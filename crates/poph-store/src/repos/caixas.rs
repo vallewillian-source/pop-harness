@@ -4,14 +4,15 @@
 //! sem perder o ACK. Saída: a chave `(turn_id, seq)` faz o reenvio na retomada não duplicar o que
 //! já saiu (D11: entrega pelo menos uma vez).
 
-use poph_types::{ConversationId, InboxId, IntegrationId, OrgId, OutboxId, TurnId};
+use poph_types::{AuditId, ConversationId, InboxId, IntegrationId, OrgId, OutboxId, TurnId};
 use rusqlite::{OptionalExtension, Row, params};
 
 use crate::Store;
 use crate::erro::{ErroStore, Resultado};
 use crate::modelo::{
     AnexoRegistro, EstadoSaida, ItemEntrada, ItemSaida, Mensagem, NovaEntrada, NovaEntradaCanal,
-    NovaEntradaComMensagem, NovaSaida, Papel, Recebido, RecebidoComMensagem,
+    NovaEntradaComMensagem, NovaMensagemDoAparelho, NovaSaida, Origem, Papel, Recebido,
+    RecebidoComMensagem, RecebidoDoAparelho,
 };
 use crate::repos::conversas::gravar_nome_cliente;
 use crate::repos::id_da_coluna;
@@ -622,6 +623,29 @@ impl CaixaSaida<'_> {
         })
     }
 
+    /// Algum envio nosso já confirmado com este id externo? (MX-41)
+    ///
+    /// É a pergunta que reconhece o **eco** da Evolution: o que o Harness mandou voltar como
+    /// `fromMe` no webhook traz o mesmo id que a MX-40 guardou ao confirmar o envio. Sem casar com
+    /// um envio nosso, um `fromMe` é mensagem digitada no aparelho do cliente.
+    pub fn enviado_com_id_externo(&self, org: OrgId, id_externo: &str) -> Resultado<bool> {
+        let texto_org = org.to_string();
+        let id_externo = id_externo.trim().to_owned();
+        self.0.leitura(move |conn| {
+            let achado: Option<i64> = conn
+                .query_row(
+                    "SELECT 1 FROM outbox
+                      WHERE org_id = ?1 AND external_message_id = ?2
+                      LIMIT 1",
+                    params![texto_org, id_externo],
+                    |linha| linha.get(0),
+                )
+                .optional()
+                .map_err(ErroStore::from)?;
+            Ok(achado.is_some())
+        })
+    }
+
     /// Itens de saída de **arquivo** de uma conversa, do mais antigo para o mais novo (HR-46d).
     ///
     /// Só `kind = 'file'`: texto e presença não entram. É a leitura que deixa o Console saber qual
@@ -814,58 +838,15 @@ impl CaixaEntrada<'_> {
                 });
             }
 
-            // Conversa do contato: a aberta ou a transferida (D12: grava, não responde). Fechada
-            // não conta; nesse caso abre-se outra.
-            let existente: Option<String> = conn
-                .query_row(
-                    "SELECT id FROM conversations
-                      WHERE org_id = ?1 AND integration_id = ?2 AND external_peer = ?3
-                        AND status IN ('open', 'transferred')
-                      ORDER BY updated_at DESC, id LIMIT 1",
-                    params![&texto_org, &texto_integracao, &peer],
-                    |linha| linha.get::<_, String>(0),
-                )
-                .optional()
-                .map_err(ErroStore::from)?;
-            let conversa_id = match existente {
-                Some(id) => id,
-                None => {
-                    let id = poph_types::ConversationId::generate().to_string();
-                    conn.execute(
-                        "INSERT INTO conversations
-                            (id, org_id, agent_id, integration_id, channel, external_peer, status,
-                             target_department_id, summary, version, created_at, updated_at,
-                             last_message_at)
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'open',
-                             (SELECT default_department_id FROM agents
-                               WHERE org_id = ?2 AND id = ?3),
-                             NULL, 1, ?7, ?7, NULL)",
-                        params![
-                            id,
-                            &texto_org,
-                            agent_id.to_string(),
-                            &texto_integracao,
-                            &canal,
-                            &peer,
-                            agora
-                        ],
-                    )
-                    .map_err(ErroStore::from)?;
-                    // A Ficha do atendimento nasce com a conversa, no mesmo savepoint (PRD L4,
-                    // FX-07). Este é o caminho que o WhatsApp usa de fato: se a Ficha fosse criada
-                    // só em `Conversas::criar`, o atendimento real ficaria sem registro.
-                    super::fichas::criar_ficha_da_conversa(
-                        conn,
-                        &texto_org,
-                        &id,
-                        &agent_id.to_string(),
-                        &canal,
-                        Some(&peer),
-                        agora,
-                    )?;
-                    id
-                }
-            };
+            let conversa_id = conversa_do_contato(
+                conn,
+                &texto_org,
+                &texto_integracao,
+                &agent_id.to_string(),
+                &canal,
+                &peer,
+                agora,
+            )?;
 
             // Nome do cliente (MX-32), no caminho que o WhatsApp usa de fato. Savepoint próprio:
             // falha aqui vira log e a mensagem entra do mesmo jeito.
@@ -968,6 +949,214 @@ impl CaixaEntrada<'_> {
             })
         })
     }
+
+    /// Grava a mensagem **digitada no aparelho** do cliente no WhatsApp (MX-41), numa escrita só.
+    ///
+    /// O que entra na mesma transação: a mensagem (`direction out`, `role assistant`,
+    /// `origin device`, `external_id` = id do WhatsApp, **sem** `turn_id`), a passagem da conversa
+    /// de `open` para `transferred` (a versão sobe uma vez só, como na MX-04) e a auditoria
+    /// `device_takeover`. O que **não** entra, de propósito:
+    ///
+    /// - a `inbox`: um item lá é o que o laço do turno pega, e o agente não deve responder a uma
+    ///   mensagem que o próprio cliente já mandou;
+    /// - a `outbox`: a mensagem já saiu pelo celular; reenviá-la duplicaria no WhatsApp do cliente.
+    ///
+    /// A conversa é a do contato, com a mesma regra da entrada do canal (aberta ou transferida;
+    /// fechada não conta, abre-se outra), e a Ficha nasce junto quando ela é aberta aqui. Reentrega
+    /// do mesmo id externo devolve `Duplicado` com a mensagem já gravada, sem gravar nada de novo.
+    pub fn receber_do_aparelho(
+        &self,
+        org: OrgId,
+        nova: NovaMensagemDoAparelho,
+    ) -> Resultado<RecebidoDoAparelho> {
+        let agora = self.0.agora();
+        let NovaMensagemDoAparelho {
+            integration_id,
+            agent_id,
+            canal,
+            peer,
+            id_externo,
+            texto,
+        } = nova;
+        let texto_org = org.to_string();
+        let texto_integracao = integration_id.to_string();
+        let texto_agente = agent_id.to_string();
+        self.0.escrita(move |conn| {
+            // Reentrega: o mesmo id externo nesta integração devolve a mensagem que já está lá,
+            // em qualquer conversa dela (a conversa anterior pode já ter fechado).
+            let ja_gravada: Option<(String, String)> = conn
+                .query_row(
+                    "SELECT m.id, m.conversation_id
+                       FROM messages m
+                       JOIN conversations c ON c.org_id = m.org_id AND c.id = m.conversation_id
+                      WHERE m.org_id = ?1 AND m.external_id = ?2 AND c.integration_id = ?3
+                      LIMIT 1",
+                    params![&texto_org, &id_externo, &texto_integracao],
+                    |linha| Ok((linha.get::<_, String>(0)?, linha.get::<_, String>(1)?)),
+                )
+                .optional()
+                .map_err(ErroStore::from)?;
+            if let Some((mensagem_id, conversa_id)) = ja_gravada {
+                let mensagem = conn
+                    .query_row(
+                        "SELECT id, org_id, conversation_id, direction, role, text,
+                                attachments_json, external_id, turn_id, created_at, origin,
+                                author_name
+                           FROM messages WHERE id = ?1",
+                        params![&mensagem_id],
+                        crate::repos::mensagens::linha,
+                    )
+                    .map_err(ErroStore::from)?;
+                return Ok(RecebidoDoAparelho {
+                    situacao: Recebido::Duplicado,
+                    conversa: conversa_de_texto(&conversa_id)?,
+                    mensagem,
+                    transferiu_agora: false,
+                });
+            }
+
+            let conversa = conversa_do_contato(
+                conn,
+                &texto_org,
+                &texto_integracao,
+                &texto_agente,
+                &canal,
+                &peer,
+                agora,
+            )?;
+
+            let mensagem_id = poph_types::MessageId::generate().to_string();
+            conn.execute(
+                "INSERT INTO messages
+                    (id, org_id, conversation_id, direction, role, text, attachments_json,
+                     external_id, turn_id, created_at, origin, author_name)
+                 VALUES (?1, ?2, ?3, 'out', ?4, ?5, '[]', ?6, NULL, ?7, ?8, NULL)",
+                params![
+                    &mensagem_id,
+                    &texto_org,
+                    &conversa,
+                    Papel::Assistente.como_texto(),
+                    &texto,
+                    &id_externo,
+                    agora,
+                    Origem::Dispositivo.como_texto()
+                ],
+            )
+            .map_err(ErroStore::from)?;
+
+            // Pausa o agente na mesma regra da resposta humana (MX-04): a conversa aberta passa a
+            // `transferred` e a versão sobe uma vez só; já transferida, só o carimbo de atividade.
+            let transferiu_agora = conn
+                .execute(
+                    "UPDATE conversations
+                        SET status = 'transferred', version = version + 1,
+                            last_message_at = ?3, updated_at = ?3
+                      WHERE org_id = ?1 AND id = ?2 AND status = 'open'",
+                    params![&texto_org, &conversa, agora],
+                )
+                .map_err(ErroStore::from)?
+                > 0;
+            if !transferiu_agora {
+                conn.execute(
+                    "UPDATE conversations SET last_message_at = ?3, updated_at = ?3
+                      WHERE org_id = ?1 AND id = ?2",
+                    params![&texto_org, &conversa, agora],
+                )
+                .map_err(ErroStore::from)?;
+            }
+
+            let detalhe = serde_json::json!({
+                "transferiu": transferiu_agora,
+                "mensagem_id": mensagem_id,
+            });
+            conn.execute(
+                "INSERT INTO audit_log
+                    (id, org_id, actor_kind, actor_id, action, entity, entity_id, detail_json,
+                     created_at)
+                 VALUES (?1, ?2, 'system', NULL, 'device_takeover', 'conversation', ?3, ?4, ?5)",
+                params![
+                    AuditId::generate().to_string(),
+                    &texto_org,
+                    &conversa,
+                    detalhe.to_string(),
+                    agora
+                ],
+            )
+            .map_err(ErroStore::from)?;
+
+            let mensagem = conn
+                .query_row(
+                    "SELECT id, org_id, conversation_id, direction, role, text, attachments_json,
+                            external_id, turn_id, created_at, origin, author_name
+                       FROM messages WHERE id = ?1",
+                    params![&mensagem_id],
+                    crate::repos::mensagens::linha,
+                )
+                .map_err(ErroStore::from)?;
+
+            Ok(RecebidoDoAparelho {
+                situacao: Recebido::Novo,
+                conversa: conversa_de_texto(&conversa)?,
+                mensagem,
+                transferiu_agora,
+            })
+        })
+    }
+}
+
+/// Acha (ou abre) a conversa do contato de um canal: a `open` ou `transferred` mais recente, e,
+/// quando não há nenhuma, uma nova com a Ficha do atendimento.
+///
+/// A regra é a mesma para a mensagem recebida do cliente (HR-26b) e para a digitada no aparelho
+/// (MX-41): fechada não conta, porque conversa encerrada não se reabre por mensagem.
+fn conversa_do_contato(
+    conn: &rusqlite::Connection,
+    org: &str,
+    integracao: &str,
+    agente: &str,
+    canal: &str,
+    peer: &str,
+    agora: i64,
+) -> Resultado<String> {
+    let existente: Option<String> = conn
+        .query_row(
+            "SELECT id FROM conversations
+              WHERE org_id = ?1 AND integration_id = ?2 AND external_peer = ?3
+                AND status IN ('open', 'transferred')
+              ORDER BY updated_at DESC, id LIMIT 1",
+            params![org, integracao, peer],
+            |linha| linha.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(ErroStore::from)?;
+    if let Some(id) = existente {
+        return Ok(id);
+    }
+    let id = ConversationId::generate().to_string();
+    conn.execute(
+        "INSERT INTO conversations
+            (id, org_id, agent_id, integration_id, channel, external_peer, status,
+             target_department_id, summary, version, created_at, updated_at,
+             last_message_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'open',
+             (SELECT default_department_id FROM agents
+               WHERE org_id = ?2 AND id = ?3),
+             NULL, 1, ?7, ?7, NULL)",
+        params![&id, org, agente, integracao, canal, peer, agora],
+    )
+    .map_err(ErroStore::from)?;
+    // A Ficha do atendimento nasce com a conversa, no mesmo savepoint (PRD L4, FX-07). Este é o
+    // caminho que o WhatsApp usa de fato: se a Ficha fosse criada só em `Conversas::criar`, o
+    // atendimento real ficaria sem registro.
+    super::fichas::criar_ficha_da_conversa(conn, org, &id, agente, canal, Some(peer), agora)?;
+    Ok(id)
+}
+
+/// Id de conversa lido do banco, como tipo do domínio.
+fn conversa_de_texto(valor: &str) -> Resultado<ConversationId> {
+    valor
+        .parse()
+        .map_err(|_| ErroStore::Interno("conversa gravada sem id válido".to_owned()))
 }
 
 /// Grava o nome do cliente num savepoint próprio, dentro da transação da mensagem (MX-32).

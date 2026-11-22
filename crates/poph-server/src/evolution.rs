@@ -27,8 +27,11 @@ use poph_evolution::webhook::{
 };
 use poph_evolution::{ClienteEvolution, ConfigEvolution, ErroEvolution, TETO_MIDIA};
 use poph_files::{ConfigArquivos, Conteudo, ErroArquivo};
-use poph_store::{NovaEntradaCanal, NovoAnexoCanal, Recebido, RecebidoComMensagem};
-use poph_types::{EventoEstado, HarnessConfig, IntegrationId, OrgId, Segredo};
+use poph_store::{
+    NovaEntradaCanal, NovaMensagemDoAparelho, NovoAnexoCanal, Recebido, RecebidoComMensagem,
+    RecebidoDoAparelho,
+};
+use poph_types::{EventoEstado, HarnessConfig, InboundEvent, IntegrationId, OrgId, Segredo};
 use serde_json::{Value, json};
 
 use crate::erro::ApiError;
@@ -188,7 +191,13 @@ pub async fn receber(
         ));
     }
 
-    let decisao = interpretar(canal.integracao, &valor, &Politica::default());
+    // MX-41: com o módulo Matrix ligado nesta org, `fromMe` deixa de ser descartado na leitura —
+    // quem decide é `receber_entrada`, que separa o eco do nosso envio da mensagem do aparelho.
+    // Sem o módulo, nada muda: o descarte é aqui, antes de qualquer gravação.
+    let politica = Politica {
+        aceitar_de_mim: modulo_matrix_ligado(&estado, &canal)?,
+    };
+    let decisao = interpretar(canal.integracao, &valor, &politica);
     match decisao {
         Decisao::Ignorado(_) => Ok(Json(json!({"recebido": true, "efeito": "nenhum"}))),
         Decisao::Estado(evento) => receber_estado(&estado, &canal, &evento),
@@ -245,6 +254,13 @@ async fn receber_entrada(
     canal: &CanalEvolution,
     entrada: EntradaRecebida,
 ) -> Result<Json<Value>, ApiError> {
+    // 0. Mensagem digitada no aparelho do cliente (MX-41): caminho próprio, decidido antes de
+    //    qualquer gravação de entrada — ela não passa pela `inbox` (não há turno) nem pela
+    //    `outbox` (já saiu pelo celular).
+    if digitada_no_aparelho(&entrada.evento) {
+        return receber_do_aparelho(estado, canal, entrada);
+    }
+
     // 1. Reentrega: devolve o que já está gravado, sem baixar mídia de novo.
     let ja_recebida = estado
         .store
@@ -256,18 +272,7 @@ async fn receber_entrada(
     }
 
     // 2. A mensagem precisa de um agente dono (a integração dele).
-    let integracao = estado
-        .store
-        .integracao_do_canal(canal.org, canal.integracao)
-        .map_err(|erro| falha_de_gravacao("integração", &erro))?
-        .filter(|integracao| integracao.kind == "whatsapp" && integracao.status != "archived")
-        .ok_or_else(|| {
-            ApiError::novo(
-                StatusCode::NOT_FOUND,
-                "not_found",
-                "integração do WhatsApp não encontrada nesta org",
-            )
-        })?;
+    let integracao = integracao_do_webhook(estado, canal)?;
 
     // 3. Mídias: as que falham viram aviso no log, e a mensagem segue com o texto.
     let anexos = baixar_anexos(estado, canal, &entrada.midias).await?;
@@ -305,6 +310,129 @@ async fn receber_entrada(
         "mensagem do WhatsApp registrada"
     );
     Ok(Json(resposta_da_entrada(&recebido)))
+}
+
+/// O módulo Matrix está ligado nesta org? É a chave do `fromMe` na MX-41.
+fn modulo_matrix_ligado(estado: &Estado, canal: &CanalEvolution) -> Result<bool, ApiError> {
+    estado
+        .store
+        .matrix()
+        .estado(canal.org)
+        .map(|estado| estado.ligado)
+        .map_err(|erro| falha_de_gravacao("estado do módulo Matrix", &erro))
+}
+
+/// `true` para a entrega que a Evolution marca como `fromMe` — foi digitada no aparelho do dono
+/// da instância, não pelo cliente, na visão dela.
+fn digitada_no_aparelho(evento: &InboundEvent) -> bool {
+    evento
+        .metadados
+        .get("from_me")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+/// A integração do WhatsApp desta instância, com o agente dono. Vale para a mensagem do cliente e
+/// para a digitada no aparelho: sem integração viva não há conversa para gravar.
+fn integracao_do_webhook(
+    estado: &Estado,
+    canal: &CanalEvolution,
+) -> Result<poph_store::IntegracaoDoCanal, ApiError> {
+    estado
+        .store
+        .integracao_do_canal(canal.org, canal.integracao)
+        .map_err(|erro| falha_de_gravacao("integração", &erro))?
+        .filter(|integracao| integracao.kind == "whatsapp" && integracao.status != "archived")
+        .ok_or_else(|| {
+            ApiError::novo(
+                StatusCode::NOT_FOUND,
+                "not_found",
+                "integração do WhatsApp não encontrada nesta org",
+            )
+        })
+}
+
+/// Mensagem digitada no aparelho do cliente (MX-41).
+///
+/// Duas decisões, nesta ordem:
+///
+/// 1. **Eco do nosso próprio envio é descartado.** O que o Harness manda pela `outbox` volta no
+///    webhook como `fromMe`; a MX-40 guarda o id que a Evolution deu ao envio, e é ele que
+///    identifica o eco. Descartar cedo evita mensagem duplicada e não cria nada.
+/// 2. **O resto é mensagem do aparelho.** Entra gravada uma vez (idempotência pelo id externo),
+///    como `out`/`device`, sem turno e sem fila de saída, e a conversa passa a `transferred` com a
+///    auditoria `device_takeover`: o agente para de responder e quem está atendendo é o humano no
+///    celular.
+///
+/// Mídia do aparelho não é baixada nesta tarefa (o caminho de arquivo das duas direções é a MX-43 e
+/// a MX-44): o texto entra, o anexo fica para depois.
+fn receber_do_aparelho(
+    estado: &Estado,
+    canal: &CanalEvolution,
+    entrada: EntradaRecebida,
+) -> Result<Json<Value>, ApiError> {
+    let evento = entrada.evento;
+
+    // 1. Eco: o id externo é de um envio nosso já confirmado.
+    let eco = estado
+        .store
+        .caixa_saida()
+        .enviado_com_id_externo(canal.org, &evento.id_externo)
+        .map_err(|erro| falha_de_gravacao("consulta da fila de saída", &erro))?;
+    if eco {
+        tracing::debug!(
+            target: "poph_server::evolution",
+            instancia = %canal.instancia,
+            "eco do nosso envio descartado"
+        );
+        return Ok(Json(json!({"recebido": true, "efeito": "eco"})));
+    }
+
+    // 2. A mensagem precisa de um agente dono (a integração dele).
+    let integracao = integracao_do_webhook(estado, canal)?;
+
+    if !entrada.midias.is_empty() {
+        tracing::warn!(
+            target: "poph_server::evolution",
+            instancia = %canal.instancia,
+            "mensagem do aparelho com mídia: só o texto é gravado nesta versão"
+        );
+    }
+
+    let recebido = estado
+        .store
+        .caixa_entrada()
+        .receber_do_aparelho(
+            canal.org,
+            NovaMensagemDoAparelho {
+                integration_id: canal.integracao,
+                agent_id: integracao.agent_id,
+                canal: "whatsapp".to_owned(),
+                peer: evento.peer,
+                id_externo: evento.id_externo,
+                texto: evento.texto,
+            },
+        )
+        .map_err(|erro| falha_de_gravacao("mensagem do aparelho", &erro))?;
+
+    tracing::info!(
+        target: "poph_server::evolution",
+        instancia = %canal.instancia,
+        situacao = if matches!(recebido.situacao, Recebido::Novo) { "nova" } else { "duplicada" },
+        pausou = recebido.transferiu_agora,
+        "mensagem digitada no aparelho registrada"
+    );
+    Ok(Json(resposta_do_aparelho(&recebido)))
+}
+
+fn resposta_do_aparelho(recebido: &RecebidoDoAparelho) -> Value {
+    json!({
+        "recebido": true,
+        "efeito": "aparelho",
+        "situacao": if matches!(recebido.situacao, Recebido::Novo) { "nova" } else { "duplicada" },
+        "conversa_id": recebido.conversa.to_string(),
+        "mensagem_id": recebido.mensagem.id.to_string(),
+    })
 }
 
 fn recebido_anexos(recebido: &RecebidoComMensagem) -> usize {

@@ -8,8 +8,11 @@
 //! Decisões que vieram do POP Atende (`core/server/routes/evolution_bridge.py` e
 //! `core/conversations/whatsapp_media.py`), com o motivo:
 //!
-//! - **`fromMe` é descartado.** O webhook devolve a nossa própria mensagem como `fromMe = true`; sem
-//!   o filtro, o agente conversaria consigo mesmo.
+//! - **`fromMe` é descartado** — por padrão. O webhook devolve como `fromMe = true` tanto a nossa
+//!   própria mensagem quanto a que o cliente digitou no celular; sem o filtro, o agente conversaria
+//!   consigo mesmo. Quem liga `Politica::aceitar_de_mim` é o servidor, e só com o módulo Matrix da
+//!   org ligado (MX-41): ali ele separa o eco do nosso envio da mensagem do aparelho, que entra
+//!   como `direction out` e `origin device`, sem turno.
 //! - **A chave de idempotência é o `key.id` do WhatsApp.** Reentrega do webhook não gera segundo
 //!   turno (é o mesmo par `(integração, id externo)` da `inbox`).
 //! - **Só imagem e documento (PDF/Office) entram como anexo.** Áudio, vídeo, figurinha, contato e
@@ -52,7 +55,13 @@ pub enum ErroWebhook {
 /// Política de entrada da integração.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Politica {
-    /// Aceitar mensagem com `fromMe = true` (só para teste; em produção fica `false`).
+    /// Aceitar mensagem com `fromMe = true` em vez de descartá-la na leitura.
+    ///
+    /// Desligado (o padrão) é o comportamento de sempre: `fromMe` sai como
+    /// [`MotivoIgnorado::DeMimMesmo`]. Ligado, o evento vira [`Decisao::Entrada`] com
+    /// `metadados.from_me = true`, e quem decide o que fazer é o chamador — hoje o servidor, que
+    /// aceita ligado só para a org com o módulo Matrix ativo (MX-41): lá o eco do nosso envio é
+    /// descartado e a mensagem digitada no aparelho é gravada como `device`.
     pub aceitar_de_mim: bool,
 }
 

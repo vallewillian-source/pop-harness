@@ -38,8 +38,8 @@ use poph_evolution::{ClienteEvolution, ConfigEvolution, TETO_MIDIA};
 use poph_server::Estado;
 use poph_server::evolution::CanalEvolution;
 use poph_store::{
-    Direcao, EstadoSaida, EstadoTurno, NovaConversa, NovaOrg, NovaSaida, NovoAgente, Pagina,
-    StatusConversa, Store,
+    Direcao, EstadoSaida, EstadoTurno, NovaConversa, NovaOrg, NovaSaida, NovoAgente, Origem,
+    Pagina, StatusConversa, Store,
 };
 use poph_types::{AgentId, ConversationId, HarnessConfig, IntegrationId, OrgId, Registro, Segredo};
 use reqwest::Client;
@@ -531,6 +531,13 @@ fn evento_texto(id: &str, texto: &str) -> Value {
     })
 }
 
+/// A mesma entrega de texto, com `fromMe = true`: o que o cliente digitou no celular (MX-41).
+fn evento_do_aparelho(id: &str, texto: &str) -> Value {
+    let mut corpo = evento_texto(id, texto);
+    corpo["data"]["key"]["fromMe"] = json!(true);
+    corpo
+}
+
 fn resposta(texto: &str) -> Roteiro {
     Roteiro::Eventos(vec![
         EventoLlm::Texto(texto.to_owned()),
@@ -700,6 +707,78 @@ async fn conversa_transferida_nao_responde_e_conclui_com_motivo() {
     );
     // A mensagem do cliente continua gravada.
     assert_eq!(cenario.respostas_gravadas().len(), 1);
+
+    servidor.desligar().await;
+}
+
+/// Aceite da MX-41: a mensagem digitada no aparelho **não** é respondida pelo agente — nem na
+/// hora (não há turno), nem depois (a conversa ficou `transferred` e a próxima mensagem do cliente
+/// também não chama o modelo).
+#[tokio::test]
+async fn mensagem_do_aparelho_nao_e_respondida_pelo_agente() {
+    let cenario = Cenario::novo("aparelho").await;
+    cenario
+        .store
+        .matrix()
+        .ligar(cenario.org)
+        .expect("liga o módulo Matrix da org");
+    let servidor = cenario
+        .subir(
+            vec![resposta(RESPOSTA), resposta("isto não deveria sair")],
+            true,
+        )
+        .await;
+
+    let (status, corpo) = servidor
+        .webhook(evento_do_aparelho("MSG-AP-1", PERGUNTA))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(corpo["efeito"], "aparelho");
+    assert_eq!(corpo["situacao"], "nova");
+
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    assert_eq!(servidor.llm_recebidos(), 0, "o modelo não é chamado");
+    assert!(cenario.evo.envios().is_empty(), "nada sai para o cliente");
+    assert_eq!(
+        cenario.entradas_pendentes(),
+        0,
+        "a mensagem do aparelho não entra na fila do turno"
+    );
+    assert_eq!(
+        cenario.saidas(EstadoSaida::Pendente),
+        0,
+        "fila de saída vazia"
+    );
+    assert!(cenario.turnos().is_empty(), "nenhum turno aberto");
+
+    // A mensagem existe, é saída do dispositivo e não tem turno.
+    let conversa = cenario.conversa().expect("a conversa existe no banco");
+    let gravadas = cenario
+        .store
+        .mensagens()
+        .listar(cenario.org, conversa, Pagina::com_limite(20))
+        .expect("lista as mensagens");
+    assert_eq!(gravadas.len(), 1);
+    assert_eq!(gravadas[0].direcao, Direcao::Saida);
+    assert_eq!(gravadas[0].origem, Origem::Dispositivo);
+    assert!(gravadas[0].turn_id.is_none());
+
+    // E o cliente que escrever depois também não é respondido: quem atende é o humano no aparelho.
+    servidor.webhook(evento_texto("MSG-AP-2", PERGUNTA)).await;
+    esperar("a entrada ser concluída", || {
+        cenario.entradas_pendentes() == 0
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(
+        servidor.llm_recebidos(),
+        0,
+        "conversa transferida pelo aparelho não chama o modelo"
+    );
+    assert_eq!(cenario.evo.envios().len(), 0, "nada sai depois da pausa");
+    let turnos = cenario.turnos();
+    let ultimo = turnos.last().expect("há turno");
+    assert_eq!(ultimo.estado, EstadoTurno::Ignorado);
 
     servidor.desligar().await;
 }

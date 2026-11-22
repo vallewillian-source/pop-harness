@@ -161,7 +161,7 @@ fn eco_da_propria_mensagem_e_descartado() {
         interpretar(integracao(), &corpo, &Politica::default()),
         Decisao::Ignorado(MotivoIgnorado::DeMimMesmo)
     );
-    // Aceitar de mim é só para teste local.
+    // Aceitar de mim é do chamador: o servidor liga para a org com o módulo Matrix ativo (MX-41).
     let politica = Politica {
         aceitar_de_mim: true,
     };

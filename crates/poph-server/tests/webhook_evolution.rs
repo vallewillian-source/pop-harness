@@ -337,6 +337,44 @@ impl Cenario {
             .expect("lista conversas")
     }
 
+    /// Liga o módulo Matrix desta org — a chave que faz o webhook aceitar `fromMe` (MX-41).
+    fn ligar_matrix(&self) {
+        self.store
+            .matrix()
+            .ligar(self.org)
+            .expect("liga o módulo Matrix da org");
+    }
+
+    /// Conta linhas lidas direto do banco (`inbox`, `outbox`, `messages`, `audit_log`…).
+    fn contar(&self, sql: &str) -> i64 {
+        rusqlite::Connection::open(self.store.caminho_harness())
+            .expect("abre o banco para conferir")
+            .query_row(sql, [], |linha| linha.get(0))
+            .expect("conta")
+    }
+
+    /// Valores de uma linha só (`SELECT a, b, ... WHERE id = ?`), com nulo como `None`.
+    fn uma_linha(&self, sql: &str, parametro: &str) -> Vec<Option<String>> {
+        rusqlite::Connection::open(self.store.caminho_harness())
+            .expect("abre o banco para conferir")
+            .query_row(sql, [parametro], |linha| {
+                let mut valores = Vec::new();
+                for i in 0..linha.as_ref().column_count() {
+                    valores.push(match linha.get_ref(i)? {
+                        rusqlite::types::ValueRef::Null => None,
+                        rusqlite::types::ValueRef::Integer(n) => Some(n.to_string()),
+                        rusqlite::types::ValueRef::Real(n) => Some(n.to_string()),
+                        rusqlite::types::ValueRef::Text(t) => {
+                            Some(String::from_utf8_lossy(t).into_owned())
+                        }
+                        rusqlite::types::ValueRef::Blob(_) => Some("<blob>".to_owned()),
+                    });
+                }
+                Ok(valores)
+            })
+            .expect("lê a linha")
+    }
+
     fn mensagem_id(resposta: &Resposta) -> MessageId {
         resposta.corpo["mensagem_id"]
             .as_str()
@@ -1158,5 +1196,158 @@ async fn nome_do_cliente_nao_aparece_em_log_nem_em_resposta() {
     assert!(
         !registro.contains("OUTRO-CANARIO-MX32"),
         "o nome do cliente vazou para o log na falha"
+    );
+}
+
+// ───────────────────── mensagem digitada no aparelho (MX-41) ─────────────────────
+
+/// A mesma entrega de texto, com `fromMe = true`: é o que a Evolution manda para o que saiu do
+/// aparelho do dono da instância (o nosso próprio envio **e** o que o cliente digitou no celular).
+fn evento_do_aparelho(id: &str, texto: &str) -> Value {
+    let mut corpo = evento_texto(id, texto);
+    corpo["data"]["key"]["fromMe"] = json!(true);
+    corpo
+}
+
+/// Aceite: com o módulo ligado, a mensagem do aparelho entra **uma** vez, como saída do
+/// dispositivo, sem `inbox` (não há turno) e sem `outbox` (já saiu pelo celular), e a conversa fica
+/// `transferred` com a auditoria `device_takeover`. A reentrega não duplica.
+#[tokio::test(flavor = "multi_thread")]
+async fn mensagem_do_aparelho_grava_uma_vez_e_pausa_o_agente() {
+    let c = Cenario::novo("aparelho").await;
+    c.ligar_matrix();
+
+    let resposta = c
+        .entregar(evento_do_aparelho("MSG-AP-1", "já respondi pelo celular"))
+        .await;
+    assert_eq!(resposta.status, StatusCode::OK, "{}", resposta.cru);
+    assert_eq!(resposta.corpo["efeito"], "aparelho");
+    assert_eq!(resposta.corpo["situacao"], "nova");
+    let conversa = resposta.corpo["conversa_id"]
+        .as_str()
+        .expect("conversa na resposta")
+        .to_owned();
+
+    // A mensagem é saída do dispositivo, sem turno.
+    let mensagem = c.uma_linha(
+        "SELECT direction, role, origin, turn_id, text FROM messages WHERE external_id = ?1",
+        "MSG-AP-1",
+    );
+    assert_eq!(mensagem[0].as_deref(), Some("out"), "direção");
+    assert_eq!(mensagem[1].as_deref(), Some("assistant"), "papel");
+    assert_eq!(mensagem[2].as_deref(), Some("device"), "origem");
+    assert_eq!(mensagem[3], None, "sem turno");
+    assert_eq!(mensagem[4].as_deref(), Some("já respondi pelo celular"));
+
+    // A conversa do contato foi pausada: transferida, com a versão subindo uma vez.
+    let estado = c.uma_linha(
+        "SELECT status, version FROM conversations WHERE id = ?1",
+        &conversa,
+    );
+    assert_eq!(estado[0].as_deref(), Some("transferred"));
+    assert_eq!(estado[1].as_deref(), Some("2"));
+
+    // Nada para o turno pegar e nada para a Evolution enviar de novo.
+    assert_eq!(c.pendentes(), 0, "inbox sem a mensagem do aparelho");
+    assert_eq!(c.contar("SELECT COUNT(*) FROM outbox"), 0, "outbox vazia");
+
+    // Auditoria da tomada do aparelho.
+    let auditoria = c.uma_linha(
+        "SELECT actor_kind, action FROM audit_log WHERE entity_id = ?1",
+        &conversa,
+    );
+    assert_eq!(auditoria[0].as_deref(), Some("system"));
+    assert_eq!(auditoria[1].as_deref(), Some("device_takeover"));
+
+    // Reentrega do mesmo webhook: nada novo.
+    let repetida = c
+        .entregar(evento_do_aparelho("MSG-AP-1", "já respondi pelo celular"))
+        .await;
+    assert_eq!(repetida.status, StatusCode::OK, "{}", repetida.cru);
+    assert_eq!(repetida.corpo["situacao"], "duplicada");
+    assert_eq!(c.contar("SELECT COUNT(*) FROM messages"), 1, "sem duplicar");
+    assert_eq!(
+        c.contar("SELECT COUNT(*) FROM conversations"),
+        1,
+        "sem abrir outra conversa"
+    );
+    assert_eq!(
+        c.contar("SELECT COUNT(*) FROM audit_log WHERE action = 'device_takeover'"),
+        1,
+        "uma auditoria só"
+    );
+    assert_eq!(c.pendentes(), 0);
+    assert_eq!(c.contar("SELECT COUNT(*) FROM outbox"), 0);
+}
+
+/// Aceite: o eco do nosso próprio envio (o id que a MX-40 guardou) é descartado, sem duplicar
+/// mensagem nem fila.
+#[tokio::test(flavor = "multi_thread")]
+async fn eco_do_proprio_envio_e_descartado() {
+    let c = Cenario::novo("aparelho-eco").await;
+    c.ligar_matrix();
+
+    // Uma mensagem do cliente abre a conversa (e é o único histórico que deve existir).
+    c.entregar(evento_texto("MSG-C-1", "oi")).await;
+    let conversa = c.conversas()[0].id.to_string();
+
+    // O envio do agente saiu e a Evolution devolveu o id — o que a MX-40 grava.
+    {
+        let conexao = rusqlite::Connection::open(c.store.caminho_harness()).expect("banco");
+        conexao
+            .execute(
+                "INSERT INTO outbox
+                    (id, org_id, conversation_id, turn_id, seq, kind, payload_json, state,
+                     attempts, created_at, sent_at, external_message_id)
+                 VALUES ('out-eco-1', ?1, ?2, 'turno-eco-1', 0, 'text', '{\"texto\":\"oi\"}',
+                     'sent', 1, 1795177000000, 1795177000000, 'EVO-ECO-1')",
+                rusqlite::params![c.org.to_string(), &conversa],
+            )
+            .expect("grava o envio confirmado");
+    }
+
+    let eco = c.entregar(evento_do_aparelho("EVO-ECO-1", "oi")).await;
+    assert_eq!(eco.status, StatusCode::OK, "{}", eco.cru);
+    assert_eq!(eco.corpo["efeito"], "eco");
+
+    assert_eq!(
+        c.contar("SELECT COUNT(*) FROM messages"),
+        1,
+        "sem mensagem nova"
+    );
+    assert_eq!(c.contar("SELECT COUNT(*) FROM conversations"), 1);
+    assert_eq!(c.contar("SELECT COUNT(*) FROM outbox"), 1, "sem envio novo");
+    assert_eq!(
+        c.contar("SELECT COUNT(*) FROM audit_log WHERE action = 'device_takeover'"),
+        0,
+        "eco não pausa o agente"
+    );
+    let estado = c.uma_linha("SELECT status FROM conversations WHERE id = ?1", &conversa);
+    assert_eq!(
+        estado[0].as_deref(),
+        Some("open"),
+        "a conversa segue aberta"
+    );
+}
+
+/// Aceite: org **sem** o módulo Matrix ligado mantém o comportamento de hoje — `fromMe` é
+/// descartado na leitura e não grava nada.
+#[tokio::test(flavor = "multi_thread")]
+async fn org_sem_modulo_continua_descartando_from_me() {
+    let c = Cenario::novo("aparelho-sem-modulo").await;
+
+    let resposta = c
+        .entregar(evento_do_aparelho("MSG-AP-2", "digitada no celular"))
+        .await;
+    assert_eq!(resposta.status, StatusCode::OK, "{}", resposta.cru);
+    assert_eq!(resposta.corpo["efeito"], "nenhum");
+
+    assert_eq!(c.contar("SELECT COUNT(*) FROM messages"), 0, "nada gravado");
+    assert_eq!(c.contar("SELECT COUNT(*) FROM conversations"), 0);
+    assert_eq!(c.contar("SELECT COUNT(*) FROM outbox"), 0);
+    assert_eq!(c.pendentes(), 0, "nada na inbox");
+    assert_eq!(
+        c.contar("SELECT COUNT(*) FROM audit_log WHERE action = 'device_takeover'"),
+        0
     );
 }

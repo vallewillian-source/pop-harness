@@ -1481,6 +1481,40 @@ pub struct NovaEntradaCanal {
     pub nome_cliente: Option<String>,
 }
 
+/// Mensagem **digitada no aparelho** do cliente no WhatsApp (MX-41).
+///
+/// É a mensagem que o dono do número escreve pelo celular, e que a Evolution devolve como
+/// `fromMe`. Já saiu para o cliente: entra gravada como `out`/`device`, **sem** turno e **sem**
+/// linha na fila de saída, e pausa o agente (a conversa passa a `transferred`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NovaMensagemDoAparelho {
+    /// Integração da instância que entregou o webhook.
+    pub integration_id: poph_types::IntegrationId,
+    /// Agente dono da integração (dono da conversa, quando ela é aberta agora).
+    pub agent_id: poph_types::AgentId,
+    /// Canal (`whatsapp`).
+    pub canal: String,
+    /// Identificador do cliente no canal (número, ou o grupo).
+    pub peer: String,
+    /// Id da mensagem no WhatsApp (chave de idempotência).
+    pub id_externo: String,
+    /// Texto digitado (pode ser vazio, como imagem do aparelho sem legenda).
+    pub texto: String,
+}
+
+/// O que a gravação da mensagem do aparelho produziu.
+#[derive(Debug, Clone)]
+pub struct RecebidoDoAparelho {
+    /// `Novo` na primeira entrega; `Duplicado` na reentrega do mesmo id externo.
+    pub situacao: Recebido,
+    /// Conversa dona da mensagem (a que existia ou a que nasceu nesta entrega).
+    pub conversa: ConversationId,
+    /// Mensagem gravada (na reentrega, a que já estava).
+    pub mensagem: Mensagem,
+    /// `true` quando **esta** mensagem foi a que passou a conversa de `open` para `transferred`.
+    pub transferiu_agora: bool,
+}
+
 /// Anexo de uma mensagem, como está gravado.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AnexoRegistro {
