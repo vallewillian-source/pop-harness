@@ -125,6 +125,8 @@ teto de falhas; plugin que trava, cai ou emite lixo não derruba o servidor nem 
 
 ## 7. O que um canal observador (Matrix) exigiria e hoje não existe
 
+> Nota: a ponte que faz o Element ler e fechar conversas do POP Harness pelo backend Python (repasse) não é um canal observador e não está descrita aqui. Ver [`REPASSE_PYTHON.md`](REPASSE_PYTHON.md).
+
 Levantamento feito lendo o esquema e o código em 21/11/2026. Direção aprovada pelo mantenedor: módulo
 desligável em crate separado, com poucas mudanças no núcleo, e um segundo papel de integração, o de
 observador da conversa. **Nada disto está especificado nem implementado.**
