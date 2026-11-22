@@ -8,7 +8,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-argon2 = "0.5"
+argon2 = "0.6"
 axum = { version = "0.8", features = ["macros", "multipart"] }
 poph-store = { path = "../poph-store" }
 poph-agent = { path = "../poph-agent" }

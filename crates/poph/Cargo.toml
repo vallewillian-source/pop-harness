@@ -10,7 +10,7 @@ publish.workspace = true
 [dependencies]
 # Os crates do workspace poph-core e poph-server entram aqui quando o binário passar a usá-los
 # (HR-13 em diante). O lint unused_dependencies do Rust 1.100 quebra o clippy com -D warnings.
-argon2 = "0.5"
+argon2 = "0.6"
 # Aleatoriedade do sistema para gerar o valor dos tokens (HR-08): a feature getrandom liga o OsRng.
 rand_core = { version = "0.6", features = ["getrandom"] }
 clap.workspace = true
