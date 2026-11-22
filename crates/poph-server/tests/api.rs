@@ -1135,6 +1135,8 @@ async fn openapi_e_valida_e_cobre_todas_as_rotas() {
         ("/admin/v1/orgs/{org_id}", "get"),
         ("/admin/v1/orgs/{org_id}", "patch"),
         ("/admin/v1/orgs/{org_id}", "delete"),
+        ("/admin/v1/orgs/{org_id}/agents/{agent_id}/flows", "get"),
+        ("/admin/v1/orgs/{org_id}/agents/{agent_id}/flows", "put"),
         (
             "/admin/v1/orgs/{org_id}/agents/{agent_id}/instructions",
             "get",
@@ -1618,6 +1620,7 @@ async fn toda_escrita_da_openapi_precisa_de_cobertura_de_auditoria() {
         ("post", "/admin/v1/orgs/{org_id}/agents"),
         ("patch", "/admin/v1/orgs/{org_id}/agents/{agent_id}"),
         ("delete", "/admin/v1/orgs/{org_id}/agents/{agent_id}"),
+        ("put", "/admin/v1/orgs/{org_id}/agents/{agent_id}/flows"),
         (
             "post",
             "/admin/v1/orgs/{org_id}/agents/{agent_id}/instructions",
@@ -3338,6 +3341,8 @@ async fn isolamento_por_org_cobre_todas_as_operacoes_publicadas() {
         ("get", "/admin/v1/orgs/{org_id}/agents/{agent_id}"),
         ("delete", "/admin/v1/orgs/{org_id}/agents/{agent_id}"),
         ("patch", "/admin/v1/orgs/{org_id}/agents/{agent_id}"),
+        ("get", "/admin/v1/orgs/{org_id}/agents/{agent_id}/flows"),
+        ("put", "/admin/v1/orgs/{org_id}/agents/{agent_id}/flows"),
         ("get", "/admin/v1/orgs/{org_id}/agents/{agent_id}/files"),
         ("post", "/admin/v1/orgs/{org_id}/agents/{agent_id}/files"),
         (
@@ -4587,7 +4592,9 @@ async fn docs_api_cobre_todas_as_rotas_publicadas() {
             || linha.rota.ends_with("/close")
             || linha.rota.ends_with("/whatsapp/qrcode")
             || linha.rota.ends_with("/whatsapp/disconnect")
-            || (linha.metodo == "put" && linha.rota.ends_with("/matrix"));
+            || (linha.metodo == "put" && linha.rota.ends_with("/matrix"))
+            // FX-28: a permissão de fluxos do agente troca a lista inteira com `If-Match` da versão do agente.
+            || (linha.metodo == "put" && linha.rota.ends_with("/agents/{agent_id}/flows"));
         let esperado = if escrita_com_if_match && !global_da_instancia {
             "sim"
         } else {

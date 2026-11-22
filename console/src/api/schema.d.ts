@@ -149,6 +149,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/v1/orgs/{org_id}/agents/{agent_id}/flows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listar"];
+        put: operations["substituir"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/v1/orgs/{org_id}/agents/{agent_id}/instructions": {
         parameters: {
             query?: never;
@@ -995,6 +1011,11 @@ export interface components {
             /** Format: double */
             temperature?: number | null;
             type?: string | null;
+        };
+        /** @description Corpo do `PUT`: a lista inteira de fluxos do agente. */
+        DadosFluxosAgente: {
+            /** @description Ids dos fluxos que o agente pode usar. O que não estiver na lista sai; máximo 20. */
+            flow_ids: string[];
         };
         DadosItem: {
             content?: string | null;
@@ -2036,6 +2057,103 @@ export interface operations {
             };
             /** @description Arquivo ou conteúdo não encontrado */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+        };
+    };
+    listar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_id: string;
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Fluxos liberados ao agente, em ordem de slug */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListaJson_Value"];
+                };
+            };
+            /** @description Agente não encontrado nesta org */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+        };
+    };
+    substituir: {
+        parameters: {
+            query?: never;
+            header: {
+                "If-Match": string;
+            };
+            path: {
+                org_id: string;
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DadosFluxosAgente"];
+            };
+        };
+        responses: {
+            /** @description Lista de fluxos do agente substituída: o que entrou, o que saiu e a versão nova do agente */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Agente ou fluxo não encontrado nesta org */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+            /** @description Mais de 20 fluxos por agente (teto_de_fluxos_por_agente) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+            /** @description If-Match diferente da versão atual do agente */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+            /** @description Falta o If-Match */
+            428: {
                 headers: {
                     [name: string]: unknown;
                 };

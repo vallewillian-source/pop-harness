@@ -1,5 +1,7 @@
 //! API administrativa (`/admin/v1`, PRD §8.1) e rotas de operação.
 
+/// Permissão de fluxos por agente (FX-28, PRD §6.2).
+mod agente_fluxos;
 mod agentes;
 mod auditoria;
 mod backup;
@@ -76,6 +78,11 @@ pub fn router(estado: Estado) -> Router {
             get(agentes::mostrar)
                 .patch(agentes::atualizar)
                 .delete(agentes::excluir),
+        )
+        // ── fluxos liberados ao agente (FX-28) ──
+        .route(
+            "/admin/v1/orgs/{org_id}/agents/{agent_id}/flows",
+            get(agente_fluxos::listar).put(agente_fluxos::substituir),
         )
         .route(
             "/admin/v1/orgs/{org_id}/agents/{agent_id}/instructions",
@@ -405,6 +412,7 @@ pub fn documento() -> utoipa::openapi::OpenApi {
         conhecimento::listar_itens, conhecimento::mostrar_item, conhecimento::criar_item, conhecimento::atualizar_item, conhecimento::excluir_item,
         conhecimento::listar, conhecimento::mostrar, conhecimento::criar, conhecimento::atualizar, conhecimento::excluir,
         agentes::listar, agentes::mostrar, agentes::criar, agentes::atualizar, agentes::excluir,
+        agente_fluxos::listar, agente_fluxos::substituir,
         instrucoes::listar, instrucoes::mostrar, instrucoes::criar, instrucoes::atualizar, instrucoes::excluir,
         orgs::listar,
         orgs::criar,

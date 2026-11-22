@@ -623,6 +623,7 @@ fn casos() -> Vec<Caso> {
     use Tipo::*;
     const ORG: &str = "/admin/v1/orgs/{org_id}";
     const AG: &str = "/admin/v1/orgs/{org_id}/agents/{agent_id}";
+    const AGF: &str = "/admin/v1/orgs/{org_id}/agents/{agent_id}/flows";
     const KN: &str = "/admin/v1/orgs/{org_id}/knowledge/{group_id}";
     const IT: &str = "/admin/v1/orgs/{org_id}/knowledge/{group_id}/items/{item_id}";
     const IG: &str = "/admin/v1/orgs/{org_id}/agents/{agent_id}/integrations/{integration_id}";
@@ -647,6 +648,8 @@ fn casos() -> Vec<Caso> {
         caso("get", AG, Vazio),
         caso("patch", AG, Json(r#"{"description":"Invadido"}"#)),
         caso("delete", AG, Vazio),
+        caso("get", AGF, Vazio),
+        caso("put", AGF, Json(r#"{"flow_ids":[]}"#)),
         caso("get", &format!("{AG}/instructions"), Vazio),
         caso(
             "post",

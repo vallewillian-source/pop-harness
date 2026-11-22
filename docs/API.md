@@ -237,6 +237,8 @@ Colunas:
 | Agentes | GET | `/admin/v1/orgs/{org_id}/agents/{agent_id}` | sim | n/a | n/a | sim |
 | Agentes | PATCH | `/admin/v1/orgs/{org_id}/agents/{agent_id}` | sim | sim | sim | sim |
 | Agentes | DELETE | `/admin/v1/orgs/{org_id}/agents/{agent_id}` | sim | n/a | sim | sim |
+| Fluxos do agente | GET | `/admin/v1/orgs/{org_id}/agents/{agent_id}/flows` | exceção: CLI vem na FX-31 | n/a | n/a | sim |
+| Fluxos do agente | PUT | `/admin/v1/orgs/{org_id}/agents/{agent_id}/flows` | exceção: CLI vem na FX-31 | sim | sim | sim |
 | Instruções | GET | `/admin/v1/orgs/{org_id}/agents/{agent_id}/instructions` | sim | n/a | n/a | sim |
 | Instruções | POST | `/admin/v1/orgs/{org_id}/agents/{agent_id}/instructions` | sim | n/a | sim | sim |
 | Instruções | GET | `/admin/v1/orgs/{org_id}/agents/{agent_id}/instructions/current` | sim | n/a | n/a | sim |
@@ -1089,6 +1091,40 @@ Element e as salas também. O que acontece, exatamente:
 Sem espaço gravado o `DELETE` responde `200` com `removed: false` (é idempotente). Departamento
 inexistente ou de outra org → `404`. A escrita registra auditoria (`action: delete`,
 `entity: matrix_space`).
+
+## Fluxos liberados ao agente (FX-28)
+
+Quais fluxos da org cada agente pode usar. O fluxo é da organização; o agente só tem a permissão.
+Liberar ou tirar é a lista inteira de uma vez.
+
+- `GET /admin/v1/orgs/{org_id}/agents/{agent_id}/flows` → `200` com `{"items": [{"id", "slug",
+  "name", "status"}], "next_cursor": null}`, em ordem de `slug`. Sem paginação (o teto é 20).
+- `PUT /admin/v1/orgs/{org_id}/agents/{agent_id}/flows` com corpo `{"flow_ids": ["…"]}` troca a
+  lista inteira numa escrita só. Resposta `200` com `{"agent_id", "version", "added", "removed"}`:
+  `added` e `removed` são os fluxos que entraram e saíram (`id`, `slug`, `name`, `status`), e
+  `version` é a versão nova do agente.
+
+| Situação | Resposta | Efeito |
+| --- | --- | --- |
+| sem `If-Match` (no `PUT`) | `428 precondition_required` | nada muda |
+| `If-Match` diferente da versão atual do **agente** | `412 version_conflict` | nada muda |
+| mais de 20 fluxos na lista | `409 teto_de_fluxos_por_agente` | nada muda |
+| fluxo de outra org, ou id que não existe | `404 not_found` | nada muda |
+| agente de outra org ou inexistente | `404 not_found` | nada muda |
+| token de outra org | `403 forbidden` | nada muda |
+| `PUT` bem-sucedido, lista igual à anterior | `200` | versão do agente +1; auditoria `agent_flows_update` |
+
+- Id de fluxo que não é UUID v7 → `400 invalid_id`. Corpo sem `flow_ids` → `400 invalid_request`.
+- Cada `PUT` bem-sucedido grava uma linha de auditoria (`agent_flows_update`, entidade `agent`) com o
+  autor do token. O corpo da lista não entra na auditoria.
+- Agente `inactive` continua aceitando a permissão.
+- Repetir o mesmo id na lista conta uma vez.
+- A versão do agente sobe a cada troca, então quem leu a lista antes e tenta gravar depois recebe
+  `412` e relê. Não há "liberar para todos" (decisão em aberto no PRD §15).
+
+Provas: `crates/poph-server/tests/agente_fluxos.rs` (ponta a ponta, com servidor e banco
+temporários). As listas de cobertura de `crates/poph-server/tests/api.rs` (OpenAPI, auditoria,
+isolamento por org e documentação da API) também conhecem as duas rotas.
 
 ## Limites conhecidos da API
 

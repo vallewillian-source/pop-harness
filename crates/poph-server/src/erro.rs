@@ -241,6 +241,7 @@ nomeavel!(poph_types::AdminTokenId, "token");
 nomeavel!(poph_types::ProductCategoryId, "categoria de produto");
 nomeavel!(poph_types::DepartmentId, "departamento");
 nomeavel!(poph_types::AgentId, "agente");
+nomeavel!(poph_types::FluxoId, "fluxo");
 nomeavel!(poph_types::FileId, "arquivo");
 
 nomeavel!(poph_types::ConversationId, "conversa");
