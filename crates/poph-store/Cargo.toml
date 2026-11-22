@@ -1,0 +1,22 @@
+[package]
+name = "poph-store"
+description = "Armazenamento do POP Harness: SQLite (harness.db e rag.db) com escritor dedicado, migrações versionadas e repositórios escopados por org."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+poph-types = { path = "../poph-types" }
+rusqlite.workspace = true
+# `tags_json` dos itens da base é uma lista JSON (HR-17).
+serde_json.workspace = true
+# sha256 do conteúdo dos blobs do arquivo de backup (HR-48e-1).
+sha2 = "0.11"
+uuid.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

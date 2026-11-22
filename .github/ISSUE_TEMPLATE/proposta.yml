@@ -1,0 +1,43 @@
+name: Proposta
+description: Sugira uma melhoria ou um recurso novo.
+labels: ["enhancement", "triagem"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Abra a proposta **antes** de escrever o código, principalmente se ela mexe em contrato de API, formato
+        de arquivo, esquema de banco ou no desenho de um módulo. Veja também o `ROADMAP.md`.
+  - type: textarea
+    id: problema
+    attributes:
+      label: Qual problema você quer resolver
+      description: Conte a situação real, sem já propor a solução. Quem é afetado e o que fazem hoje para contornar?
+    validations:
+      required: true
+  - type: textarea
+    id: proposta
+    attributes:
+      label: O que você propõe
+      description: O que muda na prática para quem usa. Se souber, diga como ficariam o comando, a rota ou a configuração.
+    validations:
+      required: true
+  - type: textarea
+    id: alternativas
+    attributes:
+      label: Alternativas que você considerou
+      description: Inclusive "não fazer nada" e contornos que já funcionam.
+  - type: textarea
+    id: custos
+    attributes:
+      label: Custos e riscos
+      description: Memória, dependência nova, compatibilidade com o que existe, isolamento entre orgs, segurança.
+  - type: dropdown
+    id: contribuir
+    attributes:
+      label: Você pode implementar?
+      options:
+        - Sim, abro o pull request depois do alinhamento
+        - Posso ajudar com parte
+        - Não, só estou sugerindo
+    validations:
+      required: true

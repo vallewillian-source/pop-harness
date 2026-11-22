@@ -1,0 +1,175 @@
+/* Base de conhecimento do agente no layout D1 (RL-11).
+ *
+ * Duas seções planas, uma embaixo da outra: grupos e, abaixo, os trechos do grupo selecionado.
+ * Cada lista é uma tabela contínua (linha de 56 px) montada com os blocos `.poph-tabela` de
+ * `relayout.css` — aqui ficam só as colunas de cada tabela e os detalhes do conteúdo.
+ * Nada de cartão; as ações de cada linha vivem no menu "⋯" (SofaMenu).
+ */
+
+.poph-conhecimento {
+    padding-bottom: var(--pop-spacing-3xl, 28px);
+}
+
+.poph-conhecimento__esqueleto-linha {
+    margin-top: 10px;
+}
+
+/* ── Cabeçalho de cada seção (título + ajuda à esquerda, ações à direita) ───── */
+
+.poph-conhecimento__cabecalho-secao {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--pop-spacing-lg, 12px);
+}
+
+.poph-conhecimento__titulo-bloco {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.poph-conhecimento__ajuda {
+    margin: 0;
+    max-width: 560px;
+    color: var(--pop-text-muted);
+    font-size: var(--pop-font-size-body-sm, 12px);
+    line-height: 1.5;
+}
+
+.poph-conhecimento__texto {
+    margin: 0;
+    max-width: 680px;
+    color: var(--pop-text-secondary);
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+.poph-conhecimento__texto code {
+    font-family: var(--pop-font-mono, "IBM Plex Mono", monospace);
+    font-size: 12px;
+}
+
+.poph-conhecimento__nota {
+    margin: 0;
+    line-height: 1.6;
+}
+
+.poph-conhecimento__acoes-secao {
+    display: flex;
+    align-items: center;
+    gap: var(--pop-spacing-md, 8px);
+    flex-wrap: wrap;
+}
+
+.poph-conhecimento__contagem {
+    color: var(--pop-text-muted);
+    font-family: var(--pop-font-mono, "IBM Plex Mono", monospace);
+    font-size: 12px;
+}
+
+/* ── Tabela de grupos ─────────────────────────────────────────────────────── */
+
+.poph-conhecimento__grupos {
+    overflow-x: auto;
+}
+
+.poph-conhecimento__grupos .poph-tabela__cabecalho,
+.poph-conhecimento__grupos .poph-tabela__linha {
+    grid-template-columns: minmax(200px, 2.6fr) 150px 110px 64px 48px;
+    min-width: 680px;
+}
+
+.poph-conhecimento__grupos .poph-tabela__linha {
+    cursor: pointer;
+}
+
+.poph-conhecimento__identidade {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+/* O nome do grupo é o controle de teclado para abrir os trechos dele. */
+.poph-conhecimento__nome {
+    align-self: flex-start;
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--pop-text-primary);
+    font: inherit;
+    font-size: 13px;
+    font-weight: var(--pop-font-weight-semibold, 600);
+    text-align: left;
+    overflow-wrap: anywhere;
+    cursor: pointer;
+}
+
+.poph-conhecimento__nome:hover {
+    color: var(--pop-accent);
+}
+
+.poph-conhecimento__nome:focus-visible {
+    outline: 2px solid var(--pop-accent);
+    outline-offset: 2px;
+    border-radius: 2px;
+}
+
+.poph-conhecimento__nome-estatico {
+    color: var(--pop-text-primary);
+    font-size: 13px;
+    font-weight: var(--pop-font-weight-semibold, 600);
+    overflow-wrap: anywhere;
+}
+
+.poph-conhecimento__sub {
+    color: var(--pop-text-muted);
+    font-size: var(--pop-font-size-body-sm, 12px);
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+
+.poph-conhecimento__vinculo {
+    color: var(--pop-text-primary);
+    font-size: 12px;
+}
+
+.poph-conhecimento__vinculo--fraco {
+    color: var(--pop-text-muted);
+}
+
+/* ── Tabela de trechos ────────────────────────────────────────────────────── */
+
+.poph-conhecimento__trechos {
+    overflow-x: auto;
+}
+
+.poph-conhecimento__trechos .poph-tabela__cabecalho,
+.poph-conhecimento__trechos .poph-tabela__linha {
+    grid-template-columns: minmax(220px, 2.2fr) 110px minmax(160px, 1.2fr) 48px;
+    min-width: 700px;
+}
+
+.poph-conhecimento__detalhes {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    color: var(--pop-text-muted);
+    font-family: var(--pop-font-mono, "IBM Plex Mono", monospace);
+    font-size: 11px;
+    line-height: 1.5;
+}
+
+.poph-conhecimento__tags {
+    color: var(--pop-text-secondary);
+}
+
+/* ── Estado do índice no cabeçalho da página ──────────────────────────────── */
+
+/* Pendente usa o âmbar do acento (não há token de atenção próprio no Console). */
+.poph-conhecimento__indice-pendente .poph-status__ponto {
+    background: var(--pop-accent);
+}

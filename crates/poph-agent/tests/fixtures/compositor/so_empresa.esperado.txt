@@ -1,0 +1,9 @@
+#  da FixProLar
+
+
+## Tom e Comunicacao
+
+- Idioma: Portugues Brasileiro
+- Tom: Profissional
+- Emojis: Com moderacao
+- Formato: Listas simples (melhor para WhatsApp)

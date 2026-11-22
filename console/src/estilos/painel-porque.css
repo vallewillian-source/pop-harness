@@ -1,0 +1,163 @@
+/* Painel do "por quê" do turno (HR-47). Só tokens `--pop-*`, colunas planas sem cartão dentro de cartão. */
+
+.poph-porque {
+    display: flex;
+    flex-direction: column;
+    gap: var(--pop-spacing-lg, 16px);
+    min-width: 0;
+}
+
+.poph-porque__secao {
+    display: flex;
+    flex-direction: column;
+    gap: var(--pop-spacing-sm, 8px);
+    min-width: 0;
+    padding-top: var(--pop-spacing-md, 12px);
+    border-top: 1px solid var(--pop-line);
+}
+
+.poph-porque__titulo {
+    margin: 0;
+    font-size: var(--pop-font-size-subtitle, 15px);
+    font-weight: 600;
+}
+
+.poph-porque__subtitulo {
+    margin: 0;
+    font-size: var(--pop-font-size-body, 14px);
+    font-weight: 600;
+}
+
+.poph-porque__resumo,
+.poph-porque__linhas {
+    display: grid;
+    grid-template-columns: minmax(120px, 1fr) minmax(0, 2fr);
+    gap: var(--pop-spacing-xs, 4px) var(--pop-spacing-md, 12px);
+    margin: 0;
+}
+
+.poph-porque__resumo > div,
+.poph-porque__linhas > div {
+    display: contents;
+}
+
+.poph-porque__resumo dt,
+.poph-porque__linhas dt {
+    color: var(--pop-text-secondary);
+}
+
+.poph-porque__resumo dd,
+.poph-porque__linhas dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.poph-porque__cartao {
+    display: flex;
+    flex-direction: column;
+    gap: var(--pop-spacing-xs, 4px);
+    padding-left: var(--pop-spacing-sm, 8px);
+    border-left: 2px solid var(--pop-line);
+}
+
+.poph-porque__lista {
+    display: flex;
+    flex-direction: column;
+    gap: var(--pop-spacing-sm, 8px);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.poph-porque__item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.poph-porque__meta {
+    color: var(--pop-text-secondary);
+    font-size: var(--pop-font-size-label, 12px);
+    overflow-wrap: anywhere;
+}
+
+.poph-porque__trecho {
+    margin: var(--pop-spacing-xs, 4px) 0 0;
+    white-space: pre-wrap;
+    line-height: 1.5;
+}
+
+.poph-porque__tempo {
+    display: grid;
+    grid-template-columns: minmax(140px, 1fr) auto;
+    align-items: center;
+    gap: var(--pop-spacing-xs, 4px) var(--pop-spacing-md, 12px);
+}
+
+.poph-porque__barra {
+    grid-column: 1 / -1;
+    width: 100%;
+    height: 8px;
+}
+
+.poph-porque__vazio,
+.poph-porque__nao-gravado,
+.poph-porque__atualizando {
+    margin: 0;
+    color: var(--pop-text-secondary);
+    font-size: var(--pop-font-size-label, 12px);
+}
+
+.poph-porque__erro {
+    margin: 0;
+    color: var(--pop-danger, #ef4444);
+    overflow-wrap: anywhere;
+}
+
+/* Chamadas de ferramenta (HR-47c). A recusa usa a cor de atenção e o rótulo "Recusada", além da cor. */
+
+.poph-porque__cabecalho-chamada {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--pop-spacing-xs, 4px) var(--pop-spacing-sm, 8px);
+    min-width: 0;
+}
+
+.poph-porque__chamada {
+    padding-left: var(--pop-spacing-sm, 8px);
+    border-left: 2px solid var(--pop-success, #14b8a6);
+}
+
+.poph-porque__chamada--recusada {
+    border-left-color: var(--pop-accent, #f5a623);
+}
+
+.poph-porque__motivo {
+    margin: 0;
+    color: var(--pop-accent, #f5a623);
+    font-size: var(--pop-font-size-label, 12px);
+    overflow-wrap: anywhere;
+}
+
+.poph-porque__texto {
+    margin: 0;
+    max-height: 12rem;
+    overflow: auto;
+    padding: var(--pop-spacing-xs, 4px) var(--pop-spacing-sm, 8px);
+    border-radius: var(--pop-radius-sm, 4px);
+    background: var(--pop-neutral-fill, rgba(255, 255, 255, 0.04));
+    font-family: var(--pop-font-mono, monospace);
+    font-size: var(--pop-font-size-label, 12px);
+    line-height: 1.5;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.poph-porque__nota {
+    margin: 0;
+    color: var(--pop-text-secondary);
+    font-size: var(--pop-font-size-label, 12px);
+    overflow-wrap: anywhere;
+}

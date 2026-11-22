@@ -1,0 +1,7 @@
+{
+  "tools": [
+    {"name": "consultar_base", "enabled": true, "when_to_use": "dúvidas"},
+    {"name": "buscar_produto", "enabled": true, "when_to_use": ""},
+    {"name": "enviar_arquivo", "enabled": false, "when_to_use": "catálogo"}
+  ]
+}

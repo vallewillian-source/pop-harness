@@ -1,0 +1,60 @@
+# POP Harness: workspace Cargo. Corte de crates conforme docs/DECISOES.md D-08 e AGENTS.md.
+
+[workspace]
+resolver = "3"
+members = [
+    "crates/poph-types",
+    "crates/poph-core",
+    "crates/poph-store",
+    "crates/poph-rag",
+    "crates/poph-files",
+    "crates/poph-retention",
+    "crates/poph-agent",
+    "crates/poph-server",
+    "crates/poph-plugins",
+    "crates/poph-evolution",
+    "crates/poph-jev",
+    "crates/poph-fluxos",
+    "crates/poph-matrix",
+    "crates/poph-plugin-eco",
+    "crates/poph",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.100.0"
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/vallewillian-source/pop-harness"
+homepage = "https://github.com/vallewillian-source/pop-harness"
+publish = false
+
+[workspace.dependencies]
+clap = { version = "4.6", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+toml = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+rusqlite = { version = "0.43", features = ["bundled"] }
+uuid = { version = "1.29", features = ["v7", "serde"] }
+# Módulo de Fluxos e Fichas (FX-04): linguagem de script dos fluxos (decidida na FX-01, Starlark).
+starlark = "0.14.3"
+# `pure` é obrigatório: sem ele o blake3 (dependência do starlark) exige compilador C no alvo
+# aarch64, e o `poph-fluxos` sairia do `cargo check` ARM da estação.
+blake3 = { version = "1.8", features = ["pure"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+# Debuginfo reduzido no perfil dev (HR-60b): mantém arquivo e linha no backtrace,
+# sem as tabelas de variáveis/tipos que faziam cada binário de teste passar de 300 MB.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

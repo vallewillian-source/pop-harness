@@ -1,0 +1,40 @@
+[package]
+name = "poph-agent"
+description = "Estado quente e concorrência do POP Harness: cache de config do agente, atores por conversa, janela de contexto, limites e compositor das instruções."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+poph-core = { path = "../poph-core" }
+# Jev (HR-28): lote único de perguntas, gates e fallback.
+poph-jev = { path = "../poph-jev" }
+# Busca híbrida e índice de trechos (HR-17).
+poph-rag = { path = "../poph-rag" }
+# Marcas do bloco não confiável do texto de arquivo (HR-35).
+poph-files = { path = "../poph-files" }
+poph-store = { path = "../poph-store" }
+poph-types = { path = "../poph-types" }
+# Consumo do stream do provedor (HR-13).
+futures = "0.3"
+# HR-11: cache com validade e teto de memória (PRD §5.3).
+moka = { version = "0.12", features = ["sync"] }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+# Atores por conversa e limitadores usam tarefas, canais e relógio do tokio. O crate não depende de
+# axum (D-08): o turno precisa ser testável pela CLI (HR-13) antes da API (HR-20).
+tokio = { version = "1.54", features = ["rt", "sync", "time"] }
+
+[dev-dependencies]
+tokio = { version = "1.54", features = ["rt-multi-thread", "macros", "time", "sync"] }
+# Captura do log no teste de vazamento de imagem (HR-23b).
+tracing-subscriber.workspace = true
+# Inserir o anexo do cliente direto na tabela `attachments` (HR-35), sem passar pelo canal.
+rusqlite.workspace = true
+
+[lints]
+workspace = true

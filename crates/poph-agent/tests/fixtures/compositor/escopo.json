@@ -1,0 +1,5 @@
+{
+  "scope": {"does": "Apenas agenda.", "does_not": ""},
+  "flow_steps": [{"name": "Passo 1", "description": "Não deve aparecer", "tools_used": ["x"], "auto_from_template": true}],
+  "extra_instructions": "  Texto extra com espaços nas pontas.  "
+}

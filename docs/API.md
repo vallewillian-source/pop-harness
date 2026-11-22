@@ -1,0 +1,1127 @@
+# API administrativa do POP Harness (HR-20)
+
+O servidor HTTP do Harness é o mesmo binário da CLI (`poph serve`). Nesta etapa ele expõe a
+administração dos recursos listados abaixo, a saúde, as métricas e o chat de teste com
+`text/event-stream` (HR-22). Console, roteamento entre instâncias e retenção entram nas tarefas
+seguintes.
+
+```bash
+poph migrate            # cria/atualiza o banco (o servidor recusa subir com esquema atrasado)
+poph serve              # sobe em http://127.0.0.1:7480 (configuração `servidor.endereco`/`porta`)
+poph openapi --out api.json   # o mesmo documento que /admin/v1/openapi.json
+```
+
+`poph serve` com um banco existente numa versão anterior **recusa subir** e diz qual comando rodar:
+
+```
+o banco .../harness.db está na versão 0 e o código espera a 1: rode `poph migrate` com o servidor
+parado e suba de novo
+```
+
+## Autenticação
+
+Tudo em `/admin/v1` pede `Authorization: Bearer <valor>`. São dois tipos de token:
+
+| Tipo | Formato | Onde vive | Alcance |
+| --- | --- | --- | --- |
+| **de org** | `poph_<uuid do token>_<segredo>` | `admin_tokens` (hash argon2 do segredo) | só a própria org |
+| **global** | `pophg_<segredo>` | configuração `[admin].tokens_globais` (hash) | todas as orgs |
+
+- O token de org é criado por `poph --offline --org <slug> token create --label <rótulo>`. O valor
+  em claro aparece **uma única vez**, na saída da criação; nenhum comando e nenhuma rota o
+  devolvem depois (o banco guarda só o hash do segredo).
+- A API acha o registro pelo uuid que vai no valor e confere o segredo contra o argon2
+  (`spawn_blocking`, porque o argon2 é caro de propósito).
+- Token de org **não** cria nem remove orgs e tokens (`403`), e recebe `403` ao pedir outra org.
+- Token revogado (`poph token delete`) deixa de autenticar na hora.
+- Tokens criados antes deste formato (hash do valor inteiro, sem uuid no valor) **não autenticam**
+  mais: recrie-os com `poph token create`. O registro antigo pode ser revogado normalmente.
+
+## Erros
+
+Formato único em toda a API (PRD §8.1):
+
+```json
+{ "code": "validation_error", "message": "campo `slug` inválido", "details": { "field": "slug", "reason": "..." } }
+```
+
+| Código | Status | Quando |
+| --- | --- | --- |
+| `unauthorized` | 401 | sem token, token malformado, desconhecido ou revogado |
+| `forbidden` | 403 | token de org fora da própria org; ação que exige token global |
+| `not_found` | 404 | registro inexistente (na org do token) |
+| `invalid_id` | 400 | id que não é UUID v7, ou cursor ilegível |
+| `precondition_required` | 428 | `PATCH` sem `If-Match` |
+| `validation_error` | 400 | campo recusado pela validação |
+| `invalid_request` | 400 | JSON inválido, corpo que não bate com o contrato |
+| `version_conflict` | 412 | `If-Match` diferente da versão atual |
+| `conflict` | 409 | slug/nome repetido, org com agentes sem `?force=true`, categoria com produtos ou agentes vinculados sem `?force=true`, produto em itens de carrinho sem `?force=true` |
+| `integracao_nao_e_whatsapp` | 409 | rota de WhatsApp numa integração de outro `kind` |
+| `whatsapp_nao_configurado` | 409 | integração sem instância da Evolution declarada em `[evolution].instancias` |
+| `evolution_recusou` | 502 | a Evolution respondeu erro HTTP (detalhe em `details.evolution_status`) |
+| `evolution_indisponivel` | 503 | não deu para falar com a Evolution (rede, prazo) ou falta `EVOLUTION_API_KEY` |
+| `evolution_sem_qr` | 502 | a Evolution respondeu o pareamento sem QR e sem código de pareamento |
+| `evolution_falhou` | 502 | outra falha ao falar com a Evolution (resposta que não serve, mídia, blob) |
+| `invalid_backup` | 400 | arquivo de backup corrompido, de outro formato ou de versão desconhecida (detalhe em `details.version` quando é a versão) |
+| `backup_incompleto` | 409 | exportação de org com arquivo da biblioteca sem conteúdo no disco (a exportação não sai pela metade) |
+| `importacao_sobrescreve` | 409 | importação de backup que atualizaria linhas que já existem na org, sem `?sobrescrever=true` (detalhe em `details.tabelas`, `details.linhas`, `details.exemplos`); nada foi gravado |
+| `payload_too_large` | 413 | corpo acima do teto da rota (importação de backup 64 MB, mensagem do chat de teste 24 MB, webhook 1 MB) |
+| `cluster_invalido` | 400 | `cluster.toml` inválido na recarga: o mapa anterior continua em uso (detalhe em `details.problemas`) |
+| `assinatura_invalida` | 401 | encaminhamento entre instâncias com cabeçalho de par (inclusive o nonce) ausente/ilegível/malformado, assinatura errada, carimbo fora da janela, instância desconhecida ou nonce repetido |
+| `rota_em_laco` | 421 | pedido já encaminhado precisaria ser encaminhado de novo (`x-poph-hop > 1`) ou a org não vive nesta instância segundo o mapa |
+| `mapa_divergente` | 421 | o mapa do cluster de quem encaminhou não é o desta instância (detalhe em `details.fingerprint_recebido` e `details.fingerprint_local`) |
+| `instancia_fora` | 503 | a instância dona da org não respondeu ao encaminhamento (detalhe em `details.instancia` e `details.url`) |
+| `internal` | 500 | falha inesperada (mensagem sem SQL nem caminho interno) |
+
+Rota que não existe responde `404 not_found` e método errado numa rota existente responde
+`405 method_not_allowed`, os dois no mesmo formato `{code, message, details}` — o cliente nunca
+recebe corpo vazio. O cabeçalho `WWW-Authenticate` só aparece no `401`.
+
+O Console e os scripts casam pelo `code`, nunca pela `message`.
+
+## Rotas
+
+| Método | Rota | Token | Observação |
+| --- | --- | --- | --- |
+| GET/POST | `/admin/v1/orgs` | global cria; org lista só a própria | |
+| GET/PATCH/DELETE | `/admin/v1/orgs/{org_id}` | global; org na própria | `DELETE` com agentes pede `force` |
+| GET/POST | `/admin/v1/orgs/{org_id}/tokens` | global | `POST` devolve o valor **uma vez** |
+| GET/DELETE | `/admin/v1/orgs/{org_id}/tokens/{token_id}` | global | `DELETE` revoga |
+| GET/POST | `/admin/v1/orgs/{org_id}/categories` | escopo da org | |
+| GET/PATCH/DELETE | `/admin/v1/orgs/{org_id}/categories/{category_id}` | escopo da org | `PATCH` exige `If-Match`; `DELETE` com produtos ou agentes vinculados pede `force=true` (sem ele: 409, nada apagado; com ele: apaga os produtos e tira a categoria dos agentes) |
+| GET/PATCH/DELETE | `/admin/v1/orgs/{org_id}/products/{product_id}` | escopo da org | `PATCH` exige `If-Match`; `DELETE` de produto que está em itens de carrinho pede `force=true` (sem ele: 409 com `details.itens_de_carrinho` e `details.carrinhos`, nada apagado; com ele: apaga, e os itens ficam no carrinho com o preço gravado, como "produto removido do catálogo"). Produto sem carrinho apaga sem `force` |
+| GET/POST | `/admin/v1/orgs/{org_id}/departments` | escopo da org | |
+| GET/PATCH/DELETE | `/admin/v1/orgs/{org_id}/departments/{department_id}` | escopo da org | `PATCH` exige `If-Match` |
+| POST/GET/POST | `…/agents/{agent_id}/integrations/{integration_id}/whatsapp/{qrcode,state,disconnect}` | escopo da org | pareamento, estado e desconexão; `If-Match` nas duas escritas |
+| GET | `…/agents/{agent_id}/files/{file_id}/content` | escopo da org | bytes do arquivo da biblioteca (`Content-Type` gravado, `Content-Disposition` com o nome, sha256 em `x-content-sha256`) |
+| GET | `…/agents/{agent_id}/test-chat/{conversation_id}/messages/{message_id}/attachments/{attachment_id}/content` | escopo da org | bytes do anexo de uma mensagem do chat de teste |
+| GET | `/admin/v1/orgs/{org_id}/backup` | escopo da org | arquivo do retrato da org (`poph-backup-org` v1) como anexo; `?com_conversas=true` inclui o histórico (padrão: não) |
+| POST | `/admin/v1/orgs/{org_id}/backup/import` | escopo da org | corpo cru `application/json` (teto de 64 MB) com o arquivo de `…/backup`; reconstrói a org do caminho e devolve o relatório. Sem `?sobrescrever=true`, recusa (`409 importacao_sobrescreve`) quando atualizaria linha existente |
+| GET | `/admin/v1/orgs/{org_id}/manifests` | escopo da org | plugins declarados em `[plugins].integracoes`: um item por `kind` com `nome`, `versao` e `situacao` (`ok`/`indisponivel`) |
+| GET | `/admin/v1/orgs/{org_id}/manifests/{kind}` | escopo da org | manifesto do plugin declarado em `[plugins].integracoes`: capacidades, limites e JSON Schema de configuração e segredos |
+| POST | `/admin/v1/cluster/reload` | **global** | relê o `cluster.toml` no processo vivo e troca o mapa; arquivo inválido mantém o mapa anterior (`400 cluster_invalido`) |
+| GET | `/healthz` | — | `{status, version, uptime_seconds, databases}` e, no modo cluster, `instance_id` e `cluster_map_fingerprint`; 503 se o banco não responde |
+| GET | `/metrics` | — | texto Prometheus |
+| GET | `/admin/v1/openapi.json` e `/openapi.json` | — | OpenAPI 3.1 gerado por utoipa |
+
+**Paginação:** `?limit=1..200` (padrão 50) e `?cursor=<next_cursor>`. A resposta é
+`{ "items": [...], "next_cursor": "<uuid>" | null }`. O cursor é o último id da página (UUID v7,
+ordenável por tempo) e é exclusivo.
+
+**Concorrência:** toda edição (`PATCH`, e o `PATCH` de org) pede `If-Match: <versão>`. Sem o
+cabeçalho: `428`; com versão velha: `412 version_conflict` com `details.expected_version` e
+`details.current_version`.
+
+## Métricas (`/metrics`)
+
+Texto no formato de exposição do Prometheus. Os que o servidor atualiza a cada leitura:
+
+- `poph_memoria_processo_bytes` — RAM residente do processo (lida de `/proc/self/status`);
+- `poph_fila_turnos` e `poph_fila_saida` — pendentes em todas as orgs (entrada e saída);
+- `poph_harness_db_bytes` e `poph_rag_db_bytes` — tamanho de cada banco.
+
+O catálogo registra também `poph_agentes_carregados`, `poph_conversas_ativas` e o histograma
+`poph_latencia_etapa_segundos` (etapas do turno), além dos contadores de chamadas e erros de LLM,
+Jev e Evolution. Os medidores que dependem do motor do turno aparecem zerados até o motor estar
+ligado no servidor; quem preenche a latência é o turno, não o HTTP.
+
+### Métricas do módulo Matrix (`poph_matrix_*`, MX-26)
+
+Estas só aparecem depois que o módulo Matrix é preparado no processo: com `[matrix]` desligado, nenhuma
+`poph_matrix_*` entra no `/metrics`. Quem prepara (a ligação no `poph serve`, MX-20) chama
+`Estado::metricas_matrix()`, que devolve `None` quando o módulo não está ligado nesta instância, e passa
+o handle ao laço (`EspelhoMatrix::com_metricas`), à entrega do atendente (`RespostaDoAtendente::com_metricas`)
+e ao destino real (`DestinoReal::com_metricas`). Chamar duas vezes devolve o mesmo handle; nada se duplica
+na saída. Não há rótulos por org: o atraso é o pior entre as orgs ligadas.
+
+- `poph_matrix_atraso_cursor_segundos` — idade, em segundos, da mensagem mais antiga que ainda não foi
+  espelhada. Sobe enquanto o Synapse recusa e volta a zero quando o laço chega ao fim.
+- `poph_matrix_salas_prontas_total` — salas que ficaram prontas nesta passagem, criadas agora ou
+  concluídas depois de uma queda. Não separa as duas coisas.
+- `poph_matrix_mensagens_espelhadas_total` — mensagens do Harness entregues ao Synapse.
+- `poph_matrix_respostas_enfileiradas_total` — respostas do atendente gravadas para envio ao cliente.
+- `poph_matrix_respostas_duplicadas_total` — reenvios do Synapse de uma resposta já gravada: nada foi
+  enviado de novo.
+- `poph_matrix_respostas_conversa_encerrada_total` — respostas cuja conversa já estava encerrada: não
+  foram ao cliente, só o aviso na sala.
+- `poph_matrix_salas_desconhecidas_total` — eventos de uma sala que este Harness não reconhece: nada
+  gravado.
+- `poph_matrix_avisos_de_midia_total` — avisos de mídia do atendente escritos na sala (o envio de
+  arquivo pelo Element não existe na fase 1).
+- `poph_matrix_erros_transitorios_total` e `poph_matrix_erros_definitivos_total` — chamadas ao Synapse
+  que falharam, por classe. O `429` conta como transitório.
+- `poph_matrix_respostas_429_total` — respostas `429` (limite de taxa) do Synapse.
+- `poph_matrix_tentativas_total` — chamadas ao Synapse feitas pelo espelho, inclusive as que falharam.
+- `poph_matrix_mensagens_isoladas_total` — mensagens guardadas em `matrix_falhas` (formato inválido ou
+  falha definitiva repetida). Elas não voltam sozinhas.
+- `poph_matrix_latencia_synapse_segundos` — duração de cada envio de evento e de cada provisão de sala
+  feitos pelo espelho.
+
+Logs do módulo: org, conversa e código curto do erro (por exemplo `M_FORBIDDEN` ou
+`armazenamento_indisponivel`). Não vão texto de cliente, telefone, corpo de mensagem nem token; o teste
+`valor_canario_nunca_aparece_no_log_do_modulo` confere isso.
+
+Limites: as chamadas do receptor do Application Service não contam (o receptor só recebe, não chama o
+Synapse). A latência é medida por operação do espelho, não por chamada HTTP individual do cliente do
+Matrix.
+
+`/healthz` e `/metrics` ficam fora do `/admin/v1` e sem autenticação: o servidor escuta só na
+própria máquina por padrão e as duas rotas não devolvem dado de cliente. Ao mudar
+`servidor.endereco` para a rede, quem protege é o proxy.
+
+## Cliente TypeScript do Console
+
+O Console não escreve o cliente à mão: ele sai do OpenAPI.
+
+```bash
+bash console/gen-api.sh                 # grava console/src/api/schema.d.ts
+bash console/gen-api.sh --url http://127.0.0.1:7480
+bash console/gen-api.sh --out /tmp/schema.d.ts
+```
+
+O script roda `poph openapi` (ou lê `/admin/v1/openapi.json` de um servidor no ar) e chama o
+`openapi-typescript` pelo `npx` (primeira execução precisa de rede; depois fica no cache do npm).
+Ele falha se o arquivo sair vazio ou sem `export interface paths`.
+
+## O que ainda não existe
+
+- Autenticação de usuário/cliente (o Console usa o mesmo token de administração).
+- Rate limit por token: também tarefa seguinte. O que existe hoje é o limite por org do provedor de
+  LLM (fora da API).
+- **Encaminhamento entre instâncias** (webhook/admin/SSE assinados, `x-poph-hop`, `?cluster=true`,
+  dona fora do ar → 503): feito; veja a seção "Roteamento entre instâncias" mais abaixo e `docs/CLUSTER.md`.
+- O `/metrics` é montado a partir do registro do processo; as latências são do próprio servidor HTTP,
+  não do turno do agente (essas vêm do registro de turno).
+
+## Inventário da HR-21 — rotas, paridade, versão, auditoria e isolamento
+
+Uma linha por operação publicada no OpenAPI. A tabela é conferida por teste
+(`docs_api_cobre_todas_as_rotas_publicadas`, em `crates/poph-server/tests/api.rs`): publicar rota nova
+sem documentar aqui, documentar rota que não existe, ou trocar uma coluna (412, auditoria,
+isolamento) faz o teste falhar.
+
+Colunas:
+
+- **CLI** — existe operação equivalente na CLI (`sim`) ou o recurso não tem comando (`exceção`, com o
+  motivo). Integrações e conversas são exceções declaradas: a API é a referência.
+- **412** — a edição exige `If-Match` e devolve `412 version_conflict` com versão velha (`sim`), ou a
+  operação não edita nada (`n/a`).
+- **Auditoria** — a escrita registra ator identificado em `audit_log` (`sim`) ou a operação é de
+  leitura (`n/a`). Nunca guarda o valor do token.
+- **Isolamento** — a rota é escopada por org: token da org A recebe 403/404 nas coleções e nos itens
+  da org B.
+
+| Recurso | Método | Caminho | CLI | 412 | Auditoria | Isolamento |
+| --- | --- | --- | --- | --- | --- | --- |
+| Organizações | GET | `/admin/v1/orgs` | sim | n/a | n/a | sim |
+| Organizações | POST | `/admin/v1/orgs` | sim | n/a | sim | sim |
+| Organizações | GET | `/admin/v1/orgs/{org_id}` | sim | n/a | n/a | sim |
+| Organizações | PATCH | `/admin/v1/orgs/{org_id}` | sim | sim | sim | sim |
+| Organizações | DELETE | `/admin/v1/orgs/{org_id}` | sim | n/a | sim | sim |
+| Tokens | GET | `/admin/v1/orgs/{org_id}/tokens` | sim | n/a | n/a | sim |
+| Tokens | POST | `/admin/v1/orgs/{org_id}/tokens` | sim | n/a | sim | sim |
+| Tokens | GET | `/admin/v1/orgs/{org_id}/tokens/{token_id}` | sim | n/a | n/a | sim |
+| Tokens | DELETE | `/admin/v1/orgs/{org_id}/tokens/{token_id}` | sim | n/a | sim | sim |
+| Categorias | GET | `/admin/v1/orgs/{org_id}/categories` | sim | n/a | n/a | sim |
+| Categorias | POST | `/admin/v1/orgs/{org_id}/categories` | sim | n/a | sim | sim |
+| Categorias | GET | `/admin/v1/orgs/{org_id}/categories/{category_id}` | sim | n/a | n/a | sim |
+| Categorias | PATCH | `/admin/v1/orgs/{org_id}/categories/{category_id}` | sim | sim | sim | sim |
+| Categorias | DELETE | `/admin/v1/orgs/{org_id}/categories/{category_id}` | sim | n/a | sim | sim |
+| Departamentos | GET | `/admin/v1/orgs/{org_id}/departments` | sim | n/a | n/a | sim |
+| Departamentos | POST | `/admin/v1/orgs/{org_id}/departments` | sim | n/a | sim | sim |
+| Departamentos | GET | `/admin/v1/orgs/{org_id}/departments/{department_id}` | sim | n/a | n/a | sim |
+| Departamentos | PATCH | `/admin/v1/orgs/{org_id}/departments/{department_id}` | sim | sim | sim | sim |
+| Departamentos | DELETE | `/admin/v1/orgs/{org_id}/departments/{department_id}` | sim | n/a | sim | sim |
+| Agentes | GET | `/admin/v1/orgs/{org_id}/agents` | sim | n/a | n/a | sim |
+| Agentes | POST | `/admin/v1/orgs/{org_id}/agents` | sim | n/a | sim | sim |
+| Agentes | GET | `/admin/v1/orgs/{org_id}/agents/{agent_id}` | sim | n/a | n/a | sim |
+| Agentes | PATCH | `/admin/v1/orgs/{org_id}/agents/{agent_id}` | sim | sim | sim | sim |
+| Agentes | DELETE | `/admin/v1/orgs/{org_id}/agents/{agent_id}` | sim | n/a | sim | sim |
+| Instruções | GET | `/admin/v1/orgs/{org_id}/agents/{agent_id}/instructions` | sim | n/a | n/a | sim |
+| Instruções | POST | `/admin/v1/orgs/{org_id}/agents/{agent_id}/instructions` | sim | n/a | sim | sim |
+| Instruções | GET | `/admin/v1/orgs/{org_id}/agents/{agent_id}/instructions/current` | sim | n/a | n/a | sim |
+| Instruções | PATCH | `/admin/v1/orgs/{org_id}/agents/{agent_id}/instructions/current` | sim | sim | sim | sim |
+| Instruções | DELETE | `/admin/v1/orgs/{org_id}/agents/{agent_id}/instructions/current` | sim | n/a | sim | sim |
+| Base de conhecimento | GET | `/admin/v1/orgs/{org_id}/knowledge` | sim | n/a | n/a | sim |
+| Base de conhecimento | POST | `/admin/v1/orgs/{org_id}/knowledge` | sim | n/a | sim | sim |
+| Base de conhecimento | GET | `/admin/v1/orgs/{org_id}/knowledge/{group_id}` | sim | n/a | n/a | sim |
+| Base de conhecimento | PATCH | `/admin/v1/orgs/{org_id}/knowledge/{group_id}` | sim | sim | sim | sim |
+| Base de conhecimento | DELETE | `/admin/v1/orgs/{org_id}/knowledge/{group_id}` | sim | n/a | sim | sim |
+| Base de conhecimento | GET | `/admin/v1/orgs/{org_id}/knowledge/{group_id}/items` | sim | n/a | n/a | sim |
+| Base de conhecimento | POST | `/admin/v1/orgs/{org_id}/knowledge/{group_id}/items` | sim | n/a | sim | sim |
+| Base de conhecimento | GET | `/admin/v1/orgs/{org_id}/knowledge/{group_id}/items/{item_id}` | sim | n/a | n/a | sim |
+| Base de conhecimento | PATCH | `/admin/v1/orgs/{org_id}/knowledge/{group_id}/items/{item_id}` | sim | sim | sim | sim |
+| Base de conhecimento | DELETE | `/admin/v1/orgs/{org_id}/knowledge/{group_id}/items/{item_id}` | sim | n/a | sim | sim |
+| Base × agente | POST | `/admin/v1/orgs/{org_id}/agents/{agent_id}/knowledge/reindex` | sim | n/a | sim | sim |
+| Base × agente | POST | `/admin/v1/orgs/{org_id}/agents/{agent_id}/knowledge/{group_id}` | sim | n/a | sim | sim |
+| Base × agente | DELETE | `/admin/v1/orgs/{org_id}/agents/{agent_id}/knowledge/{group_id}` | sim | n/a | sim | sim |
+| Produtos | GET | `/admin/v1/orgs/{org_id}/products` | sim | n/a | n/a | sim |
+| Produtos | POST | `/admin/v1/orgs/{org_id}/products` | sim | n/a | sim | sim |
+| Produtos | GET | `/admin/v1/orgs/{org_id}/products/{product_id}` | sim | n/a | n/a | sim |
+| Produtos | PATCH | `/admin/v1/orgs/{org_id}/products/{product_id}` | sim | sim | sim | sim |
+| Produtos | DELETE | `/admin/v1/orgs/{org_id}/products/{product_id}` | sim | n/a | sim | sim |
+| Backup | GET | `/admin/v1/orgs/{org_id}/backup` | sim | n/a | n/a | sim |
+| Backup | POST | `/admin/v1/orgs/{org_id}/backup/import` | sim | n/a | sim | sim |
+| Manifestos | GET | `/admin/v1/orgs/{org_id}/manifests` | exceção: a CLI não tem comando de manifesto | n/a | n/a | sim |
+| Manifestos | GET | `/admin/v1/orgs/{org_id}/manifests/{kind}` | exceção: a CLI não tem comando de manifesto | n/a | n/a | sim |
+| Cluster | POST | `/admin/v1/cluster/reload` | exceção: a CLI lê e valida o mapa (`poph cluster show/check`), mas a recarga do processo vivo é só por HTTP | n/a | n/a | n/a |
+| Integrações | GET | `/admin/v1/orgs/{org_id}/agents/{agent_id}/integrations` | exceção: a CLI não tem comando de integração | n/a | n/a | sim |
+| Integrações | POST | `/admin/v1/orgs/{org_id}/agents/{agent_id}/integrations` | exceção: a CLI não tem comando de integração | n/a | sim | sim |
+| Integrações | GET | `/admin/v1/orgs/{org_id}/agents/{agent_id}/integrations/{integration_id}` | exceção: a CLI não tem comando de integração | n/a | n/a | sim |
+| Integrações | PATCH | `/admin/v1/orgs/{org_id}/agents/{agent_id}/integrations/{integration_id}` | exceção: a CLI não tem comando de integração | sim | sim | sim |
+| Integrações | DELETE | `/admin/v1/orgs/{org_id}/agents/{agent_id}/integrations/{integration_id}` | exceção: a CLI não tem comando de integração | n/a | sim | sim |
+| Integrações WhatsApp | POST | `/admin/v1/orgs/{org_id}/agents/{agent_id}/integrations/{integration_id}/whatsapp/qrcode` | exceção: a CLI não tem comando de integração | sim | sim | sim |
+| Integrações WhatsApp | GET | `/admin/v1/orgs/{org_id}/agents/{agent_id}/integrations/{integration_id}/whatsapp/state` | exceção: a CLI não tem comando de integração | n/a | n/a | sim |
+| Integrações WhatsApp | POST | `/admin/v1/orgs/{org_id}/agents/{agent_id}/integrations/{integration_id}/whatsapp/disconnect` | exceção: a CLI não tem comando de integração | sim | sim | sim |
+| Biblioteca de arquivos | GET | `/admin/v1/orgs/{org_id}/agents/{agent_id}/files` | sim | n/a | n/a | sim |
+| Biblioteca de arquivos | POST | `/admin/v1/orgs/{org_id}/agents/{agent_id}/files` | sim | n/a | sim | sim |
+| Biblioteca de arquivos | GET | `/admin/v1/orgs/{org_id}/agents/{agent_id}/files/{file_id}` | sim | n/a | n/a | sim |
+| Biblioteca de arquivos | GET | `/admin/v1/orgs/{org_id}/agents/{agent_id}/files/{file_id}/content` | exceção: a CLI lê o blob local (`poph file show` imprime o caminho relativo) | n/a | n/a | sim |
+| Biblioteca de arquivos | DELETE | `/admin/v1/orgs/{org_id}/agents/{agent_id}/files/{file_id}` | sim | n/a | sim | sim |
+| Conversas | GET | `/admin/v1/orgs/{org_id}/conversations` | exceção: a CLI não tem comando de conversa | n/a | n/a | sim |
+| Conversas | GET | `/admin/v1/orgs/{org_id}/conversations/{conversation_id}` | exceção: a CLI não tem comando de conversa | n/a | n/a | sim |
+| Conversas | GET | `/admin/v1/orgs/{org_id}/conversations/{conversation_id}/messages` | exceção: a CLI não tem comando de conversa | n/a | n/a | sim |
+| Conversas | POST | `/admin/v1/orgs/{org_id}/conversations/{conversation_id}/reopen` | exceção: a CLI não tem comando de conversa | sim | sim | sim |
+| Conversas | POST | `/admin/v1/orgs/{org_id}/conversations/{conversation_id}/close` | exceção: a CLI não tem comando de conversa | sim | sim | sim |
+| Conversas | GET | `/admin/v1/orgs/{org_id}/conversations/{conversation_id}/turns` | exceção: a CLI não tem comando de conversa | n/a | n/a | sim |
+| Chat de teste | GET | `/admin/v1/orgs/{org_id}/agents/{agent_id}/test-chat` | exceção: a CLI não tem comando de chat de teste | n/a | n/a | sim |
+| Chat de teste | POST | `/admin/v1/orgs/{org_id}/agents/{agent_id}/test-chat` | exceção: a CLI não tem comando de chat de teste | n/a | sim | sim |
+| Chat de teste | GET | `/admin/v1/orgs/{org_id}/agents/{agent_id}/test-chat/{conversation_id}` | exceção: a CLI não tem comando de chat de teste | n/a | n/a | sim |
+| Chat de teste | POST | `/admin/v1/orgs/{org_id}/agents/{agent_id}/test-chat/{conversation_id}/messages` | exceção: a CLI não tem comando de chat de teste | n/a | sim | sim |
+| Chat de teste | POST | `/admin/v1/orgs/{org_id}/agents/{agent_id}/test-chat/{conversation_id}/reopen` | exceção: a CLI não tem comando de chat de teste | sim | sim | sim |
+| Chat de teste | GET | `/admin/v1/orgs/{org_id}/agents/{agent_id}/test-chat/{conversation_id}/messages/{message_id}/attachments/{attachment_id}/content` | exceção: a CLI não tem comando de chat de teste | n/a | n/a | sim |
+| Módulo Matrix | GET | `/admin/v1/orgs/{org_id}/matrix` | sim | n/a | n/a | sim |
+| Módulo Matrix | PUT | `/admin/v1/orgs/{org_id}/matrix` | sim | sim | sim | sim |
+| Espaços do Matrix | GET | `/admin/v1/orgs/{org_id}/matrix/spaces` | sim | n/a | n/a | sim |
+| Espaços do Matrix | PUT | `/admin/v1/orgs/{org_id}/matrix/spaces` | sim | n/a | sim | sim |
+| Espaços do Matrix | DELETE | `/admin/v1/orgs/{org_id}/matrix/spaces/{department_id}` | sim | n/a | sim | sim |
+
+## Fechar conversa (MX-06)
+
+`POST /admin/v1/orgs/{org_id}/conversations/{conversation_id}/close` encerra a conversa. Exige
+`If-Match` com a versão atual da conversa. Ainda não há botão para isso no Console.
+
+| Situação | Resposta | Efeito |
+| --- | --- | --- |
+| sem token | `401` | nada muda |
+| token de outra org | `403` | nada muda |
+| sem `If-Match` | `428` | nada muda |
+| conversa não existe na org | `404` | nada muda |
+| `If-Match` diferente da versão atual | `412` | nada muda, nada é auditado |
+| conversa já está `closed` (com a versão atual) | `409` | nada muda, nada é auditado |
+| sucesso | `200` | status `closed`, versão +1, auditoria `close` |
+
+Com versão antiga numa conversa que já foi fechada, a resposta é `412`. Depois de atualizar a versão,
+a mesma chamada passa a dar `409`.
+
+A auditoria `close` grava o token que fechou como ator (`actor_kind = admin_token`). Fechar não apaga
+o histórico: mensagens, turnos e a fila de saída continuam como estavam. A próxima mensagem do cliente
+abre uma conversa nova (ver `docs/ENTRADA_E_SAIDA.md`, seção 4).
+
+Provas: `fechar_conversa_cumpre_codigos_e_audita_uma_vez` (os seis status, auditoria, versão) e
+`mensagem_depois_do_fechamento_abre_conversa_nova` em `crates/poph-server/tests/api.rs`.
+
+## Reabrir conversa (FX-07, PRD L13)
+
+`POST /admin/v1/orgs/{org_id}/conversations/{conversation_id}/reopen` continua reabrindo conversa
+`transferred` (`200`). O que mudou: **conversa `closed` não reabre**.
+
+| Situação | Resposta | Efeito |
+| --- | --- | --- |
+| `If-Match` diferente da versão atual | `412` | nada muda |
+| conversa `transferred` (versão atual) | `200` | status `open`, versão +1, auditoria `reopen` |
+| conversa `closed` (versão atual) | `409` `conversa_encerrada` | nada muda, nada é auditado |
+
+O `409` vem antes de qualquer gravação e vale também para o `reopen` do chat de teste. O caminho para
+o cliente voltar a ser atendido é a mensagem nova dele, que abre outra conversa **e outra Ficha**: a
+conversa encerrada e a Ficha dela ficam fechadas como registro do atendimento. O mesmo vale para o
+`PATCH` genérico de situação quando ele tentaria devolver uma conversa `closed` para `open`.
+
+Provas: `reabrir_conversa_encerrada_devolve_409_conversa_encerrada` em
+`crates/poph-server/tests/api.rs` e `reabrir_conversa_fechada_e_recusado_e_transferida_continua_reabrindo`
+em `crates/poph-store/tests/fichas_invariante.rs`.
+
+## Ficha do atendimento (FX-07)
+
+Toda conversa nova ganha uma **Ficha** na mesma escrita que a cria, e fechar a conversa fecha a Ficha
+junto (tabelas `fichas` e `ficha_eventos`, `docs/DADOS.md`). Ainda não há rota de Ficha: as rotas de
+leitura e de ação do atendente são a FX-29 e a FX-30.
+
+## Dados da conversa para o Element (RP-01)
+
+Os quatro endpoints que devolvem uma conversa, `GET …/conversations` (lista),
+`GET …/conversations/{conversation_id}`, `POST …/close` e `POST …/reopen`, trazem três campos a mais.
+Nenhum campo que já existia mudou de nome ou de tipo.
+
+| Campo | Tipo | O que é |
+| --- | --- | --- |
+| `client_name` | texto ou `null` | Nome do cliente no WhatsApp (o último `pushName` recebido). `null` quando ainda não chegou ou veio vazio. |
+| `agent_name` | texto ou `null` | Nome do agente que atende a conversa. `null` só se o agente não existir mais. |
+| `matrix_room_id` | texto ou `null` | Id da sala do Matrix da conversa (`!…:servidor`). Sai só quando a sala está `ready` **e** o módulo Matrix está ligado na org. |
+
+Regras do `matrix_room_id`:
+
+- `null` quando a sala ainda está em criação (`creating`), quando a conversa não tem sala, e quando o
+  módulo está desligado na org (o mesmo `enabled` que `GET …/matrix` mostra).
+- Desligar o módulo não apaga a sala no Synapse: só deixa de mostrar o id nesta API. Ligar de novo
+  devolve o id sem criar sala nova.
+- Conversa de outra org continua `404`, e o nome e a sala dela não saem em nenhuma resposta.
+
+Leitura: a lista busca os nomes dos agentes e as salas da página inteira em consultas únicas, e não
+uma por conversa. Uma página de 2 conversas e uma de 30 gastam o mesmo número de leituras no banco
+(medido: 5 nos dois casos, em `crates/poph-server/tests/conversas_element.rs`). `limit` e `cursor`
+seguem como antes.
+
+## Listagem de conversas: filtros e ordem por atividade (RP-02)
+
+`GET …/conversations` aceita três parâmetros a mais. Sem eles, a resposta é a de sempre.
+
+| Parâmetro | Valores | Efeito |
+| --- | --- | --- |
+| `external_peer` | identificador do cliente no canal (no WhatsApp, o número) | só as conversas desse cliente, dentro da org. Espaços nas pontas são tirados. Vazio devolve `400`. |
+| `status` | `open`, `transferred` ou `closed` | só as conversas nessa situação. Outro valor devolve `400`. |
+| `sort` | `recent` | ordena pela atividade mais recente (última mensagem; sem mensagem, a data de criação), mais recente primeiro. Empate: id maior primeiro. |
+
+Regras:
+
+- Os filtros se combinam (os dois precisam valer). A lista é sempre da org do token: conversa de outra
+  org não aparece em nenhum filtro.
+- Sem `sort`: ordem de id crescente, com `limit` e `cursor` como antes. `limit` fora de 1 a 200 é
+  ajustado, não recusado.
+- Com `sort=recent`: **não usa cursor**. `limit` (padrão 50, de 1 a 200) é o único controle, e
+  `next_cursor` sai sempre `null`. Mandar `cursor` com um valor ou `limit` fora da faixa devolve `400`.
+- Os erros `400` trazem uma mensagem curta e não repetem o valor que foi recebido.
+- O `client_identifier` da sala do Matrix é o `external_peer` sem espaço nas pontas, ou o id da
+  conversa quando o `external_peer` está vazio. Para achar o histórico de um cliente a partir da sala,
+  use esse mesmo valor como `external_peer`. Conversa sem `external_peer` não aparece num filtro por
+  cliente, porque o id da conversa não é um cliente.
+
+Exemplos:
+
+```
+GET …/conversations?external_peer=5511999999999&status=open
+GET …/conversations?sort=recent&limit=20
+```
+
+Testes: `crates/poph-server/tests/conversas_filtros.rs` (filtros, ordem, `limit`, cursor recusado e
+valores inválidos) e `crates/poph-store/tests/filtros_conversas.rs` (plano da consulta e identificador).
+O índice que sustenta o filtro por cliente está em `docs/DADOS.md`, seção 4 (migração `0015`).
+
+## Chat de teste do Console (HR-22)
+
+O Console abre uma conversa de teste do agente, manda a mensagem do cliente com anexos e recebe o
+turno pela conexão, sem esperar a resposta inteira. É o contrato da aba de chat (HR-46) e do painel
+do porquê (HR-47).
+
+### Rotas
+
+| Operação | Rota | Efeito |
+| --- | --- | --- |
+| criar conversa | `POST /admin/v1/orgs/{org_id}/agents/{agent_id}/test-chat` | abre conversa nova com memória zerada (`channel = "test"`, sem integração) e devolve `201` com `id`, `status`, `version` |
+| listar | `GET …/test-chat?limit=&cursor=` | conversas de teste do agente, mais recentes primeiro, com `message_count` |
+| histórico | `GET …/test-chat/{conversation_id}` | `{conversation, messages, turns}`; cada mensagem traz `attachments` (nome, mime, tamanho, `sha256`, `extraction_status`, `has_text`), e cada turno traz `jev`, `retrieved`, `tools`, `tool_calls`, `timings`, tokens, `error` e `files_out[]` |
+| enviar mensagem | `POST …/test-chat/{conversation_id}/messages` | corpo `multipart/form-data` com `text` (opcional) e `file` (zero ou mais) → resposta `text/event-stream` |
+| reabrir | `POST …/test-chat/{conversation_id}/reopen` | exige `If-Match`; devolve a conversa para `open` (o mesmo efeito de `conversations/{id}/reopen`) |
+
+### Arquivos que o agente enviou (`files_out`, HR-46d)
+
+Cada turno do histórico traz `files_out[]` com os arquivos que o **agente** enfileirou para enviar
+naquele turno (`enviar_arquivo`, HR-24). É o que deixa o Console baixar ou pré-visualizar o arquivo
+pelo caminho de conteúdo da biblioteca — antes, o histórico só trazia os anexos do cliente.
+
+| Campo | Conteúdo |
+| --- | --- |
+| `id` | id do item na fila de saída |
+| `turn_id` | turno que o gerou |
+| `seq` | sequência do item dentro do turno, derivada do arquivo (é a chave de idempotência do envio, não a ordem `1, 2, 3`) |
+| `arquivo_id` | id na biblioteca do agente — é o que a rota `/files/{file_id}/content` aceita |
+| `name`, `mime`, `size_bytes`, `sha256` | metadados de apresentação, os mesmos que o cliente recebeu |
+| `state` | estado real do item na fila (`pending`, `sending`, `sent`, `failed`) |
+| `created_at` | criação do item (ms) |
+
+Regras:
+
+- **Só arquivo.** Itens de texto e de presença não entram na lista; turno que não mandou arquivo traz
+  `files_out: []` (nunca `null`).
+- **Nada de caminho de blob.** A resposta não traz `blob_ref`, `conteudo_json` nem o caminho do
+  blob; o conteúdo só sai pela rota de conteúdo, com autorização.
+- **Arquivo excluído da biblioteca depois do envio** continua listado (o histórico é registro do que
+  saiu), e o download responde `404 not_found` — comportamento esperado, não erro de contrato.
+- Sem rota nova: o `files_out` sai dentro do histórico que já existe.
+
+### Chamadas de ferramenta por turno (`tool_calls`, HR-47b)
+
+Cada turno do histórico traz `tool_calls[]`, o detalhe de cada chamada de ferramenta que o modelo
+fez. `tools` continua sendo a lista de nomes, no mesmo formato de antes; `tool_calls` é o que deixa
+o painel do por quê separar chamada executada de chamada recusada e mostrar o que voltou ao modelo.
+
+| Campo | Conteúdo |
+| --- | --- |
+| `nome` | nome que o modelo pediu |
+| `rodada` | rodada do laço de ferramentas (0 = primeira resposta do modelo) |
+| `ordem` | ordem da chamada dentro do turno, começando em 1 |
+| `estado` | `executada` ou `recusada` |
+| `motivo` | quando `recusada`: `nao_habilitada`, `desconhecida`, `argumento_invalido`, `erro_de_execucao`, `limite_de_chamadas` ou `fora_do_turno`; `null` quando executada |
+| `duracao_ms` | duração da execução (zero nas recusas antes de rodar) |
+| `argumentos` | resumo dos argumentos: JSON compacto em texto, cortado em 1024 caracteres com `…[cortado]`; valor de campo com nome de segredo (`token`, `senha`, `secret`, `chave`, `api_key`, `password`, `authorization`, `credencial`) sai como `[redigido]` |
+| `resultado` | resumo do texto devolvido ao modelo, cortado em 1024 caracteres com `…[cortado]` |
+
+Regras:
+
+- Turno sem chamada traz `tool_calls: []`; turno antigo (gravado antes da HR-47b) traz `tools` com a
+  lista de nomes e `tool_calls: []` — nenhuma leitura quebra.
+- `tools` mantém o comportamento anterior: lista toda chamada que chegou ao laço, inclusive a
+  recusada. Quem separa é `tool_calls`.
+- Nenhum segredo de integração, chave de provedor ou token sai aqui: os argumentos são do modelo e
+  passam pela redação por nome de campo; o resultado é a saída das próprias ferramentas.
+- O mesmo campo sai na listagem de turnos da conversa (`GET …/conversations/{id}/turns`).
+
+### Eventos do `text/event-stream`
+
+Cada evento tem `id` sequencial (começa em `1`), `event:` com o nome e `data:` com JSON de uma
+linha. A ordem é a do turno:
+
+| Evento | Dados | Quando |
+| --- | --- | --- |
+| `mensagem` | `conversation_id`, `message_id`, `text`, `attachments[]` | primeiro, antes de o turno abrir: confirma o que foi gravado |
+| `inicio` | `turn_id`, `agent_id`, `conversation_id` | o turno abriu no banco |
+| `texto` | `delta` | cada pedaço da resposta do modelo, na ordem |
+| `base` | `sources[]` | trechos da base que entraram no prompt |
+| `ferramenta` | `name`, `round` | o modelo pediu uma ferramenta |
+| `transferencia` | `department_id`, `risk_type`, `guidance` | o G1 transferiu a conversa |
+| `fim` | `turn_id`, `state`, `reason`, `text`, `error`, `model_call_failed`, `messages[]`, `input_tokens`, `output_tokens`, `model`, `timings` | o turno terminou (com ou sem resposta) |
+| `erro` | `code`, `message` | o turno não pôde nem começar (falha de armazenamento) |
+
+O `fim` é sempre o último evento de um turno que chegou a começar. `state` usa o vocabulário do
+banco: `done`, `failed` ou `skipped`.
+
+### Regras
+
+- **Um turno por conversa.** Com outro turno em voo, a rota responde `409 turno_em_andamento` antes
+  de gravar a mensagem; a segunda aba não entra no turno que já está rodando.
+- **Desconexão cancela.** Fechar a conexão aciona o cancelamento do turno: ele termina `failed`, a
+  reserva é liberada e **nada** é gravado na `outbox` — não existe resposta parcial enviada.
+- **Sem chave do modelo** a rota responde `503 turno_indisponivel` (o turno não está ligado neste
+  servidor), em vez de abrir um turno que nunca responderia.
+- **Anexos** passam pelo recebimento da HR-23: 16 MB por arquivo, tipo real pelo conteúdo,
+  extração do documento em processo isolado. O texto extraído entra no prompt como conteúdo não
+  confiável; **imagem** (JPEG/PNG/GIF/WebP) vai ao modelo como parte multimodal (até 4 por turno,
+  5 MB por imagem, 8 MB somados — `docs/TURNO.md` §13). Arquivo recusado responde `400
+  validation_error` com `details.field = "file"`.
+- **Isolamento:** token de outra org recebe `403` em todas as rotas; conversa de outro agente
+  recebe `404`.
+- O servidor não segura o fluxo atrás de proxy: a resposta leva `x-accel-buffering: no` e
+  `cache-control: no-cache`, e um `ping` a cada 10 s mantém a conexão viva na janela de agrupamento.
+
+## Estado da prova (o que cada teste garante)
+
+Paridade é "mesma operação pelos dois caminhos chega ao mesmo estado no banco/JSON", não "os dois
+responderam 200". Todos os testes abaixo estão em `crates/poph-server/tests/api.rs`.
+
+| Recurso | Prova de paridade CLI×API | O que é comparado |
+| --- | --- | --- |
+| Organizações | `orgs_e_tokens_paridade_cli_api` | criar, alterar e excluir: campos do JSON e ausência no banco depois da exclusão |
+| Tokens | `orgs_e_tokens_paridade_cli_api` | criar, revogar (delete) e ler: rótulo e situação |
+| Categorias | `categorias_e_departamentos_paridade_cli_api` | criar, alterar e excluir: nome, descrição e ausência depois da exclusão |
+| Departamentos | `categorias_e_departamentos_paridade_cli_api` | criar, alterar e excluir: nome, descrição e ausência depois da exclusão |
+| Agentes | `agentes_paridade_com_cli` | criar, alterar e excluir: campos do agente e ausência no banco depois da exclusão |
+| Instruções | `instrucoes_api_paridade_isolamento_e_auditoria` | gravar, alterar e apagar: campos, JSON estruturado e markdown composto, pelos dois formatos de entrada |
+| Base de conhecimento (grupos e itens) | `conhecimento_paridade_cli_criacao_edicao_exclusao` | criar, alterar e excluir grupo e item: campos gravados e ausência depois da exclusão |
+| Base × agente (vínculo e reindexação) | `vinculo_grupo_agente_paridade_cli_api`, `reindex_paridade_cli_api` | vínculo lido do banco pelos dois caminhos; reindexação cruzada (CLI e depois API, e o inverso) devolvendo o mesmo relatório de índice |
+| Produtos | `produtos_paridade_cli_estado_no_banco` | criar, alterar e excluir: preço em centavos, categoria, situação e vínculo |
+| Biblioteca de arquivos | `biblioteca_upload_paridade_cli_api`, `biblioteca_paridade_consulta_e_exclusao_cli_api` | envio: nome, descrição, mime, tamanho, `sha256` e caminho do blob iguais; consulta e exclusão: mesmos campos e ausência no banco |
+| Integrações | não se aplica (exceção) | a CLI não tem o recurso; a API é a referência (`integracoes_ciclo_isolamento_e_segredos`) |
+| Conversas, mensagens, turnos e `reopen` | não se aplica (exceção) | a CLI não tem comando de conversa; provado por `conversas_mensagens_turnos_isolam_org_e_mostram_dados` |
+| Chat de teste (SSE, anexos, cancelamento, duas abas) | não se aplica (exceção) | a CLI não tem comando de chat de teste; provado por `crates/poph-server/tests/teste_chat.rs` |
+| Conteúdo de arquivo (biblioteca e anexo) | não se aplica (exceção) | a CLI lê o blob local e não tem comando de chat de teste; provado por `crates/poph-server/tests/conteudo_arquivo.rs` |
+
+Outras provas exigidas pela HR-21, cada uma num teste só:
+
+- **Conflito de versão (412) por recurso editável:** `todas_as_edicoes_rejeitam_versao_desatualizada`
+  percorre todas as edições publicadas (org, categoria, departamento, agente, instruções, integração,
+  grupo e item da base, produto e `reopen`) e exige `412 version_conflict` em cada uma.
+- **Isolamento por org de toda rota publicada:** `isolamento_por_org_cobre_todas_as_operacoes_publicadas`
+  compara o conjunto de operações do OpenAPI com uma lista explícita e chama cada uma com token da
+  org A contra a org B, exigindo 403/404. Rota publicada nova sem entrada na lista faz o teste falhar.
+  As duas operações globais de org (`GET` e `POST /admin/v1/orgs`, que só o token global alcança)
+  ficam fora dele e são provadas por `token_de_org_so_enxerga_a_propria_org` e
+  `token_de_org_nao_cria_org_nem_token`.
+- **Auditoria de toda escrita publicada:** `toda_escrita_da_openapi_precisa_de_cobertura_de_auditoria`
+  compara as escritas do OpenAPI com uma lista explícita; rota de escrita nova sem cobertura faz o
+  teste falhar.
+
+## O que a HR-21 entrega e o que não entrega
+
+**Entrega:** administração por HTTP (e pelo cliente TypeScript gerado) de orgs, tokens, categorias,
+departamentos, agentes, instruções, base de conhecimento (grupos, itens, vínculo ao agente e
+reindexação), produtos, integrações (ciclo de vida), biblioteca de arquivos (envio, listagem, consulta
+e exclusão) e consulta ao histórico (conversas, mensagens, turnos e reabertura de conversa
+transferida). Toda escrita é auditada com ator identificado; toda edição tem controle de versão; toda
+coleção é paginada por cursor; todo erro sai no formato `{code, message, details}` — inclusive 404 e
+405.
+
+**Não entrega:**
+
+- **Configuração de integração.** `POST`/`PATCH` recusam qualquer chave em `config_json` com
+  `422 manifest_indisponivel`: sem o manifesto confiável vindo do servidor, um campo marcado como
+  segredo poderia ser gravado como público. Segredo de integração, cifra e nome da integração entram
+  quando o registro de manifesto existir — o Console vai precisar disso.
+- **Edição de metadados da biblioteca de arquivos.** O contrato é enviar, listar, mostrar e excluir
+  (nem a CLI nem o esquema têm versão de arquivo). Editar nome/descrição exige coluna nova e migração
+  aprovada — tarefa própria.
+- **Versionamento do histórico.** Mensagens e turnos são só de leitura. As escritas em conversa são
+  `reopen` e `close` (MX-06), ambas com `If-Match`.
+- **Cluster, Console e retenção.** Ficam nas tarefas seguintes (HR-50 em diante);
+  `poph serve` sobe um processo só.
+
+## Manifesto de plugin e configuração de integração (HR-44c)
+
+Uma integração de plugin só pode ser configurada se o servidor conhecer o **manifesto** daquele
+`kind` — é o manifesto que diz quais campos existem, quais são obrigatórios e quais são segredo. O
+manifesto nasce no handshake do plugin (`docs/PLUGIN_PROTOCOLO.md`) e a instalação declara onde ele
+mora:
+
+```toml
+[[plugins.integracoes]]
+kind = "eco"
+programa = "/opt/poph/plugins/poph-plugin-eco"
+# argumentos = []
+```
+
+**Rota do manifesto:** `GET /admin/v1/orgs/{org_id}/manifests/{kind}` devolve o manifesto inteiro
+(`nome`, `kind`, `versao`, `protocolo`, `capacidades`, `limites`, `configuracao`, `segredos`), com os
+dois últimos no formato de JSON Schema. Erros:
+
+| Situação | Resposta |
+| --- | --- |
+| `kind` sem plugin declarado | `404 not_found` (`details.kind`) |
+| plugin declarado que não responde ao handshake | `503 manifesto_indisponivel` |
+| token de outra org | `403 forbidden` |
+
+O manifesto é resolvido **uma vez por processo**: o servidor sobe o plugin pelo supervisor, lê o
+manifesto, encerra o processo e guarda o resultado em memória (falha fica em cache por 30 s). Mudou
+o plugin, reinicie o servidor. A rota é de leitura, não audita e não devolve dado de cliente — o
+escopo da org existe só para herdar o escopo de token das outras rotas.
+
+**Lista dos plugins declarados (HR-48b).** `GET /admin/v1/orgs/{org_id}/manifests` responde quais
+tipos existem, para a tela não precisar adivinhar o `kind`:
+
+```json
+{ "items": [
+  { "kind": "eco", "situacao": "ok", "nome": "Eco", "versao": "0.1.0" },
+  { "kind": "whatsapp", "situacao": "indisponivel",
+    "mensagem": "o plugin deste tipo não respondeu ao handshake; verifique o programa declarado em `[plugins].integracoes`" }
+] }
+```
+
+- Um item por `kind` declarado, na ordem do `kind` (determinística). Não pagina: é config **da
+  instância**, não cresce com o uso — por isso a lista não tem `next_cursor` nem `?limit`.
+- `situacao` é `ok` (manifesto lido: `nome` e `versao` preenchidos) ou `indisponivel` (plugin
+  declarado que não respondeu: `nome`/`versao` ausentes e `mensagem` com a frase de operação).
+  **Um plugin quebrado não derruba a lista** — o item sai marcado e os outros respondem.
+- A resolução é a mesma da consulta por tipo e usa o mesmo cache: a primeira listagem sobe cada
+  plugin uma vez; as seguintes leem da memória (inclusive a falha, por 30 s).
+- O item traz só metadado do plugin. **Nunca** caminho do programa, argumentos, `config_json`,
+  segredo ou caminho de blob.
+- `401` sem token; `403` com token de outra org (a lista é da instância, mas o caminho é da org,
+  como as demais rotas — a org não é inferida do token).
+
+**Configuração e segredo no `POST`/`PATCH` de integração.** Com manifesto disponível:
+
+```json
+{
+  "kind": "eco",
+  "config_json": { "remetente": "Loja", "modo": "inverter" },
+  "secrets": { "token": "..." }
+}
+```
+
+- `config_json` é validado contra o `configuracao` do manifesto; `secrets` contra o `segredos`.
+  Campo obrigatório ausente, tipo errado, valor fora do `enum`, número fora da faixa, texto fora de
+  `minLength`/`maxLength` ou campo que não está no esquema → `400 validation_error`, com
+  `details.field` no caminho (`config_json.remetente`, `secrets.token`, e aninhado quando houver).
+- Sem manifesto (tipo não declarado, como `whatsapp`), `config_json`/`secrets` continuam recusados
+  com `422 manifest_indisponivel`; integração **sem** configuração é criada como antes.
+- Com manifesto, a criação já é validada: o que o esquema exige é cobrado na hora, mesmo que o
+  corpo não traga configuração.
+- `config_json` no `PATCH` **substitui** a configuração inteira; em `secrets`, só os nomes enviados
+  mudam (`""` remove). Não dá para remover um segredo obrigatório.
+- **Segredo nunca volta:** a resposta traz `tem_segredo` e `segredos_preenchidos` (nomes). O valor é
+  gravado cifrado em `integrations.secrets_enc` (AES-256-GCM, chave derivada por HKDF-SHA256 de
+  `POPH_CHAVE_CIFRA`) e só sai do processo no handshake do plugin.
+- **Sem a chave de cifra** o servidor não grava segredo: `503 cifra_indisponivel`. Se a variável
+  mudar, os segredos antigos ficam ilegíveis (`tem_segredo: true`, `segredos_preenchidos: null`) —
+  regrave-os.
+- `config_json` volta na leitura como `configuracao`; toda escrita exige `If-Match` (428/412) e sobe
+  a versão.
+
+## Exportar e importar a organização (HR-48e-1)
+
+Duas rotas para o Console fechar a parte de operação. O **formato do arquivo é o mesmo** da CLI
+(`poph backup export`/`import`, HR-53): quem gera um lado abre no outro.
+
+### Exportar — `GET /admin/v1/orgs/{org_id}/backup`
+
+- **Sem `com_conversas`** (padrão) leva a configuração da org, o catálogo (categorias,
+  departamentos, produtos), os agentes com instruções e vínculos, a base de conhecimento, a
+  biblioteca de arquivos e as integrações. **Com `com_conversas=true`** leva também conversas,
+  mensagens, anexos, turnos, as duas filas e os carrinhos.
+- Resposta: o arquivo JSON (`Content-Type: application/json`,
+  `Content-Disposition: attachment; filename="<slug>-backup-<AAAAMMDD-HHMM>.json"`,
+  `X-Content-Type-Options: nosniff`, `Cache-Control: private, no-store`). O carimbo é UTC.
+- **Segredo nunca sai:** a integração leva `tem_segredo` e os **nomes** dos campos preenchidos
+  (`segredos_campos`); o valor e o blob cifrado (`secrets_enc`) ficam no banco. Sem a chave de
+  cifra, `segredos_campos` vem `null` e só a marca diz que havia segredo.
+- **Caminho de blob nunca sai:** o arquivo guarda `sha256` e o conteúdo em base64; o caminho é
+  recalculado na importação.
+- `com_conversas` com valor que não é `true`/`false` → `400 validation_error`.
+- Arquivo da biblioteca sem conteúdo no disco → `409 backup_incompleto` (nada é entregue pela
+  metade); o nome do arquivo vai em `details.name` e o caminho não aparece.
+
+### Importar — `POST /admin/v1/orgs/{org_id}/backup/import`
+
+- **Corpo cru** `application/json` com o arquivo de `…/backup` (ou de `poph backup export`), até
+  **64 MB**; acima disso → `413 payload_too_large`. Não é multipart.
+- **A org do caminho é o destino** e precisa existir (`404` se não existir). Os ids do arquivo são
+  preservados; importar não duplica nem **apaga** o que não está no arquivo.
+- **Sobrescrita é recusada por padrão (HR-48e-3):** se alguma linha do arquivo já existe na org
+  (localizada pela chave da tabela), a importação **não grava nada** e responde
+  `409 importacao_sobrescreve`, com `details.tabelas` (tabela → linhas), `details.linhas` (total) e
+  `details.exemplos` (até 5, no formato `tabela: slug` ou `tabela: id`). É o caso de reimportar um
+  arquivo antigo, que reverteria o que mudou depois dele. `?sobrescrever=true` autoriza a
+  atualização; o relatório então mostra `atualizadas` por tabela. Destino limpo (org sem essas
+  linhas) entra sem o parâmetro; `sobrescrever` com valor que não é `true`/`false` → `400
+  validation_error`.
+- **Conflito recusa antes de gravar:** se o destino já tem agente/produto/categoria/departamento/
+  grupo com a mesma chave e outro id — ou se um id do arquivo já existe na instância em **outra**
+  org — a resposta é `409 conflict`, com até 5 itens em `details.conflicts` e o resto em
+  `details.conflicts_more`, e **nada** é gravado. Conflito de chave natural tem precedência sobre
+  `importacao_sobrescreve` e é recusado **mesmo com `?sobrescrever=true`** (não há "merge").
+- **Arquivo inválido** (JSON truncado, outro formato, `versao_formato` desconhecida) → `400
+  invalid_backup`, sem gravar nada.
+- **Segredos:** a integração entra sem o valor do segredo; o relatório traz
+  `segredos_a_redigitar` e o valor precisa ser digitado de novo na aba Integrações.
+- **Reindexação automática:** com o modelo de embedding instalado, a base e o catálogo da org
+  ficam buscáveis na hora (`indice` no relatório). Sem o modelo, o material entra, `indice` vem
+  zerado e `aviso` diz o que rodar (`poph kb reindex`, `poph product reindex`) — nunca um índice
+  vazio em silêncio.
+- **Relatório (`200`):**
+
+```json
+{
+  "org": { "id": "0192…", "criada": false },
+  "com_conversas": false,
+  "tabelas": { "agents": { "inseridas": 1, "atualizadas": 0 }, "…": {} },
+  "total": 9,
+  "segredos_a_redigitar": 1,
+  "indice": { "base_conhecimento": { "agentes": 1, "trechos": 2 }, "produtos": { "trechos": 1 } },
+  "aviso": null
+}
+```
+
+- A importação é auditada (`backup_import`); a exportação é leitura e não gera registro.
+
+## WhatsApp da integração: pareamento, estado e desconexão (HR-44b)
+
+Três rotas de admin para a integração de `kind = "whatsapp"`. Elas falam com a instância da
+EvolutionAPI correspondente — a mesma que recebe o webhook.
+
+| Operação | Rota | Efeito |
+| --- | --- | --- |
+| gerar QR | `POST …/whatsapp/qrcode` | cria a instância na Evolution quando ela não existe (reaproveita quando existe) e pede o pareamento |
+| estado | `GET …/whatsapp/state` | pergunta o estado ao vivo e grava em `connection_state` |
+| desconectar | `POST …/whatsapp/disconnect` | faz o logout do aparelho e grava `connection_state = disconnected` |
+
+**Onde mora a configuração.** Cada integração precisa estar declarada em `[evolution].instancias`
+(`org_id`, `instancia`, `integracao_id`, `segredo_env`); o endereço vem de `[evolution].url_base` e
+a chave de `EVOLUTION_API_KEY` no ambiente. Sem a declaração, as três rotas respondem
+`409 whatsapp_nao_configurado`; sem a chave, `503 evolution_indisponivel`. A rota não inventa nome
+de instância.
+
+**Corpo do pareamento** (opcional): `{"number": "5511999998888"}` — com número, a Evolution também
+devolve o código de 8 caracteres. Resposta:
+
+```json
+{
+  "integration_id": "...", "instance": "loja",
+  "state": "connecting", "connection_state": "awaiting_scan",
+  "qrcode": { "base64": "data:image/png;base64,...", "code": "2@...", "count": 3 },
+  "expira_em": null,
+  "pairing_code": null
+}
+```
+
+`expira_em` é **sempre `null`**: a Evolution v2 não informa validade do QR — ele gira sozinho a
+cada ~20 s e o `count` é o único sinal de que mudou. Quem desenha o QR pede outro quando o cliente
+demorar. Com o aparelho já conectado (`state = open`), a rota responde `qrcode: null` e não pede
+pareamento de novo.
+
+**Estado:** resposta `{integration_id, instance, state, connection_state}`, com `state` no
+vocabulário da Evolution (`open`, `connecting`, `close`) e `connection_state` no nosso
+(`connected`, `awaiting_scan`, `disconnected`; valor fora desse vocabulário vira `desconhecido`).
+
+**Concorrência:** `qrcode` e `disconnect` exigem `If-Match` (428 sem ele, 412 `version_conflict`
+com versão velha), mas **não sobem a versão**: `connection_state` é estado de execução, não edição
+de configuração — a mesma regra do webhook. Quem está com a tela aberta pode gerar QR quantas vezes
+quiser com a mesma versão; se outra pessoa editar a integração no meio, a próxima escrita dá 412.
+
+**Segredo:** a chave da Evolution vai só no cabeçalho `apikey` e não aparece em resposta, log nem
+mensagem de erro — o texto do provedor é limpo pelo cliente (sem chave, sem número/JID). A resposta
+não traz configuração nem segredo.
+
+**Sem CLI:** a CLI não tem subcomando de integração, então a paridade destas rotas é provada só por
+HTTP (`crates/poph-server/tests/whatsapp_admin.rs`, com Evolution falsa).
+
+## Conteúdo de arquivo: biblioteca e anexo (HR-46b)
+
+Duas rotas entregam os **bytes** do arquivo. As demais rotas de arquivo entregam só metadados; sem
+estas, o Console não tinha como baixar nem pré-visualizar o arquivo que o agente pode enviar ao
+cliente nem o anexo do histórico do chat de teste.
+
+| Operação | Rota |
+| --- | --- |
+| arquivo da biblioteca | `GET /admin/v1/orgs/{org_id}/agents/{agent_id}/files/{file_id}/content` |
+| anexo de mensagem | `GET /admin/v1/orgs/{org_id}/agents/{agent_id}/test-chat/{conversation_id}/messages/{message_id}/attachments/{attachment_id}/content` |
+
+**Resposta:** os bytes crus, com `Content-Type` do MIME gravado, `Content-Length`,
+`Content-Disposition` com o nome sanitizado (`filename="..."` em ASCII e `filename*=UTF-8''...` com
+o nome original), `ETag` e `x-content-sha256` com o SHA-256 do conteúdo, mais
+`X-Content-Type-Options: nosniff` e `Content-Security-Policy: default-src 'none'; sandbox` — o
+navegador não executa nada do arquivo. Imagem e PDF saem `inline` (o Console mostra no lugar);
+os outros formatos saem `attachment`.
+
+**Escopo:** o caminho inteiro. Arquivo é alcançado por org + agente + id; anexo por org + agente +
+conversa + mensagem + id do anexo. Id de outra org, de outro agente da mesma org, de outra conversa
+ou inexistente responde `404 not_found` — a resposta não confirma se o registro existe em outro
+lugar.
+
+**Leitura do blob:** sempre pelo `poph_files::blob::ler`, que valida o hash (64 hex minúsculos)
+antes de tocar a pasta e confere o tamanho; o handler nunca monta caminho. Blob ausente no disco,
+hash inválido ou blob acima do teto de recebimento (`ConfigArquivos::limite_bytes`, 16 MB por
+padrão) viram `404 not_found` com mensagem genérica — o motivo real fica só no log, nunca o caminho
+do blob na resposta.
+
+**Metadados sem caminho interno:** a resposta das rotas de metadados (`…/files` e `…/files/{file_id}`)
+continua **sem** `blob_path`; a CLI obtém o caminho lendo o próprio banco local (`poph file show`),
+não a API.
+
+**Sem CLI:** não há subcomando que baixe por HTTP; a CLI lê o blob direto do disco. Por isso as duas
+rotas estão no inventário como exceção, e a prova é o teste de servidor
+(`crates/poph-server/tests/conteudo_arquivo.rs`).
+
+## Roteamento entre instâncias: mapa e recarga (HR-50a)
+
+O mapa de qual org vive em qual instância é o `cluster.toml` (PRD §12), **separado do
+`poph.toml`** e igual em todas as instâncias. Formato, validação e comandos estão em
+`docs/CLUSTER.md`. Aqui fica só o contrato da rota de recarga.
+
+`POST /admin/v1/cluster/reload` **exige token global** (é configuração da instalação, não de uma
+org): token de org → `403 forbidden`; sem token → `401 unauthorized`. Não tem corpo.
+
+- **Relê o arquivo no processo vivo** (o caminho vem de `POPH_CLUSTER` ou do `cluster.toml` ao lado
+  do `poph.toml`) e troca o mapa em uso de uma vez.
+- **Arquivo inválido → `400 cluster_invalido`**, com `details.problemas` (uma entrada por problema,
+  cada uma dizendo a chave) e `details.arquivo`; **o mapa anterior continua em uso**.
+- **Arquivo ausente** volta ao modo instância única (é o que a recarga reflete).
+- Resposta `200`:
+
+```json
+{
+  "mudou": true,
+  "fingerprint_antes": "5b0c…",
+  "fingerprint_depois": "0a91…",
+  "antes": { "modo": "cluster", "instance_id": "a", "default_instance": "b",
+             "segredo_configurado": true,
+             "instancias": [{ "id": "a", "url": "http://127.0.0.1:7480", "local": true }],
+             "orgs": { "org_01": "a" } },
+  "depois": { "…": "…" },
+  "orgs_que_trocaram": [{ "org": "org_01", "de": "a", "para": "b" }],
+  "instancias_adicionadas": ["b"],
+  "instancias_removidas": []
+}
+```
+
+- O **fingerprint** é estável: mesmo mapa, mesma impressão (a ordem do arquivo não importa); org
+  trocada de instância muda a impressão. É o que a HR-50b compara entre instâncias.
+- O **segredo compartilhado** (`POPH_CLUSTER_SECRET`) é lido na subida; a resposta só diz se está
+  configurado (`segredo_configurado`), nunca o valor. Trocar o segredo exige reiniciar o processo.
+- A recarga **não** é auditada: não grava dado de org nem de cliente; o registro é o log de subida
+  e a resposta com antes/depois.
+
+## Roteamento entre instâncias: encaminhamento (HR-50b-1)
+
+Com o mapa do `cluster.toml` valendo (HR-50a), um pedido de org que vive em **outra** instância é
+encaminhado à dona, assinado. A partir da HR-50b o mapa deixou de ser só projeção: uma org fora do
+`[orgs]` vai para `default_instance`, e é isso que o encaminhamento aplica.
+
+**O que é encaminhado:** `POST /webhook/evolution/{org_id}/{instancia}` e todas as rotas
+`/admin/v1/orgs/{org_id}/…`. **O que fica local, sempre:** `/healthz`, `/metrics`, `/openapi.json`,
+`/admin/v1/cluster/reload`, `/admin/v1/orgs` (sem org no caminho, como criar/listar orgs) e o
+Console — nenhuma delas tem org no caminho.
+
+**Cabeçalhos de par** (nunca presentes num pedido de cliente comum):
+
+| Cabeçalho | Conteúdo |
+| --- | --- |
+| `x-poph-instance` | `instance_id` de quem encaminha |
+| `x-poph-timestamp` | instante do envio, em segundos Unix |
+| `x-poph-signature` | HMAC-SHA256 em hexadecimal |
+| `x-poph-hop` | `1` no primeiro (e único) salto |
+| `x-poph-mapa` | impressão digital **do mapa** (sem a instância local) de quem encaminha |
+| `x-poph-nonce` | 16 bytes aleatórios em hexadecimal (32 caracteres), um por pedido |
+
+Texto assinado, com a chave `POPH_CLUSTER_SECRET` (linhas separadas por `\n`, sem linha no fim):
+
+```text
+método
+caminho+query
+hex(sha256(corpo))
+timestamp
+instância
+hop
+nonce
+```
+
+- O `Authorization` original segue junto: o token de org continua valendo **na dona**, que confere o
+  escopo como sempre. Token de org nunca é aceito em outra instância por causa do encaminhamento.
+- Janela aceita para o carimbo: **60 s** para trás e para frente. O **nonce** é o que torna cada
+  pedido único: dois pedidos idênticos no mesmo segundo passam os dois; o mesmo nonce recebido de
+  novo dentro de 120 s é recusado (`401 assinatura_invalida`) — proteção contra repetição, em
+  memória do processo (teto de 10.000 nonces; acima disso a memória é zerada com aviso no log).
+  Nonce ausente ou fora do formato de 32 hexadecimais é `401 assinatura_invalida`.
+- `x-poph-hop > 1` → `421 rota_em_laco`. Org que não pertence a esta instância segundo o mapa, num
+  pedido que já chegou encaminhado → `421 rota_em_laco`.
+- `x-poph-mapa` diferente do mapa local → `421 mapa_divergente`, com os dois fingerprints em
+  `details`. É o que impede encaminhar com mapas desatualizados (laço por mapa velho).
+- Dona fora do ar (conexão recusada, prazo de 5 s para conectar ou 60 s para começar a responder) →
+  `503 instancia_fora`, com `details.instancia` e `details.url`, sem caminho interno nem segredo.
+- A **resposta** da dona volta em streaming (status, cabeçalhos e corpo), inclusive o **SSE do chat
+  de teste**: o primeiro evento chega sem esperar o fim do turno, e cliente que desconecta cancela o
+  turno na dona (o pedido encaminhado é abandonado). O **corpo do pedido** é lido inteiro antes de
+  seguir, porque a assinatura usa o sha256 dele; o teto é o da própria rota (webhook 1 MB, mensagem
+  do chat de teste 24 MB, importação de backup 64 MB, demais 2 MB).
+- `GET /admin/v1/orgs?cluster=true` (token global): além das orgs desta instância, consulta as
+  vizinhas do mapa em paralelo (`/admin/v1/orgs`, com o `Authorization` do chamador, prazo de **2 s**
+  por instância) e devolve todas em `items`, cada uma com `instancia`; `instancias` traz `id`, `url`,
+  `situacao` (`local`, `ok` ou `inacessivel`) e quantas orgs vieram de cada uma. Instância fora do
+  ar aparece marcada e **não** derruba a lista. Sem o parâmetro, a resposta é exatamente a de antes
+  (sem `instancias` e sem `instancia` nos itens); com ele não há paginação (`limit`/`cursor` são
+  ignorados, `next_cursor` é `null`). Token de org ignora o parâmetro e continua vendo só a própria
+  org.
+- `/healthz` no modo cluster passa a devolver `instance_id` e `cluster_map_fingerprint` (aditivo;
+  ausentes no modo instância única) — é o que o `poph cluster check --remoto` compara entre as
+  instâncias.
+- Instância que recebe um pedido com qualquer cabeçalho de par sem ter segredo compartilhado
+  configurado responde `401 assinatura_invalida`.
+
+## Rota pública fora do admin: webhook da Evolution (HR-26b)
+
+`POST /webhook/evolution/{org_id}/{instancia}` **não faz parte** da API administrativa: não usa
+token de administração, não aparece no OpenAPI (`/admin/v1/openapi.json`) e fica fora do inventário
+acima e dos testes de isolamento e auditoria gerados dele. Quem autentica é o segredo do webhook de
+cada instância, no cabeçalho `X-Evolution-Webhook-Secret`. Comportamento completo em
+`docs/EVOLUTION.md`, seção "Entrada de mensagens".
+
+## Application Service do Matrix: as rotas que o Synapse chama (MX-16)
+
+Estas rotas **não** fazem parte da API administrativa: não usam token de org, não aparecem no
+OpenAPI (`/admin/v1/openapi.json`), não estão no inventário acima e o Console nunca as vê. Quem
+chama é o Synapse, do outro lado do Application Service.
+
+| Método | Rota | O que é |
+| --- | --- | --- |
+| PUT | `/_matrix/app/v1/transactions/{txnId}` | lote de eventos de uma sala (é o caminho da resposta do atendente) |
+| GET | `/_matrix/app/v1/users/{userId}` | "este usuário é seu?" |
+| GET | `/_matrix/app/v1/rooms/{roomAlias}` | "este alias é seu?" |
+| POST | `/_matrix/app/v1/ping` | existência do serviço (o Synapse não usa hoje) |
+
+As mesmas quatro rotas também respondem sem o `/v1` (`/_matrix/app/transactions/…`), na raiz
+(`/transactions/…`) e com o prefixo `/matrix` na frente (`/matrix/_matrix/app/v1/…` e
+`/matrix/_matrix/app/…`), por compatibilidade com registro antigo.
+
+O prefixo existe porque o registro do Application Service no Synapse de desenvolvimento — e o de
+produção, que ele reflete — aponta para uma base com `/matrix`, e o Synapse chama
+`<url>/_matrix/app/v1/…`: sem essas rotas a entrega respondia `404` e a resposta do atendente nunca
+chegava ao cliente (defeito achado no aceite, MX-31). As duas famílias respondem igual — mesmo
+`hs_token`, mesma idempotência por `txnId`, mesmos `200`/`503` — e **o registro do Synapse não muda**.
+
+- **Autenticação:** `Authorization: Bearer <hs_token>` (`POPH_MATRIX_HS_TOKEN`), comparado em tempo
+  constante. Sem cabeçalho, sem `Bearer` ou com token vazio → `401 unauthorized`; token diferente →
+  `403 forbidden`. O token nunca aparece em resposta, log ou erro.
+- **Módulo desligado** (`[matrix]` ausente ou `habilitado = false`, ou nenhum receptor injetado) →
+  `404 not_found` nas quatro rotas, e não a página do Console.
+- **Contrato de resposta da transação** (medido no spike da MX-02): qualquer resposta não-2xx marca o
+  Application Service como fora do ar no Synapse, que passa a reenviar com espera de 2 s, 4 s, 8 s… até
+  512 s. Por isso:
+
+| Situação | Resposta |
+| --- | --- |
+| transação processada | `200 {}` |
+| transação já processada (mesmo `txnId`) | `200 {}` sem reprocessar |
+| corpo acima de 1 MiB, JSON inválido ou sem `events` | `200 {}` sem processar (nunca `413`/`400`) |
+| erro transitório nosso (banco indisponível) | `503 matrix_indisponivel` — o Synapse reenvia |
+| token ausente ou errado | `401`/`403` (erro de configuração, some quando o token é corrigido) |
+
+- **Idempotência:** a memória de `txnId` já processados é por processo, FIFO e limitada a 4096
+  entradas (`TETO_PADRAO_TRANSACOES`). Uma transação é marcada **só depois** de processada, então uma
+  falha nossa nunca fica "lembrada" como feita. Se a memória esquecer uma transação antiga, o pior caso
+  é reprocessar (a gravação da resposta do atendente é idempotente por `event_id`).
+- **Tamanho do corpo:** o teto é aplicado na leitura (1 MiB), não pelo `axum`, justamente para não
+  responder `413` ao Synapse.
+- **O que está ligado nesta entrega:** receber, autenticar, validar, deduplicar e entregar os eventos a
+  quem liga o módulo (MX-17/MX-18 fazem a classificação e a gravação; MX-20 liga no `poph serve`).
+
+### Ligação no `poph serve` (MX-20)
+
+Com `[matrix] habilitado = true` e os dois tokens no ambiente, o servidor sobe o módulo na própria
+subida (`matrix_inicio::iniciar`, chamado por `servir_em`): laço das mensagens (MX-14), laço do estado
+(MX-15), receptor do Application Service (MX-16) com a entrega da resposta do atendente (MX-18) e as
+métricas `poph_matrix_*` (MX-26).
+
+| Situação | O que acontece |
+| --- | --- |
+| `[matrix]` ausente ou `habilitado = false` | nenhuma tarefa do módulo, nenhuma `poph_matrix_*` e as rotas do Synapse em `404` |
+| módulo ligado sem `POPH_MATRIX_AS_TOKEN`/`POPH_MATRIX_HS_TOKEN` | o módulo **não** sobe, o log diz `token_ausente` e o servidor atende normalmente (rotas em `404`) |
+| Synapse fora do ar na subida | o servidor sobe e atende; o módulo fica degradado e retenta (sonda a cada 30 s, espera dobrando até 60 s) |
+| org desligada em `matrix_orgs` (API da MX-22 ou CLI) | o trabalho daquela org para até o ciclo seguinte, sem reiniciar o processo |
+| `Ctrl-C` | os laços terminam o que estão fazendo (prazo de 10 s) antes de o processo sair; nada pendente se perde |
+
+O estado da conexão com o Synapse não é publicado em `/metrics` nesta entrega. Ele fica no `Estado`:
+`matrix_conectado()` devolve `Some(true)` (conectado), `Some(false)` (degradado, o servidor segue
+atendendo e os laços retentam) ou `None` (módulo desligado nesta instância). É o que a API
+administrativa da MX-22 lê como "conectado".
+
+## API do módulo Matrix: estado da org e espaços por departamento (MX-22)
+
+Estas rotas fazem parte da API administrativa (`/admin/v1`) e do OpenAPI. Token de org opera só a
+própria org (token da org A em rota da org B → `403`); sem token é `401`; org inexistente é `404`.
+**Nenhuma delas muda a configuração do homeserver** — isso é `poph.toml` + ambiente.
+
+A mesma operação está na CLI, sem token e sem servidor (`--offline --org <org>`, MX-23): `poph matrix estado`,
+`poph matrix ligar`, `poph matrix desligar`, `poph matrix espaco` e `poph matrix espaco desligar`. Por isso a
+coluna CLI das cinco rotas é `sim`.
+
+### `GET /admin/v1/orgs/{org_id}/matrix`
+
+Estado do módulo na org, com `ETag` igual ao `updated_at` da linha:
+
+```json
+{
+  "org_id": "org_…",
+  "enabled": true,
+  "enabled_at": 1795300000000,
+  "updated_at": 1795300000000,
+  "connected": true,
+  "backlog": { "messages": 12, "oldest_seconds": 340 },
+  "pending_failures": 1,
+  "last_failure": "formato_invalido"
+}
+```
+
+| Campo | O que é |
+| --- | --- |
+| `enabled` | `matrix_orgs.enabled`: o módulo trabalha esta org |
+| `enabled_at` | corte do backfill (só o que foi gravado depois dele é espelhado); `null` se a org nunca ligou |
+| `updated_at` | última alteração da linha — é o valor do `If-Match` |
+| `connected` | sonda da instância contra o Synapse: `true` conectado, `false` degradado, `null` módulo não configurado aqui |
+| `backlog.messages` | mensagens gravadas depois do cursor e ainda não espelhadas (mesmo filtro do laço: só `user`/`assistant`) |
+| `backlog.oldest_seconds` | idade da mais antiga delas; `0` quando não há nenhuma |
+| `pending_failures` | linhas de `matrix_falhas` da org |
+| `last_failure` | motivo curto (≤ 64 caracteres) da falha mais recente, ou `null` |
+
+Nada de telefone, texto de cliente ou token aparece aqui: são ids, estados, números e o código curto
+do erro.
+
+### `PUT /admin/v1/orgs/{org_id}/matrix`
+
+Corpo `{"enabled": true}` ou `{"enabled": false}`, com `If-Match` obrigatório (`updated_at` lido no
+`GET`). Devolve o mesmo JSON do `GET`.
+
+| Situação | Resposta |
+| --- | --- |
+| sem `If-Match` | `428 precondition_required` |
+| `If-Match` diferente do `updated_at` atual | `412 version_conflict` |
+| ligar | grava `enabled = 1` e um `enabled_at` novo (o corte do backfill) |
+| desligar | grava `enabled = 0`, **preserva** `enabled_at`, não apaga sala nem espaço |
+| repetir o mesmo pedido com o `If-Match` atual | `200`, sem mudar `enabled_at` (idempotente) |
+
+A escrita registra auditoria (`action: update`, `entity: matrix`). O efeito nos laços é no ciclo
+seguinte: desligar não aborta o item em voo.
+
+### `GET /admin/v1/orgs/{org_id}/matrix/spaces`
+
+Lista os espaços por departamento: `{"items": [{"department_id", "department_name",
+"space_room_id", "alias", "origin", "created_at", "updated_at"}]}`. `origin` é `auto` (o módulo criou
+o espaço) ou `linked` (já existia no Element e foi ligado ao departamento). Num espaço ligado, o
+`alias` é o nome do departamento **para o módulo**; quem deu alias no Element foi o operador.
+
+### `PUT /admin/v1/orgs/{org_id}/matrix/spaces`
+
+Corpo `{"department_id": "…", "space": "!sala:servidor" | "#alias:servidor" | null}`:
+
+- `space` ausente ou `null` → o módulo **cria** o espaço do departamento pelo alias
+  `#dep_<id do departamento>:<servidor>` e escreve nome, tópico e o evento
+  `com.sofacoding.departamento`;
+- `space` com id (`!…`) ou alias (`#…`) → **liga** um espaço que já existe, conferindo que o bot do
+  Application Service (`@<prefixo>_as_bot`) é membro **e** tem poder para escrever `m.space.child`
+  (o `state_default` do espaço, 50 no padrão do Matrix). Faltando qualquer um, a resposta é `409
+  conflict` com a instrução do que fazer no Element (convidar o bot e dar poder 50); nada é gravado.
+
+Repetir o `PUT` do mesmo departamento devolve o mesmo espaço (o alias é a trava; não há segundo
+espaço). Departamento de outra org → `404`. Espaço que não é id nem alias → `400 validation_error`.
+Synapse fora do ar → `503 synapse_indisponivel` (tentar de novo resolve). Falha do armazenamento →
+`503 matrix_indisponivel`. Módulo não configurado nesta instância → `409 matrix_desligado`.
+
+### `DELETE /admin/v1/orgs/{org_id}/matrix/spaces/{department_id}`
+
+Desliga o espaço do departamento. **Nada é apagado no Synapse**: o espaço continua existindo no
+Element e as salas também. O que acontece, exatamente:
+
+1. a linha de `matrix_spaces` daquele departamento sai;
+2. as salas da org registradas naquele espaço têm `matrix_rooms.space_room_id` zerado
+   (`rooms_forgotten` na resposta) — o módulo esquece que elas estão no espaço;
+3. as conversas continuam existindo e **não** saem do espaço no Element; o `join_rules` da sala
+   também fica como está;
+4. o efeito é reversível: a próxima alteração de uma conversa daquele departamento volta a pôr a
+   sala no espaço (MX-15), e o alias leva o módulo ao **mesmo** espaço do Element — sem criar um
+   segundo.
+
+Sem espaço gravado o `DELETE` responde `200` com `removed: false` (é idempotente). Departamento
+inexistente ou de outra org → `404`. A escrita registra auditoria (`action: delete`,
+`entity: matrix_space`).
+
+## Limites conhecidos da API
+
+- **Recarga do cluster sem auditoria (baixa):** é configuração da instância em memória; fica o log e
+  a resposta com `fingerprint_antes`/`fingerprint_depois`, não uma linha no `audit_log`.
+- **Segredo do cluster só na subida (baixa):** trocar `POPH_CLUSTER_SECRET` com o processo no ar não
+  muda o segredo em uso; reinicie.
+- **Auditoria fora da transação (média):** quase todas as escritas gravam a mudança e depois a linha
+  de auditoria, em duas transações; falha de banco exatamente entre as duas deixa a mudança sem
+  registro. Fora da transação: criar/alterar/excluir org, token, categoria, departamento, agente,
+  instruções, grupo, item, vínculo, produto, integração e envio de arquivo. Dentro da mesma
+  transação: exclusão de arquivo (`excluir_auditado`) e reabertura de conversa (`reabrir_auditado`). O
+  registro é sempre "quem fez o quê", nunca o valor de token ou segredo.
+- **Criação de agente com departamento de transferência e alteração conjunta de campos e categorias
+  (média):** usam mais de uma escrita; falha no meio deixa a operação parcial, igual à CLI.
+- **Sincronização do índice em produto e vínculo (baixa):** a resposta traz `index_warning` quando a
+  sincronização falha; o dado fica salvo e o índice pode ficar atrasado até um `reindex`.
+- **Cache do índice por processo (média, HR-50):** com mais de uma instância servindo a mesma org, a
+  reindexação de uma não invalida o cache da outra.
+- **Tipos de resposta genéricos (baixa):** parte das respostas (base de conhecimento, produtos,
+  integrações) aparece como JSON genérico no OpenAPI; o contrato real está nos testes.
+- **Manifesto depende de plugin declarado (média):** sem `[plugins].integracoes`, nenhum `kind` tem
+  manifesto e a configuração de integração continua recusada; o programa do plugin é caminho local
+  do servidor e mudá-lo exige reiniciar o processo.
+- **Manifesto resolvido subindo o plugin (média, ao estrear):** a primeira leitura do manifesto (e a
+  primeira configuração de integração daquele `kind`) custa a subida do plugin, com o prazo do
+  handshake; falha fica em cache por 30 s.
+- **Validação de esquema é subconjunto (média):** a API valida `type`, `required`, `enum`,
+  `minLength`/`maxLength`, `minimum`/`maximum` e `properties` aninhados; palavras-chave fora disso
+  (`pattern`, `oneOf`, `allOf`…) são ignoradas e **campo fora do esquema é recusado** (salvo com
+  `additionalProperties: true`), ao contrário do padrão do JSON Schema.
+- **Troca de `POPH_CHAVE_CIFRA` inutiliza segredos (alta, ao operar):** não há re-cifragem; os
+  segredos precisam ser regravados.
+- **Integração identificada por `kind` (média):** o esquema não tem coluna de nome nem de manifesto,
+  então duas integrações do mesmo tipo na mesma org não têm identificação legível.
+

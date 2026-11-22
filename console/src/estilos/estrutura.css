@@ -1,0 +1,93 @@
+/* Estrutura (departamentos e categorias) no layout D1 (RL-08).
+ *
+ * Duas seções planas, uma embaixo da outra: título em caixa alta + linha fina (`.poph-secao`,
+ * de `relayout.css`), e dentro de cada uma uma lista de linhas separadas por linha de 1 px.
+ * Nada de cartão. Os nomes são próprios (`poph-estrutura__*`): as classes `poph-linha-estrutura`
+ * e `poph-lista-estrutura` do `main.css` são usadas por outras telas e não são tocadas aqui.
+ */
+
+.poph-estrutura__eyebrow {
+    margin: 0 0 4px;
+    color: var(--pop-text-muted);
+    font-size: var(--pop-font-size-body-sm, 12px);
+}
+
+.poph-estrutura__secao {
+    padding-bottom: var(--pop-spacing-2xl, 22px);
+}
+
+.poph-estrutura__cabecalho {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--pop-spacing-lg, 12px);
+}
+
+.poph-estrutura__titulo-bloco {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.poph-estrutura__ajuda {
+    margin: 0;
+    max-width: 520px;
+    color: var(--pop-text-muted);
+    font-size: var(--pop-font-size-body-sm, 12px);
+    line-height: 1.5;
+}
+
+.poph-estrutura__acoes-secao {
+    display: flex;
+    align-items: center;
+    gap: var(--pop-spacing-md, 8px);
+    flex-wrap: wrap;
+}
+
+.poph-estrutura__lista {
+    display: flex;
+    flex-direction: column;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    border-top: 1px solid var(--pop-line);
+}
+
+.poph-estrutura__linha {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--pop-spacing-lg, 12px);
+    min-height: 56px;
+    padding: var(--pop-spacing-md, 8px) 0;
+    border-bottom: 1px solid var(--pop-line);
+}
+
+.poph-estrutura__texto {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.poph-estrutura__nome {
+    color: var(--pop-text-primary);
+    font-size: 13px;
+    font-weight: var(--pop-font-weight-semibold, 600);
+}
+
+.poph-estrutura__descricao {
+    color: var(--pop-text-muted);
+    font-size: var(--pop-font-size-body-sm, 12px);
+    overflow-wrap: anywhere;
+}
+
+.poph-estrutura__acoes {
+    display: flex;
+    align-items: center;
+    flex: none;
+    gap: var(--pop-spacing-sm, 6px);
+}

@@ -1,0 +1,137 @@
+/* Inspetor lateral da organização (RL-06).
+ *
+ * A gaveta em si (380 px, borda, rolagem, cabeçalho, corpo e rodapé) já vem de `relayout.css`
+ * (`.poph-gaveta*`, `.poph-com-gaveta*`), assim como as propriedades chave/valor
+ * (`.poph-propriedades*`), as seções (`.poph-secao*`) e a faixa de terminal (`.poph-terminal*`).
+ * Aqui fica só o que é desta tela: a casca que encolhe a lista quando a gaveta abre e os detalhes
+ * do inspetor.
+ *
+ * Sem cor nova: tudo sai dos tokens `--pop-*` que o Console já usa.
+ */
+
+/* ── Casca da lista com a gaveta ──────────────────────────────────────────── */
+
+/* A lista ocupa a altura da área de conteúdo e rola por dentro: a gaveta fica parada à direita,
+   com a própria rolagem, sem cobrir a tabela (a linha com "Abrir" continua visível). */
+.poph-orgs {
+    display: flex;
+    align-items: stretch;
+    height: 100%;
+    min-height: 0;
+}
+
+.poph-orgs__painel {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    overflow-y: auto;
+}
+
+/* ── Detalhes do inspetor ─────────────────────────────────────────────────── */
+
+.poph-inspetor__identidade {
+    min-width: 0;
+}
+
+.poph-inspetor__acoes {
+    display: flex;
+    align-items: center;
+    gap: var(--pop-spacing-md, 8px);
+}
+
+.poph-inspetor__acoes .sofa-button {
+    width: 100%;
+    justify-content: center;
+}
+
+.poph-inspetor__recurso {
+    color: var(--pop-text-primary);
+}
+
+.poph-inspetor__recurso--erro {
+    color: var(--pop-danger);
+}
+
+.poph-inspetor__dica {
+    margin: 0;
+    color: var(--pop-text-muted);
+    font-size: var(--pop-font-size-body-sm, 12px);
+    line-height: 1.5;
+}
+
+.poph-inspetor__dica code {
+    color: var(--pop-text-secondary);
+    font-family: var(--pop-font-mono, "IBM Plex Mono", monospace);
+    font-size: 11px;
+}
+
+/* ── Comando CLI de teste (D-01 da revisão) ───────────────────────────────── */
+
+/* A faixa é de `relayout.css`; dentro da gaveta (380 px, 336 úteis) o comando precisa caber
+ * sem corte. O botão de copiar virou ícone compacto de 28 px, então o que resta é dar ao
+ * comando a largura toda e mono de 11 px: `poph chat --org <slug> <agente>` com um slug de
+ * até ~20 caracteres aparece inteiro. Slug maior rola na horizontal — nunca reticências. */
+.poph-inspetor .poph-terminal {
+    gap: var(--pop-spacing-sm, 8px);
+    padding: var(--pop-spacing-sm, 8px) var(--pop-spacing-md, 10px);
+}
+
+.poph-inspetor .poph-terminal__comando {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    text-overflow: clip;
+    font-size: 11px;
+    line-height: 1.6;
+    scrollbar-width: thin;
+}
+
+.poph-inspetor .poph-terminal .poph-terminal__copiar {
+    flex: none;
+    margin-left: auto;
+}
+
+/* Anúncio do "Copiado" (aria-live). Fica reservado para a gaveta não pular ao copiar. */
+.poph-inspetor__aviso {
+    display: none;
+    align-items: center;
+    gap: var(--pop-spacing-xs, 4px);
+    margin: 0;
+    min-height: 16px;
+    color: var(--pop-success);
+    font-size: var(--pop-font-size-body-sm, 12px);
+}
+
+.poph-inspetor__aviso--visivel {
+    display: flex;
+}
+
+.poph-inspetor__aviso svg {
+    width: 13px;
+    height: 13px;
+}
+
+/* Falha do clipboard: mesmo lugar do "Copiado", em vermelho de perigo. */
+.poph-inspetor__aviso--erro {
+    color: var(--pop-danger);
+}
+
+.poph-inspetor .poph-secao:first-child {
+    padding-top: 0;
+}
+
+/* Telas estreitas: a gaveta deixa de ser coluna e passa a ocupar a largura toda. */
+@media (max-width: 1100px) {
+    .poph-orgs.poph-com-gaveta {
+        flex-direction: column;
+    }
+
+    .poph-orgs .poph-gaveta {
+        width: 100%;
+        height: auto;
+        max-height: 60vh;
+        border-top: 1px solid var(--pop-line);
+        border-left: none;
+    }
+}

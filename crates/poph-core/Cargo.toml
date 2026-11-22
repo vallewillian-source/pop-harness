@@ -1,0 +1,30 @@
+[package]
+name = "poph-core"
+description = "Núcleo do POP Harness: armazenamento, RAG, LLM, Jev e motor do turno (esqueleto)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+poph-types = { path = "../poph-types" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+# HR-10b: cliente HTTP do provedor de LLM com TLS. A feature `rustls` é a mesma do `poph-rag`
+# (aws-lc-rs + verificador de raízes do sistema), então o provedor TLS é um só no binário e não há
+# OpenSSL (banido no deny.toml). Por compilar C, o `cargo check` aarch64 da estação não cobre mais
+# este crate (D-10/D-16): a verificação ARM de verdade é o build na máquina ARM64 de testes (HR-56).
+futures = "0.3"
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+tokio = { version = "1.54", features = ["macros", "rt", "net", "io-util", "sync", "time"] }
+
+[dev-dependencies]
+tracing-subscriber.workspace = true
+# Servidor TLS local dos testes de https (certificado de fixtura em tests/fixtures/tls).
+tokio-rustls = "0.26"
+
+[lints]
+workspace = true

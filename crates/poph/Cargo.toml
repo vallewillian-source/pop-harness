@@ -1,0 +1,46 @@
+[package]
+name = "poph"
+description = "POP Harness: binário único (CLI e servidor)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# Os crates do workspace poph-core e poph-server entram aqui quando o binário passar a usá-los
+# (HR-13 em diante). O lint unused_dependencies do Rust 1.100 quebra o clippy com -D warnings.
+argon2 = "0.5"
+# Aleatoriedade do sistema para gerar o valor dos tokens (HR-08): a feature getrandom liga o OsRng.
+rand_core = { version = "0.6", features = ["getrandom"] }
+clap.workspace = true
+poph-agent = { path = "../poph-agent" }
+poph-core = { path = "../poph-core" }
+poph-files = { path = "../poph-files" }
+poph-jev = { path = "../poph-jev" }
+poph-matrix = { path = "../poph-matrix" }
+poph-rag = { path = "../poph-rag" }
+poph-retention = { path = "../poph-retention" }
+poph-server = { path = "../poph-server" }
+poph-store = { path = "../poph-store" }
+poph-types = { path = "../poph-types" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+# `poph chat` (HR-13): runtime tokio para o turno e Ctrl-C para cancelar.
+tokio = { version = "1.54", features = ["rt-multi-thread", "signal", "macros", "net", "time"] }
+toml.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+# Banco de teste manipulado direto (`tests/serve.rs` simula esquema atrás das migrações).
+rusqlite.workspace = true
+# `tests/token_api.rs`: cliente HTTP para provar o token criado pela CLI autenticando na API.
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+# `tests/cli_matrix_modulo.rs`: Synapse falso no ar para a CLI do módulo Matrix (MX-23).
+axum = { version = "0.8", features = ["macros"] }

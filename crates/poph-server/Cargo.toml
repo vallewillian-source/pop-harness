@@ -1,0 +1,44 @@
+[package]
+name = "poph-server"
+description = "Servidor do POP Harness: API admin (axum), autenticação por token, OpenAPI e métricas."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+argon2 = "0.5"
+axum = { version = "0.8", features = ["macros", "multipart"] }
+poph-store = { path = "../poph-store" }
+poph-agent = { path = "../poph-agent" }
+poph-files = { path = "../poph-files" }
+poph-evolution = { path = "../poph-evolution" }
+poph-plugins = { path = "../poph-plugins" }
+# Rotas do Application Service do Matrix (MX-16): o receptor e a configuração do módulo.
+poph-matrix = { path = "../poph-matrix" }
+poph-rag = { path = "../poph-rag" }
+rand_core = { version = "0.6", features = ["getrandom"] }
+ring = "0.17"
+poph-types = { path = "../poph-types" }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream"] }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+futures = "0.3"
+tokio = { version = "1.54", features = ["rt-multi-thread", "net", "macros", "signal", "time", "sync"] }
+tracing.workspace = true
+utoipa = { version = "6", features = ["macros", "axum_extras"] }
+uuid.workspace = true
+
+[dev-dependencies]
+# Provedor de LLM falso para o teste do turno no servidor (HR-26h).
+poph-core = { path = "../poph-core" }
+rusqlite.workspace = true
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
+oas3 = "0.22"
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream"] }
+
+[lints]
+workspace = true

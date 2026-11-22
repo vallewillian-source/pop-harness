@@ -1,0 +1,113 @@
+/* Aba Integrações do agente no layout do re-layout (RL-12).
+ *
+ * A lista é a tabela contínua de `relayout.css` (linha de 56 px, marcador âmbar na selecionada),
+ * com as colunas definidas aqui; o painel do WhatsApp vira seção plana e o rodapé é texto.
+ * Sem cartão: a separação vem da linha de 1 px (`--pop-line`), e as cores são só tokens `--pop-*`.
+ */
+
+/* ── Cabeçalho de carregamento ────────────────────────────────────────────── */
+
+.poph-integracoes__esqueleto-linha {
+    margin-top: var(--pop-spacing-md, 8px);
+}
+
+/* ── Cabeçalho de seção ───────────────────────────────────────────────────── */
+
+.poph-integracoes__cabecalho-secao {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--pop-spacing-md, 10px);
+}
+
+.poph-integracoes__titulo-bloco {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+    max-width: 680px;
+}
+
+.poph-integracoes__ajuda {
+    margin: 0;
+    color: var(--pop-text-muted);
+    font-size: var(--pop-font-size-body-sm, 12px);
+    line-height: 1.5;
+}
+
+.poph-integracoes__acoes-secao {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--pop-spacing-md, 8px);
+}
+
+/* ── Tabela contínua ──────────────────────────────────────────────────────── */
+
+.poph-integracoes__tabela .poph-tabela__cabecalho,
+.poph-integracoes__tabela .poph-tabela__linha {
+    grid-template-columns:
+        minmax(170px, 1.7fr)
+        110px
+        160px
+        150px
+        150px
+        64px
+        48px;
+    min-width: 860px;
+}
+
+.poph-integracoes__identidade {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.poph-integracoes__tipo {
+    color: var(--pop-text-primary);
+    font-size: 13px;
+    font-weight: var(--pop-font-weight-medium, 600);
+    overflow-wrap: anywhere;
+}
+
+/* O ponto âmbar é o "atenção" (inativa / aguardando leitura), sem token de atenção no Console. */
+.poph-integracoes .poph-status--atencao .poph-status__ponto {
+    background: var(--pop-accent);
+}
+
+.poph-integracoes .poph-status--atencao {
+    color: var(--pop-text-primary);
+}
+
+.poph-integracoes__acoes {
+    justify-content: flex-end;
+}
+
+/* ── Painéis do WhatsApp ──────────────────────────────────────────────────── */
+
+.poph-integracoes__paineis {
+    display: flex;
+    flex-direction: column;
+    gap: var(--pop-spacing-2xl, 22px);
+}
+
+/* ── Rodapé de segredos ───────────────────────────────────────────────────── */
+
+.poph-integracoes__segredos {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--pop-spacing-sm, 8px);
+    color: var(--pop-text-muted);
+    font-size: var(--pop-font-size-body-sm, 12px);
+    line-height: 1.5;
+}
+
+/* ── Tela estreita: a tabela rola na horizontal em vez de espremer as colunas ─ */
+
+@media (max-width: 900px) {
+    .poph-integracoes__tabela {
+        overflow-x: auto;
+    }
+}

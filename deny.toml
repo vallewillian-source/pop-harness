@@ -1,0 +1,56 @@
+# cargo-deny: política de dependências do POP Harness (PRD §5.3 e §5.3 "Regras").
+# Rodar pelo CI local: scripts/ci.sh (ou `cargo deny check` nesta pasta).
+
+[graph]
+targets = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]
+all-features = false
+
+[advisories]
+version = 2
+yanked = "deny"
+
+[licenses]
+version = 2
+confidence-threshold = 0.93
+# A lista cobre as licenças das dependências previstas no PRD §5.3 (ainda não todas presentes); não avisar as que faltam.
+unused-allowed-license = "allow"
+# Licenças permissivas aceitas. Qualquer outra (GPL, AGPL, sem licença) reprova o CI.
+# Adicionar uma licença aqui exige justificativa no PR.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "MIT",
+    "Unicode-3.0",
+    "Zlib",
+]
+
+# Exceção de escopo estreito: webpki-roots (certificados raiz, dados sob CDLA-Permissive-2.0) entra
+# só pelo download do ONNX Runtime no build do poph-rag (ort-sys -> ureq). Não vai para o binário
+# (`cargo tree -p poph -e normal`). Justificativa registrada na HR-15.
+[[licenses.exceptions]]
+name = "webpki-roots"
+allow = ["CDLA-Permissive-2.0"]
+
+[licenses.private]
+# Os crates do próprio workspace não são publicados (publish = false) e não declaram licença SPDX.
+ignore = true
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+highlight = "all"
+deny = [
+    # PRD §5.3: HTTP com rustls, sem OpenSSL (build ARM64 mais simples).
+    { crate = "openssl", reason = "usar rustls (PRD §5.3)" },
+    { crate = "openssl-sys", reason = "usar rustls (PRD §5.3)" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

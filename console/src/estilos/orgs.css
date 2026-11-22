@@ -1,0 +1,173 @@
+/* Lista de organizações no layout D1 (RL-05).
+ *
+ * Só o que a tela precisa por cima da `SofaTable` e dos blocos de `relayout.css`: altura de linha
+ * do desenho (56 px), marcador âmbar da linha selecionada, ações da linha e os estados de
+ * carregamento. Nada de cartão: a separação vem da linha de 1 px (`--pop-line`).
+ *
+ * A `SofaTable` não é editada: as regras daqui entram pelo `className` que ela aceita, com
+ * especificidade suficiente para vencer o CSS da biblioteca (`.poph-orgs__tabela .sofa-…`).
+ */
+
+/* ── Barra de abas + filtro ───────────────────────────────────────────────── */
+
+.poph-orgs__filtros {
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--pop-spacing-lg, 12px);
+}
+
+.poph-orgs__abas {
+    display: flex;
+    align-items: center;
+    gap: var(--pop-spacing-2xl, 22px);
+    min-width: 0;
+    overflow-x: auto;
+}
+
+/* A aba é um botão de filtro: `aria-pressed` diz o estado, o traço âmbar mostra. */
+.poph-orgs__abas .poph-aba:focus-visible {
+    outline: 2px solid var(--pop-accent);
+    outline-offset: 2px;
+    border-radius: var(--pop-radius-sm, 4px);
+}
+
+.poph-orgs__busca {
+    flex: none;
+    width: 244px;
+    max-width: 100%;
+}
+
+/* ── Tabela contínua (linha de 56 px, como em D1) ─────────────────────────── */
+
+/* Sem a caixa com borda e fundo da SofaTable (D-04): superfície contínua, igual a Produtos.
+ * O `className` da `SofaTable` cai no próprio elemento raiz (`.sofa-table`), não num wrapper,
+ * então o seletor é composto — `.poph-orgs__tabela .sofa-table` seria descendente e não pegaria. */
+.sofa-table.poph-orgs__tabela {
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    overflow: visible;
+}
+
+.poph-orgs__tabela .sofa-table__table {
+    border-top: 1px solid var(--pop-line);
+}
+
+.poph-orgs__tabela .sofa-table__th {
+    height: 36px;
+}
+
+.poph-orgs__tabela .sofa-table__td {
+    height: 56px;
+}
+
+.poph-orgs__tabela .sofa-table__row--selected {
+    background: var(--pop-ink-active);
+}
+
+/* Marcador âmbar da linha selecionada, na borda esquerda da primeira célula. */
+.poph-orgs__tabela .sofa-table__row--selected .sofa-table__td:first-child {
+    position: relative;
+}
+
+.poph-orgs__tabela .sofa-table__row--selected .sofa-table__td:first-child::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 2px;
+    background: var(--pop-accent);
+}
+
+/* ── Células ──────────────────────────────────────────────────────────────── */
+
+.poph-orgs__identidade {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+/* O nome é o alvo principal da linha: link sem cara de link, foco visível. */
+.poph-orgs__nome {
+    color: var(--pop-text-primary);
+    font-size: 13px;
+    font-weight: var(--pop-font-weight-medium, 600);
+    text-decoration: none;
+    overflow-wrap: anywhere;
+}
+
+.poph-orgs__nome:hover {
+    text-decoration: underline;
+}
+
+.poph-orgs__nome--atenuado {
+    color: var(--pop-text-muted);
+    font-weight: var(--pop-font-weight-regular, 400);
+}
+
+.poph-orgs__nome:focus-visible {
+    outline: 2px solid var(--pop-accent);
+    outline-offset: 2px;
+    border-radius: var(--pop-radius-sm, 4px);
+}
+
+.poph-orgs__celula--atenuada {
+    color: var(--pop-text-muted);
+}
+
+/* ── Ações da linha ───────────────────────────────────────────────────────── */
+
+.poph-orgs__acoes {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--pop-spacing-sm, 6px);
+}
+
+/* ── Estados ──────────────────────────────────────────────────────────────── */
+
+/* Esqueleto de 5 linhas enquanto a primeira consulta não responde (PRD §5.3). */
+.poph-orgs__esqueleto {
+    display: flex;
+    flex-direction: column;
+    border-top: 1px solid var(--pop-line);
+}
+
+.poph-orgs__esqueleto-linha {
+    height: 56px;
+    border-bottom: 1px solid var(--pop-line);
+    background: linear-gradient(
+        90deg,
+        var(--pop-ink-hover) 0%,
+        var(--pop-ink-active) 50%,
+        var(--pop-ink-hover) 100%
+    );
+    background-size: 200% 100%;
+    animation: poph-orgs-pulsar 1.4s ease-in-out infinite;
+}
+
+@keyframes poph-orgs-pulsar {
+    from {
+        background-position: 100% 0;
+    }
+
+    to {
+        background-position: -100% 0;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .poph-orgs__esqueleto-linha {
+        animation: none;
+    }
+}
+
+/* Dica de teclado do rodapé, discreta como no desenho. */
+.poph-orgs__dica {
+    color: var(--pop-text-muted);
+    font-family: var(--pop-font-mono, "IBM Plex Mono", monospace);
+    font-size: 11px;
+}

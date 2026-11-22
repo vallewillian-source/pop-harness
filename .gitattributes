@@ -1,0 +1,8 @@
+* text=auto eol=lf
+*.png binary
+*.onnx binary
+*.xls binary
+*.xlsx binary
+*.pdf binary
+Cargo.lock linguist-generated=false
+console/src/api/schema.d.ts linguist-generated=true

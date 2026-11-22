@@ -1,0 +1,40 @@
+{
+    "name": "@vallewillian-source/pop-harness-console",
+    "version": "0.1.0",
+    "private": true,
+    "type": "module",
+    "description": "Console administrativo do POP Harness (HR-38): SPA React embutida no binário poph.",
+    "scripts": {
+        "dev": "vite",
+        "build": "tsc --noEmit -p tsconfig.json && vite build",
+        "tipos": "bash scripts/verificar-api.sh",
+        "api": "bash gen-api.sh",
+        "preview": "vite preview",
+        "testar": "vitest run",
+        "testar:assistir": "vitest"
+    },
+    "dependencies": {
+        "@sofacoding/sofa-ui": "file:../../frontend/packages/sofa-ui",
+        "@tanstack/react-table": "^8.21.3",
+        "react": "^19.2.4",
+        "react-dom": "^19.2.4",
+        "react-router-dom": "^7.9.6"
+    },
+    "devDependencies": {
+        "@testing-library/dom": "^10.4.2",
+        "@testing-library/jest-dom": "^6.9.1",
+        "@testing-library/react": "^16.3.3",
+        "@testing-library/user-event": "^14.6.13",
+        "@types/react": "^19.2.7",
+        "@types/react-dom": "^19.2.3",
+        "@vitejs/plugin-react": "^5.1.2",
+        "jsdom": "^26.1.0",
+        "openapi-typescript": "^7.10.1",
+        "typescript": "^5.9.3",
+        "vite": "^7.3.1",
+        "vitest": "^3.2.7"
+    },
+    "engines": {
+        "node": ">=22.18.0"
+    }
+}

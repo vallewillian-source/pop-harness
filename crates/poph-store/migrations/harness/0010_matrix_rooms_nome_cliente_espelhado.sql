@@ -1,0 +1,12 @@
+-- MX-33 (HARNESS_MATRIX_PRD P10 a P13): último nome do cliente que já foi enviado ao Matrix para
+-- esta sala (o nome da sala, o `client_name` do metadata e o nome de exibição do fantasma).
+--
+-- Nulável e sem padrão. `NULL` quer dizer "a sala ainda não recebeu um nome": é o estado da sala
+-- criada antes desta migração (que nasceu com o telefone) e o da sala cujo cliente ainda não tem
+-- `pushName` (`conversations.client_name`, MX-32). Quando o nome chega, o laço de estado (MX-15)
+-- renomeia a sala, reescreve o metadata, atualiza o fantasma e só então grava aqui — repetir a
+-- passagem depois disso não fala com o Synapse.
+--
+-- A coluna fica em `matrix_rooms`, que **não** viaja no backup de org (ver `BACKUP.md`): o nome em
+-- si é dado do cliente e viaja com `conversations`, não com o módulo.
+ALTER TABLE matrix_rooms ADD COLUMN client_name_espelhado TEXT;

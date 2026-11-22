@@ -1,0 +1,36 @@
+[package]
+name = "poph-files"
+description = "Arquivos do POP Harness (HR-23): recebimento com limite de tamanho, tipo real pelo conteúdo, blob por hash, imagens como partes do LLM e texto de PDF/Office extraído em processo isolado com limite de tempo e memória."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Programa auxiliar que roda a leitura de um arquivo num processo separado (D-09, HR-23).
+[[bin]]
+name = "poph-extrator"
+path = "src/bin/poph-extrator.rs"
+
+[dependencies]
+poph-types = { path = "../poph-types" }
+# Tipo real pelo conteúdo (assinatura do arquivo), não pela extensão.
+infer = "0.22"
+# Leitores escolhidos no spike HR-02 (RELATORIO_HR02.md §1 e §5). Não trocar sem consultar o mantenedor.
+pdf-extract = "0.12"
+calamine = "0.38"
+# Só deflate (Rust puro). Sem os padrões, para não puxar bzip2/zstd em C (quebra o build ARM).
+zip = { version = "9.7", default-features = false, features = ["deflate"] }
+quick-xml = "0.42"
+sha2 = "0.11"
+# Teto de memória do processo leitor (RLIMIT_AS), sem código `unsafe` nosso.
+rlimit = "0.11"
+serde_json.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

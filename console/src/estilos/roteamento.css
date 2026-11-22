@@ -1,0 +1,46 @@
+/* Aba Roteamento do agente no re-layout (RL-10).
+ *
+ * Departamentos e motivos em seções planas (`SecaoDoAgente`). Os motivos são linhas de uma lista,
+ * não caixas: o campo ocupa a largura e o botão de remover fica alinhado à base do campo.
+ */
+
+.poph-roteamento__vazio {
+    margin: 0;
+}
+
+.poph-roteamento__motivos {
+    display: flex;
+    flex-direction: column;
+    gap: var(--pop-spacing-md, 10px);
+}
+
+.poph-roteamento__motivo {
+    display: flex;
+    align-items: flex-end;
+    gap: var(--pop-spacing-sm, 8px);
+}
+
+.poph-roteamento__motivo-campo {
+    flex: 1;
+    min-width: 0;
+}
+
+.poph-roteamento__erro {
+    margin: var(--pop-spacing-sm, 8px) 0 0;
+    color: var(--pop-danger, #ef4444);
+}
+
+.poph-roteamento__barra {
+    gap: var(--pop-spacing-sm, 8px);
+    justify-content: flex-end;
+}
+
+/* O ponto âmbar é o "alterações não salvas" (mesma regra de `modelo-jev.css`); não há token de
+   atenção no Console. */
+.poph-roteamento__barra .poph-status--atencao .poph-status__ponto {
+    background: var(--pop-accent);
+}
+
+.poph-roteamento__barra .poph-status--atencao {
+    color: var(--pop-text-primary);
+}

@@ -1,0 +1,5 @@
+# Quem é pedido como revisor automaticamente. Troque para um time quando existir.
+*                      @vallewillian-source
+/crates/poph-store/migrations/   @vallewillian-source
+/docs/DECISOES.md      @vallewillian-source
+/SECURITY.md           @vallewillian-source

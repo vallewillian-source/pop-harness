@@ -1,0 +1,55 @@
+/* Catálogo de produtos no layout D1 (RL-08).
+ *
+ * A tela é uma página com cabeçalho (`.poph-pagina__topo`, de `relayout.css`) e uma seção
+ * "Catálogo" com linha fina, filtros na mesma linha do título e tabela contínua embaixo.
+ * A `SofaTable` não é editada: a caixa com borda e fundo que ela traz é desligada pelo wrapper
+ * `.poph-produtos__tabela`, e a altura de linha de 56 px (D1) entra pelo `className`.
+ */
+
+.poph-produtos__eyebrow {
+    margin: 0 0 4px;
+    color: var(--pop-text-muted);
+    font-size: var(--pop-font-size-body-sm, 12px);
+}
+
+.poph-produtos__secao {
+    padding-bottom: var(--pop-spacing-2xl, 22px);
+}
+
+.poph-produtos__cabecalho {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--pop-spacing-lg, 12px);
+}
+
+.poph-produtos__filtros {
+    display: flex;
+    align-items: flex-end;
+    flex-wrap: wrap;
+    gap: var(--pop-spacing-md, 10px);
+    min-width: 0;
+}
+
+/* Tabela contínua: sem a caixa com borda e fundo da SofaTable, linha de 56 px. */
+.poph-produtos__tabela .sofa-table {
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    overflow: visible;
+}
+
+.poph-produtos__tabela .sofa-table__th {
+    height: 36px;
+}
+
+.poph-produtos__tabela .sofa-table__td {
+    height: 56px;
+    color: var(--pop-text-secondary);
+    font-size: 13px;
+}
+
+.poph-produtos__tabela .sofa-table__table {
+    border-top: 1px solid var(--pop-line);
+}

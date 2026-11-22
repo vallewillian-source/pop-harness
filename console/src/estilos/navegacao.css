@@ -1,0 +1,61 @@
+/* Menu lateral do Console (RL-03, PRD do re-layout §5.2).
+ *
+ * Classes próprias do menu, com prefixo `poph-rail__`. A estrutura do rail (fundo, largura,
+ * títulos de seção, item) vem da SofaUI; aqui só o que o desenho acrescenta:
+ * - marcador âmbar à esquerda do item ativo (barra fina, sem fundo colorido);
+ * - contador ao lado do rótulo (só Organizações);
+ * - rodapé com a versão da instância e o botão "? atalhos".
+ *
+ * Cores e espaçamentos vêm dos tokens `--pop-*` que o Console já usa.
+ */
+
+/* Item do rail: posição de referência para o marcador. */
+.poph-rail__item {
+    position: relative;
+}
+
+/* Marcador âmbar do item ativo: barra de 2 px dentro da própria linha. */
+.poph-rail__item[aria-current]::before {
+    content: "";
+    position: absolute;
+    top: 10px;
+    bottom: 10px;
+    left: 0;
+    width: 2px;
+    border-radius: 2px;
+    background: var(--pop-accent);
+}
+
+/* Contador à direita do rótulo (número real da sessão, sem fundo). */
+.poph-rail__contador {
+    font-family: var(--pop-font-mono);
+    font-size: var(--pop-font-size-body-sm);
+    font-variant-numeric: tabular-nums;
+    color: var(--pop-text-muted);
+}
+
+/* Wrapper de item sem contexto (ex.: Estrutura sem organização na URL). Só existe para o `title`
+ * com o motivo; ocupa a largura da linha, como o item. */
+.poph-rail__bloqueado {
+    display: block;
+    min-width: 0;
+}
+
+/* Rodapé em duas linhas: a versão inteira em cima, "? atalhos" embaixo. */
+.poph-rail__base {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--pop-spacing-xs);
+    min-width: 0;
+}
+
+/* A versão quebra a linha se precisar, mas nunca é cortada com reticências. */
+.poph-rail__versao {
+    min-width: 0;
+    max-width: 100%;
+    font-family: var(--pop-font-mono);
+    font-size: var(--pop-font-size-body-sm);
+    color: var(--pop-text-muted);
+    overflow-wrap: anywhere;
+}

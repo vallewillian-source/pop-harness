@@ -1,0 +1,449 @@
+/* Tokens e fundação do Console. A SofaUI não estiliza o elemento raiz do hospedeiro (HR-05);
+   a instrução canônica da UX_SPEC §1.2 mora aqui. */
+
+html,
+body,
+#root {
+    height: 100%;
+}
+
+html,
+body {
+    margin: 0;
+    padding: 0;
+    background-color: var(--pop-bg, #151719);
+    color: var(--pop-text-primary, #eef1f4);
+    font-family: var(--pop-font-sans, "IBM Plex Sans", -apple-system, BlinkMacSystemFont, sans-serif);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+    font-size: var(--pop-font-size-body-md, 14px);
+}
+
+code,
+pre,
+.font-mono {
+    font-family: var(--pop-font-mono, "IBM Plex Mono", monospace);
+}
+
+/* Foco visível em tudo que recebe teclado (UX_SPEC §5). A biblioteca já cobre os próprios
+   controles; esta regra alcança links e elementos do app. */
+a:focus-visible,
+[tabindex]:focus-visible {
+    outline: 2px solid var(--pop-accent, #f5a623);
+    outline-offset: 2px;
+    border-radius: var(--pop-radius-sm, 4px);
+}
+
+/* ── Barra superior ───────────────────────────────────────────────────────── */
+
+.poph-topbar {
+    display: flex;
+    flex: none;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--pop-spacing-xl, 16px);
+    height: 48px;
+    padding: 0 var(--pop-spacing-xl, 16px);
+    border-bottom: 1px solid var(--pop-line);
+    background: var(--pop-surface-raised, #1c1f22);
+}
+
+.poph-topbar__trilha {
+    display: flex;
+    align-items: center;
+    gap: var(--pop-spacing-sm, 6px);
+    min-width: 0;
+    color: var(--pop-text-muted);
+    font-size: var(--pop-font-size-body-sm, 12px);
+}
+
+/* Trilha (HR-49b): cada migalha fica numa linha só e corta com reticências; a trilha encolhe antes da busca. */
+.poph-topbar__trilha {
+    overflow: hidden;
+}
+
+.poph-topbar__trilha a {
+    display: inline-block;
+    min-height: 24px;
+    /* Padding para o alvo de clique chegar a 24 px; a margem negativa devolve a posição do texto. */
+    padding: 4px 6px;
+    margin: -4px -6px;
+    border-radius: var(--pop-radius-sm, 4px);
+    color: inherit;
+    line-height: 16px;
+    text-decoration: none;
+    max-width: 14rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: middle;
+}
+
+.poph-topbar__migalha {
+    display: inline-block;
+    max-width: 14rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.poph-topbar__trilha [aria-hidden="true"] {
+    flex: none;
+}
+
+/* Até 1320 px a trilha inteira não cabe sem cortar os nomes: mostra só o agente e a aba (as duas últimas
+   migalhas), e o nome fica legível. Acima disso, a trilha inteira. O `!important` vence o estilo inline
+   que deixa cada migalha como `display: contents`. */
+@media (max-width: 1320px) {
+    .poph-topbar__trilha > span:not(:nth-last-child(-n + 2)) {
+        display: none !important;
+    }
+
+    .poph-topbar__trilha > span:nth-last-child(2) > [aria-hidden="true"]:first-child {
+        display: none !important;
+    }
+}
+
+.poph-topbar__trilha a:hover {
+    color: var(--pop-text-primary);
+    text-decoration: underline;
+}
+
+.poph-topbar__atual {
+    max-width: 14rem;
+    overflow: hidden;
+    color: var(--pop-text-secondary);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.poph-topbar__acoes {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: var(--pop-spacing-md, 10px);
+}
+
+.poph-topbar__selo {
+    padding: 2px 8px;
+    border: 1px solid var(--pop-line-strong);
+    border-radius: 4px;
+    color: var(--pop-text-muted);
+    font-family: var(--pop-font-mono, "IBM Plex Mono", monospace);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+/* ── Rail ─────────────────────────────────────────────────────────────────── */
+
+.poph-marca {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.poph-marca__nome {
+    color: var(--pop-text-primary);
+    font-size: 13px;
+    font-weight: var(--pop-font-weight-bold, 700);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+}
+
+.poph-marca__meta {
+    color: var(--pop-text-muted);
+    font-family: var(--pop-font-mono, "IBM Plex Mono", monospace);
+    font-size: 10px;
+    letter-spacing: 0.05em;
+}
+
+.poph-rail__seletor {
+    display: flex;
+    flex-direction: column;
+    gap: var(--pop-spacing-xs, 4px);
+    padding: var(--pop-spacing-md, 10px) var(--pop-spacing-md, 10px) 0;
+}
+
+.poph-rail__rotulo {
+    color: var(--pop-text-muted);
+    font-size: var(--pop-font-size-label-caps, 10px);
+    font-weight: var(--pop-font-weight-bold, 700);
+    letter-spacing: var(--pop-letter-spacing-label-caps, 0.08em);
+    text-transform: uppercase;
+}
+
+.poph-rail__rodape {
+    display: flex;
+    flex-direction: column;
+    gap: var(--pop-spacing-sm, 6px);
+    color: var(--pop-text-muted);
+    font-size: var(--pop-font-size-body-sm, 12px);
+}
+
+.poph-rail__rodape-linha {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--pop-spacing-sm, 6px);
+}
+
+.poph-rail__rodape-linha code {
+    color: var(--pop-text-secondary);
+    font-size: 11px;
+}
+
+/* ── Login ────────────────────────────────────────────────────────────────── */
+
+.poph-login {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100%;
+    padding: var(--pop-spacing-3xl, 24px);
+    background: var(--pop-bg);
+}
+
+.poph-login__cartao {
+    width: min(460px, 100%);
+}
+
+.poph-login__form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--pop-spacing-lg, 14px);
+}
+
+.poph-login__aviso {
+    margin: 0;
+    color: var(--pop-text-muted);
+    font-size: var(--pop-font-size-body-sm, 12px);
+    line-height: 1.5;
+}
+
+/* ── Conteúdo ─────────────────────────────────────────────────────────────── */
+
+.poph-grade {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: var(--pop-spacing-lg, 14px);
+}
+
+.poph-fato {
+    display: flex;
+    flex-direction: column;
+    gap: var(--pop-spacing-xs, 4px);
+}
+
+.poph-fato__rotulo {
+    color: var(--pop-text-muted);
+    font-size: var(--pop-font-size-label-caps, 10px);
+    font-weight: var(--pop-font-weight-bold, 700);
+    letter-spacing: var(--pop-letter-spacing-label-caps, 0.08em);
+    text-transform: uppercase;
+}
+
+.poph-fato__valor {
+    color: var(--pop-text-primary);
+    overflow-wrap: anywhere;
+}
+
+.poph-fato__valor--mono {
+    font-family: var(--pop-font-mono, "IBM Plex Mono", monospace);
+    font-size: 12px;
+}
+
+.poph-pilha {
+    display: flex;
+    flex-direction: column;
+    gap: var(--pop-spacing-lg, 14px);
+}
+
+.poph-linha-titulo {
+    display: flex;
+    align-items: baseline;
+    gap: var(--pop-spacing-md, 10px);
+}
+
+.poph-mono-mudo {
+    color: var(--pop-text-muted);
+    font-family: var(--pop-font-mono, "IBM Plex Mono", monospace);
+    font-size: 11px;
+}
+
+.poph-atalho {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--pop-spacing-lg, 14px);
+    padding: 6px 0;
+    border-bottom: 1px solid var(--pop-line);
+}
+
+.poph-atalho:last-child {
+    border-bottom: none;
+}
+
+.poph-atalho kbd {
+    padding: 1px 6px;
+    border: 1px solid var(--pop-line-strong);
+    border-radius: 4px;
+    background: var(--pop-surface-glass, #212529);
+    font-family: var(--pop-font-mono, "IBM Plex Mono", monospace);
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+/* ── Estrutura: departamentos e categorias (HR-39b) ───────────────────────── */
+
+.poph-duas-colunas {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+    gap: var(--pop-spacing-lg, 14px);
+    align-items: start;
+}
+
+.poph-lista-estrutura {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--pop-spacing-sm, 8px);
+}
+
+.poph-linha-estrutura {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--pop-spacing-md, 10px);
+    padding: var(--pop-spacing-md, 10px) var(--pop-spacing-lg, 14px);
+    border: 1px solid var(--pop-border-subtle, #243142);
+    border-radius: var(--pop-radius-md, 8px);
+    background: var(--pop-bg-raised, #18222f);
+}
+
+.poph-linha-estrutura__texto {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.poph-linha-estrutura__nome {
+    color: var(--pop-text-primary);
+    font-weight: var(--pop-font-weight-bold, 700);
+    overflow-wrap: anywhere;
+}
+
+.poph-linha-estrutura__descricao {
+    color: var(--pop-text-secondary);
+    font-size: 13px;
+    overflow-wrap: anywhere;
+}
+
+.poph-linha-estrutura__acoes {
+    display: flex;
+    align-items: center;
+    gap: var(--pop-spacing-sm, 8px);
+    flex-wrap: wrap;
+}
+
+/* ── Agente · aba Instruções (HR-40) ──────────────────────────────────────── */
+
+.poph-instrucoes {
+    display: grid;
+    grid-template-columns: minmax(0, 55fr) minmax(0, 45fr);
+    gap: var(--pop-spacing-lg, 14px);
+    align-items: start;
+}
+
+@media (max-width: 1080px) {
+    .poph-instrucoes {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+.poph-instrucoes__previa {
+    position: sticky;
+    top: var(--pop-spacing-lg, 14px);
+}
+
+@media (max-width: 1080px) {
+    .poph-instrucoes__previa {
+        position: static;
+    }
+}
+
+.poph-previa {
+    max-height: 62vh;
+    margin: 0;
+    padding: var(--pop-spacing-lg, 14px);
+    overflow: auto;
+    border: 1px solid var(--pop-border-subtle, #243142);
+    border-radius: var(--pop-radius-md, 8px);
+    background: var(--pop-bg-raised, #18222f);
+    color: var(--pop-text-secondary);
+    font-family: var(--pop-font-mono, "IBM Plex Mono", monospace);
+    font-size: 12px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.poph-lista-principios {
+    display: flex;
+    flex-direction: column;
+    gap: var(--pop-spacing-md, 10px);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.poph-principio {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(180px, 220px) auto;
+    gap: var(--pop-spacing-md, 10px);
+    align-items: end;
+    padding: var(--pop-spacing-md, 10px);
+    border: 1px solid var(--pop-border-subtle, #243142);
+    border-radius: var(--pop-radius-md, 8px);
+}
+
+@media (max-width: 720px) {
+    .poph-principio {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+.poph-lista-ferramentas {
+    display: flex;
+    flex-direction: column;
+    gap: var(--pop-spacing-md, 10px);
+}
+
+.poph-ferramenta {
+    display: flex;
+    flex-direction: column;
+    gap: var(--pop-spacing-sm, 6px);
+    padding: var(--pop-spacing-md, 10px) 0;
+    border-bottom: 1px solid var(--pop-line, #243142);
+}
+
+.poph-ferramenta:last-child {
+    border-bottom: none;
+}
+
+.poph-erro-de-secao {
+    margin: 0;
+    color: var(--pop-danger-text, #ff8f8f);
+    font-size: 13px;
+}
+
+.poph-sujo {
+    color: var(--pop-accent, #f5a623);
+}

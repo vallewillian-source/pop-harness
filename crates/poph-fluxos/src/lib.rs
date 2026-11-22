@@ -1,0 +1,37 @@
+//! Módulo de Fluxos e Fichas do POP Harness (FX-04: esqueleto do crate).
+//!
+//! Este crate é **puro**: não faz I/O, não fala com banco nem com rede. Ele compila o script de
+//! um fluxo (Starlark, decidido na FX-01) para a estrutura compilada (IR `schema_versao = 1`,
+//! `docs/FLUXOS_LINGUAGEM.md` §8), valida a estrutura, avalia as regras e conduz a execução.
+//! Quem guarda os dados é o `poph-store` (tabelas `fichas`, `fluxos`, `fluxo_execucoes` etc.),
+//! quem liga o motor no turno é o `poph-agent` e quem expõe a API é o `poph-server`.
+//!
+//! Dependências permitidas: só `poph-types` e a biblioteca de script. Este crate **não** importa
+//! `poph-store`, `poph-agent`, `poph-server` nem outro crate do workspace.
+//!
+//! Módulos, e a tarefa que implementa cada um (ainda sem lógica):
+//!
+//! - [`compilador`] — FX-10: script → IR.
+//! - [`validador`] — FX-11: diagnósticos semânticos do fluxo.
+//! - [`regras`] — FX-12: combinadores e funções avançadas (`def`).
+//! - [`motor`] — FX-13 e FX-14: iniciar, registrar campos, executar ação, avançar, fim e efeitos.
+//! - [`prompt`] — FX-18: bloco do prompt e visualização da etapa.
+//! - [`diff`] — FX-17: diferença entre revisões em linguagem comum.
+//! - [`formatador`] — FX-16: forma canônica do script (script ⇄ estrutura).
+//!
+//! Por enquanto os módulos existem para fixar o desenho e a fronteira; nenhum tem função pública.
+
+// As dependências já estão declaradas para as tarefas seguintes. Este `use ... as _` só marca
+// como usadas (o lint `unused_dependencies` do Rust 1.100 quebra o clippy com `-D warnings`).
+// Remova cada linha quando o primeiro uso real entrar no módulo correspondente.
+use blake3 as _;
+use poph_types as _;
+use starlark as _;
+
+pub mod compilador;
+pub mod diff;
+pub mod formatador;
+pub mod motor;
+pub mod prompt;
+pub mod regras;
+pub mod validador;

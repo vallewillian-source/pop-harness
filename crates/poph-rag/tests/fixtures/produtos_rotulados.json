@@ -1,0 +1,110 @@
+{
+  "produtos": [
+    {
+      "id": "baratas",
+      "nome": "Dedetização de baratas",
+      "aliases": ["baratas", "barata", "desbaratização"],
+      "descricao": "Tratamento com gel e pulverização para eliminar baratas em apartamentos e casas, com garantia.",
+      "tags": ["controle de pragas", "inseto", "cozinha"]
+    },
+    {
+      "id": "cupins",
+      "nome": "Dedetização de cupins",
+      "aliases": ["cupins", "cupim", "descupinização"],
+      "descricao": "Aplicação de inseticida e barreira química contra cupins em móveis, forros e estrutura de madeira.",
+      "tags": ["cupim", "madeira", "móveis"]
+    },
+    {
+      "id": "ratos",
+      "nome": "Desratização",
+      "aliases": ["ratos", "rato", "ratazanas", "camundongos"],
+      "descricao": "Controle de roedores com iscas seguras em áreas internas e externas, sem risco para crianças e animais.",
+      "tags": ["roedor", "controle de pragas"]
+    },
+    {
+      "id": "mosquitos",
+      "nome": "Controle de mosquitos",
+      "aliases": ["mosquitos", "mosquito", "aedes"],
+      "descricao": "Nebulização contra mosquitos e eliminação de focos de dengue em quintais e áreas comuns.",
+      "tags": ["mosquito", "dengue", "nebulização"]
+    },
+    {
+      "id": "formigas",
+      "nome": "Dedetização de formigas",
+      "aliases": ["formigas", "formiga", "formigueiro"],
+      "descricao": "Tratamento para formigas em cozinha, jardim e forros, com isca e pulverização localizada.",
+      "tags": ["formiga", "jardim"]
+    },
+    {
+      "id": "escorpioes",
+      "nome": "Controle de escorpiões",
+      "aliases": ["escorpiões", "escorpião"],
+      "descricao": "Tratamento para escorpiões em terrenos e residências, com busca ativa de abrigos.",
+      "tags": ["escorpião", "peçonhento"]
+    },
+    {
+      "id": "pulgas",
+      "nome": "Dedetização de pulgas",
+      "aliases": ["pulgas", "pulga"],
+      "descricao": "Tratamento para pulgas em casas com animais de estimação, em pisos, tapetes e sofás.",
+      "tags": ["pulga", "animal de estimação"]
+    },
+    {
+      "id": "caixa-dagua",
+      "nome": "Sanitização de caixa d'água",
+      "aliases": ["caixa dagua", "caixa de agua", "limpeza de caixa"],
+      "descricao": "Limpeza e desinfecção de caixa d'água residencial, com laudo de potabilidade.",
+      "tags": ["caixa d'água", "limpeza", "hidráulica"]
+    },
+    {
+      "id": "desentupimento",
+      "nome": "Desentupimento de pia",
+      "aliases": ["pia entupida", "ralo", "ralo entupido"],
+      "descricao": "Desentupimento de pia e ralo com equipamento rotativo, sem quebrar a bancada.",
+      "tags": ["entupimento", "hidráulica"]
+    },
+    {
+      "id": "pombos",
+      "nome": "Controle de pombos",
+      "aliases": ["pombos", "pomba"],
+      "descricao": "Instalação de telas e espículas para afastar pombos de sacadas, telhados e marquises.",
+      "tags": ["pombo", "ave"]
+    },
+    {
+      "id": "percevejos",
+      "nome": "Dedetização de percevejos",
+      "aliases": ["percevejos", "percevejo"],
+      "descricao": "Tratamento para percevejos em colchões, camas e estofados, em duas aplicações.",
+      "tags": ["percevejo", "cama", "estofado"]
+    },
+    {
+      "id": "aranhas",
+      "nome": "Dedetização de aranhas",
+      "aliases": ["aranhas", "aranha", "aranha marrom"],
+      "descricao": "Tratamento para aranhas em residências, com atenção à aranha marrom em roupas e sapatos.",
+      "tags": ["aranha", "peçonhento"]
+    }
+  ],
+  "consultas": [
+    {"consulta": "barata", "esperado": ["baratas"]},
+    {"consulta": "desbaratização de apartamento", "esperado": ["baratas"]},
+    {"consulta": "cupim de madeira no guarda-roupa", "esperado": ["cupins"]},
+    {"consulta": "ratazanas no quintal", "esperado": ["ratos"]},
+    {"consulta": "dengue", "esperado": ["mosquitos"]},
+    {"consulta": "formigueiro na cozinha", "esperado": ["formigas"]},
+    {"consulta": "escorpião no terreno", "esperado": ["escorpioes"]},
+    {"consulta": "pulga no sofá por causa do cachorro", "esperado": ["pulgas"]},
+    {"consulta": "limpeza de caixa de agua", "esperado": ["caixa-dagua"]},
+    {"consulta": "ralo entupido", "esperado": ["desentupimento"]},
+    {"consulta": "pombos na sacada", "esperado": ["pombos"]},
+    {"consulta": "percevejo no colchão", "esperado": ["percevejos"]},
+    {"consulta": "aranha marrom em casa", "esperado": ["aranhas"]},
+    {"consulta": "dedetizacao de baratas", "esperado": ["baratas"]},
+    {"consulta": "cupin na estante", "esperado": ["cupins"]},
+    {"consulta": "mosquito da denge", "esperado": ["mosquitos"]},
+    {"consulta": "ratazana na lixeira", "esperado": ["ratos"]},
+    {"consulta": "escorsiao no quintal", "esperado": ["escorpioes"]},
+    {"consulta": "perceveijo no estofado", "esperado": ["percevejos"]},
+    {"consulta": "formiga no armário", "esperado": ["formigas"]}
+  ]
+}

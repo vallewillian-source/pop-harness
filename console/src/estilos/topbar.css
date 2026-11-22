@@ -1,0 +1,111 @@
+/* Header novo do Console (RL-02, PRD do re-layout §5.1).
+ *
+ * Importado de dentro de `Topbar.tsx` para esta tarefa não editar `main.tsx` nem `main.css`.
+ * Medidas do desenho aprovado (HR-61): 48 px de altura, na largura toda da tela, linha inferior de
+ * 1 px, monograma de 24 px e textos em 11–12 px. Todos os valores saem dos tokens do Console (`--pop-*`).
+ */
+
+.poph-topbar {
+    display: flex;
+    flex: none;
+    align-items: center;
+    justify-content: flex-start;
+    gap: var(--pop-spacing-lg, 12px);
+    box-sizing: border-box; /* a linha de 1 px fica dentro dos 48 px */
+    height: 48px;
+    padding: 0 var(--pop-spacing-xl, 16px);
+    border-bottom: 1px solid var(--pop-line);
+    background: var(--pop-bg);
+}
+
+/* ── Marca ────────────────────────────────────────────────────────────────── */
+
+.poph-topbar__marca {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: var(--pop-spacing-md, 8px);
+}
+
+.poph-topbar__monograma {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border: 1px solid var(--pop-line-strong);
+    border-radius: 4px;
+    background: var(--pop-surface-raised);
+    color: var(--pop-accent);
+    font-family: var(--pop-font-mono, "IBM Plex Mono", monospace);
+    font-size: 12px;
+    font-weight: var(--pop-font-weight-bold, 700);
+    line-height: 1;
+}
+
+.poph-topbar__nome {
+    color: var(--pop-text-primary);
+    font-size: 12px;
+    font-weight: var(--pop-font-weight-bold, 700);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.poph-topbar__divisor {
+    flex: none;
+    color: var(--pop-line-strong);
+    font-size: 12px;
+}
+
+/* ── Direita: estado, escopo do token e saída ─────────────────────────────── */
+
+.poph-topbar__acoes {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: var(--pop-spacing-lg, 14px);
+    margin-left: auto;
+}
+
+.poph-topbar__estado {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--pop-spacing-sm, 6px);
+    color: var(--pop-text-secondary);
+    font-family: var(--pop-font-mono, "IBM Plex Mono", monospace);
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+.poph-topbar__ponto {
+    flex: none;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--pop-success);
+}
+
+.poph-topbar__estado--sem {
+    color: var(--pop-danger);
+}
+
+.poph-topbar__estado--sem .poph-topbar__ponto {
+    background: var(--pop-danger);
+}
+
+.poph-topbar__token {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--pop-spacing-sm, 6px);
+    color: var(--pop-text-muted);
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+/* Ícone do cadeado no tamanho do desenho (13 px), como os demais ícones do header. */
+.poph-topbar__token svg {
+    width: 13px;
+    height: 13px;
+}

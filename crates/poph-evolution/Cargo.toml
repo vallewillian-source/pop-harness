@@ -1,0 +1,33 @@
+[package]
+name = "poph-evolution"
+description = "Cliente HTTP da EvolutionAPI (WhatsApp) no POP Harness: as operações da instância, envio de texto e de arquivo, download de mídia recebida e o manifesto do canal (HR-26a)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+poph-types = { path = "../poph-types" }
+# HR-10b: TLS com a mesma feature `rustls` do cliente do LLM e do Jev. A Evolution fala http na
+# rede local e https quando exposta; `http://` continua aceito. Por compilar C (`aws-lc-sys`), este
+# crate não entra no `cargo check` aarch64 da estação — a verificação ARM é o build na máquina ARM64 de testes (HR-56).
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"] }
+# `base64` 0.22 já está na árvore (o rustls a usa): nenhuma dependência nova no lock por causa disto.
+base64 = "0.22"
+# `regex` 1.x já está na árvore (dependência transitiva): a conversão de Markdown do canal usa as
+# mesmas regras do POP Atende, e escrever isso à mão seria mais frágil do que portar os regex.
+regex = "1"
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tokio = { version = "1.54", features = ["sync", "time"] }
+
+[dev-dependencies]
+tokio = { version = "1.54", features = ["rt-multi-thread", "macros", "time", "net", "io-util"] }
+# Servidor TLS local dos testes de https (certificado de fixtura em tests/fixtures/tls).
+tokio-rustls = "0.26"
+
+[lints]
+workspace = true

@@ -1,0 +1,24 @@
+[package]
+name = "poph-retention"
+description = "Retenção do histórico do POP Harness (HR-51): varredura por org com relógio injetável, blobs órfãos, simulação (dry-run) e auditoria."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+poph-store = { path = "../poph-store" }
+poph-types = { path = "../poph-types" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+# Os testes semeiam dados que o repositório ainda não cria (anexos, biblioteca, base, produtos)
+# direto no `harness.db` de teste.
+rusqlite.workspace = true
+tempfile = "3"
+
+[lints]
+workspace = true

@@ -1,0 +1,23 @@
+name: Documentação
+description: Algo está errado, faltando ou confuso na documentação.
+labels: ["documentation", "triagem"]
+body:
+  - type: input
+    id: onde
+    attributes:
+      label: Onde está
+      description: Arquivo e seção, ou o link.
+      placeholder: docs/CONFIGURACAO.md, seção "Segredos"
+    validations:
+      required: true
+  - type: textarea
+    id: problema
+    attributes:
+      label: O que está errado ou faltando
+    validations:
+      required: true
+  - type: textarea
+    id: sugestao
+    attributes:
+      label: Como deveria ser
+      description: Se você já tem o texto, melhor ainda. Pull requests de documentação são muito bem-vindos.

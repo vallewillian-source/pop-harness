@@ -1,0 +1,644 @@
+/**
+ * Formulário de produto do catálogo (criar e editar), em modal (HR-42).
+ *
+ * Mesmo molde do `ModalEstrutura`: criar faz `POST` (sem situação, que a API recusa na criação);
+ * editar faz `PATCH` com `If-Match` da versão lida. No `412` a tela relê o produto, passa a usar a
+ * versão atual e **mantém tudo o que foi digitado** para o operador revisar.
+ *
+ * Preço: a tela recebe em reais (`450` ou `450,00`) e grava em centavos, como a API espera.
+ *
+ * Preço como o cliente vê (`price_text`) — a API devolve sempre o texto calculado, sem dizer se
+ * alguém digitou um texto próprio. Por isso o campo **começa vazio** e o `price_text` só vai no
+ * corpo quando:
+ * - o operador digitou no campo (vai o texto digitado; vazio volta a calcular pelo valor);
+ * - o preço em centavos mudou e o campo não foi mexido: vai vazio, para o cliente não continuar
+ *   vendo o valor antigo quando havia um texto próprio gravado.
+ * Nos outros casos o `price_text` não vai, e o servidor mantém o que já está gravado.
+ */
+
+import { useEffect, useState, type FormEvent } from "react";
+import {
+    SofaBanner,
+    SofaButton,
+    SofaField,
+    SofaInput,
+    SofaModal,
+    SofaSelect,
+    SofaTextarea,
+    type SofaFieldControlProps,
+} from "@sofacoding/sofa-ui";
+import { ErroApi } from "../api/cliente";
+import type { Categoria } from "../api/estrutura";
+import {
+    atualizarProduto,
+    criarProduto,
+    obterProduto,
+    type MudancaProduto,
+    type Produto,
+    type SituacaoProduto,
+} from "../api/produtos";
+
+export const LIMITE_NOME_PRODUTO = 160;
+
+const SITUACOES: { valor: SituacaoProduto; rotulo: string }[] = [
+    { valor: "active", rotulo: "Ativo" },
+    { valor: "inactive", rotulo: "Inativo" },
+    { valor: "archived", rotulo: "Arquivado" },
+];
+
+/**
+ * Converte o preço digitado em reais para centavos. Aceita `450`, `450,00`, `1.234,50` e `R$ 450`.
+ * Devolve `null` quando o texto não é um valor (a tela mostra o erro no campo).
+ */
+export function centavosDe(texto: string): number | null {
+    const limpo = texto.replace(/R\$/gi, "").replace(/\s/g, "");
+    if (limpo === "") return 0;
+    let normal = limpo;
+    if (normal.includes(",")) {
+        normal = normal.replace(/\./g, "").replace(",", ".");
+    }
+    if (!/^\d+(\.\d{1,2})?$/.test(normal)) return null;
+    return Math.round(Number(normal) * 100);
+}
+
+/** Centavos para o campo de reais, com vírgula decimal (`45000` → `450,00`). */
+export function reaisDe(centavos: number): string {
+    return (centavos / 100).toFixed(2).replace(".", ",");
+}
+
+/**
+ * Texto de preço que o servidor monta sozinho (`890000` → `R$ 8.900,00`). Mesma regra de
+ * `formatar_reais` no servidor, só para a prévia da tela; quem grava continua sendo o servidor.
+ */
+export function formatarReais(centavos: number): string {
+    const sinal = centavos < 0 ? "-" : "";
+    const absoluto = Math.abs(Math.trunc(centavos));
+    const reais = Math.floor(absoluto / 100)
+        .toString()
+        .replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+    return `${sinal}R$ ${reais},${String(absoluto % 100).padStart(2, "0")}`;
+}
+
+/** Lista separada por vírgula: tira espaços e vazios. */
+export function listaDe(texto: string): string[] {
+    return texto
+        .split(",")
+        .map((item) => item.trim())
+        .filter((item) => item.length > 0);
+}
+
+type Erros = {
+    categoria?: string;
+    nome?: string;
+    slug?: string;
+    preco?: string;
+    precoTexto?: string;
+    aliases?: string;
+    etiquetas?: string;
+    unidade?: string;
+    descricao?: string;
+    inclui?: string;
+    exclui?: string;
+    condicoes?: string;
+    situacao?: string;
+};
+
+/** Campo da API → campo do formulário. A API usa o nome do corpo JSON. */
+const CAMPOS_DA_API: Record<string, keyof Erros> = {
+    category_id: "categoria",
+    categoria: "categoria",
+    name: "nome",
+    nome: "nome",
+    slug: "slug",
+    price_cents: "preco",
+    preco: "preco",
+    price_text: "precoTexto",
+    aliases: "aliases",
+    tags: "etiquetas",
+    unit: "unidade",
+    description: "descricao",
+    includes: "inclui",
+    excludes: "exclui",
+    conditions: "condicoes",
+    status: "situacao",
+    situacao: "situacao",
+};
+
+/** Ligações do `SofaField` sem `describedBy`, que vira `aria-describedby` no controle. */
+function semDescribedBy(controle: SofaFieldControlProps) {
+    const { describedBy, ...resto } = controle;
+    return { ...resto, "aria-describedby": describedBy };
+}
+
+export type ModalProdutoProps = {
+    org: string;
+    aberto: boolean;
+    aoFechar: () => void;
+    /** Produto em edição; `null` cria um novo. */
+    produto: Produto | null;
+    /** Categorias da org para escolher; sem categoria não há como criar produto. */
+    categorias: Categoria[];
+    /** Chamado com o produto devolvido pela API (criado ou alterado). */
+    aoSalvar: (produto: Produto) => void;
+};
+
+export function ModalProduto({
+    org,
+    aberto,
+    aoFechar,
+    produto,
+    categorias,
+    aoSalvar,
+}: ModalProdutoProps) {
+    const editando = produto !== null;
+    const [categoria, setCategoria] = useState("");
+    const [nome, setNome] = useState("");
+    const [slug, setSlug] = useState("");
+    const [aliases, setAliases] = useState("");
+    const [preco, setPreco] = useState("");
+    const [textoCliente, setTextoCliente] = useState("");
+    /** O operador mexeu no campo "Preço como o cliente vê"? Sem isso, o texto não vai no corpo. */
+    const [textoMexido, setTextoMexido] = useState(false);
+    /** Produto contra o qual a tela compara o preço digitado (o 412 troca pelo valor atual). */
+    const [base, setBase] = useState<Produto | null>(produto);
+    const [unidade, setUnidade] = useState("");
+    const [descricao, setDescricao] = useState("");
+    const [inclui, setInclui] = useState("");
+    const [exclui, setExclui] = useState("");
+    const [condicoes, setCondicoes] = useState("");
+    const [etiquetas, setEtiquetas] = useState("");
+    const [situacao, setSituacao] = useState<SituacaoProduto>("active");
+    const [versao, setVersao] = useState(0);
+    const [erros, setErros] = useState<Erros>({});
+    const [erroGeral, setErroGeral] = useState<string | null>(null);
+    const [conflito, setConflito] = useState<string | null>(null);
+    const [enviando, setEnviando] = useState(false);
+
+    useEffect(() => {
+        if (!aberto) return;
+        setCategoria(produto?.category_id ?? "");
+        setNome(produto?.name ?? "");
+        setSlug(produto?.slug ?? "");
+        setAliases((produto?.aliases ?? []).join(", "));
+        setPreco(produto ? reaisDe(produto.price_cents) : "");
+        setTextoCliente("");
+        setTextoMexido(false);
+        setBase(produto);
+        setUnidade(produto?.unit ?? "");
+        setDescricao(produto?.description ?? "");
+        setInclui(produto?.includes ?? "");
+        setExclui(produto?.excludes ?? "");
+        setCondicoes(produto?.conditions ?? "");
+        setEtiquetas((produto?.tags ?? []).join(", "));
+        setSituacao(produto?.status ?? "active");
+        setVersao(produto?.version ?? 0);
+        setErros({});
+        setErroGeral(null);
+        setConflito(null);
+        setEnviando(false);
+    }, [aberto, produto]);
+
+    /** Preço digitado em centavos, ou `null` enquanto o texto não é um valor. */
+    const centavosAtuais = centavosDe(preco);
+    /** Preço mudou em relação ao que a tela está comparando (só existe na edição). */
+    const precoMudou =
+        base !== null && centavosAtuais !== null && centavosAtuais !== base.price_cents;
+
+    /**
+     * O que vai em `price_text` no corpo. `undefined` = não enviar: o servidor mantém o texto que
+     * já está gravado. `""` = calcular pelo valor.
+     */
+    function textoParaEnviar(): string | undefined {
+        if (textoMexido) return textoCliente.trim();
+        if (base === null) return "";
+        if (precoMudou) return "";
+        return undefined;
+    }
+
+    /** Texto que o cliente vê depois de salvar, para a prévia. */
+    function textoDoClienteAgora(): string {
+        if (centavosAtuais === null) return "—";
+        const calculado = formatarReais(centavosAtuais);
+        if (textoMexido) return textoCliente.trim() || calculado;
+        if (base !== null && !precoMudou && base.price_text.trim() !== "") {
+            return base.price_text;
+        }
+        return calculado;
+    }
+
+    function validar(): { erros: Erros; centavos: number } {
+        const novos: Erros = {};
+        if (!categoria) {
+            novos.categoria = "escolha a categoria do produto";
+        }
+        if (!nome.trim()) {
+            novos.nome = "informe o nome do produto";
+        } else if (nome.trim().length > LIMITE_NOME_PRODUTO) {
+            novos.nome = `o nome aceita até ${LIMITE_NOME_PRODUTO} caracteres`;
+        }
+        const centavos = centavosDe(preco);
+        if (centavos === null) {
+            novos.preco = "use o formato 450 ou 450,00 (valor em reais)";
+        }
+        return { erros: novos, centavos: centavos ?? 0 };
+    }
+
+    /** Põe o erro da API no campo que ele aponta; o que não tem campo vai para o aviso geral. */
+    function mostrarErroDaApi(falha: ErroApi) {
+        const detalhes = falha.detalhes as Record<string, unknown> | null | undefined;
+        const campo = typeof detalhes?.["field"] === "string" ? detalhes["field"] : undefined;
+        const motivo =
+            typeof detalhes?.["reason"] === "string" ? detalhes["reason"] : falha.message;
+        const alvo = campo ? CAMPOS_DA_API[campo] : undefined;
+        if (alvo) {
+            setErros({ [alvo]: motivo });
+            return;
+        }
+        setErroGeral(falha.message);
+    }
+
+    async function salvar(evento?: FormEvent) {
+        evento?.preventDefault();
+        const { erros: novos, centavos } = validar();
+        setErros(novos);
+        setErroGeral(null);
+        setConflito(null);
+        if (Object.keys(novos).length > 0) return;
+
+        const comum = {
+            category_id: categoria,
+            name: nome.trim(),
+            aliases: listaDe(aliases),
+            description: descricao,
+            price_cents: centavos,
+            unit: unidade,
+            includes: inclui,
+            excludes: exclui,
+            conditions: condicoes,
+            tags: listaDe(etiquetas),
+        };
+        const textoEnvio = textoParaEnviar();
+
+        setEnviando(true);
+        try {
+            if (!produto) {
+                const criado = await criarProduto(org, {
+                    ...comum,
+                    price_text: textoEnvio ?? "",
+                    slug: slug.trim() || undefined,
+                });
+                aoSalvar(criado);
+                aoFechar();
+                return;
+            }
+
+            // O slug só vai no corpo se o operador mexeu nele: o original é válido e não precisa voltar.
+            const mudanca: MudancaProduto = { ...comum, status: situacao };
+            if (textoEnvio !== undefined) {
+                mudanca.price_text = textoEnvio;
+            }
+            if (slug.trim() !== produto.slug) {
+                mudanca.slug = slug.trim();
+            }
+            const alterado = await atualizarProduto(org, produto.id, versao, mudanca);
+            aoSalvar(alterado);
+            aoFechar();
+        } catch (falha) {
+            if (falha instanceof ErroApi && falha.status === 412 && produto) {
+                // Relê para continuar de uma versão válida; o que foi digitado não é tocado.
+                // A releitura também vira a referência do preço: o valor que o operador digitou
+                // é comparado com o que está gravado agora, não com o de quando ele abriu a tela.
+                let versaoAtual: number | undefined;
+                try {
+                    const atual = await obterProduto(org, produto.id);
+                    versaoAtual = atual.version;
+                    setBase(atual);
+                } catch {
+                    // Sem a releitura, a próxima tentativa devolve 412 de novo; nada se perde.
+                }
+                if (typeof versaoAtual === "number") setVersao(versaoAtual);
+                setConflito(
+                    `Outra pessoa salvou este produto antes de você${
+                        typeof versaoAtual === "number" ? ` (agora na versão ${versaoAtual})` : ""
+                    }. O que você digitou foi mantido: revise e salve de novo.`,
+                );
+                return;
+            }
+            if (falha instanceof ErroApi) {
+                mostrarErroDaApi(falha);
+                return;
+            }
+            setErroGeral("falha inesperada ao salvar o produto");
+        } finally {
+            setEnviando(false);
+        }
+    }
+
+    const semCategorias = categorias.length === 0;
+    const titulo = editando ? "Editar produto" : "Novo produto";
+
+    const calculado = centavosAtuais === null ? null : formatarReais(centavosAtuais);
+    const previa = textoDoClienteAgora();
+    /** Há um texto próprio no lugar do calculado: o botão de voltar ao cálculo aparece. */
+    const temTextoProprio = calculado !== null && previa !== calculado;
+    const ajudaPrecoCliente =
+        `Como o cliente vê: ${previa}. ` +
+        (!textoMexido && precoMudou
+            ? "O preço mudou: o texto volta a ser calculado pelo valor novo, a menos que você digite outro."
+            : "Vazio: o texto é calculado pelo valor. Digite só para usar um texto próprio, como R$ 320,00 por visita.");
+
+    return (
+        <SofaModal
+            open={aberto}
+            onOpenChange={(novo) => {
+                if (!novo && !enviando) aoFechar();
+            }}
+            title={titulo}
+            description={
+                editando
+                    ? `Alterando ${produto?.name}. O salvamento usa a versão lida.`
+                    : "O preço e as condições daqui são os que o agente informa ao cliente."
+            }
+            closeLabel="Fechar formulário de produto"
+            size="lg"
+            id="poph-formulario-produto"
+            footer={
+                <>
+                    <SofaButton variant="secondary" disabled={enviando} onClick={aoFechar}>
+                        Cancelar
+                    </SofaButton>
+                    <SofaButton
+                        variant="primary"
+                        type="button"
+                        disabled={semCategorias}
+                        onClick={() => void salvar()}
+                        loading={enviando}
+                    >
+                        {editando ? "Salvar alterações" : "Criar produto"}
+                    </SofaButton>
+                </>
+            }
+        >
+            <form
+                id="poph-form-produto"
+                className="poph-pilha"
+                style={{ gap: "var(--pop-spacing-lg)" }}
+                onSubmit={(evento) => void salvar(evento)}
+                noValidate
+            >
+                {conflito && (
+                    <SofaBanner tone="warn" title="Versão desatualizada">
+                        {conflito}
+                    </SofaBanner>
+                )}
+                {erroGeral && (
+                    <SofaBanner tone="danger" title="Não foi possível salvar">
+                        {erroGeral}
+                    </SofaBanner>
+                )}
+                {semCategorias && (
+                    <SofaBanner tone="info" title="Crie uma categoria primeiro">
+                        Todo produto pertence a uma categoria. Crie uma na tela de Estrutura.
+                    </SofaBanner>
+                )}
+
+                <SofaField
+                    label="Categoria"
+                    hint="Os agentes só oferecem produtos das categorias que têm vinculadas."
+                    error={erros.categoria}
+                    required
+                    htmlFor="poph-produto-categoria"
+                >
+                    {(controle) => (
+                        <SofaSelect
+                            {...semDescribedBy(controle)}
+                            value={categoria}
+                            onChange={(evento) => setCategoria(evento.target.value)}
+                        >
+                            <option value="">Escolha uma categoria</option>
+                            {categorias.map((item) => (
+                                <option key={item.id} value={item.id}>
+                                    {item.name}
+                                </option>
+                            ))}
+                        </SofaSelect>
+                    )}
+                </SofaField>
+
+                <SofaField
+                    label="Nome"
+                    hint={`Nome comercial, até ${LIMITE_NOME_PRODUTO} caracteres.`}
+                    error={erros.nome}
+                    required
+                    htmlFor="poph-produto-nome"
+                >
+                    {(controle) => (
+                        <SofaInput
+                            {...semDescribedBy(controle)}
+                            value={nome}
+                            autoComplete="off"
+                            onChange={(evento) => setNome(evento.target.value)}
+                        />
+                    )}
+                </SofaField>
+
+                <SofaField
+                    label="Identificador (slug)"
+                    hint="Opcional. Vazio: o sistema cria a partir do nome."
+                    error={erros.slug}
+                    htmlFor="poph-produto-slug"
+                >
+                    {(controle) => (
+                        <SofaInput
+                            {...semDescribedBy(controle)}
+                            value={slug}
+                            autoComplete="off"
+                            onChange={(evento) => setSlug(evento.target.value)}
+                        />
+                    )}
+                </SofaField>
+
+                <SofaField
+                    label="Outros nomes"
+                    hint="Como o cliente costuma chamar o produto. Separe por vírgula."
+                    error={erros.aliases}
+                    htmlFor="poph-produto-aliases"
+                >
+                    {(controle) => (
+                        <SofaInput
+                            {...semDescribedBy(controle)}
+                            value={aliases}
+                            autoComplete="off"
+                            onChange={(evento) => setAliases(evento.target.value)}
+                        />
+                    )}
+                </SofaField>
+
+                <div className="poph-duas-colunas">
+                    <SofaField
+                        label="Preço (R$)"
+                        hint="Valor em reais: 450 ou 450,00. Vazio é zero."
+                        error={erros.preco}
+                        htmlFor="poph-produto-preco"
+                    >
+                        {(controle) => (
+                            <SofaInput
+                                {...semDescribedBy(controle)}
+                                value={preco}
+                                inputMode="decimal"
+                                autoComplete="off"
+                                onChange={(evento) => setPreco(evento.target.value)}
+                            />
+                        )}
+                    </SofaField>
+
+                    <SofaField
+                        label="Preço como o cliente vê"
+                        hint={ajudaPrecoCliente}
+                        error={erros.precoTexto}
+                        htmlFor="poph-produto-preco-texto"
+                    >
+                        {(controle) => (
+                            <SofaInput
+                                {...semDescribedBy(controle)}
+                                value={textoCliente}
+                                autoComplete="off"
+                                onChange={(evento) => {
+                                    setTextoMexido(true);
+                                    setTextoCliente(evento.target.value);
+                                }}
+                            />
+                        )}
+                    </SofaField>
+                </div>
+                {temTextoProprio && (
+                    <div>
+                        <SofaButton
+                            variant="subtle"
+                            size="sm"
+                            type="button"
+                            disabled={enviando}
+                            onClick={() => {
+                                setTextoMexido(true);
+                                setTextoCliente("");
+                            }}
+                        >
+                            Voltar a calcular o texto pelo valor
+                        </SofaButton>
+                    </div>
+                )}
+
+                <SofaField
+                    label="Unidade"
+                    hint='Ex.: "por m²" ou "por visita". Opcional.'
+                    error={erros.unidade}
+                    htmlFor="poph-produto-unidade"
+                >
+                    {(controle) => (
+                        <SofaInput
+                            {...semDescribedBy(controle)}
+                            value={unidade}
+                            autoComplete="off"
+                            onChange={(evento) => setUnidade(evento.target.value)}
+                        />
+                    )}
+                </SofaField>
+
+                <SofaField
+                    label="Descrição"
+                    error={erros.descricao}
+                    htmlFor="poph-produto-descricao"
+                >
+                    {(controle) => (
+                        <SofaTextarea
+                            {...semDescribedBy(controle)}
+                            value={descricao}
+                            rows={2}
+                            onChange={(evento) => setDescricao(evento.target.value)}
+                        />
+                    )}
+                </SofaField>
+
+                <div className="poph-duas-colunas">
+                    <SofaField label="Inclui" error={erros.inclui} htmlFor="poph-produto-inclui">
+                        {(controle) => (
+                            <SofaTextarea
+                                {...semDescribedBy(controle)}
+                                value={inclui}
+                                rows={2}
+                                onChange={(evento) => setInclui(evento.target.value)}
+                            />
+                        )}
+                    </SofaField>
+                    <SofaField label="Não inclui" error={erros.exclui} htmlFor="poph-produto-exclui">
+                        {(controle) => (
+                            <SofaTextarea
+                                {...semDescribedBy(controle)}
+                                value={exclui}
+                                rows={2}
+                                onChange={(evento) => setExclui(evento.target.value)}
+                            />
+                        )}
+                    </SofaField>
+                </div>
+
+                <SofaField
+                    label="Condições"
+                    hint="Prazo, forma de pagamento e outras condições."
+                    error={erros.condicoes}
+                    htmlFor="poph-produto-condicoes"
+                >
+                    {(controle) => (
+                        <SofaTextarea
+                            {...semDescribedBy(controle)}
+                            value={condicoes}
+                            rows={2}
+                            onChange={(evento) => setCondicoes(evento.target.value)}
+                        />
+                    )}
+                </SofaField>
+
+                <SofaField
+                    label="Etiquetas de busca"
+                    hint="Palavras que ajudam a achar o produto. Separe por vírgula."
+                    error={erros.etiquetas}
+                    htmlFor="poph-produto-etiquetas"
+                >
+                    {(controle) => (
+                        <SofaInput
+                            {...semDescribedBy(controle)}
+                            value={etiquetas}
+                            autoComplete="off"
+                            onChange={(evento) => setEtiquetas(evento.target.value)}
+                        />
+                    )}
+                </SofaField>
+
+                {editando && (
+                    <SofaField
+                        label="Situação"
+                        hint="Inativo e arquivado saem da busca dos agentes; o cadastro continua no sistema."
+                        error={erros.situacao}
+                        htmlFor="poph-produto-situacao"
+                    >
+                        {(controle) => (
+                            <SofaSelect
+                                {...semDescribedBy(controle)}
+                                value={situacao}
+                                onChange={(evento) =>
+                                    setSituacao(evento.target.value as SituacaoProduto)
+                                }
+                            >
+                                {SITUACOES.map((opcao) => (
+                                    <option key={opcao.valor} value={opcao.valor}>
+                                        {opcao.rotulo}
+                                    </option>
+                                ))}
+                            </SofaSelect>
+                        )}
+                    </SofaField>
+                )}
+            </form>
+        </SofaModal>
+    );
+}

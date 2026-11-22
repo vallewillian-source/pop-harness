@@ -1,0 +1,9 @@
+{
+  "principles": [
+    {"rule": "Nunca prometer prazo.", "fallback_action": "say_dont_know"},
+    {"rule": "Encaminhar reclamação grave.", "fallback_action": "transfer"},
+    {"rule": "Registrar caso de saúde.", "fallback_action": "escalate"},
+    {"rule": "Regra sem ação de contingência.", "fallback_action": ""},
+    {"rule": "Regra com ação desconhecida.", "fallback_action": "qualquer_coisa"}
+  ]
+}

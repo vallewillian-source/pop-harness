@@ -1,0 +1,97 @@
+/* Busca rápida do header (RL-04, PRD do re-layout §5.1).
+ *
+ * Importado de dentro de `Topbar.tsx`, como o `topbar.css`. Cores e espaços vêm dos tokens `--pop-*`
+ * que o Console já usa; nenhum valor novo de cor.
+ */
+
+.poph-busca {
+    position: relative;
+    flex: none;
+}
+
+/* Nome acessível do campo: texto real para leitor de tela, fora da tela para quem enxerga. */
+.poph-busca__rotulo-oculto {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+}
+
+.poph-busca__campo {
+    width: 220px;
+    height: 30px;
+    padding: 0 var(--pop-spacing-md, 10px);
+    border: 1px solid var(--pop-line-strong);
+    border-radius: var(--pop-radius-md, 6px);
+    background: var(--pop-surface);
+    color: var(--pop-text-primary);
+    font-family: var(--pop-font-sans, "IBM Plex Sans", sans-serif);
+    font-size: 12px;
+}
+
+.poph-busca__campo::placeholder {
+    color: var(--pop-text-muted);
+}
+
+.poph-busca__campo:focus-visible {
+    outline: 2px solid var(--pop-accent);
+    outline-offset: 1px;
+}
+
+/* Lista de resultados: ancorada na borda direita do campo, que fica perto da borda da tela. */
+.poph-busca__lista {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    z-index: 20;
+    min-width: 260px;
+    max-height: 320px;
+    margin: 0;
+    padding: var(--pop-spacing-xs, 4px);
+    overflow-y: auto;
+    border: 1px solid var(--pop-line-strong);
+    border-radius: var(--pop-radius-md, 6px);
+    background: var(--pop-surface-raised);
+    box-shadow: var(--pop-shadow-floating);
+    list-style: none;
+}
+
+.poph-busca__opcao {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--pop-spacing-md, 10px);
+    padding: var(--pop-spacing-sm, 6px) var(--pop-spacing-md, 10px);
+    border-radius: var(--pop-radius-sm, 4px);
+    color: var(--pop-text-primary);
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.poph-busca__opcao--ativa {
+    background: var(--pop-surface-hover);
+    box-shadow: inset 2px 0 0 var(--pop-accent);
+}
+
+.poph-busca__slug {
+    color: var(--pop-text-muted);
+    font-family: var(--pop-font-mono, "IBM Plex Mono", monospace);
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+.poph-busca__vazio {
+    margin: 0;
+    padding: var(--pop-spacing-sm, 6px) var(--pop-spacing-md, 10px);
+    color: var(--pop-text-secondary);
+    font-size: 12px;
+}
+
+/* Telas até 1100 px: o campo de busca fica mais estreito, para a trilha caber o nome do agente (HR-49b). */
+@media (max-width: 1100px) {
+    .poph-busca__campo {
+        width: 150px;
+    }
+}

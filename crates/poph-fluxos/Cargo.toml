@@ -1,0 +1,20 @@
+[package]
+name = "poph-fluxos"
+description = "Módulo de Fluxos e Fichas do POP Harness: compilador de script Starlark para estrutura (IR), validador, regras, motor puro, bloco de prompt, diff e formatador (FX-04: esqueleto, sem lógica)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# O motor é puro: só os tipos do módulo vêm de fora. Sem banco, sem rede, sem `poph-store`,
+# `poph-agent` nem `poph-server` (PRD de Fluxos §3, L2).
+poph-types = { path = "../poph-types" }
+# Linguagem dos scripts de fluxo (FX-01: Starlark 0.14.3).
+starlark.workspace = true
+# Feature `pure` vem do workspace: mantém este crate no `cargo check` aarch64 da estação.
+blake3.workspace = true
+
+[lints]
+workspace = true
