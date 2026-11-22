@@ -378,6 +378,37 @@ fn fluxo_com_61_nos() -> String {
 }
 
 #[test]
+fn def_com_nome_de_declaracao_e_recusada_com_posicao() {
+    // O caso que o FX-10 deixou sem teste: `def` com nome que já é declaração da linguagem. Antes
+    // da FX-10 isso estourava em tempo de carga, com traceback; agora é erro de forma, no lugar.
+    for nome in ["etapa", "fluxo"] {
+        let fonte = format!("{BASE}\ndef {nome}(dados):\n    return True\n");
+        let compilado = compila(&fonte);
+        let diagnostico = compilado
+            .diagnosticos
+            .iter()
+            .find(|d| d.codigo == Codigo::DefInvalida)
+            .unwrap_or_else(|| {
+                panic!(
+                    "`def {nome}(dados)` devia dar FLX24; diagnósticos: {:?}",
+                    compilado.diagnosticos
+                )
+            });
+        assert_eq!(
+            (diagnostico.linha, diagnostico.coluna),
+            (Some(19), Some(1)),
+            "`def {nome}` tem de apontar o começo da declaração: {diagnostico}"
+        );
+        assert!(
+            diagnostico.mensagem.contains(nome),
+            "a mensagem tem de dizer qual é o nome reservado: {}",
+            diagnostico.mensagem
+        );
+        assert!(compilado.ir.is_none(), "erro de forma não gera IR");
+    }
+}
+
+#[test]
 fn o_fluxo_base_nao_tem_nenhum_diagnostico() {
     let compilado = compila(BASE);
     assert!(
@@ -395,9 +426,13 @@ fn cada_codigo_da_lista_fechada_tem_um_caso() {
     vistos.sort_unstable();
     vistos.dedup();
     assert_eq!(vistos.len(), total, "dois casos para o mesmo código");
-    assert_eq!(vistos.len(), 40, "a lista fechada tem 40 códigos");
-    for codigo in Codigo::TODOS {
-        assert!(vistos.contains(codigo), "{codigo} sem caso que o dispare");
+    assert_eq!(
+        vistos.len(),
+        40,
+        "a lista fechada tem 40 códigos do compilador"
+    );
+    for codigo in Codigo::do_compilador() {
+        assert!(vistos.contains(&codigo), "{codigo} sem caso que o dispare");
     }
 }
 
@@ -417,9 +452,9 @@ fn cada_diagnostico_aponta_a_linha_e_a_coluna_do_trecho() {
             ));
             continue;
         };
-        if diagnostico.linha != caso.linha || diagnostico.coluna != caso.coluna {
+        if (diagnostico.linha, diagnostico.coluna) != (Some(caso.linha), Some(caso.coluna)) {
             falhas.push(format!(
-                "{} em {}:{} (esperado {}:{}); trecho: {}",
+                "{} em {:?}:{:?} (esperado {}:{}); trecho: {}",
                 caso.codigo,
                 diagnostico.linha,
                 diagnostico.coluna,
@@ -436,9 +471,9 @@ fn cada_diagnostico_aponta_a_linha_e_a_coluna_do_trecho() {
 fn o_fluxo_base_nao_dispara_nenhum_dos_40_codigos() {
     // O outro lado de cada caso: um fluxo correto não recebe nenhum dos diagnósticos.
     let compilado = compila(BASE);
-    for codigo in Codigo::TODOS {
+    for codigo in Codigo::do_compilador() {
         assert!(
-            !compilado.diagnosticos.iter().any(|d| d.codigo == *codigo),
+            !compilado.diagnosticos.iter().any(|d| d.codigo == codigo),
             "{codigo} não devia aparecer num fluxo correto"
         );
     }
@@ -497,10 +532,10 @@ fn inventario() {
                 let linha = caso
                     .fonte
                     .lines()
-                    .nth(d.linha as usize - 1)
+                    .nth(d.linha.unwrap_or(1) as usize - 1)
                     .unwrap_or("<fora do texto>");
                 println!(
-                    "{} => {}:{} | {}\n    {}",
+                    "{} => {:?}:{:?} | {}\n    {}",
                     caso.codigo, d.linha, d.coluna, d.mensagem, linha
                 );
             }

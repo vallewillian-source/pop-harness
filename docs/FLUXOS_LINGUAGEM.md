@@ -495,6 +495,8 @@ Efeito é o que acontece **fora** do fluxo: falar com o cliente, avisar a equipe
 | `mensagem_ao_cliente` em `efeitos` de ação | o texto sai junto com a transição que a ação provocou |
 | `notificar_whatsapp` | a equipe recebe no número indicado; `para` é obrigatório e precisa de DDI (`FLX28`) |
 | `encaminhar` | a conversa vai para o departamento; a pessoa que assume vê a Ficha aberta; o agente para de responder naquela conversa (D12) |
+| `encaminhar("Logistica")` com o departamento gravado como `Logística` | aviso `FLX65` na publicação (nome não casa) e efeito `falhou` no atendimento; o casamento ignora caixa e espaços nas pontas, mas **não** ignora acento |
+| `encaminhar` com nome que existe em dois departamentos da org | aviso `FLX65` (o nome não diz para onde ir) e efeito `falhou` no atendimento |
 | efeito sem variável | aviso `FLX58` (a equipe recebe sempre o mesmo texto) |
 | efeito com variável inexistente | aviso `FLX59` na publicação; no atendimento, o trecho sai vazio |
 | falha de entrega | o efeito fica `falhou` com tentativas e espera crescente; **a transição não é desfeita** e o caso vira evento na Ficha |
@@ -829,7 +831,16 @@ Regras da forma canônica (para o formatador, FX-29):
 
 ## 10. Diagnósticos
 
-Lista **fechada**: todo diagnóstico tem código; código novo entra aqui primeiro. Publicar exige **zero erro**; aviso não bloqueia. A mensagem é em português, com linha e coluna do trecho (o formato exato da resposta está em `API.md`, quando a rota existir — FX-27).
+Lista **fechada**: todo diagnóstico tem código; código novo entra aqui primeiro. Publicar exige **zero erro**; aviso não bloqueia. A mensagem é em português, com a sugestão do que corrigir (o formato exato da resposta está em `API.md`, quando a rota existir — FX-27).
+
+A lista é conferida em **duas direções**, e o ponto do diagnóstico muda com ela:
+
+| Direção | Entrada | Onde o diagnóstico aponta | Códigos |
+|---|---|---|---|
+| **Compilador** (FX-10) | o texto do script | **linha e coluna** do trecho (`linha`/`coluna`, 1-based) | `FLX01`–`FLX28`, `FLX51`–`FLX64` |
+| **Validador** (FX-11) | uma **IR** já compilada | **caminho do nó** na estrutura (`etapas[2] (id "entrega") > acoes[1] > vai_para`), sem linha e sem coluna | os semânticos: `FLX14`–`FLX19`, `FLX21`–`FLX23`, `FLX25`, `FLX27`, `FLX51`–`FLX55`, `FLX59`–`FLX63`, `FLX65` |
+
+O validador existe para a estrutura que **não** passou pelo compilador agora: fluxo importado, revisão antiga, IR gravada à mão. Ver §10.4. Os códigos que só fazem sentido no texto (`FLX01`–`FLX13`, `FLX20`, `FLX24`, `FLX26`, `FLX28`, `FLX56`–`FLX58`, `FLX64`) não são reemitidos sobre a IR: ali a forma já está garantida, e os de texto longo e de gatilho são dica de escrita, que o compilador já deu na publicação.
 
 ### 10.1 Erros (bloqueiam a publicação)
 
@@ -881,6 +892,9 @@ Lista **fechada**: todo diagnóstico tem código; código novo entra aqui primei
 | `FLX62` | ator listado na etapa sem nenhuma ação dele | "A etapa `triagem` permite o `atendente`, mas nenhuma ação é dele: na prática ele não tem o que fazer aqui." |
 | `FLX63` | `ao_entrar` usa variável do próprio passo | "`ao_entrar` da etapa `confirmacao` usa `{confirmacao.recebido}`, que só é preenchido dentro da própria etapa: a mensagem sai com o texto vazio." |
 | `FLX64` | texto acima do recomendado (`quando`/`nao_quando` > 400; `instrucao` > 1000) | "A `instrucao` da etapa `coleta` tem 1.240 caracteres; o recomendado é até 1000, porque isso entra no prompt a cada turno." |
+| `FLX65` | `encaminhar(...)` cita departamento que a organização não tem, ou nome que casa com mais de um departamento | "O encaminhamento manda o atendimento para o departamento `Logística`, que não existe nesta organização: o efeito vai falhar no atendimento. Confira o nome do departamento." |
+
+`FLX65` é o único código que **só** nasce sobre a IR, na publicação: ele depende da lista de departamentos da organização, que o texto do script não conhece. Ver §4.9 e §10.4.
 
 ### 10.3 Falhas de execução (não são diagnóstico de publicação)
 
@@ -895,6 +909,36 @@ Lista **fechada**: todo diagnóstico tem código; código novo entra aqui primei
 
 Falha de **efeito** (mensagem, notificação, encaminhamento) não é falha de execução: fica `falhou`, com tentativas e evento na Ficha, e a transição continua valendo (PRD L11).
 
+### 10.4 Revalidação de uma IR e resolução de departamentos (FX-11)
+
+Duas operações puras trabalham sobre a IR, sem banco, sem rede, sem relógio e sem arquivo:
+
+| Operação | O que faz | Quando roda |
+|---|---|---|
+| `validar(ir) -> [diagnóstico]` | confere ids repetidos, destino/início/`exige`, opções, ator, combinador e campo de regra, `funcao` sem `def`, variável de mensagem (formato, campo existente, próprio passo), ciclo de decisões, teto de nós; avisa etapa sem ação, nó inalcançável, campo sem uso, valor fora das opções, condição contraditória, comparação de texto, `def` sem uso e variável que sai vazia | importação, IR de revisão antiga, conferência de estrutura gravada à mão — **não** é preciso para a IR que acabou de ser compilada (o compilador já conferiu, no texto) |
+| `resolver_departamentos(ir, departamentos da org)` | traduz cada nome citado em `encaminhar(...)` para o id do departamento; devolve uma resolução por nome, com `departamento_id` vazio quando não casa com um único | publicação (grava `fluxo_revisoes.resolucoes_json`, FX-09) |
+
+**O ponto do diagnóstico na revalidação é o caminho do nó**, porque não existe texto para apontar linha e coluna:
+
+| Caminho | Onde fica |
+|---|---|
+| `inicio` | o campo `inicio` do fluxo |
+| `fluxo (id "agendar_visita")` | o fluxo inteiro (teto de nós) |
+| `etapas[2] (id "entrega")` | a etapa |
+| `etapas[2] (id "entrega") > campos[0]` | o campo |
+| `etapas[2] (id "entrega") > acoes[1] > vai_para` | o destino da ação |
+| `etapas[2] (id "entrega") > acoes[1] > exige` | a lista `exige` |
+| `decisoes[0] (id "classificar") > se > args[0]` | a condição dentro do combinador |
+| `etapas[1] (id "confirmacao") > ao_entrar[0] > texto` | a variável dentro da mensagem |
+| `fins[1] (id "concluido")` | o desfecho |
+| `defs[0] (nome "problema_grave")` | a função de regra |
+
+**Ordem dos diagnósticos:** os que apontam nós saem na ordem dos nós da IR (etapas, depois decisões, depois fins); os de grafo (ciclo, alcance), o teto, os de uso (campo e `def`) vêm depois. A mesma IR sempre produz a mesma lista.
+
+**Outra diferença em relação ao compilador:** a revalidação compara o **destino para um fim** com a declaração em `fins` (`FLX16`) e recusa fim que não está declarado (`FLX15`) — na IR o mesmo `fim` aparece duas vezes (no destino e na lista), e as duas cópias têm de dizer a mesma coisa.
+
+**Casamento de departamento:** ignora espaços nas pontas e maiúscula/minúscula; **acento conta** (`Logistica` não é `Logística`). Nome que não casa ou que casa com mais de um departamento sai com `FLX65` e sem id: a publicação grava a resolução vazia e o atendimento registra o efeito como `falhou`, com evento na Ficha (a transição não é desfeita, L11).
+
 ## 11. Os três fluxos de exemplo
 
 | Arquivo | O que ensina |
@@ -905,7 +949,7 @@ Falha de **efeito** (mensagem, notificação, encaminhamento) não é falha de e
 
 Os três são carregados pelo validador e terminam sem nenhum diagnóstico; a IR de cada um é gerada por `poph flow ir`.
 
-Os **40 diagnósticos de forma** (`FLX01`–`FLX28`, `FLX51`–`FLX64`) têm, cada um, um arquivo mutado que o dispara, na pasta de testes do crate. As falhas de execução (`FLXR01`–`FLXR06`) são do motor (FX-11) e não são cobertas por esse validador.
+Os **40 diagnósticos do compilador** (`FLX01`–`FLX28`, `FLX51`–`FLX64`) têm, cada um, um caso mutado que o dispara, na pasta de testes do crate; o `FLX65` tem caso sobre a IR (§10.4). As falhas de execução (`FLXR01`–`FLXR06`) são do motor (FX-13 em diante) e não são cobertas por esses validadores.
 
 ## 12. O que muda em relação ao POP Atende
 
@@ -964,6 +1008,9 @@ Pontos que a implementação precisou decidir e que o mantenedor aceitou; ficam 
 | I9 | Igualdade de `carregar` | comparar o **JSON canônico** da IR gravada com o da recompilação: formatação não conta, valor e ordem contam | §8.2 |
 | I10 | Erro de divergência | `DomainError::IrDivergente` em `poph-types` (`ir_divergente`, HTTP 409); o motor falha fechado (`FLXR06`) | §10.3 |
 | I11 | `FLX04` na prática | só dispara se a carga estourar limite — com a forma válida, o topo do arquivo não executa nada, então é a rede de segurança, não o caminho comum | §3.4 |
+| I12 | `FLX65` | primeiro código livre na faixa de avisos: é **aviso**, não erro, e só nasce sobre a IR | §10.2, §10.4 |
+| I13 | Casamento de departamento | espaços nas pontas e caixa não contam; acento conta | §4.9, §10.4 |
+| I14 | Escopo da revalidação | a `validar(ir)` cobre também `FLX16` (fim divergente), `FLX19` (`funcao` sem `def`, ator fora da etapa), `FLX21` (forma do campo na regra), `FLX25`/`FLX59`/`FLX63` (variável de mensagem) e `FLX51` (etapa sem ação), além dos códigos de grafo, uso e teto: sem isso uma IR de fora passaria com fluxo quebrado e mensagem saindo vazia | §10.4 |
 
 ### 13.2 O que o PRD precisa mudar (avisar o mantenedor, não editar o PRD)
 
@@ -980,4 +1027,5 @@ Pontos que a implementação precisou decidir e que o mantenedor aceitou; ficam 
 - **Compilador implementado (FX-10)**: `poph_fluxos::compilar` monta a IR lendo a árvore sintática e emite os 40 diagnósticos com linha e coluna; os três exemplos compilam para a IR dourada em `tests/fluxos/ir/`; `poph_fluxos::carregar` recusa IR que não bata com o texto (`ir_divergente`). O validador do spike continua fora do workspace e não é usado por ninguém.
 - **Não testei no motor real**: avaliação de regra com dados reais, eventos, filas de efeito e concorrência são das FX-11 a FX-21. O compilador **carrega** o módulo (prova que ele compila e que os limites estão ligados), mas não avalia nenhuma `def`.
 - **A IR não foi versionada contra um caso antigo** (não há versão anterior): a regra aditiva está escrita e há teste de que campo desconhecido é ignorado na leitura, mas não existe IR de versão anterior para comparar.
-- **Diagnóstico com posição**: todo diagnóstico de forma aponta linha e coluna; os de carga sem trecho (`FLX02`, `FLX04`) apontam `1:1`. O `carregador` dos avisos de variável aponta o texto do efeito.
+- **Diagnóstico com posição**: todo diagnóstico do compilador aponta linha e coluna; os de carga sem trecho (`FLX02`, `FLX04`) apontam `1:1`. O `carregador` dos avisos de variável aponta o texto do efeito.
+- **Validador implementado (FX-11)**: `poph_fluxos::validar` revalida uma IR que não veio do compilador, apontando o **caminho do nó** (sem linha e coluna), e `poph_fluxos::resolver_departamentos` traduz nome → id com o `FLX65`. Os três exemplos passam sem diagnóstico nas duas direções, e há teste de concordância entre compilador e validador nos avisos iguais. Não confere: formato de id (`FLX13`), tipo de campo (`FLX20`), a forma de `def` (`FLX24`), texto longo (`FLX64`) nem `notificar_whatsapp` sem variável (`FLX58`) — os três primeiros são do texto e a IR, por construção, já vem com a forma certa; os dois últimos são dica de escrita, que o compilador dá na publicação.

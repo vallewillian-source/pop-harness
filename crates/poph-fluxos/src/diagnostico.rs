@@ -1,8 +1,17 @@
 //! Diagnósticos de forma do compilador de fluxos (FX-10).
 //!
-//! A lista é **fechada** e é a de `docs/FLUXOS_LINGUAGEM.md` §10: 26 erros (`FLX01`–`FLX28`) e 14
-//! avisos (`FLX51`–`FLX64`). Código novo entra naquele documento antes de entrar aqui. Cada
-//! diagnóstico carrega a linha e a coluna do trecho que o provocou (1-based, como o autor conta).
+//! A lista é **fechada** e é a de `docs/FLUXOS_LINGUAGEM.md` §10: 26 erros (`FLX01`–`FLX28`) e 15
+//! avisos (`FLX51`–`FLX65`). Código novo entra naquele documento antes de entrar aqui.
+//!
+//! O diagnóstico aponta **onde** o autor tem de mexer, de duas formas possíveis:
+//!
+//! - **Linha e coluna** (1-based) do texto do script: é o diagnóstico do compilador, que lê a
+//!   árvore sintática (`FLX01`–`FLX28`, `FLX51`–`FLX64`).
+//! - **Caminho do nó na IR** (`etapas[2] (id "entrega") > acoes[1] > vai_para`): é o diagnóstico de
+//!   revalidação de uma estrutura que **não** veio do compilador (importação, revisão antiga); ali
+//!   não existe texto para apontar. Ver [`crate::validador`].
+//!
+//! O `FLX65` (departamento que a organização não tem) só nasce sobre a IR, na publicação.
 //!
 //! Erro bloqueia a publicação; aviso não. As falhas de **execução** (`FLXR01`–`FLXR06`) não são
 //! diagnóstico de compilação e não estão nesta enum: elas nascem no motor (FX-11 em diante).
@@ -95,10 +104,12 @@ pub enum Codigo {
     VariavelDoProprioPasso,
     /// Texto acima do recomendado.
     TextoLongo,
+    /// Departamento citado em `encaminhar` que a organização não tem (ou tem com nome repetido).
+    DepartamentoInexistente,
 }
 
 impl Codigo {
-    /// Os 40 códigos, na ordem de `FLUXOS_LINGUAGEM.md` §10.
+    /// Os 41 códigos, na ordem de `FLUXOS_LINGUAGEM.md` §10.
     pub const TODOS: &'static [Self] = &[
         Self::Sintaxe,
         Self::FonteGrande,
@@ -140,7 +151,17 @@ impl Codigo {
         Self::AtorSemAcao,
         Self::VariavelDoProprioPasso,
         Self::TextoLongo,
+        Self::DepartamentoInexistente,
     ];
+
+    /// Os códigos que o **compilador** emite, lendo o texto do script: todos os de [`Self::TODOS`]
+    /// menos o `FLX65`, que só nasce sobre uma IR já compilada (`validador::resolver_departamentos`).
+    pub fn do_compilador() -> impl Iterator<Item = Self> {
+        Self::TODOS
+            .iter()
+            .copied()
+            .filter(|codigo| *codigo != Self::DepartamentoInexistente)
+    }
 
     /// Texto do código (`FLX12`), que é o que aparece na API e nos testes.
     pub fn como_texto(self) -> &'static str {
@@ -185,6 +206,7 @@ impl Codigo {
             Self::AtorSemAcao => "FLX62",
             Self::VariavelDoProprioPasso => "FLX63",
             Self::TextoLongo => "FLX64",
+            Self::DepartamentoInexistente => "FLX65",
         }
     }
 
@@ -252,10 +274,12 @@ impl fmt::Display for Severidade {
     }
 }
 
-/// Um diagnóstico do compilador, com o ponto exato do script.
+/// Um diagnóstico, com o ponto exato de onde o autor tem de mexer.
 ///
-/// `linha` e `coluna` são 1-based (como o autor conta, e como a API publica). Diagnóstico que não
-/// tem trecho (limite de tamanho da fonte) aponta `1:1`.
+/// O ponto é **um dos dois**, nunca os dois: linha e coluna do script (diagnóstico do compilador,
+/// 1-based, como o autor conta e como a API publica — diagnóstico sem trecho, como o limite de
+/// tamanho da fonte, aponta `1:1`) ou o caminho do nó na IR (revalidação de estrutura que não veio
+/// do compilador). No JSON o que não existe não aparece.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Diagnostico {
     /// Código da lista fechada.
@@ -264,33 +288,91 @@ pub struct Diagnostico {
     pub severidade: Severidade,
     /// Mensagem em português, dizendo o que corrigir.
     pub mensagem: String,
-    /// Linha do trecho (1-based).
-    pub linha: u32,
-    /// Coluna do trecho (1-based).
-    pub coluna: u32,
+    /// Linha do trecho no script (1-based); ausente quando o diagnóstico veio de uma IR.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub linha: Option<u32>,
+    /// Coluna do trecho no script (1-based); ausente quando o diagnóstico veio de uma IR.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coluna: Option<u32>,
+    /// Caminho do nó na IR (`etapas[2] (id "entrega") > acoes[1] > vai_para`); ausente quando o
+    /// diagnóstico aponta linha e coluna.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caminho: Option<String>,
 }
 
 impl Diagnostico {
-    /// Diagnóstico de erro no ponto dado.
+    /// Diagnóstico de erro no ponto dado do texto do script.
     pub fn erro(codigo: Codigo, mensagem: impl Into<String>, linha: u32, coluna: u32) -> Self {
         Self {
             codigo,
             severidade: Severidade::Erro,
             mensagem: mensagem.into(),
-            linha,
-            coluna,
+            linha: Some(linha),
+            coluna: Some(coluna),
+            caminho: None,
         }
     }
 
-    /// Diagnóstico de aviso no ponto dado.
+    /// Diagnóstico de aviso no ponto dado do texto do script.
     pub fn aviso(codigo: Codigo, mensagem: impl Into<String>, linha: u32, coluna: u32) -> Self {
         Self {
             codigo,
             severidade: Severidade::Aviso,
             mensagem: mensagem.into(),
-            linha,
-            coluna,
+            linha: Some(linha),
+            coluna: Some(coluna),
+            caminho: None,
         }
+    }
+
+    /// Diagnóstico de erro que aponta o **nó da IR** (`etapas[2] (id "entrega") > acoes[1]`).
+    ///
+    /// É o formato da revalidação de uma estrutura que não veio do compilador: ali não há texto
+    /// para dar linha e coluna.
+    pub fn erro_no(
+        codigo: Codigo,
+        mensagem: impl Into<String>,
+        caminho: impl Into<String>,
+    ) -> Self {
+        Self {
+            codigo,
+            severidade: Severidade::Erro,
+            mensagem: mensagem.into(),
+            linha: None,
+            coluna: None,
+            caminho: Some(caminho.into()),
+        }
+    }
+
+    /// Diagnóstico de aviso que aponta o nó da IR.
+    pub fn aviso_no(
+        codigo: Codigo,
+        mensagem: impl Into<String>,
+        caminho: impl Into<String>,
+    ) -> Self {
+        Self {
+            codigo,
+            severidade: Severidade::Aviso,
+            mensagem: mensagem.into(),
+            linha: None,
+            coluna: None,
+            caminho: Some(caminho.into()),
+        }
+    }
+
+    /// Linha do trecho no script, quando o diagnóstico aponta texto.
+    pub fn linha(&self) -> Option<u32> {
+        self.linha
+    }
+
+    /// Coluna do trecho no script, quando o diagnóstico aponta texto.
+    pub fn coluna(&self) -> Option<u32> {
+        self.coluna
+    }
+
+    /// Caminho do nó na IR, quando o diagnóstico aponta estrutura.
+    pub fn caminho(&self) -> Option<&str> {
+        self.caminho.as_deref()
     }
 
     /// Se este diagnóstico bloqueia a publicação.
@@ -301,11 +383,19 @@ impl Diagnostico {
 
 impl fmt::Display for Diagnostico {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}: {}: {} (linha {}, coluna {})",
-            self.severidade, self.codigo, self.mensagem, self.linha, self.coluna
-        )
+        match (&self.caminho, self.linha, self.coluna) {
+            (Some(caminho), _, _) => write!(
+                f,
+                "{}: {}: {} (no nó {})",
+                self.severidade, self.codigo, self.mensagem, caminho
+            ),
+            (None, Some(linha), Some(coluna)) => write!(
+                f,
+                "{}: {}: {} (linha {}, coluna {})",
+                self.severidade, self.codigo, self.mensagem, linha, coluna
+            ),
+            _ => write!(f, "{}: {}: {}", self.severidade, self.codigo, self.mensagem),
+        }
     }
 }
 
@@ -314,9 +404,12 @@ mod testes {
     use super::*;
 
     #[test]
-    fn a_lista_fechada_tem_os_40_codigos_do_documento() {
+    fn a_lista_fechada_tem_os_41_codigos_do_documento() {
         // Se esta contagem mudar, o §10 do FLUXOS_LINGUAGEM.md mudou junto (ou alguém inventou código).
-        assert_eq!(Codigo::TODOS.len(), 40);
+        assert_eq!(Codigo::TODOS.len(), 41);
+        // O compilador emite 40: o FLX65 nasce sobre a IR, na publicação.
+        assert_eq!(Codigo::do_compilador().count(), 40);
+        assert!(!Codigo::do_compilador().any(|c| c == Codigo::DepartamentoInexistente));
     }
 
     #[test]
@@ -360,5 +453,38 @@ mod testes {
         );
         assert!(d.e_erro());
         assert!(!Diagnostico::aviso(Codigo::TextoLongo, "longo", 1, 1).e_erro());
+    }
+
+    #[test]
+    fn diagnostico_da_ir_aponta_o_no_e_nao_aponta_linha() {
+        let d = Diagnostico::erro_no(
+            Codigo::DestinoInexistente,
+            "a ação vai para `depois`, que não existe",
+            "etapas[0] (id \"coleta\") > acoes[1] > vai_para",
+        );
+        assert_eq!(
+            d.caminho(),
+            Some("etapas[0] (id \"coleta\") > acoes[1] > vai_para")
+        );
+        assert_eq!((d.linha(), d.coluna()), (None, None));
+        assert_eq!(
+            d.to_string(),
+            "erro: FLX15: a ação vai para `depois`, que não existe (no nó etapas[0] (id \"coleta\") > acoes[1] > vai_para)"
+        );
+        // No JSON o que não existe não aparece: a API não publica linha 0.
+        let json = serde_json::to_string(&d).unwrap();
+        assert!(!json.contains("linha"), "{json}");
+        assert!(json.contains("\"caminho\""), "{json}");
+        let voltou: Diagnostico = serde_json::from_str(&json).unwrap();
+        assert_eq!(voltou, d);
+    }
+
+    #[test]
+    fn diagnostico_do_texto_vai_e_volta_em_json_sem_caminho() {
+        let d = Diagnostico::aviso(Codigo::CampoNaoUsado, "ninguém usa o campo", 7, 3);
+        let json = serde_json::to_string(&d).unwrap();
+        assert!(json.contains("\"linha\":7"), "{json}");
+        assert!(!json.contains("caminho"), "{json}");
+        assert_eq!(serde_json::from_str::<Diagnostico>(&json).unwrap(), d);
     }
 }
