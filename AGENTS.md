@@ -7,6 +7,11 @@ rodar, leia o [`README.md`](README.md).
 O POP Harness é independente do POP Atende. Nada no workspace importa código do POP Atende: as
 menções a ele estão só em comentários e em nomes de teste.
 
+Este diretório é um **repositório Git próprio** (`github.com/vallewillian-source/pop-harness`), usado
+como submódulo por quem o consome. Commit e push do POP Harness são feitos **aqui dentro**; o repositório
+que o usa guarda só o ponteiro para o commit. Antes de commitar, rode `bash scripts/ci.sh` e confira que
+nenhum dado de cliente, caminho de máquina ou documento interno entrou no diff.
+
 ## Antes de mexer
 
 1. Leia o doc do assunto em `docs/` (lista na seção "Regras de negócio" abaixo). Os docs descrevem o
