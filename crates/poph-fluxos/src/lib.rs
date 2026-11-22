@@ -13,14 +13,14 @@
 //!
 //! - [`compilador`] — FX-10: script → IR, com diagnósticos de forma (feito).
 //! - [`validador`] — FX-11: diagnósticos semânticos sobre a IR e resolução de departamentos (feito).
-//! - [`regras`] — FX-12: combinadores e funções avançadas (`def`).
+//! - [`regras`] — FX-12: combinadores e funções avançadas (`def`) (feito).
 //! - [`motor`] — FX-13 e FX-14: iniciar, registrar campos, executar ação, avançar, fim e efeitos.
 //! - [`prompt`] — FX-18: bloco do prompt e visualização da etapa.
 //! - [`diff`] — FX-17: diferença entre revisões em linguagem comum.
 //! - [`formatador`] — FX-16: forma canônica do script (script ⇄ estrutura).
 //!
-//! Os módulos ainda vazios existem para fixar o desenho e a fronteira: só `compilador` e `validador`
-//! têm função pública.
+//! Os módulos ainda vazios existem para fixar o desenho e a fronteira: `compilador`, `validador` e
+//! `regras` têm função pública.
 
 // `blake3` entra pela FX-19 (chave de cache de revisão: `fluxo_id + número + sha256`). Até lá o
 // `use ... as _` só marca a dependência como usada, porque o lint `unused_dependencies` do Rust
@@ -41,4 +41,5 @@ pub mod validador;
 pub use compilador::{Compilado, FalhaCarregamento, Limites, carregar, compilar};
 pub use diagnostico::{Codigo, Diagnostico, Severidade};
 pub use ir::Ir;
+pub use regras::{Avaliador, Dados, ErroRegra, LimitesRegra, avaliar, dados_de_json};
 pub use validador::{Departamento, MAX_NOS, Resolucao, resolver_departamentos, validar};

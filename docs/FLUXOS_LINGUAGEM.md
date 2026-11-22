@@ -560,6 +560,55 @@ def problema_grave(dados):
 
 **Ordem de avaliação de uma decisão:** o motor lê os dados atuais (snapshot da execução), avalia a árvore, segue `entao` ou `senao`. Cada passagem grava o evento `decisao_resolvida` com o resultado e o destino. Se o destino for outra decisão, repete — até 10 saltos (`FLXR04`). A execução **não** fica em memória entre turnos.
 
+### 6.1 Combinadores: semântica exata
+
+Os combinadores são IR e são avaliados em Rust nativo (`poph_fluxos::avaliar`), sem passar pelo Starlark. Campo é sempre escrito `etapa.campo`; fora desse formato a regra é `regra_invalida` (defeito do autor).
+
+| Combinador | Verdadeiro quando | Campo ausente / `null` |
+|---|---|---|
+| `igual(campo, literal)` | o texto canônico do campo (§5) é igual ao literal, sem espaços nas pontas. Booleano aceita `sim`/`nao`, `true`/`false`, `1`/`0`. Lista nunca é igual | falso |
+| `diferente(campo, literal)` | o contrário de `igual` | **verdadeiro** (o que não existe difere do literal) |
+| `maior(campo, literal)` / `menor(campo, literal)` | o campo é número e a comparação vale | falso |
+| `contem(campo, literal)` | o texto canônico contém o trecho, ignorando caixa e acento; em **lista**, algum item contém | falso |
+| `vazio(campo)` | não preenchido, `null`, só espaços, ou lista sem itens | **verdadeiro** |
+| `e(a, b, …)` / `ou(a, b, …)` / `nao(a)` | o esperado, com curto-circuito | combinam os resultados acima |
+
+Detalhes que o autor precisa saber:
+
+- **`igual` é exato** (difere maiúscula, mantém acento); **`contem` normaliza** as duas coisas — é busca em fala de cliente.
+- **Aninhamento**: `e`/`ou` recebem duas ou mais condições, `nao` recebe exatamente uma; fora disso é `regra_invalida` (`FLX21` já avisa na publicação quando a IR vem do texto).
+- **Profundidade**: a avaliação para em **32 níveis** com `regra_invalida`, em vez de estourar a pilha nativa. A IR publicada tem no máximo `MAX_NOS` nós, então isso só acontece com IR gravada à mão.
+- **Determinismo**: a mesma regra com os mesmos dados dá o mesmo resultado, sempre — não há relógio nem aleatório no caminho.
+
+### 6.2 Número × texto
+
+| Situação | Resultado |
+|---|---|
+| Campo numérico × literal numérico | compara pelo número (`maior`, `menor`) |
+| Campo de **texto que é número** (`"12"`) × literal numérico | compara pelo número: `"12"` é maior que `"9"` |
+| Campo de texto que **não é número**, lista, objeto ou booleano | **falso** (é o aviso `FLX60` na publicação: o autor provavelmente errou o tipo do campo) |
+| Literal que **não é número** (`maior("x", "muito")`) | **erro** `regra_invalida` — a regra nunca poderia ser verdadeira, é defeito do autor |
+| `igual` entre booleano do campo e literal `sim`/`nao`/`true`/`false`/`1`/`0` | compara pelo booleano normalizado |
+
+### 6.3 Como a `def` roda (prazo, isolamento e custo)
+
+- O script é carregado **uma vez** (`poph_fluxos::regras::Avaliador::novo`) e o módulo congelado serve todas as regras daquela passagem — uma carga por revisão, não uma por nó.
+- A `def` recebe os dados como **dicionário concreto**: o que o cliente escreveu entra como **valor**, nunca como código. Não existe `eval`, e o dialeto não alcança relógio, rede, arquivo nem aleatório (§3.3).
+- Limites da regra: **10.000 ticks**, **1 MiB** de heap, **128** de pilha e **200 ms** de prazo.
+- **O prazo do Starlark não é preemptivo**: uma alocação única e enorme acontece antes da conferência de heap. Por isso a `def` (e a carga do script) roda numa thread própria, e o chamador espera no máximo o prazo mais uma margem de **25 ms**; estourou, a regra responde `regra_limite` na hora e a thread abandonada termina sozinha. É o que garante o turno do atendimento mesmo com script patológico publicado.
+- Custo medido nesta estação com `cargo test -p poph-fluxos --release --test regras p95 -- --nocapture`: combinadores **p50 0,20 µs / p95 0,21 µs** e `def` com thread e prazo **p50 32 µs / p95 47 µs**; no build de teste (o do CI), combinadores **p50 2,8 µs / p95 2,9 µs** e `def` **p50 115 µs / p95 147 µs**. O custo da `def` é quase todo a thread com prazo; os dois ficam abaixo da meta de **200 µs p95** medida na FX-01 e muito abaixo do teto de 200 ms. No spike da FX-01 (release, módulo já carregado) o combinador media p95 1,7 µs.
+
+### 6.4 O que o motor faz com o erro
+
+Erro de regra **não** derruba o processo nem o turno, e vira um de dois códigos de API:
+
+| Situação | Erro | Falha de execução | Desfecho |
+|---|---|---|---|
+| `funcao` sem `def`, `def` que devolveu algo que não é `True`/`False`, `def` que estourou (chave ausente, divisão por zero), literal que não é número, campo fora do formato `etapa.campo` | `regra_invalida` (HTTP 400) | `FLXR01`/`FLXR02` | execução `falha`, Ficha **aberta** |
+| ticks, heap, pilha de chamada ou prazo estourados | `regra_limite` (HTTP 400) | `FLXR03` | execução `falha`, Ficha **aberta** |
+
+Quem marca a execução como `falha` e grava o evento é o motor (FX-13); a avaliação só devolve o erro tipado.
+
 ## 7. Variáveis nas mensagens
 
 Só existem três formas, e só nos textos que são enviados:
@@ -1011,6 +1060,12 @@ Pontos que a implementação precisou decidir e que o mantenedor aceitou; ficam 
 | I12 | `FLX65` | primeiro código livre na faixa de avisos: é **aviso**, não erro, e só nasce sobre a IR | §10.2, §10.4 |
 | I13 | Casamento de departamento | espaços nas pontas e caixa não contam; acento conta | §4.9, §10.4 |
 | I14 | Escopo da revalidação | a `validar(ir)` cobre também `FLX16` (fim divergente), `FLX19` (`funcao` sem `def`, ator fora da etapa), `FLX21` (forma do campo na regra), `FLX25`/`FLX59`/`FLX63` (variável de mensagem) e `FLX51` (etapa sem ação), além dos códigos de grafo, uso e teto: sem isso uma IR de fora passaria com fluxo quebrado e mensagem saindo vazia | §10.4 |
+| I15 | Caminho da avaliação | combinadores em **Rust nativo** (IR, microssegundos, sem alocar valor de script) e **só** `funcao("nome")` no Starlark: é a decisão D2, agora implementada (`poph_fluxos::regras`) | §6 |
+| I16 | Prazo não preemptivo | `def` e carga do script rodam numa **thread própria**, com prazo mais **25 ms** de margem; estourou, `regra_limite` na hora e a thread abandonada termina sozinha. Sem isso `"x" * 1000000000` dentro de uma `def` travaria o turno por segundos | §6.3 |
+| I17 | Profundidade da regra | avaliação para em **32 níveis** de aninhamento com `regra_invalida`, em vez de estourar a pilha nativa — só alcançável com IR gravada à mão | §6.1 |
+| I18 | Número × texto | texto que é número compara como número; valor não numérico dá **falso** (aviso `FLX60` na publicação); literal que não é número é **erro** `regra_invalida` | §6.2 |
+| I19 | Códigos de erro | `regra_invalida` e `regra_limite` em `poph-types`, HTTP **400** (defeito do fluxo publicado ou custo da regra — corrigir é republicar, não é o pedido do cliente que está errado); nenhum dos dois derruba processo ou turno | §6.4 |
+| I20 | Limites da regra | ticks **10.000**, heap **1 MiB**, pilha **128**, prazo **200 ms** — mais apertados que os da carga (1 s), porque a regra roda a cada decisão do atendimento | §3.4, §6.3 |
 
 ### 13.2 O que o PRD precisa mudar (avisar o mantenedor, não editar o PRD)
 
@@ -1029,3 +1084,4 @@ Pontos que a implementação precisou decidir e que o mantenedor aceitou; ficam 
 - **A IR não foi versionada contra um caso antigo** (não há versão anterior): a regra aditiva está escrita e há teste de que campo desconhecido é ignorado na leitura, mas não existe IR de versão anterior para comparar.
 - **Diagnóstico com posição**: todo diagnóstico do compilador aponta linha e coluna; os de carga sem trecho (`FLX02`, `FLX04`) apontam `1:1`. O `carregador` dos avisos de variável aponta o texto do efeito.
 - **Validador implementado (FX-11)**: `poph_fluxos::validar` revalida uma IR que não veio do compilador, apontando o **caminho do nó** (sem linha e coluna), e `poph_fluxos::resolver_departamentos` traduz nome → id com o `FLX65`. Os três exemplos passam sem diagnóstico nas duas direções, e há teste de concordância entre compilador e validador nos avisos iguais. Não confere: formato de id (`FLX13`), tipo de campo (`FLX20`), a forma de `def` (`FLX24`), texto longo (`FLX64`) nem `notificar_whatsapp` sem variável (`FLX58`) — os três primeiros são do texto e a IR, por construção, já vem com a forma certa; os dois últimos são dica de escrita, que o compilador dá na publicação.
+- **Avaliação de regra implementada (FX-12)**: `poph_fluxos::regras` avalia combinadores em Rust nativo e `def` no módulo congelado, com prazo, e tem teste por combinador, por desfecho de erro, de abuso (`"x" * 1000000000`, recursão, laço, leitura de campo inexistente) e de p95. **Não testei**: `def` que tenta alterar o dicionário de dados (ela recebe uma **cópia** concreta, então a alteração não volta para a execução — o comportamento não tem teste próprio), regra avaliada sob concorrência real (vários atendimentos ao mesmo tempo) e o custo da thread com prazo em produção — o número medido é de build de teste nesta estação. O motor que chama a avaliação e marca a execução como `falha` é a FX-13.
