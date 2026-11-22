@@ -1,25 +1,26 @@
 # Changelog
 
-Todas as mudanças relevantes deste projeto ficam neste arquivo.
+All notable changes to this project are recorded in this file.
 
-O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o projeto segue o
-[Versionamento Semântico](https://semver.org/lang/pt-BR/). Na série `0.x`, qualquer versão pode trazer
-mudança incompatível; ela vem sempre marcada como **Quebra** nas notas.
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows
+[Semantic Versioning](https://semver.org/). In the `0.x` series any version may bring an incompatible
+change; it is always marked **Breaking** in the notes.
 
-## [Não lançado]
+## [Unreleased]
 
-### Adicionado
+### Added
 
-- Motor de atendimento multi-tenant em Rust: orgs, agentes com instruções estruturadas, departamentos,
-  categorias, produtos com carrinho de orçamento e biblioteca de arquivos por agente.
-- Base de conhecimento com busca híbrida (vetor e texto) e embedding local em ONNX (int8).
-- Jev com oito gates de decisão rápida (G1 a G8), medidos contra conjuntos rotulados, e o G9 para iniciar fluxos.
-- WhatsApp pela EvolutionAPI como canal nativo e contrato de canal em processo externo (JSON-lines por stdio).
-- Fluxos escritos em Starlark, com revisões imutáveis, permissão por agente e Fichas por atendimento.
-- Módulo Matrix desligável: sala por conversa, espaços por departamento, resposta do atendente no Element
-  e pausa do agente.
-- API administrativa em `/admin/v1` com OpenAPI 3.1, Console web embutido e CLI `poph`.
-- Roteamento estático entre instâncias com encaminhamento assinado, backup e restauração de org,
-  retenção do histórico, métricas Prometheus e `poph doctor`.
-- Arquivos de comunidade: licença, guia de contribuição, código de conduta, política de segurança,
-  modelos de issue e de pull request.
+- Multi-tenant customer-service engine in Rust: orgs, agents with structured instructions, departments,
+  categories, products with a quote cart, and a per-agent file library.
+- Knowledge base with hybrid search (vector and text) and local embeddings in ONNX (int8).
+- The Jev, with eight fast-decision gates (G1 to G8), measured against labelled sets, and G9 to start flows.
+- WhatsApp through EvolutionAPI as a native channel, and a channel contract for external processes
+  (JSON-lines over stdio).
+- Flows written in Starlark, with immutable revisions, per-agent permission and one Ficha per conversation.
+- Optional Matrix module: one room per conversation, spaces per department, agent replies in Element and
+  pausing the AI agent.
+- Admin API at `/admin/v1` with OpenAPI 3.1, embedded web Console and the `poph` CLI.
+- Static routing between instances with signed forwarding, org backup and restore, history retention,
+  Prometheus metrics and `poph doctor`.
+- Community files: licence, contributing guide, code of conduct, security policy, issue and pull request
+  templates.

@@ -1,57 +1,58 @@
-# Roteiro
+# Roadmap
 
-Este arquivo diz o que o projeto prioriza e o que está fora do escopo. Ele muda conforme as decisões de
-quem mantém o projeto e não é uma promessa de data. Para propor algo, abra uma issue de proposta.
+This file says what the project prioritises and what is out of scope. It changes with the maintainers'
+decisions and is not a promise of dates. To propose something, open a proposal issue.
 
-## Em desenvolvimento (estado em 22/11/2026)
+## In development (status as of 2026-11-22)
 
-Estes itens já têm desenho fechado e aparecem no README como parte do produto, mas ainda não estão no binário:
+These items have a settled design and appear in the README as part of the product, but are not in the
+binary yet:
 
-- [ ] **Fluxos:** `poph flow` (validar, publicar, diff, formatar), efeitos, revisões, a ferramenta `fluxo_iniciar`
-      e o gate G9. A linguagem está em [`docs/FLUXOS_LINGUAGEM.md`](docs/FLUXOS_LINGUAGEM.md).
-- [ ] **Fichas:** a Ficha já é criada em cada atendimento e fechada junto com ele; falta `poph ficha`, a
-      listagem e o histórico de fluxos como subitem.
-- [ ] **Matrix, fase 2:** imagem e arquivo nos dois sentidos, mensagem do aparelho e expiração.
-- [ ] **Matrix, fase 3:** várias instâncias no mesmo Synapse.
-- [ ] **Console:** telas de Matrix, fluxos e Fichas (hoje aparecem como "em breve" no menu).
-- [ ] **Console fora do monorepo:** publicar ou incluir o pacote `@sofacoding/sofa-ui`.
+- [ ] **Flows:** `poph flow` (validate, publish, diff, format), effects, revisions, the `fluxo_iniciar` tool
+      and the G9 gate. The language is in [`docs/FLUXOS_LINGUAGEM.md`](docs/FLUXOS_LINGUAGEM.md).
+- [ ] **Fichas:** a Ficha is already created for each conversation and closed with it; still missing are
+      `poph ficha`, listing, and the flow history as a sub-item.
+- [ ] **Matrix, phase 2:** images and files in both directions, messages from the device, and expiry.
+- [ ] **Matrix, phase 3:** several instances on the same Synapse.
+- [ ] **Console:** Matrix, flows and Fichas screens (today they appear as "coming soon" in the menu).
+- [ ] **Console outside the monorepo:** publish or include the `@sofacoding/sofa-ui` package.
 
-## Antes da `1.0`
+## Before `1.0`
 
-O que falta para o projeto ser recomendável em produção por qualquer pessoa:
+What is missing for the project to be recommendable for production by anyone:
 
-- [ ] **Teste de carga completo.** 10 mil agentes ociosos e 500 conversas ativas, em x86_64 e ARM64, com a
-      tabela "meta × medido" publicada. Hoje as metas estão fixadas ([`docs/DECISOES.md`](docs/DECISOES.md), D-07)
-      e só há medições parciais.
-- [ ] **Benchmark reproduzível** de latência e memória contra alternativas, com método e scripts públicos.
-- [ ] **WhatsApp com número real.** Hoje o canal foi provado só com uma EvolutionAPI falsa.
-- [ ] **Provedor de modelo genérico.** Trocar o identificador `antigravity2api` por um provedor
-      compatível com OpenAI documentado e testado contra mais de um endpoint, e documentar como escrever
-      outro provedor.
-- [ ] **Decisão do Jev trocável.** Hoje o Jev é um serviço de terceiros opcional. Permitir outro serviço de
-      decisão atrás da mesma interface, com o mesmo princípio (o serviço escolhe, o código valida).
-- [ ] **Plugin externo como canal no servidor.** Ligar o contrato e o supervisor, que estão prontos, ao
-      recebimento e ao envio de mensagens no `poph serve`.
-- [ ] **Paridade de busca medida com um agente real**, não só com corpus sintético, e calibração do corte
-      de relevância padrão.
-- [ ] **Imagem de container** e pacote ARM64 reconstruído a cada versão.
-- [ ] **Login de pessoa no Console**, papéis e limite de taxa por token.
+- [ ] **Full load test.** 10,000 idle agents and 500 active conversations, on x86_64 and ARM64, with a
+      published "target × measured" table. Today the targets are fixed ([`docs/DECISOES.md`](docs/DECISOES.md), D-07)
+      and there are only partial measurements.
+- [ ] **Reproducible benchmark** of latency and memory against alternatives, with public method and scripts.
+- [ ] **WhatsApp with a real number.** Today the channel has been proven only against a fake EvolutionAPI.
+- [ ] **Generic model provider.** Replace the `antigravity2api` identifier with a documented
+      OpenAI-compatible provider tested against more than one endpoint, and document how to write another
+      provider.
+- [ ] **Swappable Jev decision.** Today the Jev is an optional third-party service. Allow another decision
+      service behind the same interface, with the same principle (the service chooses, the code validates).
+- [ ] **External plugin as a channel in the server.** Wire the contract and the supervisor, which are
+      ready, to message receiving and sending in `poph serve`.
+- [ ] **Search parity measured with a real agent**, not just a synthetic corpus, and calibration of the
+      default relevance cut-off.
+- [ ] **Container image** and an ARM64 package rebuilt on every release.
+- [ ] **Person login in the Console**, roles and a per-token rate limit.
 
-## Depois
+## Later
 
-Ideias que cabem no projeto, sem ordem e sem data:
+Ideas that fit the project, in no order and with no date:
 
-- Retenção própria das Fichas.
-- Editor visual de fluxos no Console (o formato de script já foi pensado para ele editar sem perder nada).
-- Transcrição de áudio e vídeo.
-- Plugins em WASM.
-- Novos canais como plugin: e-mail e widget de site.
+- Retention policy for Fichas.
+- Visual flow editor in the Console (the script format was designed so it can edit without losing anything).
+- Audio and video transcription.
+- WASM plugins.
+- New channels as plugins: email and a website widget.
 
-## Fora do escopo
+## Out of scope
 
-Coisas que decidimos **não** fazer, para ninguém gastar tempo nelas:
+Things we decided **not** to do, so nobody spends time on them:
 
-- Framework genérico de agentes. O Harness é um motor de atendimento, não uma biblioteca de orquestração.
-- Redis, Postgres ou outro serviço obrigatório. A instalação continua sendo um binário e arquivos.
-- Regras de rota por intenção no núcleo (a passagem é para um departamento).
-- Compatibilidade com o JSON do editor de fluxos de outros produtos.
+- A generic agent framework. Harness is a customer-service engine, not an orchestration library.
+- Redis, Postgres or any other mandatory service. The installation stays a binary and files.
+- Intent-routing rules in the core (handoff goes to a department).
+- Compatibility with the flow-editor JSON of other products.

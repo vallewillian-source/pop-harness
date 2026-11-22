@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Dúvida de uso ou conversa aberta
+  - name: Usage question or open conversation
     url: https://github.com/vallewillian-source/pop-harness/discussions
-    about: Perguntas, ideias e "como eu faço" ficam melhor nas Discussions.
-  - name: Falha de segurança
+    about: Questions, ideas and "how do I" are better in Discussions.
+  - name: Security vulnerability
     url: https://github.com/vallewillian-source/pop-harness/security/advisories/new
-    about: Não abra issue pública. Use o relato privado (veja SECURITY.md).
+    about: Do not open a public issue. Use private reporting (see SECURITY.md).

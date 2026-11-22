@@ -1,43 +1,43 @@
-name: Proposta
-description: Sugira uma melhoria ou um recurso novo.
-labels: ["enhancement", "triagem"]
+name: Proposal
+description: Suggest an improvement or a new feature.
+labels: ["enhancement", "triage"]
 body:
   - type: markdown
     attributes:
       value: |
-        Abra a proposta **antes** de escrever o código, principalmente se ela mexe em contrato de API, formato
-        de arquivo, esquema de banco ou no desenho de um módulo. Veja também o `ROADMAP.md`.
+        Open the proposal **before** writing the code, especially if it touches an API contract, a file
+        format, the database schema or the design of a module. See also `ROADMAP.md`.
   - type: textarea
-    id: problema
+    id: problem
     attributes:
-      label: Qual problema você quer resolver
-      description: Conte a situação real, sem já propor a solução. Quem é afetado e o que fazem hoje para contornar?
+      label: What problem do you want to solve
+      description: Describe the real situation, without jumping to the solution. Who is affected and what do they do today to work around it?
     validations:
       required: true
   - type: textarea
-    id: proposta
+    id: proposal
     attributes:
-      label: O que você propõe
-      description: O que muda na prática para quem usa. Se souber, diga como ficariam o comando, a rota ou a configuração.
+      label: What do you propose
+      description: What changes in practice for whoever uses it. If you know, say what the command, route or configuration would look like.
     validations:
       required: true
   - type: textarea
-    id: alternativas
+    id: alternatives
     attributes:
-      label: Alternativas que você considerou
-      description: Inclusive "não fazer nada" e contornos que já funcionam.
+      label: Alternatives you considered
+      description: Including "do nothing" and workarounds that already work.
   - type: textarea
-    id: custos
+    id: costs
     attributes:
-      label: Custos e riscos
-      description: Memória, dependência nova, compatibilidade com o que existe, isolamento entre orgs, segurança.
+      label: Costs and risks
+      description: Memory, a new dependency, compatibility with what exists, isolation between orgs, security.
   - type: dropdown
-    id: contribuir
+    id: contribute
     attributes:
-      label: Você pode implementar?
+      label: Can you implement it?
       options:
-        - Sim, abro o pull request depois do alinhamento
-        - Posso ajudar com parte
-        - Não, só estou sugerindo
+        - Yes, I'll open the pull request after we agree
+        - I can help with part of it
+        - No, I'm only suggesting
     validations:
       required: true

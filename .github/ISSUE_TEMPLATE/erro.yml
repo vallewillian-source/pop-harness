@@ -1,79 +1,79 @@
-name: Erro
-description: Algo não funciona como a documentação diz.
-labels: ["bug", "triagem"]
+name: Bug report
+description: Something does not work the way the documentation says.
+labels: ["bug", "triage"]
 body:
   - type: markdown
     attributes:
       value: |
-        Obrigado por relatar. **Não cole** chaves, tokens, `POPH_CHAVE_CIFRA`, telefones nem conversas reais de clientes.
-        Falha de segurança **não** vai aqui: veja o `SECURITY.md`.
+        Thanks for reporting. **Do not paste** keys, tokens, `POPH_CHAVE_CIFRA`, phone numbers or real customer conversations.
+        Security flaws do **not** go here: see `SECURITY.md`.
   - type: textarea
-    id: o-que-acontece
+    id: what-happens
     attributes:
-      label: O que acontece
-      description: Descreva o que você viu e o que esperava ver.
+      label: What happens
+      description: Describe what you saw and what you expected to see.
     validations:
       required: true
   - type: textarea
-    id: passos
+    id: steps
     attributes:
-      label: Passo a passo para reproduzir
-      description: Comandos, chamadas de API ou cliques, na ordem. Quanto menor o exemplo, melhor.
+      label: Steps to reproduce
+      description: Commands, API calls or clicks, in order. The smaller the example, the better.
       placeholder: |
         1. `poph --config poph.toml ...`
         2. ...
     validations:
       required: true
   - type: textarea
-    id: saida
+    id: output
     attributes:
-      label: Saída e logs
-      description: Mensagem de erro completa e o trecho de log relevante, sem segredos. Rode com `RUST_LOG=debug` se ajudar.
+      label: Output and logs
+      description: The full error message and the relevant log excerpt, without secrets. Run with `RUST_LOG=debug` if it helps.
       render: text
   - type: input
-    id: versao
+    id: version
     attributes:
-      label: Versão
-      description: Saída de `poph --version` e, se compilou do código, o commit.
+      label: Version
+      description: Output of `poph --version` and, if you built from source, the commit.
       placeholder: poph 0.1.0 (commit abc1234)
     validations:
       required: true
   - type: dropdown
     id: area
     attributes:
-      label: Área
+      label: Area
       options:
-        - Turno do agente
-        - Base de conhecimento e busca
-        - Produtos e carrinho
-        - Arquivos
+        - Agent turn
+        - Knowledge base and search
+        - Products and cart
+        - Files
         - Jev
         - WhatsApp (EvolutionAPI)
-        - Plugins de canal
-        - Fluxos e Fichas
-        - Matrix e Element
-        - API administrativa
+        - Channel plugins
+        - Flows and Fichas
+        - Matrix and Element
+        - Admin API
         - Console
         - CLI
-        - Cluster, backup ou retenção
-        - Build, CI ou documentação
-        - Não sei
+        - Cluster, backup or retention
+        - Build, CI or documentation
+        - I don't know
     validations:
       required: true
   - type: textarea
-    id: ambiente
+    id: environment
     attributes:
-      label: Ambiente
-      description: Sistema operacional, arquitetura (x86_64 ou ARM64), `poph doctor` (sem segredos) e as seções relevantes do `poph.toml`.
+      label: Environment
+      description: Operating system, architecture (x86_64 or ARM64), `poph doctor` output (no secrets) and the relevant sections of `poph.toml`.
       render: text
   - type: checkboxes
-    id: confirmacoes
+    id: confirmations
     attributes:
-      label: Antes de enviar
+      label: Before submitting
       options:
-        - label: Procurei nas issues abertas e fechadas e não achei o mesmo problema.
+        - label: I searched open and closed issues and did not find the same problem.
           required: true
-        - label: Reproduzi na versão mais recente.
+        - label: I reproduced it on the latest version.
           required: false
-        - label: Removi segredos e dados de clientes do que colei aqui.
+        - label: I removed secrets and customer data from what I pasted here.
           required: true

@@ -2,190 +2,194 @@
 
 # POP Harness
 
-**Motor de atendimento por IA para várias empresas na mesma instância.**
-Um binário em Rust, com SQLite. Sem Redis, sem Postgres e sem framework de agente.
+**An AI customer-service engine that runs many companies' agents on one instance.**
+One Rust binary, backed by SQLite. No Redis, no Postgres, no agent framework.
 
 [![CI](https://github.com/vallewillian-source/pop-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/vallewillian-source/pop-harness/actions/workflows/ci.yml)
-[![Licença: AGPL-3.0](https://img.shields.io/badge/licen%C3%A7a-AGPL--3.0--or--later-blue.svg)](LICENSE)
+[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue.svg)](LICENSE)
 [![Rust 1.100](https://img.shields.io/badge/rust-1.100-orange.svg)](rust-toolchain.toml)
-[![PRs bem-vindos](https://img.shields.io/badge/PRs-bem--vindos-brightgreen.svg)](CONTRIBUTING.md)
+[![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
-[Início rápido](#início-rápido) ·
-[O que ele faz](#o-que-ele-faz) ·
-[Fluxos e Fichas](#fluxos-e-fichas) ·
-[Atendimento humano](#atendimento-humano-com-matrix-e-element) ·
-[Documentação](#documentação) ·
-[Contribuir](#contribuir)
+[Quick start](#quick-start) ·
+[What it does](#what-it-does) ·
+[Flows and Fichas](#flows-and-fichas) ·
+[Human handoff](#human-handoff-with-matrix-and-element) ·
+[Documentation](#documentation) ·
+[Contributing](#contributing)
 
-Português · [English](README.en.md)
+English · [Português](README.pt-BR.md)
 
 </div>
 
+> **Language note.** Project files (README, contributing guide, security policy, templates, roadmap) are in
+> English. The code, identifiers, comments and the technical documents under `docs/` are still in
+> Brazilian Portuguese, as is the Console interface and the example agents' conversations. Issues and pull
+> requests are welcome in English or Portuguese, and translations of `docs/` are welcome.
+
 ---
 
-## O que é
+## What it is
 
-O POP Harness recebe a mensagem do cliente, decide o que fazer, consulta a base de conhecimento e o
-catálogo da empresa, escreve a resposta com um modelo de linguagem, entrega pelo canal de onde a mensagem
-veio e registra cada passo para que a resposta possa ser explicada depois.
+POP Harness receives a customer's message, decides what to do, looks things up in the company's knowledge
+base and catalog, writes the reply with a language model, delivers it through the channel the message came
+from, and records every step so the answer can be explained later.
 
-Ele foi desenhado para quem precisa **rodar muitos agentes de atendimento de empresas diferentes no mesmo
-servidor**, com cada empresa isolada das outras, e passar a conversa para uma pessoa quando for preciso.
+It is designed for people who need to **run many companies' support agents on the same server**, keeping each
+company isolated from the others, and hand the conversation to a person when needed.
 
-Na prática, você ganha:
+In practice you get:
 
-- **Uma instalação, várias empresas.** Cada empresa (org) tem agentes, base de conhecimento, produtos,
-  arquivos, integrações e tokens próprios. Nada é compartilhado entre elas.
-- **Um único processo.** O binário `poph` traz a CLI, a API administrativa, o Console web (React, embutido)
-  e o servidor. Os dados ficam em dois arquivos SQLite e numa pasta de anexos.
-- **Respostas que dá para explicar.** Cada turno grava o que o agente consultou, quais ferramentas usou,
-  o que o Jev decidiu e quanto tempo cada etapa levou. O Console mostra isso no painel "por quê".
-- **Passagem para humano.** Conversa transferida deixa de ser respondida pelo agente. A equipe atende pelo
-  Element (Matrix) e a resposta chega ao cliente pelo mesmo canal.
-- **Atendimentos com etapas.** Fluxos escritos como script de texto, que um agente de IA e uma pessoa
-  conseguem ler, e uma Ficha por atendimento com o histórico do que foi feito.
+- **One installation, many companies.** Each company (an *org*) has its own agents, knowledge base, products,
+  files, integrations and tokens. Nothing is shared between orgs.
+- **One process.** The `poph` binary contains the CLI, the admin API, the web Console (React, embedded) and
+  the server. Data lives in two SQLite files and one folder of attachments.
+- **Answers you can explain.** Every turn records what the agent looked up, which tools it called, what the
+  Jev decided and how long each stage took. The Console shows it in a "why" panel.
+- **Human handoff.** A transferred conversation stops being answered by the agent. Your team replies in
+  Element (Matrix) and the reply reaches the customer on the original channel.
+- **Step-by-step service.** Flows written as plain-text scripts that both an AI agent and a person can read,
+  and one *Ficha* (case record) per conversation with the history of what happened.
 
-> O projeto está na versão `0.x`: a API, os formatos de arquivo e os comandos podem mudar até a `1.0`.
-> Veja [Limitações conhecidas](#limitações-conhecidas) antes de colocar em produção.
+> The project is at `0.x`: the API, file formats and commands may change before `1.0`. Read
+> [Known limitations](#known-limitations) before going to production.
 
-> **Estado em 22/11/2026: partes desta página descrevem o que está sendo construído.**
-> Já funcionam no código: multi-org, agentes, base de conhecimento, WhatsApp, arquivos, Jev, Matrix/Element
-> (texto) e a Ficha criada em cada atendimento. **Ainda em desenvolvimento:** os comandos `poph flow` e
-> `poph ficha`, os efeitos e as revisões de fluxo, a mídia do Matrix (imagem e arquivo) e várias instâncias
-> do Matrix. O quadro com o estado de cada item fica em [ROADMAP.md](ROADMAP.md). Quando um trecho abaixo
-> não bater com o binário, vale o binário e o `ROADMAP.md`.
+> **Status as of 2026-11-22: parts of this page describe what is being built.** Already working in the code:
+> multi-org, agents, knowledge base, WhatsApp, files, Jev, Matrix/Element (text) and the Ficha created for each
+> conversation. **Still in development:** the `poph flow` and `poph ficha` commands, flow effects and
+> revisions, Matrix media (images and files) and multiple Matrix instances. Status per item is in
+> [ROADMAP.md](ROADMAP.md). Where this page disagrees with the binary, trust the binary and `ROADMAP.md`.
 
-## Para quem é
+## Who it is for
 
-**Faz sentido se você:**
+**A good fit if you:**
 
-- tem equipe técnica e quer hospedar o atendimento por IA com os próprios dados e as próprias chaves;
-- atende várias empresas (agência, software house, SaaS) e precisa de isolamento entre elas;
-- quer controlar o que o agente pode fazer: ferramentas habilitadas por agente, envio só de arquivos
-  da biblioteca, passagem para humano configurável;
-- se importa com consumo de memória e com poucas peças para operar.
+- have an engineering team and want to host AI support with your own data and your own keys;
+- serve several companies (agency, software house, SaaS) and need isolation between them;
+- want control over what the agent can do: per-agent enabled tools, sending only files from the agent's
+  library, configurable handoff to humans;
+- care about memory use and about having few moving parts to operate.
 
-**Provavelmente não é o que você procura se:**
+**Probably not what you need if you:**
 
-- quer um produto pronto, com cadastro e cobrança, para uma empresa sem equipe técnica. O Harness é o
-  motor: o Console é administrativo e não é uma área de cliente final;
-- precisa de áudio, vídeo, e-mail ou widget de site. Hoje o canal nativo é o WhatsApp (pela EvolutionAPI)
-  e há um contrato para escrever outros canais como plugin;
-- precisa de um catálogo de provedores de LLM pronto. Hoje o cliente de modelo fala com um endpoint
-  compatível com OpenAI (veja [Limitações](#limitações-conhecidas)).
+- want a finished product with sign-up and billing for a company without technical staff. Harness is the
+  engine: the Console is administrative, not a customer-facing area;
+- need audio, video, e-mail or a website widget. Today the native channel is WhatsApp (through EvolutionAPI)
+  and there is a contract for writing other channels as plugins;
+- need a ready-made catalog of LLM providers. Today the model client talks to an OpenAI-compatible endpoint
+  (see [Known limitations](#known-limitations)).
 
-## O que ele faz
+## What it does
 
-### Atendimento
+### Service
 
-| Recurso | Como funciona |
+| Feature | How it works |
 |---|---|
-| **Orgs (tenants)** | Isolamento por `org_id` em todas as tabelas, no índice de busca e nos caches. Token de org só enxerga a própria org; token global administra todas. |
-| **Agentes e instruções** | Instruções estruturadas (identidade, regras, escopo, passos, tom, ferramentas) compostas num prompt estável, ou prompt escrito à mão. A lista de ferramentas habilitadas **filtra de verdade** o que o agente pode chamar. Agente inativo não responde. |
-| **Base de conhecimento** | Busca híbrida (vetorial + texto) sobre trechos curtos, com corte de relevância configurável por agente. O embedding roda **localmente** (MiniLM multilíngue, ONNX, int8): nenhum texto da base sai para um serviço de embedding. |
-| **Produtos e orçamento** | Catálogo por categoria, busca de produto pelo nome, apelido ou etiqueta, e carrinho de orçamento por conversa. O agente consulta o catálogo em vez de inventar preço. |
-| **Arquivos** | Entram imagens (vistas pelo modelo) e PDF/Office (lidos como texto, em processo isolado, com limite de memória e de tempo). O agente só envia arquivos da biblioteca dele, nunca um caminho livre. |
-| **Memória da conversa** | Janela de contexto por orçamento de tokens, com resumo rolante. Conversa ociosa sai da memória e volta do banco. |
-| **Janela de agrupamento** | Espera curta (padrão 2 s, teto 8 s) para juntar mensagens seguidas do cliente numa resposta só. |
-| **Falha do modelo** | A mensagem é repetida depois, com limite de tentativas. O cliente não recebe aviso de erro e a mensagem não fica sem resposta. |
+| **Orgs (tenants)** | Isolation by `org_id` in every table, in the search index and in the caches. An org token only sees its own org; a global token administers all of them. |
+| **Agents and instructions** | Structured instructions (identity, rules, scope, steps, tone, tools) composed into a stable prompt, or a hand-written prompt. The per-agent tool list **really filters** what the agent may call. An inactive agent does not answer. |
+| **Knowledge base** | Hybrid search (vector + text) over short chunks, with a per-agent relevance cutoff. Embeddings run **locally** (multilingual MiniLM, ONNX, int8): no knowledge-base text goes to an embedding service. |
+| **Products and quotes** | Catalog by category, product lookup by name, alias or tag, and a quote cart per conversation. The agent looks prices up instead of making them up. |
+| **Files** | Incoming images (seen by the model) and PDF/Office files (read as text, in an isolated process with memory and time limits). The agent only sends files from its own library, never an arbitrary path. |
+| **Conversation memory** | Context window sized by token budget, with a rolling summary. Idle conversations leave memory and come back from the database. |
+| **Grouping window** | A short wait (default 2 s, cap 8 s) to merge consecutive customer messages into a single reply. |
+| **Model failure** | The message is retried later, with a retry limit. The customer gets no error notice and the message is never left unanswered. |
 
-### Jev: decisões rápidas, opcionais
+### Jev: optional fast decisions
 
-O **Jev** é um serviço externo que responde perguntas de escolha entre opções conhecidas (transferir ou
-continuar, esperar mais ou processar, qual produto). Isso evita gastar o modelo de texto em decisões que
-cabem numa classificação. O princípio é fixo: **o Jev escolhe, o código valida e executa, e a falha do
-Jev cai no comportamento sem ele.**
+The **Jev** is an external service that answers choose-among-known-options questions (transfer or continue,
+wait or process now, which product). It avoids spending the text model on decisions a classification can
+make. The principle is fixed: **the Jev chooses, the code validates and executes, and a Jev failure falls
+back to the behavior without it.**
 
-| Gate | Decide | Padrão |
+| Gate | Decides | Default |
 |---|---|---|
-| G1 | transferir para uma pessoa agora | desligado |
-| G2 | esperar mais mensagens ou processar agora | desligado |
-| G3 | a mensagem precisa de base, produto ou nada | ligado |
-| G4 | qual departamento recebe a transferência | desligado |
-| G5 | qual produto o cliente quer | ligado |
-| G6 | a resposta pode ser enviada ou deve ser reescrita | desligado |
-| G7 | injeção de prompt ou abuso | desligado |
-| G8 | o cliente encerrou a conversa | ligado |
-| G9 | iniciar um fluxo (veja [Fluxos e Fichas](#fluxos-e-fichas)) | ligado quando o agente tem fluxo liberado |
+| G1 | transfer to a person now | off |
+| G2 | wait for more messages or process now | off |
+| G3 | the message needs knowledge base, product lookup or nothing | on |
+| G4 | which department receives the transfer | off |
+| G5 | which product the customer wants | on |
+| G6 | the reply may be sent or must be rewritten | off |
+| G7 | prompt injection or abuse | off |
+| G8 | the customer ended the conversation | on |
+| G9 | start a flow (see [Flows and Fichas](#flows-and-fichas)) | on when the agent has a flow granted |
 
-O Jev é desligado por padrão (`jev.ativo = false`) e cada gate liga e desliga globalmente ou por agente.
-Detalhes, medições e como calibrar: [`docs/JEV.md`](docs/JEV.md).
+The Jev itself is off by default (`jev.ativo = false`) and each gate can be switched globally or per agent.
+Details, measurements and calibration: [`docs/JEV.md`](docs/JEV.md).
 
-### Canais
+### Channels
 
-| Canal | Situação |
+| Channel | Status |
 |---|---|
-| **WhatsApp** pela [EvolutionAPI](https://github.com/EvolutionAPI/evolution-api) | Nativo: webhook com deduplicação, pareamento por QR code pelo Console, envio de texto e arquivo, imagem e documento recebidos. |
-| **Plugin em processo externo** | Qualquer programa que fale JSON-lines por stdio, com manifesto, segredos e configuração descritos por JSON Schema. O servidor supervisiona o processo com timeout e reinício. Modelo: [`crates/poph-plugin-eco`](crates/poph-plugin-eco). |
-| **Chat de teste do Console e `poph chat`** | Conversa com o agente sem canal real, com streaming. |
+| **WhatsApp** through [EvolutionAPI](https://github.com/EvolutionAPI/evolution-api) | Native: deduplicated webhook, QR-code pairing in the Console, text and file sending, incoming images and documents. |
+| **External-process plugin** | Any program that speaks JSON-lines over stdio, with manifest, secrets and configuration described by JSON Schema. The server supervises the process with timeouts and restarts. Template: [`crates/poph-plugin-eco`](crates/poph-plugin-eco). |
+| **Console test chat and `poph chat`** | Talk to the agent without a real channel, with streaming. |
 
-Toda mensagem é entregue **pelo menos uma vez**: ela é gravada antes de o canal receber o OK e a saída
-passa por uma fila durável. Se o processo cair no meio do envio, a mensagem é reenviada, e a duplicata
-é a única falha possível. Contrato completo: [`docs/CONTRATO_CANAL.md`](docs/CONTRATO_CANAL.md).
+Every message is delivered **at least once**: it is stored before the channel gets its OK, and output goes
+through a durable queue. If the process dies mid-send the message is resent, so a duplicate is the only
+possible failure. Full contract: [`docs/CONTRATO_CANAL.md`](docs/CONTRATO_CANAL.md).
 
-### Operação
+### Operations
 
-| Recurso | Como funciona |
+| Feature | How it works |
 |---|---|
-| **Console web** | Organizações, estrutura (categorias e departamentos), produtos, agentes, base, arquivos, roteamento, integrações, modelo e Jev, chat de teste com painel "por quê", saúde da instância, exportar e importar org, Matrix. |
-| **API administrativa** | `/admin/v1`, documentada em OpenAPI 3.1 (`/admin/v1/openapi.json`). Edição com `If-Match` (concorrência otimista), paginação por cursor e erros num formato único. |
-| **CLI `poph`** | Tudo que o Console faz, também pelo terminal, com `--json` de formato estável. |
-| **Cluster** | Várias instâncias com roteamento estático por org, num `cluster.toml` igual em todas. Webhook, chamadas administrativas e chat ao vivo caem na instância errada e são encaminhados com assinatura para a instância dona. |
-| **Backup** | Uma org inteira num arquivo só, com restauração. Importar por cima de dados existentes é recusado por padrão. Segredos nunca vão em claro no arquivo. |
-| **Retenção** | O histórico vence por org (padrão 30 dias; `0` não apaga). A varredura tem `--dry-run`. |
-| **Observabilidade** | `/healthz`, métricas Prometheus em `/metrics`, logs legíveis ou em JSON, `poph doctor`. Segredos nunca vão para o log; os módulos Matrix e Fluxos também evitam texto de cliente e telefone nos logs. |
-| **Segredos** | Só no ambiente. Segredos de integração ficam cifrados em repouso. O tipo `Sensivel` imprime `[oculto]` em log e em erro. Tokens de administração são guardados como hash Argon2id. |
+| **Web Console** | Organizations, structure (categories and departments), products, agents, knowledge base, files, routing, integrations, model and Jev, test chat with a "why" panel, instance health, org export/import, Matrix. |
+| **Admin API** | `/admin/v1`, documented as OpenAPI 3.1 (`/admin/v1/openapi.json`). Edits use `If-Match` (optimistic concurrency), cursor pagination and a single error format. |
+| **`poph` CLI** | Everything the Console does is also available from the terminal, with a stable `--json` format. |
+| **Cluster** | Several instances with static per-org routing, in a `cluster.toml` identical on all of them. A webhook, admin call or live chat that lands on the wrong instance is forwarded, signed, to the owning one. |
+| **Backup** | A whole org in a single file, with restore. Importing over existing data is refused by default. Secrets are never stored in clear text in the file. |
+| **Retention** | History expires per org (default 30 days; `0` keeps everything). The sweep has `--dry-run`. |
+| **Observability** | `/healthz`, Prometheus metrics at `/metrics`, human-readable or JSON logs, `poph doctor`. Secrets never reach the logs; the Matrix and Flows modules also keep customer text and phone numbers out of them. |
+| **Secrets** | Environment only. Integration secrets are encrypted at rest. The `Sensivel` type prints `[oculto]` in logs and errors. Admin tokens are stored as Argon2id hashes. |
 
-## Como funciona
+## How it works
 
 ```mermaid
 flowchart LR
-    C([Cliente]) -->|mensagem| CH[Canal<br/>WhatsApp · plugin · chat]
-    CH -->|grava na inbox<br/>e só então responde OK| IN[(harness.db)]
-    IN --> T{Turno do agente}
-    T -->|em paralelo| J[Jev<br/>gates]
-    T -->|em paralelo| R[(rag.db<br/>base e produtos)]
-    J --> L[Modelo de linguagem<br/>com ferramentas]
+    C([Customer]) -->|message| CH[Channel<br/>WhatsApp · plugin · chat]
+    CH -->|stored in the inbox<br/>then OK is returned| IN[(harness.db)]
+    IN --> T{Agent turn}
+    T -->|in parallel| J[Jev<br/>gates]
+    T -->|in parallel| R[(rag.db<br/>knowledge and products)]
+    J --> L[Language model<br/>with tools]
     R --> L
-    L --> OUT[Fila de saída]
+    L --> OUT[Outbox]
     OUT --> CH
-    IN -. observa .-> MX[Módulo Matrix]
-    MX <--> EL([Equipe no Element])
-    EL -->|resposta do atendente| OUT
+    IN -. observes .-> MX[Matrix module]
+    MX <--> EL([Team in Element])
+    EL -->|agent reply| OUT
 ```
 
-1. **Entrada.** O canal entrega a mensagem. Ela é gravada na `inbox` com chave única por canal e id
-   externo, então duplicata é descartada. Se a org vive em outra instância, o pedido é encaminhado.
-2. **Fila por conversa.** Um ator por conversa, um turno por vez.
-3. **Agrupamento.** Espera curta para juntar mensagens em sequência.
-4. **Em paralelo:** uma chamada ao Jev com as perguntas de todos os gates ligados e a busca na base e nos
-   produtos. Se o G1 manda transferir, o turno termina sem chamar o modelo.
-5. **Laço do agente.** Prompt com prefixo estável (aproveita o cache do provedor) e bloco volátil depois.
-   Modelo com streaming e ferramentas habilitadas: `consultar_base`, `buscar_produto`, `enviar_arquivo`,
-   carrinho e as de fluxo. Texto de arquivo e trecho recuperado entram marcados como **dado**, nunca como
-   instrução.
-6. **Saída.** A resposta vai para a `outbox`, idempotente por turno e sequência, e o canal envia.
-7. **Registro.** O turno grava decisões do Jev, trechos recuperados, ferramentas, tempos e tokens.
+1. **Input.** The channel delivers the message. It is stored in the `inbox` under a unique channel + external
+   id key, so duplicates are dropped. If the org lives on another instance, the request is forwarded.
+2. **Per-conversation queue.** One actor per conversation, one turn at a time.
+3. **Grouping.** A short wait to merge messages sent in sequence.
+4. **In parallel:** one Jev call with the questions of every enabled gate, and the knowledge-base and product
+   search. If G1 says transfer, the turn ends without calling the model.
+5. **Agent loop.** A prompt with a stable prefix (to benefit from provider-side caching) and a volatile block
+   after it. Streaming model with the enabled tools: `consultar_base`, `buscar_produto`, `enviar_arquivo`,
+   quote cart and the flow tools. File text and retrieved passages enter marked as **data**, never as
+   instructions.
+6. **Output.** The reply goes to the `outbox`, idempotent per turn and sequence, and the channel sends it.
+7. **Record.** The turn stores Jev decisions, retrieved passages, tools, timings and tokens.
 
-Prioridades de projeto, nesta ordem: entregar a mensagem o mais rápido possível; usar pouca memória; escalar
-na vertical (milhares de agentes) e na horizontal (várias instâncias); manter poucas dependências e poucos
-processos. Detalhes: [`docs/VISAO_GERAL.md`](docs/VISAO_GERAL.md) e [`docs/TURNO.md`](docs/TURNO.md).
+Design priorities, in order: deliver the message as fast as possible; use little memory; scale vertically
+(thousands of agents) and horizontally (several instances); keep dependencies and processes few. Details:
+[`docs/VISAO_GERAL.md`](docs/VISAO_GERAL.md) and [`docs/TURNO.md`](docs/TURNO.md).
 
-## Início rápido
+## Quick start
 
-Você vai compilar, criar uma org com um agente e conversar com ele pelo terminal e pelo Console.
+You will build the project, create an org with an agent, and chat with it from the terminal and the Console.
 
-### Requisitos
+### Requirements
 
-- Linux (x86_64 ou ARM64) com um compilador C (`gcc` ou `clang`): o SQLite e o TLS compilam código C.
-- [Rust](https://rustup.rs). A versão (`1.100.0`) está fixada em [`rust-toolchain.toml`](rust-toolchain.toml)
-  e o `rustup` instala sozinha.
-- Para o Console: Node 22.18 ou mais novo e [pnpm](https://pnpm.io). Sem eles, o servidor sobe com uma
-  página mínima no lugar do Console.
-- Um endpoint de modelo de linguagem compatível com a API de chat da OpenAI, com streaming e ferramentas.
-  Sem ele, tudo sobe e o Console funciona, mas o agente não responde.
+- Linux (x86_64 or ARM64) with a C compiler (`gcc` or `clang`): SQLite and TLS compile C code.
+- [Rust](https://rustup.rs). The version (`1.100.0`) is pinned in [`rust-toolchain.toml`](rust-toolchain.toml)
+  and `rustup` installs it for you.
+- For the Console: Node 22.18 or newer and [pnpm](https://pnpm.io). Without them the server starts with a
+  minimal placeholder page instead of the Console.
+- A language-model endpoint compatible with the OpenAI chat API, with streaming and tool calls. Without it
+  everything starts and the Console works, but the agent cannot answer.
 
-### 1. Compilar
+### 1. Build
 
 ```bash
 git clone https://github.com/vallewillian-source/pop-harness.git
@@ -193,20 +197,20 @@ cd pop-harness
 cargo build --release --workspace
 ```
 
-Saem `target/release/poph` e `target/release/poph-extrator`. Deixe os dois na mesma pasta: o segundo lê
-PDF e Office em processo isolado. Nos comandos abaixo, `poph` é `target/release/poph`: copie os dois
-para uma pasta do seu `PATH` ou use o caminho completo.
+This produces `target/release/poph` and `target/release/poph-extrator`. Keep both in the same folder: the
+second one reads PDF and Office files in an isolated process. In the commands below `poph` means
+`target/release/poph`: copy both into a folder on your `PATH` or use the full path.
 
-Para levar o Console dentro do binário, gere o bundle antes de compilar:
+To embed the Console in the binary, build the bundle first:
 
 ```bash
 (cd console && pnpm install && pnpm build)
 cargo build --release --workspace
 ```
 
-### 2. Configurar
+### 2. Configure
 
-Crie um `poph.toml` mínimo:
+Create a minimal `poph.toml`:
 
 ```toml
 [servidor]
@@ -216,48 +220,48 @@ porta = 7480
 diretorio = "data"
 
 [llm]
-url_base = "http://127.0.0.1:8045/v1"   # seu endpoint compatível com OpenAI
-modelo   = "gemini-3.8-flash-tiered"    # o modelo que ele serve
+url_base = "http://127.0.0.1:8045/v1"   # your OpenAI-compatible endpoint
+modelo   = "gemini-3.8-flash-tiered"    # the model it serves
 ```
 
-Segredos ficam só no ambiente:
+Secrets live only in the environment:
 
 ```bash
-export POPH_CHAVE_CIFRA="$(head -c 32 /dev/urandom | base64)"   # guarde: ela cifra os segredos gravados
-export ANTIGRAVITY_API_KEY='<a chave do seu endpoint de modelo>'
+export POPH_CHAVE_CIFRA="$(head -c 32 /dev/urandom | base64)"   # keep it: it encrypts stored secrets
+export ANTIGRAVITY_API_KEY='<the key for your model endpoint>'
 ```
 
-| Variável | Para que serve | Obrigatória |
+| Variable | Purpose | Required |
 |---|---|---|
-| `POPH_CHAVE_CIFRA` | cifra dos segredos guardados | sempre |
-| `ANTIGRAVITY_API_KEY` | chave do endpoint de modelo | sempre |
-| `TYPESAFE_API_KEY` | Jev | só com o Jev ligado |
-| `EVOLUTION_API_KEY` | WhatsApp pela EvolutionAPI | só com a seção `[evolution]` |
-| `POPH_CLUSTER_SECRET` | assinatura entre instâncias | só com instâncias declaradas no `cluster.toml` |
-| `POPH_MATRIX_AS_TOKEN`, `POPH_MATRIX_HS_TOKEN` | Application Service do Matrix | só com `[matrix]` ligado |
+| `POPH_CHAVE_CIFRA` | encryption key for stored secrets | always |
+| `ANTIGRAVITY_API_KEY` | key for the model endpoint | always |
+| `TYPESAFE_API_KEY` | Jev | only with the Jev on |
+| `EVOLUTION_API_KEY` | WhatsApp through EvolutionAPI | only with an `[evolution]` section |
+| `POPH_CLUSTER_SECRET` | signing between instances | only with instances declared in `cluster.toml` |
+| `POPH_MATRIX_AS_TOKEN`, `POPH_MATRIX_HS_TOKEN` | Matrix Application Service | only with `[matrix]` enabled |
 
-Todos os campos e variáveis: [`docs/CONFIGURACAO.md`](docs/CONFIGURACAO.md).
+All fields and variables: [`docs/CONFIGURACAO.md`](docs/CONFIGURACAO.md).
 
-### 3. Conferir o ambiente e preparar os bancos
+### 3. Check the environment and prepare the databases
 
 ```bash
-poph --config poph.toml doctor      # confere configuração, pasta de dados, bancos e variáveis
-poph --config poph.toml migrate     # cria harness.db e rag.db; pode repetir
-poph --config poph.toml model install   # baixa o modelo de embedding (precisa de internet)
+poph --config poph.toml doctor          # checks config, data folder, databases and variables
+poph --config poph.toml migrate         # creates harness.db and rag.db; safe to repeat
+poph --config poph.toml model install   # downloads the embedding model (needs internet)
 ```
 
-Sem o modelo de embedding o servidor sobe e avisa, mas `consultar_base` e `buscar_produto` ficam
-desligadas. O modelo tem cerca de 118 MB e a verificação do checksum é feita no download.
+Without the embedding model the server starts and warns you, but `consultar_base` and `buscar_produto` stay
+off. The model is about 118 MB and its checksum is verified on download.
 
-### 4. Criar a primeira org, o agente e o token
+### 4. Create the first org, agent and token
 
 ```bash
 cat > prompt.md <<'EOF'
-# Bia, atendente da Clínica Exemplo
+# Bia, assistant at Clínica Exemplo
 
-Responda dúvidas sobre consultas, exames e preços, em português, de forma curta e cordial.
-Use a base de conhecimento e o catálogo antes de responder. Se não souber, diga que vai
-pedir para a equipe confirmar.
+Answer questions about appointments, exams and prices, in Portuguese, briefly and politely.
+Use the knowledge base and the catalog before answering. If you do not know, say you will
+ask the team to confirm.
 EOF
 
 poph --config poph.toml org create --name "Clínica Exemplo" --slug clinica-exemplo --offline
@@ -267,83 +271,82 @@ poph --config poph.toml --org clinica-exemplo instructions create bia --markdown
 poph --config poph.toml token global --label console
 ```
 
-O valor do token aparece **uma vez só**. `token global` também imprime um bloco `[admin]` com o hash: cole
-no `poph.toml`, porque a configuração guarda só o hash.
+The token value is shown **once**. `token global` also prints an `[admin]` block with its hash: paste it into
+`poph.toml`, because the configuration only stores the hash.
 
-### 5. Conversar
+### 5. Chat
 
 ```bash
-poph --config poph.toml --org clinica-exemplo chat bia          # pelo terminal, com streaming
-poph --config poph.toml serve                                    # API + Console em http://127.0.0.1:7480
+poph --config poph.toml --org clinica-exemplo chat bia      # from the terminal, with streaming
+poph --config poph.toml serve                                # API + Console at http://127.0.0.1:7480
 ```
 
-Abra `http://127.0.0.1:7480/`, entre com o token e use a aba **Chat de teste** do agente. Pelo terminal ou
-pelo Console, a conversa funciona sem WhatsApp.
+Open `http://127.0.0.1:7480/`, sign in with the token and use the agent's **Chat de teste** tab. From the
+terminal or the Console, the conversation works without WhatsApp.
 
 <p align="center">
-  <img src="docs/images/console-modelo-e-jev.png" alt="Console do POP Harness: aba Modelo e Jev de um agente" width="880">
+  <img src="docs/images/console-modelo-e-jev.png" alt="POP Harness Console: an agent's Model and Jev tab" width="880">
 </p>
 
-Para conectar um número de WhatsApp, adicione a seção `[evolution]` (e `EVOLUTION_API_KEY`) e pareie por QR
-code na aba **Integrações** do agente: [`docs/EVOLUTION.md`](docs/EVOLUTION.md).
+To connect a WhatsApp number, add an `[evolution]` section (and `EVOLUTION_API_KEY`) and pair by QR code in
+the agent's **Integrações** tab: [`docs/EVOLUTION.md`](docs/EVOLUTION.md).
 
-## O Console
+## The Console
 
-O Console fica embutido no binário e serve para administrar e testar. Entra-se com um token de administração
-global ou de org.
+The Console is embedded in the binary and is for administering and testing. You sign in with a global or
+org admin token.
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/images/console-organizacoes.png" alt="Lista de organizações"></td>
-    <td width="50%"><img src="docs/images/console-produtos.png" alt="Catálogo de produtos de uma organização"></td>
+    <td width="50%"><img src="docs/images/console-organizacoes.png" alt="Organization list"></td>
+    <td width="50%"><img src="docs/images/console-produtos.png" alt="An organization's product catalog"></td>
   </tr>
   <tr>
-    <td align="center"><sub>Organizações: cada uma é um tenant isolado.</sub></td>
-    <td align="center"><sub>Catálogo que o agente consulta para informar preço.</sub></td>
+    <td align="center"><sub>Organizations: each one is an isolated tenant.</sub></td>
+    <td align="center"><sub>The catalog the agent looks up to quote prices.</sub></td>
   </tr>
 </table>
 
-As capturas usam dados de demonstração. Para desenvolver o Console com recarga automática: `cd console &&
-pnpm dev` (abre em `http://localhost:5199` e encaminha a API para a porta 7480). Telas e comportamento:
-[`docs/CONSOLE.md`](docs/CONSOLE.md).
+The screenshots use demo data. To develop the Console with hot reload: `cd console && pnpm dev` (opens at
+`http://localhost:5199` and proxies the API to port 7480). Screens and behavior: [`docs/CONSOLE.md`](docs/CONSOLE.md).
 
-## Comandos da CLI
+## CLI commands
 
-Todos aceitam `--config <arquivo>`. Os que mexem em dados de uma org pedem `--org <slug>` e, em vários
-casos, `--offline` (operam direto no banco). `poph <comando> --help` mostra as opções.
+All commands accept `--config <file>`. Those that touch an org's data require `--org <slug>` and, in several
+cases, `--offline` (they operate directly on the database). `poph <command> --help` lists the options.
 
-| Comando | Para que serve |
+| Command | Purpose |
 |---|---|
-| `doctor`, `migrate`, `model install` | ambiente, bancos e modelo de embedding |
-| `org`, `token` | orgs e tokens de administração (`token global` cria o global) |
-| `agent`, `instructions` | agentes e instruções |
-| `department`, `category`, `product` | departamentos, categorias e catálogo |
-| `kb`, `rag`, `file` | base de conhecimento, índice de busca e biblioteca de arquivos |
-| `flow`, `ficha` | fluxos (validar, publicar, comparar, formatar) e Fichas |
-| `chat <agente>` | conversa pelo terminal |
-| `matrix` | registro do Application Service e, por org, ligar, desligar e espaços |
-| `cluster show`, `cluster check` | mostra e confere o mapa entre instâncias |
-| `retention show`, `retention run --dry-run` | retenção do histórico |
-| `backup export`, `backup import` | exporta e restaura uma org |
-| `jev eval` | mede um gate do Jev contra um conjunto rotulado |
-| `openapi` | imprime o documento OpenAPI |
-| `serve` | sobe o servidor, a API e o Console |
+| `doctor`, `migrate`, `model install` | environment, databases and embedding model |
+| `org`, `token` | orgs and admin tokens (`token global` creates the global one) |
+| `agent`, `instructions` | agents and instructions |
+| `department`, `category`, `product` | departments, categories and catalog |
+| `kb`, `rag`, `file` | knowledge base, search index and the agent's file library |
+| `flow`, `ficha` | flows (validate, publish, diff, format) and Fichas |
+| `chat <agent>` | chat from the terminal |
+| `matrix` | Application Service registration and, per org, enable, disable and spaces |
+| `cluster show`, `cluster check` | show and check the map between instances |
+| `retention show`, `retention run --dry-run` | history retention |
+| `backup export`, `backup import` | export and restore an org |
+| `jev eval` | measure a Jev gate against a labeled set |
+| `openapi` | print the OpenAPI document |
+| `serve` | start the server, the API and the Console |
 
-## Fluxos e Fichas
+## Flows and Fichas
 
-### Ficha: o registro de cada atendimento
+### Ficha: the record of each conversation
 
-Toda conversa nasce com uma **Ficha**. Ela acumula mensagens, turnos e a execução dos fluxos daquele
-atendimento, e só fecha quando o atendimento fecha: por quem atende, por um agente (`atendimento_encerrar`),
-pela API ou por um fluxo que encerra. Depois disso, uma mensagem nova do cliente abre **outra conversa e
-outra Ficha**. Uma Ficha fechada não muda mais.
+Every conversation is born with a **Ficha**. It accumulates the messages, turns and flow executions of that
+conversation, and it closes only when the conversation closes: by whoever is serving it, by an agent
+(`atendimento_encerrar`), through the API, or by a flow that ends the conversation. After that, a new
+customer message opens **another conversation and another Ficha**. A closed Ficha never changes.
 
-### Fluxo: um script de texto
+### Flow: a plain-text script
 
-Um fluxo descreve etapas, campos, ações e decisões. Ele é um arquivo de texto em Starlark (um subconjunto do
-Python), com declarações no nível do arquivo. O script **descreve**; o estado (etapa atual, campos
-preenchidos, histórico) fica no banco. Por isso o cliente pode sumir e voltar dias depois, e uma queda do
-servidor não perde o fluxo.
+A flow describes steps, fields, actions and decisions. It is a text file in Starlark (a subset of Python)
+with top-level declarations. The script **describes**; the state (current step, filled fields, history) lives
+in the database. That is why a customer can disappear and come back days later, and why a server crash does
+not lose the flow.
 
 ```python
 fluxo(
@@ -380,209 +383,209 @@ decisao(
 )
 ```
 
-Os três exemplos completos, validados a cada rodada, estão em [`tests/fluxos/exemplos`](tests/fluxos/exemplos).
+The three complete examples, validated on every round, are in [`tests/fluxos/exemplos`](tests/fluxos/exemplos).
 
-O que isso resolve na prática:
+What this gives you in practice:
 
-- **Pertence à org, e o agente só recebe a permissão.** Fluxo novo não é usado por nenhum agente até alguém
-  liberá-lo. Trocar de agente não perde o fluxo.
-- **Quem decide começar é o Jev (G9); quem inicia é o código.** O Jev escolhe o fluxo entre os liberados ao
-  agente, o código confere (fluxo ativo, liberado, Ficha aberta, revisão publicada) e só então inicia, antes
-  de o modelo escrever. Se o Jev falhar, o modelo recebe a ferramenta `fluxo_iniciar` como reserva.
-- **Revisões imutáveis.** Publicar cria a revisão `n+1`. Cada execução fica presa à revisão com que
-  começou. `flow diff` mostra, em português, o que mudou e quantos atendimentos em andamento continuam na
-  revisão antiga.
-- **Erros que dizem o que fazer**, com linha e coluna: "a ação `confirmar` exige o campo `cep`, que não
-  existe na etapa `coleta`". Avisos (etapa sem saída, campo nunca exigido, variável inexistente em
-  mensagem) não bloqueiam a publicação.
-- **O agente não avança sozinho.** Se a ação pedida não existe na etapa atual, a resposta é o erro e a lista
-  de ações válidas. Não há transição escondida.
-- **Efeitos explícitos**: mensagem fixa ao cliente, notificação de WhatsApp para um número da equipe e
-  encaminhamento para departamento. Saem por fila durável; falha de efeito não desfaz a transição e aparece
-  como evento na Ficha.
-- **Script é entrada não confiável.** Sem relógio, rede, arquivo ou aleatório, com limite de tamanho, de
-  passos e de memória por avaliação. `while`, recursão e `"x" * 1000000000` terminam em erro, sem travar o
-  servidor.
+- **Flows belong to the org; agents only get permission.** A new flow is used by no agent until someone
+  grants it. Switching agents does not lose the flow.
+- **The Jev decides to start; the code starts.** The Jev picks a flow among those granted to the agent, the
+  code checks it (active flow, granted, open Ficha, published revision) and only then starts it, before the
+  model writes anything. If the Jev fails, the model gets the `fluxo_iniciar` tool as a fallback.
+- **Immutable revisions.** Publishing creates revision `n+1`. Each execution stays pinned to the revision it
+  started with. `flow diff` shows, in plain language, what changed and how many in-progress conversations
+  remain on the old revision.
+- **Errors that tell you what to do**, with line and column: "action `confirmar` requires field `cep`, which
+  does not exist in step `coleta`". Warnings (a step with no exit, a field never required, an undefined
+  variable in a message) do not block publishing.
+- **The agent cannot advance on its own.** If the requested action does not exist in the current step, the
+  answer is the error and the list of valid actions. There are no hidden transitions.
+- **Explicit effects**: a fixed message to the customer, a WhatsApp notification to a team number, and a
+  transfer to a department. They go out through a durable queue; a failed effect does not undo the
+  transition and shows up as an event on the Ficha.
+- **Scripts are untrusted input.** No clock, network, file or randomness, with limits on size, steps and
+  memory per evaluation. `while`, recursion and `"x" * 1000000000` end in an error without hanging the
+  server.
 
 ```bash
-poph --org clinica-exemplo flow validar triagem_suporte.star      # erros e avisos, sem gravar
+poph --org clinica-exemplo flow validar triagem_suporte.star      # errors and warnings, writes nothing
 poph --org clinica-exemplo flow publicar triagem_suporte.star
 poph --org clinica-exemplo flow diff triagem_suporte --de 1 --para 2
 poph --org clinica-exemplo ficha listar --status open
 ```
 
-Linguagem completa, tabela "o que configurar → o que acontece" e lista de diagnósticos:
+Full language reference, the "configure → what happens" table and the list of diagnostics:
 [`docs/FLUXOS_LINGUAGEM.md`](docs/FLUXOS_LINGUAGEM.md).
 
-## Atendimento humano com Matrix e Element
+## Human handoff with Matrix and Element
 
-O módulo `poph-matrix` espelha cada conversa numa sala do Matrix para a equipe atender pelo
-[Element](https://element.io), e devolve ao cliente o que o atendente escreve. Ele é **desligável** (seção
-`[matrix]` ausente ou `habilitado = false` e nada dele carrega) e **não fica no caminho do cliente**: lê o
-que o turno já gravou e publica no Synapse. Com o Synapse fora do ar, o atendimento ao cliente continua e a
-fila esgota quando ele volta.
+The `poph-matrix` module mirrors each conversation into a Matrix room so your team can serve it in
+[Element](https://element.io), and returns to the customer whatever the agent types. It can be **switched
+off** (no `[matrix]` section, or `habilitado = false`, and none of it loads) and it is **not on the customer's
+path**: it reads what the turn already stored and publishes to Synapse. With Synapse down, customer service
+keeps working and the queue drains when it comes back.
 
-- **Uma sala por conversa**, com o nome do cliente (o nome de perfil do WhatsApp; sem ele, o telefone), o
-  texto do cliente e as respostas do agente, em ordem e sem duplicata.
-- **Espaços por departamento.** A sala vai para o espaço do departamento da conversa e muda de espaço quando
-  a conversa é transferida. O espaço pode ser criado pelo módulo ou ligado a um que já existe no Element.
-- **Resposta do atendente.** O que a pessoa escreve no Element chega ao cliente pelo mesmo canal, com o
-  nome dela (`*[Nome]*:`) na frente, e a conversa passa a `transferred`: o agente para de responder. Ele só
-  volta com a reabertura no Console. Uma transação repetida pelo Synapse não gera segundo envio.
-- **Avisos na sala**: transferência, reabertura, encerramento e falha definitiva de entrega ao cliente.
-- **Encerrar pelo Element.** O botão de encerrar atendimento, a leitura da conversa e o histórico do cliente
-  no painel da sala são atendidos pela API do Harness (`GET/close` de conversa, listagem por cliente).
-- **Mídia e mensagens do aparelho.** Imagem e arquivo nos dois sentidos (até 16 MB), aviso em texto para
-  áudio e vídeo, e a mensagem digitada direto no celular do cliente aparece como "Humano no Aparelho" e
-  também pausa o agente.
-- **Várias instâncias no mesmo Synapse**, cada uma dona das salas que criou.
+- **One room per conversation**, named after the customer (the WhatsApp profile name; the phone number if
+  there is none), with the customer's text and the agent's replies, in order and without duplicates.
+- **Spaces per department.** The room goes to the space of the conversation's department and moves when the
+  conversation is transferred. The space can be created by the module or linked to an existing one in Element.
+- **Agent reply.** Whatever the person writes in Element reaches the customer on the same channel, prefixed
+  with their name (`*[Name]*:`), and the conversation becomes `transferred`: the AI agent stops replying until
+  it is reopened in the Console. A transaction repeated by Synapse does not cause a second send.
+- **Room notices**: transfer, reopening, closing and definitive delivery failure to the customer.
+- **Closing from Element.** The close button, conversation read and the customer's history in the room panel
+  are served by the Harness API (conversation `GET`/`close`, per-customer listing).
+- **Media and phone-typed messages.** Images and files both ways (up to 16 MB), a text notice for audio and
+  video, and a message typed directly on the customer's phone appears as "Humano no Aparelho" and also
+  pauses the agent.
+- **Several instances on the same Synapse**, each owning the rooms it created.
 
 ```toml
 [matrix]
 habilitado     = true
-homeserver_url = "https://synapse.exemplo.com"
-server_name    = "exemplo.com"
-prefixo        = "ph"        # prefixo dos usuários virtuais e aliases (diferente de outras integrações do Synapse)
+homeserver_url = "https://synapse.example.com"
+server_name    = "example.com"
+prefixo        = "ph"        # prefix for virtual users and aliases (differs from other integrations on the Synapse)
 ```
 
 ```bash
-export POPH_MATRIX_AS_TOKEN='<token do application service>'
-export POPH_MATRIX_HS_TOKEN='<token do homeserver>'
+export POPH_MATRIX_AS_TOKEN='<application service token>'
+export POPH_MATRIX_HS_TOKEN='<homeserver token>'
 
-poph matrix registro --saida registro.yaml --url https://harness.exemplo.com   # gera o registro (arquivo 0600, sem imprimir token)
-# adicione registro.yaml ao Synapse e reinicie o Synapse: ele só lê registros na subida
+poph matrix registro --saida registro.yaml --url https://harness.example.com   # writes the registration (mode 0600, never prints tokens)
+# add registro.yaml to Synapse and restart Synapse: it only reads registrations at startup
 
 poph --offline --org clinica-exemplo matrix ligar
 poph --offline --org clinica-exemplo matrix espaco --departamento <id>
 ```
 
-O Synapse e o Element são **seus**: o Harness não os instala nem os altera. O roteiro de um Synapse de
-desenvolvimento com dois registros está em [`docs/MATRIX_AMBIENTE_LOCAL.md`](docs/MATRIX_AMBIENTE_LOCAL.md).
-Medição de memória, vazão e resiliência: [`docs/MATRIZ_MEMORIA.md`](docs/MATRIZ_MEMORIA.md) e
+Synapse and Element are **yours**: Harness neither installs nor changes them. A development Synapse with two
+registrations is described in [`docs/MATRIX_AMBIENTE_LOCAL.md`](docs/MATRIX_AMBIENTE_LOCAL.md). Memory,
+throughput and resilience measurements: [`docs/MATRIZ_MEMORIA.md`](docs/MATRIZ_MEMORIA.md) and
 [`docs/MATRIZ_RESILIENCIA.md`](docs/MATRIZ_RESILIENCIA.md).
 
-## Números medidos
+## Measured numbers
 
-Estes números vêm de spikes e medições de desenvolvimento (x86_64, uma máquina de 12 núcleos). **Não são um
-teste de carga completo**: o teste com 10 mil agentes e 500 conversas ativas ainda não foi feito, então as
-metas de escala abaixo são metas, não resultado.
+These numbers come from development spikes and measurements (x86_64, one 12-core machine). **They are not a
+full load test**: the test with 10,000 agents and 500 active conversations has not been run yet, so the
+scale figures below are targets, not results.
 
-| O que | Medido |
+| What | Measured |
 |---|---|
-| Memória por agente ocioso (configuração completa) | 8,3 KB; 10 mil agentes = 84 MB |
-| Memória por agente com índice vetorial (200 trechos × 384 dimensões, int8) | 82,9 KB |
-| Busca exata dos 3 melhores trechos entre 200 | 13,5 µs (p50) |
-| Caminho interno do turno, da mensagem ao pedido ao modelo pronto (sem embedding, Jev e modelo) | 0,057 ms (p50) |
-| SQLite com um escritor em lote | 118 mil mensagens/s saturado; commit de 0,2 ms (p95) a 2.000 msg/s |
-| `poph serve` com o módulo Matrix desligado (sem o modelo de embedding carregado) | ~20 MB de RSS |
-| Módulo Matrix ligado, 1.000 salas | +6,5 MB sobre o servidor sem o módulo |
-| Modelo de embedding carregado | ~458 MB de RSS |
+| Memory per idle agent (full configuration) | 8.3 KB; 10,000 agents = 84 MB |
+| Memory per agent with a vector index (200 chunks × 384 dimensions, int8) | 82.9 KB |
+| Exact search for the top 3 chunks out of 200 | 13.5 µs (p50) |
+| Internal turn path, from message to ready model request (no embedding, Jev or model) | 0.057 ms (p50) |
+| SQLite with one batching writer | 118k messages/s saturated; 0.2 ms commit (p95) at 2,000 msg/s |
+| `poph serve` with the Matrix module off (embedding model not loaded) | ~20 MB RSS |
+| Matrix module on, 1,000 rooms | +6.5 MB over the server without the module |
+| Embedding model loaded | ~458 MB RSS |
 
-A latência que o cliente percebe é dominada pelo modelo de linguagem (no spike: primeiro texto em ~6,5 s e
-resposta completa em ~6,9 s), não pelo Harness. Método, ressalvas e como repetir: [`docs/DECISOES.md`](docs/DECISOES.md)
-(D-07), [`docs/MATRIZ_MEMORIA.md`](docs/MATRIZ_MEMORIA.md) e [`docs/MEMORIA_E_CONCORRENCIA.md`](docs/MEMORIA_E_CONCORRENCIA.md).
+The latency a customer perceives is dominated by the language model (in the spike: first text at ~6.5 s and
+complete reply at ~6.9 s), not by Harness. Method, caveats and how to repeat: [`docs/DECISOES.md`](docs/DECISOES.md)
+(D-07), [`docs/MATRIZ_MEMORIA.md`](docs/MATRIZ_MEMORIA.md) and [`docs/MEMORIA_E_CONCORRENCIA.md`](docs/MEMORIA_E_CONCORRENCIA.md).
 
-## Limitações conhecidas
+## Known limitations
 
-Antes de produção, confira esta lista. Ela é mantida junto com o código.
+Check this list before going to production. It is maintained together with the code.
 
-- **Modelo de linguagem.** O cliente de modelo está atrás de uma interface (`LlmProvider`), mas o único
-  provedor incluído fala o dialeto de chat da OpenAI (`/chat/completions`, SSE, ferramentas, imagens) e foi
-  exercitado só contra um gateway específico. O identificador do provedor na configuração ainda é
-  `antigravity2api`. Outros endpoints compatíveis **não foram testados**.
-- **Jev.** É um serviço de terceiros. Sem ele, o Harness funciona no comportamento padrão de cada gate,
-  mas sem as decisões rápidas. O G1 (transferir) vem desligado até uma nova rodada de medição.
-- **WhatsApp com número real.** O canal foi provado com uma EvolutionAPI falsa e em ambiente isolado. O
-  teste com número real ainda está pendente.
-- **Plugin externo como canal.** O contrato, o supervisor e o plugin de exemplo estão prontos e testados,
-  mas o `poph serve` hoje só sobe o plugin para ler o manifesto. Receber e enviar mensagens de cliente por
-  plugin externo dentro do servidor ainda não está ligado.
-- **Escala.** As metas de memória e vazão para milhares de agentes estão fixadas, mas o teste de carga
-  completo e a paridade de busca medida com um agente real ainda não foram feitos.
-- **ARM64.** O build é validado, mas o binário ARM do último commit não foi reconstruído em máquina ARM.
-- **Sem usuário final no Console.** O Console entra com o token de administração; não há login de pessoa,
-  papéis nem rate limit por token.
-- **Só Linux.** Não testamos macOS nem Windows.
-- **Console fora do monorepo do POP Atende.** O Console depende do pacote `@sofacoding/sofa-ui`, que ainda
-  não foi publicado. Sem ele, `cargo build` e `poph serve` funcionam e abrem uma página mínima, mas o
-  bundle completo do Console não compila a partir deste repositório.
+- **Language model.** The model client sits behind an interface (`LlmProvider`), but the only bundled
+  provider speaks the OpenAI chat dialect (`/chat/completions`, SSE, tools, images) and was exercised only
+  against one specific gateway. The provider identifier in the configuration is still `antigravity2api`.
+  Other compatible endpoints have **not been tested**.
+- **Jev.** It is a third-party service. Without it Harness runs each gate's default behavior, just without
+  the fast decisions. G1 (transfer) ships off until a new measurement round.
+- **WhatsApp with a real number.** The channel was proven against a fake EvolutionAPI in an isolated
+  environment. The test with a real number is still pending.
+- **External plugin as a channel.** The contract, the supervisor and the sample plugin are ready and tested,
+  but `poph serve` currently starts the plugin only to read its manifest. Receiving and sending customer
+  messages through an external plugin inside the server is not wired yet.
+- **Scale.** The memory and throughput targets for thousands of agents are set, but the full load test and
+  search-parity measurement with a real agent have not been done.
+- **ARM64.** The build is validated, but the ARM binary of the latest commit has not been rebuilt on ARM
+  hardware.
+- **No end-user login in the Console.** It signs in with the admin token; there is no per-person login, no
+  roles and no per-token rate limit.
+- **Linux only.** We have not tested macOS or Windows.
+- **Console outside the POP Atende monorepo.** The Console depends on the `@sofacoding/sofa-ui` package, which
+  has not been published yet. Without it, `cargo build` and `poph serve` work and show a minimal page, but the
+  full Console bundle does not build from this repository.
 
-## Arquitetura do código
+## Code architecture
 
-Um workspace Cargo com crates pequenos e uma regra de dependência: `poph-types` não depende de nenhum
-outro, os crates de capacidade não conhecem o servidor nem a CLI, e quem junta as peças é `poph-agent`
-(turno) e `poph-server` (HTTP).
+A Cargo workspace of small crates with one dependency rule: `poph-types` depends on no other crate, the
+capability crates know nothing about the server or the CLI, and `poph-agent` (turn) and `poph-server` (HTTP)
+glue the pieces together.
 
-| Crate | O que faz |
+| Crate | What it does |
 |---|---|
-| `poph-types` | tipos de domínio, IDs, erros, contratos, configuração e `Sensivel` |
-| `poph-core` | cliente do provedor de modelo (streaming, ferramentas, imagens, limite por org) |
-| `poph-store` | SQLite (`harness.db`, `rag.db`): um escritor, leitores em WAL, migrações, repositórios por org, backup |
-| `poph-rag` | embedding local (ONNX Runtime, int8), fila de lote e instalação do modelo |
-| `poph-files` | recebimento de arquivos, tipo pelo conteúdo, extração de PDF/Office em processo isolado |
-| `poph-jev` | cliente do Jev, framework de gates e lote único de perguntas |
-| `poph-fluxos` | compilador, validador, regras e motor dos fluxos; puro, sem banco nem rede |
-| `poph-plugins`, `poph-plugin-eco` | supervisão de plugins por stdio e plugin de exemplo |
-| `poph-evolution` | cliente da EvolutionAPI (WhatsApp) |
-| `poph-matrix` | módulo Matrix: Application Service, salas, espaços e usuários virtuais |
-| `poph-agent` | estado quente, atores por conversa, turno, contexto, base, produtos e carrinho |
-| `poph-retention` | retenção do histórico |
-| `poph-server` | API administrativa (axum), autenticação, OpenAPI, Console embutido, cluster |
-| `poph` | o binário: CLI e `serve` |
+| `poph-types` | domain types, IDs, errors, contracts, configuration and `Sensivel` |
+| `poph-core` | model-provider client (streaming, tools, images, per-org limit) |
+| `poph-store` | SQLite (`harness.db`, `rag.db`): single writer, WAL readers, migrations, per-org repositories, backup |
+| `poph-rag` | local embedding (ONNX Runtime, int8), batch queue and model install |
+| `poph-files` | file intake, content-based type detection, isolated PDF/Office extraction |
+| `poph-jev` | Jev client, gate framework and single question batch |
+| `poph-fluxos` | flow compiler, validator, rules and engine; pure, no database or network |
+| `poph-plugins`, `poph-plugin-eco` | stdio plugin supervision and a sample plugin |
+| `poph-evolution` | EvolutionAPI (WhatsApp) client |
+| `poph-matrix` | Matrix module: Application Service, rooms, spaces and virtual users |
+| `poph-agent` | hot state, per-conversation actors, turn, context, knowledge base, products and cart |
+| `poph-retention` | history retention |
+| `poph-server` | admin API (axum), authentication, OpenAPI, embedded Console, cluster |
+| `poph` | the binary: CLI and `serve` |
 
-Mapa completo, regras de trabalho e onde fica cada regra de negócio: [`AGENTS.md`](AGENTS.md).
+Full map, working rules and where each business rule lives: [`AGENTS.md`](AGENTS.md).
 
-## Documentação
+## Documentation
 
-| Para | Leia |
+| To | Read |
 |---|---|
-| Entender o projeto | [`docs/VISAO_GERAL.md`](docs/VISAO_GERAL.md), [`docs/DECISOES.md`](docs/DECISOES.md) |
-| Configurar e operar | [`docs/CONFIGURACAO.md`](docs/CONFIGURACAO.md), [`docs/RUNBOOKS.md`](docs/RUNBOOKS.md), [`docs/CLUSTER.md`](docs/CLUSTER.md), [`docs/BACKUP.md`](docs/BACKUP.md), [`docs/RETENCAO.md`](docs/RETENCAO.md) |
-| Usar a API | [`docs/API.md`](docs/API.md) e `/admin/v1/openapi.json` |
-| Como uma mensagem vira resposta | [`docs/TURNO.md`](docs/TURNO.md), [`docs/ENTRADA_E_SAIDA.md`](docs/ENTRADA_E_SAIDA.md), [`docs/MEMORIA_E_CONCORRENCIA.md`](docs/MEMORIA_E_CONCORRENCIA.md) |
-| Agentes, base e produtos | [`docs/AGENTES.md`](docs/AGENTES.md), [`docs/BASE_DE_CONHECIMENTO.md`](docs/BASE_DE_CONHECIMENTO.md), [`docs/PRODUTOS.md`](docs/PRODUTOS.md), [`docs/ARQUIVOS.md`](docs/ARQUIVOS.md) |
+| Understand the project | [`docs/VISAO_GERAL.md`](docs/VISAO_GERAL.md), [`docs/DECISOES.md`](docs/DECISOES.md) |
+| Configure and operate | [`docs/CONFIGURACAO.md`](docs/CONFIGURACAO.md), [`docs/RUNBOOKS.md`](docs/RUNBOOKS.md), [`docs/CLUSTER.md`](docs/CLUSTER.md), [`docs/BACKUP.md`](docs/BACKUP.md), [`docs/RETENCAO.md`](docs/RETENCAO.md) |
+| Use the API | [`docs/API.md`](docs/API.md) and `/admin/v1/openapi.json` |
+| How a message becomes a reply | [`docs/TURNO.md`](docs/TURNO.md), [`docs/ENTRADA_E_SAIDA.md`](docs/ENTRADA_E_SAIDA.md), [`docs/MEMORIA_E_CONCORRENCIA.md`](docs/MEMORIA_E_CONCORRENCIA.md) |
+| Agents, knowledge and products | [`docs/AGENTES.md`](docs/AGENTES.md), [`docs/BASE_DE_CONHECIMENTO.md`](docs/BASE_DE_CONHECIMENTO.md), [`docs/PRODUTOS.md`](docs/PRODUTOS.md), [`docs/ARQUIVOS.md`](docs/ARQUIVOS.md) |
 | Jev | [`docs/JEV.md`](docs/JEV.md) |
-| Canais e plugins | [`docs/CONTRATO_CANAL.md`](docs/CONTRATO_CANAL.md), [`docs/PLUGIN_PROTOCOLO.md`](docs/PLUGIN_PROTOCOLO.md), [`docs/PLUGIN_EXEMPLO.md`](docs/PLUGIN_EXEMPLO.md), [`docs/EVOLUTION.md`](docs/EVOLUTION.md) |
-| Fluxos e Fichas | [`docs/FLUXOS_LINGUAGEM.md`](docs/FLUXOS_LINGUAGEM.md) |
-| Matrix e Element | [`docs/MATRIX_AMBIENTE_LOCAL.md`](docs/MATRIX_AMBIENTE_LOCAL.md), [`docs/DADOS.md`](docs/DADOS.md) §11 |
-| Dados e esquema | [`docs/DADOS.md`](docs/DADOS.md) |
+| Channels and plugins | [`docs/CONTRATO_CANAL.md`](docs/CONTRATO_CANAL.md), [`docs/PLUGIN_PROTOCOLO.md`](docs/PLUGIN_PROTOCOLO.md), [`docs/PLUGIN_EXEMPLO.md`](docs/PLUGIN_EXEMPLO.md), [`docs/EVOLUTION.md`](docs/EVOLUTION.md) |
+| Flows and Fichas | [`docs/FLUXOS_LINGUAGEM.md`](docs/FLUXOS_LINGUAGEM.md) |
+| Matrix and Element | [`docs/MATRIX_AMBIENTE_LOCAL.md`](docs/MATRIX_AMBIENTE_LOCAL.md), [`docs/DADOS.md`](docs/DADOS.md) §11 |
+| Data and schema | [`docs/DADOS.md`](docs/DADOS.md) |
 | Console | [`docs/CONSOLE.md`](docs/CONSOLE.md), [`console/UX_SPEC.md`](console/UX_SPEC.md) |
-| Mexer no código | [`CONTRIBUTING.md`](CONTRIBUTING.md), [`DEVELOPMENT.md`](DEVELOPMENT.md), [`AGENTS.md`](AGENTS.md) |
-| Próximos passos | [`ROADMAP.md`](ROADMAP.md) |
+| Work on the code | [`CONTRIBUTING.md`](CONTRIBUTING.md), [`DEVELOPMENT.md`](DEVELOPMENT.md), [`AGENTS.md`](AGENTS.md) |
+| What comes next | [`ROADMAP.md`](ROADMAP.md) |
 
-## Contribuir
+## Contributing
 
-Contribuições são bem-vindas: correção de erro, teste, documentação, plugin de canal, provedor de modelo
-novo. Antes de abrir um pull request grande, abra uma issue para alinhar o desenho.
+Contributions are welcome: bug fixes, tests, documentation, channel plugins, new model providers. Before
+opening a large pull request, open an issue so we can agree on the design.
 
-- Leia [`CONTRIBUTING.md`](CONTRIBUTING.md): como preparar o ambiente, rodar os testes, o estilo e o que
-  esperamos num PR.
-- O comando único de verificação é `bash scripts/ci.sh` (formatação, clippy com `-D warnings`, testes,
-  checagem ARM, licenças e auditoria de dependências).
-- Procure as issues marcadas com `good first issue` e `help wanted`.
-- Participar do projeto é aceitar o [Código de Conduta](CODE_OF_CONDUCT.md).
-- Dúvidas de uso vão em [Discussions](https://github.com/vallewillian-source/pop-harness/discussions). Veja
+- Read [`CONTRIBUTING.md`](CONTRIBUTING.md): how to set up, run the tests, the style and what we expect in a PR.
+- The single verification command is `bash scripts/ci.sh` (formatting, clippy with `-D warnings`, tests, ARM
+  check, licenses and dependency audit).
+- Look for issues labeled `good first issue` and `help wanted`.
+- Taking part means accepting the [Code of Conduct](CODE_OF_CONDUCT.md).
+- Usage questions go to [Discussions](https://github.com/vallewillian-source/pop-harness/discussions). See
   [`SUPPORT.md`](SUPPORT.md).
 
-## Segurança
+## Security
 
-Não abra issue pública para falha de segurança. Use o relato privado do GitHub
-(**Security → Report a vulnerability**). O processo está em [`SECURITY.md`](SECURITY.md).
+Do not open a public issue for a security problem. Use GitHub's private report
+(**Security → Report a vulnerability**). The process is in [`SECURITY.md`](SECURITY.md).
 
-## Licença
+## License
 
-O POP Harness é distribuído sob a [GNU Affero General Public License v3.0 ou posterior](LICENSE)
-(`AGPL-3.0-or-later`). Em resumo: você pode usar, estudar, modificar e redistribuir, inclusive
-comercialmente. Se você oferecer uma versão modificada como serviço pela rede, precisa disponibilizar o
-código-fonte dessa versão aos usuários do serviço. Leia o texto da licença para os termos exatos.
+POP Harness is distributed under the [GNU Affero General Public License v3.0 or later](LICENSE)
+(`AGPL-3.0-or-later`). In short: you may use, study, modify and redistribute it, including commercially. If
+you offer a modified version as a network service, you must make that version's source code available to the
+service's users. Read the license text for the exact terms.
 
-## Créditos
+## Credits
 
-Criado e mantido pela [SofaCoding](https://sofacoding.com.br). O projeto vem do trabalho no
-[POP Atende](https://popatende.com.br), mas é independente dele: não usa o banco dele nem importa código
-dele. "POP Harness" e "POP Atende" são nomes de produtos da SofaCoding.
+Created and maintained by [SofaCoding](https://sofacoding.com.br). The project grew out of work on
+[POP Atende](https://popatende.com.br) but is independent of it: it does not use its database or import its
+code. "POP Harness" and "POP Atende" are SofaCoding product names.
 
-O Harness usa, entre outros: [axum](https://github.com/tokio-rs/axum), [rusqlite](https://github.com/rusqlite/rusqlite),
-[ONNX Runtime](https://onnxruntime.ai) via [`ort`](https://github.com/pykeio/ort), [Starlark](https://github.com/facebook/starlark-rust)
-e o modelo [paraphrase-multilingual-MiniLM-L12-v2](https://huggingface.co/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2).
-A lista completa de dependências e licenças está em `Cargo.lock` e é verificada pelo `cargo deny`.
+Harness builds on, among others: [axum](https://github.com/tokio-rs/axum), [rusqlite](https://github.com/rusqlite/rusqlite),
+[ONNX Runtime](https://onnxruntime.ai) through [`ort`](https://github.com/pykeio/ort), [Starlark](https://github.com/facebook/starlark-rust)
+and the [paraphrase-multilingual-MiniLM-L12-v2](https://huggingface.co/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2) model.
+The full list of dependencies and licenses is in `Cargo.lock` and is enforced by `cargo deny`.

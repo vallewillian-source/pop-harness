@@ -1,23 +1,23 @@
-name: Documentação
-description: Algo está errado, faltando ou confuso na documentação.
-labels: ["documentation", "triagem"]
+name: Documentation
+description: Something is wrong, missing or confusing in the documentation.
+labels: ["documentation", "triage"]
 body:
   - type: input
-    id: onde
+    id: where
     attributes:
-      label: Onde está
-      description: Arquivo e seção, ou o link.
-      placeholder: docs/CONFIGURACAO.md, seção "Segredos"
+      label: Where it is
+      description: File and section, or the link.
+      placeholder: docs/CONFIGURACAO.md, section "Segredos"
     validations:
       required: true
   - type: textarea
-    id: problema
+    id: problem
     attributes:
-      label: O que está errado ou faltando
+      label: What is wrong or missing
     validations:
       required: true
   - type: textarea
-    id: sugestao
+    id: suggestion
     attributes:
-      label: Como deveria ser
-      description: Se você já tem o texto, melhor ainda. Pull requests de documentação são muito bem-vindos.
+      label: How it should be
+      description: If you already have the text, even better. Documentation pull requests are very welcome.

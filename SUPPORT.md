@@ -1,32 +1,34 @@
-# Suporte
+# Support
 
-O POP Harness é um projeto de código aberto, mantido por uma equipe pequena. Este arquivo diz onde cada
-tipo de pergunta deve ir para ser respondido mais rápido.
+POP Harness is an open-source project maintained by a small team. This file says where each kind of
+question should go to get answered faster.
 
-| Preciso de... | Vá para |
+| I need... | Go to |
 |---|---|
-| Entender como algo funciona ou como configurar | Leia [`docs/`](docs/) e o [`README.md`](README.md). Os runbooks passo a passo estão em [`docs/RUNBOOKS.md`](docs/RUNBOOKS.md). |
-| Tirar uma dúvida de uso, trocar ideia ou mostrar o que você montou | [GitHub Discussions](https://github.com/vallewillian-source/pop-harness/discussions) |
-| Relatar um erro | [Nova issue](https://github.com/vallewillian-source/pop-harness/issues/new/choose), modelo de erro |
-| Propor uma melhoria | [Nova issue](https://github.com/vallewillian-source/pop-harness/issues/new/choose), modelo de proposta |
-| Relatar uma falha de segurança | Privado, pelo [`SECURITY.md`](SECURITY.md). **Não** use issue pública. |
-| Contribuir com código ou documentação | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
+| To understand how something works or how to configure it | Read [`docs/`](docs/) and the [`README.md`](README.md). Step-by-step runbooks are in [`docs/RUNBOOKS.md`](docs/RUNBOOKS.md). |
+| To ask a usage question, exchange ideas or show what you built | [GitHub Discussions](https://github.com/vallewillian-source/pop-harness/discussions) |
+| To report a bug | [New issue](https://github.com/vallewillian-source/pop-harness/issues/new/choose), bug template |
+| To propose an improvement | [New issue](https://github.com/vallewillian-source/pop-harness/issues/new/choose), proposal template |
+| To report a security flaw | Privately, through [`SECURITY.md`](SECURITY.md). Do **not** use a public issue. |
+| To contribute code or documentation | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
 
-## Antes de abrir uma issue de erro
+Questions and issues are welcome in English or Portuguese.
 
-1. Rode `poph doctor` e veja se ele aponta o problema.
-2. Procure nas issues abertas e fechadas.
-3. Reproduza na versão mais recente (`main` ou a última versão publicada).
-4. Junte: a versão (`poph --version`), o sistema operacional, o trecho **sem segredos** do `poph.toml`, o
-   comando e a saída completa do erro.
+## Before opening a bug issue
 
-**Nunca cole** chaves, tokens, o conteúdo de `POPH_CHAVE_CIFRA`, telefones ou conversas reais de clientes
-numa issue.
+1. Run `poph doctor` and see whether it points to the problem.
+2. Search open and closed issues.
+3. Reproduce on the latest version (`main` or the latest release).
+4. Gather: the version (`poph --version`), the operating system, the **secret-free** part of `poph.toml`,
+   the command and the full error output.
 
-## O que este projeto não oferece
+**Never paste** keys, tokens, the contents of `POPH_CHAVE_CIFRA`, phone numbers or real customer
+conversations into an issue.
 
-Não há SLA, nem atendimento por e-mail ou telefone para a versão de código aberto. Respondemos issues e
-discussões conforme a disponibilidade de quem mantém o projeto.
+## What this project does not offer
 
-Empresas que precisam de implantação, integração com os sistemas delas, agentes sob medida ou suporte com
-prazo podem contratar a [SofaCoding](https://sofacoding.com.br).
+There is no SLA, and no email or phone support for the open-source version. We answer issues and
+discussions as maintainers have time.
+
+Companies that need deployment, integration with their own systems, custom agents or support with a
+deadline can hire [SofaCoding](https://sofacoding.com.br).

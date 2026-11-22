@@ -1,29 +1,29 @@
-## O que muda
+## What changes
 
-<!-- Em linguagem comum: o que fica diferente para quem usa. Uma ideia por pull request. -->
+<!-- In plain language: what is different for whoever uses it. One idea per pull request. -->
 
-## Por que
+## Why
 
-<!-- O problema que isso resolve. Link para a issue: "Fecha #123". -->
+<!-- The problem this solves. Link the issue: "Closes #123". -->
 
-## Como foi testado
+## How it was tested
 
-<!-- Comandos que você rodou e o resultado. O que você NÃO conseguiu conferir? -->
+<!-- Commands you ran and the result. What could you NOT check? -->
 
-## Tipo de mudança
+## Type of change
 
-- [ ] Correção de erro
-- [ ] Recurso novo
-- [ ] Documentação ou teste
-- [ ] Refatoração sem mudança de comportamento
-- [ ] Mudança incompatível (quebra API, formato de arquivo, configuração ou esquema de banco)
+- [ ] Bug fix
+- [ ] New feature
+- [ ] Documentation or test
+- [ ] Refactor with no behaviour change
+- [ ] Breaking change (breaks the API, a file format, configuration or the database schema)
 
-## Lista de conferência
+## Checklist
 
-- [ ] `bash scripts/ci.sh` passou (ou expliquei acima o que não passou e por quê).
-- [ ] Atualizei o documento do assunto em `docs/` e, se for o caso, o `CHANGELOG.md`.
-- [ ] Mudança de esquema de banco é uma **migração nova** (não editei uma já publicada).
-- [ ] Mudança de rota regenerou o cliente da API (`bash console/gen-api.sh`).
-- [ ] Código que toca dado de org tem teste de isolamento entre orgs.
-- [ ] Nenhum segredo, token, telefone ou dado de cliente em código, teste, log ou captura de tela.
-- [ ] Os commits estão assinados (`git commit -s`, Developer Certificate of Origin).
+- [ ] `bash scripts/ci.sh` passed (or I explained above what did not pass and why).
+- [ ] I updated the matching document in `docs/` and, if applicable, `CHANGELOG.md`.
+- [ ] A database schema change is a **new migration** (I did not edit a published one).
+- [ ] A route change regenerated the API client (`bash console/gen-api.sh`).
+- [ ] Code that touches org data has an isolation-between-orgs test.
+- [ ] No secret, token, phone number or customer data in code, tests, logs or screenshots.
+- [ ] Commits are signed off (`git commit -s`, Developer Certificate of Origin).
