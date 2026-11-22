@@ -9,9 +9,9 @@
 //! Dependências permitidas: só `poph-types` e a biblioteca de script. Este crate **não** importa
 //! `poph-store`, `poph-agent`, `poph-server` nem outro crate do workspace.
 //!
-//! Módulos, e a tarefa que implementa cada um (ainda sem lógica):
+//! Módulos, e a tarefa que implementa cada um:
 //!
-//! - [`compilador`] — FX-10: script → IR.
+//! - [`compilador`] — FX-10: script → IR, com diagnósticos de forma (feito).
 //! - [`validador`] — FX-11: diagnósticos semânticos do fluxo.
 //! - [`regras`] — FX-12: combinadores e funções avançadas (`def`).
 //! - [`motor`] — FX-13 e FX-14: iniciar, registrar campos, executar ação, avançar, fim e efeitos.
@@ -21,17 +21,22 @@
 //!
 //! Por enquanto os módulos existem para fixar o desenho e a fronteira; nenhum tem função pública.
 
-// As dependências já estão declaradas para as tarefas seguintes. Este `use ... as _` só marca
-// como usadas (o lint `unused_dependencies` do Rust 1.100 quebra o clippy com `-D warnings`).
-// Remova cada linha quando o primeiro uso real entrar no módulo correspondente.
+// `blake3` entra pela FX-19 (chave de cache de revisão: `fluxo_id + número + sha256`). Até lá o
+// `use ... as _` só marca a dependência como usada, porque o lint `unused_dependencies` do Rust
+// 1.100 quebra o clippy com `-D warnings`.
 use blake3 as _;
-use poph_types as _;
-use starlark as _;
 
 pub mod compilador;
+pub mod diagnostico;
 pub mod diff;
 pub mod formatador;
+pub mod ir;
+pub mod linguagem;
 pub mod motor;
 pub mod prompt;
 pub mod regras;
 pub mod validador;
+
+pub use compilador::{Compilado, FalhaCarregamento, Limites, carregar, compilar};
+pub use diagnostico::{Codigo, Diagnostico, Severidade};
+pub use ir::Ir;

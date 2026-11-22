@@ -2662,6 +2662,8 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "poph-types",
+ "serde",
+ "serde_json",
  "starlark",
 ]
 

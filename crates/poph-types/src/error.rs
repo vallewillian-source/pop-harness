@@ -86,6 +86,13 @@ pub enum DomainError {
     /// do cliente abre outra (com Ficha nova). Conversa `transferred` continua reabrindo.
     #[error("conversa {id} está encerrada: a próxima mensagem do cliente abre outra")]
     ConversaEncerrada { id: String },
+
+    /// A IR gravada da revisão diverge da recompilação do texto (`FLXR06`).
+    ///
+    /// O motor **falha fechado**: não escolhe uma das duas versões. Quem conserta é quem publica
+    /// uma revisão nova a partir do texto (FX-10, `poph_fluxos::carregar`).
+    #[error("a estrutura gravada do fluxo {fluxo} não confere com o texto: {motivo}")]
+    IrDivergente { fluxo: String, motivo: String },
 }
 
 impl DomainError {
@@ -108,6 +115,7 @@ impl DomainError {
             DomainError::AcaoInvalida { .. } => "acao_invalida",
             DomainError::CamposInvalidos { .. } => "campos_invalidos",
             DomainError::ConversaEncerrada { .. } => "conversa_encerrada",
+            DomainError::IrDivergente { .. } => "ir_divergente",
         }
     }
 
@@ -126,7 +134,8 @@ impl DomainError {
             | DomainError::FichaFechada { .. }
             | DomainError::ExecucaoJaAtiva { .. }
             | DomainError::AcaoInvalida { .. }
-            | DomainError::ConversaEncerrada { .. } => 409,
+            | DomainError::ConversaEncerrada { .. }
+            | DomainError::IrDivergente { .. } => 409,
             DomainError::CamposInvalidos { .. } => 400,
         }
     }
@@ -183,6 +192,14 @@ mod tests {
                     id: "conversa-1".to_owned(),
                 },
                 "conversa_encerrada",
+                409,
+            ),
+            (
+                DomainError::IrDivergente {
+                    fluxo: "agendar_visita".to_owned(),
+                    motivo: "as etapas diferem da recompilação do texto".to_owned(),
+                },
+                "ir_divergente",
                 409,
             ),
         ]

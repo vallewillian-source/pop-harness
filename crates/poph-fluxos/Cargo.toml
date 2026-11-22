@@ -1,6 +1,6 @@
 [package]
 name = "poph-fluxos"
-description = "Módulo de Fluxos e Fichas do POP Harness: compilador de script Starlark para estrutura (IR), validador, regras, motor puro, bloco de prompt, diff e formatador (FX-04: esqueleto, sem lógica)."
+description = "Módulo de Fluxos e Fichas do POP Harness: compilador de script Starlark para estrutura (IR), validador, regras, motor puro, bloco de prompt, diff e formatador (FX-10: compilador pronto; o resto é esqueleto)."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -15,6 +15,10 @@ poph-types = { path = "../poph-types" }
 starlark.workspace = true
 # Feature `pure` vem do workspace: mantém este crate no `cargo check` aarch64 da estação.
 blake3.workspace = true
+# A IR é gravada em `fluxo_revisoes.definicao_json` e comparada byte a byte: serde é o que dá a
+# forma estável. Já vem do workspace (nenhum crate novo entra no build por causa disto).
+serde.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true

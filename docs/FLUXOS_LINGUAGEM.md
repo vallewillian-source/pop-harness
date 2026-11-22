@@ -153,6 +153,10 @@ def gira(dados):
 
 Convenções desta seção: **posicional** = argumento sem nome, na ordem mostrada; **nomeado** = `chave = valor`. Só os argumentos listados existem: qualquer outro dá `FLX12` (é assim que um `obrigatorioo` digitado errado aparece na hora, e não em silêncio).
 
+**O valor de um argumento é sempre literal** — texto entre aspas, número, `True`/`False`/`None`, lista de literais, ou uma chamada de declaração (`campo(...)`, `acao(...)`, `fim(...)`, `gatilho(...)`, um combinador). Expressão calculada (`"a" + "b"`, `"x" * 3`, f-string, indexação) dá `FLX06`: calcule o valor antes de escrever o fluxo. Cálculo existe só dentro de `def`.
+
+Cada declaração aceita **uma** forma de chamada, a dos exemplos: `campo`, `acao`, `fim`, `mensagem_ao_cliente`, `encaminhar` e os combinadores recebem os primeiros argumentos por posição; `fluxo`, `etapa`, `decisao`, `gatilho` e `notificar_whatsapp` são todos nomeados. A outra forma é `FLX12`.
+
 ### 4.1 `fluxo(...)` — o cabeçalho do fluxo
 
 ```python
@@ -418,7 +422,7 @@ fim("concluido", resultado = "Visita agendada", encerra_atendimento = True)
 | `id`/`resultado` | aparecem no histórico da Ficha e nas métricas; o cliente não vê |
 | `encerra_atendimento = False` (padrão) | a execução fica `concluida`; a conversa **continua** com o agente, sem fluxo ativo — o cliente pode entrar em outro fluxo na mesma Ficha |
 | `encerra_atendimento = True` | encerra o atendimento: fecha conversa e Ficha e registra `fechada_por = fluxo`; mensagem seguinte do cliente abre outra conversa e outra Ficha |
-| (nenhum fim alcançável) | aviso na publicação (`FLX52` aponta a etapa sem saída); o fluxo nunca termina sozinho |
+| (nenhum fim alcançável) | o que aparece é `FLX51` (etapa sem ação, o caso comum) ou `FLX52` (etapa inalcançável): não existe diagnóstico de "fluxo que nunca termina". Um ciclo de etapas (voltar sempre à mesma etapa) é aceito pelo compilador e só para no atendimento |
 
 Válido: os exemplos acima. Inválido:
 
@@ -618,7 +622,14 @@ Comportamento:
 | `defs[].nome` | texto | sim | nome da `def` |
 | `defs[].fonte` | texto | sim | o trecho do script, recompilado na carga |
 
-Na IR **gerada pelo compilador**, todo campo desta tabela aparece: o que o script não declarou entra com o padrão (`[]`, `null`, `false`, `"agente"`). O exemplo da §8.3 sai do validador do spike, que ainda omite as chaves vazias — a partir da FX-10 a IR materializa os padrões, e é essa forma que vai para `definicao_json`.
+Na IR **gerada pelo compilador** (FX-10), todo campo desta tabela aparece, com o padrão materializado. Os textos opcionais saem como `null` (`fluxo.descricao`, `etapas[].instrucao`, `campos[].ajuda`, `gatilho.nao_quando`, `fins[].resultado`, `acoes[].ator`), as listas como `[]`, os booleanos como `false` e `etapas[].atores_acao` como `["agente"]`. O exemplo da §8.3 saiu do validador do spike, que omitia as chaves vazias — a IR de produção materializa os padrões, e é essa forma que vai para `definicao_json` e que a recompilação tem de reproduzir byte a byte.
+
+Duas regras de **ordem**, que fazem a serialização ser comparável:
+
+- `etapas`, `decisoes` e `defs` saem na ordem do script; `fins` na ordem da primeira aparição.
+- Os campos de cada objeto saem na ordem do esquema acima (a IR não usa mapa em lugar nenhum).
+
+A comparação de `carregar` (FX-10) é entre o **JSON canônico** (compacto, sem espaço) da IR gravada e o da recompilação. Formatação do arquivo (indentação) não conta como divergência; qualquer valor, ordem ou presença de campo conta.
 
 **Destino** (`vai_para`, `entao`, `senao`, e o que `fim` vira dentro deles):
 
@@ -655,7 +666,7 @@ Na IR **gerada pelo compilador**, todo campo desta tabela aparece: o que o scrip
 
 ### 8.3 Exemplo real: IR de `agendar_visita.star`
 
-Gerada pelo validador sobre o exemplo `agendar_visita` de `tests/fluxos/exemplos/`:
+Abaixo, a IR como o validador do spike a gerava (omite as chaves vazias). A forma **de produção**, com os padrões materializados, é a dourada que o teste do compilador compara: `tests/fluxos/ir/agendar_visita.json` — é essa que vai para `definicao_json` e que a recompilação precisa reproduzir:
 
 ```json
 {
@@ -829,6 +840,7 @@ Lista **fechada**: todo diagnóstico tem código; código novo entra aqui primei
 | `FLX03` | construção fora do dialeto: `load`, `while`, `lambda`, `class`, `try`, `import`, `raise`, f-string, `**` | "`load` não faz parte da linguagem de fluxos. Um fluxo não importa outro arquivo." |
 | `FLX04` | limite estourado na carga (ticks, heap, profundidade, prazo) | "O script executou demais ao ser carregado (prazo de 1 s). No topo do arquivo deve haver só declarações; confira se alguma `def` tem laço longo." |
 | `FLX05` | item no topo que não é declaração; declaração desconhecida; declaração dentro de `def` | "No topo do arquivo só pode haver `fluxo(...)`, `etapa(...)` e `decisao(...)`; tire a atribuição da linha 3." |
+| `FLX03` (nota) | `for` e `if` no topo são recusados pelo parser (não chegariam ao `FLX05`), e saem com `FLX03` | "Laço (`for`) não existe no topo de um fluxo: só `fluxo(...)`, `etapa(...)`, `decisao(...)` e `def`." |
 | `FLX06` | valor com tipo errado num argumento (lista, texto, booleano) | "`obrigatorio` do campo `coleta.cep` precisa ser `True` ou `False`, não texto." |
 | `FLX07` | nome inexistente no dialeto (`open`, `time`, `print`, `getattr`…) | "`time` não existe na linguagem de fluxos: o script não tem relógio. Use os campos do fluxo para decidir." |
 | `FLX10` | falta `fluxo(...)` ou há mais de um | "O arquivo não declara `fluxo(...)`. Um arquivo é um fluxo: comece por `fluxo(id = ..., nome = ..., inicio = ...)`." |
@@ -845,8 +857,8 @@ Lista **fechada**: todo diagnóstico tem código; código novo entra aqui primei
 | `FLX21` | combinador malformado: campo fora de `etapa.campo`, aridade errada (`e`/`ou` < 2, `nao` ≠ 1), combinador desconhecido | "`igual` precisa de `etapa.campo` e um valor: `igual(\"coleta.periodo\", \"manhã\")`." |
 | `FLX22` | combinador cita etapa ou campo inexistente | "A regra compara `relato.cep`, mas a etapa `relato` não tem o campo `cep`." |
 | `FLX23` | ciclo entre decisões (inclusive decisão que aponta para si mesma) | "As decisões formam um ciclo: `a → b → a`. Um fluxo não pode voltar a uma decisão já avaliada." |
-| `FLX24` | `def` fora do formato: não é `def nome(dados)`, ou usa nome reservado do dialeto | "`def problema_grave(dados, extra)` precisa receber um único argumento chamado `dados`." |
-| `FLX25` | variável com formato inválido | "`{cliente.nome}` não existe. As variáveis são `{etapa.campo}`, `{ficha.id}` e `{cliente.peer}`." |
+| `FLX24` | `def` fora do formato: não é `def nome(dados)`, usa nome reservado do dialeto, ou repete o nome de outra `def` | "`def problema_grave(dados, extra)` precisa receber um único argumento chamado `dados`." |
+| `FLX25` | variável com formato inválido — inclusive prefixo reservado com campo que não existe (`{cliente.nome}`, `{ficha.aberta_em}`): só `{ficha.id}` e `{cliente.peer}` valem | "`{cliente.nome}` não existe. As variáveis são `{etapa.campo}`, `{ficha.id}` e `{cliente.peer}`." |
 | `FLX26` | `{...}` em texto que não interpola | "A `instrucao` da etapa `coleta` tem `{...}`, mas instrução não interpola: o agente lê o texto como está. Use variável só em `mensagem_ao_cliente` e `notificar_whatsapp`." |
 | `FLX27` | acima de 60 nós (etapas + decisões + fins) | "O fluxo tem 72 nós e o limite é 60. Junte etapas parecidas ou divida o fluxo." |
 | `FLX28` | `notificar_whatsapp` com número inválido | "O número `123` não serve: use dígitos com DDI, por exemplo `5521999990000`." |
@@ -935,7 +947,25 @@ São escolhas que este documento fecha de um jeito, mas que são do dono do cont
 | P14 | Fonte máxima | 32 KB (D1) | o PRD §9 ainda traz `65536` em `max_fonte_bytes`; o PRD precisa mudar para 32.768 |
 | P15 | Variáveis na lista fechada | só `{etapa.campo}`, `{ficha.id}`, `{cliente.peer}` | se a operação pedir, ex.: `{ficha.aberta_em}`, entra como campo novo (mudança aditiva) |
 
-### 13.1 O que o PRD precisa mudar (avisar o mantenedor, não editar o PRD)
+### 13.1 Fechado na implementação (FX-10)
+
+Pontos que a implementação precisou decidir e que o mantenedor aceitou; ficam aqui para o autor do script e para a UI futura não tropeçarem:
+
+| # | Assunto | Decisão | Onde aparece |
+|---|---|---|---|
+| I1 | Valor de argumento | **só literal** (texto, número, booleano, `None`, lista de literais ou chamada de declaração); expressão calculada dá `FLX06` | §4 |
+| I2 | Forma de chamada | uma só por declaração, a do documento: `campo`/`acao`/`fim`/`mensagem_ao_cliente`/`encaminhar`/combinadores por posição; `fluxo`/`etapa`/`decisao`/`gatilho`/`notificar_whatsapp` nomeados. A outra forma dá `FLX12` | §4 |
+| I3 | `for`/`if` no topo | recusados pelo parser e saem como `FLX03` (não como `FLX05`) | §10.1 |
+| I4 | Atribuição no topo | o parser deixa passar; quem recusa é o compilador, com `FLX05` | §10.1 |
+| I5 | Duas `def` com o mesmo nome | `FLX24` (o parser só estouraria em tempo de carga) | §10.1 |
+| I6 | Prefixo reservado de variável | `{ficha.*}` e `{cliente.*}` fora de `ficha.id`/`cliente.peer` dão `FLX25`, não `FLX59` | §10.1 |
+| I7 | Padrões da IR | texto opcional sai como `null` (não como `""`); listas `[]`; booleanos `false`; `atores_acao` `["agente"]` | §8.2 |
+| I8 | Ordem na IR | `etapas`/`decisoes`/`defs` na ordem do script, `fins` na ordem da primeira aparição, campos na ordem do esquema; a IR não usa mapa | §8.2 |
+| I9 | Igualdade de `carregar` | comparar o **JSON canônico** da IR gravada com o da recompilação: formatação não conta, valor e ordem contam | §8.2 |
+| I10 | Erro de divergência | `DomainError::IrDivergente` em `poph-types` (`ir_divergente`, HTTP 409); o motor falha fechado (`FLXR06`) | §10.3 |
+| I11 | `FLX04` na prática | só dispara se a carga estourar limite — com a forma válida, o topo do arquivo não executa nada, então é a rede de segurança, não o caminho comum | §3.4 |
+
+### 13.2 O que o PRD precisa mudar (avisar o mantenedor, não editar o PRD)
 
 1. §9: `fluxos.max_fonte_bytes` passa a **32768** (era 65536), para bater com a decisão do mantenedor e com o §3.4 deste documento.
 2. §5: `while` e `**` não existem no Starlark; o exemplo de abuso é `"x" * 1000000000` (o spike da FX-01 já registrou isso).
@@ -947,7 +977,7 @@ São escolhas que este documento fecha de um jeito, mas que são do dono do cont
 
 ## 14. O que este documento não decidiu e não testou
 
-- **Não há código de produto**: a IR, os diagnósticos e a semântica aqui descritos são implementados na FX-10 em diante. O validador usado aqui é o do spike (descartável, fora do workspace) e serve só para provar que os exemplos não inventam sintaxe.
-- **Não testei no motor real**: avaliação de regra com dados reais, eventos, filas de efeito e concorrência são das FX-11 a FX-21.
-- **A IR não foi versionada contra um caso antigo** (não há versão anterior): a regra aditiva está escrita, não exercitada.
-- **`ir_divergente`** depende de o compilador ser determinístico — provado no spike (duas execuções, duas threads), a confirmar na FX-10.
+- **Compilador implementado (FX-10)**: `poph_fluxos::compilar` monta a IR lendo a árvore sintática e emite os 40 diagnósticos com linha e coluna; os três exemplos compilam para a IR dourada em `tests/fluxos/ir/`; `poph_fluxos::carregar` recusa IR que não bata com o texto (`ir_divergente`). O validador do spike continua fora do workspace e não é usado por ninguém.
+- **Não testei no motor real**: avaliação de regra com dados reais, eventos, filas de efeito e concorrência são das FX-11 a FX-21. O compilador **carrega** o módulo (prova que ele compila e que os limites estão ligados), mas não avalia nenhuma `def`.
+- **A IR não foi versionada contra um caso antigo** (não há versão anterior): a regra aditiva está escrita e há teste de que campo desconhecido é ignorado na leitura, mas não existe IR de versão anterior para comparar.
+- **Diagnóstico com posição**: todo diagnóstico de forma aponta linha e coluna; os de carga sem trecho (`FLX02`, `FLX04`) apontam `1:1`. O `carregador` dos avisos de variável aponta o texto do efeito.
