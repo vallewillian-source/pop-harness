@@ -12,7 +12,7 @@ One Rust binary, backed by SQLite. No Redis, no Postgres, no agent framework.
 
 [Quick start](#quick-start) ·
 [What it does](#what-it-does) ·
-[Flows and Fichas](#flows-and-fichas) ·
+[Flows and Cases](#flows-and-cases) ·
 [Human handoff](#human-handoff-with-matrix-and-element) ·
 [Documentation](#documentation) ·
 [Contributing](#contributing)
@@ -48,13 +48,13 @@ In practice you get:
 - **Human handoff.** A transferred conversation stops being answered by the agent. Your team replies in
   Element (Matrix) and the reply reaches the customer on the original channel.
 - **Step-by-step service.** Flows written as plain-text scripts that both an AI agent and a person can read,
-  and one *Ficha* (case record) per conversation with the history of what happened.
+  and one *Case* (record) per conversation with the history of what happened.
 
 > The project is at `0.x`: the API, file formats and commands may change before `1.0`. Read
 > [Known limitations](#known-limitations) before going to production.
 
 > **Status as of 2026-11-22: parts of this page describe what is being built.** Already working in the code:
-> multi-org, agents, knowledge base, WhatsApp, files, Jev, Matrix/Element (text) and the Ficha created for each
+> multi-org, agents, knowledge base, WhatsApp, files, Jev, Matrix/Element (text) and the Case created for each
 > conversation. **Still in development:** the `poph flow` and `poph ficha` commands, flow effects and
 > revisions, Matrix media (images and files) and multiple Matrix instances. Status per item is in
 > [ROADMAP.md](ROADMAP.md). Where this page disagrees with the binary, trust the binary and `ROADMAP.md`.
@@ -110,7 +110,7 @@ back to the behavior without it.**
 | G6 | the reply may be sent or must be rewritten | off |
 | G7 | prompt injection or abuse | off |
 | G8 | the customer ended the conversation | on |
-| G9 | start a flow (see [Flows and Fichas](#flows-and-fichas)) | on when the agent has a flow granted |
+| G9 | start a flow (see [Flows and Cases](#flows-and-cases)) | on when the agent has a flow granted |
 
 The Jev itself is off by default (`jev.ativo = false`) and each gate can be switched globally or per agent.
 Details, measurements and calibration: [`docs/JEV.md`](docs/JEV.md).
@@ -322,7 +322,7 @@ cases, `--offline` (they operate directly on the database). `poph <command> --he
 | `agent`, `instructions` | agents and instructions |
 | `department`, `category`, `product` | departments, categories and catalog |
 | `kb`, `rag`, `file` | knowledge base, search index and the agent's file library |
-| `flow`, `ficha` | flows (validate, publish, diff, format) and Fichas |
+| `flow`, `ficha` | flows (validate, publish, diff, format) and Cases |
 | `chat <agent>` | chat from the terminal |
 | `matrix` | Application Service registration and, per org, enable, disable and spaces |
 | `cluster show`, `cluster check` | show and check the map between instances |
@@ -332,14 +332,18 @@ cases, `--offline` (they operate directly on the database). `poph <command> --he
 | `openapi` | print the OpenAPI document |
 | `serve` | start the server, the API and the Console |
 
-## Flows and Fichas
+## Flows and Cases
 
-### Ficha: the record of each conversation
+### Case: the record of each conversation
 
-Every conversation is born with a **Ficha**. It accumulates the messages, turns and flow executions of that
+Every conversation is born with a **Case**. It accumulates the messages, turns and flow executions of that
 conversation, and it closes only when the conversation closes: by whoever is serving it, by an agent
 (`atendimento_encerrar`), through the API, or by a flow that ends the conversation. After that, a new
-customer message opens **another conversation and another Ficha**. A closed Ficha never changes.
+customer message opens **another conversation and another Case**. A closed Case never changes.
+
+> **Naming:** *Case* is the English name for what the Portuguese documentation, the database tables
+> (`fichas`, `ficha_eventos`) and the CLI (`poph ficha`) call a **Ficha**. Identifiers in code are not renamed.
+> See the [glossary](docs/GLOSSARY.md).
 
 ### Flow: a plain-text script
 
@@ -390,7 +394,7 @@ What this gives you in practice:
 - **Flows belong to the org; agents only get permission.** A new flow is used by no agent until someone
   grants it. Switching agents does not lose the flow.
 - **The Jev decides to start; the code starts.** The Jev picks a flow among those granted to the agent, the
-  code checks it (active flow, granted, open Ficha, published revision) and only then starts it, before the
+  code checks it (active flow, granted, open Case, published revision) and only then starts it, before the
   model writes anything. If the Jev fails, the model gets the `fluxo_iniciar` tool as a fallback.
 - **Immutable revisions.** Publishing creates revision `n+1`. Each execution stays pinned to the revision it
   started with. `flow diff` shows, in plain language, what changed and how many in-progress conversations
@@ -402,7 +406,7 @@ What this gives you in practice:
   answer is the error and the list of valid actions. There are no hidden transitions.
 - **Explicit effects**: a fixed message to the customer, a WhatsApp notification to a team number, and a
   transfer to a department. They go out through a durable queue; a failed effect does not undo the
-  transition and shows up as an event on the Ficha.
+  transition and shows up as an event on the Case.
 - **Scripts are untrusted input.** No clock, network, file or randomness, with limits on size, steps and
   memory per evaluation. `while`, recursion and `"x" * 1000000000` end in an error without hanging the
   server.
@@ -547,7 +551,8 @@ Full map, working rules and where each business rule lives: [`AGENTS.md`](AGENTS
 | Agents, knowledge and products | [`docs/AGENTES.md`](docs/AGENTES.md), [`docs/BASE_DE_CONHECIMENTO.md`](docs/BASE_DE_CONHECIMENTO.md), [`docs/PRODUTOS.md`](docs/PRODUTOS.md), [`docs/ARQUIVOS.md`](docs/ARQUIVOS.md) |
 | Jev | [`docs/JEV.md`](docs/JEV.md) |
 | Channels and plugins | [`docs/CONTRATO_CANAL.md`](docs/CONTRATO_CANAL.md), [`docs/PLUGIN_PROTOCOLO.md`](docs/PLUGIN_PROTOCOLO.md), [`docs/PLUGIN_EXEMPLO.md`](docs/PLUGIN_EXEMPLO.md), [`docs/EVOLUTION.md`](docs/EVOLUTION.md) |
-| Flows and Fichas | [`docs/FLUXOS_LINGUAGEM.md`](docs/FLUXOS_LINGUAGEM.md) |
+| Flows and Cases | [`docs/FLUXOS_LINGUAGEM.md`](docs/FLUXOS_LINGUAGEM.md) |
+| Terms in English (Case = Ficha, Flow = Fluxo, ...) | [`docs/GLOSSARY.md`](docs/GLOSSARY.md) |
 | Matrix and Element | [`docs/MATRIX_AMBIENTE_LOCAL.md`](docs/MATRIX_AMBIENTE_LOCAL.md), [`docs/DADOS.md`](docs/DADOS.md) §11 |
 | Data and schema | [`docs/DADOS.md`](docs/DADOS.md) |
 | Console | [`docs/CONSOLE.md`](docs/CONSOLE.md), [`console/UX_SPEC.md`](console/UX_SPEC.md) |

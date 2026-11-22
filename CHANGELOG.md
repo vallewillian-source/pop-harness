@@ -16,7 +16,7 @@ change; it is always marked **Breaking** in the notes.
 - The Jev, with eight fast-decision gates (G1 to G8), measured against labelled sets, and G9 to start flows.
 - WhatsApp through EvolutionAPI as a native channel, and a channel contract for external processes
   (JSON-lines over stdio).
-- Flows written in Starlark, with immutable revisions, per-agent permission and one Ficha per conversation.
+- Flows written in Starlark, with immutable revisions, per-agent permission and one Case per conversation.
 - Optional Matrix module: one room per conversation, spaces per department, agent replies in Element and
   pausing the AI agent.
 - Admin API at `/admin/v1` with OpenAPI 3.1, embedded web Console and the `poph` CLI.

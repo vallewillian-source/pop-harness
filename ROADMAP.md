@@ -10,11 +10,11 @@ binary yet:
 
 - [ ] **Flows:** `poph flow` (validate, publish, diff, format), effects, revisions, the `fluxo_iniciar` tool
       and the G9 gate. The language is in [`docs/FLUXOS_LINGUAGEM.md`](docs/FLUXOS_LINGUAGEM.md).
-- [ ] **Fichas:** a Ficha is already created for each conversation and closed with it; still missing are
+- [ ] **Cases:** a Case is already created for each conversation and closed with it; still missing are
       `poph ficha`, listing, and the flow history as a sub-item.
 - [ ] **Matrix, phase 2:** images and files in both directions, messages from the device, and expiry.
 - [ ] **Matrix, phase 3:** several instances on the same Synapse.
-- [ ] **Console:** Matrix, flows and Fichas screens (today they appear as "coming soon" in the menu).
+- [ ] **Console:** Matrix, flows and Cases screens (today they appear as "coming soon" in the menu).
 - [ ] **Console outside the monorepo:** publish or include the `@sofacoding/sofa-ui` package.
 
 ## Before `1.0`
@@ -42,7 +42,7 @@ What is missing for the project to be recommendable for production by anyone:
 
 Ideas that fit the project, in no order and with no date:
 
-- Retention policy for Fichas.
+- Retention policy for Cases.
 - Visual flow editor in the Console (the script format was designed so it can edit without losing anything).
 - Audio and video transcription.
 - WASM plugins.
