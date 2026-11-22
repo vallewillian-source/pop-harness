@@ -93,6 +93,17 @@ pub enum DomainError {
     /// uma revisão nova a partir do texto (FX-10, `poph_fluxos::carregar`).
     #[error("a estrutura gravada do fluxo {fluxo} não confere com o texto: {motivo}")]
     IrDivergente { fluxo: String, motivo: String },
+
+    /// Agente passaria do teto de fluxos liberados (PRD §15: 20 por agente, para o G9 do Jev ter
+    /// opções finitas). A permissão que estoura é recusada inteira; quem quer outra revoga antes.
+    #[error(
+        "agente {agent_id}: {pedidos} fluxos liberados passam do limite de {limite}; revogue algum antes"
+    )]
+    TetoDeFluxosPorAgente {
+        agent_id: String,
+        limite: u32,
+        pedidos: u32,
+    },
 }
 
 impl DomainError {
@@ -116,6 +127,7 @@ impl DomainError {
             DomainError::CamposInvalidos { .. } => "campos_invalidos",
             DomainError::ConversaEncerrada { .. } => "conversa_encerrada",
             DomainError::IrDivergente { .. } => "ir_divergente",
+            DomainError::TetoDeFluxosPorAgente { .. } => "teto_de_fluxos_por_agente",
         }
     }
 
@@ -135,7 +147,8 @@ impl DomainError {
             | DomainError::ExecucaoJaAtiva { .. }
             | DomainError::AcaoInvalida { .. }
             | DomainError::ConversaEncerrada { .. }
-            | DomainError::IrDivergente { .. } => 409,
+            | DomainError::IrDivergente { .. }
+            | DomainError::TetoDeFluxosPorAgente { .. } => 409,
             DomainError::CamposInvalidos { .. } => 400,
         }
     }
@@ -192,6 +205,15 @@ mod tests {
                     id: "conversa-1".to_owned(),
                 },
                 "conversa_encerrada",
+                409,
+            ),
+            (
+                DomainError::TetoDeFluxosPorAgente {
+                    agent_id: "agente-1".to_owned(),
+                    limite: 20,
+                    pedidos: 21,
+                },
+                "teto_de_fluxos_por_agente",
                 409,
             ),
             (

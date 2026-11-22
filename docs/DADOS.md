@@ -388,6 +388,46 @@ tabelas que a mensagem não escreve (`fichas` recebe só leitura do novo índice
 FX-09; o motor que escreve execução, etapa e efeito é a FX-13 em diante. Até lá, ninguém grava nestas
 tabelas — só o esquema existe.
 
+### Repositório de fluxos e permissão por agente (FX-08)
+
+`Store::fluxos()` (`crates/poph-store/src/repos/fluxos.rs`) é a única porta para as tabelas `fluxos` e
+`agente_fluxos`. Não compila script e não publica revisão: quem grava `fluxo_revisoes` é a FX-09.
+
+- **Cadastro.** `criar`, `obter`, `por_slug` (devolve `None` quando não existe), `listar` (filtro de
+  situação, cursor pelo id) e `atualizar` com `If-Match` (`esperada` = `version`). Versão velha devolve
+  `ConflitoDeVersao` (412) e não grava nada. `archived` é recusado: o fluxo fica `active` ou `inactive`.
+- **Slug.** Segue a regra da linguagem (`FLX13`): minúsculas, números e `_`, começando por letra, de 2 a
+  64 caracteres. Repetido na mesma org é recusado (`Validacao` no campo `slug`); em outra org é aceito.
+- **Exclusão (`excluir(org, fluxo, force)`).** Devolve quantas execuções **ativas** o fluxo tinha.
+  - Sem execução ativa: exclui e devolve `0`.
+  - Com execução ativa e `force = false`: recusa (`Conflito`, 409) com a contagem na mensagem; nada muda.
+  - Com `force = true`: cada execução ativa vira `abandonada` com `motivo_fim = fluxo_excluido` e
+    `finalizada_em` agora, e ganha o evento `execucao_abandonada` na linha do tempo da Ficha (ator
+    `sistema`). Revisões e permissões saem junto (cascata). **Execuções e Fichas ficam**: o histórico do
+    atendimento não tem chave estrangeira para o fluxo.
+  - Tudo numa escrita só: ou o fluxo sai com as execuções abandonadas, ou nada muda.
+- **Permissão.** `liberar`, `revogar`, `listar_do_agente` (fluxos liberados, por slug),
+  `listar_agentes_do_fluxo` e `substituir_lista`.
+  - **Teto de 20 fluxos por agente** (`TETO_FLUXOS_POR_AGENTE`, PRD §15). A liberação do 21º é recusada
+    com `TetoDeFluxosPorAgente` (código de API `teto_de_fluxos_por_agente`, 409). Repetir a liberação de
+    um fluxo que já está liberado não conta de novo.
+  - **Troca em lote (`substituir_lista(org, agente, esperada, fluxos)`).** Numa escrita só: confere a
+    versão do **agente** (`If-Match`), o teto, que cada fluxo é da org, e troca a lista inteira. Se
+    qualquer passo falha, a lista antiga e a versão do agente ficam como estavam. Fluxo repetido conta uma
+    vez; lista vazia é permitida (tira todas as permissões).
+  - **Org.** Fluxo ou agente de outra org (ou inexistente) é recusado com `NaoEncontrado`, não com erro de
+    chave estrangeira.
+  - **Versão do agente.** `liberar`, `revogar` (quando tira algo) e `substituir_lista` avançam
+    `agents.version` e `agents.updated_at`. Assim quem leu a lista com a versão antiga leva 412 no `If-Match`
+    seguinte e não sobrescreve a mudança de outra pessoa. Decisão desta entrega: a permissão faz parte da
+    configuração do agente para efeito de `If-Match`.
+- **Apagar agente** leva só a linha de `agente_fluxos`; o fluxo e as revisões são da organização.
+- **Isolamento.** Todas as leituras e escritas recebem `org_id`. O teste
+  `nenhum_repositorio_le_registro_de_outra_org` (`armazenamento.rs`) cobre fluxos, permissão e exclusão.
+
+O teto é uma constante do repositório. A configuração `fluxos.max_fluxos_por_org` do PRD §9 (100 fluxos por
+org) **não** foi implementada nesta entrega.
+
 ### Carrinho
 
 | Tabela | Colunas próprias |

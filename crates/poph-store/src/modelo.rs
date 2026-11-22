@@ -6,7 +6,7 @@
 
 use poph_types::{
     AgentId, AtorEvento, ConversationId, DepartmentId, EventoFichaId, ExecucaoId, FechadaPor,
-    FichaId, FileId, IntegrationId, KnowledgeGroupId, KnowledgeItemId, MessageId, OrgId,
+    FichaId, FileId, FluxoId, IntegrationId, KnowledgeGroupId, KnowledgeItemId, MessageId, OrgId,
     ProductCategoryId, ProductId, StatusFicha, TipoEventoFicha, TurnId,
 };
 
@@ -944,6 +944,65 @@ pub struct FiltroFichas {
     pub canal: Option<String>,
     /// Só Fichas abertas a partir deste instante (ms, inclusive).
     pub desde: Option<i64>,
+}
+
+// ───────────────────────────────── Fluxo ─────────────────────────────────
+
+/// Fluxo da organização (PRD §6.2 e §7.1). O fluxo é da org: o agente só tem a permissão de usar
+/// (`agente_fluxos`). O texto editável é o rascunho; o que o motor executa é uma revisão publicada.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Fluxo {
+    /// Id.
+    pub id: FluxoId,
+    /// Org dona.
+    pub org_id: OrgId,
+    /// Identificador estável, vindo do `id` do script (único por org).
+    pub slug: String,
+    /// Nome para quem opera.
+    pub nome: String,
+    /// Descrição.
+    pub descricao: String,
+    /// `active` ou `inactive`. Fluxo inativo não inicia execução nova.
+    pub status: Status,
+    /// Texto editável; pode estar inválido.
+    pub rascunho_fonte: String,
+    /// Número da revisão publicada que vale hoje. `None` enquanto não há publicação.
+    pub revisao_atual: Option<u64>,
+    /// Versão para `If-Match`.
+    pub versao: u64,
+}
+
+/// Dados para criar um fluxo.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NovoFluxo {
+    /// Identificador estável (`[a-z][a-z0-9_]*`, 2 a 64 caracteres).
+    pub slug: String,
+    /// Nome.
+    pub nome: String,
+    /// Descrição.
+    pub descricao: String,
+    /// Texto inicial do rascunho (pode ser vazio).
+    pub rascunho_fonte: String,
+}
+
+/// Campos que podem mudar num fluxo (`PATCH`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MudancaFluxo {
+    /// Novo nome.
+    pub nome: Option<String>,
+    /// Nova descrição.
+    pub descricao: Option<String>,
+    /// Nova situação (`active` ou `inactive`).
+    pub status: Option<Status>,
+    /// Novo texto do rascunho.
+    pub rascunho_fonte: Option<String>,
+}
+
+/// Filtros da lista de fluxos. Campo vazio não filtra.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FiltroFluxos {
+    /// Situação exata.
+    pub status: Option<Status>,
 }
 
 // ───────────────────────────────── Caixa de entrada e de saída ─────────────────────────────────

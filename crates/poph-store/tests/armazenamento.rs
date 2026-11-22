@@ -10,10 +10,11 @@ use std::sync::{Arc, Barrier};
 use std::thread;
 
 use poph_store::{
-    Agente, Conversa, Direcao, ErroStore, EstadoSaida, MudancaAgente, MudancaCategoria,
-    MudancaDepartamento, MudancaOrg, NovaCategoria, NovaConversa, NovaEntrada, NovaMensagem,
-    NovaOrg, NovaSaida, NovoAgente, NovoDepartamento, NovoRegistroAuditoria, Org, Pagina, Papel,
-    Recebido, Status, StatusConversa, Store, versao_do_arquivo,
+    Agente, Conversa, Direcao, ErroStore, EstadoSaida, FiltroFluxos, MudancaAgente,
+    MudancaCategoria, MudancaDepartamento, MudancaFluxo, MudancaOrg, NovaCategoria, NovaConversa,
+    NovaEntrada, NovaMensagem, NovaOrg, NovaSaida, NovoAgente, NovoDepartamento, NovoFluxo,
+    NovoRegistroAuditoria, Org, Pagina, Papel, Recebido, Status, StatusConversa, Store,
+    versao_do_arquivo,
 };
 use poph_types::{DomainError, InboxId, IntegrationId, MessageId, OrgId};
 
@@ -420,6 +421,64 @@ fn nenhum_repositorio_le_registro_de_outra_org() {
             .len(),
         1
     );
+
+    // Fluxos e permissão por agente (FX-08): a org B não vê o fluxo, a permissão nem quem o tem.
+    let fluxo = store
+        .fluxos()
+        .criar(
+            org_a.id,
+            NovoFluxo {
+                slug: "agendar_visita".to_owned(),
+                nome: "Agendar visita".to_owned(),
+                descricao: String::new(),
+                rascunho_fonte: String::new(),
+            },
+        )
+        .expect("fluxo");
+    store
+        .fluxos()
+        .liberar(org_a.id, agente.id, fluxo.id)
+        .expect("libera ao agente da org A");
+    nao_encontrado(store.fluxos().obter(org_b.id, fluxo.id).map(|_| ()));
+    assert!(
+        store
+            .fluxos()
+            .por_slug(org_b.id, "agendar_visita")
+            .expect("por slug")
+            .is_none()
+    );
+    assert!(
+        store
+            .fluxos()
+            .listar(org_b.id, &FiltroFluxos::default(), Pagina::default())
+            .expect("lista")
+            .is_empty()
+    );
+    assert!(
+        store
+            .fluxos()
+            .listar_do_agente(org_b.id, agente.id)
+            .expect("lista")
+            .is_empty()
+    );
+    nao_encontrado(
+        store
+            .fluxos()
+            .listar_agentes_do_fluxo(org_b.id, fluxo.id)
+            .map(|_| ()),
+    );
+    nao_encontrado(store.fluxos().liberar(org_b.id, agente.id, fluxo.id));
+    nao_encontrado(
+        store
+            .fluxos()
+            .atualizar(org_b.id, fluxo.id, 1, MudancaFluxo::default())
+            .map(|_| ()),
+    );
+    nao_encontrado(store.fluxos().excluir(org_b.id, fluxo.id, true).map(|_| ()));
+    store
+        .fluxos()
+        .obter(org_a.id, fluxo.id)
+        .expect("a org A continua vendo o seu fluxo");
 }
 
 #[test]

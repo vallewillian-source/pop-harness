@@ -23,6 +23,7 @@ mod conhecimento;
 mod conversas;
 mod departamentos;
 mod fichas;
+mod fluxos;
 mod instrucoes;
 mod matrix;
 mod mensagens;
@@ -43,6 +44,7 @@ pub use conversas::{
 };
 pub use departamentos::Departamentos;
 pub use fichas::{Fichas, MOTIVO_ABANDONO_ATENDIMENTO};
+pub use fluxos::{Fluxos, MOTIVO_EXCLUSAO_FLUXO, TETO_FLUXOS_POR_AGENTE};
 pub use instrucoes::InstrucoesRepo;
 pub use matrix::{
     AtrasoMatrix, CursorConversas, CursoresMatrix, DesfechoAviso, EspacoDesligado, EspacoMatrix,
