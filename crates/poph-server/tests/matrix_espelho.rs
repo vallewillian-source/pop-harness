@@ -12,14 +12,19 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use poph_matrix::erro::ErroChamada;
-use poph_matrix::formato::Envio;
+use poph_matrix::formato::{Envio, OrigemMensagem};
 use poph_matrix::salas::{ConversaParaSala, ErroSala};
+use poph_matrix::usuarios::Fantasma;
+use poph_matrix::usuarios::IdsFantasmas;
 use poph_server::matrix_espelho::{
     DestinoMatrix, EspelhoMatrix, MAX_PAGINAS_POR_CICLO, PAGINA, TENTATIVAS_DEFINITIVAS,
     TETO_ATRASO,
 };
-use poph_store::{Direcao, NovaConversa, NovaMensagem, NovaOrg, NovoAgente, Origem, Papel, Store};
-use poph_types::{AgentId, ConversationId, MatrixConfig, OrgId};
+use poph_store::{
+    Direcao, NovaConversa, NovaMensagem, NovaMensagemDoAparelho, NovaOrg, NovoAgente, Origem,
+    Papel, Store,
+};
+use poph_types::{AgentId, ConversationId, IntegrationId, MatrixConfig, MessageId, OrgId};
 use rusqlite::Connection;
 
 // ───────────────────────────── cenário ─────────────────────────────
@@ -195,12 +200,13 @@ enum Modo {
     FalhaNaChamada(usize),
 }
 
-/// Um evento que o Synapse falso criou: (sala, txnId, corpo).
+/// Um evento que o Synapse falso criou: (sala, txnId, corpo, quem enviou).
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Criado {
     sala: String,
     txn: String,
     corpo: String,
+    remetente: String,
 }
 
 struct Falso {
@@ -210,6 +216,13 @@ struct Falso {
     tentativas: Mutex<HashMap<String, u32>>,
     chamadas_sala: AtomicUsize,
     chamadas_envio: AtomicUsize,
+    /// Quantas vezes o laço pediu para pôr o aparelho na sala (uma por grupo com mensagem dele).
+    chamadas_aparelho: AtomicUsize,
+    /// Quem está dentro de cada sala: `(sala, user_id)`. O envio de um aparelho que não está aqui é
+    /// recusado, como o Synapse faz com quem não é membro.
+    membros: Mutex<std::collections::HashSet<(String, String)>>,
+    /// Quando `true`, pôr o aparelho na sala falha (Synapse fora do ar nessa etapa).
+    falha_aparelho: Mutex<bool>,
 }
 
 impl Falso {
@@ -220,7 +233,21 @@ impl Falso {
             tentativas: Mutex::new(HashMap::new()),
             chamadas_sala: AtomicUsize::new(0),
             chamadas_envio: AtomicUsize::new(0),
+            chamadas_aparelho: AtomicUsize::new(0),
+            membros: Mutex::new(std::collections::HashSet::new()),
+            falha_aparelho: Mutex::new(false),
         })
+    }
+
+    fn definir_falha_aparelho(&self, falha: bool) {
+        *self.falha_aparelho.lock().unwrap() = falha;
+    }
+
+    fn criados_do(&self, remetente: &str) -> Vec<Criado> {
+        self.criados()
+            .into_iter()
+            .filter(|criado| criado.remetente == remetente)
+            .collect()
     }
 
     fn definir_modo(&self, modo: Modo) {
@@ -277,6 +304,31 @@ impl DestinoMatrix for Sinal {
         async move { Ok(sala) }
     }
 
+    fn garantir_aparelho(
+        &self,
+        _dados: &ConversaParaSala,
+        sala: &str,
+        aparelho: &Fantasma,
+    ) -> impl std::future::Future<Output = Result<(), ErroSala>> + Send {
+        let falso = &self.0;
+        falso.chamadas_aparelho.fetch_add(1, Ordering::SeqCst);
+        let falhar = *falso.falha_aparelho.lock().unwrap();
+        if !falhar {
+            falso
+                .membros
+                .lock()
+                .unwrap()
+                .insert((sala.to_owned(), aparelho.user_id().to_owned()));
+        }
+        async move {
+            if falhar {
+                Err(ErroSala::Chamada(transitorio()))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
     fn enviar(
         &self,
         sala: &str,
@@ -288,13 +340,22 @@ impl DestinoMatrix for Sinal {
         let sala = sala.to_owned();
         let txn = envio.txn_id.clone();
         let corpo = envio.corpo.clone();
+        let remetente = envio.remetente.user_id().to_owned();
         *falso
             .tentativas
             .lock()
             .unwrap()
             .entry(txn.clone())
             .or_insert(0) += 1;
+        // Remetente que não está na sala é recusado, como no Synapse real (MX-42).
+        let fora_da_sala = envio.origem == OrigemMensagem::Dispositivo
+            && !falso
+                .membros
+                .lock()
+                .unwrap()
+                .contains(&(sala.clone(), remetente.clone()));
         let resultado = match modo {
+            _ if fora_da_sala => Err(recusado()),
             Modo::Fora => Err(transitorio()),
             Modo::Venenoso(texto) if corpo.contains(texto) => Err(recusado()),
             Modo::FalhaNaChamada(k) if n == k => {
@@ -307,7 +368,12 @@ impl DestinoMatrix for Sinal {
         let mut criados = falso.criados.lock().unwrap();
         if resultado.is_ok() && !criados.iter().any(|c| c.sala == sala && c.txn == txn) {
             // Como o Synapse: o mesmo `txnId` na mesma sala não cria outro evento.
-            criados.push(Criado { sala, txn, corpo });
+            criados.push(Criado {
+                sala,
+                txn,
+                corpo,
+                remetente,
+            });
         }
         drop(criados);
         async move { resultado }
@@ -745,4 +811,190 @@ async fn memoria_com_50_mil_pendentes() {
         store.matrix().ler_cursores(org).expect("cursor").mensagens,
         0
     );
+}
+
+// ───────────────────────────── MX-42: mensagem do aparelho ─────────────────────────────
+
+/// Peer do cliente nos testes do aparelho (o mesmo em toda a conversa).
+const PEER_APARELHO: &str = "5511999990000";
+
+/// Org com o módulo ligado, um agente e a integração do WhatsApp (a instância da Evolution).
+fn org_com_aparelho(store: &Store) -> (OrgId, AgentId, IntegrationId) {
+    let org = criar_org(store, "ap");
+    let agente = criar_agente(store, org);
+    let integracao: IntegrationId = store
+        .integracao_criar(org, agente, "whatsapp".to_owned(), "active".to_owned())
+        .expect("cria a integração")
+        .id
+        .parse()
+        .expect("id da integração");
+    store.matrix().ligar(org).expect("liga");
+    (org, agente, integracao)
+}
+
+/// Mensagem digitada no celular da loja, pelo caminho da MX-41 (`fromMe` gravado como do aparelho).
+fn receber_aparelho(
+    store: &Store,
+    org: OrgId,
+    agente: AgentId,
+    integracao: IntegrationId,
+    id_externo: &str,
+    texto: &str,
+) -> (ConversationId, MessageId) {
+    let recebido = store
+        .caixa_entrada()
+        .receber_do_aparelho(
+            org,
+            NovaMensagemDoAparelho {
+                integration_id: integracao,
+                agent_id: agente,
+                canal: "whatsapp".to_owned(),
+                peer: PEER_APARELHO.to_owned(),
+                id_externo: id_externo.to_owned(),
+                texto: texto.to_owned(),
+            },
+        )
+        .expect("recebe a mensagem do aparelho");
+    (recebido.conversa, recebido.mensagem.id)
+}
+
+/// Id do usuário do aparelho desta integração, como o espelho monta.
+fn fantasma_do_aparelho(integracao: IntegrationId) -> String {
+    IdsFantasmas::novo("ph", "matrix-dev.local")
+        .expect("ids")
+        .aparelho(&integracao.to_string())
+        .expect("id do aparelho")
+        .user_id()
+        .to_owned()
+}
+
+fn contar_outbox(cenario: &Cenario) -> i64 {
+    cenario
+        .conexao()
+        .query_row("SELECT COUNT(*) FROM outbox", [], |linha| linha.get(0))
+        .expect("conta a fila de saída")
+}
+
+#[tokio::test]
+async fn mensagem_do_aparelho_entra_na_sala_pelo_usuario_do_aparelho() {
+    let cenario = Cenario::novo("aparelho-sala");
+    let store = cenario.store();
+    let (org, agente, integracao) = org_com_aparelho(&store);
+    let (conversa, mensagem) = receber_aparelho(
+        &store,
+        org,
+        agente,
+        integracao,
+        "AP-1",
+        "Já enviei, obrigado",
+    );
+    // O nome que o WhatsApp deu ao cliente: a mensagem do aparelho não pode trocá-lo.
+    store
+        .conversas()
+        .definir_nome_cliente(org, conversa, "Maria")
+        .expect("grava o nome do cliente");
+    // Uma resposta do cliente na mesma conversa, para provar que cada um fala com o próprio usuário.
+    msg_cliente(&store, org, conversa, "oi, tudo bem?");
+
+    let destino = Falso::novo(Modo::Normal);
+    let outbox_antes = contar_outbox(&cenario);
+    let relatorio = espelho(Arc::clone(&store), Arc::clone(&destino))
+        .ciclo()
+        .await
+        .expect("ciclo");
+
+    assert_eq!(relatorio.enviadas, 2, "a do cliente e a do aparelho");
+    let do_aparelho = destino.criados_do(&fantasma_do_aparelho(integracao));
+    assert_eq!(do_aparelho.len(), 1, "o usuário do aparelho fala uma vez");
+    assert_eq!(do_aparelho[0].txn, txn_de(&mensagem.to_string()));
+    assert_eq!(do_aparelho[0].corpo, "Já enviei, obrigado");
+    assert_eq!(do_aparelho[0].sala, sala_de(conversa));
+    assert_eq!(
+        destino
+            .criados_do("@ph_wa_5511999990000:matrix-dev.local")
+            .len(),
+        1,
+        "a fala do cliente continua saindo pelo usuário do cliente"
+    );
+    assert_eq!(
+        destino.chamadas_aparelho.load(Ordering::SeqCst),
+        1,
+        "o aparelho entrou na sala uma vez"
+    );
+    assert_eq!(
+        contar_outbox(&cenario),
+        outbox_antes,
+        "o espelho não cria linha na fila de saída: a mensagem já saiu pelo celular"
+    );
+    let nome = store
+        .conversas()
+        .obter(org, conversa)
+        .expect("lê a conversa")
+        .nome_cliente;
+    assert_eq!(nome.as_deref(), Some("Maria"), "o nome do cliente não muda");
+}
+
+#[tokio::test]
+async fn aparelho_entra_uma_vez_por_passagem_e_repeticao_nao_duplica() {
+    let cenario = Cenario::novo("aparelho-repeticao");
+    let store = cenario.store();
+    let (org, agente, integracao) = org_com_aparelho(&store);
+    let (conversa, primeira) =
+        receber_aparelho(&store, org, agente, integracao, "AP-1", "primeira");
+    let (_, segunda) = receber_aparelho(&store, org, agente, integracao, "AP-2", "segunda");
+    assert_eq!(
+        store.conversas().obter(org, conversa).expect("conversa").id,
+        conversa,
+        "as duas mensagens caem na mesma conversa"
+    );
+
+    let destino = Falso::novo(Modo::Normal);
+    let espelho = espelho(Arc::clone(&store), Arc::clone(&destino));
+    let ciclo = espelho.ciclo().await.expect("ciclo 1");
+    assert_eq!(ciclo.enviadas, 2);
+    assert_eq!(
+        destino.chamadas_aparelho.load(Ordering::SeqCst),
+        1,
+        "um grupo da sala, um pedido de entrada"
+    );
+
+    // Passagem repetida do laço (como depois de uma queda): lê tudo de novo a partir do início.
+    store
+        .matrix()
+        .recuar_cursor_mensagens(org, 0, "")
+        .expect("recua o cursor");
+    espelho.ciclo().await.expect("ciclo 2");
+
+    let do_aparelho = destino.criados_do(&fantasma_do_aparelho(integracao));
+    assert_eq!(do_aparelho.len(), 2, "cada mensagem aparece uma vez");
+    for id in [primeira, segunda] {
+        assert!(
+            destino.tentativas_de(&txn_de(&id.to_string())) >= 2,
+            "a mensagem foi reenviada com o mesmo txnId"
+        );
+    }
+}
+
+#[tokio::test]
+async fn aparelho_fora_da_sala_adia_a_mensagem_sem_perde_la() {
+    let cenario = Cenario::novo("aparelho-adia");
+    let store = cenario.store();
+    let (org, agente, integracao) = org_com_aparelho(&store);
+    let (_, mensagem) = receber_aparelho(&store, org, agente, integracao, "AP-1", "oi do celular");
+
+    let destino = Falso::novo(Modo::Normal);
+    destino.definir_falha_aparelho(true);
+    let espelho = espelho(Arc::clone(&store), Arc::clone(&destino));
+    let primeiro = espelho.ciclo().await.expect("ciclo 1");
+    assert_eq!(primeiro.enviadas, 0, "sem entrar na sala, nada é enviado");
+    assert!(primeiro.pendentes >= 1, "a mensagem fica pendente");
+    assert!(destino.criados().is_empty());
+
+    // A mensagem continua gravada no Harness; quando a sala responder, sai uma vez.
+    destino.definir_falha_aparelho(false);
+    let segundo = espelho.ciclo().await.expect("ciclo 2");
+    assert_eq!(segundo.enviadas, 1);
+    let do_aparelho = destino.criados_do(&fantasma_do_aparelho(integracao));
+    assert_eq!(do_aparelho.len(), 1);
+    assert_eq!(do_aparelho[0].txn, txn_de(&mensagem.to_string()));
 }

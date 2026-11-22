@@ -68,6 +68,8 @@ pub const SUFIXO_BOT: &str = "as_bot";
 const MARCAS_FANTASMA: [&str; 3] = [MARCA_CLIENTE, MARCA_AGENTE, MARCA_APARELHO];
 /// Sufixo do nome de exibição do cliente.
 pub const SUFIXO_NOME_CLIENTE: &str = " (WhatsApp)";
+/// Nome de exibição do aparelho: as mensagens digitadas pela loja no celular (MX-42).
+pub const NOME_APARELHO: &str = "Humano no Aparelho";
 /// Nome de exibição do cliente quando a conversa não trouxe nome.
 pub const NOME_CLIENTE_PADRAO: &str = "Cliente";
 /// Teto padrão do cache de fantasmas prontos.
@@ -377,6 +379,21 @@ impl UsuariosVirtuais {
         let fantasma = self.ids.agente(id_agente)?;
         let exibicao = nome_exibicao_agente(nome, id_agente);
         self.garantir(fantasma, exibicao).await
+    }
+
+    /// Garante o fantasma do aparelho (MX-42), com o nome `Humano no Aparelho`.
+    ///
+    /// Recebe o fantasma já montado por [`IdsFantasmas::aparelho`] e recusa qualquer outro: o nome
+    /// fixo não pode ir para o fantasma do cliente nem do agente.
+    pub async fn garantir_aparelho(&self, fantasma: Fantasma) -> Result<Fantasma, ErroFantasmas> {
+        let marca_aparelho = format!("{}_{MARCA_APARELHO}_", self.ids.prefixo());
+        if !fantasma.localpart().starts_with(&marca_aparelho) {
+            return Err(ErroFantasmas::Identificador {
+                alvo: "aparelho",
+                motivo: "o id não é o do aparelho desta instância",
+            });
+        }
+        self.garantir(fantasma, NOME_APARELHO.to_owned()).await
     }
 
     /// Registra (idempotente) e aplica o nome de exibição só quando ele mudou.

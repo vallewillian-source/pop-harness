@@ -446,6 +446,30 @@ impl<P: PortaSalas> Provisionador<P> {
             .await?)
     }
 
+    /// Põe o usuário do aparelho dentro da sala antes de ele falar nela (MX-42).
+    ///
+    /// Sala criada antes do aparelho existir não o tem como participante, e o Synapse recusa evento
+    /// de quem não está na sala. Por isso confere `joined_members`: se ele já está, não faz nada; se
+    /// não está, o agente convida e o próprio aparelho entra. Repetir a passagem é seguro.
+    pub async fn garantir_aparelho_na_sala(
+        &self,
+        dados: &ConversaParaSala,
+        room_id: &str,
+        aparelho: &Fantasma,
+    ) -> Result<(), ErroSala> {
+        let agente = self.fantasma_do_agente(dados).await?;
+        let aparelho = self.usuarios.garantir_aparelho(aparelho.clone()).await?;
+        let membros = self.cliente.membros(agente.user_id(), room_id).await?;
+        if membros.contains_key(aparelho.user_id()) {
+            return Ok(());
+        }
+        self.cliente
+            .convidar(agente.user_id(), room_id, aparelho.user_id())
+            .await?;
+        self.cliente.entrar(aparelho.user_id(), room_id).await?;
+        Ok(())
+    }
+
     /// Alias que a sala desta conversa usa (o mesmo em qualquer instância com o mesmo prefixo).
     pub fn alias(&self, conversa: ConversationId) -> String {
         alias_da_conversa(&self.prefixo, &self.server_name, conversa)

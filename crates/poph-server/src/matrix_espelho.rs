@@ -64,7 +64,7 @@ use poph_matrix::formato::{
 use poph_matrix::salas::{
     ConversaParaSala, ErroPorta, ErroSala, EstadoGravado, PortaSalas, Provisionador, SalaGravada,
 };
-use poph_matrix::usuarios::{ErroFantasmas, IdsFantasmas};
+use poph_matrix::usuarios::{ErroFantasmas, Fantasma, IdsFantasmas};
 use poph_store::{
     Direcao, ErroStore, EstadoSala, MensagemDesde, Origem, Papel, StatusConversa, Store,
 };
@@ -92,6 +92,8 @@ const MOTIVO_FORMATO: &str = "mensagem_invalida";
 const MOTIVO_SALA: &str = "sala_rejeitada";
 /// Motivo gravado quando o Synapse recusou o envio sem código curto.
 const MOTIVO_ENVIO: &str = "envio_rejeitado";
+/// Motivo gravado quando o usuário do aparelho não pôde entrar na sala (MX-42).
+const MOTIVO_APARELHO: &str = "aparelho_fora_da_sala";
 /// Tamanho máximo do motivo (o mesmo `CHECK` de `matrix_falhas`).
 const LIMITE_MOTIVO: usize = 64;
 
@@ -107,6 +109,14 @@ pub trait DestinoMatrix: Send + Sync {
         &self,
         dados: &ConversaParaSala,
     ) -> impl Future<Output = Result<String, ErroSala>> + Send;
+
+    /// Garante que o usuário do aparelho (MX-42) está dentro da sala antes de falar nela.
+    fn garantir_aparelho(
+        &self,
+        dados: &ConversaParaSala,
+        sala: &str,
+        aparelho: &Fantasma,
+    ) -> impl Future<Output = Result<(), ErroSala>> + Send;
 
     /// Envia um evento já decidido pelo formato, como o usuário virtual do envio.
     fn enviar(
@@ -299,6 +309,17 @@ impl DestinoMatrix for DestinoReal {
         Ok(pronta.room_id)
     }
 
+    async fn garantir_aparelho(
+        &self,
+        dados: &ConversaParaSala,
+        sala: &str,
+        aparelho: &Fantasma,
+    ) -> Result<(), ErroSala> {
+        self.provisionador
+            .garantir_aparelho_na_sala(dados, sala, aparelho)
+            .await
+    }
+
     async fn enviar(&self, sala: &str, envio: &Envio) -> Result<(), ErroChamada> {
         let corpo = json!({ "msgtype": envio.msgtype, "body": envio.corpo });
         let inicio = Instant::now();
@@ -469,6 +490,8 @@ struct DadosConversa {
     identificador: String,
     /// Id do agente, como texto.
     agente: String,
+    /// Id da integração (instância da Evolution) da conversa, como texto (MX-42).
+    integracao: Option<String>,
     /// Dados para a provisão da sala.
     sala: ConversaParaSala,
 }
@@ -780,6 +803,7 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
                     texto: &mensagem.texto,
                     identificador_cliente: &dados.identificador,
                     id_agente: &dados.agente,
+                    id_integracao: dados.integracao.as_deref(),
                 },
             );
             match decisao {
@@ -898,8 +922,36 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
             }
         };
 
+        // O usuário do aparelho entra na sala uma vez por passagem, e só se o grupo tem mensagem dele.
+        let mut aparelho_na_sala = false;
         while let Some((indice, org, id, envio)) = itens.next() {
             self.metricas.tentativas.incrementar(1);
+            if envio.origem == OrigemMensagem::Dispositivo && !aparelho_na_sala {
+                match self
+                    .destino
+                    .garantir_aparelho(&grupo.dados, &sala, &envio.remetente)
+                    .await
+                {
+                    Ok(()) => aparelho_na_sala = true,
+                    Err(erro) => {
+                        // Mesma regra dos outros fantasmas: classifica, repete na passagem seguinte
+                        // (transitória) ou isola após as tentativas (definitiva). A mensagem continua
+                        // gravada no Harness; só a entrega à sala espera.
+                        let desfecho = self.desfecho_de(
+                            org,
+                            conversa,
+                            &id,
+                            erro.classificacao(),
+                            MOTIVO_APARELHO.to_owned(),
+                        );
+                        saida.push((indice, org, id, desfecho));
+                        for (indice, org, id, _) in itens {
+                            saida.push((indice, org, id, Desfecho::Pendente));
+                        }
+                        return saida;
+                    }
+                }
+            }
             match self.destino.enviar(&sala, &envio).await {
                 Ok(()) => {
                     self.esquecer(&id);
@@ -1027,6 +1079,7 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
         Ok(DadosConversa {
             identificador,
             agente: agente.to_string(),
+            integracao: conversa_lida.integration_id.map(|id| id.to_string()),
             sala,
         })
     }

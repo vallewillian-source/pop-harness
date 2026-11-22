@@ -7,7 +7,8 @@
 //! - cliente → fantasma do cliente; agente → fantasma do agente;
 //! - origem humana **não espelha**: a resposta do atendente já veio do Matrix, espelhar de volta
 //!   duplicaria a mensagem na sala;
-//! - origem de dispositivo (digitada no celular, fase 2) também **não espelha** nesta fase;
+//! - origem de dispositivo (digitada no celular da loja, MX-41) espelha pelo fantasma **do
+//!   aparelho** da instância ("Humano no Aparelho", MX-42), nunca pelo do cliente nem pelo do agente;
 //! - papel de ferramenta ou de sistema não vai para a sala;
 //! - texto vazio ou só com espaço não espelha;
 //! - o corpo sai como está (sem reformatar o texto do cliente); só é cortado quando passa do limite
@@ -92,6 +93,9 @@ pub struct MensagemParaEspelho<'a> {
     pub identificador_cliente: &'a str,
     /// Id do agente da conversa; monta o fantasma do agente.
     pub id_agente: &'a str,
+    /// Id da integração (instância da Evolution) da conversa; monta o fantasma do aparelho. `None`
+    /// só acontece com conversa de canal sem integração, e a mensagem do aparelho vira erro.
+    pub id_integracao: Option<&'a str>,
 }
 
 /// Motivo para não espelhar. Não é erro: a mensagem simplesmente não vai para a sala.
@@ -99,8 +103,6 @@ pub struct MensagemParaEspelho<'a> {
 pub enum MotivoNaoEspelhar {
     /// Respondida pelo atendente no Matrix: espelhar duplicaria.
     OrigemHumana,
-    /// Digitada no celular do cliente; fica para a fase 2.
-    OrigemDispositivo,
     /// Ferramenta ou instrução de sistema.
     PapelNaoEspelhado,
     /// Texto vazio ou só com espaço.
@@ -127,6 +129,9 @@ pub struct Envio {
     pub conversa: ConversationId,
     /// Usuário virtual que envia (cliente ou agente), com `?user_id=`.
     pub remetente: Fantasma,
+    /// Origem da mensagem. Mensagem do aparelho precisa que o laço ponha o usuário do aparelho na
+    /// sala antes de enviar (MX-42), e não cria nada na fila de saída do WhatsApp.
+    pub origem: OrigemMensagem,
     /// Tipo do evento (`m.room.message`).
     pub tipo_evento: &'static str,
     /// `msgtype` do conteúdo (`m.text`).
@@ -156,9 +161,7 @@ pub enum Decisao {
 pub fn decidir(ids: &IdsFantasmas, mensagem: &MensagemParaEspelho<'_>) -> Decisao {
     match mensagem.origem {
         OrigemMensagem::Humana => return Decisao::NaoEspelhar(MotivoNaoEspelhar::OrigemHumana),
-        OrigemMensagem::Dispositivo => {
-            return Decisao::NaoEspelhar(MotivoNaoEspelhar::OrigemDispositivo);
-        }
+        OrigemMensagem::Dispositivo => return decidir_do_aparelho(ids, mensagem),
         OrigemMensagem::Agente => {}
     }
 
@@ -191,18 +194,54 @@ pub fn decidir(ids: &IdsFantasmas, mensagem: &MensagemParaEspelho<'_>) -> Decisa
         Err(erro) => return Decisao::Erro(ErroFormato::Fantasma(erro)),
     };
 
-    let (corpo, cortado) = cortar_no_limite(mensagem.texto);
+    Decisao::Espelhar(montar_envio(mensagem, remetente, OrigemMensagem::Agente))
+}
 
-    Decisao::Espelhar(Envio {
+/// Mensagem digitada no aparelho (MX-42): sai pelo fantasma do aparelho da instância, nunca pelo do
+/// agente, mesmo que a mensagem venha gravada como resposta do agente (`role assistant`).
+fn decidir_do_aparelho(ids: &IdsFantasmas, mensagem: &MensagemParaEspelho<'_>) -> Decisao {
+    // Quem digitou foi a loja pelo celular; o registro é de saída. Qualquer outra combinação é dado
+    // ruim: erro, para não atribuir a mensagem ao fantasma errado.
+    if mensagem.papel != PapelMensagem::Agente || mensagem.sentido != Sentido::Saida {
+        return Decisao::Erro(ErroFormato::Inconsistente);
+    }
+    if mensagem.texto.trim().is_empty() {
+        return Decisao::NaoEspelhar(MotivoNaoEspelhar::TextoVazio);
+    }
+    let Some(instancia) = mensagem.id_integracao else {
+        return Decisao::Erro(ErroFormato::Fantasma(ErroFantasmas::Identificador {
+            alvo: "aparelho",
+            motivo: "conversa sem integração",
+        }));
+    };
+    match ids.aparelho(instancia) {
+        Ok(remetente) => Decisao::Espelhar(montar_envio(
+            mensagem,
+            remetente,
+            OrigemMensagem::Dispositivo,
+        )),
+        Err(erro) => Decisao::Erro(ErroFormato::Fantasma(erro)),
+    }
+}
+
+/// Monta o envio já decidido: corpo cortado se preciso, `txnId` da mensagem e o remetente.
+fn montar_envio(
+    mensagem: &MensagemParaEspelho<'_>,
+    remetente: Fantasma,
+    origem: OrigemMensagem,
+) -> Envio {
+    let (corpo, cortado) = cortar_no_limite(mensagem.texto);
+    Envio {
         conversa: mensagem.conversa,
         remetente,
+        origem,
         tipo_evento: TIPO_EVENTO,
         msgtype: MSGTYPE_TEXTO,
         corpo,
         txn_id: txn_id_da_mensagem(mensagem.id),
         cortado,
         bytes_originais: mensagem.texto.len(),
-    })
+    }
 }
 
 /// `txnId` de uma mensagem: `poph-msg-` mais o id dela. Só letras, números e hífen, então sai
@@ -278,6 +317,7 @@ mod testes {
             texto,
             identificador_cliente: "+55 21 99999-0001",
             id_agente: "agente-1",
+            id_integracao: Some("inst-1"),
         }
     }
 
@@ -344,17 +384,79 @@ mod testes {
     }
 
     #[test]
-    fn origem_dispositivo_nao_espelha_nesta_fase() {
+    fn origem_dispositivo_espelha_pelo_fantasma_do_aparelho() {
         let m = base(
             "digitada no celular",
             OrigemMensagem::Dispositivo,
             PapelMensagem::Agente,
             Sentido::Saida,
         );
+        let envio = espelhada(decidir(&ids(), &m));
+        assert_eq!(envio.origem, OrigemMensagem::Dispositivo);
+        assert_eq!(envio.corpo, "digitada no celular");
+        // O remetente é o aparelho desta instância, não o cliente nem o agente.
+        assert_eq!(envio.remetente, ids().aparelho("inst-1").unwrap());
+        assert!(envio.remetente.localpart().starts_with("ph_ap_"));
+        assert_ne!(envio.remetente, ids().agente("agente-1").unwrap());
+        assert_ne!(envio.remetente, ids().cliente("+55 21 99999-0001").unwrap());
+        assert_eq!(envio.txn_id, txn_id_da_mensagem(mensagem_id(1)));
+    }
+
+    #[test]
+    fn origem_dispositivo_sem_integracao_vira_erro_de_formato() {
+        let mut m = base(
+            "digitada no celular",
+            OrigemMensagem::Dispositivo,
+            PapelMensagem::Agente,
+            Sentido::Saida,
+        );
+        m.id_integracao = None;
+        assert!(matches!(
+            decidir(&ids(), &m),
+            Decisao::Erro(ErroFormato::Fantasma(_))
+        ));
+    }
+
+    #[test]
+    fn origem_dispositivo_que_nao_e_saida_do_agente_vira_erro() {
+        let m = base(
+            "digitada no celular",
+            OrigemMensagem::Dispositivo,
+            PapelMensagem::Cliente,
+            Sentido::Entrada,
+        );
         assert_eq!(
             decidir(&ids(), &m),
-            Decisao::NaoEspelhar(MotivoNaoEspelhar::OrigemDispositivo)
+            Decisao::Erro(ErroFormato::Inconsistente)
         );
+    }
+
+    #[test]
+    fn origem_dispositivo_com_texto_vazio_nao_espelha() {
+        let m = base(
+            "   ",
+            OrigemMensagem::Dispositivo,
+            PapelMensagem::Agente,
+            Sentido::Saida,
+        );
+        assert_eq!(
+            decidir(&ids(), &m),
+            Decisao::NaoEspelhar(MotivoNaoEspelhar::TextoVazio)
+        );
+    }
+
+    #[test]
+    fn mensagem_do_agente_continua_pelo_fantasma_do_agente() {
+        let m = base(
+            "resposta do agente",
+            OrigemMensagem::Agente,
+            PapelMensagem::Agente,
+            Sentido::Saida,
+        );
+        let envio = espelhada(decidir(&ids(), &m));
+        assert_eq!(envio.origem, OrigemMensagem::Agente);
+        assert_eq!(envio.remetente, ids().agente("agente-1").unwrap());
+        assert!(envio.remetente.localpart().starts_with("ph_ag_"));
     }
 
     #[test]

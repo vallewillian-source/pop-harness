@@ -202,6 +202,15 @@ impl DestinoMatrix for Sinal {
         async move { Ok(sala) }
     }
 
+    async fn garantir_aparelho(
+        &self,
+        _dados: &ConversaParaSala,
+        _sala: &str,
+        _aparelho: &poph_matrix::usuarios::Fantasma,
+    ) -> Result<(), ErroSala> {
+        Ok(())
+    }
+
     fn enviar(
         &self,
         _sala: &str,
