@@ -94,6 +94,23 @@ pub enum DomainError {
     #[error("a estrutura gravada do fluxo {fluxo} não confere com o texto: {motivo}")]
     IrDivergente { fluxo: String, motivo: String },
 
+    /// Regra de fluxo que não pôde ser avaliada por defeito do **autor** do fluxo: `funcao` sem
+    /// `def` correspondente, `def` que devolveu algo que não é `True`/`False`, `def` que estourou
+    /// (chave ausente, divisão por zero), comparação com literal que não é número, campo escrito
+    /// fora do formato `etapa.campo`.
+    ///
+    /// É a falha de execução `FLXR01`/`FLXR02` (`FLUXOS_LINGUAGEM.md` §10.3): a execução do fluxo
+    /// falha, a Ficha continua aberta e nada disso derruba o processo nem o turno.
+    #[error("regra inválida: {motivo}")]
+    RegraInvalida { motivo: String },
+
+    /// Regra passou de um limite de avaliação: ticks, heap, profundidade de chamada ou prazo.
+    ///
+    /// É a falha de execução `FLXR03`: mesmo desfecho do [`DomainError::RegraInvalida`] (execução
+    /// `falha`, Ficha aberta), mas a causa é custo, não defeito.
+    #[error("limite da regra estourado: {motivo}")]
+    RegraLimite { motivo: String },
+
     /// Agente passaria do teto de fluxos liberados (PRD §15: 20 por agente, para o G9 do Jev ter
     /// opções finitas). A permissão que estoura é recusada inteira; quem quer outra revoga antes.
     #[error(
@@ -128,6 +145,8 @@ impl DomainError {
             DomainError::ConversaEncerrada { .. } => "conversa_encerrada",
             DomainError::IrDivergente { .. } => "ir_divergente",
             DomainError::TetoDeFluxosPorAgente { .. } => "teto_de_fluxos_por_agente",
+            DomainError::RegraInvalida { .. } => "regra_invalida",
+            DomainError::RegraLimite { .. } => "regra_limite",
         }
     }
 
@@ -150,6 +169,10 @@ impl DomainError {
             | DomainError::IrDivergente { .. }
             | DomainError::TetoDeFluxosPorAgente { .. } => 409,
             DomainError::CamposInvalidos { .. } => 400,
+            // Defeito do fluxo publicado ou custo da regra: nada disso é culpa do pedido do
+            // cliente, e a saída é corrigir/republicar o fluxo, então o status é o mesmo de
+            // conteúdo que não fecha (400), como os campos recusados.
+            DomainError::RegraInvalida { .. } | DomainError::RegraLimite { .. } => 400,
         }
     }
 }
@@ -223,6 +246,21 @@ mod tests {
                 },
                 "ir_divergente",
                 409,
+            ),
+            (
+                DomainError::RegraInvalida {
+                    motivo: "a função `problema_grave` devolveu algo que não é `True`/`False`"
+                        .to_owned(),
+                },
+                "regra_invalida",
+                400,
+            ),
+            (
+                DomainError::RegraLimite {
+                    motivo: "a função `problema_grave` passou do prazo de 200 ms".to_owned(),
+                },
+                "regra_limite",
+                400,
             ),
         ]
     }
