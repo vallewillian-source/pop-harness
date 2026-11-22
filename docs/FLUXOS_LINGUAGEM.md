@@ -33,7 +33,7 @@ Este documento é a fonte para quem implementar o compilador (FX-10), o motor (F
 | D6 | Fim de fluxo **não** fecha a Ficha; só fecha com `fim(encerra_atendimento=True)`, cujo padrão é `False`. O G8 (despedida do cliente) não encerra atendimento. |
 | D7 | Números medidos no FX-01 entram no documento: **92,8 kB** de RAM por fluxo de 40 nós, **p95 de 1,7 µs** por regra, **+5,03 MiB** de binário. |
 
-**Números medidos** (spike do FX-01, `spike/fluxos/RELATORIO.md`): 92,8 kB por fluxo de 40 nós (módulo congelado + IR em texto); p95 de 1,7 µs para avaliar uma regra já carregada; +5,03 MiB de binário release. Com o teto de 60 nós (`fluxos.max_nos`), a estimativa por fluxo fica em torno de **140 kB**; a meta de RAM das revisões carregadas continua sendo a do PRD (§9, `cache_revisoes_mb = 16`).
+**Números medidos** (medidos no protótipo do FX-01): 92,8 kB por fluxo de 40 nós (módulo congelado + IR em texto); p95 de 1,7 µs para avaliar uma regra já carregada; +5,03 MiB de binário release. Com o teto de 60 nós (`fluxos.max_nos`), a estimativa por fluxo fica em torno de **140 kB**; a meta de RAM das revisões carregadas continua sendo a do PRD (§9, `cache_revisoes_mb = 16`).
 
 ## 2. Como o script é usado
 
@@ -655,7 +655,7 @@ Na IR **gerada pelo compilador**, todo campo desta tabela aparece: o que o scrip
 
 ### 8.3 Exemplo real: IR de `agendar_visita.star`
 
-Gerada pelo validador do spike sobre o arquivo de `tests/fluxos/exemplos/` (`spike/fluxos/evidencias/fx02-ir/agendar_visita.json`):
+Gerada pelo validador sobre o exemplo `agendar_visita` de `tests/fluxos/exemplos/`:
 
 ```json
 {
@@ -891,9 +891,9 @@ Falha de **efeito** (mensagem, notificação, encaminhamento) não é falha de e
 | [`tests/fluxos/exemplos/triagem_suporte.star`](../tests/fluxos/exemplos/triagem_suporte.star) | decisão nas duas formas: combinador (`e`/`igual`) e `def`; três fins |
 | [`tests/fluxos/exemplos/confirmar_entrega.star`](../tests/fluxos/exemplos/confirmar_entrega.star) | efeitos: mensagem ao cliente com variável, `notificar_whatsapp` para a equipe com `{ficha.id}`, `encaminhar` para outro departamento e um fim que encerra o atendimento |
 
-Os três são carregados pelo validador do spike e terminam sem nenhum diagnóstico (`spike/fluxos/evidencias/fx02-exemplos.txt`); a IR de cada um está em `spike/fluxos/evidencias/fx02-ir/`.
+Os três são carregados pelo validador e terminam sem nenhum diagnóstico; a IR de cada um é gerada por `poph flow ir`.
 
-Os **40 diagnósticos de forma** (`FLX01`–`FLX28`, `FLX51`–`FLX64`) têm, cada um, um arquivo mutado que o dispara: `spike/fluxos/evidencias/fx02-negativos.txt`. As falhas de execução (`FLXR01`–`FLXR06`) são do motor (FX-11) e não são cobertas por esse validador.
+Os **40 diagnósticos de forma** (`FLX01`–`FLX28`, `FLX51`–`FLX64`) têm, cada um, um arquivo mutado que o dispara, na pasta de testes do crate. As falhas de execução (`FLXR01`–`FLXR06`) são do motor (FX-11) e não são cobertas por esse validador.
 
 ## 12. O que muda em relação ao POP Atende
 

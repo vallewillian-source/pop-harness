@@ -96,7 +96,7 @@ poph --offline --org <org> kb search "<consulta>" --agent <id|slug> [--top-k N]
 poph --offline --org <org> kb status [--group <id>]
 ```
 
-- Conteúdo do item: **até 1000 caracteres** (limite do POP Atende, PARIDADE_AGENTE.md §3). O erro
+- Conteúdo do item: **até 1000 caracteres** (limite herdado do POP Atende). O erro
   diz o limite e o tamanho recebido; `--content-file` evita escapar aspas no shell.
 - `--if-match` obrigatório nas alterações (versão de grupo e de item).
 - **Toda escrita que muda o que o agente sabe reindexa os agentes ligados na hora**: item criado,

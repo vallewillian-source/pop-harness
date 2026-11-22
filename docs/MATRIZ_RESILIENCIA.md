@@ -182,4 +182,4 @@ A correção está em `crates/poph-matrix/src/espacos.rs` (commit `869664d4`) e 
   defeito.
 - `scripts/medir-resiliencia.sh`: repete a medição.
 - `docs/MATRIZ_RESILIENCIA.md`: este documento.
-- `docs/ESTADO.md`: linha da MX-29.
+- A linha da MX-29 na lista de tarefas interna (não publicada).

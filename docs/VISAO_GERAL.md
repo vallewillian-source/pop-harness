@@ -154,3 +154,7 @@ Comentários no código Rust e alguns docs ainda citam seções do PRD removido.
 | §16 (riscos) | seção 8 deste documento |
 | §17 (critério de aceite) | [`../ROADMAP.md`](../ROADMAP.md) |
 | HR-xx, RL-xx, MX-xx, FX-xx, RP-xx | commit que fechou a tarefa (`git log --grep`) |
+
+Os mesmos comentários citam `PARIDADE_AGENTE.md` (o que o POP Harness herdou do POP Atende), `ESTADO.md`
+(lista de tarefas interna) e `spike/` (protótipos de medição). Nenhum dos três é publicado; o conteúdo que
+importa para quem usa o projeto está nos documentos desta pasta.

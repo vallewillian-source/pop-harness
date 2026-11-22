@@ -43,7 +43,7 @@
 - O importador (HR-52) ignora essas regras ao trazer agente do POP Atende, sem falhar por isso.
 
 ### D-07 — Metas numéricas valem como critério de aceite
-- A lista completa, com a medida que sustenta cada número, é `spike/RELATORIO_HR01.md` §9 (M1–M13);
+- A lista completa, com a medida que sustenta cada número, é o relatório interno de medição, §9 (M1–M13), não publicado;
   os valores da tabela acima são a versão curta e não substituem a tabela original.
 - HR-55 (carga) e HR-59 (aceite) medem contra esses números; número não medido é "pendente", nunca
   "equivalente". As medidas em ARM64 são feitas na HR-56, na máquina ARM64 de testes.
@@ -147,7 +147,7 @@ segue banido no `deny.toml`. `http://` continua aceito (gateway local).
 HR-29c (nova rodada de ajuste e medição do G1), HR-52 (importador de agente do POP Atende), HR-55
 (teste de carga) e HR-59 (aceite ponta a ponta) foram suspensas para priorizar novos desenvolvimentos
 antes dos testes finais. A documentação foi mantida e nenhum trabalho em execução foi interrompido.
-Estado em `ESTADO.md`. Enquanto a HR-55 estiver suspensa, as metas de D-07 não têm medição em escala.
+O estado de cada tarefa fica no controle interno do projeto. Enquanto a HR-55 estiver suspensa, as metas de D-07 não têm medição em escala.
 
 ### D-18 — Colunas da tabela de organizações do Console (21/11/2026, mantenedor)
 Nó/Porta, Agentes e WhatsApp, previstas no desenho aprovado, ficam **fora** por enquanto: dependem de

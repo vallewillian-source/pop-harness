@@ -2,7 +2,7 @@
 
 > **Documento:** `console/UX_SPEC.md`  
 > **Tarefa:** HR-37  
-> **Base de Requisitos:** Visão geral `docs/VISAO_GERAL.md` (o antigo PRD §10 e §13 está em `docs/JEV.md` e `docs/CONSOLE.md`), Decisões `DECISOES.md` (D-03 a D-10), Paridade `PARIDADE_AGENTE.md`, e Spike de UI `RELATORIO_HR05.md`  
+> **Base de Requisitos:** Visão geral `docs/VISAO_GERAL.md` (o antigo PRD §10 e §13 está em `docs/JEV.md` e `docs/CONSOLE.md`), Decisões `DECISOES.md` (D-03 a D-10) e Console `docs/CONSOLE.md`  
 > **Data:** 19/11/2026
 
 ---
