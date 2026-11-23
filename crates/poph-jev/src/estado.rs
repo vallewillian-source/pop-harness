@@ -29,6 +29,18 @@ pub const MAX_CHARS_RESPOSTA: usize = 4000;
 /// Teto de caracteres do texto extraído de arquivo enviado ao Jev (G7). É o mesmo teto que a
 /// extração aplica por arquivo (HR-23); juntar todos os anexos de um turno pode passar disso.
 pub const MAX_CHARS_ARQUIVO: usize = 20_000;
+/// Quantos fluxos liberados podem virar opção do G9.
+///
+/// É o mesmo teto que a API impõe ao liberar fluxo para um agente (FX-08): acima disso o gate não
+/// se aplica e avisa, porque a pergunta ao Jev precisa de opções finitas.
+pub const MAX_FLUXOS_LIBERADOS: usize = 20;
+/// Teto de caracteres de cada pedaço do gatilho de um fluxo (`quando`, `nao_quando`, cada exemplo).
+///
+/// O gatilho é escrito pelo autor do fluxo e vira o critério de uma opção do G9; sem teto, um
+/// texto longo entraria inteiro no pedido ao Jev, em todas as perguntas do lote.
+pub const MAX_CHARS_GATILHO: usize = 400;
+/// Quantos exemplos de fala do cliente por fluxo vão no estado (o gatilho do PRD traz dois).
+pub const MAX_EXEMPLOS_FLUXO: usize = 5;
 
 /// Quem falou.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,6 +76,28 @@ pub struct CandidatoProduto {
     /// O que ajuda o Jev a reconhecer o produto: categoria, preço e unidade, quando houver.
     #[serde(default)]
     pub detalhe: String,
+}
+
+/// Um fluxo liberado ao agente, como o G9 o apresenta ao Jev.
+///
+/// Espelha o `gatilho` da revisão publicada do fluxo (`quando`, `nao_quando`, `exemplos`), sem os
+/// nós nem as regras: o Jev só decide **se** e **qual** fluxo iniciar; quem valida e inicia é o
+/// código. O `id` é a opção enviada e a chave que o código confere de volta.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FluxoJev {
+    /// Id do fluxo (a opção enviada ao Jev).
+    pub id: String,
+    /// Nome do fluxo, para o modelo saber o que ele faz quando o gatilho é curto.
+    pub nome: String,
+    /// Quando o fluxo se aplica, nas palavras do autor do fluxo.
+    #[serde(default)]
+    pub quando: String,
+    /// Quando **não** se aplica (o cliente está só perguntando, por exemplo).
+    #[serde(default)]
+    pub nao_quando: String,
+    /// Exemplos de fala de cliente que pedem este fluxo.
+    #[serde(default)]
+    pub exemplos: Vec<String>,
 }
 
 /// Uma mensagem da conversa, como o Jev a lê.
@@ -126,6 +160,14 @@ pub struct EstadoJev {
     /// revisar (o G6 não pergunta).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resposta_candidata: Option<String>,
+    /// Fluxos liberados ao agente (opções do G9). Vazio = o G9 não pergunta.
+    ///
+    /// Cada item traz o gatilho do fluxo, que é o que o Jev lê para escolher. A lista **não** é
+    /// cortada em [`MAX_FLUXOS_LIBERADOS`]: o gate precisa ver o total para se declarar inaplicável
+    /// acima do teto em vez de perguntar com opções faltando. Quem monta o estado é o turno, a
+    /// partir do que o `poph-store` devolve (a API já recusa liberar o 21º fluxo).
+    #[serde(default)]
+    pub fluxos_liberados: Vec<FluxoJev>,
     /// Texto extraído dos arquivos que o cliente enviou neste turno (G7), já entre as marcas de
     /// conteúdo não confiável. `None` = o turno não tem texto de arquivo para julgar.
     ///
@@ -212,6 +254,31 @@ impl EstadoJev {
         self
     }
 
+    /// Define os fluxos liberados ao agente (opções do G9).
+    ///
+    /// Corta cada pedaço do gatilho em [`MAX_CHARS_GATILHO`] e guarda no máximo
+    /// [`MAX_EXEMPLOS_FLUXO`] exemplos, para o pedido ao Jev não crescer com texto de autor de
+    /// fluxo. O corte fica aqui, num lugar só — como os outros tetos do estado —, e o critério do
+    /// gate compõe o que já veio cortado.
+    pub fn com_fluxos_liberados(mut self, fluxos: impl IntoIterator<Item = FluxoJev>) -> Self {
+        self.fluxos_liberados = fluxos
+            .into_iter()
+            .map(|fluxo| FluxoJev {
+                id: truncar(&fluxo.id, MAX_CHARS_CANDIDATO),
+                nome: truncar(&fluxo.nome, MAX_CHARS_CANDIDATO),
+                quando: truncar(&fluxo.quando, MAX_CHARS_GATILHO),
+                nao_quando: truncar(&fluxo.nao_quando, MAX_CHARS_GATILHO),
+                exemplos: fluxo
+                    .exemplos
+                    .into_iter()
+                    .take(MAX_EXEMPLOS_FLUXO)
+                    .map(|exemplo| truncar(&exemplo, MAX_CHARS_GATILHO))
+                    .collect(),
+            })
+            .collect();
+        self
+    }
+
     /// Última mensagem da conversa (o que os gates julgam).
     pub fn ultima_mensagem(&self) -> Option<&MensagemJev> {
         self.mensagens.last()
@@ -267,6 +334,23 @@ impl EstadoJev {
         // outros gates (e dos conjuntos já medidos) não mudar de forma.
         if let Some(resposta) = &self.resposta_candidata {
             valor["resposta_candidata"] = json!(resposta);
+        }
+        // Fluxos liberados (G9): só aparecem quando existem, para o estado dos outros gates (e os
+        // conjuntos já medidos) não mudar de forma.
+        if !self.fluxos_liberados.is_empty() {
+            valor["fluxos"] = json!({
+                "liberados": self
+                    .fluxos_liberados
+                    .iter()
+                    .map(|fluxo| json!({
+                        "id": fluxo.id,
+                        "nome": fluxo.nome,
+                        "quando": fluxo.quando,
+                        "nao_quando": fluxo.nao_quando,
+                        "exemplos": fluxo.exemplos,
+                    }))
+                    .collect::<Vec<_>>(),
+            });
         }
         // Texto de arquivo do turno (G7): só aparece quando existe, para o estado dos outros gates
         // (e os conjuntos já medidos) não mudar de forma.

@@ -8,8 +8,8 @@
 //! - [`estado`]: o que o Jev enxerga (conversa recente, política da empresa, capacidades) e o hash
 //!   que identifica a decisão no cache;
 //! - [`gate`]: o molde `Gate` (pergunta, aplicabilidade, limiares, interpretação, fallback);
-//! - [`gates`]: G1 a G8 (G1–G4 obrigatórios da V1, G5 na HR-33, G6 na HR-34, G7 na HR-35 e G8 na
-//!   HR-36);
+//! - [`gates`]: G1 a G9 (G1–G4 obrigatórios da V1, G5 na HR-33, G6 na HR-34, G7 na HR-35, G8 na
+//!   HR-36 e G9 na FX-22, que escolhe o fluxo a iniciar);
 //! - [`motor`]: [`motor::MotorJev`], que manda **um lote só** com as perguntas de todos os gates
 //!   ligados, distribui as respostas, guarda no cache e nunca derruba o turno;
 //! - [`handoff`]: a segunda pergunta do G1 (tipo de risco) e o texto de orientação ao cliente
@@ -34,8 +34,9 @@ pub mod tipos;
 pub use cache::{CacheDecisoes, OpcoesCache};
 pub use cliente::{ClienteJev, ConfigJev, JevFalso, Pedido, TransporteJev};
 pub use estado::{
-    CandidatoProduto, EstadoJev, MAX_CANDIDATOS_PRODUTO, MAX_CHARS_ARQUIVO, MAX_CHARS_MENSAGEM,
-    MAX_CHARS_RESPOSTA, MAX_MENSAGENS, MensagemJev, PapelJev,
+    CandidatoProduto, EstadoJev, FluxoJev, MAX_CANDIDATOS_PRODUTO, MAX_CHARS_ARQUIVO,
+    MAX_CHARS_GATILHO, MAX_CHARS_MENSAGEM, MAX_CHARS_RESPOSTA, MAX_FLUXOS_LIBERADOS, MAX_MENSAGENS,
+    MensagemJev, PapelJev,
 };
 pub use eval::{
     CasoRotulado, DetalheCaso, ErroConjunto, RelatorioEval, avaliar_conjunto, ler_conjunto,
@@ -50,7 +51,8 @@ pub use gates::{
     G3_PRODUTO, G3_TUDO, G4, G5, G5_NENHUM, G6, G6_APROVADA, G6_REVISAR, G6_REVISAR_ESCOPO,
     G6_REVISAR_LONGA, G6_REVISAR_PRECO, G6_REVISAR_TOM, G6_REVISAR_TRANSFERENCIA, G7, G7_ABUSO,
     G7_INJECAO, G7_NORMAL, G7_RESPOSTA_PADRAO, G8, G8_CONTINUA, G8_DESPEDIDA_PADRAO, G8_ENCERRADA,
-    casar_candidato, g6_orientacao, g6_precisa_revisar, g7_pede_acao,
+    G9, G9_NENHUM, casar_candidato, criterio_do_fluxo, g6_orientacao, g6_precisa_revisar,
+    g7_pede_acao,
 };
 pub use handoff::{
     Orientacao, PRAZO_PADRAO, RISCO_ANIMAL, RISCO_INGESTAO, RISCO_NENHUM, RISCO_OUTRO,

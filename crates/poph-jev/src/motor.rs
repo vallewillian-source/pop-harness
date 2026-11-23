@@ -284,15 +284,29 @@ impl MotorJev {
             IdGate::G6 => gates.g6,
             IdGate::G7 => gates.g7,
             IdGate::G8 => gates.g8,
+            IdGate::G9 => gates.g9,
         }
     }
 
     async fn avaliar_agora(&self, estado: EstadoJev, gates: GatesJev) -> ResultadoJev {
         let hash = estado.hash();
-        let aplicaveis: Vec<&Box<dyn Gate>> = self
+        let ligados: Vec<&Box<dyn Gate>> = self
             .gates
             .iter()
-            .filter(|gate| Self::ligado(gates, gate.id()) && gate.aplicavel(&estado))
+            .filter(|gate| Self::ligado(gates, gate.id()))
+            .collect();
+        // Gate ligado que não se aplica pode ter o que dizer ao operador (o G9, quando o agente tem
+        // mais fluxos liberados do que opções na pergunta). Vai para o log, não para o turno.
+        for gate in &ligados {
+            if !gate.aplicavel(&estado)
+                && let Some(aviso) = gate.aviso(&estado)
+            {
+                tracing::warn!(gate = %gate.id(), aviso, "gate não perguntado neste turno");
+            }
+        }
+        let aplicaveis: Vec<&Box<dyn Gate>> = ligados
+            .into_iter()
+            .filter(|gate| gate.aplicavel(&estado))
             .collect();
 
         let mut do_cache: BTreeMap<IdGate, Resposta> = BTreeMap::new();

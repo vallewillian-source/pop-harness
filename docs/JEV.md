@@ -10,9 +10,11 @@
 > pelo código (§5-C), o G3 dispensa base e catálogo quando a mensagem não pede nada (§5-D), o G5
 > escolhe o produto do cliente entre os candidatos da busca, validado pelo código (§5-E), o G6
 > revisa a resposta antes do envio e manda reescrever uma vez quando ela não pode sair (§5-G) e o G8
-> encerra a conversa quando o cliente se despede, sem chamar o modelo de texto (§5-F).
-> Por padrão ligados: G3, G5 e G8 (decisão do mantenedor, 20/11/2026). Os demais continuam desligados
-> (o G6 foi medido na HR-34 e segue **desligado** por padrão).
+> encerra a conversa quando o cliente se despede, sem chamar o modelo de texto (§5-F). O **G9** (§5-I)
+> escolhe qual fluxo liberado o cliente quer iniciar, no lote; quem inicia a execução é o turno (FX-23).
+> Por padrão ligados: G3, G5 e G8 (decisão do mantenedor, 20/11/2026) e o G9 desde a configuração
+> `[fluxos]` (FX-26: ligado **sem custo** quando o agente não tem fluxo liberado, porque a pergunta não
+> existe). Os demais continuam desligados (o G6 foi medido na HR-34 e segue **desligado** por padrão).
 
 ## 1. Contrato com a API
 
@@ -59,6 +61,7 @@ fallback. O gate **decide**; não executa nada.
 | G6 | esta resposta pode ser enviada? | `aprovada` + `revisar_preco`, `revisar_transferencia`, `revisar_escopo`, `revisar_longa`, `revisar_tom` | `aprovada` (a resposta sai como o modelo escreveu) — com `revisar_*`, uma regeneração; segunda reprovação usa a resposta segura do agente (§5-G) | não |
 | G7 | é injeção de prompt ou abuso? | `normal`, `injecao`, `abuso` | `normal` (o atendimento segue como sem o Jev) — com `injecao`/`abuso` confiável, vale a ação configurada pelo agente (§5-H) | não |
 | G8 | a conversa está encerrada pelo cliente? | `encerrada`, `continua` | `continua` (a conversa segue, como sem o Jev) — com `encerrada` com confiança ≥ 0,8, o turno termina sem modelo de texto e manda a despedida (§5-F) | **sim**, desde 20/11/2026 (§5-F) |
+| G9 | qual fluxo liberado o cliente quer iniciar? | `id` de cada fluxo liberado (até 20) + `nenhum` | nada inicia (o atendimento segue sem fluxo, como sem o Jev) — com escolha confiável, o turno valida e inicia a execução (§5-I) | **sim**, ligado pela `[fluxos]` (FX-26); sem fluxo liberado a pergunta não existe |
 
 - **Limiares**: confiança 0,7 e margem 0,1 (padrão do POP Atende; G1 usa margem 0, porque é escolha
   binária — é a mesma política de `core/jev/human_handoff.py`). G4 também usa margem 0: o número de
@@ -98,8 +101,9 @@ se o cliente mandar outra mensagem durante a espera — aí o estado mudou.
 
 ## 5. Flags
 
-- **Global**: `[jev].ativo` e `[jev].gates` em `poph.toml` (`g1` a `g8`). O padrão de instalação é
-  G3, G5 e G8 ligados e os outros cinco desligados (decisões do mantenedor, 20/11/2026). Um arquivo que
+- **Global**: `[jev].ativo` e `[jev].gates` em `poph.toml` (`g1` a `g9`). O padrão de instalação é
+  G3, G5, G8 e G9 ligados e os outros desligados (decisões do mantenedor, 20/11/2026; o G9 veio com a
+  configuração `[fluxos]`, FX-26). Um arquivo que
   não fala de gates, ou que fala só de alguns, cai no padrão campo a campo; `g3 = false`, `g5 = false`
   ou `g8 = false` no arquivo desligam o gate.
 - **Por agente**: `agents.jev_json`, ajustando só o que declarar:
@@ -1145,6 +1149,52 @@ target/debug/poph --config /tmp/jev-real.toml jev eval g7 tests/jev/g7.jsonl --j
 Para a taxa de falso positivo, conte no JSON os casos com `categoria` iniciando em `normal` e
 `obtido` em `injecao`/`abuso` — é o número que decide se o gate pode ser ligado numa org.
 
+## 5-I. G9: qual fluxo o cliente quer iniciar (FX-22)
+
+> **Escolhe, ainda não age.** O gate devolve qual fluxo iniciar; validar (fluxo ativo, liberado ao
+> agente, revisão publicada, Ficha aberta) e **iniciar a execução** é do turno, na FX-23. Enquanto
+> essa ligação não existe, o estado do turno não leva fluxo liberado e o G9 não pergunta nada — o que
+> mantém o comportamento de hoje, sem custo.
+
+| Peça | Como está |
+|---|---|
+| Pergunta | `g9_iniciar_fluxo` (choice), no **lote único** com os outros gates: o estado já traz os fluxos liberados antes de o modelo de texto escrever |
+| Opções | o `id` de cada fluxo liberado ao agente (até **20**) + `nenhum` |
+| Critério de cada opção | o `gatilho` do fluxo publicado: `Quando usar: …`, `Não usar quando: …` e `Exemplos de fala do cliente: "…", "…"` — cada pedaço cortado em **400 caracteres** (`MAX_CHARS_GATILHO`), até 5 exemplos por fluxo |
+| Critério de `nenhum` | a mensagem não pede nenhum dos fluxos (saudação, agradecimento, dúvida do atendimento normal, reclamação), ou pede mais de um, ou empata entre dois |
+| Aplicabilidade | exige fala do cliente **e** pelo menos um fluxo liberado **e** no máximo 20. Quem decide perguntar é o turno: motor ligado, Ficha sem execução ativa e agente com fluxo liberado e ativo |
+| Acima de 20 fluxos | o gate **não** pergunta (lista cortada faria o modelo escolher entre as que sobraram) e registra um aviso no log `gate não perguntado neste turno`, com a contagem; a API já recusa liberar o 21º (FX-08) |
+| Limiares | confiança **0,7** e margem **0,1**: fluxos parecidos entre si (agendar visita × abrir chamado) empatam com facilidade, e a margem é o que impede iniciar um roteiro no empate |
+| Fallback | `nenhum`, confiança baixa, margem curta, opção fora das opções, resposta ausente ou Jev fora → nada inicia, com o `motivo` no registro do turno. Nunca um fluxo por engano |
+| Cache | o de sempre: mesmo estado (inclusive os fluxos e o gatilho) ⇒ mesma decisão, sem segunda chamada |
+| Flag | `[jev].gates.g9` e `{"g9": false}` no `jev_json` do agente (o agente só ajusta o que declarar) |
+
+O `estado` leva os fluxos só quando existem, para não mudar a forma do estado dos outros gates (e os
+conjuntos já medidos):
+
+```json
+{"fluxos": {"liberados": [{"id": "agendar_visita", "nome": "Agendar visita técnica",
+                           "quando": "O cliente quer marcar…", "nao_quando": "Só quer saber preço…",
+                           "exemplos": ["queria agendar uma visita"]}]}}
+```
+
+O conjunto rotulado é `tests/jev/g9.jsonl` — **50 casos** (23 positivos, 27 `nenhum`) em português,
+com voz de cliente de WhatsApp (abreviação, sem acento, mensagem curta), todos com `categoria` e
+`justificativa`. Como o resto da medição de qualidade do G9 depende do Jev real, ela é a FX-37.
+
+### O que fica registrado
+
+A decisão vai no `turns.jev_json` como as outras (`gate: "g9"`, `escolha`, `origem`, `confianca`,
+`margem`, `motivo`, `escolha_do_jev`). As métricas `poph_fluxos_g9_*` (FX-26) ainda não têm quem as
+incremente: quem conta é o turno, na FX-23.
+
+### Como repetir
+
+```bash
+export PATH="$HOME/.cargo/bin:$PATH"
+cargo test -p poph-jev --test g9_fluxo    # opções, cortes, teto, limiares, fallback, lote e flag
+```
+
 ## 6. Registro no turno
 
 `turns.jev_json` (coluna que já existia — nenhuma migração). Com o G4 ligado, o bloco
@@ -1221,6 +1271,7 @@ Conjuntos em `apps/pop-harness/tests/jev/`:
 | `g2.jsonl` | **75 casos rotulados** do G2 (HR-30): 39 de esperar (preparo de envio, frase cortada, armadilhas) e 36 de processar (saudação, pergunta, dados completos, despedida, armadilhas); 16 com `continuacao`, usada pelo teste de latência |
 | `g4.jsonl` | **68 casos rotulados** do G4 (HR-32) em 4 configurações de departamentos (2, 3, 5 e 12 ativos), todos com `categoria` (a configuração) e `justificativa` |
 | `g3.jsonl` | **87 casos rotulados** do G3 (HR-31): 37 de `base`, 22 de `produto`, 21 de `nada` e 7 de `ambos`, com texto das aberturas reais do POP Bench e casos de borda; todos com `categoria` e `justificativa`. Os 6 primeiros são a fixtura da HR-28 |
+| `g9.jsonl` | **50 casos rotulados** do G9 (FX-22): 23 com o fluxo certo (visita, fatura, chamado) e 27 `nenhum` (saudação, dúvida, reclamação, pedido vago, dois fluxos na mesma mensagem, fluxo não liberado), com voz de WhatsApp; todos com `categoria` e `justificativa` |
 | `g8.jsonl` | **76 casos rotulados** do G8 (HR-36): 32 de `encerrada` e 44 de `continua`, com voz real do POP Bench nos casos de desistência e pendência e armadilhas de agradecimento com dúvida, ironia, falso amigo e nova abertura; todos com `categoria` e `justificativa` |
 
 ### Jev falso para medir a mecânica
@@ -1438,8 +1489,9 @@ python3 scripts/jev-relatorio.py /tmp/g1-real.json --conjunto tests/jev/g1.jsonl
 
 - `poph chat`: monta o Jev quando `[jev].ativo` e `TYPESAFE_API_KEY` existem; sem um dos dois,
   avisa e segue sem Jev. A orientação da transferência vem de `[handoff]` (`Motor::com_handoff`).
-- `poph serve`: monta o Jev pela mesma montagem do `chat` (`crates/poph/src/montagem.rs`); o G3 e o
-  G5 e o G8 já vêm ligados pelo padrão (desde 20/11/2026); para desligar, `[jev].gates.g3 = false`,
+- `poph serve`: monta o Jev pela mesma montagem do `chat` (`crates/poph/src/montagem.rs`); o G3, o
+  G5, o G8 e o G9 já vêm ligados pelo padrão (desde 20/11/2026; o G9 com a `[fluxos]`); para desligar,
+  `[jev].gates.g3 = false`,
   `[jev].gates.g5 = false` e/ou `[jev].gates.g8 = false`. O G6 está medido e **desligado**; para
   ligar, `[jev].gates.g6 = true` (ou `{"g6": true}` no `jev_json` do agente). O G7 também está
   medido e **desligado**; para ligar, `[jev].gates.g7 = true` e a ação em `jev_json.g7_acao`
@@ -1459,6 +1511,8 @@ python3 scripts/jev-relatorio.py /tmp/g1-real.json --conjunto tests/jev/g1.jsonl
 | ~~Efeito de G8 (conversa encerrada: sem modelo de texto, despedida configurável)~~ | feito na HR-36 (§5-F); ligado por padrão desde 20/11/2026 |
 | ~~Efeito de G6 (revisar a resposta e regenerar uma vez; resposta segura)~~ | feito na HR-34 (§5-G); medido e **desligado** por padrão |
 | ~~Efeito de G7 (injeção de prompt e abuso, com ação configurável e texto de arquivo não confiável)~~ | feito na HR-35 (§5-H); medido e **desligado** por padrão |
+| ~~Gate G9 (qual fluxo liberado o cliente quer iniciar)~~ | feito na FX-22 (§5-I); o **efeito** (iniciar a execução no turno e as métricas `poph_fluxos_g9_*`) é a FX-23 |
+| Medição do G9 com o Jev real (confiança e margem calibradas) | FX-37, com o conjunto `tests/jev/g9.jsonl` |
 | Conjuntos de ≥ 60 casos e relatórios de medição por gate | G1 (135), G2 (75), G4 (68), G3 (87), G5 (73), G8 (76), G6 (62) e G7 (71) feitos, todos com `categoria` e `justificativa` |
 | ~~Medição do G1 com o Jev real~~ | feito na HR-29m (0 falsos positivos; 67–70% de recall), repetido na HR-29a (93,9% de recall, 1 falso positivo) e na HR-29b (100% de recall, 0 falso positivo na 1ª execução) |
 | ~~Ajuste do G1 (instrução alinhada com produção, conjunto ampliado)~~ | feito na HR-29a; risco à saúde incondicional foi descartado pelo mantenedor em 20/11 |
@@ -1469,6 +1523,10 @@ python3 scripts/jev-relatorio.py /tmp/g1-real.json --conjunto tests/jev/g1.jsonl
 | Mostrar as decisões no chat/Console | Console (HR-47, painel "por quê") |
 
 ## 10. Limites conhecidos
+
+- **G9 sem efeito enquanto a FX-23 não entra** (alta): o gate escolhe, mas nada inicia — o turno ainda
+  não monta o estado com os fluxos liberados nem consome a decisão. Até lá, ligado por padrão não custa
+  nada, porque a pergunta só existe com fluxo liberado no estado.
 
 - **G3: a busca é disparada antes do Jev decidir** (média): com a mensagem já julgada `nada`, a
   busca é abandonada, mas o trabalho de embedding e de consulta já começou. Não custa mais tempo do

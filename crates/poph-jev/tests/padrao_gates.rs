@@ -1,5 +1,6 @@
 //! Padrão de instalação dos gates (decisões do mantenedor, 20/11/2026): G3, G5 e G8 ligados, os outros
-//! cinco desligados. O agente sobrepõe esse padrão pelo `jev_json`, campo a campo.
+//! cinco desligados — e o G9, que a configuração `[fluxos]` ligou em seguida (FX-26), sem pergunta
+//! quando o agente não tem fluxo liberado. O agente sobrepõe esse padrão pelo `jev_json`, campo a campo.
 
 use poph_jev::AjusteGates;
 use poph_types::GatesJev;

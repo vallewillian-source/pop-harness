@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use thiserror::Error;
 
-/// Portão do Jev (PRD §10). G1–G5 existem; G6–G8 entram nas tarefas deles.
+/// Portão do Jev (PRD §10). G1–G8 são do turno de atendimento; o G9 escolhe o fluxo a iniciar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum IdGate {
     /// G1: transferir para humano.
@@ -30,11 +30,13 @@ pub enum IdGate {
     G7,
     /// G8: conversa encerrada.
     G8,
+    /// G9: qual fluxo liberado o cliente quer iniciar.
+    G9,
 }
 
 impl IdGate {
     /// Todos os portões, na ordem do PRD.
-    pub const TODOS: [IdGate; 8] = [
+    pub const TODOS: [IdGate; 9] = [
         IdGate::G1,
         IdGate::G2,
         IdGate::G3,
@@ -43,9 +45,10 @@ impl IdGate {
         IdGate::G6,
         IdGate::G7,
         IdGate::G8,
+        IdGate::G9,
     ];
 
-    /// Texto usado na configuração, no JSON do turno e na CLI (`g1` … `g8`).
+    /// Texto usado na configuração, no JSON do turno e na CLI (`g1` … `g9`).
     pub fn como_texto(self) -> &'static str {
         match self {
             IdGate::G1 => "g1",
@@ -56,6 +59,7 @@ impl IdGate {
             IdGate::G6 => "g6",
             IdGate::G7 => "g7",
             IdGate::G8 => "g8",
+            IdGate::G9 => "g9",
         }
     }
 
@@ -70,6 +74,7 @@ impl IdGate {
             IdGate::G6 => "revisão da resposta antes do envio",
             IdGate::G7 => "injeção de prompt ou abuso",
             IdGate::G8 => "conversa encerrada",
+            IdGate::G9 => "qual fluxo o cliente quer iniciar",
         }
     }
 
@@ -95,6 +100,7 @@ impl IdGate {
             IdGate::G6 => "g6_revisao",
             IdGate::G7 => "g7_injecao",
             IdGate::G8 => "g8_encerrada",
+            IdGate::G9 => "g9_iniciar_fluxo",
         }
     }
 }

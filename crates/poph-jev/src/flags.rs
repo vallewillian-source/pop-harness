@@ -37,8 +37,7 @@ pub struct AjusteGates {
     pub g7: Option<bool>,
     /// G8.
     pub g8: Option<bool>,
-    /// G9 (quem inicia um fluxo). Só o ajuste de agente e a configuração conhecem o campo: o avaliador
-    /// do G9 entra na FX-22.
+    /// G9 (qual fluxo o cliente quer iniciar).
     pub g9: Option<bool>,
 }
 
@@ -74,6 +73,7 @@ impl AjusteGates {
             IdGate::G6 => ajuste.g6 = Some(true),
             IdGate::G7 => ajuste.g7 = Some(true),
             IdGate::G8 => ajuste.g8 = Some(true),
+            IdGate::G9 => ajuste.g9 = Some(true),
         }
         ajuste
     }

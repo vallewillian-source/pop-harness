@@ -232,7 +232,7 @@ fn gate_desconhecido_e_arquivo_ausente_falham_com_mensagem() {
     let arquivo = cenario.escrever_conjunto(CONJUNTO);
 
     let gate = cenario.poph(
-        &["jev", "eval", "g9", arquivo.to_str().expect("caminho")],
+        &["jev", "eval", "g10", arquivo.to_str().expect("caminho")],
         true,
     );
     assert_eq!(codigo(&gate), 1);

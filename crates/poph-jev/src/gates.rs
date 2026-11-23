@@ -11,7 +11,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::estado::{EstadoJev, PapelJev};
+use crate::estado::{EstadoJev, FluxoJev, MAX_FLUXOS_LIBERADOS, PapelJev};
 use crate::gate::{Decisao, Gate, Limiares, escolha_confiavel};
 use crate::tipos::{IdGate, Pergunta, Resposta};
 
@@ -977,6 +977,181 @@ impl Gate for G8 {
     }
 }
 
+// ───────────────────────────── G9: qual fluxo iniciar ─────────────────────────────
+
+/// A mensagem do cliente não pede nenhum dos fluxos liberados.
+///
+/// É uma opção explícita, e não abstenção silenciosa, pelo mesmo motivo do G5: a lista de fluxos
+/// liberados sempre tem item, e sem "nenhum" o modelo seria empurrado a iniciar um fluxo qualquer
+/// para toda mensagem — inclusive "bom dia".
+pub const G9_NENHUM: &str = "nenhum";
+
+const G9_INSTRUCOES: &str = "Escolha, entre os fluxos de atendimento liberados para este agente \
+(listados em criteria), o que a ÚLTIMA mensagem do cliente pede para iniciar AGORA, lida no \
+contexto das mensagens anteriores. Cada opção traz o que o fluxo faz (quando usar), o que não é \
+ele (não usar quando) e exemplos de fala de cliente. Julgue o pedido do cliente, não a palavra \
+isolada: ele pode pedir com outras palavras, com erro de digitação ou por áudio transcrito. \
+Escolha 'nenhum' quando a mensagem não pede nenhum dos fluxos (saudação, agradecimento, dúvida \
+que o atendimento normal resolve, reclamação), quando o cliente quiser mais de um fluxo de uma vez, \
+ou quando o pedido couber em dois fluxos e não der para saber qual. Na dúvida, escolha 'nenhum': \
+o atendimento segue sem fluxo, e iniciar o fluxo errado prende o cliente num roteiro que ele não \
+pediu.";
+
+/// Critério de uma opção do G9: o que o fluxo faz, o que não é ele e exemplos de fala do cliente.
+///
+/// Os três pedaços vêm do gatilho do fluxo e já chegam cortados em
+/// [`crate::estado::MAX_CHARS_GATILHO`] (o corte é do estado, num lugar só). Campo vazio é omitido;
+/// gatilho vazio nos três cai no nome do fluxo, para a opção nunca ir sem critério.
+pub fn criterio_do_fluxo(fluxo: &FluxoJev) -> String {
+    let mut partes: Vec<String> = Vec::new();
+    let quando = fluxo.quando.trim();
+    if !quando.is_empty() {
+        partes.push(format!("Quando usar: {quando}"));
+    }
+    let nao_quando = fluxo.nao_quando.trim();
+    if !nao_quando.is_empty() {
+        partes.push(format!("Não usar quando: {nao_quando}"));
+    }
+    let exemplos: Vec<String> = fluxo
+        .exemplos
+        .iter()
+        .map(|exemplo| exemplo.trim())
+        .filter(|exemplo| !exemplo.is_empty())
+        .map(|exemplo| format!("\"{exemplo}\""))
+        .collect();
+    if !exemplos.is_empty() {
+        partes.push(format!(
+            "Exemplos de fala do cliente: {}",
+            exemplos.join("; ")
+        ));
+    }
+    if partes.is_empty() {
+        partes.push(format!(
+            "O cliente quer o que o fluxo \"{}\" faz.",
+            fluxo.nome
+        ));
+    }
+    partes.join("\n")
+}
+
+/// Critério da opção `nenhum`, com os fluxos que ficaram de fora pelo nome.
+fn criterio_nenhum(fluxos: &[FluxoJev]) -> String {
+    let nomes: Vec<String> = fluxos
+        .iter()
+        .take(MAX_FLUXOS_LIBERADOS)
+        .map(|fluxo| format!("\"{}\"", fluxo.nome.trim()))
+        .filter(|nome| nome != "\"\"")
+        .collect();
+    let lista = if nomes.is_empty() {
+        "os fluxos liberados".to_owned()
+    } else {
+        format!("os fluxos liberados ({})", nomes.join(", "))
+    };
+    format!(
+        "A mensagem do cliente não pede nenhum de {lista}, ou pede mais de um: é saudação, \
+         agradecimento, dúvida que o atendimento normal resolve, reclamação, ou um pedido que não \
+         se encaixa em nenhum deles. Na dúvida, é 'nenhum': o atendimento segue sem fluxo."
+    )
+}
+
+/// G9: qual fluxo liberado o cliente quer iniciar (o efeito é iniciar a execução — FX-23).
+///
+/// O gate **só escolhe**. Quem decide perguntar é o turno, e só quando o motor está ligado, a Ficha
+/// não tem execução ativa e o agente tem pelo menos um fluxo liberado e ativo (PRD §6.3); o código
+/// valida a escolha (fluxo ativo, liberado, revisão publicada) antes de iniciar. A pergunta entra no
+/// **lote único**, porque as opções já estão no estado antes do modelo de texto escrever.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct G9;
+
+impl Gate for G9 {
+    fn id(&self) -> IdGate {
+        IdGate::G9
+    }
+
+    fn aplicavel(&self, estado: &EstadoJev) -> bool {
+        // Sem fluxo liberado não há escolha a fazer — e nenhuma pergunta a pagar. Acima do teto de
+        // opções o gate também não pergunta: lista cortada faria o modelo escolher entre as que
+        // sobraram, o que é pior que não decidir.
+        estado.ultima_do_cliente().is_some()
+            && !estado.fluxos_liberados.is_empty()
+            && estado.fluxos_liberados.len() <= MAX_FLUXOS_LIBERADOS
+    }
+
+    fn aviso(&self, estado: &EstadoJev) -> Option<String> {
+        let total = estado.fluxos_liberados.len();
+        (total > MAX_FLUXOS_LIBERADOS).then(|| {
+            format!(
+                "G9 não perguntado: {total} fluxos liberados para o agente, acima do teto de \
+                 {MAX_FLUXOS_LIBERADOS} opções da pergunta; o atendimento segue sem iniciar fluxo \
+                 pelo Jev"
+            )
+        })
+    }
+
+    fn pergunta(&self, estado: &EstadoJev) -> Pergunta {
+        let mut criteria = BTreeMap::new();
+        for fluxo in estado.fluxos_liberados.iter().take(MAX_FLUXOS_LIBERADOS) {
+            criteria.insert(fluxo.id.clone(), criterio_do_fluxo(fluxo));
+        }
+        criteria.insert(
+            G9_NENHUM.to_owned(),
+            criterio_nenhum(&estado.fluxos_liberados),
+        );
+        Pergunta::escolha(G9_INSTRUCOES, criteria)
+    }
+
+    fn limiares(&self) -> Limiares {
+        // Confiança 0,7 e margem 0,1, como as opções são fluxos parecidos entre si (agendar visita
+        // × abrir chamado): a margem é o que impede iniciar um roteiro quando dois empatam.
+        Limiares::novos(0.7, 0.1)
+    }
+
+    fn interpretar(
+        &self,
+        estado: &EstadoJev,
+        resposta: Option<&Resposta>,
+        limiares: Limiares,
+    ) -> Decisao {
+        // "Nenhum" é abstenção explícita: nada inicia e o prompt não oferece o catálogo.
+        if let Some(resposta) = resposta
+            && resposta.escolha.as_deref() == Some(G9_NENHUM)
+        {
+            return Decisao::fallback(
+                IdGate::G9,
+                None,
+                "o Jev não encontrou fluxo para a mensagem do cliente (nenhum)",
+            );
+        }
+        let mut validas: Vec<String> = estado
+            .fluxos_liberados
+            .iter()
+            .take(MAX_FLUXOS_LIBERADOS)
+            .map(|fluxo| fluxo.id.clone())
+            .collect();
+        validas.push(G9_NENHUM.to_owned());
+        let mut motivo = None;
+        match escolha_confiavel(resposta, &validas, limiares, &mut motivo) {
+            Some(escolha) => Decisao {
+                gate: IdGate::G9,
+                escolha: Some(escolha.to_owned()),
+                origem: crate::gate::OrigemDecisao::Jev,
+                confianca: resposta.map(|item| item.confianca).unwrap_or(0.0),
+                margem: resposta.map(Resposta::margem).unwrap_or(0.0),
+                motivo: None,
+                ms: 0,
+                tokens: 0,
+            },
+            // Abstenção, confiança baixa, margem curta, opção fora do contrato e Jev fora = nada
+            // inicia. Nunca um fluxo por engano.
+            None => Decisao::fallback(
+                IdGate::G9,
+                None,
+                motivo.unwrap_or_else(|| "sem decisão confiável".to_owned()),
+            ),
+        }
+    }
+}
+
 /// Os gates implementados, na ordem do PRD.
 ///
 /// O G5 (HR-33) só é perguntado quando há candidatos no estado, e o G6 (HR-34) quando há resposta
@@ -992,5 +1167,6 @@ pub fn padrao() -> Vec<Box<dyn Gate>> {
         Box::new(G6),
         Box::new(G7),
         Box::new(G8),
+        Box::new(G9),
     ]
 }

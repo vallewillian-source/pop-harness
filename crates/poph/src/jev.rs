@@ -26,7 +26,7 @@ pub enum AcaoJev {
 /// Opções do `poph jev eval`.
 #[derive(Debug, Args)]
 pub struct EvalArgs {
-    /// Gate a medir: `g1` a `g8`.
+    /// Gate a medir: `g1` a `g9`.
     pub gate: String,
 
     /// Arquivo do conjunto rotulado (JSON Lines).
@@ -54,7 +54,7 @@ fn rodar_eval(
 ) -> Result<(), String> {
     let gate = IdGate::de_texto(&args.gate).ok_or_else(|| {
         format!(
-            "gate `{}` desconhecido: use g1, g2, g3, g4, g5, g6, g7 ou g8",
+            "gate `{}` desconhecido: use g1, g2, g3, g4, g5, g6, g7, g8 ou g9",
             args.gate
         )
     })?;

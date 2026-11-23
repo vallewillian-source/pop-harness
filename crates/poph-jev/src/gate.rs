@@ -138,6 +138,15 @@ pub trait Gate: Send + Sync + std::fmt::Debug {
     /// A pergunta que vai no lote.
     fn pergunta(&self, estado: &EstadoJev) -> Pergunta;
 
+    /// Aviso para o operador quando o gate **deixa** de se aplicar por um motivo que ele precisa
+    /// saber, e não por este turno não ter o que julgar.
+    ///
+    /// Hoje só o G9 usa (mais fluxos liberados do que opções cabem na pergunta); o motor registra o
+    /// aviso quando o gate está ligado e não se aplica. `None` = nada a avisar.
+    fn aviso(&self, _estado: &EstadoJev) -> Option<String> {
+        None
+    }
+
     /// Limiares deste gate.
     fn limiares(&self) -> Limiares {
         Limiares::default()
