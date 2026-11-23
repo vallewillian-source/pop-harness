@@ -6,14 +6,18 @@ chamadas HTTP ao Synapse de desenvolvimento e leitura do estado da sala.
 
 Nenhum token é impresso: os valores vêm do ambiente e só viajam em cabeçalho.
 """
+import base64
+import hashlib
 import json
 import os
+import struct
 import sys
 import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # ───────────────────────────── falsos (LLM e Evolution) ─────────────────────────────
@@ -72,8 +76,86 @@ class _Llm(BaseHTTPRequestHandler):
         self.close_connection = True
 
 
+# ─────────────── fixtures de mídia da fase 2 (cliente → sala, MX-43) ───────────────
+#
+# O webhook manda só a referência da mídia; o Harness baixa o conteúdo pela Evolution
+# (`/chat/getBase64FromMediaMessage/{instância}`). A Evolution falsa serve um PNG e um PDF
+# gerados aqui — sem dependência de PIL, mesmo conteúdo em toda execução — e nunca dado de
+# cliente. O tipo vem do `mimetype` declarado no evento, como o Harness espera.
+
+
+def _bloco_png(tipo, dados):
+    return (
+        struct.pack(">I", len(dados))
+        + tipo
+        + dados
+        + struct.pack(">I", zlib.crc32(tipo + dados) & 0xFFFFFFFF)
+    )
+
+
+def _png_de_teste(largura=360, altura=220):
+    """PNG RGB com degradê (arquivo pequeno, visível no Element)."""
+    linhas = []
+    for y in range(altura):
+        linha = bytearray([0])  # filtro "None" de cada linha
+        for x in range(largura):
+            linha += bytes(((x * 255) // (largura - 1), (y * 255) // (altura - 1), 96))
+        linhas.append(bytes(linha))
+    ihdr = struct.pack(">IIBBBBB", largura, altura, 8, 2, 0, 0, 0)
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + _bloco_png(b"IHDR", ihdr)
+        + _bloco_png(b"IDAT", zlib.compress(b"".join(linhas), 9))
+        + _bloco_png(b"IEND", b"")
+    )
+
+
+def _pdf_de_teste(texto="Aceite do modulo Matrix (fase 2) - arquivo de teste"):
+    """PDF mínimo de uma página, com uma linha de texto (sem acento, para não depender de fonte)."""
+    fluxo = f"BT /F1 14 Tf 40 200 Td ({texto}) Tj ET\n".encode("latin-1")
+    objetos = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 420 260] "
+        b"/Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+        b"<< /Length " + str(len(fluxo)).encode() + b" >>\nstream\n" + fluxo + b"endstream",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]
+    saida = bytearray(b"%PDF-1.4\n")
+    deslocamentos = []
+    for numero, objeto in enumerate(objetos, start=1):
+        deslocamentos.append(len(saida))
+        saida += f"{numero} 0 obj\n".encode() + objeto + b"\nendobj\n"
+    inicio = len(saida)
+    total = len(objetos) + 1
+    saida += f"xref\n0 {total}\n".encode() + b"0000000000 65535 f \n"
+    for deslocamento in deslocamentos:
+        saida += f"{deslocamento:010d} 00000 n \n".encode()
+    saida += (
+        f"trailer\n<< /Size {total} /Root 1 0 R >>\nstartxref\n{inicio}\n%%EOF\n".encode()
+    )
+    return bytes(saida)
+
+
+FIXTURES = {
+    "image/png": ("imagem-do-cliente.png", _png_de_teste),
+    "application/pdf": ("documento-do-cliente.pdf", _pdf_de_teste),
+}
+
+
+def _midia_do_evento(corpo):
+    """Mimetype do evento que o Harness mandou em `{"message": dados}` (ou 404 se desconhecido)."""
+    dados = corpo.get("message") or {}
+    conteudo = dados.get("message") or {}
+    for chave in ("imageMessage", "documentMessage"):
+        bloco = conteudo.get(chave)
+        if isinstance(bloco, dict):
+            return (bloco.get("mimetype") or "").lower()
+    return ""
+
+
 class _Evo(BaseHTTPRequestHandler):
-    """Evolution falsa: só o envio de texto da fase 1 (e o download de mídia, que recusa)."""
+    """Evolution falsa: texto e mídia enviados, e o download da mídia que o cliente mandou."""
 
     protocol_version = "HTTP/1.1"
     diretorio = "."
@@ -106,10 +188,57 @@ class _Evo(BaseHTTPRequestHandler):
             )
             return self._json(201, {"key": {"id": "EVO-ACEITE"}, "status": "PENDING"})
         if "/message/sendMedia/" in self.path:
-            _registrar(self.diretorio, "evo_midia.jsonl", {"instancia": self.path.rsplit("/", 1)[-1]})
+            codificado = corpo.get("media") or ""
+            try:
+                bytes_da_midia = base64.b64decode(codificado)
+            except Exception:  # noqa: BLE001 - prova de ambiente, não de produto
+                bytes_da_midia = b""
+            # Só metadados: o conteúdo não fica em log (e o `media` em base64 é enorme).
+            _registrar(
+                self.diretorio,
+                "evo_midia.jsonl",
+                {
+                    "instancia": self.path.rsplit("/", 1)[-1],
+                    "number": corpo.get("number"),
+                    "mediatype": corpo.get("mediatype"),
+                    "mimetype": corpo.get("mimetype"),
+                    "fileName": corpo.get("fileName"),
+                    "caption": corpo.get("caption"),
+                    "bytes": len(bytes_da_midia),
+                    "sha256": hashlib.sha256(bytes_da_midia).hexdigest(),
+                },
+            )
             return self._json(201, {"key": {"id": "EVO-MIDIA"}, "status": "PENDING"})
         if "/chat/getBase64FromMediaMessage/" in self.path:
-            return self._json(404, {"status": 404, "error": "Not Found", "message": "Message not found"})
+            mime = _midia_do_evento(corpo)
+            fixture = FIXTURES.get(mime)
+            if fixture is None:
+                _registrar(
+                    self.diretorio,
+                    "evo_baixadas.jsonl",
+                    {"mimetype": mime, "resultado": "nao_servido"},
+                )
+                return self._json(404, {"status": 404, "error": "Not Found", "message": "Message not found"})
+            nome, gerar = fixture
+            bytes_da_midia = gerar()
+            _registrar(
+                self.diretorio,
+                "evo_baixadas.jsonl",
+                {
+                    "mimetype": mime,
+                    "resultado": "servido",
+                    "bytes": len(bytes_da_midia),
+                    "sha256": hashlib.sha256(bytes_da_midia).hexdigest(),
+                },
+            )
+            return self._json(
+                200,
+                {
+                    "base64": base64.b64encode(bytes_da_midia).decode(),
+                    "mimetype": mime,
+                    "fileName": nome,
+                },
+            )
         return self._json(404, {"message": "nao encontrado"})
 
 
@@ -355,6 +484,335 @@ def transferir_departamento(banco, conversa, departamento):
     print(f"conversa {conversa} -> departamento {departamento} (updated_at {agora})")
 
 
+# ─────────────────────────── fase 2 (MX-43 a MX-46) ───────────────────────────
+
+
+def _pedir_bruto(metodo, caminho, dados=None, token=None, content_type="application/octet-stream"):
+    """Pedido com corpo cru (upload de mídia). Devolve status e corpo JSON (ou vazio)."""
+    headers = {"Content-Type": content_type}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(BASE + caminho, data=dados, method=metodo, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            bruto = resp.read()
+            return resp.status, (json.loads(bruto) if bruto else {})
+    except urllib.error.HTTPError as e:
+        bruto = e.read()
+        try:
+            corpo = json.loads(bruto or b"{}")
+        except ValueError:
+            corpo = {}
+        return e.code, corpo
+
+
+def webhook_midia(org, instancia, id_externo, tipo, legenda, push_name):
+    """Cliente manda imagem ou documento pelo WhatsApp (MX-43).
+
+    A mensagem leva só a referência (mimetype e legenda); o conteúdo o Harness baixa da
+    Evolution falsa, que serve o fixture do tipo.
+    """
+    base = os.environ.get("HARNESS", "http://127.0.0.1:18010")
+    telefone = os.environ.get("ACEITE_TELEFONE", "5521988887777")
+    if tipo == "imagem":
+        conteudo = {
+            "imageMessage": {"mimetype": "image/png", "caption": legenda, "fileLength": 4096}
+        }
+        tipo_da_mensagem = "imageMessage"
+    else:
+        conteudo = {
+            "documentMessage": {
+                "mimetype": "application/pdf",
+                "caption": legenda,
+                "fileName": "documento-do-cliente.pdf",
+                "fileLength": 2048,
+            }
+        }
+        tipo_da_mensagem = "documentMessage"
+    corpo = {
+        "event": "messages.upsert",
+        "instance": instancia,
+        "apikey": "chave-falsa",
+        "data": {
+            "key": {
+                "id": id_externo,
+                "remoteJid": telefone + "@s.whatsapp.net",
+                "fromMe": False,
+            },
+            "pushName": push_name,
+            "messageType": tipo_da_mensagem,
+            "message": conteudo,
+            "messageTimestamp": int(time.time()),
+        },
+    }
+    req = urllib.request.Request(
+        f"{base}/webhook/evolution/{org}/{instancia}",
+        data=json.dumps(corpo).encode(),
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "X-Evolution-Webhook-Secret": os.environ["ACEITE_SEGREDO_WEBHOOK"],
+        },
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        print(resp.status, json.loads(resp.read()))
+
+
+# Chaves do protobuf que o Harness não abre (MX-45): o webhook as grava como texto de
+# histórico, sem download. O conteúdo mínimo basta para o tipo ser reconhecido.
+TIPOS_FORA_DO_ESCOPO = {
+    "audio": ("audioMessage", {"ptt": True, "seconds": 4}),
+    "video": ("videoMessage", {"seconds": 3}),
+    "figurinha": ("stickerMessage", {"isAnimated": False}),
+    "contato": ("contactMessage", {"displayName": "Contato de teste"}),
+    "localizacao": ("locationMessage", {"degreesLatitude": -22.9, "degreesLongitude": -43.2}),
+    "enquete": ("pollCreationMessage", {"name": "Enquete de teste", "selectableOptionsCount": 2}),
+}
+
+
+def escrever_fixtures(diretorio):
+    """Grava o PNG e o PDF de teste (usados no envio do atendente, MX-44) e imprime os caminhos."""
+    os.makedirs(diretorio, exist_ok=True)
+    caminhos = {}
+    for mime, (nome, gerar) in FIXTURES.items():
+        caminho = os.path.join(diretorio, nome.replace("do-cliente", "do-atendente"))
+        with open(caminho, "wb") as arquivo:
+            arquivo.write(gerar())
+        caminhos[mime] = caminho
+    print(json.dumps(caminhos, ensure_ascii=False))
+
+
+def webhook_tipo(org, instancia, id_externo, tipo, push_name):
+    """Cliente manda um tipo que o Harness não abre (áudio, vídeo, figurinha, contato,
+    localização, enquete): vira texto de histórico no turno e aviso na sala (MX-45)."""
+    base = os.environ.get("HARNESS", "http://127.0.0.1:18010")
+    telefone = os.environ.get("ACEITE_TELEFONE", "5521988887777")
+    if tipo not in TIPOS_FORA_DO_ESCOPO:
+        raise SystemExit(f"tipo fora do escopo desconhecido: {tipo}")
+    chave, conteudo = TIPOS_FORA_DO_ESCOPO[tipo]
+    corpo = {
+        "event": "messages.upsert",
+        "instance": instancia,
+        "apikey": "chave-falsa",
+        "data": {
+            "key": {
+                "id": id_externo,
+                "remoteJid": telefone + "@s.whatsapp.net",
+                "fromMe": False,
+            },
+            "pushName": push_name,
+            "messageType": chave,
+            "message": {chave: conteudo},
+            "messageTimestamp": int(time.time()),
+        },
+    }
+    req = urllib.request.Request(
+        f"{base}/webhook/evolution/{org}/{instancia}",
+        data=json.dumps(corpo).encode(),
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "X-Evolution-Webhook-Secret": os.environ["ACEITE_SEGREDO_WEBHOOK"],
+        },
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        print(resp.status, json.loads(resp.read()))
+
+
+def webhook_aparelho(org, instancia, id_externo, texto):
+    """Mensagem digitada no celular da loja (`fromMe`): MX-41/MX-42."""
+    base = os.environ.get("HARNESS", "http://127.0.0.1:18010")
+    telefone = os.environ.get("ACEITE_TELEFONE", "5521988887777")
+    corpo = {
+        "event": "messages.upsert",
+        "instance": instancia,
+        "apikey": "chave-falsa",
+        "data": {
+            "key": {
+                "id": id_externo,
+                "remoteJid": telefone + "@s.whatsapp.net",
+                "fromMe": True,
+            },
+            "pushName": "Loja",
+            "messageType": "conversation",
+            "message": {"conversation": texto},
+            "messageTimestamp": int(time.time()),
+        },
+    }
+    req = urllib.request.Request(
+        f"{base}/webhook/evolution/{org}/{instancia}",
+        data=json.dumps(corpo).encode(),
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "X-Evolution-Webhook-Secret": os.environ["ACEITE_SEGREDO_WEBHOOK"],
+        },
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        print(resp.status, json.loads(resp.read()))
+
+
+def atendente_envia_midia(sala, caminho, mime, nome):
+    """Atendente manda imagem ou arquivo pela sala (o mesmo evento que o Element publica)."""
+    token = os.environ["ACEITE_TOKEN_HUMANO"]
+    with open(caminho, "rb") as arquivo:
+        dados = arquivo.read()
+    status, d = _pedir_bruto(
+        "POST",
+        f"/_matrix/media/v3/upload?filename={_q(nome)}",
+        dados,
+        token=token,
+        content_type=mime,
+    )
+    if status != 200 or "content_uri" not in d:
+        print(status, json.dumps(d, ensure_ascii=False))
+        return
+    mxc = d["content_uri"]
+    msgtype = "m.image" if mime.startswith("image/") else "m.file"
+    conteudo = {
+        "msgtype": msgtype,
+        "body": nome,
+        "filename": nome,
+        "url": mxc,
+        "info": {"mimetype": mime, "size": len(dados)},
+    }
+    txn = f"aceite-midia-{int(time.time() * 1000)}"
+    status, d = _pedir(
+        "PUT",
+        f"/_matrix/client/v3/rooms/{_q(sala)}/send/m.room.message/{txn}",
+        conteudo,
+        token=token,
+    )
+    print(status, json.dumps(d, ensure_ascii=False))
+
+
+def eventos(sala, limite=80):
+    """Timeline da sala em forma de relatório: corpo, remetente, anexo e redação.
+
+    Só o que é preciso para as asserções: nada de token, e o texto que aparece é o do
+    roteiro (fixtures), nunca dado de cliente real.
+    """
+    token = os.environ["ACEITE_TOKEN_HUMANO"]
+    status, d = _pedir(
+        "GET",
+        f"/_matrix/client/v3/rooms/{_q(sala)}/messages?dir=b&limit={int(limite)}",
+        token=token,
+    )
+    if status != 200:
+        print(json.dumps({"status": status, "erro": d}, ensure_ascii=False))
+        return
+    itens = []
+    for evento in d.get("chunk", []):
+        if evento.get("type") != "m.room.message":
+            continue
+        conteudo = evento.get("content") or {}
+        arquivo = conteudo.get("file") if isinstance(conteudo.get("file"), dict) else {}
+        bloco = {
+            chave: valor
+            for chave, valor in conteudo.items()
+            if chave.startswith("com.") and chave.endswith(".attachment")
+        }
+        item = {
+            "evento": evento.get("event_id"),
+            "remetente": evento.get("sender"),
+            "msgtype": conteudo.get("msgtype"),
+            "corpo": conteudo.get("body"),
+            "nome": conteudo.get("filename") or arquivo.get("filename"),
+            "mxc": conteudo.get("url") or arquivo.get("url"),
+            "bloco_de_anexo": bloco,
+            "redigido": bool((evento.get("unsigned") or {}).get("redacted_because")),
+        }
+        redacao = (evento.get("unsigned") or {}).get("redacted_because") or {}
+        if redacao:
+            conteudo_da_redacao = redacao.get("content") or {}
+            item["redigido_por"] = redacao.get("sender")
+            item["bloco_expirado"] = {
+                chave: valor
+                for chave, valor in conteudo_da_redacao.items()
+                if chave.endswith(".attachment_expired")
+            }
+        itens.append(item)
+    print(json.dumps(itens, ensure_ascii=False, indent=2))
+
+
+def evento(sala, event_id):
+    token = os.environ["ACEITE_TOKEN_HUMANO"]
+    status, d = _pedir(
+        "GET",
+        f"/_matrix/client/v3/rooms/{_q(sala)}/event/{_q(event_id)}",
+        token=token,
+    )
+    print(json.dumps({"status": status, "corpo": d}, ensure_ascii=False, indent=2))
+
+
+def midia_existe(mxc):
+    """O arquivo responde no download de mídia do Synapse? (200 existe, 404 apagado)"""
+    token = os.environ["ACEITE_TOKEN_HUMANO"]
+    if not mxc.startswith("mxc://"):
+        print(json.dumps({"erro": "endereco nao e mxc"}))
+        return
+    servidor, identificador = mxc[len("mxc://") :].split("/", 1)
+    status, d = _pedir(
+        "GET",
+        f"/_matrix/client/v1/media/download/{_q(servidor)}/{_q(identificador)}",
+        token=token,
+    )
+    print(json.dumps({"status": status, "erro": d.get("errcode")}, ensure_ascii=False))
+
+
+def preparar_expiracao(banco, dias):
+    """Recua o `sent_at` da mídia pendente, para o prazo vencer sem esperar dias (só no teste)."""
+    import sqlite3
+
+    corte = int(time.time() * 1000) - int(dias) * 86_400_000 - 60_000
+    con = sqlite3.connect(banco)
+    linhas = con.execute(
+        "select count(*) from matrix_midia where redacted_at is null or deleted_at is null"
+    ).fetchone()[0]
+    con.execute(
+        "update matrix_midia set sent_at=?, updated_at=? where redacted_at is null or deleted_at is null",
+        (corte, int(time.time() * 1000)),
+    )
+    con.commit()
+    print(json.dumps({"adiantadas": linhas, "sent_at": corte}))
+
+
+def estado_expiracao(banco):
+    import sqlite3
+
+    con = sqlite3.connect(banco)
+    try:
+        linhas = con.execute(
+            "select id, event_id, mxc, kind, name, sent_at, redacted_at, deleted_at,"
+            " attempts, next_attempt_at, coalesce(last_error,'') from matrix_midia order by sent_at"
+        ).fetchall()
+    except sqlite3.OperationalError as erro:
+        print(json.dumps({"erro": str(erro)}))
+        return
+    print(
+        json.dumps(
+            [
+                {
+                    "id": linha[0],
+                    "evento": linha[1],
+                    "mxc": linha[2],
+                    "categoria": linha[3],
+                    "nome": linha[4],
+                    "sent_at": linha[5],
+                    "redacted_at": linha[6],
+                    "deleted_at": linha[7],
+                    "tentativas": linha[8],
+                    "proxima_tentativa": linha[9],
+                    "ultimo_erro": linha[10],
+                }
+                for linha in linhas
+            ],
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
 def main(argv):
     if len(argv) < 2:
         raise SystemExit("uso: aceite-matrix-aux.py <comando> ...")
@@ -385,6 +843,28 @@ def main(argv):
         tocar(argv[2], argv[3])
     elif comando == "transferir":
         transferir_departamento(argv[2], argv[3], argv[4])
+    elif comando == "webhook-midia":
+        # <org> <instancia> <id> <imagem|documento> <legenda> <pushName>
+        webhook_midia(argv[2], argv[3], argv[4], argv[5], argv[6], argv[7])
+    elif comando == "webhook-aparelho":
+        webhook_aparelho(argv[2], argv[3], argv[4], argv[5])
+    elif comando == "webhook-tipo":
+        # <org> <instancia> <id> <audio|video|figurinha|contato|localizacao|enquete> <pushName>
+        webhook_tipo(argv[2], argv[3], argv[4], argv[5], argv[6])
+    elif comando == "atendente-envia-midia":
+        atendente_envia_midia(argv[2], argv[3], argv[4], argv[5])
+    elif comando == "eventos":
+        eventos(argv[2], argv[3] if len(argv) > 3 else 80)
+    elif comando == "evento":
+        evento(argv[2], argv[3])
+    elif comando == "midia-existe":
+        midia_existe(argv[2])
+    elif comando == "preparar-expiracao":
+        preparar_expiracao(argv[2], argv[3])
+    elif comando == "estado-expiracao":
+        estado_expiracao(argv[2])
+    elif comando == "fixtures":
+        escrever_fixtures(argv[2])
     else:
         raise SystemExit(f"comando desconhecido: {comando}")
 

@@ -14,6 +14,7 @@
 # Uso:
 #   bash apps/pop-harness/scripts/aceite-matrix.sh
 #   bash apps/pop-harness/scripts/aceite-matrix.sh --sem-element   # sem capturas
+#   bash apps/pop-harness/scripts/aceite-matrix.sh --fase2         # inclui o aceite A14 (fase 2)
 #   bash apps/pop-harness/scripts/aceite-matrix.sh --manter        # não apaga a pasta
 #
 # Variáveis:
@@ -34,10 +35,12 @@ ELEMENT_JS="$APP/scripts/aceite-matrix-element.mjs"
 DIR="${POPH_ACEITE_DIR:-$HOME/.cache/poph-aceite-matrix}"
 MANTER=0
 SEM_ELEMENT=0
+FASE2=0
 for arg in "$@"; do
     case "$arg" in
         --manter) MANTER=1 ;;
         --sem-element) SEM_ELEMENT=1 ;;
+        --fase2) FASE2=1 ;;
         -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
         *) echo "argumento desconhecido: $arg" >&2; exit 2 ;;
     esac
@@ -101,6 +104,14 @@ trap limpar EXIT INT TERM
 AS_TOKEN="$POPH_MATRIX_DEV_HARNESS_AS_TOKEN"
 HS_TOKEN="$POPH_MATRIX_DEV_HARNESS_HS_TOKEN"
 PY_AS_TOKEN="$POPH_MATRIX_DEV_PYTHON_AS_TOKEN"
+# O token de administrador do Synapse (MX-46) não nasce com o matrix-dev.sh: ele mora num
+# arquivo próprio, porque o `matrix-dev.sh subir` reescreve o credenciais.env a cada execução.
+ADMIN_TOKEN="${POPH_MATRIX_DEV_ADMIN_TOKEN:-}"
+if [ -z "$ADMIN_TOKEN" ] && [ -f "$HOME/.cache/poph-matrix/admin-token.env" ]; then
+    # shellcheck disable=SC1091
+    . "$HOME/.cache/poph-matrix/admin-token.env"
+    ADMIN_TOKEN="${POPH_MATRIX_DEV_ADMIN_TOKEN:-}"
+fi
 [ -n "$AS_TOKEN" ] && [ -n "$HS_TOKEN" ] || falha "credenciais do MX-01 sem os tokens do Harness"
 
 SEGREDO_WEBHOOK="aceite-$(python3 -c 'import secrets;print(secrets.token_hex(12))')"
@@ -119,6 +130,7 @@ export EVOLUTION_API_KEY="chave-falsa-da-evolution-falsa"
 export POPH_EVO_SEGREDO_ACEITE="$SEGREDO_WEBHOOK"
 export POPH_MATRIX_AS_TOKEN="$AS_TOKEN"
 export POPH_MATRIX_HS_TOKEN="$HS_TOKEN"
+export POPH_MATRIX_ADMIN_TOKEN="$ADMIN_TOKEN"
 export ACEITE_TOKEN_HUMANO="\${ACEITE_TOKEN_HUMANO:-}"
 export ACEITE_AS_TOKEN="$AS_TOKEN"
 export ACEITE_SEGREDO_WEBHOOK="$SEGREDO_WEBHOOK"
@@ -129,6 +141,10 @@ chmod 600 "$DIR/ambiente.sh"
 . "$DIR/ambiente.sh"
 
 # ── configuração do Harness ───────────────────────────────────────────────────
+# No aceite da fase 2 o prazo da mídia cai para 1 dia (o padrão é 4): o valor encurtado só vale
+# nesta pasta de trabalho e o relatório diz qual foi usado.
+RETENCAO_TOML=""
+[ "$FASE2" = 1 ] && RETENCAO_TOML="midia_retencao_dias = 1"
 cat > "$DIR/poph.toml" <<TOML
 servidor.endereco = "0.0.0.0"
 servidor.porta = $SERVE_PORTA
@@ -149,6 +165,7 @@ server_name = "$SERVER"
 prefixo = "ph"
 concorrencia = 4
 intervalo_ms = 300
+${RETENCAO_TOML}
 TOML
 
 echo "== 2. registro do Synapse (caminho real, com /matrix) =="
@@ -621,12 +638,353 @@ else
     anotar A13 "NÃO MEDIDO: docs/MATRIZ_MEMORIA.md ainda não existe (MX-30 em execução)"
 fi
 
+# ─────────────────────────────── fase 2 (A14, MX-43 a MX-46) ───────────────────────────────
+# Os cinco pontos do critério A14, no formato da fase 1: cenário, ação, asserção e evidência.
+# Nada de produção: Synapse de desenvolvimento (18008), Evolution e LLM falsos, fixtures geradas
+# pelo auxiliar (sem dado de cliente). O prazo da mídia fica em 1 dia só nesta pasta de trabalho.
+if [ "$FASE2" = 1 ]; then
+    FIXTURES="$DIR/fixtures"
+    python3 "$AUX" fixtures "$FIXTURES" > "$DIR/fixtures.json"
+    IMG_DO_ATENDENTE="$(python3 -c "import json;print(json.load(open('$DIR/fixtures.json'))['image/png'])")"
+    PDF_DO_ATENDENTE="$(python3 -c "import json;print(json.load(open('$DIR/fixtures.json'))['application/pdf'])")"
+    TEL_F2="5521988887777"
+
+    # reinicia o servidor para a passagem da expiração (ela roda na subida)
+    reiniciar_serve() {
+        kill "$SERVE_PID" 2>/dev/null || true
+        wait "$SERVE_PID" 2>/dev/null || true
+        "$POPH" serve > "$DIR/serve-fase2.log" 2>&1 &
+        SERVE_PID=$!
+        PIDS+=("$SERVE_PID")
+        for _ in $(seq 1 150); do
+            curl -fsS -m 1 -o /dev/null "http://127.0.0.1:$SERVE_PORTA/healthz" 2>/dev/null && break
+            sleep 0.2
+        done
+        curl -fsS -m 2 -o /dev/null "http://127.0.0.1:$SERVE_PORTA/healthz" \
+            || falha "o servidor não voltou depois do reinício (veja $DIR/serve-fase2.log)"
+    }
+
+    echo "== 16. A14/MX-43: imagem e PDF do cliente aparecem na sala =="
+    CONV3="$(python3 - "$DIR/data/harness.db" "$TEL_F2" <<'FIMSQL'
+import sqlite3, sys
+c = sqlite3.connect(sys.argv[1])
+r = c.execute(
+    "select id from conversations where external_peer=? order by created_at desc limit 1",
+    (sys.argv[2],),
+).fetchone()
+print(r[0] if r else "")
+FIMSQL
+)"
+    SALA3=""
+    for _ in $(seq 1 60); do
+        SALA3="$(python3 - "$DIR/data/harness.db" "$CONV3" <<'FIMSQL'
+import sqlite3, sys
+c = sqlite3.connect(sys.argv[1])
+r = c.execute("select room_id from matrix_rooms where conversation_id=? and state='ready'", (sys.argv[2],)).fetchone()
+print(r[0] if r else "")
+FIMSQL
+)"
+        [ -n "$SALA3" ] && break
+        sleep 1
+    done
+    if [ -z "$CONV3" ] || [ -z "$SALA3" ]; then
+        falha "a conversa mais recente não tem sala pronta (conversa='$CONV3' sala='$SALA3')"
+    fi
+    for _ in $(seq 1 20); do
+        python3 "$AUX" entrar "$SALA3" > "$DIR/entrar-f2.json" 2>&1 || true
+        grep -q '^200' "$DIR/entrar-f2.json" && break
+        sleep 1
+    done
+
+    python3 "$AUX" webhook-midia "$ORG" aceite ACEITE-F2-IMG imagem \
+        "Segue a foto da fachada da loja." "Ana Souza" > "$DIR/f2-img.json" 2>&1 || true
+    python3 "$AUX" webhook-midia "$ORG" aceite ACEITE-F2-PDF documento \
+        "Segue o laudo assinado." "Ana Souza" > "$DIR/f2-pdf.json" 2>&1 || true
+    for _ in $(seq 1 60); do
+        python3 "$AUX" eventos "$SALA3" 80 > "$DIR/eventos-f2.json"
+        if python3 - "$DIR/eventos-f2.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+tipos = {e["msgtype"] for e in d}
+raise SystemExit(0 if {"m.image", "m.file"} <= tipos else 1)
+PY
+        then break; fi
+        sleep 1
+    done
+    RESULTADO_MX43="$(python3 - "$DIR/eventos-f2.json" "$TEL_F2" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+cliente = "@ph_wa_%s:matrix-dev.local" % sys.argv[2]
+
+
+def bom(e, tipo):
+    bloco = list((e.get("bloco_de_anexo") or {}).values())
+    return (
+        e["msgtype"] == tipo
+        and e["remetente"] == cliente
+        and (e.get("mxc") or "").startswith("mxc://")
+        and bool(bloco)
+        and bool(bloco[0].get("id"))
+        and bloco[0].get("source") == "whatsapp"
+    )
+
+
+imagem = [e for e in d if bom(e, "m.image")]
+arquivo = [e for e in d if bom(e, "m.file")]
+legendas = {e["corpo"] for e in d if e["msgtype"] == "m.text" and e["remetente"] == cliente}
+ok = (
+    bool(imagem)
+    and bool(arquivo)
+    and "Segue a foto da fachada da loja." in legendas
+    and "Segue o laudo assinado." in legendas
+)
+if ok:
+    print(
+        "OK: imagem (%s) e arquivo (%s) na sala pelo fantasma do cliente, com o bloco do anexo "
+        "e as duas legendas" % (imagem[0]["corpo"], arquivo[0]["corpo"])
+    )
+else:
+    print("FALHOU: imagem=%d arquivo=%d legendas=%s" % (len(imagem), len(arquivo), sorted(legendas)))
+PY
+)"
+    anotar MX43 "$RESULTADO_MX43"
+
+    echo "== 17. A14/MX-45: áudio, vídeo, figurinha, contato, localização e enquete =="
+    for tipo in audio video figurinha contato localizacao enquete; do
+        python3 "$AUX" webhook-tipo "$ORG" aceite "ACEITE-F2-${tipo^^}" "$tipo" "Ana Souza" \
+            > "$DIR/f2-$tipo.json" 2>&1 || true
+    done
+    for _ in $(seq 1 60); do
+        python3 "$AUX" eventos "$SALA3" 100 > "$DIR/eventos-f2b.json"
+        N_AVISOS="$(python3 - "$DIR/eventos-f2b.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+print(len([e for e in d if e["msgtype"] == "m.notice" and "ainda não é suportado" in (e["corpo"] or "")]))
+PY
+)"
+        [ "$N_AVISOS" -ge 6 ] && break
+        sleep 1
+    done
+    RESULTADO_MX45="$(python3 - "$DIR/eventos-f2b.json" "$DIR/data/harness.db" <<'PY'
+import json, sqlite3, sys
+d = json.load(open(sys.argv[1]))
+avisos = {e["corpo"] for e in d if e["msgtype"] == "m.notice"}
+esperados = {
+    "audio": "O cliente enviou um áudio. Esse tipo de mensagem ainda não é suportado.",
+    "video": "O cliente enviou um vídeo. Esse tipo de mensagem ainda não é suportado.",
+    "figurinha": "O cliente enviou uma figurinha. Esse tipo de mensagem ainda não é suportado.",
+    "contato": "O cliente enviou um contato. Esse tipo de mensagem ainda não é suportado.",
+    "localizacao": "O cliente enviou uma localização. Esse tipo de mensagem ainda não é suportado.",
+    "enquete": "O cliente enviou uma enquete. Esse tipo de mensagem ainda não é suportado.",
+}
+faltando = [tipo for tipo, texto in esperados.items() if texto not in avisos]
+con = sqlite3.connect(sys.argv[2])
+historico = con.execute(
+    "select count(*) from messages where text like '%que o sistema não consegue abrir%'"
+).fetchone()[0]
+if not faltando and historico >= 6:
+    print("OK: seis avisos na sala (m.notice) e %d textos de histórico no turno" % historico)
+else:
+    print("FALHOU: faltando %s; históricos=%d" % (faltando, historico))
+PY
+)"
+    anotar MX45 "$RESULTADO_MX45"
+
+    echo "== 18. A14/MX-41/42: mensagem do aparelho, sem eco duplicado =="
+    python3 "$AUX" webhook-aparelho "$ORG" aceite ACEITE-F2-APARELHO \
+        "Mensagem digitada no celular da loja." > "$DIR/f2-aparelho.json" 2>&1 || true
+    for _ in $(seq 1 60); do
+        python3 "$AUX" eventos "$SALA3" 120 > "$DIR/eventos-f2c.json"
+        N_AP="$(python3 - "$DIR/eventos-f2c.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+print(len([e for e in d if (e["corpo"] or "") == "Mensagem digitada no celular da loja."]))
+PY
+)"
+        [ "$N_AP" -ge 1 ] && break
+        sleep 1
+    done
+    python3 "$AUX" webhook-aparelho "$ORG" aceite ACEITE-F2-APARELHO \
+        "Mensagem digitada no celular da loja." > "$DIR/f2-aparelho-2.json" 2>&1 || true
+    sleep 4
+    python3 "$AUX" eventos "$SALA3" 120 > "$DIR/eventos-f2c2.json"
+    RESULTADO_MX41="$(python3 - "$DIR/eventos-f2c2.json" "$DIR/data/harness.db" "$DIR/f2-aparelho-2.json" "$CONV3" <<'PY'
+import json, sqlite3, sys
+d = json.load(open(sys.argv[1]))
+alvo = "Mensagem digitada no celular da loja."
+eventos = [e for e in d if (e["corpo"] or "") == alvo]
+do_aparelho = [e for e in eventos if e["remetente"].startswith("@ph_ap_")]
+reentrega = open(sys.argv[3]).read()
+con = sqlite3.connect(sys.argv[2])
+status = con.execute("select status from conversations where id=?", (sys.argv[4],)).fetchone()[0]
+ok = len(do_aparelho) == 1 and len(eventos) == 1 and "duplicada" in reentrega and status == "transferred"
+if ok:
+    print(
+        "OK: uma mensagem pelo fantasma do aparelho (%s), reentrega 'duplicada' sem segundo "
+        "evento e conversa %s" % (do_aparelho[0]["remetente"], status)
+    )
+else:
+    print(
+        "FALHOU: eventos=%d do aparelho=%d reentrega=%s status=%s"
+        % (len(eventos), len(do_aparelho), reentrega.strip()[:80], status)
+    )
+PY
+)"
+    anotar MX41 "$RESULTADO_MX41"
+
+    echo "== 19. A14/MX-44: imagem e PDF do atendente chegam ao Evolution =="
+    ANTES_MIDIA="$(wc -l < "$DIR/falsos/evo_midia.jsonl" 2>/dev/null || echo 0)"
+    python3 "$AUX" atendente-envia-midia "$SALA3" "$IMG_DO_ATENDENTE" image/png \
+        "foto-da-loja.png" > "$DIR/f2-atendente-img.json" 2>&1 || true
+    sleep 2
+    python3 "$AUX" atendente-envia-midia "$SALA3" "$PDF_DO_ATENDENTE" application/pdf \
+        "laudo-assinado.pdf" > "$DIR/f2-atendente-pdf.json" 2>&1 || true
+    for _ in $(seq 1 40); do
+        DEPOIS_MIDIA="$(wc -l < "$DIR/falsos/evo_midia.jsonl" 2>/dev/null || echo 0)"
+        [ "$DEPOIS_MIDIA" -ge $((ANTES_MIDIA + 2)) ] && break
+        sleep 1
+    done
+    RESULTADO_MX44="$(python3 - "$DIR/falsos/evo_midia.jsonl" "$ANTES_MIDIA" "$DIR/serve-fase2.log" <<'PY'
+import json, os, sys
+caminho, antes = sys.argv[1], int(sys.argv[2])
+linhas = []
+if os.path.exists(caminho):
+    with open(caminho, encoding="utf-8") as f:
+        linhas = [json.loads(l) for l in f if l.strip()]
+novas = linhas[antes:]
+imagem = [m for m in novas if m.get("mediatype") == "image" and (m.get("caption") or "").startswith("*[atendente")]
+documento = [m for m in novas if m.get("mediatype") == "document" and (m.get("caption") or "").startswith("*[atendente")]
+if imagem and documento:
+    print(
+        "OK: imagem e PDF chegaram ao Evolution falso como %s/%s com a legenda do atendente (%s)"
+        % (imagem[0]["mediatype"], documento[0]["mediatype"], imagem[0]["caption"])
+    )
+else:
+    motivo = "sem registro"
+    for log in sys.argv[3:]:
+        if os.path.exists(log):
+            with open(log, errors="replace") as f:
+                for linha in f:
+                    if "arquivo_indisponivel" in linha:
+                        motivo = "arquivo_indisponivel"
+    print("FALHOU: o arquivo do atendente não chegou ao Evolution (motivo no log: %s; entradas novas: %d)" % (motivo, len(novas)))
+PY
+)"
+    # Diagnóstico do motivo: o Application Service não pode se passar pelo usuário humano.
+    if printf '%s' "$RESULTADO_MX44" | grep -q FALHOU; then
+        python3 "$AUX" eventos "$SALA3" 120 > "$DIR/eventos-f2d.json"
+        MXC_E_REMETENTE="$(python3 - "$DIR/eventos-f2d.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+for e in d:
+    if e["msgtype"] in ("m.image", "m.file") and not e["remetente"].startswith("@ph_") and e.get("mxc"):
+        print("%s\t%s" % (e["mxc"], e["remetente"]))
+        break
+PY
+)"
+        MXC_ATENDENTE="$(printf '%s' "$MXC_E_REMETENTE" | cut -f1)"
+        REMETENTE_ATENDENTE="$(printf '%s' "$MXC_E_REMETENTE" | cut -f2)"
+        if [ -n "$MXC_ATENDENTE" ]; then
+            SERV_ID="${MXC_ATENDENTE#mxc://}"
+            CODIGO="$(curl -sS -o "$DIR/diag-midia.json" -w '%{http_code}' \
+                -H "Authorization: Bearer $AS_TOKEN" \
+                "http://127.0.0.1:18008/_matrix/client/v1/media/download/${SERV_ID%%/*}/${SERV_ID#*/}?user_id=$(python3 -c "import sys,urllib.parse;print(urllib.parse.quote(sys.argv[1],safe=''))" "$REMETENTE_ATENDENTE")")"
+            ERRO="$(python3 -c "import json;print(json.load(open('$DIR/diag-midia.json')).get('errcode',''))" 2>/dev/null || true)"
+            RESULTADO_MX44="$RESULTADO_MX44 — diagnóstico: baixar o arquivo com o token do Application Service e o usuário do atendente devolve HTTP $CODIGO $ERRO"
+        fi
+    fi
+    anotar MX44 "$RESULTADO_MX44"
+
+    echo "== 20. A14/MX-46: mídia redigida e apagada depois do prazo =="
+    if [ -z "$ADMIN_TOKEN" ]; then
+        anotar MX46 "NÃO CONFERIDO: credenciais do MX-01 sem POPH_MATRIX_DEV_ADMIN_TOKEN"
+    else
+        python3 "$AUX" preparar-expiracao "$DIR/data/harness.db" 1 > "$DIR/f2-expiracao.json"
+        reiniciar_serve
+        for _ in $(seq 1 40); do
+            PENDENTES="$(python3 - "$DIR/data/harness.db" <<'PY'
+import sqlite3, sys
+c = sqlite3.connect(sys.argv[1])
+print(c.execute("select count(*) from matrix_midia where redacted_at is null or deleted_at is null").fetchone()[0])
+PY
+)"
+            [ "$PENDENTES" = "0" ] && break
+            sleep 1
+        done
+        python3 "$AUX" eventos "$SALA3" 120 > "$DIR/eventos-f2e.json"
+        SUMIRAM=0
+        TOTAL_MIDIA=0
+        for MXC in $(python3 - "$DIR/data/harness.db" <<'PY'
+import sqlite3, sys
+c = sqlite3.connect(sys.argv[1])
+for (mxc,) in c.execute("select mxc from matrix_midia"):
+    print(mxc)
+PY
+); do
+            TOTAL_MIDIA=$((TOTAL_MIDIA + 1))
+            ESTADO_MIDIA="$(python3 "$AUX" midia-existe "$MXC")"
+            printf 'apagada\t%s\t%s\n' "$MXC" "$ESTADO_MIDIA" >> "$DIR/f2-expiracao-arquivos.txt"
+            printf '%s' "$ESTADO_MIDIA" | grep -q '"status": 404' && SUMIRAM=$((SUMIRAM + 1))
+        done
+        RESULTADO_MX46="$(python3 - "$DIR/eventos-f2e.json" "$DIR/data/harness.db" "$SUMIRAM" "$TOTAL_MIDIA" "$DIR/serve-fase2.log" <<'PY'
+import json, sqlite3, sys
+d = json.load(open(sys.argv[1]))
+con = sqlite3.connect(sys.argv[2])
+pendentes = con.execute(
+    "select count(*) from matrix_midia where redacted_at is null or deleted_at is null"
+).fetchone()[0]
+blocos = []
+for e in d:
+    for valor in (e.get("bloco_expirado") or {}).values():
+        if isinstance(valor, dict) and all(k in valor for k in ("filename", "mimetype", "size", "sent_at", "kind")):
+            blocos.append(valor)
+nomes = sorted({b["filename"] for b in blocos})
+metricas = ""
+try:
+    with open(sys.argv[5], errors="replace") as f:
+        metricas = f.read()
+except OSError:
+    pass
+expiracao_ligada = "expiração da mídia ligada" in metricas
+sumiram, total = int(sys.argv[3]), int(sys.argv[4])
+ok = (
+    pendentes == 0
+    and len(nomes) >= 2
+    and all(str(b["sent_at"]).endswith("Z") for b in blocos)
+    and sumiram == total
+    and total >= 2
+)
+if ok:
+    print(
+        "OK: %d mídias redigidas com o bloco da expiração (%s, sent_at em ISO Z), %d/%d arquivos "
+        "devolvem 404 e nenhuma pendente; expiração ligada no log"
+        % (len(blocos), ", ".join(nomes), sumiram, total)
+    )
+else:
+    print(
+        "FALHOU: pendentes=%d redigidas=%d arquivos 404=%d/%d expiração ligada=%s"
+        % (pendentes, len(blocos), sumiram, total, expiracao_ligada)
+    )
+PY
+)"
+        anotar MX46 "$RESULTADO_MX46"
+    fi
+
+    if grep -qE '^(MX43|MX44|MX45|MX41|MX46)[[:space:]]+FALHOU' "$RESULTADO"; then
+        anotar A14 "FALHOU: há critério da fase 2 com falha (ver MX43/MX44/MX45/MX41/MX46)"
+    elif grep -qE '^(MX43|MX44|MX45|MX41|MX46)[[:space:]]+NÃO CONFERIDO' "$RESULTADO"; then
+        anotar A14 "PARCIAL: há critério da fase 2 não conferido"
+    else
+        anotar A14 "OK: imagem e PDF do cliente na sala (MX-43), áudio etc. viram aviso (MX-45), mensagem do aparelho sem eco (MX-41/42), imagem e PDF do atendente ao cliente (MX-44) e expiração da mídia (MX-46)"
+    fi
+fi
+
 echo
 echo "== resumo =="
 cat "$RESULTADO"
 echo
 echo "Artefatos: $DIR"
-if grep -qE '^(A1|A2|A6|A7|A11|A12|MX33)\s+FALHOU' "$RESULTADO"; then
+if grep -qE '^(A1|A2|A6|A7|A11|A12|MX33|A14|MX41|MX43|MX44|MX45|MX46)[[:space:]]+FALHOU' "$RESULTADO"; then
     echo "Aceite NÃO passou: há critério com falha (ver docs/MATRIZ_ACEITE.md)." >&2
     exit 1
 fi

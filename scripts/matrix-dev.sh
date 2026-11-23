@@ -152,6 +152,12 @@ subir() {
         as_py="$(gerar_token)"; hs_py="$(gerar_token)"
         as_h="$(gerar_token)";  hs_h="$(gerar_token)"
     fi
+    # O token de administrador (MX-46) não é gerado aqui: quando existe no arquivo anterior, é
+    # preservado, porque ele foi criado à mão e regravar as credenciais não pode revogá-lo.
+    local admin_anterior=""
+    if [ -f "$CREDENCIAIS" ]; then
+        admin_anterior="$(valor_credencial POPH_MATRIX_DEV_ADMIN_TOKEN)"
+    fi
     umask 077
     {
         echo "# Credenciais FICTÍCIAS do ambiente MX-01 (fora do git)."
@@ -162,6 +168,7 @@ subir() {
         echo "POPH_MATRIX_DEV_PYTHON_HS_TOKEN=$hs_py"
         echo "POPH_MATRIX_DEV_HARNESS_AS_TOKEN=$as_h"
         echo "POPH_MATRIX_DEV_HARNESS_HS_TOKEN=$hs_h"
+        [ -n "$admin_anterior" ] && echo "POPH_MATRIX_DEV_ADMIN_TOKEN=$admin_anterior"
     } > "$CREDENCIAIS"
     chmod 600 "$CREDENCIAIS"
 
