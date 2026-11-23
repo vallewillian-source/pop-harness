@@ -19,15 +19,19 @@
 //! - [`prompt`] — FX-18: bloco do prompt e visualização da etapa.
 //! - [`diff`] — FX-17: diferença entre revisões em linguagem comum.
 //! - [`formatador`] — FX-16: forma canônica do script (script ⇄ estrutura) (feito).
+//! - [`cache`] — FX-19: cache das revisões compiladas (LRU com teto em MB, single-flight e falha
+//!   fechada).
 //!
 //! Os módulos ainda vazios existem para fixar o desenho e a fronteira: `compilador`, `validador` e
 //! `regras` têm função pública.
 
-// `blake3` entra pela FX-19 (chave de cache de revisão: `fluxo_id + número + sha256`). Até lá o
+// `blake3` vem junto do starlark e continua sem uso direto neste crate: a chave do cache usa
+// `sha2`, que já roda no workspace (o mesmo `sha256` de `fluxo_revisoes.fonte_sha256`). O
 // `use ... as _` só marca a dependência como usada, porque o lint `unused_dependencies` do Rust
 // 1.100 quebra o clippy com `-D warnings`.
 use blake3 as _;
 
+pub mod cache;
 pub mod compilador;
 pub mod diagnostico;
 pub mod diff;
@@ -39,6 +43,10 @@ pub mod prompt;
 pub mod regras;
 pub mod validador;
 
+pub use cache::{
+    CUSTO_FIXO_DA_ENTRADA, CacheRevisoes, ChaveRevisao, ESPERA_MAXIMA_DO_LOTE, FATOR_DO_PESO,
+    Metricas, TETO_PADRAO_MB, peso_da_ir, sha256_da_fonte,
+};
 pub use compilador::{Compilado, FalhaCarregamento, Limites, carregar, compilar};
 pub use diagnostico::{Codigo, Diagnostico, Severidade};
 pub use diff::{Impacto, Mudanca, TipoMudanca, diferenca};

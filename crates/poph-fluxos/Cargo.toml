@@ -15,6 +15,9 @@ poph-types = { path = "../poph-types" }
 starlark.workspace = true
 # Feature `pure` vem do workspace: mantém este crate no `cargo check` aarch64 da estação.
 blake3.workspace = true
+# sha256 da chave do cache (FX-19): é o mesmo `fonte_sha256` de `fluxo_revisoes`, e não entra
+# pacote novo no build — a versão é a que `poph-files`, `poph-rag` e `poph-store` já compilam.
+sha2 = "0.11"
 # A IR é gravada em `fluxo_revisoes.definicao_json` e comparada byte a byte: serde é o que dá a
 # forma estável. Já vem do workspace (nenhum crate novo entra no build por causa disto).
 serde.workspace = true
