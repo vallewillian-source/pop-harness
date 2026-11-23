@@ -28,7 +28,9 @@ set -euo pipefail
 
 APP="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RAIZ="$(cd "$APP/../.." && pwd)"
-POPH="$APP/target/debug/poph"
+# POPH_BIN permite rodar o roteiro com um binário construído fora desta árvore (ex.: de um
+# worktree do HEAD, quando outro agente está com código não commitado na pasta de trabalho).
+POPH="${POPH_BIN:-$APP/target/debug/poph}"
 AUX="$APP/scripts/aceite-matrix-aux.py"
 ELEMENT_JS="$APP/scripts/aceite-matrix-element.mjs"
 
