@@ -35,6 +35,7 @@ utoipa = { version = "6", features = ["macros", "axum_extras"] }
 uuid.workspace = true
 
 [dev-dependencies]
+poph-jev = { path = "../poph-jev" }
 # Provedor de LLM falso para o teste do turno no servidor (HR-26h).
 poph-core = { path = "../poph-core" }
 rusqlite.workspace = true

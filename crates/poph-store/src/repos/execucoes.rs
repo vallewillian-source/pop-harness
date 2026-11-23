@@ -864,14 +864,41 @@ fn gravar_etapas(
                 let Some(etapa) = etapa_do_payload(&evento.payload_json) else {
                     continue;
                 };
+                let atores_json: Option<String> = conn
+                    .query_row(
+                        "SELECT atores_que_agiram_json FROM fluxo_execucao_etapas
+                      WHERE org_id = ?1 AND execucao_id = ?2 AND no_id = ?3
+                        AND status <> 'concluida' ORDER BY ordem DESC LIMIT 1",
+                        params![org, execucao, etapa],
+                        |linha| linha.get(0),
+                    )
+                    .optional()
+                    .map_err(ErroStore::from)?;
+                let mut atores: Vec<String> = atores_json
+                    .as_deref()
+                    .and_then(|json| serde_json::from_str(json).ok())
+                    .unwrap_or_default();
+                if let Some(acao) = eventos.iter().find(|acao| {
+                    acao.tipo == TipoEventoFicha::AcaoExecutada
+                        && etapa_do_payload(&acao.payload_json).as_deref() == Some(&etapa)
+                }) {
+                    let ator = acao.ator_tipo.como_texto();
+                    if (ator == "agente" || ator == "atendente")
+                        && !atores.iter().any(|a| a == ator)
+                    {
+                        atores.push(ator.to_owned());
+                        atores.sort();
+                    }
+                }
+                let atores = serde_json::to_string(&atores).unwrap_or_else(|_| "[]".to_owned());
                 conn.execute(
                     "UPDATE fluxo_execucao_etapas
-                        SET status = 'concluida', concluiu_em = ?4
+                        SET status = 'concluida', concluiu_em = ?4, dados_json = ?5, atores_que_agiram_json = ?6
                       WHERE org_id = ?1 AND execucao_id = ?2 AND no_id = ?3
                         AND status <> 'concluida'
                         AND ordem = (SELECT MAX(ordem) FROM fluxo_execucao_etapas
                                       WHERE org_id = ?1 AND execucao_id = ?2 AND no_id = ?3)",
-                    params![org, execucao, etapa, agora],
+                    params![org, execucao, etapa, agora, dados_da_etapa(&novo.dados_json, &etapa), atores],
                 )
                 .map_err(ErroStore::from)?;
             }
