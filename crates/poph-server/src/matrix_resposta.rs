@@ -31,10 +31,26 @@
 //! A persistência entra pela porta [`PortaAtendimento`] (a mesma escolha da `PortaSalas` da MX-11):
 //! a implementação real é a [`PortaDoHarness`], sobre o `Store`; os testes injetam uma porta que
 //! sabe falhar, para provar o caminho do `5xx`. O cliente do Synapse é usado para quatro coisas:
-//! ler o nome de exibição do atendente, escrever o aviso na sala, **baixar** o arquivo do
-//! atendente (MX-44) e nada mais. A pasta dos blobs vem de quem liga o módulo
+//! ler o nome de exibição do atendente (perfil público, sem disfarce), escrever o aviso na sala,
+//! **baixar** o arquivo do atendente (MX-44) e nada mais — o aviso e o download em nome do fantasma
+//! do agente. A pasta dos blobs vem de quem liga o módulo
 //! ([`RespostaDoAtendente::com_pasta_de_blobs`]); sem ela, o arquivo do atendente vira aviso em vez
 //! de sumir em silêncio.
+//!
+//! ## Quem assina o download e os avisos do arquivo (MX-44)
+//!
+//! Sempre um usuário do **namespace do Application Service** — na prática, o fantasma do agente
+//! dono da conversa ([`PortaAtendimento::agente_da_conversa`]). O Synapse só deixa o `as_token`
+//! personificar quem casa com o namespace `@<prefixo>_…` do registro do AS; o atendente humano que
+//! mandou o arquivo no Element é usuário comum e recebe `403 M_FORBIDDEN` ("Application service
+//! cannot masquerade as this user"). Isso vale para o **download** da mídia e para o **aviso** na
+//! sala — com o humano como remetente, nem o arquivo descia nem o aviso aparecia (o atendente
+//! ficava sem saber de nada). O humano continua no caminho, mas só como dado: ele assina a
+//! `mensagem` do histórico (`autor_id`) e dá o nome da legenda `*[Nome]*` que o cliente lê.
+//!
+//! Conversa sem agente (ou que sumiu) não tem fantasma para assinar: é `error` no log, com o motivo
+//! `fantasma_do_agente_indisponivel`, e a mensagem não volta para a fila do Synapse — não há
+//! terceiro caminho de autenticação, e reenviar não traria o agente de volta.
 //!
 //! ## Duplicação na reentrega do arquivo
 //!
@@ -66,7 +82,7 @@ use poph_store::erro::ErroStore;
 use poph_store::{
     ArquivoDaResposta, RespostaHumana, RespostaHumanaComArquivo, RespostaHumanaNova, Store,
 };
-use poph_types::{ConversationId, OrgId};
+use poph_types::{AgentId, ConversationId, OrgId};
 use serde_json::{Value, json};
 
 use crate::api::matrix_as::{EntregaDeEventos, ErroEntrega, FuturoDaEntrega};
@@ -123,7 +139,8 @@ struct ArquivoDoEvento<'a> {
     sala: &'a str,
     /// Id do evento no Matrix (idempotência e `txnId` do aviso).
     evento_id: &'a str,
-    /// Id Matrix de quem mandou.
+    /// Id Matrix de quem mandou no Element. É usuário comum do homeserver, **fora** do namespace
+    /// do Application Service: serve só para o nome da legenda, nunca para assinar no Synapse.
     remetente: &'a str,
     /// Tipo declarado pelo `msgtype` do evento (o real vem do conteúdo).
     tipo: TipoMidia,
@@ -144,6 +161,15 @@ pub trait PortaAtendimento: Send + Sync {
     ///
     /// `Err` significa "não consegui olhar agora": vira `5xx` e o Synapse reenvia.
     fn conversa_da_sala(&self, sala: &str) -> Result<Option<ConversaDaSala>, ErroStore>;
+
+    /// O agente dono da conversa, ou `None` quando ela sumiu entre a leitura da sala e esta.
+    ///
+    /// É o que decide quem assina o arquivo do atendente no Synapse (MX-44): o download e o aviso
+    /// saem em nome do **fantasma do agente**, não do humano que mandou o arquivo (ver
+    /// [`RespostaDoAtendente::assinatura_da_sala`]).
+    ///
+    /// `Err` significa "não consegui olhar agora": vira `5xx` e o Synapse reenvia.
+    fn agente_da_conversa(&self, alvo: ConversaDaSala) -> Result<Option<AgentId>, ErroStore>;
 
     /// A operação atômica da MX-04 (resposta em texto).
     fn registrar_resposta(
@@ -189,6 +215,16 @@ impl PortaAtendimento for PortaDoHarness {
         Ok(None)
     }
 
+    fn agente_da_conversa(&self, alvo: ConversaDaSala) -> Result<Option<AgentId>, ErroStore> {
+        match self.store.conversas().obter(alvo.org, alvo.conversa) {
+            Ok(conversa) => Ok(Some(conversa.agent_id)),
+            // A conversa sumiu entre a leitura da sala e esta: nada a assinar, e reenviar não
+            // traria a conversa de volta.
+            Err(erro) if erro.eh_nao_encontrado() => Ok(None),
+            Err(erro) => Err(erro),
+        }
+    }
+
     fn registrar_resposta(
         &self,
         alvo: ConversaDaSala,
@@ -230,6 +266,9 @@ pub struct Contadores {
     pub avisos_de_midia: AtomicU64,
     /// Arquivos do atendente gravados e enfileirados para o cliente (MX-44).
     pub arquivos_gravados: AtomicU64,
+    /// Arquivos do atendente que não puderam ser assinados: a conversa não tem mais agente (ou
+    /// sumiu), então não há fantasma do agente para baixar o arquivo nem para avisar na sala.
+    pub midias_sem_assinatura: AtomicU64,
 }
 
 impl Contadores {
@@ -396,6 +435,74 @@ impl RespostaDoAtendente {
         Ok(Some(alvo))
     }
 
+    /// Quem assina o arquivo do atendente no Synapse: o **fantasma do agente** dono da conversa.
+    ///
+    /// O Application Service só pode personificar usuários do próprio namespace (`@<prefixo>_…`).
+    /// O atendente humano que mandou o arquivo no Element é usuário comum do homeserver, então
+    /// `?user_id=<humano>` no download — e no aviso — é recusado com `403 M_FORBIDDEN`
+    /// ("Application service cannot masquerade as this user"), medido no Synapse de
+    /// desenvolvimento. O fantasma do agente está na sala e é do namespace: é ele que baixa o
+    /// arquivo e escreve o aviso.
+    ///
+    /// `Ok(None)` quando não há como assinar (conversa sem agente, ou conversa que sumiu): o
+    /// chamador trata como falha explícita, sem inventar um terceiro caminho de autenticação. `Err`
+    /// quando o banco não respondeu (vira `5xx`, e o Synapse reenvia).
+    fn assinatura_da_sala(&self, alvo: ConversaDaSala) -> Result<Option<String>, ErroStore> {
+        let Some(agente) = self.porta.agente_da_conversa(alvo)? else {
+            return Ok(None);
+        };
+        // Id que não serve para montar fantasma (vazio) também é "não há como assinar".
+        Ok(self
+            .ids
+            .agente(&agente.to_string())
+            .ok()
+            .map(|fantasma| fantasma.user_id().to_owned()))
+    }
+
+    /// A assinatura do fantasma do agente, com o caso de não haver assinatura já relatado.
+    ///
+    /// Fecha o mesmo caminho de [`Self::assinatura_da_sala`] para os dois chamadores: o arquivo do
+    /// atendente (que precisa do `5xx` quando o banco não responde) e o aviso de conversa encerrada
+    /// (que é melhor-esforço). Sem assinatura não há como falar na sala: fica `error` no log, para
+    /// o caso aparecer na operação em vez de sumir em silêncio.
+    fn assinatura_relatada(
+        &self,
+        alvo: ConversaDaSala,
+        transacao: &str,
+        evento_id: &str,
+    ) -> Result<Option<String>, ErroStore> {
+        match self.assinatura_da_sala(alvo) {
+            Ok(Some(assinatura)) => Ok(Some(assinatura)),
+            Ok(None) => {
+                Contadores::somar(&self.contadores.midias_sem_assinatura);
+                tracing::error!(
+                    target: "poph_server::matrix_resposta",
+                    org = %alvo.org,
+                    conversa = %alvo.conversa,
+                    transacao,
+                    evento = evento_id,
+                    motivo = "fantasma_do_agente_indisponivel",
+                    "a conversa da sala não tem agente para assinar: nada foi escrito na sala"
+                );
+                Ok(None)
+            }
+            Err(_) => {
+                tracing::error!(
+                    target: "poph_server::matrix_resposta",
+                    org = %alvo.org,
+                    conversa = %alvo.conversa,
+                    transacao,
+                    evento = evento_id,
+                    motivo = "banco_indisponivel",
+                    "não consegui ler o agente da conversa agora"
+                );
+                Err(ErroStore::Interno(
+                    "não consegui ler o agente da conversa".to_owned(),
+                ))
+            }
+        }
+    }
+
     /// Nome de exibição do atendente, com cache e validade; "Atendente" quando não há.
     async fn nome_do_atendente(&self, remetente: &str) -> String {
         if let Some(nome) = self.nomes_guardados().obter(remetente) {
@@ -424,35 +531,48 @@ impl RespostaDoAtendente {
         }
     }
 
-    /// Escreve um aviso na sala, em nome de quem mandou o evento (o único membro que a fase 1
-    /// garante na sala além do fantasma do cliente).
+    /// Escreve um aviso na sala **em nome do fantasma do agente** (o membro da sala que o
+    /// Application Service pode personificar — ver [`Self::assinatura_da_sala`]).
     ///
     /// Aviso é melhor-esforço: o atendente já viu que a mensagem não foi, e derrubar a transação
-    /// por causa do aviso faria o Synapse reenviar a resposta do atendente de novo.
-    async fn avisar(&self, sala: &str, remetente: &str, marca: &str, evento_id: &str, corpo: &str) {
+    /// por causa do aviso faria o Synapse reenviar a resposta do atendente de novo. Falha do aviso
+    /// sai em `warn`, porque aviso que não chega é o atendente sem saber que o arquivo não foi.
+    async fn avisar(
+        &self,
+        sala: &str,
+        assinatura: &str,
+        marca: &str,
+        evento_id: &str,
+        corpo: &str,
+    ) {
         let conteudo = json!({
             "msgtype": poph_matrix::eventos::MSGTYPE_AVISO,
             "body": corpo,
         });
-        self.avisar_conteudo(sala, remetente, &txn_do_evento(marca, evento_id), &conteudo)
-            .await;
+        self.avisar_conteudo(
+            sala,
+            assinatura,
+            &txn_do_evento(marca, evento_id),
+            &conteudo,
+        )
+        .await;
     }
 
     /// Aviso na sala com um `txnId` e um conteúdo já montados (o aviso de mídia da MX-44 traz o
     /// motivo no `txnId`, para dois motivos do mesmo evento não se confundirem).
-    async fn avisar_conteudo(&self, sala: &str, remetente: &str, txn: &str, conteudo: &Value) {
+    async fn avisar_conteudo(&self, sala: &str, assinatura: &str, txn: &str, conteudo: &Value) {
         let Some(cliente) = &self.cliente else {
             return;
         };
         if let Err(erro) = cliente
-            .enviar_evento(remetente, sala, "m.room.message", txn, conteudo)
+            .enviar_evento(assinatura, sala, "m.room.message", txn, conteudo)
             .await
         {
             self.contar_erro(&erro);
-            tracing::debug!(
+            tracing::warn!(
                 target: "poph_server::matrix_resposta",
                 motivo = ?erro.classificacao(),
-                "não consegui escrever o aviso na sala"
+                "não consegui escrever o aviso na sala: o atendente não fica sabendo"
             );
         }
     }
@@ -537,14 +657,18 @@ impl RespostaDoAtendente {
                     evento = evento_id,
                     "conversa encerrada: resposta não enviada"
                 );
-                self.avisar(
-                    sala,
-                    remetente,
-                    MARCA_AVISO_ENCERRADA,
-                    evento_id,
-                    AVISO_CONVERSA_ENCERRADA,
-                )
-                .await;
+                // Quem escreve o aviso é o fantasma do agente: o atendente humano está fora do
+                // namespace do Application Service e receberia `403 M_FORBIDDEN` no lugar do aviso.
+                if let Ok(Some(assinatura)) = self.assinatura_relatada(alvo, transacao, evento_id) {
+                    self.avisar(
+                        sala,
+                        &assinatura,
+                        MARCA_AVISO_ENCERRADA,
+                        evento_id,
+                        AVISO_CONVERSA_ENCERRADA,
+                    )
+                    .await;
+                }
                 Ok(())
             }
             Ok(RespostaHumana::ConversaInexistente) => {
@@ -581,12 +705,14 @@ impl RespostaDoAtendente {
     /// A ordem é a que evita trabalho inútil e perda de arquivo:
     ///
     /// 1. acha a conversa da sala (sem ela, nada a fazer);
-    /// 2. baixa o conteúdo do Synapse com teto de bytes (falha **transitória** volta para o Synapse
+    /// 2. resolve quem assina no Synapse — o fantasma do agente dono da conversa; sem ele não há
+    ///    download nem aviso possíveis, e o caso é relatado em `error`;
+    /// 3. baixa o conteúdo do Synapse com teto de bytes (falha **transitória** volta para o Synapse
     ///    reenviar; definitiva vira aviso);
-    /// 3. confere o tipo **pelo conteúdo** com o `poph-files` (extensão enganosa e tipo fora da
+    /// 4. confere o tipo **pelo conteúdo** com o `poph-files` (extensão enganosa e tipo fora da
     ///    lista viram aviso, com o arquivo recusado antes de encostar no disco);
-    /// 4. grava como blob da org (deduplicado por hash);
-    /// 5. grava a resposta com arquivo na operação atômica da MX-44.
+    /// 5. grava como blob da org (deduplicado por hash);
+    /// 6. grava a resposta com arquivo na operação atômica da MX-44.
     ///
     /// O arquivo **não** passa pelo extrator de texto: nenhum turno lê o que o atendente manda, e a
     /// extração só custaria tempo e memória.
@@ -598,6 +724,8 @@ impl RespostaDoAtendente {
         let ArquivoDoEvento {
             sala,
             evento_id,
+            // O remetente humano não assina nada no Synapse (fora do namespace do AS); ele serve
+            // só para o nome na legenda que o cliente lê.
             remetente,
             tipo,
             url,
@@ -629,11 +757,20 @@ impl RespostaDoAtendente {
             }
         };
 
+        // Quem assina o arquivo e o aviso no Synapse: o fantasma do agente. Um humano não está no
+        // namespace do Application Service, e o Synapse recusa o disfarce com `403 M_FORBIDDEN`.
+        let assinatura = match self.assinatura_relatada(alvo, transacao, evento_id) {
+            Ok(Some(assinatura)) => assinatura,
+            // Reenviar não traria o agente de volta, e insistir gastaria a fila do Synapse.
+            Ok(None) => return Ok(()),
+            Err(_) => return Err(ErroEntrega::novo(MOTIVO_BANCO)),
+        };
+
         let Some(pasta) = self.pasta_blobs.clone() else {
             self.avisar_de_midia(
                 transacao,
                 sala,
-                remetente,
+                &assinatura,
                 evento_id,
                 MotivoNaoEnviar::NaoGravado,
             )
@@ -644,7 +781,7 @@ impl RespostaDoAtendente {
             self.avisar_de_midia(
                 transacao,
                 sala,
-                remetente,
+                &assinatura,
                 evento_id,
                 MotivoNaoEnviar::SemArquivo,
             )
@@ -653,7 +790,7 @@ impl RespostaDoAtendente {
         };
 
         let bytes = match cliente
-            .baixar_midia(remetente, url, midia_atendente::LIMITE_MIDIA_BYTES)
+            .baixar_midia(&assinatura, url, midia_atendente::LIMITE_MIDIA_BYTES)
             .await
         {
             Ok(bytes) => bytes,
@@ -680,7 +817,7 @@ impl RespostaDoAtendente {
                 self.avisar_de_midia(
                     transacao,
                     sala,
-                    remetente,
+                    &assinatura,
                     evento_id,
                     motivo_da_falha_de_midia(&erro),
                 )
@@ -696,7 +833,7 @@ impl RespostaDoAtendente {
                 self.avisar_de_midia(
                     transacao,
                     sala,
-                    remetente,
+                    &assinatura,
                     evento_id,
                     MotivoNaoEnviar::TipoRecusado,
                 )
@@ -718,7 +855,7 @@ impl RespostaDoAtendente {
                 self.avisar_de_midia(
                     transacao,
                     sala,
-                    remetente,
+                    &assinatura,
                     evento_id,
                     MotivoNaoEnviar::NaoGravado,
                 )
@@ -789,7 +926,7 @@ impl RespostaDoAtendente {
                 );
                 self.avisar(
                     sala,
-                    remetente,
+                    &assinatura,
                     MARCA_AVISO_ENCERRADA,
                     evento_id,
                     AVISO_CONVERSA_ENCERRADA,
@@ -827,12 +964,15 @@ impl RespostaDoAtendente {
     /// Aviso na sala de um arquivo do atendente que não vai ao cliente.
     ///
     /// Melhor-esforço, como o resto dos avisos: o atendente precisa saber, e a transação não pode
-    /// falhar por causa do aviso (falha faria o Synapse reenviar a mensagem de novo).
+    /// falhar por causa do aviso (falha faria o Synapse reenviar a mensagem de novo). Quem assina é
+    /// a `assinatura` — o fantasma do agente, o único membro da sala que o Application Service pode
+    /// personificar: com o atendente humano como remetente, o Synapse recusaria com
+    /// `403 M_FORBIDDEN` e o aviso não apareceria para ninguém.
     async fn avisar_de_midia(
         &self,
         transacao: &str,
         sala: &str,
-        remetente: &str,
+        assinatura: &str,
         evento_id: &str,
         motivo: MotivoNaoEnviar,
     ) {
@@ -848,7 +988,8 @@ impl RespostaDoAtendente {
         );
         let txn = midia_atendente::txn_do_aviso(evento_id, motivo);
         let conteudo = midia_atendente::conteudo_do_aviso(motivo);
-        self.avisar_conteudo(sala, remetente, &txn, &conteudo).await;
+        self.avisar_conteudo(sala, assinatura, &txn, &conteudo)
+            .await;
     }
 
     async fn processar(&self, transacao: &str, eventos: Vec<Value>) -> Result<(), ErroEntrega> {

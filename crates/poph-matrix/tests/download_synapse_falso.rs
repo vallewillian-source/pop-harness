@@ -4,8 +4,10 @@
 //! chegando inteiro) está em `midia_synapse_real.rs`, `#[ignore]`. Aqui a prova é do que o cliente
 //! controla, com um `axum` de teste que anota o caminho, a consulta e o cabeçalho de cada pedido:
 //!
-//! - o pedido vai na rota **nova** (`/_matrix/client/v1/media/download`), disfarçado de usuário e
-//!   com `allow_redirect=false`;
+//! - o pedido vai na rota **nova** (`/_matrix/client/v1/media/download`), disfarçado de usuário
+//!   **do namespace do Application Service** e com `allow_redirect=false`; o falso recusa
+//!   `403 M_FORBIDDEN` quem está fora do namespace, como o Synapse de verdade (foi assim que o
+//!   aceite da fase 2 pegou o download feito no nome do atendente humano);
 //! - `404` na rota nova cai na antiga (servidor anterior), e o conteúdo volta;
 //! - o teto de bytes vale pelo **tamanho declarado** e, sem ele, pela leitura em pedaços;
 //! - **redirecionamento não é seguido**: `3xx` é falha definitiva, e o servidor falso registra um
@@ -29,7 +31,14 @@ use poph_types::Segredo;
 /// Valor-canário: se aparecer em erro, log ou URL, o teste acusa.
 const CANARIO: &str = "CANARIO-MATRIX-MX44-nao-pode-vazar";
 
-const USUARIO: &str = "@ana:matrix-dev.local";
+/// Fantasma do agente: usuário do namespace do Application Service (o único que ele personifica).
+const USUARIO: &str = "@ph_ag_01912345-0000-7000-8000-000000000000:matrix-dev.local";
+
+/// Atendente humano: usuário comum do homeserver, fora do namespace do Application Service.
+const HUMANO: &str = "@ana:matrix-dev.local";
+
+/// Namespace do Application Service no registro do ambiente (`@<prefixo>_.*`).
+const NAMESPACE: &str = "@ph_";
 
 // ───────────────────────────── Synapse falso ─────────────────────────────
 
@@ -104,15 +113,31 @@ async fn atender(
     cabecalhos: HeaderMap,
     nova: bool,
 ) -> Response {
+    let consulta = consulta_da(&uri);
     falso.registros.lock().unwrap().push(Registro {
         caminho: if nova {
             "nova".to_owned()
         } else {
             "antiga".to_owned()
         },
-        consulta: consulta_da(&uri),
+        consulta: consulta.clone(),
         autorizacao_presente: cabecalhos.contains_key("authorization"),
     });
+    // Como o Synapse de verdade: o `as_token` só personifica quem casa com o namespace do AS.
+    if let Some(usuario) = consulta.get("user_id")
+        && !usuario.starts_with(NAMESPACE)
+    {
+        return (
+            StatusCode::FORBIDDEN,
+            [(header::CONTENT_TYPE, "application/json")],
+            serde_json::json!({
+                "errcode": "M_FORBIDDEN",
+                "error": "Application service cannot masquerade as this user"
+            })
+            .to_string(),
+        )
+            .into_response();
+    }
     let fila = if nova {
         falso.novas.lock().unwrap().pop()
     } else {
@@ -260,6 +285,45 @@ async fn baixa_pela_rota_nova_disfarcado_e_sem_redirecionar() {
             .map(String::as_str),
         Some("false")
     );
+}
+
+#[tokio::test]
+async fn disfarce_fora_do_namespace_do_application_service_e_recusado() {
+    // O atendente humano que manda o arquivo pelo Element é usuário comum do homeserver: o Synapse
+    // não deixa o Application Service personificá-lo. O falso faz o mesmo, senão um download no nome
+    // dele passaria no teste e quebraria só no Synapse de verdade.
+    let (cliente, falso) = cenario(vec![Resposta::Conteudo(b"conteudo".to_vec())], vec![]).await;
+
+    let erro = cliente
+        .baixar_midia(HUMANO, "mxc://matrix-dev.local/abc123", 1024)
+        .await
+        .expect_err("humano está fora do namespace do AS");
+    assert!(
+        !erro.transitorio(),
+        "recusa por namespace é definitiva: {erro}"
+    );
+    assert!(
+        erro.to_string().contains("403"),
+        "o erro diz o status: {erro}"
+    );
+    let registros = registros(&falso);
+    assert_eq!(
+        registros.len(),
+        1,
+        "uma tentativa só (não volta na rota antiga nem no reenvio): {registros:?}"
+    );
+    assert_eq!(
+        registros[0].consulta.get("user_id").map(String::as_str),
+        Some(HUMANO)
+    );
+
+    // O mesmo conteúdo, agora pelo fantasma do agente: desce inteiro.
+    let (cliente, _falso) = cenario(vec![Resposta::Conteudo(b"conteudo".to_vec())], vec![]).await;
+    let bytes = cliente
+        .baixar_midia(USUARIO, "mxc://matrix-dev.local/abc123", 1024)
+        .await
+        .expect("o fantasma do agente baixa");
+    assert_eq!(bytes, b"conteudo");
 }
 
 #[tokio::test]

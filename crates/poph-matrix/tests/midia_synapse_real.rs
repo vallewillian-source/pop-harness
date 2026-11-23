@@ -19,18 +19,20 @@
 //! A MX-44 usa o mesmo ambiente para provar o caminho de **volta**: o arquivo que o atendente manda
 //! é baixado da sala pelo cliente da API ([`ClienteMatrix::baixar_midia`]), com teto de bytes,
 //! `allow_redirect=false` e sem seguir redirecionamento. O Synapse falso não prova isso, porque
-//! quem decide se o `?user_id=` vale na rota de download é o servidor de verdade.
+//! quem decide se o `?user_id=` vale na rota de download é o servidor de verdade — inclusive a
+//! recusa de personificar quem está **fora** do namespace do Application Service (`403 M_FORBIDDEN`,
+//! o caso do atendente humano), que é a correção da MX-44 depois do aceite da fase 2.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use poph_matrix::ErroMidia;
 use poph_matrix::cliente::{ClienteMatrix, ConfigCliente};
 use poph_matrix::midia::{self, AnexoParaMidia, BLOCO_ANEXO, MSGTYPE_ARQUIVO, MSGTYPE_IMAGEM};
 use poph_matrix::salas::{
     ConversaParaSala, ErroPorta, EstadoGravado, PortaSalas, Provisionador, SalaGravada,
 };
+use poph_matrix::{ErroChamada, ErroMidia};
 use poph_types::{AgentId, ConversationId, MatrixConfig, OrgId, Segredo};
 
 /// Lê uma chave do `credenciais.env` sem imprimir valor nenhum.
@@ -318,11 +320,35 @@ async fn a_midia_da_sala_desce_inteira_pelo_cliente_do_matrix() {
         .expect("o evento traz o mxc://")
         .to_owned();
 
+    // O atendente humano que mandou o arquivo no Element é usuário comum do homeserver, fora do
+    // namespace do Application Service: disfarçado dele, o download é recusado — e é justamente por
+    // isso que quem baixa (e quem avisa) é o fantasma do agente.
+    let humano = format!("@atendente-mx44-{marca}:{server_name}");
+    let recusa = cliente
+        .baixar_midia(&humano, &mxc, midia::LIMITE_MIDIA_BYTES)
+        .await
+        .expect_err("o Application Service não personifica quem está fora do namespace");
+    assert!(
+        !recusa.transitorio(),
+        "recusa por namespace é definitiva: {recusa:?}"
+    );
+    match &recusa {
+        ErroMidia::Chamada(ErroChamada::Resposta {
+            status: 403,
+            errcode,
+            ..
+        }) => assert_eq!(errcode.as_deref(), Some("M_FORBIDDEN")),
+        outro => panic!("esperava 403 M_FORBIDDEN no disfarce de humano, veio {outro:?}"),
+    }
+
     let baixado = cliente
         .baixar_midia(remetente.user_id(), &mxc, midia::LIMITE_MIDIA_BYTES)
         .await
         .unwrap_or_else(|erro| panic!("o Synapse real não entregou a mídia ({erro:?})"));
-    assert_eq!(baixado, PNG, "o conteúdo desce inteiro");
+    assert_eq!(
+        baixado, PNG,
+        "o conteúdo desce inteiro pelo fantasma do agente"
+    );
 
     // Teto menor que o arquivo: a recusa é do cliente, antes de baixar tudo.
     let recusado = cliente.baixar_midia(remetente.user_id(), &mxc, 10).await;

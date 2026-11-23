@@ -254,6 +254,54 @@ impl PortaAtendimento for PortaComFalha {
         self.real.conversa_da_sala(sala)
     }
 
+    fn agente_da_conversa(
+        &self,
+        alvo: poph_server::matrix_resposta::ConversaDaSala,
+    ) -> Result<Option<poph_types::AgentId>, ErroStore> {
+        if self.falhar.load(Ordering::SeqCst) {
+            return Err(ErroStore::Interno("banco fora do ar (teste)".to_owned()));
+        }
+        self.real.agente_da_conversa(alvo)
+    }
+
+    fn registrar_resposta(
+        &self,
+        alvo: poph_server::matrix_resposta::ConversaDaSala,
+        nova: RespostaHumanaNova<'_>,
+    ) -> Result<RespostaHumana, ErroStore> {
+        self.real.registrar_resposta(alvo, nova)
+    }
+
+    fn registrar_resposta_com_arquivo(
+        &self,
+        alvo: poph_server::matrix_resposta::ConversaDaSala,
+        nova: poph_store::RespostaHumanaComArquivo<'_>,
+    ) -> Result<RespostaHumana, ErroStore> {
+        self.real.registrar_resposta_com_arquivo(alvo, nova)
+    }
+}
+
+/// A porta de verdade, mas sem saber o agente da conversa: o caso da conversa antiga, da org
+/// migrada ou do registro que sumiu. Não há fantasma para assinar o arquivo do atendente.
+struct PortaSemAgente {
+    real: PortaDoHarness,
+}
+
+impl PortaAtendimento for PortaSemAgente {
+    fn conversa_da_sala(
+        &self,
+        sala: &str,
+    ) -> Result<Option<poph_server::matrix_resposta::ConversaDaSala>, ErroStore> {
+        self.real.conversa_da_sala(sala)
+    }
+
+    fn agente_da_conversa(
+        &self,
+        _alvo: poph_server::matrix_resposta::ConversaDaSala,
+    ) -> Result<Option<poph_types::AgentId>, ErroStore> {
+        Ok(None)
+    }
+
     fn registrar_resposta(
         &self,
         alvo: poph_server::matrix_resposta::ConversaDaSala,
@@ -532,6 +580,24 @@ impl Cenario {
 
     fn escritas_no_synapse(&self) -> Vec<Escrita> {
         self.synapse.escritas.lock().unwrap().clone()
+    }
+
+    /// O fantasma do agente dono da conversa: quem o Synapse deixa personificar (namespace do
+    /// Application Service) e quem está na sala. É ele que baixa o arquivo do atendente e assina os
+    /// avisos.
+    fn fantasma_do_agente(&self) -> String {
+        let agente = self
+            .store
+            .conversas()
+            .obter(self.org, self.conversa)
+            .expect("lê a conversa")
+            .agent_id;
+        IdsFantasmas::novo(PREFIXO, SERVER_NAME)
+            .expect("ids dos fantasmas")
+            .agente(&agente.to_string())
+            .expect("fantasma do agente")
+            .user_id()
+            .to_owned()
     }
 }
 
@@ -1097,6 +1163,63 @@ async fn o_nome_do_atendente_e_lido_uma_vez_e_fica_no_cache() {
 }
 
 #[tokio::test]
+async fn conversa_sem_agente_nao_baixa_a_midia_nem_inventa_assinatura() {
+    // Sem o agente da conversa não existe fantasma do Application Service para baixar o arquivo nem
+    // para avisar na sala. O caso é relatado (`error` + contador) e a mensagem não volta para a fila
+    // do Synapse: reenviar não traria o agente de volta.
+    let cenario = Cenario::novo("sem-agente").await;
+    let porta = Arc::new(PortaSemAgente {
+        real: PortaDoHarness::nova(Arc::clone(&cenario.store)),
+    });
+    let servidor = cenario.subir(porta).await;
+
+    let (status, _) = servidor
+        .transacao(
+            "txn-sem-agente",
+            &json!({
+                "events": [{
+                    "type": "m.room.message",
+                    "room_id": SALA,
+                    "sender": ATENDENTE,
+                    "event_id": "$sem-agente:matrix-dev.local",
+                    "content": {
+                        "msgtype": "m.image",
+                        "body": "foto.png",
+                        "url": "mxc://matrix-dev.local/sem-agente"
+                    }
+                }]
+            }),
+        )
+        .await;
+    assert_eq!(
+        status,
+        StatusHttp::OK,
+        "sem assinatura é falha relatada, não erro de transporte"
+    );
+
+    // Nada foi escrito na sala e nada foi ao cliente.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(
+        cenario.escritas_no_synapse().is_empty(),
+        "sem fantasma do agente não há aviso na sala: {:?}",
+        cenario.escritas_no_synapse()
+    );
+    assert!(
+        cenario.envios_no_whatsapp().is_empty(),
+        "o arquivo não vai ao cliente"
+    );
+    assert_eq!(
+        servidor
+            .entrega
+            .contadores()
+            .midias_sem_assinatura
+            .load(Ordering::SeqCst),
+        1,
+        "o caso é contado para aparecer na operação"
+    );
+}
+
+#[tokio::test]
 async fn token_do_synapse_e_do_harness_nao_vazam_para_o_cliente_nem_para_a_sala() {
     let cenario = Cenario::novo("canario").await;
     let porta = Arc::new(PortaDoHarness::nova(Arc::clone(&cenario.store)));
@@ -1170,9 +1293,16 @@ async fn token_do_synapse_e_do_harness_nao_vazam_para_o_cliente_nem_para_a_sala(
             .is_some_and(|valor| valor == format!("Bearer {AS_TOKEN}")),
         "o token do Harness viaja no cabeçalho Authorization"
     );
+    // O aviso sai em nome do **fantasma do agente**: o atendente humano está fora do namespace do
+    // Application Service e o Synapse de verdade recusaria o disfarce com `403 M_FORBIDDEN`.
+    let fantasma = cenario.fantasma_do_agente();
     assert_eq!(
         escritas[0].disfarcado.as_deref(),
-        Some(ATENDENTE),
-        "o aviso é escrito em nome de quem mandou o evento"
+        Some(fantasma.as_str()),
+        "o aviso é escrito em nome do fantasma do agente, nunca do atendente humano"
+    );
+    assert!(
+        !fantasma.starts_with(ATENDENTE),
+        "sanidade: o fantasma do agente é do namespace do AS, e o atendente não"
     );
 }

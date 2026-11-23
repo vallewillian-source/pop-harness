@@ -674,8 +674,12 @@ impl ClienteMatrix {
     ///   usavam. Se as duas falharem, vale a resposta da rota nova — é a que o contrato promete hoje
     ///   (medido no Synapse 1.120 do ambiente da MX-01: a rota antiga já não existe e responde
     ///   `404 M_NOT_FOUND`);
-    /// - **disfarce de usuário** (`?user_id=`), como nas demais chamadas: quem lê é o usuário que
-    ///   mandou o arquivo para a sala.
+    /// - **disfarce de usuário** (`?user_id=`), como nas demais chamadas — e o usuário tem de ser do
+    ///   **namespace do Application Service** (`@<prefixo>_…`). O Synapse recusa com
+    ///   `403 M_FORBIDDEN` ("Application service cannot masquerade as this user") quem é usuário
+    ///   comum do homeserver, que é o caso do atendente humano que manda o arquivo pelo Element.
+    ///   Quem lê é, portanto, o fantasma do agente dono da conversa (MX-44), nunca o humano que
+    ///   publicou o evento.
     ///
     /// O conteúdo, o nome e o `mxc://` não entram em log nem em mensagem de erro.
     pub async fn baixar_midia(

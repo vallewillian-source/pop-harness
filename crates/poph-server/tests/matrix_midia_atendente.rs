@@ -15,6 +15,10 @@
 //!   `*[Nome do atendente]*`;
 //! - a mensagem fica no histórico como `human`, com o anexo, e o item `file` na fila de saída tem o
 //!   payload do HR-24;
+//! - o **download** e o **aviso** saem em nome do fantasma do agente, e o Synapse falso recusa
+//!   `403 M_FORBIDDEN` quem está fora do namespace do Application Service, como o de verdade: sem
+//!   isso, assinar no nome do atendente humano passava batido aqui e só quebrava no Synapse real
+//!   (foi o que o aceite da fase 2 pegou);
 //! - reentrega do mesmo evento (transação repetida ou transação nova) não gera segundo envio;
 //! - arquivo acima de 16 MB e tipo recusado viram aviso na sala, **sem** envio ao cliente;
 //! - conversa encerrada não envia o arquivo e avisa na sala;
@@ -91,6 +95,32 @@ struct Escrita {
     sala: String,
     tipo: String,
     corpo: Value,
+    /// `?user_id=` com que o evento foi escrito (o fantasma que assinou).
+    disfarce: Option<String>,
+}
+
+/// Namespace do Application Service no registro do ambiente (`@<prefixo>_.*`). O Synapse de
+/// verdade só deixa o `as_token` personificar quem casa com ele; quem está fora recebe
+/// `403 M_FORBIDDEN` ("Application service cannot masquerade as this user").
+const NAMESPACE: &str = "@ph_";
+
+/// O Synapse aceitaria este disfarce? Sem `?user_id=` a chamada age como o bot do AS, que é do
+/// namespace.
+fn pode_personificar(usuario: Option<&str>) -> bool {
+    match usuario {
+        None => true,
+        Some(usuario) => usuario.starts_with(NAMESPACE),
+    }
+}
+
+fn recusa_de_disfarce() -> (StatusCode, Json<Value>) {
+    (
+        StatusCode::FORBIDDEN,
+        Json(json!({
+            "errcode": "M_FORBIDDEN",
+            "error": "Application service cannot masquerade as this user"
+        })),
+    )
 }
 
 #[derive(Clone, Default)]
@@ -101,6 +131,10 @@ struct SynapseFalso {
     midias: Arc<Mutex<HashMap<String, Vec<u8>>>>,
     /// Ids que o download deve recusar com um status (o Synapse fora do ar, por exemplo).
     erros: Arc<Mutex<HashMap<String, u16>>>,
+    /// `?user_id=` de cada download de mídia, na ordem (o fantasma que baixou).
+    downloads: Arc<Mutex<Vec<Option<String>>>>,
+    /// Downloads recusados pelo namespace (o pedido não chegou ao conteúdo).
+    recusas_de_disfarce: Arc<Mutex<u64>>,
 }
 
 async fn perfil_falso(
@@ -123,12 +157,22 @@ async fn perfil_falso(
 async fn enviar_falso(
     State(falso): State<SynapseFalso>,
     Path((sala, tipo, txn)): Path<(String, String, String)>,
-    Query(_consulta): Query<HashMap<String, String>>,
+    Query(consulta): Query<HashMap<String, String>>,
     Json(corpo): Json<Value>,
 ) -> (StatusCode, Json<Value>) {
+    let disfarce = consulta.get("user_id").cloned();
+    if !pode_personificar(disfarce.as_deref()) {
+        *falso.recusas_de_disfarce.lock().unwrap() += 1;
+        return recusa_de_disfarce();
+    }
     let mut escritas = falso.escritas.lock().unwrap();
     let posicao = escritas.len() + 1;
-    escritas.push(Escrita { sala, tipo, corpo });
+    escritas.push(Escrita {
+        sala,
+        tipo,
+        corpo,
+        disfarce,
+    });
     let _ = txn;
     (
         StatusCode::OK,
@@ -138,15 +182,30 @@ async fn enviar_falso(
 
 /// Rota nova de download (`/_matrix/client/v1/media/download/{servidor}/{id}`) e a depreciada —
 /// o Synapse atual só atende a nova, então o falso serve as duas: é o caminho principal que interessa.
-async fn baixar_falso_novo(state: State<SynapseFalso>, path: Path<(String, String)>) -> Response {
-    baixar_falso(state, path).await
+async fn baixar_falso_novo(
+    state: State<SynapseFalso>,
+    path: Path<(String, String)>,
+    Query(consulta): Query<HashMap<String, String>>,
+) -> Response {
+    baixar_falso(state, path, Query(consulta)).await
 }
 
 /// `GET /_matrix/media/v3/download/{servidor}/{id}`: o conteúdo da mídia, ou `404 M_NOT_FOUND`.
+///
+/// Como o Synapse de verdade, recusa `403 M_FORBIDDEN` quando o `?user_id=` está fora do namespace
+/// do Application Service: é o que impede o defeito de "baixar no nome do atendente humano" de
+/// passar batido no teste.
 async fn baixar_falso(
     State(falso): State<SynapseFalso>,
     Path((_servidor, id)): Path<(String, String)>,
+    Query(consulta): Query<HashMap<String, String>>,
 ) -> Response {
+    let disfarce = consulta.get("user_id").cloned();
+    falso.downloads.lock().unwrap().push(disfarce.clone());
+    if !pode_personificar(disfarce.as_deref()) {
+        *falso.recusas_de_disfarce.lock().unwrap() += 1;
+        return recusa_de_disfarce().into_response();
+    }
     if let Some(status) = falso.erros.lock().unwrap().get(&id).copied() {
         return (
             StatusCode::from_u16(status).expect("status válido"),
@@ -495,6 +554,33 @@ impl Cenario {
         self.evo.envios.lock().unwrap().clone()
     }
 
+    /// O fantasma do agente dono da conversa: quem o Synapse aceita personificar (namespace do AS)
+    /// e quem está na sala. É ele que baixa o arquivo e assina o aviso.
+    fn fantasma_do_agente(&self) -> String {
+        let agente = self
+            .store
+            .conversas()
+            .obter(self.org, self.conversa)
+            .expect("lê a conversa")
+            .agent_id;
+        IdsFantasmas::novo(PREFIXO, SERVER_NAME)
+            .expect("ids dos fantasmas")
+            .agente(&agente.to_string())
+            .expect("fantasma do agente")
+            .user_id()
+            .to_owned()
+    }
+
+    /// `?user_id=` de cada download de mídia que o Synapse falso recebeu.
+    fn downloads(&self) -> Vec<Option<String>> {
+        self.synapse.downloads.lock().unwrap().clone()
+    }
+
+    /// Quantos pedidos o Synapse falso recusou por disfarce fora do namespace do AS.
+    fn recusas_de_disfarce(&self) -> u64 {
+        *self.synapse.recusas_de_disfarce.lock().unwrap()
+    }
+
     fn avisos_na_sala(&self) -> Vec<Escrita> {
         self.synapse.escritas.lock().unwrap().clone()
     }
@@ -641,13 +727,27 @@ fn decodificar_base64(texto: &str) -> Vec<u8> {
     saida
 }
 
-/// Corpo do aviso escrito na sala, se houver exatamente um.
+/// Corpo do aviso escrito na sala, se houver exatamente um — conferindo **quem assinou**.
+///
+/// O aviso tem de sair em nome do fantasma do agente: o atendente humano está fora do namespace do
+/// Application Service, e o Synapse de verdade recusaria o disfarce com `403 M_FORBIDDEN` (o
+/// atendente ficaria sem aviso nenhum). O Synapse falso daqui faz a mesma recusa.
 fn unico_aviso(cenario: &Cenario) -> String {
     let avisos = cenario.avisos_na_sala();
     assert_eq!(avisos.len(), 1, "esperava um aviso na sala: {avisos:?}");
     assert_eq!(avisos[0].sala, SALA, "o aviso vai para a sala do atendente");
     assert_eq!(avisos[0].tipo, "m.room.message");
     assert_eq!(avisos[0].corpo["msgtype"], json!("m.notice"));
+    assert_eq!(
+        avisos[0].disfarce.as_deref(),
+        Some(cenario.fantasma_do_agente().as_str()),
+        "o aviso é assinado pelo fantasma do agente, nunca pelo atendente humano"
+    );
+    assert_eq!(
+        cenario.recusas_de_disfarce(),
+        0,
+        "nenhum pedido pode ter sido recusado por disfarce fora do namespace do AS"
+    );
     avisos[0].corpo["body"]
         .as_str()
         .expect("corpo do aviso é texto")
@@ -745,6 +845,20 @@ async fn imagem_e_pdf_do_element_chegam_ao_whatsapp_com_a_legenda_do_atendente()
         cenario.avisos_na_sala()
     );
 
+    // O download saiu em nome do fantasma do agente: o atendente humano está fora do namespace do
+    // Application Service e o Synapse recusaria o disfarce com `403 M_FORBIDDEN`.
+    let fantasma = cenario.fantasma_do_agente();
+    assert_eq!(
+        cenario.downloads(),
+        vec![Some(fantasma.clone()), Some(fantasma)],
+        "um download por arquivo, os dois disfarçados do fantasma do agente"
+    );
+    assert_eq!(
+        cenario.recusas_de_disfarce(),
+        0,
+        "nenhum pedido recusado por disfarce"
+    );
+
     // Histórico: duas mensagens `human`, com anexo e sem texto.
     let mensagens = cenario.messages();
     assert_eq!(mensagens.len(), 2);
@@ -824,6 +938,52 @@ async fn imagem_e_pdf_do_element_chegam_ao_whatsapp_com_a_legenda_do_atendente()
     let para_o_cliente = serde_json::to_string(&corpos).expect("serializa os envios");
     assert!(!para_o_cliente.contains(HS_TOKEN));
     assert!(!para_o_cliente.contains(AS_TOKEN));
+}
+
+/// O defeito que o aceite da fase 2 pegou, preso no teste: o Application Service não pode
+/// personificar o atendente humano, e o Synapse falso precisa recusar isso como o de verdade.
+///
+/// Com o falso permissivo (o que existia antes), a MX-44 passava aqui e só quebrava no Synapse real:
+/// o download voltava `403 M_FORBIDDEN`, nenhum arquivo chegava ao cliente e o aviso — que usava o
+/// mesmo remetente — também não aparecia. Aqui as duas metades ficam provadas: recusa para o
+/// humano, conteúdo inteiro para o fantasma do agente.
+#[tokio::test]
+async fn synapse_falso_recusa_disfarce_de_humano_e_entrega_para_o_fantasma_do_agente() {
+    let cenario = Cenario::novo("disfarce").await;
+    let url = cenario.publicar("png-disfarce", PNG);
+    let fantasma = cenario.fantasma_do_agente();
+    let cliente = ClienteMatrix::novo(
+        ConfigCliente::novo(
+            cenario.url_synapse.clone(),
+            SERVER_NAME.to_owned(),
+            Segredo::new(AS_TOKEN.to_owned()),
+        )
+        .expect("config do cliente do Matrix"),
+    )
+    .expect("cliente do Matrix");
+
+    let negado = cliente
+        .baixar_midia(ATENDENTE, &url, poph_matrix::midia::LIMITE_MIDIA_BYTES)
+        .await
+        .expect_err("o humano está fora do namespace do Application Service");
+    assert!(
+        !negado.transitorio(),
+        "recusa por namespace é definitiva: {negado:?}"
+    );
+    assert_eq!(
+        cenario.recusas_de_disfarce(),
+        1,
+        "o Synapse falso recusou o disfarce de humano, como o de verdade"
+    );
+
+    let bytes = cliente
+        .baixar_midia(&fantasma, &url, poph_matrix::midia::LIMITE_MIDIA_BYTES)
+        .await
+        .unwrap_or_else(|erro| panic!("o fantasma do agente baixa o arquivo ({erro:?})"));
+    assert_eq!(
+        bytes, PNG,
+        "o conteúdo desce inteiro pelo fantasma do agente"
+    );
 }
 
 #[tokio::test]
