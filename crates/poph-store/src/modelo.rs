@@ -1046,6 +1046,64 @@ pub struct FiltroFluxos {
     pub status: Option<Status>,
 }
 
+// ───────────────────── Revisão publicada do fluxo (FX-09) ─────────────────────
+
+/// Revisão publicada de um fluxo (`fluxo_revisoes`): o que o motor executa, **imutável** (PRD §6.2,
+/// decisão L9).
+///
+/// Publicar acrescenta; não existe operação que altere uma revisão já gravada. Quem está num
+/// atendimento continua na revisão em que começou (`fluxo_execucoes.revisao_id`), e só os
+/// atendimentos novos pegam a mais recente.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RevisaoDeFluxo {
+    /// Id.
+    pub id: RevisaoId,
+    /// Org dona.
+    pub org_id: OrgId,
+    /// Fluxo a que a revisão pertence.
+    pub fluxo_id: FluxoId,
+    /// Número da revisão dentro do fluxo (1, 2, 3…), único por fluxo.
+    pub numero: u64,
+    /// Texto do script exatamente como foi publicado.
+    pub fonte: String,
+    /// sha256 (hexadecimal minúsculo) de `fonte`: prova que a IR corresponde ao texto.
+    pub fonte_sha256: String,
+    /// A IR já validada, em JSON (o repositório não compila nada).
+    pub definicao_json: String,
+    /// Versão do esquema da IR (`docs/FLUXOS_LINGUAGEM.md` §8).
+    pub schema_versao: u32,
+    /// Quando foi publicada (ms).
+    pub publicada_em: i64,
+    /// Tipo de quem publicou, no vocabulário de `audit_log.actor_kind`.
+    pub publicada_por: String,
+    /// Resoluções feitas no instante da publicação (JSON objeto; vazio é `{}`).
+    pub resolucoes_json: String,
+}
+
+/// O que publicar uma revisão precisa.
+///
+/// Agrupado num struct (e não em oito posicionais) no padrão de [`MudancaFluxo`] e
+/// [`InicioDeExecucao`]: a assinatura do repositório fica legível e o `clippy::too_many_arguments`
+/// não entra em cena.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PublicacaoDeRevisao {
+    /// `version` do fluxo que o chamador leu (`If-Match`). Diferente da gravada → `412`.
+    pub esperada: u64,
+    /// Texto do script exatamente como publicado; vira a `fonte` da revisão **e** o rascunho.
+    pub fonte: String,
+    /// A IR já validada e serializada em JSON (o repositório não compila nem valida fluxo).
+    pub definicao_json: String,
+    /// Versão do esquema da IR. Ausente é recusado: revisão sem `schema_versao` não entra.
+    pub schema_versao: Option<u32>,
+    /// Resoluções do instante da publicação (ex.: nome de departamento → id). Vazio vira `{}`.
+    pub resolucoes_json: String,
+    /// Tipo de quem publica, no vocabulário de `audit_log.actor_kind` (`admin_token`, `system`,
+    /// `plugin`, `cli`, `matrix_user`).
+    pub ator_tipo: String,
+    /// Id de quem publica (id do token, usuário do Matrix). Vai para `audit_log.actor_id`.
+    pub ator_id: Option<String>,
+}
+
 // ─────────────────────────── Execução de fluxo (FX-20) ───────────────────────────
 
 /// Execução de um fluxo numa Ficha, como o banco a guarda (PRD §7.1).

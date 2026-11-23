@@ -2,7 +2,8 @@
 //!
 //! O fluxo é da organização; o agente só usa o que estiver em `agente_fluxos` (padrão negado). Este
 //! arquivo guarda o cadastro, o rascunho, a permissão e as regras de teto, de organização e de
-//! exclusão. Não compila script e não publica revisão: isso é FX-09 (publicação) e FX-10 (compilador).
+//! exclusão. Não compila script e não publica revisão: a publicação é a FX-09
+//! (`repos::revisoes::Revisoes::publicar_revisao`) e o compilador, a FX-10.
 //!
 //! Três regras que o repositório garante, além do que o banco garante:
 //!

@@ -230,7 +230,7 @@ pub fn marcar_segredos(
 }
 
 /// sha256 em hexadecimal minúsculo.
-fn sha256_hex(bytes: &[u8]) -> String {
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     hasher

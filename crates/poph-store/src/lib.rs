@@ -287,6 +287,11 @@ impl Store {
         Fluxos(self)
     }
 
+    /// Revisões publicadas do fluxo: publicar e ler (FX-09).
+    pub fn revisoes(&self) -> Revisoes<'_> {
+        Revisoes(self)
+    }
+
     /// Execuções de fluxo, etapas percorridas e efeitos (FX-20).
     pub fn execucoes(&self) -> Execucoes<'_> {
         Execucoes(self)

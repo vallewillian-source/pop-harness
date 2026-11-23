@@ -33,6 +33,7 @@ mod mensagens;
 mod orgaos;
 mod produtos;
 mod retencao;
+mod revisoes;
 mod tokens;
 mod turnos;
 
@@ -63,6 +64,7 @@ pub use mensagens::{LIMITE_DESDE, MensagemDesde, Mensagens};
 pub use orgaos::Orgaos;
 pub use produtos::{Produtos, ReferenciasProduto};
 pub use retencao::{Retencao, VarreduraRetencao};
+pub use revisoes::{ACAO_PUBLICAR, ATORES_DE_AUDITORIA, LIMITE_REVISOES, Revisoes};
 pub use tokens::Tokens;
 pub use turnos::{Auditoria, Turnos};
 
