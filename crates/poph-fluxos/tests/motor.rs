@@ -8,12 +8,21 @@
 
 use poph_fluxos::ir::{Acao, Campo, Destino, Etapa, Fim, Fluxo, Gatilho, Ir};
 use poph_fluxos::motor::{
-    Campos, Estado, atores_exigidos, campos_faltando, executar_acao, iniciar,
+    Campos, Contexto, Estado, atores_exigidos, campos_faltando, executar_acao, iniciar,
 };
+use poph_fluxos::regras::Avaliador;
 use poph_types::{AtorAcao, DomainError, StatusExecucao, TipoCampo, TipoEventoFicha};
 use serde_json::{Value as Json, json};
+use std::sync::OnceLock;
 
 // ------------------------------------------------------------------ auxiliares
+/// Contexto das chamadas do motor: sem Ficha, sem cliente e com o avaliador só de combinadores.
+///
+/// Os testes de decisão montam o seu com o avaliador que tem as `def` do fluxo.
+fn contexto() -> Contexto<'static> {
+    static AVALIADOR: OnceLock<Avaliador> = OnceLock::new();
+    Contexto::novo(AVALIADOR.get_or_init(Avaliador::sem_funcoes))
+}
 
 fn campo(id: &str, tipo: TipoCampo, obrigatorio: bool, opcoes: &[&str]) -> Campo {
     Campo {
@@ -220,6 +229,7 @@ fn acao_valida_grava_os_campos_e_avanca_para_a_etapa_de_destino() {
         &campos(json!({ "endereco": "Rua das Flores, 10" })),
         AtorAcao::Agente,
         None,
+        &contexto(),
     )
     .expect("a ação é válida");
 
@@ -268,12 +278,21 @@ fn dados_das_etapas_anteriores_continuam_na_execucao() {
         &campos(json!({ "endereco": "Rua A" })),
         AtorAcao::Agente,
         None,
+        &contexto(),
     )
     .expect("primeira ação")
     .novo_estado;
 
-    let resultado = executar_acao(&ir, &estado, "ok", &sem_campos(), AtorAcao::Agente, None)
-        .expect("segunda ação");
+    let resultado = executar_acao(
+        &ir,
+        &estado,
+        "ok",
+        &sem_campos(),
+        AtorAcao::Agente,
+        None,
+        &contexto(),
+    )
+    .expect("segunda ação");
 
     assert_eq!(
         resultado.novo_estado.dados.get("coleta"),
@@ -303,6 +322,7 @@ fn o_texto_do_campo_e_gravado_sem_os_espacos_das_pontas() {
         &campos(json!({ "endereco": "  Rua B  " })),
         AtorAcao::Agente,
         None,
+        &contexto(),
     )
     .expect("a ação é válida");
 
@@ -326,6 +346,7 @@ fn campo_exigido_faltando_devolve_a_lista_do_que_falta() {
         &sem_campos(),
         AtorAcao::Agente,
         None,
+        &contexto(),
     )
     .expect_err("`endereco` é exigido");
 
@@ -367,6 +388,7 @@ fn exige_de_campo_que_a_etapa_nao_declara_avisa_isso() {
         &sem_campos(),
         AtorAcao::Agente,
         None,
+        &contexto(),
     )
     .expect_err("`cep` não existe na etapa");
 
@@ -407,6 +429,7 @@ fn o_campo_informado_antes_conta_para_o_exige_da_acao_seguinte() {
         &campos(json!({ "endereco": "Rua C" })),
         AtorAcao::Agente,
         None,
+        &contexto(),
     )
     .expect("anotar o campo")
     .novo_estado;
@@ -418,6 +441,7 @@ fn o_campo_informado_antes_conta_para_o_exige_da_acao_seguinte() {
         &sem_campos(),
         AtorAcao::Agente,
         None,
+        &contexto(),
     )
     .expect("o campo já estava gravado");
     assert_eq!(
@@ -453,6 +477,7 @@ fn campo_com_tipo_errado_e_recusado_com_o_que_veio() {
         &campos(json!({ "idade": "quarenta" })),
         AtorAcao::Agente,
         None,
+        &contexto(),
     )
     .expect_err("número recebeu texto");
 
@@ -499,6 +524,7 @@ fn cada_tipo_de_campo_recusa_o_valor_que_nao_e_dele() {
         })),
         AtorAcao::Agente,
         None,
+        &contexto(),
     )
     .expect_err("todos os valores estão no tipo errado");
 
@@ -548,6 +574,7 @@ fn os_valores_validos_de_cada_tipo_sao_gravados() {
         })),
         AtorAcao::Agente,
         None,
+        &contexto(),
     )
     .expect("todos os valores são do tipo certo");
 
@@ -593,6 +620,7 @@ fn opcao_fora_da_lista_e_recusada_com_as_opcoes() {
         &campos(json!({ "periodo": "noite" })),
         AtorAcao::Agente,
         None,
+        &contexto(),
     )
     .expect_err("`noite` não está na lista");
 
@@ -615,6 +643,7 @@ fn campo_de_outra_etapa_e_recusado_com_os_campos_da_etapa() {
         &campos(json!({ "cep": "20000-000", "endereco": "Rua D" })),
         AtorAcao::Agente,
         None,
+        &contexto(),
     )
     .expect_err("`cep` não é campo de `coleta`");
 
@@ -638,6 +667,7 @@ fn campo_com_o_prefixo_da_etapa_e_recusado_com_a_dica() {
         &campos(json!({ "coleta.endereco": "Rua E" })),
         AtorAcao::Agente,
         None,
+        &contexto(),
     )
     .expect_err("o valor vem por id de campo, sem prefixo");
 
@@ -660,6 +690,7 @@ fn campo_obrigatorio_nao_aceita_valor_vazio() {
         &campos(json!({ "endereco": "   " })),
         AtorAcao::Agente,
         None,
+        &contexto(),
     )
     .expect_err("campo obrigatório veio vazio");
 
@@ -695,6 +726,7 @@ fn campo_opcional_aceita_nulo_e_o_campo_conta_como_vazio() {
         &campos(json!({ "bairro": Json::Null })),
         AtorAcao::Agente,
         None,
+        &contexto(),
     )
     .expect("campo opcional aceita nulo");
     assert_eq!(
@@ -710,6 +742,7 @@ fn campo_opcional_aceita_nulo_e_o_campo_conta_como_vazio() {
         &sem_campos(),
         AtorAcao::Agente,
         None,
+        &contexto(),
     )
     .expect_err("nulo não preenche");
     assert!(erros_de_campos(&erro)[0].contains("`bairro`"));
@@ -729,6 +762,7 @@ fn ator_fora_dos_atores_da_etapa_e_recusado() {
         &campos(json!({ "endereco": "Rua F" })),
         AtorAcao::Atendente,
         None,
+        &contexto(),
     )
     .expect_err("a etapa só permite o agente");
 
@@ -751,6 +785,7 @@ fn acao_restrita_ao_atendente_recusada_para_o_agente() {
         &sem_campos(),
         AtorAcao::Agente,
         None,
+        &contexto(),
     )
     .expect_err("`assumir` é do atendente");
 
@@ -775,6 +810,7 @@ fn etapa_com_dois_atores_fica_parcial_e_diz_quem_falta() {
         &campos(json!({ "resumo": "cliente quer troca" })),
         AtorAcao::Agente,
         None,
+        &contexto(),
     )
     .expect("a ação é válida");
 
@@ -816,6 +852,7 @@ fn a_etapa_avanca_quando_o_segundo_ator_age() {
         &sem_campos(),
         AtorAcao::Agente,
         None,
+        &contexto(),
     )
     .expect("primeiro ator")
     .novo_estado;
@@ -827,6 +864,7 @@ fn a_etapa_avanca_quando_o_segundo_ator_age() {
         &sem_campos(),
         AtorAcao::Atendente,
         None,
+        &contexto(),
     )
     .expect("segundo ator");
 
@@ -866,6 +904,7 @@ fn os_dois_atores_chegam_ao_mesmo_destino_em_qualquer_ordem() {
         &sem_campos(),
         AtorAcao::Agente,
         None,
+        &contexto(),
     )
     .expect("agente primeiro")
     .novo_estado;
@@ -876,6 +915,7 @@ fn os_dois_atores_chegam_ao_mesmo_destino_em_qualquer_ordem() {
         &sem_campos(),
         AtorAcao::Atendente,
         None,
+        &contexto(),
     )
     .expect("atendente depois");
 
@@ -887,6 +927,7 @@ fn os_dois_atores_chegam_ao_mesmo_destino_em_qualquer_ordem() {
         &sem_campos(),
         AtorAcao::Atendente,
         None,
+        &contexto(),
     )
     .expect("atendente primeiro")
     .novo_estado;
@@ -897,6 +938,7 @@ fn os_dois_atores_chegam_ao_mesmo_destino_em_qualquer_ordem() {
         &sem_campos(),
         AtorAcao::Agente,
         None,
+        &contexto(),
     )
     .expect("agente depois");
 
@@ -942,6 +984,7 @@ fn acao_irrestrita_avanca_sozinha() {
         &sem_campos(),
         AtorAcao::Agente,
         None,
+        &contexto(),
     )
     .expect("a ação irrestrita é válida");
 
@@ -991,6 +1034,7 @@ fn a_acao_irrestrita_ainda_espera_a_acao_restrita_do_outro_ator() {
         &sem_campos(),
         AtorAcao::Agente,
         None,
+        &contexto(),
     )
     .expect("a ação irrestrita é válida");
     assert_eq!(
@@ -1010,6 +1054,7 @@ fn a_acao_irrestrita_ainda_espera_a_acao_restrita_do_outro_ator() {
         &sem_campos(),
         AtorAcao::Atendente,
         None,
+        &contexto(),
     )
     .expect("o atendente age");
     assert_eq!(
@@ -1051,6 +1096,7 @@ fn acao_que_vai_para_o_fim_e_decisiva_mesmo_com_outro_ator_pendente() {
         &sem_campos(),
         AtorAcao::Agente,
         None,
+        &contexto(),
     )
     .expect("a ação é válida");
 
@@ -1068,8 +1114,18 @@ fn acao_que_vai_para_o_fim_e_decisiva_mesmo_com_outro_ator_pendente() {
         vec![
             TipoEventoFicha::AcaoExecutada,
             TipoEventoFicha::EtapaConcluida,
+            TipoEventoFicha::ExecucaoConcluida,
         ],
-        "sem `etapa_entrou`: o destino é o fim, não uma etapa"
+        "sem `etapa_entrou`: o destino é o fim, que conclui a execução"
+    );
+    assert_eq!(
+        resultado.novo_estado.status,
+        StatusExecucao::Concluida,
+        "o fim conclui a execução na mesma passagem"
+    );
+    assert!(
+        !resultado.encerra_atendimento,
+        "este fim não encerra o atendimento"
     );
 }
 
@@ -1102,6 +1158,7 @@ fn a_etapa_com_acao_restrita_de_um_ator_so_nao_espera_o_outro() {
         &sem_campos(),
         AtorAcao::Agente,
         None,
+        &contexto(),
     )
     .expect("a ação é válida");
 
@@ -1178,6 +1235,7 @@ fn repetir_a_chave_nao_gera_segundo_evento() {
         &entrada,
         AtorAcao::Agente,
         Some("chave-1"),
+        &contexto(),
     )
     .expect("primeira passagem");
     assert!(!primeira.repetida);
@@ -1190,6 +1248,7 @@ fn repetir_a_chave_nao_gera_segundo_evento() {
         &entrada,
         AtorAcao::Agente,
         Some("chave-1"),
+        &contexto(),
     )
     .expect("a repetição não é erro");
 
@@ -1209,6 +1268,7 @@ fn repetir_a_chave_nao_gera_segundo_evento() {
         &sem_campos(),
         AtorAcao::Agente,
         Some("chave-2"),
+        &contexto(),
     )
     .expect("chave nova aplica");
     assert!(!terceira.repetida);
@@ -1226,6 +1286,7 @@ fn a_chave_repetida_devolve_quem_faltava_quando_a_etapa_ficou_parcial() {
         &sem_campos(),
         AtorAcao::Agente,
         Some("chave-triagem"),
+        &contexto(),
     )
     .expect("primeira passagem");
     assert_eq!(primeira.aguardando, vec![AtorAcao::Atendente]);
@@ -1237,6 +1298,7 @@ fn a_chave_repetida_devolve_quem_faltava_quando_a_etapa_ficou_parcial() {
         &sem_campos(),
         AtorAcao::Agente,
         Some("chave-triagem"),
+        &contexto(),
     )
     .expect("repetição");
 
@@ -1263,6 +1325,7 @@ fn acao_inexistente_devolve_as_validas_e_nao_muda_nada() {
         &campos(json!({ "endereco": "Rua I" })),
         AtorAcao::Agente,
         None,
+        &contexto(),
     )
     .expect_err("`concluir` não existe");
 
@@ -1302,6 +1365,7 @@ fn etapa_sem_acao_avisa_que_nao_tem_saida() {
         &sem_campos(),
         AtorAcao::Agente,
         None,
+        &contexto(),
     )
     .expect_err("a etapa não tem ação");
     assert!(motivo(&erro).contains("nenhuma (a etapa não tem saída)"));
@@ -1322,32 +1386,64 @@ fn execucao_ja_encerrada_recusa_acao() {
         &campos(json!({ "endereco": "Rua J" })),
         AtorAcao::Agente,
         None,
+        &contexto(),
     )
     .expect_err("execução concluída não aceita ação");
     assert!(motivo(&erro).contains("concluida"));
 }
 
 #[test]
-fn execucao_parada_numa_decisao_recusa_acao_em_vez_de_adivinhar() {
-    let ir = fluxo_simples();
+fn execucao_parada_numa_decisao_resolve_antes_de_executar_a_acao() {
+    // Estado gravado por uma versão anterior do motor: a execução ficou parada na decisão. Desde a
+    // FX-14 o motor atravessa a decisão na mesma passagem, então a ação é aplicada na etapa em que
+    // a decisão desemboca (o caso de teste da FX-13 que exigia recusa virou este).
+    let mut ir = fluxo_simples();
+    ir.decisoes = vec![poph_fluxos::ir::Decisao {
+        id: "escolher_rota".to_owned(),
+        // Sem endereço ainda, a decisão manda para a coleta; com ele, para a confirmação.
+        se: poph_fluxos::ir::Regra::Vazio {
+            campo: "coleta.endereco".to_owned(),
+        },
+        entao: Destino::Etapa {
+            id: "coleta".to_owned(),
+        },
+        senao: Destino::Etapa {
+            id: "confirmacao".to_owned(),
+        },
+    }];
     let mut estado = iniciar(&ir).expect("início");
     estado.no_atual = Destino::Decisao {
         id: "escolher_rota".to_owned(),
     };
 
-    let erro = executar_acao(
+    let resultado = executar_acao(
         &ir,
         &estado,
         "confirmar",
-        &sem_campos(),
+        &campos(json!({ "endereco": "Rua das Flores, 10" })),
         AtorAcao::Agente,
         None,
+        &contexto(),
     )
-    .expect_err("decisão é da FX-14");
-    let texto = motivo(&erro);
-    assert!(
-        texto.contains("decisão `escolher_rota`") && texto.contains("resolvida"),
-        "{texto}"
+    .expect("a decisão é resolvida e a ação vale na etapa de destino");
+
+    assert_eq!(
+        tipos(&resultado),
+        vec![
+            TipoEventoFicha::DecisaoResolvida,
+            TipoEventoFicha::EtapaEntrou,
+            TipoEventoFicha::CamposPreenchidos,
+            TipoEventoFicha::AcaoExecutada,
+            TipoEventoFicha::EtapaConcluida,
+            TipoEventoFicha::EtapaEntrou,
+        ],
+        "a decisão é resolvida antes da ação"
+    );
+    assert_eq!(
+        resultado.novo_estado.no_atual,
+        Destino::Etapa {
+            id: "confirmacao".to_owned()
+        }
     );
 }
 
@@ -1361,8 +1457,16 @@ fn acao_para_etapa_inexistente_e_ir_divergente() {
     )]);
     let estado = iniciar(&ir).expect("início");
 
-    let erro = executar_acao(&ir, &estado, "ok", &sem_campos(), AtorAcao::Agente, None)
-        .expect_err("o destino não existe na estrutura");
+    let erro = executar_acao(
+        &ir,
+        &estado,
+        "ok",
+        &sem_campos(),
+        AtorAcao::Agente,
+        None,
+        &contexto(),
+    )
+    .expect_err("o destino não existe na estrutura");
     assert!(matches!(erro, DomainError::IrDivergente { .. }), "{erro:?}");
 }
 
@@ -1381,6 +1485,7 @@ fn a_mesma_entrada_produz_o_mesmo_resultado() {
         &entrada,
         AtorAcao::Agente,
         Some("chave"),
+        &contexto(),
     )
     .expect("primeira");
     let segundo = executar_acao(
@@ -1390,6 +1495,7 @@ fn a_mesma_entrada_produz_o_mesmo_resultado() {
         &entrada,
         AtorAcao::Agente,
         Some("chave"),
+        &contexto(),
     )
     .expect("segunda");
 
@@ -1422,6 +1528,7 @@ fn a_ir_dourada_de_agendar_visita_roda_do_inicio_ao_fim_da_etapa() {
         &campos(json!({ "endereco": "Rua das Flores, 10", "periodo": "manhã" })),
         AtorAcao::Agente,
         Some("acao-1"),
+        &contexto(),
     )
     .expect("a ação confirmar é válida");
     assert_eq!(
@@ -1438,6 +1545,7 @@ fn a_ir_dourada_de_agendar_visita_roda_do_inicio_ao_fim_da_etapa() {
         &sem_campos(),
         AtorAcao::Agente,
         Some("acao-2"),
+        &contexto(),
     )
     .expect("a ação ok é válida");
     assert!(
@@ -1460,6 +1568,7 @@ fn o_dado_do_cliente_e_gravado_como_valor_e_nunca_interpretado() {
         &campos(json!({ "endereco": cliente })),
         AtorAcao::Agente,
         None,
+        &contexto(),
     )
     .expect("o texto do cliente é só um texto");
 
@@ -1482,6 +1591,7 @@ fn o_estado_sobrevive_a_ida_e_volta_em_json() {
         &campos(json!({ "endereco": "Rua K" })),
         AtorAcao::Agente,
         Some("chave"),
+        &contexto(),
     )
     .expect("ação válida");
 

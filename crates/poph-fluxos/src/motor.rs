@@ -1,4 +1,5 @@
-//! Motor de execução de fluxos: iniciar a execução, registrar campos e executar uma ação (FX-13).
+//! Motor de execução de fluxos: iniciar, registrar campos, executar ação, atravessar decisões,
+//! concluir num `fim(...)`, abandonar e descrever os efeitos (FX-13 e FX-14).
 //!
 //! As funções aqui são **puras**: recebem a estrutura compilada (a IR da revisão publicada) e o
 //! estado da execução que veio do banco, e devolvem o estado novo com os eventos que a operação
@@ -9,15 +10,49 @@
 //! # O que esta tarefa faz e o que não faz
 //!
 //! - **Faz:** [`iniciar`] (execução nova na etapa de `inicio`), [`executar_acao`] (confere ator,
-//!   campos e o critério `auto`; grava os campos; avança a execução quando a etapa terminou) e as
-//!   consultas que o prompt e o banco precisam ([`atores_exigidos`], [`campos_faltando`],
-//!   [`dados_da_etapa`]).
-//! - **Não faz (FX-14):** resolver decisões, concluir a execução num `fim(...)`, abandonar e
-//!   produzir os efeitos. Por isso [`Resultado::efeitos`] sai sempre vazio nesta tarefa — quem o
-//!   preenche é a FX-14, com o texto já interpolado e a chave de idempotência — e uma ação que cai
-//!   em decisão ou em fim deixa o estado **no nó de destino**, ainda `ativa`, para a FX-14 seguir.
-//! - **Não faz (FX-20):** transação, `version`, isolamento entre Ficha e fluxo, escrita do evento.
-//!   O motor descreve; o store grava.
+//!   campos e o critério `auto`; grava os campos; avança a execução quando a etapa terminou),
+//!   [`abandonar`], a travessia de **decisões encadeadas** até um nó de etapa ou de fim, a
+//!   conclusão num `fim(...)` com o pedido de encerramento quando o fim pede, a produção dos
+//!   **efeitos** com o texto resolvido e a chave de idempotência, e as consultas que o prompt e o
+//!   banco precisam ([`atores_exigidos`], [`campos_faltando`], [`dados_da_etapa`],
+//!   [`efeitos_de_entrada`]).
+//! - **Não faz (FX-20):** transação, `version`, isolamento entre Ficha e fluxo, escrita do evento,
+//!   fechar conversa ou Ficha. O motor descreve; o store grava. Em particular, chegar a um
+//!   `fim(encerra_atendimento=True)` só **pede** o encerramento ([`Resultado::encerra_atendimento`]):
+//!   quem fecha é o chamador, na mesma transação.
+//! - **Não faz (FX-21):** entregar efeito. O motor só descreve o que fazer ([`EfeitoProduzido`]),
+//!   com a chave que torna a criação idempotente; a fila e as tentativas são do store.
+//!
+//! # Decisão, limite e ciclo
+//!
+//! Uma decisão é avaliada **a partir dos dados já registrados** ([`crate::regras`]) e segue o ramo
+//! na mesma passagem: não existe ação intermediária automática nem busca em largura. Cada decisão
+//! resolvida vira um evento `decisao_resolvida` com o ramo escolhido.
+//!
+//! - Até [`MAX_SALTOS_DECISAO`] decisões encadeadas (ou o teto de
+//!   [`Contexto::max_saltos_decisao`]): a execução segue normalmente.
+//! - Ciclo de decisões (a mesma decisão duas vezes na mesma passagem) ou estouro do teto: a
+//!   execução fica **`falha`** com o motivo em [`Estado::motivo`] e no evento `execucao_falhou`. Não
+//!   é erro da chamada: o fluxo publicado é que está defeituoso (o validador recusa o ciclo com
+//!   `FLX23` na publicação), e a Ficha continua aberta.
+//! - Regra que não pôde ser avaliada (`regra_invalida`, `regra_limite`): mesmo desfecho — execução
+//!   `falha`, motivo gravado, Ficha aberta (`FLXR01`/`FLXR03`).
+//! - Nó de destino que não existe na estrutura (`etapa` ou `decisao`): [`DomainError::IrDivergente`].
+//!   A IR gravada diverge do que o motor sabe conduzir e o motor falha fechado, sem chutar.
+//!
+//! # Efeitos
+//!
+//! Os efeitos declarados em `acoes[].efeitos` (disparados depois de a transição ser aceita) e em
+//! `etapas[].ao_entrar` (ao entrar na etapa, antes de qualquer campo dela) saem em
+//! [`Resultado::efeitos`], na ordem declarada, já com o texto resolvido e com a **chave** que os
+//! torna idempotentes: `nó + índice` (`acao:<etapa>.<acao>/0`, `etapa:<id>/0`). A execução entra na
+//! chave pelo índice único do banco (`org_id, execucao_id, chave`), então o motor não precisa do id
+//! da execução para descrever o efeito.
+//!
+//! Interpolação: `{etapa.campo}` vira o texto canônico do valor (`FLUXOS_LINGUAGEM.md` §5),
+//! `{ficha.id}` e `{cliente.peer}` vêm do [`Contexto`], e **variável que não existe vira texto
+//! vazio** (`FLX59` avisa disso na publicação). O `para` do `notificar_whatsapp` e o nome do
+//! departamento do `encaminhar` são identificadores, não texto: não são interpolados.
 //!
 //! # Critério `auto` do avanço (PRD §6.4, paridade com `state_engine.py`)
 //!
@@ -72,7 +107,12 @@
 //!   calendário: `2026-02-30` passa. Calendário completo é de quem consome a data.
 //! - `dados[etapa]` que não seja objeto é tratado como etapa sem campo nenhum (não é erro: o motor
 //!   não conserta nem acusa dado que não é dele).
-//! - Decisão e fim **não** são resolvidos aqui: `no_atual` fica apontando para o nó e a FX-14 segue.
+//! - A chave do efeito é `nó + índice`, sem o id da execução: duas visitas à **mesma** etapa (um
+//!   fluxo que volta) geram a mesma chave e o `ao_entrar` dela não é enfileirado duas vezes. É o
+//!   que a especificação pede (uma mensagem por efeito), mas quem escrever um laço de etapas com
+//!   `mensagem_ao_cliente` no `ao_entrar` recebe o texto do cliente uma vez só.
+//! - Eleger o atendente para abandonar é do chamador: o motor registra quem abandonou, não confere
+//!   permissão.
 
 use std::collections::BTreeMap;
 
@@ -83,14 +123,67 @@ use poph_types::{
     AtorAcao, AtorEvento, DomainError, DomainResult, StatusExecucao, TipoCampo, TipoEventoFicha,
 };
 
-use crate::ir::{Campo, Destino, Efeito, Etapa, Ir};
-use crate::regras::{Dados, preenchido};
+use crate::ir::{Campo, Decisao, Destino, Efeito, Etapa, Ir};
+use crate::regras::{Avaliador, Dados, preenchido, texto_canonico};
 
 /// Valores de campo informados junto de uma ação: `campo -> valor`.
 ///
 /// As chaves são ids de campo **da etapa atual** (`campos[].id`), sem o prefixo da etapa. O que não
 /// for campo da etapa é recusado com a lista dos campos dela.
 pub type Campos = Map<String, Json>;
+
+/// Teto de decisões encadeadas numa mesma passagem (`fluxos.max_saltos_decisao`, PRD §9).
+pub const MAX_SALTOS_DECISAO: usize = 10;
+
+/// O que o motor não guarda no estado da execução e o chamador empresta.
+///
+/// São três coisas de fora: a **Ficha** e o **contato do cliente** (a execução não é dona deles, e
+/// os efeitos os citam em `{ficha.id}` e `{cliente.peer}`) e o **avaliador das regras** da revisão
+/// publicada (é ele que resolve `funcao("nome")`, com o módulo já carregado uma vez).
+///
+/// O teto de saltos vem de `fluxos.max_saltos_decisao`; o padrão é [`MAX_SALTOS_DECISAO`].
+#[derive(Debug, Clone, Copy)]
+pub struct Contexto<'a> {
+    /// Id da Ficha do atendimento (o que `{ficha.id}` resolve).
+    pub ficha_id: &'a str,
+    /// Contato do cliente na conversa (o que `{cliente.peer}` resolve).
+    pub cliente_peer: &'a str,
+    /// Avaliador das regras da revisão em uso.
+    pub avaliador: &'a Avaliador,
+    /// Teto de decisões encadeadas na mesma passagem.
+    pub max_saltos_decisao: usize,
+}
+
+impl<'a> Contexto<'a> {
+    /// Contexto mínimo: sem Ficha, sem cliente e sem `def` no avaliador.
+    pub fn novo(avaliador: &'a Avaliador) -> Self {
+        Self {
+            ficha_id: "",
+            cliente_peer: "",
+            avaliador,
+            max_saltos_decisao: MAX_SALTOS_DECISAO,
+        }
+    }
+
+    /// A Ficha do atendimento (para `{ficha.id}`).
+    pub fn com_ficha(mut self, ficha_id: &'a str) -> Self {
+        self.ficha_id = ficha_id;
+        self
+    }
+
+    /// O contato do cliente (para `{cliente.peer}`).
+    pub fn com_cliente(mut self, cliente_peer: &'a str) -> Self {
+        self.cliente_peer = cliente_peer;
+        self
+    }
+
+    /// O teto de decisões encadeadas (`fluxos.max_saltos_decisao`); o teste aperta para provar que
+    /// está ligado.
+    pub fn com_limite_de_saltos(mut self, limite: usize) -> Self {
+        self.max_saltos_decisao = limite;
+        self
+    }
+}
 
 /// Estado de uma execução de fluxo na forma **pura** que o motor lê e devolve.
 ///
@@ -109,8 +202,10 @@ pub struct Estado {
     /// Atores que já agiram **na etapa atual**, em ordem alfabética do texto (`agente`,
     /// `atendente`); zera ao entrar numa etapa nova.
     pub atores_que_agiram: Vec<AtorAcao>,
-    /// Resumo do desfecho (`fins[].resultado`), preenchido quando a execução chega ao fim (FX-14).
+    /// Resumo do desfecho (`fins[].resultado`), preenchido quando a execução chega ao fim.
     pub resultado: Option<String>,
+    /// Motivo do abandono ou da falha (`fluxo_execucoes.motivo_fim`); `None` no caminho feliz.
+    pub motivo: Option<String>,
     /// Chaves de idempotência já aplicadas, com o desfecho de cada uma.
     pub chaves: BTreeMap<String, Recibo>,
 }
@@ -138,19 +233,55 @@ pub struct Evento {
     pub payload: Json,
 }
 
-/// Desfecho de [`executar_acao`]: o estado novo, o que gravar e o que dizer ao agente.
+/// Desfecho de uma passagem do motor: o estado novo, o que gravar e o que dizer ao agente.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Resultado {
     /// Estado da execução depois da passagem (inalterado quando `repetida`).
     pub novo_estado: Estado,
-    /// Eventos a gravar, na ordem em que aconteceram: campos, ação, etapa concluída, etapa entrou.
+    /// Eventos a gravar, na ordem em que aconteceram: campos, ação, efeitos, etapa concluída,
+    /// decisões resolvidas, etapa entrou ou execução concluída.
     pub eventos: Vec<Evento>,
-    /// Efeitos a enfileirar: **vazio nesta tarefa**; a FX-14 preenche com o texto resolvido.
-    pub efeitos: Vec<Efeito>,
+    /// Efeitos a enfileirar, na ordem declarada e com o texto já resolvido.
+    pub efeitos: Vec<EfeitoProduzido>,
     /// Atores que ainda precisam agir porque a etapa ficou `parcial`; vazio quando avançou.
     pub aguardando: Vec<AtorAcao>,
     /// `true` quando a `chave_idempotencia` já tinha sido aplicada: nada mudou e nada é gravado.
     pub repetida: bool,
+    /// `true` quando a execução chegou a um `fim(encerra_atendimento=True)`: o chamador **pede** o
+    /// encerramento do atendimento (fechar conversa e Ficha é dele, na mesma transação).
+    ///
+    /// Sai `false` quando `repetida`: repetir a chave não pede nada de novo.
+    pub encerra_atendimento: bool,
+}
+
+/// Efeito declarado na IR, já com o texto resolvido e com a chave que o torna idempotente.
+///
+/// É o que a fila de efeitos (`fluxo_efeitos`, FX-21) grava: a **chave** é a identidade do efeito, e
+/// o `efeito` é o que fazer. O motor só descreve; entregar é da fila.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EfeitoProduzido {
+    /// Chave do efeito: `nó + índice` (`etapa:coleta/0`, `acao:coleta.confirmar/1`).
+    ///
+    /// A execução entra na chave pelo índice único do banco (`org_id, execucao_id, chave`), então a
+    /// mesma transição refeita não gera uma segunda mensagem.
+    pub chave: String,
+    /// Nó que declarou o efeito: `etapa:<id>` (`ao_entrar`) ou `acao:<etapa>.<ação>`.
+    pub no: String,
+    /// Posição do efeito na lista declarada (base zero).
+    pub indice: usize,
+    /// O que fazer, com o texto já interpolado.
+    pub efeito: Efeito,
+}
+
+impl EfeitoProduzido {
+    /// Tipo do efeito como a coluna `fluxo_efeitos.tipo` grava.
+    pub fn tipo(&self) -> &'static str {
+        match self.efeito {
+            Efeito::MensagemAoCliente { .. } => "mensagem_ao_cliente",
+            Efeito::NotificarWhatsapp { .. } => "notificar_whatsapp",
+            Efeito::Encaminhar { .. } => "encaminhar",
+        }
+    }
 }
 
 /// Cria a execução na etapa de `inicio`, com os dados vazios.
@@ -169,27 +300,32 @@ pub fn iniciar(ir: &Ir) -> DomainResult<Estado> {
         dados: Dados::new(),
         atores_que_agiram: Vec::new(),
         resultado: None,
+        motivo: None,
         chaves: BTreeMap::new(),
     })
 }
 
-/// Executa uma ação da etapa atual: confere ator, campos e o critério `auto`, grava os campos e
-/// avança quando a etapa terminou.
+/// Executa uma ação da etapa atual: confere ator, campos e o critério `auto`, grava os campos,
+/// atravessa as decisões e conclui quando o destino é um `fim(...)`.
 ///
 /// A ordem das conferências é a do POP Atende (`state_engine.execute_action`), com a mensagem que o
 /// agente precisa para se corrigir:
 ///
-/// 1. execução `ativa` e parada numa etapa;
-/// 2. chave de idempotência já aplicada → devolve o mesmo desfecho, sem evento;
-/// 3. a ação existe na etapa (senão erro com a **lista das válidas**);
-/// 4. o ator age nesta etapa (`atores_acao`);
-/// 5. a ação não é restrita a outro ator;
-/// 6. cada campo informado existe na etapa e tem o tipo/opção certo;
-/// 7. todo campo de `exige` está preenchido;
-/// 8. então grava os campos, decide o avanço e monta os eventos.
+/// 1. execução `ativa`;
+/// 2. chave de idempotência já aplicada → devolve o mesmo desfecho, sem evento e sem efeito;
+/// 3. execução parada numa decisão (estado gravado por uma versão anterior) → resolve antes;
+/// 4. o nó atual é uma etapa (fim não aceita ação);
+/// 5. a ação existe na etapa (senão erro com a **lista das válidas**);
+/// 6. o ator age nesta etapa (`atores_acao`);
+/// 7. a ação não é restrita a outro ator;
+/// 8. cada campo informado existe na etapa e tem o tipo/opção certo;
+/// 9. todo campo de `exige` está preenchido;
+/// 10. então grava os campos, decide o avanço, produz os efeitos e segue o destino.
 ///
 /// Nada disso grava pela metade: qualquer recusa deixa o estado como estava (o chamador fica com o
-/// `estado` que passou).
+/// `estado` que passou). A exceção é o fluxo **defeituoso** (ciclo de decisões, estouro de saltos,
+/// regra que não avalia): aí a passagem volta `Ok` com a execução marcada `falha`, porque o motor
+/// conduziu o estado até onde dava e o chamador precisa gravar o desfecho.
 pub fn executar_acao(
     ir: &Ir,
     estado: &Estado,
@@ -197,6 +333,7 @@ pub fn executar_acao(
     campos: &Campos,
     ator: AtorAcao,
     chave_idempotencia: Option<&str>,
+    contexto: &Contexto<'_>,
 ) -> DomainResult<Resultado> {
     // 1. Execução que não está ativa não aceita ação (concluída, abandonada ou em falha).
     if estado.status != StatusExecucao::Ativa {
@@ -219,18 +356,41 @@ pub fn executar_acao(
             efeitos: Vec::new(),
             aguardando: recibo.aguardando.clone(),
             repetida: true,
+            encerra_atendimento: false,
         });
     }
 
-    // 3. A execução precisa estar numa etapa: decisão e fim são da FX-14.
-    let etapa_id = match &estado.no_atual {
+    let mut trabalho = estado.clone();
+    let mut eventos: Vec<Evento> = Vec::new();
+    let mut efeitos: Vec<EfeitoProduzido> = Vec::new();
+
+    // 3. Estado parado numa decisão: resolve antes de olhar a ação. Desde esta tarefa o motor
+    //    atravessa a decisão na mesma passagem, então isso só aparece em estado gravado por uma
+    //    versão anterior do motor.
+    if let Destino::Decisao { .. } = trabalho.no_atual {
+        let parada = trabalho.no_atual.clone();
+        seguir(
+            ir,
+            &mut trabalho,
+            parada,
+            contexto,
+            &mut eventos,
+            &mut efeitos,
+        )?;
+        if trabalho.status != StatusExecucao::Ativa {
+            return Ok(resultado_parado(trabalho, eventos, efeitos));
+        }
+    }
+
+    // 4. A execução precisa estar numa etapa para receber ação.
+    let etapa_id = match &trabalho.no_atual {
         Destino::Etapa { id } => id.clone(),
         Destino::Decisao { id } => {
+            // Inalcançável: a decisão acima foi resolvida ou a execução parou.
             return Err(recusa(
                 acao,
                 format!(
-                    "a execução está na decisão `{id}`: ela precisa ser resolvida antes de qualquer ação \
-                     (o motor não decide sozinho)"
+                    "a execução está na decisão `{id}`: ela precisa ser resolvida antes da ação"
                 ),
             ));
         }
@@ -243,7 +403,7 @@ pub fn executar_acao(
     };
     let etapa = etapa_por_id(ir, &etapa_id)?;
 
-    // 4. A ação existe nesta etapa (sem busca em largura: só as ações daqui).
+    // 5. A ação existe nesta etapa (sem busca em largura: só as ações daqui).
     let Some(acao_ir) = etapa.acoes.iter().find(|candidata| candidata.id == acao) else {
         return Err(recusa(
             acao,
@@ -255,7 +415,7 @@ pub fn executar_acao(
         ));
     };
 
-    // 5. O ator age nesta etapa.
+    // 6. O ator age nesta etapa.
     if !etapa.atores_acao.contains(&ator) {
         return Err(recusa(
             acao,
@@ -267,7 +427,7 @@ pub fn executar_acao(
         ));
     }
 
-    // 6. A ação não é de outro ator.
+    // 7. A ação não é de outro ator.
     if let Some(dono) = acao_ir.ator
         && dono != ator
     {
@@ -277,14 +437,14 @@ pub fn executar_acao(
         ));
     }
 
-    // 7. Campos: existem na etapa, tipo certo, opção da lista. Nada disso grava pela metade.
+    // 8. Campos: existem na etapa, tipo certo, opção da lista. Nada disso grava pela metade.
     let validados = match validar_campos(etapa, campos) {
         Ok(validados) => validados,
         Err(erros) => return Err(campos_invalidos(etapa, erros)),
     };
 
-    // 8. `exige`: os campos da própria etapa, contando o que já estava gravado.
-    let mut registrados = dados_da_etapa(&estado.dados, &etapa.id);
+    // 9. `exige`: os campos da própria etapa, contando o que já estava gravado.
+    let mut registrados = dados_da_etapa(&trabalho.dados, &etapa.id);
     registrados.extend(validados.clone());
     let mut faltando: Vec<String> = acao_ir
         .exige
@@ -308,8 +468,8 @@ pub fn executar_acao(
         return Err(campos_invalidos(etapa, faltando));
     }
 
-    // 9. Critério `auto`: quem falta agir para a etapa avançar.
-    let mut progresso = estado.atores_que_agiram.clone();
+    // 10. Critério `auto`: quem falta agir para a etapa avançar.
+    let mut progresso = trabalho.atores_que_agiram.clone();
     if !progresso.contains(&ator) {
         progresso.push(ator);
     }
@@ -326,15 +486,8 @@ pub fn executar_acao(
     let decisiva = matches!(acao_ir.vai_para, Destino::Fim { .. });
     let avanca = decisiva || aguardando.is_empty();
 
-    // 10. Destino existente: uma IR gravada à mão não pode deixar a execução apontando para uma
-    // etapa que não existe (a publicação recusa isto em FX-11; aqui a falha é fechada).
-    if avanca && let Destino::Etapa { id } = &acao_ir.vai_para {
-        etapa_por_id(ir, id)?;
-    }
-
     // 11. Eventos e estado novo.
     let autor = ator_de_evento(ator);
-    let mut eventos = Vec::new();
     if !validados.is_empty() {
         eventos.push(Evento {
             tipo: TipoEventoFicha::CamposPreenchidos,
@@ -354,26 +507,35 @@ pub fn executar_acao(
         }),
     });
 
-    let mut novo_estado = estado.clone();
+    let mut novo_estado = trabalho;
     novo_estado
         .dados
         .insert(etapa.id.clone(), Json::Object(registrados));
 
+    let mut encerra_atendimento = false;
     let aguardando_do_resultado = if avanca {
+        // Efeitos da ação: saem depois de a transição ser aceita (`FLUXOS_LINGUAGEM.md` §4.9).
+        let no_da_acao = format!("acao:{}.{acao}", etapa.id);
+        for efeito in efeitos_declarados(&acao_ir.efeitos, no_da_acao, &novo_estado.dados, contexto)
+        {
+            eventos.push(evento_do_efeito(&efeito));
+            efeitos.push(efeito);
+        }
         eventos.push(Evento {
             tipo: TipoEventoFicha::EtapaConcluida,
             ator: AtorEvento::Sistema,
             payload: json!({ "etapa": etapa.id, "acao": acao }),
         });
-        if let Destino::Etapa { id } = &acao_ir.vai_para {
-            eventos.push(Evento {
-                tipo: TipoEventoFicha::EtapaEntrou,
-                ator: AtorEvento::Sistema,
-                payload: json!({ "etapa": id }),
-            });
-        }
-        novo_estado.no_atual = acao_ir.vai_para.clone();
         novo_estado.atores_que_agiram = Vec::new();
+        let desfecho = seguir(
+            ir,
+            &mut novo_estado,
+            acao_ir.vai_para.clone(),
+            contexto,
+            &mut eventos,
+            &mut efeitos,
+        )?;
+        encerra_atendimento = desfecho.encerra_atendimento;
         Vec::new()
     } else {
         novo_estado.atores_que_agiram = progresso;
@@ -393,10 +555,384 @@ pub fn executar_acao(
     Ok(Resultado {
         novo_estado,
         eventos,
-        efeitos: Vec::new(),
+        efeitos,
         aguardando: aguardando_do_resultado,
         repetida: false,
+        encerra_atendimento,
     })
+}
+
+/// Abandona a execução: ela para onde está, com o motivo gravado, e **não** produz efeito nenhum.
+///
+/// Quem pode abandonar (o agente pela ferramenta `fluxo_abandonar`, o atendente pela API) é do
+/// chamador; o motor registra o ator no evento e não confere permissão. O estado guarda o motivo,
+/// que é o mesmo texto que a coluna `fluxo_execucoes.motivo_fim` recebe.
+///
+/// Execução que não está `ativa` não é abandonada de novo (já terminou de algum jeito): devolve
+/// `conflito`, para o chamador não mascarar um desfecho com outro.
+pub fn abandonar(
+    estado: &Estado,
+    motivo: &str,
+    ator: AtorAcao,
+    chave_idempotencia: Option<&str>,
+) -> DomainResult<Resultado> {
+    let motivo = motivo.trim();
+    if motivo.is_empty() {
+        return Err(DomainError::Validacao {
+            campo: "motivo",
+            motivo: "o abandono precisa de um motivo: é ele que fica no histórico da Ficha"
+                .to_owned(),
+        });
+    }
+    if estado.status != StatusExecucao::Ativa {
+        return Err(DomainError::Conflito {
+            entidade: "execução",
+            id: estado.no_atual.id().to_owned(),
+            motivo: format!(
+                "a execução já está {} e não pode ser abandonada",
+                estado.status
+            ),
+        });
+    }
+    if let Some(chave) = chave_idempotencia
+        && let Some(recibo) = estado.chaves.get(chave)
+    {
+        return Ok(Resultado {
+            novo_estado: estado.clone(),
+            eventos: Vec::new(),
+            efeitos: Vec::new(),
+            aguardando: recibo.aguardando.clone(),
+            repetida: true,
+            encerra_atendimento: false,
+        });
+    }
+
+    let no = estado.no_atual.id().to_owned();
+    let mut novo_estado = estado.clone();
+    novo_estado.status = StatusExecucao::Abandonada;
+    novo_estado.motivo = Some(motivo.to_owned());
+    novo_estado.atores_que_agiram = Vec::new();
+
+    let eventos = vec![Evento {
+        tipo: TipoEventoFicha::ExecucaoAbandonada,
+        ator: ator_de_evento(ator),
+        payload: json!({ "motivo": motivo, "no": no }),
+    }];
+
+    if let Some(chave) = chave_idempotencia {
+        novo_estado.chaves.insert(
+            chave.to_owned(),
+            Recibo {
+                no_atual: novo_estado.no_atual.clone(),
+                aguardando: Vec::new(),
+            },
+        );
+    }
+
+    Ok(Resultado {
+        novo_estado,
+        eventos,
+        efeitos: Vec::new(),
+        aguardando: Vec::new(),
+        repetida: false,
+        encerra_atendimento: false,
+    })
+}
+
+/// Efeitos do `ao_entrar` de uma etapa, com o texto resolvido e a chave de cada um.
+///
+/// É público porque a entrada na **primeira** etapa acontece em [`iniciar`], que devolve só o
+/// estado: quem grava a execução nova (`poph-store`, FX-20) pede os efeitos daqui e enfileira.
+///
+/// A chave é a mesma que a travessia usa (`etapa:<id>/<índice>`), então enfileirar por aqui e por
+/// [`executar_acao`] não duplica efeito.
+pub fn efeitos_de_entrada(
+    ir: &Ir,
+    etapa_id: &str,
+    dados: &Dados,
+    contexto: &Contexto<'_>,
+) -> DomainResult<Vec<EfeitoProduzido>> {
+    let etapa = etapa_por_id(ir, etapa_id)?;
+    Ok(efeitos_da_etapa(etapa, dados, contexto))
+}
+
+// ------------------------------------------------------------------ decisões, fim e efeitos
+
+/// O que uma travessia produziu além do estado.
+///
+/// A falha não aparece aqui porque já está no estado (`status` e `motivo`): o chamador lê de um
+/// lugar só.
+#[derive(Debug, Clone, Default)]
+struct Desfecho {
+    /// A execução chegou a um `fim(encerra_atendimento=True)`.
+    encerra_atendimento: bool,
+}
+
+/// Atravessa o grafo a partir de `destino` até parar numa etapa (segue) ou num fim (conclui).
+///
+/// Decisão é avaliada na hora, com os dados já gravados, e o ramo é seguido na mesma passagem; cada
+/// uma vira um evento `decisao_resolvida`. Ciclo (a mesma decisão duas vezes) e estouro do teto de
+/// saltos param a execução em `falha`, com o motivo no estado e no evento `execucao_falhou` — a
+/// Ficha continua aberta, porque quem fecha é o atendimento, não o fluxo.
+///
+/// Nó que a estrutura não tem (`etapa` ou `decisao`) é [`DomainError::IrDivergente`]: a IR gravada
+/// diverge e o motor falha fechado.
+fn seguir(
+    ir: &Ir,
+    estado: &mut Estado,
+    mut destino: Destino,
+    contexto: &Contexto<'_>,
+    eventos: &mut Vec<Evento>,
+    efeitos: &mut Vec<EfeitoProduzido>,
+) -> DomainResult<Desfecho> {
+    let mut saltos = 0usize;
+    let mut visitadas: Vec<String> = Vec::new();
+
+    loop {
+        match destino.clone() {
+            Destino::Etapa { id } => {
+                let etapa = etapa_por_id(ir, &id)?;
+                estado.no_atual = Destino::Etapa { id: id.clone() };
+                estado.atores_que_agiram = Vec::new();
+                eventos.push(Evento {
+                    tipo: TipoEventoFicha::EtapaEntrou,
+                    ator: AtorEvento::Sistema,
+                    payload: json!({ "etapa": id }),
+                });
+                let da_entrada = efeitos_da_etapa(etapa, &estado.dados, contexto);
+                for efeito in da_entrada {
+                    eventos.push(evento_do_efeito(&efeito));
+                    efeitos.push(efeito);
+                }
+                return Ok(Desfecho::default());
+            }
+            Destino::Decisao { id } => {
+                let decisao = decisao_por_id(ir, &id)?;
+                if visitadas.contains(&id) {
+                    let caminho = format!("{} → {id}", visitadas.join(" → "));
+                    let motivo = format!(
+                        "ciclo de decisões: {caminho}; a execução parou para não repetir o caminho \
+                         (a publicação recusa este ciclo com FLX23)"
+                    );
+                    return Ok(parar_em_falha(
+                        estado,
+                        Destino::Decisao { id },
+                        motivo,
+                        eventos,
+                    ));
+                }
+                visitadas.push(id.clone());
+                saltos += 1;
+                if saltos > contexto.max_saltos_decisao {
+                    let motivo = format!(
+                        "a execução passou de {} decisões encadeadas (fluxos.max_saltos_decisao); \
+                         a estrutura do fluxo entrou em laço",
+                        contexto.max_saltos_decisao
+                    );
+                    return Ok(parar_em_falha(
+                        estado,
+                        Destino::Decisao { id },
+                        motivo,
+                        eventos,
+                    ));
+                }
+                let escolha = match contexto.avaliador.avaliar(&decisao.se, &estado.dados) {
+                    Ok(escolha) => escolha,
+                    // Regra defeituosa ou cara é falha da **execução** (FLXR01/FLXR03), não da
+                    // chamada: a Ficha continua aberta e o atendente vê o motivo.
+                    Err(erro) => {
+                        return Ok(parar_em_falha(
+                            estado,
+                            Destino::Decisao { id },
+                            erro.to_string(),
+                            eventos,
+                        ));
+                    }
+                };
+                let ramo = if escolha {
+                    decisao.entao.clone()
+                } else {
+                    decisao.senao.clone()
+                };
+                eventos.push(Evento {
+                    tipo: TipoEventoFicha::DecisaoResolvida,
+                    ator: AtorEvento::Sistema,
+                    payload: json!({ "decisao": id, "resultado": escolha, "destino": ramo }),
+                });
+                destino = ramo;
+            }
+            Destino::Fim {
+                id,
+                resultado,
+                encerra_atendimento,
+            } => {
+                estado.status = StatusExecucao::Concluida;
+                estado.resultado = resultado.clone();
+                estado.no_atual = Destino::Fim {
+                    id: id.clone(),
+                    resultado: resultado.clone(),
+                    encerra_atendimento,
+                };
+                eventos.push(Evento {
+                    tipo: TipoEventoFicha::ExecucaoConcluida,
+                    ator: AtorEvento::Sistema,
+                    payload: json!({
+                        "fim": id,
+                        "resultado": resultado,
+                        "encerra_atendimento": encerra_atendimento,
+                    }),
+                });
+                return Ok(Desfecho {
+                    encerra_atendimento,
+                });
+            }
+        }
+    }
+}
+
+/// Marca a execução como `falha` no nó em que ela parou, com o motivo no estado e no evento.
+fn parar_em_falha(
+    estado: &mut Estado,
+    no: Destino,
+    motivo: String,
+    eventos: &mut Vec<Evento>,
+) -> Desfecho {
+    estado.status = StatusExecucao::Falha;
+    estado.motivo = Some(motivo.clone());
+    estado.atores_que_agiram = Vec::new();
+    estado.no_atual = no;
+    eventos.push(Evento {
+        tipo: TipoEventoFicha::ExecucaoFalhou,
+        ator: AtorEvento::Sistema,
+        payload: json!({ "no": estado.no_atual.id(), "motivo": motivo }),
+    });
+    Desfecho::default()
+}
+
+/// Resultado de uma passagem que terminou sem ação: a execução concluiu ou parou em `falha`.
+fn resultado_parado(
+    estado: Estado,
+    eventos: Vec<Evento>,
+    efeitos: Vec<EfeitoProduzido>,
+) -> Resultado {
+    Resultado {
+        novo_estado: estado,
+        eventos,
+        efeitos,
+        aguardando: Vec::new(),
+        repetida: false,
+        encerra_atendimento: false,
+    }
+}
+
+/// Efeitos do `ao_entrar` de uma etapa (lista declarada), com a chave de cada um.
+fn efeitos_da_etapa(etapa: &Etapa, dados: &Dados, contexto: &Contexto<'_>) -> Vec<EfeitoProduzido> {
+    efeitos_declarados(
+        &etapa.ao_entrar,
+        format!("etapa:{}", etapa.id),
+        dados,
+        contexto,
+    )
+}
+
+/// Resolve o texto de cada efeito declarado e monta a chave `nó/índice`.
+///
+/// Interpola o **texto** (o que o cliente e a equipe leem): `{etapa.campo}`, `{ficha.id}` e
+/// `{cliente.peer}`. O `para` do `notificar_whatsapp` e o departamento do `encaminhar` são
+/// identificadores e passam como estão.
+fn efeitos_declarados(
+    declarados: &[Efeito],
+    no: String,
+    dados: &Dados,
+    contexto: &Contexto<'_>,
+) -> Vec<EfeitoProduzido> {
+    declarados
+        .iter()
+        .enumerate()
+        .map(|(indice, declarado)| {
+            let efeito = match declarado {
+                Efeito::MensagemAoCliente { texto } => Efeito::MensagemAoCliente {
+                    texto: interpolar(texto, dados, contexto),
+                },
+                Efeito::NotificarWhatsapp { para, mensagem } => Efeito::NotificarWhatsapp {
+                    para: para.clone(),
+                    mensagem: interpolar(mensagem, dados, contexto),
+                },
+                Efeito::Encaminhar { departamento } => Efeito::Encaminhar {
+                    departamento: departamento.clone(),
+                },
+            };
+            EfeitoProduzido {
+                chave: format!("{no}/{indice}"),
+                no: no.clone(),
+                indice,
+                efeito,
+            }
+        })
+        .collect()
+}
+
+/// O evento que registra na Ficha que um efeito entrou na fila.
+fn evento_do_efeito(efeito: &EfeitoProduzido) -> Evento {
+    Evento {
+        tipo: TipoEventoFicha::EfeitoCriado,
+        ator: AtorEvento::Sistema,
+        payload: json!({ "chave": efeito.chave, "tipo": efeito.tipo(), "no": efeito.no }),
+    }
+}
+
+/// Troca as variáveis do texto por valor: `{etapa.campo}`, `{ficha.id}`, `{cliente.peer}`.
+///
+/// Variável que não existe (ou `{` sem par) vira texto vazio / fica como está: o efeito sai sempre,
+/// porque a publicação já avisou o autor com `FLX59`. Isto é **texto de efeito**, não regra
+/// avaliada: nada aqui executa o que o cliente escreveu.
+fn interpolar(texto: &str, dados: &Dados, contexto: &Contexto<'_>) -> String {
+    let mut saida = String::with_capacity(texto.len());
+    let mut resto = texto;
+    while let Some(inicio) = resto.find('{') {
+        saida.push_str(&resto[..inicio]);
+        let depois = &resto[inicio + 1..];
+        match depois.find('}') {
+            Some(fim) => {
+                saida.push_str(&valor_da_variavel(&depois[..fim], dados, contexto));
+                resto = &depois[fim + 1..];
+            }
+            None => {
+                // `{` sem fechamento: não é variável, é texto do autor.
+                saida.push_str(&resto[inicio..]);
+                resto = "";
+            }
+        }
+    }
+    saida.push_str(resto);
+    saida
+}
+
+/// Valor de uma variável de efeito, em texto canônico (§5); vazio quando ela não existe.
+fn valor_da_variavel(nome: &str, dados: &Dados, contexto: &Contexto<'_>) -> String {
+    match nome.trim() {
+        "ficha.id" => contexto.ficha_id.to_owned(),
+        "cliente.peer" => contexto.cliente_peer.to_owned(),
+        nome => match nome.split_once('.') {
+            Some((etapa, campo)) => dados
+                .get(etapa)
+                .and_then(|valores| valores.get(campo))
+                .and_then(texto_canonico)
+                .unwrap_or_default(),
+            None => String::new(),
+        },
+    }
+}
+
+/// Decisão da IR pelo id; IR que aponta para decisão inexistente é divergência, não pânico.
+fn decisao_por_id<'a>(ir: &'a Ir, id: &str) -> DomainResult<&'a Decisao> {
+    ir.decisoes
+        .iter()
+        .find(|decisao| decisao.id == id)
+        .ok_or_else(|| DomainError::IrDivergente {
+            fluxo: ir.fluxo.id.clone(),
+            motivo: format!("a decisão `{id}` não existe na estrutura do fluxo"),
+        })
 }
 
 /// Atores que precisam agir para a etapa avançar, na ordem alfabética do texto.

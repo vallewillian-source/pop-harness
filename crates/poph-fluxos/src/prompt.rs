@@ -134,6 +134,7 @@ pub fn bloco_da_etapa(ir: &Ir, etapa_id: &str) -> DomainResult<String> {
         dados: serde_json::Map::new(),
         atores_que_agiram: Vec::new(),
         resultado: None,
+        motivo: None,
         chaves: std::collections::BTreeMap::new(),
     };
     Ok(renderizar_bloco(ir, &estado))

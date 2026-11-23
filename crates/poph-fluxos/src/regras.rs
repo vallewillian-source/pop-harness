@@ -468,8 +468,9 @@ fn vazio(valor: Option<&Json>) -> bool {
 
 /// Texto canônico de um valor de campo (`FLUXOS_LINGUAGEM.md` §5).
 ///
-/// `None` quando o valor não tem texto único — lista (use `contem`) ou `null`.
-fn texto_canonico(valor: &Json) -> Option<String> {
+/// `None` quando o valor não tem texto único — lista (use `contem`) ou `null`. É a mesma forma que
+/// a variável de efeito usa (`{etapa.campo}`), por isso o motor a lê daqui.
+pub(crate) fn texto_canonico(valor: &Json) -> Option<String> {
     match valor {
         Json::Null => None,
         Json::String(texto) => Some(texto.trim().to_owned()),

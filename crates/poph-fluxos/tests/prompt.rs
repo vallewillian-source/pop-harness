@@ -8,10 +8,12 @@
 //! são montadas à mão para o teste criar o caso exato.
 
 use poph_fluxos::ir::{Acao, Campo, Destino, Etapa, Fim, Fluxo, Gatilho, Ir};
-use poph_fluxos::motor::{Campos, Estado, executar_acao, iniciar};
+use poph_fluxos::motor::{Campos, Contexto, Estado, executar_acao, iniciar};
 use poph_fluxos::prompt::{TETO_DO_BLOCO, bloco_da_etapa, renderizar_bloco};
+use poph_fluxos::regras::Avaliador;
 use poph_types::{AtorAcao, DomainError, StatusExecucao, TipoCampo};
 use serde_json::{Map, Value as Json, json};
+use std::sync::OnceLock;
 
 // ------------------------------------------------------------------ auxiliares
 
@@ -108,6 +110,14 @@ fn estado_em(ir: &Ir, etapa: &str, dados: Json) -> Estado {
     estado
 }
 
+/// Contexto das chamadas do motor: sem Ficha, sem cliente e com o avaliador só de combinadores.
+///
+/// Os testes de decisão montam o seu com o avaliador que tem as `def` do fluxo.
+fn contexto() -> Contexto<'static> {
+    static AVALIADOR: OnceLock<Avaliador> = OnceLock::new();
+    Contexto::novo(AVALIADOR.get_or_init(Avaliador::sem_funcoes))
+}
+
 // ------------------------------------------------------------------ texto dourado
 
 #[test]
@@ -199,6 +209,7 @@ fn etapa_parcial_diz_quem_falta_agir() {
         &Campos::new(),
         AtorAcao::Agente,
         None,
+        &contexto(),
     )
     .expect("o agente envia para a aprovação");
     assert_eq!(depois_do_agente.aguardando, vec![AtorAcao::Atendente]);
@@ -275,6 +286,7 @@ fn quando_o_segundo_ator_age_o_bloco_mostra_a_etapa_seguinte() {
         &Campos::new(),
         AtorAcao::Atendente,
         None,
+        &contexto(),
     )
     .expect("o atendente aprova");
     let avancou = executar_acao(
@@ -284,6 +296,7 @@ fn quando_o_segundo_ator_age_o_bloco_mostra_a_etapa_seguinte() {
         &Campos::new(),
         AtorAcao::Agente,
         None,
+        &contexto(),
     )
     .expect("o agente envia depois");
     assert!(avancou.aguardando.is_empty());

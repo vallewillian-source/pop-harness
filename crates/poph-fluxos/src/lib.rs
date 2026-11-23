@@ -43,8 +43,9 @@ pub use compilador::{Compilado, FalhaCarregamento, Limites, carregar, compilar};
 pub use diagnostico::{Codigo, Diagnostico, Severidade};
 pub use ir::Ir;
 pub use motor::{
-    Campos, Estado, Evento, Recibo, Resultado, atores_exigidos, campos_faltando, dados_da_etapa,
-    executar_acao, iniciar,
+    Campos, Contexto, EfeitoProduzido, Estado, Evento, MAX_SALTOS_DECISAO, Recibo, Resultado,
+    abandonar, atores_exigidos, campos_faltando, dados_da_etapa, efeitos_de_entrada, executar_acao,
+    iniciar,
 };
 pub use prompt::{TETO_DO_BLOCO, bloco_da_etapa, renderizar_bloco};
 pub use regras::{Avaliador, Dados, ErroRegra, LimitesRegra, avaliar, dados_de_json};

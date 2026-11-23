@@ -607,7 +607,20 @@ Erro de regra **não** derruba o processo nem o turno, e vira um de dois código
 | `funcao` sem `def`, `def` que devolveu algo que não é `True`/`False`, `def` que estourou (chave ausente, divisão por zero), literal que não é número, campo fora do formato `etapa.campo` | `regra_invalida` (HTTP 400) | `FLXR01`/`FLXR02` | execução `falha`, Ficha **aberta** |
 | ticks, heap, pilha de chamada ou prazo estourados | `regra_limite` (HTTP 400) | `FLXR03` | execução `falha`, Ficha **aberta** |
 
-Quem marca a execução como `falha` e grava o evento é o motor (FX-13); a avaliação só devolve o erro tipado.
+Quem marca a execução como `falha` e grava o evento `execucao_falhou` é o motor (FX-14); a avaliação só devolve o erro tipado. O mesmo desfecho vale para ciclo de decisões e estouro do teto de saltos (§6.5).
+
+### 6.5 Decisões, fim, abandono e efeitos na mesma passagem
+
+| O que acontece | No atendimento |
+|---|---|
+| a ação leva a uma decisão | a decisão é avaliada com os dados já registrados e o ramo é seguido **na mesma passagem**, sem ação intermediária; cada decisão resolvida grava `decisao_resolvida` com o resultado e o destino |
+| duas ou mais decisões em cadeia | seguidas até o teto de saltos (`fluxos.max_saltos_decisao`, 10 por padrão); passou do teto, ou voltou a uma decisão já visitada na mesma passagem (ciclo), a execução fica `falha` com o motivo no histórico |
+| a execução chega a um `fim(...)` | a execução fica `concluida`, com o `resultado` do fim, e grava `execucao_concluida`; só com `encerra_atendimento = True` o motor **pede** o encerramento do atendimento, e quem fecha conversa e Ficha é quem grava |
+| o agente ou o atendente abandona (`fluxo_abandonar`) | a execução fica `abandonada` com o motivo no histórico, grava `execucao_abandonada` e **não** dispara efeito nenhum; abandono sem motivo é recusado |
+| efeitos de `acoes[].efeitos` | entram na fila **depois** de a transição ser aceita, na ordem declarada |
+| efeitos de `etapas[].ao_entrar` | entram na fila ao entrar na etapa, **antes** de qualquer campo dela |
+
+Cada efeito tem uma **chave** que o identifica (`nó + índice`: `acao:coleta.confirmar/0`, `etapa:coleta/0`): a mesma transição refeita não gera uma segunda mensagem. Efeito que falha não desfaz a transição (L11) — a fila tenta de novo e o caso vira evento na Ficha.
 
 ## 7. Variáveis nas mensagens
 
