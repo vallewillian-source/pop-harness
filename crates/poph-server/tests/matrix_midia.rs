@@ -30,7 +30,9 @@ use poph_matrix::midia::{
 };
 use poph_matrix::salas::{ConversaParaSala, ErroSala};
 use poph_matrix::usuarios::Fantasma;
-use poph_server::matrix_espelho::{AvisoNaSala, DestinoMatrix, EnvioMidia, EspelhoMatrix};
+use poph_server::matrix_espelho::{
+    AvisoNaSala, DestinoMatrix, EnvioMidia, EspelhoMatrix, MidiaPublicada,
+};
 use poph_store::{
     Direcao, NovaConversa, NovaMensagem, NovaOrg, NovoAgente, NovoAnexoCanal, Origem, Papel, Store,
 };
@@ -357,7 +359,7 @@ impl DestinoMatrix for Sinal {
         &self,
         sala: &str,
         envio: &EnvioMidia,
-    ) -> impl std::future::Future<Output = Result<(), ErroChamada>> + Send {
+    ) -> impl std::future::Future<Output = Result<MidiaPublicada, ErroChamada>> + Send {
         let falso = &self.0;
         let sala = sala.to_owned();
         let txn = envio.midia.txn_id.clone();
@@ -374,19 +376,25 @@ impl DestinoMatrix for Sinal {
         let mxc = format!("mxc://matrix-dev.local/{}", txn);
         let conteudo = midia::conteudo_do_evento(&mxc, &envio.midia);
         let mut midias = falso.midias.lock().unwrap();
-        if resultado.is_ok() && !midias.iter().any(|m| m.sala == sala && m.txn == txn) {
+        let novo = !midias.iter().any(|m| m.sala == sala && m.txn == txn);
+        if resultado.is_ok() && novo {
             falso.ordem.lock().unwrap().push(format!("midia:{txn}"));
             midias.push(MidiaEntregue {
-                sala,
-                txn,
+                sala: sala.clone(),
+                txn: txn.clone(),
                 remetente,
-                mxc,
+                mxc: mxc.clone(),
                 conteudo,
                 bytes: envio.conteudo.len(),
             });
         }
         drop(midias);
-        async move { resultado }
+        // Como o destino real: o evento publicado e o `mxc` que a subida devolveu.
+        let publicada = MidiaPublicada {
+            evento: format!("$midia-{txn}:matrix-dev.local"),
+            mxc,
+        };
+        async move { resultado.map(|()| publicada) }
     }
 
     fn avisar(
@@ -537,6 +545,42 @@ async fn imagem_e_pdf_do_cliente_vao_para_a_sala_depois_da_legenda() {
     // O cursor chegou ao fim da fila e não há aviso nenhum.
     assert!(falso.avisos().is_empty(), "nada recusado");
     assert_eq!(cursor(&store, org), maior_rowid_e_id(&store));
+
+    // MX-46: cada mídia entregue ficou registrada para expirar, com o evento e o `mxc` que a sala
+    // recebeu — é o que a rotina de expiração lê depois do prazo.
+    let registradas = store
+        .matrix_midia()
+        .pendentes(org, i64::MAX, i64::MAX, 10)
+        .expect("lê o registro da mídia");
+    assert_eq!(registradas.len(), 2, "as duas mídias registradas");
+    for (midia, registrada) in midias.iter().zip(&registradas) {
+        assert_eq!(registrada.sala, midia.sala);
+        assert_eq!(
+            registrada.evento,
+            format!("$midia-{}:matrix-dev.local", midia.txn)
+        );
+        assert_eq!(registrada.mxc, midia.mxc);
+        assert_eq!(
+            registrada.nome,
+            midia.conteudo["body"].as_str().unwrap_or_default()
+        );
+        assert_eq!(registrada.agente, agente.to_string());
+        // A categoria segue o que o evento é: imagem ou documento (o frontend só separa os dois).
+        assert_eq!(
+            registrada.categoria,
+            if midia.msgtype() == MSGTYPE_IMAGEM {
+                poph_store::CategoriaMidia::Imagem
+            } else {
+                poph_store::CategoriaMidia::Documento
+            },
+            "categoria da mídia registrada"
+        );
+        assert_eq!(registrada.tamanho_bytes, midia.bytes as u64);
+        assert!(
+            registrada.falta_redigir() && registrada.falta_apagar(),
+            "recém-publicada: as duas etapas pendentes"
+        );
+    }
 }
 
 #[tokio::test]

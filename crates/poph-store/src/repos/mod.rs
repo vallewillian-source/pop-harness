@@ -26,6 +26,7 @@ mod fichas;
 mod fluxos;
 mod instrucoes;
 mod matrix;
+mod matrix_midia;
 mod mensagens;
 mod orgaos;
 mod produtos;
@@ -50,6 +51,9 @@ pub use matrix::{
     AtrasoMatrix, CursorConversas, CursoresMatrix, DesfechoAviso, EspacoDesligado, EspacoMatrix,
     EstadoMatrixOrg, EstadoSala, FalhaDeRespostaHumana, FalhaMatrix, LIMITE_FALHAS,
     LIMITE_MOTIVO_FALHA, Matrix, OrigemEspaco, SalaMatrix,
+};
+pub use matrix_midia::{
+    CategoriaMidia, LIMITE_ERRO_MIDIA, LIMITE_PENDENTES, MatrixMidia, MidiaDaSala, NovaMidia,
 };
 pub use mensagens::{LIMITE_DESDE, MensagemDesde, Mensagens};
 pub use orgaos::Orgaos;

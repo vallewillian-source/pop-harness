@@ -327,6 +327,11 @@ impl Store {
         Matrix(self)
     }
 
+    /// Mídia publicada nas salas do módulo Matrix e a expiração dela (MX-46).
+    pub fn matrix_midia(&self) -> MatrixMidia<'_> {
+        MatrixMidia(self)
+    }
+
     /// Biblioteca de arquivos do agente (HR-24, D13).
     pub fn biblioteca(&self) -> Biblioteca<'_> {
         Biblioteca(self)

@@ -318,7 +318,13 @@ async fn repetir_a_mesma_midia_nao_cria_segundo_evento() {
     let segundo = midia::enviar(&cliente, &remetente, sala, &midia, PNG)
         .await
         .expect("repetição");
-    assert_eq!(primeiro, segundo, "o mesmo `txnId` devolve o mesmo evento");
+    assert_eq!(
+        primeiro.evento, segundo.evento,
+        "o mesmo `txnId` devolve o mesmo evento"
+    );
+    // O `mxc` é outro porque a subida não é idempotente no Synapse (limite conhecido da MX-43): o
+    // evento é um só, e o arquivo repetido fica sem evento. A expiração apaga o que o evento aponta.
+    assert_ne!(primeiro.mxc, segundo.mxc, "cada upload gera um `mxc` novo");
     assert_eq!(estado.eventos.lock().unwrap().len(), 1);
     tarefa.abort();
 }

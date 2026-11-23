@@ -60,6 +60,10 @@
 //! upload em si não tem chave de idempotência no Synapse; uma queda entre o upload e o evento pode
 //! deixar um arquivo sem evento (limite conhecido).
 //!
+//! Toda mídia entregue é **registrada** em `matrix_midia` (MX-46) com a sala, o evento e o
+//! `mxc://`: é essa linha que a rotina de expiração lê depois do prazo para redigir o evento e
+//! apagar o arquivo. Sem a linha, a mídia ficaria no Synapse para sempre.
+//!
 //! ## O que este arquivo não faz
 //!
 //! Classificar eventos recebidos (MX-17), espelhar o estado da conversa (MX-15), ligar no `poph
@@ -90,8 +94,8 @@ use poph_matrix::salas::{
 };
 use poph_matrix::usuarios::{ErroFantasmas, Fantasma, IdsFantasmas};
 use poph_store::{
-    AnexoRegistro, Direcao, ErroStore, EstadoSala, MensagemDesde, Origem, Papel, StatusConversa,
-    Store,
+    AnexoRegistro, CategoriaMidia, Direcao, ErroStore, EstadoSala, MensagemDesde, NovaMidia,
+    Origem, Papel, StatusConversa, Store,
 };
 use poph_types::{AgentId, ConversationId, MatrixConfig, MessageId, OrgId};
 use serde_json::json;
@@ -153,11 +157,14 @@ pub trait DestinoMatrix: Send + Sync {
     ) -> impl Future<Output = Result<(), ErroChamada>> + Send;
 
     /// Sobe a mídia do cliente ao Synapse e publica o evento na sala (MX-43).
+    ///
+    /// Devolve o evento e o `mxc://` que ficaram na sala: a expiração (MX-46) precisa dos dois para
+    /// redigir o evento e apagar o arquivo depois do prazo.
     fn enviar_midia(
         &self,
         sala: &str,
         envio: &EnvioMidia,
-    ) -> impl Future<Output = Result<(), ErroChamada>> + Send;
+    ) -> impl Future<Output = Result<MidiaPublicada, ErroChamada>> + Send;
 
     /// Escreve um aviso em texto na sala (MX-43): mídia que não entrou, em `m.notice`.
     fn avisar(
@@ -177,6 +184,15 @@ pub struct EnvioMidia {
     pub midia: Midia,
     /// Bytes do blob, já lidos e validados no limite.
     pub conteudo: Vec<u8>,
+}
+
+/// O que o Synapse devolveu quando a mídia entrou na sala: o evento publicado e o arquivo.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MidiaPublicada {
+    /// Id do evento de mídia (`m.image`/`m.file`) na sala.
+    pub evento: String,
+    /// `mxc://servidor/id` do arquivo que subiu.
+    pub mxc: String,
 }
 
 /// Aviso em texto na sala de uma mídia que não entrou (MX-43).
@@ -406,7 +422,11 @@ impl DestinoMatrix for DestinoReal {
         resultado
     }
 
-    async fn enviar_midia(&self, sala: &str, envio: &EnvioMidia) -> Result<(), ErroChamada> {
+    async fn enviar_midia(
+        &self,
+        sala: &str,
+        envio: &EnvioMidia,
+    ) -> Result<MidiaPublicada, ErroChamada> {
         let inicio = Instant::now();
         let resultado = midia::enviar(
             &self.cliente,
@@ -416,7 +436,10 @@ impl DestinoMatrix for DestinoReal {
             &envio.conteudo,
         )
         .await
-        .map(|_| ());
+        .map(|publicada| MidiaPublicada {
+            evento: publicada.evento,
+            mxc: publicada.mxc,
+        });
         self.metricas
             .latencia_synapse_segundos
             .observar(inicio.elapsed().as_secs_f64());
@@ -1146,6 +1169,7 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
         let mut itens = grupo.itens.into_iter();
 
         let conversa = grupo.dados.conversa;
+        let agente_da_conversa = grupo.dados.agente.to_string();
         self.metricas.tentativas.incrementar(1);
         let sala = match self.destino.garantir_sala(&grupo.dados).await {
             Ok(sala) => sala,
@@ -1233,13 +1257,27 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
                 }
 
                 let resultado = match &passo {
-                    Passo::Texto(envio) => self.destino.enviar(&sala, envio).await,
-                    Passo::Midia { envio, .. } => self.destino.enviar_midia(&sala, envio).await,
-                    Passo::Aviso(aviso) => self.destino.avisar(&sala, aviso).await,
+                    Passo::Texto(envio) => self.destino.enviar(&sala, envio).await.map(|()| None),
+                    Passo::Midia { envio, .. } => {
+                        self.destino.enviar_midia(&sala, envio).await.map(Some)
+                    }
+                    Passo::Aviso(aviso) => self.destino.avisar(&sala, aviso).await.map(|()| None),
                 };
 
                 match resultado {
-                    Ok(()) => {
+                    Ok(publicada) => {
+                        // MX-46: a mídia que entrou na sala fica registrada com o evento e o
+                        // `mxc`, para a expiração saber o que redigir e apagar depois do prazo.
+                        if let (Passo::Midia { envio, .. }, Some(publicada)) = (&passo, &publicada)
+                        {
+                            self.registrar_midia(
+                                item.org,
+                                &agente_da_conversa,
+                                &sala,
+                                envio,
+                                publicada,
+                            );
+                        }
                         self.esquecer(&item.id);
                         saida.push(DesfechoDoGrupo {
                             indice: item.indice,
@@ -1452,6 +1490,53 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
         })
     }
 
+    /// Grava a mídia entregue em `matrix_midia` (MX-46), com o evento e o `mxc` que ficaram na sala.
+    ///
+    /// Falha de gravação **não** muda o desfecho da mensagem: o evento já está na sala, e repetir o
+    /// envio não desfaria nada. O que se perde é a expiração daquele arquivo, e é isso que o log
+    /// registra com um código curto.
+    fn registrar_midia(
+        &self,
+        org: OrgId,
+        agente: &str,
+        sala: &str,
+        envio: &EnvioMidia,
+        publicada: &MidiaPublicada,
+    ) {
+        let midia = &envio.midia;
+        let registro = NovaMidia {
+            id: midia.id_anexo.parse().unwrap_or_else(|_| {
+                // O id vem do banco (é `attachments.id`); se não for um id do Harness, a gravação
+                // falha na validação e é registrada como as demais.
+                poph_types::AttachmentId::generate()
+            }),
+            conversa: envio.conversa,
+            agente: agente.to_owned(),
+            sala: sala.to_owned(),
+            evento: publicada.evento.clone(),
+            mxc: publicada.mxc.clone(),
+            nome: midia.nome.clone(),
+            mime: midia.mime.clone(),
+            categoria: if midia.msgtype == midia::MSGTYPE_IMAGEM {
+                CategoriaMidia::Imagem
+            } else {
+                CategoriaMidia::Documento
+            },
+            tamanho_bytes: midia.tamanho_bytes,
+            enviada_em: (self.agora_ms)(),
+        };
+        if let Err(erro) = self.store.matrix_midia().registrar(org, &registro) {
+            tracing::warn!(
+                target: "poph_server::matrix_espelho",
+                org = %org,
+                conversa = %envio.conversa,
+                motivo = "midia_nao_registrada",
+                "mídia entrou na sala mas não foi registrada para expirar: o arquivo fica no Synapse"
+            );
+            let _ = erro;
+        }
+    }
+
     /// Aviso na sala de uma mídia que não entrou. Quem assina é o fantasma do agente, dono da sala.
     fn aviso_de_midia(
         &self,
@@ -1580,7 +1665,7 @@ fn eh_429(erro: &ErroChamada) -> bool {
 }
 
 /// Relógio do sistema em milissegundos (o mesmo carimbo que o Harness grava nas mensagens).
-fn relogio_do_sistema() -> i64 {
+pub(crate) fn relogio_do_sistema() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duracao| i64::try_from(duracao.as_millis()).unwrap_or(i64::MAX))

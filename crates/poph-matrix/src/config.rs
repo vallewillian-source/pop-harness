@@ -14,10 +14,11 @@ use poph_types::{DomainError, MatrixConfig, Segredo, Sensivel};
 pub const VAR_AS_TOKEN: &str = "POPH_MATRIX_AS_TOKEN";
 /// Token que o Synapse apresenta ao chamar a rota de transações do Harness.
 pub const VAR_HS_TOKEN: &str = "POPH_MATRIX_HS_TOKEN";
-/// Token da API administrativa do Synapse, usado só na fase 2 (apagar mídia expirada).
+/// Token da API administrativa do Synapse (MX-46): apaga do repositório a mídia que venceu.
 ///
-/// Documentado aqui de propósito e **sem uso nesta fase**: a MX-46 é que o lê, e só quando a mídia
-/// entrar em operação.
+/// É **opcional**, ao contrário dos dois do Application Service: sem ele o módulo sobe e o
+/// espelhamento funciona, e só a rotina de expiração fica desligada (com aviso no log na subida).
+/// O valor vive no tipo `Sensivel` e nunca aparece em log, erro, métrica ou teste.
 pub const VAR_ADMIN_TOKEN: &str = "POPH_MATRIX_ADMIN_TOKEN";
 
 /// Resultado das operações do módulo.
@@ -62,6 +63,21 @@ impl SegredosMatrix {
             hs_token: token(buscar(VAR_HS_TOKEN), VAR_HS_TOKEN)?,
         })
     }
+}
+
+/// Lê o token de administração do Synapse, se ele existir.
+///
+/// Variável ausente, vazia ou só com espaços devolve `None` — que **não é erro**: é a rotina de
+/// expiração desligada. Quem chama avisa no log e segue.
+pub fn token_admin_do_ambiente() -> Option<Segredo> {
+    token_admin_de(|nome| std::env::var(nome).ok())
+}
+
+/// Igual a [`token_admin_do_ambiente`], com a fonte injetada (testes).
+pub fn token_admin_de(buscar: impl Fn(&str) -> Option<String>) -> Option<Segredo> {
+    buscar(VAR_ADMIN_TOKEN)
+        .filter(|valor| !valor.trim().is_empty())
+        .map(Sensivel::new)
 }
 
 fn token(valor: Option<String>, variavel: &'static str) -> ResultadoMatrix<Segredo> {

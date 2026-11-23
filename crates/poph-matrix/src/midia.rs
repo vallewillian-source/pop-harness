@@ -232,23 +232,35 @@ pub fn conteudo_do_aviso(motivo: MotivoDeRecusa) -> Value {
     json!({ "msgtype": MSGTYPE_AVISO, "body": corpo_do_aviso(motivo) })
 }
 
+/// O que ficou na sala depois de uma mídia publicada: o evento e o arquivo.
+///
+/// Os dois são necessários para a expiração (MX-46): o evento é o que se redige, e o `mxc` é o que
+/// se apaga do repositório do Synapse.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MidiaEnviada {
+    /// Id do evento de mídia na sala.
+    pub evento: String,
+    /// `mxc://servidor/id` do arquivo que subiu.
+    pub mxc: String,
+}
+
 /// Sobe o arquivo e publica o evento na sala, como o usuário virtual do cliente.
 ///
 /// Duas chamadas ao Synapse, nesta ordem: `upload` (devolve o `mxc://`) e `send` do evento com o
-/// `txnId` da mídia. Devolve o id do evento criado. Uma falha em qualquer uma delas volta como
-/// [`ErroChamada`], com a classificação que o laço do espelho usa para decidir entre repetir e
-/// isolar.
+/// `txnId` da mídia. Devolve o evento criado e o `mxc://` dele. Uma falha em qualquer uma delas
+/// volta como [`ErroChamada`], com a classificação que o laço do espelho usa para decidir entre
+/// repetir e isolar.
 pub async fn enviar(
     cliente: &ClienteMatrix,
     remetente: &Fantasma,
     sala: &str,
     midia: &Midia,
     conteudo: &[u8],
-) -> Result<String, ErroChamada> {
+) -> Result<MidiaEnviada, ErroChamada> {
     let mxc = cliente
         .enviar_midia(remetente.user_id(), &midia.nome, &midia.mime, conteudo)
         .await?;
-    cliente
+    let evento = cliente
         .enviar_evento(
             remetente.user_id(),
             sala,
@@ -256,7 +268,8 @@ pub async fn enviar(
             &midia.txn_id,
             &conteudo_do_evento(&mxc, midia),
         )
-        .await
+        .await?;
+    Ok(MidiaEnviada { evento, mxc })
 }
 
 #[cfg(test)]

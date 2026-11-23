@@ -183,11 +183,11 @@ async fn imagem_e_pdf_do_cliente_aparecem_na_sala_do_synapse_real() {
             fonte: "whatsapp",
         })
         .expect("decide a mídia");
-        let evento = midia::enviar(&cliente, &remetente, &sala, &decidida, &bytes)
+        let enviada = midia::enviar(&cliente, &remetente, &sala, &decidida, &bytes)
             .await
             .unwrap_or_else(|erro| panic!("[{nome}] o Synapse real recusou a mídia ({erro:?})"));
         let lido = cliente
-            .ler_evento(remetente.user_id(), &sala, &evento)
+            .ler_evento(remetente.user_id(), &sala, &enviada.evento)
             .await
             .unwrap_or_else(|erro| panic!("[{nome}] o evento não está na sala ({erro:?})"));
         eventos.push((nome, lido));
@@ -306,11 +306,11 @@ async fn a_midia_da_sala_desce_inteira_pelo_cliente_do_matrix() {
         fonte: "whatsapp",
     })
     .expect("decide a mídia");
-    let evento = midia::enviar(&cliente, &remetente, &pronta.room_id, &decidida, PNG)
+    let enviada = midia::enviar(&cliente, &remetente, &pronta.room_id, &decidida, PNG)
         .await
         .expect("o Synapse real aceitou a mídia na sala");
     let lido = cliente
-        .ler_evento(remetente.user_id(), &pronta.room_id, &evento)
+        .ler_evento(remetente.user_id(), &pronta.room_id, &enviada.evento)
         .await
         .expect("o evento está na sala");
     let mxc = lido["content"]["url"]

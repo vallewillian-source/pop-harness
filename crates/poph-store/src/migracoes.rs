@@ -101,6 +101,11 @@ pub const MIGRACOES_HARNESS: &[Migracao] = &[
         nome: "0015_conversas_por_cliente",
         sql: include_str!("../migrations/harness/0015_conversas_por_cliente.sql"),
     },
+    Migracao {
+        versao: 16,
+        nome: "0016_matrix_midia_expiracao",
+        sql: include_str!("../migrations/harness/0016_matrix_midia_expiracao.sql"),
+    },
 ];
 
 /// Migrações de `rag.db`. Vazio até a HR-16 (trechos, vetores int8 e FTS5).

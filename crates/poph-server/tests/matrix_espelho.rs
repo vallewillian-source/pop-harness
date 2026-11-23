@@ -17,8 +17,8 @@ use poph_matrix::salas::{ConversaParaSala, ErroSala};
 use poph_matrix::usuarios::Fantasma;
 use poph_matrix::usuarios::IdsFantasmas;
 use poph_server::matrix_espelho::{
-    AvisoNaSala, DestinoMatrix, EnvioMidia, EspelhoMatrix, MAX_PAGINAS_POR_CICLO, PAGINA,
-    TENTATIVAS_DEFINITIVAS, TETO_ATRASO,
+    AvisoNaSala, DestinoMatrix, EnvioMidia, EspelhoMatrix, MAX_PAGINAS_POR_CICLO, MidiaPublicada,
+    PAGINA, TENTATIVAS_DEFINITIVAS, TETO_ATRASO,
 };
 use poph_store::{
     Direcao, NovaConversa, NovaMensagem, NovaMensagemDoAparelho, NovaOrg, NovoAgente, Origem,
@@ -383,7 +383,7 @@ impl DestinoMatrix for Sinal {
         &self,
         sala: &str,
         envio: &EnvioMidia,
-    ) -> impl std::future::Future<Output = Result<(), ErroChamada>> + Send {
+    ) -> impl std::future::Future<Output = Result<MidiaPublicada, ErroChamada>> + Send {
         let falso = &self.0;
         let n = falso.chamadas_envio.fetch_add(1, Ordering::SeqCst) + 1;
         let modo = *falso.modo.lock().unwrap();
@@ -407,16 +407,22 @@ impl DestinoMatrix for Sinal {
             _ => Ok(()),
         };
         let mut criados = falso.criados.lock().unwrap();
-        if resultado.is_ok() && !criados.iter().any(|c| c.sala == sala && c.txn == txn) {
+        let novo = !criados.iter().any(|c| c.sala == sala && c.txn == txn);
+        if resultado.is_ok() && novo {
             criados.push(Criado {
-                sala,
-                txn,
+                sala: sala.clone(),
+                txn: txn.clone(),
                 corpo,
                 remetente,
             });
         }
         drop(criados);
-        async move { resultado }
+        // Como o destino real: o `mxc` sai do `txnId` do anexo e o evento é numerado na sala.
+        let publicada = MidiaPublicada {
+            evento: format!("$midia-{txn}:matrix-dev.local"),
+            mxc: format!("mxc://matrix-dev.local/{txn}"),
+        };
+        async move { resultado.map(|()| publicada) }
     }
 
     fn avisar(

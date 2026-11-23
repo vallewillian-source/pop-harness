@@ -15,7 +15,10 @@
 //!   e os campos que o Harness precisa preencher não somem;
 //! - as uniões `integration_type` e `status` da interface contra o que o módulo escreve.
 //! - a chave do bloco de anexo (`com.<marca>.attachment`, MX-43) contra `ATTACHMENT_BLOCK_KEY` de
-//!   `sofacoding/expiredAttachment.ts` — o arquivo do Element que lê esse bloco.
+//!   `sofacoding/expiredAttachment.ts` — o arquivo do Element que lê esse bloco;
+//! - a chave e os campos da expiração (`com.<marca>.attachment_expired`, MX-46) contra
+//!   `ATTACHMENT_EXPIRED_KEY` e o que `expiredAttachmentFromRedaction` lê em
+//!   `sofacoding/expiredAttachmentMarker.ts`.
 //!
 //! Os três testes ficam `#[ignore]` neste repositório, porque o frontend do Element mora em outro
 //! lugar. Quem tem o arquivo roda `POPH_ELEMENT_CONTRATO=/caminho/atendimentoRoom.ts cargo test
@@ -32,6 +35,7 @@
 use std::path::{Path, PathBuf};
 
 use poph_matrix::ConversaParaSala;
+use poph_matrix::expiracao::{BLOCO_EXPIRADO, CAMPO_CATEGORIA, CAMPO_ENVIADA_EM, CAMPO_NOME};
 use poph_matrix::midia::BLOCO_ANEXO;
 use poph_matrix::salas::{INTEGRACOES_DO_FRONTEND, MetadataSala, TIPO_METADATA, TIPO_SALA};
 use poph_types::{AgentId, ConversationId, DepartmentId, OrgId};
@@ -41,6 +45,9 @@ const CONTRATO: &str = "../../../frontend/src/sofacoding/atendimentoRoom.ts";
 
 /// Caminho do contrato do anexo, relativo ao crate (`apps/pop-harness/crates/poph-matrix`).
 const CONTRATO_ANEXO: &str = "../../../frontend/src/sofacoding/expiredAttachment.ts";
+
+/// Caminho do contrato da expiração, relativo ao crate.
+const CONTRATO_EXPIRADO: &str = "../../../frontend/src/sofacoding/expiredAttachmentMarker.ts";
 
 /// Nome da interface que descreve o metadata no frontend.
 const INTERFACE_METADATA: &str = "AtendimentoMetadata";
@@ -321,4 +328,58 @@ fn chave_do_bloco_de_anexo_e_a_mesma_do_frontend() {
          crates/poph-matrix/src/midia.rs) e o Element lê `{chave}` (ATTACHMENT_BLOCK_KEY em \
          sofacoding/expiredAttachment.ts). Igualar um dos dois lados."
     );
+}
+
+/// Caminho do arquivo do frontend que lê o bloco da expiração (MX-46).
+fn caminho_do_contrato_da_expiracao() -> PathBuf {
+    match std::env::var_os("POPH_ELEMENT_EXPIRADO_CONTRATO") {
+        Some(caminho) => PathBuf::from(caminho),
+        None => Path::new(env!("CARGO_MANIFEST_DIR")).join(CONTRATO_EXPIRADO),
+    }
+}
+
+/// A chave e os campos do bloco da expiração são os mesmos dos dois lados (MX-46).
+///
+/// Como o teste da chave do anexo, este **não** é `#[ignore]`: dentro do monorepo o arquivo do
+/// Element está ao lado do módulo, e renomear a chave ou um campo de um lado só tem de quebrar aqui,
+/// não no aviso de "não está mais disponível". Fora do monorepo o teste diz que não conferiu em vez
+/// de fingir que passou.
+#[test]
+fn chave_e_campos_da_expiracao_sao_os_do_frontend() {
+    let caminho = caminho_do_contrato_da_expiracao();
+    let Ok(fonte) = std::fs::read_to_string(&caminho) else {
+        println!(
+            "contrato da expiração NÃO conferido: `{}` não existe (defina \
+             POPH_ELEMENT_EXPIRADO_CONTRATO com o caminho de sofacoding/expiredAttachmentMarker.ts)",
+            caminho.display()
+        );
+        return;
+    };
+
+    let chave = valor_da_constante(&fonte, "ATTACHMENT_EXPIRED_KEY").unwrap_or_else(|| {
+        panic!(
+            "não achei `export const ATTACHMENT_EXPIRED_KEY = \"…\";` em `{}`: o Element renomeou \
+             a constante ou mudou a forma de declará-la. Se foi de propósito, ajuste o nome lido em \
+             tests/contrato_frontend.rs e o uso no módulo; senão, restaure o nome no frontend.",
+            caminho.display()
+        )
+    });
+    assert_eq!(
+        BLOCO_EXPIRADO, chave,
+        "chave do bloco da expiração diferente: o módulo publica `{BLOCO_EXPIRADO}` (BLOCO_EXPIRADO \
+         em crates/poph-matrix/src/expiracao.rs) e o Element lê `{chave}` (ATTACHMENT_EXPIRED_KEY em \
+         sofacoding/expiredAttachmentMarker.ts). Igualar um dos dois lados."
+    );
+
+    // Os campos que o módulo grava são lidos pelo frontend como `payload.<campo>`.
+    for campo in [CAMPO_CATEGORIA, CAMPO_NOME, CAMPO_ENVIADA_EM] {
+        let lido = format!("payload.{campo}");
+        assert!(
+            fonte.contains(&lido),
+            "o módulo grava o campo `{campo}` no bloco da expiração \
+             (crates/poph-matrix/src/expiracao.rs), mas `{}` não lê `{lido}`: o aviso de \
+             \"não está mais disponível\" sairia sem esse dado. Igualar o nome do campo dos dois lados.",
+            caminho.display()
+        );
+    }
 }

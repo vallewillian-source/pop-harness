@@ -7,7 +7,9 @@
 //! - **espelho das mensagens** ([`crate::matrix_espelho`], MX-14);
 //! - **espelho do estado da conversa** ([`crate::matrix_estado`], MX-15);
 //! - **receptor do Application Service** ([`crate::api::matrix_as`], MX-16), com a entrega da
-//!   resposta do atendente ([`crate::matrix_resposta`], MX-18) injetada.
+//!   resposta do atendente ([`crate::matrix_resposta`], MX-18) injetada;
+//! - **expiração da mídia** ([`crate::matrix_expiracao`], MX-46), que só entra no ar quando o token
+//!   de administração do Synapse está no ambiente.
 //!
 //! ## O que vale saber
 //!
@@ -46,6 +48,7 @@ use crate::api::matrix_as::ReceptorAs;
 use crate::estado::Estado;
 use crate::matrix_espelho::{DestinoReal, EspelhoMatrix};
 use crate::matrix_estado::{DestinoDoSynapse, EstadoDasConversas, PortaEstadoStore};
+use crate::matrix_expiracao::ExpiracaoMidia;
 use crate::matrix_falhas_aviso::{
     AvisoDeFalhas, AvisoNoSynapse, PERIODO_PADRAO, PortaFalhasDoHarness,
 };
@@ -134,6 +137,8 @@ pub struct MatrixRodando {
         Arc<EstadoDasConversas<DestinoDoSynapse<PortaEspacosStore>, PortaEstadoStore>>,
     /// Aviso na sala quando a resposta humana falha de vez (MX-19).
     falhas_aviso: Arc<AvisoDeFalhas>,
+    /// Expiração da mídia (MX-46). `None` quando o token de administração não está no ambiente.
+    expiracao: Option<Arc<ExpiracaoMidia>>,
     conexao: Arc<SinalDeConexao>,
     parar_sonda: watch::Sender<bool>,
     tarefas: Vec<tokio::task::JoinHandle<()>>,
@@ -164,6 +169,9 @@ impl MatrixRodando {
         self.espelho.pedir_parada();
         self.estado_das_conversas.pedir_parada();
         self.falhas_aviso.pedir_parada();
+        if let Some(expiracao) = &self.expiracao {
+            expiracao.pedir_parada();
+        }
         self.parar_sonda.send_replace(true);
         for tarefa in self.tarefas {
             if tokio::time::timeout(self.prazo_de_parada, tarefa)
@@ -371,6 +379,16 @@ pub fn iniciar_com_ajustes(
         estado_das_conversas = estado_das_conversas.com_metricas(Arc::clone(metricas));
     }
 
+    // ───── expiração da mídia (MX-46) ─────
+    let expiracao = expiracao_do_modulo(
+        Arc::clone(&estado.store),
+        cliente.clone(),
+        &modulo.config,
+        metricas.clone(),
+        poph_matrix::config::token_admin_do_ambiente(),
+    )
+    .map(Arc::new);
+
     // ───── receptor do Application Service (MX-16) com a resposta do atendente (MX-18) ─────
     let mut entrega = match RespostaDoAtendente::do_modulo(Arc::clone(&store), &modulo) {
         Ok(entrega) => entrega,
@@ -400,7 +418,7 @@ pub fn iniciar_com_ajustes(
     // O sinal de vida também fica no `Estado`: é o "conectado" que a API administrativa lê.
     estado.ligar_sinal_do_matrix(Arc::clone(&conexao));
     let (parar_sonda, sinal_da_sonda) = watch::channel(false);
-    let tarefas = vec![
+    let mut tarefas = vec![
         tokio::spawn(Arc::clone(&espelho).executar()),
         tokio::spawn(Arc::clone(&estado_das_conversas).executar()),
         tokio::spawn(Arc::clone(&falhas_aviso).executar(PERIODO_PADRAO)),
@@ -412,6 +430,9 @@ pub fn iniciar_com_ajustes(
             sinal_da_sonda,
         )),
     ];
+    if let Some(expiracao) = &expiracao {
+        tarefas.push(tokio::spawn(Arc::clone(expiracao).executar()));
+    }
     tracing::info!(
         target: "poph_server::matrix_inicio",
         servidor = %estado.config.matrix.as_ref().map(|matrix| matrix.server_name.as_str()).unwrap_or_default(),
@@ -421,17 +442,63 @@ pub fn iniciar_com_ajustes(
             .as_ref()
             .map(|matrix| matrix.intervalo_ms)
             .unwrap_or_default(),
+        expiracao_de_midia = expiracao.is_some(),
         "módulo Matrix ligado: espelho, estado e receptor do Application Service no ar"
     );
     Some(MatrixRodando {
         espelho,
         estado_das_conversas,
         falhas_aviso,
+        expiracao,
         conexao,
         parar_sonda,
         tarefas,
         prazo_de_parada: ajustes.prazo_de_parada,
     })
+}
+
+/// Monta a expiração da mídia (MX-46), ou `None` quando falta o token de administração.
+///
+/// `token` é o `POPH_MATRIX_ADMIN_TOKEN` já lido (aqui, e só aqui, ele sai do ambiente). Sem ele a
+/// rotina fica **desligada, com aviso claro no log**, e o servidor sobe normalmente: o módulo
+/// espelha, responde e atende — o que não acontece é a limpeza da mídia no Synapse depois do prazo.
+pub fn expiracao_do_modulo(
+    store: Arc<Store>,
+    cliente: ClienteMatrix,
+    config: &poph_types::MatrixConfig,
+    metricas: Option<Arc<crate::matrix_metricas::MetricasMatrix>>,
+    token: Option<poph_types::Segredo>,
+) -> Option<ExpiracaoMidia> {
+    let Some(token) = token else {
+        tracing::warn!(
+            target: "poph_server::matrix_inicio",
+            motivo = "token_de_administrador_ausente",
+            variavel = poph_matrix::config::VAR_ADMIN_TOKEN,
+            "expiração da mídia desligada: defina POPH_MATRIX_ADMIN_TOKEN para apagar do Synapse a mídia vencida (o resto do módulo Matrix segue normal)"
+        );
+        return None;
+    };
+    match ExpiracaoMidia::novo(Arc::clone(&store), cliente, token, config) {
+        Ok(expiracao) => {
+            tracing::info!(
+                target: "poph_server::matrix_inicio",
+                retencao_dias = config.midia_retencao_dias,
+                "expiração da mídia ligada: o que passar do prazo é redigido na sala e apagado do Synapse"
+            );
+            Some(match metricas {
+                Some(metricas) => expiracao.com_metricas(metricas),
+                None => expiracao,
+            })
+        }
+        Err(_) => {
+            tracing::error!(
+                target: "poph_server::matrix_inicio",
+                motivo = "expiracao_nao_montada",
+                "expiração da mídia não foi montada; o módulo Matrix segue sem ela"
+            );
+            None
+        }
+    }
 }
 
 /// Sonda de conexão com o Synapse: marca o estado e retenta com espera crescente enquanto falha.

@@ -15,7 +15,7 @@ use poph_matrix::erro::ErroChamada;
 use poph_matrix::formato::Envio;
 use poph_matrix::salas::{ConversaParaSala, ErroSala};
 use poph_matrix::usuarios::IdsFantasmas;
-use poph_server::matrix_espelho::{DestinoMatrix, EspelhoMatrix};
+use poph_server::matrix_espelho::{DestinoMatrix, EspelhoMatrix, MidiaPublicada};
 use poph_server::matrix_metricas::MetricasMatrix;
 use poph_server::{EntregaDeEventos, Estado, PortaDoHarness, RespostaDoAtendente};
 use poph_store::{Direcao, NovaConversa, NovaMensagem, NovaOrg, NovoAgente, Origem, Papel, Store};
@@ -235,8 +235,11 @@ impl DestinoMatrix for Sinal {
         &self,
         _sala: &str,
         _envio: &poph_server::matrix_espelho::EnvioMidia,
-    ) -> Result<(), ErroChamada> {
-        Ok(())
+    ) -> Result<MidiaPublicada, ErroChamada> {
+        // Este destino não publica mídia: nenhuma mensagem do teste tem anexo.
+        Err(ErroChamada::Configuracao(
+            "sem mídia neste destino".to_owned(),
+        ))
     }
 
     async fn avisar(

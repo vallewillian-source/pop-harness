@@ -28,6 +28,9 @@
 //! - **MX-17** — o classificador dos eventos que chegam do Synapse ([`eventos`]): resposta do
 //!   atendente, mídia do atendente ou ruído a ignorar, com motivo enumerado e anti-eco dos
 //!   fantasmas desta instância.
+//! - **MX-43/MX-46** — a mídia na sala ([`midia`]) e a expiração dela ([`expiracao`]): o anexo do
+//!   cliente vira `m.image`/`m.file`, e depois do prazo de retenção o evento é redigido com o
+//!   bloco que o Element reconhece e o arquivo é apagado pela API administrativa.
 //!
 //! As tabelas, os laços e a API administrativa entram nas tarefas seguintes (MX-14 em diante).
 //!
@@ -51,6 +54,7 @@ pub mod config;
 pub mod erro;
 pub mod espacos;
 pub mod eventos;
+pub mod expiracao;
 pub mod formato;
 pub mod midia;
 pub mod midia_atendente;

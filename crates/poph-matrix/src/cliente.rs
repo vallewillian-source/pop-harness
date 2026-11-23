@@ -54,6 +54,11 @@ const CAMINHO_DOWNLOAD_ANTIGO: &str = "/_matrix/media/v3/download";
 /// Rota de download nova, tentada quando o servidor não reconhece a antiga.
 const CAMINHO_DOWNLOAD_NOVO: &str = "/_matrix/client/v1/media/download";
 
+/// Base da API **administrativa** do Synapse (MX-46): apagar mídia do repositório local.
+///
+/// A rota recebe `servidor` e id da mídia, e exige token de administrador — nunca o `as_token`.
+const ADMIN_MEDIA: &str = "/_synapse/admin/v1/media";
+
 /// `errcode` do Synapse para rota que ele não conhece.
 const ERRCODE_NAO_RECONHECIDO: &str = "M_UNRECOGNIZED";
 
@@ -216,6 +221,20 @@ struct JuntaResposta {
 }
 
 // ───────────────────────────── o cliente ─────────────────────────────
+
+/// Os dados de uma requisição, sem o cabeçalho de autorização.
+///
+/// Existe para o mesmo caminho de transporte servir ao `as_token` (API cliente) e ao token de
+/// administração (API admin, MX-46) sem uma função de oito parâmetros.
+#[derive(Clone, Copy)]
+struct Pedido<'a> {
+    metodo: &'a Method,
+    caminho: &'a str,
+    consulta_fixa: &'a [(&'a str, &'a str)],
+    usuario: Option<&'a str>,
+    corpo: Corpo<'a>,
+    operacao: &'static str,
+}
 
 struct Interno {
     http: reqwest::Client,
@@ -778,6 +797,72 @@ impl ClienteMatrix {
         .await
     }
 
+    // ───────────────────────────── expiração da mídia (MX-46) ─────────────────────────────
+
+    /// Redige um evento da sala em nome de `usuario` (`PUT /rooms/{sala}/redact/{evento}/{txn}`).
+    ///
+    /// O corpo vai como está: é nele que a expiração publica o bloco que o frontend lê em
+    /// `unsigned.redacted_because.content`. O `txn_id` é a chave de idempotência do Synapse, como no
+    /// envio: repetir o mesmo `txn_id` não cria uma segunda redação.
+    ///
+    /// Quem redige é um moderador da sala (o fantasma do agente, dono da sala): o remetente do
+    /// evento de mídia é o fantasma do cliente, e ele não tem poder para apagar o próprio evento
+    /// depois de publicado.
+    pub async fn redigir(
+        &self,
+        usuario: &str,
+        sala: &str,
+        evento: &str,
+        txn_id: &str,
+        conteudo: &Value,
+    ) -> Result<String, ErroChamada> {
+        let valor = self
+            .chamar(
+                Method::PUT,
+                format!(
+                    "{API}/rooms/{}/redact/{}/{}",
+                    codificar(sala),
+                    codificar(evento),
+                    codificar(txn_id)
+                ),
+                Some(usuario),
+                Corpo::Json(conteudo),
+                "redact",
+            )
+            .await?;
+        texto_obrigatorio(&valor, "event_id", "redact")
+    }
+
+    /// Apaga o arquivo do repositório local do Synapse pela API **administrativa** (MX-46).
+    ///
+    /// `DELETE /_synapse/admin/v1/media/{servidor}/{id}`, com o token de administrador (nunca o
+    /// `as_token`). Devolve `true` quando o arquivo existia e foi apagado e `false` quando ele já
+    /// não existia — no Synapse atual o `DELETE` de mídia inexistente responde `404`, e isso conta
+    /// como apagado (repetir a expiração não pode falhar por já ter dado certo antes).
+    ///
+    /// Não repete sozinho: um `429` volta como erro e quem decide esperar é a rotina de expiração,
+    /// que adia o item com espera crescente.
+    pub async fn apagar_midia(&self, token_admin: &Segredo, mxc: &str) -> Result<bool, ErroMidia> {
+        let (servidor, id) = partes_do_mxc(mxc)?;
+        let caminho = format!("{ADMIN_MEDIA}/{}/{}", codificar(&servidor), codificar(&id));
+        let autorizacao = autorizacao_de(token_admin, "de administrador do Synapse")
+            .map_err(ErroMidia::Chamada)?;
+        let pedido = Pedido {
+            metodo: &Method::DELETE,
+            caminho: &caminho,
+            consulta_fixa: &[],
+            usuario: None,
+            corpo: Corpo::Nenhum,
+            operacao: "media (administração)",
+        };
+        match self.tentar_com(pedido, autorizacao).await {
+            Ok(_) => Ok(true),
+            // Mídia que já não existe: o objetivo da chamada está cumprido.
+            Err(ErroChamada::Resposta { status: 404, .. }) => Ok(false),
+            Err(erro) => Err(ErroMidia::Chamada(erro)),
+        }
+    }
+
     // ───────────────────────────── conexão ─────────────────────────────
 
     /// Confere se o Synapse responde (`GET /_matrix/client/versions`).
@@ -820,9 +905,15 @@ impl ClienteMatrix {
         corpo: Corpo<'_>,
         operacao: &'static str,
     ) -> Result<Value, ErroChamada> {
-        let resultado = self
-            .tentar(&metodo, &caminho, consulta_fixa, usuario, corpo, operacao)
-            .await;
+        let pedido = Pedido {
+            metodo: &metodo,
+            caminho: &caminho,
+            consulta_fixa,
+            usuario,
+            corpo,
+            operacao,
+        };
+        let resultado = self.tentar(pedido).await;
         match resultado {
             Ok(valor) => Ok(valor),
             Err(erro) => {
@@ -836,8 +927,7 @@ impl ClienteMatrix {
                     && Duration::from_millis(*ms) <= ESPERA_MAXIMA_429
                 {
                     tokio::time::sleep(Duration::from_millis(*ms)).await;
-                    self.tentar(&metodo, &caminho, consulta_fixa, usuario, corpo, operacao)
-                        .await
+                    self.tentar(pedido).await
                 } else {
                     Err(erro)
                 }
@@ -845,18 +935,29 @@ impl ClienteMatrix {
         }
     }
 
-    /// Uma requisição HTTP, sem repetição.
-    async fn tentar(
-        &self,
-        metodo: &Method,
-        caminho: &str,
-        consulta_fixa: &[(&str, &str)],
-        usuario: Option<&str>,
-        corpo: Corpo<'_>,
-        operacao: &'static str,
-    ) -> Result<Value, ErroChamada> {
-        let url = format!("{}{}", self.0.config.url_base, caminho);
+    /// Uma requisição HTTP, sem repetição, com o `as_token` do Application Service.
+    async fn tentar(&self, pedido: Pedido<'_>) -> Result<Value, ErroChamada> {
         let autorizacao = autorizacao_do_token(&self.0.config)?;
+        self.tentar_com(pedido, autorizacao).await
+    }
+
+    /// Igual a [`ClienteMatrix::tentar`], com o cabeçalho `Authorization` já montado.
+    ///
+    /// É o caminho da API administrativa (MX-46), que usa outro token no mesmo cliente.
+    async fn tentar_com(
+        &self,
+        pedido: Pedido<'_>,
+        autorizacao: HeaderValue,
+    ) -> Result<Value, ErroChamada> {
+        let Pedido {
+            metodo,
+            caminho,
+            consulta_fixa,
+            usuario,
+            corpo,
+            operacao,
+        } = pedido;
+        let url = format!("{}{}", self.0.config.url_base, caminho);
 
         let mut pedido = self
             .0
@@ -933,11 +1034,17 @@ impl ClienteMatrix {
 /// O token é `Sensivel`: o valor só é exposto aqui, para virar cabeçalho, e nunca entra em mensagem
 /// de erro.
 fn autorizacao_do_token(config: &ConfigCliente) -> Result<HeaderValue, ErroChamada> {
-    HeaderValue::from_str(&format!("Bearer {}", config.as_token.expor().trim())).map_err(|_| {
-        ErroChamada::Configuracao(
-            "o token do Application Service tem caractere que não cabe em cabeçalho HTTP"
-                .to_owned(),
-        )
+    autorizacao_de(&config.as_token, "do Application Service")
+}
+
+/// Cabeçalho `Authorization` de um token qualquer (`as_token` ou o de administrador da MX-46).
+///
+/// `rotulo` nomeia o token no erro — o valor nunca aparece.
+fn autorizacao_de(token: &Segredo, rotulo: &'static str) -> Result<HeaderValue, ErroChamada> {
+    HeaderValue::from_str(&format!("Bearer {}", token.expor().trim())).map_err(|_| {
+        ErroChamada::Configuracao(format!(
+            "o token {rotulo} tem caractere que não cabe em cabeçalho HTTP"
+        ))
     })
 }
 

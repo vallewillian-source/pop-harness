@@ -43,6 +43,14 @@ pub struct MetricasMatrix {
     pub tentativas: Contador,
     /// Mensagens tiradas da fila do espelho e guardadas em `matrix_falhas` (não voltam sozinhas).
     pub mensagens_isoladas: Contador,
+    /// Mídias cujo evento foi redigido na sala pela expiração (MX-46).
+    pub midias_redigidas: Contador,
+    /// Mídias cujo arquivo foi apagado do repositório do Synapse pela expiração (MX-46).
+    pub midias_apagadas: Contador,
+    /// Mídias que a expiração adiou por falha (voltam depois, com espera crescente).
+    pub midias_expiracao_adiadas: Contador,
+    /// Mídias vencidas que ainda não foram expiradas (arquivo no Synapse ou evento sem redação).
+    pub midias_pendentes_expiracao: Medidor,
     /// Duração de cada operação do espelho contra o Synapse (envio de evento ou provisão de sala).
     pub latencia_synapse_segundos: Histograma,
 }
@@ -106,6 +114,22 @@ impl MetricasMatrix {
             mensagens_isoladas: registro.contador(
                 "poph_matrix_mensagens_isoladas_total",
                 "Mensagens isoladas em matrix_falhas depois de falhas definitivas ou formato inválido.",
+            )?,
+            midias_redigidas: registro.contador(
+                "poph_matrix_midias_redigidas_total",
+                "Mídias cujo evento foi redigido na sala depois do prazo de retenção.",
+            )?,
+            midias_apagadas: registro.contador(
+                "poph_matrix_midias_apagadas_total",
+                "Mídias cujo arquivo foi apagado do repositório do Synapse depois do prazo.",
+            )?,
+            midias_expiracao_adiadas: registro.contador(
+                "poph_matrix_midias_expiracao_adiadas_total",
+                "Mídias que a expiração adiou por falha e vai tentar de novo mais tarde.",
+            )?,
+            midias_pendentes_expiracao: registro.medidor(
+                "poph_matrix_midias_pendentes_expiracao",
+                "Mídias vencidas que ainda têm etapa pendente (arquivo no Synapse ou evento sem redação).",
             )?,
             latencia_synapse_segundos: registro.histograma(
                 "poph_matrix_latencia_synapse_segundos",

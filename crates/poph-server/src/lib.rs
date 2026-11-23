@@ -15,6 +15,7 @@ pub mod evolution;
 pub mod manifestos;
 pub mod matrix_espelho;
 pub mod matrix_estado;
+pub mod matrix_expiracao;
 pub mod matrix_falhas_aviso;
 pub mod matrix_inicio;
 pub mod matrix_metricas;
