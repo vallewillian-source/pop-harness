@@ -10,13 +10,17 @@ use std::sync::{Arc, Barrier};
 use std::thread;
 
 use poph_store::{
-    Agente, Conversa, Direcao, ErroStore, EstadoSaida, FiltroFluxos, MudancaAgente,
-    MudancaCategoria, MudancaDepartamento, MudancaFluxo, MudancaOrg, NovaCategoria, NovaConversa,
-    NovaEntrada, NovaMensagem, NovaOrg, NovaSaida, NovoAgente, NovoDepartamento, NovoFluxo,
-    NovoRegistroAuditoria, Org, Pagina, Papel, Recebido, Status, StatusConversa, Store,
-    versao_do_arquivo,
+    Agente, Conversa, Direcao, EfeitoDaTransicao, ErroStore, EstadoDaExecucao, EstadoSaida,
+    ExtrasDaTransicao, FiltroFluxos, InicioDeExecucao, MudancaAgente, MudancaCategoria,
+    MudancaDepartamento, MudancaFluxo, MudancaOrg, NovaCategoria, NovaConversa, NovaEntrada,
+    NovaFicha, NovaMensagem, NovaOrg, NovaSaida, NovoAgente, NovoDepartamento, NovoEventoFicha,
+    NovoFluxo, NovoRegistroAuditoria, Org, Pagina, Papel, PublicacaoDeRevisao, Recebido, Status,
+    StatusConversa, Store, TransicaoDeFluxo, versao_do_arquivo,
 };
-use poph_types::{DomainError, InboxId, IntegrationId, MessageId, OrgId};
+use poph_types::{
+    AtorEvento, DomainError, InboxId, IntegrationId, MessageId, OrgId, StatusExecucao,
+    TipoEventoFicha,
+};
 
 /// Banco de verdade numa pasta temporária, apagada no fim.
 struct Cenario {
@@ -479,6 +483,269 @@ fn nenhum_repositorio_le_registro_de_outra_org() {
         .fluxos()
         .obter(org_a.id, fluxo.id)
         .expect("a org A continua vendo o seu fluxo");
+
+    // ── FX-09: revisões publicadas ──
+    // A revisão da org A não é lida, não é listada e não é publicável pela org B.
+    let versao_do_fluxo = store
+        .fluxos()
+        .obter(org_a.id, fluxo.id)
+        .expect("fluxo da org A")
+        .versao;
+    let publicacao = |esperada: u64| PublicacaoDeRevisao {
+        esperada,
+        fonte: "fluxo(id = \"agendar_visita\")".to_owned(),
+        definicao_json: "{}".to_owned(),
+        schema_versao: Some(1),
+        resolucoes_json: "{}".to_owned(),
+        ator_tipo: "cli".to_owned(),
+        ator_id: None,
+    };
+    let revisao = store
+        .revisoes()
+        .publicar_revisao(org_a.id, fluxo.id, publicacao(versao_do_fluxo))
+        .expect("publica a revisão 1 na org A");
+    nao_encontrado(store.revisoes().obter(org_b.id, fluxo.id, 1).map(|_| ()));
+    nao_encontrado(
+        store
+            .revisoes()
+            .obter_por_id(org_b.id, revisao.id)
+            .map(|_| ()),
+    );
+    nao_encontrado(store.revisoes().atual(org_b.id, fluxo.id).map(|_| ()));
+    nao_encontrado(
+        store
+            .revisoes()
+            .listar(org_b.id, fluxo.id, None, 10)
+            .map(|_| ()),
+    );
+    nao_encontrado(
+        store
+            .revisoes()
+            .publicar_revisao(org_b.id, fluxo.id, publicacao(versao_do_fluxo + 1))
+            .map(|_| ()),
+    );
+    assert_eq!(
+        store
+            .revisoes()
+            .listar(org_a.id, fluxo.id, None, 10)
+            .expect("lista da org A")
+            .len(),
+        1,
+        "a org A continua com a sua revisão"
+    );
+
+    // ── FX-07: Fichas e eventos ──
+    let ficha = store
+        .fichas()
+        .criar(
+            org_a.id,
+            NovaFicha {
+                conversation_id: None,
+                agent_id: agente.id,
+                canal: "cli".to_owned(),
+                peer_externo: Some("cliente-ficticio-a".to_owned()),
+            },
+        )
+        .expect("Ficha da org A");
+    nao_encontrado(store.fichas().obter(org_b.id, ficha.id).map(|_| ()));
+    assert!(
+        store
+            .fichas()
+            .por_conversa(org_b.id, conversa.id)
+            .expect("por conversa")
+            .is_none()
+    );
+    assert!(
+        store
+            .fichas()
+            .listar(org_b.id, &Default::default(), Pagina::default())
+            .expect("lista")
+            .is_empty()
+    );
+    nao_encontrado(
+        store
+            .fichas()
+            .eventos(org_b.id, ficha.id, None, 10)
+            .map(|_| ()),
+    );
+    nao_encontrado(
+        store
+            .fichas()
+            .registrar_evento(
+                org_b.id,
+                ficha.id,
+                NovoEventoFicha {
+                    execucao_id: None,
+                    tipo: TipoEventoFicha::FichaAberta,
+                    ator_tipo: AtorEvento::Sistema,
+                    ator_ref: None,
+                    payload_json: "{}".to_owned(),
+                    chave_idempotencia: None,
+                },
+            )
+            .map(|_| ()),
+    );
+    nao_encontrado(
+        store
+            .fichas()
+            .fechar_sem_conversa(org_b.id, ficha.id, ficha.versao, "invasão")
+            .map(|_| ()),
+    );
+
+    // ── FX-20: execução, etapas, eventos e efeitos ──
+    let estado_inicial = || EstadoDaExecucao {
+        status: StatusExecucao::Ativa,
+        no_atual: "coleta".to_owned(),
+        dados_json: "{}".to_owned(),
+        atores_que_agiram: Vec::new(),
+        resultado: None,
+        motivo: None,
+    };
+    let abertura = || InicioDeExecucao {
+        ficha: ficha.id,
+        fluxo: fluxo.id,
+        revisao: revisao.id,
+        ator: AtorEvento::Atendente,
+        ator_ref: Some("token-ficticio"),
+        decisao_jev: None,
+        estado_inicial: estado_inicial(),
+        efeitos_de_entrada: vec![EfeitoDaTransicao {
+            chave: "entrada/0".to_owned(),
+            tipo: "mensagem_ao_cliente".to_owned(),
+            payload_json: "{\"texto\":\"olá\"}".to_owned(),
+        }],
+        chave_idempotencia: None,
+    };
+    let aberta = store
+        .execucoes()
+        .iniciar_execucao(org_a.id, abertura())
+        .expect("abre a execução na org A");
+    let execucao = aberta.execucao.id;
+    let efeito = aberta.efeitos[0].id;
+
+    nao_encontrado(store.execucoes().obter(org_b.id, execucao).map(|_| ()));
+    assert!(
+        store
+            .execucoes()
+            .ativa_da_ficha(org_b.id, ficha.id)
+            .expect("ativa")
+            .is_none()
+    );
+    assert!(
+        store
+            .execucoes()
+            .da_ficha(org_b.id, ficha.id, 10)
+            .expect("da ficha")
+            .is_empty()
+    );
+    nao_encontrado(store.execucoes().etapas(org_b.id, execucao).map(|_| ()));
+    nao_encontrado(store.execucoes().efeitos(org_b.id, execucao).map(|_| ()));
+    assert!(
+        store
+            .execucoes()
+            .ativas_por_revisao(org_b.id, fluxo.id)
+            .expect("ativas por revisão")
+            .is_empty()
+    );
+    nao_encontrado(
+        store
+            .execucoes()
+            .iniciar_execucao(org_b.id, abertura())
+            .map(|_| ()),
+    );
+    nao_encontrado(
+        store
+            .execucoes()
+            .aplicar_transicao(
+                org_b.id,
+                execucao,
+                aberta.execucao.versao,
+                &TransicaoDeFluxo {
+                    novo_estado: estado_inicial(),
+                    eventos: Vec::new(),
+                    efeitos: Vec::new(),
+                    encerra_atendimento: false,
+                    repetida: false,
+                },
+                "chave-invasora",
+                ExtrasDaTransicao::default(),
+            )
+            .map(|_| ()),
+    );
+    assert!(
+        store
+            .execucoes()
+            .abertura_ja_feita(org_b.id, ficha.id, fluxo.id, "chave-invasora")
+            .expect("abertura já feita")
+            .is_none()
+    );
+    assert!(
+        !store
+            .execucoes()
+            .transicao_ja_aplicada(org_b.id, execucao, "chave-invasora")
+            .expect("transição já aplicada")
+    );
+
+    // Efeitos: a org B não lê a fila, não a move e não confirma entrega da org A.
+    nao_encontrado(store.efeitos().obter(org_b.id, efeito).map(|_| ()));
+    assert!(
+        store
+            .efeitos()
+            .listar_pendentes(org_b.id, 100)
+            .expect("pendentes")
+            .is_empty()
+    );
+    assert!(
+        store.efeitos().iniciar_envio(org_b.id, efeito).is_err(),
+        "a org B não pode começar a entrega de um efeito da org A"
+    );
+    store
+        .efeitos()
+        .confirmar_envio(org_b.id, efeito)
+        .expect("confirmar sem linha não é erro de banco");
+    store
+        .efeitos()
+        .falhar_envio(org_b.id, efeito, "invasão", true, None)
+        .expect("falhar sem linha não é erro de banco");
+    store
+        .efeitos()
+        .adiar(org_b.id, efeito, 1_700_000_000_000)
+        .expect("adiar sem linha não é erro de banco");
+    let intacto = store
+        .efeitos()
+        .obter(org_a.id, efeito)
+        .expect("o efeito da org A continua lá");
+    assert_eq!(intacto.tentativas, 0);
+    assert_eq!(intacto.ultimo_erro, None);
+    assert_eq!(intacto.proxima_tentativa, None);
+    assert_eq!(intacto.enviado_em, None);
+
+    // A org A continua enxergando tudo o que é dela.
+    assert_eq!(
+        store
+            .execucoes()
+            .da_ficha(org_a.id, ficha.id, 10)
+            .expect("da ficha na org A")
+            .len(),
+        1
+    );
+    assert_eq!(
+        store
+            .fichas()
+            .eventos(org_a.id, ficha.id, None, 50)
+            .expect("eventos da org A")
+            .len(),
+        2,
+        "ficha_aberta + fluxo_iniciado"
+    );
+    assert_eq!(
+        store
+            .efeitos()
+            .listar_pendentes(org_a.id, 100)
+            .expect("pendentes da org A")
+            .len(),
+        1
+    );
 }
 
 #[test]

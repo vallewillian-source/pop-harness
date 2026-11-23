@@ -39,6 +39,21 @@ corte com mensagem recente fica inteira.
 Base de conhecimento (grupos e itens), produtos e categorias, biblioteca de arquivos do agente,
 orgs, agentes, instruções, integrações, tokens, departamentos, carrinho e `audit_log`.
 
+Do módulo de Fluxos e Fichas, também nada sai (FX-34):
+
+- **Fichas** (`fichas`) — a Ficha é o registro do atendimento e sobrevive à conversa (PRD L12). Se a
+  varredura apaga a conversa, a Ficha fica e só perde o vínculo: `conversation_id` vai a nulo
+  (`ON DELETE SET NULL`). O `status` dela não muda; quem fecha a Ficha é o encerramento do
+  atendimento, não a retenção.
+- **Execuções, etapas, eventos e efeitos** (`fluxo_execucoes`, `fluxo_execucao_etapas`,
+  `ficha_eventos`, `fluxo_efeitos`) — é o que aconteceu no atendimento; ficam todos, inclusive os de
+  uma Ficha cuja conversa já saiu.
+- **Fluxos, revisões publicadas e permissão por agente** (`fluxos`, `fluxo_revisoes`,
+  `agente_fluxos`) — revisão publicada é imutável e só sai com o fluxo inteiro (exclusão com
+  `force`) ou com a org.
+
+Não existe retenção de Ficha: enquanto a decisão de produto não mudar, Ficha não expira.
+
 Pendente nunca é apagado: entrada não processada, saída `pending`, `sending` ou `failed`, e turno
 `running`.
 

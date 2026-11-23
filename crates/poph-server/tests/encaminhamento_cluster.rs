@@ -33,9 +33,9 @@ use poph_server::encaminhamento::{
     CABECALHO_TIMESTAMP, assinar, hash_do_corpo, nonce_novo,
 };
 use poph_server::evolution::CanalEvolution;
-use poph_store::{NovaOrg, Store};
+use poph_store::{NovaOrg, Pagina, Store};
 use poph_types::config::{ClusterConfig, ClusterInstance, TokenGlobalConfig};
-use poph_types::{HarnessConfig, IntegrationId, OrgId, Segredo};
+use poph_types::{HarnessConfig, IntegrationId, OrgId, Segredo, StatusFicha};
 use rand_core::OsRng;
 use reqwest::{Client, Method, StatusCode};
 use serde_json::{Value, json};
@@ -1066,4 +1066,204 @@ async fn listagem_com_cluster_soma_instancias_e_marca_a_fora_do_ar() {
         com_falha.cru
     );
     com_falha.sem_segredo();
+}
+
+/// Fluxo mínimo e válido, usado para provar que as rotas do módulo de Fluxos e Fichas passam pelo
+/// encaminhamento (o mesmo formato dos testes da API de fluxos).
+const FLUXO_DE_PROVA: &str = r#"fluxo(
+    id = "agendar_visita",
+    nome = "Agendar visita",
+    descricao = "Marca uma visita técnica no endereço do cliente.",
+    inicio = "coleta",
+    gatilho = gatilho(
+        quando = "O cliente quer marcar, remarcar ou cancelar uma visita técnica.",
+        nao_quando = "Só quer saber preço ou prazo, sem pedir visita.",
+        exemplos = ["queria agendar uma visita", "pode vir aqui amanhã?"],
+    ),
+)
+
+etapa(
+    id = "coleta",
+    nome = "Coletar dados",
+    instrucao = "Pergunte o endereço e o período preferido. Uma pergunta por vez.",
+    campos = [
+        campo("endereco", "Endereço completo", tipo = "texto", obrigatorio = True),
+    ],
+    acoes = [
+        acao("confirmar", "Dados completos", exige = ["endereco"], vai_para = fim("concluida", resultado = "Visita agendada")),
+    ],
+)
+"#;
+
+/// As rotas de fluxos e Fichas (FX-27/29/30) são encaminhadas como as demais: quem responde é a
+/// instância dona da org, e nada é gravado na instância que só repassa.
+#[tokio::test(flavor = "multi_thread")]
+async fn rotas_de_fluxos_e_fichas_sao_encaminhadas_para_a_dona() {
+    let (a, b, org, _mapa) = duas_instancias("fluxos-fichas", false).await;
+    let raiz = format!("/admin/v1/orgs/{org}");
+
+    // `a` não tem a org: se atendesse localmente, tudo abaixo sairia 404.
+    assert!(
+        a.store.orgaos().por_slug("org-da-instancia-b").is_err(),
+        "a org não pode existir no banco de `a`"
+    );
+
+    // 1. Leitura pura: validar o script (FX-27) responde igual nas duas instâncias.
+    let corpo = json!({"source": FLUXO_DE_PROVA}).to_string();
+    let validado_na_dona = pedir(
+        Method::POST,
+        &format!("{}{raiz}/flows/validate", b.base),
+        Some(TOKEN_GLOBAL),
+        Some(corpo.as_bytes()),
+        &[],
+    )
+    .await;
+    assert_eq!(
+        validado_na_dona.status,
+        StatusCode::OK,
+        "{}",
+        validado_na_dona.cru
+    );
+    assert_eq!(validado_na_dona.corpo["valid"], json!(true));
+    let validado_via_a = pedir(
+        Method::POST,
+        &format!("{}{raiz}/flows/validate", a.base),
+        Some(TOKEN_GLOBAL),
+        Some(corpo.as_bytes()),
+        &[],
+    )
+    .await;
+    assert_eq!(
+        validado_via_a.status,
+        StatusCode::OK,
+        "{}",
+        validado_via_a.cru
+    );
+    assert_eq!(validado_via_a.corpo, validado_na_dona.corpo);
+
+    // 2. Escrita: criar e publicar o fluxo por `a` grava em `b` (e só lá).
+    let criado = pedir(
+        Method::POST,
+        &format!("{}{raiz}/flows", a.base),
+        Some(TOKEN_GLOBAL),
+        Some(
+            json!({"source": FLUXO_DE_PROVA, "publish": true})
+                .to_string()
+                .as_bytes(),
+        ),
+        &[],
+    )
+    .await;
+    assert_eq!(criado.status, StatusCode::CREATED, "{}", criado.cru);
+    assert_eq!(criado.corpo["slug"], json!("agendar_visita"));
+    assert!(
+        b.store
+            .fluxos()
+            .por_slug(org, "agendar_visita")
+            .expect("consulta em b")
+            .is_some(),
+        "o fluxo criado por `a` tem de existir em `b`"
+    );
+    assert!(
+        a.store
+            .fluxos()
+            .por_slug(org, "agendar_visita")
+            .expect("consulta em a")
+            .is_none(),
+        "`a` não grava nada: a org nem existe no banco dela"
+    );
+
+    // 3. Atendimento: agente e conversa de teste criados por `a` viram Ficha em `b`.
+    let agente = pedir(
+        Method::POST,
+        &format!("{}{raiz}/agents", a.base),
+        Some(TOKEN_GLOBAL),
+        Some(
+            json!({"name": "Atendente fictício", "slug": "atendente-ficticio"})
+                .to_string()
+                .as_bytes(),
+        ),
+        &[],
+    )
+    .await;
+    assert_eq!(agente.status, StatusCode::CREATED, "{}", agente.cru);
+    let agente_id = agente.corpo["id"]
+        .as_str()
+        .expect("id do agente")
+        .to_owned();
+    let conversa = pedir(
+        Method::POST,
+        &format!("{}{raiz}/agents/{agente_id}/test-chat", a.base),
+        Some(TOKEN_GLOBAL),
+        None,
+        &[],
+    )
+    .await;
+    assert_eq!(conversa.status, StatusCode::CREATED, "{}", conversa.cru);
+
+    // 4. Leitura da Ficha por `a` devolve o que a dona tem.
+    let fichas_via_a = pedir(
+        Method::GET,
+        &format!("{}{raiz}/fichas", a.base),
+        Some(TOKEN_GLOBAL),
+        None,
+        &[],
+    )
+    .await;
+    assert_eq!(fichas_via_a.status, StatusCode::OK, "{}", fichas_via_a.cru);
+    let itens = fichas_via_a.corpo["items"]
+        .as_array()
+        .expect("lista de Fichas");
+    assert_eq!(itens.len(), 1, "a conversa de teste abriu uma Ficha");
+    let ficha = itens[0]["id"].as_str().expect("id da Ficha").to_owned();
+    let fichas_na_dona = pedir(
+        Method::GET,
+        &format!("{}{raiz}/fichas", b.base),
+        Some(TOKEN_GLOBAL),
+        None,
+        &[],
+    )
+    .await;
+    assert_eq!(fichas_na_dona.corpo, fichas_via_a.corpo);
+
+    // 5. Escrita humana na Ficha (FX-30): fechar por `a` fecha em `b`.
+    let fechada = pedir(
+        Method::POST,
+        &format!("{}{raiz}/fichas/{ficha}/close", a.base),
+        Some(TOKEN_GLOBAL),
+        None,
+        &[("if-match", "1".to_owned())],
+    )
+    .await;
+    assert_eq!(fechada.status, StatusCode::OK, "{}", fechada.cru);
+    assert_eq!(fechada.corpo["status"], json!("closed"));
+    let na_dona = b
+        .store
+        .fichas()
+        .obter(org, ficha.parse().expect("id da Ficha"))
+        .expect("Ficha em b");
+    assert_eq!(na_dona.status, StatusFicha::Fechada);
+    assert_eq!(
+        b.store
+            .fichas()
+            .listar(org, &Default::default(), Pagina::default())
+            .expect("lista em b")
+            .len(),
+        1
+    );
+    assert_eq!(
+        b.store
+            .conversas()
+            .listar(org, None, Pagina::default())
+            .expect("conversas em b")
+            .len(),
+        1,
+        "a conversa também fecha, mas fica no histórico"
+    );
+
+    // Nada disso existe no banco de `a`: tudo foi gravado pela dona, via encaminhamento.
+    assert!(
+        a.store.orgaos().obter(org).is_err(),
+        "a org não pode passar a existir em `a`"
+    );
 }

@@ -15,8 +15,11 @@ use poph_retention::{
     BancoHarness, ErroRetencao, Opcoes, RelatorioOrg, Situacao, VarreduraBanco, executar_org,
     executar_todas,
 };
-use poph_store::Store;
-use poph_types::OrgId;
+use poph_store::{
+    EfeitoDaTransicao, EstadoDaExecucao, InicioDeExecucao, NovaConversa, NovoFluxo,
+    PublicacaoDeRevisao, Store,
+};
+use poph_types::{AgentId, AtorEvento, OrgId, StatusExecucao};
 use rusqlite::{Connection, params, types::Value};
 use tempfile::TempDir;
 
@@ -763,4 +766,174 @@ fn auditoria_bate_com_o_que_foi_apagado() {
         detalhe["arquivos_sem_dono"],
         relatorio.arquivos_sem_dono.len()
     );
+}
+
+// ───────────── O que nunca sai: Fichas, execuções e fluxos (FX-34) ─────────────
+
+/// Tabelas do módulo de Fluxos e Fichas: nenhuma delas pode perder linha na varredura.
+const TABELAS_DO_MODULO: &[&str] = &[
+    "fluxos",
+    "fluxo_revisoes",
+    "agente_fluxos",
+    "fluxo_execucoes",
+    "fluxo_execucao_etapas",
+    "ficha_eventos",
+    "fluxo_efeitos",
+];
+
+/// A varredura apaga a conversa vazia e antiga, mas **nada** do atendimento registrado: a Ficha,
+/// a execução, as etapas, os eventos e os efeitos ficam, e a Ficha perde só o vínculo com a
+/// conversa (`conversation_id` nulo). Vale também para a simulação, que não muda nada.
+#[test]
+fn ficha_execucao_etapa_evento_e_efeito_sobrevivem_a_varredura() {
+    let cenario = Cenario::novo();
+    let c = cenario.banco();
+    let org_texto = org(&c, "modulo-fluxos", "{}");
+    let org = org_id(&org_texto);
+    let agente: AgentId = agente(&c, &org_texto).parse().expect("id do agente");
+
+    // A conversa nasce pelo repositório (que cria a Ficha junto) e é envelhecida: é a conversa
+    // vazia e antiga que a varredura apaga.
+    let conversa = cenario
+        .store
+        .conversas()
+        .criar(
+            org,
+            NovaConversa {
+                agent_id: agente,
+                integration_id: None,
+                canal: "cli".to_owned(),
+                peer_externo: Some("cliente-ficticio".to_owned()),
+                departamento_alvo: None,
+            },
+        )
+        .expect("conversa com Ficha");
+    c.execute(
+        "UPDATE conversations SET created_at = ?1, updated_at = ?1 WHERE org_id = ?2 AND id = ?3",
+        params![AGORA - 400 * DIA, org_texto, conversa.id.to_string()],
+    )
+    .expect("envelhece a conversa");
+
+    // Fluxo publicado (revisão 1), liberado ao agente e com execução aberta na Ficha.
+    let fluxo = cenario
+        .store
+        .fluxos()
+        .criar(
+            org,
+            NovoFluxo {
+                slug: "agendar_visita".to_owned(),
+                nome: "Agendar visita".to_owned(),
+                descricao: String::new(),
+                rascunho_fonte: "fluxo()".to_owned(),
+            },
+        )
+        .expect("fluxo");
+    let revisao = cenario
+        .store
+        .revisoes()
+        .publicar_revisao(
+            org,
+            fluxo.id,
+            PublicacaoDeRevisao {
+                esperada: fluxo.versao,
+                fonte: "fluxo()".to_owned(),
+                definicao_json: "{}".to_owned(),
+                schema_versao: Some(1),
+                resolucoes_json: "{}".to_owned(),
+                ator_tipo: "cli".to_owned(),
+                ator_id: None,
+            },
+        )
+        .expect("revisão publicada");
+    cenario
+        .store
+        .fluxos()
+        .liberar(org, agente, fluxo.id)
+        .expect("libera o fluxo ao agente");
+    let ficha = cenario
+        .store
+        .fichas()
+        .por_conversa(org, conversa.id)
+        .expect("consulta")
+        .expect("a conversa tem Ficha");
+    cenario
+        .store
+        .execucoes()
+        .iniciar_execucao(
+            org,
+            InicioDeExecucao {
+                ficha: ficha.id,
+                fluxo: fluxo.id,
+                revisao: revisao.id,
+                ator: AtorEvento::Agente,
+                ator_ref: Some("agente-ficticio"),
+                decisao_jev: None,
+                estado_inicial: EstadoDaExecucao {
+                    status: StatusExecucao::Ativa,
+                    no_atual: "coleta".to_owned(),
+                    dados_json: "{}".to_owned(),
+                    atores_que_agiram: Vec::new(),
+                    resultado: None,
+                    motivo: None,
+                },
+                efeitos_de_entrada: vec![EfeitoDaTransicao {
+                    chave: "entrada/0".to_owned(),
+                    tipo: "mensagem_ao_cliente".to_owned(),
+                    payload_json: "{\"texto\":\"olá\"}".to_owned(),
+                }],
+                chave_idempotencia: None,
+            },
+        )
+        .expect("abre a execução");
+
+    let antes = foto(&c, &org_texto, TABELAS_DO_MODULO);
+    assert_eq!(antes["fluxo_execucoes"].len(), 1);
+    assert_eq!(antes["fluxo_execucao_etapas"].len(), 1);
+    assert_eq!(antes["fluxo_efeitos"].len(), 1);
+    assert!(antes["ficha_eventos"].len() >= 2, "aberta + fluxo iniciado");
+
+    // Simulação: conta a conversa que sairia e não muda nada.
+    let simulacao = executar_org(&cenario.armazem(), org, &opcoes(30, true)).expect("simulação");
+    assert_eq!(simulacao.situacao, Situacao::Varrida);
+    assert_eq!(banco_da(&simulacao).conversas, 1, "a conversa vazia sairia");
+    assert_eq!(
+        foto(&c, &org_texto, TABELAS_DO_MODULO),
+        antes,
+        "a simulação não apaga nada do módulo"
+    );
+    assert_eq!(
+        contar(&c, "conversations", &org_texto),
+        1,
+        "a simulação não apaga a conversa"
+    );
+
+    // Varredura de verdade: a conversa sai, o atendimento registrado fica.
+    let real = executar_org(&cenario.armazem(), org, &opcoes(30, false)).expect("varredura");
+    assert_eq!(banco_da(&real).conversas, 1);
+    assert_eq!(contar(&c, "conversations", &org_texto), 0);
+    assert_eq!(
+        foto(&c, &org_texto, TABELAS_DO_MODULO),
+        antes,
+        "Ficha, execução, etapa, evento e efeito não podem perder linha"
+    );
+
+    // A Ficha continua aberta e perde só o vínculo com a conversa apagada.
+    assert_eq!(contar(&c, "fichas", &org_texto), 1);
+    let (situacao, conversa_da_ficha): (String, Option<String>) = c
+        .query_row(
+            "SELECT status, conversation_id FROM fichas WHERE org_id = ?1",
+            params![org_texto],
+            |linha| Ok((linha.get(0)?, linha.get(1)?)),
+        )
+        .expect("Ficha depois da varredura");
+    assert_eq!(situacao, "open", "a Ficha do atendimento não fecha sozinha");
+    assert_eq!(
+        conversa_da_ficha, None,
+        "conversa apagada deixa a Ficha com o vínculo nulo"
+    );
+    assert_eq!(contar(&c, "fluxo_execucoes", &org_texto), 1);
+    assert_eq!(contar(&c, "fluxo_execucao_etapas", &org_texto), 1);
+    assert_eq!(contar(&c, "fluxo_efeitos", &org_texto), 1);
+    assert_eq!(contar(&c, "fluxo_revisoes", &org_texto), 1);
+    assert_eq!(contar(&c, "fluxos", &org_texto), 1);
 }

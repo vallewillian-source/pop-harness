@@ -199,3 +199,241 @@ fn show_em_json_com_org_invalida_sai_com_1() {
             .contains("Nada foi apagado")
     );
 }
+
+// ───── O que nunca sai: Ficha, execução, etapa, evento e efeito (FX-34) ─────
+
+/// Tabelas do módulo de Fluxos e Fichas: a varredura não pode perder linha de nenhuma.
+const TABELAS_DO_MODULO: &[&str] = &[
+    "fluxos",
+    "fluxo_revisoes",
+    "agente_fluxos",
+    "fluxo_execucoes",
+    "fluxo_execucao_etapas",
+    "ficha_eventos",
+    "fluxo_efeitos",
+    "fichas",
+];
+
+const DIA_MS: i64 = 86_400_000;
+
+fn agora_ms() -> i64 {
+    let desde = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("relógio depois de 1970");
+    i64::try_from(desde.as_millis()).expect("instante em ms")
+}
+
+/// Retrato das tabelas do módulo, linha a linha, para comparar antes e depois.
+fn foto(conexao: &rusqlite::Connection, tabelas: &[&str]) -> Vec<(String, Vec<String>)> {
+    let mut retrato = Vec::new();
+    for tabela in tabelas {
+        let mut consulta = conexao
+            .prepare(&format!("SELECT * FROM {tabela} ORDER BY rowid"))
+            .expect("consulta da foto");
+        let colunas = consulta.column_count();
+        let linhas = consulta
+            .query_map([], |linha| {
+                let mut partes = Vec::with_capacity(colunas);
+                for i in 0..colunas {
+                    let valor: rusqlite::types::Value = linha.get(i)?;
+                    partes.push(format!("{valor:?}"));
+                }
+                Ok(partes.join("|"))
+            })
+            .expect("linhas da foto")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("leitura da foto");
+        retrato.push(((*tabela).to_owned(), linhas));
+    }
+    retrato
+}
+
+fn conexao(dados: &std::path::Path) -> rusqlite::Connection {
+    let conexao = rusqlite::Connection::open(dados.join("harness.db")).expect("abre o banco");
+    conexao
+        .execute_batch("PRAGMA foreign_keys = ON;")
+        .expect("chaves estrangeiras");
+    conexao
+}
+
+/// `poph retention run` (e o `--dry-run`) apaga a conversa vazia e antiga, mas não toca em nada do
+/// atendimento registrado. Depois da varredura, a Ficha fica com `conversation_id` nulo.
+#[test]
+fn run_nao_apaga_ficha_execucao_evento_nem_efeito() {
+    use poph_store::{
+        EfeitoDaTransicao, EstadoDaExecucao, InicioDeExecucao, NovaConversa, NovoFluxo,
+        PublicacaoDeRevisao, Store,
+    };
+    use poph_types::{AtorEvento, StatusExecucao};
+
+    let cenario = Cenario::novo("fichas");
+    let slug = "clinica-fichas";
+    cenario.criar_org(slug);
+    let dados = cenario.dados();
+
+    // Semeia o atendimento pelo repositório, no mesmo banco que a CLI vai varrer.
+    {
+        let store = Store::abrir_em(&dados.join("harness.db"), &dados.join("rag.db"))
+            .expect("abre o banco do teste");
+        let org = store
+            .orgaos()
+            .por_slug(slug)
+            .expect("org criada pela CLI")
+            .id;
+        let agente = store
+            .agentes()
+            .criar(
+                org,
+                poph_store::NovoAgente {
+                    nome: "Agente fictício".to_owned(),
+                    slug: "agente-ficticio".to_owned(),
+                    ..poph_store::NovoAgente::default()
+                },
+            )
+            .expect("agente");
+        let fluxo = store
+            .fluxos()
+            .criar(
+                org,
+                NovoFluxo {
+                    slug: "agendar_visita".to_owned(),
+                    nome: "Agendar visita".to_owned(),
+                    descricao: String::new(),
+                    rascunho_fonte: "fluxo()".to_owned(),
+                },
+            )
+            .expect("fluxo");
+        let revisao = store
+            .revisoes()
+            .publicar_revisao(
+                org,
+                fluxo.id,
+                PublicacaoDeRevisao {
+                    esperada: fluxo.versao,
+                    fonte: "fluxo()".to_owned(),
+                    definicao_json: "{}".to_owned(),
+                    schema_versao: Some(1),
+                    resolucoes_json: "{}".to_owned(),
+                    ator_tipo: "cli".to_owned(),
+                    ator_id: None,
+                },
+            )
+            .expect("revisão");
+        store
+            .fluxos()
+            .liberar(org, agente.id, fluxo.id)
+            .expect("libera o fluxo");
+        let conversa = store
+            .conversas()
+            .criar(
+                org,
+                NovaConversa {
+                    agent_id: agente.id,
+                    integration_id: None,
+                    canal: "cli".to_owned(),
+                    peer_externo: Some("cliente-ficticio".to_owned()),
+                    departamento_alvo: None,
+                },
+            )
+            .expect("conversa com Ficha");
+        let ficha = store
+            .fichas()
+            .por_conversa(org, conversa.id)
+            .expect("consulta")
+            .expect("a conversa tem Ficha");
+        store
+            .execucoes()
+            .iniciar_execucao(
+                org,
+                InicioDeExecucao {
+                    ficha: ficha.id,
+                    fluxo: fluxo.id,
+                    revisao: revisao.id,
+                    ator: AtorEvento::Agente,
+                    ator_ref: Some("agente-ficticio"),
+                    decisao_jev: None,
+                    estado_inicial: EstadoDaExecucao {
+                        status: StatusExecucao::Ativa,
+                        no_atual: "coleta".to_owned(),
+                        dados_json: "{}".to_owned(),
+                        atores_que_agiram: Vec::new(),
+                        resultado: None,
+                        motivo: None,
+                    },
+                    efeitos_de_entrada: vec![EfeitoDaTransicao {
+                        chave: "entrada/0".to_owned(),
+                        tipo: "mensagem_ao_cliente".to_owned(),
+                        payload_json: "{\"texto\":\"olá\"}".to_owned(),
+                    }],
+                    chave_idempotencia: None,
+                },
+            )
+            .expect("abre a execução");
+        // Envelhece a conversa: é a conversa vazia e antiga que a varredura apaga.
+        let conexao = conexao(&dados);
+        conexao
+            .execute(
+                "UPDATE conversations SET created_at = ?1, updated_at = ?1",
+                rusqlite::params![agora_ms() - 400 * DIA_MS],
+            )
+            .expect("envelhece a conversa");
+    }
+
+    let antes = {
+        let conexao = conexao(&dados);
+        foto(&conexao, TABELAS_DO_MODULO)
+    };
+
+    // `--dry-run` não apaga nada.
+    let simulacao = cenario.poph(&["--org", slug, "retention", "run", "--dry-run", "--json"]);
+    assert_eq!(codigo(&simulacao), 0, "{}", texto(&simulacao.stderr));
+    assert_eq!(json(&simulacao)["orgs"][0]["banco"]["conversas"], 1);
+    {
+        let conexao = conexao(&dados);
+        assert_eq!(
+            foto(&conexao, TABELAS_DO_MODULO),
+            antes,
+            "a simulação não pode mexer no módulo de Fluxos e Fichas"
+        );
+        let conversas: i64 = conexao
+            .query_row("SELECT COUNT(*) FROM conversations", [], |linha| {
+                linha.get(0)
+            })
+            .expect("conta conversas");
+        assert_eq!(conversas, 1, "a simulação não apaga a conversa");
+    }
+
+    // A varredura de verdade apaga a conversa e preserva o atendimento registrado.
+    let real = cenario.poph(&["--org", slug, "retention", "run", "--json"]);
+    assert_eq!(codigo(&real), 0, "{}", texto(&real.stderr));
+    assert_eq!(json(&real)["orgs"][0]["banco"]["conversas"], 1);
+    {
+        let conexao = conexao(&dados);
+        let conversas: i64 = conexao
+            .query_row("SELECT COUNT(*) FROM conversations", [], |linha| {
+                linha.get(0)
+            })
+            .expect("conta conversas");
+        assert_eq!(conversas, 0, "a conversa vazia e antiga sai");
+        let (situacao, conversa): (String, Option<String>) = conexao
+            .query_row("SELECT status, conversation_id FROM fichas", [], |linha| {
+                Ok((linha.get(0)?, linha.get(1)?))
+            })
+            .expect("Ficha depois da varredura");
+        assert_eq!(situacao, "open");
+        assert_eq!(conversa, None, "a Ficha sobrevive sem o vínculo");
+        // Único campo que muda de propósito: o vínculo da Ficha com a conversa apagada.
+        let sem_vinculo: Vec<(String, Vec<String>)> = foto(&conexao, TABELAS_DO_MODULO)
+            .into_iter()
+            .filter(|(tabela, _)| tabela != "fichas")
+            .collect();
+        assert_eq!(
+            sem_vinculo,
+            antes
+                .into_iter()
+                .filter(|(tabela, _)| tabela != "fichas")
+                .collect::<Vec<_>>(),
+            "Ficha, execução, etapa, evento e efeito não podem perder linha"
+        );
+    }
+}
