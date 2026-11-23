@@ -12,8 +12,8 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::str::FromStr;
 
-use poph_store::{ErroStore, Pagina, Status, Store};
-use poph_types::{DomainError, OrgId};
+use poph_store::{ErroStore, Fluxo, Pagina, Status, Store};
+use poph_types::{AgentId, DomainError, FluxoId, HarnessConfig, OrgId};
 use serde_json::Value;
 
 use crate::config;
@@ -38,6 +38,73 @@ pub fn abrir_banco(flag: Option<PathBuf>, ambiente: &config::Ambiente) -> Result
     let configuracao = config::carregar(arquivo.as_deref(), ambiente)
         .map_err(|erro| format!("configuração inválida: {erro}"))?;
     Store::abrir(&configuracao).map_err(|erro| format!("não consegui abrir o banco: {erro}"))
+}
+
+/// Abre a configuração e o banco e devolve as duas coisas. Os comandos de fluxo precisam da
+/// configuração `[fluxos]` (tetos e tamanho do cache) além do banco.
+pub fn abrir_com_configuracao(
+    flag: Option<PathBuf>,
+    ambiente: &config::Ambiente,
+) -> Result<(Store, HarnessConfig), String> {
+    let pasta = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let arquivo = config::resolver_arquivo(flag.as_deref(), ambiente, &pasta);
+    let configuracao = config::carregar(arquivo.as_deref(), ambiente)
+        .map_err(|erro| format!("configuração inválida: {erro}"))?;
+    let store = Store::abrir(&configuracao)
+        .map_err(|erro| format!("não consegui abrir o banco: {erro}"))?;
+    Ok((store, configuracao))
+}
+
+/// Acha o agente pelo id (UUID v7) ou pelo slug, dentro da org.
+pub fn resolver_agente(
+    store: &Store,
+    org: OrgId,
+    texto: &str,
+) -> Result<poph_store::Agente, String> {
+    let encontrado = if uuid::Uuid::parse_str(texto).is_ok() {
+        let id: AgentId = parse_id(texto)?;
+        store.agentes().obter(org, id)
+    } else {
+        store.agentes().por_slug(org, texto)
+    };
+    encontrado.map_err(|erro| {
+        if erro.eh_nao_encontrado() {
+            format!("não existe agente `{texto}` nesta org")
+        } else {
+            descrever(&erro)
+        }
+    })
+}
+
+/// Acha o fluxo pelo id (UUID v7) ou pelo slug, dentro da org.
+pub fn resolver_fluxo(store: &Store, org: OrgId, texto: &str) -> Result<Fluxo, String> {
+    let achado = if uuid::Uuid::parse_str(texto).is_ok() {
+        let id: FluxoId = parse_id(texto)?;
+        store.fluxos().obter(org, id).map(Some)
+    } else {
+        store.fluxos().por_slug(org, texto)
+    };
+    match achado {
+        Ok(Some(fluxo)) => Ok(fluxo),
+        Ok(None) => Err(format!("não existe fluxo `{texto}` nesta org")),
+        Err(erro) if erro.eh_nao_encontrado() => {
+            Err(format!("não existe fluxo `{texto}` nesta org"))
+        }
+        Err(erro) => Err(descrever(&erro)),
+    }
+}
+
+/// Página pedida na linha de comando: `--limit` de 1 a 200 e o cursor (id da página anterior).
+pub fn pagina_de(limite: u32, cursor: Option<&str>) -> Result<Pagina, String> {
+    let mut pagina = validar_limite(limite)?;
+    pagina.apos =
+        match cursor {
+            None | Some("") => None,
+            Some(texto) => Some(uuid::Uuid::parse_str(texto).map_err(|_| {
+                "cursor inválido: use o `next_cursor` da página anterior".to_owned()
+            })?),
+        };
+    Ok(pagina)
 }
 
 /// Para os comandos que trabalham dentro de uma org: exige `--offline` e `--org`, e resolve a org.

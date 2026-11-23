@@ -685,6 +685,111 @@ segredo entre instâncias **não** foi testada.
 
 ---
 
+## 7. Instalar um fluxo
+
+Quando usar: a organização já tem um fluxo escrito (`.fluxo`) e você quer deixá-lo valendo para um
+agente começar atendimentos por ele. Publicar cria uma **revisão numerada imutável**; o rascunho pode
+continuar sendo editado sem mexer em quem já está atendendo na revisão publicada.
+
+O que precisa estar pronto: instalação migrada, org e agente criados, e o arquivo do fluxo em mãos. Nada
+disso precisa do servidor no ar.
+
+**Verificação desta página:** 23/11/2026, com o binário de `cargo build -p poph` no commit `6ececcf`,
+numa pasta descartável em `/tmp/fx31/runbook2`, sem LLM e sem WhatsApp. Os dados são fictícios
+(org `clinica-norte`, agente `atendente`, fluxo `agendar_visita`).
+
+### Passo a passo
+
+```bash
+BIN=target/debug/poph
+export POPH_DADOS_DIRETORIO=/tmp/fx31/runbook2/dados   # só para a prova; em produção é a pasta de dados real
+
+# 1. Validar antes de publicar: sai com 0 quando compila e 1 quando tem erro.
+$BIN flow validar agendar.fluxo
+
+# 2. Publicar. Na primeira vez, cria o fluxo e publica a revisão 1.
+$BIN --org clinica-norte flow publicar agendar.fluxo
+
+# 3. Conferir que está lá e qual revisão vale.
+$BIN --org clinica-norte flow listar
+$BIN --org clinica-norte flow mostrar agendar_visita
+
+# 4. Liberar o fluxo ao agente — o agente só usa fluxo liberado a ele.
+$BIN --org clinica-norte flow liberar --fluxo agendar_visita atendente
+
+# 5. Conferir as Fichas que já existem (nenhuma, numa instalação limpa).
+$BIN --org clinica-norte ficha listar
+```
+
+Saída observada na prova (recortada):
+
+```
+$ poph flow validar agendar.fluxo
+agendar.fluxo: script válido.
+
+$ poph --org clinica-norte flow publicar agendar.fluxo
+fluxo `agendar_visita` criado e publicado como revisão 1.
+
+$ poph --org clinica-norte flow listar
+01a209c9-d1af-7223-b927-a08c8ab58a04  active    agendar_visita   Agendar visita  (revisão 1, versão 2)
+
+$ poph --org clinica-norte flow liberar --fluxo agendar_visita atendente
+fluxo `agendar_visita` liberado ao agente `Atendente`.
+```
+
+### Publicar uma revisão nova
+
+O fluxo já existe, então a publicação exige a versão atual (o `--if-match`), que vem do `flow mostrar`:
+
+```bash
+$BIN --org clinica-norte flow mostrar agendar_visita --json   # veja `version`
+$BIN --org clinica-norte flow publicar agendar-v2.fluxo --if-match 2
+$BIN --org clinica-norte flow diff agendar_visita --de 1 --para 2
+```
+
+- Sem `--if-match`, a CLI recusa e explica: *o fluxo já existe: informe --if-match com a versão atual*.
+- Versão velha responde conflito (*a versão informada não confere*) e **nada é gravado**. É a mesma
+  proteção contra duas pessoas publicando ao mesmo tempo.
+- A revisão 1 continua idêntica depois da 2: o que muda é a revisão que o fluxo passa a usar.
+- O `diff` mostra o que mudou e **quantos atendimentos estão presos em cada revisão**, para você não
+  publicar sem saber quem fica onde.
+
+### Formatar o script
+
+```bash
+$BIN flow formatar agendar.fluxo             # mostra a forma canônica na tela
+$BIN flow formatar agendar.fluxo --escrever  # grava no próprio arquivo
+```
+
+Formatar é idempotente: formatar a saída de novo não muda nada. Script que não compila sai com 1 e o
+arquivo não é tocado.
+
+### O que conferir depois
+
+- `flow listar` mostra o fluxo com a revisão certa.
+- `flow mostrar <slug>` mostra o rascunho e a revisão que vale hoje.
+- `agent show <agente>` lista os fluxos liberados a ele.
+- `ficha listar` começa a trazer Fichas quando o agente iniciar um atendimento por esse fluxo.
+
+### Se falhar
+
+| Mensagem | Causa | O que fazer |
+|---|---|---|
+| `o script não passa na validação: N erro(s)` | o script não compila | `flow validar` mostra linha e coluna; nada foi gravado |
+| `informe --if-match com a versão atual` | o fluxo já existe | `flow mostrar` e repetir com a versão |
+| `a versão informada não confere` | outra publicação entrou antes | ler de novo e repetir; a sua tentativa não gravou nada |
+| `não existe fluxo ... nesta org` | slug/id errado ou de outra org | `flow listar` |
+| `agente ... não encontrado` | slug do agente errado | `agent list` |
+
+### O que não fazer
+
+- Não editar o banco à mão para "corrigir" uma revisão: revisão publicada é imutável por gatilho, e a
+  tentativa de `UPDATE` falha. O caminho é publicar outra revisão.
+- Não usar `--if-match` de uma leitura antiga depois de outra pessoa publicar.
+- Não liberar o fluxo ao agente antes de conferir que a revisão publicada é a que você quer.
+
+---
+
 ## Registro desta prova
 
 | Runbook | Executado nesta prova | Não verificado (motivo) |

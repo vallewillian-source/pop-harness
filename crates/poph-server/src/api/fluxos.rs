@@ -43,21 +43,13 @@
 //! - O `preview` mostra a etapa pedida com os campos vazios: não há simulação de dados preenchidos.
 //! - As rotas estão no OpenAPI (FX-32), em `docs/API.md` e no cliente gerado do Console.
 
-use std::sync::Arc;
-
 use axum::{
     Json,
     extract::{Path, Query, State, rejection::JsonRejection},
     http::{HeaderMap, StatusCode},
 };
-use poph_fluxos::{
-    ChaveRevisao, Departamento, Diagnostico, Ir, Limites, bloco_da_etapa, diferenca, formatar_com,
-    resolver_departamentos, validar,
-};
-use poph_store::{
-    ErroStore, FiltroFluxos, Fluxo, MudancaFluxo, NovoFluxo, Pagina, PublicacaoDeRevisao,
-    RevisaoDeFluxo,
-};
+use poph_fluxos::Diagnostico;
+use poph_store::{FiltroFluxos, MudancaFluxo};
 use poph_types::{FluxoId, OrgId};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -68,14 +60,16 @@ use crate::{
     auth::Identidade,
     erro::{ApiError, id_da_url},
     estado::Estado,
+    fluxos_servico::{
+        Ator, FalhaFluxo, Operacoes, json_comparacao, json_fluxo, json_fluxo_com_rascunho,
+        json_previa, json_revisao_completa, json_revisao_resumo, json_validacao,
+    },
 };
 
 /// Revisões por página quando o cliente não pede `limit`.
 const LIMITE_PADRAO_REVISOES: u32 = 50;
 /// Teto de itens por página nas listas paginadas por cursor de id.
 const LIMITE_MAXIMO: u32 = 200;
-/// Quantos departamentos a resolução lê por página (a org tem poucos; o laço garante o resto).
-const LIMITE_DEPARTAMENTOS: u32 = 200;
 
 /// Caminho `/admin/v1/orgs/{org_id}`.
 #[derive(Deserialize)]
@@ -173,49 +167,10 @@ pub struct ConsultaExclusao {
     force: Option<String>,
 }
 
-// ───────────────────────────── JSON que a API devolve ─────────────────────────────
-
-/// O fluxo como a API o mostra (sem o texto do rascunho na lista, que é o campo grande).
-fn json_fluxo(f: &Fluxo) -> Value {
-    json!({
-        "id": f.id.to_string(),
-        "slug": f.slug,
-        "name": f.nome,
-        "description": f.descricao,
-        "status": f.status.como_texto(),
-        "current_revision": f.revisao_atual,
-        "version": f.versao,
-    })
-}
-
-/// O fluxo com o rascunho: detalhe, criação e alteração.
-fn json_fluxo_com_rascunho(f: &Fluxo) -> Value {
-    let mut corpo = json_fluxo(f);
-    corpo["draft_source"] = json!(f.rascunho_fonte);
-    corpo
-}
-
-/// Cabeçalho de uma revisão, sem o texto nem a estrutura (é o que a lista mostra).
-fn json_revisao_resumo(r: &RevisaoDeFluxo) -> Value {
-    json!({
-        "id": r.id.to_string(),
-        "flow_id": r.fluxo_id.to_string(),
-        "number": r.numero,
-        "schema_version": r.schema_versao,
-        "source_sha256": r.fonte_sha256,
-        "published_at": r.publicada_em,
-        "published_by": r.publicada_por,
-        "resolutions": serde_json::from_str::<Value>(&r.resolucoes_json).unwrap_or(Value::Null),
-    })
-}
-
-/// A revisão inteira: o texto publicado e a estrutura compilada que o motor executa.
-fn json_revisao_completa(r: &RevisaoDeFluxo) -> Value {
-    let mut corpo = json_revisao_resumo(r);
-    corpo["source"] = json!(r.fonte);
-    corpo["definition"] = serde_json::from_str::<Value>(&r.definicao_json).unwrap_or(Value::Null);
-    corpo
-}
+// ───────────────────────────── Ponte entre a API e o serviço ─────────────────────────────
+//
+// As operações estão em `fluxos_servico` (a CLI usa as mesmas). Aqui só se traduz o erro de negócio
+// para o status HTTP e o código que a API já devolvia.
 
 /// Recusa `422` com a lista de diagnósticos (código, gravidade, mensagem, linha, coluna, caminho).
 fn recusa_de_fluxo(diagnosticos: &[Diagnostico]) -> ApiError {
@@ -228,158 +183,39 @@ fn recusa_de_fluxo(diagnosticos: &[Diagnostico]) -> ApiError {
     .com_detalhes(json!({ "diagnostics": diagnosticos }))
 }
 
-/// Publicação ainda não existe (`409`): o fluxo só tem rascunho.
-fn sem_revisao() -> ApiError {
-    ApiError::novo(
-        StatusCode::CONFLICT,
-        "fluxo_nao_publicado",
-        "o fluxo ainda não tem revisão publicada: publique o rascunho antes",
-    )
-}
-
-/// Lê todos os departamentos da org, para resolver `encaminhar("...")` na publicação.
-fn departamentos_da_org(e: &Estado, org: OrgId) -> Result<Vec<Departamento>, ApiError> {
-    let mut todos: Vec<Departamento> = Vec::new();
-    let mut apos: Option<uuid::Uuid> = None;
-    loop {
-        let lote = e.store.departamentos().listar(
-            org,
-            Pagina {
-                apos,
-                limite: LIMITE_DEPARTAMENTOS,
-            },
-        )?;
-        if lote.is_empty() {
-            return Ok(todos);
-        }
-        let cheio = lote.len() >= LIMITE_DEPARTAMENTOS as usize;
-        apos = lote.last().map(|departamento| departamento.id.as_uuid());
-        todos.extend(lote.into_iter().map(|departamento| Departamento {
-            id: departamento.id.to_string(),
-            nome: departamento.nome,
-        }));
-        if !cheio {
-            return Ok(todos);
-        }
-    }
-}
-
-/// Carrega a IR de uma revisão pelo cache do processo (FX-19), conferindo que ela é a que o texto
-/// publicado produz.
-///
-/// IR ilegível é defeito de dados (`500`, com o erro só no log). IR que não confere com o texto é
-/// `409`: a leitura falha fechada, como no turno, em vez de mostrar um fluxo que ninguém publicou.
-fn ir_da_revisao(e: &Estado, fluxo: &Fluxo, revisao: &RevisaoDeFluxo) -> Result<Arc<Ir>, ApiError> {
-    let gravada: Ir = serde_json::from_str(&revisao.definicao_json).map_err(|erro| {
-        tracing::error!(
-            erro = %erro,
-            revisao = %revisao.id,
-            "a IR gravada da revisão não é JSON legível"
-        );
-        ApiError::interno()
-    })?;
-    let chave = ChaveRevisao::com_hash(
-        fluxo.slug.clone(),
-        u32::try_from(revisao.numero).unwrap_or(u32::MAX),
-        revisao.fonte_sha256.clone(),
-    );
-    e.carregar_revisao_de_fluxo(&chave, &gravada, &revisao.fonte)
-        .map_err(|falha| {
-            tracing::error!(
-                falha = %falha.codigo(),
-                revisao = %revisao.id,
-                "a revisão publicada não confere com o texto guardado"
-            );
-            ApiError::novo(
+impl From<FalhaFluxo> for ApiError {
+    fn from(falha: FalhaFluxo) -> Self {
+        match falha {
+            FalhaFluxo::VersaoVelha {
+                id,
+                esperada,
+                atual,
+            } => ApiError::conflito_de_versao("fluxo", &id, esperada, atual),
+            FalhaFluxo::ScriptVazio => {
+                ApiError::validacao("source", "o script está vazio: não há o que publicar")
+            }
+            FalhaFluxo::ScriptInvalido(diagnosticos) => recusa_de_fluxo(&diagnosticos),
+            // Publicação ainda não existe (`409`): o fluxo só tem rascunho.
+            FalhaFluxo::SemRevisao => ApiError::novo(
                 StatusCode::CONFLICT,
-                falha.codigo(),
+                "fluxo_nao_publicado",
+                "o fluxo ainda não tem revisão publicada: publique o rascunho antes",
+            ),
+            FalhaFluxo::IrDivergente(codigo) => ApiError::novo(
+                StatusCode::CONFLICT,
+                codigo,
                 "a revisão publicada não confere com o texto guardado: a leitura falha fechada",
+            ),
+            FalhaFluxo::Interno => ApiError::interno(),
+            FalhaFluxo::TetoDeFluxos { atual, teto } => ApiError::novo(
+                StatusCode::CONFLICT,
+                "teto_de_fluxos_por_org",
+                format!("a organização já tem {atual} fluxos e o teto é {teto}"),
             )
-        })
-}
-
-/// O que uma publicação produziu: a revisão gravada, os avisos do script e a versão nova do fluxo.
-struct PublicacaoFeita {
-    revisao: RevisaoDeFluxo,
-    avisos: Vec<Diagnostico>,
-    versao_do_fluxo: u64,
-}
-
-/// Compila, valida, resolve departamentos e publica — o caminho único de publicação da API.
-///
-/// `esperada` é a `version` do fluxo que o cliente leu (`If-Match`). A recusa por versão velha
-/// acontece **antes** de compilar (é o mesmo `412` que o repositório daria depois, sem gastar
-/// compilação); o `UPDATE` condicional da FX-09 continua sendo quem resolve a corrida.
-fn publicar_do_texto(
-    e: &Estado,
-    ident: &Identidade,
-    org: OrgId,
-    fluxo: &Fluxo,
-    esperada: u64,
-    fonte: &str,
-) -> Result<PublicacaoFeita, ApiError> {
-    if esperada != fluxo.versao {
-        return Err(ApiError::conflito_de_versao(
-            "fluxo",
-            &fluxo.id.to_string(),
-            esperada,
-            fluxo.versao,
-        ));
+            .com_detalhes(json!({ "flows": atual, "limit": teto })),
+            FalhaFluxo::Banco(erro) => ApiError::from(erro),
+        }
     }
-    if fonte.trim().is_empty() {
-        return Err(ApiError::validacao(
-            "source",
-            "o script está vazio: não há o que publicar",
-        ));
-    }
-    let compilado = e.compilar_fluxo(fonte);
-    if compilado.tem_erro() {
-        return Err(recusa_de_fluxo(&compilado.diagnosticos));
-    }
-    let Some(ir) = compilado.ir else {
-        // `tem_erro` falso sempre traz IR; se não trouxe, o compilador mudou de contrato.
-        tracing::error!("o compilador devolveu script sem erro e sem IR");
-        return Err(ApiError::interno());
-    };
-    // Segunda porta: a IR compilada passa de novo pelo validador semântico. Hoje isto nunca
-    // recusa (o compilador já confere), mas a publicação não depende de o compilador ter razão.
-    let erros_da_ir: Vec<Diagnostico> = validar(&ir).into_iter().filter(|d| d.e_erro()).collect();
-    if !erros_da_ir.is_empty() {
-        return Err(recusa_de_fluxo(&erros_da_ir));
-    }
-    let (resolucoes, avisos_de_departamento) =
-        resolver_departamentos(&ir, &departamentos_da_org(e, org)?);
-    let definicao_json = serde_json::to_string(&ir).map_err(|erro| {
-        tracing::error!(erro = %erro, "a IR compilada não serializa");
-        ApiError::interno()
-    })?;
-    let resolucoes_json = serde_json::to_string(&json!({ "departamentos": resolucoes }))
-        .map_err(|_| ApiError::interno())?;
-    let revisao = e.store.revisoes().publicar_revisao(
-        org,
-        fluxo.id,
-        PublicacaoDeRevisao {
-            esperada,
-            fonte: fonte.to_owned(),
-            definicao_json,
-            schema_versao: Some(ir.schema_versao),
-            resolucoes_json,
-            ator_tipo: "admin_token".to_owned(),
-            ator_id: Some(ident.ator_id()),
-        },
-    )?;
-    let versao_do_fluxo = e.store.fluxos().obter(org, fluxo.id)?.versao;
-    let mut avisos: Vec<Diagnostico> = compilado
-        .diagnosticos
-        .into_iter()
-        .filter(|d| !d.e_erro())
-        .collect();
-    avisos.extend(avisos_de_departamento);
-    Ok(PublicacaoFeita {
-        revisao,
-        avisos,
-        versao_do_fluxo,
-    })
 }
 
 // ───────────────────────────────── rotas ─────────────────────────────────
@@ -417,21 +253,9 @@ pub async fn validar_script(
             "envie o texto do script em `source`",
         ));
     }
-    let compilado = e.compilar_fluxo(&d.source);
-    let mut diagnosticos = compilado.diagnosticos;
-    let mut resolucoes = Vec::new();
-    if let Some(ir) = &compilado.ir {
-        let (encontradas, avisos) = resolver_departamentos(ir, &departamentos_da_org(&e, org)?);
-        diagnosticos.extend(avisos);
-        resolucoes = encontradas;
-    }
-    let valido = !diagnosticos.iter().any(Diagnostico::e_erro);
-    Ok(Json(json!({
-        "valid": valido,
-        "ir": compilado.ir,
-        "diagnostics": diagnosticos,
-        "resolutions": resolucoes,
-    })))
+    let ops = Operacoes::novo(&e.store, &e.cache_fluxos, &e.config);
+    let validacao = ops.validar(Some(org), &d.source)?;
+    Ok(Json(json_validacao(&validacao)))
 }
 
 /// `GET /flows`: lista da org, com filtro de situação e cursor.
@@ -515,52 +339,17 @@ pub async fn criar(
             "envie o texto do script em `source`",
         ));
     }
-    let compilado = e.compilar_fluxo(&d.source);
-    if compilado.tem_erro() {
-        return Err(recusa_de_fluxo(&compilado.diagnosticos));
-    }
-    let Some(ir) = compilado.ir else {
-        tracing::error!("o compilador devolveu script sem erro e sem IR");
-        return Err(ApiError::interno());
-    };
-    // Teto de fluxos por org (PRD §9): a configuração só é visível na API, então é aqui que ele
-    // vale. Conta todos os fluxos, ativos ou não.
-    let teto = u64::from(e.config.fluxos.max_fluxos_por_org);
-    let hoje = e.store.fluxos().contar(org)?;
-    if hoje >= teto {
-        return Err(ApiError::novo(
-            StatusCode::CONFLICT,
-            "teto_de_fluxos_por_org",
-            format!("a organização já tem {hoje} fluxos e o teto é {teto}"),
-        )
-        .com_detalhes(json!({ "flows": hoje, "limit": teto })));
-    }
-    let fluxo = e.store.fluxos().criar(
-        org,
-        NovoFluxo {
-            slug: ir.fluxo.id.clone(),
-            nome: ir.fluxo.nome.clone(),
-            descricao: ir.fluxo.descricao.clone().unwrap_or_default(),
-            rascunho_fonte: d.source.clone(),
-        },
-    )?;
-    super::auditoria::registrar(
-        &e,
-        &ident,
-        Some(org),
-        "flow_create",
-        "flow",
-        fluxo.id.to_string(),
-    )?;
-    let mut corpo = json_fluxo_com_rascunho(&fluxo);
-    if d.publish {
-        let feita = publicar_do_texto(&e, &ident, org, &fluxo, fluxo.versao, &d.source)?;
-        corpo["current_revision"] = json!(feita.revisao.numero);
-        corpo["revision"] = json_revisao_resumo(&feita.revisao);
-        corpo["warnings"] = json!(feita.avisos);
-        corpo["version"] = json!(feita.versao_do_fluxo);
-    } else {
-        corpo["revision"] = Value::Null;
+    let ops = Operacoes::novo(&e.store, &e.cache_fluxos, &e.config);
+    let criacao = ops.criar(org, &d.source, d.publish, &Ator::token(ident.ator_id()))?;
+    let mut corpo = json_fluxo_com_rascunho(&criacao.fluxo);
+    match criacao.publicacao {
+        Some(feita) => {
+            corpo["current_revision"] = json!(feita.revisao.numero);
+            corpo["revision"] = json_revisao_resumo(&feita.revisao);
+            corpo["warnings"] = json!(feita.avisos);
+            corpo["version"] = json!(feita.versao_do_fluxo);
+        }
+        None => corpo["revision"] = Value::Null,
     }
     Ok((StatusCode::CREATED, Json(corpo)))
 }
@@ -760,7 +549,8 @@ pub async fn publicar(
     };
     let fluxo = e.store.fluxos().obter(org, id)?;
     let fonte = dados.source.unwrap_or_else(|| fluxo.rascunho_fonte.clone());
-    let feita = publicar_do_texto(&e, &ident, org, &fluxo, versao, &fonte)?;
+    let ops = Operacoes::novo(&e.store, &e.cache_fluxos, &e.config);
+    let feita = ops.publicar(org, &fluxo, versao, &fonte, &Ator::token(ident.ator_id()))?;
     Ok((
         StatusCode::CREATED,
         Json(json!({
@@ -895,31 +685,16 @@ pub async fn diff(
         })
     };
     let para = match q.para.as_deref() {
-        Some(texto) if !texto.is_empty() => numero(texto, "para")?,
-        _ => fluxo.revisao_atual.ok_or_else(sem_revisao)?,
+        Some(texto) if !texto.is_empty() => Some(numero(texto, "para")?),
+        _ => None,
     };
     let de = match q.de.as_deref() {
-        Some(texto) if !texto.is_empty() => numero(texto, "de")?,
-        _ => para.saturating_sub(1).max(1),
+        Some(texto) if !texto.is_empty() => Some(numero(texto, "de")?),
+        _ => None,
     };
-    let revisao_de = e.store.revisoes().obter(org, id, de)?;
-    let revisao_para = e.store.revisoes().obter(org, id, para)?;
-    let ir_de = ir_da_revisao(&e, &fluxo, &revisao_de)?;
-    let ir_para = ir_da_revisao(&e, &fluxo, &revisao_para)?;
-    let mudancas = diferenca(&ir_de, &ir_para);
-    let contagens = e.store.execucoes().ativas_por_revisao(org, id)?;
-    let ativas = |revisao: &RevisaoDeFluxo| -> u64 {
-        contagens
-            .iter()
-            .find(|(id_da_contagem, _)| *id_da_contagem == revisao.id)
-            .map_or(0, |(_, quantas)| *quantas)
-    };
-    Ok(Json(json!({
-        "flow_id": id.to_string(),
-        "from": { "revision": revisao_de.numero, "active_runs": ativas(&revisao_de) },
-        "to": { "revision": revisao_para.numero, "active_runs": ativas(&revisao_para) },
-        "changes": mudancas,
-    })))
+    let ops = Operacoes::novo(&e.store, &e.cache_fluxos, &e.config);
+    let comparacao = ops.comparar(org, &fluxo, de, para)?;
+    Ok(Json(json_comparacao(id, &comparacao)))
 }
 
 /// `GET /flows/{flow_id}/preview?etapa=`: bloco de prompt que o agente veria naquela etapa.
@@ -950,19 +725,9 @@ pub async fn preview(
     ident.exigir_org(org)?;
     let id = id_da_url::<FluxoId>(&c.flow_id)?;
     let fluxo = e.store.fluxos().obter(org, id)?;
-    let revisao = e.store.revisoes().atual(org, id)?.ok_or_else(sem_revisao)?;
-    let ir = ir_da_revisao(&e, &fluxo, &revisao)?;
-    let etapa = match q.etapa.as_deref() {
-        Some(texto) if !texto.is_empty() => texto.to_owned(),
-        _ => ir.inicio.clone(),
-    };
-    let bloco =
-        bloco_da_etapa(&ir, &etapa).map_err(|erro| ApiError::from(ErroStore::Dominio(erro)))?;
-    Ok(Json(json!({
-        "stage": etapa,
-        "revision": revisao.numero,
-        "prompt": bloco,
-    })))
+    let ops = Operacoes::novo(&e.store, &e.cache_fluxos, &e.config);
+    let previa = ops.preview(org, &fluxo, q.etapa.as_deref())?;
+    Ok(Json(json_previa(&previa)))
 }
 
 /// `POST /flows/format`: devolve o script na forma canônica (ou os erros, se não compilar).
@@ -999,9 +764,7 @@ pub async fn formatar(
             "envie o texto do script em `source`",
         ));
     }
-    let limites = Limites::da_config(&e.config.fluxos);
-    match formatar_com(&d.source, &limites) {
-        Ok(texto) => Ok(Json(json!({ "source": texto }))),
-        Err(falha) => Err(recusa_de_fluxo(&falha.diagnosticos)),
-    }
+    let ops = Operacoes::novo(&e.store, &e.cache_fluxos, &e.config);
+    let texto = ops.formatar(&d.source)?;
+    Ok(Json(json!({ "source": texto })))
 }

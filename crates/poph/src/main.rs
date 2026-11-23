@@ -1,8 +1,8 @@
 //! Binário `poph`: CLI e servidor num só executável.
 //!
 //! Hoje: `--version`, `--help`, `doctor`, `migrate`, `model install`, `agent`, `instructions`,
-//! `org`, `token`, `category`, `department`, `kb`, `rag`, `product`, `file`, `chat`, `retention`,
-//! `backup`, `jev`, `serve` e `openapi`. Saída: 0 quando está tudo certo; 1 quando há erro a
+//! `org`, `token`, `category`, `department`, `kb`, `rag`, `product`, `file`, `chat`, `flow`, `ficha`,
+//! `retention`, `backup`, `jev`, `serve` e `openapi`. Saída: 0 quando está tudo certo; 1 quando há erro a
 //! corrigir; 2 sem comando.
 
 mod agente;
@@ -15,6 +15,8 @@ mod cluster;
 mod config;
 mod departamento;
 mod doctor;
+mod ficha;
+mod flow;
 mod jev;
 mod kb;
 mod logs;
@@ -108,6 +110,12 @@ enum Comando {
     /// Jev (decisões rápidas): `eval` mede um gate sobre um conjunto rotulado (HR-28).
     #[command(subcommand)]
     Jev(jev::AcaoJev),
+    /// Fluxos da org: validar, publicar, listar, mostrar, comparar, formatar e liberar a agentes.
+    #[command(subcommand)]
+    Flow(flow::AcaoFluxo),
+    /// Fichas da org (um atendimento por Ficha): listar e mostrar, com as execuções de fluxo.
+    #[command(subcommand)]
+    Ficha(ficha::AcaoFicha),
     /// Retenção do histórico: apaga o que venceu (`run`) e mostra a configuração (`show`).
     #[command(subcommand)]
     Retention(retencao::AcaoRetencao),
@@ -172,6 +180,8 @@ fn main() -> ExitCode {
             departamento::executar(cli.config, &ambiente, cli.offline, cli.org.as_deref(), acao)
         }
         Comando::Jev(acao) => jev::executar(cli.config, &ambiente, acao),
+        Comando::Flow(acao) => flow::executar(cli.config, &ambiente, cli.org.as_deref(), acao),
+        Comando::Ficha(acao) => ficha::executar(cli.config, &ambiente, cli.org.as_deref(), acao),
         Comando::Retention(acao) => {
             retencao::executar(cli.config, &ambiente, cli.org.as_deref(), acao)
         }
