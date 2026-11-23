@@ -2,7 +2,7 @@
 //! que o gate G9 lê.
 //!
 //! Espelho da especificação (`docs/FLUXOS_LINGUAGEM.md` §8, IR `schema_versao = 1`) e das colunas
-//! do PRD `HARNESS_FLUXOS_PRD.md` §7.1. Aqui só existe **forma**: o texto que vai para o banco e
+//! da especificação original do módulo (removida em 23/11/2026; a fonte atual é `docs/FLUXOS.md`). Aqui só existe **forma**: o texto que vai para o banco e
 //! para a API, a ida e volta entre os dois e a validação de forma do gatilho. Quem decide transição,
 //! permissão e efeito são o motor (`poph-fluxos`) e o armazenamento (`poph-store`).
 //!

@@ -100,7 +100,7 @@ define_id!(TurnId, "turno");
 define_id!(OutboxId, "item de saída");
 define_id!(InboxId, "item de entrada");
 define_id!(AuditId, "registro de auditoria");
-// Fluxos e Fichas (PRD §7.1 do módulo, `HARNESS_FLUXOS_PRD.md`).
+// Fluxos e Fichas (colunas da especificação original do módulo, removida em 23/11/2026; ver `docs/FLUXOS.md`).
 define_id!(FichaId, "ficha");
 define_id!(FluxoId, "fluxo");
 define_id!(RevisaoId, "revisão de fluxo");

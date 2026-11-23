@@ -1,4 +1,4 @@
--- FX-05 (HARNESS_FLUXOS_PRD §6.1-5 e §7.1): Fichas e eventos da Ficha.
+-- FX-05 (especificação original do módulo, removida em 23/11/2026; ver docs/FLUXOS.md): Fichas e eventos da Ficha.
 --
 -- A Ficha é o registro do atendimento: nasce junto com a conversa (FX-07) e fecha quando a conversa
 -- fecha. Cada execução de fluxo é sub-item dela (FX-06). Aqui entram só as duas tabelas e o

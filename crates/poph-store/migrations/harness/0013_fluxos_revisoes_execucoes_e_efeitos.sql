@@ -1,4 +1,4 @@
--- FX-06 (HARNESS_FLUXOS_PRD §7.1 e §6.2-6.4): fluxos, revisões, permissão por agente, execuções,
+-- FX-06 (especificação original do módulo, removida em 23/11/2026; ver docs/FLUXOS.md): fluxos, revisões, permissão por agente, execuções,
 -- etapas da execução e efeitos.
 --
 -- O fluxo pertence à ORGANIZAÇÃO (não ao agente): o agente só recebe permissão de usar o que estiver
