@@ -94,7 +94,7 @@ Efeitos são o que sai do atendimento para fora da conversa. O motor só **produ
 
 **Entrega "pelo menos uma vez".** Se o servidor cair depois do envio e antes de gravar `enviado`, o efeito pode sair de novo. Isso é aceito e documentado. Efeito já enviado não sai de novo quando a execução segue: a prova ponta a ponta roda um ciclo extra de efeitos e saída e confere que nada é reenviado (`fluxos_e2e.rs`, `exemplo_entrega_notificacao_unica_e_transferencia_com_ficha_aberta`).
 
-**Testes.** Testes do laço em `poph-server/src/fluxos_efeitos.rs`; transição, efeitos na mesma escrita e falha no meio sem evento órfão em `poph-store/tests/execucoes_fluxo.rs` (`transicao_grava_estado_etapa_evento_e_efeito_numa_escrita`, `falha_no_meio_nao_deixa_evento_sem_estado`); os três exemplos com efeitos em `fluxos_e2e.rs`.
+**Testes.** Laço de entrega em `poph-server/tests/fluxos_efeitos.rs` (`mensagem_ao_cliente_chega_ao_cliente_uma_vez`, `notificar_whatsapp_vai_para_a_equipe_e_nao_para_o_cliente`, `sem_integracao_o_efeito_fica_pendente_e_nao_trava_o_laco`, `queda_entre_enfileirar_e_confirmar_reenvia_e_aceita_duplicata`, `falha_definitiva_vira_falhou_com_evento_e_metrica`); transição, efeitos na mesma escrita e falha no meio sem evento órfão em `poph-store/tests/execucoes_fluxo.rs` (`transicao_grava_estado_etapa_evento_e_efeito_numa_escrita`, `falha_no_meio_nao_deixa_evento_sem_estado`); os três exemplos com efeitos em `fluxos_e2e.rs`.
 
 ## 5. Operação
 
