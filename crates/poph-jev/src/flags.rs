@@ -37,6 +37,9 @@ pub struct AjusteGates {
     pub g7: Option<bool>,
     /// G8.
     pub g8: Option<bool>,
+    /// G9 (quem inicia um fluxo). Só o ajuste de agente e a configuração conhecem o campo: o avaliador
+    /// do G9 entra na FX-22.
+    pub g9: Option<bool>,
 }
 
 impl AjusteGates {
@@ -60,6 +63,7 @@ impl AjusteGates {
             g6: Some(false),
             g7: Some(false),
             g8: Some(false),
+            g9: Some(false),
         };
         match gate {
             IdGate::G1 => ajuste.g1 = Some(true),
@@ -109,6 +113,7 @@ impl AjusteGates {
             g6: self.g6.unwrap_or(base.g6),
             g7: self.g7.unwrap_or(base.g7),
             g8: self.g8.unwrap_or(base.g8),
+            g9: self.g9.unwrap_or(base.g9),
         }
     }
 }
@@ -124,6 +129,7 @@ fn atribuir(ajuste: &mut AjusteGates, campo: &str, valor: Option<bool>) {
         "g6" => ajuste.g6 = Some(valor),
         "g7" => ajuste.g7 = Some(valor),
         "g8" => ajuste.g8 = Some(valor),
+        "g9" => ajuste.g9 = Some(valor),
         _ => {}
     }
 }

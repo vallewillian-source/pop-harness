@@ -111,6 +111,43 @@ const VARIAVEIS_DE_CONFIG: &[(&str, &[&str], Tipo)] = &[
     ("POPH_LLM_MODELO", &["llm", "modelo"], Tipo::Texto),
     ("POPH_JEV_ATIVO", &["jev", "ativo"], Tipo::Booleano),
     ("POPH_JEV_URL_BASE", &["jev", "url_base"], Tipo::Texto),
+    ("POPH_FLUXOS_ATIVO", &["fluxos", "ativo"], Tipo::Booleano),
+    (
+        "POPH_FLUXOS_MAX_FLUXOS_POR_ORG",
+        &["fluxos", "max_fluxos_por_org"],
+        Tipo::Inteiro,
+    ),
+    (
+        "POPH_FLUXOS_MAX_FONTE_BYTES",
+        &["fluxos", "max_fonte_bytes"],
+        Tipo::Inteiro,
+    ),
+    ("POPH_FLUXOS_MAX_NOS", &["fluxos", "max_nos"], Tipo::Inteiro),
+    (
+        "POPH_FLUXOS_MAX_DADOS_BYTES",
+        &["fluxos", "max_dados_bytes"],
+        Tipo::Inteiro,
+    ),
+    (
+        "POPH_FLUXOS_MAX_TICKS_REGRA",
+        &["fluxos", "max_ticks_regra"],
+        Tipo::Inteiro,
+    ),
+    (
+        "POPH_FLUXOS_MAX_HEAP_REGRA",
+        &["fluxos", "max_heap_regra"],
+        Tipo::Inteiro,
+    ),
+    (
+        "POPH_FLUXOS_MAX_SALTOS_DECISAO",
+        &["fluxos", "max_saltos_decisao"],
+        Tipo::Inteiro,
+    ),
+    (
+        "POPH_FLUXOS_CACHE_REVISOES_MB",
+        &["fluxos", "cache_revisoes_mb"],
+        Tipo::Inteiro,
+    ),
 ];
 
 /// Uma origem de valor: arquivo ou variável, com o caminho da chave e o valor.
@@ -477,16 +514,16 @@ mod testes {
         assert!(ligado.jev.ativo);
     }
 
-    /// Padrão de instalação (decisões de 20/11/2026): G3, G5 e G8 ligados; os outros cinco,
-    /// desligados. Se alguém voltar G3, G5 ou G8 para `false` no padrão, ou ligar um dos outros
-    /// cinco, este teste reprova.
+    /// Padrão de instalação: G3, G5, G8 e G9 ligados; G1, G2, G4, G6 e G7 desligados. Se alguém
+    /// voltar G3, G5, G8 ou G9 para `false` no padrão, ou ligar um dos outros cinco, este teste reprova.
     #[test]
-    fn gates_padrao_de_instalacao_ligam_g3_g5_e_g8() {
+    fn gates_padrao_de_instalacao_ligam_g3_g5_g8_e_g9() {
         let cfg = carregar(None, &Ambiente::new()).expect("carrega");
         assert_eq!(cfg.jev.gates, GatesJev::padrao());
         assert!(cfg.jev.gates.g3, "G3 deve vir ligado por padrão");
         assert!(cfg.jev.gates.g5, "G5 deve vir ligado por padrão");
         assert!(cfg.jev.gates.g8, "G8 deve vir ligado por padrão");
+        assert!(cfg.jev.gates.g9, "G9 deve vir ligado por padrão");
         for (nome, ligado) in [
             ("g1", cfg.jev.gates.g1),
             ("g2", cfg.jev.gates.g2),
@@ -530,7 +567,14 @@ mod testes {
         assert!(!cfg.jev.gates.g3, "g3 = false no arquivo desliga o G3");
         assert!(!cfg.jev.gates.g5, "g5 = false no arquivo desliga o G5");
         assert!(!cfg.jev.gates.g8, "g8 = false no arquivo desliga o G8");
-        assert_eq!(cfg.jev.gates, GatesJev::default());
+        // O G9 não foi mencionado no arquivo: continua no padrão de instalação.
+        assert_eq!(
+            cfg.jev.gates,
+            GatesJev {
+                g9: true,
+                ..GatesJev::default()
+            }
+        );
     }
 
     #[test]
@@ -565,5 +609,167 @@ mod testes {
         assert!(s.antigravity.is_none());
         assert!(s.typesafe.is_none());
         assert!(!format!("{s:?}").contains("segredo-de-teste-cifra"));
+    }
+
+    /// Sem arquivo e sem ambiente, a seção `[fluxos]` vale o padrão do PRD §9.
+    #[test]
+    fn fluxos_sem_arquivo_e_sem_ambiente_vale_o_padrao() {
+        let cfg = carregar(None, &Ambiente::new()).expect("carrega");
+        assert_eq!(cfg.fluxos, poph_types::FluxosConfig::default());
+    }
+
+    /// Valor lido de cada chave de `[fluxos]` que tem variável de ambiente, pelo nome da chave.
+    fn valor_de(fluxos: &poph_types::FluxosConfig, chave: &str) -> u64 {
+        match chave {
+            "max_fluxos_por_org" => u64::from(fluxos.max_fluxos_por_org),
+            "max_fonte_bytes" => fluxos.max_fonte_bytes,
+            "max_nos" => u64::from(fluxos.max_nos),
+            "max_dados_bytes" => fluxos.max_dados_bytes,
+            "max_ticks_regra" => fluxos.max_ticks_regra,
+            "max_heap_regra" => fluxos.max_heap_regra,
+            "max_saltos_decisao" => u64::from(fluxos.max_saltos_decisao),
+            "cache_revisoes_mb" => u64::from(fluxos.cache_revisoes_mb),
+            outro => panic!("chave sem leitura no teste: {outro}"),
+        }
+    }
+
+    /// Cada chave numérica de `[fluxos]`: o arquivo define um valor, a variável define outro, e a
+    /// variável vence. Com a variável ausente, o valor do arquivo aparece.
+    #[test]
+    fn variavel_de_cada_chave_de_fluxos_vence_o_arquivo() {
+        let casos = [
+            (
+                "POPH_FLUXOS_MAX_FLUXOS_POR_ORG",
+                "max_fluxos_por_org",
+                "50",
+                "200",
+            ),
+            (
+                "POPH_FLUXOS_MAX_FONTE_BYTES",
+                "max_fonte_bytes",
+                "2048",
+                "4096",
+            ),
+            ("POPH_FLUXOS_MAX_NOS", "max_nos", "20", "30"),
+            (
+                "POPH_FLUXOS_MAX_DADOS_BYTES",
+                "max_dados_bytes",
+                "2048",
+                "4096",
+            ),
+            (
+                "POPH_FLUXOS_MAX_TICKS_REGRA",
+                "max_ticks_regra",
+                "500",
+                "600",
+            ),
+            (
+                "POPH_FLUXOS_MAX_HEAP_REGRA",
+                "max_heap_regra",
+                "131072",
+                "262144",
+            ),
+            (
+                "POPH_FLUXOS_MAX_SALTOS_DECISAO",
+                "max_saltos_decisao",
+                "4",
+                "5",
+            ),
+            (
+                "POPH_FLUXOS_CACHE_REVISOES_MB",
+                "cache_revisoes_mb",
+                "8",
+                "32",
+            ),
+        ];
+        for (variavel, chave, do_arquivo, do_ambiente) in casos {
+            let caminho = arquivo(&format!("[fluxos]\n{chave} = {do_arquivo}\n"));
+            let so_arquivo = carregar(Some(&caminho), &Ambiente::new()).expect("carrega");
+            assert_eq!(
+                valor_de(&so_arquivo.fluxos, chave),
+                do_arquivo.parse::<u64>().unwrap(),
+                "{chave} vem do arquivo"
+            );
+            let vence =
+                carregar(Some(&caminho), &amb(&[(variavel, do_ambiente)])).expect("carrega");
+            assert_eq!(
+                valor_de(&vence.fluxos, chave),
+                do_ambiente.parse::<u64>().unwrap(),
+                "{variavel} vence o arquivo"
+            );
+        }
+    }
+
+    #[test]
+    fn variavel_de_ativo_vence_o_arquivo_e_aceita_so_true_ou_false() {
+        let caminho = arquivo("[fluxos]\nativo = true\n");
+        let desligado =
+            carregar(Some(&caminho), &amb(&[("POPH_FLUXOS_ATIVO", "false")])).expect("carrega");
+        assert!(!desligado.fluxos.ativo);
+        match carregar(None, &amb(&[("POPH_FLUXOS_ATIVO", "sim")])) {
+            Err(ErroConfig::Ambiente { variavel, .. }) => assert_eq!(variavel, "POPH_FLUXOS_ATIVO"),
+            outro => panic!("esperado erro de variável, veio {outro:?}"),
+        }
+    }
+
+    #[test]
+    fn variavel_de_fluxos_com_texto_aponta_a_variavel() {
+        match carregar(None, &amb(&[("POPH_FLUXOS_MAX_NOS", "abc")])) {
+            Err(ErroConfig::Ambiente { variavel, .. }) => {
+                assert_eq!(variavel, "POPH_FLUXOS_MAX_NOS")
+            }
+            outro => panic!("esperado erro de variável, veio {outro:?}"),
+        }
+    }
+
+    /// Número negativo não cabe no tipo: a chave culpada é `fluxos.max_nos`, e a origem é a variável.
+    #[test]
+    fn variavel_de_fluxos_negativa_aponta_a_chave_e_a_variavel() {
+        match carregar(None, &amb(&[("POPH_FLUXOS_MAX_NOS", "-1")])) {
+            Err(ErroConfig::Chave { origem, chave, .. }) => {
+                assert_eq!(origem, "POPH_FLUXOS_MAX_NOS");
+                assert_eq!(chave, "fluxos.max_nos");
+            }
+            outro => panic!("esperado erro de chave, veio {outro:?}"),
+        }
+    }
+
+    #[test]
+    fn variavel_de_fluxos_fora_da_faixa_cai_na_validacao_com_a_chave() {
+        match carregar(None, &amb(&[("POPH_FLUXOS_MAX_NOS", "61")])) {
+            Err(ErroConfig::Validacao(DomainError::Validacao { campo, .. })) => {
+                assert_eq!(campo, "fluxos.max_nos")
+            }
+            outro => panic!("esperado erro de validação, veio {outro:?}"),
+        }
+    }
+
+    #[test]
+    fn arquivo_com_fluxos_fora_da_faixa_cai_na_validacao_com_a_chave() {
+        let caminho = arquivo("[fluxos]\nmax_saltos_decisao = 0\n");
+        match carregar(Some(&caminho), &Ambiente::new()) {
+            Err(ErroConfig::Validacao(DomainError::Validacao { campo, .. })) => {
+                assert_eq!(campo, "fluxos.max_saltos_decisao")
+            }
+            outro => panic!("esperado erro de validação, veio {outro:?}"),
+        }
+    }
+
+    #[test]
+    fn arquivo_com_tipo_errado_em_fluxos_aponta_a_chave() {
+        let caminho = arquivo("[fluxos]\ncache_revisoes_mb = \"muito\"\n");
+        match carregar(Some(&caminho), &Ambiente::new()) {
+            Err(ErroConfig::Chave { chave, .. }) => assert_eq!(chave, "fluxos.cache_revisoes_mb"),
+            outro => panic!("esperado erro de chave, veio {outro:?}"),
+        }
+    }
+
+    /// Desligar o motor pelo arquivo vale, e o G9 segue a mesma regra dos outros gates.
+    #[test]
+    fn arquivo_pode_desligar_o_motor_e_o_g9() {
+        let caminho = arquivo("[fluxos]\nativo = false\n\n[jev.gates]\ng9 = false\n");
+        let cfg = carregar(Some(&caminho), &Ambiente::new()).expect("carrega");
+        assert!(!cfg.fluxos.ativo);
+        assert!(!cfg.jev.gates.g9);
     }
 }

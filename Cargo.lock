@@ -2767,6 +2767,7 @@ dependencies = [
  "poph-core",
  "poph-evolution",
  "poph-files",
+ "poph-fluxos",
  "poph-matrix",
  "poph-plugins",
  "poph-rag",

@@ -150,6 +150,10 @@ pub async fn openapi() -> Response {
 
 /// Lê os números do momento e grava nos medidores publicados em `/metrics`.
 fn atualizar_medidores(estado: &Estado) {
+    // As contas do cache de revisões (FX-19) viram as séries `poph_fluxos_*` no momento da leitura.
+    if let Some(fluxos) = estado.metricas_fluxos() {
+        fluxos.sincronizar_cache(estado.cache_fluxos.metricas());
+    }
     estado
         .metricas
         .memoria_processo_bytes

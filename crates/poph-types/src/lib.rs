@@ -18,9 +18,9 @@ pub mod midia_fora_do_escopo;
 pub mod segredo;
 
 pub use config::{
-    ClusterConfig, ClusterInstance, DadosConfig, EvolutionConfig, Formato, GatesJev, HandoffConfig,
-    HarnessConfig, JevConfig, LimitesConfig, LlmConfig, LogConfig, MatrixConfig, RetencaoConfig,
-    ServidorConfig,
+    ClusterConfig, ClusterInstance, DadosConfig, EvolutionConfig, FluxosConfig, Formato, GatesJev,
+    HandoffConfig, HarnessConfig, JevConfig, LimitesConfig, LlmConfig, LogConfig, MatrixConfig,
+    RetencaoConfig, ServidorConfig,
 };
 pub use error::{DomainError, DomainResult};
 pub use fluxos::{

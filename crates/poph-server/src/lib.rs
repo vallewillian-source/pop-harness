@@ -12,6 +12,7 @@ pub mod entrada_turno;
 pub mod erro;
 pub mod estado;
 pub mod evolution;
+pub mod fluxos_metricas;
 pub mod manifestos;
 pub mod matrix_espelho;
 pub mod matrix_estado;

@@ -57,3 +57,23 @@ fn ajuste_de_outro_gate_nao_liga_nem_desliga_os_padrao() {
     );
     assert!(!so_g1.g2 && !so_g1.g4 && !so_g1.g6 && !so_g1.g7);
 }
+
+/// O G9 (quem inicia um fluxo) é ajustável por agente como os outros gates (PRD de fluxos §9).
+#[test]
+fn agente_pode_desligar_g9_sem_mexer_nos_outros() {
+    let sem_g9 = efetivos(r#"{"g9": false}"#);
+    assert!(!sem_g9.g9, "g9 false no agente desliga o G9");
+    assert!(
+        sem_g9.g3 && sem_g9.g5 && sem_g9.g8,
+        "G3, G5 e G8 seguem no padrão"
+    );
+    let sem_g9_aninhado = efetivos(r#"{"gates": {"g9": false}}"#);
+    assert!(
+        !sem_g9_aninhado.g9,
+        "g9 false no formato aninhado desliga o G9"
+    );
+    assert!(
+        efetivos(r#"{"g1": true}"#).g9,
+        "um ajuste de outro gate não desliga o G9 do padrão"
+    );
+}

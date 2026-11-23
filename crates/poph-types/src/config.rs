@@ -42,6 +42,8 @@ pub struct HarnessConfig {
     /// Módulo Matrix (MX-07). Ausente ou `habilitado = false` = módulo morto: nada dele carrega.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub matrix: Option<MatrixConfig>,
+    /// Fluxos e Fichas (FX-26): motor, tetos de script, de dados e de regra, e cache das revisões.
+    pub fluxos: FluxosConfig,
     /// Plugins de integração declarados (HR-44c): quem responde ao handshake de cada `kind`.
     /// Vazio = nenhum manifesto disponível, e a API recusa configuração de integração.
     #[serde(default, skip_serializing_if = "PluginsConfig::vazio")]
@@ -265,11 +267,67 @@ SAMU (192) ou vá a um pronto-socorro sem esperar a nossa resposta."
     }
 }
 
+/// Fluxos e Fichas (FX-26, PRD §9): o que o arquivo e o ambiente podem ajustar no módulo.
+///
+/// Os números são os **propostos** pelo PRD; cada um tem uma faixa, e valor fora dela é recusado
+/// com o nome da chave. O motor (FX-13/FX-14) e o cache (FX-19) já recebem seus tetos por parâmetro;
+/// cada consumidor lê o campo que lhe cabe.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct FluxosConfig {
+    /// Liga o motor de fluxos nesta instância. Desligado, o G9, o prompt, as ferramentas e os efeitos
+    /// param; a Ficha continua sendo criada e fechada. Padrão: ligado.
+    pub ativo: bool,
+    /// Fluxos publicados por org (teto). Entre 1 e 10000; padrão 100.
+    pub max_fluxos_por_org: u32,
+    /// Tamanho máximo do script de um fluxo, em bytes. Entre 1024 e 1048576; padrão 65536.
+    pub max_fonte_bytes: u64,
+    /// Etapas, decisões e fins por fluxo. Entre 1 e 60 (o compilador não aceita mais que 60 nós).
+    pub max_nos: u32,
+    /// Tamanho máximo do `dados_json` de uma execução, em bytes. Entre 1024 e 10485760; padrão 65536.
+    pub max_dados_bytes: u64,
+    /// Passos de uma avaliação de regra antes de cortar (laço infinito). Entre 100 e 1000000; padrão 10000.
+    pub max_ticks_regra: u64,
+    /// Memória de uma avaliação de regra, em bytes. Entre 65536 e 67108864; padrão 1048576 (1 MiB).
+    pub max_heap_regra: u64,
+    /// Decisões encadeadas que uma mesma passagem atravessa antes de falhar. Entre 1 e 100; padrão 10.
+    pub max_saltos_decisao: u32,
+    /// Teto de RAM das revisões compiladas, em MB. Entre 0 e 4096; `0` não guarda nenhuma revisão
+    /// (cada uso recompila). Padrão 16.
+    pub cache_revisoes_mb: u32,
+}
+
+impl Default for FluxosConfig {
+    fn default() -> Self {
+        Self {
+            ativo: true,
+            max_fluxos_por_org: 100,
+            max_fonte_bytes: 65_536,
+            max_nos: 60,
+            max_dados_bytes: 65_536,
+            max_ticks_regra: 10_000,
+            max_heap_regra: 1_048_576,
+            max_saltos_decisao: 10,
+            cache_revisoes_mb: 16,
+        }
+    }
+}
+
+impl FluxosConfig {
+    /// Confere todas as faixas. Devolve o primeiro problema com o nome da chave.
+    ///
+    /// Vale também com o motor desligado: um teto inválido é erro de configuração, não de uso.
+    pub fn validar(&self) -> DomainResult<()> {
+        validar_fluxos(self)
+    }
+}
+
 /// Liga e desliga cada gate do Jev (PRD §10).
 ///
 /// `Default` (derivado) é **tudo desligado**: é o que vale para "sem gates" (agente com
 /// `ativo: false`, testes que montam o motor à mão). O padrão de **instalação** é outro e vive em
-/// [`GatesJev::padrao`]: G3, G5 e G8 ligados (decisão do mantenedor, 20/11/2026), os demais desligados.
+/// [`GatesJev::padrao`]: G3, G5, G8 e G9 ligados (G3, G5 e G8 por decisão do mantenedor, 20/11/2026;
+/// G9 pelo PRD de fluxos, §9), os demais desligados.
 /// Campo ausente no arquivo de configuração cai no padrão de instalação, campo a campo.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
@@ -298,6 +356,10 @@ pub struct GatesJev {
     /// G8: conversa encerrada. Ligado por padrão desde 20/11/2026 (decisão do mantenedor).
     #[serde(default = "ligado_por_padrao")]
     pub g8: bool,
+    /// G9: quem inicia um fluxo (Jev escolhe, código inicia). Ligado por padrão pelo PRD de fluxos
+    /// (§9); só tem efeito quando o motor de fluxos (`[fluxos] ativo`) estiver ligado.
+    #[serde(default = "ligado_por_padrao")]
+    pub g9: bool,
 }
 
 fn ligado_por_padrao() -> bool {
@@ -305,7 +367,7 @@ fn ligado_por_padrao() -> bool {
 }
 
 impl GatesJev {
-    /// Padrão de instalação: G3, G5 e G8 ligados; G1, G2, G4, G6 e G7, desligados.
+    /// Padrão de instalação: G3, G5, G8 e G9 ligados; G1, G2, G4, G6 e G7, desligados.
     pub const fn padrao() -> Self {
         Self {
             g1: false,
@@ -316,6 +378,7 @@ impl GatesJev {
             g6: false,
             g7: false,
             g8: true,
+            g9: true,
         }
     }
 }
@@ -495,6 +558,7 @@ impl HarnessConfig {
         if let Some(matrix) = &self.matrix {
             matrix.validar()?;
         }
+        validar_fluxos(&self.fluxos)?;
         Ok(())
     }
 
@@ -846,6 +910,67 @@ fn validar_matrix(matrix: &MatrixConfig) -> DomainResult<()> {
             "fora da faixa 1 a 365 dias",
         ));
     }
+    Ok(())
+}
+
+/// Confere a seção `[fluxos]` (FX-26). Vale sempre, ligado ou não: são tetos, não uso.
+///
+/// Cada faixa vem do PRD §9 e do que o código aceita hoje. O erro nomeia a chave e a faixa, nunca o
+/// valor recebido (o valor pode ser de um script ou de um ambiente de produção).
+fn validar_fluxos(fluxos: &FluxosConfig) -> DomainResult<()> {
+    fn faixa_u64(campo: &'static str, valor: u64, minimo: u64, maximo: u64) -> DomainResult<()> {
+        if (minimo..=maximo).contains(&valor) {
+            Ok(())
+        } else {
+            Err(invalido(
+                campo,
+                format!("fora da faixa {minimo} a {maximo}"),
+            ))
+        }
+    }
+    faixa_u64(
+        "fluxos.max_fluxos_por_org",
+        u64::from(fluxos.max_fluxos_por_org),
+        1,
+        10_000,
+    )?;
+    faixa_u64(
+        "fluxos.max_fonte_bytes",
+        fluxos.max_fonte_bytes,
+        1_024,
+        1_048_576,
+    )?;
+    faixa_u64("fluxos.max_nos", u64::from(fluxos.max_nos), 1, 60)?;
+    faixa_u64(
+        "fluxos.max_dados_bytes",
+        fluxos.max_dados_bytes,
+        1_024,
+        10_485_760,
+    )?;
+    faixa_u64(
+        "fluxos.max_ticks_regra",
+        fluxos.max_ticks_regra,
+        100,
+        1_000_000,
+    )?;
+    faixa_u64(
+        "fluxos.max_heap_regra",
+        fluxos.max_heap_regra,
+        65_536,
+        67_108_864,
+    )?;
+    faixa_u64(
+        "fluxos.max_saltos_decisao",
+        u64::from(fluxos.max_saltos_decisao),
+        1,
+        100,
+    )?;
+    faixa_u64(
+        "fluxos.cache_revisoes_mb",
+        u64::from(fluxos.cache_revisoes_mb),
+        0,
+        4096,
+    )?;
     Ok(())
 }
 
@@ -1283,6 +1408,7 @@ mod testes_gates {
                 g6: false,
                 g7: false,
                 g8: false,
+                g9: false,
             }
         );
     }
@@ -1641,5 +1767,168 @@ mod testes_matrix {
         let cfg = HarnessConfig::default();
         let json = serde_json::to_string(&cfg).expect("serializa");
         assert!(!json.contains("matrix"), "json: {json}");
+    }
+}
+
+#[cfg(test)]
+mod testes_fluxos {
+    use super::*;
+
+    /// Cada chave numérica de `[fluxos]` com a faixa da validação: (nome, mínimo, máximo).
+    const FAIXAS: &[(&str, u64, u64)] = &[
+        ("max_fluxos_por_org", 1, 10_000),
+        ("max_fonte_bytes", 1_024, 1_048_576),
+        ("max_nos", 1, 60),
+        ("max_dados_bytes", 1_024, 10_485_760),
+        ("max_ticks_regra", 100, 1_000_000),
+        ("max_heap_regra", 65_536, 67_108_864),
+        ("max_saltos_decisao", 1, 100),
+        ("cache_revisoes_mb", 0, 4096),
+    ];
+
+    /// Põe `valor` na chave `nome` (usada só com as chaves de `FAIXAS`).
+    fn definir(fluxos: &mut FluxosConfig, nome: &str, valor: u64) {
+        match nome {
+            "max_fluxos_por_org" => fluxos.max_fluxos_por_org = u32::try_from(valor).unwrap(),
+            "max_fonte_bytes" => fluxos.max_fonte_bytes = valor,
+            "max_nos" => fluxos.max_nos = u32::try_from(valor).unwrap(),
+            "max_dados_bytes" => fluxos.max_dados_bytes = valor,
+            "max_ticks_regra" => fluxos.max_ticks_regra = valor,
+            "max_heap_regra" => fluxos.max_heap_regra = valor,
+            "max_saltos_decisao" => fluxos.max_saltos_decisao = u32::try_from(valor).unwrap(),
+            "cache_revisoes_mb" => fluxos.cache_revisoes_mb = u32::try_from(valor).unwrap(),
+            outro => panic!("chave sem faixa no teste: {outro}"),
+        }
+    }
+
+    fn com(fluxos: FluxosConfig) -> HarnessConfig {
+        HarnessConfig {
+            fluxos,
+            ..Default::default()
+        }
+    }
+
+    /// Campo que a validação aponta quando a seção está fora da regra.
+    fn campo_do_erro(fluxos: FluxosConfig) -> &'static str {
+        match com(fluxos).validar() {
+            Err(DomainError::Validacao { campo, .. }) => campo,
+            outro => panic!("esperado erro de validação, veio {outro:?}"),
+        }
+    }
+
+    #[test]
+    fn padroes_da_secao_sao_os_do_prd() {
+        let padrao = FluxosConfig::default();
+        assert!(padrao.ativo);
+        assert_eq!(padrao.max_fluxos_por_org, 100);
+        assert_eq!(padrao.max_fonte_bytes, 65_536);
+        assert_eq!(padrao.max_nos, 60);
+        assert_eq!(padrao.max_dados_bytes, 65_536);
+        assert_eq!(padrao.max_ticks_regra, 10_000);
+        assert_eq!(padrao.max_heap_regra, 1_048_576);
+        assert_eq!(padrao.max_saltos_decisao, 10);
+        assert_eq!(padrao.cache_revisoes_mb, 16);
+    }
+
+    #[test]
+    fn secao_ausente_vale_o_padrao_e_passa() {
+        let cfg = HarnessConfig::default();
+        assert_eq!(cfg.fluxos, FluxosConfig::default());
+        assert_eq!(cfg.validar(), Ok(()));
+    }
+
+    #[test]
+    fn cada_faixa_aceita_as_bordas() {
+        for (nome, minimo, maximo) in FAIXAS {
+            let mut fluxos = FluxosConfig::default();
+            definir(&mut fluxos, nome, *minimo);
+            assert_eq!(com(fluxos.clone()).validar(), Ok(()), "{nome} no mínimo");
+            definir(&mut fluxos, nome, *maximo);
+            assert_eq!(com(fluxos).validar(), Ok(()), "{nome} no máximo");
+        }
+    }
+
+    #[test]
+    fn cada_faixa_recusa_fora_dos_limites_e_nomeia_a_chave() {
+        for (nome, minimo, maximo) in FAIXAS {
+            let esperado = format!("fluxos.{nome}");
+            let mut acima = FluxosConfig::default();
+            definir(&mut acima, nome, maximo + 1);
+            assert_eq!(campo_do_erro(acima), esperado, "{nome} acima do máximo");
+            if let Some(abaixo) = minimo.checked_sub(1) {
+                let mut abaixo_do_minimo = FluxosConfig::default();
+                definir(&mut abaixo_do_minimo, nome, abaixo);
+                assert_eq!(
+                    campo_do_erro(abaixo_do_minimo),
+                    esperado,
+                    "{nome} abaixo do mínimo"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_mensagem_do_erro_traz_a_chave_e_a_faixa_mas_nao_o_valor() {
+        let fluxos = FluxosConfig {
+            max_nos: 61,
+            ..FluxosConfig::default()
+        };
+        let erro = com(fluxos).validar().expect_err("61 nós passa do limite");
+        let texto = erro.to_string();
+        assert!(texto.contains("fluxos.max_nos"), "{texto}");
+        assert!(texto.contains("1 a 60"), "{texto}");
+        assert!(
+            !texto.contains("61"),
+            "o valor recebido não entra na mensagem: {texto}"
+        );
+    }
+
+    #[test]
+    fn cache_zero_e_valido_e_quer_dizer_nao_guardar() {
+        let fluxos = FluxosConfig {
+            cache_revisoes_mb: 0,
+            ..FluxosConfig::default()
+        };
+        assert_eq!(com(fluxos).validar(), Ok(()));
+    }
+
+    #[test]
+    fn motor_desligado_ainda_confere_os_tetos() {
+        let fluxos = FluxosConfig {
+            ativo: false,
+            max_saltos_decisao: 0,
+            ..FluxosConfig::default()
+        };
+        assert_eq!(campo_do_erro(fluxos), "fluxos.max_saltos_decisao");
+    }
+
+    #[test]
+    fn numero_negativo_na_secao_e_recusado_pelo_tipo() {
+        // O erro do serde diz o tipo; quem nomeia a chave é a camada que lê o arquivo (crate `poph`).
+        let erro = serde_json::from_str::<HarnessConfig>(r#"{"fluxos": {"max_nos": -1}}"#)
+            .expect_err("negativo não cabe em u32");
+        assert!(erro.to_string().contains("u32"), "{erro}");
+    }
+
+    #[test]
+    fn chave_desconhecida_na_secao_fluxos_e_recusada() {
+        let erro = serde_json::from_str::<HarnessConfig>(r#"{"fluxos": {"naoexiste": 1}}"#)
+            .expect_err("chave desconhecida deve ser recusada");
+        assert!(erro.to_string().contains("naoexiste"), "{erro}");
+    }
+
+    #[test]
+    fn g9_vem_ligado_no_padrao_de_instalacao_e_desligado_no_derivado() {
+        assert!(GatesJev::padrao().g9);
+        assert!(!GatesJev::default().g9);
+        let sem_gates: HarnessConfig =
+            serde_json::from_str(r#"{"jev": {"gates": {"g1": true}}}"#).expect("lê");
+        assert!(
+            sem_gates.jev.gates.g9,
+            "g9 ausente no arquivo cai no padrão"
+        );
+        let desligado: HarnessConfig =
+            serde_json::from_str(r#"{"jev": {"gates": {"g9": false}}}"#).expect("lê");
+        assert!(!desligado.jev.gates.g9);
     }
 }

@@ -100,6 +100,7 @@ pub fn gerar(entrada: Entrada<'_>) -> Relatorio {
             verificacoes.push(pasta_de_dados(&config.dados.diretorio));
             verificacoes.push(banco("harness.db", &config.harness_db()));
             verificacoes.push(banco("rag.db", &config.rag_db()));
+            verificacoes.extend(fluxos_verificacoes(&config.fluxos));
         }
     }
 
@@ -323,6 +324,44 @@ fn banco(nome: &str, caminho: &Path) -> Verificacao {
     }
 }
 
+/// Estado do módulo de fluxos (FX-26): se o motor está ligado e os tetos em uso.
+///
+/// Desligado é aviso, não erro: a Ficha continua funcionando, só o motor fica parado. Os tetos
+/// aparecem sempre, porque valem mesmo com o motor desligado (a validação roda antes).
+fn fluxos_verificacoes(fluxos: &poph_types::FluxosConfig) -> Vec<Verificacao> {
+    let (nivel, detalhe) = if fluxos.ativo {
+        (Nivel::Ok, "sim: o motor de fluxos roda".to_owned())
+    } else {
+        (
+            Nivel::Aviso,
+            "não: o motor de fluxos está desligado; as Fichas continuam sendo criadas".to_owned(),
+        )
+    };
+    vec![
+        Verificacao {
+            nome: "fluxos.ativo".to_owned(),
+            nivel,
+            detalhe,
+        },
+        Verificacao {
+            nome: "fluxos.tetos".to_owned(),
+            nivel: Nivel::Ok,
+            detalhe: format!(
+                "fluxos por org {}; script {} bytes; nós {}; dados {} bytes; passos de regra {}; \
+                 memória de regra {} bytes; saltos de decisão {}; cache de revisões {} MB",
+                fluxos.max_fluxos_por_org,
+                fluxos.max_fonte_bytes,
+                fluxos.max_nos,
+                fluxos.max_dados_bytes,
+                fluxos.max_ticks_regra,
+                fluxos.max_heap_regra,
+                fluxos.max_saltos_decisao,
+                fluxos.cache_revisoes_mb,
+            ),
+        },
+    ]
+}
+
 fn variavel_obrigatoria(nome: &str, presente: bool) -> Verificacao {
     let (nivel, detalhe) = if presente {
         (Nivel::Ok, "definida (valor não exibido)".to_owned())
@@ -391,6 +430,51 @@ mod testes {
         assert!(!relatorio.tem_erro(), "{}", relatorio.texto());
         assert_eq!(achar(&relatorio, "banco harness.db").nivel, Nivel::Aviso);
         assert_eq!(achar(&relatorio, "banco rag.db").nivel, Nivel::Aviso);
+    }
+
+    /// O doctor mostra se o motor de fluxos roda e os tetos em uso (FX-26).
+    #[test]
+    fn doctor_lista_fluxos_ativo_e_os_tetos() {
+        let pasta = pasta_temporaria("fluxos");
+        let config = config_em(&pasta);
+        let relatorio = gerar(Entrada {
+            config: Ok(&config),
+            arquivo: None,
+            segredos: &segredos_completos(),
+        });
+        let ativo = achar(&relatorio, "fluxos.ativo");
+        assert_eq!(ativo.nivel, Nivel::Ok);
+        assert!(ativo.detalhe.starts_with("sim"), "{}", ativo.detalhe);
+        let tetos = achar(&relatorio, "fluxos.tetos");
+        assert!(
+            tetos.detalhe.contains("cache de revisões 16 MB"),
+            "{}",
+            tetos.detalhe
+        );
+        assert!(tetos.detalhe.contains("nós 60"), "{}", tetos.detalhe);
+        assert!(
+            tetos.detalhe.contains("saltos de decisão 10"),
+            "{}",
+            tetos.detalhe
+        );
+        assert!(relatorio.texto().contains("fluxos.tetos"));
+    }
+
+    /// Motor desligado é aviso, e não erro: as Fichas continuam.
+    #[test]
+    fn doctor_avisa_motor_de_fluxos_desligado_sem_erro() {
+        let pasta = pasta_temporaria("fluxos-off");
+        let mut config = config_em(&pasta);
+        config.fluxos.ativo = false;
+        let relatorio = gerar(Entrada {
+            config: Ok(&config),
+            arquivo: None,
+            segredos: &segredos_completos(),
+        });
+        let ativo = achar(&relatorio, "fluxos.ativo");
+        assert_eq!(ativo.nivel, Nivel::Aviso);
+        assert!(ativo.detalhe.starts_with("não"), "{}", ativo.detalhe);
+        assert!(!relatorio.tem_erro(), "{}", relatorio.texto());
     }
 
     #[test]

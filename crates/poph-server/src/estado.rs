@@ -9,12 +9,14 @@ use argon2::password_hash::PasswordHash;
 use poph_agent::entrada_saida::Fluxo;
 use poph_agent::turno::Motor;
 use poph_files::ConfigArquivos;
+use poph_fluxos::CacheRevisoes;
 use poph_store::Store;
 use poph_types::{ConversationId, HarnessConfig, MetricasBase, OrgId, Registro};
 
 use crate::cifra::ChaveDeCifra;
 use crate::cluster::ClusterVivo;
 use crate::evolution::CanalEvolution;
+use crate::fluxos_metricas::MetricasFluxos;
 use crate::manifestos::CatalogoManifestos;
 
 /// Um token global, já validado na subida (hash argon2 em formato PHC).
@@ -80,6 +82,12 @@ pub struct Estado {
     /// para a API administrativa (MX-22) criar e ligar espaço com a mesma peça que o laço de estado
     /// usa. `None` = módulo desligado nesta instância: as rotas de espaço respondem `409`.
     matrix_espacos: Option<Arc<crate::matrix_inicio::EspacosDoModulo>>,
+    /// Cache das revisões compiladas de fluxo (FX-19), com o teto `fluxos.cache_revisoes_mb` (FX-26).
+    /// Um só por processo: `Clone` compartilha o estado.
+    pub cache_fluxos: CacheRevisoes,
+    /// Métricas `poph_fluxos_*` (FX-26). `None` = motor de fluxos desligado (`[fluxos] ativo = false`):
+    /// nenhuma `poph_fluxos_*` aparece no `/metrics`.
+    metricas_fluxos: Option<Arc<MetricasFluxos>>,
     /// Mapa de roteamento entre instâncias (HR-50a), trocado inteiro pela recarga.
     cluster: Arc<RwLock<ClusterVivo>>,
     /// Nonces de encaminhamento já recebidos (HR-50b): nonce → instante em que chegou. Janela
@@ -124,6 +132,16 @@ impl Estado {
         let registro = Arc::new(Registro::new());
         let metricas = MetricasBase::registrar(&registro)
             .map_err(|erro| format!("não consegui registrar as métricas: {erro}"))?;
+        let cache_fluxos = CacheRevisoes::novo(
+            usize::try_from(config.fluxos.cache_revisoes_mb).unwrap_or(usize::MAX),
+        );
+        let metricas_fluxos = if config.fluxos.ativo {
+            Some(Arc::new(MetricasFluxos::registrar(&registro).map_err(
+                |erro| format!("não consegui registrar as métricas de fluxos: {erro}"),
+            )?))
+        } else {
+            None
+        };
         Ok(Self {
             store,
             config: Arc::new(config),
@@ -150,7 +168,14 @@ impl Estado {
                 "cluster.toml",
             )))),
             nonces_vistos: Arc::new(Mutex::new(HashMap::new())),
+            cache_fluxos,
+            metricas_fluxos,
         })
+    }
+
+    /// Métricas `poph_fluxos_*` (FX-26). `None` quando o motor de fluxos está desligado.
+    pub fn metricas_fluxos(&self) -> Option<Arc<MetricasFluxos>> {
+        self.metricas_fluxos.clone()
     }
 
     /// Registra um nonce de encaminhamento recebido (HR-50b).
