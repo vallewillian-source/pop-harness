@@ -1,8 +1,178 @@
-# Fluxos e Fichas — medidas
+# Fluxos e Fichas (POP Harness)
 
-> Este arquivo nasceu na FX-36 (medição de RAM, vazão e regressão) e traz **só** a seção
-> "Medidas". As outras seções — visão, ciclo da Ficha, execução, efeitos, operação e limites — são
-> da FX-38. Nada aqui é promessa de desenho: são números medidos, com o comando que os reproduz.
+> Referência do módulo: o que existe, como se comporta e o que foi testado. A linguagem dos scripts (declarações, regras, diagnósticos) está em [`FLUXOS_LINGUAGEM.md`](FLUXOS_LINGUAGEM.md); as diferenças em relação ao POP Atende, em [`FLUXOS_PARIDADE.md`](FLUXOS_PARIDADE.md). Cada afirmação aponta o teste ou o relatório que a sustenta. Os números de desempenho estão na seção [Medidas](#medidas).
+
+**Status (23/11/2026):** implementado de FX-01 a FX-36, com commits locais no submódulo, sem push e sem produção. Pendente: a medição do G9 com o Jev real (FX-37), que depende de autorização do Willian para gastar a chave do Jev. Só backend: a interface do Console não mudou.
+
+## 1. Visão
+
+Cada atendimento (uma conversa) tem uma **Ficha**: o registro do que aconteceu nele. Dentro da Ficha ficam as **execuções de fluxo**, com as respostas e o status de cada etapa.
+
+Um **fluxo** é um roteiro de atendimento escrito num arquivo de script (Starlark, uma linguagem parecida com Python, sem `while` e sem acesso a relógio, rede ou arquivo). O fluxo pertence à organização; cada agente só usa os fluxos que alguém liberou a ele. Quando o cliente pede aquele roteiro, o fluxo começa; o motor avança as etapas, guarda os dados coletados, decide pelos caminhos e produz os efeitos (mensagem ao cliente, aviso no WhatsApp da equipe, encaminhamento para um departamento).
+
+Regras que valem hoje (decisões do Willian de 21/11/2026, e as que tomei com base nelas):
+
+- Uma Ficha por atendimento, criada no começo de cada conversa. Depois que o atendimento fecha, a próxima mensagem do cliente abre outra Ficha.
+- Uma execução ativa por Ficha por vez. Fluxos podem se suceder na mesma Ficha.
+- Concluir um fluxo não fecha a Ficha. Só um `fim` que peça o encerramento, ou o encerramento explícito do atendimento, fecha.
+- Fluxo novo não é usado por nenhum agente até ser liberado (padrão negado).
+- Publicar cria uma revisão numerada e imutável. Cada execução segue presa à revisão em que começou.
+- Quem decide iniciar um fluxo é o código, com a escolha do Jev (G9), antes de o modelo de texto responder.
+- Falha de efeito (ex.: WhatsApp fora do ar) não desfaz a etapa: aparece como evento na Ficha e é reenviada até o limite.
+
+Para desligar o motor sem perder nada, `[fluxos] ativo = false`: as Fichas continuam sendo criadas e fechadas, e o turno volta ao comportamento anterior.
+
+## 2. Ciclo da Ficha
+
+**Criação.** Toda conversa nova ganha a Ficha na mesma escrita que a cria, tanto na API quanto na mensagem que chega pelo canal. O banco garante uma Ficha por conversa (índice único). A migração `0012` criou uma Ficha para cada conversa que já existia. Testes: `fichas_invariante.rs` (`criar_conversa_cria_a_ficha_na_mesma_escrita`, `recepcao_do_canal_cria_uma_ficha_por_conversa_e_nao_por_mensagem`) e `fichas_migracao.rs` (`backfill_cria_exatamente_uma_ficha_por_conversa`).
+
+**Estados.** Aberta ou fechada. A Ficha continua aberta enquanto a conversa está aberta **ou transferida** para atendente humano. Fecha quando a conversa fecha.
+
+**Quem fecha, e como.** Fechar a conversa fecha a Ficha na mesma transação e abandona a execução ativa, se houver (motivo `atendimento_encerrado`). Os caminhos são:
+
+- o agente chama `atendimento_encerrar` (ferramenta do turno);
+- um fluxo chega a `fim(encerra_atendimento=True)`;
+- o atendente ou o admin fecha pela API (`POST .../fichas/{ficha_id}/close`), que também vale quando a conversa já foi apagada pela retenção;
+- o fechamento da conversa pelo repositório (`fechar_auditado` e `mudar_status`).
+
+Testes: `fichas_invariante.rs` (`fechar_conversa_fecha_a_ficha_e_registra_o_evento`, `mudar_status_para_fechada_tambem_fecha_a_ficha`, `fechar_com_execucao_ativa_abandona_a_execucao_na_mesma_escrita`, `falha_no_meio_do_fechamento_nao_deixa_conversa_fechada_com_ficha_aberta`), `fichas_acoes.rs` (close com e sem conversa) e `fluxos_e2e.rs` (encerramento pelo agente). A lista dos caminhos é mantida à mão; não há teste que a enumere sozinho.
+
+**Depois de fechar.** Conversa fechada não reabre: reabrir devolve `409 conversa_encerrada` (PRD L13). Conversa transferida reabre normalmente. A mensagem seguinte do cliente, depois de fechado, abre conversa e Ficha novas (`mensagem_depois_do_fechamento_abre_conversa_e_ficha_novas`, `reabrir_conversa_fechada_e_recusado_e_transferida_continua_reabrindo`, em `fichas_invariante.rs`; e o encerramento com Ficha seguinte em `fluxos_e2e.rs`, `encerramento_do_agente_e_proxima_mensagem_abrem_nova_ficha`).
+
+**Histórico.** Cada Ficha tem uma linha do tempo em `ficha_eventos`, numerada por `seq` e com idempotência por chave. Os tipos são `ficha_aberta`, `fluxo_iniciado`, `etapa_entrou`, `campos_preenchidos`, `acao_executada`, `decisao_resolvida`, `etapa_concluida`, `efeito_criado`, `efeito_enviado`, `efeito_falhou`, `execucao_concluida`, `execucao_abandonada`, `execucao_falhou`, `atendimento_transferido` e `ficha_fechada`. A API lê a Ficha com as execuções, as etapas, os campos respondidos e os eventos (`fichas_invariante.rs`, `eventos_saem_em_ordem_e_paginam_pelo_seq`). O histórico completo de cada Ficha é conferido na prova ponta a ponta (`fluxos_e2e.rs`).
+
+**Quem fechou.** A coluna `fechada_por` aceita `cliente`, `agente`, `atendente`, `admin`, `fluxo`, `sistema` e `migracao`. Cada caminho acima grava o seu valor; não há teste que cubra cada valor separadamente.
+
+**Retenção.** A retenção existente não apaga Fichas, execuções, etapas, eventos, efeitos, fluxos nem revisões. Quando a conversa é apagada, a Ficha fica com a referência à conversa nula (`conversation_id` vazio). Teste: `poph-retention/tests/banco.rs` (`ficha_execucao_etapa_evento_e_efeito_sobrevivem_a_varredura`). Uma política própria de retenção de Fichas não existe (ver Limites).
+
+## 3. Execução
+
+**Início: antes do modelo de texto.** Em cada turno, com o motor ligado e a Ficha sem execução ativa:
+
+1. Se há fluxo liberado ao agente, o estado do turno leva a lista (nome e critério de cada fluxo) e o gate **G9** do Jev escolhe um. Ver [JEV.md §5-I](JEV.md).
+2. Escolha acima dos limiares (confiança 0,7 e margem 0,1 sobre a segunda opção) → o **código** valida e abre a execução. A validação confere: fluxo da organização, ativo, liberado ao agente da Ficha, com revisão publicada, Ficha aberta e nenhuma outra execução ativa.
+3. `nenhum`, confiança baixa ou margem curta → nada inicia, e o catálogo não vai ao modelo.
+4. Jev fora do ar, gate desligado ou resposta inutilizável → **reserva**: o modelo recebe a lista de fluxos e pode chamar `fluxo_iniciar`, que passa pela mesma validação.
+
+Se já existe execução ativa, o turno não pergunta nada ao Jev: o bloco da etapa atual entra no prompt. Testes: `poph-jev/tests/g9_fluxo.rs` (opções, cortes em 400 caracteres, limiares, fallback, flag), `poph-agent/tests/fluxo_turno.rs` (início antes do modelo, reserva, bloco da etapa) e `poph-agent/tests/fluxo_ferramentas.rs`.
+
+**Revisão presa.** A execução guarda a revisão com que começou. Publicar a revisão 2 não muda a execução que está na 1 (`fluxos_e2e.rs`, `revisao_antiga_acao_humana_e_dois_fluxos_na_mesma_ficha`; `fluxos_migracao.rs`, `revisao_publicada_nao_pode_ser_alterada_nem_apagada`). `poph flow diff` mostra quantos atendimentos estão presos em cada revisão.
+
+**Etapas e ações.** Cada etapa pede campos (com tipo) e oferece ações. Quem age é sempre o ator da ação: `agente` (ferramenta do turno, sem escolha do modelo) ou `atendente` (pela API). Ação que não existe na etapa atual é recusada com a lista das válidas, e nada é gravado: o motor não executa ações intermediárias sozinho. Etapa que exige campo não avança sem ele, e a resposta diz o que falta (`motor.rs`: `acao_valida_grava_os_campos_e_avanca_para_a_etapa_de_destino`, `campo_exigido_faltando_devolve_a_lista_do_que_falta`).
+
+**Decisões.** Uma decisão escolhe o ramo pela regra (combinadores ou uma função `def`). Decisões encadeadas atravessam até 10 saltos numa mesma passagem (`[fluxos] max_saltos_decisao`); ciclo ou excesso leva a execução a falha (`motor_desfecho.rs`: `dez_saltos_passam_e_onze_derrubam_a_execucao`, `ciclo_de_decisoes_para_a_execucao_em_falha`).
+
+**Fim.** `fim(...)` conclui a execução. Com `encerra_atendimento=True`, também fecha a conversa e a Ficha (ver §2). Execução concluída, abandonada ou em falha não aceita mais ação (`execucao_encerrada_nao_aceita_transicao`, em `poph-store/tests/execucoes_fluxo.rs`).
+
+**Abandono.** O agente abandona com `fluxo_abandonar(motivo)`; o atendente, com `POST .../flow-runs/{run_id}/abandon`. Abandono sem motivo é recusado.
+
+**Erro de regra.** Regra que não avalia (campo ausente, passos ou memória esgotados, prazo estourado) leva a execução a `falha`, com um código `FLXR…`, e o atendimento segue. Os limites de uma avaliação: `max_ticks_regra` (10.000 por padrão), `max_heap_regra` (1 MiB) e 200 ms de prazo (`regras.rs`, `limites.rs`).
+
+**Dados da execução.** O `dados_json` tem teto de 64 KB (`max_dados_bytes`). Script acima de 32 KB é recusado antes de compilar (`max_fonte_bytes`), e script com mais nós que `max_nos` também é recusado (`limites.rs`: `script_de_40_kib_e_recusado_com_o_padrao`, `teto_de_nos_da_configuracao_recusa_o_que_passa_dele`).
+
+**Agente e atendente agindo ao mesmo tempo.** Só um vence; o outro recebe `412` (versão velha) e nada é gravado (`fichas_acoes.rs`: `corrida_atendente_com_agente_da_412_e_nao_grava_nada`; `execucoes_fluxo.rs`: `duas_threads_agente_e_atendente_so_uma_vence`).
+
+**Ações humanas na API.** O atendente abre um fluxo liberado ao agente da Ficha, sem passar pelo Jev (`POST .../flow-runs`), age (`.../actions`), abandona e fecha a Ficha. Todas exigem `If-Match` e `chave_idempotencia`; repetir a chave devolve o resultado da primeira chamada, sem duplicar evento (`fichas_acoes.rs`).
+
+**Cache de revisões.** As revisões compiladas ficam em memória, com teto (`cache_revisoes_mb`, padrão 16 MB), e a menos usada que não esteja em uso sai primeiro. Carga concorrente da mesma revisão compila uma vez só. Falha de carga não derruba o processo: a execução vai para falha (`poph-fluxos/tests/cache.rs`).
+
+## 4. Efeitos
+
+Efeitos são o que sai do atendimento para fora da conversa. O motor só **produz** efeitos; a entrega é feita por um laço do servidor. São três tipos:
+
+| Efeito | O que faz | Por onde sai |
+|---|---|---|
+| `mensagem_ao_cliente(texto)` | Texto fixo para o cliente | Fila de saída da conversa. Espera o turno da conversa terminar, para não chegar antes da resposta do agente. |
+| `notificar_whatsapp(para, mensagem)` | Aviso para outro número (equipe) | Integração de WhatsApp do agente da Ficha. Não usa a fila da conversa. |
+| `encaminhar(departamento)` | Transfere a conversa para o departamento pelo nome | Transferência pela operação do turno. A Ficha continua aberta e o agente para de responder. |
+
+**Gravação e entrega.** Os efeitos são gravados na mesma transação que a transição da etapa. O laço de entrega roda uma vez por segundo, e só com o motor ligado.
+
+**Estados.** `pendente` → `enviando` → `enviado` ou `falhou`. A tentativa é gravada antes da chamada externa. Falha transitória (rede, 429, 5xx) volta a `pendente` com espera crescente. Falha definitiva (4xx, departamento inexistente, conversa encerrada, Ficha sem conversa) vai a `falhou`, com o motivo. Depois de 8 tentativas (`max_tentativas`), também. Sem integração de WhatsApp, o efeito fica `pendente` e não consome tentativa.
+
+**Falha não desfaz a transição.** A transição da etapa continua valendo. A falha vira o evento `efeito_falhou` na Ficha, e o atendimento segue (PRD L11).
+
+**Entrega "pelo menos uma vez".** Se o servidor cair depois do envio e antes de gravar `enviado`, o efeito pode sair de novo. Isso é aceito e documentado. Efeito já enviado não sai de novo quando a execução segue: a prova ponta a ponta roda um ciclo extra de efeitos e saída e confere que nada é reenviado (`fluxos_e2e.rs`, `exemplo_entrega_notificacao_unica_e_transferencia_com_ficha_aberta`).
+
+**Testes.** Testes do laço em `poph-server/src/fluxos_efeitos.rs`; transição, efeitos na mesma escrita e falha no meio sem evento órfão em `poph-store/tests/execucoes_fluxo.rs` (`transicao_grava_estado_etapa_evento_e_efeito_numa_escrita`, `falha_no_meio_nao_deixa_evento_sem_estado`); os três exemplos com efeitos em `fluxos_e2e.rs`.
+
+## 5. Operação
+
+### 5.1 Configuração `[fluxos]`
+
+| Chave | Padrão | Faixa | O que controla |
+|---|---|---|---|
+| `ativo` | `true` | — | Liga o motor. Desligado: G9, prompt, ferramentas e efeitos param; as Fichas continuam. |
+| `max_fluxos_por_org` | 100 | 1 a 10.000 | Teto de fluxos publicados por organização. |
+| `max_fonte_bytes` | 32.768 | 1.024 a 1.048.576 | Tamanho máximo do script. |
+| `max_nos` | 60 | 1 a 60 | Etapas, decisões e fins por fluxo. |
+| `max_dados_bytes` | 65.536 | 1.024 a 10.485.760 | Tamanho do `dados_json` de uma execução. |
+| `max_ticks_regra` | 10.000 | 100 a 1.000.000 | Passos de uma avaliação de regra. |
+| `max_heap_regra` | 1.048.576 | 65.536 a 67.108.864 | Memória de uma avaliação de regra. |
+| `max_saltos_decisao` | 10 | 1 a 100 | Decisões encadeadas numa passagem. |
+| `cache_revisoes_mb` | 16 | 0 a 4.096 | Teto de RAM do cache de revisões. `0` não guarda nenhuma. |
+
+Valor fora da faixa é recusado com o nome da chave. O gate G9 vem ligado no padrão de instalação (`[jev].gates.g9`), e cada agente pode desligá-lo no `jev_json`. Ver [CONFIGURACAO.md](CONFIGURACAO.md).
+
+### 5.2 Comandos
+
+- `poph flow validar|publicar|listar|mostrar|diff|formatar|liberar|retirar`. Depois da primeira publicação, `publicar` exige `--if-match`; `liberar` e `retirar` mudam a permissão do agente. Passo a passo em [RUNBOOKS.md](RUNBOOKS.md) (seção 7).
+- `poph ficha listar|mostrar`, com filtros `--status`, `--agente`, `--canal` e `--desde`.
+- `poph doctor`: mostra se o motor roda e os tetos em uso.
+- `poph --offline backup export|import`: o backup leva fluxos, revisões e permissões; com `--com-conversas`, leva também as Fichas e o histórico. Importar recusa sobrescrever por padrão ([BACKUP.md](BACKUP.md)).
+
+### 5.3 API
+
+São 19 rotas novas: 12 de fluxos e de permissão por agente, e 7 de Fichas e execuções. Todas ficam sob o token da organização, com `If-Match` nas escritas. Caminhos, corpos e erros estão em [API.md](API.md). O cliente gerado e o `schema.d.ts` foram regenerados na FX-32. As rotas entram no encaminhamento do cluster (`encaminhamento_cluster.rs`, `rotas_de_fluxos_e_fichas_sao_encaminhadas_para_a_dona`).
+
+### 5.4 Métricas
+
+Só existem com `[fluxos] ativo = true`. Estado de cada uma, verificado no código:
+
+- **Incrementadas hoje:** `poph_fluxos_cache_*`, `poph_fluxos_expulsoes_total` e `poph_fluxos_revisoes_*` (cache); `poph_fluxos_g9_iniciou_total`, `poph_fluxos_g9_nenhum_total`, `poph_fluxos_g9_abaixo_do_limiar_total` e `poph_fluxos_g9_fallback_total` (turno); `poph_fluxos_efeitos_pendentes_total`, `poph_fluxos_efeitos_enviados_total` e `poph_fluxos_efeitos_falhas_total` (laço de efeitos).
+- **Declaradas, sem incremento no código:** `poph_fluxos_execucoes_iniciadas_total`, `poph_fluxos_execucoes_concluidas_total`, `poph_fluxos_execucoes_abandonadas_total`, `poph_fluxos_execucoes_falhas_total` e `poph_fluxos_erros_regra_total`. Busca no código: nenhum ponto as incrementa, então ficam em zero. Ver Limites.
+
+### 5.5 Retenção, backup e cluster
+
+- **Retenção:** não apaga Fichas, execuções, etapas, eventos, efeitos, fluxos nem revisões ([RETENCAO.md](RETENCAO.md)).
+- **Backup:** ida e volta com fluxos, revisões e permissões; com conversas, também as Fichas e o histórico. Um backup no formato anterior (sem o bloco de Fichas) importa e recria uma Ficha por conversa ([BACKUP.md](BACKUP.md)).
+- **Cluster:** as rotas de fluxos e Fichas vão para a instância dona da organização ([CLUSTER.md](CLUSTER.md)).
+
+### 5.6 Quando um fluxo não inicia
+
+O passo a passo para descobrir o motivo está em [RUNBOOKS.md](RUNBOOKS.md), na seção de fluxos.
+
+## 6. Limites e o que não foi testado
+
+- **G9 com o Jev real: não medido.** A medição (FX-37) depende de autorização do Willian para usar a chave do Jev. Os testes usam Jev falso e um conjunto rotulado de 50 casos. A qualidade da escolha em produção é desconhecida.
+- **Sem LLM, WhatsApp, Matrix ou Synapse reais.** A prova ponta a ponta (`fluxos_e2e.rs`) usa LLM, Jev e Evolution falsos, sem rede e sem credencial.
+- **CI completa não rodada.** `scripts/ci.sh` (Console, `cargo deny`, `cargo audit` e checagem aarch64) não foi executado nas entregas. Foram rodados os testes dos crates afetados, `clippy` e `fmt`. A checagem ARM64 depende de autorização (VM3).
+- **Contadores de execução sem incremento.** Ver §5.4. Corrigir é mudança pequena no motor e no turno, fora desta documentação; fica para tarefa própria.
+- **Notificação "uma vez" é garantida em camadas.** Queda do servidor entre o envio e a gravação de `enviado` pode repetir o efeito (aceito, ver §4).
+- **Medidas em máquina carregada.** A estação estava com outros builds rodando; as comparações foram intercaladas. A RAM foi medida com fluxo de 8 etapas; a meta de 40 nós é extrapolação linear, não medida. Não há medida em ARM64 nem sob carga de produção.
+- **Alocação grande no Starlark.** `"x" * 10**9` é cortado pelo prazo, não pelo limite de memória: a alocação chega perto de 2 GB antes do corte ([FLUXOS_LINGUAGEM.md](FLUXOS_LINGUAGEM.md), §3.4).
+- **Sem política própria de retenção de Fichas.** O padrão é não apagar (PRD §15, item 2). Aguarda decisão do Willian.
+- **Decisões do PRD §15 sem confirmação do Willian.** O G8 não fecha o atendimento (padrão adotado, não alterado); o teto de 20 fluxos por agente está implementado; não existe liberação "para todos os agentes" (só a permissão por agente); e o efeito `notificar_whatsapp` sem integração fica `pendente` na implementação, enquanto o PRD previa `falhou` depois do limite de tentativas. Falta a decisão do Willian nesse ponto.
+- **Sem interface.** A UI do Console não muda (decisão W8). O editor visual de fluxos fica para depois.
+- **Comentários de código desatualizados.** Alguns comentários de módulo ainda dizem que partes "ainda não existem" (por exemplo, a ferramenta `fluxo_iniciar` no turno e a lista de módulos de `poph-fluxos/src/lib.rs`). Não mudam comportamento; ficam para uma limpeza.
+- **Numeração de migrações.** A migração `0014` não existe no repositório; a sequência vai da `0013` para a `0015`. Não é do módulo e não foi preenchida.
+
+## 7. Onde cada coisa está provada
+
+| Tema | Testes ou relatórios |
+|---|---|
+| Ficha em todo caminho de criação e fechamento | `poph-store/tests/fichas_invariante.rs`, `fichas_migracao.rs` |
+| Esquema (tabelas, gatilhos, uma execução ativa) | `poph-store/tests/fluxos_migracao.rs`, `fluxos_repo.rs` |
+| Linguagem (compilador, validador, regras, limites) | `poph-fluxos/tests/compilador.rs`, `validador.rs`, `regras.rs`, `limites.rs` |
+| Motor (início, ações, decisões, fim, efeitos) | `poph-fluxos/tests/motor.rs`, `motor_desfecho.rs`, `poph-store/tests/execucoes_fluxo.rs` |
+| Gate G9 e turno | `poph-jev/tests/g9_fluxo.rs`, `poph-agent/tests/fluxo_turno.rs`, `fluxo_ferramentas.rs` |
+| Paridade com o POP Atende | `poph-fluxos/tests/paridade.rs` e [FLUXOS_PARIDADE.md](FLUXOS_PARIDADE.md) |
+| API, permissão, Fichas e ações humanas | `poph-server/tests/agente_fluxos.rs`, `fichas_leitura.rs`, `fichas_acoes.rs`, `isolamento_orgs.rs` |
+| CLI | `poph/tests/cli_flow.rs` |
+| Backup | testes de backup em `poph-store` (19), `poph-server/tests/backup_http.rs` (9) e `poph/tests/cli_backup.rs` (6) |
+| Retenção e cluster | `poph-retention/tests/banco.rs`, `poph/tests/cli_retencao.rs`, `poph-server/tests/encaminhamento_cluster.rs` |
+| Prova ponta a ponta | `poph-server/tests/fluxos_e2e.rs` (6 testes) |
+| Desempenho | seção [Medidas](#medidas) abaixo |
 
 ## Medidas
 

@@ -3,7 +3,7 @@
 Versão 1.0 · 21/11/2026 · tarefa **FX-02** · especificação interna do módulo de Fluxos e Fichas
 Status: **especificação do dialeto**, do esquema da IR e da lista de diagnósticos. A implementação segue este documento.
 
-Este documento é a fonte para quem implementar o compilador (FX-10), o motor (FX-11 a FX-19) e a API (FX-27 a FX-34). Ele descreve **só o backend**: a UI do Console não muda nesta especificação.
+Este documento é a referência da linguagem: o dialeto, a estrutura compilada (IR) e os diagnósticos. Versão final (FX-38). O módulo está implementado; o que foi feito e testado está em [`FLUXOS.md`](FLUXOS.md). Ele descreve **só o backend**: a UI do Console não muda.
 
 ## 0. Em uma página
 
@@ -1090,11 +1090,30 @@ Pontos que a implementação precisou decidir e que o mantenedor aceitou; ficam 
 6. §6.8: as variáveis de mensagem passam a valer só em `mensagem_ao_cliente` e `notificar_whatsapp` (`FLX26` nos outros textos).
 7. §7.3: os nomes de rota se fecham na **FX-27** (o texto diz FX-25). O mesmo erro já foi apontado pelo mantenedor.
 
-## 14. O que este documento não decidiu e não testou
+## 14. Estado e o que não foi testado
 
-- **Compilador implementado (FX-10)**: `poph_fluxos::compilar` monta a IR lendo a árvore sintática e emite os 40 diagnósticos com linha e coluna; os três exemplos compilam para a IR dourada em `tests/fluxos/ir/`; `poph_fluxos::carregar` recusa IR que não bata com o texto (`ir_divergente`). O validador do spike continua fora do workspace e não é usado por ninguém.
-- **Não testei no motor real**: avaliação de regra com dados reais, eventos, filas de efeito e concorrência são das FX-11 a FX-21. O compilador **carrega** o módulo (prova que ele compila e que os limites estão ligados), mas não avalia nenhuma `def`.
-- **A IR não foi versionada contra um caso antigo** (não há versão anterior): a regra aditiva está escrita e há teste de que campo desconhecido é ignorado na leitura, mas não existe IR de versão anterior para comparar.
-- **Diagnóstico com posição**: todo diagnóstico do compilador aponta linha e coluna; os de carga sem trecho (`FLX02`, `FLX04`) apontam `1:1`. O `carregador` dos avisos de variável aponta o texto do efeito.
-- **Validador implementado (FX-11)**: `poph_fluxos::validar` revalida uma IR que não veio do compilador, apontando o **caminho do nó** (sem linha e coluna), e `poph_fluxos::resolver_departamentos` traduz nome → id com o `FLX65`. Os três exemplos passam sem diagnóstico nas duas direções, e há teste de concordância entre compilador e validador nos avisos iguais. Não confere: formato de id (`FLX13`), tipo de campo (`FLX20`), a forma de `def` (`FLX24`), texto longo (`FLX64`) nem `notificar_whatsapp` sem variável (`FLX58`) — os três primeiros são do texto e a IR, por construção, já vem com a forma certa; os dois últimos são dica de escrita, que o compilador dá na publicação.
-- **Avaliação de regra implementada (FX-12)**: `poph_fluxos::regras` avalia combinadores em Rust nativo e `def` no módulo congelado, com prazo, e tem teste por combinador, por desfecho de erro, de abuso (`"x" * 1000000000`, recursão, laço, leitura de campo inexistente) e de p95. **Não testei**: `def` que tenta alterar o dicionário de dados (ela recebe uma **cópia** concreta, então a alteração não volta para a execução — o comportamento não tem teste próprio), regra avaliada sob concorrência real (vários atendimentos ao mesmo tempo) e o custo da thread com prazo em produção — o número medido é de build de teste nesta estação. O motor que chama a avaliação e marca a execução como `falha` é a FX-13.
+Esta é a versão final da linguagem. As notas de cada etapa de implementação ficaram no histórico do
+repositório; o que foi feito e testado está em [`FLUXOS.md`](FLUXOS.md).
+
+**Implementado e testado:**
+
+- **Compilador (FX-10):** `poph_fluxos::compilar` monta a IR e emite os diagnósticos com linha e coluna. Os três
+  exemplos compilam para a IR dourada em `tests/fluxos/ir/`. `poph_fluxos::carregar` recusa IR que não bata com o
+  texto (`ir_divergente`). Testes: `crates/poph-fluxos/tests/compilador.rs`.
+- **Validador (FX-11):** `poph_fluxos::validar` revalida uma IR que não veio do compilador, apontando o caminho do
+  nó; `resolver_departamentos` traduz nome em id (`FLX65`). Testes: `tests/validador.rs`.
+- **Regras (FX-12):** combinadores em Rust nativo e `def` no módulo congelado, com prazo. Testes: `tests/regras.rs`
+  (um caso por combinador e por desfecho de erro, inclusive `"x" * 1000000000`, recursão e laço).
+- **Forma canônica e diff (FX-16, FX-17):** `tests/formatador.rs`, `tests/diff.rs`.
+- **Motor, efeitos e API:** descritos e provados em [`FLUXOS.md`](FLUXOS.md), com os testes citados em cada seção.
+
+**Não testado, ou pendente:**
+
+- `def` que tenta alterar o dicionário de dados. Ela recebe uma cópia, mas não há teste específico para isso.
+- Versão da IR contra um caso anterior. Não existe IR de versão anterior; a regra aditiva só é testada com campo
+  desconhecido sendo ignorado na leitura.
+- Revalidação dos diagnósticos `FLX13` (formato de id), `FLX20` (tipo de campo), `FLX24` (forma de `def`), `FLX64`
+  (texto longo) e da checagem de `notificar_whatsapp` no validador: estavam marcados como não conferidos na FX-11, e
+  não reconferi nesta revisão.
+- G9 com o Jev real: a qualidade da escolha e o custo em tokens dependem da FX-37, que aguarda autorização.
+- Compilação para ARM64 (checagem na VM3), que exige autorização.

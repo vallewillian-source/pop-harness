@@ -1151,10 +1151,10 @@ Para a taxa de falso positivo, conte no JSON os casos com `categoria` iniciando 
 
 ## 5-I. G9: qual fluxo o cliente quer iniciar (FX-22)
 
-> **Escolhe, ainda não age.** O gate devolve qual fluxo iniciar; validar (fluxo ativo, liberado ao
-> agente, revisão publicada, Ficha aberta) e **iniciar a execução** é do turno, na FX-23. Enquanto
-> essa ligação não existe, o estado do turno não leva fluxo liberado e o G9 não pergunta nada — o que
-> mantém o comportamento de hoje, sem custo.
+> **Escolhe, e o turno inicia.** O gate devolve qual fluxo iniciar. Desde a FX-23, o turno valida a escolha
+> (fluxo ativo, liberado ao agente, revisão publicada, Ficha aberta) e abre a execução antes de o modelo de texto
+> responder. Sem escolha confiável, nada inicia. A ligação está em `poph-agent` (`turno/fluxo.rs`) e foi provada por
+> `poph-agent/tests/fluxo_turno.rs`.
 
 | Peça | Como está |
 |---|---|
@@ -1185,8 +1185,9 @@ com voz de cliente de WhatsApp (abreviação, sem acento, mensagem curta), todos
 ### O que fica registrado
 
 A decisão vai no `turns.jev_json` como as outras (`gate: "g9"`, `escolha`, `origem`, `confianca`,
-`margem`, `motivo`, `escolha_do_jev`). As métricas `poph_fluxos_g9_*` (FX-26) ainda não têm quem as
-incremente: quem conta é o turno, na FX-23.
+`margem`, `motivo`, `escolha_do_jev`). O turno incrementa as métricas `poph_fluxos_g9_iniciou_total`,
+`poph_fluxos_g9_nenhum_total`, `poph_fluxos_g9_abaixo_do_limiar_total` e `poph_fluxos_g9_fallback_total`,
+conforme o desfecho. Quanto à medição de qualidade com o Jev real, ela segue pendente (FX-37).
 
 ### Como repetir
 

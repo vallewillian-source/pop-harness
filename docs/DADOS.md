@@ -93,6 +93,8 @@ Runner próprio (decisão: ~60 linhas, sem `rusqlite_migration`), porque o PRD �
 - **Para criar uma migração nova:** acrescente o arquivo em `migrations/harness/NNNN_nome.sql` e
   registre em `MIGRACOES_HARNESS` com o próximo número. Nunca edite uma migração já publicada.
 - `rag.db` hoje tem lista vazia; a versão dele é `0` e o doctor mostra `esquema versão 0`.
+- A numeração pula a `0014`: o arquivo não existe no repositório e `migracoes.rs` não a registra. As
+  migrações do módulo de Fluxos e Fichas são a `0012` e a `0013`; o próximo número livre é o `0017`.
 
 O `poph doctor` lê a versão **sem abrir o banco para escrita**: `versao_do_arquivo` abre em modo
 somente leitura e consulta `schema_migrations` (antes ele lia o cabeçalho `user_version`, que não
