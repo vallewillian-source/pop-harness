@@ -172,7 +172,7 @@
   "defs": [
     {
       "nome": "problema_grave",
-      "fonte": "def problema_grave(dados):\n    # Regra avançada: recebe os dados do fluxo e devolve True ou False.\n    # Só lê o que está na ficha; não tem relógio, rede, arquivo nem aleatório.\n    resumo = dados.get(\"relato\", {}).get(\"resumo\", \"\").lower()\n    for palavra in [\"parado\", \"não abre\", \"nao abre\", \"perdi\", \"urgente\"]:\n        if palavra in resumo:\n            return True\n    return len(resumo) > 200\n"
+      "fonte": "def problema_grave(dados):\n    # Regra avançada: recebe os dados do fluxo e devolve True ou False.\n    # Só lê o que está na ficha; não tem relógio, rede, arquivo nem aleatório.\n    resumo = dados.get(\"relato\", {}).get(\"resumo\", \"\").lower()\n    for palavra in [\"parado\", \"não abre\", \"nao abre\", \"perdi\", \"urgente\"]:\n        if palavra in resumo:\n            return True\n    return len(resumo) > 200"
     }
   ]
 }

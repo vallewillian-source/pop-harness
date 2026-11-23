@@ -1334,10 +1334,15 @@ impl<'a> Forma<'a> {
         }
         let inicio = item.span.begin().get() as usize;
         let fim = (def.body.span.end().get() as usize).max(item.span.end().get() as usize);
+        // O fim do trecho cai no começo da declaração seguinte (ou no fim do arquivo), então ele
+        // traz junto as linhas em branco que vêm depois da `def`. Espaço em branco não é função:
+        // aparar aqui é o que deixa a IR independente da formatação do arquivo, e é o que permite
+        // ao formatador (FX-16) reimprimir a `def` sem depender do espaçamento que veio depois
+        // dela.
         let fonte = self
             .fonte
             .get(inicio..fim)
-            .map(str::to_owned)
+            .map(|trecho| trecho.trim_end().to_owned())
             .unwrap_or_default();
         self.pos_defs.insert(nome.clone(), pos);
         self.defs.push(Def { nome, fonte });

@@ -18,7 +18,7 @@
 //!   (decisões, fim, abandono e efeitos).
 //! - [`prompt`] — FX-18: bloco do prompt e visualização da etapa.
 //! - [`diff`] — FX-17: diferença entre revisões em linguagem comum.
-//! - [`formatador`] — FX-16: forma canônica do script (script ⇄ estrutura).
+//! - [`formatador`] — FX-16: forma canônica do script (script ⇄ estrutura) (feito).
 //!
 //! Os módulos ainda vazios existem para fixar o desenho e a fronteira: `compilador`, `validador` e
 //! `regras` têm função pública.
@@ -42,6 +42,7 @@ pub mod validador;
 pub use compilador::{Compilado, FalhaCarregamento, Limites, carregar, compilar};
 pub use diagnostico::{Codigo, Diagnostico, Severidade};
 pub use diff::{Impacto, Mudanca, TipoMudanca, diferenca};
+pub use formatador::{FalhaDeFormato, LARGURA, formatar, imprimir};
 pub use ir::Ir;
 pub use motor::{
     Campos, Contexto, EfeitoProduzido, Estado, Evento, MAX_SALTOS_DECISAO, Recibo, Resultado,
