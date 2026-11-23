@@ -20,6 +20,8 @@
 # Variáveis:
 #   POPH_ACEITE_DIR   pasta de trabalho (padrão ~/.cache/poph-aceite-matrix)
 #   CHROME_BIN        navegador para as capturas (padrão google-chrome)
+#   ACEITE_ESPERA_ESPACO  segundos de espera do A6 para a sala entrar no espaço novo e sair do
+#                     antigo (padrão 60); a asserção reprova quando o limite estoura
 #
 # Sai com 0 quando todos os critérios conferidos passam; 1 quando algum falha;
 # 2 quando falta pré-requisito do ambiente (Synapse, container, porta ocupada).
@@ -345,6 +347,20 @@ esta_no_espaco() {
     [ "$saida" != "{}" ]
 }
 
+# fora_do_espaco <sala> <espaco> — 0 quando o espaço NÃO tem `m.space.child` da sala (o Synapse
+# responde 404 para o evento de estado ausente, e 200 com `{}` para o filho removido), 1 quando a
+# sala ainda está lá e 2 quando não deu para ler o estado (erro transitório, 403 etc.). O 2 existe
+# para o roteiro nunca confundir "não consegui ler" com "a sala saiu do espaço".
+fora_do_espaco() {
+    local saida
+    saida="$(python3 "$AUX" pai-do-espaco "$1" "$2" 2>/dev/null || true)"
+    [ -n "$saida" ] || return 2
+    [ "$saida" = "{}" ] && return 0
+    printf '%s' "$saida" | grep -qE '"_status"[[:space:]]*:[[:space:]]*404' && return 0
+    printf '%s' "$saida" | grep -q '"_status"' && return 2
+    return 1
+}
+
 echo "== 8b. Element servido localmente (sem alterar o app) =="
 iniciar_element || true
 
@@ -431,18 +447,64 @@ if [ "$ELEMENT_OK" = 1 ]; then
 fi
 
 echo "== 10. A6: transferência pelo departamento move a sala de espaço =="
-python3 "$AUX" transferir "$DIR/data/harness.db" "$CONV" "$SUP" > "$DIR/transferencia.txt"
-MOVED=0
-for _ in $(seq 1 40); do
-    if esta_no_espaco "$SALA" "$SALA_SUP"; then MOVED=1; break; fi
+# O posicionamento é feito em duas fases pelo próprio produto: o Harness escreve o
+# `m.space.child` no espaço NOVO, dá os convites e SÓ ENTÃO grava em `matrix_rooms.space_room_id`
+# qual é o espaço da sala — e é esse registro que a transferência usa como "espaço antigo" para
+# saber de onde sair (MX-15, `espacos::posicionar`). Pedir a transferência enquanto a gravação da
+# criação ainda não aconteceu faz o produto não ter de onde sair: a sala fica nos dois espaços e
+# nenhuma passagem seguinte corrige, porque depois disso o registro já diz "Suporte". Medido na
+# MX-50: a gravação da criação chega ~1,5 s depois do `m.space.child`, e o roteiro transferia
+# dentro dessa janela em parte das rodadas (a intermitência do A6). Aqui o roteiro espera O
+# POSICIONAMENTO DA CRIAÇÃO ESTAR GRAVADO antes de transferir; a asserção do A6 continua esperando
+# as duas condições (entrou no espaço novo e saiu do antigo) com limite explícito e reprova quando
+# estoura — nada de passar por tempo.
+ESPERA_ESPACO="${ACEITE_ESPERA_ESPACO:-60}"
+ESPACO_DA_CRIACAO=0
+for _ in $(seq 1 "$ESPERA_ESPACO"); do
+    ESPACO_DA_CRIACAO="$(python3 - "$DIR/data/harness.db" "$CONV" "$SALA_COM" <<'FIMSQL'
+import sqlite3, sys
+c = sqlite3.connect(sys.argv[1])
+r = c.execute("select space_room_id from matrix_rooms where conversation_id=?", (sys.argv[2],)).fetchone()
+print(1 if r and r[0] == sys.argv[3] else 0)
+FIMSQL
+)"
+    [ "$ESPACO_DA_CRIACAO" = 1 ] && break
     sleep 1
 done
-[ "$MOVED" = 1 ] && anotar A6 "OK: sala no espaço Suporte" || anotar A6 "FALHOU: a sala não entrou no espaço Suporte"
-FORA_COM="$(python3 "$AUX" pai-do-espaco "$SALA" "$SALA_COM")"
-if [ "$FORA_COM" = "{}" ] || printf '%s' "$FORA_COM" | grep -q '"_status"'; then
+[ "$ESPACO_DA_CRIACAO" = 1 ] \
+    || echo "aviso: o espaço da criação não foi gravado em ${ESPERA_ESPACO}s; a transferência segue (o A6 vai reprovar se o produto não souber de onde sair)"
+python3 "$AUX" transferir "$DIR/data/harness.db" "$CONV" "$SUP" > "$DIR/transferencia.txt"
+# O produto entra no espaço novo antes de sair do antigo (de propósito: cair no meio deixa a sala
+# em dois espaços, nunca em nenhum). Por isso a asserção espera as duas condições juntas.
+MOVED=0
+FORA=0
+LEITURA_FALHOU=0
+for _ in $(seq 1 "$ESPERA_ESPACO"); do
+    if esta_no_espaco "$SALA" "$SALA_SUP"; then MOVED=1; else MOVED=0; fi
+    RC_FORA=0
+    fora_do_espaco "$SALA" "$SALA_COM" || RC_FORA=$?
+    case "$RC_FORA" in
+        0) FORA=1; LEITURA_FALHOU=0 ;;
+        2) LEITURA_FALHOU=1 ;;
+        *) FORA=0; LEITURA_FALHOU=0 ;;
+    esac
+    [ "$MOVED" = 1 ] && [ "$FORA" = 1 ] && break
+    sleep 1
+done
+if [ "$MOVED" = 1 ]; then
+    anotar A6 "OK: sala no espaço Suporte"
+else
+    anotar A6 "FALHOU: a sala não entrou no espaço Suporte em ${ESPERA_ESPACO}s"
+fi
+if [ "$FORA" = 1 ]; then
     anotar A6 "OK: sala fora do espaço Comercial"
 else
-    anotar A6 "FALHOU: a sala continua no espaço antigo ($FORA_COM)"
+    FORA_COM="$(python3 "$AUX" pai-do-espaco "$SALA" "$SALA_COM")"
+    if [ "$LEITURA_FALHOU" = 1 ]; then
+        anotar A6 "FALHOU: não consegui ler o vínculo da sala com o espaço Comercial em ${ESPERA_ESPACO}s ($FORA_COM)"
+    else
+        anotar A6 "FALHOU: a sala continua no espaço antigo depois de ${ESPERA_ESPACO}s ($FORA_COM)"
+    fi
 fi
 
 
