@@ -282,12 +282,17 @@ impl Store {
         Fichas(self)
     }
 
-    /// Repositório de mensagens.
     /// Fluxos da organização e a permissão de cada agente (FX-08).
     pub fn fluxos(&self) -> Fluxos<'_> {
         Fluxos(self)
     }
 
+    /// Execuções de fluxo, etapas percorridas e efeitos (FX-20).
+    pub fn execucoes(&self) -> Execucoes<'_> {
+        Execucoes(self)
+    }
+
+    /// Repositório de mensagens.
     pub fn mensagens(&self) -> Mensagens<'_> {
         Mensagens(self)
     }

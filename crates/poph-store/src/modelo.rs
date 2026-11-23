@@ -5,9 +5,10 @@
 //! Nenhuma regra de negócio aqui: só a forma do dado.
 
 use poph_types::{
-    AgentId, AtorEvento, ConversationId, DepartmentId, EventoFichaId, ExecucaoId, FechadaPor,
-    FichaId, FileId, FluxoId, IntegrationId, KnowledgeGroupId, KnowledgeItemId, MessageId, OrgId,
-    ProductCategoryId, ProductId, StatusFicha, TipoEventoFicha, TurnId,
+    AgentId, AtorAcao, AtorEvento, ConversationId, DepartmentId, EfeitoId, EstadoEfeito,
+    EventoFichaId, ExecucaoId, FechadaPor, FichaId, FileId, FluxoId, IntegrationId,
+    KnowledgeGroupId, KnowledgeItemId, MessageId, OrgId, ProductCategoryId, ProductId, RevisaoId,
+    StatusEtapa, StatusExecucao, StatusFicha, TipoEventoFicha, TurnId,
 };
 
 use crate::erro::{ErroStore, Resultado};
@@ -1043,6 +1044,218 @@ pub struct MudancaFluxo {
 pub struct FiltroFluxos {
     /// Situação exata.
     pub status: Option<Status>,
+}
+
+// ─────────────────────────── Execução de fluxo (FX-20) ───────────────────────────
+
+/// Execução de um fluxo numa Ficha, como o banco a guarda (PRD §7.1).
+///
+/// Não é o estado que o motor pensa (`poph_fluxos::Estado`): aqui o nó é o **id** que a coluna
+/// grava, os dados são o texto JSON da coluna e a idempotência é do banco (o índice único de
+/// `ficha_eventos`), não um mapa em memória. Quem traduz um no outro é quem tem os dois — o turno e
+/// a API (`poph-agent`/`poph-server`), que é onde esta camada pode ser ligada ao motor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Execucao {
+    /// Id.
+    pub id: ExecucaoId,
+    /// Org dona.
+    pub org_id: OrgId,
+    /// Ficha (atendimento) a que a execução pertence.
+    pub ficha_id: FichaId,
+    /// Fluxo executado.
+    pub fluxo_id: FluxoId,
+    /// Revisão publicada que a execução segue (a que valia quando ela começou).
+    pub revisao_id: RevisaoId,
+    /// Situação; só `ativa` aceita transição.
+    pub status: StatusExecucao,
+    /// Nó em que a execução está: id de etapa, de decisão ou de fim.
+    pub no_atual: String,
+    /// `dados[etapa][campo]` de todo o fluxo.
+    pub dados_json: String,
+    /// Resultado do `fim(...)`, quando chegou a um.
+    pub resultado: Option<String>,
+    /// Motivo do abandono ou da falha.
+    pub motivo_fim: Option<String>,
+    /// Início (ms).
+    pub iniciada_em: i64,
+    /// Fim (ms). Só em execução que não está `ativa`.
+    pub finalizada_em: Option<i64>,
+    /// Versão para `If-Match` da execução.
+    pub versao: u64,
+}
+
+/// Uma entrada de etapa da execução (`fluxo_execucao_etapas`): o histórico que vira sub-item da
+/// Ficha (PRD W6). Cada entrada numa etapa é uma linha; voltar à mesma etapa cria outra.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EtapaDaExecucao {
+    /// Id da linha.
+    pub id: String,
+    /// Org dona.
+    pub org_id: OrgId,
+    /// Execução dona.
+    pub execucao_id: ExecucaoId,
+    /// Id da etapa na IR (`etapas[].id`).
+    pub no_id: String,
+    /// Ordem de entrada na execução (1, 2, 3…).
+    pub ordem: i64,
+    /// Situação: `pendente`, `parcial` ou `concluida`.
+    pub status: StatusEtapa,
+    /// Campos colhidos nesta etapa (recorte de `dados_json`).
+    pub dados_json: String,
+    /// Atores que já executaram ação nesta etapa.
+    pub atores_que_agiram: Vec<AtorAcao>,
+    /// Entrada (ms).
+    pub entrou_em: i64,
+    /// Conclusão (ms). Só em etapa `concluida`.
+    pub concluiu_em: Option<i64>,
+}
+
+/// Um efeito enfileirado por uma execução (`fluxo_efeitos`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EfeitoDoFluxo {
+    /// Id.
+    pub id: EfeitoId,
+    /// Org dona.
+    pub org_id: OrgId,
+    /// Ficha do atendimento.
+    pub ficha_id: FichaId,
+    /// Execução que pediu o efeito.
+    pub execucao_id: ExecucaoId,
+    /// Chave de idempotência (`nó + índice`): repetir a transição não cria o segundo.
+    pub chave: String,
+    /// `mensagem_ao_cliente`, `notificar_whatsapp` ou `encaminhar`.
+    pub tipo: String,
+    /// O que fazer, em JSON (o efeito já com o texto resolvido).
+    pub payload_json: String,
+    /// Situação na fila.
+    pub estado: EstadoEfeito,
+    /// Tentativas de entrega já feitas.
+    pub tentativas: u32,
+    /// Último erro, quando falhou.
+    pub ultimo_erro: Option<String>,
+    /// Quando tentar de novo (ms).
+    pub proxima_tentativa: Option<i64>,
+    /// Entrega (ms). Só em `enviado`.
+    pub enviado_em: Option<i64>,
+    /// Criação (ms).
+    pub criado_em: i64,
+}
+
+/// Estado da execução **como o motor o descreve** e como o banco o grava.
+///
+/// É o espelho de `poph_fluxos::Estado` no vocabulário das colunas (nó por id, dados em JSON,
+/// atores por texto). Existe porque `poph-store` não importa `poph-fluxos` (regra de camadas do
+/// `AGENTS.md`): quem traduz é o crate que tem os dois, e o store só grava o que recebe.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EstadoDaExecucao {
+    /// Situação depois da operação.
+    pub status: StatusExecucao,
+    /// Nó em que a execução ficou.
+    pub no_atual: String,
+    /// `dados[etapa][campo]` de todo o fluxo, em JSON.
+    pub dados_json: String,
+    /// Atores que já agiram **na etapa atual** (zera ao entrar em etapa nova).
+    pub atores_que_agiram: Vec<AtorAcao>,
+    /// Resultado do `fim(...)`, quando chegou a um.
+    pub resultado: Option<String>,
+    /// Motivo do abandono ou da falha.
+    pub motivo: Option<String>,
+}
+
+/// Um evento da Ficha que a operação atômica grava, na ordem em que aconteceu.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EventoDaTransicao {
+    /// Tipo (`ficha_eventos.tipo`).
+    pub tipo: TipoEventoFicha,
+    /// Quem assinou (`ficha_eventos.ator_tipo`).
+    pub ator_tipo: AtorEvento,
+    /// Detalhe em JSON.
+    pub payload_json: String,
+}
+
+/// Um efeito a enfileirar, com a chave que o torna idempotente.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EfeitoDaTransicao {
+    /// Chave do efeito (`nó + índice`, do motor).
+    pub chave: String,
+    /// `mensagem_ao_cliente`, `notificar_whatsapp` ou `encaminhar` (o CHECK da coluna é a guarda).
+    pub tipo: String,
+    /// O que fazer, em JSON, com o texto já resolvido.
+    pub payload_json: String,
+}
+
+/// O que a operação atômica recebe: o desfecho do motor, pronto para virar banco.
+///
+/// `repetida` é o que o motor já sabe (a chave está no estado dele): quando vem `true`, a operação
+/// não grava nada e devolve a execução como está.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TransicaoDeFluxo {
+    /// Estado novo da execução.
+    pub novo_estado: EstadoDaExecucao,
+    /// Eventos a gravar, na ordem.
+    pub eventos: Vec<EventoDaTransicao>,
+    /// Efeitos a enfileirar, na ordem.
+    pub efeitos: Vec<EfeitoDaTransicao>,
+    /// O motor pediu o encerramento do atendimento (`fim(encerra_atendimento=True)`).
+    pub encerra_atendimento: bool,
+    /// O motor já tinha aplicado esta chave.
+    pub repetida: bool,
+}
+
+/// Decisão do Jev que iniciou a execução (gate G9, PRD §6.3), quando foi ele.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DecisaoDoJev<'a> {
+    /// Fluxo que o Jev escolheu (o `slug` que ele devolveu).
+    pub escolha: &'a str,
+    /// Confiança declarada (0,0 a 1,0), quando houver.
+    pub confianca: Option<f64>,
+}
+
+/// Tudo o que abrir uma execução precisa, para a assinatura não virar oito posicionais.
+#[derive(Debug, Clone)]
+pub struct InicioDeExecucao<'a> {
+    /// Ficha (atendimento) que vai receber a execução.
+    pub ficha: FichaId,
+    /// Fluxo a executar.
+    pub fluxo: FluxoId,
+    /// Revisão publicada que a execução segue.
+    pub revisao: RevisaoId,
+    /// Quem abriu (agente, Jev, atendente, admin).
+    pub ator: AtorEvento,
+    /// Identificador de quem abriu (id do token, id Matrix), quando houver.
+    pub ator_ref: Option<&'a str>,
+    /// Decisão do Jev, quando o G9 foi quem escolheu.
+    pub decisao_jev: Option<DecisaoDoJev<'a>>,
+    /// Estado inicial que o motor descreveu (`iniciar`): a etapa de `inicio` e os dados vazios.
+    pub estado_inicial: EstadoDaExecucao,
+    /// Efeitos do `ao_entrar` da primeira etapa (`efeitos_de_entrada` do motor).
+    pub efeitos_de_entrada: Vec<EfeitoDaTransicao>,
+}
+
+/// Extras de uma transição: o que o desfecho do motor não carrega.
+#[derive(Debug, Clone, Default)]
+pub struct ExtrasDaTransicao<'a> {
+    /// Identificador de quem assinou os eventos (`ficha_eventos.ator_ref`).
+    pub ator_ref: Option<&'a str>,
+    /// Quem fecha o atendimento quando o fluxo pede; padrão [`FechadaPor::Fluxo`].
+    pub fechada_por: Option<FechadaPor>,
+    /// Motivo do encerramento; padrão: o resultado do `fim`, ou "fim do fluxo".
+    pub motivo_encerramento: Option<&'a str>,
+}
+
+/// O que a operação gravou: a execução depois e o que entrou na Ficha na mesma escrita.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecucaoGravada {
+    /// Execução como ficou no banco.
+    pub execucao: Execucao,
+    /// Eventos gravados na linha do tempo, na ordem (`seq` crescente).
+    pub eventos: Vec<EventoFicha>,
+    /// Efeitos enfileirados por esta operação (os que já existiam pela chave não voltam).
+    pub efeitos: Vec<EfeitoDoFluxo>,
+    /// `true` quando a operação fechou a conversa e a Ficha.
+    pub fechou_atendimento: bool,
+    /// `true` quando a chave já tinha sido aplicada (ou o motor já a tinha): nada foi gravado.
+    pub repetida: bool,
 }
 
 // ───────────────────────────────── Caixa de entrada e de saída ─────────────────────────────────

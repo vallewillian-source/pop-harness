@@ -22,6 +22,7 @@ mod categorias;
 mod conhecimento;
 mod conversas;
 mod departamentos;
+mod execucoes;
 mod fichas;
 mod fluxos;
 mod instrucoes;
@@ -44,6 +45,7 @@ pub use conversas::{
     Conversas, FiltroConversas, LIMITE_NOME_CLIENTE, OrdemConversas, normalizar_nome_cliente,
 };
 pub use departamentos::Departamentos;
+pub use execucoes::{Execucoes, LIMITE_EXECUCOES};
 pub use fichas::{Fichas, MOTIVO_ABANDONO_ATENDIMENTO};
 pub use fluxos::{Fluxos, MOTIVO_EXCLUSAO_FLUXO, TETO_FLUXOS_POR_AGENTE};
 pub use instrucoes::InstrucoesRepo;

@@ -307,6 +307,42 @@ fn evento_por_chave(
     .map_err(ErroStore::from)
 }
 
+/// Eventos da Ficha com `seq` maior que `apos`, em ordem de `seq`, dentro da escrita de quem
+/// chamou. É como a operação atômica de transição (FX-20) devolve o que acabou de gravar sem
+/// recalcular `seq` por fora.
+pub(crate) fn ler_eventos_conn(
+    conn: &Connection,
+    org: &str,
+    ficha: &str,
+    apos: i64,
+) -> Resultado<Vec<EventoFicha>> {
+    let mut consulta = conn
+        .prepare(&format!(
+            "SELECT {COLUNAS_EVENTO} FROM ficha_eventos
+              WHERE org_id = ?1 AND ficha_id = ?2 AND seq > ?3
+              ORDER BY seq"
+        ))
+        .map_err(ErroStore::from)?;
+    let linhas = consulta
+        .query_map(params![org, ficha, apos], linha_evento)
+        .map_err(ErroStore::from)?;
+    let mut eventos = Vec::new();
+    for linha in linhas {
+        eventos.push(linha.map_err(ErroStore::from)?);
+    }
+    Ok(eventos)
+}
+
+/// `seq` mais alto da Ficha (`0` quando a linha do tempo está vazia).
+pub(crate) fn ultimo_seq(conn: &Connection, org: &str, ficha: &str) -> Resultado<i64> {
+    conn.query_row(
+        "SELECT COALESCE(MAX(seq), 0) FROM ficha_eventos WHERE org_id = ?1 AND ficha_id = ?2",
+        params![org, ficha],
+        |linha| linha.get(0),
+    )
+    .map_err(ErroStore::from)
+}
+
 /// Cria a Ficha aberta de uma conversa **dentro da escrita de quem chamou** (PRD L4).
 ///
 /// Devolve o id da Ficha criada. Não abre transação: roda no `SAVEPOINT` do chamador, então conversa
@@ -400,8 +436,44 @@ pub(crate) fn fechar_ficha_da_conversa(
         }
     };
 
+    // Daqui para baixo o fechamento é um só: o mesmo de quem tem a Ficha pelo id (FX-20).
+    fechar_ficha_por_id(conn, org, &ficha, por, motivo, agora)
+}
+
+/// Fecha a Ficha **pelo id dela**, dentro da escrita de quem chamou: abandona as execuções de fluxo
+/// ativas com o motivo `atendimento_encerrado`, registra os eventos e marca a Ficha `closed`.
+///
+/// Devolve `true` quando fechou agora e `false` quando já estava fechada. Existe separado de
+/// [`fechar_ficha_da_conversa`] porque a operação atômica de transição (FX-20) conhece a **Ficha**
+/// (a execução aponta para ela) e não a conversa, que pode ter sido apagada pela retenção.
+pub(crate) fn fechar_ficha_por_id(
+    conn: &Connection,
+    org: &str,
+    ficha: &str,
+    por: FechadaPor,
+    motivo: &str,
+    agora: i64,
+) -> Resultado<bool> {
+    let situacao: Option<String> = conn
+        .query_row(
+            "SELECT status FROM fichas WHERE org_id = ?1 AND id = ?2",
+            params![org, ficha],
+            |linha| linha.get(0),
+        )
+        .optional()
+        .map_err(ErroStore::from)?;
+    let Some(situacao) = situacao else {
+        return Err(ErroStore::Dominio(poph_types::DomainError::NaoEncontrado {
+            entidade: "ficha",
+            id: ficha.to_owned(),
+        }));
+    };
+    if StatusFicha::de_texto(&situacao).map_err(ErroStore::from)? == StatusFicha::Fechada {
+        return Ok(false);
+    }
+
     // Execuções ativas da Ficha: abandonadas na mesma transação (PRD L5 e L6).
-    let ativas = execucoes_ativas(conn, org, &ficha)?;
+    let ativas = execucoes_ativas(conn, org, ficha)?;
     let abandonada = StatusExecucao::Abandonada.como_texto();
     for execucao in &ativas {
         conn.execute(
@@ -420,7 +492,7 @@ pub(crate) fn fechar_ficha_da_conversa(
         registrar_evento_conn(
             conn,
             org,
-            &ficha,
+            ficha,
             &NovoEventoFicha {
                 execucao_id: execucao.parse::<ExecucaoId>().ok(),
                 tipo: TipoEventoFicha::ExecucaoAbandonada,
@@ -436,7 +508,7 @@ pub(crate) fn fechar_ficha_da_conversa(
         )?;
     }
 
-    registrar_evento_conn(conn, org, &ficha, &evento_de_fechamento(por, motivo), agora)?;
+    registrar_evento_conn(conn, org, ficha, &evento_de_fechamento(por, motivo), agora)?;
 
     let alteradas = conn
         .execute(
