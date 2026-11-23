@@ -1180,20 +1180,129 @@ conjuntos já medidos):
 
 O conjunto rotulado é `tests/jev/g9.jsonl` — **50 casos** (23 positivos, 27 `nenhum`) em português,
 com voz de cliente de WhatsApp (abreviação, sem acento, mensagem curta), todos com `categoria` e
-`justificativa`. Como o resto da medição de qualidade do G9 depende do Jev real, ela é a FX-37.
+`justificativa`. A qualidade do gate com o Jev real está medida abaixo.
+
+### Medição com o Jev real (23/11/2026)
+
+Duas execuções do conjunto inteiro contra `https://api.typesafe.ai` (`jev-latest`), sem gateway, no
+mesmo dia, na estação de desenvolvimento (Ryzen 5 5600GT, 12 threads, 32 GB) com `load average` entre
+7 e 10 por builds de outros agentes. O conjunto **não** foi filtrado, reordenado nem ajustado.
+
+```bash
+export PATH="$HOME/.cargo/bin:$PATH"
+TYPESAFE_API_KEY=… target/debug/poph --config /tmp/poph-g9/poph-real.toml \
+    jev eval g9 tests/jev/g9.jsonl --json > /tmp/poph-g9/g9-run1.json   # a chave só no ambiente
+```
+
+Contagem do próprio `poph jev eval`:
+
+| | execução 1 | execução 2 |
+|---|---|---|
+| Acertos (decisão confiável igual ao rótulo) | 22/50 (44%) | 22/50 (44%) |
+| Abstenções | 27 | 27 |
+| Erros | 1 | 1 |
+| Confiança média das decisões confiáveis | 0,984 | 0,981 |
+| Tokens (entrada · saída) | 74.092 · 3.250 | 74.092 · 3.250 |
+| Latência por caso (média · p50 / p95 / máx) | 1.148 · 834 / 3.477 / 4.400 ms | 389 · 179 / 1.355 / 3.031 ms |
+| Falhas de chamada ao Jev | 0 | 0 |
+
+O `usage` saiu igual nas duas execuções porque o pedido é o mesmo e a resposta é uma palavra por
+caso; o que mudou entre elas foram 7 confianças (até 0,04), nos dois casos de borda inclusive.
+
+**44% de acerto do relatório não é 44% no atendimento.** No G9, `nenhum` vira abstenção: o gate se
+cala e o atendimento segue sem fluxo. Em 26 dos 27 casos rotulados `nenhum`, calar é exatamente o
+comportamento certo — a métrica do eval penaliza o gate por acertar. Lido como comportamento do
+produto:
+
+| | execução 1 | execução 2 |
+|---|---|---|
+| Fluxo certo iniciado | 22/23 | 22/23 |
+| Falso negativo (deixou de iniciar) | 1/23 | 1/23 |
+| `nenhum` correto (nada iniciou) | 26/27 | 26/27 |
+| Falso positivo (iniciou fluxo num caso `nenhum`) | 1/27 | 1/27 |
+| Fluxo errado (iniciou um fluxo que não servia) | 0 | 0 |
+| **Comportamento certo** | **48/50 (96%)** | **48/50 (96%)** |
+
+Os dois casos que divergem do rótulo, com a mesma decisão nas duas execuções:
+
+- **#20 · falso negativo** — "a máquina ficou com a luz vermelha e não sai disso" (rótulo
+  `abrir_chamado`): o Jev escolheu `abrir_chamado` com confiança **0,57 / 0,60**, abaixo do limiar de
+  0,70, então nada inicia e o atendimento segue como sem fluxo.
+- **#41 · falso positivo** — "o aparelho não liga, preciso que alguém venha ver" (rótulo `nenhum`,
+  porque descreve defeito **e** pede alguém no local): o Jev escolheu `agendar_visita` com **0,96 /
+  0,92**. É o rótulo conservador do conjunto, não um fluxo sem relação: iniciar a visita atende parte
+  do que o cliente pediu, e em nenhuma das execuções o gate escolheu um fluxo que não servia.
+
+Por faixa de confiança declarada pelo Jev (execução 1 · execução 2):
+
+| Faixa | Casos | Fluxo certo | `nenhum` certo | Falso positivo | Falso negativo |
+|---|---|---|---|---|---|
+| 0,95–1,00 | 46 · 45 | 21 · 21 | 24 · 24 | 1 · 0 | 0 · 0 |
+| 0,85–0,95 | 1 · 2 | 0 · 0 | 1 · 1 | 0 · 1 | 0 · 0 |
+| 0,70–0,85 | 1 · 1 | 1 · 1 | 0 · 0 | 0 · 0 | 0 · 0 |
+| 0,50–0,70 | 1 · 1 | 0 · 0 | 0 · 0 | 0 · 0 | 1 · 1 |
+| < 0,50 | 1 · 1 | 0 · 0 | 1 · 1 | 0 · 0 | 0 · 0 |
+
+A confiança vem quase saturada — 45 a 46 dos 50 casos com 0,95 ou mais —, então **quem carrega a
+qualidade do G9 é a abstenção explícita (`nenhum`), não o limiar**: só quatro casos ficam fora da
+faixa alta, e dois deles não mudam nada com limiar nenhum (o `nenhum` de 0,37 / 0,47 não inicia fluxo;
+o pedido de chamado de 0,77 / 0,72 fica acima de 0,70). O limiar decide de fato em dois: #20 (abaixo
+de 0,70) e #41 (acima de 0,90).
+
+Limiar recalculado a partir da escolha crua, nas duas execuções já pagas:
+
+| Limiar | Inicia certo (de 23) | Deixa de iniciar | Inicia errado (de 27) |
+|---|---|---|---|
+| 0,50 | 23 · 23 | 0 · 0 | 1 · 1 |
+| 0,60 | 22 · 23 | 1 · 0 | 1 · 1 |
+| **0,70 (atual)** | **22 · 22** | **1 · 1** | **1 · 1** |
+| 0,80 | 21 · 21 | 2 · 2 | 1 · 1 |
+| 0,90 | 21 · 21 | 2 · 2 | 1 · 1 |
+| 0,95 | 21 · 21 | 2 · 2 | 1 · 0 |
+| 0,97 | 20 · 20 | 3 · 3 | 0 · 0 |
+
+A margem de 0,10 não aparece em nenhum `motivo`: o que barrou decisão aqui foi a confiança, nunca a
+margem — esperado, porque a escolha vem quase sempre em 0,95 ou mais e a segunda opção fica muito
+atrás. O relatório do eval não registra a margem por caso, então **a curva de margem não foi medida**.
+
+**Recomendação: manter o padrão — G9 ligado, confiança 0,70, margem 0,10.** Com 23 casos positivos e
+dois de borda, nenhum limiar melhora os dois lados ao mesmo tempo: descer para 0,50 recupera o caso
+#20 nas duas execuções sem criar falso positivo nesta amostra, e subir para 0,97 zera o único falso
+positivo custando 3 falsos negativos. O desenho do PRD prefere o erro barato (deixar de iniciar) ao
+caro (prender o cliente num roteiro), e é o que a medição mostra: 1 falso positivo em 27 e nenhum
+fluxo errado. O padrão só muda com decisão do mantenedor; esta medição apenas a informa.
+
+**Custo por pergunta:** ~1.482 tokens de entrada e ~65 de saída (74.092 / 50 e 3.250 / 50), com três
+fluxos liberados no estado — cerca do dobro dos ~700 tokens por pergunta do G8 (§5-F). No turno o G9
+entra no **lote único** com os outros gates, então não é uma chamada a mais: é peso no pedido que já
+saía.
+
+Limites desta medição:
+
+- o arquivo tem 65 linhas, mas **50 casos** — as outras 15 são comentário de cabeçalho;
+- a latência foi medida com **uma pergunta por chamada**, em sequência, sem cache e com a estação
+  carregada. É o custo da pergunta, não o do lote do turno; as duas execuções diferem muito (p50 834 ms
+  × 179 ms) e não dá para separar ambiente de provedor nesta amostra;
+- o conjunto tem **três** fluxos liberados por caso; o pior caso de 20 fluxos foi medido em bytes, não
+  em tokens (FX-36);
+- não é tráfego de produção: são 50 falas escritas para medir, com os rótulos revisados por nós.
 
 ### O que fica registrado
 
 A decisão vai no `turns.jev_json` como as outras (`gate: "g9"`, `escolha`, `origem`, `confianca`,
 `margem`, `motivo`, `escolha_do_jev`). O turno incrementa as métricas `poph_fluxos_g9_iniciou_total`,
 `poph_fluxos_g9_nenhum_total`, `poph_fluxos_g9_abaixo_do_limiar_total` e `poph_fluxos_g9_fallback_total`,
-conforme o desfecho. Quanto à medição de qualidade com o Jev real, ela segue pendente (FX-37).
+conforme o desfecho. A qualidade com o Jev real está medida na subseção acima (23/11/2026).
 
 ### Como repetir
 
 ```bash
 export PATH="$HOME/.cargo/bin:$PATH"
 cargo test -p poph-jev --test g9_fluxo    # opções, cortes, teto, limiares, fallback, lote e flag
+
+# qualidade com o Jev real (a chave só no ambiente):
+TYPESAFE_API_KEY=… target/debug/poph --config /tmp/poph-g9/poph-real.toml \
+    jev eval g9 tests/jev/g9.jsonl --json > /tmp/poph-g9/g9-run1.json
 ```
 
 ## 6. Registro no turno
@@ -1513,7 +1622,7 @@ python3 scripts/jev-relatorio.py /tmp/g1-real.json --conjunto tests/jev/g1.jsonl
 | ~~Efeito de G6 (revisar a resposta e regenerar uma vez; resposta segura)~~ | feito na HR-34 (§5-G); medido e **desligado** por padrão |
 | ~~Efeito de G7 (injeção de prompt e abuso, com ação configurável e texto de arquivo não confiável)~~ | feito na HR-35 (§5-H); medido e **desligado** por padrão |
 | ~~Gate G9 (qual fluxo liberado o cliente quer iniciar)~~ | feito na FX-22 (§5-I); o **efeito** (iniciar a execução no turno e as métricas `poph_fluxos_g9_*`) é a FX-23 |
-| Medição do G9 com o Jev real (confiança e margem calibradas) | FX-37, com o conjunto `tests/jev/g9.jsonl` |
+| ~~Medição do G9 com o Jev real (confiança e margem calibradas)~~ | feito na FX-37 (§5-I): 48/50 certos nas duas execuções, 1 falso positivo e 1 falso negativo; limiar 0,70 e margem 0,10 mantidos |
 | Conjuntos de ≥ 60 casos e relatórios de medição por gate | G1 (135), G2 (75), G4 (68), G3 (87), G5 (73), G8 (76), G6 (62) e G7 (71) feitos, todos com `categoria` e `justificativa` |
 | ~~Medição do G1 com o Jev real~~ | feito na HR-29m (0 falsos positivos; 67–70% de recall), repetido na HR-29a (93,9% de recall, 1 falso positivo) e na HR-29b (100% de recall, 0 falso positivo na 1ª execução) |
 | ~~Ajuste do G1 (instrução alinhada com produção, conjunto ampliado)~~ | feito na HR-29a; risco à saúde incondicional foi descartado pelo mantenedor em 20/11 |
@@ -1525,9 +1634,10 @@ python3 scripts/jev-relatorio.py /tmp/g1-real.json --conjunto tests/jev/g1.jsonl
 
 ## 10. Limites conhecidos
 
-- **G9 sem efeito enquanto a FX-23 não entra** (alta): o gate escolhe, mas nada inicia — o turno ainda
-  não monta o estado com os fluxos liberados nem consome a decisão. Até lá, ligado por padrão não custa
-  nada, porque a pergunta só existe com fluxo liberado no estado.
+- ~~**G9 sem efeito enquanto a FX-23 não entra**~~ — resolvido: o turno monta o estado com os fluxos
+  liberados e inicia a execução (FX-23), e a escolha foi medida com o Jev real (FX-37, §5-I). O que
+  resta: **G9 medido em laboratório** (média): 50 falas escritas para medir, com três fluxos liberados
+  por caso; não é tráfego real e não cobre o teto de 20 fluxos.
 
 - **G3: a busca é disparada antes do Jev decidir** (média): com a mensagem já julgada `nada`, a
   busca é abandonada, mas o trabalho de embedding e de consulta já começou. Não custa mais tempo do
