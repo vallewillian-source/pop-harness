@@ -25,7 +25,7 @@ use std::time::Duration;
 
 use poph_types::{MatrixConfig, Segredo};
 use reqwest::Method;
-use reqwest::header::{AUTHORIZATION, HeaderValue};
+use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderValue};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -41,6 +41,15 @@ pub const TEMPO_LIMITE_PADRAO: Duration = Duration::from_secs(10);
 /// Espera máxima que o cliente aceita cumprir sozinho num `429`. Acima disso ele devolve o erro
 /// com `retry_after_ms` e quem espera é o laço (uma espera de minutos não pode travar o cliente).
 pub const ESPERA_MAXIMA_429: Duration = Duration::from_secs(60);
+
+/// Rota de upload de mídia que o Synapse de desenvolvimento atende (a depreciada, ainda viva).
+const CAMINHO_UPLOAD_ANTIGO: &str = "/_matrix/media/v3/upload";
+
+/// Rota de upload nova, tentada quando o servidor não reconhece a antiga.
+const CAMINHO_UPLOAD_NOVO: &str = "/_matrix/client/v1/media/upload";
+
+/// `errcode` do Synapse para rota que ele não conhece.
+const ERRCODE_NAO_RECONHECIDO: &str = "M_UNRECOGNIZED";
 
 /// Teto de leitura do corpo de uma resposta (1 MiB).
 const TETO_CORPO: u64 = 1024 * 1024;
@@ -122,6 +131,22 @@ impl ConfigCliente {
         self.timeout = timeout;
         self
     }
+}
+
+/// Corpo do pedido HTTP: vazio, JSON (a maioria das chamadas) ou bytes (upload de mídia, MX-43).
+#[derive(Clone, Copy)]
+enum Corpo<'a> {
+    /// Sem corpo (GET, por exemplo).
+    Nenhum,
+    /// Corpo JSON, como todas as chamadas da API cliente.
+    Json(&'a Value),
+    /// Conteúdo binário de um arquivo, com o tipo que vai no `Content-Type`.
+    Bytes {
+        /// Tipo MIME do arquivo.
+        mime: &'a str,
+        /// Bytes do arquivo.
+        bytes: &'a [u8],
+    },
 }
 
 // ───────────────────────────── corpo do `createRoom` ─────────────────────────────
@@ -257,7 +282,7 @@ impl ClienteMatrix {
                 Method::POST,
                 format!("{API}/createRoom"),
                 Some(usuario),
-                Some(&corpo),
+                Corpo::Json(&corpo),
                 "createRoom",
             )
             .await?;
@@ -275,7 +300,7 @@ impl ClienteMatrix {
             Method::POST,
             format!("{API}/rooms/{}/invite", codificar(sala)),
             Some(usuario),
-            Some(&json!({ "user_id": convidado })),
+            Corpo::Json(&json!({ "user_id": convidado })),
             "invite",
         )
         .await
@@ -289,7 +314,7 @@ impl ClienteMatrix {
                 Method::POST,
                 format!("{API}/join/{}", codificar(sala_ou_alias)),
                 Some(usuario),
-                Some(&json!({})),
+                Corpo::Json(&json!({})),
                 "join",
             )
             .await?;
@@ -307,7 +332,7 @@ impl ClienteMatrix {
                 Method::GET,
                 format!("{API}/directory/room/{}", codificar(alias)),
                 None,
-                None,
+                Corpo::Nenhum,
                 "directory/room",
             )
             .await?;
@@ -325,7 +350,7 @@ impl ClienteMatrix {
                 Method::GET,
                 format!("{API}/rooms/{}/joined_members", codificar(sala)),
                 Some(usuario),
-                None,
+                Corpo::Nenhum,
                 "joined_members",
             )
             .await?;
@@ -362,7 +387,7 @@ impl ClienteMatrix {
                     codificar(txn_id)
                 ),
                 Some(usuario),
-                Some(corpo),
+                Corpo::Json(corpo),
                 "send",
             )
             .await?;
@@ -385,7 +410,7 @@ impl ClienteMatrix {
                 Method::PUT,
                 caminho_estado(sala, tipo, chave),
                 Some(usuario),
-                Some(corpo),
+                Corpo::Json(corpo),
                 "state",
             )
             .await?;
@@ -404,7 +429,7 @@ impl ClienteMatrix {
             Method::GET,
             caminho_estado(sala, tipo, chave),
             Some(usuario),
-            None,
+            Corpo::Nenhum,
             "state (leitura)",
         )
         .await
@@ -445,7 +470,7 @@ impl ClienteMatrix {
                 format!("/_matrix/client/v1/rooms/{}/hierarchy", codificar(espaco)),
                 &[("limit", "100")],
                 Some(usuario),
-                None,
+                Corpo::Nenhum,
                 "hierarchy",
             )
             .await?;
@@ -472,7 +497,7 @@ impl ClienteMatrix {
                 Method::GET,
                 format!("{API}/profile/{}", codificar(usuario_id)),
                 None,
-                None,
+                Corpo::Nenhum,
                 "profile",
             )
             .await?;
@@ -497,7 +522,7 @@ impl ClienteMatrix {
             Method::PUT,
             format!("{API}/profile/{}/displayname", codificar(usuario_id)),
             Some(usuario),
-            Some(&json!({ "displayname": nome })),
+            Corpo::Json(&json!({ "displayname": nome })),
             "profile (nome)",
         )
         .await
@@ -519,7 +544,7 @@ impl ClienteMatrix {
                 format!("{API}/register"),
                 &[("kind", "user")],
                 None,
-                Some(&json!({
+                Corpo::Json(&json!({
                     "type": "m.login.application_service",
                     "username": localpart,
                     // Sem token de acesso: o módulo age pelo disfarce do AS, e um token por
@@ -530,6 +555,91 @@ impl ClienteMatrix {
             )
             .await?;
         texto_obrigatorio(&valor, "user_id", "register")
+    }
+
+    // ───────────────────────────── mídia ─────────────────────────────
+
+    /// Sobe um arquivo ao Synapse como `usuario` e devolve o `content_uri` (`mxc://…`).
+    ///
+    /// Duas rotas conhecidas, na ordem:
+    ///
+    /// 1. `POST /_matrix/media/v3/upload` — a que o Synapse de desenvolvimento atende hoje
+    ///    (comprovado contra o Synapse 1.120 do ambiente da MX-01);
+    /// 2. `POST /_matrix/client/v1/media/upload` — a rota nova, tentada quando o servidor responde
+    ///    `404 M_UNRECOGNIZED` à antiga (versões que removeram a rota depreciada).
+    ///
+    /// O `filename` vai na consulta e o tipo do arquivo no `Content-Type`. Nada do conteúdo, do
+    /// nome ou do `mxc` vai para log ou mensagem de erro.
+    pub async fn enviar_midia(
+        &self,
+        usuario: &str,
+        nome: &str,
+        mime: &str,
+        bytes: &[u8],
+    ) -> Result<String, ErroChamada> {
+        let valor = match self
+            .subir_arquivo(CAMINHO_UPLOAD_ANTIGO, usuario, nome, mime, bytes)
+            .await
+        {
+            Ok(valor) => valor,
+            Err(ErroChamada::Resposta {
+                status: 404,
+                errcode,
+                ..
+            }) if errcode
+                .as_deref()
+                .is_none_or(|codigo| codigo == ERRCODE_NAO_RECONHECIDO) =>
+            {
+                self.subir_arquivo(CAMINHO_UPLOAD_NOVO, usuario, nome, mime, bytes)
+                    .await?
+            }
+            Err(erro) => return Err(erro),
+        };
+        texto_obrigatorio(&valor, "content_uri", "upload")
+    }
+
+    /// Uma tentativa de upload numa rota. Devolve o corpo (o `content_uri` está nele).
+    async fn subir_arquivo(
+        &self,
+        caminho: &'static str,
+        usuario: &str,
+        nome: &str,
+        mime: &str,
+        bytes: &[u8],
+    ) -> Result<Value, ErroChamada> {
+        self.chamar_com_consulta(
+            Method::POST,
+            caminho.to_owned(),
+            &[("filename", nome)],
+            Some(usuario),
+            Corpo::Bytes { mime, bytes },
+            "upload",
+        )
+        .await
+    }
+
+    /// Lê um evento da sala pelo id (`GET /rooms/{sala}/event/{evento}`).
+    ///
+    /// Serve para conferir o que ficou na sala depois de um envio (aceite e testes contra o
+    /// Synapse de verdade). O evento volta como o Synapse o guarda, inclusive o `sender`.
+    pub async fn ler_evento(
+        &self,
+        usuario: &str,
+        sala: &str,
+        evento: &str,
+    ) -> Result<Value, ErroChamada> {
+        self.chamar(
+            Method::GET,
+            format!(
+                "{API}/rooms/{}/event/{}",
+                codificar(sala),
+                codificar(evento)
+            ),
+            Some(usuario),
+            Corpo::Nenhum,
+            "event (leitura)",
+        )
+        .await
     }
 
     // ───────────────────────────── conexão ─────────────────────────────
@@ -543,7 +653,7 @@ impl ClienteMatrix {
             Method::GET,
             "/_matrix/client/versions".to_owned(),
             None,
-            None,
+            Corpo::Nenhum,
             "versions",
         )
         .await
@@ -558,7 +668,7 @@ impl ClienteMatrix {
         metodo: Method,
         caminho: String,
         usuario: Option<&str>,
-        corpo: Option<&Value>,
+        corpo: Corpo<'_>,
         operacao: &'static str,
     ) -> Result<Value, ErroChamada> {
         self.chamar_com_consulta(metodo, caminho, &[], usuario, corpo, operacao)
@@ -571,7 +681,7 @@ impl ClienteMatrix {
         caminho: String,
         consulta_fixa: &[(&str, &str)],
         usuario: Option<&str>,
-        corpo: Option<&Value>,
+        corpo: Corpo<'_>,
         operacao: &'static str,
     ) -> Result<Value, ErroChamada> {
         let resultado = self
@@ -606,7 +716,7 @@ impl ClienteMatrix {
         caminho: &str,
         consulta_fixa: &[(&str, &str)],
         usuario: Option<&str>,
-        corpo: Option<&Value>,
+        corpo: Corpo<'_>,
         operacao: &'static str,
     ) -> Result<Value, ErroChamada> {
         let url = format!("{}{}", self.0.config.url_base, caminho);
@@ -630,8 +740,23 @@ impl ClienteMatrix {
         if let Some(usuario) = usuario {
             pedido = pedido.query(&[("user_id", usuario)]);
         }
-        if let Some(corpo) = corpo {
-            pedido = pedido.json(corpo);
+        match corpo {
+            Corpo::Nenhum => {}
+            Corpo::Json(valor) => pedido = pedido.json(valor),
+            // Arquivo: os bytes como estão, com o tipo que o recebimento reconheceu. O `filename`
+            // vai na consulta (é lá que o Synapse o guarda), nunca num cabeçalho.
+            Corpo::Bytes { mime, bytes } => {
+                pedido = pedido
+                    .header(
+                        CONTENT_TYPE,
+                        HeaderValue::from_str(mime).map_err(|_| {
+                            ErroChamada::Configuracao(
+                                "o tipo do arquivo não cabe num cabeçalho HTTP".to_owned(),
+                            )
+                        })?,
+                    )
+                    .body(bytes.to_vec());
+            }
         }
 
         let resposta = pedido.send().await.map_err(|erro| {

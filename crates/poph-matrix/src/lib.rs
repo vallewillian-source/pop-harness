@@ -52,6 +52,7 @@ pub mod erro;
 pub mod espacos;
 pub mod eventos;
 pub mod formato;
+pub mod midia;
 pub mod salas;
 pub mod usuarios;
 
@@ -71,6 +72,10 @@ pub use espacos::{
 pub use eventos::{
     Acao, CAMPO_NOVO_CONTEUDO, MSGTYPE_AVISO, MSGTYPE_EMOTE, MotivoIgnorar, RELACAO_ANOTACAO,
     RELACAO_SUBSTITUICAO, TIPO_REACAO, TIPO_REMOCAO, TipoMidia, classificar,
+};
+pub use midia::{
+    AnexoParaMidia, BLOCO_ANEXO, LIMITE_MIDIA_BYTES, MSGTYPE_ARQUIVO, MSGTYPE_IMAGEM, Midia,
+    MotivoDeRecusa, PREFIXO_AVISO, decidir as decidir_midia,
 };
 pub use salas::{
     AVISO_SEM_HISTORICO, ConversaParaSala, ErroPorta, ErroSala, EstadoGravado, MetadataSala,

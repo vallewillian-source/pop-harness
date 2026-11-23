@@ -14,6 +14,8 @@
 //! - cada campo que `MetadataSala` grava na sala está declarado na interface `AtendimentoMetadata`,
 //!   e os campos que o Harness precisa preencher não somem;
 //! - as uniões `integration_type` e `status` da interface contra o que o módulo escreve.
+//! - a chave do bloco de anexo (`com.<marca>.attachment`, MX-43) contra `ATTACHMENT_BLOCK_KEY` de
+//!   `sofacoding/expiredAttachment.ts` — o arquivo do Element que lê esse bloco.
 //!
 //! Os três testes ficam `#[ignore]` neste repositório, porque o frontend do Element mora em outro
 //! lugar. Quem tem o arquivo roda `POPH_ELEMENT_CONTRATO=/caminho/atendimentoRoom.ts cargo test
@@ -30,14 +32,26 @@
 use std::path::{Path, PathBuf};
 
 use poph_matrix::ConversaParaSala;
+use poph_matrix::midia::BLOCO_ANEXO;
 use poph_matrix::salas::{INTEGRACOES_DO_FRONTEND, MetadataSala, TIPO_METADATA, TIPO_SALA};
 use poph_types::{AgentId, ConversationId, DepartmentId, OrgId};
 
 /// Caminho do contrato do Element, relativo ao crate (`apps/pop-harness/crates/poph-matrix`).
 const CONTRATO: &str = "../../../frontend/src/sofacoding/atendimentoRoom.ts";
 
+/// Caminho do contrato do anexo, relativo ao crate (`apps/pop-harness/crates/poph-matrix`).
+const CONTRATO_ANEXO: &str = "../../../frontend/src/sofacoding/expiredAttachment.ts";
+
 /// Nome da interface que descreve o metadata no frontend.
 const INTERFACE_METADATA: &str = "AtendimentoMetadata";
+
+/// Caminho do arquivo do frontend que lê o bloco do anexo.
+fn caminho_do_contrato_do_anexo() -> PathBuf {
+    match std::env::var_os("POPH_ELEMENT_ANEXO_CONTRATO") {
+        Some(caminho) => PathBuf::from(caminho),
+        None => Path::new(env!("CARGO_MANIFEST_DIR")).join(CONTRATO_ANEXO),
+    }
+}
 
 fn caminho_do_contrato() -> PathBuf {
     // Fora do monorepo o arquivo do Element não existe aqui: quem tem o frontend aponta o caminho.
@@ -272,5 +286,39 @@ fn integracoes_e_status_do_modulo_estao_nas_unioes_do_element() {
         "os estados de conversa divergiram: o módulo grava {status_do_modulo:?} (MetadataSala em \
          salas.rs) e o Element declara {status_do_element:?} (`status` em `{INTERFACE_METADATA}`, \
          atendimentoRoom.ts). Igualar um dos dois lados."
+    );
+}
+
+/// A chave do bloco que marca a mídia do atendimento é a mesma dos dois lados.
+///
+/// Este teste **não** é `#[ignore]`: dentro do monorepo o arquivo do frontend está ao lado do
+/// módulo, e um rename de um lado só (o do Rust ou o do Element) tem de quebrar aqui, não no
+/// atendimento. Fora do monorepo o arquivo não existe, e o teste diz que não conferiu em vez de
+/// fingir que passou — mesmo caminho de `POPH_ELEMENT_ANEXO_CONTRATO` para quem tem o Element
+/// noutro lugar.
+#[test]
+fn chave_do_bloco_de_anexo_e_a_mesma_do_frontend() {
+    let caminho = caminho_do_contrato_do_anexo();
+    let Ok(fonte) = std::fs::read_to_string(&caminho) else {
+        println!(
+            "contrato do anexo NÃO conferido: `{}` não existe (defina POPH_ELEMENT_ANEXO_CONTRATO \
+             com o caminho de sofacoding/expiredAttachment.ts)",
+            caminho.display()
+        );
+        return;
+    };
+    let chave = valor_da_constante(&fonte, "ATTACHMENT_BLOCK_KEY").unwrap_or_else(|| {
+        panic!(
+            "não achei `export const ATTACHMENT_BLOCK_KEY = \"…\";` em `{}`: o Element renomeou \
+             a constante ou mudou a forma de declará-la. Se foi de propósito, ajuste o nome lido em \
+             tests/contrato_frontend.rs e o uso no módulo; senão, restaure o nome no frontend.",
+            caminho.display()
+        )
+    });
+    assert_eq!(
+        BLOCO_ANEXO, chave,
+        "chave do bloco de anexo diferente: o módulo publica `{BLOCO_ANEXO}` (BLOCO_ANEXO em \
+         crates/poph-matrix/src/midia.rs) e o Element lê `{chave}` (ATTACHMENT_BLOCK_KEY em \
+         sofacoding/expiredAttachment.ts). Igualar um dos dois lados."
     );
 }

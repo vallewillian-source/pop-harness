@@ -21,6 +21,8 @@ pub struct MetricasMatrix {
     pub salas_prontas: Contador,
     /// Mensagens do Harness entregues ao Synapse pelo espelhamento.
     pub mensagens_espelhadas: Contador,
+    /// Mídia do cliente entregue à sala pelo espelhamento (MX-43): subida e evento.
+    pub midias_espelhadas: Contador,
     /// Respostas do atendente gravadas para envio ao cliente (WhatsApp).
     pub respostas_enfileiradas: Contador,
     /// Reenvios do Synapse de uma resposta que já estava gravada (nada foi enviado de novo).
@@ -60,6 +62,10 @@ impl MetricasMatrix {
             mensagens_espelhadas: registro.contador(
                 "poph_matrix_mensagens_espelhadas_total",
                 "Mensagens do Harness entregues ao Synapse pelo espelhamento.",
+            )?,
+            midias_espelhadas: registro.contador(
+                "poph_matrix_midias_espelhadas_total",
+                "Mídia do cliente entregue à sala pelo espelhamento (imagem ou arquivo).",
             )?,
             respostas_enfileiradas: registro.contador(
                 "poph_matrix_respostas_enfileiradas_total",

@@ -303,6 +303,9 @@ pub fn iniciar_com_ajustes(
     if let Some(metricas) = &metricas {
         espelho = espelho.com_metricas(Arc::clone(metricas));
     }
+    // Mídia do cliente (MX-43): a pasta onde o recebimento grava os blobs das orgs. É a mesma do
+    // resto do servidor (`Estado::arquivos`), não uma segunda configuração.
+    espelho = espelho.com_pasta_de_blobs(estado.arquivos.pasta_blobs.clone());
 
     // ───── espelho do estado (MX-15) ─────
     let espacos = match Espacos::da_config(

@@ -230,6 +230,22 @@ impl DestinoMatrix for Sinal {
         };
         async move { resultado }
     }
+
+    async fn enviar_midia(
+        &self,
+        _sala: &str,
+        _envio: &poph_server::matrix_espelho::EnvioMidia,
+    ) -> Result<(), ErroChamada> {
+        Ok(())
+    }
+
+    async fn avisar(
+        &self,
+        _sala: &str,
+        _aviso: &poph_server::matrix_espelho::AvisoNaSala,
+    ) -> Result<(), ErroChamada> {
+        Ok(())
+    }
 }
 
 // ───────────────────────────── captura de log ─────────────────────────────
@@ -658,10 +674,11 @@ fn estado_com_modulo(rotulo: &str, ligado: bool) -> (Estado, PathBuf) {
     (estado, pasta)
 }
 
-const NOMES_MATRIX: [&str; 14] = [
+const NOMES_MATRIX: [&str; 15] = [
     "poph_matrix_atraso_cursor_segundos",
     "poph_matrix_salas_prontas_total",
     "poph_matrix_mensagens_espelhadas_total",
+    "poph_matrix_midias_espelhadas_total",
     "poph_matrix_respostas_enfileiradas_total",
     "poph_matrix_respostas_duplicadas_total",
     "poph_matrix_respostas_conversa_encerrada_total",

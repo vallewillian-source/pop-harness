@@ -12,7 +12,8 @@
 //! 3. Lê `messages` a partir do menor cursor, em páginas de [`PAGINA`] linhas (memória limitada).
 //! 4. Para cada mensagem, decide: já espelhada (pela posição ou pelo id no cursor), antes do corte
 //!    do backfill, de org desligada, ou para espelhar. Para espelhar, passa pelo
-//!    [`formato::decidir`]: `Erro` vai para `matrix_falhas`, sem chamar o Synapse.
+//!    [`formato::decidir`]: `Erro` vai para `matrix_falhas`, sem chamar o Synapse. Mensagem do
+//!    cliente com anexo vira também evento de mídia (MX-43), na frente do texto.
 //! 5. Entrega em paralelo **entre salas** (até `concorrencia`) e em ordem **dentro da sala**. Uma
 //!    falha transitória interrompe a sala no ponto da falha.
 //! 6. Avança o cursor só até a primeira linha não resolvida (marca-d'água contígua). Nada é
@@ -39,6 +40,26 @@
 //! também o id da mensagem daquela posição: uma linha com o mesmo `rowid` e outro id é mensagem
 //! nova e é espelhada; com o mesmo id, já foi espelhada e é pulada.
 //!
+//! ## Mídia do cliente (MX-43)
+//!
+//! O anexo que o cliente manda já está no banco (`attachments`) quando o laço passa pela mensagem.
+//! Para mensagem de entrada do cliente com anexo, o laço monta os passos de mídia **antes** do
+//! texto: lê o blob (teto de [`poph_matrix::midia::LIMITE_MIDIA_BYTES`]), sobe ao Synapse como o
+//! fantasma do cliente e publica `m.image`/`m.file` com o bloco `com.<marca>.attachment`
+//! (MX-43). O texto do cliente, quando existe, é a legenda e sai depois da mídia, como já saía.
+//!
+//! O que **não** entra na sala, e por quê:
+//!
+//! - anexo acima do limite, vazio ou ilegível no disco → um `m.notice` na sala dizendo o motivo,
+//!   e a mensagem segue resolvida (o cursor não fica preso nela);
+//! - falha definitiva do Synapse na mídia → o mesmo aviso antes de isolar em `matrix_falhas`,
+//!   depois de [`TENTATIVAS_DEFINITIVAS`] tentativas;
+//! - falha transitória → fica pendente, como qualquer outro envio.
+//!
+//! `txnId` derivado do id do anexo: reprocessar a mesma mensagem não duplica o evento na sala. O
+//! upload em si não tem chave de idempotência no Synapse; uma queda entre o upload e o evento pode
+//! deixar um arquivo sem evento (limite conhecido).
+//!
 //! ## O que este arquivo não faz
 //!
 //! Classificar eventos recebidos (MX-17), espelhar o estado da conversa (MX-15), ligar no `poph
@@ -47,6 +68,7 @@
 
 use std::collections::HashMap;
 use std::future::Future;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -59,14 +81,17 @@ use poph_matrix::espacos::{
     DepartamentoEspaco, Espacos, Posicao, SalaParaEspaco, resolver_departamento,
 };
 use poph_matrix::formato::{
-    self, Decisao, Envio, MensagemParaEspelho, OrigemMensagem, PapelMensagem, Sentido,
+    self, Decisao, Envio, MensagemParaEspelho, MotivoNaoEspelhar, OrigemMensagem, PapelMensagem,
+    Sentido,
 };
+use poph_matrix::midia::{self, AnexoParaMidia, Midia, MotivoDeRecusa};
 use poph_matrix::salas::{
     ConversaParaSala, ErroPorta, ErroSala, EstadoGravado, PortaSalas, Provisionador, SalaGravada,
 };
 use poph_matrix::usuarios::{ErroFantasmas, Fantasma, IdsFantasmas};
 use poph_store::{
-    Direcao, ErroStore, EstadoSala, MensagemDesde, Origem, Papel, StatusConversa, Store,
+    AnexoRegistro, Direcao, ErroStore, EstadoSala, MensagemDesde, Origem, Papel, StatusConversa,
+    Store,
 };
 use poph_types::{AgentId, ConversationId, MatrixConfig, MessageId, OrgId};
 use serde_json::json;
@@ -94,6 +119,8 @@ const MOTIVO_SALA: &str = "sala_rejeitada";
 const MOTIVO_ENVIO: &str = "envio_rejeitado";
 /// Motivo gravado quando o usuário do aparelho não pôde entrar na sala (MX-42).
 const MOTIVO_APARELHO: &str = "aparelho_fora_da_sala";
+/// Motivo gravado quando a mídia do cliente não pôde ser montada (MX-43): fantasma inválido.
+const MOTIVO_MIDIA: &str = "midia_invalida";
 /// Tamanho máximo do motivo (o mesmo `CHECK` de `matrix_falhas`).
 const LIMITE_MOTIVO: usize = 64;
 
@@ -124,6 +151,45 @@ pub trait DestinoMatrix: Send + Sync {
         sala: &str,
         envio: &Envio,
     ) -> impl Future<Output = Result<(), ErroChamada>> + Send;
+
+    /// Sobe a mídia do cliente ao Synapse e publica o evento na sala (MX-43).
+    fn enviar_midia(
+        &self,
+        sala: &str,
+        envio: &EnvioMidia,
+    ) -> impl Future<Output = Result<(), ErroChamada>> + Send;
+
+    /// Escreve um aviso em texto na sala (MX-43): mídia que não entrou, em `m.notice`.
+    fn avisar(
+        &self,
+        sala: &str,
+        aviso: &AvisoNaSala,
+    ) -> impl Future<Output = Result<(), ErroChamada>> + Send;
+}
+
+/// Mídia do cliente pronta para a sala (MX-43): quem assina, o evento e o conteúdo do blob.
+pub struct EnvioMidia {
+    /// Conversa dona do anexo (a sala é dela).
+    pub conversa: ConversationId,
+    /// Usuário virtual do cliente: assina a subida e o evento.
+    pub remetente: Fantasma,
+    /// O que virou o anexo: `m.image`/`m.file`, nome, tipo, tamanho e `txnId`.
+    pub midia: Midia,
+    /// Bytes do blob, já lidos e validados no limite.
+    pub conteudo: Vec<u8>,
+}
+
+/// Aviso em texto na sala de uma mídia que não entrou (MX-43).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AvisoNaSala {
+    /// Conversa dona do anexo.
+    pub conversa: ConversationId,
+    /// Quem assina o aviso: o fantasma do agente, dono da sala (como na MX-19).
+    pub remetente: Fantasma,
+    /// `txnId` do aviso: o mesmo anexo e o mesmo motivo não duplicam o aviso.
+    pub txn_id: String,
+    /// Motivo curto, que escolhe o texto e o código de log.
+    pub motivo: MotivoDeRecusa,
 }
 
 /// Destino de verdade: a provisão de sala (MX-11) e o cliente da API do Matrix (MX-09).
@@ -339,6 +405,44 @@ impl DestinoMatrix for DestinoReal {
             .observar(inicio.elapsed().as_secs_f64());
         resultado
     }
+
+    async fn enviar_midia(&self, sala: &str, envio: &EnvioMidia) -> Result<(), ErroChamada> {
+        let inicio = Instant::now();
+        let resultado = midia::enviar(
+            &self.cliente,
+            &envio.remetente,
+            sala,
+            &envio.midia,
+            &envio.conteudo,
+        )
+        .await
+        .map(|_| ());
+        self.metricas
+            .latencia_synapse_segundos
+            .observar(inicio.elapsed().as_secs_f64());
+        resultado
+    }
+
+    async fn avisar(&self, sala: &str, aviso: &AvisoNaSala) -> Result<(), ErroChamada> {
+        let corpo = midia::conteudo_do_aviso(aviso.motivo);
+        let inicio = Instant::now();
+        // `m.notice`: o classificador da MX-17 ignora aviso, então o aviso não volta como resposta.
+        let resultado = self
+            .cliente
+            .enviar_evento(
+                aviso.remetente.user_id(),
+                sala,
+                formato::TIPO_EVENTO,
+                &aviso.txn_id,
+                &corpo,
+            )
+            .await
+            .map(|_| ());
+        self.metricas
+            .latencia_synapse_segundos
+            .observar(inicio.elapsed().as_secs_f64());
+        resultado
+    }
 }
 
 /// Porta de persistência da provisão (MX-11) sobre o repositório `matrix` do store.
@@ -451,8 +555,12 @@ impl ErroEspelho {
 /// O que um ciclo fez. Só contagens e ids de org: nada de texto de cliente.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RelatorioCiclo {
-    /// Mensagens entregues ao Synapse neste ciclo.
+    /// Eventos de texto entregues ao Synapse neste ciclo.
     pub enviadas: u32,
+    /// Eventos de mídia do cliente entregues ao Synapse neste ciclo (MX-43).
+    pub midias_enviadas: u32,
+    /// Avisos na sala de mídia que não entrou (arquivo grande, vazio, ilegível, recusado).
+    pub avisos_de_midia: u32,
     /// Mensagens que não entram na sala por regra (resposta humana, texto vazio, ferramenta).
     pub nao_espelhadas: u32,
     /// Mensagens já espelhadas antes (pela posição do cursor ou pelo id dele).
@@ -516,11 +624,72 @@ enum Desfecho {
     },
 }
 
+/// Que tipo de passo um desfecho fechou (só para contar cada coisa no seu contador).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PassoFeito {
+    /// Texto (ou legenda) da mensagem.
+    Texto,
+    /// Mídia do cliente (MX-43).
+    Midia,
+    /// Aviso em texto na sala de uma mídia que não entrou.
+    Aviso,
+}
+
+/// Um passo da entrega de uma mensagem: o texto, a mídia ou o aviso de uma mídia que não entrou.
+enum Passo {
+    /// Texto da mensagem (a legenda, quando há mídia).
+    Texto(Envio),
+    /// Mídia do cliente pronta para subir, com o aviso que entra na sala se o envio falhar de vez.
+    Midia {
+        envio: EnvioMidia,
+        aviso: AvisoNaSala,
+    },
+    /// Nada de mídia a subir: só o aviso na sala (arquivo grande, vazio, ilegível).
+    Aviso(AvisoNaSala),
+}
+
+impl Passo {
+    /// Tipo do passo, para o contador do relatório.
+    fn tipo(&self) -> PassoFeito {
+        match self {
+            Self::Texto(_) => PassoFeito::Texto,
+            Self::Midia { .. } => PassoFeito::Midia,
+            Self::Aviso(_) => PassoFeito::Aviso,
+        }
+    }
+}
+
+/// Uma mensagem da página com os passos que ela vai entregar, em ordem.
+struct ItemDoGrupo {
+    /// Índice na página (o estado do cursor é por índice).
+    indice: usize,
+    /// Org dona.
+    org: OrgId,
+    /// Id da mensagem.
+    id: MessageId,
+    /// O que entregar, em ordem: mídia (MX-43) antes do texto.
+    passos: Vec<Passo>,
+}
+
 /// Mensagens de uma conversa, em ordem, para serem entregues na mesma sala.
 struct Grupo {
     dados: ConversaParaSala,
-    /// `(índice na página, org, id, envio)`, em ordem de `rowid`.
-    itens: Vec<(usize, OrgId, MessageId, Envio)>,
+    /// Itens em ordem de `rowid`.
+    itens: Vec<ItemDoGrupo>,
+}
+
+/// O que a entrega de um grupo devolveu para uma mensagem.
+struct DesfechoDoGrupo {
+    /// Índice na página.
+    indice: usize,
+    /// Org dona.
+    org: OrgId,
+    /// Id da mensagem.
+    id: MessageId,
+    /// Tipo do passo que fechou o desfecho.
+    tipo: PassoFeito,
+    /// O que aconteceu.
+    desfecho: Desfecho,
 }
 
 /// O que sobrou de uma página: até onde o cursor pode andar e se algo ficou pendente.
@@ -552,6 +721,9 @@ pub struct EspelhoMatrix<D: DestinoMatrix> {
     metricas: Arc<MetricasMatrix>,
     /// Relógio em milissegundos, para medir a idade da mensagem pendente mais antiga.
     agora_ms: Arc<dyn Fn() -> i64 + Send + Sync>,
+    /// Onde os blobs das orgs estão no disco (MX-43). `None` só em montagem de teste sem mídia:
+    /// com mídia e sem pasta, o anexo vira aviso na sala em vez de sumir em silêncio.
+    pasta_blobs: Option<PathBuf>,
 }
 
 impl<D: DestinoMatrix> EspelhoMatrix<D> {
@@ -575,6 +747,7 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
             parar,
             metricas: MetricasMatrix::descartaveis(),
             agora_ms: Arc::new(relogio_do_sistema),
+            pasta_blobs: None,
         })
     }
 
@@ -587,6 +760,15 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
     /// Troca o relógio do laço (testes medem o atraso sem esperar de verdade).
     pub fn com_relogio(mut self, agora_ms: Arc<dyn Fn() -> i64 + Send + Sync>) -> Self {
         self.agora_ms = agora_ms;
+        self
+    }
+
+    /// Diz onde os blobs das orgs estão no disco, para a mídia do cliente (MX-43) ser lida.
+    ///
+    /// Quem liga o módulo chama isto com a pasta do `ConfigArquivos` do servidor. Sem a pasta, o
+    /// laço não lê anexo nenhum: cada mídia vira um aviso na sala, e nenhuma mensagem fica presa.
+    pub fn com_pasta_de_blobs(mut self, pasta: impl Into<PathBuf>) -> Self {
+        self.pasta_blobs = Some(pasta.into());
         self
     }
 
@@ -792,6 +974,31 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
                 continue;
             };
 
+            // Mídia do cliente (MX-43): o anexo já está gravado; a mensagem vira mídia + legenda.
+            // Sem saber os anexos, entregar só o texto esconderia a mídia: a linha fica pendente.
+            let anexos = match self.anexos_do_cliente(mensagem) {
+                Ok(anexos) => anexos,
+                Err(_) => {
+                    estados[i] = Estado::Pendente;
+                    continue;
+                }
+            };
+            let mut passos: Vec<Passo> = Vec::new();
+            let mut midia_invalida = false;
+            for anexo in &anexos {
+                match self.passo_de_midia(mensagem.org_id, &dados, anexo).await {
+                    Ok(passo) => passos.push(passo),
+                    // Sem o fantasma do agente não há nem mídia nem aviso: isola como formato.
+                    Err(_) => {
+                        midia_invalida = true;
+                        break;
+                    }
+                }
+            }
+            if midia_invalida {
+                passos.clear();
+            }
+
             let decisao = formato::decidir(
                 &self.ids,
                 &MensagemParaEspelho {
@@ -806,14 +1013,33 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
                     id_integracao: dados.integracao.as_deref(),
                 },
             );
-            match decisao {
-                Decisao::NaoEspelhar(_) => relatorio.nao_espelhadas += 1,
-                Decisao::Erro(_) => match self.store.matrix().registrar_falha(
-                    mensagem.org_id,
-                    mensagem.id,
-                    MOTIVO_FORMATO,
-                    1,
-                ) {
+            let motivo_de_falha = match decisao {
+                // Com mídia já montada, texto vazio é só legenda vazia: a mídia vai sozinha.
+                Decisao::NaoEspelhar(MotivoNaoEspelhar::TextoVazio) if !passos.is_empty() => None,
+                Decisao::NaoEspelhar(_) => {
+                    passos.clear();
+                    relatorio.nao_espelhadas += 1;
+                    None
+                }
+                Decisao::Erro(_) => {
+                    passos.clear();
+                    Some(if midia_invalida {
+                        MOTIVO_MIDIA
+                    } else {
+                        MOTIVO_FORMATO
+                    })
+                }
+                Decisao::Espelhar(envio) => {
+                    passos.push(Passo::Texto(envio));
+                    None
+                }
+            };
+            if let Some(motivo) = motivo_de_falha {
+                match self
+                    .store
+                    .matrix()
+                    .registrar_falha(mensagem.org_id, mensagem.id, motivo, 1)
+                {
                     Ok(_) => {
                         relatorio.isoladas += 1;
                         self.metricas.mensagens_isoladas.incrementar(1);
@@ -821,45 +1047,65 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
                             target: "poph_server::matrix_espelho",
                             org = %mensagem.org_id,
                             conversa = %mensagem.conversation_id,
-                            motivo = MOTIVO_FORMATO,
+                            motivo,
                             "mensagem fora do formato do espelho: isolada em matrix_falhas"
                         );
                     }
                     Err(_) => estados[i] = Estado::Pendente,
-                },
-                Decisao::Espelhar(envio) => {
-                    let posicao = match indice_grupo.get(&mensagem.conversation_id) {
-                        Some(posicao) => *posicao,
-                        None => {
-                            grupos.push(Grupo {
-                                dados: dados.sala.clone(),
-                                itens: Vec::new(),
-                            });
-                            indice_grupo.insert(mensagem.conversation_id, grupos.len() - 1);
-                            grupos.len() - 1
-                        }
-                    };
-                    grupos[posicao]
-                        .itens
-                        .push((i, mensagem.org_id, mensagem.id, envio));
                 }
+                continue;
             }
+            if passos.is_empty() {
+                continue;
+            }
+            let posicao = match indice_grupo.get(&mensagem.conversation_id) {
+                Some(posicao) => *posicao,
+                None => {
+                    grupos.push(Grupo {
+                        dados: dados.sala.clone(),
+                        itens: Vec::new(),
+                    });
+                    indice_grupo.insert(mensagem.conversation_id, grupos.len() - 1);
+                    grupos.len() - 1
+                }
+            };
+            grupos[posicao].itens.push(ItemDoGrupo {
+                indice: i,
+                org: mensagem.org_id,
+                id: mensagem.id,
+                passos,
+            });
         }
 
         // Entrega: salas em paralelo, mensagens da mesma sala em sequência.
-        let desfechos: Vec<Vec<(usize, OrgId, MessageId, Desfecho)>> =
-            futures::stream::iter(grupos)
-                .map(|grupo| self.entregar_grupo(grupo))
-                .buffer_unordered(self.concorrencia)
-                .collect()
-                .await;
+        let desfechos: Vec<Vec<DesfechoDoGrupo>> = futures::stream::iter(grupos)
+            .map(|grupo| self.entregar_grupo(grupo))
+            .buffer_unordered(self.concorrencia)
+            .collect()
+            .await;
 
-        for (indice, org, id, desfecho) in desfechos.into_iter().flatten() {
+        for desfecho in desfechos.into_iter().flatten() {
+            let DesfechoDoGrupo {
+                indice,
+                org,
+                id,
+                tipo,
+                desfecho,
+            } = desfecho;
             match desfecho {
                 Desfecho::Enviada => {
                     estados[indice] = Estado::Resolvida;
-                    relatorio.enviadas += 1;
-                    self.metricas.mensagens_espelhadas.incrementar(1);
+                    match tipo {
+                        PassoFeito::Texto => {
+                            relatorio.enviadas += 1;
+                            self.metricas.mensagens_espelhadas.incrementar(1);
+                        }
+                        PassoFeito::Midia => {
+                            relatorio.midias_enviadas += 1;
+                            self.metricas.midias_espelhadas.incrementar(1);
+                        }
+                        PassoFeito::Aviso => relatorio.avisos_de_midia += 1,
+                    }
                 }
                 Desfecho::Pendente => {
                     estados[indice] = Estado::Pendente;
@@ -895,7 +1141,7 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
     }
 
     /// Entrega as mensagens de uma sala em ordem. Para na primeira falha: o resto fica pendente.
-    async fn entregar_grupo(&self, grupo: Grupo) -> Vec<(usize, OrgId, MessageId, Desfecho)> {
+    async fn entregar_grupo(&self, grupo: Grupo) -> Vec<DesfechoDoGrupo> {
         let mut saida = Vec::with_capacity(grupo.itens.len());
         let mut itens = grupo.itens.into_iter();
 
@@ -907,16 +1153,38 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
                 if chamada_da_sala(&erro).is_some_and(eh_429) {
                     self.metricas.respostas_429.incrementar(1);
                 }
-                // A falha da sala é cobrada na primeira mensagem do grupo.
+                // A falha da sala é cobrada no primeiro passo da primeira mensagem do grupo.
                 let motivo = MOTIVO_SALA.to_owned();
                 let primeiro = itens.next();
-                if let Some((indice, org, id, _)) = primeiro {
-                    let desfecho =
-                        self.desfecho_de(org, conversa, &id, erro.classificacao(), motivo);
-                    saida.push((indice, org, id, desfecho));
+                if let Some(item) = primeiro {
+                    let tipo = item
+                        .passos
+                        .first()
+                        .map(Passo::tipo)
+                        .unwrap_or(PassoFeito::Texto);
+                    let desfecho = self.desfecho_de(
+                        item.org,
+                        conversa,
+                        &item.id,
+                        erro.classificacao(),
+                        motivo,
+                    );
+                    saida.push(DesfechoDoGrupo {
+                        indice: item.indice,
+                        org: item.org,
+                        id: item.id,
+                        tipo,
+                        desfecho,
+                    });
                 }
-                for (indice, org, id, _) in itens {
-                    saida.push((indice, org, id, Desfecho::Pendente));
+                for item in itens {
+                    saida.push(DesfechoDoGrupo {
+                        indice: item.indice,
+                        org: item.org,
+                        id: item.id,
+                        tipo: PassoFeito::Texto,
+                        desfecho: Desfecho::Pendente,
+                    });
                 }
                 return saida;
             }
@@ -924,55 +1192,126 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
 
         // O usuário do aparelho entra na sala uma vez por passagem, e só se o grupo tem mensagem dele.
         let mut aparelho_na_sala = false;
-        while let Some((indice, org, id, envio)) = itens.next() {
-            self.metricas.tentativas.incrementar(1);
-            if envio.origem == OrigemMensagem::Dispositivo && !aparelho_na_sala {
-                match self
-                    .destino
-                    .garantir_aparelho(&grupo.dados, &sala, &envio.remetente)
-                    .await
+        while let Some(item) = itens.next() {
+            for passo in item.passos {
+                self.metricas.tentativas.incrementar(1);
+                let tipo = passo.tipo();
+                // Texto do aparelho precisa do fantasma do aparelho dentro da sala antes de falar
+                // nela (MX-42). Mídia não vem do aparelho nesta fase.
+                if let Passo::Texto(envio) = &passo
+                    && envio.origem == OrigemMensagem::Dispositivo
+                    && !aparelho_na_sala
                 {
-                    Ok(()) => aparelho_na_sala = true,
-                    Err(erro) => {
-                        // Mesma regra dos outros fantasmas: classifica, repete na passagem seguinte
-                        // (transitória) ou isola após as tentativas (definitiva). A mensagem continua
-                        // gravada no Harness; só a entrega à sala espera.
-                        let desfecho = self.desfecho_de(
-                            org,
-                            conversa,
-                            &id,
-                            erro.classificacao(),
-                            MOTIVO_APARELHO.to_owned(),
-                        );
-                        saida.push((indice, org, id, desfecho));
-                        for (indice, org, id, _) in itens {
-                            saida.push((indice, org, id, Desfecho::Pendente));
+                    match self
+                        .destino
+                        .garantir_aparelho(&grupo.dados, &sala, &envio.remetente)
+                        .await
+                    {
+                        Ok(()) => aparelho_na_sala = true,
+                        Err(erro) => {
+                            // Mesma regra dos outros fantasmas: classifica, repete na passagem
+                            // seguinte (transitória) ou isola após as tentativas (definitiva). A
+                            // mensagem continua gravada no Harness; só a entrega à sala espera.
+                            let desfecho = self.desfecho_de(
+                                item.org,
+                                conversa,
+                                &item.id,
+                                erro.classificacao(),
+                                MOTIVO_APARELHO.to_owned(),
+                            );
+                            saida.push(DesfechoDoGrupo {
+                                indice: item.indice,
+                                org: item.org,
+                                id: item.id,
+                                tipo,
+                                desfecho,
+                            });
+                            self.resto_pendente(&mut itens, &mut saida);
+                            return saida;
                         }
+                    }
+                }
+
+                let resultado = match &passo {
+                    Passo::Texto(envio) => self.destino.enviar(&sala, envio).await,
+                    Passo::Midia { envio, .. } => self.destino.enviar_midia(&sala, envio).await,
+                    Passo::Aviso(aviso) => self.destino.avisar(&sala, aviso).await,
+                };
+
+                match resultado {
+                    Ok(()) => {
+                        self.esquecer(&item.id);
+                        saida.push(DesfechoDoGrupo {
+                            indice: item.indice,
+                            org: item.org,
+                            id: item.id,
+                            tipo,
+                            desfecho: Desfecho::Enviada,
+                        });
+                    }
+                    Err(erro) => {
+                        if eh_429(&erro) {
+                            self.metricas.respostas_429.incrementar(1);
+                        }
+                        let motivo = motivo_de_envio(&erro);
+                        let desfecho = self.desfecho_de(
+                            item.org,
+                            conversa,
+                            &item.id,
+                            erro.classificacao(),
+                            motivo,
+                        );
+                        // Mídia que não entra de vez deixa o aviso na sala (MX-43): o atendente
+                        // precisa saber que o cliente mandou um arquivo que não apareceu.
+                        if let (Desfecho::Isolar { .. }, Passo::Midia { aviso, .. }) =
+                            (&desfecho, &passo)
+                        {
+                            self.escrever_aviso(&sala, aviso).await;
+                        }
+                        saida.push(DesfechoDoGrupo {
+                            indice: item.indice,
+                            org: item.org,
+                            id: item.id,
+                            tipo,
+                            desfecho,
+                        });
+                        self.resto_pendente(&mut itens, &mut saida);
                         return saida;
                     }
                 }
             }
-            match self.destino.enviar(&sala, &envio).await {
-                Ok(()) => {
-                    self.esquecer(&id);
-                    saida.push((indice, org, id, Desfecho::Enviada));
-                }
-                Err(erro) => {
-                    if eh_429(&erro) {
-                        self.metricas.respostas_429.incrementar(1);
-                    }
-                    let motivo = motivo_de_envio(&erro);
-                    let desfecho =
-                        self.desfecho_de(org, conversa, &id, erro.classificacao(), motivo);
-                    saida.push((indice, org, id, desfecho));
-                    for (indice, org, id, _) in itens {
-                        saida.push((indice, org, id, Desfecho::Pendente));
-                    }
-                    break;
-                }
-            }
         }
         saida
+    }
+
+    /// Marca como pendente o que sobrou do item atual (passos) e das mensagens seguintes do grupo.
+    fn resto_pendente(
+        &self,
+        itens: &mut std::vec::IntoIter<ItemDoGrupo>,
+        saida: &mut Vec<DesfechoDoGrupo>,
+    ) {
+        for item in itens.by_ref() {
+            saida.push(DesfechoDoGrupo {
+                indice: item.indice,
+                org: item.org,
+                id: item.id,
+                tipo: PassoFeito::Texto,
+                desfecho: Desfecho::Pendente,
+            });
+        }
+    }
+
+    /// Escreve o aviso de mídia na sala, sem deixar a falha dele mudar o desfecho da mensagem.
+    async fn escrever_aviso(&self, sala: &str, aviso: &AvisoNaSala) {
+        if let Err(erro) = self.destino.avisar(sala, aviso).await {
+            tracing::warn!(
+                target: "poph_server::matrix_espelho",
+                conversa = %aviso.conversa,
+                motivo = aviso.motivo.codigo(),
+                classe = %erro.classificacao(),
+                "aviso de mídia recusada não entrou na sala; a mensagem foi isolada do mesmo jeito"
+            );
+        }
     }
 
     /// Decide o desfecho de uma falha: transitória fica pendente; definitiva conta a tentativa e,
@@ -1043,6 +1382,110 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
             .lock()
             .unwrap_or_else(|veneno| veneno.into_inner());
         mapa.remove(id);
+    }
+
+    // ───────────────────────────── mídia do cliente (MX-43) ─────────────────────────────
+
+    /// Anexos que a mensagem vai levar à sala, na ordem em que chegaram.
+    ///
+    /// Só mensagem de entrada do cliente tem mídia espelhada: mídia do agente é do caminho de saída
+    /// (MX-44), mídia de origem humana veio do próprio Matrix e mídia do aparelho não existe nesta
+    /// fase. `Err` quando a lista de anexos não lê ou o banco falha — a linha fica pendente, para
+    /// não entregar o texto escondendo a mídia.
+    fn anexos_do_cliente(&self, mensagem: &MensagemDesde) -> Result<Vec<AnexoRegistro>, ErroStore> {
+        if mensagem.origem != Origem::Agente
+            || mensagem.papel != Papel::Usuario
+            || mensagem.direcao != Direcao::Entrada
+        {
+            return Ok(Vec::new());
+        }
+        let ids: Vec<String> = serde_json::from_str(&mensagem.anexos_json).map_err(|erro| {
+            ErroStore::Interno(format!(
+                "lista de anexos da mensagem não lê como JSON: {erro}"
+            ))
+        })?;
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.store.mensagens().anexos(mensagem.org_id, mensagem.id)
+    }
+
+    /// Um passo de mídia de um anexo: o envio pronto, ou o aviso de por que ele não entra.
+    ///
+    /// `Err` só quando nem o fantasma do agente nem o do cliente podem ser montados — aí a mensagem
+    /// é isolada como formato inválido, porque não há como avisar na sala.
+    async fn passo_de_midia(
+        &self,
+        org: OrgId,
+        dados: &DadosConversa,
+        anexo: &AnexoRegistro,
+    ) -> Result<Passo, ()> {
+        let id_anexo = anexo.id.to_string();
+        let remetente = self.ids.cliente(&dados.identificador).map_err(|_| ())?;
+        let decidida = midia::decidir(&AnexoParaMidia {
+            id: &id_anexo,
+            nome: &anexo.nome,
+            mime: &anexo.mime,
+            tamanho_bytes: anexo.tamanho_bytes,
+            fonte: &dados.sala.canal,
+        });
+        let decidida = match decidida {
+            Ok(decidida) => decidida,
+            Err(motivo) => {
+                return Ok(Passo::Aviso(self.aviso_de_midia(dados, &id_anexo, motivo)?));
+            }
+        };
+        let conteudo = match self.ler_blob(org, anexo).await {
+            Ok(conteudo) => conteudo,
+            Err(motivo) => {
+                return Ok(Passo::Aviso(self.aviso_de_midia(dados, &id_anexo, motivo)?));
+            }
+        };
+        Ok(Passo::Midia {
+            envio: EnvioMidia {
+                conversa: dados.sala.conversa,
+                remetente,
+                midia: decidida,
+                conteudo,
+            },
+            aviso: self.aviso_de_midia(dados, &id_anexo, MotivoDeRecusa::Rejeitada)?,
+        })
+    }
+
+    /// Aviso na sala de uma mídia que não entrou. Quem assina é o fantasma do agente, dono da sala.
+    fn aviso_de_midia(
+        &self,
+        dados: &DadosConversa,
+        id_anexo: &str,
+        motivo: MotivoDeRecusa,
+    ) -> Result<AvisoNaSala, ()> {
+        let remetente = self.ids.agente(&dados.agente).map_err(|_| ())?;
+        Ok(AvisoNaSala {
+            conversa: dados.sala.conversa,
+            remetente,
+            txn_id: midia::txn_do_aviso(id_anexo, motivo),
+            motivo,
+        })
+    }
+
+    /// Lê os bytes do blob do anexo, com o teto da mídia.
+    ///
+    /// O tamanho da linha já foi conferido em `midia::decidir`; aqui o teto é o mesmo, de rede de
+    /// segurança contra uma linha que minta. Arquivo ausente ou ilegível vira [`MotivoDeRecusa`],
+    /// nunca pânico e nunca pendência eterna.
+    async fn ler_blob(&self, org: OrgId, anexo: &AnexoRegistro) -> Result<Vec<u8>, MotivoDeRecusa> {
+        let Some(pasta) = self.pasta_blobs.clone() else {
+            return Err(MotivoDeRecusa::Ilegivel);
+        };
+        let sha256 = anexo.sha256.clone();
+        let limite = midia::LIMITE_MIDIA_BYTES;
+        // Leitura de disco é bloqueante: sai da tarefa do laço.
+        tokio::task::spawn_blocking(move || {
+            poph_files::blob::ler(&pasta, org, &sha256, limite)
+                .map_err(|_| MotivoDeRecusa::Ilegivel)
+        })
+        .await
+        .map_err(|_| MotivoDeRecusa::Ilegivel)?
     }
 
     /// Dados da conversa para formato e sala. Canal sem `peer` usa o id da conversa como cliente.

@@ -17,8 +17,8 @@ use poph_matrix::salas::{ConversaParaSala, ErroSala};
 use poph_matrix::usuarios::Fantasma;
 use poph_matrix::usuarios::IdsFantasmas;
 use poph_server::matrix_espelho::{
-    DestinoMatrix, EspelhoMatrix, MAX_PAGINAS_POR_CICLO, PAGINA, TENTATIVAS_DEFINITIVAS,
-    TETO_ATRASO,
+    AvisoNaSala, DestinoMatrix, EnvioMidia, EspelhoMatrix, MAX_PAGINAS_POR_CICLO, PAGINA,
+    TENTATIVAS_DEFINITIVAS, TETO_ATRASO,
 };
 use poph_store::{
     Direcao, NovaConversa, NovaMensagem, NovaMensagemDoAparelho, NovaOrg, NovoAgente, Origem,
@@ -377,6 +377,69 @@ impl DestinoMatrix for Sinal {
         }
         drop(criados);
         async move { resultado }
+    }
+
+    fn enviar_midia(
+        &self,
+        sala: &str,
+        envio: &EnvioMidia,
+    ) -> impl std::future::Future<Output = Result<(), ErroChamada>> + Send {
+        let falso = &self.0;
+        let n = falso.chamadas_envio.fetch_add(1, Ordering::SeqCst) + 1;
+        let modo = *falso.modo.lock().unwrap();
+        let sala = sala.to_owned();
+        let txn = envio.midia.txn_id.clone();
+        let corpo = envio.midia.nome.clone();
+        let remetente = envio.remetente.user_id().to_owned();
+        *falso
+            .tentativas
+            .lock()
+            .unwrap()
+            .entry(txn.clone())
+            .or_insert(0) += 1;
+        let resultado = match modo {
+            Modo::Fora => Err(transitorio()),
+            Modo::Venenoso(texto) if corpo.contains(texto) => Err(recusado()),
+            Modo::FalhaNaChamada(k) if n == k => {
+                *falso.modo.lock().unwrap() = Modo::Normal;
+                Err(transitorio())
+            }
+            _ => Ok(()),
+        };
+        let mut criados = falso.criados.lock().unwrap();
+        if resultado.is_ok() && !criados.iter().any(|c| c.sala == sala && c.txn == txn) {
+            criados.push(Criado {
+                sala,
+                txn,
+                corpo,
+                remetente,
+            });
+        }
+        drop(criados);
+        async move { resultado }
+    }
+
+    fn avisar(
+        &self,
+        sala: &str,
+        aviso: &AvisoNaSala,
+    ) -> impl std::future::Future<Output = Result<(), ErroChamada>> + Send {
+        let falso = &self.0;
+        let sala = sala.to_owned();
+        let txn = aviso.txn_id.clone();
+        let corpo = poph_matrix::midia::corpo_do_aviso(aviso.motivo);
+        let remetente = aviso.remetente.user_id().to_owned();
+        let mut criados = falso.criados.lock().unwrap();
+        if !criados.iter().any(|c| c.sala == sala && c.txn == txn) {
+            criados.push(Criado {
+                sala,
+                txn,
+                corpo,
+                remetente,
+            });
+        }
+        drop(criados);
+        async move { Ok(()) }
     }
 }
 
