@@ -85,7 +85,8 @@ const COLUNAS: &str = "id, org_id, ficha_id, fluxo_id, revisao_id, status, no_at
 const COLUNAS_ETAPA: &str = "id, org_id, execucao_id, no_id, ordem, status, dados_json,
     atores_que_agiram_json, entrou_em, concluiu_em";
 
-const COLUNAS_EFEITO: &str = "id, org_id, ficha_id, execucao_id, chave, tipo, payload_json, estado,
+pub(crate) const COLUNAS_EFEITO: &str =
+    "id, org_id, ficha_id, execucao_id, chave, tipo, payload_json, estado,
     tentativas, ultimo_erro, proxima_tentativa, enviado_em, created_at";
 
 /// Quantas execuções a lista de uma Ficha devolve por padrão (histórico de fluxos do atendimento).
@@ -898,7 +899,7 @@ fn linha_etapa(linha: &Row<'_>) -> rusqlite::Result<EtapaDaExecucao> {
     })
 }
 
-fn linha_efeito(linha: &Row<'_>) -> rusqlite::Result<EfeitoDoFluxo> {
+pub(crate) fn linha_efeito(linha: &Row<'_>) -> rusqlite::Result<EfeitoDoFluxo> {
     Ok(EfeitoDoFluxo {
         id: id_da_coluna(linha, 0)?,
         org_id: id_da_coluna(linha, 1)?,

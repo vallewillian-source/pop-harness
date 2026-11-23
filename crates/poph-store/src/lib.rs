@@ -292,6 +292,11 @@ impl Store {
         Execucoes(self)
     }
 
+    /// Fila de efeitos do fluxo: o que entregar e as transições de estado (FX-21).
+    pub fn efeitos(&self) -> Efeitos<'_> {
+        Efeitos(self)
+    }
+
     /// Repositório de mensagens.
     pub fn mensagens(&self) -> Mensagens<'_> {
         Mensagens(self)

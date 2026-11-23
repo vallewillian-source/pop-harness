@@ -145,6 +145,28 @@ impl Turnos<'_> {
         super::exigir(encontrado, "turno", &id.to_string())
     }
 
+    /// Há turno **em andamento** nesta conversa agora?
+    ///
+    /// O efeito `mensagem_ao_cliente` só entra na `outbox` depois da resposta do turno (PRD §6.8):
+    /// enquanto este método disser `true`, o entregador espera. É leitura barata e sem índice novo
+    /// (o caminho é `conversation_id`, já indexado pela fila de entrada).
+    pub fn em_andamento(&self, org: OrgId, conversa: ConversationId) -> Resultado<bool> {
+        let texto_org = org.to_string();
+        let texto_conversa = conversa.to_string();
+        self.0.leitura(move |conn| {
+            conn.query_row(
+                "SELECT 1 FROM turns
+                  WHERE org_id = ?1 AND conversation_id = ?2 AND state = 'running'
+                  LIMIT 1",
+                params![texto_org, texto_conversa],
+                |linha| linha.get::<_, i64>(0),
+            )
+            .optional()
+            .map(|achado| achado.is_some())
+            .map_err(ErroStore::from)
+        })
+    }
+
     /// Lista os turnos de uma conversa, do mais antigo para o mais novo.
     pub fn listar(
         &self,

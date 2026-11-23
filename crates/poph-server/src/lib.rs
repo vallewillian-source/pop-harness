@@ -12,6 +12,7 @@ pub mod entrada_turno;
 pub mod erro;
 pub mod estado;
 pub mod evolution;
+pub mod fluxos_efeitos;
 pub mod fluxos_metricas;
 pub mod manifestos;
 pub mod matrix_espelho;
@@ -68,6 +69,8 @@ where
     // Saída do WhatsApp (HR-26c): o laço só sobe quando há instância configurada, e para junto
     // com o servidor.
     let saida = saida_whatsapp::iniciar(&estado);
+    // Fila de efeitos do fluxo (FX-21): só sobe com o motor de fluxos ligado.
+    let efeitos = fluxos_efeitos::iniciar(&estado);
     // Turno no servidor (HR-26h): só sobe com o fluxo ligado na raiz de composição.
     let turno = entrada_turno::iniciar(&estado);
     // Módulo Matrix (MX-20): desligado por configuração, não sobe nada e as rotas do Synapse
@@ -87,6 +90,9 @@ where
     }
     if let Some(turno) = turno {
         turno.abort();
+    }
+    if let Some(efeitos) = efeitos {
+        efeitos.abort();
     }
     resultado
 }

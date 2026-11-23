@@ -49,6 +49,29 @@ impl Departamentos<'_> {
         super::exigir(encontrado, "departamento", &id.to_string())
     }
 
+    /// Busca pelo **nome** dentro da org, sem diferenciar maiúsculas (o índice único é
+    /// `(org_id, lower(name))`). É o que o efeito `encaminhar(departamento)` precisa: a IR guarda o
+    /// nome que a organização escreveu, não o id.
+    ///
+    /// Nome que não existe devolve `None` — quem chama decide se é falha (o efeito é) ou se é caso
+    /// de usar outro departamento.
+    pub fn por_nome(&self, org: OrgId, nome: &str) -> Resultado<Option<Departamento>> {
+        let texto_org = org.to_string();
+        let nome = nome.trim().to_lowercase();
+        self.0.leitura(move |conn| {
+            conn.query_row(
+                &format!(
+                    "SELECT {COLUNAS} FROM departments
+                      WHERE org_id = ?1 AND lower(name) = ?2"
+                ),
+                params![texto_org, nome],
+                linha,
+            )
+            .optional()
+            .map_err(ErroStore::from)
+        })
+    }
+
     /// Lista os departamentos da org (todos; o filtro de ativo é do chamador).
     pub fn listar(&self, org: OrgId, pagina: Pagina) -> Resultado<Vec<Departamento>> {
         let texto_org = org.to_string();
