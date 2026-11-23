@@ -12,6 +12,8 @@ mod conhecimento;
 mod conteudo;
 mod conversas;
 mod departamentos;
+/// Leitura das Fichas (FX-29): lista com filtros, detalhe com execuções e linha do tempo.
+mod fichas;
 mod instrucoes;
 mod integracoes;
 mod manifestos;
@@ -83,6 +85,16 @@ pub fn router(estado: Estado) -> Router {
         .route(
             "/admin/v1/orgs/{org_id}/agents/{agent_id}/flows",
             get(agente_fluxos::listar).put(agente_fluxos::substituir),
+        )
+        // ── Fichas: leitura (FX-29) ──
+        .route("/admin/v1/orgs/{org_id}/fichas", get(fichas::listar))
+        .route(
+            "/admin/v1/orgs/{org_id}/fichas/{ficha_id}",
+            get(fichas::mostrar),
+        )
+        .route(
+            "/admin/v1/orgs/{org_id}/fichas/{ficha_id}/events",
+            get(fichas::eventos),
         )
         .route(
             "/admin/v1/orgs/{org_id}/agents/{agent_id}/instructions",

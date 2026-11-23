@@ -245,6 +245,7 @@ nomeavel!(poph_types::FluxoId, "fluxo");
 nomeavel!(poph_types::FileId, "arquivo");
 
 nomeavel!(poph_types::ConversationId, "conversa");
+nomeavel!(poph_types::FichaId, "ficha");
 nomeavel!(poph_types::MessageId, "mensagem");
 nomeavel!(poph_types::AttachmentId, "anexo");
 nomeavel!(poph_types::ProductId, "produto");
