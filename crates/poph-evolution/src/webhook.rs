@@ -15,9 +15,15 @@
 //!   como `direction out` e `origin device`, sem turno.
 //! - **A chave de idempotência é o `key.id` do WhatsApp.** Reentrega do webhook não gera segundo
 //!   turno (é o mesmo par `(integração, id externo)` da `inbox`).
-//! - **Só imagem e documento (PDF/Office) entram como anexo.** Áudio, vídeo, figurinha, contato e
-//!   localização são ignorados com motivo — a decisão do mantenedor é arquivo = imagem + PDF/Office,
-//!   sem áudio.
+//! - **Só imagem e documento (PDF/Office) entram como anexo.** A decisão do mantenedor é arquivo =
+//!   imagem + PDF/Office, sem áudio: o Harness não baixa a mídia de áudio, vídeo, figurinha, contato,
+//!   localização nem enquete.
+//! - **Esses seis tipos entram como texto de histórico (MX-45), sem download.** O agente recebe
+//!   "[O cliente enviou um áudio, que o sistema não consegue abrir]" e pode responder, como o POP
+//!   Atende já faz (`core/conversations/whatsapp_media.py`, mesmos textos). A legenda de vídeo não
+//!   entra, como no Python. A sala do Matrix mostra um aviso no lugar desse texto
+//!   (`poph_types::MidiaForaDoEscopo`). Eco do próprio aparelho (`fromMe`) desses tipos continua
+//!   descartado: não é o cliente quem mandou.
 //! - **Grupo vs. pessoa.** Em conversa individual o `peer` é o número (só dígitos, que é o que a
 //!   Evolution aceita no envio); em grupo é o jid completo (`...@g.us`) e quem escreveu vai em
 //!   `remetente`.
@@ -25,7 +31,9 @@
 //!   vez de aceitar qualquer origem.
 
 use base64::Engine as _;
-use poph_types::{AnexoEntrada, EventoEstado, InboundEvent, IntegrationId, Segredo};
+use poph_types::{
+    AnexoEntrada, EventoEstado, InboundEvent, IntegrationId, MidiaForaDoEscopo, Segredo,
+};
 use serde_json::Value;
 use thiserror::Error;
 
@@ -124,7 +132,8 @@ pub enum MotivoIgnorado {
     DeMimMesmo,
     /// Mensagem sem texto e sem mídia suportada (só reação, revogação, álbum…).
     SemConteudo,
-    /// Mídia fora do escopo (áudio, vídeo, figurinha, contato, localização).
+    /// Mídia fora do escopo (áudio, vídeo, figurinha, contato, localização, enquete) vinda do
+    /// próprio aparelho (`fromMe`). A do cliente não é descartada: vira texto de histórico (MX-45).
     MidiaNaoSuportada(String),
     /// Mídia com tipo MIME que o Harness não extrai.
     MimeNaoSuportado(String),
@@ -244,8 +253,12 @@ pub fn interpretar(integracao: IntegrationId, corpo: &Value, politica: &Politica
             tamanho_declarado: tamanho_declarado(documento),
             dados: dados.clone(),
         });
-    } else if let Some(tipo) = midia_nao_suportada(&conteudo) {
-        return Decisao::Ignorado(MotivoIgnorado::MidiaNaoSuportada(tipo));
+    } else if let Some(tipo) = midia_fora_do_escopo(&conteudo) {
+        // MX-45: sem download. O texto de histórico é o que o agente lê; a legenda não entra.
+        if de_mim {
+            return Decisao::Ignorado(MotivoIgnorado::MidiaNaoSuportada(tipo.rotulo().to_owned()));
+        }
+        texto = Some(tipo.texto_de_historico().to_owned());
     }
 
     if texto.is_none() && midias.is_empty() {
@@ -385,20 +398,27 @@ fn extrair_texto(conteudo: &Value) -> Option<String> {
         .map(|candidato| candidato.trim().to_owned())
 }
 
-fn midia_nao_suportada(conteudo: &Value) -> Option<String> {
-    const TIPOS: [(&str, &str); 7] = [
-        ("audioMessage", "audio"),
-        ("videoMessage", "video"),
-        ("stickerMessage", "figurinha"),
-        ("contactMessage", "contato"),
-        ("contactsArrayMessage", "contato"),
-        ("locationMessage", "localizacao"),
-        ("liveLocationMessage", "localizacao"),
+/// Tipo fora do escopo de download (MX-45), pelo nome da chave do protobuf. Enquete: a criação da
+/// enquete (`pollCreationMessage` e as versões 2 e 3). O voto (`pollUpdateMessage`) não é enquete
+/// nova e segue como evento sem conteúdo.
+fn midia_fora_do_escopo(conteudo: &Value) -> Option<MidiaForaDoEscopo> {
+    const CHAVES: [(&str, MidiaForaDoEscopo); 11] = [
+        ("audioMessage", MidiaForaDoEscopo::Audio),
+        ("videoMessage", MidiaForaDoEscopo::Video),
+        ("ptvMessage", MidiaForaDoEscopo::Video),
+        ("stickerMessage", MidiaForaDoEscopo::Figurinha),
+        ("contactMessage", MidiaForaDoEscopo::Contato),
+        ("contactsArrayMessage", MidiaForaDoEscopo::Contato),
+        ("locationMessage", MidiaForaDoEscopo::Localizacao),
+        ("liveLocationMessage", MidiaForaDoEscopo::Localizacao),
+        ("pollCreationMessage", MidiaForaDoEscopo::Enquete),
+        ("pollCreationMessageV2", MidiaForaDoEscopo::Enquete),
+        ("pollCreationMessageV3", MidiaForaDoEscopo::Enquete),
     ];
-    TIPOS
+    CHAVES
         .iter()
-        .find(|(campo, _)| conteudo.get(*campo).is_some())
-        .map(|(_, rotulo)| (*rotulo).to_owned())
+        .find(|(chave, _)| conteudo.get(*chave).is_some())
+        .map(|(_, tipo)| *tipo)
 }
 
 /// Tipos que o Harness extrai texto (PRD: imagem + PDF/Office, sem áudio).

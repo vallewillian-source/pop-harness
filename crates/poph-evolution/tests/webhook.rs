@@ -133,21 +133,114 @@ fn documento_de_tipo_nao_suportado_e_recusado_com_motivo() {
     );
 }
 
+/// Tabela do MX-45: cada tipo fora do escopo vira mensagem de texto com o texto de histórico, sem
+/// baixar nada (nenhum anexo a baixar).
 #[test]
-fn audio_e_video_ficam_de_fora_com_motivo() {
-    for (campo, rotulo) in [
-        ("audioMessage", "audio"),
-        ("videoMessage", "video"),
-        ("stickerMessage", "figurinha"),
+fn midia_fora_do_escopo_vira_texto_de_historico_sem_download() {
+    let casos: [(Value, poph_types::MidiaForaDoEscopo); 11] = [
+        (
+            json!({"audioMessage": {"mimetype": "audio/ogg"}}),
+            poph_types::MidiaForaDoEscopo::Audio,
+        ),
+        (
+            json!({"videoMessage": {"mimetype": "video/mp4"}}),
+            poph_types::MidiaForaDoEscopo::Video,
+        ),
+        (
+            json!({"ptvMessage": {"mimetype": "video/mp4"}}),
+            poph_types::MidiaForaDoEscopo::Video,
+        ),
+        (
+            json!({"stickerMessage": {"mimetype": "image/webp"}}),
+            poph_types::MidiaForaDoEscopo::Figurinha,
+        ),
+        (
+            json!({"contactMessage": {"displayName": "Fulano"}}),
+            poph_types::MidiaForaDoEscopo::Contato,
+        ),
+        (
+            json!({"contactsArrayMessage": {}}),
+            poph_types::MidiaForaDoEscopo::Contato,
+        ),
+        (
+            json!({"locationMessage": {"degreesLatitude": 1}}),
+            poph_types::MidiaForaDoEscopo::Localizacao,
+        ),
+        (
+            json!({"liveLocationMessage": {"degreesLatitude": 1}}),
+            poph_types::MidiaForaDoEscopo::Localizacao,
+        ),
+        (
+            json!({"pollCreationMessage": {"name": "Qual dia?"}}),
+            poph_types::MidiaForaDoEscopo::Enquete,
+        ),
+        (
+            json!({"pollCreationMessageV2": {"name": "Qual dia?"}}),
+            poph_types::MidiaForaDoEscopo::Enquete,
+        ),
+        (
+            json!({"pollCreationMessageV3": {"name": "Qual dia?"}}),
+            poph_types::MidiaForaDoEscopo::Enquete,
+        ),
+    ];
+    for (message, tipo) in casos {
+        let corpo = corpo("messages.upsert", mensagem(message.clone()));
+        match interpretar(integracao(), &corpo, &Politica::default()) {
+            Decisao::Entrada(entrada) => {
+                assert_eq!(entrada.evento.texto, tipo.texto_de_historico(), "{message}");
+                assert!(entrada.midias.is_empty(), "não baixa mídia: {message}");
+                assert!(entrada.evento.anexos.is_empty(), "{message}");
+            }
+            outra => panic!("esperava texto de histórico para {message}, veio {outra:?}"),
+        }
+    }
+}
+
+#[test]
+fn legenda_de_video_nao_entra_no_historico_como_no_python() {
+    let corpo = corpo(
+        "messages.upsert",
+        mensagem(json!({"videoMessage": {"mimetype": "video/mp4", "caption": "olha isso"}})),
+    );
+    match interpretar(integracao(), &corpo, &Politica::default()) {
+        Decisao::Entrada(entrada) => assert_eq!(
+            entrada.evento.texto,
+            poph_types::MidiaForaDoEscopo::Video.texto_de_historico()
+        ),
+        outra => panic!("esperava entrada, veio {outra:?}"),
+    }
+}
+
+#[test]
+fn eco_de_midia_fora_do_escopo_do_aparelho_continua_descartado() {
+    // Com o módulo Matrix ligado (`aceitar_de_mim`), o áudio que a loja manda do celular não é do
+    // cliente: não pode virar "o cliente enviou um áudio".
+    let mut data = mensagem(json!({"audioMessage": {"mimetype": "audio/ogg"}}));
+    data["key"]["fromMe"] = json!(true);
+    let corpo = corpo("messages.upsert", data);
+    let politica = Politica {
+        aceitar_de_mim: true,
+    };
+    assert_eq!(
+        interpretar(integracao(), &corpo, &politica),
+        Decisao::Ignorado(MotivoIgnorado::MidiaNaoSuportada("audio".to_owned()))
+    );
+}
+
+#[test]
+fn evento_sem_conteudo_conhecido_continua_descartado() {
+    // Voto em enquete, álbum e tipo novo do WhatsApp: nada disso é mensagem do cliente com
+    // conteúdo, e nenhum deles pode derrubar a entrega.
+    for message in [
+        json!({"pollUpdateMessage": {"pollCreationMessageKey": {}}}),
+        json!({"albumMessage": {"expectedImageCount": 2}}),
+        json!({"tipoQueNaoExisteAinda": {"x": 1}}),
     ] {
-        let corpo = corpo(
-            "messages.upsert",
-            mensagem(json!({ campo: {"mimetype": "x"} })),
-        );
+        let corpo = corpo("messages.upsert", mensagem(message.clone()));
         assert_eq!(
             interpretar(integracao(), &corpo, &Politica::default()),
-            Decisao::Ignorado(MotivoIgnorado::MidiaNaoSuportada(rotulo.to_owned())),
-            "campo {campo}"
+            Decisao::Ignorado(MotivoIgnorado::SemConteudo),
+            "{message}"
         );
     }
 }

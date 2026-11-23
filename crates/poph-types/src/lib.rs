@@ -14,6 +14,7 @@ pub mod ids;
 pub mod instrucoes;
 pub mod integracao;
 pub mod metricas;
+pub mod midia_fora_do_escopo;
 pub mod segredo;
 
 pub use config::{
@@ -39,4 +40,5 @@ pub use integracao::{
     SendText, SetPresence,
 };
 pub use metricas::{Contador, Histograma, Medidor, MetricasBase, Registro};
+pub use midia_fora_do_escopo::MidiaForaDoEscopo;
 pub use segredo::{Segredo, Sensivel};

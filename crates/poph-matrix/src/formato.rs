@@ -11,6 +11,10 @@
 //!   aparelho** da instância ("Humano no Aparelho", MX-42), nunca pelo do cliente nem pelo do agente;
 //! - papel de ferramenta ou de sistema não vai para a sala;
 //! - texto vazio ou só com espaço não espelha;
+//! - texto de histórico de áudio, vídeo, figurinha, contato, localização ou enquete, vindo do
+//!   cliente, vira aviso `m.notice` pelo fantasma do agente, com o mesmo `txnId` da mensagem (MX-45).
+//!   É paridade com o POP Atende, que avisa a sala do mesmo jeito; a frase exata é a de
+//!   `poph_types::MidiaForaDoEscopo`, e qualquer outra coisa segue como texto;
 //! - o corpo sai como está (sem reformatar o texto do cliente); só é cortado quando passa do limite
 //!   de evento do Matrix, e o corte é sinalizado no retorno para o laço registrar;
 //! - o `txnId` vem do id da mensagem: a mesma mensagem gera sempre o mesmo valor, inclusive depois
@@ -20,8 +24,9 @@
 //! e tamanhos, nunca o texto. Ela também não depende de `poph-store`: o chamador traduz as origens,
 //! os papéis e os sentidos da sua tabela para os enums locais deste módulo.
 
-use poph_types::{ConversationId, MessageId};
+use poph_types::{ConversationId, MessageId, MidiaForaDoEscopo};
 
+use crate::eventos::MSGTYPE_AVISO;
 use crate::usuarios::{ErroFantasmas, Fantasma, IdsFantasmas};
 
 /// Tipo do evento de mensagem do Matrix.
@@ -184,6 +189,14 @@ pub fn decidir(ids: &IdsFantasmas, mensagem: &MensagemParaEspelho<'_>) -> Decisa
         return Decisao::NaoEspelhar(MotivoNaoEspelhar::TextoVazio);
     }
 
+    // MX-45: o texto de histórico de áudio, vídeo, figurinha, contato, localização ou enquete não
+    // vai para a sala como texto: vira aviso `m.notice`. Só vale para o que o cliente mandou.
+    if mensagem.papel == PapelMensagem::Cliente
+        && let Some(tipo) = MidiaForaDoEscopo::reconhecer_historico(mensagem.texto)
+    {
+        return aviso_de_midia_fora_do_escopo(ids, mensagem, tipo);
+    }
+
     let remetente = match mensagem.papel {
         PapelMensagem::Cliente => ids.cliente(mensagem.identificador_cliente),
         PapelMensagem::Agente => ids.agente(mensagem.id_agente),
@@ -195,6 +208,31 @@ pub fn decidir(ids: &IdsFantasmas, mensagem: &MensagemParaEspelho<'_>) -> Decisa
     };
 
     Decisao::Espelhar(montar_envio(mensagem, remetente, OrigemMensagem::Agente))
+}
+
+/// Aviso na sala de uma mídia que o Harness não abre (MX-45): `m.notice` assinado pelo fantasma do
+/// agente, dono da sala, como o aviso de mídia da MX-43. O `txnId` é o da mensagem, então reentregar
+/// a mesma mensagem não duplica o aviso.
+fn aviso_de_midia_fora_do_escopo(
+    ids: &IdsFantasmas,
+    mensagem: &MensagemParaEspelho<'_>,
+    tipo: MidiaForaDoEscopo,
+) -> Decisao {
+    let remetente = match ids.agente(mensagem.id_agente) {
+        Ok(fantasma) => fantasma,
+        Err(erro) => return Decisao::Erro(ErroFormato::Fantasma(erro)),
+    };
+    Decisao::Espelhar(Envio {
+        conversa: mensagem.conversa,
+        remetente,
+        origem: OrigemMensagem::Agente,
+        tipo_evento: TIPO_EVENTO,
+        msgtype: MSGTYPE_AVISO,
+        corpo: tipo.aviso_na_sala().to_owned(),
+        txn_id: txn_id_da_mensagem(mensagem.id),
+        cortado: false,
+        bytes_originais: mensagem.texto.len(),
+    })
 }
 
 /// Mensagem digitada no aparelho (MX-42): sai pelo fantasma do aparelho da instância, nunca pelo do
@@ -457,6 +495,54 @@ mod testes {
         assert_eq!(envio.origem, OrigemMensagem::Agente);
         assert_eq!(envio.remetente, ids().agente("agente-1").unwrap());
         assert!(envio.remetente.localpart().starts_with("ph_ag_"));
+    }
+
+    #[test]
+    fn historico_de_midia_fora_do_escopo_vira_aviso_pelo_fantasma_do_agente() {
+        for tipo in MidiaForaDoEscopo::TODAS {
+            let m = base(
+                tipo.texto_de_historico(),
+                OrigemMensagem::Agente,
+                PapelMensagem::Cliente,
+                Sentido::Entrada,
+            );
+            let envio = espelhada(decidir(&ids(), &m));
+            assert_eq!(envio.msgtype, "m.notice", "{tipo:?}");
+            assert_eq!(envio.corpo, tipo.aviso_na_sala(), "{tipo:?}");
+            assert!(
+                envio.remetente.user_id().starts_with("@ph_ag_agente-1:"),
+                "aviso sai pelo fantasma do agente, veio {}",
+                envio.remetente
+            );
+            // Mesmo `txnId` da mensagem: reentregar não duplica o aviso.
+            assert_eq!(envio.txn_id, txn_id_da_mensagem(mensagem_id(1)));
+        }
+    }
+
+    #[test]
+    fn historico_so_vira_aviso_quando_vem_do_cliente() {
+        let m = base(
+            MidiaForaDoEscopo::Audio.texto_de_historico(),
+            OrigemMensagem::Agente,
+            PapelMensagem::Agente,
+            Sentido::Saida,
+        );
+        let envio = espelhada(decidir(&ids(), &m));
+        assert_eq!(envio.msgtype, "m.text");
+        assert_eq!(envio.corpo, MidiaForaDoEscopo::Audio.texto_de_historico());
+    }
+
+    #[test]
+    fn frase_parecida_com_o_historico_segue_como_texto_do_cliente() {
+        let m = base(
+            "[O cliente enviou um áudio]",
+            OrigemMensagem::Agente,
+            PapelMensagem::Cliente,
+            Sentido::Entrada,
+        );
+        let envio = espelhada(decidir(&ids(), &m));
+        assert_eq!(envio.msgtype, "m.text");
+        assert!(envio.remetente.user_id().starts_with("@ph_wa_"));
     }
 
     #[test]
