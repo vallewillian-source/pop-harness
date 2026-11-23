@@ -104,6 +104,7 @@ pub use fluxo_ferramentas::{
     NOME_ABANDONAR, NOME_EXECUTAR_ACAO, eh_ferramenta_do_fluxo,
     registrar as registrar_ferramentas_do_fluxo,
     registrar_com as registrar_ferramentas_do_fluxo_com,
+    registrar_encerramento as registrar_ferramenta_encerramento,
 };
 pub use pausa::{FuturoPausa, Pausa, PausaReal};
 pub use prompt::{

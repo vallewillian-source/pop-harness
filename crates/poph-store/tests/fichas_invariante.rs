@@ -1271,3 +1271,146 @@ fn conversa_sem_ficha_que_e_fechada_ganha_ficha_fechada() {
         Some(TipoEventoFicha::FichaFechada)
     );
 }
+
+#[test]
+fn fechamento_pelo_agente_e_atomico_com_auditoria() {
+    let c = Cenario::novo("fx25-atomicidade");
+    let org = c.org("fx25");
+    let agente = c.agente(&org, "fx25");
+    let conversa = c.conversa(&org, &agente);
+    let ficha = c
+        .store()
+        .fichas()
+        .por_conversa(org.id, conversa.id)
+        .unwrap()
+        .unwrap();
+    let execucao = c.execucao_ativa(&org, ficha.id, 1);
+    let conn = c.conexao();
+    conn.execute_batch("CREATE TRIGGER falha_auditoria_fx25 BEFORE INSERT ON audit_log WHEN NEW.action = 'close' BEGIN SELECT RAISE(ABORT, 'falha injetada'); END;").unwrap();
+    assert!(
+        c.store()
+            .conversas()
+            .fechar_pelo_agente(org.id, conversa.id, agente.id, "resolvido".into())
+            .is_err()
+    );
+    assert_eq!(
+        c.store()
+            .conversas()
+            .obter(org.id, conversa.id)
+            .unwrap()
+            .status,
+        StatusConversa::Aberta
+    );
+    assert_eq!(
+        c.store().fichas().obter(org.id, ficha.id).unwrap().status,
+        StatusFicha::Aberta
+    );
+    let status: String = conn
+        .query_row(
+            "SELECT status FROM fluxo_execucoes WHERE id=?1",
+            [&execucao],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(status, "ativa");
+    assert!(
+        c.store()
+            .fichas()
+            .eventos(org.id, ficha.id, None, 50)
+            .unwrap()
+            .iter()
+            .all(|e| e.tipo != TipoEventoFicha::FichaFechada)
+    );
+    let n: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM audit_log WHERE action='close' AND entity_id=?1",
+            [conversa.id.to_string()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(n, 0);
+    conn.execute_batch("DROP TRIGGER falha_auditoria_fx25;")
+        .unwrap();
+    assert!(
+        c.store()
+            .conversas()
+            .fechar_pelo_agente(org.id, conversa.id, agente.id, "resolvido".into())
+            .unwrap()
+    );
+    assert!(
+        !c.store()
+            .conversas()
+            .fechar_pelo_agente(org.id, conversa.id, agente.id, "resolvido".into())
+            .unwrap()
+    );
+}
+
+#[test]
+fn mensagem_apos_encerramento_pelo_agente_abre_nova_ficha() {
+    let c = Cenario::novo("fx25-ciclo");
+    let org = c.org("fx25-ciclo");
+    let agente = c.agente(&org, "fx25-ciclo");
+    let integracao = c.integracao(&org, &agente);
+    let primeira = c
+        .store()
+        .caixa_entrada()
+        .receber_do_canal(org.id, entrada(integracao, agente.id, "FX25-1"))
+        .unwrap();
+    let conversa = primeira.mensagem.conversation_id;
+    let ficha = c
+        .store()
+        .fichas()
+        .por_conversa(org.id, conversa)
+        .unwrap()
+        .unwrap();
+    c.store()
+        .conversas()
+        .fechar_pelo_agente(org.id, conversa, agente.id, "resolvido".into())
+        .unwrap();
+    let segunda = c
+        .store()
+        .caixa_entrada()
+        .receber_do_canal(org.id, entrada(integracao, agente.id, "FX25-2"))
+        .unwrap();
+    let outra = segunda.mensagem.conversation_id;
+    assert_ne!(conversa, outra);
+    assert_ne!(
+        ficha.id,
+        c.store()
+            .fichas()
+            .por_conversa(org.id, outra)
+            .unwrap()
+            .unwrap()
+            .id
+    );
+}
+
+#[test]
+fn encerramento_pelo_agente_respeita_org_e_identidade() {
+    let c = Cenario::novo("fx25-isolamento");
+    let a = c.org("fx25-org-a");
+    let b = c.org("fx25-org-b");
+    let agente_a = c.agente(&a, "fx25-a");
+    let outro = c.agente(&a, "fx25-outro");
+    let conversa = c.conversa(&a, &agente_a);
+    assert!(
+        c.store()
+            .conversas()
+            .fechar_pelo_agente(b.id, conversa.id, agente_a.id, "fim".into())
+            .is_err()
+    );
+    assert!(
+        c.store()
+            .conversas()
+            .fechar_pelo_agente(a.id, conversa.id, outro.id, "fim".into())
+            .is_err()
+    );
+    assert_eq!(
+        c.store()
+            .conversas()
+            .obter(a.id, conversa.id)
+            .unwrap()
+            .status,
+        StatusConversa::Aberta
+    );
+}

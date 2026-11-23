@@ -36,6 +36,7 @@ pub const FERRAMENTAS_V1: &[&str] = &[
     "fluxo_executar_acao",
     "fluxo_abandonar",
     "fluxo_iniciar",
+    "atendimento_encerrar",
 ];
 
 /// Identidade do agente.

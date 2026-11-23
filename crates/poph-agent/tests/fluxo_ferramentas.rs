@@ -339,6 +339,8 @@ impl Cenario {
             Arc::clone(&self.store),
             &fluxos.clone().unwrap_or_default(),
         );
+        let registro =
+            poph_agent::turno::registrar_ferramenta_encerramento(registro, Arc::clone(&self.store));
         motor = motor.com_ferramentas(Arc::new(registro));
         if let Some(ajustes) = fluxos {
             motor = motor.com_fluxos(&ajustes);
@@ -1107,4 +1109,82 @@ async fn motor_desligado_nao_registra_nem_oferece_as_ferramentas() {
 
     // A Ficha continua existindo (o módulo de Fichas não depende do motor de fluxo).
     assert_eq!(cenario.ficha(conversa).status, StatusFicha::Aberta);
+}
+
+#[tokio::test]
+async fn encerrar_pelo_agente_fecha_e_repeticao_e_idempotente() {
+    let c = Cenario::novo("fx25-fechar");
+    c.habilitar(&["atendimento_encerrar"]);
+    c.fluxo();
+    let conversa = c.conversa();
+    let (provedor, resumo) = turno_com_fluxo(
+        &c,
+        vec![
+            duas_chamadas(
+                ("atendimento_encerrar", json!({"motivo":"resolvido"})),
+                ("atendimento_encerrar", json!({"motivo":"resolvido"})),
+            ),
+            texto("Até logo!"),
+        ],
+        conversa,
+    )
+    .await;
+    assert_eq!(resumo.estado, EstadoTurno::Concluido);
+    assert!(oferecidas(&provedor.recebidos()[0]).contains(&"atendimento_encerrar".to_owned()));
+    let respostas = resultados(&provedor.recebidos()[1]);
+    assert!(
+        respostas.iter().any(|s| s.contains("já encerrado")),
+        "{respostas:?}"
+    );
+    assert_eq!(
+        c.store.conversas().obter(c.org, conversa).unwrap().status,
+        StatusConversa::Fechada
+    );
+    let ficha = c.ficha(conversa);
+    assert_eq!(ficha.status, StatusFicha::Fechada);
+    assert_eq!(ficha.fechada_por, Some(FechadaPor::Agente));
+    assert_eq!(ficha.fechada_motivo.as_deref(), Some("resolvido"));
+    assert_eq!(c.execucao(conversa).status, StatusExecucao::Abandonada);
+    assert_eq!(
+        c.eventos(conversa)
+            .iter()
+            .filter(|e| e.tipo == TipoEventoFicha::FichaFechada)
+            .count(),
+        1
+    );
+    assert_eq!(
+        c.mensagens(conversa)
+            .iter()
+            .filter(|m| m.direcao == Direcao::Saida)
+            .count(),
+        1
+    );
+    let conn = rusqlite::Connection::open(c.pasta.join("harness.db")).unwrap();
+    let n: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM audit_log WHERE action='close' AND entity_id=?1",
+            [conversa.to_string()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(n, 1);
+}
+
+#[tokio::test]
+async fn encerramento_desabilitado_e_recusado() {
+    let c = Cenario::novo("fx25-desligada");
+    c.habilitar(&[]);
+    let conversa = c.conversa();
+    let (provedor, _) = turno_com_fluxo(
+        &c,
+        vec![
+            chamada("atendimento_encerrar", json!({"motivo":"resolvido"})),
+            texto("Até logo!"),
+        ],
+        conversa,
+    )
+    .await;
+    assert!(!oferecidas(&provedor.recebidos()[0]).contains(&"atendimento_encerrar".to_owned()));
+    assert_eq!(c.chamadas(conversa)[0]["motivo"], "nao_habilitada");
+    assert_eq!(c.ficha(conversa).status, StatusFicha::Aberta);
 }

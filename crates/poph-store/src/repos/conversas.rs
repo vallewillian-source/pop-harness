@@ -333,6 +333,51 @@ impl Conversas<'_> {
         self.obter(org, id)
     }
 
+    /// Encerra pelo agente e audita junto com a Ficha e o abandono da execução.
+    /// Devolve `false` quando a conversa já estava encerrada.
+    pub fn fechar_pelo_agente(
+        &self,
+        org: OrgId,
+        id: ConversationId,
+        agente: AgentId,
+        motivo: String,
+    ) -> Resultado<bool> {
+        if motivo.trim().is_empty() {
+            return Err(ErroStore::Dominio(poph_types::DomainError::Validacao {
+                campo: "motivo",
+                motivo: "informe o motivo do encerramento".to_owned(),
+            }));
+        }
+        let texto_org = org.to_string();
+        let texto_id = id.to_string();
+        let texto_agente = agente.to_string();
+        let agora = self.0.agora();
+        let audit_id = poph_types::AuditId::generate().to_string();
+        self.0.escrita(move |conn| {
+            let situacao: Option<String> = conn.query_row(
+                "SELECT status FROM conversations WHERE org_id=?1 AND id=?2 AND agent_id=?3",
+                params![texto_org, texto_id, texto_agente], |linha| linha.get(0),
+            ).optional()?;
+            let Some(situacao) = situacao else {
+                return super::exigir::<bool>(None, "conversa", &texto_id);
+            };
+            if situacao == "closed" { return Ok(false); }
+            conn.execute(
+                "UPDATE conversations SET status='closed', version=version+1, updated_at=?3 WHERE org_id=?1 AND id=?2",
+                params![texto_org, texto_id, agora],
+            )?;
+            super::fichas::fechar_ficha_da_conversa(
+                conn, &texto_org, &texto_id, poph_types::FechadaPor::Agente, &motivo, agora,
+            )?;
+            let detalhe = serde_json::json!({"motivo": motivo, "ator": "agente"}).to_string();
+            conn.execute(
+                "INSERT INTO audit_log (id, org_id, actor_kind, actor_id, action, entity, entity_id, detail_json, created_at) VALUES (?1, ?2, 'system', ?3, 'close', 'conversation', ?4, ?5, ?6)",
+                params![audit_id, texto_org, texto_agente, texto_id, detalhe, agora],
+            )?;
+            Ok(true)
+        })
+    }
+
     /// Marca a conversa como **transferida** para humano e grava a auditoria na mesma transação
     /// (HR-29, D12).
     ///

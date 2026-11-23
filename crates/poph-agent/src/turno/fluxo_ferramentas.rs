@@ -91,6 +91,44 @@ pub fn registrar_com(
         .com(Arc::new(Iniciar(comum)) as Arc<dyn FerramentaInterna>)
 }
 
+/// Registra o encerramento independentemente da configuração do motor de fluxos.
+pub fn registrar_encerramento(registro: RegistroPadrao, store: Arc<Store>) -> RegistroPadrao {
+    registro.com(Arc::new(EncerrarAtendimento(store)) as Arc<dyn FerramentaInterna>)
+}
+
+struct EncerrarAtendimento(Arc<Store>);
+
+impl FerramentaInterna for EncerrarAtendimento {
+    fn nome(&self) -> &'static str {
+        "atendimento_encerrar"
+    }
+    fn descricao(&self) -> &'static str {
+        "Encerra o atendimento quando concluído. Escreva a despedida na resposta; esta ferramenta não envia mensagem."
+    }
+    fn parametros(&self) -> Value {
+        serde_json::json!({"type":"object", "properties":{"motivo":{"type":"string"}},
+            "required":["motivo"], "additionalProperties":false})
+    }
+    fn executar(&self, contexto: ContextoFerramenta, argumentos: Value) -> FuturoFerramenta {
+        let store = Arc::clone(&self.0);
+        Box::pin(async move {
+            let motivo = texto_obrigatorio(&argumentos, "motivo")?;
+            match store.conversas().fechar_pelo_agente(
+                contexto.org,
+                contexto.conversa,
+                contexto.agente,
+                motivo,
+            ) {
+                Ok(true) => {
+                    Ok("Atendimento encerrado. Responda ao cliente com a despedida.".to_owned())
+                }
+                Ok(false) => Ok("Atendimento já encerrado; nada mudou.".to_owned()),
+                Err(_) => Err("Não foi possível encerrar o atendimento.".to_owned()),
+            }
+        })
+    }
+}
+
 // ────────────────────────────────────────────────────────────── fluxo_executar_acao
 
 /// `fluxo_executar_acao`: o agente executa uma ação da etapa em que a execução está.

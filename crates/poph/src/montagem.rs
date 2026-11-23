@@ -253,6 +253,8 @@ pub fn montar(
         Arc::clone(&store),
         ajustes_do_fluxo,
     );
+    let registro =
+        poph_agent::turno::registrar_ferramenta_encerramento(registro, Arc::clone(&store));
     match (&base, &catalogo) {
         (Some(base), Some(catalogo)) => {
             let busca: Arc<dyn BuscadorBase> = Arc::clone(base) as Arc<dyn BuscadorBase>;
