@@ -275,6 +275,12 @@ impl Servidor {
             ),
             format!("/admin/v1/orgs/{}/tokens", org.id),
             format!("/admin/v1/orgs/{}/tokens/{}", org.id, org.token_id),
+            format!("/admin/v1/orgs/{}/flows", org.id),
+            format!("/admin/v1/orgs/{}/flows/{}", org.id, org.fluxo),
+            format!("/admin/v1/orgs/{}/flows/{}/revisions", org.id, org.fluxo),
+            format!("/admin/v1/orgs/{}/fichas", org.id),
+            format!("/admin/v1/orgs/{}/fichas/{}", org.id, org.ficha),
+            format!("/admin/v1/orgs/{}/fichas/{}/events", org.id, org.ficha),
         ];
         caminhos.sort();
         let mut fotos = Vec::new();
@@ -338,6 +344,14 @@ struct Org {
     departamento: String,
     produto: String,
     conversa: String,
+    /// Fluxo publicado da org (FX-27), liberado ao agente.
+    fluxo: String,
+    /// Versão do agente depois da liberação do fluxo (FX-28 sobe a versão a cada troca).
+    versao_agente: u64,
+    /// Ficha da conversa de teste (FX-29).
+    ficha: String,
+    /// Execução de fluxo aberta na Ficha (FX-30).
+    execucao: String,
     /// Mensagem do cliente com anexo dentro da conversa de teste (HR-46b).
     mensagem: String,
     /// Anexo dessa mensagem (HR-46b).
@@ -361,6 +375,9 @@ impl Org {
             ("message_id", self.mensagem.clone()),
             ("attachment_id", self.anexo.clone()),
             ("token_id", self.token_id.clone()),
+            ("flow_id", self.fluxo.clone()),
+            ("ficha_id", self.ficha.clone()),
+            ("run_id", self.execucao.clone()),
             ("kind", "sms".to_owned()),
         ]
     }
@@ -379,7 +396,8 @@ impl Org {
 
     /// Caminho do modelo com o `org_id` e os ids desta org.
     fn caminho(&self, modelo: &str, org_id: &str) -> String {
-        let mut caminho = modelo.replace("{org_id}", org_id);
+        // `{number}` é a revisão 1 do fluxo da vítima (publicada na montagem).
+        let mut caminho = modelo.replace("{org_id}", org_id).replace("{number}", "1");
         for (nome, valor) in self.params() {
             caminho = caminho.replace(&format!("{{{nome}}}"), &valor);
         }
@@ -574,6 +592,90 @@ async fn montar_org(s: &Servidor, slug: &str, marcador: &'static str) -> Org {
         .id
         .to_string();
 
+    // FX-27/29/30: a org vítima tem um fluxo publicado (revisão 1), liberado ao agente, e uma
+    // execução aberta na Ficha da conversa de teste (a conversa cria a Ficha). O ataque precisa de
+    // ids reais: ids inventados não provam que a checagem de org acontece antes da busca.
+    let fluxo = s
+        .criar(
+            &format!("{raiz}/flows"),
+            &token,
+            json!({"source": FLUXO_DA_VITIMA, "publish": true}),
+            StatusCode::CREATED,
+        )
+        .await["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let versao_antes = s
+        .chamar(
+            Method::GET,
+            &format!("{raiz}/agents/{agente}"),
+            &token,
+            Corpo::Nenhum,
+            None,
+        )
+        .await
+        .json["version"]
+        .as_u64()
+        .unwrap();
+    let liberado = s
+        .chamar(
+            Method::PUT,
+            &format!("{raiz}/agents/{agente}/flows"),
+            &token,
+            Corpo::Json(json!({"flow_ids": [fluxo]})),
+            Some(versao_antes),
+        )
+        .await;
+    assert_eq!(
+        liberado.status,
+        StatusCode::OK,
+        "liberar fluxo: {}",
+        liberado.texto
+    );
+    let versao_agente = liberado.json["version"].as_u64().unwrap();
+    let ficha = s
+        .chamar(
+            Method::GET,
+            &format!("{raiz}/fichas"),
+            &token,
+            Corpo::Nenhum,
+            None,
+        )
+        .await
+        .json["items"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let versao_ficha = s
+        .chamar(
+            Method::GET,
+            &format!("{raiz}/fichas/{ficha}"),
+            &token,
+            Corpo::Nenhum,
+            None,
+        )
+        .await
+        .json["version"]
+        .as_u64()
+        .unwrap();
+    let abertura = s
+        .chamar(
+            Method::POST,
+            &format!("{raiz}/fichas/{ficha}/flow-runs"),
+            &token,
+            Corpo::Json(json!({"fluxo_id": fluxo, "chave_idempotencia": "montagem-vitima"})),
+            Some(versao_ficha),
+        )
+        .await;
+    assert_eq!(
+        abertura.status,
+        StatusCode::CREATED,
+        "abrir fluxo: {}",
+        abertura.texto
+    );
+    let execucao = abertura.json["id"].as_str().unwrap().to_owned();
+
     Org {
         id,
         token,
@@ -587,6 +689,10 @@ async fn montar_org(s: &Servidor, slug: &str, marcador: &'static str) -> Org {
         departamento,
         produto,
         conversa,
+        fluxo,
+        versao_agente,
+        ficha,
+        execucao,
         mensagem: mensagem.id.to_string(),
         anexo,
         marcador,
@@ -601,6 +707,32 @@ enum Tipo {
     Multipart,
     Arquivo,
 }
+
+/// Fluxo mínimo e válido que a org vítima publica (revisão 1): a suíte ataca ids reais dele.
+const FLUXO_DA_VITIMA: &str = r#"fluxo(
+    id = "agendar_visita",
+    nome = "Agendar visita",
+    descricao = "Marca uma visita técnica no endereço do cliente.",
+    inicio = "coleta",
+    gatilho = gatilho(
+        quando = "O cliente quer marcar, remarcar ou cancelar uma visita técnica.",
+        nao_quando = "Só quer saber preço ou prazo, sem pedir visita.",
+        exemplos = ["queria agendar uma visita", "pode vir aqui amanhã?"],
+    ),
+)
+
+etapa(
+    id = "coleta",
+    nome = "Coletar dados",
+    instrucao = "Pergunte o endereço e o período preferido. Uma pergunta por vez.",
+    campos = [
+        campo("endereco", "Endereço completo", tipo = "texto", obrigatorio = True),
+    ],
+    acoes = [
+        acao("confirmar", "Dados completos", exige = ["endereco"], vai_para = fim("concluida", resultado = "Visita agendada")),
+    ],
+)
+"#;
 
 #[derive(Clone)]
 struct Caso {
@@ -633,6 +765,9 @@ fn casos() -> Vec<Caso> {
     const CV: &str = "/admin/v1/orgs/{org_id}/conversations/{conversation_id}";
     const MX: &str = "/admin/v1/orgs/{org_id}/matrix";
     const MXESP: &str = "/admin/v1/orgs/{org_id}/matrix/spaces";
+    const FL: &str = "/admin/v1/orgs/{org_id}/flows/{flow_id}";
+    const FI: &str = "/admin/v1/orgs/{org_id}/fichas/{ficha_id}";
+    const FR: &str = "/admin/v1/orgs/{org_id}/fichas/{ficha_id}/flow-runs/{run_id}";
     vec![
         caso("get", "/admin/v1/orgs", Vazio),
         caso("post", "/admin/v1/orgs", Json(r#"{"name":"Invadido"}"#)),
@@ -814,6 +949,53 @@ fn casos() -> Vec<Caso> {
             Json(r#"{"department_id":"00000000-0000-0000-0000-000000000000"}"#),
         ),
         caso("delete", &format!("{MXESP}/{{department_id}}"), Vazio),
+        // FX-27: API de fluxos.
+        caso(
+            "post",
+            "/admin/v1/orgs/{org_id}/flows/validate",
+            Json(r#"{"source":"Invadido"}"#),
+        ),
+        caso(
+            "post",
+            "/admin/v1/orgs/{org_id}/flows/format",
+            Json(r#"{"source":"Invadido"}"#),
+        ),
+        caso("get", "/admin/v1/orgs/{org_id}/flows", Vazio),
+        caso(
+            "post",
+            "/admin/v1/orgs/{org_id}/flows",
+            Json(r#"{"source":"Invadido"}"#),
+        ),
+        caso("get", FL, Vazio),
+        caso("patch", FL, Json(r#"{"name":"Invadido"}"#)),
+        caso("delete", FL, Vazio),
+        caso("post", &format!("{FL}/publish"), Json(r#"{}"#)),
+        caso("get", &format!("{FL}/revisions"), Vazio),
+        caso("get", &format!("{FL}/revisions/{{number}}"), Vazio),
+        caso("get", &format!("{FL}/diff"), Vazio),
+        caso("get", &format!("{FL}/preview"), Vazio),
+        // FX-29 e FX-30: Fichas (leitura e ações humanas).
+        caso("get", "/admin/v1/orgs/{org_id}/fichas", Vazio),
+        caso("get", FI, Vazio),
+        caso("get", &format!("{FI}/events"), Vazio),
+        caso(
+            "post",
+            &format!("{FI}/flow-runs"),
+            Json(
+                r#"{"fluxo_id":"018f0000-0000-7000-8000-000000000001","chave_idempotencia":"Invadido"}"#,
+            ),
+        ),
+        caso(
+            "post",
+            &format!("{FR}/actions"),
+            Json(r#"{"acao":"Invadido","chave_idempotencia":"Invadido"}"#),
+        ),
+        caso(
+            "post",
+            &format!("{FR}/abandon"),
+            Json(r#"{"motivo":"Invadido","chave_idempotencia":"Invadido"}"#),
+        ),
+        caso("post", &format!("{FI}/close"), Vazio),
     ]
 }
 
@@ -1273,7 +1455,7 @@ async fn isolamento_gerado_do_openapi() {
             "PATCH",
             format!("/admin/v1/orgs/{}/agents/{}", a.id, a.agente),
             json!({"product_category_ids": [b.categoria]}),
-            Some(1),
+            Some(a.versao_agente),
             String::new(),
         ),
     ];
@@ -1869,6 +2051,10 @@ fn detector_de_vazamento_so_usa_id_em_sucesso() {
         departamento: "99999999-2222".to_owned(),
         produto: "aaaaaaaa-3333".to_owned(),
         conversa: "bbbbbbbb-4444".to_owned(),
+        fluxo: "eeeeeeee-7777".to_owned(),
+        versao_agente: 1,
+        ficha: "ffffffff-8888".to_owned(),
+        execucao: "00000000-9999".to_owned(),
         mensagem: "cccccccc-5555".to_owned(),
         anexo: "dddddddd-6666".to_owned(),
         marcador: MARCADOR_B,
@@ -1924,7 +2110,7 @@ async fn comparacao_de_estado_acusa_escrita() {
             &format!("/admin/v1/orgs/{}/agents/{}", b.id, b.agente),
             &b.token,
             Corpo::Json(json!({"description": "mudança legítima do dono"})),
-            Some(1),
+            Some(b.versao_agente),
         )
         .await;
     assert_eq!(

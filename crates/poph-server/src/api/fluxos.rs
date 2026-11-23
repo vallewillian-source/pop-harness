@@ -41,8 +41,7 @@
 //! - `de` e `para` ausentes viram `para = revisao_atual` e `de = para - 1` (na revisão 1, as duas
 //!   são a mesma e a lista de mudanças sai vazia).
 //! - O `preview` mostra a etapa pedida com os campos vazios: não há simulação de dados preenchidos.
-//! - As rotas ainda **não** estão no OpenAPI nem em `docs/API.md`: o inventário e o `schema.d.ts`
-//!   são a FX-32.
+//! - As rotas estão no OpenAPI (FX-32), em `docs/API.md` e no cliente gerado do Console.
 
 use std::sync::Arc;
 
@@ -62,6 +61,7 @@ use poph_store::{
 use poph_types::{FluxoId, OrgId};
 use serde::Deserialize;
 use serde_json::{Value, json};
+use utoipa::ToSchema;
 
 use super::{ConsultaPagina, ListaJson, proximo_cursor, status_pedido, versao_do_if_match};
 use crate::{
@@ -99,7 +99,7 @@ pub struct CaminhoRevisao {
 }
 
 /// Corpo com um script: `validate` e `format`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DadosScript {
     /// Texto do script de fluxo.
@@ -107,7 +107,7 @@ pub struct DadosScript {
 }
 
 /// Corpo do `POST /flows`: o script e se a revisão 1 sai junto.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DadosCriacao {
     /// Texto do script. O `id`, o `nome` e a `descricao` do fluxo vêm dele.
@@ -118,7 +118,7 @@ pub struct DadosCriacao {
 }
 
 /// Corpo do `POST /flows/{flow_id}/publish`. Ausente, publica o rascunho.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DadosPublicacao {
     /// Texto a publicar em vez do rascunho gravado.
@@ -126,7 +126,7 @@ pub struct DadosPublicacao {
 }
 
 /// Corpo do `PATCH /flows/{flow_id}`: só o que veio muda.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DadosPatch {
     /// Novo nome (não muda o `id` do script).
@@ -385,6 +385,21 @@ fn publicar_do_texto(
 // ───────────────────────────────── rotas ─────────────────────────────────
 
 /// `POST /flows/validate`: compila o script e devolve IR, diagnósticos e resoluções. Não grava.
+#[utoipa::path(
+    post,
+    path = "/admin/v1/orgs/{org_id}/flows/validate",
+    tag = "flows",
+    operation_id = "fluxos_validar",
+    security(("bearer" = [])),
+    params(
+        ("org_id" = String, Path),
+    ),
+    request_body = DadosScript,
+    responses(
+        (status = 200, description = "Compila o script e devolve `valid`, a IR, os diagnósticos (com linha e coluna) e as resoluções de departamento; não grava nada", body = Value),
+        (status = 400, description = "Corpo sem `source`", body = crate::erro::RespostaErro),
+    )
+)]
 pub async fn validar_script(
     State(e): State<Estado>,
     ident: Identidade,
@@ -420,6 +435,23 @@ pub async fn validar_script(
 }
 
 /// `GET /flows`: lista da org, com filtro de situação e cursor.
+#[utoipa::path(
+    get,
+    path = "/admin/v1/orgs/{org_id}/flows",
+    tag = "flows",
+    operation_id = "fluxos_listar",
+    security(("bearer" = [])),
+    params(
+        ("org_id" = String, Path),
+        ("status" = Option<String>, Query, description = "`active` ou `inactive`"),
+        ("limit" = Option<u32>, Query, description = "De 1 a 200; padrão 50"),
+        ("cursor" = Option<String>, Query, description = "`next_cursor` da página anterior"),
+    ),
+    responses(
+        (status = 200, description = "Fluxos da org: `items` e `next_cursor`", body = ListaJson<Value>),
+        (status = 400, description = "`status` ou `cursor` inválido", body = crate::erro::RespostaErro),
+    )
+)]
 pub async fn listar(
     State(e): State<Estado>,
     ident: Identidade,
@@ -448,6 +480,22 @@ pub async fn listar(
 }
 
 /// `POST /flows`: cria o fluxo a partir do script; `publish: true` publica a revisão 1 junto.
+#[utoipa::path(
+    post,
+    path = "/admin/v1/orgs/{org_id}/flows",
+    tag = "flows",
+    operation_id = "fluxos_criar",
+    security(("bearer" = [])),
+    params(
+        ("org_id" = String, Path),
+    ),
+    request_body = DadosCriacao,
+    responses(
+        (status = 201, description = "Fluxo criado com o rascunho; com `publish: true`, a revisão 1 sai junto", body = Value),
+        (status = 409, description = "Teto de fluxos da org atingido (`teto_de_fluxos_por_org`), com `details.flows` e `details.limit`", body = crate::erro::RespostaErro),
+        (status = 422, description = "Script não passa na validação (`fluxo_invalido`), com a lista de diagnósticos; nada é gravado", body = crate::erro::RespostaErro),
+    )
+)]
 pub async fn criar(
     State(e): State<Estado>,
     ident: Identidade,
@@ -518,6 +566,21 @@ pub async fn criar(
 }
 
 /// `GET /flows/{flow_id}`: detalhe com a revisão que vale hoje.
+#[utoipa::path(
+    get,
+    path = "/admin/v1/orgs/{org_id}/flows/{flow_id}",
+    tag = "flows",
+    operation_id = "fluxos_mostrar",
+    security(("bearer" = [])),
+    params(
+        ("org_id" = String, Path),
+        ("flow_id" = String, Path),
+    ),
+    responses(
+        (status = 200, description = "Fluxo com o rascunho e a revisão que vale hoje (`null` se nunca publicou)", body = Value),
+        (status = 404, description = "Fluxo inexistente ou de outra org", body = crate::erro::RespostaErro),
+    )
+)]
 pub async fn mostrar(
     State(e): State<Estado>,
     ident: Identidade,
@@ -536,6 +599,26 @@ pub async fn mostrar(
 }
 
 /// `PATCH /flows/{flow_id}`: nome, descrição, situação e rascunho, com `If-Match`.
+#[utoipa::path(
+    patch,
+    path = "/admin/v1/orgs/{org_id}/flows/{flow_id}",
+    tag = "flows",
+    operation_id = "fluxos_atualizar",
+    security(("bearer" = [])),
+    params(
+        ("org_id" = String, Path),
+        ("flow_id" = String, Path),
+        ("If-Match" = String, Header, description = "Versão atual da Ficha ou da execução, como lida antes"),
+    ),
+    request_body = DadosPatch,
+    responses(
+        (status = 200, description = "Fluxo alterado (só os campos enviados mudam)", body = Value),
+        (status = 400, description = "Corpo ou `status` inválido", body = crate::erro::RespostaErro),
+        (status = 404, description = "Fluxo inexistente ou de outra org", body = crate::erro::RespostaErro),
+        (status = 412, description = "Versão do fluxo diferente da atual", body = crate::erro::RespostaErro),
+        (status = 428, description = "Falta o `If-Match`", body = crate::erro::RespostaErro),
+    )
+)]
 pub async fn atualizar(
     State(e): State<Estado>,
     ident: Identidade,
@@ -572,6 +655,24 @@ pub async fn atualizar(
 }
 
 /// `DELETE /flows/{flow_id}?force=`: exclui o fluxo; com execução ativa, só com `force=true`.
+#[utoipa::path(
+    delete,
+    path = "/admin/v1/orgs/{org_id}/flows/{flow_id}",
+    tag = "flows",
+    operation_id = "fluxos_excluir",
+    security(("bearer" = [])),
+    params(
+        ("org_id" = String, Path),
+        ("flow_id" = String, Path),
+        ("force" = Option<String>, Query, description = "`true` abandona as execuções ativas e exclui; padrão `false`"),
+    ),
+    responses(
+        (status = 200, description = "Fluxo excluído: `id`, `deleted` e `abandoned_runs`", body = Value),
+        (status = 400, description = "`force` que não é `true` nem `false`", body = crate::erro::RespostaErro),
+        (status = 404, description = "Fluxo inexistente ou de outra org", body = crate::erro::RespostaErro),
+        (status = 409, description = "Há execução ativa e `force` não veio; `details.active_runs` traz a contagem, nada é apagado", body = crate::erro::RespostaErro),
+    )
+)]
 pub async fn excluir(
     State(e): State<Estado>,
     ident: Identidade,
@@ -621,6 +722,27 @@ pub async fn excluir(
 }
 
 /// `POST /flows/{flow_id}/publish`: publica o rascunho (ou o texto do corpo) como revisão nova.
+#[utoipa::path(
+    post,
+    path = "/admin/v1/orgs/{org_id}/flows/{flow_id}/publish",
+    tag = "flows",
+    operation_id = "fluxos_publicar",
+    security(("bearer" = [])),
+    params(
+        ("org_id" = String, Path),
+        ("flow_id" = String, Path),
+        ("If-Match" = String, Header, description = "Versão atual da Ficha ou da execução, como lida antes"),
+    ),
+    request_body = Option<DadosPublicacao>,
+    responses(
+        (status = 201, description = "Revisão nova publicada: `revision`, `version` do fluxo e `warnings`", body = Value),
+        (status = 400, description = "`source` em branco", body = crate::erro::RespostaErro),
+        (status = 404, description = "Fluxo inexistente ou de outra org", body = crate::erro::RespostaErro),
+        (status = 412, description = "Versão do fluxo diferente da atual; nada é gravado", body = crate::erro::RespostaErro),
+        (status = 422, description = "Script não passa na validação (`fluxo_invalido`), com a lista de diagnósticos; nada é gravado", body = crate::erro::RespostaErro),
+        (status = 428, description = "Falta o `If-Match`", body = crate::erro::RespostaErro),
+    )
+)]
 pub async fn publicar(
     State(e): State<Estado>,
     ident: Identidade,
@@ -650,6 +772,24 @@ pub async fn publicar(
 }
 
 /// `GET /flows/{flow_id}/revisions`: revisões em ordem de número, com cursor por número.
+#[utoipa::path(
+    get,
+    path = "/admin/v1/orgs/{org_id}/flows/{flow_id}/revisions",
+    tag = "flows",
+    operation_id = "fluxos_listar_revisoes",
+    security(("bearer" = [])),
+    params(
+        ("org_id" = String, Path),
+        ("flow_id" = String, Path),
+        ("limit" = Option<u32>, Query, description = "De 1 a 200; padrão 50"),
+        ("cursor" = Option<String>, Query, description = "Número da última revisão da página anterior"),
+    ),
+    responses(
+        (status = 200, description = "Revisões em ordem de número: `items` e `next_cursor`", body = ListaJson<Value>),
+        (status = 400, description = "`cursor` inválido", body = crate::erro::RespostaErro),
+        (status = 404, description = "Fluxo inexistente ou de outra org", body = crate::erro::RespostaErro),
+    )
+)]
 pub async fn listar_revisoes(
     State(e): State<Estado>,
     ident: Identidade,
@@ -681,6 +821,23 @@ pub async fn listar_revisoes(
 }
 
 /// `GET /flows/{flow_id}/revisions/{number}`: uma revisão, com o texto e a IR.
+#[utoipa::path(
+    get,
+    path = "/admin/v1/orgs/{org_id}/flows/{flow_id}/revisions/{number}",
+    tag = "flows",
+    operation_id = "fluxos_mostrar_revisao",
+    security(("bearer" = [])),
+    params(
+        ("org_id" = String, Path),
+        ("flow_id" = String, Path),
+        ("number" = String, Path, description = "Número da revisão"),
+    ),
+    responses(
+        (status = 200, description = "Revisão com o texto publicado, a IR, o hash e as resoluções", body = Value),
+        (status = 400, description = "Número que não é de revisão", body = crate::erro::RespostaErro),
+        (status = 404, description = "Revisão inexistente ou fluxo de outra org", body = crate::erro::RespostaErro),
+    )
+)]
 pub async fn mostrar_revisao(
     State(e): State<Estado>,
     ident: Identidade,
@@ -702,6 +859,25 @@ pub async fn mostrar_revisao(
 ///
 /// A contagem é de execuções **ativas** por revisão (FX-20): é o que diz se publicar agora deixa
 /// alguém no meio de um atendimento na versão antiga.
+#[utoipa::path(
+    get,
+    path = "/admin/v1/orgs/{org_id}/flows/{flow_id}/diff",
+    tag = "flows",
+    operation_id = "fluxos_diff",
+    security(("bearer" = [])),
+    params(
+        ("org_id" = String, Path),
+        ("flow_id" = String, Path),
+        ("de" = Option<String>, Query, description = "Número da revisão antiga (padrão: a atual menos 1)"),
+        ("para" = Option<String>, Query, description = "Número da revisão nova (padrão: a atual)"),
+    ),
+    responses(
+        (status = 200, description = "Frases do que mudou e, para cada revisão, quantas execuções ativas estão nela", body = Value),
+        (status = 400, description = "`de` ou `para` que não são números de revisão", body = crate::erro::RespostaErro),
+        (status = 404, description = "Revisão inexistente ou fluxo de outra org", body = crate::erro::RespostaErro),
+        (status = 409, description = "Fluxo sem revisão publicada (`fluxo_nao_publicado`) ou IR que não confere com o texto (`ir_divergente`)", body = crate::erro::RespostaErro),
+    )
+)]
 pub async fn diff(
     State(e): State<Estado>,
     ident: Identidade,
@@ -747,6 +923,23 @@ pub async fn diff(
 }
 
 /// `GET /flows/{flow_id}/preview?etapa=`: bloco de prompt que o agente veria naquela etapa.
+#[utoipa::path(
+    get,
+    path = "/admin/v1/orgs/{org_id}/flows/{flow_id}/preview",
+    tag = "flows",
+    operation_id = "fluxos_preview",
+    security(("bearer" = [])),
+    params(
+        ("org_id" = String, Path),
+        ("flow_id" = String, Path),
+        ("etapa" = Option<String>, Query, description = "Id da etapa; padrão: a etapa de início"),
+    ),
+    responses(
+        (status = 200, description = "Bloco do prompt que o agente veria naquela etapa, com a revisão usada", body = Value),
+        (status = 404, description = "Etapa inexistente no fluxo, ou fluxo de outra org", body = crate::erro::RespostaErro),
+        (status = 409, description = "IR que não confere com o texto publicado (`ir_divergente`)", body = crate::erro::RespostaErro),
+    )
+)]
 pub async fn preview(
     State(e): State<Estado>,
     ident: Identidade,
@@ -773,6 +966,22 @@ pub async fn preview(
 }
 
 /// `POST /flows/format`: devolve o script na forma canônica (ou os erros, se não compilar).
+#[utoipa::path(
+    post,
+    path = "/admin/v1/orgs/{org_id}/flows/format",
+    tag = "flows",
+    operation_id = "fluxos_formatar",
+    security(("bearer" = [])),
+    params(
+        ("org_id" = String, Path),
+    ),
+    request_body = DadosScript,
+    responses(
+        (status = 200, description = "Script na forma canônica (`source`)", body = Value),
+        (status = 400, description = "Corpo sem `source`", body = crate::erro::RespostaErro),
+        (status = 422, description = "Script não compila (`fluxo_invalido`), com a lista de diagnósticos", body = crate::erro::RespostaErro),
+    )
+)]
 pub async fn formatar(
     State(e): State<Estado>,
     ident: Identidade,

@@ -1725,6 +1725,16 @@ async fn toda_escrita_da_openapi_precisa_de_cobertura_de_auditoria() {
             "delete",
             "/admin/v1/orgs/{org_id}/matrix/spaces/{department_id}",
         ),
+        // FX-27: fluxos (criar, editar, excluir e publicar).
+        ("post", "/admin/v1/orgs/{org_id}/flows"),
+        ("patch", "/admin/v1/orgs/{org_id}/flows/{flow_id}"),
+        ("delete", "/admin/v1/orgs/{org_id}/flows/{flow_id}"),
+        ("post", "/admin/v1/orgs/{org_id}/flows/{flow_id}/publish"),
+        // FX-30: ações humanas sobre a Ficha (iniciar fluxo, agir, abandonar e fechar).
+        ("post", "/admin/v1/orgs/{org_id}/fichas/{ficha_id}/flow-runs"),
+        ("post", "/admin/v1/orgs/{org_id}/fichas/{ficha_id}/flow-runs/{run_id}/actions"),
+        ("post", "/admin/v1/orgs/{org_id}/fichas/{ficha_id}/flow-runs/{run_id}/abandon"),
+        ("post", "/admin/v1/orgs/{org_id}/fichas/{ficha_id}/close"),
     ]
     .into_iter()
     .map(|(m, p)| (m.to_owned(), p.to_owned()))
@@ -1732,8 +1742,18 @@ async fn toda_escrita_da_openapi_precisa_de_cobertura_de_auditoria() {
     // Escritas de configuração da **instância** (não de org): não gravam dado de cliente nem
     // entram no `audit_log` por org. Ficam fora desta cobertura, mas continuam exigidas abaixo —
     // rota nova de qualquer tipo reprova aqui.
-    let fora_da_auditoria_por_org =
-        BTreeSet::from([("post".to_owned(), "/admin/v1/cluster/reload".to_owned())]);
+    // FX-27: validar e formatar script são POST que só calculam (não gravam, não auditam).
+    let fora_da_auditoria_por_org = BTreeSet::from([
+        ("post".to_owned(), "/admin/v1/cluster/reload".to_owned()),
+        (
+            "post".to_owned(),
+            "/admin/v1/orgs/{org_id}/flows/validate".to_owned(),
+        ),
+        (
+            "post".to_owned(),
+            "/admin/v1/orgs/{org_id}/flows/format".to_owned(),
+        ),
+    ]);
     let mut publicadas = BTreeSet::new();
     for (caminho, metodos) in doc["paths"].as_object().unwrap() {
         for metodo in ["post", "put", "patch", "delete"] {
@@ -3520,6 +3540,39 @@ async fn isolamento_por_org_cobre_todas_as_operacoes_publicadas() {
             "delete",
             "/admin/v1/orgs/{org_id}/matrix/spaces/{department_id}",
         ),
+        // FX-27: API de fluxos.
+        ("post", "/admin/v1/orgs/{org_id}/flows/validate"),
+        ("post", "/admin/v1/orgs/{org_id}/flows/format"),
+        ("get", "/admin/v1/orgs/{org_id}/flows"),
+        ("post", "/admin/v1/orgs/{org_id}/flows"),
+        ("get", "/admin/v1/orgs/{org_id}/flows/{flow_id}"),
+        ("patch", "/admin/v1/orgs/{org_id}/flows/{flow_id}"),
+        ("delete", "/admin/v1/orgs/{org_id}/flows/{flow_id}"),
+        ("post", "/admin/v1/orgs/{org_id}/flows/{flow_id}/publish"),
+        ("get", "/admin/v1/orgs/{org_id}/flows/{flow_id}/revisions"),
+        (
+            "get",
+            "/admin/v1/orgs/{org_id}/flows/{flow_id}/revisions/{number}",
+        ),
+        ("get", "/admin/v1/orgs/{org_id}/flows/{flow_id}/diff"),
+        ("get", "/admin/v1/orgs/{org_id}/flows/{flow_id}/preview"),
+        // FX-29 e FX-30: Fichas (leitura e ações humanas).
+        ("get", "/admin/v1/orgs/{org_id}/fichas"),
+        ("get", "/admin/v1/orgs/{org_id}/fichas/{ficha_id}"),
+        ("get", "/admin/v1/orgs/{org_id}/fichas/{ficha_id}/events"),
+        (
+            "post",
+            "/admin/v1/orgs/{org_id}/fichas/{ficha_id}/flow-runs",
+        ),
+        (
+            "post",
+            "/admin/v1/orgs/{org_id}/fichas/{ficha_id}/flow-runs/{run_id}/actions",
+        ),
+        (
+            "post",
+            "/admin/v1/orgs/{org_id}/fichas/{ficha_id}/flow-runs/{run_id}/abandon",
+        ),
+        ("post", "/admin/v1/orgs/{org_id}/fichas/{ficha_id}/close"),
     ];
     let esperadas_set: BTreeSet<_> = esperadas
         .iter()
@@ -3555,6 +3608,10 @@ async fn isolamento_por_org_cobre_todas_as_operacoes_publicadas() {
             "product_id",
             "token_id",
             "kind",
+            "flow_id",
+            "ficha_id",
+            "run_id",
+            "number",
         ] {
             caminho = caminho.replace(&format!("{{{nome}}}"), org_b);
         }
@@ -4594,7 +4651,13 @@ async fn docs_api_cobre_todas_as_rotas_publicadas() {
             || linha.rota.ends_with("/whatsapp/disconnect")
             || (linha.metodo == "put" && linha.rota.ends_with("/matrix"))
             // FX-28: a permissão de fluxos do agente troca a lista inteira com `If-Match` da versão do agente.
-            || (linha.metodo == "put" && linha.rota.ends_with("/agents/{agent_id}/flows"));
+            || (linha.metodo == "put" && linha.rota.ends_with("/agents/{agent_id}/flows"))
+            // FX-27: publicar troca a versão do fluxo (`If-Match`).
+            || linha.rota.ends_with("/flows/{flow_id}/publish")
+            // FX-30: iniciar fluxo, agir e abandonar exigem `If-Match` (versão da Ficha ou da execução).
+            || (linha.metodo == "post" && linha.rota.ends_with("/flow-runs"))
+            || linha.rota.ends_with("/flow-runs/{run_id}/actions")
+            || linha.rota.ends_with("/flow-runs/{run_id}/abandon");
         let esperado = if escrita_com_if_match && !global_da_instancia {
             "sim"
         } else {
@@ -4609,7 +4672,11 @@ async fn docs_api_cobre_todas_as_rotas_publicadas() {
         // Auditoria: toda escrita de dado de org audita; leitura e configuração da instância são
         // `n/a`. `put` entra na lista porque as duas rotas `PUT` publicadas (módulo Matrix, MX-22)
         // são escrita de dado de org e auditam.
-        let escrita = matches!(linha.metodo.as_str(), "post" | "put" | "patch" | "delete");
+        // FX-27: validar e formatar script são POST que só calculam; não gravam, então não auditam.
+        let so_calcula =
+            linha.rota.ends_with("/flows/validate") || linha.rota.ends_with("/flows/format");
+        let escrita =
+            matches!(linha.metodo.as_str(), "post" | "put" | "patch" | "delete") && !so_calcula;
         assert_eq!(
             linha.auditoria,
             if escrita && !global_da_instancia {

@@ -15,8 +15,8 @@
 //! Só sai o que é da Ficha: nenhum texto de mensagem da conversa entra nas respostas, e o payload dos
 //! eventos é só metadado do motor (chave, tipo, nó).
 //!
-//! As rotas ainda não estão no OpenAPI: a documentação delas (inventário de `docs/API.md` e
-//! `schema.d.ts`) é a FX-32.
+//! Documentadas no OpenAPI (FX-32): aparecem em `/admin/v1/openapi.json`, em `docs/API.md` e no
+//! cliente gerado do Console.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -43,6 +43,7 @@ use poph_types::{
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
+use utoipa::ToSchema;
 
 use super::{ConsultaPagina, ListaJson, proximo_cursor, versao_do_if_match};
 use crate::{
@@ -94,6 +95,26 @@ pub struct ConsultaEventos {
 }
 
 /// `GET /fichas`: lista da org, com filtros e cursor.
+#[utoipa::path(
+    get,
+    path = "/admin/v1/orgs/{org_id}/fichas",
+    tag = "fichas",
+    operation_id = "fichas_listar",
+    security(("bearer" = [])),
+    params(
+        ("org_id" = String, Path),
+        ("status" = Option<String>, Query, description = "`open` ou `closed`"),
+        ("agente" = Option<String>, Query, description = "Id do agente da Ficha (UUID v7)"),
+        ("canal" = Option<String>, Query, description = "Canal da conversa, por exemplo `whatsapp`"),
+        ("desde" = Option<i64>, Query, description = "Só Fichas abertas a partir deste instante, em milissegundos desde 1970"),
+        ("limit" = Option<u32>, Query, description = "De 1 a 200; padrão 50"),
+        ("cursor" = Option<String>, Query, description = "`next_cursor` da página anterior"),
+    ),
+    responses(
+        (status = 200, description = "Página de Fichas: `items` e `next_cursor`", body = ListaJson<Value>),
+        (status = 400, description = "Filtro ou cursor inválido (`status`, `agente`, `canal`, `desde`, `limit` ou `cursor`)", body = crate::erro::RespostaErro),
+    )
+)]
 pub async fn listar(
     State(e): State<Estado>,
     ident: Identidade,
@@ -116,6 +137,21 @@ pub async fn listar(
 
 /// `GET /fichas/{ficha_id}`: a Ficha, as execuções com as etapas e os campos respondidos, e os
 /// fluxos liberados ao agente da Ficha.
+#[utoipa::path(
+    get,
+    path = "/admin/v1/orgs/{org_id}/fichas/{ficha_id}",
+    tag = "fichas",
+    operation_id = "fichas_mostrar",
+    security(("bearer" = [])),
+    params(
+        ("org_id" = String, Path),
+        ("ficha_id" = String, Path),
+    ),
+    responses(
+        (status = 200, description = "A Ficha com as execuções, as etapas com os campos respondidos (W6) e os fluxos liberados ao agente", body = Value),
+        (status = 404, description = "Ficha inexistente ou de outra org", body = crate::erro::RespostaErro),
+    )
+)]
 pub async fn mostrar(
     State(e): State<Estado>,
     ident: Identidade,
@@ -150,6 +186,24 @@ pub async fn mostrar(
 }
 
 /// `GET /fichas/{ficha_id}/events`: a linha do tempo da Ficha, em ordem de `seq`.
+#[utoipa::path(
+    get,
+    path = "/admin/v1/orgs/{org_id}/fichas/{ficha_id}/events",
+    tag = "fichas",
+    operation_id = "fichas_eventos",
+    security(("bearer" = [])),
+    params(
+        ("org_id" = String, Path),
+        ("ficha_id" = String, Path),
+        ("limit" = Option<u32>, Query, description = "De 1 a 200; padrão 50"),
+        ("cursor" = Option<String>, Query, description = "`next_cursor` da página anterior"),
+    ),
+    responses(
+        (status = 200, description = "Linha do tempo da Ficha em ordem de `seq`: `items` e `next_cursor` (um `seq`)", body = ListaJson<Value>),
+        (status = 400, description = "Cursor inválido", body = crate::erro::RespostaErro),
+        (status = 404, description = "Ficha inexistente ou de outra org", body = crate::erro::RespostaErro),
+    )
+)]
 pub async fn eventos(
     State(e): State<Estado>,
     ident: Identidade,
@@ -314,14 +368,14 @@ pub struct CaminhoExecucao {
 }
 
 /// Corpo de `POST …/flow-runs`: o fluxo a abrir e a chave que torna a abertura repetível.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct DadosInicio {
     fluxo_id: String,
     chave_idempotencia: String,
 }
 
 /// Corpo de `POST …/actions`: a ação, os campos que ela grava e a chave.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct DadosAcao {
     acao: String,
     #[serde(default)]
@@ -330,7 +384,7 @@ pub struct DadosAcao {
 }
 
 /// Corpo de `POST …/abandon`: o motivo (fica no histórico) e a chave.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct DadosAbandono {
     motivo: String,
     chave_idempotencia: String,
@@ -341,6 +395,29 @@ pub struct DadosAbandono {
 /// `If-Match` é a versão da Ficha. Abertura nova responde `201`; repetir a chave responde `200` com a
 /// execução que a primeira chamada abriu. Fluxo não liberado ao agente da Ficha: `403`
 /// (`fluxo_nao_liberado`, a permissão é conferida pelo store).
+#[utoipa::path(
+    post,
+    path = "/admin/v1/orgs/{org_id}/fichas/{ficha_id}/flow-runs",
+    tag = "fichas",
+    operation_id = "fichas_iniciar_fluxo",
+    security(("bearer" = [])),
+    params(
+        ("org_id" = String, Path),
+        ("ficha_id" = String, Path),
+        ("If-Match" = String, Header, description = "Versão atual da Ficha ou da execução, como lida antes"),
+    ),
+    request_body = DadosInicio,
+    responses(
+        (status = 201, description = "Execução aberta na etapa de início do fluxo", body = Value),
+        (status = 200, description = "Chave já usada: devolve a execução que a primeira chamada abriu, com `repetida: true`", body = Value),
+        (status = 400, description = "Chave de idempotência vazia ou corpo inválido", body = crate::erro::RespostaErro),
+        (status = 403, description = "Fluxo não liberado ao agente da Ficha (`fluxo_nao_liberado`); nada é aberto", body = crate::erro::RespostaErro),
+        (status = 404, description = "Ficha ou fluxo inexistente na org", body = crate::erro::RespostaErro),
+        (status = 409, description = "Ficha fechada (`ficha_encerrada`) ou fluxo sem revisão publicada (`conflict`)", body = crate::erro::RespostaErro),
+        (status = 412, description = "Versão da Ficha diferente da atual", body = crate::erro::RespostaErro),
+        (status = 428, description = "Falta o `If-Match`", body = crate::erro::RespostaErro),
+    )
+)]
 pub async fn iniciar_fluxo(
     State(e): State<Estado>,
     ident: Identidade,
@@ -446,6 +523,28 @@ pub async fn iniciar_fluxo(
 /// `If-Match` é a versão da **execução**. Se o agente andou por cima (outro escrito primeiro), a
 /// versão não bate e a resposta é `412`: é a corrida atendente × agente. Ação que só o agente pode
 /// fazer: `409` (`acao_invalida`, a recusa do motor). Campo inválido: `400`.
+#[utoipa::path(
+    post,
+    path = "/admin/v1/orgs/{org_id}/fichas/{ficha_id}/flow-runs/{run_id}/actions",
+    tag = "fichas",
+    operation_id = "fichas_acao",
+    security(("bearer" = [])),
+    params(
+        ("org_id" = String, Path),
+        ("ficha_id" = String, Path),
+        ("run_id" = String, Path),
+        ("If-Match" = String, Header, description = "Versão atual da Ficha ou da execução, como lida antes"),
+    ),
+    request_body = DadosAcao,
+    responses(
+        (status = 200, description = "Execução depois da ação; chave repetida devolve a execução atual, sem evento nem efeito novo", body = Value),
+        (status = 400, description = "Chave vazia ou campos inválidos (`campos_invalidos`)", body = crate::erro::RespostaErro),
+        (status = 404, description = "Execução fora da Ficha ou da org", body = crate::erro::RespostaErro),
+        (status = 409, description = "Ação que só o agente pode fazer (`acao_invalida`) ou Ficha fechada (`ficha_encerrada`)", body = crate::erro::RespostaErro),
+        (status = 412, description = "Versão da execução diferente da atual (corrida com o agente)", body = crate::erro::RespostaErro),
+        (status = 428, description = "Falta o `If-Match`", body = crate::erro::RespostaErro),
+    )
+)]
 pub async fn acao(
     State(e): State<Estado>,
     ident: Identidade,
@@ -537,6 +636,28 @@ pub async fn acao(
 /// `POST /fichas/{ficha_id}/flow-runs/{run_id}/abandon`: o atendente para a execução onde ela está.
 ///
 /// Não gera efeito. Execução que já não está ativa: `409`. `If-Match` é a versão da execução.
+#[utoipa::path(
+    post,
+    path = "/admin/v1/orgs/{org_id}/fichas/{ficha_id}/flow-runs/{run_id}/abandon",
+    tag = "fichas",
+    operation_id = "fichas_abandonar",
+    security(("bearer" = [])),
+    params(
+        ("org_id" = String, Path),
+        ("ficha_id" = String, Path),
+        ("run_id" = String, Path),
+        ("If-Match" = String, Header, description = "Versão atual da Ficha ou da execução, como lida antes"),
+    ),
+    request_body = DadosAbandono,
+    responses(
+        (status = 200, description = "Execução abandonada; não gera efeito", body = Value),
+        (status = 400, description = "Chave vazia ou corpo inválido", body = crate::erro::RespostaErro),
+        (status = 404, description = "Execução fora da Ficha ou da org", body = crate::erro::RespostaErro),
+        (status = 409, description = "Execução que já não está ativa, ou Ficha fechada (`ficha_encerrada`)", body = crate::erro::RespostaErro),
+        (status = 412, description = "Versão da execução diferente da atual", body = crate::erro::RespostaErro),
+        (status = 428, description = "Falta o `If-Match`", body = crate::erro::RespostaErro),
+    )
+)]
 pub async fn abandonar(
     State(e): State<Estado>,
     ident: Identidade,
@@ -617,6 +738,25 @@ pub async fn abandonar(
 /// `If-Match` é a versão da Ficha. Sem conversa ligada (apagada pela retenção), fecha só a Ficha.
 /// Ficha já fechada: `409`. Não tem `chave_idempotencia`: repetir depois de fechado responde `409`
 /// e não gera nada novo.
+#[utoipa::path(
+    post,
+    path = "/admin/v1/orgs/{org_id}/fichas/{ficha_id}/close",
+    tag = "fichas",
+    operation_id = "fichas_fechar",
+    security(("bearer" = [])),
+    params(
+        ("org_id" = String, Path),
+        ("ficha_id" = String, Path),
+        ("If-Match" = String, Header, description = "Versão atual da Ficha ou da execução, como lida antes"),
+    ),
+    responses(
+        (status = 200, description = "Ficha fechada (e a conversa, quando há); a execução ativa vai para `abandonada`", body = Value),
+        (status = 404, description = "Ficha inexistente ou de outra org", body = crate::erro::RespostaErro),
+        (status = 409, description = "Ficha já fechada (`ficha_encerrada`)", body = crate::erro::RespostaErro),
+        (status = 412, description = "Versão da Ficha diferente da atual", body = crate::erro::RespostaErro),
+        (status = 428, description = "Falta o `If-Match`", body = crate::erro::RespostaErro),
+    )
+)]
 pub async fn fechar(
     State(e): State<Estado>,
     ident: Identidade,

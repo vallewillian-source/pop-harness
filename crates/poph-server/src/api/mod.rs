@@ -530,6 +530,12 @@ pub fn documento() -> utoipa::openapi::OpenApi {
         produtos::excluir,
         produtos::listar,
         produtos::mostrar,
+        // FX-27 e FX-29/30: fluxos e Fichas (rotas novas do módulo de Fluxos e Fichas).
+        fluxos::validar_script, fluxos::listar, fluxos::criar, fluxos::mostrar, fluxos::atualizar,
+        fluxos::excluir, fluxos::publicar, fluxos::listar_revisoes, fluxos::mostrar_revisao,
+        fluxos::diff, fluxos::preview, fluxos::formatar,
+        fichas::listar, fichas::mostrar, fichas::eventos, fichas::iniciar_fluxo, fichas::acao,
+        fichas::abandonar, fichas::fechar,
         saude::healthz,
         saude::metrics,
     ),
@@ -582,6 +588,8 @@ pub fn documento() -> utoipa::openapi::OpenApi {
         (name = "backup", description = "Exportar e importar a organização num arquivo único"),
         (name = "cluster", description = "Roteamento estático entre instâncias (cluster.toml)"),
         (name = "matrix", description = "Módulo Matrix: estado por org e espaços por departamento"),
+        (name = "flows", description = "Fluxos: script, validação, publicação, revisões, diff e preview"),
+        (name = "fichas", description = "Fichas do atendimento, execuções de fluxo e ações humanas"),
     ),
     modifiers(&EsquemaDeSeguranca)
 )]

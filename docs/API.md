@@ -71,6 +71,18 @@ Formato único em toda a API (PRD §8.1):
 | `rota_em_laco` | 421 | pedido já encaminhado precisaria ser encaminhado de novo (`x-poph-hop > 1`) ou a org não vive nesta instância segundo o mapa |
 | `mapa_divergente` | 421 | o mapa do cluster de quem encaminhou não é o desta instância (detalhe em `details.fingerprint_recebido` e `details.fingerprint_local`) |
 | `instancia_fora` | 503 | a instância dona da org não respondeu ao encaminhamento (detalhe em `details.instancia` e `details.url`) |
+| `conversa_encerrada` | 409 | reabrir conversa `closed`: nada muda, nada é auditado (FX-07) |
+| `ficha_encerrada` | 409 | a Ficha já está fechada: não abre fluxo, não age, não abandona e não fecha de novo |
+| `execucao_ativa` | 409 | a Ficha já tem uma execução de fluxo ativa; nada é aberto |
+| `fluxo_nao_liberado` | 403 | fluxo não liberado ao agente da Ficha; nenhuma execução é aberta |
+| `acao_invalida` | 409 | ação que o motor não aceita naquela etapa, inclusive ação que só o agente pode fazer |
+| `campos_invalidos` | 400 | campos enviados não batem com a etapa atual |
+| `regra_invalida` / `regra_limite` | 400 | regra do fluxo recusada pelo motor (defeito do fluxo publicado, ou custo acima do limite) |
+| `fluxo_invalido` | 422 | script não passa na validação; `details.diagnostics` traz código, gravidade, mensagem, linha e coluna; nada é gravado |
+| `fluxo_nao_publicado` | 409 | o fluxo só tem rascunho; `diff` e `preview` pedem uma revisão publicada |
+| `teto_de_fluxos_por_org` | 409 | a org chegou ao máximo de fluxos (`details.flows` e `details.limit`); nada é criado |
+| `teto_de_fluxos_por_agente` | 409 | mais de 20 fluxos liberados a um agente; nada muda |
+| `ir_divergente` | 409 | a IR gravada não confere com o texto publicado; a leitura falha fechada |
 | `internal` | 500 | falha inesperada (mensagem sem SQL nem caminho interno) |
 
 Rota que não existe responde `404 not_found` e método errado numa rota existente responde
@@ -297,6 +309,25 @@ Colunas:
 | Espaços do Matrix | GET | `/admin/v1/orgs/{org_id}/matrix/spaces` | sim | n/a | n/a | sim |
 | Espaços do Matrix | PUT | `/admin/v1/orgs/{org_id}/matrix/spaces` | sim | n/a | sim | sim |
 | Espaços do Matrix | DELETE | `/admin/v1/orgs/{org_id}/matrix/spaces/{department_id}` | sim | n/a | sim | sim |
+| Fluxos (script) | POST | `/admin/v1/orgs/{org_id}/flows/validate` | exceção: CLI vem na FX-31 | n/a | n/a | sim |
+| Fluxos (script) | POST | `/admin/v1/orgs/{org_id}/flows/format` | exceção: CLI vem na FX-31 | n/a | n/a | sim |
+| Fluxos | GET | `/admin/v1/orgs/{org_id}/flows` | exceção: CLI vem na FX-31 | n/a | n/a | sim |
+| Fluxos | POST | `/admin/v1/orgs/{org_id}/flows` | exceção: CLI vem na FX-31 | n/a | sim | sim |
+| Fluxos | GET | `/admin/v1/orgs/{org_id}/flows/{flow_id}` | exceção: CLI vem na FX-31 | n/a | n/a | sim |
+| Fluxos | PATCH | `/admin/v1/orgs/{org_id}/flows/{flow_id}` | exceção: CLI vem na FX-31 | sim | sim | sim |
+| Fluxos | DELETE | `/admin/v1/orgs/{org_id}/flows/{flow_id}` | exceção: CLI vem na FX-31 | n/a | sim | sim |
+| Revisões de fluxo | POST | `/admin/v1/orgs/{org_id}/flows/{flow_id}/publish` | exceção: CLI vem na FX-31 | sim | sim | sim |
+| Revisões de fluxo | GET | `/admin/v1/orgs/{org_id}/flows/{flow_id}/revisions` | exceção: CLI vem na FX-31 | n/a | n/a | sim |
+| Revisões de fluxo | GET | `/admin/v1/orgs/{org_id}/flows/{flow_id}/revisions/{number}` | exceção: CLI vem na FX-31 | n/a | n/a | sim |
+| Revisões de fluxo | GET | `/admin/v1/orgs/{org_id}/flows/{flow_id}/diff` | exceção: CLI vem na FX-31 | n/a | n/a | sim |
+| Revisões de fluxo | GET | `/admin/v1/orgs/{org_id}/flows/{flow_id}/preview` | exceção: CLI vem na FX-31 | n/a | n/a | sim |
+| Fichas | GET | `/admin/v1/orgs/{org_id}/fichas` | exceção: CLI vem na FX-31 | n/a | n/a | sim |
+| Fichas | GET | `/admin/v1/orgs/{org_id}/fichas/{ficha_id}` | exceção: CLI vem na FX-31 | n/a | n/a | sim |
+| Fichas | GET | `/admin/v1/orgs/{org_id}/fichas/{ficha_id}/events` | exceção: CLI vem na FX-31 | n/a | n/a | sim |
+| Fichas | POST | `/admin/v1/orgs/{org_id}/fichas/{ficha_id}/close` | exceção: CLI vem na FX-31 | sim | sim | sim |
+| Execuções de fluxo | POST | `/admin/v1/orgs/{org_id}/fichas/{ficha_id}/flow-runs` | exceção: CLI vem na FX-31 | sim | sim | sim |
+| Execuções de fluxo | POST | `/admin/v1/orgs/{org_id}/fichas/{ficha_id}/flow-runs/{run_id}/actions` | exceção: CLI vem na FX-31 | sim | sim | sim |
+| Execuções de fluxo | POST | `/admin/v1/orgs/{org_id}/fichas/{ficha_id}/flow-runs/{run_id}/abandon` | exceção: CLI vem na FX-31 | sim | sim | sim |
 
 ## Fechar conversa (MX-06)
 
@@ -1126,6 +1157,109 @@ Provas: `crates/poph-server/tests/agente_fluxos.rs` (ponta a ponta, com servidor
 temporários). As listas de cobertura de `crates/poph-server/tests/api.rs` (OpenAPI, auditoria,
 isolamento por org e documentação da API) também conhecem as duas rotas.
 
+## Fluxos: script, publicação e revisões (FX-27)
+
+Rotas sob `/admin/v1/orgs/{org_id}`, com token da org (`401` sem token, `403` no caminho de outra org).
+O fluxo é da organização; o agente só tem a permissão de usar (seção "Fluxos liberados ao agente").
+A CLI ainda não tem comandos para isso: entram na FX-31.
+
+| Rota | O que faz |
+| --- | --- |
+| `POST …/flows/validate` | Compila o script (`{"source": "…"}`) e devolve `valid`, a IR, os `diagnostics` (código, gravidade, mensagem, linha e coluna) e as `resolutions` de departamento. Não grava nada. Script com erro sai como `200` com `valid: false`: validar não recusa |
+| `POST …/flows/format` | Devolve o script na forma canônica (`{"source"}`). Script que não compila: `422 fluxo_invalido` |
+| `GET …/flows` | Lista da org, `?status=active\|inactive`, `?limit`, `?cursor` (`items`, `next_cursor`) |
+| `POST …/flows` | Cria o fluxo a partir do script, `{"source", "publish"}`. `publish` padrão `false` (só rascunho); com `true`, publica a revisão 1 na mesma chamada. `201` com `draft_source` e `revision` (`null` sem publicar) |
+| `GET …/flows/{flow_id}` | Detalhe: fluxo, `draft_source` e `revision` (resumo da revisão que vale hoje; `null` se nunca publicou) |
+| `PATCH …/flows/{flow_id}` | Exige `If-Match` (versão do fluxo). Muda `name`, `description`, `status` (`active` ou `inactive`) e `source` (o rascunho, que pode ficar inválido: só publicar exige script bom). Só o que vier no corpo muda |
+| `DELETE …/flows/{flow_id}?force=` | Exclui. Com atendimento ativo e sem `force=true`: `409 conflict` com `details.active_runs`, nada apagado. Com `force=true`: abandona as execuções ativas, apaga e devolve `abandoned_runs`. Não pede `If-Match` |
+| `POST …/flows/{flow_id}/publish` | Exige `If-Match` (versão do fluxo). Corpo opcional `{"source"}`; sem corpo, publica o rascunho. Devolve `201` com `revision`, `version` e `warnings` |
+| `GET …/flows/{flow_id}/revisions` | Revisões em ordem de número. `?cursor` é o número da última revisão da página anterior |
+| `GET …/flows/{flow_id}/revisions/{number}` | Uma revisão, com o texto publicado, a IR, o hash e as resoluções |
+| `GET …/flows/{flow_id}/diff?de=&para=` | Frases do que mudou entre duas revisões e, para cada uma, `active_runs` (quantos atendimentos estão nela agora) |
+| `GET …/flows/{flow_id}/preview?etapa=` | O bloco de prompt que o agente veria naquela etapa (padrão: a etapa de início), com a revisão usada |
+
+Regras:
+
+- Publicar com `If-Match` antigo responde `412` antes de compilar. Script com erro responde `422 fluxo_invalido`
+  com a lista de diagnósticos. Nos dois casos, nada é gravado. Sem `If-Match`: `428`.
+- Duas publicações com a mesma versão: uma vence e a outra leva `412`, sem revisão sobrando.
+- Revisão publicada não muda. Publicar de novo cria a revisão seguinte, e a anterior segue idêntica
+  (texto e IR).
+- A publicação só passa com o script limpo no compilador e na validação semântica. Os nomes de
+  departamento citados no script são resolvidos para o id na publicação e ficam gravados.
+- Auditoria: `flow_create`, `flow_update` e `flow_delete` em cada escrita; a publicação grava `flow_publish`
+  na mesma transação da revisão.
+
+Provas: `crates/poph-server/tests/fluxos_api.rs` (validar, formatar, criar, isolamento, publicar com as
+recusas, revisão 2 com a 1 idêntica, diff com contagem de atendimentos ativos, exclusão com `force`, teto).
+
+## Fichas: leitura e ações humanas (FX-29 e FX-30)
+
+A Ficha é o registro de um atendimento. Ela e as execuções de fluxo que rodam nela ficam legíveis
+mesmo depois de fechadas.
+
+### Leitura
+
+- `GET …/fichas`: filtros `status` (`open` ou `closed`), `agente` (id), `canal` (por exemplo `whatsapp`),
+  `desde` (instante em milissegundos desde 1970), `limit` (1 a 200, padrão 50) e `cursor`. O cursor é o id
+  da última Ficha da página. Filtro inválido: `400 validation_error` com o campo.
+- `GET …/fichas/{ficha_id}`: a Ficha com as execuções, as etapas de cada execução com os campos já
+  respondidos (é o que o atendente vê dentro da Ficha) e os fluxos liberados ao agente. Forma abreviada:
+
+```json
+{
+  "id": "…", "conversation_id": null, "agent_id": "…", "canal": "whatsapp", "status": "open",
+  "version": 3,
+  "execucoes": [{
+    "id": "…", "fluxo_id": "…", "revisao_id": "…", "status": "ativa", "no_atual": "coleta",
+    "etapas": [{ "no_id": "coleta", "status": "parcial", "dados": { "nome": "…" } }]
+  }],
+  "permissoes": { "fluxos_liberados_ao_agente": [{ "id": "…", "slug": "…", "name": "…", "status": "active" }] }
+}
+```
+
+  O detalhe não traz o texto das mensagens do cliente nem os efeitos enviados. Lê até 500 execuções.
+- `GET …/fichas/{ficha_id}/events`: linha do tempo em ordem de `seq`. Cursor é o `seq` do último evento.
+  Traz só o metadado do motor (chave, tipo e nó).
+
+Ficha de outra org ou inexistente responde `404` nas três rotas. Token de outra org responde `403`.
+
+### Ações humanas do atendente
+
+Todas exigem `If-Match`. As três primeiras também exigem `chave_idempotencia`. Repetir a mesma chave não
+cria execução, evento nem efeito novo, e devolve o que a primeira chamada fez (com `repetida: true` na
+abertura).
+
+| Rota | Corpo | `If-Match` é a versão de | Situação | Resposta |
+| --- | --- | --- | --- | --- |
+| `POST …/fichas/{ficha_id}/flow-runs` | `{"fluxo_id", "chave_idempotencia"}` | a Ficha | abre um fluxo liberado ao agente, sem o Jev | `201` (aberto) ou `200` (chave repetida) |
+| `POST …/flow-runs/{run_id}/actions` | `{"acao", "campos", "chave_idempotencia"}` | a execução | o atendente executa uma ação da etapa atual; a ação fica com ator `atendente` e o id do token em `ator_ref` | `200` com a execução |
+| `POST …/flow-runs/{run_id}/abandon` | `{"motivo", "chave_idempotencia"}` | a execução | para a execução onde ela está; não gera efeito | `200` com a execução |
+| `POST …/fichas/{ficha_id}/close` | sem corpo | a Ficha | fecha a conversa (quando há) e a Ficha; a execução ativa vai para `abandonada` com motivo `atendimento_encerrado` | `200` com a Ficha |
+
+| Situação | Resposta |
+| --- | --- |
+| sem `If-Match` | `428 precondition_required` |
+| `If-Match` diferente da versão atual (corrida com o agente, por exemplo) | `412 version_conflict`; nada é gravado |
+| Ficha fechada | `409 ficha_encerrada` |
+| fluxo não liberado ao agente da Ficha | `403 fluxo_nao_liberado`; nenhuma execução é aberta |
+| fluxo sem revisão publicada | `409 conflict` |
+| já existe execução ativa na Ficha | `409 execucao_ativa` |
+| ação que só o agente pode fazer | `409 acao_invalida` |
+| chave vazia ou campos que não batem com a etapa | `400` |
+| `close` repetido depois de fechar | `409 ficha_encerrada` (não tem chave: não há repetição a devolver) |
+
+- `close` sem conversa ligada (conversa apagada pela retenção) fecha só a Ficha, com o mesmo motivo do
+  fechamento pela conversa.
+- A chave repetida é conferida antes da versão: reenviar uma ação que já passou não vira `412`.
+
+Provas: `crates/poph-server/tests/fichas_leitura.rs` (filtros, cursor, Ficha de outra org, eventos,
+campos respondidos dentro da Ficha, Ficha fechada legível) e `crates/poph-server/tests/fichas_acoes.rs`
+(Ficha fechada, fluxo não liberado, corrida atendente × agente, ação restrita, repetição de chave,
+`close` com e sem conversa, isolamento).
+
+Paridade de CLI: ainda não existe; entra na FX-31.
+
 ## Limites conhecidos da API
 
 - **Recarga do cluster sem auditoria (baixa):** é configuração da instância em memória; fica o log e
@@ -1160,4 +1294,18 @@ isolamento por org e documentação da API) também conhecem as duas rotas.
   segredos precisam ser regravados.
 - **Integração identificada por `kind` (média):** o esquema não tem coluna de nome nem de manifesto,
   então duas integrações do mesmo tipo na mesma org não têm identificação legível.
-
+- **Fechar Ficha sem conversa não grava linha em `audit_log` (média):** o fechamento fica registrado no
+  evento `ficha_fechada` da própria Ficha, com quem fechou. Só o fechamento com conversa passa pela
+  auditoria de conversa. A tabela de inventário marca `sim` porque a escrita é auditada no caminho com conversa.
+- **Auditoria das ações do atendente fora da transação (média):** `flow_run_start`, `flow_run_action` e
+  `flow_run_abandon` são gravados logo depois da transição, em outra escrita. Se essa escrita falhar, a ação já
+  ficou gravada e a resposta sai como erro; o evento da Ficha continua certo.
+- **Leitura da Ficha não é foto única (baixa):** o detalhe lê Ficha, execuções e etapas em consultas separadas;
+  uma transição concorrente pode aparecer no meio. A leitura seguinte sai certa.
+- **Detalhe da Ficha corta em 500 execuções sem aviso (baixa).**
+- **Chave repetida devolve o estado atual (baixa):** a repetição devolve a execução como está agora, não como
+  estava na primeira chamada. Não gera evento nem efeito novo.
+- **`diff` com `de` maior que `para` (baixa):** devolve a diferença invertida, sem erro.
+- **`DELETE` de fluxo sem `If-Match` (baixa):** a proteção contra exclusão acidental é o `force=true` exigido com
+  atendimento ativo, mais a auditoria.
+- **`preview` sem dados preenchidos (baixa):** mostra a etapa com os campos vazios; não simula respostas.

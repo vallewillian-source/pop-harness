@@ -605,6 +605,308 @@ export interface paths {
         patch: operations["departamentos_atualizar"];
         trace?: never;
     };
+    "/admin/v1/orgs/{org_id}/fichas": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** `GET /fichas`: lista da org, com filtros e cursor. */
+        get: operations["fichas_listar"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/v1/orgs/{org_id}/fichas/{ficha_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /fichas/{ficha_id}`: a Ficha, as execuções com as etapas e os campos respondidos, e os
+         *     fluxos liberados ao agente da Ficha.
+         */
+        get: operations["fichas_mostrar"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/v1/orgs/{org_id}/fichas/{ficha_id}/close": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /fichas/{ficha_id}/close`: encerra o atendimento. Fecha a conversa e a Ficha juntas e
+         *     abandona a execução ativa (motivo `atendimento_encerrado`), como o `close` da conversa.
+         * @description `If-Match` é a versão da Ficha. Sem conversa ligada (apagada pela retenção), fecha só a Ficha.
+         *     Ficha já fechada: `409`. Não tem `chave_idempotencia`: repetir depois de fechado responde `409`
+         *     e não gera nada novo.
+         */
+        post: operations["fichas_fechar"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/v1/orgs/{org_id}/fichas/{ficha_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** `GET /fichas/{ficha_id}/events`: a linha do tempo da Ficha, em ordem de `seq`. */
+        get: operations["fichas_eventos"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/v1/orgs/{org_id}/fichas/{ficha_id}/flow-runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /fichas/{ficha_id}/flow-runs`: o atendente abre um fluxo na Ficha, sem o Jev.
+         * @description `If-Match` é a versão da Ficha. Abertura nova responde `201`; repetir a chave responde `200` com a
+         *     execução que a primeira chamada abriu. Fluxo não liberado ao agente da Ficha: `403`
+         *     (`fluxo_nao_liberado`, a permissão é conferida pelo store).
+         */
+        post: operations["fichas_iniciar_fluxo"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/v1/orgs/{org_id}/fichas/{ficha_id}/flow-runs/{run_id}/abandon": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /fichas/{ficha_id}/flow-runs/{run_id}/abandon`: o atendente para a execução onde ela está.
+         * @description Não gera efeito. Execução que já não está ativa: `409`. `If-Match` é a versão da execução.
+         */
+        post: operations["fichas_abandonar"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/v1/orgs/{org_id}/fichas/{ficha_id}/flow-runs/{run_id}/actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /fichas/{ficha_id}/flow-runs/{run_id}/actions`: o atendente executa uma ação da etapa atual.
+         * @description `If-Match` é a versão da **execução**. Se o agente andou por cima (outro escrito primeiro), a
+         *     versão não bate e a resposta é `412`: é a corrida atendente × agente. Ação que só o agente pode
+         *     fazer: `409` (`acao_invalida`, a recusa do motor). Campo inválido: `400`.
+         */
+        post: operations["fichas_acao"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/v1/orgs/{org_id}/flows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** `GET /flows`: lista da org, com filtro de situação e cursor. */
+        get: operations["fluxos_listar"];
+        put?: never;
+        /** `POST /flows`: cria o fluxo a partir do script; `publish: true` publica a revisão 1 junto. */
+        post: operations["fluxos_criar"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/v1/orgs/{org_id}/flows/format": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** `POST /flows/format`: devolve o script na forma canônica (ou os erros, se não compilar). */
+        post: operations["fluxos_formatar"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/v1/orgs/{org_id}/flows/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** `POST /flows/validate`: compila o script e devolve IR, diagnósticos e resoluções. Não grava. */
+        post: operations["fluxos_validar"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/v1/orgs/{org_id}/flows/{flow_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** `GET /flows/{flow_id}`: detalhe com a revisão que vale hoje. */
+        get: operations["fluxos_mostrar"];
+        put?: never;
+        post?: never;
+        /** `DELETE /flows/{flow_id}?force=`: exclui o fluxo; com execução ativa, só com `force=true`. */
+        delete: operations["fluxos_excluir"];
+        options?: never;
+        head?: never;
+        /** `PATCH /flows/{flow_id}`: nome, descrição, situação e rascunho, com `If-Match`. */
+        patch: operations["fluxos_atualizar"];
+        trace?: never;
+    };
+    "/admin/v1/orgs/{org_id}/flows/{flow_id}/diff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /flows/{flow_id}/diff?de=&para=`: o que mudou, em português, e os atendimentos em cada
+         *     revisão.
+         * @description A contagem é de execuções **ativas** por revisão (FX-20): é o que diz se publicar agora deixa
+         *     alguém no meio de um atendimento na versão antiga.
+         */
+        get: operations["fluxos_diff"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/v1/orgs/{org_id}/flows/{flow_id}/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** `GET /flows/{flow_id}/preview?etapa=`: bloco de prompt que o agente veria naquela etapa. */
+        get: operations["fluxos_preview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/v1/orgs/{org_id}/flows/{flow_id}/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** `POST /flows/{flow_id}/publish`: publica o rascunho (ou o texto do corpo) como revisão nova. */
+        post: operations["fluxos_publicar"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/v1/orgs/{org_id}/flows/{flow_id}/revisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** `GET /flows/{flow_id}/revisions`: revisões em ordem de número, com cursor por número. */
+        get: operations["fluxos_listar_revisoes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/v1/orgs/{org_id}/flows/{flow_id}/revisions/{number}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** `GET /flows/{flow_id}/revisions/{number}`: uma revisão, com o texto e a IR. */
+        get: operations["fluxos_mostrar_revisao"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/v1/orgs/{org_id}/knowledge": {
         parameters: {
             query?: never;
@@ -981,6 +1283,17 @@ export interface components {
             markdown?: string | null;
             structured?: unknown;
         };
+        /** @description Corpo de `POST …/abandon`: o motivo (fica no histórico) e a chave. */
+        DadosAbandono: {
+            chave_idempotencia: string;
+            motivo: string;
+        };
+        /** @description Corpo de `POST …/actions`: a ação, os campos que ela grava e a chave. */
+        DadosAcao: {
+            acao: string;
+            campos?: unknown;
+            chave_idempotencia: string;
+        };
         DadosAgente: {
             category?: string | null;
             department?: string | null;
@@ -1012,10 +1325,22 @@ export interface components {
             temperature?: number | null;
             type?: string | null;
         };
+        /** @description Corpo do `POST /flows`: o script e se a revisão 1 sai junto. */
+        DadosCriacao: {
+            /** @description Publicar a revisão 1 na mesma chamada. Padrão: `false` (só o rascunho). */
+            publish?: boolean;
+            /** @description Texto do script. O `id`, o `nome` e a `descricao` do fluxo vêm dele. */
+            source: string;
+        };
         /** @description Corpo do `PUT`: a lista inteira de fluxos do agente. */
         DadosFluxosAgente: {
             /** @description Ids dos fluxos que o agente pode usar. O que não estiver na lista sai; máximo 20. */
             flow_ids: string[];
+        };
+        /** @description Corpo de `POST …/flow-runs`: o fluxo a abrir e a chave que torna a abertura repetível. */
+        DadosInicio: {
+            chave_idempotencia: string;
+            fluxo_id: string;
         };
         DadosItem: {
             content?: string | null;
@@ -1048,6 +1373,17 @@ export interface components {
              */
             number?: string | null;
         };
+        /** @description Corpo do `PATCH /flows/{flow_id}`: só o que veio muda. */
+        DadosPatch: {
+            /** @description Nova descrição. */
+            description?: string | null;
+            /** @description Novo nome (não muda o `id` do script). */
+            name?: string | null;
+            /** @description Novo texto do rascunho (pode estar inválido; publicar é que exige script bom). */
+            source?: string | null;
+            /** @description Nova situação: `active` ou `inactive`. */
+            status?: string | null;
+        };
         DadosProduto: {
             aliases?: string[] | null;
             category_id?: string | null;
@@ -1063,6 +1399,16 @@ export interface components {
             status?: string | null;
             tags?: string[] | null;
             unit?: string | null;
+        };
+        /** @description Corpo do `POST /flows/{flow_id}/publish`. Ausente, publica o rascunho. */
+        DadosPublicacao: {
+            /** @description Texto a publicar em vez do rascunho gravado. */
+            source?: string | null;
+        };
+        /** @description Corpo com um script: `validate` e `format`. */
+        DadosScript: {
+            /** @description Texto do script de fluxo. */
+            source: string;
         };
         /** @description Departamento na resposta da API. */
         DepartamentoJson: {
@@ -3364,6 +3710,15 @@ export interface operations {
                     "application/json": unknown;
                 };
             };
+            /** @description Conversa encerrada (`conversa_encerrada`): não reabre; nada muda */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
             /** @description Versão desatualizada */
             412: {
                 headers: {
@@ -3572,6 +3927,1010 @@ export interface operations {
             };
             /** @description Versão desatualizada */
             412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+        };
+    };
+    fichas_listar: {
+        parameters: {
+            query?: {
+                /** @description `open` ou `closed` */
+                status?: string;
+                /** @description Id do agente da Ficha (UUID v7) */
+                agente?: string;
+                /** @description Canal da conversa, por exemplo `whatsapp` */
+                canal?: string;
+                /** @description Só Fichas abertas a partir deste instante, em milissegundos desde 1970 */
+                desde?: number;
+                /** @description De 1 a 200; padrão 50 */
+                limit?: number;
+                /** @description `next_cursor` da página anterior */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                org_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Página de Fichas: `items` e `next_cursor` */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListaJson_Value"];
+                };
+            };
+            /** @description Filtro ou cursor inválido (`status`, `agente`, `canal`, `desde`, `limit` ou `cursor`) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+        };
+    };
+    fichas_mostrar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_id: string;
+                ficha_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A Ficha com as execuções, as etapas com os campos respondidos (W6) e os fluxos liberados ao agente */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Ficha inexistente ou de outra org */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+        };
+    };
+    fichas_fechar: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Versão atual da Ficha ou da execução, como lida antes */
+                "If-Match": string;
+            };
+            path: {
+                org_id: string;
+                ficha_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Ficha fechada (e a conversa, quando há); a execução ativa vai para `abandonada` */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Ficha inexistente ou de outra org */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+            /** @description Ficha já fechada (`ficha_encerrada`) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+            /** @description Versão da Ficha diferente da atual */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+            /** @description Falta o `If-Match` */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+        };
+    };
+    fichas_eventos: {
+        parameters: {
+            query?: {
+                /** @description De 1 a 200; padrão 50 */
+                limit?: number;
+                /** @description `next_cursor` da página anterior */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                org_id: string;
+                ficha_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Linha do tempo da Ficha em ordem de `seq`: `items` e `next_cursor` (um `seq`) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListaJson_Value"];
+                };
+            };
+            /** @description Cursor inválido */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+            /** @description Ficha inexistente ou de outra org */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+        };
+    };
+    fichas_iniciar_fluxo: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Versão atual da Ficha ou da execução, como lida antes */
+                "If-Match": string;
+            };
+            path: {
+                org_id: string;
+                ficha_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DadosInicio"];
+            };
+        };
+        responses: {
+            /** @description Chave já usada: devolve a execução que a primeira chamada abriu, com `repetida: true` */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Execução aberta na etapa de início do fluxo */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Chave de idempotência vazia ou corpo inválido */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+            /** @description Fluxo não liberado ao agente da Ficha (`fluxo_nao_liberado`); nada é aberto */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+            /** @description Ficha ou fluxo inexistente na org */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+            /** @description Ficha fechada (`ficha_encerrada`) ou fluxo sem revisão publicada (`conflict`) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+            /** @description Versão da Ficha diferente da atual */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+            /** @description Falta o `If-Match` */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+        };
+    };
+    fichas_abandonar: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Versão atual da Ficha ou da execução, como lida antes */
+                "If-Match": string;
+            };
+            path: {
+                org_id: string;
+                ficha_id: string;
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DadosAbandono"];
+            };
+        };
+        responses: {
+            /** @description Execução abandonada; não gera efeito */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Chave vazia ou corpo inválido */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+            /** @description Execução fora da Ficha ou da org */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+            /** @description Execução que já não está ativa, ou Ficha fechada (`ficha_encerrada`) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+            /** @description Versão da execução diferente da atual */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+            /** @description Falta o `If-Match` */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+        };
+    };
+    fichas_acao: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Versão atual da Ficha ou da execução, como lida antes */
+                "If-Match": string;
+            };
+            path: {
+                org_id: string;
+                ficha_id: string;
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DadosAcao"];
+            };
+        };
+        responses: {
+            /** @description Execução depois da ação; chave repetida devolve a execução atual, sem evento nem efeito novo */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Chave vazia ou campos inválidos (`campos_invalidos`) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+            /** @description Execução fora da Ficha ou da org */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+            /** @description Ação que só o agente pode fazer (`acao_invalida`) ou Ficha fechada (`ficha_encerrada`) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+            /** @description Versão da execução diferente da atual (corrida com o agente) */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+            /** @description Falta o `If-Match` */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+        };
+    };
+    fluxos_listar: {
+        parameters: {
+            query?: {
+                /** @description `active` ou `inactive` */
+                status?: string;
+                /** @description De 1 a 200; padrão 50 */
+                limit?: number;
+                /** @description `next_cursor` da página anterior */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                org_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Fluxos da org: `items` e `next_cursor` */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListaJson_Value"];
+                };
+            };
+            /** @description `status` ou `cursor` inválido */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+        };
+    };
+    fluxos_criar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DadosCriacao"];
+            };
+        };
+        responses: {
+            /** @description Fluxo criado com o rascunho; com `publish: true`, a revisão 1 sai junto */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Teto de fluxos da org atingido (`teto_de_fluxos_por_org`), com `details.flows` e `details.limit` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+            /** @description Script não passa na validação (`fluxo_invalido`), com a lista de diagnósticos; nada é gravado */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+        };
+    };
+    fluxos_formatar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DadosScript"];
+            };
+        };
+        responses: {
+            /** @description Script na forma canônica (`source`) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Corpo sem `source` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+            /** @description Script não compila (`fluxo_invalido`), com a lista de diagnósticos */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+        };
+    };
+    fluxos_validar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DadosScript"];
+            };
+        };
+        responses: {
+            /** @description Compila o script e devolve `valid`, a IR, os diagnósticos (com linha e coluna) e as resoluções de departamento; não grava nada */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Corpo sem `source` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+        };
+    };
+    fluxos_mostrar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_id: string;
+                flow_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Fluxo com o rascunho e a revisão que vale hoje (`null` se nunca publicou) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Fluxo inexistente ou de outra org */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+        };
+    };
+    fluxos_excluir: {
+        parameters: {
+            query?: {
+                /** @description `true` abandona as execuções ativas e exclui; padrão `false` */
+                force?: string;
+            };
+            header?: never;
+            path: {
+                org_id: string;
+                flow_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Fluxo excluído: `id`, `deleted` e `abandoned_runs` */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description `force` que não é `true` nem `false` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+            /** @description Fluxo inexistente ou de outra org */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+            /** @description Há execução ativa e `force` não veio; `details.active_runs` traz a contagem, nada é apagado */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+        };
+    };
+    fluxos_atualizar: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Versão atual da Ficha ou da execução, como lida antes */
+                "If-Match": string;
+            };
+            path: {
+                org_id: string;
+                flow_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DadosPatch"];
+            };
+        };
+        responses: {
+            /** @description Fluxo alterado (só os campos enviados mudam) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Corpo ou `status` inválido */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+            /** @description Fluxo inexistente ou de outra org */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+            /** @description Versão do fluxo diferente da atual */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+            /** @description Falta o `If-Match` */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+        };
+    };
+    fluxos_diff: {
+        parameters: {
+            query?: {
+                /** @description Número da revisão antiga (padrão: a atual menos 1) */
+                de?: string;
+                /** @description Número da revisão nova (padrão: a atual) */
+                para?: string;
+            };
+            header?: never;
+            path: {
+                org_id: string;
+                flow_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Frases do que mudou e, para cada revisão, quantas execuções ativas estão nela */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description `de` ou `para` que não são números de revisão */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+            /** @description Revisão inexistente ou fluxo de outra org */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+            /** @description Fluxo sem revisão publicada (`fluxo_nao_publicado`) ou IR que não confere com o texto (`ir_divergente`) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+        };
+    };
+    fluxos_preview: {
+        parameters: {
+            query?: {
+                /** @description Id da etapa; padrão: a etapa de início */
+                etapa?: string;
+            };
+            header?: never;
+            path: {
+                org_id: string;
+                flow_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Bloco do prompt que o agente veria naquela etapa, com a revisão usada */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Etapa inexistente no fluxo, ou fluxo de outra org */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+            /** @description IR que não confere com o texto publicado (`ir_divergente`) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+        };
+    };
+    fluxos_publicar: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Versão atual da Ficha ou da execução, como lida antes */
+                "If-Match": string;
+            };
+            path: {
+                org_id: string;
+                flow_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["DadosPublicacao"] | null;
+            };
+        };
+        responses: {
+            /** @description Revisão nova publicada: `revision`, `version` do fluxo e `warnings` */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description `source` em branco */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+            /** @description Fluxo inexistente ou de outra org */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+            /** @description Versão do fluxo diferente da atual; nada é gravado */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+            /** @description Script não passa na validação (`fluxo_invalido`), com a lista de diagnósticos; nada é gravado */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+            /** @description Falta o `If-Match` */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+        };
+    };
+    fluxos_listar_revisoes: {
+        parameters: {
+            query?: {
+                /** @description De 1 a 200; padrão 50 */
+                limit?: number;
+                /** @description Número da última revisão da página anterior */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                org_id: string;
+                flow_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Revisões em ordem de número: `items` e `next_cursor` */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListaJson_Value"];
+                };
+            };
+            /** @description `cursor` inválido */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+            /** @description Fluxo inexistente ou de outra org */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+        };
+    };
+    fluxos_mostrar_revisao: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_id: string;
+                flow_id: string;
+                /** @description Número da revisão */
+                number: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Revisão com o texto publicado, a IR, o hash e as resoluções */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Número que não é de revisão */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+            /** @description Revisão inexistente ou fluxo de outra org */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -251,7 +251,7 @@ pub async fn turnos(
     Ok(Json(ListaJson { items, next_cursor }))
 }
 
-#[utoipa::path(post, path="/admin/v1/orgs/{org_id}/conversations/{conversation_id}/reopen", tag="conversations", operation_id="conversas_reabrir", security(("bearer"=[])), params(("org_id"=String, Path), ("conversation_id"=String, Path), ("If-Match"=String, Header)), responses((status=200, description="Conversa reaberta", body=Value), (status=412, description="Versão desatualizada", body=crate::erro::RespostaErro)))]
+#[utoipa::path(post, path="/admin/v1/orgs/{org_id}/conversations/{conversation_id}/reopen", tag="conversations", operation_id="conversas_reabrir", security(("bearer"=[])), params(("org_id"=String, Path), ("conversation_id"=String, Path), ("If-Match"=String, Header)), responses((status=200, description="Conversa reaberta", body=Value), (status=409, description="Conversa encerrada (`conversa_encerrada`): não reabre; nada muda", body=crate::erro::RespostaErro), (status=412, description="Versão desatualizada", body=crate::erro::RespostaErro)))]
 pub async fn reabrir(
     State(e): State<Estado>,
     ident: Identidade,
