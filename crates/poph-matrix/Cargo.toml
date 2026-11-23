@@ -26,6 +26,9 @@ futures = "0.3"
 tracing.workspace = true
 
 [dev-dependencies]
+# Tipo real do arquivo que vai ao cliente (MX-48): o teste contra o Synapse real classifica o que
+# baixou. Caminho local, sem dependência nova de fora.
+poph-files = { path = "../poph-files" }
 # Servidor `axum` de teste que imita o Synapse (mesma versão do `poph-server`, já no Cargo.lock).
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 tokio = { version = "1.54", features = ["rt-multi-thread", "macros", "time", "net"] }

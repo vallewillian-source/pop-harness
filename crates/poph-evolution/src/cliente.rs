@@ -370,7 +370,14 @@ impl ClienteEvolution {
         Ok(id_da_mensagem_enviada(&resposta))
     }
 
-    /// Envia um arquivo (documento ou imagem) por base64.
+    /// Envia um arquivo (imagem, documento, áudio ou vídeo) por base64.
+    ///
+    /// O `mediatype` do `sendMedia` sai do MIME: imagem vira `image`, e **todo o resto** vira
+    /// `document` — inclusive áudio e vídeo, que desde a MX-48 podem sair do Element. É de propósito:
+    /// a rota própria de voz da Evolution (`sendWhatsAppAudio`) exige formato e `ptt` específicos e
+    /// não foi provada contra a Evolution de verdade, e um áudio ou vídeo entregue como documento
+    /// chega ao cliente de qualquer jeito (o `mimetype` real vai junto). O que se perde é só o
+    /// tocador nativo do WhatsApp: o arquivo abre depois de baixar.
     pub async fn enviar_midia(
         &self,
         numero: &str,

@@ -370,3 +370,132 @@ async fn a_midia_da_sala_desce_inteira_pelo_cliente_do_matrix() {
         sala = pronta.room_id
     );
 }
+
+/// Áudio OGG com cabeçalho de Opus: o formato da gravação de voz do Element (MX-48).
+const AUDIO_OGG: &[u8] = &[
+    0x4f, 0x67, 0x67, 0x53, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x01, 0x00, 0x00, 0x00, 0x4f, 0x70, 0x75, 0x73, 0x48, 0x65, 0x61, 0x64, 0x01, 0x02, 0x38, 0x01,
+    0x80, 0xbb, 0x00, 0x00,
+];
+
+/// Vídeo MP4 mínimo (`ftyp` com a marca `isom`), para a MX-48.
+const VIDEO_MP4: &[u8] = &[
+    0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d, 0x00, 0x00, 0x02, 0x00,
+    0x69, 0x73, 0x6f, 0x6d, 0x69, 0x73, 0x6f, 0x32,
+];
+
+#[tokio::test]
+#[ignore = "precisa do Synapse de desenvolvimento da MX-01 no ar"]
+async fn audio_e_video_do_atendente_sobem_e_descem_inteiros() {
+    // MX-48: áudio e vídeo do atendente passaram a sair para o cliente. O que o Synapse falso não
+    // prova é o servidor de verdade aceitar o upload e o download de um `audio/ogg` e de um
+    // `video/mp4` em nome do fantasma do agente — e o tipo que sai do conteúdo baixado continuar
+    // sendo o esperado pela lista fechada de saída (`poph_files::envio`).
+    let base = credencial("POPH_MATRIX_DEV_BASE_URL");
+    let server_name = credencial("POPH_MATRIX_DEV_SERVER_NAME");
+    let token = credencial("POPH_MATRIX_DEV_HARNESS_AS_TOKEN");
+    let config = MatrixConfig {
+        habilitado: true,
+        homeserver_url: base,
+        server_name: server_name.clone(),
+        prefixo: "ph".to_owned(),
+        ..MatrixConfig::default()
+    };
+    let cliente = ClienteMatrix::novo(
+        ConfigCliente::novo(
+            config.homeserver_url.clone(),
+            server_name.clone(),
+            Segredo::new(token),
+        )
+        .expect("configuração do cliente"),
+    )
+    .expect("cliente");
+    let provisionador = Provisionador::da_config(cliente.clone(), PortaMemoria::default(), &config)
+        .expect("provisionador");
+
+    let marca = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("relógio")
+        .as_secs();
+    let peer = format!("5522{marca}");
+    let dados = ConversaParaSala {
+        org: OrgId::generate(),
+        conversa: ConversationId::generate(),
+        cliente: peer.clone(),
+        nome_cliente: Some(format!("Cliente MX-48 {marca}")),
+        agente: AgentId::generate(),
+        nome_agente: Some("Agente de Teste".to_owned()),
+        canal: "whatsapp".to_owned(),
+        departamento: None,
+        fechada: false,
+        corte_backfill: None,
+    };
+    let pronta = provisionador
+        .provisionar(&dados)
+        .await
+        .expect("sala criada contra o Synapse real");
+    let ids = poph_matrix::usuarios::IdsFantasmas::novo("ph", server_name.clone()).expect("ids");
+    let remetente = ids
+        .agente(&dados.agente.to_string())
+        .expect("fantasma do agente");
+
+    for (evento, nome, mime, bytes) in [
+        ("m.audio", "voice-message.ogg", "audio/ogg", AUDIO_OGG),
+        ("m.video", "video.mp4", "video/mp4", VIDEO_MP4),
+    ] {
+        let mxc = cliente
+            .enviar_midia(remetente.user_id(), nome, mime, bytes)
+            .await
+            .unwrap_or_else(|erro| panic!("[{nome}] o Synapse real recusou o upload ({erro:?})"));
+        let conteudo = serde_json::json!({
+            "msgtype": evento,
+            "body": nome,
+            "filename": nome,
+            "url": mxc,
+            "info": { "mimetype": mime, "size": bytes.len() },
+        });
+        let publicado = cliente
+            .enviar_evento(
+                remetente.user_id(),
+                &pronta.room_id,
+                "m.room.message",
+                &format!("ph-mx48-{marca}-{nome}"),
+                &conteudo,
+            )
+            .await
+            .unwrap_or_else(|erro| panic!("[{nome}] o evento não foi publicado ({erro:?})"));
+
+        let baixado = cliente
+            .baixar_midia(
+                remetente.user_id(),
+                &mxc,
+                poph_matrix::midia::LIMITE_MIDIA_BYTES,
+            )
+            .await
+            .unwrap_or_else(|erro| {
+                panic!("[{nome}] o Synapse real não entregou a mídia ({erro:?})")
+            });
+        assert_eq!(baixado, bytes, "[{nome}] o conteúdo desce inteiro");
+
+        // O tipo do que desceu, pela lista fechada de saída: é o que o Harness usa para decidir o
+        // que vai ao cliente.
+        let tipo = poph_files::envio::classificar(&baixado, nome)
+            .unwrap_or_else(|erro| panic!("[{nome}] o tipo baixado foi recusado ({erro:?})"));
+        let familia_esperada = if evento == "m.audio" {
+            poph_files::FamiliaEnvio::Audio
+        } else {
+            poph_files::FamiliaEnvio::Video
+        };
+        assert_eq!(
+            tipo.familia(),
+            familia_esperada,
+            "[{nome}] família do conteúdo"
+        );
+        assert_eq!(tipo.mime(), mime, "[{nome}] MIME do conteúdo");
+
+        println!(
+            "MX-48 no Synapse real: {nome} publicado como {publicado} na sala {} e baixado inteiro",
+            pronta.room_id
+        );
+    }
+}

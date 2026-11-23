@@ -4,7 +4,8 @@
 //! que o **atendente** manda pelo Element desce do Synapse e vira mensagem para o WhatsApp. O evento
 //! chega ao Application Service (`m.image`, `m.file`, `m.audio`, `m.video`), o Harness baixa o
 //! arquivo da sala, confere o tipo pelo conteúdo e deixa na fila de saída o item `file` que a
-//! Evolution entrega.
+//! Evolution entrega. Áudio e vídeo entraram na MX-48: o vetor é o mesmo, e o tipo real vem de
+//! `poph_files::envio` (lista fechada de saída, separada da lista de entrada).
 //!
 //! ## O que fica aqui
 //!
@@ -54,7 +55,8 @@ pub enum MotivoNaoEnviar {
     Grande,
     /// O arquivo tem zero byte.
     Vazio,
-    /// O tipo real do conteúdo não é um dos aceitos (imagem, PDF, Office).
+    /// O tipo real do conteúdo não está na lista fechada de saída (imagem, PDF, Office, áudio,
+    /// vídeo).
     TipoRecusado,
     /// O evento de mídia não trouxe o `content_uri` (`mxc://…`), ou ele não serve.
     SemArquivo,
@@ -85,7 +87,7 @@ impl MotivoNaoEnviar {
             Self::Grande => "o arquivo passa de 16 MB",
             Self::Vazio => "o arquivo está vazio",
             Self::TipoRecusado => {
-                "o tipo deste arquivo não é aceito (o cliente recebe imagem, PDF e Office)"
+                "o tipo deste arquivo não é aceito (o cliente recebe imagem, PDF, Office, áudio e vídeo)"
             }
             Self::SemArquivo => "o evento não trouxe o arquivo",
             Self::Indisponivel => "não consegui baixar o arquivo da sala",
@@ -94,19 +96,18 @@ impl MotivoNaoEnviar {
     }
 }
 
-/// Nome que o arquivo leva ao cliente: o do evento, ou um padrão quando ele não veio.
+/// Nome que o arquivo leva ao cliente: o do evento, ou o padrão de quem chama quando ele não veio.
 ///
-/// O padrão depende do tipo **real** (imagem ou documento), não do `msgtype` do evento: um PDF
-/// mandado como `m.image` continua sendo documento.
-pub fn nome_do_arquivo(nome: &str, imagem: bool) -> String {
+/// O padrão depende do tipo **real** ([`poph_files::TipoEnvio::nome_padrao`]), não do `msgtype` do
+/// evento: um PDF mandado como `m.image` continua sendo documento, e um áudio mandado como
+/// `m.file` continua sendo áudio. Quem chama passa o padrão porque este crate não conhece o
+/// `poph-files` — e não precisa conhecer: o nome padrão é dado de apresentação, não regra.
+pub fn nome_do_arquivo(nome: &str, padrao: &str) -> String {
     let limpo = nome.trim();
-    if !limpo.is_empty() {
-        return limpo.to_owned();
-    }
-    if imagem {
-        "imagem".to_owned()
+    if limpo.is_empty() {
+        padrao.to_owned()
     } else {
-        "arquivo".to_owned()
+        limpo.to_owned()
     }
 }
 
@@ -194,9 +195,11 @@ mod testes {
     }
 
     #[test]
-    fn nome_vazio_ganha_o_padrao_do_tipo_real() {
-        assert_eq!(nome_do_arquivo("  laudo.pdf ", false), "laudo.pdf");
-        assert_eq!(nome_do_arquivo("", true), "imagem");
-        assert_eq!(nome_do_arquivo("   ", false), "arquivo");
+    fn nome_vazio_ganha_o_padrao_de_quem_chama() {
+        assert_eq!(nome_do_arquivo("  laudo.pdf ", "arquivo"), "laudo.pdf");
+        assert_eq!(nome_do_arquivo("", "imagem"), "imagem");
+        assert_eq!(nome_do_arquivo("   ", "arquivo"), "arquivo");
+        assert_eq!(nome_do_arquivo("", "audio"), "audio");
+        assert_eq!(nome_do_arquivo("", "video"), "video");
     }
 }

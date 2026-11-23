@@ -87,6 +87,22 @@ const PDF: &[u8] =
 /// ZIP qualquer: tipo que o Harness não envia ao cliente (o `poph-files` recusa compactado).
 const ZIP: &[u8] = b"PK\x03\x04\x14\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00";
 
+/// Áudio OGG com cabeçalho `OpusHead`: o formato da gravação de voz do Element (MX-48).
+///
+/// Bytes fixos de fixture, sem áudio de ninguém: o teste só precisa que o conteúdo seja
+/// reconhecido como áudio e que chegue inteiro ao outro lado.
+const AUDIO_OGG: &[u8] = &[
+    0x4f, 0x67, 0x67, 0x53, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x01, 0x00, 0x00, 0x00, 0x4f, 0x70, 0x75, 0x73, 0x48, 0x65, 0x61, 0x64, 0x01, 0x02, 0x38, 0x01,
+    0x80, 0xbb, 0x00, 0x00,
+];
+
+/// Vídeo MP4 mínimo: caixa `ftyp` com a marca `isom` (MX-48). Também sem conteúdo de ninguém.
+const VIDEO_MP4: &[u8] = &[
+    0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d, 0x00, 0x00, 0x02, 0x00,
+    0x69, 0x73, 0x6f, 0x6d, 0x69, 0x73, 0x6f, 0x32,
+];
+
 // ───────────────────────────────── Synapse falso ─────────────────────────────────
 
 /// Um evento de mensagem que o Harness escreveu na sala (o aviso ao atendente, por exemplo).
@@ -1121,7 +1137,7 @@ async fn tipo_recusado_vira_aviso_na_sala_e_nao_e_enviado() {
     .await;
     assert_eq!(
         unico_aviso(&cenario),
-        "Não consegui enviar o arquivo ao cliente: o tipo deste arquivo não é aceito (o cliente recebe imagem, PDF e Office)"
+        "Não consegui enviar o arquivo ao cliente: o tipo deste arquivo não é aceito (o cliente recebe imagem, PDF, Office, áudio e vídeo)"
     );
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert!(
@@ -1266,4 +1282,166 @@ async fn synapse_fora_nao_vira_aviso_e_volta_no_reenvio() {
     })
     .await;
     assert_eq!(cenario.messages().len(), 1, "uma mensagem, no reenvio");
+}
+
+/// MX-48: áudio e vídeo do atendente saem para o cliente pelo mesmo caminho da imagem, sem aviso
+/// de tipo não aceito.
+///
+/// Antes, os dois caíam em "tipo não aceito" e só aparecia o aviso na sala. O tipo real continua
+/// vindo do conteúdo (a lista fechada de saída do `poph-files`), e o que muda para o cliente é que
+/// o arquivo chega: a Evolution recebe um `sendMedia` com o `mimetype` real, entregue como
+/// documento (o tocador nativo do WhatsApp exigiria a rota de voz, que não foi provada no ambiente
+/// real).
+#[tokio::test]
+async fn audio_e_video_do_atendente_chegam_ao_whatsapp_sem_aviso() {
+    let cenario = Cenario::novo("audio-video").await;
+    let servidor = cenario.subir().await;
+    let url_audio = cenario.publicar("ogg-mx48", AUDIO_OGG);
+    let url_video = cenario.publicar("mp4-mx48", VIDEO_MP4);
+
+    let transacao = json!({
+        "events": [
+            {
+                "type": "m.room.message",
+                "room_id": SALA,
+                "sender": ATENDENTE,
+                "event_id": "$audio-mx48:matrix-dev.local",
+                "content": {
+                    "msgtype": "m.audio",
+                    "body": "voice-message.ogg",
+                    "filename": "voice-message.ogg",
+                    "url": url_audio,
+                    "info": { "mimetype": "audio/ogg", "size": AUDIO_OGG.len() }
+                }
+            },
+            {
+                "type": "m.room.message",
+                "room_id": SALA,
+                "sender": ATENDENTE,
+                "event_id": "$video-mx48:matrix-dev.local",
+                "content": {
+                    "msgtype": "m.video",
+                    "body": "video.mp4",
+                    "filename": "video.mp4",
+                    "url": url_video,
+                    "info": { "mimetype": "video/mp4", "size": VIDEO_MP4.len() }
+                }
+            }
+        ]
+    });
+
+    let status = servidor.transacao("txn-mx48", &transacao).await;
+    assert_eq!(status, StatusHttp::OK);
+
+    esperar("o áudio e o vídeo saírem para o cliente", || {
+        cenario
+            .envios()
+            .iter()
+            .filter(|envio| envio.rota == "sendMedia")
+            .count()
+            == 2
+    })
+    .await;
+
+    let envios = cenario.envios();
+    let midias: Vec<&Envio> = envios
+        .iter()
+        .filter(|envio| envio.rota == "sendMedia")
+        .collect();
+    let (audio, video) = (midias[0], midias[1]);
+
+    // Áudio: documento com o MIME real e a legenda do atendente; os bytes chegam inteiros.
+    assert_eq!(audio.corpo["mediatype"], json!("document"));
+    assert_eq!(audio.corpo["mimetype"], json!("audio/ogg"));
+    assert_eq!(audio.corpo["fileName"], json!("voice-message.ogg"));
+    assert_eq!(audio.corpo["number"], json!(TELEFONE));
+    assert_eq!(audio.corpo["caption"], json!("*[Ana Atendente]*"));
+    let enviado = decodificar_base64(audio.corpo["media"].as_str().expect("mídia em base64"));
+    assert_eq!(enviado, AUDIO_OGG, "o áudio chega inteiro ao cliente");
+
+    // Vídeo: mesmo caminho, `video/mp4`.
+    assert_eq!(video.corpo["mediatype"], json!("document"));
+    assert_eq!(video.corpo["mimetype"], json!("video/mp4"));
+    assert_eq!(video.corpo["fileName"], json!("video.mp4"));
+    assert_eq!(video.corpo["caption"], json!("*[Ana Atendente]*"));
+    let enviado = decodificar_base64(video.corpo["media"].as_str().expect("mídia em base64"));
+    assert_eq!(enviado, VIDEO_MP4, "o vídeo chega inteiro ao cliente");
+
+    // Nenhum aviso de tipo não aceito na sala: os dois arquivos foram.
+    assert!(
+        cenario.avisos_na_sala().is_empty(),
+        "áudio e vídeo não podem virar aviso: {:?}",
+        cenario.avisos_na_sala()
+    );
+
+    // O download continua saindo em nome do fantasma do agente (regra da MX-44).
+    let fantasma = cenario.fantasma_do_agente();
+    assert_eq!(
+        cenario.downloads(),
+        vec![Some(fantasma.clone()), Some(fantasma)],
+        "um download por arquivo, os dois disfarçados do fantasma do agente"
+    );
+    assert_eq!(
+        cenario.recusas_de_disfarce(),
+        0,
+        "nenhum pedido recusado por disfarce fora do namespace do AS"
+    );
+
+    // Histórico: duas mensagens `human` com o anexo do tipo real e o blob no disco.
+    let mensagens = cenario.messages();
+    assert_eq!(mensagens.len(), 2);
+    for (indice, (nome, mime, tamanho)) in [
+        ("voice-message.ogg", "audio/ogg", AUDIO_OGG.len()),
+        ("video.mp4", "video/mp4", VIDEO_MP4.len()),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mensagem = &mensagens[indice];
+        assert_eq!(mensagem.origem, Origem::Humano);
+        assert_eq!(mensagem.autor_nome.as_deref(), Some(NOME_ATENDENTE));
+        let anexos = cenario.anexos(indice);
+        assert_eq!(anexos.len(), 1, "cada mensagem leva o seu anexo");
+        assert_eq!(anexos[0].nome, nome);
+        assert_eq!(anexos[0].mime, mime);
+        assert_eq!(anexos[0].tamanho_bytes, tamanho as u64);
+        assert_eq!(anexos[0].status_extracao, "skipped");
+        let blob = cenario.pasta_blobs.join(&anexos[0].blob_path);
+        assert!(blob.is_file(), "o blob ficou no disco: {}", blob.display());
+    }
+
+    // Fila de saída: dois itens `file`, com o MIME real no payload do HR-24.
+    let arquivos = cenario.arquivos_na_fila();
+    assert_eq!(arquivos.len(), 2);
+    for (item, mime) in arquivos.iter().zip(["audio/ogg", "video/mp4"]) {
+        assert_eq!(item.tipo, "file");
+        let payload: Value = serde_json::from_str(&item.conteudo_json).expect("payload em JSON");
+        assert_eq!(payload["mime"], json!(mime));
+        assert_eq!(payload["legenda"], json!("**[Ana Atendente]**"));
+    }
+
+    // Reentrega do mesmo lote numa transação nova: o evento é o mesmo, então nada é enviado de novo.
+    let status = servidor.transacao("txn-mx48-2", &transacao).await;
+    assert_eq!(status, StatusHttp::OK);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(
+        cenario
+            .envios()
+            .into_iter()
+            .filter(|envio| envio.rota == "sendMedia")
+            .count(),
+        2,
+        "reentrega de áudio e vídeo não manda os arquivos de novo"
+    );
+    assert_eq!(cenario.messages().len(), 2, "duas mensagens no histórico");
+    assert_eq!(cenario.arquivos_na_fila().len(), 2, "dois itens na fila");
+    assert_eq!(
+        servidor
+            .entrega
+            .contadores()
+            .duplicadas
+            .load(Ordering::SeqCst),
+        2,
+        "os dois eventos da transação nova foram reconhecidos como duplicados"
+    );
 }

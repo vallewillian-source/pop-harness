@@ -9,7 +9,8 @@
 //!   (mensagem + fila de saída + conversa `transferred` + auditoria, numa escrita só), com o id do
 //!   evento como chave de idempotência;
 //! - `MidiaDoAtendente` → o arquivo do atendente vai ao cliente (MX-44): baixa o conteúdo do
-//!   Synapse com teto de bytes e sem seguir redirecionamento, confere o tipo **pelo conteúdo**,
+//!   Synapse com teto de bytes e sem seguir redirecionamento, confere o tipo **pelo conteúdo**
+//!   (`poph_files::envio`, a lista fechada de saída — imagem, PDF, Office, áudio e vídeo),
 //!   grava como blob da org e chama a operação atômica da MX-44 (mensagem `human` com anexo + item
 //!   `file` na fila + conversa `transferred` + auditoria, numa escrita só). O que não dá para
 //!   enviar (arquivo grande, tipo recusado, mídia que o Synapse não entrega mais) vira um aviso em
@@ -827,7 +828,10 @@ impl RespostaDoAtendente {
         };
 
         // Tipo real, pelo conteúdo: o `mimetype` do evento é do cliente e não vale como prova.
-        let tipo_real = match poph_files::tipo::classificar(&bytes, nome) {
+        //
+        // A lista é a de **saída** (`envio`), não a de entrada: o arquivo do atendente é entregue,
+        // não lido. É ela que aceita áudio e vídeo (MX-48) sem afrouxar o que o cliente pode mandar.
+        let tipo_real = match poph_files::envio::classificar(&bytes, nome) {
             Ok(tipo) => tipo,
             Err(_) => {
                 self.avisar_de_midia(
@@ -864,7 +868,7 @@ impl RespostaDoAtendente {
             }
         };
 
-        let nome_arquivo = midia_atendente::nome_do_arquivo(nome, tipo_real.eh_imagem());
+        let nome_arquivo = midia_atendente::nome_do_arquivo(nome, tipo_real.nome_padrao());
         let nome_atendente = self.nome_do_atendente(remetente).await;
         let legenda = legenda_do_arquivo(&nome_atendente);
         let blob_ref = format!("{}/{}", alvo.org, gravado.sha256);

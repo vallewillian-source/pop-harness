@@ -142,7 +142,7 @@ impl Recusa {
 }
 
 /// Extensões que são de programa ou script: recusadas mesmo que o conteúdo pareça outra coisa.
-const EXTENSOES_BLOQUEADAS: &[&str] = &[
+pub(crate) const EXTENSOES_BLOQUEADAS: &[&str] = &[
     "exe", "dll", "so", "com", "scr", "msi", "bat", "cmd", "ps1", "vbs", "vbe", "js", "jse", "wsf",
     "sh", "bash", "py", "pl", "rb", "php", "jar", "apk", "app", "deb", "rpm", "dmg", "elf",
 ];
@@ -261,7 +261,7 @@ fn detectar(bytes: &[u8]) -> Result<Tipo, Recusa> {
 ///
 /// Não abre o ZIP aqui: a leitura de verdade é feita no processo isolado. Se o nome for falso,
 /// o leitor isolado falha e o arquivo é recusado.
-fn office_pelo_pacote(bytes: &[u8]) -> Option<Tipo> {
+pub(crate) fn office_pelo_pacote(bytes: &[u8]) -> Option<Tipo> {
     let contem = |nome: &[u8]| bytes.windows(nome.len()).any(|janela| janela == nome);
     if contem(b"word/document.xml") {
         Some(Tipo::Docx)
@@ -299,7 +299,7 @@ fn familia_da_extensao(ext: &str) -> Option<Familia> {
 }
 
 /// Extensão do nome em minúsculas, sem o ponto. `None` se não houver.
-fn extensao_minuscula(nome: &str) -> Option<String> {
+pub(crate) fn extensao_minuscula(nome: &str) -> Option<String> {
     let nome_limpo = nome.rsplit(['/', '\\']).next().unwrap_or(nome);
     let (_, ext) = nome_limpo.rsplit_once('.')?;
     if ext.is_empty() || ext.len() > 16 {
