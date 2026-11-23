@@ -50,7 +50,7 @@ pub use cache::{
 pub use compilador::{Compilado, FalhaCarregamento, Limites, carregar, compilar};
 pub use diagnostico::{Codigo, Diagnostico, Severidade};
 pub use diff::{Impacto, Mudanca, TipoMudanca, diferenca};
-pub use formatador::{FalhaDeFormato, LARGURA, formatar, imprimir};
+pub use formatador::{FalhaDeFormato, LARGURA, formatar, formatar_com, imprimir};
 pub use ir::Ir;
 pub use motor::{
     Campos, Contexto, EfeitoProduzido, Estado, Evento, MAX_SALTOS_DECISAO, Recibo, Resultado,

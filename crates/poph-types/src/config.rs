@@ -280,7 +280,8 @@ pub struct FluxosConfig {
     pub ativo: bool,
     /// Fluxos publicados por org (teto). Entre 1 e 10000; padrão 100.
     pub max_fluxos_por_org: u32,
-    /// Tamanho máximo do script de um fluxo, em bytes. Entre 1024 e 1048576; padrão 65536.
+    /// Tamanho máximo do script de um fluxo, em bytes. Entre 1024 e 1048576; padrão 32768 (decisão
+    /// D1 de `docs/FLUXOS_LINGUAGEM.md`; o PRD §9 traz 65536 e está pendente de atualização).
     pub max_fonte_bytes: u64,
     /// Etapas, decisões e fins por fluxo. Entre 1 e 60 (o compilador não aceita mais que 60 nós).
     pub max_nos: u32,
@@ -302,7 +303,7 @@ impl Default for FluxosConfig {
         Self {
             ativo: true,
             max_fluxos_por_org: 100,
-            max_fonte_bytes: 65_536,
+            max_fonte_bytes: 32_768,
             max_nos: 60,
             max_dados_bytes: 65_536,
             max_ticks_regra: 10_000,
@@ -1821,7 +1822,7 @@ mod testes_fluxos {
         let padrao = FluxosConfig::default();
         assert!(padrao.ativo);
         assert_eq!(padrao.max_fluxos_por_org, 100);
-        assert_eq!(padrao.max_fonte_bytes, 65_536);
+        assert_eq!(padrao.max_fonte_bytes, 32_768);
         assert_eq!(padrao.max_nos, 60);
         assert_eq!(padrao.max_dados_bytes, 65_536);
         assert_eq!(padrao.max_ticks_regra, 10_000);

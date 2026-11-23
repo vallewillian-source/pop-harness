@@ -18,11 +18,14 @@ use std::time::Duration;
 
 pub(crate) mod forma;
 
+use poph_types::config::FluxosConfig;
+
 use crate::diagnostico::{Codigo, Diagnostico};
 use crate::ir::Ir;
 use crate::linguagem::{LimitesStarlark, analisa, carregar_modulo};
 
-/// Teto de tamanho da fonte (32 KB), `FLUXOS_LINGUAGEM.md` §3.4.
+/// Teto padrão de tamanho da fonte: 32 KB (32.768 bytes), `FLUXOS_LINGUAGEM.md` §3.4 e decisão D1.
+/// É o padrão de `fluxos.max_fonte_bytes`; o PRD §9 ainda traz 65536 (pendência P14).
 pub const MAX_FONTE_BYTES: usize = 32 * 1024;
 /// Teto de ticks da carga.
 pub const MAX_TICKS: u64 = 5_000_000;
@@ -41,6 +44,8 @@ pub const PRAZO_DE_CARGA: Duration = Duration::from_secs(1);
 pub struct Limites {
     /// Tamanho máximo da fonte, em bytes; acima disso o script é recusado antes do parse.
     pub max_fonte_bytes: usize,
+    /// Etapas + decisões + fins por fluxo; acima disso a publicação é recusada (`FLX27`).
+    pub max_nos: usize,
     /// Ticks da carga (conta cada passo da avaliação do módulo).
     pub max_ticks: u64,
     /// Heap máximo da carga, em bytes.
@@ -55,6 +60,7 @@ impl Default for Limites {
     fn default() -> Self {
         Self {
             max_fonte_bytes: MAX_FONTE_BYTES,
+            max_nos: forma::MAX_NOS,
             max_ticks: MAX_TICKS,
             max_heap_bytes: MAX_HEAP_BYTES,
             max_callstack: MAX_CALLSTACK,
@@ -64,6 +70,20 @@ impl Default for Limites {
 }
 
 impl Limites {
+    /// Os limites de compilação que a configuração `[fluxos]` do processo define (FX-26b).
+    ///
+    /// É o único ponto que converte a configuração em limites do compilador: quem compila ou
+    /// carrega revisão no servidor passa por aqui. Campos sem chave em `[fluxos]` (ticks e heap da
+    /// carga do módulo, callstack, prazo) ficam nos valores de [`Limites::default`]. Os limites de
+    /// avaliação de regra vêm de [`crate::regras::LimitesRegra::da_config`].
+    pub fn da_config(fluxos: &FluxosConfig) -> Self {
+        Self {
+            max_fonte_bytes: usize::try_from(fluxos.max_fonte_bytes).unwrap_or(usize::MAX),
+            max_nos: usize::try_from(fluxos.max_nos).unwrap_or(usize::MAX),
+            ..Self::default()
+        }
+    }
+
     fn starlark(&self) -> LimitesStarlark {
         LimitesStarlark {
             max_ticks: self.max_ticks,
@@ -173,6 +193,25 @@ pub fn compilar(fonte: &str, limites: &Limites) -> Compilado {
 
     let (ir, mut de_forma) = forma::compila(fonte, &modulo);
     diagnosticos.append(&mut de_forma);
+
+    // Teto de nós da configuração (`fluxos.max_nos`). O teto de forma (60) já foi conferido pela
+    // leitura da árvore; aqui vale o limite do processo, que pode ser menor.
+    let ir = match ir {
+        Some(ir) if ir.etapas.len() + ir.decisoes.len() + ir.fins.len() > limites.max_nos => {
+            let nos = ir.etapas.len() + ir.decisoes.len() + ir.fins.len();
+            diagnosticos.push(Diagnostico::erro(
+                Codigo::NosDemais,
+                format!(
+                    "O fluxo tem {nos} nós e o limite é {}. Junte etapas parecidas ou divida o fluxo.",
+                    limites.max_nos
+                ),
+                1,
+                1,
+            ));
+            None
+        }
+        outro => outro,
+    };
 
     // Última barreira: com a forma válida, o módulo tem de carregar de verdade (é o que o motor
     // faz na execução). Aqui os limites estão ligados; sem erro de forma, o único erro possível é

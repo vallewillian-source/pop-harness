@@ -124,7 +124,17 @@ impl std::error::Error for FalhaDeFormato {}
 /// Script que não compila devolve [`FalhaDeFormato`] — sintaxe, forma, limite ou estrutura — e
 /// **nenhum texto**. Aviso não impede formatar.
 pub fn formatar(fonte: &str) -> Result<String, FalhaDeFormato> {
-    let compilado = compilar(fonte, &Limites::default());
+    formatar_com(fonte, &Limites::default())
+}
+
+/// Como [`formatar`], com os limites do processo (`fluxos.max_fonte_bytes`, `fluxos.max_nos`), que
+/// quem chama do servidor lê com [`Limites::da_config`] (FX-26b).
+///
+/// # Erros
+///
+/// O mesmo de [`formatar`].
+pub fn formatar_com(fonte: &str, limites: &Limites) -> Result<String, FalhaDeFormato> {
+    let compilado = compilar(fonte, limites);
     let Some(ir) = compilado.ir else {
         return Err(FalhaDeFormato {
             diagnosticos: compilado.diagnosticos,

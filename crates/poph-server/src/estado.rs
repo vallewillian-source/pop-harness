@@ -9,7 +9,9 @@ use argon2::password_hash::PasswordHash;
 use poph_agent::entrada_saida::Fluxo;
 use poph_agent::turno::Motor;
 use poph_files::ConfigArquivos;
-use poph_fluxos::CacheRevisoes;
+use poph_fluxos::{
+    CacheRevisoes, ChaveRevisao, Compilado, FalhaCarregamento, Ir, Limites, compilar,
+};
 use poph_store::Store;
 use poph_types::{ConversationId, HarnessConfig, MetricasBase, OrgId, Registro};
 
@@ -176,6 +178,28 @@ impl Estado {
     /// Métricas `poph_fluxos_*` (FX-26). `None` quando o motor de fluxos está desligado.
     pub fn metricas_fluxos(&self) -> Option<Arc<MetricasFluxos>> {
         self.metricas_fluxos.clone()
+    }
+
+    /// Compila o script de um fluxo com os tetos da configuração `[fluxos]` (FX-26b): tamanho do
+    /// script e nós por fluxo. É a porta de compilação do servidor; não usa o padrão do compilador.
+    pub fn compilar_fluxo(&self, fonte: &str) -> Compilado {
+        compilar(fonte, &Limites::da_config(&self.config.fluxos))
+    }
+
+    /// Carrega uma revisão de fluxo pelo cache do processo (FX-19), com os tetos da configuração
+    /// `[fluxos]` (FX-26b). Falha com o mesmo erro tipado de [`CacheRevisoes::carregar`].
+    pub fn carregar_revisao_de_fluxo(
+        &self,
+        chave: &ChaveRevisao,
+        ir_gravada: &Ir,
+        fonte: &str,
+    ) -> Result<Arc<Ir>, FalhaCarregamento> {
+        self.cache_fluxos.carregar(
+            chave,
+            ir_gravada,
+            fonte,
+            &Limites::da_config(&self.config.fluxos),
+        )
     }
 
     /// Registra um nonce de encaminhamento recebido (HR-50b).

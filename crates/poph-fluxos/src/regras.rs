@@ -55,6 +55,7 @@ use starlark::values::dict::AllocDict;
 use starlark::values::list::AllocList;
 
 use poph_types::DomainError;
+use poph_types::config::FluxosConfig;
 
 use crate::compilador::Limites;
 use crate::ir::Regra;
@@ -120,6 +121,18 @@ impl Default for LimitesRegra {
             max_heap_bytes: MAX_HEAP_REGRA_BYTES,
             max_callstack: MAX_CALLSTACK_REGRA,
             prazo: PRAZO_DA_REGRA,
+        }
+    }
+}
+
+impl LimitesRegra {
+    /// Os limites de uma avaliação de regra que a configuração `[fluxos]` define (FX-26b):
+    /// `fluxos.max_ticks_regra` e `fluxos.max_heap_regra`. Callstack e prazo ficam no padrão.
+    pub fn da_config(fluxos: &FluxosConfig) -> Self {
+        Self {
+            max_ticks: fluxos.max_ticks_regra,
+            max_heap_bytes: usize::try_from(fluxos.max_heap_regra).unwrap_or(usize::MAX),
+            ..Self::default()
         }
     }
 }
