@@ -18,21 +18,43 @@
 //! As rotas ainda não estão no OpenAPI: a documentação delas (inventário de `docs/API.md` e
 //! `schema.d.ts`) é a FX-32.
 
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
 use axum::{
     Json,
-    extract::{Path, Query, State},
+    extract::{Path, Query, State, rejection::JsonRejection},
+    http::{HeaderMap, StatusCode},
 };
-use poph_store::{EtapaDaExecucao, EventoFicha, Execucao, Ficha, FiltroFichas, Fluxo};
-use poph_types::{AgentId, FichaId, OrgId, StatusFicha};
+use poph_fluxos::cache::ChaveRevisao;
+use poph_fluxos::ir::Destino;
+use poph_fluxos::motor::{
+    Campos, Contexto, Estado as EstadoMotor, abandonar as abandonar_motor, efeitos_de_entrada,
+    executar_acao, iniciar,
+};
+use poph_fluxos::{Avaliador, Dados, Ir, Limites, LimitesRegra};
+use poph_store::{
+    ErroStore, EtapaDaExecucao, EventoFicha, Execucao, ExtrasDaTransicao, Ficha, FiltroFichas,
+    Fluxo, InicioDeExecucao, RevisaoDeFluxo,
+};
+use poph_types::{
+    AgentId, AtorAcao, AtorEvento, DomainError, ExecucaoId, FechadaPor, FichaId, FluxoId, OrgId,
+    StatusFicha,
+};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use super::{ConsultaPagina, ListaJson, proximo_cursor};
+use super::{ConsultaPagina, ListaJson, proximo_cursor, versao_do_if_match};
 use crate::{
     auth::Identidade,
     erro::{ApiError, id_da_url},
     estado::Estado,
+    fluxos_efeitos::efeito_da_transicao,
+    fluxos_transicao::{estado_para_banco, transicao_do_motor},
 };
+
+/// Motivo gravado quando a Ficha é fechada sem conversa: o mesmo texto do fechamento pela conversa.
+const MOTIVO_FECHAMENTO_PELA_API: &str = "encerrada pelo administrador";
 
 /// Quantas execuções o detalhe da Ficha traz. O repositório aceita até 500.
 const LIMITE_EXECUCOES_NA_FICHA: u32 = 500;
@@ -273,4 +295,545 @@ fn evento_json(evento: &EventoFicha) -> Value {
 /// JSON que o próprio servidor gravou. Se um dia não parsear, sai `null` em vez de derrubar a leitura.
 fn dados_em_json(texto: &str) -> Value {
     serde_json::from_str(texto).unwrap_or(Value::Null)
+}
+
+// ───────────────────── Ações humanas do atendente (FX-30, PRD §7.3 e L5/L6) ─────────────────────
+//
+// Quatro escritas sobre a Ficha. Nenhuma reimplementa transição: o motor (`poph-fluxos`) diz o que
+// acontece, e a operação atômica da FX-20 grava (`Store::execucoes`). Ordem comum a todas:
+// `If-Match` obrigatório, chave de idempotência obrigatória, ficha de outra org `404`, Ficha fechada
+// `409`, versão velha `412`. Repetir a chave devolve o que a primeira chamada fez (sem evento nem
+// efeito novo) e vem **antes** da versão, como no store.
+
+/// Caminho `…/fichas/{ficha_id}/flow-runs/{run_id}`.
+#[derive(Deserialize)]
+pub struct CaminhoExecucao {
+    org_id: String,
+    ficha_id: String,
+    run_id: String,
+}
+
+/// Corpo de `POST …/flow-runs`: o fluxo a abrir e a chave que torna a abertura repetível.
+#[derive(Debug, Deserialize)]
+pub struct DadosInicio {
+    fluxo_id: String,
+    chave_idempotencia: String,
+}
+
+/// Corpo de `POST …/actions`: a ação, os campos que ela grava e a chave.
+#[derive(Debug, Deserialize)]
+pub struct DadosAcao {
+    acao: String,
+    #[serde(default)]
+    campos: Option<Value>,
+    chave_idempotencia: String,
+}
+
+/// Corpo de `POST …/abandon`: o motivo (fica no histórico) e a chave.
+#[derive(Debug, Deserialize)]
+pub struct DadosAbandono {
+    motivo: String,
+    chave_idempotencia: String,
+}
+
+/// `POST /fichas/{ficha_id}/flow-runs`: o atendente abre um fluxo na Ficha, sem o Jev.
+///
+/// `If-Match` é a versão da Ficha. Abertura nova responde `201`; repetir a chave responde `200` com a
+/// execução que a primeira chamada abriu. Fluxo não liberado ao agente da Ficha: `403`
+/// (`fluxo_nao_liberado`, a permissão é conferida pelo store).
+pub async fn iniciar_fluxo(
+    State(e): State<Estado>,
+    ident: Identidade,
+    Path(c): Path<CaminhoFicha>,
+    h: HeaderMap,
+    corpo: Result<Json<DadosInicio>, JsonRejection>,
+) -> Result<(StatusCode, Json<Value>), ApiError> {
+    let org = id_da_url::<OrgId>(&c.org_id)?;
+    ident.exigir_org(org)?;
+    let ficha_id = id_da_url::<FichaId>(&c.ficha_id)?;
+    let versao = versao_do_if_match(&h, "ficha")?;
+    let Json(dados) = corpo.map_err(|_| {
+        ApiError::invalido(
+            "corpo JSON inválido: use {\"fluxo_id\": ..., \"chave_idempotencia\": ...}",
+        )
+    })?;
+    let fluxo = id_da_url::<FluxoId>(&dados.fluxo_id)?;
+    let chave = chave_obrigatoria(&dados.chave_idempotencia)?;
+    // Repetição vem antes da Ficha fechada e da versão: o reenvio devolve a execução da primeira vez.
+    if let Some(ja_aberta) = e
+        .store
+        .execucoes()
+        .abertura_ja_feita(org, ficha_id, fluxo, &chave)?
+    {
+        return Ok((
+            StatusCode::OK,
+            Json(resposta_execucao(&e, org, &ja_aberta, true, &[])?),
+        ));
+    }
+    let ficha = e.store.fichas().obter(org, ficha_id)?;
+    if ficha.status == StatusFicha::Fechada {
+        return Err(dominio(DomainError::FichaFechada {
+            id: ficha_id.to_string(),
+        }));
+    }
+    if ficha.versao != versao {
+        return Err(ApiError::conflito_de_versao(
+            "ficha",
+            &ficha_id.to_string(),
+            versao,
+            ficha.versao,
+        ));
+    }
+    let revisao = e
+        .store
+        .revisoes()
+        .atual(org, fluxo)?
+        .ok_or_else(|| ApiError::conflito("o fluxo ainda não tem revisão publicada"))?;
+    let ir = ir_da_revisao(&e, &revisao)?;
+    let avaliador = avaliador_da_revisao(&e, &revisao, &ir)?;
+    let ficha_texto = ficha_id.to_string();
+    let peer = ficha.peer_externo.clone().unwrap_or_default();
+    let contexto = Contexto::novo(&avaliador)
+        .com_ficha(&ficha_texto)
+        .com_cliente(&peer);
+    let estado = iniciar(&ir).map_err(dominio)?;
+    let efeitos =
+        efeitos_de_entrada(&ir, estado.no_atual.id(), &estado.dados, &contexto).map_err(dominio)?;
+    let token = ident.ator_id();
+    let gravada = e.store.execucoes().iniciar_execucao(
+        org,
+        InicioDeExecucao {
+            ficha: ficha_id,
+            fluxo,
+            revisao: revisao.id,
+            ator: AtorEvento::Atendente,
+            ator_ref: Some(&token),
+            decisao_jev: None,
+            estado_inicial: estado_para_banco(&estado),
+            efeitos_de_entrada: efeitos.iter().map(efeito_da_transicao).collect(),
+            chave_idempotencia: Some(&chave),
+        },
+    )?;
+    if !gravada.repetida {
+        super::auditoria::registrar(
+            &e,
+            &ident,
+            Some(org),
+            "flow_run_start",
+            "ficha",
+            ficha_texto,
+        )?;
+    }
+    let status = if gravada.repetida {
+        StatusCode::OK
+    } else {
+        StatusCode::CREATED
+    };
+    Ok((
+        status,
+        Json(resposta_execucao(
+            &e,
+            org,
+            &gravada.execucao,
+            gravada.repetida,
+            &gravada.eventos,
+        )?),
+    ))
+}
+
+/// `POST /fichas/{ficha_id}/flow-runs/{run_id}/actions`: o atendente executa uma ação da etapa atual.
+///
+/// `If-Match` é a versão da **execução**. Se o agente andou por cima (outro escrito primeiro), a
+/// versão não bate e a resposta é `412`: é a corrida atendente × agente. Ação que só o agente pode
+/// fazer: `409` (`acao_invalida`, a recusa do motor). Campo inválido: `400`.
+pub async fn acao(
+    State(e): State<Estado>,
+    ident: Identidade,
+    Path(c): Path<CaminhoExecucao>,
+    h: HeaderMap,
+    corpo: Result<Json<DadosAcao>, JsonRejection>,
+) -> Result<Json<Value>, ApiError> {
+    let org = id_da_url::<OrgId>(&c.org_id)?;
+    ident.exigir_org(org)?;
+    let ficha_id = id_da_url::<FichaId>(&c.ficha_id)?;
+    let run = id_da_execucao(&c.run_id)?;
+    let versao = versao_do_if_match(&h, "execução de fluxo")?;
+    let Json(dados) = corpo.map_err(|_| {
+        ApiError::invalido(
+            "corpo JSON inválido: use {\"acao\": ..., \"campos\": {...}, \"chave_idempotencia\": ...}",
+        )
+    })?;
+    let chave = chave_obrigatoria(&dados.chave_idempotencia)?;
+    let campos = campos_do_corpo(dados.campos)?;
+    let atual = execucao_da_ficha(&e, org, ficha_id, run)?;
+    if e.store
+        .execucoes()
+        .transicao_ja_aplicada(org, run, &chave)?
+    {
+        return Ok(Json(resposta_execucao(&e, org, &atual, true, &[])?));
+    }
+    let ficha = e.store.fichas().obter(org, ficha_id)?;
+    if ficha.status == StatusFicha::Fechada {
+        return Err(dominio(DomainError::FichaFechada {
+            id: ficha_id.to_string(),
+        }));
+    }
+    if atual.versao != versao {
+        return Err(ApiError::conflito_de_versao(
+            "execução de fluxo",
+            &run.to_string(),
+            versao,
+            atual.versao,
+        ));
+    }
+    let (ir, avaliador, estado) = estado_para_agir(&e, org, &atual)?;
+    let ficha_texto = ficha_id.to_string();
+    let peer = ficha.peer_externo.clone().unwrap_or_default();
+    let contexto = Contexto::novo(&avaliador)
+        .com_ficha(&ficha_texto)
+        .com_cliente(&peer);
+    let resultado = executar_acao(
+        &ir,
+        &estado,
+        &dados.acao,
+        &campos,
+        AtorAcao::Atendente,
+        Some(&chave),
+        &contexto,
+    )
+    .map_err(dominio)?;
+    let token = ident.ator_id();
+    let gravada = e.store.execucoes().aplicar_transicao(
+        org,
+        run,
+        versao,
+        &transicao_do_motor(&resultado),
+        &chave,
+        ExtrasDaTransicao {
+            ator_ref: Some(&token),
+            fechada_por: Some(FechadaPor::Atendente),
+            motivo_encerramento: None,
+        },
+    )?;
+    if !gravada.repetida {
+        super::auditoria::registrar(
+            &e,
+            &ident,
+            Some(org),
+            "flow_run_action",
+            "execucao_fluxo",
+            run.to_string(),
+        )?;
+    }
+    Ok(Json(resposta_execucao(
+        &e,
+        org,
+        &gravada.execucao,
+        gravada.repetida,
+        &gravada.eventos,
+    )?))
+}
+
+/// `POST /fichas/{ficha_id}/flow-runs/{run_id}/abandon`: o atendente para a execução onde ela está.
+///
+/// Não gera efeito. Execução que já não está ativa: `409`. `If-Match` é a versão da execução.
+pub async fn abandonar(
+    State(e): State<Estado>,
+    ident: Identidade,
+    Path(c): Path<CaminhoExecucao>,
+    h: HeaderMap,
+    corpo: Result<Json<DadosAbandono>, JsonRejection>,
+) -> Result<Json<Value>, ApiError> {
+    let org = id_da_url::<OrgId>(&c.org_id)?;
+    ident.exigir_org(org)?;
+    let ficha_id = id_da_url::<FichaId>(&c.ficha_id)?;
+    let run = id_da_execucao(&c.run_id)?;
+    let versao = versao_do_if_match(&h, "execução de fluxo")?;
+    let Json(dados) = corpo.map_err(|_| {
+        ApiError::invalido(
+            "corpo JSON inválido: use {\"motivo\": ..., \"chave_idempotencia\": ...}",
+        )
+    })?;
+    let chave = chave_obrigatoria(&dados.chave_idempotencia)?;
+    let atual = execucao_da_ficha(&e, org, ficha_id, run)?;
+    if e.store
+        .execucoes()
+        .transicao_ja_aplicada(org, run, &chave)?
+    {
+        return Ok(Json(resposta_execucao(&e, org, &atual, true, &[])?));
+    }
+    let ficha = e.store.fichas().obter(org, ficha_id)?;
+    if ficha.status == StatusFicha::Fechada {
+        return Err(dominio(DomainError::FichaFechada {
+            id: ficha_id.to_string(),
+        }));
+    }
+    if atual.versao != versao {
+        return Err(ApiError::conflito_de_versao(
+            "execução de fluxo",
+            &run.to_string(),
+            versao,
+            atual.versao,
+        ));
+    }
+    let (_ir, _avaliador, estado) = estado_para_agir(&e, org, &atual)?;
+    let resultado = abandonar_motor(&estado, &dados.motivo, AtorAcao::Atendente, Some(&chave))
+        .map_err(dominio)?;
+    let token = ident.ator_id();
+    let gravada = e.store.execucoes().aplicar_transicao(
+        org,
+        run,
+        versao,
+        &transicao_do_motor(&resultado),
+        &chave,
+        ExtrasDaTransicao {
+            ator_ref: Some(&token),
+            fechada_por: None,
+            motivo_encerramento: None,
+        },
+    )?;
+    if !gravada.repetida {
+        super::auditoria::registrar(
+            &e,
+            &ident,
+            Some(org),
+            "flow_run_abandon",
+            "execucao_fluxo",
+            run.to_string(),
+        )?;
+    }
+    Ok(Json(resposta_execucao(
+        &e,
+        org,
+        &gravada.execucao,
+        gravada.repetida,
+        &gravada.eventos,
+    )?))
+}
+
+/// `POST /fichas/{ficha_id}/close`: encerra o atendimento. Fecha a conversa e a Ficha juntas e
+/// abandona a execução ativa (motivo `atendimento_encerrado`), como o `close` da conversa.
+///
+/// `If-Match` é a versão da Ficha. Sem conversa ligada (apagada pela retenção), fecha só a Ficha.
+/// Ficha já fechada: `409`. Não tem `chave_idempotencia`: repetir depois de fechado responde `409`
+/// e não gera nada novo.
+pub async fn fechar(
+    State(e): State<Estado>,
+    ident: Identidade,
+    Path(c): Path<CaminhoFicha>,
+    h: HeaderMap,
+) -> Result<Json<Value>, ApiError> {
+    let org = id_da_url::<OrgId>(&c.org_id)?;
+    ident.exigir_org(org)?;
+    let ficha_id = id_da_url::<FichaId>(&c.ficha_id)?;
+    let esperada = versao_do_if_match(&h, "ficha")?;
+    let ficha = e.store.fichas().obter(org, ficha_id)?;
+    if ficha.status == StatusFicha::Fechada {
+        return Err(dominio(DomainError::FichaFechada {
+            id: ficha_id.to_string(),
+        }));
+    }
+    if ficha.versao != esperada {
+        return Err(ApiError::conflito_de_versao(
+            "ficha",
+            &ficha_id.to_string(),
+            esperada,
+            ficha.versao,
+        ));
+    }
+    match ficha.conversation_id {
+        Some(conversa) => {
+            // A conversa confere a própria versão na escrita: se mudou entre as duas leituras, `412`.
+            let registro = e.store.conversas().obter(org, conversa)?;
+            e.store
+                .conversas()
+                .fechar_auditado(org, conversa, registro.versao, ident.ator_id())?;
+        }
+        None => {
+            e.store.fichas().fechar_sem_conversa(
+                org,
+                ficha_id,
+                esperada,
+                MOTIVO_FECHAMENTO_PELA_API,
+            )?;
+        }
+    }
+    let atual = e.store.fichas().obter(org, ficha_id)?;
+    Ok(Json(ficha_json(&atual)))
+}
+
+/// Erro de domínio do motor ou do store, no formato da API.
+fn dominio(erro: DomainError) -> ApiError {
+    ApiError::from(ErroStore::Dominio(erro))
+}
+
+/// A chave de idempotência, sem espaços. Vazia é `400`: sem chave, duas operações diferentes
+/// colidiriam no mesmo marcador.
+fn chave_obrigatoria(texto: &str) -> Result<String, ApiError> {
+    let limpa = texto.trim();
+    if limpa.is_empty() {
+        return Err(ApiError::validacao(
+            "chave_idempotencia",
+            "informe uma chave: repetir a mesma tem de devolver o mesmo resultado",
+        ));
+    }
+    Ok(limpa.to_owned())
+}
+
+/// Os campos da ação: ausentes viram vazio; se vierem, têm de ser um objeto.
+fn campos_do_corpo(campos: Option<Value>) -> Result<Campos, ApiError> {
+    match campos {
+        None | Some(Value::Null) => Ok(Campos::new()),
+        Some(Value::Object(mapa)) => Ok(mapa),
+        Some(_) => Err(ApiError::validacao(
+            "campos",
+            "use um objeto: {\"nome_do_campo\": valor}",
+        )),
+    }
+}
+
+/// Execução pelo id, conferindo que ela é desta Ficha. Execução de outra org, ou de outra Ficha da
+/// mesma org, sai como `404`.
+fn execucao_da_ficha(
+    e: &Estado,
+    org: OrgId,
+    ficha: FichaId,
+    run: ExecucaoId,
+) -> Result<Execucao, ApiError> {
+    let execucao = e.store.execucoes().obter(org, run)?;
+    if execucao.ficha_id != ficha {
+        return Err(ApiError::nao_encontrado(
+            "execução de fluxo",
+            &run.to_string(),
+        ));
+    }
+    Ok(execucao)
+}
+
+/// A IR publicada da revisão, pelo cache de revisões (FX-19). A carga recompila o texto e confere
+/// que dá a IR gravada; se não der, a revisão não entra e a resposta é `500` (a revisão está ruim).
+fn ir_da_revisao(e: &Estado, revisao: &RevisaoDeFluxo) -> Result<Arc<Ir>, ApiError> {
+    let gravada = Ir::de_json(&revisao.definicao_json).map_err(|erro| {
+        tracing::error!(erro = ?erro, "IR gravada de revisão de fluxo não lê");
+        ApiError::interno()
+    })?;
+    let chave = ChaveRevisao::com_hash(
+        revisao.fluxo_id.to_string(),
+        u32::try_from(revisao.numero).unwrap_or(u32::MAX),
+        revisao.fonte_sha256.clone(),
+    );
+    e.cache_fluxos
+        .carregar(
+            &chave,
+            &gravada,
+            &revisao.fonte,
+            &Limites::da_config(&e.config.fluxos),
+        )
+        .map_err(|erro| {
+            tracing::error!(erro = ?erro, "revisão de fluxo publicada não carrega");
+            ApiError::interno()
+        })
+}
+
+/// O avaliador das regras da revisão. Sem `def` no fluxo, basta o de combinadores (não compila
+/// script nenhum); com `def`, carrega o módulo do texto da revisão.
+fn avaliador_da_revisao(
+    e: &Estado,
+    revisao: &RevisaoDeFluxo,
+    ir: &Ir,
+) -> Result<Avaliador, ApiError> {
+    if ir.defs.is_empty() {
+        return Ok(Avaliador::sem_funcoes());
+    }
+    Avaliador::novo_com(
+        &revisao.fonte,
+        &Limites::da_config(&e.config.fluxos),
+        LimitesRegra::default(),
+    )
+    .map_err(|erro| {
+        tracing::error!(erro = ?erro, "módulo de regras de revisão não carrega");
+        ApiError::interno()
+    })
+}
+
+/// Tudo o que o motor precisa para agir numa execução: a IR da revisão que ela segue, o avaliador e
+/// o estado como está no banco (o nó, os dados e os atores que já agiram na etapa).
+fn estado_para_agir(
+    e: &Estado,
+    org: OrgId,
+    execucao: &Execucao,
+) -> Result<(Arc<Ir>, Avaliador, EstadoMotor), ApiError> {
+    let revisao = e.store.revisoes().obter_por_id(org, execucao.revisao_id)?;
+    let ir = ir_da_revisao(e, &revisao)?;
+    let avaliador = avaliador_da_revisao(e, &revisao, &ir)?;
+    let etapas = e.store.execucoes().etapas(org, execucao.id)?;
+    let atores_que_agiram = etapas
+        .iter()
+        .rev()
+        .find(|etapa| etapa.no_id == execucao.no_atual)
+        .map(|etapa| etapa.atores_que_agiram.clone())
+        .unwrap_or_default();
+    let dados = serde_json::from_str::<Dados>(&execucao.dados_json).map_err(|erro| {
+        tracing::error!(erro = ?erro, "dados de execução de fluxo não leem");
+        ApiError::interno()
+    })?;
+    let estado = EstadoMotor {
+        fluxo_id: ir.fluxo.id.clone(),
+        status: execucao.status,
+        no_atual: destino_do_id(&ir, &execucao.no_atual)?,
+        dados,
+        atores_que_agiram,
+        resultado: execucao.resultado.clone(),
+        motivo: execucao.motivo_fim.clone(),
+        chaves: BTreeMap::new(),
+    };
+    Ok((ir, avaliador, estado))
+}
+
+/// Reconstrói o destino tipado do motor a partir do id gravado. Id que não existe na IR da revisão
+/// é divergência entre o banco e a publicação: `500`, sem chutar.
+fn destino_do_id(ir: &Ir, id: &str) -> Result<Destino, ApiError> {
+    if ir.etapas.iter().any(|etapa| etapa.id == id) {
+        return Ok(Destino::Etapa { id: id.to_owned() });
+    }
+    if ir.decisoes.iter().any(|decisao| decisao.id == id) {
+        return Ok(Destino::Decisao { id: id.to_owned() });
+    }
+    if let Some(fim) = ir.fins.iter().find(|fim| fim.id == id) {
+        return Ok(Destino::Fim {
+            id: fim.id.clone(),
+            resultado: fim.resultado.clone(),
+            encerra_atendimento: fim.encerra_atendimento,
+        });
+    }
+    tracing::error!(no = id, "nó da execução não existe na IR da revisão");
+    Err(ApiError::interno())
+}
+
+/// A execução com as etapas e, quando a operação já tinha sido aplicada, a marca de repetição. Os
+/// eventos são só os que esta chamada gravou (vazio quando repetida).
+fn resposta_execucao(
+    e: &Estado,
+    org: OrgId,
+    execucao: &Execucao,
+    repetida: bool,
+    eventos: &[EventoFicha],
+) -> Result<Value, ApiError> {
+    let etapas: Vec<EtapaDaExecucao> = e.store.execucoes().etapas(org, execucao.id)?;
+    let mut corpo = execucao_json(execucao, &etapas);
+    corpo["repetida"] = json!(repetida);
+    corpo["eventos"] = Value::Array(eventos.iter().map(evento_json).collect());
+    Ok(corpo)
+}
+
+/// Id de execução da URL. Não usa `id_da_url`: o id de execução não tem o nome de entidade que ele
+/// exige, e a mensagem de erro é a mesma.
+fn id_da_execucao(texto: &str) -> Result<ExecucaoId, ApiError> {
+    texto.parse::<ExecucaoId>().map_err(|_| {
+        ApiError::id_invalido(
+            "execução de fluxo",
+            texto,
+            "use o id de uma execução (UUID v7)",
+        )
+    })
 }

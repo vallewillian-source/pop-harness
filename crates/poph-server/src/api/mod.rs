@@ -137,6 +137,23 @@ pub fn router(estado: Estado) -> Router {
             "/admin/v1/orgs/{org_id}/fichas/{ficha_id}/events",
             get(fichas::eventos),
         )
+        // ── Fichas: ações humanas do atendente (FX-30) ──
+        .route(
+            "/admin/v1/orgs/{org_id}/fichas/{ficha_id}/flow-runs",
+            axum::routing::post(fichas::iniciar_fluxo),
+        )
+        .route(
+            "/admin/v1/orgs/{org_id}/fichas/{ficha_id}/flow-runs/{run_id}/actions",
+            axum::routing::post(fichas::acao),
+        )
+        .route(
+            "/admin/v1/orgs/{org_id}/fichas/{ficha_id}/flow-runs/{run_id}/abandon",
+            axum::routing::post(fichas::abandonar),
+        )
+        .route(
+            "/admin/v1/orgs/{org_id}/fichas/{ficha_id}/close",
+            axum::routing::post(fichas::fechar),
+        )
         .route(
             "/admin/v1/orgs/{org_id}/agents/{agent_id}/instructions",
             get(instrucoes::listar).post(instrucoes::criar),

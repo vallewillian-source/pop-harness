@@ -389,6 +389,7 @@ impl Cenario {
             .iniciar_execucao(
                 self.org,
                 InicioDeExecucao {
+                    chave_idempotencia: None,
                     ficha,
                     fluxo: self.fluxo,
                     revisao: self.revisao,

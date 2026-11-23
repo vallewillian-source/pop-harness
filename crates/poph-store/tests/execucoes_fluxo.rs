@@ -170,6 +170,7 @@ impl Cenario {
             .iniciar_execucao(
                 org.id,
                 InicioDeExecucao {
+                    chave_idempotencia: None,
                     ficha,
                     fluxo,
                     revisao,
@@ -353,6 +354,7 @@ fn iniciar_grava_execucao_primeira_etapa_evento_e_efeitos_de_entrada() {
         .iniciar_execucao(
             org.id,
             InicioDeExecucao {
+                chave_idempotencia: None,
                 ficha,
                 fluxo,
                 revisao,
@@ -780,6 +782,7 @@ fn inicio_recusado_com_ficha_fechada() {
         .iniciar_execucao(
             org.id,
             InicioDeExecucao {
+                chave_idempotencia: None,
                 ficha,
                 fluxo,
                 revisao,
@@ -814,6 +817,7 @@ fn inicio_recusado_com_fluxo_nao_liberado() {
         .iniciar_execucao(
             org.id,
             InicioDeExecucao {
+                chave_idempotencia: None,
                 ficha,
                 fluxo,
                 revisao,
@@ -859,6 +863,7 @@ fn inicio_recusado_com_fluxo_inativo() {
         .iniciar_execucao(
             org.id,
             InicioDeExecucao {
+                chave_idempotencia: None,
                 ficha,
                 fluxo,
                 revisao,
@@ -896,6 +901,7 @@ fn inicio_recusado_com_segunda_execucao_ativa() {
         .iniciar_execucao(
             org.id,
             InicioDeExecucao {
+                chave_idempotencia: None,
                 ficha,
                 fluxo,
                 revisao,
@@ -1166,6 +1172,7 @@ fn execucao_encerrada_nao_aceita_transicao() {
         .iniciar_execucao(
             org.id,
             InicioDeExecucao {
+                chave_idempotencia: None,
                 ficha,
                 fluxo: outro_fluxo,
                 revisao: outra_revisao,

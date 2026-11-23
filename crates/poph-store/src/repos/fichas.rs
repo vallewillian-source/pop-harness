@@ -197,6 +197,77 @@ impl Fichas<'_> {
         })
     }
 
+    /// Fecha uma Ficha **sem conversa ligada** (FX-30): a conversa foi apagada pela retenção, então o
+    /// fechamento da conversa não existe mais e a Ficha fecha sozinha, com as execuções ativas
+    /// abandonadas e os eventos gravados, tudo numa escrita.
+    ///
+    /// `esperada` é a `version` da Ficha que o chamador leu (`If-Match`). Ordem das recusas, todas
+    /// antes de gravar: Ficha de outra org ou inexistente → `404`; já fechada → `409`; com conversa
+    /// ligada → `409` (quem fecha essa Ficha é a conversa, em `Conversas::fechar_auditado`); `version`
+    /// diferente → `412`.
+    pub fn fechar_sem_conversa(
+        &self,
+        org: OrgId,
+        ficha: FichaId,
+        esperada: u64,
+        motivo: &str,
+    ) -> Resultado<()> {
+        let texto_org = org.to_string();
+        let texto_ficha = ficha.to_string();
+        let agora = self.0.agora();
+        let motivo = motivo.to_owned();
+        self.0.escrita(move |conn| {
+            let linha: Option<(String, Option<String>, i64)> = conn
+                .query_row(
+                    "SELECT status, conversation_id, version FROM fichas
+                      WHERE org_id = ?1 AND id = ?2",
+                    params![texto_org, texto_ficha],
+                    |linha| Ok((linha.get(0)?, linha.get(1)?, linha.get(2)?)),
+                )
+                .optional()
+                .map_err(ErroStore::from)?;
+            let Some((status, conversa, versao)) = linha else {
+                return Err(ErroStore::Dominio(poph_types::DomainError::NaoEncontrado {
+                    entidade: "ficha",
+                    id: texto_ficha.clone(),
+                }));
+            };
+            if StatusFicha::de_texto(&status).map_err(ErroStore::from)? == StatusFicha::Fechada {
+                return Err(ErroStore::Dominio(poph_types::DomainError::FichaFechada {
+                    id: texto_ficha.clone(),
+                }));
+            }
+            if conversa.is_some() {
+                return Err(ErroStore::Dominio(poph_types::DomainError::Conflito {
+                    entidade: "ficha",
+                    id: texto_ficha.clone(),
+                    motivo: "a Ficha tem conversa ligada: feche o atendimento pela conversa"
+                        .to_owned(),
+                }));
+            }
+            let atual = u64::try_from(versao).unwrap_or(0);
+            if atual != esperada {
+                return Err(ErroStore::Dominio(
+                    poph_types::DomainError::ConflitoDeVersao {
+                        entidade: "ficha",
+                        id: texto_ficha.clone(),
+                        esperada,
+                        atual,
+                    },
+                ));
+            }
+            fechar_ficha_por_id(
+                conn,
+                &texto_org,
+                &texto_ficha,
+                FechadaPor::Admin,
+                &motivo,
+                agora,
+            )?;
+            Ok(())
+        })
+    }
+
     /// Registra um evento na linha do tempo da Ficha e devolve o que ficou gravado.
     ///
     /// Idempotente por `chave_idempotencia`: repetir a mesma operação (reenvio, retomada depois de
@@ -289,7 +360,7 @@ fn situacao_da_ficha(conn: &Connection, org: &str, ficha: &str) -> Resultado<Opt
 }
 
 /// Evento já gravado com a chave de idempotência dada.
-fn evento_por_chave(
+pub(crate) fn evento_por_chave(
     conn: &Connection,
     org: &str,
     ficha: &str,

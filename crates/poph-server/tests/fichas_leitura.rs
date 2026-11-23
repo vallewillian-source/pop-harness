@@ -305,6 +305,7 @@ impl Cenario {
             .iniciar_execucao(
                 parse_org(org),
                 InicioDeExecucao {
+                    chave_idempotencia: None,
                     ficha,
                     fluxo,
                     revisao,

@@ -358,6 +358,7 @@ impl Cenario {
             .iniciar_execucao(
                 org,
                 poph_store::InicioDeExecucao {
+                    chave_idempotencia: None,
                     ficha,
                     fluxo,
                     revisao,

@@ -14,6 +14,7 @@ pub mod estado;
 pub mod evolution;
 pub mod fluxos_efeitos;
 pub mod fluxos_metricas;
+pub mod fluxos_transicao;
 pub mod manifestos;
 pub mod matrix_espelho;
 pub mod matrix_estado;

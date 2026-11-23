@@ -224,6 +224,24 @@ impl Revisoes<'_> {
         exigir(encontrada, "revisão de fluxo", &numero.to_string())
     }
 
+    /// Revisão pelo id: é a que uma execução segue (`fluxo_execucoes.revisao_id`), e a ação do
+    /// atendente precisa da IR dela para conduzir o motor (FX-30). Revisão de outra org ou
+    /// inexistente: `NaoEncontrado`.
+    pub fn obter_por_id(&self, org: OrgId, revisao: RevisaoId) -> Resultado<RevisaoDeFluxo> {
+        let texto_org = org.to_string();
+        let texto_revisao = revisao.to_string();
+        let encontrada = self.0.leitura(move |conn| {
+            conn.query_row(
+                &format!("SELECT {COLUNAS} FROM fluxo_revisoes WHERE org_id = ?1 AND id = ?2"),
+                params![texto_org, texto_revisao],
+                linha_revisao,
+            )
+            .optional()
+            .map_err(ErroStore::from)
+        })?;
+        exigir(encontrada, "revisão de fluxo", &revisao.to_string())
+    }
+
     /// A revisão que vale hoje (`fluxos.revisao_atual`), se o fluxo já foi publicado alguma vez.
     ///
     /// Fluxo sem publicação devolve `None` (é o estado de quem só tem rascunho); fluxo de outra org,

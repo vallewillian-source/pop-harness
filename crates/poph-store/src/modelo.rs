@@ -1288,6 +1288,9 @@ pub struct InicioDeExecucao<'a> {
     pub estado_inicial: EstadoDaExecucao,
     /// Efeitos do `ao_entrar` da primeira etapa (`efeitos_de_entrada` do motor).
     pub efeitos_de_entrada: Vec<EfeitoDaTransicao>,
+    /// Chave de idempotência da abertura (FX-30). Repetir a mesma devolve a execução que a primeira
+    /// chamada abriu, sem execução, evento nem efeito novo. `None` não tem essa proteção.
+    pub chave_idempotencia: Option<&'a str>,
 }
 
 /// Extras de uma transição: o que o desfecho do motor não carrega.

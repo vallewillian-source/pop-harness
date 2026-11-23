@@ -69,7 +69,9 @@ use poph_types::{
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde_json::{Map, Value as Json};
 
-use super::fichas::{fechar_ficha_por_id, ler_eventos_conn, registrar_evento_conn, ultimo_seq};
+use super::fichas::{
+    evento_por_chave, fechar_ficha_por_id, ler_eventos_conn, registrar_evento_conn, ultimo_seq,
+};
 use super::{conflito_ou_ausente, id_da_coluna, u32_da_coluna, u64_da_coluna};
 use crate::Store;
 use crate::erro::{ErroStore, Resultado};
@@ -131,8 +133,52 @@ impl Execucoes<'_> {
             .map(|decisao| (decisao.escolha.to_owned(), decisao.confianca));
         let estado_inicial = inicio.estado_inicial;
         let efeitos_entrada = inicio.efeitos_de_entrada;
+        // Marcador da abertura: prefixo próprio, para não colidir com as chaves das transições.
+        let chave_inicio = match inicio.chave_idempotencia.map(str::trim) {
+            None => None,
+            Some("") => {
+                return Err(ErroStore::Dominio(DomainError::Validacao {
+                    campo: "chave_idempotencia",
+                    motivo: "a abertura precisa de uma chave: repetir a mesma tem de devolver a \
+                             mesma execução"
+                        .to_owned(),
+                }));
+            }
+            Some(chave) => Some(format!("inicio:{chave}")),
+        };
 
         self.0.escrita(move |conn| {
+            // Idempotência antes de tudo (como nas transições): a chave já abriu uma execução na
+            // Ficha, então devolve essa execução, mesmo que ela já tenha terminado. Não grava nada.
+            if let Some(marcador) = chave_inicio.as_deref()
+                && let Some(evento) = evento_por_chave(conn, &texto_org, &texto_ficha, marcador)?
+            {
+                let Some(execucao_id) = evento.execucao_id else {
+                    return Err(ErroStore::Interno(
+                        "a abertura marcada não tem execução ligada".to_owned(),
+                    ));
+                };
+                let execucao = ler_execucao(conn, &texto_org, &execucao_id.to_string())?
+                    .ok_or_else(|| {
+                        ErroStore::Interno("a execução da abertura marcada sumiu".to_owned())
+                    })?;
+                if execucao.fluxo_id.to_string() != texto_fluxo {
+                    return Err(ErroStore::Dominio(DomainError::Conflito {
+                        entidade: "execução de fluxo",
+                        id: execucao.id.to_string(),
+                        motivo: "esta chave de idempotência já abriu outro fluxo nesta Ficha"
+                            .to_owned(),
+                    }));
+                }
+                return Ok(ExecucaoGravada {
+                    execucao,
+                    eventos: Vec::new(),
+                    efeitos: Vec::new(),
+                    fechou_atendimento: false,
+                    repetida: true,
+                });
+            }
+
             let linha_ficha: Option<(String, String)> = conn
                 .query_row(
                     "SELECT status, agent_id FROM fichas WHERE org_id = ?1 AND id = ?2",
@@ -297,7 +343,7 @@ impl Execucoes<'_> {
                     ator_tipo: ator,
                     ator_ref: ator_ref.as_deref(),
                     payload_json: Json::Object(detalhe).to_string(),
-                    chave_idempotencia: None,
+                    chave_idempotencia: chave_inicio.as_deref(),
                 },
                 agora,
             )?;
@@ -322,6 +368,87 @@ impl Execucoes<'_> {
                 fechou_atendimento: false,
                 repetida: false,
             })
+        })
+    }
+
+    /// Diz se a chave de idempotência já aplicou uma transição nesta execução (FX-30).
+    ///
+    /// A API usa isso **antes** de rodar o motor: sem essa leitura, repetir uma ação já aplicada
+    /// cairia no motor sobre o estado novo, que recusaria a ação antes de chegar ao repositório.
+    /// Só lê; quem grava continua sendo [`Execucoes::aplicar_transicao`], que também confere a chave.
+    pub fn transicao_ja_aplicada(
+        &self,
+        org: OrgId,
+        execucao: ExecucaoId,
+        chave_idempotencia: &str,
+    ) -> Resultado<bool> {
+        let chave = chave_idempotencia.trim();
+        if chave.is_empty() {
+            return Err(ErroStore::Dominio(DomainError::Validacao {
+                campo: "chave_idempotencia",
+                motivo: "informe a chave de idempotência da operação".to_owned(),
+            }));
+        }
+        let marcador = chave_do_evento(&execucao.to_string(), chave, 0);
+        let texto_org = org.to_string();
+        self.0.leitura(move |conn| {
+            let achado: Option<i64> = conn
+                .query_row(
+                    "SELECT 1 FROM ficha_eventos WHERE org_id = ?1 AND chave_idempotencia = ?2",
+                    params![texto_org, marcador],
+                    |linha| linha.get(0),
+                )
+                .optional()
+                .map_err(ErroStore::from)?;
+            Ok(achado.is_some())
+        })
+    }
+
+    /// Qual execução a chave de abertura já abriu nesta Ficha, se alguma (FX-30).
+    ///
+    /// A API usa isso **antes** de conferir Ficha fechada e `If-Match`: repetir a abertura (reenvio
+    /// depois de queda de conexão) devolve a execução da primeira chamada, mesmo que a Ficha já tenha
+    /// fechado. Mesma chave para outro fluxo → `Conflito`. Só lê; quem grava é `iniciar_execucao`.
+    pub fn abertura_ja_feita(
+        &self,
+        org: OrgId,
+        ficha: FichaId,
+        fluxo: FluxoId,
+        chave_idempotencia: &str,
+    ) -> Resultado<Option<Execucao>> {
+        let chave = chave_idempotencia.trim();
+        if chave.is_empty() {
+            return Err(ErroStore::Dominio(DomainError::Validacao {
+                campo: "chave_idempotencia",
+                motivo: "a abertura precisa de uma chave".to_owned(),
+            }));
+        }
+        let marcador = format!("inicio:{chave}");
+        let texto_org = org.to_string();
+        let texto_ficha = ficha.to_string();
+        let texto_fluxo = fluxo.to_string();
+        self.0.leitura(move |conn| {
+            let Some(evento) = evento_por_chave(conn, &texto_org, &texto_ficha, &marcador)? else {
+                return Ok(None);
+            };
+            let Some(execucao_id) = evento.execucao_id else {
+                return Err(ErroStore::Interno(
+                    "a abertura marcada não tem execução ligada".to_owned(),
+                ));
+            };
+            let execucao =
+                ler_execucao(conn, &texto_org, &execucao_id.to_string())?.ok_or_else(|| {
+                    ErroStore::Interno("a execução da abertura marcada sumiu".to_owned())
+                })?;
+            if execucao.fluxo_id.to_string() != texto_fluxo {
+                return Err(ErroStore::Dominio(DomainError::Conflito {
+                    entidade: "execução de fluxo",
+                    id: execucao.id.to_string(),
+                    motivo: "esta chave de idempotência já abriu outro fluxo nesta Ficha"
+                        .to_owned(),
+                }));
+            }
+            Ok(Some(execucao))
         })
     }
 
