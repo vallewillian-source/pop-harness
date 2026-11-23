@@ -63,8 +63,8 @@
 //!   fechada, e o valor vem de `EfeitoProduzido::tipo()`.
 
 use poph_types::{
-    AtorAcao, DomainError, EfeitoId, EstadoEfeito, ExecucaoId, FechadaPor, FichaId, OrgId,
-    StatusEtapa, StatusExecucao, StatusFicha, TipoEventoFicha,
+    AtorAcao, DomainError, EfeitoId, EstadoEfeito, ExecucaoId, FechadaPor, FichaId, FluxoId, OrgId,
+    RevisaoId, StatusEtapa, StatusExecucao, StatusFicha, TipoEventoFicha,
 };
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde_json::{Map, Value as Json};
@@ -611,6 +611,43 @@ impl Execucoes<'_> {
                 execucoes.push(linha.map_err(ErroStore::from)?);
             }
             Ok(execucoes)
+        })
+    }
+
+    /// Quantas execuções **ativas** cada revisão do fluxo tem agora (o `diff` da API mostra isso,
+    /// PRD §6.2: quem está num atendimento continua na revisão em que começou).
+    ///
+    /// Só as revisões com pelo menos uma execução ativa aparecem; revisão sem atendimento em curso
+    /// não está na lista. Fluxo de outra org (ou inexistente) devolve lista vazia — quem chama
+    /// confere o fluxo antes (`Fluxos::obter`), como a API faz.
+    pub fn ativas_por_revisao(
+        &self,
+        org: OrgId,
+        fluxo: FluxoId,
+    ) -> Resultado<Vec<(RevisaoId, u64)>> {
+        let texto_org = org.to_string();
+        let texto_fluxo = fluxo.to_string();
+        self.0.leitura(move |conn| {
+            let mut consulta = conn
+                .prepare(
+                    "SELECT revisao_id, COUNT(*) FROM fluxo_execucoes
+                      WHERE org_id = ?1 AND fluxo_id = ?2 AND status = 'ativa'
+                      GROUP BY revisao_id ORDER BY revisao_id",
+                )
+                .map_err(ErroStore::from)?;
+            let linhas = consulta
+                .query_map(params![texto_org, texto_fluxo], |linha| {
+                    Ok((
+                        id_da_coluna::<RevisaoId>(linha, 0)?,
+                        u64_da_coluna(linha, 1)?,
+                    ))
+                })
+                .map_err(ErroStore::from)?;
+            let mut contagens = Vec::new();
+            for linha in linhas {
+                contagens.push(linha.map_err(ErroStore::from)?);
+            }
+            Ok(contagens)
         })
     }
 

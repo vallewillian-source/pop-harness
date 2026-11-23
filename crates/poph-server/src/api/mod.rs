@@ -14,6 +14,8 @@ mod conversas;
 mod departamentos;
 /// Leitura das Fichas (FX-29): lista com filtros, detalhe com execuções e linha do tempo.
 mod fichas;
+/// API dos fluxos (FX-27): validar, rascunho, publicar, revisões, diff, preview e formatar.
+mod fluxos;
 mod instrucoes;
 mod integracoes;
 mod manifestos;
@@ -85,6 +87,45 @@ pub fn router(estado: Estado) -> Router {
         .route(
             "/admin/v1/orgs/{org_id}/agents/{agent_id}/flows",
             get(agente_fluxos::listar).put(agente_fluxos::substituir),
+        )
+        // ── fluxos: validar, rascunho, publicar, revisões, diff, preview, formatar (FX-27) ──
+        .route(
+            "/admin/v1/orgs/{org_id}/flows/validate",
+            axum::routing::post(fluxos::validar_script),
+        )
+        .route(
+            "/admin/v1/orgs/{org_id}/flows/format",
+            axum::routing::post(fluxos::formatar),
+        )
+        .route(
+            "/admin/v1/orgs/{org_id}/flows",
+            get(fluxos::listar).post(fluxos::criar),
+        )
+        .route(
+            "/admin/v1/orgs/{org_id}/flows/{flow_id}",
+            get(fluxos::mostrar)
+                .patch(fluxos::atualizar)
+                .delete(fluxos::excluir),
+        )
+        .route(
+            "/admin/v1/orgs/{org_id}/flows/{flow_id}/publish",
+            axum::routing::post(fluxos::publicar),
+        )
+        .route(
+            "/admin/v1/orgs/{org_id}/flows/{flow_id}/revisions",
+            get(fluxos::listar_revisoes),
+        )
+        .route(
+            "/admin/v1/orgs/{org_id}/flows/{flow_id}/revisions/{number}",
+            get(fluxos::mostrar_revisao),
+        )
+        .route(
+            "/admin/v1/orgs/{org_id}/flows/{flow_id}/diff",
+            get(fluxos::diff),
+        )
+        .route(
+            "/admin/v1/orgs/{org_id}/flows/{flow_id}/preview",
+            get(fluxos::preview),
         )
         // ── Fichas: leitura (FX-29) ──
         .route("/admin/v1/orgs/{org_id}/fichas", get(fichas::listar))

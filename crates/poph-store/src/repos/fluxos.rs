@@ -139,6 +139,22 @@ impl Fluxos<'_> {
         })
     }
 
+    /// Quantos fluxos a org tem hoje — é o que a criação confere contra o teto
+    /// `fluxos.max_fluxos_por_org` (PRD §9, FX-27).
+    ///
+    /// Conta **todos** (ativos e inativos): o teto é de cadastro, não de fluxo em uso.
+    pub fn contar(&self, org: OrgId) -> Resultado<u64> {
+        let texto_org = org.to_string();
+        self.0.leitura(move |conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM fluxos WHERE org_id = ?1",
+                params![texto_org],
+                |linha| u64_da_coluna(linha, 0),
+            )
+            .map_err(ErroStore::from)
+        })
+    }
+
     /// Altera nome, descrição, situação ou rascunho com `If-Match` (`esperada` = `version` lida).
     ///
     /// Versão diferente da gravada → [`DomainError::ConflitoDeVersao`] (412), sem gravar nada.
