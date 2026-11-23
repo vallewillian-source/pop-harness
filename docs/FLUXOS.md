@@ -151,8 +151,8 @@ O passo a passo para descobrir o motivo está em [RUNBOOKS.md](RUNBOOKS.md), na 
 - **Notificação "uma vez" é garantida em camadas.** Queda do servidor entre o envio e a gravação de `enviado` pode repetir o efeito (aceito, ver §4).
 - **Medidas em máquina carregada.** A estação estava com outros builds rodando; as comparações foram intercaladas. A RAM foi medida com fluxo de 8 etapas; a meta de 40 nós é extrapolação linear, não medida. Não há medida em ARM64 nem sob carga de produção.
 - **Alocação grande no Starlark.** `"x" * 10**9` é cortado pelo prazo, não pelo limite de memória: a alocação chega perto de 2 GB antes do corte ([FLUXOS_LINGUAGEM.md](FLUXOS_LINGUAGEM.md), §3.4).
-- **Sem política própria de retenção de Fichas.** O padrão é não apagar (PRD §15, item 2). Aguarda decisão do Willian.
-- **Decisões do PRD §15 sem confirmação do Willian.** O G8 não fecha o atendimento (padrão adotado, não alterado); o teto de 20 fluxos por agente está implementado; não existe liberação "para todos os agentes" (só a permissão por agente); e o efeito `notificar_whatsapp` sem integração fica `pendente` na implementação, enquanto o PRD previa `falhou` depois do limite de tentativas. Falta a decisão do Willian nesse ponto.
+- **Sem política própria de retenção de Fichas.** Decisão do Willian de 23/11/2026: Fichas não são apagadas, não há retenção própria (D-31 em [DECISOES.md](DECISOES.md)).
+- **Decisões do PRD §15 confirmadas pelo Willian em 23/11/2026** (D-31 em [DECISOES.md](DECISOES.md)): o G8 não fecha o atendimento, Fichas não são apagadas e o efeito `notificar_whatsapp` sem integração fica `pendente` (não vai a `falhou` depois do limite de tentativas). Seguem em vigor sem decisão dele: não existe liberação "para todos os agentes" (só a permissão por agente) e o teto de 20 fluxos por agente está implementado.
 - **Sem interface.** A UI do Console não muda (decisão W8). O editor visual de fluxos fica para depois.
 - **Numeração de migrações.** A migração `0014` não existe no repositório; a sequência vai da `0013` para a `0015`. Não é do módulo e não foi preenchida.
 
@@ -315,15 +315,18 @@ Leitura:
 | Meta | Número | Resultado |
 |---|---|---|
 | FX-01 [proposta]: RAM por fluxo carregado ≤ 300 KB | 300 KB | **atendida**: 7,2–7,8 KB por revisão de 8 etapas |
-| D-07: escrita de mensagens ≥ 50 mil msg/s | 50.000 | **atendida**: 57.075–66.832 msg/s com 32 e 256 escritores |
-| D-07: p95 da escrita ≤ 5 ms com 2.000 msg/s | 5 ms | **atendida**: 96–115 µs |
+| D-07 [oficial desde 23/11/2026]: escrita de mensagens ≥ 50 mil msg/s | 50.000 | **atendida**: 57.075–66.832 msg/s com 32 e 256 escritores |
+| D-07 [oficial desde 23/11/2026]: p95 da escrita ≤ 5 ms com 2.000 msg/s | 5 ms | **atendida**: 96–115 µs |
 | `fluxos.cache_revisoes_mb` = 16 MB (PRD §9) | 16 MB | **respeitada**: 1.000 revisões cabem em 7,6 MB guardados; acima do teto, para de crescer |
 | PRD §11: nenhuma chamada de rede dentro da transação | — | **confirmada**: 0,4–0,7 ms p95 na transição que fecha o atendimento |
 | CI e resto de D-07 (12 KB por agente ocioso, 150 MB com 10 mil agentes, ARM64) | — | **não medido aqui** — continua pendente, como antes desta tarefa |
 
-Nenhuma meta nova virou oficial com esta medição: os números acima são medição de conformidade com
-as metas propostas, não calibração delas. A HR-55 (teste de carga em escala) continua suspensa e
-**não** foi reaberta.
+As duas metas de D-07 (≥ 50 mil msg/s e p95 ≤ 5 ms) passaram a ser **oficiais em 23/11/2026**, por
+decisão do mantenedor tomada depois desta medição: a decisão oficializa o que já estava medido, e
+nenhum número desta seção mudou com ela (D-31 em [DECISOES.md](DECISOES.md)). A meta da FX-01
+(≤ 300 KB por fluxo carregado) **segue proposta**, e o resto de D-07 (12 KB por agente ocioso,
+150 MB com 10 mil agentes, ARM64) continua **não medido**. A HR-55 (teste de carga em escala)
+continua suspensa e **não** foi reaberta.
 
 ### O que não foi medido
 
