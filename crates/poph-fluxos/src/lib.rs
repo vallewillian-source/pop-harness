@@ -46,5 +46,6 @@ pub use motor::{
     Campos, Estado, Evento, Recibo, Resultado, atores_exigidos, campos_faltando, dados_da_etapa,
     executar_acao, iniciar,
 };
+pub use prompt::{TETO_DO_BLOCO, bloco_da_etapa, renderizar_bloco};
 pub use regras::{Avaliador, Dados, ErroRegra, LimitesRegra, avaliar, dados_de_json};
 pub use validador::{Departamento, MAX_NOS, Resolucao, resolver_departamentos, validar};
