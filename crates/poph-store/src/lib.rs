@@ -19,16 +19,17 @@ mod conexao;
 pub mod erro;
 mod escritor;
 mod leitores;
+pub mod metricas;
 pub mod migracoes;
 pub mod modelo;
 mod repos;
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use poph_types::HarnessConfig;
+use poph_types::{HarnessConfig, StatusExecucao};
 use rusqlite::Connection;
 
 pub use erro::ErroStore;
@@ -93,6 +94,9 @@ pub struct Store {
     leitores: leitores::PoolLeitores,
     /// Quantas leituras o store já fez (ver [`Store::leituras_feitas`]).
     leituras: AtomicU64,
+    /// Contadores das execuções de fluxo (FX-40). `None` = ninguém publicou um registro (CLI,
+    /// `poph migrate`, testes que só usam o banco): nenhuma conta é feita.
+    metricas_execucao: RwLock<Option<metricas::MetricasExecucao>>,
 }
 
 impl Store {
@@ -121,6 +125,7 @@ impl Store {
             leitores: leitores::PoolLeitores::novo(harness),
             escritor,
             leituras: AtomicU64::new(0),
+            metricas_execucao: RwLock::new(None),
         })
     }
 
@@ -133,6 +138,50 @@ impl Store {
     /// Hora atual do store, em milissegundos desde a época Unix.
     pub fn agora(&self) -> i64 {
         (self.relogio)()
+    }
+
+    /// Publica os contadores das execuções de fluxo (FX-40) neste store.
+    ///
+    /// Chamado uma vez, na subida do servidor, com os handles que o `/metrics` já registrou
+    /// (`Estado::novo`). Publicar de novo troca os handles: os números que já subiram ficam no
+    /// catálogo antigo e não são copiados — é publicação de catálogo, não soma.
+    pub fn publicar_metricas_de_execucao(&self, metricas: metricas::MetricasExecucao) {
+        let mut guarda = self
+            .metricas_execucao
+            .write()
+            .unwrap_or_else(|veneno| veneno.into_inner());
+        *guarda = Some(metricas);
+    }
+
+    /// Os contadores publicados, se houver (handle clonado). Quem conta dentro de um comando de
+    /// escrita usa isto antes de entrar no comando, porque a referência ao store não atravessa a
+    /// tarefa enviada ao escritor.
+    pub(crate) fn metricas_de_execucao(&self) -> Option<metricas::MetricasExecucao> {
+        self.metricas_execucao
+            .read()
+            .unwrap_or_else(|veneno| veneno.into_inner())
+            .clone()
+    }
+
+    /// Uma execução de fluxo nasceu.
+    pub(crate) fn contar_execucao_aberta(&self) {
+        if let Some(metricas) = self.metricas_de_execucao() {
+            metricas.abriu(1);
+        }
+    }
+
+    /// Uma execução de fluxo mudou de situação (nada é contado quando ela continua `ativa`).
+    pub(crate) fn contar_desfecho_da_execucao(&self, status: StatusExecucao) {
+        if let Some(metricas) = self.metricas_de_execucao() {
+            metricas.desfecho(status, 1);
+        }
+    }
+
+    /// Uma avaliação de regra falhou ao executar um fluxo.
+    pub(crate) fn contar_erro_de_regra(&self) {
+        if let Some(metricas) = self.metricas_de_execucao() {
+            metricas.regra_falhou(1);
+        }
     }
 
     /// Caminho do `harness.db` em uso.

@@ -129,8 +129,8 @@ São 19 rotas novas: 12 de fluxos e de permissão por agente, e 7 de Fichas e ex
 
 Só existem com `[fluxos] ativo = true`. Estado de cada uma, verificado no código:
 
-- **Incrementadas hoje:** `poph_fluxos_cache_*`, `poph_fluxos_expulsoes_total` e `poph_fluxos_revisoes_*` (cache); `poph_fluxos_g9_iniciou_total`, `poph_fluxos_g9_nenhum_total`, `poph_fluxos_g9_abaixo_do_limiar_total` e `poph_fluxos_g9_fallback_total` (turno); `poph_fluxos_efeitos_pendentes_total`, `poph_fluxos_efeitos_enviados_total` e `poph_fluxos_efeitos_falhas_total` (laço de efeitos).
-- **Declaradas, sem incremento no código:** `poph_fluxos_execucoes_iniciadas_total`, `poph_fluxos_execucoes_concluidas_total`, `poph_fluxos_execucoes_abandonadas_total`, `poph_fluxos_execucoes_falhas_total` e `poph_fluxos_erros_regra_total`. Busca no código: nenhum ponto as incrementa, então ficam em zero. Ver Limites.
+- **Incrementadas hoje:** `poph_fluxos_cache_*`, `poph_fluxos_expulsoes_total` e `poph_fluxos_revisoes_*` (cache); `poph_fluxos_g9_iniciou_total`, `poph_fluxos_g9_nenhum_total`, `poph_fluxos_g9_abaixo_do_limiar_total` e `poph_fluxos_g9_fallback_total` (turno); `poph_fluxos_efeitos_pendentes_total`, `poph_fluxos_efeitos_enviados_total` e `poph_fluxos_efeitos_falhas_total` (laço de efeitos); `poph_fluxos_execucoes_iniciadas_total`, `poph_fluxos_execucoes_concluidas_total`, `poph_fluxos_execucoes_abandonadas_total`, `poph_fluxos_execucoes_falhas_total` e `poph_fluxos_erros_regra_total` (o `poph-store`, único lugar que escreve `fluxo_execucoes` — FX-40).
+- **Como os contadores de execução contam:** na abertura (turno, reserva e API), no desfecho da transição (concluída, abandonada ou falha), no fechamento da Ficha (`atendimento_encerrado`), na exclusão do fluxo com `force` (`fluxo_excluido`) e, no caso do erro de regra, quando a regra não avalia. Repetir a chave de idempotência não soma de novo. A CLI e o `poph migrate` escrevem no banco sem publicar catálogo, então não contam — o número é da instância que roda com `poph serve`.
 
 ### 5.5 Retenção, backup e cluster
 
@@ -144,17 +144,16 @@ O passo a passo para descobrir o motivo está em [RUNBOOKS.md](RUNBOOKS.md), na 
 
 ## 6. Limites e o que não foi testado
 
-- **G9 com o Jev real: não medido.** A medição (FX-37) depende de autorização do Willian para usar a chave do Jev. Os testes usam Jev falso e um conjunto rotulado de 50 casos. A qualidade da escolha em produção é desconhecida.
+- **G9 com o Jev real: medido em laboratório, não em produção.** A medição da FX-37 (com autorização do Willian e a chave do Jev) deu 48/50 de comportamento certo nas duas execuções; o conjunto é de 50 falas escritas para medir, não tráfego real. Números e recomendação em [JEV.md](JEV.md) §5-I.
 - **Sem LLM, WhatsApp, Matrix ou Synapse reais.** A prova ponta a ponta (`fluxos_e2e.rs`) usa LLM, Jev e Evolution falsos, sem rede e sem credencial.
 - **CI completa não rodada.** `scripts/ci.sh` (Console, `cargo deny`, `cargo audit` e checagem aarch64) não foi executado nas entregas. Foram rodados os testes dos crates afetados, `clippy` e `fmt`. A checagem ARM64 depende de autorização (VM3).
-- **Contadores de execução sem incremento.** Ver §5.4. Corrigir é mudança pequena no motor e no turno, fora desta documentação; fica para tarefa própria.
+- **Contadores de execução só na instância que serve.** São contados no `poph-store`, a partir do catálogo que o `poph serve` publica na subida (FX-40); a CLI e o `poph migrate` não publicam e não contam. Depois de reiniciar o processo, os contadores começam em zero com o resto do `/metrics`.
 - **Notificação "uma vez" é garantida em camadas.** Queda do servidor entre o envio e a gravação de `enviado` pode repetir o efeito (aceito, ver §4).
 - **Medidas em máquina carregada.** A estação estava com outros builds rodando; as comparações foram intercaladas. A RAM foi medida com fluxo de 8 etapas; a meta de 40 nós é extrapolação linear, não medida. Não há medida em ARM64 nem sob carga de produção.
 - **Alocação grande no Starlark.** `"x" * 10**9` é cortado pelo prazo, não pelo limite de memória: a alocação chega perto de 2 GB antes do corte ([FLUXOS_LINGUAGEM.md](FLUXOS_LINGUAGEM.md), §3.4).
 - **Sem política própria de retenção de Fichas.** O padrão é não apagar (PRD §15, item 2). Aguarda decisão do Willian.
 - **Decisões do PRD §15 sem confirmação do Willian.** O G8 não fecha o atendimento (padrão adotado, não alterado); o teto de 20 fluxos por agente está implementado; não existe liberação "para todos os agentes" (só a permissão por agente); e o efeito `notificar_whatsapp` sem integração fica `pendente` na implementação, enquanto o PRD previa `falhou` depois do limite de tentativas. Falta a decisão do Willian nesse ponto.
 - **Sem interface.** A UI do Console não muda (decisão W8). O editor visual de fluxos fica para depois.
-- **Comentários de código desatualizados.** Alguns comentários de módulo ainda dizem que partes "ainda não existem" (por exemplo, a ferramenta `fluxo_iniciar` no turno e a lista de módulos de `poph-fluxos/src/lib.rs`). Não mudam comportamento; ficam para uma limpeza.
 - **Numeração de migrações.** A migração `0014` não existe no repositório; a sequência vai da `0013` para a `0015`. Não é do módulo e não foi preenchida.
 
 ## 7. Onde cada coisa está provada
@@ -171,7 +170,8 @@ O passo a passo para descobrir o motivo está em [RUNBOOKS.md](RUNBOOKS.md), na 
 | CLI | `poph/tests/cli_flow.rs` |
 | Backup | testes de backup em `poph-store` (19), `poph-server/tests/backup_http.rs` (9) e `poph/tests/cli_backup.rs` (6) |
 | Retenção e cluster | `poph-retention/tests/banco.rs`, `poph/tests/cli_retencao.rs`, `poph-server/tests/encaminhamento_cluster.rs` |
-| Prova ponta a ponta | `poph-server/tests/fluxos_e2e.rs` (6 testes) |
+| Prova ponta a ponta | `poph-server/tests/fluxos_e2e.rs` (7 testes) |
+| Contadores das execuções | `poph-server/tests/fluxos_contadores.rs` (7 testes) e o caso de contadores em `fluxos_e2e.rs` |
 | Desempenho | seção [Medidas](#medidas) abaixo |
 
 ## Medidas

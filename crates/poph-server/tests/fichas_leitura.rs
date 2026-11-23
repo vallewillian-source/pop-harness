@@ -345,6 +345,7 @@ impl Cenario {
             efeitos: Vec::new(),
             encerra_atendimento: false,
             repetida: false,
+            erro_de_regra: false,
         };
         self.store
             .execucoes()

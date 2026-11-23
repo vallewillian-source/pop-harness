@@ -222,6 +222,7 @@ fn transicao_parcial(etapa: &str) -> TransicaoDeFluxo {
         }],
         encerra_atendimento: false,
         repetida: false,
+        erro_de_regra: false,
     }
 }
 
@@ -258,6 +259,7 @@ fn transicao_avanca(de: &str, para: &str) -> TransicaoDeFluxo {
         efeitos: Vec::new(),
         encerra_atendimento: false,
         repetida: false,
+        erro_de_regra: false,
     }
 }
 
@@ -287,6 +289,7 @@ fn transicao_encerra(de: &str) -> TransicaoDeFluxo {
         efeitos: Vec::new(),
         encerra_atendimento: true,
         repetida: false,
+        erro_de_regra: false,
     }
 }
 

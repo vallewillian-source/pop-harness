@@ -1258,6 +1258,10 @@ pub struct TransicaoDeFluxo {
     pub encerra_atendimento: bool,
     /// O motor já tinha aplicado esta chave.
     pub repetida: bool,
+    /// O desfecho do motor é falha porque uma **regra não avaliou**, e não por ciclo de decisões nem
+    /// por estouro de saltos (FX-40). Quem traduz preenche (`poph_agent::fluxos_transicao`); o store
+    /// só usa para contar `poph_fluxos_erros_regra_total` quando a execução fica `falha`.
+    pub erro_de_regra: bool,
 }
 
 /// Decisão do Jev que iniciou a execução (gate G9, PRD §6.3), quando foi ele.

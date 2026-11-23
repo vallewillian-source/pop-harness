@@ -1272,6 +1272,10 @@ positivo custando 3 falsos negativos. O desenho do PRD prefere o erro barato (de
 caro (prender o cliente num roteiro), e é o que a medição mostra: 1 falso positivo em 27 e nenhum
 fluxo errado. O padrão só muda com decisão do mantenedor; esta medição apenas a informa.
 
+**Decisão do mantenedor (23/11/2026):** depois desta medição, o padrão fica **como está — G9 ligado,
+confiança 0,70 e margem 0,10**. Nenhuma linha de código mudou: a decisão é a política que o padrão
+(atual e daqui em diante) segue, e mudá-la continua sendo decisão dele.
+
 **Custo por pergunta:** ~1.482 tokens de entrada e ~65 de saída (74.092 / 50 e 3.250 / 50), com três
 fluxos liberados no estado — cerca do dobro dos ~700 tokens por pergunta do G8 (§5-F). No turno o G9
 entra no **lote único** com os outros gates, então não é uma chamada a mais: é peso no pedido que já

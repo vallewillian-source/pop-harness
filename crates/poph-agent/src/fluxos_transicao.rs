@@ -42,6 +42,8 @@ pub fn transicao_do_motor(resultado: &ResultadoMotor) -> TransicaoDeFluxo {
         efeitos: resultado.efeitos.iter().map(efeito_da_transicao).collect(),
         encerra_atendimento: resultado.encerra_atendimento,
         repetida: resultado.repetida,
+        // FX-40: o motivo da falha é texto no espelho; o motor diz aqui se foi regra que não avaliou.
+        erro_de_regra: resultado.erro_de_regra,
     }
 }
 

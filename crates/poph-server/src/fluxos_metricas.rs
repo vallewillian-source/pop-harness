@@ -9,9 +9,13 @@
 //! - `poph_fluxos_cache_*`, `poph_fluxos_expulsoes_total`, `poph_fluxos_revisoes_*` e
 //!   `poph_fluxos_cache_bytes`: o cache de revisões (FX-19), lido a cada `/metrics`. Como o
 //!   [`poph_fluxos::Metricas`] é cumulativo, cada leitura soma só a diferença desde a anterior.
-//! - `poph_fluxos_execucoes_*`, `poph_fluxos_g9_*`, `poph_fluxos_efeitos_*` e `poph_fluxos_erros_regra_total`:
-//!   contadores que quem executa o fluxo (FX-20 em diante, e o gate G9 na FX-22) vai incrementar. Até lá
-//!   ficam em zero, e isso é esperado.
+//! - `poph_fluxos_execucoes_*` e `poph_fluxos_erros_regra_total`: contados no `poph-store`, onde
+//!   `fluxo_execucoes` é escrito — abertura, transição, fechamento da Ficha e exclusão do fluxo
+//!   (FX-40). O servidor publica estes cinco handles no store da instância
+//!   ([`crate::Estado::novo`]), que é quem os incrementa; a CLI e o `poph migrate` não publicam e
+//!   não contam.
+//! - `poph_fluxos_g9_*` e `poph_fluxos_efeitos_*`: contados por quem decide o gate (o turno, FX-23) e
+//!   por quem entrega o efeito (a fila, FX-21).
 
 use std::sync::{Arc, Mutex};
 
@@ -164,6 +168,19 @@ impl MetricasFluxos {
             )?,
             ultimo_cache: Arc::new(Mutex::new(MetricasCache::default())),
         })
+    }
+
+    /// Os cinco contadores que o `poph-store` incrementa (FX-40), com os **mesmos** handles das
+    /// séries declaradas aqui. O `Estado` publica isto no store da instância; sem publicação (CLI,
+    /// `poph migrate`) nenhuma conta de execução é feita.
+    pub fn das_execucoes(&self) -> poph_store::metricas::MetricasExecucao {
+        poph_store::metricas::MetricasExecucao {
+            iniciadas: self.execucoes_iniciadas.clone(),
+            concluidas: self.execucoes_concluidas.clone(),
+            abandonadas: self.execucoes_abandonadas.clone(),
+            falhas: self.execucoes_falhas.clone(),
+            erros_regra: self.erros_regra.clone(),
+        }
     }
 
     /// Leva as contas do cache de revisões para as séries.

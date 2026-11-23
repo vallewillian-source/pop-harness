@@ -238,6 +238,7 @@ fn transicao_parcial(etapa: &str) -> TransicaoDeFluxo {
         }],
         encerra_atendimento: false,
         repetida: false,
+        erro_de_regra: false,
     }
 }
 
@@ -274,6 +275,7 @@ fn transicao_avanca(de: &str, para: &str) -> TransicaoDeFluxo {
         efeitos: Vec::new(),
         encerra_atendimento: false,
         repetida: false,
+        erro_de_regra: false,
     }
 }
 
@@ -303,6 +305,7 @@ fn transicao_conclui(de: &str) -> TransicaoDeFluxo {
         efeitos: Vec::new(),
         encerra_atendimento: true,
         repetida: false,
+        erro_de_regra: false,
     }
 }
 
@@ -744,6 +747,7 @@ fn repetir_a_chave_devolve_o_desfecho_sem_duplicar_evento_nem_efeito() {
                 efeitos: Vec::new(),
                 encerra_atendimento: false,
                 repetida: true,
+                erro_de_regra: false,
             },
             "outra-chave",
             sem_extras(),

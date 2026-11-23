@@ -9,21 +9,20 @@
 //! Dependências permitidas: só `poph-types` e a biblioteca de script. Este crate **não** importa
 //! `poph-store`, `poph-agent`, `poph-server` nem outro crate do workspace.
 //!
-//! Módulos, e a tarefa que implementa cada um:
+//! Módulos, e o que cada um faz:
 //!
-//! - [`compilador`] — FX-10: script → IR, com diagnósticos de forma (feito).
-//! - [`validador`] — FX-11: diagnósticos semânticos sobre a IR e resolução de departamentos (feito).
-//! - [`regras`] — FX-12: combinadores e funções avançadas (`def`) (feito).
-//! - [`motor`] — FX-13 (feito: iniciar, registrar campos, executar ação, avançar) e FX-14
-//!   (decisões, fim, abandono e efeitos).
-//! - [`prompt`] — FX-18: bloco do prompt e visualização da etapa.
-//! - [`diff`] — FX-17: diferença entre revisões em linguagem comum.
-//! - [`formatador`] — FX-16: forma canônica do script (script ⇄ estrutura) (feito).
-//! - [`cache`] — FX-19: cache das revisões compiladas (LRU com teto em MB, single-flight e falha
-//!   fechada).
+//! - [`compilador`] — script → IR, com diagnósticos de forma.
+//! - [`validador`] — diagnósticos semânticos sobre a IR e resolução de departamentos.
+//! - [`regras`] — combinadores e funções avançadas (`def`), com tetos de ticks, heap e prazo.
+//! - [`motor`] — a passagem de uma execução: iniciar, registrar campos, executar ação, avançar,
+//!   resolver decisões, chegar ao fim, abandonar e produzir efeitos.
+//! - [`prompt`] — bloco do prompt da etapa e visualização dela.
+//! - [`diff`] — diferença entre revisões em linguagem comum.
+//! - [`formatador`] — forma canônica do script (script ⇄ estrutura).
+//! - [`cache`] — cache das revisões compiladas (LRU com teto em MB, single-flight e falha fechada).
 //!
-//! Os módulos ainda vazios existem para fixar o desenho e a fronteira: `compilador`, `validador` e
-//! `regras` têm função pública.
+//! O crate está completo para as responsabilidades dele: o que falta do módulo Fluxos/Fichas está
+//! nos crates que gravam, ligam e expõem (ver `docs/FLUXOS.md`).
 
 // `blake3` vem junto do starlark e continua sem uso direto neste crate: a chave do cache usa
 // `sha2`, que já roda no workspace (o mesmo `sha256` de `fluxo_revisoes.fonte_sha256`). O

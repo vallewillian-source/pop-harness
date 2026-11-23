@@ -147,7 +147,7 @@ impl Execucoes<'_> {
             Some(chave) => Some(format!("inicio:{chave}")),
         };
 
-        self.0.escrita(move |conn| {
+        let gravada = self.0.escrita(move |conn| {
             // Idempotência antes de tudo (como nas transições): a chave já abriu uma execução na
             // Ficha, então devolve essa execução, mesmo que ela já tenha terminado. Não grava nada.
             if let Some(marcador) = chave_inicio.as_deref()
@@ -368,7 +368,13 @@ impl Execucoes<'_> {
                 fechou_atendimento: false,
                 repetida: false,
             })
-        })
+        })?;
+        // FX-40: só a abertura de verdade conta. Repetir a chave devolve a execução de antes
+        // (`repetida`), e a conta dela já foi feita na primeira chamada.
+        if !gravada.repetida {
+            self.0.contar_execucao_aberta();
+        }
+        Ok(gravada)
     }
 
     /// Diz se a chave de idempotência já aplicou uma transição nesta execução (FX-30).
@@ -482,14 +488,16 @@ impl Execucoes<'_> {
         let agora = self.0.agora();
         let texto_org = org.to_string();
         let texto_execucao = execucao.to_string();
+        let erro_de_regra = transicao.erro_de_regra;
         let transicao = transicao.clone();
+        let metricas = self.0.metricas_de_execucao();
         let chave = chave.to_owned();
         let ator_ref = extras.ator_ref.map(str::to_owned);
         let fechada_por = extras.fechada_por.unwrap_or(FechadaPor::Fluxo);
         let motivo_pedido = extras.motivo_encerramento.map(str::to_owned);
         let esperada_i64 = i64::try_from(esperada).unwrap_or(i64::MAX);
 
-        self.0.escrita(move |conn| {
+        let gravada = self.0.escrita(move |conn| {
             let Some(atual) = ler_execucao(conn, &texto_org, &texto_execucao)? else {
                 return Err(nao_encontrado("execução de fluxo", &texto_execucao));
             };
@@ -670,6 +678,7 @@ impl Execucoes<'_> {
                     fechada_por,
                     &motivo,
                     agora,
+                    metricas.as_ref(),
                 )?;
             }
 
@@ -683,7 +692,16 @@ impl Execucoes<'_> {
                 fechou_atendimento: fechou,
                 repetida: false,
             })
-        })
+        })?;
+        // FX-40: o desfecho conta uma vez. Repetir a chave volta com `repetida` e não soma nada; uma
+        // transição que deixa a execução `ativa` (etapa parcial) também não conta.
+        if !gravada.repetida {
+            self.0.contar_desfecho_da_execucao(gravada.execucao.status);
+            if erro_de_regra && gravada.execucao.status == StatusExecucao::Falha {
+                self.0.contar_erro_de_regra();
+            }
+        }
+        Ok(gravada)
     }
 
     /// Execução pelo id, dentro da org.

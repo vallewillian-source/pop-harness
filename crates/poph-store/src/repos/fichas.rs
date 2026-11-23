@@ -22,6 +22,7 @@ use rusqlite::{Connection, OptionalExtension, Row, params};
 
 use crate::Store;
 use crate::erro::{ErroStore, Resultado};
+use crate::metricas::MetricasExecucao;
 use crate::modelo::{EventoFicha, Ficha, FiltroFichas, NovaFicha, NovoEventoFicha, Pagina};
 use crate::repos::{exigir, id_da_coluna, id_opcional, u64_da_coluna};
 
@@ -216,6 +217,8 @@ impl Fichas<'_> {
         let texto_ficha = ficha.to_string();
         let agora = self.0.agora();
         let motivo = motivo.to_owned();
+        // FX-40: os contadores das execuções atravessam o comando de escrita (os handles clonam).
+        let metricas = self.0.metricas_de_execucao();
         self.0.escrita(move |conn| {
             let linha: Option<(String, Option<String>, i64)> = conn
                 .query_row(
@@ -263,6 +266,7 @@ impl Fichas<'_> {
                 FechadaPor::Admin,
                 &motivo,
                 agora,
+                metricas.as_ref(),
             )?;
             Ok(())
         })
@@ -470,6 +474,7 @@ pub(crate) fn fechar_ficha_da_conversa(
     por: FechadaPor,
     motivo: &str,
     agora: i64,
+    metricas: Option<&MetricasExecucao>,
 ) -> Resultado<bool> {
     let situacao: Option<(String, String)> = conn
         .query_row(
@@ -508,7 +513,7 @@ pub(crate) fn fechar_ficha_da_conversa(
     };
 
     // Daqui para baixo o fechamento é um só: o mesmo de quem tem a Ficha pelo id (FX-20).
-    fechar_ficha_por_id(conn, org, &ficha, por, motivo, agora)
+    fechar_ficha_por_id(conn, org, &ficha, por, motivo, agora, metricas)
 }
 
 /// Fecha a Ficha **pelo id dela**, dentro da escrita de quem chamou: abandona as execuções de fluxo
@@ -524,6 +529,7 @@ pub(crate) fn fechar_ficha_por_id(
     por: FechadaPor,
     motivo: &str,
     agora: i64,
+    metricas: Option<&MetricasExecucao>,
 ) -> Resultado<bool> {
     let situacao: Option<String> = conn
         .query_row(
@@ -577,6 +583,11 @@ pub(crate) fn fechar_ficha_por_id(
             },
             agora,
         )?;
+    }
+    // FX-40: cada execução que o fechamento do atendimento abandonou conta uma vez em
+    // `poph_fluxos_execucoes_abandonadas_total`.
+    if let Some(metricas) = metricas {
+        metricas.desfecho(StatusExecucao::Abandonada, ativas.len() as u64);
     }
 
     registrar_evento_conn(conn, org, ficha, &evento_de_fechamento(por, motivo), agora)?;

@@ -252,6 +252,14 @@ pub struct Resultado {
     ///
     /// Sai `false` quando `repetida`: repetir a chave não pede nada de novo.
     pub encerra_atendimento: bool,
+    /// `true` quando esta passagem parou a execução em `falha` porque uma **regra não avaliou**
+    /// (`FLXR01`/`FLXR03`, o motivo em [`Estado::motivo`]).
+    ///
+    /// Ciclo de decisões e estouro de `fluxos.max_saltos_decisao` também deixam a execução `falha`,
+    /// mas não são erro de regra: aqui só entram as avaliações que falharam. Serve ao contador
+    /// `poph_fluxos_erros_regra_total` (FX-40): o espelho do banco não sabe distinguir a causa pelo
+    /// texto do motivo, então ela sobe tipada daqui.
+    pub erro_de_regra: bool,
 }
 
 /// Efeito declarado na IR, já com o texto resolvido e com a chave que o torna idempotente.
@@ -357,6 +365,7 @@ pub fn executar_acao(
             aguardando: recibo.aguardando.clone(),
             repetida: true,
             encerra_atendimento: false,
+            erro_de_regra: false,
         });
     }
 
@@ -369,7 +378,7 @@ pub fn executar_acao(
     //    versão anterior do motor.
     if let Destino::Decisao { .. } = trabalho.no_atual {
         let parada = trabalho.no_atual.clone();
-        seguir(
+        let desfecho = seguir(
             ir,
             &mut trabalho,
             parada,
@@ -378,7 +387,12 @@ pub fn executar_acao(
             &mut efeitos,
         )?;
         if trabalho.status != StatusExecucao::Ativa {
-            return Ok(resultado_parado(trabalho, eventos, efeitos));
+            return Ok(resultado_parado(
+                trabalho,
+                eventos,
+                efeitos,
+                desfecho.erro_de_regra,
+            ));
         }
     }
 
@@ -513,6 +527,7 @@ pub fn executar_acao(
         .insert(etapa.id.clone(), Json::Object(registrados));
 
     let mut encerra_atendimento = false;
+    let mut erro_de_regra = false;
     let aguardando_do_resultado = if avanca {
         // Efeitos da ação: saem depois de a transição ser aceita (`FLUXOS_LINGUAGEM.md` §4.9).
         let no_da_acao = format!("acao:{}.{acao}", etapa.id);
@@ -536,6 +551,7 @@ pub fn executar_acao(
             &mut efeitos,
         )?;
         encerra_atendimento = desfecho.encerra_atendimento;
+        erro_de_regra = desfecho.erro_de_regra;
         Vec::new()
     } else {
         novo_estado.atores_que_agiram = progresso;
@@ -559,6 +575,7 @@ pub fn executar_acao(
         aguardando: aguardando_do_resultado,
         repetida: false,
         encerra_atendimento,
+        erro_de_regra,
     })
 }
 
@@ -604,6 +621,7 @@ pub fn abandonar(
             aguardando: recibo.aguardando.clone(),
             repetida: true,
             encerra_atendimento: false,
+            erro_de_regra: false,
         });
     }
 
@@ -636,6 +654,7 @@ pub fn abandonar(
         aguardando: Vec::new(),
         repetida: false,
         encerra_atendimento: false,
+        erro_de_regra: false,
     })
 }
 
@@ -661,11 +680,14 @@ pub fn efeitos_de_entrada(
 /// O que uma travessia produziu além do estado.
 ///
 /// A falha não aparece aqui porque já está no estado (`status` e `motivo`): o chamador lê de um
-/// lugar só.
+/// lugar só. A exceção é [`Desfecho::erro_de_regra`], que o estado não distingue do resto (o motivo
+/// é texto).
 #[derive(Debug, Clone, Default)]
 struct Desfecho {
     /// A execução chegou a um `fim(encerra_atendimento=True)`.
     encerra_atendimento: bool,
+    /// A travessia parou porque uma regra não avaliou.
+    erro_de_regra: bool,
 }
 
 /// Atravessa o grafo a partir de `destino` até parar numa etapa (segue) ou num fim (conclui).
@@ -719,6 +741,7 @@ fn seguir(
                         Destino::Decisao { id },
                         motivo,
                         eventos,
+                        false,
                     ));
                 }
                 visitadas.push(id.clone());
@@ -734,6 +757,7 @@ fn seguir(
                         Destino::Decisao { id },
                         motivo,
                         eventos,
+                        false,
                     ));
                 }
                 let escolha = match contexto.avaliador.avaliar(&decisao.se, &estado.dados) {
@@ -746,6 +770,7 @@ fn seguir(
                             Destino::Decisao { id },
                             erro.to_string(),
                             eventos,
+                            true,
                         ));
                     }
                 };
@@ -784,6 +809,7 @@ fn seguir(
                 });
                 return Ok(Desfecho {
                     encerra_atendimento,
+                    erro_de_regra: false,
                 });
             }
         }
@@ -791,11 +817,15 @@ fn seguir(
 }
 
 /// Marca a execução como `falha` no nó em que ela parou, com o motivo no estado e no evento.
+///
+/// `erro_de_regra` separa a regra que não avalia das outras duas causas de falha (ciclo e teto de
+/// saltos), que o estado guarda só como texto.
 fn parar_em_falha(
     estado: &mut Estado,
     no: Destino,
     motivo: String,
     eventos: &mut Vec<Evento>,
+    erro_de_regra: bool,
 ) -> Desfecho {
     estado.status = StatusExecucao::Falha;
     estado.motivo = Some(motivo.clone());
@@ -806,7 +836,10 @@ fn parar_em_falha(
         ator: AtorEvento::Sistema,
         payload: json!({ "no": estado.no_atual.id(), "motivo": motivo }),
     });
-    Desfecho::default()
+    Desfecho {
+        encerra_atendimento: false,
+        erro_de_regra,
+    }
 }
 
 /// Resultado de uma passagem que terminou sem ação: a execução concluiu ou parou em `falha`.
@@ -814,6 +847,7 @@ fn resultado_parado(
     estado: Estado,
     eventos: Vec<Evento>,
     efeitos: Vec<EfeitoProduzido>,
+    erro_de_regra: bool,
 ) -> Resultado {
     Resultado {
         novo_estado: estado,
@@ -822,6 +856,7 @@ fn resultado_parado(
         aguardando: Vec::new(),
         repetida: false,
         encerra_atendimento: false,
+        erro_de_regra,
     }
 }
 

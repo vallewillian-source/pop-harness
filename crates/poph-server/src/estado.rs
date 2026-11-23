@@ -138,9 +138,12 @@ impl Estado {
             usize::try_from(config.fluxos.cache_revisoes_mb).unwrap_or(usize::MAX),
         ));
         let metricas_fluxos = if config.fluxos.ativo {
-            Some(Arc::new(MetricasFluxos::registrar(&registro).map_err(
-                |erro| format!("não consegui registrar as métricas de fluxos: {erro}"),
-            )?))
+            let metricas = MetricasFluxos::registrar(&registro)
+                .map_err(|erro| format!("não consegui registrar as métricas de fluxos: {erro}"))?;
+            // FX-40: quem escreve `fluxo_execucoes` é o store, então ele recebe os handles das
+            // séries já declaradas aqui — o nome não é declarado duas vezes.
+            store.publicar_metricas_de_execucao(metricas.das_execucoes());
+            Some(Arc::new(metricas))
         } else {
             None
         };

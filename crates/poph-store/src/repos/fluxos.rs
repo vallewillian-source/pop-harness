@@ -15,7 +15,9 @@
 //!   agente, para que quem leu a lista com a versão antiga leve `412` no `If-Match` seguinte e não
 //!   sobrescreva a mudança de outra pessoa.
 
-use poph_types::{AgentId, AtorEvento, DomainError, ExecucaoId, FluxoId, OrgId, TipoEventoFicha};
+use poph_types::{
+    AgentId, AtorEvento, DomainError, ExecucaoId, FluxoId, OrgId, StatusExecucao, TipoEventoFicha,
+};
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
 use super::fichas::registrar_evento_conn;
@@ -221,6 +223,8 @@ impl Fluxos<'_> {
         let agora = self.0.agora();
         let texto_org = org.to_string();
         let texto_id = id.to_string();
+        // FX-40: com `force`, as execuções ativas viram `abandonada` e contam.
+        let metricas = self.0.metricas_de_execucao();
         self.0.escrita(move |conn| {
             let existe: Option<i64> = conn
                 .query_row(
@@ -272,6 +276,10 @@ impl Fluxos<'_> {
                     agora,
                 )?;
             }
+            if let Some(metricas) = metricas.as_ref() {
+                metricas.desfecho(StatusExecucao::Abandonada, ativas.len() as u64);
+            }
+
             conn.execute(
                 "DELETE FROM fluxos WHERE org_id = ?1 AND id = ?2",
                 params![texto_org, texto_id],

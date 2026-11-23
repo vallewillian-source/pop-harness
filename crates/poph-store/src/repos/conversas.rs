@@ -264,6 +264,8 @@ impl Conversas<'_> {
         let audit_id = poph_types::AuditId::generate().to_string();
         let esperada_i64 = i64::try_from(esperada).unwrap_or(i64::MAX);
         let fechada = StatusConversa::Fechada.como_texto();
+        // FX-40: os contadores das execuções atravessam o comando de escrita (os handles clonam).
+        let metricas = self.0.metricas_de_execucao();
         self.0.escrita(move |conn| {
             let atual: Option<(i64, String)> = conn
                 .query_row(
@@ -327,6 +329,7 @@ impl Conversas<'_> {
                 poph_types::FechadaPor::Admin,
                 MOTIVO_FECHAMENTO_ADMIN,
                 agora,
+                metricas.as_ref(),
             )?;
             Ok(())
         })?;
@@ -353,6 +356,7 @@ impl Conversas<'_> {
         let texto_agente = agente.to_string();
         let agora = self.0.agora();
         let audit_id = poph_types::AuditId::generate().to_string();
+        let metricas = self.0.metricas_de_execucao();
         self.0.escrita(move |conn| {
             let situacao: Option<String> = conn.query_row(
                 "SELECT status FROM conversations WHERE org_id=?1 AND id=?2 AND agent_id=?3",
@@ -368,6 +372,7 @@ impl Conversas<'_> {
             )?;
             super::fichas::fechar_ficha_da_conversa(
                 conn, &texto_org, &texto_id, poph_types::FechadaPor::Agente, &motivo, agora,
+                metricas.as_ref(),
             )?;
             let detalhe = serde_json::json!({"motivo": motivo, "ator": "agente"}).to_string();
             conn.execute(
@@ -698,6 +703,8 @@ impl Conversas<'_> {
         let texto_id = id.to_string();
         let esperada_i64 = esperada as i64;
         let fechada = StatusConversa::Fechada.como_texto();
+        // FX-40: fechar por aqui também abandona a execução ativa da Ficha (conta no store).
+        let metricas = self.0.metricas_de_execucao();
         self.0.escrita(move |conn| {
             if let Some(departamento) = departamento_alvo {
                 pertence(
@@ -759,6 +766,7 @@ impl Conversas<'_> {
                     poph_types::FechadaPor::Sistema,
                     MOTIVO_FECHAMENTO_SITUACAO,
                     agora,
+                    metricas.as_ref(),
                 )?;
             }
             Ok(())

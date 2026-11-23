@@ -666,6 +666,7 @@ fn nenhum_repositorio_le_registro_de_outra_org() {
                     efeitos: Vec::new(),
                     encerra_atendimento: false,
                     repetida: false,
+                    erro_de_regra: false,
                 },
                 "chave-invasora",
                 ExtrasDaTransicao::default(),

@@ -15,8 +15,8 @@
 //!    só. O prompt nasce com o bloco da etapa de entrada.
 //! 4. **Reserva** (Jev fora do ar, gate desligado, resposta inutilizável ou escolha recusada na
 //!    validação): nada inicia e o prompt recebe o catálogo (`id`, nome, `quando`) para o modelo
-//!    escolher — a ferramenta `fluxo_iniciar` é da FX-24, que ainda não existe; sem ela o catálogo
-//!    vai como **informação** e o turno é registrado como reserva no `turns.jev_json`.
+//!    escolher e chamar a ferramenta `fluxo_iniciar` (FX-24). O turno é registrado como reserva no
+//!    `turns.jev_json`.
 //! 5. **`nenhum` do Jev ou confiança baixa**: nada inicia e o catálogo **não** vai ao prompt.
 //!
 //! Falha de banco ou de leitura dentro daqui nunca derruba o atendimento: o turno segue sem fluxo,

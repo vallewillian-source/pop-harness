@@ -831,3 +831,51 @@ async fn encerramento_do_agente_e_proxima_mensagem_abrem_nova_ficha() {
         "closed"
     );
 }
+
+// ─────────────────────────────────────────── FX-40: contadores no caminho do turno
+
+/// Os contadores das execuções contam o turno de verdade: o G9 abre a execução antes do modelo e a
+/// ferramenta do agente conclui a **mesma** execução (uma iniciada, uma concluída, nada duplicado).
+///
+/// Os handles são os do catálogo do `/metrics`, publicados no store como `Estado::novo` faz na
+/// subida — aqui o servidor não sobe, então a publicação é explícita.
+#[tokio::test]
+async fn contadores_do_turno_contam_uma_abertura_e_uma_conclusao() {
+    let c = Cenario::novo("fx40-turno");
+    let registro = poph_types::Registro::new();
+    let metricas = poph_server::fluxos_metricas::MetricasFluxos::registrar(&registro)
+        .expect("o catálogo de fluxos registra");
+    c.store
+        .publicar_metricas_de_execucao(metricas.das_execucoes());
+
+    c.criar_fluxo("agendar_visita", "Agendar visita", VISITA, true);
+    let conversa = c.conversa();
+    executar(
+        &c,
+        conversa,
+        "agendar_visita",
+        vec![
+            chamada(
+                "fluxo_executar_acao",
+                json!({"acao":"confirmar","campos":{"endereco":"Rua Exemplo 1","periodo":"tarde"}}),
+            ),
+            chamada("fluxo_executar_acao", json!({"acao":"ok","campos":{}})),
+            texto("Visita combinada."),
+        ],
+    )
+    .await;
+
+    assert_eq!(
+        metricas.execucoes_iniciadas.valor(),
+        1,
+        "o turno abriu uma execução (G9 antes do modelo)"
+    );
+    assert_eq!(
+        metricas.execucoes_concluidas.valor(),
+        1,
+        "as ações do agente concluíram a mesma execução"
+    );
+    assert_eq!(metricas.execucoes_abandonadas.valor(), 0);
+    assert_eq!(metricas.execucoes_falhas.valor(), 0);
+    assert_eq!(metricas.erros_regra.valor(), 0);
+}
