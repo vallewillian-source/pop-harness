@@ -13,7 +13,9 @@
 //! 3. **Põe a sala no espaço**: `m.space.child` no espaço, `m.space.parent` na sala, entrada
 //!    restrita aos membros do espaço e convite dos membros do espaço para a sala, em lotes
 //!    limitados. Quando a transferência muda o departamento, o mesmo caminho **move** a sala: põe
-//!    no espaço novo e tira do antigo.
+//!    no espaço novo e tira do antigo. Se o registro da conversa ainda não diz em que espaço a sala
+//!    está (transferência durante a criação), o espaço antigo é achado pelo `m.space.parent` que a
+//!    própria sala guarda (MX-51).
 //!
 //! ## Quem escreve o quê
 //!
@@ -506,12 +508,22 @@ impl<P: PortaEspacos> Espacos<P> {
             });
         }
 
-        // 2. Sai do espaço antigo: some o `m.space.child` lá e o `m.space.parent` daqui.
-        let mut movida = false;
-        if let Some(antigo) = atual.filter(|antigo| *antigo != espaco.room_id) {
-            self.remover_filho(&antigo, &dados.sala).await?;
-            self.remover_pai(dados, &antigo).await?;
-            movida = true;
+        // 2. Sai dos espaços de onde a sala veio: some o `m.space.child` de lá e o
+        //    `m.space.parent` daqui. Com o registro gravado, o espaço antigo é ele. Sem registro (a transferência chegou
+        //    enquanto a sala ainda estava sendo criada), a própria sala diz de quais espaços é filha,
+        //    pelo `m.space.parent` que ela guarda — senão o `m.space.child` do espaço velho ficaria
+        //    para sempre (MX-51).
+        let antigos: Vec<String> = match atual {
+            Some(antigo) => vec![antigo],
+            None => self.espacos_pais_da_sala(dados).await?,
+        };
+        let antigos: Vec<String> = antigos
+            .into_iter()
+            .filter(|antigo| *antigo != espaco.room_id)
+            .collect();
+        let movida = !antigos.is_empty();
+        for antigo in &antigos {
+            self.remover_do_espaco(dados, antigo).await?;
         }
 
         self.porta
@@ -689,6 +701,33 @@ impl<P: PortaEspacos> Espacos<P> {
             )
             .await?;
         Ok(())
+    }
+
+    /// Espaços de que a sala é filha agora, pelos `m.space.parent` que ela guarda.
+    ///
+    /// Evento com conteúdo vazio é um pai que já foi tirado, então não conta. É o que substitui o
+    /// registro da conversa quando ele está vazio (MX-51).
+    async fn espacos_pais_da_sala(
+        &self,
+        dados: &SalaParaEspaco,
+    ) -> Result<Vec<String>, ErroEspaco> {
+        let eventos = self
+            .cliente
+            .estado_da_sala(dados.agente.user_id(), &dados.sala)
+            .await?;
+        Ok(eventos
+            .iter()
+            .filter(|evento| evento.get("type").and_then(Value::as_str) == Some(TIPO_PAI))
+            .filter(|evento| {
+                evento
+                    .get("content")
+                    .and_then(Value::as_object)
+                    .is_some_and(|conteudo| !conteudo.is_empty())
+            })
+            .filter_map(|evento| evento.get("state_key").and_then(Value::as_str))
+            .filter(|espaco| !espaco.is_empty())
+            .map(str::to_owned)
+            .collect())
     }
 
     /// Tira a sala do espaço: sem `m.space.child` no espaço e sem `m.space.parent` na sala.

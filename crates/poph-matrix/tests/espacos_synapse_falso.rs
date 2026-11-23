@@ -338,6 +338,28 @@ async fn atender(
                 ),
             }
         }
+        ("GET", [salas, sala, estado]) if salas == "rooms" && estado == "state" => {
+            match guarda.salas.get(sala) {
+                Some(alvo) if alvo.membros.contains(&quem) => {
+                    let eventos: Vec<Value> = alvo
+                        .estado
+                        .iter()
+                        .map(|((tipo, chave), corpo)| {
+                            json!({ "type": tipo, "state_key": chave, "content": corpo })
+                        })
+                        .collect();
+                    responder(200, Value::Array(eventos))
+                }
+                Some(_) => responder(
+                    403,
+                    json!({ "errcode": "M_FORBIDDEN", "error": "User not in room" }),
+                ),
+                None => responder(
+                    404,
+                    json!({ "errcode": "M_NOT_FOUND", "error": "Sala não existe" }),
+                ),
+            }
+        }
         ("GET", [salas, sala, estado, tipo, chave @ ..])
             if salas == "rooms" && estado == "state" =>
         {
@@ -1355,5 +1377,265 @@ async fn espaco_informado_invalido_e_erro_de_contrato() {
     assert!(
         matches!(erro, ErroEspaco::EspacoInvalido { .. }),
         "{erro:?}"
+    );
+}
+
+// ───────────────────────────── sala sem registro de espaço (MX-51) ─────────────────────────────
+
+/// Quantas requisições recebidas (só o caminho) contêm este trecho.
+fn requisicoes_com(cenario: &Cenario, trecho: &str) -> usize {
+    cenario
+        .com_estado()
+        .requisicoes
+        .iter()
+        .filter(|caminho| caminho.contains(trecho))
+        .count()
+}
+
+#[tokio::test]
+async fn transferir_com_registro_vazio_tira_a_sala_do_espaco_antigo() {
+    let cenario = cenario().await;
+    let sala = cenario.sala_da_conversa().await;
+    let mut dados = cenario.com_sala(&sala);
+    dados.departamento = Some(cenario.departamento("Comercial"));
+    let Posicao::Posicionada { espaco: antigo, .. } = cenario
+        .espacos
+        .posicionar(&dados)
+        .await
+        .expect("no espaço do comercial")
+    else {
+        panic!("esperava Posicionada");
+    };
+
+    // A janela da criação: a sala já está no espaço, mas o registro da conversa ainda não diz isso.
+    cenario
+        .porta
+        .definir_espaco_da_sala(dados.org, dados.conversa, None)
+        .await
+        .expect("registro vazio");
+
+    dados.departamento = Some(cenario.departamento("Suporte"));
+    let escritas_no_antigo_antes =
+        requisicoes_com(&cenario, &format!("{antigo}/state/{TIPO_FILHO}/"));
+    let nova = cenario
+        .espacos
+        .posicionar(&dados)
+        .await
+        .expect("transferência com registro vazio");
+    let Posicao::Posicionada {
+        espaco: novo,
+        movida,
+        convites_falhos: 0,
+        ..
+    } = nova.clone()
+    else {
+        panic!("esperava Posicionada sem convite falho, veio {nova:?}");
+    };
+    assert!(movida, "a sala veio do espaço antigo, mesmo sem o registro");
+    assert_ne!(novo, antigo);
+
+    {
+        let guarda = cenario.com_estado();
+        assert_eq!(
+            guarda.salas[&antigo]
+                .estado
+                .get(&(TIPO_FILHO.to_owned(), sala.clone())),
+            Some(&json!({})),
+            "o m.space.child sai do espaço antigo"
+        );
+        let da_sala = &guarda.salas[&sala];
+        assert_eq!(
+            da_sala.estado.get(&(TIPO_PAI.to_owned(), antigo.clone())),
+            Some(&json!({})),
+            "o m.space.parent do espaço antigo sai da sala"
+        );
+        assert_eq!(
+            da_sala
+                .estado
+                .get(&(TIPO_PAI.to_owned(), novo.clone()))
+                .map(|corpo| corpo["canonical"].clone()),
+            Some(json!(true)),
+            "o m.space.parent do espaço novo fica na sala"
+        );
+    }
+    let cliente = cenario.cliente();
+    let sob_antigo = cliente
+        .hierarquia(&cenario.bot, &antigo)
+        .await
+        .expect("hierarquia do antigo");
+    assert!(
+        !sob_antigo.contains(&sala),
+        "a sala não aparece mais sob o espaço antigo"
+    );
+    let sob_novo = cliente
+        .hierarquia(&cenario.bot, &novo)
+        .await
+        .expect("hierarquia do novo");
+    assert!(sob_novo.contains(&sala), "a sala aparece sob o espaço novo");
+    assert_eq!(
+        cenario.porta.espaco_da_sala(dados.org, dados.conversa),
+        Some(novo.clone())
+    );
+
+    // Outra passagem com o registro ainda vazio não escreve no espaço antigo de novo: o pai já
+    // tirado (conteúdo vazio) não conta como espaço de onde sair.
+    let escritas_antigas = requisicoes_com(&cenario, &format!("{antigo}/state/{TIPO_FILHO}/"));
+    assert_eq!(
+        escritas_antigas,
+        escritas_no_antigo_antes + 1,
+        "a transferência tirou o m.space.child do espaço antigo com uma escrita só"
+    );
+    cenario
+        .porta
+        .definir_espaco_da_sala(dados.org, dados.conversa, None)
+        .await
+        .expect("registro vazio de novo");
+    let repetida = cenario
+        .espacos
+        .posicionar(&dados)
+        .await
+        .expect("repetir com registro vazio");
+    assert!(
+        matches!(repetida, Posicao::Posicionada { movida: false, .. }),
+        "repetir não move a sala de novo, veio {repetida:?}"
+    );
+    assert_eq!(
+        requisicoes_com(&cenario, &format!("{antigo}/state/{TIPO_FILHO}/")),
+        escritas_antigas,
+        "o espaço antigo não recebe escrita de novo"
+    );
+}
+
+#[tokio::test]
+async fn transferir_com_registro_vazio_e_convite_falho_so_sai_do_antigo_na_passagem_seguinte() {
+    let cenario = cenario().await;
+    let sala = cenario.sala_da_conversa().await;
+    let mut dados = cenario.com_sala(&sala);
+    dados.departamento = Some(cenario.departamento("Comercial"));
+    let Posicao::Posicionada { espaco: antigo, .. } = cenario
+        .espacos
+        .posicionar(&dados)
+        .await
+        .expect("no espaço do comercial")
+    else {
+        panic!("esperava Posicionada");
+    };
+    cenario
+        .porta
+        .definir_espaco_da_sala(dados.org, dados.conversa, None)
+        .await
+        .expect("registro vazio");
+
+    // O espaço de destino já existe no Element, com alguém dentro que ainda não está na sala.
+    let suporte = cenario.espaco_do_operador(true).await;
+    cenario.dar_poder_ao_bot(&suporte, 50).await;
+    cenario
+        .pessoa_no_espaco("@atendente0:matrix-dev.local", &suporte)
+        .await;
+    dados.departamento = Some(cenario.departamento("Suporte"));
+    dados.existente = Some(suporte.clone());
+
+    cenario.com_estado().falhar_convites = 1;
+    let primeira = cenario
+        .espacos
+        .posicionar(&dados)
+        .await
+        .expect("primeira passagem");
+    let Posicao::Posicionada {
+        convites_falhos: 1,
+        movida: false,
+        ..
+    } = primeira
+    else {
+        panic!("esperava um convite falho, veio {primeira:?}");
+    };
+    assert!(
+        cenario
+            .porta
+            .espaco_da_sala(dados.org, dados.conversa)
+            .is_none(),
+        "convite pendente não grava o vínculo"
+    );
+    assert!(
+        cenario.com_estado().salas[&antigo]
+            .estado
+            .get(&(TIPO_FILHO.to_owned(), sala.clone()))
+            .is_some_and(|corpo| corpo != &json!({})),
+        "com convite pendente a sala ainda não saiu do espaço antigo"
+    );
+
+    cenario.com_estado().falhar_convites = 0;
+    let segunda = cenario
+        .espacos
+        .posicionar(&dados)
+        .await
+        .expect("passagem seguinte");
+    let Posicao::Posicionada {
+        espaco,
+        movida: true,
+        convites_falhos: 0,
+        ..
+    } = segunda
+    else {
+        panic!("esperava a sala movida na passagem seguinte, veio {segunda:?}");
+    };
+    assert_eq!(espaco, suporte);
+    assert_eq!(
+        cenario.porta.espaco_da_sala(dados.org, dados.conversa),
+        Some(suporte.clone())
+    );
+    assert_eq!(
+        cenario.com_estado().salas[&antigo]
+            .estado
+            .get(&(TIPO_FILHO.to_owned(), sala.clone())),
+        Some(&json!({})),
+        "na passagem seguinte a sala sai do espaço antigo"
+    );
+}
+
+#[tokio::test]
+async fn transferir_com_registro_preenchido_nao_le_o_estado_da_sala() {
+    let cenario = cenario().await;
+    let sala = cenario.sala_da_conversa().await;
+    let mut dados = cenario.com_sala(&sala);
+    dados.departamento = Some(cenario.departamento("Comercial"));
+    cenario
+        .espacos
+        .posicionar(&dados)
+        .await
+        .expect("no espaço do comercial");
+
+    dados.departamento = Some(cenario.departamento("Suporte"));
+    let antes = cenario.com_estado().requisicoes.len();
+    let nova = cenario
+        .espacos
+        .posicionar(&dados)
+        .await
+        .expect("transferência com registro");
+    assert!(
+        matches!(nova, Posicao::Posicionada { movida: true, .. }),
+        "veio {nova:?}"
+    );
+    let depois: Vec<String> = cenario.com_estado().requisicoes[antes..].to_vec();
+    assert!(
+        !depois.iter().any(|caminho| caminho.ends_with("/state")),
+        "com o registro preenchido, a transferência não lê o estado inteiro da sala: {depois:?}"
+    );
+
+    // Repetir com o registro gravado sai por `JaPosicionada`: nenhuma requisição.
+    let antes_repetida = cenario.com_estado().requisicoes.len();
+    let repetida = cenario
+        .espacos
+        .posicionar(&dados)
+        .await
+        .expect("passagem repetida");
+    assert!(
+        matches!(repetida, Posicao::JaPosicionada { .. }),
+        "veio {repetida:?}"
+    );
+    assert_eq!(
+        cenario.com_estado().requisicoes.len(),
+        antes_repetida,
+        "a passagem repetida não fala com o Synapse"
     );
 }

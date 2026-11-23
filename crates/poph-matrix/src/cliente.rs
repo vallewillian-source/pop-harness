@@ -476,6 +476,34 @@ impl ClienteMatrix {
         .await
     }
 
+    /// Todo o estado de uma sala (`GET /rooms/{roomId}/state`): cada evento vem com `type`,
+    /// `state_key` e `content`. Evento que foi tirado (`content` vazio) continua na lista.
+    ///
+    /// É a leitura que acha de quais espaços a sala é filha quando o módulo não tem esse registro
+    /// (MX-51): o `m.space.parent` que a própria sala guarda.
+    pub async fn estado_da_sala(
+        &self,
+        usuario: &str,
+        sala: &str,
+    ) -> Result<Vec<Value>, ErroChamada> {
+        let valor = self
+            .chamar(
+                Method::GET,
+                format!("{API}/rooms/{}/state", codificar(sala)),
+                Some(usuario),
+                Corpo::Nenhum,
+                "state (sala inteira)",
+            )
+            .await?;
+        match valor {
+            Value::Array(eventos) => Ok(eventos),
+            _ => Err(ErroChamada::RespostaInvalida {
+                operacao: "state (sala inteira)",
+                motivo: "a resposta não é uma lista de eventos".to_owned(),
+            }),
+        }
+    }
+
     /// Escreve `m.space.child` no espaço apontando para a sala filha (MX-12).
     ///
     /// A `state_key` é o id da sala filha e o corpo leva `via` com o `server_name`: é isso que faz

@@ -245,3 +245,105 @@ async fn a_sala_entra_no_espaco_do_departamento_e_muda_de_espaco() {
 fn cliente_agente(server_name: &str) -> poph_matrix::usuarios::Fantasma {
     IdsFantasmas::novo("ph", server_name).expect("ids").bot()
 }
+
+#[tokio::test]
+#[ignore = "precisa do Synapse de desenvolvimento da MX-01 no ar"]
+async fn a_sala_sem_registro_sai_do_espaco_antigo_no_synapse_real() {
+    // MX-51: a transferência chega com o registro da conversa vazio (a janela da criação). A sala
+    // tem de sair do espaço antigo mesmo assim, achando-o pelo `m.space.parent` dela.
+    let base = credencial("POPH_MATRIX_DEV_BASE_URL");
+    let server_name = credencial("POPH_MATRIX_DEV_SERVER_NAME");
+    let token = credencial("POPH_MATRIX_DEV_HARNESS_AS_TOKEN");
+    let cliente = ClienteMatrix::novo(
+        ConfigCliente::novo(base, server_name.clone(), Segredo::new(token))
+            .expect("configuração do cliente"),
+    )
+    .expect("cliente");
+    let bot = format!("@ph_as_bot:{server_name}");
+    let marcador = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("relógio")
+        .as_secs();
+
+    let sala = cliente
+        .criar_sala(
+            &bot,
+            &CriarSala {
+                room_alias_name: Some(format!("ph_c_mx51_{marcador}")),
+                name: Some(format!("Sala MX-51 {marcador}")),
+                ..CriarSala::default()
+            },
+        )
+        .await
+        .expect("createRoom da sala");
+
+    let ids = IdsFantasmas::novo("ph", server_name.clone()).expect("ids");
+    let porta = PortaMemoria::default();
+    let espacos = Espacos::com(cliente.clone(), ids, porta.clone())
+        .com_limites(LimitesConvite::com(5, 2, Duration::ZERO, 10));
+
+    let mut dados = SalaParaEspaco {
+        org: OrgId::generate(),
+        conversa: ConversationId::generate(),
+        sala: sala.clone(),
+        agente: cliente_agente(&server_name),
+        departamento: Some(DepartamentoEspaco {
+            id: DepartmentId::generate(),
+            nome: format!("Comercial MX51 {marcador}"),
+        }),
+        existente: None,
+    };
+    let Posicao::Posicionada { espaco: antigo, .. } =
+        espacos.posicionar(&dados).await.expect("no comercial")
+    else {
+        panic!("esperava Posicionada");
+    };
+
+    porta
+        .definir_espaco_da_sala(dados.org, dados.conversa, None)
+        .await
+        .expect("registro vazio");
+    dados.departamento = Some(DepartamentoEspaco {
+        id: DepartmentId::generate(),
+        nome: format!("Suporte MX51 {marcador}"),
+    });
+    let nova = espacos
+        .posicionar(&dados)
+        .await
+        .expect("transferência com registro vazio");
+    let Posicao::Posicionada {
+        espaco: novo,
+        movida: true,
+        ..
+    } = nova
+    else {
+        panic!("esperava a sala movida, veio {nova:?}");
+    };
+
+    let sob_antigo = cliente
+        .hierarquia(&bot, &antigo)
+        .await
+        .expect("hierarchy do antigo");
+    assert!(
+        !sob_antigo.contains(&sala),
+        "a sala não pode continuar sob o espaço antigo"
+    );
+    let sob_novo = cliente
+        .hierarquia(&bot, &novo)
+        .await
+        .expect("hierarchy do novo");
+    assert!(
+        sob_novo.contains(&sala),
+        "a sala tem de estar sob o espaço novo"
+    );
+    let pai_antigo = cliente
+        .ler_estado(&bot, &sala, TIPO_PAI, Some(&antigo))
+        .await
+        .expect("m.space.parent do antigo");
+    assert_eq!(
+        pai_antigo,
+        json!({}),
+        "o pai do espaço antigo foi tirado da sala"
+    );
+    println!("sala sem registro saiu do espaço antigo no Synapse de desenvolvimento");
+}

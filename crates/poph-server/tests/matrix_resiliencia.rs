@@ -523,6 +523,21 @@ fn executar(
                 None => nao_existe(),
             }
         }
+        // Estado inteiro da sala (`GET /rooms/{id}/state`): a leitura que acha os espaços de onde a
+        // sala é filha quando o registro da conversa está vazio (MX-51).
+        ("GET", [salas, sala, estado]) if salas == "rooms" && estado == "state" => {
+            match g.salas.get(sala) {
+                Some(alvo) => {
+                    let eventos: Vec<Value> = alvo
+                    .estado
+                    .iter()
+                    .map(|((tipo, chave), corpo)| json!({ "type": tipo, "state_key": chave, "content": corpo }))
+                    .collect();
+                    responder(200, Value::Array(eventos))
+                }
+                None => nao_existe(),
+            }
+        }
         ("GET", [salas, sala, estado, tipo, chave @ ..])
             if salas == "rooms" && estado == "state" =>
         {
