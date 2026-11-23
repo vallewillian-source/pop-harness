@@ -137,9 +137,87 @@ def _pdf_de_teste(texto="Aceite do modulo Matrix (fase 2) - arquivo de teste"):
     return bytes(saida)
 
 
+def _com_ffmpeg(argumentos, sufixo):
+    """Gera um fixture de áudio/vídeo com o ffmpeg; `None` quando ele não está disponível.
+
+    O Element tenta reproduzir o que está na sala: um arquivo só com o cabeçalho aparece com
+    "Erro ao baixar o áudio". Por isso o fixture é real quando há ffmpeg (o caso deste ambiente) e
+    cai num cabeçalho mínimo quando não há — o caminho de entrega é o mesmo, o que muda é a
+    reprodução na tela.
+    """
+    import shutil
+    import subprocess
+    import tempfile
+
+    if shutil.which("ffmpeg") is None:
+        return None
+    with tempfile.NamedTemporaryFile(suffix=sufixo) as saida:
+        try:
+            subprocess.run(
+                ["ffmpeg", "-y", "-loglevel", "error", *argumentos, saida.name],
+                check=True,
+                timeout=60,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        with open(saida.name, "rb") as arquivo:
+            return arquivo.read()
+
+
+def _ogg_de_teste():
+    """OGG/Opus de um segundo (silêncio) via ffmpeg; sem ffmpeg, cabeçalho `OggS` mínimo.
+
+    O `infer` reconhece o formato pelo "OggS" nos dois casos; com ffmpeg o Element também
+    reproduz o áudio na sala (MX-49).
+    """
+    real = _com_ffmpeg(
+        ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono", "-t", "1", "-c:a", "libopus", "-f", "ogg"],
+        ".ogg",
+    )
+    if real:
+        return real
+    cabecalho = (
+        b"OggS"  # assinatura
+        + b"\x00"  # versão
+        + b"\x02"  # início de fluxo
+        + b"\x00" * 8  # granule position
+        + b"\x00\x00\x00\x01"  # serial do fluxo
+        + b"\x00\x00\x00\x00"  # número de sequência
+        + b"\x00\x00\x00\x00"  # checksum (o fixture não é decodificado)
+        + b"\x00"  # nenhum segmento
+    )
+    return cabecalho + b"\x00" * 64
+
+
+def _mp4_de_teste():
+    """MP4 H.264 de um segundo via ffmpeg; sem ffmpeg, cabeçalho `ftyp` mínimo (MX-49)."""
+    real = _com_ffmpeg(
+        [
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=steelblue:s=320x240:d=1",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            "-f",
+            "mp4",
+        ],
+        ".mp4",
+    )
+    if real:
+        return real
+    return b"\x00\x00\x00\x18ftypisom\x00\x00\x02\x00isomiso2mp41" + b"\x00" * 64
+
+
 FIXTURES = {
     "image/png": ("imagem-do-cliente.png", _png_de_teste),
     "application/pdf": ("documento-do-cliente.pdf", _pdf_de_teste),
+    "audio/ogg": ("audio-do-cliente.ogg", _ogg_de_teste),
+    "video/mp4": ("video-do-cliente.mp4", _mp4_de_teste),
 }
 
 
@@ -652,8 +730,13 @@ def webhook_aparelho(org, instancia, id_externo, texto):
         print(resp.status, json.loads(resp.read()))
 
 
-def atendente_envia_midia(sala, caminho, mime, nome):
-    """Atendente manda imagem ou arquivo pela sala (o mesmo evento que o Element publica)."""
+def atendente_envia_midia(sala, caminho, mime, nome, txn=None):
+    """Atendente manda imagem, arquivo, áudio ou vídeo pela sala (o evento que o Element publica).
+
+    O `msgtype` segue o tipo real, como o Element faz: `m.image`, `m.audio`, `m.video` e `m.file`
+    para o resto (MX-44 e MX-49). O `txn` é opcional: repetir o mesmo valor reenvia a mesma
+    transação do Element, que o Synapse deduplica (prova de reentrega do MX-49).
+    """
     token = os.environ["ACEITE_TOKEN_HUMANO"]
     with open(caminho, "rb") as arquivo:
         dados = arquivo.read()
@@ -668,7 +751,14 @@ def atendente_envia_midia(sala, caminho, mime, nome):
         print(status, json.dumps(d, ensure_ascii=False))
         return
     mxc = d["content_uri"]
-    msgtype = "m.image" if mime.startswith("image/") else "m.file"
+    if mime.startswith("image/"):
+        msgtype = "m.image"
+    elif mime.startswith("audio/"):
+        msgtype = "m.audio"
+    elif mime.startswith("video/"):
+        msgtype = "m.video"
+    else:
+        msgtype = "m.file"
     conteudo = {
         "msgtype": msgtype,
         "body": nome,
@@ -676,7 +766,7 @@ def atendente_envia_midia(sala, caminho, mime, nome):
         "url": mxc,
         "info": {"mimetype": mime, "size": len(dados)},
     }
-    txn = f"aceite-midia-{int(time.time() * 1000)}"
+    txn = txn or f"aceite-midia-{int(time.time() * 1000)}"
     status, d = _pedir(
         "PUT",
         f"/_matrix/client/v3/rooms/{_q(sala)}/send/m.room.message/{txn}",
@@ -852,7 +942,8 @@ def main(argv):
         # <org> <instancia> <id> <audio|video|figurinha|contato|localizacao|enquete> <pushName>
         webhook_tipo(argv[2], argv[3], argv[4], argv[5], argv[6])
     elif comando == "atendente-envia-midia":
-        atendente_envia_midia(argv[2], argv[3], argv[4], argv[5])
+        # <sala> <caminho> <mime> <nome> [txn]
+        atendente_envia_midia(argv[2], argv[3], argv[4], argv[5], argv[6] if len(argv) > 6 else None)
     elif comando == "eventos":
         eventos(argv[2], argv[3] if len(argv) > 3 else 80)
     elif comando == "evento":

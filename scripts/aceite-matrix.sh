@@ -649,6 +649,8 @@ if [ "$FASE2" = 1 ]; then
     python3 "$AUX" fixtures "$FIXTURES" > "$DIR/fixtures.json"
     IMG_DO_ATENDENTE="$(python3 -c "import json;print(json.load(open('$DIR/fixtures.json'))['image/png'])")"
     PDF_DO_ATENDENTE="$(python3 -c "import json;print(json.load(open('$DIR/fixtures.json'))['application/pdf'])")"
+    AUDIO_DO_ATENDENTE="$(python3 -c "import json;print(json.load(open('$DIR/fixtures.json'))['audio/ogg'])")"
+    VIDEO_DO_ATENDENTE="$(python3 -c "import json;print(json.load(open('$DIR/fixtures.json'))['video/mp4'])")"
     TEL_F2="5521988887777"
 
     # reinicia o servidor para a passagem da expiração (ela roda na subida)
@@ -897,7 +899,95 @@ PY
     fi
     anotar MX44 "$RESULTADO_MX44"
 
-    echo "== 20. A14/MX-46: mídia redigida e apagada depois do prazo =="
+    echo "== 20. MX-49: áudio e vídeo do atendente chegam ao Evolution =="
+    ANTES_MIDIA49="$(wc -l < "$DIR/falsos/evo_midia.jsonl" 2>/dev/null || echo 0)"
+    python3 "$AUX" eventos "$SALA3" 200 > "$DIR/eventos-mx49-antes.json"
+    TXN_AUDIO="aceite-mx49-audio-$(python3 -c 'import time;print(int(time.time()*1000))')"
+    TXN_VIDEO="aceite-mx49-video-$(python3 -c 'import time;print(int(time.time()*1000))')"
+    python3 "$AUX" atendente-envia-midia "$SALA3" "$AUDIO_DO_ATENDENTE" audio/ogg \
+        "audio-da-loja.ogg" "$TXN_AUDIO" > "$DIR/mx49-audio.json" 2>&1 || true
+    sleep 2
+    python3 "$AUX" atendente-envia-midia "$SALA3" "$VIDEO_DO_ATENDENTE" video/mp4 \
+        "video-da-loja.mp4" "$TXN_VIDEO" > "$DIR/mx49-video.json" 2>&1 || true
+    for _ in $(seq 1 60); do
+        DEPOIS_MIDIA49="$(wc -l < "$DIR/falsos/evo_midia.jsonl" 2>/dev/null || echo 0)"
+        [ "$DEPOIS_MIDIA49" -ge $((ANTES_MIDIA49 + 2)) ] && break
+        sleep 1
+    done
+    # Reentrega da mesma transação do Element: o Synapse devolve o mesmo evento e não republica.
+    python3 "$AUX" atendente-envia-midia "$SALA3" "$AUDIO_DO_ATENDENTE" audio/ogg \
+        "audio-da-loja.ogg" "$TXN_AUDIO" > "$DIR/mx49-audio-reentrega.json" 2>&1 || true
+    sleep 5
+    python3 "$AUX" eventos "$SALA3" 200 > "$DIR/eventos-mx49-depois.json"
+    RESULTADO_MX49="$(python3 - "$DIR/falsos/evo_midia.jsonl" "$ANTES_MIDIA49" \
+        "$AUDIO_DO_ATENDENTE" "$VIDEO_DO_ATENDENTE" "$DIR/eventos-mx49-antes.json" \
+        "$DIR/eventos-mx49-depois.json" <<'PY'
+import hashlib, json, os, sys
+
+evo, antes, audio_path, video_path, antes_json, depois_json = sys.argv[1:7]
+linhas = []
+if os.path.exists(evo):
+    with open(evo, encoding="utf-8") as f:
+        linhas = [json.loads(l) for l in f if l.strip()]
+novas = linhas[int(antes):]
+sha_audio = hashlib.sha256(open(audio_path, "rb").read()).hexdigest()
+sha_video = hashlib.sha256(open(video_path, "rb").read()).hexdigest()
+legenda = lambda m: (m.get("caption") or "").startswith("*[atendente")
+
+
+def achei(mime, sha):
+    return [
+        m
+        for m in novas
+        if m.get("mimetype") == mime
+        and m.get("mediatype") == "document"
+        and legenda(m)
+        and m.get("sha256") == sha
+        and (m.get("bytes") or 0) > 0
+    ]
+
+
+# O `infer` devolve `audio/opus` para OGG/Opus (o matcher de Opus vem antes do de OGG): os dois
+# MIMEs são o mesmo arquivo que o atendente mandou, e a lista fechada aceita ambos.
+audio = achei("audio/ogg", sha_audio) or achei("audio/opus", sha_audio)
+video = achei("video/mp4", sha_video)
+
+
+def avisos(caminho):
+    with open(caminho, encoding="utf-8") as f:
+        eventos = json.load(f)
+    return [
+        e
+        for e in eventos
+        if e.get("msgtype") == "m.notice"
+        and "ainda não é suportado" in (e.get("corpo") or "")
+    ]
+
+
+antes_avisos = len(avisos(antes_json))
+depois_avisos = len(avisos(depois_json))
+novos_avisos = depois_avisos - antes_avisos
+reentrega = len(
+    [m for m in novas if m.get("mimetype") in ("audio/ogg", "audio/opus")]
+)
+if audio and video and novos_avisos == 0 and reentrega == 1:
+    print(
+        "OK: áudio (%s) e vídeo (%s) chegaram ao Evolution falso como documento, com a legenda "
+        "do atendente (%s), bytes íntegros e nenhum aviso de tipo não aceito; reentrega da mesma "
+        "transação não gerou segundo envio"
+        % (audio[0]["mimetype"], video[0]["mimetype"], audio[0]["caption"])
+    )
+else:
+    print(
+        "FALHOU: áudio=%d vídeo=%d envios de áudio=%d avisos novos de tipo não aceito=%d "
+        "(entradas novas no Evolution: %d)"
+        % (len(audio), len(video), reentrega, novos_avisos, len(novas))
+    )
+PY
+)"
+    anotar MX49 "$RESULTADO_MX49"
+
+    echo "== 21. A14/MX-46: mídia redigida e apagada depois do prazo =="
     if [ -z "$ADMIN_TOKEN" ]; then
         anotar MX46 "NÃO CONFERIDO: credenciais do MX-01 sem POPH_MATRIX_DEV_ADMIN_TOKEN"
     else
@@ -986,7 +1076,7 @@ echo "== resumo =="
 cat "$RESULTADO"
 echo
 echo "Artefatos: $DIR"
-if grep -qE '^(A1|A2|A6|A7|A11|A12|MX33|A14|MX41|MX43|MX44|MX45|MX46)[[:space:]]+FALHOU' "$RESULTADO"; then
+if grep -qE '^(A1|A2|A6|A7|A11|A12|MX33|A14|MX41|MX43|MX44|MX45|MX46|MX49)[[:space:]]+FALHOU' "$RESULTADO"; then
     echo "Aceite NÃO passou: há critério com falha (ver docs/MATRIZ_ACEITE.md)." >&2
     exit 1
 fi
