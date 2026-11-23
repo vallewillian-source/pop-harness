@@ -32,13 +32,13 @@ use poph_fluxos::cache::{CacheRevisoes, ChaveRevisao};
 use poph_fluxos::ir::Ir;
 use poph_fluxos::motor::{self, Contexto as ContextoDoMotor, Estado as EstadoDoMotor};
 use poph_fluxos::prompt::renderizar_bloco;
-use poph_fluxos::regras::{Avaliador, Dados};
+use poph_fluxos::regras::{Avaliador, Dados, LimitesRegra};
 use poph_jev::{FluxoJev, G9_NENHUM, IdGate, ResultadoJev};
 use poph_store::{
-    DecisaoDoJev, ErroStore, Execucao, Ficha, Fluxo, InicioDeExecucao, RevisaoDeFluxo, Status,
-    Store,
+    DecisaoDoJev, EfeitoDaTransicao, ErroStore, Execucao, Ficha, Fluxo, InicioDeExecucao,
+    RevisaoDeFluxo, Status, Store,
 };
-use poph_types::{AgentId, AtorEvento, ConversationId, DomainError, FluxosConfig, OrgId};
+use poph_types::{AgentId, AtorAcao, AtorEvento, ConversationId, DomainError, FluxosConfig, OrgId};
 use serde_json::{Value, json};
 
 use crate::fluxos_transicao::{efeito_da_transicao, estado_para_banco};
@@ -50,6 +50,21 @@ pub const NOME_FERRAMENTA_INICIAR: &str = "fluxo_iniciar";
 pub const ABRE_FLUXOS: &str = "<fluxos_de_atendimento>";
 /// Fecha o bloco dos fluxos.
 pub const FECHA_FLUXOS: &str = "</fluxos_de_atendimento>";
+
+/// Nota que acompanha o bloco da etapa quando a transição enfileirou efeito para o cliente.
+///
+/// O efeito sai pela fila do servidor, **depois** do texto final do turno (FX-21). Dizer isso ao
+/// modelo evita a mensagem duplicada: ele não precisa repetir o que o fluxo já vai mandar.
+pub(crate) const NOTA_DE_EFEITO: &str =
+    "O fluxo agendou uma mensagem própria, que sai depois da sua resposta: não a repita.";
+
+/// Acrescenta a nota do efeito ao texto do bloco, quando houve efeito na transição.
+pub(crate) fn aplicar_nota_de_efeito(texto: String, efeitos: usize) -> String {
+    if efeitos == 0 {
+        return texto;
+    }
+    format!("{texto}\n{NOTA_DE_EFEITO}")
+}
 
 /// Ajustes do motor de fluxos no turno, lidos de `[fluxos]` na composição.
 ///
@@ -84,6 +99,11 @@ impl AjustesDoFluxo {
         self.ativo
     }
 
+    /// Teto de decisões encadeadas numa passagem (`fluxos.max_saltos_decisao`).
+    pub(crate) fn saltos(&self) -> usize {
+        self.saltos
+    }
+
     /// Compartilha o cache de revisões de quem já tem um (o servidor tem o da API).
     pub fn com_cache(mut self, cache: Arc<CacheRevisoes>) -> Self {
         self.cache = cache;
@@ -111,12 +131,28 @@ pub(crate) struct DesfechoDoFluxo {
     pub texto: Option<String>,
     /// Registro para `turns.jev_json` (o painel "por quê").
     pub registro: Option<Value>,
+    /// Há execução ativa na Ficha neste turno: as ferramentas de ação e de abandono valem (FX-24).
+    pub em_andamento: bool,
+    /// O catálogo foi ao prompt (reserva do Jev): `fluxo_iniciar` pode ser oferecida (FX-24).
+    pub reserva: bool,
 }
 
 impl DesfechoDoFluxo {
     /// Registro de quem não teve nada a decidir.
     fn sem_fluxo() -> Self {
         Self::default()
+    }
+
+    /// Desfecho com execução em andamento (o bloco da etapa, ou o catálogo da recusa).
+    fn em_andamento(mut self) -> Self {
+        self.em_andamento = true;
+        self
+    }
+
+    /// Desfecho de reserva: o catálogo vai ao prompt e o modelo pode abrir o fluxo (FX-24).
+    fn reserva(mut self) -> Self {
+        self.reserva = true;
+        self
     }
 }
 
@@ -261,7 +297,11 @@ fn carregar_ir(
 /// O estado do motor reconstruído a partir da linha da execução e da IR da revisão dela.
 ///
 /// O banco guarda o nó pelo id (FX-20); a IR diz se ele é etapa, decisão ou fim.
-fn estado_da_execucao(ir: &Ir, execucao: &Execucao) -> Option<EstadoDoMotor> {
+fn estado_da_execucao(
+    ir: &Ir,
+    execucao: &Execucao,
+    atores_que_agiram: Vec<AtorAcao>,
+) -> Option<EstadoDoMotor> {
     let dados: Dados = match serde_json::from_str(&execucao.dados_json) {
         Ok(dados) => dados,
         Err(erro) => {
@@ -300,9 +340,7 @@ fn estado_da_execucao(ir: &Ir, execucao: &Execucao) -> Option<EstadoDoMotor> {
         status: execucao.status,
         no_atual,
         dados,
-        // A coluna não guarda os atores da etapa: o bloco do prompt diz quem falta agir só pela
-        // IR e pelos dados (`atores_exigidos` + `dados`), então a lista vazia é honesta aqui.
-        atores_que_agiram: Vec::new(),
+        atores_que_agiram,
         resultado: execucao.resultado.clone(),
         motivo: execucao.motivo_fim.clone(),
         chaves: Default::default(),
@@ -334,32 +372,147 @@ pub(crate) fn bloco_da_execucao(
         }
     };
     let ir = carregar_ir(ajustes, &fluxo, &revisao)?;
-    let estado = estado_da_execucao(&ir, execucao)?;
+    // O bloco do prompt diz quem falta agir pela IR e pelos dados (`atores_exigidos` + `dados`):
+    // a coluna não guarda os atores da etapa e a lista vazia é honesta para ele.
+    let estado = estado_da_execucao(&ir, execucao, Vec::new())?;
     Some((renderizar_bloco(&ir, &estado), ir))
+}
+
+/// O que a ferramenta do agente precisa para agir numa execução (FX-24).
+pub(crate) struct CargaDaAcao {
+    /// IR da revisão que a execução segue.
+    pub ir: Arc<Ir>,
+    /// Avaliador das regras daquela revisão (as `def` do script, quando existem).
+    pub avaliador: Avaliador,
+    /// Estado da execução como está no banco, com os atores que já agiram na etapa.
+    pub estado: EstadoDoMotor,
+}
+
+/// Lê a IR, o avaliador e o estado de uma execução para o motor agir (`fluxo_executar_acao`).
+///
+/// Diferente do bloco do prompt, aqui a lista de atores que já agiram **é** a do banco: é ela que o
+/// critério `auto` usa para decidir se a etapa avança depois da ação (FX-13). Sem isso, o agente
+/// agindo depois do atendente nunca completaria a etapa.
+pub(crate) fn carga_para_agir(
+    ajustes: &AjustesDoFluxo,
+    store: &Store,
+    org: OrgId,
+    execucao: &Execucao,
+) -> Option<CargaDaAcao> {
+    let revisao = match store.revisoes().obter_por_id(org, execucao.revisao_id) {
+        Ok(revisao) => revisao,
+        Err(erro) => {
+            tracing::warn!(erro = %erro, revisao = %execucao.revisao_id, "revisão da execução não lê");
+            return None;
+        }
+    };
+    let fluxo = match store.fluxos().obter(org, execucao.fluxo_id) {
+        Ok(fluxo) => fluxo,
+        Err(erro) => {
+            tracing::warn!(erro = %erro, fluxo = %execucao.fluxo_id, "fluxo da execução não lê");
+            return None;
+        }
+    };
+    let ir = carregar_ir(ajustes, &fluxo, &revisao)?;
+    let avaliador = avaliador_da_revisao(&revisao, &ir, &ajustes.limites)?;
+    let atores = match store.execucoes().etapas(org, execucao.id) {
+        Ok(etapas) => etapas
+            .iter()
+            .rev()
+            .find(|etapa| etapa.no_id == execucao.no_atual)
+            .map(|etapa| etapa.atores_que_agiram.clone())
+            .unwrap_or_default(),
+        Err(erro) => {
+            tracing::warn!(erro = %erro, execucao = %execucao.id, "etapas da execução não leem");
+            return None;
+        }
+    };
+    let estado = estado_da_execucao(&ir, execucao, atores)?;
+    Some(CargaDaAcao {
+        ir,
+        avaliador,
+        estado,
+    })
+}
+
+/// Avaliador das regras de uma revisão: sem `def` no script, sem função nenhuma a oferecer.
+fn avaliador_da_revisao(revisao: &RevisaoDeFluxo, ir: &Ir, limites: &Limites) -> Option<Avaliador> {
+    if ir.defs.is_empty() {
+        return Some(Avaliador::sem_funcoes());
+    }
+    match Avaliador::novo_com(&revisao.fonte, limites, LimitesRegra::default()) {
+        Ok(avaliador) => Some(avaliador),
+        Err(erro) => {
+            tracing::error!(
+                erro = %erro,
+                revisao = %revisao.id,
+                "as regras da revisão não carregam"
+            );
+            None
+        }
+    }
 }
 
 /// O que a tentativa de iniciar um fluxo produziu.
 pub(crate) enum Inicio {
-    /// Execução aberta (ou já aberta pela mesma chave).
-    Aberta(Box<Execucao>),
+    /// Execução aberta (ou já aberta pela mesma chave), com quantos efeitos a entrada enfileirou.
+    Aberta {
+        /// Execução gravada.
+        execucao: Box<Execucao>,
+        /// Efeitos do `ao_entrar` da etapa de entrada (0 quando não há).
+        efeitos: usize,
+    },
     /// A Ficha já tinha execução ativa (corrida com o atendente, por exemplo).
     JaAtiva,
     /// A validação recusou, com o motivo pronto para o registro.
     Recusado(String),
 }
 
-/// Valida a escolha do Jev e abre a execução na Ficha.
+/// Quem pediu a abertura: o G9 do Jev (turno) ou o agente pela ferramenta `fluxo_iniciar` (FX-24).
+///
+/// Muda só a assinatura do evento `fluxo_iniciado` — a validação é a **mesma** nos dois caminhos,
+/// que é o que o bloco da FX-24 cobra ("valida como o G9").
+pub(crate) enum QuemInicia<'a> {
+    /// Escolha confiável do gate G9, com a decisão dele no evento.
+    Jev(DecisaoDoJev<'a>),
+    /// O modelo, pela ferramenta de reserva (sem decisão de Jev).
+    Agente,
+}
+
+impl QuemInicia<'_> {
+    /// Ator do evento `fluxo_iniciado` e a referência dele (o gate, quando foi o Jev).
+    fn ator(&self) -> (AtorEvento, Option<&'static str>) {
+        match self {
+            Self::Jev(_) => (AtorEvento::Jev, Some("g9")),
+            Self::Agente => (AtorEvento::Agente, None),
+        }
+    }
+
+    /// A decisão do Jev que vai no evento, quando houve.
+    fn decisao(&self) -> Option<DecisaoDoJev<'_>> {
+        match self {
+            Self::Jev(decisao) => Some(decisao.clone()),
+            Self::Agente => None,
+        }
+    }
+}
+
+/// Valida a escolha e abre a execução na Ficha.
 ///
 /// A ordem é a do PRD §6.3-2: fluxo da org, ativo, liberado ao agente **da Ficha**, com revisão
 /// publicada e IR que confere. A escrita (`iniciar_execucao`) repete as conferências dentro da
 /// transação — aqui elas existem para o motivo ficar claro antes de qualquer gravação.
+///
+/// `chave_idempotencia` só é usada quando quem abre é o agente; o G9 abre sem ela e a garantia
+/// contra duplicar é a execução ativa única por Ficha (PRD L6).
 pub(crate) fn iniciar(
     ajustes: &AjustesDoFluxo,
     store: &Store,
     org: OrgId,
     ficha: &Ficha,
     slug: &str,
-    decisao: DecisaoDoJev<'_>,
+    quem: QuemInicia<'_>,
+    chave_idempotencia: Option<&str>,
 ) -> Result<Inicio, ErroStore> {
     let fluxo = match store.fluxos().por_slug(org, slug) {
         Ok(Some(fluxo)) => fluxo,
@@ -411,7 +564,9 @@ pub(crate) fn iniciar(
     if let Some(peer) = ficha.peer_externo.as_deref() {
         contexto = contexto.com_cliente(peer);
     }
-    let efeitos =
+    // O tipo é explícito: o braço de erro diverge (`return`) e a inferência sem âncora escolheria
+    // `!` ao ver o `.len()` logo abaixo (rust-lang/rust#156047).
+    let efeitos: Vec<EfeitoDaTransicao> =
         match motor::efeitos_de_entrada(&ir, estado.no_atual.id(), &estado.dados, &contexto) {
             Ok(efeitos) => efeitos.iter().map(efeito_da_transicao).collect(),
             Err(erro) => {
@@ -420,23 +575,29 @@ pub(crate) fn iniciar(
                 )));
             }
         };
+    // Quem decide é o código; a assinatura do evento diz se a escolha veio do Jev (G9) ou do
+    // modelo (ferramenta de reserva, FX-24). Quem executa é este código nos dois casos (FX-20).
+    let (ator, ator_ref) = quem.ator();
+    let inicio_efeitos = efeitos.len();
     let inicio = InicioDeExecucao {
         ficha: ficha.id,
         fluxo: fluxo.id,
         revisao: revisao.id,
-        // Quem decide é o Jev; quem executa é este código. O evento fica assinado por `jev`, com a
-        // decisão no payload (FX-20).
-        ator: AtorEvento::Jev,
-        ator_ref: Some("g9"),
-        decisao_jev: Some(decisao),
+        ator,
+        ator_ref,
+        decisao_jev: quem.decisao(),
         estado_inicial: estado_para_banco(&estado),
         efeitos_de_entrada: efeitos,
-        // Sem chave: a garantia contra duplicar é a execução ativa única por Ficha (PRD L6), que a
-        // escrita confere dentro da transação.
-        chave_idempotencia: None,
+        // Sem chave (G9), a garantia contra duplicar é a execução ativa única por Ficha (PRD L6),
+        // que a escrita confere dentro da transação.
+        chave_idempotencia,
     };
+    let efeitos_na_entrada = inicio_efeitos;
     match store.execucoes().iniciar_execucao(org, inicio) {
-        Ok(gravada) => Ok(Inicio::Aberta(Box::new(gravada.execucao))),
+        Ok(gravada) => Ok(Inicio::Aberta {
+            execucao: Box::new(gravada.execucao),
+            efeitos: efeitos_na_entrada,
+        }),
         Err(ErroStore::Dominio(DomainError::ExecucaoJaAtiva { .. })) => Ok(Inicio::JaAtiva),
         Err(ErroStore::Dominio(outro)) => Ok(Inicio::Recusado(outro.to_string())),
         Err(erro) => Err(erro),
@@ -563,14 +724,17 @@ pub(crate) fn decidir(
                     "execucao": ativa.id.to_string(),
                     "etapa": ativa.no_atual,
                 })),
-            },
+                ..DesfechoDoFluxo::default()
+            }
+            .em_andamento(),
             None => DesfechoDoFluxo {
                 registro: Some(json!({
                     "resultado": "execucao_ativa_sem_bloco",
                     "execucao": ativa.id.to_string(),
                 })),
                 ..DesfechoDoFluxo::default()
-            },
+            }
+            .em_andamento(),
         };
     }
     if preparo.liberados.is_empty() {
@@ -586,14 +750,24 @@ pub(crate) fn decidir(
             escolha: slug,
             confianca,
         };
-        return match iniciar(ajustes, store, org, &preparo.ficha, slug, decisao) {
-            Ok(Inicio::Aberta(execucao)) => {
+        return match iniciar(
+            ajustes,
+            store,
+            org,
+            &preparo.ficha,
+            slug,
+            QuemInicia::Jev(decisao),
+            None,
+        ) {
+            Ok(Inicio::Aberta { execucao, efeitos }) => {
                 let bloco = bloco_da_execucao(ajustes, store, org, &execucao);
                 match bloco {
                     Some((texto, ir)) => DesfechoDoFluxo {
-                        texto: Some(texto),
+                        texto: Some(aplicar_nota_de_efeito(texto, efeitos)),
                         registro: Some(registro_iniciado(&execucao, &ir)),
-                    },
+                        ..DesfechoDoFluxo::default()
+                    }
+                    .em_andamento(),
                     None => DesfechoDoFluxo {
                         registro: Some(json!({
                             "resultado": "iniciou_sem_bloco",
@@ -601,7 +775,8 @@ pub(crate) fn decidir(
                             "execucao": execucao.id.to_string(),
                         })),
                         ..DesfechoDoFluxo::default()
-                    },
+                    }
+                    .em_andamento(),
                 }
             }
             Ok(Inicio::JaAtiva) => {
@@ -623,7 +798,9 @@ pub(crate) fn decidir(
                                 "execucao": ativa.id.to_string(),
                                 "motivo": "a Ficha já tinha execução ativa quando o Jev escolheu",
                             })),
+                            ..DesfechoDoFluxo::default()
                         }
+                        .em_andamento()
                     }
                     _ => DesfechoDoFluxo {
                         registro: Some(json!({
@@ -632,7 +809,8 @@ pub(crate) fn decidir(
                             "motivo": "a Ficha já tinha execução ativa quando o Jev escolheu",
                         })),
                         ..DesfechoDoFluxo::default()
-                    },
+                    }
+                    .em_andamento(),
                 }
             }
             Ok(Inicio::Recusado(motivo)) => {
@@ -649,7 +827,9 @@ pub(crate) fn decidir(
                         "fluxo": slug,
                         "motivo": motivo,
                     })),
+                    ..DesfechoDoFluxo::default()
                 }
+                .reserva()
             }
             Err(erro) => {
                 tracing::warn!(erro = %erro, fluxo = slug, "erro ao iniciar o fluxo escolhido pelo G9");
@@ -660,7 +840,9 @@ pub(crate) fn decidir(
                         "fluxo": slug,
                         "motivo": "erro de armazenamento ao iniciar a execução",
                     })),
+                    ..DesfechoDoFluxo::default()
                 }
+                .reserva()
             }
         };
     }
@@ -679,11 +861,15 @@ pub(crate) fn decidir(
         MotivoSemInicio::Falhou => DesfechoDoFluxo {
             texto: bloco_do_catalogo(&preparo.liberados, ferramenta_de_inicio),
             registro: Some(registro("fallback")),
-        },
+            ..DesfechoDoFluxo::default()
+        }
+        .reserva(),
         MotivoSemInicio::NaoPerguntado => DesfechoDoFluxo {
             texto: bloco_do_catalogo(&preparo.liberados, ferramenta_de_inicio),
             registro: Some(registro("reserva")),
-        },
+            ..DesfechoDoFluxo::default()
+        }
+        .reserva(),
     }
 }
 
@@ -695,7 +881,7 @@ mod testes {
     use poph_store::{NovaConversa, NovaOrg, NovoAgente, NovoFluxo, PublicacaoDeRevisao, Store};
     use poph_types::{AgentId, AtorEvento, FluxosConfig, OrgId};
 
-    use super::{AjustesDoFluxo, Inicio, iniciar};
+    use super::{AjustesDoFluxo, Inicio, QuemInicia, iniciar};
 
     const SCRIPT: &str = r#"fluxo(
     id = "agendar_visita",
@@ -855,10 +1041,11 @@ etapa(
             cenario.org,
             &cenario.ficha,
             "agendar_visita",
-            decisao("agendar_visita"),
+            QuemInicia::Jev(decisao("agendar_visita")),
+            None,
         )
         .expect("sem erro de armazenamento");
-        let Inicio::Aberta(execucao) = inicio else {
+        let Inicio::Aberta { execucao, .. } = inicio else {
             panic!("a execução tinha de abrir");
         };
         assert_eq!(execucao.no_atual, "coleta");
@@ -910,7 +1097,8 @@ etapa(
             cenario.org,
             &cenario.ficha,
             "agendar_visita",
-            decisao("agendar_visita"),
+            QuemInicia::Jev(decisao("agendar_visita")),
+            None,
         )
         .expect("sem erro de armazenamento");
         let Inicio::Recusado(motivo) = inicio else {
@@ -939,7 +1127,8 @@ etapa(
             cenario.org,
             &cenario.ficha,
             "agendar_visita",
-            decisao("agendar_visita"),
+            QuemInicia::Jev(decisao("agendar_visita")),
+            None,
         )
         .expect("sem erro de armazenamento");
         let Inicio::Recusado(motivo) = inicio else {
@@ -963,7 +1152,8 @@ etapa(
             cenario.org,
             &cenario.ficha,
             "cancelar_tudo",
-            decisao("cancelar_tudo"),
+            QuemInicia::Jev(decisao("cancelar_tudo")),
+            None,
         )
         .expect("sem erro de armazenamento");
         let Inicio::Recusado(motivo) = inicio else {
@@ -1001,7 +1191,8 @@ etapa(
             cenario.org,
             &cenario.ficha,
             "sem_revisao",
-            decisao("sem_revisao"),
+            QuemInicia::Jev(decisao("sem_revisao")),
+            None,
         )
         .expect("sem erro de armazenamento");
         let Inicio::Recusado(motivo) = inicio else {
@@ -1022,17 +1213,19 @@ etapa(
             cenario.org,
             &cenario.ficha,
             "agendar_visita",
-            decisao("agendar_visita"),
+            QuemInicia::Jev(decisao("agendar_visita")),
+            None,
         )
         .expect("sem erro de armazenamento");
-        assert!(matches!(primeiro, Inicio::Aberta(_)));
+        assert!(matches!(primeiro, Inicio::Aberta { .. }));
         let segundo = iniciar(
             &ajustes,
             &cenario.store,
             cenario.org,
             &cenario.ficha,
             "agendar_visita",
-            decisao("agendar_visita"),
+            QuemInicia::Jev(decisao("agendar_visita")),
+            None,
         )
         .expect("sem erro de armazenamento");
         assert!(matches!(segundo, Inicio::JaAtiva));

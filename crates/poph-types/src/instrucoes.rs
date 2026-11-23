@@ -30,6 +30,12 @@ pub const FERRAMENTAS_V1: &[&str] = &[
     "cart_remove_item",
     "cart_summary",
     "cart_clear",
+    // Fluxos e Fichas (FX-24): ação, abandono e o início da reserva do Jev. Sem elas aqui, o
+    // agente não conseguiria habilitá-las (a escrita recusa nome fora da lista) e a ferramenta
+    // existiria sem nunca ser oferecida.
+    "fluxo_executar_acao",
+    "fluxo_abandonar",
+    "fluxo_iniciar",
 ];
 
 /// Identidade do agente.

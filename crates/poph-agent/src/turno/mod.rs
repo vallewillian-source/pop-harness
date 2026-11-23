@@ -55,6 +55,7 @@ mod console;
 mod departamento;
 mod ferramentas;
 mod fluxo;
+mod fluxo_ferramentas;
 mod pausa;
 mod prompt;
 
@@ -99,6 +100,11 @@ pub use ferramentas::{
     UsoFerramentas, cortar, oferecidas, registro_do_turno, resumo_de_argumentos,
 };
 pub use fluxo::{ABRE_FLUXOS, AjustesDoFluxo, FECHA_FLUXOS, NOME_FERRAMENTA_INICIAR};
+pub use fluxo_ferramentas::{
+    NOME_ABANDONAR, NOME_EXECUTAR_ACAO, eh_ferramenta_do_fluxo,
+    registrar as registrar_ferramentas_do_fluxo,
+    registrar_com as registrar_ferramentas_do_fluxo_com,
+};
 pub use pausa::{FuturoPausa, Pausa, PausaReal};
 pub use prompt::{
     ABRE_BASE, ABRE_CONTEXTO, AVISO_BASE, FECHA_BASE, FECHA_CONTEXTO, Prompt, bloco_base,
@@ -360,6 +366,23 @@ struct Preparo {
     sem_base_produto: bool,
     /// `true` quando o G5 já escolheu o produto do turno: `buscar_produto` não é oferecida (HR-33).
     sem_buscar_produto: bool,
+    /// Há execução de fluxo ativa na Ficha: ação e abandono valem neste turno (FX-24).
+    fluxo_em_andamento: bool,
+    /// O catálogo de fluxos foi ao prompt (reserva do Jev): `fluxo_iniciar` é oferecida (FX-24).
+    fluxo_reserva: bool,
+}
+
+impl Preparo {
+    /// Tira da lista oferecida as ferramentas do fluxo que não valem neste turno (FX-24).
+    fn retain_ferramentas_do_fluxo(&self, oferecidas: &mut Vec<poph_core::llm::Ferramenta>) {
+        oferecidas.retain(|ferramenta| match ferramenta.nome.as_str() {
+            fluxo_ferramentas::NOME_INICIAR => self.fluxo_reserva,
+            fluxo_ferramentas::NOME_EXECUTAR_ACAO | fluxo_ferramentas::NOME_ABANDONAR => {
+                self.fluxo_em_andamento
+            }
+            _ => true,
+        });
+    }
 }
 
 /// O que o G5 precisa do turno para procurar os candidatos e perguntar (HR-33).
@@ -1140,9 +1163,13 @@ impl Motor {
                 fluxo_preparo.as_ref(),
                 jev.as_ref(),
                 g9_ligado,
+                // A instrução do catálogo só manda chamar a ferramenta quando ela existe **e**
+                // está habilitada no agente (D-04): instruir o modelo a chamar o que não é
+                // oferecido só produz recusa no laço.
                 self.ferramentas
                     .ferramenta(fluxo::NOME_FERRAMENTA_INICIAR)
-                    .is_some(),
+                    .is_some()
+                    && quente.ferramenta_habilitada(fluxo::NOME_FERRAMENTA_INICIAR),
             ),
             None => Default::default(),
         };
@@ -1201,6 +1228,9 @@ impl Motor {
             sem_base_produto: g3_nada,
             // HR-33: com o G5 escolhendo o produto, o catálogo já foi consultado neste turno.
             sem_buscar_produto: produto_g5.is_some(),
+            // FX-24: cada ferramenta do fluxo é oferecida no momento em que faz sentido.
+            fluxo_em_andamento: fluxo_do_turno.em_andamento,
+            fluxo_reserva: fluxo_do_turno.reserva,
         };
         let conversar = self.conversar(
             Alvo {
@@ -1407,6 +1437,11 @@ impl Motor {
             // não é oferecida, e o turno economiza a rodada inteira.
             oferecidas.retain(|ferramenta| ferramenta.nome != crate::produtos::NOME_FERRAMENTA);
         }
+        // FX-24: as ferramentas do fluxo aparecem no momento em que a conversa está.
+        // `fluxo_iniciar` só na reserva (PRD §6.3-4: com o Jev respondendo, quem decide é o
+        // código); ação e abandono só com execução ativa — oferecer `fluxo_executar_acao` sem
+        // fluxo em andamento convidaria o modelo a chamar uma ferramenta que só pode recusar.
+        preparo.retain_ferramentas_do_fluxo(&mut oferecidas);
         // Biblioteca de arquivos do agente (HR-24): a lista de arquivos entra na descrição da
         // ferramenta `enviar_arquivo`, que é onde o modelo decide o que pode enviar.
         crate::biblioteca::anexar_biblioteca(
@@ -1513,6 +1548,16 @@ impl Motor {
                              exige consulta)",
                             chamada.nome
                         ),
+                    )
+                } else if chamada.nome == fluxo_ferramentas::NOME_INICIAR && !preparo.fluxo_reserva
+                {
+                    // FX-24: `fluxo_iniciar` só existe na reserva. Fora dela (Jev escolheu, já há
+                    // execução, `nenhum`), quem abre fluxo é o código — a ferramenta não é
+                    // oferecida e a chamada inventada não é executada.
+                    DesfechoFerramenta::recusada(
+                        MOTIVO_FORA_DO_TURNO,
+                        "erro: iniciar fluxo não é sua decisão neste turno; siga a orientação do bloco <fluxo_em_andamento>"
+                            .to_owned(),
                     )
                 } else if preparo.sem_buscar_produto
                     && chamada.nome == crate::produtos::NOME_FERRAMENTA

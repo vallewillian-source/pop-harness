@@ -13,7 +13,7 @@ use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
 use poph_agent::entrada_saida::{Fluxo, OpcoesFluxo};
 use poph_agent::limites::{Limitador, OpcoesLimites};
 use poph_agent::metricas::{MetricasFluxo, MetricasMemoria, MetricasTurno};
-use poph_agent::turno::{Motor, OpcoesTurno, ProcessadorTurno, RegistroPadrao};
+use poph_agent::turno::{AjustesDoFluxo, Motor, OpcoesTurno, ProcessadorTurno, RegistroPadrao};
 use poph_agent::{BuscadorBase, BuscadorProdutos, CatalogoProdutos, ConsultarBase, registro_com};
 use poph_core::llm::{ClienteAntigravity, ConfigAntigravity, LimitadorLlm};
 use poph_fluxos::cache::CacheRevisoes;
@@ -200,7 +200,7 @@ pub fn montar(
     .com_fluxos(&configuracao.fluxos);
     // O que o processo já tem do módulo é reaproveitado: mesmo cache de revisões da API e os
     // mesmos contadores `poph_fluxos_g9_*` do `/metrics`.
-    if let Some(cache) = fluxos.cache {
+    if let Some(cache) = fluxos.cache.clone() {
         motor = motor.com_cache_de_fluxos(cache);
     }
     if let Some(g9) = fluxos.g9 {
@@ -241,6 +241,17 @@ pub fn montar(
         Arc::clone(&store),
         Arc::clone(motor.config_quente()),
         base.as_ref().zip(catalogo.as_ref()),
+    );
+    // FX-24: as três ferramentas do fluxo (ação, abandono e o início da reserva). Registradas só
+    // com `[fluxos] ativo = true`, com o mesmo cache de revisões da API quando o processo tem um.
+    let ajustes_do_fluxo = match fluxos.cache.clone() {
+        Some(cache) => AjustesDoFluxo::da_config(&configuracao.fluxos).com_cache(cache),
+        None => AjustesDoFluxo::da_config(&configuracao.fluxos),
+    };
+    let registro = poph_agent::turno::registrar_ferramentas_do_fluxo_com(
+        registro,
+        Arc::clone(&store),
+        ajustes_do_fluxo,
     );
     match (&base, &catalogo) {
         (Some(base), Some(catalogo)) => {
