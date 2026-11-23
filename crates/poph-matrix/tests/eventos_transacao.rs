@@ -96,7 +96,7 @@ fn transacao() -> Value {
                 "sender": ATENDENTE,
                 "content": { "m.relates_to": { "rel_type": "m.annotation", "event_id": "$resposta1:matrix-dev.local", "key": "👍" } }
             },
-            // Mídia do atendente: na fase 1 vira aviso, não resposta.
+            // Mídia do atendente: o arquivo vai ao cliente (MX-44), não é texto.
             {
                 "type": "m.room.message",
                 "room_id": SALA,
@@ -183,6 +183,8 @@ fn transacao_inteira_vira_uma_resposta_uma_midia_e_o_resto_ruido() {
             evento_id: "$foto1:matrix-dev.local".to_owned(),
             remetente: ATENDENTE.to_owned(),
             tipo: TipoMidia::Imagem,
+            url: Some("mxc://matrix-dev.local/abc".to_owned()),
+            nome: "tabela.png".to_owned(),
         }
     );
 

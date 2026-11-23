@@ -18,7 +18,9 @@
 //! - conversa encerrada → nada ao cliente e aviso na sala;
 //! - sala que nenhuma org conhece → `200`, nada gravado;
 //! - falha de banco na entrega → `503` (nunca `4xx`), e o reenvio processa;
-//! - mídia do atendente na fase 1 → nada ao cliente e aviso na sala;
+//! - mídia do atendente que o Synapse não entrega mais → nada ao cliente e aviso na sala
+//!   (o caminho completo do arquivo, com Evolution falsa e Synapse falso servindo o download, está
+//!   em `tests/matrix_midia_atendente.rs`);
 //! - o nome do atendente é lido uma vez e fica no cache com validade.
 
 use std::collections::HashMap;
@@ -259,6 +261,14 @@ impl PortaAtendimento for PortaComFalha {
     ) -> Result<RespostaHumana, ErroStore> {
         self.real.registrar_resposta(alvo, nova)
     }
+
+    fn registrar_resposta_com_arquivo(
+        &self,
+        alvo: poph_server::matrix_resposta::ConversaDaSala,
+        nova: poph_store::RespostaHumanaComArquivo<'_>,
+    ) -> Result<RespostaHumana, ErroStore> {
+        self.real.registrar_resposta_com_arquivo(alvo, nova)
+    }
 }
 
 // ───────────────────────────────── cenário ─────────────────────────────────
@@ -439,7 +449,11 @@ impl Cenario {
         )
         .expect("cliente do Matrix");
         let ids = IdsFantasmas::novo(PREFIXO, SERVER_NAME).expect("ids dos fantasmas");
-        let entrega = Arc::new(RespostaDoAtendente::novo(porta, Some(cliente_matrix), ids));
+        // Pasta de blobs como na operação: o arquivo do atendente (MX-44) é gravado ali.
+        let entrega = Arc::new(
+            RespostaDoAtendente::novo(porta, Some(cliente_matrix), ids)
+                .com_pasta_de_blobs(self.pasta.join("blobs")),
+        );
 
         let estado = Estado::novo(Arc::clone(&self.store), HarnessConfig::default())
             .expect("estado do servidor")
@@ -995,7 +1009,9 @@ async fn falha_de_banco_da_503_e_o_reenvio_processa() {
 }
 
 #[tokio::test]
-async fn midia_do_atendente_nao_vai_ao_cliente_e_avisa_na_sala() {
+async fn arquivo_que_o_synapse_nao_entrega_mais_vira_aviso_e_nao_vai_ao_cliente() {
+    // MX-44: o arquivo do atendente agora é baixado da sala. Quando o Synapse não o entrega (aqui,
+    // porque o `mxc://` não existe), o cliente **não** recebe nada e o atendente é avisado na sala.
     let cenario = Cenario::novo("midia").await;
     let porta = Arc::new(PortaDoHarness::nova(Arc::clone(&cenario.store)));
     let servidor = cenario.subir(porta).await;
@@ -1009,7 +1025,11 @@ async fn midia_do_atendente_nao_vai_ao_cliente_e_avisa_na_sala() {
                     "room_id": SALA,
                     "sender": ATENDENTE,
                     "event_id": "$evento-midia:matrix-dev.local",
-                    "content": { "msgtype": "m.image", "body": "foto.png", "url": "mxc://x/y" }
+                    "content": {
+                        "msgtype": "m.image",
+                        "body": "foto.png",
+                        "url": "mxc://matrix-dev.local/nao-existe"
+                    }
                 }]
             }),
         )
@@ -1024,18 +1044,22 @@ async fn midia_do_atendente_nao_vai_ao_cliente_e_avisa_na_sala() {
     assert_eq!(escritas.len(), 1);
     assert_eq!(
         escritas[0].corpo.get("body").and_then(Value::as_str),
-        Some(poph_server::matrix_resposta::AVISO_MIDIA_NAO_SUPORTADA)
+        Some("Não consegui enviar o arquivo ao cliente: não consegui baixar o arquivo da sala")
+    );
+    assert_eq!(
+        escritas[0].corpo.get("msgtype").and_then(Value::as_str),
+        Some("m.notice")
     );
     assert_eq!(
         cenario.envios_no_whatsapp().len(),
         0,
-        "arquivo não vai ao cliente"
+        "sem o arquivo, nada sai para o cliente"
     );
     assert!(cenario.messages(cenario.org).is_empty());
     assert_eq!(
         cenario.status(cenario.org),
         poph_store::StatusConversa::Aberta,
-        "mídia não transfere a conversa"
+        "sem arquivo, a conversa não é transferida"
     );
 }
 

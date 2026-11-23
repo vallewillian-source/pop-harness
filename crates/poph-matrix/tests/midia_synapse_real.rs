@@ -15,11 +15,17 @@
 //! fantasma **do cliente**, com o bloco `com.<marca>.attachment` e o `mxc://` no conteúdo.
 //!
 //! A persistência é um mapa em memória: aqui interessa o que o Synapse faz com os eventos.
+//!
+//! A MX-44 usa o mesmo ambiente para provar o caminho de **volta**: o arquivo que o atendente manda
+//! é baixado da sala pelo cliente da API ([`ClienteMatrix::baixar_midia`]), com teto de bytes,
+//! `allow_redirect=false` e sem seguir redirecionamento. O Synapse falso não prova isso, porque
+//! quem decide se o `?user_id=` vale na rota de download é o servidor de verdade.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use poph_matrix::ErroMidia;
 use poph_matrix::cliente::{ClienteMatrix, ConfigCliente};
 use poph_matrix::midia::{self, AnexoParaMidia, BLOCO_ANEXO, MSGTYPE_ARQUIVO, MSGTYPE_IMAGEM};
 use poph_matrix::salas::{
@@ -232,5 +238,109 @@ async fn imagem_e_pdf_do_cliente_aparecem_na_sala_do_synapse_real() {
     println!(
         "MX-43 no Synapse real: imagem e PDF na sala {sala} pelo fantasma {}",
         remetente.user_id()
+    );
+}
+
+#[tokio::test]
+#[ignore = "precisa do Synapse de desenvolvimento da MX-01 no ar"]
+async fn a_midia_da_sala_desce_inteira_pelo_cliente_do_matrix() {
+    // MX-44: o arquivo do atendente é baixado da sala. Sobe como o fantasma do agente (o único
+    // usuário que o Application Service pode personificar no Synapse de desenvolvimento) e desce
+    // pelo mesmo cliente, com o `?user_id=` e o teto de bytes.
+    let base = credencial("POPH_MATRIX_DEV_BASE_URL");
+    let server_name = credencial("POPH_MATRIX_DEV_SERVER_NAME");
+    let token = credencial("POPH_MATRIX_DEV_HARNESS_AS_TOKEN");
+    let config = MatrixConfig {
+        habilitado: true,
+        homeserver_url: base,
+        server_name: server_name.clone(),
+        prefixo: "ph".to_owned(),
+        ..MatrixConfig::default()
+    };
+    let cliente = ClienteMatrix::novo(
+        ConfigCliente::novo(
+            config.homeserver_url.clone(),
+            server_name.clone(),
+            Segredo::new(token),
+        )
+        .expect("configuração do cliente"),
+    )
+    .expect("cliente");
+    let provisionador = Provisionador::da_config(cliente.clone(), PortaMemoria::default(), &config)
+        .expect("provisionador");
+
+    let marca = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("relógio")
+        .as_secs();
+    let peer = format!("5521{marca}");
+    let dados = ConversaParaSala {
+        org: OrgId::generate(),
+        conversa: ConversationId::generate(),
+        cliente: peer.clone(),
+        nome_cliente: Some(format!("Cliente MX-44 {marca}")),
+        agente: AgentId::generate(),
+        nome_agente: Some("Agente de Teste".to_owned()),
+        canal: "whatsapp".to_owned(),
+        departamento: None,
+        fechada: false,
+        corte_backfill: None,
+    };
+    let pronta = provisionador
+        .provisionar(&dados)
+        .await
+        .expect("sala criada contra o Synapse real");
+    let ids = poph_matrix::usuarios::IdsFantasmas::novo("ph", server_name.clone()).expect("ids");
+    let remetente = ids
+        .agente(&dados.agente.to_string())
+        .expect("fantasma do agente");
+
+    // Como no Element: o arquivo sobe **e** é publicado na sala. O Synapse só libera o download de
+    // uma mídia que foi enviada como evento de uma sala da qual quem lê participa — sem o evento, a
+    // rota de download responde `404 M_NOT_FOUND`.
+    let decidida = midia::decidir(&AnexoParaMidia {
+        id: &format!("anx-mx44-{marca}"),
+        nome: "foto.png",
+        mime: "image/png",
+        tamanho_bytes: PNG.len() as u64,
+        fonte: "whatsapp",
+    })
+    .expect("decide a mídia");
+    let evento = midia::enviar(&cliente, &remetente, &pronta.room_id, &decidida, PNG)
+        .await
+        .expect("o Synapse real aceitou a mídia na sala");
+    let lido = cliente
+        .ler_evento(remetente.user_id(), &pronta.room_id, &evento)
+        .await
+        .expect("o evento está na sala");
+    let mxc = lido["content"]["url"]
+        .as_str()
+        .expect("o evento traz o mxc://")
+        .to_owned();
+
+    let baixado = cliente
+        .baixar_midia(remetente.user_id(), &mxc, midia::LIMITE_MIDIA_BYTES)
+        .await
+        .unwrap_or_else(|erro| panic!("o Synapse real não entregou a mídia ({erro:?})"));
+    assert_eq!(baixado, PNG, "o conteúdo desce inteiro");
+
+    // Teto menor que o arquivo: a recusa é do cliente, antes de baixar tudo.
+    let recusado = cliente.baixar_midia(remetente.user_id(), &mxc, 10).await;
+    assert!(
+        matches!(recusado, Err(ErroMidia::Grande { teto: 10, .. })),
+        "acima do teto o cliente recusa: {recusado:?}"
+    );
+
+    // Endereço que não é do contrato: recusa sem tocar a rede.
+    assert!(matches!(
+        cliente
+            .baixar_midia(remetente.user_id(), "https://exemplo/x", 1024)
+            .await,
+        Err(ErroMidia::Endereco(_))
+    ));
+
+    println!(
+        "MX-44 no Synapse real: mídia da sala {sala} baixada inteira",
+        sala = pronta.room_id
     );
 }

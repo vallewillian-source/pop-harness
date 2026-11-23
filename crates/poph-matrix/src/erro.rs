@@ -151,6 +151,71 @@ impl fmt::Display for ErroChamada {
 
 impl std::error::Error for ErroChamada {}
 
+/// Falha ao baixar uma mídia da sala (MX-44).
+///
+/// É um erro à parte do [`ErroChamada`] porque duas das recusas não são do Synapse: o arquivo passa
+/// do teto ou o endereço do evento não serve. Quem trata separa as três: falha transitória volta na
+/// próxima entrega, e as demais viram aviso na sala, sem nova tentativa.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ErroMidia {
+    /// Falha do cliente (rede, prazo, status ou contrato) — classificada como as demais chamadas.
+    Chamada(ErroChamada),
+    /// O conteúdo passa do teto de bytes: repetir não resolve.
+    Grande {
+        /// Tamanho conhecido ou lido até a recusa, em bytes.
+        bytes: u64,
+        /// Teto aplicado, em bytes.
+        teto: u64,
+    },
+    /// O arquivo veio com zero byte.
+    Vazia,
+    /// O `content_uri` do evento não é um `mxc://servidor/id`.
+    Endereco(String),
+}
+
+impl ErroMidia {
+    /// Como o laço deve tratar a falha. Só a falha do cliente pode ser transitória.
+    pub fn classificacao(&self) -> Classificacao {
+        match self {
+            ErroMidia::Chamada(erro) => erro.classificacao(),
+            ErroMidia::Grande { .. } | ErroMidia::Vazia | ErroMidia::Endereco(_) => {
+                Classificacao::Definitiva
+            }
+        }
+    }
+
+    /// `true` quando repetir mais tarde pode dar certo.
+    pub fn transitorio(&self) -> bool {
+        self.classificacao() == Classificacao::Transitoria
+    }
+}
+
+impl From<ErroChamada> for ErroMidia {
+    fn from(erro: ErroChamada) -> Self {
+        ErroMidia::Chamada(erro)
+    }
+}
+
+impl fmt::Display for ErroMidia {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ErroMidia::Chamada(erro) => write!(f, "{erro}"),
+            ErroMidia::Grande { bytes, teto } => {
+                write!(
+                    f,
+                    "a mídia tem {bytes} bytes e passa do teto de {teto} bytes"
+                )
+            }
+            ErroMidia::Vazia => f.write_str("a mídia veio vazia"),
+            ErroMidia::Endereco(motivo) => {
+                write!(f, "o endereço da mídia não serve: {motivo}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ErroMidia {}
+
 #[cfg(test)]
 mod testes {
     use super::*;
@@ -220,5 +285,42 @@ mod testes {
         assert!(texto.contains("M_LIMIT_EXCEEDED"), "{texto}");
         assert!(texto.contains("1500 ms"), "{texto}");
         assert_eq!(erro.retry_after_ms(), Some(1500));
+    }
+
+    #[test]
+    fn erro_de_midia_separa_o_que_repetir_resolve() {
+        let transitorio = ErroMidia::Chamada(ErroChamada::Rede {
+            operacao: "download",
+            motivo: "não consegui conectar".to_owned(),
+        });
+        assert!(transitorio.transitorio(), "{transitorio}");
+
+        for definitivo in [
+            // Mídia que não existe mais no Synapse: repetir não a traz de volta.
+            ErroMidia::Chamada(ErroChamada::Resposta {
+                operacao: "download",
+                status: 404,
+                errcode: Some("M_NOT_FOUND".to_owned()),
+                mensagem: "não achei".to_owned(),
+                retry_after_ms: None,
+            }),
+            ErroMidia::Grande {
+                bytes: 20,
+                teto: 16,
+            },
+            ErroMidia::Vazia,
+            ErroMidia::Endereco("o evento não trouxe url".to_owned()),
+        ] {
+            assert!(
+                !definitivo.transitorio(),
+                "deveria ser definitivo: {definitivo}"
+            );
+            assert_eq!(definitivo.classificacao(), Classificacao::Definitiva);
+        }
+
+        // A mensagem de erro não carrega o endereço da mídia nem o token.
+        let texto = ErroMidia::Endereco("falta o identificador".to_owned()).to_string();
+        assert!(texto.contains("endereço da mídia"), "{texto}");
+        assert!(!texto.contains("mxc://"), "{texto}");
     }
 }

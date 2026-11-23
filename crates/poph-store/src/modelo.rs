@@ -792,6 +792,46 @@ pub struct RespostaHumanaNova<'a> {
     pub autor_nome: &'a str,
 }
 
+/// Arquivo que acompanha a resposta do atendente pelo Element (MX-44), para
+/// [`Mensagens::registrar_resposta_humana_com_arquivo`](crate::Mensagens::registrar_resposta_humana_com_arquivo).
+///
+/// O conteúdo já está no disco como blob da org (`<pasta_blobs>/<org>/<sha256>`) quando esta
+/// estrutura é montada: quem baixa, confere o tipo e grava é o módulo Matrix.
+#[derive(Debug, Clone, Copy)]
+pub struct ArquivoDaResposta<'a> {
+    /// Nome que o arquivo leva ao cliente (o do evento, ou o padrão do tipo).
+    pub nome: &'a str,
+    /// Tipo MIME **real**, pelo conteúdo.
+    pub mime: &'a str,
+    /// Tamanho em bytes.
+    pub tamanho_bytes: u64,
+    /// SHA-256 em hexadecimal minúsculo.
+    pub sha256: &'a str,
+    /// Caminho do blob relativo à pasta de blobs (`<org>/<sha256>`).
+    pub blob_path: &'a str,
+    /// Legenda que acompanha o arquivo no canal, já formatada por quem chama.
+    pub legenda: &'a str,
+    /// Situação da extração de texto (`skipped`: o arquivo do atendente não passa pelo extrator —
+    /// nenhum turno lê o que o atendente manda).
+    pub status_extracao: &'static str,
+}
+
+/// Dados de uma resposta do atendente humano **com arquivo** (MX-44).
+///
+/// Mesma idempotência e mesmas decisões de [`RespostaHumanaNova`]: o id do evento é a chave, uma
+/// conversa `closed` recusa e a passagem para `transferred` acontece na mesma escrita.
+#[derive(Debug, Clone, Copy)]
+pub struct RespostaHumanaComArquivo<'a> {
+    /// Id do evento Matrix (idempotência).
+    pub evento_id: &'a str,
+    /// Id Matrix do atendente (`@ph_...:servidor`), vai para `actor_id` da auditoria.
+    pub autor_id: &'a str,
+    /// Nome do atendente, vai para `author_name` e para a legenda montada pelo chamador.
+    pub autor_nome: &'a str,
+    /// O arquivo que vai ao cliente.
+    pub arquivo: ArquivoDaResposta<'a>,
+}
+
 /// O que foi gravado numa resposta humana aceita.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GravacaoHumana {

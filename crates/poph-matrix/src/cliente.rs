@@ -30,7 +30,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::config::SegredosMatrix;
-use crate::erro::ErroChamada;
+use crate::erro::{ErroChamada, ErroMidia};
 
 /// Base da API cliente do Matrix.
 const API: &str = "/_matrix/client/v3";
@@ -47,6 +47,12 @@ const CAMINHO_UPLOAD_ANTIGO: &str = "/_matrix/media/v3/upload";
 
 /// Rota de upload nova, tentada quando o servidor não reconhece a antiga.
 const CAMINHO_UPLOAD_NOVO: &str = "/_matrix/client/v1/media/upload";
+
+/// Rota de download de mídia que o Synapse de desenvolvimento atende (a depreciada, ainda viva).
+const CAMINHO_DOWNLOAD_ANTIGO: &str = "/_matrix/media/v3/download";
+
+/// Rota de download nova, tentada quando o servidor não reconhece a antiga.
+const CAMINHO_DOWNLOAD_NOVO: &str = "/_matrix/client/v1/media/download";
 
 /// `errcode` do Synapse para rota que ele não conhece.
 const ERRCODE_NAO_RECONHECIDO: &str = "M_UNRECOGNIZED";
@@ -213,6 +219,8 @@ struct JuntaResposta {
 
 struct Interno {
     http: reqwest::Client,
+    /// Cliente só do download de mídia: **não segue redirecionamento** (ver [`ClienteMatrix::baixar_midia`]).
+    http_sem_redirecionar: reqwest::Client,
     config: ConfigCliente,
 }
 
@@ -239,7 +247,21 @@ impl ClienteMatrix {
             .user_agent(format!("poph-harness/{}", env!("CARGO_PKG_VERSION")))
             .build()
             .map_err(|erro| ErroChamada::Configuracao(format!("cliente HTTP do Matrix: {erro}")))?;
-        Ok(Self(Arc::new(Interno { http, config })))
+        let http_sem_redirecionar = reqwest::Client::builder()
+            .timeout(config.timeout)
+            .user_agent(format!("poph-harness/{}", env!("CARGO_PKG_VERSION")))
+            // MX-44: o arquivo do atendente sai da sala, e o download não pode desviar para um
+            // endereço fora do homeserver. Sem seguir redirecionamento, o desvio é recusado.
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|erro| {
+                ErroChamada::Configuracao(format!("cliente HTTP de mídia do Matrix: {erro}"))
+            })?;
+        Ok(Self(Arc::new(Interno {
+            http,
+            http_sem_redirecionar,
+            config,
+        })))
     }
 
     /// Cliente a partir da seção `[matrix]` e dos segredos do Application Service.
@@ -618,6 +640,120 @@ impl ClienteMatrix {
         .await
     }
 
+    /// Baixa o conteúdo de uma mídia da sala a partir do `content_uri` do evento
+    /// (`mxc://servidor/id`), com teto de bytes (MX-44).
+    ///
+    /// O que o caminho garante:
+    ///
+    /// - **nada de redirecionamento para fora.** O pedido vai com `allow_redirect=false` (o Synapse
+    ///   entrega o conteúdo direto) e o cliente HTTP deste pedido **não segue** `3xx`: uma resposta
+    ///   de redirecionamento é falha definitiva, e não um desvio para outro servidor;
+    /// - **teto antes da memória.** O `Content-Length` declarado é conferido antes de ler, e a
+    ///   leitura para no teto: acima disso, [`ErroMidia::Grande`] sem carregar o resto;
+    /// - **a rota nova primeiro** (`/_matrix/client/v1/media/download`, a que o Synapse atual
+    ///   atende) e, num `404`, a depreciada (`/_matrix/media/v3/download`), que servidores anteriores
+    ///   usavam. Se as duas falharem, vale a resposta da rota nova — é a que o contrato promete hoje
+    ///   (medido no Synapse 1.120 do ambiente da MX-01: a rota antiga já não existe e responde
+    ///   `404 M_NOT_FOUND`);
+    /// - **disfarce de usuário** (`?user_id=`), como nas demais chamadas: quem lê é o usuário que
+    ///   mandou o arquivo para a sala.
+    ///
+    /// O conteúdo, o nome e o `mxc://` não entram em log nem em mensagem de erro.
+    pub async fn baixar_midia(
+        &self,
+        usuario: &str,
+        mxc: &str,
+        teto: u64,
+    ) -> Result<Vec<u8>, ErroMidia> {
+        let (servidor, id) = partes_do_mxc(mxc)?;
+        let caminho_novo = format!(
+            "{CAMINHO_DOWNLOAD_NOVO}/{}/{}",
+            codificar(&servidor),
+            codificar(&id)
+        );
+        let primeira = self.baixar(&caminho_novo, usuario, teto).await;
+        match primeira {
+            Err(ErroMidia::Chamada(ErroChamada::Resposta { status: 404, .. })) => {
+                let caminho_antigo = format!(
+                    "{CAMINHO_DOWNLOAD_ANTIGO}/{}/{}",
+                    codificar(&servidor),
+                    codificar(&id)
+                );
+                match self.baixar(&caminho_antigo, usuario, teto).await {
+                    Ok(bytes) => Ok(bytes),
+                    // Mídia que não existe responde 404 nas duas rotas: fica valendo a da rota
+                    // principal, que é a do contrato de hoje.
+                    Err(_) => primeira,
+                }
+            }
+            outro => outro,
+        }
+    }
+
+    /// Uma tentativa de download numa rota, com o teto de bytes.
+    async fn baixar(&self, caminho: &str, usuario: &str, teto: u64) -> Result<Vec<u8>, ErroMidia> {
+        let operacao = "download";
+        let url = format!("{}{}", self.0.config.url_base, caminho);
+        let autorizacao = autorizacao_do_token(&self.0.config)?;
+        let resposta = self
+            .0
+            .http_sem_redirecionar
+            .get(&url)
+            .header(AUTHORIZATION, autorizacao)
+            .query(&[("user_id", usuario), ("allow_redirect", "false")])
+            .send()
+            .await
+            .map_err(|erro| falha_de_transporte(erro, operacao, self.0.config.timeout))?;
+
+        let status = resposta.status();
+        if status.is_redirection() {
+            return Err(ErroMidia::Chamada(ErroChamada::RespostaInvalida {
+                operacao,
+                motivo: "o Synapse respondeu com redirecionamento, que não é seguido".to_owned(),
+            }));
+        }
+        if !status.is_success() {
+            let bruto = ler_corpo(resposta, operacao).await?;
+            let valor: Value = serde_json::from_slice(&bruto).unwrap_or(Value::Null);
+            let (errcode, mensagem, retry_after_ms) = detalhe_de_erro(&valor);
+            return Err(ErroMidia::Chamada(ErroChamada::Resposta {
+                operacao,
+                status: status.as_u16(),
+                errcode,
+                mensagem,
+                retry_after_ms,
+            }));
+        }
+
+        // O tamanho declarado evita carregar 16 MB para descobrir que passa do teto.
+        if let Some(declarado) = resposta.content_length()
+            && declarado > teto
+        {
+            return Err(ErroMidia::Grande {
+                bytes: declarado,
+                teto,
+            });
+        }
+
+        let mut acumulado = Vec::new();
+        let mut resposta = resposta;
+        while let Some(pedaco) = resposta
+            .chunk()
+            .await
+            .map_err(|erro| falha_de_transporte(erro, operacao, self.0.config.timeout))?
+        {
+            let total = acumulado.len() as u64 + pedaco.len() as u64;
+            if total > teto {
+                return Err(ErroMidia::Grande { bytes: total, teto });
+            }
+            acumulado.extend_from_slice(&pedaco);
+        }
+        if acumulado.is_empty() {
+            return Err(ErroMidia::Vazia);
+        }
+        Ok(acumulado)
+    }
+
     /// Lê um evento da sala pelo id (`GET /rooms/{sala}/event/{evento}`).
     ///
     /// Serve para conferir o que ficou na sala depois de um envio (aceite e testes contra o
@@ -720,14 +856,7 @@ impl ClienteMatrix {
         operacao: &'static str,
     ) -> Result<Value, ErroChamada> {
         let url = format!("{}{}", self.0.config.url_base, caminho);
-        let autorizacao =
-            HeaderValue::from_str(&format!("Bearer {}", self.0.config.as_token.expor().trim()))
-                .map_err(|_| {
-                    ErroChamada::Configuracao(
-                "o token do Application Service tem caractere que não cabe em cabeçalho HTTP"
-                    .to_owned(),
-            )
-                })?;
+        let autorizacao = autorizacao_do_token(&self.0.config)?;
 
         let mut pedido = self
             .0
@@ -759,25 +888,10 @@ impl ClienteMatrix {
             }
         }
 
-        let resposta = pedido.send().await.map_err(|erro| {
-            if erro.is_timeout() {
-                ErroChamada::Prazo {
-                    operacao,
-                    ms: u64::try_from(self.0.config.timeout.as_millis()).unwrap_or(u64::MAX),
-                }
-            } else if erro.is_connect() {
-                ErroChamada::Rede {
-                    operacao,
-                    motivo: "não consegui conectar".to_owned(),
-                }
-            } else {
-                // `without_url` tira o endereço (que carrega o id da sala) da mensagem.
-                ErroChamada::Rede {
-                    operacao,
-                    motivo: erro.without_url().to_string(),
-                }
-            }
-        })?;
+        let resposta = pedido
+            .send()
+            .await
+            .map_err(|erro| falha_de_transporte(erro, operacao, self.0.config.timeout))?;
 
         let status = resposta.status();
         let bruto = ler_corpo(resposta, operacao).await?;
@@ -813,6 +927,69 @@ impl ClienteMatrix {
 }
 
 // ───────────────────────────── auxiliares ─────────────────────────────
+
+/// Cabeçalho `Authorization` do Application Service.
+///
+/// O token é `Sensivel`: o valor só é exposto aqui, para virar cabeçalho, e nunca entra em mensagem
+/// de erro.
+fn autorizacao_do_token(config: &ConfigCliente) -> Result<HeaderValue, ErroChamada> {
+    HeaderValue::from_str(&format!("Bearer {}", config.as_token.expor().trim())).map_err(|_| {
+        ErroChamada::Configuracao(
+            "o token do Application Service tem caractere que não cabe em cabeçalho HTTP"
+                .to_owned(),
+        )
+    })
+}
+
+/// Traduz a falha de transporte da `reqwest` no erro do cliente, sem o endereço na mensagem.
+fn falha_de_transporte(
+    erro: reqwest::Error,
+    operacao: &'static str,
+    timeout: Duration,
+) -> ErroChamada {
+    if erro.is_timeout() {
+        ErroChamada::Prazo {
+            operacao,
+            ms: u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
+        }
+    } else if erro.is_connect() {
+        ErroChamada::Rede {
+            operacao,
+            motivo: "não consegui conectar".to_owned(),
+        }
+    } else {
+        // `without_url` tira o endereço (que carrega o id da sala ou da mídia) da mensagem.
+        ErroChamada::Rede {
+            operacao,
+            motivo: erro.without_url().to_string(),
+        }
+    }
+}
+
+/// `(servidor, id)` de um `content_uri` do Matrix (`mxc://servidor/id`).
+///
+/// O id de mídia do Matrix não tem barra; qualquer coisa depois da segunda barra recusa o endereço
+/// em vez de virar parte do caminho da requisição.
+fn partes_do_mxc(mxc: &str) -> Result<(String, String), ErroMidia> {
+    let resto = mxc
+        .trim()
+        .strip_prefix("mxc://")
+        .ok_or_else(|| ErroMidia::Endereco("o endereço não começa com `mxc://`".to_owned()))?;
+    let (servidor, id) = resto.split_once('/').ok_or_else(|| {
+        ErroMidia::Endereco("o endereço não tem servidor e identificador".to_owned())
+    })?;
+    if servidor.is_empty() || id.is_empty() {
+        return Err(ErroMidia::Endereco(
+            "o endereço tem servidor ou identificador vazio".to_owned(),
+        ));
+    }
+    if id.contains('/') {
+        return Err(ErroMidia::Endereco(
+            "o identificador da mídia tem barra".to_owned(),
+        ));
+    }
+    Ok((servidor.to_owned(), id.to_owned()))
+}
 
 /// Lê o corpo em pedaços, até [`TETO_CORPO`]. Um corpo maior que o teto é resposta inválida.
 async fn ler_corpo(
@@ -963,6 +1140,33 @@ mod testes {
         let recorte = recortar(&longa);
         assert!(!recorte.contains('\n'), "{recorte}");
         assert!(recorte.chars().count() <= TAMANHO_MENSAGEM + 1, "{recorte}");
+    }
+
+    #[test]
+    fn partes_do_mxc_aceita_o_contrato_e_recusa_o_resto() {
+        assert_eq!(
+            partes_do_mxc("mxc://matrix-dev.local/abc123").expect("endereço válido"),
+            ("matrix-dev.local".to_owned(), "abc123".to_owned())
+        );
+        // Espaço nas pontas vem de conteúdo de evento e não invalida o endereço.
+        assert_eq!(
+            partes_do_mxc("  mxc://s/id  ").expect("endereço válido"),
+            ("s".to_owned(), "id".to_owned())
+        );
+        for invalido in [
+            "",
+            "https://exemplo/mxc",
+            "mxc://",
+            "mxc://servidor",
+            "mxc:///id",
+            "mxc://servidor/",
+            "mxc://servidor/a/b",
+        ] {
+            assert!(
+                matches!(partes_do_mxc(invalido), Err(ErroMidia::Endereco(_))),
+                "deveria recusar: {invalido}"
+            );
+        }
     }
 
     #[test]

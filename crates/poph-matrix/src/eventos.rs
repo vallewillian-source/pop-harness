@@ -180,7 +180,7 @@ pub enum Acao {
         /// Texto como o atendente escreveu, sem reformatar.
         texto: String,
     },
-    /// Mídia do atendente: na fase 1 vira aviso de "ainda não suportado", nunca resposta.
+    /// Mídia do atendente: o arquivo vai ao cliente (MX-44) ou a sala recebe um aviso do motivo.
     MidiaDoAtendente {
         /// Sala de onde veio.
         sala: String,
@@ -188,8 +188,13 @@ pub enum Acao {
         evento_id: String,
         /// Id Matrix de quem mandou.
         remetente: String,
-        /// Que tipo de mídia chegou.
+        /// Que tipo de mídia chegou, pelo `msgtype` do evento.
         tipo: TipoMidia,
+        /// `content.url` do evento (`mxc://…`), quando veio: é por ele que o arquivo é baixado.
+        url: Option<String>,
+        /// Nome do arquivo: `filename`, ou `body` quando o evento não tem `filename`. Vazio quando
+        /// não veio nenhum dos dois.
+        nome: String,
     },
     /// Ruído: não vira nada. O motivo vai para log/métrica, sem conteúdo.
     Ignorar {
@@ -261,6 +266,8 @@ pub fn classificar(ids: &IdsFantasmas, evento: &Value) -> Acao {
                     evento_id: evento_id.to_owned(),
                     remetente: remetente.to_owned(),
                     tipo: tipo_midia,
+                    url: url_da_midia(conteudo),
+                    nome: nome_da_midia(conteudo),
                 }),
                 None => ignorar(MotivoIgnorar::MsgtypeNaoSuportado),
             };
@@ -292,6 +299,35 @@ fn com_campos(evento: &Value, montar: impl FnOnce(&str, &str) -> Acao) -> Acao {
         (Some(sala), Some(evento_id)) => montar(sala, evento_id),
         _ => ignorar(MotivoIgnorar::EventoIncompleto),
     }
+}
+
+/// `content.url` do evento de mídia, quando é texto não vazio.
+fn url_da_midia(conteudo: &Value) -> Option<String> {
+    conteudo
+        .get("url")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+        .map(str::to_owned)
+}
+
+/// Nome do arquivo do evento de mídia: `filename` e, quando ele falta, `body`.
+///
+/// Nos dois campos o Element põe o nome do arquivo; o `filename` é o campo próprio para isso e o
+/// `body` é o que aparece na linha da mensagem. Vazio quando nenhum dos dois veio (o nome padrão do
+/// tipo é decisão de quem envia, em `midia_atendente::nome_do_arquivo`).
+fn nome_da_midia(conteudo: &Value) -> String {
+    for campo in ["filename", "body"] {
+        if let Some(nome) = conteudo
+            .get(campo)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|nome| !nome.is_empty())
+        {
+            return nome.to_owned();
+        }
+    }
+    String::new()
 }
 
 /// O conteúdo é uma edição (`m.replace` ou texto novo em `m.new_content`)?
@@ -422,11 +458,74 @@ mod testes {
                     evento_id: "$ev1:matrix-dev.local".to_owned(),
                     remetente: ATENDENTE.to_owned(),
                     tipo,
+                    url: None,
+                    nome: "foto.jpg".to_owned(),
                 },
                 "msgtype {} deveria ser mídia {:?}",
                 tipo.msgtype(),
                 tipo
             );
+        }
+    }
+
+    #[test]
+    fn midia_do_atendente_traz_url_e_nome_do_arquivo() {
+        // Como o Element manda uma imagem: `body` e `filename` com o nome, e o `mxc://` em `url`.
+        let evento = mensagem(
+            ATENDENTE,
+            json!({
+                "msgtype": "m.image",
+                "body": "foto.jpg",
+                "filename": "foto.jpg",
+                "url": "mxc://matrix-dev.local/abc123",
+                "info": { "mimetype": "image/jpeg", "size": 2_048 },
+            }),
+        );
+        match classificar(&ids(), &evento) {
+            Acao::MidiaDoAtendente {
+                tipo, url, nome, ..
+            } => {
+                assert_eq!(tipo, TipoMidia::Imagem);
+                assert_eq!(url.as_deref(), Some("mxc://matrix-dev.local/abc123"));
+                assert_eq!(nome, "foto.jpg");
+            }
+            outra => panic!("esperava mídia do atendente, veio {outra:?}"),
+        }
+    }
+
+    #[test]
+    fn nome_do_arquivo_prefere_filename_e_cai_no_body() {
+        let com_filename = mensagem(
+            ATENDENTE,
+            json!({
+                "msgtype": "m.file",
+                "body": "clique para baixar",
+                "filename": "laudo.pdf",
+                "url": "mxc://matrix-dev.local/abc123",
+            }),
+        );
+        assert!(matches!(
+            classificar(&ids(), &com_filename),
+            Acao::MidiaDoAtendente { nome, .. } if nome == "laudo.pdf"
+        ));
+
+        let so_body = mensagem(
+            ATENDENTE,
+            json!({ "msgtype": "m.file", "body": "  laudo.pdf  ", "url": "mxc://s/id" }),
+        );
+        assert!(matches!(
+            classificar(&ids(), &so_body),
+            Acao::MidiaDoAtendente { nome, .. } if nome == "laudo.pdf"
+        ));
+
+        // Sem nome nenhum: string vazia (o padrão do tipo é de quem envia).
+        let sem_nome = mensagem(ATENDENTE, json!({ "msgtype": "m.image", "body": "   " }));
+        match classificar(&ids(), &sem_nome) {
+            Acao::MidiaDoAtendente { nome, url, .. } => {
+                assert_eq!(nome, "");
+                assert_eq!(url, None, "sem url, o arquivo não tem de onde ser baixado");
+            }
+            outra => panic!("esperava mídia do atendente, veio {outra:?}"),
         }
     }
 

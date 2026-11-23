@@ -8,15 +8,20 @@
 //!   para o que o WhatsApp renderiza, prefixa `*[Nome]*:`, e chama a operação atômica da MX-04
 //!   (mensagem + fila de saída + conversa `transferred` + auditoria, numa escrita só), com o id do
 //!   evento como chave de idempotência;
-//! - `MidiaDoAtendente` → na fase 1 o arquivo **não** vai ao cliente: o atendente recebe um aviso
-//!   na sala;
+//! - `MidiaDoAtendente` → o arquivo do atendente vai ao cliente (MX-44): baixa o conteúdo do
+//!   Synapse com teto de bytes e sem seguir redirecionamento, confere o tipo **pelo conteúdo**,
+//!   grava como blob da org e chama a operação atômica da MX-44 (mensagem `human` com anexo + item
+//!   `file` na fila + conversa `transferred` + auditoria, numa escrita só). O que não dá para
+//!   enviar (arquivo grande, tipo recusado, mídia que o Synapse não entrega mais) vira um aviso em
+//!   texto na sala, e a conversa não muda;
 //! - `Ignorar` → nada, só o código do motivo no log.
 //!
 //! ## O que nunca acontece aqui
 //!
-//! - **4xx/5xx por conteúdo.** Sala desconhecida, conversa encerrada e mídia são situações
-//!   previstas: respondem `200` sem mandar nada ao cliente. O único `Err` é falha transitória
-//!   nossa (banco indisponível), que a MX-16 transforma em `5xx` para o Synapse reenviar.
+//! - **4xx/5xx por conteúdo.** Sala desconhecida, conversa encerrada, arquivo recusado e mídia que
+//!   não existe mais na sala são situações previstas: respondem `200` sem mandar nada ao cliente. O
+//!   único `Err` é falha transitória nossa (banco indisponível, download que volta na próxima
+//!   entrega), que a MX-16 transforma em `5xx` para o Synapse reenviar.
 //! - **Segundo envio no reenvio.** O Synapse pode repetir a transação; a idempotência é do
 //!   `event_id` (a MX-04 devolve `Duplicada` e nada é enfileirado de novo).
 //! - **Dado de cliente no log.** Loga sala, id de evento, motivo e resultado — nunca o texto.
@@ -25,8 +30,19 @@
 //!
 //! A persistência entra pela porta [`PortaAtendimento`] (a mesma escolha da `PortaSalas` da MX-11):
 //! a implementação real é a [`PortaDoHarness`], sobre o `Store`; os testes injetam uma porta que
-//! sabe falhar, para provar o caminho do `5xx`. O cliente do Synapse é usado só para duas coisas:
-//! ler o nome de exibição do atendente e escrever o aviso na sala.
+//! sabe falhar, para provar o caminho do `5xx`. O cliente do Synapse é usado para quatro coisas:
+//! ler o nome de exibição do atendente, escrever o aviso na sala, **baixar** o arquivo do
+//! atendente (MX-44) e nada mais. A pasta dos blobs vem de quem liga o módulo
+//! ([`RespostaDoAtendente::com_pasta_de_blobs`]); sem ela, o arquivo do atendente vira aviso em vez
+//! de sumir em silêncio.
+//!
+//! ## Duplicação na reentrega do arquivo
+//!
+//! A mensagem e o item da fila são idempotentes pelo id do evento. O **envio** ao cliente não é: a
+//! Evolution não tem chave de envio, e a decisão de 17/11/2026 (a mesma do POP Atende) é reenviar
+//! aceitando o risco de o cliente receber o arquivo duas vezes quando o resultado do primeiro envio
+//! não volta — o contrário, um arquivo que nunca chega sem ninguém saber, é pior para o
+//! atendimento. Quem decide repetir é a fila de saída, não este módulo.
 //!
 //! ## Quantas consultas custa achar a conversa
 //!
@@ -37,13 +53,19 @@
 //! ([`TETO_PADRAO_SALAS`]), então o custo é uma vez por sala, não por mensagem.
 
 use std::collections::{HashMap, VecDeque};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use poph_matrix::{Acao, ClienteMatrix, IdsFantasmas, ModuloMatrix, TipoMidia, classificar};
+use poph_matrix::midia_atendente::{self, MotivoNaoEnviar};
+use poph_matrix::{
+    Acao, ClienteMatrix, ErroMidia, IdsFantasmas, ModuloMatrix, TipoMidia, classificar,
+};
 use poph_store::erro::ErroStore;
-use poph_store::{RespostaHumana, RespostaHumanaNova, Store};
+use poph_store::{
+    ArquivoDaResposta, RespostaHumana, RespostaHumanaComArquivo, RespostaHumanaNova, Store,
+};
 use poph_types::{ConversationId, OrgId};
 use serde_json::{Value, json};
 
@@ -69,17 +91,18 @@ pub const TETO_PADRAO_SALAS: usize = 1024;
 pub const AVISO_CONVERSA_ENCERRADA: &str =
     "Esta conversa já foi encerrada: a mensagem não foi enviada ao cliente.";
 
-/// Aviso na sala quando o atendente manda arquivo, imagem, áudio ou vídeo (fase 1).
-pub const AVISO_MIDIA_NAO_SUPORTADA: &str = "O envio de arquivos pelo Element ainda não é suportado nesta fase: o cliente não recebeu este arquivo.";
-
 /// Marca do `txnId` do aviso de conversa encerrada.
 const MARCA_AVISO_ENCERRADA: &str = "fechada";
 
-/// Marca do `txnId` do aviso de mídia não suportada.
-const MARCA_AVISO_MIDIA: &str = "midia";
-
 /// Motivo curto devolvido à MX-16 quando o banco não respondeu.
 const MOTIVO_BANCO: &str = "banco indisponível na resposta do atendente";
+
+/// Motivo curto devolvido à MX-16 quando o download do arquivo falhou de forma transitória.
+const MOTIVO_MIDIA: &str = "download da mídia do atendente falhou";
+
+/// Situação de extração gravada no anexo do atendente: o arquivo dele não passa pelo extrator —
+/// nenhum turno lê o que o atendente manda.
+const EXTRACAO_DO_ATENDENTE: &str = "skipped";
 
 // ───────────────────────────── a conversa que a sala representa ─────────────────────────────
 
@@ -90,6 +113,24 @@ pub struct ConversaDaSala {
     pub org: OrgId,
     /// Conversa espelhada na sala.
     pub conversa: ConversationId,
+}
+
+/// O que um evento de mídia do atendente traz, reunido para o caminho do envio (MX-44).
+///
+/// Emprestado do evento: nada é copiado antes de o arquivo ser aceito.
+struct ArquivoDoEvento<'a> {
+    /// Sala de onde veio o arquivo.
+    sala: &'a str,
+    /// Id do evento no Matrix (idempotência e `txnId` do aviso).
+    evento_id: &'a str,
+    /// Id Matrix de quem mandou.
+    remetente: &'a str,
+    /// Tipo declarado pelo `msgtype` do evento (o real vem do conteúdo).
+    tipo: TipoMidia,
+    /// `mxc://` do arquivo, quando o evento trouxe.
+    url: Option<&'a str>,
+    /// Nome do arquivo no evento, quando trouxe.
+    nome: &'a str,
 }
 
 // ───────────────────────────── porta de persistência ─────────────────────────────
@@ -104,11 +145,19 @@ pub trait PortaAtendimento: Send + Sync {
     /// `Err` significa "não consegui olhar agora": vira `5xx` e o Synapse reenvia.
     fn conversa_da_sala(&self, sala: &str) -> Result<Option<ConversaDaSala>, ErroStore>;
 
-    /// A operação atômica da MX-04.
+    /// A operação atômica da MX-04 (resposta em texto).
     fn registrar_resposta(
         &self,
         alvo: ConversaDaSala,
         nova: RespostaHumanaNova<'_>,
+    ) -> Result<RespostaHumana, ErroStore>;
+
+    /// A operação atômica da MX-44 (resposta com arquivo): mensagem `human` com anexo, item
+    /// `file` na fila de saída, passagem para `transferred` e auditoria, numa escrita só.
+    fn registrar_resposta_com_arquivo(
+        &self,
+        alvo: ConversaDaSala,
+        nova: RespostaHumanaComArquivo<'_>,
     ) -> Result<RespostaHumana, ErroStore>;
 }
 
@@ -149,6 +198,16 @@ impl PortaAtendimento for PortaDoHarness {
             .mensagens()
             .registrar_resposta_humana(alvo.org, alvo.conversa, nova)
     }
+
+    fn registrar_resposta_com_arquivo(
+        &self,
+        alvo: ConversaDaSala,
+        nova: RespostaHumanaComArquivo<'_>,
+    ) -> Result<RespostaHumana, ErroStore> {
+        self.store
+            .mensagens()
+            .registrar_resposta_humana_com_arquivo(alvo.org, alvo.conversa, nova)
+    }
 }
 
 // ───────────────────────────── a entrega ─────────────────────────────
@@ -167,8 +226,10 @@ pub struct Contadores {
     pub salas_desconhecidas: AtomicU64,
     /// Respostas recusadas porque a conversa está encerrada.
     pub encerradas: AtomicU64,
-    /// Avisos de mídia não suportada escritos na sala.
+    /// Avisos na sala de um arquivo do atendente que não foi ao cliente.
     pub avisos_de_midia: AtomicU64,
+    /// Arquivos do atendente gravados e enfileirados para o cliente (MX-44).
+    pub arquivos_gravados: AtomicU64,
 }
 
 impl Contadores {
@@ -188,6 +249,9 @@ pub struct RespostaDoAtendente {
     contadores: Contadores,
     /// Números do módulo (MX-26). Sem injeção, cai num registro descartável.
     metricas: Arc<MetricasMatrix>,
+    /// Onde os blobs das orgs estão no disco (MX-44). `None` só em montagem de teste sem mídia:
+    /// com arquivo e sem pasta, o atendente recebe um aviso em vez de o arquivo sumir calado.
+    pasta_blobs: Option<PathBuf>,
 }
 
 impl RespostaDoAtendente {
@@ -227,12 +291,22 @@ impl RespostaDoAtendente {
             validade_nome,
             contadores: Contadores::default(),
             metricas: MetricasMatrix::descartaveis(),
+            pasta_blobs: None,
         }
     }
 
     /// Usa os números do processo (`Estado::metricas_matrix`) em vez de um registro descartável.
     pub fn com_metricas(mut self, metricas: Arc<MetricasMatrix>) -> Self {
         self.metricas = metricas;
+        self
+    }
+
+    /// Diz onde os blobs das orgs estão no disco, para o arquivo do atendente (MX-44) ser gravado.
+    ///
+    /// Quem liga o módulo chama isto com a pasta do `ConfigArquivos` do servidor, a mesma do espelho
+    /// e do recebimento — não é uma segunda configuração.
+    pub fn com_pasta_de_blobs(mut self, pasta: impl Into<PathBuf>) -> Self {
+        self.pasta_blobs = Some(pasta.into());
         self
     }
 
@@ -356,18 +430,22 @@ impl RespostaDoAtendente {
     /// Aviso é melhor-esforço: o atendente já viu que a mensagem não foi, e derrubar a transação
     /// por causa do aviso faria o Synapse reenviar a resposta do atendente de novo.
     async fn avisar(&self, sala: &str, remetente: &str, marca: &str, evento_id: &str, corpo: &str) {
+        let conteudo = json!({
+            "msgtype": poph_matrix::eventos::MSGTYPE_AVISO,
+            "body": corpo,
+        });
+        self.avisar_conteudo(sala, remetente, &txn_do_evento(marca, evento_id), &conteudo)
+            .await;
+    }
+
+    /// Aviso na sala com um `txnId` e um conteúdo já montados (o aviso de mídia da MX-44 traz o
+    /// motivo no `txnId`, para dois motivos do mesmo evento não se confundirem).
+    async fn avisar_conteudo(&self, sala: &str, remetente: &str, txn: &str, conteudo: &Value) {
         let Some(cliente) = &self.cliente else {
             return;
         };
-        let txn = txn_do_evento(marca, evento_id);
         if let Err(erro) = cliente
-            .enviar_evento(
-                remetente,
-                sala,
-                "m.room.message",
-                &txn,
-                &json!({ "msgtype": "m.notice", "body": corpo }),
-            )
+            .enviar_evento(remetente, sala, "m.room.message", txn, conteudo)
             .await
         {
             self.contar_erro(&erro);
@@ -498,16 +576,266 @@ impl RespostaDoAtendente {
         }
     }
 
-    async fn guardar_midia(
+    /// Arquivo do atendente → cliente (MX-44).
+    ///
+    /// A ordem é a que evita trabalho inútil e perda de arquivo:
+    ///
+    /// 1. acha a conversa da sala (sem ela, nada a fazer);
+    /// 2. baixa o conteúdo do Synapse com teto de bytes (falha **transitória** volta para o Synapse
+    ///    reenviar; definitiva vira aviso);
+    /// 3. confere o tipo **pelo conteúdo** com o `poph-files` (extensão enganosa e tipo fora da
+    ///    lista viram aviso, com o arquivo recusado antes de encostar no disco);
+    /// 4. grava como blob da org (deduplicado por hash);
+    /// 5. grava a resposta com arquivo na operação atômica da MX-44.
+    ///
+    /// O arquivo **não** passa pelo extrator de texto: nenhum turno lê o que o atendente manda, e a
+    /// extração só custaria tempo e memória.
+    async fn enviar_arquivo(
+        &self,
+        transacao: &str,
+        evento: ArquivoDoEvento<'_>,
+    ) -> Result<(), ErroEntrega> {
+        let ArquivoDoEvento {
+            sala,
+            evento_id,
+            remetente,
+            tipo,
+            url,
+            nome,
+        } = evento;
+        let alvo = match self.conversa_da_sala(sala) {
+            Ok(Some(alvo)) => alvo,
+            Ok(None) => {
+                Contadores::somar(&self.contadores.salas_desconhecidas);
+                self.metricas.salas_desconhecidas.incrementar(1);
+                tracing::info!(
+                    target: "poph_server::matrix_resposta",
+                    transacao,
+                    sala,
+                    evento = evento_id,
+                    "arquivo em sala que nenhuma org ligada conhece: ignorado"
+                );
+                return Ok(());
+            }
+            Err(_) => {
+                tracing::error!(
+                    target: "poph_server::matrix_resposta",
+                    transacao,
+                    sala,
+                    motivo = "banco_indisponivel",
+                    "não consegui achar a conversa da sala agora"
+                );
+                return Err(ErroEntrega::novo(MOTIVO_BANCO));
+            }
+        };
+
+        let Some(pasta) = self.pasta_blobs.clone() else {
+            self.avisar_de_midia(
+                transacao,
+                sala,
+                remetente,
+                evento_id,
+                MotivoNaoEnviar::NaoGravado,
+            )
+            .await;
+            return Ok(());
+        };
+        let (Some(url), Some(cliente)) = (url, self.cliente.as_ref()) else {
+            self.avisar_de_midia(
+                transacao,
+                sala,
+                remetente,
+                evento_id,
+                MotivoNaoEnviar::SemArquivo,
+            )
+            .await;
+            return Ok(());
+        };
+
+        let bytes = match cliente
+            .baixar_midia(remetente, url, midia_atendente::LIMITE_MIDIA_BYTES)
+            .await
+        {
+            Ok(bytes) => bytes,
+            Err(erro) => {
+                if erro.transitorio() {
+                    if let ErroMidia::Chamada(chamada) = &erro {
+                        self.contar_erro(chamada);
+                    }
+                    tracing::warn!(
+                        target: "poph_server::matrix_resposta",
+                        org = %alvo.org,
+                        conversa = %alvo.conversa,
+                        transacao,
+                        sala,
+                        evento = evento_id,
+                        tipo = tipo.msgtype(),
+                        "não consegui baixar o arquivo do atendente agora: volta no reenvio do Synapse"
+                    );
+                    return Err(ErroEntrega::novo(MOTIVO_MIDIA));
+                }
+                if let ErroMidia::Chamada(chamada) = &erro {
+                    self.contar_erro(chamada);
+                }
+                self.avisar_de_midia(
+                    transacao,
+                    sala,
+                    remetente,
+                    evento_id,
+                    motivo_da_falha_de_midia(&erro),
+                )
+                .await;
+                return Ok(());
+            }
+        };
+
+        // Tipo real, pelo conteúdo: o `mimetype` do evento é do cliente e não vale como prova.
+        let tipo_real = match poph_files::tipo::classificar(&bytes, nome) {
+            Ok(tipo) => tipo,
+            Err(_) => {
+                self.avisar_de_midia(
+                    transacao,
+                    sala,
+                    remetente,
+                    evento_id,
+                    MotivoNaoEnviar::TipoRecusado,
+                )
+                .await;
+                return Ok(());
+            }
+        };
+
+        let org = alvo.org;
+        let tamanho_bytes = bytes.len() as u64;
+        let pasta_para_gravar = pasta.clone();
+        let gravado = match tokio::task::spawn_blocking(move || {
+            poph_files::blob::gravar(&pasta_para_gravar, org, &bytes)
+        })
+        .await
+        {
+            Ok(Ok(gravado)) => gravado,
+            _ => {
+                self.avisar_de_midia(
+                    transacao,
+                    sala,
+                    remetente,
+                    evento_id,
+                    MotivoNaoEnviar::NaoGravado,
+                )
+                .await;
+                return Ok(());
+            }
+        };
+
+        let nome_arquivo = midia_atendente::nome_do_arquivo(nome, tipo_real.eh_imagem());
+        let nome_atendente = self.nome_do_atendente(remetente).await;
+        let legenda = legenda_do_arquivo(&nome_atendente);
+        let blob_ref = format!("{}/{}", alvo.org, gravado.sha256);
+        let nova = RespostaHumanaComArquivo {
+            evento_id,
+            autor_id: remetente,
+            autor_nome: &nome_atendente,
+            arquivo: ArquivoDaResposta {
+                nome: &nome_arquivo,
+                mime: tipo_real.mime(),
+                tamanho_bytes,
+                sha256: &gravado.sha256,
+                blob_path: &blob_ref,
+                legenda: &legenda,
+                status_extracao: EXTRACAO_DO_ATENDENTE,
+            },
+        };
+
+        match self.porta.registrar_resposta_com_arquivo(alvo, nova) {
+            Ok(RespostaHumana::Gravada(_)) => {
+                Contadores::somar(&self.contadores.arquivos_gravados);
+                self.metricas.respostas_enfileiradas.incrementar(1);
+                tracing::info!(
+                    target: "poph_server::matrix_resposta",
+                    org = %alvo.org,
+                    conversa = %alvo.conversa,
+                    transacao,
+                    sala,
+                    evento = evento_id,
+                    tipo = tipo.msgtype(),
+                    mime = tipo_real.mime(),
+                    tamanho_bytes,
+                    "arquivo do atendente enfileirado para o cliente"
+                );
+                Ok(())
+            }
+            Ok(RespostaHumana::Duplicada) => {
+                Contadores::somar(&self.contadores.duplicadas);
+                self.metricas.respostas_duplicadas.incrementar(1);
+                tracing::debug!(
+                    target: "poph_server::matrix_resposta",
+                    transacao,
+                    evento = evento_id,
+                    "reenvio do Synapse de um arquivo do atendente já gravado"
+                );
+                Ok(())
+            }
+            Ok(RespostaHumana::ConversaFechada) => {
+                Contadores::somar(&self.contadores.encerradas);
+                self.metricas.respostas_conversa_encerrada.incrementar(1);
+                tracing::info!(
+                    target: "poph_server::matrix_resposta",
+                    org = %alvo.org,
+                    conversa = %alvo.conversa,
+                    transacao,
+                    sala,
+                    evento = evento_id,
+                    "conversa encerrada: arquivo não enviado ao cliente"
+                );
+                self.avisar(
+                    sala,
+                    remetente,
+                    MARCA_AVISO_ENCERRADA,
+                    evento_id,
+                    AVISO_CONVERSA_ENCERRADA,
+                )
+                .await;
+                Ok(())
+            }
+            Ok(RespostaHumana::ConversaInexistente) => {
+                self.esquecer_sala(sala);
+                Contadores::somar(&self.contadores.salas_desconhecidas);
+                self.metricas.salas_desconhecidas.incrementar(1);
+                tracing::info!(
+                    target: "poph_server::matrix_resposta",
+                    transacao,
+                    sala,
+                    "a sala aponta para uma conversa que não existe nesta org: arquivo ignorado"
+                );
+                Ok(())
+            }
+            Err(_) => {
+                tracing::error!(
+                    target: "poph_server::matrix_resposta",
+                    org = %alvo.org,
+                    conversa = %alvo.conversa,
+                    transacao,
+                    sala,
+                    motivo = "banco_indisponivel",
+                    "não consegui gravar o arquivo do atendente agora"
+                );
+                Err(ErroEntrega::novo(MOTIVO_BANCO))
+            }
+        }
+    }
+
+    /// Aviso na sala de um arquivo do atendente que não vai ao cliente.
+    ///
+    /// Melhor-esforço, como o resto dos avisos: o atendente precisa saber, e a transação não pode
+    /// falhar por causa do aviso (falha faria o Synapse reenviar a mensagem de novo).
+    async fn avisar_de_midia(
         &self,
         transacao: &str,
         sala: &str,
-        evento_id: &str,
         remetente: &str,
-        tipo: TipoMidia,
+        evento_id: &str,
+        motivo: MotivoNaoEnviar,
     ) {
-        // Mídia não vira resposta nesta fase, e a conversa nem precisa existir: o aviso é para o
-        // atendente, na sala.
         Contadores::somar(&self.contadores.avisos_de_midia);
         self.metricas.avisos_de_midia.incrementar(1);
         tracing::info!(
@@ -515,17 +843,12 @@ impl RespostaDoAtendente {
             transacao,
             sala,
             evento = evento_id,
-            tipo = tipo.msgtype(),
-            "mídia do atendente: avisando que ainda não é suportada"
+            motivo = motivo.codigo(),
+            "arquivo do atendente não foi ao cliente: avisando na sala"
         );
-        self.avisar(
-            sala,
-            remetente,
-            MARCA_AVISO_MIDIA,
-            evento_id,
-            AVISO_MIDIA_NAO_SUPORTADA,
-        )
-        .await;
+        let txn = midia_atendente::txn_do_aviso(evento_id, motivo);
+        let conteudo = midia_atendente::conteudo_do_aviso(motivo);
+        self.avisar_conteudo(sala, remetente, &txn, &conteudo).await;
     }
 
     async fn processar(&self, transacao: &str, eventos: Vec<Value>) -> Result<(), ErroEntrega> {
@@ -545,9 +868,21 @@ impl RespostaDoAtendente {
                     evento_id,
                     remetente,
                     tipo,
+                    url,
+                    nome,
                 } => {
-                    self.guardar_midia(transacao, &sala, &evento_id, &remetente, tipo)
-                        .await;
+                    self.enviar_arquivo(
+                        transacao,
+                        ArquivoDoEvento {
+                            sala: &sala,
+                            evento_id: &evento_id,
+                            remetente: &remetente,
+                            tipo,
+                            url: url.as_deref(),
+                            nome: &nome,
+                        },
+                    )
+                    .await?;
                 }
                 Acao::Ignorar { motivo } => {
                     tracing::debug!(
@@ -601,6 +936,24 @@ impl std::fmt::Debug for RespostaDoAtendente {
 /// nunca dividida em duas.
 pub fn texto_enfileirado(nome: &str, texto: &str) -> String {
     format!("**[{}]**:\n{texto}", nome_para_prefixo(nome))
+}
+
+/// Legenda que acompanha o arquivo do atendente no WhatsApp: `**[Nome]**` no payload, que a
+/// conversão única do canal ([`poph_evolution::texto::para_whatsapp`]) transforma no `*[Nome]*` que
+/// o cliente vê — o mesmo prefixo da mensagem de texto, sem os dois-pontos (o arquivo já é o
+/// conteúdo da mensagem).
+pub fn legenda_do_arquivo(nome: &str) -> String {
+    format!("**[{}]**", nome_para_prefixo(nome))
+}
+
+/// Por que um download recusado não vai ao cliente, na linguagem do aviso da sala.
+fn motivo_da_falha_de_midia(erro: &ErroMidia) -> MotivoNaoEnviar {
+    match erro {
+        ErroMidia::Grande { .. } => MotivoNaoEnviar::Grande,
+        ErroMidia::Vazia => MotivoNaoEnviar::Vazio,
+        ErroMidia::Endereco(_) => MotivoNaoEnviar::SemArquivo,
+        ErroMidia::Chamada(_) => MotivoNaoEnviar::Indisponivel,
+    }
 }
 
 /// Nome de exibição utilizável no prefixo: sem controle, sem marcador de formatação do canal
@@ -845,6 +1198,55 @@ mod testes {
         );
         let longo = "n".repeat(200);
         assert_eq!(nome_util(Some(&longo)).chars().count(), 80);
+    }
+
+    #[test]
+    fn legenda_do_arquivo_vira_o_prefixo_do_texto_sem_os_dois_pontos() {
+        // O que o cliente vê no WhatsApp vem da conversão única do canal (MX-44).
+        assert_eq!(legenda_do_arquivo("Ana Atendente"), "**[Ana Atendente]**");
+        assert_eq!(
+            para_whatsapp(&legenda_do_arquivo("Ana Atendente")),
+            "*[Ana Atendente]*"
+        );
+        // Nome com marcador de formatação é limpo, como no texto.
+        assert_eq!(
+            para_whatsapp(&legenda_do_arquivo("Ana*Souza")),
+            "*[Ana Souza]*"
+        );
+        // Nome vazio cai no padrão, nunca numa legenda vazia.
+        assert_eq!(
+            para_whatsapp(&legenda_do_arquivo("   ")),
+            format!("*[{NOME_PADRAO_ATENDENTE}]*")
+        );
+    }
+
+    #[test]
+    fn motivo_do_aviso_de_midia_segue_o_erro_do_download() {
+        use poph_matrix::ErroChamada;
+        use poph_matrix::midia_atendente::MotivoNaoEnviar;
+
+        assert_eq!(
+            motivo_da_falha_de_midia(&ErroMidia::Grande {
+                bytes: 20,
+                teto: 16
+            }),
+            MotivoNaoEnviar::Grande
+        );
+        assert_eq!(
+            motivo_da_falha_de_midia(&ErroMidia::Vazia),
+            MotivoNaoEnviar::Vazio
+        );
+        assert_eq!(
+            motivo_da_falha_de_midia(&ErroMidia::Endereco("sem mxc".to_owned())),
+            MotivoNaoEnviar::SemArquivo
+        );
+        assert_eq!(
+            motivo_da_falha_de_midia(&ErroMidia::Chamada(ErroChamada::Rede {
+                operacao: "download",
+                motivo: "caiu".to_owned()
+            })),
+            MotivoNaoEnviar::Indisponivel
+        );
     }
 
     #[test]

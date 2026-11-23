@@ -403,6 +403,17 @@ impl Synapse {
             .unwrap_or_default()
     }
 
+    /// Corpo de cada mensagem escrita nas salas, para conferir o que o Harness publicou.
+    fn corpos_das_mensagens(&self) -> Vec<Value> {
+        self.estado
+            .lock()
+            .expect("trava")
+            .salas
+            .values()
+            .flat_map(|sala| sala.mensagens.iter().map(|(_, _, corpo)| corpo.clone()))
+            .collect()
+    }
+
     fn total_de_mensagens(&self) -> usize {
         self.estado
             .lock()
@@ -1118,6 +1129,65 @@ async fn resposta_do_atendente_esta_ligada_no_servidor() {
         conversa.status,
         StatusConversa::Transferida,
         "a resposta do atendente pausa o agente"
+    );
+
+    let _ = desligar.send(());
+    rodando
+        .com_prazo_de_parada(Duration::from_secs(2))
+        .parar()
+        .await;
+}
+
+#[tokio::test]
+async fn arquivo_do_atendente_esta_ligado_no_servidor() {
+    // MX-44: o receptor montado pelo `iniciar_com` conhece a pasta de blobs do servidor. Sem essa
+    // ligação, todo arquivo do atendente cairia no aviso "não consegui guardar o arquivo" — aqui a
+    // mesma entrega responde o motivo certo para o evento que não trouxe `url`.
+    let synapse = Synapse::subir().await;
+    let cena = cena("arquivo", synapse.endereco.clone());
+    let mut estado = cena.cenario.estado();
+    let rodando =
+        matrix_inicio::iniciar_com(&mut estado, cena.cenario.modulo()).expect("módulo ligado");
+    esperar_ate("a sala da conversa existir", || !synapse.salas().is_empty()).await;
+    let (sala, _) = synapse.salas().pop().expect("sala criada");
+
+    let (base, desligar) = servir(estado).await;
+    let corpo = json!({
+        "events": [{
+            "type": "m.room.message",
+            "room_id": sala,
+            "sender": "@ana:matrix-dev.local",
+            "event_id": "$midia-1",
+            "content": { "msgtype": "m.image", "body": "foto.png" }
+        }]
+    })
+    .to_string();
+    let resposta = cliente()
+        .put(format!("{base}/_matrix/app/v1/transactions/10"))
+        .bearer_auth(HS_TOKEN)
+        .header("content-type", "application/json")
+        .body(corpo)
+        .send()
+        .await
+        .expect("pedido HTTP");
+    assert_eq!(resposta.status(), StatusCode::OK);
+
+    esperar_ate("o aviso da mídia aparecer na sala", || {
+        synapse
+            .corpos_das_mensagens()
+            .iter()
+            .any(|corpo| corpo["msgtype"] == json!("m.notice"))
+    })
+    .await;
+    let aviso = synapse
+        .corpos_das_mensagens()
+        .into_iter()
+        .find(|corpo| corpo["msgtype"] == json!("m.notice"))
+        .expect("o aviso está na sala");
+    assert_eq!(
+        aviso["body"],
+        json!("Não consegui enviar o arquivo ao cliente: o evento não trouxe o arquivo"),
+        "a pasta de blobs do servidor está ligada no receptor"
     );
 
     let _ = desligar.send(());

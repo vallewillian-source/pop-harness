@@ -511,3 +511,155 @@ fn migracao_da_auditoria_preserva_linhas_e_aceita_matrix_user() {
     drop(conn);
     let _ = fs::remove_dir_all(&pasta);
 }
+
+// ───────────────────────────── MX-44: resposta com arquivo ─────────────────────────────
+
+/// Grava uma resposta com arquivo (MX-44), com o payload que o módulo Matrix monta.
+fn gravar_arquivo(
+    store: &Store,
+    org: OrgId,
+    conversa: ConversationId,
+    evento: &str,
+) -> poph_store::erro::Resultado<RespostaHumana> {
+    store.mensagens().registrar_resposta_humana_com_arquivo(
+        org,
+        conversa,
+        poph_store::RespostaHumanaComArquivo {
+            evento_id: evento,
+            autor_id: "@ph_ana:matrix-dev.local",
+            autor_nome: "Ana",
+            arquivo: poph_store::ArquivoDaResposta {
+                nome: "laudo.pdf",
+                mime: "application/pdf",
+                tamanho_bytes: 1_024,
+                sha256: &"a".repeat(64),
+                blob_path: "org/sha",
+                legenda: "**[Ana]**",
+                status_extracao: "skipped",
+            },
+        },
+    )
+}
+
+#[test]
+fn resposta_com_arquivo_grava_mensagem_anexo_fila_passagem_e_auditoria() {
+    let cenario = Cenario::novo("arquivo-feliz");
+    let store = cenario.store();
+    let (org, conversa) = org_e_conversa(store, "arquivo");
+
+    let resultado = gravar_arquivo(
+        store,
+        org.id,
+        conversa.id,
+        "$evento-arquivo:matrix-dev.local",
+    )
+    .expect("grava");
+    let RespostaHumana::Gravada(gravacao) = resultado else {
+        panic!("esperava gravada, veio {resultado:?}");
+    };
+
+    // A mensagem é de saída, humana, sem texto e com o id do evento.
+    assert_eq!(gravacao.mensagem.direcao, poph_store::Direcao::Saida);
+    assert_eq!(gravacao.mensagem.origem, Origem::Humano);
+    assert_eq!(gravacao.mensagem.texto, "");
+    assert_eq!(
+        gravacao.mensagem.id_externo.as_deref(),
+        Some("$evento-arquivo:matrix-dev.local")
+    );
+    assert_eq!(gravacao.mensagem.autor_nome.as_deref(), Some("Ana"));
+
+    // O anexo existe, aponta para a mensagem e guarda o tipo real.
+    let anexos = store
+        .mensagens()
+        .anexos(org.id, gravacao.mensagem.id)
+        .expect("lista os anexos");
+    assert_eq!(anexos.len(), 1);
+    assert_eq!(anexos[0].nome, "laudo.pdf");
+    assert_eq!(anexos[0].mime, "application/pdf");
+    assert_eq!(anexos[0].tamanho_bytes, 1_024);
+    assert_eq!(anexos[0].blob_path, "org/sha");
+    assert_eq!(anexos[0].status_extracao, "skipped");
+    assert_eq!(
+        gravacao.mensagem.anexos_json,
+        serde_json::json!([anexos[0].id.to_string()]).to_string()
+    );
+
+    // O item da fila é `file`, com o payload do HR-24 e a legenda.
+    assert_eq!(gravacao.saida.tipo, "file");
+    let payload: serde_json::Value =
+        serde_json::from_str(&gravacao.saida.conteudo_json).expect("payload em JSON");
+    assert_eq!(payload["blob_ref"], "org/sha");
+    assert_eq!(payload["nome"], "laudo.pdf");
+    assert_eq!(payload["mime"], "application/pdf");
+    assert_eq!(payload["tamanho_bytes"], 1_024);
+    assert_eq!(payload["sha256"], "a".repeat(64));
+    assert_eq!(payload["legenda"], "**[Ana]**");
+    assert_eq!(payload["arquivo_id"], anexos[0].id.to_string());
+
+    // A conversa passou a `transferred` e a auditoria foi gravada uma vez.
+    assert!(gravacao.transferiu_agora);
+    let conversa_lida = store.conversas().obter(org.id, conversa.id).expect("lê");
+    assert_eq!(conversa_lida.status, StatusConversa::Transferida);
+    assert_eq!(
+        contar(
+            store,
+            "SELECT count(*) FROM audit_log WHERE action = 'human_takeover'",
+            ""
+        ),
+        1
+    );
+}
+
+#[test]
+fn reentrega_do_mesmo_arquivo_devolve_duplicada_sem_segundo_anexo_nem_saida() {
+    let cenario = Cenario::novo("arquivo-duplicado");
+    let store = cenario.store();
+    let (org, conversa) = org_e_conversa(store, "arquivo-dup");
+
+    gravar_arquivo(store, org.id, conversa.id, "$evento:matrix-dev.local").expect("primeira");
+    let segunda = gravar_arquivo(store, org.id, conversa.id, "$evento:matrix-dev.local")
+        .expect("segunda não falha");
+    assert_eq!(segunda, RespostaHumana::Duplicada);
+
+    assert_eq!(
+        contar(store, "SELECT count(*) FROM messages", ""),
+        1,
+        "uma mensagem só"
+    );
+    assert_eq!(
+        contar(store, "SELECT count(*) FROM attachments", ""),
+        1,
+        "um anexo só"
+    );
+    assert_eq!(
+        contar(store, "SELECT count(*) FROM outbox WHERE kind = 'file'", ""),
+        1,
+        "um item de arquivo só"
+    );
+}
+
+#[test]
+fn conversa_fechada_nao_grava_arquivo_nem_anexo() {
+    let cenario = Cenario::novo("arquivo-fechada");
+    let store = cenario.store();
+    let (org, conversa) = org_e_conversa(store, "arquivo-fechada");
+    let versao = store
+        .conversas()
+        .obter(org.id, conversa.id)
+        .expect("lê")
+        .versao;
+    store
+        .conversas()
+        .fechar_auditado(org.id, conversa.id, versao, "teste".to_owned())
+        .expect("encerra");
+
+    let resultado =
+        gravar_arquivo(store, org.id, conversa.id, "$evento:matrix-dev.local").expect("responde");
+    assert_eq!(resultado, RespostaHumana::ConversaFechada);
+    assert_eq!(contar(store, "SELECT count(*) FROM messages", ""), 0);
+    assert_eq!(contar(store, "SELECT count(*) FROM attachments", ""), 0);
+    assert_eq!(
+        contar(store, "SELECT count(*) FROM outbox WHERE kind = 'file'", ""),
+        0
+    );
+}

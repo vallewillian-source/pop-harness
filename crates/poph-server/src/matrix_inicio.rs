@@ -386,6 +386,9 @@ pub fn iniciar_com_ajustes(
     if let Some(metricas) = &metricas {
         entrega = entrega.com_metricas(Arc::clone(metricas));
     }
+    // Arquivo do atendente (MX-44): a mesma pasta de blobs do recebimento e do espelho — quem
+    // baixa o arquivo da sala precisa de onde gravá-lo.
+    entrega = entrega.com_pasta_de_blobs(estado.arquivos.pasta_blobs.clone());
     let receptor = ReceptorAs::do_modulo(modulo, Arc::new(entrega));
     estado.ligar_matrix_as(Arc::new(receptor));
 

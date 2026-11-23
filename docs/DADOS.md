@@ -173,6 +173,25 @@ uma vez só; conversa já transferida não sobe) e a auditoria `human_takeover`.
 o item de saída e a passagem também não ficam gravados.
 | `attachments` | `message_id`, `name`, `mime`, `size_bytes`, `sha256`, `blob_path`, `extracted_text`, `extraction_status` (`pending`/`ok`/`failed`/`skipped`) |
 
+**Resposta humana com arquivo (MX-44).** `Mensagens::registrar_resposta_humana_com_arquivo` é a
+mesma operação da MX-04 (mesma idempotência pelo id do evento, mesma passagem para `transferred`,
+mesma auditoria `human_takeover`), com três diferenças:
+
+- `messages.text` fica **vazio** — o atendente não digitou nada — e `messages.attachments_json`
+  aponta para o anexo gravado na mesma escrita;
+- entra uma linha em `attachments` com o tipo MIME **real** (conferido pelo conteúdo no `poph-files`,
+  nunca pelo `mimetype` do evento) e `extraction_status = 'skipped'`: o arquivo do atendente não passa
+  pelo extrator, porque nenhum turno do agente lê o que o atendente manda;
+- o item da `outbox` é `file`, seq 0, com o payload do HR-24 mais a legenda do canal:
+  `{"blob_ref": "<org>/<sha256>", "arquivo_id": "<id do anexo>", "nome": …, "mime": …,
+  "tamanho_bytes": …, "sha256": …, "legenda": …}`. O `blob_ref` é relativo à pasta de blobs
+  (`config.blobs()`), o mesmo lugar de onde o consumidor da fila lê o arquivo.
+
+O blob já está no disco quando a operação roda: quem baixa o arquivo da sala (com teto de 16 MB e sem
+seguir redirecionamento), confere o tipo e grava como blob da org é o módulo Matrix, antes de chamar o
+repositório. Reentrega do mesmo evento devolve `Duplicada` e não cria segundo anexo nem segundo item
+de fila.
+
 `messages` tem índice único parcial em `(conversation_id, external_id)`: gravar a mesma mensagem
 externa de novo devolve a original em vez de duplicar (reentrega do webhook).
 

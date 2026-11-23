@@ -53,6 +53,7 @@ pub mod espacos;
 pub mod eventos;
 pub mod formato;
 pub mod midia;
+pub mod midia_atendente;
 pub mod salas;
 pub mod usuarios;
 
@@ -63,7 +64,7 @@ pub use config::{
     ErroMatrix, ModuloMatrix, ResultadoMatrix, SegredosMatrix, VAR_ADMIN_TOKEN, VAR_AS_TOKEN,
     VAR_HS_TOKEN,
 };
-pub use erro::{Classificacao, ErroChamada};
+pub use erro::{Classificacao, ErroChamada, ErroMidia};
 pub use espacos::{
     DepartamentoEspaco, ErroEspaco, EspacoGravado, Espacos, LimitesConvite, OrigemEspaco,
     PortaEspacos, Posicao, SalaParaEspaco, TIPO_DEPARTAMENTO, TIPO_ESPACO, TIPO_FILHO, TIPO_PAI,
@@ -77,6 +78,7 @@ pub use midia::{
     AnexoParaMidia, BLOCO_ANEXO, LIMITE_MIDIA_BYTES, MSGTYPE_ARQUIVO, MSGTYPE_IMAGEM, Midia,
     MotivoDeRecusa, PREFIXO_AVISO, decidir as decidir_midia,
 };
+pub use midia_atendente::MotivoNaoEnviar;
 pub use salas::{
     AVISO_SEM_HISTORICO, ConversaParaSala, ErroPorta, ErroSala, EstadoGravado, MetadataSala,
     PODER_MINIMO_AGENTE, PortaSalas, Provisionador, SalaGravada, SalaPronta, TIPO_METADATA,

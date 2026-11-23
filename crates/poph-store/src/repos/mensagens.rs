@@ -11,7 +11,7 @@ use crate::Store;
 use crate::erro::{ErroStore, Resultado};
 use crate::modelo::{
     Direcao, GravacaoHumana, ItemSaida, Mensagem, NovaMensagem, NovaSaida, NovoAnexoCanal, Origem,
-    Pagina, Papel, RespostaHumana, RespostaHumanaNova, StatusConversa,
+    Pagina, Papel, RespostaHumana, RespostaHumanaComArquivo, RespostaHumanaNova, StatusConversa,
 };
 use crate::repos::caixas::{COLUNAS_SAIDA, item_de_saida_novo, linha_saida};
 use crate::repos::{id_da_coluna, id_opcional};
@@ -21,6 +21,19 @@ const COLUNAS: &str = "id, org_id, conversation_id, direction, role, text, attac
 
 /// Acesso às mensagens.
 pub struct Mensagens<'a>(pub(crate) &'a Store);
+
+/// O que toda resposta do atendente tem em comum, venha ela com texto (MX-04) ou com arquivo
+/// (MX-44).
+struct EventoHumano<'a> {
+    /// Id do evento Matrix: chave de idempotência da mensagem.
+    evento_id: &'a str,
+    /// Corpo que o atendente escreveu (vazio quando ele só mandou o arquivo).
+    texto_bruto: &'a str,
+    /// Id Matrix do atendente, para a auditoria.
+    autor_id: &'a str,
+    /// Nome do atendente, para `author_name`.
+    autor_nome: &'a str,
+}
 
 impl Mensagens<'_> {
     /// Grava a mensagem. Devolve a mensagem gravada (ou a equivalente, quando é duplicata).
@@ -394,20 +407,109 @@ impl Mensagens<'_> {
     /// A auditoria é gravada a cada resposta gravada, com `transferiu` dizendo se esta resposta
     /// fez a passagem. A mensagem e o item de saída levam o mesmo `turn_id`, que é a junção usada
     /// pelo aviso de falha de entrega (MX-19).
+    ///
+    /// A resposta **com arquivo** (MX-44) passa pelo mesmo caminho, por
+    /// [`Mensagens::registrar_resposta_humana_com_arquivo`]: o que muda é o tipo do item de saída e
+    /// a linha em `attachments`.
     pub fn registrar_resposta_humana(
         &self,
         org: OrgId,
         conversa: ConversationId,
         nova: RespostaHumanaNova<'_>,
     ) -> Resultado<RespostaHumana> {
+        let payload = serde_json::json!({ "texto": nova.texto_enviado }).to_string();
+        self.gravar_resposta_humana(
+            org,
+            conversa,
+            EventoHumano {
+                evento_id: nova.evento_id,
+                texto_bruto: nova.texto_bruto,
+                autor_id: nova.autor_id,
+                autor_nome: nova.autor_nome,
+            },
+            "text",
+            payload,
+            None,
+        )
+    }
+
+    /// Registra a resposta do atendente humano **com arquivo** pelo Element (MX-44) numa única
+    /// escrita.
+    ///
+    /// É a mesma operação de [`Mensagens::registrar_resposta_humana`] (mesma idempotência pelo id do
+    /// evento, mesma passagem para `transferred`, mesma auditoria `human_takeover`) com duas
+    /// diferenças: `messages.text` fica vazio (o atendente não digitou nada) e a mensagem leva o id
+    /// do anexo em `attachments_json`; além do item de saída `text`, entra um item `file`, com o
+    /// payload do HR-24 (`blob_ref`, `arquivo_id`, `nome`, `mime`, `tamanho_bytes`, `sha256`) mais a
+    /// `legenda` que acompanha o arquivo no canal.
+    ///
+    /// O blob **já está** no disco da org quando esta função roda: quem baixou e gravou foi o
+    /// módulo Matrix. Se o arquivo já existe com o mesmo hash, nenhum byte é regravado.
+    pub fn registrar_resposta_humana_com_arquivo(
+        &self,
+        org: OrgId,
+        conversa: ConversationId,
+        nova: RespostaHumanaComArquivo<'_>,
+    ) -> Resultado<RespostaHumana> {
+        let arquivo = nova.arquivo;
+        let id_anexo = AttachmentId::generate();
+        let payload = serde_json::json!({
+            "blob_ref": arquivo.blob_path,
+            "arquivo_id": id_anexo.to_string(),
+            "nome": arquivo.nome,
+            "mime": arquivo.mime,
+            "tamanho_bytes": arquivo.tamanho_bytes,
+            "sha256": arquivo.sha256,
+            "legenda": arquivo.legenda,
+        })
+        .to_string();
+        let anexo = NovoAnexoCanal {
+            nome: arquivo.nome.to_owned(),
+            mime: arquivo.mime.to_owned(),
+            tamanho_bytes: arquivo.tamanho_bytes,
+            sha256: arquivo.sha256.to_owned(),
+            blob_path: arquivo.blob_path.to_owned(),
+            texto_extraido: None,
+            status_extracao: arquivo.status_extracao,
+        };
+        self.gravar_resposta_humana(
+            org,
+            conversa,
+            EventoHumano {
+                evento_id: nova.evento_id,
+                texto_bruto: "",
+                autor_id: nova.autor_id,
+                autor_nome: nova.autor_nome,
+            },
+            "file",
+            payload,
+            Some((id_anexo, anexo)),
+        )
+    }
+
+    /// O corpo comum das respostas humanas (MX-04 e MX-44): as duas diferem só no tipo do item de
+    /// saída e no anexo.
+    fn gravar_resposta_humana(
+        &self,
+        org: OrgId,
+        conversa: ConversationId,
+        nova: EventoHumano<'_>,
+        tipo_saida: &str,
+        conteudo_json: String,
+        anexo: Option<(AttachmentId, NovoAnexoCanal)>,
+    ) -> Resultado<RespostaHumana> {
         let agora = self.0.agora();
         let texto_org = org.to_string();
         let texto_conversa = conversa.to_string();
         let evento = nova.evento_id.to_owned();
         let bruto = nova.texto_bruto.to_owned();
-        let enviado = nova.texto_enviado.to_owned();
         let ator = nova.autor_id.to_owned();
         let nome = nova.autor_nome.to_owned();
+        let tipo_saida = tipo_saida.to_owned();
+        let anexos_json = match &anexo {
+            Some((id, _)) => serde_json::json!([id.to_string()]).to_string(),
+            None => "[]".to_owned(),
+        };
         let id = MessageId::generate();
         let id_saida = OutboxId::generate();
         let turno = TurnId::generate();
@@ -446,7 +548,7 @@ impl Mensagens<'_> {
                 "INSERT INTO messages
                     (id, org_id, conversation_id, direction, role, text, attachments_json,
                      external_id, turn_id, created_at, origin, author_name)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, '[]', ?7, ?8, ?9, ?10, ?11)",
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                 params![
                     id.to_string(),
                     &texto_org,
@@ -454,6 +556,7 @@ impl Mensagens<'_> {
                     Direcao::Saida.como_texto(),
                     Papel::Assistente.como_texto(),
                     &bruto,
+                    &anexos_json,
                     &evento,
                     turno.to_string(),
                     agora,
@@ -463,24 +566,50 @@ impl Mensagens<'_> {
             )
             .map_err(ErroStore::from)?;
 
+            // A linha do anexo é o que o resto do Harness lê para saber o que acompanha a mensagem
+            // (e o que a retenção precisa apagar junto com ela).
+            if let Some((id_anexo, anexo)) = &anexo {
+                conn.execute(
+                    "INSERT INTO attachments
+                        (id, org_id, message_id, name, mime, size_bytes, sha256, blob_path,
+                         extracted_text, extraction_status, created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                    params![
+                        id_anexo.to_string(),
+                        &texto_org,
+                        id.to_string(),
+                        &anexo.nome,
+                        &anexo.mime,
+                        anexo.tamanho_bytes as i64,
+                        &anexo.sha256,
+                        &anexo.blob_path,
+                        anexo.texto_extraido.as_deref(),
+                        anexo.status_extracao,
+                        agora
+                    ],
+                )
+                .map_err(ErroStore::from)?;
+            }
+
             let nova_saida = NovaSaida {
                 conversation_id: conversa,
                 turn_id: turno,
                 seq: 0,
-                tipo: "text".to_owned(),
-                conteudo_json: serde_json::json!({ "texto": enviado }).to_string(),
+                tipo: tipo_saida.clone(),
+                conteudo_json: conteudo_json.clone(),
             };
             conn.execute(
                 "INSERT INTO outbox
                     (id, org_id, conversation_id, turn_id, seq, kind, payload_json, state,
                      attempts, last_error, created_at, sent_at)
-                 VALUES (?1, ?2, ?3, ?4, 0, 'text', ?5, 'pending', 0, NULL, ?6, NULL)",
+                 VALUES (?1, ?2, ?3, ?4, 0, ?5, ?6, 'pending', 0, NULL, ?7, NULL)",
                 params![
                     id_saida.to_string(),
                     &texto_org,
                     &texto_conversa,
                     turno.to_string(),
-                    &nova_saida.conteudo_json,
+                    &tipo_saida,
+                    &conteudo_json,
                     agora
                 ],
             )
@@ -535,7 +664,7 @@ impl Mensagens<'_> {
                     origem: Origem::Humano,
                     autor_nome: Some(nome),
                     texto: bruto,
-                    anexos_json: "[]".to_owned(),
+                    anexos_json,
                     id_externo: Some(evento),
                     turn_id: Some(turno),
                     criado_em: agora,
