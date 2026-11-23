@@ -352,7 +352,12 @@ pub async fn importar(
                 return Ok(Resultado::Sobrescreve(atualizacoes));
             }
         }
-        gravar_no_destino(&estado, org, retrato, &blobs).map(Resultado::Importado)
+        gravar_no_destino(&estado, org, retrato, &blobs, sobrescrever).map(|resultado| {
+            match resultado {
+                Ok(relatorio) => Resultado::Importado(relatorio),
+                Err(atualizacoes) => Resultado::Sobrescreve(atualizacoes),
+            }
+        })
     })
     .await
     .map_err(|_| ApiError::interno())??;
@@ -491,7 +496,8 @@ fn gravar_no_destino(
     org: OrgId,
     retrato: RetratoOrg,
     blobs: &BTreeMap<String, Vec<u8>>,
-) -> Result<RelatorioImportacao, ApiError> {
+    sobrescrever: bool,
+) -> Result<Result<RelatorioImportacao, AtualizacoesImportacao>, ApiError> {
     let pasta = &e.arquivos.pasta_blobs;
     for (sha, conteudo) in blobs {
         match poph_files::blob::gravar(pasta, org, conteudo) {
@@ -514,7 +520,7 @@ fn gravar_no_destino(
         }
     }
     e.store
-        .importar_retrato(retrato, DestinoImportacao::Existente(org))
+        .importar_retrato_protegido(retrato, DestinoImportacao::Existente(org), sobrescrever)
         .map_err(erro_da_importacao)
 }
 

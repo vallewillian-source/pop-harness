@@ -32,7 +32,7 @@ JSON, com a extensão que o operador quiser (sugestão: `.json`). Estrutura:
 | Campo | O que é |
 |---|---|
 | `formato` | `"poph-backup-org"` — confere na importação |
-| `versao_formato` | `1` — versão de formato desconhecida é recusada com mensagem clara |
+| `versao_formato` | `2` — a versão 1 continua importável; versão desconhecida é recusada com mensagem clara |
 | `exportado_em` | instante da exportação (ms desde a época Unix) |
 | `org_origem` | `{id, slug, nome}` da org de onde o arquivo saiu |
 | `com_conversas` | se o histórico entrou |
@@ -49,7 +49,12 @@ JSON, com a extensão que o operador quiser (sugestão: `.json`). Estrutura:
 | `knowledge_groups`, `knowledge_items`, `agent_knowledge_groups` | sim |
 | `file_library` (+ bytes do blob) | sim |
 | `integrations` (sem o segredo) | sim |
+| `fluxos`, `fluxo_revisoes` (fonte e IR), `agente_fluxos` | sim |
 | `conversations`, `messages`, `attachments` (+ bytes dos blobs), `turns`, `inbox`, `outbox`, `carts`, `cart_items` | só com `--com-conversas` |
+| `fichas`, `ficha_eventos`, `fluxo_execucoes`, `fluxo_execucao_etapas`, `fluxo_efeitos` | só com `--com-conversas` |
+
+Revisões publicadas preservam seus números e são imutáveis na importação, mesmo quando a sobrescrita é autorizada.
+Backups da versão 1 com conversas são importados com uma Ficha criada para cada conversa.
 
 **Nome do cliente (`conversations.client_name`, MX-32).** A coluna viaja com `conversations` e entra no
 mesmo `--com-conversas`, como `external_peer`: é dado pessoal do cliente, e o tratamento é o mesmo.

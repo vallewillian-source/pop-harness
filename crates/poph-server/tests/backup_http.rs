@@ -3,7 +3,7 @@
 //! Servidor de verdade (porta efêmera), banco, pasta de blobs e cliente HTTP de verdade: nada de
 //! chamar o handler direto. O que se prova aqui:
 //!
-//! - a exportação devolve o mesmo formato da CLI (`poph-backup-org` v1, org de origem, `tabelas`,
+//! - a exportação devolve o mesmo formato da CLI (`poph-backup-org` v2, org de origem, `tabelas`,
 //!   `blobs`), como anexo, sem conversas por padrão e com `com_conversas=true` quando pedido;
 //! - segredo de integração não sai no arquivo (nem em claro, nem cifrado) e caminho de blob não sai;
 //! - a importação reconstrói a org de destino, preserva o sha256 dos blobs (e o download devolve os
@@ -428,7 +428,7 @@ async fn exportar_devolve_o_arquivo_da_org_sem_segredo_nem_caminho() {
 
     let documento = arquivo_baixado.json();
     assert_eq!(documento["formato"], "poph-backup-org");
-    assert_eq!(documento["versao_formato"], 1);
+    assert_eq!(documento["versao_formato"], 2);
     assert_eq!(documento["org_origem"]["id"], org.as_str());
     assert_eq!(documento["org_origem"]["slug"], "origem");
     assert_eq!(documento["com_conversas"], false);

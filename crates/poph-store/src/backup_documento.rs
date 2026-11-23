@@ -128,7 +128,7 @@ pub fn retrato_do_documento(documento: &Value) -> Result<RetratoOrg, ErroDocumen
         .get("versao_formato")
         .and_then(Value::as_u64)
         .unwrap_or(0);
-    if versao != u64::from(VERSAO_FORMATO) {
+    if !(1..=u64::from(VERSAO_FORMATO)).contains(&versao) {
         return Err(ErroDocumento::Versao {
             lida: versao,
             entendida: VERSAO_FORMATO,

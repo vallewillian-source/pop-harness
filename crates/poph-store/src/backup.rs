@@ -45,7 +45,7 @@ use crate::erro::{ErroStore, Resultado};
 /// Nome do formato gravado no arquivo (confere na importação).
 pub const FORMATO_BACKUP: &str = "poph-backup-org";
 /// Versão do formato que esta versão do POP Harness escreve e entende.
-pub const VERSAO_FORMATO: u32 = 1;
+pub const VERSAO_FORMATO: u32 = 2;
 
 /// Tabela do retrato: nome e colunas que identificam a linha dentro da org.
 struct Tabela {
@@ -99,6 +99,18 @@ const TABELAS_SEMPRE: &[Tabela] = &[
         nome: "integrations",
         chave: &["id"],
     },
+    Tabela {
+        nome: "fluxos",
+        chave: &["id"],
+    },
+    Tabela {
+        nome: "fluxo_revisoes",
+        chave: &["id"],
+    },
+    Tabela {
+        nome: "agente_fluxos",
+        chave: &["agent_id", "fluxo_id"],
+    },
 ];
 
 /// Tabelas do histórico, só com `--com-conversas`.
@@ -135,6 +147,26 @@ const TABELAS_CONVERSAS: &[Tabela] = &[
         nome: "cart_items",
         chave: &["id"],
     },
+    Tabela {
+        nome: "fichas",
+        chave: &["id"],
+    },
+    Tabela {
+        nome: "ficha_eventos",
+        chave: &["id"],
+    },
+    Tabela {
+        nome: "fluxo_execucoes",
+        chave: &["id"],
+    },
+    Tabela {
+        nome: "fluxo_execucao_etapas",
+        chave: &["id"],
+    },
+    Tabela {
+        nome: "fluxo_efeitos",
+        chave: &["id"],
+    },
 ];
 
 /// Chaves naturais (única por org) que a importação confere **antes** de gravar.
@@ -151,6 +183,11 @@ struct ChaveNatural {
 }
 
 const CHAVES_NATURAIS: &[ChaveNatural] = &[
+    ChaveNatural {
+        tabela: "fluxos",
+        coluna: "slug",
+        recurso: "fluxo",
+    },
     ChaveNatural {
         tabela: "agents",
         coluna: "slug",
@@ -338,6 +375,26 @@ impl Store {
         self.escrita(move |conn| importar(conn, &retrato, destino))
     }
 
+    /// Verifica sobrescritas e importa na mesma transação do escritor.
+    pub fn importar_retrato_protegido(
+        &self,
+        retrato: RetratoOrg,
+        destino: DestinoImportacao,
+        sobrescrever: bool,
+    ) -> Resultado<std::result::Result<RelatorioImportacao, AtualizacoesImportacao>> {
+        self.escrita(move |conn| {
+            let (org, criada) = destino_da_importacao(conn, &retrato, destino)?;
+            conferir_chaves_naturais(conn, &retrato, org, criada)?;
+            if !sobrescrever {
+                let atualizacoes = atualizacoes_da_importacao(conn, &retrato, destino)?;
+                if !atualizacoes.vazia() {
+                    return Ok(Err(atualizacoes));
+                }
+            }
+            importar(conn, &retrato, destino).map(Ok)
+        })
+    }
+
     /// Lista, **sem gravar nada**, as chaves naturais do retrato que já existem no destino com
     /// outro id (a importação recusaria por causa delas).
     ///
@@ -523,6 +580,42 @@ fn importar(
             relatorio.segredos_a_redigitar += com_segredo;
         }
         relatorio.tabelas.insert(tabela.nome.to_owned(), gravado);
+    }
+    if !retrato.tabelas.contains_key("fichas") && retrato.tabelas.contains_key("conversations") {
+        conn.execute_batch(&format!(r#"INSERT INTO fichas
+            (id, org_id, conversation_id, agent_id, canal, peer_externo, status, aberta_em, fechada_em, fechada_por, fechada_motivo, version)
+            SELECT lower(substr(printf('%012x', max(c.created_at, 0)), 1, 8) || '-' ||
+                substr(printf('%012x', max(c.created_at, 0)), 9, 4) || '-7' ||
+                substr(hex(randomblob(2)), 1, 3) || '-' ||
+                substr('89ab', 1 + (random() & 3), 1) || substr(hex(randomblob(2)), 1, 3) || '-' || hex(randomblob(6))),
+                c.org_id, c.id, c.agent_id, c.channel, c.external_peer,
+                CASE WHEN c.status = 'closed' THEN 'closed' ELSE 'open' END, c.created_at,
+                CASE WHEN c.status = 'closed' THEN c.updated_at END,
+                CASE WHEN c.status = 'closed' THEN 'migracao' END,
+                CASE WHEN c.status = 'closed' THEN 'conversa importada de backup anterior' END, 1
+            FROM conversations c WHERE c.org_id = '{}' AND NOT EXISTS
+                (SELECT 1 FROM fichas f WHERE f.conversation_id = c.id);"#, org_id))?;
+    }
+    if let Some(conversas) = retrato.tabelas.get("conversations") {
+        for conversa in conversas {
+            let id = conversa.get("id").and_then(Value::as_str).ok_or_else(|| {
+                ErroStore::Dominio(DomainError::Validacao {
+                    campo: "backup",
+                    motivo: "conversa sem id".to_owned(),
+                })
+            })?;
+            let existe: bool = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM fichas WHERE org_id = ?1 AND conversation_id = ?2)",
+                rusqlite::params![org_id.to_string(), id],
+                |row| row.get(0),
+            )?;
+            if !existe {
+                return Err(ErroStore::Dominio(DomainError::Validacao {
+                    campo: "backup",
+                    motivo: "conversa importada sem Ficha correspondente".to_owned(),
+                }));
+            }
+        }
     }
     // Tabela que não faz parte do formato é recusada (arquivo de outra versão ou alterado).
     for nome in retrato.tabelas.keys() {
@@ -809,6 +902,38 @@ fn gravar_linha(
             "blob_path".to_owned(),
             Value::String(format!("{org_id}/{sha}")),
         );
+    }
+    if tabela.nome == "fichas"
+        && let Some(conversa) = objeto.get("conversation_id").and_then(Value::as_str)
+    {
+        let existe: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM conversations WHERE org_id = ?1 AND id = ?2)",
+            rusqlite::params![org_id.to_string(), conversa],
+            |row| row.get(0),
+        )?;
+        if !existe {
+            return Err(ErroStore::Dominio(DomainError::Validacao {
+                campo: "backup",
+                motivo: "a conversa da Ficha não pertence à organização de destino".to_owned(),
+            }));
+        }
+    }
+    if tabela.nome == "fluxo_revisoes" {
+        let id = objeto.get("id").and_then(Value::as_str).unwrap_or("");
+        let mut consulta =
+            conn.prepare("SELECT * FROM fluxo_revisoes WHERE org_id = ?1 AND id = ?2")?;
+        let nomes = nomes_das_colunas(&consulta);
+        let mut linhas = consulta.query(rusqlite::params![org_id.to_string(), id])?;
+        if let Some(linha) = linhas.next()? {
+            let existente = linha_json(tabela.nome, &nomes, linha)?;
+            if existente == Value::Object(objeto.clone()) {
+                return Ok(true);
+            }
+            return Err(ErroStore::Dominio(DomainError::Validacao {
+                campo: "backup",
+                motivo: "uma revisão publicada existente é imutável e difere do arquivo".to_owned(),
+            }));
+        }
     }
     gravar_objeto(conn, tabela, &objeto, Some(org_id), colunas)
 }
@@ -1156,6 +1281,126 @@ mod testes {
             .definir_nome_cliente(org, conversa.id, nome)
             .expect("grava o nome do cliente");
         conversa
+    }
+
+    #[test]
+    fn backup_fluxos_fichas_e_revisoes_preserva_estado() {
+        let origem = banco();
+        let org = org_com_dados(&origem, "origem");
+        let conversa = conversa_com_nome(&origem, org, "Cliente fictício");
+        let agente = origem.agentes().listar(org, Pagina::default()).unwrap()[0].id;
+        let ficha = origem.retrato_da_org(org, true).unwrap().tabelas["fichas"][0]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        origem.escrita(move |conn| {
+            let org = org.to_string();
+            let agente = agente.to_string();
+            for (id, slug, atual) in [("flow-a", "first", 2), ("flow-b", "second", 1)] {
+                conn.execute("INSERT INTO fluxos (id, org_id, slug, nome, revisao_atual) VALUES (?1, ?2, ?3, ?3, ?4)", rusqlite::params![id, org, slug, atual])?;
+                conn.execute("INSERT INTO agente_fluxos (org_id, agent_id, fluxo_id, liberado_em) VALUES (?1, ?2, ?3, 1)", rusqlite::params![org, agente, id])?;
+            }
+            for (id, fluxo, numero) in [("rev-a1", "flow-a", 1), ("rev-a2", "flow-a", 2), ("rev-b1", "flow-b", 1)] {
+                conn.execute("INSERT INTO fluxo_revisoes (id, org_id, fluxo_id, numero, fonte, fonte_sha256, definicao_json, publicada_em, publicada_por) VALUES (?1, ?2, ?3, ?4, 'fonte', 'hash', '{}', 1, 'cli')", rusqlite::params![id, org, fluxo, numero])?;
+            }
+            conn.execute("INSERT INTO fluxo_execucoes (id, org_id, ficha_id, fluxo_id, revisao_id, no_atual, iniciada_em) VALUES ('exec', ?1, ?2, 'flow-a', 'rev-a1', 'etapa', 1)", rusqlite::params![org, ficha])?;
+            conn.execute("INSERT INTO fluxo_execucao_etapas (id, org_id, execucao_id, no_id, ordem, entrou_em) VALUES ('etapa', ?1, 'exec', 'etapa', 1, 1)", [&org])?;
+            conn.execute("INSERT INTO fluxo_efeitos (id, org_id, ficha_id, execucao_id, chave, tipo, created_at) VALUES ('efeito', ?1, ?2, 'exec', 'um', 'mensagem_ao_cliente', 1)", rusqlite::params![org, ficha])?;
+            Ok(())
+        }).unwrap();
+        let retrato = origem.retrato_da_org(org, true).unwrap();
+        assert_eq!(retrato.tabelas["fluxos"].len(), 2);
+        assert_eq!(retrato.tabelas["fluxo_revisoes"].len(), 3);
+        assert_eq!(retrato.tabelas["agente_fluxos"].len(), 2);
+        for nome in [
+            "fichas",
+            "ficha_eventos",
+            "fluxo_execucoes",
+            "fluxo_execucao_etapas",
+            "fluxo_efeitos",
+        ] {
+            assert!(!retrato.tabelas[nome].is_empty(), "{nome}");
+        }
+        assert_eq!(
+            retrato.tabelas["fichas"][0]["conversation_id"],
+            conversa.id.to_string()
+        );
+        let destino = banco();
+        destino
+            .importar_retrato_protegido(retrato.clone(), DestinoImportacao::DaOrigem, false)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            destino.retrato_da_org(org, true).unwrap().tabelas,
+            retrato.tabelas
+        );
+        assert!(
+            destino
+                .importar_retrato_protegido(retrato.clone(), DestinoImportacao::DaOrigem, false)
+                .unwrap()
+                .is_err()
+        );
+        destino
+            .importar_retrato_protegido(retrato.clone(), DestinoImportacao::DaOrigem, true)
+            .unwrap()
+            .unwrap();
+        let mut adulterado = retrato.clone();
+        adulterado.tabelas.get_mut("fluxo_revisoes").unwrap()[0]["fonte"] = Value::from("alterada");
+        assert!(
+            destino
+                .importar_retrato_protegido(adulterado, DestinoImportacao::DaOrigem, true)
+                .is_err()
+        );
+        assert_eq!(
+            destino.retrato_da_org(org, true).unwrap().tabelas,
+            retrato.tabelas
+        );
+        let mut incompleto = retrato.clone();
+        incompleto.tabelas.get_mut("fichas").unwrap().clear();
+        let banco_incompleto = banco();
+        assert!(
+            banco_incompleto
+                .importar_retrato(incompleto, DestinoImportacao::DaOrigem)
+                .is_err()
+        );
+        assert!(banco_incompleto.orgaos().obter(org).is_err());
+        let sem = origem.retrato_da_org(org, false).unwrap();
+        assert!(!sem.tabelas.contains_key("fichas"));
+        let vazio = banco();
+        vazio
+            .importar_retrato(sem, DestinoImportacao::DaOrigem)
+            .unwrap();
+        assert!(vazio.retrato_da_org(org, true).unwrap().tabelas["fichas"].is_empty());
+        let mut antigo = retrato.clone();
+        for nome in [
+            "fluxos",
+            "fluxo_revisoes",
+            "agente_fluxos",
+            "fichas",
+            "ficha_eventos",
+            "fluxo_execucoes",
+            "fluxo_execucao_etapas",
+            "fluxo_efeitos",
+        ] {
+            antigo.tabelas.remove(nome);
+        }
+        let documento =
+            crate::backup_documento::documento(&antigo, true, 0, &BTreeMap::new(), &|_| None);
+        let mut documento = documento;
+        documento["versao_formato"] = Value::from(1);
+        let antigo = crate::backup_documento::retrato_do_documento(&documento).unwrap();
+        let destino_antigo = banco();
+        destino_antigo
+            .importar_retrato(antigo, DestinoImportacao::DaOrigem)
+            .unwrap();
+        let fichas = destino_antigo
+            .retrato_da_org(org, true)
+            .unwrap()
+            .tabelas
+            .remove("fichas")
+            .unwrap();
+        assert_eq!(fichas.len(), 1);
+        assert_eq!(fichas[0]["conversation_id"], conversa.id.to_string());
     }
 
     #[test]

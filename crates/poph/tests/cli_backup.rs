@@ -500,7 +500,7 @@ fn exportar_e_importar_reconstroi_a_org_num_arquivo_so() {
     assert!(!texto.contains("secrets_enc"), "segredo cifrado no arquivo");
     let documento: Value = serde_json::from_str(&texto).expect("JSON do backup");
     assert_eq!(documento["formato"], "poph-backup-org");
-    assert_eq!(documento["versao_formato"], 1);
+    assert_eq!(documento["versao_formato"], 2);
     assert_eq!(documento["org_origem"]["slug"], origem.slug);
     let integracao = &documento["tabelas"]["integrations"][0];
     assert_eq!(
