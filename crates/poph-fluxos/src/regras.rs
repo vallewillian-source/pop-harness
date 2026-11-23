@@ -447,6 +447,15 @@ fn contem(valor: Option<&Json>, trecho: &str) -> bool {
     texto_canonico(valor).is_some_and(|texto| dobra(&texto).contains(&alvo))
 }
 
+/// Se um valor de campo conta como **preenchido** (`FLUXOS_LINGUAGEM.md` §5): `null`, texto só com
+/// espaços e lista vazia não contam.
+///
+/// É a mesma régua do combinador `vazio`, exposta para o motor (FX-13) conferir `exige` da ação e
+/// `obrigatorio` do campo sem uma segunda definição que pudesse divergir.
+pub fn preenchido(valor: Option<&Json>) -> bool {
+    !vazio(valor)
+}
+
 /// `vazio`: não preenchido, `null`, só espaços ou lista sem itens.
 fn vazio(valor: Option<&Json>) -> bool {
     match valor {

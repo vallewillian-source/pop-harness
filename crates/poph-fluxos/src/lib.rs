@@ -14,7 +14,8 @@
 //! - [`compilador`] — FX-10: script → IR, com diagnósticos de forma (feito).
 //! - [`validador`] — FX-11: diagnósticos semânticos sobre a IR e resolução de departamentos (feito).
 //! - [`regras`] — FX-12: combinadores e funções avançadas (`def`) (feito).
-//! - [`motor`] — FX-13 e FX-14: iniciar, registrar campos, executar ação, avançar, fim e efeitos.
+//! - [`motor`] — FX-13 (feito: iniciar, registrar campos, executar ação, avançar) e FX-14
+//!   (decisões, fim, abandono e efeitos).
 //! - [`prompt`] — FX-18: bloco do prompt e visualização da etapa.
 //! - [`diff`] — FX-17: diferença entre revisões em linguagem comum.
 //! - [`formatador`] — FX-16: forma canônica do script (script ⇄ estrutura).
@@ -41,5 +42,9 @@ pub mod validador;
 pub use compilador::{Compilado, FalhaCarregamento, Limites, carregar, compilar};
 pub use diagnostico::{Codigo, Diagnostico, Severidade};
 pub use ir::Ir;
+pub use motor::{
+    Campos, Estado, Evento, Recibo, Resultado, atores_exigidos, campos_faltando, dados_da_etapa,
+    executar_acao, iniciar,
+};
 pub use regras::{Avaliador, Dados, ErroRegra, LimitesRegra, avaliar, dados_de_json};
 pub use validador::{Departamento, MAX_NOS, Resolucao, resolver_departamentos, validar};

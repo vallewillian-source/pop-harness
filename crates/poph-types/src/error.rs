@@ -82,6 +82,19 @@ pub enum DomainError {
         erros: Vec<String>,
     },
 
+    /// Campos de uma etapa recusados pelo **motor** antes de ele saber a Ficha (FX-13).
+    ///
+    /// A transição do motor é pura: recebe a estrutura do fluxo e o estado da execução, não o id da
+    /// Ficha. O desfecho é o mesmo de [`DomainError::CamposInvalidos`] — nada é gravado pela metade,
+    /// código `campos_invalidos`, HTTP 400 —, muda só o contexto que existe em mãos.
+    #[error("campos recusados na etapa {etapa}: {}", .erros.join("; "))]
+    CamposDaEtapaInvalidos {
+        /// Etapa do fluxo (`etapas[].id`).
+        etapa: String,
+        /// Um item por problema: "campo: motivo" ou "a ação `x` exige o campo `y`".
+        erros: Vec<String>,
+    },
+
     /// `reopen` de conversa `closed` (PRD L13): conversa encerrada não volta, só uma mensagem nova
     /// do cliente abre outra (com Ficha nova). Conversa `transferred` continua reabrindo.
     #[error("conversa {id} está encerrada: a próxima mensagem do cliente abre outra")]
@@ -142,6 +155,7 @@ impl DomainError {
             DomainError::FluxoNaoLiberado { .. } => "fluxo_nao_liberado",
             DomainError::AcaoInvalida { .. } => "acao_invalida",
             DomainError::CamposInvalidos { .. } => "campos_invalidos",
+            DomainError::CamposDaEtapaInvalidos { .. } => "campos_invalidos",
             DomainError::ConversaEncerrada { .. } => "conversa_encerrada",
             DomainError::IrDivergente { .. } => "ir_divergente",
             DomainError::TetoDeFluxosPorAgente { .. } => "teto_de_fluxos_por_agente",
@@ -168,7 +182,7 @@ impl DomainError {
             | DomainError::ConversaEncerrada { .. }
             | DomainError::IrDivergente { .. }
             | DomainError::TetoDeFluxosPorAgente { .. } => 409,
-            DomainError::CamposInvalidos { .. } => 400,
+            DomainError::CamposInvalidos { .. } | DomainError::CamposDaEtapaInvalidos { .. } => 400,
             // Defeito do fluxo publicado ou custo da regra: nada disso é culpa do pedido do
             // cliente, e a saída é corrigir/republicar o fluxo, então o status é o mesmo de
             // conteúdo que não fecha (400), como os campos recusados.
@@ -271,6 +285,23 @@ mod tests {
             assert_eq!(erro.codigo_api(), codigo, "código de {erro:?}");
             assert_eq!(erro.status_http(), status, "status de {erro:?}");
         }
+    }
+
+    #[test]
+    fn campos_recusados_pelo_motor_tem_o_mesmo_codigo_dos_campos_da_ficha() {
+        // Dois contextos, um contrato: o motor puro recusa a ação antes de saber a Ficha (FX-13) e
+        // a operação da Ficha recusa depois (PRD §6.4). Quem lê a API casa pelo código, então ele
+        // é o mesmo (`campos_invalidos`, 400) e a mensagem diz a etapa.
+        let erro = DomainError::CamposDaEtapaInvalidos {
+            etapa: "coleta".to_owned(),
+            erros: vec!["periodo: esperava uma das opções: `manhã`, `tarde`".to_owned()],
+        };
+        assert_eq!(erro.codigo_api(), "campos_invalidos");
+        assert_eq!(erro.status_http(), 400);
+        assert!(
+            erro.to_string().contains("coleta"),
+            "a mensagem precisa dizer a etapa: {erro}"
+        );
     }
 
     #[test]
