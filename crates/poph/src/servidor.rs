@@ -195,6 +195,7 @@ async fn ligar_turno(
             jev: segredos.typesafe.clone(),
         },
         metricas,
+        montagem::FluxosDoProcesso::do_servidor(&estado),
     )?;
 
     // Rede de segurança, como no chat: a base pode ter sido escrita fora do servidor. Sincronizar

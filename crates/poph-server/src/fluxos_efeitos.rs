@@ -29,8 +29,8 @@
 //! # Formato do `payload_json`
 //!
 //! É o formato que o adaptador do turno (FX-22/FX-23) grava a partir de
-//! [`poph_fluxos::EfeitoProduzido`] — e quem grava usa [`efeito_da_transicao`], aqui do lado, para
-//! não existirem dois formatos:
+//! [`poph_fluxos::EfeitoProduzido`] — e quem grava usa [`efeito_da_transicao`] (de `poph-agent`,
+//! desde a FX-23) para não existirem dois formatos:
 //!
 //! ```json
 //! {"texto": "..."}                       // mensagem_ao_cliente
@@ -51,8 +51,7 @@ use std::time::Duration;
 
 use poph_agent::Backoff;
 use poph_evolution::{BlobsEmDisco, FonteDeMidia, WhatsAppEvolution};
-use poph_fluxos::EfeitoProduzido;
-use poph_store::{EfeitoDaTransicao, EfeitoDoFluxo, ErroStore, NovaSaida, Store};
+use poph_store::{EfeitoDoFluxo, ErroStore, NovaSaida, Store};
 use poph_types::{AtorEvento, IntegrationId, OrgId, TipoEventoFicha, TurnId};
 use serde_json::Value;
 
@@ -629,27 +628,9 @@ fn espera_ms(espera: Duration) -> i64 {
 
 /// Traduz o efeito do motor no que a fila grava (FX-20) — o **único** lugar do formato.
 ///
-/// O adaptador do turno (FX-22/FX-23) usa esta função para montar [`EfeitoDaTransicao`], e o
-/// entregador lê o mesmo formato em [`EfeitosFluxo::plano`]: não existem dois jeitos de escrever o
-/// payload.
-pub fn efeito_da_transicao(produzido: &EfeitoProduzido) -> EfeitoDaTransicao {
-    let payload = match &produzido.efeito {
-        poph_fluxos::ir::Efeito::MensagemAoCliente { texto } => {
-            serde_json::json!({ "texto": texto })
-        }
-        poph_fluxos::ir::Efeito::NotificarWhatsapp { para, mensagem } => {
-            serde_json::json!({ "para": para, "mensagem": mensagem })
-        }
-        poph_fluxos::ir::Efeito::Encaminhar { departamento } => {
-            serde_json::json!({ "departamento": departamento })
-        }
-    };
-    EfeitoDaTransicao {
-        chave: produzido.chave.clone(),
-        tipo: produzido.tipo().to_owned(),
-        payload_json: payload.to_string(),
-    }
-}
+/// A função mora em `poph-agent` ([`poph_agent::fluxos_transicao::efeito_da_transicao`]) desde a
+/// FX-23, porque o turno também abre execução; aqui ela é reexportada para os chamadores da API.
+pub use poph_agent::fluxos_transicao::efeito_da_transicao;
 
 /// Sobe o laço da fila de efeitos. Sem o motor de fluxos ligado, não sobe nada.
 pub fn iniciar(estado: &Estado) -> Option<tokio::task::JoinHandle<()>> {

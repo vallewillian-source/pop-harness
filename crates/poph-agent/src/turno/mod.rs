@@ -54,6 +54,7 @@
 mod console;
 mod departamento;
 mod ferramentas;
+mod fluxo;
 mod pausa;
 mod prompt;
 
@@ -85,7 +86,7 @@ use crate::config_quente::{AgenteQuente, ConfigQuente};
 use crate::entrada_saida::{EventoEntrada, Fluxo};
 use crate::erro::{ErroAgente, Resultado};
 use crate::limites::Limitador;
-use crate::metricas::MetricasTurno;
+use crate::metricas::{MetricasG9, MetricasTurno};
 use crate::produtos::{BuscadorProdutos, ParametrosProdutos, ProdutoEncontrado};
 use crate::resumo::{self, OpcoesResumo, Resumidor};
 
@@ -97,6 +98,7 @@ pub use ferramentas::{
     RegistroChamadas, RegistroFerramentas, RegistroPadrao, SemFerramentas, TETO_RESUMO_FERRAMENTA,
     UsoFerramentas, cortar, oferecidas, registro_do_turno, resumo_de_argumentos,
 };
+pub use fluxo::{ABRE_FLUXOS, AjustesDoFluxo, FECHA_FLUXOS, NOME_FERRAMENTA_INICIAR};
 pub use pausa::{FuturoPausa, Pausa, PausaReal};
 pub use prompt::{
     ABRE_BASE, ABRE_CONTEXTO, AVISO_BASE, FECHA_BASE, FECHA_CONTEXTO, Prompt, bloco_base,
@@ -469,6 +471,11 @@ pub struct Motor {
     /// Arquivos do cliente (HR-23b): pasta dos blobs e limites. Sem ela, o turno não lê imagem
     /// nenhuma do disco — o texto extraído continua indo ao modelo pelo banco.
     arquivos: Option<poph_files::ConfigArquivos>,
+    /// Motor de fluxos (FX-23). Sem ele, o turno não toca em fluxo nenhum: `[fluxos] ativo = false`
+    /// ou composição que não ligou o módulo.
+    fluxos: Option<AjustesDoFluxo>,
+    /// Contadores do G9 (FX-23). Desacoplados do catálogo do servidor (ver [`MetricasG9`]).
+    fluxos_g9: MetricasG9,
 }
 
 impl Motor {
@@ -504,6 +511,8 @@ impl Motor {
             jev: None,
             handoff: Orientacao::default(),
             arquivos: None,
+            fluxos: None,
+            fluxos_g9: MetricasG9::proprias(),
         }
     }
 
@@ -573,6 +582,30 @@ impl Motor {
     /// extraído; imagem fica gravada e não chega ao modelo.
     pub fn com_arquivos(mut self, arquivos: poph_files::ConfigArquivos) -> Self {
         self.arquivos = Some(arquivos);
+        self
+    }
+
+    /// Liga o motor de fluxos com os ajustes de `[fluxos]` (FX-23).
+    ///
+    /// Sem esta chamada, ou com `[fluxos] ativo = false`, o turno não lê fluxo, não pergunta o G9 e
+    /// não põe bloco no prompt — a Ficha continua sendo criada e fechada pelo `poph-store`.
+    pub fn com_fluxos(mut self, config: &poph_types::FluxosConfig) -> Self {
+        self.fluxos = Some(AjustesDoFluxo::da_config(config));
+        self
+    }
+
+    /// Compartilha o cache de revisões de quem já tem um (o servidor tem o da API de fluxos).
+    pub fn com_cache_de_fluxos(mut self, cache: Arc<poph_fluxos::cache::CacheRevisoes>) -> Self {
+        let Some(ajustes) = self.fluxos.take() else {
+            return self;
+        };
+        self.fluxos = Some(ajustes.com_cache(cache));
+        self
+    }
+
+    /// Troca os contadores do G9 (o servidor passa os que publica em `/metrics`).
+    pub fn com_metricas_g9(mut self, metricas: MetricasG9) -> Self {
+        self.fluxos_g9 = metricas;
         self
     }
 
@@ -694,6 +727,23 @@ impl Motor {
             )
         };
 
+        // FX-23: o fluxo do atendimento é lido **antes** do lote do Jev, porque o G9 precisa dos
+        // fluxos liberados no estado que vai junto das outras perguntas. Motor desligado, conversa
+        // sem Ficha ou leitura que falhou devolvem `None`, e o turno segue sem fluxo.
+        let fluxo_preparo = self
+            .fluxos
+            .as_ref()
+            .and_then(|ajustes| fluxo::preparar(ajustes, &self.store, org, conversa_id, agente_id));
+        // Só os fluxos de uma Ficha **sem** execução ativa entram no estado do G9 (PRD L6): com
+        // execução em andamento, a pergunta não existe e o custo é zero.
+        let fluxos_do_g9: Vec<poph_jev::FluxoJev> = fluxo_preparo
+            .as_ref()
+            .filter(|preparo| preparo.ativa.is_none())
+            .map(|preparo| preparo.liberados.clone())
+            .unwrap_or_default();
+        let fluxos_do_g9 = (!fluxos_do_g9.is_empty()).then_some(fluxos_do_g9);
+        let fluxos_do_g9 = fluxos_do_g9.as_deref();
+
         // HR-30: o G2 governa a janela, então a decisão dele precisa existir **antes** da espera.
         // Com o G2 ligado, o lote do Jev sai na chegada da mensagem e o tempo dele cabe dentro da
         // janela; o mesmo lote é reaproveitado pelos outros gates depois (G1/G3/G4) e só é refeito
@@ -704,7 +754,9 @@ impl Motor {
         if self.g2_ligado(&quente.agente) {
             let na_chegada = self.ultimas_mensagens(org, conversa_id)?;
             marco_do_lote = ultima_entrada_do_cliente(&na_chegada);
-            if let Some(futuro) = self.iniciar_jev(org, &quente, &na_chegada, &conversa) {
+            if let Some(futuro) =
+                self.iniciar_jev(org, &quente, &na_chegada, &conversa, fluxos_do_g9)
+            {
                 jev_na_chegada = Some(futuro.await);
             }
             let decisao = jev_na_chegada
@@ -810,7 +862,7 @@ impl Motor {
         let jev_futuro = if jev_pronto.is_some() {
             None
         } else {
-            self.iniciar_jev(org, &quente, &ultimas, &conversa)
+            self.iniciar_jev(org, &quente, &ultimas, &conversa, fluxos_do_g9)
         };
         let limite = quente
             .agente
@@ -1074,6 +1126,28 @@ impl Motor {
             );
         }
 
+        // FX-23: o fluxo do atendimento, decidido **antes** da chamada do modelo. Com execução
+        // ativa, o bloco da etapa entra no prompt; sem ela, a escolha confiável do G9 é validada e
+        // a execução é aberta aqui; sem escolha, a reserva (catálogo) ou nada, conforme o motivo.
+        // O G9 estar ligado para este agente separa "não foi perguntado" de "a chamada falhou" no
+        // registro e nas métricas.
+        let g9_ligado = self.jev.is_some() && self.gates_do_agente(&quente.agente).g9;
+        let fluxo_do_turno = match self.fluxos.as_ref() {
+            Some(ajustes) => fluxo::decidir(
+                ajustes,
+                &self.store,
+                org,
+                fluxo_preparo.as_ref(),
+                jev.as_ref(),
+                g9_ligado,
+                self.ferramentas
+                    .ferramenta(fluxo::NOME_FERRAMENTA_INICIAR)
+                    .is_some(),
+            ),
+            None => Default::default(),
+        };
+        self.contar_g9(&fluxo_do_turno);
+
         if !trechos.is_empty() {
             self.metricas
                 .trechos_recuperados
@@ -1095,6 +1169,7 @@ impl Motor {
             catalogo_de_produtos: !g3_nada
                 && quente.ferramenta_habilitada(crate::produtos::NOME_FERRAMENTA),
             produto_escolhido: produto_g5.as_ref(),
+            fluxos: fluxo_do_turno.texto.as_deref(),
         }
         .montar();
         let mensagens = Prompt::novo(quente.markdown.clone())
@@ -1245,16 +1320,22 @@ impl Motor {
             .tocar(org, conversa_id, self.store.agora())?;
 
         let modelo = self.modelo_usado(&quente);
-        let jev_json = jev
-            .as_ref()
-            .filter(|item| !item.decisoes.is_empty())
-            .map(|item| {
+        // `turns.jev_json` é o painel "por quê" do turno: as decisões do Jev **e** o que o código
+        // fez com a escolha do G9 (iniciou, já havia execução, reserva). Sem texto de cliente.
+        let jev_json = match (&jev, &fluxo_do_turno.registro) {
+            (Some(item), _) if !item.decisoes.is_empty() => {
                 let mut registro = item.para_json();
                 if revisao.houve() {
                     registro["revisao"] = revisao.para_json();
                 }
-                registro.to_string()
-            });
+                if let Some(fluxo) = &fluxo_do_turno.registro {
+                    registro["fluxo"] = fluxo.clone();
+                }
+                Some(registro.to_string())
+            }
+            (_, Some(fluxo)) => Some(json!({ "fluxo": fluxo }).to_string()),
+            _ => None,
+        };
         let fim = FinalizacaoTurno {
             estado: Some(EstadoTurno::Concluido),
             jev_json,
@@ -1550,7 +1631,7 @@ impl Motor {
             candidatos.iter().map(candidato_do_g5).collect();
         let gates = self.gates_do_agente(&quente.agente);
         let estado = self
-            .estado_jev(org, quente, ultimas, conversa, gates)?
+            .estado_jev(org, quente, ultimas, conversa, gates, None)?
             .com_produtos_candidatos(do_estado);
         // Só o G5 nesta chamada: os outros gates já foram perguntados no lote, e repeti-los aqui
         // gastaria uma segunda rodada sem mudar nada.
@@ -1733,7 +1814,7 @@ impl Motor {
             })
             .collect();
         let estado = self
-            .estado_jev(org, quente, ultimas, conversa, gates)?
+            .estado_jev(org, quente, ultimas, conversa, gates, None)?
             .com_resposta_candidata(texto)
             .com_produtos_candidatos(candidatos);
         // Só o G6 nesta chamada: os outros gates já foram perguntados no lote do turno.
@@ -1805,6 +1886,7 @@ impl Motor {
         quente: &AgenteQuente,
         ultimas: &[MensagemGravada],
         conversa: &poph_store::Conversa,
+        fluxos: Option<&[poph_jev::FluxoJev]>,
     ) -> Option<futures::future::BoxFuture<'static, ResultadoJev>> {
         let avaliador = Arc::clone(self.jev.as_ref()?);
         let ajuste: Option<AjusteGates> = poph_jev::ajuste_do_agente(&quente.agente.jev_json);
@@ -1812,7 +1894,7 @@ impl Motor {
         if MotorJev::nenhum(gates) {
             return None;
         }
-        let estado = self.estado_jev(org, quente, ultimas, conversa, gates)?;
+        let estado = self.estado_jev(org, quente, ultimas, conversa, gates, fluxos)?;
         Some(Box::pin(
             async move { avaliador.avaliar(estado, ajuste).await },
         ))
@@ -1829,6 +1911,7 @@ impl Motor {
         ultimas: &[MensagemGravada],
         conversa: &poph_store::Conversa,
         gates: GatesJev,
+        fluxos: Option<&[poph_jev::FluxoJev]>,
     ) -> Option<EstadoJev> {
         let mensagens: Vec<MensagemJev> = ultimas.iter().filter_map(mensagem_do_jev).collect();
         if mensagens.is_empty() {
@@ -1846,6 +1929,13 @@ impl Motor {
             );
         if gates.g4 {
             estado = estado.com_departamentos(self.departamentos_ativos(org));
+        }
+        // FX-23: os fluxos liberados vão no estado **só** quando o G9 está ligado para o agente —
+        // com o gate desligado o estado fica como era, e as medições dos outros gates não mudam.
+        if gates.g9
+            && let Some(fluxos) = fluxos
+        {
+            estado = estado.com_fluxos_liberados(fluxos.iter().cloned());
         }
         // G7 (HR-35): o texto extraído do arquivo do cliente vai junto com a mensagem, para o Jev
         // julgar injeção embutida no documento. Sem arquivo com texto, o campo não existe.
@@ -2118,6 +2208,26 @@ impl Motor {
             conversa,
             self.opcoes.teto_leitura_mensagens.max(1),
         )?)
+    }
+
+    /// Conta o desfecho do fluxo do turno nas séries `poph_fluxos_g9_*` (FX-26/FX-23).
+    ///
+    /// Cada turno cai em **uma** série. "Reserva" (gate desligado ou acima do teto de 20 fluxos)
+    /// não conta como falha: o Jev não errou, ele não foi perguntado.
+    fn contar_g9(&self, desfecho: &fluxo::DesfechoDoFluxo) {
+        let Some(registro) = desfecho.registro.as_ref() else {
+            return;
+        };
+        match registro
+            .get("resultado")
+            .and_then(serde_json::Value::as_str)
+        {
+            Some("iniciou" | "iniciou_sem_bloco") => self.fluxos_g9.iniciou.incrementar(1),
+            Some("nenhum") => self.fluxos_g9.nenhum.incrementar(1),
+            Some("abaixo_do_limiar") => self.fluxos_g9.abaixo_do_limiar.incrementar(1),
+            Some("fallback" | "falhou" | "nao_iniciou") => self.fluxos_g9.fallback.incrementar(1),
+            _ => {}
+        }
     }
 
     /// Gates efetivos do agente: configuração global ajustada pelo `jev_json` dele.
@@ -2577,7 +2687,7 @@ impl Motor {
         };
         let ajuste: Option<AjusteGates> = poph_jev::ajuste_do_agente(&quente.agente.jev_json);
         let gates: GatesJev = avaliador.gates_efetivos(ajuste);
-        let Some(estado) = self.estado_jev(org, quente, ultimas, conversa, gates) else {
+        let Some(estado) = self.estado_jev(org, quente, ultimas, conversa, gates, None) else {
             return ResultadoOrientacao::nao_consultado("sem mensagem para julgar");
         };
         let resultado = avaliador.orientar(estado, self.handoff.prazo).await;

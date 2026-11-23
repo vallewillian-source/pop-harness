@@ -94,6 +94,55 @@ impl MetricasMemoria {
     }
 }
 
+/// Números do gate G9 (FX-23): o que a escolha do Jev fez com o fluxo do atendimento.
+///
+/// São as quatro séries `poph_fluxos_g9_*` que a FX-26 declarou. Elas moram aqui, e não no catálogo
+/// `poph_fluxos_*` do servidor, porque **quem decide é o turno**: o servidor só publica os mesmos
+/// contadores no registro do `/metrics` (`Estado::metricas_fluxos`), sem declarar o nome duas vezes.
+#[derive(Debug, Clone)]
+pub struct MetricasG9 {
+    /// Decisões do G9 que iniciaram um fluxo (`poph_fluxos_g9_iniciou_total`).
+    pub iniciou: Contador,
+    /// Decisões do G9 em que o Jev respondeu "nenhum" (`poph_fluxos_g9_nenhum_total`).
+    pub nenhum: Contador,
+    /// Decisões do G9 com confiança ou margem abaixo do limiar
+    /// (`poph_fluxos_g9_abaixo_do_limiar_total`).
+    pub abaixo_do_limiar: Contador,
+    /// Turnos em que o G9 não decidiu (Jev fora, resposta inutilizável ou recusa da validação) e o
+    /// prompt recebeu o catálogo (`poph_fluxos_g9_fallback_total`).
+    pub fallback: Contador,
+}
+
+impl MetricasG9 {
+    /// Registra o catálogo no registro dado. Repetir no mesmo registro é erro (o registro recusa).
+    pub fn registrar(registro: &Registro) -> DomainResult<Self> {
+        Ok(Self {
+            iniciou: registro.contador(
+                "poph_fluxos_g9_iniciou_total",
+                "Decisões do G9 que iniciaram um fluxo de atendimento.",
+            )?,
+            nenhum: registro.contador(
+                "poph_fluxos_g9_nenhum_total",
+                "Decisões do G9 em que o Jev respondeu que nenhum fluxo se aplica.",
+            )?,
+            abaixo_do_limiar: registro.contador(
+                "poph_fluxos_g9_abaixo_do_limiar_total",
+                "Decisões do G9 com confiança ou margem abaixo do limiar (nada inicia).",
+            )?,
+            fallback: registro.contador(
+                "poph_fluxos_g9_fallback_total",
+                "Turnos em que o G9 não decidiu e o catálogo foi oferecido ao modelo.",
+            )?,
+        })
+    }
+
+    /// Catálogo isolado (testes e usos que não publicam em `/metrics`).
+    pub fn proprias() -> Self {
+        let registro = Registro::new();
+        Self::registrar(&registro).expect("catálogo do G9 sem conflito de nome")
+    }
+}
+
 /// Números da entrada e da saída (HR-12), sem HTTP.
 ///
 /// Os medidores são agregados da instância: o tamanho da `inbox` e o que está em `sending` são

@@ -16,6 +16,7 @@ use poph_agent::metricas::{MetricasFluxo, MetricasMemoria, MetricasTurno};
 use poph_agent::turno::{Motor, OpcoesTurno, ProcessadorTurno, RegistroPadrao};
 use poph_agent::{BuscadorBase, BuscadorProdutos, CatalogoProdutos, ConsultarBase, registro_com};
 use poph_core::llm::{ClienteAntigravity, ConfigAntigravity, LimitadorLlm};
+use poph_fluxos::cache::CacheRevisoes;
 use poph_store::Store;
 use poph_types::{HarnessConfig, MetricasBase, Registro, Segredo};
 
@@ -57,6 +58,36 @@ impl Metricas {
             memoria: MetricasMemoria::registrar(registro)
                 .map_err(|erro| format!("métricas de memória: {erro}"))?,
         })
+    }
+}
+
+/// O que o processo já tem do módulo de fluxos e o turno deve **reaproveitar** (FX-23).
+///
+/// O `/metrics` e a API de fluxos do servidor já têm o cache de revisões e os contadores do G9. O
+/// turno usa os mesmos: um cache só por processo (nenhuma revisão compilada duas vezes) e as séries
+/// `poph_fluxos_g9_*` publicadas são as que o turno incrementa. O `poph chat` monta sem nada disso e
+/// o turno cria o próprio cache e os próprios contadores.
+#[derive(Default)]
+pub struct FluxosDoProcesso {
+    cache: Option<Arc<CacheRevisoes>>,
+    g9: Option<poph_agent::metricas::MetricasG9>,
+}
+
+impl FluxosDoProcesso {
+    /// Os do servidor: o cache da API de fluxos e os contadores que o `/metrics` publica.
+    pub fn do_servidor(estado: &poph_server::Estado) -> Self {
+        let g9 = estado
+            .metricas_fluxos()
+            .map(|metricas| poph_agent::metricas::MetricasG9 {
+                iniciou: metricas.g9_iniciou.clone(),
+                nenhum: metricas.g9_nenhum.clone(),
+                abaixo_do_limiar: metricas.g9_abaixo_do_limiar.clone(),
+                fallback: metricas.g9_fallback.clone(),
+            });
+        Self {
+            cache: Some(Arc::clone(&estado.cache_fluxos)),
+            g9,
+        }
     }
 }
 
@@ -117,6 +148,7 @@ pub fn montar(
     store: Arc<Store>,
     chaves: Chaves,
     metricas: Metricas,
+    fluxos: FluxosDoProcesso,
 ) -> Result<Montagem, String> {
     let cliente = ConfigAntigravity::da_config(&configuracao.llm, chaves.llm)
         .map_err(|erro| format!("configuração do provedor: {erro}"))?;
@@ -162,7 +194,18 @@ pub fn montar(
     .com_arquivos(poph_files::ConfigArquivos::padrao(configuracao.blobs()))
     // Transferência para humano (HR-29): textos da orientação e mensagem automática vêm do
     // `[handoff]` do `poph.toml` — trocar o texto não exige recompilar.
-    .com_handoff(poph_jev::Orientacao::da_config(&configuracao.handoff));
+    .com_handoff(poph_jev::Orientacao::da_config(&configuracao.handoff))
+    // Fluxos e Fichas (FX-23): o turno escolhe (G9), valida e inicia a execução na Ficha. Desligado
+    // em `[fluxos] ativo`, nada disso acontece e a Ficha continua.
+    .com_fluxos(&configuracao.fluxos);
+    // O que o processo já tem do módulo é reaproveitado: mesmo cache de revisões da API e os
+    // mesmos contadores `poph_fluxos_g9_*` do `/metrics`.
+    if let Some(cache) = fluxos.cache {
+        motor = motor.com_cache_de_fluxos(cache);
+    }
+    if let Some(g9) = fluxos.g9 {
+        motor = motor.com_metricas_g9(g9);
+    }
     // Jev (HR-28): só entra quando está ligado na configuração e a chave está no ambiente. Sem ele,
     // o turno roda exatamente como antes da HR-28 (nenhum gate é perguntado).
     if configuracao.jev.ativo {

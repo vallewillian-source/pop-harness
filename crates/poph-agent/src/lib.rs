@@ -28,6 +28,7 @@ pub mod contexto;
 pub mod entrada_saida;
 pub mod erro;
 pub mod fila_integracao;
+pub mod fluxos_transicao;
 pub mod limites;
 pub mod metricas;
 pub mod produtos;
@@ -53,6 +54,7 @@ pub use fila_integracao::{
     chave_idempotencia, comando_do_item,
 };
 pub use limites::{Limitador, OpcoesLimites, Vaga, VagaProvedor};
+pub use metricas::MetricasG9;
 pub use metricas::{MetricasFluxo, MetricasMemoria, MetricasTurno};
 pub use produtos::{
     BuscadorProdutos, BuscarProduto, CatalogoProdutos, ParametrosProdutos, ProdutoEncontrado,

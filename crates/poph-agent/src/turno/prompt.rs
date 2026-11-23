@@ -171,6 +171,9 @@ pub struct BlocoVolatil<'a> {
     pub catalogo_de_produtos: bool,
     /// Produto escolhido pelo G5 neste turno.
     pub produto_escolhido: Option<&'a ProdutoEncontrado>,
+    /// Bloco dos fluxos de atendimento (FX-23): a etapa atual da execução em andamento ou o
+    /// catálogo da reserva. Sempre **fora** do prefixo estável, e `None` quando não há fluxo.
+    pub fluxos: Option<&'a str>,
 }
 
 impl BlocoVolatil<'_> {
@@ -185,6 +188,13 @@ impl BlocoVolatil<'_> {
             self.trechos,
             self.catalogo_de_produtos && self.produto_escolhido.is_none(),
         );
+        // FX-23: o fluxo vem **depois** do bloco de contexto e **antes** da base. É a instrução do
+        // que fazer agora, então fica perto do topo; e nunca no prefixo estável, que é cacheado.
+        if let Some(fluxos) = self.fluxos.filter(|texto| !texto.trim().is_empty()) {
+            bloco.push('\n');
+            bloco.push_str(fluxos.trim_end());
+            bloco.push('\n');
+        }
         if let Some(produto) = self.produto_escolhido {
             bloco.push('\n');
             bloco.push_str(AVISO_PRECO_ESCOLHIDO);

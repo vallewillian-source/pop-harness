@@ -86,7 +86,7 @@ pub struct Estado {
     matrix_espacos: Option<Arc<crate::matrix_inicio::EspacosDoModulo>>,
     /// Cache das revisões compiladas de fluxo (FX-19), com o teto `fluxos.cache_revisoes_mb` (FX-26).
     /// Um só por processo: `Clone` compartilha o estado.
-    pub cache_fluxos: CacheRevisoes,
+    pub cache_fluxos: Arc<CacheRevisoes>,
     /// Métricas `poph_fluxos_*` (FX-26). `None` = motor de fluxos desligado (`[fluxos] ativo = false`):
     /// nenhuma `poph_fluxos_*` aparece no `/metrics`.
     metricas_fluxos: Option<Arc<MetricasFluxos>>,
@@ -134,9 +134,9 @@ impl Estado {
         let registro = Arc::new(Registro::new());
         let metricas = MetricasBase::registrar(&registro)
             .map_err(|erro| format!("não consegui registrar as métricas: {erro}"))?;
-        let cache_fluxos = CacheRevisoes::novo(
+        let cache_fluxos = Arc::new(CacheRevisoes::novo(
             usize::try_from(config.fluxos.cache_revisoes_mb).unwrap_or(usize::MAX),
-        );
+        ));
         let metricas_fluxos = if config.fluxos.ativo {
             Some(Arc::new(MetricasFluxos::registrar(&registro).map_err(
                 |erro| format!("não consegui registrar as métricas de fluxos: {erro}"),

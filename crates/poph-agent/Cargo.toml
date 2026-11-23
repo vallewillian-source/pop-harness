@@ -16,6 +16,8 @@ poph-rag = { path = "../poph-rag" }
 # Marcas do bloco não confiável do texto de arquivo (HR-35).
 poph-files = { path = "../poph-files" }
 poph-store = { path = "../poph-store" }
+# Motor de fluxos (FX-23): o turno escolhe, valida e inicia a execução na Ficha.
+poph-fluxos = { path = "../poph-fluxos" }
 poph-types = { path = "../poph-types" }
 # Consumo do stream do provedor (HR-13).
 futures = "0.3"

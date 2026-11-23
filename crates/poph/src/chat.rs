@@ -89,6 +89,7 @@ fn rodar(
             jev: config::segredos(ambiente).typesafe,
         },
         montagem::Metricas::proprias(metricas_base),
+        montagem::FluxosDoProcesso::default(),
     )?;
     let montagem::Montagem {
         motor,
