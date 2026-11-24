@@ -40,6 +40,7 @@ executa "console (cliente do OpenAPI em dia)" bash console/scripts/verificar-api
 executa "console (testes de componente)" bash console/scripts/testar.sh
 
 executa "comentários (teste do removedor)" python3 scripts/tests/test-strip-comments.py
+executa "glossário (termos, congelados e tabela em dia)" python3 scripts/glossary-terms.py --validar
 
 executa "formatação" cargo fmt --all -- --check
 executa "clippy" cargo clippy --workspace --all-targets --locked -- -D warnings
