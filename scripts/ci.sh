@@ -39,6 +39,8 @@ executa "console (cliente do OpenAPI em dia)" bash console/scripts/verificar-api
 # Testes de componente do Console (HR-39a). Também se declara pulada sem `console/node_modules`.
 executa "console (testes de componente)" bash console/scripts/testar.sh
 
+executa "comentários (teste do removedor)" python3 scripts/tests/test-strip-comments.py
+
 executa "formatação" cargo fmt --all -- --check
 executa "clippy" cargo clippy --workspace --all-targets --locked -- -D warnings
 executa "build" cargo build --workspace --locked

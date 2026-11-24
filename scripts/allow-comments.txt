@@ -1,0 +1,13 @@
+# Exceções da regra "zero comentário" (seção 7.1 do PRD).
+# Formato, campos separados por TAB: <glob do caminho>	<tipo>	<casamento>	<motivo>
+# tipo: shebang | directive | data
+# casamento em directive: texto que o comentário precisa começar depois do marcador.
+# casamento em data: line:N, lines:A-B, starts:TEXTO ou contains:TEXTO.
+# Uma linha por exceção. Sem expressão regular: o que não casar exatamente aqui é reprovado.
+*.sh	shebang		primeira linha do script: o kernel precisa do shebang para executá-lo
+*.py	shebang		primeira linha do script: o kernel precisa do shebang para executá-lo
+*	directive	noqa		diretiva do flake8/ruff; sair faz o linter reprovar a linha
+*	directive	type: ignore	diretiva do mypy; sair faz o verificador de tipos reprovar a linha
+*	directive	shellcheck disable=	diretiva do shellcheck; sair faz o linter reprovar o source dinâmico
+scripts/limpar-cache.sh	data	lines:2-30	bloco de uso lido pela própria função uso() com sed na linha 43; é dado, não comentário
+console/gen-api.sh	data	lines:2-16	bloco de uso lido pela própria opção --help com sed na linha 28; é dado, não comentário
