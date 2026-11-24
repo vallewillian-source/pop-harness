@@ -36,6 +36,15 @@ const TRES_AGENTES = {
     next_cursor: null,
 };
 
+const AGENTS_WITH_STATUS = {
+    items: [
+        { id: "agt_1", name: "Atendente", org_id: "org_1", status: "active" },
+        { id: "agt_2", name: "Triagem", org_id: "org_1", status: "inactive" },
+        { id: "agt_3", name: "Vendas", org_id: "org_1", status: "archived" },
+    ],
+    next_cursor: null,
+};
+
 function prepararSessao() {
     window.sessionStorage.setItem(
         CHAVE_DA_SESSAO,
@@ -89,6 +98,31 @@ describe("Casca do Console (HR-61)", () => {
         await usuario.click(screen.getByRole("link", { name: /Produtos e catálogo/ }));
         await usuario.click(screen.getByRole("link", { name: /Agentes/ }));
         expect(screen.getByRole("link", { name: /Agentes/ })).toHaveTextContent("3");
+        expect(servidor.chamadasPara("GET", "/admin/v1/orgs/org_1/agents")).toHaveLength(1);
+    });
+
+    it("lista os agentes da organização no menu, sem segunda consulta", async () => {
+        const usuario = userEvent.setup();
+        prepararSessao();
+        const servidor = new ServidorFalso()
+            .responder("GET", "/healthz", { status: 200, corpo: SAUDE })
+            .responder("GET", "/admin/v1/orgs/org_1/agents", {
+                status: 200,
+                corpo: AGENTS_WITH_STATUS,
+            })
+            .instalar();
+        montar("/orgs/org_1/structure");
+
+        expect(await screen.findByRole("link", { name: /Atendente/ })).toHaveAttribute(
+            "href",
+            "/orgs/org_1/agents/agt_1/instructions",
+        );
+        expect(screen.getByTitle("Ativo")).toHaveClass("poph-rail__agent-dot--active");
+        expect(screen.getByTitle("Arquivado")).toHaveClass("poph-rail__agent-dot--idle");
+
+        await usuario.click(screen.getByRole("link", { name: /Produtos e catálogo/ }));
+        await usuario.click(screen.getByRole("link", { name: /Agentes/ }));
+        expect(screen.getByRole("link", { name: /Vendas/ })).toBeInTheDocument();
         expect(servidor.chamadasPara("GET", "/admin/v1/orgs/org_1/agents")).toHaveLength(1);
     });
 

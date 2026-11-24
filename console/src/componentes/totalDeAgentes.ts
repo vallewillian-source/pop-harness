@@ -1,44 +1,45 @@
 /**
- * Contador de agentes da organização aberta, para o item Agentes do menu (HR-61, item 4).
+ * Agentes da organização aberta, para o item Agentes do menu (HR-61, item 4; CN-02).
  *
  * Uma consulta por organização (`GET /admin/v1/orgs/{org}/agents`), guardada na casca enquanto ela
  * estiver montada, ou seja, durante a sessão. A consulta fica guardada como promessa, então o modo
  * de desenvolvimento do React (que monta o efeito duas vezes) não gera uma segunda chamada. Se a
- * consulta falha, o item fica sem contador e a entrada sai do cache para a próxima vez tentar de
- * novo. A lista da API não traz total: o número é o de itens da primeira página (até 200).
+ * consulta falha, a lista fica nula (o item fica sem contador e sem subitens) e a entrada sai do
+ * cache para a próxima vez tentar de novo. A lista da API não traz total: o número de itens é o da
+ * primeira página (até 200), e é ele que o contador do menu mostra.
  */
 
 import { useEffect, useRef, useState } from "react";
-import { listarAgentes } from "../api/agentes";
+import { listarAgentes, type Agente } from "../api/agentes";
 
-/** Total de agentes da organização, ou `null` quando não há organização aberta ou não há número. */
-export function useTotalDeAgentes(orgId: string): number | null {
-    const consultas = useRef(new Map<string, Promise<number>>());
-    const [resultado, setResultado] = useState<{ org: string; total: number } | null>(null);
+/** Agentes da organização, ou `null` quando não há organização aberta, a consulta não voltou ou falhou. */
+export function useOrgAgents(orgId: string): Agente[] | null {
+    const queries = useRef(new Map<string, Promise<Agente[]>>());
+    const [result, setResult] = useState<{ org: string; agents: Agente[] } | null>(null);
 
     useEffect(() => {
         if (!orgId) return;
-        let vivo = true;
-        let consulta = consultas.current.get(orgId);
-        if (!consulta) {
-            consulta = listarAgentes(orgId).then((lista) => lista.length);
-            consultas.current.set(orgId, consulta);
-            consulta.catch(() => {
-                consultas.current.delete(orgId);
+        let alive = true;
+        let query = queries.current.get(orgId);
+        if (!query) {
+            query = listarAgentes(orgId);
+            queries.current.set(orgId, query);
+            query.catch(() => {
+                queries.current.delete(orgId);
             });
         }
-        consulta.then(
-            (total) => {
-                if (vivo) setResultado({ org: orgId, total });
+        query.then(
+            (agents) => {
+                if (alive) setResult({ org: orgId, agents });
             },
             () => {
                 // Falha: o item fica sem contador; a navegação segue normal.
             },
         );
         return () => {
-            vivo = false;
+            alive = false;
         };
     }, [orgId]);
 
-    return orgId && resultado?.org === orgId ? resultado.total : null;
+    return orgId && result?.org === orgId ? result.agents : null;
 }

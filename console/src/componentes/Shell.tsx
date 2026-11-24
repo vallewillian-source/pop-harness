@@ -13,7 +13,7 @@ import "../estilos/casca.css";
 import { useSessao } from "../sessao/Sessao";
 import { Rail } from "./Rail";
 import { Topbar } from "./Topbar";
-import { useTotalDeAgentes } from "./totalDeAgentes";
+import { useOrgAgents } from "./totalDeAgentes";
 
 /** Casca com barra superior e menu; o conteúdo da rota entra em `children`. */
 export function Shell({ children }: { children: ReactNode }) {
@@ -24,7 +24,8 @@ export function Shell({ children }: { children: ReactNode }) {
     // Organização aberta na URL (`/orgs/:id/...`): só ela tem contador de agentes.
     const partes = pathname.split("/").filter(Boolean);
     const orgAberta = partes[0] === "orgs" ? (partes[1] ?? "") : "";
-    const totalDeAgentes = useTotalDeAgentes(orgAberta);
+    const agents = useOrgAgents(orgAberta);
+    const totalDeAgentes = agents === null ? null : agents.length;
 
     useEffect(() => {
         const aoTeclar = (evento: KeyboardEvent) => {
@@ -57,6 +58,7 @@ export function Shell({ children }: { children: ReactNode }) {
                             <Rail
                                 aoAbrirAtalhos={abrirAtalhos}
                                 totalDeAgentes={totalDeAgentes}
+                                agents={agents ?? []}
                                 compacta={railCompacta}
                                 aoAlternarCompacta={() => setRailCompacta((atual) => !atual)}
                             />

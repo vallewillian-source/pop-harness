@@ -20,6 +20,9 @@
  * CN-01: com uma organização aberta o item "Organizações" sai do menu: a lista de organizações é o
  * nível de cima, alcançada pelo primeiro item do combobox ("Administrar Organizações"). Na lista
  * (`/orgs`) o menu continua como antes.
+ * CN-02: o item "Agentes" ganha os agentes da organização como subitens (fora do modo foco), cada
+ * um com a bolinha do status à esquerda do nome e clique direto nas Instruções do agente. A lista
+ * vem da casca (`agents`), que já faz a consulta única por organização.
  * O item ativo usa o degrau tonal da SofaUI, sem a barra âmbar que existia aqui: o desenho não tem
  * borda lateral colorida. No modo foco o rótulo de cada item continua no DOM, escondido por recorte,
  * e o `title` devolve o nome ao mouse. A casca põe este menu abaixo da barra superior.
@@ -44,6 +47,7 @@ import {
     type ItemDeNavegacao,
 } from "./navegacao";
 import { ChipDoCluster, type SituacaoDoCluster } from "./ChipDoCluster";
+import type { Agente } from "../api/agentes";
 import { SeletorDeOrganizacao } from "./SeletorDeOrganizacao";
 import { SeletorDeAgente, VoltarParaAgentes } from "./SeletorDeAgente";
 import { useSaude } from "./saude";
@@ -57,6 +61,55 @@ function motivoDoBloqueio(item: ItemDeNavegacao, contexto: ContextoDeNavegacao):
     if (item.exigeOrg && !contexto.orgId) return "Requer uma organização aberta";
     if (item.exigeAgente && !contexto.agentId) return "Requer um agente aberto";
     return undefined;
+}
+
+function statusLabel(status: string | undefined): string {
+    switch (status) {
+        case "active":
+            return "Ativo";
+        case "inactive":
+            return "Inativo";
+        case "archived":
+            return "Arquivado";
+        default:
+            return status ?? "";
+    }
+}
+
+function statusTone(status: string | undefined): string {
+    return status === "active" ? "poph-rail__agent-dot--active" : "poph-rail__agent-dot--idle";
+}
+
+function AgentSubitems({ orgId, agents }: { orgId: string; agents: Agente[] }) {
+    return (
+        <>
+            {agents.map((agent) => {
+                const label = statusLabel(agent.status);
+                return (
+                    <NavLink
+                        key={agent.id}
+                        to={`/orgs/${orgId}/agents/${agent.id}/instructions`}
+                        style={{ color: "inherit", textDecoration: "none" }}
+                    >
+                        {({ isActive }) => (
+                            <SofaRailItem
+                                className="poph-rail__item poph-rail__agent-row"
+                                label={agent.name}
+                                media={
+                                    <span
+                                        className={`poph-rail__agent-dot ${statusTone(agent.status)}`}
+                                        title={label}
+                                        aria-label={label}
+                                    />
+                                }
+                                active={isActive}
+                            />
+                        )}
+                    </NavLink>
+                );
+            })}
+        </>
+    );
 }
 
 /**
@@ -136,12 +189,14 @@ export function ItenDeNavegacao({
 export function Rail({
     aoAbrirAtalhos,
     totalDeAgentes = null,
+    agents = [],
     compacta = false,
     aoAlternarCompacta = () => {},
 }: {
     aoAbrirAtalhos: () => void;
     /** Agentes da organização aberta (contador do item Agentes); `null` = sem contador. */
     totalDeAgentes?: number | null;
+    agents?: Agente[];
     /** Estado visual do rail: expandido (240px) ou modo foco (64px). */
     compacta?: boolean;
     aoAlternarCompacta?: () => void;
@@ -308,12 +363,19 @@ export function Rail({
                         {ITENS_DE_NAVEGACAO.filter(
                             (item) => item.grupo === grupo && !hidesOrgsList(item),
                         ).map((item) => (
-                            <ItenDeNavegacao
-                                key={item.rotulo}
-                                item={item}
-                                contexto={contexto}
-                                compacta={compacta}
-                            />
+                            <Fragment key={item.rotulo}>
+                                <ItenDeNavegacao
+                                    item={item}
+                                    contexto={contexto}
+                                    compacta={compacta}
+                                />
+                                {!compacta &&
+                                    orgAberta !== "" &&
+                                    agents.length > 0 &&
+                                    item.rota(contexto) === `/orgs/${orgAberta}/agents` && (
+                                        <AgentSubitems orgId={orgAberta} agents={agents} />
+                                    )}
+                            </Fragment>
                         ))}
                     </Fragment>
                 ))

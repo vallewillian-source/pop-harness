@@ -75,12 +75,24 @@ function prepararSessao(
     );
 }
 
-function montarRail(caminho: string, opcoes: { sujo?: boolean; aoAbrirAtalhos?: () => void } = {}) {
+function montarRail(
+    caminho: string,
+    opcoes: {
+        sujo?: boolean;
+        aoAbrirAtalhos?: () => void;
+        agents?: Agente[];
+        compacta?: boolean;
+    } = {},
+) {
     return render(
         <MemoryRouter initialEntries={[caminho]}>
             <SessaoProvider>
                 <GuardaAlteracoesProvider>
-                    <Rail aoAbrirAtalhos={opcoes.aoAbrirAtalhos ?? (() => {})} />
+                    <Rail
+                        aoAbrirAtalhos={opcoes.aoAbrirAtalhos ?? (() => {})}
+                        agents={opcoes.agents}
+                        compacta={opcoes.compacta}
+                    />
                     {opcoes.sujo && <Sujo />}
                     <Sonda />
                 </GuardaAlteracoesProvider>
@@ -245,6 +257,104 @@ describe("itens do menu", () => {
         );
 
         expect(screen.getByRole("link", { name: /Organizações/ })).toHaveTextContent("7");
+    });
+});
+
+describe("CN-02: agentes sob o item Agentes", () => {
+    function agent(partial: Partial<Agente> & Pick<Agente, "id" | "name">): Agente {
+        return {
+            org_id: "org_1",
+            slug: partial.id,
+            description: "",
+            status: "active",
+            default_department_id: null,
+            human_handoff_department_id: null,
+            version: 1,
+            created_at: 1_700_000_000_000,
+            updated_at: 1_700_000_000_000,
+            ...partial,
+        };
+    }
+
+    const AGENTS = [
+        agent({ id: "agt_1", name: "Atendente", slug: "atendente", status: "active" }),
+        agent({ id: "agt_2", name: "Patinhas", slug: "patinhas", status: "inactive" }),
+        agent({ id: "agt_3", name: "Arquivado", slug: "arquivado", status: "archived" }),
+    ];
+
+    it("lista os agentes da organização logo abaixo de Agentes, com a bolinha do status", () => {
+        prepararSessao("global", DUAS_ORGS);
+        montarRail("/orgs/org_1/structure", { agents: AGENTS });
+
+        expect(screen.getByRole("link", { name: /Atendente/ })).toHaveAttribute(
+            "href",
+            "/orgs/org_1/agents/agt_1/instructions",
+        );
+        expect(screen.getByRole("link", { name: /Patinhas/ })).toHaveAttribute(
+            "href",
+            "/orgs/org_1/agents/agt_2/instructions",
+        );
+        expect(screen.getByRole("link", { name: /Arquivado/ })).toHaveAttribute(
+            "href",
+            "/orgs/org_1/agents/agt_3/instructions",
+        );
+    });
+
+    it("a bolinha é verde no agente ativo e cinza nos demais, com o status no title", () => {
+        prepararSessao("global", DUAS_ORGS);
+        montarRail("/orgs/org_1/structure", { agents: AGENTS });
+
+        expect(screen.getByTitle("Ativo")).toHaveClass("poph-rail__agent-dot--active");
+        expect(screen.getByTitle("Inativo")).toHaveClass("poph-rail__agent-dot--idle");
+        expect(screen.getByTitle("Arquivado")).toHaveClass("poph-rail__agent-dot--idle");
+        expect(screen.getByLabelText("Ativo")).toBe(screen.getByTitle("Ativo"));
+    });
+
+    it("status desconhecido cai no cinza com o próprio texto", () => {
+        prepararSessao("global", DUAS_ORGS);
+        montarRail("/orgs/org_1/structure", {
+            agents: [agent({ id: "agt_4", name: "Novo", status: "paused" })],
+        });
+
+        expect(screen.getByTitle("paused")).toHaveClass("poph-rail__agent-dot--idle");
+    });
+
+    it("clicar no agente leva direto para as Instruções dele", async () => {
+        const usuario = userEvent.setup();
+        prepararSessao("global", DUAS_ORGS);
+        montarRail("/orgs/org_1/structure", { agents: AGENTS });
+
+        await usuario.click(screen.getByRole("link", { name: /Patinhas/ }));
+
+        expect(screen.getByTestId("caminho")).toHaveTextContent(
+            "/orgs/org_1/agents/agt_2/instructions",
+        );
+    });
+
+    it("no modo foco o menu não lista os agentes", () => {
+        prepararSessao("global", DUAS_ORGS);
+        montarRail("/orgs/org_1/structure", { agents: AGENTS, compacta: true });
+
+        expect(screen.queryByRole("link", { name: /Atendente/ })).toBeNull();
+        expect(screen.queryByTitle("Ativo")).toBeNull();
+    });
+
+    it("organização sem agentes mantém o item Agentes e não cria subitem", () => {
+        prepararSessao("global", DUAS_ORGS);
+        montarRail("/orgs/org_1/structure", { agents: [] });
+
+        expect(screen.getByRole("link", { name: "Agentes" })).toHaveAttribute(
+            "href",
+            "/orgs/org_1/agents",
+        );
+        expect(screen.queryByTitle("Ativo")).toBeNull();
+    });
+
+    it("sem organização aberta, o menu não lista agentes", () => {
+        prepararSessao("global", DUAS_ORGS);
+        montarRail("/orgs", { agents: AGENTS });
+
+        expect(screen.queryByRole("link", { name: /Atendente/ })).toBeNull();
     });
 });
 
