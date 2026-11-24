@@ -61,7 +61,7 @@ cargo test --workspace                    # all Rust tests
 ```
 
 `scripts/ci.sh` runs: cache pruning, the Console bundle, the API client check, Console tests, the comment
-remover test, the comment gate, `cargo fmt --check`, `cargo clippy -D warnings`, build, Rust tests, the model RAM
+remover test, the comment gate, the glossary check, the identifier gate, `cargo fmt --check`, `cargo clippy -D warnings`, build, Rust tests, the model RAM
 test, `cargo check` for ARM64, `cargo deny` and `cargo audit`. The Console steps declare themselves skipped when
 `console/node_modules` does not exist. It ends with `CI LOCAL: OK` or the number of checks that failed.
 
@@ -88,6 +88,31 @@ that no longer has comments, a count that no longer matches the tree, and a malf
 exception in `scripts/allow-comments.txt` stops matching any comment, so a stale exception is not forgotten. Only
 files the repository publishes are scanned: what `.git/info/exclude` keeps on this machine is out, because it does
 not exist in a clone. It runs on Python and `git` (no toolchain) and takes about 5 s on the whole tree.
+
+### Identifier gate
+
+Identifiers are in English (`AGENTS.md`). `bash scripts/check-names.sh` reads the Portuguese terms of
+`scripts/glossary-map.txt`, adds the forms the map does not spell out (plural, feminine, verb conjugation) and
+fails when one of them is left in an identifier:
+
+```bash
+bash scripts/check-names.sh                              # whole repository against the pending list
+bash scripts/check-names.sh crates/poph-jev              # one module: prints nothing when it is clean
+bash scripts/check-names.sh --atualizar-pendentes        # regenerate scripts/pendentes-nomes.txt
+bash scripts/check-names.sh --atualizar-allowlist        # regenerate scripts/allow-names.txt
+bash scripts/check-names.sh --measure                    # most frequent Portuguese identifiers
+```
+
+`scripts/allow-names.txt` is the closed list of section 7.2 of the refactor: the words of the flow language, every
+published name (table, column, index, trigger, route, `operationId`, JSON field, `poph.toml` key, CLI command and
+flag, environment variable, metric, plugin protocol term, backup key), the words spelled the same in both languages
+and the example flow scripts, which are frozen byte by byte. The file is written by `--atualizar-allowlist` from the
+published inventory, so a hand edit fails the gate; a whole file is excepted with the `path` kind, never a
+directory. `scripts/pendentes-nomes.txt` is the same ceiling per file as the comment list: an extra identifier in a
+listed file fails, a listed file that became clean fails, and the module task regenerates the list on the same
+commit. Identifier extraction and term splitting come from `scripts/glossary-terms.py`, which already skips string
+and comment by the syntax of `scripts/strip-comments.py`, so product text never trips the gate. Only files the
+repository publishes are scanned. It runs on Python and `git` (no toolchain) and takes about 5 s on the whole tree.
 
 ### Measurement and acceptance scripts
 

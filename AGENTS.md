@@ -48,6 +48,11 @@ no customer data, machine path or internal document entered the diff.
   `scripts/pendentes-comentario.txt` (generated, one line per file with its module and the count), and each module
   task removes its own lines on the commit that cleans them. The gate reads what the repository publishes: a file
   kept only on this machine by `.git/info/exclude` is out, and an allowlist exception that matches nothing fails.
+  `bash scripts/check-names.sh` is the same kind of gate for identifiers: the Portuguese words of
+  `scripts/glossary-map.txt` (with their inflections) are refused outside `scripts/allow-names.txt` — the closed
+  list of section 7.2, generated from the published inventory — and outside `scripts/pendentes-nomes.txt`, which
+  each module task shrinks with `bash scripts/check-names.sh --atualizar-pendentes` on the commit that renames it.
+  Strings and comments are never read, so product text is out of it.
 - **Product text is in Portuguese.** Error messages, log message text, the Jev and agent prompts, the Console UI
   and test data are written in Brazilian Portuguese, because the customer and the operator read them. Only the
   `tracing` key is an identifier and becomes English; the message text does not change.

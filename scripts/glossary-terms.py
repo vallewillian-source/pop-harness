@@ -28,8 +28,9 @@ cujo termo não aparece na árvore reprova a validação.
 
 Escopo da medição: só o que o repositório publica. A varredura usa `git ls-files --cached --others
 --exclude-standard`, então arquivo que o `.git/info/exclude` esconde desta máquina não entra na
-contagem — sem isso a tabela gerada aqui diverge da que um clone limpo valida. Sem `git`
-disponível, a varredura cai para a árvore de trabalho inteira.
+contagem — sem isso a tabela gerada aqui diverge da que um clone limpo valida. A extração dos
+nomes publicados segue o mesmo escopo: variável de ambiente citada só em documento interno não
+entra no inventário. Sem `git` disponível, a varredura cai para a árvore de trabalho inteira.
 """
 
 import argparse
@@ -571,9 +572,12 @@ def chaves_toml():
 
 def variaveis_de_ambiente():
     padrao = re.compile(r"\b(?:POPH_[A-Z0-9_]+|[A-Z][A-Z0-9_]*_API_KEY)\b")
+    visiveis = caminhos_do_repositorio()
     nomes = set()
     for arquivo in sorted((RAIZ / "docs").glob("*.md")) + [RAIZ / "README.md"]:
         if not arquivo.exists():
+            continue
+        if visiveis is not None and arquivo.relative_to(RAIZ).as_posix() not in visiveis:
             continue
         nomes.update(padrao.findall(arquivo.read_text(encoding="utf-8")))
     return sorted(nomes)
