@@ -1,10 +1,5 @@
 # Arquivos com comentário fora da allowlist, um por linha: módulo, quantidade de comentários e caminho,
 # separados por TAB. Gerado por `bash scripts/check-comments.sh --atualizar-pendentes`; não editar à mão.
-M00	2	.github/dependabot.yml
-M00	2	.github/workflows/ci.yml
-M00	5	.gitignore
-M00	6	Cargo.toml
-M00	10	deny.toml
 M01	248	crates/poph-types/src/config.rs
 M01	67	crates/poph-types/src/error.rs
 M01	122	crates/poph-types/src/fluxos.rs
@@ -599,7 +594,6 @@ M14	26	scripts/aceite-matrix-aux.py
 M14	28	scripts/aceite-matrix-element.mjs
 M14	79	scripts/aceite-matrix.sh
 M14	20	scripts/build-dist.sh
-M14	23	scripts/ci.sh
 M14	8	scripts/jev-falso.py
 M14	1	scripts/jev-relatorio.py
 M14	11	scripts/limpar-cache.sh
