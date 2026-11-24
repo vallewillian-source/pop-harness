@@ -67,7 +67,7 @@ impl ProvedorFake {
 impl LlmProvider for ProvedorFake {
     fn stream<'a>(&'a self, pedido: Pedido) -> BoxFuture<'a, Result<FluxoLlm, ErroLlm>> {
         Box::pin(async move {
-            validar_pedido(&pedido)?;
+            validar_pedido(&pedido, true)?;
             let cancelamento = pedido.cancelamento.clone();
             match self.recebidos.lock() {
                 Ok(mut guarda) => guarda.push(pedido),

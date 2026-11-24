@@ -1,4 +1,4 @@
-//! Cliente do antigravity2api: API OpenAI-compatível com streaming SSE, ferramentas e imagens.
+//! Cliente OpenAI-compatível (o `antigravity2api` local é um deles).
 //!
 //! Regras deste cliente:
 //! - Retentativa só em 429, 5xx ou falha de conexão **antes** de a resposta começar. Depois do
@@ -34,15 +34,15 @@ use super::tipos::{
 };
 use super::tls;
 
-/// Nome do provedor aceito na configuração.
-pub const PROVEDOR: &str = "antigravity2api";
+pub const PROVEDOR_OPENAI_COMPATIVEL: &str = "openai_compativel";
+pub const PROVEDOR_ANTIGRAVITY: &str = "antigravity2api";
 
 /// Teto de espera entre retentativas.
 const ESPERA_MAXIMA: Duration = Duration::from_secs(30);
 
 /// Parâmetros do cliente, já validados.
 #[derive(Clone, Debug)]
-pub struct ConfigAntigravity {
+pub struct OpenAiCompatibleConfig {
     /// Endereço base, terminado em `/v1` (ex.: `http://127.0.0.1:8045/v1`).
     pub url_base: String,
     /// Chave de API. Nunca aparece em log, erro ou `Debug`.
@@ -59,14 +59,16 @@ pub struct ConfigAntigravity {
     pub temperatura: f32,
     /// Teto de tokens de saída.
     pub max_tokens_saida: u32,
+    /// Recusa pedido que termina em turno do modelo (o `antigravity2api` devolve HTTP 400 nesse caso).
+    pub recusa_turno_modelo: bool,
 }
 
-impl ConfigAntigravity {
+impl OpenAiCompatibleConfig {
     /// Monta a configuração a partir do bloco `[llm]` e da chave lida do ambiente.
     pub fn da_config(llm: &LlmConfig, chave: Segredo) -> Result<Self, ErroLlm> {
-        if llm.provedor != PROVEDOR {
+        if !poph_types::provedor_llm_aceito(&llm.provedor) {
             return Err(ErroLlm::Configuracao(format!(
-                "provedor {} não suportado; o único disponível é {PROVEDOR}",
+                "provedor {} não suportado; use {PROVEDOR_OPENAI_COMPATIVEL} ou {PROVEDOR_ANTIGRAVITY}",
                 llm.provedor
             )));
         }
@@ -92,6 +94,7 @@ impl ConfigAntigravity {
             espera_base: Duration::from_secs(1),
             temperatura: llm.temperatura,
             max_tokens_saida: llm.max_tokens_saida,
+            recusa_turno_modelo: llm.recusa_turno_modelo,
         })
     }
 }
@@ -99,19 +102,19 @@ impl ConfigAntigravity {
 struct Interno {
     http: reqwest::Client,
     endpoint: String,
-    config: ConfigAntigravity,
+    config: OpenAiCompatibleConfig,
     limites: LimitadorLlm,
     metricas: MetricasBase,
 }
 
-/// Cliente do antigravity2api. Clonar é barato e todos os clones compartilham limites e métricas.
+/// Cliente OpenAI-compatível. Clonar é barato e todos os clones compartilham limites e métricas.
 #[derive(Clone)]
-pub struct ClienteAntigravity(Arc<Interno>);
+pub struct OpenAiCompatibleClient(Arc<Interno>);
 
-impl ClienteAntigravity {
+impl OpenAiCompatibleClient {
     /// Cria o cliente. `limites` e `metricas` são compartilhados com o resto da instância.
     pub fn new(
-        config: ConfigAntigravity,
+        config: OpenAiCompatibleConfig,
         limites: LimitadorLlm,
         metricas: MetricasBase,
     ) -> Result<Self, ErroLlm> {
@@ -161,14 +164,15 @@ fn construir_http(raiz_extra: Option<&[u8]>) -> Result<reqwest::Client, ErroLlm>
         .map_err(|erro| ErroLlm::Configuracao(format!("cliente HTTP: {}", erro.without_url())))
 }
 
-impl LlmProvider for ClienteAntigravity {
+impl LlmProvider for OpenAiCompatibleClient {
     fn stream<'a>(&'a self, pedido: Pedido) -> BoxFuture<'a, Result<FluxoLlm, ErroLlm>> {
         Box::pin(abrir(Arc::clone(&self.0), pedido))
     }
 }
 
 async fn abrir(interno: Arc<Interno>, pedido: Pedido) -> Result<FluxoLlm, ErroLlm> {
-    validar_pedido(&pedido).map_err(|erro| interno.registrar_falha(erro))?;
+    validar_pedido(&pedido, interno.config.recusa_turno_modelo)
+        .map_err(|erro| interno.registrar_falha(erro))?;
     interno.metricas.chamadas_llm.incrementar(1);
 
     let cancelamento = pedido.cancelamento.clone();
@@ -319,7 +323,7 @@ fn resumir_erro(texto: &str, chave: &str) -> String {
 }
 
 /// Monta o corpo do pedido no formato OpenAI (que o gateway aceita).
-pub fn montar_corpo(pedido: &Pedido, config: &ConfigAntigravity) -> Value {
+pub fn montar_corpo(pedido: &Pedido, config: &OpenAiCompatibleConfig) -> Value {
     let modelo = pedido.modelo.as_deref().unwrap_or(&config.modelo);
     let mensagens: Vec<Value> = pedido.mensagens.iter().map(mensagem_json).collect();
     // Temperatura e teto de tokens podem vir do agente (configuração por agente); o bloco `[llm]`
@@ -618,10 +622,12 @@ mod testes {
 
     use super::*;
 
-    fn config(url: &str, chave: &str) -> Result<ConfigAntigravity, ErroLlm> {
+    fn config(url: &str, chave: &str) -> Result<OpenAiCompatibleConfig, ErroLlm> {
         let llm = LlmConfig {
-            provedor: PROVEDOR.to_owned(),
+            provedor: PROVEDOR_OPENAI_COMPATIVEL.to_owned(),
             url_base: url.to_owned(),
+            chave_env: "ANTIGRAVITY_API_KEY".to_owned(),
+            recusa_turno_modelo: true,
             modelo: "gemini-3.8-flash-tiered".to_owned(),
             timeout_segundos: 10,
             retentativas: 2,
@@ -629,7 +635,7 @@ mod testes {
             temperatura: 0.0,
             max_tokens_saida: 512,
         };
-        ConfigAntigravity::da_config(&llm, Segredo::new(chave.to_owned()))
+        OpenAiCompatibleConfig::da_config(&llm, Segredo::new(chave.to_owned()))
     }
 
     #[test]
@@ -645,6 +651,8 @@ mod testes {
         let llm = LlmConfig {
             provedor: "outro".to_owned(),
             url_base: "http://127.0.0.1:8045/v1".to_owned(),
+            chave_env: "ANTIGRAVITY_API_KEY".to_owned(),
+            recusa_turno_modelo: true,
             modelo: "m".to_owned(),
             timeout_segundos: 10,
             retentativas: 0,
@@ -652,7 +660,7 @@ mod testes {
             temperatura: 0.0,
             max_tokens_saida: 1,
         };
-        assert!(ConfigAntigravity::da_config(&llm, Segredo::new("k".into())).is_err());
+        assert!(OpenAiCompatibleConfig::da_config(&llm, Segredo::new("k".into())).is_err());
     }
 
     #[test]

@@ -12,12 +12,12 @@ M01	31	crates/poph-types/src/midia_fora_do_escopo.rs
 M01	9	crates/poph-types/src/segredo.rs
 M02	5	crates/poph-core/Cargo.toml
 M02	8	crates/poph-core/src/lib.rs
-M02	49	crates/poph-core/src/llm/antigravity.rs
 M02	4	crates/poph-core/src/llm/base64.rs
 M02	14	crates/poph-core/src/llm/erro.rs
 M02	13	crates/poph-core/src/llm/fake.rs
 M02	12	crates/poph-core/src/llm/limites.rs
 M02	9	crates/poph-core/src/llm/mod.rs
+M02	49	crates/poph-core/src/llm/openai.rs
 M02	10	crates/poph-core/src/llm/provedor.rs
 M02	9	crates/poph-core/src/llm/sse.rs
 M02	58	crates/poph-core/src/llm/tipos.rs

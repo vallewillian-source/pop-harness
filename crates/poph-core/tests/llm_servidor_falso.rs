@@ -1,4 +1,4 @@
-//! Cliente do antigravity2api contra um servidor HTTP falso local (sem rede externa).
+//! Cliente OpenAI-compatível contra um servidor HTTP falso local (sem rede externa).
 //!
 //! Cobre: texto em stream, chamada de ferramenta (ida e volta), imagem, 429 e 5xx com
 //! retentativa, timeout, cancelamento no meio do stream, erro definitivo, resposta cortada,
@@ -324,6 +324,35 @@ async fn resposta_cortada_vira_erro_e_nao_repete() {
         1,
         "depois de texto já enviado não pode repetir"
     );
+}
+
+#[tokio::test]
+async fn pedido_que_termina_em_turno_do_modelo_sai_quando_a_regra_esta_desligada() {
+    let servidor = Servidor::iniciar(vec![Resposta::ok(sse(&[
+        r#"{"choices":[{"index":0,"delta":{"content":"Oi"}}]}"#,
+        r#"{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#,
+        "[DONE]",
+    ]))])
+    .await;
+    let m = montar_com_regra(&servidor.url_base, 0, Duration::from_secs(5), false);
+    let pedido = pedido_com(vec![
+        Mensagem::Usuario(vec![Parte::Texto("oi".into())]),
+        Mensagem::Assistente {
+            texto: "olá".into(),
+            chamadas: vec![],
+        },
+    ]);
+
+    let fluxo = m.cliente.stream(pedido).await.expect("pedido aceito");
+    let eventos = so_eventos(colher(fluxo).await);
+    assert!(
+        eventos.contains(&EventoLlm::Texto("Oi".into())),
+        "{eventos:?}"
+    );
+    let enviados = servidor.pedidos();
+    assert_eq!(enviados.len(), 1, "o pedido tem de chegar ao servidor");
+    let mensagens = enviados[0]["messages"].as_array().expect("lista");
+    assert_eq!(mensagens.last().expect("última")["role"], "assistant");
 }
 
 #[tokio::test]

@@ -167,8 +167,8 @@ pub fn executar(flag: Option<PathBuf>, ambiente: &config::Ambiente, args: ServeA
 
 /// Liga o turno no servidor (HR-26h).
 ///
-/// Sem `ANTIGRAVITY_API_KEY`, o servidor segue só recebendo: as mensagens ficam na fila (não se
-/// perdem) e são respondidas quando ele subir com a chave. O aviso sai na subida. Com a chave, a
+/// Sem a chave do provedor (`llm.chave_env`, por padrão `ANTIGRAVITY_API_KEY`), o servidor segue só
+/// recebendo: as mensagens ficam na fila e são respondidas quando ele subir com a chave. Com ela, a
 /// base e o catálogo dos agentes das instâncias configuradas são conferidos antes de atender.
 async fn ligar_turno(
     estado: Estado,
@@ -177,11 +177,13 @@ async fn ligar_turno(
     store: &Arc<Store>,
 ) -> Result<Estado, String> {
     let segredos = config::segredos(ambiente);
-    let Some(chave) = segredos.antigravity.clone() else {
+    let nome_da_chave = &configuracao.llm.chave_env;
+    let Some(chave) = config::chave_llm(ambiente, nome_da_chave) else {
         if !estado.canais_evolution.is_empty() {
             tracing::warn!(
                 target: "poph_server::turno",
-                "turno desligado: ANTIGRAVITY_API_KEY não definida. As mensagens recebidas ficam na fila e são respondidas quando o servidor subir com a chave"
+                %nome_da_chave,
+                "turno desligado: chave do provedor não definida. As mensagens recebidas ficam na fila e são respondidas quando o servidor subir com a chave"
             );
         }
         return Ok(estado);

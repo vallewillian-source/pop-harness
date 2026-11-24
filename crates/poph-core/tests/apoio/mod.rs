@@ -10,8 +10,8 @@ use std::time::Duration;
 use futures::StreamExt;
 use poph_core::llm::base64::codificar;
 use poph_core::llm::{
-    ChamadaFerramenta, ClienteAntigravity, ConfigAntigravity, ErroLlm, EventoLlm, Ferramenta,
-    FluxoLlm, LimitadorLlm, LlmProvider, Mensagem, MotivoFim, Parte, Pedido, Uso,
+    ChamadaFerramenta, ErroLlm, EventoLlm, Ferramenta, FluxoLlm, LimitadorLlm, LlmProvider,
+    Mensagem, MotivoFim, OpenAiCompatibleClient, OpenAiCompatibleConfig, Parte, Pedido, Uso,
 };
 use poph_types::{MetricasBase, OrgId, Registro, Segredo};
 use serde_json::{Value, json};
@@ -164,13 +164,22 @@ pub async fn ler_requisicao(conexao: &mut TcpStream) -> Vec<u8> {
 }
 
 pub struct Montagem {
-    pub cliente: ClienteAntigravity,
+    pub cliente: OpenAiCompatibleClient,
     pub limites: LimitadorLlm,
     pub metricas: MetricasBase,
 }
 
 pub fn montar(url_base: &str, retentativas: u32, timeout: Duration) -> Montagem {
-    let config = ConfigAntigravity {
+    montar_com_regra(url_base, retentativas, timeout, true)
+}
+
+pub fn montar_com_regra(
+    url_base: &str,
+    retentativas: u32,
+    timeout: Duration,
+    recusa_turno_modelo: bool,
+) -> Montagem {
+    let config = OpenAiCompatibleConfig {
         url_base: url_base.to_owned(),
         chave: Segredo::new(CHAVE.to_owned()),
         modelo: "gemini-3.8-flash-tiered".to_owned(),
@@ -179,11 +188,12 @@ pub fn montar(url_base: &str, retentativas: u32, timeout: Duration) -> Montagem 
         espera_base: Duration::from_millis(10),
         temperatura: 0.0,
         max_tokens_saida: 512,
+        recusa_turno_modelo,
     };
     let limites = LimitadorLlm::new(4, 2).expect("limites válidos");
     let metricas = MetricasBase::registrar(&Registro::new()).expect("catálogo");
     let cliente =
-        ClienteAntigravity::new(config, limites.clone(), metricas.clone()).expect("cliente");
+        OpenAiCompatibleClient::new(config, limites.clone(), metricas.clone()).expect("cliente");
     Montagem {
         cliente,
         limites,

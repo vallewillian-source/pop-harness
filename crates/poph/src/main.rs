@@ -302,10 +302,16 @@ fn executar_doctor(
     }
 
     let segredos = config::segredos(ambiente);
+    let nome_da_chave = carregada
+        .as_ref()
+        .map(|config| config.llm.chave_env.clone())
+        .unwrap_or_else(|_| config::VAR_ANTIGRAVITY.to_owned());
+    let chave_llm = config::chave_llm(ambiente, &nome_da_chave);
     let relatorio = doctor::gerar(doctor::Entrada {
         config: carregada.as_ref(),
         arquivo: arquivo.as_deref(),
         segredos: &segredos,
+        chave_llm: chave_llm.as_ref(),
     });
 
     if args.json {

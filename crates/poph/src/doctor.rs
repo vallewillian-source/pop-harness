@@ -12,7 +12,7 @@
 use std::fs::{self, File};
 use std::path::Path;
 
-use poph_types::HarnessConfig;
+use poph_types::{HarnessConfig, Segredo};
 use serde::Serialize;
 use tracing::debug;
 
@@ -79,6 +79,7 @@ pub struct Entrada<'a> {
     pub arquivo: Option<&'a Path>,
     /// Segredos lidos do ambiente (só a presença é conferida).
     pub segredos: &'a Segredos,
+    pub chave_llm: Option<&'a Segredo>,
 }
 
 /// Faz todas as verificações e devolve o relatório.
@@ -111,9 +112,13 @@ pub fn gerar(entrada: Entrada<'_>) -> Relatorio {
         VAR_CIFRA,
         entrada.segredos.cifra.is_some(),
     ));
+    let nome_da_chave_llm = match entrada.config {
+        Ok(config) => config.llm.chave_env.as_str(),
+        Err(_) => VAR_ANTIGRAVITY,
+    };
     verificacoes.push(variavel_obrigatoria(
-        VAR_ANTIGRAVITY,
-        entrada.segredos.antigravity.is_some(),
+        nome_da_chave_llm,
+        entrada.chave_llm.is_some(),
     ));
     if jev_ativo {
         verificacoes.push(variavel_obrigatoria(
@@ -410,6 +415,10 @@ mod testes {
         ]))
     }
 
+    fn chave_llm_de_teste() -> Segredo {
+        Segredo::new("SEGREDO-LLM-XYZ-2".to_owned())
+    }
+
     fn achar<'a>(relatorio: &'a Relatorio, nome: &str) -> &'a Verificacao {
         relatorio
             .verificacoes
@@ -426,6 +435,7 @@ mod testes {
             config: Ok(&config),
             arquivo: None,
             segredos: &segredos_completos(),
+            chave_llm: Some(&chave_llm_de_teste()),
         });
         assert!(!relatorio.tem_erro(), "{}", relatorio.texto());
         assert_eq!(achar(&relatorio, "banco harness.db").nivel, Nivel::Aviso);
@@ -441,6 +451,7 @@ mod testes {
             config: Ok(&config),
             arquivo: None,
             segredos: &segredos_completos(),
+            chave_llm: Some(&chave_llm_de_teste()),
         });
         let ativo = achar(&relatorio, "fluxos.ativo");
         assert_eq!(ativo.nivel, Nivel::Ok);
@@ -470,6 +481,7 @@ mod testes {
             config: Ok(&config),
             arquivo: None,
             segredos: &segredos_completos(),
+            chave_llm: Some(&chave_llm_de_teste()),
         });
         let ativo = achar(&relatorio, "fluxos.ativo");
         assert_eq!(ativo.nivel, Nivel::Aviso);
@@ -489,11 +501,29 @@ mod testes {
             config: Ok(&config),
             arquivo: None,
             segredos: &segredos,
+            chave_llm: Some(&chave_llm_de_teste()),
         });
         assert!(relatorio.tem_erro());
         let v = achar(&relatorio, "variável POPH_CHAVE_CIFRA");
         assert_eq!(v.nivel, Nivel::Erro);
         assert!(v.detalhe.contains("POPH_CHAVE_CIFRA"));
+    }
+
+    #[test]
+    fn nome_da_chave_do_llm_vem_da_configuracao() {
+        let pasta = pasta_temporaria("chave-llm");
+        let mut config = config_em(&pasta);
+        config.llm.chave_env = "MINHA_CHAVE_LLM".to_owned();
+        let relatorio = gerar(Entrada {
+            config: Ok(&config),
+            arquivo: None,
+            segredos: &segredos_completos(),
+            chave_llm: None,
+        });
+        let v = achar(&relatorio, "variável MINHA_CHAVE_LLM");
+        assert_eq!(v.nivel, Nivel::Erro);
+        assert!(v.detalhe.contains("MINHA_CHAVE_LLM"), "{}", v.detalhe);
+        assert!(!relatorio.texto().contains("variável ANTIGRAVITY_API_KEY"));
     }
 
     #[test]
@@ -505,6 +535,7 @@ mod testes {
             config: Ok(&config),
             arquivo: None,
             segredos: &segredos,
+            chave_llm: Some(&chave_llm_de_teste()),
         });
         assert!(
             desligado
@@ -517,6 +548,7 @@ mod testes {
             config: Ok(&config),
             arquivo: None,
             segredos: &segredos,
+            chave_llm: Some(&chave_llm_de_teste()),
         });
         assert_eq!(
             achar(&ligado, "variável TYPESAFE_API_KEY").nivel,
@@ -533,6 +565,7 @@ mod testes {
             config: Ok(&config),
             arquivo: None,
             segredos: &segredos,
+            chave_llm: Some(&chave_llm_de_teste()),
         });
         let texto = relatorio.texto();
         let json = relatorio.json();
@@ -550,6 +583,7 @@ mod testes {
             config: Ok(&config),
             arquivo: None,
             segredos: &segredos_completos(),
+            chave_llm: Some(&chave_llm_de_teste()),
         });
         let valor: serde_json::Value =
             serde_json::from_str(&relatorio.json()).expect("JSON válido");
@@ -617,6 +651,7 @@ mod testes {
             config: Err(&erro),
             arquivo: None,
             segredos: &segredos_completos(),
+            chave_llm: Some(&chave_llm_de_teste()),
         });
         assert!(relatorio.tem_erro());
         assert!(relatorio.texto().contains("servidor.portaa"));

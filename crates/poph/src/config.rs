@@ -34,7 +34,7 @@ pub const VAR_CLUSTER_SECRET: &str = "POPH_CLUSTER_SECRET";
 
 /// Chave da cifra dos segredos guardados (AES-256-GCM, a partir da HR-07/HR-26).
 pub const VAR_CIFRA: &str = "POPH_CHAVE_CIFRA";
-/// Chave do provedor de LLM (antigravity2api). Mesmo nome usado pelo POP Atende.
+/// Chave do provedor de LLM (`llm.chave_env` padrão). Mesmo nome usado pelo POP Atende.
 pub const VAR_ANTIGRAVITY: &str = "ANTIGRAVITY_API_KEY";
 /// Chave do Jev (TypeSafe). Mesmo nome usado pelo POP Atende.
 pub const VAR_TYPESAFE: &str = "TYPESAFE_API_KEY";
@@ -79,8 +79,6 @@ pub enum ErroConfig {
 pub struct Segredos {
     /// Chave de cifra (`POPH_CHAVE_CIFRA`).
     pub cifra: Option<Segredo>,
-    /// Chave do provedor de LLM (`ANTIGRAVITY_API_KEY`).
-    pub antigravity: Option<Segredo>,
     /// Chave do Jev (`TYPESAFE_API_KEY`).
     pub typesafe: Option<Segredo>,
     /// Chave da Evolution (`EVOLUTION_API_KEY`).
@@ -231,10 +229,13 @@ pub fn segredo_cluster(ambiente: &Ambiente) -> Option<Segredo> {
 pub fn segredos(ambiente: &Ambiente) -> Segredos {
     Segredos {
         cifra: lido(ambiente, VAR_CIFRA),
-        antigravity: lido(ambiente, VAR_ANTIGRAVITY),
         typesafe: lido(ambiente, VAR_TYPESAFE),
         evolution: lido(ambiente, VAR_EVOLUTION),
     }
+}
+
+pub fn chave_llm(ambiente: &Ambiente, chave_env: &str) -> Option<Segredo> {
+    lido(ambiente, chave_env)
 }
 
 fn lido(ambiente: &Ambiente, variavel: &str) -> Option<Segredo> {
@@ -507,6 +508,22 @@ mod testes {
     }
 
     #[test]
+    fn llm_sem_os_campos_novos_usa_os_padroes() {
+        let caminho = arquivo(
+            "[llm]\nprovedor = \"openai_compativel\"\nurl_base = \"https://api.exemplo.test/v1\"\n",
+        );
+        let cfg = carregar(Some(&caminho), &Ambiente::new()).expect("carrega");
+        assert_eq!(cfg.llm.provedor, "openai_compativel");
+        assert_eq!(cfg.llm.chave_env, VAR_ANTIGRAVITY);
+        assert!(cfg.llm.recusa_turno_modelo);
+        let chave = chave_llm(
+            &amb(&[("OUTRA_CHAVE", "valor-de-teste")]),
+            &cfg.llm.chave_env,
+        );
+        assert!(chave.is_none(), "a chave vem do nome configurado");
+    }
+
+    #[test]
     fn jev_vem_desligado_e_pode_ligar_por_ambiente() {
         let cfg = carregar(None, &Ambiente::new()).expect("carrega");
         assert!(!cfg.jev.ativo);
@@ -600,15 +617,26 @@ mod testes {
 
     #[test]
     fn segredos_vem_do_ambiente_e_vazio_conta_como_ausente() {
-        let ambiente = amb(&[
-            (VAR_CIFRA, "segredo-de-teste-cifra"),
-            (VAR_ANTIGRAVITY, "   "),
-        ]);
+        let ambiente = amb(&[(VAR_CIFRA, "segredo-de-teste-cifra")]);
         let s = segredos(&ambiente);
         assert!(s.cifra.is_some());
-        assert!(s.antigravity.is_none());
         assert!(s.typesafe.is_none());
         assert!(!format!("{s:?}").contains("segredo-de-teste-cifra"));
+    }
+
+    /// A chave do provedor é lida pelo nome configurado, e não pelo nome padrão.
+    #[test]
+    fn chave_do_llm_vem_do_nome_configurado() {
+        let ambiente = amb(&[
+            (VAR_ANTIGRAVITY, "chave-padrao"),
+            ("MINHA_CHAVE_LLM", "chave-propria"),
+        ]);
+        let padrao = chave_llm(&ambiente, VAR_ANTIGRAVITY).expect("chave padrão");
+        assert_eq!(padrao.expor(), "chave-padrao");
+        let propria = chave_llm(&ambiente, "MINHA_CHAVE_LLM").expect("chave própria");
+        assert_eq!(propria.expor(), "chave-propria");
+        assert!(chave_llm(&ambiente, "OUTRA_CHAVE").is_none());
+        assert!(chave_llm(&ambiente, VAR_ANTIGRAVITY).is_some_and(|c| !c.expor().is_empty()));
     }
 
     /// Sem arquivo e sem ambiente, a seção `[fluxos]` vale o padrão do PRD §9.

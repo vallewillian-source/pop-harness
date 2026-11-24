@@ -172,14 +172,22 @@ pub struct LimitesConfig {
     pub taxa_por_org_por_minuto: u32,
 }
 
+pub const PROVEDORES_LLM_ACEITOS: [&str; 2] = ["openai_compativel", "antigravity2api"];
+
+pub fn provedor_llm_aceito(nome: &str) -> bool {
+    PROVEDORES_LLM_ACEITOS.contains(&nome)
+}
+
 /// Provedor de LLM padrão.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct LlmConfig {
-    /// Nome do provedor. Na V1 só existe `antigravity2api`.
+    /// Nome do provedor: `openai_compativel` ou `antigravity2api` (sinônimo do mesmo cliente).
     pub provedor: String,
     /// Endereço base do serviço (formato compatível com OpenAI, termina em `/v1`).
     pub url_base: String,
+    pub chave_env: String,
+    pub recusa_turno_modelo: bool,
     /// Modelo padrão. Cada agente pode trocar.
     pub modelo: String,
     /// Tempo máximo de uma chamada, em segundos.
@@ -516,6 +524,8 @@ impl Default for LlmConfig {
         Self {
             provedor: "antigravity2api".to_owned(),
             url_base: "http://127.0.0.1:8045/v1".to_owned(),
+            chave_env: "ANTIGRAVITY_API_KEY".to_owned(),
+            recusa_turno_modelo: true,
             modelo: "gemini-3.8-flash-tiered".to_owned(),
             timeout_segundos: 150,
             retentativas: 2,
@@ -686,16 +696,28 @@ fn validar_limites(limites: &LimitesConfig) -> DomainResult<()> {
 }
 
 fn validar_llm(llm: &LlmConfig) -> DomainResult<()> {
-    if llm.provedor != "antigravity2api" {
+    if llm.provedor.trim().is_empty() {
+        return Err(invalido(
+            "llm.provedor",
+            "nome do provedor vazio; use openai_compativel",
+        ));
+    }
+    if !provedor_llm_aceito(&llm.provedor) {
         return Err(invalido(
             "llm.provedor",
             format!(
-                "`{}` não é um provedor da V1; use antigravity2api",
-                llm.provedor
+                "`{}` não é um provedor aceito; use {} ou {}",
+                llm.provedor, PROVEDORES_LLM_ACEITOS[0], PROVEDORES_LLM_ACEITOS[1]
             ),
         ));
     }
     validar_url("llm.url_base", &llm.url_base)?;
+    if !nome_de_variavel_valido(&llm.chave_env) {
+        return Err(invalido(
+            "llm.chave_env",
+            "deve ser o nome de uma variável de ambiente (letras, números e `_`, começando por letra ou `_`)",
+        ));
+    }
     if llm.modelo.trim().is_empty() {
         return Err(invalido("llm.modelo", "nome do modelo vazio"));
     }
@@ -718,6 +740,17 @@ fn validar_llm(llm: &LlmConfig) -> DomainResult<()> {
         ));
     }
     Ok(())
+}
+
+fn nome_de_variavel_valido(nome: &str) -> bool {
+    let mut caracteres = nome.chars();
+    let Some(primeiro) = caracteres.next() else {
+        return false;
+    };
+    if !(primeiro.is_ascii_alphabetic() || primeiro == '_') {
+        return false;
+    }
+    caracteres.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 fn validar_jev(jev: &JevConfig) -> DomainResult<()> {
@@ -1334,6 +1367,52 @@ mod testes {
         match cfg.validar() {
             Err(DomainError::Validacao { campo, .. }) => assert_eq!(campo, "llm.url_base"),
             outro => panic!("esperado erro de validação, veio {outro:?}"),
+        }
+    }
+
+    #[test]
+    fn provedor_openai_compativel_com_chave_propria_e_sem_recusa_valida() {
+        let mut cfg = HarnessConfig::default();
+        cfg.llm.provedor = "openai_compativel".to_owned();
+        cfg.llm.chave_env = "MINHA_CHAVE_LLM".to_owned();
+        cfg.llm.recusa_turno_modelo = false;
+        cfg.validar().expect("configuração válida");
+        assert_eq!(cfg.llm.chave_env, "MINHA_CHAVE_LLM");
+        assert!(!cfg.llm.recusa_turno_modelo);
+    }
+
+    #[test]
+    fn provedor_vazio_ou_desconhecido_e_recusado_com_mensagem_clara() {
+        let mut cfg = HarnessConfig::default();
+        cfg.llm.provedor = String::new();
+        match cfg.validar() {
+            Err(DomainError::Validacao { campo, motivo }) => {
+                assert_eq!(campo, "llm.provedor");
+                assert!(motivo.contains("vazio"), "{motivo}");
+            }
+            outro => panic!("esperado erro de validação, veio {outro:?}"),
+        }
+
+        cfg.llm.provedor = "openai".to_owned();
+        match cfg.validar() {
+            Err(DomainError::Validacao { campo, motivo }) => {
+                assert_eq!(campo, "llm.provedor");
+                assert!(motivo.contains("openai_compativel"), "{motivo}");
+                assert!(motivo.contains("antigravity2api"), "{motivo}");
+            }
+            outro => panic!("esperado erro de validação, veio {outro:?}"),
+        }
+    }
+
+    #[test]
+    fn chave_env_vazia_ou_com_espaco_e_recusada() {
+        for nome in ["", "MINHA CHAVE", "1_CHAVE"] {
+            let mut cfg = HarnessConfig::default();
+            cfg.llm.chave_env = nome.to_owned();
+            match cfg.validar() {
+                Err(DomainError::Validacao { campo, .. }) => assert_eq!(campo, "llm.chave_env"),
+                outro => panic!("esperado erro de validação para `{nome}`, veio {outro:?}"),
+            }
         }
     }
 

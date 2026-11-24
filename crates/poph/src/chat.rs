@@ -74,8 +74,9 @@ fn rodar(
     let agente = resolver_agente(&store, org, &args.agente)?;
     let conversa = resolver_conversa(&store, org, &agente.id, &args)?;
 
-    let chave = config::segredos(ambiente).antigravity.ok_or_else(|| {
-        "defina ANTIGRAVITY_API_KEY no ambiente desta sessão para conversar com o modelo".to_owned()
+    let nome_da_chave = configuracao.llm.chave_env.clone();
+    let chave = config::chave_llm(ambiente, &nome_da_chave).ok_or_else(|| {
+        format!("defina {nome_da_chave} no ambiente desta sessão para conversar com o modelo")
     })?;
     let registro = Registro::new();
     let metricas_base =

@@ -11,28 +11,30 @@ use super::tipos::{EventoLlm, Mensagem, Parte, Pedido};
 /// Stream de eventos de uma resposta. Quem consome pode parar a qualquer momento: soltar o stream cancela a chamada.
 pub type FluxoLlm = BoxStream<'static, Result<EventoLlm, ErroLlm>>;
 
-/// Provedor de LLM. Hoje só existe o cliente do antigravity2api e o provedor falso para testes.
+/// Provedor de LLM. Hoje só existe o cliente OpenAI-compatível e o provedor falso para testes.
 pub trait LlmProvider: Send + Sync {
     /// Abre a resposta. Quando devolve `Ok`, o stream já está no ar; os eventos chegam por ele.
     fn stream<'a>(&'a self, pedido: Pedido) -> BoxFuture<'a, Result<FluxoLlm, ErroLlm>>;
 }
 
-/// Tipos de imagem que o gateway aceita.
+/// Tipos de imagem que o cliente aceita.
 pub const MIMES_IMAGEM: [&str; 4] = ["image/jpeg", "image/png", "image/gif", "image/webp"];
 
 /// Confere o pedido antes de qualquer envio.
 ///
-/// Regra que evita o HTTP 400 "Requests ending with a model turn are not supported" do gateway:
-/// a última mensagem tem de ser do usuário ou um resultado de ferramenta. Esta função não
-/// corrige o pedido, só recusa, para o erro aparecer aqui com a causa.
-pub fn validar_pedido(pedido: &Pedido) -> Result<(), ErroLlm> {
+/// Com `recusa_turno_modelo` (padrão), evita o HTTP 400 "Requests ending with a model turn are
+/// not supported" do gateway: a última mensagem tem de ser do usuário ou um resultado de
+/// ferramenta. Esta função não corrige o pedido, só recusa, para o erro aparecer aqui com a causa.
+pub fn validar_pedido(pedido: &Pedido, recusa_turno_modelo: bool) -> Result<(), ErroLlm> {
     let Some(ultima) = pedido.mensagens.last() else {
         return Err(ErroLlm::PedidoInvalido("nenhuma mensagem".to_owned()));
     };
-    if let Mensagem::Assistente { .. } = ultima {
-        return Err(ErroLlm::PedidoInvalido(
-            "a última mensagem é do modelo; o provedor recusa esse formato. Termine com a instrução do usuário ou com o resultado de uma ferramenta".to_owned(),
-        ));
+    if recusa_turno_modelo {
+        if let Mensagem::Assistente { .. } = ultima {
+            return Err(ErroLlm::PedidoInvalido(
+                "a última mensagem é do modelo e o provedor recusa esse formato (llm.recusa_turno_modelo = true). Termine com a instrução do usuário ou com o resultado de uma ferramenta".to_owned(),
+            ));
+        }
     }
 
     let mut nomes = HashSet::new();
@@ -78,19 +80,28 @@ mod testes {
         Pedido::new(OrgId::generate(), mensagens)
     }
 
-    #[test]
-    fn recusa_pedido_que_termina_em_turno_do_modelo() {
-        let p = pedido(vec![
+    fn pedido_terminando_no_modelo() -> Pedido {
+        pedido(vec![
             Mensagem::Usuario(vec![Parte::Texto("oi".into())]),
             Mensagem::Assistente {
                 texto: "olá".into(),
                 chamadas: vec![],
             },
-        ]);
+        ])
+    }
+
+    #[test]
+    fn recusa_pedido_que_termina_em_turno_do_modelo() {
         assert!(matches!(
-            validar_pedido(&p),
+            validar_pedido(&pedido_terminando_no_modelo(), true),
             Err(ErroLlm::PedidoInvalido(_))
         ));
+    }
+
+    #[test]
+    fn aceita_pedido_que_termina_em_turno_do_modelo_com_a_regra_desligada() {
+        assert!(validar_pedido(&pedido_terminando_no_modelo(), false).is_ok());
+        assert!(validar_pedido(&pedido_terminando_no_modelo(), true).is_err());
     }
 
     #[test]
@@ -110,7 +121,7 @@ mod testes {
                 conteudo: "R$ 10".into(),
             },
         ]);
-        assert!(validar_pedido(&p).is_ok());
+        assert!(validar_pedido(&p, true).is_ok());
     }
 
     #[test]
@@ -119,7 +130,7 @@ mod testes {
             mime: "image/bmp".into(),
             bytes: vec![1],
         }])]);
-        assert!(validar_pedido(&p).is_err());
+        assert!(validar_pedido(&p, true).is_err());
 
         p.mensagens = vec![Mensagem::Usuario(vec![Parte::Texto("x".into())])];
         let f = Ferramenta {
@@ -128,6 +139,6 @@ mod testes {
             parametros: serde_json::json!({"type": "object"}),
         };
         p.ferramentas = vec![f.clone(), f];
-        assert!(validar_pedido(&p).is_err());
+        assert!(validar_pedido(&p, true).is_err());
     }
 }

@@ -15,7 +15,7 @@ use poph_agent::limites::{Limitador, OpcoesLimites};
 use poph_agent::metricas::{MetricasFluxo, MetricasMemoria, MetricasTurno};
 use poph_agent::turno::{AjustesDoFluxo, Motor, OpcoesTurno, ProcessadorTurno, RegistroPadrao};
 use poph_agent::{BuscadorBase, BuscadorProdutos, CatalogoProdutos, ConsultarBase, registro_com};
-use poph_core::llm::{ClienteAntigravity, ConfigAntigravity, LimitadorLlm};
+use poph_core::llm::{LimitadorLlm, OpenAiCompatibleClient, OpenAiCompatibleConfig};
 use poph_fluxos::cache::CacheRevisoes;
 use poph_store::Store;
 use poph_types::{HarnessConfig, MetricasBase, Registro, Segredo};
@@ -150,7 +150,7 @@ pub fn montar(
     metricas: Metricas,
     fluxos: FluxosDoProcesso,
 ) -> Result<Montagem, String> {
-    let cliente = ConfigAntigravity::da_config(&configuracao.llm, chaves.llm)
+    let cliente = OpenAiCompatibleConfig::da_config(&configuracao.llm, chaves.llm)
         .map_err(|erro| format!("configuração do provedor: {erro}"))?;
     // O Jev (HR-28) usa o mesmo catálogo de métricas; a cópia é feita antes de entregar ao provedor.
     let metricas_jev = metricas.base.clone();
@@ -160,7 +160,7 @@ pub fn montar(
     )
     .map_err(|erro| format!("limites do provedor: {erro}"))?;
     let provedor = Arc::new(
-        ClienteAntigravity::new(cliente, limites_llm, metricas.base)
+        OpenAiCompatibleClient::new(cliente, limites_llm, metricas.base)
             .map_err(|erro| format!("cliente do provedor: {erro}"))?,
     );
 

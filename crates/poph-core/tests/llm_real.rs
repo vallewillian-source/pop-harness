@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 
 use futures::StreamExt;
 use poph_core::llm::{
-    ClienteAntigravity, ConfigAntigravity, EventoLlm, Ferramenta, LimitadorLlm, LlmProvider,
-    Mensagem, Parte, Pedido,
+    EventoLlm, Ferramenta, LimitadorLlm, LlmProvider, Mensagem, OpenAiCompatibleClient,
+    OpenAiCompatibleConfig, Parte, Pedido,
 };
 use poph_types::{MetricasBase, OrgId, Registro, Segredo};
 use serde_json::json;
@@ -26,7 +26,7 @@ async fn uma_chamada_real_com_stream_e_ferramenta() {
     let modelo =
         std::env::var("ANTIGRAVITY_MODEL").unwrap_or_else(|_| "gemini-3.8-flash-tiered".to_owned());
 
-    let config = ConfigAntigravity {
+    let config = OpenAiCompatibleConfig {
         url_base,
         chave: Segredo::new(chave),
         modelo: modelo.clone(),
@@ -35,9 +35,10 @@ async fn uma_chamada_real_com_stream_e_ferramenta() {
         espera_base: Duration::from_secs(1),
         temperatura: 0.0,
         max_tokens_saida: 512,
+        recusa_turno_modelo: true,
     };
     let metricas = MetricasBase::registrar(&Registro::new()).expect("catálogo");
-    let cliente = ClienteAntigravity::new(
+    let cliente = OpenAiCompatibleClient::new(
         config,
         LimitadorLlm::new(1, 1).expect("limites"),
         metricas.clone(),

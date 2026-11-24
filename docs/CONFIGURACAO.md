@@ -40,8 +40,10 @@ Each error says where it came from (the file or the variable) and which key is i
 | `limites.turnos_simultaneos` | `200` | 1 to 10000 | D-07 |
 | `limites.turnos_simultaneos_por_org` | `50` | 1 up to the total | **proposal** |
 | `limites.taxa_por_org_por_minuto` | `600` | 1 to 100000 | **proposal** |
-| `llm.provedor` | `antigravity2api` | only this one in V1 | PRD §8.4 |
-| `llm.url_base` | `http://127.0.0.1:8045/v1` | http or https | POP Atende (`ANTIGRAVITY_BASE_URL`) |
+| `llm.provedor` | `antigravity2api` | `openai_compativel` or `antigravity2api` (same client) | PRD §8.4 |
+| `llm.url_base` | `http://127.0.0.1:8045/v1` | any endpoint that speaks the OpenAI protocol, http or https | POP Atende (`ANTIGRAVITY_BASE_URL`) |
+| `llm.chave_env` | `ANTIGRAVITY_API_KEY` | name of the environment variable holding the key | PV-01 |
+| `llm.recusa_turno_modelo` | `true` | refuse a request ending on a model turn (the gateway answers HTTP 400) | PV-01 |
 | `llm.modelo` | `gemini-3.8-flash-tiered` | non-empty | PRD D6 |
 | `llm.timeout_segundos` | `150` | 1 to 600 | POP Atende (`ANTIGRAVITY_TIMEOUT_SECONDS`) |
 | `llm.retentativas` | `2` | 0 to 5, only on transient errors | POP Atende (`LLM_RATE_LIMIT_RETRIES`) |
