@@ -12,33 +12,29 @@ VOLATILE_REGIONS = {
     "01-login.png": [],
 
     "02-orgs-lista.png": [
-        {"name": "Topbar: chip de memória/engine", "box": (1050, 10, 1264, 48)},
-        {"name": "Orgs: telemetria (uptime/RAM)", "box": (230, 72, 500, 96)},
+        {"name": "Topbar: chip de memória/engine", "box": (1040, 10, 1280, 48)},
+        {"name": "Orgs: telemetria (uptime/RAM)", "box": (1160, 180, 1420, 205)},
     ],
 
     "03-orgs-inspetor.png": [
-        {"name": "Topbar: chip de memória/engine", "box": (1050, 10, 1264, 48)},
-        {"name": "Orgs: telemetria (uptime/RAM)", "box": (230, 72, 500, 96)},
+        {"name": "Topbar: chip de memória/engine", "box": (1040, 10, 1280, 48)},
+        {"name": "Orgs: telemetria (uptime/RAM)", "box": (780, 225, 1040, 250)},
     ],
 
-    "04-agente-instrucoes.png": [
-        {"name": "Topbar: chip de memória/engine", "box": (1050, 10, 1264, 48)},
-    ],
+    "04-agente-instrucoes.png": [],
 
-    "05-agente-base-conhecimento.png": [
-        {"name": "Topbar: chip de memória/engine", "box": (1050, 10, 1264, 48)},
-    ],
+    "05-agente-base-conhecimento.png": [],
 
-    "06-chat-teste.png": [
-        {"name": "Topbar: chip de memória/engine", "box": (1050, 10, 1264, 48)},
-    ],
+    "06-chat-teste.png": [],
 
     "07-operacao.png": [
-        {"name": "Topbar: chip de memória/engine", "box": (1050, 10, 1264, 48)},
+        {"name": "Topbar: chip de memória/engine", "box": (1040, 10, 1280, 48)},
         {"name": "Operação: timestamp de atualização", "box": (1170, 100, 1304, 136)},
         {"name": "Operação: tempo no ar", "box": (730, 298, 880, 318)},
         {"name": "Operação: memória usada pelo processo", "box": (730, 663, 880, 683)},
     ],
+
+    "08-agente-instrucoes-1280.png": [],
 }
 
 def compare_dirs(dir1, dir2):

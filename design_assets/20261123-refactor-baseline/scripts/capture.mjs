@@ -135,6 +135,13 @@ async function captureScreens(targetDir) {
     fs.writeFileSync(path.join(targetDir, "07-operacao.html"), await page.content());
     console.log("✓ Capturada tela 7: Operação (07-operacao.png)");
 
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.goto(`${BASE_URL}/orgs/${ids.orgId}/agents/${ids.agentId}/instructions`);
+    await page.waitForTimeout(1000);
+    await page.screenshot({ path: path.join(targetDir, "08-agente-instrucoes-1280.png") });
+    fs.writeFileSync(path.join(targetDir, "08-agente-instrucoes-1280.html"), await page.content());
+    console.log("✓ Capturada tela 8: Agente - Instruções 1280px (08-agente-instrucoes-1280.png)");
+
     await browser.close();
 }
 
