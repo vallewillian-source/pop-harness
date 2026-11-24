@@ -59,6 +59,9 @@ a:focus-visible,
     overflow: hidden;
     color: var(--pop-text-muted);
     font-size: var(--pop-font-size-body-sm, 12px);
+    /* A mesma altura de linha para links, separadores e a migalha atual: sem ela, o link (que tem
+       `line-height` próprio por causa do alvo de clique) centraliza o texto em outro ponto. */
+    line-height: 16px;
 }
 
 /* Cada migalha é um passo com o seu próprio separador: esconder o passo não deixa um "/" órfão.
@@ -94,13 +97,14 @@ a:focus-visible,
 }
 
 .poph-topbar__trilha a {
+    box-sizing: border-box;
     min-height: 24px;
-    /* Padding para o alvo de clique chegar a 24 px; a margem negativa devolve a posição do texto. */
+    /* Padding para o alvo de clique chegar a 24 px. A margem negativa só na horizontal: na vertical
+       ela deslocava o link para cima dentro do passo e a migalha saía 4,5 px acima do separador. */
     padding: 4px 6px;
-    margin: -4px -6px;
+    margin: 0 -6px;
     border-radius: var(--pop-radius-sm, 4px);
     color: inherit;
-    line-height: 16px;
     text-decoration: none;
 }
 
