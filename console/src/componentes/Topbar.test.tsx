@@ -114,6 +114,8 @@ describe("Topbar", () => {
         // O endereço saiu do texto visível e foi para a dica do indicador de estado (CF-04).
         expect(screen.getByTitle(/^Local :\d+ · Token global/)).toBeInTheDocument();
         expect(screen.getByText("POP HARNESS")).toBeInTheDocument();
+        // A marca é só o texto: o monograma em avatar saiu do header.
+        expect(document.querySelector(".poph-topbar__monograma")).toBeNull();
     });
 
     it("mostra 'Token de org' com token de organização", () => {

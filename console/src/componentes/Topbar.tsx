@@ -1,7 +1,7 @@
 /**
  * Barra superior do Console (PRD do re-layout §5.1, RL-02, RL-04 e CF-04).
  *
- * Esquerda: monograma, nome da marca, versão da instância e a trilha de navegação. Centro: a busca
+ * Esquerda: nome da marca, versão da instância e a trilha de navegação. Centro: a busca
  * global (organizações, telas do Console e comandos do `poph`), com o atalho ⌘/Ctrl+K visível.
  * Direita, nesta ordem: estado da instância ("Engine: 200 OK · 125 MB", ou "Sem conexão"), escopo
  * do token, botão de sair e, na extremidade, o botão de ajuda que abre os atalhos (HR-61).
@@ -413,9 +413,6 @@ export function Topbar({
         <header className={emRotaDeAgente ? "poph-topbar poph-topbar--agent" : "poph-topbar"}>
             <div className="poph-topbar__esquerda">
                 <div className="poph-topbar__marca">
-                    <span className="poph-topbar__monograma" aria-hidden="true">
-                        P
-                    </span>
                     <span className="poph-topbar__nome">POP HARNESS</span>
                     {dados?.version && (
                         <span

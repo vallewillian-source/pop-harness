@@ -50,23 +50,6 @@
     gap: var(--pop-spacing-md, 8px);
 }
 
-.poph-topbar__monograma {
-    display: inline-flex;
-    flex: none;
-    align-items: center;
-    justify-content: center;
-    width: 24px;
-    height: 24px;
-    border: 1px solid var(--pop-line-strong);
-    border-radius: 4px;
-    background: var(--pop-surface-raised);
-    color: var(--pop-accent);
-    font-family: var(--pop-font-mono, "IBM Plex Mono", monospace);
-    font-size: 12px;
-    font-weight: var(--pop-font-weight-bold, 700);
-    line-height: 1;
-}
-
 .poph-topbar__nome {
     color: var(--pop-text-primary);
     font-size: 12px;
