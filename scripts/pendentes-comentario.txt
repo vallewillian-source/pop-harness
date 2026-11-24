@@ -517,7 +517,7 @@ M13b	4	console/src/componentes/Shell.tsx
 M13b	15	console/src/componentes/Topbar.test.tsx
 M13b	17	console/src/componentes/Topbar.tsx
 M13b	4	console/src/componentes/Trilha.test.tsx
-M13b	7	console/src/componentes/Trilha.tsx
+M13b	6	console/src/componentes/Trilha.tsx
 M13b	9	console/src/componentes/busca.ts
 M13b	25	console/src/componentes/navegacao.test.tsx
 M13b	19	console/src/componentes/navegacao.ts
