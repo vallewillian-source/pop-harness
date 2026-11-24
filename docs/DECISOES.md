@@ -250,3 +250,31 @@ running.
 
 Not decided by the maintainer (in force by default, as in D-30): there is no "grant to all agents" option — permission
 is per agent — and the cap of 20 flows per agent is implemented.
+
+### D-32 — Code in English, no comments; product text in Portuguese (23/11/2026, maintainer)
+The maintainer decided on 23/11/2026 that the repository moves to code in English with no comments, without changing
+any external contract. The rule lives in `AGENTS.md` ("Rules that apply here") and revokes the previous one, which
+kept identifiers and comments in Portuguese. It bites at two moments, the comment cleanup and the identifier
+translation, each with its own CI gate.
+
+- **Comment.** None in code or configuration. The only exceptions are the shebang in the first line of a script and
+  a directive that breaks the tool if it goes (`# noqa`, `# type: ignore`, coverage ignore markers and the like),
+  each one in the versioned allowlist `scripts/allow-comments.txt`, one line per exception with the reason. A
+  comment that carries a rule is not simply deleted: the rule moves to the matching document in `docs/`.
+- **Product text stays in Portuguese**: error messages, log message text, the Jev and agent prompts, the Console UI
+  and test data. The `tracing` key is an identifier and becomes English; the message text does not change.
+- **Identifier.** Internal names become English. Published names keep today's value through an explicit attribute:
+  tables, columns, indexes, triggers, routes, `operationId`, JSON fields, `poph.toml` keys, CLI flags and command
+  names, environment variables, metric names, plugin protocol terms, the words of the flow language and the IR
+  stored in the database.
+- **Migration.** A published migration may lose its comments and nothing else: file name, tables, columns, indexes
+  and the SQL stay. The runner stores version and file name, with no checksum of the content
+  (`crates/poph-store/src/migracoes.rs`), so a database already migrated sees no difference; the proof is the schema
+  of a database migrated from scratch and of an old one, identical before and after.
+
+Why: the code has to be readable by any developer, and the repository is public.
+
+The two gates that enforce it are part of the same refactor. The comment check (`scripts/check-comments.sh`, with
+the allowlist and a by-module pending list) enters after the comment remover and before the first module is cleaned,
+so a comment cannot come back. The identifier check (`scripts/check-names.sh`, with the glossary as its dictionary
+and its own allowlist) enters before the first module is renamed.

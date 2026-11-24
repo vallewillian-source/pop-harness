@@ -4,9 +4,10 @@ Code map for whoever (person or AI agent) is going to change this project. Also 
 [`CONTRIBUTING.md`](CONTRIBUTING.md) for the contribution flow. To install, configure and run, read the
 [`README.md`](README.md).
 
-> **Language.** Identifiers and code comments are in Brazilian Portuguese (`conversa`, `turno`, `org`,
-> `Sensivel`...). Documentation is in English. This file explains the names in English; the names stay as they
-> are in the code.
+> **Language.** Code, identifiers and comments are in English, and code carries no comments. Product text — error
+> messages, log text, the Jev and agent prompts, the Console UI, test data — stays in Brazilian Portuguese, and so
+> do the names the outside sees (tables, routes, CLI flags, configuration keys). Documentation is in English. The
+> exceptions are listed in full under "Rules that apply here"; anything outside them is not allowed.
 
 POP Harness is independent of POP Atende. Nothing in the workspace imports POP Atende code: mentions of it
 are only in comments and test names.
@@ -34,10 +35,23 @@ no customer data, machine path or internal document entered the diff.
 
 - **All documentation is in English.** Every document in this repository is written in English: `docs/`, the
   root `*.md` files, `console/UX_SPEC.md` and the READMEs in the test fixtures. Do not add a document in
-  Portuguese. If a document in Portuguese is found, translate it or delete it when it is obsolete. Names that
-  exist in the code (`conversa`, `turno`, `fichas`, `poph ficha`) keep their form inside code formatting; in
-  English prose, use the English term from `docs/GLOSSARY.md` (for example, *Case* for *Ficha*). Code,
-  identifiers and code comments may stay in Portuguese.
+  Portuguese. If a document in Portuguese is found, translate it or delete it when it is obsolete. Published
+  names (`fichas`, `poph ficha`) keep their form inside code formatting; in English prose, use the English term
+  from `docs/GLOSSARY.md` (for example, *Case* for *Ficha*).
+- **Code is in English, with no comments.** Identifiers, log keys, test names and code file names are in English.
+  Comments are removed: code and configuration carry none, so the code has to read on its own; an explanation that
+  would have been a comment belongs in the matching document in `docs/`. The only exceptions are the shebang in the
+  first line of a script and a directive that breaks the tool if it goes (`# noqa`, `# type: ignore`, coverage
+  ignore markers and the like), each one in the versioned allowlist `scripts/allow-comments.txt`, one line per
+  exception with the reason. Code written from now on is born this way, including work already in progress.
+- **Product text is in Portuguese.** Error messages, log message text, the Jev and agent prompts, the Console UI
+  and test data are written in Brazilian Portuguese, because the customer and the operator read them. Only the
+  `tracing` key is an identifier and becomes English; the message text does not change.
+- **Published names keep today's value.** Tables, columns, indexes, triggers, routes, `operationId`, JSON fields,
+  `poph.toml` keys, CLI flags and command names, environment variables, metric names, plugin protocol terms and
+  the words of the flow language do not change; an internal name that becomes English keeps the published value
+  through an explicit attribute. The list of what is frozen is the inventory of the second wave (the names the
+  outside sees), which is a separate decision.
 - **Flows are pure in the engine.** `poph-fluxos` decides and `poph-store` writes. A flow transition is written once, in one transaction, through `Store::execucoes()` (`aplicar_transicao`). Effects are queued and delivered by the server loop, never by the engine.
 - **Secrets never leak.** Keys come only from the environment (`POPH_CHAVE_CIFRA`, `ANTIGRAVITY_API_KEY`,
   `TYPESAFE_API_KEY`, `EVOLUTION_API_KEY`, `POPH_CLUSTER_SECRET`). They never go into a file, log, report
@@ -45,7 +59,11 @@ no customer data, machine path or internal document entered the diff.
   `Debug` and `Display`. Use it for any sensitive value that passes through a log or error.
 - **Migrations.** A new migration is a file `crates/poph-store/migrations/harness/NNNN_name.sql`,
   registered in `crates/poph-store/src/migracoes.rs` with the next number. Never edit a published
-  migration. It is applied by `poph migrate` **and also by the server** when it opens the database
+  migration — with one exception: a published migration may lose its comments and nothing else. The file name, the
+  tables, columns and indexes and the SQL itself stay exactly as they are. The runner stores the version and the
+  file name, with no checksum of the content (`crates/poph-store/src/migracoes.rs`), so a database already migrated
+  sees no difference; the proof is the schema of a database migrated from scratch and of an old one, identical
+  before and after. It is applied by `poph migrate` **and also by the server** when it opens the database
   (verified: a new database, with the server starting, already came out at version 2 without
   `poph migrate`).
 - **An org token cannot do global actions.** Creating an org, creating or revoking a global token and

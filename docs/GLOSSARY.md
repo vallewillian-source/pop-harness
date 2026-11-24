@@ -1,9 +1,9 @@
 # Glossary: Portuguese terms and their English names
 
-Most of the technical documentation in this folder is still written in Portuguese, and so are the identifiers in
-the code (tables, CLI commands, crate names). The English documentation (`README.md`, `CONTRIBUTING.md`,
-`ROADMAP.md`, `AGENTS.md`, `CHANGELOG.md`) uses the English names below. Identifiers are **not** renamed: a *Case*
-is stored in the `fichas` table and listed with `poph ficha`.
+Most of the technical documentation in this folder is still written in Portuguese, and so is part of the code
+(tables, CLI commands, crate names). The English documentation (`README.md`, `CONTRIBUTING.md`,
+`ROADMAP.md`, `AGENTS.md`, `CHANGELOG.md`) uses the English names below. Published names are **not** renamed: a
+*Case* is stored in the `fichas` table and listed with `poph ficha`.
 
 | English (use in English text) | Portuguese (docs and code) | What it is |
 |---|---|---|

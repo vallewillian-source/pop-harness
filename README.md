@@ -20,9 +20,10 @@ One Rust binary, backed by SQLite. No Redis, no Postgres, no agent framework.
 </div>
 
 > **Language note.** Project files (README, contributing guide, security policy, templates, roadmap) are in
-> English. The code, identifiers, comments and the technical documents under `docs/` are still in
-> Brazilian Portuguese, as is the Console interface and the example agents' conversations. Issues and pull
-> requests are welcome in English or Portuguese, and translations of `docs/` are welcome.
+> English, and so is the code: identifiers are in English and comments are being removed. Product text — the Console
+> interface, the example agents' conversations, error messages and log text — is in Brazilian Portuguese, and so are
+> the technical documents under `docs/` that are still being translated. Issues and pull requests are welcome in
+> English or Portuguese, and translations of `docs/` are welcome.
 
 ---
 
@@ -340,7 +341,7 @@ conversation, and it closes only when the conversation closes: by whoever is ser
 customer message opens **another conversation and another Case**. A closed Case never changes.
 
 > **Naming:** *Case* is the English name for what the Portuguese documentation, the database tables
-> (`fichas`, `ficha_eventos`) and the CLI (`poph ficha`) call a **Ficha**. Identifiers in code are not renamed.
+> (`fichas`, `ficha_eventos`) and the CLI (`poph ficha`) call a **Ficha**. Published names are not renamed.
 > See the [glossary](docs/GLOSSARY.md).
 
 ### Flow: a plain-text script

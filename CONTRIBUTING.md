@@ -6,10 +6,11 @@ is already a useful contribution: open an issue or fix the text.
 
 By taking part, you agree to the [Code of Conduct](CODE_OF_CONDUCT.md).
 
-> **Language.** Issues, pull requests and discussions are welcome in English or Portuguese. The code,
-> identifiers, comments and most of the documents under `docs/` are in Brazilian Portuguese (domain terms
-> such as `conversa`, `turno`, `org`). Keep the language of the code you are changing; new top-level
-> project files (README, guides, templates) are in English. Translations of `docs/` are welcome.
+> **Language.** Issues, pull requests and discussions are welcome in English or Portuguese. Code, identifiers and
+> comments follow the repository rule: code and identifiers in English, no comments. Product text — error messages,
+> log text, prompts, the Console UI, test data — stays in Brazilian Portuguese, and so do the names the outside sees
+> (tables, routes, CLI flags, configuration keys). Most documents under `docs/` are in English; new top-level
+> project files (README, guides, templates) are in English, and translations of `docs/` are welcome.
 
 ## Before you start
 
@@ -101,9 +102,15 @@ These rules come from decisions already made and are explained in [`AGENTS.md`](
 ## Code style
 
 - Rust: `cargo fmt` and `clippy -D warnings`. Typed errors with `thiserror`; no `unwrap` or `expect` on a
-  production path except for invariants the comment explains.
-- Domain names in Portuguese (`conversa`, `turno`, `org`), as in the rest of the code.
-- Comments explain **why**, not what. A comment that repeats the code goes.
+  production path except for invariants documented in `docs/`.
+- Domain names in English (`conversation` for `conversa`, `turn` for `turno`, `org`). The glossary in
+  `docs/GLOSSARY.md` is the reference; published names (tables, routes, CLI flags, configuration keys) keep today's
+  value and are not translated.
+- No comments. Code and configuration carry none: a decision that needs explaining goes into `docs/` and is linked
+  from the pull request. The only exceptions are the shebang and a directive that breaks the tool if it goes
+  (`# noqa`, `# type: ignore`, coverage ignore markers), each one listed in `scripts/allow-comments.txt` with the
+  reason.
+- Product text stays in Portuguese: error messages, log text, prompts, UI labels and test data.
 - Tests live next to the code they cover. A new test must fail without your change.
 
 ## Commit messages
