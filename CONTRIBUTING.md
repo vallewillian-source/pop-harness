@@ -132,8 +132,9 @@ Removing the comments of a module:
 
 Renaming the identifiers of a module:
 
-1. `bash scripts/rename.sh` applies a map file (`old<TAB>new`) through `rust-analyzer` for Rust and the
-   TypeScript language server for the Console, including file and module names.
+1. `bash scripts/rename.sh --map <file>` applies a map (`old<TAB>new` or `old -> new`) through `rust-analyzer`
+   for Rust and the TypeScript language service for the Console, including file and module names. A pair that the
+   tool cannot finish is undone.
 2. `bash scripts/check-names.sh <paths>` prints nothing when the module is clean; a leftover Portuguese
    identifier outside the allowlist fails it.
 3. `bash scripts/check-names.sh --atualizar-pendentes` in the same commit, then

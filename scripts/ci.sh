@@ -43,6 +43,7 @@ executa "comentários (teste do removedor)" python3 scripts/tests/test-strip-com
 executa "comentários (trava: allowlist e pendentes por módulo)" bash scripts/check-comments.sh
 executa "glossário (termos, congelados e tabela em dia)" python3 scripts/glossary-terms.py --validar
 executa "nomes (trava: allowlist de publicados e pendentes por módulo)" bash scripts/check-names.sh
+executa "nomes (teste do renomeador)" python3 scripts/tests/test-rename.py
 
 executa "formatação" cargo fmt --all -- --check
 executa "clippy" cargo clippy --workspace --all-targets --locked -- -D warnings

@@ -114,6 +114,29 @@ commit. Identifier extraction and term splitting come from `scripts/glossary-ter
 and comment by the syntax of `scripts/strip-comments.py`, so product text never trips the gate. Only files the
 repository publishes are scanned. It runs on Python and `git` (no toolchain) and takes about 5 s on the whole tree.
 
+### Renaming tool
+
+`scripts/rename.sh` renames identifiers and modules with the language tool, never by text substitution:
+`rust-analyzer` for Rust (types, functions, files and the `mod`/`use` paths that point at them) and the
+TypeScript language service of `console/` for the Console, through `scripts/rename_ts.mjs`.
+
+```bash
+bash scripts/rename.sh --map <file> --dry-run   # plan, writes nothing
+bash scripts/rename.sh --map <file>             # applies the map, in order
+```
+
+The map has one rename per line, `old<TAB>new` or `old -> new`, and `#` starts a comment. A left side with a
+`/` is a file rename and must stay in the same directory with the same extension. The tool refuses, with exit
+code 3, a published name (table, column, index, trigger, route, `operationId`, JSON field, `poph.toml` key, CLI
+command or flag, environment variable, metric, plugin protocol term, backup key, flow language word), a new name
+that still carries a Portuguese term, and an identifier no language tool can rename safely; the edit of a pair
+that fails is undone, so a refused rename leaves the tree as it was. Exit code 4 means a leftover of the old
+name, 5 means a language tool is missing. After a rename run `bash scripts/check-names.sh --atualizar-pendentes`
+and `python3 scripts/glossary-terms.py --gerar` in the same commit.
+
+The language tools are not part of the CI: `scripts/tests/test-rename.py` (about a second, `python3` only)
+stubs the tool and proves the map parsing, the refusals, the edit applier and the leftover decision.
+
 ### Measurement and acceptance scripts
 
 | Script | What it is for |

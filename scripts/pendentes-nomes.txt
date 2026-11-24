@@ -563,7 +563,7 @@ M14	34	scripts/build-dist.sh
 M14	4	scripts/check-comments.sh
 M14	5	scripts/check_comments.py
 M14	4	scripts/check_names.py
-M14	26	scripts/ci.sh
+M14	27	scripts/ci.sh
 M14	1	scripts/contracts.sh
 M14	829	scripts/glossary-terms.py
 M14	85	scripts/jev-falso.py
@@ -575,3 +575,4 @@ M14	58	scripts/medir-memoria-roteiro.sh
 M14	202	scripts/medir-memoria.sh
 M14	10	scripts/medir-resiliencia.sh
 M14	16	scripts/plugin-eco.sh
+M14	2	scripts/rename.py
