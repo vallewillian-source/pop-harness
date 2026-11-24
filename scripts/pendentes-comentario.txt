@@ -2,9 +2,6 @@
 # separados por TAB. Gerado por `bash scripts/check-comments.sh --atualizar-pendentes`; não editar à mão.
 -	11	design_assets/20261123-refactor-baseline/scripts/capture.mjs
 -	24	design_assets/20261123-refactor-baseline/scripts/compare.py
--	2	tests/contratos/base/flows/agendar_visita.star
--	3	tests/contratos/base/flows/confirmar_entrega.star
--	5	tests/contratos/base/flows/triagem_suporte.star
 M00	2	.github/dependabot.yml
 M00	2	.github/workflows/ci.yml
 M00	5	.gitignore
@@ -151,9 +148,6 @@ M06b	43	crates/poph-fluxos/tests/prompt.rs
 M06b	31	crates/poph-fluxos/tests/ram.rs
 M06b	52	crates/poph-fluxos/tests/regras.rs
 M06b	28	crates/poph-fluxos/tests/validador.rs
-M06b	2	tests/fluxos/exemplos/agendar_visita.star
-M06b	3	tests/fluxos/exemplos/confirmar_entrega.star
-M06b	5	tests/fluxos/exemplos/triagem_suporte.star
 M07a	245	crates/poph-matrix/src/cliente.rs
 M07a	50	crates/poph-matrix/src/config.rs
 M07a	53	crates/poph-matrix/src/erro.rs
@@ -563,7 +557,6 @@ M13c	28	console/src/telas/Orgs.test.tsx
 M13c	32	console/src/telas/Orgs.tsx
 M13c	3	console/src/telas/Produtos.test.tsx
 M13c	4	console/src/telas/Produtos.tsx
-M13d	61	console/build_frames.py
 M13d	2	console/gen-api.sh
 M13d	2	console/pnpm-workspace.yaml
 M13d	4	console/scripts/build.sh
@@ -607,9 +600,6 @@ M14	16	scripts/Dockerfile.build-arm
 M14	26	scripts/aceite-matrix-aux.py
 M14	28	scripts/aceite-matrix-element.mjs
 M14	79	scripts/aceite-matrix.sh
-M14	6	scripts/aceite-repasse-aux.py
-M14	50	scripts/aceite-repasse-element.mjs
-M14	53	scripts/aceite-repasse.sh
 M14	20	scripts/build-dist.sh
 M14	23	scripts/ci.sh
 M14	8	scripts/jev-falso.py
@@ -621,4 +611,3 @@ M14	11	scripts/medir-memoria-roteiro.sh
 M14	29	scripts/medir-memoria.sh
 M14	8	scripts/medir-resiliencia.sh
 M14	10	scripts/plugin-eco.sh
-M14	87	scripts/repasse-dev.sh

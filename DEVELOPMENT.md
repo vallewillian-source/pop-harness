@@ -84,8 +84,10 @@ bash scripts/check-comments.sh --atualizar-pendentes        # regenerate scripts
 `scripts/pendentes-comentario.txt` is the whitelist of modules not cleaned yet: one line per file, with the module
 and the number of comments. It is generated, never edited by hand, and it shrinks to nothing as the modules are
 cleaned. The gate fails in four cases: a comment outside the allowlist in a file that is not listed, a listed file
-that no longer has comments, a count that no longer matches the tree, and a malformed list. It runs on Python alone
-(no toolchain) and takes about 13 s on the whole tree.
+that no longer has comments, a count that no longer matches the tree, and a malformed list. It also fails when an
+exception in `scripts/allow-comments.txt` stops matching any comment, so a stale exception is not forgotten. Only
+files the repository publishes are scanned: what `.git/info/exclude` keeps on this machine is out, because it does
+not exist in a clone. It runs on Python and `git` (no toolchain) and takes about 5 s on the whole tree.
 
 ### Measurement and acceptance scripts
 

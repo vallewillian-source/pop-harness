@@ -11,3 +11,11 @@
 *	directive	shellcheck disable=	diretiva do shellcheck; sair faz o linter reprovar o source dinâmico
 scripts/limpar-cache.sh	data	lines:2-30	bloco de uso lido pela própria função uso() com sed na linha 43; é dado, não comentário
 console/gen-api.sh	data	lines:2-16	bloco de uso lido pela própria opção --help com sed na linha 28; é dado, não comentário
+tests/fluxos/exemplos/agendar_visita.star	data	lines:1-2	published flow-language example: the header comment is part of the sample text users read
+tests/fluxos/exemplos/confirmar_entrega.star	data	lines:1-3	published flow-language example: the header comment is part of the sample text users read
+tests/fluxos/exemplos/triagem_suporte.star	data	lines:1-3	published flow-language example: the header comment is part of the sample text users read
+tests/fluxos/exemplos/triagem_suporte.star	data	lines:59-60	published flow-language example: the inline comment introduces the sample rule function
+tests/contratos/base/flows/agendar_visita.star	data	lines:1-2	byte-for-byte copy of the published flow example kept in the contract baseline; it is data, not source
+tests/contratos/base/flows/confirmar_entrega.star	data	lines:1-3	byte-for-byte copy of the published flow example kept in the contract baseline; it is data, not source
+tests/contratos/base/flows/triagem_suporte.star	data	lines:1-3	byte-for-byte copy of the published flow example kept in the contract baseline; it is data, not source
+tests/contratos/base/flows/triagem_suporte.star	data	lines:59-60	byte-for-byte copy of the published flow example kept in the contract baseline; it is data, not source

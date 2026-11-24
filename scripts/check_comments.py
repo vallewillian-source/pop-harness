@@ -1,6 +1,7 @@
 import argparse
 import importlib.util
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -100,23 +101,51 @@ def write_pending(path, dirty):
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def scan(scanner, rules, paths):
+def repository_paths(root):
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+            capture_output=True,
+            check=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    names = result.stdout.decode("utf-8", "surrogateescape").split("\0")
+    return {name for name in names if name}
+
+
+def scan(scanner, rules, paths, visible=None):
     dirty = {}
     findings = []
+    matched = [0] * len(rules)
     for path in scanner.collect_files(paths):
         if scanner.is_skipped(path):
             continue
         if scanner.language_of(path) is None:
             continue
+        relative = path.as_posix()
+        if visible is not None and relative not in visible:
+            continue
         raw, spans, keep_ids, starts = scanner.process_file(path, rules)
+        for span in spans:
+            if id(span) not in keep_ids:
+                continue
+            shebang = span.start == 0 and raw.startswith("#!")
+            for index, rule in enumerate(rules):
+                if scanner.rule_matches(rule, relative, starts, span, raw, shebang):
+                    matched[index] += 1
+                    break
         resting = [span for span in spans if id(span) not in keep_ids]
         if not resting:
             continue
-        relative = path.as_posix()
         dirty[relative] = len(resting)
         for span in resting:
             findings.append(scanner.describe(relative, starts, span, raw))
-    return dirty, findings
+    return dirty, findings, matched
+
+
+def orphan_rules(rules, matched):
+    return [(rule, matched[index]) for index, rule in enumerate(rules) if "/" in rule.pattern and matched[index] == 0]
 
 
 def main(argv):
@@ -158,10 +187,22 @@ def main(argv):
         return 2
 
     try:
-        dirty, findings = scan(scanner, rules, arguments.paths or ["."])
+        dirty, findings, matched = scan(scanner, rules, arguments.paths or ["."], repository_paths(root))
     except FileNotFoundError as error:
         print(f"check-comments: caminho não encontrado: {error}", file=sys.stderr)
         return 2
+
+    if not arguments.paths and not arguments.atualizar_pendentes:
+        orphans = orphan_rules(rules, matched)
+        if orphans:
+            for rule, _ in orphans:
+                print(
+                    f"check-comments: allowlist: exceção não casa mais em nenhum comentário: "
+                    f"{rule.pattern} [{rule.kind} {rule.match}] {rule.reason}",
+                    file=sys.stderr,
+                )
+            print("check-comments: remova a exceção ou corrija o caminho", file=sys.stderr)
+            return 2
 
     pending_path = Path(arguments.pendentes)
 

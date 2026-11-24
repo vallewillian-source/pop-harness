@@ -191,7 +191,7 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | anexo | attachment | traduz | poph-server, poph-agent | 352 |
 | identidade | identity | traduz | poph-server, poph-rag | 349 |
 | tamanho | size | traduz | poph-server, poph-agent | 349 |
-| pendentes | pending | traduz | poph-agent, poph-server | 346 |
+| pendentes | pending | traduz | poph-agent, poph-server | 347 |
 | conhecimento | knowledge | traduz | poph-server, console | 345 |
 | bloco | block | traduz | poph-agent, console | 343 |
 | lote | batch | traduz | poph-rag, poph-jev | 342 |
@@ -258,8 +258,8 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | busca | search | traduz | poph-agent, console | 250 |
 | definir | define | traduz | poph-server, poph-store | 244 |
 | leitura | read | traduz | poph-store, console | 244 |
+| atualizar | update | traduz | poph-server, console | 241 |
 | recebidos | received | traduz | poph-agent, poph-evolution | 241 |
-| atualizar | update | traduz | poph-server, console | 240 |
 | escrita | writing | traduz | poph-store, poph-server | 239 |
 | transicao | transition | traduz | poph-store, poph-server | 238 |
 | conflito | conflict | traduz | poph-store, console | 234 |

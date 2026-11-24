@@ -46,7 +46,8 @@ no customer data, machine path or internal document entered the diff.
   exception with the reason. Code written from now on is born this way, including work already in progress.
   `bash scripts/check-comments.sh` is the gate; the files still to be cleaned are listed in
   `scripts/pendentes-comentario.txt` (generated, one line per file with its module and the count), and each module
-  task removes its own lines on the commit that cleans them.
+  task removes its own lines on the commit that cleans them. The gate reads what the repository publishes: a file
+  kept only on this machine by `.git/info/exclude` is out, and an allowlist exception that matches nothing fails.
 - **Product text is in Portuguese.** Error messages, log message text, the Jev and agent prompts, the Console UI
   and test data are written in Brazilian Portuguese, because the customer and the operator read them. Only the
   `tracing` key is an identifier and becomes English; the message text does not change.
