@@ -253,3 +253,77 @@ fn departamento_de_outra_org_e_recusado() {
         .expect("lê a conversa");
     assert_eq!(gravada.status, StatusConversa::Aberta);
 }
+
+#[test]
+fn transferencia_administrativa_recusa_conversa_encerrada() {
+    let cenario = Cenario::novo();
+    let conversa = cenario.conversa();
+    cenario
+        .store
+        .conversas()
+        .fechar_pelo_agente(cenario.org, conversa, cenario.agente, "fim".to_owned())
+        .expect("fecha pelo agente");
+
+    let erro = cenario
+        .store
+        .conversas()
+        .transferir_auditado(
+            cenario.org,
+            conversa,
+            None,
+            Some("admin".to_owned()),
+            "{}".to_owned(),
+        )
+        .expect_err("conversa encerrada não transfere");
+    assert!(matches!(
+        erro,
+        ErroStore::Dominio(DomainError::ConversaEncerrada { .. })
+    ));
+
+    let gravada = cenario
+        .store
+        .conversas()
+        .obter(cenario.org, conversa)
+        .expect("lê a conversa");
+    assert_eq!(gravada.status, StatusConversa::Fechada);
+    assert!(
+        !cenario
+            .store
+            .auditoria()
+            .listar(cenario.org, Pagina::com_limite(10))
+            .expect("lê a auditoria")
+            .iter()
+            .any(|registro| registro.acao == "transfer"),
+        "a recusa não escreve auditoria de transferência"
+    );
+}
+
+#[test]
+fn transferencia_administrativa_marca_transferida_e_audita_o_motivo() {
+    let cenario = Cenario::novo();
+    let conversa = cenario.conversa();
+    let depois = cenario
+        .store
+        .conversas()
+        .transferir_auditado(
+            cenario.org,
+            conversa,
+            None,
+            Some("admin".to_owned()),
+            r#"{"motivo":"rotina"}"#.to_owned(),
+        )
+        .expect("transfere");
+    assert_eq!(depois.status, StatusConversa::Transferida);
+
+    let auditoria = cenario
+        .store
+        .auditoria()
+        .listar(cenario.org, Pagina::com_limite(10))
+        .expect("lê a auditoria");
+    let registro = auditoria
+        .iter()
+        .find(|registro| registro.acao == "transfer")
+        .expect("a transferência é auditada");
+    assert_eq!(registro.ator_id.as_deref(), Some("admin"));
+    assert_eq!(registro.detalhe_json, r#"{"motivo":"rotina"}"#);
+}

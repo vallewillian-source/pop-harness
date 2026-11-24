@@ -1716,6 +1716,10 @@ async fn toda_escrita_da_openapi_precisa_de_cobertura_de_auditoria() {
             "post",
             "/admin/v1/orgs/{org_id}/conversations/{conversation_id}/close",
         ),
+        (
+            "post",
+            "/admin/v1/orgs/{org_id}/conversations/{conversation_id}/transfer",
+        ),
         // HR-48e-1: a importação grava na org (a exportação é leitura).
         ("post", "/admin/v1/orgs/{org_id}/backup/import"),
         // MX-22: ligar/desligar o módulo Matrix e os espaços por departamento.
@@ -3483,6 +3487,10 @@ async fn isolamento_por_org_cobre_todas_as_operacoes_publicadas() {
         (
             "post",
             "/admin/v1/orgs/{org_id}/conversations/{conversation_id}/close",
+        ),
+        (
+            "post",
+            "/admin/v1/orgs/{org_id}/conversations/{conversation_id}/transfer",
         ),
         (
             "get",

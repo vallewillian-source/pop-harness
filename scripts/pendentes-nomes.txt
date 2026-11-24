@@ -178,7 +178,7 @@ M08b	703	crates/poph-store/src/repos/caixas.rs
 M08b	258	crates/poph-store/src/repos/carrinho.rs
 M08b	136	crates/poph-store/src/repos/categorias.rs
 M08b	498	crates/poph-store/src/repos/conhecimento.rs
-M08b	574	crates/poph-store/src/repos/conversas.rs
+M08b	615	crates/poph-store/src/repos/conversas.rs
 M08b	136	crates/poph-store/src/repos/departamentos.rs
 M08b	111	crates/poph-store/src/repos/efeitos.rs
 M08b	880	crates/poph-store/src/repos/execucoes.rs
@@ -205,7 +205,7 @@ M08d	87	crates/poph-store/tests/erro_escrita.rs
 M08d	1042	crates/poph-store/tests/execucoes_fluxo.rs
 M08d	806	crates/poph-store/tests/fichas_invariante.rs
 M08d	283	crates/poph-store/tests/fichas_migracao.rs
-M08d	165	crates/poph-store/tests/filtros_conversas.rs
+M08d	208	crates/poph-store/tests/filtros_conversas.rs
 M08d	419	crates/poph-store/tests/fluxos_migracao.rs
 M08d	481	crates/poph-store/tests/fluxos_repo.rs
 M08d	329	crates/poph-store/tests/leitura_incremental.rs
@@ -218,7 +218,7 @@ M08d	121	crates/poph-store/tests/orgaos_agentes_ativos.rs
 M08d	212	crates/poph-store/tests/origem_mensagens.rs
 M08d	346	crates/poph-store/tests/resposta_humana.rs
 M08d	469	crates/poph-store/tests/revisoes_fluxo.rs
-M08d	146	crates/poph-store/tests/transferencia.rs
+M08d	196	crates/poph-store/tests/transferencia.rs
 M08d	245	crates/poph-store/tests/transicao_latencia.rs
 M08d	145	crates/poph-store/tests/vazao.rs
 M09	21	crates/poph-retention/src/armazem.rs
@@ -296,7 +296,7 @@ M11a-c	224	crates/poph-server/src/api/categorias.rs
 M11a-c	23	crates/poph-server/src/api/cluster.rs
 M11a-c	329	crates/poph-server/src/api/conhecimento.rs
 M11a-c	68	crates/poph-server/src/api/conteudo.rs
-M11a-c	200	crates/poph-server/src/api/conversas.rs
+M11a-c	231	crates/poph-server/src/api/conversas.rs
 M11a-c	146	crates/poph-server/src/api/departamentos.rs
 M11a-c	532	crates/poph-server/src/api/fichas.rs
 M11a-c	387	crates/poph-server/src/api/fluxos.rs
@@ -305,7 +305,7 @@ M11a-c	196	crates/poph-server/src/api/integracoes.rs
 M11a-c	36	crates/poph-server/src/api/manifestos.rs
 M11a-c	281	crates/poph-server/src/api/matrix.rs
 M11a-c	504	crates/poph-server/src/api/matrix_as.rs
-M11a-c	318	crates/poph-server/src/api/mod.rs
+M11a-c	320	crates/poph-server/src/api/mod.rs
 M11a-c	281	crates/poph-server/src/api/orgs.rs
 M11a-c	19	crates/poph-server/src/api/paginacao.rs
 M11a-c	170	crates/poph-server/src/api/produtos.rs
@@ -346,6 +346,7 @@ M11d	242	crates/poph-server/tests/conteudo_arquivo.rs
 M11d	120	crates/poph-server/tests/contracts_baseline.rs
 M11d	232	crates/poph-server/tests/conversas_element.rs
 M11d	214	crates/poph-server/tests/conversas_filtros.rs
+M11d	205	crates/poph-server/tests/conversas_transferencia.rs
 M11d	747	crates/poph-server/tests/encaminhamento_cluster.rs
 M11d	484	crates/poph-server/tests/fichas_acoes.rs
 M11d	384	crates/poph-server/tests/fichas_leitura.rs

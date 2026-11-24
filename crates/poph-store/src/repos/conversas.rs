@@ -97,6 +97,7 @@ pub struct FiltroConversas {
     pub status: Option<StatusConversa>,
     /// Identificador do cliente no canal (`external_peer`), exato.
     pub external_peer: Option<String>,
+    pub last_activity_before: Option<i64>,
 }
 
 /// Ordem da listagem administrativa de conversas (RP-02).
@@ -148,6 +149,13 @@ fn montar_listagem(
     if let Some(peer) = &filtro.external_peer {
         valores.push(ValorSql::Text(peer.clone()));
         condicoes.push(format!("external_peer = ?{}", valores.len()));
+    }
+    if let Some(limite) = filtro.last_activity_before {
+        valores.push(ValorSql::Integer(limite));
+        condicoes.push(format!(
+            "COALESCE(last_message_at, created_at) < ?{}",
+            valores.len()
+        ));
     }
     let ordenacao = match ordem {
         OrdemConversas::Id => {
@@ -398,10 +406,34 @@ impl Conversas<'_> {
         ator_id: Option<String>,
         detalhe_json: String,
     ) -> Resultado<Conversa> {
+        self.transferir_interno(org, id, departamento_alvo, ator_id, detalhe_json, false)
+    }
+
+    pub fn transferir_auditado(
+        &self,
+        org: OrgId,
+        id: ConversationId,
+        departamento_alvo: Option<DepartmentId>,
+        ator_id: Option<String>,
+        detalhe_json: String,
+    ) -> Resultado<Conversa> {
+        self.transferir_interno(org, id, departamento_alvo, ator_id, detalhe_json, true)
+    }
+
+    fn transferir_interno(
+        &self,
+        org: OrgId,
+        id: ConversationId,
+        departamento_alvo: Option<DepartmentId>,
+        ator_id: Option<String>,
+        detalhe_json: String,
+        recusar_encerrada: bool,
+    ) -> Resultado<Conversa> {
         let agora = self.0.agora();
         let texto_org = org.to_string();
         let texto_id = id.to_string();
         let audit_id = poph_types::AuditId::generate().to_string();
+        let fechada = StatusConversa::Fechada.como_texto();
         self.0.escrita(move |conn| {
             if let Some(departamento) = departamento_alvo {
                 pertence(
@@ -411,6 +443,24 @@ impl Conversas<'_> {
                     &texto_org,
                     &departamento.to_string(),
                 )?;
+            }
+            let situacao: Option<String> = conn
+                .query_row(
+                    "SELECT status FROM conversations WHERE org_id = ?1 AND id = ?2",
+                    params![texto_org, texto_id],
+                    |linha| linha.get(0),
+                )
+                .optional()
+                .map_err(ErroStore::from)?;
+            let Some(situacao) = situacao else {
+                return super::exigir::<()>(None, "conversa", &texto_id);
+            };
+            if recusar_encerrada && situacao == fechada {
+                return Err(ErroStore::Dominio(
+                    poph_types::DomainError::ConversaEncerrada {
+                        id: texto_id.clone(),
+                    },
+                ));
             }
             let alteradas = conn.execute(
                 "UPDATE conversations

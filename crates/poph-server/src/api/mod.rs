@@ -296,6 +296,10 @@ pub fn router(estado: Estado) -> Router {
             "/admin/v1/orgs/{org_id}/conversations/{conversation_id}/close",
             axum::routing::post(conversas::fechar),
         )
+        .route(
+            "/admin/v1/orgs/{org_id}/conversations/{conversation_id}/transfer",
+            axum::routing::post(conversas::transferir),
+        )
         // ── chat de teste do Console (HR-22) ──
         .route(
             "/admin/v1/orgs/{org_id}/agents/{agent_id}/test-chat",
@@ -514,6 +518,7 @@ pub fn documento() -> utoipa::openapi::OpenApi {
         conversas::turnos,
         conversas::reabrir,
         conversas::fechar,
+        conversas::transferir,
         matrix::mostrar,
         matrix::atualizar,
         matrix::listar_espacos,

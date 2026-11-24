@@ -29,12 +29,10 @@ pub fn validar_pedido(pedido: &Pedido, recusa_turno_modelo: bool) -> Result<(), 
     let Some(ultima) = pedido.mensagens.last() else {
         return Err(ErroLlm::PedidoInvalido("nenhuma mensagem".to_owned()));
     };
-    if recusa_turno_modelo {
-        if let Mensagem::Assistente { .. } = ultima {
-            return Err(ErroLlm::PedidoInvalido(
-                "a última mensagem é do modelo e o provedor recusa esse formato (llm.recusa_turno_modelo = true). Termine com a instrução do usuário ou com o resultado de uma ferramenta".to_owned(),
-            ));
-        }
+    if recusa_turno_modelo && let Mensagem::Assistente { .. } = ultima {
+        return Err(ErroLlm::PedidoInvalido(
+            "a última mensagem é do modelo e o provedor recusa esse formato (llm.recusa_turno_modelo = true). Termine com a instrução do usuário ou com o resultado de uma ferramenta".to_owned(),
+        ));
     }
 
     let mut nomes = HashSet::new();

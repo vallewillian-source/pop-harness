@@ -297,6 +297,7 @@ Colunas:
 | Conversas | GET | `/admin/v1/orgs/{org_id}/conversations/{conversation_id}/messages` | exceção: a CLI não tem comando de conversa | n/a | n/a | sim |
 | Conversas | POST | `/admin/v1/orgs/{org_id}/conversations/{conversation_id}/reopen` | exceção: a CLI não tem comando de conversa | sim | sim | sim |
 | Conversas | POST | `/admin/v1/orgs/{org_id}/conversations/{conversation_id}/close` | exceção: a CLI não tem comando de conversa | sim | sim | sim |
+| Conversas | POST | `/admin/v1/orgs/{org_id}/conversations/{conversation_id}/transfer` | exceção: a CLI não tem comando de conversa | n/a | sim | sim |
 | Conversas | GET | `/admin/v1/orgs/{org_id}/conversations/{conversation_id}/turns` | exceção: a CLI não tem comando de conversa | n/a | n/a | sim |
 | Chat de teste | GET | `/admin/v1/orgs/{org_id}/agents/{agent_id}/test-chat` | exceção: a CLI não tem comando de chat de teste | n/a | n/a | sim |
 | Chat de teste | POST | `/admin/v1/orgs/{org_id}/agents/{agent_id}/test-chat` | exceção: a CLI não tem comando de chat de teste | n/a | sim | sim |
@@ -354,6 +355,39 @@ abre uma conversa nova (ver `docs/ENTRADA_E_SAIDA.md`, seção 4).
 Provas: `fechar_conversa_cumpre_codigos_e_audita_uma_vez` (os seis status, auditoria, versão) e
 `mensagem_depois_do_fechamento_abre_conversa_nova` em `crates/poph-server/tests/api.rs`.
 
+## Transferir conversa para outro departamento (PA-119)
+
+`POST /admin/v1/orgs/{org_id}/conversations/{conversation_id}/transfer` marca a conversa como
+`transferred` e, quando o `department_id` vem no corpo, troca o departamento alvo dela. É a rota que
+o `pop-api` usa para transferir conversa viva: antes dela, só o agente ou um fluxo conseguiam
+transferir, de dentro do turno.
+
+Corpo: `{"department_id": "<uuid do departamento>", "reason": "<motivo>"}`. O `department_id` é
+opcional (sem ele, só a situação muda); o `reason` é obrigatório e não pode ser vazio.
+
+| Situação | Resposta | Efeito |
+| --- | --- | --- |
+| sem token | `401` | nada muda |
+| token de outra org | `403` | nada muda |
+| conversa não existe na org | `404` | nada muda |
+| departamento não existe na org | `404` | nada muda |
+| corpo que não é objeto JSON | `400` `invalid_request` | nada muda |
+| `reason` ausente ou vazio, `department_id` malformado | `400` `validation_error` | nada muda |
+| conversa `closed` | `409` `conversa_encerrada` | nada muda, nada é auditado |
+| sucesso | `200` | status `transferred`, departamento alvo gravado, versão +1, auditoria `transfer` |
+
+A rota não exige `If-Match`: a versão sobe do mesmo jeito, então um `PATCH` de quem estava com a
+versão antiga continua recebendo `412`. A auditoria `transfer` grava o token como ator e o detalhe
+`{"motivo": ..., "ator": "administrador", "department_id": ...}`.
+
+Quem move a sala do Matrix é o laço de estado: no ciclo seguinte, a conversa que mudou de departamento
+recebe um aviso e um `m.space.child` no espaço do departamento novo (o mesmo caminho do agente que
+transfere dentro do turno — provas em `crates/poph-server/tests/matrix_estado.rs`).
+
+Provas: `conversas_transferencia.rs` (`transferir_marca_a_conversa_e_audita_o_motivo`,
+`transferir_recusa_conversa_encerrada_da_outra_org_e_corpo_invalido`) e, no repositório,
+`transferencia_administrativa_*` em `crates/poph-store/tests/transferencia.rs`.
+
 ## Reabrir conversa (FX-07, PRD L13)
 
 `POST /admin/v1/orgs/{org_id}/conversations/{conversation_id}/reopen` continua reabrindo conversa
@@ -407,13 +441,14 @@ seguem como antes.
 
 ## Listagem de conversas: filtros e ordem por atividade (RP-02)
 
-`GET …/conversations` aceita três parâmetros a mais. Sem eles, a resposta é a de sempre.
+`GET …/conversations` aceita quatro parâmetros a mais. Sem eles, a resposta é a de sempre.
 
 | Parâmetro | Valores | Efeito |
 | --- | --- | --- |
 | `external_peer` | identificador do cliente no canal (no WhatsApp, o número) | só as conversas desse cliente, dentro da org. Espaços nas pontas são tirados. Vazio devolve `400`. |
 | `status` | `open`, `transferred` ou `closed` | só as conversas nessa situação. Outro valor devolve `400`. |
 | `sort` | `recent` | ordena pela atividade mais recente (última mensagem; sem mensagem, a data de criação), mais recente primeiro. Empate: id maior primeiro. |
+| `last_activity_before` | instante em milissegundos desde 1970 | só as conversas cuja última atividade é **anterior** a esse instante. É o corte que acha conversa parada; valor que não é inteiro devolve `400`. |
 
 Regras:
 
@@ -434,10 +469,16 @@ Exemplos:
 ```
 GET …/conversations?external_peer=5511999999999&status=open
 GET …/conversations?sort=recent&limit=20
+GET …/conversations?status=open&sort=recent&limit=100&last_activity_before=1764000000000
 ```
 
+`last_activity_before` combinado com `status=open` e `sort=recent` é o que o worker de inatividade do
+`pop-api` usa para achar conversa viva parada e fechá-la (o corte em si é do `pop-api`, que decide
+quanto tempo é inatividade).
+
 Testes: `crates/poph-server/tests/conversas_filtros.rs` (filtros, ordem, `limit`, cursor recusado e
-valores inválidos) e `crates/poph-store/tests/filtros_conversas.rs` (plano da consulta e identificador).
+valores inválidos), `crates/poph-server/tests/conversas_transferencia.rs` (corte por última atividade)
+e `crates/poph-store/tests/filtros_conversas.rs` (plano da consulta e identificador).
 O índice que sustenta o filtro por cliente está em `docs/DADOS.md`, seção 4 (migração `0015`).
 
 ## Chat de teste do Console (HR-22)

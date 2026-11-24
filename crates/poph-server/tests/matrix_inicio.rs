@@ -1357,6 +1357,7 @@ async fn listagem_por_cliente_acha_so_a_conversa_do_identificador_do_metadata() 
     let filtro = FiltroConversas {
         status: None,
         external_peer: Some(identificador),
+        ..Default::default()
     };
     let da_a: Vec<String> = cenario
         .store

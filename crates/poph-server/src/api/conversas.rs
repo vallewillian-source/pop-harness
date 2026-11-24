@@ -8,13 +8,14 @@ use crate::{
 };
 use axum::{
     Json,
-    extract::{Path, Query, State},
+    extract::{Path, Query, State, rejection::JsonRejection},
 };
 use poph_store::{FiltroConversas, OrdemConversas, StatusConversa};
-use poph_types::{AgentId, ConversationId, OrgId};
+use poph_types::{AgentId, ConversationId, DepartmentId, OrgId};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::HashMap;
+use utoipa::ToSchema;
 
 #[derive(Deserialize)]
 pub struct CaminhoConversa {
@@ -83,6 +84,7 @@ pub struct ConsultaConversas {
     status: Option<String>,
     /// `recent`: da atividade mais recente para a mais antiga, sem cursor.
     sort: Option<String>,
+    last_activity_before: Option<String>,
 }
 
 /// Lê os filtros da consulta. Valor presente mas vazio, ou desconhecido, devolve 400 sem repetir o
@@ -111,9 +113,18 @@ fn filtro_da_consulta(q: &ConsultaConversas) -> Result<FiltroConversas, ApiError
             Some(limpo.to_owned())
         }
     };
+    let last_activity_before = match q.last_activity_before.as_deref() {
+        None => None,
+        Some(texto) => Some(texto.trim().parse::<i64>().map_err(|_| {
+            ApiError::invalido(
+                "last_activity_before inválido: informe o instante em milissegundos desde 1970",
+            )
+        })?),
+    };
     Ok(FiltroConversas {
         status,
         external_peer,
+        last_activity_before,
     })
 }
 
@@ -128,7 +139,7 @@ fn ordem_da_consulta(q: &ConsultaConversas) -> Result<OrdemConversas, ApiError> 
     }
 }
 
-#[utoipa::path(get, path="/admin/v1/orgs/{org_id}/conversations", tag="conversations", operation_id="conversas_listar", security(("bearer"=[])), params(("org_id"=String, Path), ("limit"=Option<u32>, Query), ("cursor"=Option<String>, Query), ("external_peer"=Option<String>, Query), ("status"=Option<String>, Query), ("sort"=Option<String>, Query)), responses((status=200, description="Conversas", body=ListaJson<Value>), (status=400, description="Parâmetro inválido", body=crate::erro::RespostaErro)))]
+#[utoipa::path(get, path="/admin/v1/orgs/{org_id}/conversations", tag="conversations", operation_id="conversas_listar", security(("bearer"=[])), params(("org_id"=String, Path), ("limit"=Option<u32>, Query), ("cursor"=Option<String>, Query), ("external_peer"=Option<String>, Query), ("status"=Option<String>, Query), ("sort"=Option<String>, Query), ("last_activity_before"=Option<i64>, Query)), responses((status=200, description="Conversas", body=ListaJson<Value>), (status=400, description="Parâmetro inválido", body=crate::erro::RespostaErro)))]
 pub async fn listar(
     State(e): State<Estado>,
     ident: Identidade,
@@ -285,6 +296,61 @@ pub async fn fechar(
         .store
         .conversas()
         .fechar_auditado(org, id, versao, ident.ator_id())?;
+    let complementos = complementos_de(&e, org, std::slice::from_ref(&conversa))?;
+    Ok(Json(conversa_json(&conversa, &complementos)))
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct CorpoTransferencia {
+    department_id: Option<String>,
+    reason: Option<String>,
+}
+
+#[utoipa::path(post, path="/admin/v1/orgs/{org_id}/conversations/{conversation_id}/transfer", tag="conversations", operation_id="conversas_transferir", security(("bearer"=[])), params(("org_id"=String, Path), ("conversation_id"=String, Path)), request_body = CorpoTransferencia, responses((status=200, description="Conversa transferida para o departamento", body=Value), (status=400, description="Corpo inválido, motivo vazio ou departamento malformado", body=crate::erro::RespostaErro), (status=404, description="Conversa ou departamento fora da org", body=crate::erro::RespostaErro), (status=409, description="Conversa encerrada (`conversa_encerrada`): não transfere; nada muda", body=crate::erro::RespostaErro)))]
+pub async fn transferir(
+    State(e): State<Estado>,
+    ident: Identidade,
+    Path(c): Path<CaminhoConversa>,
+    corpo: Result<Json<CorpoTransferencia>, JsonRejection>,
+) -> Result<Json<Value>, ApiError> {
+    let org = id_da_url::<OrgId>(&c.org_id)?;
+    ident.exigir_org(org)?;
+    let id = id_da_url::<ConversationId>(&c.conversation_id)?;
+    let Json(dados) = corpo.map_err(|_| {
+        ApiError::invalido("corpo JSON inválido: use {\"department_id\": ..., \"reason\": ...}")
+    })?;
+    let motivo = dados
+        .reason
+        .as_deref()
+        .map(str::trim)
+        .filter(|motivo| !motivo.is_empty())
+        .ok_or_else(|| ApiError::validacao("reason", "informe o motivo da transferência"))?
+        .to_owned();
+    let departamento =
+        match dados
+            .department_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|texto| !texto.is_empty())
+        {
+            Some(texto) => Some(texto.parse::<DepartmentId>().map_err(|_| {
+                ApiError::validacao("department_id", "informe um id de departamento")
+            })?),
+            None => None,
+        };
+    let detalhe = json!({
+        "motivo": motivo,
+        "ator": "administrador",
+        "department_id": departamento.map(|destino| destino.to_string()),
+    })
+    .to_string();
+    let conversa = e.store.conversas().transferir_auditado(
+        org,
+        id,
+        departamento,
+        Some(ident.ator_id()),
+        detalhe,
+    )?;
     let complementos = complementos_de(&e, org, std::slice::from_ref(&conversa))?;
     Ok(Json(conversa_json(&conversa, &complementos)))
 }

@@ -111,6 +111,7 @@ fn filtro_peer(peer: &str) -> FiltroConversas {
     FiltroConversas {
         external_peer: Some(peer.to_owned()),
         status: None,
+        ..Default::default()
     }
 }
 
@@ -172,6 +173,7 @@ fn filtro_por_situacao_e_os_dois_juntos() {
     let so_transferidas = FiltroConversas {
         status: Some(StatusConversa::Transferida),
         external_peer: None,
+        ..Default::default()
     };
     assert_eq!(
         c.listar(org.id, &so_transferidas),
@@ -181,18 +183,21 @@ fn filtro_por_situacao_e_os_dois_juntos() {
     let so_fechadas = FiltroConversas {
         status: Some(StatusConversa::Fechada),
         external_peer: None,
+        ..Default::default()
     };
     assert_eq!(c.listar(org.id, &so_fechadas), vec![fechada.id]);
 
     let so_abertas = FiltroConversas {
         status: Some(StatusConversa::Aberta),
         external_peer: None,
+        ..Default::default()
     };
     assert_eq!(c.listar(org.id, &so_abertas), vec![aberta.id]);
 
     let cliente_e_transferida = FiltroConversas {
         status: Some(StatusConversa::Transferida),
         external_peer: Some("5511".to_owned()),
+        ..Default::default()
     };
     assert_eq!(
         c.listar(org.id, &cliente_e_transferida),
@@ -308,6 +313,7 @@ fn plano_da_consulta_por_cliente_usa_o_indice_novo_e_nao_varre_a_tabela() {
     let por_cliente = FiltroConversas {
         external_peer: Some("5511".to_owned()),
         status: Some(StatusConversa::Aberta),
+        ..Default::default()
     };
     for ordem in [OrdemConversas::Id, OrdemConversas::Recente] {
         let plano = c
@@ -370,4 +376,49 @@ fn identificador_do_cliente_e_o_peer_sem_espaco_ou_o_id_quando_vazio() {
         achadas.contains(&normal.id),
         "o identificador da sala acha a conversa pelo filtro de cliente"
     );
+}
+
+#[test]
+fn filtro_por_ultima_atividade_traz_so_as_conversas_paradas_da_org() {
+    let c = Cenario::novo("inatividade");
+    let org = c.org("a");
+    let outra = c.org("b");
+    let agente = c.agente(&org, "a");
+    let agente_b = c.agente(&outra, "b");
+    let primeira = c.conversa(&org, &agente, Some("5511"));
+    let segunda = c.conversa(&org, &agente, Some("5522"));
+    let terceira = c.conversa(&org, &agente, Some("5533"));
+    let alheia = c.conversa(&outra, &agente_b, Some("5511"));
+    assert!(alheia.criado_em >= terceira.criado_em);
+
+    let paradas_ate = FiltroConversas {
+        last_activity_before: Some(segunda.criado_em + 1),
+        ..Default::default()
+    };
+    assert_eq!(
+        c.listar(org.id, &paradas_ate),
+        vec![primeira.id, segunda.id]
+    );
+
+    let nada = FiltroConversas {
+        last_activity_before: Some(primeira.criado_em),
+        ..Default::default()
+    };
+    assert!(c.listar(org.id, &nada).is_empty());
+
+    let abertas_paradas = FiltroConversas {
+        status: Some(StatusConversa::Aberta),
+        external_peer: None,
+        last_activity_before: Some(segunda.criado_em + 1),
+    };
+    assert_eq!(
+        c.listar(org.id, &abertas_paradas),
+        vec![primeira.id, segunda.id]
+    );
+
+    c.store
+        .conversas()
+        .mudar_status(org.id, primeira.id, 1, StatusConversa::Fechada, None)
+        .expect("fecha a primeira");
+    assert_eq!(c.listar(org.id, &abertas_paradas), vec![segunda.id]);
 }
