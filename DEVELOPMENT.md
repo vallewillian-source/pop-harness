@@ -60,14 +60,32 @@ cargo test --workspace                    # all Rust tests
 (cd console && npx vitest run src/telas/Operacao.test.tsx)   # one component test
 ```
 
-`scripts/ci.sh` runs: cache pruning, the Console bundle, the API client check, Console tests,
-`cargo fmt --check`, `cargo clippy -D warnings`, build, Rust tests, the model RAM test, `cargo check` for
-ARM64, `cargo deny` and `cargo audit`. The Console steps declare themselves skipped when
+`scripts/ci.sh` runs: cache pruning, the Console bundle, the API client check, Console tests, the comment
+remover test, the comment gate, `cargo fmt --check`, `cargo clippy -D warnings`, build, Rust tests, the model RAM
+test, `cargo check` for ARM64, `cargo deny` and `cargo audit`. The Console steps declare themselves skipped when
 `console/node_modules` does not exist. It ends with `CI LOCAL: OK` or the number of checks that failed.
 
 Tests that talk to external services (model, Jev, EvolutionAPI, Synapse) use in-process fake servers: the
 suite needs no network and no keys. Tests marked `#[ignore]` are measurements or depend on files from
 outside the repository, and say in the attribute what they need.
+
+### Comment gate
+
+Code and configuration carry no comment (`AGENTS.md`); the only exceptions are the shebang and a directive that
+breaks the tool, one line each in `scripts/allow-comments.txt`. `bash scripts/check-comments.sh` is the gate and
+reads the scan of `scripts/strip-comments.py`:
+
+```bash
+bash scripts/check-comments.sh                              # whole repository against the pending list
+bash scripts/check-comments.sh crates/poph-jev              # one module: prints nothing when it is clean
+bash scripts/check-comments.sh --atualizar-pendentes        # regenerate scripts/pendentes-comentario.txt
+```
+
+`scripts/pendentes-comentario.txt` is the whitelist of modules not cleaned yet: one line per file, with the module
+and the number of comments. It is generated, never edited by hand, and it shrinks to nothing as the modules are
+cleaned. The gate fails in four cases: a comment outside the allowlist in a file that is not listed, a listed file
+that no longer has comments, a count that no longer matches the tree, and a malformed list. It runs on Python alone
+(no toolchain) and takes about 13 s on the whole tree.
 
 ### Measurement and acceptance scripts
 

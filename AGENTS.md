@@ -44,6 +44,9 @@ no customer data, machine path or internal document entered the diff.
   first line of a script and a directive that breaks the tool if it goes (`# noqa`, `# type: ignore`, coverage
   ignore markers and the like), each one in the versioned allowlist `scripts/allow-comments.txt`, one line per
   exception with the reason. Code written from now on is born this way, including work already in progress.
+  `bash scripts/check-comments.sh` is the gate; the files still to be cleaned are listed in
+  `scripts/pendentes-comentario.txt` (generated, one line per file with its module and the count), and each module
+  task removes its own lines on the commit that cleans them.
 - **Product text is in Portuguese.** Error messages, log message text, the Jev and agent prompts, the Console UI
   and test data are written in Brazilian Portuguese, because the customer and the operator read them. Only the
   `tracing` key is an identifier and becomes English; the message text does not change.

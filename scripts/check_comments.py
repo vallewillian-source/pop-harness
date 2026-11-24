@@ -1,0 +1,214 @@
+import argparse
+import importlib.util
+import os
+import sys
+from pathlib import Path
+
+PENDING_DEFAULT = "scripts/pendentes-comentario.txt"
+ALLOW_LIST_DEFAULT = "scripts/allow-comments.txt"
+SCANNER_DEFAULT = "scripts/strip-comments.py"
+UNKNOWN_MODULE = "-"
+PENDING_HEADER = (
+    "# Arquivos com comentário fora da allowlist, um por linha: módulo, quantidade de comentários e caminho,",
+    "# separados por TAB. Gerado por `bash scripts/check-comments.sh --atualizar-pendentes`; não editar à mão.",
+)
+MODULE_RULES = (
+    ("Cargo.toml", "M00"),
+    ("deny.toml", "M00"),
+    ("rust-toolchain.toml", "M00"),
+    (".github/", "M00"),
+    ("crates/poph-types/", "M01"),
+    ("crates/poph-core/", "M02"),
+    ("crates/poph-plugins/", "M02"),
+    ("crates/poph-plugin-eco/", "M02"),
+    ("crates/poph-files/", "M03"),
+    ("crates/poph-evolution/", "M03"),
+    ("crates/poph-rag/", "M04"),
+    ("crates/poph-jev/", "M05"),
+    ("crates/poph-fluxos/src/", "M06a"),
+    ("crates/poph-fluxos/", "M06b"),
+    ("crates/poph-matrix/src/", "M07a"),
+    ("crates/poph-matrix/", "M07b"),
+    ("crates/poph-store/src/repos/", "M08b"),
+    ("crates/poph-store/migrations/", "M08c"),
+    ("crates/poph-store/src/", "M08a"),
+    ("crates/poph-store/tests/", "M08d"),
+    ("crates/poph-store/", "M08a"),
+    ("crates/poph-retention/", "M09"),
+    ("crates/poph-agent/src/", "M10a"),
+    ("crates/poph-agent/", "M10b"),
+    ("crates/poph-server/src/", "M11a-c"),
+    ("crates/poph-server/tests/", "M11d"),
+    ("crates/poph-server/", "M11a-c"),
+    ("crates/poph/src/", "M12a"),
+    ("crates/poph/tests/", "M12b"),
+    ("crates/poph/", "M12a"),
+    ("console/src/api/", "M13a"),
+    ("console/src/componentes/", "M13b"),
+    ("console/src/telas/", "M13c"),
+    ("console/", "M13d"),
+    ("scripts/", "M14"),
+    ("tests/fluxos/", "M06b"),
+    ("tests/matrix/", "M07b"),
+)
+
+
+def module_of(relative):
+    if "/" not in relative:
+        return "M00"
+    for pattern, module in MODULE_RULES:
+        if pattern.endswith("/"):
+            if relative.startswith(pattern):
+                return module
+        elif relative == pattern:
+            return module
+    return UNKNOWN_MODULE
+
+
+def load_scanner(path):
+    spec = importlib.util.spec_from_file_location("strip_comments", path)
+    if spec is None or spec.loader is None:
+        raise ValueError(f"não foi possível carregar o removedor de comentários em {path.as_posix()}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def read_pending(path):
+    listed = {}
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        parts = line.split("\t")
+        if len(parts) != 3:
+            raise ValueError(f"linha {number}: esperado módulo, quantidade e caminho separados por TAB: {line!r}")
+        module, count, relative = parts[0].strip(), parts[1].strip(), parts[2].strip()
+        if not count.isdigit():
+            raise ValueError(f"linha {number}: quantidade inválida: {count!r}")
+        if not relative:
+            raise ValueError(f"linha {number}: caminho vazio")
+        if relative in listed:
+            raise ValueError(f"linha {number}: caminho repetido: {relative}")
+        listed[relative] = int(count)
+    return listed
+
+
+def write_pending(path, dirty):
+    lines = list(PENDING_HEADER)
+    for relative in sorted(dirty, key=lambda item: (module_of(item), item)):
+        lines.append(f"{module_of(relative)}\t{dirty[relative]}\t{relative}")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def scan(scanner, rules, paths):
+    dirty = {}
+    findings = []
+    for path in scanner.collect_files(paths):
+        if scanner.is_skipped(path):
+            continue
+        if scanner.language_of(path) is None:
+            continue
+        raw, spans, keep_ids, starts = scanner.process_file(path, rules)
+        resting = [span for span in spans if id(span) not in keep_ids]
+        if not resting:
+            continue
+        relative = path.as_posix()
+        dirty[relative] = len(resting)
+        for span in resting:
+            findings.append(scanner.describe(relative, starts, span, raw))
+    return dirty, findings
+
+
+def main(argv):
+    parser = argparse.ArgumentParser(
+        prog="check-comments.sh",
+        description="Trava de CI: reprova comentário fora da allowlist e fora da lista de pendentes por módulo.",
+    )
+    parser.add_argument("paths", nargs="*", help="caminhos a conferir; sem eles, confere o repositório contra a lista de pendentes")
+    parser.add_argument("--atualizar-pendentes", action="store_true", help="regenera a lista de pendentes a partir da árvore")
+    parser.add_argument("--pendentes", default=PENDING_DEFAULT, help=f"lista de pendentes (padrão: {PENDING_DEFAULT})")
+    parser.add_argument("--allow-list", default=ALLOW_LIST_DEFAULT, help=f"allowlist das exceções (padrão: {ALLOW_LIST_DEFAULT})")
+    parser.add_argument("--raiz", default=".", help="raiz do repositório (padrão: .)")
+    parser.add_argument("--scanner", default=SCANNER_DEFAULT, help=f"removedor de comentários (padrão: {SCANNER_DEFAULT})")
+    arguments = parser.parse_args(argv)
+
+    if arguments.atualizar_pendentes and arguments.paths:
+        print("check-comments: --atualizar-pendentes não aceita caminhos", file=sys.stderr)
+        return 2
+
+    root = Path(arguments.raiz).resolve()
+    if not root.is_dir():
+        print(f"check-comments: raiz não encontrada: {root.as_posix()}", file=sys.stderr)
+        return 2
+    scanner_path = Path(arguments.scanner)
+    if not scanner_path.is_absolute():
+        scanner_path = root / scanner_path
+    try:
+        scanner = load_scanner(scanner_path)
+    except (OSError, ValueError) as error:
+        print(f"check-comments: {error}", file=sys.stderr)
+        return 2
+
+    os.chdir(root)
+
+    try:
+        rules = scanner.load_allow_list(Path(arguments.allow_list))
+    except ValueError as error:
+        print(f"check-comments: allowlist: {error}", file=sys.stderr)
+        return 2
+
+    try:
+        dirty, findings = scan(scanner, rules, arguments.paths or ["."])
+    except FileNotFoundError as error:
+        print(f"check-comments: caminho não encontrado: {error}", file=sys.stderr)
+        return 2
+
+    pending_path = Path(arguments.pendentes)
+
+    if arguments.atualizar_pendentes:
+        write_pending(pending_path, dirty)
+        total = sum(dirty.values())
+        print(f"pendentes: {total} comentário(s) em {len(dirty)} arquivo(s) gravado(s) em {pending_path.as_posix()}")
+        return 0
+
+    if arguments.paths:
+        if not findings:
+            return 0
+        for finding in findings:
+            print(f"{finding.path}:{finding.line}:{finding.column}: comentário fora da allowlist: {finding.text}")
+        print(f"comentários: {len(findings)} fora da allowlist em {len(dirty)} arquivo(s) conferido(s)")
+        return 1
+
+    if not pending_path.exists():
+        print(f"check-comments: lista de pendentes não encontrada: {pending_path.as_posix()}", file=sys.stderr)
+        print("check-comments: rode bash scripts/check-comments.sh --atualizar-pendentes", file=sys.stderr)
+        return 2
+    try:
+        listed = read_pending(pending_path)
+    except ValueError as error:
+        print(f"check-comments: pendentes: {error}", file=sys.stderr)
+        return 2
+
+    appeared = sorted(set(dirty) - set(listed))
+    vanished = sorted(set(listed) - set(dirty))
+    drifted = [relative for relative in sorted(set(dirty) & set(listed)) if dirty[relative] != listed[relative]]
+    if not appeared and not vanished and not drifted:
+        print(f"comentários: {len(dirty)} arquivo(s) pendente(s) como listado(s), nenhum comentário novo")
+        return 0
+
+    for relative in appeared:
+        print(f"+ {relative}: {dirty[relative]} comentário(s) fora da lista de pendentes")
+    for relative in vanished:
+        print(f"- {relative}: está na lista de pendentes e não tem mais comentário na árvore")
+    for relative in drifted:
+        print(f"! {relative}: a lista diz {listed[relative]} comentário(s) e a árvore tem {dirty[relative]}")
+    print(
+        f"comentários: trava reprovada ({len(appeared)} arquivo(s) novo(s), "
+        f"{len(vanished)} entrada(s) vencida(s), {len(drifted)} contagem(ns) diferente(s))"
+    )
+    print("comentários: rode bash scripts/check-comments.sh --atualizar-pendentes depois de limpar o módulo")
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
