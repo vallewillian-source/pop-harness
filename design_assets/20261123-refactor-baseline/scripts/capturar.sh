@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+    echo "Uso: capturar.sh"
+    echo "Executa o ciclo completo de seed, subida do servidor, captura dupla e comparação da linha de base."
+    exit 0
+fi
+
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_DIR="$(cd "$HERE/.." && pwd)"
 ROOT="$(cd "$BASE_DIR/../.." && pwd)"

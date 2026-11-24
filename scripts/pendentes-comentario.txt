@@ -1,7 +1,5 @@
 # Arquivos com comentário fora da allowlist, um por linha: módulo, quantidade de comentários e caminho,
 # separados por TAB. Gerado por `bash scripts/check-comments.sh --atualizar-pendentes`; não editar à mão.
--	11	design_assets/20261123-refactor-baseline/scripts/capture.mjs
--	24	design_assets/20261123-refactor-baseline/scripts/compare.py
 M00	2	.github/dependabot.yml
 M00	2	.github/workflows/ci.yml
 M00	5	.gitignore

@@ -24,7 +24,6 @@ for (const p of candidatePaths) {
         playwright = require(p);
         break;
     } catch (e) {
-        // continue
     }
 }
 
@@ -45,7 +44,6 @@ async function waitForServer(url, timeoutMs = 15000) {
             const res = await fetch(`${url}/healthz`);
             if (res.ok) return true;
         } catch (_) {
-            // wait
         }
         await new Promise((r) => setTimeout(r, 200));
     }
@@ -70,7 +68,6 @@ async function captureScreens(targetDir) {
 
     const page = await context.newPage();
 
-    // 1. Login
     await page.goto(`${BASE_URL}/login`);
     await page.waitForSelector("input");
     await page.waitForTimeout(600);
@@ -78,18 +75,15 @@ async function captureScreens(targetDir) {
     fs.writeFileSync(path.join(targetDir, "01-login.html"), await page.content());
     console.log("✓ Capturada tela 1: Login (01-login.png)");
 
-    // Autenticar com token global de demonstração
     await page.fill("input", DEMO_TOKEN);
     await page.click("button:has-text(\"Entrar\")");
     await page.waitForURL("**/orgs");
     await page.waitForTimeout(1000);
 
-    // 2. Orgs lista
     await page.screenshot({ path: path.join(targetDir, "02-orgs-lista.png") });
     fs.writeFileSync(path.join(targetDir, "02-orgs-lista.html"), await page.content());
     console.log("✓ Capturada tela 2: Orgs - lista (02-orgs-lista.png)");
 
-    // Obter IDs da org e agente para rotas profundas
     const token = await page.evaluate(() => {
         const item = sessionStorage.getItem("poph-console.sessao");
         return JSON.parse(item).token;
@@ -104,7 +98,6 @@ async function captureScreens(targetDir) {
         return { orgId: org.id, agentId: data2.items[0].id };
     }, token);
 
-    // 3. Orgs inspetor
     const orgRow = page.locator("tr", { hasText: "Acme Demonstração" }).first();
     await orgRow.click();
     await page.waitForSelector(".poph-inspetor");
@@ -113,21 +106,18 @@ async function captureScreens(targetDir) {
     fs.writeFileSync(path.join(targetDir, "03-orgs-inspetor.html"), await page.content());
     console.log("✓ Capturada tela 3: Orgs - inspetor (03-orgs-inspetor.png)");
 
-    // 4. Agente Instruções
     await page.goto(`${BASE_URL}/orgs/${ids.orgId}/agents/${ids.agentId}/instructions`);
     await page.waitForTimeout(1000);
     await page.screenshot({ path: path.join(targetDir, "04-agente-instrucoes.png") });
     fs.writeFileSync(path.join(targetDir, "04-agente-instrucoes.html"), await page.content());
     console.log("✓ Capturada tela 4: Agente - Instruções (04-agente-instrucoes.png)");
 
-    // 5. Agente Base de conhecimento
     await page.goto(`${BASE_URL}/orgs/${ids.orgId}/agents/${ids.agentId}/knowledge-base`);
     await page.waitForTimeout(1000);
     await page.screenshot({ path: path.join(targetDir, "05-agente-base-conhecimento.png") });
     fs.writeFileSync(path.join(targetDir, "05-agente-base-conhecimento.html"), await page.content());
     console.log("✓ Capturada tela 5: Agente - Base de conhecimento (05-agente-base-conhecimento.png)");
 
-    // 6. Chat de teste
     await page.goto(`${BASE_URL}/orgs/${ids.orgId}/agents/${ids.agentId}/test-chat`);
     await page.waitForTimeout(1000);
     const conv = page.locator(".poph-chat-teste__item").first();
@@ -139,7 +129,6 @@ async function captureScreens(targetDir) {
     fs.writeFileSync(path.join(targetDir, "06-chat-teste.html"), await page.content());
     console.log("✓ Capturada tela 6: Chat de teste (06-chat-teste.png)");
 
-    // 7. Operação
     await page.goto(`${BASE_URL}/orgs/${ids.orgId}/operacao`);
     await page.waitForTimeout(1000);
     await page.screenshot({ path: path.join(targetDir, "07-operacao.png") });

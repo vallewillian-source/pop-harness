@@ -4,62 +4,40 @@ import os
 import glob
 from PIL import Image, ImageChops, ImageDraw
 
-# Tolerância por canal (0-255) para absorver diferenças imperceptíveis de sub-pixel antialiasing
 COLOR_TOLERANCE = 12
 
-# Limite máximo de pixels com divergência aceitos como ruído fora de regiões voláteis (~0.001% de 1.296.000 px)
 MAX_UNEXPECTED_PIXELS = 15
 
-# Regiões voláteis documentadas por tela: (x1, y1, x2, y2)
-# Qualquer alteração fora destas caixas reprova a comparação.
 VOLATILE_REGIONS = {
-    # 01-login: 100% determinística (sem regiões voláteis)
     "01-login.png": [],
 
-    # 02-orgs-lista:
-    # 1. Topbar: chip de estado e memória do motor (Engine: 200 OK · [N] MB)
-    # 2. Orgs: subtítulo de telemetria (1 nó conectado · Uptime ... · RAM ...)
     "02-orgs-lista.png": [
-        {"nome": "Topbar: chip de memória/engine", "box": (1050, 10, 1264, 48)},
-        {"nome": "Orgs: telemetria (uptime/RAM)", "box": (230, 72, 500, 96)},
+        {"name": "Topbar: chip de memória/engine", "box": (1050, 10, 1264, 48)},
+        {"name": "Orgs: telemetria (uptime/RAM)", "box": (230, 72, 500, 96)},
     ],
 
-    # 03-orgs-inspetor:
-    # 1. Topbar: chip de estado e memória do motor
-    # 2. Orgs: subtítulo de telemetria
     "03-orgs-inspetor.png": [
-        {"nome": "Topbar: chip de memória/engine", "box": (1050, 10, 1264, 48)},
-        {"nome": "Orgs: telemetria (uptime/RAM)", "box": (230, 72, 500, 96)},
+        {"name": "Topbar: chip de memória/engine", "box": (1050, 10, 1264, 48)},
+        {"name": "Orgs: telemetria (uptime/RAM)", "box": (230, 72, 500, 96)},
     ],
 
-    # 04-agente-instrucoes:
-    # 1. Topbar: chip de estado e memória do motor
     "04-agente-instrucoes.png": [
-        {"nome": "Topbar: chip de memória/engine", "box": (1050, 10, 1264, 48)},
+        {"name": "Topbar: chip de memória/engine", "box": (1050, 10, 1264, 48)},
     ],
 
-    # 05-agente-base-conhecimento:
-    # 1. Topbar: chip de estado e memória do motor
     "05-agente-base-conhecimento.png": [
-        {"nome": "Topbar: chip de memória/engine", "box": (1050, 10, 1264, 48)},
+        {"name": "Topbar: chip de memória/engine", "box": (1050, 10, 1264, 48)},
     ],
 
-    # 06-chat-teste:
-    # 1. Topbar: chip de estado e memória do motor
     "06-chat-teste.png": [
-        {"nome": "Topbar: chip de memória/engine", "box": (1050, 10, 1264, 48)},
+        {"name": "Topbar: chip de memória/engine", "box": (1050, 10, 1264, 48)},
     ],
 
-    # 07-operacao:
-    # 1. Topbar: chip de estado e memória do motor
-    # 2. Timestamp de atualização dinâmica da página
-    # 3. Tempo no ar do processo
-    # 4. Memória usada pelo processo
     "07-operacao.png": [
-        {"nome": "Topbar: chip de memória/engine", "box": (1050, 10, 1264, 48)},
-        {"nome": "Operação: timestamp de atualização", "box": (1170, 100, 1304, 136)},
-        {"nome": "Operação: tempo no ar", "box": (730, 298, 880, 318)},
-        {"nome": "Operação: memória usada pelo processo", "box": (730, 663, 880, 683)},
+        {"name": "Topbar: chip de memória/engine", "box": (1050, 10, 1264, 48)},
+        {"name": "Operação: timestamp de atualização", "box": (1170, 100, 1304, 136)},
+        {"name": "Operação: tempo no ar", "box": (730, 298, 880, 318)},
+        {"name": "Operação: memória usada pelo processo", "box": (730, 663, 880, 683)},
     ],
 }
 
@@ -116,7 +94,6 @@ def compare_dirs(dir1, dir2):
 
         allowed_regions = VOLATILE_REGIONS.get(fname, [])
 
-        # Isolar divergências inesperadas fora das regiões voláteis
         unexpected_thresh = thresh.copy()
         draw_unexp = ImageDraw.Draw(unexpected_thresh)
         for reg in allowed_regions:
@@ -136,7 +113,6 @@ def compare_dirs(dir1, dir2):
             print(f"       Caixa delimitadora: [x={x1}, y={y1}, w={w}, h={h}]")
             all_stable = False
         else:
-            # Avaliar se houve variação em regiões voláteis
             vmask = Image.new("L", thresh.size, 0)
             vdraw = ImageDraw.Draw(vmask)
             for reg in allowed_regions:
@@ -149,7 +125,7 @@ def compare_dirs(dir1, dir2):
                 vx1, vy1, vx2, vy2 = v_bbox
                 vw = vx2 - vx1
                 vh = vy2 - vy1
-                reg_names = [reg["nome"] for reg in allowed_regions]
+                reg_names = [reg["name"] for reg in allowed_regions]
                 print(f"[VOLÁTIL] {fname}: {v_pixels} pixels em campos dinâmicos documentados ({', '.join(reg_names)})")
                 print(f"          Caixa: [x={vx1}, y={vy1}, w={vw}, h={vh}]")
             else:
