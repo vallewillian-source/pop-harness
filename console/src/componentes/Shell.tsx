@@ -20,6 +20,7 @@ export function Shell({ children }: { children: ReactNode }) {
     const { sessao } = useSessao();
     const { pathname } = useLocation();
     const [atalhos, setAtalhos] = useState(false);
+    const [railCompacta, setRailCompacta] = useState(false);
     // Organização aberta na URL (`/orgs/:id/...`): só ela tem contador de agentes.
     const partes = pathname.split("/").filter(Boolean);
     const orgAberta = partes[0] === "orgs" ? (partes[1] ?? "") : "";
@@ -52,7 +53,14 @@ export function Shell({ children }: { children: ReactNode }) {
                 <div className="poph-casca__corpo">
                     <SofaAdminShell
                         identity="settings"
-                        rail={<Rail aoAbrirAtalhos={abrirAtalhos} totalDeAgentes={totalDeAgentes} />}
+                        rail={
+                            <Rail
+                                aoAbrirAtalhos={abrirAtalhos}
+                                totalDeAgentes={totalDeAgentes}
+                                compacta={railCompacta}
+                                aoAlternarCompacta={() => setRailCompacta((atual) => !atual)}
+                            />
+                        }
                     >
                         {children}
                     </SofaAdminShell>

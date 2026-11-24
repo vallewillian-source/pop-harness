@@ -1068,6 +1068,117 @@ async fn listagem_com_cluster_soma_instancias_e_marca_a_fora_do_ar() {
     com_falha.sem_segredo();
 }
 
+/// `agents_active_count` (CF-03a) atravessa a listagem do cluster: a contagem vem da instância dona
+/// da org, no próprio payload do `/admin/v1/orgs` dela — quem lista não faz consulta por org.
+#[tokio::test(flavor = "multi_thread")]
+async fn listagem_com_cluster_traz_agentes_ativos_de_cada_instancia() {
+    let (a, b, org, _mapa) = duas_instancias("agentes-ativos-cluster", false).await;
+
+    // Na dona (`b`): 2 agentes ativos e 1 inativo na org de prova.
+    for slug in ["agente-um", "agente-dois"] {
+        b.store
+            .agentes()
+            .criar(
+                org,
+                poph_store::NovoAgente {
+                    nome: format!("Agente {slug}"),
+                    slug: slug.to_owned(),
+                    ..poph_store::NovoAgente::default()
+                },
+            )
+            .expect("cria o agente em b");
+    }
+    let inativo = b
+        .store
+        .agentes()
+        .criar(
+            org,
+            poph_store::NovoAgente {
+                nome: "Agente inativo".to_owned(),
+                slug: "agente-inativo".to_owned(),
+                ..poph_store::NovoAgente::default()
+            },
+        )
+        .expect("cria o agente inativo em b");
+    let lido = b
+        .store
+        .agentes()
+        .obter(org, inativo.id)
+        .expect("lê o agente");
+    b.store
+        .agentes()
+        .atualizar(
+            org,
+            inativo.id,
+            lido.versao,
+            poph_store::MudancaAgente {
+                status: Some(poph_store::Status::Inativo),
+                ..poph_store::MudancaAgente::default()
+            },
+        )
+        .expect("inativa o agente em b");
+
+    // Em `a`: 1 org local com 1 agente ativo. O mapa manda as orgs fora dele para a instância
+    // `default_instance` (`b`), então a org local entra no mapa com o `id` dela em `a`.
+    let local_org = a
+        .store
+        .orgaos()
+        .criar(NovaOrg {
+            nome: "Org local".to_owned(),
+            slug: "org-local-cf03a".to_owned(),
+            config_json: String::new(),
+        })
+        .expect("cria org local")
+        .id;
+    a.store
+        .agentes()
+        .criar(
+            local_org,
+            poph_store::NovoAgente {
+                nome: "Agente local".to_owned(),
+                slug: "agente-local".to_owned(),
+                ..poph_store::NovoAgente::default()
+            },
+        )
+        .expect("cria o agente local");
+
+    let com_cluster = pedir(
+        Method::GET,
+        &format!("{}/admin/v1/orgs?cluster=true", a.base),
+        Some(TOKEN_GLOBAL),
+        None,
+        &[],
+    )
+    .await;
+    assert_eq!(com_cluster.status, StatusCode::OK, "{}", com_cluster.cru);
+    let itens = com_cluster.corpo["items"]
+        .as_array()
+        .unwrap_or_else(|| panic!("items: {}", com_cluster.cru));
+    let remota = itens
+        .iter()
+        .find(|item| item["id"] == json!(org.to_string()))
+        .unwrap_or_else(|| panic!("org de b fora da listagem: {}", com_cluster.cru));
+    assert_eq!(remota["instancia"], json!("b"), "{}", com_cluster.cru);
+    assert_eq!(
+        remota["agents_active_count"],
+        json!(2),
+        "a contagem da org de b tem de vir no payload remoto, sem o inativo: {}",
+        com_cluster.cru
+    );
+    let local = itens
+        .iter()
+        .find(|item| item["id"] == json!(local_org.to_string()))
+        .unwrap_or_else(|| panic!("org local fora da listagem: {}", com_cluster.cru));
+    assert_eq!(local["instancia"], json!("a"), "{}", com_cluster.cru);
+    assert_eq!(
+        local["agents_active_count"],
+        json!(1),
+        "{}",
+        com_cluster.cru
+    );
+    com_cluster.sem_segredo();
+}
+
 /// Fluxo mínimo e válido, usado para provar que as rotas do módulo de Fluxos e Fichas passam pelo
 /// encaminhamento (o mesmo formato dos testes da API de fluxos).
 const FLUXO_DE_PROVA: &str = r#"fluxo(

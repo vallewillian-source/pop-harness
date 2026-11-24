@@ -1651,6 +1651,16 @@ export interface components {
         ListaJson_OrgJson: {
             /** @description Os registros desta página. */
             items: {
+                /**
+                 * Format: int32
+                 * @description Quantos agentes **ativos** (`status = active`) a org tem hoje (CF-03a). Vem sempre, nas duas
+                 *     formas da listagem (com e sem `?cluster=true`) e na leitura de uma org só; `0` quando não há
+                 *     agente ativo. É contado por uma consulta agregada por página, nunca uma por linha.
+                 *
+                 *     `serde(default)` só vale na **leitura**: é o que faz a listagem do cluster continuar
+                 *     funcionando quando uma instância vizinha ainda não tem o campo (versão anterior).
+                 */
+                agents_active_count?: number;
                 /** @description Configuração da org (retenção, limites, padrões). */
                 config: Record<string, never>;
                 /**
@@ -1748,6 +1758,16 @@ export interface components {
         };
         /** @description Org na resposta da API. */
         OrgJson: {
+            /**
+             * Format: int32
+             * @description Quantos agentes **ativos** (`status = active`) a org tem hoje (CF-03a). Vem sempre, nas duas
+             *     formas da listagem (com e sem `?cluster=true`) e na leitura de uma org só; `0` quando não há
+             *     agente ativo. É contado por uma consulta agregada por página, nunca uma por linha.
+             *
+             *     `serde(default)` só vale na **leitura**: é o que faz a listagem do cluster continuar
+             *     funcionando quando uma instância vizinha ainda não tem o campo (versão anterior).
+             */
+            agents_active_count?: number;
             /** @description Configuração da org (retenção, limites, padrões). */
             config: Record<string, never>;
             /**
@@ -1892,7 +1912,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Página de orgs. Com `cluster=true`, `items` traz todas as orgs do cluster (cada uma com `instancia`) e `instancias` traz o estado de cada instância; sem o parâmetro é a página de sempre */
+            /** @description Página de orgs. Cada item traz `agents_active_count` (agentes com `status = active`, `0` quando não há nenhum), nas duas formas da listagem. Com `cluster=true`, `items` traz todas as orgs do cluster (cada uma com `instancia`) e `instancias` traz o estado de cada instância; sem o parâmetro é a página de sempre */
             200: {
                 headers: {
                     [name: string]: unknown;

@@ -1,0 +1,354 @@
+/* Topo do rail na visão do agente (CF-07, desenho `AgentSwitcherCombobox` da prancha 03).
+ *
+ * Duas peças: o link de volta "← Agentes da Org" (22 px de altura, seta de 12 px e texto de 11 px em
+ * tom mudo) e o combobox do agente (36 px, fundo e borda do desenho, ícone de bot em âmbar, nome em
+ * 12,5 px Medium e subtítulo de 10,5 px). Ao abrir, a borda vira âmbar, como no seletor de
+ * organização da prancha 05.
+ *
+ * O popover vai para o `body` (fixo, acima do rail), por isso as classes não dependem de
+ * `.poph-casca`. Cores e espaços vêm dos tokens `--pop-*`. A geometria do popover é a mesma do
+ * seletor de organização (`posicaoDoGatilho`, em `SeletorDeOrganizacao.tsx`).
+ */
+
+/* Link de volta: ocupa a linha inteira, com o recuo de 4 px do desenho. */
+.poph-agsel__voltar {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 6px;
+    box-sizing: border-box;
+    height: 22px;
+    padding: 0 4px;
+    border-radius: var(--pop-radius-sm, 4px);
+    color: var(--pop-text-muted);
+    font-family: var(--pop-font-sans);
+    font-size: 11px;
+    text-decoration: none;
+    min-width: 0;
+}
+
+.poph-agsel__voltar:hover {
+    color: var(--pop-text-primary);
+}
+
+.poph-agsel__voltar:focus-visible {
+    outline: none;
+    box-shadow: var(--pop-focus-ring);
+}
+
+.poph-agsel__voltar-seta {
+    flex: none;
+    width: 14px;
+    height: 14px;
+}
+
+.poph-agsel__voltar-texto {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Combobox do agente: 36 px de altura e duas linhas de texto, como no desenho. */
+.poph-agsel {
+    position: relative;
+    display: flex;
+    width: 100%;
+    min-width: 0;
+    flex: none;
+}
+
+.poph-agsel__gatilho {
+    display: flex;
+    align-items: center;
+    gap: var(--pop-spacing-md, 8px);
+    width: 100%;
+    height: 36px;
+    padding: 0 var(--pop-spacing-md, 8px);
+    box-sizing: border-box;
+    border: 1px solid var(--pop-line);
+    border-radius: var(--pop-radius-sm, 6px);
+    background: var(--pop-surface-glass);
+    color: var(--pop-text-primary);
+    font-family: var(--pop-font-sans);
+    text-align: left;
+    cursor: pointer;
+    min-width: 0;
+}
+
+.poph-agsel__gatilho:hover {
+    background: var(--pop-surface-hover);
+}
+
+.poph-agsel__gatilho[aria-expanded="true"] {
+    border-color: var(--pop-accent);
+}
+
+.poph-agsel__gatilho:focus-visible {
+    outline: none;
+    box-shadow: var(--pop-focus-ring);
+}
+
+.poph-agsel__icone {
+    flex: none;
+    width: 14px;
+    height: 14px;
+    color: var(--pop-accent);
+}
+
+/* Nome e subtítulo empilhados, um sobre o outro, como no desenho. */
+.poph-agsel__coluna {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+}
+
+.poph-agsel__rotulo {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12.5px;
+    font-weight: var(--pop-font-weight-medium, 500);
+    line-height: 1.25;
+}
+
+.poph-agsel__sub {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--pop-text-muted);
+    font-size: 10.5px;
+    line-height: 1.25;
+}
+
+.poph-agsel__setas {
+    flex: none;
+    color: var(--pop-text-muted);
+}
+
+/* Modo foco: o gatilho vira um tile de 32×32 só com o ícone e o link de volta, só a seta. */
+.poph-agsel--compacta {
+    width: 32px;
+    height: 32px;
+    margin: 0 auto;
+}
+
+.poph-agsel--compacta .poph-agsel__gatilho {
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    gap: 0;
+}
+
+.poph-agsel--compacta .poph-agsel__coluna,
+.poph-agsel--compacta .poph-agsel__setas {
+    display: none;
+}
+
+.poph-agsel__voltar--compacta {
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    justify-content: center;
+    margin: 0 auto;
+}
+
+.poph-agsel__voltar--compacta .poph-agsel__voltar-texto {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+}
+
+/* Abaixo de 900 px o rail entra recolhido pelo layout: as duas peças viram tile/seta. */
+@media (max-width: 900px) {
+    .poph-agsel {
+        width: 32px;
+        height: 32px;
+        margin: 0 auto;
+    }
+
+    .poph-agsel .poph-agsel__gatilho {
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        padding: 0;
+        gap: 0;
+    }
+
+    .poph-agsel .poph-agsel__coluna,
+    .poph-agsel .poph-agsel__setas {
+        display: none;
+    }
+
+    .poph-agsel__voltar {
+        width: 32px;
+        height: 32px;
+        padding: 0;
+        justify-content: center;
+        margin: 0 auto;
+    }
+
+    .poph-agsel__voltar .poph-agsel__voltar-texto {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
+    }
+}
+
+/* Popover (no body): busca e lista dos agentes da organização. */
+.poph-agsel__painel {
+    position: fixed;
+    z-index: 1300;
+    display: flex;
+    flex-direction: column;
+    gap: var(--pop-spacing-xs, 4px);
+    box-sizing: border-box;
+    padding: var(--pop-spacing-sm, 6px);
+    border: 1px solid var(--pop-line);
+    border-radius: var(--pop-radius-md, 8px);
+    background: var(--pop-surface-raised);
+    box-shadow: var(--pop-shadow-floating);
+    color: var(--pop-text-primary);
+    font-family: var(--pop-font-sans);
+    overflow: hidden;
+}
+
+.poph-agsel__busca {
+    display: flex;
+    align-items: center;
+    gap: var(--pop-spacing-sm, 6px);
+    height: 30px;
+    padding: 0 var(--pop-spacing-md, 8px);
+    box-sizing: border-box;
+    flex: none;
+    border: 1px solid var(--pop-line-strong);
+    border-radius: var(--pop-radius-sm, 6px);
+    background: var(--pop-surface-glass);
+    color: var(--pop-text-muted);
+}
+
+.poph-agsel__busca:focus-within {
+    box-shadow: var(--pop-focus-ring);
+}
+
+.poph-agsel__busca svg {
+    flex: none;
+    width: 13px;
+    height: 13px;
+}
+
+.poph-agsel__campo {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 100%;
+    padding: 0;
+    border: none;
+    outline: none;
+    background: transparent;
+    color: var(--pop-text-primary);
+    font-family: var(--pop-font-sans);
+    font-size: 12px;
+}
+
+.poph-agsel__campo::placeholder {
+    color: var(--pop-text-muted);
+}
+
+.poph-agsel__grupo {
+    flex: none;
+    padding: 4px 6px 0;
+    color: var(--pop-text-muted);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: var(--pop-letter-spacing-label-caps, 0.055em);
+    text-transform: uppercase;
+}
+
+.poph-agsel__lista {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin: 0;
+    padding: 0;
+    min-height: 0;
+    list-style: none;
+    overflow-y: auto;
+    scrollbar-width: thin;
+}
+
+.poph-agsel__opcao {
+    display: flex;
+    align-items: center;
+    gap: var(--pop-spacing-md, 8px);
+    min-height: 34px;
+    padding: 4px var(--pop-spacing-md, 8px);
+    box-sizing: border-box;
+    border-radius: var(--pop-radius-sm, 6px);
+    color: var(--pop-text-secondary);
+    cursor: pointer;
+}
+
+.poph-agsel__opcao svg {
+    flex: none;
+    width: 14px;
+    height: 14px;
+    color: var(--pop-text-muted);
+}
+
+.poph-agsel__opcao--ativa {
+    background: var(--pop-surface-hover);
+    color: var(--pop-text-primary);
+}
+
+.poph-agsel__opcao[aria-current="true"] .poph-agsel__nome {
+    font-weight: 700;
+}
+
+.poph-agsel__texto {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.poph-agsel__nome {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12.5px;
+    font-weight: var(--pop-font-weight-medium, 500);
+    line-height: 1.25;
+}
+
+.poph-agsel__slug {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--pop-text-muted);
+    font-size: 10.5px;
+    line-height: 1.3;
+}
+
+.poph-agsel__marca {
+    flex: none;
+    color: var(--pop-success) !important;
+}
+
+.poph-agsel__aviso {
+    margin: 0;
+    padding: var(--pop-spacing-md, 8px);
+    color: var(--pop-text-muted);
+    font-size: 12px;
+    line-height: 1.4;
+}

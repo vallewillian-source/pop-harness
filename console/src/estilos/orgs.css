@@ -1,87 +1,194 @@
-/* Lista de organizações no layout D1 (RL-05).
+/* Lista de organizações no layout da prancha 01 do FigCraft (CF-03b).
  *
- * Só o que a tela precisa por cima da `SofaTable` e dos blocos de `relayout.css`: altura de linha
- * do desenho (56 px), marcador âmbar da linha selecionada, ações da linha e os estados de
- * carregamento. Nada de cartão: a separação vem da linha de 1 px (`--pop-line`).
+ * Só o que a tela precisa por cima da `SofaTable` e dos blocos de `relayout.css`: título com a
+ * contagem, barra de abas e telemetria, tabela em caixa com linha de 52 px, células, estados de
+ * carregamento e os três cards de operação do cluster. Sem cor nova: tudo sai dos tokens `--pop-*`.
  *
  * A `SofaTable` não é editada: as regras daqui entram pelo `className` que ela aceita, com
  * especificidade suficiente para vencer o CSS da biblioteca (`.poph-orgs__tabela .sofa-…`).
  */
 
-/* ── Barra de abas + filtro ───────────────────────────────────────────────── */
+/* ── Cabeçalho: título, contagem e ações ──────────────────────────────────── */
 
-.poph-orgs__filtros {
-    justify-content: space-between;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: var(--pop-spacing-lg, 12px);
+/* A área da lista é o contêiner das consultas de largura (a gaveta do inspetor a estreita). */
+.poph-orgs__painel {
+    container: poph-orgs / inline-size;
 }
 
-.poph-orgs__abas {
+.poph-orgs__titulo-linha {
     display: flex;
     align-items: center;
-    gap: var(--pop-spacing-2xl, 22px);
-    min-width: 0;
-    overflow-x: auto;
+    gap: var(--pop-spacing-sm, 6px);
 }
 
-/* A aba é um botão de filtro: `aria-pressed` diz o estado, o traço âmbar mostra. */
-.poph-orgs__abas .poph-aba:focus-visible {
-    outline: 2px solid var(--pop-accent);
-    outline-offset: 2px;
+/* Contagem de organizações ao lado do título (o chip do desenho). */
+.poph-orgs__contagem {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 22px;
+    height: 20px;
+    padding: 0 6px;
+    border: 1px solid var(--pop-line);
     border-radius: var(--pop-radius-sm, 4px);
+    background: var(--pop-ink-hover);
+    color: var(--pop-text-muted);
+    font-family: var(--pop-font-mono, "IBM Plex Mono", monospace);
+    font-size: 11px;
+}
+
+.poph-orgs__acoes-topo {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: var(--pop-spacing-sm, 6px);
+    min-width: 0;
 }
 
 .poph-orgs__busca {
     flex: none;
-    width: 244px;
+    width: 240px;
     max-width: 100%;
 }
 
-/* ── Tabela contínua (linha de 56 px, como em D1) ─────────────────────────── */
+/* ── Barra de abas + telemetria ───────────────────────────────────────────── */
 
-/* Sem a caixa com borda e fundo da SofaTable (D-04): superfície contínua, igual a Produtos.
- * O `className` da `SofaTable` cai no próprio elemento raiz (`.sofa-table`), não num wrapper,
- * então o seletor é composto — `.poph-orgs__tabela .sofa-table` seria descendente e não pegaria. */
+.poph-orgs__barra {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--pop-spacing-lg, 12px);
+}
+
+/* Abas segmentadas: um trilho com a aba ativa em degrau tonal (sem traço de borda). */
+.poph-orgs__abas {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    max-width: 100%;
+    min-width: 0;
+    padding: 3px;
+    overflow-x: auto;
+    border: 1px solid var(--pop-line);
+    border-radius: var(--pop-radius-md, 6px);
+    background: var(--pop-surface-glass);
+}
+
+.poph-orgs__abas .poph-aba {
+    padding: 5px 10px;
+    border-radius: var(--pop-radius-sm, 4px);
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.poph-orgs__abas .poph-aba--ativa {
+    background: var(--pop-ink-active);
+}
+
+/* O traço de aba da base da lista não entra no trilho segmentado. */
+.poph-orgs__abas .poph-aba--ativa::after {
+    display: none;
+}
+
+.poph-orgs__abas .poph-aba:focus-visible {
+    outline: 2px solid var(--pop-accent);
+    outline-offset: 2px;
+}
+
+.poph-orgs__telemetria {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 0;
+    color: var(--pop-text-muted);
+    font-size: 12px;
+}
+
+.poph-orgs__ponto {
+    flex: none;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--pop-text-muted);
+}
+
+.poph-orgs__ponto--ok {
+    background: var(--pop-success);
+}
+
+.poph-orgs__ponto--aviso {
+    background: var(--pop-accent);
+}
+
+.poph-orgs__ponto--falha {
+    background: var(--pop-danger);
+}
+
+/* ── Tabela em caixa (linha de 52 px, cabeçalho de 34 px, como no desenho) ── */
+
 .sofa-table.poph-orgs__tabela {
-    border: none;
-    border-radius: 0;
-    background: transparent;
-    overflow: visible;
+    border: 1px solid var(--pop-line);
+    border-radius: var(--pop-radius-md, 8px);
+    background: var(--pop-surface-raised);
+    overflow: hidden;
 }
 
 .poph-orgs__tabela .sofa-table__table {
-    border-top: 1px solid var(--pop-line);
+    border-top: none;
 }
 
 .poph-orgs__tabela .sofa-table__th {
-    height: 36px;
+    height: 34px;
+    padding-top: 0;
+    padding-bottom: 0;
+    color: var(--pop-text-muted);
+    font-size: 10.5px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+/* O botão de ordenação do cabeçalho traz 42 px da SofaUI; o cabeçalho do desenho tem 34 px. */
+.poph-orgs__tabela .sofa-table__th-sort-btn {
+    height: 34px;
 }
 
 .poph-orgs__tabela .sofa-table__td {
-    height: 56px;
+    height: 52px;
 }
 
+/* Linha do inspetor aberto: degrau tonal e nome em âmbar (sem barra lateral colorida). */
 .poph-orgs__tabela .sofa-table__row--selected {
     background: var(--pop-ink-active);
 }
 
-/* Marcador âmbar da linha selecionada, na borda esquerda da primeira célula. */
-.poph-orgs__tabela .sofa-table__row--selected .sofa-table__td:first-child {
-    position: relative;
-}
-
-.poph-orgs__tabela .sofa-table__row--selected .sofa-table__td:first-child::before {
-    content: "";
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    left: 0;
-    width: 2px;
-    background: var(--pop-accent);
-}
-
 /* ── Células ──────────────────────────────────────────────────────────────── */
+
+.poph-orgs__identidade-linha {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+}
+
+.poph-orgs__tile {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border: 1px solid var(--pop-line);
+    border-radius: var(--pop-radius-sm, 6px);
+    background: var(--pop-ink-hover);
+    color: var(--pop-text-secondary);
+}
+
+.poph-orgs__tile--atenuado {
+    color: var(--pop-text-muted);
+}
 
 .poph-orgs__identidade {
     display: flex;
@@ -108,6 +215,10 @@
     font-weight: var(--pop-font-weight-regular, 400);
 }
 
+.poph-orgs__nome--selecionado {
+    color: var(--pop-accent);
+}
+
 .poph-orgs__nome:focus-visible {
     outline: 2px solid var(--pop-accent);
     outline-offset: 2px;
@@ -119,6 +230,11 @@
 }
 
 /* ── Ações da linha ───────────────────────────────────────────────────────── */
+
+/* A SofaUI esconde o ⋮ da linha até o hover ou o foco; o desenho mostra o ícone sempre. */
+.poph-orgs__tabela .sofa-table__cell--actions .sofa-icon-button {
+    opacity: 1;
+}
 
 .poph-orgs__acoes {
     display: inline-flex;
@@ -133,11 +249,13 @@
 .poph-orgs__esqueleto {
     display: flex;
     flex-direction: column;
-    border-top: 1px solid var(--pop-line);
+    border: 1px solid var(--pop-line);
+    border-radius: var(--pop-radius-md, 8px);
+    overflow: hidden;
 }
 
 .poph-orgs__esqueleto-linha {
-    height: 56px;
+    height: 52px;
     border-bottom: 1px solid var(--pop-line);
     background: linear-gradient(
         90deg,
@@ -170,4 +288,103 @@
     color: var(--pop-text-muted);
     font-family: var(--pop-font-mono, "IBM Plex Mono", monospace);
     font-size: 11px;
+}
+
+/* ── Cards de operação do cluster (abaixo da tabela) ──────────────────────── */
+
+.poph-orgs__cards {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--pop-spacing-md, 10px);
+}
+
+.poph-orgs__card {
+    min-width: 0;
+    padding: 12px 14px;
+    border: 1px solid var(--pop-line);
+    border-radius: var(--pop-radius-md, 8px);
+    background: var(--pop-surface-raised);
+}
+
+.poph-orgs__card-cabeca {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--pop-spacing-sm, 6px);
+}
+
+.poph-orgs__card-titulo {
+    margin: 0;
+    color: var(--pop-text-primary);
+    font-size: 12.5px;
+    font-weight: var(--pop-font-weight-semibold, 600);
+}
+
+.poph-orgs__card-texto {
+    margin: 6px 0 0;
+    color: var(--pop-text-muted);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.poph-orgs__selo {
+    flex: none;
+    padding: 1px 6px;
+    border: 1px solid var(--pop-line);
+    border-radius: var(--pop-radius-sm, 4px);
+    color: var(--pop-text-muted);
+    font-family: var(--pop-font-mono, "IBM Plex Mono", monospace);
+    font-size: 10.5px;
+    white-space: nowrap;
+}
+
+.poph-orgs__comandos {
+    margin: 6px 0 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.poph-orgs__comandos code {
+    color: var(--pop-text-secondary);
+    font-family: var(--pop-font-mono, "IBM Plex Mono", monospace);
+    font-size: 11.5px;
+}
+
+/* ── Larguras: a área da lista muda com a gaveta aberta, então a regra é pelo contêiner ──── */
+
+/* Colunas secundárias saem antes de a tabela apertar: Retenção, Nó / instância e, por último, Atualizada. */
+@container poph-orgs (max-width: 999px) {
+    .poph-orgs__tabela .sofa-table__th:nth-child(5),
+    .poph-orgs__tabela .sofa-table__td:nth-child(5) {
+        display: none;
+    }
+}
+
+@container poph-orgs (max-width: 919px) {
+    .poph-orgs__tabela .sofa-table__th:nth-child(3),
+    .poph-orgs__tabela .sofa-table__td:nth-child(3) {
+        display: none;
+    }
+}
+
+@container poph-orgs (max-width: 759px) {
+    .poph-orgs__tabela .sofa-table__th:nth-child(6),
+    .poph-orgs__tabela .sofa-table__td:nth-child(6) {
+        display: none;
+    }
+}
+
+@container poph-orgs (max-width: 999px) {
+    .poph-orgs__cards {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@container poph-orgs (max-width: 639px) {
+    .poph-orgs__cards {
+        grid-template-columns: minmax(0, 1fr);
+    }
 }

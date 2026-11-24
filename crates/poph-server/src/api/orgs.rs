@@ -35,6 +35,14 @@ pub struct OrgJson {
     pub created_at: i64,
     /// Última alteração (ms).
     pub updated_at: i64,
+    /// Quantos agentes **ativos** (`status = active`) a org tem hoje (CF-03a). Vem sempre, nas duas
+    /// formas da listagem (com e sem `?cluster=true`) e na leitura de uma org só; `0` quando não há
+    /// agente ativo. É contado por uma consulta agregada por página, nunca uma por linha.
+    ///
+    /// `serde(default)` só vale na **leitura**: é o que faz a listagem do cluster continuar
+    /// funcionando quando uma instância vizinha ainda não tem o campo (versão anterior).
+    #[serde(default)]
+    pub agents_active_count: u32,
     /// Instância dona da org (HR-50b-2). Só aparece com `?cluster=true`; sem o parâmetro, a
     /// resposta é a de sempre, sem este campo.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -54,6 +62,7 @@ impl OrgJson {
             version: org.versao,
             created_at: org.criado_em,
             updated_at: org.atualizado_em,
+            agents_active_count: 0,
             instancia: None,
         }
     }
@@ -62,6 +71,36 @@ impl OrgJson {
         self.instancia = Some(instancia.to_owned());
         self
     }
+
+    fn com_agentes_ativos(mut self, ativos: u32) -> Self {
+        self.agents_active_count = ativos;
+        self
+    }
+}
+
+/// Monta os itens da resposta com `agents_active_count` preenchido.
+///
+/// A contagem das orgs da página sai de **uma** consulta agregada
+/// ([`poph_store::Agentes::contar_ativos_por_org`]) — a listagem não faz consulta por linha, e o
+/// número não é inventado: org que aparece na consulta recebe o total, as demais ficam com `0`.
+fn itens_com_agentes_ativos(
+    estado: &Estado,
+    orgs: &[Org],
+    instancia: Option<&str>,
+) -> Result<Vec<OrgJson>, ApiError> {
+    let ids: Vec<OrgId> = orgs.iter().map(|org| org.id).collect();
+    let contagem = estado.store.agentes().contar_ativos_por_org(&ids)?;
+    Ok(orgs
+        .iter()
+        .map(|org| {
+            let item =
+                OrgJson::de(org).com_agentes_ativos(contagem.get(&org.id).copied().unwrap_or(0));
+            match instancia {
+                Some(instancia) => item.na_instancia(instancia),
+                None => item,
+            }
+        })
+        .collect())
 }
 
 /// Lista de orgs. Sem `?cluster=true` é a mesma resposta de sempre (`items` + `next_cursor`);
@@ -189,7 +228,7 @@ const PAGINAS_DA_LISTA_REMOTA: u32 = 20;
         ("cluster" = Option<bool>, Query, description = "Com `true`, soma as orgs das outras instâncias do mapa (token global) e devolve o estado de cada instância em `instancias`; uma instância fora do ar aparece como `inacessivel` sem derrubar a lista")
     ),
     responses(
-        (status = 200, description = "Página de orgs. Com `cluster=true`, `items` traz todas as orgs do cluster (cada uma com `instancia`) e `instancias` traz o estado de cada instância; sem o parâmetro é a página de sempre", body = ListaJson<OrgJson>),
+        (status = 200, description = "Página de orgs. Cada item traz `agents_active_count` (agentes com `status = active`, `0` quando não há nenhum), nas duas formas da listagem. Com `cluster=true`, `items` traz todas as orgs do cluster (cada uma com `instancia`) e `instancias` traz o estado de cada instância; sem o parâmetro é a página de sempre", body = ListaJson<OrgJson>),
         (status = 401, description = "Token ausente ou inválido", body = crate::erro::RespostaErro)
     )
 )]
@@ -204,7 +243,7 @@ pub async fn listar(
     if let Some(propria) = identidade.org {
         let org = estado.store.orgaos().obter(propria)?;
         return Ok(Json(ListaOrgsJson::local(ListaJson {
-            items: vec![OrgJson::de(&org)],
+            items: itens_com_agentes_ativos(&estado, std::slice::from_ref(&org), None)?,
             next_cursor: None,
         })));
     }
@@ -213,7 +252,7 @@ pub async fn listar(
     }
     let pagina = consulta.pagina()?;
     let orgs = estado.store.orgaos().listar(pagina)?;
-    let items: Vec<OrgJson> = orgs.iter().map(OrgJson::de).collect();
+    let items = itens_com_agentes_ativos(&estado, &orgs, None)?;
     let next_cursor = proximo_cursor(&items, pagina.limite, |item| item.id.clone());
     Ok(Json(ListaOrgsJson::local(ListaJson { items, next_cursor })))
 }
@@ -242,11 +281,7 @@ async fn listar_no_cluster(
             break;
         }
     }
-    let mut items: Vec<OrgJson> = todas
-        .iter()
-        .map(OrgJson::de)
-        .map(|org| org.na_instancia(&local))
-        .collect();
+    let mut items: Vec<OrgJson> = itens_com_agentes_ativos(estado, &todas, Some(&local))?;
     let mut instancias = vec![InstanciaStatusJson {
         id: local.clone(),
         url: cluster
@@ -449,6 +484,7 @@ pub async fn criar(
         "org",
         org.id.to_string(),
     )?;
+    // Org recém-criada não tem agente: `agents_active_count` é 0 sem precisar consultar.
     Ok((StatusCode::CREATED, Json(OrgJson::de(&org))))
 }
 
@@ -474,7 +510,10 @@ pub async fn mostrar(
     let id = id_da_url::<OrgId>(&caminho.org_id)?;
     identidade.exigir_org(id)?;
     let org = estado.store.orgaos().obter(id)?;
-    Ok(Json(OrgJson::de(&org)))
+    let item = itens_com_agentes_ativos(&estado, std::slice::from_ref(&org), None)?
+        .pop()
+        .unwrap_or_else(|| OrgJson::de(&org));
+    Ok(Json(item))
 }
 
 /// `PATCH /admin/v1/orgs/{org_id}` (exige `If-Match`).
@@ -533,7 +572,10 @@ pub async fn atualizar(
         "org",
         id.to_string(),
     )?;
-    Ok(Json(OrgJson::de(&org)))
+    let item = itens_com_agentes_ativos(&estado, std::slice::from_ref(&org), None)?
+        .pop()
+        .unwrap_or_else(|| OrgJson::de(&org));
+    Ok(Json(item))
 }
 
 /// `DELETE /admin/v1/orgs/{org_id}?force=true` (só token global).

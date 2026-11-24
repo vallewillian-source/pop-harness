@@ -8,9 +8,12 @@
  * RL-04: busca rápida de organizações — atalho Ctrl/⌘+K, não roubar o atalho de outro campo, filtro
  * por nome e slug sem acento e sem caixa, setas + Enter pela guarda de alterações, Esc, mensagem
  * de sem resultado e nome acessível do campo.
+ *
+ * CF-04: busca global (organizações, telas e comandos do poph em grupos), chip de versão, estado
+ * com a RAM de /metrics e o caso de 503 (degradada).
  */
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
@@ -89,7 +92,7 @@ function montar(
 }
 
 function campoDeBusca() {
-    return screen.getByRole("combobox", { name: "Buscar organização" });
+    return screen.getByRole("combobox", { name: "Buscar organizações, telas e comandos" });
 }
 
 afterEach(() => {
@@ -104,7 +107,8 @@ describe("Topbar", () => {
         montar();
 
         expect(screen.getByText("Token global")).toBeInTheDocument();
-        expect(screen.getByText(/^Local :\d+$/)).toBeInTheDocument();
+        // O endereço saiu do texto visível e foi para a dica do indicador de estado (CF-04).
+        expect(screen.getByTitle(/^Local :\d+ · Token global/)).toBeInTheDocument();
         expect(screen.getByText("POP HARNESS")).toBeInTheDocument();
     });
 
@@ -126,7 +130,7 @@ describe("Topbar", () => {
         montar();
 
         expect(await screen.findByText("Sem conexão")).toBeInTheDocument();
-        expect(screen.queryByText(/^Local :\d+$/)).not.toBeInTheDocument();
+        expect(screen.queryByText(/Engine:/)).not.toBeInTheDocument();
     });
 
     it("o botão sair limpa a sessão e vai para /login", async () => {
@@ -217,14 +221,14 @@ describe("busca rápida de organizações (RL-04)", () => {
 
         // Nome, com acento e caixa diferentes do cadastro.
         await usuario.type(campoDeBusca(), "CLINICA");
-        let lista = screen.getByRole("listbox", { name: "Organizações encontradas" });
+        let lista = screen.getByRole("listbox", { name: "Resultados da busca" });
         expect(within(lista).getAllByRole("option")).toHaveLength(1);
         expect(within(lista).getByText("Clínica Nova")).toBeInTheDocument();
 
         // Slug, com caixa diferente.
         await usuario.clear(campoDeBusca());
         await usuario.type(campoDeBusca(), "LOJA-ANTI");
-        lista = screen.getByRole("listbox", { name: "Organizações encontradas" });
+        lista = screen.getByRole("listbox", { name: "Resultados da busca" });
         expect(within(lista).getAllByRole("option")).toHaveLength(1);
         expect(within(lista).getByText("Loja Antiga")).toBeInTheDocument();
     });
@@ -236,13 +240,15 @@ describe("busca rápida de organizações (RL-04)", () => {
 
         montar();
         await usuario.type(campoDeBusca(), "a");
-        // "a" acha as três; a primeira é destacada, uma seta abaixo põe a segunda.
-        const opcoes = screen.getAllByRole("option");
+        // "a" acha as três organizações (no grupo Organizações); a primeira é destacada, uma seta
+        // abaixo põe a segunda.
+        const grupo = screen.getByRole("group", { name: "Organizações" });
+        const opcoes = within(grupo).getAllByRole("option");
         expect(opcoes).toHaveLength(3);
         expect(opcoes[0]).toHaveAttribute("aria-selected", "true");
 
         await usuario.keyboard("{ArrowDown}");
-        expect(screen.getAllByRole("option")[1]).toHaveAttribute("aria-selected", "true");
+        expect(within(grupo).getAllByRole("option")[1]).toHaveAttribute("aria-selected", "true");
 
         await usuario.keyboard("{Enter}");
         expect(screen.getByTestId("caminho")).toHaveTextContent("/orgs/org_2");
@@ -276,7 +282,7 @@ describe("busca rápida de organizações (RL-04)", () => {
 
         expect(campoDeBusca()).toHaveValue("");
         expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
-        expect(screen.queryByRole("status")).not.toBeInTheDocument();
+        expect(screen.queryByText(/Nada encontrado/)).not.toBeInTheDocument();
     });
 
     it("sem resultado mostra 'Nenhuma organização encontrada'", async () => {
@@ -287,7 +293,151 @@ describe("busca rápida de organizações (RL-04)", () => {
         montar();
         await usuario.type(campoDeBusca(), "zzzz");
 
-        expect(screen.getByText("Nenhuma organização encontrada")).toBeInTheDocument();
+        expect(screen.getByText("Nada encontrado para “zzzz”")).toBeInTheDocument();
         expect(screen.queryByRole("option")).not.toBeInTheDocument();
+    });
+});
+
+describe("busca global, versão e estado da instância (CF-04)", () => {
+    const SAUDE_COM_VERSAO = { ...SAUDE, version: "0.1.0" };
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+        Reflect.deleteProperty(navigator, "clipboard");
+    });
+
+    it("mostra o chip de versão da instância ao lado da marca", async () => {
+        prepararSessao("pophg_teste", "global");
+        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_COM_VERSAO }).instalar();
+
+        montar();
+
+        expect(await screen.findByText("v0.1.0")).toBeInTheDocument();
+    });
+
+    it("mostra 'Engine: 200 OK · 125 MB' com a memória lida de /metrics", async () => {
+        prepararSessao("pophg_teste", "global");
+        new ServidorFalso()
+            .responder("GET", "/healthz", { status: 200, corpo: SAUDE_COM_VERSAO })
+            .responder("GET", "/metrics", {
+                status: 200,
+                texto: "# TYPE poph_memoria_processo_bytes gauge\npoph_memoria_processo_bytes 131072000\n",
+            })
+            .instalar();
+
+        montar();
+
+        expect(await screen.findByText("Engine: 200 OK · 125 MB")).toBeInTheDocument();
+    });
+
+    it("sem a memória, mostra só 'Engine: 200 OK' (sem MB inventado)", async () => {
+        prepararSessao("pophg_teste", "global");
+        // Sem rota para /metrics: a consulta falha e a tela não mostra o número.
+        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_COM_VERSAO }).instalar();
+
+        montar();
+
+        expect(await screen.findByText("Engine: 200 OK")).toBeInTheDocument();
+        expect(screen.queryByText(/MB/)).not.toBeInTheDocument();
+    });
+
+    it("saúde 503 aparece como 'degradada', e não como 'Sem conexão'", async () => {
+        prepararSessao("pophg_teste", "global");
+        new ServidorFalso()
+            .responder("GET", "/healthz", { status: 503, corpo: { ...SAUDE_COM_VERSAO, status: "degraded" } })
+            .instalar();
+
+        montar();
+
+        expect(await screen.findByText("Engine: 503 · degradada")).toBeInTheDocument();
+        expect(screen.queryByText("Sem conexão")).not.toBeInTheDocument();
+    });
+
+    it("agrupa o resultado em Organizações, Telas e Comandos do poph", async () => {
+        const usuario = userEvent.setup();
+        prepararSessao("pophg_teste", "global", TRES_ORGS);
+        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_COM_VERSAO }).instalar();
+
+        montar();
+        await usuario.type(campoDeBusca(), "organiz");
+
+        // Nenhuma organização tem "organiz" no nome; a tela "Organizações" e os comandos sim.
+        expect(screen.queryByRole("group", { name: "Organizações" })).not.toBeInTheDocument();
+        expect(screen.getByRole("group", { name: "Telas" })).toBeInTheDocument();
+        expect(screen.getByRole("group", { name: "Comandos do poph" })).toBeInTheDocument();
+    });
+
+    it("tela do menu só aparece na busca quando a organização está aberta na URL", async () => {
+        const usuario = userEvent.setup();
+        prepararSessao("pophg_teste", "global", TRES_ORGS);
+        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_COM_VERSAO }).instalar();
+
+        montar("/orgs/org_2/structure");
+        await usuario.type(campoDeBusca(), "produtos");
+
+        // Com org aberta, "Produtos e catálogo" existe como tela; Enter abre a tela pela guarda.
+        const tela = screen.getByRole("option", { name: /Produtos e catálogo/ });
+        expect(tela).toBeInTheDocument();
+        await usuario.click(tela);
+        expect(screen.getByTestId("caminho")).toHaveTextContent("/orgs/org_2/products");
+    });
+
+    it("sem organização aberta, as telas que exigem organização não aparecem", async () => {
+        const usuario = userEvent.setup();
+        prepararSessao("pophg_teste", "global", TRES_ORGS);
+        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_COM_VERSAO }).instalar();
+
+        montar("/orgs");
+        await usuario.type(campoDeBusca(), "produtos");
+
+        expect(screen.queryByRole("option", { name: /Produtos e catálogo/ })).not.toBeInTheDocument();
+        expect(screen.getByText("Nada encontrado para “produtos”")).toBeInTheDocument();
+    });
+
+    it("Enter num comando copia o texto e avisa que foi copiado", async () => {
+        const usuario = userEvent.setup();
+        const copiar = vi.fn().mockResolvedValue(undefined);
+        Object.defineProperty(navigator, "clipboard", {
+            value: { writeText: copiar },
+            configurable: true,
+        });
+        prepararSessao("pophg_teste", "global", TRES_ORGS);
+        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_COM_VERSAO }).instalar();
+
+        montar();
+        await usuario.type(campoDeBusca(), "doctor");
+        expect(screen.getByRole("group", { name: "Comandos do poph" })).toBeInTheDocument();
+        await usuario.keyboard("{Enter}");
+
+        expect(copiar).toHaveBeenCalledWith("poph doctor");
+        expect(await screen.findByText("Comando copiado: poph doctor")).toBeInTheDocument();
+        // Copiar comando não navega para outra tela.
+        expect(screen.getByTestId("caminho")).toHaveTextContent("/orgs");
+    });
+
+    it("sem área de transferência, o comando aparece no aviso para copiar à mão", async () => {
+        // Força o navegador sem clipboard (o userEvent instala um próprio, que aqui não serve).
+        const usuario = userEvent.setup();
+        Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
+        prepararSessao("pophg_teste", "global", TRES_ORGS);
+        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_COM_VERSAO }).instalar();
+
+        montar();
+        await usuario.type(campoDeBusca(), "doctor");
+        await usuario.keyboard("{Enter}");
+
+        expect(await screen.findByText("Não consegui copiar. Comando: poph doctor")).toBeInTheDocument();
+    });
+
+    it("Enter numa organização continua abrindo /orgs/:id pela busca global", async () => {
+        const usuario = userEvent.setup();
+        prepararSessao("pophg_teste", "global", TRES_ORGS);
+        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_COM_VERSAO }).instalar();
+
+        montar();
+        await usuario.type(campoDeBusca(), "padaria");
+        await usuario.keyboard("{Enter}");
+
+        expect(screen.getByTestId("caminho")).toHaveTextContent("/orgs/org_3");
     });
 });

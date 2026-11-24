@@ -15,13 +15,13 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import type { Agente } from "../api/agentes";
-import type { Org } from "../api/cliente";
+import type { InstanciaDaLista, Org, OrgNaLista } from "../api/cliente";
 import { GuardaAlteracoesProvider, useGuardaDeAlteracoes } from "../componentes/GuardaAlteracoes";
 import { SessaoProvider } from "../sessao/Sessao";
 import { ServidorFalso } from "../testes/servidor";
 import { Orgs } from "./Orgs";
 
-function org(parcial: Partial<Org> & Pick<Org, "id" | "name" | "slug">): Org {
+function org(parcial: Partial<OrgNaLista> & Pick<OrgNaLista, "id" | "name" | "slug">): OrgNaLista {
     return {
         status: "active",
         version: 3,
@@ -96,6 +96,8 @@ const AGENTE: Agente = {
     slug: "atendente-demo",
     description: "",
     status: "active",
+    provider: "gemini",
+    model: "gemini-3.8-flash",
     default_department_id: null,
     human_handoff_department_id: null,
     version: 1,
@@ -103,7 +105,19 @@ const AGENTE: Agente = {
     updated_at: 1_700_000_000_000,
 };
 
-/** Servidor com a lista e a consulta de agentes que a gaveta faz ao abrir. */
+/** Estado do módulo Matrix que a gaveta consulta ao abrir (prancha 01b). */
+const MATRIX_CONECTADO = {
+    org_id: "org_1",
+    enabled: true,
+    connected: true,
+    enabled_at: 1_700_000_000_000,
+    last_failure: null,
+    pending_failures: 0,
+    backlog: { messages: 0, oldest_seconds: 0 },
+    updated_at: 1_700_000_000_000,
+};
+
+/** Servidor com a lista e as consultas que a gaveta faz ao abrir (agentes e Matrix). */
 function servidorCom(items: Org[]) {
     const servidor = new ServidorFalso();
     // A rota mais específica vem primeiro: o roteador falso casa por `includes`, em ordem.
@@ -112,6 +126,7 @@ function servidorCom(items: Org[]) {
             status: 200,
             corpo: { items: [AGENTE], next_cursor: null },
         }))
+        .responder("GET", "/matrix", { status: 200, corpo: MATRIX_CONECTADO })
         .responder("GET", "/admin/v1/orgs", { status: 200, corpo: { items, next_cursor: null } })
         .instalar();
     return servidor;
@@ -133,7 +148,7 @@ describe("Orgs", () => {
         montar();
 
         expect(await screen.findByText("Loja Antiga")).toBeInTheDocument();
-        expect(screen.getByRole("button", { name: "Abrir" })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Acessar →" })).toBeInTheDocument();
 
         const gatilho = screen.getByRole("button", { name: "Ações de Loja Antiga" });
         expect(gatilho).toHaveAttribute("aria-expanded", "false");
@@ -158,7 +173,7 @@ describe("Orgs", () => {
         montar();
 
         expect(await screen.findByText("Patinhas Pet Shop")).toBeInTheDocument();
-        expect(screen.getByRole("button", { name: "Abrir" })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Acessar →" })).toBeInTheDocument();
         expect(screen.queryByRole("button", { name: "Nova organização" })).not.toBeInTheDocument();
         expect(screen.queryByRole("button", { name: "Ações de Patinhas Pet Shop" })).not.toBeInTheDocument();
         expect(screen.queryByRole("button", { name: "Editar" })).not.toBeInTheDocument();
@@ -216,14 +231,14 @@ describe("Orgs", () => {
         expect(screen.queryByRole("button", { name: /^Arquivadas/ })).not.toBeInTheDocument();
     });
 
-    it("Abrir navega para o painel da organização", async () => {
+    it("Acessar navega para o painel da organização", async () => {
         const usuario = userEvent.setup();
         prepararSessao("pophg_teste", "global", [ATIVA]);
         servidorCom([ATIVA]);
 
         montar();
 
-        await usuario.click(await screen.findByRole("button", { name: "Abrir" }));
+        await usuario.click(await screen.findByRole("button", { name: "Acessar →" }));
         expect(await screen.findByTestId("caminho")).toHaveTextContent("/orgs/org_1");
     });
 
@@ -366,7 +381,7 @@ describe("Orgs", () => {
         await waitFor(() => expect(screen.getByText("falha inesperada")).toBeInTheDocument());
     });
 
-    it("teclado: Tab chega ao nome e ao menu da linha, e Enter no Abrir navega", async () => {
+    it("teclado: Tab chega ao nome e ao menu da linha, e Enter no Acessar navega", async () => {
         const usuario = userEvent.setup();
         prepararSessao("pophg_teste", "global", [ATIVA]);
         servidorCom([ATIVA]);
@@ -375,7 +390,7 @@ describe("Orgs", () => {
 
         const link = await screen.findByRole("link", { name: "Loja Antiga" });
         const gatilho = screen.getByRole("button", { name: "Ações de Loja Antiga" });
-        const abrir = screen.getByRole("button", { name: "Abrir" });
+        const abrir = screen.getByRole("button", { name: "Acessar →" });
 
         // Tab percorre os controles da página até a linha (nome) e o menu dela.
         const alcancados: HTMLElement[] = [];
@@ -408,17 +423,18 @@ describe("Orgs", () => {
         const gaveta = await screen.findByRole("complementary", {
             name: "Detalhes de Loja Antiga",
         });
-        expect(within(gaveta).getByText("loja-antiga")).toBeInTheDocument();
-        expect(within(gaveta).getByText("org_1")).toBeInTheDocument();
-        expect(within(gaveta).getByText("v3")).toBeInTheDocument();
+        // Cabeçalho da prancha 01b: slug e versão de concorrência no subtítulo mono.
+        expect(within(gaveta).getByText(/slug: loja-antiga · versão v3 \(ETag\/If-Match\)/)).toBeInTheDocument();
+        expect(within(gaveta).getByText("ID: org_1")).toBeInTheDocument();
         expect(within(gaveta).getByText("30 dias")).toBeInTheDocument();
         expect(within(gaveta).getByText("Ativa")).toBeInTheDocument();
 
-        // O botão Abrir da linha continua na tela: a gaveta encolhe a tabela, não a cobre.
-        expect(screen.getByRole("button", { name: "Abrir" })).toBeInTheDocument();
+        // O botão Acessar da linha continua na tela: a gaveta encolhe a tabela, não a cobre.
+        expect(screen.getByRole("button", { name: "Acessar →" })).toBeInTheDocument();
 
-        // Recursos: a consulta de agentes alimenta a linha de Agentes.
-        expect(await within(gaveta).findByText("1 agente · Atendente Demo")).toBeInTheDocument();
+        // Bloco dos agentes vinculados: um card por agente, com modelo e situação.
+        expect(await within(gaveta).findByText("Atendente Demo")).toBeInTheDocument();
+        expect(within(gaveta).getByText("gemini-3.8-flash · Ativo")).toBeInTheDocument();
     });
 
     it("trocar a seleção atualiza o inspetor para a outra organização", async () => {
@@ -496,11 +512,11 @@ describe("Orgs", () => {
         await usuario.click(await screen.findByText("loja-antiga"));
         const gaveta = await screen.findByRole("complementary");
 
-        expect(await within(gaveta).findByText("não consegui carregar")).toBeInTheDocument();
+        expect(await within(gaveta).findByText("não consegui carregar os agentes")).toBeInTheDocument();
         // O resto da gaveta continua inteiro.
-        expect(within(gaveta).getByText("Propriedades do tenant")).toBeInTheDocument();
-        expect(within(gaveta).getByText("org_1")).toBeInTheDocument();
-        expect(within(gaveta).getByText(/para fechar o inspetor/)).toBeInTheDocument();
+        expect(within(gaveta).getByText("Retenção de histórico")).toBeInTheDocument();
+        expect(within(gaveta).getByText("ID: org_1")).toBeInTheDocument();
+        expect(within(gaveta).getByRole("button", { name: "Acessar Organização →" })).toBeInTheDocument();
     });
 
     it("copiar põe o comando no clipboard e anuncia Copiado", async () => {
@@ -550,7 +566,7 @@ describe("Orgs", () => {
             screen.queryByRole("button", { name: "Ações de Loja Antiga" }),
         ).not.toBeInTheDocument();
         expect(
-            within(gaveta).getByRole("button", { name: "Acessar organização →" }),
+            within(gaveta).getByRole("button", { name: "Acessar Organização →" }),
         ).toBeInTheDocument();
     });
 
@@ -565,10 +581,144 @@ describe("Orgs", () => {
         const gaveta = await screen.findByRole("complementary");
 
         await usuario.click(
-            within(gaveta).getByRole("button", { name: "Acessar organização →" }),
+            within(gaveta).getByRole("button", { name: "Acessar Organização →" }),
         );
 
         expect(await screen.findByRole("dialog")).toHaveAccessibleName("Alterações não salvas");
         expect(screen.queryByTestId("caminho")).not.toBeInTheDocument();
+    });
+});
+
+describe("Orgs · layout da prancha 01 (CF-03b)", () => {
+    /** Servidor com a listagem do cluster, o estado dos nós e a saúde/métricas do nó local. */
+    function servidorDoCluster(items: OrgNaLista[], instancias: InstanciaDaLista[] | null) {
+        const servidor = new ServidorFalso();
+        servidor
+            .responder("GET", "/agents", () => ({ status: 200, corpo: { items: [AGENTE], next_cursor: null } }))
+            .responder("GET", "/backup", {
+                status: 200,
+                texto: "{}",
+                cabecalhos: { "content-disposition": 'attachment; filename="loja-antiga.json"' },
+            })
+            .responder("GET", "/admin/v1/orgs", {
+                status: 200,
+                corpo: { items, next_cursor: null, ...(instancias ? { instancias } : {}) },
+            })
+            .responder("GET", "/healthz", {
+                status: 200,
+                corpo: { status: "ok", version: "0.1.0", uptime_seconds: 15120, databases: { harness: 1, rag: 1 } },
+            })
+            .responder("GET", "/metrics", { status: 200, texto: "poph_memoria_processo_bytes 131072000\n" })
+            .instalar();
+        return servidor;
+    }
+
+    /** Linha da tabela cujo nome é `nome`. */
+    function linhaDe(nome: string): HTMLElement {
+        const linha = screen.getByText(nome).closest("tr");
+        if (!linha) throw new Error(`sem linha para ${nome}`);
+        return linha;
+    }
+
+    it("mostra a contagem de agentes ativos, e '—' com explicação quando a instância não informa", async () => {
+        prepararSessao("pophg_teste", "global", []);
+        const comContagem = org({ id: "org_1", name: "Loja Antiga", slug: "loja-antiga", agents_active_count: 3 });
+        const semContagem = org({ id: "org_2", name: "Patinhas Pet Shop", slug: "patinhas-petshop" });
+        servidorDoCluster([comContagem, semContagem], null);
+
+        montar();
+
+        expect(await screen.findByText("3 agentes")).toBeInTheDocument();
+        const linhaSemContagem = linhaDe("Patinhas Pet Shop");
+        expect(within(linhaSemContagem).getByTitle("A instância ainda não informa a contagem de agentes ativos")).toHaveTextContent("—");
+    });
+
+    it("pede a lista do cluster, mostra o nó de cada organização e não deixa abrir a que está em outro nó", async () => {
+        prepararSessao("pophg_teste", "global", []);
+        const local = org({ id: "org_1", name: "Loja Antiga", slug: "loja-antiga", instancia: "local" });
+        const remota = org({ id: "org_2", name: "Patinhas Pet Shop", slug: "patinhas-petshop", instancia: "node-2" });
+        const servidor = servidorDoCluster(
+            [local, remota],
+            [
+                { id: "local", situacao: "local", orgs: 1 },
+                { id: "node-2", situacao: "inacessivel", orgs: 0, mensagem: "sem resposta" },
+            ],
+        );
+
+        montar();
+
+        expect(await screen.findByText("Loja Antiga")).toBeInTheDocument();
+        expect(servidor.chamadasPara("GET", "/admin/v1/orgs")[0]?.url).toContain("cluster=true");
+        // O nó local aparece como "nó local" (id vazio) ou pelo id, com "online" embaixo.
+        expect(screen.getByText("local")).toBeInTheDocument();
+        expect(screen.getAllByText("online").length).toBeGreaterThan(0);
+        expect(screen.getByText("remoto · inacessível")).toBeInTheDocument();
+
+        // O nome da organização de outro nó não é link, e o botão de acesso fica desabilitado.
+        expect(screen.queryByRole("link", { name: "Patinhas Pet Shop" })).not.toBeInTheDocument();
+        expect(within(linhaDe("Patinhas Pet Shop")).getByRole("button", { name: "Acessar →" })).toBeDisabled();
+        expect(within(linhaDe("Loja Antiga")).getByRole("button", { name: "Acessar →" })).toBeEnabled();
+
+        // Telemetria: conta os nós, uptime e memória do nó local (vindos de /healthz e /metrics).
+        expect(await screen.findByText(/Uptime 4h 12m/)).toBeInTheDocument();
+        expect(screen.getByText(/RAM 125 MB/)).toBeInTheDocument();
+        expect(screen.getByText(/1 nó conectado · 1 nó inacessível/)).toBeInTheDocument();
+    });
+
+    it("Ver detalhes no menu abre o inspetor e destaca o nome da linha", async () => {
+        const usuario = userEvent.setup();
+        prepararSessao("pophg_teste", "global", []);
+        servidorDoCluster([org({ id: "org_1", name: "Loja Antiga", slug: "loja-antiga" })], null);
+
+        montar();
+
+        await screen.findByText("Loja Antiga");
+        const menu = await abrirMenu(usuario, "Loja Antiga");
+        await usuario.click(within(menu).getByRole("menuitem", { name: "Ver detalhes" }));
+
+        expect(await screen.findByRole("complementary", { name: "Detalhes de Loja Antiga" })).toBeInTheDocument();
+        expect(screen.getByRole("link", { name: "Loja Antiga" })).toHaveClass("poph-orgs__nome--selecionado");
+    });
+
+    it("Exportar pelo menu baixa o arquivo sem conversas", async () => {
+        const usuario = userEvent.setup();
+        const criarUrl = vi.fn(() => "blob:teste");
+        const revogarUrl = vi.fn();
+        const criarOriginal = URL.createObjectURL;
+        const revogarOriginal = URL.revokeObjectURL;
+        URL.createObjectURL = criarUrl;
+        URL.revokeObjectURL = revogarUrl;
+        try {
+            prepararSessao("pophg_teste", "global", []);
+            const servidor = servidorDoCluster([org({ id: "org_1", name: "Loja Antiga", slug: "loja-antiga" })], null);
+
+            montar();
+
+            await screen.findByText("Loja Antiga");
+            const menu = await abrirMenu(usuario, "Loja Antiga");
+            await usuario.click(within(menu).getByRole("menuitem", { name: "Exportar" }));
+
+            await waitFor(() => expect(criarUrl).toHaveBeenCalledTimes(1));
+            const pedido = servidor.chamadasPara("GET", "/backup")[0];
+            expect(pedido?.url).toContain("/admin/v1/orgs/org_1/backup");
+            expect(pedido?.url).not.toContain("com_conversas");
+        } finally {
+            URL.createObjectURL = criarOriginal;
+            URL.revokeObjectURL = revogarOriginal;
+        }
+    });
+
+    it("os cards mostram o Matrix como indisponível e os comandos CLI que existem", async () => {
+        prepararSessao("pophg_teste", "global", []);
+        servidorDoCluster([org({ id: "org_1", name: "Loja Antiga", slug: "loja-antiga" })], null);
+
+        montar();
+
+        await screen.findByText("Loja Antiga");
+        expect(screen.getByText("Espelho Matrix Synapse")).toBeInTheDocument();
+        expect(screen.getByText("indisponível")).toBeInTheDocument();
+        expect(screen.getByText("poph org list")).toBeInTheDocument();
+        expect(screen.getByText('poph org create --name "nome"')).toBeInTheDocument();
+        expect(screen.getByText("poph doctor")).toBeInTheDocument();
     });
 });

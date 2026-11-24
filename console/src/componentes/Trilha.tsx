@@ -61,6 +61,15 @@ export function trilha(
     return [{ rotulo: "Organizações", para: "/orgs" }, { rotulo: partes[0] ?? "" }];
 }
 
+/**
+ * Trilha de navegação. Cada migalha é um passo com o seu próprio separador dentro, para que esconder
+ * um passo não deixe um "/" órfão (CF-08).
+ *
+ * Em rotas com caminho longo (organização / agentes / agente / aba, cinco migalhas) o espaço acaba:
+ * a migalha da tela atual nunca encolhe, e as anteriores encolhem por prioridade — quanto mais longe
+ * da atual, mais cedo ela corta com reticências. O `flexShrink` de cada passo é essa distância, e o
+ * texto completo de cada migalha cortada fica no `title`.
+ */
 export function Trilha({ orgs }: { orgs: { id: string; name: string }[] }) {
     const { pathname } = useLocation();
     const partes = pathname.split("/").filter(Boolean);
@@ -70,13 +79,33 @@ export function Trilha({ orgs }: { orgs: { id: string; name: string }[] }) {
         <nav className="poph-topbar__trilha" aria-label="Trilha de navegação">
             {migalhas.map((migalha, indice) => {
                 const ultima = indice === migalhas.length - 1;
+                // 0 na tela atual: ela mantém o tamanho do texto; 1 na anterior, e assim por diante.
+                const distanciaDaAtual = migalhas.length - 1 - indice;
                 return (
-                    <span key={`${migalha.rotulo}-${indice}`} style={{ display: "contents" }}>
-                        {indice > 0 && <span aria-hidden="true">/</span>}
+                    <span
+                        key={`${migalha.rotulo}-${indice}`}
+                        className={
+                            ultima
+                                ? "poph-topbar__passo poph-topbar__passo--atual"
+                                : "poph-topbar__passo"
+                        }
+                        style={{ flexShrink: distanciaDaAtual }}
+                    >
+                        {indice > 0 && (
+                            <span className="poph-topbar__separador" aria-hidden="true">
+                                /
+                            </span>
+                        )}
                         {migalha.para && !ultima ? (
-                            <Link to={migalha.para}>{migalha.rotulo}</Link>
+                            <Link to={migalha.para} title={migalha.rotulo}>
+                                {migalha.rotulo}
+                            </Link>
                         ) : (
-                            <span className={ultima ? "poph-topbar__atual" : "poph-topbar__migalha"}>
+                            <span
+                                className={ultima ? "poph-topbar__atual" : "poph-topbar__migalha"}
+                                title={ultima ? undefined : migalha.rotulo}
+                                aria-current={ultima ? "page" : undefined}
+                            >
                                 {migalha.rotulo}
                             </span>
                         )}

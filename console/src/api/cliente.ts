@@ -12,6 +12,30 @@ export type Org = components["schemas"]["OrgJson"];
 export type ListaOrgs = components["schemas"]["ListaJson_OrgJson"];
 export type RespostaErro = components["schemas"]["RespostaErro"];
 
+/**
+ * Estado de uma instância na listagem com `?cluster=true` (campo `instancias`). `situacao` é
+ * `local` (esta instância), `ok` (respondeu) ou `inacessivel`.
+ */
+export type InstanciaDaLista = {
+    id: string;
+    situacao: string;
+    orgs: number;
+    mensagem?: string | null;
+};
+
+/**
+ * Org na listagem da tela. `agents_active_count` é a contagem de agentes ativos (contrato novo,
+ * CF-03a): fica opcional até o tipo gerado trazer o campo, e a tela mostra "—" enquanto não vier.
+ */
+export type OrgNaLista = Org & { agents_active_count?: number };
+
+/** Listagem de organizações da tela: com `?cluster=true` traz também o estado das instâncias. */
+export type ListaOrgsDoCluster = {
+    items: OrgNaLista[];
+    next_cursor?: string | null;
+    instancias?: InstanciaDaLista[];
+};
+
 /** Falha de uma chamada à API, já traduzida do formato de erro do servidor. */
 export class ErroApi extends Error {
     /** Status HTTP; `0` quando a requisição nem chegou ao servidor. */

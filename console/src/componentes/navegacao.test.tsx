@@ -12,14 +12,22 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { useEffect } from "react";
 import { ItenDeNavegacao, Rail } from "./Rail";
+import type { Agente } from "../api/agentes";
 import { ITENS_DE_NAVEGACAO, type ContextoDeNavegacao, type ItemDeNavegacao } from "./navegacao";
 import { GuardaAlteracoesProvider, useGuardaDeAlteracoes } from "./GuardaAlteracoes";
 import { SessaoProvider } from "../sessao/Sessao";
+import { ServidorFalso, erroApi } from "../testes/servidor";
 
-// O rail consulta a saúde da instância (rede). Nos testes ela devolve uma versão fixa.
-vi.mock("./saude", () => ({
-    useSaude: () => ({ saude: { version: "0.9.1" }, semConexao: false }),
+// O rail consulta a saúde da instância (rede). Nos testes ela devolve uma versão fixa; os testes do
+// chip do cluster trocam o estado (degradada, sem conexão) por `estadoDaSaude.atual`.
+const estadoDaSaude = vi.hoisted(() => ({
+    atual: {
+        saude: { version: "0.9.1" } as { version: string } | null,
+        semConexao: false,
+        degradada: false,
+    },
 }));
+vi.mock("./saude", () => ({ useSaude: () => estadoDaSaude.atual }));
 
 const CHAVE_SESSAO = "poph-console.sessao";
 const CONTEXTO_VAZIO: ContextoDeNavegacao = { orgId: null, agentId: null, totalDeOrgs: null };
@@ -46,7 +54,10 @@ function Sujo() {
     return null;
 }
 
-function prepararSessao(escopo: "global" | "org", orgs: { id: string; name: string }[]) {
+function prepararSessao(
+    escopo: "global" | "org",
+    orgs: { id: string; name: string; slug?: string; status?: string }[],
+) {
     window.sessionStorage.setItem(
         CHAVE_SESSAO,
         JSON.stringify({
@@ -72,8 +83,8 @@ function montarRail(caminho: string, opcoes: { sujo?: boolean; aoAbrirAtalhos?: 
 }
 
 const DUAS_ORGS = [
-    { id: "org_1", name: "Loja Antiga" },
-    { id: "org_2", name: "Clínica Nova" },
+    { id: "org_1", name: "Loja Antiga", slug: "loja-antiga", status: "active" },
+    { id: "org_2", name: "Clínica Nova", slug: "clinica-nova", status: "inactive" },
 ];
 
 beforeEach(() => {
@@ -82,6 +93,7 @@ beforeEach(() => {
 
 afterEach(() => {
     window.sessionStorage.clear();
+    vi.unstubAllGlobals();
 });
 
 describe("lista de navegação", () => {
@@ -393,45 +405,264 @@ describe("menu montado com a sessão", () => {
         expect(screen.getByRole("link", { name: /Organizações/ })).toHaveTextContent("2");
     });
 
-    it("com token global, o seletor oferece Todas e as organizações", () => {
+    it("o seletor mostra a organização aberta e lista as que o token vê, com Todas as organizações", async () => {
+        const usuario = userEvent.setup();
+        prepararSessao("global", DUAS_ORGS);
+        montarRail("/orgs/org_1/structure");
+
+        const seletor = screen.getByRole("combobox", { name: "Organização: Loja Antiga" });
+        expect(seletor).toHaveTextContent("Loja Antiga");
+        expect(screen.queryByRole("listbox")).toBeNull();
+
+        await usuario.click(seletor);
+
+        expect(screen.getByRole("listbox", { name: "Organizações disponíveis" })).toBeInTheDocument();
+        expect(screen.getByRole("option", { name: /Todas as organizações/ })).toBeInTheDocument();
+        expect(screen.getByRole("option", { name: /Loja Antiga/ })).toHaveAttribute(
+            "aria-current",
+            "true",
+        );
+        expect(screen.getByRole("option", { name: /Clínica Nova/ })).toBeInTheDocument();
+    });
+
+    it("na lista de organizações, o topo é o chip do cluster — e não o combobox", () => {
         prepararSessao("global", DUAS_ORGS);
         montarRail("/orgs");
 
-        const seletor = screen.getByRole("combobox");
-        expect(seletor).toBeEnabled();
-        expect(screen.getByRole("option", { name: "Todas" })).toBeInTheDocument();
-        expect(screen.getByRole("option", { name: "Loja Antiga" })).toBeInTheDocument();
+        const chip = screen.getByText("POP Harness Cluster");
+        expect(chip).toBeInTheDocument();
+        expect(chip.closest(".poph-rail__cluster")).toHaveAttribute(
+            "title",
+            "POP Harness Cluster · instância respondendo",
+        );
+        expect(screen.queryByRole("combobox")).toBeNull();
     });
 
-    it("com token de org, o seletor fica bloqueado na própria organização", () => {
-        prepararSessao("org", [{ id: "org_1", name: "Loja Antiga" }]);
+    it("com organização aberta, o topo volta a ser o combobox do seletor", () => {
+        prepararSessao("global", DUAS_ORGS);
+        montarRail("/orgs/org_1/structure");
+
+        expect(screen.getByRole("combobox", { name: "Organização: Loja Antiga" })).toBeInTheDocument();
+        expect(screen.queryByText("POP Harness Cluster")).toBeNull();
+    });
+
+    it("o ponto do chip acompanha a saúde: verde respondendo, vermelho degradada ou sem conexão", () => {
+        prepararSessao("global", DUAS_ORGS);
+
+        const ponto = () => {
+            const { container, unmount } = montarRail("/orgs");
+            const achado = container.querySelector(".poph-rail__cluster-ponto");
+            const classe = achado?.className ?? "";
+            unmount();
+            return { classe, titulo: achado?.closest(".poph-rail__cluster")?.getAttribute("title") };
+        };
+
+        estadoDaSaude.atual = { saude: { version: "0.9.1" }, semConexao: false, degradada: false };
+        expect(ponto()).toEqual({
+            classe: "poph-rail__cluster-ponto",
+            titulo: "POP Harness Cluster · instância respondendo",
+        });
+
+        estadoDaSaude.atual = { saude: null, semConexao: false, degradada: true };
+        expect(ponto().titulo).toBe("POP Harness Cluster · instância degradada");
+        expect(ponto().classe).toContain("poph-rail__cluster-ponto--alerta");
+
+        estadoDaSaude.atual = { saude: null, semConexao: true, degradada: false };
+        expect(ponto().titulo).toBe("POP Harness Cluster · sem conexão com a instância");
+        expect(ponto().classe).toContain("poph-rail__cluster-ponto--alerta");
+
+        estadoDaSaude.atual = { saude: null, semConexao: false, degradada: false };
+        expect(ponto().titulo).toBe("POP Harness Cluster · verificando a instância");
+        expect(ponto().classe).toContain("poph-rail__cluster-ponto--neutro");
+
+        estadoDaSaude.atual = { saude: { version: "0.9.1" }, semConexao: false, degradada: false };
+    });
+
+    it("fora das telas de organização, sem organização aberta, diz Selecionar organização", () => {
+        prepararSessao("global", DUAS_ORGS);
+        montarRail("/");
+
+        expect(screen.getByRole("combobox")).toHaveTextContent("Selecionar organização");
+    });
+
+    it("sem nenhuma organização, o gatilho diz Nenhuma organização e o popover explica", async () => {
+        const usuario = userEvent.setup();
+        prepararSessao("global", []);
+        montarRail("/orgs/org_1/structure");
+
+        const seletor = screen.getByRole("combobox");
+        expect(seletor).toHaveTextContent("Nenhuma organização");
+
+        await usuario.click(seletor);
+
+        expect(screen.queryByRole("option")).toBeNull();
+        expect(screen.getByRole("status")).toHaveTextContent("Nenhuma organização");
+    });
+
+    it("com token de org, o gatilho mostra a própria organização e não abre a lista", async () => {
+        const usuario = userEvent.setup();
+        prepararSessao("org", [{ id: "org_1", name: "Loja Antiga", slug: "loja-antiga" }]);
         montarRail("/orgs/org_1/structure");
 
         const seletor = screen.getByRole("combobox");
         expect(seletor).toBeDisabled();
-        expect(seletor).toHaveValue("org_1");
-        expect(screen.queryByRole("option", { name: "Todas" })).toBeNull();
+        expect(seletor).toHaveTextContent("Loja Antiga");
+
+        await usuario.click(seletor);
+        expect(screen.queryByRole("listbox")).toBeNull();
     });
 
-    it("trocar a org no seletor sem alterações pendentes navega para a nova org", async () => {
+    it("escolher outra organização sem alterações pendentes navega para ela", async () => {
         const usuario = userEvent.setup();
         prepararSessao("global", DUAS_ORGS);
         montarRail("/orgs/org_1/structure");
 
-        await usuario.selectOptions(screen.getByRole("combobox"), "org_2");
+        await usuario.click(screen.getByRole("combobox"));
+        await usuario.click(screen.getByRole("option", { name: /Clínica Nova/ }));
 
         expect(screen.getByTestId("caminho")).toHaveTextContent("/orgs/org_2");
+        expect(screen.queryByRole("listbox")).toBeNull();
     });
 
-    it("trocar a org no seletor com alterações pendentes pede confirmação antes de sair", async () => {
+    it("escolher a organização que já está aberta não navega", async () => {
+        const usuario = userEvent.setup();
+        prepararSessao("global", DUAS_ORGS);
+        montarRail("/orgs/org_1/structure");
+
+        await usuario.click(screen.getByRole("combobox"));
+        await usuario.click(screen.getByRole("option", { name: /Loja Antiga/ }));
+
+        expect(screen.getByTestId("caminho")).toHaveTextContent("/orgs/org_1/structure");
+        expect(screen.queryByRole("listbox")).toBeNull();
+    });
+
+    it("escolher outra organização com alterações pendentes pede confirmação antes de sair", async () => {
         const usuario = userEvent.setup();
         prepararSessao("global", DUAS_ORGS);
         montarRail("/orgs/org_1/structure", { sujo: true });
 
-        await usuario.selectOptions(screen.getByRole("combobox"), "org_2");
+        await usuario.click(screen.getByRole("combobox"));
+        await usuario.click(screen.getByRole("option", { name: /Clínica Nova/ }));
 
         expect(await screen.findByText("Alterações não salvas")).toBeInTheDocument();
         expect(screen.getByTestId("caminho")).toHaveTextContent("/orgs/org_1/structure");
+    });
+
+    it("ao abrir, o foco vai para o campo de busca", async () => {
+        const usuario = userEvent.setup();
+        prepararSessao("global", DUAS_ORGS);
+        montarRail("/orgs/org_1/structure");
+
+        await usuario.click(screen.getByRole("combobox"));
+
+        expect(screen.getByRole("textbox", { name: /Filtrar organizações/ })).toHaveFocus();
+    });
+
+    it("Esc fecha sem navegar e devolve o foco ao gatilho", async () => {
+        const usuario = userEvent.setup();
+        prepararSessao("global", DUAS_ORGS);
+        montarRail("/orgs/org_1/structure");
+
+        await usuario.click(screen.getByRole("combobox"));
+        await usuario.keyboard("{Escape}");
+
+        expect(screen.queryByRole("listbox")).toBeNull();
+        expect(screen.getByRole("combobox")).toHaveFocus();
+        expect(screen.getByTestId("caminho")).toHaveTextContent("/orgs/org_1/structure");
+    });
+
+    it("clicar fora fecha o seletor sem devolver o foco", async () => {
+        const usuario = userEvent.setup();
+        prepararSessao("global", DUAS_ORGS);
+        montarRail("/orgs/org_1/structure");
+
+        await usuario.click(screen.getByRole("combobox"));
+        expect(screen.getByRole("listbox")).toBeInTheDocument();
+
+        await usuario.click(screen.getByTestId("caminho"));
+
+        expect(screen.queryByRole("listbox")).toBeNull();
+    });
+
+    it("digitar filtra por nome ou slug, sem diferenciar acento nem caixa", async () => {
+        const usuario = userEvent.setup();
+        prepararSessao("global", DUAS_ORGS);
+        montarRail("/orgs/org_1/structure");
+
+        await usuario.click(screen.getByRole("combobox"));
+        await usuario.type(screen.getByRole("textbox", { name: /Filtrar organizações/ }), "CLINICA");
+
+        expect(screen.getByRole("option", { name: /Clínica Nova/ })).toBeInTheDocument();
+        expect(screen.queryByRole("option", { name: /Loja Antiga/ })).toBeNull();
+        expect(screen.queryByRole("option", { name: /Todas as organizações/ })).toBeNull();
+
+        await usuario.clear(screen.getByRole("textbox", { name: /Filtrar organizações/ }));
+        await usuario.type(screen.getByRole("textbox", { name: /Filtrar organizações/ }), "loja-antiga");
+        expect(screen.getByRole("option", { name: /Loja Antiga/ })).toBeInTheDocument();
+        expect(screen.queryByRole("option", { name: /Clínica Nova/ })).toBeNull();
+    });
+
+    it("busca sem resultado mostra a mensagem com o termo", async () => {
+        const usuario = userEvent.setup();
+        prepararSessao("global", DUAS_ORGS);
+        montarRail("/orgs/org_1/structure");
+
+        await usuario.click(screen.getByRole("combobox"));
+        await usuario.type(screen.getByRole("textbox", { name: /Filtrar organizações/ }), "xyz");
+
+        expect(screen.queryByRole("option")).toBeNull();
+        expect(screen.getByRole("status")).toHaveTextContent("Nenhuma organização encontrada para “xyz”");
+    });
+
+    it("setas e Enter percorrem a lista e abrem a organização escolhida, devolvendo o foco", async () => {
+        const usuario = userEvent.setup();
+        prepararSessao("global", DUAS_ORGS);
+        montarRail("/orgs/org_1/structure");
+
+        await usuario.click(screen.getByRole("combobox"));
+        const campo = screen.getByRole("textbox", { name: /Filtrar organizações/ });
+        const todas = screen.getByRole("option", { name: /Todas as organizações/ });
+        const clinica = screen.getByRole("option", { name: /Clínica Nova/ });
+
+        // A primeira opção começa ativa; duas setas para baixo chegam em Clínica Nova.
+        expect(campo).toHaveAttribute("aria-activedescendant", todas.id);
+        await usuario.keyboard("{ArrowDown}{ArrowDown}");
+        expect(campo).toHaveAttribute("aria-activedescendant", clinica.id);
+        expect(clinica).toHaveAttribute("aria-selected", "true");
+
+        await usuario.keyboard("{Enter}");
+
+        expect(screen.getByTestId("caminho")).toHaveTextContent("/orgs/org_2");
+        expect(screen.getByRole("combobox")).toHaveFocus();
+    });
+
+    it("End e Home levam à última e à primeira opção, e a seta para baixo não passa do fim", async () => {
+        const usuario = userEvent.setup();
+        prepararSessao("global", DUAS_ORGS);
+        montarRail("/orgs/org_1/structure");
+
+        await usuario.click(screen.getByRole("combobox"));
+        const campo = screen.getByRole("textbox", { name: /Filtrar organizações/ });
+        const todas = screen.getByRole("option", { name: /Todas as organizações/ });
+        const clinica = screen.getByRole("option", { name: /Clínica Nova/ });
+
+        await usuario.keyboard("{End}");
+        expect(campo).toHaveAttribute("aria-activedescendant", clinica.id);
+        await usuario.keyboard("{ArrowDown}");
+        expect(campo).toHaveAttribute("aria-activedescendant", clinica.id);
+        await usuario.keyboard("{Home}");
+        expect(campo).toHaveAttribute("aria-activedescendant", todas.id);
+    });
+
+    it("a situação de cada organização fica no nome acessível da opção", async () => {
+        const usuario = userEvent.setup();
+        prepararSessao("global", DUAS_ORGS);
+        montarRail("/orgs/org_1/structure");
+
+        await usuario.click(screen.getByRole("combobox"));
+
+        expect(screen.getByRole("option", { name: /Loja Antiga/ })).toHaveAccessibleName(/Ativa/);
+        expect(screen.getByRole("option", { name: /Clínica Nova/ })).toHaveAccessibleName(/Inativa/);
     });
 
     it("o rodapé mostra a versão da instância e o botão de atalhos abre a lista", async () => {
@@ -445,5 +676,421 @@ describe("menu montado com a sessão", () => {
 
         await usuario.click(screen.getByRole("button", { name: "? atalhos" }));
         expect(aoAbrirAtalhos).toHaveBeenCalledTimes(1);
+    });
+
+    describe("CF-02: rail de 240 px e modo foco de 64 px", () => {
+        function montarComEstado(
+            compacta: boolean,
+            aoAlternarCompacta = vi.fn(),
+            caminho = "/orgs",
+        ) {
+            prepararSessao("global", DUAS_ORGS);
+            return {
+                aoAlternarCompacta,
+                ...render(
+                    <MemoryRouter initialEntries={[caminho]}>
+                        <SessaoProvider>
+                            <GuardaAlteracoesProvider>
+                                <Rail
+                                    aoAbrirAtalhos={() => {}}
+                                    compacta={compacta}
+                                    aoAlternarCompacta={aoAlternarCompacta}
+                                />
+                            </GuardaAlteracoesProvider>
+                        </SessaoProvider>
+                    </MemoryRouter>,
+                ),
+            };
+        }
+
+        it("expandido: mostra o chip do cluster na lista e o botão de recolher", async () => {
+            const usuario = userEvent.setup();
+            const { aoAlternarCompacta } = montarComEstado(false);
+
+            expect(screen.getByText("POP Harness Cluster")).toBeInTheDocument();
+            expect(screen.getByText("POP Harness v0.9.1 · Rust")).toBeInTheDocument();
+            expect(screen.queryByRole("button", { name: "Expandir menu lateral" })).toBeNull();
+
+            await usuario.click(screen.getByRole("button", { name: "Recolher menu lateral" }));
+            expect(aoAlternarCompacta).toHaveBeenCalledTimes(1);
+        });
+
+        it("em foco: o chip do cluster vira um tile de 32×32 com o nome no title", () => {
+            montarComEstado(true);
+
+            const chip = screen.getByText("POP Harness Cluster").closest(".poph-rail__cluster");
+            expect(chip).toHaveClass("poph-rail__cluster--compacta");
+            expect(chip).toHaveAttribute("title", "POP Harness Cluster · instância respondendo");
+            expect(screen.queryByText("POP Harness v0.9.1 · Rust")).toBeNull();
+            expect(screen.getByRole("button", { name: "Expandir menu lateral" })).toBeInTheDocument();
+            expect(screen.getByRole("link", { name: /Organizações/ })).toHaveAttribute(
+                "title",
+                "Organizações",
+            );
+        });
+
+        it("em foco: com organização aberta, o seletor vira um tile e o popover abre ao lado", async () => {
+            const usuario = userEvent.setup();
+            montarComEstado(true, vi.fn(), "/orgs/org_1/structure");
+
+            expect(screen.queryByText("POP Harness Cluster")).toBeNull();
+            const seletor = screen.getByRole("combobox");
+            expect(seletor).toHaveAttribute("title", "Loja Antiga");
+            expect(seletor.closest(".poph-orgsel")).toHaveClass("poph-orgsel--compacta");
+
+            // O popover abre ao lado do tile, com o mesmo fluxo do modo expandido.
+            await usuario.click(seletor);
+            expect(screen.getByRole("listbox")).toBeInTheDocument();
+        });
+
+        it("o botão que alterna continua alcançável por teclado nos dois estados", async () => {
+            const usuario = userEvent.setup();
+            const { aoAlternarCompacta } = montarComEstado(true);
+
+            const expandir = screen.getByRole("button", { name: "Expandir menu lateral" });
+            expandir.focus();
+            expect(expandir).toHaveFocus();
+            await usuario.keyboard("{Enter}");
+            expect(aoAlternarCompacta).toHaveBeenCalledTimes(1);
+        });
+    });
+});
+
+/**
+ * CF-07: na visão do agente (`/orgs/:id/agents/:agentId/...`, prancha 03) o topo do rail é o link
+ * "← Agentes da Org" e o combobox do agente. Todas as leituras passam por um servidor falso, para
+ * o teste conferir também quantas consultas a tela faz.
+ */
+describe("CF-07: seletor de agente no topo do rail", () => {
+    function agente(parcial: Partial<Agente> & Pick<Agente, "id" | "name" | "slug">): Agente {
+        return {
+            org_id: "org_1",
+            description: "",
+            status: "active",
+            default_department_id: null,
+            human_handoff_department_id: null,
+            version: 1,
+            created_at: 1_700_000_000_000,
+            updated_at: 1_700_000_000_000,
+            ...parcial,
+        };
+    }
+
+    const MATRIX = agente({
+        id: "agt_1",
+        name: "Atendente Matrix",
+        slug: "atendente-matrix",
+        model: "gemini-3.8-flash",
+        status: "active",
+    });
+    // Sem `model` próprio: a API manda `null` nesse caso e a tela mostra o padrão do servidor.
+    const PATINHAS = agente({
+        id: "agt_2",
+        name: "Patinhas",
+        slug: "patinhas",
+        status: "inactive",
+    });
+    const TRIAGEM = agente({
+        id: "agt_3",
+        name: "Triagem",
+        slug: "triagem",
+        model: "gpt-6-sol",
+        status: "active",
+    });
+    const FORA_DA_LISTA = agente({
+        id: "agt_9",
+        name: "Agente Arquivado",
+        slug: "agente-arquivado",
+        status: "archived",
+    });
+
+    /** Servidor falso com a lista de agentes; a leitura de um agente só (`agt_9`) é declarada antes. */
+    function prepararServidor(
+        opcoes: {
+            agentes?: Agente[];
+            avulso?: { agente: Agente } | { falha: true };
+            falhaNaLista?: boolean;
+        } = {},
+    ) {
+        const servidor = new ServidorFalso();
+        const avulso = opcoes.avulso;
+        if (avulso && "agente" in avulso) {
+            servidor.responder("GET", `/agents/${avulso.agente.id}`, {
+                status: 200,
+                corpo: avulso.agente,
+            });
+        } else if (avulso) {
+            servidor.responder("GET", "/agents/", () =>
+                erroApi(404, "not_found", "agente não encontrado"),
+            );
+        }
+        servidor.responder("GET", "/agents", () =>
+            opcoes.falhaNaLista
+                ? erroApi(500, "interno", "falha ao ler os agentes")
+                : {
+                      status: 200,
+                      corpo: { items: opcoes.agentes ?? [MATRIX, PATINHAS, TRIAGEM], next_cursor: null },
+                  },
+        );
+        servidor.instalar();
+        return servidor;
+    }
+
+    function montar(caminho: string, compacta = false) {
+        prepararSessao("global", DUAS_ORGS);
+        return render(
+            <MemoryRouter initialEntries={[caminho]}>
+                <SessaoProvider>
+                    <GuardaAlteracoesProvider>
+                        <Rail aoAbrirAtalhos={() => {}} compacta={compacta} />
+                        <Sonda />
+                    </GuardaAlteracoesProvider>
+                </SessaoProvider>
+            </MemoryRouter>,
+        );
+    }
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    it("mostra o link de volta para os agentes da organização", () => {
+        prepararServidor();
+        montar("/orgs/org_1/agents/agt_1/instructions");
+
+        expect(screen.getByRole("link", { name: "Agentes da Org" })).toHaveAttribute(
+            "href",
+            "/orgs/org_1/agents",
+        );
+    });
+
+    it("no lugar do seletor de organização, mostra o agente da URL com modelo e situação", async () => {
+        prepararServidor();
+        montar("/orgs/org_1/agents/agt_1/instructions");
+
+        const gatilho = await screen.findByRole("combobox", { name: "Agente: Atendente Matrix" });
+        expect(gatilho).toHaveTextContent("Atendente Matrix");
+        expect(gatilho).toHaveTextContent("gemini-3.8-flash · Ativo");
+        // O topo do rail na visão do agente não tem o chip nem o seletor de organização.
+        expect(screen.queryByText("POP Harness Cluster")).toBeNull();
+        expect(screen.queryByRole("combobox", { name: /^Organização:/ })).toBeNull();
+    });
+
+    it("agente sem modelo próprio mostra o padrão do servidor e a situação", async () => {
+        prepararServidor();
+        montar("/orgs/org_1/agents/agt_2/files");
+
+        const gatilho = await screen.findByRole("combobox", { name: "Agente: Patinhas" });
+        expect(gatilho).toHaveTextContent("modelo padrão do servidor · Inativo");
+    });
+
+    it("abre a lista dos agentes da organização com busca por nome", async () => {
+        const usuario = userEvent.setup();
+        prepararServidor();
+        montar("/orgs/org_1/agents/agt_1/instructions");
+
+        await usuario.click(await screen.findByRole("combobox", { name: "Agente: Atendente Matrix" }));
+
+        const campo = screen.getByRole("textbox", { name: /Filtrar agentes/ });
+        expect(campo).toHaveFocus();
+        expect(screen.getAllByRole("option")).toHaveLength(3);
+
+        await usuario.type(campo, "TRIAGE");
+        expect(screen.getByRole("option", { name: /Triagem/ })).toBeInTheDocument();
+        expect(screen.queryByRole("option", { name: /Patinhas/ })).toBeNull();
+
+        await usuario.clear(campo);
+        await usuario.type(campo, "patinhas");
+        expect(screen.getByRole("option", { name: /Patinhas/ })).toBeInTheDocument();
+        expect(screen.queryByRole("option", { name: /Triagem/ })).toBeNull();
+    });
+
+    it("marca o agente aberto com o check e não navega ao escolhê-lo", async () => {
+        const usuario = userEvent.setup();
+        prepararServidor();
+        montar("/orgs/org_1/agents/agt_1/instructions");
+
+        await usuario.click(await screen.findByRole("combobox", { name: "Agente: Atendente Matrix" }));
+        const atual = screen.getByRole("option", { name: /Atendente Matrix/ });
+        expect(atual).toHaveAttribute("aria-current", "true");
+
+        await usuario.click(atual);
+
+        expect(screen.queryByRole("listbox")).toBeNull();
+        expect(screen.getByTestId("caminho")).toHaveTextContent(
+            "/orgs/org_1/agents/agt_1/instructions",
+        );
+    });
+
+    it("trocar de agente com alterações pendentes pede confirmação antes de sair", async () => {
+        const usuario = userEvent.setup();
+        prepararServidor();
+        prepararSessao("global", DUAS_ORGS);
+        render(
+            <MemoryRouter initialEntries={["/orgs/org_1/agents/agt_1/instructions"]}>
+                <SessaoProvider>
+                    <GuardaAlteracoesProvider>
+                        <Rail aoAbrirAtalhos={() => {}} />
+                        <Sujo />
+                        <Sonda />
+                    </GuardaAlteracoesProvider>
+                </SessaoProvider>
+            </MemoryRouter>,
+        );
+
+        await usuario.click(await screen.findByRole("combobox", { name: "Agente: Atendente Matrix" }));
+        await usuario.click(screen.getByRole("option", { name: /Triagem/ }));
+
+        expect(await screen.findByText("Alterações não salvas")).toBeInTheDocument();
+        expect(screen.getByTestId("caminho")).toHaveTextContent(
+            "/orgs/org_1/agents/agt_1/instructions",
+        );
+    });
+
+    it("setas e Enter trocam de agente, indo para as Instruções dele", async () => {
+        const usuario = userEvent.setup();
+        prepararServidor();
+        montar("/orgs/org_1/agents/agt_1/instructions");
+
+        await usuario.click(await screen.findByRole("combobox", { name: "Agente: Atendente Matrix" }));
+        const campo = screen.getByRole("textbox", { name: /Filtrar agentes/ });
+        const triagem = screen.getByRole("option", { name: /Triagem/ });
+
+        // A primeira opção começa ativa; duas setas chegam em Triagem (a terceira da lista).
+        expect(campo).toHaveAttribute("aria-activedescendant", screen.getByRole("option", { name: /Atendente Matrix/ }).id);
+        await usuario.keyboard("{ArrowDown}{ArrowDown}");
+        expect(campo).toHaveAttribute("aria-activedescendant", triagem.id);
+
+        await usuario.keyboard("{Enter}");
+
+        expect(screen.getByTestId("caminho")).toHaveTextContent("/orgs/org_1/agents/agt_3/instructions");
+        expect(screen.getByRole("combobox")).toHaveFocus();
+    });
+
+    it("Esc fecha sem navegar e devolve o foco ao gatilho", async () => {
+        const usuario = userEvent.setup();
+        prepararServidor();
+        montar("/orgs/org_1/agents/agt_1/instructions");
+
+        await usuario.click(await screen.findByRole("combobox", { name: "Agente: Atendente Matrix" }));
+        await usuario.keyboard("{Escape}");
+
+        expect(screen.queryByRole("listbox")).toBeNull();
+        expect(screen.getByRole("combobox")).toHaveFocus();
+        expect(screen.getByTestId("caminho")).toHaveTextContent(
+            "/orgs/org_1/agents/agt_1/instructions",
+        );
+    });
+
+    it("clicar fora fecha o seletor", async () => {
+        const usuario = userEvent.setup();
+        prepararServidor();
+        montar("/orgs/org_1/agents/agt_1/instructions");
+
+        await usuario.click(await screen.findByRole("combobox", { name: "Agente: Atendente Matrix" }));
+        expect(screen.getByRole("listbox")).toBeInTheDocument();
+
+        await usuario.click(screen.getByTestId("caminho"));
+
+        expect(screen.queryByRole("listbox")).toBeNull();
+    });
+
+    it("organização sem agentes mostra o estado vazio no popover", async () => {
+        const usuario = userEvent.setup();
+        prepararServidor({ agentes: [] });
+        montar("/orgs/org_1/agents/agt_1/instructions");
+
+        await usuario.click(await screen.findByRole("combobox"));
+        expect(screen.getByRole("status")).toHaveTextContent("Nenhum agente nesta organização");
+    });
+
+    it("falha ao ler os agentes aparece no popover e não derruba a navegação", async () => {
+        const usuario = userEvent.setup();
+        prepararServidor({ falhaNaLista: true });
+        montar("/orgs/org_1/agents/agt_1/instructions");
+
+        const gatilho = await screen.findByRole("combobox");
+        expect(gatilho).toHaveAccessibleName("Agente: Agentes indisponíveis");
+        await usuario.click(gatilho);
+        expect(await screen.findByRole("status")).toHaveTextContent(
+            "Não foi possível ler os agentes",
+        );
+        // O resto do menu continua funcionando.
+        expect(screen.getByRole("link", { name: "Chat de teste" })).toBeInTheDocument();
+        expect(screen.getByRole("link", { name: "Agentes da Org" })).toBeInTheDocument();
+    });
+
+    it("agente da URL fora da lista é lido sozinho e mostra o nome dele", async () => {
+        prepararServidor({ avulso: { agente: FORA_DA_LISTA } });
+        montar("/orgs/org_1/agents/agt_9/instructions");
+
+        const gatilho = await screen.findByRole("combobox", { name: "Agente: Agente Arquivado" });
+        expect(gatilho).toHaveTextContent("Agente Arquivado");
+        expect(gatilho).toHaveTextContent("Arquivado");
+    });
+
+    it("agente da URL que não existe mais aparece como não encontrado, sem quebrar a tela", async () => {
+        prepararServidor({ avulso: { falha: true } });
+        montar("/orgs/org_1/agents/agt_9/instructions");
+
+        const gatilho = await screen.findByRole("combobox", { name: "Agente: Agente não encontrado" });
+        expect(gatilho).toBeInTheDocument();
+        expect(screen.getByRole("link", { name: "Agentes da Org" })).toBeInTheDocument();
+    });
+
+    it("uma consulta por organização: abrir a lista duas vezes não relê os agentes", async () => {
+        const usuario = userEvent.setup();
+        const servidor = prepararServidor();
+        montar("/orgs/org_1/agents/agt_1/instructions");
+
+        const gatilho = await screen.findByRole("combobox", { name: "Agente: Atendente Matrix" });
+        await usuario.click(gatilho);
+        await usuario.keyboard("{Escape}");
+        await usuario.click(gatilho);
+
+        expect(servidor.chamadasPara("GET", "/agents")).toHaveLength(1);
+    });
+
+    it("em modo foco, o link e o gatilho viram tiles e o popover abre ao lado", async () => {
+        const usuario = userEvent.setup();
+        prepararServidor();
+        montar("/orgs/org_1/agents/agt_1/instructions", true);
+
+        const gatilho = await screen.findByRole("combobox", { name: "Agente: Atendente Matrix" });
+        expect(gatilho).toHaveAttribute("title", "Atendente Matrix");
+        expect(gatilho.closest(".poph-agsel")).toHaveClass("poph-agsel--compacta");
+
+        const voltar = screen.getByRole("link", { name: "Agentes da Org" });
+        expect(voltar).toHaveClass("poph-agsel__voltar--compacta");
+
+        await usuario.click(gatilho);
+        expect(screen.getByRole("listbox")).toBeInTheDocument();
+    });
+
+    it("com token de organização, o seletor do agente continua funcionando", async () => {
+        prepararSessao("org", [{ id: "org_1", name: "Loja Antiga", slug: "loja-antiga" }]);
+        prepararServidor();
+        render(
+            <MemoryRouter initialEntries={["/orgs/org_1/agents/agt_1/instructions"]}>
+                <SessaoProvider>
+                    <GuardaAlteracoesProvider>
+                        <Rail aoAbrirAtalhos={() => {}} />
+                        <Sonda />
+                    </GuardaAlteracoesProvider>
+                </SessaoProvider>
+            </MemoryRouter>,
+        );
+
+        expect(
+            await screen.findByRole("combobox", { name: "Agente: Atendente Matrix" }),
+        ).toBeEnabled();
+    });
+
+    it("fora das rotas de agente, o topo continua sendo o seletor de organização", () => {
+        prepararServidor();
+        montar("/orgs/org_1/structure");
+
+        expect(screen.getByRole("combobox", { name: "Organização: Loja Antiga" })).toBeInTheDocument();
+        expect(screen.queryByRole("link", { name: "Agentes da Org" })).toBeNull();
     });
 });

@@ -45,28 +45,55 @@ a:focus-visible,
     align-items: center;
     justify-content: space-between;
     gap: var(--pop-spacing-xl, 16px);
-    height: 48px;
+    height: 56px;
     padding: 0 var(--pop-spacing-xl, 16px);
-    border-bottom: 1px solid var(--pop-line);
+    border-bottom: 1px solid var(--pop-accent, #f5a623);
     background: var(--pop-surface-raised, #1c1f22);
 }
 
 .poph-topbar__trilha {
     display: flex;
     align-items: center;
-    gap: var(--pop-spacing-sm, 6px);
     min-width: 0;
+    gap: var(--pop-spacing-sm, 6px);
+    overflow: hidden;
     color: var(--pop-text-muted);
     font-size: var(--pop-font-size-body-sm, 12px);
 }
 
-/* Trilha (HR-49b): cada migalha fica numa linha só e corta com reticências; a trilha encolhe antes da busca. */
-.poph-topbar__trilha {
+/* Cada migalha é um passo com o seu próprio separador: esconder o passo não deixa um "/" órfão.
+   O passo encolhe (flex-shrink vem do componente, pela distância até a tela atual), então as
+   migalhas mais próximas da atual ficam com mais espaço (CF-08). */
+.poph-topbar__passo {
+    display: inline-flex;
+    flex: 0 1 auto;
+    align-items: center;
+    min-width: 0;
+    gap: var(--pop-spacing-sm, 6px);
+}
+
+/* A tela atual nunca encolhe: é o que a pessoa precisa ler inteiro. */
+.poph-topbar__passo--atual {
+    flex: 0 0 auto;
+}
+
+.poph-topbar__separador {
+    flex: none;
+}
+
+.poph-topbar__trilha a,
+.poph-topbar__migalha,
+.poph-topbar__atual {
+    display: inline-block;
+    min-width: 0;
+    max-width: 14rem;
     overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: middle;
 }
 
 .poph-topbar__trilha a {
-    display: inline-block;
     min-height: 24px;
     /* Padding para o alvo de clique chegar a 24 px; a margem negativa devolve a posição do texto. */
     padding: 4px 6px;
@@ -75,35 +102,19 @@ a:focus-visible,
     color: inherit;
     line-height: 16px;
     text-decoration: none;
-    max-width: 14rem;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    vertical-align: middle;
 }
 
-.poph-topbar__migalha {
-    display: inline-block;
-    max-width: 14rem;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.poph-topbar__trilha [aria-hidden="true"] {
-    flex: none;
-}
-
-/* Até 1320 px a trilha inteira não cabe sem cortar os nomes: mostra só o agente e a aba (as duas últimas
-   migalhas), e o nome fica legível. Acima disso, a trilha inteira. O `!important` vence o estilo inline
-   que deixa cada migalha como `display: contents`. */
+/* Até 1320 px a trilha inteira não cabe sem cortar os nomes: mostra as duas últimas migalhas (agente e
+   aba, ou organização e tela), e cada uma fica legível. Acima disso, a trilha inteira. O `!important`
+   vence o `flex-shrink` que o componente põe em cada passo. */
 @media (max-width: 1320px) {
-    .poph-topbar__trilha > span:not(:nth-last-child(-n + 2)) {
+    .poph-topbar__trilha > .poph-topbar__passo:not(:nth-last-child(-n + 2)) {
         display: none !important;
     }
 
-    .poph-topbar__trilha > span:nth-last-child(2) > [aria-hidden="true"]:first-child {
-        display: none !important;
+    /* O primeiro passo visível perde o separador, para não começar com "/". */
+    .poph-topbar__trilha > .poph-topbar__passo:nth-last-child(2) .poph-topbar__separador {
+        display: none;
     }
 }
 
@@ -113,11 +124,10 @@ a:focus-visible,
 }
 
 .poph-topbar__atual {
-    max-width: 14rem;
-    overflow: hidden;
+    /* Rede de segurança para um nome enorme: acima disto a tela atual também corta, em vez de
+       empurrar a busca. */
+    max-width: 20rem;
     color: var(--pop-text-secondary);
-    text-overflow: ellipsis;
-    white-space: nowrap;
 }
 
 .poph-topbar__acoes {

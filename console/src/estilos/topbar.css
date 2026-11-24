@@ -1,24 +1,47 @@
-/* Header novo do Console (RL-02, PRD do re-layout §5.1).
+/* Header do Console (RL-02, PRD do re-layout §5.1; CF-04).
  *
  * Importado de dentro de `Topbar.tsx` para esta tarefa não editar `main.tsx` nem `main.css`.
- * Medidas do desenho aprovado (HR-61): 48 px de altura, na largura toda da tela, linha inferior de
- * 1 px, monograma de 24 px e textos em 11–12 px. Todos os valores saem dos tokens do Console (`--pop-*`).
+ * Medidas do desenho aprovado: 56 px de altura, na largura toda da tela, linha inferior âmbar de
+ * 1 px, marca compacta, versão ao lado da marca e busca global centralizada. Os valores saem dos
+ * tokens do Console (`--pop-*`).
+ *
+ * Três partes, como no desenho: a esquerda (marca e trilha) e a direita (estado e ações) têm a largura
+ * do próprio conteúdo, e a busca fica com até 440 px entre elas. O espaço que sobra é dividido em
+ * partes iguais dos dois lados da busca (`justify-content: space-between`), que é o mesmo modelo do
+ * FigCraft ("hug" nas pontas e busca "fill" com largura máxima).
+ *
+ * CF-06 rodada 1: a busca encolhe com a janela (`clamp(220px, 35vw, 420px)` no CF-08), em vez de ficar cravada
+ * em 440 px, e as pontas cortam dentro de si mesmas (`min-width: 0` + `overflow: hidden`), em vez de
+ * transbordar por cima da busca.
+ *
+ * CF-08: com a esquerda presa ao conteúdo, a trilha ganha a largura que os nomes pedem em 1440 px
+ * (antes as duas metades iguais a espremiam em ~250 px e as cinco migalhas da visão do agente
+ * cortavam). Quem cede espaço agora é o vão dos lados da busca, não a trilha.
  */
 
 .poph-topbar {
     display: flex;
     flex: none;
     align-items: center;
-    justify-content: flex-start;
+    justify-content: space-between;
     gap: var(--pop-spacing-lg, 12px);
-    box-sizing: border-box; /* a linha de 1 px fica dentro dos 48 px */
-    height: 48px;
+    box-sizing: border-box; /* a linha de 1 px fica dentro dos 56 px */
+    height: 56px;
     padding: 0 var(--pop-spacing-xl, 16px);
-    border-bottom: 1px solid var(--pop-line);
-    background: var(--pop-bg);
+    border-bottom: 1px solid var(--pop-accent, #f5a623);
+    background: var(--pop-surface-raised, #1c1f22);
 }
 
-/* ── Marca ────────────────────────────────────────────────────────────────── */
+/* ── Esquerda: marca, versão e trilha ─────────────────────────────────────── */
+
+.poph-topbar__esquerda {
+    display: flex;
+    flex: 0 1 auto;
+    min-width: 0;
+    align-items: center;
+    gap: var(--pop-spacing-lg, 12px);
+    overflow: hidden;
+}
 
 .poph-topbar__marca {
     display: flex;
@@ -53,20 +76,47 @@
     white-space: nowrap;
 }
 
+/* Chip de versão, como no desenho: borda fina, texto mono pequeno. */
+.poph-topbar__versao {
+    flex: none;
+    padding: 1px 6px;
+    border: 1px solid var(--pop-line-strong);
+    border-radius: var(--pop-radius-sm, 4px);
+    color: var(--pop-text-secondary);
+    font-family: var(--pop-font-mono, "IBM Plex Mono", monospace);
+    font-size: 11px;
+    line-height: 16px;
+    white-space: nowrap;
+}
+
 .poph-topbar__divisor {
     flex: none;
     color: var(--pop-line-strong);
     font-size: 12px;
 }
 
+/* ── Centro: busca global ─────────────────────────────────────────────────── */
+
+/* A busca é a única parte com largura fixa; ela não encolhe por conta própria, porque já encolhe
+ * com a janela pelo `clamp`. O teto desceu de 440 para 420 px no CF-08: com cinco migalhas, 440 px
+ * deixavam 28 px faltando para os nomes caírem inteiros em 1440 px. O desenho usa no máximo 380. */
+.poph-topbar__centro {
+    display: flex;
+    flex: 0 0 clamp(220px, 35vw, 420px);
+    min-width: 0;
+    justify-content: center;
+}
+
 /* ── Direita: estado, escopo do token e saída ─────────────────────────────── */
 
 .poph-topbar__acoes {
     display: flex;
-    flex: none;
+    flex: 0 0 auto;
+    min-width: 0;
     align-items: center;
-    gap: var(--pop-spacing-lg, 14px);
-    margin-left: auto;
+    justify-content: flex-end;
+    /* 10 px, como no desenho: um pouco mais de folga para a trilha em 1440 px (CF-08). */
+    gap: var(--pop-spacing-md, 10px);
 }
 
 .poph-topbar__estado {
@@ -108,4 +158,75 @@
 .poph-topbar__token svg {
     width: 13px;
     height: 13px;
+}
+
+/* Texto que só leitor de tela lê (o aviso de instância fora do ar). */
+.poph-topbar__so-leitor {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+}
+
+/* ── Respostas a larguras menores ─────────────────────────────────────────── */
+
+/* Entre 900 e 1200 px a barra é apertada: os espaços da direita encolhem para o indicador caber
+ * inteiro sem empurrar nada por cima da busca, e a trilha fica só com a migalha da tela atual — com
+ * duas, sobrava menos de 40 px para cada uma e as duas saíam cortadas. */
+@media (max-width: 1200px) {
+    .poph-topbar__acoes {
+        gap: var(--pop-spacing-sm, 6px);
+    }
+
+    .poph-topbar__trilha > .poph-topbar__passo:not(:last-child) {
+        display: none !important;
+    }
+
+    .poph-topbar__trilha > .poph-topbar__passo:last-child .poph-topbar__separador {
+        display: none;
+    }
+}
+
+/* Abaixo de 1020 px nem a migalha da tela atual cabe ao lado da marca (sobram ~25 px para um nome de
+ * 58 px): a trilha sai inteira, com o divisor, em vez de aparecer cortada em duas letras. */
+@media (max-width: 1020px) {
+    .poph-topbar__esquerda .poph-topbar__trilha,
+    .poph-topbar__divisor {
+        display: none;
+    }
+}
+
+@media (max-width: 900px) {
+    .poph-topbar {
+        gap: var(--pop-spacing-md, 8px);
+        padding-inline: var(--pop-spacing-md, 10px);
+    }
+
+    .poph-topbar__esquerda {
+        flex: 0 0 auto;
+    }
+
+    /* Sem a trilha, a busca ocupa o espaço que sobra. */
+    .poph-topbar__centro {
+        flex: 1 1 auto;
+        justify-content: stretch;
+    }
+
+    .poph-topbar__nome,
+    .poph-topbar__versao,
+    .poph-topbar__token {
+        display: none;
+    }
+}
+
+@media (max-width: 520px) {
+    .poph-topbar__estado-texto {
+        display: none;
+    }
+
+    .poph-topbar__estado {
+        gap: 0;
+    }
 }

@@ -3953,7 +3953,15 @@ async fn orgs_e_tokens_paridade_cli_api() {
     let oa = criado_cli["org"]["id"].as_str().unwrap();
     let ob = criado_api["id"].as_str().unwrap();
     let comparar_org = |mut a: Value, mut b: Value| {
-        for key in ["id", "slug", "created_at", "updated_at"] {
+        // `agents_active_count` é só da API (CF-03a): a coluna "agentes ativos" da listagem do
+        // Console, que a CLI não tem. Os demais campos continuam idênticos.
+        for key in [
+            "id",
+            "slug",
+            "created_at",
+            "updated_at",
+            "agents_active_count",
+        ] {
             a.as_object_mut().unwrap().remove(key);
             b.as_object_mut().unwrap().remove(key);
         }

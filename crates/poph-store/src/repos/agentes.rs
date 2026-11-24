@@ -5,6 +5,8 @@
 //! janela de agrupamento, limites do laço de ferramentas, top-k/corte do RAG e flags do Jev.
 //! Regras de rota por intenção não existem de propósito (decisão D-06).
 
+use std::collections::HashMap;
+
 use poph_types::{AgentId, OrgId, ProductCategoryId};
 use rusqlite::{OptionalExtension, Row, named_params, params};
 
@@ -209,6 +211,36 @@ impl Agentes<'_> {
                 nomes.insert(id, nome);
             }
             Ok(nomes)
+        })
+    }
+
+    /// Quantos agentes **ativos** cada org pedida tem, numa consulta só (CF-03a).
+    ///
+    /// É a coluna "agentes ativos" da listagem de orgs: uma consulta agregada para a página
+    /// inteira, nunca uma por linha (a mesma regra do RP-01). Org sem agente ativo **não aparece**
+    /// no mapa — quem chama trata a ausência como zero.
+    pub fn contar_ativos_por_org(&self, orgs: &[OrgId]) -> Resultado<HashMap<OrgId, u32>> {
+        if orgs.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let lista =
+            serde_json::to_string(&orgs.iter().map(ToString::to_string).collect::<Vec<_>>())
+                .unwrap_or_else(|_| "[]".to_owned());
+        self.0.leitura(move |conn| {
+            let mut consulta = conn.prepare(
+                "SELECT org_id, count(*) FROM agents
+                  WHERE status = 'active' AND org_id IN (SELECT value FROM json_each(?1))
+                  GROUP BY org_id",
+            )?;
+            let linhas = consulta.query_map(params![lista], |linha| {
+                Ok((id_da_coluna::<OrgId>(linha, 0)?, u32_da_coluna(linha, 1)?))
+            })?;
+            let mut contagem = HashMap::new();
+            for linha in linhas {
+                let (org, total) = linha?;
+                contagem.insert(org, total);
+            }
+            Ok(contagem)
         })
     }
 

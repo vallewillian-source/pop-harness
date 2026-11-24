@@ -1,37 +1,123 @@
 /**
- * Inspetor lateral da organização (PRD do re-layout §5.4, RL-06).
+ * Inspetor lateral da organização no desenho da prancha 01b do FigCraft (CF-05).
  *
  * Gaveta de 380 px à direita, sem modal: abre quando a linha da lista é selecionada, fecha com
- * `Esc` e com o "✕". Tudo o que aparece vem da lista já carregada (`Org`) ou de **uma** consulta
- * feita ao abrir (agentes da org). Porta, nó, banco, cota, canal de WhatsApp e gates G1–G8 não
- * entram: a API não entrega esses dados por organização (PRD §6 e §5.4).
+ * `Esc` e com o "✕", e devolve o foco à linha (o `Orgs` guarda de onde ele veio).
  *
- * O comando de terminal foi conferido no binário (`poph --help` e `poph chat --help`): `--org` é
- * opção global e `chat` exige o agente como argumento posicional. Então o comando real é
- * `poph chat --org <slug-da-org> <slug-do-agente>`; enquanto os agentes não chegam (ou quando não
- * há agente ativo), o lugar do agente fica com o marcador `<agente>`, e não com um slug inventado.
+ * Estrutura da prancha: cabeçalho com o tile do prédio, título, slug + versão de concorrência;
+ * badges de situação, nó e id; caixa do comando `poph chat`; grid de propriedades; bloco dos
+ * agentes vinculados; rodapé fixo com as ações.
+ *
+ * **Duas** consultas ao abrir, uma por recurso e independentes — o resto da gaveta aparece na
+ * hora: `GET …/agents` (bloco dos agentes) e `GET …/matrix` (estado real do Espelho Matrix). Cada
+ * uma tem prazo próprio: `carregando` sempre termina em `pronto` ou `erro`, mesmo que a resposta
+ * nunca chegue, e uma falha não derruba a outra nem a gaveta.
+ *
+ * O que o desenho mostra e a API **não** entrega fica de fora, em vez de inventado: latência do
+ * agente, canal/espaço do Matrix dentro do estado (a rota de estado não traz o espaço) e o
+ * endereço do nó. O comando `poph chat --org <slug> <agente>` foi conferido no binário (`--org` é
+ * opção global e `chat` exige o agente como argumento posicional).
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { IconCheck, IconClose, IconCopy, SofaButton, SofaIconButton } from "@sofacoding/sofa-ui";
+import { Link } from "react-router-dom";
+import {
+    IconBot,
+    IconBuilding,
+    IconCheck,
+    IconChevronRight,
+    IconClose,
+    IconCopy,
+    IconTrash,
+    SofaButton,
+    SofaIconButton,
+} from "@sofacoding/sofa-ui";
 import { listarAgentes, type Agente } from "../api/agentes";
 import type { Org } from "../api/cliente";
+import { lerEstadoMatrix, type EstadoMatrix } from "../api/matrix";
 import "../estilos/inspetor.css";
+
+/**
+ * Nó onde a organização mora, já resolvido pela lista (`?cluster=true`). `id` vazio é a
+ * instalação de nó único; `situacao` é `local`, `ok` (nó vizinho que respondeu) ou `inacessivel`.
+ */
+export type NoDaOrg = { id: string; situacao: string };
 
 export type InspetorOrgProps = {
     /** Organização selecionada na lista; o inspetor mostra sempre esta. */
     org: Org;
+    /** Nó da organização; `null` quando a resposta não traz o estado do cluster (token de org). */
+    no?: NoDaOrg | null;
+    /** `false` com token de organização: o rodapé mostra só "Acessar Organização →". */
+    podeGerenciar?: boolean;
+    /** Organização em outro nó: acesso e edição ficam desabilitados, como na lista. */
+    remota?: boolean;
     /** Fecha a gaveta (o dono da tela devolve o foco à linha). */
     aoFechar: () => void;
     /** Abre o painel da organização; passa pela guarda de alterações não salvas. */
     aoAcessar: (org: Org) => void;
+    /** Abre o formulário de edição da organização (`ModalOrg`). */
+    aoEditar?: (org: Org) => void;
+    /** Exporta a organização sem conversas (mesmo caminho da lista). */
+    aoExportar?: (org: Org) => void;
+    /** Abre o diálogo de exclusão com confirmação por slug. */
+    aoExcluir?: (org: Org) => void;
 };
 
-/** Estado da consulta de agentes: carrega uma vez por org aberta, sem travar o resto da gaveta. */
-type Recurso =
+/**
+ * Prazo de uma leitura da gaveta. A API local responde em milissegundos; se ela não responder, a
+ * gaveta diz que não conseguiu em vez de ficar em "carregando…" para sempre.
+ */
+const PRAZO_DA_LEITURA_MS = 12_000;
+
+/** Quantos agentes aparecem como card; o resto fica no link "Ver todos". */
+const AGENTES_NO_BLOCO = 8;
+
+type Recurso<T> =
     | { estado: "carregando" }
-    | { estado: "pronto"; agentes: Agente[] }
+    | { estado: "pronto"; dados: T }
     | { estado: "erro"; mensagem: string };
+
+/**
+ * Lê uma vez por `chave` (a org aberta) e garante desfecho: `pronto`, `erro` ou o prazo estourado.
+ * Resultado que chega depois do prazo, ou depois de trocar de organização, é descartado.
+ */
+function useLeitura<T>(chave: string, ler: () => Promise<T>): Recurso<T> {
+    const [recurso, setRecurso] = useState<Recurso<T>>({ estado: "carregando" });
+    // A leitura mais recente, sem entrar nas dependências do efeito (as dependências são a chave).
+    const lerAgora = useRef(ler);
+    lerAgora.current = ler;
+
+    useEffect(() => {
+        let encerrado = false;
+        setRecurso({ estado: "carregando" });
+        const prazo = setTimeout(() => {
+            if (encerrado) return;
+            encerrado = true;
+            setRecurso({ estado: "erro", mensagem: "a leitura demorou demais; abra o inspetor de novo" });
+        }, PRAZO_DA_LEITURA_MS);
+        lerAgora
+            .current()
+            .then((dados) => {
+                if (encerrado) return;
+                encerrado = true;
+                clearTimeout(prazo);
+                setRecurso({ estado: "pronto", dados });
+            })
+            .catch((falha: unknown) => {
+                if (encerrado) return;
+                encerrado = true;
+                clearTimeout(prazo);
+                setRecurso({ estado: "erro", mensagem: mensagemDoErro(falha) });
+            });
+        return () => {
+            encerrado = true;
+            clearTimeout(prazo);
+        };
+    }, [chave]);
+
+    return recurso;
+}
 
 function rotuloDaSituacao(situacao: string): string {
     switch (situacao) {
@@ -41,6 +127,24 @@ function rotuloDaSituacao(situacao: string): string {
             return "Inativa";
         case "archived":
             return "Arquivada";
+        default:
+            return situacao;
+    }
+}
+
+function tomDaSituacao(situacao: string): string {
+    return situacao === "active" ? "poph-status--ativo" : "poph-status--inativo";
+}
+
+/** Situação do agente em caixa de frase, para o card ("Ativo", "Inativo"). */
+function rotuloDoAgente(situacao: string): string {
+    switch (situacao) {
+        case "active":
+            return "Ativo";
+        case "inactive":
+            return "Inativo";
+        case "archived":
+            return "Arquivado";
         default:
             return situacao;
     }
@@ -56,49 +160,105 @@ function retencao(org: Org): string {
     return "padrão";
 }
 
-function dataCurta(ms: number): string {
+/** Data e hora completas em pt-BR, como no desenho ("23/11/2026 às 12:08"). */
+function dataEHora(ms: number): string {
     if (!Number.isFinite(ms) || ms <= 0) return "—";
-    return new Date(ms).toLocaleString("pt-BR", {
+    const data = new Date(ms).toLocaleString("pt-BR", {
         day: "2-digit",
         month: "2-digit",
         year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
     });
+    // O `toLocaleString` usa ", " antes da hora; o desenho escreve "às".
+    return data.replace(", ", " às ");
 }
 
-/** Falha de consulta em texto curto, para a linha de Agentes. */
+/** Falha de consulta em texto curto, para o bloco que falhou. */
 function mensagemDoErro(falha: unknown): string {
     if (falha instanceof Error && falha.message) return falha.message;
-    return "falha inesperada ao consultar os agentes";
+    return "falha inesperada na consulta";
 }
 
-export function InspetorOrg({ org, aoFechar, aoAcessar }: InspetorOrgProps) {
-    const [recurso, setRecurso] = useState<Recurso>({ estado: "carregando" });
+/** Nó em texto curto para o chip e para a propriedade "Instância alocada". */
+function textoDoNo(no: NoDaOrg | null | undefined): { chip: string; valor: string } | null {
+    if (!no) return null;
+    if (no.id === "") return { chip: "nó local", valor: "nó local" };
+    switch (no.situacao) {
+        case "local":
+            return { chip: "Nó primário", valor: `${no.id} (nó primário)` };
+        case "ok":
+            return { chip: `Nó ${no.id}`, valor: `${no.id} (remoto · online)` };
+        case "inacessivel":
+            return { chip: `Nó ${no.id}`, valor: `${no.id} (remoto · inacessível)` };
+        default:
+            return { chip: `Nó ${no.id}`, valor: no.id };
+    }
+}
+
+/** Estado do Espelho Matrix em valor e tooltip, sem inventar: cada ramo é um campo da rota. */
+function espelhoMatrix(estado: EstadoMatrix): { valor: string; detalhe: string } {
+    const pendentes = estado.backlog?.messages ?? 0;
+    const idade = estado.backlog?.oldest_seconds ?? 0;
+    const partes: string[] = [];
+    if (pendentes > 0) {
+        partes.push(`${pendentes} ${pendentes === 1 ? "mensagem" : "mensagens"} ainda não espelhada${pendentes === 1 ? "" : "s"}`);
+        if (idade > 0) partes.push(`a mais antiga com ${idade}s`);
+    }
+    if (estado.pending_failures > 0) {
+        partes.push(
+            `${estado.pending_failures} ${estado.pending_failures === 1 ? "falha isolada" : "falhas isoladas"}`,
+        );
+    }
+    if (estado.last_failure) partes.push(`última falha: ${estado.last_failure}`);
+    const detalhe = partes.length > 0 ? partes.join(" · ") : "Nada pendente de espelhamento nesta organização.";
+
+    if (estado.connected === null || estado.connected === undefined) {
+        return { valor: "Não configurado", detalhe: "O módulo Matrix não está configurado nesta instância." };
+    }
+    if (!estado.enabled) {
+        return {
+            valor: "Desligado nesta organização",
+            detalhe: `O módulo existe na instância, mas esta organização não o ligou. ${detalhe}`,
+        };
+    }
+    if (estado.connected) {
+        return { valor: "Conectado", detalhe };
+    }
+    return { valor: "Desconectado", detalhe: `A instância não está falando com o Synapse. ${detalhe}` };
+}
+
+/** Texto do agente no card: modelo (ou o padrão do servidor) e situação. */
+function metaDoAgente(agente: Agente): string {
+    const modelo = agente.model?.trim() ? agente.model.trim() : "modelo padrão do servidor";
+    return `${modelo} · ${rotuloDoAgente(agente.status)}`;
+}
+
+export function InspetorOrg({
+    org,
+    no = null,
+    podeGerenciar = true,
+    remota = false,
+    aoFechar,
+    aoAcessar,
+    aoEditar,
+    aoExportar,
+    aoExcluir,
+}: InspetorOrgProps) {
+    const gaveta = useRef<HTMLElement | null>(null);
     const [copiado, setCopiado] = useState(false);
     /** Falha do clipboard, quando não há como copiar (degradação honesta). */
     const [falhaAoCopiar, setFalhaAoCopiar] = useState<string | null>(null);
     const relogioDoCopiado = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    // Uma consulta ao abrir (e ao trocar a org), isolada: o resto da gaveta aparece na hora.
-    useEffect(() => {
-        let cancelado = false;
-        setRecurso({ estado: "carregando" });
-        listarAgentes(org.id)
-            .then((agentes) => {
-                if (!cancelado) setRecurso({ estado: "pronto", agentes });
-            })
-            .catch((falha: unknown) => {
-                if (!cancelado) setRecurso({ estado: "erro", mensagem: mensagemDoErro(falha) });
-            });
-        return () => {
-            cancelado = true;
-        };
-    }, [org.id]);
+    // Uma consulta por recurso, independentes: a falha de uma não apaga a outra.
+    const agentes = useLeitura(`agentes:${org.id}`, useCallback(() => listarAgentes(org.id), [org.id]));
+    const matrix = useLeitura(`matrix:${org.id}`, useCallback(() => lerEstadoMatrix(org.id), [org.id]));
 
-    // A seleção mudou: o "Copiado" pertence à organização anterior.
+    // O foco entra na gaveta quando ela abre (a lista devolve ele para a linha ao fechar).
     useEffect(() => {
-        setCopiado(false);
-        setFalhaAoCopiar(null);
-    }, [org.id]);
+        gaveta.current?.focus();
+    }, []);
 
     const fechar = useCallback(() => aoFechar(), [aoFechar]);
 
@@ -116,6 +276,12 @@ export function InspetorOrg({ org, aoFechar, aoAcessar }: InspetorOrgProps) {
         return () => window.removeEventListener("keydown", aoTeclar);
     }, [fechar]);
 
+    // A seleção mudou: o "Copiado" pertence à organização anterior.
+    useEffect(() => {
+        setCopiado(false);
+        setFalhaAoCopiar(null);
+    }, [org.id]);
+
     useEffect(
         () => () => {
             if (relogioDoCopiado.current !== null) clearTimeout(relogioDoCopiado.current);
@@ -123,9 +289,12 @@ export function InspetorOrg({ org, aoFechar, aoAcessar }: InspetorOrgProps) {
         [],
     );
 
-    const agentes = recurso.estado === "pronto" ? recurso.agentes : [];
-    const primeiroAtivo = agentes.find((agente) => agente.status === "active") ?? null;
+    const listaDeAgentes = agentes.estado === "pronto" ? agentes.dados : [];
+    const primeiroAtivo = listaDeAgentes.find((agente) => agente.status === "active") ?? null;
     const comando = `poph chat --org ${org.slug} ${primeiroAtivo?.slug ?? "<agente>"}`;
+    const textoNo = textoDoNo(no);
+    const idCurto = org.id.length > 8 ? `${org.id.slice(0, 8)}…` : org.id;
+    const agentesNoBloco = listaDeAgentes.slice(0, AGENTES_NO_BLOCO);
 
     async function copiar() {
         setFalhaAoCopiar(null);
@@ -146,100 +315,47 @@ export function InspetorOrg({ org, aoFechar, aoAcessar }: InspetorOrgProps) {
 
     return (
         <aside
+            ref={gaveta}
             className="poph-gaveta poph-inspetor"
             role="complementary"
             aria-label={`Detalhes de ${org.name}`}
+            tabIndex={-1}
         >
-            <div className="poph-gaveta__topo">
-                <div className="poph-inspetor__identidade">
-                    <h2 className="poph-gaveta__titulo">{org.name}</h2>
-                    <p className="poph-gaveta__slug">{org.slug}</p>
+            <header className="poph-inspetor__topo">
+                <div className="poph-inspetor__topo-linha">
+                    <span className="poph-inspetor__tile" aria-hidden="true">
+                        <IconBuilding size={14} aria-hidden="true" />
+                    </span>
+                    <h2 className="poph-inspetor__titulo">{org.name}</h2>
+                    <SofaIconButton label="Fechar inspetor" size={24} onClick={fechar}>
+                        <IconClose aria-hidden="true" />
+                    </SofaIconButton>
                 </div>
-                <SofaIconButton label="Fechar inspetor" size={28} onClick={fechar}>
-                    <IconClose aria-hidden="true" />
-                </SofaIconButton>
-            </div>
+                <p className="poph-inspetor__subtitulo">
+                    slug: {org.slug} · versão v{org.version} (ETag/If-Match)
+                </p>
+            </header>
 
-            <div className="poph-gaveta__corpo">
-                <div className="poph-inspetor__acoes">
-                    <SofaButton variant="primary" onClick={() => aoAcessar(org)}>
-                        Acessar organização →
-                    </SofaButton>
+            <div className="poph-inspetor__corpo">
+                <div className="poph-inspetor__badges">
+                    <span className={`poph-status ${tomDaSituacao(org.status)}`}>
+                        <span className="poph-status__ponto" aria-hidden="true" />
+                        {rotuloDaSituacao(org.status)}
+                    </span>
+                    {textoNo && (
+                        <span
+                            className="poph-inspetor__chip"
+                            title={textoNo.chip === textoNo.valor ? undefined : textoNo.valor}
+                        >
+                            {textoNo.chip}
+                        </span>
+                    )}
+                    <span className="poph-inspetor__chip poph-inspetor__chip--mono" title={org.id}>
+                        ID: {idCurto}
+                    </span>
                 </div>
 
-                <section className="poph-secao">
-                    <h3 className="poph-secao__titulo">Propriedades do tenant</h3>
-                    <dl className="poph-propriedades">
-                        <div className="poph-propriedade">
-                            <dt className="poph-propriedade__chave">Identificador</dt>
-                            <dd className="poph-propriedade__valor poph-propriedade__valor--mono">
-                                {org.id}
-                            </dd>
-                        </div>
-                        <div className="poph-propriedade">
-                            <dt className="poph-propriedade__chave">Situação</dt>
-                            <dd className="poph-propriedade__valor">
-                                {rotuloDaSituacao(org.status)}
-                            </dd>
-                        </div>
-                        <div className="poph-propriedade">
-                            <dt className="poph-propriedade__chave">Versão</dt>
-                            <dd className="poph-propriedade__valor poph-propriedade__valor--mono">
-                                v{org.version}
-                            </dd>
-                        </div>
-                        <div className="poph-propriedade">
-                            <dt className="poph-propriedade__chave">Retenção do histórico</dt>
-                            <dd className="poph-propriedade__valor">{retencao(org)}</dd>
-                        </div>
-                        <div className="poph-propriedade">
-                            <dt className="poph-propriedade__chave">Criada em</dt>
-                            <dd className="poph-propriedade__valor">{dataCurta(org.created_at)}</dd>
-                        </div>
-                        <div className="poph-propriedade">
-                            <dt className="poph-propriedade__chave">Atualizada em</dt>
-                            <dd className="poph-propriedade__valor">{dataCurta(org.updated_at)}</dd>
-                        </div>
-                    </dl>
-                </section>
-
-                <section className="poph-secao">
-                    <h3 className="poph-secao__titulo">Recursos ativos</h3>
-                    <dl className="poph-propriedades">
-                        <div className="poph-propriedade">
-                            <dt className="poph-propriedade__chave">Agentes</dt>
-                            <dd className="poph-propriedade__valor">
-                                {recurso.estado === "carregando" && (
-                                    <span className="poph-inspetor__recurso">carregando…</span>
-                                )}
-                                {recurso.estado === "erro" && (
-                                    <span
-                                        className="poph-inspetor__recurso poph-inspetor__recurso--erro"
-                                        title={recurso.mensagem}
-                                    >
-                                        não consegui carregar
-                                    </span>
-                                )}
-                                {recurso.estado === "pronto" && (
-                                    <span className="poph-inspetor__recurso">
-                                        {agentes.length === 0
-                                            ? "nenhum agente"
-                                            : `${agentes.length} ${
-                                                  agentes.length === 1 ? "agente" : "agentes"
-                                              }`}
-                                        {agentes.length > 0 &&
-                                            (primeiroAtivo === null
-                                                ? " · nenhum ativo"
-                                                : ` · ${primeiroAtivo.name}`)}
-                                    </span>
-                                )}
-                            </dd>
-                        </div>
-                    </dl>
-                </section>
-
-                <section className="poph-secao">
-                    <h3 className="poph-secao__titulo">Comando CLI de teste</h3>
+                <section className="poph-inspetor__secao" aria-label="Comando de teste da organização">
                     <div className="poph-terminal">
                         <code className="poph-terminal__comando">{comando}</code>
                         <SofaIconButton
@@ -251,10 +367,6 @@ export function InspetorOrg({ org, aoFechar, aoAcessar }: InspetorOrgProps) {
                             <IconCopy size={13} aria-hidden="true" />
                         </SofaIconButton>
                     </div>
-                    <p className="poph-inspetor__dica">
-                        Conversa de teste pelo terminal. Quando não há agente ativo, troque{" "}
-                        <code>&lt;agente&gt;</code> pelo slug do agente.
-                    </p>
                     <p
                         className={[
                             "poph-inspetor__aviso",
@@ -275,11 +387,177 @@ export function InspetorOrg({ org, aoFechar, aoAcessar }: InspetorOrgProps) {
                         )}
                     </p>
                 </section>
+
+                <section
+                    className="poph-inspetor__secao poph-inspetor__secao--propriedades"
+                    aria-label="Propriedades da organização"
+                >
+                    <dl className="poph-propriedades">
+                        <div className="poph-propriedade">
+                            <dt className="poph-propriedade__chave">Retenção de histórico</dt>
+                            <dd className="poph-propriedade__valor">{retencao(org)}</dd>
+                        </div>
+                        <div className="poph-propriedade">
+                            <dt className="poph-propriedade__chave">Espelho Matrix</dt>
+                            <dd className="poph-propriedade__valor">
+                                {matrix.estado === "carregando" && (
+                                    <span className="poph-inspetor__recurso">consultando…</span>
+                                )}
+                                {matrix.estado === "erro" && (
+                                    <span
+                                        className="poph-inspetor__recurso poph-inspetor__recurso--erro"
+                                        title={matrix.mensagem}
+                                    >
+                                        indisponível
+                                    </span>
+                                )}
+                                {matrix.estado === "pronto" &&
+                                    (() => {
+                                        const espelho = espelhoMatrix(matrix.dados);
+                                        return (
+                                            <span className="poph-inspetor__com-dica" title={espelho.detalhe}>
+                                                {espelho.valor}
+                                            </span>
+                                        );
+                                    })()}
+                            </dd>
+                        </div>
+                        <div className="poph-propriedade">
+                            <dt className="poph-propriedade__chave">Instância alocada</dt>
+                            <dd className="poph-propriedade__valor">
+                                {textoNo ? (
+                                    <span className="poph-propriedade__valor--mono">{textoNo.valor}</span>
+                                ) : (
+                                    <span
+                                        className="poph-inspetor__recurso"
+                                        title="A resposta não traz o estado das instâncias (token de organização)"
+                                    >
+                                        —
+                                    </span>
+                                )}
+                            </dd>
+                        </div>
+                        <div className="poph-propriedade">
+                            <dt className="poph-propriedade__chave">Atualizada em</dt>
+                            <dd className="poph-propriedade__valor">{dataEHora(org.updated_at)}</dd>
+                        </div>
+                        <div className="poph-propriedade">
+                            <dt className="poph-propriedade__chave">Criada em</dt>
+                            <dd className="poph-propriedade__valor">{dataEHora(org.created_at)}</dd>
+                        </div>
+                    </dl>
+                </section>
+
+                <section className="poph-inspetor__secao" aria-labelledby="poph-inspetor-agentes">
+                    <h3 id="poph-inspetor-agentes" className="poph-inspetor__secao-titulo">
+                        Agentes vinculados
+                        {agentes.estado === "pronto" && listaDeAgentes.length > 0 && (
+                            <span className="poph-inspetor__contagem"> ({listaDeAgentes.length})</span>
+                        )}
+                    </h3>
+                    {agentes.estado === "carregando" && (
+                        <p className="poph-inspetor__recurso">carregando…</p>
+                    )}
+                    {agentes.estado === "erro" && (
+                        <p
+                            className="poph-inspetor__recurso poph-inspetor__recurso--erro"
+                            title={agentes.mensagem}
+                        >
+                            não consegui carregar os agentes
+                        </p>
+                    )}
+                    {agentes.estado === "pronto" && listaDeAgentes.length === 0 && (
+                        <p className="poph-inspetor__recurso">Nenhum agente cadastrado nesta organização.</p>
+                    )}
+                    {agentes.estado === "pronto" && listaDeAgentes.length > 0 && (
+                        <>
+                            <ul className="poph-inspetor__agentes">
+                                {agentesNoBloco.map((agente) => {
+                                    const conteudo = (
+                                        <>
+                                            <span className="poph-inspetor__agente-tile" aria-hidden="true">
+                                                <IconBot size={14} aria-hidden="true" />
+                                            </span>
+                                            <span className="poph-inspetor__agente-texto">
+                                                <span className="poph-inspetor__agente-nome">{agente.name}</span>
+                                                <span className="poph-inspetor__agente-meta">
+                                                    {metaDoAgente(agente)}
+                                                </span>
+                                            </span>
+                                            <IconChevronRight size={14} aria-hidden="true" />
+                                        </>
+                                    );
+                                    return (
+                                        <li key={agente.id}>
+                                            {remota ? (
+                                                <div
+                                                    className="poph-inspetor__agente poph-inspetor__agente--estatico"
+                                                    title="A organização está em outro nó: abra o console desse nó"
+                                                >
+                                                    {conteudo}
+                                                </div>
+                                            ) : (
+                                                <Link
+                                                    className="poph-inspetor__agente"
+                                                    to={`/orgs/${org.id}/agents/${agente.id}`}
+                                                >
+                                                    {conteudo}
+                                                </Link>
+                                            )}
+                                        </li>
+                                    );
+                                })}
+                            </ul>
+                            {listaDeAgentes.length > agentesNoBloco.length && (
+                                <Link className="poph-inspetor__ver-todos" to={`/orgs/${org.id}/agents`}>
+                                    Ver todos os {listaDeAgentes.length} agentes →
+                                </Link>
+                            )}
+                        </>
+                    )}
+                </section>
             </div>
 
-            <div className="poph-gaveta__rodape">
-                Pressione <kbd>Esc</kbd> para fechar o inspetor.
-            </div>
+            <footer className="poph-inspetor__rodape">
+                <SofaButton
+                    variant="primary"
+                    fullWidth
+                    disabled={remota}
+                    title={remota ? "A organização está em outro nó" : undefined}
+                    onClick={() => aoAcessar(org)}
+                >
+                    Acessar Organização →
+                </SofaButton>
+                {podeGerenciar && (
+                    <div className="poph-inspetor__rodape-secundarias">
+                        <SofaButton
+                            variant="secondary"
+                            size="sm"
+                            disabled={remota || aoEditar === undefined}
+                            onClick={() => aoEditar?.(org)}
+                        >
+                            Editar
+                        </SofaButton>
+                        <SofaButton
+                            variant="secondary"
+                            size="sm"
+                            disabled={aoExportar === undefined}
+                            onClick={() => aoExportar?.(org)}
+                        >
+                            Exportar
+                        </SofaButton>
+                        <SofaIconButton
+                            label={`Excluir ${org.name}`}
+                            variant="danger"
+                            size={32}
+                            disabled={remota || aoExcluir === undefined}
+                            onClick={() => aoExcluir?.(org)}
+                        >
+                            <IconTrash size={14} aria-hidden="true" />
+                        </SofaIconButton>
+                    </div>
+                )}
+            </footer>
         </aside>
     );
 }

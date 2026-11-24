@@ -82,3 +82,75 @@ describe("trilha (tela) com o nome publicado pela aba do agente", () => {
         expect(screen.queryByText("Outro agente")).not.toBeInTheDocument();
     });
 });
+
+/**
+ * CF-08: em rota de agente (cinco migalhas) a trilha não cabe inteira em 1440 px. A tela atual fica
+ * inteira, as anteriores encolhem por prioridade (quanto mais longe da atual, mais cedo) e cada uma
+ * leva o texto completo no `title`.
+ */
+describe("trilha longa (rota de agente) e prioridade de corte", () => {
+    const ROTA = "/orgs/org_1/agents/agt_1/instructions";
+
+    function montar() {
+        publicarNomeDoAgente("agt_1", "Bia");
+        return render(
+            <MemoryRouter initialEntries={[ROTA]}>
+                <Trilha orgs={ORGS} />
+            </MemoryRouter>,
+        );
+    }
+
+    it("as cinco migalhas aparecem, na ordem do caminho", () => {
+        montar();
+        const passos = document.querySelectorAll(".poph-topbar__passo");
+        expect([...passos].map((passo) => passo.textContent?.replace("/", "").trim())).toEqual([
+            "Organizações",
+            "Clínica Aurora",
+            "Agentes",
+            "Bia",
+            "Instruções",
+        ]);
+    });
+
+    it("a tela atual fica inteira: marcada como atual, sem title e sem encolher", () => {
+        montar();
+        const atual = screen.getByText("Instruções");
+        expect(atual).toHaveClass("poph-topbar__atual");
+        expect(atual).toHaveAttribute("aria-current", "page");
+        expect(atual).not.toHaveAttribute("title");
+        expect(atual.parentElement).toHaveClass("poph-topbar__passo--atual");
+        expect((atual.parentElement as HTMLElement).style.flexShrink).toBe("0");
+    });
+
+    it("as migalhas anteriores levam o texto completo no title e encolhem por prioridade", () => {
+        montar();
+        const passos = [...document.querySelectorAll<HTMLElement>(".poph-topbar__passo")];
+        // A distância até a tela atual é o `flex-shrink`: a mais longe encolhe primeiro.
+        expect(passos.map((passo) => passo.style.flexShrink)).toEqual(["4", "3", "2", "1", "0"]);
+        // Texto completo no title, para o nome cortado continuar acessível.
+        expect(screen.getByText("Organizações")).toHaveAttribute("title", "Organizações");
+        expect(screen.getByText("Clínica Aurora")).toHaveAttribute("title", "Clínica Aurora");
+        expect(screen.getByText("Agentes")).toHaveAttribute("title", "Agentes");
+        expect(screen.getByText("Bia")).toHaveAttribute("title", "Bia");
+    });
+
+    it("cada passo carrega o próprio separador, então esconder um passo não deixa '/' solto", () => {
+        montar();
+        const passos = [...document.querySelectorAll(".poph-topbar__passo")];
+        expect(passos[0]?.querySelector(".poph-topbar__separador")).toBeNull();
+        for (const passo of passos.slice(1)) {
+            expect(passo.querySelector(".poph-topbar__separador")?.textContent).toBe("/");
+        }
+    });
+
+    it("em caminho curto a última migalha também é a atual e não tem title", () => {
+        render(
+            <MemoryRouter initialEntries={["/orgs/org_1/structure"]}>
+                <Trilha orgs={ORGS} />
+            </MemoryRouter>,
+        );
+        const atual = screen.getByText("Estrutura");
+        expect(atual).toHaveAttribute("aria-current", "page");
+        expect(atual).not.toHaveAttribute("title");
+    });
+});

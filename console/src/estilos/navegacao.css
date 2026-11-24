@@ -1,35 +1,27 @@
-/* Menu lateral do Console (RL-03, PRD do re-layout §5.2).
+/* Menu lateral do Console (RL-03, PRD do re-layout §5.2; CF-02, desenho FigCraft).
  *
  * Classes próprias do menu, com prefixo `poph-rail__`. A estrutura do rail (fundo, largura,
  * títulos de seção, item) vem da SofaUI; aqui só o que o desenho acrescenta:
- * - marcador âmbar à esquerda do item ativo (barra fina, sem fundo colorido);
- * - contador ao lado do rótulo (só Organizações);
- * - rodapé com a versão da instância e o botão "? atalhos".
+ * - seletor de organização no topo (CF-06, em `seletorDeOrganizacao.css`) e o alternador expandido/foco;
+ * - contador ao lado do rótulo (só Organizações), em chip de borda fina;
+ * - rodapé em uma linha com a versão da instância, o botão dos atalhos e o alternador.
  *
- * Cores e espaçamentos vêm dos tokens `--pop-*` que o Console já usa.
+ * O item ativo fica com o degrau tonal da própria SofaUI (`--pop-ink-active`): o desenho não tem
+ * barra nem borda lateral colorida. Cores e espaçamentos vêm dos tokens `--pop-*`.
  */
 
-/* Item do rail: posição de referência para o marcador. */
+/* Item do rail: posição de referência para o contador e o `aside`. */
 .poph-rail__item {
     position: relative;
 }
 
-/* Marcador âmbar do item ativo: barra de 2 px dentro da própria linha. */
-.poph-rail__item[aria-current]::before {
-    content: "";
-    position: absolute;
-    top: 10px;
-    bottom: 10px;
-    left: 0;
-    width: 2px;
-    border-radius: 2px;
-    background: var(--pop-accent);
-}
-
-/* Contador à direita do rótulo (número real da sessão, sem fundo). */
+/* Contador à direita do rótulo, em chip de borda fina como no desenho (só Organizações). */
 .poph-rail__contador {
+    padding: 1px 5px;
+    border: 1px solid var(--pop-line);
+    border-radius: var(--pop-radius-sm, 4px);
     font-family: var(--pop-font-mono);
-    font-size: var(--pop-font-size-body-sm);
+    font-size: 10px;
     font-variant-numeric: tabular-nums;
     color: var(--pop-text-muted);
 }
@@ -41,21 +33,292 @@
     min-width: 0;
 }
 
-/* Rodapé em duas linhas: a versão inteira em cima, "? atalhos" embaixo. */
-.poph-rail__base {
+/* Chip de identidade do cluster no topo do rail (prancha 01, URL `/orgs`). Medidas do desenho:
+ * 32 px de altura, borda de 1 px, ícone de 14 px em âmbar, nome em 12,5 px e o ponto de situação. */
+.poph-rail__cluster {
     display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: var(--pop-spacing-xs);
+    flex: none;
+    align-items: center;
+    gap: var(--pop-spacing-md, 8px);
+    box-sizing: border-box;
+    height: 32px;
+    padding: 0 var(--pop-spacing-md, 8px);
+    border: 1px solid var(--pop-line);
+    border-radius: var(--pop-radius-sm, 6px);
+    background: var(--pop-surface-glass);
+    color: var(--pop-text-primary);
+    font-family: var(--pop-font-sans);
+    font-size: 12.5px;
+    font-weight: var(--pop-font-weight-medium, 500);
     min-width: 0;
 }
 
-/* A versão quebra a linha se precisar, mas nunca é cortada com reticências. */
-.poph-rail__versao {
-    min-width: 0;
-    max-width: 100%;
-    font-family: var(--pop-font-mono);
-    font-size: var(--pop-font-size-body-sm);
+.poph-rail__cluster-icone {
+    flex: none;
+    width: 14px;
+    height: 14px;
     color: var(--pop-text-muted);
-    overflow-wrap: anywhere;
+}
+
+.poph-rail__cluster-nome {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.poph-rail__cluster-ponto {
+    flex: none;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--pop-success);
+}
+
+.poph-rail__cluster-ponto--alerta {
+    background: var(--pop-danger);
+}
+
+.poph-rail__cluster-ponto--neutro {
+    background: var(--pop-text-muted);
+}
+
+/* Texto só para leitor de tela (a situação do cluster, que o ponto mostra por cor). */
+.poph-rail__so-leitor {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+}
+
+/* Modo foco: o chip vira um tile de 32×32 com o ícone; o nome sai da tela, mas fica no `title`. */
+.poph-rail__cluster--compacta {
+    width: 32px;
+    padding: 0;
+    justify-content: center;
+    margin: 0 auto;
+}
+
+.poph-rail__cluster--compacta .poph-rail__cluster-nome,
+.poph-rail__cluster--compacta .poph-rail__cluster-ponto {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+}
+
+/* Rodapé em uma linha: versão à esquerda, atalhos e alternador à direita. */
+.poph-rail__base {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: nowrap;
+    gap: var(--pop-spacing-sm, 6px);
+    min-width: 0;
+}
+
+/* Versão da instância no rodapé: ocupa o que sobra, em uma linha só, e corta com reticências. */
+.poph-rail__versao {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-family: var(--pop-font-mono);
+    font-size: 10px;
+    color: var(--pop-text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Estrutura compartilhada do desenho FigCraft: rail de 240px e modo foco de 64px. */
+.poph-casca .sofa-sidebar-rail {
+    width: var(--sofa-rail-width, 240px);
+    border-right-color: var(--pop-line);
+    background: var(--pop-surface);
+}
+
+.poph-casca .sofa-sidebar-rail__list {
+    gap: 2px;
+    padding: 12px 10px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--pop-line-strong) transparent;
+}
+
+.poph-rail__separador {
+    flex: none;
+    height: 1px;
+    margin: 2px 0 0;
+    background: var(--pop-line);
+}
+
+.poph-rail__controle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: var(--pop-radius-sm, 4px);
+    background: transparent;
+    color: var(--pop-text-muted);
+    cursor: pointer;
+}
+
+.poph-rail__controle:hover {
+    background: var(--pop-surface-hover);
+    color: var(--pop-text-primary);
+}
+
+.poph-rail__controle:focus-visible {
+    outline: none;
+    box-shadow: var(--pop-focus-ring);
+}
+
+.poph-casca .sofa-rail-item {
+    min-height: 30px;
+    padding: 0 8px;
+    border-radius: var(--pop-radius-sm, 5px);
+    gap: 8px;
+    font-size: 12px;
+}
+
+.poph-casca .sofa-rail-item__media svg {
+    width: 14px;
+    height: 14px;
+}
+
+.poph-casca .sofa-rail-item__text {
+    gap: 0;
+}
+
+.poph-casca .sofa-sidebar-rail__section-title {
+    padding: 8px 8px 4px;
+    font-size: 10px;
+}
+
+.poph-casca .sofa-sidebar-rail__footer {
+    padding: 10px;
+}
+
+/* No rodapé, os controles (atalhos e alternar o rail) ficam colados à direita. */
+.poph-rail__base .poph-rail__atalhos {
+    flex: none;
+    min-width: 0;
+    padding-inline: 6px;
+}
+
+/* Modo foco: o rótulo continua acessível, mas a rail mostra somente os glifos. */
+.poph-casca .sofa-sidebar-rail--compact {
+    width: 64px;
+}
+
+.poph-casca .sofa-sidebar-rail--compact .sofa-sidebar-rail__list {
+    align-items: center;
+    padding: 12px 15px;
+}
+
+.poph-casca .sofa-sidebar-rail--compact .poph-rail__controle {
+    width: 32px;
+    height: 32px;
+    border-color: var(--pop-line);
+    background: var(--pop-surface-glass);
+}
+
+.poph-casca .sofa-sidebar-rail--compact .poph-rail__item {
+    width: 34px;
+    min-height: 34px;
+    padding: 0;
+    justify-content: center;
+    gap: 0;
+}
+
+.poph-casca .sofa-sidebar-rail--compact .sofa-rail-item__text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+}
+
+.poph-casca .sofa-sidebar-rail--compact .sofa-rail-item__aside,
+.poph-casca .sofa-sidebar-rail--compact .sofa-sidebar-rail__section-title,
+.poph-casca .sofa-sidebar-rail--compact .poph-rail__versao {
+    display: none;
+}
+
+.poph-casca .sofa-sidebar-rail--compact .poph-rail__base {
+    justify-content: center;
+    align-items: center;
+}
+
+.poph-casca .sofa-sidebar-rail--compact .poph-rail__atalhos {
+    width: 32px;
+    min-width: 32px;
+    justify-content: center;
+    padding-inline: 0;
+}
+
+@media (max-width: 900px) {
+    /* Abaixo de 900 px o rail entra recolhido pelo layout: o alternador manual sai de cena para não
+     * prometer um estado que a largura não comporta. O chip do cluster vira o mesmo tile do foco. */
+    .poph-casca .sofa-sidebar-rail .poph-rail__controle {
+        display: none;
+    }
+
+    .poph-casca .sofa-sidebar-rail:not(.sofa-sidebar-rail--compact) .poph-rail__cluster {
+        width: 32px;
+        padding: 0;
+        justify-content: center;
+        margin: 0 auto;
+    }
+
+    .poph-casca .sofa-sidebar-rail:not(.sofa-sidebar-rail--compact) .poph-rail__cluster-nome,
+    .poph-casca .sofa-sidebar-rail:not(.sofa-sidebar-rail--compact) .poph-rail__cluster-ponto {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
+    }
+
+    .poph-casca .sofa-sidebar-rail:not(.sofa-sidebar-rail--compact) {
+        width: 64px;
+    }
+
+    .poph-casca .sofa-sidebar-rail:not(.sofa-sidebar-rail--compact) .poph-rail__separador,
+    .poph-casca .sofa-sidebar-rail:not(.sofa-sidebar-rail--compact) .sofa-sidebar-rail__section-title {
+        display: none;
+    }
+
+    .poph-casca .sofa-sidebar-rail:not(.sofa-sidebar-rail--compact) .sofa-sidebar-rail__list {
+        align-items: center;
+        padding-inline: 15px;
+    }
+
+    .poph-casca .sofa-sidebar-rail:not(.sofa-sidebar-rail--compact) .poph-rail__item {
+        width: 34px;
+        min-height: 34px;
+        padding: 0;
+        justify-content: center;
+        gap: 0;
+    }
+
+    .poph-casca .sofa-sidebar-rail:not(.sofa-sidebar-rail--compact) .sofa-rail-item__text,
+    .poph-casca .sofa-sidebar-rail:not(.sofa-sidebar-rail--compact) .sofa-rail-item__aside,
+    .poph-casca .sofa-sidebar-rail:not(.sofa-sidebar-rail--compact) .poph-rail__versao {
+        display: none;
+    }
 }

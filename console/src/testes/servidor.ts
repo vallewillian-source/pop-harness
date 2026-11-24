@@ -97,6 +97,7 @@ export class ServidorFalso {
                     ok: status >= 200 && status < 300,
                     headers: new Headers(cabecalhosResposta),
                     text: async () => conteudo,
+                    json: async () => JSON.parse(conteudo),
                     blob: async () => new Blob([conteudo]),
                 } as unknown as Response;
             }),
