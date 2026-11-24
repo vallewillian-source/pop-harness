@@ -104,16 +104,19 @@ a:focus-visible,
     text-decoration: none;
 }
 
-/* Até 1320 px a trilha inteira não cabe sem cortar os nomes: mostra as duas últimas migalhas (agente e
-   aba, ou organização e tela), e cada uma fica legível. Acima disso, a trilha inteira. O `!important`
-   vence o `flex-shrink` que o componente põe em cada passo. */
+/* Até 1320 px a trilha inteira não cabe sem cortar os nomes: mostra as duas últimas migalhas (org e
+   tela). A do agente fica de fora (`--agent`, CF-11 rodada 1): são três passos e eles cabem a partir
+   de 1200 px. O `!important` vence o `flex-shrink` que o componente põe em cada passo. */
 @media (max-width: 1320px) {
-    .poph-topbar__trilha > .poph-topbar__passo:not(:nth-last-child(-n + 2)) {
+    .poph-topbar__trilha:not(.poph-topbar__trilha--agent)
+        > .poph-topbar__passo:not(:nth-last-child(-n + 2)) {
         display: none !important;
     }
 
     /* O primeiro passo visível perde o separador, para não começar com "/". */
-    .poph-topbar__trilha > .poph-topbar__passo:nth-last-child(2) .poph-topbar__separador {
+    .poph-topbar__trilha:not(.poph-topbar__trilha--agent)
+        > .poph-topbar__passo:nth-last-child(2)
+        .poph-topbar__separador {
         display: none;
     }
 }

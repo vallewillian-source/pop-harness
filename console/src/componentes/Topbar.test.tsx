@@ -652,3 +652,43 @@ describe("cabeçalho da visão do agente sem selo de token e com trilha curta (C
         ]);
     });
 });
+
+describe("trilha do agente de três passos em 1280 (CF-11 rodada 1)", () => {
+    const SAUDE_OK = { ...SAUDE, version: "0.1.0" };
+
+    it("na visão do agente o cabeçalho e a trilha levam a marca --agent", async () => {
+        prepararSessao("pophg_teste", "global");
+        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
+
+        const { container } = montar("/orgs/org_1/agents/agt_largura/instructions");
+
+        expect(await screen.findByText(/Modelo:/)).toBeInTheDocument();
+        expect(container.querySelector("header.poph-topbar")).toHaveClass("poph-topbar--agent");
+        expect(container.querySelector("nav.poph-topbar__trilha")).toHaveClass(
+            "poph-topbar__trilha--agent",
+        );
+    });
+
+    it("na rota de organização nem o cabeçalho nem a trilha levam a marca", () => {
+        prepararSessao("pophg_teste", "global");
+        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
+
+        const { container } = montar("/orgs/org_1/structure");
+
+        expect(container.querySelector("header.poph-topbar")).not.toHaveClass("poph-topbar--agent");
+        expect(container.querySelector("nav.poph-topbar__trilha")).not.toHaveClass(
+            "poph-topbar__trilha--agent",
+        );
+    });
+
+    it("na lista de agentes da organização a trilha também fica sem a marca", () => {
+        prepararSessao("pophg_teste", "global");
+        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
+
+        const { container } = montar("/orgs/org_1/agents");
+
+        expect(container.querySelector("nav.poph-topbar__trilha")).not.toHaveClass(
+            "poph-topbar__trilha--agent",
+        );
+    });
+});

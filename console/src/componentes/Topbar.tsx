@@ -398,7 +398,7 @@ export function Topbar({
     };
 
     return (
-        <header className="poph-topbar">
+        <header className={emRotaDeAgente ? "poph-topbar poph-topbar--agent" : "poph-topbar"}>
             <div className="poph-topbar__esquerda">
                 <div className="poph-topbar__marca">
                     <span className="poph-topbar__monograma" aria-hidden="true">

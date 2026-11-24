@@ -98,13 +98,21 @@
 /* ── Centro: busca global ─────────────────────────────────────────────────── */
 
 /* A busca é a única parte com largura fixa; ela não encolhe por conta própria, porque já encolhe
- * com a janela pelo `clamp`. O teto desceu de 440 para 420 px no CF-08: com cinco migalhas, 440 px
- * deixavam 28 px faltando para os nomes caírem inteiros em 1440 px. O desenho usa no máximo 380. */
+ * com a janela pelo `clamp`. O teto desceu de 440 para 420 px no CF-08; nas rotas do agente ele cai
+ * para os 380 px do desenho, e os 40 px vão para a trilha de três passos (CF-11 rodada 1). */
 .poph-topbar__centro {
     display: flex;
     flex: 0 0 clamp(220px, 35vw, 420px);
     min-width: 0;
     justify-content: center;
+}
+
+.poph-topbar--agent .poph-topbar__centro {
+    flex: 0 2 clamp(220px, 35vw, 380px);
+}
+
+.poph-topbar--agent .poph-topbar__esquerda {
+    flex-shrink: 0;
 }
 
 /* ── Direita: estado, escopo do token e saída ─────────────────────────────── */

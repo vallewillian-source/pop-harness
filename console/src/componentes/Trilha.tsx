@@ -76,8 +76,16 @@ export function Trilha({ orgs }: { orgs: { id: string; name: string }[] }) {
     const partes = pathname.split("/").filter(Boolean);
     const nomeAgente = useNomeDoAgente(partes[0] === "orgs" && partes[2] === "agents" ? partes[3] : undefined);
     const migalhas = trilha(pathname, orgs, nomeAgente);
+    const agentTrail = partes[0] === "orgs" && partes[2] === "agents" && Boolean(partes[3]);
     return (
-        <nav className="poph-topbar__trilha" aria-label="Trilha de navegação">
+        <nav
+            className={
+                agentTrail
+                    ? "poph-topbar__trilha poph-topbar__trilha--agent"
+                    : "poph-topbar__trilha"
+            }
+            aria-label="Trilha de navegação"
+        >
             {migalhas.map((migalha, indice) => {
                 const ultima = indice === migalhas.length - 1;
                 // 0 na tela atual: ela mantém o tamanho do texto; 1 na anterior, e assim por diante.

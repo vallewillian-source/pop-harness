@@ -173,3 +173,30 @@ describe("trilha curta (rota de agente) e prioridade de corte", () => {
         expect(atual).not.toHaveAttribute("title");
     });
 });
+
+describe("marca da trilha do agente", () => {
+    it("em rota de agente a trilha leva a marca --agent", () => {
+        render(
+            <MemoryRouter initialEntries={["/orgs/org_1/agents/agt_1/instructions"]}>
+                <Trilha orgs={ORGS} />
+            </MemoryRouter>,
+        );
+        expect(document.querySelector("nav.poph-topbar__trilha")).toHaveClass(
+            "poph-topbar__trilha--agent",
+        );
+    });
+
+    it("na tela da organização e na lista de agentes a trilha fica sem a marca", () => {
+        for (const caminho of ["/orgs/org_1/structure", "/orgs/org_1/agents"]) {
+            render(
+                <MemoryRouter initialEntries={[caminho]}>
+                    <Trilha orgs={ORGS} />
+                </MemoryRouter>,
+            );
+            expect(document.querySelector("nav.poph-topbar__trilha")).not.toHaveClass(
+                "poph-topbar__trilha--agent",
+            );
+            cleanup();
+        }
+    });
+});

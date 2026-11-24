@@ -482,10 +482,10 @@ M13b	251	console/src/componentes/SeletorDeAgente.tsx
 M13b	197	console/src/componentes/SeletorDeOrganizacao.tsx
 M13b	75	console/src/componentes/Shell.test.tsx
 M13b	55	console/src/componentes/Shell.tsx
-M13b	468	console/src/componentes/Topbar.test.tsx
-M13b	301	console/src/componentes/Topbar.tsx
-M13b	76	console/src/componentes/Trilha.test.tsx
-M13b	83	console/src/componentes/Trilha.tsx
+M13b	491	console/src/componentes/Topbar.test.tsx
+M13b	302	console/src/componentes/Topbar.tsx
+M13b	80	console/src/componentes/Trilha.test.tsx
+M13b	86	console/src/componentes/Trilha.tsx
 M13b	82	console/src/componentes/busca.ts
 M13b	671	console/src/componentes/navegacao.test.tsx
 M13b	143	console/src/componentes/navegacao.ts
@@ -551,7 +551,7 @@ M13d	47	console/src/estilos/seletorDeAgente.css
 M13d	40	console/src/estilos/seletorDeOrganizacao.css
 M13d	32	console/src/estilos/topbar.css
 M13d	9	console/src/estilos/whatsapp.css
-M13d	66	console/src/main.css
+M13d	68	console/src/main.css
 M13d	6	console/src/main.tsx
 M13d	125	console/src/sessao/Sessao.tsx
 M13d	4	console/src/testes/modal.ts
