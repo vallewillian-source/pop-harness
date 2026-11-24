@@ -338,7 +338,7 @@ export function AgenteInstrucoes() {
                 }
             />
 
-            <AbasDoAgente org={orgId} agente={agentId} ativa="instructions" nome={agente.name} />
+            <AbasDoAgente org={orgId} agente={agentId} ativa="instructions" nome={agente.name} model={agente.model ?? null} />
 
             {(conflito || erroGeral) && (
                 <div className="poph-pilha">

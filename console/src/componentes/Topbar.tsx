@@ -19,6 +19,7 @@ import {
     IconLock,
     IconLogOut,
     IconSearch,
+    SofaButton,
     SofaIconButton,
     type SofaIconProps,
 } from "@sofacoding/sofa-ui";
@@ -30,7 +31,12 @@ import {
     type OpcaoDeBusca,
     type TelaBuscavel,
 } from "./busca";
-import { ITENS_DE_NAVEGACAO, type ContextoDeNavegacao } from "./navegacao";
+import {
+    ITENS_DE_NAVEGACAO,
+    ITENS_DO_COCKPIT_DO_AGENTE,
+    type ContextoDeNavegacao,
+} from "./navegacao";
+import { useAgentModel } from "./agentModel";
 import { useMemoriaDoProcesso, useSaude } from "./saude";
 import { Trilha } from "./Trilha";
 import "../estilos/topbar.css";
@@ -80,12 +86,21 @@ function contextoDaUrl(pathname: string): ContextoDeNavegacao {
 
 /** Telas do menu que existem para o contexto da URL (as que estão ativas e têm rota resolvida). */
 function telasDisponiveis(contexto: ContextoDeNavegacao): TelaBuscavel[] {
-    return ITENS_DE_NAVEGACAO.flatMap((item) => {
+    const itens = contexto.agentId
+        ? [
+              ...ITENS_DE_NAVEGACAO.filter((item) => !item.exigeAgente),
+              ...ITENS_DO_COCKPIT_DO_AGENTE,
+          ]
+        : ITENS_DE_NAVEGACAO;
+    return itens.flatMap((item) => {
         if (item.estado !== "ativo") return [];
         const caminho = item.rota(contexto);
         return caminho ? [{ rotulo: item.rotulo, caminho }] : [];
     });
 }
+
+const PLACEHOLDER_GLOBAL = "Buscar organizações, rotas ou comandos globais…";
+const PLACEHOLDER_DO_AGENTE = "Buscar instruções, parâmetros ou turnos deste agente…";
 
 /** Tempo que o aviso de "comando copiado" fica na tela. */
 const DURACAO_DO_AVISO_MS = 3000;
@@ -95,7 +110,7 @@ const DURACAO_DO_AVISO_MS = 3000;
  * telas e comandos do `poph`; setas percorrem as opções de todos os grupos; Enter abre a
  * organização ou a tela pela guarda de alterações, ou copia o comando; Esc limpa e fecha.
  */
-function BuscaGlobal({ telas }: { telas: TelaBuscavel[] }) {
+function BuscaGlobal({ telas, placeholder }: { telas: TelaBuscavel[]; placeholder: string }) {
     const { sessao } = useSessao();
     const guarda = useGuardaDeAlteracoes();
     const campo = useRef<HTMLInputElement>(null);
@@ -204,7 +219,7 @@ function BuscaGlobal({ telas }: { telas: TelaBuscavel[] }) {
                 type="text"
                 role="combobox"
                 className="poph-busca__campo"
-                placeholder="Buscar organizações, rotas ou comandos globais…"
+                placeholder={placeholder}
                 autoComplete="off"
                 spellCheck={false}
                 value={termo}
@@ -331,6 +346,30 @@ function estadoDaInstancia(
     return { texto, alerta: dados.status !== "ok" };
 }
 
+function saudeDoChip(
+    dados: { status: string } | null,
+    semConexao: boolean,
+    degradada: boolean,
+): string {
+    if (semConexao) return "sem conexão";
+    if (degradada) return "503 · degradada";
+    if (!dados) return "verificando…";
+    return dados.status === "ok" ? "200 OK" : "degradada";
+}
+
+function estadoDoAgente(
+    model: string | null,
+    dados: { status: string } | null,
+    semConexao: boolean,
+    degradada: boolean,
+): { modelo: string; saude: string; alerta: boolean } {
+    return {
+        modelo: `Modelo: ${model ?? "—"}`,
+        saude: saudeDoChip(dados, semConexao, degradada),
+        alerta: semConexao || degradada || (dados !== null && dados.status !== "ok"),
+    };
+}
+
 export function Topbar({
     orgs,
     aoAbrirAtalhos,
@@ -345,8 +384,17 @@ export function Topbar({
     const { saude: dados, semConexao, degradada } = useSaude();
     const memoria = useMemoriaDoProcesso();
     const escopoDoToken = sessao?.escopo === "org" ? "Token de org" : "Token global";
-    const telas = telasDisponiveis(contextoDaUrl(pathname));
+    const contexto = contextoDaUrl(pathname);
+    const emRotaDeAgente = contexto.agentId !== null;
+    const modelDoAgente = useAgentModel(contexto.agentId ?? undefined);
+    const telas = telasDisponiveis(contexto);
     const estado = estadoDaInstancia(dados, semConexao, degradada, memoria);
+    const chipDoAgente = estadoDoAgente(modelDoAgente, dados, semConexao, degradada);
+    const tituloDoChip = `${enderecoDaInstancia()} · ${escopoDoToken} · consulta a cada 15 s`;
+    const sairDoConsole = () => {
+        sair();
+        navegar("/login", { replace: true });
+    };
 
     return (
         <header className="poph-topbar">
@@ -368,20 +416,38 @@ export function Topbar({
                 <Trilha orgs={orgs} />
             </div>
             <div className="poph-topbar__centro">
-                <BuscaGlobal telas={telas} />
+                <BuscaGlobal
+                    telas={telas}
+                    placeholder={emRotaDeAgente ? PLACEHOLDER_DO_AGENTE : PLACEHOLDER_GLOBAL}
+                />
             </div>
             <div className="poph-topbar__acoes">
-                <span
-                    className={
-                        estado.alerta
-                            ? "poph-topbar__estado poph-topbar__estado--sem"
-                            : "poph-topbar__estado"
-                    }
-                    title={`${enderecoDaInstancia()} · ${escopoDoToken} · consulta a cada 15 s`}
-                >
-                    <span className="poph-topbar__ponto" aria-hidden="true" />
-                    <span className="poph-topbar__estado-texto">{estado.texto}</span>
-                </span>
+                {emRotaDeAgente ? (
+                    <span
+                        className={
+                            chipDoAgente.alerta
+                                ? "poph-topbar__estado poph-topbar__estado--agente poph-topbar__estado--sem"
+                                : "poph-topbar__estado poph-topbar__estado--agente"
+                        }
+                        title={tituloDoChip}
+                    >
+                        <span className="poph-topbar__ponto" aria-hidden="true" />
+                        <span className="poph-topbar__estado-texto">{chipDoAgente.modelo}</span>
+                        <span className="poph-topbar__saude">{chipDoAgente.saude}</span>
+                    </span>
+                ) : (
+                    <span
+                        className={
+                            estado.alerta
+                                ? "poph-topbar__estado poph-topbar__estado--sem"
+                                : "poph-topbar__estado"
+                        }
+                        title={tituloDoChip}
+                    >
+                        <span className="poph-topbar__ponto" aria-hidden="true" />
+                        <span className="poph-topbar__estado-texto">{estado.texto}</span>
+                    </span>
+                )}
                 {/* Leitura para quem usa leitor de tela: só anuncia quando a instância cai. */}
                 <span role="status" className="poph-topbar__so-leitor">
                     {semConexao ? "Instância sem conexão" : ""}
@@ -390,15 +456,22 @@ export function Topbar({
                     <IconLock aria-hidden="true" />
                     {escopoDoToken}
                 </span>
-                <SofaIconButton
-                    label="Sair do Console"
-                    onClick={() => {
-                        sair();
-                        navegar("/login", { replace: true });
-                    }}
-                >
-                    <IconLogOut aria-hidden="true" />
-                </SofaIconButton>
+                {emRotaDeAgente ? (
+                    <SofaButton
+                        variant="subtle"
+                        size="sm"
+                        className="poph-topbar__sair"
+                        aria-label="Sair do Console"
+                        icon={<IconLogOut aria-hidden="true" />}
+                        onClick={sairDoConsole}
+                    >
+                        Sair
+                    </SofaButton>
+                ) : (
+                    <SofaIconButton label="Sair do Console" onClick={sairDoConsole}>
+                        <IconLogOut aria-hidden="true" />
+                    </SofaIconButton>
+                )}
                 <SofaIconButton label="Atalhos do teclado" size={28} onClick={aoAbrirAtalhos}>
                     <IconeAjuda aria-hidden="true" />
                 </SofaIconButton>

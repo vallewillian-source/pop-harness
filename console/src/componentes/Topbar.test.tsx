@@ -21,6 +21,7 @@ import { useEffect } from "react";
 import { SessaoProvider } from "../sessao/Sessao";
 import { ServidorFalso } from "../testes/servidor";
 import { GuardaAlteracoesProvider, useGuardaDeAlteracoes } from "./GuardaAlteracoes";
+import { publishAgentModel } from "./agentModel";
 import { Topbar } from "./Topbar";
 
 const CHAVE_DA_SESSAO = "poph-console.sessao";
@@ -439,5 +440,150 @@ describe("busca global, versão e estado da instância (CF-04)", () => {
         await usuario.keyboard("{Enter}");
 
         expect(screen.getByTestId("caminho")).toHaveTextContent("/orgs/org_3");
+    });
+});
+
+describe("cabeçalho da visão do agente (CF-10)", () => {
+    const SAUDE_OK = { ...SAUDE, version: "0.1.0" };
+
+    it("a busca da visão do agente usa o placeholder contextual", () => {
+        prepararSessao("pophg_teste", "global");
+        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
+
+        montar("/orgs/org_1/agents/agt_ctx/instructions");
+
+        expect(campoDeBusca()).toHaveAttribute(
+            "placeholder",
+            "Buscar instruções, parâmetros ou turnos deste agente…",
+        );
+    });
+
+    it("a busca da visão do agente abre a aba do agente pela rota real", async () => {
+        const usuario = userEvent.setup();
+        prepararSessao("pophg_teste", "global", TRES_ORGS);
+        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
+
+        montar("/orgs/org_1/agents/agt_busca/instructions");
+        await usuario.type(campoDeBusca(), "roteamento");
+
+        const aba = screen.getByRole("option", { name: "Roteamento & Habilidades" });
+        await usuario.click(aba);
+
+        expect(screen.getByTestId("caminho")).toHaveTextContent(
+            "/orgs/org_1/agents/agt_busca/routing",
+        );
+    });
+
+    it("a busca da visão do agente lista as seis abas com rota", async () => {
+        const usuario = userEvent.setup();
+        prepararSessao("pophg_teste", "global", TRES_ORGS);
+        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
+
+        montar("/orgs/org_1/agents/agt_abas/instructions");
+        await usuario.type(campoDeBusca(), "e");
+
+        const grupo = screen.getByRole("group", { name: "Telas" });
+        const rotulos = within(grupo)
+            .getAllByRole("option")
+            .map((opcao) => opcao.textContent);
+
+        expect(rotulos).toEqual(
+            expect.arrayContaining([
+                "Instruções & Prompts",
+                "Base de Conhecimento",
+                "Arquivos do Agente",
+                "Roteamento & Habilidades",
+                "Modelo & Parâmetros (Jev)",
+                "Chat de Teste",
+            ]),
+        );
+        expect(rotulos).not.toContain("Inspeção de Turnos");
+    });
+
+    it("fora da visão do agente a busca continua global", () => {
+        prepararSessao("pophg_teste", "global");
+        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
+
+        montar("/orgs/org_1/structure");
+
+        expect(campoDeBusca()).toHaveAttribute(
+            "placeholder",
+            "Buscar organizações, rotas ou comandos globais…",
+        );
+    });
+
+    it("a busca da organização não oferece as abas do agente", async () => {
+        const usuario = userEvent.setup();
+        prepararSessao("pophg_teste", "global", TRES_ORGS);
+        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
+
+        montar("/orgs/org_1/structure");
+        await usuario.type(campoDeBusca(), "conhecimento");
+
+        expect(screen.queryByRole("option", { name: /Base de Conhecimento/ })).not.toBeInTheDocument();
+        expect(screen.getByText("Nada encontrado para “conhecimento”")).toBeInTheDocument();
+    });
+
+    it("o chip mostra o modelo do agente aberto e a saúde da instância", async () => {
+        prepararSessao("pophg_teste", "global");
+        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
+        publishAgentModel("agt_chip", "gemini-3.8-flash");
+
+        montar("/orgs/org_1/agents/agt_chip/instructions");
+
+        expect(await screen.findByText("Modelo: gemini-3.8-flash")).toBeInTheDocument();
+        expect(screen.getByText("200 OK")).toBeInTheDocument();
+    });
+
+    it("sem modelo publicado o chip mostra 'Modelo: —'", async () => {
+        prepararSessao("pophg_teste", "global");
+        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
+
+        montar("/orgs/org_1/agents/agt_sem_modelo/instructions");
+
+        expect(await screen.findByText("Modelo: —")).toBeInTheDocument();
+    });
+
+    it("o chip avisa quando a instância responde 503", async () => {
+        prepararSessao("pophg_teste", "global");
+        new ServidorFalso()
+            .responder("GET", "/healthz", { status: 503, corpo: { ...SAUDE_OK, status: "degraded" } })
+            .instalar();
+        publishAgentModel("agt_degradado", "gemini-3.8-flash");
+
+        montar("/orgs/org_1/agents/agt_degradado/instructions");
+
+        expect(await screen.findByText("503 · degradada")).toBeInTheDocument();
+        expect(screen.getByText("Modelo: gemini-3.8-flash")).toHaveClass("poph-topbar__estado-texto");
+    });
+
+    it("o chip avisa quando a instância não responde", async () => {
+        prepararSessao("pophg_teste", "global");
+        new ServidorFalso().instalar();
+        publishAgentModel("agt_sem_conexao", "gemini-3.8-flash");
+
+        montar("/orgs/org_1/agents/agt_sem_conexao/instructions");
+
+        expect(await screen.findByText("sem conexão")).toBeInTheDocument();
+    });
+
+    it("na visão do agente o botão de sair aparece com o texto 'Sair'", () => {
+        prepararSessao("pophg_teste", "global");
+        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
+
+        montar("/orgs/org_1/agents/agt_sair/instructions");
+
+        const botao = screen.getByRole("button", { name: "Sair do Console" });
+        expect(within(botao).getByText("Sair")).toBeInTheDocument();
+    });
+
+    it("fora da visão do agente o botão de sair continua só com o ícone", () => {
+        prepararSessao("pophg_teste", "global");
+        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
+
+        montar("/orgs/org_1/structure");
+
+        expect(screen.getByRole("button", { name: "Sair do Console" })).toBeInTheDocument();
+        expect(screen.queryByText("Sair")).not.toBeInTheDocument();
     });
 });

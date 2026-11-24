@@ -349,7 +349,7 @@ export function AgenteRoteamento() {
                 descricao="para onde a conversa vai e quando passa a humano"
             />
 
-            <AbasDoAgente org={orgId} agente={agentId} ativa="routing" nome={agente.name} />
+            <AbasDoAgente org={orgId} agente={agentId} ativa="routing" nome={agente.name} model={agente.model ?? null} />
 
             {conflito && (
                 <SofaBanner tone="warn" title="Versão desatualizada">

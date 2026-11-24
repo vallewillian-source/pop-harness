@@ -20,6 +20,7 @@ import { useEffect, useId, useRef, type KeyboardEvent, type ReactNode } from "re
 import { IconArrowLeft, SofaIconButton } from "@sofacoding/sofa-ui";
 import { useGuardaDeAlteracoes } from "./GuardaAlteracoes";
 import { publicarNomeDoAgente } from "./nomeDoAgente";
+import { publishAgentModel } from "./agentModel";
 import "../estilos/agentes.css";
 
 export type IdAbaDoAgente =
@@ -55,15 +56,18 @@ export type AbasDoAgenteProps = {
     ativa: IdAbaDoAgente;
     /** Nome do agente, para a trilha da barra superior (HR-49b). Cada aba já tem o agente carregado. */
     nome?: string;
+    /** Modelo do agente, para o chip do cabeçalho (CF-10). Vem do mesmo agente que a aba carregou. */
+    model?: string | null;
 };
 
-export function AbasDoAgente({ org, agente, ativa, nome }: AbasDoAgenteProps) {
+export function AbasDoAgente({ org, agente, ativa, nome, model }: AbasDoAgenteProps) {
     const guarda = useGuardaDeAlteracoes();
     const refs = useRef<Array<HTMLButtonElement | null>>([]);
 
     useEffect(() => {
         if (nome) publicarNomeDoAgente(agente, nome);
-    }, [agente, nome]);
+        publishAgentModel(agente, model ?? null);
+    }, [agente, nome, model]);
 
     function trocar(id: IdAbaDoAgente) {
         const aba = ABAS_DO_AGENTE.find((candidata) => candidata.id === id);

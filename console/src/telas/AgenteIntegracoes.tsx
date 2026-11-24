@@ -373,7 +373,7 @@ export function AgenteIntegracoes() {
                     }
                 />
 
-                <AbasDoAgente org={orgId} agente={agentId} ativa="integrations" nome={agente.name} />
+                <AbasDoAgente org={orgId} agente={agentId} ativa="integrations" nome={agente.name} model={agente.model ?? null} />
 
                 {aviso && (
                     <p className="poph-mono-mudo" style={{ margin: 0 }} role="status">

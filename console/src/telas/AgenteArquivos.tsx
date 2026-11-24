@@ -235,7 +235,7 @@ export function AgenteArquivos() {
                 descricao="arquivos que o agente pode enviar ao cliente"
             />
 
-            <AbasDoAgente org={orgId} agente={agentId} ativa="files" nome={agente.name} />
+            <AbasDoAgente org={orgId} agente={agentId} ativa="files" nome={agente.name} model={agente.model ?? null} />
 
             {aviso && (
                 <p className="poph-mono-mudo" style={{ margin: 0 }} role="status">

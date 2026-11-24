@@ -145,6 +145,31 @@
     background: var(--pop-danger);
 }
 
+.poph-topbar__estado--agente {
+    box-sizing: border-box;
+    height: 26px;
+    padding: 0 var(--pop-spacing-md, 8px);
+    border: 1px solid var(--pop-line);
+    border-radius: 5px;
+    background: var(--pop-surface-glass, #212529);
+    font-family: var(--pop-font-sans, "IBM Plex Sans", sans-serif);
+    font-size: 11.5px;
+}
+
+.poph-topbar__saude {
+    font-family: var(--pop-font-mono, "IBM Plex Mono", monospace);
+    font-size: 10.5px;
+    color: var(--pop-text-muted);
+}
+
+.poph-topbar__estado--sem .poph-topbar__saude {
+    color: var(--pop-danger);
+}
+
+.poph-topbar__sair {
+    font-size: 11.5px;
+}
+
 .poph-topbar__token {
     display: inline-flex;
     align-items: center;

@@ -493,7 +493,7 @@ export function AgenteConhecimento() {
                     }
                 />
 
-                <AbasDoAgente org={orgId} agente={agentId} ativa="knowledge-base" nome={agente.name} />
+                <AbasDoAgente org={orgId} agente={agentId} ativa="knowledge-base" nome={agente.name} model={agente.model ?? null} />
 
                 {erroDeVinculo && (
                     <SofaBanner tone="danger" title="Não foi possível mudar o vínculo">

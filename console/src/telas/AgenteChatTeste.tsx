@@ -758,7 +758,7 @@ export function AgenteChatTeste() {
                 organizacao={nomeDaOrg}
                 descricao="conversas de teste com memória zerada: nada do que você escreve aqui sai para o WhatsApp"
             />
-            <AbasDoAgente org={orgId} agente={agentId} ativa="test-chat" nome={agente.name} />
+            <AbasDoAgente org={orgId} agente={agentId} ativa="test-chat" nome={agente.name} model={agente.model ?? null} />
 
             <div className="poph-chat-teste__corpo">
                 <aside className="poph-chat-teste__lista" aria-label="Conversas de teste">

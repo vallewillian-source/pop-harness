@@ -348,7 +348,7 @@ export function AgenteModeloJev() {
                     descricao="modelo, busca na base e portões de decisão do Jev"
                 />
 
-                <AbasDoAgente org={orgId} agente={agentId} ativa="model-jev" nome={agente.name} />
+                <AbasDoAgente org={orgId} agente={agentId} ativa="model-jev" nome={agente.name} model={agente.model ?? null} />
 
                 {conflito && (
                     <SofaBanner tone="warn" title="Versão desatualizada">
