@@ -1,44 +1,44 @@
-# Plugin de exemplo (eco) e a ligação com as filas (HR-27)
+# Example plugin (echo) and the link to the queues (HR-27)
 
-> Contrato: `docs/PLUGIN_PROTOCOLO.md` (HR-25). Código: `crates/poph-plugin-eco/`
-> (o plugin) e `crates/poph-agent/src/fila_integracao.rs` (a ligação com `inbox`/`outbox`).
+> Contract: `docs/PLUGIN_PROTOCOLO.md` (HR-25). Code: `crates/poph-plugin-eco/`
+> (the plugin) and `crates/poph-agent/src/fila_integracao.rs` (the link with `inbox`/`outbox`).
 
-Este documento responde três perguntas:
+This document answers three questions:
 
-1. **como um plugin de verdade conversa com o Harness** — com um exemplo que roda;
-2. **como a fila de saída e a fila de entrada se ligam ao canal** — o que faltava depois da HR-25;
-3. **o que ainda não existe** — para não confundir o exemplo com o WhatsApp da HR-26.
+1. **how a real plugin talks to Harness** — with an example that runs;
+2. **how the output queue and the input queue connect to the channel** — what was missing after HR-25;
+3. **what does not exist yet** — so the example is not confused with the WhatsApp work of HR-26.
 
-## 1. O plugin de exemplo
+## 1. The example plugin
 
-`crates/poph-plugin-eco/` gera o binário **`plugin-eco`**, um programa pequeno que implementa o
-protocolo JSON-lines sobre stdio:
+`crates/poph-plugin-eco/` builds the binary **`plugin-eco`**, a small program that implements the JSON-lines protocol
+over stdio:
 
-| Recebe | Faz | Responde |
+| Receives | Does | Replies |
 |---|---|---|
-| `handshake` | confere a versão do protocolo | `handshake_ok` com o manifesto (`kind: "eco"`, `text: true`, `file_out: true`, `typing: true`), com o esquema de configuração (`modo`, `remetente` obrigatório) e um segredo (`token`, obrigatório) só para o exemplo mostrar o formulário gerado (HR-44c) |
-| `comando` / `enviar_texto` | inverte o texto recebido | `resultado` ok **e** um `evento` de entrada com o texto invertido |
-| `comando` / `enviar_arquivo` | nada (um plugin real subiria o arquivo) | `resultado` ok |
-| `comando` / `definir_presenca` | anota no stderr | `resultado` ok |
-| `saude` | conta as mensagens tratadas | `saude` ok com o detalhe |
-| `encerrar` | sai com código 0 | — |
+| `handshake` | checks the protocol version | `handshake_ok` with the manifest (`kind: "eco"`, `text: true`, `file_out: true`, `typing: true`), with the configuration schema (`modo`, `remetente` required) and a secret (`token`, required) only so the example shows the generated form (HR-44c) |
+| `comando` / `enviar_texto` | reverses the received text | `resultado` ok **and** an inbound `evento` with the reversed text |
+| `comando` / `enviar_arquivo` | nothing (a real plugin would upload the file) | `resultado` ok |
+| `comando` / `definir_presenca` | notes it on stderr | `resultado` ok |
+| `saude` | counts the messages handled | `saude` ok with the detail |
+| `encerrar` | exits with code 0 | — |
 
-Duas decisões que valem para qualquer plugin novo:
+Two decisions that apply to any new plugin:
 
-- **`id_externo` estável.** O evento que o plugin devolve usa `eco-<turno:seq>` — a chave de
-  idempotência do comando. Se o Harness reenviar a mesma mensagem depois de uma queda, o evento
-  chega com o mesmo id e a `inbox` descarta a repetição (a entrega é "pelo menos uma vez").
-- **linha fora do protocolo é lixo.** JSON inválido ou mensagem desconhecida vão para o stderr e o
-  laço continua; o plugin nunca morre por causa de uma linha estranha.
+- **Stable `id_externo`.** The event the plugin returns uses `eco-<turno:seq>` — the command's idempotency key. If
+  Harness resends the same message after a crash, the event arrives with the same id and the `inbox` discards the
+  repetition (delivery is "at least once").
+- **A line outside the protocol is noise.** Invalid JSON or an unknown message goes to stderr and the loop continues;
+  the plugin never dies because of a strange line.
 
-## 2. Como rodar
+## 2. How to run it
 
 ```bash
 apps/pop-harness/scripts/plugin-eco.sh
 ```
 
-O script compila o plugin e a demonstração, roda tudo num banco temporário e apaga a pasta no fim.
-Saída esperada (resumida):
+The script builds the plugin and the demonstration, runs everything in a temporary database and deletes the folder at
+the end. Expected output (summarized; the lines are printed by the code and stay in Portuguese):
 
 ```text
 2. supervisor pronto: Eco (exemplo) v0.1.0 (kind=eco, protocolo=1)
@@ -50,121 +50,116 @@ Saída esperada (resumida):
 ==> processos do plugin ainda vivos: 0
 ```
 
-O que a demonstração faz, passo a passo:
+What the demonstration does, step by step:
 
-1. abre um banco (`harness.db`) numa pasta temporária, com org, agente e a conversa do contato;
-2. sobe o `plugin-eco` **como processo filho** pelo `Supervisor` e faz o handshake;
-3. enfileira um item `text` na `outbox` (`{"texto": "olá, mundo"}`), como o turno faria;
-4. entrega o item pelo `EnvioPeloCanal` — o mesmo transporte que o WhatsApp vai usar;
-5. espera o evento de volta e mostra a mensagem gravada na conversa (`"odnum ,álo"`);
-6. reenvia o mesmo comando e mostra que a `inbox` conta `duplicado` em vez de gravar de novo.
+1. opens a database (`harness.db`) in a temporary folder, with an org, an agent and the contact's conversation;
+2. starts `plugin-eco` **as a child process** through the `Supervisor` and performs the handshake;
+3. enqueues a `text` item in the `outbox` (`{"texto": "olá, mundo"}`), as the turn would;
+4. delivers the item through `EnvioPeloCanal` — the same transport WhatsApp will use;
+5. waits for the event to come back and shows the message recorded in the conversation (`"odnum ,álo"`);
+6. resends the same command and shows that the `inbox` counts it as `duplicado` instead of recording it again.
 
-## 3. A ligação com as filas (`poph-agent/src/fila_integracao.rs`)
+## 3. The link with the queues (`poph-agent/src/fila_integracao.rs`)
 
-Ela mora no `poph-agent`, e não no `poph-plugins`, por dois motivos: quem conhece a `outbox`/`inbox`
-e o `TransporteSaida` é o motor (`poph-agent`), e o `poph-plugins` continua sendo código puro (só o
-protocolo e o supervisor), o que o mantém no check ARM da estação sem arrastar SQLite.
+It lives in `poph-agent`, not in `poph-plugins`, for two reasons: whoever knows the `outbox`/`inbox` and the
+`TransporteSaida` is the engine (`poph-agent`), and `poph-plugins` remains pure code (only the protocol and the
+supervisor), which keeps it in the workstation's ARM check without pulling in SQLite.
 
-### Sai­da: `outbox` → canal
+### Output: `outbox` → channel
 
 ```rust
 let transporte = EnvioPeloCanal::novo(store, canal);   // canal: Arc<dyn Integration>
 fluxo.enviar_pendentes(org, &transporte).await?;        // pending/sending → sent | failed
 ```
 
-`EnvioPeloCanal` implementa `TransporteSaida` (HR-12) e traduz o item da `outbox` no comando do
-protocolo:
+`EnvioPeloCanal` implements `TransporteSaida` (HR-12) and translates the `outbox` item into the protocol command:
 
-| Item da `outbox` | Vira | Campos usados do payload |
+| `outbox` item | Becomes | Payload fields used |
 |---|---|---|
 | `text` | `enviar_texto` | `texto` |
 | `file` | `enviar_arquivo` | `blob_ref`, `nome`, `mime`, `tamanho_bytes`, `sha256`, `legenda` |
 | `presence` | `definir_presenca` | `estado` (`digitando`/`pausado`) |
 
-O destino (`peer`) vem do `external_peer` da conversa do item — o canal não aparece no payload. Erro
-**transitório** do canal (`indisponível`, `tempo esgotado`, recusa marcada como transitória) faz o
-item voltar para a fila como `sending` e ser retentado; erro definitivo (`conversa sem peer`,
-payload inválido) marca `failed` com o motivo legível. O item só vira `sent` depois que o canal
-confirma — é o que impede mensagem perdida em queda no meio do envio.
+The destination (`peer`) comes from the conversation's `external_peer` of the item — the channel does not appear in the
+payload. A **transient** channel error (`indisponível`, `tempo esgotado`, a refusal marked as transient) puts the item
+back in the queue as `sending` to be retried; a definitive error (`conversa sem peer`, invalid payload) marks it
+`failed` with a readable reason. The item only becomes `sent` after the channel confirms — this is what prevents a
+message from being lost on a crash in the middle of sending.
 
-### Entrada: canal → `inbox`
+### Input: channel → `inbox`
 
 ```rust
 let resolvedor = Arc::new(ConversaDoCanal::novo(store, agente, "whatsapp", Some(integracao)));
-let entrada = InboxDoCanal::iniciar(fluxo, org, resolvedor);  // implementa Receptor
+let entrada = InboxDoCanal::iniciar(fluxo, org, resolvedor);  // implements Receptor
 ```
 
-`InboxDoCanal` implementa `Receptor` (HR-25): o `Receptor::receber` só **enfileira** (o laço de
-leitura do canal não pode esperar o banco) e uma tarefa própria grava pelo caminho da HR-12 —
-`Fluxo::receber_mensagem`, que grava a mensagem e o item da `inbox` na **mesma transação**, com
-idempotência por `(integração, id externo)`. Reentrega vira `duplicado`, não outra mensagem.
+`InboxDoCanal` implements `Receptor` (HR-25): `Receptor::receber` only **enqueues** (the channel's read loop cannot
+wait for the database), and a separate task records it through the HR-12 path — `Fluxo::receber_mensagem`, which records
+the message and the `inbox` item in the **same transaction**, with idempotency by `(integração, id externo)`. A
+redelivery becomes `duplicado`, not another message.
 
-`ConversaDoCanal` decide a conversa: procura uma conversa da org com o mesmo canal e o mesmo
-`external_peer` (prefere a aberta); se não houver, abre uma nova com o agente configurado. Sem
-isso, um evento de contato novo não teria onde cair.
+`ConversaDoCanal` decides the conversation: it looks for an org conversation with the same channel and the same
+`external_peer` (preferring the open one); if there is none, it opens a new one with the configured agent. Without this,
+an event from a new contact would have nowhere to go.
 
-Contadores (`InboxDoCanal::contadores`) — por integração, nunca somados entre orgs:
+Counters (`InboxDoCanal::contadores`) — per integration, never summed across orgs:
 
-| Contador | Significado |
+| Counter | Meaning |
 |---|---|
-| `gravados` | evento novo virou mensagem |
-| `duplicados` | a `inbox` recusou por id externo repetido |
-| `recusados` | a fila interna (1024) estava cheia — contrapressão |
-| `falhas` | não deu para resolver a conversa ou gravar |
-| `estados` | avisos de estado do canal (conectado, QR, erro) |
-| `com_anexo` | evento trouxe anexo (ver limite 3 abaixo) |
+| `gravados` | new event became a message |
+| `duplicados` | the `inbox` refused it for a repeated external id |
+| `recusados` | the internal queue (1024) was full — backpressure |
+| `falhas` | could not resolve the conversation or record |
+| `estados` | channel state notices (connected, QR, error) |
+| `com_anexo` | event carried an attachment (see limit 3 below) |
 
-## 4. Como escrever um plugin novo a partir deste
+## 4. How to write a new plugin based on this one
 
-1. Copie a estrutura de `crates/poph-plugin-eco/src/main.rs`: laço de linhas, `MensagemHost` na
-   entrada, `MensagemPlugin` na saída.
-2. Responda o `handshake` com um manifesto verdadeiro (capacidades e esquema de configuração) e
-   recuse versão de protocolo diferente.
-3. Confirme **todo** comando com `resultado` e o mesmo `id` — é o que faz o item da `outbox` virar
-   `sent`.
-4. Entregue o que chega do cliente como `evento`, com `id_externo` **estável** (o id do canal).
-   Reentrega é normal: quem deduplica é a `inbox`.
-5. Nunca escreva segredo em `stderr`, em arquivo ou no evento: o segredo chega só no handshake.
-6. Se o plugin cair, ele será reiniciado com backoff; não guarde estado que não sobreviva a isso.
-7. Registre-o no Harness com `OpcoesPlugin::novo(caminho, integracao_id, org)` — programa,
-   argumentos e ambiente declarados; segredo só por `com_segredo`.
+1. Copy the structure of `crates/poph-plugin-eco/src/main.rs`: line loop, `MensagemHost` on input, `MensagemPlugin` on output.
+2. Answer the `handshake` with a truthful manifest (capabilities and configuration schema) and refuse a different protocol version.
+3. Confirm **every** command with `resultado` and the same `id` — this is what turns the `outbox` item into `sent`.
+4. Deliver what arrives from the customer as `evento`, with a **stable** `id_externo` (the channel's id). Redelivery is
+   normal: the `inbox` is what deduplicates.
+5. Never write a secret to `stderr`, to a file or into an event: the secret arrives only in the handshake.
+6. If the plugin crashes, it will be restarted with backoff; do not keep state that does not survive that.
+7. Register it in Harness with `OpcoesPlugin::novo(caminho, integracao_id, org)` — program, arguments and environment
+   declared; secret only through `com_segredo`.
 
-Um plugin em outra linguagem segue o mesmo JSON de `docs/PLUGIN_PROTOCOLO.md`; o exemplo em Rust usa
-os tipos de `poph-types` de propósito, para que uma mudança de contrato quebre a compilação em vez
-de quebrar em produção.
+A plugin in another language follows the same JSON as `docs/PLUGIN_PROTOCOLO.md`; the Rust example uses the types of
+`poph-types` on purpose, so that a contract change breaks the build instead of breaking in production.
 
-## 5. O que a suíte prova
+## 5. What the test suite proves
 
-`crates/poph-plugin-eco/tests/conversa.rs` (5 testes) e `tests/queda.rs` (1 teste), com o
-`plugin-eco` como processo filho de verdade:
+`crates/poph-plugin-eco/tests/conversa.rs` (5 tests) and `tests/queda.rs` (1 test), with `plugin-eco` as a real child
+process:
 
-- **conversa completa:** item na `outbox` → supervisor → plugin → evento → `inbox` → mensagem na
-  conversa, com o texto invertido conferido;
-- **idempotência:** reenviar o mesmo comando não cria segunda mensagem (`duplicados = 1`);
-- **arquivo:** o item `file` da HR-24 vira `enviar_arquivo` e o item vira `sent`;
-- **conversa sem contato:** falha definitiva com motivo legível, o canal nem é chamado;
-- **dois contatos:** cada `peer` abre a sua conversa, sem misturar;
-- **payload inválido:** falha definitiva, sem chamar o plugin;
-- **`kill -9` no plugin:** o supervisor não cai, reinicia o plugin (`reinicios ≥ 1`), o item volta a
-  ser enviado, nenhuma mensagem se perde e nenhuma duplica.
+- **full conversation:** `outbox` item → supervisor → plugin → event → `inbox` → message in the conversation, with the
+  reversed text checked;
+- **idempotency:** resending the same command does not create a second message (`duplicados = 1`);
+- **file:** the `file` item from HR-24 becomes `enviar_arquivo` and the item becomes `sent`;
+- **conversation without a contact:** definitive failure with a readable reason; the channel is not even called;
+- **two contacts:** each `peer` opens its own conversation, without mixing;
+- **invalid payload:** definitive failure, without calling the plugin;
+- **`kill -9` on the plugin:** the supervisor does not fall, restarts the plugin (`reinicios ≥ 1`), the item is sent
+  again, no message is lost and none is duplicated.
 
-## 6. O que ainda não existe (limites conhecidos)
+## 6. What does not exist yet (known limits)
 
-1. **Não é o WhatsApp.** A HR-26 traz o módulo nativo e a resposta ao webhook. Aqui o caminho é o
-   das filas, provado com o plugin — o mesmo `EnvioPeloCanal` e o mesmo `InboxDoCanal` servem.
-2. **O servidor ainda não sobe integrações.** `poph serve` não carrega plugins; quem liga hoje é o
-   processo que monta o `Fluxo` (a demonstração e os testes). Ligar no servidor é a integração da
+1. **It is not WhatsApp.** HR-26 brings the native module and the webhook reply. Here the path is the queues, proven
+   with the plugin — the same `EnvioPeloCanal` and the same `InboxDoCanal` serve.
+2. **The server does not start integrations yet.** `poph serve` does not load plugins; today whoever turns it on is the
+   process that builds the `Fluxo` (the demonstration and the tests). Turning it on in the server is the integration of
    HR-26/HR-38.
-3. **Anexo recebido não vira linha em `attachments`.** Enquanto a HR-26 não registrar o blob e a
-   extração, o anexo fica **descrito** no campo de anexos da mensagem, como o canal entregou —
-   nada se perde, mas o turno ainda não lê arquivo do cliente por esse caminho.
-4. **Busca de conversa por contato não é indexada.** O resolvedor lembra no cache a conversa de cada
-   contato (conferida no banco a cada uso, só vale conversa aberta), então o caso normal custa uma
-   leitura por id. Quando o contato não está no cache — primeiro contato, conversa transferida ou
-   cache cheio (teto de 4.096 contatos) —, a busca varre até 50 páginas (10 mil conversas), porque o
-   repositório de conversas ainda não tem busca por `peer`. Aparece em org com histórico muito
-   grande; o certo é a HR-26 expor essa busca no repositório.
-5. **Fila de entrada limitada a 1024 eventos**: com o banco travado e o canal entregando sem parar,
-   o excedente é recusado e contado (`recusados`) — o evento não é gravado.
-6. **O plugin de exemplo não entra no pacote de distribuição**: o `poph` não depende de
-   `poph-plugin-eco`, e o `scripts/build-dist.sh` só empacota `poph` e `poph-extrator`.
+3. **Received attachment does not become a row in `attachments`.** Until HR-26 records the blob and the extraction, the
+   attachment stays **described** in the message's attachment field, as the channel delivered it — nothing is lost, but
+   the turn still does not read the customer's file through this path.
+4. **Searching a conversation by contact is not indexed.** The resolver remembers each contact's conversation in cache
+   (checked in the database on each use, only an open conversation counts), so the normal case costs one read by id. When
+   the contact is not in the cache — first contact, transferred conversation or a full cache (cap of 4,096 contacts) —
+   the search scans up to 50 pages (10 thousand conversations), because the conversations repository does not yet have a
+   search by `peer`. It shows up in an org with a very large history; the right fix is for HR-26 to expose this search in
+   the repository.
+5. **Input queue limited to 1024 events**: with the database locked and the channel delivering non-stop, the excess is
+   refused and counted (`recusados`) — the event is not recorded.
+6. **The example plugin is not in the distribution package**: `poph` does not depend on `poph-plugin-eco`, and
+   `scripts/build-dist.sh` only packages `poph` and `poph-extrator`.

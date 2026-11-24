@@ -1,160 +1,160 @@
-# POP Harness (Rust): visão geral
+# POP Harness (Rust): overview
 
-> Ponto de partida do projeto. Diz o que o Harness é, o que está dentro e fora, as decisões de base e
-> o caminho de uma mensagem de ponta a ponta. O que falta para a `1.0` está em [`../ROADMAP.md`](../ROADMAP.md).
-> O contrato dos canais está em [`CONTRATO_CANAL.md`](CONTRATO_CANAL.md). Os identificadores `HR-xx`, `RL-xx`,
-> `MX-xx`, `FX-xx` e `RP-xx` que aparecem em comentários e documentos são números de tarefa do histórico do
-> projeto: o commit que fechou a tarefa os cita. A especificação original (PRD e lista de tarefas) não faz
-> parte deste repositório; o que valia dela está aqui, em `DECISOES.md` e nos docs por assunto.
+> Starting point for the project. It says what the Harness is, what is in and out of scope, the base decisions and
+> the path of a message from end to end. What is missing for `1.0` is in [`../ROADMAP.md`](../ROADMAP.md).
+> The channel contract is in [`CONTRATO_CANAL.md`](CONTRATO_CANAL.md). The identifiers `HR-xx`, `RL-xx`,
+> `MX-xx`, `FX-xx` and `RP-xx` that appear in comments and documents are task numbers from the project history:
+> the commit that closed the task cites them. The original specification (PRD and task list) is not part of this
+> repository; what was valid in it is here, in `DECISOES.md` and in the docs by topic.
 
-## 1. O que é
+## 1. What it is
 
-Motor de atendimento por IA, multi-tenant, em Rust: um binário (`poph`) que roda os agentes de várias
-organizações na mesma instância. Tem três entradas: a CLI, a API administrativa (`/admin/v1`) e o
-Console web (React, embutido no binário), usado pelo time interno para administrar e testar.
+A multi-tenant AI customer-service engine, in Rust: one binary (`poph`) that runs the agents of several
+organizations on the same instance. It has three entry points: the CLI, the administrative API (`/admin/v1`) and the
+web Console (React, embedded in the binary), used by the internal team to administer and test.
 
-É independente do POP Atende: não usa o Postgres dele, não importa código dele e não substitui o motor
-dele (a troca do motor LangGraph só será discutida depois de o Harness estar estável).
+It is independent of POP Atende: it does not use its Postgres, does not import its code and does not replace its
+engine (switching the LangGraph engine will only be discussed after the Harness is stable).
 
-Prioridades, nesta ordem: (1) entregar a mensagem o mais rápido possível; (2) baixo uso de RAM;
-(3) escala vertical (milhares de agentes) e horizontal (várias instâncias); (4) minimalismo (poucas
-dependências, poucos processos, sem framework de agente).
+Priorities, in this order: (1) deliver the message as fast as possible; (2) low RAM usage; (3) vertical scale
+(thousands of agents) and horizontal scale (several instances); (4) minimalism (few dependencies, few processes, no
+agent framework).
 
-## 2. O que está dentro
+## 2. What is inside
 
-- Orgs, categorias de produto, agentes, departamentos (com departamento padrão), instruções
-  estruturadas, base de conhecimento, produtos com carrinho de orçamento, biblioteca de arquivos do
-  agente e integrações.
-- Busca própria (RAG): embedding local, busca híbrida (vetor + texto) com corte de relevância.
+- Orgs, product categories, agents, departments (with a default department), structured instructions, knowledge
+  base, products with a quote cart, the agent's file library and integrations.
+- Own search (RAG): local embedding, hybrid search (vector + text) with a relevance cut.
   [`BASE_DE_CONHECIMENTO.md`](BASE_DE_CONHECIMENTO.md).
-- Jev (decisões rápidas) em 9 pontos, G1 a G9 (o G9 inicia fluxos), cada um atrás de flag. [`JEV.md`](JEV.md).
-- LLM atrás de uma interface; hoje um provedor, compatível com a API de chat da OpenAI, com o modelo configurável por agente.
-- Canais como integrações com um contrato único: WhatsApp pela EvolutionAPI (módulo nativo) e plugin em
-  processo externo. [`CONTRATO_CANAL.md`](CONTRATO_CANAL.md), [`PLUGIN_PROTOCOLO.md`](PLUGIN_PROTOCOLO.md).
-- Arquivos: imagens e PDF/Office (como texto) recebidos; arquivos da biblioteca do agente enviados.
+- Jev (quick decisions) at 9 points, G1 to G9 (G9 starts flows), each behind a flag. [`JEV.md`](JEV.md).
+- LLM behind an interface; today one provider, compatible with the OpenAI chat API, with the model configurable per
+  agent.
+- Channels as integrations with a single contract: WhatsApp through EvolutionAPI (native module) and a plugin running
+  in an external process. [`CONTRATO_CANAL.md`](CONTRATO_CANAL.md), [`PLUGIN_PROTOCOLO.md`](PLUGIN_PROTOCOLO.md).
+- Files: images and PDF/Office (as text) received; files from the agent's library sent.
   [`ARQUIVOS.md`](ARQUIVOS.md).
-- Histórico local com retenção configurável, backup/restauração de org, roteamento estático entre
-  instâncias. [`RETENCAO.md`](RETENCAO.md), [`BACKUP.md`](BACKUP.md), [`CLUSTER.md`](CLUSTER.md).
-- Fichas e fluxos: toda conversa nasce com uma Ficha; fluxos são scripts em Starlark, da org, com revisões
-  imutáveis e permissão por agente. [`FLUXOS_LINGUAGEM.md`](FLUXOS_LINGUAGEM.md).
-- Matrix e atendimento humano: módulo desligável (`poph-matrix`) que espelha a conversa numa sala do
-  Element, recebe a resposta do atendente e pausa o agente. [`MATRIX_AMBIENTE_LOCAL.md`](MATRIX_AMBIENTE_LOCAL.md),
+- Local history with configurable retention, org backup/restore, static routing between instances.
+  [`RETENCAO.md`](RETENCAO.md), [`BACKUP.md`](BACKUP.md), [`CLUSTER.md`](CLUSTER.md).
+- Cases and flows: every conversation starts with a Case, which closes with the conversation. Flows are Starlark
+  scripts, owned by the org, with immutable revisions and per-agent permission. The engine runs in the turn, before the
+  text model. [`FLUXOS.md`](FLUXOS.md), [`FLUXOS_LINGUAGEM.md`](FLUXOS_LINGUAGEM.md).
+- Matrix and human handoff: a removable module (`poph-matrix`) that mirrors the conversation in an Element room,
+  receives the reply from the human operator and pauses the agent. [`MATRIX_AMBIENTE_LOCAL.md`](MATRIX_AMBIENTE_LOCAL.md),
   [`DADOS.md`](DADOS.md) §11.
 
-## 3. O que está fora
+## 3. What is outside
 
-Documentos PDF e templates; calendário; e-mail; widget de site; perfil persistente do cliente (a memória é
-a janela da conversa com resumo rolante); transcrição de áudio e vídeo; OCR de PDF escaneado; plugins WASM;
-regras de rota por intenção (D-06); editor visual de fluxos; retenção própria das Fichas. Veja também as
-lacunas conhecidas em [`../ROADMAP.md`](../ROADMAP.md).
+PDF documents and templates; calendar; e-mail; website widget; persistent customer profile (memory is the
+conversation window with a rolling summary); audio and video transcription; OCR of scanned PDFs; WASM plugins;
+intent-based routing rules (D-06); visual flow editor (the Console does not change for flows); a retention policy for Cases beyond the current one (Cases are never deleted for now). See also the known gaps
+in [`../ROADMAP.md`](../ROADMAP.md).
 
-## 4. Decisões de base (D1 a D13)
+## 4. Base decisions (D1 to D13)
 
-Estas decisões vieram da especificação original e continuam valendo. As posteriores estão em
-[`DECISOES.md`](DECISOES.md) (D-01 em diante, com prefixo hífen para não confundir).
+These decisions came from the original specification and still hold. Later ones are in [`DECISOES.md`](DECISOES.md)
+(D-01 onwards, with a hyphen so they are not confused with these).
 
-| # | Decisão |
+| # | Decision |
 |---|---|
-| D1 | Rust; workspace Cargo na raiz do repositório, `console/` ao lado; binário `poph`. |
-| D2 | Plugins de integração: nativo e processo externo (JSON-lines sobre stdio). WASM fica para depois. |
-| D3 | Histórico de conversas e mensagens local, no SQLite, com retenção configurável por org (padrão 30 dias). |
-| D4 | Roteamento estático por org entre instâncias. |
-| D5 | Arquivos do cliente: imagens e PDF/Office como texto. Sem áudio. |
-| D6 | LLM: antigravity2api, modelo `gemini-3.8-flash-tiered` por padrão, configurável por agente. |
-| D7 | Embedding: mesmo modelo do POP Atende (`paraphrase-multilingual-MiniLM-L12-v2`), local. |
-| D8 | O Jev decide o que é escolha entre opções conhecidas; o LLM só escreve texto. O Jev escolhe, ranqueia ou se abstém; o código valida e executa; falha do Jev cai no comportamento sem ele. |
-| D9 | Console administrativo interno, com login por token (global ou de org). |
-| D10 | Sem Redis, sem Postgres, sem framework de agente. |
-| D11 | Mensagem ao cliente é entregue pelo menos uma vez: se o envio cair no meio, reenvia, aceitando duplicata. |
-| D12 | Conversa transferida para humano deixa de ser respondida pelo agente até ser reaberta; as mensagens do cliente continuam gravadas. |
-| D13 | O agente só envia arquivos da biblioteca do agente, nunca caminhos livres. |
+| D1 | Rust; Cargo workspace at the root of the repository, `console/` next to it; binary `poph`. |
+| D2 | Integration plugins: native and external process (JSON-lines over stdio). WASM is left for later. |
+| D3 | Conversation and message history local, in SQLite, with retention configurable per org (default 30 days). |
+| D4 | Static routing per org between instances. |
+| D5 | Customer files: images and PDF/Office as text. No audio. |
+| D6 | LLM: antigravity2api, model `gemini-3.8-flash-tiered` by default, configurable per agent. |
+| D7 | Embedding: same model as POP Atende (`paraphrase-multilingual-MiniLM-L12-v2`), local. |
+| D8 | Jev decides what is a choice among known options; the LLM only writes text. Jev chooses, ranks or abstains; the code validates and executes; a Jev failure falls back to the behavior without it. |
+| D9 | Internal administrative Console, with token login (global or per org). |
+| D10 | No Redis, no Postgres, no agent framework. |
+| D11 | A message to the customer is delivered at least once: if sending fails midway, it is resent, accepting a duplicate. |
+| D12 | A conversation transferred to a human stops being answered by the agent until it is reopened; customer messages keep being recorded. |
+| D13 | The agent only sends files from the agent's library, never free paths. |
 
-## 5. Uma mensagem de ponta a ponta
+## 5. One message, end to end
 
-Detalhe em [`TURNO.md`](TURNO.md) e [`ENTRADA_E_SAIDA.md`](ENTRADA_E_SAIDA.md).
+Details in [`TURNO.md`](TURNO.md) and [`ENTRADA_E_SAIDA.md`](ENTRADA_E_SAIDA.md).
 
-1. **Entrada.** O canal (webhook da Evolution, plugin, chat do Console ou CLI) entrega a mensagem. Ela
-   é gravada na `inbox` com chave única por canal e id externo (duplicata é descartada) e só então o
-   webhook recebe OK. Se a org é de outra instância, o pedido é encaminhado à dona.
-2. **Fila por conversa.** Um ator por conversa, um turno por vez. Conversa ociosa sai da memória.
-3. **Janela de agrupamento.** Espera curta (padrão 2 s, teto 8 s) para juntar mensagens em sequência; o
-   G2 do Jev pode encurtar ou alongar.
-4. **Em paralelo:** uma chamada ao Jev com as perguntas de todos os gates ligados, e a busca na base e
-   nos produtos. Se o G1 manda transferir, o turno termina sem chamar o LLM.
-5. **Laço do agente.** Prompt com prefixo estável (para o cache do provedor) e bloco volátil depois;
-   LLM com streaming; ferramentas habilitadas para o agente (`consultar_base`, `buscar_produto`,
-   `enviar_arquivo`, carrinho). Texto de arquivo e trecho recuperado entram marcados como dado, nunca
-   como instrução.
-6. **Saída.** A resposta vai para a `outbox` (idempotente por turno e sequência); o canal envia pela
-   mesma integração de onde veio a mensagem. Estados: `pending`, `sending`, `sent`, `failed`.
-7. **Registro.** O turno grava decisões do Jev, trechos recuperados, ferramentas, tempos, tokens; o
-   Console mostra isso no painel "por quê".
+1. **Input.** The channel (Evolution webhook, plugin, Console chat or CLI) delivers the message. It is saved in the
+   `inbox` with a unique key per channel and external id (duplicates are discarded), and only then does the webhook
+   receive OK. If the org belongs to another instance, the request is forwarded to its owner.
+2. **Queue per conversation.** One actor per conversation, one turn at a time. An idle conversation leaves memory.
+3. **Grouping window.** A short wait (default 2 s, cap 8 s) to group messages sent in sequence; Jev's G2 can shorten or
+   lengthen it.
+4. **In parallel:** one call to Jev with the questions of all enabled gates, and the search in the knowledge base and
+   in the products. If G1 says transfer, the turn ends without calling the LLM.
+5. **Agent loop.** Prompt with a stable prefix (for the provider's cache) and a volatile block after it; LLM with
+   streaming; tools enabled for the agent (`consultar_base`, `buscar_produto`, `enviar_arquivo`, cart). File text and
+   retrieved chunks come in marked as data, never as instructions.
+6. **Output.** The reply goes to the `outbox` (idempotent per turn and sequence); the channel sends it through the same
+   integration it came from. States: `pending`, `sending`, `sent`, `failed`.
+7. **Record.** The turn saves Jev's decisions, retrieved chunks, tools, times and tokens; the Console shows this in the
+   "why" panel.
 
-## 6. Dados e isolamento
+## 6. Data and isolation
 
-Memória (estado quente, perdido no restart), `harness.db` (SQLite durável), `rag.db` (SQLite
-reconstruível) e blobs em disco por org e hash. Toda tabela de negócio tem `org_id` e todo acesso filtra
-por ele; índice vetorial e caches são particionados por org. Detalhe em [`DADOS.md`](DADOS.md).
-Segredos ficam cifrados em repouso, só do ambiente, e nunca em log. Tokens de admin são guardados como
-hash, com escopo global ou de org.
+Memory (hot state, lost on restart), `harness.db` (durable SQLite), `rag.db` (rebuildable SQLite) and blobs on disk per
+org and hash. Every business table has `org_id` and every access filters by it; the vector index and caches are
+partitioned by org. Details in [`DADOS.md`](DADOS.md).
+Secrets are encrypted at rest, come only from the environment, and never appear in logs. Admin tokens are stored as
+hashes, with global or org scope.
 
-## 7. Console: regras de design
+## 7. Console: design rules
 
-Valem para qualquer tela nova ([`CONSOLE.md`](CONSOLE.md), [`../console/UX_SPEC.md`](../console/UX_SPEC.md)):
-sem cartões, e nunca cartão dentro de cartão (seções separadas por título e linha de 1 px); fundo
-`#151719`; acento âmbar só em ação primária, linha selecionada e item ativo; status como ponto de 6 px
-mais texto; slugs, ids, portas e comandos em fonte monoespaçada; foco visível e uso por teclado; estados
-vazio, carregando e erro em toda tela. Rótulos em caixa alta e contadores no menu seguem o desenho aprovado do layout.
+They apply to any new screen ([`CONSOLE.md`](CONSOLE.md), [`../console/UX_SPEC.md`](../console/UX_SPEC.md)): no cards,
+and never a card inside a card (sections separated by a title and a 1 px line); background `#151719`; amber accent
+only on the primary action, the selected row and the active item; status as a 6 px dot plus text; slugs, ids, ports
+and commands in monospace font; visible focus and keyboard use; empty, loading and error states on every screen.
+Uppercase labels and counters in the menu follow the approved layout design.
 
-## 8. Riscos que continuam abertos
+## 8. Risks still open
 
-| Risco | Situação |
+| Risk | Status |
 |---|---|
-| Paridade de comportamento com o motor LangGraph | Não medida com agente real. O POP Bench pode servir de base. |
-| RAM e vazão com milhares de agentes | Metas fixadas em D-07; o teste de carga (HR-55) está suspenso, então nada foi confirmado em escala. |
-| Build ARM64 | Validado na máquina ARM64 de testes num commit de 20/11; builds posteriores não foram reconstruídos lá. |
-| Um escritor SQLite por instância | Medido no spike; sem teste de carga completo. |
-| `ort` ainda em release candidate | Versão fixada; a troca fica isolada pela interface do embedder. |
-| WhatsApp real | Provado só com Evolution falsa e ambiente isolado; teste com número real pendente (não bloqueia). |
+| Behavior parity with the LangGraph engine | Not measured with a real agent. POP Bench can serve as a base. |
+| RAM and throughput with thousands of agents | Targets set in D-07; the load test (HR-55) is suspended, so nothing was confirmed at scale. |
+| ARM64 build | Validated on the ARM64 test machine at a commit from 20/11; later builds were not rebuilt there. |
+| One SQLite writer per instance | Measured in the spike; no full load test. |
+| `ort` still a release candidate | Version pinned; the change is isolated behind the embedder interface. |
+| Real WhatsApp | Proven only with a fake Evolution and an isolated environment; test with a real number pending (does not block). |
 
-## 9. Onde está cada assunto
+## 9. Where each subject is
 
-| Assunto | Documento |
+| Subject | Document |
 |---|---|
-| O que falta para a `1.0` | [`../ROADMAP.md`](../ROADMAP.md) |
-| Canais e contrato de integração | [`CONTRATO_CANAL.md`](CONTRATO_CANAL.md) |
-| Decisões posteriores | [`DECISOES.md`](DECISOES.md) |
-| Configuração e variáveis | [`CONFIGURACAO.md`](CONFIGURACAO.md) |
-| Dados, esquema, concorrência | [`DADOS.md`](DADOS.md), [`MEMORIA_E_CONCORRENCIA.md`](MEMORIA_E_CONCORRENCIA.md) |
-| API administrativa | [`API.md`](API.md) |
-| Operação | [`RUNBOOKS.md`](RUNBOOKS.md), [`../DEVELOPMENT.md`](../DEVELOPMENT.md) |
-| Mapa do código e regras de trabalho | [`../AGENTS.md`](../AGENTS.md) |
+| What is missing for `1.0` | [`../ROADMAP.md`](../ROADMAP.md) |
+| Channels and integration contract | [`CONTRATO_CANAL.md`](CONTRATO_CANAL.md) |
+| Later decisions | [`DECISOES.md`](DECISOES.md) |
+| Configuration and variables | [`CONFIGURACAO.md`](CONFIGURACAO.md) |
+| Data, schema, concurrency | [`DADOS.md`](DADOS.md), [`MEMORIA_E_CONCORRENCIA.md`](MEMORIA_E_CONCORRENCIA.md) |
+| Administrative API | [`API.md`](API.md) |
+| Operations | [`RUNBOOKS.md`](RUNBOOKS.md), [`../DEVELOPMENT.md`](../DEVELOPMENT.md) |
+| Code map and working rules | [`../AGENTS.md`](../AGENTS.md) |
 
-## 10. Referências antigas ("PRD §x", "D6", "HR-xx")
+## 10. Old references ("PRD §x", "D6", "HR-xx")
 
-Comentários no código Rust e alguns docs ainda citam seções do PRD removido. Equivalência:
+Comments in the Rust code and some docs still cite sections of the removed PRD. Equivalence:
 
-| Citação | Onde está agora |
+| Citation | Where it is now |
 |---|---|
-| §3 (escopo) | seções 2 e 3 deste documento |
-| §4 (decisões D1–D13) | seção 4 deste documento |
-| §5.2, §5.3, §5.4 (crates, dependências) | [`../AGENTS.md`](../AGENTS.md), [`../DEVELOPMENT.md`](../DEVELOPMENT.md), `DECISOES.md` D-08 |
-| §6, §6.1, §6.3 (turno, prompt, janela) | [`TURNO.md`](TURNO.md) |
-| §7, §7.1, §7.2, §7.3 (dados) | [`DADOS.md`](DADOS.md) |
-| §7.4 (retenção) | [`RETENCAO.md`](RETENCAO.md) |
+| §3 (scope) | sections 2 and 3 of this document |
+| §4 (decisions D1–D13) | section 4 of this document |
+| §5.2, §5.3, §5.4 (crates, dependencies) | [`../AGENTS.md`](../AGENTS.md), [`../DEVELOPMENT.md`](../DEVELOPMENT.md), `DECISOES.md` D-08 |
+| §6, §6.1, §6.3 (turn, prompt, window) | [`TURNO.md`](TURNO.md) |
+| §7, §7.1, §7.2, §7.3 (data) | [`DADOS.md`](DADOS.md) |
+| §7.4 (retention) | [`RETENCAO.md`](RETENCAO.md) |
 | §8.1 (API) | [`API.md`](API.md) |
-| §8.3 (contrato de integração) | [`CONTRATO_CANAL.md`](CONTRATO_CANAL.md) |
-| §8.4 (provedor de LLM) | [`CONFIGURACAO.md`](CONFIGURACAO.md) (`llm.*`) |
+| §8.3 (integration contract) | [`CONTRATO_CANAL.md`](CONTRATO_CANAL.md) |
+| §8.4 (LLM provider) | [`CONFIGURACAO.md`](CONFIGURACAO.md) (`llm.*`) |
 | §8.5, §10 (Jev) | [`JEV.md`](JEV.md) |
 | §9 (RAG) | [`BASE_DE_CONHECIMENTO.md`](BASE_DE_CONHECIMENTO.md), `DECISOES.md` D-09 |
-| §11 (arquivos) | [`ARQUIVOS.md`](ARQUIVOS.md) |
+| §11 (files) | [`ARQUIVOS.md`](ARQUIVOS.md) |
 | §12 (cluster) | [`CLUSTER.md`](CLUSTER.md) |
-| §13 (Console) | [`CONSOLE.md`](CONSOLE.md) e a seção 7 deste documento |
-| §14, §15 (segurança, observabilidade) | seção 6 deste documento, [`CONFIGURACAO.md`](CONFIGURACAO.md), [`RUNBOOKS.md`](RUNBOOKS.md) |
-| §16 (riscos) | seção 8 deste documento |
-| §17 (critério de aceite) | [`../ROADMAP.md`](../ROADMAP.md) |
-| HR-xx, RL-xx, MX-xx, FX-xx, RP-xx | commit que fechou a tarefa (`git log --grep`) |
+| §13 (Console) | [`CONSOLE.md`](CONSOLE.md) and section 7 of this document |
+| §14, §15 (security, observability) | section 6 of this document, [`CONFIGURACAO.md`](CONFIGURACAO.md), [`RUNBOOKS.md`](RUNBOOKS.md) |
+| §16 (risks) | section 8 of this document |
+| §17 (acceptance criteria) | [`../ROADMAP.md`](../ROADMAP.md) |
+| HR-xx, RL-xx, MX-xx, FX-xx, RP-xx | commit that closed the task (`git log --grep`) |
 
-Os mesmos comentários citam `PARIDADE_AGENTE.md` (o que o POP Harness herdou do POP Atende), `ESTADO.md`
-(lista de tarefas interna) e `spike/` (protótipos de medição). Nenhum dos três é publicado; o conteúdo que
-importa para quem usa o projeto está nos documentos desta pasta.
+The same comments cite `PARIDADE_AGENTE.md` (what POP Harness inherited from POP Atende), `ESTADO.md` (internal task
+list) and `spike/` (measurement prototypes). None of the three is published; the content that matters to users of the
+project is in the documents in this folder.

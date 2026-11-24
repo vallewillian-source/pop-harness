@@ -1,116 +1,115 @@
-# Arquivos do POP Harness (`crates/poph-files`)
+# POP Harness files (`crates/poph-files`)
 
-Recebimento de arquivos do cliente (HR-23): valida, lê documento e grava o blob da org. Sem HTTP,
-sem LLM de verdade e sem a tabela `attachments` (essa é a HR-24). Nenhum `unsafe` neste crate.
+Receiving files from the customer (HR-23): validates them, reads documents and writes the org's blob. No HTTP,
+no real LLM, and no `attachments` table (that is HR-24). No `unsafe` in this crate.
 
-## O que o crate faz
+## What the crate does
 
-1. **Tamanho:** recusa acima de 16 MB (configurável, até 256 MB) antes de qualquer outra coisa.
-   Nada é gravado.
-2. **Tipo real:** decide pelo conteúdo (assinatura do arquivo), não pelo nome. O nome só entra
-   para duas coisas: recusar extensão de programa/script e pegar arquivo enganoso.
-3. **Aceitos:** JPEG, PNG, WebP e GIF (vão ao LLM como imagem); PDF, Word (`.docx`), Excel
-   (`.xlsx` e `.xls`) e PowerPoint (`.pptx`) (viram texto).
-4. **Recusados com mensagem:** programa executável, script, áudio, vídeo, Word e PowerPoint antigos
-   (`.doc` e `.ppt`), compactado (zip, rar etc.), texto simples, formato desconhecido.
-5. **Leitura isolada:** PDF e Office são lidos num processo separado (`poph-extrator`), com teto de
-   memória e prazo de tempo (ver abaixo).
-6. **Texto:** cortado em 20 mil caracteres, com aviso ao LLM quando corta.
-7. **PDF sem texto** (escaneado): não inventa conteúdo; o LLM recebe a instrução de dizer ao cliente
-   que não conseguiu ler o arquivo.
-8. **Blob:** gravado em `<pasta de blobs>/<id da org>/<sha256>`, uma vez por conteúdo. Repetir o
-   mesmo arquivo reaproveita o blob. O nome que o cliente mandou nunca vira caminho de disco.
+1. **Size:** rejects anything above 16 MB (configurable, up to 256 MB) before anything else. Nothing is written.
+2. **Real type:** decides by content (file signature), not by name. The name is only used for two things: rejecting
+   program or script extensions and catching a misleading file.
+3. **Accepted:** JPEG, PNG, WebP and GIF (sent to the LLM as images); PDF, Word (`.docx`), Excel (`.xlsx` and `.xls`)
+   and PowerPoint (`.pptx`) (turned into text).
+4. **Rejected with a message:** executable programs, scripts, audio, video, old Word and PowerPoint (`.doc` and
+   `.ppt`), compressed archives (zip, rar, etc.), plain text, unknown formats.
+5. **Isolated reading:** PDF and Office files are read in a separate process (`poph-extrator`), with a memory
+   ceiling and a time limit (see below).
+6. **Text:** cut at 20,000 characters, with a warning to the LLM when it is cut.
+7. **PDF with no text** (scanned): does not invent content; the LLM receives the instruction to tell the customer it
+   could not read the file.
+8. **Blob:** written to `<blobs folder>/<org id>/<sha256>`, once per content. Repeating the same file reuses the blob.
+   The name the customer sent never becomes a disk path.
 
-## Como o texto chega ao LLM
+## How the text reaches the LLM
 
-Todo texto extraído sai em **bloco não confiável**:
+All extracted text goes into an **untrusted block**:
 
 ```
 <<ARQUIVO_NAO_CONFIAVEL>>
-...texto do arquivo...
+...file text...
 <<FIM_ARQUIVO_NAO_CONFIAVEL>>
 ```
 
-Antes do bloco vai um aviso nosso (texto confiável) dizendo que aquilo é dado, não instrução.
-O texto do arquivo não consegue fechar o bloco: a sequência `<<` dentro dele vira `‹‹`.
-`ArquivoRecebido::para_llm()` devolve as partes na ordem: aviso, (aviso de corte, se houver), bloco.
-Imagens saem como partes de imagem.
+Before the block comes a notice from us (trusted text) saying that this is data, not instructions.
+The file text cannot close the block: the sequence `<<` inside it becomes `‹‹`.
+`ArquivoRecebido::para_llm()` returns the parts in order: notice, (truncation notice, if any), block.
+Images go out as image parts.
 
-**Atenção:** o compositor do motor do turno (HR-13) precisa usar as mesmas marcas e tratar o bloco
-como dado. Este crate não conhece o compositor (que ainda está no `poph-core`).
+**Attention:** the turn engine's composer (HR-13) must use the same markers and treat the block as data. This crate
+does not know the composer (which is still in `poph-core`).
 
-## Leitura isolada (por que processo e não thread)
+## Isolated reading (why a process and not a thread)
 
-- O processo principal chama `poph-extrator <formato> <limite de caracteres> <teto de memória>`,
-  envia os bytes pela entrada padrão e lê uma linha JSON pela saída padrão.
-- Dentro do filho, a primeira coisa é o teto de memória (RLIMIT_AS, padrão 512 MB) e desligar o
-  núcleo de memória (core dump), para um abort não gravar o conteúdo do documento em disco.
-- O pai controla o prazo (padrão 5 s) e mata o filho se passar. O ambiente do filho é vazio e o
-  erro do filho não vai para log.
-- Medido no spike (HR-02): um PDF de 149 KB chegava a 2,5 GB de memória. Com o teto de 512 MB, o
-  filho é interrompido pelo sistema em ~0,4 s (build de release); o processo principal segue.
-- Zip bomba (Word/Excel/PowerPoint): cada bloco XML descompactado passa de 32 MB ou o total passa de
-  64 MB, a leitura é recusada antes de descompactar (testado com a fixture de 200 MB, em ~3 ms).
+- The main process calls `poph-extrator <formato> <limite de caracteres> <teto de memória>`, sends the bytes through
+  standard input and reads one JSON line from standard output.
+- Inside the child, the first thing is the memory ceiling (RLIMIT_AS, default 512 MB) and turning off the core dump,
+  so that a crash does not write the document's content to disk.
+- The parent controls the time limit (default 5 s) and kills the child if it goes over. The child's environment is
+  empty, and the child's error is not sent to the log.
+- Measured in the spike (HR-02): a 149 KB PDF reached 2.5 GB of memory. With the 512 MB ceiling, the child is stopped
+  by the system in ~0.4 s (release build); the main process carries on.
+- Zip bomb (Word/Excel/PowerPoint): if any uncompressed XML block exceeds 32 MB or the total exceeds 64 MB, the read is
+  refused before decompressing (tested with the 200 MB fixture, in ~3 ms).
 
-## Configuração
+## Configuration
 
 `ConfigArquivos::padrao(pasta_blobs)`:
 
-| Campo | Padrão | Observação |
+| Field | Default | Note |
 |---|---|---|
-| `limite_bytes` | 16 MB | recusa acima disso, sem gravar |
-| `limite_caracteres` | 20 000 | corte do texto com aviso |
-| `tempo_extracao` | 5 s | passou disso, o leitor é morto |
-| `memoria_extracao_bytes` | 512 MB | mínimo 128 MB |
-| `caminho_extrator` | ao lado do executável, `poph-extrator` | o build precisa levar o programa junto |
+| `limite_bytes` | 16 MB | rejects above this, without writing |
+| `limite_caracteres` | 20,000 | text cut with a warning |
+| `tempo_extracao` | 5 s | after this, the reader is killed |
+| `memoria_extracao_bytes` | 512 MB | minimum 128 MB |
+| `caminho_extrator` | next to the executable, `poph-extrator` | the build must ship the program with it |
 
-A ligação com `dados.blobs` (seção de dados de `HarnessConfig`, em `poph-types`) é feita pelo crate `poph` (HR-06 e HR-24).
+Linking to `dados.blobs` (the data section of `HarnessConfig`, in `poph-types`) is done by the `poph` crate (HR-06 and HR-24).
 
-## Programa `poph-extrator`
+## `poph-extrator` program
 
-Vem do mesmo crate (`src/bin/poph-extrator.rs`). Precisa estar **ao lado** do executável `poph`.
-`cargo build --workspace --release` gera os dois. Se faltar, o recebimento de PDF e Office recusa com
-mensagem clara ("programa de leitura de arquivos indisponível"); imagens não dependem dele.
+It comes from the same crate (`src/bin/poph-extrator.rs`). It must be **next to** the `poph` executable.
+`cargo build --workspace --release` builds both. If it is missing, PDF and Office receipt is refused with a clear
+message ("file reading program unavailable"); images do not depend on it.
 
-## Erros (o que aparece para o cliente, em resumo)
+## Errors (what the customer sees, in summary)
 
-| Situação | Erro | Mensagem |
+| Situation | Error | Message |
 |---|---|---|
-| Acima de 16 MB | `Grande` | "o arquivo tem X MB e o limite é de 16 MB; não foi gravado" |
-| Vazio | `Vazio` | "o arquivo está vazio" |
-| Programa, script, áudio, `.doc`/`.ppt` | `TipoNaoAceito` | explica o que é e o que enviar |
-| Nome `.pdf`, conteúdo `.exe` | `ExtensaoEnganosa` | "o nome termina em .pdf, mas o conteúdo é um programa executável" |
-| PDF corrompido, zip bomba, planilha ilegível | `Leitura` | motivo curto, sem conteúdo do arquivo |
-| Passou do prazo | `Tempo` | "passou de 5 s e foi interrompida" |
-| Blob não gravado | `Gravacao` | falha de disco |
+| Above 16 MB | `Grande` | "the file is X MB and the limit is 16 MB; it was not saved" |
+| Empty | `Vazio` | "the file is empty" |
+| Program, script, audio, `.doc`/`.ppt` | `TipoNaoAceito` | explains what it is and what to send |
+| Name `.pdf`, content `.exe` | `ExtensaoEnganosa` | "the name ends in .pdf, but the content is an executable program" |
+| Corrupt PDF, zip bomb, unreadable spreadsheet | `Leitura` | short reason, no file content |
+| Time limit exceeded | `Tempo` | "exceeded 5 s and was stopped" |
+| Blob not written | `Gravacao` | disk failure |
 
-## Testes
+The messages above are the ones the code emits, so they stay in Portuguese.
+
+## Tests
 
 ```bash
 export PATH="$HOME/.cargo/bin:$PATH"
 cd apps/pop-harness
-cargo test -p poph-files                                  # 13 unitários + 26 de ponta a ponta
+cargo test -p poph-files                                  # 13 unit + 26 end-to-end
 cargo clippy -p poph-files --all-targets -- -D warnings
-cargo test --release -p poph-files --test recebimento     # opcional
+cargo test --release -p poph-files --test recebimento     # optional
 ```
 
-Fixtures em `crates/poph-files/tests/fixtures/`: PDFs (texto, tabela, escaneado, quebrado, bomba
-e injeção), `.docx` (inclui bomba de descompactação), `.pptx`, `.xlsx`, `.xls`, `.doc` e `.ppt`.
-Os `.doc`/`.ppt`/`.xls`/injeção foram gerados com o LibreOffice; a bomba de PDF e a de Word vêm do
-spike HR-02.
+Fixtures in `crates/poph-files/tests/fixtures/`: PDFs (text, table, scanned, broken, bomb and injection), `.docx`
+(includes a decompression bomb), `.pptx`, `.xlsx`, `.xls`, `.doc` and `.ppt`. The `.doc`/`.ppt`/`.xls`/injection files
+were generated with LibreOffice; the PDF bomb and the Word bomb come from the HR-02 spike.
 
-## Detalhes que valem saber
+## Details worth knowing
 
-- **Office sem pasta `word/`:** o `infer` (detector de tipo) classifica docx e pptx mínimos como ZIP
-  genérico. O crate reconhece Office pelo nome interno do pacote (`word/document.xml`,
-  `xl/workbook.xml`, `ppt/slides/`), lido como texto nos bytes. Se o nome for falso, o leitor
-  isolado recusa.
-- **Planilha:** `.xls` e `.xlsx` são o mesmo grupo; trocar o nome entre os dois não é recusado.
-- **Tabela de Word:** célula vira tabulação, linha vira quebra de linha.
-- **Escape XML:** `&amp;`, `&lt;` e referências numéricas são resolvidas.
+- **Office without a `word/` folder:** `infer` (the type detector) classifies minimal docx and pptx files as generic ZIP.
+  The crate recognizes Office by the package's internal name (`word/document.xml`, `xl/workbook.xml`, `ppt/slides/`),
+  read as text from the bytes. If the name is fake, the isolated reader refuses.
+- **Spreadsheet:** `.xls` and `.xlsx` are the same group; swapping the name between the two is not refused.
+- **Word table:** a cell becomes a tab, a row becomes a line break.
+- **XML escaping:** `&amp;`, `&lt;` and numeric references are resolved.
 
-## O que não está no crate
+## What is not in the crate
 
-- Gravação na tabela `attachments` e a ligação com o motor do turno: HR-24 e HR-13.
-- Validação de conteúdo da imagem (só a assinatura é conferida; imagem corrompida chega ao LLM).
-- Limpeza de blobs órfãos e de arquivos temporários deixados por queda no meio (retenção, HR-55).
+- Writing to the `attachments` table and the link to the turn engine: HR-24 and HR-13.
+- Content validation of images (only the signature is checked; a corrupt image reaches the LLM).
+- Cleanup of orphaned blobs and temporary files left by a crash in the middle (retention, HR-55).

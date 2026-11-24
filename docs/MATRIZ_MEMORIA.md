@@ -1,188 +1,179 @@
-# Memória e vazão do módulo Matrix (MX-30)
+# Memory and throughput of the Matrix module (MX-30)
 
-Este documento responde ao critério **A13**: quanto de memória o módulo Matrix custa ao `poph serve`
-e quantas mensagens ele espelha por segundo. Todos os números aqui foram medidos no ambiente de
-desenvolvimento, com o binário de release e o servidor de verdade; nenhum é estimado. O que não deu
-para medir está marcado como tal, com o motivo.
+This document answers criterion **A13**: how much memory the Matrix module costs `poph serve` and how many messages
+it mirrors per second. All the numbers here were measured in the development environment, with the release binary and
+the real server; none is estimated. What could not be measured is marked as such, with the reason.
 
-A medição também encontrou **um defeito real no caminho de criação de sala contra um Synapse de
-verdade** — a sala nasce sem nome, sem tópico e sem poder configurado. Está na seção "Defeito
-achado", com a evidência; não foi corrigido porque o arquivo é de outra tarefa.
+The measurement also found **a real defect in the room-creation path against a real Synapse** — the room is born
+without a name, without a topic and without the configured power level. It is in the section "Defect found", with the
+evidence; it was not fixed because the file belongs to another task.
 
-## Resumo
+## Summary
 
-- **Memória com 1.000 salas:** o módulo ligado custa **+6,5 MB** sobre o servidor sem o módulo
-  (mediana de 27,1 MB contra 20,4 MB, em três rodadas). A meta proposta no PRD — 20 MB com 1.000
-  salas — é atendida com folga de cerca de três vezes.
-- **Custo fixo:** com uma sala só, o módulo custa **+2,5 MB**. O resto cresce devagar: **+3,7 MB**
-  com 100 salas, **+6,5 MB** com 1.000 e **+10,3 MB** com 10.000 — ou seja, dez vezes mais salas
-  custam 1,6 vez mais memória que mil salas. De 100 para 1.000 salas são ~3,1 kB por sala; de 1.000
-  para 10.000, ~0,4 kB por sala.
-- **Vazão:** **739 mensagens/s** no cenário de uma mensagem por sala (com a criação das 1.000 salas
-  junto) e **2.648 a 2.811 mensagens/s** no cenário de dez mensagens por sala (criação amortizada).
-  O gargalo é o **Synapse falso**, que chega a 93% de um núcleo; o Harness fica em 39–64%.
-- **Synapse de desenvolvimento (20 salas):** 4,8 mensagens/s. Esse número **não mede vazão de
-  espelhamento** — mede o custo de criar sala no Synapse de dev (≈5 salas/s), e ainda está
-  contaminado pelo defeito abaixo.
+- **Memory with 1,000 rooms:** with the module on, it costs **+6.5 MB** over the server without the module (median of
+  27.1 MB against 20.4 MB, across three rounds). The target proposed in the PRD — 20 MB with 1,000 rooms — is met with
+  a margin of about three times.
+- **Fixed cost:** with a single room, the module costs **+2.5 MB**. The rest grows slowly: **+3.7 MB** with 100 rooms,
+  **+6.5 MB** with 1,000 and **+10.3 MB** with 10,000 — that is, ten times more rooms cost 1.6 times more memory than
+  one thousand rooms. From 100 to 1,000 rooms it is about 3.1 kB per room; from 1,000 to 10,000, about 0.4 kB per room.
+- **Throughput:** **739 messages/s** in the scenario of one message per room (with the creation of the 1,000 rooms
+  included) and **2,648 to 2,811 messages/s** in the scenario of ten messages per room (amortized room creation). The
+  bottleneck is the **fake Synapse**, which reaches 93% of one core; the Harness stays at 39–64%.
+- **Development Synapse (20 rooms):** 4.8 messages/s. This number **does not measure mirroring throughput** — it
+  measures the cost of creating a room on the development Synapse (about 5 rooms/s), and it is still contaminated by the
+  defect below.
 
-## Critério A13
+## Criterion A13
 
-| O que o A13 pede | O que foi medido | Onde |
+| What A13 asks for | What was measured | Where |
 |---|---|---|
-| RAM do `poph serve` com o módulo desligado | ~20,4 MB de RSS em regime (20.272–20.984 kB), de 1 a 10.000 salas | "Números: memória" |
-| RAM com o módulo ligado, em 100, 1.000 e 10.000 salas | +3,7 MB / +6,5 MB / +10,3 MB | "Números: memória" |
-| Meta de 20 MB com 1.000 salas | medida em 6,5 MB; folga de ~3× | "Números: memória" |
-| Vazão de mensagens espelhadas por segundo | 739 msg/s (1 msg/sala, 1.000 salas) e 2.648–2.811 msg/s (10 msgs/sala) | "Números: vazão" |
-| Medição contra o Synapse de verdade | 20 salas, 5 rodadas, 4,5–4,8 msg/s — número contaminado, ver a seção | "Synapse de desenvolvimento" |
+| RAM of `poph serve` with the module off | ~20.4 MB of RSS at steady state (20,272–20,984 kB), from 1 to 10,000 rooms | "Numbers: memory" |
+| RAM with the module on, at 100, 1,000 and 10,000 rooms | +3.7 MB / +6.5 MB / +10.3 MB | "Numbers: memory" |
+| Target of 20 MB with 1,000 rooms | measured at 6.5 MB; margin of about 3× | "Numbers: memory" |
+| Mirrored messages per second | 739 msg/s (1 msg/room, 1,000 rooms) and 2,648–2,811 msg/s (10 msgs/room) | "Numbers: throughput" |
+| Measurement against the real Synapse | 20 rooms, 5 rounds, 4.5–4.8 msg/s — contaminated number, see the section | "Development Synapse" |
 
-## Método
+## Method
 
-Cada rodada é uma execução independente:
+Each round is an independent run:
 
-1. **Semeadura** (processo separado, pela API do `poph-store`, não por SQL à mão): cria a org, o
-   agente e N conversas com M mensagens do cliente cada. Com o módulo ligado, a org é ligada no
-   módulo **antes** das mensagens, então tudo o que veio depois é espelhado.
-2. **`poph serve` de verdade** (`target/release/poph`) sobre aquele banco, com a configuração
-   padrão de produção: concorrência 8, intervalo de 500 ms, log em `info`. Nada de laço acelerado.
-3. **Synapse falso em processo separado** (`scripts/medicao-memoria/synapse_falso.py`, só biblioteca
-   padrão), para que o consumo dele não entre no RSS do `poph serve` e para que a escala de 10.000
-   salas caiba no tempo. Ele responde as mesmas rotas que o falso dos testes do módulo: registro de
-   fantasma, perfil, `createRoom` com alias, convite, entrada, membros, estado, envio com dedupe por
-   `txnId` e a sonda `/_matrix/client/versions`.
-4. **RSS lido do processo** (`/proc/<pid>/status`: `VmRSS` e o pico `VmHWM`), amostrado uma vez por
-   segundo durante 10 s **depois** de a fila esvaziar. O número da tabela é a mediana dessas 10
-   amostras; o pico é o `VmHWM`. CPU vem dos ticks de `/proc/<pid>/stat` divididos pelo tempo de
-   parede.
-5. **Vazão** = envios únicos contados pelo falso (dedupe por `txnId`) divididos pelo tempo entre o
-   servidor responder em `/healthz` e a última mensagem chegar ao falso.
+1. **Seeding** (separate process, through the `poph-store` API, not by hand-written SQL): creates the org, the agent and
+   N conversations with M customer messages each. With the module on, the org is switched on in the module **before**
+   the messages, so everything that comes afterwards is mirrored.
+2. **Real `poph serve`** (`target/release/poph`) on top of that database, with the default production configuration:
+   concurrency 8, interval of 500 ms, log at `info` level. No accelerated loop.
+3. **Fake Synapse in a separate process** (`scripts/medicao-memoria/synapse_falso.py`, standard library only), so that
+   its consumption does not enter the RSS of `poph serve` and so that the 10,000-room scale fits in the time available.
+   It answers the same routes as the fake used in the module's tests: ghost registration, profile, `createRoom` with
+   alias, invite, join, members, state, send with `txnId` deduplication, and the probe `/_matrix/client/versions`.
+4. **RSS read from the process** (`/proc/<pid>/status`: `VmRSS` and the peak `VmHWM`), sampled once per second for 10 s
+   **after** the queue empties. The number in the table is the median of those 10 samples; the peak is `VmHWM`. CPU
+   comes from the ticks in `/proc/<pid>/stat` divided by the wall-clock time.
+5. **Throughput** = unique sends counted by the fake (deduplicated by `txnId`) divided by the time between the server
+   answering on `/healthz` and the last message reaching the fake.
 
-Rodadas: três por cenário em 1, 100, 1.000 e 10.000 salas; duas no cenário de vazão; cinco no
-Synapse de dev. Comandos no fim do documento.
+Rounds: three per scenario at 1, 100, 1,000 and 10,000 rooms; two in the throughput scenario; five in the development
+Synapse. Commands at the end of the document.
 
-### Desvios da produção, declarados
+### Declared deviations from production
 
-- **Synapse falso, não o Synapse real**, para a escala de 100 a 10.000 salas: o Synapse de
-  desenvolvimento cria ~5 salas por segundo, então 10.000 salas levariam cerca de meia hora por
-  rodada, num ambiente que outros agentes usam. A rodada real foi feita em escala pequena (20
-  salas) e é reportada à parte.
-- **Falso e servidor na mesma máquina**: os 93% de CPU do falso e a contenção entre os dois
-  processos tornam a vazão medida um **piso**, não um teto.
-- **Binário de release**, sem `perf` nem instrumentação de alocador: o número é o RSS total do
-  processo, incluindo o cache de páginas do SQLite e o alocador — não é "memória do módulo" isolada.
+- **Fake Synapse, not the real Synapse**, for the 100 to 10,000 room scale: the development Synapse creates about 5
+  rooms per second, so 10,000 rooms would take about half an hour per round, in an environment that other agents use.
+  The real round was done at a small scale (20 rooms) and is reported separately.
+- **Fake and server on the same machine**: the 93% CPU of the fake and the contention between the two processes make
+  the measured throughput a **floor**, not a ceiling.
+- **Release binary**, with no `perf` and no allocator instrumentation: the number is the total RSS of the process,
+  including the SQLite page cache and the allocator — it is not the "memory of the module" in isolation.
 
-## Números: memória
+## Numbers: memory
 
-RSS em regime (mediana de 10 amostras por rodada; kB), `poph serve` de release:
+RSS at steady state (median of 10 samples per round; kB), `poph serve` release build:
 
-| Salas | Módulo desligado (3 rodadas) | Módulo ligado (3 rodadas) | Acréscimo |
+| Rooms | Module off (3 rounds) | Module on (3 rounds) | Increase |
 |---|---|---|---|
-| 1 | 20.152 (20.084–20.468) | 22.720 (22.664–22.776) | **+2,5 MB** |
-| 100 | 20.768 (20.624–20.788) | 24.526 (24.272–24.660) | **+3,7 MB** |
-| 1.000 | 20.440 (20.272–20.984) | 27.092 (26.780–27.152) | **+6,5 MB** |
-| 10.000 | 20.596 (20.404–20.628) | 31.186 (31.024–31.348, 2 rodadas) | **+10,3 MB** |
+| 1 | 20,152 (20,084–20,468) | 22,720 (22,664–22,776) | **+2.5 MB** |
+| 100 | 20,768 (20,624–20,788) | 24,526 (24,272–24,660) | **+3.7 MB** |
+| 1,000 | 20,440 (20,272–20,984) | 27,092 (26,780–27,152) | **+6.5 MB** |
+| 10,000 | 20,596 (20,404–20,628) | 31,186 (31,024–31,348, 2 rounds) | **+10.3 MB** |
 
-Pico (`VmHWM`) nas mesmas rodadas: 20.768 kB (desligado, 100 salas) a 31.348 kB (ligado, 10.000
-salas). O pico ficou entre 0 e 24 kB acima do regime em todas as rodadas — o módulo não tem picos
-de alocação no ciclo normal; o que existe é o patamar.
+Peak (`VmHWM`) in the same rounds: 20,768 kB (off, 100 rooms) to 31,348 kB (on, 10,000 rooms). The peak was between 0 and
+24 kB above steady state in every round — the module has no allocation spikes in the normal cycle; what exists is the
+plateau.
 
-Leitura:
+Reading:
 
-- **Custo fixo de 2,5 MB** (uma sala): cliente HTTP, ids dos fantasmas, a sonda de conexão, os três
-  laços, o registro de métricas e os primeiros acessos ao banco.
-- **Crescimento sublinear**: 100 → 1.000 salas acrescenta 2,8 MB (~3,1 kB por sala); 1.000 →
-  10.000 acrescenta 3,8 MB (~0,4 kB por sala). É o comportamento esperado de cache com teto (os
-  caches de fantasma têm teto de 1.024 entradas por processo) somado ao que o banco mantém em
-  memória para o cursor e para a leitura incremental.
-- **Não medi a divisão por componente** (quanto é cache do módulo, quanto é página do SQLite): não
-  há instrumentação de alocador no projeto e criá-la está fora do escopo desta tarefa. O que está
-  medido é o total, que é o número do critério.
+- **Fixed cost of 2.5 MB** (one room): HTTP client, ghost ids, the connection probe, the three loops, the metrics
+  registry and the first database accesses.
+- **Sublinear growth**: 100 → 1,000 rooms adds 2.8 MB (~3.1 kB per room); 1,000 → 10,000 adds 3.8 MB (~0.4 kB per
+  room). This is the expected behavior of a capped cache (the ghost caches are capped at 1,024 entries per process)
+  added to what the database keeps in memory for the cursor and for incremental reading.
+- **I did not measure the split by component** (how much is the module's cache, how much is SQLite pages): the project
+  has no allocator instrumentation, and creating it is outside the scope of this task. What is measured is the total,
+  which is the criterion's number.
 
-## Números: vazão
+## Numbers: throughput
 
-| Cenário | Mensagens | Tempo de drenagem | Vazão | CPU do serve | CPU do falso |
+| Scenario | Messages | Drain time | Throughput | Serve CPU | Fake CPU |
 |---|---|---|---|---|---|
-| Ligado, 100 salas, 1 msg/sala | 100 | 0,25 s (0,25–0,25) | 403,2 msg/s (403–407) | 8% | 8–16% |
-| Ligado, 1.000 salas, 1 msg/sala | 1.000 | 1,35 s (1,35–1,36) | **739,1 msg/s** (737,5–740,7) | 61% | 92–95% |
-| Ligado, 10.000 salas, 1 msg/sala | 10.000 | 14,66 s (14,65–14,66) | **682,4 msg/s** (682,0–682,7) | 64% | 93–94% |
-| Ligado, 1.000 salas, 10 msg/sala | 10.000 | 3,67 s (3,56–3,78) | **2.729 msg/s** (2.648–2.811) | 39% | 70–73% |
+| On, 100 rooms, 1 msg/room | 100 | 0.25 s (0.25–0.25) | 403.2 msg/s (403–407) | 8% | 8–16% |
+| On, 1,000 rooms, 1 msg/room | 1,000 | 1.35 s (1.35–1.36) | **739.1 msg/s** (737.5–740.7) | 61% | 92–95% |
+| On, 10,000 rooms, 1 msg/room | 10,000 | 14.66 s (14.65–14.66) | **682.4 msg/s** (682.0–682.7) | 64% | 93–94% |
+| On, 1,000 rooms, 10 msgs/room | 10,000 | 3.67 s (3.56–3.78) | **2,729 msg/s** (2,648–2,811) | 39% | 70–73% |
 
-Como ler:
+How to read it:
 
-- Nos três primeiros cenários, **a maior parte do tempo é criação de sala**, não envio de mensagem:
-  são N salas criadas, convite do fantasma do cliente, entrada e metadata. A criação de sala roda a
-  ~700–740 salas/s contra o falso.
-- Só o cenário de 10 mensagens por sala separa o envio da criação: 10.000 mensagens em 3,67 s. Dali
-  sai a leitura de que **o envio de mensagem em si é mais rápido que o número da tabela**: descontando
-  o ~1,35 s que a criação das 1.000 salas custou no cenário anterior, sobram ~2,3 s para 10.000
-  mensagens (≈4.300 msg/s). Esse número é **derivado**, não medido diretamente — a medição direta
-  exigiria semear as salas e só depois injetar mensagens, e o script atual faz as duas coisas na
-  mesma semeadura.
-- O **falso é o gargalo** a partir de 1.000 salas: 92–95% de um núcleo contra 61–64% do Harness. A
-  vazão medida é, portanto, um piso do que o módulo sustenta.
-- Na escala de 10.000 salas a vazão cai 8% em relação a 1.000 (739 → 682), com a mesma CPU do
-  Harness: é o custo de manter 10.000 salas no banco e no laço, não uma degradação do envio.
+- In the first three scenarios, **most of the time is room creation**, not message sending: N rooms are created, the
+  customer's ghost is invited, joins, and metadata is set. Room creation runs at ~700–740 rooms/s against the fake.
+- Only the 10-messages-per-room scenario separates sending from creation: 10,000 messages in 3.67 s. From it comes the
+  reading that **sending a message by itself is faster than the number in the table**: discounting the ~1.35 s that the
+  creation of 1,000 rooms cost in the previous scenario, about 2.3 s remain for 10,000 messages (≈4,300 msg/s). This
+  number is **derived**, not measured directly — a direct measurement would require seeding the rooms and only then
+  injecting messages, and the current script does both in the same seeding.
+- **The fake is the bottleneck** from 1,000 rooms on: 92–95% of one core against 61–64% for the Harness. The measured
+  throughput is therefore a floor for what the module sustains.
+- At the 10,000-room scale throughput drops 8% compared with 1,000 (739 → 682), with the same Harness CPU: this is the
+  cost of keeping 10,000 rooms in the database and in the loop, not a degradation of sending.
 
-## Ruído
+## Noise
 
-- **Entre rodadas do mesmo cenário** (o que mais importa para comparar com/sem módulo): o RSS sem o
-  módulo variou 712 kB (20.272–20.984 kB); com o módulo, 372 kB em 1.000 salas. O acréscimo medido
-  (6,5 MB) é **nove vezes** essa variação.
-- **Na vazão:** a faixa entre rodadas foi de 3,2 msg/s em 1.000 salas (0,4% da mediana) e de
-  162 msg/s no cenário de 10 mensagens por sala (5,9% da mediana).
-- **No tempo de drenagem:** ±0,11 s em 10 mensagens por sala; ±0,01 s nos cenários de uma mensagem.
-- **Execuções**: o roteiro principal rodou uma vez inteiro (três rodadas em cada cenário de 100,
-  1.000 e 10.000 salas, duas no de vazão). Depois disso, o cenário de uma sala (custo fixo) e o
-  modo real foram rodados em execuções separadas — o real cinco vezes no total, com os resultados
-  dentro da faixa de 4,5–4,8 msg/s.
+- **Between rounds of the same scenario** (what matters most for comparing with/without the module): the RSS without
+  the module varied by 712 kB (20,272–20,984 kB); with the module, by 372 kB at 1,000 rooms. The measured increase
+  (6.5 MB) is **nine times** that variation.
+- **In throughput:** the range between rounds was 3.2 msg/s at 1,000 rooms (0.4% of the median) and 162 msg/s in the
+  10-messages-per-room scenario (5.9% of the median).
+- **In drain time:** ±0.11 s at 10 messages per room; ±0.01 s in the one-message scenarios.
+- **Runs:** the main script ran once in full (three rounds in each scenario at 100, 1,000 and 10,000 rooms, two in the
+  throughput one). After that, the one-room scenario (fixed cost) and the real mode were run in separate runs — the real
+  one five times in total, with the results within the range of 4.5–4.8 msg/s.
 
-## Duração real
+## Total duration
 
-O roteiro completo (100/1.000/10.000 salas, desligado e ligado, vazão e real) levou **7 min 27 s**
-de parede (03:10:24 a 03:17:51 UTC, medidos pelos carimbos dos logs do servidor):
+The full script (100/1,000/10,000 rooms, off and on, throughput and real) took **7 min 27 s** of wall-clock time
+(03:10:24 to 03:17:51 UTC, measured from the timestamps in the server logs):
 
-| Cenário | Semeadura | Drenagem | Amostragem | Total por rodada |
+| Scenario | Seeding | Drain | Sampling | Total per round |
 |---|---|---|---|---|
-| Desligado, 100–1.000 salas | 0,2–0,7 s | — | 10 s | ~11 s |
-| Desligado, 10.000 salas | 4,6–4,8 s | — | 10 s | ~15–16 s |
-| Ligado, 100–1.000 salas, 1 msg | 0,2–0,7 s | 0,02–1,35 s | 10 s | ~11–12 s |
-| Ligado, 10.000 salas | 4,8 s | 14,66 s | 10 s | ~30 s |
-| Ligado, 1.000 salas, 10 msgs | 2,0–2,1 s | 3,56–3,78 s | 10 s | ~16 s |
-| Real, 20 salas | 0,2 s | 4,18–4,40 s | 10 s | ~15 s |
+| Off, 100–1,000 rooms | 0.2–0.7 s | — | 10 s | ~11 s |
+| Off, 10,000 rooms | 4.6–4.8 s | — | 10 s | ~15–16 s |
+| On, 100–1,000 rooms, 1 msg | 0.2–0.7 s | 0.02–1.35 s | 10 s | ~11–12 s |
+| On, 10,000 rooms | 4.8 s | 14.66 s | 10 s | ~30 s |
+| On, 1,000 rooms, 10 msgs | 2.0–2.1 s | 3.56–3.78 s | 10 s | ~16 s |
+| Real, 20 rooms | 0.2 s | 4.18–4.40 s | 10 s | ~15 s |
 
-A maior parte de cada rodada é a janela fixa de 10 s de amostragem do RSS, não o trabalho.
+Most of each round is the fixed 10 s RSS sampling window, not the work.
 
-## Synapse de desenvolvimento (MX-01, porta 18008)
+## Development Synapse (MX-01, port 18008)
 
-Cinco rodadas de 20 salas e 20 mensagens:
+Five rounds of 20 rooms and 20 messages:
 
-| Rodada | RSS de subida | RSS em regime | Drenagem | Vazão |
+| Round | RSS at startup | RSS at steady state | Drain | Throughput |
 |---|---|---|---|---|
-| 1 | 23.464 kB | 24.056 kB | 4,40 s | 4,5 msg/s |
-| 2 | 23.672 kB | 24.116 kB | 4,19 s | 4,8 msg/s |
-| 3 | 23.180 kB | 23.644 kB | 4,19 s | 4,8 msg/s |
-| 4 | 22.852 kB | 23.316 kB | 4,19 s | 4,8 msg/s |
-| 5 | 23.120 kB | 23.644 kB | 4,18 s | 4,8 msg/s |
+| 1 | 23,464 kB | 24,056 kB | 4.40 s | 4.5 msg/s |
+| 2 | 23,672 kB | 24,116 kB | 4.19 s | 4.8 msg/s |
+| 3 | 23,180 kB | 23,644 kB | 4.19 s | 4.8 msg/s |
+| 4 | 22,852 kB | 23,316 kB | 4.19 s | 4.8 msg/s |
+| 5 | 23,120 kB | 23,644 kB | 4.18 s | 4.8 msg/s |
 
-**Esses números não medem a vazão do módulo.** Nas cinco rodadas, as 20 salas falharam na primeira
-tentativa e só entraram na passagem seguinte do laço; o tempo de 4,2 s é o custo de criar sala no
-Synapse de dev **mais** uma volta do laço. A memória da rodada real (23,3–24,1 MB em regime) é
-coerente com a das rodadas locais na mesma escala, mas o ambiente é compartilhado com outros
-agentes, então não serve como medida de referência. A causa da falha está abaixo.
+**These numbers do not measure the module's throughput.** In all five rounds, the 20 rooms failed on the first attempt
+and only entered on a later pass of the loop; the 4.2 s time is the cost of creating a room on the development Synapse
+**plus** one extra pass of the loop. The memory of the real round (23.3–24.1 MB at steady state) is consistent with the
+local rounds at the same scale, but the environment is shared with other agents, so it does not serve as a reference
+measurement. The cause of the failure is below.
 
-## Defeito achado (não corrigido)
+## Defect found (not fixed)
 
-**A sala criada contra um Synapse de verdade nasce sem nome, sem tópico e sem o poder configurado.**
+**The room created against a real Synapse is born without a name, without a topic and without the configured power
+level.**
 
-O que acontece: o `createRoom` pedido pelo módulo manda `power_level_content_override` com o fantasma
-do agente no nível de `matrix.poder_agente`, cujo padrão é **50** (`crates/poph-types/src/config.rs`,
-`poder_agente: 50`). No Synapse real, quem cria a sala precisa de nível **100** para escrever o
-próprio `m.room.power_levels`: com 50, a requisição volta **403** — depois de a sala e o alias já
-existirem. A passagem seguinte acha o alias (`M_ROOM_IN_USE` → resolve o alias → segue), então o
-Harness "recupera", mas a sala **fica sem `m.room.name` e sem `m.room.topic`**, e sem o poder que o
-módulo queria aplicar.
+What happens: the `createRoom` sent by the module includes `power_level_content_override` with the agent's ghost at the
+level of `matrix.poder_agente`, whose default is **50** (`crates/poph-types/src/config.rs`, `poder_agente: 50`). On the
+real Synapse, whoever creates the room needs level **100** to write its own `m.room.power_levels`: with 50, the request
+returns **403** — after the room and the alias already exist. The next pass finds the alias (`M_ROOM_IN_USE` → resolves
+the alias → continues), so the Harness "recovers", but the room **ends up without `m.room.name` and without
+`m.room.topic`**, and without the power level the module wanted to apply.
 
-Evidência (capturada por um proxy de diagnóstico entre o `poph serve` e o Synapse de dev, que
-registra método, caminho, status e `errcode` — sem token):
+Evidence (captured by a diagnostic proxy between `poph serve` and the development Synapse, which records method, path,
+status and `errcode` — no token):
 
 ```
 POST /_matrix/client/v3/createRoom user=@ph_ag_… status=403 errcode=M_FORBIDDEN
@@ -191,98 +182,96 @@ POST /_matrix/client/v3/createRoom user=@ph_ag_… status=400 errcode=M_ROOM_IN_
   erro=Room alias already taken
 ```
 
-Estado da sala criada nessa rodada, lido pela API do Matrix como o fantasma do agente (que é o
-criador): `m.room.name` → `404 M_NOT_FOUND`, `m.room.topic` → `404`, `m.room.power_levels` → `404`,
-enquanto o `com.sofacoding.atendimento.metadata` está presente (200). A sala existe, os dois membros
-estão dentro, e ela está **sem nome**.
+State of the room created in that round, read through the Matrix API as the agent's ghost (who is the creator):
+`m.room.name` → `404 M_NOT_FOUND`, `m.room.topic` → `404`, `m.room.power_levels` → `404`, while
+`com.sofacoding.atendimento.metadata` is present (200). The room exists, both members are inside, and it is **without a
+name**.
 
-Contraprova, com o mesmo corpo e só o poder trocado:
+Control test, with the same body and only the power level changed:
 
-| `power_level_content_override` do criador | `createRoom` | `m.room.name` depois |
+| `power_level_content_override` of the creator | `createRoom` | `m.room.name` afterwards |
 |---|---|---|
 | 50 | **403** `M_FORBIDDEN` (`user_level (50) < send_level (100)`) | `404 M_NOT_FOUND` |
 | 100 | **200** | `{"name":"Nome Visivel"}` |
 
-Impacto no produto: é o critério **A1** ("nome do cliente e do agente corretos" na sala) falhando no
-Synapse de verdade — a sala aparece no Element com o identificador técnico, não com o nome do
-cliente. Além disso, cada conversa paga uma chamada condenada e uma volta do laço antes de a sala
-ficar utilizável. Os testes locais não pegam isso porque o Synapse falso não valida poder.
+Product impact: this is criterion **A1** ("correct customer and agent names" in the room) failing on the real Synapse —
+the room shows up in Element with the technical identifier, not the customer's name. Also, each conversation pays one
+doomed call and one extra loop pass before the room becomes usable. The local tests do not catch this because the fake
+Synapse does not validate power levels.
 
-Não corrigi: o arquivo é da MX-11 e a regra desta tarefa é parar e devolver com a
-evidência. A correção provável é não rebaixar o **criador** abaixo de 100 e aplicar o poder do
-fantasma do agente só depois da criação (ou usar `events`/`users_default` em vez de sobrescrever o
-criador). Também vale um teste no Synapse real, já que o falso não reproduz.
+Not fixed: the file belongs to MX-11 and this task's rule is to stop and return with the evidence. The likely fix is not
+to lower the **creator** below 100 and to apply the agent ghost's power level only after creation (or to use
+`events`/`users_default` instead of overriding the creator). A test against the real Synapse is also worth doing, since
+the fake does not reproduce it.
 
-### Como reproduzir o defeito (contra o Synapse de dev, sem o Harness)
+### How to reproduce the defect (against the development Synapse, without the Harness)
 
-Com o `$TOKEN` do Application Service do Harness e `$BASE` do Synapse (`http://127.0.0.1:18008`):
+With the `$TOKEN` of the Harness's Application Service and `$BASE` of the Synapse (`http://127.0.0.1:18008`):
 
-1. `POST /_matrix/client/v3/register?kind=user` com
+1. `POST /_matrix/client/v3/register?kind=user` with
    `{"type":"m.login.application_service","username":"ph_ag_pl50","inhibit_login":true}`.
-2. Criar a sala **com o poder que o módulo manda hoje**, como o fantasma recém-registrado:
-   `POST /_matrix/client/v3/createRoom?user_id=@ph_ag_pl50:matrix-dev.local` com
+2. Create the room **with the power level the module sends today**, as the newly registered ghost:
+   `POST /_matrix/client/v3/createRoom?user_id=@ph_ag_pl50:matrix-dev.local` with
    `{"room_alias_name":"ph_c_pl50","name":"Nome Visivel","topic":"Atendimento",
    "creation_content":{"type":"com.sofacoding.atendimento"},
    "power_level_content_override":{"users":{"@ph_ag_pl50:matrix-dev.local":50}},
    "preset":"private_chat"}` → **403** `M_FORBIDDEN` (`user_level (50) < send_level (100)`).
-3. Repetir com `100` no lugar de `50` → **200**, e
+3. Repeat with `100` instead of `50` → **200**, and
    `GET /_matrix/client/v3/rooms/{room_id}/state/m.room.name?user_id=@ph_ag_pl50:matrix-dev.local`
-   devolve `{"name":"Nome Visivel"}`. Com 50, a mesma leitura devolve `404 M_NOT_FOUND` — a sala
-   existe e não tem nome.
+   returns `{"name":"Nome Visivel"}`. With 50, the same read returns `404 M_NOT_FOUND` — the room exists and has no name.
 
-O mesmo acontece pelo caminho do Harness: suba o `poph serve` com `[matrix]` apontando para o Synapse
-de dev e o banco de uma rodada real; no log aparecem as falhas `motivo=sala_rejeitada` na primeira
-passagem e o espelhamento completa na seguinte, com as salas sem `m.room.name`.
+The same happens through the Harness path: start `poph serve` with `[matrix]` pointing to the development Synapse and the
+database of a real round; the log shows the `motivo=sala_rejeitada` (reason=room_rejected) failures on the first pass and
+mirroring completes on the next one, with the rooms lacking `m.room.name`.
 
-## O que NÃO foi medido
+## What was NOT measured
 
-- **RAM com o Synapse real em escala**: 10.000 salas a ~5 salas/s dariam cerca de meia hora por
-  rodada, num ambiente que outros agentes usam. O número de 10.000 salas é do Synapse falso.
-- **Vazão de envio isolada da criação de sala**: exigiria semear as salas, esperar o módulo
-  estabilizar e só então injetar mensagens. O script atual semeia as duas coisas juntas; o número de
-  ~4.300 msg/s que aparece na leitura é derivado, não medido.
-- **A divisão do acréscimo de memória por componente** (cache do módulo × página do SQLite ×
-  alocador): sem instrumentação de alocador.
-- **Comportamento depois de horas de operação** (fragmentação, crescimento do WAL): a rodada mais
-  longa foi de 30 s.
-- **O estado visual no Element** (A1 de verdade, com o nome na tela): é a MX-31, de outro dono.
-- **Duas instâncias do Harness** disputando a mesma máquina: fase 3.
+- **RAM with the real Synapse at scale**: 10,000 rooms at ~5 rooms/s would take about half an hour per round, in an
+  environment that other agents use. The 10,000-room number comes from the fake Synapse.
+- **Throughput of sending in isolation from room creation**: it would require seeding the rooms, waiting for the module
+  to stabilize and only then injecting messages. The current script seeds both together; the ~4,300 msg/s figure in the
+  reading is derived, not measured.
+- **The split of the memory increase by component** (module cache × SQLite pages × allocator): no allocator
+  instrumentation.
+- **Behavior after hours of operation** (fragmentation, WAL growth): the longest round was 30 s.
+- **The visual state in Element** (A1 for real, with the name on screen): it is MX-31, owned by someone else.
+- **Two Harness instances competing for the same machine**: phase 3.
 
-## Limites conhecidos
+## Known limits
 
-- **O RSS é do processo inteiro**, não do módulo: inclui o cache de páginas do SQLite e o que o
-  alocador não devolve ao sistema. Serve para comparar com/sem módulo na mesma máquina, não como
-  promessa absoluta em outro hardware.
-- **O falso é mais rápido que qualquer Synapse real**; a vazão de 739–2.811 msg/s é o que o módulo
-  faz quando o outro lado acompanha, e o teto real será do Synapse.
-- **A rodada real ficou contaminada** pelo defeito do poder (uma volta de laço a mais em todas as
-  salas), então 4,8 msg/s é um piso pessimista, não uma medida limpa.
-- **A janela de amostragem de 10 s** pega o regime, não o pico de uma rajada; o `VmHWM` cobre o pico
-  de alocação e foi igual ao regime.
-- **O mesmo SSD e a mesma CPU** hospedam o servidor, o falso e o banco: a vazão absoluta varia com a
-  carga da máquina (as cinco rodadas reais mostram a variação).
-- **O script não apaga os bancos** de `target/mx30/`: são descartáveis e ficam fora do git.
+- **RSS is for the whole process**, not the module: it includes the SQLite page cache and what the allocator does not
+  return to the system. It is useful for comparing with/without the module on the same machine, not as an absolute
+  promise on other hardware.
+- **The fake is faster than any real Synapse**; the 739–2,811 msg/s throughput is what the module does when the other
+  side keeps up, and the real ceiling will be set by Synapse.
+- **The real round was contaminated** by the power-level defect (one extra loop pass on every room), so 4.8 msg/s is a
+  pessimistic floor, not a clean measurement.
+- **The 10 s sampling window** captures the steady state, not the peak of a burst; `VmHWM` covers the allocation peak and
+  was the same as steady state.
+- **The same SSD and the same CPU** host the server, the fake and the database: the absolute throughput varies with the
+  machine's load (the five real rounds show the variation).
+- **The script does not delete the databases** in `target/mx30/`: they are disposable and stay out of git.
 
-## Como reproduzir
+## How to reproduce
 
 ```bash
 cd apps/pop-harness
 export PATH="$HOME/.cargo/bin:$PATH"
-cargo build --release --locked -p poph          # o script usa target/release/poph
+cargo build --release --locked -p poph          # the script uses target/release/poph
 
 bash scripts/medir-memoria.sh --modo desligado --salas 1000 --rodada 1
 bash scripts/medir-memoria.sh --modo ligado   --salas 1000 --mensagens 1  --rodada 1
-bash scripts/medir-memoria.sh --modo ligado   --salas 1000 --mensagens 10 --rodada 1   # vazão
-bash scripts/medir-memoria.sh --modo real     --salas 20   --rodada 1                  # Synapse de dev
+bash scripts/medir-memoria.sh --modo ligado   --salas 1000 --mensagens 10 --rodada 1   # throughput
+bash scripts/medir-memoria.sh --modo real     --salas 20   --rodada 1                  # development Synapse
 
-bash scripts/medir-memoria-roteiro.sh           # a matriz completa (7–8 min)
-bash scripts/medir-memoria-roteiro.sh rapido    # 100 salas, checagem rápida
+bash scripts/medir-memoria-roteiro.sh           # the full matrix (7–8 min)
+bash scripts/medir-memoria-roteiro.sh rapido    # 100 rooms, quick check
 ```
 
-Cada rodada grava uma linha em `target/mx30/memoria.csv` (fora do git), com RSS de subida, regime,
-pico, tempo de drenagem, vazão, CPU dos dois processos, salas criadas, envios únicos, convites,
-requisições e o tempo de semeadura. Os logs de cada rodada ficam em `target/mx30/logs/`.
+Each round writes one line to `target/mx30/memoria.csv` (outside git), with startup RSS, steady state, peak, drain time,
+throughput, CPU of both processes, rooms created, unique sends, invites, requests and seeding time. The logs of each
+round are in `target/mx30/logs/`.
 
-O modo `real` lê as credenciais do Synapse de desenvolvimento de `~/.cache/poph-matrix/credenciais.env`
-(geradas por `scripts/matrix-dev.sh`) e não imprime token nenhum: os tokens vão por variável de
-ambiente e nunca para a linha de comando nem para o CSV.
+The `real` mode reads the credentials of the development Synapse from `~/.cache/poph-matrix/credenciais.env`
+(generated by `scripts/matrix-dev.sh`) and does not print any token: the tokens go through environment variables and
+never onto the command line or into the CSV.

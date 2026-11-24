@@ -1,97 +1,98 @@
-# Contrato do canal (integração) e eventos do turno
+# Channel contract (integration) and turn events
 
-> Descreve o que existe no código hoje. A fonte dos tipos é
-> `crates/poph-types/src/integracao.rs`; o protocolo de plugin em processo externo está em
-> [`PLUGIN_PROTOCOLO.md`](PLUGIN_PROTOCOLO.md); o exemplo completo em [`PLUGIN_EXEMPLO.md`](PLUGIN_EXEMPLO.md).
-> Se o código mudar, este documento muda no mesmo commit. A seção 7 lista o que **não existe** e seria
-> preciso para um canal que observa a conversa (caso do Matrix); ela é levantamento, não decisão.
+> Describes what exists in the code today. The source of the types is
+> `crates/poph-types/src/integracao.rs`; the external-process plugin protocol is in
+> [`PLUGIN_PROTOCOLO.md`](PLUGIN_PROTOCOLO.md); the full example is in [`PLUGIN_EXEMPLO.md`](PLUGIN_EXEMPLO.md).
+> If the code changes, this document changes in the same commit. Section 7 lists what **does not exist** and
+> would be needed for a channel that observes the conversation (the Matrix case); it is a survey, not a decision.
 
-## 1. Papéis
+## 1. Roles
 
-Um **canal** é a ponta do cliente: de lá chegam as mensagens e para lá vai a resposta. Hoje há dois
-tipos, com o mesmo contrato:
+A **channel** is the customer's end: messages arrive from there and the reply goes back there. There are two
+kinds today, with the same contract:
 
-- **Nativo:** WhatsApp pela EvolutionAPI (`crates/poph-evolution`), módulo em Rust que implementa o
-  trait `Integration`.
-- **Processo externo:** qualquer programa que fale o protocolo JSON-lines sobre stdio, supervisionado
-  por `poph-plugins`. O plugin `poph-plugin-eco` é o modelo.
+- **Native:** WhatsApp through EvolutionAPI (`crates/poph-evolution`), a Rust module that implements the
+  `Integration` trait.
+- **External process:** any program that speaks the JSON-lines protocol over stdio, supervised by
+  `poph-plugins`. The `poph-plugin-eco` plugin is the model.
 
-Cada integração pertence a **um agente** (`integrations.agent_id`) e a uma org. A versão do protocolo é
-`PROTOCOLO_VERSAO = 1`; diferença no handshake é recusada.
+Each integration belongs to **one agent** (`integrations.agent_id`) and to an org. The protocol version is
+`PROTOCOLO_VERSAO = 1`; a difference in the handshake is refused.
 
-## 2. Manifesto
+## 2. Manifest
 
-O canal se descreve no handshake (`Manifesto`):
+The channel describes itself in the handshake (`Manifesto`):
 
-| Campo | Para que serve |
+| Field | What it is for |
 |---|---|
-| `nome`, `kind`, `versao`, `protocolo` | identificação; `kind` é o mesmo da tabela `integrations` |
-| `capacidades` | `text`, `image_in`, `file_in`, `file_out`, `typing`, `read_receipt` (ausente = falso) |
-| `limites` | `max_anexo_bytes` (padrão 16 MB), `max_texto_bytes` (0 = sem teto declarado), `tipos_aceitos` |
-| `configuracao` | JSON Schema do formulário de configuração (o Console desenha a partir dele) |
-| `segredos` | JSON Schema dos segredos que o operador preenche |
+| `nome`, `kind`, `versao`, `protocolo` | identification; `kind` is the same as in the `integrations` table |
+| `capacidades` | `text`, `image_in`, `file_in`, `file_out`, `typing`, `read_receipt` (absent = false) |
+| `limites` | `max_anexo_bytes` (default 16 MB), `max_texto_bytes` (0 = no declared limit), `tipos_aceitos` |
+| `configuracao` | JSON Schema of the configuration form (the Console draws it from this) |
+| `segredos` | JSON Schema of the secrets the operator fills in |
 
-Segredos viajam só no handshake e nunca em evento, comando, erro ou log. O servidor não guarda
-manifesto: pergunta ao plugin declarado em `[plugins].integracoes` e guarda o resultado em memória
+Secrets travel only in the handshake and never in an event, command, error or log. The server does not keep the
+manifest: it asks the plugin declared in `[plugins].integracoes` and keeps the result in memory
 (`PLUGIN_PROTOCOLO.md` §8.1).
 
-## 3. Entrada: `InboundEvent`
+## 3. Input: `InboundEvent`
 
-O que o canal entrega ao Harness:
+What the channel delivers to the Harness:
 
-| Campo | Significado |
+| Field | Meaning |
 |---|---|
-| `integracao` | integração que recebeu |
-| `id_externo` | id da mensagem no canal; **chave de idempotência** (obrigatório) |
-| `peer` | contato do outro lado: telefone, jid, sala (obrigatório) |
-| `remetente` | quem escreveu, quando difere do `peer` (grupo) |
-| `texto` | texto recebido; vazio quando é só anexo |
-| `anexos` | lista de `AnexoEntrada`: `blob` (já gravado: nome, mime, sha256, tamanho) ou `bytes` (base64 no evento) |
-| `ocorrido_em` | ms desde a época (obrigatório, positivo) |
-| `metadados` | dados do canal sem campo próprio (id de resposta, menções) |
+| `integracao` | integration that received it |
+| `id_externo` | id of the message in the channel; **idempotency key** (required) |
+| `peer` | the other party: phone, jid, room (required) |
+| `remetente` | who wrote it, when different from `peer` (group) |
+| `texto` | text received; empty when it is only an attachment |
+| `anexos` | list of `AnexoEntrada`: `blob` (already stored: name, mime, sha256, size) or `bytes` (base64 in the event) |
+| `ocorrido_em` | ms since the epoch (required, positive) |
+| `metadados` | channel data without a field of its own (reply id, mentions) |
 
-`InboundEvent::validar` recusa evento sem `id_externo`, sem `peer`, sem horário ou com anexo inválido
-(sha256 que não tem 64 hexa, tamanho zero, sem nome ou mime).
+`InboundEvent::validar` refuses an event without `id_externo`, without `peer`, without a time, or with an invalid
+attachment (sha256 that is not 64 hex characters, zero size, no name or mime).
 
-**Nome do cliente (`push_name`, MX-32).** O plugin do WhatsApp põe o nome do contato em
-`metadados["push_name"]` quando a mensagem é de contato individual recebido: não sai para mensagem
-enviada por nós (`fromMe`, que traz o nome do dono da instância) nem para grupo (que traz o nome de quem
-escreveu). Sem o campo, a conversa mantém o nome que já tinha. O campo não entra no `InboundEvent`
-como campo próprio, então o contrato do canal não muda. Quem grava é `receber_do_canal`, dentro da
-transação da mensagem (`DADOS.md`, migração `0008`), e não o `ConversaDoCanal`: o webhook do WhatsApp
-não passa por ele.
+**Customer name (`push_name`, MX-32).** The WhatsApp plugin puts the contact's name in
+`metadados["push_name"]` when the message is from an individual contact received: it is not sent for a message
+we sent (`fromMe`, which carries the instance owner's name) nor for a group (which carries the name of whoever
+wrote it). Without the field, the conversation keeps the name it already had. The field is not part of
+`InboundEvent` as a field of its own, so the channel contract does not change. It is written by
+`receber_do_canal`, inside the message transaction (`DADOS.md`, migration `0008`), and not by
+`ConversaDoCanal`: the WhatsApp webhook does not go through it.
 
-**O que o Harness faz com ele** (`ENTRADA_E_SAIDA.md`): grava mensagem e item da `inbox` numa transação,
-com chave única `(integration_id, external_message_id)`; duplicata devolve sucesso sem segundo turno; o
-OK ao canal só sai depois do commit. O item da `inbox` guarda só `{conversa, mensagem}`
-(`EventoEntrada`); o conteúdo está em `messages` e `attachments`. O item só é concluído quando o turno
-termina, então queda no meio faz o despacho repetir (pelo menos uma vez).
+**What the Harness does with it** (`ENTRADA_E_SAIDA.md`): it writes the message and the `inbox` item in one
+transaction, with the unique key `(integration_id, external_message_id)`; a duplicate returns success without a
+second turn; the OK to the channel only goes out after the commit. The `inbox` item stores only
+`{conversa, mensagem}` (`EventoEntrada`); the content is in `messages` and `attachments`. The item is only
+completed when the turn ends, so a failure in the middle makes the dispatch repeat (at least once).
 
-## 4. Saída: `ComandoSaida`
+## 4. Output: `ComandoSaida`
 
-O que o Harness manda o canal entregar. Todo comando traz uma chave de idempotência `turn_id:seq`
-(menos a presença).
+What the Harness tells the channel to deliver. Every command carries an idempotency key `turn_id:seq` (except
+presence).
 
-| Comando | Campos | Observação |
+| Command | Fields | Note |
 |---|---|---|
-| `EnviarTexto` (`SendText`) | `idempotencia`, `peer`, `texto` | no WhatsApp, texto acima de 4000 caracteres é cortado com `…`, numa mensagem só |
-| `EnviarArquivo` (`SendFile`) | `idempotencia`, `peer`, `nome`, `mime`, `tamanho_bytes`, `sha256`, `blob_ref`, `legenda?` | só arquivos da biblioteca do agente (D13); `blob_ref` é `<org>/<sha256>` |
-| `DefinirPresenca` (`SetPresence`) | `peer`, `estado` (`digitando` ou `pausado`) | |
+| `EnviarTexto` (`SendText`) | `idempotencia`, `peer`, `texto` | on WhatsApp, text longer than 4000 characters is cut with `…`, in a single message |
+| `EnviarArquivo` (`SendFile`) | `idempotencia`, `peer`, `nome`, `mime`, `tamanho_bytes`, `sha256`, `blob_ref`, `legenda?` | only files from the agent's library (D13); `blob_ref` is `<org>/<sha256>` |
+| `DefinirPresenca` (`SetPresence`) | `peer`, `estado` (`digitando` = typing, or `pausado` = paused) | |
 
-Estados de uma linha da `outbox`: `pending`, `sending` (gravado **antes** de chamar o canal),
-`sent`, `failed`. Na retomada, o que ficou em `sending` é reenviado: é a única situação em que o cliente
-pode receber duplicata (D11). Backoff padrão 500 ms × 2 até 60 s.
+States of an `outbox` row: `pending`, `sending` (saved **before** calling the channel), `sent`, `failed`. On
+resume, what was left in `sending` is sent again: this is the only situation in which the customer can receive a
+duplicate (D11). Default backoff 500 ms × 2 up to 60 s.
 
-## 5. Estado, saúde e o trait
+## 5. State, health and the trait
 
-O canal avisa mudanças com `EventoEstado`: `conectado`, `desconectado`, `qr` (código e expiração) e
-`erro` (código, mensagem, se vale retentar). A pergunta de saúde devolve `Saude { ok, detalhe }`.
+The channel reports changes with `EventoEstado`: `conectado` (connected), `desconectado` (disconnected), `qr`
+(code and expiry) and `erro` (error: code, message, whether to retry). The health question returns
+`Saude { ok, detalhe }`.
 
-O trait que os dois tipos de canal implementam:
+The trait that both kinds of channel implement:
 
 ```rust
 pub trait Integration: Send + Sync + 'static {
-    fn manifesto(&self) -> Option<Manifesto>;        // vazio antes do handshake
+    fn manifesto(&self) -> Option<Manifesto>;        // empty before the handshake
     fn estado(&self) -> EstadoIntegracao;            // Iniciando, Pronto, Reiniciando, Caida, Encerrada
     fn enviar_texto(&self, comando: SendText) -> FuturoComando;
     fn enviar_arquivo(&self, comando: SendFile) -> FuturoComando;
@@ -100,55 +101,58 @@ pub trait Integration: Send + Sync + 'static {
 }
 ```
 
-Quem recebe o que o canal produz implementa `Receptor::receber(EventoIntegracao)`, com
-`EventoIntegracao::Entrada(InboundEvent)` ou `EventoIntegracao::Estado(EventoEstado)`. A chamada é
-síncrona de propósito: quem recebe enfileira e volta. A ligação pronta entre o contrato e as filas está
-em `poph-agent/src/fila_integracao.rs` (`InboxDoCanal`, `EnvioPeloCanal`).
+Whoever receives what the channel produces implements `Receptor::receber(EventoIntegracao)`, with
+`EventoIntegracao::Entrada(InboundEvent)` or `EventoIntegracao::Estado(EventoEstado)`. The call is synchronous on
+purpose: the receiver enqueues and returns. The ready connection between the contract and the queues is in
+`poph-agent/src/fila_integracao.rs` (`InboxDoCanal`, `EnvioPeloCanal`).
 
-Supervisão de plugin externo: teto de tamanho por linha, timeout por comando, reinício com backoff e
-teto de falhas; plugin que trava, cai ou emite lixo não derruba o servidor nem outras integrações
-(`PLUGIN_PROTOCOLO.md` §5).
+Supervision of an external plugin: a size limit per line, a timeout per command, restart with backoff and a
+failure limit; a plugin that hangs, crashes or emits garbage does not bring down the server or the other
+integrations (`PLUGIN_PROTOCOLO.md` §5).
 
-## 6. Eventos do turno
+## 6. Turn events
 
-`EventoTurno` (em `poph-agent/src/turno/mod.rs`) é o que o turno avisa a quem acompanha:
-`Inicio`, `Texto` (pedaços da resposta), `Base` (fontes recuperadas), `Ferramenta` (nome e rodada),
-`Transferencia` (departamento, tipo de risco, se saiu orientação) e `Fim` (estado e motivo).
+`EventoTurno` (in `poph-agent/src/turno/mod.rs`) is what the turn reports to whoever follows it: `Inicio`
+(start), `Texto` (pieces of the reply), `Base` (retrieved sources), `Ferramenta` (tool name and round),
+`Transferencia` (department, risk type, whether guidance was sent) and `Fim` (end: state and reason).
 
-- Eles são entregues a um `Observador` **dentro do processo**. Na integração (WhatsApp, plugin) o
-  observador é nulo: a resposta sai pela `outbox`. No chat de teste do Console, os eventos viram SSE
-  (`inicio`, `texto`, `base`, `ferramenta`, `transferencia`, `fim`; contrato em [`API.md`](API.md)).
-- O que fica **gravado** e dá para consultar depois: `messages`, `turns` (decisões do Jev, tempos,
-  tokens, ferramentas), `conversations.status` e `target_department_id`, `audit_log`. A API lê isso por
-  `GET /admin/v1/orgs/{org}/conversations`, `…/{id}`, `…/{id}/messages`, `…/{id}/turns`, e reabre por
+- They are delivered to an `Observador` **inside the process**. On the integration side (WhatsApp, plugin) the
+  observer is null: the reply goes out through the `outbox`. In the Console test chat, the events become SSE
+  (`inicio`, `texto`, `base`, `ferramenta`, `transferencia`, `fim`; contract in [`API.md`](API.md)).
+- What is **recorded** and can be queried later: `messages`, `turns` (Jev decisions, timings, tokens, tools),
+  `conversations.status` and `target_department_id`, `audit_log`. The API reads it through
+  `GET /admin/v1/orgs/{org}/conversations`, `…/{id}`, `…/{id}/messages`, `…/{id}/turns`, and reopens through
   `POST …/{id}/reopen`.
 
-## 7. O que um canal observador (Matrix) exigiria e hoje não existe
+## 7. What an observing channel (Matrix) would require and does not exist today
 
-> Nota: a ponte que faz o Element ler e fechar conversas do POP Harness pelo backend Python (repasse) não é um canal observador e não está descrita aqui. Ver [`REPASSE_PYTHON.md`](REPASSE_PYTHON.md).
+> Note: the bridge that lets the Element read and close POP Harness conversations through the Python
+> backend (repasse) is not an observing channel and is not described here. See
+> [`REPASSE_PYTHON.md`](REPASSE_PYTHON.md).
 
-Levantamento feito lendo o esquema e o código em 21/11/2026. Direção aprovada pelo mantenedor: módulo
-desligável em crate separado, com poucas mudanças no núcleo, e um segundo papel de integração, o de
-observador da conversa. **Nada disto está especificado nem implementado.**
+Survey done by reading the schema and the code on 21/11/2026. The direction approved by the maintainer: a
+removable module in a separate crate, with few changes to the core, and a second integration role, that of
+observer of the conversation. **None of this is specified or implemented.**
 
-1. **Não há saída de eventos para fora do processo.** `EventoTurno` só chega a observadores em memória.
-   Para um módulo em crate separado receber cópia de cada mensagem e da transferência, falta um ponto de
-   publicação (ou leitura incremental do que já é gravado).
-2. **O contrato é de canal de cliente.** `Integration` serve a um peer por vez e pertence a um agente.
-   Um observador acompanha todas as conversas de uma org (ou de um departamento) e não responde a um
-   `peer`. Falta o tipo do papel e a regra de quais conversas ele recebe.
-3. **Mensagem de atendente humano não tem onde entrar.** `messages.direction` aceita `in`/`out` e
-   `messages.role` aceita `user`, `assistant`, `tool`, `system`: não há papel de atendente humano.
-4. **Envio iniciado por humano não tem turno.** `outbox.turn_id` é obrigatório e a idempotência é
-   `(turn_id, seq)`. Uma resposta digitada no Element chegaria sem turno e precisaria de outra chave.
-5. **Pausar o agente quando o humano responde.** Hoje só a transferência (G1/G4) pausa, por
-   `conversations.status = transferred` (D12). Humano que assume sem transferência não tem estado.
-6. **Várias instâncias.** O encaminhamento entre instâncias hoje cobre `POST /webhook/evolution/{org_id}/{instancia}`
-   e `/admin/v1/orgs/{org_id}/…`, porque a org está no caminho. Um webhook do Synapse só serviria ao
-   mesmo mecanismo se também trouxesse a org no caminho. **Suposição**: não foi testado.
-7. **Synapse fora do ar não pode atrasar o cliente.** A cópia ao Matrix teria de sair por fila própria,
-   depois da resposta ao cliente. Hoje o único mecanismo de fila durável é a `outbox` do canal do cliente.
-8. **Ligação com as Fichas** e com as salas por departamento não existe no Harness (Fichas estão fora).
+1. **There is no way to send events out of the process.** `EventoTurno` only reaches observers in memory. For a
+   module in a separate crate to receive a copy of each message and of the transfer, a publishing point is
+   missing (or incremental reading of what is already recorded).
+2. **The contract is for a customer channel.** `Integration` serves one peer at a time and belongs to an agent.
+   An observer follows all conversations of an org (or of a department) and does not reply to a `peer`. The
+   type for the role and the rule for which conversations it receives are missing.
+3. **A human agent's message has nowhere to go.** `messages.direction` accepts `in`/`out` and
+   `messages.role` accepts `user`, `assistant`, `tool`, `system`: there is no role for a human agent.
+4. **A send started by a human has no turn.** `outbox.turn_id` is required and the idempotency is
+   `(turn_id, seq)`. A reply typed in Element would arrive without a turn and would need another key.
+5. **Pausing the agent when the human replies.** Today only the transfer (G1/G4) pauses, through
+   `conversations.status = transferred` (D12). A human who takes over without a transfer has no state.
+6. **Several instances.** Routing between instances today covers `POST /webhook/evolution/{org_id}/{instancia}`
+   and `/admin/v1/orgs/{org_id}/…`, because the org is in the path. A Synapse webhook would only serve the same
+   mechanism if it also carried the org in the path. **Assumption**: not tested.
+7. **Synapse being down must not delay the customer.** The copy to Matrix would have to go out through its own
+   queue, after the reply to the customer. Today the only durable queue mechanism is the `outbox` of the customer
+   channel.
+8. **Connection to Cases** and to the per-department rooms does not exist in the Harness (Cases are out of scope).
 
-Antes de escrever a especificação do Matrix, os pontos 1, 3, 4 e 5 são os que mexem no núcleo; os demais
-ficam dentro do módulo novo.
+Before writing the Matrix specification, points 1, 3, 4 and 5 are the ones that touch the core; the others stay
+inside the new module.

@@ -1,99 +1,97 @@
-# Produtos: catálogo, busca híbrida e `buscar_produto` (HR-18)
+# Products: catalog, hybrid search and `buscar_produto` (HR-18)
 
-> Como o agente deixa de responder preço "de cabeça": o catálogo é indexado no `rag.db` (só o texto),
-> o preço vem do registro na hora da resposta, e o modelo só recebe valor pela ferramenta. Código:
-> `crates/poph-store/src/repos/produtos.rs` (registro), `crates/poph-rag/src/indice.rs` (índice de
-> produtos), `crates/poph-agent/src/produtos.rs` (serviço e ferramenta), `crates/poph/src/produto.rs`
-> (CLI) e `crates/poph-agent/src/turno/` (ligação com o turno).
+> How the agent stops answering prices "from memory": the catalog is indexed in `rag.db` (text only), the
+> price comes from the record at the moment of the reply, and the model only receives a value through the tool.
+> Code: `crates/poph-store/src/repos/produtos.rs` (record), `crates/poph-rag/src/indice.rs` (product index),
+> `crates/poph-agent/src/produtos.rs` (service and tool), `crates/poph/src/produto.rs` (CLI) and
+> `crates/poph-agent/src/turno/` (link with the turn).
 
-## 1. Desenho
+## 1. Design
 
 ```
-catálogo (harness.db)                    índice de produtos (rag.db)
-  product_categories  ─────┐                rag_produtos          (1 linha por produto/agente)
-  products (preço!)   ─────┤                rag_produtos_trechos  (vetor int8 por trecho)
-  agent_product_categories ┘                rag_produtos_fts      (FTS5 do texto)
+catalog (harness.db)                     product index (rag.db)
+  product_categories  ─────┐                rag_produtos          (1 row per product/agent)
+  products (price!)   ─────┤                rag_produtos_trechos  (int8 vector per chunk)
+  agent_product_categories ┘                rag_produtos_fts      (FTS5 over the text)
            │                                          │
-           │  só nome, aliases, descrição e tags ─────┘  (preço NUNCA entra)
+           │  name, aliases, description and tags only ┘  (price NEVER enters)
            ▼
-  pergunta do cliente
-     ├─ embedding da consulta
-     ├─ varredura exata no índice int8 do agente (cosseno) ─┐
-     └─ FTS5 (palavras, com prefixo e sem palavras vazias) ─┤
-                                                            ▼
-                                    combinação por rank (RRF, k = 60)
-                                                            │
-                              corte de relevância (cosseno) e top-k do agente
-                                                            │
-                              ids achados → **leitura do registro** (preço, unidade, condições)
-                                                            │
-                                            ferramenta `buscar_produto` → modelo
+  customer question
+     ├─ query embedding
+     ├─ exact scan of the agent's int8 index (cosine) ─┐
+     └─ FTS5 (words, with prefix and without stop words) ┤
+                                                         ▼
+                                    rank-based merge (RRF, k = 60)
+                                                         │
+                              relevance cut (cosine) and the agent's top-k
+                                                         │
+                              ids found → **read the record** (price, unit, conditions)
+                                                         │
+                                            `buscar_produto` tool → model
 ```
 
-- **Preço fora do índice.** O hash de origem é calculado sobre o texto indexável; mudar preço,
-  unidade, condições, inclui/exclui **não muda o hash** e não reembeda nada. A resposta sempre usa o
-  registro atual (teste `mudar_preco_aparece_na_resposta_seguinte_sem_reindexar`; medido na CLI:
-  preço alterado de R$ 250,50 para R$ 199,90 e a resposta seguinte já saiu com o valor novo).
-- **Um resultado por produto.** A busca devolve até `top_k` produtos (o melhor trecho de cada um),
-  não vários trechos do mesmo produto.
-- **Palavras e acentos.** Mesma consulta do FTS5 da HR-17: palavras vazias do português saem e
-  palavras de 4+ letras viram prefixo. É o que faz "cupins" achar "cupim" e "ratos" achar "ratazanas".
-- **Determinismo.** Empate na nota RRF desempata por similaridade e depois por `rowid`.
+- **Price outside the index.** The source hash is computed over the indexable text; changing price, unit,
+  conditions, includes/excludes **does not change the hash** and re-embeds nothing. The reply always uses the
+  current record (test `mudar_preco_aparece_na_resposta_seguinte_sem_reindexar`; measured in the CLI: price changed
+  from R$ 250,50 to R$ 199,90 and the next reply already used the new value).
+- **One result per product.** The search returns up to `top_k` products (the best chunk of each), not several
+  chunks of the same product.
+- **Words and accents.** Same FTS5 query as HR-17: Portuguese stop words are removed and words of 4+ letters become
+  prefixes. This is why "cupins" finds "cupim" and "ratos" finds "ratazanas".
+- **Determinism.** Ties in the RRF score are broken by similarity, then by `rowid`.
 
-### Medição (fixtura `crates/poph-rag/tests/fixtures/produtos_rotulados.json`)
+### Measurement (fixture `crates/poph-rag/tests/fixtures/produtos_rotulados.json`)
 
-12 produtos de uma empresa fictícia de controle de pragas e **20 consultas** escritas como cliente
-escreveria — 13 por apelido ("barata", "ralo entupido", "caixa de agua") e 7 com um erro de
-digitação simples ("dedetizacao", "cupin", "denge", "escorsiao", "perceveijo"). Modelo real int8,
-acerto no top-3:
+12 products from a fictional pest-control company and **20 queries** written the way a customer would write them —
+13 by nickname ("barata", "ralo entupido", "caixa de agua") and 7 with a simple typo ("dedetizacao", "cupin", "denge",
+"escorsiao", "perceveijo"). Real int8 model, hit in the top 3:
 
-| Busca | Acerto top-3 |
+| Search | Top-3 hit |
 |---|---|
-| só vetor | 19/20 (95,0 %) |
-| híbrida (RRF + FTS com prefixo) | **19/20 (95,0 %)** |
+| vector only | 19/20 (95.0 %) |
+| hybrid (RRF + FTS with prefix) | **19/20 (95.0 %)** |
 
-A única falha das duas é `escorsiao` (dois erros na mesma palavra). O teste
-`hibrida_de_produtos_acerta_top3_pelo_menos_tanto_quanto_so_vetor` falha se a híbrida ficar abaixo da
-vetorial; sem o modelo instalado ele é pulado.
+The only miss in both is `escorsiao` (two errors in the same word). The test
+`hibrida_de_produtos_acerta_top3_pelo_menos_tanto_quanto_so_vetor` fails if the hybrid falls below the vector-only
+result; without the model installed it is skipped.
 
-## 2. Regra de categoria (`agent_product_categories`)
+## 2. Category rule (`agent_product_categories`)
 
-É a mesma do POP Atende (`core/skills/tools/product_tools.py`):
+It is the same as in POP Atende (`core/skills/tools/product_tools.py`):
 
-- **Agente com categorias vinculadas:** só enxerga os produtos **ativos** dessas categorias. Produto de
-  outra categoria não entra no índice dele, não volta da busca e não é executado pela ferramenta.
-- **Agente sem vínculo:** enxerga todos os produtos ativos da org.
-- **Filtro pedido pelo modelo** (`categoria`, nome ou id): restringe dentro do que o agente já pode
-  ver. Categoria não vinculada é **recusada** com erro ("não está vinculada a este agente"), como no
-  POP Atende — o modelo recebe o erro e pode seguir sem filtro.
+- **Agent with linked categories:** sees only the **active** products of those categories. A product from another
+  category does not enter its index, does not come back from the search and is not executed by the tool.
+- **Agent without links:** sees all active products of the org.
+- **Filter requested by the model** (`categoria`, name or id): narrows within what the agent can already see. An
+  unlinked category is **refused** with an error ("não está vinculada a este agente", "not linked to this agent"),
+  as in POP Atende — the model receives the error and can continue without the filter.
 
-O vínculo é escrito por `poph agent update --category-id …` (HR-09) e muda a versão do agente, o que
-invalida a config quente (HR-11).
+The link is written by `poph agent update --category-id …` (HR-09) and changes the agent version, which invalidates
+the hot config (HR-11).
 
-## 3. D-05 aplicado a produto
+## 3. D-05 applied to products
 
-Produto `inactive` ou `archived` sai do índice na sincronização: não volta da busca, não é oferecido
-pela ferramenta e não é lido por `ativos_por_ids`. Continua listado (`poph product list --all`) e
-editável. Teste: `produto_inativo_ou_arquivado_sai_da_busca_e_da_ferramenta`.
+A product that is `inactive` or `archived` leaves the index during sync: it does not come back from the search, is
+not offered by the tool and is not read by `ativos_por_ids`. It stays listed (`poph product list --all`) and
+editable. Test: `produto_inativo_ou_arquivado_sai_da_busca_e_da_ferramenta`.
 
-## 4. Ferramenta `buscar_produto` (D-04)
+## 4. Tool `buscar_produto` (D-04)
 
-- Registrada em `RegistroPadrao`; o `chat` junta com `consultar_base` (`registro_com`). As próximas
-  tarefas (carrinho HR-19, arquivos HR-24) registram as suas sem tocar no laço.
-- Só é **oferecida** quando o agente a tem habilitada nas instruções *e* o processo sabe executá-la.
-- Argumentos: `termo` (obrigatório), `categoria` (opcional, nome ou id) e `limite` (1–10). **Nenhum
-  campo de preço.**
-- Devolve, por produto: id, nome, categoria, preço (texto e centavos), unidade, condições,
-  inclui/exclui — o texto vem dentro de `<produtos_encontrados>`, marcado como **dado**, não ordem
-  (a descrição é escrita por gente e pode conter "ignore as instruções").
-- Sem resultado, devolve instrução explícita de **não inventar preço** ("Não invente preço: diga que
-  não encontrou e ofereça falar com a equipe").
-- O que a ferramenta usou fica no coletor do turno (`UsoFerramentas`), que o turno grava em
-  `turns.retrieved_json`.
+- Registered in `RegistroPadrao`; `chat` combines it with `consultar_base` (`registro_com`). The next tasks (cart
+  HR-19, files HR-24) register theirs without touching the loop.
+- It is only **offered** when the agent has it enabled in its instructions *and* the process knows how to run it.
+- Arguments: `termo` (required), `categoria` (optional, name or id) and `limite` (1–10). **No price field.**
+- Returns, per product: id, name, category, price (text and cents), unit, conditions, includes/excludes. The text
+  comes inside `<produtos_encontrados>` (`<found_products>`, a tag emitted by the code), marked as **data**, not as
+  an order (the description is written by people and may contain "ignore as instruções", "ignore the instructions").
+- With no result, it returns an explicit instruction **not to invent a price**: "Não invente preço: diga que não
+  encontrou e ofereça falar com a equipe" (emitted by the code in Portuguese; in English: "Do not invent a price: say
+  you did not find it and offer to talk to the team").
+- What the tool used goes into the turn collector (`UsoFerramentas`), which the turn saves in `turns.retrieved_json`.
 
-### Registro do turno
+### Turn record
 
-`turns.retrieved_json` passa a ser uma lista com discriminante `tipo`:
+`turns.retrieved_json` becomes a list with a `tipo` discriminator:
 
 ```json
 [
@@ -102,23 +100,27 @@ editável. Teste: `produto_inativo_ou_arquivado_sai_da_busca_e_da_ferramenta`.
 ]
 ```
 
-Sem uso nenhum continua `[]`. Sem migração: a coluna já existia (HR-04b) e a HR-17 grava a mesma
-estrutura, agora com `tipo`.
+With no use at all it stays `[]`. No migration: the column already existed (HR-04b) and HR-17 writes the same
+structure, now with `tipo`.
 
-**Limite:** o registro guarda o que a **ferramenta devolveu**, não o que o modelo citou. Com o corte
-de relevância configurado no agente, só os produtos acima do corte entram (medido: com corte 0,35 uma
-pergunta sobre escorpiões — fora do catálogo — gravou `[]`).
+**Limit:** the record stores what the **tool returned**, not what the model cited. With the relevance cut configured on
+the agent, only products above the cut enter (measured: with a cut of 0.35, a question about scorpions — outside the
+catalog — recorded `[]`).
 
-## 5. Regra do preço no bloco volátil
+## 5. Price rule in the volatile block
 
-Quando o agente tem `buscar_produto` habilitada, o bloco volátil do turno ganha uma linha:
+When the agent has `buscar_produto` enabled, the turn's volatile block gets one line:
 
 > `preço: só informe valor que vier da ferramenta buscar_produto neste turno; se ela não devolveu o produto, diga que vai confirmar com a equipe e não estime valor.`
 
-Motivo medido: sem essa linha, o modelo respondeu de cabeça para uma pergunta indireta ("Vocês fazem
-desratização? Qual o valor?") e inventou R$ 380,00 e "retorno após 15 dias" — nada disso existia no
-catálogo. Com a linha, as mesmas perguntas passaram a chamar a ferramenta e a responder com o valor do
-registro (3 de 3 execuções). O bloco é volátil: o prefixo estável continua idêntico byte a byte.
+(Emitted by the code in Portuguese. In English: "price: only state a value that comes from the buscar_produto tool in
+this turn; if it did not return the product, say you will confirm with the team and do not estimate a value.")
+
+Measured reason: without this line, the model answered from memory to an indirect question ("Vocês fazem
+desratização? Qual o valor?", "Do you do rat control? What's the price?") and invented R$ 380,00 and "retorno após 15
+dias" ("return after 15 days") — none of it existed in the catalog. With the line, the same questions started calling
+the tool and answering with the value from the record (3 of 3 runs). The block is volatile: the stable prefix stays
+identical byte for byte.
 
 ## 6. CLI `poph product`
 
@@ -132,36 +134,36 @@ poph --offline --org <org> product delete <id|slug> --force
 poph --offline --org <org> product reindex [--agent <id|slug>]
 ```
 
-- `--price` é sempre **centavos** (`32000` = R$ 320,00). `--price-text` é o que o cliente vê; vazio, a
-  resposta formata a partir dos centavos (`25050` → "R$ 250,50").
-- `--category` aceita id (UUID v7) ou nome exato, sem diferenciar maiúsculas.
-- `--if-match` obrigatório nas alterações; `If-Match` velho devolve conflito de versão.
-- Toda escrita reindexa os agentes da org na hora (comparação por hash: só reembeda o que mudou). Sem
-  o modelo instalado, a escrita vale e o comando avisa: rode `poph product reindex` depois.
-- `delete` exige `--force` (a exclusão apaga o produto do catálogo; itens de carrinho ficam com
-  `product_id` nulo, por decisão do esquema).
+- `--price` is always in **cents** (`32000` = R$ 320,00). `--price-text` is what the customer sees; if empty, the reply
+  is formatted from the cents (`25050` → "R$ 250,50").
+- `--category` accepts an id (UUID v7) or an exact name, case-insensitive.
+- `--if-match` is required for changes; an outdated `If-Match` returns a version conflict.
+- Every write reindexes the org's agents right away (hash comparison: only what changed is re-embedded). Without the
+  model installed, the write still takes effect and the command warns you: run `poph product reindex` afterwards.
+- `delete` requires `--force` (deletion removes the product from the catalog; cart items keep `product_id` null, by
+  the schema's decision).
 
-## 7. O que a HR-19 (carrinho) e a HR-42 (Console) consomem
+## 7. What HR-19 (cart) and HR-42 (Console) consume
 
-- **HR-19:** `Produtos::ativos_por_ids` e `Produtos::obter` para conferir o produto e o preço na hora
-  de adicionar ao carrinho (`cart_items.unit_price_cents` guarda o preço praticado). A ferramenta
-  `buscar_produto` devolve o `id` para o modelo usar nas ferramentas de carrinho.
-- **HR-42 (Console):** `poph product list --json` (catálogo e situação), `poph category list --json`
-  (categorias) e `turns.retrieved_json` (o "por quê": produto, preço aplicado e similaridade). O
-  estado do índice de um agente sai de `product reindex --json` (novos/alterados/removidos).
-- **HR-31 (Fichas/fluxo de orçamento)** usa a mesma ferramenta; nada muda no contrato.
+- **HR-19:** `Produtos::ativos_por_ids` and `Produtos::obter` to check the product and the price when adding to the
+  cart (`cart_items.unit_price_cents` stores the price charged). The `buscar_produto` tool returns the `id` for the
+  model to use in the cart tools.
+- **HR-42 (Console):** `poph product list --json` (catalog and status), `poph category list --json` (categories) and
+  `turns.retrieved_json` (the "why": product, applied price and similarity). The state of an agent's index comes from
+  `product reindex --json` (new/changed/removed).
+- **HR-31 (Cases/budget flow)** uses the same tool; nothing changes in the contract.
 
-## 8. O que não está coberto
+## 8. What is not covered
 
-- **Carrinho** (HR-19) e o preço por quantidade; hoje o preço é por unidade, como no POP Atende.
-- **Promoção/desconto por cliente**: não existe; o preço é o do registro.
-- **Custo por turno** continua 0 (sem tabela de preços de modelo, herdado da HR-10).
-- **A busca de produtos não tem cache em memória**: lê os vetores do `rag.db` a cada consulta (o
-  catálogo é pequeno; a HR-55 mede carga). A base de conhecimento continua com o LRU da HR-16.
-- **Reindexação é por org** nas escritas da CLI (uma consulta por agente, sem reembedar o que não
-  mudou). Org com milhares de agentes é a HR-55.
-- **O modelo pode responder sem chamar a ferramenta**: a linha do bloco volátil reduz muito, mas não
-  proíbe. Quem vai decidir "preço exige consulta" é o Jev (HR-28 em diante); hoje o motor não força a
-  chamada.
-- **Produto sem preço** (`price_cents = 0` e texto vazio) sai como "R$ 0,00" — é decisão de cadastro:
-  quem quer "sob consulta" escreve isso em `--price-text` ou em `--conditions`.
+- **Cart** (HR-19) and price per quantity; today the price is per unit, as in POP Atende.
+- **Promotion/discount per customer:** does not exist; the price is the one in the record.
+- **Cost per turn** stays at 0 (no model price table, inherited from HR-10).
+- **The product search has no in-memory cache:** it reads the vectors from `rag.db` on every query (the catalog is
+  small; HR-55 measures load). The knowledge base still uses the LRU from HR-16.
+- **Reindexing is per org** on CLI writes (one query per agent, without re-embedding what did not change). An org with
+  thousands of agents is HR-55.
+- **The model can reply without calling the tool:** the line in the volatile block greatly reduces this, but does not
+  forbid it. Jev (HR-28 onwards) is the one to decide "price requires a lookup"; today the engine does not force the
+  call.
+- **Product without a price** (`price_cents = 0` and empty text) is shown as "R$ 0,00" — this is a catalog decision:
+  whoever wants "sob consulta" ("price on request") writes that in `--price-text` or in `--conditions`.

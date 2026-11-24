@@ -17,8 +17,6 @@ One Rust binary, backed by SQLite. No Redis, no Postgres, no agent framework.
 [Documentation](#documentation) ·
 [Contributing](#contributing)
 
-English · [Português](README.pt-BR.md)
-
 </div>
 
 > **Language note.** Project files (README, contributing guide, security policy, templates, roadmap) are in

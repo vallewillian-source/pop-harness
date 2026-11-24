@@ -1,175 +1,252 @@
-# POP Harness (Rust) — Registro de decisões
+# POP Harness (Rust) — Decision log
 
-> Registro das decisões tomadas **depois** da especificação original (PRD e lista de tarefas, removidos
-> em 21/11/2026). As decisões de base D1 a D13 estão em [`VISAO_GERAL.md`](VISAO_GERAL.md) §4 e
-> continuam fechadas; aqui ficam as decisões operacionais e as respostas do mantenedor que mudam o desenho.
-> Cada decisão diz onde ela morde, para quem implementa não precisar procurar.
+> Log of the decisions made **after** the original specification (PRD and task list, removed on 21/11/2026).
+> The base decisions D1 to D13 are in [`VISAO_GERAL.md`](VISAO_GERAL.md) §4 and remain closed; here are the
+> operational decisions and the maintainer's answers that change the design. Each decision says where it bites,
+> so whoever implements it does not have to look for it.
 
-| ID | Data | Decisão | Manda em |
+| ID | Date | Decision | Governs |
 |---|---|---|---|
-| D-01 | 19/11/2026 | Rust instalado só no usuário (`~/.rustup`, `~/.cargo`), sem sudo: rustup 1.29.3, rustc/cargo 1.100.0 stable, alvos `x86_64-unknown-linux-gnu` e `aarch64-unknown-linux-gnu`, clippy, rustfmt, cargo-deny 0.22.0, cargo-audit 0.23.0. | HR-00, HR-04 |
-| D-02 | 19/11/2026 | Sem linker cruzado na estação: o alvo aarch64 fica só baixado e validado por `cargo check`. O binário ARM é compilado **direto na máquina ARM64 de testes** na HR-56, com autorização do mantenedor na hora — usar a máquina ARM64 de testes continua exigindo autorização. | HR-01 (ressalva ARM), HR-56 |
-| D-03 | 19/11/2026 | O Console serve as fontes da SofaUI em `/res/fonts` como estático e define fonte, cor e fundo do `body`. A biblioteca **não** é alterada para caminho relativo. | HR-38, HR-37 |
-| D-04 | 19/11/2026 · mantenedor | A lista de ferramentas habilitadas por agente **filtra de verdade** o que o agente pode usar. Deixa de ser campo decorativo como no POP Atende (HR-03 §7). | HR-09, HR-13, HR-19, HR-24 |
-| D-05 | 19/11/2026 · mantenedor | Base de conhecimento com status inativo **sai do índice e da busca**, e agente com status inativo **para de responder** (não recebe turno novo). | HR-09, HR-16, HR-17, HR-26 |
-| D-06 | 19/11/2026 · mantenedor | Regras de rota por intenção ficam **fora da V1**: sem tela e sem implementação. Podem constar como item futuro, sem gancho no código. | HR-04, HR-21, HR-37, HR-52 |
-| D-07 | 19/11/2026 · mantenedor | **Metas numéricas da V1 fixadas como o spike HR-01 propôs (M1–M13)**, sem aperto: 12 KB por agente ocioso, 96 KB por agente indexado, 150 MB com 10 mil ociosos, 450 MB com 2 mil índices, LRU de 512 MB, latência interna ≤ 2 ms p50 / ≤ 5 ms p95, escrita ≥ 50 mil msg/s e p95 ≤ 5 ms a 2.000 msg/s, ≥ 20 mil leituras/s, ingestão 2.000 msg/s por instância, 200 turnos simultâneos configuráveis, alerta se o primeiro texto passar de 12 s p95, carga com 10 mil agentes + 500 conversas ativas em ARM64. | HR-11, HR-12, HR-16, HR-55, HR-56, HR-59 |
-| D-08 | 19/11/2026 · mantenedor | **Corte de crates aprovado** com a quebra do `poph-core` em três: `poph-types`, `poph-store` (SQLite + memória), `poph-rag` (embedding + índice, único `unsafe`/FFI), `poph-agent` (LLM, Jev, compositor, turno), `poph-server` (axum, API, SSE, plugins, Evolution) e `poph` (binário + console embutido). | HR-04b, HR-06 a HR-13, HR-15 a HR-27, HR-56 |
+| D-01 | 19/11/2026 | Rust installed only for the user (`~/.rustup`, `~/.cargo`), no sudo: rustup 1.29.3, rustc/cargo 1.100.0 stable, targets `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu`, clippy, rustfmt, cargo-deny 0.22.0, cargo-audit 0.23.0. | HR-00, HR-04 |
+| D-02 | 19/11/2026 | No cross linker on the workstation: the aarch64 target is only downloaded and validated by `cargo check`. The ARM binary is compiled **directly on the ARM64 test machine** in HR-56, with the maintainer's authorization at that time — using the ARM64 test machine still requires authorization. | HR-01 (ARM caveat), HR-56 |
+| D-03 | 19/11/2026 | The Console serves the SofaUI fonts at `/res/fonts` as static files and sets font, color and background on the `body`. The library is **not** changed to a relative path. | HR-38, HR-37 |
+| D-04 | 19/11/2026 · maintainer | The list of tools enabled per agent **actually filters** what the agent can use. It stops being a decorative field as in POP Atende (HR-03 §7). | HR-09, HR-13, HR-19, HR-24 |
+| D-05 | 19/11/2026 · maintainer | Knowledge base with inactive status **leaves the index and the search**, and an agent with inactive status **stops answering** (it receives no new turn). | HR-09, HR-16, HR-17, HR-26 |
+| D-06 | 19/11/2026 · maintainer | Intent-based routing rules are **out of V1**: no screen and no implementation. They may appear as a future item, with no hook in the code. | HR-04, HR-21, HR-37, HR-52 |
+| D-07 | 19/11/2026 · maintainer | **Numeric V1 targets fixed as the HR-01 spike proposed (M1–M13), with no tightening**: 12 KB per idle agent, 96 KB per indexed agent, 150 MB with 10k idle, 450 MB with 2k indexes, LRU of 512 MB, internal latency ≤ 2 ms p50 / ≤ 5 ms p95, writes ≥ 50k msg/s and p95 ≤ 5 ms at 2,000 msg/s, ≥ 20k reads/s, ingestion of 2,000 msg/s per instance, 200 configurable simultaneous turns, alert if the first text exceeds 12 s p95, load with 10k agents + 500 active conversations on ARM64. | HR-11, HR-12, HR-16, HR-55, HR-56, HR-59 |
+| D-08 | 19/11/2026 · maintainer | **Crate split approved**: `poph-core` is broken into three: `poph-types`, `poph-store` (SQLite + memory), `poph-rag` (embedding + index, the only `unsafe`/FFI), `poph-agent` (LLM, Jev, composer, turn), `poph-server` (axum, API, SSE, plugins, Evolution) and `poph` (binary + embedded console). | HR-04b, HR-06 to HR-13, HR-15 to HR-27, HR-56 |
 
-## Efeito de cada decisão no desenho
+## Effect of each decision on the design
 
-### D-04 — Ferramentas habilitadas filtram
-- `agent_instructions.structured_json.ferramentas` (nome, habilitada, quando usar) passa a ser
-  **fonte de verdade** do toolset: o motor só oferece ao LLM as ferramentas marcadas como
-  habilitadas para aquele agente. Ferramenta desabilitada não aparece na lista enviada ao provedor.
-- Consequência para a HR-09: o campo precisa ser tipado e validado (nome de ferramenta conhecido,
-  lista fechada do motor), não texto livre.
-- Consequência para o turno (HR-13): o laço de ferramentas rejeita chamada de ferramenta não
-  habilitada mesmo que o modelo invente o nome (erro de ferramenta, não execução).
-- Sem configuração explícita, vale o padrão por tipo de agente definido na HR-09 — a decisão não
-  autoriza "tudo liberado".
+### D-04 — Enabled tools filter
+- `agent_instructions.structured_json.ferramentas` (name, enabled, when to use) becomes the **source of truth** for
+  the toolset: the engine offers the LLM only the tools marked as enabled for that agent. A disabled tool does not
+  appear in the list sent to the provider.
+- Consequence for HR-09: the field must be typed and validated (known tool name, closed list from the engine), not
+  free text.
+- Consequence for the turn (HR-13): the tool loop rejects a call to a non-enabled tool even if the model invents the
+  name (tool error, not execution).
+- Without explicit configuration, the default per agent type defined in HR-09 applies — the decision does not
+  authorize "everything enabled".
 
-### D-05 — Inativo quer dizer inativo
-- Item/grupo de conhecimento inativo não entra em `rag.db` (ou sai na reindexação) e não volta na
-  busca híbrida nem na ferramenta `consultar_base`.
-- Agente inativo não abre turno novo: mensagem recebida da integração é registrada e descartada
-  sem resposta (com registro em `audit_log`/`turns`), no mesmo padrão de conexão pausada.
-- Conversa em andamento com agente que ficou inativo no meio não continua o turno.
+### D-05 — Inactive means inactive
+- An inactive knowledge item/group is not in `rag.db` (or it leaves on reindexing) and does not come back in hybrid
+  search or in the `consultar_base` tool.
+- An inactive agent does not open a new turn: a message received from the integration is recorded and discarded
+  without a reply (with a record in `audit_log`/`turns`), following the same pattern as a paused connection.
+- A conversation in progress with an agent that became inactive mid-way does not continue the turn.
 
-### D-06 — Roteamento por intenção fora da V1
-- Não se cria tabela de regras de intenção no `harness.db`; o encaminhamento é só transferência
-  para departamento (G1/G4).
-- Não aparece tela de regras no Console (HR-37/HR-38) nem rota na API (HR-21).
-- O importador (HR-52) ignora essas regras ao trazer agente do POP Atende, sem falhar por isso.
+### D-06 — Intent-based routing out of V1
+- No intent rules table is created in `harness.db`; routing is only a transfer to a department (G1/G4).
+- No rules screen appears in the Console (HR-37/HR-38) and no route in the API (HR-21).
+- The importer (HR-52) ignores these rules when bringing an agent from POP Atende, without failing because of it.
 
-### D-07 — Metas numéricas valem como critério de aceite
-- A lista completa, com a medida que sustenta cada número, é o relatório interno de medição, §9 (M1–M13), não publicado;
-  os valores da tabela acima são a versão curta e não substituem a tabela original.
-- HR-55 (carga) e HR-59 (aceite) medem contra esses números; número não medido é "pendente", nunca
-  "equivalente". As medidas em ARM64 são feitas na HR-56, na máquina ARM64 de testes.
-- Metas de latência percebida (M12) monitoram o provedor: não são desculpa para o Harness gastar mais.
+### D-07 — Numeric targets count as acceptance criteria
+- The full list, with the measurement behind each number, is the internal measurement report, §9 (M1–M13), which is
+  not published; the values in the table above are the short version and do not replace the original table.
+- HR-55 (load) and HR-59 (acceptance) measure against these numbers; a number that was not measured is "pending",
+  never "equivalent". ARM64 measurements are done in HR-56, on the ARM64 test machine.
+- Perceived latency targets (M12) monitor the provider: they are not an excuse for Harness to spend more.
 
-### D-08 — Corte de crates aprovado
-- O workspace atual (HR-04 parte A) tem `poph-core` quase vazio. A quebra em `poph-store`,
-  `poph-rag` e `poph-agent` entra **a partir da HR-04b/HR-06**, sem replay: `poph-core` deixa de
-  existir quando o primeiro dos três trouxer código de verdade, e o nome nunca é reaproveitado.
-- Regra de fronteira: `unsafe`/FFI só em `poph-rag` (embedding) e na parte de SQLite; `poph-agent`
-  não depende de axum, para o turno ser testável pela CLI (HR-13) antes da API (HR-20).
-- `exclude = ["spike"]` no workspace continua valendo; o spike não vira crate.
+### D-08 — Crate split approved
+- The current workspace (HR-04 part A) has an almost empty `poph-core`. The split into `poph-store`, `poph-rag` and
+  `poph-agent` happens **starting at HR-04b/HR-06**, without replay: `poph-core` stops existing when the first of the
+  three brings real code, and the name is never reused.
+- Boundary rule: `unsafe`/FFI only in `poph-rag` (embedding) and in the SQLite part; `poph-agent` does not depend on
+  axum, so the turn can be tested through the CLI (HR-13) before the API (HR-20).
+- `exclude = ["spike"]` in the workspace still applies; the spike does not become a crate.
 
-### D-09 — RAG local: `ort` + int8, trechos curtos e extração de arquivo isolada
-- Runtime do embedding: `ort` (ONNX Runtime) 2.0.0-rc.15 linkado estaticamente, mesma família de
-  modelo do POP Atende (MiniLM multilíngue, janela 128, tokenizador original do `sentence-transformers`).
-- Quantização: int8 na V1, com fp32 como reserva. A troca exige reindexação (`poph rag reindex --model`).
-- Chunker: ~350 caracteres (~100 tokens) com sobreposição de 80, respeitando parágrafo e frase — é o
-  que faz o int8 passar do limiar de paridade (R@3 0,80 contra 0,45 com trechos de 1000 caracteres).
-  O PRD §9 já autorizava trechos menores caso o truncamento em 128 tokens se confirmasse — confirmou:
-  só 47% do texto de um trecho de 1000 caracteres é lido pelo embedding hoje.
-- Consequência para HR-15/HR-16: gravar a versão do chunker e o sha256 do modelo em `rag.db`, e
-  medir a paridade de verdade com o corpus de aceite (o int8 ficou em 0,90, no limite).
-- Arquivos: PDF com `pdf-extract`, Office com `calamine` (xlsx/xls) e `zip`+`quick-xml` (docx/pptx).
-  A extração **roda em processo isolado**, com limite de memória e timeout: um PDF de 149 KB levou
-  2,5 GB de RSS nos dois leitores testados. PDF só de imagem devolve vazio e o turno responde
-  "não consegui ler"; `.doc`/`.ppt` são recusados.
+### D-09 — Local RAG: `ort` + int8, short chunks and isolated file extraction
+- Embedding runtime: `ort` (ONNX Runtime) 2.0.0-rc.15 linked statically, same model family as POP Atende
+  (multilingual MiniLM, window 128, original `sentence-transformers` tokenizer).
+- Quantization: int8 in V1, with fp32 as a fallback. Switching requires reindexing (`poph rag reindex --model`).
+- Chunker: ~350 characters (~100 tokens) with an 80-character overlap, respecting paragraphs and sentences — this is
+  what lets int8 pass the parity threshold (R@3 0.80 against 0.45 with 1000-character chunks). PRD §9 already
+  allowed smaller chunks if truncation at 128 tokens were confirmed — it was confirmed: only 47% of the text of a
+  1000-character chunk is read by the embedding today.
+- Consequence for HR-15/HR-16: record the chunker version and the model's sha256 in `rag.db`, and measure parity for
+  real with the acceptance corpus (int8 came out at 0.90, at the limit).
+- Files: PDF with `pdf-extract`, Office with `calamine` (xlsx/xls) and `zip`+`quick-xml` (docx/pptx). Extraction
+  **runs in an isolated process**, with a memory limit and a timeout: a 149 KB PDF took 2.5 GB RSS in both readers
+  tested. A PDF with only images returns empty and the turn answers "não consegui ler" (the phrase the code emits,
+  kept in Portuguese); `.doc`/`.ppt` are refused.
 
-## Pendências de decisão (não bloqueiam o código)
-- Uso da máquina ARM64 de testes para o teste ARM: pedir autorização na HR-56.
-- ~~Token de fundo escuro do Console (`#151719` na SofaUI × `#121a24` na instrução antiga)~~ —
-  resolvido na HR-37: `#151719` é o canônico e `#121a24` fica revogado (ver D-11).
+## Pending decisions (they do not block the code)
+- Use of the ARM64 test machine for the ARM test: ask for authorization in HR-56.
+- ~~Dark background token of the Console (`#151719` in SofaUI × `#121a24` in the old instruction)~~ —
+  resolved in HR-37: `#151719` is the canonical one and `#121a24` is revoked (see D-11).
 
-### D-10 — TLS no cliente do provedor e alcance da checagem ARM na estação
-- O cliente do provedor (HR-10) foi aceito **sem TLS**: o gateway antigravity roda em `http://127.0.0.1`,
-  e `https` é recusado com erro explícito. Isso vale só até lá: **antes da HR-26** (Evolution) e da
-  **HR-28** (Jev, https), o cliente passa a usar `rustls` — as duas integrações falam https com o mundo.
-  **Feito na HR-10b** (ver D-16): os dois clientes já falam https. A HR-26 (Evolution) usa o mesmo
-  caminho; quem abrir a HR-26 não precisa mais habilitar TLS.
-- **Checagem `cargo check --target aarch64` na estação:** só vale para crates de código puro. Tudo que
-  compila C (SQLite embutido do `rusqlite`, `ring`/`aws-lc` do TLS, `onig` do tokenizador) falha por falta
-  de compilador C cruzado — não é defeito do nosso código. A verificação ARM de verdade é a HR-56, na máquina ARM64 de testes,
-  com os mesmos comandos. **Decisão do mantenedor (19/11/2026, 19:49):** não instalar o compilador cruzado de
-  ARM na estação; a checagem ARM completa fica para a HR-56, na máquina ARM64 de testes. O CI local não gateia por ela.
-- **Limite de chamadas simultâneas ao LLM por org:** usa as chaves que a config já tem (`limites`), sem
-  chave nova; a ligação com o turno fica na HR-13.
+### D-10 — TLS in the provider client and the check's ARM coverage in the workstation
+- The provider client (HR-10) was accepted **without TLS**: the antigravity gateway runs on `http://127.0.0.1`, and
+  `https` is refused with an explicit error. This holds only until then: **before HR-26** (Evolution) and
+  **HR-28** (Jev, https), the client starts using `rustls` — both integrations talk https to the outside world.
+  **Done in HR-10b** (see D-16): both clients already speak https. HR-26 (Evolution) uses the same path; whoever
+  opens HR-26 no longer needs to enable TLS.
+- **`cargo check --target aarch64` on the workstation:** only valid for crates with pure code. Anything that
+  compiles C (embedded SQLite from `rusqlite`, `ring`/`aws-lc` for TLS, `onig` for the tokenizer) fails for lack of
+  a cross C compiler — this is not a defect in our code. The real ARM check is HR-56, on the ARM64 test machine,
+  with the same commands. **Maintainer decision (19/11/2026, 19:49):** do not install the ARM cross compiler on the
+  workstation; the full ARM check stays for HR-56, on the ARM64 test machine. The local CI does not gate on it.
+- **Limit of simultaneous LLM calls per org:** uses the keys the config already has (`limites`), with no new key;
+  the link with the turn is in HR-13.
 
-### D-11 — Console: fundo `#151719`, fontes em `/res/fonts` e `body` no hospedeiro
-Confirmado na HR-37 (aceita em 19/11/2026). O fundo escuro canônico do Console é o token `--pop-bg`
-(`#151719`) da SofaUI/DESIGN.md; a menção a `#121a24` numa instrução antiga fica **revogada**. O tema
-claro correspondente é `#F5F6F7`. O binário hospedeiro serve `IBM Plex Sans`/`IBM Plex Mono`
-estaticamente em `/res/fonts/` e define fonte, cor e fundo no seletor `body`; a biblioteca não é
-alterada para caminho relativo (HR-05 → HR-38). Rota por intenção continua fora da interface (D-06).
+### D-11 — Console: `#151719` background, fonts in `/res/fonts` and `body` on the host
+Confirmed in HR-37 (accepted on 19/11/2026). The canonical dark background of the Console is the `--pop-bg` token
+(`#151719`) from SofaUI/DESIGN.md; the mention of `#121a24` in an old instruction is **revoked**. The matching light
+theme is `#F5F6F7`. The host binary serves `IBM Plex Sans`/`IBM Plex Mono` statically at `/res/fonts/` and sets
+font, color and background on the `body` selector; the library is not changed to a relative path (HR-05 → HR-38).
+Intent-based routing stays out of the interface (D-06).
 
-### D-12 — TLS entrou na HR-15 (download do modelo), não só na HR-26/28
-O D-10 previa TLS só antes da HR-26/28. O `poph model install` precisa baixar por https, então o
-`poph-rag` já usa `rustls`. O `ort` foi configurado com `tls-rustls` em vez da feature padrão
-`tls-native`, que puxava OpenSSL (banido no `deny.toml`); OpenSSL não entra no binário, conferido com
-`ldd`. Sobra uma exceção **estreita** no `deny.toml` para `webpki-roots` (CDLA-Permissive-2.0), que é
-só dependência de build do download do ONNX Runtime e não vai para o binário. O cliente do LLM
-continuou sem TLS até a **HR-10b**, que o habilitou nos dois clientes (D-16).
+### D-12 — TLS came in HR-15 (model download), not only in HR-26/28
+D-10 planned TLS only before HR-26/28. `poph model install` needs to download over https, so `poph-rag` already uses
+`rustls`. `ort` was configured with `tls-rustls` instead of the default `tls-native` feature, which pulled in
+OpenSSL (banned in `deny.toml`); OpenSSL does not go into the binary, checked with `ldd`. A **narrow** exception
+remains in `deny.toml` for `webpki-roots` (CDLA-Permissive-2.0), which is only a build dependency of the ONNX
+Runtime download and does not go into the binary. The LLM client stayed without TLS until **HR-10b**, which enabled
+it in both clients (D-16).
 
-### D-13 — Lote do embedding: agrupa na fila, roda um trecho por vez no modelo
-A quantização int8 dinâmica calcula a escala sobre o tensor do lote inteiro: o mesmo texto dentro de
-um lote saía com cosseno 0,991 contra ele sozinho (0,991 < 0,9999 exigido na HR-15). Com um trecho por
-vez, o cosseno volta a 1,0000000 e não há custo medido (12,9–13,8 ms por trecho em lote de 32 contra
-14,6 ms no spike). A fila continua agrupando (32 trechos / 10 ms), o modelo é chamado por trecho.
-Consequência para HR-16/HR-17: consulta e documento usam o mesmo caminho, então os vetores comparam.
+### D-13 — Embedding batch: groups in the queue, runs one chunk at a time in the model
+Dynamic int8 quantization computes the scale over the tensor of the whole batch: the same text inside a batch came
+out with cosine 0.991 against itself alone (0.991 < the 0.9999 required in HR-15). With one chunk at a time, cosine
+returns to 1.0000000 and there is no measured cost (12.9–13.8 ms per chunk in a batch of 32 against 14.6 ms in the
+spike). The queue keeps grouping (32 chunks / 10 ms), and the model is called per chunk.
+Consequence for HR-16/HR-17: queries and documents use the same path, so the vectors compare.
 
-### D-14 — Teto de RAM do modelo de embedding na V1: 470 MB
-Medido em release, processo isolado, 3 rodadas: 458 MB de RSS depois da carga (+447 MB sobre 11 MB de
-base), contra 438 MB no spike da HR-02 (+4,6%). A diferença não foi investigada e não bloqueia; adoto
-**470 MB** como teto de referência na V1 e mantenho a medição no relatório da HR-15. Revisar se a
-HR-55 (carga) ou a HR-59 mostra pressão de memória na máquina ARM64 de testes de 12 GB.
+### D-14 — RAM ceiling of the embedding model in V1: 470 MB
+Measured in release, isolated process, 3 rounds: 458 MB RSS after loading (+447 MB over an 11 MB base), against
+438 MB in the HR-02 spike (+4.6%). The difference was not investigated and does not block; I adopt **470 MB** as the
+reference ceiling in V1 and keep the measurement in the HR-15 report. Review if HR-55 (load) or HR-59 shows memory
+pressure on the 12 GB ARM64 test machine.
 
-### D-15 — Corte de relevância do RAG começa em 0 (paridade), revisto na HR-59
-A HR-17 entrega `rag_min_score` configurável por agente, com padrão **0** — o mesmo comportamento do
-POP Atende hoje. Com 0, o top-k volta mesmo sem relação: na demonstração da HR-17 vieram 3 trechos
-onde só 1 era relevante. Mantenho 0 por dois motivos: (a) paridade declarada com o POP Atende é
-critério do PRD, e mudar o padrão muda o que o cliente final recebe sem medição na base real; (b) o
-corpus da HR-17 é sintético (24 itens), e um corte calibrado nele pode barrar trecho bom na base da
-Exemplo. A calibração do padrão é item da HR-59, com a base real; até lá o corte se ajusta por agente.
+### D-15 — RAG relevance cutoff starts at 0 (parity), reviewed in HR-59
+HR-17 delivers `rag_min_score` configurable per agent, with default **0** — the same behavior POP Atende has today.
+With 0, the top-k comes back even without relevance: in HR-17's demo, 3 chunks came back where only 1 was relevant. I
+keep 0 for two reasons: (a) declared parity with POP Atende is a PRD criterion, and changing the default changes what
+the end customer receives without measurement on the real base; (b) the HR-17 corpus is synthetic (24 items), and a
+cutoff calibrated on it could block a good chunk on the Exemplo base. Calibrating the default is an HR-59 item, with
+the real base; until then the cutoff is adjusted per agent.
 
-### D-16 — TLS nos clientes do provedor e do Jev (HR-10b) e o que o check ARM deixou de cobrir
-Feito na HR-10b (20/11/2026). Os dois clientes HTTP (`poph-core` para o provedor, `poph-jev` para o
-Jev) passam a falar `https` com a feature `rustls` do `reqwest` — a mesma do download do modelo no
-`poph-rag`, com as **raízes de confiança do sistema** (rustls-platform-verifier) e sem OpenSSL, que
-segue banido no `deny.toml`. `http://` continua aceito (gateway local).
-- **Falha de TLS é definitiva**: certificado não confiável, nome do servidor diferente do certificado
-  ou handshake recusado viram erro próprio (`ErroLlm::Tls` / `ErroJev::Tls`), sem retentativa, com a
-  mensagem da causa (ex.: `invalid peer certificate: UnknownIssuer`). Não existe opção pública de
-  "ignorar certificado"; o teste usa uma raiz extra, nunca validação desligada.
-- **O que o `cargo check --target aarch64` da estação deixou de cobrir:** `poph-core` e `poph-jev`
-  saíram do passo, porque o TLS traz `aws-lc-sys`, que compila C — o build cruzado falha na estação
-  por falta de `aarch64-linux-gnu-gcc` (`error occurred in cc-rs: failed to find tool
-  "aarch64-linux-gnu-gcc"`), o mesmo motivo do D-02/D-10. Continuam no check: `poph-types`,
-  `poph-files`, `poph-plugins` e `poph-plugin-eco`. A prova ARM de verdade desses dois crates (e do
-  binário inteiro) é o build na máquina ARM64 de testes, na HR-56; o CI local não gateia por ela.
+### D-16 — TLS in the provider and Jev clients (HR-10b) and what the ARM check stopped covering
+Done in HR-10b (20/11/2026). The two HTTP clients (`poph-core` for the provider, `poph-jev` for Jev) now speak
+`https` with the `rustls` feature of `reqwest` — the same one used for the model download in `poph-rag`, with the
+**system trust roots** (rustls-platform-verifier) and without OpenSSL, which stays banned in `deny.toml`. `http://`
+is still accepted (local gateway).
+- **A TLS failure is definitive**: an untrusted certificate, a server name that does not match the certificate, or a
+  refused handshake become their own errors (`ErroLlm::Tls` / `ErroJev::Tls`), with no retry, carrying the cause's
+  message (e.g. `invalid peer certificate: UnknownIssuer`). There is no public option to "ignore the certificate";
+  the test uses an extra root, never disabled validation.
+- **What the workstation's `cargo check --target aarch64` stopped covering:** `poph-core` and `poph-jev` were
+  removed from the step, because TLS brings in `aws-lc-sys`, which compiles C — the cross build fails on the
+  workstation for lack of `aarch64-linux-gnu-gcc` (`error occurred in cc-rs: failed to find tool
+  "aarch64-linux-gnu-gcc"`), the same reason as D-02/D-10. Still in the check: `poph-types`, `poph-files`,
+  `poph-plugins` and `poph-plugin-eco`. The real ARM proof for these two crates (and for the whole binary) is the
+  build on the ARM64 test machine, in HR-56; the local CI does not gate on it.
 
-### D-17 — Tarefas suspensas (21/11/2026, mantenedor)
-HR-29c (nova rodada de ajuste e medição do G1), HR-52 (importador de agente do POP Atende), HR-55
-(teste de carga) e HR-59 (aceite ponta a ponta) foram suspensas para priorizar novos desenvolvimentos
-antes dos testes finais. A documentação foi mantida e nenhum trabalho em execução foi interrompido.
-O estado de cada tarefa fica no controle interno do projeto. Enquanto a HR-55 estiver suspensa, as metas de D-07 não têm medição em escala.
+### D-17 — Suspended tasks (21/11/2026, maintainer)
+HR-29c (new round of G1 adjustment and measurement), HR-52 (importer of an agent from POP Atende), HR-55 (load test)
+and HR-59 (end-to-end acceptance) were suspended to prioritize new development before the final tests. The
+documentation was kept and no work in progress was interrupted. The state of each task is in the project's internal
+tracking. While HR-55 is suspended, the D-07 targets have no measurement at scale.
 
-### D-18 — Colunas da tabela de organizações do Console (21/11/2026, mantenedor)
-Nó/Porta, Agentes e WhatsApp, previstas no desenho aprovado, ficam **fora** por enquanto: dependem de
-a API devolver esses dados na listagem de orgs. Nenhuma tarefa foi aberta.
+### D-18 — Console organization table columns (21/11/2026, maintainer)
+Node/Port, Agents and WhatsApp, planned in the approved design, stay **out** for now: they depend on the API
+returning this data in the org listing. No task was opened.
 
-### D-19 — Gates do Jev por padrão (20/11/2026, mantenedor)
-Ligados por padrão: G3, G5 e G8. Desligados: G1, G2, G4, G6 e G7. Risco à saúde **não** vira
-transferência incondicional: o G1 depende da política configurada pela empresa e fica desligado até a
-rodada de ajuste e nova medição (HR-29c, suspensa). Não há ajuste de gate por organização: vale o global
-(`poph.toml`) ou o por agente. Detalhe em `JEV.md`.
+### D-19 — Jev gates by default (20/11/2026, maintainer)
+On by default: G3, G5 and G8. Off: G1, G2, G4, G6 and G7. A health risk does **not** turn into an unconditional
+transfer: G1 depends on the policy configured by the company and stays off until the adjustment round and new
+measurement (HR-29c, suspended). There is no per-organization gate adjustment: the global one (`poph.toml`) or the
+per-agent one applies. Details in `JEV.md`.
 
-### D-20 — Falha do modelo, texto longo e backup (20 e 21/11/2026, mantenedor)
-- Falha do modelo no meio do turno: a mensagem é repetida depois, com limite de tentativas
-  (`tentativas_falha_modelo`, padrão 3); não avisa o cliente e não deixa sem resposta. `TURNO.md`.
-- Resposta acima de 4000 caracteres no WhatsApp é cortada com `…` numa mensagem só, nunca dividida.
+### D-20 — Model failure, long text and backup (20 and 21/11/2026, maintainer)
+- Model failure in the middle of a turn: the message is repeated later, with a limit on attempts
+  (`tentativas_falha_modelo`, default 3); it does not warn the customer and does not leave the message without a
+  reply. `TURNO.md`.
+- A reply longer than 4000 characters on WhatsApp is cut with `…` in a single message, never split.
   `EVOLUTION.md`.
-- Importar backup que sobrescreveria dados já existentes na org é recusado por padrão e exige
-  confirmação explícita. `BACKUP.md`.
-- WhatsApp: a HR-26 fecha sem a conta de teste; o teste com número real fica como pendência, não como
-  bloqueio.
+- Importing a backup that would overwrite data already present in the org is refused by default and requires explicit
+  confirmation. `BACKUP.md`.
+- WhatsApp: HR-26 closes without the test account; the test with a real number stays as a pending item, not as a blocker.
 
-### D-21 — Matrix como módulo do Harness (21/11/2026, mantenedor) — direção, sem especificação
-Levar o Matrix para dentro do Harness como módulo desligável, em crate separado, com poucas mudanças no
-núcleo, e criar um segundo papel de integração (observador da conversa). Nada especificado nem
-implementado; o levantamento do que falta está em `CONTRATO_CANAL.md` §7.
+### D-21 — Matrix as a Harness module (21/11/2026, maintainer) — direction, no specification
+Bring Matrix into the Harness as a removable module, in a separate crate, with few changes to the core, and create a
+second integration role (observer of the conversation). Nothing specified or implemented yet; the survey of what is
+missing is in `CONTRATO_CANAL.md` §7.
+
+### D-22 — Flow language: Starlark (21/11/2026, maintainer, decided by measurement)
+Flows are scripts in Starlark (crate `starlark`). The spike (FX-01) met every criterion within the proposed limits, so
+the Rhai fallback was not used. Limits in force: 32 KB of source (`max_fonte_bytes`), 60 nodes (`max_nos`). An
+allocation such as `"x" * 10**9` is stopped by the time limit, not by the memory limit, because it reaches about 2 GB
+first. Details: `FLUXOS_LINGUAGEM.md`.
+
+### D-23 — One Case per conversation, created with it (21/11/2026, maintainer)
+Every conversation has exactly one Case, created in the same write as the conversation (unique index). It closes with
+the conversation, in the same transaction. A transferred conversation keeps its Case open. A closed conversation is
+not reopened (409 `conversa_encerrada`), so the customer's next message opens a new conversation and a new Case.
+Concluding a flow does not close the Case. Details: `FLUXOS.md` §2.
+
+### D-24 — One active execution per Case; flows can follow one another (21/11/2026, maintainer)
+A partial unique index allows one active execution per Case. A second flow starts only after the first one ends.
+Details: `FLUXOS.md` §3.
+
+### D-25 — Permission per agent: explicit list, denied by default (21/11/2026, maintainer)
+A new flow is used by no agent until someone grants it to that agent. There is no "grant to all agents" option yet.
+
+### D-26 — Immutable revisions; an execution stays on the revision it started with (21/11/2026, maintainer)
+Publishing creates a numbered revision that never changes: a database trigger refuses UPDATE and DELETE. Each
+execution is pinned to the revision it started with, so a new publication does not change it. Details: `FLUXOS.md` §3.
+
+### D-27 — The code starts flows; the Jev chooses (G9); the model is the fallback (21/11/2026, maintainer)
+The turn validates the Jev's choice and opens the execution before the text model answers. If the Jev fails, the model
+gets the `fluxo_iniciar` tool (reserve). `nenhum` or low confidence starts nothing. Details: `JEV.md` §5-I.
+
+### D-28 — Effects leave the transition and are delivered by a queue, at least once (21/11/2026, maintainer)
+A failed effect does not undo the transition: it becomes the `efeito_falhou` event in the Case, and the attendance goes
+on. Delivery is at least once: a crash between sending and recording can repeat an effect, which is accepted and
+documented. Details: `FLUXOS.md` §4.
+
+### D-29 — Status of decisions L1 to L13 (PRD §3.2) (23/11/2026)
+All thirteen are implemented: L1 (Starlark), L2 (pure `poph-fluxos` crate, depending only on `poph-types` and the
+script library), L3 (built-in engine, Case always on, `[fluxos] ativo`), L4 (the one-Case invariant lives in the store),
+L5 (one attendance = one conversation = one Case), L6 (one active execution per Case), L7 (concluding a flow does not
+close the Case), L8 (permission by explicit list), L9 (immutable revisions), L10 (the code starts the flow, decided by the
+Jev; reserve tool), L11 (effects through a queue, failure does not undo the transition), L12 (retention does not delete
+the Case) and L13 (reopen of a closed conversation returns 409). None was removed.
+
+### D-30 — Decisions still open for the maintainer (PRD §15) (23/11/2026)
+The defaults below are in force. The maintainer confirmed items 1, 2, 4 and 6 on 23/11/2026 (D-31); items 3 and 5
+were not decided by him and stay in force by default:
+
+1. Customer's farewell (G8) does not close the attendance; the agent closes it with `atendimento_encerrar`.
+   **Confirmed by the maintainer on 23/11/2026 (D-31).**
+2. Cases are never deleted; there is no retention for Cases yet. **Confirmed by the maintainer on 23/11/2026 (D-31).**
+3. No "grant to all agents" option; permission is per agent. *Not decided by the maintainer (D-31); in force by default.*
+4. `notificar_whatsapp` without a WhatsApp integration stays `pendente`. The PRD proposed `falhou` after the attempt
+   limit; the implementation does not do that. **Confirmed by the maintainer on 23/11/2026 (D-31).**
+5. The cap of 20 flows per agent is implemented. It is a proposal from the PRD, not a decision.
+   *Not decided by the maintainer (D-31); in force by default.*
+6. Numeric targets (PRD §5 and §9) are proposals. The two measured D-07 targets are **official since 23/11/2026 by the
+   maintainer's decision (D-31)**; the FX-01 target (≤ 300 KB per loaded flow) stays a proposal. The measurements are in
+   `FLUXOS.md`, section Measurements.
+
+### D-31 — Decisions confirmed by the maintainer (23/11/2026)
+The maintainer answered the items of D-30 on 23/11/2026: four are confirmed as already implemented and two stay in force
+without his decision. No code, default or configuration changes; the behaviour he confirmed is the one that was already
+running.
+
+1. **Customer's farewell (G8) does not close the attendance** (D-30 item 1). The agent closes it with
+   `atendimento_encerrar`. Evidence: FX-25 and the flow proof (`FLUXOS.md` §7).
+2. **Cases are never deleted; there is no retention of their own for Cases** (D-30 item 2). The retention job does not
+   touch them. Evidence: FX-34, `RETENCAO.md`.
+3. **`notificar_whatsapp` without a WhatsApp integration stays `pendente`** (D-30 item 4): the effect does not move to
+   `falhou` after the attempt limit. Evidence: FX-21, `FLUXOS.md` §4.
+4. **The measured numeric targets are official** (D-30 item 6): message write throughput **≥ 50,000 msg/s** and **p95 ≤
+   5 ms** at 2,000 msg/s. Evidence: FX-36 — 57,075–66,832 msg/s with 32 and 256 writers, p95 96–115 µs; numbers in
+   `FLUXOS.md`, section Measurements. The FX-01 target of **≤ 300 KB per loaded flow remains a proposal**, and the rest
+   of D-07 (12 KB per idle agent, 150 MB with 10,000 agents, ARM64) remains **unmeasured**.
+5. **G9 stays on by default, with confidence 0.70 and margin 0.10**, kept after the measurement against the real Jev
+   (FX-37). Numbers, false positives/negatives, abstention and latency: `JEV.md` §5-I. The default in the code is
+   unchanged.
+
+Not decided by the maintainer (in force by default, as in D-30): there is no "grant to all agents" option — permission
+is per agent — and the cap of 20 flows per agent is implemented.

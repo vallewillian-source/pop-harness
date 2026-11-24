@@ -1,222 +1,215 @@
-# Cliente da EvolutionAPI (`poph-evolution`)
+# EvolutionAPI client (`poph-evolution`)
 
-Primeiro pedaço do WhatsApp nativo (HR-26a). Fala com a EvolutionAPI pelas mesmas rotas e corpos
-que o POP Atende usa (`core/integrations/evolution_api.py`, `core/integrations/evolution.py`).
+First piece of native WhatsApp (HR-26a). It talks to EvolutionAPI through the same routes and bodies
+that POP Atende uses (`core/integrations/evolution_api.py`, `core/integrations/evolution.py`).
 
-## Operações cobertas
+## Operations covered
 
-| Operação | Rota | Repete? |
+| Operation | Route | Retries? |
 |---|---|---|
-| Criar instância | `POST /instance/create` | não |
-| Parear (QR e código) | `GET /instance/connect/{instância}` (com `?number=` para código) | sim, 1 vez |
-| Estado da conexão | `GET /instance/connectionState/{instância}` | sim, 1 vez |
-| Listar instâncias | `GET /instance/fetchInstances` | sim, 1 vez |
-| Desconectar | `DELETE /instance/logout/{instância}` | não |
-| Apagar | `DELETE /instance/delete/{instância}` | não |
-| Definir webhook | `POST /webhook/set/{instância}` | sim, 1 vez (configuração idempotente) |
-| Enviar texto | `POST /message/sendText/{instância}` | **não** |
-| Enviar arquivo | `POST /message/sendMedia/{instância}` | **não** |
-| "Digitando" | `POST /chat/sendPresence/{instância}` | não |
-| Baixar mídia recebida | `POST /chat/getBase64FromMediaMessage/{instância}` | **não** |
+| Create instance | `POST /instance/create` | no |
+| Pair (QR and code) | `GET /instance/connect/{instância}` (with `?number=` for a code) | yes, once |
+| Connection state | `GET /instance/connectionState/{instância}` | yes, once |
+| List instances | `GET /instance/fetchInstances` | yes, once |
+| Disconnect | `DELETE /instance/logout/{instância}` | no |
+| Delete | `DELETE /instance/delete/{instância}` | no |
+| Set webhook | `POST /webhook/set/{instância}` | yes, once (idempotent configuration) |
+| Send text | `POST /message/sendText/{instância}` | **no** |
+| Send file | `POST /message/sendMedia/{instância}` | **no** |
+| "Typing" | `POST /chat/sendPresence/{instância}` | no |
+| Download received media | `POST /chat/getBase64FromMediaMessage/{instância}` | **no** |
 
-Autenticação: a chave vai só no cabeçalho `apikey`. Ela nunca aparece em erro, `Debug` ou log.
+Authentication: the key goes only in the `apikey` header. It never appears in an error, `Debug` output or log.
 
-Implementado no crate: `ClienteEvolution` (as operações acima) e `WhatsAppEvolution` (a
-integração no contrato `Integration`, com envio de texto, arquivo, presença e saúde).
+Implemented in the crate: `ClienteEvolution` (the operations above) and `WhatsAppEvolution` (the integration in the
+`Integration` contract, with sending text, files, presence and health).
 
-## Id da mensagem enviada (MX-40)
+## ID of the sent message (MX-40)
 
-A resposta do envio (`sendText` e `sendMedia`) traz o id que o WhatsApp deu à mensagem. O cliente lê
-os formatos que a Evolution já usou, nesta ordem: `key.id`, `message.key.id`, `id` e `data.key.id` — o
-primeiro que for texto não vazio. Não há id sintético: se nenhum vier, o resultado é "sem id".
+The response to a send (`sendText` and `sendMedia`) carries the ID that WhatsApp gave the message. The client reads
+the formats Evolution has already used, in this order: `key.id`, `message.key.id`, `id` and `data.key.id` — the first
+one that is a non-empty string. There is no synthetic ID: if none comes back, the result is "sem id" (no id).
 
-- **`ClienteEvolution::enviar_texto` e `enviar_midia`** devolvem `Option<String>` com esse id.
-- **`WhatsAppEvolution::enviar_com_recibo(ComandoSaida)`** é o caminho com recibo: entrega texto ou
-  arquivo e devolve o id; presença devolve `None` (a Evolution não devolve id para "digitando").
-- **O contrato genérico do canal não muda:** `Integration::enviar_texto`/`enviar_arquivo` seguem
-  respondendo `Result<(), ErroIntegracao>` e descartam o id, porque o mesmo contrato serve a plugin
-  em processo externo, que pode não devolver nenhum.
-- **O que o Harness guarda:** a saída do WhatsApp (`crates/poph-server/src/saida_whatsapp.rs`) grava
-  o id em `outbox.external_message_id` ao confirmar o envio (migração `0011`). Envio que falha, ou
-  canal que não devolve id, deixa a coluna nula — e isso não é erro de envio.
+- **`ClienteEvolution::enviar_texto` and `enviar_midia`** return `Option<String>` with that ID.
+- **`WhatsAppEvolution::enviar_com_recibo(ComandoSaida)`** is the receipt path: it delivers text or a file and returns
+  the ID; presence returns `None` (Evolution does not return an ID for "typing").
+- **The generic channel contract does not change:** `Integration::enviar_texto`/`enviar_arquivo` still return
+  `Result<(), ErroIntegracao>` and discard the ID, because the same contract serves a plugin in an external process,
+  which may not return any.
+- **What Harness stores:** the WhatsApp output (`crates/poph-server/src/saida_whatsapp.rs`) records the ID in
+  `outbox.external_message_id` when it confirms the send (migration `0011`). A send that fails, or a channel that
+  returns no ID, leaves the column null — and that is not a send error.
 
-Formato observado no falso dos testes (`{"key": {"id": "…"}}`) e nos registros do POP Atende; o
-formato real de uma instância de produção só se confirma com um número de verdade.
+Format observed in the test fake (`{"key": {"id": "…"}}`) and in POP Atende's records; the real format of a
+production instance is only confirmed with a real number.
 
-## Configuração
+## Configuration
 
-- Endereço da Evolution (`url_base`, `http://` na rede local ou `https://`), nome da instância
-  e prazo por tentativa (padrão 20 s).
-- Chave: variável de ambiente `EVOLUTION_API_KEY`. Não vai em arquivo de configuração.
-- Segredo do webhook: obrigatório. Vai no cabeçalho `X-Evolution-Webhook-Secret` que a
-  Evolution repete em cada entrega.
-- Contadores opcionais: `ConfigEvolution::com_metricas` liga
-  `poph_chamadas_evolution_total` (uma por requisição HTTP) e `poph_erros_evolution_total`
-  (uma por requisição que falhou). Recusas feitas antes de sair (arquivo acima do teto,
-  configuração) não contam como chamada.
+- Evolution address (`url_base`, `http://` on the local network or `https://`), instance name and the time limit per
+  attempt (default 20 s).
+- Key: environment variable `EVOLUTION_API_KEY`. It does not go in the configuration file.
+- Webhook secret: required. It goes in the `X-Evolution-Webhook-Secret` header, which Evolution repeats on every
+  delivery.
+- Optional counters: `ConfigEvolution::com_metricas` turns on `poph_chamadas_evolution_total` (one per HTTP request)
+  and `poph_erros_evolution_total` (one per request that failed). Refusals made before anything leaves (file above
+  the cap, configuration) do not count as calls.
 
-## Limites
+## Limits
 
-- **Arquivo** (envio e download): 16 MB (`TETO_MIDIA`), conferido antes de subir ou decodificar.
-  Mídia recusada no envio não sai; mídia acima do teto no download é recusada sem decodificar.
-- **Resposta da Evolution**: 1 MB para respostas comuns; para download de mídia, o necessário para
-  16 MB em base64. Passou disso, a leitura para e o erro é `RespostaGrande`.
-- **Mídia expirada**: o download só é tratado como expirado com a resposta 400/404 que contém
-  "message not found", "media not found", "media not available" ou "expired/expirad". Qualquer outro
-  400 é erro comum.
-- **Texto de erro do provedor**: limpo antes de virar mensagem. Número, JID (tudo com `@`),
-  trecho com 7 dígitos ou mais e a própria chave saem; o texto corta em 120 caracteres.
-  Limitação: texto livre sem número (por exemplo, um nome de contato que o provedor ecoe) não
-  é detectado.
-- **Repetição**: só leitura e configuração repetem, e só uma vez, em queda de rede, prazo, 429 ou
-  5xx. Envio e download nunca repetem dentro do cliente. Quem decide tentar de novo mais tarde
-  é a fila de saída, que usa a marcação de transitório do erro.
+- **File** (send and download): 16 MB (`TETO_MIDIA`), checked before uploading or decoding. Media refused on send does
+  not go out; media above the cap on download is refused without decoding.
+- **Evolution response**: 1 MB for common responses; for media download, what is needed for 16 MB in base64. Beyond
+  that, reading stops and the error is `RespostaGrande`.
+- **Expired media**: a download is only treated as expired with a 400/404 response that contains "message not found",
+  "media not found", "media not available" or "expired/expirad" (these are the provider's own texts, matched as they
+  are). Any other 400 is a common error.
+- **Provider error text**: cleaned before it becomes a message. Numbers, JIDs (anything with `@`), any run of 7 or more
+  digits and the key itself are removed; the text is cut at 120 characters.
+  Limitation: free text without a number (for example, a contact name that the provider echoes) is not detected.
+- **Retries**: only reads and configuration are retried, and only once, on network drop, timeout, 429 or 5xx. Sending
+  and downloading are never retried inside the client. Whoever decides to try again later is the output queue, which
+  uses the error's transient marking.
 
-## Entrada de mensagens (webhook, HR-26b)
+## Incoming messages (webhook, HR-26b)
 
-Rota pública do servidor, fora do `/admin/v1`:
+Public server route, outside `/admin/v1`:
 
 ```
 POST /webhook/evolution/{org_id}/{instancia}
-Cabeçalho: X-Evolution-Webhook-Secret: <segredo da instância>
+Header: X-Evolution-Webhook-Secret: <instance secret>
 ```
 
-**Configuração.** Cada instância liga uma org a uma integração WhatsApp do Harness, no arquivo de
-configuração (sem segredo dentro):
+**Configuration.** Each instance links an org to a WhatsApp integration in Harness, in the configuration file (with no
+secret inside):
 
 ```toml
 [evolution]
 url_base = "http://127.0.0.1:18081"
 
 [[evolution.instancias]]
-org_id = "<id da org>"
-instancia = "loja"                       # nome da instância na Evolution
-integracao_id = "<id da integração WhatsApp>"
-segredo_env = "POPH_EVO_SEGREDO_LOJA"    # nome da variável que guarda o segredo
+org_id = "<org id>"
+instancia = "loja"                       # instance name in Evolution
+integracao_id = "<WhatsApp integration id>"
+segredo_env = "POPH_EVO_SEGREDO_LOJA"    # name of the variable that holds the secret
 ```
 
-O segredo vem só do ambiente (`POPH_EVO_SEGREDO_LOJA=...`), lido na subida. A chave da Evolution
-continua em `EVOLUTION_API_KEY`, usada para baixar mídia. Sem a variável do segredo, a instância
-responde 401 até ela existir (o servidor avisa no log, com o nome da variável e não o valor).
+The secret comes only from the environment (`POPH_EVO_SEGREDO_LOJA=...`), read at startup. The Evolution key stays in
+`EVOLUTION_API_KEY`, used to download media. Without the secret variable, the instance answers 401 until it exists
+(the server warns in the log, with the variable's name and not its value).
 
-**Respostas.** Pensadas para a Evolution, que reenvia 5xx e timeout (até 10 vezes em ~21 min) e
-não reenvia 4xx:
+**Responses.** Designed for Evolution, which resends 5xx and timeouts (up to 10 times in ~21 min) and does not resend
+4xx:
 
-| Situação | Resposta | Efeito |
+| Situation | Response | Effect |
 |---|---|---|
-| Mensagem nova gravada | 200, `situacao: nova` | inbox, conversa, mensagem e anexos gravados numa transação |
-| Mesma mensagem de novo (reentrega) | 200, `situacao: duplicada` | devolve as mesmas ids; não grava nem baixa mídia |
-| Estado de conexão (`open`, `close`, QR) | 200, `efeito: estado` | atualiza `connection_state` da integração |
-| Estado `connecting` ou erro transitório | 200, `efeito: nenhum` | não muda nada |
-| Evento sem efeito (ex.: `send.message`) | 200, `efeito: nenhum` | não grava |
-| Estado de uma integração que não existe | 200, `efeito: integracao_inexistente` | não cria linha |
-| Segredo ausente ou errado | 401, `webhook_nao_autorizado` | não lê o corpo nem grava |
-| Instância ou org não configurada | 404 | — |
-| Mensagem de integração que não existe ou está arquivada | 404 | não grava (sem agente dono não há conversa) |
-| Corpo que não é um objeto JSON | 400 | — |
-| Falha nossa ao gravar (banco ou blob) | 503, `indisponivel` | nada fica pela metade; a Evolution reenvia |
+| New message recorded | 200, `situacao: nova` | inbox, conversation, message and attachments recorded in one transaction |
+| Same message again (redelivery) | 200, `situacao: duplicada` | returns the same IDs; does not record or download media |
+| Connection state (`open`, `close`, QR) | 200, `efeito: estado` | updates the integration's `connection_state` |
+| `connecting` state or transient error | 200, `efeito: nenhum` | changes nothing |
+| Event with no effect (e.g. `send.message`) | 200, `efeito: nenhum` | does not record |
+| State for an integration that does not exist | 200, `efeito: integracao_inexistente` | does not create a row |
+| Missing or wrong secret | 401, `webhook_nao_autorizado` | does not read the body nor record |
+| Instance or org not configured | 404 | — |
+| Message for an integration that does not exist or is archived | 404 | does not record (without an owner agent there is no conversation) |
+| Body that is not a JSON object | 400 | — |
+| Our failure to record (database or blob) | 503, `indisponivel` | nothing is left half-done; Evolution resends |
 
-**Mensagens.** Texto e legenda viram o texto da mensagem. Imagem é baixada pela Evolution, gravada
-no armazenamento de blobs (por hash, na pasta da org) e vira anexo. PDF e Office passam pelo mesmo
-recebimento de arquivos da biblioteca (tipo real pelo conteúdo, leitura de texto com o extrator).
-Mídia que falha (expirada, acima de 16 MB, tipo não aceito, arquivo ilegível) **não derruba a
-mensagem**: ela entra com o texto que veio e um aviso no log. Áudio, vídeo, figurinha, contato e
-localização não entram (decisão do mantenedor: arquivo = imagem + PDF/Office).
+**Messages.** Text and captions become the message text. Images are downloaded by Evolution, stored in the blob store
+(by hash, in the org's folder) and become attachments. PDF and Office go through the same intake of library files
+(real type from the content, text reading with the extractor). Media that fails (expired, over 16 MB, unsupported
+type, unreadable file) **does not bring down the message**: it comes in with the text it had and a warning in the log.
+Audio, video, stickers, contacts and location do not come in (decision of the maintainer: file = image + PDF/Office).
 
-**Conversa.** Uma mensagem vai para a conversa aberta ou transferida do mesmo contato, nessa
-integração. Se não houver, abre uma nova com o agente da integração e o departamento padrão dele.
-Conversa transferida continua gravando, sem resposta do agente (D12).
+**Conversation.** A message goes to the open or transferred conversation of the same contact, in that integration. If
+there is none, a new one opens with the integration's agent and its default department. A transferred conversation
+keeps recording, with no reply from the agent (D12).
 
-**Idempotência.** A chave é a integração mais o id da mensagem no WhatsApp. Reentrega devolve o
-mesmo item e não repete nada.
+**Idempotency.** The key is the integration plus the WhatsApp message id. A redelivery returns the same item and
+repeats nothing.
 
-**Segurança.** O corpo do evento traz o `apikey` da instância. Ele não é gravado cru, não é logado e
-não volta na resposta. Erros e logs saem só com ids internos e categorias: sem telefone, JID, chave
-ou segredo. A comparação do segredo é em tempo constante.
+**Security.** The event body carries the instance's `apikey`. It is not stored raw, not logged and not returned in the
+response. Errors and logs contain only internal ids and categories: no phone number, JID, key or secret. The secret
+comparison is in constant time.
 
-**Limites desta etapa.**
+**Limits of this stage.**
 
-- A conversa **não é respondida** ainda: o turno (chamada ao modelo e envio da resposta) é a HR-26c.
-- Estado de integração arquivada não é checado no webhook de estado; a regra de "agente inativo para
-  de responder" fica para o turno.
-- Mensagem de integração **inativa** é gravada normalmente (sem perder o que o cliente mandou); o
-  turno decide não responder.
-- O horário gravado é o do recebimento, não o `messageTimestamp` do WhatsApp (que fica em
-  `evento_json` da inbox).
-- O texto extraído de PDF/Office fica gravado já envelopado como conteúdo não confiável. O turno
-  deve usá-lo como está, sem envelopar de novo.
-- Blob gravado antes da transação: se o banco falhar depois, sobra um arquivo sem linha de anexo
-  (mesmo conteúdo, mesmo hash; é reaproveitado numa próxima entrega).
-- PDF e Office pelo webhook **não foram testados ponta a ponta**: a leitura de texto usa o
-  programa `poph-extrator`, que precisa estar ao lado do executável. A imagem foi testada.
-- Não testado com número real: o cenário de conversa de verdade depende da conta de teste do
-  WhatsApp. Coberto por testes com Evolution falsa e com os formatos de corpo capturados da
-  Evolution 2.3.7 no ambiente isolado.
+- The conversation is **not answered** yet: the turn (model call and sending the reply) is HR-26c.
+- An archived integration's state is not checked in the state webhook; the rule "inactive agent stops answering" is
+  left for the turn.
+- A message for an **inactive** integration is recorded normally (nothing the customer sent is lost); the turn decides
+  not to answer.
+- The recorded time is the time of receipt, not WhatsApp's `messageTimestamp` (which stays in `evento_json` of the inbox).
+- Text extracted from PDF/Office is stored already wrapped as untrusted content. The turn must use it as it is, without
+  wrapping it again.
+- Blob written before the transaction: if the database fails afterwards, a file is left without an attachment row (same
+  content, same hash; it is reused on a later delivery).
+- PDF and Office through the webhook **were not tested end to end**: text reading uses the `poph-extrator` program,
+  which must sit next to the executable. The image was tested.
+- Not tested with a real number: the real-conversation scenario depends on the WhatsApp test account. Covered by tests
+  with a fake Evolution and with the body formats captured from Evolution 2.3.7 in the isolated environment.
 
-## Saída: da fila de saída até o WhatsApp (HR-26c)
+## Output: from the output queue to WhatsApp (HR-26c)
 
-Quem escreve a resposta é o turno (ainda não roda no `poph serve`). Ele grava a mensagem do agente
-como `out` na conversa e enfileira um item `text` (ou `file`, para arquivo da biblioteca) na fila
-de saída. O consumidor fica em `crates/poph-server/src/saida_whatsapp.rs`, roda como um laço de
-1 s dentro do `poph serve` (só quando há instância da Evolution configurada) e segue estas regras:
+The reply is written by the turn (which does not yet run in `poph serve`). It records the agent's message as `out` in
+the conversation and enqueues a `text` item (or `file`, for a library file) in the output queue. The consumer lives in
+`crates/poph-server/src/saida_whatsapp.rs`, runs as a 1 s loop inside `poph serve` (only when an Evolution instance is
+configured) and follows these rules:
 
-- **Só pega o que é do WhatsApp configurado.** Item cuja conversa é de console, de outro canal ou
-  de integração que não está em `[[evolution.instancias]]` fica como está. Não é marcado como falha.
-- **Sem chave da Evolution** (`EVOLUTION_API_KEY` ausente no ambiente), o item fica `pending` e não
-  gasta tentativa. A chave é lida na subida do servidor: depois de pôr a chave, é preciso reiniciar
-  o `poph serve` para os itens saírem.
-- **Texto acima de 4000 caracteres** sai cortado, terminando em `…`, numa mensagem só. Não é
-  dividido (regra do POP Atende, `WHATSAPP_TEXT_LIMIT = 4000`).
-- **Arquivo** sai como mídia, com o conteúdo lido do blob da biblioteca. Arquivo acima de 16 MB é
-  recusado **antes** de ser lido e vira `failed` com o motivo; o texto do mesmo turno segue.
-- **Não repete dentro da tentativa.** Envio de texto e de mídia fazem uma requisição por tentativa.
-- **Falha transitória** (rede, 429, 5xx) volta para a fila com espera crescente (500 ms, dobrando,
-  teto de 60 s). Depois de 8 tentativas, vira `failed` com "tentativas de envio esgotadas".
-- **Falha definitiva** (4xx, mídia expirada, arquivo acima do teto) vai para `failed` na hora e
-  não repete. O motivo gravado já vem sem telefone, JID nem chave.
-- **Repetição entre tentativas aceita.** Se a Evolution receber e a resposta se perder, a próxima
-  tentativa pode duplicar a mensagem no WhatsApp do cliente. É o risco aceito na fila (D11); a
-  Evolution não tem chave de idempotência para evitar isso.
-- **Reinício do servidor**: itens em `sending` voltam a ser tentados na subida (são pendentes).
+- **Only picks up what belongs to the configured WhatsApp.** An item whose conversation is from the console, another
+  channel, or an integration that is not in `[[evolution.instancias]]` stays as it is. It is not marked as a failure.
+- **No Evolution key** (`EVOLUTION_API_KEY` missing from the environment), the item stays `pending` and does not use up
+  an attempt. The key is read at server startup: after setting the key, `poph serve` must be restarted for the items to
+  go out.
+- **Text over 4000 characters** goes out cut, ending in `…`, in a single message. It is not split (POP Atende rule,
+  `WHATSAPP_TEXT_LIMIT = 4000`).
+- **File** goes out as media, with the content read from the library's blob. A file over 16 MB is refused **before** it
+  is read and becomes `failed` with the reason; the text of the same turn continues.
+- **No retry within an attempt.** Sending text and media makes one request per attempt.
+- **Transient failure** (network, 429, 5xx) goes back to the queue with growing waits (500 ms, doubling, cap of 60 s).
+  After 8 attempts it becomes `failed` with "tentativas de envio esgotadas" ("send attempts exhausted").
+- **Definitive failure** (4xx, expired media, file over the cap) goes to `failed` immediately and is not retried. The
+  recorded reason already comes without phone number, JID or key.
+- **Repetition between attempts is accepted.** If Evolution receives the message and the response is lost, the next
+  attempt may duplicate the message on the customer's WhatsApp. This is the risk accepted in the queue (D11); Evolution
+  has no idempotency key to prevent it.
+- **Server restart**: items in `sending` are tried again on startup (they are pending).
 
-Limites desta entrega:
+Limits of this delivery:
 
-- O id da mensagem que a Evolution devolve ao enviar não é gravado. O trait do canal devolve só
-  sucesso ou erro. Por isso a linha `out` da conversa não recebe o id externo; ela é gravada no
-  momento do turno, sem id externo.
-- O consumidor não confere se a integração está arquivada no banco; só a configuração do servidor.
-- O `poph chat` confirma só os itens das conversas do console (corrigido na HR-26f). Os de WhatsApp
-  ficam para o laço de saída.
-- A ordem entre mensagens da mesma conversa pode inverter quando uma delas está esperando nova
-  tentativa.
+- The ID of the message that Evolution returns when sending is not recorded. The channel trait returns only success or
+  error. So the conversation's `out` line does not get the external ID; it is recorded at the time of the turn, without
+  an external ID.
+- The consumer does not check whether the integration is archived in the database; only the server configuration.
+- `poph chat` confirms only the items of console conversations (fixed in HR-26f). WhatsApp ones are left for the output
+  loop.
+- The order between messages of the same conversation can flip when one of them is waiting for a new attempt.
 
-## Turno no servidor (HR-26h)
+## Turn on the server (HR-26h)
 
-A mensagem que entra pelo webhook vira turno, e a resposta sai pela fila de saída acima. O laço que
-lê a fila de entrada e o que acontece quando o turno não responde (transferida, integração inativa,
-sem chave do modelo) estão em [`TURNO.md`](TURNO.md), seção 11.
+The message that comes in through the webhook becomes a turn, and the reply goes out through the output queue above.
+The loop that reads the input queue, and what happens when the turn does not reply (transferred, integration inactive,
+no model key), are in [`TURNO.md`](TURNO.md), section 11.
 
-Um defeito da entrada (HR-26b) foi corrigido nesta entrega: a fila de entrada guardava o evento do
-canal, sem a conversa e a mensagem que o turno lê. Agora o item guarda os dois ids, e o evento do
-canal fica junto, em `canal`.
+A defect in the input (HR-26b) was fixed in this delivery: the input queue stored the channel event, without the
+conversation and the message the turn reads. Now the item stores both ids, and the channel event is kept alongside, in
+`canal`.
 
-Configuração do intervalo: `[turno] intervalo_despacho_ms` (padrão 1000).
+Interval setting: `[turno] intervalo_despacho_ms` (default 1000).
 
-Quando o modelo falha no meio do turno, a mensagem do cliente é tentada de novo, até 3 vezes
-(`[turno] tentativas_falha_modelo`), com espera de 30 s e depois 120 s (`atraso_falha_modelo_ms`). Se
-todas falharem, a mensagem é concluída sem resposta e nada sai pelo WhatsApp. Detalhes em
-[`TURNO.md`](TURNO.md), seção 11.
+When the model fails in the middle of a turn, the customer's message is tried again up to 3 times
+(`[turno] tentativas_falha_modelo`), with a wait of 30 s and then 120 s (`atraso_falha_modelo_ms`). If all of them fail,
+the message is completed with no reply and nothing goes out on WhatsApp. Details in [`TURNO.md`](TURNO.md), section 11.
 
-## O que ainda não faz
+## What it does not do yet
 
-- **Teste com número real**: não feito. A conta de teste do WhatsApp segue pendente; o aceite
-  usa servidor falso local e a Evolution isolada.
-- **Número real e modelo real**: as duas pontas (entrada e saída) foram provadas com Evolution
-  falsa e modelo falso. A prova com número de WhatsApp de verdade segue pendente.
-- **Criar instância e parear pela API do Harness**: as operações existem no cliente, mas não há
-  rota administrativa que as chame.
+- **Test with a real number**: not done. The WhatsApp test account is still pending; acceptance uses a local fake server
+  and an isolated Evolution.
+- **Real number and real model**: both ends (input and output) were proven with a fake Evolution and a fake model. The
+  proof with a real WhatsApp number is still pending.
+- **Create instance and pair through the Harness API**: the operations exist in the client, but there is no
+  administrative route that calls them.
 
-## Como rodar os testes
+## How to run the tests
 
 ```
 cd apps/pop-harness
@@ -226,5 +219,5 @@ cargo test -p poph-server --test webhook_evolution --locked
 cargo test -p poph-server --test turno_whatsapp --locked
 ```
 
-Os testes usam um servidor falso em `127.0.0.1` com roteiro de respostas. Nenhum deles fala com a
-Evolution de verdade nem com número de WhatsApp.
+The tests use a fake server on `127.0.0.1` with a script of responses. None of them talks to the real Evolution or to a
+WhatsApp number.

@@ -1,79 +1,90 @@
-# POP Harness: configuração, logs e `poph doctor`
+# POP Harness: configuration, logs and `poph doctor`
 
-Entrega da HR-06. Padrões marcados como **proposta** foram escolhidos nesta etapa e podem ser
-calibrados; os demais vêm do PRD (§7.4, §8.4, §10, §15) ou do POP Atende.
+Delivered in HR-06. Defaults marked as **proposal** were chosen at this stage and can be calibrated; the others come
+from the PRD (§7.4, §8.4, §10, §15) or from POP Atende.
 
-## Precedência
+## Precedence
 
-Do menos para o mais forte: **padrão < arquivo TOML < variável de ambiente**.
+From weakest to strongest: **default < TOML file < environment variable**.
 
-Arquivo, na ordem de procura:
-1. `--config <arquivo>` (vale para qualquer comando);
-2. variável `POPH_CONFIG`;
-3. `poph.toml` na pasta atual, se existir.
+File, in search order:
+1. `--config <file>` (applies to any command);
+2. the `POPH_CONFIG` variable;
+3. `poph.toml` in the current folder, if it exists.
 
-Sem arquivo, valem os padrões e o ambiente. Um arquivo pedido e inexistente é erro.
+Without a file, the defaults and the environment apply. A file that was requested and does not exist is an error.
 
-## Erros de configuração
+## Configuration errors
 
-Cada erro diz de onde veio (o arquivo ou a variável) e qual é a chave:
+Each error says where it came from (the file or the variable) and which key is involved:
 
-- `arquivo.toml: chave \`servidor.portaa\` inválida: unknown field ...` (chave desconhecida)
-- `arquivo.toml: erro de sintaxe no TOML: ...` (a mensagem traz linha e coluna)
+- `arquivo.toml: chave \`servidor.portaa\` inválida: unknown field ...` (unknown key)
+- `arquivo.toml: erro de sintaxe no TOML: ...` (the message includes line and column)
 - `POPH_SERVIDOR_PORTA: valor inválido (esperado um número inteiro)`
-- `configuração inválida: campo servidor.porta inválido: ...` (regra de faixa ou formato)
+- `configuração inválida: campo servidor.porta inválido: ...` (range or format rule)
 
-## Campos do arquivo TOML
+> Note: the messages above are emitted by the code in Portuguese, so they are kept as they are.
 
-| Chave | Padrão | Regra | Origem |
+## TOML file fields
+
+| Key | Default | Rule | Origin |
 |---|---|---|---|
-| `servidor.endereco` | `127.0.0.1` | endereço IP | proposta |
-| `servidor.porta` | `7480` | 1024 a 65535 | proposta |
-| `dados.diretorio` | `data` | caminho não vazio | HR-04 (`.gitignore`) |
-| `dados.harness_db` / `rag_db` / `blobs` | dentro de `diretorio` | opcional | PRD §7.1 |
-| `dados.modelos` | `modelos` dentro de `diretorio` | pasta do modelo de embedding (`poph model install`) | HR-15 (D-09) |
-| `log.nivel` | `info` | trace, debug, info, warn ou error | PRD §15 |
-| `log.formato` | `legivel` | `legivel` ou `json` | PRD §15 |
-| `retencao.dias` | `30` | `0` = não apagar | PRD §7.4 |
-| `limites.turnos_simultaneos` | `200` | 1 a 10000 | D-07 |
-| `limites.turnos_simultaneos_por_org` | `50` | 1 até o total | **proposta** |
-| `limites.taxa_por_org_por_minuto` | `600` | 1 a 100000 | **proposta** |
-| `llm.provedor` | `antigravity2api` | só este na V1 | PRD §8.4 |
-| `llm.url_base` | `http://127.0.0.1:8045/v1` | http ou https | POP Atende (`ANTIGRAVITY_BASE_URL`) |
-| `llm.modelo` | `gemini-3.8-flash-tiered` | não vazio | PRD D6 |
-| `llm.timeout_segundos` | `150` | 1 a 600 | POP Atende (`ANTIGRAVITY_TIMEOUT_SECONDS`) |
-| `llm.retentativas` | `2` | 0 a 5, só em erro transitório | POP Atende (`LLM_RATE_LIMIT_RETRIES`) |
-| `llm.simultaneos` | `32` | 1 a 1000 | **proposta** |
-| `llm.temperatura` | `0.0` | 0 a 2 | POP Atende (padrão do `LLMService`) |
-| `llm.max_tokens_saida` | `4096` | 1 a 131072 | POP Atende (`AGENT_MAX_OUTPUT_TOKENS`) |
-| `jev.ativo` | `false` | liga o Jev; só depois de medido (PRD §10) | PRD §10 |
-| `jev.url_base` | `https://api.typesafe.ai` | http ou https | POP Atende (`TYPESAFE_BASE_URL`) |
-| `jev.modelo` | `jev-latest` | não vazio | POP Atende (`JEV_MODEL`) |
-| `jev.timeout_segundos` | `8` | 1 a 60 | PRD §8.5 |
-| `jev.retentativas` | `1` | 0 a 3, só em 429 ou 5xx | PRD §8.5 |
-| `jev.gates.g1` … `g8` | g3, g5 e g8 `true`; os outros `false` | liga cada gate; padrão de instalação desde 20/11/2026 | PRD §10, `docs/JEV.md` |
-| `[evolution] url_base` | ausente | seção existe = integração WhatsApp configurada | POP Atende |
-| `[[plugins.integracoes]] kind` / `programa` | nenhum | `kind` único e não vazio; `programa` é caminho local do plugin | HR-44c |
-| `[[plugins.integracoes]] argumentos` | `[]` | argumentos do processo; **nunca** segredo (aparece em `ps`) | HR-44c |
-| `[matrix] habilitado` | `false` | liga o módulo Matrix; seção ausente ou `false` = módulo morto (nada dele carrega) | MX-07 |
-| `matrix.homeserver_url` | — | endereço base da API cliente do Synapse (`http://` ou `https://`); conferido só com o módulo ligado | MX-07 |
-| `matrix.server_name` | — | domínio dos ids Matrix, como no `server_name` do Synapse (ex.: `matrix-dev.local`, `localhost:18008`) | MX-07 |
-| `matrix.prefixo` | `ph` | prefixo de usuários virtuais, aliases e `sender_localpart`: `[a-z0-9]{1,12}` | MX-07 |
-| `matrix.concorrencia` | `8` | salas espelhadas em paralelo; 1 a 64 | MX-07 |
-| `matrix.intervalo_ms` | `500` | espera entre leituras do cursor; 50 a 60000 ms | MX-07 |
-| `matrix.poder_agente` | `50` | power level do fantasma do agente na sala; 0 a 100 | MX-07 |
-| `matrix.midia_retencao_dias` | `4` | dias de retenção da mídia no Synapse (fase 2); 1 a 365 | MX-07 |
+| `servidor.endereco` | `127.0.0.1` | IP address | proposal |
+| `servidor.porta` | `7480` | 1024 to 65535 | proposal |
+| `dados.diretorio` | `data` | non-empty path | HR-04 (`.gitignore`) |
+| `dados.harness_db` / `rag_db` / `blobs` | inside `diretorio` | optional | PRD §7.1 |
+| `dados.modelos` | `modelos` inside `diretorio` | folder of the embedding model (`poph model install`) | HR-15 (D-09) |
+| `log.nivel` | `info` | trace, debug, info, warn or error | PRD §15 |
+| `log.formato` | `legivel` | `legivel` or `json` | PRD §15 |
+| `retencao.dias` | `30` | `0` = do not delete | PRD §7.4 |
+| `limites.turnos_simultaneos` | `200` | 1 to 10000 | D-07 |
+| `limites.turnos_simultaneos_por_org` | `50` | 1 up to the total | **proposal** |
+| `limites.taxa_por_org_por_minuto` | `600` | 1 to 100000 | **proposal** |
+| `llm.provedor` | `antigravity2api` | only this one in V1 | PRD §8.4 |
+| `llm.url_base` | `http://127.0.0.1:8045/v1` | http or https | POP Atende (`ANTIGRAVITY_BASE_URL`) |
+| `llm.modelo` | `gemini-3.8-flash-tiered` | non-empty | PRD D6 |
+| `llm.timeout_segundos` | `150` | 1 to 600 | POP Atende (`ANTIGRAVITY_TIMEOUT_SECONDS`) |
+| `llm.retentativas` | `2` | 0 to 5, only on transient errors | POP Atende (`LLM_RATE_LIMIT_RETRIES`) |
+| `llm.simultaneos` | `32` | 1 to 1000 | **proposal** |
+| `llm.temperatura` | `0.0` | 0 to 2 | POP Atende (`LLMService` default) |
+| `llm.max_tokens_saida` | `4096` | 1 to 131072 | POP Atende (`AGENT_MAX_OUTPUT_TOKENS`) |
+| `jev.ativo` | `false` | turns Jev on; only after measurement (PRD §10) | PRD §10 |
+| `jev.url_base` | `https://api.typesafe.ai` | http or https | POP Atende (`TYPESAFE_BASE_URL`) |
+| `jev.modelo` | `jev-latest` | non-empty | POP Atende (`JEV_MODEL`) |
+| `jev.timeout_segundos` | `8` | 1 to 60 | PRD §8.5 |
+| `jev.retentativas` | `1` | 0 to 3, only on 429 or 5xx | PRD §8.5 |
+| `jev.gates.g1` … `g9` | g3, g5, g8 and g9 `true`; the others `false` | turns each gate on; installation default: g3, g5 and g8 since 20/11/2026, g9 per the flows PRD §9 | PRD §10, `docs/JEV.md`, flows PRD §9 |
+| `[evolution] url_base` | absent | section exists = WhatsApp integration configured | POP Atende |
+| `[[plugins.integracoes]] kind` / `programa` | none | `kind` unique and non-empty; `programa` is the plugin's local path | HR-44c |
+| `[[plugins.integracoes]] argumentos` | `[]` | process arguments; **never** a secret (it shows up in `ps`) | HR-44c |
+| `[matrix] habilitado` | `false` | turns the Matrix module on; section absent or `false` = module off (none of it loads) | MX-07 |
+| `matrix.homeserver_url` | — | base address of the Synapse client API (`http://` or `https://`); checked only with the module on | MX-07 |
+| `matrix.server_name` | — | domain of the Matrix ids, as in the Synapse `server_name` (e.g. `matrix-dev.local`, `localhost:18008`) | MX-07 |
+| `matrix.prefixo` | `ph` | prefix for virtual users, aliases and `sender_localpart`: `[a-z0-9]{1,12}` | MX-07 |
+| `matrix.concorrencia` | `8` | rooms mirrored in parallel; 1 to 64 | MX-07 |
+| `matrix.intervalo_ms` | `500` | wait between cursor reads; 50 to 60000 ms | MX-07 |
+| `matrix.poder_agente` | `50` | power level of the agent's ghost in the room; 0 to 100 | MX-07 |
+| `matrix.midia_retencao_dias` | `4` | days media is kept in Synapse (phase 2); 1 to 365 | MX-07 |
+| `fluxos.ativo` | `true` | turns the flow engine on: the G9, the prompt, the tools and the effects stop when `false`; Fichas keep being created and closed | FX-26, flows PRD §9 |
+| `fluxos.max_fluxos_por_org` | `100` | published flows per org; 1 to 10000 | flows PRD §9 |
+| `fluxos.max_fonte_bytes` | `32768` | size of a flow script, in bytes; 1024 to 1048576 | flows PRD §9 |
+| `fluxos.max_nos` | `60` | steps, decisions and ends per flow; 1 to 60 (the compiler does not accept more) | flows PRD §9 |
+| `fluxos.max_dados_bytes` | `65536` | size of an execution's `dados_json`, in bytes; 1024 to 10485760 | flows PRD §9 |
+| `fluxos.max_ticks_regra` | `10000` | steps of one rule evaluation before it is cut off; 100 to 1000000 | flows PRD §9 |
+| `fluxos.max_heap_regra` | `1048576` | memory of one rule evaluation, in bytes (1 MiB); 65536 to 67108864 | flows PRD §9 |
+| `fluxos.max_saltos_decisao` | `10` | decisions one pass goes through before it fails; 1 to 100 | flows PRD §9 |
+| `fluxos.cache_revisoes_mb` | `16` | RAM cap of compiled flow revisions, in MB; `0` keeps none (each use recompiles); 0 to 4096 | flows PRD §9, FX-19 |
 
-O programa do plugin é caminho **local do servidor** (nunca vem de requisição). Com ele o servidor
-descobre o manifesto de cada `kind` — subindo o plugin uma vez e guardando o resultado em memória —
-e valida a configuração da integração. Sem a declaração, `config_json` de integração é recusado com
-`422 manifest_indisponivel` e a rota do manifesto responde `404`.
+The plugin program is a **local path on the server** (it never comes from a request). With it, the server discovers
+the manifest of each `kind` — starting the plugin once and keeping the result in memory — and validates the
+integration configuration. Without the declaration, an integration `config_json` is refused with
+`422 manifest_indisponivel` (the message code stays as it is) and the manifest route answers `404`.
 
-## Variáveis de ambiente
+## Environment variables
 
-Campos não secretos (sobrepõem o arquivo):
+Non-secret fields (they override the file):
 
-| Variável | Campo |
+| Variable | Field |
 |---|---|
 | `POPH_SERVIDOR_ENDERECO` | `servidor.endereco` |
 | `POPH_SERVIDOR_PORTA` | `servidor.porta` |
@@ -83,67 +94,75 @@ Campos não secretos (sobrepõem o arquivo):
 | `POPH_RETENCAO_DIAS` | `retencao.dias` |
 | `POPH_LLM_URL_BASE` | `llm.url_base` |
 | `POPH_LLM_MODELO` | `llm.modelo` |
-| `POPH_JEV_ATIVO` | `jev.ativo` (`true` ou `false`) |
+| `POPH_JEV_ATIVO` | `jev.ativo` (`true` or `false`) |
 | `POPH_JEV_URL_BASE` | `jev.url_base` |
 
-Variável vazia não sobrepõe nada.
+An empty variable overrides nothing.
 
-`POPH_CLUSTER` não é campo do `poph.toml`: aponta o caminho do `cluster.toml` do roteamento entre
-instâncias (padrão: `cluster.toml` no mesmo diretório do `poph.toml`). Formato e regras em
-`docs/CLUSTER.md`.
+| `POPH_FLUXOS_ATIVO` | `fluxos.ativo` (`true` or `false`) |
+| `POPH_FLUXOS_MAX_FLUXOS_POR_ORG` | `fluxos.max_fluxos_por_org` |
+| `POPH_FLUXOS_MAX_FONTE_BYTES` | `fluxos.max_fonte_bytes` |
+| `POPH_FLUXOS_MAX_NOS` | `fluxos.max_nos` |
+| `POPH_FLUXOS_MAX_DADOS_BYTES` | `fluxos.max_dados_bytes` |
+| `POPH_FLUXOS_MAX_TICKS_REGRA` | `fluxos.max_ticks_regra` |
+| `POPH_FLUXOS_MAX_HEAP_REGRA` | `fluxos.max_heap_regra` |
+| `POPH_FLUXOS_MAX_SALTOS_DECISAO` | `fluxos.max_saltos_decisao` |
+| `POPH_FLUXOS_CACHE_REVISOES_MB` | `fluxos.cache_revisoes_mb` |
 
-`RUST_LOG`, se definida, vence `log.nivel` no filtro de logs.
+`POPH_CLUSTER` is not a field of `poph.toml`: it points to the path of the `cluster.toml` for routing between
+instances (default: `cluster.toml` in the same directory as `poph.toml`). Format and rules in `docs/CLUSTER.md`.
 
-## Segredos (só no ambiente)
+`RUST_LOG`, if set, takes priority over `log.nivel` in the log filter.
 
-Nunca vão para arquivo, relatório, log nem resposta da API. O `poph doctor` mostra só se estão
-definidos.
+## Secrets (environment only)
 
-| Variável | Uso | Obrigatória |
+They never go into a file, report, log or API response. `poph doctor` only shows whether they are set.
+
+| Variable | Use | Required |
 |---|---|---|
-| `POPH_CHAVE_CIFRA` | cifra dos segredos guardados (AES-256-GCM, a partir da HR-07) | sempre |
-| `ANTIGRAVITY_API_KEY` | provedor de LLM | sempre |
-| `TYPESAFE_API_KEY` | Jev | só com `jev.ativo = true` |
-| `EVOLUTION_API_KEY` | Evolution (WhatsApp) | só com a seção `[evolution]` |
-| `POPH_CLUSTER_SECRET` | segredo compartilhado entre as instâncias (HMAC do encaminhamento, HR-50b) | só com `cluster.toml` que declara instâncias |
-| `POPH_MATRIX_AS_TOKEN` | token do Application Service do módulo Matrix, que o Harness apresenta ao Synapse | só com `[matrix] habilitado = true` |
-| `POPH_MATRIX_HS_TOKEN` | token do Application Service que o Synapse apresenta ao Harness | só com `[matrix] habilitado = true` |
-| `POPH_MATRIX_ADMIN_TOKEN` | API administrativa do Synapse (apagar mídia expirada) | **fase 2**; ainda não é lido |
+| `POPH_CHAVE_CIFRA` | encryption key for stored secrets (AES-256-GCM, from HR-07) | always |
+| `ANTIGRAVITY_API_KEY` | LLM provider | always |
+| `TYPESAFE_API_KEY` | Jev | only with `jev.ativo = true` |
+| `EVOLUTION_API_KEY` | Evolution (WhatsApp) | only with the `[evolution]` section |
+| `POPH_CLUSTER_SECRET` | shared secret between instances (forwarding HMAC, HR-50b) | only with a `cluster.toml` that declares instances |
+| `POPH_MATRIX_AS_TOKEN` | Application Service token of the Matrix module, which Harness presents to Synapse | only with `[matrix] habilitado = true` |
+| `POPH_MATRIX_HS_TOKEN` | Application Service token that Synapse presents to Harness | only with `[matrix] habilitado = true` |
+| `POPH_MATRIX_ADMIN_TOKEN` | Synapse administrative API (deletes expired media) | **phase 2**; not read yet |
 
-Os nomes de `ANTIGRAVITY_API_KEY`, `TYPESAFE_API_KEY` e `EVOLUTION_API_KEY` são os mesmos do POP
-Atende, para reaproveitar o mesmo ambiente. Valor vazio ou só com espaços conta como ausente.
+The names `ANTIGRAVITY_API_KEY`, `TYPESAFE_API_KEY` and `EVOLUTION_API_KEY` are the same as in POP Atende, so the
+same environment can be reused. An empty value or one with only spaces counts as missing.
 
-O módulo Matrix tem uma regra própria: **desligado, nada dele é carregado**. Sem `[matrix]` no arquivo,
-ou com `habilitado = false`, a configuração da seção não é conferida (pode ficar vazia), os dois tokens
-não são lidos e nenhuma tarefa ou rota do módulo existe. Com `habilitado = true`, a seção é validada —
-erro nomeia a chave e nunca repete o valor — e os dois tokens passam a ser obrigatórios: faltando um, a
-subida recusa com o nome da variável, sem imprimir o valor. Os tokens vivem no tipo `Sensivel` e não
-aparecem em `Debug`, `Display`, log, erro ou resposta (`crates/poph-matrix/src/config.rs`).
+The Matrix module has its own rule: **off, nothing from it is loaded**. Without `[matrix]` in the file, or with
+`habilitado = false`, the section's configuration is not checked (it may be empty), the two tokens are not read,
+and no task or route of the module exists. With `habilitado = true`, the section is validated — the error names the
+key and never repeats the value — and both tokens become required: if one is missing, startup refuses with the
+variable name, without printing the value. The tokens live in the `Sensivel` type and do not appear in `Debug`,
+`Display`, logs, errors or responses (`crates/poph-matrix/src/config.rs`).
 
-O cliente da API do Matrix (`crates/poph-matrix/src/cliente.rs`, MX-09) usa **prazo fixo de 10 s por
-chamada** (`TEMPO_LIMITE_PADRAO`): a seção `[matrix]` não tem chave de prazo, e `concorrencia` e
-`intervalo_ms` são do laço, não do cliente. `429` com `retry_after_ms` é esperado e repetido **uma
-vez** (até 60 s de espera); acima disso o cliente devolve o erro com a espera pedida e quem espera é o
-laço. Nenhuma outra repetição acontece dentro do cliente: o laço decide pelos erros transitórios
-(rede, prazo, 429, 5xx) e definitivos (4xx, resposta fora do contrato).
+The Matrix API client (`crates/poph-matrix/src/cliente.rs`, MX-09) uses a **fixed 10 s limit per call**
+(`TEMPO_LIMITE_PADRAO`): the `[matrix]` section has no timeout key, and `concorrencia` and `intervalo_ms` belong to
+the loop, not to the client. A `429` with `retry_after_ms` is expected and retried **once** (up to 60 s of wait);
+beyond that the client returns the error with the requested wait, and the loop is the one that waits. No other
+retry happens inside the client: the loop decides based on transient errors (network, timeout, 429, 5xx) and
+definitive ones (4xx, response outside the contract).
 
-### Registro do Application Service (`poph matrix registro`)
+### Application Service registration (`poph matrix registro`)
 
 ```bash
 poph matrix registro --saida /etc/poph/registro.yaml --url https://harness.exemplo.com
 poph matrix registro --verificar /etc/poph/registro.yaml
 ```
 
-- Lê a seção `[matrix]` e os dois tokens do ambiente; grava o arquivo em **0600**, recusa sobrescrever
-  sem `--forcar` e **nunca** imprime token.
-- `--url` é o endereço por onde o **Synapse alcança o Harness** (o `homeserver_url` da seção é o
-  Synapse). Sem `--url`, vale `POPH_MATRIX_URL_AS`.
-- `--id` (padrão `poph-matrix`) vira o `id` do Application Service; na fase 3, cada instância tem o seu.
-- `--verificar` compara o arquivo com a configuração e os tokens atuais e aponta o campo divergente
-  (`url`, `sender_localpart`, `rate_limited`, `namespaces.*`, `as_token`, `hs_token`) sem repetir
-  valor. O Synapse só lê registros na subida: depois de gerar, reinicie o Synapse do ambiente.
+- Reads the `[matrix]` section and the two tokens from the environment; writes the file with **0600** permissions,
+  refuses to overwrite without `--forcar` (the flag name stays as it is), and **never** prints a token.
+- `--url` is the address where **Synapse reaches Harness** (the section's `homeserver_url` is Synapse's address).
+  Without `--url`, `POPH_MATRIX_URL_AS` is used.
+- `--id` (default `poph-matrix`) becomes the Application Service `id`; in phase 3, each instance has its own.
+- `--verificar` compares the file with the current configuration and tokens and points to the field that differs
+  (`url`, `sender_localpart`, `rate_limited`, `namespaces.*`, `as_token`, `hs_token`) without repeating any value.
+  Synapse only reads registrations at startup: after generating one, restart the environment's Synapse.
 
-### Operar o módulo Matrix por org (`poph matrix estado|ligar|desligar|espaco`, MX-23)
+### Operating the Matrix module per org (`poph matrix estado|ligar|desligar|espaco`, MX-23)
 
 ```bash
 poph --offline --org loja matrix estado [--json]
@@ -154,83 +173,81 @@ poph --offline --org loja matrix espaco --departamento <id> [--espaco <!id|#alia
 poph --offline --org loja matrix espaco desligar --departamento <id> [--json]
 ```
 
-- Como os outros comandos administrativos da CLI (`org`, `department`, `token`), exigem `--offline` e
-  `--org` (slug ou id) e operam direto no banco. A CLI **não** usa token e **não** fala com o servidor.
-  O `poph serve` pega a mudança no ciclo seguinte, sem reiniciar.
-- `estado` mostra se o módulo está ligado, o corte do backfill, quantas mensagens faltam espelhar, as
-  falhas isoladas e o último motivo. Não mostra se o Synapse está respondendo: essa sonda roda no
-  servidor (na API, o campo `connected`).
-- `ligar` e `desligar` leem a versão da org (a mesma que o `ETag` da API) antes de gravar. Se ela mudar
-  entre a leitura e a gravação, nada é gravado e a saída é `3`. Desligar preserva o corte do backfill e
-  não apaga sala nem espaço.
-- `espaco --departamento` cria o espaço do departamento; com `--espaco` liga um espaço que já existe no
-  Element (id `!…` ou alias `#…`). Fala com o Synapse de `[matrix]`, então exige `POPH_MATRIX_AS_TOKEN` e
-  `POPH_MATRIX_HS_TOKEN` no ambiente. Repetir não cria segundo espaço.
-- `espaco desligar --departamento <id>` tira o espaço do departamento só do Harness. Nada sai do Element.
-  Na próxima alteração de conversa desse departamento, a sala volta a ser posicionada no mesmo espaço.
-- `espaco` sem `--departamento` lista os espaços da org.
-- Saída: `0` ok; `1` erro (org ou departamento inexistente, configuração, Synapse ou banco); `3` a versão
-  mudou entre a leitura e a gravação. `--json` tem formato estável, com `versao_relatorio` = 1.
-- Ao contrário da API, o comando grava auditoria com ator `cli`.
+- Like the other administrative CLI commands (`org`, `department`, `token`), they require `--offline` and `--org`
+  (slug or id) and work directly on the database. The CLI does **not** use a token and does **not** talk to the
+  server. `poph serve` picks up the change in the next cycle, without restarting.
+- `estado` shows whether the module is on, the backfill cutoff, how many messages are still to be mirrored, the
+  isolated failures and the last reason. It does not show whether Synapse is responding: that probe runs on the
+  server (in the API, the `connected` field).
+- `ligar` and `desligar` read the org's version (the same one as the API's `ETag`) before writing. If it changes
+  between the read and the write, nothing is written and the exit code is `3`. Turning off keeps the backfill
+  cutoff and does not delete any room or space.
+- `espaco --departamento` creates the department's space; with `--espaco` it links a space that already exists in
+  Element (id `!…` or alias `#…`). It talks to the Synapse in `[matrix]`, so it requires `POPH_MATRIX_AS_TOKEN` and
+  `POPH_MATRIX_HS_TOKEN` in the environment. Repeating it does not create a second space.
+- `espaco desligar --departamento <id>` removes the department's space only from Harness. Nothing leaves Element.
+  On the next conversation change for that department, the room is placed back into the same space.
+- `espaco` without `--departamento` lists the org's spaces.
+- Output: `0` ok; `1` error (org or department does not exist, configuration, Synapse or database); `3` the version
+  changed between the read and the write. `--json` has a stable format, with `versao_relatorio` = 1.
+- Unlike the API, the command writes audit records with the actor `cli`.
 
 ## `poph doctor`
 
 ```
-poph doctor            # saída legível
-poph doctor --json     # saída estável para máquina (versao_relatorio = 1)
+poph doctor            # readable output
+poph doctor --json     # stable output for machines (versao_relatorio = 1)
 poph --config arq.toml doctor
 ```
 
-Confere: binário e compilador usados; arquivo de configuração; configuração válida; pasta de
-dados (existe e aceita escrita, ou pode ser criada); `harness.db` e `rag.db` (formato SQLite e
-versão de esquema, lida na tabela `schema_migrations`, em modo somente leitura); variáveis
-obrigatórias.
+Checks: the binary and the compiler used; the configuration file; valid configuration; the flows module (`fluxos.ativo` and the caps in use, as information); the data folder (exists and
+accepts writes, or can be created); `harness.db` and `rag.db` (SQLite format and schema version, read from the
+`schema_migrations` table, in read-only mode); required variables.
 
-- Escreve só um arquivo de teste na pasta de dados, e apaga logo depois.
-- Banco ausente é **aviso** (crie com `poph migrate`). Banco que existe e não é SQLite é **erro**.
-- Código de saída: `0` sem erro (avisos não contam); `1` com erro; `2` quando roda sem comando.
+- It writes only a test file in the data folder and deletes it right after.
+- A missing database is a **warning** (create it with `poph migrate`). A database that exists but is not SQLite is an **error**.
+- Exit code: `0` no error (warnings do not count); `1` with an error; `2` when it runs without a command.
 
 ## `poph migrate` (HR-07)
 
 ```
-poph migrate            # texto: versão antes → depois e o que foi aplicado
+poph migrate            # text: version before → after and what was applied
 poph migrate --json     # versao_relatorio = 1: harness, rag, ja_estava_em_dia
 ```
 
-Cria e/ou atualiza `harness.db` e `rag.db` a partir da configuração. É **idempotente**: rodar de
-novo não aplica nada e sai com `0`. Rode com o servidor parado — ele abre conexão de escrita
-própria, e a regra do armazenamento é um escritor por vez. O servidor também migra sozinho ao
-abrir o banco. O esquema, as tabelas e as decisões de armazenamento estão em `docs/DADOS.md`.
+Creates and/or updates `harness.db` and `rag.db` from the configuration. It is **idempotent**: running it again
+applies nothing and exits with `0`. Run it with the server stopped — the server opens its own write connection, and
+the storage rule is one writer at a time. The server also migrates on its own when it opens the database. The schema,
+the tables and the storage decisions are in `docs/DADOS.md`.
 
 ## `poph model install` (HR-15)
 
 ```
-poph model install           # texto
-poph model install --json    # versao_relatorio = 1: arquivos, bytes, sha256 e situacao
+poph model install           # text
+poph model install --json    # versao_relatorio = 1: files, bytes, sha256 and situacao
 ```
 
-Baixa para `dados.modelos` o modelo de embedding (int8, 118 MB) e o tokenizador (9 MB). Cada
-arquivo é baixado para um temporário, o sha256 é conferido e só então ele recebe o nome final:
-hash errado nunca fica na pasta. Arquivo que já confere não é baixado de novo.
+Downloads to `dados.modelos` the embedding model (int8, 118 MB) and the tokenizer (9 MB). Each file is downloaded to a
+temporary name, its sha256 is checked, and only then does it get the final name: a wrong hash never stays in the
+folder. A file that already checks out is not downloaded again.
 
-- É o **único** comando que baixa modelo. O turno nunca baixa em silêncio: se o modelo falta, o
-  erro manda rodar `poph model install`.
-- Carga do modelo: confere os sha256 na subida; se algum arquivo falta ou está diferente, o
-  Harness não sobe e o erro diz o que fazer.
-- Código de saída: `0` instalado; `1` com erro (no `--json`, o erro vem no campo `erro`).
+- It is the **only** command that downloads a model. A turn never downloads silently: if the model is missing, the
+  error tells you to run `poph model install`.
+- Model loading: checks the sha256 values at startup; if a file is missing or different, Harness does not start and
+  the error says what to do.
+- Exit code: `0` installed; `1` with an error (in `--json`, the error is in the `erro` field).
 
 ## Logs
 
-- Saída no erro padrão (stderr), para o JSON do `doctor` continuar válido no stdout.
-- Contexto de turno: `contexto_turno(org, agente, conversa, turno)` no crate `poph`. Vale a partir da HR-13.
-- Regra: nenhum conteúdo de cliente nem segredo. Valores sensíveis usam `Sensivel`, que se imprime
-  como `[oculto]`.
+- Output goes to standard error (stderr), so the `doctor` JSON stays valid on stdout.
+- Turn context: `contexto_turno(org, agente, conversa, turno)` in the `poph` crate. Available from HR-13 onward.
+- Rule: no customer content and no secrets. Sensitive values use `Sensivel`, which prints as `[oculto]`.
 
-## Testes
+## Tests
 
 ```
 cd apps/pop-harness && bash scripts/ci.sh
 ```
 
-Os testes do `poph` provam a precedência, os erros com origem e chave, o JSON válido, e que as
-sentinelas de segredo não aparecem no stdout, no stderr nem em log `trace` em JSON.
+The `poph` tests prove precedence, errors with their origin and key, valid JSON, and that the secret sentinels do not
+appear in stdout, stderr or in a `trace` log in JSON.

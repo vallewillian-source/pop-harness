@@ -1,16 +1,16 @@
-# Certificados de teste do TLS (HR-10b)
+# TLS test certificates (HR-10b)
 
-Não são segredo e não servem para nada fora dos testes: são a autoridade certificadora (CA) falsa e
-os dois certificados de servidor que os testes usam para provar https de verdade, sem rede externa.
+These are not secrets and have no use outside the tests. They are a fake certificate authority (CA) and
+the two server certificates the tests use to prove real https without any external network.
 
-| Arquivo | O que é |
+| File | What it is |
 |---|---|
-| `ca.der` | CA de teste (autoassinada, `CA:TRUE`, válida por 10 anos). É a raiz extra que o teste acrescenta ao cliente. |
-| `servidor-ip.der` | Certificado de servidor com `subjectAltName = IP:127.0.0.1`, assinado pela CA. Usado no teste de https que deve funcionar. |
-| `servidor-nome.der` | Certificado de servidor com `subjectAltName = DNS:localhost`, assinado pela CA. Usado no teste de nome errado: o cliente conecta em `127.0.0.1` e recusa. |
-| `servidor-chave.der` | Chave privada (PKCS#8 DER) dos dois certificados de servidor. |
+| `ca.der` | Test CA (self-signed, `CA:TRUE`, valid for 10 years). It is the extra root the test adds to the client. |
+| `servidor-ip.der` | Server certificate with `subjectAltName = IP:127.0.0.1`, signed by the CA. Used in the https test that must succeed. |
+| `servidor-nome.der` | Server certificate with `subjectAltName = DNS:localhost`, signed by the CA. Used in the wrong-name test: the client connects to `127.0.0.1` and refuses. |
+| `servidor-chave.der` | Private key (PKCS#8 DER) of the two server certificates. |
 
-Como foram gerados (OpenSSL 3, fora do repositório):
+How they were generated (OpenSSL 3, outside the repository):
 
 ```sh
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyout ca.key -out ca.pem -days 3650 \

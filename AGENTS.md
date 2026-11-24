@@ -4,8 +4,9 @@ Code map for whoever (person or AI agent) is going to change this project. Also 
 [`CONTRIBUTING.md`](CONTRIBUTING.md) for the contribution flow. To install, configure and run, read the
 [`README.md`](README.md).
 
-> **Language.** Identifiers, comments and most of `docs/` are in Brazilian Portuguese (`conversa`, `turno`,
-> `org`, `Sensivel`...). This file explains them in English; the names stay as they are in the code.
+> **Language.** Identifiers and code comments are in Brazilian Portuguese (`conversa`, `turno`, `org`,
+> `Sensivel`...). Documentation is in English. This file explains the names in English; the names stay as they
+> are in the code.
 
 POP Harness is independent of POP Atende. Nothing in the workspace imports POP Atende code: mentions of it
 are only in comments and test names.
@@ -31,6 +32,13 @@ no customer data, machine path or internal document entered the diff.
 
 ## Rules that apply here
 
+- **All documentation is in English.** Every document in this repository is written in English: `docs/`, the
+  root `*.md` files, `console/UX_SPEC.md` and the READMEs in the test fixtures. Do not add a document in
+  Portuguese. If a document in Portuguese is found, translate it or delete it when it is obsolete. Names that
+  exist in the code (`conversa`, `turno`, `fichas`, `poph ficha`) keep their form inside code formatting; in
+  English prose, use the English term from `docs/GLOSSARY.md` (for example, *Case* for *Ficha*). Code,
+  identifiers and code comments may stay in Portuguese.
+- **Flows are pure in the engine.** `poph-fluxos` decides and `poph-store` writes. A flow transition is written once, in one transaction, through `Store::execucoes()` (`aplicar_transicao`). Effects are queued and delivered by the server loop, never by the engine.
 - **Secrets never leak.** Keys come only from the environment (`POPH_CHAVE_CIFRA`, `ANTIGRAVITY_API_KEY`,
   `TYPESAFE_API_KEY`, `EVOLUTION_API_KEY`, `POPH_CLUSTER_SECRET`). They never go into a file, log, report
   or API response. The `Sensivel` type (in `crates/poph-types/src/segredo.rs`) prints `[oculto]` in
@@ -109,7 +117,7 @@ check it against the table. Two rules the table makes clear:
 | Per-department spaces (what the agent sees organised in Element) | `poph-matrix/src/espacos.rs` (`PortaEspacos` port, implemented by `poph-server` over `store.matrix()`) | `docs/DADOS.md` §11.4 |
 | Matrix module wiring in the server (starts, degrades, per-org on/off, ordered stop) | `poph-server/src/matrix_inicio.rs` (composition root; `PortaEspacosStore` over `store.matrix()`) | `docs/ENTRADA_E_SAIDA.md` §8, `docs/API.md` |
 | Overview, base decisions, status | (no code) | `docs/VISAO_GERAL.md`, `docs/DECISOES.md`, `ROADMAP.md` |
-| Flows and Cases (language, compiler, engine; under construction) | `crates/poph-fluxos/` | `docs/FLUXOS_LINGUAGEM.md` (language, IR and diagnostics) |
+| Flows and Cases (language, compiler, engine, effects, API and CLI) | `crates/poph-fluxos/`; `poph-store` (`fichas`, `fluxos`, `fluxo_*`); `poph-agent` (`turno/fluxo*.rs`); `poph-server` (`api/fichas.rs`, `api/fluxos.rs`) | `docs/FLUXOS.md` (overview, operation, limits); `docs/FLUXOS_LINGUAGEM.md` (language, IR and diagnostics) |
 | Databases, schema and migrations | `poph-store/` (`migracoes.rs`, `migrations/harness/`, `escritor.rs`) | `docs/DADOS.md` |
 | Agents and instructions | `poph-agent/src/compositor.rs`, `poph-server/src/api/instrucoes.rs` | `docs/AGENTES.md` |
 

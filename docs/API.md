@@ -941,6 +941,12 @@ nonce
   (sem `instancias` e sem `instancia` nos itens); com ele não há paginação (`limit`/`cursor` são
   ignorados, `next_cursor` é `null`). Token de org ignora o parâmetro e continua vendo só a própria
   org.
+- `agents_active_count` (CF-03a): todo item da listagem de orgs traz esse inteiro, nas duas formas
+  (com e sem `cluster=true`) e também em `GET /admin/v1/orgs/{org_id}` — é quantos agentes da org
+  estão com `status = active` (`inactive`/`archived` não contam; org sem agente ativo devolve `0`).
+  A contagem de uma página sai de **uma** consulta agregada (`org_id IN (…) GROUP BY org_id`), nunca
+  de uma consulta por linha. No `cluster=true` o número vem no payload da própria instância dona da
+  org; instância de versão anterior que ainda não devolva o campo aparece com `0`.
 - `/healthz` no modo cluster passa a devolver `instance_id` e `cluster_map_fingerprint` (aditivo;
   ausentes no modo instância única) — é o que o `poph cluster check --remoto` compara entre as
   instâncias.

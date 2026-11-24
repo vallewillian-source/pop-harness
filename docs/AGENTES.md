@@ -1,134 +1,136 @@
-# Agentes, instruções e compositor (HR-09)
+# Agents, instructions and composer (HR-09)
 
-> Entrega da **HR-09**. Cobre a entidade agente com os campos `V1`, as instruções estruturadas, o
-> compositor (portado do POP Atende, o produto de origem do projeto) e a CLI `poph agent` / `poph instructions`.
-> Banco e repositórios: [`DADOS.md`](DADOS.md). Decisões: [`DECISOES.md`](DECISOES.md).
+> HR-09 deliverable. Covers the agent entity with the `V1` fields, the structured instructions, the
+> composer (ported from POP Atende, the product the project originated from) and the `poph agent` /
+> `poph instructions` CLI.
+> Database and repositories: [`DADOS.md`](DADOS.md). Decisions: [`DECISOES.md`](DECISOES.md).
 
-## 1. O que existe agora
+## 1. What exists now
 
-| Peça | Onde | O que faz |
+| Piece | Where | What it does |
 |---|---|---|
-| Tipos das instruções | `crates/poph-types/src/instrucoes.rs` | `StructuredInstructions` com os mesmos nomes, padrões e tolerâncias do POP Atende (HR-03 §9.1); lista fechada de ferramentas da V1; validação de escrita. |
-| Compositor | `crates/poph-core/src/compositor.rs` | Porte fiel de `core/agent/instructions_composer.py`: mesma saída, byte a byte. |
-| Repositórios | `crates/poph-store/src/repos/agentes.rs` e `instrucoes.rs` | Agente (campos `V1`), vínculo agente↔categorias, instruções com `If-Match`. |
-| CLI | `crates/poph/src/agente.rs` | `poph agent ...` e `poph instructions ...` (texto e `--json`). |
+| Instruction types | `crates/poph-types/src/instrucoes.rs` | `StructuredInstructions` with the same names, defaults and tolerances as POP Atende (HR-03 §9.1); closed list of V1 tools; validation on write. |
+| Composer | `crates/poph-core/src/compositor.rs` | Faithful port of `core/agent/instructions_composer.py`: same output, byte for byte. |
+| Repositories | `crates/poph-store/src/repos/agentes.rs` and `instrucoes.rs` | Agent (`V1` fields), agent↔category link, instructions with `If-Match`. |
+| CLI | `crates/poph/src/agente.rs` | `poph agent ...` and `poph instructions ...` (text and `--json`). |
 
-O crate `poph-agent` (D-08) ainda não existe. O compositor ficou em `poph-core` porque é código puro
-sobre `poph-types`: pode ir para `poph-agent` sem mudar uma linha quando a HR-13 abrir a crate.
+The crate `poph-agent` (D-08) does not exist yet. The composer lives in `poph-core` because it is pure code
+on top of `poph-types`: it can move to `poph-agent` without changing a line when HR-13 opens that crate.
 
-## 2. Campos do agente (`V1`)
+## 2. Agent fields (`V1`)
 
-Os campos são os marcados `V1` no inventário de configuração do agente (histórico) e já estavam no esquema
-da HR-04b. O que esta tarefa acrescenta é a regra e a porta de entrada:
+The fields are the ones marked `V1` in the agent configuration inventory (history) and were already in the
+HR-04b schema. What this task adds is the rule and the entry point:
 
-- **Identidade/perfil:** `name`, `slug`, `description`, `status`, `agent_type`, `category`.
-- **Departamento:** `default_department_id` (para onde vão as conversas novas) e o par de handoff
+- **Identity/profile:** `name`, `slug`, `description`, `status`, `agent_type`, `category`.
+- **Department:** `default_department_id` (where new conversations go) and the handoff pair
   (`human_handoff_enabled`, `human_handoff_department_id`, gate G1/G4).
-- **LLM por agente:** `provider`, `model`, `temperature`, `max_output_tokens`, `max_context_tokens`.
-  No POP Atende esses campos eram gravados e ignorados; no Harness valem (é a diferença registrada
-  na HR-03).
-- **Turno:** `grouping_window_ms` (janela de agrupamento), `max_tool_rounds`,
-  `max_tool_calls_per_message`.
-- **RAG:** `rag_top_k`, `rag_min_score` (por agente; no POP Atende era global).
-- **Jev:** `jev_json` (flags e limiares que sobrescrevem a configuração).
-- **Categorias de produto:** tabela de vínculo `agent_product_categories`.
+- **LLM per agent:** `provider`, `model`, `temperature`, `max_output_tokens`, `max_context_tokens`.
+  In POP Atende these fields were saved and ignored; in the Harness they take effect (the difference is
+  recorded in HR-03).
+- **Turn:** `grouping_window_ms` (grouping window), `max_tool_rounds`, `max_tool_calls_per_message`.
+- **RAG:** `rag_top_k`, `rag_min_score` (per agent; in POP Atende they were global).
+- **Jev:** `jev_json` (flags and thresholds that override the configuration).
+- **Product categories:** link table `agent_product_categories`.
 
-## 3. Regras que mudam o comportamento
+## 3. Rules that change behavior
 
-### D-05 — inativo quer dizer inativo
+### D-05 — inactive means inactive
 
-`Agente::pode_abrir_turno()` e `Agentes::obter_para_turno()` aplicam a decisão: só `status = active`
-abre turno. Agente `inactive`/`archived` devolve `DomainError::AgenteInativo` (com id e status), não
-um agente pronto. O agente inativo **continua listado** e editável (o Console precisa mostrá-lo);
-apenas sai do caminho do turno.
+`Agente::pode_abrir_turno()` and `Agentes::obter_para_turno()` apply the decision: only `status = active`
+opens a turn. An agent that is `inactive`/`archived` returns `DomainError::AgenteInativo` (with id and
+status), not a ready agent. The inactive agent **stays listed** and editable (the Console needs to show
+it); it only leaves the turn path.
 
-### D-04 — ferramenta habilitada filtra de verdade
+### D-04 — enabled tool filters for real
 
-`StructuredInstructions::ferramentas_habilitadas()` é o toolset do agente. A lista é fechada
+`StructuredInstructions::ferramentas_habilitadas()` is the agent's toolset. The list is closed
 (`FERRAMENTAS_V1`): `consultar_base`, `buscar_produto`, `enviar_arquivo`, `transferir`,
 `cart_add_item`, `cart_remove_item`, `cart_summary`, `cart_clear`.
 
-`validar()` roda **na escrita** (CLI/API): nome fora da lista é recusado com a lista do motor na
-mensagem. Não roda na leitura: JSON legado do POP Atende, com nomes como `search_knowledge_base`,
-precisa ser lido e mapeado pelo importador (HR-52), não recusado.
+`validar()` runs **on write** (CLI/API): a name outside the list is refused, with the engine's list in the
+message. It does not run on read: legacy POP Atende JSON, with names such as `search_knowledge_base`, must
+be read and mapped by the importer (HR-52), not refused.
 
-### Texto editado à mão é preservado
+### Hand-edited text is preserved
 
-`agent_instructions.derived_from_json` guarda a distinção do POP Atende: `1` = texto gerado pelo
-compositor (pode ser recomposto), `0` = prompt editado à mão (não é sobrescrito sem ordem).
-`poph instructions create|update --file` recompõe; `--markdown-file` grava o texto como está.
+`agent_instructions.derived_from_json` keeps the distinction from POP Atende: `1` = text generated by the
+composer (can be recomposed), `0` = prompt edited by hand (not overwritten without an order).
+`poph instructions create|update --file` recomposes; `--markdown-file` saves the text as it is.
 
-## 4. O compositor
+## 4. The composer
 
-Porte de `compose_instructions`. Ordem fixa dos blocos:
+Port of `compose_instructions`. Fixed order of blocks:
 
-1. **Identidade** — só se `identity.name` **ou** `identity.company`; cabeçalho
-   `# {nome}, {papel} da {empresa}` seguido da descrição da empresa.
-2. **Princípios** — numerados, cada um com a frase de contingência quando a ação é conhecida.
-3. **Escopo** — `O que voce faz` / `O que voce NAO faz`. **Não** emite seção de handoff.
-4. **Tom** — sempre emitido (idioma, tom, emojis, formato, restrições adicionais).
-5. **Ferramentas** — só as habilitadas, com `— quando usar` quando houver.
-6. **Instruções adicionais**.
+1. **Identity** — only if `identity.name` **or** `identity.company` is set; heading
+   `# {nome}, {papel} da {empresa}` (`# {name}, {role} of {company}`, emitted as-is), followed by the company
+   description.
+2. **Principles** — numbered, each with the fallback sentence when the action is known.
+3. **Scope** — `O que voce faz` / `O que voce NAO faz` (“What you do” / “What you do NOT do”). These headings
+   are emitted by the code in Portuguese and are kept as they are. The section **does not** emit handoff.
+4. **Tone** — always emitted (language, tone, emojis, format, additional restrictions).
+5. **Tools** — only the enabled ones, with `— quando usar` (“when to use”) when present.
+6. **Additional instructions**.
 
-O que ele **não** faz (de propósito): `flow_steps` (sem efeito no POP Atende), handoff, estilo fixo do
-sistema, fichas, regras de data e contexto temporal — esses blocos são do motor do turno (PRD §6.1)
-e entram depois do prefixo estável, nunca dentro dele.
+What it does **not** do (on purpose): `flow_steps` (no effect in POP Atende), handoff, fixed system style,
+Cases, date rules and time context. These blocks belong to the turn engine (PRD §6.1) and come after the
+stable prefix, never inside it.
 
-### Paridade provada e como regerar
+### Proven parity and how to regenerate
 
-Fixturas em `crates/poph-core/tests/fixtures/compositor/`: `<nome>.json` (entrada) e
-`<nome>.esperado.txt` (saída real do compositor do POP Atende). O teste
-`crates/poph-core/tests/compositor_paridade.rs` compara byte a byte em 9 entradas e cobre os casos de
-borda do §9.3 (identidade sem nome, empresa sem nome, ferramenta desabilitada, `flow_steps`).
+Fixtures in `crates/poph-core/tests/fixtures/compositor/`: `<nome>.json` (input) and
+`<nome>.esperado.txt` (real output of the POP Atende composer). The test
+`crates/poph-core/tests/compositor_paridade.rs` compares byte for byte across 9 inputs and covers the edge
+cases in §9.3 (identity without name, company without name, disabled tool, `flow_steps`).
 
-Para regerar as referências quando o POP Atende mudar:
+To regenerate the references when POP Atende changes:
 
 ```bash
 cd apps/backend
 .venv/bin/python ../pop-harness/crates/poph-core/tests/fixtures/compositor/gerar_referencia.py
 ```
 
-O script só importa `core.agent.instructions_composer` e chama a mesma função que o
-`PATCH /agents/{id}/instructions` chama; nada do backend é alterado.
+The script only imports `core.agent.instructions_composer` and calls the same function that
+`PATCH /agents/{id}/instructions` calls; nothing in the backend is changed.
 
 ## 5. CLI
 
-`--org` (UUID v7 ou slug) é global e obrigatório nos comandos de dados. Escrita exige `--if-match`
-com a versão lida; `--json` devolve formato estável (`versao_relatorio: 1`).
+`--org` (UUID v7 or slug) is global and required for data commands. Writes require `--if-match` with the
+version that was read; `--json` returns a stable format (`versao_relatorio: 1`).
 
 ```bash
-# cria o agente (slug derivado do nome: "Bia Atendente" → bia-atendente)
+# create the agent (slug derived from the name: "Bia Atendente" → bia-atendente)
 poph --org demo agent create --name "Bia Atendente" --department <dep_id> --model gemini-3.8-flash-tiered
 
-# grava as instruções estruturadas (o texto é recomposto pelo compositor)
+# save the structured instructions (the text is recomposed by the composer)
 poph --org demo instructions create bia-atendente --file instrucoes.json
 
-# prompt editado à mão, sem recomposição
+# hand-edited prompt, no recomposition
 poph --org demo instructions update bia-atendente --if-match 2 --markdown-file prompt.md
 
-# mostra o agente, as categorias e o texto composto
+# show the agent, its categories and the composed text
 poph --org demo agent show bia-atendente
 
-# inativa (D-05: deixa de abrir turno)
+# deactivate (D-05: stops opening turns)
 poph --org demo agent update bia-atendente --if-match 1 --status inactive
 
-# vincula categorias de produto (substitui a lista)
+# link product categories (replaces the list)
 poph --org demo agent update bia-atendente --if-match 2 --category-id <cat_id>
 ```
 
-Códigos de saída: `0` sucesso, `1` erro (com mensagem no stderr), `2` uso incorreto (clap).
+Exit codes: `0` success, `1` error (message on stderr), `2` incorrect usage (clap).
 
-Enquanto o `poph org` não existir (HR-08), o exemplo `crates/poph/examples/semear_org.rs` cria uma
-org e um departamento para exercitar a CLI:
+While `poph org` does not exist (HR-08), the example `crates/poph/examples/semear_org.rs` creates an org and
+a department to exercise the CLI:
 
 ```bash
 cargo run -p poph --example semear_org -- demo "Org Demonstração"
 ```
 
-## 6. O que fica para a HR-13
+## 6. What is left for HR-13
 
-- Ler o agente pelo `obter_para_turno` (D-05), carregar as instruções e usar o markdown como prefixo
-  estável — com o bloco volátil (RAG, Jev, contexto temporal, atendimento humano) depois.
-- Regra de conversa em andamento com agente que ficou inativo no meio (D-05).
-- Registrar em `audit_log`/`turns` a mensagem descartada de agente inativo.
-- Ligar `ferramentas_habilitadas()` ao laço de ferramentas, rejeitando nome inventado pelo modelo.
+- Read the agent through `obter_para_turno` (D-05), load the instructions and use the markdown as the stable
+  prefix — with the volatile block (RAG, Jev, time context, human handoff) after it.
+- Rule for a conversation in progress with an agent that became inactive in the middle (D-05).
+- Record the discarded message from an inactive agent in `audit_log`/`turns`.
+- Connect `ferramentas_habilitadas()` to the tool loop, rejecting a name invented by the model.

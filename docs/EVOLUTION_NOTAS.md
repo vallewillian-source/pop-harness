@@ -1,142 +1,141 @@
-# WhatsApp pela EvolutionAPI no POP Harness (HR-26)
+# WhatsApp through EvolutionAPI in POP Harness (HR-26)
 
-Este documento responde as três verificações que a HR-26 pede — **(a)** reenvio do webhook em 5xx,
-**(b)** autenticação do webhook e **(c)** a regra de mensagem longa — e descreve o que o módulo
-nativo entrega, com a evidência no código do POP Atende.
+This document answers the three checks HR-26 asks for — **(a)** webhook redelivery on 5xx,
+**(b)** webhook authentication and **(c)** the long-message rule — and describes what the native module
+delivers, with the evidence in the POP Atende code.
 
-- **Código:** `crates/poph-evolution` (`cliente.rs`, `webhook.rs`, `texto.rs`, `integracao.rs`).
-- **Contrato:** o mesmo da HR-25 (`poph_types::Integration`), igual ao plugin em processo externo.
-- **Testes:** 50 (9 de unidade, 17 da entrada, 23 do cliente/canal contra Evolution falso e 1 doc test).
+- **Code:** `crates/poph-evolution` (`cliente.rs`, `webhook.rs`, `texto.rs`, `integracao.rs`).
+- **Contract:** the same as HR-25 (`poph_types::Integration`), equal to the external-process plugin.
+- **Tests:** 50 (9 unit, 17 for input, 23 for the client/channel against a fake Evolution, and 1 doc test).
 
 ---
 
-## 1. As três verificações
+## 1. The three checks
 
-### (a) O Evolution reenvia o webhook quando respondemos 5xx?
+### (a) Does Evolution redeliver the webhook when we reply 5xx?
 
-**Não foi medido com uma instância real** — depende da conta de teste, que é do mantenedor. O que o
-repositório prova:
+**Not measured with a real instance** — it depends on the test account, which belongs to the maintainer. What the
+repository proves:
 
-1. **O POP Atende assume que sim.** Ele mantém uma tabela de deduplicação de eventos com 24 h de
-   validade (`core/server/routes/evolution_bridge.py:184`, `_WEBHOOK_DEDUPE_TTL_HOURS = 24`), chave
-   `wev_<instância>_<id da mensagem>` e `INSERT … ON CONFLICT DO NOTHING`. Deduplicar por id só faz
-   sentido se a mesma entrega pode chegar duas vezes.
-2. **Ele responde 5xx em vários caminhos** (`evolution_bridge.py:999`, `1002`, `1015`, `1021` —
-   falha/timeout ao chamar o agente).
-3. **E, apesar disso, a reentrega seria descartada**: a reivindicação do evento acontece **antes** de
-   qualquer processamento (`evolution_bridge.py:4701`, comentário "claim the webhook event BEFORE any
-   processing") e não existe devolução da reivindicação quando o processamento falha. Ou seja: se a
-   Evolution reenviar depois de um 5xx, o POP Atende responde `duplicate_message_claimed` e a
-   mensagem do cliente **se perde**.
+1. **POP Atende assumes yes.** It keeps an event-deduplication table with a 24 h validity
+   (`core/server/routes/evolution_bridge.py:184`, `_WEBHOOK_DEDUPE_TTL_HOURS = 24`), key
+   `wev_<instância>_<id da mensagem>` (`wev_<instance>_<message id>`, a key format emitted by the code) and
+   `INSERT … ON CONFLICT DO NOTHING`. Deduplicating by id only makes sense if the same delivery can arrive twice.
+2. **It replies 5xx on several paths** (`evolution_bridge.py:999`, `1002`, `1015`, `1021` — failure/timeout when
+   calling the agent).
+3. **And yet the redelivery would be discarded**: the event claim happens **before** any processing
+   (`evolution_bridge.py:4701`, the comment "claim the webhook event BEFORE any processing" is in the code in
+   English) and there is no release of the claim when processing fails. In other words: if Evolution redelivers
+   after a 5xx, POP Atende answers `duplicate_message_claimed` (a code emitted by the code) and the customer's message
+   **is lost**.
 
-**O que o Harness faz (decisão, não herança).** A `inbox` da HR-12 grava a mensagem e só então o
-webhook recebe `200`; o item só ganha `processed_at` quando o turno conclui
-(`crates/poph-agent/src/entrada_saida.rs`, documentação do módulo). A chave única
-`(integration_id, external_message_id)` faz a segunda entrega ser inofensiva **sem** impedir que uma
-entrega que falhou seja processada depois. Portanto: reenvio do Evolution é **bem-vindo** aqui, e o
-efeito é exatamente um turno por mensagem.
+**What the Harness does (a decision, not inheritance).** The HR-12 `inbox` saves the message and only then the webhook
+receives `200`; the item only gets `processed_at` when the turn completes
+(`crates/poph-agent/src/entrada_saida.rs`, module documentation). The unique key
+`(integration_id, external_message_id)` makes a second delivery harmless **without** preventing a delivery that
+failed from being processed later. Therefore: Evolution redelivery is **welcome** here, and the effect is exactly one
+turn per message.
 
-**Como fechar a medição quando houver conta de teste:** subir a instância, apontar o webhook para um
-endpoint que responde `500` de propósito e contar as entregas do mesmo `key.id` no log da Evolution
-(ou em um arquivo do endpoint falso). Se ela não reenviar, nada muda no Harness — a mensagem continua
-sendo processada porque a retomada da `inbox` despacha item pendente na subida.
+**How to close this measurement when a test account exists:** start the instance, point the webhook to an endpoint
+that answers `500` on purpose and count the deliveries of the same `key.id` in the Evolution log (or in a file of the
+fake endpoint). If it does not redeliver, nothing changes in the Harness — the message is still processed, because
+resuming the `inbox` dispatches a pending item at startup.
 
-### (b) Como autenticar o webhook
+### (b) How to authenticate the webhook
 
-- **Cabeçalho:** `X-Evolution-Webhook-Secret`, conferido contra o segredo configurado na integração.
-- **Recusa:** segredo errado ou ausente → a entrega é recusada; sem segredo configurado, **nenhuma**
-  entrega é aceita (`ErroWebhook::SemSegredoConfigurado`).
-- **Comparação em tempo constante** (`webhook::conferir_segredo`): o conteúdo não vaza pelo tempo de
-  resposta.
-- **Do lado da Evolution**, o segredo viaja no próprio `webhook/set` (`headers`), como o POP Atende já
-  faz — é o que `ClienteEvolution::definir_webhook` monta ao iniciar o canal.
-- Evidência no POP Atende: `core/server/routes/evolution_bridge.py:4577-4579`
-  (`X-Evolution-Webhook-Secret`, `403 Invalid Evolution webhook secret`).
+- **Header:** `X-Evolution-Webhook-Secret` (header name kept as the code emits it), checked against the secret set in
+  the integration.
+- **Refusal:** wrong or missing secret → the delivery is refused; with no secret configured, **no** delivery is
+  accepted (`ErroWebhook::SemSegredoConfigurado`, the error variant name).
+- **Constant-time comparison** (`webhook::conferir_segredo`): the content does not leak through response time.
+- **On the Evolution side**, the secret travels in the `webhook/set` call itself (`headers`), as POP Atende already
+  does — this is what `ClienteEvolution::definir_webhook` builds when the channel starts.
+- Evidence in POP Atende: `core/server/routes/evolution_bridge.py:4577-4579` (`X-Evolution-Webhook-Secret`,
+  `403 Invalid Evolution webhook secret`, a message emitted by the code).
 
-### (c) Como o POP Atende trata mensagem longa — e a regra reproduzida
+### (c) How POP Atende handles a long message — and the rule reproduced
 
-**Ele não divide: ele corta.** `apps/backend/core/utils/markdown_to_whatsapp.py`:
+**It does not split: it cuts.** `apps/backend/core/utils/markdown_to_whatsapp.py`:
 
 - `WHATSAPP_TEXT_LIMIT = 4000`;
-- converte Markdown para o que o WhatsApp renderiza (negrito `*x*`, itálico `_x_`, riscado `~x~`,
-  título em negrito, link `texto (url)`, lista `• item`, tabela achatada em `coluna: valor`);
-- e, no fim, `text[: LIMITE - 1].rstrip() + "…"`.
+- converts Markdown into what WhatsApp renders (bold `*x*`, italic `_x_`, strikethrough `~x~`, title in bold, link
+  `texto (url)`, list `• item`, table flattened into `coluna: valor`);
+- and, at the end, `text[: LIMITE - 1].rstrip() + "…"`.
 
-A tarefa pedia "como divide mensagens longas e envia em sequência". **Isso não existe no POP Atende
-hoje**: um texto acima de 4000 caracteres chega ao cliente truncado, não em duas mensagens. O
-Harness reproduz o comportamento (`texto::para_whatsapp` + `texto::cortar`), porque paridade de canal
-vale mais do que a suposição da tarefa — e porque dividir em N mensagens muda o que o cliente vê.
+The task asked "how it splits long messages and sends them in sequence". **That does not exist in POP Atende today**:
+a text above 4000 characters reaches the customer truncated, not in two messages. The Harness reproduces the behavior
+(`texto::para_whatsapp` + `texto::cortar`), because channel parity is worth more than the assumption in the task — and
+because splitting into N messages changes what the customer sees.
 
-**Consequência que fica registrada:** um turno que produza resposta acima de 4000 caracteres perde o
-final. Dividir em sequência (com o `(turn_id, seq)` da `outbox` já existente) é uma mudança de
-comportamento visível ao cliente: fica para decisão do mantenedor, não para esta entrega.
+**Consequence recorded:** a turn that produces a reply above 4000 characters loses its end. Splitting into a sequence
+(with the `(turn_id, seq)` of the existing `outbox`) is a change in behavior visible to the customer: it is for the
+maintainer to decide, not for this delivery.
 
 ---
 
-## 2. O que o módulo entrega
+## 2. What the module delivers
 
-| Peça | O que faz | Onde |
+| Part | What it does | Where |
 |---|---|---|
-| `ClienteEvolution` | criar instância, parear (QR), estado, desconectar, apagar, `webhook/set`, `sendText`, `sendMedia`, `getBase64FromMediaMessage`, `sendPresence` | `cliente.rs` |
-| `webhook::interpretar` | `messages.upsert` → `InboundEvent` (texto, imagem, PDF/Office) e `connection.update`/`qrcode.updated` → `EventoEstado` | `webhook.rs` |
-| `texto::para_whatsapp` | Markdown → formato do WhatsApp + corte em 4000 | `texto.rs` |
-| `WhatsAppEvolution` | o canal como `Integration`: enviar texto, enviar arquivo da biblioteca, presença, saúde, estado | `integracao.rs` |
+| `ClienteEvolution` | create instance, pair (QR), state, disconnect, delete, `webhook/set`, `sendText`, `sendMedia`, `getBase64FromMediaMessage`, `sendPresence` | `cliente.rs` |
+| `webhook::interpretar` | `messages.upsert` → `InboundEvent` (text, image, PDF/Office) and `connection.update`/`qrcode.updated` → `EventoEstado` | `webhook.rs` |
+| `texto::para_whatsapp` | Markdown → WhatsApp format + cut at 4000 | `texto.rs` |
+| `WhatsAppEvolution` | the channel as `Integration`: send text, send a library file, presence, health, state | `integracao.rs` |
 
-Regras que vieram do POP Atende e por quê:
+Rules that came from POP Atende, and why:
 
-- **`fromMe = true` é descartado** — é o eco da nossa própria mensagem (`evolution.py:16`).
-- **Idempotência pelo `key.id` do WhatsApp** — reentrega não gera segundo turno.
-- **Só imagem e documento (PDF/Office) entram como anexo.** Áudio, vídeo, figurinha, contato e
-  localização são ignorados **com motivo**; e documento de MIME fora da lista é recusado. É a decisão
-  do mantenedor (arquivo = imagem + PDF/Office em texto, sem áudio).
-- **Grupo vs. pessoa:** conversa individual usa o número (só dígitos, que é o que o `sendText`
-  aceita); grupo usa o jid completo (`…@g.us`) e quem escreveu vai em `remetente`.
-- **Mídia:** teto de **16 MB**, conferido **antes** de decodificar o base64 (um arquivo enorme não é
-  carregado na memória para depois ser recusado); a Evolution guarda a mídia por **4 dias**, e passou
-  disso ela responde "Message not found" → `ErroEvolution::MidiaExpirada`, que é erro **definitivo**
-  (não é retentado).
-- **Retentativa:** uma, só em queda de rede/prazo/429/5xx; 400/401/404 não são repetidos.
-- **A chave (`apikey`) só no cabeçalho** e nunca em erro, `Debug` ou log — há teste que falha se ela
-  aparecer na mensagem de erro.
-- **Mídia que falha não derruba o texto:** se o download estourar o prazo ou a mídia tiver expirado, o
-  evento chega ao turno **sem o anexo**, com o texto do cliente preservado.
+- **`fromMe = true` is discarded** — it is the echo of our own message (`evolution.py:16`).
+- **Idempotency by the WhatsApp `key.id`** — a redelivery does not generate a second turn.
+- **Only images and documents (PDF/Office) come in as attachments.** Audio, video, stickers, contacts and location are
+  ignored **with a reason**; and a document whose MIME type is not on the list is refused. This is the maintainer's
+  decision (file = image + PDF/Office as text, no audio).
+- **Group vs. person:** an individual conversation uses the number (digits only, which is what `sendText` accepts);
+  a group uses the full jid (`…@g.us`) and whoever wrote the message goes in `remetente`.
+- **Media:** a **16 MB** limit, checked **before** decoding the base64 (a huge file is not loaded into memory just to be
+  refused later); Evolution keeps media for **4 days**, and past that it answers "Message not found" →
+  `ErroEvolution::MidiaExpirada`, which is a **definitive** error (it is not retried).
+- **Retry:** one, only on network drop/timeout/429/5xx; 400/401/404 are not repeated.
+- **The key (`apikey`) only in the header** and never in an error, `Debug` or a log — there is a test that fails if it
+  appears in the error message.
+- **Failed media does not bring down the text:** if the download times out or the media has expired, the event reaches
+  the turn **without the attachment**, with the customer's text preserved.
 
-## 3. Como rodar os testes
+## 3. How to run the tests
 
 ```bash
 cd apps/pop-harness
 export PATH="$HOME/.cargo/bin:$PATH"
-cargo test -p poph-evolution            # 50 testes, nenhum usa rede externa
+cargo test -p poph-evolution            # 50 tests, none uses an external network
 ```
 
-O servidor falso dos testes é um `TcpListener` em porta efêmera com roteiro combinado
-(`crates/poph-evolution/tests/evolution.rs`): ele registra o que recebeu (método, trajeto,
-cabeçalhos, corpo) e responde o que o teste mandar. Não há chave real, não há Evolution de verdade.
+The tests' fake server is a `TcpListener` on an ephemeral port with a combined script
+(`crates/poph-evolution/tests/evolution.rs`): it records what it received (method, path, headers, body) and answers
+what the test sends. There is no real key and no real Evolution.
 
-## 4. O que falta para produção
+## 4. What is missing for production
 
-1. **Conta de teste real** (item do mantenedor): criar instância, ler o QR, mandar e receber texto,
-   imagem e PDF numa instância de verdade. É o único passo do aceite da HR-26 que não fecha aqui.
-2. **Registro de manifesto no servidor**: hoje a API recusa configurar integração (`422
-   manifest_indisponivel`) até existir uma fonte confiável do manifesto. O manifesto do WhatsApp já
-   está escrito em código (`integracao.rs`), com `apikey` e `webhook_secret` marcados como
-   `format: password` + `x-secret: true`; quem hospeda esse registro liga a config da integração.
-3. **Rota de webhook no servidor** (`poph serve`): o canal já sabe autenticar e ler o corpo, mas
-   nenhuma rota HTTP o chama ainda — ela precisa do registro de integração e do motor de turno no
-   servidor, que hoje não roda turnos.
-4. **Persistência da mídia:** o canal entrega o conteúdo e o fluxo decide; gravar o blob é do
-   `poph-files` (HR-23), que já existe — o encaixe é na rota da webhook, junto do item 3.
+1. **Real test account** (the maintainer's item): create an instance, read the QR, send and receive text, image and PDF
+   on a real instance. It is the only step of the HR-26 acceptance that does not close here.
+2. **Manifest registration on the server:** today the API refuses to configure an integration (`422
+   manifest_indisponivel`, an error code emitted by the code) until there is a trusted source for the manifest. The
+   WhatsApp manifest is already written in code (`integracao.rs`), with `apikey` and `webhook_secret` marked as
+   `format: password` + `x-secret: true`; whoever hosts this registration turns on the integration config.
+3. **Webhook route on the server** (`poph serve`): the channel already knows how to authenticate and read the body, but
+   no HTTP route calls it yet — it needs the integration registration and the turn engine on the server, which does not
+   run turns today.
+4. **Media persistence:** the channel delivers the content and the flow decides; saving the blob is `poph-files`'
+   job (HR-23), which already exists — the connection point is the webhook route, together with item 3.
 
-## 5. Notas de campo
+## 5. Field notes
 
-- **`sendMedia` aceita base64** (é o que o POP Atende usa quando não há URL pública temporária). Para
-  arquivo grande isso é caro: 16 MB viram ~21 MB de JSON. O caminho com URL pública (link temporário)
-  não foi implementado porque o Harness ainda não serve arquivos por HTTP.
-- **`getBase64FromMediaMessage` exige o objeto `data` do webhook**, não só o id: com o id sozinho a
-  Evolution procura no banco dela e responde "Message not found" para mídia que ela não guardou
+- **`sendMedia` accepts base64** (this is what POP Atende uses when there is no temporary public URL). For a large file
+  this is expensive: 16 MB becomes ~21 MB of JSON. The path with a public URL (temporary link) was not implemented,
+  because the Harness does not yet serve files over HTTP.
+- **`getBase64FromMediaMessage` requires the `data` object from the webhook**, not just the id: with the id alone,
+  Evolution looks in its own database and answers "Message not found" for media it did not keep
   (`evolution.py:272`).
-- **O `webhook/set` é por instância, com `byEvents: false`** — igual ao POP Atende
-  (`evolution_api.py:214`), e com a lista `MESSAGES_UPSERT`, `CONNECTION_UPDATE`, `QRCODE_UPDATED`.
-- **`WEBHOOK_GLOBAL_ENABLED` fica `false`** nos dois compose do POP Atende
-  (`infra/docker-compose.dev.yml:107`, `infra/docker-compose.oci.yml:197`): a configuração é sempre por
-  instância, nunca global.
+- **`webhook/set` is per instance, with `byEvents: false`** — the same as POP Atende (`evolution_api.py:214`), and with
+  the list `MESSAGES_UPSERT`, `CONNECTION_UPDATE`, `QRCODE_UPDATED` (event names, kept as they are).
+- **`WEBHOOK_GLOBAL_ENABLED` stays `false`** in both POP Atende compose files
+  (`infra/docker-compose.dev.yml:107`, `infra/docker-compose.oci.yml:197`): the configuration is always per instance,
+  never global.

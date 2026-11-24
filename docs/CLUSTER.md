@@ -1,222 +1,225 @@
-# Cluster do POP Harness — roteamento estático entre instâncias (HR-50a)
+# POP Harness cluster — static routing between instances (HR-50a)
 
-Cada organização vive em **uma** instância, com os dados no SQLite dela (PRD §12). O mapa de qual
-org vive em qual instância é um arquivo de configuração — `cluster.toml` — separado do `poph.toml`
-e **igual em todas as instâncias**. É estático de propósito: mudou o mapa, edita o arquivo e pede
-recarga; não existe hash dinâmico que "mova" orgs sozinho e deixe dados órfãos.
+Each organization lives in **one** instance, with its data in that instance's SQLite database (PRD §12). The map
+of which org lives in which instance is a configuration file, `cluster.toml`, separate from `poph.toml`, and it
+**must be identical on every instance**. It is static on purpose: when the map changes, you edit the file and
+request a reload. There is no dynamic hash that "moves" orgs on its own and leaves orphaned data behind.
 
-Este documento cobre o **mapa** (formato, validação, impressão digital, os comandos `poph cluster
-show|check` e a recarga do processo vivo, `POST /admin/v1/cluster/reload`) e o **encaminhamento** de
-webhook, chamadas admin, chat ao vivo (SSE) e `?cluster=true` entre instâncias (seção "Encaminhamento
-entre instâncias"; HR-50a, HR-50b-1 e HR-50b-2, todas feitas).
+This document covers the **map** (format, validation, fingerprint, the `poph cluster show|check` commands, and
+reloading the running process with `POST /admin/v1/cluster/reload`) and the **forwarding** of webhooks, admin
+calls, live chat (SSE) and `?cluster=true` between instances (section "Forwarding between instances"; HR-50a,
+HR-50b-1 and HR-50b-2, all done).
 
-## Onde o arquivo mora
+## Where the file lives
 
-| Origem | Caminho |
+| Source | Path |
 | --- | --- |
-| `POPH_CLUSTER` (ambiente) | o caminho indicado, quando não vazio |
-| padrão | `cluster.toml` **no mesmo diretório do `poph.toml`** resolvido (`--config`, `POPH_CONFIG` ou `./poph.toml`) |
-| sem `poph.toml` | `cluster.toml` na pasta em que o processo roda |
+| `POPH_CLUSTER` (environment) | the given path, when not empty |
+| default | `cluster.toml` **in the same directory as the resolved `poph.toml`** (`--config`, `POPH_CONFIG` or `./poph.toml`) |
+| no `poph.toml` | `cluster.toml` in the folder where the process runs |
 
-**Sem `cluster.toml`, a instalação roda em modo instância única**: todas as orgs vivem nela, e nada
-muda em relação a hoje. Um arquivo vazio (só comentários) também é modo instância única; um arquivo
-com qualquer chave **precisa** se identificar com `instance_id`.
+**Without `cluster.toml`, the installation runs in single-instance mode**: all orgs live in it, and nothing changes
+from today. An empty file (only comments) is also single-instance mode; a file with any key **must** identify
+itself with `instance_id`.
 
-O **segredo compartilhado** entre as instâncias (o HMAC do encaminhamento, HR-50b) vem **só** de
-`POPH_CLUSTER_SECRET`, no ambiente. Ele nunca vai no arquivo, nunca é impresso, nunca aparece em
-resposta, log ou erro. O `poph serve` lê o segredo na subida; trocá-lo exige reiniciar o processo.
+The **shared secret** between instances (the forwarding HMAC, HR-50b) comes **only** from `POPH_CLUSTER_SECRET`,
+in the environment. It is never written to the file, never printed, and never appears in a response, log or
+error. `poph serve` reads the secret at startup; changing it requires restarting the process.
 
-## Formato
+## Format
 
 ```toml
-# Nome desta instância no mapa. Obrigatório quando existe cluster.toml.
+# This instance's name in the map. Required when cluster.toml exists.
 instance_id = "a"
 
-# Para onde vão as orgs que não estão no mapa. Obrigatória quando o cluster tem mais de uma
-# instância; com uma só, ela é a padrão implícita.
+# Where orgs that are not in the map go. Required when the cluster has more than one instance; with only one,
+# it is the implicit default.
 default_instance = "b"
 
-# Instâncias do cluster: id curto e endereço base (http:// ou https://, com destino).
+# Cluster instances: short id and base address (http:// or https://, with a destination).
 [[instances]]
 id = "a"
 url = "http://10.0.0.11:7480"
 
 [[instances]]
 id = "b"
-url = "https://harness-b.exemplo"
+url = "https://harness-b.example"
 
-# Mapa explícito org → instância, no formato [orgs] do TOML. A chave é o id da org (UUIDv7, sem prefixo).
+# Explicit org → instance map, in TOML's [orgs] format. The key is the org id (UUIDv7, without prefix).
 [orgs]
 01a1ff21-8f3c-7a2b-9c4d-5e6f70819203 = "a"
 01a1ff21-8f3c-7d10-8e2f-a1b2c3d4e5f6 = "b"
 ```
 
-Regras conferidas (cada problema diz a chave):
+Validated rules (each problem names the key):
 
-- `instance_id` obrigatório, não vazio, até 64 caracteres (`letras`, números, `-`, `_`, `.`);
-- cada instância: `id` no mesmo formato, sem repetir, e `url` começando com `http://` ou `https://`
-  com destino (sem espaços);
-- a instância local (`instance_id`) precisa estar declarada em `instances`;
-- `default_instance`, quando declarada, precisa existir em `instances`; é **obrigatória** quando o
-  cluster tem mais de uma instância (senão as orgs fora do mapa não teriam dono);
-- cada org do `[orgs]` precisa apontar para uma instância declarada; chave repetida no `[orgs]` é
-  recusada pelo próprio TOML (o arquivo nem é lido como configuração);
-- campo desconhecido, TOML inválido e arquivo ilegível dão erro com o **arquivo** e a **chave**
-  (quando há uma).
+- `instance_id` is required, not empty, up to 64 characters (`letters`, digits, `-`, `_`, `.`);
+- each instance: `id` in the same format, not repeated, and `url` starting with `http://` or `https://` with a
+  destination (no spaces);
+- the local instance (`instance_id`) must be declared in `instances`;
+- `default_instance`, when declared, must exist in `instances`; it is **required** when the cluster has more than
+  one instance (otherwise the orgs outside the map would have no owner);
+- each org in `[orgs]` must point to a declared instance; a repeated key in `[orgs]` is refused by the TOML parser
+  itself (the file is not even read as configuration);
+- unknown field, invalid TOML and unreadable file give an error with the **file** and the **key** (when there is one).
 
-## Impressão digital (fingerprint)
+## Fingerprint
 
-`poph cluster show` e a recarga devolvem uma impressão digital estável do mapa: instância local,
-instância padrão resolvida, instâncias ordenadas por id e orgs ordenadas por chave. Mesmo mapa,
-mesma impressão (a ordem do arquivo não importa); org trocada de instância muda a impressão. Não é
-criptográfica e **não inclui o segredo** — serve para detectar mudança, não para autenticar.
+`poph cluster show` and the reload return a stable fingerprint of the map: local instance, resolved default
+instance, instances sorted by id and orgs sorted by key. Same map, same fingerprint (the order in the file does not
+matter); an org moved to another instance changes the fingerprint. It is not cryptographic and **does not include
+the secret** — it is used to detect changes, not to authenticate.
 
-Como a instância local entra nessa impressão, duas instâncias do mesmo cluster têm impressões
-**diferentes**. Para comparar o mapa entre elas existe uma segunda impressão, a **do mapa** (sem a
-instância local): é a que o encaminhamento manda em `x-poph-mapa` e a que o `show` imprime na linha
-"fingerprint do mapa (sem a instância local)" (`fingerprint_mapa` no `--json`). Mesmo `cluster.toml`
-a menos do `instance_id` = mesma impressão do mapa.
+Because the local instance is part of this fingerprint, two instances of the same cluster have **different**
+fingerprints. To compare the map between them there is a second fingerprint, the **map fingerprint** (without the
+local instance): it is what forwarding sends in `x-poph-mapa`, and what `show` prints in the line "map fingerprint
+(without the local instance)" (`fingerprint_mapa` in `--json`). The same `cluster.toml` except for `instance_id`
+= the same map fingerprint.
 
-## Comandos
+## Commands
 
 ```bash
-poph cluster show            # mapa efetivo: modo, instância local, orgs por instância, fingerprint
-poph cluster show --json     # formato estável: versao_relatorio = 1, sem segredo
-poph cluster check           # valida e lista TODOS os problemas; sai com 1 quando há algum
+poph cluster show            # effective map: mode, local instance, orgs per instance, fingerprint
+poph cluster show --json     # stable format: versao_relatorio = 1, no secret
+poph cluster check           # validates and lists ALL problems; exits with 1 when there is any
 poph cluster check --json
 ```
 
-- Sem `cluster.toml`: `show` diz "modo: instância única"; `check` diz que não há nada a corrigir.
-- Cluster declarado sem `POPH_CLUSTER_SECRET`: `check` reprova dizendo qual variável definir.
-- `show`/`check` **não** sobem servidor nem tocam no banco; só leem o arquivo e o ambiente.
-- Nenhuma saída traz o valor do segredo (só `segredo compartilhado: definido`/`não definido`).
+- Without `cluster.toml`: `show` says "modo: instância única" (single-instance mode); `check` says there is nothing to fix.
+- Cluster declared without `POPH_CLUSTER_SECRET`: `check` fails and says which variable to set.
+- `show`/`check` do **not** start a server or touch the database; they only read the file and the environment.
+- No output includes the secret value (only "segredo compartilhado: definido" / "não definido", as printed by the code).
 
-## Recarga sem reiniciar
+## Reloading without restarting
 
-`POST /admin/v1/cluster/reload` (token **global**; token de org → `403`, sem token → `401`) relê o
-arquivo no processo vivo. Contrato completo em `docs/API.md`, seção "Roteamento entre instâncias:
-mapa e recarga".
+`POST /admin/v1/cluster/reload` (**global** token; org token → `403`; no token → `401`) rereads the file in the
+running process. The full contract is in `docs/API.md`, section "Roteamento entre instâncias: mapa e recarga"
+(the section title is still in Portuguese, as it is in `docs/API.md`).
 
-- Arquivo novo válido → o mapa passa a valer na hora; a resposta traz `fingerprint_antes`,
-  `fingerprint_depois`, o resumo dos dois mapas, as orgs que trocaram de instância e as instâncias
-  adicionadas/removidas.
-- Arquivo inválido → `400 cluster_invalido` com `details.problemas`; **o mapa anterior continua em
-  uso** — um erro de digitação não derruba o roteamento.
-- Arquivo removido → volta ao modo instância única (é o que a recarga reflete).
+- Valid new file → the map takes effect immediately; the response includes `fingerprint_antes` (before),
+  `fingerprint_depois` (after), a summary of both maps, the orgs that changed instance, and the instances added/removed.
+- Invalid file → `400 cluster_invalido` with `details.problemas`; **the previous map stays in use** — a typo does
+  not break routing.
+- File removed → back to single-instance mode (this is what the reload reflects).
 
-## Encaminhamento entre instâncias (HR-50b-1, HR-50b-2)
+## Forwarding between instances (HR-50b-1, HR-50b-2)
 
-O mapa agora é aplicado de verdade: um pedido de org que vive em outra instância é encaminhado à
-dona, assinado. **Chamada admin** (`/admin/v1/orgs/{org_id}/…`) e **webhook do Evolution** são
-encaminhados; saúde, métricas, OpenAPI, recarga, `/admin/v1/orgs` e o Console ficam sempre na
-instância que recebeu — nenhum deles tem org no caminho. Sem `cluster.toml` (modo instância única),
-nada é encaminhado.
+The map is now applied for real: a request for an org that lives in another instance is forwarded to its owner,
+signed. **Admin calls** (`/admin/v1/orgs/{org_id}/…`) and **Evolution webhooks** are forwarded; health, metrics,
+OpenAPI, reload, `/admin/v1/orgs` and the Console always stay on the instance that received the request — none of
+them has an org in the path. Without `cluster.toml` (single-instance mode), nothing is forwarded.
 
-**Cabeçalhos de par**
+**Peer headers**
 
-| Cabeçalho | Conteúdo |
+| Header | Content |
 | --- | --- |
-| `x-poph-instance` | `instance_id` de quem encaminha |
-| `x-poph-timestamp` | instante do envio, em segundos Unix |
-| `x-poph-signature` | HMAC-SHA256 em hexadecimal |
-| `x-poph-hop` | `1` no primeiro (e único) salto |
-| `x-poph-mapa` | impressão digital **do mapa** de quem encaminha |
-| `x-poph-nonce` | 16 bytes aleatórios em hexadecimal (32 caracteres), um por pedido |
+| `x-poph-instance` | `instance_id` of the forwarding instance |
+| `x-poph-timestamp` | time of sending, in Unix seconds |
+| `x-poph-signature` | HMAC-SHA256 in hexadecimal |
+| `x-poph-hop` | `1` on the first (and only) hop |
+| `x-poph-mapa` | **map** fingerprint of the forwarding instance |
+| `x-poph-nonce` | 16 random bytes in hexadecimal (32 characters), one per request |
 
-**Texto assinado** (chave: `POPH_CLUSTER_SECRET`; linhas separadas por `\n`, sem linha no fim):
+**Signed text** (key: `POPH_CLUSTER_SECRET`; lines separated by `\n`, no line break at the end):
 
 ```text
-método
-caminho+query
-hex(sha256(corpo))
+method
+path+query
+hex(sha256(body))
 timestamp
-instância
+instance
 hop
 nonce
 ```
 
-O `x-poph-mapa` é o `ClusterConfig::fingerprint_do_mapa`: o mesmo `cluster.toml` em duas
-instâncias produz a mesma impressão mesmo com `instance_id` diferente — é o que permite detectar
-mapa divergente. A impressão do `poph cluster show` continua incluindo a instância local (ela
-identifica o arquivo daquela instância); são valores diferentes com propósitos diferentes.
+`x-poph-mapa` is `ClusterConfig::fingerprint_do_mapa` (the map fingerprint): the same `cluster.toml` on two
+instances produces the same fingerprint even with a different `instance_id` — this is what makes it possible to
+detect a divergent map. The fingerprint shown by `poph cluster show` still includes the local instance (it
+identifies that instance's file); these are different values with different purposes.
 
-**Regras**
+**Rules**
 
-- Janela do carimbo: 60 s para trás e para frente.
-- O **nonce** é o que torna cada pedido único: dois pedidos idênticos no mesmo segundo, com nonces
-  diferentes, passam os dois; o mesmo nonce dentro de 120 s é `401 assinatura_invalida` (proteção
-  contra repetição, em memória do processo; teto de 10.000 nonces). Nonce ausente ou fora do
-  formato (32 hexadecimais) é `401 assinatura_invalida`.
-- `x-poph-hop > 1`, ou org que não é desta instância num pedido já encaminhado: `421 rota_em_laco`.
-- `x-poph-mapa` diferente do local: `421 mapa_divergente` com os dois fingerprints em `details`.
-- Dona fora do ar: `503 instancia_fora` com `details.instancia` e `details.url`. Tempos: 5 s para
-  conectar, 60 s para a dona começar a responder; o corpo, depois disso, segue em streaming.
-- Pedido **sem** cabeçalho de par segue o caminho de token de sempre, sem nenhuma mudança.
-- O segredo compartilhado nunca aparece em resposta, erro ou log.
+- Timestamp window: 60 s back and forth.
+- The **nonce** is what makes each request unique: two identical requests in the same second, with different
+  nonces, both pass; the same nonce within 120 s is `401 assinatura_invalida` (replay protection, kept in process
+  memory; cap of 10,000 nonces). A missing nonce, or one outside the format (32 hexadecimal characters), is
+  `401 assinatura_invalida`.
+- `x-poph-hop > 1`, or an org that is not this instance's in a request that was already forwarded: `421 rota_em_laco`.
+- `x-poph-mapa` different from the local one: `421 mapa_divergente` with both fingerprints in `details`.
+- Owner down: `503 instancia_fora` with `details.instancia` and `details.url`. Timeouts: 5 s to connect, 60 s for
+  the owner to start responding; after that the body is streamed.
+- A request **without** peer headers follows the usual token path, with no change.
+- The shared secret never appears in a response, error or log.
 
-**SSE do chat de teste (HR-50b-2).** `GET …/test-chat/{conversa}/messages` (e o `POST` que abre o
-stream) atravessa o encaminhamento sem buffer: o primeiro evento chega em milissegundos, os eventos
-fluem um a um e o prazo de 60 s vale só até a dona começar a responder — depois disso o stream não
-tem prazo. Cliente que desconecta derruba o pedido encaminhado e o turno é cancelado na dona.
-Medido no teste de duas instâncias: primeiro evento em ~0,36 s com o turno pendurado por 30 s.
+**Test chat SSE (HR-50b-2).** `GET …/test-chat/{conversa}/messages` (and the `POST` that opens the stream) goes
+through forwarding without buffering: the first event arrives in milliseconds, events flow one by one, and the 60 s
+limit applies only until the owner starts responding — after that the stream has no time limit. A client that
+disconnects drops the forwarded request, and the turn is cancelled on the owner. Measured in the two-instance test:
+first event in ~0.36 s with the turn hanging for 30 s.
 
-**Listagem de orgs com `?cluster=true` (HR-50b-2).** `GET /admin/v1/orgs` continua local (não é
-encaminhada); com o parâmetro e um **token global**, ela consulta as instâncias vizinhas do mapa em
-paralelo (`/admin/v1/orgs` de cada uma, com o `Authorization` do chamador, prazo de 2 s por
-instância) e devolve todas as orgs em `items`, cada uma com `instancia`, mais `instancias` com
-`id`, `url`, `situacao` (`local`, `ok`, `inacessivel`) e a contagem de orgs. Instância fora do ar
-entra marcada e não derruba a lista. Sem o parâmetro a resposta é a de sempre; com ele não há
-paginação. Token de org ignora o parâmetro e vê só a própria org.
+**Org listing with `?cluster=true` (HR-50b-2).** `GET /admin/v1/orgs` stays local (it is not forwarded). With the
+parameter and a **global token**, it queries the neighbor instances in the map in parallel (`/admin/v1/orgs` of
+each one, with the caller's `Authorization`, 2 s limit per instance) and returns all orgs in `items`, each with
+`instancia`, plus `instancias` with `id`, `url`, `situacao` (`local`, `ok`, `inacessivel`) and the org count. An
+instance that is down is marked and does not break the list. Without the parameter the response is the usual one;
+with it there is no pagination. An org token ignores the parameter and sees only its own org.
 
-**`/healthz` no modo cluster** devolve `instance_id` e `cluster_map_fingerprint` (aditivo, ausentes
-no modo instância única).
+**`agents_active_count` (CF-03a).** Every item of the org listing carries this integer in both forms (with and
+without `cluster=true`) and in `GET /admin/v1/orgs/{org_id}`: how many agents of the org have `status = active`
+(`inactive`/`archived` do not count; an org with no active agent answers `0`). A page is counted with one
+aggregated query (`org_id IN (…) GROUP BY org_id`), never one query per row. With `cluster=true` the number comes
+in the payload of the instance that owns the org; a neighbour on an older version that does not send the field yet
+shows `0`.
 
-**`poph cluster check --remoto`.** Consulta o `/healthz` de cada instância declarada (menos a local,
-que é o próprio arquivo), em paralelo, com prazo de 3 s cada, e aponta:
+**`/healthz` in cluster mode** returns `instance_id` and `cluster_map_fingerprint` (additive, absent in
+single-instance mode).
 
-- **inacessível** — não respondeu, respondeu erro ou respondeu sem dizer o mapa (versão anterior);
-- **mapa divergente** — a impressão digital do mapa dela é outra (atualize o `cluster.toml` dos dois
-  lados e recarregue as duas);
-- **identidade divergente** — ela se declara com outro `instance_id` (corrija o `instance_id` dela).
+**`poph cluster check --remoto`.** Queries the `/healthz` of each declared instance (except the local one, which is
+the file itself), in parallel, with a 3 s limit each, and reports:
 
-Sai com código 1 quando há qualquer problema. Sem `--remoto`, o comando continua validando só o
-arquivo, como antes. Em JSON, o relatório traz `remoto` (um item por instância) e
-`problemas_remotos`.
-## O que ainda NÃO existe
+- **inacessível** (unreachable) — it did not respond, responded with an error, or responded without stating the map
+  (older version);
+- **mapa divergente** (divergent map) — its map fingerprint is different (update `cluster.toml` on both sides and reload both);
+- **identidade divergente** (divergent identity) — it declares itself with a different `instance_id` (fix its `instance_id`).
 
-- **Mover uma org de instância automaticamente:** trocar o mapa e recarregar só muda o roteamento;
-  os dados continuam na instância antiga até um exportar/importar manual.
-- **Retentativa/failover:** se a dona falhar no meio de um pedido, o erro volta ao cliente; não há
-  nova tentativa em outra instância.
-- **Encaminhar com token global:** o `Authorization` original segue junto e quem valida é a dona.
-- **Mapa no `/healthz` de versões antigas:** uma instância anterior à HR-50b-2 aparece como
-  inacessível no `cluster check --remoto` (não diz o mapa).
+It exits with code 1 when there is any problem. Without `--remoto`, the command keeps validating only the file, as
+before. In JSON, the report includes `remoto` (one item per instance) and `problemas_remotos`.
 
-## Limites conhecidos
+## What does NOT exist yet
 
-- **Média, corpo do pedido encaminhado:** o corpo é lido inteiro antes de seguir (a assinatura usa
-  o sha256); a resposta da dona vai em streaming. Um corpo grande encaminhado ocupa memória na
-  instância que recebeu e na dona ao mesmo tempo, até o teto da rota.
-- **Média, listagem `?cluster=true` sem paginação:** devolve o retrato do cluster inteiro (até 20
-  páginas de 200 orgs por instância vizinha); numa instalação com muitas orgs a resposta é grande e
-  a tela do Console precisa paginar no cliente.
-- **Média, listagem remota com o token do chamador:** se o token for válido nesta instância e não na
-  vizinha (tokens globais diferentes), a vizinha aparece como `inacessivel` com o código HTTP.
-- **Baixa, `cluster check --remoto` não confere a instância local:** ela é o próprio arquivo em uso;
-  o comando olha as vizinhas. A URL local do mapa não é consultada.
-- **Baixa, `cluster check --remoto` usa `/healthz`:** rota pública na rede interna, sem o segredo do
-  cluster; quem alcança a porta pode ler a impressão digital do mapa (não é segredo).
-- **Média, `cluster.toml` recarregado só na instância que recebeu a recarga:** as demais precisam
-  de `POST /admin/v1/cluster/reload` também; mapa diferente entre elas dá `421 mapa_divergente`
-  (o pedido é recusado, nunca processado com mapa errado).
-- **Média, recarga reflete o arquivo:** se o arquivo desaparece (ou `POPH_CLUSTER` aponta para um
-  caminho errado) e o operador pede recarga, a instância volta ao modo instância única. A recarga é
-  explícita; não há proteção contra isso.
-- **Baixa, segredo na subida:** trocar `POPH_CLUSTER_SECRET` com o processo no ar não troca o
-  segredo em uso; reinicie.
-- **Baixa, cache de mapa:** o mapa é lido do arquivo na subida e na recarga; editar o arquivo sem
-  pedir recarga não muda nada (é o desenho: estático).
-- **Baixa, `[orgs]` por id:** a chave deve ser o id da org (UUIDv7, como `01a1ff21-8f3c-7…`, sem prefixo
-  `org_`), que é o que aparece no caminho das rotas e no webhook. Slug não é resolvido pelo mapa.
-- **Baixa, sem auditoria:** a recarga não grava no `audit_log` (é configuração da instância, não dado
-  de org); ficam o log e a resposta com o antes/depois.
+- **Automatically moving an org to another instance:** changing the map and reloading only changes routing; the
+  data stays in the old instance until a manual export/import.
+- **Retry/failover:** if the owner fails in the middle of a request, the error goes back to the client; there is no
+  retry on another instance.
+- **Forwarding with a global token:** the original `Authorization` stays attached, and the owner is the one who validates it.
+- **Map in `/healthz` of older versions:** an instance older than HR-50b-2 shows up as unreachable in
+  `cluster check --remoto` (it does not state the map).
+
+## Known limits
+
+- **Medium, body of a forwarded request:** the body is read in full before it is forwarded (the signature uses the
+  sha256); the owner's response is streamed. A large forwarded body occupies memory on the receiving instance and on
+  the owner at the same time, up to the route's limit.
+- **Medium, `?cluster=true` listing without pagination:** returns the whole cluster snapshot (up to 20 pages of 200
+  orgs per neighbor instance); on an installation with many orgs the response is large and the Console screen has
+  to paginate on the client side.
+- **Medium, remote listing with the caller's token:** if the token is valid on this instance and not on the neighbor
+  (different global tokens), the neighbor shows as `inacessivel` with the HTTP code.
+- **Low, `cluster check --remoto` does not check the local instance:** it is the file in use; the command looks at
+  the neighbors. The local URL in the map is not queried.
+- **Low, `cluster check --remoto` uses `/healthz`:** a public route on the internal network, without the cluster
+  secret; anyone who can reach the port can read the map fingerprint (it is not a secret).
+- **Medium, `cluster.toml` reloaded only on the instance that received the reload:** the others also need
+  `POST /admin/v1/cluster/reload`; a different map between them gives `421 mapa_divergente` (the request is refused,
+  never processed with the wrong map).
+- **Medium, reload reflects the file:** if the file disappears (or `POPH_CLUSTER` points to a wrong path) and the
+  operator requests a reload, the instance goes back to single-instance mode. The reload is explicit; there is no
+  protection against this.
+- **Low, secret at startup:** changing `POPH_CLUSTER_SECRET` while the process is running does not change the secret
+  in use; restart it.
+- **Low, map cache:** the map is read from the file at startup and on reload; editing the file without requesting a
+  reload changes nothing (that is the design: static).
+- **Low, `[orgs]` by id:** the key must be the org id (UUIDv7, like `01a1ff21-8f3c-7…`, without the `org_` prefix),
+  which is what appears in the route path and in the webhook. A slug is not resolved by the map.
+- **Low, no audit trail:** the reload does not write to `audit_log` (it is instance configuration, not org data);
+  the log and the response with before/after are kept.

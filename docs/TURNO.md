@@ -1,205 +1,202 @@
-# Turno: motor mínimo e `poph chat` (HR-13)
+# Turn: minimal engine and `poph chat` (HR-13)
 
-> Marco da fase 1: a conversa funciona de ponta a ponta pela CLI. Este documento explica o desenho,
-> as decisões, o que a próxima tarefa consome e o que **não** está coberto.
-> Código: `crates/poph-agent/src/turno/` (motor) e `crates/poph/src/chat.rs` (CLI).
+> Phase 1 milestone: the conversation works end to end through the CLI. This document explains the design,
+> the decisions, what the next task consumes, and what is **not** covered.
+> Code: `crates/poph-agent/src/turno/` (engine) and `crates/poph/src/chat.rs` (CLI).
 
-## 1. O caminho de um turno
+## 1. The path of a turn
 
 ```
-mensagem do cliente
+customer message
    │
    ├─ chat:  messages.gravar(entrada) ─────────────────────────────┐
-   └─ integração: Fluxo::receber_mensagem (mensagem + inbox, atômico)
+   └─ integration: Fluxo::receber_mensagem (message + inbox, atomic)
                             │
-                    Fluxo::despachar → ator da conversa (HR-11)
+                    Fluxo::despachar → conversation actor (HR-11)
                             │
                     ProcessadorTurno → Motor::executar
                             │
-   1. conversa + agente (D-05: inativo não abre turno; D12: transferida não responde)
-   2. janela de agrupamento (Agente.grouping_window_ms, teto de 8 s)
-   3. grupo = cauda de mensagens do cliente ainda sem resposta
+   1. conversation + agent (D-05: an inactive agent does not open a turn; D12: a transferred conversation does not reply)
+   2. grouping window (Agente.grouping_window_ms, ceiling of 8 s)
+   3. group = tail of customer messages that still have no reply
    4. turns.iniciar (state=running)
-   5. vaga de turno (Limites: org, agente, instância) + vaga do provedor
-   6. prompt = prefixo estável + bloco volátil + janela de contexto (HR-11)
-   7. laço de ferramentas (limite de rodadas e de chamadas por mensagem, D-04)
-   8. resposta = messages.gravar(saida) + outbox.enfileirar(turno, seq 0)
-   9. turns.finalizar (tempos, tokens, modelo, motivo, erro)
+   5. turn slot (Limites: org, agent, instance) + provider slot
+   6. prompt = stable prefix + volatile block + context window (HR-11)
+   7. tool loop (limit of rounds and of calls per message, D-04)
+   8. reply = messages.gravar(saida) + outbox.enfileirar(turno, seq 0)
+   9. turns.finalizar (times, tokens, model, reason, error)
 
-   (HR-29) se o G1 do Jev decidiu transferir, o turno termina no passo 7½:
-     7½. pergunta de risco → texto de orientação + mensagem automática → messages.gravar +
-         outbox.enfileirar → conversas.transferir(status=transferred, auditoria) → turns.finalizar
-         O modelo de texto NÃO é chamado; os turnos seguintes caem no passo 1 (D12).
+   (HR-29) if the Jev's G1 decided to transfer, the turn ends at step 7½:
+     7½. risk question → guidance text + automatic message → messages.gravar +
+         outbox.enfileirar → conversas.transferir(status=transferred, audit) → turns.finalizar
+         The text model is NOT called; the following turns fall into step 1 (D12).
                             │
-        Fluxo::enviar_pendentes(transporte) → cliente
+        Fluxo::enviar_pendentes(transport) → customer
 ```
 
-`Motor::executar` devolve `ResumoTurno` (turno gravado, estado, texto, mensagens atendidas, tempos,
-tokens). `Err` só quando o armazenamento falha antes de abrir o turno; agente inativo, conversa
-transferida, mensagem já respondida e erro do provedor terminam como `ResumoTurno` com `estado` e
-`erro` — o processador precisa concluir a entrada nos dois casos.
+`Motor::executar` returns `ResumoTurno` (turn recorded, state, text, messages handled, times,
+tokens). It returns `Err` only when storage fails before the turn is opened. An inactive agent, a
+transferred conversation, an already-answered message, and a provider error all end as a `ResumoTurno`
+with `estado` and `erro` set. The processor has to close the entry in both cases.
 
-## 2. Janela de agrupamento
+## 2. Grouping window
 
-- A espera é medida **a partir da chegada da mensagem** que disparou o turno: `janela − decorrido`,
-  nunca maior que `grouping_window_ms` (0 usa 2 s) nem que o teto de 8 s do PRD §6.3.
-- Depois da espera o motor lê a conversa e agrupa **todas** as mensagens seguidas do cliente que
-  ainda não têm resposta. É por isso que um "oi" seguido de "queria um orçamento" dentro da janela
-  vira um turno só, e uma mensagem que chega depois da resposta abre outro.
-- A pausa é injetável (`Pausa`), então o teste prova a janela com o relógio controlado, sem dormir.
-- O **G2 do Jev** (esperar mais / processar agora) governa a janela desde a HR-30: com ele ligado, o
-  lote do Jev sai **antes** da espera (o tempo dele cabe na janela) e a decisão ajusta a espera —
-  `esperar_mais` dobra a janela até o teto de 8 s, `processar_agora` a reduz para a confirmação curta
-  de 250 ms, e o fallback mantém a janela fixa. Se o cliente mandar outra mensagem durante a espera, o
-  lote é refeito. Detalhe e medição em `docs/JEV.md` §5-B; teste em `tests/g2_janela.rs`.
+- The wait is measured **from the arrival of the message** that triggered the turn: `window − elapsed`,
+  never more than `grouping_window_ms` (0 uses 2 s) nor the 8 s ceiling from PRD §6.3.
+- After the wait, the engine reads the conversation and groups **all** consecutive customer messages that
+  still have no reply. That is why a "hi" followed by "I'd like a quote" within the window becomes a single
+  turn, while a message that arrives after the reply opens another turn.
+- The pause is injectable (`Pausa`), so the test proves the window with a controlled clock, without sleeping.
+- The **Jev's G2** (wait for more / process now) governs the window since HR-30. With G2 on, the Jev's batch
+  goes out **before** the wait (its time fits in the window), and the decision adjusts the wait:
+  `esperar_mais` (wait more) doubles the window up to the 8 s ceiling, `processar_agora` (process now)
+  reduces it to the short 250 ms confirmation, and the fallback keeps the fixed window. If the customer sends
+  another message during the wait, the batch is redone. Details and measurements in `docs/JEV.md` §5-B;
+  test in `tests/g2_janela.rs`.
 
-## 3. Prompt estável (PRD §6.1)
+## 3. Stable prompt (PRD §6.1)
 
-Ordem das mensagens:
+Message order:
 
-1. `system`: o markdown do compositor (HR-09), **idêntico byte a byte** entre turnos do mesmo agente.
-   Vem de `agent_instructions.markdown` e nunca é recomposto no turno (pode ter sido editado à mão).
-2. `system`: bloco volátil delimitado por `<contexto_do_turno>`: hora (UTC), canal, id da conversa,
-   estado do atendimento e resumo (quando a HR-14 gravar um).
-3. histórico: as últimas mensagens, dentro do orçamento de tokens do agente (HR-11).
+1. `system`: the markdown from the composer (HR-09), **byte-for-byte identical** between turns of the same agent.
+   It comes from `agent_instructions.markdown` and is never recomposed during a turn (it may have been edited by hand).
+2. `system`: volatile block delimited by `<contexto_do_turno>`: time (UTC), channel, conversation id,
+   service state, and summary (when HR-14 writes one).
+3. history: the last messages, within the agent's token budget (HR-11).
 
-Quando o RAG (HR-17), os arquivos (HR-23) e o Jev (HR-28) entrarem, eles vão **depois** do prefixo,
-no bloco volátil (ou como mensagem seguinte), nunca dentro dele.
+When RAG (HR-17), files (HR-23), and the Jev (HR-28) come in, they go **after** the prefix, in the volatile
+block (or as a following message), never inside it.
 
-O **Jev** entrou na HR-28 e **não** toca no prompt: ele roda em paralelo com a busca, decide os
-portões e grava o resultado em `turns.jev_json` ([`JEV.md`](JEV.md)). O G1 tem efeito desde a HR-29
-(transfere a conversa e encerra o turno antes do modelo), o G2 desde a HR-30 (governa a janela de
-agrupamento) e o G4 desde a HR-32 (escolhe o departamento da transferência, validado pelo código);
-falta o efeito do G3 (pular a busca, HR-31). Todos nascem desligados e só ligam depois de medidos.
+The **Jev** came in with HR-28 and **does not** touch the prompt: it runs in parallel with the search, decides the
+gates, and writes the result to `turns.jev_json` ([`JEV.md`](JEV.md)). G1 has had effect since HR-29
+(it transfers the conversation and ends the turn before the model), G2 since HR-30 (it governs the grouping
+window), and G4 since HR-32 (it chooses the transfer department, validated by the code). The effect of G3
+(skip the search, HR-31) is still missing. All of them start disabled and only turn on after being measured.
 
-## 4. Laço de ferramentas (D-04)
+## 4. Tool loop (D-04)
 
-- Ao modelo só são oferecidas as ferramentas **habilitadas no agente** *e* implementadas no processo.
-  Nesta tarefa o registro de produção (`SemFerramentas`) está vazio: `consultar_base` é HR-17,
-  `buscar_produto`/carrinho HR-18/19, `enviar_arquivo` HR-24, `transferir` depende do Jev.
-  Cada uma se registra em `RegistroFerramentas` sem tocar no laço.
-- O registro de ferramentas **não depende da base de conhecimento** (HR-46f): `enviar_arquivo` e as
-  quatro do carrinho usam só o banco e são registradas sempre; `consultar_base` e `buscar_produto`
-  só entram quando o índice de embedding abriu. Sem `poph model install`, o pedido ao modelo segue
-  com `enviar_arquivo` e o agente continua podendo enviar arquivo.
-- Chamada de ferramenta desabilitada (ou inventada) vira **resultado de erro** para o modelo, não
-  execução.
-- `max_tool_rounds` limita as rodadas: na última passagem o pedido vai **sem ferramenta**, e é assim
-  que o turno termina em texto. `max_tool_calls_per_message` limita as chamadas de uma resposta; as
-  que passam recebem erro de limite.
-- Os argumentos chegam inteiros antes de a ferramenta rodar (garantia da HR-10).
+- Only the tools **enabled on the agent** *and* implemented in the process are offered to the model.
+  In this task the production registry (`SemFerramentas`) is empty: `consultar_base` is HR-17,
+  `buscar_produto`/cart are HR-18/19, `enviar_arquivo` is HR-24, and `transferir` depends on the Jev.
+  Each one registers in `RegistroFerramentas` without touching the loop.
+- The tool registry **does not depend on the knowledge base** (HR-46f): `enviar_arquivo` and the four cart
+  tools use only the database and are always registered; `consultar_base` and `buscar_produto` only appear
+  when the embedding index has opened. Without `poph model install`, the request to the model still includes
+  `enviar_arquivo`, so the agent can still send files.
+- A disabled (or invented) tool call becomes an **error result** for the model, not an execution.
+- `max_tool_rounds` limits the rounds: on the last pass the request goes **without tools**, which is how the
+  turn ends in text. `max_tool_calls_per_message` limits the calls in one reply; the calls past the limit
+  receive a limit error.
+- Arguments arrive whole before the tool runs (HR-10 guarantee).
 
-## 5. Streaming, cancelamento e erro
+## 5. Streaming, cancellation, and errors
 
-- Cada `EventoLlm::Texto` vai para o `Observador` na hora: o `chat` imprime o pedaço (texto) ou uma
-  linha JSON (`--json`).
-- Ctrl-C no `chat` pede `Cancelamento`; o provedor fecha o stream com `ErroLlm::Cancelada` e o turno
-  é gravado como **falho** com o motivo. A resposta parcial **não** é enviada nem gravada como
-  mensagem do agente: ela nunca chegou ao cliente, e guardá-la faria o próximo turno "achar" que o
-  agente já tinha respondido aquilo.
-- Erro do provedor: turno `failed` com o motivo e nada na `outbox`. No `poph serve`, a entrada é
-  adiada e tentada de novo, com limite (ver a seção 11, "Falha do modelo"). Em `poph chat`, o turno
-  termina aí, como antes.
-- **Falta de vaga** (vaga da instância, da org ou do agente, ou vaga de chamada ao provedor): o
-  turno é gravado como falho e a entrada entra na mesma escada da falha do modelo (seção 11, HR-26k).
-  Não há mais repetição sem limite nesse caminho. A espera pela vaga dentro do turno é
-  `espera_vaga` (5 s).
-- `tempo_maximo_turno` (padrão 180 s) fecha o turno com erro em vez de deixar o ator preso.
+- Each `EventoLlm::Texto` goes to the `Observador` right away: `chat` prints the piece (text) or a JSON line
+  (`--json`).
+- Ctrl-C in `chat` requests `Cancelamento`; the provider closes the stream with `ErroLlm::Cancelada` and the
+  turn is recorded as **failed** with the reason. The partial reply is **not** sent or recorded as an agent
+  message: it never reached the customer, and saving it would make the next turn "think" the agent had already
+  answered that.
+- Provider error: turn `failed` with the reason and nothing in the `outbox`. In `poph serve`, the entry is
+  postponed and retried, with a limit (see section 11, "Model failure"). In `poph chat`, the turn ends there, as before.
+- **No slot available** (instance, org, or agent slot, or provider call slot): the turn is recorded as failed and
+  the entry goes into the same ladder as a model failure (section 11, HR-26k). There is no longer any unlimited
+  retry on this path. The wait for a slot inside the turn is `espera_vaga` (5 s).
+- `tempo_maximo_turno` (default 180 s) closes the turn with an error instead of leaving the actor stuck.
 
-## 6. Registro em `turns`
+## 6. Record in `turns`
 
-`timings_json` guarda as etapas e, junto, `modelo` e `motivo_fim` — `turns` não tem coluna própria
-para esses dois, e a HR-04b fechou o esquema (migração nova exige autorização do mantenedor).
+`timings_json` stores the stages and, alongside them, `modelo` and `motivo_fim` — `turns` has no column of its
+own for these two, and HR-04b closed the schema (a new migration requires the maintainer's authorization).
 
 ```json
 {"fila_ms":2002,"montagem_ms":0,"primeiro_texto_ms":3719,"total_ms":4181,
  "rodadas_ferramenta":0,"modelo":"gemini-3.8-flash-tiered","motivo_fim":"concluido"}
 ```
 
-- `fila_ms`: da chegada da mensagem que disparou o turno até o turno começar (inclui a janela).
-- `montagem_ms`: montar prompt e ferramentas.
-- `primeiro_texto_ms`: do início do turno ao primeiro pedaço de texto do modelo.
-- `total_ms`: o turno inteiro (inclui as rodadas de ferramenta).
-- `tokens_entrada`/`tokens_saida`: somados entre as chamadas do turno.
-- `tools_json`: registro das ferramentas do turno. Guarda `{"nomes": [...], "chamadas": [...]}`:
-  `nomes` é a lista publicada como `tools` (toda chamada que chegou ao laço, inclusive a recusada,
-  como antes), e `chamadas` traz o detalhe por chamada (HR-47b, ver abaixo). `custo_micros` fica 0:
-  a config ainda não tem tabela de preço por modelo (limite conhecido da HR-10).
+- `fila_ms`: from the arrival of the message that triggered the turn until the turn starts (includes the window).
+- `montagem_ms`: assembling the prompt and the tools.
+- `primeiro_texto_ms`: from the start of the turn to the model's first piece of text.
+- `total_ms`: the whole turn (includes the tool rounds).
+- `tokens_entrada`/`tokens_saida`: summed across the turn's calls.
+- `tools_json`: record of the turn's tools. It stores `{"nomes": [...], "chamadas": [...]}`:
+  `nomes` is the list published as `tools` (every call that reached the loop, including the refused one, as
+  before), and `chamadas` holds the per-call detail (HR-47b, see below). `custo_micros` stays at 0: the config
+  still has no price table per model (known limit from HR-10).
 
-### Registro das chamadas de ferramenta (HR-47b)
+### Record of tool calls (HR-47b)
 
-Cada chamada que o modelo faz entra em `chamadas`, na ordem em que aconteceu:
+Each call the model makes goes into `chamadas`, in the order it happened:
 
 ```json
 {"nome":"consultar_base","rodada":0,"ordem":1,"estado":"executada","motivo":null,
  "duracao_ms":12,"argumentos":"{\"consulta\":\"prazo\"}","resultado":"Prazo de 5 dias úteis."}
 ```
 
-- `estado`: `executada` (a ferramenta rodou, mesmo quando devolveu erro de conteúdo ao modelo) ou
-  `recusada` (não rodou).
-- `motivo` da recusa, só quando `recusada`: `nao_habilitada` (fora da lista do agente, D-04),
-  `desconhecida` (nome que o processo não registra), `argumento_invalido`, `erro_de_execucao`,
-  `limite_de_chamadas` (teto por mensagem) e `fora_do_turno` (G3 em `nada` ou catálogo já
-  consultado no turno).
-- `duracao_ms`: tempo da execução; zero nas recusas antes de rodar.
-- `argumentos` e `resultado`: **resumos de texto**, cortados em 1024 caracteres com a marca
-  `…[cortado]`. Nos argumentos, campo com nome que indique segredo (`token`, `senha`, `secret`,
-  `chave`, `api_key`, `password`, `authorization`, `credencial`) tem o valor trocado por
-  `[redigido]`. O resultado é o texto que o modelo recebeu, sem redação (é saída das nossas
-  ferramentas).
-- Turno que falhou no provedor depois de já ter chamado ferramenta grava as chamadas feitas; turno
-  sem chamada grava `"chamadas": []`.
+- `estado` (state): `executada` (the tool ran, even when it returned a content error to the model) or
+  `recusada` (refused, did not run).
+- `motivo` (reason) for a refusal, only when `recusada`: `nao_habilitada` (not on the agent's list, D-04),
+  `desconhecida` (a name the process does not register), `argumento_invalido` (invalid argument),
+  `erro_de_execucao` (execution error), `limite_de_chamadas` (per-message ceiling), and `fora_do_turno`
+  (G3 at `nada`, or a catalog already consulted in the turn).
+- `duracao_ms`: execution time; zero for refusals before running.
+- `argumentos` and `resultado`: **text summaries**, cut at 1024 characters with the mark `…[cortado]`
+  (cut). In the arguments, a field whose name indicates a secret (`token`, `senha`, `secret`, `chave`,
+  `api_key`, `password`, `authorization`, `credencial`) has its value replaced with `[redigido]` (redacted).
+  The result is the text the model received, without redaction (it is output from our tools).
+- A turn that failed at the provider after already calling a tool records the calls made; a turn without
+  calls records `"chamadas": []`.
 
-## 7. Temperature e teto de tokens por agente
+## 7. Temperature and token limit per agent
 
-A HR-03 encontrou os dois campos gravados e ignorados no POP Atende. Aqui eles valem: o turno põe
-`temperatura` e `max_tokens` no `Pedido`, e o cliente do provedor prefere o que veio no pedido ao
-padrão do bloco `[llm]`. É o único acréscimo feito em `poph-core/src/llm/` (dois campos opcionais em
-`Pedido` e uma linha em `montar_corpo`), e nada muda para quem não os preenche.
+HR-03 found the two fields recorded and ignored in POP Atende. Here they take effect: the turn puts
+`temperatura` and `max_tokens` in the `Pedido`, and the provider client prefers what came in the request over
+the default in the `[llm]` block. This is the only addition made to `poph-core/src/llm/` (two optional fields
+in `Pedido` and one line in `montar_corpo`), and nothing changes for anyone who does not set them.
 
-## 8. O que a próxima tarefa consome
+## 8. What the next task consumes
 
-| Tarefa | O que usar |
+| Task | What to use |
 |---|---|
-| HR-14 (resumo rolante) | `Prompt`/`bloco_volatil` já recebe `resumo`; `contexto::Janela::folga()` diz quanto sobrou; gerar fora do caminho crítico e gravar com `Conversas::definir_resumo` |
-| HR-17 (RAG) | registrar `consultar_base` em `RegistroFerramentas`; a busca entra em paralelo antes da 1ª chamada e o resultado vai no bloco volátil (marcado como conteúdo não confiável) |
-| HR-18/19 (produtos, carrinho) | idem, por `RegistroFerramentas`; o `ContextoFerramenta` já traz org, conversa, agente e turno |
-| HR-20 (API/SSE) | `Motor::executar` + `Observador` que publique os eventos; `turns` já guarda o "por quê"; `Motor::com_cancelamento` serve ao desligamento ordenado |
-| HR-28 (Jev) | feito: `Motor::com_jev`, decisões em `turns.jev_json` e no `ResumoTurno`, em paralelo com a busca (ver `JEV.md`) |
-| HR-29 (G1) | feito: `Motor::com_handoff`, `AvaliadorGates::orientar`, `Conversas::transferir` (status + auditoria numa transação) e o evento `EventoTurno::Transferencia` (ver `JEV.md` §5-A) |
-| HR-30 (gate G2) | substituir a pausa fixa por "esperar mais/processar agora" |
-| HR-55 (carga) | 500 conversas ativas: `Atores` + `Motor` já são `Clone` barato e particionados por org |
+| HR-14 (rolling summary) | `Prompt`/`bloco_volatil` already receives `resumo`; `contexto::Janela::folga()` says how much room is left; generate outside the critical path and save with `Conversas::definir_resumo` |
+| HR-17 (RAG) | register `consultar_base` in `RegistroFerramentas`; the search runs in parallel before the 1st call, and the result goes into the volatile block (marked as untrusted content) |
+| HR-18/19 (products, cart) | same, through `RegistroFerramentas`; the `ContextoFerramenta` already carries org, conversation, agent, and turn |
+| HR-20 (API/SSE) | `Motor::executar` + an `Observador` that publishes the events; `turns` already stores the "why"; `Motor::com_cancelamento` serves the orderly shutdown |
+| HR-28 (Jev) | done: `Motor::com_jev`, decisions in `turns.jev_json` and in `ResumoTurno`, in parallel with the search (see `JEV.md`) |
+| HR-29 (G1) | done: `Motor::com_handoff`, `AvaliadorGates::orientar`, `Conversas::transferir` (status + audit in one transaction), and the `EventoTurno::Transferencia` event (see `JEV.md` §5-A) |
+| HR-30 (gate G2) | replace the fixed pause with "wait more / process now" |
+| HR-55 (load) | 500 active conversations: `Atores` + `Motor` are already cheap `Clone` and partitioned by org |
 
-## 9. Limites conhecidos
+## 9. Known limits
 
-- **Sem RAG, sem Jev, sem produtos, sem arquivos**: nesta tarefa o modelo responde só com as
-  instruções e o histórico. O toolset de produção está vazio de propósito.
-- **Resposta vazia**: se o modelo não devolver texto (por exemplo, só chamadas de ferramenta até o
-  limite), o turno fecha `done` com texto vazio e **nada** vai para a `outbox`. O Console vai mostrar
-  o turno sem resposta; não há retentativa.
-- **Hora em UTC**, sem fuso local: não há crate de data na lista do PRD §5.3. O Jev (HR-30) é quem
-  precisa da janela temporal em horário local.
-- **`custo_micros` é 0** (sem tabela de preço na configuração — limite herdado da HR-10).
-- **Mensagem agrupada**: os itens da `inbox` das mensagens que entraram no mesmo turno são
-  concluídos juntos. A busca é `listar_pendentes(org, 500)` por turno; com fila maior que isso o
-  item que sobrar é despachado de novo e cai em "mensagem já respondida" (turno `skipped`).
-- **`--conversa` de outro agente** é recusado; para trocar de agente abra conversa nova.
-- **Transporte real** (Evolution/plugin) é fase 4. O `TransporteConsole` confirma itens de texto; e
-  `file`/`presence` são confirmados sem imprimir, para não repetir envio para sempre.
-- **`chat` não passa pela `inbox`**: ele grava a mensagem e dispara o turno direto (`Tarefa::nova`),
-  porque um humano está esperando a resposta na mesma sessão. A idempotência da `inbox` é do canal
-  externo.
-- **Sanitização de texto**: o que o cliente escreve entra como conteúdo do usuário; não há
-  marcação de "conteúdo não confiável" nesta fase (entra com o RAG/arquivos, HR-17/23).
-- **aarch64**: só `cargo check` nos crates sem C (D-02/D-10); o binário ARM é a HR-56.
+- **No RAG, no Jev, no products, no files**: in this task the model answers only with the instructions and the
+  history. The production toolset is empty on purpose.
+- **Empty reply**: if the model returns no text (for example, only tool calls up to the limit), the turn closes
+  `done` with empty text and **nothing** goes to the `outbox`. The Console will show the turn without a reply;
+  there is no retry.
+- **Time in UTC**, without local time zone: there is no date crate in the PRD §5.3 list. The Jev (HR-30) is the
+  one that needs the time window in local time.
+- **`custo_micros` is 0** (no price table in the configuration — limit inherited from HR-10).
+- **Grouped message**: the `inbox` items of the messages that entered the same turn are completed together.
+  The lookup is `listar_pendentes(org, 500)` per turn; with a queue longer than that, the item left over is
+  dispatched again and falls into "message already answered" (turn `skipped`).
+- **`--conversa` from another agent** is refused; to switch agents, open a new conversation.
+- **Real transport** (Evolution/plugin) is phase 4. `TransporteConsole` confirms text items; `file`/`presence`
+  are confirmed without printing, so they are not sent forever.
+- **`chat` does not go through the `inbox`**: it records the message and triggers the turn directly
+  (`Tarefa::nova`), because a human is waiting for the reply in the same session. The `inbox` idempotency belongs
+  to the external channel.
+- **Text sanitization**: what the customer writes enters as user content; there is no "untrusted content" marking
+  in this phase (it comes with RAG/files, HR-17/23).
+- **aarch64**: only `cargo check` on the crates without C code (D-02/D-10); the ARM binary is HR-56.
 
-## 10. Demonstração (19/11/2026, gateway local `127.0.0.1:8045`, `gemini-3.8-flash-tiered`)
+## 10. Demonstration (19/11/2026, local gateway `127.0.0.1:8045`, `gemini-3.8-flash-tiered`)
 
-Agente criado pela CLI (`poph agent create`, `poph instructions create --file`), conversa de 5
-mensagens pelo `poph chat`. Transcrição completa em `/tmp/hr13-demo-final/transcricao.txt` (fora do
-repositório); os tempos vêm de `turns`:
+Agent created by the CLI (`poph agent create`, `poph instructions create --file`), a 5-message conversation through
+`poph chat`. Full transcript in `/tmp/hr13-demo-final/transcricao.txt` (outside the repository); the times come
+from `turns`:
 
-| # | fila | montagem | 1º texto | total | tokens (in/out) |
+| # | queue | assembly | 1st text | total | tokens (in/out) |
 |---|---|---|---|---|---|
 | 1 | 2002 ms | 0 ms | 3719 ms | 4181 ms | 414 / 43 |
 | 2 | 2003 ms | 0 ms | 4492 ms | 4854 ms | 471 / 48 |
@@ -207,151 +204,144 @@ repositório); os tempos vêm de `turns`:
 | 4 | 2003 ms | 0 ms | 5081 ms | 5712 ms | 592 / 78 |
 | 5 | 2001 ms | 0 ms | 3704 ms | 4237 ms | 677 / 41 |
 
-10 mensagens gravadas, 5 itens de saída `sent`, nenhuma entrada pendente. O `fila_ms` de ~2000 ms é
-a janela de agrupamento (padrão de 2 s do agente).
+10 messages recorded, 5 outgoing items `sent`, no pending entries. The `fila_ms` of ~2000 ms is the grouping
+window (the agent's default of 2 s).
 
-## 11. Turno no `poph serve` (HR-26h)
+## 11. Turn in `poph serve` (HR-26h)
 
-O servidor responde as mensagens do WhatsApp. O caminho é o mesmo do `poph chat`, com a entrada
-vindo da fila em vez do terminal:
+The server answers WhatsApp messages. The path is the same as `poph chat`, with the input coming from the queue
+instead of the terminal:
 
-1. O webhook da Evolution grava a mensagem do cliente na fila de entrada (`inbox`) e na conversa.
-2. O laço de despacho (`crates/poph-server/src/entrada_turno.rs`) lê a fila pendente a cada
-   `[turno] intervalo_despacho_ms` (padrão 1000 ms; aceita de 100 a 60000). Ele despacha **só a
-   entrada**: não envia nada. A saída é do laço do WhatsApp (`saida_whatsapp.rs`).
-3. O ator da conversa roda o turno. Um turno por vez por conversa é garantido pelo próprio ator.
-4. A resposta vai para a conversa como `out` e para a fila de saída; o laço do WhatsApp entrega.
+1. The Evolution webhook records the customer's message in the incoming queue (`inbox`) and in the conversation.
+2. The dispatch loop (`crates/poph-server/src/entrada_turno.rs`) reads the pending queue every
+   `[turno] intervalo_despacho_ms` (default 1000 ms; accepts 100 to 60000). It dispatches **only the input**: it
+   sends nothing. The output is handled by the WhatsApp loop (`saida_whatsapp.rs`).
+3. The conversation actor runs the turn. One turn at a time per conversation is guaranteed by the actor itself.
+4. The reply goes to the conversation as `out` and to the outgoing queue; the WhatsApp loop delivers it.
 
-A montagem do turno (motor, modelo, base, produtos, Jev, transferência) é a mesma nos dois
-comandos: `crates/poph/src/montagem.rs`. O `chat` mantém as métricas dele, fora do `/metrics`; o
-`serve` publica as dele no `/metrics`.
+Turn assembly (engine, model, base, products, Jev, transfer) is the same in both commands:
+`crates/poph/src/montagem.rs`. `chat` keeps its own metrics, outside `/metrics`; `serve` publishes its metrics
+on `/metrics`.
 
-### Quando não responde
+### When it does not reply
 
-A mensagem fica gravada e o item da fila é concluído **sem resposta**, com o motivo no turno
-(estado `ignorado`). Não é marcado como falha. Casos:
+The message stays recorded and the queue item is completed **without a reply**, with the reason on the turn
+(state `ignorado`, which means skipped). It is not marked as a failure. Cases:
 
-- conversa transferida para humano, ou fechada (até alguém reabrir);
-- agente inativo ou arquivado;
-- integração do WhatsApp inativa ou arquivada, ou que não existe mais.
+- conversation transferred to a human, or closed (until someone reopens it);
+- agent inactive or archived;
+- WhatsApp integration inactive or archived, or no longer exists.
 
-### Sem a chave do modelo
+### Without the model key
 
-Sem `ANTIGRAVITY_API_KEY`, o `poph serve` sobe normalmente e continua recebendo as mensagens, mas
-não roda turno. O aviso sai na subida. As mensagens ficam na fila (não se perdem) e são respondidas
-quando o servidor sobe com a chave. Trocar a chave ou o intervalo exige reiniciar o servidor.
+Without `ANTIGRAVITY_API_KEY`, `poph serve` starts normally and keeps receiving messages, but does not run turns.
+The warning is printed at startup. Messages stay in the queue (they are not lost) and are answered when the server
+starts with the key. Changing the key or the interval requires restarting the server.
 
-### Retomada na subida
+### Resuming at startup
 
-- Mensagem pendente na fila (chegou enquanto o servidor estava parado, ou com o turno desligado)
-  é despachada na primeira passagem do laço.
-- Resposta que estava em envio quando o processo caiu (`sending`) é reenviada pelo laço do
-  WhatsApp. O risco de duplicata na queda entre o envio e a confirmação segue o que já está
-  aceito (D11).
-- Mensagem que estava em turno quando o processo caiu continua na fila. Ao ser refeita, o turno
-  confere o histórico: se já há resposta depois dela, não responde de novo.
+- A pending message in the queue (it arrived while the server was stopped, or with turns turned off) is dispatched
+  on the first pass of the loop.
+- A reply that was being sent when the process crashed (`sending`) is resent by the WhatsApp loop. The risk of a
+  duplicate when the crash happens between sending and confirmation follows what has already been accepted (D11).
+- A message that was in a turn when the process crashed stays in the queue. When it is retried, the turn checks
+  the history: if there is already a reply after it, it does not reply again.
 
-### Falha do modelo: repetir depois, com limite (HR-26i)
+### Model failure: retry later, with a limit (HR-26i)
 
-Quando o modelo falha no meio de um turno (provedor fora do ar ou com erro depois das retentativas
-do próprio cliente, conexão caída, ou tempo máximo do turno estourado), a mensagem **não** fica
-sem resposta em silêncio. A escada é:
+When the model fails in the middle of a turn (provider down or erroring after the client's own retries, connection
+dropped, or the turn's maximum time exceeded), the message is **not** left without a reply silently. The ladder is:
 
-1. A tentativa falha. O turno fica `falhou` com o motivo, como antes.
-2. Os itens da fila que esse turno atenderia (a mensagem e as do mesmo grupo) são **adiados**: ficam
-   na fila, não vão para a saída, e contam mais uma tentativa. O instante da próxima tentativa é
-   gravado no banco (coluna `next_attempt_at` de `inbox`), então o adiamento sobrevive a reinício.
-3. Vencido o instante, o laço de despacho pega o item de novo e roda um turno novo.
-4. Se a tentativa der certo, a resposta segue o caminho normal (conversa, `outbox`, WhatsApp).
-5. Se o limite acabar, a entrada é **concluída sem resposta**, com o motivo gravado, e o turno fica
-   como falha definitiva. Não volta mais para a fila.
+1. The attempt fails. The turn stays `falhou` (failed) with the reason, as before.
+2. The queue items that this turn would have answered (the message and those in the same group) are **postponed**:
+   they stay in the queue, do not go to the outgoing queue, and count one more attempt. The time of the next attempt
+   is stored in the database (column `next_attempt_at` of `inbox`), so the postponement survives a restart.
+3. Once that time has passed, the dispatch loop picks up the item again and runs a new turn.
+4. If the attempt succeeds, the reply follows the normal path (conversation, `outbox`, WhatsApp).
+5. If the limit runs out, the entry is **completed without a reply**, with the reason stored, and the turn stays as a
+   final failure. It does not return to the queue.
 
-Padrões, todos em `[turno]` do `poph.toml`:
+Defaults, all under `[turno]` in `poph.toml`:
 
-| Chave | Padrão | Faixa | O que faz |
+| Key | Default | Range | What it does |
 |---|---|---|---|
-| `tentativas_falha_modelo` | 3 | 1 a 10 | Tentativas no total, contando a primeira. |
-| `atraso_falha_modelo_ms` | 30000 | 1000 a 600000 | Espera antes da segunda tentativa. Cada espera seguinte é quatro vezes a anterior, até 10 min. |
+| `tentativas_falha_modelo` | 3 | 1 to 10 | Total attempts, counting the first. |
+| `atraso_falha_modelo_ms` | 30000 | 1000 to 600000 | Wait before the second attempt. Each following wait is four times the previous one, up to 10 min. |
 
-Com os padrões, as esperas são 30 s (antes da 2ª tentativa) e 120 s (antes da 3ª). Com
-`tentativas_falha_modelo = 1`, a primeira falha já é definitiva. Mudar exige reiniciar o servidor.
+With the defaults, the waits are 30 s (before the 2nd attempt) and 120 s (before the 3rd). With
+`tentativas_falha_modelo = 1`, the first failure is final. Changing it requires restarting the server.
 
-Regras que valem em toda repetição:
+Rules that apply to every retry:
 
-- **Não duplica resposta.** Antes de chamar o modelo de novo, o turno refaz a análise do grupo: se
-  o agente já respondeu depois da mensagem (por exemplo, o turno anterior gravou a resposta e caiu
-  antes de fechar a entrada), conclui sem chamar o modelo.
-- **Não repete se já saiu algo.** Se o turno que falhou já tinha enfileirado saída para o cliente
-  (hoje, um arquivo da biblioteca enviado antes da falha), a falha é definitiva e a entrada é
-  concluída com o motivo. Repetir mandaria o arquivo de novo. O cliente recebe o arquivo e não
-  recebe o texto.
-- **Adiado não sai na saída.** Nada vai para a `outbox` por causa do adiamento.
+- **Does not duplicate a reply.** Before calling the model again, the turn redoes the analysis of the group: if the
+  agent has already replied after the message (for example, the previous turn saved the reply and crashed before
+  closing the entry), it completes without calling the model.
+- **Does not retry if something has already gone out.** If the failed turn had already queued output for the customer
+  (today, a library file sent before the failure), the failure is final and the entry is completed with the reason.
+  Retrying would send the file again. The customer receives the file and does not receive the text.
+- **Postponed items do not go to the output.** Nothing goes to the `outbox` because of the postponement.
 
-Classificação (HR-26i e HR-26k):
+Classification (HR-26i and HR-26k):
 
-- **Entra na escada:** falha do modelo (provedor fora do ar depois das retentativas, conexão caída,
-  tempo máximo do turno estourado) e falta de vaga (do turno ou do provedor). Nenhuma chamada chega
-  ao modelo na falta de vaga, então a repetição não duplica nada.
-- **Não repete, avisa na hora (HR-26k):** recusa do provedor (`Recusado`: chave recusada (401),
-  pedido recusado (400) e demais códigos que não são 429 nem 5xx). A entrada é concluída sem
-  resposta na primeira tentativa, o turno fica `falhou` e sai um `WARN` com o motivo sanitizado.
-- **Não repete:** erro de configuração local, pedido inválido e cancelamento.
+- **Enters the ladder:** model failure (provider down after the retries, dropped connection, turn's maximum time
+  exceeded) and no slot available (turn or provider). No call reaches the model when there is no slot, so the retry
+  does not duplicate anything.
+- **Does not retry, warns right away (HR-26k):** provider refusal (`Recusado`: key refused (401), request refused (400),
+  and other codes that are neither 429 nor 5xx). The entry is completed without a reply on the first attempt, the turn
+  stays `falhou`, and a `WARN` is logged with the sanitized reason.
+- **Does not retry:** local configuration error, invalid request, and cancellation.
 
-A falta de vaga usa o mesmo `tentativas_falha_modelo` e `atraso_falha_modelo_ms`. Não há knob
-próprio: é a mesma escada de capacidade, e um knob separado só criaria mais uma configuração para
-o mesmo efeito.
+The no-slot case uses the same `tentativas_falha_modelo` and `atraso_falha_modelo_ms`. There is no separate knob: it is
+the same capacity ladder, and a separate knob would only add another setting for the same effect.
 
-Métricas no `/metrics`: `poph_turnos_falha_modelo_adiadas_total` (repetições agendadas, inclui falta
-de vaga), `poph_turnos_falha_modelo_definitivas_total` (mensagens concluídas sem resposta: depois do
-limite ou por recusa do provedor) e `poph_turnos_falha_modelo_recusadas_total` (só as recusas; parte
-das definitivas).
-Logs: uma linha `WARN` por adiamento (com a tentativa, de quantas e a espera), uma por desistência
-(`tentativas esgotadas; mensagem concluída sem resposta`) e uma por recusa do provedor (`provedor
-recusou o pedido: ... confira a chave e o modelo do agente`), todas com o motivo sanitizado.
+Metrics on `/metrics`: `poph_turnos_falha_modelo_adiadas_total` (scheduled retries, includes no-slot),
+`poph_turnos_falha_modelo_definitivas_total` (messages completed without a reply: after the limit or because of a provider
+refusal), and `poph_turnos_falha_modelo_recusadas_total` (refusals only; part of the final ones).
+Logs: one `WARN` line per postponement (with the attempt, out of how many, and the wait), one per give-up
+(`tentativas esgotadas; mensagem concluída sem resposta`, "attempts exhausted; message completed without a reply"), and one per
+provider refusal (`provedor recusou o pedido: ... confira a chave e o modelo do agente`, "provider refused the request: ...
+check the agent's key and model"). All with the sanitized reason.
 
-### Registro e métricas
+### Record and metrics
 
-- Uma linha `INFO` por turno que termina, com org, conversa, turno, estado, duração e tokens. Turno
-  sem resposta sai em `INFO` com o motivo. Turno que falhou sai em `WARN` com o motivo.
-- Nenhuma linha leva texto do cliente ou da resposta, telefone, JID, chave ou segredo. O motivo
-  corta em 160 caracteres e esconde números longos e identificadores com `@`.
-- No `/metrics`: `poph_turnos_iniciados_total`, `poph_turnos_concluidos_total`,
-  `poph_turnos_falhos_total`, `poph_turnos_ignorados_total`, as duas de falha do modelo (seção acima)
-  e as medidas de duração.
+- One `INFO` line per turn that ends, with org, conversation, turn, state, duration, and tokens. A turn without a reply
+  goes out as `INFO` with the reason. A failed turn goes out as `WARN` with the reason.
+- No log line carries the customer's or the reply's text, phone number, JID, key, or secret. The reason is cut at
+  160 characters, and long numbers and identifiers with `@` are hidden.
+- On `/metrics`: `poph_turnos_iniciados_total`, `poph_turnos_concluidos_total`, `poph_turnos_falhos_total`,
+  `poph_turnos_ignorados_total`, the two model-failure counters (section above), and the duration measures.
 
-### O que não faz (e limites)
+### What it does not do (and limits)
 
-- **Falha do modelo sem resposta no fim.** Esgotadas as tentativas, a mensagem é concluída **sem
-  resposta** (não há mensagem de instabilidade ao cliente). A decisão foi repetir com limite, não
-  avisar o cliente.
-- **Cota por minuto da org não entra no turno.** O limitador tem a conta (`consumir_cota`), mas o
-  caminho do turno não a chama hoje, então ela não limita nem adia nada. Se for ligada, entra na
-  mesma escada.
-- **Falta de vaga é provada no motor, não no servidor completo.** O teste de servidor com Evolution
-  falsa não segura vaga ocupada; a escada de falta de vaga está provada em `poph-agent`.
-- **Recusa do provedor que é transitória na prática.** Um 400 causado por uma falha momentânea do
-  provedor conta como recusa e não é repetido. Hoje a classificação não distingue essas duas coisas.
-- **Falha de TLS não é repetida, mas entra na escada.** O provedor marca TLS como não repetível; o
-  turno ainda a trata como falha do modelo (decisão da HR-26i, sem mudança nesta rodada).
-- **Turno interrompido pelo processo** fica com estado `rodando` no histórico. A mensagem é refeita
-  na subida, mas o registro antigo não é fechado.
-- **Intervalo e chaves** são lidos na subida: mudar exige reiniciar o servidor.
-- **Provado com LLM falso** (`ProvedorFake` no teste, servidor falso de SSE no smoke) e Evolution
-  falsa. Nenhum teste fala com o modelo real nem com número de WhatsApp.
+- **Model failure with no reply at the end.** After the attempts run out, the message is completed **without a reply**
+  (there is no instability message to the customer). The decision was to retry with a limit, not to warn the customer.
+- **Per-minute quota of the org does not enter the turn.** The limiter has the accounting (`consumir_cota`), but the turn
+  path does not call it today, so it does not limit or postpone anything. If it is turned on, it enters the same ladder.
+- **No-slot is proven in the engine, not in the full server.** The server test with a fake Evolution does not hold an
+  occupied slot; the no-slot ladder is proven in `poph-agent`.
+- **Provider refusal that is transient in practice.** A 400 caused by a momentary provider failure counts as a refusal and
+  is not retried. Today the classification does not distinguish the two.
+- **TLS failure is not retried, but enters the ladder.** The provider marks TLS as non-retryable; the turn still treats it
+  as a model failure (HR-26i decision, unchanged in this round).
+- **Turn interrupted by the process** stays with state `rodando` (running) in the history. The message is retried at
+  startup, but the old record is not closed.
+- **Interval and keys** are read at startup: changing them requires restarting the server.
+- **Proven with a fake LLM** (`ProvedorFake` in the test, a fake SSE server in the smoke test) and a fake Evolution.
+  No test talks to the real model or to a WhatsApp number.
 
-### Como provar
+### How to prove it
 
 ```
 cd apps/pop-harness
 cargo test -p poph-server --test turno_whatsapp --locked
 ```
 
-Sete casos: mensagem vira resposta uma vez (com contagem de chamadas e da chave só no cabeçalho);
-reentrega não abre segundo turno; conversa transferida e integração inativa não respondem; sem chave
-a mensagem fica na fila e é respondida na subida; resposta em envio na queda sai na subida; métricas
-no `/metrics`; logs sem dado sensível (com captura que prova que a linha existe).
+Seven cases: a message becomes a reply once (with a count of calls, and the key only in the header); a redelivery does not
+open a second turn; a transferred conversation and an inactive integration do not reply; without the key the message stays
+in the queue and is answered at startup; a reply that was being sent when the crash happened goes out at startup; metrics on
+`/metrics`; logs without sensitive data (with a capture that proves the line exists).
 
-Falha do modelo (HR-26i), com provedor falso e Evolution falsa:
+Model failure (HR-26i), with a fake provider and a fake Evolution:
 
 ```
 cargo test -p poph-agent --test turno --locked falha_do_modelo
@@ -359,7 +349,7 @@ cargo test -p poph-agent --test biblioteca_arquivos --locked falha_do_modelo
 cargo test -p poph-server --test turno_whatsapp --locked falha_do_modelo
 ```
 
-Falta de vaga e recusa do provedor (HR-26k), com provedor falso e Evolution falsa:
+No slot and provider refusal (HR-26k), with a fake provider and a fake Evolution:
 
 ```
 cargo test -p poph-agent --test turno --locked falta_de_vaga
@@ -367,130 +357,147 @@ cargo test -p poph-agent --test turno --locked provedor_que_recusa
 cargo test -p poph-server --test turno_whatsapp --locked recusa_do_provedor
 ```
 
-Provas: falta de vaga do turno em todas as tentativas (três turnos falhos, nenhuma chamada ao modelo,
-nada na saída, nenhuma repetição depois do limite); falta de vaga na primeira e resposta na segunda
-(uma chamada, uma resposta, uma saída); falta de vaga do provedor com a mesma escada (nenhuma chamada
-sai enquanto a vaga está ocupada); recusa do provedor (401) com uma única chamada, sem adiamento, com
-métrica e aviso no log sem dado sensível.
+Proofs: no turn slot in every attempt (three failed turns, no call to the model, nothing in the output, no retry after the
+limit); no slot on the first try and a reply on the second (one call, one reply, one output); provider slot missing with the
+same ladder (no call goes out while the slot is occupied); provider refusal (401) with a single call, no postponement, with
+a metric and a warning in the log without sensitive data.
 
-Provas: duas falhas e uma resposta (três chamadas ao modelo, uma saída, espera crescente antes de
-cada tentativa, nada despachado antes do instante); três falhas (três chamadas, entrada concluída,
-sem saída, sem nova tentativa depois); limite de uma tentativa; tempo máximo entra na mesma escada;
-resposta já gravada não chama o modelo; adiado sai da fila junto com a mensagem nova do cliente;
-arquivo já enviado não é repetido; pelo servidor, métricas e logs sem dado sensível.
+Proofs: two failures and one reply (three calls to the model, one output, increasing wait before each attempt, nothing
+dispatched before the time); three failures (three calls, entry completed, no output, no new attempt afterwards); a one-attempt
+limit; maximum time enters the same ladder; a reply already saved does not call the model; a postponed item leaves the queue
+together with the customer's new message; a file already sent is not repeated; through the server, metrics and logs without
+sensitive data.
 
-## 12. Chat de teste do Console: SSE, anexos e cancelamento (HR-22)
+## 12. Console test chat: SSE, attachments, and cancellation (HR-22)
 
-A aba de chat de teste do Console (HR-46) conversa com o mesmo motor da produção: a rota
-`POST /admin/v1/orgs/{org}/agents/{agente}/test-chat/{conversa}/messages` grava a mensagem do
-cliente e roda um turno direto no `Motor`, com o mesmo provedor, Jev, base, produtos e ferramentas
-do `poph serve`. Não é um motor paralelo de teste.
+The Console's test chat tab (HR-46) talks to the same engine as production: the route
+`POST /admin/v1/orgs/{org}/agents/{agente}/test-chat/{conversa}/messages` records the customer's message and runs a turn
+directly on the `Motor`, with the same provider, Jev, base, products, and tools as `poph serve`. It is not a separate test engine.
 
-- **Conversa de teste:** conversa comum com `channel = "test"` e sem integração, criada por
-  `POST …/test-chat`. Memória zerada é consequência de ser nova (`summary` nulo); o histórico
-  completo (mensagens, anexos, turnos) volta por `GET …/test-chat/{conversa}`.
-- **SSE:** o turno roda numa tarefa e cada evento do `Observador` vira um evento
-  `text/event-stream` com `id` sequencial: `mensagem` (o que foi gravado, antes de abrir o turno),
-  `inicio`, `texto` (deltas na ordem), `base`, `ferramenta`, `transferencia` e `fim` (ou `erro`).
-  O `Fim` do motor não é repassado: o `fim` do SSE é montado do `ResumoTurno`, com turno, tokens,
-  erros e tempos. Contrato em `docs/API.md`.
-- **Um turno por conversa:** a reserva é em memória, por instância (`Estado::reservar_turno_de_teste`).
-  Com um turno em voo, a outra conexão recebe `409 turno_em_andamento` antes de qualquer gravação —
-  a mensagem da segunda aba não entra no turno que já está rodando.
-- **Desconexão:** o fluxo do SSE carrega um guarda com o cancelamento do turno e a reserva. Quando
-  o cliente fecha a conexão, o cancelamento é acionado, o turno termina `failed` com o motivo
-  (`Cancelada`) e **nada** vai para a `outbox`: resposta parcial nunca chegou ao cliente. A
-  reserva é liberada no mesmo instante, então a conversa aceita a próxima mensagem.
-- **Saída:** o texto já saiu pelo SSE; ao terminar, o servidor confirma a `outbox` do console com
-  `TransporteConsole::silencioso`, para o item não ficar pendente na fila.
-- **Anexos:** o corpo é `multipart/form-data` (`text` + `file` repetível) e cada arquivo passa pelo
-  `poph_files::receber` da HR-23 (16 MB, tipo pelo conteúdo, extração isolada em `poph-extrator`).
-  O texto extraído entra no prompt pelo caminho da HR-35, entre as marcas de conteúdo não
-  confiável, e a imagem vai como parte multimodal (§13). Limite de corpo da rota: 24 MB.
-- **Sem a chave do modelo** não há motor no estado: a rota responde `503 turno_indisponivel` antes
-  de gravar a mensagem.
+- **Test conversation:** a normal conversation with `channel = "test"` and no integration, created by `POST …/test-chat`.
+  Zeroed memory is a consequence of being new (`summary` is null); the full history (messages, attachments, turns) comes back
+  through `GET …/test-chat/{conversa}`.
+- **SSE:** the turn runs in a task, and each `Observador` event becomes a `text/event-stream` event with a sequential `id`:
+  `mensagem` (what was recorded, before the turn opens), `inicio` (start), `texto` (deltas in order), `base`, `ferramenta`
+  (tool), `transferencia` (transfer), and `fim` (end) or `erro` (error). The `Fim` of the engine is not passed through: the SSE
+  `fim` is built from the `ResumoTurno`, with turn, tokens, errors, and times. Contract in `docs/API.md`.
+- **One turn per conversation:** the reservation is in memory, per instance (`Estado::reservar_turno_de_teste`). With a turn in
+  flight, the other connection receives `409 turno_em_andamento` (turn in progress) before any recording — the second tab's
+  message does not enter the turn that is already running.
+- **Disconnection:** the SSE flow carries a guard with the turn's cancellation and the reservation. When the client closes the
+  connection, cancellation is triggered, the turn ends `failed` with the reason (`Cancelada`, cancelled), and **nothing** goes to
+  the `outbox`: a partial reply never reached the client. The reservation is released at that same instant, so the conversation
+  accepts the next message.
+- **Output:** the text has already gone out through SSE; when it finishes, the server confirms the console's `outbox` with
+  `TransporteConsole::silencioso` (silent console transport), so the item does not stay pending in the queue.
+- **Attachments:** the body is `multipart/form-data` (`text` + `file`, repeatable), and each file goes through
+  `poph_files::receber` from HR-23 (16 MB, type detected by content, extraction isolated in `poph-extrator`). The extracted text
+  enters the prompt through the HR-35 path, between the untrusted-content marks, and the image goes as a multimodal part (§13).
+  Body limit for the route: 24 MB.
+- **Without the model key** there is no engine in the state: the route responds `503 turno_indisponivel` (turn unavailable) before
+  recording the message.
 
-## 13. Imagem do cliente no prompt (HR-23b)
+## 13. Customer image in the prompt (HR-23b)
 
-O turno lê os anexos de cada mensagem do cliente no histórico. Até a HR-22 só o texto extraído
-(`attachments.extracted_text`) entrava no prompt: imagem era gravada, aparecia no histórico e **não**
-chegava ao modelo — mensagem só com imagem gerava pedido sem conteúdo. Agora:
+The turn reads the attachments of each customer message in the history. Until HR-22, only the extracted text
+(`attachments.extracted_text`) went into the prompt: an image was recorded, appeared in the history, and **did not** reach the
+model — a message with only an image produced a request with no content. Now:
 
-- **Imagem vai como parte multimodal.** Anexo cujo MIME real é `image/jpeg`, `image/png`,
-  `image/gif` ou `image/webp` vira `Parte::Imagem { mime, bytes }` na mesma posição em que o texto
-  do arquivo entrava: numa mensagem de usuário **depois** da mensagem do cliente que trouxe o
-  arquivo. Os bytes vêm do blob (`data/blobs/<org>/<sha256>`) pelo hash gravado em `attachments`;
-  nada é reextraído.
-- **Documento continua como dado, nunca instrução.** O texto extraído do PDF/Office mantém o aviso
-  `AVISO_NAO_CONFIAVEL` e as marcas do bloco não confiável (HR-35). Uma mensagem com imagem e
-  documento leva as duas coisas: o texto marcado e a imagem.
-- **Mensagem só com arquivo.** Se o texto da mensagem é vazio e há anexo, a mensagem de texto em
-  branco não entra no pedido: o conteúdo é a parte do arquivo. Antes, o pedido ia com um texto vazio.
-- **Tetos do turno** (constantes em `crates/poph-agent/src/turno/mod.rs`), contados na janela de
-  contexto inteira, não por mensagem:
-  - `MAX_IMAGENS_POR_TURNO` = **4** imagens;
-  - `MAX_BYTES_POR_IMAGEM` = **5 MB** por imagem (o recebimento aceita 16 MB; no pedido a imagem
-    vira base64, ~4/3 do tamanho);
-  - `MAX_BYTES_DE_IMAGENS_POR_TURNO` = **8 MB** somados.
-  O que passa do teto é **omitido** com `tracing::warn!` (id do anexo e tamanho, nunca bytes nem
-  base64) e o turno segue.
-- **Degradação.** Sem configuração de arquivos no motor (`Motor::com_arquivos`), sem blob no disco,
-  hash inválido ou blob acima do limite de leitura: o anexo fica de fora, com registro no log, e o
-  turno **nunca** falha por causa da imagem. O texto do documento, se houver, continua indo.
-- **Quem liga a configuração:** a raiz de composição (`crates/poph/src/montagem.rs`) passa
-  `ConfigArquivos::padrao(configuracao.blobs())` ao motor. É a mesma pasta que o recebimento e o
-  chat de teste usam para gravar o blob.
-- **Provedor que não aceite imagem:** não há declaração de capacidade por provedor hoje — o
-  `validar_pedido` do `poph-core` recusa MIME fora da lista e imagem vazia antes do envio, e os
-  provedores configurados (antigravity) recebem imagem. Se um provedor passar a recusar, o caminho
-  atual é a falha do turno (retomada do HR-26i), não um envio sem a parte: a degradação por
-  capacidade fica para quando existir essa configuração.
-- **Como provar:** `cargo test -p poph-agent --test imagem_anexo` (5 testes: só imagem, imagem +
-  documento, blob ausente, teto, e turno sem configuração de arquivos).
+- **The image goes as a multimodal part.** An attachment whose real MIME type is `image/jpeg`, `image/png`, `image/gif`, or
+  `image/webp` becomes `Parte::Imagem { mime, bytes }` in the same position where the file's text used to go: in a user message
+  **after** the customer message that brought the file. The bytes come from the blob (`data/blobs/<org>/<sha256>`) by the hash stored
+  in `attachments`; nothing is re-extracted.
+- **A document stays data, never instructions.** The extracted text of the PDF/Office file keeps the `AVISO_NAO_CONFIAVEL` notice
+  (untrusted-content warning) and the marks of the untrusted block (HR-35). A message with an image and a document carries both:
+  the marked text and the image.
+- **File-only message.** If the message text is empty and there is an attachment, the blank text message does not go into the
+  request: the content is the file's part. Before, the request went with an empty text.
+- **Turn ceilings** (constants in `crates/poph-agent/src/turno/mod.rs`), counted over the whole context window, not per message:
+  - `MAX_IMAGENS_POR_TURNO` = **4** images;
+  - `MAX_BYTES_POR_IMAGEM` = **5 MB** per image (intake accepts 16 MB; in the request the image becomes base64, ~4/3 of its size);
+  - `MAX_BYTES_DE_IMAGENS_POR_TURNO` = **8 MB** in total.
+  What goes over the ceiling is **omitted** with `tracing::warn!` (attachment id and size, never bytes or base64) and the turn continues.
+- **Degradation.** Without the file configuration in the engine (`Motor::com_arquivos`), without a blob on disk, invalid hash, or a blob
+  above the read limit: the attachment is left out, with a log entry, and the turn **never** fails because of the image. The document
+  text, if any, still goes.
+- **Who turns the configuration on:** the composition root (`crates/poph/src/montagem.rs`) passes `ConfigArquivos::padrao(configuracao.blobs())`
+  to the engine. It is the same folder that intake and the test chat use to write the blob.
+- **Provider that does not accept images:** there is no per-provider capability declaration today — `validar_pedido` in `poph-core`
+  refuses MIME types outside the list and empty images before sending, and the configured providers (antigravity) accept images. If a
+  provider starts refusing them, the current path is a turn failure (the HR-26i retry), not a send without the part: degradation by
+  capability waits until that configuration exists.
+- **How to prove it:** `cargo test -p poph-agent --test imagem_anexo` (5 tests: image only, image + document, missing blob, ceiling,
+  and turn without file configuration).
 
-## 14. Queda e recuperação (HR-57)
+## 14. Crash and recovery (HR-57)
 
-O que acontece quando o processo morre (`kill -9`, falta de energia, OOM) no meio do atendimento.
-A regra é: **a mensagem do cliente não se perde, o turno não fica preso em "em andamento", a
-conversa volta a atender e a resposta não sai duas vezes.**
+What happens when the process dies (`kill -9`, power loss, OOM) in the middle of a service. The rule is: **the customer's message is
+not lost, the turn does not get stuck as "in progress", the conversation goes back to service, and the reply does not go out twice.**
 
-- **Garantias que já vinham da fila.** O item da `inbox` só é concluído quando o turno termina
-  (`Fluxo::concluir_entrada`); queda no meio deixa o item pendente e a subida o despacha de novo
-  (pelo menos uma vez). Se a resposta já estava gravada depois da mensagem do cliente, o turno
-  refaz a análise (`analisar`) e conclui como `skipped` sem chamar o modelo — é o que impede
-  resposta duplicada (HR-12).
-- **Turno interrompido não fica `running`.** Na subida, `entrada_turno::recuperar_turnos_interrompidos`
-  fecha como `failed` todo turno que ficou `running` e começou **até** o instante da subida, com o
-  erro `interrompido: o processo caiu no meio do atendimento; a mensagem foi mantida`
-  (`Turnos::falhar_orfaos`, leitura/escrita aditiva, sem migração). Turno aberto nesta instância
-  depois da subida nunca é tocado. A varredura roda em `servir_em`, antes de qualquer atendimento.
-- **Resposta e fila de saída na mesma transação.** A resposta do agente e o item da `outbox` são
-  gravados por `Mensagens::gravar_com_saida` numa escrita só (o mesmo vale para a mensagem de
-  transferência, a do G7 e a do G8). Antes eram duas escritas: morte entre elas deixava a resposta
-  no histórico sem nunca ser enviada ao cliente.
-- **Saída presa em `sending`.** Item de WhatsApp em `sending` é reenviado pelo laço de saída (D11 —
-  pode duplicar no canal, é o preço da entrega pelo menos uma vez). Item de conversa do console
-  (sem integração) é confirmado na subida por `enviar_pendentes_do_console` com o transporte
-  silencioso: o texto já foi mostrado ao operador pelo stream e o item não pode ficar preso.
-- **Trava de "um turno por conversa" (chat de teste).** A reserva é em memória, por instância, com
-  validade de 30 minutos (`Estado::VALIDADE_DA_RESERVA`). Uma queda leva a memória junto, então a
-  conversa já aceita mensagem na primeira requisição depois da subida; a validade existe para uma
-  reserva que escape dentro de um processo vivo (bug, cancelamento que não passou pelo `Drop`).
-- **Falha do provedor é estado controlado, não turno pendurado.** Provedor fora do ar, 5xx, tempo
-  esgotado ou stream cortado: o turno termina `failed` com o motivo gravado, sem resposta inventada
-  e sem texto parcial virando resposta. No WhatsApp, a falha do modelo entra na escada de repetição
-  do HR-26i (com limite) e, se já havia saída enfileirada, não repete, para não duplicar.
-- **Falha do Jev não derruba o turno.** O lote que falha vira fallback registrado em
-  `turns.jev_json.chamada.falha` e o turno segue (`cargo test -p poph-agent --test jev_turno`).
-- **Limite conhecido:** mensagem do chat de teste do Console (`channel = "test"`) **não** está na
-  `inbox`. Morta antes de o turno terminar, ela fica gravada e sem resposta automática depois da
-  subida (o operador reenvia). O caminho de canal (WhatsApp) retoma e responde uma vez.
-- **Como provar:**
-  - `cargo test -p poph-server --test resiliencia_queda` — turno órfão fechado na subida, conversa
-    volta a atender, provedor indisponível, stream cortado, reserva vencida e saída do console presa
-    em `sending`;
-  - `cargo test -p poph-server --test turno_whatsapp` — `turno_interrompido_por_queda_e_retomado_uma_vez_na_subida`
-    (uma resposta, um envio) e `resposta_que_ficou_em_envio_na_queda_sai_na_subida`;
-  - `cargo test -p poph-store --test armazenamento` — `turno_orfaos_fecha_so_os_comecados_antes_da_subida`
-    e `resposta_e_item_de_saida_entram_na_mesma_escrita`;
-  - roteiro com o binário real, `kill -9` em seis pontos, em `/tmp/hr57-run/queda.py`.
+- **Guarantees that already came from the queue.** The `inbox` item is only completed when the turn ends (`Fluxo::concluir_entrada`); a
+  crash in the middle leaves the item pending and startup dispatches it again (at least once). If the reply was already saved after the
+  customer's message, the turn redoes the analysis (`analisar`) and completes as `skipped` without calling the model — this is what
+  prevents a duplicate reply (HR-12).
+- **An interrupted turn does not stay `running`.** At startup, `entrada_turno::recuperar_turnos_interrompidos` closes as `failed` every turn
+  that is still `running` and started **up to** the startup instant, with the error `interrompido: o processo caiu no meio do atendimento; a
+  mensagem foi mantida` (interrupted: the process crashed in the middle of the service; the message was kept)
+  (`Turnos::falhar_orfaos`, additive read/write, no migration). A turn opened in this instance after startup is never touched. The sweep runs
+  in `servir_em`, before any service.
+- **Reply and outgoing queue in the same transaction.** The agent's reply and the `outbox` item are saved by `Mensagens::gravar_com_saida` in a
+  single write (the same goes for the transfer message, the G7 message, and the G8 message). Before, they were two writes: a death between them
+  left the reply in the history and never sent to the customer.
+- **Output stuck in `sending`.** A WhatsApp item in `sending` is resent by the outgoing loop (D11 — it may duplicate on the channel, which is the
+  price of at-least-once delivery). A console conversation item (no integration) is confirmed at startup by `enviar_pendentes_do_console` with the
+  silent transport: the text was already shown to the operator through the stream, and the item must not get stuck.
+- **"One turn per conversation" lock (test chat).** The reservation is in memory, per instance, with a 30-minute validity
+  (`Estado::VALIDADE_DA_RESERVA`). A crash takes the memory with it, so the conversation accepts a message on the first request after startup;
+  the validity exists for a reservation that escapes inside a live process (bug, cancellation that did not go through `Drop`).
+- **Provider failure is a controlled state, not a hung turn.** Provider down, 5xx, timeout, or a cut stream: the turn ends `failed` with the
+  reason recorded, with no invented reply and no partial text becoming a reply. On WhatsApp, the model failure enters the HR-26i retry ladder
+  (with a limit) and, if output was already queued, does not retry, to avoid duplication.
+- **Jev failure does not bring down the turn.** The batch that fails becomes a fallback recorded in `turns.jev_json.chamada.falha` and the turn
+  continues (`cargo test -p poph-agent --test jev_turno`).
+- **Known limit:** a message from the Console's test chat (`channel = "test"`) is **not** in the `inbox`. If it dies before the turn ends, it stays
+  recorded and without an automatic reply after startup (the operator resends it). The channel path (WhatsApp) resumes and replies once.
+- **How to prove it:**
+  - `cargo test -p poph-server --test resiliencia_queda` — orphan turn closed at startup, conversation goes back to service, provider unavailable,
+    cut stream, expired reservation, and console output stuck in `sending`;
+  - `cargo test -p poph-server --test turno_whatsapp` — `turno_interrompido_por_queda_e_retomado_uma_vez_na_subida` (one reply, one send) and
+    `resposta_que_ficou_em_envio_na_queda_sai_na_subida`;
+  - `cargo test -p poph-store --test armazenamento` — `turno_orfaos_fecha_so_os_comecados_antes_da_subida` and
+    `resposta_e_item_de_saida_entram_na_mesma_escrita`;
+  - run with the real binary, `kill -9` at six points, in `/tmp/hr57-run/queda.py`.
+
+## 15. Flows in the turn (FX-23, FX-24, FX-25)
+
+When the engine is on (`[fluxos] ativo = true`), a turn runs the flow step before the text model is called:
+
+1. **Active execution on the Case.** The block of the current step (`poph_fluxos::renderizar_bloco`) goes into the
+   volatile part of the prompt. The Jev is not asked: a Case has at most one active execution.
+2. **No active execution and flows granted to the agent.** The state sent to the Jev carries the list (name and
+   trigger) and gate G9 chooses one. A confident choice is validated by the code (flow of the org, active, granted to
+   the agent of the Case, published revision) and opens the execution in one write: the first step, the
+   `fluxo_iniciado` event and the entry effects. The prompt starts with the block of the entry step. See `JEV.md` §5-I.
+3. **Reserve.** If the Jev is down, the gate is off, the answer is unusable or the choice fails validation, nothing
+   starts and the model receives the catalogue of flows with the `fluxo_iniciar` tool.
+4. **`nenhum` or low confidence.** Nothing starts, and the catalogue does not go into the prompt.
+
+Tools offered to the model (filtered by the agent's enabled list, D-04):
+
+| Tool | When it is offered | What it does |
+|---|---|---|
+| `fluxo_executar_acao(acao, campos?, chave_idempotencia?)` | with an active execution | validates and records the action of the current step, actor `agente` |
+| `fluxo_abandonar(motivo)` | with an active execution | abandons the execution, actor `agente` |
+| `fluxo_iniciar(fluxo_id)` | only in the reserve (step 3) | validates like G9 and opens the execution |
+| `atendimento_encerrar` | always registered, whatever the engine setting | closes the conversation and its Case (FX-25) |
+
+Rules that the code keeps: the actor is set by the code, never taken from the model's arguments; there is no
+auto-transition (an action that is not valid on the current step is refused with the list of valid ones, and nothing
+is recorded); the transition is written atomically by `Store::execucoes()` (`aplicar_transicao`); effects are queued
+and delivered after the text of the turn is final; the model's answer has no internal ids.
+
+A database or read error inside this step never breaks the turn: the turn continues without a flow, and the reason
+goes to the log.
+
+Tests: `poph-agent/tests/fluxo_turno.rs`, `poph-agent/tests/fluxo_ferramentas.rs`, `poph-jev/tests/g9_fluxo.rs`; end to
+end in `poph-server/tests/fluxos_e2e.rs`. Details in [`FLUXOS.md`](FLUXOS.md) §3.

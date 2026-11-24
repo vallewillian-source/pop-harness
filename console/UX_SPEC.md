@@ -95,20 +95,40 @@ O Console é servido como Single Page Application (SPA) embutida no binário `po
 ### 2.2 Estrutura do Shell Global (App Shell)
 
 O layout divide-se em três zonas fixas:
-1. **Sidebar Retrátil (240 px fixos):**
-   - **Cabeçalho:** Logotipo "POP HARNESS", badge de runtime "CORE RUST" e versão do binário.
-   - **Seletor de Organização:** Dropdown com busca rápida. Quando logado com token de org dedicada, o seletor fica bloqueado exibindo a org única.
-   - **Navegação Agrupada:**
-     - *GESTÃO:* Organizações, Categorias, Departamentos, Agentes.
-     - *OPERAÇÃO:* Saúde da Instância, Topologia do Cluster, Plugins Externos, Importar / Exportar.
-   - **Rodapé de Telemetria:** Indicador de pulso verde com o nó local (`node-01:8080`), escopo do token ativo e atalho para o diálogo de atalhos de teclado (`[?]`).
+1. **Sidebar Retrátil (240 px; 64 px no modo foco):**
+   - **Topo do rail (CF-06, rodada 1):** o topo depende da tela, como no desenho — nunca os dois.
+     - **Na lista (`/orgs`, prancha 01): o chip de identidade do cluster.** Caixa de 32 px de altura, fundo `--pop-surface-glass`, borda de 1 px, glifo de servidor de 14 px em `--pop-text-muted` (o mesmo desenho do FigCraft; a SofaUI não tem esse glifo), nome "POP Harness Cluster" em 12,5 px Medium e o ponto de situação à direita. O ponto é verde com a instância respondendo, vermelho quando `/healthz` responde degradada (503) ou não responde, e neutro enquanto a saúde não chegou; a situação também vai no `title` e num texto só para leitor de tela ("POP Harness Cluster · instância respondendo"). No modo foco vira um tile de 32×32 com o nome no `title`; abaixo de 900 px também.
+     - **Com uma organização aberta (`/orgs/:orgId/...`, pranchas 02 e 05): o seletor de organização (combobox).** Caixa de 32 px com fundo `--pop-surface-glass`, borda de 1 px, ícone de prédio âmbar, o nome da organização aberta e as setas para cima e para baixo. O texto muda conforme a URL: "Selecionar organização" fora de uma organização e "Nenhuma organização" sem nenhuma.
+     - Ao abrir, o popover (no `body`, fixo, ao lado do rail no modo foco) põe o foco no campo "Filtrar organizações…", que filtra por nome ou slug sem diferenciar acento nem caixa. A lista traz "Todas as organizações" (só com token global e sem filtro) e as organizações que o token enxerga, cada uma com nome, slug, ponto de situação (ativa em verde, inativa em cinza) e check na atual.
+     - Teclado: seta para baixo abre o popover ou move a opção; setas, Home e End percorrem a lista; Enter escolhe; Esc fecha e devolve o foco ao gatilho. Clicar fora fecha sem devolver o foco. Escolher passa pela guarda de alterações (mesmo caminho do clique na linha da lista); escolher a organização que já está aberta só fecha.
+     - Acessibilidade: o gatilho é `role="combobox"` com `aria-haspopup="listbox"`, `aria-expanded` e `aria-controls`; a lista é `role="listbox"` e o campo usa `aria-activedescendant`. Não usa o `SofaSelect` do formulário, porque a SofaUI não tem combobox de navegação com popover.
+     - Token de organização: o gatilho mostra a própria organização, fica desabilitado e não abre a lista.
+     - Modo foco: o gatilho vira um tile de 32×32 só com o ícone, com `title` e `aria-label` com o nome da organização. Abaixo de 900 px o gatilho também vira o tile.
+     - **Na visão do agente (`/orgs/:orgId/agents/:agentId/...`, prancha 03, CF-07): o link de volta e o combobox do agente**, no lugar do seletor de organização.
+       - **Link de volta:** "← Agentes da Org" em 22 px de altura, seta de 12 px e texto de 11 px em `--pop-text-muted`, com recuo de 4 px. Vai para `/orgs/:orgId/agents` e passa pela guarda de alterações como qualquer link interno. No modo foco fica só a seta, com `aria-label` e `title` "Agentes da Org".
+       - **Combobox do agente:** caixa de 36 px (medida do desenho), fundo `--pop-surface-glass`, borda de 1 px que fica âmbar com o popover aberto, ícone de bot de 14 px em âmbar, nome do agente em 12,5 px Medium e subtítulo de 10,5 px em tom mudo com **modelo e situação reais** ("gemini-3.8-flash · Ativo"; sem modelo próprio, "modelo padrão do servidor · Ativo"). As setas up/down ficam à direita.
+       - Ao abrir, o popover (no `body`, fixo, ao lado do rail no modo foco) põe o foco no campo "Filtrar agentes…", que filtra por nome ou slug sem diferenciar acento nem caixa. A lista traz os agentes da organização com nome e o mesmo subtítulo de modelo e situação, e check no agente aberto.
+       - Estados: "Carregando agentes…", "Nenhum agente nesta organização", "Nenhum agente encontrado para “termo”" e, em falha, "Não foi possível ler os agentes: motivo" — o resto do menu continua funcionando. Toda leitura termina em pronto ou erro, inclusive por prazo de 12 s.
+       - Escolher navega para `/orgs/:orgId/agents/:novoId/instructions` pela guarda de alterações; o agente que já está aberto só fecha o popover. Teclado e foco: os mesmos do seletor de organização (seta abre, setas/Home/End percorrem, Enter escolhe, Esc fecha e devolve o foco ao gatilho).
+       - Dados: **uma** consulta por organização (`GET …/agents`), guardada enquanto o rail viver; um agente que não esteja nessa lista é lido sozinho (`GET …/agents/{id}`) e, se não existir mais, o gatilho mostra "Agente não encontrado".
+     - A versão da instância continua no rodapé (o desenho também a mostra no chip do cabeçalho).
+   - **Navegação Agrupada:** os três grupos de `navegacao.ts` — *TENANTS E RECURSOS*, *RUNTIME E MOTOR* e *SISTEMA*. O item ativo usa o degrau tonal da SofaUI (fundo elevado, sem borda lateral colorida); o contador à direita é um chip de borda fina.
+   - **Rodapé:** versão da instância à esquerda, botão `?` dos atalhos e, à direita, o botão que recolhe o menu.
+   - **Modo foco (prancha 04 do desenho):** rail de 64 px com ícones de 34×34 px, o botão de expandir no topo, o chip do cluster (na lista) ou o seletor de organização (com organização aberta) reduzido ao tile de 32×32 e os atalhos no rodapé. Na visão do agente, o link de volta vira a seta e o combobox vira um tile de 32×32 com o ícone de bot (CF-07). O rótulo de cada item continua no DOM (escondido por recorte, para leitores de tela) e volta como `title` no hover. O foco de teclado acompanha a troca de estado.
 2. **Topbar Global (56 px altura):**
-   - Breadcrumbs hierárquicos clicáveis (`Organizações / Exemplo / Agentes / Dra. Beatriz`).
-   - Badge de ambiente (`DEV LOCAL`, `HOMOLOGAÇÃO`, `PRODUÇÃO`).
-   - Indicador de status da conexão SSE em tempo real (`● SSE CONECTADO`).
-   - Perfil de autenticação e botão de Logout / Troca de Token.
+   - Borda inferior de 1 px em âmbar (`--pop-accent`, `#F5A623`) atravessando a tela toda; fundo `--pop-surface-raised`.
+   - Três colunas: à esquerda, monograma `P`, nome da marca, chip de versão da instância (`v0.1.0`, do `/healthz`) e a trilha de navegação (breadcrumbs clicáveis, ex.: `Organizações / Exemplo / Agentes / Dra. Beatriz`); no centro, a busca global; à direita, estado, escopo do token, saída e ajuda.
+   - **Largura das colunas (CF-08, medidas em 1440 px):** a esquerda e a direita têm a largura do próprio conteúdo e a busca fica com até 420 px entre elas, no mínimo 220 px (`clamp(220px, 35vw, 420px)`); o espaço que sobra é dividido em partes iguais dos dois lados da busca (`justify-content: space-between`), como no desenho ("hug" nas pontas, busca "fill" com teto). Em 1440 px a busca mede 420 px, em 1280 px 420 px e em 1100 px 385 px. O que não couber é cortado dentro da própria coluna, nunca por cima da busca.
+   - **Trilha de navegação (CF-08):** cada migalha é um passo com o separador dentro. A migalha da tela atual (a última) **nunca encolhe**: aparece inteira, com `aria-current="page"` e sem `title`. As anteriores encolhem por prioridade — quanto mais longe da atual, mais cedo cortam com reticências (`flex-shrink` = distância até a atual) — e cada uma leva o texto completo no `title`. Em rota de agente (cinco migalhas: organização / Agentes / agente / aba) as cinco cabem inteiras em 1440 px; com nomes muito longos, as anteriores cortam e a atual continua inteira.
+   - **Busca global** (no centro, até 420 px): um só campo para organizações, telas e comandos do `poph`, com o atalho `⌘K` (ou `Ctrl K`) visível dentro do campo. O resultado sai em grupos, nesta ordem: *Organizações* (nome ou slug, como antes), *Telas* (as entradas do menu lateral que existem para a URL atual: uma organização ou um agente só aparecem quando estão abertos) e *Comandos do poph* (só os comandos conferidos no binário). Setas percorrem todos os grupos; Enter abre a organização ou a tela pela guarda de alterações, ou copia o comando para a área de transferência com aviso curto; Esc limpa e fecha. Com nada encontrado: "Nada encontrado para “termo”".
+   - **Estado da instância** (texto mono): `Engine: 200 OK · 125 MB` com a situação de `/healthz` e a memória residente de `/metrics`, consultados a cada 15 s. Sem a memória, mostra só `Engine: 200 OK`; com `/healthz` respondendo 503 (um banco fora), mostra `Engine: 503 · degradada` em vermelho; sem resposta, `Sem conexão`. Nunca mostra "0 MB" no lugar de um dado que não veio.
+   - O endereço da instância (`Local :porta`) e o escopo do token ficam na dica (`title`) do indicador de estado; o escopo do token segue visível como selo ao lado do estado.
+   - **Larguras menores:** até 1320 px a trilha mostra as duas últimas migalhas (agente e aba, ou organização e tela), com o separador do primeiro passo visível escondido para não começar com "/"; até 1200 px mostra só a migalha da tela atual e os espaços da direita encolhem para o indicador não ser cortado; até 1020 px a trilha sai inteira, com o divisor, porque nem a migalha da tela atual cabe ao lado da marca; até 900 px saem também a versão, o nome da marca e o selo do token, e a busca ocupa o espaço que sobra. Abaixo de 520 px o texto do estado some e fica só o ponto de situação.
+
 3. **Workspace Central (Largura fluida, mín. 1200 px):**
    - Contêiner denso com rolagem independente, evitando rolagem dupla na página.
+
+Abaixo de 900 px o rail entra no modo foco pelo layout e o alternador manual sai de cena: a largura não comporta os dois estados.
 
 ---
 
@@ -136,20 +156,49 @@ Abaixo, cada tela é detalhada com: objetivo, campos, contratos de API (rotas de
 ---
 
 ### 3.2 Lista de Organizações (`/orgs`)
-- **Objetivo:** Visualização multi-tenant das organizações cadastradas na instância e no cluster, alocação de nós e limites operacionais.
-- **Tabela Densa (`SofaTable`):**
-  - Colunas: `Organização / Slug`, `Instância Alocada`, `Agentes Ativos`, `Retenção (dias)`, `Limite de Concorrência`, `Ações`.
-  - Ações por linha: `Acessar Organização`, `Editar Configuração`, `Backup (.poph-org)`.
-- **Dados da API:**
-  - `GET /v1/orgs?cluster=true`
-  - Resposta: `200 OK` `[{ id, name, slug, instance_id, active_agents_count, retention_days, concurrency_limit, is_local, version }]`.
-- **Comportamento em Falha:**
-  - Erro 503 / Timeout: Se a listagem do cluster falhar ou o nó remoto não responder em 3 segundos, exibe a tabela com o nó inacessível marcado em vermelho e banner de aviso com botão de retentativa rápida.
+Layout da prancha 01 do FigCraft (`design/pop-harness-console-v2.figcraft`), CF-03b.
+
+- **Objetivo:** ver as organizações da instância e do cluster, com o nó de cada uma e os agentes ativos, e gerenciá-las (criar, editar, reativar, exportar, excluir).
+- **Cabeçalho:** título "Organizações" com a contagem ao lado; campo de busca por nome ou slug; botão "Atualizar" (só ícone); "Nova organização" (primário âmbar, só token global).
+- **Barra:** abas Todas / Ativas / Inativas (e Arquivadas, quando houver), cada uma com a contagem, num trilho segmentado. À direita, a telemetria do nó local: nós conectados, uptime e RAM (de `/healthz` e `/metrics`). Um dado que não chega some da linha.
+- **Tabela (`SofaTable`):** caixa de 1 px, cabeçalho de 34 px, linhas de 52 px. Colunas: Organização / slug (com ícone), Situação, Nó / instância, Agentes ativos, Retenção, Atualizada (data e versão) e Ações.
+  - Linha com o inspetor aberto: fundo tonal e nome em âmbar (sem barra lateral colorida).
+  - Ações: "Acessar →" (em organização inativa, "Reativar", só token global) e o menu ⋮, sempre visível: Ver detalhes, Editar, Exportar, e para inativa também Acessar e Reativar; Excluir por último.
+  - Organização que mora em outro nó: o nome não é link, "Acessar" fica desabilitado e a tela explica o nó.
+- **Nó / instância:** vem de `instancia` (cada organização) e de `instancias` (situação de cada nó). Instância sem id configurado aparece como "nó local". Sem `instancias` (token de org), a coluna mostra "—".
+- **Agentes ativos:** vem de `agents_active_count`. Enquanto a instância não informa o campo, mostra "—" com explicação no `title`.
+- **Responsivo:** as colunas secundárias saem conforme a largura da área da lista, que encolhe com a gaveta aberta. Retenção sai abaixo de 1000 px; Nó / instância abaixo de 920 px; Atualizada abaixo de 760 px. Os cards vão de 3 colunas para 2 abaixo de 1000 px e para 1 abaixo de 640 px. Abaixo de 1100 px, a gaveta do inspetor vai para baixo da lista.
+- **Cards de operação:** Espelho Matrix Synapse (mostra "indisponível": o estado do Matrix é por organização, e a lista do cluster não traz esse dado); Isolamento Multi-Tenant (texto explicativo); Comandos CLI Úteis (`poph org list`, `poph org create --name "nome"`, `poph doctor`).
+- **Dados da API:** `GET /admin/v1/orgs?cluster=true` (uma chamada, sem consulta por linha), `GET /healthz` e `GET /metrics`. O filtro por aba e texto é local.
+- **Diferenças do desenho, por decisão:** a API não devolve o endereço do nó, então a telemetria não mostra endereço; não há nomes dos agentes ativos (a API devolve só a contagem); a busca não tem o atalho `/`; o rodapé não tem as setas ↑↓ nem ⌘↵ (o atalho de teclado que existe é Tab e Enter); "Criada em" saiu da tabela e continua no inspetor; a contagem do título é neutra, como na prancha, e não âmbar.
 - **Estados:**
-  - *Populado:* Linhas com status verde, slugs monoespacados e métricas numéricas alinhadas.
-  - *Vazio:* Card com contorno tracejado, ícone `[ ∅ ]`, título "Nenhuma organização cadastrada" e CTA "+ Criar Primeira Organização".
-  - *Carregando:* Shimmer de 5 linhas simulando a estrutura exata da tabela.
-  - *Erro:* Card com borda vermelha `--pop-danger-fill`, stacktrace do erro HTTP 503 e botão para rodar `poph doctor`.
+  - *Carregando:* 5 linhas de esqueleto com a altura da linha.
+  - *Vazio:* "Nenhuma organização cadastrada" com CTA "Criar primeira organização" (só token global).
+  - *Erro:* "Não consegui carregar as organizações" com "Tentar de novo".
+  - *Filtro sem resultado:* "Nenhuma organização encontrada" com "Limpar filtros".
+
+---
+
+### 3.2.1 Inspetor lateral da organização (gaveta da prancha 01b)
+Gaveta de 380 px à direita da lista, aberta ao selecionar a linha (`InspetorOrg`), CF-05.
+
+- **Objetivo:** inspecionar uma organização sem sair da lista: identidade, situação, nó, estado do espelho Matrix, agentes vinculados e as ações de gestão.
+- **Cabeçalho:** tile de 26 px com o ícone de prédio (contorno âmbar), nome em 15 px, botão ✕ (nome acessível "Fechar inspetor") e, abaixo, em mono de 11 px, `slug: <slug> · versão vN (ETag/If-Match)` — a versão é a do `If-Match` das alterações.
+- **Badges:** situação em pílula com ponto (mesmos tons da lista), chip do nó (`Nó primário` quando a organização está no nó desta instância, `Nó <id>` quando está em vizinho, `nó local` na instalação de nó único) e chip do id abreviado em 8 caracteres com o id inteiro no `title`.
+- **Caixa de comando:** `poph chat --org <slug> <slug-do-primeiro-agente-ativo>` (ou `<agente>` quando não há agente ativo), em âmbar, quebrando linha, com botão de copiar e anúncio "Copiado" em `aria-live`.
+- **Propriedades (`dl`, rótulo à esquerda e valor à direita, sem fio entre as linhas):** Retenção de histórico (`config.retention_days`, "padrão" quando ausente); Espelho Matrix; Instância alocada; Atualizada em; Criada em — as datas completas em pt-BR (`dd/mm/aaaa às hh:mm`).
+- **Espelho Matrix:** de `GET /admin/v1/orgs/{org}/matrix`. `Não configurado` quando `connected` é `null` (módulo não configurado na instância), `Desligado nesta organização` quando `enabled` é `false`, `Desconectado` quando `connected` é `false` e `Conectado` quando é `true`. O `title` traz o atraso, as falhas isoladas e a última falha. Falha da rota vira `indisponível` com o motivo no `title` — nunca um estado inventado.
+- **Agentes vinculados (N):** cards com nome, modelo (ou "modelo padrão do servidor") e situação, vindos da mesma consulta única de `GET …/agents` que a gaveta já fazia; cada card é link para `/orgs/:id/agents/:agentId`. Até 8 cards e, acima disso, o link "Ver todos os N agentes →". Lista vazia diz "Nenhum agente cadastrado nesta organização."; falha aparece só no bloco, com o motivo no `title`, sem derrubar a gaveta.
+- **Terminação das leituras:** cada recurso (agentes e Matrix) carrega sozinho e sempre termina em pronto ou erro — inclusive por prazo de 12 s —, então a gaveta nunca fica em "carregando…".
+- **Rodapé fixo:** "Acessar Organização →" primário em âmbar na largura toda, mais Editar, Exportar e Excluir (ícone de lixeira, `aria-label` "Excluir <nome>"). Editar abre o `ModalOrg`, Exportar usa `exportarOrganizacao` + `baixarArquivo` sem conversas, Excluir abre o `DialogoExclusao` com confirmação por slug. Com token de organização o rodapé mostra só "Acessar Organização →". Organização em outro nó desabilita Acessar e Editar.
+- **Teclado e foco:** o foco entra na gaveta ao abrir e volta à linha ao fechar (o `Orgs` guarda a linha de origem); `Esc` fecha, menos quando um menu ou diálogo aberto por cima consome a tecla primeiro.
+- **Diferenças do desenho, por decisão:**
+  - a rota de estado do Matrix não traz o espaço/canal, então o valor é "Conectado" sem `(#canal)`;
+  - não há latência do agente (o card mostra modelo e situação, que existem) nem "nó primário do agente";
+  - o endereço `host:porta` do nó não existe na resposta: a propriedade e o chip usam o id da instância, e `nó local` na instalação de nó único;
+  - datas completas (`dd/mm/aaaa às hh:mm`) em vez de "Hoje às 13:06", como pede a leitura técnica;
+  - o rodapé não repete a dica "Esc fecha o inspetor" (ela fica na tabela);
+  - componentes da SofaUI mantêm as medidas da biblioteca: os secundários têm 32 px (o desenho pede 30) e rótulo SemiBold, o botão de copiar tem 24 px (o desenho pede 22, e o `SofaIconButton` só tem 24/28/32/36) e os valores das propriedades usam o peso 500 real da IBM Plex (no render do FigCraft o Medium é sintetizado, e sai mais leve).
 
 ---
 

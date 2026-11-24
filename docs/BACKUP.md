@@ -1,176 +1,178 @@
-# POP Harness: backup da org em arquivo único (HR-53)
+# POP Harness: single-file org backup (HR-53)
 
-Exporta uma org inteira para **um arquivo** e reconstrói essa org a partir dele em outra instância.
-É a base do "exportar/importar org" do Console (HR-48): a tela vai chamar a mesma lógica.
+Exports a whole org to **one file** and rebuilds that org from it on another instance.
+It is the basis of the Console's "export/import org" (HR-48): the screen will call the same logic.
 
-## Comandos
+## Commands
 
 ```
 poph --offline backup export <org> --out <arquivo> [--com-conversas] [--sobrescrever] [--json]
 poph --offline backup import <arquivo> [--org <destino>] [--sobrescrever] [--json]
 ```
 
-- `<org>` é id (UUID v7) ou slug. Os dois comandos rodam **direto no banco** e exigem `--offline`
-  (como `org`, `file` e `kb`): rode com o servidor parado.
-- `--com-conversas` inclui conversas, mensagens, anexos, turnos, as duas filas (`inbox`/`outbox`) e
-  os carrinhos. Sem o flag, o arquivo leva só a configuração, a base, o catálogo e a biblioteca.
-- `export` **não sobrescreve** arquivo existente sem `--sobrescrever`. O arquivo é escrito num
-  temporário ao lado e renomeado no fim: erro no meio não deixa backup pela metade.
-- `import --org <destino>` grava dentro de uma org **já existente** (id ou slug), mantendo o nome e
-  a configuração dela. Sem `--org`, vale a org de origem do arquivo — criada se não existir.
-- `import` **recusa por padrão** quando atualizaria linha que já existe no destino: diz quantas
-  linhas, em quais tabelas e até cinco exemplos (`tabela: slug`), não grava nada e sai com código
-  `1`. `--sobrescrever` autoriza (o `--sobrescrever` do `export` é outro: lá é o arquivo de saída).
-  Destino limpo entra sem o flag.
-- Saída: `0` quando terminou (inclusive com o aviso de índice pendente); `1` em erro; `2` é uso
-  incorreto da linha de comando. `--json` tem `versao_relatorio: 1`.
+- `<org>` is an id (UUID v7) or a slug. Both commands run **directly on the database** and require `--offline`
+  (like `org`, `file` and `kb`): run them with the server stopped.
+- `--com-conversas` includes conversations, messages, attachments, turns, both queues (`inbox`/`outbox`) and
+  the carts. Without the flag, the file carries only the configuration, the knowledge base, the catalog and the
+  library.
+- `export` **does not overwrite** an existing file without `--sobrescrever` (the flag's name is Portuguese and is
+  kept; here it means "overwrite"). The file is written to a temporary file next to it and renamed at the end: an
+  error in the middle does not leave a half-finished backup.
+- `import --org <destino>` writes inside an **already existing** org (id or slug), keeping that org's name and
+  configuration. Without `--org`, the source org from the file is used — created if it does not exist.
+- `import` **refuses by default** when it would update a row that already exists in the destination: it says how
+  many rows, in which tables, and up to five examples (`tabela: slug`), writes nothing and exits with code `1`.
+  `--sobrescrever` authorizes it (the `--sobrescrever` of `export` is a different thing: there it is the output
+  file). A clean destination goes in without the flag.
+- Output: `0` when finished (including with the pending-index warning); `1` on error; `2` is incorrect command-line
+  usage. `--json` has `versao_relatorio: 1`.
 
-## Formato do arquivo
+## File format
 
-JSON, com a extensão que o operador quiser (sugestão: `.json`). Estrutura:
+JSON, with whatever extension the operator wants (suggestion: `.json`). Structure:
 
-| Campo | O que é |
+| Field | What it is |
 |---|---|
-| `formato` | `"poph-backup-org"` — confere na importação |
-| `versao_formato` | `2` — a versão 1 continua importável; versão desconhecida é recusada com mensagem clara |
-| `exportado_em` | instante da exportação (ms desde a época Unix) |
-| `org_origem` | `{id, slug, nome}` da org de onde o arquivo saiu |
-| `com_conversas` | se o histórico entrou |
-| `org` | a linha completa da tabela `orgs` |
-| `tabelas` | tabela → lista de linhas (objetos coluna → valor) |
-| `blobs` | lista de `{sha256, conteudo_base64}` — um por conteúdo, deduplicado por sha256 |
+| `formato` | `"poph-backup-org"` — checked on import |
+| `versao_formato` | `2` — version 1 remains importable; an unknown version is refused with a clear message |
+| `exportado_em` | instant of the export (ms since the Unix epoch) |
+| `org_origem` | `{id, slug, nome}` of the org the file came from |
+| `com_conversas` | whether the history was included |
+| `org` | the full row of the `orgs` table |
+| `tabelas` | table → list of rows (objects column → value) |
+| `blobs` | list of `{sha256, conteudo_base64}` — one per content, deduplicated by sha256 |
 
-### O que entra
+### What goes in
 
-| Tabela | Sempre |
+| Table | Always |
 |---|---|
-| `product_categories`, `departments`, `products` | sim |
-| `agents`, `agent_instructions`, `agent_product_categories` | sim |
-| `knowledge_groups`, `knowledge_items`, `agent_knowledge_groups` | sim |
-| `file_library` (+ bytes do blob) | sim |
-| `integrations` (sem o segredo) | sim |
-| `fluxos`, `fluxo_revisoes` (fonte e IR), `agente_fluxos` | sim |
-| `conversations`, `messages`, `attachments` (+ bytes dos blobs), `turns`, `inbox`, `outbox`, `carts`, `cart_items` | só com `--com-conversas` |
-| `fichas`, `ficha_eventos`, `fluxo_execucoes`, `fluxo_execucao_etapas`, `fluxo_efeitos` | só com `--com-conversas` |
+| `product_categories`, `departments`, `products` | yes |
+| `agents`, `agent_instructions`, `agent_product_categories` | yes |
+| `knowledge_groups`, `knowledge_items`, `agent_knowledge_groups` | yes |
+| `file_library` (+ blob bytes) | yes |
+| `integrations` (without the secret) | yes |
+| `fluxos`, `fluxo_revisoes` (source and IR), `agente_fluxos` | yes |
+| `conversations`, `messages`, `attachments` (+ blob bytes), `turns`, `inbox`, `outbox`, `carts`, `cart_items` | only with `--com-conversas` |
+| `fichas`, `ficha_eventos`, `fluxo_execucoes`, `fluxo_execucao_etapas`, `fluxo_efeitos` | only with `--com-conversas` |
 
-Revisões publicadas preservam seus números e são imutáveis na importação, mesmo quando a sobrescrita é autorizada.
-Backups da versão 1 com conversas são importados com uma Ficha criada para cada conversa.
+Published revisions keep their numbers and are immutable on import, including when overwriting is authorized.
+Version 1 backups with conversations are imported with a Ficha created for each conversation.
 
-**Nome do cliente (`conversations.client_name`, MX-32).** A coluna viaja com `conversations` e entra no
-mesmo `--com-conversas`, como `external_peer`: é dado pessoal do cliente, e o tratamento é o mesmo.
-Backup feito antes da migração `0008` não tem a coluna; a importação aceita esse arquivo e deixa o
-nome nulo nas conversas.
+**Customer name (`conversations.client_name`, MX-32).** The column travels with `conversations` and goes in under the
+same `--com-conversas`, like `external_peer`: it is personal data of the customer, and the handling is the same.
+A backup made before migration `0008` does not have the column; the import accepts that file and leaves the name
+empty in the conversations.
 
-**Id do envio (`outbox.external_message_id`, MX-40).** Viaja com `outbox` no `--com-conversas`, como
-o resto da fila. Não é dado de cliente: é o id que o canal deu à mensagem enviada. Backup feito antes
-da migração `0011` não tem a coluna; a importação aceita o arquivo e deixa o id nulo, sem efeito no
-resto da fila (o item continua `sent`).
+**Send id (`outbox.external_message_id`, MX-40).** Travels with `outbox` under `--com-conversas`, like the rest of
+the queue. It is not customer data: it is the id the channel gave the sent message. A backup made before migration
+`0011` does not have the column; the import accepts the file and leaves the id empty, with no effect on the rest of
+the queue (the item stays `sent`).
 
-### O que **não** entra
+### What does **not** go in
 
-- **`admin_tokens`**: credencial. O token se cria de novo com `poph token`.
-- **`audit_log`**: histórico de infraestrutura, não faz parte do estado da org.
-- **`integrations.secrets_enc`**: o segredo cifrado. Nem em claro, nem cifrado (ver abaixo).
-- **`blob_path`**: caminho interno (`<org>/<sha256>`). O arquivo guarda `sha256` e os bytes; o
-  caminho é recalculado para a org de destino na importação.
-- **Tabelas do módulo Matrix (`matrix_orgs`, `matrix_rooms`, `matrix_spaces`, `matrix_estado`,
-  `matrix_falhas`, `matrix_avisos_falha`)**: **não** viajam no backup. A sala pertence ao Synapse do ambiente, e um
-  `room_id` copiado para outra instalação apontaria para uma sala que não existe lá (ou, pior, para
-  a de outro ambiente). Na instância de destino o módulo começa desligado e, quando a org o ligar,
-  cria as salas de novo a partir das conversas que existirem. O mesmo vale para a importação: um
-  arquivo nunca traz essas tabelas, e o esquema delas não é tocado.
+- **`admin_tokens`**: credential. The token is created again with `poph token`.
+- **`audit_log`**: infrastructure history, not part of the org's state.
+- **`integrations.secrets_enc`**: the encrypted secret. Neither in plain text nor encrypted (see below).
+- **`blob_path`**: internal path (`<org>/<sha256>`). The file keeps `sha256` and the bytes; the path is recalculated
+  for the destination org on import.
+- **Matrix module tables (`matrix_orgs`, `matrix_rooms`, `matrix_spaces`, `matrix_estado`, `matrix_falhas`,
+  `matrix_avisos_falha`)**: they **do not** travel in the backup. The room belongs to the environment's Synapse, and
+  a `room_id` copied to another installation would point to a room that does not exist there (or, worse, to one
+  from another environment). On the destination instance the module starts turned off and, when the org turns it
+  on, it creates the rooms again from the conversations that exist. The same applies to import: a file never
+  carries these tables, and their schema is not touched.
 
-## Segredo
+## Secret
 
-Do segredo de integração o arquivo leva só:
+From the integration secret, the file carries only:
 
-- `tem_segredo: true` — havia segredo gravado;
-- `segredos_campos: ["token"]` — os **nomes** dos campos preenchidos, quando a chave de cifra do
-  processo (`POPH_CHAVE_CIFRA`) consegue abrir o blob. Sem a chave (ou com uma chave diferente da
-  que gravou), vem `null`: só a marca sobra.
+- `tem_segredo: true` — a secret was saved;
+- `segredos_campos: ["token"]` — the **names** of the fields filled in, when the process's encryption key
+  (`POPH_CHAVE_CIFRA`) can open the blob. Without the key (or with a different key from the one that saved it), the
+  value is `null`: only the mark remains.
 
-O valor nunca é escrito, em nenhuma forma. Ao importar, a integração entra com os segredos **vazios**
-e o relatório diz quantas precisam ser digitadas de novo (aba Integrações do Console). Reimportar o
-mesmo arquivo **não apaga** o segredo que já foi digitado depois da primeira importação.
+The value is never written, in any form. On import, the integration comes in with **empty** secrets and the report
+says how many must be typed again (Integrations tab of the Console). Re-importing the same file **does not erase**
+a secret that was typed in after the first import.
 
-Na exportação, prove que o valor não saiu com um `grep` pelo segredo real no arquivo (o teste de CI
-faz isso com uma org que tem segredo cifrado gravado).
+On export, prove that the value did not leave with a `grep` for the real secret in the file (the CI test does this
+with an org that has an encrypted secret saved).
 
-## Importação
+## Import
 
-- **Atômica**: todas as linhas vão numa transação do escritor. Erro em qualquer ponto desfaz tudo —
-  não fica estado pela metade. Os blobs são gravados antes (são content-addressed: regravar o mesmo
-  hash não muda nada); se o banco recusar, eles ficam órfãos e a retenção apaga depois.
-- **Localiza pela chave da tabela**: cada linha é procurada pelo `id` (ou pelas colunas da chave
-  primária composta). Linha que não existe entra (`inseridas`); linha que já existe **atualiza**
-  (`atualizadas`) com o valor do arquivo — e é por isso que a atualização precisa de autorização
-  explícita (abaixo). Importar o mesmo arquivo duas vezes, com `--sobrescrever`, deixa o mesmo
-  estado, sem duplicar.
-- **Atualização exige autorização (HR-48e-3)**: sem `--sobrescrever`, a importação confere antes de
-  gravar (só leitura) e, se alguma linha do arquivo já existe no destino, **recusa**: mostra total,
-  tabelas e até cinco exemplos e não grava nada. Reimportar um arquivo antigo na mesma org
-  reverteria o que mudou depois dele (versão do agente, instruções, Jev) — é o caso que a recusa
-  protege. Numa org de destino (`--org`), a linha da org não entra na conta: ela não é tocada.
-- **Não apaga**: o que existe no destino e não está no arquivo fica como está. Para reconstruir
-  exatamente, importe numa instância limpa.
-- **Ids preservados**: agentes, produtos, conversas, mensagens e turnos mantêm os ids, versões e
-  carimbos. É o que mantém conversa → agente, mensagem → turno e anexo → mensagem ligados.
-- **Conflito de chave natural**: se o destino já tem um agente/produto com o mesmo **slug** (ou
-  categoria/departamento/grupo com o mesmo nome, ou a org com o mesmo slug), com **id diferente**,
-  a importação é recusada **antes de gravar**, com a lista do que conflitou. Não há "merge"
-  silencioso. Importar o mesmo conteúdo (mesmos ids) é atualização, não conflito.
-- **Coluna desconhecida**: se o arquivo traz uma coluna que esta versão do esquema não tem, a
-  importação é recusada com o nome da tabela e da coluna (arquivo de versão mais nova).
-- **Arquivo antigo**: um arquivo gerado antes da coluna `origin` (migração `0003`) não traz `origin`
-  nem `author_name`, e continua importável. As mensagens entram como `agent`, sem autor.
+- **Atomic**: all rows go in one transaction of the writer. An error at any point undoes everything — no half-done
+  state is left. The blobs are written first (they are content-addressed: writing the same hash again changes
+  nothing); if the database refuses, they stay orphaned and retention removes them later.
+- **Finds by the table key**: each row is looked up by `id` (or by the columns of the composite primary key). A row
+  that does not exist is inserted (`inseridas`); a row that already exists is **updated** (`atualizadas`) with the
+  value from the file — and that is why the update needs explicit authorization (below). Importing the same file
+  twice, with `--sobrescrever`, leaves the same state, without duplicating anything.
+- **Update requires authorization (HR-48e-3)**: without `--sobrescrever`, the import checks before writing (read-only)
+  and, if any row in the file already exists in the destination, **refuses**: it shows the total, the tables and up
+  to five examples, and writes nothing. Re-importing an old file into the same org would revert what changed after
+  it (agent version, instructions, Jev) — this is the case the refusal protects against. In a destination org
+  (`--org`), the org's own row is not counted: it is not touched.
+- **Does not delete**: what exists in the destination and is not in the file stays as it is. To rebuild exactly,
+  import into a clean instance.
+- **Ids preserved**: agents, products, conversations, messages and turns keep their ids, versions and timestamps.
+  This is what keeps conversation → agent, message → turn and attachment → message linked.
+- **Natural key conflict**: if the destination already has an agent/product with the same **slug** (or
+  category/department/group with the same name, or the org with the same slug), with a **different id**, the import
+  is refused **before writing**, with the list of what conflicted. There is no silent "merge". Importing the same
+  content (same ids) is an update, not a conflict.
+- **Unknown column**: if the file carries a column this version of the schema does not have, the import is refused
+  with the table and column name (a file from a newer version).
+- **Old file**: a file generated before the `origin` column (migration `0003`) does not carry `origin` or
+  `author_name`, and can still be imported. Messages come in as `agent`, without an author.
 
 ### Blobs
 
-O conteúdo de cada arquivo da biblioteca e de cada anexo vai no arquivo em base64, com o sha256.
-Na importação o sha256 é conferido antes de gravar (arquivo alterado ou truncado é recusado), o blob
-é gravado por `poph-files` na pasta da **org de destino** e o `blob_path` das linhas é refeito.
+The content of each library file and each attachment goes into the file in base64, with its sha256. On import the
+sha256 is checked before writing (a changed or truncated file is refused), the blob is written by `poph-files` into
+the folder of the **destination org**, and the rows' `blob_path` is recalculated.
 
-## Reindexação
+## Re-indexing
 
-Depois de importar, a base de conhecimento e o catálogo da org são reindexados sem passo manual
-(`sincronizar_org` de cada um), então `poph kb search` e a ferramenta `buscar_produto` já funcionam.
+After importing, the org's knowledge base and catalog are re-indexed without a manual step (`sincronizar_org` of
+each), so `poph kb search` and the `buscar_produto` tool already work.
 
-- Sem o modelo de embedding instalado (`poph model install`), a importação **termina com aviso** e
-  o índice fica pendente: rode `poph kb reindex` e `poph product reindex` quando o modelo estiver
-  disponível. Nada é gravado como índice vazio silencioso.
-- O relatório traz `indice.base_conhecimento` e `indice.produtos` com agentes/trechos; o aviso, se
-  houver, vai em `aviso` (e no erro padrão, na saída de texto).
+- Without the embedding model installed (`poph model install`), the import **ends with a warning** and the index
+  stays pending: run `poph kb reindex` and `poph product reindex` when the model is available. Nothing is saved as a
+  silent empty index.
+- The report carries `indice.base_conhecimento` and `indice.produtos` with agents/chunks; the warning, if any, goes
+  in `aviso` (and in the default error output, in text mode).
 
-## Validação e erros
+## Validation and errors
 
-| Situação | Resposta |
+| Situation | Response |
 |---|---|
-| arquivo truncado ou que não é JSON | `o arquivo … não é um backup do POP Harness (JSON inválido: …)` |
-| `formato` diferente | "este arquivo não é um backup do POP Harness" |
-| `versao_formato` desconhecida | "versão de formato desconhecida: N; esta instalação entende a M" |
-| blob com conteúdo que não bate com o sha256 | "o conteúdo de um arquivo do backup não confere com o sha256 gravado" |
-| coluna fora do esquema | "o arquivo traz a coluna `x` em `tabela`…" |
-| chave natural repetida com outro id | lista dos conflitos, e nada é gravado (nem com `--sobrescrever`) |
-| linhas que já existem no destino, sem `--sobrescrever` | total, tabelas e até 5 exemplos, e nada é gravado |
-| blob ausente no disco na exportação | erro com o nome do arquivo e o sha256 (sem caminho) |
+| truncated file or one that is not JSON | `o arquivo … não é um backup do POP Harness (JSON inválido: …)` |
+| different `formato` | "este arquivo não é um backup do POP Harness" |
+| unknown `versao_formato` | "versão de formato desconhecida: N; esta instalação entende a M" |
+| blob whose content does not match the sha256 | "o conteúdo de um arquivo do backup não confere com o sha256 gravado" |
+| column outside the schema | "o arquivo traz a coluna `x` em `tabela`…" |
+| natural key repeated with another id | list of conflicts, and nothing is written (not even with `--sobrescrever`) |
+| rows that already exist in the destination, without `--sobrescrever` | total, tables and up to 5 examples, and nothing is written |
+| blob missing from disk on export | error with the file name and the sha256 (no path) |
 
-## Limites
+(The messages above are emitted by the code in Portuguese and are kept as they are, because they are the text the
+operator sees.)
 
-- **Sem compactação**: o arquivo é JSON com os blobs em base64 (~4/3 do tamanho dos bytes). Um
-  arquivo de 16 MB vira ~21 MB no backup. Pela API, o teto do corpo é 64 MB.
-- **Arquivo inteiro na memória**: exportar e importar carregam o arquivo e os blobs na memória.
-  Para orgs com muitos arquivos grandes, isso pesa; não há envio em pedaços.
-- **Sem segredo**: a integração volta sem credencial; quem importou precisa digitar o segredo de
-  novo. Rotacionar `POPH_CHAVE_CIFRA` antes de exportar só tira os nomes dos campos (`null`), nunca
-  o valor.
-- **Histórico**: `--com-conversas` leva todo o histórico vivo da org (a retenção já apaga o vencido
-  antes, se estiver configurada).
-- **Concorrência**: é um comando offline. Com o servidor escrevendo ao mesmo tempo, o retrato pode
-  não refletir o último instante de cada tabela (a leitura é de uma conexão só, mas não trava o
-  servidor). Rode com o servidor parado.
-- **Importação numa org que já tem dados**: reimportar o mesmo arquivo atualiza **se** vier com
-  `--sobrescrever` (sem ele, recusa com a lista do que seria sobrescrito); um arquivo diferente com
-  os mesmos slugs e outro id é recusado sempre. Não há modo "mesclar".
-- **HTTP**: as mesmas duas operações existem na API administrativa (`GET …/backup` e
-  `POST …/backup/import`, com `?sobrescrever=true` para autorizar a atualização) — ver
-  `docs/API.md`. O Console usa essas rotas, não a CLI.
+## Limits
+
+- **No compression**: the file is JSON with the blobs in base64 (~4/3 of the byte size). A 16 MB file becomes ~21 MB
+  in the backup. Through the API, the body limit is 64 MB.
+- **Whole file in memory**: export and import load the file and the blobs into memory. For orgs with many large
+  files this weighs on memory; there is no sending in pieces.
+- **No secret**: the integration comes back without a credential; whoever imported has to type the secret again.
+  Rotating `POPH_CHAVE_CIFRA` before exporting only removes the field names (`null`), never the value.
+- **History**: `--com-conversas` carries the whole live history of the org (retention already deletes what is expired
+  first, if it is configured).
+- **Concurrency**: this is an offline command. With the server writing at the same time, the snapshot may not reflect
+  the last instant of each table (the read uses a single connection, but does not lock the server). Run it with the
+  server stopped.
+- **Import into an org that already has data**: re-importing the same file updates **only** if it comes with
+  `--sobrescrever` (without it, it refuses with the list of what would be overwritten); a different file with the
+  same slugs and another id is always refused. There is no "merge" mode.
+- **HTTP**: the same two operations exist in the administrative API (`GET …/backup` and `POST …/backup/import`, with
+  `?sobrescrever=true` to authorize the update) — see `docs/API.md`. The Console uses these routes, not the CLI.

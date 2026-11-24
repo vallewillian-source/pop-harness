@@ -1,34 +1,33 @@
-# Biblioteca de arquivos do agente e `enviar_arquivo` (HR-24)
+# Agent file library and `enviar_arquivo` (HR-24)
 
-O agente só envia ao cliente um arquivo que esteja na **biblioteca dele** (decisão D13). O modelo
-nunca escolhe caminho de disco nem conteúdo: escolhe um **id** de uma lista que ele vê no próprio
-pedido. Quem grava o arquivo é o crate `poph-files` (HR-23); quem decide o que sai é o motor do
-turno; quem entrega ao canal é a `outbox` (HR-12).
+The agent only sends the customer a file that is in **its library** (decision D13). The model never chooses a disk path
+or content: it chooses an **id** from a list it sees in its own request. The `poph-files` crate (HR-23) writes the file;
+the turn engine decides what goes out; the `outbox` (HR-12) delivers it to the channel.
 
-## Modelo
+## Model
 
-Tabela `file_library` (já existia no esquema da HR-07, sem migração nova):
+Table `file_library` (it already existed in the HR-07 schema, so there is no new migration):
 
-| coluna | conteúdo |
+| column | content |
 |---|---|
-| `id` | UUID v7 do arquivo |
-| `org_id` | org dona |
-| `agent_id` | agente dono (o arquivo só existe para ele) |
-| `name` | nome mostrado ao cliente (até 200 caracteres) |
-| `description` | texto que o modelo lê para decidir enviar (até 500) |
-| `mime` | tipo **real**, pelo conteúdo |
-| `size_bytes` | tamanho em bytes |
-| `sha256` | hash do conteúdo (o blob é deduplicado por ele) |
-| `blob_path` | caminho do blob **relativo** à pasta de blobs (`<org>/<sha256>`) |
-| `created_at` | criação (ms) |
+| `id` | UUID v7 of the file |
+| `org_id` | owning org |
+| `agent_id` | owning agent (the file exists only for it) |
+| `name` | name shown to the customer (up to 200 characters) |
+| `description` | text the model reads to decide whether to send it (up to 500) |
+| `mime` | **real** type, detected from the content |
+| `size_bytes` | size in bytes |
+| `sha256` | hash of the content (the blob is deduplicated by it) |
+| `blob_path` | blob path **relative** to the blobs folder (`<org>/<sha256>`) |
+| `created_at` | creation time (ms) |
 
-O conteúdo não fica no SQLite. O blob fica em `<dados.blobs>/<org>/<sha256>`, gravado pelo
-`poph-files`, e é compartilhado por qualquer registro com o mesmo hash dentro da org.
+The content is not kept in SQLite. The blob is stored at `<dados.blobs>/<org>/<sha256>`, written by `poph-files`, and
+is shared by any record with the same hash within the org.
 
-Não há versão/`If-Match`: a tabela não é editável. Para trocar o conteúdo de um arquivo, exclua e
-suba de novo (o blob não é duplicado se o conteúdo for o mesmo).
+There is no version or `If-Match`: the table is not editable. To change a file's content, delete it and upload it again
+(the blob is not duplicated if the content is the same).
 
-## Upload pela CLI
+## Upload through the CLI
 
 ```
 poph file upload <caminho> --agent <id|slug> [--name "Nome mostrado"] [--description "…"] [--json] \
@@ -38,43 +37,40 @@ poph file show   <id> --agent <id|slug> [--json] --org … --offline
 poph file delete <id> --agent <id|slug> [--json] --org … --offline
 ```
 
-Regras da CLI:
+CLI rules:
 
-- `--offline`, `--org` e `--agent` são obrigatórios (como `org`, `token`, `kb`).
-- O upload passa pelo `poph-files`: limite de 16 MB, tipo real pelo conteúdo, extensão enganosa
-  recusada, blob por hash. Arquivo recusado não deixa nada gravado.
-- O arquivo é lido com teto (`limite + 1` bytes): um arquivo de vários GB nunca entra inteiro na
-  memória para depois ser recusado.
-- Erro de negócio: código 1 e mensagem em português no erro padrão. `--json` sai com
-  `versao_relatorio: 1`.
-- `delete` tira o registro; o blob fica no disco até a retenção (HR-51) apagar o que não tem dono.
+- `--offline`, `--org` and `--agent` are required (as with `org`, `token`, `kb`).
+- Upload goes through `poph-files`: 16 MB limit, real type from the content, misleading extension refused, blob by hash.
+  A refused file leaves nothing written.
+- The file is read with a cap (`limite + 1` bytes): a file of several GB never goes into memory whole just to be refused.
+- Business error: exit code 1 and a message in Portuguese on the standard error output (the code emits Portuguese).
+  `--json` outputs with `versao_relatorio: 1`.
+- `delete` removes the record; the blob stays on disk until retention (HR-51) removes what has no owner.
 
-PDF e Office exigem o `poph-extrator` ao lado do executável (ver `docs/ARQUIVOS.md`). Sem ele, o
-upload de documento falha com mensagem clara; imagem continua funcionando.
+PDF and Office need the `poph-extrator` next to the executable (see `docs/ARQUIVOS.md`). Without it, uploading a document
+fails with a clear message; images keep working.
 
-## Ferramenta `enviar_arquivo`
+## `enviar_arquivo` tool
 
-- Nome: `enviar_arquivo`. Argumentos: **só** `id` (`additionalProperties: false`). Qualquer outra
-  chave (caminho, nome, conteúdo) é recusada com erro legível.
-- O id é conferido contra a biblioteca **do mesmo agente e da mesma org**. Id de outro agente, de
-  outra org ou inexistente devolve `erro: não existe arquivo com esse id na sua biblioteca…` ao
-  modelo — o turno continua e o modelo pode seguir sem o arquivo.
-- Habilitação por agente (D-04): sem `enviar_arquivo` na lista de ferramentas do agente, ela não vai
-  no pedido ao modelo.
-- A **descrição** da ferramenta é completada, a cada turno, com a lista da biblioteca do agente:
+- Name: `enviar_arquivo`. Arguments: **only** `id` (`additionalProperties: false`). Any other key (path, name, content)
+  is refused with a readable error.
+- The id is checked against the library **of the same agent and the same org**. An id from another agent, another org,
+  or a non-existent id returns `erro: não existe arquivo com esse id na sua biblioteca…` to the model (the message is in
+  Portuguese, as the code emits it). The turn continues and the model can carry on without the file.
+- Per-agent enablement (D-04): without `enviar_arquivo` in the agent's tool list, the tool is not sent to the model.
+- The tool **description** is completed, on every turn, with the agent's library list:
 
   ```
   - <id> — <nome> (<mime>, <tamanho>): <descrição>
   ```
 
-  É assim que o modelo decide o que enviar, sem precisar de outra chamada. A lista traz até 60
-  arquivos (`LIMITE_LISTAGEM`); acima disso aparece um aviso de quantos ficaram de fora. Biblioteca
-  vazia aparece como vazia.
-- O resultado da ferramenta volta como **dado** (nome e mime sem `<` nem `>`), não como instrução.
+  This is how the model decides what to send, without needing another call. The list shows up to 60 files
+  (`LIMITE_LISTAGEM`); above that, a notice shows how many were left out. An empty library is shown as empty.
+- The tool's result comes back as **data** (name and mime with no `<` or `>`), not as an instruction.
 
-## O que sai na `outbox`
+## What goes into the `outbox`
 
-Item `kind = 'file'` com `payload_json`:
+Item `kind = 'file'` with `payload_json`:
 
 ```json
 {
@@ -87,30 +83,28 @@ Item `kind = 'file'` com `payload_json`:
 }
 ```
 
-- A resposta em texto do turno usa `seq = 0`; o arquivo usa `seq` derivada do id (faixa 1 a
-  1.000.000.000), estável por arquivo.
-- **Idempotência:** repetir a mesma chamada no mesmo turno cai no mesmo `(turn_id, seq)` e não
-  duplica; a ferramenta responde "já estava enfileirado neste turno". Dois arquivos diferentes no
-  mesmo turno ocupam itens separados.
-- O estado segue `pending → sending → sent | failed` pela HR-12 (`D11`: pelo menos uma entrega).
+- The text reply of the turn uses `seq = 0`; the file uses a `seq` derived from the id (range 1 to 1,000,000,000),
+  stable per file.
+- **Idempotency:** repeating the same call in the same turn hits the same `(turn_id, seq)` and does not duplicate; the
+  tool replies "already queued in this turn". Two different files in the same turn take separate items.
+- The state follows `pending → sending → sent | failed` through HR-12 (`D11`: at least one delivery).
 
-## O que falta para o envio real
+## What is missing for real sending
 
-- **Transporte do canal** (HR-25/HR-26): hoje o item fica na `outbox`; o WhatsApp e o plugin entram
-  com o mesmo contrato.
-- **Console (HR-46)**: mostrar o arquivo enviado como anexo na conversa. Hoje o item vive na
-  `outbox`; o transporte de console confirma o item sem imprimir nada (só texto é impresso).
-- **Teto de arquivos por turno**: não há limite além do `max_rodadas_ferramenta` do agente — cada
-  rodada pode enfileirar um ou mais arquivos.
+- **Channel transport** (HR-25/HR-26): today the item stays in the `outbox`; WhatsApp and the plugin come with the same
+  contract.
+- **Console (HR-46)**: show the sent file as an attachment in the conversation. Today the item lives in the `outbox`;
+  the console transport confirms the item without printing anything (only text is printed).
+- **Per-turn file limit**: there is no limit beyond the agent's `max_rodadas_ferramenta` — each round can queue one or
+  more files.
 
-## Testes
+## Tests
 
-- `crates/poph-store/tests/biblioteca.rs` — repositório: criar/listar/contar/excluir, isolamento por
-  org e por agente da mesma org, agente de outra org recusado, validação de campos.
-- `crates/poph-agent/tests/biblioteca_arquivos.rs` — ferramenta e turno: id de outro agente/org
-  recusado (inclusive com org forjada no contexto), id inexistente com erro legível e turno
-  seguindo, `SendFile` na `outbox` com `blob_ref` e sem duplicar na repetição, agente sem a
-  ferramenta não a recebe, agente com ela vê a descrição dos arquivos, biblioteca vazia.
-- `crates/poph/tests/cli_arquivo.rs` — CLI de ponta a ponta: upload/lista/mostra/exclui, dedupe de
-  blob por hash, arquivo acima de 16 MB recusado, extensão enganosa recusada, erros com código 1,
-  `--offline` obrigatório, biblioteca por agente.
+- `crates/poph-store/tests/biblioteca.rs` — repository: create/list/count/delete, isolation by org and by agent within the
+  same org, agent from another org refused, field validation.
+- `crates/poph-agent/tests/biblioteca_arquivos.rs` — tool and turn: id of another agent/org refused (including with a
+  forged org in the context), non-existent id with a readable error and the turn carrying on, `SendFile` in the `outbox`
+  with `blob_ref` and no duplicate on repetition, an agent without the tool does not receive it, an agent with it sees
+  the file descriptions, empty library.
+- `crates/poph/tests/cli_arquivo.rs` — end-to-end CLI: upload/list/show/delete, blob dedupe by hash, file above 16 MB
+  refused, misleading extension refused, errors with exit code 1, `--offline` required, library per agent.
