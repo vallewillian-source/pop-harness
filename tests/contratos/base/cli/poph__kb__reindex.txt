@@ -1,0 +1,11 @@
+Reconstrói o índice de um agente (ou de todos os agentes da org)
+
+Usage: poph kb reindex [OPTIONS]
+
+Options:
+      --agent <AGENT>     Agente (id UUID v7 ou slug). Sem ele, reindexa todos os agentes da org
+      --config <ARQUIVO>  Arquivo de configuração TOML. Sem ele, usa POPH_CONFIG ou ./poph.toml, se existir
+      --json              Saída em JSON
+      --org <ORG>         Org do contexto (id UUID v7 ou slug). Obrigatória nos comandos que mexem em dados de org
+      --offline           Opera direto no banco, sem servidor. Obrigatório em `org`, `token`, `category`, `department`, `kb` e `file` enquanto o modo com servidor não existe
+  -h, --help              Print help

@@ -1,0 +1,17 @@
+Gerencia as orgs (tenants): criar, listar, mostrar, alterar e excluir
+
+Usage: poph org [OPTIONS] <COMMAND>
+
+Commands:
+  create  Cria uma org
+  list    Lista as orgs (primeira página, por id)
+  show    Mostra uma org e quantos agentes ela tem
+  update  Altera uma org com `--if-match` (a versão lida antes)
+  delete  Exclui a org. Se ela tiver conteúdo, exige `--force` e apaga tudo junto
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+      --config <ARQUIVO>  Arquivo de configuração TOML. Sem ele, usa POPH_CONFIG ou ./poph.toml, se existir
+      --org <ORG>         Org do contexto (id UUID v7 ou slug). Obrigatória nos comandos que mexem em dados de org
+      --offline           Opera direto no banco, sem servidor. Obrigatório em `org`, `token`, `category`, `department`, `kb` e `file` enquanto o modo com servidor não existe
+  -h, --help              Print help

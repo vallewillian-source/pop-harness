@@ -1,0 +1,17 @@
+Altera uma categoria com `--if-match`
+
+Usage: poph category update [OPTIONS] --if-match <IF_MATCH> <CATEGORIA>
+
+Arguments:
+  <CATEGORIA>  Id (UUID v7) da categoria
+
+Options:
+      --config <ARQUIVO>           Arquivo de configuração TOML. Sem ele, usa POPH_CONFIG ou ./poph.toml, se existir
+      --if-match <IF_MATCH>        Versão lida com `show` (`If-Match`). Obrigatória
+      --name <NAME>                Novo nome
+      --org <ORG>                  Org do contexto (id UUID v7 ou slug). Obrigatória nos comandos que mexem em dados de org
+      --description <DESCRIPTION>  Nova descrição
+      --offline                    Opera direto no banco, sem servidor. Obrigatório em `org`, `token`, `category`, `department`, `kb` e `file` enquanto o modo com servidor não existe
+      --status <STATUS>            Nova situação: `active`, `inactive` ou `archived`
+      --json                       Saída em JSON (formato estável)
+  -h, --help                       Print help

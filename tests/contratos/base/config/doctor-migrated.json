@@ -1,0 +1,61 @@
+{
+  "versao_relatorio": 1,
+  "status": "erro",
+  "binario": {
+    "nome": "poph",
+    "versao": "0.1.0",
+    "rustc": "rustc <version>"
+  },
+  "verificacoes": [
+    {
+      "nome": "binário e toolchain",
+      "nivel": "ok",
+      "detalhe": "poph 0.1.0, compilado com rustc <version>"
+    },
+    {
+      "nome": "arquivo de configuração",
+      "nivel": "ok",
+      "detalhe": "nenhum arquivo indicado; usando padrões e ambiente"
+    },
+    {
+      "nome": "configuração",
+      "nivel": "ok",
+      "detalhe": "valores válidos"
+    },
+    {
+      "nome": "pasta de dados",
+      "nivel": "ok",
+      "detalhe": "<data_dir>/data existe e aceita escrita"
+    },
+    {
+      "nome": "banco harness.db",
+      "nivel": "ok",
+      "detalhe": "formato SQLite, esquema versão 16"
+    },
+    {
+      "nome": "banco rag.db",
+      "nivel": "ok",
+      "detalhe": "formato SQLite, esquema versão 0"
+    },
+    {
+      "nome": "fluxos.ativo",
+      "nivel": "ok",
+      "detalhe": "sim: o motor de fluxos roda"
+    },
+    {
+      "nome": "fluxos.tetos",
+      "nivel": "ok",
+      "detalhe": "fluxos por org 100; script 32768 bytes; nós 60; dados 65536 bytes; passos de regra 10000; memória de regra 1048576 bytes; saltos de decisão 10; cache de revisões 16 MB"
+    },
+    {
+      "nome": "variável POPH_CHAVE_CIFRA",
+      "nivel": "erro",
+      "detalhe": "ausente; defina POPH_CHAVE_CIFRA no ambiente"
+    },
+    {
+      "nome": "variável ANTIGRAVITY_API_KEY",
+      "nivel": "erro",
+      "detalhe": "ausente; defina ANTIGRAVITY_API_KEY no ambiente"
+    }
+  ]
+}

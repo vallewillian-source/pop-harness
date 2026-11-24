@@ -1,0 +1,17 @@
+{
+  "status": 200,
+  "body": {
+    "items": [
+      {
+        "id": "<uuid>",
+        "slug": "agendar_visita",
+        "name": "Agendar visita",
+        "description": "Marca a visita tecnica",
+        "status": "active",
+        "current_revision": 2,
+        "version": 3
+      }
+    ],
+    "next_cursor": null
+  }
+}

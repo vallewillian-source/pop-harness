@@ -1,0 +1,27 @@
+Altera um produto com `--if-match`
+
+Usage: poph product update [OPTIONS] --if-match <IF_MATCH> <PRODUTO>
+
+Arguments:
+  <PRODUTO>  Id (UUID v7) ou slug do produto
+
+Options:
+      --config <ARQUIVO>           Arquivo de configuração TOML. Sem ele, usa POPH_CONFIG ou ./poph.toml, se existir
+      --if-match <IF_MATCH>        Versão lida com `show` (`If-Match`). Obrigatória
+      --category <CATEGORY>        Nova categoria (id ou nome exato)
+      --org <ORG>                  Org do contexto (id UUID v7 ou slug). Obrigatória nos comandos que mexem em dados de org
+      --name <NAME>                Novo nome
+      --offline                    Opera direto no banco, sem servidor. Obrigatório em `org`, `token`, `category`, `department`, `kb` e `file` enquanto o modo com servidor não existe
+      --slug <SLUG>                Novo slug
+      --price <PRICE>              Novo preço em centavos
+      --price-text <PRICE_TEXT>    Novo texto de preço
+      --alias <ALIAS>              Novos aliases (substitui a lista)
+      --tag <TAG>                  Novas tags (substitui a lista)
+      --description <DESCRIPTION>  Nova descrição
+      --unit <UNIT>                Nova unidade
+      --includes <INCLUDES>        Novo inclui
+      --excludes <EXCLUDES>        Novo exclui
+      --conditions <CONDITIONS>    Novas condições
+      --status <STATUS>            Nova situação: `active`, `inactive` ou `archived` (inativo sai da busca, D-05)
+      --json                       Saída em JSON (formato estável)
+  -h, --help                       Print help

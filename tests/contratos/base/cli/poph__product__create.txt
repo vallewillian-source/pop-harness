@@ -1,0 +1,22 @@
+Cria um produto na org
+
+Usage: poph product create [OPTIONS] --name <NAME> --category <CATEGORY>
+
+Options:
+      --config <ARQUIVO>           Arquivo de configuração TOML. Sem ele, usa POPH_CONFIG ou ./poph.toml, se existir
+      --name <NAME>                Nome comercial (até 160 caracteres)
+      --category <CATEGORY>        Categoria dona: id (UUID v7) ou nome exato
+      --org <ORG>                  Org do contexto (id UUID v7 ou slug). Obrigatória nos comandos que mexem em dados de org
+      --offline                    Opera direto no banco, sem servidor. Obrigatório em `org`, `token`, `category`, `department`, `kb` e `file` enquanto o modo com servidor não existe
+      --price <PRICE>              Preço em centavos (ex.: 32000 = R$ 320,00) [default: 0]
+      --price-text <PRICE_TEXT>    Preço como o cliente vê (ex.: "R$ 320,00"). Vazio = formatado a partir dos centavos [default: ""]
+      --slug <SLUG>                Slug (vazio deriva do nome)
+      --alias <ALIAS>              Outro nome pelo qual o cliente chama o produto (pode repetir)
+      --tag <TAG>                  Etiqueta de busca (pode repetir)
+      --description <DESCRIPTION>  Descrição [default: ""]
+      --unit <UNIT>                Unidade ("por m²", "por visita") [default: ""]
+      --includes <INCLUDES>        O que está incluso [default: ""]
+      --excludes <EXCLUDES>        O que não está incluso [default: ""]
+      --conditions <CONDITIONS>    Condições (prazo, pagamento) [default: ""]
+      --json                       Saída em JSON (formato estável)
+  -h, --help                       Print help

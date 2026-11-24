@@ -1,0 +1,15 @@
+Consulta a base como o agente faria (busca híbrida)
+
+Usage: poph kb search [OPTIONS] --agent <AGENT> <CONSULTA>
+
+Arguments:
+  <CONSULTA>  Texto da consulta
+
+Options:
+      --agent <AGENT>     Agente cuja base será consultada (id UUID v7 ou slug)
+      --config <ARQUIVO>  Arquivo de configuração TOML. Sem ele, usa POPH_CONFIG ou ./poph.toml, se existir
+      --org <ORG>         Org do contexto (id UUID v7 ou slug). Obrigatória nos comandos que mexem em dados de org
+      --top-k <TOP_K>     Quantos trechos trazer (padrão: o top-k do agente)
+      --json              Saída em JSON
+      --offline           Opera direto no banco, sem servidor. Obrigatório em `org`, `token`, `category`, `department`, `kb` e `file` enquanto o modo com servidor não existe
+  -h, --help              Print help

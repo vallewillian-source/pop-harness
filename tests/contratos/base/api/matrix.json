@@ -1,0 +1,16 @@
+{
+  "status": 200,
+  "body": {
+    "org_id": "<uuid>",
+    "enabled": true,
+    "enabled_at": 1700000000000,
+    "updated_at": 1700000000000,
+    "connected": null,
+    "backlog": {
+      "messages": 3,
+      "oldest_seconds": 0
+    },
+    "pending_failures": 0,
+    "last_failure": null
+  }
+}

@@ -1,0 +1,49 @@
+Cria o agente na org
+
+Usage: poph agent create [OPTIONS] --name <NAME>
+
+Options:
+      --config <ARQUIVO>
+          Arquivo de configuração TOML. Sem ele, usa POPH_CONFIG ou ./poph.toml, se existir
+      --name <NAME>
+          Nome de exibição (3 a 120 caracteres)
+      --org <ORG>
+          Org do contexto (id UUID v7 ou slug). Obrigatória nos comandos que mexem em dados de org
+      --slug <SLUG>
+          Slug único na org (`^[a-z0-9-]{3,64}$`). Sem ele, é derivado do nome
+      --description <DESCRIPTION>
+          Descrição curta [default: ""]
+      --offline
+          Opera direto no banco, sem servidor. Obrigatório em `org`, `token`, `category`, `department`, `kb` e `file` enquanto o modo com servidor não existe
+      --type <TIPO>
+          Tipo: `custom` (padrão) ou `standard` (paridade com o POP Atende) [default: custom]
+      --category <CATEGORY>
+          Categoria do POP Atende (metadado; `generic` por padrão) [default: generic]
+      --department <DEPARTMENT>
+          Departamento padrão (id): onde as conversas novas entram
+      --handoff-department <HANDOFF_DEPARTMENT>
+          Departamento humano do gate G4
+      --provider <PROVIDER>
+          Provedor do LLM [default: antigravity2api]
+      --model <MODEL>
+          Modelo do LLM (vale por agente) [default: gemini-3.8-flash-tiered]
+      --temperature <TEMPERATURE>
+          Temperatura do LLM (sem valor, usa o padrão do provedor)
+      --max-output-tokens <MAX_OUTPUT_TOKENS>
+          Teto de tokens de saída (sem valor, usa o padrão da configuração)
+      --max-context-tokens <MAX_CONTEXT_TOKENS>
+          Orçamento de contexto em tokens [default: 64000]
+      --grouping-window-ms <GROUPING_WINDOW_MS>
+          Janela de agrupamento em ms (0 a 8000) [default: 2000]
+      --max-tool-rounds <MAX_TOOL_ROUNDS>
+          Máximo de rodadas de ferramenta por turno [default: 4]
+      --max-tool-calls <MAX_TOOL_CALLS>
+          Máximo de chamadas de ferramenta por mensagem [default: 10]
+      --rag-top-k <RAG_TOP_K>
+          Quantos trechos o RAG devolve [default: 3]
+      --rag-min-score <RAG_MIN_SCORE>
+          Corte mínimo de relevância do RAG (0 a 1) [default: 0]
+      --json
+          Saída em JSON (formato estável)
+  -h, --help
+          Print help

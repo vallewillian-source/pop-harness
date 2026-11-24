@@ -1,0 +1,24 @@
+{
+  "status": 200,
+  "body": {
+    "items": [
+      {
+        "id": "<uuid>",
+        "org_id": "<uuid>",
+        "conversation_id": "<uuid>",
+        "state": "running",
+        "retrieved": [],
+        "tools": [],
+        "tool_calls": [],
+        "timings": {},
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cost_micros": 0,
+        "error": null,
+        "started_at": 1700000000000,
+        "finished_at": null
+      }
+    ],
+    "next_cursor": null
+  }
+}

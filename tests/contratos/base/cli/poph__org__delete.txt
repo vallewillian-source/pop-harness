@@ -1,0 +1,13 @@
+Exclui a org. Se ela tiver conteúdo, exige `--force` e apaga tudo junto
+
+Usage: poph org delete [OPTIONS] <ORG>
+
+Arguments:
+  <ORG>  Id (UUID v7) ou slug da org
+
+Options:
+      --config <ARQUIVO>  Arquivo de configuração TOML. Sem ele, usa POPH_CONFIG ou ./poph.toml, se existir
+      --force             Confirma a exclusão quando a org tem conteúdo (agentes, categorias, departamentos, tokens)
+      --json              Saída em JSON (formato estável)
+      --offline           Opera direto no banco, sem servidor. Obrigatório em `org`, `token`, `category`, `department`, `kb` e `file` enquanto o modo com servidor não existe
+  -h, --help              Print help

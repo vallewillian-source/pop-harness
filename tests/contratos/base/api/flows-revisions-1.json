@@ -1,0 +1,131 @@
+{
+  "status": 200,
+  "body": {
+    "id": "<uuid>",
+    "flow_id": "<uuid>",
+    "number": 1,
+    "schema_version": 1,
+    "source_sha256": "0d1380f8d0fc350763ad7ef3607aef192e6df12ad91c290dd8f28bfe639befcc",
+    "published_at": 1700000000000,
+    "published_by": "cli",
+    "resolutions": {},
+    "source": "# Exemplo 1 — o mais simples possível: duas etapas e dois fins, sem decisão.\n# Serve para conferir a forma mínima de um fluxo válido.\nfluxo(\n    id = \"agendar_visita\",\n    nome = \"Agendar visita\",\n    descricao = \"Marca uma visita técnica no endereço do cliente.\",\n    inicio = \"coleta\",\n    gatilho = gatilho(\n        quando = \"O cliente quer marcar, remarcar ou cancelar uma visita técnica.\",\n        nao_quando = \"Só quer saber preço ou prazo, sem pedir visita.\",\n        exemplos = [\"queria agendar uma visita\", \"pode vir aqui amanhã?\"],\n    ),\n)\n\netapa(\n    id = \"coleta\",\n    nome = \"Coletar dados\",\n    instrucao = \"Pergunte o endereço e o período preferido. Uma pergunta por vez.\",\n    campos = [\n        campo(\"endereco\", \"Endereço completo\", tipo = \"texto\", obrigatorio = True),\n        campo(\"periodo\", \"Período\", tipo = \"opcao\", opcoes = [\"manhã\", \"tarde\"], obrigatorio = True),\n    ],\n    acoes = [\n        acao(\"confirmar\", \"Dados completos\", exige = [\"endereco\", \"periodo\"], vai_para = \"confirmacao\"),\n        acao(\"desistir\", \"Cliente desistiu\", vai_para = fim(\"desistencia\", resultado = \"Cliente desistiu\")),\n    ],\n)\n\netapa(\n    id = \"confirmacao\",\n    nome = \"Confirmar visita\",\n    instrucao = \"Repita o endereço e o período combinados e peça a confirmação do cliente.\",\n    acoes = [\n        acao(\"ok\", \"Visita combinada\", vai_para = fim(\"concluida\", resultado = \"Visita agendada\")),\n    ],\n)\n",
+    "definition": {
+      "schema_versao": 1,
+      "fluxo": {
+        "id": "agendar_visita",
+        "nome": "Agendar visita",
+        "descricao": "Marca uma visita técnica no endereço do cliente."
+      },
+      "gatilho": {
+        "quando": "O cliente quer marcar, remarcar ou cancelar uma visita técnica.",
+        "nao_quando": "Só quer saber preço ou prazo, sem pedir visita.",
+        "exemplos": [
+          "queria agendar uma visita",
+          "pode vir aqui amanhã?"
+        ]
+      },
+      "inicio": "coleta",
+      "etapas": [
+        {
+          "id": "coleta",
+          "nome": "Coletar dados",
+          "instrucao": "Pergunte o endereço e o período preferido. Uma pergunta por vez.",
+          "atores_acao": [
+            "agente"
+          ],
+          "campos": [
+            {
+              "id": "endereco",
+              "rotulo": "Endereço completo",
+              "tipo": "texto",
+              "obrigatorio": true,
+              "opcoes": [],
+              "ajuda": null
+            },
+            {
+              "id": "periodo",
+              "rotulo": "Período",
+              "tipo": "opcao",
+              "obrigatorio": true,
+              "opcoes": [
+                "manhã",
+                "tarde"
+              ],
+              "ajuda": null
+            }
+          ],
+          "acoes": [
+            {
+              "id": "confirmar",
+              "rotulo": "Dados completos",
+              "exige": [
+                "endereco",
+                "periodo"
+              ],
+              "ator": null,
+              "vai_para": {
+                "tipo": "etapa",
+                "id": "confirmacao"
+              },
+              "efeitos": []
+            },
+            {
+              "id": "desistir",
+              "rotulo": "Cliente desistiu",
+              "exige": [],
+              "ator": null,
+              "vai_para": {
+                "tipo": "fim",
+                "id": "desistencia",
+                "resultado": "Cliente desistiu",
+                "encerra_atendimento": false
+              },
+              "efeitos": []
+            }
+          ],
+          "ao_entrar": []
+        },
+        {
+          "id": "confirmacao",
+          "nome": "Confirmar visita",
+          "instrucao": "Repita o endereço e o período combinados e peça a confirmação do cliente.",
+          "atores_acao": [
+            "agente"
+          ],
+          "campos": [],
+          "acoes": [
+            {
+              "id": "ok",
+              "rotulo": "Visita combinada",
+              "exige": [],
+              "ator": null,
+              "vai_para": {
+                "tipo": "fim",
+                "id": "concluida",
+                "resultado": "Visita agendada",
+                "encerra_atendimento": false
+              },
+              "efeitos": []
+            }
+          ],
+          "ao_entrar": []
+        }
+      ],
+      "decisoes": [],
+      "fins": [
+        {
+          "id": "desistencia",
+          "resultado": "Cliente desistiu",
+          "encerra_atendimento": false
+        },
+        {
+          "id": "concluida",
+          "resultado": "Visita agendada",
+          "encerra_atendimento": false
+        }
+      ],
+      "defs": []
+    }
+  }
+}

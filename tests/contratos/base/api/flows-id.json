@@ -1,0 +1,23 @@
+{
+  "status": 200,
+  "body": {
+    "id": "<uuid>",
+    "slug": "agendar_visita",
+    "name": "Agendar visita",
+    "description": "Marca a visita tecnica",
+    "status": "active",
+    "current_revision": 2,
+    "version": 3,
+    "draft_source": "# Exemplo 1 — o mais simples possível: duas etapas e dois fins, sem decisão.\n# Serve para conferir a forma mínima de um fluxo válido.\nfluxo(\n    id = \"agendar_visita\",\n    nome = \"Agendar visita\",\n    descricao = \"Marca uma visita técnica no endereço do cliente, com confirmação.\",\n    inicio = \"coleta\",\n    gatilho = gatilho(\n        quando = \"O cliente quer marcar, remarcar ou cancelar uma visita técnica.\",\n        nao_quando = \"Só quer saber preço ou prazo, sem pedir visita.\",\n        exemplos = [\"queria agendar uma visita\", \"pode vir aqui amanhã?\"],\n    ),\n)\n\netapa(\n    id = \"coleta\",\n    nome = \"Coletar dados\",\n    instrucao = \"Pergunte o endereço e o período preferido. Uma pergunta por vez.\",\n    campos = [\n        campo(\"endereco\", \"Endereço completo\", tipo = \"texto\", obrigatorio = True),\n        campo(\"periodo\", \"Período\", tipo = \"opcao\", opcoes = [\"manhã\", \"tarde\"], obrigatorio = True),\n    ],\n    acoes = [\n        acao(\"confirmar\", \"Dados completos\", exige = [\"endereco\", \"periodo\"], vai_para = \"confirmacao\"),\n        acao(\"desistir\", \"Cliente desistiu\", vai_para = fim(\"desistencia\", resultado = \"Cliente desistiu\")),\n    ],\n)\n\netapa(\n    id = \"confirmacao\",\n    nome = \"Confirmar visita\",\n    instrucao = \"Repita o endereço e o período combinados e peça a confirmação do cliente.\",\n    acoes = [\n        acao(\"ok\", \"Visita combinada\", vai_para = fim(\"concluida\", resultado = \"Visita agendada\")),\n    ],\n)\n",
+    "revision": {
+      "id": "<uuid>",
+      "flow_id": "<uuid>",
+      "number": 2,
+      "schema_version": 1,
+      "source_sha256": "17766ede447adf2582a65f2bfec71427b8b13cda0504e29d09a76af33e75b4b3",
+      "published_at": 1700000000000,
+      "published_by": "cli",
+      "resolutions": {}
+    }
+  }
+}

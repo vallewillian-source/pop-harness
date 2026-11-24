@@ -1,0 +1,16 @@
+Põe um arquivo na biblioteca do agente (limite de 16 MB, tipo conferido pelo conteúdo)
+
+Usage: poph file upload [OPTIONS] --agent <AGENT> <CAMINHO>
+
+Arguments:
+  <CAMINHO>  Caminho do arquivo no disco
+
+Options:
+      --agent <AGENT>              Agente dono do arquivo: id (UUID v7) ou slug
+      --config <ARQUIVO>           Arquivo de configuração TOML. Sem ele, usa POPH_CONFIG ou ./poph.toml, se existir
+      --name <NAME>                Nome mostrado ao cliente (padrão: o nome do arquivo no disco) [default: ""]
+      --org <ORG>                  Org do contexto (id UUID v7 ou slug). Obrigatória nos comandos que mexem em dados de org
+      --description <DESCRIPTION>  Descrição que o modelo lê para decidir quando enviar [default: ""]
+      --offline                    Opera direto no banco, sem servidor. Obrigatório em `org`, `token`, `category`, `department`, `kb` e `file` enquanto o modo com servidor não existe
+      --json                       Saída em JSON (formato estável, sem segredo)
+  -h, --help                       Print help

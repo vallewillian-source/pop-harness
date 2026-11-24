@@ -1,0 +1,19 @@
+{
+  "status": 200,
+  "body": {
+    "items": [
+      {
+        "id": "<uuid>",
+        "name": "Contratos Ltda",
+        "slug": "contratos",
+        "status": "active",
+        "config": {},
+        "version": 1,
+        "created_at": 1700000000000,
+        "updated_at": 1700000000000,
+        "agents_active_count": 1
+      }
+    ],
+    "next_cursor": null
+  }
+}

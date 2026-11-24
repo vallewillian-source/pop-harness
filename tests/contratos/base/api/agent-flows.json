@@ -1,0 +1,14 @@
+{
+  "status": 200,
+  "body": {
+    "items": [
+      {
+        "id": "<uuid>",
+        "slug": "agendar_visita",
+        "name": "Agendar visita",
+        "status": "active"
+      }
+    ],
+    "next_cursor": null
+  }
+}

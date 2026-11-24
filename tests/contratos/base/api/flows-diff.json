@@ -1,0 +1,22 @@
+{
+  "status": 200,
+  "body": {
+    "flow_id": "<uuid>",
+    "from": {
+      "revision": 1,
+      "active_runs": 0
+    },
+    "to": {
+      "revision": 2,
+      "active_runs": 0
+    },
+    "changes": [
+      {
+        "tipo": "texto_mudou",
+        "impacto": "nenhum",
+        "alvo": "fluxo",
+        "texto": "a descrição do fluxo mudou de \"Marca uma visita técnica no endereço do cliente.\" para \"Marca uma visita técnica no endereço do cliente, com confirmação.\"."
+      }
+    ]
+  }
+}

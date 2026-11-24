@@ -1,0 +1,14 @@
+Gera (`--saida`) ou confere (`--verificar`) o registro do Application Service
+
+Usage: poph matrix registro [OPTIONS]
+
+Options:
+      --config <ARQUIVO>     Arquivo de configuração TOML. Sem ele, usa POPH_CONFIG ou ./poph.toml, se existir
+      --saida <ARQUIVO>      Arquivo a gerar, com permissão 0600. Recusa sobrescrever sem `--forcar`
+      --org <ORG>            Org do contexto (id UUID v7 ou slug). Obrigatória nos comandos que mexem em dados de org
+      --verificar <ARQUIVO>  Arquivo existente a conferir contra a seção `[matrix]` e os tokens do ambiente
+      --offline              Opera direto no banco, sem servidor. Obrigatório em `org`, `token`, `category`, `department`, `kb` e `file` enquanto o modo com servidor não existe
+      --url <BASE>           Endereço por onde o Synapse alcança o Harness (padrão: variável `POPH_MATRIX_URL_AS`)
+      --id <ID>              Id do Application Service no registro (muda por instância na fase 3) [default: poph-matrix]
+      --forcar               Sobrescreve o arquivo existente
+  -h, --help                 Print help

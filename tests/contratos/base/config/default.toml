@@ -1,0 +1,74 @@
+[servidor]
+endereco = "127.0.0.1"
+porta = 7480
+
+[dados]
+diretorio = "data"
+
+[log]
+nivel = "info"
+formato = "legivel"
+
+[retencao]
+dias = 30
+
+[limites]
+turnos_simultaneos = 200
+turnos_simultaneos_por_org = 50
+taxa_por_org_por_minuto = 600
+
+[llm]
+provedor = "antigravity2api"
+url_base = "http://127.0.0.1:8045/v1"
+modelo = "gemini-3.8-flash-tiered"
+timeout_segundos = 150
+retentativas = 2
+simultaneos = 32
+temperatura = 0.0
+max_tokens_saida = 4096
+
+[jev]
+ativo = false
+url_base = "https://api.typesafe.ai"
+modelo = "jev-latest"
+timeout_segundos = 8
+retentativas = 1
+
+[jev.gates]
+g1 = false
+g2 = false
+g3 = true
+g4 = false
+g5 = true
+g6 = false
+g7 = false
+g8 = true
+g9 = true
+
+[handoff]
+mensagem_automatica = "Sua conversa foi transferida para um atendente humano da nossa equipe, que já irá respondê-la por aqui. 🙋"
+orientacao_ativa = true
+orientacao_confianca = 0.5
+orientacao_timeout_segundos = 4
+orientacao_ingestao_contato_produto = "⚠️ Se alguém engoliu ou teve contato com o produto, procure atendimento médico agora ou ligue para o SAMU (192) ou para o Disque-Intoxicação (0800 722 6001). Leve a embalagem do produto. Não provoque vômito e não dê nada para beber ou comer sem orientação médica."
+orientacao_animal_peconhento = "⚠️ Não toque nem tente pegar o animal. Mantenha crianças e outras pessoas longe dele e, se puder, feche a porta do cômodo. Se alguém foi picado, vá agora a um pronto-socorro ou ligue para o SAMU (192)."
+orientacao_outro_risco_saude = "⚠️ Se alguém corre risco de saúde agora, ligue para o SAMU (192) ou vá a um pronto-socorro sem esperar a nossa resposta."
+
+[turno]
+intervalo_despacho_ms = 1000
+tentativas_falha_modelo = 3
+atraso_falha_modelo_ms = 30000
+
+[fluxos]
+ativo = true
+max_fluxos_por_org = 100
+max_fonte_bytes = 32768
+max_nos = 60
+max_dados_bytes = 65536
+max_ticks_regra = 10000
+max_heap_regra = 1048576
+max_saltos_decisao = 10
+cache_revisoes_mb = 16
+
+[admin]
+tokens_globais = []

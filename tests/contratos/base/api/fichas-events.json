@@ -1,0 +1,18 @@
+{
+  "status": 200,
+  "body": {
+    "items": [
+      {
+        "id": "<uuid>",
+        "seq": 1,
+        "tipo": "ficha_aberta",
+        "ator_tipo": "sistema",
+        "ator_ref": null,
+        "execucao_id": null,
+        "payload": {},
+        "criado_em": 1700000000000
+      }
+    ],
+    "next_cursor": null
+  }
+}

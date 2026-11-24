@@ -1,0 +1,10 @@
+Sobe o servidor HTTP (API administrativa, `/healthz` e `/metrics`)
+
+Usage: poph serve [OPTIONS]
+
+Options:
+      --config <ARQUIVO>  Arquivo de configuração TOML. Sem ele, usa POPH_CONFIG ou ./poph.toml, se existir
+      --somente-endereco  Imprime o endereço e sai (útil para scripts de teste)
+      --org <ORG>         Org do contexto (id UUID v7 ou slug). Obrigatória nos comandos que mexem em dados de org
+      --offline           Opera direto no banco, sem servidor. Obrigatório em `org`, `token`, `category`, `department`, `kb` e `file` enquanto o modo com servidor não existe
+  -h, --help              Print help

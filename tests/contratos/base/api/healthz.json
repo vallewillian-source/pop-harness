@@ -1,0 +1,12 @@
+{
+  "status": 200,
+  "body": {
+    "status": "ok",
+    "version": "0.1.0",
+    "uptime_seconds": 0,
+    "databases": {
+      "harness": 16,
+      "rag": 0
+    }
+  }
+}

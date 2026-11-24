@@ -1,0 +1,18 @@
+{
+  "status": 200,
+  "body": {
+    "agent_id": "<uuid>",
+    "org_id": "<uuid>",
+    "structured": {
+      "identity": {
+        "name": "Ana",
+        "role": "Atendente"
+      }
+    },
+    "markdown": "Voce e a Ana, atendente de suporte.",
+    "derived_from_json": true,
+    "version": 1,
+    "created_at": 1700000000000,
+    "updated_at": 1700000000000
+  }
+}

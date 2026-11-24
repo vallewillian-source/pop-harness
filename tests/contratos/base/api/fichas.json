@@ -1,0 +1,34 @@
+{
+  "status": 200,
+  "body": {
+    "items": [
+      {
+        "id": "<uuid>",
+        "conversation_id": "<uuid>",
+        "agent_id": "<uuid>",
+        "canal": "whatsapp",
+        "peer_externo": "5521000000000",
+        "status": "open",
+        "aberta_em": 1700000000000,
+        "fechada_em": null,
+        "fechada_por": null,
+        "fechada_motivo": null,
+        "version": 1
+      },
+      {
+        "id": "<uuid>",
+        "conversation_id": "<uuid>",
+        "agent_id": "<uuid>",
+        "canal": "test",
+        "peer_externo": null,
+        "status": "open",
+        "aberta_em": 1700000000000,
+        "fechada_em": null,
+        "fechada_por": null,
+        "fechada_motivo": null,
+        "version": 1
+      }
+    ],
+    "next_cursor": null
+  }
+}

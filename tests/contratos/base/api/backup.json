@@ -1,0 +1,236 @@
+{
+  "status": 200,
+  "body": {
+    "formato": "poph-backup-org",
+    "versao_formato": 2,
+    "exportado_em": 1700000000000,
+    "org_origem": {
+      "id": "<uuid>",
+      "slug": "contratos",
+      "nome": null
+    },
+    "com_conversas": false,
+    "org": {
+      "id": "<uuid>",
+      "name": "Contratos Ltda",
+      "slug": "contratos",
+      "status": "active",
+      "config_json": "{}",
+      "version": 1,
+      "created_at": 1700000000000,
+      "updated_at": 1700000000000
+    },
+    "tabelas": {
+      "agent_instructions": [
+        {
+          "agent_id": "<uuid>",
+          "org_id": "<uuid>",
+          "structured_json": "{\"identity\":{\"name\":\"Ana\",\"role\":\"Atendente\"}}",
+          "markdown": "Voce e a Ana, atendente de suporte.",
+          "derived_from_json": 1,
+          "version": 1,
+          "created_at": 1700000000000,
+          "updated_at": 1700000000000
+        }
+      ],
+      "agent_knowledge_groups": [
+        {
+          "org_id": "<uuid>",
+          "agent_id": "<uuid>",
+          "group_id": "<uuid>",
+          "version": 1,
+          "created_at": 1700000000000
+        }
+      ],
+      "agent_product_categories": [],
+      "agente_fluxos": [
+        {
+          "org_id": "<uuid>",
+          "agent_id": "<uuid>",
+          "fluxo_id": "<uuid>",
+          "liberado_em": 1700000000000
+        }
+      ],
+      "agents": [
+        {
+          "id": "<uuid>",
+          "org_id": "<uuid>",
+          "name": "Ana",
+          "slug": "ana",
+          "description": "Agente de suporte",
+          "status": "active",
+          "agent_type": "custom",
+          "category": "generic",
+          "default_department_id": "<uuid>",
+          "human_handoff_enabled": 0,
+          "human_handoff_department_id": null,
+          "provider": "antigravity2api",
+          "model": "gemini-3.8-flash-tiered",
+          "temperature": null,
+          "max_output_tokens": null,
+          "max_context_messages": 30,
+          "max_context_tokens": 64000,
+          "grouping_window_ms": 2000,
+          "max_tool_rounds": 4,
+          "max_tool_calls_per_message": 10,
+          "rag_top_k": 4,
+          "rag_min_score": 0.0,
+          "jev_json": "{}",
+          "version": 2,
+          "created_at": 1700000000000,
+          "updated_at": 1700000000000
+        }
+      ],
+      "departments": [
+        {
+          "id": "<uuid>",
+          "org_id": "<uuid>",
+          "name": "Suporte",
+          "description": "Atendimento de primeiro nivel",
+          "status": "active",
+          "version": 1,
+          "created_at": 1700000000000,
+          "updated_at": 1700000000000
+        }
+      ],
+      "file_library": [
+        {
+          "id": "<uuid>",
+          "org_id": "<uuid>",
+          "agent_id": "<uuid>",
+          "name": "exemplo.txt",
+          "description": "Arquivo de exemplo",
+          "mime": "text/plain",
+          "size_bytes": 19,
+          "sha256": "6f58c962397ecb32f05669d1895a6b5be389e5a4055afe89cdb1cc800e565794",
+          "created_at": 1700000000000
+        }
+      ],
+      "fluxo_revisoes": [
+        {
+          "id": "<uuid>",
+          "org_id": "<uuid>",
+          "fluxo_id": "<uuid>",
+          "numero": 1,
+          "fonte": "# Exemplo 1 — o mais simples possível: duas etapas e dois fins, sem decisão.\n# Serve para conferir a forma mínima de um fluxo válido.\nfluxo(\n    id = \"agendar_visita\",\n    nome = \"Agendar visita\",\n    descricao = \"Marca uma visita técnica no endereço do cliente.\",\n    inicio = \"coleta\",\n    gatilho = gatilho(\n        quando = \"O cliente quer marcar, remarcar ou cancelar uma visita técnica.\",\n        nao_quando = \"Só quer saber preço ou prazo, sem pedir visita.\",\n        exemplos = [\"queria agendar uma visita\", \"pode vir aqui amanhã?\"],\n    ),\n)\n\netapa(\n    id = \"coleta\",\n    nome = \"Coletar dados\",\n    instrucao = \"Pergunte o endereço e o período preferido. Uma pergunta por vez.\",\n    campos = [\n        campo(\"endereco\", \"Endereço completo\", tipo = \"texto\", obrigatorio = True),\n        campo(\"periodo\", \"Período\", tipo = \"opcao\", opcoes = [\"manhã\", \"tarde\"], obrigatorio = True),\n    ],\n    acoes = [\n        acao(\"confirmar\", \"Dados completos\", exige = [\"endereco\", \"periodo\"], vai_para = \"confirmacao\"),\n        acao(\"desistir\", \"Cliente desistiu\", vai_para = fim(\"desistencia\", resultado = \"Cliente desistiu\")),\n    ],\n)\n\netapa(\n    id = \"confirmacao\",\n    nome = \"Confirmar visita\",\n    instrucao = \"Repita o endereço e o período combinados e peça a confirmação do cliente.\",\n    acoes = [\n        acao(\"ok\", \"Visita combinada\", vai_para = fim(\"concluida\", resultado = \"Visita agendada\")),\n    ],\n)\n",
+          "fonte_sha256": "0d1380f8d0fc350763ad7ef3607aef192e6df12ad91c290dd8f28bfe639befcc",
+          "definicao_json": "{\"schema_versao\":1,\"fluxo\":{\"id\":\"agendar_visita\",\"nome\":\"Agendar visita\",\"descricao\":\"Marca uma visita técnica no endereço do cliente.\"},\"gatilho\":{\"quando\":\"O cliente quer marcar, remarcar ou cancelar uma visita técnica.\",\"nao_quando\":\"Só quer saber preço ou prazo, sem pedir visita.\",\"exemplos\":[\"queria agendar uma visita\",\"pode vir aqui amanhã?\"]},\"inicio\":\"coleta\",\"etapas\":[{\"id\":\"coleta\",\"nome\":\"Coletar dados\",\"instrucao\":\"Pergunte o endereço e o período preferido. Uma pergunta por vez.\",\"atores_acao\":[\"agente\"],\"campos\":[{\"id\":\"endereco\",\"rotulo\":\"Endereço completo\",\"tipo\":\"texto\",\"obrigatorio\":true,\"opcoes\":[],\"ajuda\":null},{\"id\":\"periodo\",\"rotulo\":\"Período\",\"tipo\":\"opcao\",\"obrigatorio\":true,\"opcoes\":[\"manhã\",\"tarde\"],\"ajuda\":null}],\"acoes\":[{\"id\":\"confirmar\",\"rotulo\":\"Dados completos\",\"exige\":[\"endereco\",\"periodo\"],\"ator\":null,\"vai_para\":{\"tipo\":\"etapa\",\"id\":\"confirmacao\"},\"efeitos\":[]},{\"id\":\"desistir\",\"rotulo\":\"Cliente desistiu\",\"exige\":[],\"ator\":null,\"vai_para\":{\"tipo\":\"fim\",\"id\":\"desistencia\",\"resultado\":\"Cliente desistiu\",\"encerra_atendimento\":false},\"efeitos\":[]}],\"ao_entrar\":[]},{\"id\":\"confirmacao\",\"nome\":\"Confirmar visita\",\"instrucao\":\"Repita o endereço e o período combinados e peça a confirmação do cliente.\",\"atores_acao\":[\"agente\"],\"campos\":[],\"acoes\":[{\"id\":\"ok\",\"rotulo\":\"Visita combinada\",\"exige\":[],\"ator\":null,\"vai_para\":{\"tipo\":\"fim\",\"id\":\"concluida\",\"resultado\":\"Visita agendada\",\"encerra_atendimento\":false},\"efeitos\":[]}],\"ao_entrar\":[]}],\"decisoes\":[],\"fins\":[{\"id\":\"desistencia\",\"resultado\":\"Cliente desistiu\",\"encerra_atendimento\":false},{\"id\":\"concluida\",\"resultado\":\"Visita agendada\",\"encerra_atendimento\":false}],\"defs\":[]}",
+          "schema_versao": 1,
+          "publicada_em": 1700000000000,
+          "publicada_por": "cli",
+          "resolucoes_json": "{}"
+        },
+        {
+          "id": "<uuid>",
+          "org_id": "<uuid>",
+          "fluxo_id": "<uuid>",
+          "numero": 2,
+          "fonte": "# Exemplo 1 — o mais simples possível: duas etapas e dois fins, sem decisão.\n# Serve para conferir a forma mínima de um fluxo válido.\nfluxo(\n    id = \"agendar_visita\",\n    nome = \"Agendar visita\",\n    descricao = \"Marca uma visita técnica no endereço do cliente, com confirmação.\",\n    inicio = \"coleta\",\n    gatilho = gatilho(\n        quando = \"O cliente quer marcar, remarcar ou cancelar uma visita técnica.\",\n        nao_quando = \"Só quer saber preço ou prazo, sem pedir visita.\",\n        exemplos = [\"queria agendar uma visita\", \"pode vir aqui amanhã?\"],\n    ),\n)\n\netapa(\n    id = \"coleta\",\n    nome = \"Coletar dados\",\n    instrucao = \"Pergunte o endereço e o período preferido. Uma pergunta por vez.\",\n    campos = [\n        campo(\"endereco\", \"Endereço completo\", tipo = \"texto\", obrigatorio = True),\n        campo(\"periodo\", \"Período\", tipo = \"opcao\", opcoes = [\"manhã\", \"tarde\"], obrigatorio = True),\n    ],\n    acoes = [\n        acao(\"confirmar\", \"Dados completos\", exige = [\"endereco\", \"periodo\"], vai_para = \"confirmacao\"),\n        acao(\"desistir\", \"Cliente desistiu\", vai_para = fim(\"desistencia\", resultado = \"Cliente desistiu\")),\n    ],\n)\n\netapa(\n    id = \"confirmacao\",\n    nome = \"Confirmar visita\",\n    instrucao = \"Repita o endereço e o período combinados e peça a confirmação do cliente.\",\n    acoes = [\n        acao(\"ok\", \"Visita combinada\", vai_para = fim(\"concluida\", resultado = \"Visita agendada\")),\n    ],\n)\n",
+          "fonte_sha256": "17766ede447adf2582a65f2bfec71427b8b13cda0504e29d09a76af33e75b4b3",
+          "definicao_json": "{\"schema_versao\":1,\"fluxo\":{\"id\":\"agendar_visita\",\"nome\":\"Agendar visita\",\"descricao\":\"Marca uma visita técnica no endereço do cliente, com confirmação.\"},\"gatilho\":{\"quando\":\"O cliente quer marcar, remarcar ou cancelar uma visita técnica.\",\"nao_quando\":\"Só quer saber preço ou prazo, sem pedir visita.\",\"exemplos\":[\"queria agendar uma visita\",\"pode vir aqui amanhã?\"]},\"inicio\":\"coleta\",\"etapas\":[{\"id\":\"coleta\",\"nome\":\"Coletar dados\",\"instrucao\":\"Pergunte o endereço e o período preferido. Uma pergunta por vez.\",\"atores_acao\":[\"agente\"],\"campos\":[{\"id\":\"endereco\",\"rotulo\":\"Endereço completo\",\"tipo\":\"texto\",\"obrigatorio\":true,\"opcoes\":[],\"ajuda\":null},{\"id\":\"periodo\",\"rotulo\":\"Período\",\"tipo\":\"opcao\",\"obrigatorio\":true,\"opcoes\":[\"manhã\",\"tarde\"],\"ajuda\":null}],\"acoes\":[{\"id\":\"confirmar\",\"rotulo\":\"Dados completos\",\"exige\":[\"endereco\",\"periodo\"],\"ator\":null,\"vai_para\":{\"tipo\":\"etapa\",\"id\":\"confirmacao\"},\"efeitos\":[]},{\"id\":\"desistir\",\"rotulo\":\"Cliente desistiu\",\"exige\":[],\"ator\":null,\"vai_para\":{\"tipo\":\"fim\",\"id\":\"desistencia\",\"resultado\":\"Cliente desistiu\",\"encerra_atendimento\":false},\"efeitos\":[]}],\"ao_entrar\":[]},{\"id\":\"confirmacao\",\"nome\":\"Confirmar visita\",\"instrucao\":\"Repita o endereço e o período combinados e peça a confirmação do cliente.\",\"atores_acao\":[\"agente\"],\"campos\":[],\"acoes\":[{\"id\":\"ok\",\"rotulo\":\"Visita combinada\",\"exige\":[],\"ator\":null,\"vai_para\":{\"tipo\":\"fim\",\"id\":\"concluida\",\"resultado\":\"Visita agendada\",\"encerra_atendimento\":false},\"efeitos\":[]}],\"ao_entrar\":[]}],\"decisoes\":[],\"fins\":[{\"id\":\"desistencia\",\"resultado\":\"Cliente desistiu\",\"encerra_atendimento\":false},{\"id\":\"concluida\",\"resultado\":\"Visita agendada\",\"encerra_atendimento\":false}],\"defs\":[]}",
+          "schema_versao": 1,
+          "publicada_em": 1700000000000,
+          "publicada_por": "cli",
+          "resolucoes_json": "{}"
+        }
+      ],
+      "fluxos": [
+        {
+          "id": "<uuid>",
+          "org_id": "<uuid>",
+          "slug": "agendar_visita",
+          "nome": "Agendar visita",
+          "descricao": "Marca a visita tecnica",
+          "status": "active",
+          "rascunho_fonte": "# Exemplo 1 — o mais simples possível: duas etapas e dois fins, sem decisão.\n# Serve para conferir a forma mínima de um fluxo válido.\nfluxo(\n    id = \"agendar_visita\",\n    nome = \"Agendar visita\",\n    descricao = \"Marca uma visita técnica no endereço do cliente, com confirmação.\",\n    inicio = \"coleta\",\n    gatilho = gatilho(\n        quando = \"O cliente quer marcar, remarcar ou cancelar uma visita técnica.\",\n        nao_quando = \"Só quer saber preço ou prazo, sem pedir visita.\",\n        exemplos = [\"queria agendar uma visita\", \"pode vir aqui amanhã?\"],\n    ),\n)\n\netapa(\n    id = \"coleta\",\n    nome = \"Coletar dados\",\n    instrucao = \"Pergunte o endereço e o período preferido. Uma pergunta por vez.\",\n    campos = [\n        campo(\"endereco\", \"Endereço completo\", tipo = \"texto\", obrigatorio = True),\n        campo(\"periodo\", \"Período\", tipo = \"opcao\", opcoes = [\"manhã\", \"tarde\"], obrigatorio = True),\n    ],\n    acoes = [\n        acao(\"confirmar\", \"Dados completos\", exige = [\"endereco\", \"periodo\"], vai_para = \"confirmacao\"),\n        acao(\"desistir\", \"Cliente desistiu\", vai_para = fim(\"desistencia\", resultado = \"Cliente desistiu\")),\n    ],\n)\n\netapa(\n    id = \"confirmacao\",\n    nome = \"Confirmar visita\",\n    instrucao = \"Repita o endereço e o período combinados e peça a confirmação do cliente.\",\n    acoes = [\n        acao(\"ok\", \"Visita combinada\", vai_para = fim(\"concluida\", resultado = \"Visita agendada\")),\n    ],\n)\n",
+          "revisao_atual": 2,
+          "version": 3
+        }
+      ],
+      "integrations": [
+        {
+          "id": "<uuid>",
+          "org_id": "<uuid>",
+          "agent_id": "<uuid>",
+          "kind": "whatsapp",
+          "config_json": "{}",
+          "status": "active",
+          "connection_state": "disconnected",
+          "version": 1,
+          "created_at": 1700000000000,
+          "updated_at": 1700000000000,
+          "tem_segredo": false,
+          "segredos_campos": null
+        }
+      ],
+      "knowledge_groups": [
+        {
+          "id": "<uuid>",
+          "org_id": "<uuid>",
+          "name": "Perguntas frequentes",
+          "description": "Duvidas recorrentes",
+          "status": "active",
+          "version": 1,
+          "created_at": 1700000000000,
+          "updated_at": 1700000000000
+        }
+      ],
+      "knowledge_items": [
+        {
+          "id": "<uuid>",
+          "org_id": "<uuid>",
+          "group_id": "<uuid>",
+          "title": "Horario de atendimento",
+          "content": "De segunda a sexta, das 8h as 18h.",
+          "tags_json": "[\"horario\"]",
+          "source_type": "manual",
+          "position": 0,
+          "status": "active",
+          "version": 1,
+          "created_at": 1700000000000,
+          "updated_at": 1700000000000
+        }
+      ],
+      "product_categories": [
+        {
+          "id": "<uuid>",
+          "org_id": "<uuid>",
+          "name": "Planos",
+          "description": "Planos comerciais",
+          "status": "active",
+          "version": 1,
+          "created_at": 1700000000000,
+          "updated_at": 1700000000000
+        }
+      ],
+      "products": [
+        {
+          "id": "<uuid>",
+          "org_id": "<uuid>",
+          "category_id": "<uuid>",
+          "name": "Plano Basico",
+          "slug": "plano-basico",
+          "aliases_json": "[\"basico\"]",
+          "description": "Plano de entrada",
+          "price_text": "R$ 99,00",
+          "price_cents": 9900,
+          "unit": "mes",
+          "includes": "Suporte por WhatsApp",
+          "excludes": "Visitas",
+          "conditions": "Contrato de 12 meses",
+          "tags_json": "[\"plano\"]",
+          "status": "active",
+          "version": 1,
+          "created_at": 1700000000000,
+          "updated_at": 1700000000000
+        }
+      ]
+    },
+    "blobs": [
+      {
+        "sha256": "6f58c962397ecb32f05669d1895a6b5be389e5a4055afe89cdb1cc800e565794",
+        "conteudo_base64": "Y29udGV1ZG8gZGUgZXhlbXBsbw=="
+      }
+    ]
+  }
+}

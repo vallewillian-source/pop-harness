@@ -1,0 +1,30 @@
+{
+  "status": 200,
+  "body": {
+    "items": [
+      {
+        "id": "<uuid>",
+        "org_id": "<uuid>",
+        "conversation_id": "<uuid>",
+        "direction": "in",
+        "role": "user",
+        "text": "Ola",
+        "attachments": [],
+        "turn_id": "<uuid>",
+        "created_at": 1700000000000
+      },
+      {
+        "id": "<uuid>",
+        "org_id": "<uuid>",
+        "conversation_id": "<uuid>",
+        "direction": "out",
+        "role": "assistant",
+        "text": "Ola, como posso ajudar?",
+        "attachments": [],
+        "turn_id": "<uuid>",
+        "created_at": 1700000000000
+      }
+    ],
+    "next_cursor": null
+  }
+}

@@ -1,0 +1,16 @@
+Espaços por departamento: lista, cria ou liga (`--departamento`) e `desligar` (`--offline --org`)
+
+Usage: poph matrix espaco [OPTIONS] [COMMAND]
+
+Commands:
+  desligar  Desliga o espaço do departamento: a linha sai do Harness; a sala e o espaço continuam no Element
+  help      Print this message or the help of the given subcommand(s)
+
+Options:
+      --config <ARQUIVO>      Arquivo de configuração TOML. Sem ele, usa POPH_CONFIG ou ./poph.toml, se existir
+      --departamento <ID>     Departamento do espaço (id UUID v7 da org). Sem ele, lista os espaços da org
+      --espaco <ID_OU_ALIAS>  Espaço que já existe no Element: id `!…` ou alias `#…`. Sem ele, o módulo cria o espaço do departamento pelo alias próprio. Só vale junto com `--departamento`
+      --org <ORG>             Org do contexto (id UUID v7 ou slug). Obrigatória nos comandos que mexem em dados de org
+      --json                  Saída em JSON (formato estável, `versao_relatorio` = 1)
+      --offline               Opera direto no banco, sem servidor. Obrigatório em `org`, `token`, `category`, `department`, `kb` e `file` enquanto o modo com servidor não existe
+  -h, --help                  Print help

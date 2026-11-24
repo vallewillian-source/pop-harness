@@ -1,0 +1,18 @@
+{
+  "harness": {
+    "aplicadas": [],
+    "banco": "harness.db",
+    "caminho": "data/harness.db",
+    "versao_antes": 16,
+    "versao_depois": 16
+  },
+  "ja_estava_em_dia": true,
+  "rag": {
+    "aplicadas": [],
+    "banco": "rag.db",
+    "caminho": "data/rag.db",
+    "versao_antes": 0,
+    "versao_depois": 0
+  },
+  "versao_relatorio": 1
+}

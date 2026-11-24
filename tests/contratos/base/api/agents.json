@@ -1,0 +1,37 @@
+{
+  "status": 200,
+  "body": {
+    "items": [
+      {
+        "id": "<uuid>",
+        "org_id": "<uuid>",
+        "name": "Ana",
+        "slug": "ana",
+        "description": "Agente de suporte",
+        "status": "active",
+        "abre_turno": true,
+        "agent_type": "custom",
+        "category": "generic",
+        "default_department_id": "<uuid>",
+        "human_handoff_enabled": false,
+        "human_handoff_department_id": null,
+        "provider": "antigravity2api",
+        "model": "gemini-3.8-flash-tiered",
+        "temperature": null,
+        "max_output_tokens": null,
+        "max_context_messages": 30,
+        "max_context_tokens": 64000,
+        "grouping_window_ms": 2000,
+        "max_tool_rounds": 4,
+        "max_tool_calls_per_message": 10,
+        "rag_top_k": 4,
+        "rag_min_score": 0.0,
+        "jev": {},
+        "version": 2,
+        "created_at": 1700000000000,
+        "updated_at": 1700000000000
+      }
+    ],
+    "next_cursor": null
+  }
+}

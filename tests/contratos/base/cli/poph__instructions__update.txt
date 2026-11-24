@@ -1,0 +1,16 @@
+Altera as instruções existentes com `If-Match`
+
+Usage: poph instructions update [OPTIONS] <AGENTE>
+
+Arguments:
+  <AGENTE>  Id (UUID v7) ou slug do agente
+
+Options:
+      --config <ARQUIVO>         Arquivo de configuração TOML. Sem ele, usa POPH_CONFIG ou ./poph.toml, se existir
+      --if-match <IF_MATCH>      Versão lida da instrução (`If-Match`). Obrigatória no `update`
+      --file <ARQUIVO>           Arquivo JSON com o `StructuredInstructions`. O texto é recomposto pelo compositor
+      --org <ORG>                Org do contexto (id UUID v7 ou slug). Obrigatória nos comandos que mexem em dados de org
+      --markdown-file <ARQUIVO>  Arquivo markdown com o prompt editado à mão. Sem recomposição (`derived_from_json = 0`)
+      --offline                  Opera direto no banco, sem servidor. Obrigatório em `org`, `token`, `category`, `department`, `kb` e `file` enquanto o modo com servidor não existe
+      --json                     Saída em JSON (formato estável)
+  -h, --help                     Print help

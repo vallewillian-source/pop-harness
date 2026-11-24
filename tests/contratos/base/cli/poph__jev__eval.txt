@@ -1,0 +1,14 @@
+Mede um gate sobre um conjunto rotulado (JSON Lines com `estado` e `esperado`)
+
+Usage: poph jev eval [OPTIONS] <GATE> <ARQUIVO>
+
+Arguments:
+  <GATE>     Gate a medir: `g1` a `g9`
+  <ARQUIVO>  Arquivo do conjunto rotulado (JSON Lines)
+
+Options:
+      --config <ARQUIVO>  Arquivo de configuração TOML. Sem ele, usa POPH_CONFIG ou ./poph.toml, se existir
+      --json              Saída em JSON (formato estável, com o detalhe por caso)
+      --org <ORG>         Org do contexto (id UUID v7 ou slug). Obrigatória nos comandos que mexem em dados de org
+      --offline           Opera direto no banco, sem servidor. Obrigatório em `org`, `token`, `category`, `department`, `kb` e `file` enquanto o modo com servidor não existe
+  -h, --help              Print help

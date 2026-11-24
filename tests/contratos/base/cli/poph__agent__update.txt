@@ -1,0 +1,56 @@
+Altera um agente com `If-Match`; também define as categorias de produto
+
+Usage: poph agent update [OPTIONS] --if-match <IF_MATCH> <AGENTE>
+
+Arguments:
+  <AGENTE>  Id (UUID v7) ou slug do agente
+
+Options:
+      --config <ARQUIVO>
+          Arquivo de configuração TOML. Sem ele, usa POPH_CONFIG ou ./poph.toml, se existir
+      --if-match <IF_MATCH>
+          Versão lida (`If-Match`). Obrigatória
+      --name <NAME>
+          Novo nome
+      --org <ORG>
+          Org do contexto (id UUID v7 ou slug). Obrigatória nos comandos que mexem em dados de org
+      --description <DESCRIPTION>
+          Nova descrição
+      --offline
+          Opera direto no banco, sem servidor. Obrigatório em `org`, `token`, `category`, `department`, `kb` e `file` enquanto o modo com servidor não existe
+      --status <STATUS>
+          Nova situação: `active`, `inactive` ou `archived` (D-05: só `active` abre turno)
+      --department <DEPARTMENT>
+          Novo departamento padrão (id)
+      --handoff <HANDOFF>
+          Liga/desliga o gate G1 de transferência (`--handoff true|false`) [possible values: true, false]
+      --handoff-department <HANDOFF_DEPARTMENT>
+          Novo departamento humano do gate G4 (id)
+      --provider <PROVIDER>
+          Novo provedor do LLM
+      --model <MODEL>
+          Novo modelo do LLM
+      --temperature <TEMPERATURE>
+          Nova temperatura
+      --max-output-tokens <MAX_OUTPUT_TOKENS>
+          Novo teto de tokens de saída
+      --max-context-tokens <MAX_CONTEXT_TOKENS>
+          Novo orçamento de contexto em tokens
+      --grouping-window-ms <GROUPING_WINDOW_MS>
+          Nova janela de agrupamento em ms
+      --max-tool-rounds <MAX_TOOL_ROUNDS>
+          Novo máximo de rodadas de ferramenta
+      --max-tool-calls <MAX_TOOL_CALLS>
+          Novo máximo de chamadas de ferramenta por mensagem
+      --rag-top-k <RAG_TOP_K>
+          Novo top-k do RAG
+      --rag-min-score <RAG_MIN_SCORE>
+          Novo corte mínimo do RAG
+      --jev-json <JEV_JSON>
+          Flags do Jev do agente (JSON)
+      --category-id <CATEGORIAS>
+          Substitui as categorias de produto do agente (repita a opção; sem ela, não mexe)
+      --json
+          Saída em JSON (formato estável)
+  -h, --help
+          Print help

@@ -1,0 +1,13 @@
+Exclui o departamento (agentes e conversas que o usavam ficam sem ele)
+
+Usage: poph department delete [OPTIONS] <DEPARTAMENTO>
+
+Arguments:
+  <DEPARTAMENTO>  Id (UUID v7) do departamento
+
+Options:
+      --config <ARQUIVO>  Arquivo de configuração TOML. Sem ele, usa POPH_CONFIG ou ./poph.toml, se existir
+      --json              Saída em JSON (formato estável)
+      --org <ORG>         Org do contexto (id UUID v7 ou slug). Obrigatória nos comandos que mexem em dados de org
+      --offline           Opera direto no banco, sem servidor. Obrigatório em `org`, `token`, `category`, `department`, `kb` e `file` enquanto o modo com servidor não existe
+  -h, --help              Print help

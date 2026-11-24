@@ -1,0 +1,12 @@
+Lista os itens de um grupo, com o estado no índice
+
+Usage: poph kb item list [OPTIONS] --group <GROUP>
+
+Options:
+      --config <ARQUIVO>  Arquivo de configuração TOML. Sem ele, usa POPH_CONFIG ou ./poph.toml, se existir
+      --group <GROUP>     Grupo dono (id UUID v7)
+      --limit <LIMIT>     Quantos itens trazer (1 a 200) [default: 50]
+      --org <ORG>         Org do contexto (id UUID v7 ou slug). Obrigatória nos comandos que mexem em dados de org
+      --json              Saída em JSON
+      --offline           Opera direto no banco, sem servidor. Obrigatório em `org`, `token`, `category`, `department`, `kb` e `file` enquanto o modo com servidor não existe
+  -h, --help              Print help

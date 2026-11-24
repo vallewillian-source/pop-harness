@@ -1,0 +1,28 @@
+{
+  "status": 200,
+  "body": {
+    "items": [
+      {
+        "id": "<uuid>",
+        "flow_id": "<uuid>",
+        "number": 1,
+        "schema_version": 1,
+        "source_sha256": "0d1380f8d0fc350763ad7ef3607aef192e6df12ad91c290dd8f28bfe639befcc",
+        "published_at": 1700000000000,
+        "published_by": "cli",
+        "resolutions": {}
+      },
+      {
+        "id": "<uuid>",
+        "flow_id": "<uuid>",
+        "number": 2,
+        "schema_version": 1,
+        "source_sha256": "17766ede447adf2582a65f2bfec71427b8b13cda0504e29d09a76af33e75b4b3",
+        "published_at": 1700000000000,
+        "published_by": "cli",
+        "resolutions": {}
+      }
+    ],
+    "next_cursor": null
+  }
+}

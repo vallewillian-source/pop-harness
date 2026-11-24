@@ -1,0 +1,14 @@
+Roteamento entre instâncias: mostra e confere o `cluster.toml` (HR-50a)
+
+Usage: poph cluster [OPTIONS] <COMMAND>
+
+Commands:
+  show   Mostra o mapa efetivo (instância local, orgs por instância e impressão digital)
+  check  Valida o `cluster.toml` e lista os problemas. Código de saída 1 quando há algum
+  help   Print this message or the help of the given subcommand(s)
+
+Options:
+      --config <ARQUIVO>  Arquivo de configuração TOML. Sem ele, usa POPH_CONFIG ou ./poph.toml, se existir
+      --org <ORG>         Org do contexto (id UUID v7 ou slug). Obrigatória nos comandos que mexem em dados de org
+      --offline           Opera direto no banco, sem servidor. Obrigatório em `org`, `token`, `category`, `department`, `kb` e `file` enquanto o modo com servidor não existe
+  -h, --help              Print help

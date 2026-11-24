@@ -1,0 +1,160 @@
+{
+  "schema_versao": 1,
+  "fluxo": {
+    "id": "confirmar_entrega",
+    "nome": "Confirmar entrega",
+    "descricao": "Confirma a entrega de um pedido e encerra o atendimento."
+  },
+  "gatilho": {
+    "quando": "O cliente pergunta onde está o pedido ou quer confirmar a entrega.",
+    "nao_quando": "O cliente quer trocar, devolver ou comprar outro produto.",
+    "exemplos": [
+      "meu pedido chegou?",
+      "quando chega a entrega do pedido 1234?"
+    ]
+  },
+  "inicio": "identificacao",
+  "etapas": [
+    {
+      "id": "identificacao",
+      "nome": "Identificar o pedido",
+      "instrucao": "Peça o número do pedido e confirme que é esse o atendimento.",
+      "atores_acao": [
+        "agente"
+      ],
+      "campos": [
+        {
+          "id": "pedido",
+          "rotulo": "Número do pedido",
+          "tipo": "texto",
+          "obrigatorio": true,
+          "opcoes": [],
+          "ajuda": null
+        }
+      ],
+      "acoes": [
+        {
+          "id": "localizado",
+          "rotulo": "Pedido localizado",
+          "exige": [
+            "pedido"
+          ],
+          "ator": null,
+          "vai_para": {
+            "tipo": "etapa",
+            "id": "confirmacao"
+          },
+          "efeitos": []
+        }
+      ],
+      "ao_entrar": []
+    },
+    {
+      "id": "confirmacao",
+      "nome": "Confirmar a entrega",
+      "instrucao": "Pergunte se a entrega foi recebida. Não prometa prazo novo.",
+      "atores_acao": [
+        "agente"
+      ],
+      "campos": [
+        {
+          "id": "recebido",
+          "rotulo": "Entrega recebida",
+          "tipo": "opcao",
+          "obrigatorio": true,
+          "opcoes": [
+            "sim",
+            "nao"
+          ],
+          "ajuda": null
+        }
+      ],
+      "acoes": [
+        {
+          "id": "confirmada",
+          "rotulo": "Entrega confirmada",
+          "exige": [
+            "recebido"
+          ],
+          "ator": null,
+          "vai_para": {
+            "tipo": "fim",
+            "id": "concluido",
+            "resultado": "Entrega confirmada",
+            "encerra_atendimento": true
+          },
+          "efeitos": [
+            {
+              "tipo": "notificar_whatsapp",
+              "para": "5521999990000",
+              "mensagem": "Pedido {identificacao.pedido} entregue (ficha {ficha.id})."
+            }
+          ]
+        },
+        {
+          "id": "nao_recebida",
+          "rotulo": "Cliente não recebeu",
+          "exige": [
+            "recebido"
+          ],
+          "ator": null,
+          "vai_para": {
+            "tipo": "etapa",
+            "id": "extravio"
+          },
+          "efeitos": []
+        }
+      ],
+      "ao_entrar": [
+        {
+          "tipo": "mensagem_ao_cliente",
+          "texto": "Vou confirmar a entrega do pedido {identificacao.pedido} com você."
+        }
+      ]
+    },
+    {
+      "id": "extravio",
+      "nome": "Registrar extravio",
+      "instrucao": "Anote o que o cliente disse e avise que a logística vai investigar.",
+      "atores_acao": [
+        "agente"
+      ],
+      "campos": [],
+      "acoes": [
+        {
+          "id": "registrado",
+          "rotulo": "Extravio registrado",
+          "exige": [],
+          "ator": null,
+          "vai_para": {
+            "tipo": "fim",
+            "id": "extravio_registrado",
+            "resultado": "Extravio registrado",
+            "encerra_atendimento": false
+          },
+          "efeitos": [
+            {
+              "tipo": "encaminhar",
+              "departamento": "Logística"
+            }
+          ]
+        }
+      ],
+      "ao_entrar": []
+    }
+  ],
+  "decisoes": [],
+  "fins": [
+    {
+      "id": "concluido",
+      "resultado": "Entrega confirmada",
+      "encerra_atendimento": true
+    },
+    {
+      "id": "extravio_registrado",
+      "resultado": "Extravio registrado",
+      "encerra_atendimento": false
+    }
+  ],
+  "defs": []
+}

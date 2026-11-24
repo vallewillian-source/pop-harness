@@ -1,0 +1,79 @@
+{
+  "harness": {
+    "aplicadas": [
+      {
+        "nome": "0001_esquema_inicial",
+        "versao": 1
+      },
+      {
+        "nome": "0002_entrada_proxima_tentativa",
+        "versao": 2
+      },
+      {
+        "nome": "0003_origem_autor_mensagens",
+        "versao": 3
+      },
+      {
+        "nome": "0004_audit_log_matrix_user",
+        "versao": 4
+      },
+      {
+        "nome": "0005_tabelas_matrix",
+        "versao": 5
+      },
+      {
+        "nome": "0006_indice_conversations_atualizada",
+        "versao": 6
+      },
+      {
+        "nome": "0007_matrix_cursor_mensagem_id",
+        "versao": 7
+      },
+      {
+        "nome": "0008_conversa_nome_cliente",
+        "versao": 8
+      },
+      {
+        "nome": "0009_matrix_avisos_falha",
+        "versao": 9
+      },
+      {
+        "nome": "0010_matrix_rooms_nome_cliente_espelhado",
+        "versao": 10
+      },
+      {
+        "nome": "0011_outbox_id_externo",
+        "versao": 11
+      },
+      {
+        "nome": "0012_fichas_e_eventos",
+        "versao": 12
+      },
+      {
+        "nome": "0013_fluxos_revisoes_execucoes_e_efeitos",
+        "versao": 13
+      },
+      {
+        "nome": "0015_conversas_por_cliente",
+        "versao": 15
+      },
+      {
+        "nome": "0016_matrix_midia_expiracao",
+        "versao": 16
+      }
+    ],
+    "banco": "harness.db",
+    "caminho": "data/harness.db",
+    "versao_antes": 0,
+    "versao_depois": 16
+  },
+  "ja_estava_em_dia": false,
+  "rag": {
+    "aplicadas": [],
+    "banco": "rag.db",
+    "caminho": "data/rag.db",
+    "versao_antes": 0,
+    "versao_depois": 0
+  },
+  "versao_relatorio": 1
+}

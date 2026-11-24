@@ -1,0 +1,178 @@
+{
+  "schema_versao": 1,
+  "fluxo": {
+    "id": "triagem_suporte",
+    "nome": "Triagem de suporte",
+    "descricao": "Descobre o problema, classifica a urgência e encaminha o atendimento."
+  },
+  "gatilho": {
+    "quando": "O cliente relata um problema técnico e precisa de ajuda para resolver.",
+    "nao_quando": "O cliente quer comprar, agendar visita ou falar de cobrança.",
+    "exemplos": [
+      "meu sistema não abre",
+      "deu erro ao emitir a nota"
+    ]
+  },
+  "inicio": "relato",
+  "etapas": [
+    {
+      "id": "relato",
+      "nome": "Ouvir o relato",
+      "instrucao": "Peça o que aconteceu e se o trabalho está parado agora. Uma pergunta por vez.",
+      "atores_acao": [
+        "agente"
+      ],
+      "campos": [
+        {
+          "id": "resumo",
+          "rotulo": "O que aconteceu",
+          "tipo": "texto",
+          "obrigatorio": true,
+          "opcoes": [],
+          "ajuda": null
+        },
+        {
+          "id": "afeta_agora",
+          "rotulo": "Está parado agora?",
+          "tipo": "opcao",
+          "obrigatorio": true,
+          "opcoes": [
+            "sim",
+            "nao"
+          ],
+          "ajuda": null
+        }
+      ],
+      "acoes": [
+        {
+          "id": "registrado",
+          "rotulo": "Relato registrado",
+          "exige": [
+            "resumo",
+            "afeta_agora"
+          ],
+          "ator": null,
+          "vai_para": {
+            "tipo": "decisao",
+            "id": "classificar"
+          },
+          "efeitos": []
+        },
+        {
+          "id": "nao_e_suporte",
+          "rotulo": "Não é suporte",
+          "exige": [],
+          "ator": null,
+          "vai_para": {
+            "tipo": "fim",
+            "id": "fora_de_escopo",
+            "resultado": "Fora do suporte",
+            "encerra_atendimento": false
+          },
+          "efeitos": []
+        }
+      ],
+      "ao_entrar": []
+    },
+    {
+      "id": "urgente",
+      "nome": "Atendimento urgente",
+      "instrucao": "Avise que o time foi acionado e que respondemos em até 30 minutos.",
+      "atores_acao": [
+        "agente"
+      ],
+      "campos": [],
+      "acoes": [
+        {
+          "id": "encaminhado",
+          "rotulo": "Encaminhado ao time",
+          "exige": [],
+          "ator": null,
+          "vai_para": {
+            "tipo": "fim",
+            "id": "concluido_urgente",
+            "resultado": "Urgente",
+            "encerra_atendimento": false
+          },
+          "efeitos": []
+        }
+      ],
+      "ao_entrar": []
+    },
+    {
+      "id": "normal",
+      "nome": "Fila normal",
+      "instrucao": "Informe o prazo de um dia útil e registre o contato do cliente.",
+      "atores_acao": [
+        "agente"
+      ],
+      "campos": [],
+      "acoes": [
+        {
+          "id": "encaminhado",
+          "rotulo": "Encaminhado ao time",
+          "exige": [],
+          "ator": null,
+          "vai_para": {
+            "tipo": "fim",
+            "id": "concluido_normal",
+            "resultado": "Normal",
+            "encerra_atendimento": false
+          },
+          "efeitos": []
+        }
+      ],
+      "ao_entrar": []
+    }
+  ],
+  "decisoes": [
+    {
+      "id": "classificar",
+      "se": {
+        "tipo": "e",
+        "args": [
+          {
+            "tipo": "igual",
+            "campo": "relato.afeta_agora",
+            "valor": "sim"
+          },
+          {
+            "tipo": "funcao",
+            "nome": "problema_grave"
+          }
+        ]
+      },
+      "entao": {
+        "tipo": "etapa",
+        "id": "urgente"
+      },
+      "senao": {
+        "tipo": "etapa",
+        "id": "normal"
+      }
+    }
+  ],
+  "fins": [
+    {
+      "id": "fora_de_escopo",
+      "resultado": "Fora do suporte",
+      "encerra_atendimento": false
+    },
+    {
+      "id": "concluido_urgente",
+      "resultado": "Urgente",
+      "encerra_atendimento": false
+    },
+    {
+      "id": "concluido_normal",
+      "resultado": "Normal",
+      "encerra_atendimento": false
+    }
+  ],
+  "defs": [
+    {
+      "nome": "problema_grave",
+      "fonte": "def problema_grave(dados):\n    # Regra avançada: recebe os dados do fluxo e devolve True ou False.\n    # Só lê o que está na ficha; não tem relógio, rede, arquivo nem aleatório.\n    resumo = dados.get(\"relato\", {}).get(\"resumo\", \"\").lower()\n    for palavra in [\"parado\", \"não abre\", \"nao abre\", \"perdi\", \"urgente\"]:\n        if palavra in resumo:\n            return True\n    return len(resumo) > 200"
+    }
+  ]
+}

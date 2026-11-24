@@ -1,0 +1,18 @@
+{
+  "status": 200,
+  "body": {
+    "id": "<uuid>",
+    "org_id": "<uuid>",
+    "group_id": "<uuid>",
+    "title": "Horario de atendimento",
+    "content": "De segunda a sexta, das 8h as 18h.",
+    "tags": [
+      "horario"
+    ],
+    "position": 0,
+    "status": "active",
+    "version": 1,
+    "created_at": 1700000000000,
+    "updated_at": 1700000000000
+  }
+}

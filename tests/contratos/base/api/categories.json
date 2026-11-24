@@ -1,0 +1,18 @@
+{
+  "status": 200,
+  "body": {
+    "items": [
+      {
+        "id": "<uuid>",
+        "org_id": "<uuid>",
+        "name": "Planos",
+        "description": "Planos comerciais",
+        "status": "active",
+        "version": 1,
+        "created_at": 1700000000000,
+        "updated_at": 1700000000000
+      }
+    ],
+    "next_cursor": null
+  }
+}

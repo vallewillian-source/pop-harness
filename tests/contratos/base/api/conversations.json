@@ -1,0 +1,44 @@
+{
+  "status": 200,
+  "body": {
+    "items": [
+      {
+        "id": "<uuid>",
+        "org_id": "<uuid>",
+        "agent_id": "<uuid>",
+        "integration_id": null,
+        "channel": "whatsapp",
+        "external_peer": "5521000000000",
+        "status": "open",
+        "target_department_id": "<uuid>",
+        "summary": null,
+        "version": 1,
+        "created_at": 1700000000000,
+        "updated_at": 1700000000000,
+        "last_message_at": null,
+        "client_name": null,
+        "agent_name": "Ana",
+        "matrix_room_id": null
+      },
+      {
+        "id": "<uuid>",
+        "org_id": "<uuid>",
+        "agent_id": "<uuid>",
+        "integration_id": null,
+        "channel": "test",
+        "external_peer": null,
+        "status": "open",
+        "target_department_id": null,
+        "summary": null,
+        "version": 1,
+        "created_at": 1700000000000,
+        "updated_at": 1700000000000,
+        "last_message_at": null,
+        "client_name": null,
+        "agent_name": "Ana",
+        "matrix_room_id": null
+      }
+    ],
+    "next_cursor": null
+  }
+}

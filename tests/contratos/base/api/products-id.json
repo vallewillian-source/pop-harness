@@ -1,0 +1,27 @@
+{
+  "status": 200,
+  "body": {
+    "id": "<uuid>",
+    "org_id": "<uuid>",
+    "category_id": "<uuid>",
+    "name": "Plano Basico",
+    "slug": "plano-basico",
+    "aliases": [
+      "basico"
+    ],
+    "description": "Plano de entrada",
+    "price_text": "R$ 99,00",
+    "price_cents": 9900,
+    "unit": "mes",
+    "includes": "Suporte por WhatsApp",
+    "excludes": "Visitas",
+    "conditions": "Contrato de 12 meses",
+    "tags": [
+      "plano"
+    ],
+    "status": "active",
+    "version": 1,
+    "created_at": 1700000000000,
+    "updated_at": 1700000000000
+  }
+}

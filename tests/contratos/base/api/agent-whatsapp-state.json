@@ -1,0 +1,10 @@
+{
+  "status": 409,
+  "body": {
+    "code": "whatsapp_nao_configurado",
+    "message": "esta integração não tem instância da Evolution declarada na configuração do servidor (`[evolution].instancias`: org, instância e integração)",
+    "details": {
+      "integration_id": "<uuid>"
+    }
+  }
+}

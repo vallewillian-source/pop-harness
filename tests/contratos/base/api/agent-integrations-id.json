@@ -1,0 +1,13 @@
+{
+  "status": 200,
+  "body": {
+    "id": "<uuid>",
+    "kind": "whatsapp",
+    "status": "active",
+    "connection_state": "disconnected",
+    "version": 1,
+    "tem_segredo": false,
+    "configuracao": {},
+    "segredos_preenchidos": []
+  }
+}

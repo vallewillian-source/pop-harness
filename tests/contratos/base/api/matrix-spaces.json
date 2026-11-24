@@ -1,0 +1,16 @@
+{
+  "status": 200,
+  "body": {
+    "items": [
+      {
+        "department_id": "<uuid>",
+        "department_name": "Suporte",
+        "space_room_id": "!espaco:contratos.test",
+        "alias": "#suporte:contratos.test",
+        "origin": "auto",
+        "created_at": 1700000000000,
+        "updated_at": 1700000000000
+      }
+    ]
+  }
+}

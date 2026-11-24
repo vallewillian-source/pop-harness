@@ -1,0 +1,20 @@
+Fluxos da org: validar, publicar, listar, mostrar, comparar, formatar e liberar a agentes
+
+Usage: poph flow [OPTIONS] <COMMAND>
+
+Commands:
+  validar   Compila e valida um script, sem gravar nada. Sai com 1 se há erro
+  publicar  Publica o script como revisão nova. Se o fluxo ainda não existe, cria e publica a revisão 1
+  listar    Lista os fluxos da org (primeira página, em ordem de id)
+  mostrar   Mostra um fluxo: o rascunho e a revisão que vale hoje. Aceita id ou slug
+  diff      Compara duas revisões: o que mudou e quantos atendimentos estão em cada uma
+  formatar  Mostra o script na forma canônica. Com `--escrever`, grava no próprio arquivo
+  liberar   Libera o fluxo a um agente (o agente só usa fluxos liberados a ele)
+  retirar   Tira a permissão do fluxo de um agente
+  help      Print this message or the help of the given subcommand(s)
+
+Options:
+      --config <ARQUIVO>  Arquivo de configuração TOML. Sem ele, usa POPH_CONFIG ou ./poph.toml, se existir
+      --org <ORG>         Org do contexto (id UUID v7 ou slug). Obrigatória nos comandos que mexem em dados de org
+      --offline           Opera direto no banco, sem servidor. Obrigatório em `org`, `token`, `category`, `department`, `kb` e `file` enquanto o modo com servidor não existe
+  -h, --help              Print help

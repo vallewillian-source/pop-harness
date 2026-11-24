@@ -1,0 +1,17 @@
+Gerencia os tokens de administração de uma org (`--org`)
+
+Usage: poph token [OPTIONS] <COMMAND>
+
+Commands:
+  create  Cria um token para a org. O valor aparece só nesta saída
+  list    Lista os tokens da org (sem valor)
+  show    Mostra um token da org (sem valor)
+  delete  Revoga o token: ele deixa de funcionar; o registro fica para auditoria
+  global  Gera um token global (para a configuração) e mostra o valor e o bloco TOML com o hash
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+      --config <ARQUIVO>  Arquivo de configuração TOML. Sem ele, usa POPH_CONFIG ou ./poph.toml, se existir
+      --org <ORG>         Org do contexto (id UUID v7 ou slug). Obrigatória nos comandos que mexem em dados de org
+      --offline           Opera direto no banco, sem servidor. Obrigatório em `org`, `token`, `category`, `department`, `kb` e `file` enquanto o modo com servidor não existe
+  -h, --help              Print help

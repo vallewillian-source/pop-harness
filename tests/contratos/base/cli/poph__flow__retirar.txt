@@ -1,0 +1,14 @@
+Tira a permissão do fluxo de um agente
+
+Usage: poph flow retirar [OPTIONS] --fluxo <FLUXO> <AGENTE>
+
+Arguments:
+  <AGENTE>  Agente: id (UUID v7) ou slug
+
+Options:
+      --config <ARQUIVO>  Arquivo de configuração TOML. Sem ele, usa POPH_CONFIG ou ./poph.toml, se existir
+      --fluxo <FLUXO>     Fluxo: id (UUID v7) ou slug
+      --json              Saída em JSON (formato estável, com `versao_relatorio`)
+      --org <ORG>         Org do contexto (id UUID v7 ou slug). Obrigatória nos comandos que mexem em dados de org
+      --offline           Opera direto no banco, sem servidor. Obrigatório em `org`, `token`, `category`, `department`, `kb` e `file` enquanto o modo com servidor não existe
+  -h, --help              Print help

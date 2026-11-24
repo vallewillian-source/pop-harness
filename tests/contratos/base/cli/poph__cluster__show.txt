@@ -1,0 +1,10 @@
+Mostra o mapa efetivo (instância local, orgs por instância e impressão digital)
+
+Usage: poph cluster show [OPTIONS]
+
+Options:
+      --config <ARQUIVO>  Arquivo de configuração TOML. Sem ele, usa POPH_CONFIG ou ./poph.toml, se existir
+      --json              Saída em JSON (formato estável, sem segredo)
+      --org <ORG>         Org do contexto (id UUID v7 ou slug). Obrigatória nos comandos que mexem em dados de org
+      --offline           Opera direto no banco, sem servidor. Obrigatório em `org`, `token`, `category`, `department`, `kb` e `file` enquanto o modo com servidor não existe
+  -h, --help              Print help

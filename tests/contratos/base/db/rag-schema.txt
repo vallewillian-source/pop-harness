@@ -1,0 +1,1 @@
+table|schema_migrations|schema_migrations|CREATE TABLE schema_migrations ( version INTEGER PRIMARY KEY NOT NULL, name TEXT NOT NULL, applied_at INTEGER NOT NULL ) STRICT

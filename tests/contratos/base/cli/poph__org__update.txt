@@ -1,0 +1,16 @@
+Altera uma org com `--if-match` (a versão lida antes)
+
+Usage: poph org update [OPTIONS] --if-match <IF_MATCH> <ORG>
+
+Arguments:
+  <ORG>  Id (UUID v7) ou slug da org
+
+Options:
+      --config <ARQUIVO>           Arquivo de configuração TOML. Sem ele, usa POPH_CONFIG ou ./poph.toml, se existir
+      --if-match <IF_MATCH>        Versão lida com `show` (`If-Match`). Obrigatória
+      --name <NAME>                Novo nome
+      --offline                    Opera direto no banco, sem servidor. Obrigatório em `org`, `token`, `category`, `department`, `kb` e `file` enquanto o modo com servidor não existe
+      --status <STATUS>            Nova situação: `active`, `inactive` ou `archived`
+      --config-json <CONFIG_JSON>  Nova configuração da org (objeto JSON: retenção, limites, padrões de modelo)
+      --json                       Saída em JSON (formato estável)
+  -h, --help                       Print help

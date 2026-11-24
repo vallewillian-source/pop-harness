@@ -1,0 +1,12 @@
+Lista os arquivos da biblioteca do agente
+
+Usage: poph file list [OPTIONS] --agent <AGENT>
+
+Options:
+      --agent <AGENT>     Agente dono dos arquivos: id (UUID v7) ou slug
+      --config <ARQUIVO>  Arquivo de configuração TOML. Sem ele, usa POPH_CONFIG ou ./poph.toml, se existir
+      --limit <LIMIT>     Quantos arquivos trazer (1 a 200) [default: 50]
+      --org <ORG>         Org do contexto (id UUID v7 ou slug). Obrigatória nos comandos que mexem em dados de org
+      --json              Saída em JSON
+      --offline           Opera direto no banco, sem servidor. Obrigatório em `org`, `token`, `category`, `department`, `kb` e `file` enquanto o modo com servidor não existe
+  -h, --help              Print help

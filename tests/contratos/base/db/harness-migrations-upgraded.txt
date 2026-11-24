@@ -1,0 +1,15 @@
+1|0001_esquema_inicial
+2|0002_entrada_proxima_tentativa
+3|0003_origem_autor_mensagens
+4|0004_audit_log_matrix_user
+5|0005_tabelas_matrix
+6|0006_indice_conversations_atualizada
+7|0007_matrix_cursor_mensagem_id
+8|0008_conversa_nome_cliente
+9|0009_matrix_avisos_falha
+10|0010_matrix_rooms_nome_cliente_espelhado
+11|0011_outbox_id_externo
+12|0012_fichas_e_eventos
+13|0013_fluxos_revisoes_execucoes_e_efeitos
+15|0015_conversas_por_cliente
+16|0016_matrix_midia_expiracao

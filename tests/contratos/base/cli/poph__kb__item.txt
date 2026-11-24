@@ -1,0 +1,17 @@
+Itens da base: criar, listar, mostrar, alterar e excluir
+
+Usage: poph kb item [OPTIONS] <COMMAND>
+
+Commands:
+  create  Cria um item (conteúdo até 1000 caracteres)
+  list    Lista os itens de um grupo, com o estado no índice
+  show    Mostra um item, com a fonte e o estado no índice
+  update  Altera um item com `--if-match`
+  delete  Exclui o item
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+      --config <ARQUIVO>  Arquivo de configuração TOML. Sem ele, usa POPH_CONFIG ou ./poph.toml, se existir
+      --org <ORG>         Org do contexto (id UUID v7 ou slug). Obrigatória nos comandos que mexem em dados de org
+      --offline           Opera direto no banco, sem servidor. Obrigatório em `org`, `token`, `category`, `department`, `kb` e `file` enquanto o modo com servidor não existe
+  -h, --help              Print help

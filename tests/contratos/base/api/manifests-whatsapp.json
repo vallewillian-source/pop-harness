@@ -1,0 +1,10 @@
+{
+  "status": 404,
+  "body": {
+    "code": "not_found",
+    "message": "manifesto `whatsapp` não encontrado: esta instalação não declara manifesto para este tipo de integração; declare o plugin em `[plugins].integracoes` da configuração",
+    "details": {
+      "kind": "whatsapp"
+    }
+  }
+}

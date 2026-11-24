@@ -1,0 +1,16 @@
+Cria um item (conteúdo até 1000 caracteres)
+
+Usage: poph kb item create [OPTIONS] --group <GROUP> --title <TITLE>
+
+Options:
+      --config <ARQUIVO>        Arquivo de configuração TOML. Sem ele, usa POPH_CONFIG ou ./poph.toml, se existir
+      --group <GROUP>           Grupo dono (id UUID v7)
+      --org <ORG>               Org do contexto (id UUID v7 ou slug). Obrigatória nos comandos que mexem em dados de org
+      --title <TITLE>           Título (vira a fonte mostrada ao modelo)
+      --content <CONTENT>       Conteúdo do item
+      --offline                 Opera direto no banco, sem servidor. Obrigatório em `org`, `token`, `category`, `department`, `kb` e `file` enquanto o modo com servidor não existe
+      --content-file <ARQUIVO>  Arquivo com o conteúdo do item
+      --tag <TAG>               Etiquetas separadas por vírgula
+      --position <POSITION>     Posição dentro do grupo [default: 0]
+      --json                    Saída em JSON
+  -h, --help                    Print help

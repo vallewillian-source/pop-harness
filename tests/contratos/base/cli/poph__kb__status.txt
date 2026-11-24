@@ -1,0 +1,11 @@
+Mostra o estado do índice dos itens (geral ou de um grupo)
+
+Usage: poph kb status [OPTIONS]
+
+Options:
+      --config <ARQUIVO>  Arquivo de configuração TOML. Sem ele, usa POPH_CONFIG ou ./poph.toml, se existir
+      --group <GROUP>     Limita a um grupo (id UUID v7)
+      --json              Saída em JSON
+      --org <ORG>         Org do contexto (id UUID v7 ou slug). Obrigatória nos comandos que mexem em dados de org
+      --offline           Opera direto no banco, sem servidor. Obrigatório em `org`, `token`, `category`, `department`, `kb` e `file` enquanto o modo com servidor não existe
+  -h, --help              Print help
