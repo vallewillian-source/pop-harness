@@ -25,6 +25,11 @@ Classificação: um termo é português quando está em `scripts/glossary-map.tx
 termos portugueses medidos com frequência alta; `--medir --candidatos` lista os termos medidos que
 ainda não estão no mapa, para a próxima rodada de tradução. Nada aqui inventa termo: linha do mapa
 cujo termo não aparece na árvore reprova a validação.
+
+Escopo da medição: só o que o repositório publica. A varredura usa `git ls-files --cached --others
+--exclude-standard`, então arquivo que o `.git/info/exclude` esconde desta máquina não entra na
+contagem — sem isso a tabela gerada aqui diverge da que um clone limpo valida. Sem `git`
+disponível, a varredura cai para a árvore de trabalho inteira.
 """
 
 import argparse
@@ -32,6 +37,7 @@ import importlib.util
 import json
 import re
 import sqlite3
+import subprocess
 import sys
 import tomllib
 import unicodedata
@@ -425,10 +431,26 @@ class Medicao:
         return ", ".join(nome for nome, _ in ordenado[:limite])
 
 
+def caminhos_do_repositorio():
+    try:
+        resultado = subprocess.run(
+            ["git", "-C", str(RAIZ), "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+            capture_output=True,
+            check=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    nomes = resultado.stdout.decode("utf-8", "surrogateescape").split("\0")
+    return {nome for nome in nomes if nome}
+
+
 def medir():
     medicao = Medicao()
+    visiveis = caminhos_do_repositorio()
     for caminho in leitor.collect_files([str(RAIZ)]):
         relativo = caminho.relative_to(RAIZ).as_posix()
+        if visiveis is not None and relativo not in visiveis:
+            continue
         if relativo.startswith(NAO_CODIGO):
             continue
         if leitor.is_skipped(caminho):

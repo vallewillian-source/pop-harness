@@ -302,7 +302,6 @@ cortado	cut
 cortar	cut
 corte	cutoff
 cosseno	cosine
-credenciais	credentials
 credencial	credential
 cria	creates
 criacao	creation
@@ -1031,7 +1030,6 @@ removidos	removed
 renderizar	render
 renomeacoes	renames
 renomear	rename
-repasse	relay
 repeticao	repetition
 repetida	repeated
 repetido	repeated
