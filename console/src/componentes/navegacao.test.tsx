@@ -406,7 +406,7 @@ describe("menu montado com a sessão", () => {
         expect(screen.queryByText("TENANTS E RECURSOS")).toBeNull();
     });
 
-    it("marca o item ativo com aria-current, sem marcar Organizações dentro de uma org", () => {
+    it("com organização aberta o menu não tem Organizações e o item ativo é o da tela", () => {
         prepararSessao("global", DUAS_ORGS);
         montarRail("/orgs/org_1/structure");
 
@@ -414,9 +414,7 @@ describe("menu montado com a sessão", () => {
             "aria-current",
             "page",
         );
-        expect(screen.getByRole("link", { name: /Organizações/ })).not.toHaveAttribute(
-            "aria-current",
-        );
+        expect(screen.queryByRole("link", { name: /^Organizações/ })).toBeNull();
     });
 
     it("marca Organizações quando a tela é a lista", () => {
@@ -436,7 +434,7 @@ describe("menu montado com a sessão", () => {
         expect(screen.getByRole("link", { name: /Organizações/ })).toHaveTextContent("2");
     });
 
-    it("o seletor mostra a organização aberta e lista as que o token vê, com Todas as organizações", async () => {
+    it("o seletor mostra a organização aberta e lista as que o token vê, com Administrar Organizações", async () => {
         const usuario = userEvent.setup();
         prepararSessao("global", DUAS_ORGS);
         montarRail("/orgs/org_1/structure");
@@ -448,7 +446,9 @@ describe("menu montado com a sessão", () => {
         await usuario.click(seletor);
 
         expect(screen.getByRole("listbox", { name: "Organizações disponíveis" })).toBeInTheDocument();
-        expect(screen.getByRole("option", { name: /Todas as organizações/ })).toBeInTheDocument();
+        expect(
+            screen.getAllByRole("option")[0],
+        ).toHaveAccessibleName(/Administrar Organizações/);
         expect(screen.getByRole("option", { name: /Loja Antiga/ })).toHaveAttribute(
             "aria-current",
             "true",
@@ -555,6 +555,33 @@ describe("menu montado com a sessão", () => {
         expect(screen.queryByRole("listbox")).toBeNull();
     });
 
+    it("o primeiro item do combobox é Administrar Organizações e leva para a lista", async () => {
+        const usuario = userEvent.setup();
+        prepararSessao("global", DUAS_ORGS);
+        montarRail("/orgs/org_1/structure");
+
+        await usuario.click(screen.getByRole("combobox"));
+        const administrar = screen.getByRole("option", { name: /Administrar Organizações/ });
+        expect(screen.getAllByRole("option")[0]).toBe(administrar);
+
+        await usuario.click(administrar);
+
+        expect(screen.getByTestId("caminho")).toHaveTextContent("/orgs");
+        expect(screen.queryByRole("listbox")).toBeNull();
+    });
+
+    it("Administrar Organizações com alterações pendentes pede confirmação antes de sair", async () => {
+        const usuario = userEvent.setup();
+        prepararSessao("global", DUAS_ORGS);
+        montarRail("/orgs/org_1/structure", { sujo: true });
+
+        await usuario.click(screen.getByRole("combobox"));
+        await usuario.click(screen.getByRole("option", { name: /Administrar Organizações/ }));
+
+        expect(await screen.findByText("Alterações não salvas")).toBeInTheDocument();
+        expect(screen.getByTestId("caminho")).toHaveTextContent("/orgs/org_1/structure");
+    });
+
     it("escolher a organização que já está aberta não navega", async () => {
         const usuario = userEvent.setup();
         prepararSessao("global", DUAS_ORGS);
@@ -625,7 +652,7 @@ describe("menu montado com a sessão", () => {
 
         expect(screen.getByRole("option", { name: /Clínica Nova/ })).toBeInTheDocument();
         expect(screen.queryByRole("option", { name: /Loja Antiga/ })).toBeNull();
-        expect(screen.queryByRole("option", { name: /Todas as organizações/ })).toBeNull();
+        expect(screen.queryByRole("option", { name: /Administrar Organizações/ })).toBeNull();
 
         await usuario.clear(screen.getByRole("textbox", { name: /Filtrar organizações/ }));
         await usuario.type(screen.getByRole("textbox", { name: /Filtrar organizações/ }), "loja-antiga");
@@ -652,11 +679,11 @@ describe("menu montado com a sessão", () => {
 
         await usuario.click(screen.getByRole("combobox"));
         const campo = screen.getByRole("textbox", { name: /Filtrar organizações/ });
-        const todas = screen.getByRole("option", { name: /Todas as organizações/ });
+        const administrar = screen.getByRole("option", { name: /Administrar Organizações/ });
         const clinica = screen.getByRole("option", { name: /Clínica Nova/ });
 
         // A primeira opção começa ativa; duas setas para baixo chegam em Clínica Nova.
-        expect(campo).toHaveAttribute("aria-activedescendant", todas.id);
+        expect(campo).toHaveAttribute("aria-activedescendant", administrar.id);
         await usuario.keyboard("{ArrowDown}{ArrowDown}");
         expect(campo).toHaveAttribute("aria-activedescendant", clinica.id);
         expect(clinica).toHaveAttribute("aria-selected", "true");
@@ -674,7 +701,7 @@ describe("menu montado com a sessão", () => {
 
         await usuario.click(screen.getByRole("combobox"));
         const campo = screen.getByRole("textbox", { name: /Filtrar organizações/ });
-        const todas = screen.getByRole("option", { name: /Todas as organizações/ });
+        const administrar = screen.getByRole("option", { name: /Administrar Organizações/ });
         const clinica = screen.getByRole("option", { name: /Clínica Nova/ });
 
         await usuario.keyboard("{End}");
@@ -682,7 +709,7 @@ describe("menu montado com a sessão", () => {
         await usuario.keyboard("{ArrowDown}");
         expect(campo).toHaveAttribute("aria-activedescendant", clinica.id);
         await usuario.keyboard("{Home}");
-        expect(campo).toHaveAttribute("aria-activedescendant", todas.id);
+        expect(campo).toHaveAttribute("aria-activedescendant", administrar.id);
     });
 
     it("a situação de cada organização fica no nome acessível da opção", async () => {

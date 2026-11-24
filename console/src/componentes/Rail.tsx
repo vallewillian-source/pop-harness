@@ -17,6 +17,9 @@
  * CF-09: nas mesmas rotas de agente os itens são o cockpit vertical da prancha 03
  * (`ITENS_DO_COCKPIT_DO_AGENTE`) — primeiro bloco sem título, depois "Diagnóstico & Teste" — e o
  * rodapé troca a versão por "Agente: <nome>". Fora delas o rail não muda.
+ * CN-01: com uma organização aberta o item "Organizações" sai do menu: a lista de organizações é o
+ * nível de cima, alcançada pelo primeiro item do combobox ("Administrar Organizações"). Na lista
+ * (`/orgs`) o menu continua como antes.
  * O item ativo usa o degrau tonal da SofaUI, sem a barra âmbar que existia aqui: o desenho não tem
  * borda lateral colorida. No modo foco o rótulo de cada item continua no DOM, escondido por recorte,
  * e o `title` devolve o nome ao mouse. A casca põe este menu abaixo da barra superior.
@@ -186,6 +189,8 @@ export function Rail({
         totalDeOrgs: sessao ? orgs.length : null,
         totalDeAgentes,
     };
+    const hidesOrgsList = (item: ItemDeNavegacao): boolean =>
+        orgAberta !== "" && item.rota(contexto) === "/orgs";
 
     return (
         <SofaSidebarRail
@@ -300,7 +305,9 @@ export function Rail({
                 GRUPOS_DE_NAVEGACAO.map((grupo) => (
                     <Fragment key={grupo}>
                         <div className="sofa-sidebar-rail__section-title">{grupo}</div>
-                        {ITENS_DE_NAVEGACAO.filter((item) => item.grupo === grupo).map((item) => (
+                        {ITENS_DE_NAVEGACAO.filter(
+                            (item) => item.grupo === grupo && !hidesOrgsList(item),
+                        ).map((item) => (
                             <ItenDeNavegacao
                                 key={item.rotulo}
                                 item={item}

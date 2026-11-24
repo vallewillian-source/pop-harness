@@ -2,7 +2,7 @@
  * Sessão do Console: token administrativo, escopo e a lista de orgs que o token enxerga.
  *
  * O token vive **na memória da aba e no `sessionStorage`** (UX_SPEC §3.1): fechar a aba encerra a
- * sessão; nada vai para `localStorage`. A tela de login avisa isso.
+ * sessão; o token nunca vai para `localStorage`. Só o id da última organização aberta vai para lá.
  */
 
 import {
@@ -83,6 +83,31 @@ function gravarNaAba(sessao: Sessao | null): void {
     } catch {
         // Aba com armazenamento bloqueado: a sessão continua só em memória.
     }
+}
+
+export const LAST_ORG_STORAGE_KEY = "poph-console.lastOrgId";
+
+function readLastOrgId(): string | null {
+    try {
+        return window.localStorage.getItem(LAST_ORG_STORAGE_KEY);
+    } catch {
+        return null;
+    }
+}
+
+export function writeLastOrgId(orgId: string): void {
+    try {
+        window.localStorage.setItem(LAST_ORG_STORAGE_KEY, orgId);
+    } catch {
+        return;
+    }
+}
+
+export function resolveDefaultOrgPath(orgs: Org[]): string {
+    const saved = readLastOrgId();
+    if (saved !== null && orgs.some((org) => org.id === saved)) return `/orgs/${saved}`;
+    const first = orgs[0];
+    return first ? `/orgs/${first.id}` : "/orgs";
 }
 
 export function SessaoProvider({ children }: { children: ReactNode }) {

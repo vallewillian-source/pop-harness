@@ -1,10 +1,11 @@
 /**
  * Seletor de organização no topo do rail (CF-06, desenho `OrgWorkspaceSwitcherCombobox`).
  *
- * Um único combobox de navegação: mostra a organização aberta na URL ("Todas as organizações" na
+ * Um único combobox de navegação: mostra a organização aberta na URL ("Administrar Organizações" na
  * lista, "Selecionar organização" fora dela e "Nenhuma organização" sem nenhuma). Ao abrir, lista as organizações que o
- * token enxerga, com busca por nome ou slug. Escolher passa pela guarda de alterações, como o clique
- * na linha da lista. Token de organização vê só a própria e não abre a lista.
+ * token enxerga, com busca por nome ou slug. O primeiro item leva à tela de administração das
+ * organizações (`/orgs`), que não é recurso de dentro de uma organização. Escolher passa pela guarda
+ * de alterações, como o clique na linha da lista. Token de organização vê só a própria e não abre a lista.
  *
  * A SofaUI não tem combobox de navegação com popover, então o padrão é feito aqui: botão com
  * `role="combobox"`, lista com `role="listbox"` e `aria-activedescendant` no campo de busca. O
@@ -57,7 +58,7 @@ export function posicaoDoGatilho(gatilho: HTMLElement | null): Posicao {
     };
 }
 
-/** Uma linha da lista: "Todas as organizações" (org `null`) ou uma organização. */
+/** Uma linha da lista: "Administrar Organizações" (org `null`) ou uma organização. */
 type Opcao = { chave: string; org: Org | null };
 
 /** Ponto de situação da organização: ativa e inativa têm tom próprio; outros estados não mostram ponto. */
@@ -134,7 +135,7 @@ export function SeletorDeOrganizacao({
         : orgs.length === 0
           ? "Nenhuma organização"
           : naListaDeOrgs
-            ? "Todas as organizações"
+            ? "Administrar Organizações"
             : "Selecionar organização";
 
     const termoLimpo = termo.trim();
@@ -343,7 +344,9 @@ export function SeletorDeOrganizacao({
                                           )}
                                           <span className="poph-orgsel__texto">
                                               <span className="poph-orgsel__nome">
-                                                  {opcao.org ? opcao.org.name : "Todas as organizações"}
+                                                  {opcao.org
+                                                      ? opcao.org.name
+                                                      : "Administrar Organizações"}
                                               </span>
                                               {opcao.org && (
                                                   <span className="poph-orgsel__slug">

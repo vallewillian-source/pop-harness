@@ -555,7 +555,7 @@ M13d	2	console/pnpm-workspace.yaml
 M13d	4	console/scripts/build.sh
 M13d	4	console/scripts/testar.sh
 M13d	8	console/scripts/verificar-api.sh
-M13d	4	console/src/App.tsx
+M13d	6	console/src/App.tsx
 M13d	10	console/src/estilos/agentes.css
 M13d	1	console/src/estilos/arquivos.css
 M13d	7	console/src/estilos/busca.css

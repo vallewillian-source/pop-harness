@@ -17,7 +17,7 @@ import {
     SofaStatusIndicator,
 } from "@sofacoding/sofa-ui";
 import { ErroApi } from "../api/cliente";
-import { useSessao } from "../sessao/Sessao";
+import { resolveDefaultOrgPath, useSessao } from "../sessao/Sessao";
 import "../estilos/login.css";
 
 /** Endereço desta instância — o Console é servido pelo próprio binário, então é a origem atual. */
@@ -42,9 +42,8 @@ export function Login() {
         try {
             const sessao = await entrar(token);
             limparAvisoExpiracao();
-            // Token de org não tem o que escolher: entra direto no painel da própria org.
-            const propria = sessao.escopo === "org" ? sessao.orgs[0]?.id : undefined;
-            navegar(propria ? `/orgs/${propria}` : "/orgs", { replace: true });
+            // Vale para os dois escopos: token de org só enxerga a própria, que é a primeira da lista.
+            navegar(resolveDefaultOrgPath(sessao.orgs), { replace: true });
         } catch (erro) {
             if (erro instanceof ErroApi) {
                 if (erro.naoAutorizado) {
