@@ -1,0 +1,188 @@
+#![allow(dead_code)]
+
+mod apoio;
+
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
+use apoio::{Cenario, SemEspera};
+use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
+use poph_agent::limites::{Limitador, OpcoesLimites};
+use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
+use poph_agent::provedores::{ProvedorResolvido, Provedores};
+use poph_agent::resumo::OpcoesResumo;
+use poph_agent::turno::{Motor, OpcoesTurno};
+use poph_core::llm::{EventoLlm, MotivoFim, ProvedorFake, Roteiro, Uso};
+use poph_store::{MudancaAgente, Pagina};
+use poph_types::AgentId;
+
+fn roteiro(texto: &str) -> Roteiro {
+    Roteiro::Eventos(vec![
+        EventoLlm::Texto(texto.to_owned()),
+        EventoLlm::Uso(Uso {
+            entrada: 10,
+            saida: 5,
+        }),
+        EventoLlm::Fim(MotivoFim::Concluido),
+    ])
+}
+
+fn primeiro_agente(cenario: &Cenario) -> AgentId {
+    cenario
+        .store
+        .agentes()
+        .listar(cenario.org, Pagina::com_limite(10))
+        .expect("lista os agentes")
+        .first()
+        .expect("o cenário cria um agente")
+        .id
+}
+
+fn definir_provedor_do_agente(cenario: &Cenario, provedor: &str) {
+    let id = primeiro_agente(cenario);
+    let agente = cenario
+        .store
+        .agentes()
+        .obter(cenario.org, id)
+        .expect("lê o agente");
+    cenario
+        .store
+        .agentes()
+        .atualizar(
+            cenario.org,
+            id,
+            agente.versao,
+            MudancaAgente {
+                provedor: Some(provedor.to_owned()),
+                modelo: Some(String::new()),
+                ..MudancaAgente::default()
+            },
+        )
+        .expect("troca o provedor do agente");
+}
+
+struct Palco {
+    cenario: Cenario,
+    padrao: Arc<ProvedorFake>,
+    nomeado: Arc<ProvedorFake>,
+}
+
+impl Palco {
+    fn novo(rotulo: &str, resposta_padrao: &str, resposta_nomeada: &str) -> Self {
+        let cenario = Cenario::novo(rotulo);
+        Self {
+            padrao: Arc::new(ProvedorFake::com_roteiros(vec![roteiro(resposta_padrao)])),
+            nomeado: Arc::new(ProvedorFake::com_roteiros(vec![roteiro(resposta_nomeada)])),
+            cenario,
+        }
+    }
+
+    fn motor(&self) -> Motor {
+        let mut nomeados = BTreeMap::new();
+        nomeados.insert(
+            "openai-forte".to_owned(),
+            ProvedorResolvido::novo(
+                "openai-forte",
+                Arc::clone(&self.nomeado) as Arc<dyn poph_core::llm::LlmProvider>,
+                "modelo-do-forte",
+            ),
+        );
+        let padrao = ProvedorResolvido::novo(
+            "antigravity2api",
+            Arc::clone(&self.padrao) as Arc<dyn poph_core::llm::LlmProvider>,
+            "modelo-do-padrao",
+        );
+        let provedores = Arc::new(Provedores::novo(padrao, nomeados));
+        let config = ConfigQuente::nova(
+            Arc::clone(&self.cenario.store),
+            OpcoesConfigQuente::default(),
+            MetricasMemoria::proprio(),
+        );
+        let limitador = Arc::new(Limitador::novo(
+            OpcoesLimites::default(),
+            MetricasMemoria::proprio(),
+        ));
+        Motor::novo(
+            Arc::clone(&self.cenario.store),
+            config,
+            limitador,
+            Arc::clone(&self.padrao) as Arc<dyn poph_core::llm::LlmProvider>,
+            OpcoesTurno::default(),
+            MetricasTurno::proprio(),
+        )
+        .com_pausa(Arc::new(SemEspera))
+        .com_resumo(OpcoesResumo {
+            ativo: false,
+            ..OpcoesResumo::default()
+        })
+        .com_provedores(provedores)
+    }
+}
+
+#[tokio::test]
+async fn agente_com_provedor_nomeado_recebe_a_resposta_dele() {
+    let palco = Palco::novo("nomeado", "resposta do padrão", "resposta do forte");
+    definir_provedor_do_agente(&palco.cenario, "openai-forte");
+    let motor = palco.motor();
+
+    let gatilho = palco.cenario.falar_com_arquivos("oi", Vec::new());
+    let resumo = palco.cenario.turno(&motor, gatilho).await;
+
+    assert_eq!(resumo.modelo, "modelo-do-forte");
+    assert_eq!(palco.nomeado.recebidos().len(), 1);
+    let pedido = &palco.nomeado.recebidos()[0];
+    assert_eq!(pedido.modelo.as_deref(), Some("modelo-do-forte"));
+    assert!(
+        palco.padrao.recebidos().is_empty(),
+        "o provedor padrão não deveria receber pedido"
+    );
+    let texto = palco
+        .cenario
+        .store
+        .mensagens()
+        .listar(
+            palco.cenario.org,
+            palco.cenario.conversa,
+            Pagina::com_limite(50),
+        )
+        .expect("lista as mensagens")
+        .into_iter()
+        .filter(|mensagem| mensagem.papel == poph_store::Papel::Assistente)
+        .map(|mensagem| mensagem.texto)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(texto.contains("resposta do forte"), "{texto}");
+}
+
+#[tokio::test]
+async fn escolha_vazia_e_nome_de_protocolo_caem_no_provedor_padrao() {
+    for escolha in ["", "antigravity2api", "openai_compativel"] {
+        let palco = Palco::novo("padrao", "resposta do padrão", "resposta do forte");
+        definir_provedor_do_agente(&palco.cenario, escolha);
+        let motor = palco.motor();
+        let gatilho = palco.cenario.falar_com_arquivos("oi", Vec::new());
+        let resumo = palco.cenario.turno(&motor, gatilho).await;
+        assert_eq!(resumo.modelo, "modelo-do-padrao", "escolha `{escolha}`");
+        assert_eq!(palco.padrao.recebidos().len(), 1, "escolha `{escolha}`");
+        assert!(
+            palco.nomeado.recebidos().is_empty(),
+            "escolha `{escolha}`: o nomeado não deveria receber pedido"
+        );
+    }
+}
+
+#[tokio::test]
+async fn provedor_desconhecido_falha_o_turno_sem_chamar_ninguem() {
+    let palco = Palco::novo("desconhecido", "resposta do padrão", "resposta do forte");
+    definir_provedor_do_agente(&palco.cenario, "sumiu-do-toml");
+    let motor = palco.motor();
+    let gatilho = palco.cenario.falar_com_arquivos("oi", Vec::new());
+    let resumo = palco.cenario.turno(&motor, gatilho).await;
+
+    assert_eq!(resumo.estado, poph_store::EstadoTurno::Falhou);
+    let erro = resumo.erro.unwrap_or_default();
+    assert!(erro.contains("sumiu-do-toml"), "{erro}");
+    assert!(erro.contains("openai-forte"), "{erro}");
+    assert!(palco.padrao.recebidos().is_empty());
+    assert!(palco.nomeado.recebidos().is_empty());
+}

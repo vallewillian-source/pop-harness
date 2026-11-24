@@ -91,6 +91,7 @@ fn rodar(
         },
         montagem::Metricas::proprias(metricas_base),
         montagem::FluxosDoProcesso::default(),
+        ambiente,
     )?;
     let montagem::Montagem {
         motor,

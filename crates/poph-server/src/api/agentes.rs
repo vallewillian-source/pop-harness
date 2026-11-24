@@ -205,6 +205,9 @@ pub async fn criar(
         e.store.departamentos().obter(org, id)?;
     }
     if let Some(x) = d.provider {
+        if let Err(erro) = e.config.validar_escolha_de_provedor(&x) {
+            return Err(ApiError::validacao("provider", erro.to_string()));
+        }
         n.provedor = x;
     }
     if let Some(x) = d.model {
@@ -267,6 +270,11 @@ pub async fn atualizar(
     if let Some(ref j) = d.jev_json {
         serde_json::from_str::<Value>(j)
             .map_err(|_| ApiError::validacao("jev_json", "JSON inválido"))?;
+    }
+    if let Some(ref escolha) = d.provider
+        && let Err(erro) = e.config.validar_escolha_de_provedor(escolha)
+    {
+        return Err(ApiError::validacao("provider", erro.to_string()));
     }
     let categorias = d
         .product_category_ids

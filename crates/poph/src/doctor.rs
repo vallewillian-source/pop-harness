@@ -17,7 +17,7 @@ use serde::Serialize;
 use tracing::debug;
 
 use crate::config::{
-    ErroConfig, Segredos, VAR_ANTIGRAVITY, VAR_CIFRA, VAR_EVOLUTION, VAR_TYPESAFE,
+    self, ErroConfig, Segredos, VAR_ANTIGRAVITY, VAR_CIFRA, VAR_EVOLUTION, VAR_TYPESAFE,
 };
 
 /// Versão do formato do `--json`. Muda só se a forma do JSON mudar.
@@ -80,6 +80,8 @@ pub struct Entrada<'a> {
     /// Segredos lidos do ambiente (só a presença é conferida).
     pub segredos: &'a Segredos,
     pub chave_llm: Option<&'a Segredo>,
+    pub ambiente: Option<&'a crate::config::Ambiente>,
+    pub agentes_por_provedor: Option<&'a [(String, u64)]>,
 }
 
 /// Faz todas as verificações e devolve o relatório.
@@ -102,6 +104,7 @@ pub fn gerar(entrada: Entrada<'_>) -> Relatorio {
             verificacoes.push(banco("harness.db", &config.harness_db()));
             verificacoes.push(banco("rag.db", &config.rag_db()));
             verificacoes.extend(fluxos_verificacoes(&config.fluxos));
+            verificacoes.extend(provedores_verificacoes(config, entrada));
         }
     }
 
@@ -225,6 +228,63 @@ fn arquivo_verificacao(arquivo: Option<&Path>) -> Verificacao {
         nivel,
         detalhe,
     }
+}
+
+fn provedores_verificacoes(config: &HarnessConfig, entrada: Entrada<'_>) -> Vec<Verificacao> {
+    let mut verificacoes = Vec::new();
+    for (nome, sobreposicao) in &config.provedores {
+        let efetivo = sobreposicao.efetivo(&config.llm);
+        let chave = match entrada.ambiente {
+            Some(ambiente) => config::chave_llm(ambiente, &efetivo.chave_env),
+            None => None,
+        };
+        let (nivel, chave_texto) = match (entrada.ambiente, chave.is_some()) {
+            (None, _) => (Nivel::Ok, String::new()),
+            (Some(_), true) => (Nivel::Ok, format!("chave {} definida", efetivo.chave_env)),
+            (Some(_), false) => (
+                Nivel::Aviso,
+                format!("chave {} ausente no ambiente", efetivo.chave_env),
+            ),
+        };
+        let sufixo = if chave_texto.is_empty() {
+            String::new()
+        } else {
+            format!(" · {chave_texto}")
+        };
+        verificacoes.push(Verificacao {
+            nome: format!("provedor {nome}"),
+            nivel,
+            detalhe: format!(
+                "{} · {} chamadas simultâneas{sufixo}",
+                efetivo.url_base, efetivo.simultaneos
+            ),
+        });
+    }
+    let Some(contagem) = entrada.agentes_por_provedor else {
+        return verificacoes;
+    };
+    let mut orfaos = Vec::new();
+    for (escolha, total) in contagem {
+        if *total == 0
+            || HarnessConfig::provedor_e_padrao(escolha)
+            || config.provedores.contains_key(escolha.trim())
+        {
+            continue;
+        }
+        orfaos.push(format!("{escolha} ({total})"));
+    }
+    if !orfaos.is_empty() {
+        verificacoes.push(Verificacao {
+            nome: "provedor dos agentes".to_owned(),
+            nivel: Nivel::Aviso,
+            detalhe: format!(
+                "{} agente(s) apontam para provedor inexistente: {}",
+                orfaos.len(),
+                orfaos.join(", ")
+            ),
+        });
+    }
+    verificacoes
 }
 
 fn pasta_de_dados(diretorio: &Path) -> Verificacao {
@@ -436,10 +496,71 @@ mod testes {
             arquivo: None,
             segredos: &segredos_completos(),
             chave_llm: Some(&chave_llm_de_teste()),
+            ambiente: None,
+            agentes_por_provedor: None,
         });
         assert!(!relatorio.tem_erro(), "{}", relatorio.texto());
         assert_eq!(achar(&relatorio, "banco harness.db").nivel, Nivel::Aviso);
         assert_eq!(achar(&relatorio, "banco rag.db").nivel, Nivel::Aviso);
+    }
+
+    #[test]
+    fn doctor_lista_provedores_e_avisa_agente_com_provedor_inexistente() {
+        let pasta = pasta_temporaria("provedores");
+        let mut config = config_em(&pasta);
+        config.provedores.insert(
+            "openai-forte".to_owned(),
+            poph_types::ProvedorConfig {
+                url_base: Some("https://api.exemplo.com/v1".to_owned()),
+                simultaneos: Some(4),
+                ..poph_types::ProvedorConfig::default()
+            },
+        );
+        let ambiente = Ambiente::from([
+            (VAR_CIFRA.to_owned(), "SEGREDO-CIFRA-XYZ-1".to_owned()),
+            (VAR_ANTIGRAVITY.to_owned(), "SEGREDO-LLM-XYZ-2".to_owned()),
+        ]);
+        let agentes = vec![
+            ("antigravity2api".to_owned(), 1_u64),
+            ("openai-forte".to_owned(), 2_u64),
+            ("sumiu-do-toml".to_owned(), 3_u64),
+        ];
+        let relatorio = gerar(Entrada {
+            config: Ok(&config),
+            arquivo: None,
+            segredos: &segredos_completos(),
+            chave_llm: Some(&chave_llm_de_teste()),
+            ambiente: Some(&ambiente),
+            agentes_por_provedor: Some(&agentes),
+        });
+
+        let linha = achar(&relatorio, "provedor openai-forte");
+        assert_eq!(linha.nivel, Nivel::Ok, "{}", linha.detalhe);
+        assert!(
+            linha.detalhe.contains("https://api.exemplo.com/v1"),
+            "{}",
+            linha.detalhe
+        );
+        assert!(
+            linha.detalhe.contains("4 chamadas simultâneas"),
+            "{}",
+            linha.detalhe
+        );
+        assert!(linha.detalhe.contains(VAR_ANTIGRAVITY), "{}", linha.detalhe);
+        assert!(linha.detalhe.contains("definida"), "{}", linha.detalhe);
+
+        let orfaos = achar(&relatorio, "provedor dos agentes");
+        assert_eq!(orfaos.nivel, Nivel::Aviso);
+        assert!(
+            orfaos.detalhe.contains("sumiu-do-toml"),
+            "{}",
+            orfaos.detalhe
+        );
+        assert!(
+            !orfaos.detalhe.contains("openai-forte"),
+            "{}",
+            orfaos.detalhe
+        );
     }
 
     /// O doctor mostra se o motor de fluxos roda e os tetos em uso (FX-26).
@@ -452,6 +573,8 @@ mod testes {
             arquivo: None,
             segredos: &segredos_completos(),
             chave_llm: Some(&chave_llm_de_teste()),
+            ambiente: None,
+            agentes_por_provedor: None,
         });
         let ativo = achar(&relatorio, "fluxos.ativo");
         assert_eq!(ativo.nivel, Nivel::Ok);
@@ -482,6 +605,8 @@ mod testes {
             arquivo: None,
             segredos: &segredos_completos(),
             chave_llm: Some(&chave_llm_de_teste()),
+            ambiente: None,
+            agentes_por_provedor: None,
         });
         let ativo = achar(&relatorio, "fluxos.ativo");
         assert_eq!(ativo.nivel, Nivel::Aviso);
@@ -502,6 +627,8 @@ mod testes {
             arquivo: None,
             segredos: &segredos,
             chave_llm: Some(&chave_llm_de_teste()),
+            ambiente: None,
+            agentes_por_provedor: None,
         });
         assert!(relatorio.tem_erro());
         let v = achar(&relatorio, "variável POPH_CHAVE_CIFRA");
@@ -519,6 +646,8 @@ mod testes {
             arquivo: None,
             segredos: &segredos_completos(),
             chave_llm: None,
+            ambiente: None,
+            agentes_por_provedor: None,
         });
         let v = achar(&relatorio, "variável MINHA_CHAVE_LLM");
         assert_eq!(v.nivel, Nivel::Erro);
@@ -536,6 +665,8 @@ mod testes {
             arquivo: None,
             segredos: &segredos,
             chave_llm: Some(&chave_llm_de_teste()),
+            ambiente: None,
+            agentes_por_provedor: None,
         });
         assert!(
             desligado
@@ -549,6 +680,8 @@ mod testes {
             arquivo: None,
             segredos: &segredos,
             chave_llm: Some(&chave_llm_de_teste()),
+            ambiente: None,
+            agentes_por_provedor: None,
         });
         assert_eq!(
             achar(&ligado, "variável TYPESAFE_API_KEY").nivel,
@@ -566,6 +699,8 @@ mod testes {
             arquivo: None,
             segredos: &segredos,
             chave_llm: Some(&chave_llm_de_teste()),
+            ambiente: None,
+            agentes_por_provedor: None,
         });
         let texto = relatorio.texto();
         let json = relatorio.json();
@@ -584,6 +719,8 @@ mod testes {
             arquivo: None,
             segredos: &segredos_completos(),
             chave_llm: Some(&chave_llm_de_teste()),
+            ambiente: None,
+            agentes_por_provedor: None,
         });
         let valor: serde_json::Value =
             serde_json::from_str(&relatorio.json()).expect("JSON válido");
@@ -652,6 +789,8 @@ mod testes {
             arquivo: None,
             segredos: &segredos_completos(),
             chave_llm: Some(&chave_llm_de_teste()),
+            ambiente: None,
+            agentes_por_provedor: None,
         });
         assert!(relatorio.tem_erro());
         assert!(relatorio.texto().contains("servidor.portaa"));

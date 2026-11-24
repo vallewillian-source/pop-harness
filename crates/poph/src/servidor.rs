@@ -198,6 +198,7 @@ async fn ligar_turno(
         },
         metricas,
         montagem::FluxosDoProcesso::do_servidor(&estado),
+        ambiente,
     )?;
 
     // Rede de segurança, como no chat: a base pode ter sido escrita fora do servidor. Sincronizar

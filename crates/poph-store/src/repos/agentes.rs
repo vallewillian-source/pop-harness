@@ -6,6 +6,7 @@
 //! Regras de rota por intenção não existem de propósito (decisão D-06).
 
 use std::collections::HashMap;
+use std::path::Path;
 
 use poph_types::{AgentId, OrgId, ProductCategoryId};
 use rusqlite::{OptionalExtension, Row, named_params, params};
@@ -17,6 +18,22 @@ use crate::repos::{
     conflito_ou_ausente, id_da_coluna, id_opcional, pertence, status_da_coluna, u32_da_coluna,
     u64_da_coluna,
 };
+
+pub fn agentes_por_provedor_em(caminho: &Path) -> Resultado<Vec<(String, u64)>> {
+    let conn = crate::conexao::abrir_leitura(caminho)?;
+    let mut consulta =
+        conn.prepare("SELECT provider, COUNT(*) FROM agents GROUP BY provider ORDER BY provider")?;
+    let linhas = consulta.query_map([], |linha| {
+        let nome: String = linha.get(0)?;
+        let total: i64 = linha.get(1)?;
+        Ok((nome, total.max(0) as u64))
+    })?;
+    let mut contagem = Vec::new();
+    for linha in linhas {
+        contagem.push(linha?);
+    }
+    Ok(contagem)
+}
 
 /// Colunas do agente que podem recusar um valor (`CHECK`/`NOT NULL`) e o campo que a API expõe
 /// para cada uma. Sem isto, a faixa de contexto apareceria como "campo slug inválido".

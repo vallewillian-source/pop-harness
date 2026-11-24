@@ -30,6 +30,8 @@ pub struct HarnessConfig {
     pub limites: LimitesConfig,
     /// Provedor de LLM padrão (o agente pode trocar de modelo).
     pub llm: LlmConfig,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub provedores: BTreeMap<String, ProvedorConfig>,
     /// Jev (decisões rápidas). Desligado até cada gate passar na medição (PRD §10).
     pub jev: JevConfig,
     /// Transferência para humano e orientação ao cliente antes dela (HR-29).
@@ -200,6 +202,47 @@ pub struct LlmConfig {
     pub temperatura: f32,
     /// Teto de tokens de saída por resposta.
     pub max_tokens_saida: u32,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct ProvedorConfig {
+    pub provedor: Option<String>,
+    pub url_base: Option<String>,
+    pub chave_env: Option<String>,
+    pub recusa_turno_modelo: Option<bool>,
+    pub modelo: Option<String>,
+    pub timeout_segundos: Option<u32>,
+    pub retentativas: Option<u32>,
+    pub simultaneos: Option<u32>,
+    pub temperatura: Option<f32>,
+    pub max_tokens_saida: Option<u32>,
+}
+
+impl ProvedorConfig {
+    pub fn efetivo(&self, llm: &LlmConfig) -> LlmConfig {
+        LlmConfig {
+            provedor: self
+                .provedor
+                .clone()
+                .unwrap_or_else(|| llm.provedor.clone()),
+            url_base: self
+                .url_base
+                .clone()
+                .unwrap_or_else(|| llm.url_base.clone()),
+            chave_env: self
+                .chave_env
+                .clone()
+                .unwrap_or_else(|| llm.chave_env.clone()),
+            recusa_turno_modelo: self.recusa_turno_modelo.unwrap_or(llm.recusa_turno_modelo),
+            modelo: self.modelo.clone().unwrap_or_else(|| llm.modelo.clone()),
+            timeout_segundos: self.timeout_segundos.unwrap_or(llm.timeout_segundos),
+            retentativas: self.retentativas.unwrap_or(llm.retentativas),
+            simultaneos: self.simultaneos.unwrap_or(llm.simultaneos),
+            temperatura: self.temperatura.unwrap_or(llm.temperatura),
+            max_tokens_saida: self.max_tokens_saida.unwrap_or(llm.max_tokens_saida),
+        }
+    }
 }
 
 /// Jev: decisões rápidas. Tudo desligado por padrão até a medição de cada gate.
@@ -557,6 +600,7 @@ impl HarnessConfig {
         validar_log(&self.log)?;
         validar_limites(&self.limites)?;
         validar_llm(&self.llm)?;
+        self.validar_provedores()?;
         validar_jev(&self.jev)?;
         validar_handoff(&self.handoff)?;
         validar_turno(&self.turno)?;
@@ -570,6 +614,81 @@ impl HarnessConfig {
             matrix.validar()?;
         }
         validar_fluxos(&self.fluxos)?;
+        Ok(())
+    }
+
+    pub fn nomes_de_provedores(&self) -> Vec<String> {
+        self.provedores.keys().cloned().collect()
+    }
+
+    pub fn provedor_efetivo(&self, nome: &str) -> Option<LlmConfig> {
+        self.provedores
+            .get(nome.trim())
+            .map(|provedor| provedor.efetivo(&self.llm))
+    }
+
+    pub fn provedor_e_padrao(escolha: &str) -> bool {
+        let escolha = escolha.trim();
+        escolha.is_empty() || provedor_llm_aceito(escolha)
+    }
+
+    pub fn validar_escolha_de_provedor(&self, escolha: &str) -> DomainResult<()> {
+        if Self::provedor_e_padrao(escolha) || self.provedores.contains_key(escolha.trim()) {
+            return Ok(());
+        }
+        let declarados = self.nomes_de_provedores();
+        let lista = if declarados.is_empty() {
+            "nenhum declarado em [provedores]".to_owned()
+        } else {
+            declarados.join(", ")
+        };
+        Err(invalido(
+            "provedor",
+            format!(
+                "`{}` não é um provedor desta instância; use vazio (o padrão do [llm]), {} ou um de [provedores]: {}",
+                escolha.trim(),
+                PROVEDORES_LLM_ACEITOS.join(" ou "),
+                lista
+            ),
+        ))
+    }
+
+    fn validar_provedores(&self) -> DomainResult<()> {
+        for (nome, provedor) in &self.provedores {
+            if !nome_de_provedor_valido(nome) {
+                return Err(invalido(
+                    "provedores",
+                    format!("nome `{nome}` inválido: use letras minúsculas, números, `-` e `_`"),
+                ));
+            }
+            if provedor_llm_aceito(nome) {
+                return Err(invalido(
+                    "provedores",
+                    format!(
+                        "`{nome}` é nome de protocolo e não pode ser usado como nome de provedor; escolha outro"
+                    ),
+                ));
+            }
+            let url_base = provedor.url_base.as_deref().unwrap_or(&self.llm.url_base);
+            if url_base.trim().is_empty() {
+                return Err(invalido(
+                    "provedores",
+                    format!("`{nome}`: url_base vazia; informe em [provedores.{nome}] ou em [llm]"),
+                ));
+            }
+            let chave_env = provedor.chave_env.as_deref().unwrap_or(&self.llm.chave_env);
+            if chave_env.trim().is_empty() {
+                return Err(invalido(
+                    "provedores",
+                    format!(
+                        "`{nome}`: chave_env vazia; informe em [provedores.{nome}] ou em [llm]"
+                    ),
+                ));
+            }
+            let efetivo = provedor.efetivo(&self.llm);
+            validar_llm(&efetivo)
+                .map_err(|erro| invalido("provedores", format!("`{nome}`: {erro}")))?;
+        }
         Ok(())
     }
 
@@ -740,6 +859,13 @@ fn validar_llm(llm: &LlmConfig) -> DomainResult<()> {
         ));
     }
     Ok(())
+}
+
+fn nome_de_provedor_valido(nome: &str) -> bool {
+    !nome.is_empty()
+        && nome
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
 }
 
 fn nome_de_variavel_valido(nome: &str) -> bool {
@@ -1402,6 +1528,118 @@ mod testes {
             }
             outro => panic!("esperado erro de validação, veio {outro:?}"),
         }
+    }
+
+    #[test]
+    fn provedor_nomeado_herda_o_que_nao_define_do_bloco_llm() {
+        let mut cfg = HarnessConfig::default();
+        cfg.llm.modelo = "modelo-do-padrao".to_owned();
+        cfg.llm.simultaneos = 32;
+        cfg.provedores.insert(
+            "openai-forte".to_owned(),
+            ProvedorConfig {
+                url_base: Some("https://api.exemplo.com/v1".to_owned()),
+                chave_env: Some("CHAVE_DO_FORTE".to_owned()),
+                simultaneos: Some(4),
+                ..ProvedorConfig::default()
+            },
+        );
+        cfg.validar().expect("configuração válida");
+        let efetivo = cfg
+            .provedor_efetivo("openai-forte")
+            .expect("provedor existe");
+        assert_eq!(efetivo.url_base, "https://api.exemplo.com/v1");
+        assert_eq!(efetivo.chave_env, "CHAVE_DO_FORTE");
+        assert_eq!(efetivo.modelo, "modelo-do-padrao");
+        assert_eq!(efetivo.simultaneos, 4);
+        assert_eq!(efetivo.provedor, cfg.llm.provedor);
+        assert_eq!(efetivo.timeout_segundos, cfg.llm.timeout_segundos);
+    }
+
+    #[test]
+    fn nome_de_provedor_reservado_vazio_ou_fora_do_padrao_e_recusado() {
+        for nome in [
+            "openai_compativel",
+            "antigravity2api",
+            "",
+            "Com Espaço",
+            "Maiúsculo",
+        ] {
+            let mut cfg = HarnessConfig::default();
+            cfg.provedores
+                .insert(nome.to_owned(), ProvedorConfig::default());
+            match cfg.validar() {
+                Err(DomainError::Validacao { campo, motivo }) => {
+                    assert_eq!(campo, "provedores", "nome `{nome}`");
+                    assert!(
+                        motivo.contains(nome)
+                            || motivo.contains("vazio")
+                            || motivo.contains("inválido"),
+                        "{motivo}"
+                    );
+                }
+                outro => panic!("esperado erro de validação para `{nome}`, veio {outro:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn provedor_sem_url_base_nem_chave_e_erro_claro() {
+        let mut cfg = HarnessConfig::default();
+        cfg.provedores.insert(
+            "sem-endereco".to_owned(),
+            ProvedorConfig {
+                url_base: Some(String::new()),
+                ..ProvedorConfig::default()
+            },
+        );
+        match cfg.validar() {
+            Err(DomainError::Validacao { campo, motivo }) => {
+                assert_eq!(campo, "provedores");
+                assert!(motivo.contains("url_base"), "{motivo}");
+                assert!(motivo.contains("sem-endereco"), "{motivo}");
+            }
+            outro => panic!("esperado erro de validação, veio {outro:?}"),
+        }
+
+        let mut cfg = HarnessConfig::default();
+        cfg.provedores.insert(
+            "sem-chave".to_owned(),
+            ProvedorConfig {
+                url_base: Some("https://api.exemplo.com/v1".to_owned()),
+                chave_env: Some(String::new()),
+                ..ProvedorConfig::default()
+            },
+        );
+        match cfg.validar() {
+            Err(DomainError::Validacao { campo, motivo }) => {
+                assert_eq!(campo, "provedores");
+                assert!(motivo.contains("chave_env"), "{motivo}");
+            }
+            outro => panic!("esperado erro de validação, veio {outro:?}"),
+        }
+    }
+
+    #[test]
+    fn escolha_de_provedor_do_agente_aceita_vazio_protocolo_e_nome_declarado() {
+        let mut cfg = HarnessConfig::default();
+        cfg.provedores.insert(
+            "openai-forte".to_owned(),
+            ProvedorConfig {
+                url_base: Some("https://api.exemplo.com/v1".to_owned()),
+                ..ProvedorConfig::default()
+            },
+        );
+        for escolha in ["", "openai_compativel", "antigravity2api", "openai-forte"] {
+            cfg.validar_escolha_de_provedor(escolha)
+                .unwrap_or_else(|erro| panic!("`{escolha}` deveria valer: {erro}"));
+        }
+        let erro = cfg
+            .validar_escolha_de_provedor("inexistente")
+            .expect_err("recusa nome desconhecido")
+            .to_string();
+        assert!(erro.contains("inexistente"), "{erro}");
+        assert!(erro.contains("openai-forte"), "{erro}");
     }
 
     #[test]

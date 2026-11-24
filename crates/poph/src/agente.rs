@@ -15,7 +15,9 @@ use std::process::ExitCode;
 use clap::{Args, Subcommand};
 use poph_agent::compor_instrucoes;
 use poph_store::{Agente, Instrucoes, MudancaAgente, NovoAgente, Pagina, Status, Store};
-use poph_types::{AgentId, DepartmentId, OrgId, ProductCategoryId, StructuredInstructions};
+use poph_types::{
+    AgentId, DepartmentId, HarnessConfig, OrgId, ProductCategoryId, StructuredInstructions,
+};
 use serde_json::{Value, json};
 
 use crate::config;
@@ -286,35 +288,35 @@ pub fn executar_agente(
 ) -> ExitCode {
     match acao {
         AcaoAgente::Create(args) => {
-            let (store, org) = match abrir(flag, ambiente, org) {
+            let (store, org, configuracao) = match abrir(flag, ambiente, org) {
                 Ok(par) => par,
                 Err(erro) => return falha(&erro),
             };
-            criar(&store, org, args)
+            criar(&store, org, &configuracao, args)
         }
         AcaoAgente::List(args) => {
-            let (store, org) = match abrir(flag, ambiente, org) {
+            let (store, org, _) = match abrir(flag, ambiente, org) {
                 Ok(par) => par,
                 Err(erro) => return falha(&erro),
             };
             listar(&store, org, args)
         }
         AcaoAgente::Show(args) => {
-            let (store, org) = match abrir(flag, ambiente, org) {
+            let (store, org, _) = match abrir(flag, ambiente, org) {
                 Ok(par) => par,
                 Err(erro) => return falha(&erro),
             };
             mostrar(&store, org, args)
         }
         AcaoAgente::Update(args) => {
-            let (store, org) = match abrir(flag, ambiente, org) {
+            let (store, org, configuracao) = match abrir(flag, ambiente, org) {
                 Ok(par) => par,
                 Err(erro) => return falha(&erro),
             };
-            atualizar(&store, org, args)
+            atualizar(&store, org, &configuracao, args)
         }
         AcaoAgente::Delete(args) => {
-            let (store, org) = match abrir(flag, ambiente, org) {
+            let (store, org, _) = match abrir(flag, ambiente, org) {
                 Ok(par) => par,
                 Err(erro) => return falha(&erro),
             };
@@ -330,7 +332,7 @@ pub fn executar_instrucoes(
     org: Option<&str>,
     acao: AcaoInstrucoes,
 ) -> ExitCode {
-    let (store, org) = match abrir(flag, ambiente, org) {
+    let (store, org, _) = match abrir(flag, ambiente, org) {
         Ok(par) => par,
         Err(erro) => return falha(&erro),
     };
@@ -348,12 +350,15 @@ pub fn executar_instrucoes(
     }
 }
 
-fn criar(store: &Store, org: OrgId, args: CriarAgente) -> ExitCode {
+fn criar(store: &Store, org: OrgId, configuracao: &HarnessConfig, args: CriarAgente) -> ExitCode {
     if args.name.trim().len() < 3 {
         return falha("o nome do agente precisa de ao menos 3 caracteres");
     }
     if args.tipo != "custom" && args.tipo != "standard" {
         return falha("--type aceita `custom` ou `standard`");
+    }
+    if let Err(erro) = configuracao.validar_escolha_de_provedor(&args.provider) {
+        return falha(format!("--provider: {erro}"));
     }
     let slug = match args.slug.clone() {
         Some(slug) => slug,
@@ -493,7 +498,12 @@ fn mostrar(store: &Store, org: OrgId, args: ReferenciaAgente) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn atualizar(store: &Store, org: OrgId, args: AtualizarAgente) -> ExitCode {
+fn atualizar(
+    store: &Store,
+    org: OrgId,
+    configuracao: &HarnessConfig,
+    args: AtualizarAgente,
+) -> ExitCode {
     let agente = match resolver_agente(store, org, &args.agente) {
         Ok(agente) => agente,
         Err(erro) => return falha(erro),
@@ -512,6 +522,11 @@ fn atualizar(store: &Store, org: OrgId, args: AtualizarAgente) -> ExitCode {
         {
             return falha("--jev-json precisa ser um JSON válido");
         }
+    }
+    if let Some(escolha) = args.provider.as_deref()
+        && let Err(erro) = configuracao.validar_escolha_de_provedor(escolha)
+    {
+        return falha(format!("--provider: {erro}"));
     }
     let tem_categorias = args.categorias.is_some();
     let tem_mudanca = args.name.is_some()
@@ -758,7 +773,7 @@ fn abrir(
     flag: Option<PathBuf>,
     ambiente: &config::Ambiente,
     org: Option<&str>,
-) -> Result<(Store, OrgId), String> {
+) -> Result<(Store, OrgId, HarnessConfig), String> {
     let Some(texto_org) = org else {
         return Err("informe --org com o id (UUID v7) ou o slug da org".to_owned());
     };
@@ -769,7 +784,7 @@ fn abrir(
     let store = Store::abrir(&configuracao)
         .map_err(|erro| format!("não consegui abrir o banco: {erro}"))?;
     let org = resolver_org(&store, texto_org)?;
-    Ok((store, org))
+    Ok((store, org, configuracao))
 }
 
 fn resolver_org(store: &Store, texto: &str) -> Result<OrgId, String> {

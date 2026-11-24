@@ -5,6 +5,7 @@
 //! Quem chama escolhe duas coisas: as chaves (o modelo é obrigatório; o Jev é opcional) e as
 //! métricas, que o servidor publica no `/metrics` e o chat mantém próprias.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use poph_agent::atores::{Atores, OpcoesAtores};
@@ -13,12 +14,15 @@ use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
 use poph_agent::entrada_saida::{Fluxo, OpcoesFluxo};
 use poph_agent::limites::{Limitador, OpcoesLimites};
 use poph_agent::metricas::{MetricasFluxo, MetricasMemoria, MetricasTurno};
+use poph_agent::provedores::{ProvedorResolvido, Provedores};
 use poph_agent::turno::{AjustesDoFluxo, Motor, OpcoesTurno, ProcessadorTurno, RegistroPadrao};
 use poph_agent::{BuscadorBase, BuscadorProdutos, CatalogoProdutos, ConsultarBase, registro_com};
-use poph_core::llm::{LimitadorLlm, OpenAiCompatibleClient, OpenAiCompatibleConfig};
+use poph_core::llm::{LimitadorLlm, LlmProvider, OpenAiCompatibleClient, OpenAiCompatibleConfig};
 use poph_fluxos::cache::CacheRevisoes;
 use poph_store::Store;
-use poph_types::{HarnessConfig, MetricasBase, Registro, Segredo};
+use poph_types::{HarnessConfig, LlmConfig, MetricasBase, Registro, Segredo};
+
+use crate::config;
 
 /// Chaves que a montagem usa. A do modelo é obrigatória; a do Jev só liga o Jev quando existe.
 pub struct Chaves {
@@ -139,6 +143,53 @@ fn registro_do_turno(
     registro_com(registro, quente, produtos)
 }
 
+fn cliente_llm(
+    llm: &LlmConfig,
+    chave: Segredo,
+    metricas: MetricasBase,
+    rotulo: &str,
+) -> Result<Arc<dyn LlmProvider>, String> {
+    let cliente = OpenAiCompatibleConfig::da_config(llm, chave)
+        .map_err(|erro| format!("configuração do provedor {rotulo}: {erro}"))?;
+    let limites_llm = LimitadorLlm::new(llm.simultaneos as usize, llm.simultaneos as usize)
+        .map_err(|erro| format!("limites do provedor {rotulo}: {erro}"))?;
+    let cliente = OpenAiCompatibleClient::new(cliente, limites_llm, metricas)
+        .map_err(|erro| format!("cliente do provedor {rotulo}: {erro}"))?;
+    Ok(Arc::new(cliente))
+}
+
+fn registro_de_provedores(
+    configuracao: &HarnessConfig,
+    ambiente: &config::Ambiente,
+    metricas: MetricasBase,
+    padrao: &Arc<dyn LlmProvider>,
+) -> Result<(Provedores, BTreeMap<String, u32>), String> {
+    let padrao = ProvedorResolvido::novo(
+        configuracao.llm.provedor.as_str(),
+        Arc::clone(padrao),
+        configuracao.llm.modelo.clone(),
+    );
+    let mut nomeados = BTreeMap::new();
+    let mut tetos = BTreeMap::new();
+    for (nome, sobreposicao) in &configuracao.provedores {
+        let efetivo = sobreposicao.efetivo(&configuracao.llm);
+        let Some(chave) = config::chave_llm(ambiente, &efetivo.chave_env) else {
+            eprintln!(
+                "[aviso] provedor `{nome}` sem a variável {} no ambiente: agentes que apontam para ele não atendem",
+                efetivo.chave_env
+            );
+            continue;
+        };
+        let cliente = cliente_llm(&efetivo, chave, metricas.clone(), &format!("`{nome}`"))?;
+        tetos.insert(nome.clone(), efetivo.simultaneos);
+        nomeados.insert(
+            nome.clone(),
+            ProvedorResolvido::novo(nome.as_str(), cliente, efetivo.modelo.clone()),
+        );
+    }
+    Ok((Provedores::novo(padrao, nomeados), tetos))
+}
+
 /// Monta o turno completo a partir da configuração e do banco.
 ///
 /// Os avisos de base e de Jev vão para o erro padrão, como sempre foram no chat. Erro devolvido é
@@ -149,20 +200,18 @@ pub fn montar(
     chaves: Chaves,
     metricas: Metricas,
     fluxos: FluxosDoProcesso,
+    ambiente: &config::Ambiente,
 ) -> Result<Montagem, String> {
-    let cliente = OpenAiCompatibleConfig::da_config(&configuracao.llm, chaves.llm)
-        .map_err(|erro| format!("configuração do provedor: {erro}"))?;
     // O Jev (HR-28) usa o mesmo catálogo de métricas; a cópia é feita antes de entregar ao provedor.
     let metricas_jev = metricas.base.clone();
-    let limites_llm = LimitadorLlm::new(
-        configuracao.llm.simultaneos as usize,
-        configuracao.llm.simultaneos as usize,
-    )
-    .map_err(|erro| format!("limites do provedor: {erro}"))?;
-    let provedor = Arc::new(
-        OpenAiCompatibleClient::new(cliente, limites_llm, metricas.base)
-            .map_err(|erro| format!("cliente do provedor: {erro}"))?,
-    );
+    let provedor = cliente_llm(
+        &configuracao.llm,
+        chaves.llm,
+        metricas.base.clone(),
+        "padrão",
+    )?;
+    let (provedores, tetos) =
+        registro_de_provedores(configuracao, ambiente, metricas.base, &provedor)?;
 
     // Base de conhecimento (HR-17): sem o modelo instalado, o turno continua, só sem RAG.
     let base = match crate::rag::abrir_base(configuracao, Arc::clone(&store)) {
@@ -181,7 +230,8 @@ pub fn montar(
             metricas.memoria.clone(),
         ),
         Arc::new(Limitador::novo(
-            OpcoesLimites::da_config(&configuracao.limites, &configuracao.llm),
+            OpcoesLimites::da_config(&configuracao.limites, &configuracao.llm)
+                .com_tetos_por_provedor(tetos),
             metricas.memoria.clone(),
         )),
         provedor,
@@ -189,6 +239,7 @@ pub fn montar(
         metricas.turno,
     )
     .com_modelo_padrao(configuracao.llm.modelo.clone())
+    .com_provedores(Arc::new(provedores))
     // Arquivos do cliente (HR-23b): pasta dos blobs e limites, para a imagem do anexo chegar ao
     // modelo como parte multimodal. Sem isto, só o texto extraído entra no prompt.
     .com_arquivos(poph_files::ConfigArquivos::padrao(configuracao.blobs()))

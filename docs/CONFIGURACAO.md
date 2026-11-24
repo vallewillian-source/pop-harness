@@ -50,6 +50,10 @@ Each error says where it came from (the file or the variable) and which key is i
 | `llm.simultaneos` | `32` | 1 to 1000 | **proposal** |
 | `llm.temperatura` | `0.0` | 0 to 2 | POP Atende (`LLMService` default) |
 | `llm.max_tokens_saida` | `4096` | 1 to 131072 | POP Atende (`AGENT_MAX_OUTPUT_TOKENS`) |
+| `[provedores.<nome>]` | empty | named provider an agent's `provedor` field can choose; the name is `[a-z0-9_-]` and cannot be `openai_compativel` or `antigravity2api` | PV-02 |
+| `provedores.<nome>.url_base` | from `[llm]` | any endpoint that speaks the OpenAI protocol, http or https | PV-02 |
+| `provedores.<nome>.chave_env` | from `[llm]` | name of the environment variable holding the key; without it the provider is not registered and the log warns at startup | PV-02 |
+| `provedores.<nome>.provedor` / `recusa_turno_modelo` / `modelo` / `timeout_segundos` / `retentativas` / `simultaneos` / `temperatura` / `max_tokens_saida` | from `[llm]` | same rules as the `[llm]` key of the same name; `simultaneos` is that provider's own concurrency cap | PV-02 |
 | `jev.ativo` | `false` | turns Jev on; only after measurement (PRD §10) | PRD §10 |
 | `jev.url_base` | `https://api.typesafe.ai` | http or https | POP Atende (`TYPESAFE_BASE_URL`) |
 | `jev.modelo` | `jev-latest` | non-empty | POP Atende (`JEV_MODEL`) |

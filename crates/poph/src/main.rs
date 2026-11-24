@@ -307,11 +307,17 @@ fn executar_doctor(
         .map(|config| config.llm.chave_env.clone())
         .unwrap_or_else(|_| config::VAR_ANTIGRAVITY.to_owned());
     let chave_llm = config::chave_llm(ambiente, &nome_da_chave);
+    let agentes_por_provedor = carregada
+        .as_ref()
+        .ok()
+        .and_then(|config| poph_store::agentes_por_provedor_em(&config.harness_db()).ok());
     let relatorio = doctor::gerar(doctor::Entrada {
         config: carregada.as_ref(),
         arquivo: arquivo.as_deref(),
         segredos: &segredos,
         chave_llm: chave_llm.as_ref(),
+        ambiente: Some(ambiente),
+        agentes_por_provedor: agentes_por_provedor.as_deref(),
     });
 
     if args.json {

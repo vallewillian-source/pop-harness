@@ -32,6 +32,7 @@ pub mod fluxos_transicao;
 pub mod limites;
 pub mod metricas;
 pub mod produtos;
+pub mod provedores;
 pub mod resumo;
 pub mod turno;
 
@@ -60,6 +61,7 @@ pub use produtos::{
     BuscadorProdutos, BuscarProduto, CatalogoProdutos, ParametrosProdutos, ProdutoEncontrado,
     formatar_produtos, preco_texto, registro_com,
 };
+pub use provedores::{ProvedorResolvido, Provedores};
 pub use resumo::{OpcoesResumo, Resumo};
 pub use turno::{
     ContextoFerramenta, Entrada, EventoTurno, FerramentaInterna, Motor, Observador, ObservadorNulo,

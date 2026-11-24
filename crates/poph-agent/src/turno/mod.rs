@@ -89,6 +89,7 @@ use crate::erro::{ErroAgente, Resultado};
 use crate::limites::Limitador;
 use crate::metricas::{MetricasG9, MetricasTurno};
 use crate::produtos::{BuscadorProdutos, ParametrosProdutos, ProdutoEncontrado};
+use crate::provedores::{ProvedorResolvido, Provedores};
 use crate::resumo::{self, OpcoesResumo, Resumidor};
 
 pub use console::{TransporteConsole, texto_do_item};
@@ -473,6 +474,7 @@ pub struct Motor {
     config: Arc<ConfigQuente>,
     limitador: Arc<Limitador>,
     provedor: Arc<dyn LlmProvider>,
+    provedores: Option<Arc<Provedores>>,
     ferramentas: Arc<dyn RegistroFerramentas>,
     /// Busca na base de conhecimento (HR-17). Sem ela, o turno roda sem RAG.
     busca: Option<Arc<dyn BuscadorBase>>,
@@ -523,6 +525,7 @@ impl Motor {
             config: Arc::new(config),
             limitador,
             provedor,
+            provedores: None,
             ferramentas: Arc::new(SemFerramentas),
             busca: None,
             produtos: None,
@@ -568,6 +571,11 @@ impl Motor {
         if !modelo.trim().is_empty() {
             self.modelo_padrao = modelo;
         }
+        self
+    }
+
+    pub fn com_provedores(mut self, provedores: Arc<Provedores>) -> Self {
+        self.provedores = Some(provedores);
         self
     }
 
@@ -1452,6 +1460,7 @@ impl Motor {
             quente.agente.id,
         );
         let modelo = self.modelo_usado(quente);
+        let provedor_do_turno = self.provedor_do_turno(quente)?;
 
         let uso = &preparo.uso;
         let chamadas_do_turno = &preparo.chamadas;
@@ -1477,11 +1486,11 @@ impl Motor {
 
             let vaga_provedor = self
                 .limitador
-                .adquirir_provedor(&quente.agente.provedor, self.opcoes.espera_vaga)
+                .adquirir_provedor(provedor_do_turno.nome(), self.opcoes.espera_vaga)
                 .await
                 .map_err(erro_de_vaga_do_provedor)?;
 
-            let mut fluxo = self.provedor.stream(pedido).await?;
+            let mut fluxo = provedor_do_turno.cliente().stream(pedido).await?;
             let mut texto_da_rodada = String::new();
             let mut chamadas: Vec<ChamadaFerramenta> = Vec::new();
             while let Some(evento) = self.proximo_evento(&mut fluxo, cancelamento).await? {
@@ -1902,12 +1911,13 @@ impl Motor {
             .agente
             .max_tokens_saida
             .and_then(|valor| u32::try_from(valor).ok());
+        let provedor_do_turno = self.provedor_do_turno(quente)?;
         let _vaga = self
             .limitador
-            .adquirir_provedor(&quente.agente.provedor, self.opcoes.espera_vaga)
+            .adquirir_provedor(provedor_do_turno.nome(), self.opcoes.espera_vaga)
             .await
             .map_err(erro_de_vaga_do_provedor)?;
-        let mut fluxo = self.provedor.stream(pedido).await?;
+        let mut fluxo = provedor_do_turno.cliente().stream(pedido).await?;
         let mut regenerada = RespostaRegenerada::default();
         while let Some(evento) = self.proximo_evento(&mut fluxo, cancelamento).await? {
             match evento? {
@@ -2292,11 +2302,24 @@ impl Motor {
     /// Modelo do pedido: o do agente ou, quando vazio, o da configuração.
     fn modelo_usado(&self, quente: &AgenteQuente) -> String {
         let modelo = quente.agente.modelo.trim();
-        if modelo.is_empty() {
-            self.modelo_padrao.clone()
-        } else {
-            modelo.to_owned()
+        if !modelo.is_empty() {
+            return modelo.to_owned();
         }
+        match self.provedor_do_turno(quente) {
+            Ok(provedor) => provedor.modelo().to_owned(),
+            Err(_) => self.modelo_padrao.clone(),
+        }
+    }
+
+    fn provedor_do_turno(&self, quente: &AgenteQuente) -> Result<ProvedorResolvido, ErroLlm> {
+        let Some(provedores) = &self.provedores else {
+            return Ok(ProvedorResolvido::novo(
+                quente.agente.provedor.clone(),
+                Arc::clone(&self.provedor),
+                self.modelo_padrao.clone(),
+            ));
+        };
+        provedores.resolver(&quente.agente.provedor)
     }
 
     /// Grava o turno como `skipped` e devolve o resumo (agente inativo, conversa fechada, sem

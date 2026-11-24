@@ -424,6 +424,7 @@ async fn org_saturada_nao_atrasa_outra_org() {
             turnos_por_org: 1,
             turnos_por_agente: 0,
             chamadas_por_provedor: 4,
+            tetos_por_provedor: Default::default(),
             taxa_por_org_por_minuto: 0,
         },
         MetricasMemoria::proprio(),

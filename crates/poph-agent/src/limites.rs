@@ -8,7 +8,7 @@
 //! A vaga devolvida por [`Limitador::adquirir_turno`] é um empréstimo: solta quando `Vaga` sai de
 //! escopo (fim do turno). Não é preciso chamar nada.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -29,6 +29,7 @@ pub struct OpcoesLimites {
     pub turnos_por_agente: u32,
     /// Chamadas simultâneas por provedor de LLM.
     pub chamadas_por_provedor: u32,
+    pub tetos_por_provedor: BTreeMap<String, u32>,
     /// Mensagens aceitas por minuto em cada org (0 = sem teto).
     pub taxa_por_org_por_minuto: u32,
 }
@@ -50,6 +51,7 @@ impl OpcoesLimites {
                 .clamp(1, limites.turnos_simultaneos.max(1)),
             turnos_por_agente: 0,
             chamadas_por_provedor: 32,
+            tetos_por_provedor: BTreeMap::new(),
             taxa_por_org_por_minuto: limites.taxa_por_org_por_minuto,
         }
     }
@@ -62,6 +64,11 @@ impl OpcoesLimites {
     /// Define o teto de chamadas simultâneas de um provedor (vem de `llm.simultaneos`).
     pub fn com_provedor(mut self, simultaneas: u32) -> Self {
         self.chamadas_por_provedor = simultaneas.max(1);
+        self
+    }
+
+    pub fn com_tetos_por_provedor(mut self, tetos: BTreeMap<String, u32>) -> Self {
+        self.tetos_por_provedor = tetos;
         self
     }
 
@@ -240,7 +247,13 @@ impl Limitador {
     }
 
     fn semaforo_do_provedor(&self, provedor: &str) -> Arc<Semaphore> {
-        let maximo = self.opcoes.chamadas_por_provedor as usize;
+        let maximo = self
+            .opcoes
+            .tetos_por_provedor
+            .get(provedor)
+            .copied()
+            .unwrap_or(self.opcoes.chamadas_por_provedor)
+            .max(1) as usize;
         let mut mapa = self
             .por_provedor
             .lock()

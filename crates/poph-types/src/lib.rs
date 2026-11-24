@@ -20,7 +20,7 @@ pub mod segredo;
 pub use config::{
     ClusterConfig, ClusterInstance, DadosConfig, EvolutionConfig, FluxosConfig, Formato, GatesJev,
     HandoffConfig, HarnessConfig, JevConfig, LimitesConfig, LlmConfig, LogConfig, MatrixConfig,
-    PROVEDORES_LLM_ACEITOS, RetencaoConfig, ServidorConfig, provedor_llm_aceito,
+    PROVEDORES_LLM_ACEITOS, ProvedorConfig, RetencaoConfig, ServidorConfig, provedor_llm_aceito,
 };
 pub use error::{DomainError, DomainResult};
 pub use fluxos::{
