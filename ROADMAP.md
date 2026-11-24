@@ -26,9 +26,10 @@ What is missing for the project to be recommendable for production by anyone:
       and there are only partial measurements.
 - [ ] **Reproducible benchmark** of latency and memory against alternatives, with public method and scripts.
 - [ ] **WhatsApp with a real number.** Today the channel has been proven only against a fake EvolutionAPI.
-- [ ] **Generic model provider.** Replace the `antigravity2api` identifier with a documented
+- [x] **Generic model provider.** Replace the `antigravity2api` identifier with a documented
       OpenAI-compatible provider tested against more than one endpoint, and document how to write another
-      provider.
+      provider. See [`docs/PROVEDORES.md`](docs/PROVEDORES.md). The protocol is proven against the fake
+      server; testing against a second real endpoint is still pending.
 - [ ] **Swappable Jev decision.** Today the Jev is an optional third-party service. Allow another decision
       service behind the same interface, with the same principle (the service chooses, the code validates).
 - [ ] **External plugin as a channel in the server.** Wire the contract and the supervisor, which are

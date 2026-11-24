@@ -81,6 +81,11 @@ Each error says where it came from (the file or the variable) and which key is i
 | `fluxos.max_saltos_decisao` | `10` | decisions one pass goes through before it fails; 1 to 100 | flows PRD §9 |
 | `fluxos.cache_revisoes_mb` | `16` | RAM cap of compiled flow revisions, in MB; `0` keeps none (each use recompiles); 0 to 4096 | flows PRD §9, FX-19 |
 
+An agent chooses a named provider with its `provider` field (`--provider` in the CLI, `provider` in the API);
+empty, `openai_compativel` or `antigravity2api` use the `[llm]` default. The provider contract, both ways of
+configuring an endpoint, the gateway-specific rules and how to test without a real key are in
+[`PROVEDORES.md`](PROVEDORES.md).
+
 The plugin program is a **local path on the server** (it never comes from a request). With it, the server discovers
 the manifest of each `kind` — starting the plugin once and keeping the result in memory — and validates the
 integration configuration. Without the declaration, an integration `config_json` is refused with
