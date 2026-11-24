@@ -6,8 +6,9 @@
  * Direita, nesta ordem: estado da instância ("Engine: 200 OK · 125 MB", ou "Sem conexão"), escopo
  * do token, botão de sair e, na extremidade, o botão de ajuda que abre os atalhos (HR-61).
  *
- * O endereço da instância e o escopo do token ficam no `title` do indicador de estado; o escopo
- * também segue visível como selo, como antes.
+ * O endereço da instância e o escopo do token ficam no `title` do indicador de estado. O selo com o
+ * escopo aparece nas telas da organização; nas rotas do agente (CF-11) ele sai, e o escopo fica só
+ * no `title` do chip.
  *
  * As classes próprias deste header vivem em `src/estilos/topbar.css` e as da busca em
  * `src/estilos/busca.css`, importados abaixo para a tarefa não precisar mexer em `main.tsx`.
@@ -452,10 +453,12 @@ export function Topbar({
                 <span role="status" className="poph-topbar__so-leitor">
                     {semConexao ? "Instância sem conexão" : ""}
                 </span>
-                <span className="poph-topbar__token">
-                    <IconLock aria-hidden="true" />
-                    {escopoDoToken}
-                </span>
+                {!emRotaDeAgente && (
+                    <span className="poph-topbar__token">
+                        <IconLock aria-hidden="true" />
+                        {escopoDoToken}
+                    </span>
+                )}
                 {emRotaDeAgente ? (
                     <SofaButton
                         variant="subtle"

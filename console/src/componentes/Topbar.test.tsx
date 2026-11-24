@@ -587,3 +587,68 @@ describe("cabeçalho da visão do agente (CF-10)", () => {
         expect(screen.queryByText("Sair")).not.toBeInTheDocument();
     });
 });
+
+describe("cabeçalho da visão do agente sem selo de token e com trilha curta (CF-11)", () => {
+    const SAUDE_OK = { ...SAUDE, version: "0.1.0" };
+
+    it("na visão do agente o selo de token sai e o escopo fica só na dica do chip", async () => {
+        prepararSessao("pophg_teste", "global");
+        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
+
+        montar("/orgs/org_1/agents/agt_selo/instructions");
+
+        expect(await screen.findByText(/Modelo:/)).toBeInTheDocument();
+        expect(screen.queryByText("Token global")).not.toBeInTheDocument();
+        expect(screen.queryByText("Token de org")).not.toBeInTheDocument();
+        expect(screen.getByTitle(/^Local :\d+ · Token global/)).toBeInTheDocument();
+    });
+
+    it("na visão do agente com token de organização o selo também sai", async () => {
+        prepararSessao("poph_org_teste", "org");
+        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
+
+        montar("/orgs/org_1/agents/agt_selo_org/instructions");
+
+        expect(await screen.findByText(/Modelo:/)).toBeInTheDocument();
+        expect(screen.queryByText("Token de org")).not.toBeInTheDocument();
+    });
+
+    it("fora da visão do agente o selo de token continua", () => {
+        prepararSessao("pophg_teste", "global");
+        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
+
+        montar("/orgs/org_1/structure");
+
+        expect(screen.getByText("Token global")).toBeInTheDocument();
+    });
+
+    it("a trilha da visão do agente tem três passos, sem Organizações e sem Agentes", () => {
+        prepararSessao("pophg_teste", "global");
+        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
+
+        montar("/orgs/org_1/agents/agt_trilha/instructions");
+
+        const passos = [...document.querySelectorAll(".poph-topbar__passo")];
+        expect(passos.map((passo) => passo.textContent?.replace("/", "").trim())).toEqual([
+            "Loja Antiga",
+            "Agente",
+            "Instruções",
+        ]);
+        expect(screen.queryByText("Organizações")).not.toBeInTheDocument();
+        expect(screen.queryByText("Agentes")).not.toBeInTheDocument();
+    });
+
+    it("na lista de agentes da organização a trilha continua como era", () => {
+        prepararSessao("pophg_teste", "global");
+        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
+
+        montar("/orgs/org_1/agents");
+
+        const passos = [...document.querySelectorAll(".poph-topbar__passo")];
+        expect(passos.map((passo) => passo.textContent?.replace("/", "").trim())).toEqual([
+            "Organizações",
+            "Loja Antiga",
+            "Agentes",
+        ]);
+    });
+});

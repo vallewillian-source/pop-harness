@@ -1,6 +1,6 @@
 /**
- * Trilha da barra superior com o nome do agente (HR-49b): o nome entra entre "Agentes" e a aba, só
- * quando a aba do agente da URL já publicou o nome dele; sem isso, mostra "Agente".
+ * Trilha da barra superior: em rota de agente ela tem três passos (CF-11) — organização / agente /
+ * aba —, com o nome do agente publicado pela aba (HR-49b); sem nome publicado, mostra "Agente".
  */
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -16,26 +16,32 @@ afterEach(() => {
 });
 
 describe("trilha (função)", () => {
-    it("põe o nome do agente entre Agentes e a aba, com o nome sem link", () => {
+    it("em rota de agente tem três passos: organização, agente e aba", () => {
         const migalhas = trilha("/orgs/org_1/agents/agt_1/instructions", ORGS, "Bia");
 
         expect(migalhas.map((migalha) => migalha.rotulo)).toEqual([
-            "Organizações",
             "Clínica Aurora",
-            "Agentes",
             "Bia",
             "Instruções",
         ]);
-        expect(migalhas[3]?.para).toBeUndefined();
+        expect(migalhas[0]?.para).toBe("/orgs/org_1");
+        expect(migalhas[1]?.para).toBe("/orgs/org_1/agents/agt_1");
+        expect(migalhas[2]?.para).toBeUndefined();
+    });
+
+    it("na raiz do agente o agente é a migalha atual, sem link", () => {
+        const migalhas = trilha("/orgs/org_1/agents/agt_1", ORGS, "Bia");
+
+        expect(migalhas.map((migalha) => migalha.rotulo)).toEqual(["Clínica Aurora", "Bia"]);
+        expect(migalhas[0]?.para).toBe("/orgs/org_1");
+        expect(migalhas[1]?.para).toBeUndefined();
     });
 
     it("sem nome publicado, mostra Agente no lugar do nome", () => {
         const migalhas = trilha("/orgs/org_1/agents/agt_1/model-jev", ORGS);
 
         expect(migalhas.map((migalha) => migalha.rotulo)).toEqual([
-            "Organizações",
             "Clínica Aurora",
-            "Agentes",
             "Agente",
             "Modelo e Jev",
         ]);
@@ -53,6 +59,17 @@ describe("trilha (função)", () => {
             "Clínica Aurora",
             "Saúde da instância",
         ]);
+    });
+
+    it("a lista de agentes da organização continua com Organizações e Agentes", () => {
+        const migalhas = trilha("/orgs/org_1/agents", ORGS);
+
+        expect(migalhas.map((migalha) => migalha.rotulo)).toEqual([
+            "Organizações",
+            "Clínica Aurora",
+            "Agentes",
+        ]);
+        expect(migalhas[2]?.para).toBe("/orgs/org_1/agents");
     });
 });
 
@@ -84,11 +101,10 @@ describe("trilha (tela) com o nome publicado pela aba do agente", () => {
 });
 
 /**
- * CF-08: em rota de agente (cinco migalhas) a trilha não cabe inteira em 1440 px. A tela atual fica
- * inteira, as anteriores encolhem por prioridade (quanto mais longe da atual, mais cedo) e cada uma
- * leva o texto completo no `title`.
+ * CF-11: em rota de agente a trilha tem três passos e deixa de cortar os nomes. A tela atual fica
+ * inteira, as anteriores encolhem por prioridade e cada uma leva o texto completo no `title`.
  */
-describe("trilha longa (rota de agente) e prioridade de corte", () => {
+describe("trilha curta (rota de agente) e prioridade de corte", () => {
     const ROTA = "/orgs/org_1/agents/agt_1/instructions";
 
     function montar() {
@@ -100,16 +116,21 @@ describe("trilha longa (rota de agente) e prioridade de corte", () => {
         );
     }
 
-    it("as cinco migalhas aparecem, na ordem do caminho", () => {
+    it("os três passos aparecem, na ordem do caminho", () => {
         montar();
         const passos = document.querySelectorAll(".poph-topbar__passo");
         expect([...passos].map((passo) => passo.textContent?.replace("/", "").trim())).toEqual([
-            "Organizações",
             "Clínica Aurora",
-            "Agentes",
             "Bia",
             "Instruções",
         ]);
+    });
+
+    it("organização e agente são links; a aba é a tela atual", () => {
+        montar();
+        expect(screen.getByRole("link", { name: "Clínica Aurora" })).toHaveAttribute("href", "/orgs/org_1");
+        expect(screen.getByRole("link", { name: "Bia" })).toHaveAttribute("href", "/orgs/org_1/agents/agt_1");
+        expect(screen.queryByRole("link", { name: "Instruções" })).not.toBeInTheDocument();
     });
 
     it("a tela atual fica inteira: marcada como atual, sem title e sem encolher", () => {
@@ -126,11 +147,9 @@ describe("trilha longa (rota de agente) e prioridade de corte", () => {
         montar();
         const passos = [...document.querySelectorAll<HTMLElement>(".poph-topbar__passo")];
         // A distância até a tela atual é o `flex-shrink`: a mais longe encolhe primeiro.
-        expect(passos.map((passo) => passo.style.flexShrink)).toEqual(["4", "3", "2", "1", "0"]);
+        expect(passos.map((passo) => passo.style.flexShrink)).toEqual(["2", "1", "0"]);
         // Texto completo no title, para o nome cortado continuar acessível.
-        expect(screen.getByText("Organizações")).toHaveAttribute("title", "Organizações");
         expect(screen.getByText("Clínica Aurora")).toHaveAttribute("title", "Clínica Aurora");
-        expect(screen.getByText("Agentes")).toHaveAttribute("title", "Agentes");
         expect(screen.getByText("Bia")).toHaveAttribute("title", "Bia");
     });
 

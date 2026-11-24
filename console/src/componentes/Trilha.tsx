@@ -36,18 +36,19 @@ export function trilha(
         const id = partes[1];
         if (id) {
             const org = orgs.find((candidata) => candidata.id === id);
-            migalhas.push({ rotulo: org?.name ?? id, para: `/orgs/${id}` });
-            // Seções da organização (HR-40): agentes e as abas do agente.
+            const orgCrumb: Migalha = { rotulo: org?.name ?? id, para: `/orgs/${id}` };
+            // Rotas do agente (CF-11): <organização> / <agente> / <aba>, sem "Agentes".
+            if (partes[2] === "agents" && partes[3]) {
+                const agentRoot = `/orgs/${id}/agents/${partes[3]}`;
+                const agentLabel = nomeAgente ?? "Agente";
+                const tabLabel = partes[4] ? ROTULOS_DAS_ABAS[partes[4]] : undefined;
+                if (!tabLabel) return [orgCrumb, { rotulo: agentLabel }];
+                return [orgCrumb, { rotulo: agentLabel, para: agentRoot }, { rotulo: tabLabel }];
+            }
+            migalhas.push(orgCrumb);
+            // Seções da organização (HR-40).
             if (partes[2] === "agents") {
                 migalhas.push({ rotulo: "Agentes", para: `/orgs/${id}/agents` });
-                if (partes[3]) {
-                    // Organizações / <Org> / Agentes / <Nome do agente> / <Aba>: o nome não é link,
-                    // porque é o contexto atual.
-                    const aba = partes[4];
-                    const rotuloDaAba = aba ? ROTULOS_DAS_ABAS[aba] : undefined;
-                    migalhas.push({ rotulo: nomeAgente ?? "Agente" });
-                    if (rotuloDaAba) migalhas.push({ rotulo: rotuloDaAba });
-                }
             } else if (partes[2] === "structure") {
                 migalhas.push({ rotulo: "Estrutura" });
             } else if (partes[2] === "products") {
@@ -65,10 +66,10 @@ export function trilha(
  * Trilha de navegação. Cada migalha é um passo com o seu próprio separador dentro, para que esconder
  * um passo não deixe um "/" órfão (CF-08).
  *
- * Em rotas com caminho longo (organização / agentes / agente / aba, cinco migalhas) o espaço acaba:
- * a migalha da tela atual nunca encolhe, e as anteriores encolhem por prioridade — quanto mais longe
- * da atual, mais cedo ela corta com reticências. O `flexShrink` de cada passo é essa distância, e o
- * texto completo de cada migalha cortada fica no `title`.
+ * Em rotas curtas (organização / tela) e nas do agente, a trilha tem três passos no máximo. Quando o
+ * texto não cabe, a migalha da tela atual nunca encolhe e as anteriores encolhem por prioridade —
+ * quanto mais longe da atual, mais cedo ela corta com reticências. O `flexShrink` de cada passo é
+ * essa distância, e o texto completo de cada migalha cortada fica no `title`.
  */
 export function Trilha({ orgs }: { orgs: { id: string; name: string }[] }) {
     const { pathname } = useLocation();
