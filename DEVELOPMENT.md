@@ -13,6 +13,13 @@ read [`AGENTS.md`](AGENTS.md). To contribute, read [`CONTRIBUTING.md`](CONTRIBUT
 | `cargo-deny`, `cargo-audit` | recent | `cargo install cargo-deny cargo-audit --locked`; used by `scripts/ci.sh` |
 | Node and pnpm | Node 22.18 or newer | only for the Console |
 
+## Local files
+
+A local run writes to `data/`: the two databases, the attachments and the embedding model. That folder, `.env*`,
+keys and certificates (`*.pem`, `*.key`), `cluster.toml` and the local registrations (`registro*.yaml`) are in
+`.gitignore` and are never committed. Configuration and secrets come from the environment, as
+[`README.md`](README.md) lists; a secret has no file form.
+
 ## Build
 
 ```bash
@@ -40,6 +47,12 @@ cd ..
 cargo build --workspace
 ```
 
+The Console steps of `scripts/ci.sh` — the bundle, the API client check and the component tests — declare
+themselves skipped when `console/node_modules` does not exist, so the local CI of a clean clone still runs
+offline; `pnpm install` is the only step that needs network and it is manual on purpose. Dependabot does not
+watch `console/` for the same reason: the package comes from a local path and there is no published lockfile.
+Add the npm ecosystem to `.github/dependabot.yml` once `@sofacoding/sofa-ui` is on npm.
+
 To develop with auto-reload, start the server on the default port (7480) and run `pnpm dev` in `console/`:
 Vite opens at `http://localhost:5199` and forwards the API to 7480. If the server uses another port, adjust
 `console/vite.config.ts`.
@@ -49,6 +62,25 @@ The TypeScript API client is generated from the server's OpenAPI document. After
 ```bash
 bash console/gen-api.sh        # regenerates console/src/api/schema.d.ts (do not edit by hand)
 ```
+
+## Dependencies
+
+`deny.toml` holds the policy; `scripts/ci.sh` runs `cargo deny check` and `cargo audit`.
+
+- **Licences.** Only the permissive ones in the list are accepted (Apache-2.0, Apache-2.0 with the LLVM
+  exception, BSD-2-Clause, BSD-3-Clause, ISC, MIT, Unicode-3.0 and Zlib). Anything else — GPL, AGPL, no
+  licence — fails the check, and adding a licence takes a reason in the pull request. The list covers the
+  dependencies of the plan, including the ones not in the tree yet, so `unused-allowed-license = "allow"`
+  keeps the check from reporting the missing ones.
+- **One exception.** `webpki-roots` ships the trust roots under CDLA-Permissive-2.0. It comes only with the
+  ONNX Runtime download during the build of `poph-rag` (`ort-sys` → `ureq`) and does not reach the binary,
+  which `cargo tree -p poph -e normal` confirms.
+- **OpenSSL is banned.** `openssl` and `openssl-sys` fail the check: TLS is `rustls` (see below), which also
+  keeps the ARM64 build free of an OpenSSL build.
+- **The workspace's own crates** are not published and declare no SPDX licence, so `[licenses.private]`
+  ignores them.
+- **Duplicates and sources.** The same crate in more than one version is a warning, a wildcard requirement is
+  an error, and crates.io is the only accepted source: no unknown registry, no git dependency.
 
 ## Test
 
@@ -169,6 +201,12 @@ On x86_64, CI runs `cargo check --target aarch64-unknown-linux-gnu` only for the
 (`poph-types`, `poph-files`, `poph-plugins`, `poph-plugin-eco` and `poph-fluxos`). The others need a C
 compiler for ARM and are only verified in a real ARM64 build.
 
+The exclusion is per C dependency: `poph-core` (model provider over `rustls`, which pulls `aws-lc-sys`) and
+`poph-jev` (same TLS stack) need the cross C compiler, and `poph-server` too, because it depends on
+`poph-store` and on the bundled SQLite of `rusqlite`. `poph-fluxos` stays in the check because `blake3` — a
+dependency of `starlark` — is declared with the `pure` feature: without it the crate compiles C and would
+leave the check as well. `poph-plugin-eco` needs only `poph-types` and `serde_json`, so it is pure code too.
+
 ## TLS
 
 The HTTP clients (model provider, Jev, embedding model download) use `rustls` with the system trust roots.
@@ -178,9 +216,10 @@ certificates. To test with your own CA, install it in the system.
 ## Build cache
 
 Since Cargo 1.100, each different command shape (`clippy --all-targets`, `check`, another target) produces
-a new set of artifacts in `target/`, and Cargo never deletes the old ones, so the directory grows. The
-workspace reduces the `dev` profile's `debuginfo` (`debug = "line-tables-only"`) and `scripts/ci.sh` starts
-by pruning the cache.
+a new set of artifacts in `target/`, and Cargo never deletes the old ones, so the directory grows.
+`scripts/ci.sh` starts by pruning the cache, and the `dev` profile reduces `debuginfo` to
+`debug = "line-tables-only"`: it keeps the file and the line in a backtrace and drops the tables of variables
+and types that made every test binary grow by hundreds of megabytes.
 
 ```bash
 bash scripts/limpar-cache.sh --seco     # shows what it would delete

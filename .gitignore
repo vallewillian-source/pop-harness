@@ -1,9 +1,7 @@
-# Compilação
 /target/
 console/dist/
 console/node_modules/
 
-# Dados locais de execução (bancos, anexos e modelo de embedding): nunca versionar
 /data/
 *.db
 *.db-shm
@@ -12,18 +10,15 @@ poph.toml
 cluster.toml
 registro*.yaml
 
-# Segredos e ambiente
 .env
 .env.*
 *.pem
 *.key
 
-# Editores e sistema
 .idea/
 .vscode/
 *.swp
 .DS_Store
 
-# Python (scripts de apoio)
 __pycache__/
 *.pyc

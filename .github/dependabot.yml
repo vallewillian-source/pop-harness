@@ -1,5 +1,3 @@
-# O Console (console/) fica de fora: ele depende de @sofacoding/sofa-ui por caminho local e não tem
-# lockfile publicado. Quando o pacote estiver no npm, acrescente o ecossistema npm.
 version: 2
 updates:
   - package-ecosystem: cargo
