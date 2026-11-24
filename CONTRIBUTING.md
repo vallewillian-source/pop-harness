@@ -99,6 +99,51 @@ These rules come from decisions already made and are explained in [`AGENTS.md`](
 - **Console.** No card inside a card, loading, empty and error states on every screen, and action buttons
   disabled while the request runs. See `console/UX_SPEC.md`.
 
+## Working on one module at a time
+
+A module is the unit of change: one crate, the Console, `scripts/`, or the workspace root. One module
+per pull request, and no unrelated fix riding along. Large modules are split by directory, not by taste.
+
+**The contract is the gate.** Before asking for review, run:
+
+```bash
+bash scripts/contracts.sh compare
+```
+
+It has to print `0 diferenças` and exit `0`. It compares the external contract — the OpenAPI document,
+the `--help` of every command, the schema of a fresh and of an upgraded database, the JSON of the read
+routes, `poph.toml`, the metric names, the example flow scripts with their IR, the plugin protocol and
+the backup format — against the baseline in `tests/contratos/base/`, whose `LEIAME.md` explains how to
+recapture it. A difference fails the task even with the tests green: changing the contract is a decision
+taken before the code, not after. When a published description cannot be reproduced as an attribute,
+return the change instead of deleting the description.
+
+Comments and identifiers are removed in two separate passes: comments first, module by module, and
+identifiers only after every module is clean. Never rename an identifier in the pull request that
+removes comments, and never mix the two.
+
+Removing the comments of a module:
+
+1. `python3 scripts/strip-comments.py <paths>`
+2. `bash scripts/check-comments.sh --atualizar-pendentes` in the same commit.
+3. `bash scripts/check-comments.sh <paths>` prints nothing when the module is clean.
+4. A comment that carried a rule gets a line in the pull request saying where the rule now lives under
+   `docs/`. A comment that only restated the code needs none.
+
+Renaming the identifiers of a module:
+
+1. `bash scripts/rename.sh` applies a map file (`old<TAB>new`) through `rust-analyzer` for Rust and the
+   TypeScript language server for the Console, including file and module names.
+2. `bash scripts/check-names.sh <paths>` prints nothing when the module is clean; a leftover Portuguese
+   identifier outside the allowlist fails it.
+3. The same pull request runs `python3 scripts/glossary-terms.py --gerar` and keeps the table in
+   `docs/GLOSSARY.md` in step with the tree.
+
+The rule already applies to new code, including work in progress: a module that has not been cleaned
+yet does not license a new Portuguese identifier or a new comment. When the tools cannot do a rename
+safely — a name that is also published, a word of the flow language, text inside a string — do not do it
+by hand: describe the case and leave that rename out of the pull request.
+
 ## Code style
 
 - Rust: `cargo fmt` and `clippy -D warnings`. Typed errors with `thiserror`; no `unwrap` or `expect` on a
