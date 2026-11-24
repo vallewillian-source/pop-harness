@@ -122,6 +122,7 @@ export function SeletorDeAgente({
     orgId,
     agentId,
     compacta,
+    aoMudarNome,
 }: {
     /** Organização aberta na URL. */
     orgId: string;
@@ -129,6 +130,12 @@ export function SeletorDeAgente({
     agentId: string;
     /** Modo foco: o gatilho vira o tile de 32×32 com o ícone. */
     compacta: boolean;
+    /**
+     * Avisa o rótulo resolvido do agente (nome, ou o estado real da leitura) para quem mostra o
+     * mesmo nome em outro lugar do rail — o rodapé "Agente: <nome>" do cockpit (CF-09). Não faz
+     * leitura nova: reaproveita a que este componente já fez.
+     */
+    aoMudarNome?: (nome: string) => void;
 }) {
     const guarda = useGuardaDeAlteracoes();
     const idBase = useId();
@@ -214,6 +221,14 @@ export function SeletorDeAgente({
     else if (!avulsoDaChave) nome = "Carregando…"; // o agente saiu da lista: leitura dele em curso
     else nome = "Agente não encontrado";
     const subtitulo = atual ? subtituloDoAgente(atual) : "";
+
+    // O rodapé do cockpit mostra o mesmo nome. O callback vai numa ref para o efeito não rodar de
+    // novo a cada renderização do pai (o rail o recria a cada mudança de estado).
+    const avisarNome = useRef(aoMudarNome);
+    avisarNome.current = aoMudarNome;
+    useEffect(() => {
+        avisarNome.current?.(nome);
+    }, [nome]);
 
     // Opções do popover: os agentes da organização, filtrados por nome ou slug.
     const termoLimpo = termo.trim();

@@ -137,6 +137,44 @@
     text-overflow: ellipsis;
 }
 
+/* Rodapé na visão do agente (prancha 03): "Agente: <nome>" no lugar da versão, no mesmo tom mudo
+ * de 10 px do desenho. Nome longo corta com reticências; o `title` traz o texto inteiro. */
+.poph-rail__agente {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-family: var(--pop-font-sans);
+    font-size: 10px;
+    color: var(--pop-text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Cada item do rail é um link (<a>) em volta de um item da SofaUI, que por sua vez é um botão: os
+ * dois entram na ordem do Tab, e o anel de foco da SofaUI só alcança o botão interno. Sem esta
+ * regra, o primeiro Tab de cada item não mostra indicador nenhum. */
+.poph-casca a:has(> .sofa-rail-item):focus-visible {
+    outline: none;
+    border-radius: var(--pop-radius-sm, 5px);
+    box-shadow: var(--pop-focus-ring);
+}
+
+/* Item do cockpit do agente: rótulo de 12,5 px, como no desenho da prancha 03 (o resto do rail
+ * segue em 12 px). */
+.poph-casca .sofa-rail-item.poph-rail__item--cockpit {
+    font-size: 12.5px;
+}
+
+/* Título de seção do cockpit ("Diagnóstico & Teste"): caixa de frase, sem o caixa-alta e o
+ * espaçamento das seções do rail de organização — é o que a prancha 03 desenha. */
+.poph-casca .sofa-sidebar-rail__section-title.poph-rail__secao--frase {
+    padding: 10px 8px 3px;
+    font-size: 10.5px;
+    font-weight: var(--pop-font-weight-medium, 500);
+    letter-spacing: 0;
+    text-transform: none;
+}
+
 /* Estrutura compartilhada do desenho FigCraft: rail de 240px e modo foco de 64px. */
 .poph-casca .sofa-sidebar-rail {
     width: var(--sofa-rail-width, 240px);
@@ -253,7 +291,8 @@
 
 .poph-casca .sofa-sidebar-rail--compact .sofa-rail-item__aside,
 .poph-casca .sofa-sidebar-rail--compact .sofa-sidebar-rail__section-title,
-.poph-casca .sofa-sidebar-rail--compact .poph-rail__versao {
+.poph-casca .sofa-sidebar-rail--compact .poph-rail__versao,
+.poph-casca .sofa-sidebar-rail--compact .poph-rail__agente {
     display: none;
 }
 
@@ -318,7 +357,8 @@
 
     .poph-casca .sofa-sidebar-rail:not(.sofa-sidebar-rail--compact) .sofa-rail-item__text,
     .poph-casca .sofa-sidebar-rail:not(.sofa-sidebar-rail--compact) .sofa-rail-item__aside,
-    .poph-casca .sofa-sidebar-rail:not(.sofa-sidebar-rail--compact) .poph-rail__versao {
+    .poph-casca .sofa-sidebar-rail:not(.sofa-sidebar-rail--compact) .poph-rail__versao,
+    .poph-casca .sofa-sidebar-rail:not(.sofa-sidebar-rail--compact) .poph-rail__agente {
         display: none;
     }
 }

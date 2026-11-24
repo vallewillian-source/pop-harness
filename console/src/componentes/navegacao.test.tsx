@@ -13,11 +13,18 @@ import { MemoryRouter, useLocation } from "react-router-dom";
 import { useEffect } from "react";
 import { ItenDeNavegacao, Rail } from "./Rail";
 import type { Agente } from "../api/agentes";
-import { ITENS_DE_NAVEGACAO, type ContextoDeNavegacao, type ItemDeNavegacao } from "./navegacao";
+import {
+    ITENS_DE_NAVEGACAO,
+    ITENS_DO_COCKPIT_DO_AGENTE,
+    type ContextoDeNavegacao,
+    type ItemDeNavegacao,
+} from "./navegacao";
 import { GuardaAlteracoesProvider, useGuardaDeAlteracoes } from "./GuardaAlteracoes";
 import { SessaoProvider } from "../sessao/Sessao";
 import { ServidorFalso, erroApi } from "../testes/servidor";
+import AppFonte from "../App.tsx?raw";
 
+// Rotas declaradas no `App.tsx`, lidas do próprio arquivo: o cockpit só aponta para tela que existe.
 // O rail consulta a saúde da instância (rede). Nos testes ela devolve uma versão fixa; os testes do
 // chip do cluster trocam o estado (degradada, sem conexão) por `estadoDaSaude.atual`.
 const estadoDaSaude = vi.hoisted(() => ({
@@ -272,9 +279,17 @@ describe('"em breve" aparece só nos itens que ainda não têm tela', () => {
         }
     });
 
+    // CF-09: nas rotas de agente o rail passou a ser o cockpit da prancha 03, então estes itens de
+    // `ITENS_DE_NAVEGACAO` são conferidos no próprio item (eles continuam alimentando a busca).
     it("com agente na URL, Chat de teste é link para a aba do agente, sem 'em breve'", () => {
-        prepararSessao("global", DUAS_ORGS);
-        montarRail("/orgs/org_1/agents/agt_1/instructions");
+        render(
+            <MemoryRouter>
+                <ItenDeNavegacao
+                    item={item("Chat de teste")}
+                    contexto={{ orgId: "org_1", agentId: "agt_1", totalDeOrgs: null }}
+                />
+            </MemoryRouter>,
+        );
 
         const link = screen.getByRole("link", { name: "Chat de teste" });
         expect(link).toHaveAttribute("href", "/orgs/org_1/agents/agt_1/test-chat");
@@ -282,8 +297,14 @@ describe('"em breve" aparece só nos itens que ainda não têm tela', () => {
     });
 
     it("com agente na URL, Modelo e Jev é link sem 'em breve'", () => {
-        prepararSessao("global", DUAS_ORGS);
-        montarRail("/orgs/org_1/agents/agt_1/instructions");
+        render(
+            <MemoryRouter>
+                <ItenDeNavegacao
+                    item={item("Modelo e Jev")}
+                    contexto={{ orgId: "org_1", agentId: "agt_1", totalDeOrgs: null }}
+                />
+            </MemoryRouter>,
+        );
 
         const link = screen.getByRole("link", { name: "Modelo e Jev" });
         expect(link).toHaveAttribute("href", "/orgs/org_1/agents/agt_1/model-jev");
@@ -321,18 +342,27 @@ describe('"em breve" aparece só nos itens que ainda não têm tela', () => {
         expect(motivos.some((motivo) => motivo.contains(botao))).toBe(true);
     });
 
+    // CF-09: conferido no item, e não no rail montado, porque nas rotas de agente o rail é o cockpit.
     it("itens de estado emBreve continuam desabilitados e com 'em breve', mesmo com organização aberta", () => {
-        prepararSessao("global", DUAS_ORGS);
-        montarRail("/orgs/org_1/agents/agt_1/instructions");
-
         for (const rotulo of [
             "Inspeção de turnos",
             "WhatsApp e canais",
             "Plugins e extensões",
         ]) {
-            const botao = screen.getByRole("button", { name: new RegExp(rotulo.replace(/[()]/g, "\\$&")) });
+            const renderizado = render(
+                <MemoryRouter>
+                    <ItenDeNavegacao
+                        item={item(rotulo)}
+                        contexto={{ orgId: "org_1", agentId: "agt_1", totalDeOrgs: null }}
+                    />
+                </MemoryRouter>,
+            );
+            const botao = screen.getByRole("button", {
+                name: new RegExp(rotulo.replace(/[()]/g, "\\$&")),
+            });
             expect(botao).toBeDisabled();
             expect(botao).toHaveTextContent("em breve");
+            renderizado.unmount();
         }
     });
 });
@@ -365,14 +395,15 @@ describe("menu montado com a sessão", () => {
         );
     });
 
-    it("com agente na URL, Modelo e Jev é link para a aba do agente", () => {
+    it("com agente na URL, o rail é o cockpit do agente, e não os grupos de organização", () => {
         prepararSessao("global", DUAS_ORGS);
         montarRail("/orgs/org_1/agents/agt_1/instructions");
 
-        expect(screen.getByRole("link", { name: "Modelo e Jev" })).toHaveAttribute(
+        expect(screen.getByRole("link", { name: "Modelo & Parâmetros (Jev)" })).toHaveAttribute(
             "href",
             "/orgs/org_1/agents/agt_1/model-jev",
         );
+        expect(screen.queryByText("TENANTS E RECURSOS")).toBeNull();
     });
 
     it("marca o item ativo com aria-current, sem marcar Organizações dentro de uma org", () => {
@@ -1016,7 +1047,7 @@ describe("CF-07: seletor de agente no topo do rail", () => {
             "Não foi possível ler os agentes",
         );
         // O resto do menu continua funcionando.
-        expect(screen.getByRole("link", { name: "Chat de teste" })).toBeInTheDocument();
+        expect(screen.getByRole("link", { name: "Chat de Teste" })).toBeInTheDocument();
         expect(screen.getByRole("link", { name: "Agentes da Org" })).toBeInTheDocument();
     });
 
@@ -1092,5 +1123,196 @@ describe("CF-07: seletor de agente no topo do rail", () => {
 
         expect(screen.getByRole("combobox", { name: "Organização: Loja Antiga" })).toBeInTheDocument();
         expect(screen.queryByRole("link", { name: "Agentes da Org" })).toBeNull();
+    });
+});
+
+/**
+ * CF-09: cockpit do agente no rail (prancha 03). Nas rotas `/orgs/:orgId/agents/:agentId/...` o rail
+ * passa a ser o cockpit vertical do desenho — primeiro bloco sem título, depois "Diagnóstico &
+ * Teste" — e o rodapé troca a versão por "Agente: <nome>". Fora dessas rotas nada muda.
+ */
+describe("CF-09: cockpit do agente no rail", () => {
+    const AGENTE: Agente = {
+        id: "agt_1",
+        org_id: "org_1",
+        name: "Atendente Matrix",
+        slug: "atendente-matrix",
+        description: "",
+        status: "active",
+        model: "gemini-3.8-flash",
+        default_department_id: null,
+        human_handoff_department_id: null,
+        version: 1,
+        created_at: 1_700_000_000_000,
+        updated_at: 1_700_000_000_000,
+    };
+
+    /** Lista de agentes do servidor falso: o combobox do agente e o rodapé leem daqui. */
+    function prepararServidor() {
+        const servidor = new ServidorFalso();
+        servidor.responder("GET", "/agents", {
+            status: 200,
+            corpo: { items: [AGENTE], next_cursor: null },
+        });
+        servidor.instalar();
+        return servidor;
+    }
+
+    function montar(caminho: string, opcoes: { compacta?: boolean; sujo?: boolean } = {}) {
+        prepararSessao("global", DUAS_ORGS);
+        return render(
+            <MemoryRouter initialEntries={[caminho]}>
+                <SessaoProvider>
+                    <GuardaAlteracoesProvider>
+                        <Rail aoAbrirAtalhos={() => {}} compacta={opcoes.compacta ?? false} />
+                        {opcoes.sujo && <Sujo />}
+                        <Sonda />
+                    </GuardaAlteracoesProvider>
+                </SessaoProvider>
+            </MemoryRouter>,
+        );
+    }
+
+    const ROTA = "/orgs/org_1/agents/agt_1/instructions";
+
+    it("nas rotas de agente, o rail tem os itens da prancha 03 na ordem do desenho", () => {
+        prepararServidor();
+        montar(ROTA);
+
+        const rotulos = [
+            "Instruções & Prompts",
+            "Base de Conhecimento",
+            "Arquivos do Agente",
+            "Roteamento & Habilidades",
+            "Modelo & Parâmetros (Jev)",
+            "Chat de Teste",
+            "Inspeção de Turnos",
+        ];
+        // Só os itens do cockpit (o topo do rail tem o link de volta e o combobox do agente).
+        const lista = screen.getByRole("navigation").querySelector(".sofa-sidebar-rail__list");
+        const ordem = Array.from(lista?.querySelectorAll(".sofa-rail-item__label") ?? []).map(
+            (no) => no.textContent,
+        );
+        expect(ordem).toEqual(rotulos);
+        expect(screen.getByText("Diagnóstico & Teste")).toBeInTheDocument();
+        // Nenhum grupo do rail de organização aparece na visão do agente.
+        expect(screen.queryByText("TENANTS E RECURSOS")).toBeNull();
+        expect(screen.queryByText("SISTEMA")).toBeNull();
+    });
+
+    it("cada item ativo leva para a tela real do agente", () => {
+        prepararServidor();
+        montar(ROTA);
+
+        const rotas: [string, string][] = [
+            ["Instruções & Prompts", "instructions"],
+            ["Base de Conhecimento", "knowledge-base"],
+            ["Arquivos do Agente", "files"],
+            ["Roteamento & Habilidades", "routing"],
+            ["Modelo & Parâmetros (Jev)", "model-jev"],
+            ["Chat de Teste", "test-chat"],
+        ];
+        for (const [rotulo, aba] of rotas) {
+            expect(screen.getByRole("link", { name: rotulo })).toHaveAttribute(
+                "href",
+                `/orgs/org_1/agents/agt_1/${aba}`,
+            );
+        }
+    });
+
+    it("o item da rota atual fica destacado, e só ele", () => {
+        prepararServidor();
+        montar("/orgs/org_1/agents/agt_1/routing");
+
+        expect(screen.getByRole("link", { name: "Roteamento & Habilidades" })).toHaveAttribute(
+            "aria-current",
+            "page",
+        );
+        expect(screen.getByRole("link", { name: "Instruções & Prompts" })).not.toHaveAttribute(
+            "aria-current",
+        );
+    });
+
+    it("na raiz do agente, Instruções & Prompts já aparece ativa", () => {
+        prepararServidor();
+        montar("/orgs/org_1/agents/agt_1");
+
+        // A raiz redireciona para /instructions: o item já nasce destacado (o `aria-current` do
+        // link é do NavLink; quem marca o estado visual do item é o SofaRailItem).
+        const link = screen.getByRole("link", { name: "Instruções & Prompts" });
+        expect(link.querySelector(".sofa-rail-item")).toHaveAttribute("aria-current", "true");
+    });
+
+    it("toda rota do cockpit existe no App.tsx", () => {
+        const declaradas = Array.from(AppFonte.matchAll(/path="([^"]+)"/g), (achado) => achado[1] ?? "");
+        for (const entrada of ITENS_DO_COCKPIT_DO_AGENTE) {
+            const rota = entrada.rota({ orgId: "org_1", agentId: "agt_1", totalDeOrgs: null });
+            if (rota === null) continue;
+            const padrao = rota
+                .replace("/orgs/org_1", "/orgs/:orgId")
+                .replace("/agents/agt_1", "/agents/:agentId");
+            expect(declaradas).toContain(padrao);
+        }
+    });
+
+    it("Inspeção de Turnos continua 'em breve', desabilitada e sem navegar", async () => {
+        const usuario = userEvent.setup();
+        prepararServidor();
+        montar(ROTA);
+
+        expect(screen.queryByRole("link", { name: "Inspeção de Turnos" })).toBeNull();
+        const botao = screen.getByRole("button", { name: /Inspeção de Turnos/ });
+        expect(botao).toBeDisabled();
+        expect(botao).toHaveTextContent("em breve");
+
+        await usuario.click(botao);
+        expect(screen.getByTestId("caminho")).toHaveTextContent(ROTA);
+    });
+
+    it("o rodapé mostra 'Agente: <nome>' no lugar da versão", async () => {
+        prepararServidor();
+        montar(ROTA);
+
+        expect(await screen.findByText("Agente: Atendente Matrix")).toBeInTheDocument();
+        expect(screen.queryByText("POP Harness v0.9.1 · Rust")).toBeNull();
+    });
+
+    it("no modo foco os itens viram tiles com title e o título de seção sai de cena", () => {
+        prepararServidor();
+        montar(ROTA, { compacta: true });
+
+        expect(screen.queryByText("Diagnóstico & Teste")).toBeNull();
+        expect(screen.queryByText(/^Agente: /)).toBeNull();
+        expect(screen.getByRole("link", { name: "Instruções & Prompts" })).toHaveAttribute(
+            "title",
+            "Instruções & Prompts",
+        );
+        // O item "em breve" também ganha o nome no title, que é a única pista no modo foco.
+        const emBreve = screen.getByRole("button", { name: /Inspeção de Turnos/ });
+        expect(emBreve.closest(".poph-rail__bloqueado")).toHaveAttribute(
+            "title",
+            "Inspeção de Turnos",
+        );
+    });
+
+    it("trocar de tela pelo cockpit com alterações pendentes pede confirmação", async () => {
+        const usuario = userEvent.setup();
+        prepararServidor();
+        montar(ROTA, { sujo: true });
+
+        await usuario.click(screen.getByRole("link", { name: "Arquivos do Agente" }));
+
+        expect(await screen.findByText("Alterações não salvas")).toBeInTheDocument();
+        expect(screen.getByTestId("caminho")).toHaveTextContent(ROTA);
+    });
+
+    it("fora das rotas de agente, o rail continua com os grupos e itens de sempre", () => {
+        prepararServidor();
+        montar("/orgs/org_1/structure");
+
+        expect(screen.getByText("TENANTS E RECURSOS")).toBeInTheDocument();
+        expect(screen.getByRole("link", { name: "Agentes" })).toBeInTheDocument();
+        expect(screen.queryByText("Instruções & Prompts")).toBeNull();
+        expect(screen.queryByText("Diagnóstico & Teste")).toBeNull();
     });
 });

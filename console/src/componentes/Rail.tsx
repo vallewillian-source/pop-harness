@@ -14,12 +14,15 @@
  * CF-07: na visão do agente (`/orgs/:id/agents/:agentId/...`, prancha 03) o topo é o link
  * "← Agentes da Org" mais o combobox do agente (`SeletorDeAgente`), no lugar do seletor de
  * organização.
+ * CF-09: nas mesmas rotas de agente os itens são o cockpit vertical da prancha 03
+ * (`ITENS_DO_COCKPIT_DO_AGENTE`) — primeiro bloco sem título, depois "Diagnóstico & Teste" — e o
+ * rodapé troca a versão por "Agente: <nome>". Fora delas o rail não muda.
  * O item ativo usa o degrau tonal da SofaUI, sem a barra âmbar que existia aqui: o desenho não tem
  * borda lateral colorida. No modo foco o rótulo de cada item continua no DOM, escondido por recorte,
  * e o `title` devolve o nome ao mouse. A casca põe este menu abaixo da barra superior.
  */
 
-import { Fragment, useRef, type ReactNode } from "react";
+import { Fragment, useRef, useState, type ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import {
     IconChevronLeft,
@@ -30,8 +33,10 @@ import {
 } from "@sofacoding/sofa-ui";
 import { useSessao } from "../sessao/Sessao";
 import {
+    GRUPO_DIAGNOSTICO_DO_AGENTE,
     GRUPOS_DE_NAVEGACAO,
     ITENS_DE_NAVEGACAO,
+    ITENS_DO_COCKPIT_DO_AGENTE,
     type ContextoDeNavegacao,
     type ItemDeNavegacao,
 } from "./navegacao";
@@ -56,26 +61,34 @@ function motivoDoBloqueio(item: ItemDeNavegacao, contexto: ContextoDeNavegacao):
  * resolvida. "em breve" aparece só nos itens de estado `emBreve`. Um item ativo sem contexto
  * (organização ou agente ausente na URL) fica desabilitado sem etiqueta visível: o motivo vai no
  * `title` de um wrapper, porque o `SofaRailItem` não repassa `title` nem `aria-*`.
+ *
+ * `cockpit` liga o rótulo de 12,5 px do cockpit do agente (prancha 03), como no desenho; no modo
+ * foco o `title` devolve o nome ao mouse, inclusive nos itens "em breve".
  */
 export function ItenDeNavegacao({
     item,
     contexto,
     compacta = false,
+    cockpit = false,
 }: {
     item: ItemDeNavegacao;
     contexto: ContextoDeNavegacao;
     compacta?: boolean;
+    cockpit?: boolean;
 }) {
     const icone: ReactNode = <item.icone aria-hidden="true" />;
     const contagem = item.contador?.(contexto) ?? null;
     const aside: ReactNode =
         contagem === null ? undefined : <span className="poph-rail__contador">{contagem}</span>;
     const rota = item.rota(contexto);
+    const rotaDeAtivo = item.rotaDeAtivo?.(contexto) ?? null;
+    const { pathname } = useLocation();
+    const classe = cockpit ? "poph-rail__item poph-rail__item--cockpit" : "poph-rail__item";
     if (item.estado === "emBreve" || rota === null) {
         const emBreve = item.estado === "emBreve";
         const botao = (
             <SofaRailItem
-                className="poph-rail__item"
+                className={classe}
                 label={item.rotulo}
                 media={icone}
                 aside={aside}
@@ -84,7 +97,11 @@ export function ItenDeNavegacao({
                 disabled
             />
         );
-        const motivo = emBreve ? undefined : motivoDoBloqueio(item, contexto);
+        const motivo = emBreve
+            ? compacta
+                ? item.rotulo
+                : undefined
+            : motivoDoBloqueio(item, contexto);
         if (!motivo) return botao;
         return (
             <div className="poph-rail__bloqueado" title={compacta ? item.rotulo : motivo}>
@@ -101,12 +118,12 @@ export function ItenDeNavegacao({
         >
             {({ isActive }) => (
                 <SofaRailItem
-                    className="poph-rail__item"
+                    className={classe}
                     label={item.rotulo}
                     media={icone}
                     aside={aside}
                     compact={compacta}
-                    active={isActive}
+                    active={isActive || (rotaDeAtivo !== null && rotaDeAtivo === pathname)}
                 />
             )}
         </NavLink>
@@ -147,6 +164,9 @@ export function Rail({
     const agenteAberto = orgAberta && partesDaUrl[2] === "agents" ? (partesDaUrl[3] ?? "") : "";
     // Visão do agente (prancha 03): o topo do rail passa a ser o link de volta + o combobox do agente.
     const emRotaDeAgente = Boolean(orgAberta && agenteAberto);
+    // Nome do agente para o rodapé do cockpit. Vem do combobox do agente, que é quem lê a lista
+    // (uma consulta por organização) — o rail não faz leitura própria só para repetir o nome.
+    const [nomeDoAgente, setNomeDoAgente] = useState("");
 
     const orgs = sessao?.orgs ?? [];
     // Com token de org o seletor é informativo: mostra a própria org e não deixa trocar.
@@ -174,11 +194,20 @@ export function Rail({
             label="Navegação do Console"
             footer={
                 <div className="poph-rail__base">
-                    {!compacta && (
-                        <span className="poph-rail__versao">
-                            POP Harness v{dados?.version ?? "—"} · Rust
-                        </span>
-                    )}
+                    {emRotaDeAgente
+                        ? !compacta && (
+                              <span
+                                  className="poph-rail__agente"
+                                  title={nomeDoAgente ? `Agente: ${nomeDoAgente}` : undefined}
+                              >
+                                  Agente: {nomeDoAgente || "—"}
+                              </span>
+                          )
+                        : !compacta && (
+                              <span className="poph-rail__versao">
+                                  POP Harness v{dados?.version ?? "—"} · Rust
+                              </span>
+                          )}
                     <SofaButton
                         variant="subtle"
                         size="sm"
@@ -221,7 +250,12 @@ export function Rail({
             ) : emRotaDeAgente ? (
                 <>
                     <VoltarParaAgentes orgId={orgAberta} compacta={compacta} />
-                    <SeletorDeAgente orgId={orgAberta} agentId={agenteAberto} compacta={compacta} />
+                    <SeletorDeAgente
+                        orgId={orgAberta}
+                        agentId={agenteAberto}
+                        compacta={compacta}
+                        aoMudarNome={setNomeDoAgente}
+                    />
                 </>
             ) : (
                 <SeletorDeOrganizacao
@@ -234,19 +268,49 @@ export function Rail({
             )}
             {!compacta && <div className="poph-rail__separador" aria-hidden="true" />}
 
-            {GRUPOS_DE_NAVEGACAO.map((grupo) => (
-                <Fragment key={grupo}>
-                    <div className="sofa-sidebar-rail__section-title">{grupo}</div>
-                    {ITENS_DE_NAVEGACAO.filter((item) => item.grupo === grupo).map((item) => (
+            {emRotaDeAgente ? (
+                // Cockpit do agente (prancha 03): primeiro bloco sem título, depois "Diagnóstico &
+                // Teste". Fora das rotas de agente o rail continua com os grupos de ITENS_DE_NAVEGACAO.
+                <>
+                    {ITENS_DO_COCKPIT_DO_AGENTE.filter((item) => item.grupo === "").map((item) => (
                         <ItenDeNavegacao
                             key={item.rotulo}
                             item={item}
                             contexto={contexto}
                             compacta={compacta}
+                            cockpit
                         />
                     ))}
-                </Fragment>
-            ))}
+                    {!compacta && (
+                        <div className="sofa-sidebar-rail__section-title poph-rail__secao--frase">
+                            {GRUPO_DIAGNOSTICO_DO_AGENTE}
+                        </div>
+                    )}
+                    {ITENS_DO_COCKPIT_DO_AGENTE.filter((item) => item.grupo !== "").map((item) => (
+                        <ItenDeNavegacao
+                            key={item.rotulo}
+                            item={item}
+                            contexto={contexto}
+                            compacta={compacta}
+                            cockpit
+                        />
+                    ))}
+                </>
+            ) : (
+                GRUPOS_DE_NAVEGACAO.map((grupo) => (
+                    <Fragment key={grupo}>
+                        <div className="sofa-sidebar-rail__section-title">{grupo}</div>
+                        {ITENS_DE_NAVEGACAO.filter((item) => item.grupo === grupo).map((item) => (
+                            <ItenDeNavegacao
+                                key={item.rotulo}
+                                item={item}
+                                contexto={contexto}
+                                compacta={compacta}
+                            />
+                        ))}
+                    </Fragment>
+                ))
+            )}
         </SofaSidebarRail>
     );
 }

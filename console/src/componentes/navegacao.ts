@@ -19,14 +19,19 @@ import {
     IconBarChart,
     IconBot,
     IconBuilding,
+    IconDatabase,
+    IconFile,
+    IconFolder,
     IconGear,
     IconGrid,
     IconLink,
     IconList,
     IconMessage,
     IconPhone,
+    IconSliders,
     IconTag,
     IconUsers,
+    IconWorkflow,
     type SofaIconProps,
 } from "@sofacoding/sofa-ui";
 
@@ -51,7 +56,10 @@ export interface ContextoDeNavegacao {
 export type EstadoDoItem = "ativo" | "emBreve";
 
 export interface ItemDeNavegacao {
-    /** Título da seção do menu em que o item aparece. */
+    /**
+     * Título da seção do menu em que o item aparece. String vazia = o item fica no bloco inicial,
+     * antes do primeiro título de seção (é assim que a prancha 03 desenha o cockpit do agente).
+     */
     grupo: string;
     /** Texto visível no rail. */
     rotulo: string;
@@ -68,6 +76,11 @@ export interface ItemDeNavegacao {
     contador?: (contexto: ContextoDeNavegacao) => number | null;
     /** Marca como ativo só na rota exata, e não em subtelas. */
     exato?: boolean;
+    /**
+     * Rota extra em que o item também aparece ativo, além da própria (`rota`). É o caso de
+     * Instruções & Prompts, que acende também na raiz do agente.
+     */
+    rotaDeAtivo?: (contexto: ContextoDeNavegacao) => string | null;
 }
 
 /** Seções do menu, na ordem em que aparecem. Os nomes já vêm em caixa alta, como no desenho. */
@@ -178,5 +191,94 @@ export const ITENS_DE_NAVEGACAO: ItemDeNavegacao[] = [
         estado: "ativo",
         exigeOrg: true,
         exigeAgente: false,
+    },
+];
+
+/**
+ * Título da seção de diagnóstico do cockpit do agente (prancha 03). Vai em caixa de frase, e não
+ * em caixa alta como as seções de `GRUPOS_DE_NAVEGACAO`: é o que o desenho mostra.
+ */
+export const GRUPO_DIAGNOSTICO_DO_AGENTE = "Diagnóstico & Teste";
+
+/**
+ * Cockpit do agente (prancha 03): o rail da visão do agente (`/orgs/:orgId/agents/:agentId/...`),
+ * na ordem do desenho. Fora dessas rotas o rail continua sendo `ITENS_DE_NAVEGACAO`.
+ *
+ * Todos os itens ativos apontam para rotas que já existem no `App.tsx`. "Inspeção de Turnos" ainda
+ * não tem tela: fica `emBreve`, como os outros itens sem rota — nada de página inventada.
+ * "Integrações" (`/integrations`) não aparece no desenho e continua alcançável pelas abas de dentro
+ * das telas do agente, que este menu não substitui.
+ */
+export const ITENS_DO_COCKPIT_DO_AGENTE: ItemDeNavegacao[] = [
+    {
+        grupo: "",
+        rotulo: "Instruções & Prompts",
+        icone: IconFile,
+        rota: ({ orgId, agentId }) =>
+            orgId && agentId ? `/orgs/${orgId}/agents/${agentId}/instructions` : null,
+        rotaDeAtivo: ({ orgId, agentId }) =>
+            orgId && agentId ? `/orgs/${orgId}/agents/${agentId}` : null,
+        estado: "ativo",
+        exigeOrg: true,
+        exigeAgente: true,
+    },
+    {
+        grupo: "",
+        rotulo: "Base de Conhecimento",
+        icone: IconDatabase,
+        rota: ({ orgId, agentId }) =>
+            orgId && agentId ? `/orgs/${orgId}/agents/${agentId}/knowledge-base` : null,
+        estado: "ativo",
+        exigeOrg: true,
+        exigeAgente: true,
+    },
+    {
+        grupo: "",
+        rotulo: "Arquivos do Agente",
+        icone: IconFolder,
+        rota: ({ orgId, agentId }) =>
+            orgId && agentId ? `/orgs/${orgId}/agents/${agentId}/files` : null,
+        estado: "ativo",
+        exigeOrg: true,
+        exigeAgente: true,
+    },
+    {
+        grupo: "",
+        rotulo: "Roteamento & Habilidades",
+        icone: IconWorkflow,
+        rota: ({ orgId, agentId }) =>
+            orgId && agentId ? `/orgs/${orgId}/agents/${agentId}/routing` : null,
+        estado: "ativo",
+        exigeOrg: true,
+        exigeAgente: true,
+    },
+    {
+        grupo: "",
+        rotulo: "Modelo & Parâmetros (Jev)",
+        icone: IconSliders,
+        rota: ({ orgId, agentId }) =>
+            orgId && agentId ? `/orgs/${orgId}/agents/${agentId}/model-jev` : null,
+        estado: "ativo",
+        exigeOrg: true,
+        exigeAgente: true,
+    },
+    {
+        grupo: GRUPO_DIAGNOSTICO_DO_AGENTE,
+        rotulo: "Chat de Teste",
+        icone: IconMessage,
+        rota: ({ orgId, agentId }) =>
+            orgId && agentId ? `/orgs/${orgId}/agents/${agentId}/test-chat` : null,
+        estado: "ativo",
+        exigeOrg: true,
+        exigeAgente: true,
+    },
+    {
+        grupo: GRUPO_DIAGNOSTICO_DO_AGENTE,
+        rotulo: "Inspeção de Turnos",
+        icone: IconList,
+        rota: () => null,
+        estado: "emBreve",
+        exigeOrg: true,
+        exigeAgente: true,
     },
 ];
