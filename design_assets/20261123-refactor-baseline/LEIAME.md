@@ -12,7 +12,7 @@ All captures were generated in PNG format along with their respective DOM HTML s
 
 | File | Screen / Route | Captured State |
 |---|---|---|
-| `01-login.png` | Login (`/login`) | Clean initial state: admin token field, in-memory usage guidance, and submit button. |
+| `01-login.png` | Login (`/login`) | Clean initial state: admin token field, in-memory usage guidance with strictly enforced instance port (17485), and submit button. |
 | `02-orgs-lista.png` | Organizations (`/orgs`) | Organization table with demo seed data, filter tabs ("All", "Active", "Inactive"), global search, cluster status, and actions. |
 | `03-orgs-inspetor.png` | Organization Inspector (`/orgs`) | Side inspector drawer opened over the selected organization, displaying metadata, CLI snippet, active agent card, node status, and actions. |
 | `04-agente-instrucoes.png` | Agent / Instructions (`/orgs/:id/agents/:id/instructions`) | 1440 px canonical view: agent cockpit rail with 7 items, 3-step breadcrumb (`Acme Demonstração › Bia Atendente › Instruções & Prompts`), contextual search placeholder, agent model chip (`● Modelo: gemini-3.8-flash-tiered 200 OK`), "Sair" button with label, and prompt form. |
@@ -69,14 +69,14 @@ Any alteration outside the bounding boxes below results in `exit code 1`, report
 
 | Screen | Component / Element | Bounding Box `[x, y, w, h]` | Reason for Volatility |
 |---|---|---|---|
-| `01-login.png` | *(None)* | *(Zero tolerance)* | 100% static and deterministic screen. |
+| `01-login.png` | Login: Instance Port (`.poph-fato__valor`) | `[645, 512, 45, 16]` | HTTP daemon port (e.g. 17485 vs 17513) rendered in the instance guidance label. 100% identical when running on default port 17485. |
 | `02-orgs-lista.png` | Topbar: Engine Chip (`.poph-topbar__estado`) | `[1040, 10, 240, 38]` | Dynamic process RSS (`Engine: 200 OK · [N] MB`). |
 | `02-orgs-lista.png` | Orgs Telemetry (`.poph-orgs__telemetria`) | `[1160, 180, 260, 25]` | Cluster `Uptime` counter and `RAM` usage (`1 nó conectado · Uptime 0m · RAM [N] MB`). |
 | `03-orgs-inspetor.png` | Topbar: Engine Chip (`.poph-topbar__estado`) | `[1040, 10, 240, 38]` | Dynamic process RSS. |
 | `03-orgs-inspetor.png` | Orgs Telemetry (`.poph-orgs__telemetria`) | `[780, 225, 260, 25]` | Cluster `Uptime` counter and `RAM` usage (wrapped below filter tabs due to open inspector drawer). |
-| `04-agente-instrucoes.png` | *(None)* | *(Zero tolerance)* | **100% static:** In CF-10 / CF-11, the topbar indicator in agent routes was replaced by the `.poph-topbar__estado--agente` chip (`● Modelo: gemini-3.8-flash-tiered 200 OK`). Dynamic process memory RSS (`[N] MB`) was removed. Model is fixed from demo seed and health status is fixed at `200 OK`. |
-| `05-agente-base-conhecimento.png` | *(None)* | *(Zero tolerance)* | **100% static:** Agent topbar indicator contains deterministic model and health status with no volatile process RSS. |
-| `06-chat-teste.png` | *(None)* | *(Zero tolerance)* | **100% static:** Agent topbar indicator contains deterministic model and health status; seed conversation messages use fixed timestamps. |
+| `04-agente-instrucoes.png` | *(None)* | *(Zero tolerance)* | **100% static:** In CF-10 / CF-11, the topbar indicator in agent routes was replaced by the `.poph-topbar__estado--agente` chip (`● Modelo: gemini-3.8-flash-tiered 200 OK`). Dynamic process memory RSS (`[N] MB`) was removed. Model is fixed from demo seed and health status is fixed at `200 OK`. Form and agent footer are deterministically loaded before capture. |
+| `05-agente-base-conhecimento.png` | *(None)* | *(Zero tolerance)* | **100% static:** Agent topbar indicator contains deterministic model and health status with no volatile process RSS. Knowledge table is deterministically loaded before capture. |
+| `06-chat-teste.png` | *(None)* | *(Zero tolerance)* | **100% static:** Agent topbar indicator contains deterministic model and health status; seed conversation messages and chat bubbles are deterministically rendered before capture. |
 | `07-operacao.png` | Topbar: Engine Chip (`.poph-topbar__estado`) | `[1040, 10, 240, 38]` | Dynamic process RSS (`Engine: 200 OK · [N] MB`). |
 | `07-operacao.png` | Timestamp (`.poph-operacao__atualizacao`) | `[1170, 100, 134, 36]` | Dynamic query timestamp (`Atualizado às HH:MM`). |
 | `07-operacao.png` | Operation: Process Uptime | `[730, 298, 150, 20]` | Elapsed seconds since daemon startup. |
@@ -92,6 +92,9 @@ Any alteration outside the bounding boxes below results in `exit code 1`, report
 - Node.js (>= 22.18) and monorepo dependencies (`playwright` installed in workspace)
 - Google Chrome or Chromium
 
+### Port Configuration
+The HTTP daemon port defaults to `17485`. The login screen explicitly renders the instance port in its informational facts list (`.poph-fato__valor--mono`), which is documented and tolerated as a volatile region in `compare.py` when running on non-default ports (e.g. `POPH_PORT=17513`). When executed on the reference port `17485`, the login screen is 100% identical.
+
 ### Automated Reproduction (Recommended)
 From the root of the `apps/pop-harness` repository:
 
@@ -104,6 +107,5 @@ The script:
 2. Seeds deterministic demo data (`seed.py`).
 3. Starts `poph serve` on a dedicated port (default: `17485`).
 4. Warms up the instance to reach steady-state runtime heap and cached buffers.
-5. Captures the 8 baseline screens via Playwright (`capture.mjs`) into `design_assets/20261123-refactor-baseline/`.
-6. Executes a second capture run into a separate temporary directory.
-7. Executes `compare.py` verifying pixel-by-pixel stability and zero regressions outside documented volatile fields.
+5. Executes 3 consecutive captures via Playwright (`capture.mjs`) with deterministic wait logic (no arbitrary timeouts; waits on element states, font readiness, and zero `aria-busy`/spinner/skeleton presence).
+6. Executes `compare.py` verifying pixel-by-pixel stability across all 3 rounds and zero regressions outside documented volatile fields.

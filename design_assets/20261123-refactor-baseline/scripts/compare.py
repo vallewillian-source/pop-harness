@@ -9,7 +9,9 @@ COLOR_TOLERANCE = 12
 MAX_UNEXPECTED_PIXELS = 15
 
 VOLATILE_REGIONS = {
-    "01-login.png": [],
+    "01-login.png": [
+        {"name": "Login: porta da instância", "box": (645, 512, 690, 528)},
+    ],
 
     "02-orgs-lista.png": [
         {"name": "Topbar: chip de memória/engine", "box": (1040, 10, 1280, 48)},
