@@ -4,6 +4,9 @@ Esta pasta contém a linha de base visual das telas principais do Console do POP
 
 O objetivo desta linha de base é servir como referência visual comparativa para garantir paridade exata de layout, tipografia, espaçamentos e componentes durante e após as renomeações e refatores do frontend.
 
+> **Importante — Linha de Base Provisória:**
+> O conjunto atual de capturas em `design_assets/20261123-refactor-baseline/` é **provisório**. O layout do Console está atualmente em evolução ativa (tarefas CF-09 em andamento e CF-10 pendente). A captura definitiva da linha de base para portão de CI será gerada após a conclusão e aceite do layout final (CF-10).
+
 ---
 
 ## 1. Telas Capturadas
@@ -49,18 +52,36 @@ O ambiente utiliza um banco SQLite temporário gerado a partir das migrações o
 
 ---
 
-## 4. Campos Voláteis Documentados
+## 4. Campos Voláteis Documentados e Tolerâncias do Comparador
 
-Em conformidade com a especificação da tarefa RF-08, os seguintes campos refletem o estado dinâmico do processo do sistema operacional e podem variar entre capturas consecutivas:
+O script `scripts/compare.py` valida as capturas pixel a pixel e aplica tolerância rigorosa para diferenciar variações legítimas de regressões visuais:
 
-1. **Chip de Memória do Motor no Topbar:**
-   - Elemento: `Engine: 200 OK · [N] MB` no cabeçalho superior.
-   - Motivo: O valor é obtido em tempo real via `/metrics` / medição do RSS do processo, variando alguns megabytes conforme a coleta de lixo (GC) e alocações dinâmicas do runtime.
-2. **Contador de Uptime:**
-   - Elemento: `Uptime` no cartão do cluster e em Operação (`tempo no ar: menos de 1 min`).
-   - Motivo: Reflete os segundos decorridos desde a inicialização do daemon `poph serve`.
+### Limiares de Tolerância
+1. **Tolerância por Canal de Cor (`COLOR_TOLERANCE = 12`):**
+   - Variações de cor com delta máximo `<= 12` em qualquer canal (escala 0–255) são desconsideradas.
+   - *Motivo:* Absorve diferenças imperceptíveis de sub-pixel antialiasing e suavização tipográfica entre versões do motor de renderização do navegador sem mascarar trocas de tokens visuais ou cores de bordas/foco (cujos deltas superam 50).
+2. **Tolerância de Ruído de Antialiasing (`MAX_UNEXPECTED_PIXELS = 15`):**
+   - Tolerância residual de até 15 pixels fora das regiões voláteis (equivalente a ~0,001% da área de 1.296.000 px).
+   - *Motivo:* Evita falsos positivos decorrentes de micro-fringe de 1 px em curvas de fontes e cantos arredondados, enquanto garante reprovação instantânea diante de qualquer mudança estrutural de layout (um deslocamento de 2 px de margem afeta centenas de pixels).
 
-Qualquer outra área das telas (estrutura DOM, posicionamento, tamanhos de fonte, cores de tokens, bordas e alinhamentos) permanece 100% idêntica entre execuções.
+### Regiões Voláteis Permitidas por Tela
+
+Qualquer alteração fora das caixas delimitadoras abaixo resulta em saída `exit code 1` com a contagem de pixels divergentes e a caixa delimitadora (`bounding box`) da anomalia:
+
+| Tela | Componente / Elemento | Caixa Delimitadora `[x, y, w, h]` | Motivo da Volatilidade |
+|---|---|---|---|
+| `01-login.png` | *(Nenhum)* | *(Zero tolerância)* | Tela 100% estática e determinística. |
+| `02-orgs-lista.png` | Topbar: Chip do Motor (`.poph-topbar__estado`) | `[1050, 10, 214, 38]` | RSS dinâmico do processo (`Engine: 200 OK · [N] MB`). |
+| `02-orgs-lista.png` | Telemetria de Orgs (`.poph-orgs__telemetria`) | `[230, 72, 270, 24]` | Contador de `Uptime` e uso de `RAM` do cluster. |
+| `03-orgs-inspetor.png` | Topbar: Chip do Motor (`.poph-topbar__estado`) | `[1050, 10, 214, 38]` | RSS dinâmico do processo. |
+| `03-orgs-inspetor.png` | Telemetria de Orgs (`.poph-orgs__telemetria`) | `[230, 72, 270, 24]` | Contador de `Uptime` e uso de `RAM` do cluster. |
+| `04-agente-instrucoes.png` | Topbar: Chip do Motor (`.poph-topbar__estado`) | `[1050, 10, 214, 38]` | RSS dinâmico do processo. |
+| `05-agente-base-conhecimento.png` | Topbar: Chip do Motor (`.poph-topbar__estado`) | `[1050, 10, 214, 38]` | RSS dinâmico do processo. |
+| `06-chat-teste.png` | Topbar: Chip do Motor (`.poph-topbar__estado`) | `[1050, 10, 214, 38]` | RSS dinâmico do processo. |
+| `07-operacao.png` | Topbar: Chip do Motor (`.poph-topbar__estado`) | `[1050, 10, 214, 38]` | RSS dinâmico do processo. |
+| `07-operacao.png` | Timestamp (`.poph-operacao__atualizacao`) | `[1170, 100, 134, 36]` | Horário dinâmico da consulta (`Atualizado às HH:MM`). |
+| `07-operacao.png` | Operação: Tempo no ar | `[730, 298, 150, 20]` | Segundos decorridos desde o início do daemon. |
+| `07-operacao.png` | Operação: Memória usada pelo processo | `[730, 663, 150, 20]` | Consumo dinâmico de memória heap do servidor. |
 
 ---
 
