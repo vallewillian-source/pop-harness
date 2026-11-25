@@ -24,16 +24,19 @@ import { excluirOrg } from "../api/orgs";
 import { DialogoExclusao } from "../componentes/DialogoExclusao";
 import { ModalOrg } from "../componentes/ModalOrg";
 import { useSessao } from "../sessao/Sessao";
+import { translate, useI18n } from "../i18n";
+import type { TranslationKey } from "../i18n/catalog";
+import { formatDateTime } from "../i18n/format";
 import "../estilos/orgpainel.css";
 
 function rotuloDaSituacao(situacao: string): string {
     switch (situacao) {
         case "active":
-            return "Ativa";
+            return translate("orgs.statusActive");
         case "inactive":
-            return "Inativa";
+            return translate("orgs.statusInactive");
         case "archived":
-            return "Arquivada";
+            return translate("orgs.statusArchived");
         default:
             return situacao;
     }
@@ -45,16 +48,18 @@ function tomDaSituacao(situacao: string): string {
 
 function dataLonga(ms: number): string {
     if (!Number.isFinite(ms) || ms <= 0) return "—";
-    return new Date(ms).toLocaleString("pt-BR");
+    return formatDateTime(ms);
 }
 
 function retencaoDaConfig(org: Org): string {
     const config = org.config as Record<string, unknown> | undefined;
     const valor = config?.["retention_days"] ?? config?.["retencao_dias"];
     if (typeof valor === "number") {
-        return valor === 0 ? "nunca apaga" : `${valor} dias`;
+        return valor === 0
+            ? translate("orgs.retentionNever")
+            : translate("orgs.retentionDays", { days: valor });
     }
-    return "padrão da instância (30 dias)";
+    return translate("orgs.retentionInstanceDefault");
 }
 
 function Propriedade({ chave, valor, mono }: { chave: string; valor: string; mono?: boolean }) {
@@ -94,20 +99,21 @@ function Secao({
     );
 }
 
-const PROXIMAS_SECOES = [
-    "Base de conhecimento",
-    "Produtos e preços",
-    "Integrações e WhatsApp",
+const PROXIMAS_SECOES: TranslationKey[] = [
+    "orgs.panelSectionKnowledge",
+    "orgs.panelSectionProducts",
+    "orgs.panelSectionIntegrations",
 ];
 
-const O_QUE_A_TELA_FAZ = [
-    "Edita nome, situação e retenção com controle de versão: se outro salvou antes, o que você digitou é mantido e você só revisa.",
-    "Exclui com confirmação; organização com conteúdo pede confirmação extra e mostra o motivo recusado pela API.",
-    "Identifica a organização e o escopo do token em uso (global ou de uma organização).",
-    "O seletor do rail troca de organização sem recarregar a página.",
+const O_QUE_A_TELA_FAZ: TranslationKey[] = [
+    "orgs.panelDoesEdit",
+    "orgs.panelDoesDelete",
+    "orgs.panelDoesScope",
+    "orgs.panelDoesSwitcher",
 ];
 
 export function OrgPainel() {
+    const { translate: t } = useI18n();
     const { orgId = "" } = useParams();
     const navegar = useNavigate();
     const [org, setOrg] = useState<Org | null>(null);
@@ -131,7 +137,7 @@ export function OrgPainel() {
             setOrg(resposta);
         } catch (falha) {
             const mensagem =
-                falha instanceof Error ? falha.message : "falha ao carregar a organização";
+                falha instanceof Error ? falha.message : t("orgs.panelLoadFailed");
             setErro(mensagem);
             setDetalheErro(`GET /admin/v1/orgs/${orgId}`);
         } finally {
@@ -163,17 +169,17 @@ export function OrgPainel() {
         return (
             <div className="poph-pagina poph-orgpainel">
                 <SofaErrorState
-                    title="Não consegui carregar a organização"
-                    description="A instância respondeu com erro. Tente de novo; se persistir, confira a saúde do servidor."
+                    title={t("orgs.panelLoadErrorTitle")}
+                    description={t("orgs.panelLoadErrorDescription")}
                     details={detalheErro ?? undefined}
-                    retry={{ label: "Tentar de novo", onClick: () => void carregar() }}
+                    retry={{ label: t("orgs.failureTryAgain"), onClick: () => void carregar() }}
                     action={
                         <SofaButton
                             variant="subtle"
                             onClick={() => navegar("/orgs")}
                             icon={<IconArrowLeft aria-hidden="true" />}
                         >
-                            Voltar para organizações
+                            {t("orgs.panelBackToOrgs")}
                         </SofaButton>
                     }
                 />
@@ -188,26 +194,26 @@ export function OrgPainel() {
     const atalhos = [
         {
             chave: "estrutura",
-            titulo: "Departamentos e categorias",
-            descricao: "Destinos de transferência e agrupamento do catálogo que os agentes usam.",
-            nota: "Cria, edita e exclui departamentos; cria e edita categorias.",
-            rotulo: "Abrir estrutura",
+            titulo: t("orgs.structureShortcutTitle"),
+            descricao: t("orgs.structureShortcutDescription"),
+            nota: t("orgs.structureShortcutNote"),
+            rotulo: t("orgs.structureShortcutAction"),
             caminho: `/orgs/${org.id}/structure`,
         },
         {
             chave: "produtos",
-            titulo: "Produtos",
-            descricao: "Catálogo com preço e condições que os agentes informam ao cliente.",
-            nota: "Lista, filtros, criação e alteração; a exclusão pede confirmação.",
-            rotulo: "Abrir produtos",
+            titulo: t("orgs.productsShortcutTitle"),
+            descricao: t("orgs.productsShortcutDescription"),
+            nota: t("orgs.productsShortcutNote"),
+            rotulo: t("orgs.productsShortcutAction"),
             caminho: `/orgs/${org.id}/products`,
         },
         {
             chave: "agentes",
-            titulo: "Agentes de atendimento",
-            descricao: "Quem responde pelo WhatsApp desta organização, com instruções por agente.",
-            nota: "Lista e seleção do agente; as instruções são editadas na aba dele.",
-            rotulo: "Abrir agentes",
+            titulo: t("orgs.agentsShortcutTitle"),
+            descricao: t("orgs.agentsShortcutDescription"),
+            nota: t("orgs.agentsShortcutNote"),
+            rotulo: t("orgs.agentsShortcutAction"),
             caminho: `/orgs/${org.id}/agents`,
         },
     ];
@@ -217,11 +223,11 @@ export function OrgPainel() {
             <div className="poph-pagina poph-orgpainel">
                 <div className="poph-pagina__topo">
                     <div className="poph-orgpainel__identidade">
-                        <SofaIconButton label="Voltar" onClick={() => navegar("/orgs")}>
+                        <SofaIconButton label={t("orgs.panelBack")} onClick={() => navegar("/orgs")}>
                             <IconArrowLeft aria-hidden="true" />
                         </SofaIconButton>
                         <div className="poph-orgpainel__texto">
-                            <span className="poph-orgpainel__eyebrow">Organização</span>
+                            <span className="poph-orgpainel__eyebrow">{t("orgs.panelEyebrow")}</span>
                             <div className="poph-orgpainel__titulo-linha">
                                 <h1 className="poph-pagina__titulo">{org.name}</h1>
                                 <span className={`poph-status ${tomDaSituacao(org.status)}`}>
@@ -230,8 +236,10 @@ export function OrgPainel() {
                                 </span>
                             </div>
                             <p className="poph-pagina__descricao">
-                                {org.slug} · versão {org.version} · dados isolados por
-                                organização
+                                {t("orgs.panelSubtitle", {
+                                    slug: org.slug,
+                                    version: org.version,
+                                })}
                             </p>
                         </div>
                     </div>
@@ -243,14 +251,14 @@ export function OrgPainel() {
                                     icon={<IconPencil aria-hidden="true" />}
                                     onClick={() => setEditando(true)}
                                 >
-                                    Editar
+                                    {t("orgs.actionEdit")}
                                 </SofaButton>
                                 <SofaButton
                                     variant="danger"
                                     icon={<IconTrash aria-hidden="true" />}
                                     onClick={() => setExcluindo(true)}
                                 >
-                                    Excluir
+                                    {t("orgs.actionDelete")}
                                 </SofaButton>
                             </>
                         )}
@@ -260,27 +268,37 @@ export function OrgPainel() {
                             onClick={() => void carregar()}
                             loading={carregando}
                         >
-                            Atualizar
+                            {t("orgs.listRefresh")}
                         </SofaButton>
                     </div>
                 </div>
 
-                <Secao titulo="Resumo">
-                    <p className="poph-orgpainel__ajuda">
-                        Identidade e configuração que o servidor devolve para esta organização.
-                    </p>
+                <Secao titulo={t("orgs.panelSummary")}>
+                    <p className="poph-orgpainel__ajuda">{t("orgs.panelSummaryHelp")}</p>
                     <dl className="poph-propriedades">
-                        <Propriedade chave="Identificador" valor={org.id} mono />
-                        <Propriedade chave="Slug" valor={org.slug} mono />
-                        <Propriedade chave="Situação" valor={rotuloDaSituacao(org.status)} />
-                        <Propriedade chave="Versão" valor={`v${org.version}`} mono />
-                        <Propriedade chave="Retenção do histórico" valor={retencaoDaConfig(org)} />
-                        <Propriedade chave="Criada em" valor={dataLonga(org.created_at)} />
-                        <Propriedade chave="Última alteração" valor={dataLonga(org.updated_at)} />
+                        <Propriedade chave={t("orgs.panelId")} valor={org.id} mono />
+                        <Propriedade chave={t("orgs.panelSlug")} valor={org.slug} mono />
+                        <Propriedade
+                            chave={t("orgs.panelStatus")}
+                            valor={rotuloDaSituacao(org.status)}
+                        />
+                        <Propriedade chave={t("orgs.panelVersion")} valor={`v${org.version}`} mono />
+                        <Propriedade
+                            chave={t("orgs.inspectorRetention")}
+                            valor={retencaoDaConfig(org)}
+                        />
+                        <Propriedade
+                            chave={t("orgs.inspectorCreatedAt")}
+                            valor={dataLonga(org.created_at)}
+                        />
+                        <Propriedade
+                            chave={t("orgs.panelLastChange")}
+                            valor={dataLonga(org.updated_at)}
+                        />
                     </dl>
                 </Secao>
 
-                <Secao titulo="Estrutura, produtos e agentes">
+                <Secao titulo={t("orgs.panelShortcutsTitle")}>
                     <ul className="poph-orgpainel__atalhos">
                         {atalhos.map((atalho) => (
                             <li key={atalho.chave} className="poph-orgpainel__atalho">
@@ -300,33 +318,28 @@ export function OrgPainel() {
                 </Secao>
 
                 <Secao
-                    titulo="Próximas seções"
-                    cabeca={<span className="poph-orgpainel__etiqueta">em construção</span>}
+                    titulo={t("orgs.panelNextSections")}
+                    cabeca={<span className="poph-orgpainel__etiqueta">{t("orgs.panelInProgress")}</span>}
                 >
-                    <p className="poph-orgpainel__ajuda">
-                        A navegação desta organização cresce junto com as entregas do Console.
-                    </p>
+                    <p className="poph-orgpainel__ajuda">{t("orgs.panelNextSectionsHelp")}</p>
                     <ul className="poph-orgpainel__lista poph-orgpainel__lista--simples">
                         {PROXIMAS_SECOES.map((secao) => (
                             <li key={secao} className="poph-orgpainel__linha">
-                                <span>{secao}</span>
-                                <span className="poph-orgpainel__etiqueta">em breve</span>
+                                <span>{t(secao)}</span>
+                                <span className="poph-orgpainel__etiqueta">
+                                    {t("orgs.panelComingSoon")}
+                                </span>
                             </li>
                         ))}
                     </ul>
-                    <p className="poph-orgpainel__ajuda">
-                        Enquanto as telas não chegam, a API administrativa e a CLI atendem os
-                        mesmos recursos.
-                    </p>
+                    <p className="poph-orgpainel__ajuda">{t("orgs.panelNextSectionsHelp2")}</p>
                 </Secao>
 
-                <Secao titulo="O que esta tela já faz">
-                    <p className="poph-orgpainel__ajuda">
-                        Criar, editar e excluir organização, com o mesmo efeito da CLI.
-                    </p>
+                <Secao titulo={t("orgs.panelDoesTitle")}>
+                    <p className="poph-orgpainel__ajuda">{t("orgs.panelDoesHelp")}</p>
                     <ul className="poph-orgpainel__lista">
                         {O_QUE_A_TELA_FAZ.map((item) => (
-                            <li key={item}>{item}</li>
+                            <li key={item}>{t(item)}</li>
                         ))}
                     </ul>
                 </Secao>
@@ -345,18 +358,16 @@ export function OrgPainel() {
             <DialogoExclusao
                 aberto={excluindo}
                 aoFechar={() => setExcluindo(false)}
-                titulo="Excluir organização?"
-                descricao={`A organização ${org.name} e tudo que está dentro dela saem do sistema. Não há como desfazer.`}
+                titulo={t("orgs.deleteOrgTitle")}
+                descricao={t("orgs.deleteOrgDescription", { name: org.name })}
                 recurso={org.slug}
-                rotuloRecurso="slug da organização"
-                rotuloConfirmar="Excluir organização"
+                rotuloRecurso={t("orgs.deleteOrgResourceLabel")}
+                rotuloConfirmar={t("orgs.deleteOrgConfirm")}
                 permiteForcar
-                rotuloForcar="Apagar também agentes, categorias, departamentos e tokens"
+                rotuloForcar={t("orgs.deleteOrgForceLabel")}
                 consequencia={
                     <p className="poph-orgpainel__consequencia">
-                        Serão apagados os agentes, as categorias, os departamentos, as conversas e os
-                        tokens desta organização. A exclusão de uma organização com conteúdo exige a
-                        confirmação extra abaixo.
+                        {t("orgs.deleteOrgConsequence")}
                     </p>
                 }
                 aoConfirmar={(forcar) => excluirOrg(org.id, forcar)}

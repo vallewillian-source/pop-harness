@@ -6,7 +6,7 @@
  * `GET /admin/v1/orgs/{id}`; a lista (`GET /admin/v1/orgs`) alimenta só o seletor da sessão.
  */
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -14,6 +14,7 @@ import type { Org } from "../api/cliente";
 import { SessaoProvider } from "../sessao/Sessao";
 import { ServidorFalso } from "../testes/servidor";
 import { OrgPainel } from "./OrgPainel";
+import { setLocale } from "../i18n";
 
 const ORG: Org = {
     id: "org_1",
@@ -58,6 +59,35 @@ function montar() {
         </MemoryRouter>,
     );
 }
+
+describe("OrgPainel em en-US", () => {
+    afterEach(() => setLocale("pt-BR"));
+
+    it("traduz cabeçalho, resumo, atalhos e a confirmação de exclusão", async () => {
+        const usuario = userEvent.setup();
+        prepararSessao("pophg_teste", "global");
+        servidorComOrg();
+        setLocale("en-US");
+
+        montar();
+
+        expect(await screen.findByRole("heading", { level: 1, name: "Loja Antiga" })).toBeInTheDocument();
+        const cabeca = document.querySelector(".poph-orgpainel__titulo-linha") as HTMLElement;
+        expect(within(cabeca).getByText("Active")).toBeInTheDocument();
+        const resumo = screen.getByRole("heading", { name: "Summary" }).closest("section");
+        expect(within(resumo!).getByText("Identifier")).toBeInTheDocument();
+        expect(within(resumo!).getByText("30 days")).toBeInTheDocument();
+        expect(screen.getByRole("link", { name: "Open structure" })).toHaveAttribute(
+            "href",
+            "/orgs/org_1/structure",
+        );
+
+        await usuario.click(screen.getByRole("button", { name: "Delete" }));
+        const dialogo = await screen.findByRole("dialog");
+        expect(dialogo).toHaveAccessibleName("Delete organization?");
+        expect(within(dialogo).getByText(/There is no undo/)).toBeInTheDocument();
+    });
+});
 
 describe("OrgPainel", () => {
     it("mostra o nome e a situação da organização e o resumo de configuração", async () => {

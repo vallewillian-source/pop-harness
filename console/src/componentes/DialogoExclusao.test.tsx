@@ -3,13 +3,14 @@
  * conflict`) mostrada como veio e a confirmação extra que libera o `?force=true`.
  */
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { excluirOrg } from "../api/orgs";
 import { DialogoExclusao } from "./DialogoExclusao";
 import { esperarFocoDoModal } from "../testes/modal";
 import { ServidorFalso, erroApi } from "../testes/servidor";
+import { setLocale } from "../i18n";
 
 function montar(aoConfirmar: (forcar: boolean) => Promise<void>, aoExcluir = vi.fn(), aoFechar = vi.fn()) {
     return render(
@@ -97,5 +98,45 @@ describe("DialogoExclusao", () => {
         expect(pedidos).toHaveLength(2);
         expect(pedidos[0]?.url).not.toContain("force=true");
         expect(pedidos[1]?.url).toContain("force=true");
+    });
+});
+
+describe("DialogoExclusao em en-US", () => {
+    afterEach(() => setLocale("pt-BR"));
+
+    it("traduz rótulos, trava de digitação e recusa", async () => {
+        const usuario = userEvent.setup();
+        setLocale("en-US");
+        const aoConfirmar = vi.fn().mockRejectedValueOnce(new Error("the organization has agents"));
+
+        render(
+            <DialogoExclusao
+                aberto
+                aoFechar={vi.fn()}
+                titulo="Delete organization?"
+                descricao="The organization leaves the system."
+                recurso="loja-antiga"
+                rotuloRecurso="organization slug"
+                rotuloConfirmar="Delete organization"
+                permiteForcar
+                aoConfirmar={aoConfirmar}
+            />,
+        );
+        await esperarFocoDoModal();
+
+        expect(screen.getByRole("dialog")).toHaveAccessibleName("Delete organization?");
+        expect(screen.getByText("organization slug", { exact: false })).toBeInTheDocument();
+        expect(screen.getByRole("checkbox")).toHaveAccessibleName(
+            /Also delete this organization's content/,
+        );
+        expect(screen.getByRole("button", { name: "Delete organization" })).toBeDisabled();
+
+        await usuario.type(screen.getByLabelText(/Type/i), "loja-antiga");
+        expect(screen.getByRole("button", { name: "Delete organization" })).toBeEnabled();
+
+        await usuario.click(screen.getByRole("button", { name: "Delete organization" }));
+
+        expect(await screen.findByText("The deletion was refused")).toBeInTheDocument();
+        expect(screen.getByText("the organization has agents")).toBeInTheDocument();
     });
 });

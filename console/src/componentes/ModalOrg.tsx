@@ -29,13 +29,15 @@ import {
     obterOrg,
     retencaoEmDias,
 } from "../api/orgs";
+import { useI18n } from "../i18n";
+import type { TranslationKey } from "../i18n/catalog";
 
 const SLUG = /^[a-z0-9-]{3,64}$/;
 
-const SITUACOES = [
-    { valor: "active", rotulo: "Ativa" },
-    { valor: "inactive", rotulo: "Inativa" },
-    { valor: "archived", rotulo: "Arquivada" },
+const SITUACOES: { valor: string; rotulo: TranslationKey }[] = [
+    { valor: "active", rotulo: "orgs.statusActive" },
+    { valor: "inactive", rotulo: "orgs.statusInactive" },
+    { valor: "archived", rotulo: "orgs.statusArchived" },
 ];
 
 export type ModalOrgProps = {
@@ -68,6 +70,7 @@ type Erros = {
 };
 
 export function ModalOrg({ aberto, aoFechar, org, aoSalvar }: ModalOrgProps) {
+    const { translate: t } = useI18n();
     const editando = org !== null;
     const [nome, setNome] = useState("");
     const [slug, setSlug] = useState("");
@@ -96,17 +99,17 @@ export function ModalOrg({ aberto, aoFechar, org, aoSalvar }: ModalOrgProps) {
     function validar(): Erros {
         const novos: Erros = {};
         if (!nome.trim()) {
-            novos.nome = "informe o nome da organização";
+            novos.nome = t("orgs.formNameRequired");
         } else if (nome.trim().length > 120) {
-            novos.nome = "o nome aceita até 120 caracteres";
+            novos.nome = t("orgs.formNameTooLong");
         }
         if (!editando && slug.trim() && !SLUG.test(slug.trim())) {
-            novos.slug = "use de 3 a 64 caracteres: letras minúsculas, números e hífen";
+            novos.slug = t("orgs.formSlugInvalid");
         }
         if (retencao.trim()) {
             const dias = Number(retencao);
             if (!Number.isInteger(dias) || dias < 0) {
-                novos.retencao = "informe um número inteiro de dias (0 = nunca apagar)";
+                novos.retencao = t("orgs.formRetentionInvalid");
             }
         }
         return novos;
@@ -118,7 +121,7 @@ export function ModalOrg({ aberto, aoFechar, org, aoSalvar }: ModalOrgProps) {
         const campo = typeof detalhes?.["field"] === "string" ? detalhes["field"] : undefined;
         if (falha.status === 409 || falha.codigo === "conflict") {
             if (criar) {
-                setErros({ slug: "já existe uma organização com este slug" });
+                setErros({ slug: t("orgs.formSlugTaken") });
             } else {
                 setErroGeral(falha.message);
             }
@@ -178,9 +181,9 @@ export function ModalOrg({ aberto, aoFechar, org, aoSalvar }: ModalOrgProps) {
                 }
                 if (typeof versaoAtual === "number") setVersao(versaoAtual);
                 setConflito(
-                    `Outra pessoa salvou esta organização antes de você${
-                        typeof versaoAtual === "number" ? ` (agora na versão ${versaoAtual})` : ""
-                    }. O que você digitou foi mantido: revise e salve de novo.`,
+                    typeof versaoAtual === "number"
+                        ? t("orgs.formConflictWithVersion", { version: versaoAtual })
+                        : t("orgs.formConflictPlain"),
                 );
                 return;
             }
@@ -188,7 +191,7 @@ export function ModalOrg({ aberto, aoFechar, org, aoSalvar }: ModalOrgProps) {
                 mostrarErroDaApi(falha, !editando);
                 return;
             }
-            setErroGeral("falha inesperada ao salvar a organização");
+            setErroGeral(t("orgs.formSaveUnexpected"));
         } finally {
             setEnviando(false);
         }
@@ -200,19 +203,19 @@ export function ModalOrg({ aberto, aoFechar, org, aoSalvar }: ModalOrgProps) {
             onOpenChange={(novo) => {
                 if (!novo && !enviando) aoFechar();
             }}
-            title={editando ? "Editar organização" : "Nova organização"}
+            title={editando ? t("orgs.modalEditTitle") : t("orgs.modalCreateTitle")}
             description={
                 editando
-                    ? `Alterando ${org?.name}. O salvamento usa a versão lida da organização.`
-                    : "Cada organização é um tenant isolado, com dados e limites próprios."
+                    ? t("orgs.modalEditDescription", { name: org?.name ?? "" })
+                    : t("orgs.tenantDescription")
             }
-            closeLabel="Fechar formulário de organização"
+            closeLabel={t("orgs.modalClose")}
             size="md"
             id="poph-formulario-org"
             footer={
                 <>
                     <SofaButton variant="secondary" disabled={enviando} onClick={aoFechar}>
-                        Cancelar
+                        {t("common.cancel")}
                     </SofaButton>
                     <SofaButton
                         variant="primary"
@@ -220,7 +223,7 @@ export function ModalOrg({ aberto, aoFechar, org, aoSalvar }: ModalOrgProps) {
                         onClick={() => void salvar()}
                         loading={enviando}
                     >
-                        {editando ? "Salvar alterações" : "Criar organização"}
+                        {editando ? t("orgs.formSaveChanges") : t("orgs.formCreate")}
                     </SofaButton>
                 </>
             }
@@ -233,19 +236,19 @@ export function ModalOrg({ aberto, aoFechar, org, aoSalvar }: ModalOrgProps) {
                 noValidate
             >
                 {conflito && (
-                    <SofaBanner tone="warn" title="Versão desatualizada">
+                    <SofaBanner tone="warn" title={t("orgs.formConflictTitle")}>
                         {conflito}
                     </SofaBanner>
                 )}
                 {erroGeral && (
-                    <SofaBanner tone="danger" title="Não foi possível salvar">
+                    <SofaBanner tone="danger" title={t("orgs.formErrorTitle")}>
                         {erroGeral}
                     </SofaBanner>
                 )}
 
                 <SofaField
-                    label="Nome"
-                    hint="Como a organização aparece no Console e nos relatórios."
+                    label={t("orgs.formNameLabel")}
+                    hint={t("orgs.formNameHint")}
                     error={erros.nome}
                     required
                     htmlFor="poph-org-nome"
@@ -261,12 +264,8 @@ export function ModalOrg({ aberto, aoFechar, org, aoSalvar }: ModalOrgProps) {
                 </SofaField>
 
                 <SofaField
-                    label="Slug"
-                    hint={
-                        editando
-                            ? "O slug é o identificador da URL e não muda depois da criação."
-                            : "Identificador na URL (letras minúsculas, números e hífen). Em branco, é derivado do nome."
-                    }
+                    label={t("orgs.formSlugLabel")}
+                    hint={editando ? t("orgs.formSlugHintLocked") : t("orgs.formSlugHintNew")}
                     error={erros.slug}
                     htmlFor="poph-org-slug"
                 >
@@ -285,8 +284,8 @@ export function ModalOrg({ aberto, aoFechar, org, aoSalvar }: ModalOrgProps) {
 
                 {editando && (
                     <SofaField
-                        label="Situação"
-                        hint="Inativa e arquivada deixam de atender; o histórico continua no banco."
+                        label={t("orgs.formStatusLabel")}
+                        hint={t("orgs.formStatusHint")}
                         htmlFor="poph-org-situacao"
                     >
                         {(controle) => (
@@ -297,7 +296,7 @@ export function ModalOrg({ aberto, aoFechar, org, aoSalvar }: ModalOrgProps) {
                             >
                                 {SITUACOES.map((opcao) => (
                                     <option key={opcao.valor} value={opcao.valor}>
-                                        {opcao.rotulo}
+                                        {t(opcao.rotulo)}
                                     </option>
                                 ))}
                             </SofaSelect>
@@ -306,8 +305,8 @@ export function ModalOrg({ aberto, aoFechar, org, aoSalvar }: ModalOrgProps) {
                 )}
 
                 <SofaField
-                    label="Retenção do histórico (dias)"
-                    hint="Quantos dias as conversas ficam guardadas. 0 = nunca apagar. Em branco, vale o padrão da instância."
+                    label={t("orgs.formRetentionLabel")}
+                    hint={t("orgs.formRetentionHint")}
                     error={erros.retencao}
                     htmlFor="poph-org-retencao"
                 >

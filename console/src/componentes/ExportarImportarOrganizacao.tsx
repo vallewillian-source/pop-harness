@@ -36,6 +36,8 @@ import {
     type RelatorioImportacao,
     type RecusaSobrescrita,
 } from "../api/backup";
+import { useI18n } from "../i18n";
+import { formatNumber } from "../i18n/format";
 
 /** Teto da importação em MB inteiros, para as mensagens ("64 MB"). */
 const LIMITE_MB = LIMITE_IMPORTACAO_BYTES / (1024 * 1024);
@@ -58,7 +60,7 @@ function somas(relatorio: RelatorioImportacao): { inseridas: number; atualizadas
 }
 
 function numero(valor: number): string {
-    return valor.toLocaleString("pt-BR");
+    return formatNumber(valor);
 }
 
 /** Bloco de erro com a frase do operador e, quando houver, a lista de conflitos. */
@@ -69,6 +71,7 @@ function AvisoDeFalha({
     falha: FalhaDeBackup;
     aoTentarDeNovo?: () => void;
 }) {
+    const { translate: t } = useI18n();
     // O `SofaBanner` de tom `danger` já anuncia como alerta (role="alert"); não se envolve de novo.
     return (
         <div>
@@ -76,25 +79,34 @@ function AvisoDeFalha({
                 <p style={{ margin: 0 }}>{falha.texto}</p>
                 {falha.versoes ? (
                     <p style={{ margin: "6px 0 0" }}>
-                        O arquivo é da versão {falha.versoes.arquivo}; esta instalação entende a versão{" "}
-                        {falha.versoes.instalacao}.
+                        {t("orgs.failureVersionLine", {
+                            file: falha.versoes.arquivo,
+                            instance: falha.versoes.instalacao,
+                        })}
                     </p>
                 ) : null}
                 {falha.conflitos && falha.conflitos.itens.length > 0 ? (
                     <>
-                        <p style={{ margin: "6px 0 0" }}>Conflitos encontrados:</p>
-                        <ul className="poph-operacao__conflitos" aria-label="Conflitos encontrados">
+                        <p style={{ margin: "6px 0 0" }}>{t("orgs.failureConflictsFound")}</p>
+                        <ul
+                            className="poph-operacao__conflitos"
+                            aria-label={t("orgs.failureConflictsLabel")}
+                        >
                             {falha.conflitos.itens.map((item) => (
                                 <li key={item}>{item}</li>
                             ))}
-                            {falha.conflitos.mais > 0 ? <li>e mais {numero(falha.conflitos.mais)}</li> : null}
+                            {falha.conflitos.mais > 0 ? (
+                                <li>
+                                    {t("orgs.failureAndMore", { count: numero(falha.conflitos.mais) })}
+                                </li>
+                            ) : null}
                         </ul>
                     </>
                 ) : null}
                 {falha.podeTentarDeNovo && aoTentarDeNovo ? (
                     <div style={{ marginTop: 8 }}>
                         <SofaButton variant="secondary" onClick={aoTentarDeNovo}>
-                            Tentar de novo
+                            {t("orgs.failureTryAgain")}
                         </SofaButton>
                     </div>
                 ) : null}
@@ -119,20 +131,29 @@ function RecusaDeSobrescrita({
     aoAutorizar: () => void;
     aoCancelar: () => void;
 }) {
+    const { translate: t } = useI18n();
     const tabelas = Object.entries(recusa.tabelas);
     // O `SofaBanner` já anuncia como alerta (role="alert"); não se envolve de novo.
     return (
-        <SofaBanner tone="warn" title="Esta importação vai sobrescrever o que já existe">
+        <SofaBanner tone="warn" title={t("orgs.backupOverwriteTitle")}>
             <p style={{ margin: 0 }}>
-                {numero(recusa.linhas)} {recusa.linhas === 1 ? "linha desta organização seria atualizada" : "linhas desta organização seriam atualizadas"} com o conteúdo do arquivo.
-                Nada foi gravado. Se é isso que você quer, autorize abaixo.
+                {t(
+                    recusa.linhas === 1
+                        ? "orgs.backupOverwriteLinesOne"
+                        : "orgs.backupOverwriteLinesMany",
+                    { count: numero(recusa.linhas) },
+                )}
             </p>
             {tabelas.length > 0 ? (
-                <table className="poph-operacao__tabela" aria-label="Linhas que seriam sobrescritas por tabela" style={{ marginTop: 8 }}>
+                <table
+                    className="poph-operacao__tabela"
+                    aria-label={t("orgs.backupOverwriteTableLabel")}
+                    style={{ marginTop: 8 }}
+                >
                     <thead>
                         <tr>
-                            <th scope="col">Tabela</th>
-                            <th scope="col">Linhas</th>
+                            <th scope="col">{t("orgs.backupTableColumn")}</th>
+                            <th scope="col">{t("orgs.backupRowsColumn")}</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -147,8 +168,11 @@ function RecusaDeSobrescrita({
             ) : null}
             {recusa.exemplos.length > 0 ? (
                 <>
-                    <p style={{ margin: "6px 0 0" }}>Exemplos do que seria atualizado:</p>
-                    <ul className="poph-operacao__conflitos" aria-label="Exemplos do que seria sobrescrito">
+                    <p style={{ margin: "6px 0 0" }}>{t("orgs.backupExamplesHeading")}</p>
+                    <ul
+                        className="poph-operacao__conflitos"
+                        aria-label={t("orgs.backupExamplesLabel")}
+                    >
                         {recusa.exemplos.map((item, indice) => (
                             <li key={`${indice}-${item}`}>{textoDeExemplo(item)}</li>
                         ))}
@@ -157,10 +181,10 @@ function RecusaDeSobrescrita({
             ) : null}
             <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 8 }}>
                 <SofaButton variant="primary" loading={importando} disabled={importando} onClick={aoAutorizar}>
-                    Sobrescrever e importar
+                    {t("orgs.backupOverwriteConfirm")}
                 </SofaButton>
                 <SofaButton variant="secondary" disabled={importando} onClick={aoCancelar}>
-                    Cancelar
+                    {t("common.cancel")}
                 </SofaButton>
             </div>
         </SofaBanner>
@@ -169,6 +193,7 @@ function RecusaDeSobrescrita({
 
 /** Relatório da importação: o que entrou, segredos a digitar de novo e o estado do índice. */
 function RelatorioDaImportacao({ relatorio }: { relatorio: RelatorioImportacao }) {
+    const { translate: t } = useI18n();
     const totais = somas(relatorio);
     const linhas = Object.entries(relatorio.tabelas).filter(
         ([, linha]) => linha.inseridas > 0 || linha.atualizadas > 0,
@@ -179,22 +204,25 @@ function RelatorioDaImportacao({ relatorio }: { relatorio: RelatorioImportacao }
         <div className="poph-operacao__relatorio" role="status" aria-live="polite">
             <p style={{ margin: "0 0 var(--pop-spacing-sm, 6px)" }}>
                 {relatorio.org.criada
-                    ? "Organização criada a partir do arquivo."
-                    : "Conteúdo do arquivo gravado nesta organização."}{" "}
-                {numero(relatorio.total)} linhas gravadas: {numero(totais.inseridas)} novas e{" "}
-                {numero(totais.atualizadas)} atualizadas.
+                    ? t("orgs.backupReportCreated")
+                    : t("orgs.backupReportWritten")}{" "}
+                {t("orgs.backupReportTotals", {
+                    total: numero(relatorio.total),
+                    inserted: numero(totais.inseridas),
+                    updated: numero(totais.atualizadas),
+                })}
                 {totais.inseridas === 0 && totais.atualizadas === 0
-                    ? " Nada mudou: o conteúdo já estava aqui."
+                    ? t("orgs.backupReportNoChange")
                     : ""}
             </p>
 
             {linhas.length > 0 ? (
-                <table className="poph-operacao__tabela" aria-label="Linhas gravadas por tabela">
+                <table className="poph-operacao__tabela" aria-label={t("orgs.backupReportTableLabel")}>
                     <thead>
                         <tr>
-                            <th scope="col">Tabela</th>
-                            <th scope="col">Novas</th>
-                            <th scope="col">Atualizadas</th>
+                            <th scope="col">{t("orgs.backupTableColumn")}</th>
+                            <th scope="col">{t("orgs.backupNewColumn")}</th>
+                            <th scope="col">{t("orgs.backupUpdatedColumn")}</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -211,28 +239,29 @@ function RelatorioDaImportacao({ relatorio }: { relatorio: RelatorioImportacao }
 
             {relatorio.segredos_a_redigitar > 0 ? (
                 <div style={{ marginTop: "var(--pop-spacing-md, 8px)" }}>
-                    <SofaBanner tone="warn" title="Segredos para digitar de novo">
+                    <SofaBanner tone="warn" title={t("orgs.backupSecretsTitle")}>
                         {relatorio.segredos_a_redigitar === 1
-                            ? "1 integração chegou sem o segredo, porque o arquivo não leva segredo."
-                            : `${numero(relatorio.segredos_a_redigitar)} integrações chegaram sem o segredo, porque o arquivo não leva segredo.`}{" "}
-                        Digite o segredo de novo na aba Integrações do agente antes de usar essas integrações.
+                            ? t("orgs.backupSecretsOne")
+                            : t("orgs.backupSecretsMany", {
+                                  count: numero(relatorio.segredos_a_redigitar),
+                              })}{" "}
+                        {t("orgs.backupSecretsAction")}
                     </SofaBanner>
                 </div>
             ) : null}
 
             <div style={{ marginTop: "var(--pop-spacing-md, 8px)" }}>
                 {indiceProntoAgora ? (
-                    <SofaBanner tone="success" title="Busca pronta">
-                        Base de conhecimento: {numero(relatorio.indice.base_conhecimento.trechos)} trechos de{" "}
-                        {numero(relatorio.indice.base_conhecimento.agentes)} agentes. Produtos:{" "}
-                        {numero(relatorio.indice.produtos.trechos)} trechos. A busca já responde com o conteúdo
-                        importado.
+                    <SofaBanner tone="success" title={t("orgs.backupIndexReadyTitle")}>
+                        {t("orgs.backupIndexReady", {
+                            chunks: numero(relatorio.indice.base_conhecimento.trechos),
+                            agents: numero(relatorio.indice.base_conhecimento.agentes),
+                            productChunks: numero(relatorio.indice.produtos.trechos),
+                        })}
                     </SofaBanner>
                 ) : (
-                    <SofaBanner tone="warn" title="Importado, índice pendente">
-                        O conteúdo entrou, mas a busca da base de conhecimento e dos produtos ainda não foi
-                        montada: o modelo de embedding não está disponível nesta instância. Quando ele estiver
-                        instalado, reindexe pela linha de comando (poph kb reindex e poph product reindex).
+                    <SofaBanner tone="warn" title={t("orgs.backupIndexPendingTitle")}>
+                        {t("orgs.backupIndexPending")}
                     </SofaBanner>
                 )}
             </div>
@@ -250,6 +279,7 @@ export type SecaoBackupProps = {
  * da tela não mexe nela.
  */
 export function ExportarImportarOrganizacao({ org }: SecaoBackupProps) {
+    const { translate: t } = useI18n();
     const idSecao = useId();
     const idEntrada = useId();
 
@@ -275,7 +305,7 @@ export function ExportarImportarOrganizacao({ org }: SecaoBackupProps) {
         try {
             const exportado = await exportarOrganizacao(org, comConversas);
             baixarArquivo(exportado);
-            setAvisoExportacao(`Arquivo "${exportado.nome}" baixado.`);
+            setAvisoExportacao(t("orgs.backupDownloaded", { name: exportado.nome }));
         } catch (erro) {
             setFalhaExportacao(falhaDeBackup(erro, "exportar"));
         } finally {
@@ -333,18 +363,16 @@ export function ExportarImportarOrganizacao({ org }: SecaoBackupProps) {
 
     return (
         <section className="poph-secao" aria-labelledby={idSecao}>
-            <h2 id={idSecao} className="poph-secao__titulo">Exportar e importar a organização</h2>
-            <p className="poph-operacao__ajuda">
-                Exportar gera um arquivo com a configuração, o catálogo, a base de conhecimento e a biblioteca
-                desta organização. Importar grava esse arquivo numa organização, sem apagar o que já existe nela.
-                Segredos de integração não vão no arquivo: depois de importar, é preciso digitá-los de novo.
-            </p>
+            <h2 id={idSecao} className="poph-secao__titulo">
+                {t("orgs.backupSectionTitle")}
+            </h2>
+            <p className="poph-operacao__ajuda">{t("orgs.backupSectionHelp")}</p>
 
-            <h3 className="poph-operacao__subtitulo">Exportar</h3>
+            <h3 className="poph-operacao__subtitulo">{t("orgs.backupExportHeading")}</h3>
             <div className="poph-pilha" style={{ gap: "var(--pop-spacing-sm, 6px)", maxWidth: 680 }}>
                 <SofaCheckbox
-                    label="Incluir conversas"
-                    description="Leva mensagens, turnos, anexos e as filas de entrada e saída. Sem isso, o arquivo traz só a configuração, o catálogo, a base e a biblioteca."
+                    label={t("orgs.backupIncludeConversations")}
+                    description={t("orgs.backupIncludeConversationsDescription")}
                     checked={comConversas}
                     disabled={exportando}
                     onChange={(evento) => setComConversas(evento.target.checked)}
@@ -356,13 +384,13 @@ export function ExportarImportarOrganizacao({ org }: SecaoBackupProps) {
                         disabled={exportando}
                         onClick={() => void exportar()}
                     >
-                        Baixar arquivo da organização
+                        {t("orgs.backupDownload")}
                     </SofaButton>
                 </div>
                 <div aria-live="polite">
                     {exportando ? (
                         <p className="poph-operacao__carregando" role="status">
-                            Gerando o arquivo da organização… isso pode demorar em organizações com biblioteca grande.
+                            {t("orgs.backupGenerating")}
                         </p>
                     ) : null}
                     {avisoExportacao && !exportando ? (
@@ -379,16 +407,24 @@ export function ExportarImportarOrganizacao({ org }: SecaoBackupProps) {
                 </div>
             </div>
 
-            <h3 className="poph-operacao__subtitulo">Importar</h3>
+            <h3 className="poph-operacao__subtitulo">{t("orgs.backupImportHeading")}</h3>
             <div className="poph-pilha" style={{ gap: "var(--pop-spacing-sm, 6px)", maxWidth: 680 }}>
                 <p className="poph-operacao__ajuda" style={{ margin: 0 }}>
-                    Importar não apaga o que já existe nesta organização. Se algum recurso do arquivo já existir
-                    aqui com o mesmo nome, a importação para antes de gravar e nada é alterado.
+                    {t("orgs.backupImportHelp")}
                 </p>
                 <SofaField
-                    label="Arquivo de backup"
-                    hint={`Arquivo .json gerado por esta tela ou pelo comando de exportar. Até ${tamanhoEmMb(LIMITE_IMPORTACAO_BYTES)}.`}
-                    error={arquivoRecusado && arquivo ? `O arquivo tem ${tamanhoEmMb(arquivo.size)}, acima do limite de ${LIMITE_MB} MB. Nada foi enviado.` : undefined}
+                    label={t("orgs.backupFileLabel")}
+                    hint={t("orgs.backupFileHint", {
+                        limit: tamanhoEmMb(LIMITE_IMPORTACAO_BYTES),
+                    })}
+                    error={
+                        arquivoRecusado && arquivo
+                            ? t("orgs.backupFileTooLarge", {
+                                  size: tamanhoEmMb(arquivo.size),
+                                  limit: LIMITE_MB,
+                              })
+                            : undefined
+                    }
                     htmlFor={idEntrada}
                 >
                     {(controle) => (
@@ -405,7 +441,10 @@ export function ExportarImportarOrganizacao({ org }: SecaoBackupProps) {
                 </SofaField>
                 {arquivo && !arquivoRecusado ? (
                     <p className="poph-mono-mudo" style={{ margin: 0 }}>
-                        Escolhido: {arquivo.name} · {tamanhoEmMb(arquivo.size)} (dentro do limite)
+                        {t("orgs.backupFileChosen", {
+                            name: arquivo.name,
+                            size: tamanhoEmMb(arquivo.size),
+                        })}
                     </p>
                 ) : null}
                 <div>
@@ -415,14 +454,14 @@ export function ExportarImportarOrganizacao({ org }: SecaoBackupProps) {
                         loading={importando}
                         onClick={() => setConfirmando(true)}
                     >
-                        Importar arquivo nesta organização…
+                        {t("orgs.backupImportButton")}
                     </SofaButton>
                 </div>
 
                 <div aria-live="polite">
                     {importando ? (
                         <p className="poph-operacao__carregando" role="status">
-                            Importando o arquivo… não feche a tela até aparecer o resultado.
+                            {t("orgs.backupImporting")}
                         </p>
                     ) : null}
                     {falhaImportacao ? (
@@ -448,15 +487,18 @@ export function ExportarImportarOrganizacao({ org }: SecaoBackupProps) {
                 onOpenChange={(aberto) => {
                     if (!aberto && !importando) setConfirmando(false);
                 }}
-                title="Importar este arquivo nesta organização?"
+                title={t("orgs.backupConfirmTitle")}
                 description={
                     arquivo
-                        ? `O arquivo ${arquivo.name} (${tamanhoEmMb(arquivo.size)}) será gravado nesta organização. A importação não apaga o que já existe aqui. Se algum recurso tiver o mesmo nome, nada é gravado. Segredos de integração precisam ser digitados de novo.`
-                        : "Nenhum arquivo escolhido."
+                        ? t("orgs.backupConfirmDescription", {
+                              name: arquivo.name,
+                              size: tamanhoEmMb(arquivo.size),
+                          })
+                        : t("orgs.backupConfirmNoFile")
                 }
-                confirmLabel="Importar agora"
-                cancelLabel="Cancelar"
-                closeLabel="Fechar confirmação de importação"
+                confirmLabel={t("orgs.backupConfirmAction")}
+                cancelLabel={t("common.cancel")}
+                closeLabel={t("orgs.backupConfirmClose")}
                 onConfirm={() => void importar(false)}
                 loading={importando}
             />
