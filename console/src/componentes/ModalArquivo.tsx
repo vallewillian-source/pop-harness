@@ -27,6 +27,7 @@ import {
     tamanhoEmMb,
     type Arquivo,
 } from "../api/arquivos";
+import { translate, useI18n } from "../i18n";
 
 /** Tipos que o servidor aceita (docs/BIBLIOTECA_ARQUIVOS.md e docs/ARQUIVOS.md). */
 const TIPOS_ACEITOS =
@@ -60,14 +61,15 @@ function excessoLegivel(bytes: number): string {
 
 /** Mensagem de tamanho para o arquivo escolhido, ou `null` se cabe no limite. */
 export function erroDeTamanho(bytes: number): string | null {
-    if (bytes === 0) return "o arquivo está vazio";
+    if (bytes === 0) return translate("files.fileEmpty");
     if (bytes > LIMITE_ARQUIVO_BYTES) {
-        return `o arquivo passa do limite de 16 MB por arquivo em ${excessoLegivel(bytes)}. Reduza ou comprima o arquivo antes de enviar.`;
+        return translate("files.fileTooLarge", { excess: excessoLegivel(bytes) });
     }
     return null;
 }
 
 export function ModalArquivo({ org, agente, aberto, aoFechar, aoEnviar }: ModalArquivoProps) {
+    const { translate: t } = useI18n();
     const [escolhido, setEscolhido] = useState<File | null>(null);
     const [nome, setNome] = useState("");
     const [descricao, setDescricao] = useState("");
@@ -98,16 +100,18 @@ export function ModalArquivo({ org, agente, aberto, aoFechar, aoEnviar }: ModalA
     function validar(): Erros {
         const novos: Erros = {};
         if (!escolhido) {
-            novos.arquivo = "escolha o arquivo a enviar";
+            novos.arquivo = t("files.chooseFile");
         } else {
             const tamanho = erroDeTamanho(escolhido.size);
             if (tamanho) novos.arquivo = tamanho;
         }
         if (nome.trim().length > LIMITE_NOME_ARQUIVO) {
-            novos.nome = `o nome aceita até ${LIMITE_NOME_ARQUIVO} caracteres`;
+            novos.nome = t("files.nameTooLong", { limit: LIMITE_NOME_ARQUIVO });
         }
         if (descricao.trim().length > LIMITE_DESCRICAO_ARQUIVO) {
-            novos.descricao = `a descrição aceita até ${LIMITE_DESCRICAO_ARQUIVO} caracteres`;
+            novos.descricao = t("files.descriptionTooLong", {
+                limit: LIMITE_DESCRICAO_ARQUIVO,
+            });
         }
         return novos;
     }
@@ -135,10 +139,13 @@ export function ModalArquivo({ org, agente, aberto, aoFechar, aoEnviar }: ModalA
                     setErros({ arquivo: motivo });
                     return;
                 }
-                setErroGeral(`${falha.message} (código ${falha.codigo})`);
+                setErroGeral(t("files.apiErrorWithCode", {
+                    message: falha.message,
+                    code: falha.codigo,
+                }));
                 return;
             }
-            setErroGeral("falha inesperada ao enviar o arquivo");
+            setErroGeral(t("files.uploadUnexpected"));
         } finally {
             setEnviando(false);
         }
@@ -150,15 +157,15 @@ export function ModalArquivo({ org, agente, aberto, aoFechar, aoEnviar }: ModalA
             onOpenChange={(novo) => {
                 if (!novo && !enviando) aoFechar();
             }}
-            title="Enviar arquivo ao agente"
-            description="O agente só envia ao cliente o que estiver nesta biblioteca. Ele escolhe pelo nome e pela descrição."
-            closeLabel="Fechar envio de arquivo"
+            title={t("files.uploadTitle")}
+            description={t("files.uploadDescription")}
+            closeLabel={t("files.uploadClose")}
             size="md"
             id="poph-formulario-arquivo"
             footer={
                 <>
                     <SofaButton variant="secondary" disabled={enviando} onClick={aoFechar}>
-                        Cancelar
+                        {t("common.cancel")}
                     </SofaButton>
                     <SofaButton
                         variant="primary"
@@ -166,7 +173,7 @@ export function ModalArquivo({ org, agente, aberto, aoFechar, aoEnviar }: ModalA
                         onClick={() => void enviar()}
                         loading={enviando}
                     >
-                        Enviar arquivo
+                        {t("files.upload")}
                     </SofaButton>
                 </>
             }
@@ -179,14 +186,14 @@ export function ModalArquivo({ org, agente, aberto, aoFechar, aoEnviar }: ModalA
                 noValidate
             >
                 {erroGeral && (
-                    <SofaBanner tone="danger" title="Não foi possível enviar">
+                    <SofaBanner tone="danger" title={t("files.uploadFailedTitle")}>
                         {erroGeral}
                     </SofaBanner>
                 )}
 
                 <SofaField
-                    label="Arquivo"
-                    hint={`PDF, Word (.docx), Excel (.xlsx ou .xls), PowerPoint (.pptx) ou imagem (JPEG, PNG, WebP, GIF). Até 16 MB.`}
+                    label={t("files.fileLabel")}
+                    hint={t("files.fileHint")}
                     error={erros.arquivo}
                     required
                     htmlFor="poph-arquivo-escolha"
@@ -205,14 +212,16 @@ export function ModalArquivo({ org, agente, aberto, aoFechar, aoEnviar }: ModalA
                 </SofaField>
                 {escolhido && !erros.arquivo && (
                     <p className="poph-mono-mudo" style={{ margin: 0 }}>
-                        Escolhido: {escolhido.name} · {tamanhoEmMb(escolhido.size)} (dentro do
-                        limite de 16 MB)
+                        {t("files.chosenFile", {
+                            name: escolhido.name,
+                            size: tamanhoEmMb(escolhido.size),
+                        })}
                     </p>
                 )}
 
                 <SofaField
-                    label="Nome mostrado ao cliente"
-                    hint={`Opcional. Se ficar vazio, usa o nome do arquivo. Até ${LIMITE_NOME_ARQUIVO} caracteres.`}
+                    label={t("files.nameLabel")}
+                    hint={t("files.nameHint", { limit: LIMITE_NOME_ARQUIVO })}
                     error={erros.nome}
                     htmlFor="poph-arquivo-nome"
                 >
@@ -227,8 +236,8 @@ export function ModalArquivo({ org, agente, aberto, aoFechar, aoEnviar }: ModalA
                 </SofaField>
 
                 <SofaField
-                    label="Descrição para o agente"
-                    hint={`Opcional, mas é o que o agente lê para decidir quando enviar. Até ${LIMITE_DESCRICAO_ARQUIVO} caracteres.`}
+                    label={t("files.descriptionLabel")}
+                    hint={t("files.descriptionHint", { limit: LIMITE_DESCRICAO_ARQUIVO })}
                     error={erros.descricao}
                     htmlFor="poph-arquivo-descricao"
                 >

@@ -28,11 +28,13 @@ import {
     LIMITE_NOME_GRUPO,
     type GrupoConhecimento,
 } from "../api/conhecimento";
+import { useI18n } from "../i18n";
+import type { TranslationKey } from "../i18n/catalog";
 
-const SITUACOES = [
-    { valor: "active", rotulo: "Ativo" },
-    { valor: "inactive", rotulo: "Inativo" },
-    { valor: "archived", rotulo: "Arquivado" },
+const SITUACOES: { valor: string; labelKey: TranslationKey }[] = [
+    { valor: "active", labelKey: "knowledge.statusActive" },
+    { valor: "inactive", labelKey: "knowledge.statusInactive" },
+    { valor: "archived", labelKey: "knowledge.statusArchived" },
 ];
 
 export type ModalGrupoProps = {
@@ -62,6 +64,7 @@ function semDescribedBy(controle: SofaFieldControlProps) {
 }
 
 export function ModalGrupo({ org, aberto, aoFechar, grupo, aoSalvar }: ModalGrupoProps) {
+    const { translate: t } = useI18n();
     const editando = grupo !== null;
     const [nome, setNome] = useState("");
     const [descricao, setDescricao] = useState("");
@@ -87,9 +90,9 @@ export function ModalGrupo({ org, aberto, aoFechar, grupo, aoSalvar }: ModalGrup
     function validar(): Erros {
         const novos: Erros = {};
         if (!nome.trim()) {
-            novos.nome = "informe o nome do grupo";
+            novos.nome = t("knowledge.groupNameRequired");
         } else if (nome.trim().length > LIMITE_NOME_GRUPO) {
-            novos.nome = `o nome aceita até ${LIMITE_NOME_GRUPO} caracteres`;
+            novos.nome = t("knowledge.groupNameTooLong", { limit: LIMITE_NOME_GRUPO });
         }
         return novos;
     }
@@ -105,7 +108,10 @@ export function ModalGrupo({ org, aberto, aoFechar, grupo, aoSalvar }: ModalGrup
             setErros({ [alvo]: motivo });
             return;
         }
-        setErroGeral(`${falha.message} (código ${falha.codigo})`);
+        setErroGeral(t("knowledge.apiErrorWithCode", {
+            message: falha.message,
+            code: falha.codigo,
+        }));
     }
 
     async function salvar(evento?: FormEvent) {
@@ -147,9 +153,9 @@ export function ModalGrupo({ org, aberto, aoFechar, grupo, aoSalvar }: ModalGrup
                 }
                 if (typeof versaoAtual === "number") setVersao(versaoAtual);
                 setConflito(
-                    `Outra pessoa salvou este grupo antes de você${
-                        typeof versaoAtual === "number" ? ` (agora na versão ${versaoAtual})` : ""
-                    }. O que você digitou foi mantido: revise e salve de novo.`,
+                    typeof versaoAtual === "number"
+                        ? t("knowledge.groupConflictWithVersion", { version: versaoAtual })
+                        : t("knowledge.groupConflict"),
                 );
                 return;
             }
@@ -157,7 +163,7 @@ export function ModalGrupo({ org, aberto, aoFechar, grupo, aoSalvar }: ModalGrup
                 mostrarErroDaApi(falha);
                 return;
             }
-            setErroGeral("falha inesperada ao salvar o grupo");
+            setErroGeral(t("knowledge.groupSaveUnexpected"));
         } finally {
             setEnviando(false);
         }
@@ -169,19 +175,19 @@ export function ModalGrupo({ org, aberto, aoFechar, grupo, aoSalvar }: ModalGrup
             onOpenChange={(novo) => {
                 if (!novo && !enviando) aoFechar();
             }}
-            title={editando ? "Editar grupo" : "Novo grupo"}
+            title={editando ? t("knowledge.groupEditTitle") : t("knowledge.groupCreateTitle")}
             description={
                 editando
-                    ? `Alterando ${grupo?.name}. O salvamento usa a versão lida.`
-                    : "Um grupo reúne trechos que o agente consulta juntos (políticas, horários, perguntas frequentes)."
+                    ? t("knowledge.groupEditDescription", { name: grupo?.name ?? "" })
+                    : t("knowledge.groupCreateDescription")
             }
-            closeLabel="Fechar formulário de grupo"
+            closeLabel={t("knowledge.groupFormClose")}
             size="md"
             id="poph-formulario-grupo"
             footer={
                 <>
                     <SofaButton variant="secondary" disabled={enviando} onClick={aoFechar}>
-                        Cancelar
+                        {t("common.cancel")}
                     </SofaButton>
                     <SofaButton
                         variant="primary"
@@ -189,7 +195,9 @@ export function ModalGrupo({ org, aberto, aoFechar, grupo, aoSalvar }: ModalGrup
                         onClick={() => void salvar()}
                         loading={enviando}
                     >
-                        {editando ? "Salvar alterações" : "Criar grupo"}
+                        {editando
+                            ? t("knowledge.saveChanges")
+                            : t("knowledge.groupCreateSubmit")}
                     </SofaButton>
                 </>
             }
@@ -202,19 +210,19 @@ export function ModalGrupo({ org, aberto, aoFechar, grupo, aoSalvar }: ModalGrup
                 noValidate
             >
                 {conflito && (
-                    <SofaBanner tone="warn" title="Versão desatualizada">
+                    <SofaBanner tone="warn" title={t("knowledge.conflictTitle")}>
                         {conflito}
                     </SofaBanner>
                 )}
                 {erroGeral && (
-                    <SofaBanner tone="danger" title="Não foi possível salvar">
+                    <SofaBanner tone="danger" title={t("knowledge.saveFailedTitle")}>
                         {erroGeral}
                     </SofaBanner>
                 )}
 
                 <SofaField
-                    label="Nome"
-                    hint={`Único na organização, sem diferenciar maiúsculas de minúsculas. Até ${LIMITE_NOME_GRUPO} caracteres.`}
+                    label={t("knowledge.nameLabel")}
+                    hint={t("knowledge.groupNameHint", { limit: LIMITE_NOME_GRUPO })}
                     error={erros.nome}
                     required
                     htmlFor="poph-grupo-nome"
@@ -230,8 +238,8 @@ export function ModalGrupo({ org, aberto, aoFechar, grupo, aoSalvar }: ModalGrup
                 </SofaField>
 
                 <SofaField
-                    label="Descrição"
-                    hint="Opcional. Diz para que serve o grupo, para quem opera a base."
+                    label={t("knowledge.descriptionLabel")}
+                    hint={t("knowledge.groupDescriptionHint")}
                     error={erros.descricao}
                     htmlFor="poph-grupo-descricao"
                 >
@@ -247,8 +255,8 @@ export function ModalGrupo({ org, aberto, aoFechar, grupo, aoSalvar }: ModalGrup
 
                 {editando && (
                     <SofaField
-                        label="Situação"
-                        hint="Grupo inativo sai da consulta do agente depois da próxima sincronização; os itens continuam no banco."
+                        label={t("knowledge.statusLabel")}
+                        hint={t("knowledge.groupStatusHint")}
                         htmlFor="poph-grupo-situacao"
                     >
                         {(controle) => (
@@ -259,7 +267,7 @@ export function ModalGrupo({ org, aberto, aoFechar, grupo, aoSalvar }: ModalGrup
                             >
                                 {SITUACOES.map((opcao) => (
                                     <option key={opcao.valor} value={opcao.valor}>
-                                        {opcao.rotulo}
+                                        {t(opcao.labelKey)}
                                     </option>
                                 ))}
                             </SofaSelect>

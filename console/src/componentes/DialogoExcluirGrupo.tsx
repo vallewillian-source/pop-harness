@@ -9,6 +9,7 @@
 import { useEffect, useState } from "react";
 import { SofaSkeleton } from "@sofacoding/sofa-ui";
 import { listarItens, excluirGrupo, type GrupoConhecimento, type ItemConhecimento } from "../api/conhecimento";
+import { useI18n } from "../i18n";
 import { DialogoExclusao } from "./DialogoExclusao";
 
 export type DialogoExcluirGrupoProps = {
@@ -22,10 +23,6 @@ export type DialogoExcluirGrupoProps = {
     aoExcluir: () => void;
 };
 
-function plural(quantidade: number, singular: string, plurala: string): string {
-    return `${quantidade} ${quantidade === 1 ? singular : plurala}`;
-}
-
 export function DialogoExcluirGrupo({
     aberto,
     aoFechar,
@@ -34,6 +31,7 @@ export function DialogoExcluirGrupo({
     nomesDosAgentes,
     aoExcluir,
 }: DialogoExcluirGrupoProps) {
+    const { translate: t } = useI18n();
     const [carregando, setCarregando] = useState(false);
     const [itens, setItens] = useState<ItemConhecimento[] | null>(null);
     const [falhaAoContar, setFalhaAoContar] = useState(false);
@@ -70,33 +68,44 @@ export function DialogoExcluirGrupo({
         if (falhaAoContar || itens === null) {
             return (
                 <p style={{ margin: 0, color: "var(--pop-text-secondary)", lineHeight: 1.6 }}>
-                    Não consegui contar os trechos deste grupo. A exclusão apaga o grupo com todos
-                    os trechos e vínculos dele.
+                    {t("knowledge.deleteGroupCannotCount")}
                 </p>
             );
         }
+        const titles =
+            itens
+                .slice(0, 6)
+                .map((item) => item.title)
+                .join(", ") +
+            (itens.length > 6
+                ? t("knowledge.deleteGroupMoreItems", { count: itens.length - 6 })
+                : "");
         return (
             <div className="poph-pilha" style={{ gap: "var(--pop-spacing-sm, 8px)" }}>
                 <p style={{ margin: 0, color: "var(--pop-text-secondary)", lineHeight: 1.6 }}>
                     {itens.length === 0
-                        ? "O grupo está vazio: nenhum trecho será apagado."
-                        : `O grupo tem ${plural(itens.length, "trecho", "trechos")}. Excluir apaga ${
-                              itens.length === 1 ? "esse trecho" : "todos eles"
-                          }: ${itens
-                              .slice(0, 6)
-                              .map((item) => item.title)
-                              .join(", ")}${
-                              itens.length > 6 ? ` e mais ${itens.length - 6}` : ""
-                          }.`}
+                        ? t("knowledge.deleteGroupEmpty")
+                        : t(
+                              itens.length === 1
+                                  ? "knowledge.deleteGroupItemsOne"
+                                  : "knowledge.deleteGroupItemsMany",
+                              { count: itens.length, titles },
+                          )}
                 </p>
                 <p style={{ margin: 0, color: "var(--pop-text-secondary)", lineHeight: 1.6 }}>
                     {agentes.length === 0
-                        ? "Nenhum agente usa este grupo hoje."
-                        : `${plural(agentes.length, "agente usa", "agentes usam")} este grupo e ${
-                              agentes.length === 1 ? "fica" : "ficam"
-                          } sem ele: ${agentes
-                              .map((id) => nomesDosAgentes[id] ?? id)
-                              .join(", ")}.`}
+                        ? t("knowledge.deleteGroupNoAgents")
+                        : t(
+                              agentes.length === 1
+                                  ? "knowledge.deleteGroupAgentsOne"
+                                  : "knowledge.deleteGroupAgentsMany",
+                              {
+                                  count: agentes.length,
+                                  names: agentes
+                                      .map((id) => nomesDosAgentes[id] ?? id)
+                                      .join(", "),
+                              },
+                          )}
                 </p>
             </div>
         );
@@ -106,11 +115,11 @@ export function DialogoExcluirGrupo({
         <DialogoExclusao
             aberto={aberto}
             aoFechar={aoFechar}
-            titulo="Excluir grupo?"
-            descricao={`O grupo ${grupo.name} sai do sistema com os trechos e os vínculos. Não há como desfazer.`}
+            titulo={t("knowledge.deleteGroupTitle")}
+            descricao={t("knowledge.deleteGroupDescription", { name: grupo.name })}
             recurso={grupo.name}
-            rotuloRecurso="nome do grupo"
-            rotuloConfirmar="Excluir grupo"
+            rotuloRecurso={t("knowledge.deleteGroupResourceLabel")}
+            rotuloConfirmar={t("knowledge.deleteGroupConfirm")}
             consequencia={consequencia()}
             permiteForcar={false}
             aoConfirmar={async () => {

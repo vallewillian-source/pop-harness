@@ -36,6 +36,9 @@ import {
 import { DialogoExclusao } from "../componentes/DialogoExclusao";
 import { useGuardaDeAlteracoes } from "../componentes/GuardaAlteracoes";
 import { ModalArquivo } from "../componentes/ModalArquivo";
+import { formatNumber } from "../i18n/format";
+import { useI18n } from "../i18n";
+import type { TranslationKey } from "../i18n/catalog";
 import "../estilos/arquivos.css";
 
 const coluna = createColumnHelper<Arquivo>();
@@ -43,12 +46,13 @@ const coluna = createColumnHelper<Arquivo>();
 /** Tamanho legível: KB abaixo de 1 MB, MB acima. */
 function tamanhoLegivel(bytes: number): string {
     if (bytes < 1024 * 1024) {
-        return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+        return `${formatNumber(Math.max(1, Math.round(bytes / 1024)))} KB`;
     }
     return tamanhoEmMb(bytes);
 }
 
 export function AgenteArquivos() {
+    const { translate: t, locale } = useI18n();
     const { orgId = "", agentId = "" } = useParams();
     const guarda = useGuardaDeAlteracoes();
 
@@ -62,7 +66,7 @@ export function AgenteArquivos() {
 
     const [modalEnvio, setModalEnvio] = useState(false);
     const [paraExcluir, setParaExcluir] = useState<Arquivo | null>(null);
-    const [aviso, setAviso] = useState<string | null>(null);
+    const [aviso, setAviso] = useState<{ key: TranslationKey; name: string } | null>(null);
 
     const carregarArquivos = useCallback(async () => {
         setCarregandoArquivos(true);
@@ -71,24 +75,24 @@ export function AgenteArquivos() {
             setArquivos(await listarArquivos(orgId, agentId));
         } catch (falha) {
             setErroArquivos(
-                falha instanceof Error ? falha.message : "falha ao carregar a biblioteca",
+                falha instanceof Error ? falha.message : t("files.libraryLoadFailed"),
             );
             setArquivos([]);
         } finally {
             setCarregandoArquivos(false);
         }
-    }, [orgId, agentId]);
+    }, [orgId, agentId, t]);
 
     const carregar = useCallback(async () => {
         setErroDeCarga(null);
         try {
             setAgente(await obterAgente(orgId, agentId));
         } catch (falha) {
-            setErroDeCarga(falha instanceof Error ? falha.message : "falha ao carregar o agente");
+            setErroDeCarga(falha instanceof Error ? falha.message : t("files.agentLoadFailed"));
             return;
         }
         void carregarArquivos();
-    }, [orgId, agentId, carregarArquivos]);
+    }, [orgId, agentId, carregarArquivos, t]);
 
     useEffect(() => {
         void carregar();
@@ -100,7 +104,7 @@ export function AgenteArquivos() {
     const colunas = useMemo(
         () => [
             coluna.accessor("name", {
-                header: "Arquivo",
+                header: t("files.columnFile"),
                 cell: (info) => {
                     const arquivo = info.row.original;
                     return (
@@ -114,11 +118,11 @@ export function AgenteArquivos() {
                 },
             }),
             coluna.accessor("mime", {
-                header: "Tipo",
+                header: t("files.columnType"),
                 cell: (info) => <span className="poph-mono-mudo">{info.getValue()}</span>,
             }),
             coluna.accessor("size_bytes", {
-                header: "Tamanho",
+                header: t("files.columnSize"),
                 cell: (info) => tamanhoLegivel(info.getValue()),
             }),
             coluna.accessor("sha256", {
@@ -131,12 +135,12 @@ export function AgenteArquivos() {
             }),
             coluna.display({
                 id: "acoes",
-                header: "Ações",
+                header: t("files.columnActions"),
                 cell: (info) => {
                     const arquivo = info.row.original;
                     return (
                         <SofaIconButton
-                            label={`Excluir arquivo ${arquivo.name}`}
+                            label={t("files.deleteFileLabel", { name: arquivo.name })}
                             onClick={() => {
                                 setAviso(null);
                                 setParaExcluir(arquivo);
@@ -148,24 +152,24 @@ export function AgenteArquivos() {
                 },
             }),
         ],
-        [],
+        [locale, t],
     );
 
     if (!agente && erroDeCarga) {
         return (
             <div className="poph-pagina">
                 <SofaErrorState
-                    title="Não consegui carregar os arquivos do agente"
-                    description="A instância não respondeu à leitura do agente. Tente de novo; se persistir, confira a saúde do servidor."
+                    title={t("files.loadErrorTitle")}
+                    description={t("files.loadErrorDescription")}
                     details={erroDeCarga}
-                    retry={{ label: "Tentar de novo", onClick: () => void carregar() }}
+                    retry={{ label: t("files.retry"), onClick: () => void carregar() }}
                     action={
                         <SofaButton
                             variant="subtle"
                             icon={<IconArrowLeft aria-hidden="true" />}
                             onClick={() => guarda.tentarNavegar(`/orgs/${orgId}/agents`)}
                         >
-                            Voltar para agentes
+                            {t("files.backToAgents")}
                         </SofaButton>
                     }
                 />
@@ -187,25 +191,25 @@ export function AgenteArquivos() {
     } else if (erroArquivos) {
         corpo = (
             <SofaErrorState
-                title="Não consegui carregar a biblioteca"
-                description="A lista de arquivos não respondeu. Tente de novo."
+                title={t("files.libraryErrorTitle")}
+                description={t("files.libraryErrorDescription")}
                 details={erroArquivos}
-                retry={{ label: "Tentar de novo", onClick: () => void carregarArquivos() }}
+                retry={{ label: t("files.retry"), onClick: () => void carregarArquivos() }}
             />
         );
     } else if (arquivos.length === 0) {
         corpo = (
             <SofaEmptyState
                 icon={<IconFile aria-hidden="true" />}
-                title="Nenhum arquivo na biblioteca"
-                description="Sem arquivo aqui, o agente não tem o que enviar ao cliente. Envie PDFs, planilhas, apresentações ou imagens de até 16 MB."
+                title={t("files.emptyTitle")}
+                description={t("files.emptyDescription")}
                 action={
                     <SofaButton
                         variant="primary"
                         icon={<IconPlus aria-hidden="true" />}
                         onClick={() => setModalEnvio(true)}
                     >
-                        Enviar primeiro arquivo
+                        {t("files.uploadFirst")}
                     </SofaButton>
                 }
             />
@@ -214,12 +218,16 @@ export function AgenteArquivos() {
         corpo = (
             <SofaTable
                 className="poph-arquivos__tabela"
-                label="Biblioteca de arquivos do agente"
+                label={t("files.tableLabel")}
                 columns={colunas}
                 data={arquivos}
                 getRowId={(arquivo) => arquivo.id}
                 isLoading={carregandoArquivos}
-                footerMeta={({ total }) => (total === 1 ? "1 arquivo" : `${total} arquivos`)}
+                footerMeta={({ total }) =>
+                    total === 1
+                        ? t("files.countOne")
+                        : t("files.countMany", { total })
+                }
             />
         );
     }
@@ -232,20 +240,20 @@ export function AgenteArquivos() {
                 slug={agente.slug}
                 situacao={agente.status}
                 organizacao={nomeDaOrg}
-                descricao="arquivos que o agente pode enviar ao cliente"
+                descricao={t("files.headerDescription")}
             />
 
             <AbasDoAgente org={orgId} agente={agentId} ativa="files" nome={agente.name} model={agente.model ?? null} />
 
             {aviso && (
                 <p className="poph-mono-mudo" style={{ margin: 0 }} role="status">
-                    {aviso}
+                    {t(aviso.key, { name: aviso.name })}
                 </p>
             )}
 
             <SecaoDoAgente
-                titulo="Biblioteca de arquivos"
-                descricao="O agente só envia ao cliente o que está aqui. Ele escolhe pelo nome e pela descrição; nunca escolhe um caminho no disco. Limite: 16 MB por arquivo."
+                titulo={t("files.sectionTitle")}
+                descricao={t("files.sectionDescription")}
                 acoes={
                     <>
                         <SofaButton
@@ -255,7 +263,7 @@ export function AgenteArquivos() {
                             onClick={() => void carregarArquivos()}
                             loading={carregandoArquivos && arquivos.length > 0}
                         >
-                            Atualizar
+                            {t("files.refresh")}
                         </SofaButton>
                         <SofaButton
                             variant="primary"
@@ -263,7 +271,7 @@ export function AgenteArquivos() {
                             icon={<IconPlus aria-hidden="true" />}
                             onClick={() => setModalEnvio(true)}
                         >
-                            Enviar arquivo
+                            {t("files.upload")}
                         </SofaButton>
                     </>
                 }
@@ -278,22 +286,22 @@ export function AgenteArquivos() {
                 aoFechar={() => setModalEnvio(false)}
                 aoEnviar={(arquivo) => {
                     setArquivos((atuais) => [arquivo, ...atuais.filter((a) => a.id !== arquivo.id)]);
-                    setAviso(`Arquivo "${arquivo.name}" enviado à biblioteca.`);
+                    setAviso({ key: "files.uploadedNotice", name: arquivo.name });
                 }}
             />
 
             <DialogoExclusao
                 aberto={paraExcluir !== null}
                 aoFechar={() => setParaExcluir(null)}
-                titulo="Excluir arquivo?"
+                titulo={t("files.deleteTitle")}
                 descricao={
                     paraExcluir
-                        ? `O agente deixa de poder enviar “${paraExcluir.name}” ao cliente. Não há como desfazer; para voltar, é preciso enviar o arquivo de novo.`
+                        ? t("files.deleteDescription", { name: paraExcluir.name })
                         : ""
                 }
                 recurso={paraExcluir?.name ?? ""}
-                rotuloRecurso="nome do arquivo"
-                rotuloConfirmar="Excluir arquivo"
+                rotuloRecurso={t("files.deleteResourceLabel")}
+                rotuloConfirmar={t("files.deleteConfirm")}
                 aoConfirmar={async () => {
                     if (!paraExcluir) return;
                     await excluirArquivo(orgId, agentId, paraExcluir.id);
@@ -301,7 +309,7 @@ export function AgenteArquivos() {
                 aoExcluir={() => {
                     if (paraExcluir) {
                         setArquivos((atuais) => atuais.filter((a) => a.id !== paraExcluir.id));
-                        setAviso(`Arquivo "${paraExcluir.name}" removido da biblioteca.`);
+                        setAviso({ key: "files.removedNotice", name: paraExcluir.name });
                     }
                 }}
             />
