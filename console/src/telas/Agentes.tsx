@@ -24,6 +24,7 @@ import {
 import { listarAgentes, type Agente } from "../api/agentes";
 import { listarEstrutura, type Departamento } from "../api/estrutura";
 import { obterOrg } from "../api/orgs";
+import { translate, useI18n } from "../i18n";
 import "../estilos/agentes.css";
 
 const coluna = createColumnHelper<Agente>();
@@ -43,17 +44,18 @@ function classeDaSituacao(situacao: string): string {
 function rotuloDaSituacao(situacao: string): string {
     switch (situacao) {
         case "active":
-            return "Ativo";
+            return translate("agents.agentStatusActive");
         case "inactive":
-            return "Inativo";
+            return translate("agents.agentStatusInactive");
         case "archived":
-            return "Arquivado";
+            return translate("agents.agentStatusArchived");
         default:
             return situacao;
     }
 }
 
 export function Agentes() {
+    const { locale, translate: t } = useI18n();
     const { orgId = "" } = useParams();
     const navegar = useNavigate();
     const [agentes, setAgentes] = useState<Agente[]>([]);
@@ -69,11 +71,11 @@ export function Agentes() {
             const lista = await listarAgentes(orgId);
             setAgentes(lista);
         } catch (falha) {
-            setErro(falha instanceof Error ? falha.message : "falha ao carregar os agentes");
+            setErro(falha instanceof Error ? falha.message : t("agents.loadFailed"));
         } finally {
             setCarregando(false);
         }
-    }, [orgId]);
+    }, [orgId, t]);
 
     useEffect(() => {
         void carregar();
@@ -97,7 +99,7 @@ export function Agentes() {
     const colunas = useMemo(
         () => [
             coluna.accessor("name", {
-                header: "Agente",
+                header: t("agents.listAgent"),
                 cell: (info) => {
                     const agente = info.row.original;
                     const atenuado = agente.status !== "active";
@@ -112,7 +114,7 @@ export function Agentes() {
                 },
             }),
             coluna.accessor("status", {
-                header: "Situação",
+                header: t("agents.listStatus"),
                 size: 130,
                 cell: (info) => (
                     <span className={`poph-status ${classeDaSituacao(info.getValue())}`}>
@@ -122,7 +124,7 @@ export function Agentes() {
                 ),
             }),
             coluna.accessor("default_department_id", {
-                header: "Departamento padrão",
+                header: t("agents.listDefaultDepartment"),
                 cell: (info) => {
                     const atenuado = info.row.original.status !== "active";
                     return (
@@ -133,13 +135,13 @@ export function Agentes() {
                 },
             }),
             coluna.accessor("version", {
-                header: "Versão",
+                header: t("agents.listVersion"),
                 size: 90,
                 cell: (info) => <span className="poph-mono-mudo">v{info.getValue()}</span>,
             }),
             coluna.display({
                 id: "acoes",
-                header: "Ações",
+                header: t("agents.listActions"),
                 cell: (info) => (
                     <div className="poph-agentes__acoes">
                         <SofaButton
@@ -149,13 +151,13 @@ export function Agentes() {
                                 navegar(`/orgs/${orgId}/agents/${info.row.original.id}/instructions`)
                             }
                         >
-                            Abrir instruções
+                            {t("agents.openInstructions")}
                         </SofaButton>
                     </div>
                 ),
             }),
         ],
-        [navegar, orgId, nomeDoDepartamento],
+        [navegar, orgId, nomeDoDepartamento, t, locale],
     );
 
     return (
@@ -163,17 +165,18 @@ export function Agentes() {
             <div className="poph-pagina__topo">
                 <div>
                     <p className="poph-agentes__contexto">
-                        {nomeDaOrg ? `Organização · ${nomeDaOrg}` : "Organização"}
+                        {nomeDaOrg
+                            ? t("agents.orgContextWithName", { name: nomeDaOrg })
+                            : t("agents.orgContext")}
                     </p>
                     <h1 className="poph-pagina__titulo">
-                        Agentes de atendimento
+                        {t("agents.pageTitle")}
                         {!carregando && (
                             <span className="poph-agentes__contagem">({agentes.length})</span>
                         )}
                     </h1>
                     <p className="poph-pagina__descricao">
-                        Cada agente tem instruções, base, catálogo e integrações próprios. Selecione um
-                        para configurar.
+                        {t("agents.pageDescription")}
                     </p>
                 </div>
                 <div className="poph-pagina__acoes">
@@ -183,22 +186,22 @@ export function Agentes() {
                         onClick={() => void carregar()}
                         loading={carregando}
                     >
-                        Atualizar
+                        {t("agents.refresh")}
                     </SofaButton>
                 </div>
             </div>
 
             {erro && !carregando ? (
                 <SofaErrorState
-                    title="Não consegui carregar os agentes"
-                    description="A instância não respondeu à consulta. Verifique se o processo `poph serve` está no ar e tente de novo."
+                    title={t("agents.loadErrorTitle")}
+                    description={t("agents.loadErrorDescription")}
                     details={erro}
-                    retry={{ label: "Tentar de novo", onClick: () => void carregar() }}
+                    retry={{ label: t("agents.retry"), onClick: () => void carregar() }}
                 />
             ) : (
                 <SofaTable
                     className="poph-agentes__tabela"
-                    label="Agentes de atendimento"
+                    label={t("agents.pageTitle")}
                     columns={colunas}
                     data={agentes}
                     getRowId={(agente) => agente.id}
@@ -206,11 +209,15 @@ export function Agentes() {
                     empty={
                         <SofaEmptyState
                             icon={<IconUsers aria-hidden="true" />}
-                            title="Nenhum agente nesta organização"
-                            description="O cadastro de agente pela tela chega na próxima tarefa do Console. Enquanto isso, crie pela CLI (`poph agent create`) ou pela API administrativa."
+                            title={t("agents.emptyTitle")}
+                            description={t("agents.emptyDescription")}
                         />
                     }
-                    footerMeta={({ total }) => (total === 1 ? "1 agente" : `${total} agentes`)}
+                    footerMeta={({ total }) =>
+                        total === 1
+                            ? t("agents.countOne")
+                            : t("agents.countMany", { total })
+                    }
                 />
             )}
         </div>

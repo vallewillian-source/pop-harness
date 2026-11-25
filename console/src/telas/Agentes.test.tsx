@@ -7,14 +7,15 @@
  */
 
 import { useEffect } from "react";
-import { describe, expect, it } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { GuardaAlteracoesProvider, useGuardaDeAlteracoes } from "../componentes/GuardaAlteracoes";
 import { ServidorFalso, erroApi } from "../testes/servidor";
 import { AbasDoAgente, CabecalhoDoAgente, type IdAbaDoAgente } from "../componentes/AbasDoAgente";
 import { Agentes } from "./Agentes";
+import { setLocale } from "../i18n";
 
 const ORG = "org_1";
 
@@ -256,5 +257,87 @@ describe("CabecalhoDoAgente (RL-09)", () => {
 
         await usuario.click(screen.getByRole("button", { name: "Voltar para agentes" }));
         expect(caminho()).toBe(`/orgs/${ORG}/agents`);
+    });
+});
+
+describe("I18N-04: tela de agentes e abas em en-US", () => {
+    afterEach(() => {
+        act(() => setLocale("pt-BR"));
+    });
+
+    it("a lista de agentes troca cabeçalhos, situação e ações para inglês", async () => {
+        servidorCom([agente()]);
+        setLocale("en-US");
+        montar();
+
+        expect(await screen.findByText("Beatriz")).toBeInTheDocument();
+        expect(screen.getByRole("heading", { name: /Service agents/ })).toBeInTheDocument();
+        expect(screen.getByText(/Organization · Exemplo Odontologia/)).toBeInTheDocument();
+        expect(screen.getByRole("columnheader", { name: "Agent" })).toBeInTheDocument();
+        expect(screen.getByRole("columnheader", { name: "Status" })).toBeInTheDocument();
+        expect(screen.getByRole("columnheader", { name: "Default department" })).toBeInTheDocument();
+        expect(screen.getByRole("columnheader", { name: "Version" })).toBeInTheDocument();
+        expect(screen.getByRole("columnheader", { name: "Actions" })).toBeInTheDocument();
+        expect(screen.getByText("Active")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Open instructions" })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Refresh" })).toBeInTheDocument();
+        expect(screen.getByText("1 agent")).toBeInTheDocument();
+    });
+
+    it("o estado vazio explica em inglês onde criar agente", async () => {
+        servidorCom([]);
+        setLocale("en-US");
+        montar();
+
+        expect(await screen.findByText("No agent in this organization")).toBeInTheDocument();
+        expect(screen.getByText(/poph agent create/)).toBeInTheDocument();
+    });
+
+    it("a falha da API mostra o estado de erro em inglês e o botão repete a consulta", async () => {
+        const usuario = userEvent.setup();
+        let falhar = true;
+        new ServidorFalso()
+            .responder("GET", `/admin/v1/orgs/${ORG}/departments`, {
+                status: 200,
+                corpo: { items: [], next_cursor: null },
+            })
+            .responder("GET", `/admin/v1/orgs/${ORG}/agents`, () =>
+                falhar
+                    ? erroApi(500, "internal_error", "the instance failed")
+                    : { status: 200, corpo: { items: [agente()], next_cursor: null } },
+            )
+            .responder("GET", `/admin/v1/orgs/${ORG}`, {
+                status: 200,
+                corpo: { id: ORG, name: "Exemplo" },
+            })
+            .instalar();
+        setLocale("en-US");
+        montar();
+
+        expect(await screen.findByText("Could not load the agents")).toBeInTheDocument();
+        falhar = false;
+        await usuario.click(screen.getByRole("button", { name: "Try again" }));
+        await waitFor(() => expect(screen.getByText("Beatriz")).toBeInTheDocument());
+    });
+
+    it("as abas e o cabeçalho do agente falam inglês", () => {
+        setLocale("en-US");
+        montarAbas();
+
+        expect(screen.getAllByRole("tab").map((aba) => aba.textContent)).toEqual([
+            "Instructions",
+            "Knowledge base",
+            "Files",
+            "Routing",
+            "Integrations",
+            "Model and Jev",
+            "Test chat",
+        ]);
+        expect(screen.getByRole("tablist", { name: "Agent sections" })).toBeInTheDocument();
+
+        montarCabecalho();
+        expect(screen.getByText("Agent · Exemplo Odontologia")).toBeInTheDocument();
+        expect(screen.getByText("Active")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Back to agents" })).toBeInTheDocument();
     });
 });

@@ -7,7 +7,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { useEffect } from "react";
@@ -20,6 +20,7 @@ import {
     type ItemDeNavegacao,
 } from "./navegacao";
 import { GuardaAlteracoesProvider, useGuardaDeAlteracoes } from "./GuardaAlteracoes";
+import { setLocale } from "../i18n";
 import { SessaoProvider } from "../sessao/Sessao";
 import { ServidorFalso, erroApi } from "../testes/servidor";
 import AppFonte from "../App.tsx?raw";
@@ -1451,5 +1452,162 @@ describe("CF-09: cockpit do agente no rail", () => {
         expect(screen.getByRole("link", { name: "Agentes" })).toBeInTheDocument();
         expect(screen.queryByText("Instruções & Prompts")).toBeNull();
         expect(screen.queryByText("Diagnóstico & Teste")).toBeNull();
+    });
+});
+
+describe("I18N-04: rail e seletores em en-US", () => {
+    const AGENTE_EN: Agente = {
+        id: "agt_1",
+        org_id: "org_1",
+        name: "Atendente Matrix",
+        slug: "atendente-matrix",
+        description: "",
+        status: "active",
+        model: "gemini-3.8-flash",
+        default_department_id: null,
+        human_handoff_department_id: null,
+        version: 1,
+        created_at: 1_700_000_000_000,
+        updated_at: 1_700_000_000_000,
+    };
+
+    function servirAgentes(agentes: Agente[] = [AGENTE_EN]) {
+        return new ServidorFalso()
+            .responder("GET", "/agents", {
+                status: 200,
+                corpo: { items: agentes, next_cursor: null },
+            })
+            .instalar();
+    }
+
+    afterEach(() => {
+        act(() => setLocale("pt-BR"));
+    });
+
+    it("a lista de navegação tem os mesmos itens em inglês", () => {
+        setLocale("en-US");
+
+        expect(ITENS_DE_NAVEGACAO.map((entrada) => entrada.rotulo)).toEqual([
+            "Organizations",
+            "Structure",
+            "Products and catalog",
+            "Agents",
+            "Model and Jev",
+            "Turn inspection",
+            "Test chat",
+            "WhatsApp and channels",
+            "Matrix (Element)",
+            "Plugins and extensions",
+            "Instance health",
+        ]);
+        expect(ITENS_DO_COCKPIT_DO_AGENTE.map((entrada) => entrada.rotulo)).toContain(
+            "Instructions & Prompts",
+        );
+    });
+
+    it("os grupos e o item 'em breve' aparecem em inglês no rail", () => {
+        prepararSessao("global", DUAS_ORGS);
+        setLocale("en-US");
+        montarRail("/orgs");
+
+        expect(screen.getByText("TENANTS AND RESOURCES")).toBeInTheDocument();
+        expect(screen.getByText("RUNTIME AND ENGINE")).toBeInTheDocument();
+        expect(screen.getByText("SYSTEM")).toBeInTheDocument();
+        expect(screen.getByRole("link", { name: /^Organizations/ })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: /Turn inspection/ })).toHaveTextContent(
+            "coming soon",
+        );
+    });
+
+    it("o rail reage à troca de idioma sem recarregar", () => {
+        prepararSessao("global", DUAS_ORGS);
+        montarRail("/orgs");
+
+        expect(screen.getByRole("link", { name: /^Organizações/ })).toBeInTheDocument();
+
+        act(() => setLocale("en-US"));
+
+        expect(screen.getByRole("link", { name: /^Organizations/ })).toBeInTheDocument();
+        expect(screen.queryByRole("link", { name: /^Organizações/ })).toBeNull();
+    });
+
+    it("o seletor de organização fala inglês no gatilho, na busca e nas opções", async () => {
+        const usuario = userEvent.setup();
+        prepararSessao("global", DUAS_ORGS);
+        setLocale("en-US");
+        montarRail("/orgs/org_1/structure");
+
+        const gatilho = screen.getByRole("combobox", {
+            name: "Organization: Loja Antiga",
+        });
+        await usuario.click(gatilho);
+
+        expect(screen.getByPlaceholderText("Filter organizations…")).toHaveAccessibleName(
+            "Filter organizations by name or slug",
+        );
+        expect(screen.getByRole("listbox", { name: "Available organizations" })).toBeInTheDocument();
+        expect(screen.getByRole("option", { name: /Manage Organizations/ })).toBeInTheDocument();
+    });
+
+    it("o seletor de agente e o link de volta falam inglês", async () => {
+        servirAgentes();
+        prepararSessao("global", DUAS_ORGS);
+        setLocale("en-US");
+        montarRail("/orgs/org_1/agents/agt_1/instructions");
+
+        expect(screen.getByRole("link", { name: "Org Agents" })).toHaveAttribute(
+            "href",
+            "/orgs/org_1/agents",
+        );
+        const gatilho = await screen.findByRole("combobox", { name: "Agent: Atendente Matrix" });
+        expect(gatilho).toHaveTextContent("gemini-3.8-flash · Active");
+    });
+
+    it("agente sem modelo próprio mostra o padrão do servidor em inglês", async () => {
+        servirAgentes([{ ...AGENTE_EN, model: undefined, status: "inactive" }]);
+        prepararSessao("global", DUAS_ORGS);
+        setLocale("en-US");
+        montarRail("/orgs/org_1/agents/agt_1/files");
+
+        const gatilho = await screen.findByRole("combobox", { name: "Agent: Atendente Matrix" });
+        expect(gatilho).toHaveTextContent("server default model · Inactive");
+    });
+
+    it("organização sem agentes mostra o estado vazio em inglês", async () => {
+        const usuario = userEvent.setup();
+        servirAgentes([]);
+        prepararSessao("global", DUAS_ORGS);
+        setLocale("en-US");
+        montarRail("/orgs/org_1/agents/agt_1/instructions");
+
+        await usuario.click(await screen.findByRole("combobox"));
+        expect(screen.getByRole("status")).toHaveTextContent("No agent in this organization");
+    });
+
+    it("o rodapé do cockpit, os atalhos e o botão de recolher falam inglês", async () => {
+        servirAgentes();
+        prepararSessao("global", DUAS_ORGS);
+        setLocale("en-US");
+        montarRail("/orgs/org_1/agents/agt_1/instructions");
+
+        expect(await screen.findByText("Agent: Atendente Matrix")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "? shortcuts" })).toHaveAttribute(
+            "title",
+            "Keyboard shortcuts (?)",
+        );
+        expect(screen.getByRole("button", { name: "Collapse sidebar" })).toBeInTheDocument();
+    });
+
+    it("o cockpit do agente tem as abas e o grupo de diagnóstico em inglês", () => {
+        servirAgentes();
+        prepararSessao("global", DUAS_ORGS);
+        setLocale("en-US");
+        montarRail("/orgs/org_1/agents/agt_1/instructions");
+
+        expect(screen.getByRole("link", { name: "Knowledge Base" })).toHaveAttribute(
+            "href",
+            "/orgs/org_1/agents/agt_1/knowledge-base",
+        );
+        expect(screen.getByText("Diagnostics & Testing")).toBeInTheDocument();
     });
 });

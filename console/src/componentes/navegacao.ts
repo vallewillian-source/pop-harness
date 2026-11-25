@@ -15,6 +15,8 @@
  */
 
 import type { ComponentType } from "react";
+import { translate } from "../i18n";
+import type { TranslationKey } from "../i18n/catalog";
 import {
     IconBarChart,
     IconBot,
@@ -55,14 +57,28 @@ export interface ContextoDeNavegacao {
 
 export type EstadoDoItem = "ativo" | "emBreve";
 
+export type NavigationGroup = "tenants" | "runtime" | "system" | "diagnostics";
+
+const NAVIGATION_GROUP_KEYS: Record<NavigationGroup, TranslationKey> = {
+    tenants: "navigation.groupTenants",
+    runtime: "navigation.groupRuntime",
+    system: "navigation.groupSystem",
+    diagnostics: "navigation.groupDiagnostics",
+};
+
+export function navigationGroupLabel(grupo: NavigationGroup): string {
+    return translate(NAVIGATION_GROUP_KEYS[grupo]);
+}
+
 export interface ItemDeNavegacao {
+    id: string;
     /**
      * Título da seção do menu em que o item aparece. String vazia = o item fica no bloco inicial,
      * antes do primeiro título de seção (é assim que a prancha 03 desenha o cockpit do agente).
      */
-    grupo: string;
-    /** Texto visível no rail. */
-    rotulo: string;
+    grupo: NavigationGroup | "";
+    /** Texto visível no rail, resolvido pelo idioma ativo. */
+    readonly rotulo: string;
     /** Glifo decorativo exibido à esquerda do rótulo. */
     icone: ComponentType<SofaIconProps>;
     /** Rota do item; `null` quando falta organização ou agente exigido. */
@@ -83,14 +99,17 @@ export interface ItemDeNavegacao {
     rotaDeAtivo?: (contexto: ContextoDeNavegacao) => string | null;
 }
 
-/** Seções do menu, na ordem em que aparecem. Os nomes já vêm em caixa alta, como no desenho. */
-export const GRUPOS_DE_NAVEGACAO = ["TENANTS E RECURSOS", "RUNTIME E MOTOR", "SISTEMA"] as const;
+/** Seções do menu, na ordem em que aparecem. */
+export const GRUPOS_DE_NAVEGACAO: readonly NavigationGroup[] = ["tenants", "runtime", "system"];
 
 /** Itens do menu, na ordem do PRD do re-layout (§5.2). */
 export const ITENS_DE_NAVEGACAO: ItemDeNavegacao[] = [
     {
-        grupo: "TENANTS E RECURSOS",
-        rotulo: "Organizações",
+        id: "organizations",
+        grupo: "tenants",
+        get rotulo() {
+            return translate("navigation.organizations");
+        },
         icone: IconBuilding,
         rota: () => "/orgs",
         estado: "ativo",
@@ -100,8 +119,11 @@ export const ITENS_DE_NAVEGACAO: ItemDeNavegacao[] = [
         exato: true,
     },
     {
-        grupo: "TENANTS E RECURSOS",
-        rotulo: "Estrutura",
+        id: "structure",
+        grupo: "tenants",
+        get rotulo() {
+            return translate("navigation.structure");
+        },
         icone: IconGrid,
         rota: ({ orgId }) => (orgId ? `/orgs/${orgId}/structure` : null),
         estado: "ativo",
@@ -109,8 +131,11 @@ export const ITENS_DE_NAVEGACAO: ItemDeNavegacao[] = [
         exigeAgente: false,
     },
     {
-        grupo: "TENANTS E RECURSOS",
-        rotulo: "Produtos e catálogo",
+        id: "products",
+        grupo: "tenants",
+        get rotulo() {
+            return translate("navigation.products");
+        },
         icone: IconTag,
         rota: ({ orgId }) => (orgId ? `/orgs/${orgId}/products` : null),
         estado: "ativo",
@@ -118,8 +143,11 @@ export const ITENS_DE_NAVEGACAO: ItemDeNavegacao[] = [
         exigeAgente: false,
     },
     {
-        grupo: "TENANTS E RECURSOS",
-        rotulo: "Agentes",
+        id: "agents",
+        grupo: "tenants",
+        get rotulo() {
+            return translate("navigation.agents");
+        },
         icone: IconUsers,
         rota: ({ orgId }) => (orgId ? `/orgs/${orgId}/agents` : null),
         estado: "ativo",
@@ -128,8 +156,11 @@ export const ITENS_DE_NAVEGACAO: ItemDeNavegacao[] = [
         contador: ({ totalDeAgentes }) => totalDeAgentes ?? null,
     },
     {
-        grupo: "RUNTIME E MOTOR",
-        rotulo: "Modelo e Jev",
+        id: "model-jev",
+        grupo: "runtime",
+        get rotulo() {
+            return translate("navigation.modelJev");
+        },
         icone: IconBot,
         rota: ({ orgId, agentId }) =>
             orgId && agentId ? `/orgs/${orgId}/agents/${agentId}/model-jev` : null,
@@ -138,8 +169,11 @@ export const ITENS_DE_NAVEGACAO: ItemDeNavegacao[] = [
         exigeAgente: true,
     },
     {
-        grupo: "RUNTIME E MOTOR",
-        rotulo: "Inspeção de turnos",
+        id: "turn-inspection",
+        grupo: "runtime",
+        get rotulo() {
+            return translate("navigation.turnInspection");
+        },
         icone: IconList,
         rota: () => null,
         estado: "emBreve",
@@ -147,8 +181,11 @@ export const ITENS_DE_NAVEGACAO: ItemDeNavegacao[] = [
         exigeAgente: true,
     },
     {
-        grupo: "RUNTIME E MOTOR",
-        rotulo: "Chat de teste",
+        id: "test-chat",
+        grupo: "runtime",
+        get rotulo() {
+            return translate("navigation.testChat");
+        },
         icone: IconMessage,
         rota: ({ orgId, agentId }) =>
             orgId && agentId ? `/orgs/${orgId}/agents/${agentId}/test-chat` : null,
@@ -157,8 +194,11 @@ export const ITENS_DE_NAVEGACAO: ItemDeNavegacao[] = [
         exigeAgente: true,
     },
     {
-        grupo: "SISTEMA",
-        rotulo: "WhatsApp e canais",
+        id: "whatsapp",
+        grupo: "system",
+        get rotulo() {
+            return translate("navigation.whatsapp");
+        },
         icone: IconPhone,
         rota: () => null,
         estado: "emBreve",
@@ -166,8 +206,11 @@ export const ITENS_DE_NAVEGACAO: ItemDeNavegacao[] = [
         exigeAgente: true,
     },
     {
-        grupo: "SISTEMA",
-        rotulo: "Matrix (Element)",
+        id: "matrix",
+        grupo: "system",
+        get rotulo() {
+            return translate("navigation.matrix");
+        },
         icone: IconLink,
         rota: ({ orgId }) => (orgId ? `/orgs/${orgId}/matrix` : null),
         estado: "ativo",
@@ -175,8 +218,11 @@ export const ITENS_DE_NAVEGACAO: ItemDeNavegacao[] = [
         exigeAgente: false,
     },
     {
-        grupo: "SISTEMA",
-        rotulo: "Plugins e extensões",
+        id: "plugins",
+        grupo: "system",
+        get rotulo() {
+            return translate("navigation.plugins");
+        },
         icone: IconGear,
         rota: () => null,
         estado: "emBreve",
@@ -184,8 +230,11 @@ export const ITENS_DE_NAVEGACAO: ItemDeNavegacao[] = [
         exigeAgente: false,
     },
     {
-        grupo: "SISTEMA",
-        rotulo: "Saúde da instância",
+        id: "instance-health",
+        grupo: "system",
+        get rotulo() {
+            return translate("navigation.instanceHealth");
+        },
         icone: IconBarChart,
         rota: ({ orgId }) => (orgId ? `/orgs/${orgId}/operacao` : null),
         estado: "ativo",
@@ -198,7 +247,7 @@ export const ITENS_DE_NAVEGACAO: ItemDeNavegacao[] = [
  * Título da seção de diagnóstico do cockpit do agente (prancha 03). Vai em caixa de frase, e não
  * em caixa alta como as seções de `GRUPOS_DE_NAVEGACAO`: é o que o desenho mostra.
  */
-export const GRUPO_DIAGNOSTICO_DO_AGENTE = "Diagnóstico & Teste";
+export const GRUPO_DIAGNOSTICO_DO_AGENTE: NavigationGroup = "diagnostics";
 
 /**
  * Cockpit do agente (prancha 03): o rail da visão do agente (`/orgs/:orgId/agents/:agentId/...`),
@@ -211,8 +260,11 @@ export const GRUPO_DIAGNOSTICO_DO_AGENTE = "Diagnóstico & Teste";
  */
 export const ITENS_DO_COCKPIT_DO_AGENTE: ItemDeNavegacao[] = [
     {
+        id: "cockpit-instructions",
         grupo: "",
-        rotulo: "Instruções & Prompts",
+        get rotulo() {
+            return translate("navigation.cockpitInstructions");
+        },
         icone: IconFile,
         rota: ({ orgId, agentId }) =>
             orgId && agentId ? `/orgs/${orgId}/agents/${agentId}/instructions` : null,
@@ -223,8 +275,11 @@ export const ITENS_DO_COCKPIT_DO_AGENTE: ItemDeNavegacao[] = [
         exigeAgente: true,
     },
     {
+        id: "cockpit-knowledge",
         grupo: "",
-        rotulo: "Base de Conhecimento",
+        get rotulo() {
+            return translate("navigation.cockpitKnowledge");
+        },
         icone: IconDatabase,
         rota: ({ orgId, agentId }) =>
             orgId && agentId ? `/orgs/${orgId}/agents/${agentId}/knowledge-base` : null,
@@ -233,8 +288,11 @@ export const ITENS_DO_COCKPIT_DO_AGENTE: ItemDeNavegacao[] = [
         exigeAgente: true,
     },
     {
+        id: "cockpit-files",
         grupo: "",
-        rotulo: "Arquivos do Agente",
+        get rotulo() {
+            return translate("navigation.cockpitFiles");
+        },
         icone: IconFolder,
         rota: ({ orgId, agentId }) =>
             orgId && agentId ? `/orgs/${orgId}/agents/${agentId}/files` : null,
@@ -243,8 +301,11 @@ export const ITENS_DO_COCKPIT_DO_AGENTE: ItemDeNavegacao[] = [
         exigeAgente: true,
     },
     {
+        id: "cockpit-routing",
         grupo: "",
-        rotulo: "Roteamento & Habilidades",
+        get rotulo() {
+            return translate("navigation.cockpitRouting");
+        },
         icone: IconWorkflow,
         rota: ({ orgId, agentId }) =>
             orgId && agentId ? `/orgs/${orgId}/agents/${agentId}/routing` : null,
@@ -253,8 +314,11 @@ export const ITENS_DO_COCKPIT_DO_AGENTE: ItemDeNavegacao[] = [
         exigeAgente: true,
     },
     {
+        id: "cockpit-model-jev",
         grupo: "",
-        rotulo: "Modelo & Parâmetros (Jev)",
+        get rotulo() {
+            return translate("navigation.cockpitModelJev");
+        },
         icone: IconSliders,
         rota: ({ orgId, agentId }) =>
             orgId && agentId ? `/orgs/${orgId}/agents/${agentId}/model-jev` : null,
@@ -263,8 +327,11 @@ export const ITENS_DO_COCKPIT_DO_AGENTE: ItemDeNavegacao[] = [
         exigeAgente: true,
     },
     {
+        id: "cockpit-test-chat",
         grupo: GRUPO_DIAGNOSTICO_DO_AGENTE,
-        rotulo: "Chat de Teste",
+        get rotulo() {
+            return translate("navigation.cockpitTestChat");
+        },
         icone: IconMessage,
         rota: ({ orgId, agentId }) =>
             orgId && agentId ? `/orgs/${orgId}/agents/${agentId}/test-chat` : null,
@@ -273,8 +340,11 @@ export const ITENS_DO_COCKPIT_DO_AGENTE: ItemDeNavegacao[] = [
         exigeAgente: true,
     },
     {
+        id: "cockpit-turn-inspection",
         grupo: GRUPO_DIAGNOSTICO_DO_AGENTE,
-        rotulo: "Inspeção de Turnos",
+        get rotulo() {
+            return translate("navigation.cockpitTurnInspection");
+        },
         icone: IconList,
         rota: () => null,
         estado: "emBreve",
