@@ -29,6 +29,9 @@ import {
     SofaSkeleton,
 } from "@sofacoding/sofa-ui";
 import { ErroApi } from "../api/cliente";
+import { translate, useI18n } from "../i18n";
+import type { TranslationKey } from "../i18n/catalog";
+import { formatDateTime, formatNumber } from "../i18n/format";
 import { listarEstrutura, type Departamento } from "../api/estrutura";
 import {
     alterarModuloMatrix,
@@ -44,10 +47,22 @@ import { formatarTempoNoAr, mensagemDeFalha } from "./Operacao";
 import "../estilos/matrix.css";
 
 /** Mensagem da tela quando o `If-Match` não bate: o estado mudou entre a leitura e a gravação. */
-export const MENSAGEM_DE_CONFLITO = "O estado mudou entre a leitura e a gravação, tente de novo.";
+export function conflictMessage(): string {
+    return translate("matrix.conflict");
+}
 
-type Carga<T> = { carregando: boolean; dados: T | null; erro: string | null };
-type Aviso = { tom: "ok" | "erro"; texto: string } | null;
+type TextoFonte =
+    | { key: TranslationKey }
+    | { erro: unknown; what: TranslationKey; espaco?: true };
+
+function textoDoAviso(fonte: TextoFonte): string {
+    if ("key" in fonte) return translate(fonte.key);
+    const what = translate(fonte.what);
+    return fonte.espaco ? mensagemDoEspaco(fonte.erro, what) : mensagemDeFalha(fonte.erro, what);
+}
+
+type Carga<T> = { carregando: boolean; dados: T | null; erro: TextoFonte | null };
+type Aviso = { tom: "ok" | "erro"; fonte: TextoFonte } | null;
 
 /** Linha da tabela: um departamento (ativo, ou arquivado com espaço ainda gravado). */
 export type LinhaDeEspaco = {
@@ -61,26 +76,37 @@ const cargaInicial = <T,>(): Carga<T> => ({ carregando: true, dados: null, erro:
 
 /** Conexão com o servidor de chat. `null` = módulo não configurado nesta instância. */
 export function situacaoDaConexao(conectado: boolean | null | undefined): { valor: string; detalhe?: string } {
-    if (conectado === true) return { valor: "Conectado" };
-    if (conectado === false) return { valor: "Desconectado", detalhe: "o módulo tenta de novo sozinho" };
-    return { valor: "Desconhecido", detalhe: "não configurado nesta instância" };
+    if (conectado === true) return { valor: translate("matrix.connectionConnected") };
+    if (conectado === false) {
+        return {
+            valor: translate("matrix.connectionDisconnected"),
+            detalhe: translate("matrix.connectionDisconnectedDetail"),
+        };
+    }
+    return {
+        valor: translate("matrix.connectionUnknown"),
+        detalhe: translate("matrix.connectionUnknownDetail"),
+    };
 }
 
 /** Atraso do cursor: quantas mensagens faltam espelhar, em abreviação de painel (`0 msgs atrás`). */
 export function valorDoAtraso(mensagens: number): string {
-    if (mensagens <= 0) return "0 msgs atrás";
-    return `${mensagens.toLocaleString("pt-BR")} ${mensagens === 1 ? "msg atrás" : "msgs atrás"}`;
+    return translate(mensagens === 1 ? "matrix.backlogMessageOne" : "matrix.backlogMessageMany", {
+        count: formatNumber(mensagens),
+    });
 }
 
 /** Falhas isoladas (mensagens que o módulo não conseguiu espelhar). */
 export function valorDasFalhas(quantidade: number): string {
-    return `${quantidade.toLocaleString("pt-BR")} ${quantidade === 1 ? "pendente" : "pendentes"}`;
+    return translate(quantidade === 1 ? "matrix.failuresPendingOne" : "matrix.failuresPendingMany", {
+        count: formatNumber(quantidade),
+    });
 }
 
 /** Origem do espaço, com os rótulos do desenho: criado pelo módulo ou vinculado ao Element. */
 export function textoDaOrigem(origem: string): string {
-    if (origem === "auto") return "Automático (módulo)";
-    if (origem === "linked") return "Vinculado (Element)";
+    if (origem === "auto") return translate("matrix.originAuto");
+    if (origem === "linked") return translate("matrix.originLinked");
     return origem;
 }
 
@@ -100,7 +126,7 @@ export function montarLinhas(departamentos: Departamento[] | null, espacos: Espa
         if (ativos.some((departamento) => departamento.id === espaco.department_id)) continue;
         linhas.push({
             id: espaco.department_id,
-            nome: espaco.department_name ?? "departamento sem nome",
+            nome: espaco.department_name ?? translate("matrix.departmentUnnamed"),
             espaco,
             arquivado: departamentos !== null,
         });
@@ -121,7 +147,7 @@ export function mensagemDoEspaco(erro: unknown, oQue: string): string {
 }
 
 function dataDoCorte(ms: number): string {
-    return new Date(ms).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
+    return formatDateTime(new Date(ms));
 }
 
 function Indicador({
@@ -154,6 +180,7 @@ function Indicador({
 
 export function Matrix() {
     const { orgId = "" } = useParams();
+    const { translate: t } = useI18n();
 
     const [modulo, setModulo] = useState<Carga<EstadoMatrix>>(cargaInicial);
     const [espacos, setEspacos] = useState<Carga<Espaco[]>>(cargaInicial);
@@ -172,7 +199,7 @@ export function Matrix() {
     const [ligandoA, setLigandoA] = useState<{ id: string; nome: string } | null>(null);
     const [espacoDigitado, setEspacoDigitado] = useState("");
     const [enviandoLigacao, setEnviandoLigacao] = useState(false);
-    const [erroDoDialogo, setErroDoDialogo] = useState<string | null>(null);
+    const [erroDoDialogo, setErroDoDialogo] = useState<TextoFonte | null>(null);
 
     const vivo = useRef(true);
     const emCurso = useRef(false);
@@ -209,7 +236,7 @@ export function Matrix() {
             setModulo((atual) => ({
                 carregando: false,
                 dados: atual.dados,
-                erro: mensagemDeFalha(resModulo.reason, "o módulo Matrix"),
+                erro: { erro: resModulo.reason, what: "operation.whatMatrixModule" },
             }));
         }
 
@@ -219,7 +246,7 @@ export function Matrix() {
             setEspacos((atual) => ({
                 carregando: false,
                 dados: atual.dados,
-                erro: mensagemDeFalha(resEspacos.reason, "os espaços"),
+                erro: { erro: resEspacos.reason, what: "operation.whatSpaces" },
             }));
         }
 
@@ -233,7 +260,7 @@ export function Matrix() {
             setDepartamentos((atual) => ({
                 carregando: false,
                 dados: atual.dados,
-                erro: mensagemDeFalha(resDepartamentos.reason, "os departamentos"),
+                erro: { erro: resDepartamentos.reason, what: "operation.whatDepartments" },
             }));
         }
     }, [orgId]);
@@ -251,7 +278,7 @@ export function Matrix() {
             if (vivo.current) {
                 setEspacos((atual) => ({
                     ...atual,
-                    erro: mensagemDeFalha(erro, "os espaços"),
+                    erro: { erro, what: "operation.whatSpaces" },
                 }));
             }
         }
@@ -268,17 +295,20 @@ export function Matrix() {
             setModulo({ carregando: false, dados: novo, erro: null });
             setAvisoModulo({
                 tom: "ok",
-                texto: ligado
-                    ? "Módulo ligado. Só o que chegar daqui em diante é espelhado."
-                    : "Módulo desligado. Nada foi apagado: as salas e os espaços continuam no Element.",
+                fonte: {
+                    key: ligado ? "matrix.moduleEnabledNotice" : "matrix.moduleDisabledNotice",
+                },
             });
         } catch (erro) {
             if (!vivo.current) return;
             if (erro instanceof ErroApi && erro.status === 412) {
-                setAvisoModulo({ tom: "erro", texto: MENSAGEM_DE_CONFLITO });
+                setAvisoModulo({ tom: "erro", fonte: { key: "matrix.conflict" } });
                 void carregar();
             } else {
-                setAvisoModulo({ tom: "erro", texto: mensagemDeFalha(erro, "o módulo Matrix") });
+                setAvisoModulo({
+                    tom: "erro",
+                    fonte: { erro, what: "operation.whatMatrixModule" },
+                });
             }
         } finally {
             if (vivo.current) setEnviandoModulo(false);
@@ -292,10 +322,15 @@ export function Matrix() {
         try {
             await ligarEspacoMatrix(orgId, { department_id: linha.id, space: null });
             if (!vivo.current) return;
-            setAvisoEspaco({ tom: "ok", texto: "Espaço do departamento criado." });
+            setAvisoEspaco({ tom: "ok", fonte: { key: "matrix.spaceCreated" } });
             await recarregarEspacos();
         } catch (erro) {
-            if (vivo.current) setAvisoEspaco({ tom: "erro", texto: mensagemDoEspaco(erro, "o departamento") });
+            if (vivo.current) {
+                setAvisoEspaco({
+                    tom: "erro",
+                    fonte: { erro, what: "operation.whatDepartment", espaco: true },
+                });
+            }
         } finally {
             if (vivo.current) setCriandoPara(null);
         }
@@ -325,10 +360,12 @@ export function Matrix() {
             if (!vivo.current) return;
             setLigandoA(null);
             setEspacoDigitado("");
-            setAvisoEspaco({ tom: "ok", texto: "Espaço existente ligado ao departamento." });
+            setAvisoEspaco({ tom: "ok", fonte: { key: "matrix.spaceLinked" } });
             await recarregarEspacos();
         } catch (erro) {
-            if (vivo.current) setErroDoDialogo(mensagemDoEspaco(erro, "o departamento"));
+            if (vivo.current) {
+                setErroDoDialogo({ erro, what: "operation.whatDepartment", espaco: true });
+            }
         } finally {
             if (vivo.current) setEnviandoLigacao(false);
         }
@@ -344,13 +381,16 @@ export function Matrix() {
             setEspacoParaDesligar(null);
             setAvisoEspaco({
                 tom: "ok",
-                texto: "Espaço desligado. Nada foi apagado no Element.",
+                fonte: { key: "matrix.spaceDisconnected" },
             });
             await recarregarEspacos();
         } catch (erro) {
             if (!vivo.current) return;
             setEspacoParaDesligar(null);
-            setAvisoEspaco({ tom: "erro", texto: mensagemDoEspaco(erro, "o espaço") });
+            setAvisoEspaco({
+                tom: "erro",
+                fonte: { erro, what: "operation.whatSpace", espaco: true },
+            });
         } finally {
             if (vivo.current) setDesligandoEspaco(false);
         }
@@ -361,7 +401,7 @@ export function Matrix() {
     const deptos = departamentos.dados;
     const linhas = lista ? montarLinhas(deptos, lista) : [];
     const carregandoAlgum = modulo.carregando || espacos.carregando || departamentos.carregando;
-    const nomeDoEspaco = (espaco: Espaco) => espaco.department_name ?? "departamento sem nome";
+    const nomeDoEspaco = (espaco: Espaco) => espaco.department_name ?? t("matrix.departmentUnnamed");
     const conexao = situacaoDaConexao(m?.connected);
     const espelhando = m?.enabled === true;
 
@@ -369,11 +409,8 @@ export function Matrix() {
         <div className="poph-pagina poph-matrix">
             <div className="poph-pagina__topo">
                 <div>
-                    <h1 className="poph-pagina__titulo">Matrix (Element)</h1>
-                    <p className="poph-pagina__descricao">
-                        Como o espelho das conversas no Element está nesta organização: se o módulo
-                        está ligado, quanto falta espelhar e os espaços de cada departamento.
-                    </p>
+                    <h1 className="poph-pagina__titulo">{t("matrix.pageTitle")}</h1>
+                    <p className="poph-pagina__descricao">{t("matrix.pageDescription")}</p>
                 </div>
                 <div className="poph-pagina__acoes">
                     <SofaButton
@@ -382,10 +419,10 @@ export function Matrix() {
                         onClick={() => void carregar()}
                         disabled={carregandoAlgum}
                     >
-                        {carregandoAlgum ? "Atualizando…" : "Atualizar"}
+                        {carregandoAlgum ? t("matrix.refreshing") : t("matrix.refresh")}
                     </SofaButton>
                     {enviandoModulo ? (
-                        <span className="poph-matrix__status" role="status">Gravando…</span>
+                        <span className="poph-matrix__status" role="status">{t("matrix.saving")}</span>
                     ) : null}
                     {m ? (
                         espelhando ? (
@@ -394,7 +431,7 @@ export function Matrix() {
                                 disabled={enviandoModulo}
                                 onClick={() => setConfirmandoDesligarModulo(true)}
                             >
-                                Desligar módulo
+                                {t("matrix.disableModule")}
                             </SofaButton>
                         ) : (
                             <SofaButton
@@ -403,7 +440,7 @@ export function Matrix() {
                                 disabled={enviandoModulo}
                                 onClick={() => void alternarModulo(true)}
                             >
-                                Ligar módulo Matrix
+                                {t("matrix.enableModule")}
                             </SofaButton>
                         )
                     ) : null}
@@ -411,10 +448,16 @@ export function Matrix() {
             </div>
 
             <section className="poph-secao poph-matrix__resumo" aria-labelledby={idModulo}>
-                <h2 id={idModulo} className="poph-matrix__oculto">Módulo nesta organização</h2>
+                <h2 id={idModulo} className="poph-matrix__oculto">{t("matrix.moduleSectionLabel")}</h2>
                 {modulo.carregando && !m ? (
                     <dl className="poph-matrix__indicadores" aria-busy="true">
-                        {["Módulo na org", "Servidor de chat (Synapse)", "Atraso do cursor", "Mensagens isoladas", "Última falha"].map(
+                        {[
+                            t("matrix.indicatorModule"),
+                            t("matrix.indicatorSynapse"),
+                            t("matrix.indicatorBacklog"),
+                            t("matrix.indicatorFailures"),
+                            t("matrix.indicatorLastFailure"),
+                        ].map(
                             (rotulo) => (
                                 <div className="poph-matrix__indicador" key={rotulo}>
                                     <dt className="poph-matrix__indicador-rotulo">{rotulo}</dt>
@@ -427,88 +470,91 @@ export function Matrix() {
                     </dl>
                 ) : modulo.erro && !m ? (
                     <SofaErrorState
-                        title="Não consegui ler o estado do módulo"
-                        description={modulo.erro}
-                        retry={{ label: "Tentar de novo", onClick: () => void carregar() }}
+                        title={t("matrix.moduleLoadFailed")}
+                        description={textoDoAviso(modulo.erro)}
+                        retry={{ label: t("operation.retry"), onClick: () => void carregar() }}
                     />
                 ) : m ? (
                     <>
                         {modulo.erro ? (
                             <p className="poph-matrix__aviso" role="alert">
-                                A última atualização falhou: {modulo.erro} Mostrando o último resultado.
+                                {t("matrix.lastUpdateFailed", { message: textoDoAviso(modulo.erro) })}
                             </p>
                         ) : null}
 
                         {!m.enabled ? (
-                            <SofaBanner tone="warn" title="Módulo Matrix desativado para esta organização">
-                                O espelhamento de conversas no Element está suspenso. Ao ligar o módulo, só o que
-                                chegar daí em diante é espelhado: o histórico anterior não é trazido (corte sem
-                                backfill).
+                            <SofaBanner tone="warn" title={t("matrix.disabledTitle")}>
+                                {t("matrix.disabledText")}
                             </SofaBanner>
                         ) : null}
 
                         {m.enabled && m.connected === false ? (
                             <SofaBanner
                                 tone="danger"
-                                title="Falha de comunicação com o Synapse: o envio para o Element está acumulando fila"
+                                title={t("matrix.synapseTitle")}
                                 action={
                                     <SofaButton variant="subtle" onClick={() => void carregar()}>
-                                        Tentar reconectar
+                                        {t("matrix.reconnect")}
                                     </SofaButton>
                                 }
                             >
-                                O WhatsApp e o motor de IA continuam operando normalmente, sem perda de mensagens. O
-                                espelhamento será retomado automaticamente assim que o Synapse responder.
+                                {t("matrix.synapseText")}
                             </SofaBanner>
                         ) : null}
 
                         {avisoModulo ? (
                             <SofaBanner tone={avisoModulo.tom === "ok" ? "success" : "danger"}>
-                                {avisoModulo.texto}
+                                {textoDoAviso(avisoModulo.fonte)}
                             </SofaBanner>
                         ) : null}
 
                         <dl className="poph-matrix__indicadores">
                             <Indicador
-                                rotulo="Módulo na org"
-                                valor={m.enabled ? "Ligado" : "Desligado"}
+                                rotulo={t("matrix.indicatorModule")}
+                                valor={m.enabled ? t("matrix.valueEnabled") : t("matrix.valueDisabled")}
                                 tom={m.enabled ? "ok" : undefined}
                                 detalhe={
                                     m.enabled
                                         ? m.enabled_at
-                                            ? `ativo · desde ${dataDoCorte(m.enabled_at)}`
-                                            : "ativo"
+                                            ? t("matrix.detailActiveSince", {
+                                                  date: dataDoCorte(m.enabled_at),
+                                              })
+                                            : t("matrix.detailActive")
                                         : m.enabled_at
-                                          ? `pausado · desde ${dataDoCorte(m.enabled_at)}`
-                                          : "pausado · nunca ligado"
+                                          ? t("matrix.detailPausedSince", {
+                                                date: dataDoCorte(m.enabled_at),
+                                            })
+                                          : t("matrix.detailPausedNever")
                                 }
                             />
                             <Indicador
-                                rotulo="Servidor de chat (Synapse)"
+                                rotulo={t("matrix.indicatorSynapse")}
                                 valor={conexao.valor}
                                 tom={m.connected === true ? "ok" : m.connected === false ? "erro" : undefined}
                                 detalhe={conexao.detalhe}
                             />
                             <Indicador
-                                rotulo="Atraso do cursor"
+                                rotulo={t("matrix.indicatorBacklog")}
                                 valor={espelhando ? valorDoAtraso(m.backlog.messages) : "—"}
                                 detalhe={
                                     !espelhando
-                                        ? "pausado"
+                                        ? t("matrix.backlogPaused")
                                         : m.backlog.messages > 0
-                                          ? `a mais antiga há ${formatarTempoNoAr(m.backlog.oldest_seconds)}`
+                                          ? t("matrix.backlogOldest", {
+                                                duration: formatarTempoNoAr(m.backlog.oldest_seconds),
+                                            })
                                           : undefined
                                 }
                                 tom={espelhando && m.backlog.messages > 0 ? "alerta" : undefined}
                             />
                             <Indicador
-                                rotulo="Mensagens isoladas"
+                                rotulo={t("matrix.indicatorFailures")}
                                 valor={valorDasFalhas(m.pending_failures)}
                                 tom={m.pending_failures > 0 ? "erro" : undefined}
                             />
                             <Indicador
-                                rotulo="Última falha"
-                                valor={m.last_failure ?? "Nenhuma falha recente"}
+                                rotulo={t("matrix.indicatorLastFailure")}
+                                valor={m.last_failure ?? t("matrix.noRecentFailure")}
                                 tom={m.last_failure ? "erro" : undefined}
                             />
                         </dl>
@@ -517,21 +563,27 @@ export function Matrix() {
             </section>
 
             <section className="poph-secao" aria-labelledby={idEspacos}>
-                <h2 id={idEspacos} className="poph-secao__titulo">Espaços por departamento</h2>
+                <h2 id={idEspacos} className="poph-secao__titulo">{t("matrix.sectionSpaces")}</h2>
                 <p className="poph-matrix__ajuda">
-                    Salas de atendimento são organizadas no espaço Matrix do respectivo departamento da
-                    conversa. Para usar um espaço que já existe no Element, use “Ligar existente” e informe o
-                    id (começa com <code>!</code>) ou o endereço (começa com <code>#</code>).
+                    {t("matrix.spacesHelpBefore")}
+                    <code>!</code>
+                    {t("matrix.spacesHelpBetween")}
+                    <code>#</code>
+                    {t("matrix.spacesHelpAfter")}
                 </p>
 
                 {espacos.carregando && !lista ? (
-                    <div className="poph-tabela poph-matrix__tabela" aria-busy="true" aria-label="Carregando espaços por departamento">
+                    <div
+                        className="poph-tabela poph-matrix__tabela"
+                        aria-busy="true"
+                        aria-label={t("matrix.loadingSpacesLabel")}
+                    >
                         <div className="poph-tabela__cabecalho" role="presentation">
-                            <span>Departamento</span>
-                            <span>Espaço Matrix (alias / room ID)</span>
-                            <span>Origem</span>
-                            <span>Status</span>
-                            <span className="poph-tabela__celula--acoes">Ações</span>
+                            <span>{t("matrix.columnDepartment")}</span>
+                            <span>{t("matrix.columnSpace")}</span>
+                            <span>{t("matrix.columnOrigin")}</span>
+                            <span>{t("matrix.columnStatus")}</span>
+                            <span className="poph-tabela__celula--acoes">{t("matrix.columnActions")}</span>
                         </div>
                         {[0, 1, 2].map((indice) => (
                             <div className="poph-tabela__linha" role="presentation" key={indice}>
@@ -545,27 +597,29 @@ export function Matrix() {
                     </div>
                 ) : espacos.erro && !lista ? (
                     <SofaErrorState
-                        title="Não consegui ler os espaços"
-                        description={espacos.erro}
-                        retry={{ label: "Tentar de novo", onClick: () => void carregar() }}
+                        title={t("matrix.spacesLoadFailed")}
+                        description={textoDoAviso(espacos.erro)}
+                        retry={{ label: t("operation.retry"), onClick: () => void carregar() }}
                     />
                 ) : lista ? (
                     <>
                         {espacos.erro ? (
                             <p className="poph-matrix__aviso" role="alert">
-                                A última atualização falhou: {espacos.erro} Mostrando o último resultado.
+                                {t("matrix.lastUpdateFailed", { message: textoDoAviso(espacos.erro) })}
                             </p>
                         ) : null}
 
                         {departamentos.erro && !deptos ? (
                             <p className="poph-matrix__aviso" role="alert">
-                                Não consegui ler os departamentos: {departamentos.erro}
+                                {t("matrix.departmentsLoadFailed", {
+                                    message: textoDoAviso(departamentos.erro),
+                                })}
                             </p>
                         ) : null}
 
                         {avisoEspaco ? (
                             <SofaBanner tone={avisoEspaco.tom === "ok" ? "success" : "danger"}>
-                                {avisoEspaco.texto}
+                                {textoDoAviso(avisoEspaco.fonte)}
                             </SofaBanner>
                         ) : null}
 
@@ -573,17 +627,23 @@ export function Matrix() {
                             <SofaSkeleton lines={3} />
                         ) : linhas.length === 0 ? (
                             <SofaEmptyState
-                                title="Nenhum departamento ativo"
-                                description="Crie departamentos em Estrutura para que cada um tenha o seu espaço no Element."
+                                title={t("matrix.noActiveDepartment")}
+                                description={t("matrix.noActiveDepartmentText")}
                             />
                         ) : (
-                            <div className="poph-tabela poph-matrix__tabela" role="table" aria-label="Espaços por departamento">
+                            <div
+                                className="poph-tabela poph-matrix__tabela"
+                                role="table"
+                                aria-label={t("matrix.spacesTableLabel")}
+                            >
                                 <div className="poph-tabela__cabecalho" role="row">
-                                    <span role="columnheader">Departamento</span>
-                                    <span role="columnheader">Espaço Matrix (alias / room ID)</span>
-                                    <span role="columnheader">Origem</span>
-                                    <span role="columnheader">Status</span>
-                                    <span role="columnheader" className="poph-tabela__celula--acoes">Ações</span>
+                                    <span role="columnheader">{t("matrix.columnDepartment")}</span>
+                                    <span role="columnheader">{t("matrix.columnSpace")}</span>
+                                    <span role="columnheader">{t("matrix.columnOrigin")}</span>
+                                    <span role="columnheader">{t("matrix.columnStatus")}</span>
+                                    <span role="columnheader" className="poph-tabela__celula--acoes">
+                                        {t("matrix.columnActions")}
+                                    </span>
                                 </div>
                                 {linhas.map((linha) => {
                                     const { espaco } = linha;
@@ -601,9 +661,11 @@ export function Matrix() {
                                                     </>
                                                 ) : (
                                                     <>
-                                                        <span className="poph-matrix__vazio">Nenhum espaço vinculado</span>
+                                                        <span className="poph-matrix__vazio">
+                                                            {t("matrix.noSpaceLinked")}
+                                                        </span>
                                                         <span className="poph-matrix__pequeno">
-                                                            Salas criadas sem agrupamento de espaço
+                                                            {t("matrix.noSpaceLinkHint")}
                                                         </span>
                                                     </>
                                                 )}
@@ -621,7 +683,7 @@ export function Matrix() {
                                                     </span>
                                                 ) : (
                                                     <span className="poph-matrix__origem poph-matrix__origem--nenhuma">
-                                                        Não configurado
+                                                        {t("matrix.originNotConfigured")}
                                                     </span>
                                                 )}
                                             </span>
@@ -629,17 +691,17 @@ export function Matrix() {
                                                 {espaco && !linha.arquivado ? (
                                                     <span className="poph-status poph-status--ativo">
                                                         <span className="poph-status__ponto" aria-hidden="true" />
-                                                        Ativo
+                                                        {t("matrix.statusActive")}
                                                     </span>
                                                 ) : espaco ? (
                                                     <span className="poph-status poph-status--inativo">
                                                         <span className="poph-status__ponto" aria-hidden="true" />
-                                                        Departamento arquivado
+                                                        {t("matrix.statusArchivedDepartment")}
                                                     </span>
                                                 ) : (
                                                     <span className="poph-status poph-status--inativo">
                                                         <span className="poph-status__ponto" aria-hidden="true" />
-                                                        Sem espaço
+                                                        {t("matrix.statusNoSpace")}
                                                     </span>
                                                 )}
                                             </span>
@@ -647,32 +709,38 @@ export function Matrix() {
                                                 {espaco ? (
                                                     <SofaButton
                                                         variant="subtle"
-                                                        aria-label={`Desligar espaço do departamento ${linha.nome}`}
+                                                        aria-label={t("matrix.disconnectAria", {
+                                                            name: linha.nome,
+                                                        })}
                                                         disabled={desligandoEspaco}
                                                         onClick={() => setEspacoParaDesligar(espaco)}
                                                     >
-                                                        Desligar
+                                                        {t("matrix.disconnect")}
                                                     </SofaButton>
                                                 ) : (
                                                     <>
                                                         <SofaButton
                                                             variant="primary"
                                                             size="sm"
-                                                            aria-label={`Criar espaço automático do departamento ${linha.nome}`}
+                                                            aria-label={t("matrix.createAutoAria", {
+                                                                name: linha.nome,
+                                                            })}
                                                             loading={criandoPara === linha.id}
                                                             disabled={criandoPara !== null}
                                                             onClick={() => void criarEspaco(linha)}
                                                         >
-                                                            Criar auto
+                                                            {t("matrix.createAuto")}
                                                         </SofaButton>
                                                         <SofaButton
                                                             variant="secondary"
                                                             size="sm"
-                                                            aria-label={`Ligar espaço existente ao departamento ${linha.nome}`}
+                                                            aria-label={t("matrix.linkExistingAria", {
+                                                                name: linha.nome,
+                                                            })}
                                                             disabled={criandoPara !== null}
                                                             onClick={() => abrirLigacao(linha)}
                                                         >
-                                                            Ligar existente
+                                                            {t("matrix.linkExisting")}
                                                         </SofaButton>
                                                     </>
                                                 )}
@@ -683,9 +751,8 @@ export function Matrix() {
                             </div>
                         )}
 
-                        <SofaBanner tone="info" title="Regra de operação">
-                            A ação de desligar um espaço remove apenas o vínculo do departamento no Harness. A sala e
-                            o histórico permanecem intactos no Synapse.
+                        <SofaBanner tone="info" title={t("matrix.operationRuleTitle")}>
+                            {t("matrix.operationRuleText")}
                         </SofaBanner>
                     </>
                 ) : null}
@@ -696,13 +763,13 @@ export function Matrix() {
                 onOpenChange={(aberto) => {
                     if (!aberto) fecharLigacao();
                 }}
-                title="Ligar departamento a espaço existente"
-                description="Vincule um espaço já existente no Element para organizar as salas deste departamento."
-                closeLabel="Fechar ligação de espaço existente"
+                title={t("matrix.linkModalTitle")}
+                description={t("matrix.linkModalDescription")}
+                closeLabel={t("matrix.linkModalClose")}
                 footer={
                     <>
                         <SofaButton variant="secondary" disabled={enviandoLigacao} onClick={fecharLigacao}>
-                            Cancelar
+                            {t("matrix.cancel")}
                         </SofaButton>
                         <SofaButton
                             type="submit"
@@ -711,22 +778,22 @@ export function Matrix() {
                             loading={enviandoLigacao}
                             disabled={enviandoLigacao || espacoDigitado.trim() === ""}
                         >
-                            Ligar espaço
+                            {t("matrix.linkSpaceAction")}
                         </SofaButton>
                     </>
                 }
             >
                 <form id={idFormLigacao} className="poph-matrix__form" onSubmit={(evento) => void ligarExistente(evento)} noValidate>
                     <div className="poph-matrix__departamento-escolhido">
-                        <span className="poph-matrix__pequeno">Departamento selecionado</span>
+                        <span className="poph-matrix__pequeno">{t("matrix.selectedDepartment")}</span>
                         <strong>{ligandoA ? `${ligandoA.nome} (${ligandoA.id})` : ""}</strong>
                     </div>
                     {erroDoDialogo ? (
-                        <SofaBanner tone="danger">{erroDoDialogo}</SofaBanner>
+                        <SofaBanner tone="danger">{textoDoAviso(erroDoDialogo)}</SofaBanner>
                     ) : null}
                     <SofaField
-                        label="Alias ou room ID do espaço Matrix"
-                        hint="O bot virtual do Harness deve ter permissão de convite e gestão neste espaço."
+                        label={t("matrix.spaceFieldLabel")}
+                        hint={t("matrix.spaceFieldHint")}
                         htmlFor={idEspacoExistente}
                     >
                         {(controle) => (
@@ -739,7 +806,7 @@ export function Matrix() {
                                 autoComplete="off"
                                 autoFocus
                                 disabled={enviandoLigacao}
-                                placeholder="#alias:servidor ou !id:servidor"
+                                placeholder={t("matrix.spaceFieldPlaceholder")}
                                 onChange={(evento) => setEspacoDigitado(evento.target.value)}
                             />
                         )}
@@ -752,11 +819,11 @@ export function Matrix() {
                 onOpenChange={(aberto) => {
                     if (!aberto && !enviandoModulo) setConfirmandoDesligarModulo(false);
                 }}
-                title="Desligar o módulo Matrix nesta organização?"
-                description="O espelho para: o que chegar depois não aparece no Element até você religar. Nada é apagado: salas, espaços e conversas continuam como estão. Ao religar, só o que chegar daí em diante é espelhado."
-                confirmLabel="Desligar módulo"
-                cancelLabel="Cancelar"
-                closeLabel="Fechar confirmação de desligar o módulo"
+                title={t("matrix.confirmDisableTitle")}
+                description={t("matrix.confirmDisableText")}
+                confirmLabel={t("matrix.disableModule")}
+                cancelLabel={t("matrix.cancel")}
+                closeLabel={t("matrix.confirmDisableClose")}
                 tone="danger"
                 loading={enviandoModulo}
                 onConfirm={() => {
@@ -772,13 +839,15 @@ export function Matrix() {
                 }}
                 title={
                     espacoParaDesligar
-                        ? `Desligar o espaço de ${nomeDoEspaco(espacoParaDesligar)}?`
-                        : "Desligar espaço?"
+                        ? t("matrix.confirmDisconnectTitle", {
+                              department: nomeDoEspaco(espacoParaDesligar),
+                          })
+                        : t("matrix.confirmDisconnectTitleFallback")
                 }
-                description="Nada é apagado no Element: o espaço e as salas continuam como estão, e nenhuma conversa é apagada. O módulo só deixa de usar esse espaço; na próxima alteração de conversa desse departamento ele volta a usá-lo."
-                confirmLabel="Desligar espaço"
-                cancelLabel="Cancelar"
-                closeLabel="Fechar confirmação de desligar o espaço"
+                description={t("matrix.confirmDisconnectText")}
+                confirmLabel={t("matrix.confirmDisconnectAction")}
+                cancelLabel={t("matrix.cancel")}
+                closeLabel={t("matrix.confirmDisconnectClose")}
                 tone="danger"
                 loading={desligandoEspaco}
                 onConfirm={() => {

@@ -12,6 +12,7 @@
  *   `obterManifesto` (já existia em `integracoes.ts`).
  */
 
+import { translate } from "../i18n";
 import { ErroApi, pedir, type Saude } from "./cliente";
 import { obterManifesto, type ManifestoDoPlugin } from "./integracoes";
 
@@ -46,7 +47,7 @@ async function buscarTexto(caminho: string, aceita: string): Promise<{ status: n
     try {
         resposta = await fetch(caminho, { headers: { accept: aceita } });
     } catch {
-        throw new ErroApi(0, "rede", "não consegui falar com a instância: sem conexão com o servidor");
+        throw new ErroApi(0, "rede", translate("operation.apiOffline"));
     }
     return { status: resposta.status, texto: await resposta.text() };
 }
@@ -71,9 +72,13 @@ export async function consultarSaude(): Promise<SaudeDaInstancia> {
                 saude: corpo as Saude,
             };
         }
-        throw new ErroApi(status, "healthz", `a instância respondeu ${status} sem o resumo de saúde`);
+        throw new ErroApi(
+            status,
+            "healthz",
+            translate("operation.apiHealthWithoutSummary", { status }),
+        );
     }
-    throw new ErroApi(status, "healthz", `a instância respondeu ${status} ao pedido de saúde`);
+    throw new ErroApi(status, "healthz", translate("operation.apiHealthFailed", { status }));
 }
 
 /**
@@ -106,7 +111,7 @@ export function interpretarMetricas(texto: string): Medicoes {
 export async function consultarMetricas(): Promise<Medicoes> {
     const { status, texto } = await buscarTexto("/metrics", "text/plain");
     if (status !== 200) {
-        throw new ErroApi(status, "metrics", `a instância respondeu ${status} ao pedido de métricas`);
+        throw new ErroApi(status, "metrics", translate("operation.apiMetricsFailed", { status }));
     }
     return interpretarMetricas(texto);
 }
@@ -122,8 +127,9 @@ export type ItemDePlugin = {
 };
 
 /** Frase de reserva quando o servidor não manda a mensagem de um plugin indisponível. */
-const MENSAGEM_INDISPONIVEL_PADRAO =
-    "o plugin deste tipo não respondeu; verifique o programa declarado na configuração da instância";
+function mensagemIndisponivelPadrao(): string {
+    return translate("operation.apiPluginUnavailable");
+}
 
 /**
  * Lista os plugins declarados na instância. Item sem `kind` de texto é descartado (não há como
@@ -154,7 +160,7 @@ export async function listarPlugins(org: string): Promise<ItemDePlugin[]> {
                 mensagem:
                     typeof registro.mensagem === "string" && registro.mensagem
                         ? registro.mensagem
-                        : MENSAGEM_INDISPONIVEL_PADRAO,
+                        : mensagemIndisponivelPadrao(),
             });
         }
     }
@@ -258,7 +264,7 @@ function lerResumo(bruto: unknown): ResumoDoMapa {
 export function interpretarRelatorio(corpo: unknown): RelatorioRecarga {
     const registro = comoObjeto(corpo);
     if (!registro || typeof registro.mudou !== "boolean" || !comoObjeto(registro.antes) || !comoObjeto(registro.depois)) {
-        throw new ErroApi(200, "formato", "a instância respondeu a recarga sem o resumo esperado");
+        throw new ErroApi(200, "formato", translate("operation.apiClusterWithoutSummary"));
     }
     const trocas = Array.isArray(registro.orgs_que_trocaram) ? registro.orgs_que_trocaram : [];
     return {

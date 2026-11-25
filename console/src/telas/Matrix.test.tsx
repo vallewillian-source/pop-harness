@@ -14,10 +14,11 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { ServidorFalso, erroApi, type Chamada } from "../testes/servidor";
 import { ErroApi, definirToken, quandoExpirar } from "../api/cliente";
+import { setLocale } from "../i18n";
 import { esperarFocoDoModal } from "../testes/modal";
 import {
     Matrix,
-    MENSAGEM_DE_CONFLITO,
+    conflictMessage,
     mensagemDoEspaco,
     montarLinhas,
     situacaoDaConexao,
@@ -351,7 +352,7 @@ describe("módulo nesta organização", () => {
 
         await userEvent.click(await screen.findByRole("button", { name: "Ligar módulo Matrix" }));
 
-        expect(await screen.findByText(MENSAGEM_DE_CONFLITO)).toBeInTheDocument();
+        expect(await screen.findByText(conflictMessage())).toBeInTheDocument();
         await waitFor(() =>
             expect(
                 servidor.chamadasPara("GET", CAMINHO).filter((c) => !c.url.includes("/spaces")).length,
@@ -586,5 +587,152 @@ describe("espaços por departamento", () => {
         const linha = await waitFor(() => linhaDo("Antigo"));
         expect(within(linha).getByText("Departamento arquivado")).toBeInTheDocument();
         expect(within(linha).queryByRole("button", { name: /Criar espaço automático/ })).toBeNull();
+    });
+});
+
+describe("Matrix em en-US", () => {
+    afterEach(() => setLocale("pt-BR"));
+
+    it("textos derivados acompanham o idioma ativo", () => {
+        setLocale("en-US");
+        expect(situacaoDaConexao(true)).toEqual({ valor: "Connected" });
+        expect(situacaoDaConexao(false).detalhe).toBe("the module retries on its own");
+        expect(situacaoDaConexao(undefined).detalhe).toBe("not configured in this instance");
+        expect(valorDoAtraso(1)).toBe("1 msg behind");
+        expect(valorDoAtraso(142)).toBe("142 msgs behind");
+        expect(valorDasFalhas(2)).toBe("2 pending");
+        expect(textoDaOrigem("linked")).toBe("Linked (Element)");
+        expect(conflictMessage()).toBe("The state changed between reading and saving, try again.");
+        expect(mensagemDoEspaco(new ErroApi(404, "x", "cru"), "the department")).toBe(
+            "Could not find the department.",
+        );
+    });
+
+    it("tela traduzida: indicadores, colunas, status e ações", async () => {
+        setLocale("en-US");
+        servidorPadrao({ modulo: MODULO_LIGADO, espacos: [ESPACO_SUPORTE] });
+
+        montar();
+
+        const bloco = await waitFor(() => {
+            const b = secao("Module in this organization");
+            expect(within(b).getByText("Enabled")).toBeInTheDocument();
+            return b;
+        });
+        expect(within(bloco).getByText("Connected")).toBeInTheDocument();
+        expect(within(bloco).getByText("3 msgs behind")).toBeInTheDocument();
+        expect(within(bloco).getByText("1 pending")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Disable module" })).toBeInTheDocument();
+
+        const tabela = await screen.findByRole("table", { name: "Spaces by department" });
+        expect(within(tabela).getByRole("columnheader", { name: "Department" })).toBeInTheDocument();
+        expect(within(tabela).getByRole("columnheader", { name: "Origin" })).toBeInTheDocument();
+        expect(within(tabela).getByRole("columnheader", { name: "Actions" })).toBeInTheDocument();
+        expect(within(tabela).getByText("Active")).toBeInTheDocument();
+        expect(within(tabela).getByText("Automatic (module)")).toBeInTheDocument();
+        expect(
+            within(tabela).getByRole("button", { name: "Disconnect the space of department Suporte" }),
+        ).toBeInTheDocument();
+        expect(
+            screen.getByRole("heading", { level: 2, name: "Spaces by department" }),
+        ).toBeInTheDocument();
+    });
+
+    it("troca o idioma da tela aberta sem recarregar", async () => {
+        servidorPadrao({ modulo: MODULO_LIGADO });
+
+        montar();
+
+        expect(await screen.findByText("Ligado")).toBeInTheDocument();
+
+        setLocale("en-US");
+
+        expect(await screen.findByText("Enabled")).toBeInTheDocument();
+        expect(screen.queryByText("Ligado")).toBeNull();
+    });
+
+    it("desligar pede confirmação em inglês e o aviso sai traduzido", async () => {
+        setLocale("en-US");
+        servidorPadrao({ modulo: MODULO_LIGADO });
+
+        montar();
+
+        await userEvent.click(await screen.findByRole("button", { name: "Disable module" }));
+        const dialogo = await dialogoAberto();
+        await esperarFocoDoModal();
+        expect(
+            within(dialogo).getByText("Disable the Matrix module in this organization?"),
+        ).toBeInTheDocument();
+        expect(within(dialogo).getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+
+        await userEvent.click(within(dialogo).getByRole("button", { name: "Disable module" }));
+
+        expect(
+            await screen.findByText(
+                "Module disabled. Nothing was deleted: the rooms and spaces stay in Element.",
+            ),
+        ).toBeInTheDocument();
+    });
+
+    it("módulo desligado e Synapse fora aparecem em inglês", async () => {
+        setLocale("en-US");
+        servidorPadrao({ modulo: { ...MODULO_LIGADO, connected: false } });
+
+        montar();
+
+        expect(
+            await screen.findByText(/sending to Element is piling up in the queue/),
+        ).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Try reconnecting" })).toBeInTheDocument();
+    });
+
+    it("erro de leitura em inglês e 'Try again' refaz a consulta", async () => {
+        setLocale("en-US");
+        const servidor = servidorPadrao({ moduloStatus: 500 });
+
+        montar();
+
+        const bloco = await waitFor(() => {
+            const b = secao("Module in this organization");
+            expect(within(b).getByText("Could not read the module state")).toBeInTheDocument();
+            return b;
+        });
+        const antes = servidor.chamadasPara("GET", CAMINHO).filter((c) => !c.url.includes("/spaces")).length;
+        await userEvent.click(within(bloco).getByRole("button", { name: "Try again" }));
+
+        await waitFor(() =>
+            expect(
+                servidor.chamadasPara("GET", CAMINHO).filter((c) => !c.url.includes("/spaces")).length,
+            ).toBeGreaterThan(antes),
+        );
+    });
+
+    it("criar espaço e ligar existente em inglês", async () => {
+        setLocale("en-US");
+        servidorPadrao({ modulo: MODULO_LIGADO });
+
+        montar();
+
+        const tabela = await screen.findByRole("table", { name: "Spaces by department" });
+        const linha = within(tabela)
+            .getAllByRole("row")
+            .find((celula) => within(celula).queryByText("Vendas", { exact: true }) !== null);
+        if (!linha) throw new Error("sem linha para Vendas");
+
+        await userEvent.click(
+            within(linha).getByRole("button", { name: "Create automatic space for department Vendas" }),
+        );
+
+        expect(await screen.findByText("Department space created.")).toBeInTheDocument();
+
+        await userEvent.click(
+            within(linha).getByRole("button", { name: "Link an existing space to department Vendas" }),
+        );
+        const dialogo = await dialogoAberto();
+        await esperarFocoDoModal();
+        expect(within(dialogo).getByText("Link a department to an existing space")).toBeInTheDocument();
+        expect(
+            within(dialogo).getByLabelText("Alias or room ID of the Matrix space"),
+        ).toHaveAttribute("placeholder", "#alias:server or !id:server");
     });
 });
