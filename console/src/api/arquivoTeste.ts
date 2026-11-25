@@ -10,6 +10,7 @@
  * histórico traz o `arquivo_id`. Os dois casos saem daqui com a mesma origem de arquivo.
  */
 
+import { translate } from "../i18n";
 import { pedirBytes } from "./cliente";
 
 /** Tipos de imagem que a tela mostra no lugar. Outros tipos (PDF, Office) são só baixados. */
@@ -122,12 +123,12 @@ export function origemDoArquivoDoAgente(
 export function rotuloDoEnvio(estado: string): string {
     switch (estado) {
         case "sent":
-            return "enviado";
+            return translate("testChat.uploadSent");
         case "pending":
         case "sending":
-            return "na fila para envio";
+            return translate("testChat.uploadQueued");
         case "failed":
-            return "falhou ao enviar";
+            return translate("testChat.uploadFailed");
         default:
             return estado;
     }

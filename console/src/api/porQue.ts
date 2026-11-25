@@ -16,6 +16,8 @@
  * e os resumos de argumentos e de resultado, já prontos para exibir.
  */
 
+import { translate } from "../i18n";
+import { formatCurrency, formatNumber } from "../i18n/format";
 import { DESCRICAO_GATE, type IdGate } from "./modeloJev";
 
 /** Um gate decidido no turno, como o motor grava em `turns.jev_json`. */
@@ -149,7 +151,7 @@ export function lerJevDoTurno(valor: unknown): JevDoTurno | null {
     const decisoes: DecisaoDoGate[] = lista(valor.decisoes)
         .filter(ehObjeto)
         .map((item) => ({
-            gate: texto(item.gate) ?? "desconhecido",
+            gate: texto(item.gate) ?? translate("testChat.unknownGate"),
             escolha: texto(item.escolha),
             escolhaDoJev: texto(item.escolha_do_jev),
             origem: texto(item.origem),
@@ -184,7 +186,7 @@ export function lerRecuperadosDoTurno(valor: unknown): RecuperadosDoTurno {
         if (item.tipo === "produto") {
             produtos.push({
                 produto: texto(item.produto),
-                nome: texto(item.nome) ?? "Produto sem nome",
+                nome: texto(item.nome) ?? translate("testChat.productWithoutName"),
                 precoTexto: texto(item.preco_texto),
                 precoCentavos: numero(item.preco_centavos),
                 unidade: texto(item.unidade) ?? "",
@@ -193,7 +195,7 @@ export function lerRecuperadosDoTurno(valor: unknown): RecuperadosDoTurno {
         } else if (item.tipo === "trecho" || texto(item.titulo) !== null) {
             trechos.push({
                 item: texto(item.item),
-                titulo: texto(item.titulo) ?? "Trecho sem título",
+                titulo: texto(item.titulo) ?? translate("testChat.snippetWithoutTitle"),
                 grupo: texto(item.grupo) ?? "",
                 texto: texto(item.texto) ?? "",
                 similaridade: numero(item.similaridade),
@@ -254,23 +256,23 @@ export function lerChamadasDeFerramenta(valor: unknown): ChamadaDeFerramenta[] {
     return chamadas.sort((a, b) => (a.rodada ?? 0) - (b.rodada ?? 0) || (a.ordem ?? 0) - (b.ordem ?? 0));
 }
 
-/** Motivo da recusa de uma chamada, em português claro. Motivo desconhecido aparece como veio. */
+/** Motivo da recusa de uma chamada, em linguagem comum. Motivo desconhecido aparece como veio. */
 export function rotuloDoMotivoRecusa(motivo: string | null): string {
     switch (motivo) {
         case "nao_habilitada":
-            return "ferramenta não habilitada neste agente";
+            return translate("testChat.reasonNotEnabled");
         case "desconhecida":
-            return "ferramenta desconhecida (o nome não existe no sistema)";
+            return translate("testChat.reasonUnknownTool");
         case "argumento_invalido":
-            return "argumento inválido";
+            return translate("testChat.reasonInvalidArgument");
         case "erro_de_execucao":
-            return "falha ao executar a ferramenta";
+            return translate("testChat.reasonExecutionError");
         case "limite_de_chamadas":
-            return "passou do limite de chamadas de ferramenta nesta mensagem";
+            return translate("testChat.reasonCallLimit");
         case "fora_do_turno":
-            return "fora do escopo deste turno";
+            return translate("testChat.reasonOutOfTurn");
         case null:
-            return "motivo não registrado";
+            return translate("testChat.reasonNotRecorded");
         default:
             return motivo;
     }
@@ -278,8 +280,8 @@ export function rotuloDoMotivoRecusa(motivo: string | null): string {
 
 /** Duração de uma chamada. Zero é "menos de 1 ms" (o turno mediu e arredondou para baixo), não "não medido". */
 export function formatarDuracaoDeFerramenta(ms: number | null): string {
-    if (ms === null) return "não registrada";
-    if (ms === 0) return "menos de 1 ms";
+    if (ms === null) return translate("testChat.durationNotRecorded");
+    if (ms === 0) return translate("testChat.durationUnderOneMs");
     return formatarMs(ms);
 }
 
@@ -393,13 +395,13 @@ export function tituloDoGate(gate: string): string {
 export function rotuloDaOrigem(origem: string | null): string {
     switch (origem) {
         case "jev":
-            return "Respondida pelo Jev";
+            return translate("testChat.originJev");
         case "cache":
-            return "Reaproveitada do cache (sem chamada ao Jev)";
+            return translate("testChat.originCache");
         case "fallback":
-            return "Valeu o padrão do gate; a resposta do Jev não foi usada";
+            return translate("testChat.originFallback");
         default:
-            return "não registrado";
+            return translate("testChat.notRecorded");
     }
 }
 
@@ -407,13 +409,13 @@ export function rotuloDaOrigem(origem: string | null): string {
 export function rotuloDoMotivoFim(motivo: string | null): string {
     switch (motivo) {
         case "concluido":
-            return "Resposta completa";
+            return translate("testChat.endCompleted");
         case "chamadas_ferramenta":
-            return "Parou para chamar ferramentas";
+            return translate("testChat.endToolCalls");
         case "limite_de_tokens":
-            return "Parou no limite de tokens de saída";
+            return translate("testChat.endTokenLimit");
         case null:
-            return "não registrado";
+            return translate("testChat.notRecorded");
         default:
             return motivo;
     }
@@ -421,24 +423,24 @@ export function rotuloDoMotivoFim(motivo: string | null): string {
 
 /** Confiança de 0 a 1 como porcentagem inteira. */
 export function formatarConfianca(valor: number | null): string {
-    if (valor === null) return "não registrado";
-    return `${Math.round(valor * 100)}%`;
+    if (valor === null) return translate("testChat.notRecorded");
+    return `${formatNumber(Math.round(valor * 100))}%`;
 }
 
 /** Margem de 0 a 1 como porcentagem com uma casa. */
 export function formatarMargem(valor: number | null): string {
-    if (valor === null) return "não registrado";
-    return `${(valor * 100).toFixed(1).replace(".", ",")}%`;
+    if (valor === null) return translate("testChat.notRecorded");
+    return `${formatNumber(valor * 100, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
 }
 
 export function formatarMs(valor: number | null): string {
-    if (valor === null) return "não registrado";
-    return `${valor.toLocaleString("pt-BR")} ms`;
+    if (valor === null) return translate("testChat.notRecorded");
+    return translate("testChat.milliseconds", { value: formatNumber(valor) });
 }
 
 export function formatarTokens(valor: number | null): string {
-    if (valor === null) return "não registrado";
-    return `${valor.toLocaleString("pt-BR")} tokens`;
+    if (valor === null) return translate("testChat.notRecorded");
+    return translate("testChat.tokenCount", { value: formatNumber(valor) });
 }
 
 /**
@@ -449,14 +451,14 @@ export function formatarTokens(valor: number | null): string {
  * isso `null` e `0` dizem que o custo não foi calculado, em vez de mostrar um custo zero.
  */
 export function formatarCustoMicros(valor: number | null): string {
-    if (valor === null || valor === 0) return "não calculado neste turno (o turno ainda não grava o custo)";
-    return `${valor.toLocaleString("pt-BR")} micros de moeda (a API não informa a moeda)`;
+    if (valor === null || valor === 0) return translate("testChat.costNotCalculated");
+    return translate("testChat.costMicros", { value: formatNumber(valor) });
 }
 
 /** Preço em centavos para leitura, em reais. Sem valor, `null`. */
 export function formatarPrecoCentavos(centavos: number | null): string | null {
     if (centavos === null) return null;
-    return (centavos / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+    return formatCurrency(centavos / 100, "BRL");
 }
 
 /**
@@ -477,13 +479,13 @@ export function duracaoDoTurno(
 export function rotuloDoEstadoDoTurno(estado: string): string {
     switch (estado) {
         case "done":
-            return "Concluído";
+            return translate("testChat.stateDone");
         case "failed":
-            return "Falhou";
+            return translate("testChat.stateFailed");
         case "skipped":
-            return "Não respondeu";
+            return translate("testChat.stateSkipped");
         case "running":
-            return "Em andamento";
+            return translate("testChat.stateRunning");
         default:
             return estado;
     }
@@ -496,15 +498,15 @@ export function rotuloDoEstadoDoTurno(estado: string): string {
 export function frasePeloEstadoSemResposta(estado: string): string {
     switch (estado) {
         case "failed":
-            return "O turno falhou antes de a IA enviar uma resposta.";
+            return translate("testChat.noResponseFailed");
         case "skipped":
-            return "A IA não respondeu a esta mensagem.";
+            return translate("testChat.noResponseSkipped");
         case "done":
-            return "O turno terminou sem texto de resposta.";
+            return translate("testChat.noResponseDone");
         case "running":
-            return "O turno ainda está em andamento.";
+            return translate("testChat.noResponseRunning");
         default:
-            return "Nenhuma resposta foi enviada neste turno.";
+            return translate("testChat.noResponseDefault");
     }
 }
 

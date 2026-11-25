@@ -4,8 +4,9 @@
  * turno, e o aborto para a leitura com `AbortError` (o cancelamento).
  */
 
-import { describe, expect, it } from "vitest";
-import { interpretarQuadro, lerFluxo, type EventoDoTurno } from "./testeChat";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { setLocale } from "../i18n";
+import { enviarMensagemTeste, interpretarQuadro, lerFluxo, type EventoDoTurno } from "./testeChat";
 
 const codificador = new TextEncoder();
 
@@ -79,5 +80,25 @@ describe("lerFluxo", () => {
             name: "AbortError",
         });
         expect(recebidos.length).toBeLessThanOrEqual(1);
+    });
+});
+
+describe("I18N-10: erro do turno sem eventos no idioma ativo", () => {
+    afterEach(() => {
+        vi.unstubAllGlobals();
+        setLocale("pt-BR");
+    });
+
+    it("a frase do erro segue o catálogo em pt-BR e en-US", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () => new Response(null, { status: 200 })),
+        );
+        const envio = (texto: string) =>
+            enviarMensagemTeste("org_1", "ag_1", "conv_1", { texto, arquivos: [] }, { aoEvento: () => undefined });
+
+        await expect(envio("oi")).rejects.toThrow("a resposta do turno não trouxe eventos");
+        setLocale("en-US");
+        await expect(envio("oi")).rejects.toThrow("the turn response brought no events");
     });
 });

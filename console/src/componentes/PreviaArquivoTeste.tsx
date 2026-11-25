@@ -10,6 +10,7 @@
 
 import { SofaBanner, SofaButton, SofaModal } from "@sofacoding/sofa-ui";
 import type { OrigemDeArquivo } from "../api/arquivoTeste";
+import { useI18n } from "../i18n";
 import "../estilos/chat-teste.css";
 
 export type PreviaDeImagem = {
@@ -29,31 +30,36 @@ type Props = {
 };
 
 export function PreviaArquivoTeste({ previa, aoFechar, aoTentarDeNovo }: Props) {
+    const { translate: t } = useI18n();
     return (
         <SofaModal
             open={previa !== null}
             onOpenChange={(proximo) => {
                 if (!proximo) aoFechar();
             }}
-            title={previa ? `Imagem: ${previa.origem.nome}` : "Imagem"}
+            title={
+                previa
+                    ? t("testChat.previewTitle", { name: previa.origem.nome })
+                    : t("testChat.previewTitlePlain")
+            }
             description={
                 previa?.origem.de === "agente"
-                    ? "Arquivo que o agente enviou nesta conversa de teste."
-                    : "Arquivo enviado pelo cliente nesta conversa de teste."
+                    ? t("testChat.previewFromAgent")
+                    : t("testChat.previewFromClient")
             }
-            closeLabel="Fechar a prévia da imagem"
+            closeLabel={t("testChat.previewClose")}
             size="lg"
         >
             {previa?.estado === "carregando" && (
                 <p className="poph-previa-arquivo__estado" role="status">
-                    Carregando a imagem…
+                    {t("testChat.previewLoading")}
                 </p>
             )}
             {previa?.estado === "erro" && (
-                <SofaBanner tone="danger" title="Não consegui abrir a imagem">
+                <SofaBanner tone="danger" title={t("testChat.previewErrorTitle")}>
                     <p>{previa.erro}</p>
                     <SofaButton variant="secondary" onClick={aoTentarDeNovo}>
-                        Tentar de novo
+                        {t("testChat.retry")}
                     </SofaButton>
                 </SofaBanner>
             )}
@@ -61,7 +67,11 @@ export function PreviaArquivoTeste({ previa, aoFechar, aoTentarDeNovo }: Props) 
                 <img
                     className="poph-previa-arquivo__imagem"
                     src={previa.src}
-                    alt={`Imagem enviada pelo ${previa.origem.de === "agente" ? "agente" : "cliente"}: ${previa.origem.nome}`}
+                    alt={
+                        previa.origem.de === "agente"
+                            ? t("testChat.imageFromAgent", { name: previa.origem.nome })
+                            : t("testChat.imageFromClient", { name: previa.origem.nome })
+                    }
                 />
             )}
         </SofaModal>

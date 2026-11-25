@@ -2,7 +2,8 @@
  * Funções puras de ver e baixar o arquivo do cliente no chat de teste (HR-46c).
  */
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { setLocale } from "../i18n";
 import {
     caminhoDoAnexo,
     caminhoDoArquivoDoAgente,
@@ -127,6 +128,21 @@ describe("rotuloDoEnvio (HR-46e)", () => {
         expect(rotuloDoEnvio("pending")).toBe("na fila para envio");
         expect(rotuloDoEnvio("sending")).toBe("na fila para envio");
         expect(rotuloDoEnvio("failed")).toBe("falhou ao enviar");
+        expect(rotuloDoEnvio("outro")).toBe("outro");
+    });
+});
+
+describe("I18N-10: rotuloDoEnvio em en-US", () => {
+    afterEach(() => {
+        setLocale("pt-BR");
+    });
+
+    it("os quatro estados da fila em inglês; estado desconhecido sai como veio", () => {
+        setLocale("en-US");
+        expect(rotuloDoEnvio("sent")).toBe("sent");
+        expect(rotuloDoEnvio("pending")).toBe("queued to send");
+        expect(rotuloDoEnvio("sending")).toBe("queued to send");
+        expect(rotuloDoEnvio("failed")).toBe("failed to send");
         expect(rotuloDoEnvio("outro")).toBe("outro");
     });
 });

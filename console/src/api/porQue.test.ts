@@ -3,14 +3,18 @@
  * gravado (ou veio com outro formato) não vira número inventado.
  */
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { setLocale } from "../i18n";
 import {
     contarFerramentas,
     duracaoDoTurno,
+    formatarConfianca,
     formatarConteudoDeFerramenta,
     formatarCustoMicros,
+    formatarMargem,
     formatarDuracaoDeFerramenta,
     formatarMs,
+    formatarTokens,
     frasePeloEstadoSemResposta,
     intercalarTurnos,
     lerChamadasDeFerramenta,
@@ -19,6 +23,7 @@ import {
     lerRecuperadosDoTurno,
     lerTemposDoTurno,
     rotuloDaOrigem,
+    rotuloDoEstadoDoTurno,
     rotuloDoMotivoFim,
     rotuloDoMotivoRecusa,
     tituloDoGate,
@@ -397,3 +402,56 @@ describe("formatarConteudoDeFerramenta (HR-49b)", () => {
     });
 });
 
+
+describe("I18N-10: rótulos e formatação em en-US", () => {
+    afterEach(() => {
+        setLocale("pt-BR");
+    });
+
+    it("rótulos de estado, origem e fim do turno saem do catálogo em inglês", () => {
+        setLocale("en-US");
+        expect(rotuloDoEstadoDoTurno("done")).toBe("Done");
+        expect(rotuloDoEstadoDoTurno("failed")).toBe("Failed");
+        expect(rotuloDoEstadoDoTurno("skipped")).toBe("Did not answer");
+        expect(rotuloDoEstadoDoTurno("running")).toBe("In progress");
+        expect(rotuloDaOrigem("jev")).toBe("Answered by Jev");
+        expect(rotuloDaOrigem("cache")).toBe("Reused from cache (no Jev call)");
+        expect(rotuloDaOrigem(null)).toBe("not recorded");
+        expect(rotuloDoMotivoFim("concluido")).toBe("Complete response");
+        expect(rotuloDoMotivoFim("limite_de_tokens")).toBe("Stopped at the output token limit");
+        expect(frasePeloEstadoSemResposta("failed")).toBe("The turn failed before the AI sent a response.");
+        expect(frasePeloEstadoSemResposta(null as unknown as string)).toBe("No response was sent in this turn.");
+    });
+
+    it("motivos de recusa e duração das ferramentas em inglês", () => {
+        setLocale("en-US");
+        expect(rotuloDoMotivoRecusa("nao_habilitada")).toBe("tool not enabled for this agent");
+        expect(rotuloDoMotivoRecusa("argumento_invalido")).toBe("invalid argument");
+        expect(rotuloDoMotivoRecusa(null)).toBe("reason not recorded");
+        expect(formatarDuracaoDeFerramenta(null)).toBe("not recorded");
+        expect(formatarDuracaoDeFerramenta(0)).toBe("less than 1 ms");
+    });
+
+    it("números, milissegundos, tokens e custo seguem o formato inglês", () => {
+        setLocale("en-US");
+        expect(formatarMs(1234)).toBe("1,234 ms");
+        expect(formatarTokens(1234)).toBe("1,234 tokens");
+        expect(formatarCustoMicros(1820)).toBe("1,820 currency micros (the API does not report the currency)");
+        expect(formatarCustoMicros(0)).toBe(
+            "not calculated in this turn (the turn does not record the cost yet)",
+        );
+        expect(formatarConfianca(0.92)).toBe("92%");
+        expect(formatarConfianca(null)).toBe("not recorded");
+        expect(formatarMargem(0.61)).toBe("61.0%");
+    });
+
+    it("nome de reserva do produto e do trecho também trocam de idioma", () => {
+        setLocale("en-US");
+        const recuperados = lerRecuperadosDoTurno([
+            { tipo: "produto", produto: "p1", preco_centavos: null },
+            { tipo: "trecho", item: "i1" },
+        ]);
+        expect(recuperados.produtos[0]?.nome).toBe("Product without a name");
+        expect(recuperados.trechos[0]?.titulo).toBe("Snippet without a title");
+    });
+});

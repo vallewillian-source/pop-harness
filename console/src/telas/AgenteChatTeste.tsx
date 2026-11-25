@@ -77,6 +77,8 @@ import { intercalarTurnos, frasePeloEstadoSemResposta, rotuloDoEstadoDoTurno } f
 import { CabecalhoDoAgente, AbasDoAgente } from "../componentes/AbasDoAgente";
 import { PainelPorQue } from "../componentes/PainelPorQue";
 import { PreviaArquivoTeste, type PreviaDeImagem } from "../componentes/PreviaArquivoTeste";
+import { useI18n, translate } from "../i18n";
+import { formatDateTime, formatNumber } from "../i18n/format";
 import "../estilos/chat-teste.css";
 
 /** Tipos de arquivo que o recebimento aceita (imagem, PDF e Office). A API confere o conteúdo. */
@@ -110,7 +112,7 @@ type Encerramento = {
 type ErroDeCampo = { campo: "text" | "file"; mensagem: string } | null;
 
 function mensagemDe(falha: unknown): string {
-    return falha instanceof Error ? falha.message : "falha desconhecida";
+    return falha instanceof Error ? falha.message : translate("testChat.fallbackUnknown");
 }
 
 function ehAbortado(falha: unknown): boolean {
@@ -120,12 +122,7 @@ function ehAbortado(falha: unknown): boolean {
 }
 
 function dataCurta(ms: number): string {
-    return new Date(ms).toLocaleString("pt-BR", {
-        day: "2-digit",
-        month: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-    });
+    return formatDateTime(ms);
 }
 
 /** Identificador curto para a lista e o cabeçalho (o id completo fica no atributo). */
@@ -134,8 +131,10 @@ function idCurto(id: string): string {
 }
 
 function tamanhoLegivel(bytes: number): string {
-    if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-    return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+    if (bytes >= 1024 * 1024) {
+        return `${formatNumber(bytes / (1024 * 1024), { minimumFractionDigits: 1, maximumFractionDigits: 1 })} MB`;
+    }
+    return `${formatNumber(Math.max(1, Math.round(bytes / 1024)))} KB`;
 }
 
 function ehTransferida(conversa: ConversaTeste | undefined | null): boolean {
@@ -143,7 +142,11 @@ function ehTransferida(conversa: ConversaTeste | undefined | null): boolean {
 }
 
 function rotuloDoStatus(status: string): string {
-    return status === "transferred" ? "Transferida" : status === "open" ? "Ativa" : status;
+    return status === "transferred"
+        ? translate("testChat.statusTransferred")
+        : status === "open"
+          ? translate("testChat.statusActive")
+          : status;
 }
 
 function classeDoStatus(status: string): string {
@@ -169,6 +172,7 @@ function campos(evento: EventoDoTurno): Record<string, unknown> {
 export function AgenteChatTeste() {
     const { orgId = "", agentId = "" } = useParams();
     const navegar = useNavigate();
+    const { translate: t } = useI18n();
 
     const [agente, setAgente] = useState<Agente | null>(null);
     const [nomeDaOrg, setNomeDaOrg] = useState<string | null>(null);
@@ -365,7 +369,7 @@ export function AgenteChatTeste() {
         } catch (falha) {
             setAviso({
                 tom: "danger",
-                titulo: "Não consegui abrir uma conversa nova",
+                titulo: t("testChat.newConversationError"),
                 texto: mensagemDe(falha),
             });
         } finally {
@@ -388,7 +392,7 @@ export function AgenteChatTeste() {
                 break;
             }
             case "ferramenta": {
-                const nome = texto(dados.name) ?? "ferramenta";
+                const nome = texto(dados.name) ?? t("testChat.toolFallback");
                 setTurno((atual) =>
                     atual ? { ...atual, ferramentas: [...atual.ferramentas, nome] } : atual,
                 );
@@ -413,16 +417,14 @@ export function AgenteChatTeste() {
                 if (estado === "failed") {
                     setAviso({
                         tom: "danger",
-                        titulo: "O turno falhou",
-                        texto:
-                            texto(dados.error) ??
-                            "A IA não conseguiu responder a esta mensagem. Tente de novo.",
+                        titulo: t("testChat.turnFailedTitle"),
+                        texto: texto(dados.error) ?? t("testChat.turnFailedText"),
                     });
                 } else if (estado === "skipped") {
                     setAviso({
                         tom: "info",
-                        titulo: "A IA não respondeu a esta mensagem",
-                        texto: "A conversa não recebe resposta automática neste momento.",
+                        titulo: t("testChat.skippedTitle"),
+                        texto: t("testChat.skippedText"),
                     });
                 }
                 break;
@@ -432,7 +434,7 @@ export function AgenteChatTeste() {
                     atual
                         ? {
                               ...atual,
-                              erro: texto(dados.message) ?? "o turno não pôde começar",
+                              erro: texto(dados.message) ?? t("testChat.turnStartError"),
                           }
                         : atual,
                 );
@@ -449,15 +451,15 @@ export function AgenteChatTeste() {
             if (falha.status === 409) {
                 return {
                     tom: "warn",
-                    titulo: "Esta conversa já tem uma resposta em andamento",
-                    texto: "Espere a resposta terminar ou feche a outra aba onde ela está sendo escrita. Sua mensagem não foi enviada.",
+                    titulo: t("testChat.busyTitle"),
+                    texto: t("testChat.busyText"),
                 };
             }
             if (falha.status === 503) {
                 return {
                     tom: "danger",
-                    titulo: "O turno não está ligado neste servidor",
-                    texto: "Falta a chave do modelo. Sua mensagem não foi gravada.",
+                    titulo: t("testChat.noTurnTitle"),
+                    texto: t("testChat.noTurnText"),
                 };
             }
             if (falha.status === 400) {
@@ -469,7 +471,7 @@ export function AgenteChatTeste() {
         }
         return {
             tom: "danger",
-            titulo: "Não consegui enviar a mensagem",
+            titulo: t("testChat.sendErrorTitle"),
             texto: mensagemDe(falha),
         };
     }
@@ -480,7 +482,7 @@ export function AgenteChatTeste() {
 
         const textoDoCliente = rascunho.trim();
         if (!textoDoCliente && arquivos.length === 0) {
-            setErroDeCampo({ campo: "text", mensagem: "Escreva uma mensagem ou anexe um arquivo." });
+            setErroDeCampo({ campo: "text", mensagem: t("testChat.invalidMessage") });
             return;
         }
 
@@ -526,8 +528,8 @@ export function AgenteChatTeste() {
                 if (ehAbortado(falha)) {
                     setAviso({
                         tom: "info",
-                        titulo: "Turno cancelado",
-                        texto: "A sua mensagem ficou registrada, mas a resposta não foi gerada. Você pode enviar outra.",
+                        titulo: t("testChat.cancelTitle"),
+                        texto: t("testChat.cancelText"),
                     });
                 } else {
                     const avisoDaFalha = tratarFalhaDeEnvio(falha);
@@ -637,7 +639,10 @@ export function AgenteChatTeste() {
             if (arquivo.size > LIMITE_ARQUIVO_BYTES) {
                 setErroDeCampo({
                     campo: "file",
-                    mensagem: `${arquivo.name} tem ${tamanhoLegivel(arquivo.size)}: o limite é 16 MB por arquivo.`,
+                    mensagem: t("testChat.fileTooLarge", {
+                        name: arquivo.name,
+                        size: tamanhoLegivel(arquivo.size),
+                    }),
                 });
                 continue;
             }
@@ -671,8 +676,8 @@ export function AgenteChatTeste() {
             if (ativaRef.current === conversa) {
                 setAviso({
                     tom: "info",
-                    titulo: "Atendimento reaberto",
-                    texto: "A IA volta a responder nesta conversa.",
+                    titulo: t("testChat.reopenedTitle"),
+                    texto: t("testChat.reopenedText"),
                 });
             }
         } catch (falha) {
@@ -680,13 +685,13 @@ export function AgenteChatTeste() {
                 if (falha instanceof ErroApi && falha.status === 412) {
                     setAviso({
                         tom: "warn",
-                        titulo: "A conversa mudou em outro lugar",
-                        texto: "Atualizei a versão na tela. Confira a conversa e tente reabrir de novo. O que você digitou continua aqui.",
+                        titulo: t("testChat.conflictTitle"),
+                        texto: t("testChat.conflictText"),
                     });
                 } else {
                     setAviso({
                         tom: "danger",
-                        titulo: "Não consegui reabrir a conversa",
+                        titulo: t("testChat.reopenErrorTitle"),
                         texto: mensagemDe(falha),
                     });
                 }
@@ -704,17 +709,17 @@ export function AgenteChatTeste() {
         return (
             <div className="poph-pagina">
                 <SofaErrorState
-                    title="Não consegui carregar o chat de teste"
-                    description="A instância não respondeu à leitura do agente. Tente de novo; se persistir, confira a saúde do servidor."
+                    title={t("testChat.pageLoadTitle")}
+                    description={t("testChat.pageLoadDescription")}
                     details={erroDeCarga}
-                    retry={{ label: "Tentar de novo", onClick: () => void carregarAgente() }}
+                    retry={{ label: t("testChat.retry"), onClick: () => void carregarAgente() }}
                     action={
                         <SofaButton
                             variant="subtle"
                             icon={<IconArrowLeft aria-hidden="true" />}
                             onClick={() => navegar(`/orgs/${orgId}/agents`)}
                         >
-                            Voltar para agentes
+                            {t("testChat.backToAgents")}
                         </SofaButton>
                     }
                 />
@@ -756,12 +761,12 @@ export function AgenteChatTeste() {
                 slug={agente.slug}
                 situacao={agente.status}
                 organizacao={nomeDaOrg}
-                descricao="conversas de teste com memória zerada: nada do que você escreve aqui sai para o WhatsApp"
+                descricao={t("testChat.chatDescription")}
             />
             <AbasDoAgente org={orgId} agente={agentId} ativa="test-chat" nome={agente.name} model={agente.model ?? null} />
 
             <div className="poph-chat-teste__corpo">
-                <aside className="poph-chat-teste__lista" aria-label="Conversas de teste">
+                <aside className="poph-chat-teste__lista" aria-label={t("testChat.conversationsLabel")}>
                     <div className="poph-chat-teste__lista-topo">
                         <SofaButton
                             variant="primary"
@@ -771,7 +776,7 @@ export function AgenteChatTeste() {
                             disabled={enviando}
                             fullWidth
                         >
-                            Nova conversa
+                            {t("testChat.newConversation")}
                         </SofaButton>
                         <SofaButton
                             variant="subtle"
@@ -783,7 +788,7 @@ export function AgenteChatTeste() {
                                 );
                             }}
                         >
-                            Atualizar
+                            {t("testChat.refresh")}
                         </SofaButton>
                     </div>
 
@@ -791,11 +796,11 @@ export function AgenteChatTeste() {
                         <SofaSkeleton lines={4} />
                     ) : erroLista && conversas.length === 0 ? (
                         <SofaErrorState
-                            title="Não consegui listar as conversas"
-                            description="A lista de conversas de teste não respondeu. Tente de novo."
+                            title={t("testChat.listErrorTitle")}
+                            description={t("testChat.listErrorDescription")}
                             details={erroLista}
                             retry={{
-                                label: "Tentar de novo",
+                                label: t("testChat.retry"),
                                 onClick: () => {
                                     setErroLista(null);
                                     void atualizarLista().catch((falha: unknown) =>
@@ -805,11 +810,9 @@ export function AgenteChatTeste() {
                             }}
                         />
                     ) : conversas.length === 0 ? (
-                        <p className="poph-chat-teste__vazio">
-                            Nenhuma conversa de teste ainda. Crie uma para começar.
-                        </p>
+                        <p className="poph-chat-teste__vazio">{t("testChat.listEmpty")}</p>
                     ) : (
-                        <ul className="poph-chat-teste__itens" aria-label="Conversas">
+                        <ul className="poph-chat-teste__itens" aria-label={t("testChat.conversationsListLabel")}>
                             {conversas.map((conversa) => {
                                 const selecionada = conversa.id === ativa;
                                 return (
@@ -837,8 +840,10 @@ export function AgenteChatTeste() {
                                                 </span>
                                             </span>
                                             <span className="poph-chat-teste__item-meta">
-                                                {dataCurta(conversa.created_at)} ·{" "}
-                                                {conversa.message_count} mensagem(ns)
+                                                {t("testChat.conversationMeta", {
+                                                    date: dataCurta(conversa.created_at),
+                                                    count: formatNumber(conversa.message_count),
+                                                })}
                                             </span>
                                         </button>
                                     </li>
@@ -849,17 +854,17 @@ export function AgenteChatTeste() {
 
                     {proximoCursor && (
                         <SofaButton variant="subtle" onClick={() => void carregarMais()}>
-                            Carregar mais conversas
+                            {t("testChat.loadMore")}
                         </SofaButton>
                     )}
                 </aside>
 
-                <section className="poph-chat-teste__conversa" aria-label="Conversa de teste">
+                <section className="poph-chat-teste__conversa" aria-label={t("testChat.conversationSectionLabel")}>
                     {!ativa ? (
                         <SofaEmptyState
                             icon={<IconMessage aria-hidden="true" />}
-                            title="Escolha uma conversa ou crie uma nova"
-                            description="Cada conversa de teste começa com a memória zerada, como um cliente novo."
+                            title={t("testChat.chooseTitle")}
+                            description={t("testChat.chooseDescription")}
                             action={
                                 <SofaButton
                                     variant="primary"
@@ -867,16 +872,16 @@ export function AgenteChatTeste() {
                                     onClick={() => void novaConversa()}
                                     loading={criando}
                                 >
-                                    Nova conversa
+                                    {t("testChat.newConversation")}
                                 </SofaButton>
                             }
                         />
                     ) : erroHistorico && !historico ? (
                         <SofaErrorState
-                            title="Não consegui abrir esta conversa"
-                            description="O histórico não respondeu. Tente de novo."
+                            title={t("testChat.openErrorTitle")}
+                            description={t("testChat.openErrorDescription")}
                             details={erroHistorico}
-                            retry={{ label: "Tentar de novo", onClick: () => void carregarHistorico(ativa) }}
+                            retry={{ label: t("testChat.retry"), onClick: () => void carregarHistorico(ativa) }}
                         />
                     ) : !historico ? (
                         <SofaSkeleton lines={6} />
@@ -884,7 +889,7 @@ export function AgenteChatTeste() {
                         <>
                             <div className="poph-chat-teste__cabecalho">
                                 <span className="poph-mono-mudo" title={historico.conversation.id}>
-                                    Conversa {idCurto(historico.conversation.id)}
+                                    {t("testChat.conversationLabel", { id: idCurto(historico.conversation.id) })}
                                 </span>
                                 <span
                                     className={`poph-status ${classeDoStatus(historico.conversation.status)}`}
@@ -893,18 +898,14 @@ export function AgenteChatTeste() {
                                     {rotuloDoStatus(historico.conversation.status)}
                                 </span>
                                 {carregandoHistorico && (
-                                    <span className="poph-chat-teste__atualizando">Atualizando…</span>
+                                    <span className="poph-chat-teste__atualizando">{t("testChat.updating")}</span>
                                 )}
                             </div>
 
                             {transferida && (
                                 <div className="poph-chat-teste__transferida">
-                                    <SofaBanner
-                                        tone="warn"
-                                        title="Atendimento transferido para uma pessoa"
-                                    >
-                                        A IA não responde nesta conversa até alguém reabrir o atendimento.
-                                        A mensagem nova fica registrada.
+                                    <SofaBanner tone="warn" title={t("testChat.transferredTitle")}>
+                                        {t("testChat.transferredDescription")}
                                     </SofaBanner>
                                     <SofaButton
                                         variant="secondary"
@@ -912,7 +913,7 @@ export function AgenteChatTeste() {
                                         loading={reabrindo}
                                         disabled={enviando}
                                     >
-                                        Reabrir atendimento da IA nesta conversa
+                                        {t("testChat.reopen")}
                                     </SofaButton>
                                 </div>
                             )}
@@ -922,12 +923,10 @@ export function AgenteChatTeste() {
                                 className="poph-chat-teste__registro"
                                 role="log"
                                 aria-live="polite"
-                                aria-label="Mensagens da conversa de teste"
+                                aria-label={t("testChat.logLabel")}
                             >
                                 {mensagens.length === 0 && turnosSemResposta.length === 0 && !turno && (
-                                    <p className="poph-chat-teste__vazio">
-                                        Esta conversa ainda não tem mensagens. Escreva a primeira abaixo.
-                                    </p>
+                                    <p className="poph-chat-teste__vazio">{t("testChat.noMessages")}</p>
                                 )}
                                 {itensDoRegistro.map((item) =>
                                     item.tipo === "mensagem" ? (
@@ -961,7 +960,7 @@ export function AgenteChatTeste() {
                                 {turno && (
                                     <>
                                         <div className="poph-chat-teste__balao poph-chat-teste__balao--cliente">
-                                            <span className="poph-chat-teste__autor">Cliente</span>
+                                            <span className="poph-chat-teste__autor">{t("testChat.client")}</span>
                                             {turno.textoDoCliente && <p>{turno.textoDoCliente}</p>}
                                             {turno.anexosDoCliente.length > 0 && (
                                                 <ul className="poph-chat-teste__anexos">
@@ -975,20 +974,22 @@ export function AgenteChatTeste() {
                                             className="poph-chat-teste__balao poph-chat-teste__balao--agente"
                                             aria-busy={turno.resposta === "" && !turno.erro}
                                         >
-                                            <span className="poph-chat-teste__autor">Agente</span>
+                                            <span className="poph-chat-teste__autor">{t("testChat.agent")}</span>
                                             {turno.ferramentas.map((nome, indice) => (
                                                 <p key={`${nome}-${indice}`} className="poph-chat-teste__evento">
-                                                    Usando a ferramenta {nome}…
+                                                    {t("testChat.toolRunning", { name: nome })}
                                                 </p>
                                             ))}
                                             {turno.fontes !== null && (
                                                 <p className="poph-chat-teste__evento">
-                                                    Base consultada: {turno.fontes} trecho(s).
+                                                    {turno.fontes === 1
+                                                        ? t("testChat.sourcesOne")
+                                                        : t("testChat.sourcesMany", { count: formatNumber(turno.fontes) })}
                                                 </p>
                                             )}
                                             {turno.transferido && (
                                                 <p className="poph-chat-teste__evento">
-                                                    A conversa foi transferida para uma pessoa.
+                                                    {t("testChat.conversationTransferred")}
                                                 </p>
                                             )}
                                             {turno.resposta ? (
@@ -1002,7 +1003,7 @@ export function AgenteChatTeste() {
                                                 </p>
                                             ) : (
                                                 !turno.erro && (
-                                                    <p className="poph-chat-teste__evento">Pensando…</p>
+                                                    <p className="poph-chat-teste__evento">{t("testChat.thinking")}</p>
                                                 )
                                             )}
                                             {turno.erro && (
@@ -1015,13 +1016,19 @@ export function AgenteChatTeste() {
 
                             {encerramento?.estado === "done" && !turno && (
                                 <p className="poph-chat-teste__fim">
-                                    Turno concluído
+                                    {t("testChat.turnDone")}
                                     {encerramento.tokensEntrada !== null &&
-                                        ` · entrada ${encerramento.tokensEntrada} tokens`}
+                                        t("testChat.turnDoneInput", {
+                                            value: formatNumber(encerramento.tokensEntrada),
+                                        })}
                                     {encerramento.tokensSaida !== null &&
-                                        ` · saída ${encerramento.tokensSaida} tokens`}
+                                        t("testChat.turnDoneOutput", {
+                                            value: formatNumber(encerramento.tokensSaida),
+                                        })}
                                     {encerramento.totalMs !== null &&
-                                        ` · ${encerramento.totalMs} ms`}
+                                        t("testChat.turnDoneTime", {
+                                            value: formatNumber(encerramento.totalMs),
+                                        })}
                                 </p>
                             )}
 
@@ -1056,11 +1063,11 @@ export function AgenteChatTeste() {
                             <form
                                 className="poph-chat-teste__formulario"
                                 onSubmit={(evento) => void enviar(evento)}
-                                aria-label="Enviar mensagem de teste"
+                                aria-label={t("testChat.formLabel")}
                             >
                                 <div className="poph-chat-teste__campo">
                                     <label htmlFor="chat-teste-texto" className="poph-chat-teste__rotulo">
-                                        Mensagem do cliente
+                                        {t("testChat.messageLabel")}
                                     </label>
                                     <textarea
                                         id="chat-teste-texto"
@@ -1070,8 +1077,8 @@ export function AgenteChatTeste() {
                                         disabled={bloqueada || enviando}
                                         placeholder={
                                             transferida
-                                                ? "Reabra o atendimento para escrever de novo"
-                                                : "Escreva como o cliente escreveria. Enter envia; Shift+Enter quebra a linha."
+                                                ? t("testChat.placeholderTransferred")
+                                                : t("testChat.placeholder")
                                         }
                                         aria-invalid={erroDeCampo?.campo === "text" || undefined}
                                         aria-describedby={
@@ -1093,7 +1100,7 @@ export function AgenteChatTeste() {
                                         className="poph-chat-teste__botao-anexar"
                                     >
                                         <IconUpload aria-hidden="true" size={14} />
-                                        Anexar arquivos
+                                        {t("testChat.attach")}
                                     </label>
                                     <input
                                         id="chat-teste-arquivos"
@@ -1106,12 +1113,12 @@ export function AgenteChatTeste() {
                                         onChange={escolherArquivos}
                                     />
                                     <span id="chat-teste-ajuda-arquivos" className="poph-chat-teste__ajuda">
-                                        Imagem, PDF ou Office, até 16 MB por arquivo.
+                                        {t("testChat.attachHelp")}
                                     </span>
                                 </div>
 
                                 {arquivos.length > 0 && (
-                                    <ul className="poph-chat-teste__anexos-na-fila" aria-label="Arquivos a enviar">
+                                    <ul className="poph-chat-teste__anexos-na-fila" aria-label={t("testChat.filesToSendLabel")}>
                                         {arquivos.map((arquivo, indice) => (
                                             <li key={`${arquivo.name}-${indice}`}>
                                                 <span>
@@ -1120,7 +1127,7 @@ export function AgenteChatTeste() {
                                                 <button
                                                     type="button"
                                                     className="poph-chat-teste__tirar"
-                                                    aria-label={`Tirar ${arquivo.name} da mensagem`}
+                                                    aria-label={t("testChat.removeFileLabel", { name: arquivo.name })}
                                                     disabled={enviando}
                                                     onClick={() => tirarArquivo(indice)}
                                                 >
@@ -1140,7 +1147,7 @@ export function AgenteChatTeste() {
                                 <div className="poph-chat-teste__acoes">
                                     {enviando ? (
                                         <SofaButton variant="danger" onClick={cancelarTurno}>
-                                            Cancelar turno em andamento
+                                            {t("testChat.cancelTurn")}
                                         </SofaButton>
                                     ) : (
                                         <SofaButton
@@ -1149,7 +1156,7 @@ export function AgenteChatTeste() {
                                             icon={<IconSend aria-hidden="true" />}
                                             disabled={bloqueada}
                                         >
-                                            Enviar
+                                            {t("testChat.send")}
                                         </SofaButton>
                                     )}
                                 </div>
@@ -1191,6 +1198,7 @@ function Balao({
     aoVerPorQue: (turnoId: string) => void;
     acoesDeArquivo: AcoesDeArquivo;
 }) {
+    const { translate: t } = useI18n();
     const doCliente = mensagem.direction === "in";
     const turnoDaResposta = mensagem.turn_id;
     return (
@@ -1201,14 +1209,14 @@ function Balao({
                     : "poph-chat-teste__balao poph-chat-teste__balao--agente"
             }
         >
-            <span className="poph-chat-teste__autor">{doCliente ? "Cliente" : "Agente"}</span>
+            <span className="poph-chat-teste__autor">{doCliente ? t("testChat.client") : t("testChat.agent")}</span>
             {mensagem.text && <p className="poph-chat-teste__texto-agente">{mensagem.text}</p>}
             {mensagem.attachments.length > 0 && (
                 <ul className="poph-chat-teste__anexos">
                     {mensagem.attachments.map((anexo) => (
                         <li key={anexo.id}>
                             {anexo.name} · {tamanhoLegivel(anexo.size_bytes)}
-                            {anexo.has_text ? " · com texto extraído" : ""}
+                            {anexo.has_text ? t("testChat.extractedText") : ""}
                             {/* Só o anexo do cliente tem ação aqui; o arquivo do agente vem do turno (`files_out`). */}
                             {doCliente && (
                                 <AcoesDoArquivo
@@ -1226,7 +1234,7 @@ function Balao({
             {!doCliente && turnoDaResposta && numeroDoTurno !== null && (
                 <div>
                     <SofaButton variant="subtle" onClick={() => aoVerPorQue(turnoDaResposta)}>
-                        Ver por quê (turno {numeroDoTurno})
+                        {t("testChat.viewWhy", { number: numeroDoTurno })}
                     </SofaButton>
                 </div>
             )}
@@ -1241,6 +1249,7 @@ function Balao({
  * tela. Baixar não depende do estado do envio (um arquivo "falhou" ainda pode ser baixado).
  */
 function AcoesDoArquivo({ origem, acoes }: { origem: OrigemDeArquivo; acoes: AcoesDeArquivo }) {
+    const { translate: t } = useI18n();
     const baixandoEste = acoes.baixando === origem.chave;
     const falhou = acoes.erro?.chave === origem.chave ? acoes.erro.texto : null;
     return (
@@ -1248,30 +1257,30 @@ function AcoesDoArquivo({ origem, acoes }: { origem: OrigemDeArquivo; acoes: Aco
             {podeVerNaTela(origem.mime) && (
                 <SofaButton
                     variant="subtle"
-                    aria-label={`Ver ${origem.nome}`}
+                    aria-label={t("testChat.viewFileLabel", { name: origem.nome })}
                     onClick={() => acoes.ver(origem)}
                 >
-                    Ver
+                    {t("testChat.view")}
                 </SofaButton>
             )}
             <SofaButton
                 variant="subtle"
-                aria-label={`Baixar ${origem.nome}`}
+                aria-label={t("testChat.downloadFileLabel", { name: origem.nome })}
                 loading={baixandoEste}
                 disabled={acoes.baixando !== null && !baixandoEste}
                 onClick={() => acoes.baixar(origem)}
             >
-                Baixar
+                {t("testChat.download")}
             </SofaButton>
             {falhou && (
                 <span className="poph-chat-teste__anexo-erro" role="alert">
                     <span className="poph-chat-teste__erro">{falhou}</span>
                     <SofaButton
                         variant="secondary"
-                        aria-label={`Tentar de novo: baixar ${origem.nome}`}
+                        aria-label={t("testChat.retryDownloadLabel", { name: origem.nome })}
                         onClick={() => acoes.baixar(origem)}
                     >
-                        Tentar de novo
+                        {t("testChat.retry")}
                     </SofaButton>
                 </span>
             )}
@@ -1290,8 +1299,9 @@ function ArquivosDoAgente({
     arquivos: ArquivoEnviadoTeste[];
     acoes: AcoesDeArquivo;
 }) {
+    const { translate: t } = useI18n();
     return (
-        <ul className="poph-chat-teste__anexos" aria-label="Arquivos enviados pelo agente">
+        <ul className="poph-chat-teste__anexos" aria-label={t("testChat.agentFilesLabel")}>
             {arquivos.map((arquivo) => (
                 <li key={arquivo.id}>
                     {arquivo.name} · {tamanhoLegivel(arquivo.size_bytes)} ·{" "}
@@ -1317,10 +1327,13 @@ function TurnoSemResposta({
     aoVerPorQue: (turnoId: string) => void;
     acoesDeArquivo: AcoesDeArquivo;
 }) {
+    const { translate: t } = useI18n();
     return (
         <div className="poph-chat-teste__balao poph-chat-teste__balao--agente poph-chat-teste__sem-resposta">
             <span className="poph-chat-teste__autor">
-                Turno {numero !== null ? `#${numero}` : ""} · {rotuloDoEstadoDoTurno(turno.state)}
+                {numero !== null
+                    ? t("testChat.turnHeading", { number: numero, state: rotuloDoEstadoDoTurno(turno.state) })
+                    : t("testChat.turnHeadingNoNumber", { state: rotuloDoEstadoDoTurno(turno.state) })}
             </span>
             <p className="poph-chat-teste__evento">{frasePeloEstadoSemResposta(turno.state)}</p>
             {turno.error && <p className="poph-chat-teste__erro">{turno.error}</p>}
@@ -1330,7 +1343,7 @@ function TurnoSemResposta({
             {numero !== null && (
                 <div>
                     <SofaButton variant="subtle" onClick={() => aoVerPorQue(turno.id)}>
-                        Ver por quê (turno {numero})
+                        {t("testChat.viewWhy", { number: numero })}
                     </SofaButton>
                 </div>
             )}

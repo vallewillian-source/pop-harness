@@ -6,9 +6,10 @@
 
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { TurnoTeste } from "../api/testeChat";
+import { setLocale } from "../i18n";
 import { PainelPorQue } from "./PainelPorQue";
 
 const TURNO_COMPLETO: TurnoTeste = {
@@ -413,5 +414,80 @@ describe("chamadas de ferramenta (HR-47c, tool_calls)", () => {
         expect(within(dialogo).getByText("não registrada")).toBeInTheDocument();
         expect(within(dialogo).getAllByText("não registrados").length).toBeGreaterThan(0);
         expect(within(dialogo).getAllByText("não registrado").length).toBeGreaterThan(0);
+    });
+});
+
+describe("I18N-10: painel em en-US", () => {
+    afterEach(() => {
+        act(() => setLocale("pt-BR"));
+    });
+
+    it("o resumo, as decisões do Jev e os tempos falam inglês", async () => {
+        setLocale("en-US");
+        const usuario = abrir();
+        await usuario.click(screen.getByRole("button", { name: "Ver por quê (turno 1)" }));
+
+        const dialogo = await screen.findByRole("dialog", { name: "Why for turn 1" });
+
+        expect(within(dialogo).getByText("Turn summary")).toBeInTheDocument();
+        expect(
+            within(dialogo).getByText(/136 tokens \(input 120 tokens, output 16 tokens\)/),
+        ).toBeInTheDocument();
+        expect(
+            within(dialogo).getByText("not calculated in this turn (the turn does not record the cost yet)"),
+        ).toBeInTheDocument();
+        expect(within(dialogo).getByText("Answered by Jev")).toBeInTheDocument();
+        expect(within(dialogo).getByText("92%")).toBeInTheDocument();
+        expect(within(dialogo).getByText("61.0%")).toBeInTheDocument();
+        expect(within(dialogo).getByText("2 question(s), 0 reused from cache")).toBeInTheDocument();
+        expect(within(dialogo).getByText(/Group: Logística · Similarity: 83% · Relevance \(ranking\): 0.0163/)).toBeInTheDocument();
+        expect(within(dialogo).getByText(/Price the customer saw:/)).toBeInTheDocument();
+        expect(within(dialogo).getByText("Complete response")).toBeInTheDocument();
+        expect(
+            within(dialogo).getByRole("progressbar", { name: "Until the first text: 480 ms of 920 ms" }),
+        ).toBeInTheDocument();
+    });
+
+    it("chamada recusada usa os rótulos em inglês", async () => {
+        setLocale("en-US");
+        const usuario = abrir({
+            turno: {
+                ...TURNO_COMPLETO,
+                tools: ["cart_add_item"],
+                tool_calls: [
+                    {
+                        nome: "cart_add_item",
+                        rodada: 0,
+                        ordem: 2,
+                        estado: "recusada",
+                        motivo: "nao_habilitada",
+                        duracao_ms: 0,
+                        argumentos: '{"token":"[redigido]"}',
+                        resultado: "erro",
+                    },
+                ],
+            },
+        });
+        await usuario.click(screen.getByRole("button", { name: "Ver por quê (turno 1)" }));
+        const dialogo = await screen.findByRole("dialog");
+
+        expect(within(dialogo).getByText("Rejected, did not run")).toBeInTheDocument();
+        expect(within(dialogo).getByText(/Reason: tool not enabled for this agent/)).toBeInTheDocument();
+        expect(within(dialogo).getByText("Error returned to the model")).toBeInTheDocument();
+        expect(within(dialogo).getByLabelText("Arguments of cart_add_item")).toHaveTextContent("[redigido]");
+        expect(within(dialogo).getByText("less than 1 ms")).toBeInTheDocument();
+    });
+
+    it("a troca para inglês reescreve o painel aberto sem recarregar", async () => {
+        const usuario = abrir();
+        await usuario.click(screen.getByRole("button", { name: "Ver por quê (turno 1)" }));
+        const dialogo = await screen.findByRole("dialog", { name: "Por quê do turno 1" });
+        expect(within(dialogo).getByText("Resumo do turno")).toBeInTheDocument();
+
+        act(() => setLocale("en-US"));
+
+        expect(screen.getByRole("dialog", { name: "Why for turn 1" })).toBeInTheDocument();
+        expect(screen.getByText("Turn summary")).toBeInTheDocument();
+        expect(screen.getByText("Tools called")).toBeInTheDocument();
     });
 });

@@ -7,6 +7,7 @@
  * não é `EventSource`): o leitor abaixo quebra o fluxo em eventos e entrega cada um na ordem.
  */
 
+import { translate } from "../i18n";
 import { ErroApi, pedir, pedirFluxo } from "./cliente";
 
 /** Teto por arquivo do recebimento (HR-23): 16 MB. Acima disso a API recusa; a tela avisa antes. */
@@ -221,7 +222,7 @@ export async function enviarMensagemTeste(
         { method: "POST", body: corpo, signal: opcoes.sinal },
     );
     if (!resposta.body) {
-        throw new ErroApi(resposta.status, "sem_fluxo", "a resposta do turno não trouxe eventos");
+        throw new ErroApi(resposta.status, "sem_fluxo", translate("testChat.streamWithoutEvents"));
     }
     await lerFluxo(resposta.body, opcoes.aoEvento, opcoes.sinal);
 }

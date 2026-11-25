@@ -9,11 +9,12 @@
  */
 
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { GuardaAlteracoesProvider } from "../componentes/GuardaAlteracoes";
 import { definirToken } from "../api/cliente";
+import { setLocale } from "../i18n";
 import { AgenteChatTeste } from "./AgenteChatTeste";
 
 const ORG = "org_1";
@@ -334,7 +335,7 @@ describe("envio e streaming", () => {
         const seletor = document.getElementById("chat-teste-arquivos") as HTMLInputElement;
         await usuario.upload(seletor, grande);
 
-        expect(await screen.findByText(/gigante\.pdf tem 17\.0 MB: o limite é 16 MB/)).toBeInTheDocument();
+        expect(await screen.findByText(/gigante\.pdf tem 17,0 MB: o limite é 16 MB/)).toBeInTheDocument();
         expect(screen.queryByRole("button", { name: "Tirar gigante.pdf da mensagem" })).toBeNull();
         expect(chamadas("POST", `${BASE}/conv_1/messages`)).toHaveLength(0);
     });
@@ -989,5 +990,76 @@ describe("arquivos que o agente enviou no turno (HR-46e)", () => {
 
         await usuario.click(itemDaConversa("conv_2"));
         await waitFor(() => expect(urlsLiberadas).toContain("blob:teste/1"));
+    });
+});
+
+describe("I18N-10: chat de teste em en-US", () => {
+    afterEach(() => {
+        act(() => setLocale("pt-BR"));
+    });
+
+    it("a lista, a conversa e o envio falam inglês", async () => {
+        setLocale("en-US");
+        const usuario = userEvent.setup();
+        montar();
+
+        expect(await screen.findByText("qual o prazo?")).toBeInTheDocument();
+        expect(screen.getByRole("list", { name: "Conversations" })).toBeInTheDocument();
+        expect(screen.getAllByText("Active").length).toBeGreaterThan(0);
+        expect(screen.getAllByText("Transferred").length).toBeGreaterThan(0);
+        expect(screen.getByRole("button", { name: "New conversation" })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Refresh" })).toBeInTheDocument();
+        expect(screen.getByRole("textbox", { name: "Customer message" })).toBeInTheDocument();
+        expect(screen.getByText("Attach files")).toBeInTheDocument();
+
+        await usuario.type(screen.getByRole("textbox", { name: "Customer message" }), "prazo?{Enter}");
+
+        await waitFor(() =>
+            expect(
+                screen.getByText("Turn completed · input 120 tokens · output 16 tokens · 83 ms"),
+            ).toBeInTheDocument(),
+        );
+    });
+
+    it("a validação local e o arquivo grande respondem em inglês", async () => {
+        setLocale("en-US");
+        const usuario = userEvent.setup();
+        montar();
+        await screen.findByText("qual o prazo?");
+
+        await usuario.click(screen.getByRole("button", { name: "Send" }));
+        expect(await screen.findByText("Write a message or attach a file.")).toBeInTheDocument();
+
+        const grande = new File(["x"], "huge.pdf", { type: "application/pdf" });
+        Object.defineProperty(grande, "size", { value: 17 * 1024 * 1024 });
+        const seletor = document.getElementById("chat-teste-arquivos") as HTMLInputElement;
+        await usuario.upload(seletor, grande);
+
+        expect(await screen.findByText(/huge\.pdf is 17\.0 MB: the limit is 16 MB/)).toBeInTheDocument();
+    });
+
+    it("a conversa transferida e o estado vazio aparecem em inglês", async () => {
+        setLocale("en-US");
+        const usuario = userEvent.setup();
+        montar();
+        await screen.findByText("qual o prazo?");
+
+        await usuario.click(within(screen.getByRole("list", { name: "Conversations" })).getByText("conv_2").closest("button") as HTMLElement);
+
+        expect(await screen.findByText("Conversation transferred to a person")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Reopen AI service in this conversation" })).toBeInTheDocument();
+    });
+
+    it("a troca para inglês reescreve a conversa aberta sem recarregar", async () => {
+        montar();
+        await screen.findByText("qual o prazo?");
+        expect(screen.getByRole("button", { name: "Nova conversa" })).toBeInTheDocument();
+        expect(screen.getByRole("textbox", { name: "Mensagem do cliente" })).toBeInTheDocument();
+
+        act(() => setLocale("en-US"));
+
+        expect(screen.getByRole("button", { name: "New conversation" })).toBeInTheDocument();
+        expect(screen.getByRole("textbox", { name: "Customer message" })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument();
     });
 });
