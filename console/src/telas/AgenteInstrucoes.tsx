@@ -42,17 +42,17 @@ import {
     type ErrosDoFormulario,
 } from "../componentes/FormularioInstrucoes";
 import { useGuardaDeAlteracoes } from "../componentes/GuardaAlteracoes";
+import { translate, useI18n } from "../i18n";
 import "../estilos/instrucoes.css";
 
 /** Validação local: o que o formulário exige antes de chamar a API. */
 export function validarInstrucoes(valor: Estruturadas): ErrosDoFormulario {
     const erros: ErrosDoFormulario = {};
     if (!valor.identity.name.trim()) {
-        erros.nome = "informe o nome do assistente";
+        erros.nome = translate("instructions.validationNameRequired");
     }
     if (valor.principles.some((principio) => !principio.rule.trim())) {
-        erros.principios =
-            "preencha a regra de todos os princípios ou remova os que ficaram vazios";
+        erros.principios = translate("instructions.validationPrinciplesRequired");
     }
     return erros;
 }
@@ -82,6 +82,7 @@ function motivoDoErro(falha: ErroApi): string {
 export function AgenteInstrucoes() {
     const { orgId = "", agentId = "" } = useParams();
     const guarda = useGuardaDeAlteracoes();
+    const { translate: t } = useI18n();
 
     const [agente, setAgente] = useState<Agente | null>(null);
     const [nomeDaOrg, setNomeDaOrg] = useState<string | null>(null);
@@ -131,12 +132,12 @@ export function AgenteInstrucoes() {
             setMarkdown(instrucoes?.markdown ?? "");
         } catch (falha) {
             const mensagem =
-                falha instanceof Error ? falha.message : "falha ao carregar as instruções";
+                falha instanceof Error ? falha.message : t("instructions.loadFailed");
             setErroDeCarga(mensagem);
         } finally {
             setCarregando(false);
         }
-    }, [orgId, agentId]);
+    }, [orgId, agentId, t]);
 
     useEffect(() => {
         void carregar();
@@ -179,9 +180,9 @@ export function AgenteInstrucoes() {
                     setMarkdown(atual.markdown);
                 }
                 setConflito(
-                    `Outra pessoa salvou as instruções antes de você${
-                        atual ? ` (agora na versão ${atual.version})` : ""
-                    }. O que você digitou foi mantido: revise e salve de novo.`,
+                    atual
+                        ? t("instructions.conflictMessageVersion", { version: atual.version })
+                        : t("instructions.conflictMessage"),
                 );
                 return false;
             }
@@ -194,16 +195,21 @@ export function AgenteInstrucoes() {
                     setErros({ nome: motivo });
                 } else {
                     // Formato do contrato: mensagem legível + código estável, para o ticket.
-                    setErroGeral(`${falha.message} (código ${falha.codigo})`);
+                    setErroGeral(
+                        t("instructions.errorWithCode", {
+                            message: falha.message,
+                            code: falha.codigo,
+                        }),
+                    );
                 }
                 return false;
             }
-            setErroGeral("falha inesperada ao salvar as instruções");
+            setErroGeral(t("instructions.unexpectedSaveError"));
             return false;
         } finally {
             setSalvando(false);
         }
-    }, [rascunho, versao, orgId, agentId]);
+    }, [rascunho, versao, orgId, agentId, t]);
 
     // A guarda precisa da versão mais recente de `salvar`; o provedor guarda a referência.
     useEffect(() => {
@@ -245,15 +251,13 @@ export function AgenteInstrucoes() {
                 setSalvo(atual.structured);
                 setVersao(atual.version);
             } else if (atual.version !== versao) {
-                setAvisoPrevia(
-                    `Existe uma versão mais nova salva (v${atual.version}); a prévia mostra o texto dela. Ao salvar, você recebe o aviso de conflito.`,
-                );
+                setAvisoPrevia(t("instructions.previewNewerVersion", { version: atual.version }));
             }
         } catch (falha) {
             setAvisoPrevia(
                 falha instanceof Error
-                    ? `Não consegui reler a prévia: ${falha.message}`
-                    : "Não consegui reler a prévia.",
+                    ? t("instructions.previewRefetchFailed", { message: falha.message })
+                    : t("instructions.previewRefetchFailedPlain"),
             );
         } finally {
             setRecarregandoPrevia(false);
@@ -278,10 +282,10 @@ export function AgenteInstrucoes() {
         return (
             <div className="poph-pagina">
                 <SofaErrorState
-                    title="Não consegui carregar as instruções"
-                    description="A instância não respondeu à leitura do agente ou das instruções. Tente de novo; se persistir, confira a saúde do servidor."
+                    title={t("instructions.loadErrorTitle")}
+                    description={t("instructions.loadErrorDescription")}
                     details={erroDeCarga}
-                    retry={{ label: "Tentar de novo", onClick: () => void carregar() }}
+                    retry={{ label: t("instructions.retry"), onClick: () => void carregar() }}
                     action={
                         <SofaButton
                             variant="subtle"
@@ -308,8 +312,12 @@ export function AgenteInstrucoes() {
                 organizacao={nomeDaOrg}
                 descricao={
                     <>
-                        {versao === null ? "sem instruções salvas" : `If-Match: v${versao}`}
-                        {sujo && <span className="poph-sujo"> · alterações não salvas</span>}
+                        {versao === null
+                            ? t("instructions.noInstructionsSaved")
+                            : t("instructions.versionLabel", { version: versao })}
+                        {sujo && (
+                            <span className="poph-sujo">{t("instructions.unsavedSuffix")}</span>
+                        )}
                     </>
                 }
                 acoes={
@@ -324,7 +332,7 @@ export function AgenteInstrucoes() {
                                 setErroGeral(null);
                             }}
                         >
-                            Desfazer
+                            {t("instructions.undo")}
                         </SofaButton>
                         <SofaButton
                             variant="primary"
@@ -332,7 +340,9 @@ export function AgenteInstrucoes() {
                             loading={salvando}
                             onClick={() => void salvar()}
                         >
-                            {versao === null ? "Salvar instruções" : `Salvar (v${versao})`}
+                            {versao === null
+                                ? t("instructions.saveNew")
+                                : t("instructions.saveVersion", { version: versao })}
                         </SofaButton>
                     </>
                 }
@@ -343,12 +353,12 @@ export function AgenteInstrucoes() {
             {(conflito || erroGeral) && (
                 <div className="poph-pilha">
                     {conflito && (
-                        <SofaBanner tone="warn" title="Versão desatualizada">
+                        <SofaBanner tone="warn" title={t("instructions.conflictTitle")}>
                             {conflito}
                         </SofaBanner>
                     )}
                     {erroGeral && (
-                        <SofaBanner tone="danger" title="Não foi possível salvar">
+                        <SofaBanner tone="danger" title={t("instructions.saveErrorTitle")}>
                             {erroGeral}
                         </SofaBanner>
                     )}
@@ -374,8 +384,8 @@ export function AgenteInstrucoes() {
 
                 <aside className="poph-instrucoes__previa">
                     <SecaoDoAgente
-                        titulo="Prévia do texto composto"
-                        descricao="Markdown composto pelo servidor a partir das instruções salvas."
+                        titulo={t("instructions.previewSection")}
+                        descricao={t("instructions.previewDescription")}
                         acoes={
                             <SofaButton
                                 variant="subtle"
@@ -383,36 +393,37 @@ export function AgenteInstrucoes() {
                                 loading={recarregandoPrevia}
                                 onClick={() => void atualizarPrevia()}
                             >
-                                Atualizar prévia
+                                {t("instructions.refreshPreview")}
                             </SofaButton>
                         }
                     >
                         <div className="poph-pilha">
                             {previaDesatualizada && (
-                                <SofaBanner tone="info" title="Prévia do texto salvo">
-                                    Você tem alterações não salvas. A prévia mostra a última versão
-                                    salva
-                                    {versaoDaPrevia !== null ? ` (v${versaoDaPrevia})` : ""}; ela é
-                                    atualizada pelo servidor quando você salva.
+                                <SofaBanner
+                                    tone="info"
+                                    title={t("instructions.previewStaleTitle")}
+                                >
+                                    {versaoDaPrevia !== null
+                                        ? t("instructions.previewStaleBodyVersion", {
+                                              version: versaoDaPrevia,
+                                          })
+                                        : t("instructions.previewStaleBody")}
                                 </SofaBanner>
                             )}
                             {avisoPrevia && (
-                                <SofaBanner tone="warn" title="Prévia">
+                                <SofaBanner tone="warn" title={t("instructions.previewTitle")}>
                                     {avisoPrevia}
                                 </SofaBanner>
                             )}
                             {markdown ? (
                                 <pre
                                     className="poph-previa"
-                                    aria-label="Prévia do texto composto em markdown"
+                                    aria-label={t("instructions.previewAriaLabel")}
                                 >
                                     {markdown}
                                 </pre>
                             ) : (
-                                <p className="poph-mono-mudo">
-                                    Nenhum texto composto ainda: o servidor compõe o markdown quando
-                                    as instruções são salvas.
-                                </p>
+                                <p className="poph-mono-mudo">{t("instructions.previewEmpty")}</p>
                             )}
                         </div>
                     </SecaoDoAgente>

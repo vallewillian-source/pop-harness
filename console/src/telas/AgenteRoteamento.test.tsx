@@ -7,13 +7,14 @@
  * da API mostrado com código e motivo reais.
  */
 
-import { describe, expect, it } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { GuardaAlteracoesProvider } from "../componentes/GuardaAlteracoes";
 import { ServidorFalso, erroApi } from "../testes/servidor";
 import { AgenteRoteamento } from "./AgenteRoteamento";
+import { setLocale } from "../i18n";
 
 const ORG = "org_1";
 const AGENTE = "ag_1";
@@ -270,5 +271,80 @@ describe("Aba Roteamento", () => {
         expect(sujo).toHaveClass("poph-status--atencao");
         expect(sujo!.querySelector(".poph-status__ponto")).not.toBeNull();
         expect(sujo).toHaveTextContent("Alterações não salvas");
+    });
+});
+
+describe("I18N-07: aba de Roteamento em en-US", () => {
+    afterEach(() => {
+        act(() => setLocale("pt-BR"));
+    });
+
+    it("os campos, as seções e a barra de salvar falam inglês", async () => {
+        setLocale("en-US");
+        servidorCom();
+        montar();
+
+        expect(await screen.findByLabelText("Default department")).toHaveValue("dep_1");
+        expect(
+            screen.getByRole("switch", { name: /Transfer to a human agent/ }),
+        ).not.toBeChecked();
+        expect(screen.getByLabelText("Human destination department")).toBeInTheDocument();
+        expect(
+            within(screen.getByLabelText("Default department")).getByRole("option", {
+                name: "Financeiro (inactive)",
+            }),
+        ).toBeInTheDocument();
+        expect(screen.getByRole("region", { name: "Agent departments" })).toBeInTheDocument();
+        expect(screen.getByRole("region", { name: "Transfer reasons" })).toBeInTheDocument();
+        expect(screen.getByLabelText("Reason 1")).toHaveValue("cliente pede segunda via");
+        expect(screen.getByRole("button", { name: "Add reason" })).toBeEnabled();
+        expect(screen.getByRole("button", { name: "Save routing" })).toBeDisabled();
+        expect(screen.getByRole("button", { name: "Discard changes" })).toBeDisabled();
+        expect(screen.getByText("Saved (version 1)")).toBeInTheDocument();
+    });
+
+    it("a troca para inglês reescreve a tela aberta sem recarregar", async () => {
+        servidorCom();
+        montar();
+        await screen.findByLabelText("Departamento padrão");
+
+        expect(screen.getByRole("region", { name: "Departamentos do agente" })).toBeInTheDocument();
+
+        act(() => setLocale("en-US"));
+
+        expect(screen.getByLabelText("Default department")).toHaveValue("dep_1");
+        expect(screen.getByRole("region", { name: "Agent departments" })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Save routing" })).toBeInTheDocument();
+        expect(screen.getByText("Saved (version 1)")).toBeInTheDocument();
+    });
+
+    it("a validação local responde em inglês e não chama a API", async () => {
+        const usuario = userEvent.setup();
+        setLocale("en-US");
+        const servidor = servidorCom();
+        montar();
+        await screen.findByLabelText("Default department");
+
+        await usuario.click(screen.getByRole("switch", { name: /Transfer to a human agent/ }));
+        await usuario.click(screen.getByRole("button", { name: "Save routing" }));
+
+        expect(
+            await screen.findByText(/choose the human destination department to turn on the transfer/),
+        ).toBeInTheDocument();
+        expect(servidor.chamadasPara("PATCH", `/agents/${AGENTE}`)).toHaveLength(0);
+    });
+
+    it("o aviso de conflito e a barra de status falam inglês depois de gravar", async () => {
+        const usuario = userEvent.setup();
+        setLocale("en-US");
+        const servidor = servidorCom({ patches: [{ status: 200, corpo: agenteJson({ version: 2 }) }] });
+        montar();
+        await screen.findByLabelText("Default department");
+
+        await usuario.selectOptions(screen.getByLabelText("Default department"), "dep_2");
+        await usuario.click(screen.getByRole("button", { name: "Save routing" }));
+
+        expect(await screen.findByRole("status")).toHaveTextContent("Routing saved (version 2).");
+        expect(servidor.chamadasPara("PATCH", `/agents/${AGENTE}`)).toHaveLength(1);
     });
 });

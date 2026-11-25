@@ -50,6 +50,7 @@ import {
     SecaoDoAgente,
 } from "../componentes/AbasDoAgente";
 import { useGuardaDeAlteracoes } from "../componentes/GuardaAlteracoes";
+import { useI18n } from "../i18n";
 import "../estilos/roteamento.css";
 
 /** Compara dois roteamentos como a tela os grava (motivos sem espaços vazios). */
@@ -104,6 +105,7 @@ const CAMPOS_DA_API: Record<string, string> = {
 export function AgenteRoteamento() {
     const { orgId = "", agentId = "" } = useParams();
     const guarda = useGuardaDeAlteracoes();
+    const { translate: t } = useI18n();
 
     const [agente, setAgente] = useState<Agente | null>(null);
     const [salvo, setSalvo] = useState<Roteamento | null>(null);
@@ -130,13 +132,13 @@ export function AgenteRoteamento() {
             setDepartamentos(lista as Departamento[]);
         } catch (falha) {
             setErroDepartamentos(
-                falha instanceof Error ? falha.message : "falha ao carregar os departamentos",
+                falha instanceof Error ? falha.message : t("routing.loadDepartmentsFailed"),
             );
             setDepartamentos([]);
         } finally {
             setCarregandoDepartamentos(false);
         }
-    }, [orgId]);
+    }, [orgId, t]);
 
     const carregar = useCallback(async () => {
         setErroDeCarga(null);
@@ -148,7 +150,7 @@ export function AgenteRoteamento() {
             setSalvo(roteamento);
             setRascunho(roteamento);
         } catch (falha) {
-            setErroDeCarga(falha instanceof Error ? falha.message : "falha ao carregar o agente");
+            setErroDeCarga(falha instanceof Error ? falha.message : t("routing.loadAgentFailed"));
             return;
         }
         void carregarDepartamentos();
@@ -186,7 +188,7 @@ export function AgenteRoteamento() {
 
         const mudanca = mudancaDoRoteamento(salvo, rascunho, agente.jev);
         if (Object.keys(mudanca).length === 0) {
-            setAviso("Nada para gravar: o roteamento já está como está salvo.");
+            setAviso(t("routing.nothingToSave"));
             return true;
         }
 
@@ -198,15 +200,15 @@ export function AgenteRoteamento() {
             const novo = roteamentoDoAgente(gravado);
             setSalvo(novo);
             setRascunho(novo);
-            setAviso(`Roteamento gravado (versão ${gravado.version}).`);
+            setAviso(t("routing.savedVersion", { version: gravado.version }));
             return true;
         } catch (falha) {
             if (falha instanceof ErroApi && falha.status === 412) {
                 const atual = await releraAgente();
                 setConflito(
-                    `Outra pessoa salvou este agente antes de você${
-                        typeof atual === "number" ? ` (agora na versão ${atual})` : ""
-                    }. O que você digitou foi mantido: revise e salve de novo.`,
+                    typeof atual === "number"
+                        ? t("routing.conflictMessageVersion", { version: atual })
+                        : t("routing.conflictMessage"),
                 );
                 return false;
             }
@@ -222,17 +224,24 @@ export function AgenteRoteamento() {
                 }
                 setErroGeral(
                     motivo
-                        ? `${falha.message}: ${motivo} (código ${falha.codigo})`
-                        : `${falha.message} (código ${falha.codigo})`,
+                        ? t("routing.errorWithDetails", {
+                              message: falha.message,
+                              reason: motivo,
+                              code: falha.codigo,
+                          })
+                        : t("routing.errorWithCode", {
+                              message: falha.message,
+                              code: falha.codigo,
+                          }),
                 );
                 return false;
             }
-            setErroGeral("falha inesperada ao salvar o roteamento");
+            setErroGeral(t("routing.unexpectedSaveError"));
             return false;
         } finally {
             setSalvando(false);
         }
-    }, [rascunho, salvo, agente, versao, orgId, agentId, releraAgente]);
+    }, [rascunho, salvo, agente, versao, orgId, agentId, releraAgente, t]);
 
     // A guarda de alterações precisa da versão mais recente de `salvar`.
     useEffect(() => {
@@ -262,16 +271,16 @@ export function AgenteRoteamento() {
             rotulo:
                 departamento.status === "active"
                     ? departamento.name
-                    : `${departamento.name} (inativo)`,
+                    : t("routing.departmentInactive", { name: departamento.name }),
         }));
         // Departamento guardado no agente que não existe mais na lista (apagado ou de outra org).
         for (const id of [rascunho?.departamentoPadrao, rascunho?.departamentoHumano]) {
             if (id && !opcoes.some((opcao) => opcao.valor === id)) {
-                opcoes.push({ valor: id, rotulo: "departamento não encontrado na organização" });
+                opcoes.push({ valor: id, rotulo: t("routing.departmentNotFound") });
             }
         }
         return opcoes;
-    }, [departamentos, rascunho?.departamentoPadrao, rascunho?.departamentoHumano]);
+    }, [departamentos, rascunho?.departamentoPadrao, rascunho?.departamentoHumano, t]);
 
     function alterar(parcial: Partial<Roteamento>) {
         setRascunho((atual) => (atual ? { ...atual, ...parcial } : atual));
@@ -302,17 +311,17 @@ export function AgenteRoteamento() {
         setErros({});
         setErroGeral(null);
         setConflito(null);
-        setAviso("Alterações descartadas: voltou ao que está salvo.");
+        setAviso(t("routing.discarded"));
     }
 
     if (!agente && erroDeCarga) {
         return (
             <div className="poph-pagina">
                 <SofaErrorState
-                    title="Não consegui carregar o roteamento do agente"
-                    description="A instância não respondeu à leitura do agente. Tente de novo; se persistir, confira a saúde do servidor."
+                    title={t("routing.loadErrorTitle")}
+                    description={t("routing.loadErrorDescription")}
                     details={erroDeCarga}
-                    retry={{ label: "Tentar de novo", onClick: () => void carregar() }}
+                    retry={{ label: t("routing.retry"), onClick: () => void carregar() }}
                     action={
                         <SofaButton
                             variant="subtle"
@@ -346,18 +355,18 @@ export function AgenteRoteamento() {
                 slug={agente.slug}
                 situacao={agente.status}
                 organizacao={nomeDaOrg}
-                descricao="para onde a conversa vai e quando passa a humano"
+                descricao={t("routing.headerDescription")}
             />
 
             <AbasDoAgente org={orgId} agente={agentId} ativa="routing" nome={agente.name} model={agente.model ?? null} />
 
             {conflito && (
-                <SofaBanner tone="warn" title="Versão desatualizada">
+                <SofaBanner tone="warn" title={t("routing.conflictTitle")}>
                     {conflito}
                 </SofaBanner>
             )}
             {erroGeral && (
-                <SofaBanner tone="danger" title="Não foi possível salvar">
+                <SofaBanner tone="danger" title={t("routing.saveErrorTitle")}>
                     {erroGeral}
                 </SofaBanner>
             )}
@@ -368,29 +377,29 @@ export function AgenteRoteamento() {
             )}
 
             {erroDepartamentos && (
-                <SofaBanner tone="danger" title="Não consegui carregar os departamentos">
+                <SofaBanner tone="danger" title={t("routing.departmentsErrorTitle")}>
                     {erroDepartamentos}.{" "}
                     <SofaButton variant="subtle" size="sm" onClick={() => void carregarDepartamentos()}>
-                        Tentar de novo
+                        {t("routing.retry")}
                     </SofaButton>
                 </SofaBanner>
             )}
 
             <SecaoDoAgente
-                titulo="Departamentos do agente"
-                descricao="Os departamentos são da organização (criados em Estrutura). Aqui você escolhe quais o agente usa."
+                titulo={t("routing.sectionDepartments")}
+                descricao={t("routing.sectionDepartmentsDescription")}
             >
                 {semDepartamentos ? (
                     <SofaEmptyState
-                        title="Nenhum departamento na organização"
-                        description="Crie os departamentos em Estrutura antes de escolher o departamento padrão e o de transferência."
+                        title={t("routing.emptyDepartmentsTitle")}
+                        description={t("routing.emptyDepartmentsDescription")}
                         action={
                             <SofaButton
                                 variant="primary"
                                 icon={<IconPlus aria-hidden="true" />}
                                 onClick={() => guarda.tentarNavegar(`/orgs/${orgId}/structure`)}
                             >
-                                Ir para Estrutura
+                                {t("routing.goToStructure")}
                             </SofaButton>
                         }
                     />
@@ -408,8 +417,8 @@ export function AgenteRoteamento() {
                         noValidate
                     >
                         <SofaField
-                            label="Departamento padrão"
-                            hint="Onde a conversa deste agente começa. Só dá para trocar; a API não aceita deixar sem departamento."
+                            label={t("routing.defaultDepartmentLabel")}
+                            hint={t("routing.defaultDepartmentHint")}
                             error={erros["departamentoPadrao"]}
                             htmlFor="poph-roteamento-padrao"
                         >
@@ -422,7 +431,7 @@ export function AgenteRoteamento() {
                                     }
                                 >
                                     {rascunho.departamentoPadrao === null && (
-                                        <option value="">Escolha um departamento</option>
+                                        <option value="">{t("routing.chooseDepartment")}</option>
                                     )}
                                     {opcoesDeDepartamento.map((opcao) => (
                                         <option key={opcao.valor} value={opcao.valor}>
@@ -434,8 +443,8 @@ export function AgenteRoteamento() {
                         </SofaField>
 
                         <SofaSwitch
-                            label="Transferir para atendente humano"
-                            description="Liga a transferência: quando o motor decidir que o caso é de humano, a conversa vai para o departamento de destino abaixo."
+                            label={t("routing.handoffLabel")}
+                            description={t("routing.handoffDescription")}
                             checked={rascunho.transferenciaHumana}
                             onChange={(evento) =>
                                 alterar({ transferenciaHumana: evento.target.checked })
@@ -443,8 +452,8 @@ export function AgenteRoteamento() {
                         />
 
                         <SofaField
-                            label="Departamento humano de destino"
-                            hint="Para onde a conversa vai quando há transferência. Obrigatório com a transferência ligada."
+                            label={t("routing.humanDepartmentLabel")}
+                            hint={t("routing.humanDepartmentHint")}
                             error={erros["departamentoHumano"]}
                             htmlFor="poph-roteamento-humano"
                         >
@@ -457,7 +466,7 @@ export function AgenteRoteamento() {
                                     }
                                 >
                                     {rascunho.departamentoHumano === null && (
-                                        <option value="">Escolha um departamento</option>
+                                        <option value="">{t("routing.chooseDepartment")}</option>
                                     )}
                                     {opcoesDeDepartamento.map((opcao) => (
                                         <option key={opcao.valor} value={opcao.valor}>
@@ -472,8 +481,11 @@ export function AgenteRoteamento() {
             </SecaoDoAgente>
 
             <SecaoDoAgente
-                titulo="Motivos de transferência"
-                descricao={`Situações em que a conversa deve passar a humano, em linguagem simples (ex.: “cliente pede segunda via”). Até ${LIMITE_MOTIVOS} motivos, com até ${LIMITE_MOTIVO} caracteres cada. Motivos vazios não são gravados.`}
+                titulo={t("routing.sectionReasons")}
+                descricao={t("routing.sectionReasonsDescription", {
+                    limit: LIMITE_MOTIVOS,
+                    maxLength: LIMITE_MOTIVO,
+                })}
                 acoes={
                     <SofaButton
                         variant="secondary"
@@ -482,21 +494,19 @@ export function AgenteRoteamento() {
                         disabled={motivosCheios}
                         onClick={adicionarMotivo}
                     >
-                        Adicionar motivo
+                        {t("routing.addReason")}
                     </SofaButton>
                 }
             >
                 {rascunho.motivos.length === 0 ? (
-                    <p className="poph-mono-mudo poph-roteamento__vazio">
-                        Nenhum motivo cadastrado. Sem motivos, o agente só transfere nos casos de risco que o próprio motor já trata.
-                    </p>
+                    <p className="poph-mono-mudo poph-roteamento__vazio">{t("routing.noReasons")}</p>
                 ) : (
                     <div className="poph-roteamento__motivos">
                         {rascunho.motivos.map((motivo, indice) => (
                             <div key={indice} className="poph-roteamento__motivo">
                                 <div className="poph-roteamento__motivo-campo">
                                     <SofaField
-                                        label={`Motivo ${indice + 1}`}
+                                        label={t("routing.reasonLabel", { number: indice + 1 })}
                                         hint={`${motivo.trim().length}/${LIMITE_MOTIVO}`}
                                         error={erros[`motivo-${indice}`]}
                                         htmlFor={`poph-motivo-${indice}`}
@@ -514,7 +524,7 @@ export function AgenteRoteamento() {
                                     </SofaField>
                                 </div>
                                 <SofaIconButton
-                                    label={`Remover motivo ${indice + 1}`}
+                                    label={t("routing.removeReasonLabel", { number: indice + 1 })}
                                     onClick={() => removerMotivo(indice)}
                                 >
                                     <IconTrash aria-hidden="true" />
@@ -535,10 +545,12 @@ export function AgenteRoteamento() {
                     className={`poph-status ${sujo ? "poph-status--atencao" : "poph-status--inativo"}`}
                 >
                     <span className="poph-status__ponto" aria-hidden="true" />
-                    {sujo ? "Alterações não salvas" : `Salvo (versão ${versao})`}
+                    {sujo
+                        ? t("routing.unsavedChanges")
+                        : t("routing.savedStatus", { version: versao })}
                 </span>
                 <SofaButton variant="subtle" disabled={!sujo || salvando} onClick={descartar}>
-                    Descartar alterações
+                    {t("routing.discardChanges")}
                 </SofaButton>
                 <SofaButton
                     variant="primary"
@@ -547,7 +559,7 @@ export function AgenteRoteamento() {
                     loading={salvando}
                     onClick={() => void salvar()}
                 >
-                    Salvar roteamento
+                    {t("routing.saveRouting")}
                 </SofaButton>
             </div>
         </div>
