@@ -23,6 +23,7 @@ import {
     SofaSelect,
     type SofaFieldControlProps,
 } from "@sofacoding/sofa-ui";
+import { translate, useI18n } from "../i18n";
 
 /** Propriedade de um esquema de objeto (o subconjunto que o manifesto usa). */
 export type PropriedadeDeEsquema = {
@@ -145,12 +146,16 @@ export function validarValoresDeEsquema(
             !jaGravado &&
             (campo.propriedade.type === "boolean" ? valor !== true : vazio(valor))
         ) {
-            erros[campo.nome] = campo.segredo ? "informe o segredo" : "campo obrigatório";
+            erros[campo.nome] = campo.segredo
+                ? translate("integrations.schemaValidationSecretRequired")
+                : translate("integrations.schemaValidationFieldRequired");
             continue;
         }
         const opcoes = campo.propriedade.enum;
         if (opcoes && !vazio(valor) && !opcoes.some((opcao) => String(opcao) === String(valor))) {
-            erros[campo.nome] = `use um destes valores: ${opcoes.map(String).join(", ")}`;
+            erros[campo.nome] = translate("integrations.schemaValidationEnum", {
+                options: opcoes.map(String).join(", "),
+            });
             continue;
         }
         const numerico =
@@ -158,19 +163,23 @@ export function validarValoresDeEsquema(
         if (numerico && !vazio(valor)) {
             const numero = Number(valor);
             if (Number.isNaN(numero)) {
-                erros[campo.nome] = "informe um número";
+                erros[campo.nome] = translate("integrations.schemaValidationNumber");
                 continue;
             }
             if (campo.propriedade.type === "integer" && !Number.isInteger(numero)) {
-                erros[campo.nome] = "informe um número inteiro";
+                erros[campo.nome] = translate("integrations.schemaValidationInteger");
                 continue;
             }
             if (campo.propriedade.minimum !== undefined && numero < campo.propriedade.minimum) {
-                erros[campo.nome] = `o mínimo é ${campo.propriedade.minimum}`;
+                erros[campo.nome] = translate("integrations.schemaValidationMin", {
+                    min: campo.propriedade.minimum,
+                });
                 continue;
             }
             if (campo.propriedade.maximum !== undefined && numero > campo.propriedade.maximum) {
-                erros[campo.nome] = `o máximo é ${campo.propriedade.maximum}`;
+                erros[campo.nome] = translate("integrations.schemaValidationMax", {
+                    max: campo.propriedade.maximum,
+                });
             }
         }
     }
@@ -268,13 +277,14 @@ export function FormularioEsquema({
     estadoDosSegredos = {},
     aoAlternarRemocao,
 }: FormularioEsquemaProps) {
+    const { translate: t } = useI18n();
     const campos = camposDoEsquema(configuracao, segredos);
     const preenchidos = estadoDosSegredos.preenchidos ?? [];
     const removidos = estadoDosSegredos.removidos ?? [];
     if (campos.length === 0) {
         return (
             <p className="poph-mono-mudo" style={{ margin: 0 }}>
-                Esta integração não tem configuração nem segredo no manifesto.
+                {t("integrations.schemaEmptyManifest")}
             </p>
         );
     }
@@ -294,11 +304,11 @@ export function FormularioEsquema({
                 const dicaDoSegredo = !campo.segredo
                     ? dica
                     : removendo
-                      ? "o segredo gravado será removido ao salvar"
+                      ? t("integrations.schemaSecretRemovingHint")
                       : jaGravado
-                        ? "já gravado: deixe em branco para manter, digite para trocar"
+                        ? t("integrations.schemaSecretSavedHint")
                         : ilegivel
-                          ? "há segredo gravado, mas a chave de criptografia atual não consegue lê-lo: digite um valor novo para voltar a valer"
+                          ? t("integrations.schemaSecretUnreadableHint")
                           : dica;
 
                 if (campo.propriedade.type === "boolean") {
@@ -336,7 +346,7 @@ export function FormularioEsquema({
                                                 aoMudar(campo.nome, evento.target.value)
                                             }
                                         >
-                                            <option value="">Escolha…</option>
+                                            <option value="">{t("integrations.schemaSelectChoose")}</option>
                                             {opcoes.map((opcao) => (
                                                 <option key={String(opcao)} value={String(opcao)}>
                                                     {String(opcao)}
@@ -360,10 +370,10 @@ export function FormularioEsquema({
                                         placeholder={
                                             campo.segredo
                                                 ? jaGravado
-                                                    ? "•••••• (gravado; digite para trocar)"
+                                                    ? t("integrations.schemaSecretSavedPlaceholder")
                                                     : ilegivel
-                                                      ? "•••••• (gravado; ilegível com a chave atual)"
-                                                      : "•••••• (guardado; digite para trocar)"
+                                                      ? t("integrations.schemaSecretUnreadablePlaceholder")
+                                                      : t("integrations.schemaSecretDefaultPlaceholder")
                                                 : undefined
                                         }
                                         value={
@@ -380,7 +390,7 @@ export function FormularioEsquema({
                         </SofaField>
                         {campo.segredo && jaGravado && !campo.obrigatorio && aoAlternarRemocao && (
                             <SofaCheckbox
-                                label="Remover este segredo ao salvar"
+                                label={t("integrations.schemaSecretRemoveCheckbox")}
                                 checked={removendo}
                                 onChange={(evento) =>
                                     aoAlternarRemocao(campo.nome, evento.target.checked)
@@ -389,13 +399,12 @@ export function FormularioEsquema({
                         )}
                         {campo.segredo && jaGravado && campo.obrigatorio && (
                             <span className="poph-mono-mudo">
-                                Segredo obrigatório: não pode ser removido, só trocado.
+                                {t("integrations.schemaSecretRequiredNote")}
                             </span>
                         )}
                         {campo.segredo && !jaGravado && ilegivel && !somenteLeitura && (
                             <span className="poph-mono-mudo">
-                                A tela não sabe qual segredo está gravado porque a chave de
-                                criptografia do servidor mudou. Regravar resolve.
+                                {t("integrations.schemaSecretUnreadableNote")}
                             </span>
                         )}
                     </div>

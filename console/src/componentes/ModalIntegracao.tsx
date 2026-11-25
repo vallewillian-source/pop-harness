@@ -61,6 +61,8 @@ import {
     valoresParaSegredos,
     type ValoresDeEsquema,
 } from "./FormularioEsquema";
+import { useI18n } from "../i18n";
+import type { TranslationKey } from "../i18n/catalog";
 
 /** Ligações do `SofaField` sem `describedBy`, que vira `aria-describedby` no controle. */
 function semDescribedBy(controle: SofaFieldControlProps) {
@@ -126,13 +128,12 @@ type EstadoDoManifesto =
     /** `404`: este tipo não tem plugin declarado, logo não tem formulário. */
     | { situacao: "sem_formulario" }
     /** `503` (ou falha de transporte): não há como configurar sem quebrar o contrato. */
-    | { situacao: "falha"; mensagem: string; codigo?: string; dica?: string };
+    | { situacao: "falha"; mensagem: string; messageKey?: TranslationKey; codigo?: string; tipKey?: TranslationKey };
 
-const DICAS_DO_MANIFESTO: Record<string, string> = {
-    manifesto_indisponivel:
-        "O plugin deste tipo está declarado na configuração do servidor, mas não respondeu. Sem o formulário dele não há como gravar configuração — confira o plugin e tente de novo.",
-    rede: "Não foi possível falar com a instância para ler o formulário do plugin.",
-    not_found: "Este tipo não declara formulário no servidor.",
+const MANIFEST_TIP_KEYS: Record<string, TranslationKey> = {
+    manifesto_indisponivel: "integrations.manifestTipUnavailable",
+    rede: "integrations.manifestTipNetwork",
+    not_found: "integrations.manifestTipNotFound",
 };
 
 /**
@@ -184,6 +185,7 @@ export function ModalIntegracao({
     integracao,
     aoSalvar,
 }: ModalIntegracaoProps) {
+    const { translate: t } = useI18n();
     const editando = integracao !== null;
     const [kind, setKind] = useState("");
     const [situacao, setSituacao] = useState<SituacaoIntegracao>("active");
@@ -242,8 +244,8 @@ export function ModalIntegracao({
                         ) {
                             setManifesto({
                                 situacao: "falha",
-                                mensagem:
-                                    "o servidor respondeu sem o esquema de configuração deste tipo",
+                                mensagem: "",
+                                messageKey: "integrations.manifestInvalidError",
                                 codigo: "manifesto_invalido",
                             });
                             return;
@@ -272,16 +274,15 @@ export function ModalIntegracao({
                                 situacao: "falha",
                                 mensagem: falha.message,
                                 codigo: falha.codigo,
-                                dica: DICAS_DO_MANIFESTO[falha.codigo],
+                                tipKey: MANIFEST_TIP_KEYS[falha.codigo],
                             });
                             return;
                         }
                         setManifesto({
                             situacao: "falha",
-                            mensagem:
-                                falha instanceof Error
-                                    ? falha.message
-                                    : "falha ao ler o formulário do plugin",
+                            mensagem: falha instanceof Error ? falha.message : "",
+                            messageKey:
+                                falha instanceof Error ? undefined : "integrations.manifestReadError",
                         });
                     });
             },
@@ -334,7 +335,7 @@ export function ModalIntegracao({
         const novos = validarIntegracao({ kind, situacao, editando });
 
         if (manifesto.situacao === "carregando") {
-            setErroGeral("Aguarde: ainda estou lendo o formulário deste tipo.");
+            setErroGeral(t("integrations.manifestLoadingSaveError"));
             return;
         }
         const pronto = manifesto.situacao === "pronto" ? manifesto.manifesto : null;
@@ -398,9 +399,14 @@ export function ModalIntegracao({
                 }
                 if (typeof versaoAtual === "number") setVersao(versaoAtual);
                 setConflito(
-                    `Outra pessoa alterou esta integração antes de você${
-                        typeof versaoAtual === "number" ? ` (agora na versão ${versaoAtual})` : ""
-                    }. O que você preencheu foi mantido: revise e salve de novo.`,
+                    t("integrations.modalConflict", {
+                        versionSuffix:
+                            typeof versaoAtual === "number"
+                                ? t("integrations.modalConflictVersionSuffix", {
+                                      version: versaoAtual,
+                                  })
+                                : "",
+                    }),
                 );
                 return;
             }
@@ -408,13 +414,13 @@ export function ModalIntegracao({
                 mostrarErroDaApi(falha);
                 return;
             }
-            setErroGeral("falha inesperada ao salvar a integração");
+            setErroGeral(t("integrations.modalUnexpectedSaveError"));
         } finally {
             setEnviando(false);
         }
     }
 
-    const titulo = editando ? "Editar integração" : "Nova integração";
+    const titulo = editando ? t("integrations.modalTitleEdit") : t("integrations.modalTitleNew");
     /** Plugin declarado que não respondeu: sem formulário, não dá para gravar. */
     const bloqueadoPeloManifesto = manifesto.situacao === "falha";
     const semConfiguracao = manifesto.situacao === "sem_formulario";
@@ -428,15 +434,15 @@ export function ModalIntegracao({
             title={titulo}
             description={
                 editando
-                    ? "O tipo não muda depois de criado. O salvamento usa a versão lida; configuração e segredo entram pelo formulário do plugin."
-                    : "Escolha o tipo: o formulário de configuração é o que o plugin daquele tipo declara no servidor."
+                    ? t("integrations.modalDescriptionEdit")
+                    : t("integrations.modalDescriptionNew")
             }
-            closeLabel="Fechar formulário de integração"
+            closeLabel={t("integrations.modalCloseLabel")}
             id="poph-formulario-integracao"
             footer={
                 <>
                     <SofaButton variant="secondary" disabled={enviando} onClick={aoFechar}>
-                        Cancelar
+                        {t("integrations.modalCancel")}
                     </SofaButton>
                     <SofaButton
                         variant="primary"
@@ -445,7 +451,7 @@ export function ModalIntegracao({
                         loading={enviando}
                         disabled={bloqueadoPeloManifesto}
                     >
-                        {editando ? "Salvar alterações" : "Criar integração"}
+                        {editando ? t("integrations.modalSaveChanges") : t("integrations.modalCreate")}
                     </SofaButton>
                 </>
             }
@@ -458,19 +464,22 @@ export function ModalIntegracao({
                 noValidate
             >
                 {conflito && (
-                    <SofaBanner tone="warn" title="Versão desatualizada">
+                    <SofaBanner tone="warn" title={t("integrations.bannerOutdatedTitle")}>
                         {conflito}
                     </SofaBanner>
                 )}
                 {erroGeral && (
-                    <SofaBanner tone="danger" title="Não foi possível salvar">
+                    <SofaBanner tone="danger" title={t("integrations.bannerSaveErrorTitle")}>
                         {erroGeral}
                     </SofaBanner>
                 )}
 
                 <SofaField
-                    label="Tipo da integração"
-                    hint={`Identifica o canal no servidor. Exemplos: ${KIND_WHATSAPP}, eco. Até ${LIMITE_KIND} caracteres; não muda depois de criado.`}
+                    label={t("integrations.fieldKindLabel")}
+                    hint={t("integrations.fieldKindHint", {
+                        whatsapp: KIND_WHATSAPP,
+                        max: LIMITE_KIND,
+                    })}
                     error={erros["kind"]}
                     required
                     htmlFor="poph-integracao-kind"
@@ -488,7 +497,9 @@ export function ModalIntegracao({
 
                 {editando && integracao && (
                     <div className="poph-pilha" style={{ gap: 4 }}>
-                        <span className="poph-mono-mudo">Estado de conexão (informado pelo canal)</span>
+                        <span className="poph-mono-mudo">
+                            {t("integrations.connectionStateLabel")}
+                        </span>
                         <div>
                             <SofaStatusIndicator tone={tomDaConexao(integracao.connection_state)}>
                                 {rotuloDaConexao(integracao.connection_state)}
@@ -499,7 +510,9 @@ export function ModalIntegracao({
 
                 {manifesto.situacao === "carregando" && (
                     <div className="poph-pilha" style={{ gap: 4 }} role="status">
-                        <span className="poph-mono-mudo">Lendo o formulário deste tipo…</span>
+                        <span className="poph-mono-mudo">
+                            {t("integrations.manifestLoadingText")}
+                        </span>
                         <SofaSkeleton lines={3} />
                     </div>
                 )}
@@ -507,8 +520,10 @@ export function ModalIntegracao({
                 {manifesto.situacao === "pronto" && (
                     <div className="poph-pilha" style={{ gap: "var(--pop-spacing-sm, 8px)" }}>
                         <span className="poph-mono-mudo">
-                            Configuração do plugin “{manifesto.manifesto.nome}” (versão{" "}
-                            {manifesto.manifesto.versao})
+                            {t("integrations.pluginConfigHeader", {
+                                name: manifesto.manifesto.nome,
+                                version: manifesto.manifesto.versao,
+                            })}
                         </span>
                         <FormularioEsquema
                             configuracao={manifesto.manifesto.configuracao}
@@ -529,25 +544,26 @@ export function ModalIntegracao({
                 )}
 
                 {semConfiguracao && (
-                    <SofaBanner tone="info" title="Este tipo não tem formulário">
-                        O servidor não declara manifesto para “{kind.trim()}”: a integração é criada
-                        só com o tipo e a situação, e nenhuma configuração é gravada.
+                    <SofaBanner tone="info" title={t("integrations.noManifestTitle")}>
+                        {t("integrations.noManifestDescription", { kind: kind.trim() })}
                     </SofaBanner>
                 )}
 
                 {manifesto.situacao === "falha" && (
-                    <SofaBanner tone="danger" title="Não consegui ler o formulário do plugin">
-                        {manifesto.mensagem}
-                        {manifesto.dica ? ` ${manifesto.dica}` : ""}
+                    <SofaBanner tone="danger" title={t("integrations.manifestErrorTitle")}>
+                        {manifesto.messageKey ? t(manifesto.messageKey) : manifesto.mensagem}
+                        {manifesto.tipKey ? ` ${t(manifesto.tipKey)}` : ""}
                         {manifesto.codigo ? (
-                            <span className="poph-mono-mudo"> (código: {manifesto.codigo})</span>
+                            <span className="poph-mono-mudo">
+                                {t("integrations.manifestErrorCode", { code: manifesto.codigo })}
+                            </span>
                         ) : null}
                     </SofaBanner>
                 )}
 
                 <SofaField
-                    label="Situação"
-                    hint="Inativa e arquivada param o atendimento por este canal; arquivada é o estado final."
+                    label={t("integrations.fieldStatusLabel")}
+                    hint={t("integrations.fieldStatusHint")}
                     error={erros["situacao"]}
                     required
                     htmlFor="poph-integracao-situacao"
@@ -571,16 +587,13 @@ export function ModalIntegracao({
 
                 {segredosPreenchidos === null && integracao?.tem_segredo !== false && (
                     <p className="poph-mono-mudo" style={{ margin: 0 }}>
-                        Há segredo gravado nesta integração, mas a chave de criptografia atual do
-                        servidor não consegue lê-lo: a tela não sabe quais campos estão preenchidos.
-                        Digitar o valor de novo resolve.
+                        {t("integrations.unreadableSecretsNote")}
                     </p>
                 )}
 
                 {manifesto.situacao === "pronto" && (
                     <p className="poph-mono-mudo" style={{ margin: 0 }}>
-                        Segredo em branco mantém o que já está gravado; digitar troca o valor. O
-                        valor de um segredo nunca volta para esta tela depois de salvo.
+                        {t("integrations.secretsBlankNote")}
                     </p>
                 )}
             </form>

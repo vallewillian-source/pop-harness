@@ -65,6 +65,7 @@ import {
 } from "../api/modeloJev";
 import { AbasDoAgente, CabecalhoDoAgente, SecaoDoAgente } from "../componentes/AbasDoAgente";
 import { useGuardaDeAlteracoes } from "../componentes/GuardaAlteracoes";
+import { translate, useI18n } from "../i18n";
 import "../estilos/modelo-jev.css";
 
 function ligacoes(controle: SofaFieldControlProps) {
@@ -84,11 +85,15 @@ function mesmoJev(a: ValoresJev, b: ValoresJev): boolean {
 /** Texto curto do que o gate faz neste agente agora, com a origem do valor. */
 function situacaoDoGate(valores: ValoresJev, gate: IdGate): string {
     const ligado = efeitoDoGate(valores, gate);
-    if (valores.jevDesligado) return "desligado pelo interruptor do Jev deste agente";
+    if (valores.jevDesligado) return translate("modelJev.gateStatusDisabledBySwitch");
     if (valores.gates[gate] === "herdar") {
-        return `${ligado ? "ligado" : "desligado"} (herda o padrão de fábrica)`;
+        return translate("modelJev.gateStatusInherit", {
+            state: ligado ? translate("modelJev.gateStateOnLower") : translate("modelJev.gateStateOffLower"),
+        });
     }
-    return ligado ? "ligado neste agente" : "desligado neste agente";
+    return ligado
+        ? translate("modelJev.gateStatusActiveInAgent")
+        : translate("modelJev.gateStatusInactiveInAgent");
 }
 
 /** Chaves do `jev_json` que estão definidas no agente (para a lista de preservadas). */
@@ -97,6 +102,7 @@ function chavesDefinidas(jev: Record<string, unknown> | undefined): Set<string> 
 }
 
 export function AgenteModeloJev() {
+    const { translate: t } = useI18n();
     const { orgId = "", agentId = "" } = useParams();
     const guarda = useGuardaDeAlteracoes();
 
@@ -131,9 +137,11 @@ export function AgenteModeloJev() {
         try {
             aplicarAgente(await obterAgente(orgId, agentId));
         } catch (falha) {
-            setErroDeCarga(falha instanceof Error ? falha.message : "falha ao carregar o agente");
+            setErroDeCarga(
+                falha instanceof Error ? falha.message : t("modelJev.loadAgentFallbackError"),
+            );
         }
-    }, [orgId, agentId, aplicarAgente]);
+    }, [orgId, agentId, aplicarAgente, t]);
 
     useEffect(() => {
         void carregar();
@@ -177,7 +185,7 @@ export function AgenteModeloJev() {
         const jevJson = mudancaDoJev(agente.jev, baseJev, rascunhoJev);
         const mudanca = jevJson === undefined ? mudancaModelo : { ...mudancaModelo, jev_json: jevJson };
         if (Object.keys(mudanca).length === 0) {
-            setAviso("Nada para gravar: o modelo e o Jev já estão como estão salvos.");
+            setAviso(t("modelJev.nothingToSave"));
             return true;
         }
 
@@ -185,15 +193,18 @@ export function AgenteModeloJev() {
         try {
             const gravado = await salvarModeloJev(orgId, agentId, versao, mudanca);
             aplicarAgente(gravado);
-            setAviso(`Modelo e Jev gravados (versão ${gravado.version}). Vale a partir do próximo turno.`);
+            setAviso(t("modelJev.savedNotice", { version: gravado.version }));
             return true;
         } catch (falha) {
             if (falha instanceof ErroApi && falha.status === 412) {
                 const atual = await releraAgente();
                 setConflito(
-                    `Outra pessoa salvou este agente antes de você${
-                        typeof atual === "number" ? ` (agora na versão ${atual})` : ""
-                    }. O que você digitou foi mantido: revise e salve de novo.`,
+                    t("modelJev.conflictMessage", {
+                        versionSuffix:
+                            typeof atual === "number"
+                                ? t("modelJev.conflictVersionSuffix", { version: atual })
+                                : "",
+                    }),
                 );
                 return false;
             }
@@ -208,17 +219,24 @@ export function AgenteModeloJev() {
                 }
                 setErroGeral(
                     motivo
-                        ? `${falha.message}: ${motivo} (código ${falha.codigo})`
-                        : `${falha.message} (código ${falha.codigo})`,
+                        ? t("modelJev.apiErrorWithReason", {
+                              message: falha.message,
+                              reason: motivo,
+                              code: falha.codigo,
+                          })
+                        : t("modelJev.apiErrorWithoutReason", {
+                              message: falha.message,
+                              code: falha.codigo,
+                          }),
                 );
                 return false;
             }
-            setErroGeral("falha inesperada ao salvar o modelo e o Jev");
+            setErroGeral(t("modelJev.unexpectedSaveError"));
             return false;
         } finally {
             setSalvando(false);
         }
-    }, [agente, baseModelo, rascunhoModelo, baseJev, rascunhoJev, versao, orgId, agentId, aplicarAgente, releraAgente]);
+    }, [agente, baseModelo, rascunhoModelo, baseJev, rascunhoJev, versao, orgId, agentId, aplicarAgente, releraAgente, t]);
 
     // A guarda de alterações precisa da versão mais recente de `salvar`.
     useEffect(() => {
@@ -267,7 +285,7 @@ export function AgenteModeloJev() {
         setErros({});
         setErroGeral(null);
         setConflito(null);
-        setAviso("Alterações descartadas: voltou ao que está salvo.");
+        setAviso(t("modelJev.discardedNotice"));
     }
 
     const chavesNoAgente = useMemo(() => chavesDefinidas(agente?.jev), [agente]);
@@ -276,17 +294,17 @@ export function AgenteModeloJev() {
         return (
             <div className="poph-pagina">
                 <SofaErrorState
-                    title="Não consegui carregar o modelo e o Jev do agente"
-                    description="A instância não respondeu à leitura do agente. Tente de novo; se persistir, confira a saúde do servidor."
+                    title={t("modelJev.loadErrorTitle")}
+                    description={t("modelJev.loadErrorDescription")}
                     details={erroDeCarga}
-                    retry={{ label: "Tentar de novo", onClick: () => void carregar() }}
+                    retry={{ label: t("modelJev.retry"), onClick: () => void carregar() }}
                     action={
                         <SofaButton
                             variant="subtle"
                             icon={<IconArrowLeft aria-hidden="true" />}
                             onClick={() => guarda.tentarNavegar(`/orgs/${orgId}/agents`)}
                         >
-                            Voltar para agentes
+                            {t("modelJev.backToAgents")}
                         </SofaButton>
                     }
                 />
@@ -345,18 +363,18 @@ export function AgenteModeloJev() {
                     slug={agente.slug}
                     situacao={agente.status}
                     organizacao={nomeDaOrg}
-                    descricao="modelo, busca na base e portões de decisão do Jev"
+                    descricao={t("modelJev.headerDescription")}
                 />
 
                 <AbasDoAgente org={orgId} agente={agentId} ativa="model-jev" nome={agente.name} model={agente.model ?? null} />
 
                 {conflito && (
-                    <SofaBanner tone="warn" title="Versão desatualizada">
+                    <SofaBanner tone="warn" title={t("modelJev.bannerOutdatedTitle")}>
                         {conflito}
                     </SofaBanner>
                 )}
                 {erroGeral && (
-                    <SofaBanner tone="danger" title="Não foi possível salvar">
+                    <SofaBanner tone="danger" title={t("modelJev.bannerSaveErrorTitle")}>
                         {erroGeral}
                     </SofaBanner>
                 )}
@@ -376,82 +394,91 @@ export function AgenteModeloJev() {
                     noValidate
                 >
                     <SecaoDoAgente
-                        titulo="Modelo de linguagem"
-                        descricao="Quem escreve a resposta e com que limites. Temperatura e máximo de tokens de saída mostram “herda o padrão do servidor” quando o agente ainda não tem valor; depois de definidos, a tela não consegue voltar a esse padrão."
+                        titulo={t("modelJev.sectionModelTitle")}
+                        descricao={t("modelJev.sectionModelDescription")}
                     >
                         <div className="poph-modelo-jev__grade">
-                            {campoTexto("provider", "Provedor", {
-                                dica: "Na V1 o provedor é antigravity2api.",
+                            {campoTexto("provider", t("modelJev.fieldProviderLabel"), {
+                                dica: t("modelJev.fieldProviderHint"),
                             })}
-                            {campoTexto("model", "Modelo", {
-                                dica: "Nome do modelo que escreve a resposta.",
+                            {campoTexto("model", t("modelJev.fieldModelLabel"), {
+                                dica: t("modelJev.fieldModelHint"),
                             })}
-                            {campoTexto("temperature", "Temperatura", {
+                            {campoTexto("temperature", t("modelJev.fieldTemperatureLabel"), {
                                 modo: "decimal",
                                 placeholder:
                                     agente.temperature == null
-                                        ? "herda o padrão do servidor"
+                                        ? t("modelJev.placeholderInheritsDefault")
                                         : undefined,
-                                dica: `De ${LIMITE_TEMPERATURA_MIN} a ${LIMITE_TEMPERATURA_MAX}. Mais alto, respostas mais variadas.`,
+                                dica: t("modelJev.fieldTemperatureHint", {
+                                    min: LIMITE_TEMPERATURA_MIN,
+                                    max: LIMITE_TEMPERATURA_MAX,
+                                }),
                             })}
-                            {campoTexto("max_output_tokens", "Máximo de tokens de saída", {
+                            {campoTexto("max_output_tokens", t("modelJev.fieldMaxOutputLabel"), {
                                 modo: "numeric",
                                 placeholder:
                                     agente.max_output_tokens == null
-                                        ? "herda o padrão do servidor"
+                                        ? t("modelJev.placeholderInheritsDefault")
                                         : undefined,
-                                dica: "Tamanho máximo de cada resposta, em tokens.",
+                                dica: t("modelJev.fieldMaxOutputHint"),
                             })}
-                            {campoTexto("max_context_tokens", "Máximo de tokens de contexto", {
+                            {campoTexto("max_context_tokens", t("modelJev.fieldMaxContextLabel"), {
                                 modo: "numeric",
-                                dica: `Quanto da conversa e das instruções o turno monta para o modelo. Mínimo ${LIMITE_CONTEXTO_MIN}.`,
+                                dica: t("modelJev.fieldMaxContextHint", { min: LIMITE_CONTEXTO_MIN }),
                             })}
                         </div>
                     </SecaoDoAgente>
 
                     <SecaoDoAgente
-                        titulo="Atendimento e ferramentas"
-                        descricao="Como o turno junta as mensagens do cliente e quantas ferramentas pode usar."
+                        titulo={t("modelJev.sectionServiceTitle")}
+                        descricao={t("modelJev.sectionServiceDescription")}
                     >
                         <div className="poph-modelo-jev__grade">
-                            {campoTexto("grouping_window_ms", "Janela de agrupamento (ms)", {
+                            {campoTexto("grouping_window_ms", t("modelJev.fieldGroupingWindowLabel"), {
                                 modo: "numeric",
-                                dica: `De 0 a ${LIMITE_JANELA_MS} ms. Mensagens que chegam dentro dessa janela viram uma resposta só.`,
+                                dica: t("modelJev.fieldGroupingWindowHint", { max: LIMITE_JANELA_MS }),
                             })}
-                            {campoTexto("max_tool_rounds", "Rodadas de ferramenta por turno", {
+                            {campoTexto("max_tool_rounds", t("modelJev.fieldMaxToolRoundsLabel"), {
                                 modo: "numeric",
-                                dica: `Quantas vezes o modelo pode chamar ferramentas numa mesma resposta. De 0 a ${LIMITE_RODADAS_MAX}.`,
+                                dica: t("modelJev.fieldMaxToolRoundsHint", { max: LIMITE_RODADAS_MAX }),
                             })}
-                            {campoTexto("max_tool_calls", "Ferramentas por mensagem", {
+                            {campoTexto("max_tool_calls", t("modelJev.fieldMaxToolCallsLabel"), {
                                 modo: "numeric",
-                                dica: `Limite de chamadas de ferramenta para cada mensagem do cliente. De 0 a ${LIMITE_FERRAMENTAS_MAX}.`,
+                                dica: t("modelJev.fieldMaxToolCallsHint", { max: LIMITE_FERRAMENTAS_MAX }),
                             })}
                         </div>
                     </SecaoDoAgente>
 
                     <SecaoDoAgente
-                        titulo="Busca na base (RAG)"
-                        descricao="Quantos trechos da base de conhecimento entram na resposta e o mínimo de relevância para aceitar um trecho."
+                        titulo={t("modelJev.sectionRagTitle")}
+                        descricao={t("modelJev.sectionRagDescription")}
                     >
                         <div className="poph-modelo-jev__grade">
-                            {campoTexto("rag_top_k", "Trechos recuperados (top-k)", {
+                            {campoTexto("rag_top_k", t("modelJev.fieldRagTopKLabel"), {
                                 modo: "numeric",
-                                dica: `De ${LIMITE_TOP_K_MIN} a ${LIMITE_TOP_K_MAX}.`,
+                                dica: t("modelJev.fieldRagTopKHint", {
+                                    min: LIMITE_TOP_K_MIN,
+                                    max: LIMITE_TOP_K_MAX,
+                                }),
                             })}
-                            {campoTexto("rag_min_score", "Corte mínimo de relevância", {
+                            {campoTexto("rag_min_score", t("modelJev.fieldRagMinScoreLabel"), {
                                 modo: "decimal",
-                                dica: `De ${LIMITE_CORTE_MIN} a ${LIMITE_CORTE_MAX}. Zero aceita qualquer trecho do top-k, mesmo sem relação com a pergunta.`,
+                                dica: t("modelJev.fieldRagMinScoreHint", {
+                                    min: LIMITE_CORTE_MIN,
+                                    max: LIMITE_CORTE_MAX,
+                                }),
                             })}
                         </div>
                     </SecaoDoAgente>
 
                     <SecaoDoAgente
-                        titulo="Jev: portões de decisão"
-                        descricao="Cada gate decide uma coisa antes da resposta. “Herdar” usa o padrão de fábrica do código (G3, G5 e G8 ligados; os demais desligados). A configuração do servidor pode ter mudado isso, e esta tela não consegue ler essa configuração."
+                        titulo={t("modelJev.sectionJevTitle")}
+                        descricao={t("modelJev.sectionJevDescription")}
                     >
                         <SofaSwitch
-                            label="Desligar o Jev neste agente"
-                            description="Quando ligado, nenhum gate roda neste agente, mesmo com os gates abaixo ligados."
+                            label={t("modelJev.switchDisableJevLabel")}
+                            description={t("modelJev.switchDisableJevDescription")}
                             checked={rascunhoJev.jevDesligado}
                             onChange={(evento) => alterarInterruptor(evento.target.checked)}
                         />
@@ -463,7 +490,10 @@ export function AgenteModeloJev() {
                                     <SofaField
                                         key={gate}
                                         label={descricao.titulo}
-                                        hint={`${descricao.explicacao} Hoje: ${situacaoDoGate(rascunhoJev, gate)}.`}
+                                        hint={t("modelJev.gateHintToday", {
+                                            explanation: descricao.explicacao,
+                                            status: situacaoDoGate(rascunhoJev, gate),
+                                        })}
                                         htmlFor={`poph-gate-${gate}`}
                                     >
                                         {(controle) => (
@@ -475,11 +505,14 @@ export function AgenteModeloJev() {
                                                 }
                                             >
                                                 <option value="herdar">
-                                                    Herdar (padrão de fábrica:{" "}
-                                                    {PADRAO_DE_FABRICA[gate] ? "ligado" : "desligado"})
+                                                    {t("modelJev.gateOptionInherit", {
+                                                        defaultState: PADRAO_DE_FABRICA[gate]
+                                                            ? t("modelJev.gateStateOnLower")
+                                                            : t("modelJev.gateStateOffLower"),
+                                                    })}
                                                 </option>
-                                                <option value="ligado">Ligado</option>
-                                                <option value="desligado">Desligado</option>
+                                                <option value="ligado">{t("modelJev.gateOptionOn")}</option>
+                                                <option value="desligado">{t("modelJev.gateOptionOff")}</option>
                                             </SofaSelect>
                                         )}
                                     </SofaField>
@@ -489,17 +522,21 @@ export function AgenteModeloJev() {
                     </SecaoDoAgente>
 
                     <SecaoDoAgente
-                        titulo="Outras chaves do Jev (não editadas aqui)"
-                        descricao="Estas chaves o motor lê, mas esta aba não as altera. Ao salvar, elas voltam exatamente como estão."
+                        titulo={t("modelJev.sectionOtherKeysTitle")}
+                        descricao={t("modelJev.sectionOtherKeysDescription")}
                     >
                         <ul className="poph-modelo-jev__chaves">
                             {CHAVES_PRESERVADAS.map((item) => (
                                 <li key={item.chave}>
                                     <code>{item.chave}</code> ·{" "}
-                                    {chavesNoAgente.has(item.chave) ? "definida" : "não definida"}
+                                    {chavesNoAgente.has(item.chave)
+                                        ? t("modelJev.keyDefined")
+                                        : t("modelJev.keyUndefined")}
                                     <div className="poph-mono-mudo">
                                         {item.explicacao}
-                                        {item.ondeEdita ? ` Edite em ${item.ondeEdita}.` : ""}
+                                        {item.ondeEdita
+                                            ? t("modelJev.keyEditIn", { where: item.ondeEdita })
+                                            : ""}
                                     </div>
                                 </li>
                             ))}
@@ -512,10 +549,12 @@ export function AgenteModeloJev() {
                         className={`poph-status ${sujo ? "poph-status--atencao" : "poph-status--inativo"}`}
                     >
                         <span className="poph-status__ponto" aria-hidden="true" />
-                        {sujo ? "Alterações não salvas" : `Salvo (versão ${versao})`}
+                        {sujo
+                            ? t("modelJev.statusUnsaved")
+                            : t("modelJev.statusSaved", { version: versao })}
                     </span>
                     <SofaButton variant="subtle" disabled={!sujo || salvando} onClick={descartar}>
-                        Descartar alterações
+                        {t("modelJev.discardChanges")}
                     </SofaButton>
                     <SofaButton
                         variant="primary"
@@ -524,7 +563,7 @@ export function AgenteModeloJev() {
                         loading={salvando}
                         onClick={() => void salvar()}
                     >
-                        Salvar modelo e Jev
+                        {t("modelJev.saveButton")}
                     </SofaButton>
                 </div>
             </div>

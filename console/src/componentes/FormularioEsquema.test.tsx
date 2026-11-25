@@ -7,9 +7,14 @@
  */
 
 import { useState } from "react";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { I18nProvider, setLocale } from "../i18n";
+
+afterEach(() => {
+    setLocale("pt-BR");
+});
 import {
     FormularioEsquema,
     camposDoEsquema,
@@ -176,5 +181,28 @@ describe("FormularioEsquema", () => {
         expect(
             screen.getByText("Esta integração não tem configuração nem segredo no manifesto."),
         ).toBeInTheDocument();
+    });
+
+    it("valida e renderiza textos em inglês quando en-US está ativo", () => {
+        setLocale("en-US");
+        const erros = validarValoresDeEsquema(ESQUEMA_PLUGIN, SEGREDOS_PLUGIN, {
+            endpoint: "",
+            tentativas: 9,
+            avisar: false,
+            api_key: "",
+        });
+        expect(erros["endpoint"]).toBe("required field");
+        expect(erros["api_key"]).toBe("enter the secret");
+        expect(erros["tentativas"]).toBe("maximum is 5");
+
+        render(
+            <I18nProvider>
+                <FormularioDeTeste configuracao={{ type: "object", properties: {} }} />
+            </I18nProvider>,
+        );
+        expect(
+            screen.getByText("This integration has no configuration or secrets in the manifest."),
+        ).toBeInTheDocument();
+        setLocale("pt-BR");
     });
 });

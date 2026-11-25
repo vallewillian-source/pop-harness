@@ -7,11 +7,16 @@
  * da API aparece no campo.
  */
 
-import { describe, expect, it } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { GuardaAlteracoesProvider } from "../componentes/GuardaAlteracoes";
+import { I18nProvider, setLocale } from "../i18n";
+
+afterEach(() => {
+    setLocale("pt-BR");
+});
 import { ServidorFalso, erroApi } from "../testes/servidor";
 import { AgenteModeloJev } from "./AgenteModeloJev";
 
@@ -53,15 +58,17 @@ function agenteJson(parcial: Record<string, unknown> = {}) {
 
 function montar() {
     return render(
-        <MemoryRouter initialEntries={[`/orgs/${ORG}/agents/${AGENTE}/model-jev`]}>
-            <GuardaAlteracoesProvider>
-                <Routes>
-                    <Route path="/orgs/:orgId/agents/:agentId/model-jev" element={<AgenteModeloJev />} />
-                    <Route path="/orgs/:orgId/agents" element={<div>Tela de agentes</div>} />
-                    <Route path="/orgs/:orgId/agents/:agentId/routing" element={<div>Tela de roteamento</div>} />
-                </Routes>
-            </GuardaAlteracoesProvider>
-        </MemoryRouter>,
+        <I18nProvider>
+            <MemoryRouter initialEntries={[`/orgs/${ORG}/agents/${AGENTE}/model-jev`]}>
+                <GuardaAlteracoesProvider>
+                    <Routes>
+                        <Route path="/orgs/:orgId/agents/:agentId/model-jev" element={<AgenteModeloJev />} />
+                        <Route path="/orgs/:orgId/agents" element={<div>Tela de agentes</div>} />
+                        <Route path="/orgs/:orgId/agents/:agentId/routing" element={<div>Tela de roteamento</div>} />
+                    </Routes>
+                </GuardaAlteracoesProvider>
+            </MemoryRouter>
+        </I18nProvider>,
     );
 }
 
@@ -295,5 +302,23 @@ describe("Aba Modelo e Jev", () => {
         montar();
         expect(await screen.findByText("Não consegui carregar o modelo e o Jev do agente")).toBeInTheDocument();
         expect(screen.getByRole("button", { name: "Tentar de novo" })).toBeInTheDocument();
+    });
+
+    it("reage à troca para en-US com a tela aberta e mantém o formulário em inglês", async () => {
+        servidorCom();
+        montar();
+        expect(await screen.findByLabelText("Provedor")).toBeInTheDocument();
+
+        act(() => {
+            setLocale("en-US");
+        });
+
+        expect(await screen.findByLabelText("Provider")).toHaveValue("antigravity2api");
+        expect(screen.getByLabelText("Model")).toHaveValue("gemini-3.8-flash-tiered");
+        expect(screen.getByLabelText("Temperature")).toHaveAttribute("placeholder", "inherits server default");
+        expect(screen.getByRole("region", { name: "Language model" })).toBeInTheDocument();
+        expect(screen.getByRole("region", { name: "Jev: decision gates" })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Save model and Jev" })).toBeDisabled();
+        setLocale("pt-BR");
     });
 });

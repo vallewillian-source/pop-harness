@@ -54,6 +54,7 @@ import { DialogoExclusao } from "../componentes/DialogoExclusao";
 import { useGuardaDeAlteracoes } from "../componentes/GuardaAlteracoes";
 import { ModalIntegracao } from "../componentes/ModalIntegracao";
 import { PainelWhatsApp } from "../componentes/PainelWhatsApp";
+import { translate, useI18n } from "../i18n";
 import "../estilos/integracoes.css";
 
 /** Classe do ponto de status (`.poph-status` de `relayout.css`) para a situação da integração. */
@@ -71,11 +72,11 @@ function classeDaSituacao(situacao: string): string {
 function rotuloDaSituacao(situacao: string): string {
     switch (situacao) {
         case "active":
-            return "Ativa";
+            return translate("integrations.statusActive");
         case "inactive":
-            return "Inativa";
+            return translate("integrations.statusInactive");
         case "archived":
-            return "Arquivada";
+            return translate("integrations.statusArchived");
         default:
             return situacao;
     }
@@ -95,6 +96,7 @@ function classeDaConexao(estado: string): string {
 }
 
 export function AgenteIntegracoes() {
+    const { translate: t } = useI18n();
     const { orgId = "", agentId = "" } = useParams();
     const guarda = useGuardaDeAlteracoes();
 
@@ -117,12 +119,16 @@ export function AgenteIntegracoes() {
         try {
             setIntegracoes(await listarIntegracoes(orgId, agentId));
         } catch (falha) {
-            setErro(falha instanceof Error ? falha.message : "falha ao carregar as integrações");
+            setErro(
+                falha instanceof Error
+                    ? falha.message
+                    : t("integrations.loadIntegrationsFallbackError"),
+            );
             setIntegracoes([]);
         } finally {
             setCarregando(false);
         }
-    }, [orgId, agentId]);
+    }, [orgId, agentId, t]);
 
     /** Atualiza uma integração na lista (o painel do WhatsApp devolve o estado de conexão). */
     const atualizarIntegracao = useCallback((atualizada: Integracao) => {
@@ -136,11 +142,13 @@ export function AgenteIntegracoes() {
         try {
             setAgente(await obterAgente(orgId, agentId));
         } catch (falha) {
-            setErroDeCarga(falha instanceof Error ? falha.message : "falha ao carregar o agente");
+            setErroDeCarga(
+                falha instanceof Error ? falha.message : t("integrations.loadAgentFallbackError"),
+            );
             return;
         }
         void carregarIntegracoes();
-    }, [orgId, agentId, carregarIntegracoes]);
+    }, [orgId, agentId, carregarIntegracoes, t]);
 
     useEffect(() => {
         void carregar();
@@ -158,17 +166,17 @@ export function AgenteIntegracoes() {
         return (
             <div className="poph-pagina">
                 <SofaErrorState
-                    title="Não consegui carregar as integrações do agente"
-                    description="A instância não respondeu à leitura do agente. Tente de novo; se persistir, confira a saúde do servidor."
+                    title={t("integrations.loadAgentErrorTitle")}
+                    description={t("integrations.loadAgentErrorDescription")}
                     details={erroDeCarga}
-                    retry={{ label: "Tentar de novo", onClick: () => void carregar() }}
+                    retry={{ label: t("integrations.retry"), onClick: () => void carregar() }}
                     action={
                         <SofaButton
                             variant="subtle"
                             icon={<IconArrowLeft aria-hidden="true" />}
                             onClick={() => guarda.tentarNavegar(`/orgs/${orgId}/agents`)}
                         >
-                            Voltar para agentes
+                            {t("integrations.backToAgents")}
                         </SofaButton>
                     }
                 />
@@ -197,7 +205,7 @@ export function AgenteIntegracoes() {
         return [
             {
                 id: "editar",
-                label: "Editar",
+                label: t("integrations.actionEdit"),
                 icon: <IconPencil size={14} aria-hidden="true" />,
                 onSelect: () => {
                     setAviso(null);
@@ -207,7 +215,7 @@ export function AgenteIntegracoes() {
             },
             {
                 id: "excluir",
-                label: "Excluir",
+                label: t("integrations.actionDelete"),
                 icon: <IconTrash size={14} aria-hidden="true" />,
                 danger: true,
                 onSelect: () => {
@@ -224,18 +232,18 @@ export function AgenteIntegracoes() {
     } else if (erro) {
         corpo = (
             <SofaErrorState
-                title="Não consegui carregar as integrações"
-                description="A lista de integrações não respondeu. Tente de novo."
+                title={t("integrations.loadListErrorTitle")}
+                description={t("integrations.loadListErrorDescription")}
                 details={erro}
-                retry={{ label: "Tentar de novo", onClick: () => void carregarIntegracoes() }}
+                retry={{ label: t("integrations.retry"), onClick: () => void carregarIntegracoes() }}
             />
         );
     } else if (integracoes.length === 0) {
         corpo = (
             <SofaEmptyState
                 icon={<IconWorkflow aria-hidden="true" />}
-                title="Nenhuma integração neste agente"
-                description="Uma integração liga o agente a um canal, como o WhatsApp. Crie a primeira para o agente atender por ela."
+                title={t("integrations.emptyTitle")}
+                description={t("integrations.emptyDescription")}
                 action={
                     <SofaButton
                         variant="primary"
@@ -245,7 +253,7 @@ export function AgenteIntegracoes() {
                             setModalAberto(true);
                         }}
                     >
-                        Criar primeira integração
+                        {t("integrations.emptyAction")}
                     </SofaButton>
                 }
             />
@@ -256,17 +264,17 @@ export function AgenteIntegracoes() {
             <div
                 className="poph-tabela poph-integracoes__tabela"
                 role="table"
-                aria-label="Integrações do agente"
+                aria-label={t("integrations.tableAriaLabel")}
             >
                 <div className="poph-tabela__cabecalho" role="row">
-                    <span role="columnheader">Tipo</span>
-                    <span role="columnheader">Situação</span>
-                    <span role="columnheader">Conexão</span>
-                    <span role="columnheader">Segredo</span>
-                    <span role="columnheader">Configuração</span>
-                    <span role="columnheader">Versão</span>
+                    <span role="columnheader">{t("integrations.colType")}</span>
+                    <span role="columnheader">{t("integrations.colStatus")}</span>
+                    <span role="columnheader">{t("integrations.colConnection")}</span>
+                    <span role="columnheader">{t("integrations.colSecret")}</span>
+                    <span role="columnheader">{t("integrations.colConfig")}</span>
+                    <span role="columnheader">{t("integrations.colVersion")}</span>
                     <span role="columnheader" className="poph-tabela__celula--acoes">
-                        Ações
+                        {t("integrations.colActions")}
                     </span>
                 </div>
                 {integracoes.map((integracao) => {
@@ -281,7 +289,10 @@ export function AgenteIntegracoes() {
                     ]
                         .filter(Boolean)
                         .join(" ");
-                    const nomeDoMenu = `Ações de ${integracao.kind} (${integracao.id})`;
+                    const nomeDoMenu = t("integrations.rowMenuLabel", {
+                        kind: integracao.kind,
+                        id: integracao.id,
+                    });
                     return (
                         <div key={integracao.id} role="row" className={classes}>
                             <div role="cell" className="poph-integracoes__identidade">
@@ -303,12 +314,16 @@ export function AgenteIntegracoes() {
                                 </span>
                             </div>
                             <div role="cell" className="poph-tabela__celula--mono">
-                                {integracao.tem_segredo ? "gravado (não exibido)" : "sem segredo"}
+                                {integracao.tem_segredo
+                                    ? t("integrations.secretSavedCell")
+                                    : t("integrations.secretNoneCell")}
                             </div>
                             <div role="cell" className="poph-tabela__celula--mono">
                                 {chaves === 0
-                                    ? "sem configuração"
-                                    : `${chaves} ${chaves === 1 ? "campo" : "campos"} gravados`}
+                                    ? t("integrations.configEmptyCell")
+                                    : chaves === 1
+                                      ? t("integrations.configOneField")
+                                      : t("integrations.configManyFields", { count: chaves })}
                             </div>
                             <div role="cell" className="poph-tabela__celula--mono">
                                 v{integracao.version}
@@ -333,7 +348,9 @@ export function AgenteIntegracoes() {
                 })}
             </div>
             <p className="poph-tabela__rodape">
-                {integracoes.length === 1 ? "1 integração" : `${integracoes.length} integrações`}
+                {integracoes.length === 1
+                    ? t("integrations.footerOne")
+                    : t("integrations.footerMany", { count: integracoes.length })}
             </p>
             </>
         );
@@ -348,7 +365,7 @@ export function AgenteIntegracoes() {
                     slug={agente.slug}
                     situacao={agente.status}
                     organizacao={nomeDaOrg}
-                    descricao="canais e plugins ligados a este agente"
+                    descricao={t("integrations.headerDescription")}
                     acoes={
                         <>
                             <SofaButton
@@ -357,7 +374,7 @@ export function AgenteIntegracoes() {
                                 onClick={() => void carregarIntegracoes()}
                                 loading={carregando && integracoes.length > 0}
                             >
-                                Atualizar
+                                {t("integrations.refresh")}
                             </SofaButton>
                             <SofaButton
                                 variant="primary"
@@ -367,7 +384,7 @@ export function AgenteIntegracoes() {
                                     setModalAberto(true);
                                 }}
                             >
-                                Nova integração
+                                {t("integrations.newIntegration")}
                             </SofaButton>
                         </>
                     }
@@ -381,22 +398,18 @@ export function AgenteIntegracoes() {
                     </p>
                 )}
 
-                <SofaBanner tone="info" title="Configuração pelo formulário do plugin">
-                    O formulário de cada integração vem do manifesto que o próprio plugin declara no
-                    servidor — nenhuma integração tem formulário escrito à mão aqui. Tipo sem plugin
-                    declarado (como o {KIND_WHATSAPP}, que usa a Evolution) é criado só com tipo e
-                    situação. O pareamento, o estado ao vivo e a desconexão do WhatsApp funcionam no
-                    painel abaixo.
+                <SofaBanner tone="info" title={t("integrations.pluginFormBannerTitle")}>
+                    {t("integrations.pluginFormBannerBody", { whatsapp: KIND_WHATSAPP })}
                 </SofaBanner>
 
                 <section className="poph-secao">
                     <div className="poph-integracoes__cabecalho-secao">
                         <div className="poph-integracoes__titulo-bloco">
-                            <h2 className="poph-secao__titulo">Integrações do agente</h2>
+                            <h2 className="poph-secao__titulo">
+                                {t("integrations.sectionIntegrationsTitle")}
+                            </h2>
                             <p className="poph-integracoes__ajuda">
-                                O tipo identifica o canal. A situação controla se o agente atende
-                                por ele; alterar usa a versão lida (duas pessoas não sobrescrevem
-                                uma à outra).
+                                {t("integrations.sectionIntegrationsHelp")}
                             </p>
                         </div>
                     </div>
@@ -406,10 +419,11 @@ export function AgenteIntegracoes() {
                 <section className="poph-secao">
                     <div className="poph-integracoes__cabecalho-secao">
                         <div className="poph-integracoes__titulo-bloco">
-                            <h2 className="poph-secao__titulo">WhatsApp: pareamento e conexão</h2>
+                            <h2 className="poph-secao__titulo">
+                                {t("integrations.sectionWhatsappTitle")}
+                            </h2>
                             <p className="poph-integracoes__ajuda">
-                                Gere o QR, acompanhe o estado ao vivo e desconecte o aparelho. Sem
-                                contagem regressiva: o WhatsApp não informa validade do QR.
+                                {t("integrations.sectionWhatsappHelp")}
                             </p>
                         </div>
                         <div className="poph-integracoes__acoes-secao">
@@ -420,7 +434,7 @@ export function AgenteIntegracoes() {
                                 onClick={() => void carregarIntegracoes()}
                                 loading={carregando && integracoes.length > 0}
                             >
-                                Atualizar
+                                {t("integrations.refresh")}
                             </SofaButton>
                         </div>
                     </div>
@@ -428,8 +442,7 @@ export function AgenteIntegracoes() {
                         <SofaSkeleton lines={2} />
                     ) : doWhatsapp.length === 0 ? (
                         <p className="poph-mono-mudo" style={{ margin: 0 }}>
-                            Nenhuma integração do tipo {KIND_WHATSAPP}. Crie uma abaixo com o tipo{" "}
-                            {KIND_WHATSAPP} para parear um aparelho aqui.
+                            {t("integrations.whatsappEmpty", { whatsapp: KIND_WHATSAPP })}
                         </p>
                     ) : (
                         <div className="poph-integracoes__paineis">
@@ -449,19 +462,18 @@ export function AgenteIntegracoes() {
                 <section className="poph-secao">
                     <div className="poph-integracoes__cabecalho-secao">
                         <div className="poph-integracoes__titulo-bloco">
-                            <h2 className="poph-secao__titulo">Segredos</h2>
+                            <h2 className="poph-secao__titulo">
+                                {t("integrations.sectionSecretsTitle")}
+                            </h2>
                             <p className="poph-integracoes__ajuda">
-                                Toda credencial de integração fica guardada cifrada no servidor e
-                                nunca volta na resposta, no log ou nesta tela.
+                                {t("integrations.sectionSecretsHelp")}
                             </p>
                         </div>
                     </div>
                     <div className="poph-integracoes__segredos">
                         <IconKey aria-hidden="true" />
                         <span className="poph-mono-mudo">
-                            A coluna “Segredo” só diz se existe um segredo gravado, e o formulário
-                            do plugin mostra no máximo quais campos já estão preenchidos. O valor
-                            não é legível por esta API — é o desenho, não uma limitação da tela.
+                            {t("integrations.secretsFooterNote")}
                         </span>
                     </div>
                 </section>
@@ -485,8 +497,11 @@ export function AgenteIntegracoes() {
                     });
                     setAviso(
                         emEdicao
-                            ? `Integração ${salva.kind} gravada (versão ${salva.version}).`
-                            : `Integração ${salva.kind} criada.`,
+                            ? t("integrations.savedNotice", {
+                                  kind: salva.kind,
+                                  version: salva.version,
+                              })
+                            : t("integrations.createdNotice", { kind: salva.kind }),
                     );
                 }}
             />
@@ -494,19 +509,20 @@ export function AgenteIntegracoes() {
             <DialogoExclusao
                 aberto={paraExcluir !== null}
                 aoFechar={() => setParaExcluir(null)}
-                titulo="Excluir integração?"
+                titulo={t("integrations.deleteModalTitle")}
                 descricao={
                     paraExcluir
-                        ? `O agente deixa de atender por “${paraExcluir.kind}” e a configuração desta integração some. Não há como desfazer; para voltar, é preciso criar outra.`
+                        ? t("integrations.deleteModalDescription", { kind: paraExcluir.kind })
                         : ""
                 }
                 recurso={paraExcluir?.kind ?? ""}
-                rotuloRecurso="tipo da integração"
-                rotuloConfirmar="Excluir integração"
+                rotuloRecurso={t("integrations.deleteModalResourceLabel")}
+                rotuloConfirmar={t("integrations.deleteModalConfirmLabel")}
                 consequencia={
                     <span className="poph-mono-mudo">
-                        Se houver mais de uma integração do mesmo tipo, confira o identificador{" "}
-                        {paraExcluir?.id ?? ""} na lista: a confirmação é pelo tipo.
+                        {t("integrations.deleteModalConsequence", {
+                            id: paraExcluir?.id ?? "",
+                        })}
                     </span>
                 }
                 aoConfirmar={async () => {
@@ -518,7 +534,7 @@ export function AgenteIntegracoes() {
                         setIntegracoes((atuais) =>
                             atuais.filter((item) => item.id !== paraExcluir.id),
                         );
-                        setAviso(`Integração ${paraExcluir.kind} excluída.`);
+                        setAviso(t("integrations.deletedNotice", { kind: paraExcluir.kind }));
                     }
                 }}
             />

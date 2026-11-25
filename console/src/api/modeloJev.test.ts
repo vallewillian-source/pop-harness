@@ -5,7 +5,12 @@
  * A prova de que nenhuma chave some está aqui e também na tela (`AgenteModeloJev.test.tsx`).
  */
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { setLocale } from "../i18n";
+
+afterEach(() => {
+    setLocale("pt-BR");
+});
 import {
     PADRAO_DE_FABRICA,
     efeitoDoGate,
@@ -211,5 +216,13 @@ describe("modelo e RAG: validação e corpo do PATCH", () => {
         const modelo = modeloDoAgente(agente);
         expect(modelo.temperature).toBe("");
         expect(modelo.max_tool_calls).toBe("10");
+    });
+
+    it("emite validações em inglês quando o idioma ativo é en-US", () => {
+        setLocale("en-US");
+        const erros = validarModelo({ ...base, provider: "", grouping_window_ms: "9000" }, base);
+        expect(erros.provider).toBe("enter the provider");
+        expect(erros.grouping_window_ms).toBe("use a number from 0 to 8000 ms");
+        setLocale("pt-BR");
     });
 });

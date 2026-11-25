@@ -19,6 +19,8 @@
 
 import { ErroApi, pedir } from "./cliente";
 import type { EsquemaDeObjeto } from "../componentes/FormularioEsquema";
+import { translate } from "../i18n";
+import type { TranslationKey } from "../i18n/catalog";
 
 /**
  * Integração como a API a devolve. O OpenAPI publica a resposta como JSON genérico, então o tipo é
@@ -46,24 +48,40 @@ export type Integracao = {
 
 /** Situações aceitas pela API (`status_pedido`, `api/mod.rs`). */
 export const SITUACOES_INTEGRACAO = [
-    { valor: "active", rotulo: "Ativa" },
-    { valor: "inactive", rotulo: "Inativa" },
-    { valor: "archived", rotulo: "Arquivada" },
+    {
+        valor: "active",
+        get rotulo() {
+            return translate("integrations.statusActive");
+        },
+    },
+    {
+        valor: "inactive",
+        get rotulo() {
+            return translate("integrations.statusInactive");
+        },
+    },
+    {
+        valor: "archived",
+        get rotulo() {
+            return translate("integrations.statusArchived");
+        },
+    },
 ] as const;
 
 export type SituacaoIntegracao = (typeof SITUACOES_INTEGRACAO)[number]["valor"];
 
 /** Estados de conexão que o webhook do canal grava (`docs/EVOLUTION.md`). */
-const ROTULOS_DE_CONEXAO: Record<string, string> = {
-    connected: "Conectado",
-    disconnected: "Desconectado",
-    awaiting_scan: "Aguardando leitura do QR",
-    connecting: "Conectando",
+const CONNECTION_LABEL_KEYS: Record<string, TranslationKey> = {
+    connected: "integrations.connectionConnected",
+    disconnected: "integrations.connectionDisconnected",
+    awaiting_scan: "integrations.connectionAwaitingScan",
+    connecting: "integrations.connectionConnecting",
 };
 
 /** Rótulo do estado de conexão; estado desconhecido aparece como veio. */
 export function rotuloDaConexao(estado: string): string {
-    return ROTULOS_DE_CONEXAO[estado] ?? estado;
+    const key = CONNECTION_LABEL_KEYS[estado];
+    return key ? translate(key) : estado;
 }
 
 /** Tipo sugerido para a integração de WhatsApp (o mesmo `kind` do plugin de Evolution). */
@@ -296,34 +314,29 @@ export function fonteDoQr(base64: string): string {
  */
 export type FalhaDoWhatsapp = { texto: string; codigo?: string; dica?: string };
 
-const DICAS_POR_CODIGO: Record<string, string> = {
-    whatsapp_nao_configurado:
-        "Esta integração ainda não tem uma instância da Evolution declarada na configuração do servidor. Enquanto isso, não há como parear nem consultar o estado dela.",
-    evolution_indisponivel:
-        "O servidor não conseguiu falar com o WhatsApp: a integração está sem a chave da Evolution ou o serviço está fora do ar.",
-    integracao_nao_e_whatsapp:
-        "Só a integração do tipo whatsapp tem pareamento, estado e desconexão.",
-    evolution_recusou:
-        "A Evolution recusou a operação. O motivo dela está na mensagem acima; tente de novo em alguns segundos.",
-    evolution_sem_qr:
-        "A Evolution respondeu sem QR nem código. Peça outro QR em alguns segundos.",
-    version_conflict:
-        "Outra pessoa alterou esta integração antes de você. A tela releu a versão atual; repita a operação.",
-    precondition_required: "A tela precisa da versão atual da integração para esta operação.",
+const WHATSAPP_TIP_KEYS: Record<string, TranslationKey> = {
+    whatsapp_nao_configurado: "integrations.whatsappTipNotConfigured",
+    evolution_indisponivel: "integrations.whatsappTipEvolutionUnavailable",
+    integracao_nao_e_whatsapp: "integrations.whatsappTipNotWhatsapp",
+    evolution_recusou: "integrations.whatsappTipEvolutionRefused",
+    evolution_sem_qr: "integrations.whatsappTipEvolutionNoQr",
+    version_conflict: "integrations.whatsappTipVersionConflict",
+    precondition_required: "integrations.whatsappTipPreconditionRequired",
 };
 
 export function explicarFalhaDoWhatsapp(falha: unknown): FalhaDoWhatsapp {
     if (falha instanceof ErroApi) {
+        const tipKey = WHATSAPP_TIP_KEYS[falha.codigo];
         return {
             texto: falha.message,
             codigo: falha.codigo,
-            dica: DICAS_POR_CODIGO[falha.codigo],
+            dica: tipKey ? translate(tipKey) : undefined,
         };
     }
     if (falha instanceof Error) {
         return { texto: falha.message };
     }
-    return { texto: "falha inesperada ao falar com o WhatsApp" };
+    return { texto: translate("integrations.whatsappUnexpectedFailure") };
 }
 
 /**
@@ -339,13 +352,13 @@ export function validarIntegracao(campos: {
     if (!campos.editando) {
         const kind = campos.kind.trim();
         if (kind === "") {
-            erros["kind"] = "informe o tipo da integração (por exemplo, whatsapp)";
+            erros["kind"] = translate("integrations.validationKindRequired");
         } else if (kind.length > LIMITE_KIND) {
-            erros["kind"] = `o tipo aceita até ${LIMITE_KIND} caracteres`;
+            erros["kind"] = translate("integrations.validationKindMaxLength", { max: LIMITE_KIND });
         }
     }
     if (!SITUACOES_INTEGRACAO.some((situacao) => situacao.valor === campos.situacao)) {
-        erros["situacao"] = "escolha a situação";
+        erros["situacao"] = translate("integrations.validationStatusRequired");
     }
     return erros;
 }

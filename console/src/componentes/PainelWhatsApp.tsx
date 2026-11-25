@@ -48,6 +48,7 @@ import {
     type Integracao,
     type QrDoWhatsapp,
 } from "../api/integracoes";
+import { useI18n } from "../i18n";
 import "../estilos/whatsapp.css";
 
 /** Intervalo entre consultas automáticas do estado (≥ 3 s, como pede a tarefa). */
@@ -93,6 +94,7 @@ export function PainelWhatsApp({
     integracao,
     aoAtualizarIntegracao,
 }: PainelWhatsAppProps) {
+    const { translate: t } = useI18n();
     const [qr, setQr] = useState<QrDoWhatsapp | null>(null);
     const [estadoAoVivo, setEstadoAoVivo] = useState<EstadoDoWhatsapp | null>(null);
     const [carregandoQr, setCarregandoQr] = useState(false);
@@ -122,22 +124,22 @@ export function PainelWhatsApp({
             const atual = await obterIntegracao(org, agente, id);
             aoAtualizarIntegracao(atual);
             setFalha({
-                texto: `Outra pessoa alterou esta integração antes de você (agora na versão ${atual.version}). O estado foi relido: revise e repita a operação.`,
+                texto: t("integrations.whatsappConflictText", { version: atual.version }),
                 codigo: "version_conflict",
-                dica: "Nada foi perdido: a integração continua como está no servidor.",
+                dica: t("integrations.whatsappConflictTip"),
             });
         } catch {
             setFalha({
-                texto: "Outra pessoa alterou esta integração antes de você, e a releitura falhou. Recarregue a lista e repita.",
+                texto: t("integrations.whatsappConflictRereadFailed"),
                 codigo: "version_conflict",
             });
         }
-    }, [org, agente, id, aoAtualizarIntegracao]);
+    }, [org, agente, id, aoAtualizarIntegracao, t]);
 
     async function conectar() {
         const digitado = numero.trim();
         if (digitado !== "" && !NUMERO_WHATSAPP.test(digitado)) {
-            setErroDoNumero("use só dígitos, com DDI e DDD (ex.: 5511999998888)");
+            setErroDoNumero(t("integrations.whatsappPhoneInvalid"));
             return;
         }
         setErroDoNumero(null);
@@ -166,12 +168,12 @@ export function PainelWhatsApp({
                 setLacoAtivo(true);
                 setAviso(
                     resposta.pairing_code
-                        ? "QR gerado. Leia com o celular ou use o código de pareamento."
-                        : "QR gerado. Leia com o WhatsApp do celular.",
+                        ? t("integrations.whatsappQrWithCodeNotice")
+                        : t("integrations.whatsappQrNotice"),
                 );
             } else if (resposta.state === "open") {
                 setLacoAtivo(false);
-                setAviso("Este aparelho já está conectado; não há QR para ler.");
+                setAviso(t("integrations.whatsappAlreadyConnectedNotice"));
             }
         } catch (erro) {
             setLacoAtivo(false);
@@ -198,7 +200,9 @@ export function PainelWhatsApp({
             // Conectou (ou caiu): o QR que estava na tela não vale mais.
             if (resposta.connection_state !== "awaiting_scan") setQr(null);
             setAviso(
-                `Estado ao vivo: ${rotuloDaConexao(resposta.connection_state).toLowerCase()}.`,
+                t("integrations.whatsappLiveStateNotice", {
+                    state: rotuloDaConexao(resposta.connection_state).toLowerCase(),
+                }),
             );
             return resposta;
         } catch (erro) {
@@ -207,7 +211,7 @@ export function PainelWhatsApp({
         } finally {
             setConsultando(false);
         }
-    }, [org, agente, id, aoAtualizarIntegracao]);
+    }, [org, agente, id, aoAtualizarIntegracao, t]);
 
     // Laço curto enquanto o aparelho aguarda leitura do QR.
     useEffect(() => {
@@ -219,9 +223,7 @@ export function PainelWhatsApp({
             if (consultas > MAXIMO_DE_CONSULTAS) {
                 if (!vivo) return;
                 setLacoAtivo(false);
-                setAviso(
-                    "Paramos de consultar o estado automaticamente depois de 3 minutos. Use “Verificar estado” ou “Gerar outro QR”.",
-                );
+                setAviso(t("integrations.whatsappPollingStoppedNotice"));
                 return;
             }
             void lerEstadoDoWhatsapp(org, agente, id)
@@ -237,8 +239,10 @@ export function PainelWhatsApp({
                         setQr(null);
                         setAviso(
                             resposta.connection_state === "connected"
-                                ? "Aparelho conectado."
-                                : `Estado ao vivo: ${rotuloDaConexao(resposta.connection_state).toLowerCase()}.`,
+                                ? t("integrations.whatsappConnectedNotice")
+                                : t("integrations.whatsappLiveStateNotice", {
+                                      state: rotuloDaConexao(resposta.connection_state).toLowerCase(),
+                                  }),
                         );
                     }
                 })
@@ -252,7 +256,7 @@ export function PainelWhatsApp({
             vivo = false;
             window.clearInterval(intervalo);
         };
-    }, [lacoAtivo, aguardandoLeitura, org, agente, id, aoAtualizarIntegracao]);
+    }, [lacoAtivo, aguardandoLeitura, org, agente, id, aoAtualizarIntegracao, t]);
 
     async function desconectar() {
         setConfirmandoDesconexao(false);
@@ -272,9 +276,7 @@ export function PainelWhatsApp({
                 ...integracaoRef.current,
                 connection_state: resposta.connection_state,
             });
-            setAviso(
-                "Aparelho desconectado. A integração continua cadastrada; para voltar, gere um novo QR.",
-            );
+            setAviso(t("integrations.whatsappDisconnectedNotice"));
         } catch (erro) {
             if (erro instanceof ErroApi && erro.status === 412) {
                 await relerDepoisDoConflito();
@@ -299,15 +301,19 @@ export function PainelWhatsApp({
                 </span>
                 <span className="poph-mono-mudo">
                     {integracao.tem_segredo
-                        ? "segredo gravado — nunca exibido"
-                        : "sem segredo gravado"}
+                        ? t("integrations.whatsappSecretSaved")
+                        : t("integrations.whatsappNoSecret")}
                 </span>
-                {qr?.instance && <span className="poph-mono-mudo">instância: {qr.instance}</span>}
+                {qr?.instance && (
+                    <span className="poph-mono-mudo">
+                        {t("integrations.whatsappInstanceLabel", { instance: qr.instance })}
+                    </span>
+                )}
             </div>
 
             <SofaField
-                label="Número do WhatsApp (opcional)"
-                hint="Só dígitos, com DDI e DDD. Em branco, o pareamento é pelo QR. Com o número, o WhatsApp também devolve o código de 8 caracteres."
+                label={t("integrations.whatsappPhoneLabel")}
+                hint={t("integrations.whatsappPhoneHint")}
                 error={erroDoNumero ?? undefined}
                 htmlFor="poph-whatsapp-numero"
             >
@@ -331,7 +337,7 @@ export function PainelWhatsApp({
                     onClick={() => void conectar()}
                     loading={carregandoQr}
                 >
-                    {qr ? "Gerar outro QR" : "Conectar / gerar QR"}
+                    {qr ? t("integrations.whatsappRegenerateQr") : t("integrations.whatsappGenerateQr")}
                 </SofaButton>
                 <SofaButton
                     variant="subtle"
@@ -342,7 +348,7 @@ export function PainelWhatsApp({
                     }}
                     loading={consultando}
                 >
-                    Verificar estado
+                    {t("integrations.whatsappCheckState")}
                 </SofaButton>
                 <SofaButton
                     variant="subtle"
@@ -355,11 +361,11 @@ export function PainelWhatsApp({
                     loading={desconectando}
                     disabled={estado === "disconnected"}
                 >
-                    Desconectar aparelho
+                    {t("integrations.whatsappDisconnectDevice")}
                 </SofaButton>
                 {lacoAtivo && aguardandoLeitura && (
                     <SofaButton variant="subtle" size="sm" onClick={() => setLacoAtivo(false)}>
-                        Parar consulta automática
+                        {t("integrations.whatsappStopPolling")}
                     </SofaButton>
                 )}
             </div>
@@ -371,12 +377,12 @@ export function PainelWhatsApp({
             )}
 
             {falha && (
-                <SofaBanner tone="danger" title="Não consegui completar a operação">
+                <SofaBanner tone="danger" title={t("integrations.whatsappOperationErrorTitle")}>
                     <span>{falha.texto}</span>
                     {falha.dica && <div className="poph-whatsapp__dica">{falha.dica}</div>}
                     {falha.codigo && (
                         <div className="poph-mono-mudo poph-whatsapp__dica">
-                            código: {falha.codigo}
+                            {t("integrations.whatsappErrorCode", { code: falha.codigo })}
                         </div>
                     )}
                 </SofaBanner>
@@ -387,46 +393,47 @@ export function PainelWhatsApp({
                     <img
                         className="poph-whatsapp__qr-imagem"
                         src={fonteDoQr(base64)}
-                        alt="QR de pareamento do WhatsApp"
+                        alt={t("integrations.whatsappQrAlt")}
                         width={220}
                         height={220}
                     />
                     <div className="poph-whatsapp__qr-texto">
-                        <strong>Leia este QR com o WhatsApp do celular</strong>
+                        <strong>{t("integrations.whatsappQrHeading")}</strong>
                         <span className="poph-mono-mudo">
-                            No celular: WhatsApp → Aparelhos conectados → Conectar aparelho.
+                            {t("integrations.whatsappQrSteps")}
                         </span>
                         {rodada !== null && (
-                            <span className="poph-mono-mudo">rodada {rodada} do QR</span>
+                            <span className="poph-mono-mudo">
+                                {t("integrations.whatsappQrRound", { round: rodada })}
+                            </span>
                         )}
                         {qr?.pairing_code && (
                             <span>
-                                Código de pareamento:{" "}
+                                {t("integrations.whatsappPairingCode")}{" "}
                                 <code className="poph-mono-mudo">{qr.pairing_code}</code>
                             </span>
                         )}
                         <span className="poph-mono-mudo">
-                            O QR muda sozinho a cada ~20 s e não tem prazo informado pelo WhatsApp.
-                            Se demorar, clique em “Gerar outro QR”.
+                            {t("integrations.whatsappQrRotationHint")}
                         </span>
                     </div>
                 </div>
             ) : qr?.state === "open" || estado === "connected" ? (
-                <SofaBanner tone="success" title="Aparelho conectado">
-                    O aparelho está conectado a esta integração; não há QR para ler. Para trocar de
-                    aparelho, desconecte e gere um novo QR.
+                <SofaBanner tone="success" title={t("integrations.whatsappConnectedBannerTitle")}>
+                    {t("integrations.whatsappConnectedBannerBody")}
                 </SofaBanner>
             ) : (
                 <p className="poph-mono-mudo" style={{ margin: 0 }}>
-                    Nenhum QR na tela. Use “Conectar / gerar QR” para parear o celular; o estado
-                    acima é o que o servidor tem gravado até você consultar o estado ao vivo.
+                    {t("integrations.whatsappNoQrHint")}
                 </p>
             )}
 
             {aguardandoLeitura && lacoAtivo && (
                 <p className="poph-mono-mudo" style={{ margin: 0 }}>
-                    Consultando o estado a cada {INTERVALO_DE_CONSULTA_MS / 1000} s por até{" "}
-                    {Math.round((INTERVALO_DE_CONSULTA_MS * MAXIMO_DE_CONSULTAS) / 60_000)} min.
+                    {t("integrations.whatsappPollingHint", {
+                        seconds: INTERVALO_DE_CONSULTA_MS / 1000,
+                        minutes: Math.round((INTERVALO_DE_CONSULTA_MS * MAXIMO_DE_CONSULTAS) / 60_000),
+                    })}
                 </p>
             )}
 
@@ -435,9 +442,9 @@ export function PainelWhatsApp({
                 onOpenChange={(novo) => {
                     if (!novo && !desconectando) setConfirmandoDesconexao(false);
                 }}
-                title="Desconectar o WhatsApp?"
-                description="O aparelho para de receber e enviar mensagens por esta integração."
-                closeLabel="Fechar confirmação de desconexão"
+                title={t("integrations.whatsappDisconnectModalTitle")}
+                description={t("integrations.whatsappDisconnectModalDescription")}
+                closeLabel={t("integrations.whatsappDisconnectModalClose")}
                 size="sm"
                 id="poph-confirma-desconexao-whatsapp"
                 footer={
@@ -447,7 +454,7 @@ export function PainelWhatsApp({
                             disabled={desconectando}
                             onClick={() => setConfirmandoDesconexao(false)}
                         >
-                            Cancelar
+                            {t("integrations.whatsappDisconnectCancel")}
                         </SofaButton>
                         <SofaButton
                             variant="danger"
@@ -455,7 +462,7 @@ export function PainelWhatsApp({
                             loading={desconectando}
                             onClick={() => void desconectar()}
                         >
-                            Desconectar
+                            {t("integrations.whatsappDisconnectConfirm")}
                         </SofaButton>
                     </>
                 }
@@ -464,13 +471,14 @@ export function PainelWhatsApp({
                     <div className="poph-whatsapp__confirmacao-linha">
                         <IconAlertTriangle aria-hidden="true" />
                         <span>
-                            A integração <strong>continua cadastrada</strong>; o que sai é o
-                            pareamento do aparelho. Para reconectar, é só gerar um novo QR e ler com
-                            o celular.
+                            {t("integrations.whatsappDisconnectBodyPrefix")}
+                            <strong>{t("integrations.whatsappDisconnectBodyStrong")}</strong>
+                            {t("integrations.whatsappDisconnectBodySuffix")}
                         </span>
                     </div>
                     <p className="poph-mono-mudo" style={{ margin: 0 }}>
-                        <IconLink aria-hidden="true" /> integração {id}
+                        <IconLink aria-hidden="true" />{" "}
+                        {t("integrations.whatsappDisconnectIntegrationId", { id })}
                     </p>
                 </div>
             </SofaModal>

@@ -18,6 +18,7 @@
 
 import { pedir } from "./cliente";
 import type { Agente } from "./agentes";
+import { translate } from "../i18n";
 
 /** Os oito portões do Jev, na ordem da tela. */
 export const GATES = ["g1", "g2", "g3", "g4", "g5", "g6", "g7", "g8"] as const;
@@ -45,43 +46,68 @@ export const PADRAO_DE_FABRICA: Record<IdGate, boolean> = {
 /** Uma linha por gate: o que ele decide, em linguagem comum (sem números de medição). */
 export const DESCRICAO_GATE: Record<IdGate, { titulo: string; explicacao: string }> = {
     g1: {
-        titulo: "G1 · Transferir para humano agora?",
-        explicacao:
-            "Decide se a conversa vai para atendente humano. Inclui a orientação de risco à saúde, que depende da política da empresa.",
+        get titulo() {
+            return translate("modelJev.gateG1Title");
+        },
+        get explicacao() {
+            return translate("modelJev.gateG1Description");
+        },
     },
     g2: {
-        titulo: "G2 · Esperar mais mensagens ou responder agora?",
-        explicacao: "Ajusta a espera antes de responder quando o cliente manda mensagens em sequência.",
+        get titulo() {
+            return translate("modelJev.gateG2Title");
+        },
+        get explicacao() {
+            return translate("modelJev.gateG2Description");
+        },
     },
     g3: {
-        titulo: "G3 · Precisa de base, de produto ou de nada?",
-        explicacao:
-            "Em saudação e agradecimento, dispensa a consulta à base e ao catálogo.",
+        get titulo() {
+            return translate("modelJev.gateG3Title");
+        },
+        get explicacao() {
+            return translate("modelJev.gateG3Description");
+        },
     },
     g4: {
-        titulo: "G4 · Qual departamento recebe a transferência?",
-        explicacao:
-            "Escolhe um dos departamentos ativos da organização quando há transferência. Sem escolha válida, vale o departamento padrão do agente.",
+        get titulo() {
+            return translate("modelJev.gateG4Title");
+        },
+        get explicacao() {
+            return translate("modelJev.gateG4Description");
+        },
     },
     g5: {
-        titulo: "G5 · Qual produto o cliente quer?",
-        explicacao:
-            "Escolhe o produto entre os candidatos do catálogo quando há mais de um possível. Ligá-lo faz a busca de produtos rodar em todo turno.",
+        get titulo() {
+            return translate("modelJev.gateG5Title");
+        },
+        get explicacao() {
+            return translate("modelJev.gateG5Description");
+        },
     },
     g6: {
-        titulo: "G6 · A resposta pode ser enviada?",
-        explicacao:
-            "Revisa a resposta antes do envio. Se reprovar, o modelo reescreve uma vez; se reprovar de novo, sai a resposta segura do agente.",
+        get titulo() {
+            return translate("modelJev.gateG6Title");
+        },
+        get explicacao() {
+            return translate("modelJev.gateG6Description");
+        },
     },
     g7: {
-        titulo: "G7 · É injeção de prompt ou abuso?",
-        explicacao:
-            "Identifica tentativa de dar ordens ao assistente ou ofensa, na mensagem e no texto de arquivo. O que fazer é configurado em g7_acao.",
+        get titulo() {
+            return translate("modelJev.gateG7Title");
+        },
+        get explicacao() {
+            return translate("modelJev.gateG7Description");
+        },
     },
     g8: {
-        titulo: "G8 · A conversa foi encerrada pelo cliente?",
-        explicacao:
-            "Quando o cliente se despede, manda a despedida sem chamar o modelo de texto.",
+        get titulo() {
+            return translate("modelJev.gateG8Title");
+        },
+        get explicacao() {
+            return translate("modelJev.gateG8Description");
+        },
     },
 };
 
@@ -89,24 +115,36 @@ export const DESCRICAO_GATE: Record<IdGate, { titulo: string; explicacao: string
 export const CHAVES_PRESERVADAS: ReadonlyArray<{ chave: string; explicacao: string; ondeEdita?: string }> = [
     {
         chave: "situacoes_de_handoff",
-        explicacao: "Motivos de transferência para humano.",
-        ondeEdita: "Roteamento",
+        get explicacao() {
+            return translate("modelJev.preservedHandoffDescription");
+        },
+        get ondeEdita() {
+            return translate("modelJev.preservedHandoffWhere");
+        },
     },
     {
         chave: "despedida",
-        explicacao: "Texto enviado quando o G8 encerra a conversa. Sem a chave, vale o texto padrão.",
+        get explicacao() {
+            return translate("modelJev.preservedFarewellDescription");
+        },
     },
     {
         chave: "resposta_segura",
-        explicacao: "Texto enviado quando o G6 reprova a resposta duas vezes.",
+        get explicacao() {
+            return translate("modelJev.preservedSafeReplyDescription");
+        },
     },
     {
         chave: "g7_acao",
-        explicacao: "O que fazer com injeção ou abuso: registrar (padrão), responder_padrao ou transferir.",
+        get explicacao() {
+            return translate("modelJev.preservedG7ActionDescription");
+        },
     },
     {
         chave: "g7_resposta",
-        explicacao: "Texto usado quando g7_acao é responder_padrao. Sem a chave, vale o texto padrão.",
+        get explicacao() {
+            return translate("modelJev.preservedG7ReplyDescription");
+        },
     },
 ];
 
@@ -287,35 +325,35 @@ export function validarModelo(
 ): Partial<Record<CampoModelo, string>> {
     const erros: Partial<Record<CampoModelo, string>> = {};
 
-    if (texto.provider.trim() === "") erros.provider = "informe o provedor";
-    if (texto.model.trim() === "") erros.model = "informe o modelo";
+    if (texto.provider.trim() === "") erros.provider = translate("modelJev.validationProviderRequired");
+    if (texto.model.trim() === "") erros.model = translate("modelJev.validationModelRequired");
 
     const apagadoSemVolta = (campo: CampoModelo) =>
         texto[campo].trim() === "" && base[campo].trim() !== "";
 
     const temperatura = texto.temperature.trim();
     if (apagadoSemVolta("temperature")) {
-        erros.temperature = "a tela não volta ao padrão do servidor: digite um valor entre 0 e 2";
+        erros.temperature = translate("modelJev.validationTemperatureLocked");
     } else if (temperatura !== "") {
         const n = numeroDigitado(temperatura);
         if (!Number.isFinite(n) || n < LIMITE_TEMPERATURA_MIN || n > LIMITE_TEMPERATURA_MAX) {
-            erros.temperature = "use um número entre 0 e 2";
+            erros.temperature = translate("modelJev.validationTemperatureRange");
         }
     }
 
     const saida = texto.max_output_tokens.trim();
     if (apagadoSemVolta("max_output_tokens")) {
-        erros.max_output_tokens = "a tela não volta ao padrão do servidor: digite um número de tokens";
+        erros.max_output_tokens = translate("modelJev.validationMaxOutputLocked");
     } else if (saida !== "" && !(inteiroDigitado(saida) >= 1)) {
-        erros.max_output_tokens = "use um número inteiro maior que zero";
+        erros.max_output_tokens = translate("modelJev.validationMaxOutputPositive");
     }
 
     const inteiros: Array<[CampoModelo, string, (n: number) => boolean]> = [
-        ["max_context_tokens", `use um número de ${LIMITE_CONTEXTO_MIN} para cima`, (n) => n >= LIMITE_CONTEXTO_MIN],
-        ["grouping_window_ms", `use um número de 0 a ${LIMITE_JANELA_MS} ms`, (n) => n >= 0 && n <= LIMITE_JANELA_MS],
-        ["max_tool_rounds", `use um número de 0 a ${LIMITE_RODADAS_MAX}`, (n) => n >= 0 && n <= LIMITE_RODADAS_MAX],
-        ["max_tool_calls", `use um número de 0 a ${LIMITE_FERRAMENTAS_MAX}`, (n) => n >= 0 && n <= LIMITE_FERRAMENTAS_MAX],
-        ["rag_top_k", `use um número de ${LIMITE_TOP_K_MIN} a ${LIMITE_TOP_K_MAX}`, (n) => n >= LIMITE_TOP_K_MIN && n <= LIMITE_TOP_K_MAX],
+        ["max_context_tokens", translate("modelJev.validationMaxContextMin", { min: LIMITE_CONTEXTO_MIN }), (n) => n >= LIMITE_CONTEXTO_MIN],
+        ["grouping_window_ms", translate("modelJev.validationGroupingWindowRange", { max: LIMITE_JANELA_MS }), (n) => n >= 0 && n <= LIMITE_JANELA_MS],
+        ["max_tool_rounds", translate("modelJev.validationMaxToolRoundsRange", { max: LIMITE_RODADAS_MAX }), (n) => n >= 0 && n <= LIMITE_RODADAS_MAX],
+        ["max_tool_calls", translate("modelJev.validationMaxToolCallsRange", { max: LIMITE_FERRAMENTAS_MAX }), (n) => n >= 0 && n <= LIMITE_FERRAMENTAS_MAX],
+        ["rag_top_k", translate("modelJev.validationRagTopKRange", { min: LIMITE_TOP_K_MIN, max: LIMITE_TOP_K_MAX }), (n) => n >= LIMITE_TOP_K_MIN && n <= LIMITE_TOP_K_MAX],
     ];
     for (const [campo, mensagem, valido] of inteiros) {
         if (!valido(inteiroDigitado(texto[campo]))) erros[campo] = mensagem;
@@ -323,11 +361,11 @@ export function validarModelo(
 
     const corte = texto.rag_min_score.trim();
     if (corte === "") {
-        erros.rag_min_score = `use um número de ${LIMITE_CORTE_MIN} a ${LIMITE_CORTE_MAX}`;
+        erros.rag_min_score = translate("modelJev.validationRagMinScoreRange", { min: LIMITE_CORTE_MIN, max: LIMITE_CORTE_MAX });
     } else {
         const n = numeroDigitado(corte);
         if (!Number.isFinite(n) || n < LIMITE_CORTE_MIN || n > LIMITE_CORTE_MAX) {
-            erros.rag_min_score = `use um número de ${LIMITE_CORTE_MIN} a ${LIMITE_CORTE_MAX}`;
+            erros.rag_min_score = translate("modelJev.validationRagMinScoreRange", { min: LIMITE_CORTE_MIN, max: LIMITE_CORTE_MAX });
         }
     }
 

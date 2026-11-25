@@ -11,11 +11,16 @@
  * desconexão com confirmação e `412` no desconectar relendo a versão.
  */
 
-import { describe, expect, it } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { GuardaAlteracoesProvider } from "../componentes/GuardaAlteracoes";
+import { I18nProvider, setLocale } from "../i18n";
+
+afterEach(() => {
+    setLocale("pt-BR");
+});
 import { esperarFocoDoModal } from "../testes/modal";
 import { ServidorFalso, erroApi } from "../testes/servidor";
 import { AgenteIntegracoes } from "./AgenteIntegracoes";
@@ -127,17 +132,19 @@ const MANIFESTOS: Record<string, unknown> = { eco: MANIFESTO_ECO, sms: MANIFESTO
 
 function montar() {
     return render(
-        <MemoryRouter initialEntries={[`/orgs/${ORG}/agents/${AGENTE}/integrations`]}>
-            <GuardaAlteracoesProvider>
-                <Routes>
-                    <Route
-                        path="/orgs/:orgId/agents/:agentId/integrations"
-                        element={<AgenteIntegracoes />}
-                    />
-                    <Route path="/orgs/:orgId/agents" element={<div>Tela de agentes</div>} />
-                </Routes>
-            </GuardaAlteracoesProvider>
-        </MemoryRouter>,
+        <I18nProvider>
+            <MemoryRouter initialEntries={[`/orgs/${ORG}/agents/${AGENTE}/integrations`]}>
+                <GuardaAlteracoesProvider>
+                    <Routes>
+                        <Route
+                            path="/orgs/:orgId/agents/:agentId/integrations"
+                            element={<AgenteIntegracoes />}
+                        />
+                        <Route path="/orgs/:orgId/agents" element={<div>Tela de agentes</div>} />
+                    </Routes>
+                </GuardaAlteracoesProvider>
+            </MemoryRouter>
+        </I18nProvider>,
     );
 }
 
@@ -976,5 +983,30 @@ describe("Painel do WhatsApp (HR-44d)", () => {
         expect(
             servidor.chamadasPara("POST", "/whatsapp/disconnect")[1]!.cabecalhos["if-match"],
         ).toBe("5");
+    });
+
+    it("traduz tabela, painel do WhatsApp e modal ao alternar para en-US", async () => {
+        const usuario = userEvent.setup();
+        servidorCom([integracao({ id: "int_1", kind: "whatsapp", connection_state: "disconnected" })]);
+        montar();
+
+        expect(await screen.findByRole("table", { name: "Integrações do agente" })).toBeInTheDocument();
+
+        act(() => {
+            setLocale("en-US");
+        });
+
+        expect(await screen.findByRole("table", { name: "Agent integrations" })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "New integration" })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Connect / generate QR" })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Check state" })).toBeInTheDocument();
+        expect(screen.getByText("1 integration")).toBeInTheDocument();
+
+        await usuario.click(screen.getByRole("button", { name: "New integration" }));
+        const modal = await screen.findByRole("dialog");
+        await esperarFocoDoModal();
+        expect(within(modal).getByText("New integration")).toBeInTheDocument();
+        expect(within(modal).getByRole("button", { name: "Create integration" })).toBeInTheDocument();
+        setLocale("pt-BR");
     });
 });
