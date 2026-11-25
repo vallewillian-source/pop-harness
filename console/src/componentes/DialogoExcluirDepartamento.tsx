@@ -16,6 +16,7 @@ import {
     type AgenteResumo,
     type Departamento,
 } from "../api/estrutura";
+import { useI18n } from "../i18n";
 import { DialogoExclusao } from "./DialogoExclusao";
 
 export type DialogoExcluirDepartamentoProps = {
@@ -34,6 +35,7 @@ export function DialogoExcluirDepartamento({
     departamento,
     aoExcluir,
 }: DialogoExcluirDepartamentoProps) {
+    const { translate } = useI18n();
     const [carregando, setCarregando] = useState(false);
     const [afetados, setAfetados] = useState<AgenteResumo[] | null>(null);
     const [falhaAoVerificar, setFalhaAoVerificar] = useState(false);
@@ -68,15 +70,14 @@ export function DialogoExcluirDepartamento({
         if (falhaAoVerificar || afetados === null) {
             return (
                 <p style={{ margin: 0, color: "var(--pop-text-secondary)", lineHeight: 1.6 }}>
-                    Não consegui verificar quais agentes usam este departamento. Os agentes que o
-                    usam, como padrão ou para transferência, ficam sem ele depois da exclusão.
+                    {translate("structure.deleteDeptCheckFailed")}
                 </p>
             );
         }
         if (afetados.length === 0) {
             return (
                 <p style={{ margin: 0, color: "var(--pop-text-secondary)", lineHeight: 1.6 }}>
-                    Nenhum agente usa este departamento hoje. Só o cadastro sai do sistema.
+                    {translate("structure.deleteDeptNoAgents")}
                 </p>
             );
         }
@@ -84,11 +85,10 @@ export function DialogoExcluirDepartamento({
         return (
             <p style={{ margin: 0, color: "var(--pop-text-secondary)", lineHeight: 1.6 }}>
                 {afetados.length === 1
-                    ? "1 agente usa este departamento"
-                    : `${afetados.length} agentes usam este departamento`}
-                {" "}(padrão ou transferência) e ficam sem ele: <strong>{nomes}</strong>. Depois,
-                esses agentes precisam de outro departamento para transferir ou receber conversas
-                novas.
+                    ? translate("structure.deleteDeptAgentsOnePrefix")
+                    : translate("structure.deleteDeptAgentsManyPrefix", { count: afetados.length })}
+                {" "}{translate("structure.deleteDeptAgentsMiddle")} <strong>{nomes}</strong>.{" "}
+                {translate("structure.deleteDeptAgentsSuffix")}
             </p>
         );
     }
@@ -97,11 +97,11 @@ export function DialogoExcluirDepartamento({
         <DialogoExclusao
             aberto={aberto}
             aoFechar={aoFechar}
-            titulo="Excluir departamento?"
-            descricao={`O departamento ${departamento.name} sai do sistema. Não há como desfazer.`}
+            titulo={translate("structure.deleteDeptTitle")}
+            descricao={translate("structure.deleteDeptDescription", { name: departamento.name })}
             recurso={departamento.name}
-            rotuloRecurso="nome do departamento"
-            rotuloConfirmar="Excluir departamento"
+            rotuloRecurso={translate("structure.deleteDeptResourceLabel")}
+            rotuloConfirmar={translate("structure.deleteDeptConfirm")}
             consequencia={consequencia()}
             aoConfirmar={async () => {
                 await excluirDepartamento(org, departamento.id);

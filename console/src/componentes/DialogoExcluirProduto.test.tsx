@@ -3,10 +3,11 @@
  * digitado, o `DELETE` sem `force` (a API não pede) e o motivo real quando a API recusa.
  */
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Produto } from "../api/produtos";
+import { setLocale } from "../i18n";
 import { esperarFocoDoModal } from "../testes/modal";
 import { ServidorFalso, erroApi } from "../testes/servidor";
 import { DialogoExcluirProduto } from "./DialogoExcluirProduto";
@@ -192,4 +193,32 @@ describe("DialogoExcluirProduto", () => {
         expect(aoExcluir).not.toHaveBeenCalled();
         expect(servidor.chamadasPara("DELETE", "/products/prod_1")).toHaveLength(1);
     });
+
+    it("renders consequences and 409 cart count in en-US", async () => {
+        const usuario = userEvent.setup();
+        setLocale("en-US");
+        new ServidorFalso()
+            .responder("DELETE", `/admin/v1/orgs/${ORG}/products/prod_1`, recusaDeCarrinho(3, 2))
+            .instalar();
+        montar(2);
+        await esperarFocoDoModal();
+
+        expect(screen.getByRole("dialog", { name: "Delete product?" })).toBeInTheDocument();
+        expect(screen.getByText(/2 agents offer this product/)).toBeInTheDocument();
+
+        await usuario.type(screen.getByLabelText(/Clareamento dental|product name/i), "Clareamento dental");
+        await usuario.click(screen.getByRole("button", { name: "Delete product" }));
+        expect(
+            await screen.findByText(/This product is in 3 items across 2 carts/),
+        ).toBeInTheDocument();
+        expect(
+            screen.getByRole("checkbox", {
+                name: /Delete anyway: 3 cart items will remain as "product removed from catalog"/,
+            }),
+        ).toBeInTheDocument();
+    });
+});
+
+afterEach(() => {
+    setLocale("pt-BR");
 });

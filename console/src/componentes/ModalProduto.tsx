@@ -29,6 +29,7 @@ import {
 } from "@sofacoding/sofa-ui";
 import { ErroApi } from "../api/cliente";
 import type { Categoria } from "../api/estrutura";
+import { useI18n } from "../i18n";
 import {
     atualizarProduto,
     criarProduto,
@@ -40,10 +41,10 @@ import {
 
 export const LIMITE_NOME_PRODUTO = 160;
 
-const SITUACOES: { valor: SituacaoProduto; rotulo: string }[] = [
-    { valor: "active", rotulo: "Ativo" },
-    { valor: "inactive", rotulo: "Inativo" },
-    { valor: "archived", rotulo: "Arquivado" },
+const SITUACOES: { valor: SituacaoProduto; chave: "products.statusActive" | "products.statusInactive" | "products.statusArchived" }[] = [
+    { valor: "active", chave: "products.statusActive" },
+    { valor: "inactive", chave: "products.statusInactive" },
+    { valor: "archived", chave: "products.statusArchived" },
 ];
 
 /**
@@ -150,6 +151,7 @@ export function ModalProduto({
     categorias,
     aoSalvar,
 }: ModalProdutoProps) {
+    const { translate } = useI18n();
     const editando = produto !== null;
     const [categoria, setCategoria] = useState("");
     const [nome, setNome] = useState("");
@@ -229,16 +231,16 @@ export function ModalProduto({
     function validar(): { erros: Erros; centavos: number } {
         const novos: Erros = {};
         if (!categoria) {
-            novos.categoria = "escolha a categoria do produto";
+            novos.categoria = translate("products.validationCategoryRequired");
         }
         if (!nome.trim()) {
-            novos.nome = "informe o nome do produto";
+            novos.nome = translate("products.validationNameRequired");
         } else if (nome.trim().length > LIMITE_NOME_PRODUTO) {
-            novos.nome = `o nome aceita até ${LIMITE_NOME_PRODUTO} caracteres`;
+            novos.nome = translate("products.validationNameMaxLength", { limit: LIMITE_NOME_PRODUTO });
         }
         const centavos = centavosDe(preco);
         if (centavos === null) {
-            novos.preco = "use o formato 450 ou 450,00 (valor em reais)";
+            novos.preco = translate("products.validationPriceFormat");
         }
         return { erros: novos, centavos: centavos ?? 0 };
     }
@@ -317,35 +319,35 @@ export function ModalProduto({
                     // Sem a releitura, a próxima tentativa devolve 412 de novo; nada se perde.
                 }
                 if (typeof versaoAtual === "number") setVersao(versaoAtual);
-                setConflito(
-                    `Outra pessoa salvou este produto antes de você${
-                        typeof versaoAtual === "number" ? ` (agora na versão ${versaoAtual})` : ""
-                    }. O que você digitou foi mantido: revise e salve de novo.`,
-                );
+                const versionText =
+                    typeof versaoAtual === "number"
+                        ? translate("products.conflictVersionSuffix", { version: versaoAtual })
+                        : "";
+                setConflito(translate("products.conflictMessage", { version: versionText }));
                 return;
             }
             if (falha instanceof ErroApi) {
                 mostrarErroDaApi(falha);
                 return;
             }
-            setErroGeral("falha inesperada ao salvar o produto");
+            setErroGeral(translate("products.unexpectedSaveError"));
         } finally {
             setEnviando(false);
         }
     }
 
     const semCategorias = categorias.length === 0;
-    const titulo = editando ? "Editar produto" : "Novo produto";
+    const titulo = editando ? translate("products.modalTitleEdit") : translate("products.modalTitleNew");
 
     const calculado = centavosAtuais === null ? null : formatarReais(centavosAtuais);
     const previa = textoDoClienteAgora();
     /** Há um texto próprio no lugar do calculado: o botão de voltar ao cálculo aparece. */
     const temTextoProprio = calculado !== null && previa !== calculado;
     const ajudaPrecoCliente =
-        `Como o cliente vê: ${previa}. ` +
+        `${translate("products.pricePreviewPrefix", { preview: previa })} ` +
         (!textoMexido && precoMudou
-            ? "O preço mudou: o texto volta a ser calculado pelo valor novo, a menos que você digite outro."
-            : "Vazio: o texto é calculado pelo valor. Digite só para usar um texto próprio, como R$ 320,00 por visita.");
+            ? translate("products.pricePreviewChangedHint")
+            : translate("products.pricePreviewDefaultHint"));
 
     return (
         <SofaModal
@@ -356,16 +358,16 @@ export function ModalProduto({
             title={titulo}
             description={
                 editando
-                    ? `Alterando ${produto?.name}. O salvamento usa a versão lida.`
-                    : "O preço e as condições daqui são os que o agente informa ao cliente."
+                    ? translate("products.modalDescriptionEdit", { name: produto?.name ?? "" })
+                    : translate("products.modalDescriptionNew")
             }
-            closeLabel="Fechar formulário de produto"
+            closeLabel={translate("products.modalClose")}
             size="lg"
             id="poph-formulario-produto"
             footer={
                 <>
                     <SofaButton variant="secondary" disabled={enviando} onClick={aoFechar}>
-                        Cancelar
+                        {translate("products.cancel")}
                     </SofaButton>
                     <SofaButton
                         variant="primary"
@@ -374,7 +376,7 @@ export function ModalProduto({
                         onClick={() => void salvar()}
                         loading={enviando}
                     >
-                        {editando ? "Salvar alterações" : "Criar produto"}
+                        {editando ? translate("products.saveChanges") : translate("products.createProduct")}
                     </SofaButton>
                 </>
             }
@@ -387,24 +389,24 @@ export function ModalProduto({
                 noValidate
             >
                 {conflito && (
-                    <SofaBanner tone="warn" title="Versão desatualizada">
+                    <SofaBanner tone="warn" title={translate("products.bannerOutdatedTitle")}>
                         {conflito}
                     </SofaBanner>
                 )}
                 {erroGeral && (
-                    <SofaBanner tone="danger" title="Não foi possível salvar">
+                    <SofaBanner tone="danger" title={translate("products.bannerSaveErrorTitle")}>
                         {erroGeral}
                     </SofaBanner>
                 )}
                 {semCategorias && (
-                    <SofaBanner tone="info" title="Crie uma categoria primeiro">
-                        Todo produto pertence a uma categoria. Crie uma na tela de Estrutura.
+                    <SofaBanner tone="info" title={translate("products.bannerNoCategoriesTitle")}>
+                        {translate("products.bannerNoCategoriesBody")}
                     </SofaBanner>
                 )}
 
                 <SofaField
-                    label="Categoria"
-                    hint="Os agentes só oferecem produtos das categorias que têm vinculadas."
+                    label={translate("products.fieldCategoryLabel")}
+                    hint={translate("products.fieldCategoryHint")}
                     error={erros.categoria}
                     required
                     htmlFor="poph-produto-categoria"
@@ -415,7 +417,7 @@ export function ModalProduto({
                             value={categoria}
                             onChange={(evento) => setCategoria(evento.target.value)}
                         >
-                            <option value="">Escolha uma categoria</option>
+                            <option value="">{translate("products.fieldCategoryPlaceholder")}</option>
                             {categorias.map((item) => (
                                 <option key={item.id} value={item.id}>
                                     {item.name}
@@ -426,8 +428,8 @@ export function ModalProduto({
                 </SofaField>
 
                 <SofaField
-                    label="Nome"
-                    hint={`Nome comercial, até ${LIMITE_NOME_PRODUTO} caracteres.`}
+                    label={translate("products.fieldNameLabel")}
+                    hint={translate("products.fieldNameHint", { limit: LIMITE_NOME_PRODUTO })}
                     error={erros.nome}
                     required
                     htmlFor="poph-produto-nome"
@@ -443,8 +445,8 @@ export function ModalProduto({
                 </SofaField>
 
                 <SofaField
-                    label="Identificador (slug)"
-                    hint="Opcional. Vazio: o sistema cria a partir do nome."
+                    label={translate("products.fieldSlugLabel")}
+                    hint={translate("products.fieldSlugHint")}
                     error={erros.slug}
                     htmlFor="poph-produto-slug"
                 >
@@ -459,8 +461,8 @@ export function ModalProduto({
                 </SofaField>
 
                 <SofaField
-                    label="Outros nomes"
-                    hint="Como o cliente costuma chamar o produto. Separe por vírgula."
+                    label={translate("products.fieldAliasesLabel")}
+                    hint={translate("products.fieldAliasesHint")}
                     error={erros.aliases}
                     htmlFor="poph-produto-aliases"
                 >
@@ -476,8 +478,8 @@ export function ModalProduto({
 
                 <div className="poph-duas-colunas">
                     <SofaField
-                        label="Preço (R$)"
-                        hint="Valor em reais: 450 ou 450,00. Vazio é zero."
+                        label={translate("products.fieldPriceLabel")}
+                        hint={translate("products.fieldPriceHint")}
                         error={erros.preco}
                         htmlFor="poph-produto-preco"
                     >
@@ -493,7 +495,7 @@ export function ModalProduto({
                     </SofaField>
 
                     <SofaField
-                        label="Preço como o cliente vê"
+                        label={translate("products.fieldPriceTextLabel")}
                         hint={ajudaPrecoCliente}
                         error={erros.precoTexto}
                         htmlFor="poph-produto-preco-texto"
@@ -523,14 +525,14 @@ export function ModalProduto({
                                 setTextoCliente("");
                             }}
                         >
-                            Voltar a calcular o texto pelo valor
+                            {translate("products.resetPriceText")}
                         </SofaButton>
                     </div>
                 )}
 
                 <SofaField
-                    label="Unidade"
-                    hint='Ex.: "por m²" ou "por visita". Opcional.'
+                    label={translate("products.fieldUnitLabel")}
+                    hint={translate("products.fieldUnitHint")}
                     error={erros.unidade}
                     htmlFor="poph-produto-unidade"
                 >
@@ -545,7 +547,7 @@ export function ModalProduto({
                 </SofaField>
 
                 <SofaField
-                    label="Descrição"
+                    label={translate("products.fieldDescriptionLabel")}
                     error={erros.descricao}
                     htmlFor="poph-produto-descricao"
                 >
@@ -560,7 +562,7 @@ export function ModalProduto({
                 </SofaField>
 
                 <div className="poph-duas-colunas">
-                    <SofaField label="Inclui" error={erros.inclui} htmlFor="poph-produto-inclui">
+                    <SofaField label={translate("products.fieldIncludesLabel")} error={erros.inclui} htmlFor="poph-produto-inclui">
                         {(controle) => (
                             <SofaTextarea
                                 {...semDescribedBy(controle)}
@@ -570,7 +572,7 @@ export function ModalProduto({
                             />
                         )}
                     </SofaField>
-                    <SofaField label="Não inclui" error={erros.exclui} htmlFor="poph-produto-exclui">
+                    <SofaField label={translate("products.fieldExcludesLabel")} error={erros.exclui} htmlFor="poph-produto-exclui">
                         {(controle) => (
                             <SofaTextarea
                                 {...semDescribedBy(controle)}
@@ -583,8 +585,8 @@ export function ModalProduto({
                 </div>
 
                 <SofaField
-                    label="Condições"
-                    hint="Prazo, forma de pagamento e outras condições."
+                    label={translate("products.fieldConditionsLabel")}
+                    hint={translate("products.fieldConditionsHint")}
                     error={erros.condicoes}
                     htmlFor="poph-produto-condicoes"
                 >
@@ -599,8 +601,8 @@ export function ModalProduto({
                 </SofaField>
 
                 <SofaField
-                    label="Etiquetas de busca"
-                    hint="Palavras que ajudam a achar o produto. Separe por vírgula."
+                    label={translate("products.fieldTagsLabel")}
+                    hint={translate("products.fieldTagsHint")}
                     error={erros.etiquetas}
                     htmlFor="poph-produto-etiquetas"
                 >
@@ -616,8 +618,8 @@ export function ModalProduto({
 
                 {editando && (
                     <SofaField
-                        label="Situação"
-                        hint="Inativo e arquivado saem da busca dos agentes; o cadastro continua no sistema."
+                        label={translate("products.fieldStatusLabel")}
+                        hint={translate("products.fieldStatusHint")}
                         error={erros.situacao}
                         htmlFor="poph-produto-situacao"
                     >
@@ -631,7 +633,7 @@ export function ModalProduto({
                             >
                                 {SITUACOES.map((opcao) => (
                                     <option key={opcao.valor} value={opcao.valor}>
-                                        {opcao.rotulo}
+                                        {translate(opcao.chave)}
                                     </option>
                                 ))}
                             </SofaSelect>

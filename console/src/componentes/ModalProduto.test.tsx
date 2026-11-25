@@ -6,10 +6,11 @@
  * que precisa manter o que foi digitado e usar a versão nova no salvamento seguinte.
  */
 
-import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Produto } from "../api/produtos";
+import { setLocale } from "../i18n";
 import { esperarFocoDoModal } from "../testes/modal";
 import { ServidorFalso, erroApi } from "../testes/servidor";
 import { ModalProduto, centavosDe, formatarReais, listaDe, reaisDe } from "./ModalProduto";
@@ -331,4 +332,27 @@ describe("preço como o cliente vê", () => {
             price_text: "",
         });
     });
+
+    it("renders fields, statuses, and validation in en-US", async () => {
+        const usuario = userEvent.setup();
+        setLocale("en-US");
+        montar();
+        await esperarFocoDoModal();
+
+        expect(screen.getByRole("heading", { name: "New product" })).toBeInTheDocument();
+        expect(screen.getByRole("option", { name: "Choose a category" })).toBeInTheDocument();
+        await usuario.click(screen.getByRole("button", { name: "Create product" }));
+        expect(await screen.findByText("choose the product category")).toBeInTheDocument();
+        expect(screen.getByText("enter the product name")).toBeInTheDocument();
+
+        act(() => {
+            setLocale("pt-BR");
+        });
+        expect(await screen.findByRole("heading", { name: "Novo produto" })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Criar produto" })).toBeInTheDocument();
+    });
+});
+
+afterEach(() => {
+    setLocale("pt-BR");
 });
