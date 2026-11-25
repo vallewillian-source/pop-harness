@@ -3,8 +3,9 @@
  * a tradução de cada erro da API em texto de operador. Quem decide é o `code`, nunca a mensagem.
  */
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { ErroApi } from "./cliente";
+import { setLocale } from "../i18n";
 import {
     CONFLITOS_MOSTRADOS,
     LIMITE_IMPORTACAO_BYTES,
@@ -131,6 +132,34 @@ describe("falhaDeBackup", () => {
     it("sem servidor pede para conferir se a instância está no ar", () => {
         const falha = falhaDeBackup(new ErroApi(0, "rede", "x"), "exportar");
         expect(falha.texto).toMatch(/servidor está no ar/);
+    });
+});
+
+describe("backup em en-US", () => {
+    afterEach(() => setLocale("pt-BR"));
+
+    it("traduz nomes de tabela, conflitos e erros para inglês", () => {
+        setLocale("en-US");
+
+        expect(nomeDaTabela("agents")).toBe("Agents");
+        expect(nomeDaTabela("cart_items")).toBe("Cart items");
+        expect(nomeDaTabela("tabela_nova")).toBe("tabela_nova");
+        expect(textoDeConflito("`product_categories` 01a1-x")).toBe("Product categories: 01a1-x");
+        expect(textoDeExemplo("agents: bia")).toBe("Agents: bia");
+
+        const sessao = falhaDeBackup(new ErroApi(401, "invalid_token", "cru"), "exportar");
+        expect(sessao.titulo).toBe("Session ended");
+        expect(sessao.texto).toMatch(/Sign in again/);
+
+        const conflito = falhaDeBackup(
+            new ErroApi(409, "conflict", "cru", { conflicts: ["a"], conflicts_more: 1 }),
+            "importar",
+        );
+        expect(conflito.titulo).toBe("Import refused");
+        expect(conflito.texto).toMatch(/Nothing was written/);
+
+        const grande = falhaDeBackup(new ErroApi(413, "payload_too_large", "cru"), "importar");
+        expect(grande.titulo).toBe("File too large");
     });
 });
 

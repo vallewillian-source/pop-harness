@@ -18,6 +18,7 @@ import {
     type SofaFieldControlProps,
 } from "@sofacoding/sofa-ui";
 import { ErroApi } from "../api/cliente";
+import { translate, useI18n } from "../i18n";
 
 /** Ligações do `SofaField` sem `describedBy`, que vira `aria-describedby` no controle. */
 function semDescribedBy(controle: SofaFieldControlProps) {
@@ -66,7 +67,7 @@ function mensagemDoErro(erro: unknown): { texto: string; codigo?: string } {
     if (erro instanceof Error) {
         return { texto: erro.message };
     }
-    return { texto: "falha inesperada ao excluir" };
+    return { texto: translate("orgs.deleteUnexpected") };
 }
 
 export function DialogoExclusao({
@@ -85,6 +86,7 @@ export function DialogoExclusao({
     aoConfirmar,
     aoExcluir,
 }: DialogoExclusaoProps) {
+    const { translate: t } = useI18n();
     const [digitado, setDigitado] = useState("");
     const [forcar, setForcar] = useState(false);
     const [enviando, setEnviando] = useState(false);
@@ -132,13 +134,13 @@ export function DialogoExclusao({
             }}
             title={titulo}
             description={descricao}
-            closeLabel="Fechar confirmação de exclusão"
+            closeLabel={t("orgs.deleteClose")}
             size="sm"
             id="poph-dialogo-exclusao"
             footer={
                 <>
                     <SofaButton variant="secondary" disabled={enviando} onClick={aoFechar}>
-                        Cancelar
+                        {t("common.cancel")}
                     </SofaButton>
                     <SofaButton
                         variant="danger"
@@ -155,28 +157,23 @@ export function DialogoExclusao({
                 {consequencia}
 
                 {erro && (
-                    <SofaBanner tone="danger" title="A exclusão foi recusada">
+                    <SofaBanner tone="danger" title={t("orgs.deleteRefusedTitle")}>
                         <span>{erro.texto}</span>
                         {erro.codigo && (
                             <div className="poph-mono-mudo" style={{ marginTop: 4 }}>
-                                código: {erro.codigo}
+                                {t("orgs.deleteCode", { code: erro.codigo })}
                             </div>
                         )}
                         {recusouPorVinculo && (
-                            <div style={{ marginTop: 6 }}>
-                                Para apagar mesmo assim, marque a confirmação extra abaixo e repita.
-                            </div>
+                            <div style={{ marginTop: 6 }}>{t("orgs.deleteForceHint")}</div>
                         )}
                     </SofaBanner>
                 )}
 
                 {permiteForcar && (!forcarSoAposRecusa || recusouPorVinculo) && (
                     <SofaCheckbox
-                        label={rotuloForcar ?? "Apagar também o conteúdo desta organização"}
-                        description={
-                            descricaoForcar ??
-                            "Sem esta confirmação, a API recusa a exclusão de uma organização que ainda tem conteúdo."
-                        }
+                        label={rotuloForcar ?? t("orgs.deleteForceLabel")}
+                        description={descricaoForcar ?? t("orgs.deleteForceDescription")}
                         checked={forcar}
                         error={recusouPorVinculo}
                         onChange={(evento) => setForcar(evento.target.checked)}
@@ -187,10 +184,11 @@ export function DialogoExclusao({
                     <SofaField
                         label={
                             <>
-                                Digite <code>{recurso}</code> para confirmar
+                                {t("orgs.deleteTypePrefix")} <code>{recurso}</code>{" "}
+                                {t("orgs.deleteTypeSuffix")}
                             </>
                         }
-                        hint={`Precisa ser exatamente o ${rotuloRecurso}; é a trava contra exclusão por engano.`}
+                        hint={t("orgs.deleteTypeHint", { label: rotuloRecurso })}
                         htmlFor="poph-confirma-exclusao"
                     >
                         {(controle) => (

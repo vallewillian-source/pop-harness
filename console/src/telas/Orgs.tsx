@@ -49,6 +49,9 @@ import { useGuardaDeAlteracoes } from "../componentes/GuardaAlteracoes";
 import { InspetorOrg, type NoDaOrg } from "../componentes/InspetorOrg";
 import { ModalOrg } from "../componentes/ModalOrg";
 import { useSessao } from "../sessao/Sessao";
+import { translate, useI18n } from "../i18n";
+import type { TranslationKey } from "../i18n/catalog";
+import { formatDate } from "../i18n/format";
 import "../estilos/orgs.css";
 
 const coluna = createColumnHelper<OrgNaLista>();
@@ -58,11 +61,11 @@ type Aba = "todas" | "ativas" | "inativas" | "arquivadas";
 
 const ABAS: Aba[] = ["todas", "ativas", "inativas", "arquivadas"];
 
-const ROTULO_DA_ABA: Record<Aba, string> = {
-    todas: "Todas",
-    ativas: "Ativas",
-    inativas: "Inativas",
-    arquivadas: "Arquivadas",
+const ROTULO_DA_ABA: Record<Aba, TranslationKey> = {
+    todas: "orgs.tabAll",
+    ativas: "orgs.tabActive",
+    inativas: "orgs.tabInactive",
+    arquivadas: "orgs.tabArchived",
 };
 
 /** Situações que cada aba aceita. */
@@ -96,11 +99,11 @@ function tomDaSituacao(situacao: string): string {
 function rotuloDaSituacao(situacao: string): string {
     switch (situacao) {
         case "active":
-            return "Ativa";
+            return translate("orgs.statusActive");
         case "inactive":
-            return "Inativa";
+            return translate("orgs.statusInactive");
         case "archived":
-            return "Arquivada";
+            return translate("orgs.statusArchived");
         default:
             return situacao;
     }
@@ -108,11 +111,7 @@ function rotuloDaSituacao(situacao: string): string {
 
 function dataCurta(ms: number): string {
     if (!Number.isFinite(ms) || ms <= 0) return "—";
-    return new Date(ms).toLocaleString("pt-BR", {
-        day: "2-digit",
-        month: "2-digit",
-        year: "numeric",
-    });
+    return formatDate(ms);
 }
 
 /** Retenção vem da configuração da org, que é JSON livre. */
@@ -120,20 +119,22 @@ function retencao(org: Org): string {
     const config = org.config as Record<string, unknown> | undefined;
     const valor = config?.["retention_days"] ?? config?.["retencao_dias"];
     if (typeof valor === "number") {
-        return valor === 0 ? "nunca apaga" : `${valor} dias`;
+        return valor === 0
+            ? translate("orgs.retentionNever")
+            : translate("orgs.retentionDays", { days: valor });
     }
-    return "padrão";
+    return translate("orgs.retentionDefault");
 }
 
 /** Frase do nó na coluna "Nó / instância", a partir do estado que a listagem devolve. */
 function rotuloDoNo(instancia: InstanciaDaLista | null | undefined): string {
     switch (instancia?.situacao) {
         case "local":
-            return "online";
+            return translate("orgs.nodeOnline");
         case "ok":
-            return "remoto · online";
+            return translate("orgs.nodeRemoteOnlineShort");
         case "inacessivel":
-            return "remoto · inacessível";
+            return translate("orgs.nodeRemoteUnreachableShort");
         default:
             return "";
     }
@@ -175,6 +176,7 @@ async function lerTelemetria(): Promise<Telemetria> {
 type Aviso = { tom: "warn" | "danger"; titulo: string; texto: string };
 
 export function Orgs() {
+    const { translate: t, locale } = useI18n();
     const { sessao, recarregarOrgs } = useSessao();
     const navegar = useNavigate();
     const { tentarNavegar } = useGuardaDeAlteracoes();
@@ -247,7 +249,7 @@ export function Orgs() {
             // A lista também alimenta o seletor da casca.
             await recarregarOrgs();
         } catch (falha) {
-            setErro(falha instanceof Error ? falha.message : "falha ao carregar as organizações");
+            setErro(falha instanceof Error ? falha.message : t("orgs.orgLoadFailed"));
         } finally {
             setCarregando(false);
         }
@@ -336,8 +338,11 @@ export function Orgs() {
         if (ehDeOutroNo(org)) {
             setAviso({
                 tom: "warn",
-                titulo: "Organização em outro nó",
-                texto: `${org.name} está no nó ${org.instancia}. Abra o console desse nó para acessá-la.`,
+                titulo: t("orgs.noticeRemoteTitle"),
+                texto: t("orgs.noticeRemoteText", {
+                    name: org.name,
+                    node: org.instancia ?? "",
+                }),
             });
             return;
         }
@@ -372,18 +377,25 @@ export function Orgs() {
             if (disputa) {
                 setAviso({
                     tom: "warn",
-                    titulo: "Versão desatualizada",
-                    texto: `Outra pessoa alterou ${org.name} antes de você${
-                        typeof disputa.atual === "number" ? ` (agora na versão ${disputa.atual})` : ""
-                    }. A lista foi atualizada: confira a situação e tente de novo.`,
+                    titulo: t("orgs.formConflictTitle"),
+                    texto:
+                        typeof disputa.atual === "number"
+                            ? t("orgs.noticeConflictWithVersion", {
+                                  name: org.name,
+                                  version: disputa.atual,
+                              })
+                            : t("orgs.noticeConflictPlain", { name: org.name }),
                 });
                 await carregar();
                 return;
             }
             setAviso({
                 tom: "danger",
-                titulo: "Não foi possível reativar",
-                texto: falha instanceof Error ? falha.message : "falha inesperada ao reativar",
+                titulo: t("orgs.noticeReactivateTitle"),
+                texto:
+                    falha instanceof Error
+                        ? falha.message
+                        : t("orgs.noticeReactivateUnexpected"),
             });
         } finally {
             setReativando(null);
@@ -395,19 +407,19 @@ export function Orgs() {
         const itens: SofaMenuItemSpec[] = [
             {
                 id: "detalhes",
-                label: "Ver detalhes",
+                label: t("orgs.actionDetails"),
                 icon: <IconEye size={14} aria-hidden="true" />,
                 onSelect: () => setSelecionada(org.id),
             },
             {
                 id: "editar",
-                label: "Editar",
+                label: t("orgs.actionEdit"),
                 icon: <IconPencil size={14} aria-hidden="true" />,
                 onSelect: () => abrirEdicao(org),
             },
             {
                 id: "exportar",
-                label: "Exportar",
+                label: t("orgs.actionExport"),
                 icon: <IconDownload size={14} aria-hidden="true" />,
                 onSelect: () => void exportar(org),
             },
@@ -416,14 +428,14 @@ export function Orgs() {
             // Inativa: a linha mostra "Reativar", então o acesso à organização fica aqui.
             itens.push({
                 id: "acessar",
-                label: "Acessar organização",
+                label: t("orgs.actionAccessOrg"),
                 icon: <IconPlay size={14} aria-hidden="true" />,
                 disabled: remota,
                 onSelect: () => acessarOrg(org),
             });
             itens.push({
                 id: "reativar",
-                label: "Reativar",
+                label: t("orgs.actionReactivate"),
                 icon: <IconPlay size={14} aria-hidden="true" />,
                 disabled: remota,
                 onSelect: () => void reativar(org),
@@ -431,7 +443,7 @@ export function Orgs() {
         }
         itens.push({
             id: "excluir",
-            label: "Excluir",
+            label: t("orgs.actionDelete"),
             icon: <IconTrash size={14} aria-hidden="true" />,
             danger: true,
             onSelect: () => setParaExcluir(org),
@@ -442,7 +454,7 @@ export function Orgs() {
     const colunas = useMemo(
         () => [
             coluna.accessor("name", {
-                header: "Organização / slug",
+                header: t("orgs.columnName"),
                 size: 210,
                 cell: (info) => {
                     const org = info.row.original;
@@ -482,7 +494,7 @@ export function Orgs() {
                 },
             }),
             coluna.accessor("status", {
-                header: "Situação",
+                header: t("orgs.columnStatus"),
                 size: 100,
                 cell: (info) => (
                     <span className={`poph-status ${tomDaSituacao(info.getValue())}`}>
@@ -492,13 +504,16 @@ export function Orgs() {
                 ),
             }),
             coluna.accessor("instancia", {
-                header: "Nó / instância",
+                header: t("orgs.columnNode"),
                 size: 130,
                 cell: (info) => {
                     // Sem dado de cluster (token de org), a coluna não tem o que mostrar.
                     if (instancias === null) {
                         return (
-                            <span className="poph-orgs__celula--atenuada" title="A resposta não traz o nó desta organização">
+                            <span
+                                className="poph-orgs__celula--atenuada"
+                                title={t("orgs.cellNodeUnknown")}
+                            >
                                 —
                             </span>
                         );
@@ -509,14 +524,14 @@ export function Orgs() {
                     const rotulo = rotuloDoNo(nodo);
                     return (
                         <div className="poph-orgs__identidade">
-                            <span className="poph-mono">{id || "nó local"}</span>
+                            <span className="poph-mono">{id || t("orgs.nodeLocal")}</span>
                             {rotulo !== "" && <span className="poph-mono-mudo">{rotulo}</span>}
                         </div>
                     );
                 },
             }),
             coluna.accessor("agents_active_count", {
-                header: "Agentes ativos",
+                header: t("orgs.columnAgents"),
                 size: 110,
                 cell: (info) => {
                     const total = info.getValue();
@@ -524,7 +539,7 @@ export function Orgs() {
                         return (
                             <span
                                 className="poph-orgs__celula--atenuada"
-                                title="A instância ainda não informa a contagem de agentes ativos"
+                                title={t("orgs.cellAgentsUnknown")}
                             >
                                 —
                             </span>
@@ -533,14 +548,16 @@ export function Orgs() {
                     const org = info.row.original;
                     return (
                         <span className={org.status === "active" ? undefined : "poph-orgs__celula--atenuada"}>
-                            {total === 1 ? "1 agente" : `${total} agentes`}
+                            {total === 1
+                                ? t("orgs.agentsCountOne")
+                                : t("orgs.agentsCountMany", { count: total })}
                         </span>
                     );
                 },
             }),
             coluna.display({
                 id: "retention",
-                header: "Retenção",
+                header: t("orgs.columnRetention"),
                 size: 90,
                 cell: (info) => {
                     const org = info.row.original;
@@ -552,7 +569,7 @@ export function Orgs() {
                 },
             }),
             coluna.accessor("updated_at", {
-                header: "Atualizada",
+                header: t("orgs.columnUpdated"),
                 size: 120,
                 cell: (info) => {
                     const org = info.row.original;
@@ -568,7 +585,7 @@ export function Orgs() {
             }),
             coluna.display({
                 id: "actions",
-                header: "Ações",
+                header: t("orgs.columnActions"),
                 size: 170,
                 cell: (info) => {
                     const org = info.row.original;
@@ -585,7 +602,7 @@ export function Orgs() {
                                     disabled={ehDeOutroNo(org)}
                                     onClick={() => void reativar(org)}
                                 >
-                                    Reativar
+                                    {t("orgs.actionReactivate")}
                                 </SofaButton>
                             ) : (
                                 <SofaButton
@@ -594,15 +611,18 @@ export function Orgs() {
                                     disabled={ehDeOutroNo(org)}
                                     onClick={() => acessarOrg(org)}
                                 >
-                                    Acessar →
+                                    {t("orgs.actionAccess")}
                                 </SofaButton>
                             )}
                             {podeGerenciar && (
                                 <SofaMenu
-                                    label={`Ações de ${org.name}`}
+                                    label={t("orgs.actionMenuLabel", { name: org.name })}
                                     align="end"
                                     trigger={
-                                        <SofaIconButton label={`Ações de ${org.name}`} size={28}>
+                                        <SofaIconButton
+                                            label={t("orgs.actionMenuLabel", { name: org.name })}
+                                            size={28}
+                                        >
                                             <IconMoreHorizontal size={16} aria-hidden="true" />
                                         </SofaIconButton>
                                     }
@@ -616,7 +636,7 @@ export function Orgs() {
         ],
         // As células mostram a seleção e o carregamento do Reativar, então as colunas são remontadas
         // quando esses estados mudam (as ações em si leem a organização pelo argumento).
-        [navegar, podeGerenciar, selecionada, reativando, instancias, instanciaLocal, mapaDeInstancias, ehDeOutroNo, tentarNavegar],
+        [navegar, podeGerenciar, selecionada, reativando, instancias, instanciaLocal, mapaDeInstancias, ehDeOutroNo, tentarNavegar, locale],
     );
 
     const filtrando = aba !== "todas" || filtro.trim() !== "";
@@ -627,18 +647,37 @@ export function Orgs() {
     if (instancias) {
         const conectados = instancias.filter((i) => i.situacao === "local" || i.situacao === "ok").length;
         const inacessiveis = instancias.filter((i) => i.situacao === "inacessivel").length;
-        partesDaTelemetria.push(`${conectados} ${conectados === 1 ? "nó conectado" : "nós conectados"}`);
+        partesDaTelemetria.push(
+            t(conectados === 1 ? "orgs.telemetryNodesOne" : "orgs.telemetryNodesMany", {
+                count: conectados,
+            }),
+        );
         if (inacessiveis > 0) {
-            partesDaTelemetria.push(`${inacessiveis} ${inacessiveis === 1 ? "nó inacessível" : "nós inacessíveis"}`);
+            partesDaTelemetria.push(
+                t(
+                    inacessiveis === 1
+                        ? "orgs.telemetryNodesOfflineOne"
+                        : "orgs.telemetryNodesOfflineMany",
+                    { count: inacessiveis },
+                ),
+            );
         }
     }
-    if (telemetria?.situacao === "sem_resposta") partesDaTelemetria.push("sem resposta do nó local");
-    if (telemetria?.situacao === "degradada") partesDaTelemetria.push("banco do nó local com problema");
+    if (telemetria?.situacao === "sem_resposta") {
+        partesDaTelemetria.push(t("orgs.telemetryNoResponse"));
+    }
+    if (telemetria?.situacao === "degradada") {
+        partesDaTelemetria.push(t("orgs.telemetryDegraded"));
+    }
     if (telemetria?.uptimeSegundos !== undefined) {
-        partesDaTelemetria.push(`Uptime ${formatarUptime(telemetria.uptimeSegundos)}`);
+        partesDaTelemetria.push(
+            t("orgs.telemetryUptime", { value: formatarUptime(telemetria.uptimeSegundos) }),
+        );
     }
     if (telemetria?.memoriaBytes !== undefined) {
-        partesDaTelemetria.push(`RAM ${formatarMemoria(telemetria.memoriaBytes)}`);
+        partesDaTelemetria.push(
+            t("orgs.telemetryMemory", { value: formatarMemoria(telemetria.memoriaBytes) }),
+        );
     }
     const tomDaTelemetria =
         telemetria?.situacao === "sem_resposta"
@@ -653,29 +692,32 @@ export function Orgs() {
                 <div className="poph-pagina__topo">
                     <div>
                         <div className="poph-orgs__titulo-linha">
-                            <h1 className="poph-pagina__titulo">Organizações</h1>
+                            <h1 className="poph-pagina__titulo">{t("orgs.listTitle")}</h1>
                             <span className="poph-orgs__contagem">{orgs.length}</span>
                         </div>
-                        <p className="poph-pagina__descricao">
-                            Cada organização é um tenant isolado, com dados e limites próprios.
-                        </p>
+                        <p className="poph-pagina__descricao">{t("orgs.tenantDescription")}</p>
                     </div>
                     <div className="poph-orgs__acoes-topo">
                         <SofaSearchField
-                            label="Filtrar organizações por nome ou slug"
+                            label={t("orgs.listFilterLabel")}
                             value={filtro}
                             onValueChange={setFiltro}
-                            placeholder="Filtrar por nome ou slug…"
+                            placeholder={t("orgs.listFilterPlaceholder")}
                             size="md"
-                            clearLabel="Limpar filtro"
+                            clearLabel={t("orgs.listFilterClear")}
                             className="poph-orgs__busca"
                         />
-                        <SofaIconButton label="Atualizar" size={32} loading={carregando} onClick={() => void carregar()}>
+                        <SofaIconButton
+                            label={t("orgs.listRefresh")}
+                            size={32}
+                            loading={carregando}
+                            onClick={() => void carregar()}
+                        >
                             <IconRefresh aria-hidden="true" />
                         </SofaIconButton>
                         {podeGerenciar && (
                             <SofaButton variant="primary" icon={<IconPlus aria-hidden="true" />} onClick={abrirCriacao}>
-                                Nova organização
+                                {t("orgs.listNew")}
                             </SofaButton>
                         )}
                     </div>
@@ -685,7 +727,7 @@ export function Orgs() {
                     <SofaBanner
                         tone={aviso.tom}
                         title={aviso.titulo}
-                        dismissLabel="Fechar aviso"
+                        dismissLabel={t("orgs.listDismissNotice")}
                         onDismiss={() => setAviso(null)}
                     >
                         {aviso.texto}
@@ -693,7 +735,11 @@ export function Orgs() {
                 )}
 
                 <div className="poph-orgs__barra">
-                    <div className="poph-orgs__abas" role="group" aria-label="Filtrar por situação">
+                    <div
+                        className="poph-orgs__abas"
+                        role="group"
+                        aria-label={t("orgs.tabsAriaLabel")}
+                    >
                         {abasVisiveis.map((candidata) => {
                             const ativa = candidata === aba;
                             return (
@@ -704,7 +750,7 @@ export function Orgs() {
                                     className={ativa ? "poph-aba poph-aba--ativa" : "poph-aba"}
                                     onClick={() => setAba(candidata)}
                                 >
-                                    {ROTULO_DA_ABA[candidata]}
+                                    {t(ROTULO_DA_ABA[candidata])}
                                     <span className="poph-aba__contagem">({contagens[candidata]})</span>
                                 </button>
                             );
@@ -723,13 +769,17 @@ export function Orgs() {
 
                 {erro && !carregando ? (
                     <SofaErrorState
-                        title="Não consegui carregar as organizações"
-                        description="A instância não respondeu à consulta. Verifique se o processo `poph serve` está no ar e tente de novo."
+                        title={t("orgs.listLoadErrorTitle")}
+                        description={t("orgs.listLoadErrorDescription")}
                         details={erro}
-                        retry={{ label: "Tentar de novo", onClick: () => void carregar() }}
+                        retry={{ label: t("orgs.failureTryAgain"), onClick: () => void carregar() }}
                     />
                 ) : carregando && orgs.length === 0 ? (
-                    <div className="poph-orgs__esqueleto" aria-busy="true" aria-label="Carregando organizações">
+                    <div
+                        className="poph-orgs__esqueleto"
+                        aria-busy="true"
+                        aria-label={t("orgs.listLoading")}
+                    >
                         {[0, 1, 2, 3, 4].map((linha) => (
                             <div key={linha} className="poph-orgs__esqueleto-linha" />
                         ))}
@@ -737,7 +787,7 @@ export function Orgs() {
                 ) : (
                     <SofaTable
                         className="poph-orgs__tabela"
-                        label="Organizações"
+                        label={t("orgs.listTitle")}
                         columns={colunas}
                         data={visiveis}
                         getRowId={(org) => org.id}
@@ -747,16 +797,24 @@ export function Orgs() {
                         isLoading={carregando}
                         totalCount={visiveis.length}
                         footerMeta={() =>
-                            `Exibindo ${visiveis.length} de ${orgs.length} ${
-                                orgs.length === 1 ? "organização" : "organizações"
-                            }`
+                            orgs.length === 1
+                                ? t("orgs.listFooterOne", {
+                                      shown: visiveis.length,
+                                      total: orgs.length,
+                                  })
+                                : t("orgs.listFooterMany", {
+                                      shown: visiveis.length,
+                                      total: orgs.length,
+                                  })
                         }
-                        footer={<span className="poph-orgs__dica">Tab percorre · Enter abre</span>}
+                        footer={
+                            <span className="poph-orgs__dica">{t("orgs.listKeyboardHint")}</span>
+                        }
                         empty={
                             filtrando ? (
                                 <SofaEmptyState
-                                    title="Nenhuma organização encontrada"
-                                    description="Nenhuma organização corresponde à situação e ao texto escolhidos."
+                                    title={t("orgs.listEmptyFilteredTitle")}
+                                    description={t("orgs.listEmptyFilteredDescription")}
                                     action={
                                         <SofaButton
                                             variant="secondary"
@@ -765,18 +823,18 @@ export function Orgs() {
                                                 setFiltro("");
                                             }}
                                         >
-                                            Limpar filtros
+                                            {t("orgs.listClearFilters")}
                                         </SofaButton>
                                     }
                                 />
                             ) : (
                                 <SofaEmptyState
                                     icon={<IconBuilding aria-hidden="true" />}
-                                    title="Nenhuma organização cadastrada"
+                                    title={t("orgs.listEmptyTitle")}
                                     description={
                                         podeGerenciar
-                                            ? "Comece criando a primeira organização: ela é o tenant que agrupa agentes, base de conhecimento e integrações."
-                                            : "Este token enxerga uma organização só, e ela ainda não aparece na listagem."
+                                            ? t("orgs.listEmptyManagerDescription")
+                                            : t("orgs.listEmptyOrgTokenDescription")
                                     }
                                     action={
                                         podeGerenciar ? (
@@ -785,7 +843,7 @@ export function Orgs() {
                                                 icon={<IconPlus aria-hidden="true" />}
                                                 onClick={abrirCriacao}
                                             >
-                                                Criar primeira organização
+                                                {t("orgs.listCreateFirst")}
                                             </SofaButton>
                                         ) : undefined
                                     }
@@ -799,34 +857,29 @@ export function Orgs() {
                     <section className="poph-orgs__card" aria-labelledby="poph-card-matrix">
                         <div className="poph-orgs__card-cabeca">
                             <h2 id="poph-card-matrix" className="poph-orgs__card-titulo">
-                                Espelho Matrix Synapse
+                                {t("orgs.cardMatrixTitle")}
                             </h2>
                             <span
                                 className="poph-orgs__selo"
-                                title="A lista do cluster não traz o estado do Matrix; ele é consultado por organização"
+                                title={t("orgs.cardMatrixBadgeTitle")}
                             >
-                                indisponível
+                                {t("orgs.inspectorUnavailable")}
                             </span>
                         </div>
-                        <p className="poph-orgs__card-texto">
-                            O estado do Matrix é de cada organização. Abra uma organização para ver a conexão dela.
-                        </p>
+                        <p className="poph-orgs__card-texto">{t("orgs.cardMatrixText")}</p>
                     </section>
                     <section className="poph-orgs__card" aria-labelledby="poph-card-isolamento">
                         <div className="poph-orgs__card-cabeca">
                             <h2 id="poph-card-isolamento" className="poph-orgs__card-titulo">
-                                Isolamento Multi-Tenant
+                                {t("orgs.cardTenantTitle")}
                             </h2>
                         </div>
-                        <p className="poph-orgs__card-texto">
-                            Cada organização tem agentes, fichas, catálogo e tokens próprios. Um token de organização
-                            só enxerga a sua.
-                        </p>
+                        <p className="poph-orgs__card-texto">{t("orgs.cardTenantText")}</p>
                     </section>
                     <section className="poph-orgs__card" aria-labelledby="poph-card-cli">
                         <div className="poph-orgs__card-cabeca">
                             <h2 id="poph-card-cli" className="poph-orgs__card-titulo">
-                                Comandos CLI Úteis
+                                {t("orgs.cardCliTitle")}
                             </h2>
                             <span className="poph-orgs__selo">poph</span>
                         </div>
@@ -857,18 +910,16 @@ export function Orgs() {
                     <DialogoExclusao
                         aberto={paraExcluir !== null}
                         aoFechar={() => setParaExcluir(null)}
-                        titulo="Excluir organização?"
-                        descricao={`A organização ${paraExcluir.name} e tudo que está dentro dela saem do sistema. Não há como desfazer.`}
+                        titulo={t("orgs.deleteOrgTitle")}
+                        descricao={t("orgs.deleteOrgDescription", { name: paraExcluir.name })}
                         recurso={paraExcluir.slug}
-                        rotuloRecurso="slug da organização"
-                        rotuloConfirmar="Excluir organização"
+                        rotuloRecurso={t("orgs.deleteOrgResourceLabel")}
+                        rotuloConfirmar={t("orgs.deleteOrgConfirm")}
                         permiteForcar
-                        rotuloForcar="Apagar também agentes, categorias, departamentos e tokens"
+                        rotuloForcar={t("orgs.deleteOrgForceLabel")}
                         consequencia={
                             <p style={{ margin: 0, color: "var(--pop-text-secondary)", lineHeight: 1.6 }}>
-                                Serão apagados os agentes, as categorias, os departamentos, as conversas e
-                                os tokens desta organização. A exclusão de uma organização com conteúdo
-                                exige a confirmação extra abaixo.
+                                {t("orgs.deleteOrgConsequence")}
                             </p>
                         }
                         aoConfirmar={(forcar) => excluirOrg(paraExcluir.id, forcar)}

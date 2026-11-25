@@ -14,6 +14,8 @@
 import { ErroApi, pedir, pedirBytes } from "./cliente";
 import { nomeDoCabecalho } from "./arquivoTeste";
 import { tamanhoEmMb } from "./arquivos";
+import { translate } from "../i18n";
+import type { TranslationKey } from "../i18n/catalog";
 
 export { tamanhoEmMb };
 
@@ -89,7 +91,8 @@ export function lerTextoDoArquivo(arquivo: Blob): Promise<string> {
     return new Promise((resolver, rejeitar) => {
         const leitor = new FileReader();
         leitor.onload = () => resolver(typeof leitor.result === "string" ? leitor.result : "");
-        leitor.onerror = () => rejeitar(leitor.error ?? new Error("não consegui ler o arquivo"));
+        leitor.onerror = () =>
+            rejeitar(leitor.error ?? new Error(translate("orgs.backupReadFileError")));
         leitor.readAsText(arquivo);
     });
 }
@@ -116,31 +119,34 @@ export function passaDoLimite(bytes: number): boolean {
 }
 
 /** Nomes de operador para as tabelas que o arquivo leva (o resto aparece com o nome técnico). */
-export const NOMES_DE_TABELA: Record<string, string> = {
-    agents: "Agentes",
-    agent_instructions: "Instruções dos agentes",
-    departments: "Departamentos",
-    product_categories: "Categorias de produto",
-    agent_product_categories: "Categorias liberadas por agente",
-    products: "Produtos",
-    knowledge_groups: "Grupos da base de conhecimento",
-    agent_knowledge_groups: "Grupos liberados por agente",
-    knowledge_items: "Trechos da base de conhecimento",
-    file_library: "Biblioteca de arquivos",
-    integrations: "Integrações",
-    conversations: "Conversas",
-    messages: "Mensagens",
-    turns: "Turnos",
-    attachments: "Anexos",
-    outbox: "Fila de saída",
-    inbox: "Fila de entrada",
-    carts: "Orçamentos",
-    cart_items: "Itens de orçamento",
+export const NOMES_DE_TABELA: Record<string, TranslationKey> = {
+    agents: "orgs.tableAgents",
+    agent_instructions: "orgs.tableAgentInstructions",
+    departments: "orgs.tableDepartments",
+    product_categories: "orgs.tableProductCategories",
+    agent_product_categories: "orgs.tableAgentProductCategories",
+    products: "orgs.tableProducts",
+    knowledge_groups: "orgs.tableKnowledgeGroups",
+    agent_knowledge_groups: "orgs.tableAgentKnowledgeGroups",
+    knowledge_items: "orgs.tableKnowledgeItems",
+    file_library: "orgs.tableFileLibrary",
+    integrations: "orgs.tableIntegrations",
+    conversations: "orgs.tableConversations",
+    messages: "orgs.tableMessages",
+    turns: "orgs.tableTurns",
+    attachments: "orgs.tableAttachments",
+    outbox: "orgs.tableOutbox",
+    inbox: "orgs.tableInbox",
+    carts: "orgs.tableCarts",
+    cart_items: "orgs.tableCartItems",
 };
 
 /** Nome de operador de uma tabela; tabela fora da lista mantém o nome técnico. */
 export function nomeDaTabela(tabela: string): string {
-    return Object.prototype.hasOwnProperty.call(NOMES_DE_TABELA, tabela) ? NOMES_DE_TABELA[tabela] ?? tabela : tabela;
+    const key = Object.prototype.hasOwnProperty.call(NOMES_DE_TABELA, tabela)
+        ? NOMES_DE_TABELA[tabela]
+        : undefined;
+    return key === undefined ? tabela : translate(key);
 }
 
 /**
@@ -244,58 +250,56 @@ export function textoDeExemplo(item: string): string {
 export function falhaDeBackup(erro: unknown, operacao: "exportar" | "importar"): FalhaDeBackup {
     if (!(erro instanceof ErroApi)) {
         return {
-            titulo: operacao === "exportar" ? "Não consegui exportar" : "Não consegui importar",
-            texto: "Algo deu errado. Tente de novo.",
+            titulo: translate(operacao === "exportar" ? "orgs.backupExportFailed" : "orgs.backupImportFailed"),
+            texto: translate("orgs.backupGeneric"),
             podeTentarDeNovo: true,
         };
     }
 
     if (erro.semServidor) {
         return {
-            titulo: operacao === "exportar" ? "Não consegui exportar" : "Não consegui importar",
-            texto: "Não consegui falar com a instância. Confira se o servidor está no ar e tente de novo.",
+            titulo: translate(operacao === "exportar" ? "orgs.backupExportFailed" : "orgs.backupImportFailed"),
+            texto: translate("orgs.backupOffline"),
             podeTentarDeNovo: true,
         };
     }
 
     if (erro.status === 401) {
         return {
-            titulo: "Sessão encerrada",
-            texto: "Sua sessão não vale mais. Entre de novo para continuar.",
+            titulo: translate("orgs.backupSessionTitle"),
+            texto: translate("orgs.backupSessionText"),
             podeTentarDeNovo: false,
         };
     }
 
     if (erro.status === 403) {
         return {
-            titulo: operacao === "exportar" ? "Não consegui exportar" : "Não consegui importar",
-            texto:
-                "Seu token não alcança esta organização. Use um token desta organização ou um token global.",
+            titulo: translate(operacao === "exportar" ? "orgs.backupExportFailed" : "orgs.backupImportFailed"),
+            texto: translate("orgs.backupForbiddenText"),
             podeTentarDeNovo: true,
         };
     }
 
     if (erro.status === 404) {
         return {
-            titulo: "Organização não encontrada",
-            texto: "Esta organização não existe mais nesta instância. Volte à lista de organizações.",
+            titulo: translate("orgs.backupNotFoundTitle"),
+            texto: translate("orgs.backupNotFoundText"),
             podeTentarDeNovo: false,
         };
     }
 
     if (erro.status === 413 || erro.codigo === "payload_too_large") {
         return {
-            titulo: "Arquivo grande demais",
-            texto: "O arquivo passa de 64 MB. Nada foi gravado.",
+            titulo: translate("orgs.backupTooLargeTitle"),
+            texto: translate("orgs.backupTooLargeText"),
             podeTentarDeNovo: false,
         };
     }
 
     if (erro.codigo === "backup_incompleto") {
         return {
-            titulo: "Não consegui exportar",
-            texto:
-                "Um arquivo da biblioteca desta organização não está no disco, então a exportação não pode sair pela metade. Restaure esse arquivo e exporte de novo.",
+            titulo: translate("orgs.backupExportFailed"),
+            texto: translate("orgs.backupIncompleteText"),
             podeTentarDeNovo: false,
         };
     }
@@ -303,8 +307,8 @@ export function falhaDeBackup(erro: unknown, operacao: "exportar" | "importar"):
     // A tela trata esta recusa à parte (com o botão de autorizar); aqui é só a salvaguarda.
     if (erro.status === 409 && erro.codigo === "importacao_sobrescreve") {
         return {
-            titulo: "Esta importação vai sobrescrever o que já existe",
-            texto: "Nada foi gravado. Autorize a sobrescrita para importar mesmo assim.",
+            titulo: translate("orgs.backupOverwriteTitle"),
+            texto: translate("orgs.backupOverwriteText"),
             podeTentarDeNovo: false,
         };
     }
@@ -313,9 +317,8 @@ export function falhaDeBackup(erro: unknown, operacao: "exportar" | "importar"):
         const conflitos = listaDoDetalhe(erro.detalhes, "conflicts");
         const mais = numeroDoDetalhe(erro.detalhes, "conflicts_more") ?? 0;
         return {
-            titulo: "Importação recusada",
-            texto:
-                "Esta organização já tem recursos com os mesmos nomes do arquivo. Nada foi gravado. Renomeie um dos dois lados ou importe numa instalação sem esses recursos.",
+            titulo: translate("orgs.backupConflictTitle"),
+            texto: translate("orgs.backupConflictText"),
             conflitos: {
                 itens: conflitos.slice(0, CONFLITOS_MOSTRADOS).map(textoDeConflito),
                 mais: mais + Math.max(0, conflitos.length - CONFLITOS_MOSTRADOS),
@@ -328,9 +331,8 @@ export function falhaDeBackup(erro: unknown, operacao: "exportar" | "importar"):
         const arquivo = numeroDoDetalhe(erro.detalhes, "version");
         const instalacao = numeroDoDetalhe(erro.detalhes, "supported_version");
         return {
-            titulo: "Arquivo inválido",
-            texto:
-                "Este arquivo não é um backup válido desta instalação (pode estar cortado ou alterado). Nada foi gravado.",
+            titulo: translate("orgs.backupInvalidTitle"),
+            texto: translate("orgs.backupInvalidText"),
             versoes:
                 arquivo !== undefined && instalacao !== undefined
                     ? { arquivo, instalacao }
@@ -341,15 +343,15 @@ export function falhaDeBackup(erro: unknown, operacao: "exportar" | "importar"):
 
     if (erro.status >= 500) {
         return {
-            titulo: operacao === "exportar" ? "Não consegui exportar" : "Não consegui importar",
-            texto: `A instância respondeu com erro (${erro.status}). Tente de novo em instantes.`,
+            titulo: translate(operacao === "exportar" ? "orgs.backupExportFailed" : "orgs.backupImportFailed"),
+            texto: translate("orgs.backupServerError", { status: erro.status }),
             podeTentarDeNovo: true,
         };
     }
 
     return {
-        titulo: operacao === "exportar" ? "Não consegui exportar" : "Não consegui importar",
-        texto: "Algo deu errado. Tente de novo.",
+        titulo: translate(operacao === "exportar" ? "orgs.backupExportFailed" : "orgs.backupImportFailed"),
+        texto: translate("orgs.backupGeneric"),
         podeTentarDeNovo: true,
     };
 }

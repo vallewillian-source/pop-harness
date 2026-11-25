@@ -9,7 +9,7 @@
  * A gaveta é montada direto (sem a lista) e o servidor falso responde às duas rotas.
  */
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
@@ -18,6 +18,7 @@ import type { Agente } from "../api/agentes";
 import type { Org } from "../api/cliente";
 import { ServidorFalso } from "../testes/servidor";
 import "../testes/preparo";
+import { setLocale } from "../i18n";
 
 const ORG: Org = {
     id: "01a208f7-1111-7000-8000-000000000001",
@@ -369,6 +370,51 @@ describe("InspetorOrg · comando de teste", () => {
         expect(
             await within(gaveta).findByText("poph chat --org sessao-matrix <agente>"),
         ).toBeInTheDocument();
+    });
+});
+
+describe("InspetorOrg em en-US", () => {
+    afterEach(() => setLocale("pt-BR"));
+
+    it("mostra cabeçalho, propriedades, datas e agentes em inglês", async () => {
+        servidor();
+        setLocale("en-US");
+
+        render(
+            <MemoryRouter>
+                <InspetorOrg
+                    org={ORG}
+                    no={{ id: "local:18490", situacao: "local" }}
+                    aoFechar={vi.fn()}
+                    aoAcessar={vi.fn()}
+                />
+            </MemoryRouter>,
+        );
+
+        const gaveta = await screen.findByRole("complementary", { name: "Details of Sessão Matrix" });
+        expect(within(gaveta).getByText("slug: sessao-matrix · version v3 (ETag/If-Match)")).toBeInTheDocument();
+        expect(within(gaveta).getByRole("button", { name: "Close inspector" })).toBeInTheDocument();
+        expect(within(gaveta).getByText("Active")).toBeInTheDocument();
+        expect(within(gaveta).getByText("History retention")).toBeInTheDocument();
+        expect(within(gaveta).getByText("30 days")).toBeInTheDocument();
+        expect(within(gaveta).getByText("Primary node")).toBeInTheDocument();
+        expect(within(gaveta).getAllByText(/^11\/23\/2026 at \d\d:\d\d [AP]M$/)).toHaveLength(2);
+        expect(within(gaveta).getByText("Linked agents")).toHaveTextContent("Linked agents (1)");
+        expect(await within(gaveta).findByText("gemini-3.8-flash · Active")).toBeInTheDocument();
+        expect(within(gaveta).getByRole("button", { name: "Open Organization →" })).toBeInTheDocument();
+    });
+
+    it("troca o idioma da gaveta aberta sem recarregar", async () => {
+        servidor();
+        setLocale("pt-BR");
+        const { gaveta } = montar();
+
+        expect(within(gaveta).getByText("Retenção de histórico")).toBeInTheDocument();
+
+        setLocale("en-US");
+
+        expect(await within(gaveta).findByText("History retention")).toBeInTheDocument();
+        expect(within(gaveta).getByRole("button", { name: "Close inspector" })).toBeInTheDocument();
     });
 });
 

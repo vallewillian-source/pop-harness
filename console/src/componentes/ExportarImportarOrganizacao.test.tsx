@@ -15,6 +15,7 @@ import userEvent from "@testing-library/user-event";
 import { ServidorFalso, erroApi } from "../testes/servidor";
 import { ExportarImportarOrganizacao } from "./ExportarImportarOrganizacao";
 import { LIMITE_IMPORTACAO_BYTES } from "../api/backup";
+import { setLocale } from "../i18n";
 
 const ORG = "org_1";
 const NOME_DO_ARQUIVO = "org-origem-backup-20261121-1118.json";
@@ -85,6 +86,78 @@ async function confirmarImportacao() {
     const dialogo = await screen.findByRole("dialog");
     await userEvent.click(within(dialogo).getByRole("button", { name: "Importar agora" }));
 }
+
+describe("backup em en-US", () => {
+    afterEach(() => setLocale("pt-BR"));
+
+    it("mostra a seção, o relatório e os conflitos em inglês", async () => {
+        setLocale("en-US");
+        new ServidorFalso()
+            .responder("GET", "/backup", {
+                status: 200,
+                texto: CONTEUDO_DO_ARQUIVO,
+                cabecalhos: cabecalhoDeAnexo,
+            })
+            .responder("POST", "/backup/import", { status: 200, corpo: RELATORIO })
+            .instalar();
+        montar();
+
+        expect(screen.getByRole("heading", { name: "Export and import the organization" })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Download organization file" })).toBeInTheDocument();
+        expect(screen.getByRole("checkbox", { name: /Include conversations/ })).toBeInTheDocument();
+
+        await userEvent.click(screen.getByRole("button", { name: "Download organization file" }));
+        expect(await screen.findByText(`File "${NOME_DO_ARQUIVO}" downloaded.`)).toBeInTheDocument();
+
+        await escolher(arquivoJson());
+        await userEvent.click(screen.getByRole("button", { name: /Import file into this organization/ }));
+        const dialogo = await screen.findByRole("dialog");
+        await userEvent.click(within(dialogo).getByRole("button", { name: "Import now" }));
+
+        expect(await screen.findByText(/5 rows written: 2 new and 3 updated/)).toBeInTheDocument();
+        expect(screen.getByText("Secrets to type again")).toBeInTheDocument();
+        expect(screen.getByText(/1 integration arrived without the secret/)).toBeInTheDocument();
+        expect(screen.getByText("Search ready")).toBeInTheDocument();
+        const tabela = screen.getByRole("table", { name: "Rows written per table" });
+        expect(within(tabela).getByText("Agents")).toBeInTheDocument();
+        expect(within(tabela).getByText("Products")).toBeInTheDocument();
+    });
+
+    it("traduz a recusa de sobrescrita e os nomes das tabelas", async () => {
+        setLocale("en-US");
+        new ServidorFalso()
+            .responder("POST", "/backup/import", {
+                status: 409,
+                corpo: {
+                    code: "importacao_sobrescreve",
+                    message: "cru",
+                    details: {
+                        tabelas: { agents: 1, products: 3 },
+                        linhas: 4,
+                        exemplos: ["agents: bia", "products: dedetizacao"],
+                    },
+                },
+            })
+            .instalar();
+        montar();
+
+        await escolher(arquivoJson());
+        await userEvent.click(screen.getByRole("button", { name: /Import file into this organization/ }));
+        const dialogo = await screen.findByRole("dialog");
+        await userEvent.click(within(dialogo).getByRole("button", { name: "Import now" }));
+
+        const alerta = await screen.findByRole("alert");
+        expect(within(alerta).getByText("This import will overwrite what already exists")).toBeInTheDocument();
+        expect(within(alerta).getByText(/4 rows in this organization would be updated/)).toBeInTheDocument();
+        const tabela = within(alerta).getByRole("table", { name: "Rows that would be overwritten per table" });
+        expect(within(tabela).getByText("Agents")).toBeInTheDocument();
+        const lista = within(alerta).getByRole("list", { name: "Examples of what would be overwritten" });
+        const itens = within(lista).getAllByRole("listitem");
+        expect(itens[0]).toHaveTextContent("Agents: bia");
+        expect(itens[1]).toHaveTextContent("Products: dedetizacao");
+        expect(within(alerta).getByRole("button", { name: "Overwrite and import" })).toBeEnabled();
+    });
+});
 
 describe("exportar", () => {
     it("sem conversas: chama a rota sem query e baixa com o nome que o servidor mandou", async () => {

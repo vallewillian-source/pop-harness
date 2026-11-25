@@ -4,13 +4,14 @@
  * operador digitou.
  */
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Org } from "../api/cliente";
 import { esperarFocoDoModal } from "../testes/modal";
 import { ServidorFalso, erroApi } from "../testes/servidor";
 import { ModalOrg } from "./ModalOrg";
+import { setLocale } from "../i18n";
 
 function orgFalsa(parcial: Partial<Org> = {}): Org {
     return {
@@ -148,5 +149,42 @@ describe("ModalOrg", () => {
 
         expect(await screen.findByText("campo `name` inválido")).toBeInTheDocument();
         expect(campoNome()).toHaveAttribute("aria-invalid", "true");
+    });
+});
+
+describe("ModalOrg em en-US", () => {
+    afterEach(() => setLocale("pt-BR"));
+
+    it("mostra o formulário e a validação em inglês", async () => {
+        const usuario = userEvent.setup();
+        setLocale("en-US");
+        new ServidorFalso().instalar();
+
+        render(<ModalOrg aberto org={null} aoFechar={vi.fn()} aoSalvar={vi.fn()} />);
+        await esperarFocoDoModal();
+
+        expect(screen.getByRole("dialog")).toHaveAccessibleName("New organization");
+        expect(screen.getByRole("textbox", { name: "Name" })).toBeInTheDocument();
+        expect(screen.getByRole("textbox", { name: "Slug" })).toBeInTheDocument();
+        expect(screen.getByRole("spinbutton", { name: /retention/i })).toBeInTheDocument();
+
+        await usuario.click(screen.getByRole("button", { name: "Create organization" }));
+
+        expect(await screen.findByText("enter the organization name")).toBeInTheDocument();
+    });
+
+    it("troca o idioma do formulário aberto sem recarregar", async () => {
+        setLocale("pt-BR");
+        new ServidorFalso().instalar();
+
+        render(<ModalOrg aberto org={orgFalsa()} aoFechar={vi.fn()} aoSalvar={vi.fn()} />);
+        await esperarFocoDoModal();
+
+        expect(screen.getByRole("dialog")).toHaveAccessibleName("Editar organização");
+
+        setLocale("en-US");
+
+        expect(await screen.findByRole("dialog", { name: "Edit organization" })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Save changes" })).toBeInTheDocument();
     });
 });

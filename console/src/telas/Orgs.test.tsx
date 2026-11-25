@@ -10,7 +10,7 @@
  */
 
 import { useEffect } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
@@ -20,6 +20,7 @@ import { GuardaAlteracoesProvider, useGuardaDeAlteracoes } from "../componentes/
 import { SessaoProvider } from "../sessao/Sessao";
 import { ServidorFalso } from "../testes/servidor";
 import { Orgs } from "./Orgs";
+import { setLocale } from "../i18n";
 
 function org(parcial: Partial<OrgNaLista> & Pick<OrgNaLista, "id" | "name" | "slug">): OrgNaLista {
     return {
@@ -138,6 +139,43 @@ async function abrirMenu(usuario: ReturnType<typeof userEvent.setup>, nome: stri
     await usuario.click(gatilho);
     return screen.getByRole("menu");
 }
+
+describe("Orgs em en-US", () => {
+    afterEach(() => setLocale("pt-BR"));
+
+    it("traduz lista, abas, colunas, ações e rodapé", async () => {
+        prepararSessao("pophg_teste", "global", [ATIVA]);
+        servidorCom([ATIVA]);
+        setLocale("en-US");
+
+        montar();
+
+        expect(await screen.findByText("Loja Antiga")).toBeInTheDocument();
+        expect(screen.getByRole("heading", { level: 1, name: "Organizations" })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: /^All/ })).toHaveTextContent("All(1)");
+        expect(screen.getByText("Active agents")).toBeInTheDocument();
+        expect(screen.getByText("Showing 1 of 1 organization")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Open →" })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "New organization" })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Actions for Loja Antiga" })).toBeInTheDocument();
+        expect(screen.getByText("Matrix Synapse mirror")).toBeInTheDocument();
+    });
+
+    it("troca o idioma da lista aberta sem recarregar", async () => {
+        prepararSessao("pophg_teste", "global", [ATIVA]);
+        servidorCom([ATIVA]);
+        setLocale("pt-BR");
+
+        montar();
+
+        expect(await screen.findByRole("heading", { level: 1, name: "Organizações" })).toBeInTheDocument();
+
+        setLocale("en-US");
+
+        expect(await screen.findByRole("heading", { level: 1, name: "Organizations" })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: /^All/ })).toHaveTextContent("All(1)");
+    });
+});
 
 describe("Orgs", () => {
     it("token global vê as ações de gestão e abre o formulário de criação", async () => {

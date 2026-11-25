@@ -12,15 +12,17 @@
  */
 
 import type { SofaIconProps } from "@sofacoding/sofa-ui";
+import { useI18n } from "../i18n";
+import type { TranslationKey } from "../i18n/catalog";
 
 /** Situação da instância, do jeito que o ponto do chip a mostra. */
 export type SituacaoDoCluster = "ok" | "degradada" | "sem-conexao" | "verificando";
 
-const ROTULOS: Record<SituacaoDoCluster, string> = {
-    ok: "instância respondendo",
-    degradada: "instância degradada",
-    "sem-conexao": "sem conexão com a instância",
-    verificando: "verificando a instância",
+const ROTULOS: Record<SituacaoDoCluster, TranslationKey> = {
+    ok: "orgs.clusterOk",
+    degradada: "orgs.clusterDegraded",
+    "sem-conexao": "orgs.clusterOffline",
+    verificando: "orgs.clusterChecking",
 };
 
 const CLASSES: Record<SituacaoDoCluster, string> = {
@@ -60,7 +62,8 @@ export function ChipDoCluster({
     /** Modo foco: o chip vira um tile de 32×32 com o ícone e o nome no `title`. */
     compacta?: boolean;
 }) {
-    const rotulo = `POP Harness Cluster · ${ROTULOS[situacao]}`;
+    const { translate: t } = useI18n();
+    const rotulo = t("orgs.clusterLabel", { status: t(ROTULOS[situacao]) });
     return (
         <div
             className={

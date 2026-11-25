@@ -35,6 +35,8 @@ import {
 import { listarAgentes, type Agente } from "../api/agentes";
 import type { Org } from "../api/cliente";
 import { lerEstadoMatrix, type EstadoMatrix } from "../api/matrix";
+import { translate, useI18n } from "../i18n";
+import { formatDate, formatTime } from "../i18n/format";
 import "../estilos/inspetor.css";
 
 /**
@@ -94,7 +96,7 @@ function useLeitura<T>(chave: string, ler: () => Promise<T>): Recurso<T> {
         const prazo = setTimeout(() => {
             if (encerrado) return;
             encerrado = true;
-            setRecurso({ estado: "erro", mensagem: "a leitura demorou demais; abra o inspetor de novo" });
+            setRecurso({ estado: "erro", mensagem: translate("orgs.inspectorBacklogTimeout") });
         }, PRAZO_DA_LEITURA_MS);
         lerAgora
             .current()
@@ -122,11 +124,11 @@ function useLeitura<T>(chave: string, ler: () => Promise<T>): Recurso<T> {
 function rotuloDaSituacao(situacao: string): string {
     switch (situacao) {
         case "active":
-            return "Ativa";
+            return translate("orgs.statusActive");
         case "inactive":
-            return "Inativa";
+            return translate("orgs.statusInactive");
         case "archived":
-            return "Arquivada";
+            return translate("orgs.statusArchived");
         default:
             return situacao;
     }
@@ -140,11 +142,11 @@ function tomDaSituacao(situacao: string): string {
 function rotuloDoAgente(situacao: string): string {
     switch (situacao) {
         case "active":
-            return "Ativo";
+            return translate("orgs.agentStatusActive");
         case "inactive":
-            return "Inativo";
+            return translate("orgs.agentStatusInactive");
         case "archived":
-            return "Arquivado";
+            return translate("orgs.agentStatusArchived");
         default:
             return situacao;
     }
@@ -155,44 +157,50 @@ function retencao(org: Org): string {
     const config = org.config as Record<string, unknown> | undefined;
     const valor = config?.["retention_days"] ?? config?.["retencao_dias"];
     if (typeof valor === "number") {
-        return valor === 0 ? "nunca apaga" : `${valor} dias`;
+        return valor === 0
+            ? translate("orgs.retentionNever")
+            : translate("orgs.retentionDays", { days: valor });
     }
-    return "padrão";
+    return translate("orgs.retentionDefault");
 }
 
 /** Data e hora completas em pt-BR, como no desenho ("23/11/2026 às 12:08"). */
 function dataEHora(ms: number): string {
     if (!Number.isFinite(ms) || ms <= 0) return "—";
-    const data = new Date(ms).toLocaleString("pt-BR", {
-        day: "2-digit",
-        month: "2-digit",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-    });
-    // O `toLocaleString` usa ", " antes da hora; o desenho escreve "às".
-    return data.replace(", ", " às ");
+    // A data e a hora saem dos formatadores do locale ativo; o separador vem do catálogo.
+    return translate("orgs.dateTimeAt", { date: formatDate(ms), time: formatTime(ms) });
 }
 
 /** Falha de consulta em texto curto, para o bloco que falhou. */
 function mensagemDoErro(falha: unknown): string {
     if (falha instanceof Error && falha.message) return falha.message;
-    return "falha inesperada na consulta";
+    return translate("orgs.inspectorQueryFailed");
 }
 
 /** Nó em texto curto para o chip e para a propriedade "Instância alocada". */
 function textoDoNo(no: NoDaOrg | null | undefined): { chip: string; valor: string } | null {
     if (!no) return null;
-    if (no.id === "") return { chip: "nó local", valor: "nó local" };
+    if (no.id === "") {
+        return { chip: translate("orgs.nodeLocal"), valor: translate("orgs.nodeLocal") };
+    }
     switch (no.situacao) {
         case "local":
-            return { chip: "Nó primário", valor: `${no.id} (nó primário)` };
+            return {
+                chip: translate("orgs.nodePrimary"),
+                valor: translate("orgs.nodePrimaryValue", { id: no.id }),
+            };
         case "ok":
-            return { chip: `Nó ${no.id}`, valor: `${no.id} (remoto · online)` };
+            return {
+                chip: translate("orgs.nodeChip", { id: no.id }),
+                valor: translate("orgs.nodeRemoteOnline", { id: no.id }),
+            };
         case "inacessivel":
-            return { chip: `Nó ${no.id}`, valor: `${no.id} (remoto · inacessível)` };
+            return {
+                chip: translate("orgs.nodeChip", { id: no.id }),
+                valor: translate("orgs.nodeRemoteUnreachable", { id: no.id }),
+            };
         default:
-            return { chip: `Nó ${no.id}`, valor: no.id };
+            return { chip: translate("orgs.nodeChip", { id: no.id }), valor: no.id };
     }
 }
 
@@ -202,35 +210,53 @@ function espelhoMatrix(estado: EstadoMatrix): { valor: string; detalhe: string }
     const idade = estado.backlog?.oldest_seconds ?? 0;
     const partes: string[] = [];
     if (pendentes > 0) {
-        partes.push(`${pendentes} ${pendentes === 1 ? "mensagem" : "mensagens"} ainda não espelhada${pendentes === 1 ? "" : "s"}`);
-        if (idade > 0) partes.push(`a mais antiga com ${idade}s`);
+        partes.push(
+            translate(pendentes === 1 ? "orgs.matrixBacklogOne" : "orgs.matrixBacklogMany", {
+                count: pendentes,
+            }),
+        );
+        if (idade > 0) partes.push(translate("orgs.matrixOldest", { seconds: idade }));
     }
     if (estado.pending_failures > 0) {
         partes.push(
-            `${estado.pending_failures} ${estado.pending_failures === 1 ? "falha isolada" : "falhas isoladas"}`,
+            translate(
+                estado.pending_failures === 1 ? "orgs.matrixFailureOne" : "orgs.matrixFailureMany",
+                { count: estado.pending_failures },
+            ),
         );
     }
-    if (estado.last_failure) partes.push(`última falha: ${estado.last_failure}`);
-    const detalhe = partes.length > 0 ? partes.join(" · ") : "Nada pendente de espelhamento nesta organização.";
+    if (estado.last_failure) {
+        partes.push(translate("orgs.matrixLastFailure", { reason: estado.last_failure }));
+    }
+    const detalhe =
+        partes.length > 0 ? partes.join(" · ") : translate("orgs.matrixNothingPending");
 
     if (estado.connected === null || estado.connected === undefined) {
-        return { valor: "Não configurado", detalhe: "O módulo Matrix não está configurado nesta instância." };
+        return {
+            valor: translate("orgs.matrixNotConfigured"),
+            detalhe: translate("orgs.matrixNotConfiguredDetail"),
+        };
     }
     if (!estado.enabled) {
         return {
-            valor: "Desligado nesta organização",
-            detalhe: `O módulo existe na instância, mas esta organização não o ligou. ${detalhe}`,
+            valor: translate("orgs.matrixDisabled"),
+            detalhe: translate("orgs.matrixDisabledDetail", { detail: detalhe }),
         };
     }
     if (estado.connected) {
-        return { valor: "Conectado", detalhe };
+        return { valor: translate("orgs.matrixConnected"), detalhe };
     }
-    return { valor: "Desconectado", detalhe: `A instância não está falando com o Synapse. ${detalhe}` };
+    return {
+        valor: translate("orgs.matrixDisconnected"),
+        detalhe: translate("orgs.matrixDisconnectedDetail", { detail: detalhe }),
+    };
 }
 
 /** Texto do agente no card: modelo (ou o padrão do servidor) e situação. */
 function metaDoAgente(agente: Agente): string {
-    const modelo = agente.model?.trim() ? agente.model.trim() : "modelo padrão do servidor";
+    const modelo = agente.model?.trim()
+        ? agente.model.trim()
+        : translate("orgs.agentModelDefault");
     return `${modelo} · ${rotuloDoAgente(agente.status)}`;
 }
 
@@ -245,6 +271,7 @@ export function InspetorOrg({
     aoExportar,
     aoExcluir,
 }: InspetorOrgProps) {
+    const { translate: t } = useI18n();
     const gaveta = useRef<HTMLElement | null>(null);
     const [copiado, setCopiado] = useState(false);
     /** Falha do clipboard, quando não há como copiar (degradação honesta). */
@@ -305,7 +332,7 @@ export function InspetorOrg({
             await navigator.clipboard.writeText(comando);
         } catch {
             setCopiado(false);
-            setFalhaAoCopiar("Não consegui copiar. Selecione o comando e copie à mão.");
+            setFalhaAoCopiar(t("orgs.inspectorCopyFailed"));
             return;
         }
         setCopiado(true);
@@ -318,7 +345,7 @@ export function InspetorOrg({
             ref={gaveta}
             className="poph-gaveta poph-inspetor"
             role="complementary"
-            aria-label={`Detalhes de ${org.name}`}
+            aria-label={t("orgs.inspectorAriaLabel", { name: org.name })}
             tabIndex={-1}
         >
             <header className="poph-inspetor__topo">
@@ -327,12 +354,12 @@ export function InspetorOrg({
                         <IconBuilding size={14} aria-hidden="true" />
                     </span>
                     <h2 className="poph-inspetor__titulo">{org.name}</h2>
-                    <SofaIconButton label="Fechar inspetor" size={24} onClick={fechar}>
+                    <SofaIconButton label={t("orgs.inspectorClose")} size={24} onClick={fechar}>
                         <IconClose aria-hidden="true" />
                     </SofaIconButton>
                 </div>
                 <p className="poph-inspetor__subtitulo">
-                    slug: {org.slug} · versão v{org.version} (ETag/If-Match)
+                    {t("orgs.inspectorSubtitle", { slug: org.slug, version: org.version })}
                 </p>
             </header>
 
@@ -355,11 +382,11 @@ export function InspetorOrg({
                     </span>
                 </div>
 
-                <section className="poph-inspetor__secao" aria-label="Comando de teste da organização">
+                <section className="poph-inspetor__secao" aria-label={t("orgs.inspectorCommandAria")}>
                     <div className="poph-terminal">
                         <code className="poph-terminal__comando">{comando}</code>
                         <SofaIconButton
-                            label="Copiar comando"
+                            label={t("orgs.inspectorCopyCommand")}
                             size={24}
                             className="poph-terminal__copiar"
                             onClick={() => void copiar()}
@@ -380,7 +407,7 @@ export function InspetorOrg({
                     >
                         {copiado ? (
                             <>
-                                <IconCheck aria-hidden="true" /> Copiado
+                                <IconCheck aria-hidden="true" /> {t("orgs.inspectorCopied")}
                             </>
                         ) : (
                             falhaAoCopiar ?? ""
@@ -390,25 +417,27 @@ export function InspetorOrg({
 
                 <section
                     className="poph-inspetor__secao poph-inspetor__secao--propriedades"
-                    aria-label="Propriedades da organização"
+                    aria-label={t("orgs.inspectorPropertiesAria")}
                 >
                     <dl className="poph-propriedades">
                         <div className="poph-propriedade">
-                            <dt className="poph-propriedade__chave">Retenção de histórico</dt>
+                            <dt className="poph-propriedade__chave">{t("orgs.inspectorRetention")}</dt>
                             <dd className="poph-propriedade__valor">{retencao(org)}</dd>
                         </div>
                         <div className="poph-propriedade">
-                            <dt className="poph-propriedade__chave">Espelho Matrix</dt>
+                            <dt className="poph-propriedade__chave">{t("orgs.inspectorMatrix")}</dt>
                             <dd className="poph-propriedade__valor">
                                 {matrix.estado === "carregando" && (
-                                    <span className="poph-inspetor__recurso">consultando…</span>
+                                    <span className="poph-inspetor__recurso">
+                                        {t("orgs.inspectorLoading")}
+                                    </span>
                                 )}
                                 {matrix.estado === "erro" && (
                                     <span
                                         className="poph-inspetor__recurso poph-inspetor__recurso--erro"
                                         title={matrix.mensagem}
                                     >
-                                        indisponível
+                                        {t("orgs.inspectorUnavailable")}
                                     </span>
                                 )}
                                 {matrix.estado === "pronto" &&
@@ -423,14 +452,14 @@ export function InspetorOrg({
                             </dd>
                         </div>
                         <div className="poph-propriedade">
-                            <dt className="poph-propriedade__chave">Instância alocada</dt>
+                            <dt className="poph-propriedade__chave">{t("orgs.inspectorInstance")}</dt>
                             <dd className="poph-propriedade__valor">
                                 {textoNo ? (
                                     <span className="poph-propriedade__valor--mono">{textoNo.valor}</span>
                                 ) : (
                                     <span
                                         className="poph-inspetor__recurso"
-                                        title="A resposta não traz o estado das instâncias (token de organização)"
+                                        title={t("orgs.inspectorInstanceUnknown")}
                                     >
                                         —
                                     </span>
@@ -438,11 +467,11 @@ export function InspetorOrg({
                             </dd>
                         </div>
                         <div className="poph-propriedade">
-                            <dt className="poph-propriedade__chave">Atualizada em</dt>
+                            <dt className="poph-propriedade__chave">{t("orgs.inspectorUpdatedAt")}</dt>
                             <dd className="poph-propriedade__valor">{dataEHora(org.updated_at)}</dd>
                         </div>
                         <div className="poph-propriedade">
-                            <dt className="poph-propriedade__chave">Criada em</dt>
+                            <dt className="poph-propriedade__chave">{t("orgs.inspectorCreatedAt")}</dt>
                             <dd className="poph-propriedade__valor">{dataEHora(org.created_at)}</dd>
                         </div>
                     </dl>
@@ -450,24 +479,24 @@ export function InspetorOrg({
 
                 <section className="poph-inspetor__secao" aria-labelledby="poph-inspetor-agentes">
                     <h3 id="poph-inspetor-agentes" className="poph-inspetor__secao-titulo">
-                        Agentes vinculados
+                        {t("orgs.inspectorAgentsTitle")}
                         {agentes.estado === "pronto" && listaDeAgentes.length > 0 && (
                             <span className="poph-inspetor__contagem"> ({listaDeAgentes.length})</span>
                         )}
                     </h3>
                     {agentes.estado === "carregando" && (
-                        <p className="poph-inspetor__recurso">carregando…</p>
+                        <p className="poph-inspetor__recurso">{t("orgs.inspectorAgentsLoading")}</p>
                     )}
                     {agentes.estado === "erro" && (
                         <p
                             className="poph-inspetor__recurso poph-inspetor__recurso--erro"
                             title={agentes.mensagem}
                         >
-                            não consegui carregar os agentes
+                            {t("orgs.inspectorAgentsError")}
                         </p>
                     )}
                     {agentes.estado === "pronto" && listaDeAgentes.length === 0 && (
-                        <p className="poph-inspetor__recurso">Nenhum agente cadastrado nesta organização.</p>
+                        <p className="poph-inspetor__recurso">{t("orgs.inspectorAgentsEmpty")}</p>
                     )}
                     {agentes.estado === "pronto" && listaDeAgentes.length > 0 && (
                         <>
@@ -492,7 +521,7 @@ export function InspetorOrg({
                                             {remota ? (
                                                 <div
                                                     className="poph-inspetor__agente poph-inspetor__agente--estatico"
-                                                    title="A organização está em outro nó: abra o console desse nó"
+                                                    title={t("orgs.inspectorAgentRemote")}
                                                 >
                                                     {conteudo}
                                                 </div>
@@ -510,7 +539,7 @@ export function InspetorOrg({
                             </ul>
                             {listaDeAgentes.length > agentesNoBloco.length && (
                                 <Link className="poph-inspetor__ver-todos" to={`/orgs/${org.id}/agents`}>
-                                    Ver todos os {listaDeAgentes.length} agentes →
+                                    {t("orgs.inspectorSeeAll", { count: listaDeAgentes.length })}
                                 </Link>
                             )}
                         </>
@@ -523,10 +552,10 @@ export function InspetorOrg({
                     variant="primary"
                     fullWidth
                     disabled={remota}
-                    title={remota ? "A organização está em outro nó" : undefined}
+                    title={remota ? t("orgs.inspectorRemoteTitle") : undefined}
                     onClick={() => aoAcessar(org)}
                 >
-                    Acessar Organização →
+                    {t("orgs.inspectorAccess")}
                 </SofaButton>
                 {podeGerenciar && (
                     <div className="poph-inspetor__rodape-secundarias">
@@ -536,7 +565,7 @@ export function InspetorOrg({
                             disabled={remota || aoEditar === undefined}
                             onClick={() => aoEditar?.(org)}
                         >
-                            Editar
+                            {t("orgs.inspectorEdit")}
                         </SofaButton>
                         <SofaButton
                             variant="secondary"
@@ -544,10 +573,10 @@ export function InspetorOrg({
                             disabled={aoExportar === undefined}
                             onClick={() => aoExportar?.(org)}
                         >
-                            Exportar
+                            {t("orgs.inspectorExport")}
                         </SofaButton>
                         <SofaIconButton
-                            label={`Excluir ${org.name}`}
+                            label={t("orgs.inspectorDeleteLabel", { name: org.name })}
                             variant="danger"
                             size={32}
                             disabled={remota || aoExcluir === undefined}
