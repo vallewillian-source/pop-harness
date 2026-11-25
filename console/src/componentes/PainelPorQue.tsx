@@ -40,6 +40,7 @@ import {
     type TemposDoTurno,
 } from "../api/porQue";
 import type { TurnoTeste } from "../api/testeChat";
+import { useI18n } from "../i18n";
 import "../estilos/painel-porque.css";
 
 type Props = {
@@ -56,25 +57,6 @@ type Props = {
     aoTentarDeNovo: () => void;
 };
 
-function dataHora(ms: number): { texto: string; iso: string } {
-    const data = new Date(ms);
-    return {
-        texto: data.toLocaleString("pt-BR", {
-            day: "2-digit",
-            month: "2-digit",
-            year: "numeric",
-            hour: "2-digit",
-            minute: "2-digit",
-            second: "2-digit",
-        }),
-        iso: data.toISOString(),
-    };
-}
-
-function simNao(valor: boolean): string {
-    return valor ? "sim" : "não";
-}
-
 export function PainelPorQue({
     aberto,
     numero,
@@ -84,36 +66,35 @@ export function PainelPorQue({
     aoFechar,
     aoTentarDeNovo,
 }: Props) {
-    const titulo = numero !== null ? `Por quê do turno ${numero}` : "Por quê do turno";
+    const { translate: t } = useI18n();
+    const title = numero !== null ? t("testChat.panelTitle", { number: numero }) : t("testChat.panelTitleNoNumber");
     return (
         <SofaDrawer
             open={aberto}
             onOpenChange={(proximo) => {
                 if (!proximo) aoFechar();
             }}
-            title={titulo}
-            description="O que o agente usou para responder esta mensagem, como ficou gravado no turno."
-            closeLabel="Fechar o painel do por quê"
+            title={title}
+            description={t("testChat.panelDescription")}
+            closeLabel={t("testChat.panelClose")}
             size="lg"
         >
             <div className="poph-porque">
                 {erroDeLeitura && (
-                    <SofaBanner tone="danger" title="Não consegui atualizar os dados deste turno">
+                    <SofaBanner tone="danger" title={t("testChat.panelRefreshError")}>
                         <p>{erroDeLeitura}</p>
                         <SofaButton variant="secondary" onClick={aoTentarDeNovo} disabled={atualizando}>
-                            Tentar de novo
+                            {t("testChat.retry")}
                         </SofaButton>
                     </SofaBanner>
                 )}
                 {atualizando && (
                     <p className="poph-porque__atualizando" role="status">
-                        Atualizando os dados do turno…
+                        {t("testChat.panelRefreshing")}
                     </p>
                 )}
                 {turno === null ? (
-                    <p className="poph-porque__vazio">
-                        Este turno não está na leitura atual da conversa. Atualize a conversa e abra de novo.
-                    </p>
+                    <p className="poph-porque__vazio">{t("testChat.panelEmpty")}</p>
                 ) : (
                     <ConteudoDoTurno turno={turno} numero={numero} />
                 )}
@@ -123,27 +104,22 @@ export function PainelPorQue({
 }
 
 function ConteudoDoTurno({ turno, numero }: { turno: TurnoTeste; numero: number | null }) {
+    const { translate: t } = useI18n();
     const jev = lerJevDoTurno(turno.jev);
     const recuperados = lerRecuperadosDoTurno(turno.retrieved);
     const ferramentas = lerFerramentasDoTurno(turno.tools);
     const chamadas = lerChamadasDeFerramenta(turno.tool_calls);
     const tempos = lerTemposDoTurno(turno.timings);
-    const inicio = dataHora(turno.started_at);
     const duracao = duracaoDoTurno(turno.started_at, turno.finished_at, tempos);
 
     return (
         <>
-            <CabecalhoDoTurno
-                numero={numero}
-                turno={turno}
-                inicio={inicio}
-                duracao={duracao}
-            />
+            <CabecalhoDoTurno numero={numero} turno={turno} duracao={duracao} />
 
             {turno.error && (
                 <section className="poph-porque__secao" aria-labelledby="porque-erro">
                     <h3 id="porque-erro" className="poph-porque__titulo">
-                        Erro registrado
+                        {t("testChat.panelErrorSection")}
                     </h3>
                     <p className="poph-porque__erro">{turno.error}</p>
                 </section>
@@ -160,14 +136,13 @@ function ConteudoDoTurno({ turno, numero }: { turno: TurnoTeste; numero: number 
 function CabecalhoDoTurno({
     numero,
     turno,
-    inicio,
     duracao,
 }: {
     numero: number | null;
     turno: TurnoTeste;
-    inicio: { texto: string; iso: string };
     duracao: number | null;
 }) {
+    const { translate: t, formatDateTime } = useI18n();
     const entrada = turno.input_tokens ?? null;
     const saida = turno.output_tokens ?? null;
     // Zero nos dois lados é o padrão de quem não chegou a usar o modelo (ou não gravou o uso): não é
@@ -177,43 +152,47 @@ function CabecalhoDoTurno({
     return (
         <section className="poph-porque__secao" aria-labelledby="porque-cabecalho">
             <h3 id="porque-cabecalho" className="poph-porque__titulo">
-                Resumo do turno
+                {t("testChat.panelSummary")}
             </h3>
             <dl className="poph-porque__resumo">
                 <div>
-                    <dt>Turno</dt>
-                    <dd>{numero !== null ? `#${numero}` : "não registrado"}</dd>
+                    <dt>{t("testChat.fieldTurn")}</dt>
+                    <dd>{numero !== null ? t("testChat.turnNumber", { number: numero }) : t("testChat.notRecorded")}</dd>
                 </div>
                 <div>
-                    <dt>Estado</dt>
+                    <dt>{t("testChat.fieldState")}</dt>
                     <dd>{rotuloDoEstadoDoTurno(turno.state)}</dd>
                 </div>
                 <div>
-                    <dt>Início</dt>
+                    <dt>{t("testChat.fieldStart")}</dt>
                     <dd>
-                        <time dateTime={inicio.iso}>{inicio.texto}</time>
+                        <time dateTime={new Date(turno.started_at).toISOString()}>{formatDateTime(turno.started_at)}</time>
                     </dd>
                 </div>
                 <div>
-                    <dt>Duração</dt>
+                    <dt>{t("testChat.fieldDuration")}</dt>
                     <dd>
                         {duracao !== null
                             ? formatarMs(duracao)
                             : turno.state === "running"
-                              ? "em andamento"
-                              : "não registrada"}
+                              ? t("testChat.durationRunning")
+                              : t("testChat.durationNotRecorded")}
                     </dd>
                 </div>
                 <div>
-                    <dt>Tokens do modelo</dt>
+                    <dt>{t("testChat.fieldModelTokens")}</dt>
                     <dd>
                         {total === null
-                            ? "não registrado"
-                            : `${formatarTokens(total)} (entrada ${formatarTokens(entrada)}, saída ${formatarTokens(saida)})`}
+                            ? t("testChat.notRecorded")
+                            : t("testChat.tokensBreakdown", {
+                                  total: formatarTokens(total),
+                                  input: formatarTokens(entrada),
+                                  output: formatarTokens(saida),
+                              })}
                     </dd>
                 </div>
                 <div>
-                    <dt>Custo</dt>
+                    <dt>{t("testChat.fieldCost")}</dt>
                     <dd>{formatarCustoMicros(turno.cost_micros ?? null)}</dd>
                 </div>
             </dl>
@@ -222,53 +201,58 @@ function CabecalhoDoTurno({
 }
 
 function SecaoJev({ jev }: { jev: JevDoTurno | null }) {
+    const { translate: t } = useI18n();
     return (
         <section className="poph-porque__secao" aria-labelledby="porque-jev">
             <h3 id="porque-jev" className="poph-porque__titulo">
-                Decisões do Jev por gate
+                {t("testChat.sectionJev")}
             </h3>
             {jev === null ? (
-                <p className="poph-porque__vazio">Nenhum gate decidiu neste turno.</p>
+                <p className="poph-porque__vazio">{t("testChat.jevEmpty")}</p>
             ) : (
                 <>
                     {jev.chamada && (
                         <dl className="poph-porque__linhas">
                             <div>
-                                <dt>Chamada ao Jev</dt>
+                                <dt>{t("testChat.fieldJevCall")}</dt>
                                 <dd>
                                     {jev.chamada.perguntas === null
-                                        ? "não registrado"
-                                        : `${jev.chamada.perguntas} pergunta(s), ${jev.chamada.decididasPorCache ?? 0} reaproveitada(s) do cache`}
+                                        ? t("testChat.notRecorded")
+                                        : t("testChat.jevCallSummary", {
+                                              questions: jev.chamada.perguntas,
+                                              cached: jev.chamada.decididasPorCache ?? 0,
+                                          })}
                                 </dd>
                             </div>
                             <div>
-                                <dt>Tempo do lote</dt>
+                                <dt>{t("testChat.fieldBatchTime")}</dt>
                                 <dd>{formatarMs(jev.chamada.ms)}</dd>
                             </div>
                             <div>
-                                <dt>Tokens do Jev</dt>
+                                <dt>{t("testChat.fieldJevTokens")}</dt>
                                 <dd>
                                     {jev.chamada.total !== null || jev.chamada.tokens !== null
                                         ? `${formatarTokens(jev.chamada.total ?? jev.chamada.tokens)}${
                                               jev.chamada.entrada !== null || jev.chamada.saida !== null
-                                                  ? ` (entrada ${formatarTokens(jev.chamada.entrada)}, saída ${formatarTokens(jev.chamada.saida)})`
+                                                  ? ` ${t("testChat.tokensBreakdownOnly", {
+                                                        input: formatarTokens(jev.chamada.entrada),
+                                                        output: formatarTokens(jev.chamada.saida),
+                                                    })}`
                                                   : ""
                                           }`
-                                        : "não informados pelo Jev"}
+                                        : t("testChat.jevTokensNotInformed")}
                                 </dd>
                             </div>
                             {jev.chamada.falha && (
                                 <div>
-                                    <dt>Falha da chamada</dt>
+                                    <dt>{t("testChat.fieldCallFailure")}</dt>
                                     <dd className="poph-porque__erro">{jev.chamada.falha}</dd>
                                 </div>
                             )}
                         </dl>
                     )}
 
-                    {jev.decisoes.length === 0 && (
-                        <p className="poph-porque__vazio">A chamada não decidiu nenhum gate.</p>
-                    )}
+                    {jev.decisoes.length === 0 && <p className="poph-porque__vazio">{t("testChat.jevNoDecisions")}</p>}
                     {jev.decisoes.map((decisao, indice) => (
                         <CartaoDoGate key={`${decisao.gate}-${indice}`} decisao={decisao} />
                     ))}
@@ -276,40 +260,36 @@ function SecaoJev({ jev }: { jev: JevDoTurno | null }) {
                     {jev.revisao && (
                         <article className="poph-porque__cartao" aria-labelledby="porque-g6">
                             <h4 id="porque-g6" className="poph-porque__subtitulo">
-                                Revisão da resposta antes do envio (G6)
+                                {t("testChat.g6Title")}
                             </h4>
                             <dl className="poph-porque__linhas">
                                 <div>
-                                    <dt>Escolha da revisão</dt>
-                                    <dd>{jev.revisao.escolha ?? "não registrado"}</dd>
+                                    <dt>{t("testChat.fieldG6Choice")}</dt>
+                                    <dd>{jev.revisao.escolha ?? t("testChat.notRecorded")}</dd>
                                 </div>
                                 <div>
-                                    <dt>Confiança</dt>
+                                    <dt>{t("testChat.fieldConfidence")}</dt>
                                     <dd>{formatarConfianca(jev.revisao.confianca)}</dd>
                                 </div>
                                 <div>
-                                    <dt>Reescreveu a resposta</dt>
-                                    <dd>{simNao(jev.revisao.regenerou)}</dd>
+                                    <dt>{t("testChat.fieldRewrote")}</dt>
+                                    <dd>{jev.revisao.regenerou ? t("testChat.yes") : t("testChat.no")}</dd>
                                 </div>
                                 {jev.revisao.segundaEscolha && (
                                     <div>
-                                        <dt>Escolha da segunda revisão</dt>
+                                        <dt>{t("testChat.fieldSecondChoice")}</dt>
                                         <dd>{jev.revisao.segundaEscolha}</dd>
                                     </div>
                                 )}
                                 <div>
-                                    <dt>Enviou a resposta segura</dt>
-                                    <dd>{simNao(jev.revisao.respostaSegura)}</dd>
+                                    <dt>{t("testChat.fieldSafeResponse")}</dt>
+                                    <dd>{jev.revisao.respostaSegura ? t("testChat.yes") : t("testChat.no")}</dd>
                                 </div>
                             </dl>
                         </article>
                     )}
 
-                    <p className="poph-porque__nao-gravado">
-                        Não gravado neste turno: o texto da pergunta enviada ao Jev e as probabilidades de cada
-                        opção. O tempo e os tokens são do lote inteiro, então gates decididos no mesmo lote
-                        mostram o mesmo valor.
-                    </p>
+                    <p className="poph-porque__nao-gravado">{t("testChat.jevNotRecorded")}</p>
                 </>
             )}
         </section>
@@ -317,6 +297,7 @@ function SecaoJev({ jev }: { jev: JevDoTurno | null }) {
 }
 
 function CartaoDoGate({ decisao }: { decisao: DecisaoDoGate }) {
+    const { translate: t } = useI18n();
     const id = `porque-gate-${decisao.gate}-${decisao.escolha ?? "sem"}`;
     return (
         <article className="poph-porque__cartao" aria-labelledby={id}>
@@ -325,37 +306,37 @@ function CartaoDoGate({ decisao }: { decisao: DecisaoDoGate }) {
             </h4>
             <dl className="poph-porque__linhas">
                 <div>
-                    <dt>Escolha que valeu</dt>
-                    <dd>{decisao.escolha ?? "nenhuma"}</dd>
+                    <dt>{t("testChat.fieldChosen")}</dt>
+                    <dd>{decisao.escolha ?? t("testChat.none")}</dd>
                 </div>
                 <div>
-                    <dt>Escolha do Jev</dt>
-                    <dd>{decisao.escolhaDoJev ?? "não registrado"}</dd>
+                    <dt>{t("testChat.fieldJevChoice")}</dt>
+                    <dd>{decisao.escolhaDoJev ?? t("testChat.notRecorded")}</dd>
                 </div>
                 <div>
-                    <dt>Origem</dt>
+                    <dt>{t("testChat.fieldOrigin")}</dt>
                     <dd>{rotuloDaOrigem(decisao.origem)}</dd>
                 </div>
                 <div>
-                    <dt>Confiança</dt>
+                    <dt>{t("testChat.fieldConfidence")}</dt>
                     <dd>{formatarConfianca(decisao.confianca)}</dd>
                 </div>
                 <div>
-                    <dt>Margem sobre a segunda opção</dt>
+                    <dt>{t("testChat.fieldMargin")}</dt>
                     <dd>{formatarMargem(decisao.margem)}</dd>
                 </div>
                 {decisao.motivo && (
                     <div>
-                        <dt>Motivo</dt>
+                        <dt>{t("testChat.fieldReason")}</dt>
                         <dd>{decisao.motivo}</dd>
                     </div>
                 )}
                 <div>
-                    <dt>Tempo do lote</dt>
+                    <dt>{t("testChat.fieldBatchTime")}</dt>
                     <dd>{formatarMs(decisao.ms)}</dd>
                 </div>
                 <div>
-                    <dt>Tokens do lote</dt>
+                    <dt>{t("testChat.fieldBatchTokens")}</dt>
                     <dd>{formatarTokens(decisao.tokens)}</dd>
                 </div>
             </dl>
@@ -364,33 +345,40 @@ function CartaoDoGate({ decisao }: { decisao: DecisaoDoGate }) {
 }
 
 function SecaoRecuperados({ recuperados }: { recuperados: RecuperadosDoTurno }) {
+    const { translate: t, formatNumber } = useI18n();
     const vazio = recuperados.trechos.length === 0 && recuperados.produtos.length === 0;
     return (
         <section className="poph-porque__secao" aria-labelledby="porque-recuperados">
             <h3 id="porque-recuperados" className="poph-porque__titulo">
-                Base e catálogo usados na resposta
+                {t("testChat.sectionRetrieved")}
             </h3>
             {vazio ? (
-                <p className="poph-porque__vazio">Nenhum trecho da base nem produto entrou na resposta deste turno.</p>
+                <p className="poph-porque__vazio">{t("testChat.retrievedEmpty")}</p>
             ) : (
                 <>
                     {recuperados.trechos.length > 0 && (
                         <>
-                            <h4 className="poph-porque__subtitulo">Base de conhecimento</h4>
+                            <h4 className="poph-porque__subtitulo">{t("testChat.subheadingKnowledge")}</h4>
                             <ul className="poph-porque__lista">
                                 {recuperados.trechos.map((trecho, indice) => (
                                     <li key={`${trecho.item ?? "trecho"}-${indice}`} className="poph-porque__item">
                                         <strong>{trecho.titulo}</strong>
                                         <span className="poph-porque__meta">
-                                            Grupo: {trecho.grupo || "não registrado"} · Similaridade:{" "}
-                                            {formatarConfianca(trecho.similaridade)} · Relevância (ranking):{" "}
-                                            {trecho.relevancia === null
-                                                ? "não registrada"
-                                                : trecho.relevancia.toFixed(4).replace(".", ",")}
+                                            {t("testChat.snippetMeta", {
+                                                group: trecho.grupo || t("testChat.notRecorded"),
+                                                similarity: formatarConfianca(trecho.similaridade),
+                                                relevance:
+                                                    trecho.relevancia === null
+                                                        ? t("testChat.notRecordedF")
+                                                        : formatNumber(trecho.relevancia, {
+                                                              minimumFractionDigits: 4,
+                                                              maximumFractionDigits: 4,
+                                                          }),
+                                            })}
                                         </span>
                                         {trecho.texto && (
                                             <details>
-                                                <summary>Ver o texto do trecho</summary>
+                                                <summary>{t("testChat.showSnippetText")}</summary>
                                                 <p className="poph-porque__trecho">{trecho.texto}</p>
                                             </details>
                                         )}
@@ -401,22 +389,24 @@ function SecaoRecuperados({ recuperados }: { recuperados: RecuperadosDoTurno }) 
                     )}
                     {recuperados.produtos.length > 0 && (
                         <>
-                            <h4 className="poph-porque__subtitulo">Catálogo de produtos</h4>
+                            <h4 className="poph-porque__subtitulo">{t("testChat.subheadingProducts")}</h4>
                             <ul className="poph-porque__lista">
                                 {recuperados.produtos.map((produto, indice) => {
                                     const preco =
                                         produto.precoTexto ??
                                         formatarPrecoCentavos(produto.precoCentavos) ??
-                                        "sem preço gravado";
+                                        t("testChat.priceNotRecorded");
                                     return (
                                         <li key={`${produto.produto ?? "produto"}-${indice}`} className="poph-porque__item">
                                             <strong>{produto.nome}</strong>
                                             <span className="poph-porque__meta">
-                                                Preço que o cliente viu: {preco}
+                                                {t("testChat.productPriceSeen", { price: preco })}
                                                 {produto.unidade ? ` · ${produto.unidade}` : ""}
                                             </span>
                                             {produto.condicoes && (
-                                                <span className="poph-porque__meta">Condições: {produto.condicoes}</span>
+                                                <span className="poph-porque__meta">
+                                                    {t("testChat.productConditions", { conditions: produto.condicoes })}
+                                                </span>
                                             )}
                                         </li>
                                     );
@@ -426,9 +416,7 @@ function SecaoRecuperados({ recuperados }: { recuperados: RecuperadosDoTurno }) 
                     )}
                 </>
             )}
-            <p className="poph-porque__nao-gravado">
-                Não gravado neste turno: link para a fonte oficial e indicação de corte por trecho.
-            </p>
+            <p className="poph-porque__nao-gravado">{t("testChat.retrievedNotRecorded")}</p>
         </section>
     );
 }
@@ -440,15 +428,16 @@ function SecaoFerramentas({
     chamadas: ChamadaDeFerramenta[];
     nomesAntigos: string[];
 }) {
+    const { translate: t } = useI18n();
     // Turno gravado antes da HR-47b: tem `tools` (só os nomes) e nenhum detalhe por chamada.
     const soNomes = chamadas.length === 0 && nomesAntigos.length > 0;
     return (
         <section className="poph-porque__secao" aria-labelledby="porque-ferramentas">
             <h3 id="porque-ferramentas" className="poph-porque__titulo">
-                Ferramentas chamadas
+                {t("testChat.sectionTools")}
             </h3>
             {chamadas.length > 0 && (
-                <ol className="poph-porque__lista" aria-label="Chamadas de ferramenta, na ordem em que aconteceram">
+                <ol className="poph-porque__lista" aria-label={t("testChat.toolCallsLabel")}>
                     {chamadas.map((chamada, indice) => (
                         <ChamadaDaFerramenta key={`${chamada.rodada ?? "r"}-${chamada.ordem ?? indice}`} chamada={chamada} />
                     ))}
@@ -456,16 +445,15 @@ function SecaoFerramentas({
             )}
             {soNomes && (
                 <>
-                    <p className="poph-porque__nota">
-                        Este turno foi gravado antes do registro detalhado: aparecem só os nomes. Estado, motivo,
-                        duração, argumentos e resultado não foram gravados.
-                    </p>
+                    <p className="poph-porque__nota">{t("testChat.legacyToolNote")}</p>
                     <ul className="poph-porque__lista">
                         {contarFerramentas(nomesAntigos).map((item) => (
                             <li key={item.nome} className="poph-porque__item">
                                 <strong>{item.nome}</strong>
                                 <span className="poph-porque__meta">
-                                    {item.vezes === 1 ? "chamada 1 vez" : `chamada ${item.vezes} vezes`}
+                                    {item.vezes === 1
+                                        ? t("testChat.toolCalledOnce")
+                                        : t("testChat.toolCalledMany", { count: item.vezes })}
                                 </span>
                             </li>
                         ))}
@@ -473,29 +461,34 @@ function SecaoFerramentas({
                 </>
             )}
             {chamadas.length === 0 && nomesAntigos.length === 0 && (
-                <p className="poph-porque__vazio">Nenhuma ferramenta foi chamada neste turno.</p>
+                <p className="poph-porque__vazio">{t("testChat.toolsEmpty")}</p>
             )}
-            <p className="poph-porque__nao-gravado">
-                Não gravado neste turno: a estrutura completa do retorno de cada ferramenta. Fica o texto que voltou
-                ao modelo, cortado em 1.024 caracteres quando passa disso.
-            </p>
+            <p className="poph-porque__nao-gravado">{t("testChat.toolsNotRecorded")}</p>
         </section>
     );
 }
 
 /** Uma chamada: executada e recusada têm estado com rótulo e cor diferentes, e a recusa mostra o motivo. */
 function ChamadaDaFerramenta({ chamada }: { chamada: ChamadaDeFerramenta }) {
+    const { translate: t, formatNumber } = useI18n();
     const recusada = chamada.estado === "recusada";
-    const rotuloDoEstado =
-        chamada.estado === "executada" ? "Executada" : recusada ? "Recusada, não rodou" : "Estado não registrado";
+    const stateLabel =
+        chamada.estado === "executada"
+            ? t("testChat.toolStateExecuted")
+            : recusada
+              ? t("testChat.toolStateRejected")
+              : t("testChat.toolStateUnrecorded");
     const tom = chamada.estado === "executada" ? "success" : recusada ? "attention" : "muted";
-    const rodada = chamada.rodada === null ? "rodada não registrada" : `rodada ${chamada.rodada + 1}`;
-    const ordem = chamada.ordem === null ? "" : `, chamada ${chamada.ordem}`;
+    const rodada =
+        chamada.rodada === null
+            ? t("testChat.roundUnrecorded")
+            : t("testChat.roundNumber", { number: formatNumber(chamada.rodada + 1) });
+    const ordem = chamada.ordem === null ? "" : t("testChat.callOrder", { number: formatNumber(chamada.ordem) });
     return (
         <li className={`poph-porque__item poph-porque__chamada${recusada ? " poph-porque__chamada--recusada" : ""}`}>
             <div className="poph-porque__cabecalho-chamada">
                 <strong>{chamada.nome}</strong>
-                <SofaStatusIndicator tone={tom}>{rotuloDoEstado}</SofaStatusIndicator>
+                <SofaStatusIndicator tone={tom}>{stateLabel}</SofaStatusIndicator>
             </div>
             <span className="poph-porque__meta">
                 {rodada}
@@ -503,33 +496,41 @@ function ChamadaDaFerramenta({ chamada }: { chamada: ChamadaDeFerramenta }) {
             </span>
             {recusada && (
                 <p className="poph-porque__motivo">
-                    Motivo: {rotuloDoMotivoRecusa(chamada.motivo)}. O modelo recebeu o erro abaixo.
+                    {t("testChat.rejectedReason", { reason: rotuloDoMotivoRecusa(chamada.motivo) })}
                 </p>
             )}
             <dl className="poph-porque__linhas">
                 <div>
-                    <dt>Duração</dt>
+                    <dt>{t("testChat.fieldDuration")}</dt>
                     <dd>{formatarDuracaoDeFerramenta(chamada.duracaoMs)}</dd>
                 </div>
                 <div>
-                    <dt>Argumentos</dt>
+                    <dt>{t("testChat.fieldArguments")}</dt>
                     <dd>
                         {chamada.argumentos === null ? (
-                            "não registrados"
+                            t("testChat.notRecordedPlural")
                         ) : (
-                            <pre className="poph-porque__texto" tabIndex={0} aria-label={`Argumentos de ${chamada.nome}`}>
+                            <pre
+                                className="poph-porque__texto"
+                                tabIndex={0}
+                                aria-label={t("testChat.argumentsLabel", { name: chamada.nome })}
+                            >
                                 {formatarConteudoDeFerramenta(chamada.argumentos)}
                             </pre>
                         )}
                     </dd>
                 </div>
                 <div>
-                    <dt>{recusada ? "Erro devolvido ao modelo" : "Resultado"}</dt>
+                    <dt>{recusada ? t("testChat.fieldErrorToModel") : t("testChat.fieldResult")}</dt>
                     <dd>
                         {chamada.resultado === null ? (
-                            "não registrado"
+                            t("testChat.notRecorded")
                         ) : (
-                            <pre className="poph-porque__texto" tabIndex={0} aria-label={`Resultado de ${chamada.nome}`}>
+                            <pre
+                                className="poph-porque__texto"
+                                tabIndex={0}
+                                aria-label={t("testChat.resultLabel", { name: chamada.nome })}
+                            >
                                 {formatarConteudoDeFerramenta(chamada.resultado)}
                             </pre>
                         )}
@@ -541,27 +542,28 @@ function ChamadaDaFerramenta({ chamada }: { chamada: ChamadaDeFerramenta }) {
 }
 
 function SecaoTempos({ tempos }: { tempos: TemposDoTurno | null }) {
+    const { translate: t } = useI18n();
     if (tempos === null) {
         return (
             <section className="poph-porque__secao" aria-labelledby="porque-tempos">
                 <h3 id="porque-tempos" className="poph-porque__titulo">
-                    Tempos por etapa
+                    {t("testChat.sectionTimes")}
                 </h3>
-                <p className="poph-porque__vazio">Os tempos não foram registrados neste turno.</p>
+                <p className="poph-porque__vazio">{t("testChat.timesEmpty")}</p>
             </section>
         );
     }
     const total = tempos.totalMs;
     const etapas: Array<{ rotulo: string; ms: number | null }> = [
-        { rotulo: "Fila", ms: tempos.filaMs },
-        { rotulo: "Montagem do contexto", ms: tempos.montagemMs },
-        { rotulo: "Até o primeiro texto", ms: tempos.primeiroTextoMs },
-        { rotulo: "Total do turno", ms: total },
+        { rotulo: t("testChat.timeQueue"), ms: tempos.filaMs },
+        { rotulo: t("testChat.timeAssembly"), ms: tempos.montagemMs },
+        { rotulo: t("testChat.timeFirstText"), ms: tempos.primeiroTextoMs },
+        { rotulo: t("testChat.timeTotal"), ms: total },
     ];
     return (
         <section className="poph-porque__secao" aria-labelledby="porque-tempos">
             <h3 id="porque-tempos" className="poph-porque__titulo">
-                Tempos por etapa
+                {t("testChat.sectionTimes")}
             </h3>
             <ul className="poph-porque__lista">
                 {etapas.map((etapa) => (
@@ -573,7 +575,11 @@ function SecaoTempos({ tempos }: { tempos: TemposDoTurno | null }) {
                                 className="poph-porque__barra"
                                 max={total}
                                 value={Math.min(etapa.ms, total)}
-                                aria-label={`${etapa.rotulo}: ${formatarMs(etapa.ms)} de ${formatarMs(total)}`}
+                                aria-label={t("testChat.timeBarLabel", {
+                                    label: etapa.rotulo,
+                                    value: formatarMs(etapa.ms),
+                                    total: formatarMs(total),
+                                })}
                             />
                         )}
                     </li>
@@ -581,21 +587,19 @@ function SecaoTempos({ tempos }: { tempos: TemposDoTurno | null }) {
             </ul>
             <dl className="poph-porque__linhas">
                 <div>
-                    <dt>Rodadas de ferramenta</dt>
-                    <dd>{tempos.rodadasFerramenta ?? "não registrado"}</dd>
+                    <dt>{t("testChat.fieldToolRounds")}</dt>
+                    <dd>{tempos.rodadasFerramenta ?? t("testChat.notRecorded")}</dd>
                 </div>
                 <div>
-                    <dt>Modelo usado</dt>
-                    <dd>{tempos.modelo ?? "não registrado"}</dd>
+                    <dt>{t("testChat.fieldModel")}</dt>
+                    <dd>{tempos.modelo ?? t("testChat.notRecorded")}</dd>
                 </div>
                 <div>
-                    <dt>Motivo do fim</dt>
+                    <dt>{t("testChat.fieldEndReason")}</dt>
                     <dd>{rotuloDoMotivoFim(tempos.motivoFim)}</dd>
                 </div>
             </dl>
-            <p className="poph-porque__nao-gravado">
-                Não gravado neste turno: o tempo da busca na base separado do resto da montagem.
-            </p>
+            <p className="poph-porque__nao-gravado">{t("testChat.timesNotRecorded")}</p>
         </section>
     );
 }

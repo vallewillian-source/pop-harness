@@ -7,10 +7,11 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { GuardaAlteracoesProvider } from "../componentes/GuardaAlteracoes";
+import { setLocale } from "../i18n";
 import { AgenteChatTeste } from "./AgenteChatTeste";
 
 const ORG = "org_1";
@@ -302,5 +303,59 @@ describe("leitura e troca de conversa", () => {
 
         await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
         await waitFor(() => expect(botao).toHaveFocus());
+    });
+});
+
+describe("I18N-10: o por quê da conversa em en-US", () => {
+    afterEach(() => {
+        act(() => setLocale("pt-BR"));
+    });
+
+    it("o botão, o painel e o turno falho falam inglês", async () => {
+        setLocale("en-US");
+        const usuario = userEvent.setup();
+        montar();
+
+        const botao = await screen.findByRole("button", { name: "See why (turn 1)" });
+        await usuario.click(botao);
+
+        const dialogo = await screen.findByRole("dialog", { name: "Why for turn 1" });
+        expect(within(dialogo).getByText("Prazo de entrega")).toBeInTheDocument();
+        expect(within(dialogo).getByText("Answered by Jev")).toBeInTheDocument();
+        expect(within(dialogo).getByText("consultar_base")).toBeInTheDocument();
+        expect(within(dialogo).getByText("Turn summary")).toBeInTheDocument();
+
+        await usuario.keyboard("{Escape}");
+        await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+        const linha = screen.getByText("Turn #2 · Failed").closest("div") as HTMLElement;
+        expect(within(linha).getByText("chamada ao LLM cancelada")).toBeInTheDocument();
+        await usuario.click(within(linha).getByRole("button", { name: "See why (turn 2)" }));
+
+        const dialogoDois = await screen.findByRole("dialog", { name: "Why for turn 2" });
+        expect(within(dialogoDois).getByText("No gate decided in this turn.")).toBeInTheDocument();
+    });
+
+    it("erro de leitura e Tentar de novo aparecem em inglês", async () => {
+        setLocale("en-US");
+        const usuario = userEvent.setup();
+        montar();
+        const botao = await screen.findByRole("button", { name: "See why (turn 1)" });
+
+        leituraConversa1 = () => json(500, { code: "internal", message: "falha ao ler o histórico", details: null });
+        await usuario.click(botao);
+
+        const dialogo = await screen.findByRole("dialog", { name: "Why for turn 1" });
+        expect(await within(dialogo).findByText("Could not refresh this turn's data")).toBeInTheDocument();
+        expect(within(dialogo).getByRole("button", { name: "Try again" })).toBeInTheDocument();
+
+        leituraConversa1 = () => json(200, historicoConversa1());
+        await usuario.click(within(dialogo).getByRole("button", { name: "Try again" }));
+        await waitFor(() =>
+            expect(within(screen.getByRole("dialog")).queryByText("Could not refresh this turn's data")).not.toBeInTheDocument(),
+        );
+
+        await usuario.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Close the why panel" }));
+        await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     });
 });
