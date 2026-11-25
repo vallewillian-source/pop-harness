@@ -32,11 +32,13 @@ import {
     listarItens,
     type ItemConhecimento,
 } from "../api/conhecimento";
+import { useI18n } from "../i18n";
+import type { TranslationKey } from "../i18n/catalog";
 
-const SITUACOES = [
-    { valor: "active", rotulo: "Ativo" },
-    { valor: "inactive", rotulo: "Inativo" },
-    { valor: "archived", rotulo: "Arquivado" },
+const SITUACOES: { valor: string; labelKey: TranslationKey }[] = [
+    { valor: "active", labelKey: "knowledge.statusActive" },
+    { valor: "inactive", labelKey: "knowledge.statusInactive" },
+    { valor: "archived", labelKey: "knowledge.statusArchived" },
 ];
 
 export type ModalItemProps = {
@@ -77,6 +79,7 @@ async function relerItem(
 }
 
 export function ModalItem({ org, grupo, aberto, aoFechar, item, aoSalvar }: ModalItemProps) {
+    const { translate: t } = useI18n();
     const editando = item !== null;
     const [titulo, setTitulo] = useState("");
     const [conteudo, setConteudo] = useState("");
@@ -108,17 +111,20 @@ export function ModalItem({ org, grupo, aberto, aoFechar, item, aoSalvar }: Moda
     function validar(): Erros {
         const novos: Erros = {};
         if (!titulo.trim()) {
-            novos.titulo = "informe o título do trecho";
+            novos.titulo = t("knowledge.itemTitleRequired");
         } else if (titulo.trim().length > LIMITE_TITULO_ITEM) {
-            novos.titulo = `o título aceita até ${LIMITE_TITULO_ITEM} caracteres`;
+            novos.titulo = t("knowledge.itemTitleTooLong", { limit: LIMITE_TITULO_ITEM });
         }
         if (!conteudo.trim()) {
-            novos.conteudo = "informe o conteúdo do trecho";
+            novos.conteudo = t("knowledge.itemContentRequired");
         } else if (caracteres > LIMITE_CONTEUDO_ITEM) {
-            novos.conteudo = `o conteúdo aceita até ${LIMITE_CONTEUDO_ITEM} caracteres; este tem ${caracteres}`;
+            novos.conteudo = t("knowledge.itemContentTooLong", {
+                limit: LIMITE_CONTEUDO_ITEM,
+                count: caracteres,
+            });
         }
         if (posicao.trim() && !Number.isInteger(Number(posicao))) {
-            novos.ordem = "a ordem precisa ser um número inteiro";
+            novos.ordem = t("knowledge.itemOrderInvalid");
         }
         return novos;
     }
@@ -134,7 +140,10 @@ export function ModalItem({ org, grupo, aberto, aoFechar, item, aoSalvar }: Moda
             setErros({ [alvo]: motivo });
             return;
         }
-        setErroGeral(`${falha.message} (código ${falha.codigo})`);
+        setErroGeral(t("knowledge.apiErrorWithCode", {
+            message: falha.message,
+            code: falha.codigo,
+        }));
     }
 
     async function salvar(evento?: FormEvent) {
@@ -180,9 +189,9 @@ export function ModalItem({ org, grupo, aberto, aoFechar, item, aoSalvar }: Moda
                 }
                 if (typeof versaoAtual === "number") setVersao(versaoAtual);
                 setConflito(
-                    `Outra pessoa salvou este trecho antes de você${
-                        typeof versaoAtual === "number" ? ` (agora na versão ${versaoAtual})` : ""
-                    }. O que você digitou foi mantido: revise e salve de novo.`,
+                    typeof versaoAtual === "number"
+                        ? t("knowledge.itemConflictWithVersion", { version: versaoAtual })
+                        : t("knowledge.itemConflict"),
                 );
                 return;
             }
@@ -190,7 +199,7 @@ export function ModalItem({ org, grupo, aberto, aoFechar, item, aoSalvar }: Moda
                 mostrarErroDaApi(falha);
                 return;
             }
-            setErroGeral("falha inesperada ao salvar o trecho");
+            setErroGeral(t("knowledge.itemSaveUnexpected"));
         } finally {
             setEnviando(false);
         }
@@ -202,19 +211,19 @@ export function ModalItem({ org, grupo, aberto, aoFechar, item, aoSalvar }: Moda
             onOpenChange={(novo) => {
                 if (!novo && !enviando) aoFechar();
             }}
-            title={editando ? "Editar trecho" : "Novo trecho"}
+            title={editando ? t("knowledge.itemEditTitle") : t("knowledge.itemCreateTitle")}
             description={
                 editando
-                    ? "Alterando o conteúdo que o agente consulta. O salvamento usa a versão lida."
-                    : "Escreva o conteúdo como ele deve ser lido pelo agente: uma resposta completa, sem depender do resto da página."
+                    ? t("knowledge.itemEditDescription")
+                    : t("knowledge.itemCreateDescription")
             }
-            closeLabel="Fechar formulário de trecho"
+            closeLabel={t("knowledge.itemFormClose")}
             size="lg"
             id="poph-formulario-item"
             footer={
                 <>
                     <SofaButton variant="secondary" disabled={enviando} onClick={aoFechar}>
-                        Cancelar
+                        {t("common.cancel")}
                     </SofaButton>
                     <SofaButton
                         variant="primary"
@@ -222,7 +231,9 @@ export function ModalItem({ org, grupo, aberto, aoFechar, item, aoSalvar }: Moda
                         onClick={() => void salvar()}
                         loading={enviando}
                     >
-                        {editando ? "Salvar alterações" : "Criar trecho"}
+                        {editando
+                            ? t("knowledge.saveChanges")
+                            : t("knowledge.itemCreateSubmit")}
                     </SofaButton>
                 </>
             }
@@ -235,19 +246,19 @@ export function ModalItem({ org, grupo, aberto, aoFechar, item, aoSalvar }: Moda
                 noValidate
             >
                 {conflito && (
-                    <SofaBanner tone="warn" title="Versão desatualizada">
+                    <SofaBanner tone="warn" title={t("knowledge.conflictTitle")}>
                         {conflito}
                     </SofaBanner>
                 )}
                 {erroGeral && (
-                    <SofaBanner tone="danger" title="Não foi possível salvar">
+                    <SofaBanner tone="danger" title={t("knowledge.saveFailedTitle")}>
                         {erroGeral}
                     </SofaBanner>
                 )}
 
                 <SofaField
-                    label="Título"
-                    hint={`Como o trecho aparece na lista. Até ${LIMITE_TITULO_ITEM} caracteres.`}
+                    label={t("knowledge.itemTitleLabel")}
+                    hint={t("knowledge.itemTitleHint", { limit: LIMITE_TITULO_ITEM })}
                     error={erros.titulo}
                     required
                     htmlFor="poph-item-titulo"
@@ -263,8 +274,8 @@ export function ModalItem({ org, grupo, aberto, aoFechar, item, aoSalvar }: Moda
                 </SofaField>
 
                 <SofaField
-                    label="Conteúdo"
-                    hint={`Até ${LIMITE_CONTEUDO_ITEM} caracteres. É o texto que o agente recebe na consulta.`}
+                    label={t("knowledge.itemContentLabel")}
+                    hint={t("knowledge.itemContentHint", { limit: LIMITE_CONTEUDO_ITEM })}
                     error={erros.conteudo}
                     required
                     htmlFor="poph-item-conteudo"
@@ -290,13 +301,16 @@ export function ModalItem({ org, grupo, aberto, aoFechar, item, aoSalvar }: Moda
                                 : undefined,
                     }}
                 >
-                    {caracteres} / {LIMITE_CONTEUDO_ITEM} caracteres
+                    {t("knowledge.itemCounter", {
+                        count: caracteres,
+                        limit: LIMITE_CONTEUDO_ITEM,
+                    })}
                 </div>
 
                 <div className="poph-duas-colunas">
                     <SofaField
-                        label="Tags"
-                        hint="Opcional. Separe por vírgula; ajudam a busca híbrida."
+                        label={t("knowledge.tagsLabel")}
+                        hint={t("knowledge.tagsHint")}
                         htmlFor="poph-item-tags"
                     >
                         {(controle) => (
@@ -309,8 +323,8 @@ export function ModalItem({ org, grupo, aberto, aoFechar, item, aoSalvar }: Moda
                         )}
                     </SofaField>
                     <SofaField
-                        label="Ordem"
-                        hint="Número inteiro; menor aparece antes."
+                        label={t("knowledge.orderLabel")}
+                        hint={t("knowledge.orderHint")}
                         error={erros.ordem}
                         htmlFor="poph-item-ordem"
                     >
@@ -327,8 +341,8 @@ export function ModalItem({ org, grupo, aberto, aoFechar, item, aoSalvar }: Moda
 
                 {editando && (
                     <SofaField
-                        label="Situação"
-                        hint="Trecho inativo sai da busca depois da próxima sincronização; o texto continua no banco."
+                        label={t("knowledge.statusLabel")}
+                        hint={t("knowledge.itemStatusHint")}
                         htmlFor="poph-item-situacao"
                     >
                         {(controle) => (
@@ -339,7 +353,7 @@ export function ModalItem({ org, grupo, aberto, aoFechar, item, aoSalvar }: Moda
                             >
                                 {SITUACOES.map((opcao) => (
                                     <option key={opcao.valor} value={opcao.valor}>
-                                        {opcao.rotulo}
+                                        {t(opcao.labelKey)}
                                     </option>
                                 ))}
                             </SofaSelect>

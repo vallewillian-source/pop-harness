@@ -62,11 +62,13 @@ import { DialogoExclusao } from "../componentes/DialogoExclusao";
 import { useGuardaDeAlteracoes } from "../componentes/GuardaAlteracoes";
 import { ModalGrupo } from "../componentes/ModalGrupo";
 import { ModalItem } from "../componentes/ModalItem";
+import { translate, useI18n } from "../i18n";
+import type { TranslationKey } from "../i18n/catalog";
 import "../estilos/conhecimento.css";
 
 type EstadoDoIndice =
     | { tipo: "nao-verificado" }
-    | { tipo: "atualizado"; origem: string; relatorio?: RelatorioIndexacao }
+    | { tipo: "atualizado"; origem: TranslationKey; relatorio?: RelatorioIndexacao }
     | { tipo: "pendente"; mensagem: string };
 
 /** Classe do ponto de status (6 px + texto), no padrão de Orgs e OrgPainel. */
@@ -77,29 +79,29 @@ function classeDaSituacao(situacao: string): string {
 function rotuloDaSituacao(situacao: string): string {
     switch (situacao) {
         case "active":
-            return "Ativo";
+            return translate("knowledge.statusActive");
         case "inactive":
-            return "Inativo";
+            return translate("knowledge.statusInactive");
         case "archived":
-            return "Arquivado";
+            return translate("knowledge.statusArchived");
         default:
             return situacao;
     }
 }
 
-function plural(quantidade: number, singular: string, plurala: string): string {
-    return `${quantidade} ${quantidade === 1 ? singular : plurala}`;
+function countLabel(count: number, oneKey: TranslationKey, manyKey: TranslationKey): string {
+    return translate(count === 1 ? oneKey : manyKey, { count });
 }
 
 /** Estado do índice na linguagem do cabeçalho (ponto + texto, sem pílula). */
 function rotuloDoIndice(indice: EstadoDoIndice): string {
     switch (indice.tipo) {
         case "atualizado":
-            return "Índice atualizado";
+            return translate("knowledge.indexUpdated");
         case "pendente":
-            return "Reindexação pendente";
+            return translate("knowledge.indexPending");
         default:
-            return "Índice não verificado";
+            return translate("knowledge.indexUnverified");
     }
 }
 
@@ -117,12 +119,32 @@ function classeDoIndice(indice: EstadoDoIndice): string {
 /** Resumo do relatório do reindex em uma linha. */
 function resumoDoRelatorio(relatorio: RelatorioIndexacao): string {
     return [
-        plural(relatorio.itens_novos, "novo", "novos"),
-        `${relatorio.itens_alterados} alterado${relatorio.itens_alterados === 1 ? "" : "s"}`,
-        `${relatorio.itens_inalterados} inalterado${relatorio.itens_inalterados === 1 ? "" : "s"}`,
-        `${relatorio.itens_removidos} removido${relatorio.itens_removidos === 1 ? "" : "s"}`,
-        plural(relatorio.embeddings_gerados, "embedding gerado", "embeddings gerados"),
-        plural(relatorio.trechos_gravados, "trecho indexado", "trechos indexados"),
+        countLabel(relatorio.itens_novos, "knowledge.reindexNewOne", "knowledge.reindexNewMany"),
+        countLabel(
+            relatorio.itens_alterados,
+            "knowledge.reindexChangedOne",
+            "knowledge.reindexChangedMany",
+        ),
+        countLabel(
+            relatorio.itens_inalterados,
+            "knowledge.reindexUnchangedOne",
+            "knowledge.reindexUnchangedMany",
+        ),
+        countLabel(
+            relatorio.itens_removidos,
+            "knowledge.reindexRemovedOne",
+            "knowledge.reindexRemovedMany",
+        ),
+        countLabel(
+            relatorio.embeddings_gerados,
+            "knowledge.reindexEmbeddingsOne",
+            "knowledge.reindexEmbeddingsMany",
+        ),
+        countLabel(
+            relatorio.trechos_gravados,
+            "knowledge.reindexChunksOne",
+            "knowledge.reindexChunksMany",
+        ),
     ].join(" · ");
 }
 
@@ -134,6 +156,7 @@ function avisoDeIndice(resposta: { index_warning?: string | null }): string | nu
 }
 
 export function AgenteConhecimento() {
+    const { translate: t } = useI18n();
     const { orgId = "", agentId = "" } = useParams();
     const guarda = useGuardaDeAlteracoes();
 
@@ -202,13 +225,13 @@ export function AgenteConhecimento() {
             });
         } catch (falha) {
             setErroGrupos(
-                falha instanceof Error ? falha.message : "falha ao carregar os grupos da base",
+                falha instanceof Error ? falha.message : t("knowledge.groupsLoadFailed"),
             );
             setGrupos([]);
         } finally {
             setCarregandoGrupos(false);
         }
-    }, [orgId, agentId]);
+    }, [orgId, agentId, t]);
 
     const carregarItens = useCallback(
         async (grupo: string | null) => {
@@ -223,14 +246,14 @@ export function AgenteConhecimento() {
                 setItens(await listarItens(orgId, grupo));
             } catch (falha) {
                 setErroItens(
-                    falha instanceof Error ? falha.message : "falha ao carregar os trechos",
+                    falha instanceof Error ? falha.message : t("knowledge.itemsLoadFailed"),
                 );
                 setItens([]);
             } finally {
                 setCarregandoItens(false);
             }
         },
-        [orgId],
+        [orgId, t],
     );
 
     const carregar = useCallback(async () => {
@@ -241,14 +264,14 @@ export function AgenteConhecimento() {
             setAgente(dados);
         } catch (falha) {
             setErroDeCarga(
-                falha instanceof Error ? falha.message : "falha ao carregar o agente",
+                falha instanceof Error ? falha.message : t("knowledge.agentLoadFailed"),
             );
             setCarregando(false);
             return;
         }
         setCarregando(false);
         void carregarGrupos();
-    }, [orgId, agentId, carregarGrupos]);
+    }, [orgId, agentId, carregarGrupos, t]);
 
     useEffect(() => {
         void carregar();
@@ -269,7 +292,7 @@ export function AgenteConhecimento() {
     }, [carregarItens, selecionado]);
 
     /** Depois de uma escrita: atualiza o estado do índice com o que o servidor disse. */
-    function registrarIndice(aviso: string | null, origem: string) {
+    function registrarIndice(aviso: string | null, origem: TranslationKey) {
         setIndice(
             aviso
                 ? { tipo: "pendente", mensagem: aviso }
@@ -289,10 +312,10 @@ export function AgenteConhecimento() {
             }
             await carregarGrupos();
             // O vínculo sincroniza o índice do agente; relê o detalhe para saber se atrasou.
-            setIndice({ tipo: "atualizado", origem: "vínculo do grupo atualizado" });
+            setIndice({ tipo: "atualizado", origem: "knowledge.indexOriginLink" });
         } catch (falha) {
             setErroDeVinculo(
-                falha instanceof Error ? falha.message : "falha ao mudar o vínculo do grupo",
+                falha instanceof Error ? falha.message : t("knowledge.linkFailed"),
             );
         } finally {
             setEmVinculo(null);
@@ -306,17 +329,17 @@ export function AgenteConhecimento() {
             const resultado = await reindexarAgente(orgId, agentId);
             setIndice({
                 tipo: "atualizado",
-                origem: "reindexação concluída agora",
+                origem: "knowledge.indexOriginReindexed",
                 relatorio: resultado.indexed,
             });
         } catch (falha) {
             if (falha instanceof ErroApi && falha.codigo === "embedding_unavailable") {
                 setErroReindex(
-                    `${falha.message}. O índice não mudou. Instale o modelo de embedding na instância e repita.`,
+                    t("knowledge.embeddingUnavailable", { message: falha.message }),
                 );
             } else {
                 setErroReindex(
-                    falha instanceof Error ? falha.message : "falha ao reindexar o agente",
+                    falha instanceof Error ? falha.message : t("knowledge.reindexFailed"),
                 );
             }
         } finally {
@@ -337,7 +360,7 @@ export function AgenteConhecimento() {
         // Só há índice a sincronizar se este agente usa o grupo; sem vínculo, nada muda.
         // A resposta do `PATCH` não traz `agents`, então o vínculo vem do estado anterior.
         if (vinculado) {
-            registrarIndice(avisoDeIndice(grupo), "grupo gravado");
+            registrarIndice(avisoDeIndice(grupo), "knowledge.indexOriginGroupSaved");
         }
         void carregarGrupos();
     }
@@ -351,7 +374,7 @@ export function AgenteConhecimento() {
         });
         // Trecho de grupo não vinculado a este agente não entra no índice dele.
         if (grupoAberto?.agents?.includes(agentId)) {
-            registrarIndice(avisoDeIndice(item), "trecho gravado");
+            registrarIndice(avisoDeIndice(item), "knowledge.indexOriginItemSaved");
         }
         if (selecionado) void carregarItens(selecionado);
     }
@@ -368,11 +391,11 @@ export function AgenteConhecimento() {
             if (grupoAberto?.agents?.includes(agentId)) {
                 setIndice({
                     tipo: "pendente",
-                    mensagem: "trecho removido; o índice precisa ser sincronizado",
+                    mensagem: t("knowledge.indexItemRemoved"),
                 });
             }
         } catch (falha) {
-            setErroDeItem(falha instanceof Error ? falha.message : "falha ao excluir o trecho");
+            setErroDeItem(falha instanceof Error ? falha.message : t("knowledge.itemDeleteFailed"));
         } finally {
             setRemovendoItem(false);
         }
@@ -398,17 +421,17 @@ export function AgenteConhecimento() {
         return (
             <div className="poph-pagina">
                 <SofaErrorState
-                    title="Não consegui carregar a base do agente"
-                    description="A instância não respondeu à leitura do agente. Tente de novo; se persistir, confira a saúde do servidor."
+                    title={t("knowledge.loadErrorTitle")}
+                    description={t("knowledge.loadErrorDescription")}
                     details={erroDeCarga}
-                    retry={{ label: "Tentar de novo", onClick: () => void carregar() }}
+                    retry={{ label: t("knowledge.retry"), onClick: () => void carregar() }}
                     action={
                         <SofaButton
                             variant="subtle"
                             icon={<IconArrowLeft aria-hidden="true" />}
                             onClick={() => guarda.tentarNavegar(`/orgs/${orgId}/agents`)}
                         >
-                            Voltar para agentes
+                            {t("knowledge.backToAgents")}
                         </SofaButton>
                     }
                 />
@@ -426,20 +449,20 @@ export function AgenteConhecimento() {
         return [
             {
                 id: "editar",
-                label: "Editar",
+                label: t("knowledge.edit"),
                 icon: <IconPencil size={14} aria-hidden="true" />,
                 onSelect: () => setModalGrupo({ aberto: true, grupo }),
             },
             {
                 id: "vinculo",
-                label: vinculado ? "Desvincular" : "Vincular",
+                label: vinculado ? t("knowledge.unlink") : t("knowledge.link"),
                 icon: <IconLink size={14} aria-hidden="true" />,
                 disabled: emVinculo === grupo.id,
                 onSelect: () => void alternarVinculo(grupo),
             },
             {
                 id: "excluir",
-                label: "Excluir",
+                label: t("knowledge.remove"),
                 icon: <IconTrash size={14} aria-hidden="true" />,
                 danger: true,
                 onSelect: () => setGrupoParaExcluir(grupo),
@@ -451,13 +474,13 @@ export function AgenteConhecimento() {
         return [
             {
                 id: "editar",
-                label: "Editar",
+                label: t("knowledge.edit"),
                 icon: <IconPencil size={14} aria-hidden="true" />,
                 onSelect: () => setModalItem({ aberto: true, item: trecho }),
             },
             {
                 id: "excluir",
-                label: "Excluir",
+                label: t("knowledge.remove"),
                 icon: <IconTrash size={14} aria-hidden="true" />,
                 danger: true,
                 onSelect: () => setItemParaExcluir(trecho),
@@ -474,7 +497,7 @@ export function AgenteConhecimento() {
                     slug={agente.slug}
                     situacao={agente.status}
                     organizacao={nomeDaOrg}
-                    descricao="trechos indexados que o agente consulta antes de responder"
+                    descricao={t("knowledge.headerDescription")}
                     acoes={
                         <>
                             <span className={`poph-status ${classeDoIndice(indice)}`}>
@@ -487,7 +510,7 @@ export function AgenteConhecimento() {
                                 loading={reindexando}
                                 onClick={() => void reindexar()}
                             >
-                                Reindexar agente
+                                {t("knowledge.reindexAgent")}
                             </SofaButton>
                         </>
                     }
@@ -496,65 +519,59 @@ export function AgenteConhecimento() {
                 <AbasDoAgente org={orgId} agente={agentId} ativa="knowledge-base" nome={agente.name} model={agente.model ?? null} />
 
                 {erroDeVinculo && (
-                    <SofaBanner tone="danger" title="Não foi possível mudar o vínculo">
+                    <SofaBanner tone="danger" title={t("knowledge.linkErrorTitle")}>
                         {erroDeVinculo}
                     </SofaBanner>
                 )}
 
                 <section className="poph-secao">
                     <div className="poph-conhecimento__titulo-bloco">
-                        <h2 className="poph-secao__titulo">Índice de busca do agente</h2>
+                        <h2 className="poph-secao__titulo">{t("knowledge.indexTitle")}</h2>
                         <p className="poph-conhecimento__ajuda">
-                            A base é consultada por busca híbrida (vetor + texto). Gravar um trecho
-                            já tenta sincronizar o índice.
+                            {t("knowledge.indexHelp")}
                         </p>
                     </div>
 
                     {indice.tipo === "nao-verificado" && (
                         <p className="poph-conhecimento__texto">
-                            A API administrativa não expõe o estado do índice (não há rota de
-                            status nem contagem de trechos indexados). Ele aparece aqui depois de
-                            uma gravação ou de uma reindexação; para o estado real a qualquer
-                            momento, use <code>poph kb status --offline</code> na instância.
+                            {t("knowledge.indexUnverifiedBefore")}
+                            <code>{t("knowledge.indexCommand")}</code>
+                            {t("knowledge.indexUnverifiedAfter")}
                         </p>
                     )}
 
                     {indice.tipo === "atualizado" && (
                         <p className="poph-conhecimento__texto">
-                            {indice.origem}.{" "}
+                            {t(indice.origem)}.{" "}
                             {indice.relatorio
                                 ? resumoDoRelatorio(indice.relatorio)
-                                : "A sincronização rodou no servidor sem aviso de atraso."}
+                                : t("knowledge.syncNoWarning")}
                         </p>
                     )}
 
                     {indice.tipo === "pendente" && (
-                        <SofaBanner tone="warn" title="Reindexação necessária">
-                            {indice.mensagem}. Clique em “Reindexar agente” para reconstruir o
-                            índice deste agente.
+                        <SofaBanner tone="warn" title={t("knowledge.indexPendingTitle")}>
+                            {t("knowledge.indexPendingText", { message: indice.mensagem })}
                         </SofaBanner>
                     )}
 
                     {erroReindex && (
-                        <SofaBanner tone="danger" title="A reindexação não concluiu">
+                        <SofaBanner tone="danger" title={t("knowledge.reindexErrorTitle")}>
                             {erroReindex}
                         </SofaBanner>
                     )}
 
                     <p className="poph-mono-mudo poph-conhecimento__nota">
-                        A reindexação é síncrona: a tela espera a resposta do servidor, que pode
-                        demorar (a primeira carrega o modelo de embedding). Não feche a aba durante
-                        o processo.
+                        {t("knowledge.reindexNote")}
                     </p>
                 </section>
 
                 <section className="poph-secao">
                     <div className="poph-conhecimento__cabecalho-secao">
                         <div className="poph-conhecimento__titulo-bloco">
-                            <h2 className="poph-secao__titulo">Grupos da base</h2>
+                            <h2 className="poph-secao__titulo">{t("knowledge.groupsTitle")}</h2>
                             <p className="poph-conhecimento__ajuda">
-                                Grupos ligados a este agente são consultados por ele. Grupos sem
-                                vínculo existem na organização e não são usados.
+                                {t("knowledge.groupsHelp")}
                             </p>
                         </div>
                         <div className="poph-conhecimento__acoes-secao">
@@ -564,14 +581,14 @@ export function AgenteConhecimento() {
                                 onClick={() => void carregarGrupos()}
                                 loading={carregandoGrupos && grupos.length > 0}
                             >
-                                Atualizar
+                                {t("knowledge.refresh")}
                             </SofaButton>
                             <SofaButton
                                 variant="primary"
                                 icon={<IconPlus aria-hidden="true" />}
                                 onClick={() => setModalGrupo({ aberto: true, grupo: null })}
                             >
-                                Novo grupo
+                                {t("knowledge.newGroup")}
                             </SofaButton>
                         </div>
                     </div>
@@ -580,26 +597,26 @@ export function AgenteConhecimento() {
                         <SofaSkeleton lines={5} />
                     ) : erroGrupos ? (
                         <SofaErrorState
-                            title="Não consegui carregar os grupos"
-                            description="A lista de grupos não respondeu. Tente de novo."
+                            title={t("knowledge.groupsErrorTitle")}
+                            description={t("knowledge.groupsErrorDescription")}
                             details={erroGrupos}
                             retry={{
-                                label: "Tentar de novo",
+                                label: t("knowledge.retry"),
                                 onClick: () => void carregarGrupos(),
                             }}
                         />
                     ) : grupos.length === 0 ? (
                         <SofaEmptyState
                             icon={<IconFolder aria-hidden="true" />}
-                            title="Nenhum grupo de conhecimento"
-                            description="Crie o primeiro grupo (por exemplo, “Políticas da loja”) e escreva os trechos que o agente deve consultar."
+                            title={t("knowledge.groupsEmptyTitle")}
+                            description={t("knowledge.groupsEmptyDescription")}
                             action={
                                 <SofaButton
                                     variant="primary"
                                     icon={<IconPlus aria-hidden="true" />}
                                     onClick={() => setModalGrupo({ aberto: true, grupo: null })}
                                 >
-                                    Criar primeiro grupo
+                                    {t("knowledge.createFirstGroup")}
                                 </SofaButton>
                             }
                         />
@@ -607,15 +624,15 @@ export function AgenteConhecimento() {
                         <div
                             className="poph-tabela poph-conhecimento__grupos"
                             role="table"
-                            aria-label="Grupos da base"
+                            aria-label={t("knowledge.groupsTableLabel")}
                         >
                             <div className="poph-tabela__cabecalho" role="row">
-                                <span role="columnheader">Grupo</span>
-                                <span role="columnheader">Vínculo</span>
-                                <span role="columnheader">Situação</span>
-                                <span role="columnheader">Versão</span>
+                                <span role="columnheader">{t("knowledge.columnGroup")}</span>
+                                <span role="columnheader">{t("knowledge.columnLink")}</span>
+                                <span role="columnheader">{t("knowledge.columnStatus")}</span>
+                                <span role="columnheader">{t("knowledge.columnVersion")}</span>
                                 <span role="columnheader" className="poph-tabela__celula--acoes">
-                                    Ações
+                                    {t("knowledge.columnActions")}
                                 </span>
                             </div>
                             {grupos.map((grupo) => {
@@ -665,7 +682,7 @@ export function AgenteConhecimento() {
                                                         : "poph-conhecimento__vinculo poph-conhecimento__vinculo--fraco"
                                                 }
                                             >
-                                                {vinculado ? "usado por este agente" : "sem vínculo"}
+                                                {vinculado ? t("knowledge.linkedToAgent") : t("knowledge.noLink")}
                                             </span>
                                         </div>
                                         <div role="cell">
@@ -683,11 +700,11 @@ export function AgenteConhecimento() {
                                             onClick={(evento) => evento.stopPropagation()}
                                         >
                                             <SofaMenu
-                                                label={`Ações de ${grupo.name}`}
+                                                label={t("knowledge.actionsOf", { name: grupo.name })}
                                                 align="end"
                                                 trigger={
                                                     <SofaIconButton
-                                                        label={`Ações de ${grupo.name}`}
+                                                        label={t("knowledge.actionsOf", { name: grupo.name })}
                                                         size={28}
                                                         loading={emVinculo === grupo.id}
                                                     >
@@ -711,28 +728,37 @@ export function AgenteConhecimento() {
                     <div className="poph-conhecimento__cabecalho-secao">
                         <div className="poph-conhecimento__titulo-bloco">
                             <h2 className="poph-secao__titulo">
-                                {grupoAberto ? `Trechos · ${grupoAberto.name}` : "Trechos do grupo"}
+                                {grupoAberto
+                                    ? t("knowledge.itemsTitleWithGroup", { group: grupoAberto.name })
+                                    : t("knowledge.itemsTitle")}
                             </h2>
                             <p className="poph-conhecimento__ajuda">
                                 {grupoAberto
-                                    ? "Cada trecho é enviado ao agente como um bloco de consulta. Até 1000 caracteres por trecho."
-                                    : "Escolha um grupo acima para ver e editar os trechos."}
+                                    ? t("knowledge.itemsHelp")
+                                    : t("knowledge.itemsHelpNoGroup")}
                             </p>
                         </div>
                         {grupoAberto && (
                             <div className="poph-conhecimento__acoes-secao">
                                 <span
                                     className="poph-conhecimento__contagem"
-                                    aria-label="trechos no grupo"
+                                    aria-label={t("knowledge.itemsCountLabel")}
                                 >
-                                    {carregandoItens ? "…" : plural(itens.length, "trecho", "trechos")}
+                                    {carregandoItens
+                                        ? "…"
+                                        : t(
+                                              itens.length === 1
+                                                  ? "knowledge.itemsCountOne"
+                                                  : "knowledge.itemsCountMany",
+                                              { count: itens.length },
+                                          )}
                                 </span>
                                 <SofaButton
                                     variant="primary"
                                     icon={<IconPlus aria-hidden="true" />}
                                     onClick={() => setModalItem({ aberto: true, item: null })}
                                 >
-                                    Novo trecho
+                                    {t("knowledge.newItem")}
                                 </SofaButton>
                             </div>
                         )}
@@ -741,33 +767,33 @@ export function AgenteConhecimento() {
                     {!grupoAberto ? (
                         <SofaEmptyState
                             icon={<IconDatabase aria-hidden="true" />}
-                            title="Nenhum grupo selecionado"
-                            description="Os trechos aparecem aqui quando um grupo é aberto."
+                            title={t("knowledge.itemsNoGroupTitle")}
+                            description={t("knowledge.itemsNoGroupDescription")}
                         />
                     ) : carregandoItens && itens.length === 0 ? (
                         <SofaSkeleton lines={5} />
                     ) : erroItens ? (
                         <SofaErrorState
-                            title="Não consegui carregar os trechos"
-                            description="A lista de trechos do grupo não respondeu. Tente de novo."
+                            title={t("knowledge.itemsErrorTitle")}
+                            description={t("knowledge.itemsErrorDescription")}
                             details={erroItens}
                             retry={{
-                                label: "Tentar de novo",
+                                label: t("knowledge.retry"),
                                 onClick: () => void carregarItens(selecionado),
                             }}
                         />
                     ) : itens.length === 0 ? (
                         <SofaEmptyState
                             icon={<IconDatabase aria-hidden="true" />}
-                            title="Grupo sem trechos"
-                            description="Escreva o primeiro trecho: uma resposta completa, como o agente deve dizer ao cliente."
+                            title={t("knowledge.itemsEmptyTitle")}
+                            description={t("knowledge.itemsEmptyDescription")}
                             action={
                                 <SofaButton
                                     variant="primary"
                                     icon={<IconPlus aria-hidden="true" />}
                                     onClick={() => setModalItem({ aberto: true, item: null })}
                                 >
-                                    Criar primeiro trecho
+                                    {t("knowledge.createFirstItem")}
                                 </SofaButton>
                             }
                         />
@@ -775,14 +801,14 @@ export function AgenteConhecimento() {
                         <div
                             className="poph-tabela poph-conhecimento__trechos"
                             role="table"
-                            aria-label="Trechos do grupo"
+                            aria-label={t("knowledge.itemsTableLabel")}
                         >
                             <div className="poph-tabela__cabecalho" role="row">
-                                <span role="columnheader">Trecho</span>
-                                <span role="columnheader">Situação</span>
-                                <span role="columnheader">Detalhes</span>
+                                <span role="columnheader">{t("knowledge.columnItem")}</span>
+                                <span role="columnheader">{t("knowledge.columnStatus")}</span>
+                                <span role="columnheader">{t("knowledge.columnDetails")}</span>
                                 <span role="columnheader" className="poph-tabela__celula--acoes">
-                                    Ações
+                                    {t("knowledge.columnActions")}
                                 </span>
                             </div>
                             {itens.map((trecho) => (
@@ -813,8 +839,11 @@ export function AgenteConhecimento() {
                                     </div>
                                     <div role="cell" className="poph-conhecimento__detalhes">
                                         <span>
-                                            {trecho.content.length} caracteres · ordem{" "}
-                                            {trecho.position} · v{trecho.version}
+                                            {t("knowledge.itemDetails", {
+                                                count: trecho.content.length,
+                                                position: trecho.position,
+                                                version: trecho.version,
+                                            })}
                                         </span>
                                         {trecho.tags.length > 0 && (
                                             <span className="poph-conhecimento__tags">
@@ -824,11 +853,11 @@ export function AgenteConhecimento() {
                                     </div>
                                     <div role="cell" className="poph-tabela__celula--acoes">
                                         <SofaMenu
-                                            label={`Ações de ${trecho.title}`}
+                                            label={t("knowledge.actionsOf", { name: trecho.title })}
                                             align="end"
                                             trigger={
                                                 <SofaIconButton
-                                                    label={`Ações de ${trecho.title}`}
+                                                    label={t("knowledge.actionsOf", { name: trecho.title })}
                                                     size={28}
                                                 >
                                                     <IconMoreHorizontal
@@ -846,7 +875,7 @@ export function AgenteConhecimento() {
                     )}
 
                     {erroDeItem && (
-                        <SofaBanner tone="danger" title="Não foi possível excluir o trecho">
+                        <SofaBanner tone="danger" title={t("knowledge.itemDeleteErrorTitle")}>
                             {erroDeItem}
                         </SofaBanner>
                     )}
@@ -889,8 +918,7 @@ export function AgenteConhecimento() {
                     if (eraDoAgente) {
                         setIndice({
                             tipo: "pendente",
-                            mensagem:
-                                "grupo removido; o índice deste agente precisa ser sincronizado",
+                            mensagem: t("knowledge.indexGroupRemoved"),
                         });
                     }
                     void carregarGrupos();
@@ -902,13 +930,13 @@ export function AgenteConhecimento() {
                 aoFechar={() => {
                     if (!removendoItem) setItemParaExcluir(null);
                 }}
-                titulo="Excluir trecho?"
-                descricao={`O trecho ${
-                    itemParaExcluir?.title ?? ""
-                } sai da base do agente. Não há como desfazer.`}
+                titulo={t("knowledge.deleteItemTitle")}
+                descricao={t("knowledge.deleteItemDescription", {
+                    title: itemParaExcluir?.title ?? "",
+                })}
                 recurso={itemParaExcluir?.title ?? ""}
-                rotuloRecurso="título do trecho"
-                rotuloConfirmar="Excluir trecho"
+                rotuloRecurso={t("knowledge.deleteItemResourceLabel")}
+                rotuloConfirmar={t("knowledge.deleteItemConfirm")}
                 aoConfirmar={excluirTrecho}
             />
         </>

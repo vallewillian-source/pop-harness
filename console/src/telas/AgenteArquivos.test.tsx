@@ -6,13 +6,14 @@
  * o servidor devolve quando recusa o tipo, remover com confirmação pelo nome e o estado vazio.
  */
 
-import { describe, expect, it } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { GuardaAlteracoesProvider } from "../componentes/GuardaAlteracoes";
 import { esperarFocoDoModal } from "../testes/modal";
 import { ServidorFalso, erroApi } from "../testes/servidor";
+import { setLocale } from "../i18n";
 import { AgenteArquivos } from "./AgenteArquivos";
 
 const ORG = "org_1";
@@ -230,5 +231,107 @@ describe("Aba Arquivos", () => {
         expect(screen.getByRole("region", { name: "Biblioteca de arquivos" })).toBeInTheDocument();
         expect(await screen.findByText("Tabela de preços")).toBeInTheDocument();
         expect(container.querySelector(".sofa-card")).toBeNull();
+    });
+});
+
+describe("I18N-08: aba Arquivos em en-US", () => {
+    afterEach(() => {
+        act(() => setLocale("pt-BR"));
+    });
+
+    it("lista a biblioteca em inglês, com tamanho e contagem no formato do idioma", async () => {
+        servidorCom([
+            arquivo({
+                id: "arq_1",
+                name: "Price table",
+                description: "Prices 2026",
+                size_bytes: 3 * 1024 * 1024,
+            }),
+        ]);
+        setLocale("en-US");
+        montar();
+
+        expect(await screen.findByText("Price table")).toBeInTheDocument();
+        expect(screen.getByRole("columnheader", { name: "File" })).toBeInTheDocument();
+        expect(screen.getByRole("columnheader", { name: "Type" })).toBeInTheDocument();
+        expect(screen.getByRole("columnheader", { name: "Size" })).toBeInTheDocument();
+        expect(screen.getByRole("columnheader", { name: "Actions" })).toBeInTheDocument();
+        expect(screen.getByText("3.0 MB")).toBeInTheDocument();
+        expect(screen.getByText("1 file")).toBeInTheDocument();
+        expect(
+            screen.getByRole("button", { name: "Delete file Price table" }),
+        ).toBeInTheDocument();
+        expect(screen.getByText("Agent · Clínica Teste")).toBeInTheDocument();
+        expect(screen.getByRole("region", { name: "File library" })).toBeInTheDocument();
+    });
+
+    it("mostra o estado vazio em inglês com o botão de enviar o primeiro arquivo", async () => {
+        servidorCom([]);
+        setLocale("en-US");
+        montar();
+
+        expect(await screen.findByText("No file in the library")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Upload first file" })).toBeEnabled();
+    });
+
+    it("recusa o arquivo acima de 16 MB e envia com os metadados em inglês", async () => {
+        const servidor = servidorCom([]);
+        setLocale("en-US");
+        montar();
+        await screen.findByText("No file in the library");
+        const usuario = userEvent.setup();
+
+        await usuario.click(screen.getByRole("button", { name: "Upload file" }));
+        await esperarFocoDoModal();
+        const dialogo = document.querySelector('[role="dialog"]') as HTMLElement;
+        expect(within(dialogo).getByText("Upload file to the agent")).toBeInTheDocument();
+
+        const grande = new File([new Uint8Array(LIMITE + 1024 * 1024)], "catalog.pdf", {
+            type: "application/pdf",
+        });
+        const entrada = document.querySelector('input[type="file"]') as HTMLInputElement;
+        await usuario.upload(entrada, grande);
+        expect(
+            await within(dialogo).findByText(/over the 16 MB per-file limit by 1\.0 MB/),
+        ).toBeInTheDocument();
+        await usuario.click(within(dialogo).getByRole("button", { name: "Upload file" }));
+        expect(servidor.chamadasPara("POST", "/files")).toHaveLength(0);
+
+        const pequeno = new File([new Uint8Array(69)], "pixel.png", { type: "image/png" });
+        await usuario.upload(entrada, pequeno);
+        await usuario.type(
+            within(dialogo).getByLabelText(/Name shown to the customer/),
+            "Clinic map",
+        );
+        expect(
+            within(dialogo).getByText(/Chosen: pixel\.png · 0\.0 MB \(within the 16 MB limit\)/),
+        ).toBeInTheDocument();
+        await usuario.click(within(dialogo).getByRole("button", { name: "Upload file" }));
+
+        await waitFor(() => expect(servidor.chamadasPara("POST", "/files").length).toBe(1));
+        expect(await screen.findByText("Clinic map")).toBeInTheDocument();
+        expect(screen.getByRole("status")).toHaveTextContent('File "Clinic map" uploaded');
+    });
+
+    it("remove com confirmação pelo nome em inglês e avisa na lista", async () => {
+        const servidor = servidorCom([arquivo({ id: "arq_1", name: "Price table" })]);
+        setLocale("en-US");
+        montar();
+        await screen.findByText("Price table");
+        const usuario = userEvent.setup();
+
+        await usuario.click(screen.getByRole("button", { name: "Delete file Price table" }));
+        await esperarFocoDoModal();
+        const dialogo = document.querySelector('[role="dialog"]') as HTMLElement;
+        expect(within(dialogo).getByText("Delete file?")).toBeInTheDocument();
+        const confirmar = within(dialogo).getByRole("button", { name: "Delete file" });
+        expect(confirmar).toBeDisabled();
+
+        await usuario.type(within(dialogo).getByRole("textbox"), "Price table");
+        await usuario.click(confirmar);
+
+        await waitFor(() => expect(servidor.chamadasPara("DELETE", "/files/arq_1")).toHaveLength(1));
+        await waitFor(() => expect(screen.queryByText("Price table")).not.toBeInTheDocument());
+        expect(screen.getByRole("status")).toHaveTextContent('File "Price table" removed');
     });
 });

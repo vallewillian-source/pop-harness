@@ -11,6 +11,7 @@
 
 import { pedir } from "./cliente";
 import type { components } from "./schema";
+import { formatNumber } from "../i18n/format";
 
 /** Metadados de um arquivo da biblioteca (sem o conteúdo). */
 export type Arquivo = components["schemas"]["ArquivoJson"];
@@ -29,7 +30,11 @@ export const LIMITE_LISTA_ARQUIVOS = 200;
 
 /** Tamanho em MB com uma casa decimal, para a mensagem ("3,2 MB"). */
 export function tamanhoEmMb(bytes: number): string {
-    return (bytes / (1024 * 1024)).toFixed(1).replace(".", ",") + " MB";
+    const megabytes = formatNumber(bytes / (1024 * 1024), {
+        minimumFractionDigits: 1,
+        maximumFractionDigits: 1,
+    });
+    return `${megabytes} MB`;
 }
 
 function base(org: string, agente: string): string {

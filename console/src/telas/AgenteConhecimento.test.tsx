@@ -7,13 +7,14 @@
  * (o `DELETE` leva `force=true`) e o painel do índice com a reindexação.
  */
 
-import { describe, expect, it } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { GuardaAlteracoesProvider } from "../componentes/GuardaAlteracoes";
 import { esperarFocoDoModal } from "../testes/modal";
 import { ServidorFalso, erroApi } from "../testes/servidor";
+import { setLocale } from "../i18n";
 import { AgenteConhecimento } from "./AgenteConhecimento";
 
 const ORG = "org_1";
@@ -635,5 +636,128 @@ describe("AgenteConhecimento", () => {
             await screen.findByText(/O índice não mudou\. Instale o modelo de embedding/),
         ).toBeInTheDocument();
         expect(servidor.chamadasPara("POST", "/reindex")).toHaveLength(1);
+    });
+});
+
+describe("I18N-08: Base de conhecimento em en-US", () => {
+    afterEach(() => {
+        act(() => setLocale("pt-BR"));
+    });
+
+    it("mostra grupos e trechos em inglês, com vínculo, situação e detalhes", async () => {
+        servidorCom(cenarioPadrao());
+        setLocale("en-US");
+        montar();
+
+        expect(await screen.findByText("Políticas da loja")).toBeInTheDocument();
+        expect(screen.getByText("Index not verified")).toBeInTheDocument();
+        expect(screen.getByText("used by this agent")).toBeInTheDocument();
+        expect(screen.getByText("not linked")).toBeInTheDocument();
+
+        const grupos = screen.getByRole("table", { name: "Knowledge groups" });
+        expect(within(grupos).getByRole("columnheader", { name: "Group" })).toBeInTheDocument();
+        expect(within(grupos).getByRole("columnheader", { name: "Link" })).toBeInTheDocument();
+        expect(within(grupos).getByRole("columnheader", { name: "Status" })).toBeInTheDocument();
+        expect(within(grupos).getByRole("columnheader", { name: "Version" })).toBeInTheDocument();
+        expect(within(grupos).getByRole("columnheader", { name: "Actions" })).toBeInTheDocument();
+        expect(
+            within(grupos).getByRole("button", { name: "Actions for Políticas da loja" }),
+        ).toBeInTheDocument();
+        expect(screen.getAllByText("Active").length).toBeGreaterThan(0);
+
+        const trechos = await screen.findByRole("table", { name: "Group entries" });
+        expect(within(trechos).getByRole("columnheader", { name: "Entry" })).toBeInTheDocument();
+        expect(within(trechos).getByRole("columnheader", { name: "Details" })).toBeInTheDocument();
+        expect(screen.getByText("Entries · Políticas da loja")).toBeInTheDocument();
+        expect(screen.getByText("1 entry")).toBeInTheDocument();
+        expect(screen.getByText(/characters · order 0 · v1/)).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "New entry" })).toBeInTheDocument();
+    });
+
+    it("reindexa em inglês e mostra o relatório do índice", async () => {
+        const usuario = userEvent.setup();
+        const servidor = servidorCom(cenarioPadrao());
+        setLocale("en-US");
+        montar();
+
+        await screen.findByText("Index not verified");
+        await usuario.click(screen.getByRole("button", { name: "Reindex agent" }));
+
+        expect(await screen.findByText("Index updated")).toBeInTheDocument();
+        expect(await screen.findByText(/2 new/)).toBeInTheDocument();
+        expect(screen.getByText(/3 embeddings generated/)).toBeInTheDocument();
+        expect(
+            servidor.chamadasPara("POST", `/agents/${AGENTE}/knowledge/reindex`),
+        ).toHaveLength(1);
+    });
+
+    it("valida o trecho em inglês antes de chamar a API", async () => {
+        const usuario = userEvent.setup();
+        const servidor = servidorCom(cenarioPadrao());
+        setLocale("en-US");
+        montar();
+
+        await screen.findByText("Prazo de entrega");
+        await usuario.click(screen.getByRole("button", { name: "New entry" }));
+        await esperarFocoDoModal();
+        await usuario.click(screen.getByRole("button", { name: "Create entry" }));
+
+        expect(await screen.findByText("enter the entry title")).toBeInTheDocument();
+        expect(screen.getByText("enter the entry content")).toBeInTheDocument();
+        expect(screen.getByText(/0 \/ 1000 characters/)).toBeInTheDocument();
+        expect(servidor.chamadasPara("POST", "/items")).toHaveLength(0);
+    });
+
+    it("exclui o grupo em inglês com a consequência e a confirmação pelo nome", async () => {
+        const usuario = userEvent.setup();
+        const servidor = servidorCom(cenarioPadrao());
+        setLocale("en-US");
+        montar();
+
+        await screen.findByText("Políticas da loja");
+        await usuario.click(
+            screen.getByRole("button", { name: "Actions for Políticas da loja" }),
+        );
+        await usuario.click(await screen.findByRole("menuitem", { name: "Delete" }));
+        await esperarFocoDoModal();
+
+        const dialogo = await screen.findByRole("dialog");
+        expect(within(dialogo).getByText("Delete group?")).toBeInTheDocument();
+        expect(await within(dialogo).findByText(/The group has 1 entry/)).toBeInTheDocument();
+        expect(
+            await within(dialogo).findByText(/1 agent uses this group and will be left without it: Beatriz/),
+        ).toBeInTheDocument();
+
+        const botao = within(dialogo).getByRole("button", { name: "Delete group" });
+        expect(botao).toBeDisabled();
+        await usuario.type(within(dialogo).getByRole("textbox"), "Políticas da loja");
+        await usuario.click(botao);
+
+        await waitFor(() =>
+            expect(servidor.chamadasPara("DELETE", "/knowledge/grupo-1")).toHaveLength(1),
+        );
+        expect(servidor.chamadasPara("DELETE", "/knowledge/grupo-1")[0]?.url).toContain(
+            "force=true",
+        );
+    });
+
+    it("abre o formulário do trecho em inglês com as dicas do idioma", async () => {
+        const usuario = userEvent.setup();
+        servidorCom(cenarioPadrao());
+        setLocale("en-US");
+        montar();
+
+        await screen.findByText("Prazo de entrega");
+        await usuario.click(screen.getByRole("button", { name: "New entry" }));
+        await esperarFocoDoModal();
+
+        const dialogo = await screen.findByRole("dialog");
+        expect(within(dialogo).getByText("New entry")).toBeInTheDocument();
+        expect(within(dialogo).getByText("Content")).toBeInTheDocument();
+        expect(
+            within(dialogo).getByText(/This is the text the agent receives in the query/),
+        ).toBeInTheDocument();
+        expect(within(dialogo).getByText("Order")).toBeInTheDocument();
+        expect(within(dialogo).getByText(/lower appears first/)).toBeInTheDocument();
     });
 });
