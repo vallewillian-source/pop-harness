@@ -32,6 +32,7 @@ import { listarAgentes, obterAgente, type Agente } from "../api/agentes";
 import { normalizarBusca } from "./busca";
 import { useGuardaDeAlteracoes } from "./GuardaAlteracoes";
 import { posicaoDoGatilho, type Posicao } from "./SeletorDeOrganizacao";
+import { translate, useI18n } from "../i18n";
 import "../estilos/seletorDeAgente.css";
 
 /** Prazo de cada leitura: passado isso, o estado vira erro em vez de "carregando" eterno. */
@@ -41,11 +42,11 @@ const PRAZO_DA_LEITURA_MS = 12_000;
 function rotuloDaSituacao(situacao: string): string {
     switch (situacao) {
         case "active":
-            return "Ativo";
+            return translate("agents.agentStatusActive");
         case "inactive":
-            return "Inativo";
+            return translate("agents.agentStatusInactive");
         case "archived":
-            return "Arquivado";
+            return translate("agents.agentStatusArchived");
         default:
             return situacao;
     }
@@ -54,7 +55,7 @@ function rotuloDaSituacao(situacao: string): string {
 /** Modelo real do agente; sem modelo próprio, ele herda o padrão do servidor (a API não devolve qual). */
 function rotuloDoModelo(agente: Agente): string {
     const modelo = agente.model?.trim();
-    return modelo ? modelo : "modelo padrão do servidor";
+    return modelo ? modelo : translate("agents.defaultServerModel");
 }
 
 /** Texto do subtítulo do gatilho e da opção: "modelo · situação", só com o que existe. */
@@ -103,17 +104,18 @@ export function VoltarParaAgentes({
     /** Modo foco: só a seta, com o nome no `title` e no rótulo acessível. */
     compacta: boolean;
 }) {
+    const { translate: t } = useI18n();
     return (
         <Link
             to={`/orgs/${orgId}/agents`}
             className={
                 compacta ? "poph-agsel__voltar poph-agsel__voltar--compacta" : "poph-agsel__voltar"
             }
-            aria-label="Agentes da Org"
-            title="Agentes da Org"
+            aria-label={t("agents.backToAgents")}
+            title={t("agents.backToAgents")}
         >
             <IconArrowLeft aria-hidden="true" className="poph-agsel__voltar-seta" />
-            <span className="poph-agsel__voltar-texto">Agentes da Org</span>
+            <span className="poph-agsel__voltar-texto">{t("agents.backToAgents")}</span>
         </Link>
     );
 }
@@ -137,6 +139,7 @@ export function SeletorDeAgente({
      */
     aoMudarNome?: (nome: string) => void;
 }) {
+    const { translate: t } = useI18n();
     const guarda = useGuardaDeAlteracoes();
     const idBase = useId();
     const gatilho = useRef<HTMLButtonElement>(null);
@@ -166,7 +169,7 @@ export function SeletorDeAgente({
         const prazo = setTimeout(() => {
             if (encerrado) return;
             encerrado = true;
-            setLista({ estado: "erro", mensagem: "a leitura dos agentes demorou demais" });
+            setLista({ estado: "erro", mensagem: translate("agents.agentsTimeout") });
         }, PRAZO_DA_LEITURA_MS);
         listarAgentes(orgId)
             .then((agentes) => {
@@ -215,11 +218,12 @@ export function SeletorDeAgente({
     // Rótulo do gatilho: o nome do agente quando já se sabe; senão, o estado real da leitura.
     let nome: string;
     if (atual) nome = atual.name;
-    else if (lista.estado === "erro") nome = agentId ? "Agentes indisponíveis" : "Sem agentes";
-    else if (lista.estado === "carregando") nome = "Carregando…";
-    else if (!agentId) nome = "Nenhum agente aberto";
-    else if (!avulsoDaChave) nome = "Carregando…"; // o agente saiu da lista: leitura dele em curso
-    else nome = "Agente não encontrado";
+    else if (lista.estado === "erro")
+        nome = agentId ? t("agents.agentsUnavailable") : t("agents.noAgents");
+    else if (lista.estado === "carregando") nome = t("agents.loading");
+    else if (!agentId) nome = t("agents.noAgentOpen");
+    else if (!avulsoDaChave) nome = t("agents.loading"); // o agente saiu da lista: leitura dele em curso
+    else nome = t("agents.agentNotFound");
     const subtitulo = atual ? subtituloDoAgente(atual) : "";
 
     // O rodapé do cockpit mostra o mesmo nome. O callback vai numa ref para o efeito não rodar de
@@ -364,8 +368,8 @@ export function SeletorDeAgente({
                           id={`${idBase}-filtro`}
                           type="text"
                           className="poph-agsel__campo"
-                          placeholder="Filtrar agentes…"
-                          aria-label="Filtrar agentes por nome ou slug"
+                          placeholder={t("agents.filterAgentsPlaceholder")}
+                          aria-label={t("agents.filterAgentsLabel")}
                           autoComplete="off"
                           spellCheck={false}
                           value={termo}
@@ -379,27 +383,27 @@ export function SeletorDeAgente({
                       />
                   </div>
                   <div className="poph-agsel__grupo" aria-hidden="true">
-                      Agentes da organização
+                      {t("agents.agentsOfOrg")}
                   </div>
                   {lista.estado === "carregando" ? (
                       <p className="poph-agsel__aviso" role="status">
-                          Carregando agentes…
+                          {t("agents.loadingAgents")}
                       </p>
                   ) : lista.estado === "erro" ? (
                       <p className="poph-agsel__aviso" role="status">
-                          Não foi possível ler os agentes: {lista.mensagem}
+                          {t("agents.agentsLoadFailed", { message: lista.mensagem })}
                       </p>
                   ) : visiveis.length === 0 ? (
                       <p className="poph-agsel__aviso" role="status">
                           {agentes.length === 0
-                              ? "Nenhum agente nesta organização"
-                              : `Nenhum agente encontrado para “${termoLimpo}”`}
+                              ? t("agents.noAgentsInOrg")
+                              : t("agents.noAgentsFoundFor", { term: termoLimpo })}
                       </p>
                   ) : (
                       <ul
                           id={idLista}
                           role="listbox"
-                          aria-label="Agentes da organização"
+                          aria-label={t("agents.agentsOfOrg")}
                           className="poph-agsel__lista"
                       >
                           {visiveis.map((agente, posicaoNaLista) => {
@@ -454,7 +458,7 @@ export function SeletorDeAgente({
                 aria-haspopup="listbox"
                 aria-expanded={aberto}
                 aria-controls={aberto ? idLista : undefined}
-                aria-label={`Agente: ${nome}`}
+                aria-label={t("agents.agentSelectorLabel", { name: nome })}
                 title={nome}
                 className="poph-agsel__gatilho"
                 onClick={() => (aberto ? fechar(true) : abrir())}

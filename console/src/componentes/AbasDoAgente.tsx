@@ -21,6 +21,8 @@ import { IconArrowLeft, SofaIconButton } from "@sofacoding/sofa-ui";
 import { useGuardaDeAlteracoes } from "./GuardaAlteracoes";
 import { publicarNomeDoAgente } from "./nomeDoAgente";
 import { publishAgentModel } from "./agentModel";
+import { translate, useI18n } from "../i18n";
+import type { TranslationKey } from "../i18n/catalog";
 import "../estilos/agentes.css";
 
 export type IdAbaDoAgente =
@@ -34,20 +36,20 @@ export type IdAbaDoAgente =
 
 type Aba = {
     id: IdAbaDoAgente;
-    label: string;
+    labelKey: TranslationKey;
     /** Sufixo da rota dentro de `/orgs/:org/agents/:agent/` (todas existem no `App.tsx`). */
     rota: string;
 };
 
 /** Ordem do PRD §5.5 / TASKS RL-09. A aba "Produtos" saiu: não tem rota no `App.tsx`. */
 export const ABAS_DO_AGENTE: readonly Aba[] = [
-    { id: "instructions", label: "Instruções", rota: "instructions" },
-    { id: "knowledge-base", label: "Base de conhecimento", rota: "knowledge-base" },
-    { id: "files", label: "Arquivos", rota: "files" },
-    { id: "routing", label: "Roteamento", rota: "routing" },
-    { id: "integrations", label: "Integrações", rota: "integrations" },
-    { id: "model-jev", label: "Modelo e Jev", rota: "model-jev" },
-    { id: "test-chat", label: "Chat de teste", rota: "test-chat" },
+    { id: "instructions", labelKey: "agents.tabInstructions", rota: "instructions" },
+    { id: "knowledge-base", labelKey: "agents.tabKnowledge", rota: "knowledge-base" },
+    { id: "files", labelKey: "agents.tabFiles", rota: "files" },
+    { id: "routing", labelKey: "agents.tabRouting", rota: "routing" },
+    { id: "integrations", labelKey: "agents.tabIntegrations", rota: "integrations" },
+    { id: "model-jev", labelKey: "agents.tabModelJev", rota: "model-jev" },
+    { id: "test-chat", labelKey: "agents.tabTestChat", rota: "test-chat" },
 ] as const;
 
 export type AbasDoAgenteProps = {
@@ -61,6 +63,7 @@ export type AbasDoAgenteProps = {
 };
 
 export function AbasDoAgente({ org, agente, ativa, nome, model }: AbasDoAgenteProps) {
+    const { translate: t } = useI18n();
     const guarda = useGuardaDeAlteracoes();
     const refs = useRef<Array<HTMLButtonElement | null>>([]);
 
@@ -102,7 +105,7 @@ export function AbasDoAgente({ org, agente, ativa, nome, model }: AbasDoAgentePr
     }
 
     return (
-        <div className="poph-abas" role="tablist" aria-label="Seções do agente">
+        <div className="poph-abas" role="tablist" aria-label={t("agents.tabsLabel")}>
             {ABAS_DO_AGENTE.map((aba, indice) => {
                 const selecionada = aba.id === ativa;
                 return (
@@ -120,7 +123,7 @@ export function AbasDoAgente({ org, agente, ativa, nome, model }: AbasDoAgentePr
                         onClick={() => trocar(aba.id)}
                         onKeyDown={(evento) => moverFoco(indice, evento)}
                     >
-                        {aba.label}
+                        {t(aba.labelKey)}
                     </button>
                 );
             })}
@@ -143,11 +146,11 @@ function tomDaSituacao(situacao: string): string {
 function rotuloDaSituacao(situacao: string): string {
     switch (situacao) {
         case "active":
-            return "Ativo";
+            return translate("agents.agentStatusActive");
         case "inactive":
-            return "Inativo";
+            return translate("agents.agentStatusInactive");
         case "archived":
-            return "Arquivado";
+            return translate("agents.agentStatusArchived");
         default:
             return situacao;
     }
@@ -179,13 +182,14 @@ export function CabecalhoDoAgente({
     descricao,
     acoes,
 }: CabecalhoDoAgenteProps) {
+    const { translate: t } = useI18n();
     const guarda = useGuardaDeAlteracoes();
 
     return (
         <div className="poph-pagina__topo poph-agente__topo">
             <div className="poph-agente__identidade">
                 <SofaIconButton
-                    label="Voltar para agentes"
+                    label={t("agents.backToAgentsLabel")}
                     onClick={() =>
                         guarda.tentarNavegar(
                             `/orgs/${encodeURIComponent(org)}/agents`,
@@ -196,7 +200,9 @@ export function CabecalhoDoAgente({
                 </SofaIconButton>
                 <div className="poph-agente__texto">
                     <p className="poph-agente__contexto">
-                        {organizacao ? `Agente · ${organizacao}` : "Agente"}
+                        {organizacao
+                            ? t("agents.agentContextWithOrg", { org: organizacao })
+                            : t("agents.agentContext")}
                     </p>
                     <h1 className="poph-pagina__titulo">{nome}</h1>
                     <p className="poph-pagina__descricao poph-agente__meta">

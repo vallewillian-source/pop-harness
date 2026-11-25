@@ -26,6 +26,7 @@ import { IconBuilding, IconCheck, IconGrid, IconSearch } from "@sofacoding/sofa-
 import type { Org } from "../api/cliente";
 import { filtrarOrgs } from "./busca";
 import { useGuardaDeAlteracoes } from "./GuardaAlteracoes";
+import { useI18n } from "../i18n";
 import "../estilos/seletorDeOrganizacao.css";
 
 /** Largura do rail no modo foco: abaixo disso o gatilho está recolhido e o popover abre ao lado. */
@@ -63,9 +64,10 @@ type Opcao = { chave: string; org: Org | null };
 
 /** Ponto de situação da organização: ativa e inativa têm tom próprio; outros estados não mostram ponto. */
 function Situacao({ status }: { status: string | undefined }) {
+    const { translate: t } = useI18n();
     if (status !== "active" && status !== "inactive") return null;
     const ativa = status === "active";
-    const rotulo = ativa ? "Ativa" : "Inativa";
+    const rotulo = ativa ? t("navigation.orgStatusActive") : t("navigation.orgStatusInactive");
     return (
         <span
             className={
@@ -117,6 +119,7 @@ export function SeletorDeOrganizacao({
     /** Modo foco: o gatilho vira só o tile do ícone. */
     compacta: boolean;
 }) {
+    const { translate: t } = useI18n();
     const guarda = useGuardaDeAlteracoes();
     const idBase = useId();
     const gatilho = useRef<HTMLButtonElement>(null);
@@ -133,10 +136,10 @@ export function SeletorDeOrganizacao({
     const rotulo = atual
         ? atual.name
         : orgs.length === 0
-          ? "Nenhuma organização"
+          ? t("navigation.orgNone")
           : naListaDeOrgs
-            ? "Administrar Organizações"
-            : "Selecionar organização";
+            ? t("navigation.orgManage")
+            : t("navigation.orgSelect");
 
     const termoLimpo = termo.trim();
     const itens: Opcao[] = [];
@@ -283,8 +286,8 @@ export function SeletorDeOrganizacao({
                               id={`${idBase}-filtro`}
                               type="text"
                               className="poph-orgsel__campo"
-                              placeholder="Filtrar organizações…"
-                              aria-label="Filtrar organizações por nome ou slug"
+                              placeholder={t("navigation.orgFilterPlaceholder")}
+                              aria-label={t("navigation.orgFilterLabel")}
                               autoComplete="off"
                               spellCheck={false}
                               value={termo}
@@ -300,19 +303,19 @@ export function SeletorDeOrganizacao({
                           />
                       </div>
                       <div className="poph-orgsel__grupo" aria-hidden="true">
-                          Organizações disponíveis
+                          {t("navigation.orgsAvailable")}
                       </div>
                       {itens.length === 0 ? (
                           <p className="poph-orgsel__vazio" role="status">
                               {orgs.length === 0
-                                  ? "Nenhuma organização"
-                                  : `Nenhuma organização encontrada para “${termoLimpo}”`}
+                                  ? t("navigation.orgNone")
+                                  : t("navigation.orgsEmptyFor", { term: termoLimpo })}
                           </p>
                       ) : (
                           <ul
                               id={idLista}
                               role="listbox"
-                              aria-label="Organizações disponíveis"
+                              aria-label={t("navigation.orgsAvailable")}
                               className="poph-orgsel__lista"
                           >
                               {itens.map((opcao, posicaoNaLista) => {
@@ -346,7 +349,7 @@ export function SeletorDeOrganizacao({
                                               <span className="poph-orgsel__nome">
                                                   {opcao.org
                                                       ? opcao.org.name
-                                                      : "Administrar Organizações"}
+                                                      : t("navigation.orgManage")}
                                               </span>
                                               {opcao.org && (
                                                   <span className="poph-orgsel__slug">
@@ -380,7 +383,7 @@ export function SeletorDeOrganizacao({
                 aria-haspopup="listbox"
                 aria-expanded={aberto}
                 aria-controls={aberto ? idLista : undefined}
-                aria-label={`Organização: ${rotulo}`}
+                aria-label={t("navigation.orgSelectorLabel", { name: rotulo })}
                 title={rotulo}
                 disabled={bloqueado}
                 className="poph-orgsel__gatilho"

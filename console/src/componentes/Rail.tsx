@@ -43,9 +43,11 @@ import {
     GRUPOS_DE_NAVEGACAO,
     ITENS_DE_NAVEGACAO,
     ITENS_DO_COCKPIT_DO_AGENTE,
+    navigationGroupLabel,
     type ContextoDeNavegacao,
     type ItemDeNavegacao,
 } from "./navegacao";
+import { translate, useI18n } from "../i18n";
 import { ChipDoCluster, type SituacaoDoCluster } from "./ChipDoCluster";
 import type { Agente } from "../api/agentes";
 import { SeletorDeOrganizacao } from "./SeletorDeOrganizacao";
@@ -57,20 +59,24 @@ import "../estilos/navegacao.css";
  * Motivo que aparece ao passar o mouse num item ativo que está sem contexto na URL. Não é texto
  * visível na linha: vai no `title` do wrapper.
  */
-function motivoDoBloqueio(item: ItemDeNavegacao, contexto: ContextoDeNavegacao): string | undefined {
-    if (item.exigeOrg && !contexto.orgId) return "Requer uma organização aberta";
-    if (item.exigeAgente && !contexto.agentId) return "Requer um agente aberto";
+function motivoDoBloqueio(
+    item: ItemDeNavegacao,
+    contexto: ContextoDeNavegacao,
+    t: (key: "navigation.requiresOrg" | "navigation.requiresAgent") => string,
+): string | undefined {
+    if (item.exigeOrg && !contexto.orgId) return t("navigation.requiresOrg");
+    if (item.exigeAgente && !contexto.agentId) return t("navigation.requiresAgent");
     return undefined;
 }
 
 function statusLabel(status: string | undefined): string {
     switch (status) {
         case "active":
-            return "Ativo";
+            return translate("agents.agentStatusActive");
         case "inactive":
-            return "Inativo";
+            return translate("agents.agentStatusInactive");
         case "archived":
-            return "Arquivado";
+            return translate("agents.agentStatusArchived");
         default:
             return status ?? "";
     }
@@ -132,6 +138,7 @@ export function ItenDeNavegacao({
     compacta?: boolean;
     cockpit?: boolean;
 }) {
+    const { translate: t } = useI18n();
     const icone: ReactNode = <item.icone aria-hidden="true" />;
     const contagem = item.contador?.(contexto) ?? null;
     const aside: ReactNode =
@@ -148,7 +155,7 @@ export function ItenDeNavegacao({
                 label={item.rotulo}
                 media={icone}
                 aside={aside}
-                description={emBreve ? "em breve" : undefined}
+                description={emBreve ? t("navigation.comingSoon") : undefined}
                 compact={compacta}
                 disabled
             />
@@ -157,7 +164,7 @@ export function ItenDeNavegacao({
             ? compacta
                 ? item.rotulo
                 : undefined
-            : motivoDoBloqueio(item, contexto);
+            : motivoDoBloqueio(item, contexto, t);
         if (!motivo) return botao;
         return (
             <div className="poph-rail__bloqueado" title={compacta ? item.rotulo : motivo}>
@@ -201,6 +208,7 @@ export function Rail({
     compacta?: boolean;
     aoAlternarCompacta?: () => void;
 }) {
+    const { translate: t } = useI18n();
     const { sessao } = useSessao();
     const { saude: dados, semConexao, degradada } = useSaude();
     const { pathname } = useLocation();
@@ -251,16 +259,20 @@ export function Rail({
         <SofaSidebarRail
             width={compacta ? 64 : 240}
             compact={compacta}
-            label="Navegação do Console"
+            label={t("navigation.railLabel")}
             footer={
                 <div className="poph-rail__base">
                     {emRotaDeAgente
                         ? !compacta && (
                               <span
                                   className="poph-rail__agente"
-                                  title={nomeDoAgente ? `Agente: ${nomeDoAgente}` : undefined}
+                                  title={
+                                      nomeDoAgente
+                                          ? t("navigation.agentFooter", { name: nomeDoAgente })
+                                          : undefined
+                                  }
                               >
-                                  Agente: {nomeDoAgente || "—"}
+                                  {t("navigation.agentFooter", { name: nomeDoAgente || "—" })}
                               </span>
                           )
                         : !compacta && (
@@ -272,8 +284,8 @@ export function Rail({
                         variant="subtle"
                         size="sm"
                         className="poph-rail__atalhos"
-                        aria-label="? atalhos"
-                        title="Atalhos do teclado (?)"
+                        aria-label={t("navigation.shortcutsLabel")}
+                        title={t("navigation.shortcutsTitle")}
                         onClick={aoAbrirAtalhos}
                     >
                         ?
@@ -283,8 +295,8 @@ export function Rail({
                             ref={botaoDoRodape}
                             type="button"
                             className="poph-rail__controle"
-                            aria-label="Recolher menu lateral"
-                            title="Recolher menu lateral"
+                            aria-label={t("navigation.collapseMenu")}
+                            title={t("navigation.collapseMenu")}
                             onClick={alternar}
                         >
                             <IconChevronLeft aria-hidden="true" />
@@ -298,8 +310,8 @@ export function Rail({
                     ref={botaoDoTopo}
                     type="button"
                     className="poph-rail__controle poph-rail__controle--topo"
-                    aria-label="Expandir menu lateral"
-                    title="Expandir menu lateral"
+                    aria-label={t("navigation.expandMenu")}
+                    title={t("navigation.expandMenu")}
                     onClick={alternar}
                 >
                     <IconChevronRight aria-hidden="true" />
@@ -334,7 +346,7 @@ export function Rail({
                 <>
                     {ITENS_DO_COCKPIT_DO_AGENTE.filter((item) => item.grupo === "").map((item) => (
                         <ItenDeNavegacao
-                            key={item.rotulo}
+                            key={item.id}
                             item={item}
                             contexto={contexto}
                             compacta={compacta}
@@ -343,12 +355,12 @@ export function Rail({
                     ))}
                     {!compacta && (
                         <div className="sofa-sidebar-rail__section-title poph-rail__secao--frase">
-                            {GRUPO_DIAGNOSTICO_DO_AGENTE}
+                            {navigationGroupLabel(GRUPO_DIAGNOSTICO_DO_AGENTE)}
                         </div>
                     )}
                     {ITENS_DO_COCKPIT_DO_AGENTE.filter((item) => item.grupo !== "").map((item) => (
                         <ItenDeNavegacao
-                            key={item.rotulo}
+                            key={item.id}
                             item={item}
                             contexto={contexto}
                             compacta={compacta}
@@ -359,11 +371,13 @@ export function Rail({
             ) : (
                 GRUPOS_DE_NAVEGACAO.map((grupo) => (
                     <Fragment key={grupo}>
-                        <div className="sofa-sidebar-rail__section-title">{grupo}</div>
+                        <div className="sofa-sidebar-rail__section-title">
+                            {navigationGroupLabel(grupo)}
+                        </div>
                         {ITENS_DE_NAVEGACAO.filter(
                             (item) => item.grupo === grupo && !hidesOrgsList(item),
                         ).map((item) => (
-                            <Fragment key={item.rotulo}>
+                            <Fragment key={item.id}>
                                 <ItenDeNavegacao
                                     item={item}
                                     contexto={contexto}
