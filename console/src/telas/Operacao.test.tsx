@@ -7,7 +7,7 @@
  * 503); botão Atualizar; atualização automática a cada 15 s; formatação de tempo, memória e versão.
  */
 
-import { describe, expect, it, vi, type Mock } from "vitest";
+import { afterEach, describe, expect, it, vi, type Mock } from "vitest";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -21,6 +21,7 @@ import {
     mensagemDeFalha,
 } from "./Operacao";
 import { ErroApi } from "../api/cliente";
+import { setLocale } from "../i18n";
 import { esperarFocoDoModal } from "../testes/modal";
 
 const SAUDE_OK = {
@@ -700,5 +701,164 @@ describe("Operacao: cluster, recarga do mapa (HR-48f)", () => {
         await userEvent.click(within(bloco).getByRole("button", { name: "Tentar de novo" }));
         expect(await screen.findByRole("dialog")).toBeInTheDocument();
         expect(servidor.chamadasPara("POST", "/admin/v1/cluster/reload")).toHaveLength(0);
+    });
+});
+
+describe("Operacao em en-US", () => {
+    afterEach(() => setLocale("pt-BR"));
+
+    it("formatações e mensagens de erro acompanham o idioma", () => {
+        setLocale("en-US");
+        expect(formatarTempoNoAr(30)).toBe("less than 1 min");
+        expect(formatarTempoNoAr(300)).toBe("5 min");
+        expect(formatarTempoNoAr(3_725)).toBe("1 h and 2 min");
+        expect(formatarTempoNoAr(90_000)).toBe("1 day and 1 h");
+        expect(formatarMemoria(1_572_864)).toBe("1.5 MB");
+        expect(formatarVersaoDoBanco(0)).toBe("no version stored yet");
+        expect(formatarVersaoDoBanco(12)).toBe("schema 12");
+        expect(mensagemDeFalha(new ErroApi(404, "x", "cru"), "the plugin")).toBe("Could not find the plugin.");
+        expect(mensagemDeFalha(new ErroApi(403, "x", "cru"), "the plugin")).toMatch(
+            /does not reach this organization/,
+        );
+        expect(mensagemDeFalha(new ErroApi(500, "x", "cru"), "the plugin")).toMatch(/error \(500\)/);
+    });
+
+    it("tela traduzida: título, seções, situação, métricas e números no formato inglês", async () => {
+        setLocale("en-US");
+        servidorPadrao();
+        montar();
+
+        expect(await screen.findByRole("heading", { level: 1, name: "Instance health" })).toBeInTheDocument();
+        const servidor = await waitFor(() => {
+            const bloco = secao("Server");
+            expect(within(bloco).getByText("Up, with the databases responding")).toBeInTheDocument();
+            return bloco;
+        });
+        expect(within(servidor).getByText("1 day and 1 h")).toBeInTheDocument();
+        expect(within(servidor).getByText("schema 12")).toBeInTheDocument();
+        expect(within(servidor).getByText("Conversations database")).toBeInTheDocument();
+
+        const filas = secao("Queues and resources");
+        expect(within(filas).getByText("Turns waiting in the queue")).toBeInTheDocument();
+        expect(within(filas).getByText("64 MB")).toBeInTheDocument();
+        expect(within(filas).getByText("15 · with errors: 1")).toBeInTheDocument();
+        expect(within(filas).getByText("4,800")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Refresh" })).toBeInTheDocument();
+    });
+
+    it("troca o idioma da tela aberta sem recarregar", async () => {
+        servidorPadrao();
+        montar();
+
+        expect(await screen.findByRole("heading", { level: 1, name: "Saúde da instância" })).toBeInTheDocument();
+
+        setLocale("en-US");
+
+        expect(await screen.findByRole("heading", { level: 1, name: "Instance health" })).toBeInTheDocument();
+        expect(screen.getByText("Up, with the databases responding")).toBeInTheDocument();
+        expect(screen.getByRole("heading", { level: 2, name: "Declared plugins" })).toBeInTheDocument();
+    });
+
+    it("erro de seção em inglês, com o botão de tentar de novo", async () => {
+        setLocale("en-US");
+        servidorPadrao({ status: 500, corpo: { code: "interno", message: "falha" } });
+        montar();
+
+        const bloco = await waitFor(() => {
+            const b = secao("Server");
+            expect(within(b).getByText("Could not read the server state")).toBeInTheDocument();
+            return b;
+        });
+        expect(within(bloco).getByRole("button", { name: "Try again" })).toBeInTheDocument();
+        expect(within(bloco).getByText(/The instance answered with an error \(500\)/)).toBeInTheDocument();
+    });
+
+    it("lista de plugins e detalhe em inglês", async () => {
+        setLocale("en-US");
+        new ServidorFalso()
+            .responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK })
+            .responder("GET", "/metrics", { status: 200, texto: METRICAS })
+            .responder("GET", "/admin/v1/orgs/org_1/manifests/eco", { status: 200, corpo: MANIFESTO_ECO })
+            .responder("GET", "/manifests", { status: 200, corpo: LISTA_DOIS_PLUGINS })
+            .instalar();
+        montar();
+
+        const lista = await screen.findByRole("list", { name: "Declared plugins" });
+        const itens = within(lista).getAllByRole("listitem");
+        expect(within(itens[0] as HTMLElement).getByText("Up")).toBeInTheDocument();
+        expect(within(itens[0] as HTMLElement).getByText(/version 0\.1\.0/)).toBeInTheDocument();
+        expect(within(itens[1] as HTMLElement).getByText("Unavailable")).toBeInTheDocument();
+
+        await userEvent.click(screen.getByRole("button", { name: "See details of plugin eco" }));
+
+        const detalhe = await waitFor(() => {
+            const bloco = document.querySelector('dl[aria-label="Details of plugin eco"]');
+            expect(bloco).not.toBeNull();
+            return bloco as HTMLElement;
+        });
+        expect(within(detalhe).getByText("Plugin Eco")).toBeInTheDocument();
+        expect(within(detalhe).getByText("Configuration fields")).toBeInTheDocument();
+        expect(within(detalhe).getByText("Secret fields")).toBeInTheDocument();
+    });
+
+    it("cluster em inglês: confirmação, relatório e orgs que trocaram", async () => {
+        setLocale("en-US");
+        const mapaUnico = {
+            modo: "instancia_unica",
+            instance_id: "",
+            default_instance: null,
+            segredo_configurado: false,
+            instancias: [],
+            orgs: {},
+        };
+        const mapaDois = {
+            modo: "cluster",
+            instance_id: "a",
+            default_instance: "a",
+            segredo_configurado: true,
+            instancias: [
+                { id: "a", local: true },
+                { id: "b", local: false },
+            ],
+            orgs: { org_1: "b" },
+        };
+        const relatorio = {
+            mudou: true,
+            fingerprint_antes: "1111aaaa2222bbbb",
+            fingerprint_depois: "9999cccc8888dddd",
+            antes: mapaUnico,
+            depois: mapaDois,
+            orgs_que_trocaram: [{ org: "org_1", de: null, para: "b" }],
+            instancias_adicionadas: ["b"],
+            instancias_removidas: [],
+        };
+        new ServidorFalso()
+            .responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK })
+            .responder("GET", "/metrics", { status: 200, texto: METRICAS })
+            .responder("GET", "/manifests", { status: 200, corpo: { items: [] } })
+            .responder("POST", "/admin/v1/cluster/reload", { status: 200, corpo: relatorio })
+            .instalar();
+        montar();
+        await screen.findByText("Up, with the databases responding");
+
+        await userEvent.click(within(secao("Cluster")).getByRole("button", { name: "Reload cluster map" }));
+        const dialogo = await screen.findByRole("dialog");
+        await esperarFocoDoModal();
+        expect(within(dialogo).getByText("Reload the cluster map?")).toBeInTheDocument();
+
+        await userEvent.click(within(dialogo).getByRole("button", { name: "Reload now" }));
+
+        const bloco = await waitFor(() => {
+            const b = secao("Cluster");
+            expect(within(b).getByText("Map reloaded: there were changes")).toBeInTheDocument();
+            return b;
+        });
+        const tabela = within(bloco).getByRole("table", { name: "Map before and after the reload" });
+        expect(within(tabela).getByRole("rowheader", { name: "Mode" }).closest("tr")).toHaveTextContent(
+            "Single instanceCluster",
+        );
+        const orgs = within(bloco).getByRole("list", { name: "Orgs that changed instance" });
+        expect(within(orgs).getByText("org_1: from no destination to b")).toBeInTheDocument();
+        expect(within(bloco).getByText("Instances added: b.")).toBeInTheDocument();
     });
 });

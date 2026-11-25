@@ -15,6 +15,7 @@ import {
     recarregarCluster,
 } from "./operacao";
 import { ServidorFalso, erroApi } from "../testes/servidor";
+import { setLocale } from "../i18n";
 
 afterEach(() => {
     vi.unstubAllGlobals();
@@ -360,5 +361,39 @@ describe("interpretarRelatorio (HR-48f)", () => {
     it("corpo que não é objeto lança erro de formato", () => {
         expect(() => interpretarRelatorio(undefined)).toThrow(ErroApi);
         expect(() => interpretarRelatorio({ mudou: "sim" })).toThrow(ErroApi);
+    });
+});
+
+describe("mensagens em en-US", () => {
+    afterEach(() => setLocale("pt-BR"));
+
+    it("saúde com erro fala inglês nos dois casos", async () => {
+        setLocale("en-US");
+        new ServidorFalso().responder("GET", "/healthz", erroApi(500, "interno", "falha")).instalar();
+        await expect(consultarSaude()).rejects.toThrow(/answered 500 to the health request/);
+
+        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: { status: "ok" } }).instalar();
+        await expect(consultarSaude()).rejects.toThrow(/answered 200 without the health summary/);
+    });
+
+    it("métricas com erro e queda de rede falam inglês", async () => {
+        setLocale("en-US");
+        new ServidorFalso().responder("GET", "/metrics", erroApi(503, "indisponivel", "falha")).instalar();
+        await expect(consultarMetricas()).rejects.toThrow(/answered 503 to the metrics request/);
+    });
+
+    it("plugin sem resposta usa a frase de reserva em inglês", async () => {
+        setLocale("en-US");
+        new ServidorFalso()
+            .responder("GET", "/manifests", { status: 200, corpo: { items: [{ kind: "eco", situacao: "indisponivel" }] } })
+            .instalar();
+
+        const [item] = await listarPlugins("org_1");
+        expect(item?.mensagem).toMatch(/check the program declared in the instance configuration/);
+    });
+
+    it("recarga sem o resumo esperado fala inglês", () => {
+        setLocale("en-US");
+        expect(() => interpretarRelatorio({})).toThrow(/without the expected summary/);
     });
 });
