@@ -14,6 +14,13 @@
 
 /* ── Marca ────────────────────────────────────────────────────────────────── */
 
+.poph-login__topo {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--pop-spacing-md, 8px);
+}
+
 .poph-login__marca {
     display: flex;
     align-items: center;

@@ -6,6 +6,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
+import { setLocale } from "../i18n";
 import { Trilha, trilha } from "./Trilha";
 import { publicarNomeDoAgente } from "./nomeDoAgente";
 
@@ -13,6 +14,8 @@ const ORGS = [{ id: "org_1", name: "Clínica Aurora" }];
 
 afterEach(() => {
     cleanup();
+    window.localStorage.removeItem("poph-console.locale");
+    setLocale("pt-BR");
 });
 
 describe("trilha (função)", () => {
@@ -198,5 +201,31 @@ describe("marca da trilha do agente", () => {
             );
             cleanup();
         }
+    });
+});
+
+describe("Trilha i18n", () => {
+    it("translates breadcrumbs and agent tabs to en-US", () => {
+        setLocale("en-US");
+
+        expect(trilha("/orgs/org_1/agents/agt_1/model-jev", ORGS).map((m) => m.rotulo)).toEqual([
+            "Clínica Aurora",
+            "Agent",
+            "Model and Jev",
+        ]);
+        expect(trilha("/orgs/org_1/operacao", ORGS).map((m) => m.rotulo)).toEqual([
+            "Organizations",
+            "Clínica Aurora",
+            "Instance health",
+        ]);
+
+        render(
+            <MemoryRouter initialEntries={["/orgs/org_1/structure"]}>
+                <Trilha orgs={ORGS} />
+            </MemoryRouter>,
+        );
+
+        expect(screen.getByRole("navigation", { name: "Breadcrumb navigation" })).toBeInTheDocument();
+        expect(screen.getByText("Structure")).toBeInTheDocument();
     });
 });

@@ -10,6 +10,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 import { IconClose, SofaAdminShell, SofaModal } from "@sofacoding/sofa-ui";
 import "../estilos/casca.css";
+import { useI18n } from "../i18n";
 import { useSessao } from "../sessao/Sessao";
 import { Rail } from "./Rail";
 import { Topbar } from "./Topbar";
@@ -17,6 +18,7 @@ import { useOrgAgents } from "./totalDeAgentes";
 
 /** Casca com barra superior e menu; o conteúdo da rota entra em `children`. */
 export function Shell({ children }: { children: ReactNode }) {
+    const { translate } = useI18n();
     const { sessao } = useSessao();
     const { pathname } = useLocation();
     const [atalhos, setAtalhos] = useState(false);
@@ -71,25 +73,25 @@ export function Shell({ children }: { children: ReactNode }) {
             <SofaModal
                 open={atalhos}
                 onOpenChange={setAtalhos}
-                title="Atalhos do Console"
-                description="Vale em qualquer tela. Atalhos de formulário entram com as telas de edição."
-                closeLabel="Fechar atalhos"
+                title={translate("shell.shortcutsTitle")}
+                description={translate("shell.shortcutsDescription")}
+                closeLabel={translate("shell.shortcutsClose")}
             >
                 <div>
                     <div className="poph-atalho">
-                        <span>Navegar entre controles</span>
+                        <span>{translate("shell.shortcutNavigate")}</span>
                         <kbd>Tab</kbd> <kbd>Shift+Tab</kbd>
                     </div>
                     <div className="poph-atalho">
-                        <span>Acionar botão ou opção em foco</span>
-                        <kbd>Enter</kbd> <kbd>Espaço</kbd>
+                        <span>{translate("shell.shortcutActivate")}</span>
+                        <kbd>Enter</kbd> <kbd>{translate("shell.shortcutSpaceKey")}</kbd>
                     </div>
                     <div className="poph-atalho">
-                        <span>Fechar diálogo ou menu</span>
+                        <span>{translate("shell.shortcutClose")}</span>
                         <kbd>Esc</kbd>
                     </div>
                     <div className="poph-atalho">
-                        <span>Abrir esta lista</span>
+                        <span>{translate("shell.shortcutOpen")}</span>
                         <kbd>?</kbd>
                     </div>
                 </div>

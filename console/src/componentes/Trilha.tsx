@@ -6,19 +6,20 @@
  */
 
 import { Link, useLocation } from "react-router-dom";
+import { translate, useI18n } from "../i18n";
 import { useNomeDoAgente } from "./nomeDoAgente";
 
 export type Migalha = { rotulo: string; para?: string };
 
-const ROTULOS_DAS_ABAS: Record<string, string> = {
-    instructions: "Instruções",
-    "knowledge-base": "Base de conhecimento",
-    files: "Arquivos",
-    routing: "Roteamento",
-    integrations: "Integrações",
-    "model-jev": "Modelo e Jev",
-    "test-chat": "Chat de teste",
-};
+const TAB_LABEL_KEYS = {
+    instructions: "shell.tabInstructions",
+    "knowledge-base": "shell.tabKnowledgeBase",
+    files: "shell.tabFiles",
+    routing: "shell.tabRouting",
+    integrations: "shell.tabIntegrations",
+    "model-jev": "shell.tabModelJev",
+    "test-chat": "shell.tabTestChat",
+} as const;
 
 /**
  * `nomeAgente`: nome do agente da URL, quando já foi publicado (HR-49b). Sem ele, a migalha mostra
@@ -30,9 +31,9 @@ export function trilha(
     nomeAgente: string | null = null,
 ): Migalha[] {
     const partes = caminho.split("/").filter(Boolean);
-    if (partes.length === 0) return [{ rotulo: "Console" }];
+    if (partes.length === 0) return [{ rotulo: translate("shell.crumbConsole") }];
     if (partes[0] === "orgs") {
-        const migalhas: Migalha[] = [{ rotulo: "Organizações", para: "/orgs" }];
+        const migalhas: Migalha[] = [{ rotulo: translate("shell.crumbOrgs"), para: "/orgs" }];
         const id = partes[1];
         if (id) {
             const org = orgs.find((candidata) => candidata.id === id);
@@ -40,26 +41,30 @@ export function trilha(
             // Rotas do agente (CF-11): <organização> / <agente> / <aba>, sem "Agentes".
             if (partes[2] === "agents" && partes[3]) {
                 const agentRoot = `/orgs/${id}/agents/${partes[3]}`;
-                const agentLabel = nomeAgente ?? "Agente";
-                const tabLabel = partes[4] ? ROTULOS_DAS_ABAS[partes[4]] : undefined;
+                const agentLabel = nomeAgente ?? translate("shell.crumbAgent");
+                const tabKey =
+                    partes[4] && partes[4] in TAB_LABEL_KEYS
+                        ? TAB_LABEL_KEYS[partes[4] as keyof typeof TAB_LABEL_KEYS]
+                        : undefined;
+                const tabLabel = tabKey ? translate(tabKey) : undefined;
                 if (!tabLabel) return [orgCrumb, { rotulo: agentLabel }];
                 return [orgCrumb, { rotulo: agentLabel, para: agentRoot }, { rotulo: tabLabel }];
             }
             migalhas.push(orgCrumb);
             // Seções da organização (HR-40).
             if (partes[2] === "agents") {
-                migalhas.push({ rotulo: "Agentes", para: `/orgs/${id}/agents` });
+                migalhas.push({ rotulo: translate("shell.crumbAgents"), para: `/orgs/${id}/agents` });
             } else if (partes[2] === "structure") {
-                migalhas.push({ rotulo: "Estrutura" });
+                migalhas.push({ rotulo: translate("shell.crumbStructure") });
             } else if (partes[2] === "products") {
-                migalhas.push({ rotulo: "Produtos" });
+                migalhas.push({ rotulo: translate("shell.crumbProducts") });
             } else if (partes[2] === "operacao") {
-                migalhas.push({ rotulo: "Saúde da instância" });
+                migalhas.push({ rotulo: translate("shell.crumbOperation") });
             }
         }
         return migalhas;
     }
-    return [{ rotulo: "Organizações", para: "/orgs" }, { rotulo: partes[0] ?? "" }];
+    return [{ rotulo: translate("shell.crumbOrgs"), para: "/orgs" }, { rotulo: partes[0] ?? "" }];
 }
 
 /**
@@ -72,6 +77,7 @@ export function trilha(
  * essa distância, e o texto completo de cada migalha cortada fica no `title`.
  */
 export function Trilha({ orgs }: { orgs: { id: string; name: string }[] }) {
+    useI18n();
     const { pathname } = useLocation();
     const partes = pathname.split("/").filter(Boolean);
     const nomeAgente = useNomeDoAgente(partes[0] === "orgs" && partes[2] === "agents" ? partes[3] : undefined);
@@ -84,7 +90,7 @@ export function Trilha({ orgs }: { orgs: { id: string; name: string }[] }) {
                     ? "poph-topbar__trilha poph-topbar__trilha--agent"
                     : "poph-topbar__trilha"
             }
-            aria-label="Trilha de navegação"
+            aria-label={translate("shell.breadcrumbLabel")}
         >
             {migalhas.map((migalha, indice) => {
                 const ultima = indice === migalhas.length - 1;

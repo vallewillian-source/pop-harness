@@ -25,6 +25,7 @@ import {
 } from "react";
 import { useNavigate } from "react-router-dom";
 import { SofaButton, SofaModal } from "@sofacoding/sofa-ui";
+import { useI18n } from "../i18n";
 
 export type RegistroDaGuarda = {
     /** Há edição pendente na tela atual? */
@@ -77,6 +78,7 @@ function destinoDoLink(evento: MouseEvent): string | null {
 }
 
 export function GuardaAlteracoesProvider({ children }: { children: ReactNode }) {
+    const { translate } = useI18n();
     const navegar = useNavigate();
     const registro = useRef<RegistroDaGuarda | null>(null);
     const [destino, setDestino] = useState<string | null>(null);
@@ -153,19 +155,19 @@ export function GuardaAlteracoesProvider({ children }: { children: ReactNode }) 
                 onOpenChange={(aberto) => {
                     if (!aberto && !salvando) setDestino(null);
                 }}
-                title="Alterações não salvas"
+                title={translate("shell.unsavedTitle")}
                 description={
                     sujo
-                        ? "Você editou as instruções do agente e ainda não salvou. O que sair da tela agora descarta o rascunho."
-                        : "Há uma edição pendente nesta tela."
+                        ? translate("shell.unsavedDirtyDescription")
+                        : translate("shell.unsavedPendingDescription")
                 }
-                closeLabel="Fechar aviso de alterações não salvas"
+                closeLabel={translate("shell.unsavedClose")}
                 size="sm"
                 id="poph-alteracoes-nao-salvas"
                 footer={
                     <>
                         <SofaButton variant="secondary" disabled={salvando} onClick={() => setDestino(null)}>
-                            Cancelar
+                            {translate("common.cancel")}
                         </SofaButton>
                         <SofaButton
                             variant="danger"
@@ -177,20 +179,20 @@ export function GuardaAlteracoesProvider({ children }: { children: ReactNode }) 
                                 if (alvo) navegar(alvo);
                             }}
                         >
-                            Descartar alterações
+                            {translate("shell.unsavedDiscard")}
                         </SofaButton>
                         <SofaButton
                             variant="primary"
                             loading={salvando}
                             onClick={() => void salvarESair()}
                         >
-                            Salvar e sair
+                            {translate("shell.unsavedSaveAndLeave")}
                         </SofaButton>
                     </>
                 }
             >
                 <p style={{ margin: 0, color: "var(--pop-text-secondary)" }}>
-                    Salve para manter o que você digitou, ou descarte para sair sem gravar.
+                    {translate("shell.unsavedBody")}
                 </p>
             </SofaModal>
         </GuardaContexto.Provider>

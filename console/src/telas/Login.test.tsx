@@ -14,6 +14,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useParams } from "react-router-dom";
+import { setLocale } from "../i18n";
 import { LAST_ORG_STORAGE_KEY, SessaoProvider } from "../sessao/Sessao";
 import { ServidorFalso } from "../testes/servidor";
 import { Login } from "./Login";
@@ -65,6 +66,7 @@ afterEach(() => {
     vi.unstubAllGlobals();
     window.sessionStorage.clear();
     window.localStorage.clear();
+    setLocale("pt-BR");
 });
 
 describe("Login", () => {
@@ -168,5 +170,32 @@ describe("Login", () => {
         expect(screen.getByText(/Não foi possível alcançar a instância/)).toBeInTheDocument();
         await waitFor(() => expect(campoDoToken()).toBeInTheDocument());
         expect(screen.queryByText("lista de organizações")).toBeNull();
+    });
+
+    it("switches to en-US when clicking EN and persists in localStorage", async () => {
+        montar();
+
+        const enButton = screen.getByRole("button", { name: "Inglês (Estados Unidos)" });
+        await userEvent.click(enButton);
+
+        expect(
+            screen.getByRole("heading", { level: 1, name: "POP Harness Console" }),
+        ).toBeInTheDocument();
+        expect(
+            screen.getByText("Token-based administrative access. Internal use."),
+        ).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Sign in to Console" })).toBeInTheDocument();
+        expect(screen.getByLabelText(/Administrative token/)).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "English (United States)" })).toHaveAttribute(
+            "aria-pressed",
+            "true",
+        );
+        expect(document.documentElement.lang).toBe("en-US");
+        expect(window.localStorage.getItem("poph-console.locale")).toBe("en-US");
+
+        await userEvent.click(screen.getByRole("button", { name: "Portuguese (Brazil)" }));
+        expect(
+            screen.getByRole("heading", { level: 1, name: "Console do POP Harness" }),
+        ).toBeInTheDocument();
     });
 });

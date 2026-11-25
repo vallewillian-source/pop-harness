@@ -22,6 +22,7 @@ import {
     type ListaOrgs,
     type Org,
 } from "../api/cliente";
+import { translate } from "../i18n";
 
 const CHAVE = "poph-console.sessao";
 
@@ -135,7 +136,7 @@ export function SessaoProvider({ children }: { children: ReactNode }) {
     const entrar = useCallback(async (token: string) => {
         const limpo = token.trim();
         if (!limpo) {
-            throw new ErroApi(400, "token_vazio", "informe o token administrativo");
+            throw new ErroApi(400, "token_vazio", translate("login.emptyToken"));
         }
         definirToken(limpo);
         try {

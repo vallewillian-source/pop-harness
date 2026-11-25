@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
+import { setLocale } from "../i18n";
 import { SessaoProvider } from "../sessao/Sessao";
 import { ServidorFalso, erroApi } from "../testes/servidor";
 import { GuardaAlteracoesProvider } from "./GuardaAlteracoes";
@@ -68,6 +69,8 @@ function montar(caminho: string) {
 
 afterEach(() => {
     window.sessionStorage.removeItem(CHAVE_DA_SESSAO);
+    window.localStorage.removeItem("poph-console.locale");
+    setLocale("pt-BR");
 });
 
 describe("Casca do Console (HR-61)", () => {
@@ -155,5 +158,21 @@ describe("Casca do Console (HR-61)", () => {
         expect(screen.getByRole("link", { name: /Agentes/ })).not.toHaveTextContent(/\d/);
         expect(screen.getByText("Conteúdo da tela")).toBeInTheDocument();
         expect(screen.getByRole("button", { name: "Atalhos do teclado" })).toBeInTheDocument();
+    });
+
+    it("switches the shortcuts modal to en-US when clicking EN", async () => {
+        const user = userEvent.setup();
+        prepararSessao();
+        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE }).instalar();
+        montar("/orgs");
+
+        await user.click(screen.getByRole("button", { name: "Inglês (Estados Unidos)" }));
+        await user.click(screen.getByRole("button", { name: "Keyboard shortcuts" }));
+
+        expect(
+            await screen.findByRole("dialog", { name: "Console shortcuts" }),
+        ).toBeInTheDocument();
+        expect(screen.getByText("Navigate between controls")).toBeInTheDocument();
+        expect(screen.getByText("Space")).toBeInTheDocument();
     });
 });

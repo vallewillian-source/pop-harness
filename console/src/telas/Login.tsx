@@ -17,6 +17,8 @@ import {
     SofaStatusIndicator,
 } from "@sofacoding/sofa-ui";
 import { ErroApi } from "../api/cliente";
+import { LanguageSwitcher } from "../componentes/LanguageSwitcher";
+import { useI18n } from "../i18n";
 import { resolveDefaultOrgPath, useSessao } from "../sessao/Sessao";
 import "../estilos/login.css";
 
@@ -26,6 +28,7 @@ function instancia(): string {
 }
 
 export function Login() {
+    const { translate } = useI18n();
     const { entrar, expirada, limparAvisoExpiracao } = useSessao();
     const navegar = useNavigate();
     const [token, setToken] = useState("");
@@ -47,18 +50,16 @@ export function Login() {
         } catch (erro) {
             if (erro instanceof ErroApi) {
                 if (erro.naoAutorizado) {
-                    setErroToken(
-                        "Token administrativo inválido ou revogado. Confira com a equipe de operação ou gere outro com `poph token`.",
-                    );
+                    setErroToken(translate("login.invalidToken"));
                 } else if (erro.semServidor) {
                     setErroRede(
-                        `Não foi possível alcançar a instância em ${instancia()}. Verifique se o processo \`poph serve\` está em execução.`,
+                        translate("login.unreachableInstance", { origin: instancia() }),
                     );
                 } else {
                     setErroToken(erro.message);
                 }
             } else {
-                setErroRede("Falha inesperada ao entrar. Tente de novo.");
+                setErroRede(translate("login.unexpectedError"));
             }
         } finally {
             setEnviando(false);
@@ -68,28 +69,29 @@ export function Login() {
     return (
         <main className="poph-login" role="main">
             <section className="poph-login__bloco" aria-labelledby="poph-login-titulo">
-                <div className="poph-login__marca">
-                    <span className="poph-login__monograma" aria-hidden="true">
-                        P
-                    </span>
-                    <span className="poph-login__nome">POP HARNESS</span>
+                <div className="poph-login__topo">
+                    <div className="poph-login__marca">
+                        <span className="poph-login__monograma" aria-hidden="true">
+                            P
+                        </span>
+                        <span className="poph-login__nome">POP HARNESS</span>
+                    </div>
+                    <LanguageSwitcher />
                 </div>
                 <h1 id="poph-login-titulo" className="poph-login__titulo">
-                    Console do POP Harness
+                    {translate("login.title")}
                 </h1>
-                <p className="poph-login__descricao">
-                    Acesso administrativo por token. Uso interno.
-                </p>
+                <p className="poph-login__descricao">{translate("login.subtitle")}</p>
 
                 {(expirada || erroRede) && (
                     <div className="poph-login__avisos">
                         {expirada && (
-                            <SofaBanner tone="warn" title="Sessão encerrada">
-                                O token desta sessão não é mais aceito pela instância.
+                            <SofaBanner tone="warn" title={translate("login.expiredTitle")}>
+                                {translate("login.expiredBody")}
                             </SofaBanner>
                         )}
                         {erroRede && (
-                            <SofaBanner tone="danger" title="Sem conexão">
+                            <SofaBanner tone="danger" title={translate("login.offlineTitle")}>
                                 {erroRede}
                             </SofaBanner>
                         )}
@@ -98,8 +100,8 @@ export function Login() {
 
                 <form className="poph-login__form" onSubmit={enviar} noValidate>
                     <SofaField
-                        label="Token administrativo"
-                        hint="Gerado com `poph token` na instância, ou definido em [admin].tokens_globais."
+                        label={translate("login.tokenLabel")}
+                        hint={translate("login.tokenHint")}
                         error={erroToken ?? undefined}
                         required
                         htmlFor="poph-token"
@@ -114,11 +116,15 @@ export function Login() {
                                     autoComplete="off"
                                     autoFocus
                                     spellCheck={false}
-                                    placeholder="pophg_… ou poph_…"
+                                    placeholder={translate("login.tokenPlaceholder")}
                                     onChange={(evento) => setToken(evento.target.value)}
                                 />
                                 <SofaIconButton
-                                    label={visivel ? "Ocultar token" : "Mostrar token"}
+                                    label={
+                                        visivel
+                                            ? translate("login.hideToken")
+                                            : translate("login.showToken")
+                                    }
                                     size={36}
                                     type="button"
                                     onClick={() => setVisivel((atual) => !atual)}
@@ -134,7 +140,9 @@ export function Login() {
                     </SofaField>
 
                     <div className="poph-fato">
-                        <span className="poph-fato__rotulo">Instância</span>
+                        <span className="poph-fato__rotulo">
+                            {translate("login.instanceLabel")}
+                        </span>
                         <span className="poph-fato__valor poph-fato__valor--mono">
                             {instancia()}
                         </span>
@@ -147,18 +155,13 @@ export function Login() {
                         loading={enviando}
                         icon={<IconKey aria-hidden="true" />}
                     >
-                        Entrar no Console
+                        {translate("login.submit")}
                     </SofaButton>
 
-                    <p className="poph-login__aviso">
-                        O token fica só na memória desta aba e no armazenamento de sessão do
-                        navegador: fechar a aba encerra o acesso. Nada é gravado de forma
-                        permanente.
-                    </p>
+                    <p className="poph-login__aviso">{translate("login.sessionNotice")}</p>
 
                     <SofaStatusIndicator tone="muted">
-                        Escopo é definido pelo token: global enxerga todas as organizações, de
-                        organização enxerga só a própria.
+                        {translate("login.scopeNotice")}
                     </SofaStatusIndicator>
                 </form>
             </section>

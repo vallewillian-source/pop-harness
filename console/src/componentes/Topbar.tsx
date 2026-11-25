@@ -24,11 +24,14 @@ import {
     SofaIconButton,
     type SofaIconProps,
 } from "@sofacoding/sofa-ui";
+import { translate, useI18n } from "../i18n";
 import { useSessao } from "../sessao/Sessao";
 import { useGuardaDeAlteracoes } from "./GuardaAlteracoes";
+import { LanguageSwitcher } from "./LanguageSwitcher";
 import {
     buscarTudo,
     GRUPOS_DA_BUSCA,
+    SEARCH_GROUP_KEYS,
     type OpcaoDeBusca,
     type TelaBuscavel,
 } from "./busca";
@@ -47,7 +50,7 @@ import "../estilos/busca.css";
 export function enderecoDaInstancia(): string {
     const { hostname, port } = window.location;
     if (hostname === "127.0.0.1" || hostname === "localhost" || hostname === "") {
-        return port ? `Local :${port}` : "Local";
+        return port ? translate("shell.instanceLocalPort", { port }) : translate("shell.instanceLocal");
     }
     return hostname;
 }
@@ -100,9 +103,6 @@ function telasDisponiveis(contexto: ContextoDeNavegacao): TelaBuscavel[] {
     });
 }
 
-const PLACEHOLDER_GLOBAL = "Buscar organizações, rotas ou comandos globais…";
-const PLACEHOLDER_DO_AGENTE = "Buscar instruções, parâmetros ou turnos deste agente…";
-
 /** Tempo que o aviso de "comando copiado" fica na tela. */
 const DURACAO_DO_AVISO_MS = 3000;
 
@@ -112,6 +112,7 @@ const DURACAO_DO_AVISO_MS = 3000;
  * organização ou a tela pela guarda de alterações, ou copia o comando; Esc limpa e fecha.
  */
 function BuscaGlobal({ telas, placeholder }: { telas: TelaBuscavel[]; placeholder: string }) {
+    const { translate } = useI18n();
     const { sessao } = useSessao();
     const guarda = useGuardaDeAlteracoes();
     const campo = useRef<HTMLInputElement>(null);
@@ -164,12 +165,12 @@ function BuscaGlobal({ telas, placeholder }: { telas: TelaBuscavel[]; placeholde
         setAberta(false);
         setTermo("");
         if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
-            setAviso(`Não consegui copiar. Comando: ${texto}`);
+            setAviso(translate("shell.copyFailure", { command: texto }));
             return;
         }
         navigator.clipboard.writeText(texto).then(
-            () => setAviso(`Comando copiado: ${texto}`),
-            () => setAviso(`Não consegui copiar. Comando: ${texto}`),
+            () => setAviso(translate("shell.copySuccess", { command: texto })),
+            () => setAviso(translate("shell.copyFailure", { command: texto })),
         );
     }
 
@@ -209,7 +210,7 @@ function BuscaGlobal({ telas, placeholder }: { telas: TelaBuscavel[]; placeholde
     return (
         <div className="poph-busca">
             <label htmlFor={idCampo} className="poph-busca__rotulo-oculto">
-                Buscar organizações, telas e comandos
+                {translate("shell.searchLabel")}
             </label>
             <span className="poph-busca__lupa" aria-hidden="true">
                 <IconSearch />
@@ -248,11 +249,11 @@ function BuscaGlobal({ telas, placeholder }: { telas: TelaBuscavel[]; placeholde
                     id={idLista}
                     className="poph-busca__lista"
                     role={opcoes.length > 0 ? "listbox" : undefined}
-                    aria-label={opcoes.length > 0 ? "Resultados da busca" : undefined}
+                    aria-label={opcoes.length > 0 ? translate("shell.searchResultsLabel") : undefined}
                 >
                     {opcoes.length === 0 ? (
                         <p className="poph-busca__vazio" role="status">
-                            Nada encontrado para “{termo.trim()}”
+                            {translate("shell.searchEmpty", { query: termo.trim() })}
                         </p>
                     ) : (
                         GRUPOS_DA_BUSCA.map((grupo) => {
@@ -264,7 +265,7 @@ function BuscaGlobal({ telas, placeholder }: { telas: TelaBuscavel[]; placeholde
                             return (
                                 <div key={grupo} role="group" aria-labelledby={idTitulo}>
                                     <div id={idTitulo} className="poph-busca__grupo">
-                                        {grupo}
+                                        {translate(SEARCH_GROUP_KEYS[grupo])}
                                     </div>
                                     {doGrupo.map(({ opcao, posicao }) => {
                                         const ativa = posicao === indiceAtivo;
@@ -338,12 +339,16 @@ function estadoDaInstancia(
     degradada: boolean,
     memoria: number | null,
 ): { texto: string; alerta: boolean } {
-    if (semConexao) return { texto: "Sem conexão", alerta: true };
-    if (degradada) return { texto: "Engine: 503 · degradada", alerta: true };
-    if (!dados) return { texto: "Engine: verificando…", alerta: false };
-    const situacao = dados.status === "ok" ? "200 OK" : "degradada";
+    if (semConexao) return { texto: translate("shell.statusOffline"), alerta: true };
+    if (degradada) return { texto: translate("shell.statusDegraded503"), alerta: true };
+    if (!dados) return { texto: translate("shell.statusChecking"), alerta: false };
+    const situacao =
+        dados.status === "ok" ? "200 OK" : translate("shell.statusDegradedWord");
     const mb = memoria == null ? null : Math.round(memoria / 1048576);
-    const texto = mb == null ? `Engine: ${situacao}` : `Engine: ${situacao} · ${mb} MB`;
+    const texto =
+        mb == null
+            ? translate("shell.statusEngine", { state: situacao })
+            : translate("shell.statusEngineWithMemory", { state: situacao, mb });
     return { texto, alerta: dados.status !== "ok" };
 }
 
@@ -352,10 +357,10 @@ function saudeDoChip(
     semConexao: boolean,
     degradada: boolean,
 ): string {
-    if (semConexao) return "sem conexão";
-    if (degradada) return "503 · degradada";
-    if (!dados) return "verificando…";
-    return dados.status === "ok" ? "200 OK" : "degradada";
+    if (semConexao) return translate("shell.chipOffline");
+    if (degradada) return translate("shell.chipDegraded503");
+    if (!dados) return translate("shell.chipChecking");
+    return dados.status === "ok" ? "200 OK" : translate("shell.statusDegradedWord");
 }
 
 function estadoDoAgente(
@@ -365,7 +370,7 @@ function estadoDoAgente(
     degradada: boolean,
 ): { modelo: string; saude: string; alerta: boolean } {
     return {
-        modelo: `Modelo: ${model ?? "—"}`,
+        modelo: translate("shell.agentModel", { model: model ?? "—" }),
         saude: saudeDoChip(dados, semConexao, degradada),
         alerta: semConexao || degradada || (dados !== null && dados.status !== "ok"),
     };
@@ -379,19 +384,26 @@ export function Topbar({
     /** Abre o modal "Atalhos do Console" (o mesmo do botão "? atalhos" do menu). */
     aoAbrirAtalhos: () => void;
 }) {
+    const { translate } = useI18n();
     const { sessao, sair } = useSessao();
     const navegar = useNavigate();
     const { pathname } = useLocation();
     const { saude: dados, semConexao, degradada } = useSaude();
     const memoria = useMemoriaDoProcesso();
-    const escopoDoToken = sessao?.escopo === "org" ? "Token de org" : "Token global";
+    const escopoDoToken =
+        sessao?.escopo === "org"
+            ? translate("shell.tokenScopeOrg")
+            : translate("shell.tokenScopeGlobal");
     const contexto = contextoDaUrl(pathname);
     const emRotaDeAgente = contexto.agentId !== null;
     const modelDoAgente = useAgentModel(contexto.agentId ?? undefined);
     const telas = telasDisponiveis(contexto);
     const estado = estadoDaInstancia(dados, semConexao, degradada, memoria);
     const chipDoAgente = estadoDoAgente(modelDoAgente, dados, semConexao, degradada);
-    const tituloDoChip = `${enderecoDaInstancia()} · ${escopoDoToken} · consulta a cada 15 s`;
+    const tituloDoChip = translate("shell.chipTitle", {
+        address: enderecoDaInstancia(),
+        scope: escopoDoToken,
+    });
     const sairDoConsole = () => {
         sair();
         navegar("/login", { replace: true });
@@ -406,7 +418,10 @@ export function Topbar({
                     </span>
                     <span className="poph-topbar__nome">POP HARNESS</span>
                     {dados?.version && (
-                        <span className="poph-topbar__versao" title="Versão da instância">
+                        <span
+                            className="poph-topbar__versao"
+                            title={translate("shell.instanceVersionTitle")}
+                        >
                             v{dados.version}
                         </span>
                     )}
@@ -419,7 +434,11 @@ export function Topbar({
             <div className="poph-topbar__centro">
                 <BuscaGlobal
                     telas={telas}
-                    placeholder={emRotaDeAgente ? PLACEHOLDER_DO_AGENTE : PLACEHOLDER_GLOBAL}
+                    placeholder={
+                        emRotaDeAgente
+                            ? translate("shell.searchAgentPlaceholder")
+                            : translate("shell.searchGlobalPlaceholder")
+                    }
                 />
             </div>
             <div className="poph-topbar__acoes">
@@ -451,7 +470,7 @@ export function Topbar({
                 )}
                 {/* Leitura para quem usa leitor de tela: só anuncia quando a instância cai. */}
                 <span role="status" className="poph-topbar__so-leitor">
-                    {semConexao ? "Instância sem conexão" : ""}
+                    {semConexao ? translate("shell.instanceOfflineSr") : ""}
                 </span>
                 {!emRotaDeAgente && (
                     <span className="poph-topbar__token">
@@ -464,18 +483,23 @@ export function Topbar({
                         variant="subtle"
                         size="sm"
                         className="poph-topbar__sair"
-                        aria-label="Sair do Console"
+                        aria-label={translate("shell.signOutLabel")}
                         icon={<IconLogOut aria-hidden="true" />}
                         onClick={sairDoConsole}
                     >
-                        Sair
+                        {translate("shell.signOut")}
                     </SofaButton>
                 ) : (
-                    <SofaIconButton label="Sair do Console" onClick={sairDoConsole}>
+                    <SofaIconButton label={translate("shell.signOutLabel")} onClick={sairDoConsole}>
                         <IconLogOut aria-hidden="true" />
                     </SofaIconButton>
                 )}
-                <SofaIconButton label="Atalhos do teclado" size={28} onClick={aoAbrirAtalhos}>
+                <LanguageSwitcher />
+                <SofaIconButton
+                    label={translate("shell.keyboardShortcuts")}
+                    size={28}
+                    onClick={aoAbrirAtalhos}
+                >
                     <IconeAjuda aria-hidden="true" />
                 </SofaIconButton>
             </div>

@@ -6,11 +6,22 @@
  * verdade. Compara sem acento e sem caixa dos dois lados, então "clinica" acha "Clínica Nova".
  */
 
+import { translate } from "../i18n";
+
 export type OrgBuscavel = { id: string; name: string; slug: string };
 
 /** Grupos da busca, na ordem em que aparecem. */
-export const GRUPOS_DA_BUSCA = ["Organizações", "Telas", "Comandos do poph"] as const;
+export const GRUPOS_DA_BUSCA = ["orgs", "screens", "commands"] as const;
 export type GrupoDeBusca = (typeof GRUPOS_DA_BUSCA)[number];
+
+export const SEARCH_GROUP_KEYS: Record<
+    GrupoDeBusca,
+    "shell.searchGroupOrgs" | "shell.searchGroupScreens" | "shell.searchGroupCommands"
+> = {
+    orgs: "shell.searchGroupOrgs",
+    screens: "shell.searchGroupScreens",
+    commands: "shell.searchGroupCommands",
+};
 
 /** Tela do Console que a busca pode abrir: já resolvida para a URL atual. */
 export type TelaBuscavel = { rotulo: string; caminho: string };
@@ -30,12 +41,17 @@ export type OpcaoDeBusca = {
  * Comandos do `poph` que existem no binário (`crates/poph/src/main.rs` e subcomandos). Qualquer
  * comando novo entra aqui só depois de conferido no código.
  */
-export const COMANDOS_DO_POPH: ComandoBuscavel[] = [
-    { texto: "poph serve", descricao: "Sobe o servidor HTTP da instância" },
-    { texto: "poph org list", descricao: "Lista as organizações" },
-    { texto: 'poph org create --name "<nome>"', descricao: "Cria uma organização" },
-    { texto: "poph doctor", descricao: "Confere o ambiente antes de subir o servidor" },
-];
+export function pophCommands(): ComandoBuscavel[] {
+    return [
+        { texto: "poph serve", descricao: translate("shell.cmdServeDesc") },
+        { texto: "poph org list", descricao: translate("shell.cmdOrgListDesc") },
+        {
+            texto: translate("shell.cmdOrgCreate"),
+            descricao: translate("shell.cmdOrgCreateDesc"),
+        },
+        { texto: "poph doctor", descricao: translate("shell.cmdDoctorDesc") },
+    ];
+}
 
 /** Texto em forma comparável: sem acento, minúsculo, sem espaços das pontas. */
 export function normalizarBusca(texto: string): string {
@@ -65,7 +81,7 @@ export function buscarTudo(
     termo: string,
     orgs: OrgBuscavel[],
     telas: TelaBuscavel[],
-    comandos: ComandoBuscavel[] = COMANDOS_DO_POPH,
+    comandos: ComandoBuscavel[] = pophCommands(),
 ): OpcaoDeBusca[] {
     const alvo = normalizarBusca(termo);
     if (alvo === "") return [];
@@ -76,7 +92,7 @@ export function buscarTudo(
     for (const org of filtrarOrgs(orgs, termo)) {
         opcoes.push({
             chave: `org-${org.id}`,
-            grupo: "Organizações",
+            grupo: "orgs",
             rotulo: org.name,
             detalhe: org.slug,
             destino: { tipo: "caminho", caminho: `/orgs/${org.id}` },
@@ -86,7 +102,7 @@ export function buscarTudo(
         if (!casa(tela.rotulo)) continue;
         opcoes.push({
             chave: `tela-${tela.caminho}`,
-            grupo: "Telas",
+            grupo: "screens",
             rotulo: tela.rotulo,
             destino: { tipo: "caminho", caminho: tela.caminho },
         });
@@ -95,7 +111,7 @@ export function buscarTudo(
         if (!casa(comando.texto, comando.descricao)) continue;
         opcoes.push({
             chave: `comando-${comando.texto}`,
-            grupo: "Comandos do poph",
+            grupo: "commands",
             rotulo: comando.texto,
             detalhe: comando.descricao,
             destino: { tipo: "comando", texto: comando.texto },

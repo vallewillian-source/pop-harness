@@ -18,6 +18,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { useEffect } from "react";
+import { setLocale } from "../i18n";
 import { SessaoProvider } from "../sessao/Sessao";
 import { ServidorFalso } from "../testes/servidor";
 import { GuardaAlteracoesProvider, useGuardaDeAlteracoes } from "./GuardaAlteracoes";
@@ -98,6 +99,8 @@ function campoDeBusca() {
 
 afterEach(() => {
     window.sessionStorage.removeItem(CHAVE_DA_SESSAO);
+    window.localStorage.removeItem("poph-console.locale");
+    setLocale("pt-BR");
 });
 
 describe("Topbar", () => {
@@ -690,5 +693,37 @@ describe("trilha do agente de três passos em 1280 (CF-11 rodada 1)", () => {
         expect(container.querySelector("nav.poph-topbar__trilha")).not.toHaveClass(
             "poph-topbar__trilha--agent",
         );
+    });
+});
+
+describe("Topbar i18n", () => {
+    it("switches Topbar, global search, and unsaved guard to en-US", async () => {
+        const user = userEvent.setup();
+        prepararSessao("pophg_teste", "global", TRES_ORGS);
+        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE }).instalar();
+
+        montar("/orgs", { sujo: true });
+
+        await user.click(screen.getByRole("button", { name: "Inglês (Estados Unidos)" }));
+
+        expect(screen.getByText("Global token")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Sign out of Console" })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Keyboard shortcuts" })).toBeInTheDocument();
+        expect(window.localStorage.getItem("poph-console.locale")).toBe("en-US");
+
+        const searchInput = screen.getByRole("combobox", {
+            name: "Search organizations, screens, and commands",
+        });
+        await user.type(searchInput, "Starts");
+        expect(screen.getByRole("group", { name: "poph commands" })).toBeInTheDocument();
+        expect(screen.getByText("Starts the instance HTTP server")).toBeInTheDocument();
+
+        await user.clear(searchInput);
+        await user.type(searchInput, "padaria");
+        await user.keyboard("{Enter}");
+
+        expect(await screen.findByText("Unsaved changes")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Discard changes" })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Save and leave" })).toBeInTheDocument();
     });
 });
