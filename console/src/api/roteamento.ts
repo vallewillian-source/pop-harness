@@ -19,6 +19,7 @@
 
 import { pedir } from "./cliente";
 import type { Agente } from "./agentes";
+import { translate } from "../i18n";
 
 /** Motivos de transferência: até 15 (docs/JEV.md, seção de flags do agente). */
 export const LIMITE_MOTIVOS = 15;
@@ -68,16 +69,20 @@ export function motivosLimpos(motivos: string[]): string[] {
 export function validarRoteamento(valor: Roteamento): Record<string, string> {
     const erros: Record<string, string> = {};
     if (valor.transferenciaHumana && !valor.departamentoHumano) {
-        erros["departamentoHumano"] =
-            "escolha o departamento humano de destino para ligar a transferência";
+        erros["departamentoHumano"] = translate("routing.validationHumanDepartment");
     }
     const limpos = motivosLimpos(valor.motivos);
     if (limpos.length > LIMITE_MOTIVOS) {
-        erros["motivos"] = `use no máximo ${LIMITE_MOTIVOS} motivos (há ${limpos.length})`;
+        erros["motivos"] = translate("routing.validationTooManyReasons", {
+            limit: LIMITE_MOTIVOS,
+            count: limpos.length,
+        });
     }
     valor.motivos.forEach((motivo, indice) => {
         if (motivo.trim().length > LIMITE_MOTIVO) {
-            erros[`motivo-${indice}`] = `o motivo aceita até ${LIMITE_MOTIVO} caracteres`;
+            erros[`motivo-${indice}`] = translate("routing.validationReasonTooLong", {
+                limit: LIMITE_MOTIVO,
+            });
         }
     });
     return erros;

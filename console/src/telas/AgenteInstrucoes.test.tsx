@@ -7,14 +7,15 @@
  * de alterações não salvas ao trocar de tela.
  */
 
-import { describe, expect, it } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { GuardaAlteracoesProvider } from "../componentes/GuardaAlteracoes";
 import { esperarFocoDoModal } from "../testes/modal";
 import { ServidorFalso, erroApi } from "../testes/servidor";
 import { AgenteInstrucoes } from "./AgenteInstrucoes";
+import { setLocale } from "../i18n";
 
 const ORG = "org_1";
 const AGENTE = "ag_1";
@@ -337,5 +338,65 @@ describe("AgenteInstrucoes", () => {
         expect(screen.getByRole("region", { name: "Identidade" })).toBeInTheDocument();
         expect(screen.getByRole("region", { name: "Prévia do texto composto" })).toBeInTheDocument();
         expect(container.querySelector(".sofa-card")).toBeNull();
+    });
+});
+
+describe("I18N-07: aba de Instruções em en-US", () => {
+    afterEach(() => {
+        act(() => setLocale("pt-BR"));
+    });
+
+    it("o formulário, a prévia e as ações falam inglês", async () => {
+        setLocale("en-US");
+        servidorCom();
+        montar();
+
+        expect(await screen.findByDisplayValue("Beatriz")).toBeInTheDocument();
+        expect(screen.getByLabelText(/Assistant name/)).toHaveValue("Beatriz");
+        expect(screen.getByLabelText("Role or function")).toHaveValue("Atendente");
+        expect(screen.getByRole("region", { name: "Identity" })).toBeInTheDocument();
+        expect(
+            screen.getByRole("region", { name: "Principles and non-negotiable rules" }),
+        ).toBeInTheDocument();
+        expect(screen.getByLabelText("Rule 1")).toBeInTheDocument();
+        expect(screen.getByLabelText("When it cannot comply")).toBeInTheDocument();
+        expect(screen.getByLabelText("Language")).toHaveValue("pt-BR");
+        expect(screen.getByRole("option", { name: "Portuguese (Brazil)" })).toBeInTheDocument();
+        expect(screen.getByRole("option", { name: "Friendly" })).toBeInTheDocument();
+        expect(screen.getByRole("switch", { name: /Search the knowledge base/ })).toBeChecked();
+        expect(screen.getByRole("region", { name: "Composed text preview" })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Save (v2)" })).toBeDisabled();
+        expect(screen.getByRole("button", { name: "Refresh preview" })).toBeInTheDocument();
+        expect(screen.getByText(/If-Match: v2/)).toBeInTheDocument();
+    });
+
+    it("a troca para inglês reescreve a tela aberta sem recarregar", async () => {
+        servidorCom();
+        montar();
+        await screen.findByDisplayValue("Beatriz");
+
+        expect(screen.getByLabelText(/Nome do assistente/)).toBeInTheDocument();
+        expect(screen.getByRole("region", { name: "Identidade" })).toBeInTheDocument();
+
+        act(() => setLocale("en-US"));
+
+        expect(screen.getByLabelText(/Assistant name/)).toHaveValue("Beatriz");
+        expect(screen.getByRole("region", { name: "Identity" })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Save (v2)" })).toBeInTheDocument();
+        expect(screen.getByRole("region", { name: "Composed text preview" })).toBeInTheDocument();
+    });
+
+    it("a validação local responde em inglês e não chama a API", async () => {
+        const usuario = userEvent.setup();
+        setLocale("en-US");
+        const servidor = servidorCom();
+        montar();
+
+        const campo = await screen.findByDisplayValue("Beatriz");
+        await usuario.clear(campo);
+        await usuario.click(screen.getByRole("button", { name: "Save (v2)" }));
+
+        expect(await screen.findByText("enter the assistant name")).toBeInTheDocument();
+        expect(servidor.chamadasPara("PATCH", "/instructions/current")).toHaveLength(0);
     });
 });

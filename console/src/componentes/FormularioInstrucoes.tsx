@@ -33,6 +33,7 @@ import {
     type Estruturadas,
 } from "../api/instrucoes";
 import { SecaoDoAgente } from "./AbasDoAgente";
+import { useI18n } from "../i18n";
 
 /** Ligações do `SofaField` sem `describedBy`, que vira `aria-describedby` no controle. */
 function semDescribedBy(controle: SofaFieldControlProps) {
@@ -59,6 +60,7 @@ export function FormularioInstrucoes({
     erros,
     desabilitado = false,
 }: FormularioInstrucoesProps) {
+    const { translate: t } = useI18n();
     const identidade = valor.identity;
     const tom = valor.tone;
     const escopo = valor.scope;
@@ -127,14 +129,14 @@ export function FormularioInstrucoes({
     return (
         <div className="poph-instrucoes__formulario">
             <SecaoDoAgente
-                titulo="Identidade"
-                descricao="Quem é o assistente. O nome e a empresa viram o cabeçalho do texto composto."
+                titulo={t("instructions.sectionIdentity")}
+                descricao={t("instructions.sectionIdentityDescription")}
             >
                 <div className="poph-pilha">
                 <div className="poph-grade">
                     <SofaField
-                        label="Nome do assistente"
-                        hint="Como o agente se apresenta ao cliente."
+                        label={t("instructions.nameLabel")}
+                        hint={t("instructions.nameHint")}
                         error={erros.nome}
                         required
                         htmlFor="poph-inst-nome"
@@ -149,7 +151,7 @@ export function FormularioInstrucoes({
                             />
                         )}
                     </SofaField>
-                    <SofaField label="Papel ou função" hint="Ex.: atendente, recepcionista.">
+                    <SofaField label={t("instructions.roleLabel")} hint={t("instructions.roleHint")}>
                         {(controle) => (
                             <SofaInput
                                 {...semDescribedBy(controle)}
@@ -160,7 +162,7 @@ export function FormularioInstrucoes({
                             />
                         )}
                     </SofaField>
-                    <SofaField label="Empresa" hint="Nome do negócio do cliente.">
+                    <SofaField label={t("instructions.companyLabel")} hint={t("instructions.companyHint")}>
                         {(controle) => (
                             <SofaInput
                                 {...semDescribedBy(controle)}
@@ -173,8 +175,8 @@ export function FormularioInstrucoes({
                     </SofaField>
                 </div>
                 <SofaField
-                    label="Descrição da empresa"
-                    hint="Um parágrafo sobre o negócio; entra logo abaixo do cabeçalho."
+                    label={t("instructions.companyDescriptionLabel")}
+                    hint={t("instructions.companyDescriptionHint")}
                 >
                     {(controle) => (
                         <SofaTextarea
@@ -192,8 +194,8 @@ export function FormularioInstrucoes({
             </SecaoDoAgente>
 
             <SecaoDoAgente
-                titulo="Princípios e regras invioláveis"
-                descricao="Cada regra entra numerada no texto, com a ação de contingência logo abaixo."
+                titulo={t("instructions.sectionPrinciples")}
+                descricao={t("instructions.sectionPrinciplesDescription")}
             >
                 {erros.principios && (
                     <p role="alert" className="poph-erro-de-secao">
@@ -201,19 +203,16 @@ export function FormularioInstrucoes({
                     </p>
                 )}
                 {valor.principles.length === 0 ? (
-                    <p className="poph-mono-mudo">
-                        Nenhum princípio. Regras como "nunca informar preço fora do catálogo" entram
-                        aqui.
-                    </p>
+                    <p className="poph-mono-mudo">{t("instructions.noPrinciples")}</p>
                 ) : (
                     <ol className="poph-lista-principios">
                         {valor.principles.map((principio, indice) => (
                             <li className="poph-principio" key={`principio-${indice}`}>
                                 <SofaField
-                                    label={`Regra ${indice + 1}`}
+                                    label={t("instructions.ruleLabel", { number: indice + 1 })}
                                     error={
                                         erros.principios && !principio.rule.trim()
-                                            ? "escreva a regra ou remova este princípio"
+                                            ? t("instructions.emptyRuleError")
                                             : undefined
                                     }
                                 >
@@ -229,7 +228,7 @@ export function FormularioInstrucoes({
                                         />
                                     )}
                                 </SofaField>
-                                <SofaField label="Quando não puder cumprir">
+                                <SofaField label={t("instructions.fallbackLabel")}>
                                     {(controle) => (
                                         <SofaSelect
                                             {...semDescribedBy(controle)}
@@ -243,7 +242,7 @@ export function FormularioInstrucoes({
                                         >
                                             {ACOES_DE_CONTINGENCIA.map((acao) => (
                                                 <option key={acao.valor} value={acao.valor}>
-                                                    {acao.rotulo}
+                                                    {t(acao.labelKey)}
                                                 </option>
                                             ))}
                                         </SofaSelect>
@@ -254,10 +253,10 @@ export function FormularioInstrucoes({
                                     size="sm"
                                     icon={<IconTrash aria-hidden="true" />}
                                     disabled={desabilitado}
-                                    aria-label={`Remover regra ${indice + 1}`}
+                                    aria-label={t("instructions.removeRuleLabel", { number: indice + 1 })}
                                     onClick={() => removerPrincipio(indice)}
                                 >
-                                    Remover
+                                    {t("instructions.remove")}
                                 </SofaButton>
                             </li>
                         ))}
@@ -270,16 +269,16 @@ export function FormularioInstrucoes({
                         disabled={desabilitado}
                         onClick={adicionarPrincipio}
                     >
-                        Adicionar princípio
+                        {t("instructions.addPrinciple")}
                     </SofaButton>
                 </div>
             </SecaoDoAgente>
 
             <SecaoDoAgente
-                titulo="Escopo"
-                descricao="O que o agente faz e o que ele não faz. Entra como duas frases no texto."
+                titulo={t("instructions.sectionScope")}
+                descricao={t("instructions.sectionScopeDescription")}
             >
-                <SofaField label="O que o agente faz">
+                <SofaField label={t("instructions.doesLabel")}>
                     {(controle) => (
                         <SofaTextarea
                             {...semDescribedBy(controle)}
@@ -290,7 +289,7 @@ export function FormularioInstrucoes({
                         />
                     )}
                 </SofaField>
-                <SofaField label="O que o agente NÃO faz">
+                <SofaField label={t("instructions.doesNotLabel")}>
                     {(controle) => (
                         <SofaTextarea
                             {...semDescribedBy(controle)}
@@ -304,11 +303,11 @@ export function FormularioInstrucoes({
             </SecaoDoAgente>
 
             <SecaoDoAgente
-                titulo="Tom e comunicação"
-                descricao="Sempre entra no texto composto, mesmo com o resto vazio."
+                titulo={t("instructions.sectionTone")}
+                descricao={t("instructions.sectionToneDescription")}
             >
                 <div className="poph-grade">
-                    <SofaField label="Idioma">
+                    <SofaField label={t("instructions.languageLabel")}>
                         {(controle) => (
                             <SofaSelect
                                 {...semDescribedBy(controle)}
@@ -318,13 +317,13 @@ export function FormularioInstrucoes({
                             >
                                 {IDIOMAS.map((idioma) => (
                                     <option key={idioma.valor} value={idioma.valor}>
-                                        {idioma.rotulo}
+                                        {t(idioma.labelKey)}
                                     </option>
                                 ))}
                             </SofaSelect>
                         )}
                     </SofaField>
-                    <SofaField label="Estilo">
+                    <SofaField label={t("instructions.styleLabel")}>
                         {(controle) => (
                             <SofaSelect
                                 {...semDescribedBy(controle)}
@@ -334,13 +333,13 @@ export function FormularioInstrucoes({
                             >
                                 {ESTILOS.map((estilo) => (
                                     <option key={estilo.valor} value={estilo.valor}>
-                                        {estilo.rotulo}
+                                        {t(estilo.labelKey)}
                                     </option>
                                 ))}
                             </SofaSelect>
                         )}
                     </SofaField>
-                    <SofaField label="Emojis">
+                    <SofaField label={t("instructions.emojiLabel")}>
                         {(controle) => (
                             <SofaSelect
                                 {...semDescribedBy(controle)}
@@ -350,13 +349,13 @@ export function FormularioInstrucoes({
                             >
                                 {EMOJIS.map((emoji) => (
                                     <option key={emoji.valor} value={emoji.valor}>
-                                        {emoji.rotulo}
+                                        {t(emoji.labelKey)}
                                     </option>
                                 ))}
                             </SofaSelect>
                         )}
                     </SofaField>
-                    <SofaField label="Formato da resposta">
+                    <SofaField label={t("instructions.formatLabel")}>
                         {(controle) => (
                             <SofaSelect
                                 {...semDescribedBy(controle)}
@@ -366,7 +365,7 @@ export function FormularioInstrucoes({
                             >
                                 {FORMATOS.map((formato) => (
                                     <option key={formato.valor} value={formato.valor}>
-                                        {formato.rotulo}
+                                        {t(formato.labelKey)}
                                     </option>
                                 ))}
                             </SofaSelect>
@@ -374,8 +373,8 @@ export function FormularioInstrucoes({
                     </SofaField>
                 </div>
                 <SofaField
-                    label="Restrições adicionais"
-                    hint="Uma linha de lista no texto composto. Ex.: não prometer prazo fora do catálogo."
+                    label={t("instructions.extraRestrictionsLabel")}
+                    hint={t("instructions.extraRestrictionsHint")}
                 >
                     {(controle) => (
                         <SofaInput
@@ -392,8 +391,8 @@ export function FormularioInstrucoes({
             </SecaoDoAgente>
 
             <SecaoDoAgente
-                titulo="Ferramentas habilitadas"
-                descricao="A lista filtra o que o motor oferece ao modelo. Desligada, a ferramenta não existe naquele turno."
+                titulo={t("instructions.sectionTools")}
+                descricao={t("instructions.sectionToolsDescription")}
             >
                 {erros.ferramentas && (
                     <p role="alert" className="poph-erro-de-secao">
@@ -408,8 +407,8 @@ export function FormularioInstrucoes({
                         return (
                             <div className="poph-ferramenta" key={ferramenta.nome}>
                                 <SofaSwitch
-                                    label={ferramenta.rotulo}
-                                    description={`${ferramenta.descricao} (${ferramenta.nome})`}
+                                    label={t(ferramenta.labelKey)}
+                                    description={`${t(ferramenta.descriptionKey)} (${ferramenta.nome})`}
                                     checked={ligada}
                                     disabled={desabilitado}
                                     onChange={(evento) =>
@@ -418,8 +417,8 @@ export function FormularioInstrucoes({
                                 />
                                 {ligada && (
                                     <SofaField
-                                        label={`Quando usar ${ferramenta.rotulo.toLowerCase()}`}
-                                        hint="Opcional: entra depois do nome, no texto composto."
+                                        label={t("instructions.whenToUseLabel", { tool: t(ferramenta.labelKey).toLowerCase() })}
+                                        hint={t("instructions.whenToUseHint")}
                                     >
                                         {(controle) => (
                                             <SofaInput
@@ -444,16 +443,13 @@ export function FormularioInstrucoes({
                 </div>
                 {desconhecidas.length > 0 && (
                     <div className="poph-pilha" style={{ gap: 6 }}>
-                        <p className="poph-erro-de-secao">
-                            Estas ferramentas não existem na V1 e o servidor recusa a gravação
-                            enquanto estiverem ligadas:
-                        </p>
+                        <p className="poph-erro-de-secao">{t("instructions.unknownToolsWarning")}</p>
                         {desconhecidas.map((ferramenta) => (
                             <div className="poph-ferramenta" key={ferramenta.name}>
-                                <SofaTag tier="strong">{ferramenta.name} · fora da V1</SofaTag>
+                                <SofaTag tier="strong">{t("instructions.toolOutsideV1", { name: ferramenta.name })}</SofaTag>
                                 <SofaSwitch
-                                    label={`Manter ${ferramenta.name}`}
-                                    description="Desligue para salvar sem ela."
+                                    label={t("instructions.keepToolLabel", { name: ferramenta.name })}
+                                    description={t("instructions.keepToolDescription")}
                                     checked={ferramenta.enabled}
                                     disabled={desabilitado}
                                     onChange={(evento) => {
@@ -474,10 +470,10 @@ export function FormularioInstrucoes({
             </SecaoDoAgente>
 
             <SecaoDoAgente
-                titulo="Instruções extras"
-                descricao="Diretrizes de exceção que não cabem nos blocos acima."
+                titulo={t("instructions.sectionExtra")}
+                descricao={t("instructions.sectionExtraDescription")}
             >
-                <SofaField label="Texto livre">
+                <SofaField label={t("instructions.extraLabel")}>
                     {(controle) => (
                         <SofaTextarea
                             {...semDescribedBy(controle)}

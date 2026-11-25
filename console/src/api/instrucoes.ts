@@ -11,6 +11,7 @@
  */
 
 import { ErroApi, pedir } from "./cliente";
+import type { TranslationKey } from "../i18n/catalog";
 
 /** Regra inegociável com a ação de contingência. */
 export type Principio = {
@@ -79,36 +80,36 @@ export type Instrucoes = {
 };
 
 /** Ações de contingência que o formulário oferece (as mesmas que o compositor entende). */
-export const ACOES_DE_CONTINGENCIA = [
-    { valor: "say_dont_know", rotulo: "Dizer que não sabe" },
-    { valor: "transfer", rotulo: "Transferir para humano" },
-    { valor: "escalate", rotulo: "Escalar para o time" },
+export const ACOES_DE_CONTINGENCIA: { valor: string; labelKey: TranslationKey }[] = [
+    { valor: "say_dont_know", labelKey: "instructions.fallbackSayDontKnow" },
+    { valor: "transfer", labelKey: "instructions.fallbackTransfer" },
+    { valor: "escalate", labelKey: "instructions.fallbackEscalate" },
 ] as const;
 
 /** Idiomas, estilos, emojis e formatos que o compositor traduz. */
 export const IDIOMAS = [
-    { valor: "pt-BR", rotulo: "Português (Brasil)" },
-    { valor: "en", rotulo: "Inglês" },
-    { valor: "es", rotulo: "Espanhol" },
+    { valor: "pt-BR", labelKey: "instructions.languagePortuguese" },
+    { valor: "en", labelKey: "instructions.languageEnglish" },
+    { valor: "es", labelKey: "instructions.languageSpanish" },
 ] as const;
 
 export const ESTILOS = [
-    { valor: "professional", rotulo: "Profissional" },
-    { valor: "casual", rotulo: "Casual" },
-    { valor: "technical", rotulo: "Técnico" },
-    { valor: "friendly", rotulo: "Acolhedor" },
+    { valor: "professional", labelKey: "instructions.styleProfessional" },
+    { valor: "casual", labelKey: "instructions.styleCasual" },
+    { valor: "technical", labelKey: "instructions.styleTechnical" },
+    { valor: "friendly", labelKey: "instructions.styleFriendly" },
 ] as const;
 
 export const EMOJIS = [
-    { valor: "moderate", rotulo: "Com moderação" },
-    { valor: "none", rotulo: "Sem emojis" },
-    { valor: "free", rotulo: "Livres" },
+    { valor: "moderate", labelKey: "instructions.emojiModerate" },
+    { valor: "none", labelKey: "instructions.emojiNone" },
+    { valor: "free", labelKey: "instructions.emojiFree" },
 ] as const;
 
 export const FORMATOS = [
-    { valor: "simple_lists", rotulo: "Listas simples" },
-    { valor: "free_text", rotulo: "Texto corrido" },
-    { valor: "tables", rotulo: "Tabelas" },
+    { valor: "simple_lists", labelKey: "instructions.formatSimpleLists" },
+    { valor: "free_text", labelKey: "instructions.formatFreeText" },
+    { valor: "tables", labelKey: "instructions.formatTables" },
 ] as const;
 
 /**
@@ -117,46 +118,46 @@ export const FORMATOS = [
  * Nome fora desta lista é recusado pelo servidor na escrita (400 `validation_error`, campo
  * `structured`); a tela mostra o nome desconhecido como aviso, e nunca deixa marcar um novo.
  */
-export const FERRAMENTAS: { nome: string; rotulo: string; descricao: string }[] = [
+export const FERRAMENTAS: { nome: string; labelKey: TranslationKey; descriptionKey: TranslationKey }[] = [
     {
         nome: "consultar_base",
-        rotulo: "Consultar a base",
-        descricao: "Busca o que está na base de conhecimento do agente.",
+        labelKey: "instructions.toolConsultKnowledgeBase",
+        descriptionKey: "instructions.toolConsultKnowledgeBaseDescription",
     },
     {
         nome: "buscar_produto",
-        rotulo: "Buscar produto",
-        descricao: "Consulta o catálogo; é a única fonte de preço e prazo.",
+        labelKey: "instructions.toolSearchProduct",
+        descriptionKey: "instructions.toolSearchProductDescription",
     },
     {
         nome: "enviar_arquivo",
-        rotulo: "Enviar arquivo",
-        descricao: "Envia um arquivo da biblioteca do agente.",
+        labelKey: "instructions.toolSendFile",
+        descriptionKey: "instructions.toolSendFileDescription",
     },
     {
         nome: "transferir",
-        rotulo: "Transferir",
-        descricao: "Passa a conversa para o atendimento humano.",
+        labelKey: "instructions.toolTransfer",
+        descriptionKey: "instructions.toolTransferDescription",
     },
     {
         nome: "cart_add_item",
-        rotulo: "Carrinho: adicionar",
-        descricao: "Inclui um produto no orçamento em andamento.",
+        labelKey: "instructions.toolCartAdd",
+        descriptionKey: "instructions.toolCartAddDescription",
     },
     {
         nome: "cart_remove_item",
-        rotulo: "Carrinho: remover",
-        descricao: "Tira um produto do orçamento em andamento.",
+        labelKey: "instructions.toolCartRemove",
+        descriptionKey: "instructions.toolCartRemoveDescription",
     },
     {
         nome: "cart_summary",
-        rotulo: "Carrinho: resumo",
-        descricao: "Mostra o total do orçamento, calculado pelo servidor.",
+        labelKey: "instructions.toolCartSummary",
+        descriptionKey: "instructions.toolCartSummaryDescription",
     },
     {
         nome: "cart_clear",
-        rotulo: "Carrinho: limpar",
-        descricao: "Esvazia o orçamento em andamento.",
+        labelKey: "instructions.toolCartClear",
+        descriptionKey: "instructions.toolCartClearDescription",
     },
 ];
 
