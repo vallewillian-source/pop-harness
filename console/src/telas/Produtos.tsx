@@ -39,6 +39,7 @@ import {
 } from "../api/produtos";
 import { DialogoExcluirProduto } from "../componentes/DialogoExcluirProduto";
 import { ModalProduto } from "../componentes/ModalProduto";
+import { useI18n } from "../i18n";
 import "../estilos/produtos.css";
 
 type Situacao = "todas" | SituacaoProduto;
@@ -56,14 +57,17 @@ function classeDaSituacao(situacao: string): string {
     return situacao === "active" ? "poph-status--ativo" : "poph-status--inativo";
 }
 
-function rotuloDaSituacao(situacao: string): string {
+function rotuloDaSituacao(
+    situacao: string,
+    translate: ReturnType<typeof useI18n>["translate"],
+): string {
     switch (situacao) {
         case "active":
-            return "Ativo";
+            return translate("products.statusActive");
         case "inactive":
-            return "Inativo";
+            return translate("products.statusInactive");
         case "archived":
-            return "Arquivado";
+            return translate("products.statusArchived");
         default:
             return situacao;
     }
@@ -82,15 +86,21 @@ function casaComBusca(produto: Produto, busca: string): boolean {
     return alvo.includes(normalizar(busca.trim()));
 }
 
-function textoDeAgentes(total: number | null): string {
+function textoDeAgentes(
+    total: number | null,
+    translate: ReturnType<typeof useI18n>["translate"],
+): string {
     if (total === null) return "—";
-    if (total === 0) return "nenhum";
-    return total === 1 ? "1 agente" : `${total} agentes`;
+    if (total === 0) return translate("products.agentsCountNone");
+    return total === 1
+        ? translate("products.agentsCountOne")
+        : translate("products.agentsCountMany", { count: total });
 }
 
 const coluna = createColumnHelper<Produto>();
 
 export function Produtos() {
+    const { translate } = useI18n();
     const { orgId = "" } = useParams();
     const navegar = useNavigate();
     const idDoCatalogo = useId();
@@ -120,11 +130,11 @@ export function Produtos() {
             setProdutos(lista);
             setCategorias(cats);
         } catch (falha) {
-            setErro(falha instanceof Error ? falha.message : "falha ao carregar produtos");
+            setErro(falha instanceof Error ? falha.message : translate("products.loadError"));
         } finally {
             setCarregando(false);
         }
-    }, [orgId]);
+    }, [orgId, translate]);
 
     const carregarAgentes = useCallback(async () => {
         try {
@@ -173,7 +183,7 @@ export function Produtos() {
     const colunas = useMemo(
         () => [
             coluna.accessor("name", {
-                header: "Produto",
+                header: translate("products.colProduct"),
                 cell: (info) => {
                     const produto = info.row.original;
                     return (
@@ -182,7 +192,9 @@ export function Produtos() {
                             <span className="poph-mono-mudo">{produto.slug}</span>
                             {produto.aliases?.length > 0 && (
                                 <span className="poph-mono-mudo">
-                                    também: {produto.aliases.join(", ")}
+                                    {translate("products.colProductAliases", {
+                                        aliases: produto.aliases.join(", "),
+                                    })}
                                 </span>
                             )}
                         </div>
@@ -190,11 +202,12 @@ export function Produtos() {
                 },
             }),
             coluna.accessor("category_id", {
-                header: "Categoria",
-                cell: (info) => nomeDaCategoria.get(info.getValue()) ?? "sem categoria",
+                header: translate("products.colCategory"),
+                cell: (info) =>
+                    nomeDaCategoria.get(info.getValue()) ?? translate("products.colCategoryNone"),
             }),
             coluna.accessor("price_cents", {
-                header: "Preço",
+                header: translate("products.colPrice"),
                 cell: (info) => {
                     const produto = info.row.original;
                     return (
@@ -206,32 +219,32 @@ export function Produtos() {
                 },
             }),
             coluna.accessor("status", {
-                header: "Situação",
+                header: translate("products.colStatus"),
                 cell: (info) => (
                     <span className={`poph-status ${classeDaSituacao(info.getValue())}`}>
                         <span className="poph-status__ponto" aria-hidden="true" />
-                        {rotuloDaSituacao(info.getValue())}
+                        {rotuloDaSituacao(info.getValue(), translate)}
                     </span>
                 ),
             }),
             coluna.display({
                 id: "agentes",
-                header: "Agentes que oferecem",
+                header: translate("products.colAgents"),
                 cell: (info) => (
                     <span
                         title={
                             agentes === null
-                                ? "Não consegui ler os agentes desta organização"
+                                ? translate("products.colAgentsLoadFailedTitle")
                                 : undefined
                         }
                     >
-                        {textoDeAgentes(contagemDeAgentes.get(info.row.original.id) ?? null)}
+                        {textoDeAgentes(contagemDeAgentes.get(info.row.original.id) ?? null, translate)}
                     </span>
                 ),
             }),
             coluna.display({
                 id: "acoes",
-                header: "Ações",
+                header: translate("products.colActions"),
                 cell: (info) => {
                     const produto = info.row.original;
                     return (
@@ -239,25 +252,29 @@ export function Produtos() {
                             <SofaButton
                                 variant="subtle"
                                 size="sm"
-                                aria-label={`Editar produto ${produto.name}`}
+                                aria-label={translate("products.editProductAria", {
+                                    name: produto.name,
+                                })}
                                 onClick={() => setEdicao({ aberto: true, produto })}
                             >
-                                Editar
+                                {translate("products.edit")}
                             </SofaButton>
                             <SofaButton
                                 variant="subtle"
                                 size="sm"
-                                aria-label={`Excluir produto ${produto.name}`}
+                                aria-label={translate("products.deleteProductAria", {
+                                    name: produto.name,
+                                })}
                                 onClick={() => setParaExcluir(produto)}
                             >
-                                Excluir
+                                {translate("products.delete")}
                             </SofaButton>
                         </div>
                     );
                 },
             }),
         ],
-        [agentes, contagemDeAgentes, nomeDaCategoria],
+        [agentes, contagemDeAgentes, nomeDaCategoria, translate],
     );
 
     function aoSalvarProduto(salvo: Produto) {
@@ -282,15 +299,15 @@ export function Produtos() {
     if (erro && !carregando) {
         corpo = (
             <SofaErrorState
-                title="Não consegui carregar os produtos"
-                description="A instância não respondeu. Verifique se o processo `poph serve` está no ar e tente de novo."
+                title={translate("products.errorTitle")}
+                description={translate("products.errorDescription")}
                 details={erro}
-                retry={{ label: "Tentar de novo", onClick: () => void carregar() }}
+                retry={{ label: translate("products.retry"), onClick: () => void carregar() }}
             />
         );
     } else if (carregando && produtos.length === 0) {
         corpo = (
-            <div aria-busy="true" aria-label="Carregando produtos">
+            <div aria-busy="true" aria-label={translate("products.loadingAria")}>
                 <SofaSkeleton lines={4} />
             </div>
         );
@@ -299,11 +316,11 @@ export function Produtos() {
         corpo = (
             <SofaEmptyState
                 icon={<IconTag aria-hidden="true" />}
-                title="Nenhum produto cadastrado"
+                title={translate("products.emptyTitle")}
                 description={
                     semCategorias
-                        ? "Todo produto pertence a uma categoria. Crie uma categoria na tela de Estrutura primeiro."
-                        : "Os agentes só conseguem informar preço e condições de produtos cadastrados aqui."
+                        ? translate("products.emptyNoCategoriesDescription")
+                        : translate("products.emptyDefaultDescription")
                 }
                 action={
                     semCategorias ? (
@@ -311,7 +328,7 @@ export function Produtos() {
                             variant="primary"
                             onClick={() => navegar(`/orgs/${orgId}/structure`)}
                         >
-                            Ir para Estrutura
+                            {translate("products.goToStructure")}
                         </SofaButton>
                     ) : (
                         <SofaButton
@@ -319,7 +336,7 @@ export function Produtos() {
                             icon={<IconPlus aria-hidden="true" />}
                             onClick={() => setEdicao({ aberto: true, produto: null })}
                         >
-                            Criar primeiro produto
+                            {translate("products.createFirstProduct")}
                         </SofaButton>
                     )
                 }
@@ -329,11 +346,11 @@ export function Produtos() {
         corpo = (
             <SofaEmptyState
                 icon={<IconTag aria-hidden="true" />}
-                title="Nenhum produto com esses filtros"
-                description="Mude a busca, a situação ou a categoria para ver outros produtos."
+                title={translate("products.filteredEmptyTitle")}
+                description={translate("products.filteredEmptyDescription")}
                 action={
                     <SofaButton variant="secondary" onClick={limparFiltros}>
-                        Limpar filtros
+                        {translate("products.clearFilters")}
                     </SofaButton>
                 }
             />
@@ -342,7 +359,7 @@ export function Produtos() {
         corpo = (
             <div className="poph-produtos__tabela">
                 <SofaTable
-                    label="Produtos da organização"
+                    label={translate("products.tableLabel")}
                     columns={colunas}
                     data={visiveis}
                     getRowId={(produto) => produto.id}
@@ -350,9 +367,12 @@ export function Produtos() {
                     footerMeta={({ total }) =>
                         total === produtos.length
                             ? total === 1
-                                ? "1 produto"
-                                : `${total} produtos`
-                            : `${total} de ${produtos.length} produtos`
+                                ? translate("products.footerOne")
+                                : translate("products.footerMany", { total })
+                            : translate("products.footerFiltered", {
+                                  total,
+                                  all: produtos.length,
+                              })
                     }
                 />
             </div>
@@ -367,12 +387,13 @@ export function Produtos() {
             <div className="poph-pagina__topo">
                 <div>
                     <p className="poph-produtos__eyebrow">
-                        {nomeDaOrg ? `Organização · ${nomeDaOrg}` : "Organização"}
+                        {nomeDaOrg
+                            ? translate("products.eyebrowOrg", { name: nomeDaOrg })
+                            : translate("products.eyebrow")}
                     </p>
-                    <h1 className="poph-pagina__titulo">Produtos</h1>
+                    <h1 className="poph-pagina__titulo">{translate("products.pageTitle")}</h1>
                     <p className="poph-pagina__descricao">
-                        O que o agente informa ao cliente sobre preço e condições sai daqui. Inativos
-                        e arquivados saem da busca.
+                        {translate("products.pageDescription")}
                     </p>
                 </div>
                 <div className="poph-pagina__acoes">
@@ -382,7 +403,7 @@ export function Produtos() {
                         disabled={totalDeCategorias === 0}
                         onClick={() => setEdicao({ aberto: true, produto: null })}
                     >
-                        Novo produto
+                        {translate("products.newProduct")}
                     </SofaButton>
                     <SofaButton
                         variant="secondary"
@@ -393,38 +414,37 @@ export function Produtos() {
                         }}
                         loading={carregando}
                     >
-                        Atualizar
+                        {translate("products.refresh")}
                     </SofaButton>
                 </div>
             </div>
                 {avisoDoIndice && (
                     <SofaBanner
                         tone="warn"
-                        title="Produto salvo, índice de busca não atualizou"
+                        title={translate("products.indexWarningTitle")}
                         onDismiss={() => setAvisoDoIndice(null)}
                     >
-                        Os agentes só passam a usar a mudança na busca depois que o índice for
-                        reconstruído. Detalhe: <span className="poph-mono-mudo">{avisoDoIndice}</span>
+                        {translate("products.indexWarningBody")}{" "}
+                        <span className="poph-mono-mudo">{avisoDoIndice}</span>
                     </SofaBanner>
                 )}
                 {agentes === null && !carregando && (
-                    <SofaBanner tone="info" title="Agentes não carregaram">
-                        A coluna "Agentes que oferecem" mostra "—" até a leitura dos agentes
-                        funcionar. O catálogo segue normal.
+                    <SofaBanner tone="info" title={translate("products.agentsBannerTitle")}>
+                        {translate("products.agentsBannerBody")}
                     </SofaBanner>
                 )}
                 <section className="poph-secao poph-produtos__secao" aria-labelledby={idDoCatalogo}>
                     <div className="poph-produtos__cabecalho">
                         <h2 id={idDoCatalogo} className="poph-secao__titulo">
-                            Catálogo
+                            {translate("products.catalogHeading")}
                         </h2>
                         <div className="poph-produtos__filtros">
-                            <SofaField label="Buscar por nome" htmlFor="poph-produtos-busca">
+                            <SofaField label={translate("products.filterSearchLabel")} htmlFor="poph-produtos-busca">
                                 {(controle) => (
                                     <SofaInput
                                         id={controle.id}
                                         value={filtros.busca}
-                                        placeholder="Nome, identificador ou outro nome"
+                                        placeholder={translate("products.filterSearchPlaceholder")}
                                         autoComplete="off"
                                         onChange={(evento) =>
                                             setFiltros((atual) => ({
@@ -435,7 +455,7 @@ export function Produtos() {
                                     />
                                 )}
                             </SofaField>
-                            <SofaField label="Situação" htmlFor="poph-produtos-situacao">
+                            <SofaField label={translate("products.filterStatusLabel")} htmlFor="poph-produtos-situacao">
                                 {(controle) => (
                                     <SofaSelect
                                         id={controle.id}
@@ -447,14 +467,14 @@ export function Produtos() {
                                             }))
                                         }
                                     >
-                                        <option value="todas">Todas</option>
-                                        <option value="active">Ativos</option>
-                                        <option value="inactive">Inativos</option>
-                                        <option value="archived">Arquivados</option>
+                                        <option value="todas">{translate("products.filterAll")}</option>
+                                        <option value="active">{translate("products.filterActive")}</option>
+                                        <option value="inactive">{translate("products.filterInactive")}</option>
+                                        <option value="archived">{translate("products.filterArchived")}</option>
                                     </SofaSelect>
                                 )}
                             </SofaField>
-                            <SofaField label="Categoria" htmlFor="poph-produtos-categoria">
+                            <SofaField label={translate("products.filterCategoryLabel")} htmlFor="poph-produtos-categoria">
                                 {(controle) => (
                                     <SofaSelect
                                         id={controle.id}
@@ -466,7 +486,7 @@ export function Produtos() {
                                             }))
                                         }
                                     >
-                                        <option value="todas">Todas</option>
+                                        <option value="todas">{translate("products.filterAll")}</option>
                                         {categorias.map((categoria) => (
                                             <option key={categoria.id} value={categoria.id}>
                                                 {categoria.name}

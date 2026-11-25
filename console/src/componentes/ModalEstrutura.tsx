@@ -21,6 +21,7 @@ import {
     type SofaFieldControlProps,
 } from "@sofacoding/sofa-ui";
 import { ErroApi } from "../api/cliente";
+import { useI18n } from "../i18n";
 import {
     atualizarEstrutura,
     criarEstrutura,
@@ -29,15 +30,10 @@ import {
     type TipoEstrutura,
 } from "../api/estrutura";
 
-const ROTULOS: Record<TipoEstrutura, { singular: string; artigo: string }> = {
-    categoria: { singular: "categoria", artigo: "a" },
-    departamento: { singular: "departamento", artigo: "o" },
-};
-
 const SITUACOES = [
-    { valor: "active", rotulo: "Ativo" },
-    { valor: "inactive", rotulo: "Inativo" },
-    { valor: "archived", rotulo: "Arquivado" },
+    { valor: "active", chave: "structure.statusActive" as const },
+    { valor: "inactive", chave: "structure.statusInactive" as const },
+    { valor: "archived", chave: "structure.statusArchived" as const },
 ];
 
 export type ModalEstruturaProps = {
@@ -81,8 +77,8 @@ export function ModalEstrutura({
     registro,
     aoSalvar,
 }: ModalEstruturaProps) {
+    const { translate } = useI18n();
     const editando = registro !== null;
-    const rotulo = ROTULOS[tipo];
     const [nome, setNome] = useState("");
     const [descricao, setDescricao] = useState("");
     const [situacao, setSituacao] = useState("active");
@@ -107,9 +103,12 @@ export function ModalEstrutura({
     function validar(): Erros {
         const novos: Erros = {};
         if (!nome.trim()) {
-            novos.nome = `informe o nome ${rotulo.artigo === "a" ? "da" : "do"} ${rotulo.singular}`;
+            novos.nome =
+                tipo === "categoria"
+                    ? translate("structure.validationCategoryNameRequired")
+                    : translate("structure.validationDepartmentNameRequired");
         } else if (nome.trim().length > 120) {
-            novos.nome = "o nome aceita até 120 caracteres";
+            novos.nome = translate("structure.validationNameMaxLength");
         }
         return novos;
     }
@@ -166,10 +165,14 @@ export function ModalEstrutura({
                     // Sem a releitura, a próxima tentativa devolve 412 de novo; nada se perde.
                 }
                 if (typeof versaoAtual === "number") setVersao(versaoAtual);
+                const versionText =
+                    typeof versaoAtual === "number"
+                        ? translate("structure.conflictVersionSuffix", { version: versaoAtual })
+                        : "";
                 setConflito(
-                    `Outra pessoa salvou ${rotulo.artigo === "a" ? "esta" : "este"} ${rotulo.singular} antes de você${
-                        typeof versaoAtual === "number" ? ` (agora na versão ${versaoAtual})` : ""
-                    }. O que você digitou foi mantido: revise e salve de novo.`,
+                    tipo === "categoria"
+                        ? translate("structure.conflictCategory", { version: versionText })
+                        : translate("structure.conflictDepartment", { version: versionText }),
                 );
                 return;
             }
@@ -177,17 +180,23 @@ export function ModalEstrutura({
                 mostrarErroDaApi(falha);
                 return;
             }
-            setErroGeral(`falha inesperada ao salvar ${rotulo.artigo === "a" ? "a" : "o"} ${rotulo.singular}`);
+            setErroGeral(
+                tipo === "categoria"
+                    ? translate("structure.unexpectedSaveCategoryError")
+                    : translate("structure.unexpectedSaveDepartmentError"),
+            );
         } finally {
             setEnviando(false);
         }
     }
 
     const titulo = editando
-        ? `Editar ${rotulo.singular}`
+        ? tipo === "categoria"
+            ? translate("structure.modalTitleEditCategory")
+            : translate("structure.modalTitleEditDepartment")
         : tipo === "categoria"
-          ? "Nova categoria"
-          : "Novo departamento";
+          ? translate("structure.modalTitleNewCategory")
+          : translate("structure.modalTitleNewDepartment");
 
     return (
         <SofaModal
@@ -198,18 +207,22 @@ export function ModalEstrutura({
             title={titulo}
             description={
                 editando
-                    ? `Alterando ${registro?.name}. O salvamento usa a versão lida.`
+                    ? translate("structure.modalDescriptionEdit", { name: registro?.name ?? "" })
                     : tipo === "categoria"
-                      ? "Agrupa os produtos do catálogo e filtra o que cada agente pode oferecer."
-                      : "Destino de transferência para atendimento humano e padrão das conversas novas."
+                      ? translate("structure.modalDescriptionNewCategory")
+                      : translate("structure.modalDescriptionNewDepartment")
             }
-            closeLabel={`Fechar formulário de ${rotulo.singular}`}
+            closeLabel={
+                tipo === "categoria"
+                    ? translate("structure.modalCloseCategory")
+                    : translate("structure.modalCloseDepartment")
+            }
             size="md"
             id={`poph-formulario-${tipo}`}
             footer={
                 <>
                     <SofaButton variant="secondary" disabled={enviando} onClick={aoFechar}>
-                        Cancelar
+                        {translate("structure.cancel")}
                     </SofaButton>
                     <SofaButton
                         variant="primary"
@@ -217,7 +230,11 @@ export function ModalEstrutura({
                         onClick={() => void salvar()}
                         loading={enviando}
                     >
-                        {editando ? "Salvar alterações" : `Criar ${rotulo.singular}`}
+                        {editando
+                            ? translate("structure.saveChanges")
+                            : tipo === "categoria"
+                              ? translate("structure.createCategory")
+                              : translate("structure.createDepartment")}
                     </SofaButton>
                 </>
             }
@@ -230,19 +247,19 @@ export function ModalEstrutura({
                 noValidate
             >
                 {conflito && (
-                    <SofaBanner tone="warn" title="Versão desatualizada">
+                    <SofaBanner tone="warn" title={translate("structure.bannerOutdatedTitle")}>
                         {conflito}
                     </SofaBanner>
                 )}
                 {erroGeral && (
-                    <SofaBanner tone="danger" title="Não foi possível salvar">
+                    <SofaBanner tone="danger" title={translate("structure.bannerSaveErrorTitle")}>
                         {erroGeral}
                     </SofaBanner>
                 )}
 
                 <SofaField
-                    label="Nome"
-                    hint={`Único na organização, sem diferenciar maiúsculas de minúsculas. Até 120 caracteres.`}
+                    label={translate("structure.fieldNameLabel")}
+                    hint={translate("structure.fieldNameHint")}
                     error={erros.nome}
                     required
                     htmlFor={`poph-${tipo}-nome`}
@@ -258,8 +275,8 @@ export function ModalEstrutura({
                 </SofaField>
 
                 <SofaField
-                    label="Descrição"
-                    hint="Opcional. Aparece na lista e na conversa com o operador."
+                    label={translate("structure.fieldDescriptionLabel")}
+                    hint={translate("structure.fieldDescriptionHint")}
                     error={erros.descricao}
                     htmlFor={`poph-${tipo}-descricao`}
                 >
@@ -275,8 +292,8 @@ export function ModalEstrutura({
 
                 {editando && (
                     <SofaField
-                        label="Situação"
-                        hint="Inativo e arquivado deixam de valer para os agentes; o cadastro continua no banco."
+                        label={translate("structure.fieldStatusLabel")}
+                        hint={translate("structure.fieldStatusHint")}
                         error={erros.situacao}
                         htmlFor={`poph-${tipo}-situacao`}
                     >
@@ -288,7 +305,7 @@ export function ModalEstrutura({
                             >
                                 {SITUACOES.map((opcao) => (
                                     <option key={opcao.valor} value={opcao.valor}>
-                                        {opcao.rotulo}
+                                        {translate(opcao.chave)}
                                     </option>
                                 ))}
                             </SofaSelect>

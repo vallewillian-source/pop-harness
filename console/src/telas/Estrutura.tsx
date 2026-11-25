@@ -36,6 +36,7 @@ import { obterOrg } from "../api/orgs";
 import { DialogoExcluirCategoria } from "../componentes/DialogoExcluirCategoria";
 import { DialogoExcluirDepartamento } from "../componentes/DialogoExcluirDepartamento";
 import { ModalEstrutura } from "../componentes/ModalEstrutura";
+import { useI18n } from "../i18n";
 import "../estilos/estrutura.css";
 
 type Estado = {
@@ -51,22 +52,30 @@ function classeDaSituacao(situacao: string): string {
     return situacao === "active" ? "poph-status--ativo" : "poph-status--inativo";
 }
 
-function rotuloDaSituacao(situacao: string): string {
+function rotuloDaSituacao(
+    situacao: string,
+    translate: ReturnType<typeof useI18n>["translate"],
+): string {
     switch (situacao) {
         case "active":
-            return "Ativo";
+            return translate("structure.statusActive");
         case "inactive":
-            return "Inativo";
+            return translate("structure.statusInactive");
         case "archived":
-            return "Arquivado";
+            return translate("structure.statusArchived");
         default:
             return situacao;
     }
 }
 
-function textoDeAgentes(total: number | null): string {
-    if (total === null) return "agentes: —";
-    return total === 1 ? "1 agente" : `${total} agentes`;
+function textoDeAgentes(
+    total: number | null,
+    translate: ReturnType<typeof useI18n>["translate"],
+): string {
+    if (total === null) return translate("structure.agentsCountUnknown");
+    return total === 1
+        ? translate("structure.agentsCountOne")
+        : translate("structure.agentsCountMany", { count: total });
 }
 
 type ColunaProps = {
@@ -79,6 +88,7 @@ type ColunaProps = {
 };
 
 function SecaoEstrutura({ tipo, org, contagemAgentes, aoMudar }: ColunaProps) {
+    const { translate } = useI18n();
     const [estado, setEstado] = useState<Estado>(ESTADO_INICIAL);
     const [edicao, setEdicao] = useState<{ aberto: boolean; registro: Registro | null }>({
         aberto: false,
@@ -89,8 +99,9 @@ function SecaoEstrutura({ tipo, org, contagemAgentes, aoMudar }: ColunaProps) {
     const idDoTitulo = useId();
 
     const eDepartamento = tipo === "departamento";
-    const titulo = eDepartamento ? "Departamentos" : "Categorias de produtos";
-    const singular = eDepartamento ? "departamento" : "categoria";
+    const titulo = eDepartamento
+        ? translate("structure.departmentsTitle")
+        : translate("structure.categoriesTitle");
 
     const carregar = useCallback(async () => {
         setEstado((atual) => ({ ...atual, carregando: true, erro: null }));
@@ -99,10 +110,14 @@ function SecaoEstrutura({ tipo, org, contagemAgentes, aoMudar }: ColunaProps) {
             setEstado({ carregando: false, erro: null, itens });
         } catch (falha) {
             const mensagem =
-                falha instanceof Error ? falha.message : `falha ao carregar ${titulo.toLowerCase()}`;
+                falha instanceof Error
+                    ? falha.message
+                    : eDepartamento
+                      ? translate("structure.loadDepartmentsError")
+                      : translate("structure.loadCategoriesError");
             setEstado({ carregando: false, erro: mensagem, itens: [] });
         }
-    }, [tipo, org, titulo]);
+    }, [tipo, org, eDepartamento, translate]);
 
     useEffect(() => {
         void carregar();
@@ -126,35 +141,52 @@ function SecaoEstrutura({ tipo, org, contagemAgentes, aoMudar }: ColunaProps) {
             icon={<IconPlus aria-hidden="true" />}
             onClick={() => setEdicao({ aberto: true, registro: null })}
         >
-            {eDepartamento ? "Novo departamento" : "Nova categoria"}
+            {eDepartamento
+                ? translate("structure.modalTitleNewDepartment")
+                : translate("structure.modalTitleNewCategory")}
         </SofaButton>
     );
 
     let corpo: ReactNode;
     if (estado.carregando && estado.itens.length === 0) {
         corpo = (
-            <div aria-busy="true" aria-label={`Carregando ${titulo.toLowerCase()}`}>
+            <div
+                aria-busy="true"
+                aria-label={
+                    eDepartamento
+                        ? translate("structure.loadingDepartments")
+                        : translate("structure.loadingCategories")
+                }
+            >
                 <SofaSkeleton lines={3} />
             </div>
         );
     } else if (estado.erro) {
         corpo = (
             <SofaErrorState
-                title={`Não consegui carregar ${titulo.toLowerCase()}`}
-                description="A instância não respondeu. As outras listas da tela seguem funcionando."
+                title={
+                    eDepartamento
+                        ? translate("structure.errorDepartmentsTitle")
+                        : translate("structure.errorCategoriesTitle")
+                }
+                description={translate("structure.errorDescription")}
                 details={estado.erro}
-                retry={{ label: "Tentar de novo", onClick: () => void carregar() }}
+                retry={{ label: translate("structure.retry"), onClick: () => void carregar() }}
             />
         );
     } else if (estado.itens.length === 0) {
         corpo = (
             <SofaEmptyState
                 icon={eDepartamento ? <IconBuilding aria-hidden="true" /> : <IconGrid aria-hidden="true" />}
-                title={eDepartamento ? "Nenhum departamento cadastrado" : "Nenhuma categoria cadastrada"}
+                title={
+                    eDepartamento
+                        ? translate("structure.emptyDepartmentsTitle")
+                        : translate("structure.emptyCategoriesTitle")
+                }
                 description={
                     eDepartamento
-                        ? "Sem departamento, o agente não tem para onde transferir a conversa."
-                        : "Categorias agrupam os produtos e controlam o que cada agente pode oferecer."
+                        ? translate("structure.emptyDepartmentsDescription")
+                        : translate("structure.emptyCategoriesDescription")
                 }
                 action={
                     <SofaButton
@@ -162,51 +194,68 @@ function SecaoEstrutura({ tipo, org, contagemAgentes, aoMudar }: ColunaProps) {
                         icon={<IconPlus aria-hidden="true" />}
                         onClick={() => setEdicao({ aberto: true, registro: null })}
                     >
-                        {eDepartamento ? "Criar primeiro departamento" : "Criar primeira categoria"}
+                        {eDepartamento
+                            ? translate("structure.createFirstDepartment")
+                            : translate("structure.createFirstCategory")}
                     </SofaButton>
                 }
             />
         );
     } else {
         corpo = (
-            <ul className="poph-estrutura__lista" aria-label={`Lista de ${titulo.toLowerCase()}`}>
+            <ul
+                className="poph-estrutura__lista"
+                aria-label={
+                    eDepartamento
+                        ? translate("structure.listDepartmentsAria")
+                        : translate("structure.listCategoriesAria")
+                }
+            >
                 {estado.itens.map((item) => (
                     <li className="poph-estrutura__linha" key={item.id}>
                         <div className="poph-estrutura__texto">
                             <span className="poph-estrutura__nome">{item.name}</span>
                             <span className="poph-estrutura__descricao">
-                                {item.description || "Sem descrição"}
+                                {item.description || translate("structure.noDescription")}
                             </span>
                             {eDepartamento && contagemAgentes && (
                                 <span className="poph-mono-mudo">
-                                    {textoDeAgentes(contagemAgentes(item.id))}
+                                    {textoDeAgentes(contagemAgentes(item.id), translate)}
                                 </span>
                             )}
                         </div>
                         <div className="poph-estrutura__acoes">
                             <span className={`poph-status ${classeDaSituacao(item.status)}`}>
                                 <span className="poph-status__ponto" aria-hidden="true" />
-                                {rotuloDaSituacao(item.status)}
+                                {rotuloDaSituacao(item.status, translate)}
                             </span>
                             <SofaButton
                                 variant="subtle"
                                 size="sm"
-                                aria-label={`Editar ${singular} ${item.name}`}
+                                aria-label={
+                                    eDepartamento
+                                        ? translate("structure.editDepartmentAria", { name: item.name })
+                                        : translate("structure.editCategoryAria", { name: item.name })
+                                }
                                 onClick={() => setEdicao({ aberto: true, registro: item })}
                             >
-                                Editar
+                                {translate("structure.edit")}
                             </SofaButton>
                             <SofaButton
                                 variant="subtle"
                                 size="sm"
-                                aria-label={`Excluir ${singular} ${item.name}`}
+                                aria-label={
+                                    eDepartamento
+                                        ? translate("structure.deleteDepartmentAria", { name: item.name })
+                                        : translate("structure.deleteCategoryAria", { name: item.name })
+                                }
                                 onClick={() =>
                                     eDepartamento
                                         ? setParaExcluir(item as Departamento)
                                         : setCategoriaParaExcluir(item as Categoria)
                                 }
                             >
-                                Excluir
+                                {translate("structure.delete")}
                             </SofaButton>
                         </div>
                     </li>
@@ -224,8 +273,8 @@ function SecaoEstrutura({ tipo, org, contagemAgentes, aoMudar }: ColunaProps) {
                     </h2>
                     <p className="poph-estrutura__ajuda">
                         {eDepartamento
-                            ? "Destinos de transferência para atendimento humano e padrão das conversas novas."
-                            : "Agrupam os produtos do catálogo e filtram o que cada agente pode oferecer."}
+                            ? translate("structure.departmentsHelp")
+                            : translate("structure.categoriesHelp")}
                     </p>
                 </div>
                 <div className="poph-estrutura__acoes-secao">
@@ -236,7 +285,7 @@ function SecaoEstrutura({ tipo, org, contagemAgentes, aoMudar }: ColunaProps) {
                         onClick={() => void carregar()}
                         loading={estado.carregando && estado.itens.length > 0}
                     >
-                        Atualizar
+                        {translate("structure.refresh")}
                     </SofaButton>
                     {botaoNovo}
                 </div>
@@ -285,6 +334,7 @@ function SecaoEstrutura({ tipo, org, contagemAgentes, aoMudar }: ColunaProps) {
 }
 
 export function Estrutura() {
+    const { translate } = useI18n();
     const { orgId = "" } = useParams();
     const [nomeDaOrg, setNomeDaOrg] = useState<string | null>(null);
     const [agentes, setAgentes] = useState<AgenteResumo[] | null>(null);
@@ -314,11 +364,13 @@ export function Estrutura() {
             <div className="poph-pagina__topo">
                 <div>
                     <p className="poph-estrutura__eyebrow">
-                        {nomeDaOrg ? `Organização · ${nomeDaOrg}` : "Organização"}
+                        {nomeDaOrg
+                            ? translate("structure.eyebrowOrg", { name: nomeDaOrg })
+                            : translate("structure.eyebrow")}
                     </p>
-                    <h1 className="poph-pagina__titulo">Departamentos e categorias</h1>
+                    <h1 className="poph-pagina__titulo">{translate("structure.pageTitle")}</h1>
                     <p className="poph-pagina__descricao">
-                        Estrutura que os agentes usam para transferir conversas e oferecer o catálogo.
+                        {translate("structure.pageDescription")}
                     </p>
                 </div>
                 <div className="poph-pagina__acoes">
@@ -327,7 +379,7 @@ export function Estrutura() {
                         icon={<IconRefresh aria-hidden="true" />}
                         onClick={() => void carregarAgentes()}
                     >
-                        Atualizar agentes
+                        {translate("structure.refreshAgents")}
                     </SofaButton>
                 </div>
             </div>

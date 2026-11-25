@@ -1,1 +1,117 @@
-export const structure = {} as const satisfies Record<string, string>;
+export const structure = {
+    statusActive: "Ativo",
+    statusInactive: "Inativo",
+    statusArchived: "Arquivado",
+    validationCategoryNameRequired: "informe o nome da categoria",
+    validationDepartmentNameRequired: "informe o nome do departamento",
+    validationNameMaxLength: "o nome aceita até 120 caracteres",
+    conflictCategory:
+        "Outra pessoa salvou esta categoria antes de você{version}. O que você digitou foi mantido: revise e salve de novo.",
+    conflictDepartment:
+        "Outra pessoa salvou este departamento antes de você{version}. O que você digitou foi mantido: revise e salve de novo.",
+    conflictVersionSuffix: " (agora na versão {version})",
+    unexpectedSaveCategoryError: "falha inesperada ao salvar a categoria",
+    unexpectedSaveDepartmentError: "falha inesperada ao salvar o departamento",
+    modalTitleEditCategory: "Editar categoria",
+    modalTitleEditDepartment: "Editar departamento",
+    modalTitleNewCategory: "Nova categoria",
+    modalTitleNewDepartment: "Novo departamento",
+    modalDescriptionEdit: "Alterando {name}. O salvamento usa a versão lida.",
+    modalDescriptionNewCategory:
+        "Agrupa os produtos do catálogo e filtra o que cada agente pode oferecer.",
+    modalDescriptionNewDepartment:
+        "Destino de transferência para atendimento humano e padrão das conversas novas.",
+    modalCloseCategory: "Fechar formulário de categoria",
+    modalCloseDepartment: "Fechar formulário de departamento",
+    cancel: "Cancelar",
+    saveChanges: "Salvar alterações",
+    createCategory: "Criar categoria",
+    createDepartment: "Criar departamento",
+    bannerOutdatedTitle: "Versão desatualizada",
+    bannerSaveErrorTitle: "Não foi possível salvar",
+    fieldNameLabel: "Nome",
+    fieldNameHint:
+        "Único na organização, sem diferenciar maiúsculas de minúsculas. Até 120 caracteres.",
+    fieldDescriptionLabel: "Descrição",
+    fieldDescriptionHint: "Opcional. Aparece na lista e na conversa com o operador.",
+    fieldStatusLabel: "Situação",
+    fieldStatusHint:
+        "Inativo e arquivado deixam de valer para os agentes; o cadastro continua no banco.",
+    deleteDeptTitle: "Excluir departamento?",
+    deleteDeptDescription: "O departamento {name} sai do sistema. Não há como desfazer.",
+    deleteDeptResourceLabel: "nome do departamento",
+    deleteDeptConfirm: "Excluir departamento",
+    deleteDeptCheckFailed:
+        "Não consegui verificar quais agentes usam este departamento. Os agentes que o usam, como padrão ou para transferência, ficam sem ele depois da exclusão.",
+    deleteDeptNoAgents:
+        "Nenhum agente usa este departamento hoje. Só o cadastro sai do sistema.",
+    deleteDeptAgentsOnePrefix: "1 agente usa este departamento",
+    deleteDeptAgentsManyPrefix: "{count} agentes usam este departamento",
+    deleteDeptAgentsMiddle: "(padrão ou transferência) e ficam sem ele:",
+    deleteDeptAgentsSuffix:
+        "Depois, esses agentes precisam de outro departamento para transferir ou receber conversas novas.",
+    deleteCatTitle: "Excluir categoria?",
+    deleteCatDescription: "A categoria {name} sai do sistema. Não há como desfazer.",
+    deleteCatResourceLabel: "nome da categoria",
+    deleteCatConfirm: "Excluir categoria",
+    deleteCatCheckFailed:
+        "Não consegui contar os produtos e agentes desta categoria. Se houver algum, a API recusa a exclusão e mostra a contagem.",
+    deleteCatNoLinks:
+        "Nenhum produto nem agente usa esta categoria. Só o cadastro sai do sistema.",
+    deleteCatProductOne: "1 produto",
+    deleteCatProductMany: "{count} produtos",
+    deleteCatProductsLine:
+        "Esta categoria tem {products} (de qualquer situação). Excluir apaga {pronoun}:",
+    deleteCatProductsPronounOne: "ele",
+    deleteCatProductsPronounMany: "todos eles",
+    deleteCatAgentOne: "1 agente usa",
+    deleteCatAgentMany: "{count} agentes usam",
+    deleteCatAgentsLine: "{agents} esta categoria e ficam sem ela:",
+    deleteCatForceWithProductsOne: "Apagar também o 1 produto desta categoria",
+    deleteCatForceWithProductsMany: "Apagar também os {count} produtos desta categoria",
+    deleteCatForceAgentsOnly: "Tirar a categoria dos agentes e excluir",
+    deleteCatForceDescription:
+        "Sem esta confirmação, a API recusa a exclusão enquanto a categoria tiver produtos ou agentes vinculados.",
+    agentsCountUnknown: "agentes: —",
+    agentsCountOne: "1 agente",
+    agentsCountMany: "{count} agentes",
+    departmentsTitle: "Departamentos",
+    categoriesTitle: "Categorias de produtos",
+    loadDepartmentsError: "falha ao carregar departamentos",
+    loadCategoriesError: "falha ao carregar categorias de produtos",
+    loadingDepartments: "Carregando departamentos",
+    loadingCategories: "Carregando categorias de produtos",
+    errorDepartmentsTitle: "Não consegui carregar departamentos",
+    errorCategoriesTitle: "Não consegui carregar categorias de produtos",
+    errorDescription:
+        "A instância não respondeu. As outras listas da tela seguem funcionando.",
+    retry: "Tentar de novo",
+    emptyDepartmentsTitle: "Nenhum departamento cadastrado",
+    emptyCategoriesTitle: "Nenhuma categoria cadastrada",
+    emptyDepartmentsDescription:
+        "Sem departamento, o agente não tem para onde transferir a conversa.",
+    emptyCategoriesDescription:
+        "Categorias agrupam os produtos e controlam o que cada agente pode oferecer.",
+    createFirstDepartment: "Criar primeiro departamento",
+    createFirstCategory: "Criar primeira categoria",
+    listDepartmentsAria: "Lista de departamentos",
+    listCategoriesAria: "Lista de categorias de produtos",
+    noDescription: "Sem descrição",
+    edit: "Editar",
+    delete: "Excluir",
+    editDepartmentAria: "Editar departamento {name}",
+    editCategoryAria: "Editar categoria {name}",
+    deleteDepartmentAria: "Excluir departamento {name}",
+    deleteCategoryAria: "Excluir categoria {name}",
+    departmentsHelp:
+        "Destinos de transferência para atendimento humano e padrão das conversas novas.",
+    categoriesHelp:
+        "Agrupam os produtos do catálogo e filtram o que cada agente pode oferecer.",
+    refresh: "Atualizar",
+    eyebrowOrg: "Organização · {name}",
+    eyebrow: "Organização",
+    pageTitle: "Departamentos e categorias",
+    pageDescription:
+        "Estrutura que os agentes usam para transferir conversas e oferecer o catálogo.",
+    refreshAgents: "Atualizar agentes",
+} as const satisfies Record<string, string>;

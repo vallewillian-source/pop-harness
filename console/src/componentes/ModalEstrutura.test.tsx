@@ -5,10 +5,11 @@
  * API (nome repetido) e o `412` de concorrência, que precisa manter o que foi digitado.
  */
 
-import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Registro } from "../api/estrutura";
+import { setLocale } from "../i18n";
 import { esperarFocoDoModal } from "../testes/modal";
 import { ServidorFalso, erroApi } from "../testes/servidor";
 import { ModalEstrutura } from "./ModalEstrutura";
@@ -189,4 +190,39 @@ describe("ModalEstrutura", () => {
         });
         expect(aoSalvar).toHaveBeenCalledWith(expect.objectContaining({ version: 5 }));
     });
+
+    it("renders in en-US and reacts to live locale switch", async () => {
+        const usuario = userEvent.setup();
+        setLocale("en-US");
+        render(
+            <ModalEstrutura
+                tipo="categoria"
+                org="org_1"
+                aberto
+                registro={CATEGORIA}
+                aoFechar={vi.fn()}
+                aoSalvar={vi.fn()}
+            />,
+        );
+        await esperarFocoDoModal();
+
+        expect(screen.getByRole("heading", { name: "Edit category" })).toBeInTheDocument();
+        expect(screen.getByRole("option", { name: "Active" })).toBeInTheDocument();
+        expect(screen.getByRole("option", { name: "Inactive" })).toBeInTheDocument();
+        expect(screen.getByRole("option", { name: "Archived" })).toBeInTheDocument();
+
+        await usuario.clear(screen.getByLabelText(/Name/i));
+        await usuario.click(screen.getByRole("button", { name: "Save changes" }));
+        expect(await screen.findByText("enter the category name")).toBeInTheDocument();
+
+        act(() => {
+            setLocale("pt-BR");
+        });
+        expect(await screen.findByRole("heading", { name: "Editar categoria" })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Salvar alterações" })).toBeInTheDocument();
+    });
+});
+
+afterEach(() => {
+    setLocale("pt-BR");
 });

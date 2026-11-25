@@ -23,6 +23,7 @@ import {
     type ContagemCarrinhos,
     type Produto,
 } from "../api/produtos";
+import { useI18n } from "../i18n";
 import { DialogoExclusao } from "./DialogoExclusao";
 
 export type DialogoExcluirProdutoProps = {
@@ -36,10 +37,6 @@ export type DialogoExcluirProdutoProps = {
     aoExcluir: (avisoDoIndice: string | null) => void;
 };
 
-function plural(quantidade: number, singular: string, plurala: string): string {
-    return `${quantidade} ${quantidade === 1 ? singular : plurala}`;
-}
-
 export function DialogoExcluirProduto({
     aberto,
     aoFechar,
@@ -48,6 +45,7 @@ export function DialogoExcluirProduto({
     agentesQueVeem,
     aoExcluir,
 }: DialogoExcluirProdutoProps) {
+    const { translate } = useI18n();
     // Aviso do índice da exclusão em curso: vai de `aoConfirmar` até `aoExcluir`.
     const avisoRef = useRef<string | null>(null);
     // Contagem que a recusa 409 trouxe nesta abertura; some quando o diálogo fecha.
@@ -64,57 +62,70 @@ export function DialogoExcluirProduto({
     function consequencia() {
         const texto =
             agentesQueVeem === null ? (
-                "Não consegui contar os agentes que oferecem este produto. Eles deixam de oferecê-lo depois da exclusão."
+                translate("products.deleteAgentsUnknown")
             ) : agentesQueVeem === 0 ? (
-                "Nenhum agente oferece este produto hoje."
+                translate("products.deleteAgentsNone")
             ) : (
                 <>
                     {agentesQueVeem === 1
-                        ? "1 agente oferece este produto"
-                        : `${agentesQueVeem} agentes oferecem este produto`}{" "}
-                    (direto ou porque enxerga a categoria, inclusive agente sem categoria vinculada) e
-                    deixam de oferecê-lo.
+                        ? translate("products.deleteAgentsOne")
+                        : translate("products.deleteAgentsMany", { count: agentesQueVeem })}{" "}
+                    {translate("products.deleteAgentsSuffix")}
                 </>
             );
+        const itemsText = contagem
+            ? contagem.itens_de_carrinho === 1
+                ? translate("products.deleteCartItemOne")
+                : translate("products.deleteCartItemMany", { count: contagem.itens_de_carrinho })
+            : "";
+        const cartsText = contagem
+            ? contagem.carrinhos === 1
+                ? translate("products.deleteCartOne")
+                : translate("products.deleteCartMany", { count: contagem.carrinhos })
+            : "";
         return (
             <div className="poph-pilha" style={{ gap: "var(--pop-spacing-sm, 6px)" }}>
                 <p style={{ margin: 0, color: "var(--pop-text-secondary)", lineHeight: 1.6 }}>
                     {texto}
                 </p>
                 <p style={{ margin: 0, color: "var(--pop-text-secondary)", lineHeight: 1.6 }}>
-                    Itens de carrinho de conversas que citam este produto ficam sem a referência a
-                    ele; o preço já gravado neles continua.
+                    {translate("products.deleteCartsNote")}
                 </p>
                 {contagem && (
                     <p style={{ margin: 0, color: "var(--pop-text-primary)", lineHeight: 1.6 }}>
-                        Este produto está em{" "}
-                        {plural(contagem.itens_de_carrinho, "item", "itens")} de{" "}
-                        {plural(contagem.carrinhos, "carrinho", "carrinhos")}. Excluir deixa esses itens
-                        como "produto removido do catálogo", com o preço que já estava gravado.
+                        {translate("products.deleteCartsConflict", {
+                            items: itemsText,
+                            carts: cartsText,
+                        })}
                     </p>
                 )}
             </div>
         );
     }
 
+    const forceItemsText = contagem
+        ? contagem.itens_de_carrinho === 1
+            ? translate("products.deleteForceItemOne")
+            : translate("products.deleteForceItemMany", { count: contagem.itens_de_carrinho })
+        : "";
     const rotuloForcar = contagem
-        ? `Excluir mesmo assim: ${plural(contagem.itens_de_carrinho, "item de carrinho", "itens de carrinho")} ficam como "produto removido do catálogo"`
-        : "Excluir mesmo assim, mesmo com itens de carrinho que citam este produto";
+        ? translate("products.deleteForceLabelWithCount", { items: forceItemsText })
+        : translate("products.deleteForceLabelDefault");
 
     return (
         <DialogoExclusao
             aberto={aberto}
             aoFechar={aoFechar}
-            titulo="Excluir produto?"
-            descricao={`O produto ${produto.name} sai do catálogo. Não há como desfazer.`}
+            titulo={translate("products.deleteTitle")}
+            descricao={translate("products.deleteDescription", { name: produto.name })}
             recurso={produto.name}
-            rotuloRecurso="nome do produto"
-            rotuloConfirmar="Excluir produto"
+            rotuloRecurso={translate("products.deleteResourceLabel")}
+            rotuloConfirmar={translate("products.deleteConfirm")}
             consequencia={consequencia()}
             permiteForcar
             forcarSoAposRecusa
             rotuloForcar={rotuloForcar}
-            descricaoForcar="Sem esta confirmação, a API não apaga um produto que está em carrinhos. Nada é apagado antes disso."
+            descricaoForcar={translate("products.deleteForceDescription")}
             aoConfirmar={async (forcar) => {
                 try {
                     const resultado = await excluirProduto(org, produto.id, forcar);

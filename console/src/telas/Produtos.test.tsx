@@ -4,10 +4,11 @@
  * por situação, categoria e nome, e os estados vazio, sem resultado e de erro.
  */
 
-import { describe, expect, it } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { setLocale } from "../i18n";
 import { ServidorFalso, erroApi } from "../testes/servidor";
 import { Produtos } from "./Produtos";
 
@@ -215,4 +216,27 @@ describe("Produtos", () => {
         expect(container.querySelector(".poph-produtos__tabela table")).not.toBeNull();
         expect(within(linhaDe("Clareamento dental")).getByText("Ativo")).toBeInTheDocument();
     });
+
+    it("renders catalog in en-US and updates live when locale changes", async () => {
+        setLocale("en-US");
+        servidorPadrao();
+        montar();
+
+        await screen.findByText("Clareamento dental");
+        expect(screen.getByRole("heading", { level: 1, name: "Products" })).toBeInTheDocument();
+        expect(screen.getByRole("heading", { level: 2, name: "Catalog" })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "New product" })).toBeInTheDocument();
+        expect(screen.getByRole("columnheader", { name: "Offering agents" })).toBeInTheDocument();
+        expect(within(linhaDe("Clareamento dental")).getByText("Active")).toBeInTheDocument();
+
+        act(() => {
+            setLocale("pt-BR");
+        });
+        expect(await screen.findByRole("heading", { level: 1, name: "Produtos" })).toBeInTheDocument();
+        expect(within(linhaDe("Clareamento dental")).getByText("Ativo")).toBeInTheDocument();
+    });
+});
+
+afterEach(() => {
+    setLocale("pt-BR");
 });

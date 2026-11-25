@@ -4,9 +4,10 @@
  * categoria sem vínculo que sai direto.
  */
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { setLocale } from "../i18n";
 import { DialogoExcluirCategoria } from "./DialogoExcluirCategoria";
 import { esperarFocoDoModal } from "../testes/modal";
 import { ServidorFalso, erroApi } from "../testes/servidor";
@@ -211,4 +212,49 @@ describe("DialogoExcluirCategoria · contagem dos produtos", () => {
         expect(listagens.every((chamada) => !chamada.url.includes("limit="))).toBe(true);
         expect(listagens[1]?.url).toContain("cursor=cur_1");
     });
+
+    it("renders consequences and force label in en-US", async () => {
+        setLocale("en-US");
+        new ServidorFalso()
+            .responder("GET", "/products?all=true", {
+                status: 200,
+                corpo: {
+                    items: [
+                        { id: "p1", name: "Laser whitening", category_id: "cat_1" },
+                        { id: "p2", name: "Home whitening", category_id: "cat_1" },
+                    ],
+                    next_cursor: null,
+                },
+            })
+            .responder("GET", "/agents?limit", {
+                status: 200,
+                corpo: { items: [], next_cursor: null },
+            })
+            .instalar();
+
+        render(
+            <DialogoExcluirCategoria
+                aberto
+                aoFechar={vi.fn()}
+                org={ORG}
+                categoria={categoria}
+                aoExcluir={vi.fn()}
+            />,
+        );
+        const dialogo = await screen.findByRole("dialog", { name: "Delete category?" });
+
+        expect(
+            await within(dialogo).findByText(/This category has 2 products/),
+        ).toBeInTheDocument();
+        expect(
+            within(dialogo).getByRole("checkbox", {
+                name: /Also delete the 2 products in this category/,
+            }),
+        ).toBeInTheDocument();
+        expect(within(dialogo).getByRole("button", { name: "Delete category" })).toBeInTheDocument();
+    });
+});
+
+afterEach(() => {
+    setLocale("pt-BR");
 });

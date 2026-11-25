@@ -6,10 +6,11 @@
  * e a falha de uma coluna sem derrubar a outra.
  */
 
-import { describe, expect, it } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { setLocale } from "../i18n";
 import { esperarFocoDoModal } from "../testes/modal";
 import { ServidorFalso, erroApi } from "../testes/servidor";
 import { Estrutura } from "./Estrutura";
@@ -241,4 +242,50 @@ describe("Estrutura", () => {
         expect(container.querySelector(".sofa-card")).toBeNull();
         expect(container.querySelectorAll("section.poph-secao")).toHaveLength(2);
     });
+
+    it("renders in en-US and updates live when locale changes", async () => {
+        setLocale("en-US");
+        new ServidorFalso()
+            .responder("GET", `/admin/v1/orgs/${ORG}/departments`, {
+                status: 200,
+                corpo: { items: [departamento("dep_1", "Finance")], next_cursor: null },
+            })
+            .responder("GET", `/admin/v1/orgs/${ORG}/agents`, {
+                status: 200,
+                corpo: { items: [], next_cursor: null },
+            })
+            .responder("GET", `/admin/v1/orgs/${ORG}/categories`, {
+                status: 200,
+                corpo: { items: [categoria("cat_1", "Orthodontics")], next_cursor: null },
+            })
+            .responder("GET", `/admin/v1/orgs/${ORG}`, {
+                status: 200,
+                corpo: { id: ORG, name: "Example" },
+            })
+            .instalar();
+
+        montar();
+
+        expect(
+            await screen.findByRole("heading", { level: 1, name: "Departments and categories" }),
+        ).toBeInTheDocument();
+        expect(screen.getByRole("heading", { level: 2, name: "Departments" })).toBeInTheDocument();
+        expect(
+            screen.getByRole("heading", { level: 2, name: "Product categories" }),
+        ).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "New department" })).toBeInTheDocument();
+        expect(screen.getAllByText("Active")).toHaveLength(2);
+
+        act(() => {
+            setLocale("pt-BR");
+        });
+        expect(
+            await screen.findByRole("heading", { level: 1, name: "Departamentos e categorias" }),
+        ).toBeInTheDocument();
+        expect(screen.getAllByText("Ativo")).toHaveLength(2);
+    });
+});
+
+afterEach(() => {
+    setLocale("pt-BR");
 });
