@@ -7,6 +7,7 @@
  */
 
 import type { components } from "./schema";
+import { translate } from "../i18n";
 
 export type Org = components["schemas"]["OrgJson"];
 export type ListaOrgs = components["schemas"]["ListaJson_OrgJson"];
@@ -89,7 +90,7 @@ const BASE = "";
 
 function mensagemDeRede(erro: unknown): string {
     const motivo = erro instanceof Error ? erro.message : String(erro);
-    return `não foi possível falar com a instância do POP Harness (${motivo})`;
+    return translate("client.networkError", { reason: motivo });
 }
 
 /** Ajustes de transporte de uma chamada. */
@@ -154,14 +155,15 @@ function lerCorpo(texto: string): unknown {
 function erroDaResposta(resposta: Response, corpo: unknown, encerraSessao: boolean): ErroApi {
     const erro = corpo as Partial<RespostaErro> | undefined;
     const codigo = typeof erro?.code === "string" ? erro.code : `http_${resposta.status}`;
+    const status = resposta.status;
     const mensagem =
         typeof erro?.message === "string" && erro.message
             ? erro.message
-            : `a API respondeu ${resposta.status}`;
-    if (resposta.status === 401 && encerraSessao && tokenAtual !== null) {
+            : translate("client.httpError", { status });
+    if (status === 401 && encerraSessao && tokenAtual !== null) {
         aoExpirar?.();
     }
-    return new ErroApi(resposta.status, codigo, mensagem, erro?.details);
+    return new ErroApi(status, codigo, mensagem, erro?.details);
 }
 
 /**
@@ -248,7 +250,7 @@ export async function saude(): Promise<Saude> {
         throw new ErroApi(0, "rede", mensagemDeRede(erro));
     }
     if (!resposta.ok) {
-        throw new ErroApi(resposta.status, "healthz", `a instância respondeu ${resposta.status}`);
+        throw new ErroApi(resposta.status, "healthz", translate("client.healthError", { status: resposta.status }));
     }
     return (await resposta.json()) as Saude;
 }

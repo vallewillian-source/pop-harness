@@ -11,6 +11,7 @@ import "./main.css";
 /* Base do re-layout do Console (RL-01): blocos reutilizáveis com prefixo `poph-`. */
 import "./estilos/relayout.css";
 import { App } from "./App";
+import { I18nProvider } from "./i18n";
 import { SessaoProvider } from "./sessao/Sessao";
 
 const raiz = document.getElementById("root");
@@ -21,9 +22,11 @@ if (!raiz) {
 createRoot(raiz).render(
     <StrictMode>
         <BrowserRouter>
-            <SessaoProvider>
-                <App />
-            </SessaoProvider>
+            <I18nProvider>
+                <SessaoProvider>
+                    <App />
+                </SessaoProvider>
+            </I18nProvider>
         </BrowserRouter>
     </StrictMode>,
 );
