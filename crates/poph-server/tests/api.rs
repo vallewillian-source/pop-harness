@@ -1937,18 +1937,8 @@ async fn agentes_paridade_com_cli() {
     let org = c.criar_org("Paridade", "org-paridade-api").await;
     let org_id = org["id"].as_str().unwrap();
     let col = format!("/admin/v1/orgs/{org_id}/agents");
-    let build = std::process::Command::new("cargo")
-        .args(["build", "--locked", "-p", "poph"])
-        .current_dir(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
-        .output()
-        .expect("compila CLI para paridade");
-    assert!(
-        build.status.success(),
-        "build CLI: {}",
-        String::from_utf8_lossy(&build.stderr)
-    );
     let cli = |args: &[&str]| -> Value {
-        let exe = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/poph");
+        let exe = cli_poph_exe();
         let output = std::process::Command::new(exe)
             .args(["--org", org_id, "--offline", "agent"])
             .args(args)
@@ -2084,21 +2074,11 @@ async fn instrucoes_api_paridade_isolamento_e_auditoria() {
             StatusCode::FORBIDDEN
         );
     }
-    let build = std::process::Command::new("cargo")
-        .args(["build", "--locked", "-p", "poph"])
-        .current_dir(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
-        .output()
-        .unwrap();
-    assert!(
-        build.status.success(),
-        "{}",
-        String::from_utf8_lossy(&build.stderr)
-    );
     let file = c.pasta.join("instructions.txt");
     fs::write(&file, "Primeira instrução").unwrap();
-    let exe = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/poph");
+    let exe = cli_poph_exe();
     let cli = |args: &[&str]| -> Value {
-        let output = std::process::Command::new(&exe)
+        let output = std::process::Command::new(exe)
             .args(["--org", ob, "--offline", "instructions"])
             .args(args)
             .env("POPH_DADOS_DIRETORIO", c.pasta.join("dados"))
@@ -2628,7 +2608,7 @@ async fn conhecimento_paridade_cli_criacao_edicao_exclusao() {
     let org = c.criar_org("Base paridade", "kb-paridade").await;
     let oid = org["id"].as_str().unwrap();
     let cli = |args: &[&str]| -> Value {
-        let exe = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/poph");
+        let exe = cli_poph_exe();
         let output = std::process::Command::new(exe)
             .args(["--org", oid, "--offline", "kb"])
             .args(args)
@@ -3225,25 +3205,13 @@ async fn produtos_paridade_cli_estado_no_banco() {
             },
         )
         .unwrap();
-    let build = std::process::Command::new("cargo")
-        .args(["build", "--locked", "-p", "poph"])
-        .current_dir(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
-        .output()
-        .unwrap();
-    assert!(
-        build.status.success(),
-        "{}",
-        String::from_utf8_lossy(&build.stderr)
-    );
     let cli = |args: &[&str]| -> Value {
-        let out = std::process::Command::new(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/poph"),
-        )
-        .args(["--org", oid, "--offline", "product"])
-        .args(args)
-        .env("POPH_DADOS_DIRETORIO", c.pasta.join("dados"))
-        .output()
-        .unwrap();
+        let out = std::process::Command::new(cli_poph_exe())
+            .args(["--org", oid, "--offline", "product"])
+            .args(args)
+            .env("POPH_DADOS_DIRETORIO", c.pasta.join("dados"))
+            .output()
+            .unwrap();
         assert!(
             out.status.success(),
             "{}",
@@ -3821,7 +3789,7 @@ async fn categorias_e_departamentos_paridade_cli_api() {
     let oa = a["id"].as_str().unwrap();
     let ob = b["id"].as_str().unwrap();
     let cli = |recurso: &str, args: &[&str]| -> Value {
-        let exe = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/poph");
+        let exe = cli_poph_exe();
         let output = std::process::Command::new(exe)
             .args(["--org", oa, "--offline", recurso])
             .args(args)
@@ -3910,13 +3878,11 @@ async fn categorias_e_departamentos_paridade_cli_api() {
                 .0,
             StatusCode::NOT_FOUND
         );
-        let consulta_cli = std::process::Command::new(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/poph"),
-        )
-        .args(["--org", oa, "--offline", recurso, "show", cli_id, "--json"])
-        .env("POPH_DADOS_DIRETORIO", c.pasta.join("dados"))
-        .output()
-        .unwrap();
+        let consulta_cli = std::process::Command::new(cli_poph_exe())
+            .args(["--org", oa, "--offline", recurso, "show", cli_id, "--json"])
+            .env("POPH_DADOS_DIRETORIO", c.pasta.join("dados"))
+            .output()
+            .unwrap();
         assert!(!consulta_cli.status.success());
     }
 }
@@ -3925,7 +3891,7 @@ async fn categorias_e_departamentos_paridade_cli_api() {
 async fn orgs_e_tokens_paridade_cli_api() {
     let c = Cenario::novo("paridade-org-token").await;
     let cli = |args: &[&str]| -> Value {
-        let exe = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/poph");
+        let exe = cli_poph_exe();
         let output = std::process::Command::new(exe)
             .arg("--offline")
             .args(args)
@@ -4079,7 +4045,7 @@ async fn biblioteca_paridade_consulta_e_exclusao_cli_api() {
     let b = c.store().biblioteca().criar(org_id, novo()).unwrap();
     let agente = agent.id.to_string();
     let cli = |args: &[&str]| -> Value {
-        let exe = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/poph");
+        let exe = cli_poph_exe();
         let out = std::process::Command::new(exe)
             .args(["--org", oid, "--offline", "file"])
             .args(args)
@@ -4144,9 +4110,35 @@ async fn biblioteca_paridade_consulta_e_exclusao_cli_api() {
 /// PNG mínimo: a detecção por conteúdo lê a assinatura e imagem não passa pelo extrator.
 const PNG: &[u8] = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89";
 
+fn cli_poph_exe() -> &'static std::path::Path {
+    static EXE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    EXE.get_or_init(|| {
+        let built = std::process::Command::new(env!("CARGO"))
+            .args(["build", "--locked", "-p", "poph"])
+            .current_dir(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
+            .output()
+            .expect("compila a CLI para paridade");
+        assert!(
+            built.status.success(),
+            "build CLI: {}",
+            String::from_utf8_lossy(&built.stderr)
+        );
+        let target = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"))
+            .parent()
+            .expect("CARGO_TARGET_TMPDIR fica dentro do target-dir");
+        let exe = target.join("debug").join("poph");
+        assert!(
+            exe.is_file(),
+            "binário da CLI não encontrado em {}",
+            exe.display()
+        );
+        exe
+    })
+}
+
 /// Executa `poph` contra o banco do cenário (mesma pasta de dados do servidor).
 fn cli_poph(pasta: &std::path::Path, args: &[&str]) -> Value {
-    let exe = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/poph");
+    let exe = cli_poph_exe();
     let saida = std::process::Command::new(exe)
         .args(args)
         .env("POPH_DADOS_DIRETORIO", pasta.join("dados"))
