@@ -1667,3 +1667,58 @@ bash console/gen-api.sh --url http://127.0.0.1:7480
 - **Índice local sem modelo de embedding** (média, no ambiente atual): sem o modelo instalado, toda
   gravação que tenta sincronizar devolve `index_warning` e `reindexar` responde `503
   embedding_unavailable`. A tela explica, mas busca e reindexação não funcionam até instalar o modelo.
+
+## Internationalization of the Console (i18n)
+
+The Console ships two interface languages: `pt-BR` (default) and `en-US`. Only the Console is
+translated — the Rust server, the CLI, log lines and free-form server messages stay in Portuguese.
+
+### Where it lives
+
+| Path | Role |
+|---|---|
+| `console/src/i18n/types.ts` | `Locale`, `TranslationParams`, `I18n` and the formatter signatures |
+| `console/src/i18n/index.ts` | Locale store (`useSyncExternalStore`), `getLocale`, `setLocale`, `translate`, `useI18n`, `useLocale`, `I18nProvider`, `LOCALES` |
+| `console/src/i18n/catalog.ts` | Aggregates the 18 domains, builds `flatCatalogs` and the `TranslationKey` type (`domain.name`) |
+| `console/src/i18n/format.ts` | `formatDate`, `formatDateTime`, `formatTime`, `formatNumber`, `formatCurrency` on the active locale |
+| `console/src/i18n/pt-BR/<domain>.ts` | Source of truth for the keys of a domain |
+| `console/src/i18n/en-US/<domain>.ts` | English values, typed as `Record<keyof typeof ptBR<Domain>, string>` |
+
+Domains: `common`, `client`, `shell`, `login`, `orgs`, `navigation`, `agents`, `structure`,
+`products`, `operation`, `matrix`, `instructions`, `routing`, `knowledge`, `files`, `modelJev`,
+`integrations`, `testChat`.
+
+### Persistence and default
+
+The choice lives in `localStorage["poph-console.locale"]`, read and written inside `try/catch`; a
+storage failure is ignored and the Console keeps working in memory. With nothing stored the Console
+opens in `pt-BR`; `navigator.language` is never read. `setLocale()` writes the key, updates
+`<html lang>` and `document.title` and notifies subscribers once per change; the document language
+and the title are applied again on load.
+
+### Switching at runtime
+
+`LanguageSwitcher` (`console/src/componentes/LanguageSwitcher.tsx`) renders the `PT | EN` pair and
+calls `setLocale`. It sits in `.poph-topbar__acoes` (before the shortcuts button) and at the top of
+`.poph-login__bloco`, so the language can be changed before and after login. Every screen
+subscribes through `useI18n()` (or `useLocale()`), so the switch re-renders the tree in place:
+nothing is reloaded and the route does not change.
+
+### Adding or changing a key
+
+1. Add the key to `console/src/i18n/pt-BR/<domain>.ts`.
+2. Add the same key to `console/src/i18n/en-US/<domain>.ts`. The English module is typed from the
+   Portuguese one, so a missing or extra key fails `tsc`, and `{placeholder}` names must match in
+   both locales.
+3. Render it with `t("<domain>.<key>")` from `useI18n()`; parameters go in the second argument
+   (`t("shell.agentFooter", { name })`).
+
+`i18n.test.ts` covers the store, interpolation, both locales of the five formatters, per-domain
+parity (no orphan, empty or placeholder-mismatched key) and a mounted `Shell` + `Topbar` + `Rail`
+that switches language in place.
+
+### Server text is not translated
+
+Free-form text that comes from the API (`message`, `reason`, plugin names, titles declared in an
+integration manifest) is rendered exactly as received. Only text owned by the Console goes through
+the catalog.

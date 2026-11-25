@@ -140,6 +140,83 @@ describe("formatters", () => {
     });
 });
 
+describe("mounted shell", () => {
+    it("switches Shell, Topbar and Rail in place from the LanguageSwitcher", async () => {
+        window.sessionStorage.setItem(
+            "poph-console.sessao",
+            JSON.stringify({
+                token: "pophg_teste",
+                escopo: "global",
+                orgs: [{ id: "org_1", name: "Loja Antiga", slug: "loja-antiga", status: "active" }],
+            }),
+        );
+        const { ServidorFalso } = await import("../testes/servidor");
+        new ServidorFalso()
+            .responder("GET", "/healthz", {
+                status: 200,
+                corpo: {
+                    status: "ok",
+                    version: "0.4.2",
+                    uptime_seconds: 10,
+                    databases: { harness: 1, rag: 1 },
+                },
+            })
+            .instalar();
+
+        const { createElement } = await import("react");
+        const { act, render, screen } = await import("@testing-library/react");
+        const { default: userEvent } = await import("@testing-library/user-event");
+        const { MemoryRouter } = await import("react-router-dom");
+        const { SessaoProvider } = await import("../sessao/Sessao");
+        const { GuardaAlteracoesProvider } = await import("../componentes/GuardaAlteracoes");
+        const { Shell } = await import("../componentes/Shell");
+        const { setLocale } = await import("./index");
+
+        const usuario = userEvent.setup();
+        render(
+            createElement(
+                MemoryRouter,
+                { initialEntries: ["/orgs"] },
+                createElement(
+                    SessaoProvider,
+                    null,
+                    createElement(
+                        GuardaAlteracoesProvider,
+                        null,
+                        createElement(Shell, null, createElement("p", null, "conteudo")),
+                    ),
+                ),
+            ),
+        );
+
+        expect(await screen.findByText("SISTEMA")).toBeInTheDocument();
+        expect(screen.getByText("Saúde da instância")).toBeInTheDocument();
+        expect(screen.getByText("Token global")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Sair do Console" })).toBeInTheDocument();
+
+        await usuario.click(screen.getByRole("button", { name: "Inglês (Estados Unidos)" }));
+
+        expect(screen.getByText("SYSTEM")).toBeInTheDocument();
+        expect(screen.getByText("Instance health")).toBeInTheDocument();
+        expect(screen.getByText("Global token")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Sign out of Console" })).toBeInTheDocument();
+        expect(window.localStorage.getItem(STORAGE_KEY)).toBe("en-US");
+        expect(document.documentElement.lang).toBe("en-US");
+
+        await usuario.click(screen.getByRole("button", { name: "Keyboard shortcuts" }));
+
+        expect(await screen.findByText("Console shortcuts")).toBeInTheDocument();
+        expect(screen.getByText("Navigate between controls")).toBeInTheDocument();
+
+        act(() => setLocale("pt-BR"));
+
+        expect(screen.getByText("Atalhos do Console")).toBeInTheDocument();
+        expect(screen.getByText("Navegar entre controles")).toBeInTheDocument();
+
+        window.sessionStorage.removeItem("poph-console.sessao");
+    });
+});
+
 describe("catalog parity", () => {
     it("has the same keys, no empty value and the same placeholders in both locales", async () => {
         const { enUS, ptBR } = await import("./catalog");
@@ -161,5 +238,26 @@ describe("catalog parity", () => {
         const { ptBR } = await import("./catalog");
 
         expect(Object.keys(ptBR)).toHaveLength(18);
+    });
+
+    it("mirrors every domain without orphan or empty keys", async () => {
+        const { enUS, ptBR } = await import("./catalog");
+        const domains = Object.keys(ptBR) as (keyof typeof ptBR)[];
+
+        expect(Object.keys(enUS).sort()).toEqual([...domains].map(String).sort());
+
+        for (const domain of domains) {
+            const source = ptBR[domain] as Record<string, string>;
+            const target = enUS[domain] as Record<string, string>;
+            const names = Object.keys(source).sort();
+
+            expect(Object.keys(target).sort(), domain).toEqual(names);
+
+            for (const name of names) {
+                const key = `${String(domain)}.${name}`;
+                expect(source[name]?.trim(), key).not.toBe("");
+                expect(target[name]?.trim(), key).not.toBe("");
+            }
+        }
     });
 });

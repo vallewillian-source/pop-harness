@@ -504,13 +504,13 @@ M13c	172	console/src/telas/AgenteChatTestePorQue.test.tsx
 M13c	429	console/src/telas/AgenteConhecimento.test.tsx
 M13c	528	console/src/telas/AgenteConhecimento.tsx
 M13c	155	console/src/telas/AgenteInstrucoes.test.tsx
-M13c	279	console/src/telas/AgenteInstrucoes.tsx
+M13c	277	console/src/telas/AgenteInstrucoes.tsx
 M13c	507	console/src/telas/AgenteIntegracoes.test.tsx
 M13c	182	console/src/telas/AgenteIntegracoes.tsx
 M13c	147	console/src/telas/AgenteModeloJev.test.tsx
 M13c	376	console/src/telas/AgenteModeloJev.tsx
 M13c	169	console/src/telas/AgenteRoteamento.test.tsx
-M13c	431	console/src/telas/AgenteRoteamento.tsx
+M13c	429	console/src/telas/AgenteRoteamento.tsx
 M13c	129	console/src/telas/Agentes.test.tsx
 M13c	69	console/src/telas/Agentes.tsx
 M13c	131	console/src/telas/Estrutura.test.tsx
@@ -555,6 +555,7 @@ M13d	47	console/src/estilos/seletorDeAgente.css
 M13d	40	console/src/estilos/seletorDeOrganizacao.css
 M13d	32	console/src/estilos/topbar.css
 M13d	9	console/src/estilos/whatsapp.css
+M13d	13	console/src/i18n/i18n.test.ts
 M13d	68	console/src/main.css
 M13d	6	console/src/main.tsx
 M13d	125	console/src/sessao/Sessao.tsx

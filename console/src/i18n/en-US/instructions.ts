@@ -89,6 +89,7 @@ export const instructions: Record<keyof typeof ptBRInstructions, string> = {
     loadErrorDescription:
         "The instance did not respond to reading the agent or the instructions. Try again; if it persists, check the server health.",
     retry: "Try again",
+    backToAgents: "Back to agents",
     loadFailed: "failed to load the instructions",
     noInstructionsSaved: "no instructions saved",
     versionLabel: "If-Match: v{version}",

@@ -20,6 +20,7 @@ export const routing = {
     loadErrorDescription:
         "A instância não respondeu à leitura do agente. Tente de novo; se persistir, confira a saúde do servidor.",
     retry: "Tentar de novo",
+    backToAgents: "Voltar para agentes",
     headerDescription: "para onde a conversa vai e quando passa a humano",
     conflictTitle: "Versão desatualizada",
     saveErrorTitle: "Não foi possível salvar",

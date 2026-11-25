@@ -431,6 +431,16 @@ Abaixo do cabeçalho, o `SofaTabSwitcher` organiza as 7 abas funcionais:
 - **Zero Cumulative Layout Shift (CLS):** Enquanto os dados de agentes, tabelas e métricas são carregados via API, a interface exibe skeletons (`Shimmer`) que reproduzem exatamente a grade, altura e espaçamento das linhas finais, prevenindo saltos visuais na renderização.
 - **Erro Crítico de Armazenamento (500):** Em caso de falha de banco SQLite ou erro interno do axum, a tela renderiza card técnico detalhado com o stacktrace exato, caminho do arquivo afetado e sugestões diretas de ação de recuperação (ex: executar `poph doctor` ou restaurar backup).
 
+### 4.4 Interface language (i18n — pt-BR / en-US)
+
+- **Scope:** the Console interface only. The Rust server, CLI output, logs and free-form server messages keep their original language.
+- **Locales:** `pt-BR` (default when nothing is stored) and `en-US`. `navigator.language` is never read, so the first screen is always the same for every operator.
+- **Persistence:** `localStorage["poph-console.locale"]`, read and written inside `try/catch`; when the storage is unavailable the Console keeps working in memory.
+- **Switcher:** a compact `PT | EN` control in the top bar (`.poph-topbar__acoes`, immediately before the shortcuts button) and at the top of the login block, aligned with the brand. Switching re-renders the open screen in place and updates `<html lang>` and `document.title`; there is no reload and no navigation.
+- **Catalogs:** `console/src/i18n/` holds `types.ts` (locale, params, formatter signatures), the store in `index.ts` (`getLocale`, `setLocale`, `translate`, `useI18n`, `useLocale`, `I18nProvider`, `LOCALES`), `catalog.ts` (18 domains and the `domain.key` type) and `format.ts` (`formatDate`, `formatDateTime`, `formatTime`, `formatNumber`, `formatCurrency`). Each English module is typed from the Portuguese one, so a key that exists in only one locale fails `tsc`; placeholders must match in both.
+- **Component contract:** a screen reads text through `useI18n()` (`t("domain.key", params)`) and never keeps a translated string as a module constant, otherwise the switch would not reach that string.
+- **Server text:** API messages, plugin names and titles declared in an integration manifest are shown exactly as received, never translated.
+
 ---
 
 ## 5. Diretrizes de Acessibilidade e Navegação por Teclado

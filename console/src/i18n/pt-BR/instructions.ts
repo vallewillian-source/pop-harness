@@ -87,6 +87,7 @@ export const instructions = {
     loadErrorDescription:
         "A instância não respondeu à leitura do agente ou das instruções. Tente de novo; se persistir, confira a saúde do servidor.",
     retry: "Tentar de novo",
+    backToAgents: "Voltar para agentes",
     loadFailed: "falha ao carregar as instruções",
     noInstructionsSaved: "sem instruções salvas",
     versionLabel: "If-Match: v{version}",

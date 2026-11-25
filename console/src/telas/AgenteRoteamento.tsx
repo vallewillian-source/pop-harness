@@ -328,7 +328,7 @@ export function AgenteRoteamento() {
                             icon={<IconArrowLeft aria-hidden="true" />}
                             onClick={() => guarda.tentarNavegar(`/orgs/${orgId}/agents`)}
                         >
-                            Voltar para agentes
+                            {t("routing.backToAgents")}
                         </SofaButton>
                     }
                 />

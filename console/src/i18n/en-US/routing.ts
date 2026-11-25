@@ -21,6 +21,7 @@ export const routing: Record<keyof typeof ptBRRouting, string> = {
     loadErrorDescription:
         "The instance did not respond to reading the agent. Try again; if it persists, check the server health.",
     retry: "Try again",
+    backToAgents: "Back to agents",
     headerDescription: "where the conversation goes and when it moves to a human",
     conflictTitle: "Outdated version",
     saveErrorTitle: "Could not save",

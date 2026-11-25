@@ -292,7 +292,7 @@ export function AgenteInstrucoes() {
                             icon={<IconArrowLeft aria-hidden="true" />}
                             onClick={() => guarda.tentarNavegar(`/orgs/${orgId}/agents`)}
                         >
-                            Voltar para agentes
+                            {t("instructions.backToAgents")}
                         </SofaButton>
                     }
                 />
