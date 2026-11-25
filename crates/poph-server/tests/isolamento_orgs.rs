@@ -54,7 +54,9 @@ use poph_core::llm::{
 use poph_files::ConfigArquivos;
 use poph_rag::{ConfigIndice, EmbedderFake, Indice};
 use poph_server::Estado;
-use poph_store::{Direcao, EstadoSaida, NovaMensagem, NovoAnexoCanal, Papel, Store};
+use poph_store::{
+    Direcao, EstadoSaida, NovaMensagem, NovoAnexoCanal, Pagina, Papel, RegistroAuditoria, Store,
+};
 use poph_types::HarnessConfig;
 use poph_types::config::TokenGlobalConfig;
 use poph_types::{ConversationId, OrgId};
@@ -291,6 +293,14 @@ impl Servidor {
             fotos.push(format!("{caminho} -> {} {}", r.status, r.texto));
         }
         fotos
+    }
+
+    fn auditoria(&self, org: &Org) -> Vec<RegistroAuditoria> {
+        let id = org.id.parse::<OrgId>().expect("id da org");
+        self.store
+            .auditoria()
+            .listar(id, Pagina::com_limite(200))
+            .expect("auditoria da org")
     }
 }
 
@@ -876,6 +886,11 @@ fn casos() -> Vec<Caso> {
         caso("get", &format!("{CV}/turns"), Vazio),
         caso("post", &format!("{CV}/reopen"), Vazio),
         caso("post", &format!("{CV}/close"), Vazio),
+        caso(
+            "post",
+            &format!("{CV}/transfer"),
+            Json(r#"{"department_id":"018f0000-0000-7000-8000-000000000002","reason":"Invadido"}"#),
+        ),
         caso("get", "/admin/v1/orgs/{org_id}/departments", Vazio),
         caso(
             "post",
@@ -1400,6 +1415,12 @@ async fn isolamento_gerado_do_openapi() {
     let b = montar_org(&s, "isola-b", MARCADOR_B).await;
     let antes_a = s.foto(&a).await;
     let antes_b = s.foto(&b).await;
+    let auditoria_antes_a = s.auditoria(&a);
+    let auditoria_antes_b = s.auditoria(&b);
+    assert!(
+        !auditoria_antes_a.is_empty() && !auditoria_antes_b.is_empty(),
+        "fixture sem auditoria: a comparação de auditoria não provaria nada"
+    );
     // Os recursos da vítima existem de verdade: o dono lê cada um com 200. Sem isso, um 404 dos
     // ataques não provaria nada.
     for (nome, fotos) in [("A", &antes_a), ("B", &antes_b)] {
@@ -1486,6 +1507,54 @@ async fn isolamento_gerado_do_openapi() {
         }
     }
 
+    let caminho_conversa_b = format!("/admin/v1/orgs/{}/conversations/{}", b.id, b.conversa);
+    let conversa_antes = s
+        .chamar(
+            Method::GET,
+            &caminho_conversa_b,
+            &b.token,
+            Corpo::Nenhum,
+            None,
+        )
+        .await
+        .json;
+    let transferencia = s
+        .chamar(
+            Method::POST,
+            &format!(
+                "/admin/v1/orgs/{}/conversations/{}/transfer",
+                a.id, b.conversa
+            ),
+            &a.token,
+            Corpo::Json(json!({"department_id": a.departamento, "reason": "atravessado"})),
+            None,
+        )
+        .await;
+    pedidos += 1;
+    if transferencia.status != StatusCode::NOT_FOUND {
+        falhas.push(format!(
+            "transferência atravessada (conversa de {}, departamento de {}): esperado 404, veio {} {}",
+            b.marcador, a.marcador, transferencia.status, transferencia.texto
+        ));
+    }
+    let conversa_depois = s
+        .chamar(
+            Method::GET,
+            &caminho_conversa_b,
+            &b.token,
+            Corpo::Nenhum,
+            None,
+        )
+        .await
+        .json;
+    pedidos += 1;
+    if conversa_antes != conversa_depois {
+        falhas.push(format!(
+            "conversa de {} mudou com a transferência atravessada:\n  antes: {conversa_antes}\n  depois: {conversa_depois}",
+            b.marcador
+        ));
+    }
+
     // 5) Estado: nada da vítima mudou, lido pelo dono de cada org.
     let depois_a = s.foto(&a).await;
     let depois_b = s.foto(&b).await;
@@ -1499,6 +1568,18 @@ async fn isolamento_gerado_do_openapi() {
                     "estado da org {nome} mudou após os ataques:\n  antes: {x}\n  depois: {y}"
                 ));
             }
+        }
+    }
+    for (antes, depois, nome) in [
+        (&auditoria_antes_a, &s.auditoria(&a), "A"),
+        (&auditoria_antes_b, &s.auditoria(&b), "B"),
+    ] {
+        if antes != depois {
+            falhas.push(format!(
+                "auditoria da org {nome} mudou após os ataques: {} registro(s) antes, {} depois",
+                antes.len(),
+                depois.len()
+            ));
         }
     }
 
@@ -2104,6 +2185,7 @@ async fn comparacao_de_estado_acusa_escrita() {
     .await;
     let b = montar_org(&s, "estado-b", MARCADOR_B).await;
     let antes = s.foto(&b).await;
+    let auditoria_antes = s.auditoria(&b);
     let r = s
         .chamar(
             Method::PATCH,
@@ -2123,5 +2205,10 @@ async fn comparacao_de_estado_acusa_escrita() {
     assert_ne!(
         antes, depois,
         "a comparação de estado tem de acusar uma escrita do dono"
+    );
+    assert_ne!(
+        auditoria_antes,
+        s.auditoria(&b),
+        "a comparação de auditoria tem de acusar uma escrita do dono"
     );
 }
