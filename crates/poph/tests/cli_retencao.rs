@@ -1,7 +1,7 @@
 //! Testes de ponta a ponta de `poph retention run|show` (HR-51).
 //!
 //! Processo de verdade e banco de verdade numa pasta temporária. A varredura em si (o que sai,
-//! o que fica, a simulação) é testada em `crates/poph-retention/tests/banco.rs`; aqui se confere
+//! o que fica, a simulação) é testada em `crates/poph-retention/tests/database.rs`; aqui se confere
 //! a linha de comando: códigos de saída, formato do JSON e mensagens de erro.
 
 use std::fs;

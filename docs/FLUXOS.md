@@ -43,7 +43,7 @@ Testes: `cases_invariant.rs` (`closing_conversation_closes_case_and_records_even
 
 **Quem fechou.** A coluna `fechada_por` aceita `cliente`, `agente`, `atendente`, `admin`, `fluxo`, `sistema` e `migracao`. Cada caminho acima grava o seu valor; não há teste que cubra cada valor separadamente.
 
-**Retenção.** A retenção existente não apaga Fichas, execuções, etapas, eventos, efeitos, fluxos nem revisões. Quando a conversa é apagada, a Ficha fica com a referência à conversa nula (`conversation_id` vazio). Teste: `poph-retention/tests/banco.rs` (`ficha_execucao_etapa_evento_e_efeito_sobrevivem_a_varredura`). Uma política própria de retenção de Fichas não existe (ver Limites).
+**Retenção.** A retenção existente não apaga Fichas, execuções, etapas, eventos, efeitos, fluxos nem revisões. Quando a conversa é apagada, a Ficha fica com a referência à conversa nula (`conversation_id` vazio). Teste: `poph-retention/tests/database.rs` (`case_execution_step_event_and_effect_survive_the_sweep`). Uma política própria de retenção de Fichas não existe (ver Limites).
 
 ## 3. Execução
 
@@ -169,7 +169,7 @@ O passo a passo para descobrir o motivo está em [RUNBOOKS.md](RUNBOOKS.md), na 
 | API, permissão, Fichas e ações humanas | `poph-server/tests/agente_fluxos.rs`, `fichas_leitura.rs`, `fichas_acoes.rs`, `isolamento_orgs.rs` |
 | CLI | `poph/tests/cli_flow.rs` |
 | Backup | testes de backup em `poph-store` (19), `poph-server/tests/backup_http.rs` (9) e `poph/tests/cli_backup.rs` (6) |
-| Retenção e cluster | `poph-retention/tests/banco.rs`, `poph/tests/cli_retencao.rs`, `poph-server/tests/encaminhamento_cluster.rs` |
+| Retenção e cluster | `poph-retention/tests/database.rs`, `poph/tests/cli_retencao.rs`, `poph-server/tests/encaminhamento_cluster.rs` |
 | Prova ponta a ponta | `poph-server/tests/fluxos_e2e.rs` (7 testes) |
 | Contadores das execuções | `poph-server/tests/fluxos_contadores.rs` (7 testes) e o caso de contadores em `fluxos_e2e.rs` |
 | Desempenho | seção [Medidas](#medidas) abaixo |

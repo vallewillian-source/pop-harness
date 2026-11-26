@@ -92,3 +92,11 @@ a turn in `running`.
 
 - `rusqlite` (dev-dependency only): the tests seed data that the repository does not create yet (attachments,
   library, knowledge base, products) directly in the test `harness.db`. It is not used by the crate itself.
+
+## Tests
+
+- `tests/database.rs` runs the sweep against the real database: a `Store` in a temporary folder, with the clock
+  injected. The expired and recent data for each case is seeded directly in `harness.db`.
+- `tests/execution.rs` runs the sweep against an in-memory fake of the warehouse, with real files in a temporary
+  folder per org. Those tests cover the order of the deletion, the orphans, the invalid config and the failure
+  paths.
