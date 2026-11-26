@@ -274,7 +274,7 @@ async fn enviar(
             }
             Err(erro) => {
                 // Falha de TLS é definitiva: repetir não conserta certificado nem nome errado.
-                if let Some(detalhe) = tls::detalhe_de_falha_tls(&erro) {
+                if let Some(detalhe) = tls::tls_failure_detail(&erro) {
                     return Err(ErroLlm::Tls(detalhe));
                 }
                 ultimo = if erro.is_connect() {

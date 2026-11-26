@@ -52,6 +52,8 @@ dobra a cada tentativa até 30 s; o timeout vale por tentativa e não é retenta
 4xx são definitivos; a chave não aparece em log, erro ou `Debug` e é substituída por `[oculto]` se o
 provedor a ecoar. As vagas de simultaneidade ficam presas até o stream terminar ou ser solto.
 
+A detecção de falha de TLS examina o texto da cadeia de causas antes da classificação de rede. Ela usa marcadores de falhas do rustls e webpki, pois o erro de conexão também pode representar uma porta fechada. Uma falha de TLS sem marcador é tratada como falha de rede transitória. O detalhe usa a causa mais interna com marcador, sem caracteres de controle e limitado a 200 caracteres.
+
 ## 3. Duas formas de usar um endpoint novo
 
 ### (a) Um provedor para a instância inteira — bloco `[llm]`
