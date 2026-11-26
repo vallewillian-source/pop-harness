@@ -11,14 +11,14 @@ import { afterEach, describe, expect, it } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { GuardaAlteracoesProvider } from "../componentes/GuardaAlteracoes";
+import { GuardChangesProvider } from "../components/GuardChanges";
 import { I18nProvider, setLocale } from "../i18n";
 
 afterEach(() => {
     setLocale("pt-BR");
 });
 import { FakeServer, apiError } from "../testing/server";
-import { AgenteModeloJev } from "./AgenteModeloJev";
+import { AgentModelJev } from "./AgenteModeloJev";
 
 const ORG = "org_1";
 const AGENTE = "ag_1";
@@ -60,13 +60,13 @@ function montar() {
     return render(
         <I18nProvider>
             <MemoryRouter initialEntries={[`/orgs/${ORG}/agents/${AGENTE}/model-jev`]}>
-                <GuardaAlteracoesProvider>
+                <GuardChangesProvider>
                     <Routes>
-                        <Route path="/orgs/:orgId/agents/:agentId/model-jev" element={<AgenteModeloJev />} />
+                        <Route path="/orgs/:orgId/agents/:agentId/model-jev" element={<AgentModelJev />} />
                         <Route path="/orgs/:orgId/agents" element={<div>Tela de agentes</div>} />
                         <Route path="/orgs/:orgId/agents/:agentId/routing" element={<div>Tela de roteamento</div>} />
                     </Routes>
-                </GuardaAlteracoesProvider>
+                </GuardChangesProvider>
             </MemoryRouter>
         </I18nProvider>,
     );

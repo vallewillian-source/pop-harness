@@ -13,7 +13,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import type { Org } from "../api/client";
 import { SessionProvider } from "../session/Session";
 import { FakeServer } from "../testing/server";
-import { OrgPainel } from "./OrgPainel";
+import { OrgPanel } from "./OrgPainel";
 import { setLocale } from "../i18n";
 
 const ORG: Org = {
@@ -52,7 +52,7 @@ function montar() {
         <MemoryRouter initialEntries={["/orgs/org_1"]}>
             <SessionProvider>
                 <Routes>
-                    <Route path="/orgs/:orgId" element={<OrgPainel />} />
+                    <Route path="/orgs/:orgId" element={<OrgPanel />} />
                     <Route path="/orgs" element={<p>lista de organizações</p>} />
                 </Routes>
             </SessionProvider>
@@ -72,7 +72,7 @@ describe("OrgPainel em en-US", () => {
         montar();
 
         expect(await screen.findByRole("heading", { level: 1, name: "Loja Antiga" })).toBeInTheDocument();
-        const cabeca = document.querySelector(".poph-orgpainel__titulo-linha") as HTMLElement;
+        const cabeca = document.querySelector(".poph-org-panel__title-line") as HTMLElement;
         expect(within(cabeca).getByText("Active")).toBeInTheDocument();
         const resumo = screen.getByRole("heading", { name: "Summary" }).closest("section");
         expect(within(resumo!).getByText("Identifier")).toBeInTheDocument();
@@ -98,7 +98,7 @@ describe("OrgPainel", () => {
 
         expect(await screen.findByRole("heading", { level: 1, name: "Loja Antiga" })).toBeInTheDocument();
         // "Ativa" aparece no cabeçalho e de novo no resumo: confere a do cabeçalho.
-        const cabeca = document.querySelector(".poph-orgpainel__titulo-linha") as HTMLElement;
+        const cabeca = document.querySelector(".poph-org-panel__title-line") as HTMLElement;
         expect(within(cabeca).getByText("Ativa")).toBeInTheDocument();
         const resumo = screen.getByRole("heading", { name: "Resumo" }).closest("section");
         expect(resumo).not.toBeNull();

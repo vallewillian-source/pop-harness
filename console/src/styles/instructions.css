@@ -1,0 +1,35 @@
+
+.poph-instructions__form {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    min-width: 0;
+}
+
+.poph-instructions .poph-principle {
+    padding: var(--pop-spacing-md, 10px) 0;
+    border: none;
+    border-bottom: 1px solid var(--pop-line);
+    border-radius: 0;
+}
+
+.poph-instructions .poph-principle:last-child {
+    border-bottom: none;
+}
+
+.poph-instructions .poph-list-principles {
+    gap: 0;
+}
+
+.poph-instructions .poph-tool {
+    padding: var(--pop-spacing-md, 10px) 0;
+}
+
+.poph-instructions__preview .poph-section {
+    padding-top: 0;
+    border-top: none;
+}
+
+.poph-instructions__skeleton-line {
+    margin-top: 10px;
+}

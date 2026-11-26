@@ -1,0 +1,22 @@
+
+.poph-files__table .sofa-table__th {
+    height: 36px;
+}
+
+.poph-files__table .sofa-table__td {
+    height: 56px;
+}
+
+.poph-files__identity {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.poph-files__name {
+    color: var(--pop-text-primary);
+    font-size: 13px;
+    font-weight: var(--pop-font-weight-medium, 600);
+    overflow-wrap: anywhere;
+}

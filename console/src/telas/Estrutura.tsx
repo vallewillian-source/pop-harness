@@ -33,11 +33,11 @@ import {
     type StructureType,
 } from "../api/structure";
 import { getOrg } from "../api/orgs";
-import { DialogoExcluirCategoria } from "../componentes/DialogoExcluirCategoria";
-import { DialogoExcluirDepartamento } from "../componentes/DialogoExcluirDepartamento";
-import { ModalEstrutura } from "../componentes/ModalEstrutura";
+import { DialogDeleteCategory } from "../components/DialogDeleteCategory";
+import { DialogDeleteDepartment } from "../components/DialogDeleteDepartment";
+import { ModalStructure } from "../components/ModalStructure";
 import { useI18n } from "../i18n";
-import "../estilos/estrutura.css";
+import "../styles/structure.css";
 
 type Estado = {
     carregando: boolean;
@@ -49,7 +49,7 @@ const ESTADO_INICIAL: Estado = { carregando: true, erro: null, itens: [] };
 
 /** Classe do ponto de status (6 px + texto), no padrão de Orgs e OrgPainel. */
 function classeDaSituacao(situacao: string): string {
-    return situacao === "active" ? "poph-status--ativo" : "poph-status--inativo";
+    return situacao === "active" ? "poph-status--active" : "poph-status--inactive";
 }
 
 function rotuloDaSituacao(
@@ -204,7 +204,7 @@ function SecaoEstrutura({ tipo, org, contagemAgentes, aoMudar }: ColunaProps) {
     } else {
         corpo = (
             <ul
-                className="poph-estrutura__lista"
+                className="poph-structure__list"
                 aria-label={
                     eDepartamento
                         ? translate("structure.listDepartmentsAria")
@@ -212,21 +212,21 @@ function SecaoEstrutura({ tipo, org, contagemAgentes, aoMudar }: ColunaProps) {
                 }
             >
                 {estado.itens.map((item) => (
-                    <li className="poph-estrutura__linha" key={item.id}>
-                        <div className="poph-estrutura__texto">
-                            <span className="poph-estrutura__nome">{item.name}</span>
-                            <span className="poph-estrutura__descricao">
+                    <li className="poph-structure__line" key={item.id}>
+                        <div className="poph-structure__text">
+                            <span className="poph-structure__name">{item.name}</span>
+                            <span className="poph-structure__description">
                                 {item.description || translate("structure.noDescription")}
                             </span>
                             {eDepartamento && contagemAgentes && (
-                                <span className="poph-mono-mudo">
+                                <span className="poph-mono-muted">
                                     {textoDeAgentes(contagemAgentes(item.id), translate)}
                                 </span>
                             )}
                         </div>
-                        <div className="poph-estrutura__acoes">
+                        <div className="poph-structure__actions">
                             <span className={`poph-status ${classeDaSituacao(item.status)}`}>
-                                <span className="poph-status__ponto" aria-hidden="true" />
+                                <span className="poph-status__point" aria-hidden="true" />
                                 {rotuloDaSituacao(item.status, translate)}
                             </span>
                             <SofaButton
@@ -265,19 +265,19 @@ function SecaoEstrutura({ tipo, org, contagemAgentes, aoMudar }: ColunaProps) {
     }
 
     return (
-        <section className="poph-secao poph-estrutura__secao" aria-labelledby={idDoTitulo}>
-            <div className="poph-estrutura__cabecalho">
-                <div className="poph-estrutura__titulo-bloco">
-                    <h2 id={idDoTitulo} className="poph-secao__titulo">
+        <section className="poph-section poph-structure__section" aria-labelledby={idDoTitulo}>
+            <div className="poph-structure__header">
+                <div className="poph-structure__title-block">
+                    <h2 id={idDoTitulo} className="poph-section__title">
                         {titulo}
                     </h2>
-                    <p className="poph-estrutura__ajuda">
+                    <p className="poph-structure__help">
                         {eDepartamento
                             ? translate("structure.departmentsHelp")
                             : translate("structure.categoriesHelp")}
                     </p>
                 </div>
-                <div className="poph-estrutura__acoes-secao">
+                <div className="poph-structure__actions-section">
                     <SofaButton
                         variant="subtle"
                         size="sm"
@@ -293,19 +293,19 @@ function SecaoEstrutura({ tipo, org, contagemAgentes, aoMudar }: ColunaProps) {
 
             {corpo}
 
-            <ModalEstrutura
+            <ModalStructure
                 tipo={tipo}
                 org={org}
                 aberto={edicao.aberto}
                 registro={edicao.registro}
-                aoFechar={() => setEdicao({ aberto: false, registro: null })}
-                aoSalvar={aoSalvarRegistro}
+                onClose={() => setEdicao({ aberto: false, registro: null })}
+                onSave={aoSalvarRegistro}
             />
 
             {eDepartamento && (
-                <DialogoExcluirDepartamento
+                <DialogDeleteDepartment
                     aberto={paraExcluir !== null}
-                    aoFechar={() => setParaExcluir(null)}
+                    onClose={() => setParaExcluir(null)}
                     org={org}
                     departamento={paraExcluir}
                     aoExcluir={() => {
@@ -317,9 +317,9 @@ function SecaoEstrutura({ tipo, org, contagemAgentes, aoMudar }: ColunaProps) {
             )}
 
             {!eDepartamento && (
-                <DialogoExcluirCategoria
+                <DialogDeleteCategory
                     aberto={categoriaParaExcluir !== null}
-                    aoFechar={() => setCategoriaParaExcluir(null)}
+                    onClose={() => setCategoriaParaExcluir(null)}
                     org={org}
                     categoria={categoriaParaExcluir}
                     aoExcluir={() => {
@@ -333,7 +333,7 @@ function SecaoEstrutura({ tipo, org, contagemAgentes, aoMudar }: ColunaProps) {
     );
 }
 
-export function Estrutura() {
+export function Structure() {
     const { translate } = useI18n();
     const { orgId = "" } = useParams();
     const [nomeDaOrg, setNomeDaOrg] = useState<string | null>(null);
@@ -360,20 +360,20 @@ export function Estrutura() {
         agentes === null ? null : agentsUsing(agentes, id).length;
 
     return (
-        <div className="poph-pagina poph-estrutura">
-            <div className="poph-pagina__topo">
+        <div className="poph-page poph-structure">
+            <div className="poph-page__top">
                 <div>
-                    <p className="poph-estrutura__eyebrow">
+                    <p className="poph-structure__eyebrow">
                         {nomeDaOrg
                             ? translate("structure.eyebrowOrg", { name: nomeDaOrg })
                             : translate("structure.eyebrow")}
                     </p>
-                    <h1 className="poph-pagina__titulo">{translate("structure.pageTitle")}</h1>
-                    <p className="poph-pagina__descricao">
+                    <h1 className="poph-page__title">{translate("structure.pageTitle")}</h1>
+                    <p className="poph-page__description">
                         {translate("structure.pageDescription")}
                     </p>
                 </div>
-                <div className="poph-pagina__acoes">
+                <div className="poph-page__actions">
                     <SofaButton
                         variant="secondary"
                         icon={<IconRefresh aria-hidden="true" />}

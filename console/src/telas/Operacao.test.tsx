@@ -13,7 +13,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { FakeServer, apiError } from "../testing/server";
 import {
-    Operacao,
+    Operation,
     formatarMemoria,
     formatarTempoNoAr,
     formatarVersaoDoBanco,
@@ -74,7 +74,7 @@ function montar(caminho = "/orgs/org_1/operacao") {
     return render(
         <MemoryRouter initialEntries={[caminho]}>
             <Routes>
-                <Route path="/orgs/:orgId/operacao" element={<Operacao />} />
+                <Route path="/orgs/:orgId/operacao" element={<Operation />} />
             </Routes>
         </MemoryRouter>,
     );

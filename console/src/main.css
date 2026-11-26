@@ -1,5 +1,3 @@
-/* Tokens e fundação do Console. A SofaUI não estiliza o elemento raiz do hospedeiro (HR-05);
-   a instrução canônica da UX_SPEC §1.2 mora aqui. */
 
 html,
 body,
@@ -28,8 +26,6 @@ pre,
     font-family: var(--pop-font-mono, "IBM Plex Mono", monospace);
 }
 
-/* Foco visível em tudo que recebe teclado (UX_SPEC §5). A biblioteca já cobre os próprios
-   controles; esta regra alcança links e elementos do app. */
 a:focus-visible,
 [tabindex]:focus-visible {
     outline: 2px solid var(--pop-accent, #f5a623);
@@ -37,7 +33,6 @@ a:focus-visible,
     border-radius: var(--pop-radius-sm, 4px);
 }
 
-/* ── Barra superior ───────────────────────────────────────────────────────── */
 
 .poph-topbar {
     display: flex;
@@ -51,7 +46,7 @@ a:focus-visible,
     background: var(--pop-surface-raised, #1c1f22);
 }
 
-.poph-topbar__trilha {
+.poph-topbar__trail {
     display: flex;
     align-items: center;
     min-width: 0;
@@ -59,15 +54,10 @@ a:focus-visible,
     overflow: hidden;
     color: var(--pop-text-muted);
     font-size: var(--pop-font-size-body-sm, 12px);
-    /* A mesma altura de linha para links, separadores e a migalha atual: sem ela, o link (que tem
-       `line-height` próprio por causa do alvo de clique) centraliza o texto em outro ponto. */
     line-height: 16px;
 }
 
-/* Cada migalha é um passo com o seu próprio separador: esconder o passo não deixa um "/" órfão.
-   O passo encolhe (flex-shrink vem do componente, pela distância até a tela atual), então as
-   migalhas mais próximas da atual ficam com mais espaço (CF-08). */
-.poph-topbar__passo {
+.poph-topbar__step {
     display: inline-flex;
     flex: 0 1 auto;
     align-items: center;
@@ -75,18 +65,17 @@ a:focus-visible,
     gap: var(--pop-spacing-sm, 6px);
 }
 
-/* A tela atual nunca encolhe: é o que a pessoa precisa ler inteiro. */
-.poph-topbar__passo--atual {
+.poph-topbar__step--current {
     flex: 0 0 auto;
 }
 
-.poph-topbar__separador {
+.poph-topbar__separator {
     flex: none;
 }
 
-.poph-topbar__trilha a,
-.poph-topbar__migalha,
-.poph-topbar__atual {
+.poph-topbar__trail a,
+.poph-topbar__crumb,
+.poph-topbar__current {
     display: inline-block;
     min-width: 0;
     max-width: 14rem;
@@ -96,11 +85,9 @@ a:focus-visible,
     vertical-align: middle;
 }
 
-.poph-topbar__trilha a {
+.poph-topbar__trail a {
     box-sizing: border-box;
     min-height: 24px;
-    /* Padding para o alvo de clique chegar a 24 px. A margem negativa só na horizontal: na vertical
-       ela deslocava o link para cima dentro do passo e a migalha saía 4,5 px acima do separador. */
     padding: 4px 6px;
     margin: 0 -6px;
     border-radius: var(--pop-radius-sm, 4px);
@@ -108,43 +95,37 @@ a:focus-visible,
     text-decoration: none;
 }
 
-/* Até 1320 px a trilha inteira não cabe sem cortar os nomes: mostra as duas últimas migalhas (org e
-   tela). A do agente fica de fora (`--agent`, CF-11 rodada 1): são três passos e eles cabem a partir
-   de 1200 px. O `!important` vence o `flex-shrink` que o componente põe em cada passo. */
 @media (max-width: 1320px) {
-    .poph-topbar__trilha:not(.poph-topbar__trilha--agent)
-        > .poph-topbar__passo:not(:nth-last-child(-n + 2)) {
+    .poph-topbar__trail:not(.poph-topbar__trail--agent)
+        > .poph-topbar__step:not(:nth-last-child(-n + 2)) {
         display: none !important;
     }
 
-    /* O primeiro passo visível perde o separador, para não começar com "/". */
-    .poph-topbar__trilha:not(.poph-topbar__trilha--agent)
-        > .poph-topbar__passo:nth-last-child(2)
-        .poph-topbar__separador {
+    .poph-topbar__trail:not(.poph-topbar__trail--agent)
+        > .poph-topbar__step:nth-last-child(2)
+        .poph-topbar__separator {
         display: none;
     }
 }
 
-.poph-topbar__trilha a:hover {
+.poph-topbar__trail a:hover {
     color: var(--pop-text-primary);
     text-decoration: underline;
 }
 
-.poph-topbar__atual {
-    /* Rede de segurança para um nome enorme: acima disto a tela atual também corta, em vez de
-       empurrar a busca. */
+.poph-topbar__current {
     max-width: 20rem;
     color: var(--pop-text-secondary);
 }
 
-.poph-topbar__acoes {
+.poph-topbar__actions {
     display: flex;
     flex: none;
     align-items: center;
     gap: var(--pop-spacing-md, 10px);
 }
 
-.poph-topbar__selo {
+.poph-topbar__seal {
     padding: 2px 8px;
     border: 1px solid var(--pop-line-strong);
     border-radius: 4px;
@@ -155,16 +136,15 @@ a:focus-visible,
     text-transform: uppercase;
 }
 
-/* ── Rail ─────────────────────────────────────────────────────────────────── */
 
-.poph-marca {
+.poph-mark {
     display: flex;
     flex-direction: column;
     gap: 2px;
     min-width: 0;
 }
 
-.poph-marca__nome {
+.poph-mark__name {
     color: var(--pop-text-primary);
     font-size: 13px;
     font-weight: var(--pop-font-weight-bold, 700);
@@ -172,21 +152,21 @@ a:focus-visible,
     text-transform: uppercase;
 }
 
-.poph-marca__meta {
+.poph-mark__meta {
     color: var(--pop-text-muted);
     font-family: var(--pop-font-mono, "IBM Plex Mono", monospace);
     font-size: 10px;
     letter-spacing: 0.05em;
 }
 
-.poph-rail__seletor {
+.poph-rail__selector {
     display: flex;
     flex-direction: column;
     gap: var(--pop-spacing-xs, 4px);
     padding: var(--pop-spacing-md, 10px) var(--pop-spacing-md, 10px) 0;
 }
 
-.poph-rail__rotulo {
+.poph-rail__label {
     color: var(--pop-text-muted);
     font-size: var(--pop-font-size-label-caps, 10px);
     font-weight: var(--pop-font-weight-bold, 700);
@@ -194,7 +174,7 @@ a:focus-visible,
     text-transform: uppercase;
 }
 
-.poph-rail__rodape {
+.poph-rail__footer {
     display: flex;
     flex-direction: column;
     gap: var(--pop-spacing-sm, 6px);
@@ -202,19 +182,18 @@ a:focus-visible,
     font-size: var(--pop-font-size-body-sm, 12px);
 }
 
-.poph-rail__rodape-linha {
+.poph-rail__footer-line {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: var(--pop-spacing-sm, 6px);
 }
 
-.poph-rail__rodape-linha code {
+.poph-rail__footer-line code {
     color: var(--pop-text-secondary);
     font-size: 11px;
 }
 
-/* ── Login ────────────────────────────────────────────────────────────────── */
 
 .poph-login {
     display: flex;
@@ -225,7 +204,7 @@ a:focus-visible,
     background: var(--pop-bg);
 }
 
-.poph-login__cartao {
+.poph-login__card {
     width: min(460px, 100%);
 }
 
@@ -235,28 +214,27 @@ a:focus-visible,
     gap: var(--pop-spacing-lg, 14px);
 }
 
-.poph-login__aviso {
+.poph-login__notice {
     margin: 0;
     color: var(--pop-text-muted);
     font-size: var(--pop-font-size-body-sm, 12px);
     line-height: 1.5;
 }
 
-/* ── Conteúdo ─────────────────────────────────────────────────────────────── */
 
-.poph-grade {
+.poph-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
     gap: var(--pop-spacing-lg, 14px);
 }
 
-.poph-fato {
+.poph-fact {
     display: flex;
     flex-direction: column;
     gap: var(--pop-spacing-xs, 4px);
 }
 
-.poph-fato__rotulo {
+.poph-fact__label {
     color: var(--pop-text-muted);
     font-size: var(--pop-font-size-label-caps, 10px);
     font-weight: var(--pop-font-weight-bold, 700);
@@ -264,35 +242,35 @@ a:focus-visible,
     text-transform: uppercase;
 }
 
-.poph-fato__valor {
+.poph-fact__value {
     color: var(--pop-text-primary);
     overflow-wrap: anywhere;
 }
 
-.poph-fato__valor--mono {
+.poph-fact__value--mono {
     font-family: var(--pop-font-mono, "IBM Plex Mono", monospace);
     font-size: 12px;
 }
 
-.poph-pilha {
+.poph-stack {
     display: flex;
     flex-direction: column;
     gap: var(--pop-spacing-lg, 14px);
 }
 
-.poph-linha-titulo {
+.poph-line-title {
     display: flex;
     align-items: baseline;
     gap: var(--pop-spacing-md, 10px);
 }
 
-.poph-mono-mudo {
+.poph-mono-muted {
     color: var(--pop-text-muted);
     font-family: var(--pop-font-mono, "IBM Plex Mono", monospace);
     font-size: 11px;
 }
 
-.poph-atalho {
+.poph-shortcut {
     display: flex;
     justify-content: space-between;
     gap: var(--pop-spacing-lg, 14px);
@@ -300,11 +278,11 @@ a:focus-visible,
     border-bottom: 1px solid var(--pop-line);
 }
 
-.poph-atalho:last-child {
+.poph-shortcut:last-child {
     border-bottom: none;
 }
 
-.poph-atalho kbd {
+.poph-shortcut kbd {
     padding: 1px 6px;
     border: 1px solid var(--pop-line-strong);
     border-radius: 4px;
@@ -314,16 +292,15 @@ a:focus-visible,
     white-space: nowrap;
 }
 
-/* ── Estrutura: departamentos e categorias (HR-39b) ───────────────────────── */
 
-.poph-duas-colunas {
+.poph-two-columns {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
     gap: var(--pop-spacing-lg, 14px);
     align-items: start;
 }
 
-.poph-lista-estrutura {
+.poph-list-structure {
     list-style: none;
     margin: 0;
     padding: 0;
@@ -332,7 +309,7 @@ a:focus-visible,
     gap: var(--pop-spacing-sm, 8px);
 }
 
-.poph-linha-estrutura {
+.poph-line-structure {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -344,35 +321,34 @@ a:focus-visible,
     background: var(--pop-bg-raised, #18222f);
 }
 
-.poph-linha-estrutura__texto {
+.poph-line-structure__text {
     display: flex;
     flex-direction: column;
     gap: 2px;
     min-width: 0;
 }
 
-.poph-linha-estrutura__nome {
+.poph-line-structure__name {
     color: var(--pop-text-primary);
     font-weight: var(--pop-font-weight-bold, 700);
     overflow-wrap: anywhere;
 }
 
-.poph-linha-estrutura__descricao {
+.poph-line-structure__description {
     color: var(--pop-text-secondary);
     font-size: 13px;
     overflow-wrap: anywhere;
 }
 
-.poph-linha-estrutura__acoes {
+.poph-line-structure__actions {
     display: flex;
     align-items: center;
     gap: var(--pop-spacing-sm, 8px);
     flex-wrap: wrap;
 }
 
-/* ── Agente · aba Instruções (HR-40) ──────────────────────────────────────── */
 
-.poph-instrucoes {
+.poph-instructions {
     display: grid;
     grid-template-columns: minmax(0, 55fr) minmax(0, 45fr);
     gap: var(--pop-spacing-lg, 14px);
@@ -380,23 +356,23 @@ a:focus-visible,
 }
 
 @media (max-width: 1080px) {
-    .poph-instrucoes {
+    .poph-instructions {
         grid-template-columns: minmax(0, 1fr);
     }
 }
 
-.poph-instrucoes__previa {
+.poph-instructions__preview {
     position: sticky;
     top: var(--pop-spacing-lg, 14px);
 }
 
 @media (max-width: 1080px) {
-    .poph-instrucoes__previa {
+    .poph-instructions__preview {
         position: static;
     }
 }
 
-.poph-previa {
+.poph-preview {
     max-height: 62vh;
     margin: 0;
     padding: var(--pop-spacing-lg, 14px);
@@ -412,7 +388,7 @@ a:focus-visible,
     overflow-wrap: anywhere;
 }
 
-.poph-lista-principios {
+.poph-list-principles {
     display: flex;
     flex-direction: column;
     gap: var(--pop-spacing-md, 10px);
@@ -421,7 +397,7 @@ a:focus-visible,
     list-style: none;
 }
 
-.poph-principio {
+.poph-principle {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(180px, 220px) auto;
     gap: var(--pop-spacing-md, 10px);
@@ -432,18 +408,18 @@ a:focus-visible,
 }
 
 @media (max-width: 720px) {
-    .poph-principio {
+    .poph-principle {
         grid-template-columns: minmax(0, 1fr);
     }
 }
 
-.poph-lista-ferramentas {
+.poph-list-tools {
     display: flex;
     flex-direction: column;
     gap: var(--pop-spacing-md, 10px);
 }
 
-.poph-ferramenta {
+.poph-tool {
     display: flex;
     flex-direction: column;
     gap: var(--pop-spacing-sm, 6px);
@@ -451,16 +427,16 @@ a:focus-visible,
     border-bottom: 1px solid var(--pop-line, #243142);
 }
 
-.poph-ferramenta:last-child {
+.poph-tool:last-child {
     border-bottom: none;
 }
 
-.poph-erro-de-secao {
+.poph-section-error {
     margin: 0;
     color: var(--pop-danger-text, #ff8f8f);
     font-size: 13px;
 }
 
-.poph-sujo {
+.poph-dirty {
     color: var(--pop-accent, #f5a623);
 }

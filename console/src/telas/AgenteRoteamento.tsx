@@ -45,13 +45,13 @@ import {
     type Routing,
 } from "../api/routing";
 import {
-    AbasDoAgente,
-    CabecalhoDoAgente,
-    SecaoDoAgente,
-} from "../componentes/AbasDoAgente";
-import { useGuardaDeAlteracoes } from "../componentes/GuardaAlteracoes";
+    TabsAgent,
+    HeaderAgent,
+    SectionAgent,
+} from "../components/TabsAgent";
+import { useGuardChanges } from "../components/GuardChanges";
 import { useI18n } from "../i18n";
-import "../estilos/roteamento.css";
+import "../styles/routing.css";
 
 /** Compara dois roteamentos como a tela os grava (motivos sem espaços vazios). */
 function mesmoRoteamento(a: Routing, b: Routing): boolean {
@@ -102,9 +102,9 @@ const CAMPOS_DA_API: Record<string, string> = {
     jev_json: "motivos",
 };
 
-export function AgenteRoteamento() {
+export function AgentRouting() {
     const { orgId = "", agentId = "" } = useParams();
-    const guarda = useGuardaDeAlteracoes();
+    const guarda = useGuardChanges();
     const { translate: t } = useI18n();
 
     const [agente, setAgente] = useState<Agente | null>(null);
@@ -246,7 +246,7 @@ export function AgenteRoteamento() {
     // A guarda de alterações precisa da versão mais recente de `salvar`.
     useEffect(() => {
         if (!rascunho) return;
-        guarda.registrar({ sujo, salvar: async () => salvar() });
+        guarda.registrar({ dirty: sujo, salvar: async () => salvar() });
     }, [guarda, sujo, salvar, rascunho]);
 
     useEffect(() => {
@@ -316,7 +316,7 @@ export function AgenteRoteamento() {
 
     if (!agente && erroDeCarga) {
         return (
-            <div className="poph-pagina">
+            <div className="poph-page">
                 <SofaErrorState
                     title={t("routing.loadErrorTitle")}
                     description={t("routing.loadErrorDescription")}
@@ -338,7 +338,7 @@ export function AgenteRoteamento() {
 
     if (!agente || !rascunho) {
         return (
-            <div className="poph-pagina" aria-busy="true">
+            <div className="poph-page" aria-busy="true">
                 <SofaSkeleton lines={6} />
             </div>
         );
@@ -348,8 +348,8 @@ export function AgenteRoteamento() {
     const motivosCheios = rascunho.motivos.length >= LIMIT_REASONS;
 
     return (
-        <div className="poph-pagina">
-            <CabecalhoDoAgente
+        <div className="poph-page">
+            <HeaderAgent
                 org={orgId}
                 nome={agente.name}
                 slug={agente.slug}
@@ -358,7 +358,7 @@ export function AgenteRoteamento() {
                 descricao={t("routing.headerDescription")}
             />
 
-            <AbasDoAgente org={orgId} agente={agentId} ativa="routing" nome={agente.name} model={agente.model ?? null} />
+            <TabsAgent org={orgId} agente={agentId} active="routing" nome={agente.name} model={agente.model ?? null} />
 
             {conflito && (
                 <SofaBanner tone="warn" title={t("routing.conflictTitle")}>
@@ -371,7 +371,7 @@ export function AgenteRoteamento() {
                 </SofaBanner>
             )}
             {aviso && !erroGeral && !conflito && (
-                <p className="poph-mono-mudo" style={{ margin: 0 }} role="status">
+                <p className="poph-mono-muted" style={{ margin: 0 }} role="status">
                     {aviso}
                 </p>
             )}
@@ -385,7 +385,7 @@ export function AgenteRoteamento() {
                 </SofaBanner>
             )}
 
-            <SecaoDoAgente
+            <SectionAgent
                 titulo={t("routing.sectionDepartments")}
                 descricao={t("routing.sectionDepartmentsDescription")}
             >
@@ -408,7 +408,7 @@ export function AgenteRoteamento() {
                 ) : (
                     <form
                         id="poph-form-roteamento"
-                        className="poph-pilha"
+                        className="poph-stack"
                         style={{ gap: "var(--pop-spacing-lg)" }}
                         onSubmit={(evento) => {
                             evento.preventDefault();
@@ -478,9 +478,9 @@ export function AgenteRoteamento() {
                         </SofaField>
                     </form>
                 )}
-            </SecaoDoAgente>
+            </SectionAgent>
 
-            <SecaoDoAgente
+            <SectionAgent
                 titulo={t("routing.sectionReasons")}
                 descricao={t("routing.sectionReasonsDescription", {
                     limit: LIMIT_REASONS,
@@ -499,12 +499,12 @@ export function AgenteRoteamento() {
                 }
             >
                 {rascunho.motivos.length === 0 ? (
-                    <p className="poph-mono-mudo poph-roteamento__vazio">{t("routing.noReasons")}</p>
+                    <p className="poph-mono-muted poph-routing__empty">{t("routing.noReasons")}</p>
                 ) : (
-                    <div className="poph-roteamento__motivos">
+                    <div className="poph-routing__reasons">
                         {rascunho.motivos.map((motivo, indice) => (
-                            <div key={indice} className="poph-roteamento__motivo">
-                                <div className="poph-roteamento__motivo-campo">
+                            <div key={indice} className="poph-routing__reason">
+                                <div className="poph-routing__reason-field">
                                     <SofaField
                                         label={t("routing.reasonLabel", { number: indice + 1 })}
                                         hint={`${motivo.trim().length}/${LIMIT_REASON}`}
@@ -534,17 +534,17 @@ export function AgenteRoteamento() {
                     </div>
                 )}
                 {erros["motivos"] && (
-                    <p role="alert" className="poph-roteamento__erro">
+                    <p role="alert" className="poph-routing__error">
                         {erros["motivos"]}
                     </p>
                 )}
-            </SecaoDoAgente>
+            </SectionAgent>
 
-            <div className="poph-linha-titulo poph-roteamento__barra">
+            <div className="poph-line-title poph-routing__bar">
                 <span
-                    className={`poph-status ${sujo ? "poph-status--atencao" : "poph-status--inativo"}`}
+                    className={`poph-status ${sujo ? "poph-status--attention" : "poph-status--inactive"}`}
                 >
-                    <span className="poph-status__ponto" aria-hidden="true" />
+                    <span className="poph-status__point" aria-hidden="true" />
                     {sujo
                         ? t("routing.unsavedChanges")
                         : t("routing.savedStatus", { version: versao })}

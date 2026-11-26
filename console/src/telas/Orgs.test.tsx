@@ -16,7 +16,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import type { Agente } from "../api/agents";
 import type { ListInstance, Org, OrgInList } from "../api/client";
-import { GuardaAlteracoesProvider, useGuardaDeAlteracoes } from "../componentes/GuardaAlteracoes";
+import { GuardChangesProvider, useGuardChanges } from "../components/GuardChanges";
 import { SessionProvider } from "../session/Session";
 import { FakeServer } from "../testing/server";
 import { Orgs } from "./Orgs";
@@ -62,14 +62,14 @@ function prepararSessao(token: string, escopo: "global" | "org", items: Org[]) {
 /** Mostra o caminho atual num elemento, para o teste conferir navegação. */
 function Destino() {
     const local = useLocation();
-    return <output data-testid="caminho">{local.pathname}</output>;
+    return <output data-testid="path">{local.pathname}</output>;
 }
 
 /** Registra uma edição pendente na guarda: é o que segura a navegação da gaveta no teste. */
 function EdicaoPendente() {
-    const guarda = useGuardaDeAlteracoes();
+    const guarda = useGuardChanges();
     useEffect(() => {
-        guarda.registrar({ sujo: true, salvar: async () => true });
+        guarda.registrar({ dirty: true, salvar: async () => true });
     }, [guarda]);
     return null;
 }
@@ -78,13 +78,13 @@ function montar(inicial = "/orgs", opcoes: { sujo?: boolean } = {}) {
     return render(
         <MemoryRouter initialEntries={[inicial]}>
             <SessionProvider>
-                <GuardaAlteracoesProvider>
+                <GuardChangesProvider>
                     {opcoes.sujo ? <EdicaoPendente /> : null}
                     <Routes>
                         <Route path="/orgs" element={<Orgs />} />
                         <Route path="/orgs/:orgId" element={<Destino />} />
                     </Routes>
-                </GuardaAlteracoesProvider>
+                </GuardChangesProvider>
             </SessionProvider>
         </MemoryRouter>,
     );
@@ -277,7 +277,7 @@ describe("Orgs", () => {
         montar();
 
         await usuario.click(await screen.findByRole("button", { name: "Acessar →" }));
-        expect(await screen.findByTestId("caminho")).toHaveTextContent("/orgs/org_1");
+        expect(await screen.findByTestId("path")).toHaveTextContent("/orgs/org_1");
     });
 
     it("o nome da organização é link para o painel", async () => {
@@ -443,7 +443,7 @@ describe("Orgs", () => {
 
         abrir.focus();
         await usuario.keyboard("{Enter}");
-        expect(await screen.findByTestId("caminho")).toHaveTextContent("/orgs/org_1");
+        expect(await screen.findByTestId("path")).toHaveTextContent("/orgs/org_1");
     });
 
     // ── Inspetor lateral (RL-06) ───────────────────────────────────────────
@@ -623,7 +623,7 @@ describe("Orgs", () => {
         );
 
         expect(await screen.findByRole("dialog")).toHaveAccessibleName("Alterações não salvas");
-        expect(screen.queryByTestId("caminho")).not.toBeInTheDocument();
+        expect(screen.queryByTestId("path")).not.toBeInTheDocument();
     });
 });
 
@@ -715,7 +715,7 @@ describe("Orgs · layout da prancha 01 (CF-03b)", () => {
         await usuario.click(within(menu).getByRole("menuitem", { name: "Ver detalhes" }));
 
         expect(await screen.findByRole("complementary", { name: "Detalhes de Loja Antiga" })).toBeInTheDocument();
-        expect(screen.getByRole("link", { name: "Loja Antiga" })).toHaveClass("poph-orgs__nome--selecionado");
+        expect(screen.getByRole("link", { name: "Loja Antiga" })).toHaveClass("poph-orgs__name--selected");
     });
 
     it("Exportar pelo menu baixa o arquivo sem conversas", async () => {

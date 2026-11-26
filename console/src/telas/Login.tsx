@@ -17,10 +17,10 @@ import {
     SofaStatusIndicator,
 } from "@sofacoding/sofa-ui";
 import { ApiError } from "../api/client";
-import { LanguageSwitcher } from "../componentes/LanguageSwitcher";
+import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import { useI18n } from "../i18n";
 import { resolveDefaultOrgPath, useSession } from "../session/Session";
-import "../estilos/login.css";
+import "../styles/login.css";
 
 /** Endereço desta instância — o Console é servido pelo próprio binário, então é a origem atual. */
 function instancia(): string {
@@ -68,23 +68,23 @@ export function Login() {
 
     return (
         <main className="poph-login" role="main">
-            <section className="poph-login__bloco" aria-labelledby="poph-login-titulo">
-                <div className="poph-login__topo">
-                    <div className="poph-login__marca">
-                        <span className="poph-login__monograma" aria-hidden="true">
+            <section className="poph-login__block" aria-labelledby="poph-login-titulo">
+                <div className="poph-login__top">
+                    <div className="poph-login__mark">
+                        <span className="poph-login__monogram" aria-hidden="true">
                             P
                         </span>
-                        <span className="poph-login__nome">POP HARNESS</span>
+                        <span className="poph-login__name">POP HARNESS</span>
                     </div>
                     <LanguageSwitcher />
                 </div>
-                <h1 id="poph-login-titulo" className="poph-login__titulo">
+                <h1 id="poph-login-titulo" className="poph-login__title">
                     {translate("login.title")}
                 </h1>
-                <p className="poph-login__descricao">{translate("login.subtitle")}</p>
+                <p className="poph-login__description">{translate("login.subtitle")}</p>
 
                 {(expirada || erroRede) && (
-                    <div className="poph-login__avisos">
+                    <div className="poph-login__notices">
                         {expirada && (
                             <SofaBanner tone="warn" title={translate("login.expiredTitle")}>
                                 {translate("login.expiredBody")}
@@ -107,7 +107,7 @@ export function Login() {
                         htmlFor="poph-token"
                     >
                         {(controle) => (
-                            <div className="poph-login__campo">
+                            <div className="poph-login__field">
                                 <SofaInput
                                     {...controle}
                                     id="poph-token"
@@ -139,11 +139,11 @@ export function Login() {
                         )}
                     </SofaField>
 
-                    <div className="poph-fato">
-                        <span className="poph-fato__rotulo">
+                    <div className="poph-fact">
+                        <span className="poph-fact__label">
                             {translate("login.instanceLabel")}
                         </span>
-                        <span className="poph-fato__valor poph-fato__valor--mono">
+                        <span className="poph-fact__value poph-fact__value--mono">
                             {instancia()}
                         </span>
                     </div>
@@ -158,7 +158,7 @@ export function Login() {
                         {translate("login.submit")}
                     </SofaButton>
 
-                    <p className="poph-login__aviso">{translate("login.sessionNotice")}</p>
+                    <p className="poph-login__notice">{translate("login.sessionNotice")}</p>
 
                     <SofaStatusIndicator tone="muted">
                         {translate("login.scopeNotice")}

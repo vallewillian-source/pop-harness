@@ -29,17 +29,17 @@ import { getAgent, type Agente } from "../api/agents";
 import { deleteFile, listFiles, sizeInMb, type LibraryFile } from "../api/files";
 import { getOrg } from "../api/orgs";
 import {
-    AbasDoAgente,
-    CabecalhoDoAgente,
-    SecaoDoAgente,
-} from "../componentes/AbasDoAgente";
-import { DialogoExclusao } from "../componentes/DialogoExclusao";
-import { useGuardaDeAlteracoes } from "../componentes/GuardaAlteracoes";
-import { ModalArquivo } from "../componentes/ModalArquivo";
+    TabsAgent,
+    HeaderAgent,
+    SectionAgent,
+} from "../components/TabsAgent";
+import { DialogExclusion } from "../components/DialogExclusion";
+import { useGuardChanges } from "../components/GuardChanges";
+import { ModalFile } from "../components/ModalFile";
 import { formatNumber } from "../i18n/format";
 import { useI18n } from "../i18n";
 import type { TranslationKey } from "../i18n/catalog";
-import "../estilos/arquivos.css";
+import "../styles/files.css";
 
 const coluna = createColumnHelper<LibraryFile>();
 
@@ -51,10 +51,10 @@ function tamanhoLegivel(bytes: number): string {
     return sizeInMb(bytes);
 }
 
-export function AgenteArquivos() {
+export function AgentFiles() {
     const { translate: t, locale } = useI18n();
     const { orgId = "", agentId = "" } = useParams();
-    const guarda = useGuardaDeAlteracoes();
+    const guarda = useGuardChanges();
 
     const [agente, setAgente] = useState<Agente | null>(null);
     const [nomeDaOrg, setNomeDaOrg] = useState<string | null>(null);
@@ -108,10 +108,10 @@ export function AgenteArquivos() {
                 cell: (info) => {
                     const arquivo = info.row.original;
                     return (
-                        <div className="poph-arquivos__identidade">
-                            <span className="poph-arquivos__nome">{arquivo.name}</span>
+                        <div className="poph-files__identity">
+                            <span className="poph-files__name">{arquivo.name}</span>
                             {arquivo.description && (
-                                <span className="poph-mono-mudo">{arquivo.description}</span>
+                                <span className="poph-mono-muted">{arquivo.description}</span>
                             )}
                         </div>
                     );
@@ -119,7 +119,7 @@ export function AgenteArquivos() {
             }),
             coluna.accessor("mime", {
                 header: t("files.columnType"),
-                cell: (info) => <span className="poph-mono-mudo">{info.getValue()}</span>,
+                cell: (info) => <span className="poph-mono-muted">{info.getValue()}</span>,
             }),
             coluna.accessor("size_bytes", {
                 header: t("files.columnSize"),
@@ -128,7 +128,7 @@ export function AgenteArquivos() {
             coluna.accessor("sha256", {
                 header: "SHA-256",
                 cell: (info) => (
-                    <span className="poph-mono-mudo" title={info.getValue()}>
+                    <span className="poph-mono-muted" title={info.getValue()}>
                         {info.getValue().slice(0, 12)}…
                     </span>
                 ),
@@ -157,7 +157,7 @@ export function AgenteArquivos() {
 
     if (!agente && erroDeCarga) {
         return (
-            <div className="poph-pagina">
+            <div className="poph-page">
                 <SofaErrorState
                     title={t("files.loadErrorTitle")}
                     description={t("files.loadErrorDescription")}
@@ -179,7 +179,7 @@ export function AgenteArquivos() {
 
     if (!agente) {
         return (
-            <div className="poph-pagina" aria-busy="true">
+            <div className="poph-page" aria-busy="true">
                 <SofaSkeleton lines={6} />
             </div>
         );
@@ -217,7 +217,7 @@ export function AgenteArquivos() {
     } else {
         corpo = (
             <SofaTable
-                className="poph-arquivos__tabela"
+                className="poph-files__table"
                 label={t("files.tableLabel")}
                 columns={colunas}
                 data={arquivos}
@@ -233,8 +233,8 @@ export function AgenteArquivos() {
     }
 
     return (
-        <div className="poph-pagina">
-            <CabecalhoDoAgente
+        <div className="poph-page">
+            <HeaderAgent
                 org={orgId}
                 nome={agente.name}
                 slug={agente.slug}
@@ -243,15 +243,15 @@ export function AgenteArquivos() {
                 descricao={t("files.headerDescription")}
             />
 
-            <AbasDoAgente org={orgId} agente={agentId} ativa="files" nome={agente.name} model={agente.model ?? null} />
+            <TabsAgent org={orgId} agente={agentId} active="files" nome={agente.name} model={agente.model ?? null} />
 
             {aviso && (
-                <p className="poph-mono-mudo" style={{ margin: 0 }} role="status">
+                <p className="poph-mono-muted" style={{ margin: 0 }} role="status">
                     {t(aviso.key, { name: aviso.name })}
                 </p>
             )}
 
-            <SecaoDoAgente
+            <SectionAgent
                 titulo={t("files.sectionTitle")}
                 descricao={t("files.sectionDescription")}
                 acoes={
@@ -277,31 +277,31 @@ export function AgenteArquivos() {
                 }
             >
                 {corpo}
-            </SecaoDoAgente>
+            </SectionAgent>
 
-            <ModalArquivo
+            <ModalFile
                 org={orgId}
                 agente={agentId}
                 aberto={modalEnvio}
-                aoFechar={() => setModalEnvio(false)}
-                aoEnviar={(arquivo) => {
+                onClose={() => setModalEnvio(false)}
+                onSend={(arquivo) => {
                     setArquivos((atuais) => [arquivo, ...atuais.filter((a) => a.id !== arquivo.id)]);
                     setAviso({ key: "files.uploadedNotice", name: arquivo.name });
                 }}
             />
 
-            <DialogoExclusao
+            <DialogExclusion
                 aberto={paraExcluir !== null}
-                aoFechar={() => setParaExcluir(null)}
+                onClose={() => setParaExcluir(null)}
                 titulo={t("files.deleteTitle")}
                 descricao={
                     paraExcluir
                         ? t("files.deleteDescription", { name: paraExcluir.name })
                         : ""
                 }
-                recurso={paraExcluir?.name ?? ""}
-                rotuloRecurso={t("files.deleteResourceLabel")}
-                rotuloConfirmar={t("files.deleteConfirm")}
+                resource={paraExcluir?.name ?? ""}
+                labelResource={t("files.deleteResourceLabel")}
+                labelConfirm={t("files.deleteConfirm")}
                 aoConfirmar={async () => {
                     if (!paraExcluir) return;
                     await deleteFile(orgId, agentId, paraExcluir.id);

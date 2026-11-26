@@ -10,7 +10,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { setLocale } from "../i18n";
 import { FakeServer, apiError } from "../testing/server";
-import { Produtos } from "./Produtos";
+import { Products } from "./Produtos";
 
 const ORG = "org_1";
 const BASE = `/admin/v1/orgs/${ORG}`;
@@ -84,7 +84,7 @@ function montar() {
     return render(
         <MemoryRouter initialEntries={[`/orgs/${ORG}/products`]}>
             <Routes>
-                <Route path="/orgs/:orgId/products" element={<Produtos />} />
+                <Route path="/orgs/:orgId/products" element={<Products />} />
                 <Route path="/orgs/:orgId/structure" element={<p>tela de estrutura</p>} />
             </Routes>
         </MemoryRouter>,
@@ -213,7 +213,7 @@ describe("Produtos", () => {
 
         expect(screen.getByRole("heading", { level: 2, name: "Catálogo" })).toBeInTheDocument();
         expect(container.querySelector(".sofa-card")).toBeNull();
-        expect(container.querySelector(".poph-produtos__tabela table")).not.toBeNull();
+        expect(container.querySelector(".poph-products__table table")).not.toBeNull();
         expect(within(linhaDe("Clareamento dental")).getByText("Ativo")).toBeInTheDocument();
     });
 

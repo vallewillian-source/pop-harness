@@ -44,15 +44,15 @@ import {
 import { updateOrg, versionConflict, deleteOrg } from "../api/orgs";
 import { fetchMetrics, fetchHealth } from "../api/operation";
 import { downloadFile, exportOrg, backupFailure } from "../api/backup";
-import { DialogoExclusao } from "../componentes/DialogoExclusao";
-import { useGuardaDeAlteracoes } from "../componentes/GuardaAlteracoes";
-import { InspetorOrg, type NoDaOrg } from "../componentes/InspetorOrg";
-import { ModalOrg } from "../componentes/ModalOrg";
+import { DialogExclusion } from "../components/DialogExclusion";
+import { useGuardChanges } from "../components/GuardChanges";
+import { InspectorOrg, type OrgNode } from "../components/InspectorOrg";
+import { ModalOrg } from "../components/ModalOrg";
 import { useSession } from "../session/Session";
 import { translate, useI18n } from "../i18n";
 import type { TranslationKey } from "../i18n/catalog";
 import { formatDate } from "../i18n/format";
-import "../estilos/orgs.css";
+import "../styles/orgs.css";
 
 const coluna = createColumnHelper<OrgInList>();
 
@@ -87,12 +87,12 @@ function semAcento(texto: string): string {
 function tomDaSituacao(situacao: string): string {
     switch (situacao) {
         case "active":
-            return "poph-status--ativo";
+            return "poph-status--active";
         case "inactive":
         case "archived":
-            return "poph-status--inativo";
+            return "poph-status--inactive";
         default:
-            return "poph-status--inativo";
+            return "poph-status--inactive";
     }
 }
 
@@ -179,7 +179,7 @@ export function Orgs() {
     const { translate: t, locale } = useI18n();
     const { sessao, recarregarOrgs } = useSession();
     const navegar = useNavigate();
-    const { tentarNavegar } = useGuardaDeAlteracoes();
+    const { tentarNavegar } = useGuardChanges();
     const [orgs, setOrgs] = useState<OrgInList[]>(sessao?.orgs ?? []);
     /** Estado das instâncias do cluster. `null` quando a resposta não traz (token de org). */
     const [instancias, setInstancias] = useState<ListInstance[] | null>(null);
@@ -229,7 +229,7 @@ export function Orgs() {
      * instalação de nó único.
      */
     const noDaOrg = useCallback(
-        (org: OrgInList): NoDaOrg | null => {
+        (org: OrgInList): OrgNode | null => {
             if (instancias === null) return null;
             const id = org.instancia ?? "";
             if (id === "") return { id: "", situacao: "local" };
@@ -460,21 +460,21 @@ export function Orgs() {
                     const org = info.row.original;
                     const atenuada = org.status !== "active";
                     const classeDoNome = [
-                        "poph-orgs__nome",
-                        atenuada ? "poph-orgs__nome--atenuado" : "",
-                        selecionada === org.id ? "poph-orgs__nome--selecionado" : "",
+                        "poph-orgs__name",
+                        atenuada ? "poph-orgs__name--dimmed" : "",
+                        selecionada === org.id ? "poph-orgs__name--selected" : "",
                     ]
                         .filter(Boolean)
                         .join(" ");
                     return (
-                        <div className="poph-orgs__identidade-linha">
+                        <div className="poph-orgs__identity-line">
                             <span
-                                className={atenuada ? "poph-orgs__tile poph-orgs__tile--atenuado" : "poph-orgs__tile"}
+                                className={atenuada ? "poph-orgs__tile poph-orgs__tile--dimmed" : "poph-orgs__tile"}
                                 aria-hidden="true"
                             >
                                 <IconBuilding size={14} aria-hidden="true" />
                             </span>
-                            <div className="poph-orgs__identidade">
+                            <div className="poph-orgs__identity">
                                 {ehDeOutroNo(org) ? (
                                     <span className={classeDoNome}>{info.getValue()}</span>
                                 ) : (
@@ -487,7 +487,7 @@ export function Orgs() {
                                         {info.getValue()}
                                     </Link>
                                 )}
-                                <span className="poph-mono-mudo">{org.slug}</span>
+                                <span className="poph-mono-muted">{org.slug}</span>
                             </div>
                         </div>
                     );
@@ -498,7 +498,7 @@ export function Orgs() {
                 size: 100,
                 cell: (info) => (
                     <span className={`poph-status ${tomDaSituacao(info.getValue())}`}>
-                        <span className="poph-status__ponto" aria-hidden="true" />
+                        <span className="poph-status__point" aria-hidden="true" />
                         {rotuloDaSituacao(info.getValue())}
                     </span>
                 ),
@@ -511,7 +511,7 @@ export function Orgs() {
                     if (instancias === null) {
                         return (
                             <span
-                                className="poph-orgs__celula--atenuada"
+                                className="poph-orgs__cell--dimmed"
                                 title={t("orgs.cellNodeUnknown")}
                             >
                                 —
@@ -523,9 +523,9 @@ export function Orgs() {
                     const nodo = id === "" ? instanciaLocal : (mapaDeInstancias.get(id) ?? null);
                     const rotulo = rotuloDoNo(nodo);
                     return (
-                        <div className="poph-orgs__identidade">
+                        <div className="poph-orgs__identity">
                             <span className="poph-mono">{id || t("orgs.nodeLocal")}</span>
-                            {rotulo !== "" && <span className="poph-mono-mudo">{rotulo}</span>}
+                            {rotulo !== "" && <span className="poph-mono-muted">{rotulo}</span>}
                         </div>
                     );
                 },
@@ -538,7 +538,7 @@ export function Orgs() {
                     if (typeof total !== "number") {
                         return (
                             <span
-                                className="poph-orgs__celula--atenuada"
+                                className="poph-orgs__cell--dimmed"
                                 title={t("orgs.cellAgentsUnknown")}
                             >
                                 —
@@ -547,7 +547,7 @@ export function Orgs() {
                     }
                     const org = info.row.original;
                     return (
-                        <span className={org.status === "active" ? undefined : "poph-orgs__celula--atenuada"}>
+                        <span className={org.status === "active" ? undefined : "poph-orgs__cell--dimmed"}>
                             {total === 1
                                 ? t("orgs.agentsCountOne")
                                 : t("orgs.agentsCountMany", { count: total })}
@@ -562,7 +562,7 @@ export function Orgs() {
                 cell: (info) => {
                     const org = info.row.original;
                     return (
-                        <span className={org.status === "active" ? undefined : "poph-orgs__celula--atenuada"}>
+                        <span className={org.status === "active" ? undefined : "poph-orgs__cell--dimmed"}>
                             {retencao(org)}
                         </span>
                     );
@@ -574,11 +574,11 @@ export function Orgs() {
                 cell: (info) => {
                     const org = info.row.original;
                     return (
-                        <div className="poph-orgs__identidade">
-                            <span className={org.status === "active" ? undefined : "poph-orgs__celula--atenuada"}>
+                        <div className="poph-orgs__identity">
+                            <span className={org.status === "active" ? undefined : "poph-orgs__cell--dimmed"}>
                                 {dataCurta(info.getValue())}
                             </span>
-                            <span className="poph-mono-mudo">v{org.version}</span>
+                            <span className="poph-mono-muted">v{org.version}</span>
                         </div>
                     );
                 },
@@ -593,7 +593,7 @@ export function Orgs() {
                     // Inativa com gestão: a ação da linha é reativar; o acesso fica no menu.
                     const reativarNaLinha = podeGerenciar && org.status === "inactive";
                     return (
-                        <div className="poph-orgs__acoes" onClick={(evento) => evento.stopPropagation()}>
+                        <div className="poph-orgs__actions" onClick={(evento) => evento.stopPropagation()}>
                             {reativarNaLinha ? (
                                 <SofaButton
                                     variant="secondary"
@@ -681,23 +681,23 @@ export function Orgs() {
     }
     const tomDaTelemetria =
         telemetria?.situacao === "sem_resposta"
-            ? "falha"
+            ? "failure"
             : telemetria?.situacao === "degradada" || (instancias?.some((i) => i.situacao === "inacessivel") ?? false)
-              ? "aviso"
+              ? "notice"
               : "ok";
 
     return (
-        <div className={orgSelecionada ? "poph-orgs poph-com-gaveta" : "poph-orgs"}>
-            <div className="poph-pagina poph-orgs__painel">
-                <div className="poph-pagina__topo">
+        <div className={orgSelecionada ? "poph-orgs poph-with-drawer" : "poph-orgs"}>
+            <div className="poph-page poph-orgs__panel">
+                <div className="poph-page__top">
                     <div>
-                        <div className="poph-orgs__titulo-linha">
-                            <h1 className="poph-pagina__titulo">{t("orgs.listTitle")}</h1>
-                            <span className="poph-orgs__contagem">{orgs.length}</span>
+                        <div className="poph-orgs__title-line">
+                            <h1 className="poph-page__title">{t("orgs.listTitle")}</h1>
+                            <span className="poph-orgs__count">{orgs.length}</span>
                         </div>
-                        <p className="poph-pagina__descricao">{t("orgs.tenantDescription")}</p>
+                        <p className="poph-page__description">{t("orgs.tenantDescription")}</p>
                     </div>
-                    <div className="poph-orgs__acoes-topo">
+                    <div className="poph-orgs__actions-top">
                         <SofaSearchField
                             label={t("orgs.listFilterLabel")}
                             value={filtro}
@@ -705,7 +705,7 @@ export function Orgs() {
                             placeholder={t("orgs.listFilterPlaceholder")}
                             size="md"
                             clearLabel={t("orgs.listFilterClear")}
-                            className="poph-orgs__busca"
+                            className="poph-orgs__search"
                         />
                         <SofaIconButton
                             label={t("orgs.listRefresh")}
@@ -734,9 +734,9 @@ export function Orgs() {
                     </SofaBanner>
                 )}
 
-                <div className="poph-orgs__barra">
+                <div className="poph-orgs__bar">
                     <div
-                        className="poph-orgs__abas"
+                        className="poph-orgs__tabs"
                         role="group"
                         aria-label={t("orgs.tabsAriaLabel")}
                     >
@@ -747,19 +747,19 @@ export function Orgs() {
                                     key={candidata}
                                     type="button"
                                     aria-pressed={ativa}
-                                    className={ativa ? "poph-aba poph-aba--ativa" : "poph-aba"}
+                                    className={ativa ? "poph-tab poph-tab--active" : "poph-tab"}
                                     onClick={() => setAba(candidata)}
                                 >
                                     {t(ROTULO_DA_ABA[candidata])}
-                                    <span className="poph-aba__contagem">({contagens[candidata]})</span>
+                                    <span className="poph-tab__count">({contagens[candidata]})</span>
                                 </button>
                             );
                         })}
                     </div>
                     {partesDaTelemetria.length > 0 && (
-                        <p className="poph-orgs__telemetria">
+                        <p className="poph-orgs__telemetry">
                             <span
-                                className={`poph-orgs__ponto poph-orgs__ponto--${tomDaTelemetria}`}
+                                className={`poph-orgs__point poph-orgs__point--${tomDaTelemetria}`}
                                 aria-hidden="true"
                             />
                             {partesDaTelemetria.join(" · ")}
@@ -776,17 +776,17 @@ export function Orgs() {
                     />
                 ) : carregando && orgs.length === 0 ? (
                     <div
-                        className="poph-orgs__esqueleto"
+                        className="poph-orgs__skeleton"
                         aria-busy="true"
                         aria-label={t("orgs.listLoading")}
                     >
                         {[0, 1, 2, 3, 4].map((linha) => (
-                            <div key={linha} className="poph-orgs__esqueleto-linha" />
+                            <div key={linha} className="poph-orgs__skeleton-line" />
                         ))}
                     </div>
                 ) : (
                     <SofaTable
-                        className="poph-orgs__tabela"
+                        className="poph-orgs__table"
                         label={t("orgs.listTitle")}
                         columns={colunas}
                         data={visiveis}
@@ -808,7 +808,7 @@ export function Orgs() {
                                   })
                         }
                         footer={
-                            <span className="poph-orgs__dica">{t("orgs.listKeyboardHint")}</span>
+                            <span className="poph-orgs__hint">{t("orgs.listKeyboardHint")}</span>
                         }
                         empty={
                             filtrando ? (
@@ -855,35 +855,35 @@ export function Orgs() {
 
                 <div className="poph-orgs__cards">
                     <section className="poph-orgs__card" aria-labelledby="poph-card-matrix">
-                        <div className="poph-orgs__card-cabeca">
-                            <h2 id="poph-card-matrix" className="poph-orgs__card-titulo">
+                        <div className="poph-orgs__card-head">
+                            <h2 id="poph-card-matrix" className="poph-orgs__card-title">
                                 {t("orgs.cardMatrixTitle")}
                             </h2>
                             <span
-                                className="poph-orgs__selo"
+                                className="poph-orgs__seal"
                                 title={t("orgs.cardMatrixBadgeTitle")}
                             >
                                 {t("orgs.inspectorUnavailable")}
                             </span>
                         </div>
-                        <p className="poph-orgs__card-texto">{t("orgs.cardMatrixText")}</p>
+                        <p className="poph-orgs__card-text">{t("orgs.cardMatrixText")}</p>
                     </section>
                     <section className="poph-orgs__card" aria-labelledby="poph-card-isolamento">
-                        <div className="poph-orgs__card-cabeca">
-                            <h2 id="poph-card-isolamento" className="poph-orgs__card-titulo">
+                        <div className="poph-orgs__card-head">
+                            <h2 id="poph-card-isolamento" className="poph-orgs__card-title">
                                 {t("orgs.cardTenantTitle")}
                             </h2>
                         </div>
-                        <p className="poph-orgs__card-texto">{t("orgs.cardTenantText")}</p>
+                        <p className="poph-orgs__card-text">{t("orgs.cardTenantText")}</p>
                     </section>
                     <section className="poph-orgs__card" aria-labelledby="poph-card-cli">
-                        <div className="poph-orgs__card-cabeca">
-                            <h2 id="poph-card-cli" className="poph-orgs__card-titulo">
+                        <div className="poph-orgs__card-head">
+                            <h2 id="poph-card-cli" className="poph-orgs__card-title">
                                 {t("orgs.cardCliTitle")}
                             </h2>
-                            <span className="poph-orgs__selo">poph</span>
+                            <span className="poph-orgs__seal">poph</span>
                         </div>
-                        <ul className="poph-orgs__comandos">
+                        <ul className="poph-orgs__commands">
                             <li>
                                 <code>poph org list</code>
                             </li>
@@ -900,23 +900,23 @@ export function Orgs() {
                 <ModalOrg
                     aberto={formularioAberto}
                     org={emEdicao}
-                    aoFechar={() => setFormularioAberto(false)}
-                    aoSalvar={() => {
+                    onClose={() => setFormularioAberto(false)}
+                    onSave={() => {
                         void carregar();
                     }}
                 />
 
                 {paraExcluir && (
-                    <DialogoExclusao
+                    <DialogExclusion
                         aberto={paraExcluir !== null}
-                        aoFechar={() => setParaExcluir(null)}
+                        onClose={() => setParaExcluir(null)}
                         titulo={t("orgs.deleteOrgTitle")}
                         descricao={t("orgs.deleteOrgDescription", { name: paraExcluir.name })}
-                        recurso={paraExcluir.slug}
-                        rotuloRecurso={t("orgs.deleteOrgResourceLabel")}
-                        rotuloConfirmar={t("orgs.deleteOrgConfirm")}
+                        resource={paraExcluir.slug}
+                        labelResource={t("orgs.deleteOrgResourceLabel")}
+                        labelConfirm={t("orgs.deleteOrgConfirm")}
                         permiteForcar
-                        rotuloForcar={t("orgs.deleteOrgForceLabel")}
+                        labelForce={t("orgs.deleteOrgForceLabel")}
                         consequencia={
                             <p style={{ margin: 0, color: "var(--pop-text-secondary)", lineHeight: 1.6 }}>
                                 {t("orgs.deleteOrgConsequence")}
@@ -932,15 +932,15 @@ export function Orgs() {
             </div>
 
             {orgSelecionada && (
-                <InspetorOrg
+                <InspectorOrg
                     org={orgSelecionada}
                     no={noDaOrg(orgSelecionada)}
-                    podeGerenciar={podeGerenciar}
-                    remota={ehDeOutroNo(orgSelecionada)}
-                    aoFechar={fecharInspetor}
-                    aoAcessar={acessarOrg}
-                    aoEditar={abrirEdicao}
-                    aoExportar={(org) => void exportar(org)}
+                    canManage={podeGerenciar}
+                    remote={ehDeOutroNo(orgSelecionada)}
+                    onClose={fecharInspetor}
+                    onAccess={acessarOrg}
+                    onEdit={abrirEdicao}
+                    onExport={(org) => void exportar(org)}
                     aoExcluir={(org) => setParaExcluir(org)}
                 />
             )}

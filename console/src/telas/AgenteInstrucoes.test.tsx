@@ -11,10 +11,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
-import { GuardaAlteracoesProvider } from "../componentes/GuardaAlteracoes";
+import { GuardChangesProvider } from "../components/GuardChanges";
 import { waitForModalFocus } from "../testing/modal";
 import { FakeServer, apiError } from "../testing/server";
-import { AgenteInstrucoes } from "./AgenteInstrucoes";
+import { AgentInstructions } from "./AgenteInstrucoes";
 import { setLocale } from "../i18n";
 
 const ORG = "org_1";
@@ -87,7 +87,7 @@ function Casca() {
     return (
         <div>
             <Link to={`/orgs/${ORG}/agents`}>Agentes</Link>
-            <AgenteInstrucoes />
+            <AgentInstructions />
         </div>
     );
 }
@@ -95,7 +95,7 @@ function Casca() {
 function montar() {
     return render(
         <MemoryRouter initialEntries={[`/orgs/${ORG}/agents/${AGENTE}/instructions`]}>
-            <GuardaAlteracoesProvider>
+            <GuardChangesProvider>
                 <Routes>
                     <Route path="/orgs/:orgId/agents" element={<div>Tela de agentes</div>} />
                     <Route
@@ -103,7 +103,7 @@ function montar() {
                         element={<Casca />}
                     />
                 </Routes>
-            </GuardaAlteracoesProvider>
+            </GuardChangesProvider>
         </MemoryRouter>,
     );
 }

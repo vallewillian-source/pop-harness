@@ -33,26 +33,26 @@ import {
     type Structured,
 } from "../api/instructions";
 import {
-    AbasDoAgente,
-    CabecalhoDoAgente,
-    SecaoDoAgente,
-} from "../componentes/AbasDoAgente";
+    TabsAgent,
+    HeaderAgent,
+    SectionAgent,
+} from "../components/TabsAgent";
 import {
-    FormularioInstrucoes,
-    type ErrosDoFormulario,
-} from "../componentes/FormularioInstrucoes";
-import { useGuardaDeAlteracoes } from "../componentes/GuardaAlteracoes";
+    FormInstructions,
+    type ErrorsForm,
+} from "../components/FormInstructions";
+import { useGuardChanges } from "../components/GuardChanges";
 import { translate, useI18n } from "../i18n";
-import "../estilos/instrucoes.css";
+import "../styles/instructions.css";
 
 /** Validação local: o que o formulário exige antes de chamar a API. */
-export function validarInstrucoes(valor: Structured): ErrosDoFormulario {
-    const erros: ErrosDoFormulario = {};
+export function validarInstrucoes(valor: Structured): ErrorsForm {
+    const erros: ErrorsForm = {};
     if (!valor.identity.name.trim()) {
         erros.nome = translate("instructions.validationNameRequired");
     }
     if (valor.principles.some((principio) => !principio.rule.trim())) {
-        erros.principios = translate("instructions.validationPrinciplesRequired");
+        erros.principles = translate("instructions.validationPrinciplesRequired");
     }
     return erros;
 }
@@ -79,9 +79,9 @@ function motivoDoErro(falha: ApiError): string {
     return typeof detalhes?.["reason"] === "string" ? detalhes["reason"] : falha.message;
 }
 
-export function AgenteInstrucoes() {
+export function AgentInstructions() {
     const { orgId = "", agentId = "" } = useParams();
-    const guarda = useGuardaDeAlteracoes();
+    const guarda = useGuardChanges();
     const { translate: t } = useI18n();
 
     const [agente, setAgente] = useState<Agente | null>(null);
@@ -99,7 +99,7 @@ export function AgenteInstrucoes() {
     const [recarregandoPrevia, setRecarregandoPrevia] = useState(false);
     const [conflito, setConflito] = useState<string | null>(null);
     const [erroGeral, setErroGeral] = useState<string | null>(null);
-    const [erros, setErros] = useState<ErrosDoFormulario>({});
+    const [erros, setErros] = useState<ErrorsForm>({});
     const [avisoPrevia, setAvisoPrevia] = useState<string | null>(null);
 
     const sujo = useMemo(
@@ -214,7 +214,7 @@ export function AgenteInstrucoes() {
     // A guarda precisa da versão mais recente de `salvar`; o provedor guarda a referência.
     useEffect(() => {
         if (!rascunho) return;
-        guarda.registrar({ sujo, salvar });
+        guarda.registrar({ dirty: sujo, salvar });
     }, [guarda, sujo, salvar, rascunho]);
 
     useEffect(() => {
@@ -268,9 +268,9 @@ export function AgenteInstrucoes() {
 
     if (carregando && !agente) {
         return (
-            <div className="poph-pagina" aria-busy="true">
+            <div className="poph-page" aria-busy="true">
                 <SofaSkeleton width={260} height={26} />
-                <div className="poph-instrucoes__esqueleto-linha">
+                <div className="poph-instructions__skeleton-line">
                     <SofaSkeleton width={360} height={12} />
                 </div>
                 <SofaSkeleton lines={5} />
@@ -280,7 +280,7 @@ export function AgenteInstrucoes() {
 
     if (erroDeCarga && !agente) {
         return (
-            <div className="poph-pagina">
+            <div className="poph-page">
                 <SofaErrorState
                     title={t("instructions.loadErrorTitle")}
                     description={t("instructions.loadErrorDescription")}
@@ -303,8 +303,8 @@ export function AgenteInstrucoes() {
     if (!agente || !rascunho) return null;
 
     return (
-        <div className="poph-pagina">
-            <CabecalhoDoAgente
+        <div className="poph-page">
+            <HeaderAgent
                 org={orgId}
                 nome={agente.name}
                 slug={agente.slug}
@@ -316,7 +316,7 @@ export function AgenteInstrucoes() {
                             ? t("instructions.noInstructionsSaved")
                             : t("instructions.versionLabel", { version: versao })}
                         {sujo && (
-                            <span className="poph-sujo">{t("instructions.unsavedSuffix")}</span>
+                            <span className="poph-dirty">{t("instructions.unsavedSuffix")}</span>
                         )}
                     </>
                 }
@@ -348,10 +348,10 @@ export function AgenteInstrucoes() {
                 }
             />
 
-            <AbasDoAgente org={orgId} agente={agentId} ativa="instructions" nome={agente.name} model={agente.model ?? null} />
+            <TabsAgent org={orgId} agente={agentId} active="instructions" nome={agente.name} model={agente.model ?? null} />
 
             {(conflito || erroGeral) && (
-                <div className="poph-pilha">
+                <div className="poph-stack">
                     {conflito && (
                         <SofaBanner tone="warn" title={t("instructions.conflictTitle")}>
                             {conflito}
@@ -365,7 +365,7 @@ export function AgenteInstrucoes() {
                 </div>
             )}
 
-            <div className="poph-instrucoes">
+            <div className="poph-instructions">
                 <form
                     id="poph-form-instrucoes"
                     noValidate
@@ -374,16 +374,16 @@ export function AgenteInstrucoes() {
                         void salvar();
                     }}
                 >
-                    <FormularioInstrucoes
+                    <FormInstructions
                         valor={rascunho}
-                        aoMudar={setRascunho}
+                        onChange={setRascunho}
                         erros={erros}
-                        desabilitado={salvando}
+                        disabled={salvando}
                     />
                 </form>
 
-                <aside className="poph-instrucoes__previa">
-                    <SecaoDoAgente
+                <aside className="poph-instructions__preview">
+                    <SectionAgent
                         titulo={t("instructions.previewSection")}
                         descricao={t("instructions.previewDescription")}
                         acoes={
@@ -397,7 +397,7 @@ export function AgenteInstrucoes() {
                             </SofaButton>
                         }
                     >
-                        <div className="poph-pilha">
+                        <div className="poph-stack">
                             {previaDesatualizada && (
                                 <SofaBanner
                                     tone="info"
@@ -417,16 +417,16 @@ export function AgenteInstrucoes() {
                             )}
                             {markdown ? (
                                 <pre
-                                    className="poph-previa"
+                                    className="poph-preview"
                                     aria-label={t("instructions.previewAriaLabel")}
                                 >
                                     {markdown}
                                 </pre>
                             ) : (
-                                <p className="poph-mono-mudo">{t("instructions.previewEmpty")}</p>
+                                <p className="poph-mono-muted">{t("instructions.previewEmpty")}</p>
                             )}
                         </div>
-                    </SecaoDoAgente>
+                    </SectionAgent>
                 </aside>
             </div>
         </div>

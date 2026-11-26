@@ -56,15 +56,15 @@ import {
     type IndexReport,
 } from "../api/knowledge";
 import { getOrg } from "../api/orgs";
-import { AbasDoAgente, CabecalhoDoAgente } from "../componentes/AbasDoAgente";
-import { DialogoExcluirGrupo } from "../componentes/DialogoExcluirGrupo";
-import { DialogoExclusao } from "../componentes/DialogoExclusao";
-import { useGuardaDeAlteracoes } from "../componentes/GuardaAlteracoes";
-import { ModalGrupo } from "../componentes/ModalGrupo";
-import { ModalItem } from "../componentes/ModalItem";
+import { TabsAgent, HeaderAgent } from "../components/TabsAgent";
+import { DialogDeleteGroup } from "../components/DialogDeleteGroup";
+import { DialogExclusion } from "../components/DialogExclusion";
+import { useGuardChanges } from "../components/GuardChanges";
+import { ModalGroup } from "../components/ModalGroup";
+import { ModalItem } from "../components/ModalItem";
 import { translate, useI18n } from "../i18n";
 import type { TranslationKey } from "../i18n/catalog";
-import "../estilos/conhecimento.css";
+import "../styles/knowledge.css";
 
 type EstadoDoIndice =
     | { tipo: "nao-verificado" }
@@ -73,7 +73,7 @@ type EstadoDoIndice =
 
 /** Classe do ponto de status (6 px + texto), no padrão de Orgs e OrgPainel. */
 function classeDaSituacao(situacao: string): string {
-    return situacao === "active" ? "poph-status--ativo" : "poph-status--inativo";
+    return situacao === "active" ? "poph-status--active" : "poph-status--inactive";
 }
 
 function rotuloDaSituacao(situacao: string): string {
@@ -108,11 +108,11 @@ function rotuloDoIndice(indice: EstadoDoIndice): string {
 function classeDoIndice(indice: EstadoDoIndice): string {
     switch (indice.tipo) {
         case "atualizado":
-            return "poph-status--ativo";
+            return "poph-status--active";
         case "pendente":
-            return "poph-conhecimento__indice-pendente";
+            return "poph-knowledge__index-pending";
         default:
-            return "poph-status--inativo";
+            return "poph-status--inactive";
     }
 }
 
@@ -155,10 +155,10 @@ function avisoDeIndice(resposta: { index_warning?: string | null }): string | nu
         : null;
 }
 
-export function AgenteConhecimento() {
+export function AgentKnowledge() {
     const { translate: t } = useI18n();
     const { orgId = "", agentId = "" } = useParams();
-    const guarda = useGuardaDeAlteracoes();
+    const guarda = useGuardChanges();
 
     const [agente, setAgente] = useState<Agente | null>(null);
     const [nomeDaOrg, setNomeDaOrg] = useState<string | null>(null);
@@ -403,11 +403,11 @@ export function AgenteConhecimento() {
 
     if (carregando && !agente) {
         return (
-            <div className="poph-pagina" aria-busy="true">
-                <div className="poph-pagina__topo">
+            <div className="poph-page" aria-busy="true">
+                <div className="poph-page__top">
                     <div>
                         <SofaSkeleton width={260} height={26} />
-                        <div className="poph-conhecimento__esqueleto-linha">
+                        <div className="poph-knowledge__skeleton-line">
                             <SofaSkeleton width={360} height={12} />
                         </div>
                     </div>
@@ -419,7 +419,7 @@ export function AgenteConhecimento() {
 
     if (erroDeCarga && !agente) {
         return (
-            <div className="poph-pagina">
+            <div className="poph-page">
                 <SofaErrorState
                     title={t("knowledge.loadErrorTitle")}
                     description={t("knowledge.loadErrorDescription")}
@@ -490,8 +490,8 @@ export function AgenteConhecimento() {
 
     return (
         <>
-            <div className="poph-pagina poph-conhecimento">
-                <CabecalhoDoAgente
+            <div className="poph-page poph-knowledge">
+                <HeaderAgent
                     org={orgId}
                     nome={agente.name}
                     slug={agente.slug}
@@ -501,7 +501,7 @@ export function AgenteConhecimento() {
                     acoes={
                         <>
                             <span className={`poph-status ${classeDoIndice(indice)}`}>
-                                <span className="poph-status__ponto" aria-hidden="true" />
+                                <span className="poph-status__point" aria-hidden="true" />
                                 {rotuloDoIndice(indice)}
                             </span>
                             <SofaButton
@@ -516,7 +516,7 @@ export function AgenteConhecimento() {
                     }
                 />
 
-                <AbasDoAgente org={orgId} agente={agentId} ativa="knowledge-base" nome={agente.name} model={agente.model ?? null} />
+                <TabsAgent org={orgId} agente={agentId} active="knowledge-base" nome={agente.name} model={agente.model ?? null} />
 
                 {erroDeVinculo && (
                     <SofaBanner tone="danger" title={t("knowledge.linkErrorTitle")}>
@@ -524,16 +524,16 @@ export function AgenteConhecimento() {
                     </SofaBanner>
                 )}
 
-                <section className="poph-secao">
-                    <div className="poph-conhecimento__titulo-bloco">
-                        <h2 className="poph-secao__titulo">{t("knowledge.indexTitle")}</h2>
-                        <p className="poph-conhecimento__ajuda">
+                <section className="poph-section">
+                    <div className="poph-knowledge__title-block">
+                        <h2 className="poph-section__title">{t("knowledge.indexTitle")}</h2>
+                        <p className="poph-knowledge__help">
                             {t("knowledge.indexHelp")}
                         </p>
                     </div>
 
                     {indice.tipo === "nao-verificado" && (
-                        <p className="poph-conhecimento__texto">
+                        <p className="poph-knowledge__text">
                             {t("knowledge.indexUnverifiedBefore")}
                             <code>{t("knowledge.indexCommand")}</code>
                             {t("knowledge.indexUnverifiedAfter")}
@@ -541,7 +541,7 @@ export function AgenteConhecimento() {
                     )}
 
                     {indice.tipo === "atualizado" && (
-                        <p className="poph-conhecimento__texto">
+                        <p className="poph-knowledge__text">
                             {t(indice.origem)}.{" "}
                             {indice.relatorio
                                 ? resumoDoRelatorio(indice.relatorio)
@@ -561,20 +561,20 @@ export function AgenteConhecimento() {
                         </SofaBanner>
                     )}
 
-                    <p className="poph-mono-mudo poph-conhecimento__nota">
+                    <p className="poph-mono-muted poph-knowledge__note">
                         {t("knowledge.reindexNote")}
                     </p>
                 </section>
 
-                <section className="poph-secao">
-                    <div className="poph-conhecimento__cabecalho-secao">
-                        <div className="poph-conhecimento__titulo-bloco">
-                            <h2 className="poph-secao__titulo">{t("knowledge.groupsTitle")}</h2>
-                            <p className="poph-conhecimento__ajuda">
+                <section className="poph-section">
+                    <div className="poph-knowledge__header-section">
+                        <div className="poph-knowledge__title-block">
+                            <h2 className="poph-section__title">{t("knowledge.groupsTitle")}</h2>
+                            <p className="poph-knowledge__help">
                                 {t("knowledge.groupsHelp")}
                             </p>
                         </div>
-                        <div className="poph-conhecimento__acoes-secao">
+                        <div className="poph-knowledge__actions-section">
                             <SofaButton
                                 variant="subtle"
                                 icon={<IconRefresh aria-hidden="true" />}
@@ -622,16 +622,16 @@ export function AgenteConhecimento() {
                         />
                     ) : (
                         <div
-                            className="poph-tabela poph-conhecimento__grupos"
+                            className="poph-table poph-knowledge__groups"
                             role="table"
                             aria-label={t("knowledge.groupsTableLabel")}
                         >
-                            <div className="poph-tabela__cabecalho" role="row">
+                            <div className="poph-table__header" role="row">
                                 <span role="columnheader">{t("knowledge.columnGroup")}</span>
                                 <span role="columnheader">{t("knowledge.columnLink")}</span>
                                 <span role="columnheader">{t("knowledge.columnStatus")}</span>
                                 <span role="columnheader">{t("knowledge.columnVersion")}</span>
-                                <span role="columnheader" className="poph-tabela__celula--acoes">
+                                <span role="columnheader" className="poph-table__cell--actions">
                                     {t("knowledge.columnActions")}
                                 </span>
                             </div>
@@ -639,9 +639,9 @@ export function AgenteConhecimento() {
                                 const vinculado = vinculadoAoAgente(grupo);
                                 const aberto = grupo.id === selecionado;
                                 const classes = [
-                                    "poph-tabela__linha",
-                                    aberto ? "poph-tabela__linha--selecionada" : "",
-                                    grupo.status !== "active" ? "poph-tabela__linha--atenuada" : "",
+                                    "poph-table__line",
+                                    aberto ? "poph-table__line--selected" : "",
+                                    grupo.status !== "active" ? "poph-table__line--dimmed" : "",
                                 ]
                                     .filter(Boolean)
                                     .join(" ");
@@ -655,11 +655,11 @@ export function AgenteConhecimento() {
                                     >
                                         <div
                                             role="cell"
-                                            className="poph-conhecimento__identidade"
+                                            className="poph-knowledge__identity"
                                         >
                                             <button
                                                 type="button"
-                                                className="poph-conhecimento__nome"
+                                                className="poph-knowledge__name"
                                                 aria-pressed={aberto}
                                                 onClick={(evento) => {
                                                     evento.stopPropagation();
@@ -669,7 +669,7 @@ export function AgenteConhecimento() {
                                                 {grupo.name}
                                             </button>
                                             {grupo.description && (
-                                                <span className="poph-conhecimento__sub">
+                                                <span className="poph-knowledge__sub">
                                                     {grupo.description}
                                                 </span>
                                             )}
@@ -678,8 +678,8 @@ export function AgenteConhecimento() {
                                             <span
                                                 className={
                                                     vinculado
-                                                        ? "poph-conhecimento__vinculo"
-                                                        : "poph-conhecimento__vinculo poph-conhecimento__vinculo--fraco"
+                                                        ? "poph-knowledge__link"
+                                                        : "poph-knowledge__link poph-knowledge__link--weak"
                                                 }
                                             >
                                                 {vinculado ? t("knowledge.linkedToAgent") : t("knowledge.noLink")}
@@ -687,16 +687,16 @@ export function AgenteConhecimento() {
                                         </div>
                                         <div role="cell">
                                             <span className={`poph-status ${classeDaSituacao(grupo.status)}`}>
-                                                <span className="poph-status__ponto" aria-hidden="true" />
+                                                <span className="poph-status__point" aria-hidden="true" />
                                                 {rotuloDaSituacao(grupo.status)}
                                             </span>
                                         </div>
-                                        <div role="cell" className="poph-tabela__celula--mono">
+                                        <div role="cell" className="poph-table__cell--mono">
                                             v{grupo.version}
                                         </div>
                                         <div
                                             role="cell"
-                                            className="poph-tabela__celula--acoes"
+                                            className="poph-table__cell--actions"
                                             onClick={(evento) => evento.stopPropagation()}
                                         >
                                             <SofaMenu
@@ -724,24 +724,24 @@ export function AgenteConhecimento() {
                     )}
                 </section>
 
-                <section className="poph-secao">
-                    <div className="poph-conhecimento__cabecalho-secao">
-                        <div className="poph-conhecimento__titulo-bloco">
-                            <h2 className="poph-secao__titulo">
+                <section className="poph-section">
+                    <div className="poph-knowledge__header-section">
+                        <div className="poph-knowledge__title-block">
+                            <h2 className="poph-section__title">
                                 {grupoAberto
                                     ? t("knowledge.itemsTitleWithGroup", { group: grupoAberto.name })
                                     : t("knowledge.itemsTitle")}
                             </h2>
-                            <p className="poph-conhecimento__ajuda">
+                            <p className="poph-knowledge__help">
                                 {grupoAberto
                                     ? t("knowledge.itemsHelp")
                                     : t("knowledge.itemsHelpNoGroup")}
                             </p>
                         </div>
                         {grupoAberto && (
-                            <div className="poph-conhecimento__acoes-secao">
+                            <div className="poph-knowledge__actions-section">
                                 <span
-                                    className="poph-conhecimento__contagem"
+                                    className="poph-knowledge__count"
                                     aria-label={t("knowledge.itemsCountLabel")}
                                 >
                                     {carregandoItens
@@ -799,15 +799,15 @@ export function AgenteConhecimento() {
                         />
                     ) : (
                         <div
-                            className="poph-tabela poph-conhecimento__trechos"
+                            className="poph-table poph-knowledge__passages"
                             role="table"
                             aria-label={t("knowledge.itemsTableLabel")}
                         >
-                            <div className="poph-tabela__cabecalho" role="row">
+                            <div className="poph-table__header" role="row">
                                 <span role="columnheader">{t("knowledge.columnItem")}</span>
                                 <span role="columnheader">{t("knowledge.columnStatus")}</span>
                                 <span role="columnheader">{t("knowledge.columnDetails")}</span>
-                                <span role="columnheader" className="poph-tabela__celula--acoes">
+                                <span role="columnheader" className="poph-table__cell--actions">
                                     {t("knowledge.columnActions")}
                                 </span>
                             </div>
@@ -817,15 +817,15 @@ export function AgenteConhecimento() {
                                     role="row"
                                     className={
                                         trecho.status === "active"
-                                            ? "poph-tabela__linha"
-                                            : "poph-tabela__linha poph-tabela__linha--atenuada"
+                                            ? "poph-table__line"
+                                            : "poph-table__line poph-table__line--dimmed"
                                     }
                                 >
-                                    <div role="cell" className="poph-conhecimento__identidade">
-                                        <span className="poph-conhecimento__nome-estatico">
+                                    <div role="cell" className="poph-knowledge__identity">
+                                        <span className="poph-knowledge__name-static">
                                             {trecho.title}
                                         </span>
-                                        <span className="poph-conhecimento__sub">
+                                        <span className="poph-knowledge__sub">
                                             {trecho.content.length > 160
                                                 ? `${trecho.content.slice(0, 160)}…`
                                                 : trecho.content}
@@ -833,11 +833,11 @@ export function AgenteConhecimento() {
                                     </div>
                                     <div role="cell">
                                         <span className={`poph-status ${classeDaSituacao(trecho.status)}`}>
-                                            <span className="poph-status__ponto" aria-hidden="true" />
+                                            <span className="poph-status__point" aria-hidden="true" />
                                             {rotuloDaSituacao(trecho.status)}
                                         </span>
                                     </div>
-                                    <div role="cell" className="poph-conhecimento__detalhes">
+                                    <div role="cell" className="poph-knowledge__details">
                                         <span>
                                             {t("knowledge.itemDetails", {
                                                 count: trecho.content.length,
@@ -846,12 +846,12 @@ export function AgenteConhecimento() {
                                             })}
                                         </span>
                                         {trecho.tags.length > 0 && (
-                                            <span className="poph-conhecimento__tags">
+                                            <span className="poph-knowledge__tags">
                                                 {trecho.tags.join(" · ")}
                                             </span>
                                         )}
                                     </div>
-                                    <div role="cell" className="poph-tabela__celula--acoes">
+                                    <div role="cell" className="poph-table__cell--actions">
                                         <SofaMenu
                                             label={t("knowledge.actionsOf", { name: trecho.title })}
                                             align="end"
@@ -882,12 +882,12 @@ export function AgenteConhecimento() {
                 </section>
             </div>
 
-            <ModalGrupo
+            <ModalGroup
                 org={orgId}
                 aberto={modalGrupo.aberto}
                 grupo={modalGrupo.grupo}
-                aoFechar={() => setModalGrupo({ aberto: false, grupo: null })}
-                aoSalvar={aoSalvarGrupo}
+                onClose={() => setModalGrupo({ aberto: false, grupo: null })}
+                onSave={aoSalvarGrupo}
             />
 
             {grupoAberto && (
@@ -896,17 +896,17 @@ export function AgenteConhecimento() {
                     grupo={grupoAberto.id}
                     aberto={modalItem.aberto}
                     item={modalItem.item}
-                    aoFechar={() => setModalItem({ aberto: false, item: null })}
-                    aoSalvar={aoSalvarItem}
+                    onClose={() => setModalItem({ aberto: false, item: null })}
+                    onSave={aoSalvarItem}
                 />
             )}
 
-            <DialogoExcluirGrupo
+            <DialogDeleteGroup
                 aberto={grupoParaExcluir !== null}
-                aoFechar={() => setGrupoParaExcluir(null)}
+                onClose={() => setGrupoParaExcluir(null)}
                 org={orgId}
                 grupo={grupoParaExcluir}
-                nomesDosAgentes={nomesDosAgentes}
+                namesAgents={nomesDosAgentes}
                 aoExcluir={() => {
                     const removido = grupoParaExcluir?.id;
                     const eraDoAgente = grupoParaExcluir?.agents?.includes(agentId) ?? false;
@@ -925,18 +925,18 @@ export function AgenteConhecimento() {
                 }}
             />
 
-            <DialogoExclusao
+            <DialogExclusion
                 aberto={itemParaExcluir !== null}
-                aoFechar={() => {
+                onClose={() => {
                     if (!removendoItem) setItemParaExcluir(null);
                 }}
                 titulo={t("knowledge.deleteItemTitle")}
                 descricao={t("knowledge.deleteItemDescription", {
                     title: itemParaExcluir?.title ?? "",
                 })}
-                recurso={itemParaExcluir?.title ?? ""}
-                rotuloRecurso={t("knowledge.deleteItemResourceLabel")}
-                rotuloConfirmar={t("knowledge.deleteItemConfirm")}
+                resource={itemParaExcluir?.title ?? ""}
+                labelResource={t("knowledge.deleteItemResourceLabel")}
+                labelConfirm={t("knowledge.deleteItemConfirm")}
                 aoConfirmar={excluirTrecho}
             />
         </>

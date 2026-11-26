@@ -37,10 +37,10 @@ import {
     type Product,
     type ProductStatus,
 } from "../api/products";
-import { DialogoExcluirProduto } from "../componentes/DialogoExcluirProduto";
-import { ModalProduto } from "../componentes/ModalProduto";
+import { DialogDeleteProduct } from "../components/DialogDeleteProduct";
+import { ModalProduct } from "../components/ModalProduct";
 import { useI18n } from "../i18n";
-import "../estilos/produtos.css";
+import "../styles/products.css";
 
 type Situacao = "todas" | ProductStatus;
 
@@ -54,7 +54,7 @@ const FILTROS_INICIAIS: Filtros = { busca: "", situacao: "todas", categoria: "to
 
 /** Classe do ponto de status (6 px + texto), no padrão de Orgs e OrgPainel. */
 function classeDaSituacao(situacao: string): string {
-    return situacao === "active" ? "poph-status--ativo" : "poph-status--inativo";
+    return situacao === "active" ? "poph-status--active" : "poph-status--inactive";
 }
 
 function rotuloDaSituacao(
@@ -99,7 +99,7 @@ function textoDeAgentes(
 
 const coluna = createColumnHelper<Product>();
 
-export function Produtos() {
+export function Products() {
     const { translate } = useI18n();
     const { orgId = "" } = useParams();
     const navegar = useNavigate();
@@ -187,11 +187,11 @@ export function Produtos() {
                 cell: (info) => {
                     const produto = info.row.original;
                     return (
-                        <div className="poph-pilha" style={{ gap: 2 }}>
+                        <div className="poph-stack" style={{ gap: 2 }}>
                             <span style={{ color: "var(--pop-text-primary)" }}>{produto.name}</span>
-                            <span className="poph-mono-mudo">{produto.slug}</span>
+                            <span className="poph-mono-muted">{produto.slug}</span>
                             {produto.aliases?.length > 0 && (
-                                <span className="poph-mono-mudo">
+                                <span className="poph-mono-muted">
                                     {translate("products.colProductAliases", {
                                         aliases: produto.aliases.join(", "),
                                     })}
@@ -211,9 +211,9 @@ export function Produtos() {
                 cell: (info) => {
                     const produto = info.row.original;
                     return (
-                        <div className="poph-pilha" style={{ gap: 2 }}>
+                        <div className="poph-stack" style={{ gap: 2 }}>
                             <span>{produto.price_text}</span>
-                            {produto.unit && <span className="poph-mono-mudo">{produto.unit}</span>}
+                            {produto.unit && <span className="poph-mono-muted">{produto.unit}</span>}
                         </div>
                     );
                 },
@@ -222,7 +222,7 @@ export function Produtos() {
                 header: translate("products.colStatus"),
                 cell: (info) => (
                     <span className={`poph-status ${classeDaSituacao(info.getValue())}`}>
-                        <span className="poph-status__ponto" aria-hidden="true" />
+                        <span className="poph-status__point" aria-hidden="true" />
                         {rotuloDaSituacao(info.getValue(), translate)}
                     </span>
                 ),
@@ -357,7 +357,7 @@ export function Produtos() {
         );
     } else {
         corpo = (
-            <div className="poph-produtos__tabela">
+            <div className="poph-products__table">
                 <SofaTable
                     label={translate("products.tableLabel")}
                     columns={colunas}
@@ -383,20 +383,20 @@ export function Produtos() {
 
     return (
         <>
-            <div className="poph-pagina poph-produtos">
-            <div className="poph-pagina__topo">
+            <div className="poph-page poph-products">
+            <div className="poph-page__top">
                 <div>
-                    <p className="poph-produtos__eyebrow">
+                    <p className="poph-products__eyebrow">
                         {nomeDaOrg
                             ? translate("products.eyebrowOrg", { name: nomeDaOrg })
                             : translate("products.eyebrow")}
                     </p>
-                    <h1 className="poph-pagina__titulo">{translate("products.pageTitle")}</h1>
-                    <p className="poph-pagina__descricao">
+                    <h1 className="poph-page__title">{translate("products.pageTitle")}</h1>
+                    <p className="poph-page__description">
                         {translate("products.pageDescription")}
                     </p>
                 </div>
-                <div className="poph-pagina__acoes">
+                <div className="poph-page__actions">
                     <SofaButton
                         variant="primary"
                         icon={<IconPlus aria-hidden="true" />}
@@ -425,7 +425,7 @@ export function Produtos() {
                         onDismiss={() => setAvisoDoIndice(null)}
                     >
                         {translate("products.indexWarningBody")}{" "}
-                        <span className="poph-mono-mudo">{avisoDoIndice}</span>
+                        <span className="poph-mono-muted">{avisoDoIndice}</span>
                     </SofaBanner>
                 )}
                 {agentes === null && !carregando && (
@@ -433,12 +433,12 @@ export function Produtos() {
                         {translate("products.agentsBannerBody")}
                     </SofaBanner>
                 )}
-                <section className="poph-secao poph-produtos__secao" aria-labelledby={idDoCatalogo}>
-                    <div className="poph-produtos__cabecalho">
-                        <h2 id={idDoCatalogo} className="poph-secao__titulo">
+                <section className="poph-section poph-products__section" aria-labelledby={idDoCatalogo}>
+                    <div className="poph-products__header">
+                        <h2 id={idDoCatalogo} className="poph-section__title">
                             {translate("products.catalogHeading")}
                         </h2>
-                        <div className="poph-produtos__filtros">
+                        <div className="poph-products__filters">
                             <SofaField label={translate("products.filterSearchLabel")} htmlFor="poph-produtos-busca">
                                 {(controle) => (
                                     <SofaInput
@@ -501,21 +501,21 @@ export function Produtos() {
                 </section>
             </div>
 
-            <ModalProduto
+            <ModalProduct
                 org={orgId}
                 aberto={edicao.aberto}
                 produto={edicao.produto}
-                categorias={categorias}
-                aoFechar={() => setEdicao({ aberto: false, produto: null })}
-                aoSalvar={aoSalvarProduto}
+                categories={categorias}
+                onClose={() => setEdicao({ aberto: false, produto: null })}
+                onSave={aoSalvarProduto}
             />
 
-            <DialogoExcluirProduto
+            <DialogDeleteProduct
                 aberto={paraExcluir !== null}
-                aoFechar={() => setParaExcluir(null)}
+                onClose={() => setParaExcluir(null)}
                 org={orgId}
                 produto={paraExcluir}
-                agentesQueVeem={
+                agentsSee={
                     paraExcluir && agentes !== null && contagemDeAgentes.has(paraExcluir.id)
                         ? (contagemDeAgentes.get(paraExcluir.id) ?? 0)
                         : null

@@ -11,11 +11,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { GuardaAlteracoesProvider } from "../componentes/GuardaAlteracoes";
+import { GuardChangesProvider } from "../components/GuardChanges";
 import { waitForModalFocus } from "../testing/modal";
 import { FakeServer, apiError } from "../testing/server";
 import { setLocale } from "../i18n";
-import { AgenteConhecimento } from "./AgenteConhecimento";
+import { AgentKnowledge } from "./AgenteConhecimento";
 
 const ORG = "org_1";
 const AGENTE = "ag_1";
@@ -91,15 +91,15 @@ const AGENTE_JSON = {
 function montar() {
     return render(
         <MemoryRouter initialEntries={[`/orgs/${ORG}/agents/${AGENTE}/knowledge-base`]}>
-            <GuardaAlteracoesProvider>
+            <GuardChangesProvider>
                 <Routes>
                     <Route
                         path="/orgs/:orgId/agents/:agentId/knowledge-base"
-                        element={<AgenteConhecimento />}
+                        element={<AgentKnowledge />}
                     />
                     <Route path="/orgs/:orgId/agents" element={<div>Tela de agentes</div>} />
                 </Routes>
-            </GuardaAlteracoesProvider>
+            </GuardChangesProvider>
         </MemoryRouter>,
     );
 }

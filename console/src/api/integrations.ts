@@ -1,6 +1,6 @@
 
 import { ApiError, request } from "./client";
-import type { EsquemaDeObjeto } from "../componentes/FormularioEsquema";
+import type { SchemaObject } from "../components/FormSchema";
 import { translate } from "../i18n";
 import type { TranslationKey } from "../i18n/catalog";
 
@@ -136,8 +136,8 @@ export type PluginManifest = {
     nome: string;
     kind: string;
     versao: string;
-    configuracao: EsquemaDeObjeto;
-    segredos?: EsquemaDeObjeto | null;
+    configuracao: SchemaObject;
+    segredos?: SchemaObject | null;
 };
 
 export async function getManifest(org: string, kind: string): Promise<PluginManifest> {

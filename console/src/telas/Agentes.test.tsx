@@ -11,10 +11,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
-import { GuardaAlteracoesProvider, useGuardaDeAlteracoes } from "../componentes/GuardaAlteracoes";
+import { GuardChangesProvider, useGuardChanges } from "../components/GuardChanges";
 import { FakeServer, apiError } from "../testing/server";
-import { AbasDoAgente, CabecalhoDoAgente, type IdAbaDoAgente } from "../componentes/AbasDoAgente";
-import { Agentes } from "./Agentes";
+import { TabsAgent, HeaderAgent, type IdTabAgent } from "../components/TabsAgent";
+import { Agents } from "./Agentes";
 import { setLocale } from "../i18n";
 
 const ORG = "org_1";
@@ -39,7 +39,7 @@ function montar() {
     return render(
         <MemoryRouter initialEntries={[`/orgs/${ORG}/agents`]}>
             <Routes>
-                <Route path="/orgs/:orgId/agents" element={<Agentes />} />
+                <Route path="/orgs/:orgId/agents" element={<Agents />} />
             </Routes>
         </MemoryRouter>,
     );
@@ -79,30 +79,30 @@ function servidorCom(items: unknown[]) {
 /** Mostra o caminho atual num elemento, para o teste conferir navegação. */
 function Destino() {
     const local = useLocation();
-    return <output data-testid="caminho">{local.pathname}</output>;
+    return <output data-testid="path">{local.pathname}</output>;
 }
 
 /** Registra uma edição pendente na guarda: é o que segura a troca de aba no teste. */
 function EdicaoPendente() {
-    const guarda = useGuardaDeAlteracoes();
+    const guarda = useGuardChanges();
     useEffect(() => {
-        guarda.registrar({ sujo: true, salvar: async () => true });
+        guarda.registrar({ dirty: true, salvar: async () => true });
     }, [guarda]);
     return null;
 }
 
 function caminho(): string | null {
-    return screen.getByTestId("caminho").textContent;
+    return screen.getByTestId("path").textContent;
 }
 
-function montarAbas(ativa: IdAbaDoAgente = "instructions", opcoes: { sujo?: boolean } = {}) {
+function montarAbas(ativa: IdTabAgent = "instructions", opcoes: { sujo?: boolean } = {}) {
     return render(
         <MemoryRouter initialEntries={[`/orgs/${ORG}/agents/ag_1/instructions`]}>
-            <GuardaAlteracoesProvider>
+            <GuardChangesProvider>
                 {opcoes.sujo ? <EdicaoPendente /> : null}
-                <AbasDoAgente org={ORG} agente="ag_1" ativa={ativa} />
+                <TabsAgent org={ORG} agente="ag_1" active={ativa} />
                 <Destino />
-            </GuardaAlteracoesProvider>
+            </GuardChangesProvider>
         </MemoryRouter>,
     );
 }
@@ -110,13 +110,13 @@ function montarAbas(ativa: IdAbaDoAgente = "instructions", opcoes: { sujo?: bool
 function montarCabecalho() {
     return render(
         <MemoryRouter initialEntries={[`/orgs/${ORG}/agents/ag_1/instructions`]}>
-            <GuardaAlteracoesProvider>
+            <GuardChangesProvider>
                 <Routes>
                     <Route
                         path="*"
                         element={
                             <>
-                                <CabecalhoDoAgente
+                                <HeaderAgent
                                     org={ORG}
                                     nome="Beatriz"
                                     slug="beatriz"
@@ -129,7 +129,7 @@ function montarCabecalho() {
                         }
                     />
                 </Routes>
-            </GuardaAlteracoesProvider>
+            </GuardChangesProvider>
         </MemoryRouter>,
     );
 }

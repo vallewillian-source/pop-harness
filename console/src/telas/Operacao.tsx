@@ -42,8 +42,8 @@ import {
     type InstanceHealth,
 } from "../api/operation";
 import type { PluginManifest } from "../api/integrations";
-import { ExportarImportarOrganizacao } from "../componentes/ExportarImportarOrganizacao";
-import "../estilos/operacao.css";
+import { ExportImportOrganization } from "../components/ExportImportOrganization";
+import "../styles/operation.css";
 
 /** Intervalo da atualização automática. Nunca menos que isso (sem laço de requisições). */
 export const INTERVALO_DE_ATUALIZACAO_MS = 15_000;
@@ -135,9 +135,9 @@ function mensagemDoPlugin(erro: unknown): string {
 
 function Propriedade({ chave, valor, mono }: { chave: string; valor: string; mono?: boolean }) {
     return (
-        <div className="poph-propriedade">
-            <dt className="poph-propriedade__chave">{chave}</dt>
-            <dd className={mono ? "poph-propriedade__valor poph-propriedade__valor--mono" : "poph-propriedade__valor"}>
+        <div className="poph-property">
+            <dt className="poph-property__key">{chave}</dt>
+            <dd className={mono ? "poph-property__value poph-property__value--mono" : "poph-property__value"}>
                 {valor}
             </dd>
         </div>
@@ -160,13 +160,13 @@ function LinhaDePlugin({
     const { translate: t } = useI18n();
     if (item.situacao === "ok") {
         return (
-            <li className="poph-operacao__plugin">
-                <div className="poph-operacao__plugin-texto">
-                    <span className="poph-operacao__selo poph-operacao__selo--ok">
+            <li className="poph-operation__plugin">
+                <div className="poph-operation__plugin-text">
+                    <span className="poph-operation__seal poph-operation__seal--ok">
                         {t("operation.pluginOnline")}
                     </span>
-                    <span className="poph-operacao__plugin-nome">{item.nome ?? item.kind}</span>
-                    <span className="poph-operacao__plugin-meta">
+                    <span className="poph-operation__plugin-name">{item.nome ?? item.kind}</span>
+                    <span className="poph-operation__plugin-meta">
                         {t("operation.pluginKindPrefix")} <code>{item.kind}</code>
                         {item.versao ? t("operation.pluginVersionSuffix", { version: item.versao }) : ""}
                     </span>
@@ -183,15 +183,15 @@ function LinhaDePlugin({
         );
     }
     return (
-        <li className="poph-operacao__plugin poph-operacao__plugin--indisponivel">
-            <div className="poph-operacao__plugin-texto">
-                <span className="poph-operacao__selo poph-operacao__selo--indisponivel">
+        <li className="poph-operation__plugin poph-operation__plugin--unavailable">
+            <div className="poph-operation__plugin-text">
+                <span className="poph-operation__seal poph-operation__seal--unavailable">
                     {t("operation.pluginUnavailable")}
                 </span>
-                <span className="poph-operacao__plugin-nome">
+                <span className="poph-operation__plugin-name">
                     {t("operation.pluginKindPrefix")} <code>{item.kind}</code>
                 </span>
-                <span className="poph-operacao__plugin-meta">{(item.mensagem ?? "").replace(/`/g, "")}</span>
+                <span className="poph-operation__plugin-meta">{(item.mensagem ?? "").replace(/`/g, "")}</span>
             </div>
         </li>
     );
@@ -294,7 +294,7 @@ function TabelaDoMapa({ antes, depois, impressaoAntes, impressaoDepois }: {
         },
     ];
     return (
-        <table className="poph-operacao__tabela" aria-label={t("operation.mapTableLabel")}>
+        <table className="poph-operation__table" aria-label={t("operation.mapTableLabel")}>
             <thead>
                 <tr>
                     <th scope="col">{t("operation.mapColumnItem")}</th>
@@ -319,8 +319,8 @@ function TabelaDoMapa({ antes, depois, impressaoAntes, impressaoDepois }: {
 function RelatorioDaRecarga({ relatorio, titulo }: { relatorio: ReloadReport; titulo: string }) {
     const { translate: t } = useI18n();
     return (
-        <div className="poph-operacao__relatorio">
-            <h3 className="poph-operacao__subtitulo">{titulo}</h3>
+        <div className="poph-operation__report">
+            <h3 className="poph-operation__subtitle">{titulo}</h3>
             <SofaBanner
                 tone={relatorio.mudou ? "success" : "info"}
                 title={
@@ -334,7 +334,7 @@ function RelatorioDaRecarga({ relatorio, titulo }: { relatorio: ReloadReport; ti
                     : t("operation.clusterUnchangedText")}
             </SofaBanner>
             {relatorio.depois.modo === "instancia_unica" ? (
-                <p className="poph-operacao__ajuda">{t("operation.clusterSingleInstance")}</p>
+                <p className="poph-operation__help">{t("operation.clusterSingleInstance")}</p>
             ) : null}
             <TabelaDoMapa
                 antes={relatorio.antes}
@@ -342,21 +342,21 @@ function RelatorioDaRecarga({ relatorio, titulo }: { relatorio: ReloadReport; ti
                 impressaoAntes={relatorio.impressaoAntes}
                 impressaoDepois={relatorio.impressaoDepois}
             />
-            <p className="poph-operacao__ajuda">
+            <p className="poph-operation__help">
                 {t("operation.clusterInstancesAdded", {
                     list: listaOuNenhuma(relatorio.instanciasAdicionadas),
                 })}
             </p>
-            <p className="poph-operacao__ajuda">
+            <p className="poph-operation__help">
                 {t("operation.clusterInstancesRemoved", {
                     list: listaOuNenhuma(relatorio.instanciasRemovidas),
                 })}
             </p>
             {relatorio.orgsQueTrocaram.length > 0 ? (
                 <>
-                    <p className="poph-operacao__ajuda">{t("operation.clusterOrgsChanged")}</p>
+                    <p className="poph-operation__help">{t("operation.clusterOrgsChanged")}</p>
                     <ul
-                        className="poph-operacao__conflitos"
+                        className="poph-operation__conflicts"
                         aria-label={t("operation.clusterOrgsChangedLabel")}
                     >
                         {relatorio.orgsQueTrocaram.map((troca) => (
@@ -371,7 +371,7 @@ function RelatorioDaRecarga({ relatorio, titulo }: { relatorio: ReloadReport; ti
                     </ul>
                 </>
             ) : (
-                <p className="poph-operacao__ajuda">{t("operation.clusterNoOrgChanged")}</p>
+                <p className="poph-operation__help">{t("operation.clusterNoOrgChanged")}</p>
             )}
         </div>
     );
@@ -385,13 +385,13 @@ function AvisoDaRecarga({ falha, aoTentarDeNovo }: { falha: FalhaDaRecarga; aoTe
             <SofaBanner tone="danger" title={t("operation.clusterInvalidTitle")}>
                 <p style={{ margin: 0 }}>{t("operation.clusterInvalidText")}</p>
                 {falha.arquivo ? (
-                    <p className="poph-mono-mudo" style={{ margin: "6px 0 0" }}>
+                    <p className="poph-mono-muted" style={{ margin: "6px 0 0" }}>
                         {t("operation.clusterFile", { file: falha.arquivo })}
                     </p>
                 ) : null}
                 <p style={{ margin: "6px 0 0" }}>{t("operation.clusterProblems")}</p>
                 <ul
-                    className="poph-operacao__conflitos"
+                    className="poph-operation__conflicts"
                     aria-label={t("operation.clusterProblemsLabel")}
                 >
                     {falha.problemas.map((problema, indice) => (
@@ -465,11 +465,11 @@ function SecaoCluster() {
     }, []);
 
     return (
-        <section className="poph-secao" aria-labelledby={idSecao}>
-            <h2 id={idSecao} className="poph-secao__titulo">{t("operation.sectionCluster")}</h2>
-            <p className="poph-operacao__ajuda">{t("operation.clusterHelp")}</p>
+        <section className="poph-section" aria-labelledby={idSecao}>
+            <h2 id={idSecao} className="poph-section__title">{t("operation.sectionCluster")}</h2>
+            <p className="poph-operation__help">{t("operation.clusterHelp")}</p>
 
-            <div className="poph-pilha" style={{ gap: "var(--pop-spacing-sm, 6px)", maxWidth: 680 }}>
+            <div className="poph-stack" style={{ gap: "var(--pop-spacing-sm, 6px)", maxWidth: 680 }}>
                 <div>
                     <SofaButton
                         variant="secondary"
@@ -483,7 +483,7 @@ function SecaoCluster() {
 
                 <div aria-live="polite">
                     {recarregando ? (
-                        <p className="poph-operacao__carregando" role="status">
+                        <p className="poph-operation__loading" role="status">
                             {t("operation.clusterReloading")}
                         </p>
                     ) : null}
@@ -500,7 +500,7 @@ function SecaoCluster() {
                             }
                         />
                     ) : !falha && !recarregando ? (
-                        <p className="poph-operacao__vazio">{t("operation.clusterEmpty")}</p>
+                        <p className="poph-operation__empty">{t("operation.clusterEmpty")}</p>
                     ) : null}
                 </div>
             </div>
@@ -522,7 +522,7 @@ function SecaoCluster() {
     );
 }
 
-export function Operacao() {
+export function Operation() {
     const { orgId = "" } = useParams();
     const { translate: t, formatTime } = useI18n();
     const [saude, setSaude] = useState<Estado<InstanceHealth>>(estadoInicial);
@@ -622,14 +622,14 @@ export function Operacao() {
     const lista = plugins.dados;
 
     return (
-        <div className="poph-pagina poph-operacao">
-            <div className="poph-pagina__topo">
+        <div className="poph-page poph-operation">
+            <div className="poph-page__top">
                 <div>
-                    <h1 className="poph-pagina__titulo">{t("operation.pageTitle")}</h1>
-                    <p className="poph-pagina__descricao">{t("operation.pageDescription")}</p>
+                    <h1 className="poph-page__title">{t("operation.pageTitle")}</h1>
+                    <p className="poph-page__description">{t("operation.pageDescription")}</p>
                 </div>
-                <div className="poph-pagina__acoes">
-                    <span className="poph-operacao__atualizacao" role="status" aria-live="polite">
+                <div className="poph-page__actions">
+                    <span className="poph-operation__update" role="status" aria-live="polite">
                         {saude.carregando || metricas.carregando || plugins.carregando
                             ? t("operation.refreshing")
                             : atualizadoEm
@@ -647,8 +647,8 @@ export function Operacao() {
                 </div>
             </div>
 
-            <section className="poph-secao" aria-labelledby={idSaude}>
-                <h2 id={idSaude} className="poph-secao__titulo">{t("operation.sectionServer")}</h2>
+            <section className="poph-section" aria-labelledby={idSaude}>
+                <h2 id={idSaude} className="poph-section__title">{t("operation.sectionServer")}</h2>
                 {saude.carregando && !s ? (
                     <SofaSkeleton lines={3} />
                 ) : saude.erro && !s ? (
@@ -660,11 +660,11 @@ export function Operacao() {
                 ) : s ? (
                     <>
                         {saude.erro ? (
-                            <p className="poph-operacao__aviso" role="alert">
+                            <p className="poph-operation__notice" role="alert">
                                 {t("operation.lastUpdateFailed", { message: textoDaFalha(saude.erro) })}
                             </p>
                         ) : null}
-                        <dl className="poph-propriedades">
+                        <dl className="poph-properties">
                             <Propriedade
                                 chave={t("operation.propertyStatus")}
                                 valor={
@@ -695,8 +695,8 @@ export function Operacao() {
                 ) : null}
             </section>
 
-            <section className="poph-secao" aria-labelledby={idMetricas}>
-                <h2 id={idMetricas} className="poph-secao__titulo">{t("operation.sectionMetrics")}</h2>
+            <section className="poph-section" aria-labelledby={idMetricas}>
+                <h2 id={idMetricas} className="poph-section__title">{t("operation.sectionMetrics")}</h2>
                 {metricas.carregando && !m ? (
                     <SofaSkeleton lines={4} />
                 ) : metricas.erro && !m ? (
@@ -708,12 +708,12 @@ export function Operacao() {
                 ) : m ? (
                     <>
                         {metricas.erro ? (
-                            <p className="poph-operacao__aviso" role="alert">
+                            <p className="poph-operation__notice" role="alert">
                                 {t("operation.lastUpdateFailed", { message: textoDaFalha(metricas.erro) })}
                             </p>
                         ) : null}
-                        <h3 className="poph-operacao__subtitulo">{t("operation.subtitleNow")}</h3>
-                        <dl className="poph-propriedades">
+                        <h3 className="poph-operation__subtitle">{t("operation.subtitleNow")}</h3>
+                        <dl className="poph-properties">
                             <Propriedade
                                 chave={t("operation.metricQueueTurns")}
                                 valor={numero(m.filaTurnos)}
@@ -743,8 +743,8 @@ export function Operacao() {
                                 valor={memoria(m.bancoBusca)}
                             />
                         </dl>
-                        <h3 className="poph-operacao__subtitulo">{t("operation.subtitleSinceBoot")}</h3>
-                        <dl className="poph-propriedades">
+                        <h3 className="poph-operation__subtitle">{t("operation.subtitleSinceBoot")}</h3>
+                        <dl className="poph-properties">
                             <Propriedade
                                 chave={t("operation.metricLlmCalls")}
                                 valor={t("operation.valueWithErrors", {
@@ -775,13 +775,13 @@ export function Operacao() {
                 ) : null}
             </section>
 
-            <section className="poph-secao" aria-labelledby={idPlugin}>
-                <h2 id={idPlugin} className="poph-secao__titulo">{t("operation.sectionPlugins")}</h2>
-                <p className="poph-operacao__ajuda">{t("operation.pluginsHelp")}</p>
+            <section className="poph-section" aria-labelledby={idPlugin}>
+                <h2 id={idPlugin} className="poph-section__title">{t("operation.sectionPlugins")}</h2>
+                <p className="poph-operation__help">{t("operation.pluginsHelp")}</p>
 
                 {plugins.carregando && !lista ? (
                     <>
-                        <p className="poph-operacao__carregando" role="status">
+                        <p className="poph-operation__loading" role="status">
                             {t("operation.pluginsLoading")}
                         </p>
                         <SofaSkeleton lines={3} />
@@ -795,19 +795,19 @@ export function Operacao() {
                 ) : lista ? (
                     <>
                         {plugins.erro ? (
-                            <p className="poph-operacao__aviso" role="alert">
+                            <p className="poph-operation__notice" role="alert">
                                 {t("operation.lastUpdateFailed", { message: textoDaFalha(plugins.erro) })}
                             </p>
                         ) : null}
                         {lista.length === 0 ? (
-                            <p className="poph-operacao__vazio">
+                            <p className="poph-operation__empty">
                                 {t("operation.pluginsEmptyBefore")}
                                 <code> [plugins].integracoes</code>
                                 {t("operation.pluginsEmptyAfter")}
                             </p>
                         ) : (
                             <ul
-                                className="poph-operacao__lista-plugins"
+                                className="poph-operation__list-plugins"
                                 aria-label={t("operation.pluginsListLabel")}
                             >
                                 {lista.map((item) => (
@@ -826,7 +826,7 @@ export function Operacao() {
                 <div aria-live="polite">
                     {consulta.carregando ? (
                         <>
-                            <p className="poph-operacao__carregando" role="status">
+                            <p className="poph-operation__loading" role="status">
                                 {t("operation.pluginConsulting", { kind: consulta.kind })}
                             </p>
                             <SofaSkeleton lines={3} />
@@ -842,7 +842,7 @@ export function Operacao() {
                         />
                     ) : consulta.manifesto ? (
                         <dl
-                            className="poph-propriedades poph-operacao__detalhe"
+                            className="poph-properties poph-operation__detail"
                             aria-label={t("operation.pluginDetailsLabel", { kind: consulta.kind })}
                         >
                             <Propriedade chave={t("operation.propertyName")} valor={consulta.manifesto.nome} />
@@ -867,7 +867,7 @@ export function Operacao() {
 
             <SecaoCluster />
 
-            <ExportarImportarOrganizacao key={orgId} org={orgId} />
+            <ExportImportOrganization key={orgId} org={orgId} />
         </div>
     );
 }

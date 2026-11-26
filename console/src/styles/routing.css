@@ -1,0 +1,39 @@
+
+.poph-routing__empty {
+    margin: 0;
+}
+
+.poph-routing__reasons {
+    display: flex;
+    flex-direction: column;
+    gap: var(--pop-spacing-md, 10px);
+}
+
+.poph-routing__reason {
+    display: flex;
+    align-items: flex-end;
+    gap: var(--pop-spacing-sm, 8px);
+}
+
+.poph-routing__reason-field {
+    flex: 1;
+    min-width: 0;
+}
+
+.poph-routing__error {
+    margin: var(--pop-spacing-sm, 8px) 0 0;
+    color: var(--pop-danger, #ef4444);
+}
+
+.poph-routing__bar {
+    gap: var(--pop-spacing-sm, 8px);
+    justify-content: flex-end;
+}
+
+.poph-routing__bar .poph-status--attention .poph-status__point {
+    background: var(--pop-accent);
+}
+
+.poph-routing__bar .poph-status--attention {
+    color: var(--pop-text-primary);
+}

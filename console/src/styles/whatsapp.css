@@ -1,0 +1,66 @@
+
+.poph-whatsapp {
+    display: flex;
+    flex-direction: column;
+    gap: var(--pop-spacing-lg, 12px);
+    min-width: 0;
+}
+
+.poph-whatsapp__state {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--pop-spacing-sm, 8px);
+}
+
+.poph-whatsapp__actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--pop-spacing-sm, 8px);
+}
+
+.poph-whatsapp__hint {
+    margin-top: var(--pop-spacing-xs, 4px);
+}
+
+.poph-whatsapp__qr-block {
+    display: flex;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: var(--pop-spacing-lg, 16px);
+}
+
+.poph-whatsapp__qr-image {
+    flex: none;
+    padding: var(--pop-spacing-sm, 8px);
+    border-radius: var(--pop-radius-md, 8px);
+    background: #fff;
+}
+
+.poph-whatsapp__qr-text {
+    display: flex;
+    flex-direction: column;
+    gap: var(--pop-spacing-xs, 6px);
+    min-width: 0;
+}
+
+.poph-whatsapp .poph-status--attention .poph-status__point {
+    background: var(--pop-accent);
+}
+
+.poph-whatsapp .poph-status--attention {
+    color: var(--pop-text-primary);
+}
+
+.poph-whatsapp__confirmation {
+    display: flex;
+    flex-direction: column;
+    gap: var(--pop-spacing-md, 12px);
+}
+
+.poph-whatsapp__confirmation-line {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--pop-spacing-sm, 8px);
+}

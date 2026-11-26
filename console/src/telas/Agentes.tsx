@@ -25,19 +25,19 @@ import { listAgents, type Agente } from "../api/agents";
 import { listStructure, type Departamento } from "../api/structure";
 import { getOrg } from "../api/orgs";
 import { translate, useI18n } from "../i18n";
-import "../estilos/agentes.css";
+import "../styles/agents.css";
 
 const coluna = createColumnHelper<Agente>();
 
 function classeDaSituacao(situacao: string): string {
     switch (situacao) {
         case "active":
-            return "poph-status--ativo";
+            return "poph-status--active";
         case "inactive":
         case "archived":
-            return "poph-status--inativo";
+            return "poph-status--inactive";
         default:
-            return "poph-status--inativo";
+            return "poph-status--inactive";
     }
 }
 
@@ -54,7 +54,7 @@ function rotuloDaSituacao(situacao: string): string {
     }
 }
 
-export function Agentes() {
+export function Agents() {
     const { locale, translate: t } = useI18n();
     const { orgId = "" } = useParams();
     const navegar = useNavigate();
@@ -104,11 +104,11 @@ export function Agentes() {
                     const agente = info.row.original;
                     const atenuado = agente.status !== "active";
                     return (
-                        <div className="poph-agentes__identidade">
-                            <span className={atenuado ? "poph-agentes__nome--atenuado" : "poph-agentes__nome"}>
+                        <div className="poph-agents__identity">
+                            <span className={atenuado ? "poph-agents__name--dimmed" : "poph-agents__name"}>
                                 {info.getValue()}
                             </span>
-                            <span className="poph-mono-mudo">{agente.slug}</span>
+                            <span className="poph-mono-muted">{agente.slug}</span>
                         </div>
                     );
                 },
@@ -118,7 +118,7 @@ export function Agentes() {
                 size: 130,
                 cell: (info) => (
                     <span className={`poph-status ${classeDaSituacao(info.getValue())}`}>
-                        <span className="poph-status__ponto" aria-hidden="true" />
+                        <span className="poph-status__point" aria-hidden="true" />
                         {rotuloDaSituacao(info.getValue())}
                     </span>
                 ),
@@ -128,7 +128,7 @@ export function Agentes() {
                 cell: (info) => {
                     const atenuado = info.row.original.status !== "active";
                     return (
-                        <span className={atenuado ? "poph-agentes__celula--atenuada" : undefined}>
+                        <span className={atenuado ? "poph-agents__cell--dimmed" : undefined}>
                             {nomeDoDepartamento(info.getValue())}
                         </span>
                     );
@@ -137,13 +137,13 @@ export function Agentes() {
             coluna.accessor("version", {
                 header: t("agents.listVersion"),
                 size: 90,
-                cell: (info) => <span className="poph-mono-mudo">v{info.getValue()}</span>,
+                cell: (info) => <span className="poph-mono-muted">v{info.getValue()}</span>,
             }),
             coluna.display({
                 id: "acoes",
                 header: t("agents.listActions"),
                 cell: (info) => (
-                    <div className="poph-agentes__acoes">
+                    <div className="poph-agents__actions">
                         <SofaButton
                             variant="subtle"
                             size="sm"
@@ -161,25 +161,25 @@ export function Agentes() {
     );
 
     return (
-        <div className="poph-pagina">
-            <div className="poph-pagina__topo">
+        <div className="poph-page">
+            <div className="poph-page__top">
                 <div>
-                    <p className="poph-agentes__contexto">
+                    <p className="poph-agents__context">
                         {nomeDaOrg
                             ? t("agents.orgContextWithName", { name: nomeDaOrg })
                             : t("agents.orgContext")}
                     </p>
-                    <h1 className="poph-pagina__titulo">
+                    <h1 className="poph-page__title">
                         {t("agents.pageTitle")}
                         {!carregando && (
-                            <span className="poph-agentes__contagem">({agentes.length})</span>
+                            <span className="poph-agents__count">({agentes.length})</span>
                         )}
                     </h1>
-                    <p className="poph-pagina__descricao">
+                    <p className="poph-page__description">
                         {t("agents.pageDescription")}
                     </p>
                 </div>
-                <div className="poph-pagina__acoes">
+                <div className="poph-page__actions">
                     <SofaButton
                         variant="secondary"
                         icon={<IconRefresh aria-hidden="true" />}
@@ -200,7 +200,7 @@ export function Agentes() {
                 />
             ) : (
                 <SofaTable
-                    className="poph-agentes__tabela"
+                    className="poph-agents__table"
                     label={t("agents.pageTitle")}
                     columns={colunas}
                     data={agentes}

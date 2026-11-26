@@ -63,10 +63,10 @@ import {
     saveModelJev,
     validateModel,
 } from "../api/modelJev";
-import { AbasDoAgente, CabecalhoDoAgente, SecaoDoAgente } from "../componentes/AbasDoAgente";
-import { useGuardaDeAlteracoes } from "../componentes/GuardaAlteracoes";
+import { TabsAgent, HeaderAgent, SectionAgent } from "../components/TabsAgent";
+import { useGuardChanges } from "../components/GuardChanges";
 import { translate, useI18n } from "../i18n";
-import "../estilos/modelo-jev.css";
+import "../styles/model-jev.css";
 
 function ligacoes(controle: SofaFieldControlProps) {
     const { describedBy, invalid, required, id } = controle;
@@ -101,10 +101,10 @@ function chavesDefinidas(jev: Record<string, unknown> | undefined): Set<string> 
     return new Set(Object.keys(jev ?? {}));
 }
 
-export function AgenteModeloJev() {
+export function AgentModelJev() {
     const { translate: t } = useI18n();
     const { orgId = "", agentId = "" } = useParams();
-    const guarda = useGuardaDeAlteracoes();
+    const guarda = useGuardChanges();
 
     const [agente, setAgente] = useState<Agente | null>(null);
     const [versao, setVersao] = useState<number>(0);
@@ -241,7 +241,7 @@ export function AgenteModeloJev() {
     // A guarda de alterações precisa da versão mais recente de `salvar`.
     useEffect(() => {
         if (!rascunhoModelo) return;
-        guarda.registrar({ sujo, salvar: async () => salvar() });
+        guarda.registrar({ dirty: sujo, salvar: async () => salvar() });
     }, [guarda, sujo, salvar, rascunhoModelo]);
 
     useEffect(() => {
@@ -292,7 +292,7 @@ export function AgenteModeloJev() {
 
     if (!agente && erroDeCarga) {
         return (
-            <div className="poph-pagina">
+            <div className="poph-page">
                 <SofaErrorState
                     title={t("modelJev.loadErrorTitle")}
                     description={t("modelJev.loadErrorDescription")}
@@ -314,11 +314,11 @@ export function AgenteModeloJev() {
 
     if (!agente || !rascunhoModelo || !rascunhoJev) {
         return (
-            <div className="poph-pagina" aria-busy="true">
-                <div className="poph-pagina__topo">
+            <div className="poph-page" aria-busy="true">
+                <div className="poph-page__top">
                     <div>
                         <SofaSkeleton width={260} height={26} />
-                        <div className="poph-modelo-jev__esqueleto-linha">
+                        <div className="poph-model-jev__skeleton-line">
                             <SofaSkeleton width={360} height={12} />
                         </div>
                     </div>
@@ -356,8 +356,8 @@ export function AgenteModeloJev() {
 
     return (
         <>
-            <div className="poph-pagina poph-modelo-jev">
-                <CabecalhoDoAgente
+            <div className="poph-page poph-model-jev">
+                <HeaderAgent
                     org={orgId}
                     nome={agente.name}
                     slug={agente.slug}
@@ -366,7 +366,7 @@ export function AgenteModeloJev() {
                     descricao={t("modelJev.headerDescription")}
                 />
 
-                <AbasDoAgente org={orgId} agente={agentId} ativa="model-jev" nome={agente.name} model={agente.model ?? null} />
+                <TabsAgent org={orgId} agente={agentId} active="model-jev" nome={agente.name} model={agente.model ?? null} />
 
                 {conflito && (
                     <SofaBanner tone="warn" title={t("modelJev.bannerOutdatedTitle")}>
@@ -379,25 +379,25 @@ export function AgenteModeloJev() {
                     </SofaBanner>
                 )}
                 {aviso && !erroGeral && !conflito && (
-                    <p className="poph-mono-mudo" style={{ margin: 0 }} role="status">
+                    <p className="poph-mono-muted" style={{ margin: 0 }} role="status">
                         {aviso}
                     </p>
                 )}
 
                 <form
                     id="poph-form-modelo-jev"
-                    className="poph-modelo-jev__formulario"
+                    className="poph-model-jev__form"
                     onSubmit={(evento) => {
                         evento.preventDefault();
                         void salvar();
                     }}
                     noValidate
                 >
-                    <SecaoDoAgente
+                    <SectionAgent
                         titulo={t("modelJev.sectionModelTitle")}
                         descricao={t("modelJev.sectionModelDescription")}
                     >
-                        <div className="poph-modelo-jev__grade">
+                        <div className="poph-model-jev__grid">
                             {campoTexto("provider", t("modelJev.fieldProviderLabel"), {
                                 dica: t("modelJev.fieldProviderHint"),
                             })}
@@ -428,13 +428,13 @@ export function AgenteModeloJev() {
                                 dica: t("modelJev.fieldMaxContextHint", { min: LIMIT_CONTEXT_MIN }),
                             })}
                         </div>
-                    </SecaoDoAgente>
+                    </SectionAgent>
 
-                    <SecaoDoAgente
+                    <SectionAgent
                         titulo={t("modelJev.sectionServiceTitle")}
                         descricao={t("modelJev.sectionServiceDescription")}
                     >
-                        <div className="poph-modelo-jev__grade">
+                        <div className="poph-model-jev__grid">
                             {campoTexto("grouping_window_ms", t("modelJev.fieldGroupingWindowLabel"), {
                                 modo: "numeric",
                                 dica: t("modelJev.fieldGroupingWindowHint", { max: LIMIT_WINDOW_MS }),
@@ -448,13 +448,13 @@ export function AgenteModeloJev() {
                                 dica: t("modelJev.fieldMaxToolCallsHint", { max: LIMIT_TOOLS_MAX }),
                             })}
                         </div>
-                    </SecaoDoAgente>
+                    </SectionAgent>
 
-                    <SecaoDoAgente
+                    <SectionAgent
                         titulo={t("modelJev.sectionRagTitle")}
                         descricao={t("modelJev.sectionRagDescription")}
                     >
-                        <div className="poph-modelo-jev__grade">
+                        <div className="poph-model-jev__grid">
                             {campoTexto("rag_top_k", t("modelJev.fieldRagTopKLabel"), {
                                 modo: "numeric",
                                 dica: t("modelJev.fieldRagTopKHint", {
@@ -470,9 +470,9 @@ export function AgenteModeloJev() {
                                 }),
                             })}
                         </div>
-                    </SecaoDoAgente>
+                    </SectionAgent>
 
-                    <SecaoDoAgente
+                    <SectionAgent
                         titulo={t("modelJev.sectionJevTitle")}
                         descricao={t("modelJev.sectionJevDescription")}
                     >
@@ -483,7 +483,7 @@ export function AgenteModeloJev() {
                             onChange={(evento) => alterarInterruptor(evento.target.checked)}
                         />
 
-                        <div className="poph-modelo-jev__grade">
+                        <div className="poph-model-jev__grid">
                             {GATES.map((gate) => {
                                 const descricao = GATE_DESCRIPTION[gate];
                                 return (
@@ -519,20 +519,20 @@ export function AgenteModeloJev() {
                                 );
                             })}
                         </div>
-                    </SecaoDoAgente>
+                    </SectionAgent>
 
-                    <SecaoDoAgente
+                    <SectionAgent
                         titulo={t("modelJev.sectionOtherKeysTitle")}
                         descricao={t("modelJev.sectionOtherKeysDescription")}
                     >
-                        <ul className="poph-modelo-jev__chaves">
+                        <ul className="poph-model-jev__keys">
                             {PRESERVED_KEYS.map((item) => (
                                 <li key={item.chave}>
                                     <code>{item.chave}</code> ·{" "}
                                     {chavesNoAgente.has(item.chave)
                                         ? t("modelJev.keyDefined")
                                         : t("modelJev.keyUndefined")}
-                                    <div className="poph-mono-mudo">
+                                    <div className="poph-mono-muted">
                                         {item.explicacao}
                                         {item.ondeEdita
                                             ? t("modelJev.keyEditIn", { where: item.ondeEdita })
@@ -541,14 +541,14 @@ export function AgenteModeloJev() {
                                 </li>
                             ))}
                         </ul>
-                    </SecaoDoAgente>
+                    </SectionAgent>
                 </form>
 
-                <div className="poph-modelo-jev__barra">
+                <div className="poph-model-jev__bar">
                     <span
-                        className={`poph-status ${sujo ? "poph-status--atencao" : "poph-status--inativo"}`}
+                        className={`poph-status ${sujo ? "poph-status--attention" : "poph-status--inactive"}`}
                     >
-                        <span className="poph-status__ponto" aria-hidden="true" />
+                        <span className="poph-status__point" aria-hidden="true" />
                         {sujo
                             ? t("modelJev.statusUnsaved")
                             : t("modelJev.statusSaved", { version: versao })}

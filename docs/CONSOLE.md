@@ -184,7 +184,7 @@ produtos recusa `limit` com `400`** (defeito do servidor, ver Limites): por isso
 
 Teste de servidor: `categoria_com_vinculos_so_sai_com_force` (`crates/poph-server/tests/api.rs`).
 Mutação "apagar sem checar `force`" reprova o teste. Testes de componente em
-`DialogoExcluirCategoria.test.tsx`, incluindo a paginação em duas páginas e a recusa de `limit`.
+`DialogDeleteCategory.test.tsx`, incluindo a paginação em duas páginas e a recusa de `limit`.
 
 Contagem de agentes na coluna de departamentos vem de uma leitura da lista de agentes; se ela falhar,
 a coluna mostra `agentes: —` e a lista de departamentos segue normal.
@@ -432,9 +432,9 @@ Inativo, `Esc` devolvendo o foco ao botão Editar, exclusão com nome exato e `4
 de todos os campos e validação de nome vazio). A checagem de console acusou só os `412` provocados
 de propósito e um `404` de `favicon.ico`, que o servidor não serve (também visto na HR-39b).
 
-**Testes de componente:** `ModalProduto.test.tsx` (corpo da criação com centavos e listas, sem
+**Testes de componente:** `ModalProduct.test.tsx` (corpo da criação com centavos e listas, sem
 `status` e sem `slug` vazio, validação sem chamar a API, erro de campo da API no campo, `412`
-preservando o formulário e salvando com a versão nova), `DialogoExcluirProduto.test.tsx` (botão só
+preservando o formulário e salvando com a versão nova), `DialogDeleteProduct.test.tsx` (botão só
 com o nome exato, contagem de agentes, `DELETE` sem `force` sem carrinho, motivo real da recusa,
 `409` com a contagem sem apagar e a confirmação extra que envia `force=true`, `Esc` no segundo
 passo) e
@@ -987,7 +987,7 @@ arquivo no rótulo (por exemplo "Ver laudo.png" e "Baixar laudo.png"):
   antiga aparecer na conversa nova.
 
 **Arquivos.** `console/src/api/testFile.ts` (caminho, nome do cabeçalho e prévia),
-`console/src/componentes/PreviaArquivoTeste.tsx` (a prévia) e `console/src/telas/AgenteChatTeste.tsx`
+`console/src/components/PreviewFileTest.tsx` (a prévia) e `console/src/telas/AgenteChatTeste.tsx`
 (botões e liberação). Em `console/src/api/client.ts`, `requestBytes` faz o `fetch` com o token e devolve
 os bytes.
 
@@ -1080,11 +1080,11 @@ resposta). Os tipos de `files_out` estão em `console/src/api/testChat.ts`.
 - A lista carrega a primeira página de 50 conversas; as demais entram com "Carregar mais".
 
 **Arquivos.** `console/src/api/testChat.ts` (contrato da aba, leitor do fluxo e `requestFlow`),
-`console/src/telas/AgenteChatTeste.tsx` (tela), `console/src/estilos/chat-teste.css`. Ajustes pontuais:
+`console/src/telas/AgenteChatTeste.tsx` (tela), `console/src/styles/chat-test.css`. Ajustes pontuais:
 `console/src/api/client.ts` (`requestFlow` e a tradução de erro compartilhada com `request`),
-`console/src/App.tsx` (rota), `console/src/componentes/AbasDoAgente.tsx` (aba), `navegacao.ts` (item do
-menu), `Trilha.tsx` (migalha). Testes: `api/testChat.test.ts` (6) e `telas/AgenteChatTeste.test.tsx`
-(14); os de navegação e de abas (`navegacao.test.tsx`, `Agentes.test.tsx`) foram ajustados para a aba e o
+`console/src/App.tsx` (rota), `console/src/components/TabsAgent.tsx` (aba), `navigation.ts` (item do
+menu), `Trail.tsx` (migalha). Testes: `api/testChat.test.ts` (6) e `telas/AgenteChatTeste.test.tsx`
+(14); os de navegação e de abas (`navigation.test.tsx`, `Agentes.test.tsx`) foram ajustados para a aba e o
 item novos.
 
 **Provas.**
@@ -1175,7 +1175,7 @@ de corte por trecho; o link para a fonte oficial; e o custo (o turno não calcul
 **Provas.**
 
 - Testes de camada de leitura (`api/turnWhy.test.ts`, 21), de componente do painel
-  (`componentes/PainelPorQue.test.tsx`, 17) e da página com o "por quê" (`telas/AgenteChatTestePorQue.test.tsx`,
+  (`components/PanelWhy.test.tsx`, 17) e da página com o "por quê" (`telas/AgenteChatTestePorQue.test.tsx`,
   5). Suíte do Console: 322 testes em 28 arquivos, todos verdes (`console/scripts/testar.sh`).
 - Mutações, com o arquivo restaurado e conferido com `cmp`: fazer aparecer "0 ms" quando o tempo não foi
   gravado reprova 1 teste; deixar de mostrar o turno sem resposta reprova 1 teste. Na HR-47c, mostrar uma
@@ -1447,7 +1447,7 @@ o foco. Carga e resultado são anunciados (região de status); erro é anunciado
 
 **Provas.**
 
-- Testes de componente (fetch falso, `console/src/componentes/ExportarImportarOrganizacao.test.tsx`, 21 testes; a recusa de sobrescrita (HR-48e-4) entra nesses 21):
+- Testes de componente (fetch falso, `console/src/components/ExportImportOrganization.test.tsx`, 21 testes; a recusa de sobrescrita (HR-48e-4) entra nesses 21):
   exportar sem e com conversas (query e nome do cabeçalho); download de `backup_incompleto` sem "Tentar de novo";
   erro de servidor na exportação com "Tentar de novo" que refaz; nada disparado ao montar; importação com
   sucesso (texto do arquivo no corpo, `content-type: application/json`, relatório, tabela, segredo e índice
@@ -1741,9 +1741,9 @@ and the title are applied again on load.
 
 ### Switching at runtime
 
-`LanguageSwitcher` (`console/src/componentes/LanguageSwitcher.tsx`) renders the `PT | EN` pair and
-calls `setLocale`. It sits in `.poph-topbar__acoes` (before the shortcuts button) and at the top of
-`.poph-login__bloco`, so the language can be changed before and after login. Every screen
+`LanguageSwitcher` (`console/src/components/LanguageSwitcher.tsx`) renders the `PT | EN` pair and
+calls `setLocale`. It sits in `.poph-topbar__actions` (before the shortcuts button) and at the top of
+`.poph-login__block`, so the language can be changed before and after login. Every screen
 subscribes through `useI18n()` (or `useLocale()`), so the switch re-renders the tree in place:
 nothing is reloaded and the route does not change.
 

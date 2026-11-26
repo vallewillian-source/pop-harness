@@ -1,0 +1,47 @@
+
+.poph-products__eyebrow {
+    margin: 0 0 4px;
+    color: var(--pop-text-muted);
+    font-size: var(--pop-font-size-body-sm, 12px);
+}
+
+.poph-products__section {
+    padding-bottom: var(--pop-spacing-2xl, 22px);
+}
+
+.poph-products__header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--pop-spacing-lg, 12px);
+}
+
+.poph-products__filters {
+    display: flex;
+    align-items: flex-end;
+    flex-wrap: wrap;
+    gap: var(--pop-spacing-md, 10px);
+    min-width: 0;
+}
+
+.poph-products__table .sofa-table {
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    overflow: visible;
+}
+
+.poph-products__table .sofa-table__th {
+    height: 36px;
+}
+
+.poph-products__table .sofa-table__td {
+    height: 56px;
+    color: var(--pop-text-secondary);
+    font-size: 13px;
+}
+
+.poph-products__table .sofa-table__table {
+    border-top: 1px solid var(--pop-line);
+}

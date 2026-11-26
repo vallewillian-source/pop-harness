@@ -1,0 +1,21 @@
+
+.poph-shell {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+    background: var(--pop-bg);
+}
+
+.poph-shell__body {
+    display: flex;
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+.poph-shell__body > .sofa-admin-shell {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 100%;
+}

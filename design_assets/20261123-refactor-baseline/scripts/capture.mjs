@@ -64,7 +64,7 @@ async function waitScreenReady(page, contentSelector) {
     await page.waitForFunction(() => {
         const busy = document.querySelectorAll('[aria-busy="true"]');
         const spinners = document.querySelectorAll('.sofa-spinner');
-        const skeletons = document.querySelectorAll('.sofa-skeleton, .poph-orgs__esqueleto, .poph-conhecimento__esqueleto-linha');
+        const skeletons = document.querySelectorAll('.sofa-skeleton, .poph-orgs__skeleton, .poph-knowledge__skeleton-line');
         return busy.length === 0 && spinners.length === 0 && skeletons.length === 0;
     });
     await page.evaluate(() => {
@@ -118,7 +118,7 @@ async function captureScreens(targetDir) {
 
     await page.goto(`${BASE_URL}/login`);
     await page.waitForSelector("input#poph-token", { state: "visible" });
-    await page.waitForSelector(".poph-fato__valor--mono", { state: "visible" });
+    await page.waitForSelector(".poph-fact__value--mono", { state: "visible" });
     await waitScreenReady(page, "button:has-text(\"Entrar\")");
     await page.screenshot({ path: path.join(targetDir, "01-login.png"), animations: "disabled" });
     fs.writeFileSync(path.join(targetDir, "01-login.html"), await page.content());
@@ -128,9 +128,9 @@ async function captureScreens(targetDir) {
     await page.click("button:has-text(\"Entrar\")");
     await page.waitForURL("**/orgs");
     await page.waitForSelector("tr:has-text(\"Acme Demonstração\")", { state: "visible" });
-    await page.waitForSelector(".poph-orgs__telemetria", { state: "visible" });
+    await page.waitForSelector(".poph-orgs__telemetry", { state: "visible" });
     await page.waitForSelector("button[aria-label=\"Atualizar\"]:not([aria-busy=\"true\"])", { state: "visible" });
-    await waitScreenReady(page, ".poph-orgs__tabela");
+    await waitScreenReady(page, ".poph-orgs__table");
     await page.screenshot({ path: path.join(targetDir, "02-orgs-lista.png"), animations: "disabled" });
     fs.writeFileSync(path.join(targetDir, "02-orgs-lista.html"), await page.content());
     console.log("✓ Capturada tela 2: Orgs - lista (02-orgs-lista.png)");
@@ -151,67 +151,67 @@ async function captureScreens(targetDir) {
 
     const orgRow = page.locator("tr", { hasText: "Acme Demonstração" }).first();
     await orgRow.click();
-    await page.waitForSelector(".poph-inspetor", { state: "visible" });
-    await page.waitForSelector(".poph-inspetor h2:has-text(\"Acme Demonstração\")", { state: "visible" });
-    await waitScreenReady(page, ".poph-inspetor__secao");
+    await page.waitForSelector(".poph-inspector", { state: "visible" });
+    await page.waitForSelector(".poph-inspector h2:has-text(\"Acme Demonstração\")", { state: "visible" });
+    await waitScreenReady(page, ".poph-inspector__section");
     await page.screenshot({ path: path.join(targetDir, "03-orgs-inspetor.png"), animations: "disabled" });
     fs.writeFileSync(path.join(targetDir, "03-orgs-inspetor.html"), await page.content());
     console.log("✓ Capturada tela 3: Orgs - inspetor (03-orgs-inspetor.png)");
 
     await page.goto(`${BASE_URL}/orgs/${ids.orgId}/agents/${ids.agentId}/instructions`);
-    await page.waitForSelector(".poph-rail__agente:has-text(\"Agente: Bia Atendente\")", { state: "visible" });
-    await page.waitForSelector(".poph-topbar__estado--agente:has-text(\"Modelo: gemini-3.8-flash-tiered\")", { state: "visible" });
-    await page.waitForSelector("h1.poph-pagina__titulo:has-text(\"Bia Atendente\")", { state: "visible" });
-    await page.waitForSelector(".poph-agente__identidade", { state: "visible" });
+    await page.waitForSelector(".poph-rail__agent:has-text(\"Agente: Bia Atendente\")", { state: "visible" });
+    await page.waitForSelector(".poph-topbar__state--agent:has-text(\"Modelo: gemini-3.8-flash-tiered\")", { state: "visible" });
+    await page.waitForSelector("h1.poph-page__title:has-text(\"Bia Atendente\")", { state: "visible" });
+    await page.waitForSelector(".poph-agent__identity", { state: "visible" });
     await page.waitForSelector("textarea", { state: "visible" });
-    await waitScreenReady(page, ".poph-instrucoes, .poph-agente__identidade");
+    await waitScreenReady(page, ".poph-instructions, .poph-agent__identity");
     await page.screenshot({ path: path.join(targetDir, "04-agente-instrucoes.png"), animations: "disabled" });
     fs.writeFileSync(path.join(targetDir, "04-agente-instrucoes.html"), await page.content());
     console.log("✓ Capturada tela 4: Agente - Instruções (04-agente-instrucoes.png)");
 
     await page.goto(`${BASE_URL}/orgs/${ids.orgId}/agents/${ids.agentId}/knowledge-base`);
-    await page.waitForSelector(".poph-rail__agente:has-text(\"Agente: Bia Atendente\")", { state: "visible" });
-    await page.waitForSelector(".poph-topbar__estado--agente:has-text(\"Modelo: gemini-3.8-flash-tiered\")", { state: "visible" });
-    await page.waitForSelector("h1.poph-pagina__titulo:has-text(\"Bia Atendente\")", { state: "visible" });
-    await page.waitForSelector(".poph-conhecimento", { state: "visible" });
-    await page.waitForSelector("h2.poph-secao__titulo:has-text(\"Índice de busca do agente\")", { state: "visible" });
-    await page.waitForSelector(".poph-conhecimento__grupos", { state: "visible" });
-    await waitScreenReady(page, ".poph-conhecimento__grupos");
+    await page.waitForSelector(".poph-rail__agent:has-text(\"Agente: Bia Atendente\")", { state: "visible" });
+    await page.waitForSelector(".poph-topbar__state--agent:has-text(\"Modelo: gemini-3.8-flash-tiered\")", { state: "visible" });
+    await page.waitForSelector("h1.poph-page__title:has-text(\"Bia Atendente\")", { state: "visible" });
+    await page.waitForSelector(".poph-knowledge", { state: "visible" });
+    await page.waitForSelector("h2.poph-section__title:has-text(\"Índice de busca do agente\")", { state: "visible" });
+    await page.waitForSelector(".poph-knowledge__groups", { state: "visible" });
+    await waitScreenReady(page, ".poph-knowledge__groups");
     await page.screenshot({ path: path.join(targetDir, "05-agente-base-conhecimento.png"), animations: "disabled" });
     fs.writeFileSync(path.join(targetDir, "05-agente-base-conhecimento.html"), await page.content());
     console.log("✓ Capturada tela 5: Agente - Base de conhecimento (05-agente-base-conhecimento.png)");
 
     await page.goto(`${BASE_URL}/orgs/${ids.orgId}/agents/${ids.agentId}/test-chat`);
-    await page.waitForSelector(".poph-rail__agente:has-text(\"Agente: Bia Atendente\")", { state: "visible" });
-    await page.waitForSelector(".poph-topbar__estado--agente:has-text(\"Modelo: gemini-3.8-flash-tiered\")", { state: "visible" });
-    await page.waitForSelector("h1.poph-pagina__titulo:has-text(\"Bia Atendente\")", { state: "visible" });
-    await page.waitForSelector(".poph-chat-teste", { state: "visible" });
-    await page.waitForSelector(".poph-chat-teste__item", { state: "visible" });
-    await page.locator(".poph-chat-teste__item").first().click();
-    await page.waitForSelector(".poph-chat-teste__balao", { state: "visible" });
+    await page.waitForSelector(".poph-rail__agent:has-text(\"Agente: Bia Atendente\")", { state: "visible" });
+    await page.waitForSelector(".poph-topbar__state--agent:has-text(\"Modelo: gemini-3.8-flash-tiered\")", { state: "visible" });
+    await page.waitForSelector("h1.poph-page__title:has-text(\"Bia Atendente\")", { state: "visible" });
+    await page.waitForSelector(".poph-chat-test", { state: "visible" });
+    await page.waitForSelector(".poph-chat-test__item", { state: "visible" });
+    await page.locator(".poph-chat-test__item").first().click();
+    await page.waitForSelector(".poph-chat-test__bubble", { state: "visible" });
     await page.waitForSelector("textarea#chat-teste-texto", { state: "visible" });
-    await waitScreenReady(page, ".poph-chat-teste__balao");
+    await waitScreenReady(page, ".poph-chat-test__bubble");
     await page.screenshot({ path: path.join(targetDir, "06-chat-teste.png"), animations: "disabled" });
     fs.writeFileSync(path.join(targetDir, "06-chat-teste.html"), await page.content());
     console.log("✓ Capturada tela 6: Chat de teste (06-chat-teste.png)");
 
     await page.goto(`${BASE_URL}/orgs/${ids.orgId}/operacao`);
-    await page.waitForSelector(".poph-operacao", { state: "visible" });
+    await page.waitForSelector(".poph-operation", { state: "visible" });
     await page.waitForSelector("h1:has-text(\"Saúde da instância\")", { state: "visible" });
-    await page.waitForSelector(".poph-operacao__atualizacao", { state: "visible" });
-    await waitScreenReady(page, ".poph-operacao");
+    await page.waitForSelector(".poph-operation__update", { state: "visible" });
+    await waitScreenReady(page, ".poph-operation");
     await page.screenshot({ path: path.join(targetDir, "07-operacao.png"), animations: "disabled" });
     fs.writeFileSync(path.join(targetDir, "07-operacao.html"), await page.content());
     console.log("✓ Capturada tela 7: Operação (07-operacao.png)");
 
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.goto(`${BASE_URL}/orgs/${ids.orgId}/agents/${ids.agentId}/instructions`);
-    await page.waitForSelector(".poph-rail__agente:has-text(\"Agente: Bia Atendente\")", { state: "visible" });
-    await page.waitForSelector(".poph-topbar__estado--agente:has-text(\"Modelo: gemini-3.8-flash-tiered\")", { state: "visible" });
-    await page.waitForSelector("h1.poph-pagina__titulo:has-text(\"Bia Atendente\")", { state: "visible" });
-    await page.waitForSelector(".poph-agente__identidade", { state: "visible" });
+    await page.waitForSelector(".poph-rail__agent:has-text(\"Agente: Bia Atendente\")", { state: "visible" });
+    await page.waitForSelector(".poph-topbar__state--agent:has-text(\"Modelo: gemini-3.8-flash-tiered\")", { state: "visible" });
+    await page.waitForSelector("h1.poph-page__title:has-text(\"Bia Atendente\")", { state: "visible" });
+    await page.waitForSelector(".poph-agent__identity", { state: "visible" });
     await page.waitForSelector("textarea", { state: "visible" });
-    await waitScreenReady(page, ".poph-agente__identidade");
+    await waitScreenReady(page, ".poph-agent__identity");
     await page.screenshot({ path: path.join(targetDir, "08-agente-instrucoes-1280.png"), animations: "disabled" });
     fs.writeFileSync(path.join(targetDir, "08-agente-instrucoes-1280.html"), await page.content());
     console.log("✓ Capturada tela 8: Agente - Instruções 1280px (08-agente-instrucoes-1280.png)");

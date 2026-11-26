@@ -166,8 +166,8 @@ describe("mounted shell", () => {
         const { default: userEvent } = await import("@testing-library/user-event");
         const { MemoryRouter } = await import("react-router-dom");
         const { SessionProvider } = await import("../session/Session");
-        const { "GuardaAlteracoesProvider": ChangeGuardProvider } = await import("../componentes/GuardaAlteracoes");
-        const { Shell } = await import("../componentes/Shell");
+        const { "GuardChangesProvider": ChangeGuardProvider } = await import("../components/GuardChanges");
+        const { Shell } = await import("../components/Shell");
         const { setLocale } = await import("./index");
 
         const user = userEvent.setup();

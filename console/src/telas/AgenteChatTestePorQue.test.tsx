@@ -10,9 +10,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { GuardaAlteracoesProvider } from "../componentes/GuardaAlteracoes";
+import { GuardChangesProvider } from "../components/GuardChanges";
 import { setLocale } from "../i18n";
-import { AgenteChatTeste } from "./AgenteChatTeste";
+import { AgentChatTest } from "./AgenteChatTeste";
 
 const ORG = "org_1";
 const AGENTE = "ag_1";
@@ -203,11 +203,11 @@ function instalarServidor() {
 function montar() {
     return render(
         <MemoryRouter initialEntries={[`/orgs/${ORG}/agents/${AGENTE}/test-chat`]}>
-            <GuardaAlteracoesProvider>
+            <GuardChangesProvider>
                 <Routes>
-                    <Route path="/orgs/:orgId/agents/:agentId/test-chat" element={<AgenteChatTeste />} />
+                    <Route path="/orgs/:orgId/agents/:agentId/test-chat" element={<AgentChatTest />} />
                 </Routes>
-            </GuardaAlteracoesProvider>
+            </GuardChangesProvider>
         </MemoryRouter>,
     );
 }

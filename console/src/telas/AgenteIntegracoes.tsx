@@ -49,23 +49,23 @@ import {
     type Integracao,
 } from "../api/integrations";
 import { getOrg } from "../api/orgs";
-import { AbasDoAgente, CabecalhoDoAgente } from "../componentes/AbasDoAgente";
-import { DialogoExclusao } from "../componentes/DialogoExclusao";
-import { useGuardaDeAlteracoes } from "../componentes/GuardaAlteracoes";
-import { ModalIntegracao } from "../componentes/ModalIntegracao";
-import { PainelWhatsApp } from "../componentes/PainelWhatsApp";
+import { TabsAgent, HeaderAgent } from "../components/TabsAgent";
+import { DialogExclusion } from "../components/DialogExclusion";
+import { useGuardChanges } from "../components/GuardChanges";
+import { ModalIntegration } from "../components/ModalIntegration";
+import { PanelWhatsApp } from "../components/PanelWhatsApp";
 import { translate, useI18n } from "../i18n";
-import "../estilos/integracoes.css";
+import "../styles/integrations.css";
 
 /** Classe do ponto de status (`.poph-status` de `relayout.css`) para a situação da integração. */
 function classeDaSituacao(situacao: string): string {
     switch (situacao) {
         case "active":
-            return "poph-status--ativo";
+            return "poph-status--active";
         case "inactive":
-            return "poph-status--atencao";
+            return "poph-status--attention";
         default:
-            return "poph-status--inativo";
+            return "poph-status--inactive";
     }
 }
 
@@ -85,20 +85,20 @@ function rotuloDaSituacao(situacao: string): string {
 function classeDaConexao(estado: string): string {
     switch (estado) {
         case "connected":
-            return "poph-status--ativo";
+            return "poph-status--active";
         case "awaiting_scan":
-            return "poph-status--atencao";
+            return "poph-status--attention";
         case "disconnected":
-            return "poph-status--erro";
+            return "poph-status--error";
         default:
-            return "poph-status--inativo";
+            return "poph-status--inactive";
     }
 }
 
-export function AgenteIntegracoes() {
+export function AgentIntegrations() {
     const { translate: t } = useI18n();
     const { orgId = "", agentId = "" } = useParams();
-    const guarda = useGuardaDeAlteracoes();
+    const guarda = useGuardChanges();
 
     const [agente, setAgente] = useState<Agente | null>(null);
     const [nomeDaOrg, setNomeDaOrg] = useState<string | null>(null);
@@ -164,7 +164,7 @@ export function AgenteIntegracoes() {
 
     if (!agente && erroDeCarga) {
         return (
-            <div className="poph-pagina">
+            <div className="poph-page">
                 <SofaErrorState
                     title={t("integrations.loadAgentErrorTitle")}
                     description={t("integrations.loadAgentErrorDescription")}
@@ -186,11 +186,11 @@ export function AgenteIntegracoes() {
 
     if (!agente) {
         return (
-            <div className="poph-pagina" aria-busy="true">
-                <div className="poph-pagina__topo">
+            <div className="poph-page" aria-busy="true">
+                <div className="poph-page__top">
                     <div>
                         <SofaSkeleton width={260} height={26} />
-                        <div className="poph-integracoes__esqueleto-linha">
+                        <div className="poph-integrations__skeleton-line">
                             <SofaSkeleton width={360} height={12} />
                         </div>
                     </div>
@@ -262,18 +262,18 @@ export function AgenteIntegracoes() {
         corpo = (
             <>
             <div
-                className="poph-tabela poph-integracoes__tabela"
+                className="poph-table poph-integrations__table"
                 role="table"
                 aria-label={t("integrations.tableAriaLabel")}
             >
-                <div className="poph-tabela__cabecalho" role="row">
+                <div className="poph-table__header" role="row">
                     <span role="columnheader">{t("integrations.colType")}</span>
                     <span role="columnheader">{t("integrations.colStatus")}</span>
                     <span role="columnheader">{t("integrations.colConnection")}</span>
                     <span role="columnheader">{t("integrations.colSecret")}</span>
                     <span role="columnheader">{t("integrations.colConfig")}</span>
                     <span role="columnheader">{t("integrations.colVersion")}</span>
-                    <span role="columnheader" className="poph-tabela__celula--acoes">
+                    <span role="columnheader" className="poph-table__cell--actions">
                         {t("integrations.colActions")}
                     </span>
                 </div>
@@ -284,8 +284,8 @@ export function AgenteIntegracoes() {
                             ? Object.keys(configuracao).length
                             : 0;
                     const classes = [
-                        "poph-tabela__linha",
-                        integracao.status !== "active" ? "poph-tabela__linha--atenuada" : "",
+                        "poph-table__line",
+                        integracao.status !== "active" ? "poph-table__line--dimmed" : "",
                     ]
                         .filter(Boolean)
                         .join(" ");
@@ -295,13 +295,13 @@ export function AgenteIntegracoes() {
                     });
                     return (
                         <div key={integracao.id} role="row" className={classes}>
-                            <div role="cell" className="poph-integracoes__identidade">
-                                <span className="poph-integracoes__tipo">{integracao.kind}</span>
-                                <span className="poph-mono-mudo">{integracao.id}</span>
+                            <div role="cell" className="poph-integrations__identity">
+                                <span className="poph-integrations__kind">{integracao.kind}</span>
+                                <span className="poph-mono-muted">{integracao.id}</span>
                             </div>
                             <div role="cell">
                                 <span className={`poph-status ${classeDaSituacao(integracao.status)}`}>
-                                    <span className="poph-status__ponto" aria-hidden="true" />
+                                    <span className="poph-status__point" aria-hidden="true" />
                                     {rotuloDaSituacao(integracao.status)}
                                 </span>
                             </div>
@@ -309,28 +309,28 @@ export function AgenteIntegracoes() {
                                 <span
                                     className={`poph-status ${classeDaConexao(integracao.connection_state)}`}
                                 >
-                                    <span className="poph-status__ponto" aria-hidden="true" />
+                                    <span className="poph-status__point" aria-hidden="true" />
                                     {connectionLabel(integracao.connection_state)}
                                 </span>
                             </div>
-                            <div role="cell" className="poph-tabela__celula--mono">
+                            <div role="cell" className="poph-table__cell--mono">
                                 {integracao.tem_segredo
                                     ? t("integrations.secretSavedCell")
                                     : t("integrations.secretNoneCell")}
                             </div>
-                            <div role="cell" className="poph-tabela__celula--mono">
+                            <div role="cell" className="poph-table__cell--mono">
                                 {chaves === 0
                                     ? t("integrations.configEmptyCell")
                                     : chaves === 1
                                       ? t("integrations.configOneField")
                                       : t("integrations.configManyFields", { count: chaves })}
                             </div>
-                            <div role="cell" className="poph-tabela__celula--mono">
+                            <div role="cell" className="poph-table__cell--mono">
                                 v{integracao.version}
                             </div>
                             <div
                                 role="cell"
-                                className="poph-tabela__celula--acoes poph-integracoes__acoes"
+                                className="poph-table__cell--actions poph-integrations__actions"
                             >
                                 <SofaMenu
                                     label={nomeDoMenu}
@@ -347,7 +347,7 @@ export function AgenteIntegracoes() {
                     );
                 })}
             </div>
-            <p className="poph-tabela__rodape">
+            <p className="poph-table__footer">
                 {integracoes.length === 1
                     ? t("integrations.footerOne")
                     : t("integrations.footerMany", { count: integracoes.length })}
@@ -358,8 +358,8 @@ export function AgenteIntegracoes() {
 
     return (
         <>
-            <div className="poph-pagina poph-integracoes">
-                <CabecalhoDoAgente
+            <div className="poph-page poph-integrations">
+                <HeaderAgent
                     org={orgId}
                     nome={agente.name}
                     slug={agente.slug}
@@ -390,10 +390,10 @@ export function AgenteIntegracoes() {
                     }
                 />
 
-                <AbasDoAgente org={orgId} agente={agentId} ativa="integrations" nome={agente.name} model={agente.model ?? null} />
+                <TabsAgent org={orgId} agente={agentId} active="integrations" nome={agente.name} model={agente.model ?? null} />
 
                 {aviso && (
-                    <p className="poph-mono-mudo" style={{ margin: 0 }} role="status">
+                    <p className="poph-mono-muted" style={{ margin: 0 }} role="status">
                         {aviso}
                     </p>
                 )}
@@ -402,13 +402,13 @@ export function AgenteIntegracoes() {
                     {t("integrations.pluginFormBannerBody", { whatsapp: KIND_WHATSAPP })}
                 </SofaBanner>
 
-                <section className="poph-secao">
-                    <div className="poph-integracoes__cabecalho-secao">
-                        <div className="poph-integracoes__titulo-bloco">
-                            <h2 className="poph-secao__titulo">
+                <section className="poph-section">
+                    <div className="poph-integrations__header-section">
+                        <div className="poph-integrations__title-block">
+                            <h2 className="poph-section__title">
                                 {t("integrations.sectionIntegrationsTitle")}
                             </h2>
-                            <p className="poph-integracoes__ajuda">
+                            <p className="poph-integrations__help">
                                 {t("integrations.sectionIntegrationsHelp")}
                             </p>
                         </div>
@@ -416,17 +416,17 @@ export function AgenteIntegracoes() {
                     {corpo}
                 </section>
 
-                <section className="poph-secao">
-                    <div className="poph-integracoes__cabecalho-secao">
-                        <div className="poph-integracoes__titulo-bloco">
-                            <h2 className="poph-secao__titulo">
+                <section className="poph-section">
+                    <div className="poph-integrations__header-section">
+                        <div className="poph-integrations__title-block">
+                            <h2 className="poph-section__title">
                                 {t("integrations.sectionWhatsappTitle")}
                             </h2>
-                            <p className="poph-integracoes__ajuda">
+                            <p className="poph-integrations__help">
                                 {t("integrations.sectionWhatsappHelp")}
                             </p>
                         </div>
-                        <div className="poph-integracoes__acoes-secao">
+                        <div className="poph-integrations__actions-section">
                             <SofaButton
                                 variant="subtle"
                                 size="sm"
@@ -441,54 +441,54 @@ export function AgenteIntegracoes() {
                     {carregando && doWhatsapp.length === 0 ? (
                         <SofaSkeleton lines={2} />
                     ) : doWhatsapp.length === 0 ? (
-                        <p className="poph-mono-mudo" style={{ margin: 0 }}>
+                        <p className="poph-mono-muted" style={{ margin: 0 }}>
                             {t("integrations.whatsappEmpty", { whatsapp: KIND_WHATSAPP })}
                         </p>
                     ) : (
-                        <div className="poph-integracoes__paineis">
+                        <div className="poph-integrations__panels">
                             {doWhatsapp.map((integracao) => (
-                                <PainelWhatsApp
+                                <PanelWhatsApp
                                     key={integracao.id}
                                     org={orgId}
                                     agente={agentId}
                                     integracao={integracao}
-                                    aoAtualizarIntegracao={atualizarIntegracao}
+                                    onUpdateIntegration={atualizarIntegracao}
                                 />
                             ))}
                         </div>
                     )}
                 </section>
 
-                <section className="poph-secao">
-                    <div className="poph-integracoes__cabecalho-secao">
-                        <div className="poph-integracoes__titulo-bloco">
-                            <h2 className="poph-secao__titulo">
+                <section className="poph-section">
+                    <div className="poph-integrations__header-section">
+                        <div className="poph-integrations__title-block">
+                            <h2 className="poph-section__title">
                                 {t("integrations.sectionSecretsTitle")}
                             </h2>
-                            <p className="poph-integracoes__ajuda">
+                            <p className="poph-integrations__help">
                                 {t("integrations.sectionSecretsHelp")}
                             </p>
                         </div>
                     </div>
-                    <div className="poph-integracoes__segredos">
+                    <div className="poph-integrations__secrets">
                         <IconKey aria-hidden="true" />
-                        <span className="poph-mono-mudo">
+                        <span className="poph-mono-muted">
                             {t("integrations.secretsFooterNote")}
                         </span>
                     </div>
                 </section>
             </div>
 
-            <ModalIntegracao
+            <ModalIntegration
                 org={orgId}
                 agente={agentId}
                 aberto={modalAberto}
-                aoFechar={() => {
+                onClose={() => {
                     setModalAberto(false);
                     setEmEdicao(null);
                 }}
                 integracao={emEdicao}
-                aoSalvar={(salva) => {
+                onSave={(salva) => {
                     setIntegracoes((atuais) => {
                         const existe = atuais.some((item) => item.id === salva.id);
                         return existe
@@ -506,20 +506,20 @@ export function AgenteIntegracoes() {
                 }}
             />
 
-            <DialogoExclusao
+            <DialogExclusion
                 aberto={paraExcluir !== null}
-                aoFechar={() => setParaExcluir(null)}
+                onClose={() => setParaExcluir(null)}
                 titulo={t("integrations.deleteModalTitle")}
                 descricao={
                     paraExcluir
                         ? t("integrations.deleteModalDescription", { kind: paraExcluir.kind })
                         : ""
                 }
-                recurso={paraExcluir?.kind ?? ""}
-                rotuloRecurso={t("integrations.deleteModalResourceLabel")}
-                rotuloConfirmar={t("integrations.deleteModalConfirmLabel")}
+                resource={paraExcluir?.kind ?? ""}
+                labelResource={t("integrations.deleteModalResourceLabel")}
+                labelConfirm={t("integrations.deleteModalConfirmLabel")}
                 consequencia={
-                    <span className="poph-mono-mudo">
+                    <span className="poph-mono-muted">
                         {t("integrations.deleteModalConsequence", {
                             id: paraExcluir?.id ?? "",
                         })}

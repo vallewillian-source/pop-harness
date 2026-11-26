@@ -11,9 +11,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { GuardaAlteracoesProvider } from "../componentes/GuardaAlteracoes";
+import { GuardChangesProvider } from "../components/GuardChanges";
 import { FakeServer, apiError } from "../testing/server";
-import { AgenteRoteamento } from "./AgenteRoteamento";
+import { AgentRouting } from "./AgenteRoteamento";
 import { setLocale } from "../i18n";
 
 const ORG = "org_1";
@@ -47,13 +47,13 @@ function agenteJson(parcial: Record<string, unknown> = {}) {
 function montar() {
     return render(
         <MemoryRouter initialEntries={[`/orgs/${ORG}/agents/${AGENTE}/routing`]}>
-            <GuardaAlteracoesProvider>
+            <GuardChangesProvider>
                 <Routes>
-                    <Route path="/orgs/:orgId/agents/:agentId/routing" element={<AgenteRoteamento />} />
+                    <Route path="/orgs/:orgId/agents/:agentId/routing" element={<AgentRouting />} />
                     <Route path="/orgs/:orgId/structure" element={<div>Tela de estrutura</div>} />
                     <Route path="/orgs/:orgId/agents" element={<div>Tela de agentes</div>} />
                 </Routes>
-            </GuardaAlteracoesProvider>
+            </GuardChangesProvider>
         </MemoryRouter>,
     );
 }
@@ -254,22 +254,22 @@ describe("Aba Roteamento", () => {
         const { container } = montar();
         await screen.findByLabelText("Departamento padrão");
 
-        const barra = container.querySelector(".poph-roteamento__barra");
+        const barra = container.querySelector(".poph-routing__bar");
         expect(barra).not.toBeNull();
         // A pílula da biblioteca não é mais usada nesta barra.
         expect(barra!.querySelector(".sofa-status-indicator")).toBeNull();
 
         const salvo = barra!.querySelector(".poph-status");
-        expect(salvo).toHaveClass("poph-status--inativo");
-        expect(salvo!.querySelector(".poph-status__ponto")).not.toBeNull();
+        expect(salvo).toHaveClass("poph-status--inactive");
+        expect(salvo!.querySelector(".poph-status__point")).not.toBeNull();
         expect(salvo).toHaveTextContent("Salvo (versão 1)");
 
         const usuario = userEvent.setup();
         await usuario.selectOptions(screen.getByLabelText("Departamento padrão"), "dep_2");
 
-        const sujo = container.querySelector(".poph-roteamento__barra .poph-status");
-        expect(sujo).toHaveClass("poph-status--atencao");
-        expect(sujo!.querySelector(".poph-status__ponto")).not.toBeNull();
+        const sujo = container.querySelector(".poph-routing__bar .poph-status");
+        expect(sujo).toHaveClass("poph-status--attention");
+        expect(sujo!.querySelector(".poph-status__point")).not.toBeNull();
         expect(sujo).toHaveTextContent("Alterações não salvas");
     });
 });

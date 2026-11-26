@@ -163,15 +163,15 @@ repository (see `ROADMAP.md`).
   `operacao.ts`), the types are written by hand in that layer. Do not touch the generated schema.
 - `src/telas/`: one screen per file ("telas" = screens). Each has its component test next to it
   (`Tela.test.tsx`).
-- `src/componentes/`: dialogs, modals, side menu, top bar. `navegacao.ts` has the menu list.
-- `src/estilos/`: CSS per screen.
+- `src/components/`: dialogs, modals, side menu, top bar. `navigation.ts` has the menu list.
+- `src/styles/`: CSS per screen.
 - Required states: loading, empty and error. An action button is disabled while the request runs, to
   prevent double submission.
 - Token: kept only in memory and in `sessionStorage`. `401` ends the session. `403` does not: it shows the
   call's error.
 - Visual: `@sofacoding/sofa-ui`. Background `#151719`, which is what applies to the Console according to
   `console/UX_SPEC.md`. Avoid a card inside a card: it is the maintainer's preference for this Console.
-- Adding a screen: an entry in `navegacao.ts`, a route in `App.tsx`, and a component test next to it.
+- Adding a screen: an entry in `navigation.ts`, a route in `App.tsx`, and a component test next to it.
 
 ## Tests and CI
 

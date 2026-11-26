@@ -15,7 +15,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { GuardaAlteracoesProvider } from "../componentes/GuardaAlteracoes";
+import { GuardChangesProvider } from "../components/GuardChanges";
 import { I18nProvider, setLocale } from "../i18n";
 
 afterEach(() => {
@@ -23,7 +23,7 @@ afterEach(() => {
 });
 import { waitForModalFocus } from "../testing/modal";
 import { FakeServer, apiError } from "../testing/server";
-import { AgenteIntegracoes } from "./AgenteIntegracoes";
+import { AgentIntegrations } from "./AgenteIntegracoes";
 
 const ORG = "org_1";
 const AGENTE = "ag_1";
@@ -134,15 +134,15 @@ function montar() {
     return render(
         <I18nProvider>
             <MemoryRouter initialEntries={[`/orgs/${ORG}/agents/${AGENTE}/integrations`]}>
-                <GuardaAlteracoesProvider>
+                <GuardChangesProvider>
                     <Routes>
                         <Route
                             path="/orgs/:orgId/agents/:agentId/integrations"
-                            element={<AgenteIntegracoes />}
+                            element={<AgentIntegrations />}
                         />
                         <Route path="/orgs/:orgId/agents" element={<div>Tela de agentes</div>} />
                     </Routes>
-                </GuardaAlteracoesProvider>
+                </GuardChangesProvider>
             </MemoryRouter>
         </I18nProvider>,
     );

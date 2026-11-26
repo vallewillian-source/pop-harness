@@ -1,23 +1,23 @@
 
 import { useEffect } from "react";
 import { Navigate, Outlet, Route, Routes, useLocation, useParams } from "react-router-dom";
-import { GuardaAlteracoesProvider } from "./componentes/GuardaAlteracoes";
-import { Shell } from "./componentes/Shell";
+import { GuardChangesProvider } from "./components/GuardChanges";
+import { Shell } from "./components/Shell";
 import { resolveDefaultOrgPath, useSession, writeLastOrgId } from "./session/Session";
-import { AgenteConhecimento } from "./telas/AgenteConhecimento";
-import { AgenteArquivos } from "./telas/AgenteArquivos";
-import { AgenteChatTeste } from "./telas/AgenteChatTeste";
-import { AgenteInstrucoes } from "./telas/AgenteInstrucoes";
-import { AgenteModeloJev } from "./telas/AgenteModeloJev";
-import { AgenteIntegracoes } from "./telas/AgenteIntegracoes";
-import { AgenteRoteamento } from "./telas/AgenteRoteamento";
-import { Agentes } from "./telas/Agentes";
+import { AgentKnowledge } from "./telas/AgenteConhecimento";
+import { AgentFiles } from "./telas/AgenteArquivos";
+import { AgentChatTest } from "./telas/AgenteChatTeste";
+import { AgentInstructions } from "./telas/AgenteInstrucoes";
+import { AgentModelJev } from "./telas/AgenteModeloJev";
+import { AgentIntegrations } from "./telas/AgenteIntegracoes";
+import { AgentRouting } from "./telas/AgenteRoteamento";
+import { Agents } from "./telas/Agentes";
 import { Login } from "./telas/Login";
-import { Estrutura } from "./telas/Estrutura";
-import { OrgPainel } from "./telas/OrgPainel";
+import { Structure } from "./telas/Estrutura";
+import { OrgPanel } from "./telas/OrgPainel";
 import { Orgs } from "./telas/Orgs";
-import { Produtos } from "./telas/Produtos";
-import { Operacao } from "./telas/Operacao";
+import { Products } from "./telas/Produtos";
+import { Operation } from "./telas/Operacao";
 import { Matrix } from "./telas/Matrix";
 
 function RememberLastOrg() {
@@ -37,12 +37,12 @@ function Protegido() {
         return <Navigate to="/login" replace />;
     }
     return (
-        <GuardaAlteracoesProvider>
+        <GuardChangesProvider>
             <RememberLastOrg />
             <Shell>
                 <Outlet />
             </Shell>
-        </GuardaAlteracoesProvider>
+        </GuardChangesProvider>
     );
 }
 
@@ -68,37 +68,37 @@ export function App() {
             <Route element={<Protegido />}>
                 <Route path="/" element={<SessionHome />} />
                 <Route path="/orgs" element={<Orgs />} />
-                <Route path="/orgs/:orgId" element={<OrgPainel />} />
-                <Route path="/orgs/:orgId/structure" element={<Estrutura />} />
-                <Route path="/orgs/:orgId/products" element={<Produtos />} />
-                <Route path="/orgs/:orgId/operacao" element={<Operacao />} />
+                <Route path="/orgs/:orgId" element={<OrgPanel />} />
+                <Route path="/orgs/:orgId/structure" element={<Structure />} />
+                <Route path="/orgs/:orgId/products" element={<Products />} />
+                <Route path="/orgs/:orgId/operacao" element={<Operation />} />
                 <Route path="/orgs/:orgId/matrix" element={<Matrix />} />
-                <Route path="/orgs/:orgId/agents" element={<Agentes />} />
+                <Route path="/orgs/:orgId/agents" element={<Agents />} />
                 <Route path="/orgs/:orgId/agents/:agentId" element={<AgentWithoutTab />} />
                 <Route
                     path="/orgs/:orgId/agents/:agentId/instructions"
-                    element={<AgenteInstrucoes />}
+                    element={<AgentInstructions />}
                 />
                 <Route
                     path="/orgs/:orgId/agents/:agentId/knowledge-base"
-                    element={<AgenteConhecimento />}
+                    element={<AgentKnowledge />}
                 />
-                <Route path="/orgs/:orgId/agents/:agentId/files" element={<AgenteArquivos />} />
+                <Route path="/orgs/:orgId/agents/:agentId/files" element={<AgentFiles />} />
                 <Route
                     path="/orgs/:orgId/agents/:agentId/routing"
-                    element={<AgenteRoteamento />}
+                    element={<AgentRouting />}
                 />
                 <Route
                     path="/orgs/:orgId/agents/:agentId/integrations"
-                    element={<AgenteIntegracoes />}
+                    element={<AgentIntegrations />}
                 />
                 <Route
                     path="/orgs/:orgId/agents/:agentId/model-jev"
-                    element={<AgenteModeloJev />}
+                    element={<AgentModelJev />}
                 />
                 <Route
                     path="/orgs/:orgId/agents/:agentId/test-chat"
-                    element={<AgenteChatTeste />}
+                    element={<AgentChatTest />}
                 />
                 <Route path="*" element={<SessionHome />} />
             </Route>

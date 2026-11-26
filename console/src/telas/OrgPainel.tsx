@@ -21,13 +21,13 @@ import {
 } from "@sofacoding/sofa-ui";
 import { request, type Org } from "../api/client";
 import { deleteOrg } from "../api/orgs";
-import { DialogoExclusao } from "../componentes/DialogoExclusao";
-import { ModalOrg } from "../componentes/ModalOrg";
+import { DialogExclusion } from "../components/DialogExclusion";
+import { ModalOrg } from "../components/ModalOrg";
 import { useSession } from "../session/Session";
 import { translate, useI18n } from "../i18n";
 import type { TranslationKey } from "../i18n/catalog";
 import { formatDateTime } from "../i18n/format";
-import "../estilos/orgpainel.css";
+import "../styles/org-panel.css";
 
 function rotuloDaSituacao(situacao: string): string {
     switch (situacao) {
@@ -43,7 +43,7 @@ function rotuloDaSituacao(situacao: string): string {
 }
 
 function tomDaSituacao(situacao: string): string {
-    return situacao === "active" ? "poph-status--ativo" : "poph-status--inativo";
+    return situacao === "active" ? "poph-status--active" : "poph-status--inactive";
 }
 
 function dataLonga(ms: number): string {
@@ -64,13 +64,13 @@ function retencaoDaConfig(org: Org): string {
 
 function Propriedade({ chave, valor, mono }: { chave: string; valor: string; mono?: boolean }) {
     return (
-        <div className="poph-propriedade">
-            <dt className="poph-propriedade__chave">{chave}</dt>
+        <div className="poph-property">
+            <dt className="poph-property__key">{chave}</dt>
             <dd
                 className={
                     mono
-                        ? "poph-propriedade__valor poph-propriedade__valor--mono"
-                        : "poph-propriedade__valor"
+                        ? "poph-property__value poph-property__value--mono"
+                        : "poph-property__value"
                 }
             >
                 {valor}
@@ -89,12 +89,12 @@ function Secao({
     children: ReactNode;
 }) {
     return (
-        <section className="poph-secao">
-            <div className="poph-orgpainel__secao-cabeca">
-                <h2 className="poph-secao__titulo">{titulo}</h2>
+        <section className="poph-section">
+            <div className="poph-org-panel__section-head">
+                <h2 className="poph-section__title">{titulo}</h2>
                 {cabeca}
             </div>
-            <div className="poph-secao__conteudo">{children}</div>
+            <div className="poph-section__content">{children}</div>
         </section>
     );
 }
@@ -112,7 +112,7 @@ const O_QUE_A_TELA_FAZ: TranslationKey[] = [
     "orgs.panelDoesSwitcher",
 ];
 
-export function OrgPainel() {
+export function OrgPanel() {
     const { translate: t } = useI18n();
     const { orgId = "" } = useParams();
     const navegar = useNavigate();
@@ -151,11 +151,11 @@ export function OrgPainel() {
 
     if (carregando && !org) {
         return (
-            <div className="poph-pagina poph-orgpainel" aria-busy="true">
-                <div className="poph-pagina__topo">
+            <div className="poph-page poph-org-panel" aria-busy="true">
+                <div className="poph-page__top">
                     <div>
                         <SofaSkeleton width={220} height={26} />
-                        <div className="poph-orgpainel__esqueleto">
+                        <div className="poph-org-panel__skeleton">
                             <SofaSkeleton width={340} height={12} />
                         </div>
                     </div>
@@ -167,7 +167,7 @@ export function OrgPainel() {
 
     if (erro && !org) {
         return (
-            <div className="poph-pagina poph-orgpainel">
+            <div className="poph-page poph-org-panel">
                 <SofaErrorState
                     title={t("orgs.panelLoadErrorTitle")}
                     description={t("orgs.panelLoadErrorDescription")}
@@ -220,22 +220,22 @@ export function OrgPainel() {
 
     return (
         <>
-            <div className="poph-pagina poph-orgpainel">
-                <div className="poph-pagina__topo">
-                    <div className="poph-orgpainel__identidade">
+            <div className="poph-page poph-org-panel">
+                <div className="poph-page__top">
+                    <div className="poph-org-panel__identity">
                         <SofaIconButton label={t("orgs.panelBack")} onClick={() => navegar("/orgs")}>
                             <IconArrowLeft aria-hidden="true" />
                         </SofaIconButton>
-                        <div className="poph-orgpainel__texto">
-                            <span className="poph-orgpainel__eyebrow">{t("orgs.panelEyebrow")}</span>
-                            <div className="poph-orgpainel__titulo-linha">
-                                <h1 className="poph-pagina__titulo">{org.name}</h1>
+                        <div className="poph-org-panel__text">
+                            <span className="poph-org-panel__eyebrow">{t("orgs.panelEyebrow")}</span>
+                            <div className="poph-org-panel__title-line">
+                                <h1 className="poph-page__title">{org.name}</h1>
                                 <span className={`poph-status ${tomDaSituacao(org.status)}`}>
-                                    <span className="poph-status__ponto" aria-hidden="true" />
+                                    <span className="poph-status__point" aria-hidden="true" />
                                     {rotuloDaSituacao(org.status)}
                                 </span>
                             </div>
-                            <p className="poph-pagina__descricao">
+                            <p className="poph-page__description">
                                 {t("orgs.panelSubtitle", {
                                     slug: org.slug,
                                     version: org.version,
@@ -243,7 +243,7 @@ export function OrgPainel() {
                             </p>
                         </div>
                     </div>
-                    <div className="poph-pagina__acoes">
+                    <div className="poph-page__actions">
                         {podeGerenciar && (
                             <>
                                 <SofaButton
@@ -274,8 +274,8 @@ export function OrgPainel() {
                 </div>
 
                 <Secao titulo={t("orgs.panelSummary")}>
-                    <p className="poph-orgpainel__ajuda">{t("orgs.panelSummaryHelp")}</p>
-                    <dl className="poph-propriedades">
+                    <p className="poph-org-panel__help">{t("orgs.panelSummaryHelp")}</p>
+                    <dl className="poph-properties">
                         <Propriedade chave={t("orgs.panelId")} valor={org.id} mono />
                         <Propriedade chave={t("orgs.panelSlug")} valor={org.slug} mono />
                         <Propriedade
@@ -299,17 +299,17 @@ export function OrgPainel() {
                 </Secao>
 
                 <Secao titulo={t("orgs.panelShortcutsTitle")}>
-                    <ul className="poph-orgpainel__atalhos">
+                    <ul className="poph-org-panel__shortcuts">
                         {atalhos.map((atalho) => (
-                            <li key={atalho.chave} className="poph-orgpainel__atalho">
-                                <div className="poph-orgpainel__atalho-texto">
-                                    <span className="poph-orgpainel__atalho-titulo">
+                            <li key={atalho.chave} className="poph-org-panel__shortcut">
+                                <div className="poph-org-panel__shortcut-text">
+                                    <span className="poph-org-panel__shortcut-title">
                                         {atalho.titulo}
                                     </span>
-                                    <span className="poph-orgpainel__ajuda">{atalho.descricao}</span>
-                                    <span className="poph-orgpainel__nota">{atalho.nota}</span>
+                                    <span className="poph-org-panel__help">{atalho.descricao}</span>
+                                    <span className="poph-org-panel__note">{atalho.nota}</span>
                                 </div>
-                                <Link to={atalho.caminho} className="poph-orgpainel__atalho-link">
+                                <Link to={atalho.caminho} className="poph-org-panel__shortcut-link">
                                     {atalho.rotulo}
                                 </Link>
                             </li>
@@ -319,25 +319,25 @@ export function OrgPainel() {
 
                 <Secao
                     titulo={t("orgs.panelNextSections")}
-                    cabeca={<span className="poph-orgpainel__etiqueta">{t("orgs.panelInProgress")}</span>}
+                    cabeca={<span className="poph-org-panel__tag">{t("orgs.panelInProgress")}</span>}
                 >
-                    <p className="poph-orgpainel__ajuda">{t("orgs.panelNextSectionsHelp")}</p>
-                    <ul className="poph-orgpainel__lista poph-orgpainel__lista--simples">
+                    <p className="poph-org-panel__help">{t("orgs.panelNextSectionsHelp")}</p>
+                    <ul className="poph-org-panel__list poph-org-panel__list--simple">
                         {PROXIMAS_SECOES.map((secao) => (
-                            <li key={secao} className="poph-orgpainel__linha">
+                            <li key={secao} className="poph-org-panel__line">
                                 <span>{t(secao)}</span>
-                                <span className="poph-orgpainel__etiqueta">
+                                <span className="poph-org-panel__tag">
                                     {t("orgs.panelComingSoon")}
                                 </span>
                             </li>
                         ))}
                     </ul>
-                    <p className="poph-orgpainel__ajuda">{t("orgs.panelNextSectionsHelp2")}</p>
+                    <p className="poph-org-panel__help">{t("orgs.panelNextSectionsHelp2")}</p>
                 </Secao>
 
                 <Secao titulo={t("orgs.panelDoesTitle")}>
-                    <p className="poph-orgpainel__ajuda">{t("orgs.panelDoesHelp")}</p>
-                    <ul className="poph-orgpainel__lista">
+                    <p className="poph-org-panel__help">{t("orgs.panelDoesHelp")}</p>
+                    <ul className="poph-org-panel__list">
                         {O_QUE_A_TELA_FAZ.map((item) => (
                             <li key={item}>{t(item)}</li>
                         ))}
@@ -348,25 +348,25 @@ export function OrgPainel() {
             <ModalOrg
                 aberto={editando}
                 org={org}
-                aoFechar={() => setEditando(false)}
-                aoSalvar={(alterada) => {
+                onClose={() => setEditando(false)}
+                onSave={(alterada) => {
                     setOrg(alterada);
                     void carregar();
                 }}
             />
 
-            <DialogoExclusao
+            <DialogExclusion
                 aberto={excluindo}
-                aoFechar={() => setExcluindo(false)}
+                onClose={() => setExcluindo(false)}
                 titulo={t("orgs.deleteOrgTitle")}
                 descricao={t("orgs.deleteOrgDescription", { name: org.name })}
-                recurso={org.slug}
-                rotuloRecurso={t("orgs.deleteOrgResourceLabel")}
-                rotuloConfirmar={t("orgs.deleteOrgConfirm")}
+                resource={org.slug}
+                labelResource={t("orgs.deleteOrgResourceLabel")}
+                labelConfirm={t("orgs.deleteOrgConfirm")}
                 permiteForcar
-                rotuloForcar={t("orgs.deleteOrgForceLabel")}
+                labelForce={t("orgs.deleteOrgForceLabel")}
                 consequencia={
-                    <p className="poph-orgpainel__consequencia">
+                    <p className="poph-org-panel__consequence">
                         {t("orgs.deleteOrgConsequence")}
                     </p>
                 }

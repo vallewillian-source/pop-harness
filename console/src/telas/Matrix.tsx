@@ -44,7 +44,7 @@ import {
     type Espaco,
 } from "../api/matrix";
 import { formatarTempoNoAr, mensagemDeFalha } from "./Operacao";
-import "../estilos/matrix.css";
+import "../styles/matrix.css";
 
 /** Mensagem da tela quando o `If-Match` não bate: o estado mudou entre a leitura e a gravação. */
 export function conflictMessage(): string {
@@ -62,7 +62,7 @@ function textoDoAviso(fonte: TextoFonte): string {
 }
 
 type Carga<T> = { carregando: boolean; dados: T | null; erro: TextoFonte | null };
-type Aviso = { tom: "ok" | "erro"; fonte: TextoFonte } | null;
+type Aviso = { tom: "ok" | "error"; fonte: TextoFonte } | null;
 
 /** Linha da tabela: um departamento (ativo, ou arquivado com espaço ainda gravado). */
 export type LinhaDeEspaco = {
@@ -159,20 +159,20 @@ function Indicador({
     rotulo: string;
     valor: string;
     detalhe?: string;
-    tom?: "ok" | "alerta" | "erro";
+    tom?: "ok" | "alert" | "error";
 }) {
     return (
-        <div className="poph-matrix__indicador">
-            <dt className="poph-matrix__indicador-rotulo">{rotulo}</dt>
-            <dd className="poph-matrix__indicador-corpo">
+        <div className="poph-matrix__indicator">
+            <dt className="poph-matrix__indicator-label">{rotulo}</dt>
+            <dd className="poph-matrix__indicator-body">
                 <span
                     className={
-                        tom ? `poph-matrix__indicador-valor poph-matrix__indicador-valor--${tom}` : "poph-matrix__indicador-valor"
+                        tom ? `poph-matrix__indicator-value poph-matrix__indicator-value--${tom}` : "poph-matrix__indicator-value"
                     }
                 >
                     {valor}
                 </span>
-                {detalhe ? <span className="poph-matrix__indicador-detalhe">{detalhe}</span> : null}
+                {detalhe ? <span className="poph-matrix__indicator-detail">{detalhe}</span> : null}
             </dd>
         </div>
     );
@@ -302,11 +302,11 @@ export function Matrix() {
         } catch (erro) {
             if (!vivo.current) return;
             if (erro instanceof ApiError && erro.status === 412) {
-                setAvisoModulo({ tom: "erro", fonte: { key: "matrix.conflict" } });
+                setAvisoModulo({ tom: "error", fonte: { key: "matrix.conflict" } });
                 void carregar();
             } else {
                 setAvisoModulo({
-                    tom: "erro",
+                    tom: "error",
                     fonte: { erro, what: "operation.whatMatrixModule" },
                 });
             }
@@ -327,7 +327,7 @@ export function Matrix() {
         } catch (erro) {
             if (vivo.current) {
                 setAvisoEspaco({
-                    tom: "erro",
+                    tom: "error",
                     fonte: { erro, what: "operation.whatDepartment", espaco: true },
                 });
             }
@@ -388,7 +388,7 @@ export function Matrix() {
             if (!vivo.current) return;
             setEspacoParaDesligar(null);
             setAvisoEspaco({
-                tom: "erro",
+                tom: "error",
                 fonte: { erro, what: "operation.whatSpace", espaco: true },
             });
         } finally {
@@ -406,13 +406,13 @@ export function Matrix() {
     const espelhando = m?.enabled === true;
 
     return (
-        <div className="poph-pagina poph-matrix">
-            <div className="poph-pagina__topo">
+        <div className="poph-page poph-matrix">
+            <div className="poph-page__top">
                 <div>
-                    <h1 className="poph-pagina__titulo">{t("matrix.pageTitle")}</h1>
-                    <p className="poph-pagina__descricao">{t("matrix.pageDescription")}</p>
+                    <h1 className="poph-page__title">{t("matrix.pageTitle")}</h1>
+                    <p className="poph-page__description">{t("matrix.pageDescription")}</p>
                 </div>
-                <div className="poph-pagina__acoes">
+                <div className="poph-page__actions">
                     <SofaButton
                         variant="subtle"
                         icon={<IconRefresh aria-hidden="true" />}
@@ -447,10 +447,10 @@ export function Matrix() {
                 </div>
             </div>
 
-            <section className="poph-secao poph-matrix__resumo" aria-labelledby={idModulo}>
-                <h2 id={idModulo} className="poph-matrix__oculto">{t("matrix.moduleSectionLabel")}</h2>
+            <section className="poph-section poph-matrix__summary" aria-labelledby={idModulo}>
+                <h2 id={idModulo} className="poph-matrix__hidden">{t("matrix.moduleSectionLabel")}</h2>
                 {modulo.carregando && !m ? (
-                    <dl className="poph-matrix__indicadores" aria-busy="true">
+                    <dl className="poph-matrix__indicators" aria-busy="true">
                         {[
                             t("matrix.indicatorModule"),
                             t("matrix.indicatorSynapse"),
@@ -459,9 +459,9 @@ export function Matrix() {
                             t("matrix.indicatorLastFailure"),
                         ].map(
                             (rotulo) => (
-                                <div className="poph-matrix__indicador" key={rotulo}>
-                                    <dt className="poph-matrix__indicador-rotulo">{rotulo}</dt>
-                                    <dd className="poph-matrix__indicador-corpo">
+                                <div className="poph-matrix__indicator" key={rotulo}>
+                                    <dt className="poph-matrix__indicator-label">{rotulo}</dt>
+                                    <dd className="poph-matrix__indicator-body">
                                         <SofaSkeleton lines={2} />
                                     </dd>
                                 </div>
@@ -477,7 +477,7 @@ export function Matrix() {
                 ) : m ? (
                     <>
                         {modulo.erro ? (
-                            <p className="poph-matrix__aviso" role="alert">
+                            <p className="poph-matrix__notice" role="alert">
                                 {t("matrix.lastUpdateFailed", { message: textoDoAviso(modulo.erro) })}
                             </p>
                         ) : null}
@@ -508,7 +508,7 @@ export function Matrix() {
                             </SofaBanner>
                         ) : null}
 
-                        <dl className="poph-matrix__indicadores">
+                        <dl className="poph-matrix__indicators">
                             <Indicador
                                 rotulo={t("matrix.indicatorModule")}
                                 valor={m.enabled ? t("matrix.valueEnabled") : t("matrix.valueDisabled")}
@@ -530,7 +530,7 @@ export function Matrix() {
                             <Indicador
                                 rotulo={t("matrix.indicatorSynapse")}
                                 valor={conexao.valor}
-                                tom={m.connected === true ? "ok" : m.connected === false ? "erro" : undefined}
+                                tom={m.connected === true ? "ok" : m.connected === false ? "error" : undefined}
                                 detalhe={conexao.detalhe}
                             />
                             <Indicador
@@ -545,26 +545,26 @@ export function Matrix() {
                                             })
                                           : undefined
                                 }
-                                tom={espelhando && m.backlog.messages > 0 ? "alerta" : undefined}
+                                tom={espelhando && m.backlog.messages > 0 ? "alert" : undefined}
                             />
                             <Indicador
                                 rotulo={t("matrix.indicatorFailures")}
                                 valor={valorDasFalhas(m.pending_failures)}
-                                tom={m.pending_failures > 0 ? "erro" : undefined}
+                                tom={m.pending_failures > 0 ? "error" : undefined}
                             />
                             <Indicador
                                 rotulo={t("matrix.indicatorLastFailure")}
                                 valor={m.last_failure ?? t("matrix.noRecentFailure")}
-                                tom={m.last_failure ? "erro" : undefined}
+                                tom={m.last_failure ? "error" : undefined}
                             />
                         </dl>
                     </>
                 ) : null}
             </section>
 
-            <section className="poph-secao" aria-labelledby={idEspacos}>
-                <h2 id={idEspacos} className="poph-secao__titulo">{t("matrix.sectionSpaces")}</h2>
-                <p className="poph-matrix__ajuda">
+            <section className="poph-section" aria-labelledby={idEspacos}>
+                <h2 id={idEspacos} className="poph-section__title">{t("matrix.sectionSpaces")}</h2>
+                <p className="poph-matrix__help">
                     {t("matrix.spacesHelpBefore")}
                     <code>!</code>
                     {t("matrix.spacesHelpBetween")}
@@ -574,19 +574,19 @@ export function Matrix() {
 
                 {espacos.carregando && !lista ? (
                     <div
-                        className="poph-tabela poph-matrix__tabela"
+                        className="poph-table poph-matrix__table"
                         aria-busy="true"
                         aria-label={t("matrix.loadingSpacesLabel")}
                     >
-                        <div className="poph-tabela__cabecalho" role="presentation">
+                        <div className="poph-table__header" role="presentation">
                             <span>{t("matrix.columnDepartment")}</span>
                             <span>{t("matrix.columnSpace")}</span>
                             <span>{t("matrix.columnOrigin")}</span>
                             <span>{t("matrix.columnStatus")}</span>
-                            <span className="poph-tabela__celula--acoes">{t("matrix.columnActions")}</span>
+                            <span className="poph-table__cell--actions">{t("matrix.columnActions")}</span>
                         </div>
                         {[0, 1, 2].map((indice) => (
-                            <div className="poph-tabela__linha" role="presentation" key={indice}>
+                            <div className="poph-table__line" role="presentation" key={indice}>
                                 <SofaSkeleton lines={2} />
                                 <SofaSkeleton lines={2} />
                                 <SofaSkeleton lines={1} />
@@ -604,13 +604,13 @@ export function Matrix() {
                 ) : lista ? (
                     <>
                         {espacos.erro ? (
-                            <p className="poph-matrix__aviso" role="alert">
+                            <p className="poph-matrix__notice" role="alert">
                                 {t("matrix.lastUpdateFailed", { message: textoDoAviso(espacos.erro) })}
                             </p>
                         ) : null}
 
                         {departamentos.erro && !deptos ? (
-                            <p className="poph-matrix__aviso" role="alert">
+                            <p className="poph-matrix__notice" role="alert">
                                 {t("matrix.departmentsLoadFailed", {
                                     message: textoDoAviso(departamentos.erro),
                                 })}
@@ -632,80 +632,80 @@ export function Matrix() {
                             />
                         ) : (
                             <div
-                                className="poph-tabela poph-matrix__tabela"
+                                className="poph-table poph-matrix__table"
                                 role="table"
                                 aria-label={t("matrix.spacesTableLabel")}
                             >
-                                <div className="poph-tabela__cabecalho" role="row">
+                                <div className="poph-table__header" role="row">
                                     <span role="columnheader">{t("matrix.columnDepartment")}</span>
                                     <span role="columnheader">{t("matrix.columnSpace")}</span>
                                     <span role="columnheader">{t("matrix.columnOrigin")}</span>
                                     <span role="columnheader">{t("matrix.columnStatus")}</span>
-                                    <span role="columnheader" className="poph-tabela__celula--acoes">
+                                    <span role="columnheader" className="poph-table__cell--actions">
                                         {t("matrix.columnActions")}
                                     </span>
                                 </div>
                                 {linhas.map((linha) => {
                                     const { espaco } = linha;
                                     return (
-                                        <div className="poph-tabela__linha" role="row" key={linha.id}>
-                                            <span role="cell" className="poph-tabela__celula poph-matrix__departamento">
+                                        <div className="poph-table__line" role="row" key={linha.id}>
+                                            <span role="cell" className="poph-table__cell poph-matrix__department">
                                                 <strong>{linha.nome}</strong>
-                                                <span className="poph-matrix__pequeno">{linha.id}</span>
+                                                <span className="poph-matrix__small">{linha.id}</span>
                                             </span>
-                                            <span role="cell" className="poph-tabela__celula">
+                                            <span role="cell" className="poph-table__cell">
                                                 {espaco ? (
                                                     <>
                                                         <span className="poph-matrix__alias">{espaco.alias}</span>
-                                                        <span className="poph-matrix__pequeno">{espaco.space_room_id}</span>
+                                                        <span className="poph-matrix__small">{espaco.space_room_id}</span>
                                                     </>
                                                 ) : (
                                                     <>
-                                                        <span className="poph-matrix__vazio">
+                                                        <span className="poph-matrix__empty">
                                                             {t("matrix.noSpaceLinked")}
                                                         </span>
-                                                        <span className="poph-matrix__pequeno">
+                                                        <span className="poph-matrix__small">
                                                             {t("matrix.noSpaceLinkHint")}
                                                         </span>
                                                     </>
                                                 )}
                                             </span>
-                                            <span role="cell" className="poph-tabela__celula">
+                                            <span role="cell" className="poph-table__cell">
                                                 {espaco ? (
                                                     <span
                                                         className={
                                                             espaco.origin === "auto"
-                                                                ? "poph-matrix__origem poph-matrix__origem--auto"
-                                                                : "poph-matrix__origem poph-matrix__origem--vinculado"
+                                                                ? "poph-matrix__origin poph-matrix__origin--auto"
+                                                                : "poph-matrix__origin poph-matrix__origin--linked"
                                                         }
                                                     >
                                                         {textoDaOrigem(espaco.origin)}
                                                     </span>
                                                 ) : (
-                                                    <span className="poph-matrix__origem poph-matrix__origem--nenhuma">
+                                                    <span className="poph-matrix__origin poph-matrix__origin--none">
                                                         {t("matrix.originNotConfigured")}
                                                     </span>
                                                 )}
                                             </span>
-                                            <span role="cell" className="poph-tabela__celula">
+                                            <span role="cell" className="poph-table__cell">
                                                 {espaco && !linha.arquivado ? (
-                                                    <span className="poph-status poph-status--ativo">
-                                                        <span className="poph-status__ponto" aria-hidden="true" />
+                                                    <span className="poph-status poph-status--active">
+                                                        <span className="poph-status__point" aria-hidden="true" />
                                                         {t("matrix.statusActive")}
                                                     </span>
                                                 ) : espaco ? (
-                                                    <span className="poph-status poph-status--inativo">
-                                                        <span className="poph-status__ponto" aria-hidden="true" />
+                                                    <span className="poph-status poph-status--inactive">
+                                                        <span className="poph-status__point" aria-hidden="true" />
                                                         {t("matrix.statusArchivedDepartment")}
                                                     </span>
                                                 ) : (
-                                                    <span className="poph-status poph-status--inativo">
-                                                        <span className="poph-status__ponto" aria-hidden="true" />
+                                                    <span className="poph-status poph-status--inactive">
+                                                        <span className="poph-status__point" aria-hidden="true" />
                                                         {t("matrix.statusNoSpace")}
                                                     </span>
                                                 )}
                                             </span>
-                                            <span role="cell" className="poph-tabela__celula poph-tabela__celula--acoes">
+                                            <span role="cell" className="poph-table__cell poph-table__cell--actions">
                                                 {espaco ? (
                                                     <SofaButton
                                                         variant="subtle"
@@ -784,8 +784,8 @@ export function Matrix() {
                 }
             >
                 <form id={idFormLigacao} className="poph-matrix__form" onSubmit={(evento) => void ligarExistente(evento)} noValidate>
-                    <div className="poph-matrix__departamento-escolhido">
-                        <span className="poph-matrix__pequeno">{t("matrix.selectedDepartment")}</span>
+                    <div className="poph-matrix__department-chosen">
+                        <span className="poph-matrix__small">{t("matrix.selectedDepartment")}</span>
                         <strong>{ligandoA ? `${ligandoA.nome} (${ligandoA.id})` : ""}</strong>
                     </div>
                     {erroDoDialogo ? (

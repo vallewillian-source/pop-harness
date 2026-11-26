@@ -1,0 +1,150 @@
+
+import { useEffect, useState } from "react";
+import { SofaSkeleton } from "@sofacoding/sofa-ui";
+import {
+    agentsUsingCategory,
+    deleteCategory,
+    categoryProducts,
+    type AgentSummary,
+    type Category,
+    type CategoryProduct,
+} from "../api/structure";
+import { useI18n } from "../i18n";
+import { DialogExclusion } from "../components/DialogExclusion";
+
+export type DialogDeleteCategoryProps = {
+    aberto: boolean;
+    onClose: () => void;
+    org: string;
+    categoria: Category | null;
+    aoExcluir: () => void;
+};
+
+type Links = {
+    produtos: CategoryProduct[];
+    agentes: AgentSummary[];
+};
+
+export function DialogDeleteCategory({
+    aberto: isOpen,
+    onClose,
+    org,
+    categoria: category,
+    aoExcluir: onDelete,
+}: DialogDeleteCategoryProps) {
+    const { translate } = useI18n();
+    const [loading, setLoading] = useState(false);
+    const [links, setLinks] = useState<Links | null>(null);
+    const [failureVerify, setFailureVerify] = useState(false);
+
+    useEffect(() => {
+        if (!isOpen || !category) return;
+        let cancelled = false;
+        setLoading(true);
+        setLinks(null);
+        setFailureVerify(false);
+        Promise.all([
+            categoryProducts(org, category.id),
+            agentsUsingCategory(org, category.id),
+        ])
+            .then(([products, agents]) => {
+                if (!cancelled) setLinks({ produtos: products, agentes: agents });
+            })
+            .catch(() => {
+                if (!cancelled) setFailureVerify(true);
+            })
+            .finally(() => {
+                if (!cancelled) setLoading(false);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [isOpen, category, org]);
+
+    if (!category) return null;
+
+    const withoutLink = links !== null && links.produtos.length === 0 && links.agentes.length === 0;
+    const quantityProducts = links?.produtos.length ?? 0;
+
+    function consequencia() {
+        if (loading) {
+            return <SofaSkeleton lines={2} />;
+        }
+        if (failureVerify || links === null) {
+            return (
+                <p style={{ margin: 0, color: "var(--pop-text-secondary)", lineHeight: 1.6 }}>
+                    {translate("structure.deleteCatCheckFailed")}
+                </p>
+            );
+        }
+        if (withoutLink) {
+            return (
+                <p style={{ margin: 0, color: "var(--pop-text-secondary)", lineHeight: 1.6 }}>
+                    {translate("structure.deleteCatNoLinks")}
+                </p>
+            );
+        }
+        const names = links.agentes.map((agente) => agente.name).join(", ");
+        const productsText =
+            links.produtos.length === 1
+                ? translate("structure.deleteCatProductOne")
+                : translate("structure.deleteCatProductMany", { count: links.produtos.length });
+        const productsPronoun =
+            links.produtos.length === 1
+                ? translate("structure.deleteCatProductsPronounOne")
+                : translate("structure.deleteCatProductsPronounMany");
+        const agentsText =
+            links.agentes.length === 1
+                ? translate("structure.deleteCatAgentOne")
+                : translate("structure.deleteCatAgentMany", { count: links.agentes.length });
+        return (
+            <div className="poph-stack" style={{ gap: "var(--pop-spacing-sm, 8px)" }}>
+                {links.produtos.length > 0 && (
+                    <p style={{ margin: 0, color: "var(--pop-text-secondary)", lineHeight: 1.6 }}>
+                        {translate("structure.deleteCatProductsLine", {
+                            products: productsText,
+                            pronoun: productsPronoun,
+                        })}{" "}
+                        <strong>
+                            {links.produtos.map((product) => product.name).join(", ")}
+                        </strong>
+                        .
+                    </p>
+                )}
+                {links.agentes.length > 0 && (
+                    <p style={{ margin: 0, color: "var(--pop-text-secondary)", lineHeight: 1.6 }}>
+                        {translate("structure.deleteCatAgentsLine", { agents: agentsText })}{" "}
+                        <strong>{names}</strong>.
+                    </p>
+                )}
+            </div>
+        );
+    }
+
+    const labelForce =
+        quantityProducts > 0
+            ? quantityProducts === 1
+                ? translate("structure.deleteCatForceWithProductsOne")
+                : translate("structure.deleteCatForceWithProductsMany", { count: quantityProducts })
+            : translate("structure.deleteCatForceAgentsOnly");
+
+    return (
+        <DialogExclusion
+            aberto={isOpen}
+            onClose={onClose}
+            titulo={translate("structure.deleteCatTitle")}
+            descricao={translate("structure.deleteCatDescription", { name: category.name })}
+            resource={category.name}
+            labelResource={translate("structure.deleteCatResourceLabel")}
+            labelConfirm={translate("structure.deleteCatConfirm")}
+            consequencia={consequencia()}
+            permiteForcar={!withoutLink}
+            labelForce={labelForce}
+            descriptionForce={translate("structure.deleteCatForceDescription")}
+            aoConfirmar={async (forcar) => {
+                await deleteCategory(org, category.id, forcar);
+            }}
+            aoExcluir={onDelete}
+        />
+    );
+}

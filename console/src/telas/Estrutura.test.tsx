@@ -13,7 +13,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { setLocale } from "../i18n";
 import { waitForModalFocus } from "../testing/modal";
 import { FakeServer, apiError } from "../testing/server";
-import { Estrutura } from "./Estrutura";
+import { Structure } from "./Estrutura";
 
 const ORG = "org_1";
 
@@ -38,7 +38,7 @@ function montar() {
     return render(
         <MemoryRouter initialEntries={[`/orgs/${ORG}/structure`]}>
             <Routes>
-                <Route path="/orgs/:orgId/structure" element={<Estrutura />} />
+                <Route path="/orgs/:orgId/structure" element={<Structure />} />
             </Routes>
         </MemoryRouter>,
     );
@@ -240,7 +240,7 @@ describe("Estrutura", () => {
         expect(screen.getByRole("heading", { level: 2, name: "Departamentos" })).toBeInTheDocument();
         expect(screen.getByRole("heading", { level: 2, name: "Categorias de produtos" })).toBeInTheDocument();
         expect(container.querySelector(".sofa-card")).toBeNull();
-        expect(container.querySelectorAll("section.poph-secao")).toHaveLength(2);
+        expect(container.querySelectorAll("section.poph-section")).toHaveLength(2);
     });
 
     it("renders in en-US and updates live when locale changes", async () => {

@@ -74,12 +74,12 @@ import {
     type FileOrigin,
 } from "../api/testFile";
 import { interleaveTurns, phraseForStateWithoutResponse, turnStateLabel } from "../api/turnWhy";
-import { CabecalhoDoAgente, AbasDoAgente } from "../componentes/AbasDoAgente";
-import { PainelPorQue } from "../componentes/PainelPorQue";
-import { PreviaArquivoTeste, type PreviaDeImagem } from "../componentes/PreviaArquivoTeste";
+import { HeaderAgent, TabsAgent } from "../components/TabsAgent";
+import { PanelWhy } from "../components/PanelWhy";
+import { PreviewFileTest, type PreviewImage } from "../components/PreviewFileTest";
 import { useI18n, translate } from "../i18n";
 import { formatDateTime, formatNumber } from "../i18n/format";
-import "../estilos/chat-teste.css";
+import "../styles/chat-test.css";
 
 /** Tipos de arquivo que o recebimento aceita (imagem, PDF e Office). A API confere o conteúdo. */
 const ACEITOS = ".jpg,.jpeg,.png,.gif,.webp,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx";
@@ -150,7 +150,7 @@ function rotuloDoStatus(status: string): string {
 }
 
 function classeDoStatus(status: string): string {
-    return status === "transferred" ? "poph-status--atencao" : "poph-status--ativo";
+    return status === "transferred" ? "poph-status--attention" : "poph-status--active";
 }
 
 /** Texto de um campo do `fim`/`erro`, quando vier como texto. */
@@ -169,7 +169,7 @@ function campos(evento: TurnEvent): Record<string, unknown> {
         : {};
 }
 
-export function AgenteChatTeste() {
+export function AgentChatTest() {
     const { orgId = "", agentId = "" } = useParams();
     const navegar = useNavigate();
     const { translate: t } = useI18n();
@@ -200,7 +200,7 @@ export function AgenteChatTeste() {
     /** Turno cujo "por quê" está aberto no painel (HR-47). `null`: painel fechado. */
     const [turnoAberto, setTurnoAberto] = useState<string | null>(null);
     /** Prévia de imagem do cliente aberta (HR-46c). `null`: fechada. */
-    const [previa, setPrevia] = useState<PreviaDeImagem | null>(null);
+    const [previa, setPrevia] = useState<PreviewImage | null>(null);
     /** Arquivo que está baixando agora (chave), para o botão mostrar o carregando. */
     const [baixandoAnexo, setBaixandoAnexo] = useState<string | null>(null);
     /** Falha do último download, com a chave do arquivo: a linha mostra o motivo e "Tentar de novo". */
@@ -707,7 +707,7 @@ export function AgenteChatTeste() {
 
     if (!agente && erroDeCarga) {
         return (
-            <div className="poph-pagina">
+            <div className="poph-page">
                 <SofaErrorState
                     title={t("testChat.pageLoadTitle")}
                     description={t("testChat.pageLoadDescription")}
@@ -729,7 +729,7 @@ export function AgenteChatTeste() {
 
     if (!agente) {
         return (
-            <div className="poph-pagina" aria-busy="true">
+            <div className="poph-page" aria-busy="true">
                 <SofaSkeleton width={260} height={26} />
                 <SofaSkeleton lines={6} />
             </div>
@@ -754,8 +754,8 @@ export function AgenteChatTeste() {
         : null;
 
     return (
-        <div className="poph-pagina poph-chat-teste">
-            <CabecalhoDoAgente
+        <div className="poph-page poph-chat-test">
+            <HeaderAgent
                 org={orgId}
                 nome={agente.name}
                 slug={agente.slug}
@@ -763,11 +763,11 @@ export function AgenteChatTeste() {
                 organizacao={nomeDaOrg}
                 descricao={t("testChat.chatDescription")}
             />
-            <AbasDoAgente org={orgId} agente={agentId} ativa="test-chat" nome={agente.name} model={agente.model ?? null} />
+            <TabsAgent org={orgId} agente={agentId} active="test-chat" nome={agente.name} model={agente.model ?? null} />
 
-            <div className="poph-chat-teste__corpo">
-                <aside className="poph-chat-teste__lista" aria-label={t("testChat.conversationsLabel")}>
-                    <div className="poph-chat-teste__lista-topo">
+            <div className="poph-chat-test__body">
+                <aside className="poph-chat-test__list" aria-label={t("testChat.conversationsLabel")}>
+                    <div className="poph-chat-test__list-top">
                         <SofaButton
                             variant="primary"
                             icon={<IconPlus aria-hidden="true" />}
@@ -810,9 +810,9 @@ export function AgenteChatTeste() {
                             }}
                         />
                     ) : conversas.length === 0 ? (
-                        <p className="poph-chat-teste__vazio">{t("testChat.listEmpty")}</p>
+                        <p className="poph-chat-test__empty">{t("testChat.listEmpty")}</p>
                     ) : (
-                        <ul className="poph-chat-teste__itens" aria-label={t("testChat.conversationsListLabel")}>
+                        <ul className="poph-chat-test__items" aria-label={t("testChat.conversationsListLabel")}>
                             {conversas.map((conversa) => {
                                 const selecionada = conversa.id === ativa;
                                 return (
@@ -821,25 +821,25 @@ export function AgenteChatTeste() {
                                             type="button"
                                             className={
                                                 selecionada
-                                                    ? "poph-chat-teste__item poph-chat-teste__item--ativo"
-                                                    : "poph-chat-teste__item"
+                                                    ? "poph-chat-test__item poph-chat-test__item--active"
+                                                    : "poph-chat-test__item"
                                             }
                                             aria-current={selecionada ? "true" : undefined}
                                             title={conversa.id}
                                             onClick={() => abrirConversa(conversa.id)}
                                         >
-                                            <span className="poph-chat-teste__item-linha">
-                                                <span className="poph-mono-mudo">
+                                            <span className="poph-chat-test__item-line">
+                                                <span className="poph-mono-muted">
                                                     {idCurto(conversa.id)}
                                                 </span>
                                                 <span
                                                     className={`poph-status ${classeDoStatus(conversa.status)}`}
                                                 >
-                                                    <span className="poph-status__ponto" aria-hidden="true" />
+                                                    <span className="poph-status__point" aria-hidden="true" />
                                                     {rotuloDoStatus(conversa.status)}
                                                 </span>
                                             </span>
-                                            <span className="poph-chat-teste__item-meta">
+                                            <span className="poph-chat-test__item-meta">
                                                 {t("testChat.conversationMeta", {
                                                     date: dataCurta(conversa.created_at),
                                                     count: formatNumber(conversa.message_count),
@@ -859,7 +859,7 @@ export function AgenteChatTeste() {
                     )}
                 </aside>
 
-                <section className="poph-chat-teste__conversa" aria-label={t("testChat.conversationSectionLabel")}>
+                <section className="poph-chat-test__conversation" aria-label={t("testChat.conversationSectionLabel")}>
                     {!ativa ? (
                         <SofaEmptyState
                             icon={<IconMessage aria-hidden="true" />}
@@ -887,23 +887,23 @@ export function AgenteChatTeste() {
                         <SofaSkeleton lines={6} />
                     ) : (
                         <>
-                            <div className="poph-chat-teste__cabecalho">
-                                <span className="poph-mono-mudo" title={historico.conversation.id}>
+                            <div className="poph-chat-test__header">
+                                <span className="poph-mono-muted" title={historico.conversation.id}>
                                     {t("testChat.conversationLabel", { id: idCurto(historico.conversation.id) })}
                                 </span>
                                 <span
                                     className={`poph-status ${classeDoStatus(historico.conversation.status)}`}
                                 >
-                                    <span className="poph-status__ponto" aria-hidden="true" />
+                                    <span className="poph-status__point" aria-hidden="true" />
                                     {rotuloDoStatus(historico.conversation.status)}
                                 </span>
                                 {carregandoHistorico && (
-                                    <span className="poph-chat-teste__atualizando">{t("testChat.updating")}</span>
+                                    <span className="poph-chat-test__updating">{t("testChat.updating")}</span>
                                 )}
                             </div>
 
                             {transferida && (
-                                <div className="poph-chat-teste__transferida">
+                                <div className="poph-chat-test__transferred">
                                     <SofaBanner tone="warn" title={t("testChat.transferredTitle")}>
                                         {t("testChat.transferredDescription")}
                                     </SofaBanner>
@@ -920,13 +920,13 @@ export function AgenteChatTeste() {
 
                             <div
                                 ref={registroRef}
-                                className="poph-chat-teste__registro"
+                                className="poph-chat-test__record"
                                 role="log"
                                 aria-live="polite"
                                 aria-label={t("testChat.logLabel")}
                             >
                                 {mensagens.length === 0 && turnosSemResposta.length === 0 && !turno && (
-                                    <p className="poph-chat-teste__vazio">{t("testChat.noMessages")}</p>
+                                    <p className="poph-chat-test__empty">{t("testChat.noMessages")}</p>
                                 )}
                                 {itensDoRegistro.map((item) =>
                                     item.tipo === "mensagem" ? (
@@ -959,11 +959,11 @@ export function AgenteChatTeste() {
 
                                 {turno && (
                                     <>
-                                        <div className="poph-chat-teste__balao poph-chat-teste__balao--cliente">
-                                            <span className="poph-chat-teste__autor">{t("testChat.client")}</span>
+                                        <div className="poph-chat-test__bubble poph-chat-test__bubble--client">
+                                            <span className="poph-chat-test__author">{t("testChat.client")}</span>
                                             {turno.textoDoCliente && <p>{turno.textoDoCliente}</p>}
                                             {turno.anexosDoCliente.length > 0 && (
-                                                <ul className="poph-chat-teste__anexos">
+                                                <ul className="poph-chat-test__attachments">
                                                     {turno.anexosDoCliente.map((nome, indice) => (
                                                         <li key={`${nome}-${indice}`}>{nome}</li>
                                                     ))}
@@ -971,43 +971,43 @@ export function AgenteChatTeste() {
                                             )}
                                         </div>
                                         <div
-                                            className="poph-chat-teste__balao poph-chat-teste__balao--agente"
+                                            className="poph-chat-test__bubble poph-chat-test__bubble--agent"
                                             aria-busy={turno.resposta === "" && !turno.erro}
                                         >
-                                            <span className="poph-chat-teste__autor">{t("testChat.agent")}</span>
+                                            <span className="poph-chat-test__author">{t("testChat.agent")}</span>
                                             {turno.ferramentas.map((nome, indice) => (
-                                                <p key={`${nome}-${indice}`} className="poph-chat-teste__evento">
+                                                <p key={`${nome}-${indice}`} className="poph-chat-test__event">
                                                     {t("testChat.toolRunning", { name: nome })}
                                                 </p>
                                             ))}
                                             {turno.fontes !== null && (
-                                                <p className="poph-chat-teste__evento">
+                                                <p className="poph-chat-test__event">
                                                     {turno.fontes === 1
                                                         ? t("testChat.sourcesOne")
                                                         : t("testChat.sourcesMany", { count: formatNumber(turno.fontes) })}
                                                 </p>
                                             )}
                                             {turno.transferido && (
-                                                <p className="poph-chat-teste__evento">
+                                                <p className="poph-chat-test__event">
                                                     {t("testChat.conversationTransferred")}
                                                 </p>
                                             )}
                                             {turno.resposta ? (
-                                                <p className="poph-chat-teste__texto-agente">
+                                                <p className="poph-chat-test__text-agent">
                                                     {turno.resposta}
                                                     {enviando && !encerramento && (
-                                                        <span aria-hidden="true" className="poph-chat-teste__cursor">
+                                                        <span aria-hidden="true" className="poph-chat-test__cursor">
                                                             ▌
                                                         </span>
                                                     )}
                                                 </p>
                                             ) : (
                                                 !turno.erro && (
-                                                    <p className="poph-chat-teste__evento">{t("testChat.thinking")}</p>
+                                                    <p className="poph-chat-test__event">{t("testChat.thinking")}</p>
                                                 )
                                             )}
                                             {turno.erro && (
-                                                <p className="poph-chat-teste__erro">{turno.erro}</p>
+                                                <p className="poph-chat-test__error">{turno.erro}</p>
                                             )}
                                         </div>
                                     </>
@@ -1015,7 +1015,7 @@ export function AgenteChatTeste() {
                             </div>
 
                             {encerramento?.estado === "done" && !turno && (
-                                <p className="poph-chat-teste__fim">
+                                <p className="poph-chat-test__end">
                                     {t("testChat.turnDone")}
                                     {encerramento.tokensEntrada !== null &&
                                         t("testChat.turnDoneInput", {
@@ -1033,45 +1033,45 @@ export function AgenteChatTeste() {
                             )}
 
                             {aviso && (
-                                <div className="poph-chat-teste__aviso" role="status">
+                                <div className="poph-chat-test__notice" role="status">
                                     <SofaBanner tone={aviso.tom} title={aviso.titulo}>
                                         {aviso.texto}
                                     </SofaBanner>
                                 </div>
                             )}
 
-                            <PreviaArquivoTeste
-                                previa={previa}
-                                aoFechar={fecharPrevia}
-                                aoTentarDeNovo={() => {
+                            <PreviewFileTest
+                                preview={previa}
+                                onClose={fecharPrevia}
+                                onTryNew={() => {
                                     if (previa) void abrirPrevia(previa.origem);
                                 }}
                             />
 
-                            <PainelPorQue
+                            <PanelWhy
                                 aberto={turnoAberto !== null}
                                 numero={turnoDoPainel ? (numeroDoTurno.get(turnoDoPainel.id) ?? null) : null}
                                 turno={turnoDoPainel}
-                                atualizando={carregandoHistorico}
-                                erroDeLeitura={turnoAberto !== null ? erroHistorico : null}
-                                aoFechar={() => setTurnoAberto(null)}
-                                aoTentarDeNovo={() => {
+                                updating={carregandoHistorico}
+                                errorRead={turnoAberto !== null ? erroHistorico : null}
+                                onClose={() => setTurnoAberto(null)}
+                                onTryNew={() => {
                                     if (ativaRef.current) void carregarHistorico(ativaRef.current);
                                 }}
                             />
 
                             <form
-                                className="poph-chat-teste__formulario"
+                                className="poph-chat-test__form"
                                 onSubmit={(evento) => void enviar(evento)}
                                 aria-label={t("testChat.formLabel")}
                             >
-                                <div className="poph-chat-teste__campo">
-                                    <label htmlFor="chat-teste-texto" className="poph-chat-teste__rotulo">
+                                <div className="poph-chat-test__field">
+                                    <label htmlFor="chat-teste-texto" className="poph-chat-test__label">
                                         {t("testChat.messageLabel")}
                                     </label>
                                     <textarea
                                         id="chat-teste-texto"
-                                        className="poph-chat-teste__texto"
+                                        className="poph-chat-test__text"
                                         rows={3}
                                         value={rascunho}
                                         disabled={bloqueada || enviando}
@@ -1088,16 +1088,16 @@ export function AgenteChatTeste() {
                                         onKeyDown={teclaNoTexto}
                                     />
                                     {erroDeCampo?.campo === "text" && (
-                                        <p id="chat-teste-erro-texto" className="poph-chat-teste__erro">
+                                        <p id="chat-teste-erro-texto" className="poph-chat-test__error">
                                             {erroDeCampo.mensagem}
                                         </p>
                                     )}
                                 </div>
 
-                                <div className="poph-chat-teste__anexar">
+                                <div className="poph-chat-test__attach">
                                     <label
                                         htmlFor="chat-teste-arquivos"
-                                        className="poph-chat-teste__botao-anexar"
+                                        className="poph-chat-test__button-attach"
                                     >
                                         <IconUpload aria-hidden="true" size={14} />
                                         {t("testChat.attach")}
@@ -1107,18 +1107,18 @@ export function AgenteChatTeste() {
                                         type="file"
                                         multiple
                                         accept={ACEITOS}
-                                        className="poph-chat-teste__arquivo"
+                                        className="poph-chat-test__file"
                                         disabled={bloqueada || enviando}
                                         aria-describedby="chat-teste-ajuda-arquivos"
                                         onChange={escolherArquivos}
                                     />
-                                    <span id="chat-teste-ajuda-arquivos" className="poph-chat-teste__ajuda">
+                                    <span id="chat-teste-ajuda-arquivos" className="poph-chat-test__help">
                                         {t("testChat.attachHelp")}
                                     </span>
                                 </div>
 
                                 {arquivos.length > 0 && (
-                                    <ul className="poph-chat-teste__anexos-na-fila" aria-label={t("testChat.filesToSendLabel")}>
+                                    <ul className="poph-chat-test__attachments-queued" aria-label={t("testChat.filesToSendLabel")}>
                                         {arquivos.map((arquivo, indice) => (
                                             <li key={`${arquivo.name}-${indice}`}>
                                                 <span>
@@ -1126,7 +1126,7 @@ export function AgenteChatTeste() {
                                                 </span>
                                                 <button
                                                     type="button"
-                                                    className="poph-chat-teste__tirar"
+                                                    className="poph-chat-test__remove"
                                                     aria-label={t("testChat.removeFileLabel", { name: arquivo.name })}
                                                     disabled={enviando}
                                                     onClick={() => tirarArquivo(indice)}
@@ -1139,12 +1139,12 @@ export function AgenteChatTeste() {
                                 )}
 
                                 {erroDeCampo?.campo === "file" && (
-                                    <p className="poph-chat-teste__erro" role="alert">
+                                    <p className="poph-chat-test__error" role="alert">
                                         {erroDeCampo.mensagem}
                                     </p>
                                 )}
 
-                                <div className="poph-chat-teste__acoes">
+                                <div className="poph-chat-test__actions">
                                     {enviando ? (
                                         <SofaButton variant="danger" onClick={cancelarTurno}>
                                             {t("testChat.cancelTurn")}
@@ -1205,14 +1205,14 @@ function Balao({
         <div
             className={
                 doCliente
-                    ? "poph-chat-teste__balao poph-chat-teste__balao--cliente"
-                    : "poph-chat-teste__balao poph-chat-teste__balao--agente"
+                    ? "poph-chat-test__bubble poph-chat-test__bubble--client"
+                    : "poph-chat-test__bubble poph-chat-test__bubble--agent"
             }
         >
-            <span className="poph-chat-teste__autor">{doCliente ? t("testChat.client") : t("testChat.agent")}</span>
-            {mensagem.text && <p className="poph-chat-teste__texto-agente">{mensagem.text}</p>}
+            <span className="poph-chat-test__author">{doCliente ? t("testChat.client") : t("testChat.agent")}</span>
+            {mensagem.text && <p className="poph-chat-test__text-agent">{mensagem.text}</p>}
             {mensagem.attachments.length > 0 && (
-                <ul className="poph-chat-teste__anexos">
+                <ul className="poph-chat-test__attachments">
                     {mensagem.attachments.map((anexo) => (
                         <li key={anexo.id}>
                             {anexo.name} · {tamanhoLegivel(anexo.size_bytes)}
@@ -1253,7 +1253,7 @@ function AcoesDoArquivo({ origem, acoes }: { origem: FileOrigin; acoes: AcoesDeA
     const baixandoEste = acoes.baixando === origem.chave;
     const falhou = acoes.erro?.chave === origem.chave ? acoes.erro.texto : null;
     return (
-        <span className="poph-chat-teste__anexo-acoes">
+        <span className="poph-chat-test__attachment-actions">
             {canSeeOnScreen(origem.mime) && (
                 <SofaButton
                     variant="subtle"
@@ -1273,8 +1273,8 @@ function AcoesDoArquivo({ origem, acoes }: { origem: FileOrigin; acoes: AcoesDeA
                 {t("testChat.download")}
             </SofaButton>
             {falhou && (
-                <span className="poph-chat-teste__anexo-erro" role="alert">
-                    <span className="poph-chat-teste__erro">{falhou}</span>
+                <span className="poph-chat-test__attachment-error" role="alert">
+                    <span className="poph-chat-test__error">{falhou}</span>
                     <SofaButton
                         variant="secondary"
                         aria-label={t("testChat.retryDownloadLabel", { name: origem.nome })}
@@ -1301,11 +1301,11 @@ function ArquivosDoAgente({
 }) {
     const { translate: t } = useI18n();
     return (
-        <ul className="poph-chat-teste__anexos" aria-label={t("testChat.agentFilesLabel")}>
+        <ul className="poph-chat-test__attachments" aria-label={t("testChat.agentFilesLabel")}>
             {arquivos.map((arquivo) => (
                 <li key={arquivo.id}>
                     {arquivo.name} · {tamanhoLegivel(arquivo.size_bytes)} ·{" "}
-                    <span className={arquivo.state === "failed" ? "poph-chat-teste__erro" : undefined}>
+                    <span className={arquivo.state === "failed" ? "poph-chat-test__error" : undefined}>
                         {sendLabel(arquivo.state)}
                     </span>
                     <AcoesDoArquivo origem={acoes.doAgente(arquivo)} acoes={acoes} />
@@ -1329,14 +1329,14 @@ function TurnoSemResposta({
 }) {
     const { translate: t } = useI18n();
     return (
-        <div className="poph-chat-teste__balao poph-chat-teste__balao--agente poph-chat-teste__sem-resposta">
-            <span className="poph-chat-teste__autor">
+        <div className="poph-chat-test__bubble poph-chat-test__bubble--agent poph-chat-test__no-response">
+            <span className="poph-chat-test__author">
                 {numero !== null
                     ? t("testChat.turnHeading", { number: numero, state: turnStateLabel(turno.state) })
                     : t("testChat.turnHeadingNoNumber", { state: turnStateLabel(turno.state) })}
             </span>
-            <p className="poph-chat-teste__evento">{phraseForStateWithoutResponse(turno.state)}</p>
-            {turno.error && <p className="poph-chat-teste__erro">{turno.error}</p>}
+            <p className="poph-chat-test__event">{phraseForStateWithoutResponse(turno.state)}</p>
+            {turno.error && <p className="poph-chat-test__error">{turno.error}</p>}
             {(turno.files_out ?? []).length > 0 && (
                 <ArquivosDoAgente arquivos={turno.files_out ?? []} acoes={acoesDeArquivo} />
             )}

@@ -1,0 +1,347 @@
+
+.poph-rail__item {
+    position: relative;
+}
+
+.poph-rail__counter {
+    padding: 1px 5px;
+    border: 1px solid var(--pop-line);
+    border-radius: var(--pop-radius-sm, 4px);
+    font-family: var(--pop-font-mono);
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    color: var(--pop-text-muted);
+}
+
+.poph-rail__blocked {
+    display: block;
+    min-width: 0;
+}
+
+.poph-rail__cluster {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: var(--pop-spacing-md, 8px);
+    box-sizing: border-box;
+    height: 32px;
+    padding: 0 var(--pop-spacing-md, 8px);
+    border: 1px solid var(--pop-line);
+    border-radius: var(--pop-radius-sm, 6px);
+    background: var(--pop-surface-glass);
+    color: var(--pop-text-primary);
+    font-family: var(--pop-font-sans);
+    font-size: 12.5px;
+    font-weight: var(--pop-font-weight-medium, 500);
+    min-width: 0;
+}
+
+.poph-rail__cluster-icon {
+    flex: none;
+    width: 14px;
+    height: 14px;
+    color: var(--pop-text-muted);
+}
+
+.poph-rail__cluster-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.poph-rail__cluster-point {
+    flex: none;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--pop-success);
+}
+
+.poph-rail__cluster-point--alert {
+    background: var(--pop-danger);
+}
+
+.poph-rail__cluster-point--neutral {
+    background: var(--pop-text-muted);
+}
+
+.poph-rail__only-reader {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+}
+
+.poph-rail__cluster--compact {
+    width: 32px;
+    padding: 0;
+    justify-content: center;
+    margin: 0 auto;
+}
+
+.poph-rail__cluster--compact .poph-rail__cluster-name,
+.poph-rail__cluster--compact .poph-rail__cluster-point {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+}
+
+.poph-rail__base {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: nowrap;
+    gap: var(--pop-spacing-sm, 6px);
+    min-width: 0;
+}
+
+.poph-rail__version {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-family: var(--pop-font-mono);
+    font-size: 10px;
+    color: var(--pop-text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.poph-rail__agent {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-family: var(--pop-font-sans);
+    font-size: 10px;
+    color: var(--pop-text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.poph-shell a:has(> .sofa-rail-item):focus-visible {
+    outline: none;
+    border-radius: var(--pop-radius-sm, 5px);
+    box-shadow: var(--pop-focus-ring);
+}
+
+.poph-shell .sofa-rail-item.poph-rail__item--cockpit {
+    font-size: 12.5px;
+}
+
+.poph-shell .sofa-rail-item.poph-rail__agent-row {
+    min-height: 30px;
+    padding-left: 28px;
+    font-size: 11.5px;
+}
+
+.poph-rail__agent-dot {
+    display: block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--pop-text-muted);
+}
+
+.poph-rail__agent-dot--active {
+    background: var(--pop-success);
+}
+
+.poph-shell .sofa-sidebar-rail__section-title.poph-rail__secao--frase {
+    padding: 16px 9px 6px;
+    font-size: 10.5px;
+    font-weight: var(--pop-font-weight-medium, 500);
+    letter-spacing: 0;
+    text-transform: none;
+}
+
+.poph-shell .sofa-sidebar-rail {
+    width: var(--sofa-rail-width, 240px);
+    border-right-color: var(--pop-line);
+    background: var(--pop-surface);
+}
+
+.poph-shell .sofa-sidebar-rail__list {
+    gap: 5px;
+    padding: 14px 10px 16px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--pop-line-strong) transparent;
+}
+
+.poph-rail__separator {
+    flex: none;
+    height: 1px;
+    margin: 6px 0 0;
+    background: var(--pop-line);
+}
+
+.poph-rail__control {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: var(--pop-radius-sm, 4px);
+    background: transparent;
+    color: var(--pop-text-muted);
+    cursor: pointer;
+}
+
+.poph-rail__control:hover {
+    background: var(--pop-surface-hover);
+    color: var(--pop-text-primary);
+}
+
+.poph-rail__control:focus-visible {
+    outline: none;
+    box-shadow: var(--pop-focus-ring);
+}
+
+.poph-shell .sofa-rail-item {
+    min-height: 34px;
+    padding: 0 9px;
+    border-radius: var(--pop-radius-sm, 5px);
+    gap: 8px;
+    font-size: 12px;
+}
+
+.poph-shell .sofa-rail-item__media svg {
+    width: 14px;
+    height: 14px;
+}
+
+.poph-shell .sofa-rail-item__text {
+    gap: 0;
+}
+
+.poph-shell .sofa-sidebar-rail__section-title {
+    padding: 14px 9px 6px;
+    font-size: 10px;
+}
+
+.poph-shell .sofa-sidebar-rail__footer {
+    padding: 10px;
+}
+
+.poph-rail__base .poph-rail__shortcuts {
+    flex: none;
+    min-width: 0;
+    padding-inline: 6px;
+}
+
+.poph-shell .sofa-sidebar-rail--compact {
+    width: 64px;
+}
+
+.poph-shell .sofa-sidebar-rail--compact .sofa-sidebar-rail__list {
+    align-items: center;
+    padding: 14px 15px;
+}
+
+.poph-shell .sofa-sidebar-rail--compact .poph-rail__control {
+    width: 32px;
+    height: 32px;
+    border-color: var(--pop-line);
+    background: var(--pop-surface-glass);
+}
+
+.poph-shell .sofa-sidebar-rail--compact .poph-rail__item {
+    width: 34px;
+    min-height: 34px;
+    padding: 0;
+    justify-content: center;
+    gap: 0;
+}
+
+.poph-shell .sofa-sidebar-rail--compact .sofa-rail-item__text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+}
+
+.poph-shell .sofa-sidebar-rail--compact .sofa-rail-item__aside,
+.poph-shell .sofa-sidebar-rail--compact .sofa-sidebar-rail__section-title,
+.poph-shell .sofa-sidebar-rail--compact .poph-rail__version,
+.poph-shell .sofa-sidebar-rail--compact .poph-rail__agent {
+    display: none;
+}
+
+.poph-shell .sofa-sidebar-rail--compact .poph-rail__base {
+    justify-content: center;
+    align-items: center;
+}
+
+.poph-shell .sofa-sidebar-rail--compact .poph-rail__shortcuts {
+    width: 32px;
+    min-width: 32px;
+    justify-content: center;
+    padding-inline: 0;
+}
+
+@media (max-width: 900px) {
+    .poph-shell .sofa-sidebar-rail .poph-rail__control {
+        display: none;
+    }
+
+    .poph-shell .sofa-sidebar-rail:not(.sofa-sidebar-rail--compact) .poph-rail__cluster {
+        width: 32px;
+        padding: 0;
+        justify-content: center;
+        margin: 0 auto;
+    }
+
+    .poph-shell .sofa-sidebar-rail:not(.sofa-sidebar-rail--compact) .poph-rail__cluster-name,
+    .poph-shell .sofa-sidebar-rail:not(.sofa-sidebar-rail--compact) .poph-rail__cluster-point {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
+    }
+
+    .poph-shell .sofa-sidebar-rail:not(.sofa-sidebar-rail--compact) {
+        width: 64px;
+    }
+
+    .poph-shell .sofa-sidebar-rail:not(.sofa-sidebar-rail--compact) .poph-rail__separator,
+    .poph-shell .sofa-sidebar-rail:not(.sofa-sidebar-rail--compact) .sofa-sidebar-rail__section-title {
+        display: none;
+    }
+
+    .poph-shell .sofa-sidebar-rail:not(.sofa-sidebar-rail--compact) .sofa-sidebar-rail__list {
+        align-items: center;
+        padding-inline: 15px;
+    }
+
+    .poph-shell .sofa-sidebar-rail:not(.sofa-sidebar-rail--compact) .poph-rail__item {
+        width: 34px;
+        min-height: 34px;
+        padding: 0;
+        justify-content: center;
+        gap: 0;
+    }
+
+    .poph-shell .sofa-sidebar-rail:not(.sofa-sidebar-rail--compact) .sofa-rail-item__text,
+    .poph-shell .sofa-sidebar-rail:not(.sofa-sidebar-rail--compact) .sofa-rail-item__aside,
+    .poph-shell .sofa-sidebar-rail:not(.sofa-sidebar-rail--compact) .poph-rail__version,
+    .poph-shell .sofa-sidebar-rail:not(.sofa-sidebar-rail--compact) .poph-rail__agent {
+        display: none;
+    }
+}

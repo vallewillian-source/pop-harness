@@ -10,11 +10,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { GuardaAlteracoesProvider } from "../componentes/GuardaAlteracoes";
+import { GuardChangesProvider } from "../components/GuardChanges";
 import { waitForModalFocus } from "../testing/modal";
 import { FakeServer, apiError } from "../testing/server";
 import { setLocale } from "../i18n";
-import { AgenteArquivos } from "./AgenteArquivos";
+import { AgentFiles } from "./AgenteArquivos";
 
 const ORG = "org_1";
 const AGENTE = "ag_1";
@@ -63,12 +63,12 @@ function arquivo(parcial: Partial<Arquivo> & { id: string; name: string }): Arqu
 function montar() {
     return render(
         <MemoryRouter initialEntries={[`/orgs/${ORG}/agents/${AGENTE}/files`]}>
-            <GuardaAlteracoesProvider>
+            <GuardChangesProvider>
                 <Routes>
-                    <Route path="/orgs/:orgId/agents/:agentId/files" element={<AgenteArquivos />} />
+                    <Route path="/orgs/:orgId/agents/:agentId/files" element={<AgentFiles />} />
                     <Route path="/orgs/:orgId/agents" element={<div>Tela de agentes</div>} />
                 </Routes>
-            </GuardaAlteracoesProvider>
+            </GuardChangesProvider>
         </MemoryRouter>,
     );
 }

@@ -45,7 +45,7 @@ MODULE_RULES = (
     ("crates/poph/tests/", "M12b"),
     ("crates/poph/", "M12a"),
     ("console/src/api/", "M13a"),
-    ("console/src/componentes/", "M13b"),
+    ("console/src/components/", "M13b"),
     ("console/src/telas/", "M13c"),
     ("console/", "M13d"),
     ("scripts/", "M14"),
