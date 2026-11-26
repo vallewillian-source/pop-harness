@@ -1,18 +1,7 @@
 # Arquivos com comentário fora da allowlist, um por linha: módulo, quantidade de comentários e caminho,
 # separados por TAB. Gerado por `bash scripts/check-comments.sh --atualizar-pendentes`; não editar à mão.
-M02	5	crates/poph-core/Cargo.toml
 M02	16	crates/poph-core/tests/apoio/mod.rs
-M02	8	crates/poph-core/tests/llm_logs.rs
-M02	7	crates/poph-core/tests/llm_real.rs
-M02	7	crates/poph-core/tests/llm_servidor_falso.rs
-M02	14	crates/poph-core/tests/llm_tls.rs
 M03	7	crates/poph-evolution/Cargo.toml
-M03	120	crates/poph-evolution/src/cliente.rs
-M03	30	crates/poph-evolution/src/erro.rs
-M03	68	crates/poph-evolution/src/integracao.rs
-M03	40	crates/poph-evolution/src/lib.rs
-M03	43	crates/poph-evolution/src/texto.rs
-M03	93	crates/poph-evolution/src/webhook.rs
 M03	12	crates/poph-evolution/tests/evolucao_real.rs
 M03	24	crates/poph-evolution/tests/evolution.rs
 M03	18	crates/poph-evolution/tests/webhook.rs
