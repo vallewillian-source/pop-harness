@@ -110,7 +110,7 @@ write them (not copied from the text). Top-3 accuracy, real int8 model:
 | vector only | 29/30 (96.7%) |
 | hybrid (RRF + FTS with prefix) | **30/30 (100%)** |
 
-The test `hibrida_acerta_top3_pelo_menos_tanto_quanto_so_vetor` runs this measurement and fails if the hybrid
+The test `hybrid_matches_or_beats_vector_only_in_top_three` runs this measurement and fails if the hybrid
 falls below the vector-only result. Without the model installed it is skipped, like the other `poph-rag`
 tests.
 
@@ -234,3 +234,25 @@ idea of untrusted content, with its own mark. Details in `docs/PRODUTOS.md`.
   organization never sees another's chunks or products.
 - A poisoned mutex does not block a read: the stored state is still valid, so the lock is taken with the panic
   payload recovered.
+
+## 10. Search and model tests
+
+- The queue, index and relevance-cutoff tests use fake embeddings. The model installation tests serve
+  known bytes and checksums from a local HTTP listener. Both sets run without an installed model or
+  access to the internet.
+- The vector and ranking comparisons use an installed int8 model. The test support's
+  `model_folder` helper reads the location override and defaults to `data/modelos`. Tests return
+  early if the model or tokenizer is missing. Run `poph model install` before running these
+  comparisons. The vector comparison requires a cosine of at least 0.9999 against the reference
+  fixture.
+- With the optional spike corpus and query fixtures available, run
+  `cargo test -p poph-rag --test model_quantization -- --nocapture`. It compares floating-point
+  ranking with fixed-scale and per-vector int8 ranking over 300 chunks and 20 labeled queries.
+- The RAM measurement runs in its own test process so earlier loads cannot affect the resident
+  memory reading. Run `cargo test --locked -p poph-rag --test ram -- --ignored --nocapture` with the
+  model installed. The assertion allows 10% test-harness overhead over the 438 MB reference, and
+  the captured load log must omit the model path.
+- Run `cargo test --release -p poph-rag --test search_throughput -- --ignored --nocapture` for the
+  exact int8 search measurement. It measures the first read from `rag.db` and warm searches over
+  100,000 chunks, and also measures warm searches for a 200-chunk agent. It uses fake embeddings
+  to keep model inference outside the timing.

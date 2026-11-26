@@ -52,7 +52,7 @@ catalog (harness.db)                     product index (rag.db)
 | hybrid (RRF + FTS with prefix) | **19/20 (95.0 %)** |
 
 The only miss in both is `escorsiao` (two errors in the same word). The test
-`hibrida_de_produtos_acerta_top3_pelo_menos_tanto_quanto_so_vetor` fails if the hybrid falls below the vector-only
+`product_hybrid_matches_or_beats_vector_only_in_top_three` fails if the hybrid falls below the vector-only
 result; without the model installed it is skipped.
 
 ## 2. Category rule (`agent_product_categories`)
