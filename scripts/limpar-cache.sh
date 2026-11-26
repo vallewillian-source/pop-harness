@@ -1,196 +1,184 @@
 #!/usr/bin/env bash
-# HR-60 — Poda do cache de compilação do Cargo.
+# HR-60 — Pruning the Cargo build cache.
 #
-# Por que existe: desde o Cargo 1.100 o layout do build-dir mudou (cargo#15010) e TODO artefato
-# intermediário passa a ficar em `target/<perfil>/build/<crate>/<hash-da-unidade>/out/`. O hash
-# muda quando a configuração efetiva da unidade muda (perfil dev/test/check, features unificadas
-# pela forma do comando, alvo, toolchain e hashes das dependências). O Cargo nunca apaga os
-# diretórios de hashes antigos, e cada binário de teste levava debuginfo completo (~300 MB antes
-# da HR-60b; hoje o perfil dev usa `line-tables-only` e os binários ficam ~56% menores — a poda
-# continua necessária, porque as unidades antigas nunca são apagadas pelo Cargo).
-# Resultado: o `target/` cresce a cada forma de comando diferente até encher o disco.
+# Why it exists: since Cargo 1.100 the build-dir layout changed (cargo#15010) and EVERY intermediate
+# artifact now lives in `target/<profile>/build/<crate>/<unit-hash>/out/`. The hash changes when the
+# effective configuration of the unit changes (dev/test/check profile, features unified by the command
+# shape, target, toolchain and dependency hashes). Cargo never deletes old hash directories, and each
+# test binary carried full debuginfo (~300 MB before HR-60b; today the dev profile uses
+# `line-tables-only` and the binaries are ~56% smaller — pruning is still needed, because Cargo never
+# deletes the old units).
+# Result: `target/` grows with every different command shape until the disk is full.
 #
-# O que faz: apaga as unidades e os diretórios de incremental que não são tocados há N dias
-# (padrão 3), preservando o que um build recente pode estar usando, e reduz a retenção sozinho
-# quando o `target/` passa do limite em GB. Nunca toca em código, em `Cargo.lock` nem em arquivo
-# fora de `target/`.
+# What it does: deletes the units and incremental directories that have not been touched for N days
+# (default 3), keeping what a recent build may still be using, and reduces retention on its own when
+# `target/` exceeds the GB limit. Never touches code, `Cargo.lock` or any file outside `target/`.
 #
-# Uso:
-#   scripts/limpar-cache.sh                 # poda o que passou de 3 dias; reduz se passar de 25 GB
-#   scripts/limpar-cache.sh --seco          # só mostra o que apagaria
-#   scripts/limpar-cache.sh --dias 7        # retenção maior
-#   scripts/limpar-cache.sh --limite-gb 40  # teto de tamanho do target
-#   scripts/limpar-cache.sh --tudo          # `cargo clean` (apaga o target inteiro; respeita build ativo)
-#   scripts/limpar-cache.sh --forcar        # poda mesmo com build em andamento (só para teste)
+# Usage:
+#   scripts/limpar-cache.sh                 # prunes what is older than 3 days; reduces if over 25 GB
+#   scripts/limpar-cache.sh --seco          # only shows what would be deleted
+#   scripts/limpar-cache.sh --dias 7        # longer retention
+#   scripts/limpar-cache.sh --limite-gb 40  # size ceiling for target
+#   scripts/limpar-cache.sh --tudo          # `cargo clean` (deletes the whole target; respects an active build)
+#   scripts/limpar-cache.sh --forcar        # prunes even with a build running (test only)
 #
-# Saída: resumo com bytes liberados. Código 0 também quando pula por build em andamento —
-# o CI não deve falhar por causa da poda.
+# Output: summary with bytes freed. Exit code 0 also when it skips because a build is running —
+# CI must not fail because of pruning.
 
 set -uo pipefail
 
-RAIZ="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$RAIZ" || exit 2
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT" || exit 2
 export PATH="$HOME/.cargo/bin:$PATH"
 
-DIAS=3
-LIMITE_GB=25
-SECO=0
-TUDO=0
-FORCAR=0
-MINUTOS_ATIVOS=120
+DAYS=3
+LIMIT_GB=25
+DRY=0
+ALL=0
+FORCE=0
+ACTIVE_MINUTES=120
 
-uso() {
+usage() {
     sed -n '2,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --dias) DIAS="${2:-}"; shift 2 ;;
-        --dias=*) DIAS="${1#*=}"; shift ;;
-        --limite-gb) LIMITE_GB="${2:-}"; shift 2 ;;
-        --limite-gb=*) LIMITE_GB="${1#*=}"; shift ;;
-        --minutos-ativos) MINUTOS_ATIVOS="${2:-}"; shift 2 ;;
-        --seco|--dry-run) SECO=1; shift ;;
-        --tudo) TUDO=1; shift ;;
-        --forcar) FORCAR=1; shift ;;
-        -h|--ajuda|--help) uso; exit 0 ;;
-        *) echo "argumento desconhecido: $1" >&2; exit 2 ;;
+        --dias) DAYS="${2:-}"; shift 2 ;;
+        --dias=*) DAYS="${1#*=}"; shift ;;
+        --limite-gb) LIMIT_GB="${2:-}"; shift 2 ;;
+        --limite-gb=*) LIMIT_GB="${1#*=}"; shift ;;
+        --minutos-ativos) ACTIVE_MINUTES="${2:-}"; shift 2 ;;
+        --seco|--dry-run) DRY=1; shift ;;
+        --tudo) ALL=1; shift ;;
+        --forcar) FORCE=1; shift ;;
+        -h|--ajuda|--help) usage; exit 0 ;;
+        *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
 done
 
-case "$DIAS" in ''|*[!0-9.]*) echo "--dias precisa de número (ex.: 3 ou 0.5)" >&2; exit 2 ;; esac
-case "$LIMITE_GB" in ''|*[!0-9]*) echo "--limite-gb precisa de inteiro" >&2; exit 2 ;; esac
+case "$DAYS" in ''|*[!0-9.]*) echo "--dias needs a number (e.g. 3 or 0.5)" >&2; exit 2 ;; esac
+case "$LIMIT_GB" in ''|*[!0-9]*) echo "--limite-gb needs an integer" >&2; exit 2 ;; esac
 
 num() { awk -v b="${1:-0}" 'BEGIN{ printf "%.2f GB", b/1073741824 }'; }
 
-ALVO="$RAIZ/target"
-if [ ! -d "$ALVO" ]; then
-    echo "cache: sem target/ em $RAIZ — nada a podar"
+TARGET="$ROOT/target"
+if [ ! -d "$TARGET" ]; then
+    echo "cache: no target/ in $ROOT — nothing to prune"
     exit 0
 fi
 
-if [ "$TUDO" -eq 1 ]; then
-    # Mesma guarda da poda por idade: `--tudo` também não pode apagar o target de um build em curso.
-    if [ "$FORCAR" -eq 0 ] && { pgrep -x cargo >/dev/null 2>&1 || pgrep -x rustc >/dev/null 2>&1; }; then
-        echo "cache: há um cargo/rustc em execução nesta máquina — --tudo adiado (use --forcar para apagar de qualquer forma)"
+if [ "$ALL" -eq 1 ]; then
+    if [ "$FORCE" -eq 0 ] && { pgrep -x cargo >/dev/null 2>&1 || pgrep -x rustc >/dev/null 2>&1; }; then
+        echo "cache: a cargo/rustc is running on this machine — --tudo postponed (use --forcar to delete anyway)"
         exit 0
     fi
-    antes=$(du -sb "$ALVO" 2>/dev/null | cut -f1)
-    if [ "$SECO" -eq 1 ]; then
-        echo "cache: --seco com --tudo: apagaria o target/ inteiro ($(num "$antes") )"
+    before=$(du -sb "$TARGET" 2>/dev/null | cut -f1)
+    if [ "$DRY" -eq 1 ]; then
+        echo "cache: --seco with --tudo: would delete the whole target/ ($(num "$before") )"
         exit 0
     fi
-    echo "cache: apagando o target/ inteiro (cargo clean)"
-    cargo clean 2>/dev/null || rm -rf "$ALVO"
-    echo "cache: liberado $(num "$antes") — o próximo build compila do zero"
+    echo "cache: deleting the whole target/ (cargo clean)"
+    cargo clean 2>/dev/null || rm -rf "$TARGET"
+    echo "cache: freed $(num "$before") — the next build compiles from scratch"
     exit 0
 fi
 
-# Um build de outro processo pode estar usando diretórios antigos; podar agora poderia quebrá-lo.
-if [ "$FORCAR" -eq 0 ] && { pgrep -x cargo >/dev/null 2>&1 || pgrep -x rustc >/dev/null 2>&1; }; then
-    echo "cache: há um cargo/rustc em execução nesta máquina — poda adiada (não falha o CI)"
+if [ "$FORCE" -eq 0 ] && { pgrep -x cargo >/dev/null 2>&1 || pgrep -x rustc >/dev/null 2>&1; }; then
+    echo "cache: a cargo/rustc is running on this machine — pruning postponed (does not fail CI)"
     exit 0
 fi
 
-poda() {
-    local dias="$1" rotulo="$2"
-    local minutos
-    minutos=$(awk -v d="$dias" 'BEGIN{ printf "%d", d*1440 }')
-    [ "$minutos" -lt 1 ] && minutos=1
+prune() {
+    local days="$1" label="$2"
+    local minutes
+    minutes=$(awk -v d="$days" 'BEGIN{ printf "%d", d*1440 }')
+    [ "$minutes" -lt 1 ] && minutes=1
 
-    local antes_dir=${#REMOVER[@]}
-    # janela de proteção: nunca maior que metade da retenção (senão a retenção curta não poda nada)
-    local ativo=$MINUTOS_ATIVOS
-    [ "$ativo" -ge "$minutos" ] && ativo=$(( minutos / 2 ))
-    [ "$ativo" -lt 5 ] && ativo=0
-    local alvo
+    local before_dir=${#REMOVE[@]}
+    local active=$ACTIVE_MINUTES
+    [ "$active" -ge "$minutes" ] && active=$(( minutes / 2 ))
+    [ "$active" -lt 5 ] && active=0
+    local candidate
 
-    # 1) Unidades do build-dir novo: target/<perfil>/build/<crate>/<hash16>/
-    while IFS= read -r -d '' alvo; do
-        local base; base=$(basename "$alvo")
+    while IFS= read -r -d '' candidate; do
+        local base; base=$(basename "$candidate")
         [[ "$base" =~ ^[0-9a-f]{16}$ ]] || continue
-        # ainda em uso recente? então fica
-        if [ -n "$(find "$alvo" -newermt "-${ativo} minutes" -print -quit 2>/dev/null)" ]; then
+        if [ -n "$(find "$candidate" -newermt "-${active} minutes" -print -quit 2>/dev/null)" ]; then
             continue
         fi
-        # algum arquivo tocado dentro da retenção? então fica
-        if [ -n "$(find "$alvo" -newermt "-${minutos} minutes" -print -quit 2>/dev/null)" ]; then
+        if [ -n "$(find "$candidate" -newermt "-${minutes} minutes" -print -quit 2>/dev/null)" ]; then
             continue
         fi
-        REMOVER+=("$alvo")
-    done < <(find "$ALVO" -mindepth 4 -maxdepth 4 -type d -path '*/build/*/*' -print0 2>/dev/null)
+        REMOVE+=("$candidate")
+    done < <(find "$TARGET" -mindepth 4 -maxdepth 4 -type d -path '*/build/*/*' -print0 2>/dev/null)
 
-    # 2) Layout antigo: target/<perfil>/build/<crate>-<hash>/  (tem out/, output, stderr)
-    while IFS= read -r -d '' alvo; do
-        # diretório de crate do layout novo (contém filhos <hash16>): não é unidade antiga
-        if [ -n "$(find "$alvo" -mindepth 1 -maxdepth 1 -type d -regextype posix-extended -regex '.*/[0-9a-f]{16}' -print -quit 2>/dev/null)" ]; then
+    while IFS= read -r -d '' candidate; do
+        if [ -n "$(find "$candidate" -mindepth 1 -maxdepth 1 -type d -regextype posix-extended -regex '.*/[0-9a-f]{16}' -print -quit 2>/dev/null)" ]; then
             continue
         fi
-        if [ -n "$(find "$alvo" -newermt "-${ativo} minutes" -print -quit 2>/dev/null)" ]; then
+        if [ -n "$(find "$candidate" -newermt "-${active} minutes" -print -quit 2>/dev/null)" ]; then
             continue
         fi
-        if [ -n "$(find "$alvo" -newermt "-${minutos} minutes" -print -quit 2>/dev/null)" ]; then
+        if [ -n "$(find "$candidate" -newermt "-${minutes} minutes" -print -quit 2>/dev/null)" ]; then
             continue
         fi
-        REMOVER+=("$alvo")
-    done < <(find "$ALVO" -mindepth 3 -maxdepth 3 -type d -path '*/build/*-*' -print0 2>/dev/null)
+        REMOVE+=("$candidate")
+    done < <(find "$TARGET" -mindepth 3 -maxdepth 3 -type d -path '*/build/*-*' -print0 2>/dev/null)
 
-    # 3) Incremental: target/<perfil>/incremental/<crate>-<sufixo>/
-    while IFS= read -r -d '' alvo; do
-        if [ -n "$(find "$alvo" -newermt "-${ativo} minutes" -print -quit 2>/dev/null)" ]; then
+    while IFS= read -r -d '' candidate; do
+        if [ -n "$(find "$candidate" -newermt "-${active} minutes" -print -quit 2>/dev/null)" ]; then
             continue
         fi
-        if [ -n "$(find "$alvo" -newermt "-${minutos} minutes" -print -quit 2>/dev/null)" ]; then
+        if [ -n "$(find "$candidate" -newermt "-${minutes} minutes" -print -quit 2>/dev/null)" ]; then
             continue
         fi
-        REMOVER+=("$alvo")
-    done < <(find "$ALVO" -mindepth 3 -maxdepth 3 -type d -path '*/incremental/*' -print0 2>/dev/null)
+        REMOVE+=("$candidate")
+    done < <(find "$TARGET" -mindepth 3 -maxdepth 3 -type d -path '*/incremental/*' -print0 2>/dev/null)
 
-    local novos=$(( ${#REMOVER[@]} - antes_dir ))
-    [ "$rotulo" != "" ] && echo "cache: retenção ${rotulo} (${minutos} min) — ${novos} diretório(s) candidato(s)"
+    local added=$(( ${#REMOVE[@]} - before_dir ))
+    [ "$label" != "" ] && echo "cache: retention ${label} (${minutes} min) — ${added} candidate directory(ies)"
 }
 
-tamanho() { du -sb "$ALVO" 2>/dev/null | cut -f1; }
+size() { du -sb "$TARGET" 2>/dev/null | cut -f1; }
 
-inicio=$(tamanho)
-REMOVER=()
+start=$(size)
+REMOVE=()
 
-echo "cache: target/ com $(num "$inicio") — procurando diretórios sem uso há mais de ${DIAS} dia(s)"
-poda "$DIAS" "principal"
+echo "cache: target/ at $(num "$start") — looking for directories unused for more than ${DAYS} day(s)"
+prune "$DAYS" "main"
 
-# Sem o que podar na retenção normal e o target já grande? Aperta a retenção.
-if [ ${#REMOVER[@]} -eq 0 ] && [ $(( inicio / 1073741824 )) -ge "$LIMITE_GB" ]; then
-    echo "cache: nada passou de ${DIAS} dia(s) e o target/ está acima de ${LIMITE_GB} GB — apertando"
-    poda 1 "1 dia"
-    if [ ${#REMOVER[@]} -eq 0 ] && [ $(( inicio / 1073741824 )) -ge "$LIMITE_GB" ]; then
-        poda 0.05 "1 hora"
+if [ ${#REMOVE[@]} -eq 0 ] && [ $(( start / 1073741824 )) -ge "$LIMIT_GB" ]; then
+    echo "cache: nothing older than ${DAYS} day(s) and target/ is above ${LIMIT_GB} GB — tightening"
+    prune 1 "1 day"
+    if [ ${#REMOVE[@]} -eq 0 ] && [ $(( start / 1073741824 )) -ge "$LIMIT_GB" ]; then
+        prune 0.05 "1 hour"
     fi
 fi
 
-if [ ${#REMOVER[@]} -eq 0 ]; then
-    echo "cache: nada a podar; target/ segue com $(num "$(tamanho)")"
+if [ ${#REMOVE[@]} -eq 0 ]; then
+    echo "cache: nothing to prune; target/ stays at $(num "$(size)")"
     exit 0
 fi
 
 total=0
-for alvo in "${REMOVER[@]}"; do
-    tamanho_alvo=$(du -sb "$alvo" 2>/dev/null | cut -f1)
-    total=$(( total + ${tamanho_alvo:-0} ))
-    if [ "$SECO" -eq 1 ]; then
-        echo "  [seco] $(num "${tamanho_alvo:-0}")  ${alvo#"$RAIZ"/}"
+for candidate in "${REMOVE[@]}"; do
+    candidate_size=$(du -sb "$candidate" 2>/dev/null | cut -f1)
+    total=$(( total + ${candidate_size:-0} ))
+    if [ "$DRY" -eq 1 ]; then
+        echo "  [dry] $(num "${candidate_size:-0}")  ${candidate#"$ROOT"/}"
     else
-        rm -rf -- "$alvo"
+        rm -rf -- "$candidate"
     fi
 done
 
-if [ "$SECO" -eq 1 ]; then
-    echo "cache [seco]: ${#REMOVER[@]} diretório(s), $(num "$total") seriam liberados"
+if [ "$DRY" -eq 1 ]; then
+    echo "cache [dry]: ${#REMOVE[@]} directory(ies), $(num "$total") would be freed"
     exit 0
 fi
 
-# Remove diretórios de crate que ficaram vazios.
-find "$ALVO" -mindepth 3 -maxdepth 3 -type d -path '*/build/*' -empty -delete 2>/dev/null
+find "$TARGET" -mindepth 3 -maxdepth 3 -type d -path '*/build/*' -empty -delete 2>/dev/null
 
-fim=$(tamanho)
-echo "cache: ${#REMOVER[@]} diretório(s) removido(s), $(num "$total") liberados; target/ de $(num "$inicio") para $(num "$fim")"
+end=$(size)
+echo "cache: ${#REMOVE[@]} directory(ies) removed, $(num "$total") freed; target/ from $(num "$start") to $(num "$end")"
 exit 0

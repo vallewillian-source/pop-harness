@@ -195,7 +195,7 @@ bash scripts/build-dist.sh [output_folder]
 
 Builds in release mode with `Cargo.lock`, gathers `poph` and `poph-extrator`, generates `SHA256SUMS` and a
 `.tar.gz` next to the folder. The script refuses to overwrite an existing output. The package is **native**
-to the architecture where the script runs: there is no cross-compilation. ONNX Runtime is linked statically
+to the architecture where the script runs: there is no cross-compilation: the workstation has no cross C compiler, and SQLite (bundled) and ONNX Runtime must be built for the host architecture. ONNX Runtime is linked statically
 into `poph`; the embedding model is not in the package (install it with `poph model install`). The package
 still depends on the system shared libraries listed in `LDD-poph.txt`.
 

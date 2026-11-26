@@ -1,51 +1,51 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-RAIZ="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$RAIZ" || exit 2
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT" || exit 2
 export PATH="$HOME/.cargo/bin:$PATH"
 
-falhas=0
+failures=0
 
-executa() {
-    local nome="$1"
+run() {
+    local name="$1"
     shift
     echo
-    echo "==> ${nome}: $*"
+    echo "==> ${name}: $*"
     if "$@"; then
-        echo "<== OK: ${nome}"
+        echo "<== OK: ${name}"
     else
         local rc=$?
-        echo "<== FALHOU: ${nome} (código ${rc})"
-        falhas=$((falhas + 1))
+        echo "<== FALHOU: ${name} (código ${rc})"
+        failures=$((failures + 1))
     fi
 }
 
-executa "cache de compilação (poda do que não é usado há 3 dias)" bash scripts/limpar-cache.sh --dias 3
-executa "console (bundle do Console embutido no binário)" bash console/scripts/build.sh
-executa "console (cliente do OpenAPI em dia)" bash console/scripts/verify-api.sh
-executa "console (testes de componente)" bash console/scripts/test.sh
+run "build cache (prune what has not been used for 3 days)" bash scripts/limpar-cache.sh --dias 3
+run "console (Console bundle embedded in the binary)" bash console/scripts/build.sh
+run "console (OpenAPI client up to date)" bash console/scripts/verify-api.sh
+run "console (component tests)" bash console/scripts/test.sh
 
-executa "comentários (teste do removedor)" python3 scripts/tests/test-strip-comments.py
-executa "comentários (trava: allowlist e pendentes por módulo)" bash scripts/check-comments.sh
-executa "glossário (termos, congelados e tabela em dia)" python3 scripts/glossary-terms.py --validar
-executa "nomes (trava: allowlist de publicados e pendentes por módulo)" bash scripts/check-names.sh
-executa "nomes (teste do renomeador)" python3 scripts/tests/test-rename.py
+run "comments (remover test)" python3 scripts/tests/test-strip-comments.py
+run "comments (gate: allowlist and pending per module)" bash scripts/check-comments.sh
+run "glossary (terms, frozen and table up to date)" python3 scripts/glossary-terms.py --validar
+run "names (gate: allowlist of published names and pending per module)" bash scripts/check-names.sh
+run "names (renamer test)" python3 scripts/tests/test-rename.py
 
-executa "formatação" cargo fmt --all -- --check
-executa "clippy" cargo clippy --workspace --all-targets --locked -- -D warnings
-executa "build" cargo build --workspace --locked
-executa "testes" cargo test --workspace --locked
-executa "ram (medição do modelo, poph-rag sozinho)" cargo test --locked -p poph-rag --test ram -- --ignored --nocapture
-executa "aarch64 (check, crates sem C)" cargo check --locked --target aarch64-unknown-linux-gnu -p poph-types -p poph-files -p poph-plugins -p poph-fluxos
-executa "aarch64 (check, plugin de exemplo)" cargo check --locked --target aarch64-unknown-linux-gnu -p poph-plugin-eco
-executa "deny (licenças, bans, fontes, advisories)" cargo deny check
-executa "audit (vulnerabilidades)" cargo audit
+run "formatting" cargo fmt --all -- --check
+run "clippy" cargo clippy --workspace --all-targets --locked -- -D warnings
+run "build" cargo build --workspace --locked
+run "tests" cargo test --workspace --locked
+run "ram (model measurement, poph-rag alone)" cargo test --locked -p poph-rag --test ram -- --ignored --nocapture
+run "aarch64 (check, crates without C)" cargo check --locked --target aarch64-unknown-linux-gnu -p poph-types -p poph-files -p poph-plugins -p poph-fluxos
+run "aarch64 (check, example plugin)" cargo check --locked --target aarch64-unknown-linux-gnu -p poph-plugin-eco
+run "deny (licenses, bans, sources, advisories)" cargo deny check
+run "audit (vulnerabilities)" cargo audit
 
 echo
-if [ "$falhas" -eq 0 ]; then
+if [ "$failures" -eq 0 ]; then
     echo "CI LOCAL: OK (todas as checagens passaram)"
     exit 0
 fi
-echo "CI LOCAL: FALHOU (${falhas} checagem(ns) com erro)"
+echo "CI LOCAL: FALHOU (${failures} checagem(ns) com erro)"
 exit 1

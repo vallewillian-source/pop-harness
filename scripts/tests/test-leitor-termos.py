@@ -5,13 +5,13 @@ import sys
 import tempfile
 from pathlib import Path
 
-RAIZ = Path(__file__).resolve().parent.parent.parent
-GLOSSARY = RAIZ / "scripts" / "glossary-terms.py"
+ROOT = Path(__file__).resolve().parent.parent.parent
+GLOSSARY = ROOT / "scripts" / "glossary-terms.py"
 
 spec = importlib.util.spec_from_file_location("glossary_terms", GLOSSARY)
 glossary = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(glossary)
-leitor = glossary.leitor_termos
+reader = glossary.leitor_termos
 
 failures = []
 
@@ -28,7 +28,7 @@ def tokens(directory, name, source):
     path = directory / name
     path.write_text(source, encoding="utf-8")
     language = "css" if name.endswith(".css") else "javascript"
-    return leitor.tokens(path, language)
+    return reader.tokens(path, language)
 
 
 JSX_TEXT = """\
