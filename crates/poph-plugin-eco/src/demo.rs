@@ -6,7 +6,7 @@ use poph_agent::atores::{Atores, Futuro, OpcoesAtores, Processador, Tarefa};
 use poph_agent::entrada_saida::{Fluxo, OpcoesFluxo};
 use poph_agent::fila_integracao::{ConversaDoCanal, EnvioPeloCanal, InboxDoCanal};
 use poph_agent::metricas::MetricasMemoria;
-use poph_plugins::{OpcoesPlugin, Supervisor};
+use poph_plugins::{PluginOptions, Supervisor};
 use poph_store::{NewAgent, NewConversation, NewOrg, NewOutboxItem, OutboxState, Page, Store};
 use poph_types::{EventSink, Integration, IntegrationId, SendText, TurnId};
 
@@ -85,9 +85,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let inbox = InboxDoCanal::iniciar(flow.clone(), org, resolver);
 
     let integration = IntegrationId::generate();
-    let options = OpcoesPlugin::novo(&program, integration, org).com_kind("eco");
-    let supervisor = Supervisor::iniciar(options, Arc::clone(&inbox) as Arc<dyn EventSink>).await?;
-    let manifest = supervisor.manifesto().expect("manifesto do handshake");
+    let options = PluginOptions::new(&program, integration, org).with_kind("eco");
+    let supervisor = Supervisor::start(options, Arc::clone(&inbox) as Arc<dyn EventSink>).await?;
+    let manifest = supervisor.manifest().expect("manifesto do handshake");
     println!(
         "2. supervisor pronto: {} v{} (kind={}, protocolo={})",
         manifest.name, manifest.version, manifest.kind, manifest.protocol
@@ -161,7 +161,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         store.outbox().count_by_state(org, OutboxState::Sent)?
     );
 
-    supervisor.encerrar().await;
+    supervisor.shutdown().await;
     drop(inbox);
     if temporary {
         let _ = std::fs::remove_dir_all(&directory);

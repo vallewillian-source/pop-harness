@@ -25,7 +25,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use poph_plugins::{ColetorEventos, OpcoesPlugin, Supervisor};
+use poph_plugins::{EventCollector, PluginOptions, Supervisor};
 use poph_types::{DeclaredPlugin, IntegrationId, Manifest, OrgId, PluginsConfig};
 use serde::Serialize;
 use serde_json::Value;
@@ -201,18 +201,18 @@ impl CatalogoManifestos {
 
 /// Sobe o plugin, lê o manifesto e encerra o processo.
 async fn resolver(declarado: &DeclaredPlugin) -> Result<Manifest, FalhaManifesto> {
-    let mut opcoes = OpcoesPlugin::novo(
+    let mut opcoes = PluginOptions::new(
         declarado.program.clone(),
         IntegrationId::generate(),
         OrgId::generate(),
     )
-    .com_kind(declarado.kind.trim());
-    opcoes.argumentos = declarado.arguments.clone();
+    .with_kind(declarado.kind.trim());
+    opcoes.arguments = declarado.arguments.clone();
     // O manifesto não depende de configuração nem de segredo: nada do operador é enviado aqui.
-    match Supervisor::iniciar(opcoes, Arc::new(ColetorEventos::novo())).await {
+    match Supervisor::start(opcoes, Arc::new(EventCollector::new())).await {
         Ok(supervisor) => {
-            let manifesto = supervisor.manifesto();
-            supervisor.encerrar().await;
+            let manifesto = supervisor.manifest();
+            supervisor.shutdown().await;
             match manifesto {
                 Some(manifesto) => Ok(manifesto),
                 None => {

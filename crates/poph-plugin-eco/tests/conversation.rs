@@ -148,7 +148,7 @@ async fn conversation_without_a_contact_fails_without_blocking_the_queue() {
     assert!(reason.contains("peer"), "{reason}");
 
     assert_eq!(scenario.inbox.contadores().gravados, 0);
-    assert_eq!(scenario.supervisor.contadores().comandos, 0);
+    assert_eq!(scenario.supervisor.counters().commands, 0);
 
     scenario.shutdown().await;
 }

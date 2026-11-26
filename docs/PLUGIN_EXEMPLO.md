@@ -127,8 +127,8 @@ Counters (`InboxDoCanal::contadores`) — per integration, never summed across o
    normal: the `inbox` is what deduplicates.
 5. Never write a secret to `stderr`, to a file or into an event: the secret arrives only in the handshake.
 6. If the plugin crashes, it will be restarted with backoff; do not keep state that does not survive that.
-7. Register it in Harness with `OpcoesPlugin::novo(caminho, integracao_id, org)` — program, arguments and environment
-   declared; secret only through `com_segredo`.
+7. Register it in Harness with `PluginOptions::new(caminho, integracao_id, org)` — program, arguments and environment
+   declared; secret only through `with_secret`.
 
 A plugin in another language follows the same JSON as `docs/PLUGIN_PROTOCOLO.md`; the Rust example uses the types of
 `poph-types` on purpose, so that a contract change breaks the build instead of breaking in production.

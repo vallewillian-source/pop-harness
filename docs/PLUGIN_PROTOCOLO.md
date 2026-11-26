@@ -57,7 +57,7 @@ First line the host writes to the plugin's input:
 - `segredos` (secrets) is the **only** place through which a secret reaches the plugin. It never goes in the
   environment or on the command line: `argv` shows up in `ps`/`/proc`, and third-party logs copy the environment.
 - The plugin **does not inherit** the Harness environment. The process receives only `PATH`, `HOME`, `LANG`, `LC_ALL`,
-  `TZ`, `TMPDIR` and whatever is declared in `OpcoesPlugin::com_ambiente` — the LLM, Jev and encryption keys stay out
+  `TZ`, `TMPDIR` and whatever is declared in `PluginOptions::with_env` — the LLM, Jev and encryption keys stay out
   of reach of a third-party program.
 
 The first line the plugin sends back is the acceptance, with the manifest:
@@ -151,7 +151,7 @@ characters, or with an empty attachment — and counts it in `eventos_invalidos`
 
 | Item | Default | What happens when it is exceeded |
 |---|---|---|
-| Message size (both directions) | 1 MiB | the plugin's line is discarded and counted in `lixo`; a host message is refused with `mensagem de N bytes passa do limite de M` ("message of N bytes exceeds the limit of M") (the plugin is **not** brought down) |
+| Message size (both directions) | 1 MiB | the plugin's line is discarded — and everything up to the next `\n` with it — and counted as junk; a host message is refused with `mensagem de N bytes passa do limite de M` ("message of N bytes exceeds the limit of M") (the plugin is **not** brought down) |
 | Handshake | 5 s | process killed, failure counted, restart scheduled |
 | Command | 10 s | process killed, failure counted, restart scheduled; the caller gets "tempo esgotado" (timed out) |
 | Health | 3 s | same |
@@ -175,10 +175,9 @@ Console/CLI can expose a "reconnect"), or restarts the Harness process.
 
 ## 6. Counters (for `/metrics` and for the "why" in the Console)
 
-`linhas` (lines), `lixo` (garbage: a line outside the protocol or above the cap), `eventos` (events),
-`eventos_invalidos` (invalid events), `estados` (states), `comandos` (commands), `saudes` (health checks),
-`handshakes`, `falhas` (consecutive failures), `reinicios` (restarts), `tempo_esgotado` (timeouts), `abortos`
-(aborts). They are per integration — never summed across orgs.
+`CounterReport` (from `Supervisor::counters`): `lines`, `junk` (a line outside the protocol or above the cap),
+`events`, `invalid_events`, `states`, `commands`, `health_checks`, `handshakes`, `failures` (consecutive),
+`restarts`, `timed_out`, `aborts`. They are per integration — never summed across orgs.
 
 ## 7. Minimal plugin example
 
@@ -224,19 +223,22 @@ It exists only for the tests: the distribution package (`scripts/build-dist.sh`)
 ## 8. How the Harness uses the contract
 
 ```rust
-use poph_plugins::{OpcoesPlugin, Supervisor};
+use poph_plugins::{PluginOptions, Supervisor};
 use poph_types::Integration;              // the trait, the same for native and plugin
 
-let opcoes = OpcoesPlugin::novo("/opt/poph/plugins/whatsapp", integracao_id, org_id)
-    .com_kind("whatsapp")
-    .com_config(config_do_operador)
-    .com_segredo("apikey", segredo);      // only goes in the handshake
+let opcoes = PluginOptions::new("/opt/poph/plugins/whatsapp", integracao_id, org_id)
+    .with_kind("whatsapp")
+    .with_config(config_do_operador)
+    .with_secret("apikey", segredo);      // only goes in the handshake
 
-let canal = Supervisor::iniciar(opcoes, receptor).await?;   // handshake already done here
-canal.enviar_texto(comando).await?;                          // through `Integration`
-let saude = canal.saude().await?;
-canal.encerrar().await;
+let canal = Supervisor::start(opcoes, receptor).await?;     // handshake already done here
+canal.send_text(comando).await?;                             // through `Integration`
+let saude = canal.health().await?;
+canal.shutdown().await;
 ```
+
+For tests and for a consumer that has no destination of its own, `poph_plugins::EventCollector` implements the same
+trait keeping every event in memory (`all`, `inbound`, `states`, `count`, `wait_for`).
 
 The `receptor` (receiver) implements `poph_types::Receptor`: it receives `EventoIntegracao::Entrada(InboundEvent)` and
 `EventoIntegracao::Estado(EventoEstado)`. The ready-made link between the contract and the queues is in

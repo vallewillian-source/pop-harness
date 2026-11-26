@@ -88,9 +88,9 @@ async fn kill_9_on_the_plugin_does_not_drop_the_supervisor_and_the_message_comes
             break;
         }
         assert!(
-            !scenario.supervisor.estado().is_closed(),
+            !scenario.supervisor.state().is_closed(),
             "o supervisor não pode desistir do plugin: {:?}",
-            scenario.supervisor.estado()
+            scenario.supervisor.state()
         );
         assert!(
             Instant::now() < deadline,
@@ -102,12 +102,12 @@ async fn kill_9_on_the_plugin_does_not_drop_the_supervisor_and_the_message_comes
 
     scenario
         .wait_until("o plugin voltar a ficar pronto", || {
-            scenario.supervisor.estado() == IntegrationState::Ready
+            scenario.supervisor.state() == IntegrationState::Ready
         })
         .await;
-    let counters = scenario.supervisor.contadores();
+    let counters = scenario.supervisor.counters();
     assert!(
-        counters.reinicios >= 1,
+        counters.restarts >= 1,
         "esperava pelo menos um reinício: {counters:?}"
     );
 

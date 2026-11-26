@@ -1,27 +1,3 @@
-//! Supervisor de plugin de integração em processo externo (HR-25, PRD §8.3).
-//!
-//! O plugin é um programa separado que fala **uma mensagem JSON por linha** com o Harness: lê
-//! comandos na entrada padrão, escreve eventos, resultados e erros na saída padrão. O formato está
-//! em [`poph_types::integracao`] e em `docs/PLUGIN_PROTOCOLO.md`.
-//!
-//! Por que stdio (e não socket Unix): o plugin já nasce com o ciclo de vida do Harness — quem
-//! abre é este supervisor, o `stdin`/`stdout` existe em qualquer sistema, não há arquivo de socket
-//! para limpar depois de uma queda (o socket fica para o dia em que duas instâncias dividirem o
-//! mesmo plugin, que não é o caso da V1) e o fim do processo vira `EOF` na hora, sem timeout de
-//! conexão. Isolamento é por processo: um plugin que trava, cai ou imprime lixo não afeta as outras
-//! integrações nem o servidor.
-//!
-//! O que este módulo garante:
-//! - **handshake obrigatório** com a versão de protocolo ([`PROTOCOLO_VERSAO`]) e o manifesto;
-//! - **segredos só no handshake**: eles não vão para `argv` nem para o ambiente do processo;
-//! - **teto de tamanho** por mensagem nos dois sentidos — a linha acima do teto é descartada e
-//!   contada, nunca acumulada em memória;
-//! - **timeout por comando**: quem estoura é abortado, o processo é morto e volta depois do
-//!   backoff (nada de ficar pendurado esperando para sempre);
-//! - **reinício com backoff** até um teto de falhas seguidas; depois disso a integração é marcada
-//!   como [`EstadoIntegracao::Caida`] e não sobe mais sozinha;
-//! - **lixo é ignorado e contado**, sem derrubar o supervisor.
-
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::path::PathBuf;
@@ -40,494 +16,408 @@ use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{sleep, timeout};
 
-use crate::leitor::{LeitorLinhas, Proxima};
+use crate::reader::{LineReader, NextLine};
 
-/// Folga somada ao prazo do handshake na espera do construtor: o ator ainda tem de responder.
-const FOLGA_CONSTRUTOR: Duration = Duration::from_secs(1);
+const CONSTRUCTOR_MARGIN: Duration = Duration::from_secs(1);
 
-/// Prazo para o processo morrer depois de morto (evita zumbi se ele ignorar o sinal).
-const PRAZO_MORTE: Duration = Duration::from_secs(2);
+const KILL_DEADLINE: Duration = Duration::from_secs(2);
 
-/// Quantas linhas do plugin ficam na fila antes de a leitura parar (contrapressão).
-///
-/// Sem teto, um plugin que imprime em laço encheria a memória do Harness mais rápido do que o
-/// supervisor consome. Com fila limitada, a leitura para, o cano do sistema operacional enche e o
-/// plugin bloqueia na escrita: quem abusa fica para trás, o Harness não.
-const FILA_LINHAS: usize = 256;
+const LINE_QUEUE_CAPACITY: usize = 256;
 
-// ───────────────────────────── Configuração ─────────────────────────────
-
-/// Espera exponencial com teto entre tentativas de reinício.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Espera {
-    /// Espera da primeira repetição.
+pub struct Backoff {
     pub base: Duration,
-    /// Multiplicador de cada repetição (≥ 1).
-    pub fator: u32,
-    /// Teto da espera.
-    pub teto: Duration,
+    pub factor: u32,
+    pub cap: Duration,
 }
 
-impl Default for Espera {
+impl Default for Backoff {
     fn default() -> Self {
         Self {
             base: Duration::from_millis(500),
-            fator: 2,
-            teto: Duration::from_secs(60),
+            factor: 2,
+            cap: Duration::from_secs(60),
         }
     }
 }
 
-impl Espera {
-    /// Espera depois da `falha`-ésima falha seguida (1 = primeira).
-    pub fn espera(&self, falha: u32) -> Duration {
-        let mut espera = self.base;
-        for _ in 1..falha.max(1) {
-            if espera >= self.teto {
+impl Backoff {
+    pub fn delay(&self, failure: u32) -> Duration {
+        let mut delay = self.base;
+        for _ in 1..failure.max(1) {
+            if delay >= self.cap {
                 break;
             }
-            espera = espera.saturating_mul(self.fator.max(1));
+            delay = delay.saturating_mul(self.factor.max(1));
         }
-        espera.min(self.teto)
+        delay.min(self.cap)
     }
 }
 
-/// Limites e prazos do supervisor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct LimitesSupervisor {
-    /// Teto de bytes por mensagem (linha) nos dois sentidos.
-    pub max_mensagem_bytes: usize,
-    /// Prazo do handshake (subida + manifesto).
+pub struct SupervisorLimits {
+    pub max_message_bytes: usize,
     pub timeout_handshake: Duration,
-    /// Prazo de cada comando de saída.
-    pub timeout_comando: Duration,
-    /// Prazo do pedido de saúde.
-    pub timeout_saude: Duration,
-    /// Espera entre reinícios.
-    pub espera: Espera,
-    /// Falhas seguidas antes de marcar a integração como caída.
-    pub max_falhas: u32,
+    pub command_timeout: Duration,
+    pub health_timeout: Duration,
+    pub backoff: Backoff,
+    pub max_failures: u32,
 }
 
-impl Default for LimitesSupervisor {
+impl Default for SupervisorLimits {
     fn default() -> Self {
         Self {
-            max_mensagem_bytes: 1024 * 1024,
+            max_message_bytes: 1024 * 1024,
             timeout_handshake: Duration::from_secs(5),
-            timeout_comando: Duration::from_secs(10),
-            timeout_saude: Duration::from_secs(3),
-            espera: Espera::default(),
-            max_falhas: 5,
+            command_timeout: Duration::from_secs(10),
+            health_timeout: Duration::from_secs(3),
+            backoff: Backoff::default(),
+            max_failures: 5,
         }
     }
 }
 
-/// Como lançar e supervisionar o plugin.
 #[derive(Clone)]
-pub struct OpcoesPlugin {
-    /// Programa a executar (caminho do binário do plugin).
-    pub programa: PathBuf,
-    /// Argumentos. **Nunca** ponha segredo aqui: eles aparecem em `ps` e no `/proc`.
-    pub argumentos: Vec<String>,
-    /// Variáveis de ambiente entregues ao plugin, além do mínimo (`PATH`, `HOME`, `LANG`, `TZ`…).
-    ///
-    /// O processo **não herda** o ambiente do Harness: as chaves do provedor de LLM, do Jev e da
-    /// cifra não ficam visíveis a um programa de terceiro (PRD §8.3). Segredo da integração não
-    /// entra aqui — o lugar dele é o handshake.
-    pub ambiente: Vec<(String, String)>,
-    /// Diretório de trabalho do processo.
-    pub diretorio: Option<PathBuf>,
-    /// Integração configurada (o `id` da tabela `integrations`).
-    pub integracao: IntegrationId,
-    /// Org dona.
+pub struct PluginOptions {
+    pub program: PathBuf,
+    pub arguments: Vec<String>,
+    pub environment: Vec<(String, String)>,
+    pub directory: Option<PathBuf>,
+    pub integration: IntegrationId,
     pub org: OrgId,
-    /// Tipo da integração.
     pub kind: String,
-    /// Configuração do operador (validada contra o JSON Schema do manifesto pela API/Console).
     pub config: serde_json::Value,
-    /// Segredos do canal, entregues **só** no handshake.
-    pub segredos: BTreeMap<String, Secret>,
-    /// Limites e prazos.
-    pub limites: LimitesSupervisor,
+    pub secrets: BTreeMap<String, Secret>,
+    pub limits: SupervisorLimits,
 }
 
-impl OpcoesPlugin {
-    /// Opções com os padrões de limite e configuração vazia.
-    pub fn novo(programa: impl Into<PathBuf>, integracao: IntegrationId, org: OrgId) -> Self {
+impl PluginOptions {
+    pub fn new(program: impl Into<PathBuf>, integration: IntegrationId, org: OrgId) -> Self {
         Self {
-            programa: programa.into(),
-            argumentos: Vec::new(),
-            ambiente: Vec::new(),
-            diretorio: None,
-            integracao,
+            program: program.into(),
+            arguments: Vec::new(),
+            environment: Vec::new(),
+            directory: None,
+            integration,
             org,
             kind: "plugin".to_owned(),
             config: serde_json::json!({}),
-            segredos: BTreeMap::new(),
-            limites: LimitesSupervisor::default(),
+            secrets: BTreeMap::new(),
+            limits: SupervisorLimits::default(),
         }
     }
 
-    /// Tipo da integração.
-    pub fn com_kind(mut self, kind: impl Into<String>) -> Self {
+    pub fn with_kind(mut self, kind: impl Into<String>) -> Self {
         self.kind = kind.into();
         self
     }
 
-    /// Configuração do operador.
-    pub fn com_config(mut self, config: serde_json::Value) -> Self {
+    pub fn with_config(mut self, config: serde_json::Value) -> Self {
         self.config = config;
         self
     }
 
-    /// Acrescenta um segredo (vai só no handshake).
-    pub fn com_segredo(mut self, nome: impl Into<String>, valor: impl Into<String>) -> Self {
-        self.segredos.insert(nome.into(), Secret::new(valor.into()));
+    pub fn with_secret(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.secrets.insert(name.into(), Secret::new(value.into()));
         self
     }
 
-    /// Variável de ambiente explícita para o plugin (não use para segredo).
-    pub fn com_ambiente(mut self, nome: impl Into<String>, valor: impl Into<String>) -> Self {
-        self.ambiente.push((nome.into(), valor.into()));
+    pub fn with_env(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.environment.push((name.into(), value.into()));
         self
     }
 
-    /// Limites e prazos.
-    pub fn com_limites(mut self, limites: LimitesSupervisor) -> Self {
-        self.limites = limites;
+    pub fn with_limits(mut self, limits: SupervisorLimits) -> Self {
+        self.limits = limits;
         self
     }
 }
 
-impl fmt::Debug for OpcoesPlugin {
+impl fmt::Debug for PluginOptions {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("OpcoesPlugin")
-            .field("programa", &self.programa)
-            .field("argumentos", &self.argumentos)
+        f.debug_struct("PluginOptions")
+            .field("program", &self.program)
+            .field("arguments", &self.arguments)
             .field(
-                "ambiente",
-                &format_args!("{} variável(is)", self.ambiente.len()),
+                "environment",
+                &format_args!("{} variável(is)", self.environment.len()),
             )
-            .field("diretorio", &self.diretorio)
-            .field("integracao", &self.integracao)
+            .field("directory", &self.directory)
+            .field("integration", &self.integration)
             .field("org", &self.org)
             .field("kind", &self.kind)
             .field("config", &self.config)
             .field(
-                "segredos",
-                &format_args!("{} chave(s) [oculto]", self.segredos.len()),
+                "secrets",
+                &format_args!("{} chave(s) [oculto]", self.secrets.len()),
             )
-            .field("limites", &self.limites)
+            .field("limits", &self.limits)
             .finish()
     }
 }
 
-// ───────────────────────────── Contadores ─────────────────────────────
-
-/// Retrato dos contadores de uma integração (para `/metrics` e para o relatório).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct RelatoContadores {
-    /// Linhas recebidas do plugin.
-    pub linhas: u64,
-    /// Linhas descartadas (acima do teto) ou que não são do protocolo.
-    pub lixo: u64,
-    /// Eventos de entrada aceitos.
-    pub eventos: u64,
-    /// Eventos de entrada recusados pela validação.
-    pub eventos_invalidos: u64,
-    /// Eventos de estado.
-    pub estados: u64,
-    /// Comandos enviados.
-    pub comandos: u64,
-    /// Pedidos de saúde.
-    pub saudes: u64,
-    /// Handshakes concluídos.
+pub struct CounterReport {
+    pub lines: u64,
+    pub junk: u64,
+    pub events: u64,
+    pub invalid_events: u64,
+    pub states: u64,
+    pub commands: u64,
+    pub health_checks: u64,
     pub handshakes: u64,
-    /// Falhas seguidas contabilizadas (queda, timeout, handshake recusado).
-    pub falhas: u64,
-    /// Reinícios automáticos bem-sucedidos.
-    pub reinicios: u64,
-    /// Comandos que estouraram o prazo.
-    pub tempo_esgotado: u64,
-    /// Abortos pedidos por quem chamou (timeout).
-    pub abortos: u64,
+    pub failures: u64,
+    pub restarts: u64,
+    pub timed_out: u64,
+    pub aborts: u64,
 }
 
 #[derive(Debug, Default)]
-struct Contadores {
-    linhas: AtomicU64,
-    lixo: AtomicU64,
-    eventos: AtomicU64,
-    eventos_invalidos: AtomicU64,
-    estados: AtomicU64,
-    comandos: AtomicU64,
-    saudes: AtomicU64,
+struct Counters {
+    lines: AtomicU64,
+    junk: AtomicU64,
+    events: AtomicU64,
+    invalid_events: AtomicU64,
+    states: AtomicU64,
+    commands: AtomicU64,
+    health_checks: AtomicU64,
     handshakes: AtomicU64,
-    falhas: AtomicU64,
-    reinicios: AtomicU64,
-    tempo_esgotado: AtomicU64,
-    abortos: AtomicU64,
+    failures: AtomicU64,
+    restarts: AtomicU64,
+    timed_out: AtomicU64,
+    aborts: AtomicU64,
 }
 
-impl Contadores {
-    fn somar(&self, contador: &AtomicU64) {
-        contador.fetch_add(1, Ordering::Relaxed);
+impl Counters {
+    fn increment(&self, counter: &AtomicU64) {
+        counter.fetch_add(1, Ordering::Relaxed);
     }
 
-    fn relato(&self) -> RelatoContadores {
-        let ler = |contador: &AtomicU64| contador.load(Ordering::Relaxed);
-        RelatoContadores {
-            linhas: ler(&self.linhas),
-            lixo: ler(&self.lixo),
-            eventos: ler(&self.eventos),
-            eventos_invalidos: ler(&self.eventos_invalidos),
-            estados: ler(&self.estados),
-            comandos: ler(&self.comandos),
-            saudes: ler(&self.saudes),
-            handshakes: ler(&self.handshakes),
-            falhas: ler(&self.falhas),
-            reinicios: ler(&self.reinicios),
-            tempo_esgotado: ler(&self.tempo_esgotado),
-            abortos: ler(&self.abortos),
+    fn report(&self) -> CounterReport {
+        let load = |counter: &AtomicU64| counter.load(Ordering::Relaxed);
+        CounterReport {
+            lines: load(&self.lines),
+            junk: load(&self.junk),
+            events: load(&self.events),
+            invalid_events: load(&self.invalid_events),
+            states: load(&self.states),
+            commands: load(&self.commands),
+            health_checks: load(&self.health_checks),
+            handshakes: load(&self.handshakes),
+            failures: load(&self.failures),
+            restarts: load(&self.restarts),
+            timed_out: load(&self.timed_out),
+            aborts: load(&self.aborts),
         }
     }
 }
 
-// ───────────────────────────── Estado compartilhado ─────────────────────────────
-
-struct Comum {
-    opcoes: OpcoesPlugin,
-    estado: RwLock<IntegrationState>,
-    manifesto: RwLock<Option<Manifest>>,
-    contadores: Contadores,
-    proximo_id: AtomicU64,
+struct Shared {
+    options: PluginOptions,
+    state: RwLock<IntegrationState>,
+    manifest: RwLock<Option<Manifest>>,
+    counters: Counters,
+    next_id: AtomicU64,
 }
 
-impl Comum {
-    fn novo(opcoes: OpcoesPlugin) -> Self {
+impl Shared {
+    fn new(options: PluginOptions) -> Self {
         Self {
-            opcoes,
-            estado: RwLock::new(IntegrationState::Starting),
-            manifesto: RwLock::new(None),
-            contadores: Contadores::default(),
-            proximo_id: AtomicU64::new(1),
+            options,
+            state: RwLock::new(IntegrationState::Starting),
+            manifest: RwLock::new(None),
+            counters: Counters::default(),
+            next_id: AtomicU64::new(1),
         }
     }
 
-    fn definir_estado(&self, novo: IntegrationState) {
-        let mut estado = self
-            .estado
+    fn set_state(&self, next: IntegrationState) {
+        let mut state = self
+            .state
             .write()
-            .unwrap_or_else(|veneno| veneno.into_inner());
-        if *estado != novo {
-            tracing::debug!(target: "poph_plugins", estado = ?novo, "estado da integração mudou");
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if *state != next {
+            tracing::debug!(target: "poph_plugins", state = ?next, "estado da integração mudou");
         }
-        *estado = novo;
+        *state = next;
     }
 
-    fn estado(&self) -> IntegrationState {
-        self.estado
+    fn state(&self) -> IntegrationState {
+        self.state
             .read()
-            .unwrap_or_else(|veneno| veneno.into_inner())
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone()
     }
 
-    fn manifesto(&self) -> Option<Manifest> {
-        self.manifesto
+    fn manifest(&self) -> Option<Manifest> {
+        self.manifest
             .read()
-            .unwrap_or_else(|veneno| veneno.into_inner())
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone()
     }
 
-    fn definir_manifesto(&self, manifesto: Manifest) {
-        let mut guarda = self
-            .manifesto
+    fn set_manifest(&self, manifest: Manifest) {
+        let mut guard = self
+            .manifest
             .write()
-            .unwrap_or_else(|veneno| veneno.into_inner());
-        *guarda = Some(manifesto);
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *guard = Some(manifest);
     }
 
-    fn proximo_id(&self) -> u64 {
-        self.proximo_id.fetch_add(1, Ordering::Relaxed)
+    fn next_id(&self) -> u64 {
+        self.next_id.fetch_add(1, Ordering::Relaxed)
     }
 }
 
-// ───────────────────────────── Handle público ─────────────────────────────
-
-/// Integração em processo externo, supervisionada.
-///
-/// Clonar o handle não abre outro processo: todos os clones falam com o mesmo supervisor.
 #[derive(Clone)]
 pub struct Supervisor {
-    controle: mpsc::UnboundedSender<Controle>,
-    comum: Arc<Comum>,
+    control: mpsc::UnboundedSender<Control>,
+    shared: Arc<Shared>,
 }
 
 impl fmt::Debug for Supervisor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Supervisor")
-            .field("integracao", &self.comum.opcoes.integracao)
-            .field("kind", &self.comum.opcoes.kind)
-            .field("estado", &self.comum.estado())
+            .field("integration", &self.shared.options.integration)
+            .field("kind", &self.shared.options.kind)
+            .field("state", &self.shared.state())
             .finish_non_exhaustive()
     }
 }
 
 impl Supervisor {
-    /// Sobe o plugin, faz o handshake e devolve o handle pronto para enviar.
-    ///
-    /// Falha se o programa não executar, se o handshake estourar o prazo, se a versão de protocolo
-    /// não bater ou se o manifesto for inválido. Ao falhar, o processo é encerrado e nada fica
-    /// rodando: quem chamou decide se tenta de novo.
-    pub async fn iniciar(
-        opcoes: OpcoesPlugin,
-        receptor: Arc<dyn EventSink>,
+    pub async fn start(
+        options: PluginOptions,
+        sink: Arc<dyn EventSink>,
     ) -> Result<Self, IntegrationError> {
-        let comum = Arc::new(Comum::novo(opcoes));
-        let (tx_controle, rx_controle) = mpsc::unbounded_channel();
-        let (tx_linhas, rx_linhas) = mpsc::channel(FILA_LINHAS);
-        let ator = Ator {
-            comum: Arc::clone(&comum),
-            receptor,
-            controle: rx_controle,
-            linhas: rx_linhas,
-            tx_linhas,
-            processo: None,
-            comandos: HashMap::new(),
-            saudes: HashMap::new(),
-            falhas: 0,
-            geracao: 0,
-            reiniciar_em: None,
+        let shared = Arc::new(Shared::new(options));
+        let (control_tx, control_rx) = mpsc::unbounded_channel();
+        let (lines_tx, lines_rx) = mpsc::channel(LINE_QUEUE_CAPACITY);
+        let actor = Actor {
+            shared: Arc::clone(&shared),
+            sink,
+            control: control_rx,
+            lines: lines_rx,
+            lines_tx,
+            process: None,
+            commands: HashMap::new(),
+            health: HashMap::new(),
+            failures: 0,
+            generation: 0,
+            restart_at: None,
         };
-        tokio::spawn(laco(ator));
+        tokio::spawn(run_loop(actor));
 
-        let (responder, resposta) = oneshot::channel();
-        if tx_controle.send(Controle::Iniciar { responder }).is_err() {
+        let (reply, answer) = oneshot::channel();
+        if control_tx.send(Control::Start { reply }).is_err() {
             return Err(IntegrationError::Closed);
         }
-        let prazo = comum.opcoes.limites.timeout_handshake + FOLGA_CONSTRUTOR;
-        match timeout(prazo, resposta).await {
-            Ok(Ok(resultado)) => resultado.map(|()| Self {
-                controle: tx_controle,
-                comum,
+        let deadline = shared.options.limits.timeout_handshake + CONSTRUCTOR_MARGIN;
+        match timeout(deadline, answer).await {
+            Ok(Ok(result)) => result.map(|()| Self {
+                control: control_tx,
+                shared,
             }),
             Ok(Err(_)) => Err(IntegrationError::Unavailable {
                 reason: "o supervisor do plugin encerrou durante o handshake".to_owned(),
             }),
             Err(_) => Err(IntegrationError::Timeout {
                 operation: "handshake".to_owned(),
-                limit_ms: prazo.as_millis() as u64,
+                limit_ms: deadline.as_millis() as u64,
             }),
         }
     }
 
-    /// Manifesto recebido no handshake (`None` antes dele).
-    pub fn manifesto(&self) -> Option<Manifest> {
-        self.comum.manifesto()
+    pub fn manifest(&self) -> Option<Manifest> {
+        self.shared.manifest()
     }
 
-    /// Estado atual do vínculo.
-    pub fn estado(&self) -> IntegrationState {
-        self.comum.estado()
+    pub fn state(&self) -> IntegrationState {
+        self.shared.state()
     }
 
-    /// Contadores desta integração.
-    pub fn contadores(&self) -> RelatoContadores {
-        self.comum.contadores.relato()
+    pub fn counters(&self) -> CounterReport {
+        self.shared.counters.report()
     }
 
-    /// Integração (id, org e tipo) que este supervisor serve.
-    pub fn integracao(&self) -> (IntegrationId, OrgId, String) {
+    pub fn integration(&self) -> (IntegrationId, OrgId, String) {
         (
-            self.comum.opcoes.integracao,
-            self.comum.opcoes.org,
-            self.comum.opcoes.kind.clone(),
+            self.shared.options.integration,
+            self.shared.options.org,
+            self.shared.options.kind.clone(),
         )
     }
 
-    /// Espera o estado ficar pronto (ou caído/encerrado), sem dormir mais que o prazo.
-    pub async fn aguardar_pronto(&self, prazo: Duration) -> Result<(), IntegrationError> {
-        let limite = Instant::now() + prazo;
+    pub async fn wait_ready(&self, deadline: Duration) -> Result<(), IntegrationError> {
+        let limit = Instant::now() + deadline;
         loop {
-            let estado = self.comum.estado();
-            if estado.is_ready() {
+            let state = self.shared.state();
+            if state.is_ready() {
                 return Ok(());
             }
-            if let IntegrationState::Down {
-                failures: falhas,
-                reason: motivo,
-            } = &estado
-            {
+            if let IntegrationState::Down { failures, reason } = &state {
                 return Err(IntegrationError::Down {
-                    failures: *falhas,
-                    reason: motivo.clone(),
+                    failures: *failures,
+                    reason: reason.clone(),
                 });
             }
-            if estado == IntegrationState::Closed {
+            if state == IntegrationState::Closed {
                 return Err(IntegrationError::Closed);
             }
-            if Instant::now() >= limite {
+            if Instant::now() >= limit {
                 return Err(IntegrationError::Unavailable {
-                    reason: format!("o plugin não ficou pronto em {} ms", prazo.as_millis()),
+                    reason: format!("o plugin não ficou pronto em {} ms", deadline.as_millis()),
                 });
             }
             sleep(Duration::from_millis(10)).await;
         }
     }
 
-    /// Encerra o supervisor e mata o processo do plugin.
-    pub async fn encerrar(&self) {
-        let (responder, resposta) = oneshot::channel();
+    pub async fn shutdown(&self) {
+        let (reply, answer) = oneshot::channel();
         if self
-            .controle
-            .send(Controle::Encerrar {
-                responder: Some(responder),
-            })
+            .control
+            .send(Control::Close { reply: Some(reply) })
             .is_ok()
         {
-            let prazo = PRAZO_MORTE + Duration::from_secs(1);
-            let _ = timeout(prazo, resposta).await;
+            let deadline = KILL_DEADLINE + Duration::from_secs(1);
+            let _ = timeout(deadline, answer).await;
         }
     }
 
-    async fn executar(
+    async fn execute(
         &self,
-        comando: OutboundCommand,
-        operacao: &'static str,
+        command: OutboundCommand,
+        operation: &'static str,
     ) -> Result<(), IntegrationError> {
-        let id = self.comum.proximo_id();
-        let (responder, resposta) = oneshot::channel();
+        let id = self.shared.next_id();
+        let (reply, answer) = oneshot::channel();
         if self
-            .controle
-            .send(Controle::Comando {
-                id,
-                comando,
-                responder,
-            })
+            .control
+            .send(Control::Command { id, command, reply })
             .is_err()
         {
             return Err(IntegrationError::Closed);
         }
-        let prazo = self.comum.opcoes.limites.timeout_comando;
-        match timeout(prazo, resposta).await {
-            Ok(Ok(resultado)) => resultado,
+        let deadline = self.shared.options.limits.command_timeout;
+        match timeout(deadline, answer).await {
+            Ok(Ok(result)) => result,
             Ok(Err(_)) => Err(IntegrationError::Unavailable {
                 reason: "o supervisor do plugin encerrou".to_owned(),
             }),
             Err(_) => {
-                self.comum
-                    .contadores
-                    .somar(&self.comum.contadores.tempo_esgotado);
-                // Aborta para o plugin travado não segurar o turno nem a próxima tentativa.
-                let _ = self.controle.send(Controle::Abortar {
-                    motivo: format!(
-                        "o plugin não respondeu a `{operacao}` em {} ms",
-                        prazo.as_millis()
+                self.shared
+                    .counters
+                    .increment(&self.shared.counters.timed_out);
+                let _ = self.control.send(Control::Abort {
+                    reason: format!(
+                        "o plugin não respondeu a `{operation}` em {} ms",
+                        deadline.as_millis()
                     ),
                 });
                 Err(IntegrationError::Timeout {
-                    operation: operacao.to_owned(),
-                    limit_ms: prazo.as_millis() as u64,
+                    operation: operation.to_owned(),
+                    limit_ms: deadline.as_millis() as u64,
                 })
             }
         }
@@ -536,33 +426,33 @@ impl Supervisor {
 
 impl Integration for Supervisor {
     fn manifest(&self) -> Option<Manifest> {
-        self.comum.manifesto()
+        self.shared.manifest()
     }
 
     fn state(&self) -> IntegrationState {
-        self.comum.estado()
+        self.shared.state()
     }
 
-    fn send_text(&self, comando: SendText) -> CommandFuture {
+    fn send_text(&self, command: SendText) -> CommandFuture {
         let this = self.clone();
         Box::pin(async move {
-            this.executar(OutboundCommand::Text(comando), "enviar_texto")
+            this.execute(OutboundCommand::Text(command), "enviar_texto")
                 .await
         })
     }
 
-    fn send_file(&self, comando: SendFile) -> CommandFuture {
+    fn send_file(&self, command: SendFile) -> CommandFuture {
         let this = self.clone();
         Box::pin(async move {
-            this.executar(OutboundCommand::File(comando), "enviar_arquivo")
+            this.execute(OutboundCommand::File(command), "enviar_arquivo")
                 .await
         })
     }
 
-    fn set_presence(&self, comando: SetPresence) -> CommandFuture {
+    fn set_presence(&self, command: SetPresence) -> CommandFuture {
         let this = self.clone();
         Box::pin(async move {
-            this.executar(OutboundCommand::Presence(comando), "definir_presenca")
+            this.execute(OutboundCommand::Presence(command), "definir_presenca")
                 .await
         })
     }
@@ -570,35 +460,33 @@ impl Integration for Supervisor {
     fn health(&self) -> HealthFuture {
         let this = self.clone();
         Box::pin(async move {
-            let id = this.comum.proximo_id();
-            let (responder, resposta) = oneshot::channel();
-            if this
-                .controle
-                .send(Controle::Saude { id, responder })
-                .is_err()
-            {
+            let id = this.shared.next_id();
+            let (reply, answer) = oneshot::channel();
+            if this.control.send(Control::Health { id, reply }).is_err() {
                 return Err(IntegrationError::Closed);
             }
-            this.comum.contadores.somar(&this.comum.contadores.saudes);
-            let prazo = this.comum.opcoes.limites.timeout_saude;
-            match timeout(prazo, resposta).await {
-                Ok(Ok(resultado)) => resultado,
+            this.shared
+                .counters
+                .increment(&this.shared.counters.health_checks);
+            let deadline = this.shared.options.limits.health_timeout;
+            match timeout(deadline, answer).await {
+                Ok(Ok(result)) => result,
                 Ok(Err(_)) => Err(IntegrationError::Unavailable {
                     reason: "o supervisor do plugin encerrou".to_owned(),
                 }),
                 Err(_) => {
-                    this.comum
-                        .contadores
-                        .somar(&this.comum.contadores.tempo_esgotado);
-                    let _ = this.controle.send(Controle::Abortar {
-                        motivo: format!(
+                    this.shared
+                        .counters
+                        .increment(&this.shared.counters.timed_out);
+                    let _ = this.control.send(Control::Abort {
+                        reason: format!(
                             "o plugin não respondeu à saúde em {} ms",
-                            prazo.as_millis()
+                            deadline.as_millis()
                         ),
                     });
                     Err(IntegrationError::Timeout {
                         operation: "saude".to_owned(),
-                        limit_ms: prazo.as_millis() as u64,
+                        limit_ms: deadline.as_millis() as u64,
                     })
                 }
             }
@@ -606,157 +494,144 @@ impl Integration for Supervisor {
     }
 }
 
-// ───────────────────────────── Ator ─────────────────────────────
-
-/// Pedido que chega ao ator.
-enum Controle {
-    Iniciar {
-        responder: oneshot::Sender<Result<(), IntegrationError>>,
+enum Control {
+    Start {
+        reply: oneshot::Sender<Result<(), IntegrationError>>,
     },
-    Comando {
+    Command {
         id: u64,
-        comando: OutboundCommand,
-        responder: oneshot::Sender<Result<(), IntegrationError>>,
+        command: OutboundCommand,
+        reply: oneshot::Sender<Result<(), IntegrationError>>,
     },
-    Saude {
+    Health {
         id: u64,
-        responder: oneshot::Sender<Result<Health, IntegrationError>>,
+        reply: oneshot::Sender<Result<Health, IntegrationError>>,
     },
-    Abortar {
-        motivo: String,
+    Abort {
+        reason: String,
     },
-    Encerrar {
-        responder: Option<oneshot::Sender<()>>,
+    Close {
+        reply: Option<oneshot::Sender<()>>,
     },
 }
 
-/// Resposta de um comando que o plugin ainda vai confirmar (operação, para a mensagem de recusa).
-type ComandoPendente = (&'static str, oneshot::Sender<Result<(), IntegrationError>>);
+type PendingCommand = (&'static str, oneshot::Sender<Result<(), IntegrationError>>);
 
-/// O que chega da tarefa de leitura.
-enum Entrada {
-    Linha { geracao: u64, linha: String },
-    Descartada { geracao: u64 },
-    Fim { geracao: u64, motivo: String },
+enum Input {
+    Line { generation: u64, line: String },
+    Discarded { generation: u64 },
+    End { generation: u64, reason: String },
 }
 
-struct Processo {
-    geracao: u64,
-    filho: Child,
-    entrada: ChildStdin,
+struct Process {
+    generation: u64,
+    child: Child,
+    stdin: ChildStdin,
 }
 
-struct Ator {
-    comum: Arc<Comum>,
-    receptor: Arc<dyn EventSink>,
-    controle: mpsc::UnboundedReceiver<Controle>,
-    linhas: mpsc::Receiver<Entrada>,
-    tx_linhas: mpsc::Sender<Entrada>,
-    processo: Option<Processo>,
-    comandos: HashMap<u64, ComandoPendente>,
-    saudes: HashMap<u64, oneshot::Sender<Result<Health, IntegrationError>>>,
-    falhas: u32,
-    geracao: u64,
-    reiniciar_em: Option<Instant>,
+struct Actor {
+    shared: Arc<Shared>,
+    sink: Arc<dyn EventSink>,
+    control: mpsc::UnboundedReceiver<Control>,
+    lines: mpsc::Receiver<Input>,
+    lines_tx: mpsc::Sender<Input>,
+    process: Option<Process>,
+    commands: HashMap<u64, PendingCommand>,
+    health: HashMap<u64, oneshot::Sender<Result<Health, IntegrationError>>>,
+    failures: u32,
+    generation: u64,
+    restart_at: Option<Instant>,
 }
 
-async fn laco(mut ator: Ator) {
+async fn run_loop(mut actor: Actor) {
     loop {
-        let reiniciar_em = ator.reiniciar_em;
+        let restart_at = actor.restart_at;
         tokio::select! {
-            pedido = ator.controle.recv() => {
-                let Some(pedido) = pedido else { break };
-                if !ator.tratar_controle(pedido).await {
+            request = actor.control.recv() => {
+                let Some(request) = request else { break };
+                if !actor.handle_control(request).await {
                     break;
                 }
             }
-            entrada = ator.linhas.recv() => {
-                let Some(entrada) = entrada else { break };
-                ator.tratar_entrada(entrada).await;
+            input = actor.lines.recv() => {
+                let Some(input) = input else { break };
+                actor.handle_input(input).await;
             }
-            () = esperar_ate(reiniciar_em) => ator.reiniciar().await,
+            () = wait_until(restart_at) => actor.restart().await,
         }
     }
-    ator.encerrar().await;
+    actor.shutdown().await;
 }
 
-async fn esperar_ate(prazo: Option<Instant>) {
-    match prazo {
-        Some(prazo) => {
-            let agora = Instant::now();
-            if prazo > agora {
-                sleep(prazo - agora).await;
+async fn wait_until(deadline: Option<Instant>) {
+    match deadline {
+        Some(deadline) => {
+            let now = Instant::now();
+            if deadline > now {
+                sleep(deadline - now).await;
             }
         }
         None => std::future::pending::<()>().await,
     }
 }
 
-impl Ator {
-    /// Trata um pedido. `false` = encerrar o laço.
-    async fn tratar_controle(&mut self, pedido: Controle) -> bool {
-        match pedido {
-            Controle::Iniciar { responder } => {
-                let resultado = self.subir().await;
-                if resultado.is_err() {
-                    self.registrar_falha().await;
+impl Actor {
+    async fn handle_control(&mut self, request: Control) -> bool {
+        match request {
+            Control::Start { reply } => {
+                let result = self.start_process().await;
+                if result.is_err() {
+                    self.record_failure().await;
                 }
-                let _ = responder.send(resultado);
+                let _ = reply.send(result);
             }
-            Controle::Comando {
-                id,
-                comando,
-                responder,
-            } => {
-                let operacao = comando.protocol_name();
-                let Some(processo) = self.processo.as_mut() else {
-                    let _ = responder.send(Err(self.erro_sem_processo()));
+            Control::Command { id, command, reply } => {
+                let operation = command.protocol_name();
+                let Some(process) = self.process.as_mut() else {
+                    let _ = reply.send(Err(self.no_process_error()));
                     return true;
                 };
-                self.comandos.insert(id, (operacao, responder));
-                self.comum.contadores.somar(&self.comum.contadores.comandos);
-                let mensagem = HostMessage::Command {
-                    id,
-                    command: comando,
-                };
-                let teto = self.comum.opcoes.limites.max_mensagem_bytes;
-                match escrever(&mut processo.entrada, &mensagem, teto).await {
-                    // Mensagem grande demais é erro de quem chamou, não do plugin: responde só este.
-                    Err(erro @ IntegrationError::MessageTooLarge { .. }) => {
-                        if let Some((_, responder)) = self.comandos.remove(&id) {
-                            let _ = responder.send(Err(erro));
+                self.commands.insert(id, (operation, reply));
+                self.shared
+                    .counters
+                    .increment(&self.shared.counters.commands);
+                let message = HostMessage::Command { id, command };
+                let cap = self.shared.options.limits.max_message_bytes;
+                match write_message(&mut process.stdin, &message, cap).await {
+                    Err(error @ IntegrationError::MessageTooLarge { .. }) => {
+                        if let Some((_, reply)) = self.commands.remove(&id) {
+                            let _ = reply.send(Err(error));
                         }
                     }
-                    Err(erro) => {
-                        tracing::debug!(target: "poph_plugins", %erro, "falha ao escrever comando");
-                        // O `registrar_falha` responde os pendentes (inclusive este) e agenda o reinício.
-                        self.registrar_falha().await;
+                    Err(error) => {
+                        tracing::debug!(target: "poph_plugins", %error, "falha ao escrever comando");
+                        self.record_failure().await;
                     }
                     Ok(()) => {}
                 }
             }
-            Controle::Saude { id, responder } => {
-                let Some(processo) = self.processo.as_mut() else {
-                    let _ = responder.send(Err(self.erro_sem_processo()));
+            Control::Health { id, reply } => {
+                let Some(process) = self.process.as_mut() else {
+                    let _ = reply.send(Err(self.no_process_error()));
                     return true;
                 };
-                self.saudes.insert(id, responder);
-                let mensagem = HostMessage::Health { id };
-                let teto = self.comum.opcoes.limites.max_mensagem_bytes;
-                if let Err(erro) = escrever(&mut processo.entrada, &mensagem, teto).await {
-                    tracing::debug!(target: "poph_plugins", %erro, "falha ao escrever pedido de saúde");
-                    self.registrar_falha().await;
+                self.health.insert(id, reply);
+                let message = HostMessage::Health { id };
+                let cap = self.shared.options.limits.max_message_bytes;
+                if let Err(error) = write_message(&mut process.stdin, &message, cap).await {
+                    tracing::debug!(target: "poph_plugins", %error, "falha ao escrever pedido de saúde");
+                    self.record_failure().await;
                 }
             }
-            Controle::Abortar { motivo } => {
-                self.comum.contadores.somar(&self.comum.contadores.abortos);
-                tracing::warn!(target: "poph_plugins", %motivo, "abortando o plugin");
-                self.registrar_falha().await;
+            Control::Abort { reason } => {
+                self.shared.counters.increment(&self.shared.counters.aborts);
+                tracing::warn!(target: "poph_plugins", %reason, "abortando o plugin");
+                self.record_failure().await;
             }
-            Controle::Encerrar { responder } => {
-                self.encerrar().await;
-                if let Some(responder) = responder {
-                    let _ = responder.send(());
+            Control::Close { reply } => {
+                self.shutdown().await;
+                if let Some(reply) = reply {
+                    let _ = reply.send(());
                 }
                 return false;
             }
@@ -764,131 +639,123 @@ impl Ator {
         true
     }
 
-    async fn tratar_entrada(&mut self, entrada: Entrada) {
-        match entrada {
-            Entrada::Linha { geracao, linha } => {
-                if Some(geracao) != self.processo.as_ref().map(|processo| processo.geracao) {
+    async fn handle_input(&mut self, input: Input) {
+        match input {
+            Input::Line { generation, line } => {
+                if Some(generation) != self.process.as_ref().map(|process| process.generation) {
                     return;
                 }
-                self.comum.contadores.somar(&self.comum.contadores.linhas);
-                let mensagem: PluginMessage = match serde_json::from_str(&linha) {
-                    Ok(mensagem) => mensagem,
-                    Err(erro) => {
-                        self.comum.contadores.somar(&self.comum.contadores.lixo);
-                        tracing::debug!(target: "poph_plugins", %erro, "linha fora do protocolo ignorada");
+                self.shared.counters.increment(&self.shared.counters.lines);
+                let message: PluginMessage = match serde_json::from_str(&line) {
+                    Ok(message) => message,
+                    Err(error) => {
+                        self.shared.counters.increment(&self.shared.counters.junk);
+                        tracing::debug!(target: "poph_plugins", %error, "linha fora do protocolo ignorada");
                         return;
                     }
                 };
-                self.tratar_mensagem(mensagem);
+                self.handle_message(message);
             }
-            Entrada::Descartada { geracao } => {
-                if Some(geracao) == self.processo.as_ref().map(|processo| processo.geracao) {
-                    self.comum.contadores.somar(&self.comum.contadores.lixo);
+            Input::Discarded { generation } => {
+                if Some(generation) == self.process.as_ref().map(|process| process.generation) {
+                    self.shared.counters.increment(&self.shared.counters.junk);
                     tracing::debug!(
                         target: "poph_plugins",
                         "linha acima do limite de tamanho ignorada"
                     );
                 }
             }
-            Entrada::Fim { geracao, motivo } => {
-                if Some(geracao) != self.processo.as_ref().map(|processo| processo.geracao) {
+            Input::End { generation, reason } => {
+                if Some(generation) != self.process.as_ref().map(|process| process.generation) {
                     return;
                 }
-                tracing::warn!(target: "poph_plugins", %motivo, "o plugin caiu");
-                self.registrar_falha().await;
+                tracing::warn!(target: "poph_plugins", %reason, "o plugin caiu");
+                self.record_failure().await;
             }
         }
     }
 
-    fn tratar_mensagem(&mut self, mensagem: PluginMessage) {
-        match mensagem {
+    fn handle_message(&mut self, message: PluginMessage) {
+        match message {
             PluginMessage::HandshakeOk { .. } => {
-                // Handshake só vale dentro do `subir`; repetido, é lixo.
-                self.comum.contadores.somar(&self.comum.contadores.lixo);
+                self.shared.counters.increment(&self.shared.counters.junk);
             }
             PluginMessage::Result {
                 id,
                 ok,
-                error: erro,
+                error: failure,
             } => {
-                let Some((operacao, responder)) = self.comandos.remove(&id) else {
-                    self.comum.contadores.somar(&self.comum.contadores.lixo);
+                let Some((operation, reply)) = self.commands.remove(&id) else {
+                    self.shared.counters.increment(&self.shared.counters.junk);
                     return;
                 };
-                let resultado = if ok {
-                    self.falhas = 0;
+                let result = if ok {
+                    self.failures = 0;
                     Ok(())
                 } else {
-                    let erro = erro.unwrap_or_else(|| poph_types::CommandError {
+                    let failure = failure.unwrap_or_else(|| poph_types::CommandError {
                         code: "sem_motivo".to_owned(),
                         message: "o plugin recusou sem dizer o motivo".to_owned(),
                         transient: false,
                     });
                     Err(IntegrationError::Refused {
-                        operation: operacao.to_owned(),
-                        code: erro.code,
-                        message: erro.message,
-                        transient: erro.transient,
+                        operation: operation.to_owned(),
+                        code: failure.code,
+                        message: failure.message,
+                        transient: failure.transient,
                     })
                 };
-                let _ = responder.send(resultado);
+                let _ = reply.send(result);
             }
-            PluginMessage::Health { id, health: saude } => {
-                let Some(responder) = self.saudes.remove(&id) else {
-                    self.comum.contadores.somar(&self.comum.contadores.lixo);
+            PluginMessage::Health { id, health } => {
+                let Some(reply) = self.health.remove(&id) else {
+                    self.shared.counters.increment(&self.shared.counters.junk);
                     return;
                 };
-                self.falhas = 0;
-                let _ = responder.send(Ok(saude));
+                self.failures = 0;
+                let _ = reply.send(Ok(health));
             }
-            PluginMessage::Evento { evento } => match evento.validar() {
+            PluginMessage::Evento { evento: event } => match event.validar() {
                 Ok(()) => {
-                    self.comum.contadores.somar(&self.comum.contadores.eventos);
-                    self.receptor.receive(IntegrationEvent::Inbound(evento));
+                    self.shared.counters.increment(&self.shared.counters.events);
+                    self.sink.receive(IntegrationEvent::Inbound(event));
                 }
-                Err(erro) => {
-                    self.comum
-                        .contadores
-                        .somar(&self.comum.contadores.eventos_invalidos);
-                    tracing::debug!(target: "poph_plugins", %erro, "evento de entrada inválido ignorado");
+                Err(error) => {
+                    self.shared
+                        .counters
+                        .increment(&self.shared.counters.invalid_events);
+                    tracing::debug!(target: "poph_plugins", %error, "evento de entrada inválido ignorado");
                 }
             },
-            PluginMessage::State { estado } => {
-                self.comum.contadores.somar(&self.comum.contadores.estados);
-                self.receptor.receive(IntegrationEvent::Estado(estado));
+            PluginMessage::State { estado: state } => {
+                self.shared.counters.increment(&self.shared.counters.states);
+                self.sink.receive(IntegrationEvent::Estado(state));
             }
             PluginMessage::Error {
-                code: codigo,
-                message: mensagem,
-                transient: transitorio,
+                code,
+                message,
+                transient,
             } => {
-                self.comum.contadores.somar(&self.comum.contadores.lixo);
-                tracing::debug!(target: "poph_plugins", %codigo, %mensagem, transitorio, "erro reportado pelo plugin");
-                self.receptor
+                self.shared.counters.increment(&self.shared.counters.junk);
+                tracing::debug!(target: "poph_plugins", %code, %message, transient, "erro reportado pelo plugin");
+                self.sink
                     .receive(IntegrationEvent::Estado(poph_types::StateEvent::Error {
-                        code: codigo,
-                        message: mensagem,
-                        transient: transitorio,
+                        code,
+                        message,
+                        transient,
                     }));
             }
         }
     }
 
-    /// Erro para quando não há processo (subindo, caído ou encerrado).
-    fn erro_sem_processo(&self) -> IntegrationError {
-        match self.comum.estado() {
-            IntegrationState::Down {
-                failures: falhas,
-                reason: motivo,
-            } => IntegrationError::Down {
-                failures: falhas,
-                reason: motivo,
-            },
+    fn no_process_error(&self) -> IntegrationError {
+        match self.shared.state() {
+            IntegrationState::Down { failures, reason } => {
+                IntegrationError::Down { failures, reason }
+            }
             IntegrationState::Closed => IntegrationError::Closed,
-            IntegrationState::Restarting {
-                wait_ms: espera_ms, ..
-            } => IntegrationError::Unavailable {
-                reason: format!("o plugin está reiniciando (faltam ~{espera_ms} ms)"),
+            IntegrationState::Restarting { wait_ms, .. } => IntegrationError::Unavailable {
+                reason: format!("o plugin está reiniciando (faltam ~{wait_ms} ms)"),
             },
             IntegrationState::Starting | IntegrationState::Ready => IntegrationError::Unavailable {
                 reason: "o plugin ainda não está pronto".to_owned(),
@@ -896,106 +763,103 @@ impl Ator {
         }
     }
 
-    /// Sobe o processo e faz o handshake, esperando o manifesto dentro do prazo.
-    async fn subir(&mut self) -> Result<(), IntegrationError> {
-        if self.processo.is_some() {
+    async fn start_process(&mut self) -> Result<(), IntegrationError> {
+        if self.process.is_some() {
             return Ok(());
         }
-        self.reiniciar_em = None;
-        self.comum.definir_estado(IntegrationState::Starting);
-        self.geracao = self.geracao.saturating_add(1);
-        let geracao = self.geracao;
+        self.restart_at = None;
+        self.shared.set_state(IntegrationState::Starting);
+        self.generation = self.generation.saturating_add(1);
+        let generation = self.generation;
 
-        let opcoes = &self.comum.opcoes;
-        let mut comando = Command::new(&opcoes.programa);
-        comando
-            .args(&opcoes.argumentos)
+        let options = &self.shared.options;
+        let mut command = Command::new(&options.program);
+        command
+            .args(&options.arguments)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
-        if let Some(diretorio) = &opcoes.diretorio {
-            comando.current_dir(diretorio);
+        if let Some(directory) = &options.directory {
+            command.current_dir(directory);
         }
-        // Ambiente mínimo: o plugin NÃO herda o do Harness (as chaves do LLM/Jev/cifra não são
-        // dele), e segredo da integração nunca vai por aqui (PRD §8.3) — só no handshake.
-        comando.env_clear();
-        for nome in ["PATH", "HOME", "LANG", "LC_ALL", "TZ", "TMPDIR"] {
-            if let Some(valor) = std::env::var_os(nome) {
-                comando.env(nome, valor);
+        command.env_clear();
+        for name in ["PATH", "HOME", "LANG", "LC_ALL", "TZ", "TMPDIR"] {
+            if let Some(value) = std::env::var_os(name) {
+                command.env(name, value);
             }
         }
-        for (nome, valor) in &opcoes.ambiente {
-            comando.env(nome, valor);
+        for (name, value) in &options.environment {
+            command.env(name, value);
         }
-        let mut filho = comando
+        let mut child = command
             .spawn()
-            .map_err(|erro| IntegrationError::StartFailed {
-                program: opcoes.programa.display().to_string(),
-                reason: erro.to_string(),
+            .map_err(|error| IntegrationError::StartFailed {
+                program: options.program.display().to_string(),
+                reason: error.to_string(),
             })?;
-        let entrada = filho
+        let stdin = child
             .stdin
             .take()
             .ok_or_else(|| IntegrationError::StartFailed {
-                program: opcoes.programa.display().to_string(),
+                program: options.program.display().to_string(),
                 reason: "sem entrada padrão".to_owned(),
             })?;
-        let saida = filho
+        let stdout = child
             .stdout
             .take()
             .ok_or_else(|| IntegrationError::StartFailed {
-                program: opcoes.programa.display().to_string(),
+                program: options.program.display().to_string(),
                 reason: "sem saída padrão".to_owned(),
             })?;
-        if let Some(erro_padrao) = filho.stderr.take() {
-            tokio::spawn(drenar_erro_padrao(erro_padrao));
+        if let Some(stderr) = child.stderr.take() {
+            tokio::spawn(drain_stderr(stderr));
         }
-        tokio::spawn(ler_saida(
-            saida,
-            self.tx_linhas.clone(),
-            geracao,
-            self.comum.opcoes.limites.max_mensagem_bytes,
+        tokio::spawn(read_output(
+            stdout,
+            self.lines_tx.clone(),
+            generation,
+            self.shared.options.limits.max_message_bytes,
         ));
 
-        let mut processo = Processo {
-            geracao,
-            filho,
-            entrada,
+        let mut process = Process {
+            generation,
+            child,
+            stdin,
         };
         let handshake = HostMessage::Handshake(poph_types::Handshake {
             protocol: PROTOCOL_VERSION,
-            integration: opcoes.integracao,
-            org: opcoes.org,
-            kind: opcoes.kind.clone(),
-            config: opcoes.config.clone(),
-            secrets: opcoes
-                .segredos
+            integration: options.integration,
+            org: options.org,
+            kind: options.kind.clone(),
+            config: options.config.clone(),
+            secrets: options
+                .secrets
                 .iter()
-                .map(|(nome, valor)| (nome.clone(), valor.expose().clone()))
+                .map(|(name, value)| (name.clone(), value.expose().clone()))
                 .collect(),
         });
-        escrever(
-            &mut processo.entrada,
+        write_message(
+            &mut process.stdin,
             &handshake,
-            opcoes.limites.max_mensagem_bytes,
+            options.limits.max_message_bytes,
         )
         .await?;
 
-        let prazo = Instant::now() + opcoes.limites.timeout_handshake;
+        let deadline = Instant::now() + options.limits.timeout_handshake;
         loop {
-            let restante = prazo.saturating_duration_since(Instant::now());
-            if restante.is_zero() {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
                 return Err(IntegrationError::Timeout {
                     operation: "handshake".to_owned(),
-                    limit_ms: opcoes.limites.timeout_handshake.as_millis() as u64,
+                    limit_ms: options.limits.timeout_handshake.as_millis() as u64,
                 });
             }
-            match timeout(restante, self.linhas.recv()).await {
+            match timeout(remaining, self.lines.recv()).await {
                 Err(_) => {
                     return Err(IntegrationError::Timeout {
                         operation: "handshake".to_owned(),
-                        limit_ms: opcoes.limites.timeout_handshake.as_millis() as u64,
+                        limit_ms: options.limits.timeout_handshake.as_millis() as u64,
                     });
                 }
                 Ok(None) => {
@@ -1003,222 +867,212 @@ impl Ator {
                         reason: "o leitor do plugin encerrou durante o handshake".to_owned(),
                     });
                 }
-                Ok(Some(Entrada::Fim {
-                    geracao: origem,
-                    motivo,
-                })) if origem == geracao => {
+                Ok(Some(Input::End {
+                    generation: origin,
+                    reason,
+                })) if origin == generation => {
                     return Err(IntegrationError::HandshakeRefused {
-                        reason: format!("o plugin terminou antes do handshake: {motivo}"),
+                        reason: format!("o plugin terminou antes do handshake: {reason}"),
                     });
                 }
-                Ok(Some(Entrada::Linha {
-                    geracao: origem,
-                    linha,
-                })) if origem == geracao => match serde_json::from_str::<PluginMessage>(&linha) {
+                Ok(Some(Input::Line {
+                    generation: origin,
+                    line,
+                })) if origin == generation => match serde_json::from_str::<PluginMessage>(&line) {
                     Ok(PluginMessage::HandshakeOk {
-                        protocolo,
-                        manifest: manifesto,
+                        protocolo: protocol,
+                        manifest,
                     }) => {
-                        if protocolo != PROTOCOL_VERSION {
+                        if protocol != PROTOCOL_VERSION {
                             return Err(IntegrationError::IncompatibleProtocol {
                                 expected: PROTOCOL_VERSION,
-                                received: protocolo,
+                                received: protocol,
                             });
                         }
-                        manifesto.validar()?;
-                        self.comum.definir_manifesto(manifesto);
-                        self.comum
-                            .contadores
-                            .somar(&self.comum.contadores.handshakes);
-                        self.processo = Some(processo);
-                        // As falhas seguidas **não** zeram aqui: subir não é sinal de que o plugin
-                        // está saudável (um plugin que cai a cada comando sobe toda vez). O placar
-                        // zera quando ele responde um comando ou uma saúde.
-                        self.comum.definir_estado(IntegrationState::Ready);
+                        manifest.validar()?;
+                        self.shared.set_manifest(manifest);
+                        self.shared
+                            .counters
+                            .increment(&self.shared.counters.handshakes);
+                        self.process = Some(process);
+                        self.shared.set_state(IntegrationState::Ready);
                         return Ok(());
                     }
                     _ => {
-                        // Outra mensagem antes do handshake é fora do contrato: conta e ignora.
-                        self.comum.contadores.somar(&self.comum.contadores.lixo);
+                        self.shared.counters.increment(&self.shared.counters.junk);
                     }
                 },
-                Ok(Some(_)) => {
-                    // Entrada de uma geração antiga: descarta.
-                }
+                Ok(Some(_)) => {}
             }
         }
     }
 
-    /// Timer do reinício.
-    async fn reiniciar(&mut self) {
-        self.reiniciar_em = None;
-        if self.comum.estado().is_closed() {
+    async fn restart(&mut self) {
+        self.restart_at = None;
+        if self.shared.state().is_closed() {
             return;
         }
-        match self.subir().await {
+        match self.start_process().await {
             Ok(()) => {
-                self.comum
-                    .contadores
-                    .somar(&self.comum.contadores.reinicios);
+                self.shared
+                    .counters
+                    .increment(&self.shared.counters.restarts);
                 tracing::info!(target: "poph_plugins", "plugin reiniciado");
             }
-            Err(erro) => {
-                tracing::warn!(target: "poph_plugins", %erro, "o plugin não subiu");
-                self.registrar_falha().await;
+            Err(error) => {
+                tracing::warn!(target: "poph_plugins", %error, "o plugin não subiu");
+                self.record_failure().await;
             }
         }
     }
 
-    /// Conta a falha, derruba o processo, responde os pendentes e agenda o reinício (ou marca
-    /// como caída, se passou do teto).
-    async fn registrar_falha(&mut self) {
-        self.falhas = self.falhas.saturating_add(1);
-        self.comum.contadores.somar(&self.comum.contadores.falhas);
-        if let Some(processo) = self.processo.take() {
-            encerrar_processo(processo).await;
+    async fn record_failure(&mut self) {
+        self.failures = self.failures.saturating_add(1);
+        self.shared
+            .counters
+            .increment(&self.shared.counters.failures);
+        if let Some(process) = self.process.take() {
+            kill_process(process).await;
         }
-        let indisponivel = IntegrationError::Unavailable {
+        let unavailable = IntegrationError::Unavailable {
             reason: "o plugin caiu; a mensagem pode ser retentada".to_owned(),
         };
-        for (_, (_, responder)) in self.comandos.drain() {
-            let _ = responder.send(Err(indisponivel.clone()));
+        for (_, (_, reply)) in self.commands.drain() {
+            let _ = reply.send(Err(unavailable.clone()));
         }
-        for (_, responder) in self.saudes.drain() {
-            let _ = responder.send(Err(indisponivel.clone()));
+        for (_, reply) in self.health.drain() {
+            let _ = reply.send(Err(unavailable.clone()));
         }
-        let limite = &self.comum.opcoes.limites;
-        if self.falhas >= limite.max_falhas {
-            let motivo = format!(
+        let limits = &self.shared.options.limits;
+        if self.failures >= limits.max_failures {
+            let reason = format!(
                 "{} falhas seguidas (teto {}); não reinicia mais sozinho",
-                self.falhas, limite.max_falhas
+                self.failures, limits.max_failures
             );
-            tracing::error!(target: "poph_plugins", %motivo, "integração marcada como caída");
-            self.comum.definir_estado(IntegrationState::Down {
-                failures: self.falhas,
-                reason: motivo,
+            tracing::error!(target: "poph_plugins", %reason, "integração marcada como caída");
+            self.shared.set_state(IntegrationState::Down {
+                failures: self.failures,
+                reason,
             });
-            self.reiniciar_em = None;
+            self.restart_at = None;
         } else {
-            let espera = limite.espera.espera(self.falhas);
-            self.comum.definir_estado(IntegrationState::Restarting {
-                failures: self.falhas,
-                wait_ms: espera.as_millis() as u64,
+            let delay = limits.backoff.delay(self.failures);
+            self.shared.set_state(IntegrationState::Restarting {
+                failures: self.failures,
+                wait_ms: delay.as_millis() as u64,
             });
-            self.reiniciar_em = Some(Instant::now() + espera);
+            self.restart_at = Some(Instant::now() + delay);
         }
     }
 
-    async fn encerrar(&mut self) {
-        self.reiniciar_em = None;
-        if let Some(processo) = self.processo.take() {
-            let Processo {
-                filho,
-                entrada,
-                geracao: _,
-            } = processo;
-            let mut entrada = entrada;
-            let teto = self.comum.opcoes.limites.max_mensagem_bytes;
-            let _ = escrever(&mut entrada, &HostMessage::Shutdown, teto).await;
-            // Fecha a entrada: o plugin que ignorar `encerrar` vê EOF e sai.
-            drop(entrada);
-            let mut filho = filho;
-            if timeout(Duration::from_millis(500), filho.wait())
+    async fn shutdown(&mut self) {
+        self.restart_at = None;
+        if let Some(process) = self.process.take() {
+            let Process {
+                child,
+                stdin,
+                generation: _,
+            } = process;
+            let mut stdin = stdin;
+            let cap = self.shared.options.limits.max_message_bytes;
+            let _ = write_message(&mut stdin, &HostMessage::Shutdown, cap).await;
+            drop(stdin);
+            let mut child = child;
+            if timeout(Duration::from_millis(500), child.wait())
                 .await
                 .is_err()
             {
-                let _ = filho.start_kill();
-                let _ = timeout(PRAZO_MORTE, filho.wait()).await;
+                let _ = child.start_kill();
+                let _ = timeout(KILL_DEADLINE, child.wait()).await;
             }
         }
-        let encerrada = IntegrationError::Closed;
-        for (_, (_, responder)) in self.comandos.drain() {
-            let _ = responder.send(Err(encerrada.clone()));
+        let closed = IntegrationError::Closed;
+        for (_, (_, reply)) in self.commands.drain() {
+            let _ = reply.send(Err(closed.clone()));
         }
-        for (_, responder) in self.saudes.drain() {
-            let _ = responder.send(Err(encerrada.clone()));
+        for (_, reply) in self.health.drain() {
+            let _ = reply.send(Err(closed.clone()));
         }
-        self.comum.definir_estado(IntegrationState::Closed);
+        self.shared.set_state(IntegrationState::Closed);
     }
 }
 
-// ───────────────────────────── Processo e leitura ─────────────────────────────
-
-async fn escrever(
-    entrada: &mut ChildStdin,
-    mensagem: &HostMessage,
-    teto: usize,
+async fn write_message(
+    stdin: &mut ChildStdin,
+    message: &HostMessage,
+    cap: usize,
 ) -> Result<(), IntegrationError> {
-    let mut linha = serde_json::to_string(mensagem).map_err(|erro| IntegrationError::Protocol {
-        reason: format!("não consegui serializar a mensagem: {erro}"),
+    let mut line = serde_json::to_string(message).map_err(|error| IntegrationError::Protocol {
+        reason: format!("não consegui serializar a mensagem: {error}"),
     })?;
-    if linha.len() + 1 > teto {
+    if line.len() + 1 > cap {
         return Err(IntegrationError::MessageTooLarge {
-            bytes: linha.len() + 1,
-            cap: teto,
+            bytes: line.len() + 1,
+            cap,
         });
     }
-    linha.push('\n');
-    entrada
-        .write_all(linha.as_bytes())
+    line.push('\n');
+    stdin
+        .write_all(line.as_bytes())
         .await
-        .map_err(|erro| IntegrationError::Unavailable {
-            reason: format!("o plugin não aceitou a mensagem: {erro}"),
+        .map_err(|error| IntegrationError::Unavailable {
+            reason: format!("o plugin não aceitou a mensagem: {error}"),
         })?;
-    entrada
+    stdin
         .flush()
         .await
-        .map_err(|erro| IntegrationError::Unavailable {
-            reason: format!("o plugin não aceitou a mensagem: {erro}"),
+        .map_err(|error| IntegrationError::Unavailable {
+            reason: format!("o plugin não aceitou a mensagem: {error}"),
         })
 }
 
-async fn encerrar_processo(mut processo: Processo) {
-    let _ = processo.filho.start_kill();
-    let _ = timeout(PRAZO_MORTE, processo.filho.wait()).await;
+async fn kill_process(mut process: Process) {
+    let _ = process.child.start_kill();
+    let _ = timeout(KILL_DEADLINE, process.child.wait()).await;
 }
 
-async fn ler_saida(
-    saida: tokio::process::ChildStdout,
-    tx: mpsc::Sender<Entrada>,
-    geracao: u64,
-    limite: usize,
+async fn read_output(
+    output: tokio::process::ChildStdout,
+    tx: mpsc::Sender<Input>,
+    generation: u64,
+    limit: usize,
 ) {
-    let mut leitor = LeitorLinhas::novo(saida, limite);
+    let mut reader = LineReader::new(output, limit);
     loop {
-        let entrada = match leitor.proxima().await {
-            Ok(Proxima::Linha(linha)) => Entrada::Linha { geracao, linha },
-            Ok(Proxima::Descartada) => Entrada::Descartada { geracao },
-            Ok(Proxima::Fim) => Entrada::Fim {
-                geracao,
-                motivo: "o plugin fechou a saída padrão".to_owned(),
+        let input = match reader.next_line().await {
+            Ok(NextLine::Line(line)) => Input::Line { generation, line },
+            Ok(NextLine::Discarded) => Input::Discarded { generation },
+            Ok(NextLine::End) => Input::End {
+                generation,
+                reason: "o plugin fechou a saída padrão".to_owned(),
             },
-            Err(erro) => Entrada::Fim {
-                geracao,
-                motivo: format!("falha ao ler a saída do plugin: {erro}"),
+            Err(error) => Input::End {
+                generation,
+                reason: format!("falha ao ler a saída do plugin: {error}"),
             },
         };
-        let fim = matches!(entrada, Entrada::Fim { .. });
-        if tx.send(entrada).await.is_err() {
+        let end = matches!(input, Input::End { .. });
+        if tx.send(input).await.is_err() {
             return;
         }
-        if fim {
+        if end {
             return;
         }
     }
 }
 
-async fn drenar_erro_padrao(mut erro_padrao: tokio::process::ChildStderr) {
+async fn drain_stderr(mut stderr: tokio::process::ChildStderr) {
     use tokio::io::AsyncReadExt;
 
-    let mut pedaco = [0u8; 4096];
+    let mut chunk = [0u8; 4096];
     loop {
-        match erro_padrao.read(&mut pedaco).await {
+        match stderr.read(&mut chunk).await {
             Ok(0) | Err(_) => return,
-            Ok(lidos) => {
-                let texto = String::from_utf8_lossy(&pedaco[..lidos]);
-                let texto = texto.trim();
-                if !texto.is_empty() {
-                    tracing::debug!(target: "poph_plugins", "plugin (stderr): {texto}");
+            Ok(read) => {
+                let text = String::from_utf8_lossy(&chunk[..read]);
+                let text = text.trim();
+                if !text.is_empty() {
+                    tracing::debug!(target: "poph_plugins", "plugin (stderr): {text}");
                 }
             }
         }
@@ -1226,39 +1080,38 @@ async fn drenar_erro_padrao(mut erro_padrao: tokio::process::ChildStderr) {
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use super::*;
 
     #[test]
-    fn espera_cresce_e_para_no_teto() {
-        let espera = Espera {
+    fn backoff_grows_and_stops_at_the_cap() {
+        let backoff = Backoff {
             base: Duration::from_millis(100),
-            fator: 2,
-            teto: Duration::from_millis(500),
+            factor: 2,
+            cap: Duration::from_millis(500),
         };
-        assert_eq!(espera.espera(0), Duration::from_millis(100));
-        assert_eq!(espera.espera(1), Duration::from_millis(100));
-        assert_eq!(espera.espera(2), Duration::from_millis(200));
-        assert_eq!(espera.espera(3), Duration::from_millis(400));
-        // A partir daqui o teto manda.
-        assert_eq!(espera.espera(4), Duration::from_millis(500));
-        assert_eq!(espera.espera(30), Duration::from_millis(500));
+        assert_eq!(backoff.delay(0), Duration::from_millis(100));
+        assert_eq!(backoff.delay(1), Duration::from_millis(100));
+        assert_eq!(backoff.delay(2), Duration::from_millis(200));
+        assert_eq!(backoff.delay(3), Duration::from_millis(400));
+        assert_eq!(backoff.delay(4), Duration::from_millis(500));
+        assert_eq!(backoff.delay(30), Duration::from_millis(500));
     }
 
     #[test]
-    fn limites_padrao_sao_os_documentados() {
-        let limites = LimitesSupervisor::default();
-        assert_eq!(limites.max_mensagem_bytes, 1024 * 1024);
-        assert_eq!(limites.timeout_handshake, Duration::from_secs(5));
-        assert_eq!(limites.timeout_comando, Duration::from_secs(10));
-        assert_eq!(limites.timeout_saude, Duration::from_secs(3));
-        assert_eq!(limites.max_falhas, 5);
+    fn default_limits_are_the_documented_ones() {
+        let limits = SupervisorLimits::default();
+        assert_eq!(limits.max_message_bytes, 1024 * 1024);
+        assert_eq!(limits.timeout_handshake, Duration::from_secs(5));
+        assert_eq!(limits.command_timeout, Duration::from_secs(10));
+        assert_eq!(limits.health_timeout, Duration::from_secs(3));
+        assert_eq!(limits.max_failures, 5);
     }
 
     #[test]
-    fn estado_pronto_e_o_unico_que_aceita_comando() {
+    fn ready_is_the_only_state_that_accepts_commands() {
         assert!(IntegrationState::Ready.is_ready());
-        for estado in [
+        for state in [
             IntegrationState::Starting,
             IntegrationState::Restarting {
                 failures: 1,
@@ -1270,7 +1123,7 @@ mod testes {
             },
             IntegrationState::Closed,
         ] {
-            assert!(!estado.is_ready(), "{estado:?}");
+            assert!(!state.is_ready(), "{state:?}");
         }
         assert!(
             IntegrationState::Down {

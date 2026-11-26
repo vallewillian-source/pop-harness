@@ -9,25 +9,25 @@ use poph_agent::atores::{Atores, Futuro, OpcoesAtores, Processador, Tarefa};
 use poph_agent::entrada_saida::{Fluxo, OpcoesFluxo};
 use poph_agent::fila_integracao::{ConversaDoCanal, EnvioPeloCanal, InboxDoCanal};
 use poph_agent::metricas::MetricasMemoria;
-use poph_plugins::{Espera, LimitesSupervisor, OpcoesPlugin, Supervisor};
+use poph_plugins::{Backoff, PluginOptions, Supervisor, SupervisorLimits};
 use poph_store::{
     Conversa, NewAgent, NewConversation, NewOrg, NewOutboxItem, OutboxItem, OutboxState, Page,
     Store,
 };
 use poph_types::{ConversationId, EventSink, Integration, IntegrationId, OrgId};
 
-pub fn fast_limits() -> LimitesSupervisor {
-    LimitesSupervisor {
-        max_mensagem_bytes: 1024 * 1024,
+pub fn fast_limits() -> SupervisorLimits {
+    SupervisorLimits {
+        max_message_bytes: 1024 * 1024,
         timeout_handshake: Duration::from_secs(5),
-        timeout_comando: Duration::from_millis(500),
-        timeout_saude: Duration::from_secs(2),
-        espera: Espera {
+        command_timeout: Duration::from_millis(500),
+        health_timeout: Duration::from_secs(2),
+        backoff: Backoff {
             base: Duration::from_millis(30),
-            fator: 2,
-            teto: Duration::from_millis(200),
+            factor: 2,
+            cap: Duration::from_millis(200),
         },
-        max_falhas: 5,
+        max_failures: 5,
     }
 }
 
@@ -121,10 +121,10 @@ impl Scenario {
         let inbox = InboxDoCanal::iniciar(flow.clone(), org, resolver);
 
         let integration = IntegrationId::generate();
-        let options = OpcoesPlugin::novo(program, integration, org)
-            .com_kind("eco")
-            .com_limites(fast_limits());
-        let supervisor = Supervisor::iniciar(options, Arc::clone(&inbox) as Arc<dyn EventSink>)
+        let options = PluginOptions::new(program, integration, org)
+            .with_kind("eco")
+            .with_limits(fast_limits());
+        let supervisor = Supervisor::start(options, Arc::clone(&inbox) as Arc<dyn EventSink>)
             .await
             .expect("sobe o plugin eco");
         let channel: Arc<dyn Integration> = Arc::new(supervisor.clone());
@@ -190,7 +190,7 @@ impl Scenario {
     }
 
     pub async fn shutdown(self) {
-        self.supervisor.encerrar().await;
+        self.supervisor.shutdown().await;
     }
 
     pub fn conversation_id(&self) -> ConversationId {
