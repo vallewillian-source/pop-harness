@@ -157,7 +157,7 @@ define_text_enum!(
 
 define_text_enum!(
     FieldKind, field: "tipo_campo",
-    Texto => "texto",
+    Text => "texto",
     Number => "numero",
     Data => "data",
     Boolean => "booleano",

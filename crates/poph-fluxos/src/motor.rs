@@ -1095,7 +1095,7 @@ fn validar_valor(campo: &Campo, valor: &Json) -> Result<Json, String> {
         };
     }
     match campo.tipo {
-        FieldKind::Texto => match valor {
+        FieldKind::Text => match valor {
             Json::String(texto) => {
                 let limpo = texto.trim();
                 if campo.obrigatorio && limpo.is_empty() {

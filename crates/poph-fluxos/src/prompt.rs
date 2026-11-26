@@ -304,7 +304,7 @@ fn destino_em_palavras(ir: &Ir, destino: &Destino) -> String {
 
 fn tipo_como_texto(campo: &Campo) -> String {
     match campo.tipo {
-        FieldKind::Texto => "texto".to_owned(),
+        FieldKind::Text => "texto".to_owned(),
         FieldKind::Number => "número".to_owned(),
         FieldKind::Data => "data".to_owned(),
         FieldKind::Boolean => "sim ou não".to_owned(),

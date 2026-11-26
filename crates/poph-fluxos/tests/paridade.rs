@@ -233,7 +233,7 @@ fn auto_avanca_quando_o_unico_ator_exigido_e_quem_agiu() {
             etapa(
                 "abertura",
                 &[ActionActor::Agent],
-                vec![campo("relato", FieldKind::Texto, true)],
+                vec![campo("relato", FieldKind::Text, true)],
                 vec![acao_para_etapa(
                     "registrar_relato",
                     None,
@@ -975,7 +975,7 @@ fn condicional_com_def_escolhe_o_ramo() {
             etapa(
                 "triagem",
                 &[ActionActor::Agent],
-                vec![campo("relato", FieldKind::Texto, true)],
+                vec![campo("relato", FieldKind::Text, true)],
                 vec![acao(
                     "seguir",
                     None,
@@ -1096,7 +1096,7 @@ fn campo_obrigatorio_faltando_devolve_a_lista() {
                 &[ActionActor::Agent],
                 vec![
                     campo("valor", FieldKind::Number, true),
-                    campo("descricao", FieldKind::Texto, true),
+                    campo("descricao", FieldKind::Text, true),
                 ],
                 vec![acao_para_etapa(
                     "enviar_orcamento",
@@ -1142,7 +1142,7 @@ fn campo_de_texto_recusa_numero() {
         vec![etapa(
             "abertura",
             &[ActionActor::Agent],
-            vec![campo("relato", FieldKind::Texto, true)],
+            vec![campo("relato", FieldKind::Text, true)],
             vec![acao_para_fim("registrar", None, "Feito", false)],
         )],
         Vec::new(),

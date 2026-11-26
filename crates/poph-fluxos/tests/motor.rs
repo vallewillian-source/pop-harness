@@ -123,7 +123,7 @@ fn fluxo_simples() -> Ir {
         etapa(
             "coleta",
             &[ActionActor::Agent],
-            vec![campo("endereco", FieldKind::Texto, true, &[])],
+            vec![campo("endereco", FieldKind::Text, true, &[])],
             vec![
                 acao("confirmar", None, &["endereco"], "confirmacao"),
                 acao("desistir", None, &[], "confirmacao"),
@@ -145,7 +145,7 @@ fn fluxo_com_dois_atores() -> Ir {
         etapa(
             "triagem",
             &[ActionActor::Agent, ActionActor::Attendant],
-            vec![campo("resumo", FieldKind::Texto, false, &[])],
+            vec![campo("resumo", FieldKind::Text, false, &[])],
             vec![
                 acao("registrar", Some(ActionActor::Agent), &[], "depois"),
                 acao("assumir", Some(ActionActor::Attendant), &[], "depois"),
@@ -407,7 +407,7 @@ fn o_campo_informado_antes_conta_para_o_exige_da_acao_seguinte() {
         etapa(
             "coleta",
             &[ActionActor::Agent],
-            vec![campo("endereco", FieldKind::Texto, true, &[])],
+            vec![campo("endereco", FieldKind::Text, true, &[])],
             vec![
                 acao("anotar", None, &[], "coleta"),
                 acao("confirmar", None, &["endereco"], "confirmacao"),
@@ -496,7 +496,7 @@ fn cada_tipo_de_campo_recusa_o_valor_que_nao_e_dele() {
             "cadastro",
             &[ActionActor::Agent],
             vec![
-                campo("texto", FieldKind::Texto, false, &[]),
+                campo("texto", FieldKind::Text, false, &[]),
                 campo("data", FieldKind::Data, false, &[]),
                 campo("booleano", FieldKind::Boolean, false, &[]),
                 campo("anexo", FieldKind::Attachment, false, &[]),
@@ -543,7 +543,7 @@ fn os_valores_validos_de_cada_tipo_sao_gravados() {
             "cadastro",
             &[ActionActor::Agent],
             vec![
-                campo("texto", FieldKind::Texto, false, &[]),
+                campo("texto", FieldKind::Text, false, &[]),
                 campo("numero", FieldKind::Number, false, &[]),
                 campo("data", FieldKind::Data, false, &[]),
                 campo("booleano", FieldKind::Boolean, false, &[]),
@@ -703,7 +703,7 @@ fn campo_opcional_aceita_nulo_e_o_campo_conta_como_vazio() {
         etapa(
             "coleta",
             &[ActionActor::Agent],
-            vec![campo("bairro", FieldKind::Texto, false, &[])],
+            vec![campo("bairro", FieldKind::Text, false, &[])],
             vec![
                 acao("limpar", None, &[], "coleta"),
                 acao("confirmar", None, &["bairro"], "depois"),
@@ -1199,8 +1199,8 @@ fn campos_faltando_lista_so_os_obrigatorios_na_ordem_do_script() {
         "coleta",
         &[ActionActor::Agent],
         vec![
-            campo("endereco", FieldKind::Texto, true, &[]),
-            campo("bairro", FieldKind::Texto, false, &[]),
+            campo("endereco", FieldKind::Text, true, &[]),
+            campo("bairro", FieldKind::Text, false, &[]),
             campo("periodo", FieldKind::Option, true, &["manhã", "tarde"]),
         ],
         Vec::new(),

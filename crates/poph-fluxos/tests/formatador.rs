@@ -449,7 +449,7 @@ impl Gerador {
             for c in 0..quantos_campos {
                 let tipo_sorteado = self.sorteia() % 5;
                 let (tipo, opcoes) = match tipo_sorteado {
-                    0 => (poph_types::FieldKind::Texto, Vec::new()),
+                    0 => (poph_types::FieldKind::Text, Vec::new()),
                     1 => (poph_types::FieldKind::Number, Vec::new()),
                     2 => (poph_types::FieldKind::Data, Vec::new()),
                     3 => (poph_types::FieldKind::Boolean, Vec::new()),
@@ -682,7 +682,7 @@ fn com_textos_complicados(texto: &str) -> Ir {
             campos: vec![Campo {
                 id: "dado".to_owned(),
                 rotulo: texto.to_owned(),
-                tipo: poph_types::FieldKind::Texto,
+                tipo: poph_types::FieldKind::Text,
                 obrigatorio: true,
                 opcoes: Vec::new(),
                 ajuda: Some(texto.to_owned()),

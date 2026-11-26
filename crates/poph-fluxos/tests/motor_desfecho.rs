@@ -140,7 +140,7 @@ fn fluxo_com_decisao(entao: Destino, senao: Destino) -> Ir {
         vec![
             etapa(
                 "coleta",
-                vec![campo("marca", FieldKind::Texto, false)],
+                vec![campo("marca", FieldKind::Text, false)],
                 vec![acao_para(
                     "ir",
                     None,
@@ -683,7 +683,7 @@ fn fluxo_com_efeitos() -> Ir {
         vec![
             etapa(
                 "coleta",
-                vec![campo("endereco", FieldKind::Texto, true)],
+                vec![campo("endereco", FieldKind::Text, true)],
                 vec![acao_para(
                     "confirmar",
                     None,
@@ -864,7 +864,7 @@ fn o_dado_do_cliente_entra_como_valor_no_texto_do_efeito() {
     let ir = fluxo(
         vec![etapa(
             "coleta",
-            vec![campo("endereco", FieldKind::Texto, true)],
+            vec![campo("endereco", FieldKind::Text, true)],
             vec![acao_para(
                 "confirmar",
                 None,

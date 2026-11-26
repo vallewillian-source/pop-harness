@@ -386,7 +386,7 @@ fn campo_novo_pede_dado_novo() {
     let b = com(&a, |ir| {
         em_etapa(ir, "coleta")
             .campos
-            .push(campo("cep", "CEP", FieldKind::Texto, false, &[]));
+            .push(campo("cep", "CEP", FieldKind::Text, false, &[]));
     });
     let lista = diferenca(&a, &b);
     let novo = unica(&lista, TipoMudanca::CampoNovo);
@@ -456,7 +456,7 @@ fn campo_que_deixa_de_ser_obrigatorio_vale_para_atendimentos_novos() {
 fn campo_com_outro_tipo_pede_dado_do_novo_jeito() {
     let a = base();
     let b = com(&a, |ir| {
-        em_etapa(ir, "coleta").campos[1].tipo = FieldKind::Texto;
+        em_etapa(ir, "coleta").campos[1].tipo = FieldKind::Text;
     });
     let lista = diferenca(&a, &b);
     let mudou = unica(&lista, TipoMudanca::CampoMudouTipo);
@@ -558,7 +558,7 @@ fn acao_que_passa_a_exigir_campo_pede_o_dado() {
     let b = com(&a, |ir| {
         em_etapa(ir, "coleta")
             .campos
-            .push(campo("cep", "CEP", FieldKind::Texto, false, &[]));
+            .push(campo("cep", "CEP", FieldKind::Text, false, &[]));
         em_acao(ir, "coleta", "confirmar")
             .exige
             .push("cep".to_owned());
@@ -1060,7 +1060,7 @@ fn ordem_da_lista_numa_mudanca_grande_e_sempre_a_mesma() {
         em_etapa(ir, "coleta").campos[0].obrigatorio = false;
         em_etapa(ir, "coleta")
             .campos
-            .push(campo("cep", "CEP", FieldKind::Texto, false, &[]));
+            .push(campo("cep", "CEP", FieldKind::Text, false, &[]));
         em_acao(ir, "coleta", "confirmar")
             .exige
             .push("cep".to_owned());

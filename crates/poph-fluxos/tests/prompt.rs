@@ -642,7 +642,7 @@ fn campo_vazio_ou_nulo_conta_como_nao_preenchido() {
             None,
             &[ActionActor::Agent],
             vec![
-                campo("endereco", "Endereço", FieldKind::Texto, true, &[]),
+                campo("endereco", "Endereço", FieldKind::Text, true, &[]),
                 campo(
                     "periodo",
                     "Período",
@@ -650,7 +650,7 @@ fn campo_vazio_ou_nulo_conta_como_nao_preenchido() {
                     false,
                     &["manhã", "tarde"],
                 ),
-                campo("obs", "Observação", FieldKind::Texto, false, &[]),
+                campo("obs", "Observação", FieldKind::Text, false, &[]),
             ],
             Vec::new(),
         )],

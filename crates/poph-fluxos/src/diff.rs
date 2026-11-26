@@ -1186,7 +1186,7 @@ fn opcoes_em_texto(opcoes: &[String]) -> String {
 
 fn tipo_em_texto(tipo: FieldKind) -> &'static str {
     match tipo {
-        FieldKind::Texto => "texto",
+        FieldKind::Text => "texto",
         FieldKind::Number => "número",
         FieldKind::Data => "data",
         FieldKind::Boolean => "sim ou não",

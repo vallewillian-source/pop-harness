@@ -686,11 +686,11 @@ impl<'a> Forma<'a> {
                                 ),
                                 pos_tipo,
                             );
-                            FieldKind::Texto
+                            FieldKind::Text
                         }
                     }
                 }
-                None => FieldKind::Texto,
+                None => FieldKind::Text,
             };
             let obrigatorio = match obrigatorio_expr {
                 Some(expr) => self
