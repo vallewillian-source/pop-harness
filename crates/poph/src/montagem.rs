@@ -245,7 +245,9 @@ pub fn montar(
     .com_arquivos(poph_files::FileConfig::default(configuracao.blobs()))
     // Transferência para humano (HR-29): textos da orientação e mensagem automática vêm do
     // `[handoff]` do `poph.toml` — trocar o texto não exige recompilar.
-    .com_handoff(poph_jev::Orientacao::da_config(&configuracao.handoff))
+    .com_handoff(poph_jev::HandoffGuidance::from_config(
+        &configuracao.handoff,
+    ))
     // Fluxos e Fichas (FX-23): o turno escolhe (G9), valida e inicia a execução na Ficha. Desligado
     // em `[fluxos] ativo`, nada disso acontece e a Ficha continua.
     .com_fluxos(&configuracao.flows);

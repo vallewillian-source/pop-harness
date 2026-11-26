@@ -50,8 +50,8 @@ pub use gates::{
     G9_NONE, flow_policy, g6_guidance, g6_needs_review, g7_requests_action, match_candidate,
 };
 pub use handoff::{
-    Orientacao, PRAZO_PADRAO, RISCO_ANIMAL, RISCO_INGESTAO, RISCO_NENHUM, RISCO_OUTRO,
-    RISCO_PERGUNTA_ID, ResultadoOrientacao, TIPOS_DE_RISCO, pergunta_risco,
+    ANIMAL_RISK, DEFAULT_TIMEOUT, GuidanceResult, HandoffGuidance, INGESTION_RISK, NO_RISK,
+    OTHER_RISK, RISK_QUESTION_ID, RISK_TYPES, risk_question,
 };
 pub use motor::{
     CallReport, DEFAULT_BATCH_TIMEOUT, GateEvaluator, JevEngine, JevOptions, JevResult,

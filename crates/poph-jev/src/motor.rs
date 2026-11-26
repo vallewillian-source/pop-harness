@@ -11,7 +11,7 @@ use crate::cliente::{Pedido, TransporteJev};
 use crate::flags::GateOverrides;
 use crate::gate::{Decisao, DecisionOrigin, Gate, Thresholds};
 use crate::gates;
-use crate::handoff::ResultadoOrientacao;
+use crate::handoff::GuidanceResult;
 use crate::state::JevState;
 use crate::types::{IdGate, JevResponse, UsageTokens};
 
@@ -132,10 +132,10 @@ pub trait GateEvaluator: Send + Sync {
         &'a self,
         estado: JevState,
         deadline: Duration,
-    ) -> BoxFuture<'a, ResultadoOrientacao> {
+    ) -> BoxFuture<'a, GuidanceResult> {
         let _ = (estado, deadline);
         Box::pin(async {
-            ResultadoOrientacao::nao_consultado("este avaliador não faz a pergunta de risco")
+            GuidanceResult::not_queried("este avaliador não faz a pergunta de risco")
         })
     }
 }
@@ -375,12 +375,12 @@ impl GateEvaluator for JevEngine {
         &'a self,
         estado: JevState,
         deadline: Duration,
-    ) -> BoxFuture<'a, ResultadoOrientacao> {
+    ) -> BoxFuture<'a, GuidanceResult> {
         Box::pin(async move {
             let mut questions = BTreeMap::new();
             questions.insert(
-                crate::handoff::RISCO_PERGUNTA_ID.to_owned(),
-                crate::handoff::pergunta_risco(),
+                crate::handoff::RISK_QUESTION_ID.to_owned(),
+                crate::handoff::risk_question(),
             );
             let request = Pedido {
                 estado: estado.to_json(),
@@ -390,30 +390,30 @@ impl GateEvaluator for JevEngine {
             let started = Instant::now();
             match tokio::time::timeout(deadline, self.transport.julgar(request)).await {
                 Ok(Ok(batch)) => {
-                    let response = batch.answers.get(crate::handoff::RISCO_PERGUNTA_ID);
-                    ResultadoOrientacao {
-                        consultado: true,
+                    let response = batch.answers.get(crate::handoff::RISK_QUESTION_ID);
+                    GuidanceResult {
+                        queried: true,
                         tipo: response.and_then(|item| item.choice.clone()),
-                        confianca: response.map(|item| item.confidence).unwrap_or(0.0),
+                        confidence: response.map(|item| item.confidence).unwrap_or(0.0),
                         ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
                         tokens: batch.tokens,
-                        falha: None,
+                        failure: None,
                     }
                 }
-                Ok(Err(error)) => ResultadoOrientacao {
-                    consultado: true,
+                Ok(Err(error)) => GuidanceResult {
+                    queried: true,
                     ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
-                    falha: Some(error.to_string()),
-                    ..ResultadoOrientacao::default()
+                    failure: Some(error.to_string()),
+                    ..GuidanceResult::default()
                 },
-                Err(_) => ResultadoOrientacao {
-                    consultado: true,
+                Err(_) => GuidanceResult {
+                    queried: true,
                     ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
-                    falha: Some(format!(
+                    failure: Some(format!(
                         "a pergunta de risco não respondeu em {} ms",
                         deadline.as_millis()
                     )),
-                    ..ResultadoOrientacao::default()
+                    ..GuidanceResult::default()
                 },
             }
         })

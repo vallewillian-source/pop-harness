@@ -22,7 +22,7 @@ use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
 use poph_agent::turno::{Entrada, FuturoPausa, Motor, ObservadorNulo, OpcoesTurno, Pausa};
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, Usage};
 use poph_jev::{
-    BatchResponse, G1_TRANSFER, IdGate, JevEngine, JevFalso, JevResponse, Orientacao, Pedido,
+    BatchResponse, G1_TRANSFER, HandoffGuidance, IdGate, JevEngine, JevFalso, JevResponse, Pedido,
 };
 use poph_store::{
     AgentChange, DepartmentChange, Direction, NewAgent, NewConversation, NewDepartment, NewMessage,
@@ -262,7 +262,7 @@ impl Cenario {
             MetricasTurno::proprio(),
         )
         .com_pausa(Arc::new(SemEspera))
-        .com_handoff(Orientacao::default());
+        .com_handoff(HandoffGuidance::default());
         if let Some(jev) = jev {
             motor = motor.com_jev(jev);
         }
@@ -723,5 +723,5 @@ async fn a_escolha_do_departamento_nao_muda_o_texto_ao_cliente() {
     let motor = cenario.motor(Some(motor_jev(jev(Some(("Financeiro", 0.95)), true), true)));
     let gatilho = cenario.falar(conversa, "quero falar com um atendente sobre a cobrança");
     let resumo = cenario.turno(&motor, conversa, gatilho).await;
-    assert_eq!(resumo.texto, Orientacao::default().mensagem_automatica);
+    assert_eq!(resumo.texto, HandoffGuidance::default().mensagem_automatica);
 }

@@ -70,8 +70,8 @@ use poph_core::llm::{
 };
 use poph_jev::{
     G1_TRANSFER, G3_NOTHING, G6_APPROVED, G7_DEFAULT_REPLY, G7Action, G8_DEFAULT_FAREWELL,
-    G8_ENDED, GateEvaluator, GateOverrides, IdGate, JevEngine, JevMessage, JevResult, JevState,
-    Orientacao, ResultadoOrientacao,
+    G8_ENDED, GateEvaluator, GateOverrides, GuidanceResult, HandoffGuidance, IdGate, JevEngine,
+    JevMessage, JevResult, JevState,
 };
 use poph_store::{
     Direction, Mensagem as MensagemGravada, NewAuditEntry, NewMessage, NewOutboxItem, Page, Role,
@@ -495,7 +495,7 @@ pub struct Motor {
     /// exatamente como antes.
     jev: Option<Arc<dyn GateEvaluator>>,
     /// Transferência para humano (HR-29): textos da orientação, mensagem automática e limiares.
-    handoff: Orientacao,
+    handoff: HandoffGuidance,
     /// Arquivos do cliente (HR-23b): pasta dos blobs e limites. Sem ela, o turno não lê imagem
     /// nenhuma do disco — o texto extraído continua indo ao modelo pelo banco.
     arquivos: Option<poph_files::FileConfig>,
@@ -538,7 +538,7 @@ impl Motor {
             cancelamento: None,
             resumidor,
             jev: None,
-            handoff: Orientacao::default(),
+            handoff: HandoffGuidance::default(),
             arquivos: None,
             fluxos: None,
             fluxos_g9: MetricasG9::proprias(),
@@ -589,7 +589,7 @@ impl Motor {
 
     /// Define a orientação ao cliente antes da transferência (HR-29): textos aprovados, mensagem
     /// automática, limiar e prazo da segunda pergunta. Sem ela, valem os padrões da configuração.
-    pub fn com_handoff(mut self, orientacao: Orientacao) -> Self {
+    pub fn com_handoff(mut self, orientacao: HandoffGuidance) -> Self {
         self.handoff = orientacao;
         self
     }
@@ -2357,8 +2357,8 @@ impl Motor {
 
         // 1. Orientação mínima (segunda pergunta do G1). Nunca segura a transferência.
         let risco = self.classificar_risco(org, quente, ultimas, conversa).await;
-        let tipo = self.handoff.tipo_confiavel(&risco);
-        let texto = self.handoff.compor(tipo.as_deref());
+        let tipo = self.handoff.reliable_type(&risco);
+        let texto = self.handoff.compose(tipo.as_deref());
 
         // 2. Mensagem do agente + item da `outbox` (idempotente por turno + seq, como a resposta),
         //    escritos juntos (HR-57). A configuração recusa mensagem automática vazia; se alguém
@@ -2458,7 +2458,7 @@ impl Motor {
         };
         let modelo = self.modelo_usado(quente);
         let mut registro = jev.to_json();
-        registro["risco"] = risco.para_json();
+        registro["risco"] = risco.to_json();
         // Efeito do G4, já validado pelo código: o painel "por quê" (HR-47) mostra para onde a
         // conversa foi e, quando não foi a escolha do Jev, por quê.
         registro["transferencia"] = json!({
@@ -2745,22 +2745,22 @@ impl Motor {
         quente: &AgenteQuente,
         ultimas: &[MensagemGravada],
         conversa: &poph_store::Conversa,
-    ) -> ResultadoOrientacao {
+    ) -> GuidanceResult {
         if !self.handoff.ativo {
-            return ResultadoOrientacao::nao_consultado("orientação desligada na configuração");
+            return GuidanceResult::not_queried("orientação desligada na configuração");
         }
         let Some(avaliador) = self.jev.as_ref() else {
-            return ResultadoOrientacao::nao_consultado("Jev desligado no motor");
+            return GuidanceResult::not_queried("Jev desligado no motor");
         };
         let ajuste: Option<GateOverrides> = poph_jev::ajuste_do_agente(&quente.agente.jev_json);
         let gates: JevGates = avaliador.effective_gates(ajuste);
         let Some(estado) = self.estado_jev(org, quente, ultimas, conversa, gates, None) else {
-            return ResultadoOrientacao::nao_consultado("sem mensagem para julgar");
+            return GuidanceResult::not_queried("sem mensagem para julgar");
         };
-        let resultado = avaliador.orientar(estado, self.handoff.prazo).await;
-        if resultado.falhou() {
+        let resultado = avaliador.orientar(estado, self.handoff.timeout).await;
+        if resultado.failed() {
             tracing::warn!(
-                falha = ?resultado.falha,
+                falha = ?resultado.failure,
                 "pergunta de risco da transferência falhou; segue só com a mensagem automática"
             );
         }
