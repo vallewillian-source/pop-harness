@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use poph_jev::{
-    AvaliadorGates, DecisionOrigin, G1_CONTINUAR, G1_TRANSFERIR, G2_PROCESSAR, G3_BASE, G3_NADA,
+    AvaliadorGates, DecisionOrigin, G1_CONTINUE, G1_TRANSFER, G2_PROCESS, G3_BASE, G3_NOTHING,
     GateOverrides, IdGate, JevError, JevFalso, JevMessage, JevState, MotorJev, OpcoesJev,
 };
 use poph_types::JevGates;
@@ -52,8 +52,8 @@ fn motor(jev: Arc<JevFalso>, globais: JevGates) -> Arc<MotorJev> {
 #[tokio::test]
 async fn tres_gates_ligados_geram_uma_requisicao_e_distribuem_as_respostas() {
     let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[
-        ("g1_transferir", G1_CONTINUAR),
-        ("g2_esperar", G2_PROCESSAR),
+        ("g1_transferir", G1_CONTINUE),
+        ("g2_esperar", G2_PROCESS),
         ("g3_precisa", G3_BASE),
     ])));
     let avaliador = motor(Arc::clone(&jev), gates(true, true, true, false));
@@ -68,8 +68,8 @@ async fn tres_gates_ligados_geram_uma_requisicao_e_distribuem_as_respostas() {
     assert_eq!(resultado.chamada.tokens, 12);
     assert!(!resultado.falhou());
 
-    assert_eq!(resultado.escolha(IdGate::G1), Some(G1_CONTINUAR));
-    assert_eq!(resultado.escolha(IdGate::G2), Some(G2_PROCESSAR));
+    assert_eq!(resultado.escolha(IdGate::G1), Some(G1_CONTINUE));
+    assert_eq!(resultado.escolha(IdGate::G2), Some(G2_PROCESS));
     assert_eq!(resultado.escolha(IdGate::G3), Some(G3_BASE));
     assert!(
         resultado.decisao(IdGate::G4).is_none(),
@@ -88,7 +88,7 @@ async fn tres_gates_ligados_geram_uma_requisicao_e_distribuem_as_respostas() {
 async fn o_pedido_leva_o_estado_da_conversa() {
     let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
         "g1_transferir",
-        G1_CONTINUAR,
+        G1_CONTINUE,
     )])));
     let avaliador = motor(Arc::clone(&jev), gates(true, false, false, false));
     avaliador.avaliar(estado(), None).await;
@@ -121,7 +121,7 @@ async fn sem_gate_ligado_nenhuma_pergunta_e_enviada() {
 async fn cache_evita_pergunta_repetida_no_mesmo_estado() {
     let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
         "g1_transferir",
-        G1_TRANSFERIR,
+        G1_TRANSFER,
     )])));
     let avaliador = motor(Arc::clone(&jev), gates(true, false, false, false));
 
@@ -129,8 +129,8 @@ async fn cache_evita_pergunta_repetida_no_mesmo_estado() {
     let segundo = avaliador.avaliar(estado(), None).await;
 
     assert_eq!(jev.chamadas(), 1, "a segunda vez veio do cache");
-    assert_eq!(primeiro.escolha(IdGate::G1), Some(G1_TRANSFERIR));
-    assert_eq!(segundo.escolha(IdGate::G1), Some(G1_TRANSFERIR));
+    assert_eq!(primeiro.escolha(IdGate::G1), Some(G1_TRANSFER));
+    assert_eq!(segundo.escolha(IdGate::G1), Some(G1_TRANSFER));
     assert_eq!(
         segundo.decisao(IdGate::G1).unwrap().origin,
         DecisionOrigin::Cache
@@ -143,7 +143,7 @@ async fn cache_evita_pergunta_repetida_no_mesmo_estado() {
 async fn estado_diferente_nao_reaproveita_a_decisao() {
     let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
         "g1_transferir",
-        G1_CONTINUAR,
+        G1_CONTINUE,
     )])));
     let avaliador = motor(Arc::clone(&jev), gates(true, false, false, false));
 
@@ -178,7 +178,7 @@ async fn falha_do_jev_leva_todos_os_gates_ao_fallback() {
             .all(|decisao| decisao.origin == DecisionOrigin::Fallback)
     );
     // Fallback é o comportamento sem o Jev, não uma escolha inventada.
-    assert_eq!(resultado.escolha(IdGate::G1), Some(G1_CONTINUAR));
+    assert_eq!(resultado.escolha(IdGate::G1), Some(G1_CONTINUE));
     assert!(resultado.escolha_confiavel(IdGate::G1).is_none());
 }
 
@@ -186,7 +186,7 @@ async fn falha_do_jev_leva_todos_os_gates_ao_fallback() {
 #[tokio::test]
 async fn prazo_do_lote_estourado_cai_no_fallback() {
     let jev = Arc::new(
-        JevFalso::com_escolhas(escolhas(&[("g1_transferir", G1_TRANSFERIR)]))
+        JevFalso::com_escolhas(escolhas(&[("g1_transferir", G1_TRANSFER)]))
             .com_atraso(Duration::from_secs(5)),
     );
     let avaliador = Arc::new(
@@ -269,7 +269,7 @@ async fn confianca_abaixo_do_limiar_e_abstencao() {
             respostas.insert(
                 id.clone(),
                 poph_jev::JevResponse {
-                    choice: Some(G1_TRANSFERIR.to_owned()),
+                    choice: Some(G1_TRANSFER.to_owned()),
                     confidence: 0.55,
                     ..poph_jev::JevResponse::default()
                 },
@@ -294,7 +294,7 @@ async fn confianca_abaixo_do_limiar_e_abstencao() {
             .unwrap_or_default()
             .contains("confiança 0.55")
     );
-    assert_eq!(resultado.escolha(IdGate::G1), Some(G1_CONTINUAR));
+    assert_eq!(resultado.escolha(IdGate::G1), Some(G1_CONTINUE));
 }
 
 /// Gate que não se aplica ao estado fica de fora do pedido (agente sem transferência, G1 não pergunta).
@@ -302,7 +302,7 @@ async fn confianca_abaixo_do_limiar_e_abstencao() {
 async fn gate_que_nao_se_aplica_nao_e_perguntado() {
     let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
         "g1_transferir",
-        G1_TRANSFERIR,
+        G1_TRANSFER,
     )])));
     let avaliador = motor(Arc::clone(&jev), gates(true, false, false, false));
     let sem_handoff = estado().with_handoff(Vec::new(), false);
@@ -338,8 +338,8 @@ async fn ajuste_do_agente_sobrepoe_so_o_que_declara() {
 #[tokio::test]
 async fn dois_gates_no_mesmo_pedido_e_uma_chamada() {
     let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[
-        ("g1_transferir", G1_CONTINUAR),
-        ("g3_precisa", G3_NADA),
+        ("g1_transferir", G1_CONTINUE),
+        ("g3_precisa", G3_NOTHING),
     ])));
     let avaliador = motor(Arc::clone(&jev), gates(true, false, true, false));
 
@@ -347,5 +347,5 @@ async fn dois_gates_no_mesmo_pedido_e_uma_chamada() {
 
     assert_eq!(jev.chamadas(), 1);
     assert_eq!(jev.pedidos()[0].perguntas.len(), 2);
-    assert_eq!(resultado.escolha(IdGate::G3), Some(G3_NADA));
+    assert_eq!(resultado.escolha(IdGate::G3), Some(G3_NOTHING));
 }

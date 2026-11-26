@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use poph_jev::{
-    AvaliadorGates, DecisionOrigin, G5, G5_NENHUM, Gate, IdGate, JevFalso, JevMessage, JevResponse,
+    AvaliadorGates, DecisionOrigin, G5, G5_NONE, Gate, IdGate, JevFalso, JevMessage, JevResponse,
     JevState, MotorJev, ProductCandidate, eval::ajuste_de_gate,
 };
 use poph_types::JevGates;
@@ -114,7 +114,7 @@ fn id_fora_dos_candidatos_e_recusado() {
 #[test]
 fn nenhum_e_abstencao_com_motivo() {
     let estado = estado("qual o prazo de entrega?", candidatos());
-    let decisao = G5.interpret(&estado, Some(&resposta(G5_NENHUM, 0.95)), G5.thresholds());
+    let decisao = G5.interpret(&estado, Some(&resposta(G5_NONE, 0.95)), G5.thresholds());
     assert_eq!(decisao.origin, DecisionOrigin::Fallback);
     assert_eq!(decisao.choice, None);
     let motivo = decisao.motivo.unwrap_or_default();

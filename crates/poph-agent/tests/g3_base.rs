@@ -33,7 +33,7 @@ use poph_agent::turno::{
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, ToolCall, Usage};
 use poph_jev::{
-    BatchResponse, G3_BASE, G3_NADA, IdGate, JevError, JevFalso, JevResponse as RespostaJev,
+    BatchResponse, G3_BASE, G3_NOTHING, IdGate, JevError, JevFalso, JevResponse as RespostaJev,
     MotorJev,
 };
 use poph_store::{Direction, NewAgent, NewConversation, NewMessage, NewOrg, Role, Store};
@@ -404,7 +404,10 @@ fn texto_do_prompt(pedido: &poph_core::llm::Request) -> String {
 #[tokio::test]
 async fn g3_nada_descarta_a_busca_e_nao_oferece_base_nem_catalogo() {
     let cenario = Cenario::novo("nada");
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[("g3_precisa", G3_NADA)])));
+    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
+        "g3_precisa",
+        G3_NOTHING,
+    )])));
     let (motor, provedor) = cenario.motor(
         vec![roteiro_texto("Oi! Tudo bem? Como posso ajudar?")],
         Some(motor_jev(Arc::clone(&jev))),
@@ -417,7 +420,7 @@ async fn g3_nada_descarta_a_busca_e_nao_oferece_base_nem_catalogo() {
     assert_eq!(resumo.texto, "Oi! Tudo bem? Como posso ajudar?");
     assert_eq!(
         resumo.jev.as_ref().and_then(|jev| jev.escolha(IdGate::G3)),
-        Some(G3_NADA)
+        Some(G3_NOTHING)
     );
 
     // O resultado da busca não entra no prompt nem no registro.
@@ -461,7 +464,10 @@ async fn g3_nada_descarta_a_busca_e_nao_oferece_base_nem_catalogo() {
 #[tokio::test]
 async fn g3_nada_nao_executa_ferramenta_inventada_pelo_modelo() {
     let cenario = Cenario::novo("inventada");
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[("g3_precisa", G3_NADA)])));
+    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
+        "g3_precisa",
+        G3_NOTHING,
+    )])));
     let (motor, _) = cenario.motor(
         vec![
             Script::Events(vec![
@@ -578,11 +584,11 @@ async fn g3_confianca_baixa_cai_no_comportamento_de_hoje() {
         let mut respostas = BTreeMap::new();
         for id in pedido.perguntas.keys() {
             let mut resposta = RespostaJev {
-                choice: Some(G3_NADA.to_owned()),
+                choice: Some(G3_NOTHING.to_owned()),
                 confidence: 0.4,
                 ..RespostaJev::default()
             };
-            resposta.probabilities.insert(G3_NADA.to_owned(), 0.4);
+            resposta.probabilities.insert(G3_NOTHING.to_owned(), 0.4);
             resposta.probabilities.insert(G3_BASE.to_owned(), 0.4);
             respostas.insert(id.clone(), resposta);
         }
@@ -646,7 +652,10 @@ async fn g3_nada_abandona_a_busca_em_andamento() {
         Arc::new(AtomicU64::new(0)),
     );
 
-    let jev_nada = Arc::new(JevFalso::com_escolhas(escolhas(&[("g3_precisa", G3_NADA)])));
+    let jev_nada = Arc::new(JevFalso::com_escolhas(escolhas(&[(
+        "g3_precisa",
+        G3_NOTHING,
+    )])));
     let (motor, _) = cenario.motor(
         vec![roteiro_texto("Oi! Como posso ajudar?")],
         Some(motor_jev(Arc::clone(&jev_nada))),
@@ -712,8 +721,8 @@ async fn g3_nada_com_transferencia_nao_quebra_o_turno() {
         .expect("liga o handoff");
 
     let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[
-        ("g1_transferir", poph_jev::G1_TRANSFERIR),
-        ("g3_precisa", G3_NADA),
+        ("g1_transferir", poph_jev::G1_TRANSFER),
+        ("g3_precisa", G3_NOTHING),
     ])));
     let gates = JevGates {
         g1: true,
@@ -738,7 +747,7 @@ async fn g3_nada_com_transferencia_nao_quebra_o_turno() {
     );
     assert_eq!(
         resumo.jev.as_ref().and_then(|jev| jev.escolha(IdGate::G1)),
-        Some(poph_jev::G1_TRANSFERIR)
+        Some(poph_jev::G1_TRANSFER)
     );
     assert_eq!(
         cenario.metricas.buscas_puladas_g3.value(),
@@ -856,7 +865,10 @@ async fn medicao_de_tokens_e_latencia_do_g3() {
             }),
             Arc::new(AtomicU64::new(0)),
         );
-        let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[("g3_precisa", G3_NADA)])));
+        let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
+            "g3_precisa",
+            G3_NOTHING,
+        )])));
         let (motor, provedor) = cenario.motor(
             vec![roteiro_texto("Oi! Como posso ajudar?")],
             Some(motor_jev(Arc::clone(&jev))),
@@ -907,7 +919,10 @@ async fn medicao_de_tokens_e_latencia_do_g3() {
 #[tokio::test]
 async fn padrao_de_instalacao_liga_o_g3_sem_configurar_o_agente() {
     let cenario = Cenario::novo("padrao-g3");
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[("g3_precisa", G3_NADA)])));
+    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
+        "g3_precisa",
+        G3_NOTHING,
+    )])));
     let gates_padrao = poph_types::JevConfig::default().gates;
     let avaliador = Arc::new(MotorJev::novo(jev, gates_padrao, "jev-latest"));
     let (motor, provedor) = cenario.motor(
@@ -921,7 +936,7 @@ async fn padrao_de_instalacao_liga_o_g3_sem_configurar_o_agente() {
     assert_eq!(resumo.estado, poph_store::TurnState::Completed);
     assert_eq!(
         resumo.jev.as_ref().and_then(|jev| jev.escolha(IdGate::G3)),
-        Some(G3_NADA),
+        Some(G3_NOTHING),
         "sem configuração no agente, o G3 do padrão de instalação precisa perguntar"
     );
     let pedidos = provedor.received();
@@ -959,7 +974,10 @@ async fn agente_que_desliga_o_g3_volta_ao_comportamento_de_hoje() {
         )
         .expect("desliga o G3 no agente");
 
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[("g3_precisa", G3_NADA)])));
+    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
+        "g3_precisa",
+        G3_NOTHING,
+    )])));
     let gates_padrao = poph_types::JevConfig::default().gates;
     let avaliador = Arc::new(MotorJev::novo(jev, gates_padrao, "jev-latest"));
     let (motor, provedor) = cenario.motor(
@@ -1007,7 +1025,10 @@ async fn agente_com_ativo_false_nao_consulta_o_jev_nem_o_g3() {
         )
         .expect("desliga o Jev do agente");
 
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[("g3_precisa", G3_NADA)])));
+    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
+        "g3_precisa",
+        G3_NOTHING,
+    )])));
     let gates_padrao = poph_types::JevConfig::default().gates;
     let avaliador = Arc::new(MotorJev::novo(jev, gates_padrao, "jev-latest"));
     let (motor, provedor) = cenario.motor(

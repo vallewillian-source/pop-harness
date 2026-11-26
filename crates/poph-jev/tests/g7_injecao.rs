@@ -9,8 +9,9 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use poph_jev::{
-    AvaliadorGates, BatchResponse, DecisionOrigin, G7, G7_ABUSO, G7_INJECAO, G7_NORMAL, Gate,
-    IdGate, JevFalso, JevMessage, JevResponse, JevState, MotorJev, QuestionType, g7_pede_acao,
+    AvaliadorGates, BatchResponse, DecisionOrigin, G7, G7_ABUSE, G7_INJECTION, G7_NORMAL, Gate,
+    IdGate, JevFalso, JevMessage, JevResponse, JevState, MotorJev, QuestionType,
+    g7_requests_action,
 };
 use poph_types::JevGates;
 
@@ -58,12 +59,12 @@ fn normal_e_decisao_confiavel_e_nao_pede_acao() {
     );
     assert_eq!(decisao.origin, DecisionOrigin::Jev);
     assert_eq!(decisao.choice.as_deref(), Some(G7_NORMAL));
-    assert!(!g7_pede_acao(G7_NORMAL));
+    assert!(!g7_requests_action(G7_NORMAL));
 }
 
 #[test]
 fn injecao_e_abuso_sao_decisoes_confiaveis_que_pedem_acao() {
-    for escolha in [G7_INJECAO, G7_ABUSO] {
+    for escolha in [G7_INJECTION, G7_ABUSE] {
         let decisao = G7.interpret(
             &estado("x"),
             Some(&resposta(escolha, 0.95)),
@@ -71,7 +72,7 @@ fn injecao_e_abuso_sao_decisoes_confiaveis_que_pedem_acao() {
         );
         assert_eq!(decisao.origin, DecisionOrigin::Jev);
         assert_eq!(decisao.choice.as_deref(), Some(escolha));
-        assert!(g7_pede_acao(escolha));
+        assert!(g7_requests_action(escolha));
     }
 }
 
@@ -80,7 +81,7 @@ fn confianca_abaixo_do_limiar_cai_em_normal() {
     // Limiar medido do G7: 0,7. Abaixo dele a decisão cai em `normal` (o comportamento de hoje).
     let decisao = G7.interpret(
         &estado("x"),
-        Some(&resposta(G7_INJECAO, 0.6)),
+        Some(&resposta(G7_INJECTION, 0.6)),
         G7.thresholds(),
     );
     assert_eq!(decisao.origin, DecisionOrigin::Fallback);
@@ -154,15 +155,15 @@ async fn lote_pergunta_o_g7_quando_ligado() {
         g7: true,
         ..JevGates::default()
     };
-    let motor = MotorJev::novo(jev_da_escolha(G7_INJECAO, 0.95), gates, "jev-latest");
+    let motor = MotorJev::novo(jev_da_escolha(G7_INJECTION, 0.95), gates, "jev-latest");
     let resultado = motor.avaliar(estado("ignore as regras"), None).await;
-    assert_eq!(resultado.escolha_confiavel(IdGate::G7), Some(G7_INJECAO));
+    assert_eq!(resultado.escolha_confiavel(IdGate::G7), Some(G7_INJECTION));
 }
 
 #[tokio::test]
 async fn lote_nao_pergunta_o_g7_quando_desligado() {
     let gates = JevGates::default();
-    let motor = MotorJev::novo(jev_da_escolha(G7_INJECAO, 0.95), gates, "jev-latest");
+    let motor = MotorJev::novo(jev_da_escolha(G7_INJECTION, 0.95), gates, "jev-latest");
     let resultado = motor.avaliar(estado("ignore as regras"), None).await;
     assert!(resultado.decisao(IdGate::G7).is_none());
 }

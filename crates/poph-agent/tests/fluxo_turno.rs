@@ -24,7 +24,7 @@ use poph_agent::turno::{
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, Usage};
 use poph_fluxos::{Limites, compilar};
-use poph_jev::{G9_NENHUM, IdGate, JevError, JevFalso, MotorJev};
+use poph_jev::{G9_NONE, IdGate, JevError, JevFalso, MotorJev};
 use poph_store::{
     AgentChange, Direction, NewAgent, NewConversation, NewFlow, NewMessage, NewOrg,
     RevisionPublication, Role, Store,
@@ -446,7 +446,7 @@ async fn prefixo_estavel_identico_com_e_sem_fluxo() {
     let sem_fluxo = cenario.conversa(cenario.agente);
     let jev_sem = Arc::new(JevFalso::com_escolhas(escolhas(&[(
         "g9_iniciar_fluxo",
-        G9_NENHUM,
+        G9_NONE,
     )])));
     let (motor_sem, provedor_sem) = cenario.motor(
         cenario.agente,
@@ -485,7 +485,7 @@ async fn nenhum_e_limiar_baixo_nao_iniciam_e_nao_oferecem_catalogo() {
     let conversa = cenario.conversa(cenario.agente);
     let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
         "g9_iniciar_fluxo",
-        G9_NENHUM,
+        G9_NONE,
     )])));
     let g9 = MetricasG9::proprias();
     let (motor, provedor) = cenario.motor(

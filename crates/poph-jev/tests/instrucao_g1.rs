@@ -14,7 +14,7 @@
 
 use std::path::Path;
 
-use poph_jev::{G1, G1_CONTINUAR, G1_TRANSFERIR, Gate, JevMessage, JevState, Question};
+use poph_jev::{G1, G1_CONTINUE, G1_TRANSFER, Gate, JevMessage, JevState, Question};
 
 /// `_INSTRUCTIONS` de `core/jev/human_handoff.py`.
 const INSTRUCOES_PRODUCAO: &str = "Julgue se a ÚLTIMA mensagem do cliente, lida no contexto das mensagens anteriores e das \
@@ -95,12 +95,12 @@ fn criteria_do_g1_sao_as_de_producao_com_os_tres_acrescimos() {
     let pergunta = pergunta_do_g1();
     let transferir = pergunta
         .rubric
-        .get(G1_TRANSFERIR)
+        .get(G1_TRANSFER)
         .cloned()
         .unwrap_or_default();
     let continuar = pergunta
         .rubric
-        .get(G1_CONTINUAR)
+        .get(G1_CONTINUE)
         .cloned()
         .unwrap_or_default();
 
@@ -125,13 +125,13 @@ fn criteria_do_g1_sao_as_de_producao_com_os_tres_acrescimos() {
         transferir,
         criterio_transferir_esperado(),
         "a criteria de {} não é a de produção mais os acréscimos (a) e (b)",
-        G1_TRANSFERIR
+        G1_TRANSFER
     );
     assert_eq!(
         continuar,
         criterio_continuar_esperado(),
         "a criteria de {} não é a de produção mais o acréscimo (c)",
-        G1_CONTINUAR
+        G1_CONTINUE
     );
 }
 
@@ -144,7 +144,7 @@ fn os_tres_pontos_da_hr_29a_continuam_corrigidos() {
     // continuar no fim dela.
     let transferir = pergunta
         .rubric
-        .get(G1_TRANSFERIR)
+        .get(G1_TRANSFER)
         .cloned()
         .unwrap_or_default();
 

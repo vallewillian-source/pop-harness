@@ -93,6 +93,14 @@ fallback. O gate **decide**; não executa nada.
   base ou catálogo; G4 só com dois departamentos ou mais.
 - **Abstenção** (sem resposta, resposta fora das opções ou abaixo do limiar) vira `Fallback` com
   `motivo` — a confiança do Jev fica registrada mesmo assim, para o relatório dizer o quanto faltou.
+- **Ordem dentro do gate (G4)**: a escolha é casada com um departamento ativo **antes** dos
+  limiares. Um nome que não é departamento da empresa não vira decisão confiável nem com confiança
+  1,0; por isso a recusa por nome inválido vem primeiro.
+- **`nenhum` é opção explícita no G5 e no G9**, e não abstenção silenciosa: a lista de candidatos
+  (top-k da busca, no G5) e a de fluxos liberados (no G9) sempre têm item, e sem `nenhum` o modelo
+  seria empurrado a escolher um produto ou um fluxo qualquer para toda mensagem.
+- **G9 sem gatilho**: quando o fluxo publicado não traz nenhum dos três pedaços do gatilho, o
+  critério da opção cai no nome do fluxo, para a opção nunca ir sem critério. Campo vazio é omitido.
 
 ## 3. Lote único
 
@@ -717,7 +725,7 @@ e o turno manda a despedida direto (`encerrar_g8` em `crates/poph-agent/src/turn
 
 | Parte | Quem faz |
 |---|---|
-| Pergunta | o Jev, **no lote** com G1–G5, com a conversa recente; a instrução está em `G8_INSTRUCOES` |
+| Pergunta | o Jev, **no lote** com G1–G5, com a conversa recente; a instrução está em `G8_INSTRUCTIONS` |
 | Opções | `encerrada` e `continua` |
 | Validação | **o código**: o G8 só é perguntado com fala do agente antes da última do cliente; só `encerrada` com confiança ≥ 0,8 vira efeito |
 | Efeito | `encerrada` → o turno termina sem chamar o modelo de texto; a despedida entra na conversa e na `outbox` |
@@ -746,7 +754,7 @@ e o turno manda a despedida direto (`encerrar_g8` em `crates/poph-agent/src/turn
   `outbox` (uma vez, por turno) e fecha o turno como concluído, com `turns.jev_json.encerramento`.
   **Nenhuma chamada ao modelo de texto.** Métrica `poph_turnos_encerrados_g8_total`.
 - **Despedida** vem do `jev_json` do agente, no mesmo JSON da situação de transferência:
-  `{"despedida": "Valeu, até a próxima!"}`. Ausente = a padrão (`G8_DESPEDIDA_PADRAO`:
+  `{"despedida": "Valeu, até a próxima!"}`. Ausente = a padrão (`G8_DEFAULT_FAREWELL`:
   "Obrigado pelo contato! Quando precisar, é só mandar mensagem por aqui."). **Vazia (`""`) = encerra
   sem mandar nada.** Limite de 500 caracteres; JSON inválido ou campo de outro tipo é ignorado.
 - **A conversa não muda de estado.** Ela continua `aberta` no banco: o encerramento vale para o turno,
@@ -964,8 +972,8 @@ limiar ficou em 0,50 para não decidir por um só ponto.
 **A 1ª execução, antes do ajuste de instrução**, tinha 40 acertos, **2 erros** e 20 abstenções: os
 dois erros eram o mesmo problema corrigido na regra 4 (o agente dizendo que ia verificar com a equipe
 lido como promessa de transferência), e a abstenção era alta porque o critério de transferência estava
-largo demais. O texto da instrução e da criteria está no código (`G6_INSTRUCOES`,
-`G6_REVISAR_TRANSFERENCIA`).
+largo demais. O texto da instrução e da criteria está no código (`G6_INSTRUCTIONS`,
+`G6_REVIEW_TRANSFER`).
 
 **Limiar** (recomputado da execução 2, pelo efeito no turno):
 
@@ -1039,7 +1047,7 @@ configurada pelo agente** — registrar, responder um texto neutro ou transferir
 | O que é julgado | a última mensagem do cliente (janela de 10, 800 caracteres) e o texto extraído dos arquivos do turno (`arquivo.texto`, até 20 mil caracteres) |
 | Julgamento | o Jev, em **uma** pergunta com três opções: `normal`, `injecao`, `abuso` |
 | Ação | o turno, conforme `jev_json.g7_acao`: `registrar` (padrão), `responder_padrao` ou `transferir` |
-| Texto da resposta neutra | `jev_json.g7_resposta`; ausente ou vazio usa `G7_RESPOSTA_PADRAO` |
+| Texto da resposta neutra | `jev_json.g7_resposta`; ausente ou vazio usa `G7_DEFAULT_REPLY` |
 | Fallback | `normal` — a resposta segue para o modelo, como seria sem o Jev |
 
 ```json

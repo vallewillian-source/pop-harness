@@ -69,8 +69,8 @@ use poph_core::llm::{
     Usage,
 };
 use poph_jev::{
-    AvaliadorGates, G1_TRANSFERIR, G3_NADA, G6_APROVADA, G7_RESPOSTA_PADRAO, G7Action,
-    G8_DESPEDIDA_PADRAO, G8_ENCERRADA, GateOverrides, IdGate, JevMessage, JevState, MotorJev,
+    AvaliadorGates, G1_TRANSFER, G3_NOTHING, G6_APPROVED, G7_DEFAULT_REPLY, G7Action,
+    G8_DEFAULT_FAREWELL, G8_ENDED, GateOverrides, IdGate, JevMessage, JevState, MotorJev,
     Orientacao, ResultadoJev, ResultadoOrientacao,
 };
 use poph_store::{
@@ -185,8 +185,8 @@ pub fn janela_com_g2(
     decisao: Option<&str>,
 ) -> Duration {
     match decisao {
-        Some(poph_jev::G2_ESPERAR) => base.saturating_mul(2).min(teto),
-        Some(poph_jev::G2_PROCESSAR) => base.min(confirmacao),
+        Some(poph_jev::G2_WAIT) => base.saturating_mul(2).min(teto),
+        Some(poph_jev::G2_PROCESS) => base.min(confirmacao),
         _ => base,
     }
 }
@@ -808,10 +808,10 @@ impl Motor {
                 decisao,
             );
             match decisao {
-                Some(poph_jev::G2_ESPERAR) if ajustada > janela => {
+                Some(poph_jev::G2_WAIT) if ajustada > janela => {
                     self.metricas.janelas_esticadas.increment(1);
                 }
-                Some(poph_jev::G2_PROCESSAR) if ajustada < janela => {
+                Some(poph_jev::G2_PROCESS) if ajustada < janela => {
                     self.metricas.janelas_diretas.increment(1);
                 }
                 _ => {}
@@ -955,9 +955,9 @@ impl Motor {
                     }
                     futures::future::Either::Right((jev, busca_pendente)) => {
                         // HR-36: o G8 encerrado também dispensa a busca: a resposta não sai do modelo.
-                        let dispensa_busca = jev.escolha_confiavel(IdGate::G3) == Some(G3_NADA)
+                        let dispensa_busca = jev.escolha_confiavel(IdGate::G3) == Some(G3_NOTHING)
                             || (encerramento_possivel
-                                && jev.escolha_confiavel(IdGate::G8) == Some(G8_ENCERRADA));
+                                && jev.escolha_confiavel(IdGate::G8) == Some(G8_ENDED));
                         if dispensa_busca {
                             (None, Some(jev))
                         } else {
@@ -978,7 +978,7 @@ impl Motor {
         let g3_nada = jev
             .as_ref()
             .and_then(|resultado| resultado.escolha_confiavel(IdGate::G3))
-            == Some(G3_NADA);
+            == Some(G3_NOTHING);
         let mut trechos = match resultado_busca {
             Some(Ok(trechos)) => trechos,
             Some(Err(erro)) => {
@@ -1016,7 +1016,7 @@ impl Motor {
         if jev
             .as_ref()
             .and_then(|resultado| resultado.escolha_confiavel(IdGate::G1))
-            == Some(G1_TRANSFERIR)
+            == Some(G1_TRANSFER)
         {
             let resultado_jev = jev.expect("a transferência só existe com o resultado do Jev");
             return self
@@ -1050,7 +1050,7 @@ impl Motor {
         if jev
             .as_ref()
             .and_then(|resultado| resultado.escolha_confiavel(IdGate::G7))
-            .is_some_and(poph_jev::g7_pede_acao)
+            .is_some_and(poph_jev::g7_requests_action)
         {
             let resultado_jev = jev.as_ref().expect("o G7 só decide com o resultado do Jev");
             self.metricas.g7_detectados.increment(1);
@@ -1119,7 +1119,7 @@ impl Motor {
             && jev
                 .as_ref()
                 .and_then(|resultado| resultado.escolha_confiavel(IdGate::G8))
-                == Some(G8_ENCERRADA)
+                == Some(G8_ENDED)
         {
             let resultado_jev = jev.expect("o encerramento só existe com o resultado do Jev");
             return self.encerrar_g8(
@@ -1778,13 +1778,13 @@ impl Motor {
             .and_then(|resultado| resultado.decisao(IdGate::G6))
             .map(|decisao| decisao.confidence)
             .unwrap_or(0.0);
-        if escolha == G6_APROVADA {
+        if escolha == G6_APPROVED {
             return revisao;
         }
 
         // Reprovada: **uma** regeneração, com a orientação fixa do motivo escolhido.
         self.metricas.reprovadas_g6.increment(1);
-        let orientacao = poph_jev::g6_orientacao(&escolha);
+        let orientacao = poph_jev::g6_guidance(&escolha);
         let regenerada = match self
             .regenerar(
                 org,
@@ -1834,7 +1834,7 @@ impl Motor {
             )
             .await;
         revisao.segunda = segunda.clone();
-        if segunda.as_deref() == Some(G6_APROVADA) {
+        if segunda.as_deref() == Some(G6_APPROVED) {
             return revisao;
         }
         if let Some(segura) = poph_jev::safe_response_from_agent(&quente.agente.jev_json) {
@@ -2542,7 +2542,7 @@ impl Motor {
         let turno = alvo.turno;
 
         let texto = poph_jev::g7_response_from_agent(&quente.agente.jev_json)
-            .unwrap_or_else(|| G7_RESPOSTA_PADRAO.to_owned());
+            .unwrap_or_else(|| G7_DEFAULT_REPLY.to_owned());
         self.store.messages().write_with_output(
             org,
             NewMessage {
@@ -2647,7 +2647,7 @@ impl Motor {
         let turno = alvo.turno;
 
         let texto = poph_jev::farewell_from_agent(&quente.agente.jev_json)
-            .unwrap_or_else(|| G8_DESPEDIDA_PADRAO.to_owned())
+            .unwrap_or_else(|| G8_DEFAULT_FAREWELL.to_owned())
             .trim()
             .to_owned();
         if !texto.is_empty() {

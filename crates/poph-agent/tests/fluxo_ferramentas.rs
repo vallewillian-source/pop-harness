@@ -31,7 +31,7 @@ use poph_core::llm::{
     FakeProvider, FinishReason, LlmEvent, Message, Request, Script, ToolCall, Usage,
 };
 use poph_fluxos::{Limites, compilar};
-use poph_jev::{G9_NENHUM, JevFalso, MotorJev};
+use poph_jev::{G9_NONE, JevFalso, MotorJev};
 use poph_store::{
     AgentChange, ConversationStatus, Direction, NewAgent, NewConversation, NewFlow, NewMessage,
     NewOrg, RevisionPublication, Role, Store, TurnState,
@@ -753,7 +753,7 @@ async fn fluxo_iniciar_so_aparece_na_reserva_e_valida_como_o_g9() {
     let conversa = cenario.conversa();
     let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
         "g9_iniciar_fluxo",
-        G9_NENHUM,
+        G9_NONE,
     )])));
     let (motor, provedor) = cenario.motor(
         vec![

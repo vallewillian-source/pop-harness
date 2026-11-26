@@ -5,8 +5,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use poph_jev::{
-    CasoRotulado, ErroConjunto, G1_CONTINUAR, G1_TRANSFERIR, IdGate, JevFalso, JevMessage,
-    JevState, MotorJev, avaliar_conjunto, ler_conjunto,
+    CasoRotulado, ErroConjunto, G1_CONTINUE, G1_TRANSFER, IdGate, JevFalso, JevMessage, JevState,
+    MotorJev, avaliar_conjunto, ler_conjunto,
 };
 use poph_types::JevGates;
 
@@ -36,11 +36,11 @@ fn jev_de_teste() -> Arc<JevFalso> {
             .unwrap_or_default()
             .to_owned();
         let (escolha, confianca) = if texto.contains("atendente") {
-            (G1_TRANSFERIR, 0.95)
+            (G1_TRANSFER, 0.95)
         } else if texto.contains("talvez") {
-            (G1_CONTINUAR, 0.2)
+            (G1_CONTINUE, 0.2)
         } else {
-            (G1_CONTINUAR, 0.9)
+            (G1_CONTINUE, 0.9)
         };
         let mut respostas = BTreeMap::new();
         for id in pedido.perguntas.keys() {
@@ -67,9 +67,9 @@ async fn mede_acerto_abstencao_e_latencia() {
     let jev = jev_de_teste();
     let motor = Arc::new(MotorJev::novo(jev, globais(true), "jev-latest"));
     let casos = vec![
-        caso("quero falar com um atendente", G1_TRANSFERIR),
-        caso("qual o prazo de entrega?", G1_CONTINUAR),
-        caso("isso sim, talvez eu precise", G1_CONTINUAR),
+        caso("quero falar com um atendente", G1_TRANSFER),
+        caso("qual o prazo de entrega?", G1_CONTINUE),
+        caso("isso sim, talvez eu precise", G1_CONTINUE),
     ];
 
     let relatorio = avaliar_conjunto(motor.as_ref(), IdGate::G1, &casos).await;
@@ -96,7 +96,7 @@ async fn gate_que_nao_se_aplica_conta_como_nao_aplicavel() {
         globais(false),
         "jev-latest",
     ));
-    let mut caso = caso("quero falar com um atendente", G1_TRANSFERIR);
+    let mut caso = caso("quero falar com um atendente", G1_TRANSFER);
     caso.estado = caso.estado.with_handoff(Vec::new(), false);
     let casos = vec![caso];
 
@@ -115,7 +115,7 @@ async fn falha_da_chamada_conta_como_abstencao() {
         motivo: "Internal Server Error".to_owned(),
     }));
     let motor = Arc::new(MotorJev::novo(jev, globais(true), "jev-latest"));
-    let casos = vec![caso("quero falar com um atendente", G1_TRANSFERIR)];
+    let casos = vec![caso("quero falar com um atendente", G1_TRANSFER)];
 
     let relatorio = avaliar_conjunto(motor.as_ref(), IdGate::G1, &casos).await;
 
@@ -139,8 +139,8 @@ async fn cache_do_motor_aparece_como_zero_de_latencia() {
         }),
     );
     let casos = vec![
-        caso("qual o prazo?", G1_CONTINUAR),
-        caso("qual o prazo?", G1_CONTINUAR),
+        caso("qual o prazo?", G1_CONTINUE),
+        caso("qual o prazo?", G1_CONTINUE),
     ];
 
     let relatorio = avaliar_conjunto(motor.as_ref(), IdGate::G1, &casos).await;
@@ -159,11 +159,11 @@ async fn abstencao_mostra_a_escolha_do_jev_e_o_motivo() {
             respostas.insert(
                 id.clone(),
                 poph_jev::JevResponse {
-                    choice: Some(G1_TRANSFERIR.to_owned()),
+                    choice: Some(G1_TRANSFER.to_owned()),
                     confidence: 0.55,
                     probabilities: BTreeMap::from([
-                        (G1_TRANSFERIR.to_owned(), 0.55),
-                        (G1_CONTINUAR.to_owned(), 0.45),
+                        (G1_TRANSFER.to_owned(), 0.55),
+                        (G1_CONTINUE.to_owned(), 0.45),
                     ]),
                     ..poph_jev::JevResponse::default()
                 },
@@ -176,7 +176,7 @@ async fn abstencao_mostra_a_escolha_do_jev_e_o_motivo() {
         })
     }));
     let motor = Arc::new(MotorJev::novo(jev, globais(true), "jev-latest"));
-    let casos = vec![caso("quero falar com um atendente", G1_TRANSFERIR)];
+    let casos = vec![caso("quero falar com um atendente", G1_TRANSFER)];
 
     let relatorio = avaliar_conjunto(motor.as_ref(), IdGate::G1, &casos).await;
 
@@ -189,7 +189,7 @@ async fn abstencao_mostra_a_escolha_do_jev_e_o_motivo() {
     );
     assert_eq!(
         detalhe.escolha.as_deref(),
-        Some(G1_TRANSFERIR),
+        Some(G1_TRANSFER),
         "a escolha do modelo aparece mesmo no fallback"
     );
     assert_eq!(detalhe.confianca, "0.55");
@@ -210,7 +210,7 @@ async fn abstencao_mostra_a_escolha_do_jev_e_o_motivo() {
 
     // E o JSON do relatório leva os mesmos campos.
     let valor = serde_json::to_value(&relatorio).expect("serializa");
-    assert_eq!(valor["detalhes"][0]["escolha"], G1_TRANSFERIR);
+    assert_eq!(valor["detalhes"][0]["escolha"], G1_TRANSFER);
     assert_eq!(valor["detalhes"][0]["obtido"], serde_json::Value::Null);
     assert!(
         valor["detalhes"][0]["motivo"]
@@ -229,7 +229,7 @@ async fn usage_da_chamada_aparece_no_relatorio() {
             respostas.insert(
                 id.clone(),
                 poph_jev::JevResponse {
-                    choice: Some(G1_CONTINUAR.to_owned()),
+                    choice: Some(G1_CONTINUE.to_owned()),
                     confidence: 0.95,
                     ..poph_jev::JevResponse::default()
                 },
@@ -247,8 +247,8 @@ async fn usage_da_chamada_aparece_no_relatorio() {
     }));
     let motor = Arc::new(MotorJev::novo(jev, globais(true), "jev-latest"));
     let casos = vec![
-        caso("qual o prazo?", G1_CONTINUAR),
-        caso("e o frete?", G1_CONTINUAR),
+        caso("qual o prazo?", G1_CONTINUE),
+        caso("e o frete?", G1_CONTINUE),
     ];
 
     let relatorio = avaliar_conjunto(motor.as_ref(), IdGate::G1, &casos).await;
@@ -273,7 +273,7 @@ async fn usage_da_chamada_aparece_no_relatorio() {
 async fn sem_usage_o_relatorio_diz_nao_informado() {
     let jev = jev_de_teste();
     let motor = Arc::new(MotorJev::novo(jev, globais(true), "jev-latest"));
-    let casos = vec![caso("qual o prazo?", G1_CONTINUAR)];
+    let casos = vec![caso("qual o prazo?", G1_CONTINUE)];
 
     let relatorio = avaliar_conjunto(motor.as_ref(), IdGate::G1, &casos).await;
 

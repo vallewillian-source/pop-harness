@@ -22,7 +22,7 @@ use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
 use poph_agent::turno::{Entrada, FuturoPausa, Motor, ObservadorNulo, OpcoesTurno, Pausa};
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, Usage};
 use poph_jev::{
-    BatchResponse, G1_TRANSFERIR, IdGate, JevFalso, JevResponse, MotorJev, Orientacao, Pedido,
+    BatchResponse, G1_TRANSFER, IdGate, JevFalso, JevResponse, MotorJev, Orientacao, Pedido,
 };
 use poph_store::{
     AgentChange, DepartmentChange, Direction, NewAgent, NewConversation, NewDepartment, NewMessage,
@@ -352,7 +352,7 @@ fn jev(departamento: Option<(&'static str, f64)>, veio_o_g4: bool) -> Arc<JevFal
         if pedido.perguntas.contains_key(IdGate::G1.question_id()) {
             respostas.insert(
                 IdGate::G1.question_id().to_owned(),
-                resposta(G1_TRANSFERIR, 0.96),
+                resposta(G1_TRANSFER, 0.96),
             );
         }
         if veio_o_g4
@@ -595,7 +595,7 @@ async fn jev_fora_do_ar_nao_trava_o_turno() {
     let jev = Arc::new(
         JevFalso::com_escolhas(BTreeMap::from([(
             IdGate::G1.question_id().to_owned(),
-            G1_TRANSFERIR.to_owned(),
+            G1_TRANSFER.to_owned(),
         )]))
         .com_atraso(Duration::from_millis(400)),
     );

@@ -18,7 +18,7 @@
 //! **O padrão não é validado**, de propósito: ele é o comportamento de hoje e validá-lo mudaria o
 //! que acontece com o G4 desligado. Fica registrado como limite conhecido na HR-32.
 
-use poph_jev::casar_candidato;
+use poph_jev::match_candidate;
 use poph_store::Departamento;
 use poph_types::DepartmentId;
 
@@ -107,7 +107,7 @@ pub fn resolver(
         .iter()
         .map(|candidato| candidato.nome.clone())
         .collect();
-    let canonico = match casar_candidato(escolha, &nomes) {
+    let canonico = match match_candidate(escolha, &nomes) {
         Ok(canonico) => canonico,
         Err(motivo) => return Escolha::padrao(padrao, Some(motivo)),
     };

@@ -22,8 +22,8 @@ use poph_agent::turno::{
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, Usage};
 use poph_jev::{
-    BatchResponse, G1_CONTINUAR, G1_TRANSFERIR, IdGate, JevFalso, JevResponse, MotorJev,
-    Orientacao, Pedido, RISCO_ANIMAL, RISCO_INGESTAO, RISCO_NENHUM, RISCO_OUTRO, RISCO_PERGUNTA_ID,
+    BatchResponse, G1_CONTINUE, G1_TRANSFER, IdGate, JevFalso, JevResponse, MotorJev, Orientacao,
+    Pedido, RISCO_ANIMAL, RISCO_INGESTAO, RISCO_NENHUM, RISCO_OUTRO, RISCO_PERGUNTA_ID,
 };
 use poph_store::{
     AgentChange, Direction, NewAgent, NewConversation, NewMessage, NewOrg, Page, Role, Store,
@@ -379,7 +379,7 @@ async fn transfere_com_orientacao_e_nao_chama_o_modelo() {
     let cenario = Cenario::novo("orientacao", true);
     cenario.situacoes_de_handoff(&["risco com produto"]);
     let conversa = cenario.conversa();
-    let jev = jev(G1_TRANSFERIR, 0.95, Some((RISCO_INGESTAO, 0.9)));
+    let jev = jev(G1_TRANSFER, 0.95, Some((RISCO_INGESTAO, 0.9)));
     let motor = cenario.motor(Some(motor_jev(Arc::clone(&jev))), Orientacao::default());
 
     let gatilho = cenario.falar(conversa, "meu filho engoliu o veneno da isca, e agora?");
@@ -431,7 +431,7 @@ async fn transfere_com_orientacao_e_nao_chama_o_modelo() {
     let gravado: serde_json::Value =
         serde_json::from_str(&turno.jev_json).expect("jev_json é JSON");
     assert_eq!(gravado["decisoes"][0]["gate"], "g1");
-    assert_eq!(gravado["decisoes"][0]["escolha"], G1_TRANSFERIR);
+    assert_eq!(gravado["decisoes"][0]["escolha"], G1_TRANSFER);
     assert_eq!(gravado["risco"]["tipo"], RISCO_INGESTAO);
     assert_eq!(turno.state, TurnState::Completed);
 
@@ -484,7 +484,7 @@ async fn outros_dois_tipos_de_risco_usam_os_textos_aprovados() {
     ] {
         let cenario = Cenario::novo(&format!("tipo-{tipo}"), true);
         let conversa = cenario.conversa();
-        let jev = jev(G1_TRANSFERIR, 0.95, Some((tipo, 0.8)));
+        let jev = jev(G1_TRANSFER, 0.95, Some((tipo, 0.8)));
         let motor = cenario.motor(Some(motor_jev(jev)), Orientacao::default());
         let gatilho = cenario.falar(conversa, "tem um escorpião no berço do meu filho");
         let resumo = cenario.turno(&motor, conversa, gatilho).await;
@@ -514,9 +514,9 @@ async fn transferida_nao_responde_ate_reabrir() {
         let mut respostas = BTreeMap::new();
         if pedido.perguntas.contains_key("g1_transferir") {
             let escolha = if ultima.contains("cobra") {
-                G1_TRANSFERIR
+                G1_TRANSFER
             } else {
-                G1_CONTINUAR
+                G1_CONTINUE
             };
             respostas.insert("g1_transferir".to_owned(), resposta(escolha, 0.95));
         }
@@ -581,7 +581,7 @@ async fn erro_na_pergunta_de_risco_transfere_com_a_mensagem_automatica() {
             });
         }
         let mut respostas = BTreeMap::new();
-        respostas.insert("g1_transferir".to_owned(), resposta(G1_TRANSFERIR, 0.99));
+        respostas.insert("g1_transferir".to_owned(), resposta(G1_TRANSFER, 0.99));
         Ok(BatchResponse {
             answers: respostas,
             tokens: 9,
@@ -619,7 +619,7 @@ async fn prazo_na_pergunta_de_risco_suprime_so_a_orientacao() {
     // (20 ms) é o que se mede aqui — o lote do G1 tem prazo próprio, bem maior.
     let jev = Arc::new(
         JevFalso::com_escolhas(BTreeMap::from([
-            ("g1_transferir".to_owned(), G1_TRANSFERIR.to_owned()),
+            ("g1_transferir".to_owned(), G1_TRANSFER.to_owned()),
             (RISCO_PERGUNTA_ID.to_owned(), RISCO_INGESTAO.to_owned()),
         ]))
         .com_atraso(Duration::from_millis(200)),
@@ -649,7 +649,7 @@ async fn sem_risco_confiavel_manda_so_a_mensagem_automatica() {
     ] {
         let cenario = Cenario::novo(&format!("risco-{rotulo}"), true);
         let conversa = cenario.conversa();
-        let jev = jev(G1_TRANSFERIR, 0.95, Some(risco));
+        let jev = jev(G1_TRANSFER, 0.95, Some(risco));
         let motor = cenario.motor(Some(motor_jev(jev)), Orientacao::default());
         let gatilho = cenario.falar(conversa, "quero falar com o atendente, por favor");
         let resumo = cenario.turno(&motor, conversa, gatilho).await;
@@ -666,7 +666,7 @@ async fn sem_risco_confiavel_manda_so_a_mensagem_automatica() {
 async fn orientacao_desligada_nao_faz_a_segunda_pergunta() {
     let cenario = Cenario::novo("orientacao-desligada", true);
     let conversa = cenario.conversa();
-    let jev = jev(G1_TRANSFERIR, 0.95, Some((RISCO_INGESTAO, 0.9)));
+    let jev = jev(G1_TRANSFER, 0.95, Some((RISCO_INGESTAO, 0.9)));
     let orientacao = Orientacao {
         ativo: false,
         ..Orientacao::default()
@@ -686,7 +686,7 @@ async fn orientacao_desligada_nao_faz_a_segunda_pergunta() {
 async fn texto_vazio_na_configuracao_nao_orienta() {
     let cenario = Cenario::novo("texto-vazio", true);
     let conversa = cenario.conversa();
-    let jev = jev(G1_TRANSFERIR, 0.95, Some((RISCO_INGESTAO, 0.9)));
+    let jev = jev(G1_TRANSFER, 0.95, Some((RISCO_INGESTAO, 0.9)));
     let orientacao = Orientacao::default().com_texto(RISCO_INGESTAO, "");
     let motor = cenario.motor(Some(motor_jev(jev)), orientacao);
 
@@ -702,7 +702,7 @@ async fn texto_vazio_na_configuracao_nao_orienta() {
 async fn g1_desligado_nao_transfere() {
     let cenario = Cenario::novo("g1-desligado", true);
     let conversa = cenario.conversa();
-    let jev = jev(G1_TRANSFERIR, 0.99, Some((RISCO_INGESTAO, 0.99)));
+    let jev = jev(G1_TRANSFER, 0.99, Some((RISCO_INGESTAO, 0.99)));
     let avaliador = Arc::new(MotorJev::novo(jev, JevGates::default(), "jev-latest"));
     let motor = cenario.motor(Some(avaliador), Orientacao::default());
 
@@ -724,7 +724,7 @@ async fn g1_desligado_nao_transfere() {
 async fn agente_sem_handoff_nao_transfere() {
     let cenario = Cenario::novo("sem-handoff", false);
     let conversa = cenario.conversa();
-    let jev = jev(G1_TRANSFERIR, 0.99, Some((RISCO_INGESTAO, 0.99)));
+    let jev = jev(G1_TRANSFER, 0.99, Some((RISCO_INGESTAO, 0.99)));
     let motor = cenario.motor(Some(motor_jev(jev)), Orientacao::default());
 
     let gatilho = cenario.falar(conversa, "quero falar com um atendente humano");
@@ -742,7 +742,7 @@ async fn agente_sem_handoff_nao_transfere() {
 async fn g1_continuar_responde_normalmente() {
     let cenario = Cenario::novo("continuar", true);
     let conversa = cenario.conversa();
-    let jev = jev(G1_CONTINUAR, 0.99, None);
+    let jev = jev(G1_CONTINUE, 0.99, None);
     let motor = cenario.motor(Some(motor_jev(jev)), Orientacao::default());
 
     let gatilho = cenario.falar(conversa, "qual é o prazo de entrega?");
@@ -759,7 +759,7 @@ async fn g1_continuar_responde_normalmente() {
             .jev
             .as_ref()
             .and_then(|item| item.escolha(IdGate::G1)),
-        Some(G1_CONTINUAR)
+        Some(G1_CONTINUE)
     );
     assert_eq!(cenario.provedor.received().len(), 1);
     assert!(
@@ -806,7 +806,7 @@ async fn transferencia_guarda_o_departamento_do_agente() {
         .expect("define o departamento humano");
 
     let conversa = cenario.conversa();
-    let jev = jev(G1_TRANSFERIR, 0.95, Some((RISCO_ANIMAL, 0.9)));
+    let jev = jev(G1_TRANSFER, 0.95, Some((RISCO_ANIMAL, 0.9)));
     let motor = cenario.motor(Some(motor_jev(jev)), Orientacao::default());
     let gatilho = cenario.falar(conversa, "tem uma aranha no quarto");
     cenario.turno(&motor, conversa, gatilho).await;
@@ -825,7 +825,7 @@ async fn transferencia_guarda_o_departamento_do_agente() {
 async fn segunda_pergunta_nao_usa_o_cache_do_lote() {
     let cenario = Cenario::novo("cache", true);
     let conversa = cenario.conversa();
-    let jev = jev(G1_TRANSFERIR, 0.95, Some((RISCO_INGESTAO, 0.9)));
+    let jev = jev(G1_TRANSFER, 0.95, Some((RISCO_INGESTAO, 0.9)));
     let avaliador = motor_jev(Arc::clone(&jev));
     let motor = cenario.motor(Some(avaliador), Orientacao::default());
 

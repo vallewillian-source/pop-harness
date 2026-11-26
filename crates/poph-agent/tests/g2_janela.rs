@@ -26,9 +26,7 @@ use poph_agent::turno::{
     ResumoTurno, janela_com_g2,
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Message, Script, Usage};
-use poph_jev::{
-    G1_CONTINUAR, G2_ESPERAR, G2_PROCESSAR, IdGate, JevFalso, JevState, MotorJev, OpcoesJev,
-};
+use poph_jev::{G1_CONTINUE, G2_PROCESS, G2_WAIT, IdGate, JevFalso, JevState, MotorJev, OpcoesJev};
 use poph_store::{
     AgentChange, Direction, NewAgent, NewConversation, NewMessage, NewOrg, Role, Store, TurnState,
 };
@@ -350,7 +348,7 @@ async fn esperar_mais_estica_a_janela_e_agrupa_a_mensagem_seguinte() {
     // O cliente manda o endereço 3 s depois — depois da janela fixa de 2 s e dentro dos 4 s do G2.
     pausa.agendar(3000, "Rua das Flores, 120 — apto 3");
 
-    let jev = Arc::new(JevFalso::com_escolhas(escolha("g2_esperar", G2_ESPERAR)));
+    let jev = Arc::new(JevFalso::com_escolhas(escolha("g2_esperar", G2_WAIT)));
     let provedor = provedor();
     let motor = cenario.motor(
         Some(motor_jev(Arc::clone(&jev), so_g2())),
@@ -385,7 +383,7 @@ async fn esperar_mais_estica_a_janela_e_agrupa_a_mensagem_seguinte() {
     );
     assert_eq!(
         resumo.jev.as_ref().and_then(|jev| jev.escolha(IdGate::G2)),
-        Some(G2_ESPERAR)
+        Some(G2_WAIT)
     );
 }
 
@@ -402,7 +400,7 @@ async fn mensagem_nova_durante_a_espera_refaz_o_lote() {
     ));
     pausa.agendar(3000, "o produto que eu quero é o azul");
 
-    let jev = Arc::new(JevFalso::com_escolhas(escolha("g2_esperar", G2_ESPERAR)));
+    let jev = Arc::new(JevFalso::com_escolhas(escolha("g2_esperar", G2_WAIT)));
     let motor = cenario.motor(
         Some(motor_jev(Arc::clone(&jev), so_g2())),
         Arc::clone(&pausa),
@@ -439,7 +437,7 @@ async fn processar_agora_encurta_a_espera() {
         cenario.org,
         conversa,
     ));
-    let jev = Arc::new(JevFalso::com_escolhas(escolha("g2_esperar", G2_PROCESSAR)));
+    let jev = Arc::new(JevFalso::com_escolhas(escolha("g2_esperar", G2_PROCESS)));
     let motor = cenario.motor(
         Some(motor_jev(Arc::clone(&jev), so_g2())),
         Arc::clone(&pausa),
@@ -484,7 +482,7 @@ async fn gate_desligado_mantem_a_janela_fixa() {
     };
     let jev = Arc::new(JevFalso::com_escolhas(escolha(
         "g1_transferir",
-        G1_CONTINUAR,
+        G1_CONTINUE,
     )));
     let motor = cenario.motor(
         Some(motor_jev(Arc::clone(&jev), gates)),
@@ -563,7 +561,7 @@ async fn falha_do_jev_mantem_a_janela_fixa() {
     assert!(registro.falhou());
     assert_eq!(
         registro.escolha(IdGate::G2),
-        Some(G2_PROCESSAR),
+        Some(G2_PROCESS),
         "fallback do G2"
     );
 }
@@ -610,11 +608,11 @@ async fn confianca_baixa_mantem_a_janela_fixa() {
         let mut respostas = BTreeMap::new();
         for id in pedido.perguntas.keys() {
             let mut resposta = poph_jev::JevResponse {
-                choice: Some(G2_ESPERAR.to_owned()),
+                choice: Some(G2_WAIT.to_owned()),
                 confidence: 0.4,
                 ..poph_jev::JevResponse::default()
             };
-            resposta.probabilities.insert(G2_ESPERAR.to_owned(), 0.4);
+            resposta.probabilities.insert(G2_WAIT.to_owned(), 0.4);
             respostas.insert(id.clone(), resposta);
         }
         Ok(poph_jev::BatchResponse {
@@ -650,7 +648,7 @@ async fn prazo_do_jev_mantem_a_janela_fixa() {
         conversa,
     ));
     let jev = Arc::new(
-        JevFalso::com_escolhas(escolha("g2_esperar", G2_ESPERAR))
+        JevFalso::com_escolhas(escolha("g2_esperar", G2_WAIT))
             .com_atraso(Duration::from_millis(250)),
     );
     let opcoes = OpcoesJev {
@@ -701,7 +699,7 @@ async fn conversa_transferida_nao_responde_nem_consulta_o_jev() {
         cenario.org,
         conversa,
     ));
-    let jev = Arc::new(JevFalso::com_escolhas(escolha("g2_esperar", G2_ESPERAR)));
+    let jev = Arc::new(JevFalso::com_escolhas(escolha("g2_esperar", G2_WAIT)));
     let provedor = provedor();
     let motor = cenario.motor(
         Some(motor_jev(Arc::clone(&jev), so_g2())),
@@ -736,16 +734,16 @@ fn janela_com_g2_respeita_o_teto_e_o_fallback() {
     let confirmacao = JANELA_CONFIRMACAO;
 
     assert_eq!(
-        janela_com_g2(base, teto, confirmacao, Some(G2_ESPERAR)),
+        janela_com_g2(base, teto, confirmacao, Some(G2_WAIT)),
         Duration::from_secs(4)
     );
     assert_eq!(
-        janela_com_g2(Duration::from_secs(6), teto, confirmacao, Some(G2_ESPERAR)),
+        janela_com_g2(Duration::from_secs(6), teto, confirmacao, Some(G2_WAIT)),
         teto,
         "esticar nunca passa do teto do PRD §6.3"
     );
     assert_eq!(
-        janela_com_g2(base, teto, confirmacao, Some(G2_PROCESSAR)),
+        janela_com_g2(base, teto, confirmacao, Some(G2_PROCESS)),
         confirmacao
     );
     assert_eq!(janela_com_g2(base, teto, confirmacao, None), base);
@@ -841,7 +839,7 @@ async fn latencia_menor_nas_completas_sem_partir_mais_frases() {
     // janela fixa. O mesmo caso sem o gate é a linha de base.
     let completas: Vec<&CasoDoConjunto> = casos
         .iter()
-        .filter(|caso| caso.esperado == G2_PROCESSAR)
+        .filter(|caso| caso.esperado == G2_PROCESS)
         .collect();
     assert!(
         completas.len() >= 30,
@@ -852,7 +850,7 @@ async fn latencia_menor_nas_completas_sem_partir_mais_frases() {
     let mut soma_sem = Duration::ZERO;
     for caso in &completas {
         let conversa = cenario.conversa();
-        let (pausa, resumo) = rodar_caso(&cenario, conversa, caso, Some(G2_PROCESSAR)).await;
+        let (pausa, resumo) = rodar_caso(&cenario, conversa, caso, Some(G2_PROCESS)).await;
         assert_eq!(resumo.estado, TurnState::Completed);
         soma_com += pausa.espera_total();
 

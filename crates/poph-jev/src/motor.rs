@@ -226,7 +226,7 @@ impl MotorJev {
     ) -> Self {
         Self {
             transporte,
-            gates: gates::padrao(),
+            gates: gates::default_gates(),
             globais,
             modelo: modelo.into(),
             limiares: BTreeMap::new(),

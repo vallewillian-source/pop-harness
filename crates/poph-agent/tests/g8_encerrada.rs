@@ -36,7 +36,7 @@ use poph_agent::turno::{
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, Usage};
 use poph_jev::{
-    BatchResponse, G8_DESPEDIDA_PADRAO, JevError, JevFalso, JevResponse as RespostaJev, MotorJev,
+    BatchResponse, G8_DEFAULT_FAREWELL, JevError, JevFalso, JevResponse as RespostaJev, MotorJev,
 };
 use poph_store::{
     AgentChange, ConversationStatus, Direction, NewAgent, NewConversation, NewMessage, Page, Role,
@@ -438,7 +438,7 @@ async fn g8_encerra_sem_chamar_o_modelo_e_grava_a_despedida_padrao() {
     let resumo = cenario.turno(&motor, gatilho).await;
 
     assert_eq!(resumo.estado, TurnState::Completed);
-    assert_eq!(resumo.texto, G8_DESPEDIDA_PADRAO);
+    assert_eq!(resumo.texto, G8_DEFAULT_FAREWELL);
     assert_eq!(
         provedor.received().len(),
         0,
@@ -446,7 +446,7 @@ async fn g8_encerra_sem_chamar_o_modelo_e_grava_a_despedida_padrao() {
     );
     assert_eq!(
         cenario.saidas(),
-        vec!["Mais alguma dúvida?", G8_DESPEDIDA_PADRAO]
+        vec!["Mais alguma dúvida?", G8_DEFAULT_FAREWELL]
     );
     assert_eq!(
         cenario.fila().len(),
@@ -789,7 +789,7 @@ async fn padrao_de_instalacao_liga_o_g8_sem_configurar_o_agente() {
     let primeiro = cenario.falar(ENCERRA);
     let encerrou = cenario.turno(&motor, primeiro).await;
 
-    assert_eq!(encerrou.texto, G8_DESPEDIDA_PADRAO);
+    assert_eq!(encerrou.texto, G8_DEFAULT_FAREWELL);
     assert_eq!(
         provedor.received().len(),
         0,

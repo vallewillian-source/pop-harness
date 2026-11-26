@@ -16,9 +16,9 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use poph_jev::{
-    AvaliadorGates, DecisionOrigin, G1_CONTINUAR, G3_BASE, G9, G9_NENHUM, Gate, GateOverrides,
-    IdGate, JevFalso, JevFlow, JevMessage, JevResponse, JevState, MAX_RELEASED_FLOWS,
-    MAX_TRIGGER_CHARS, MotorJev, Thresholds, criterio_do_fluxo, ler_conjunto,
+    AvaliadorGates, DecisionOrigin, G1_CONTINUE, G3_BASE, G9, G9_NONE, Gate, GateOverrides, IdGate,
+    JevFalso, JevFlow, JevMessage, JevResponse, JevState, MAX_RELEASED_FLOWS, MAX_TRIGGER_CHARS,
+    MotorJev, Thresholds, flow_policy, ler_conjunto,
 };
 use poph_types::JevGates;
 
@@ -151,7 +151,7 @@ fn criterio_cai_no_nome_quando_o_gatilho_esta_vazio() {
         not_when: "  ".to_owned(),
         examples: Vec::new(),
     };
-    let criterio = criterio_do_fluxo(&sem_gatilho);
+    let criterio = flow_policy(&sem_gatilho);
     assert_eq!(
         criterio,
         "O cliente quer o que o fluxo \"Abrir chamado\" faz."
@@ -244,7 +244,7 @@ fn nenhum_baixa_confianca_margem_curta_e_opcao_inventada_viram_fallback_com_moti
     let gate = G9;
     let limiares = gate.thresholds();
 
-    let nenhum = gate.interpret(&estado(), Some(&resposta(G9_NENHUM, 0.95)), limiares);
+    let nenhum = gate.interpret(&estado(), Some(&resposta(G9_NONE, 0.95)), limiares);
     assert_eq!(nenhum.origin, DecisionOrigin::Fallback);
     assert_eq!(nenhum.choice, None, "nada inicia");
     assert!(
@@ -312,7 +312,7 @@ fn nenhum_baixa_confianca_margem_curta_e_opcao_inventada_viram_fallback_com_moti
 #[tokio::test]
 async fn tres_gates_ligados_com_fluxo_geram_uma_requisicao_so() {
     let jev = Arc::new(JevFalso::com_escolhas(BTreeMap::from([
-        ("g1_transferir".to_owned(), G1_CONTINUAR.to_owned()),
+        ("g1_transferir".to_owned(), G1_CONTINUE.to_owned()),
         ("g3_precisa".to_owned(), G3_BASE.to_owned()),
         ("g9_iniciar_fluxo".to_owned(), "agendar_visita".to_owned()),
     ])));
@@ -451,7 +451,7 @@ fn conjunto_rotulado_do_g9_serve_para_a_medicao() {
             .map(|fluxo| fluxo.id.as_str())
             .collect();
         assert!(
-            caso.esperado == G9_NENHUM || ids.contains(&caso.esperado.as_str()),
+            caso.esperado == G9_NONE || ids.contains(&caso.esperado.as_str()),
             "caso {numero}: esperado `{}` não é um fluxo do caso nem `nenhum`",
             caso.esperado
         );
@@ -461,10 +461,7 @@ fn conjunto_rotulado_do_g9_serve_para_a_medicao() {
         );
     }
 
-    let positivos = casos
-        .iter()
-        .filter(|caso| caso.esperado != G9_NENHUM)
-        .count();
+    let positivos = casos.iter().filter(|caso| caso.esperado != G9_NONE).count();
     let negativos = casos.len() - positivos;
     assert!(
         positivos >= 15 && negativos >= 15,

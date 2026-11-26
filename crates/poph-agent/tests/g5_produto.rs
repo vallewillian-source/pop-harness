@@ -32,7 +32,7 @@ use poph_agent::turno::{
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, ToolCall, Usage};
 use poph_jev::{
-    AvaliadorGates, BatchResponse, Decisao, DecisionOrigin, G3_NADA, G5_NENHUM, GateOverrides,
+    AvaliadorGates, BatchResponse, Decisao, DecisionOrigin, G3_NOTHING, G5_NONE, GateOverrides,
     IdGate, JevError, JevFalso, JevResponse as RespostaJev, JevState, MotorJev, OpcoesJev,
     ResultadoJev,
 };
@@ -570,10 +570,7 @@ async fn g5_id_inventado_mantem_o_comportamento_de_hoje() {
 #[tokio::test]
 async fn g5_nenhum_mantem_o_comportamento_de_hoje() {
     let cenario = Cenario::novo("nenhum", false);
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
-        "g5_produto",
-        G5_NENHUM,
-    )])));
+    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[("g5_produto", G5_NONE)])));
     let (motor, provedor) = cenario.motor(
         vec![roteiro_texto("Posso ajudar com o prazo e o orçamento.")],
         Some(motor_jev(Arc::clone(&jev), so_g5())),
@@ -607,7 +604,7 @@ async fn g5_confianca_baixa_mantem_o_comportamento_de_hoje() {
                 ..RespostaJev::default()
             };
             resposta.probabilities.insert(escolha.clone(), 0.4);
-            resposta.probabilities.insert(G5_NENHUM.to_owned(), 0.4);
+            resposta.probabilities.insert(G5_NONE.to_owned(), 0.4);
             respostas.insert(id.clone(), resposta);
         }
         Ok(BatchResponse {
@@ -788,7 +785,7 @@ async fn g3_nada_dispensa_o_g5() {
     let cenario = Cenario::novo("g3nada", false);
     let baratas = cenario.baratas.to_string();
     let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[
-        ("g3_precisa", G3_NADA),
+        ("g3_precisa", G3_NOTHING),
         ("g5_produto", baratas.as_str()),
     ])));
     let gates = JevGates {
@@ -894,7 +891,7 @@ async fn padrao_de_instalacao_liga_o_g5_sem_configurar_o_agente() {
     let cenario = Cenario::novo("padrao-g5", false);
     let baratas = cenario.baratas.to_string();
     let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[
-        ("g3_precisa", poph_jev::G3_PRODUTO),
+        ("g3_precisa", poph_jev::G3_PRODUCT),
         ("g5_produto", baratas.as_str()),
     ])));
     let gates_padrao = poph_types::JevConfig::default().gates;

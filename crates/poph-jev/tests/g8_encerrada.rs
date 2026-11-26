@@ -14,8 +14,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use poph_jev::{
-    AvaliadorGates, DecisionOrigin, G8, G8_CONTINUA, G8_DESPEDIDA_PADRAO, G8_ENCERRADA, Gate,
-    IdGate, JevFalso, JevMessage, JevResponse, JevState, MotorJev, Thresholds, farewell_from_agent,
+    AvaliadorGates, DecisionOrigin, G8, G8_CONTINUES, G8_DEFAULT_FAREWELL, G8_ENDED, Gate, IdGate,
+    JevFalso, JevMessage, JevResponse, JevState, MotorJev, Thresholds, farewell_from_agent,
 };
 use poph_types::JevGates;
 
@@ -47,7 +47,7 @@ fn pergunta_tem_as_duas_opcoes_e_so_se_aplica_com_fala_do_agente() {
     let opcoes: Vec<&str> = pergunta.rubric.keys().map(String::as_str).collect();
     assert_eq!(
         opcoes,
-        vec![G8_CONTINUA, G8_ENCERRADA],
+        vec![G8_CONTINUES, G8_ENDED],
         "as duas opções, em ordem"
     );
 
@@ -75,22 +75,22 @@ fn so_encerrada_com_confianca_no_limiar_vira_decisao() {
         "limiar mais alto: fechar por engano é o caro"
     );
 
-    let acima = gate.interpret(&com_agente(), Some(&resposta(G8_ENCERRADA, 0.9)), limiares);
+    let acima = gate.interpret(&com_agente(), Some(&resposta(G8_ENDED, 0.9)), limiares);
     assert_eq!(acima.origin, DecisionOrigin::Jev);
-    assert_eq!(acima.choice.as_deref(), Some(G8_ENCERRADA));
+    assert_eq!(acima.choice.as_deref(), Some(G8_ENDED));
 
-    let no_limiar = gate.interpret(&com_agente(), Some(&resposta(G8_ENCERRADA, 0.8)), limiares);
+    let no_limiar = gate.interpret(&com_agente(), Some(&resposta(G8_ENDED, 0.8)), limiares);
     assert_eq!(
         no_limiar.choice.as_deref(),
-        Some(G8_ENCERRADA),
+        Some(G8_ENDED),
         "0,8 exato passa"
     );
 
-    let abaixo = gate.interpret(&com_agente(), Some(&resposta(G8_ENCERRADA, 0.79)), limiares);
+    let abaixo = gate.interpret(&com_agente(), Some(&resposta(G8_ENDED, 0.79)), limiares);
     assert_eq!(abaixo.origin, DecisionOrigin::Fallback);
     assert_eq!(
         abaixo.choice.as_deref(),
-        Some(G8_CONTINUA),
+        Some(G8_CONTINUES),
         "abaixo do limiar: conversa segue"
     );
     assert!(
@@ -105,11 +105,11 @@ fn so_encerrada_com_confianca_no_limiar_vira_decisao() {
 fn continua_confiante_e_decisao_sem_efeito_de_encerramento() {
     let decisao = G8.interpret(
         &com_agente(),
-        Some(&resposta(G8_CONTINUA, 0.95)),
+        Some(&resposta(G8_CONTINUES, 0.95)),
         G8.thresholds(),
     );
     assert_eq!(decisao.origin, DecisionOrigin::Jev);
-    assert_eq!(decisao.choice.as_deref(), Some(G8_CONTINUA));
+    assert_eq!(decisao.choice.as_deref(), Some(G8_CONTINUES));
 }
 
 #[test]
@@ -117,11 +117,11 @@ fn resposta_fora_do_contrato_e_ausente_viram_continua() {
     let limiares = G8.thresholds();
     let fora = G8.interpret(&com_agente(), Some(&resposta("talvez", 1.0)), limiares);
     assert_eq!(fora.origin, DecisionOrigin::Fallback);
-    assert_eq!(fora.choice.as_deref(), Some(G8_CONTINUA));
+    assert_eq!(fora.choice.as_deref(), Some(G8_CONTINUES));
 
     let ausente = G8.interpret(&com_agente(), None, limiares);
     assert_eq!(ausente.origin, DecisionOrigin::Fallback);
-    assert_eq!(ausente.choice.as_deref(), Some(G8_CONTINUA));
+    assert_eq!(ausente.choice.as_deref(), Some(G8_CONTINUES));
     assert_eq!(ausente.motivo.as_deref(), Some("sem resposta do Jev"));
 }
 
@@ -129,7 +129,7 @@ fn resposta_fora_do_contrato_e_ausente_viram_continua() {
 fn o_motor_so_pergunta_o_g8_com_a_flag_ligada() {
     let jev = Arc::new(JevFalso::com_escolhas(BTreeMap::from([(
         "g8_encerrada".to_owned(),
-        G8_ENCERRADA.to_owned(),
+        G8_ENDED.to_owned(),
     )])));
 
     let desligado = MotorJev::novo(jev.clone(), JevGates::default(), "jev-latest");
@@ -148,7 +148,7 @@ fn o_motor_so_pergunta_o_g8_com_a_flag_ligada() {
     assert_eq!(jev.chamadas(), 1);
     let pedido = jev.pedidos().pop().expect("um pedido");
     assert!(pedido.perguntas.contains_key("g8_encerrada"));
-    assert_eq!(resultado.escolha(IdGate::G8), Some(G8_ENCERRADA));
+    assert_eq!(resultado.escolha(IdGate::G8), Some(G8_ENDED));
 }
 
 #[test]
@@ -177,7 +177,7 @@ fn despedida_do_agente_respeita_ausente_vazia_invalida_e_longa() {
     let longa = "x".repeat(900);
     let lida = farewell_from_agent(&format!(r#"{{"despedida": "{longa}"}}"#)).unwrap_or_default();
     assert_eq!(lida.chars().count(), poph_jev::flags::MAX_FAREWELL_CHARS);
-    assert!(!G8_DESPEDIDA_PADRAO.is_empty());
+    assert!(!G8_DEFAULT_FAREWELL.is_empty());
 }
 
 /// Executa um futuro sem runtime do motor: o Jev falso responde na hora.

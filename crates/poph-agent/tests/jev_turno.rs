@@ -19,8 +19,8 @@ use poph_agent::turno::{
 };
 use poph_core::llm::{FakeProvider, Script};
 use poph_jev::{
-    AvaliadorGates, G1_CONTINUAR, G1_TRANSFERIR, G4, IdGate, JevError, JevFalso, JevMessage,
-    JevState, MotorJev,
+    AvaliadorGates, G1_CONTINUE, G1_TRANSFER, G4, IdGate, JevError, JevFalso, JevMessage, JevState,
+    MotorJev,
 };
 use poph_store::{
     AgentChange, Direction, NewAgent, NewConversation, NewDepartment, NewMessage, NewOrg, Role,
@@ -278,7 +278,7 @@ async fn turno_grava_a_decisao_do_jev_no_registro() {
     let conversa = cenario.conversa();
     let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
         "g1_transferir",
-        G1_CONTINUAR,
+        G1_CONTINUE,
     )])));
     let motor = cenario.motor(so_g1(), Some(motor_jev(Arc::clone(&jev), so_g1())));
 
@@ -288,7 +288,7 @@ async fn turno_grava_a_decisao_do_jev_no_registro() {
     assert_eq!(resumo.estado, TurnState::Completed);
     assert_eq!(resumo.texto, "Olá! Como posso ajudar?");
     let jev = resumo.jev.expect("o turno registra o Jev");
-    assert_eq!(jev.escolha(IdGate::G1), Some(G1_CONTINUAR));
+    assert_eq!(jev.escolha(IdGate::G1), Some(G1_CONTINUE));
     assert_eq!(jev.chamada.perguntas, 1);
     assert_eq!(jev.chamada.decididas_por_cache, 0);
 
@@ -296,7 +296,7 @@ async fn turno_grava_a_decisao_do_jev_no_registro() {
     let gravado: serde_json::Value =
         serde_json::from_str(&turno.jev_json).expect("jev_json é JSON");
     assert_eq!(gravado["decisoes"][0]["gate"], "g1");
-    assert_eq!(gravado["decisoes"][0]["escolha"], G1_CONTINUAR);
+    assert_eq!(gravado["decisoes"][0]["escolha"], G1_CONTINUE);
     assert_eq!(gravado["chamada"]["perguntas"], 1);
 }
 
@@ -307,7 +307,7 @@ async fn estado_do_turno_leva_conversa_e_politica() {
     let conversa = cenario.conversa();
     let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
         "g1_transferir",
-        G1_TRANSFERIR,
+        G1_TRANSFER,
     )])));
     let motor = cenario.motor(so_g1(), Some(motor_jev(Arc::clone(&jev), so_g1())));
 
@@ -315,7 +315,7 @@ async fn estado_do_turno_leva_conversa_e_politica() {
     let resumo = cenario.turno(&motor, conversa, gatilho).await;
     assert_eq!(
         resumo.jev.as_ref().and_then(|jev| jev.escolha(IdGate::G1)),
-        Some(G1_TRANSFERIR)
+        Some(G1_TRANSFER)
     );
 
     let pedido = &jev.pedidos()[0];
@@ -356,7 +356,7 @@ async fn ajuste_do_agente_desliga_o_gate_no_turno() {
     cenario.ajustar_jev_do_agente(r#"{"gates": {"g1": false}}"#);
     let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
         "g1_transferir",
-        G1_TRANSFERIR,
+        G1_TRANSFER,
     )])));
     let motor = cenario.motor(so_g1(), Some(motor_jev(Arc::clone(&jev), so_g1())));
 
@@ -386,11 +386,7 @@ async fn falha_do_jev_nao_derruba_o_turno() {
     assert_eq!(resumo.texto, "Olá! Como posso ajudar?");
     let jev = resumo.jev.expect("o turno registra a tentativa");
     assert!(jev.falhou());
-    assert_eq!(
-        jev.escolha(IdGate::G1),
-        Some(G1_CONTINUAR),
-        "fallback do G1"
-    );
+    assert_eq!(jev.escolha(IdGate::G1), Some(G1_CONTINUE), "fallback do G1");
 
     let turno = cenario.ultimo_turno(conversa);
     let gravado: serde_json::Value = serde_json::from_str(&turno.jev_json).expect("JSON");
@@ -515,7 +511,7 @@ async fn jev_e_busca_correm_juntos() {
     let cenario = Cenario::novo("paralelo");
     let conversa = cenario.conversa();
     let jev = Arc::new(
-        JevFalso::com_escolhas(escolhas(&[("g1_transferir", G1_CONTINUAR)]))
+        JevFalso::com_escolhas(escolhas(&[("g1_transferir", G1_CONTINUE)]))
             .com_atraso(Duration::from_millis(300)),
     );
     let motor = cenario

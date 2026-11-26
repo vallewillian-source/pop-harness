@@ -11,10 +11,10 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use poph_jev::{
-    AvaliadorGates, DecisionOrigin, G6, G6_APROVADA, G6_REVISAR, G6_REVISAR_ESCOPO,
-    G6_REVISAR_LONGA, G6_REVISAR_PRECO, G6_REVISAR_TOM, G6_REVISAR_TRANSFERENCIA, Gate, IdGate,
-    JevFalso, JevMessage, JevResponse, JevState, MotorJev, QuestionType, eval::ajuste_de_gate,
-    g6_orientacao, g6_precisa_revisar,
+    AvaliadorGates, DecisionOrigin, G6, G6_APPROVED, G6_REVIEW, G6_REVIEW_LONG, G6_REVIEW_PRICE,
+    G6_REVIEW_SCOPE, G6_REVIEW_TONE, G6_REVIEW_TRANSFER, Gate, IdGate, JevFalso, JevMessage,
+    JevResponse, JevState, MotorJev, QuestionType, eval::ajuste_de_gate, g6_guidance,
+    g6_needs_review,
 };
 use poph_types::JevGates;
 
@@ -90,18 +90,18 @@ fn resposta_em_revisao_e_truncada() {
 fn aprovada_e_decisao_confiavel() {
     let decisao = G6.interpret(
         &estado("Sai R$ 180,00 por visita."),
-        Some(&resposta(G6_APROVADA, 0.93)),
+        Some(&resposta(G6_APPROVED, 0.93)),
         G6.thresholds(),
     );
     assert_eq!(decisao.origin, DecisionOrigin::Jev);
-    assert_eq!(decisao.choice.as_deref(), Some(G6_APROVADA));
+    assert_eq!(decisao.choice.as_deref(), Some(G6_APPROVED));
     assert_eq!(decisao.motivo, None);
 }
 
 /// Cada motivo de revisão é decisão confiável, com a orientação fixa correspondente.
 #[test]
 fn cada_motivo_de_revisao_e_decisao_confiavel_com_orientacao() {
-    for motivo in G6_REVISAR {
+    for motivo in G6_REVIEW {
         let decisao = G6.interpret(
             &estado("Amanhã mandamos alguém."),
             Some(&resposta(motivo, 0.88)),
@@ -109,14 +109,14 @@ fn cada_motivo_de_revisao_e_decisao_confiavel_com_orientacao() {
         );
         assert_eq!(decisao.origin, DecisionOrigin::Jev, "{motivo}");
         assert_eq!(decisao.choice.as_deref(), Some(motivo));
-        assert!(g6_precisa_revisar(motivo));
-        let orientacao = g6_orientacao(motivo);
+        assert!(g6_needs_review(motivo));
+        let orientacao = g6_guidance(motivo);
         assert!(
             orientacao.starts_with("Revise a resposta anterior"),
             "{motivo}"
         );
     }
-    assert!(!g6_precisa_revisar(G6_APROVADA));
+    assert!(!g6_needs_review(G6_APPROVED));
 }
 
 /// Confiança abaixo do limiar (0,5) vira fallback que **aprova**: o comportamento de hoje.
@@ -124,11 +124,11 @@ fn cada_motivo_de_revisao_e_decisao_confiavel_com_orientacao() {
 fn confianca_baixa_aprova() {
     let decisao = G6.interpret(
         &estado("Sai R$ 180,00."),
-        Some(&resposta(G6_REVISAR_PRECO, 0.45)),
+        Some(&resposta(G6_REVIEW_PRICE, 0.45)),
         G6.thresholds(),
     );
     assert_eq!(decisao.origin, DecisionOrigin::Fallback);
-    assert_eq!(decisao.choice.as_deref(), Some(G6_APROVADA));
+    assert_eq!(decisao.choice.as_deref(), Some(G6_APPROVED));
     let motivo = decisao.motivo.unwrap_or_default();
     assert!(motivo.contains("abaixo do limiar"), "{motivo}");
 }
@@ -142,7 +142,7 @@ fn opcao_fora_do_contrato_aprova() {
         G6.thresholds(),
     );
     assert_eq!(decisao.origin, DecisionOrigin::Fallback);
-    assert_eq!(decisao.choice.as_deref(), Some(G6_APROVADA));
+    assert_eq!(decisao.choice.as_deref(), Some(G6_APPROVED));
     let motivo = decisao.motivo.unwrap_or_default();
     assert!(motivo.contains("fora das opções"), "{motivo}");
 }
@@ -152,7 +152,7 @@ fn opcao_fora_do_contrato_aprova() {
 fn sem_resposta_do_jev_aprova() {
     let decisao = G6.interpret(&estado("Sai R$ 180,00."), None, G6.thresholds());
     assert_eq!(decisao.origin, DecisionOrigin::Fallback);
-    assert_eq!(decisao.choice.as_deref(), Some(G6_APROVADA));
+    assert_eq!(decisao.choice.as_deref(), Some(G6_APPROVED));
     assert_eq!(decisao.motivo.as_deref(), Some("sem resposta do Jev"));
 }
 
@@ -163,7 +163,7 @@ fn sem_resposta_do_jev_aprova() {
 #[tokio::test]
 async fn g6_e_perguntado_fora_do_lote_so_com_resposta_em_revisao() {
     let mut escolhas: BTreeMap<String, String> = BTreeMap::new();
-    escolhas.insert("g6_revisao".to_owned(), G6_REVISAR_PRECO.to_owned());
+    escolhas.insert("g6_revisao".to_owned(), G6_REVIEW_PRICE.to_owned());
     let jev = Arc::new(JevFalso::com_escolhas(escolhas));
     let globais = JevGates {
         g6: true,
@@ -196,7 +196,7 @@ async fn g6_e_perguntado_fora_do_lote_so_com_resposta_em_revisao() {
     );
     assert_eq!(
         resultado.escolha_confiavel(IdGate::G6),
-        Some(G6_REVISAR_PRECO)
+        Some(G6_REVIEW_PRICE)
     );
     // A resposta em revisão vai no estado que o Jev lê.
     assert_eq!(
@@ -217,14 +217,14 @@ fn estado_sem_resposta_nao_leva_o_campo() {
 #[test]
 fn orientacoes_sao_distintas_por_motivo() {
     let textos: Vec<&str> = [
-        G6_REVISAR_PRECO,
-        G6_REVISAR_TRANSFERENCIA,
-        G6_REVISAR_ESCOPO,
-        G6_REVISAR_LONGA,
-        G6_REVISAR_TOM,
+        G6_REVIEW_PRICE,
+        G6_REVIEW_TRANSFER,
+        G6_REVIEW_SCOPE,
+        G6_REVIEW_LONG,
+        G6_REVIEW_TONE,
     ]
     .into_iter()
-    .map(g6_orientacao)
+    .map(g6_guidance)
     .collect();
     let mut unicos = textos.clone();
     unicos.sort_unstable();

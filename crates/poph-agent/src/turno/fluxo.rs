@@ -33,7 +33,7 @@ use poph_fluxos::ir::Ir;
 use poph_fluxos::motor::{self, Contexto as ContextoDoMotor, Estado as EstadoDoMotor};
 use poph_fluxos::prompt::renderizar_bloco;
 use poph_fluxos::regras::{Avaliador, Dados, LimitesRegra};
-use poph_jev::{G9_NENHUM, IdGate, JevFlow, ResultadoJev};
+use poph_jev::{G9_NONE, IdGate, JevFlow, ResultadoJev};
 use poph_store::{
     Execution, ExecutionStart, Ficha, FlowRevision, Fluxo, JevDecision, Status, Store, StoreError,
     TransitionEffect,
@@ -673,7 +673,7 @@ pub(crate) fn motivo_sem_inicio(jev: Option<&ResultadoJev>, g9_ligado: bool) -> 
         return MotivoSemInicio::NaoPerguntado;
     };
     match jev.resposta(IdGate::G9) {
-        Some(bruta) if bruta.choice.as_deref() == Some(G9_NENHUM) => MotivoSemInicio::Nenhum,
+        Some(bruta) if bruta.choice.as_deref() == Some(G9_NONE) => MotivoSemInicio::Nenhum,
         Some(_) => MotivoSemInicio::AbaixoDoLimiar,
         None if g9_ligado && jev.falhou() => MotivoSemInicio::Falhou,
         None => MotivoSemInicio::NaoPerguntado,

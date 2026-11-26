@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 
 use poph_jev::{
     AvaliadorGates, BatchResponse, DecisionOrigin, G4, Gate, IdGate, JevFalso, JevMessage,
-    JevResponse, JevState, MotorJev, Pedido, casar_candidato, eval::ajuste_de_gate,
+    JevResponse, JevState, MotorJev, Pedido, eval::ajuste_de_gate, match_candidate,
 };
 
 fn estado(departamentos: &[&str], texto: &str) -> JevState {
@@ -151,22 +151,22 @@ fn sem_resposta_cai_no_fallback() {
 fn casamento_de_nomes_e_estrito_sem_ser_burro() {
     let candidatos = candidatos();
     assert_eq!(
-        casar_candidato("Suporte", &candidatos).as_deref(),
+        match_candidate("Suporte", &candidatos).as_deref(),
         Ok("Suporte")
     );
     assert_eq!(
-        casar_candidato("  Suporte  ", &candidatos).as_deref(),
+        match_candidate("  Suporte  ", &candidatos).as_deref(),
         Ok("Suporte")
     );
     assert_eq!(
-        casar_candidato("SUPORTE", &candidatos).as_deref(),
+        match_candidate("SUPORTE", &candidatos).as_deref(),
         Ok("Suporte")
     );
-    assert!(casar_candidato("Jurídico", &candidatos).is_err());
-    assert!(casar_candidato("", &candidatos).is_err());
+    assert!(match_candidate("Jurídico", &candidatos).is_err());
+    assert!(match_candidate("", &candidatos).is_err());
     // Ambíguo: dois cadastros que só diferem por caixa (nenhum com a grafia que o modelo usou).
     let ambiguos = vec!["Financeiro".to_owned(), "FINANCEIRO".to_owned()];
-    let erro = casar_candidato("financeiro", &ambiguos).unwrap_err();
+    let erro = match_candidate("financeiro", &ambiguos).unwrap_err();
     assert!(erro.contains("ambíguo"), "{erro}");
 }
 
