@@ -13,6 +13,21 @@ fail() {
     exit 2
 }
 
+cargo_target_dir() {
+    local meta dir
+    meta="$(cargo metadata --format-version 1 --no-deps 2>/dev/null)" || return 1
+    [ -n "$meta" ] || return 1
+    if command -v jq > /dev/null 2>&1; then
+        dir="$(printf '%s' "$meta" | jq -er '.target_directory' 2>/dev/null)" || return 1
+    elif command -v python3 > /dev/null 2>&1; then
+        dir="$(printf '%s' "$meta" | python3 -c 'import json, sys; print(json.load(sys.stdin)["target_directory"])' 2>/dev/null)" || return 1
+    else
+        return 1
+    fi
+    [ -n "$dir" ] && [ "$dir" != "null" ] || return 1
+    printf '%s\n' "$dir"
+}
+
 capture() {
     local target="$1"
     mkdir -p "$target" || return 1
@@ -24,8 +39,12 @@ capture() {
     fi
     rm -f "$target/.build.log"
 
-    local binary="$ROOT/target/debug/poph"
-    [ -x "$binary" ] || fail "binário não encontrado em $binary"
+    local build_dir binary
+    build_dir="$(cargo_target_dir)" || build_dir="$ROOT/target"
+    binary="$build_dir/debug/poph"
+    if [ ! -x "$binary" ]; then
+        fail "binário poph não encontrado em $binary; o diretório de build do Cargo é $build_dir"
+    fi
 
     echo "contracts: cli (todos os --help)" >&2
     python3 scripts/contracts.py cli "$target/cli" "$binary" "$target" || return 1
