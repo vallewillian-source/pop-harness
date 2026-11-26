@@ -13,15 +13,12 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
-# Processo filho com stdin/stdout assíncronos, canal de controle, relógio e select.
 tokio = { version = "1.54", features = ["process", "io-util", "sync", "time", "rt", "macros"] }
 
 [dev-dependencies]
 tokio = { version = "1.54", features = ["rt-multi-thread", "macros", "time", "sync"] }
 tracing-subscriber.workspace = true
 
-# Plugin de fixtura do próprio crate (testes do contrato). Não entra no pacote de distribuição:
-# o `scripts/build-dist.sh` só empacota os bins do `poph` e do `poph-files`.
 [[bin]]
 name = "plugin-fixtura"
 path = "tests/fixtures/plugin_fixtura.rs"
