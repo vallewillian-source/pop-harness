@@ -25,7 +25,7 @@ use poph_agent::turno::{
     Entrada, FuturoPausa, Motor, ObservadorNulo, OpcoesTurno, Pausa, ResumoTurno,
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmError, LlmEvent, Script, Usage};
-use poph_jev::{BatchResponse, JevEngine, JevError, JevFalso, JevResponse as RespostaJev};
+use poph_jev::{BatchResponse, FakeJev, JevEngine, JevError, JevResponse as RespostaJev};
 use poph_store::{
     AgentChange, Direction, NewAgent, NewConversation, NewMessage, Page, Role, Store, TurnState,
 };
@@ -268,14 +268,14 @@ type RespostaRoteirizada = (&'static str, f64);
 
 /// Jev falso que responde pela **resposta em revisão** (`estado.resposta_candidata`): para cada
 /// texto, a escolha do G6. Texto fora da tabela não recebe resposta (abstenção).
-fn jev_por_texto(tabela: &[(&str, RespostaRoteirizada)]) -> Arc<JevFalso> {
+fn jev_por_texto(tabela: &[(&str, RespostaRoteirizada)]) -> Arc<FakeJev> {
     let tabela: Vec<(String, String, f64)> = tabela
         .iter()
         .map(|(texto, (escolha, confianca))| {
             ((*texto).to_owned(), (*escolha).to_owned(), *confianca)
         })
         .collect();
-    Arc::new(JevFalso::novo(move |pedido| {
+    Arc::new(FakeJev::new(move |pedido| {
         let candidata = pedido.estado["resposta_candidata"]
             .as_str()
             .unwrap_or_default()
@@ -302,8 +302,8 @@ fn jev_por_texto(tabela: &[(&str, RespostaRoteirizada)]) -> Arc<JevFalso> {
 }
 
 /// Jev falso que falha em todas as chamadas.
-fn jev_fora() -> Arc<JevFalso> {
-    Arc::new(JevFalso::novo(|_pedido: &poph_jev::Pedido| {
+fn jev_fora() -> Arc<FakeJev> {
+    Arc::new(FakeJev::new(|_pedido: &poph_jev::JevRequest| {
         Err(JevError::Status {
             code: 503,
             motivo: "Service Unavailable".to_owned(),
@@ -312,9 +312,9 @@ fn jev_fora() -> Arc<JevFalso> {
 }
 
 /// Jev falso que acerta na primeira revisão e falha na segunda (por contagem de chamadas).
-fn jev_que_falha_na_segunda(primeira: RespostaRoteirizada) -> Arc<JevFalso> {
+fn jev_que_falha_na_segunda(primeira: RespostaRoteirizada) -> Arc<FakeJev> {
     let chamadas = Arc::new(AtomicU64::new(0));
-    Arc::new(JevFalso::novo(move |_pedido: &poph_jev::Pedido| {
+    Arc::new(FakeJev::new(move |_pedido: &poph_jev::JevRequest| {
         let chamada = chamadas.fetch_add(1, Ordering::SeqCst);
         if chamada > 0 {
             return Err(JevError::Status {
@@ -339,7 +339,7 @@ fn jev_que_falha_na_segunda(primeira: RespostaRoteirizada) -> Arc<JevFalso> {
     }))
 }
 
-fn motor_jev(jev: Arc<JevFalso>, gates: JevGates) -> Arc<JevEngine> {
+fn motor_jev(jev: Arc<FakeJev>, gates: JevGates) -> Arc<JevEngine> {
     Arc::new(JevEngine::new(jev, gates, "jev-latest"))
 }
 
@@ -537,7 +537,10 @@ async fn g6_desligado_nao_pergunta_e_mantem_a_resposta() {
 
     assert_eq!(resumo.texto, RASCUNHO);
     assert_eq!(provedor.received().len(), 1);
-    assert!(jev.pedidos().is_empty(), "o G6 desligado não pergunta nada");
+    assert!(
+        jev.requests().is_empty(),
+        "o G6 desligado não pergunta nada"
+    );
     assert_eq!(cenario.metricas.revisoes_g6.value(), 0);
     assert!(
         !JevGates::default_value().g6,
@@ -622,7 +625,7 @@ async fn medicao_do_g6() {
             Cenario::novo("medicao-sem")
         };
         let tabela_json: Vec<(String, String, f64)> = tabela.clone();
-        let jev = Arc::new(JevFalso::novo(move |pedido| {
+        let jev = Arc::new(FakeJev::new(move |pedido| {
             let candidata = pedido.estado["resposta_candidata"]
                 .as_str()
                 .unwrap_or_default()
@@ -648,7 +651,7 @@ async fn medicao_do_g6() {
         }));
         let gates = if ligado { so_g6() } else { JevGates::default() };
         let motor_jev = Arc::new(JevEngine::new(
-            Arc::clone(&jev) as Arc<dyn poph_jev::TransporteJev>,
+            Arc::clone(&jev) as Arc<dyn poph_jev::JevTransport>,
             gates,
             "jev-latest",
         ));
@@ -661,7 +664,7 @@ async fn medicao_do_g6() {
         resultados.push((
             rotulo,
             provedor.received().len(),
-            jev.pedidos().len(),
+            jev.requests().len(),
             cenario.metricas.reprovadas_g6.value(),
             cenario.metricas.respostas_seguras_g6.value(),
         ));

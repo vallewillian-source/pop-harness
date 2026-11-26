@@ -22,7 +22,7 @@ use poph_agent::turno::{
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, Usage};
 use poph_jev::{
-    BatchResponse, G7_ABUSE, G7_DEFAULT_REPLY, G7_INJECTION, JevEngine, JevError, JevFalso,
+    BatchResponse, FakeJev, G7_ABUSE, G7_DEFAULT_REPLY, G7_INJECTION, JevEngine, JevError,
     JevResponse as RespostaJev,
 };
 use poph_store::{
@@ -299,7 +299,7 @@ fn so_g7() -> JevGates {
     }
 }
 
-fn motor_jev(jev: Arc<JevFalso>, gates: JevGates) -> Arc<JevEngine> {
+fn motor_jev(jev: Arc<FakeJev>, gates: JevGates) -> Arc<JevEngine> {
     Arc::new(JevEngine::new(jev, gates, "jev-latest"))
 }
 
@@ -314,14 +314,14 @@ fn resposta(escolha: &str, confianca: f64) -> RespostaJev {
 }
 
 /// Jev falso que classifica pelo texto da última mensagem do cliente.
-fn jev_por_texto(tabela: &[(&str, (&'static str, f64))]) -> Arc<JevFalso> {
+fn jev_por_texto(tabela: &[(&str, (&'static str, f64))]) -> Arc<FakeJev> {
     let tabela: Vec<(String, String, f64)> = tabela
         .iter()
         .map(|(texto, (escolha, confianca))| {
             ((*texto).to_owned(), (*escolha).to_owned(), *confianca)
         })
         .collect();
-    Arc::new(JevFalso::novo(move |pedido| {
+    Arc::new(FakeJev::new(move |pedido| {
         let ultima = pedido.estado["conversa"]["mensagens"]
             .as_array()
             .and_then(|mensagens| mensagens.last())
@@ -342,8 +342,8 @@ fn jev_por_texto(tabela: &[(&str, (&'static str, f64))]) -> Arc<JevFalso> {
 }
 
 /// Jev falso que classifica pelo texto do arquivo: só responde quando o estado traz o arquivo.
-fn jev_por_arquivo(escolha: &'static str, confianca: f64) -> Arc<JevFalso> {
-    Arc::new(JevFalso::novo(move |pedido| {
+fn jev_por_arquivo(escolha: &'static str, confianca: f64) -> Arc<FakeJev> {
+    Arc::new(FakeJev::new(move |pedido| {
         let mut respostas = BTreeMap::new();
         if pedido.estado["arquivo"]["texto"]
             .as_str()
@@ -359,8 +359,8 @@ fn jev_por_arquivo(escolha: &'static str, confianca: f64) -> Arc<JevFalso> {
     }))
 }
 
-fn jev_fora() -> Arc<JevFalso> {
-    Arc::new(JevFalso::novo(|_pedido: &poph_jev::Pedido| {
+fn jev_fora() -> Arc<FakeJev> {
+    Arc::new(FakeJev::new(|_pedido: &poph_jev::JevRequest| {
         Err(JevError::Status {
             code: 503,
             motivo: "Service Unavailable".to_owned(),

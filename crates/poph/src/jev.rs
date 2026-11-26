@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Args, Subcommand};
-use poph_jev::{ClienteJev, ConfigJev, IdGate, JevEngine, avaliar_conjunto, ler_conjunto};
+use poph_jev::{IdGate, JevClient, JevClientConfig, JevEngine, avaliar_conjunto, ler_conjunto};
 use poph_types::BaseMetrics;
 
 use crate::apoio;
@@ -69,11 +69,11 @@ fn rodar_eval(
             .to_owned()
     })?;
     let cliente =
-        ConfigJev::da_config(&configuracao.jev, chave).map_err(|erro| erro.to_string())?;
+        JevClientConfig::from_config(&configuracao.jev, chave).map_err(|erro| erro.to_string())?;
     let registro = poph_types::Registry::new();
     let metricas =
         BaseMetrics::register(&registro).map_err(|erro| format!("métricas base: {erro}"))?;
-    let transporte = ClienteJev::novo(cliente, metricas).map_err(|erro| erro.to_string())?;
+    let transporte = JevClient::new(cliente, metricas).map_err(|erro| erro.to_string())?;
     let motor = JevEngine::new(
         std::sync::Arc::new(transporte),
         configuracao.jev.gates,

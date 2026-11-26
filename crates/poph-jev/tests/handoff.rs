@@ -10,8 +10,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use poph_jev::{
-    ANIMAL_RISK, BatchResponse, GateEvaluator, GuidanceResult, HandoffGuidance, INGESTION_RISK,
-    JevEngine, JevError, JevFalso, JevMessage, JevResponse, JevState, NO_RISK, OTHER_RISK,
+    ANIMAL_RISK, BatchResponse, FakeJev, GateEvaluator, GuidanceResult, HandoffGuidance,
+    INGESTION_RISK, JevEngine, JevError, JevMessage, JevResponse, JevState, NO_RISK, OTHER_RISK,
     RISK_QUESTION_ID, RISK_TYPES,
 };
 use poph_types::JevGates;
@@ -38,7 +38,7 @@ fn estado() -> JevState {
         .with_handoff(Vec::new(), true)
 }
 
-fn motor(jev: Arc<JevFalso>) -> JevEngine {
+fn motor(jev: Arc<FakeJev>) -> JevEngine {
     JevEngine::new(
         jev,
         JevGates {
@@ -60,10 +60,10 @@ fn resposta(escolha: &str, confianca: f64) -> JevResponse {
 }
 
 /// Jev falso que responde a pergunta de risco com a escolha e a confiança dadas.
-fn jev_do_risco(escolha: &'static str, confianca: f64) -> Arc<JevFalso> {
-    Arc::new(JevFalso::novo(move |pedido: &poph_jev::Pedido| {
+fn jev_do_risco(escolha: &'static str, confianca: f64) -> Arc<FakeJev> {
+    Arc::new(FakeJev::new(move |pedido: &poph_jev::JevRequest| {
         let mut respostas = BTreeMap::new();
-        if pedido.perguntas.contains_key(RISK_QUESTION_ID) {
+        if pedido.questions.contains_key(RISK_QUESTION_ID) {
             respostas.insert(RISK_QUESTION_ID.to_owned(), resposta(escolha, confianca));
         }
         Ok(BatchResponse {
@@ -119,11 +119,11 @@ async fn pergunta_de_risco_nao_entra_no_lote() {
     let avaliador = motor(Arc::clone(&jev));
 
     let lote = avaliador.evaluate(estado(), None).await;
-    let pedidos = jev.pedidos();
+    let pedidos = jev.requests();
     assert_eq!(pedidos.len(), 1, "o lote é uma chamada só");
-    assert!(pedidos[0].perguntas.contains_key("g1_transferir"));
+    assert!(pedidos[0].questions.contains_key("g1_transferir"));
     assert!(
-        !pedidos[0].perguntas.contains_key(RISK_QUESTION_ID),
+        !pedidos[0].questions.contains_key(RISK_QUESTION_ID),
         "a pergunta de risco não pode ir no lote do turno"
     );
     // Só G1 ligado e sem resposta roteirizada para ele: o gate absteve.
@@ -134,10 +134,10 @@ async fn pergunta_de_risco_nao_entra_no_lote() {
     assert_eq!(risco.tipo.as_deref(), Some(INGESTION_RISK));
     assert!((risco.confidence - 0.92).abs() < 1e-9);
     assert_eq!(risco.tokens, 7);
-    let pedidos = jev.pedidos();
+    let pedidos = jev.requests();
     assert_eq!(pedidos.len(), 2, "a segunda pergunta é uma chamada própria");
     assert_eq!(
-        pedidos[1].perguntas.keys().collect::<Vec<_>>(),
+        pedidos[1].questions.keys().collect::<Vec<_>>(),
         vec![RISK_QUESTION_ID]
     );
 }
@@ -162,11 +162,11 @@ fn pergunta_tem_as_quatro_opcoes() {
 async fn prazo_da_segunda_pergunta_vira_falha() {
     // O atraso atinge as duas chamadas; o prazo da segunda (40 ms) é o que se mede aqui.
     let jev = Arc::new(
-        JevFalso::com_escolhas(BTreeMap::from([(
+        FakeJev::with_choices(BTreeMap::from([(
             RISK_QUESTION_ID.to_owned(),
             INGESTION_RISK.to_owned(),
         )]))
-        .com_atraso(Duration::from_millis(300)),
+        .with_delay(Duration::from_millis(300)),
     );
     let avaliador = motor(Arc::clone(&jev));
     let inicio = std::time::Instant::now();
@@ -187,7 +187,7 @@ async fn prazo_da_segunda_pergunta_vira_falha() {
 /// Erro do provedor também vira falha, nunca pânico nem tipo inventado.
 #[tokio::test]
 async fn erro_do_provedor_vira_falha() {
-    let jev = Arc::new(JevFalso::falhando(JevError::Status {
+    let jev = Arc::new(FakeJev::failing(JevError::Status {
         code: 503,
         motivo: "Service Unavailable".to_owned(),
     }));

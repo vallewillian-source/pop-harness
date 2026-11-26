@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use poph_jev::{
-    CasoRotulado, ErroConjunto, G1_CONTINUE, G1_TRANSFER, IdGate, JevEngine, JevFalso, JevMessage,
+    CasoRotulado, ErroConjunto, FakeJev, G1_CONTINUE, G1_TRANSFER, IdGate, JevEngine, JevMessage,
     JevState, avaliar_conjunto, ler_conjunto,
 };
 use poph_types::JevGates;
@@ -29,8 +29,8 @@ fn caso(texto: &str, esperado: &str) -> CasoRotulado {
 }
 
 /// Jev falso que acerta "pedido de humano", erra o resto e se abstém quando a resposta é fraca.
-fn jev_de_teste() -> Arc<JevFalso> {
-    Arc::new(JevFalso::novo(|pedido| {
+fn jev_de_teste() -> Arc<FakeJev> {
+    Arc::new(FakeJev::new(|pedido| {
         let texto = pedido.estado["conversa"]["mensagens"][0]["texto"]
             .as_str()
             .unwrap_or_default()
@@ -43,7 +43,7 @@ fn jev_de_teste() -> Arc<JevFalso> {
             (G1_CONTINUE, 0.9)
         };
         let mut respostas = BTreeMap::new();
-        for id in pedido.perguntas.keys() {
+        for id in pedido.questions.keys() {
             respostas.insert(
                 id.clone(),
                 poph_jev::JevResponse {
@@ -92,7 +92,7 @@ async fn mede_acerto_abstencao_e_latencia() {
 async fn gate_que_nao_se_aplica_conta_como_nao_aplicavel() {
     let jev = jev_de_teste();
     let motor = Arc::new(JevEngine::new(
-        Arc::clone(&jev) as Arc<dyn poph_jev::TransporteJev>,
+        Arc::clone(&jev) as Arc<dyn poph_jev::JevTransport>,
         globais(false),
         "jev-latest",
     ));
@@ -110,7 +110,7 @@ async fn gate_que_nao_se_aplica_conta_como_nao_aplicavel() {
 /// Falha do Jev conta como abstenção e aparece no relatório.
 #[tokio::test]
 async fn falha_da_chamada_conta_como_abstencao() {
-    let jev = Arc::new(JevFalso::falhando(poph_jev::JevError::Status {
+    let jev = Arc::new(FakeJev::failing(poph_jev::JevError::Status {
         code: 500,
         motivo: "Internal Server Error".to_owned(),
     }));
@@ -129,7 +129,7 @@ async fn cache_do_motor_aparece_como_zero_de_latencia() {
     let jev = jev_de_teste();
     let motor = Arc::new(
         JevEngine::new(
-            Arc::clone(&jev) as Arc<dyn poph_jev::TransporteJev>,
+            Arc::clone(&jev) as Arc<dyn poph_jev::JevTransport>,
             globais(true),
             "jev-latest",
         )
@@ -146,16 +146,16 @@ async fn cache_do_motor_aparece_como_zero_de_latencia() {
     let relatorio = avaliar_conjunto(motor.as_ref(), IdGate::G1, &casos).await;
 
     assert_eq!(relatorio.acertos, 2);
-    assert_eq!(jev.chamadas(), 1, "o segundo caso veio do cache");
+    assert_eq!(jev.calls(), 1, "o segundo caso veio do cache");
 }
 
 /// Abstenção mostra a escolha que o modelo devolveu e o motivo do fallback (aceite da calibração).
 #[tokio::test]
 async fn abstencao_mostra_a_escolha_do_jev_e_o_motivo() {
     // O Jev responde "transferir_agora" com confiança 0,55: abaixo do limiar 0,70 do G1.
-    let jev = Arc::new(JevFalso::novo(|pedido: &poph_jev::Pedido| {
+    let jev = Arc::new(FakeJev::new(|pedido: &poph_jev::JevRequest| {
         let mut respostas = BTreeMap::new();
-        for id in pedido.perguntas.keys() {
+        for id in pedido.questions.keys() {
             respostas.insert(
                 id.clone(),
                 poph_jev::JevResponse {
@@ -223,9 +223,9 @@ async fn abstencao_mostra_a_escolha_do_jev_e_o_motivo() {
 /// `usage` do lote aparece no relatório, somado por execução, quando o Jev informa.
 #[tokio::test]
 async fn usage_da_chamada_aparece_no_relatorio() {
-    let jev = Arc::new(JevFalso::novo(|pedido: &poph_jev::Pedido| {
+    let jev = Arc::new(FakeJev::new(|pedido: &poph_jev::JevRequest| {
         let mut respostas = BTreeMap::new();
-        for id in pedido.perguntas.keys() {
+        for id in pedido.questions.keys() {
             respostas.insert(
                 id.clone(),
                 poph_jev::JevResponse {

@@ -11,8 +11,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use poph_jev::{
-    DecisionOrigin, G6, G6_APPROVED, G6_REVIEW, G6_REVIEW_LONG, G6_REVIEW_PRICE, G6_REVIEW_SCOPE,
-    G6_REVIEW_TONE, G6_REVIEW_TRANSFER, Gate, GateEvaluator, IdGate, JevEngine, JevFalso,
+    DecisionOrigin, FakeJev, G6, G6_APPROVED, G6_REVIEW, G6_REVIEW_LONG, G6_REVIEW_PRICE,
+    G6_REVIEW_SCOPE, G6_REVIEW_TONE, G6_REVIEW_TRANSFER, Gate, GateEvaluator, IdGate, JevEngine,
     JevMessage, JevResponse, JevState, QuestionType, eval::ajuste_de_gate, g6_guidance,
     g6_needs_review,
 };
@@ -164,12 +164,12 @@ fn sem_resposta_do_jev_aprova() {
 async fn g6_e_perguntado_fora_do_lote_so_com_resposta_em_revisao() {
     let mut escolhas: BTreeMap<String, String> = BTreeMap::new();
     escolhas.insert("g6_revisao".to_owned(), G6_REVIEW_PRICE.to_owned());
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas));
+    let jev = Arc::new(FakeJev::with_choices(escolhas));
     let globais = JevGates {
         g6: true,
         ..JevGates::default()
     };
-    let transporte: Arc<dyn poph_jev::TransporteJev> = jev.clone();
+    let transporte: Arc<dyn poph_jev::JevTransport> = jev.clone();
     let avaliador = JevEngine::new(transporte, globais, "jev-latest");
 
     // 1. Lote normal, sem resposta em revisão: o G6 não se aplica e nenhuma pergunta sai.
@@ -178,17 +178,17 @@ async fn g6_e_perguntado_fora_do_lote_so_com_resposta_em_revisao() {
         .with_capabilities(true, true);
     let lote = avaliador.evaluate(sem_resposta, None).await;
     assert!(lote.decisions.is_empty(), "{:?}", lote.decisions);
-    assert!(jev.pedidos().is_empty(), "nenhum pedido ao Jev");
+    assert!(jev.requests().is_empty(), "nenhum pedido ao Jev");
 
     // 2. Chamada só do G6: uma pergunta, uma decisão.
     let resultado = avaliador
         .evaluate(estado("Sai R$ 180,00."), Some(ajuste_de_gate(IdGate::G6)))
         .await;
-    let pedidos = jev.pedidos();
+    let pedidos = jev.requests();
     assert_eq!(pedidos.len(), 1);
     assert_eq!(
         pedidos[0]
-            .perguntas
+            .questions
             .keys()
             .cloned()
             .collect::<Vec<String>>(),

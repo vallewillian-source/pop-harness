@@ -31,7 +31,7 @@ use poph_core::llm::{
     FakeProvider, FinishReason, LlmEvent, Message, Request, Script, ToolCall, Usage,
 };
 use poph_fluxos::{Limites, compilar};
-use poph_jev::{G9_NONE, JevEngine, JevFalso};
+use poph_jev::{FakeJev, G9_NONE, JevEngine};
 use poph_store::{
     AgentChange, ConversationStatus, Direction, NewAgent, NewConversation, NewFlow, NewMessage,
     NewOrg, RevisionPublication, Role, Store, TurnState,
@@ -493,7 +493,7 @@ fn gates_com_g9() -> JevGates {
     }
 }
 
-fn motor_jev(jev: Arc<JevFalso>) -> Arc<JevEngine> {
+fn motor_jev(jev: Arc<FakeJev>) -> Arc<JevEngine> {
     Arc::new(JevEngine::new(jev, gates_com_g9(), "jev-latest"))
 }
 
@@ -533,7 +533,7 @@ async fn turno_com_fluxo(
     roteiros: Vec<Script>,
     conversa: ConversationId,
 ) -> (Arc<FakeProvider>, ResumoTurno) {
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
+    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g9_iniciar_fluxo",
         "agendar_visita",
     )])));
@@ -751,7 +751,7 @@ async fn fluxo_iniciar_so_aparece_na_reserva_e_valida_como_o_g9() {
     let cenario = Cenario::novo("iniciar-nenhum");
     cenario.fluxo();
     let conversa = cenario.conversa();
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
+    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g9_iniciar_fluxo",
         G9_NONE,
     )])));

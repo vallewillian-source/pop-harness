@@ -292,7 +292,7 @@ cargo test --release -p poph-jev --test g9_medicao -- --ignored --nocapture
 Estado de um turno com base disponível e uma resposta do agente, para o lote ter mais de uma
 pergunta (G3 e G8 também perguntam). Texto de gatilho de cada fluxo no máximo que a pergunta aceita
 (400 caracteres), que é o pior caso. O tempo medido é o do Harness **antes** da chamada — montar o
-estado, montar as perguntas e serializar o pedido (`JevFalso`, sem rede). Duas rodadas.
+estado, montar as perguntas e serializar o pedido (`FakeJev`, sem rede). Duas rodadas.
 
 | Lote | Perguntas | p50 | p95 | Pedido serializado | Estado | Perguntas |
 |---|---|---|---|---|---|---|

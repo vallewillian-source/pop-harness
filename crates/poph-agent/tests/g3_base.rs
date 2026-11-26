@@ -33,7 +33,7 @@ use poph_agent::turno::{
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, ToolCall, Usage};
 use poph_jev::{
-    BatchResponse, G3_BASE, G3_NOTHING, IdGate, JevEngine, JevError, JevFalso,
+    BatchResponse, FakeJev, G3_BASE, G3_NOTHING, IdGate, JevEngine, JevError,
     JevResponse as RespostaJev,
 };
 use poph_store::{Direction, NewAgent, NewConversation, NewMessage, NewOrg, Role, Store};
@@ -356,7 +356,7 @@ fn so_g3() -> JevGates {
     }
 }
 
-fn motor_jev(jev: Arc<JevFalso>) -> Arc<JevEngine> {
+fn motor_jev(jev: Arc<FakeJev>) -> Arc<JevEngine> {
     Arc::new(JevEngine::new(jev, so_g3(), "jev-latest"))
 }
 
@@ -404,7 +404,7 @@ fn texto_do_prompt(pedido: &poph_core::llm::Request) -> String {
 #[tokio::test]
 async fn g3_nada_descarta_a_busca_e_nao_oferece_base_nem_catalogo() {
     let cenario = Cenario::novo("nada");
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
+    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g3_precisa",
         G3_NOTHING,
     )])));
@@ -464,7 +464,7 @@ async fn g3_nada_descarta_a_busca_e_nao_oferece_base_nem_catalogo() {
 #[tokio::test]
 async fn g3_nada_nao_executa_ferramenta_inventada_pelo_modelo() {
     let cenario = Cenario::novo("inventada");
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
+    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g3_precisa",
         G3_NOTHING,
     )])));
@@ -498,7 +498,7 @@ async fn g3_nada_nao_executa_ferramenta_inventada_pelo_modelo() {
 #[tokio::test]
 async fn g3_base_mantem_a_busca_e_as_ferramentas() {
     let cenario = Cenario::novo("base");
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[("g3_precisa", G3_BASE)])));
+    let jev = Arc::new(FakeJev::with_choices(escolhas(&[("g3_precisa", G3_BASE)])));
     let (motor, provedor) = cenario.motor(
         vec![roteiro_texto("O prazo é de até 8 dias úteis.")],
         Some(motor_jev(Arc::clone(&jev))),
@@ -557,7 +557,7 @@ async fn g3_desligado_nao_muda_o_comportamento() {
 async fn g3_sem_resposta_cai_no_comportamento_de_hoje() {
     let cenario = Cenario::novo("abstencao");
     // Mapa vazio: o Jev falso responde o lote sem `g3_precisa`, e o gate cai no fallback `tudo`.
-    let jev = Arc::new(JevFalso::com_escolhas(BTreeMap::new()));
+    let jev = Arc::new(FakeJev::with_choices(BTreeMap::new()));
     let (motor, provedor) = cenario.motor(
         vec![roteiro_texto("Olá! Como posso ajudar?")],
         Some(motor_jev(Arc::clone(&jev))),
@@ -580,9 +580,9 @@ async fn g3_sem_resposta_cai_no_comportamento_de_hoje() {
 #[tokio::test]
 async fn g3_confianca_baixa_cai_no_comportamento_de_hoje() {
     let cenario = Cenario::novo("confianca");
-    let jev = Arc::new(JevFalso::novo(|pedido: &poph_jev::Pedido| {
+    let jev = Arc::new(FakeJev::new(|pedido: &poph_jev::JevRequest| {
         let mut respostas = BTreeMap::new();
-        for id in pedido.perguntas.keys() {
+        for id in pedido.questions.keys() {
             let mut resposta = RespostaJev {
                 choice: Some(G3_NOTHING.to_owned()),
                 confidence: 0.4,
@@ -618,7 +618,7 @@ async fn g3_confianca_baixa_cai_no_comportamento_de_hoje() {
 #[tokio::test]
 async fn g3_jev_fora_do_ar_cai_no_comportamento_de_hoje() {
     let cenario = Cenario::novo("fora");
-    let jev = Arc::new(JevFalso::falhando(JevError::Status {
+    let jev = Arc::new(FakeJev::failing(JevError::Status {
         code: 503,
         motivo: "Service Unavailable".to_owned(),
     }));
@@ -652,7 +652,7 @@ async fn g3_nada_abandona_a_busca_em_andamento() {
         Arc::new(AtomicU64::new(0)),
     );
 
-    let jev_nada = Arc::new(JevFalso::com_escolhas(escolhas(&[(
+    let jev_nada = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g3_precisa",
         G3_NOTHING,
     )])));
@@ -675,7 +675,7 @@ async fn g3_nada_abandona_a_busca_em_andamento() {
         BuscaContada::com_demora(Duration::from_millis(300)) as Arc<dyn BuscadorBase>,
         Arc::new(AtomicU64::new(0)),
     );
-    let jev_base = Arc::new(JevFalso::com_escolhas(escolhas(&[("g3_precisa", G3_BASE)])));
+    let jev_base = Arc::new(FakeJev::with_choices(escolhas(&[("g3_precisa", G3_BASE)])));
     let (motor, _) = cenario_base.motor(
         vec![roteiro_texto("O prazo é de até 8 dias úteis.")],
         Some(motor_jev(Arc::clone(&jev_base))),
@@ -720,7 +720,7 @@ async fn g3_nada_com_transferencia_nao_quebra_o_turno() {
         )
         .expect("liga o handoff");
 
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[
+    let jev = Arc::new(FakeJev::with_choices(escolhas(&[
         ("g1_transferir", poph_jev::G1_TRANSFER),
         ("g3_precisa", G3_NOTHING),
     ])));
@@ -865,7 +865,7 @@ async fn medicao_de_tokens_e_latencia_do_g3() {
             }),
             Arc::new(AtomicU64::new(0)),
         );
-        let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
+        let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
             "g3_precisa",
             G3_NOTHING,
         )])));
@@ -919,7 +919,7 @@ async fn medicao_de_tokens_e_latencia_do_g3() {
 #[tokio::test]
 async fn padrao_de_instalacao_liga_o_g3_sem_configurar_o_agente() {
     let cenario = Cenario::novo("padrao-g3");
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
+    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g3_precisa",
         G3_NOTHING,
     )])));
@@ -974,7 +974,7 @@ async fn agente_que_desliga_o_g3_volta_ao_comportamento_de_hoje() {
         )
         .expect("desliga o G3 no agente");
 
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
+    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g3_precisa",
         G3_NOTHING,
     )])));
@@ -1025,7 +1025,7 @@ async fn agente_com_ativo_false_nao_consulta_o_jev_nem_o_g3() {
         )
         .expect("desliga o Jev do agente");
 
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
+    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g3_precisa",
         G3_NOTHING,
     )])));

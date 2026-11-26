@@ -27,7 +27,7 @@ use poph_agent::turno::{
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Message, Script, Usage};
 use poph_jev::{
-    G1_CONTINUE, G2_PROCESS, G2_WAIT, IdGate, JevEngine, JevFalso, JevOptions, JevState,
+    FakeJev, G1_CONTINUE, G2_PROCESS, G2_WAIT, IdGate, JevEngine, JevOptions, JevState,
 };
 use poph_store::{
     AgentChange, Direction, NewAgent, NewConversation, NewMessage, NewOrg, Role, Store, TurnState,
@@ -312,12 +312,12 @@ fn so_g2() -> JevGates {
     }
 }
 
-fn motor_jev(jev: Arc<JevFalso>, gates: JevGates) -> Arc<JevEngine> {
+fn motor_jev(jev: Arc<FakeJev>, gates: JevGates) -> Arc<JevEngine> {
     Arc::new(JevEngine::new(jev, gates, "jev-latest"))
 }
 
 /// Motor do Jev com opções trocadas (prazo do lote, testes de timeout).
-fn motor_jev_com(jev: Arc<JevFalso>, gates: JevGates, opcoes: JevOptions) -> Arc<JevEngine> {
+fn motor_jev_com(jev: Arc<FakeJev>, gates: JevGates, opcoes: JevOptions) -> Arc<JevEngine> {
     Arc::new(JevEngine::new(jev, gates, "jev-latest").with_options(opcoes))
 }
 
@@ -350,7 +350,7 @@ async fn esperar_mais_estica_a_janela_e_agrupa_a_mensagem_seguinte() {
     // O cliente manda o endereço 3 s depois — depois da janela fixa de 2 s e dentro dos 4 s do G2.
     pausa.agendar(3000, "Rua das Flores, 120 — apto 3");
 
-    let jev = Arc::new(JevFalso::com_escolhas(escolha("g2_esperar", G2_WAIT)));
+    let jev = Arc::new(FakeJev::with_choices(escolha("g2_esperar", G2_WAIT)));
     let provedor = provedor();
     let motor = cenario.motor(
         Some(motor_jev(Arc::clone(&jev), so_g2())),
@@ -402,7 +402,7 @@ async fn mensagem_nova_durante_a_espera_refaz_o_lote() {
     ));
     pausa.agendar(3000, "o produto que eu quero é o azul");
 
-    let jev = Arc::new(JevFalso::com_escolhas(escolha("g2_esperar", G2_WAIT)));
+    let jev = Arc::new(FakeJev::with_choices(escolha("g2_esperar", G2_WAIT)));
     let motor = cenario.motor(
         Some(motor_jev(Arc::clone(&jev), so_g2())),
         Arc::clone(&pausa),
@@ -415,11 +415,11 @@ async fn mensagem_nova_durante_a_espera_refaz_o_lote() {
     assert_eq!(resumo.estado, TurnState::Completed);
     assert_eq!(resumo.mensagens.len(), 2);
     assert_eq!(
-        jev.chamadas(),
+        jev.calls(),
         2,
         "o lote é refeito quando o cliente fala durante a espera"
     );
-    let ultimo = jev.pedidos().pop().expect("há pedido");
+    let ultimo = jev.requests().pop().expect("há pedido");
     assert_eq!(
         ultimo.estado["conversa"]["mensagens"][1]["texto"],
         "o produto que eu quero é o azul"
@@ -439,7 +439,7 @@ async fn processar_agora_encurta_a_espera() {
         cenario.org,
         conversa,
     ));
-    let jev = Arc::new(JevFalso::com_escolhas(escolha("g2_esperar", G2_PROCESS)));
+    let jev = Arc::new(FakeJev::with_choices(escolha("g2_esperar", G2_PROCESS)));
     let motor = cenario.motor(
         Some(motor_jev(Arc::clone(&jev), so_g2())),
         Arc::clone(&pausa),
@@ -461,7 +461,7 @@ async fn processar_agora_encurta_a_espera() {
         "a espera devia ser a confirmação curta, foi {:?}",
         pausa.espera_total()
     );
-    assert_eq!(jev.chamadas(), 1, "sem mensagem nova, um lote só");
+    assert_eq!(jev.calls(), 1, "sem mensagem nova, um lote só");
     assert_eq!(resumo.mensagens.len(), 1);
 }
 
@@ -482,10 +482,7 @@ async fn gate_desligado_mantem_a_janela_fixa() {
         g1: true,
         ..JevGates::default()
     };
-    let jev = Arc::new(JevFalso::com_escolhas(escolha(
-        "g1_transferir",
-        G1_CONTINUE,
-    )));
+    let jev = Arc::new(FakeJev::with_choices(escolha("g1_transferir", G1_CONTINUE)));
     let motor = cenario.motor(
         Some(motor_jev(Arc::clone(&jev), gates)),
         Arc::clone(&pausa),
@@ -502,7 +499,7 @@ async fn gate_desligado_mantem_a_janela_fixa() {
         "{:?}",
         pausa.espera_total()
     );
-    assert_eq!(jev.chamadas(), 1, "o G1 continua sendo consultado");
+    assert_eq!(jev.calls(), 1, "o G1 continua sendo consultado");
     assert!(resumo.jev.is_some());
 }
 
@@ -540,7 +537,7 @@ async fn falha_do_jev_mantem_a_janela_fixa() {
         cenario.org,
         conversa,
     ));
-    let jev = Arc::new(JevFalso::falhando(poph_jev::JevError::Status {
+    let jev = Arc::new(FakeJev::failing(poph_jev::JevError::Status {
         code: 503,
         motivo: "Service Unavailable".to_owned(),
     }));
@@ -578,7 +575,7 @@ async fn escolha_fora_das_opcoes_mantem_a_janela_fixa() {
         cenario.org,
         conversa,
     ));
-    let jev = Arc::new(JevFalso::com_escolhas(escolha("g2_esperar", "talvez")));
+    let jev = Arc::new(FakeJev::with_choices(escolha("g2_esperar", "talvez")));
     let motor = cenario.motor(
         Some(motor_jev(Arc::clone(&jev), so_g2())),
         Arc::clone(&pausa),
@@ -606,9 +603,9 @@ async fn confianca_baixa_mantem_a_janela_fixa() {
         cenario.org,
         conversa,
     ));
-    let jev = Arc::new(JevFalso::novo(|pedido: &poph_jev::Pedido| {
+    let jev = Arc::new(FakeJev::new(|pedido: &poph_jev::JevRequest| {
         let mut respostas = BTreeMap::new();
-        for id in pedido.perguntas.keys() {
+        for id in pedido.questions.keys() {
             let mut resposta = poph_jev::JevResponse {
                 choice: Some(G2_WAIT.to_owned()),
                 confidence: 0.4,
@@ -650,8 +647,8 @@ async fn prazo_do_jev_mantem_a_janela_fixa() {
         conversa,
     ));
     let jev = Arc::new(
-        JevFalso::com_escolhas(escolha("g2_esperar", G2_WAIT))
-            .com_atraso(Duration::from_millis(250)),
+        FakeJev::with_choices(escolha("g2_esperar", G2_WAIT))
+            .with_delay(Duration::from_millis(250)),
     );
     let opcoes = JevOptions {
         batch_timeout: Duration::from_millis(50),
@@ -701,7 +698,7 @@ async fn conversa_transferida_nao_responde_nem_consulta_o_jev() {
         cenario.org,
         conversa,
     ));
-    let jev = Arc::new(JevFalso::com_escolhas(escolha("g2_esperar", G2_WAIT)));
+    let jev = Arc::new(FakeJev::with_choices(escolha("g2_esperar", G2_WAIT)));
     let provedor = provedor();
     let motor = cenario.motor(
         Some(motor_jev(Arc::clone(&jev), so_g2())),
@@ -714,7 +711,7 @@ async fn conversa_transferida_nao_responde_nem_consulta_o_jev() {
 
     assert_eq!(resumo.estado, TurnState::Skipped);
     assert!(resumo.texto.is_empty());
-    assert_eq!(jev.chamadas(), 0, "nem consulta o Jev");
+    assert_eq!(jev.calls(), 0, "nem consulta o Jev");
     assert!(provedor.received().is_empty(), "nem chama o modelo");
     assert!(pausa.esperas().is_empty(), "nem espera a janela");
     // A mensagem do cliente continua gravada (D12).
@@ -814,7 +811,7 @@ async fn rodar_caso(
         Some(decidido) => escolha("g2_esperar", decidido),
         None => BTreeMap::new(),
     };
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas));
+    let jev = Arc::new(FakeJev::with_choices(escolhas));
     let motor = cenario.motor(
         Some(motor_jev(Arc::clone(&jev), so_g2())),
         Arc::clone(&pausa),

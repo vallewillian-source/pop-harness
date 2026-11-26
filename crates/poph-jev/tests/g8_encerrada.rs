@@ -14,8 +14,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use poph_jev::{
-    DecisionOrigin, G8, G8_CONTINUES, G8_DEFAULT_FAREWELL, G8_ENDED, Gate, GateEvaluator, IdGate,
-    JevEngine, JevFalso, JevMessage, JevResponse, JevState, Thresholds, farewell_from_agent,
+    DecisionOrigin, FakeJev, G8, G8_CONTINUES, G8_DEFAULT_FAREWELL, G8_ENDED, Gate, GateEvaluator,
+    IdGate, JevEngine, JevMessage, JevResponse, JevState, Thresholds, farewell_from_agent,
 };
 use poph_types::JevGates;
 
@@ -127,14 +127,14 @@ fn resposta_fora_do_contrato_e_ausente_viram_continua() {
 
 #[test]
 fn o_motor_so_pergunta_o_g8_com_a_flag_ligada() {
-    let jev = Arc::new(JevFalso::com_escolhas(BTreeMap::from([(
+    let jev = Arc::new(FakeJev::with_choices(BTreeMap::from([(
         "g8_encerrada".to_owned(),
         G8_ENDED.to_owned(),
     )])));
 
     let desligado = JevEngine::new(jev.clone(), JevGates::default(), "jev-latest");
     let _ = futures_block(desligado.evaluate(com_agente(), None));
-    assert_eq!(jev.chamadas(), 0, "com o G8 desligado, nenhuma pergunta");
+    assert_eq!(jev.calls(), 0, "com o G8 desligado, nenhuma pergunta");
 
     let ligado = JevEngine::new(
         jev.clone(),
@@ -145,9 +145,9 @@ fn o_motor_so_pergunta_o_g8_com_a_flag_ligada() {
         "jev-latest",
     );
     let resultado = futures_block(ligado.evaluate(com_agente(), None));
-    assert_eq!(jev.chamadas(), 1);
-    let pedido = jev.pedidos().pop().expect("um pedido");
-    assert!(pedido.perguntas.contains_key("g8_encerrada"));
+    assert_eq!(jev.calls(), 1);
+    let pedido = jev.requests().pop().expect("um pedido");
+    assert!(pedido.questions.contains_key("g8_encerrada"));
     assert_eq!(resultado.choice(IdGate::G8), Some(G8_ENDED));
 }
 

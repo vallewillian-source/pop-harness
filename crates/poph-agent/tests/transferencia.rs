@@ -22,8 +22,8 @@ use poph_agent::turno::{
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, Usage};
 use poph_jev::{
-    ANIMAL_RISK, BatchResponse, G1_CONTINUE, G1_TRANSFER, HandoffGuidance, INGESTION_RISK, IdGate,
-    JevEngine, JevFalso, JevResponse, NO_RISK, OTHER_RISK, Pedido, RISK_QUESTION_ID,
+    ANIMAL_RISK, BatchResponse, FakeJev, G1_CONTINUE, G1_TRANSFER, HandoffGuidance, INGESTION_RISK,
+    IdGate, JevEngine, JevRequest, JevResponse, NO_RISK, OTHER_RISK, RISK_QUESTION_ID,
 };
 use poph_store::{
     AgentChange, Direction, NewAgent, NewConversation, NewMessage, NewOrg, Page, Role, Store,
@@ -346,13 +346,13 @@ fn resposta(escolha: &str, confianca: f64) -> JevResponse {
 }
 
 /// Jev falso que decide o G1 e responde a pergunta de risco como pedido.
-fn jev(decisao: &'static str, confianca: f64, risco: Option<(&'static str, f64)>) -> Arc<JevFalso> {
-    Arc::new(JevFalso::novo(move |pedido: &Pedido| {
+fn jev(decisao: &'static str, confianca: f64, risco: Option<(&'static str, f64)>) -> Arc<FakeJev> {
+    Arc::new(FakeJev::new(move |pedido: &JevRequest| {
         let mut respostas = BTreeMap::new();
-        if pedido.perguntas.contains_key("g1_transferir") {
+        if pedido.questions.contains_key("g1_transferir") {
             respostas.insert("g1_transferir".to_owned(), resposta(decisao, confianca));
         }
-        if pedido.perguntas.contains_key(RISK_QUESTION_ID)
+        if pedido.questions.contains_key(RISK_QUESTION_ID)
             && let Some((tipo, confianca)) = risco
         {
             respostas.insert(RISK_QUESTION_ID.to_owned(), resposta(tipo, confianca));
@@ -365,7 +365,7 @@ fn jev(decisao: &'static str, confianca: f64, risco: Option<(&'static str, f64)>
     }))
 }
 
-fn motor_jev(jev: Arc<JevFalso>) -> Arc<JevEngine> {
+fn motor_jev(jev: Arc<FakeJev>) -> Arc<JevEngine> {
     Arc::new(JevEngine::new(jev, so_g1(), "jev-latest"))
 }
 
@@ -469,10 +469,10 @@ async fn transfere_com_orientacao_e_nao_chama_o_modelo() {
         observador.eventos
     );
     // A segunda pergunta saiu numa chamada própria, com o estado do turno.
-    let pedidos = jev.pedidos();
+    let pedidos = jev.requests();
     assert_eq!(pedidos.len(), 2);
     assert_eq!(
-        pedidos[1].perguntas.keys().collect::<Vec<_>>(),
+        pedidos[1].questions.keys().collect::<Vec<_>>(),
         vec![RISK_QUESTION_ID]
     );
     assert_eq!(pedidos[1].estado["canal"], "cli");
@@ -504,7 +504,7 @@ async fn transferida_nao_responde_ate_reabrir() {
     let conversa = cenario.conversa();
     // O Jev só transfere quando a última mensagem fala da cobra: depois de reabrir, a conversa
     // segue normalmente, como aconteceria com o Jev de verdade.
-    let jev = Arc::new(JevFalso::novo(|pedido: &Pedido| {
+    let jev = Arc::new(FakeJev::new(|pedido: &JevRequest| {
         let ultima = pedido.estado["conversa"]["mensagens"]
             .as_array()
             .and_then(|mensagens| mensagens.last())
@@ -512,7 +512,7 @@ async fn transferida_nao_responde_ate_reabrir() {
             .unwrap_or("")
             .to_owned();
         let mut respostas = BTreeMap::new();
-        if pedido.perguntas.contains_key("g1_transferir") {
+        if pedido.questions.contains_key("g1_transferir") {
             let escolha = if ultima.contains("cobra") {
                 G1_TRANSFER
             } else {
@@ -520,7 +520,7 @@ async fn transferida_nao_responde_ate_reabrir() {
             };
             respostas.insert("g1_transferir".to_owned(), resposta(escolha, 0.95));
         }
-        if pedido.perguntas.contains_key(RISK_QUESTION_ID) {
+        if pedido.questions.contains_key(RISK_QUESTION_ID) {
             respostas.insert(RISK_QUESTION_ID.to_owned(), resposta(ANIMAL_RISK, 0.9));
         }
         Ok(BatchResponse {
@@ -573,8 +573,8 @@ async fn erro_na_pergunta_de_risco_transfere_com_a_mensagem_automatica() {
     let cenario = Cenario::novo("risco-erro", true);
     let conversa = cenario.conversa();
     // O G1 responde; a pergunta de risco recebe erro do provedor.
-    let jev = Arc::new(JevFalso::novo(|pedido: &Pedido| {
-        if pedido.perguntas.contains_key(RISK_QUESTION_ID) {
+    let jev = Arc::new(FakeJev::new(|pedido: &JevRequest| {
+        if pedido.questions.contains_key(RISK_QUESTION_ID) {
             return Err(poph_jev::JevError::Status {
                 code: 503,
                 motivo: "Service Unavailable".to_owned(),
@@ -618,11 +618,11 @@ async fn prazo_na_pergunta_de_risco_suprime_so_a_orientacao() {
     // O Jev falso responde com 200 ms de atraso nas duas chamadas; o prazo da pergunta de risco
     // (20 ms) é o que se mede aqui — o lote do G1 tem prazo próprio, bem maior.
     let jev = Arc::new(
-        JevFalso::com_escolhas(BTreeMap::from([
+        FakeJev::with_choices(BTreeMap::from([
             ("g1_transferir".to_owned(), G1_TRANSFER.to_owned()),
             (RISK_QUESTION_ID.to_owned(), INGESTION_RISK.to_owned()),
         ]))
-        .com_atraso(Duration::from_millis(200)),
+        .with_delay(Duration::from_millis(200)),
     );
     let orientacao = HandoffGuidance::default().with_timeout(Duration::from_millis(20));
     let motor = cenario.motor(Some(motor_jev(jev)), orientacao);
@@ -677,8 +677,8 @@ async fn orientacao_desligada_nao_faz_a_segunda_pergunta() {
     let resumo = cenario.turno(&motor, conversa, gatilho).await;
 
     assert_eq!(resumo.texto, APROVADA_AUTOMATICA);
-    assert_eq!(jev.pedidos().len(), 1, "só o lote do turno foi chamado");
-    assert_eq!(jev.chamadas(), 1);
+    assert_eq!(jev.requests().len(), 1, "só o lote do turno foi chamado");
+    assert_eq!(jev.calls(), 1);
 }
 
 /// Texto de orientação vazio na configuração: o tipo não orienta (§5.3).
@@ -829,14 +829,14 @@ async fn segunda_pergunta_nao_usa_o_cache_do_lote() {
     let gatilho = cenario.falar(conversa, "engoliu o produto");
     cenario.turno(&motor, conversa, gatilho).await;
     // Uma chamada para o lote e uma para o risco — o risco não vem do cache do G1.
-    assert_eq!(jev.pedidos().len(), 2);
+    assert_eq!(jev.requests().len(), 2);
     assert_eq!(
-        jev.pedidos()[1].perguntas.keys().collect::<Vec<_>>(),
+        jev.requests()[1].questions.keys().collect::<Vec<_>>(),
         vec![RISK_QUESTION_ID]
     );
     // O estado da segunda pergunta é o mesmo da primeira (mesma conversa).
     assert_eq!(
-        jev.pedidos()[0].estado["conversa"],
-        jev.pedidos()[1].estado["conversa"]
+        jev.requests()[0].estado["conversa"],
+        jev.requests()[1].estado["conversa"]
     );
 }

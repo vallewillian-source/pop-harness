@@ -24,8 +24,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use poph_jev::{
-    BatchResponse, GateEvaluator, GateOverrides, JevEngine, JevFalso, JevFlow, JevMessage,
-    JevResponse, JevState, Pedido, TransporteJev,
+    BatchResponse, FakeJev, GateEvaluator, GateOverrides, JevEngine, JevFlow, JevMessage,
+    JevRequest, JevResponse, JevState, JevTransport,
 };
 use poph_types::JevGates;
 
@@ -66,10 +66,10 @@ fn estado(rodada: usize, fluxos: usize) -> JevState {
 }
 
 /// Motor com Jev falso: responde a primeira opção de cada pergunta, confiança 1,0.
-fn motor() -> (Arc<JevFalso>, JevEngine) {
-    let falso = Arc::new(JevFalso::novo(|pedido: &Pedido| {
+fn motor() -> (Arc<FakeJev>, JevEngine) {
+    let falso = Arc::new(FakeJev::new(|pedido: &JevRequest| {
         let mut respostas = BTreeMap::new();
-        for (id, pergunta) in &pedido.perguntas {
+        for (id, pergunta) in &pedido.questions {
             let escolha = pergunta
                 .rubric
                 .keys()
@@ -90,7 +90,7 @@ fn motor() -> (Arc<JevFalso>, JevEngine) {
         })
     }));
     let motor = JevEngine::new(
-        Arc::clone(&falso) as Arc<dyn TransporteJev>,
+        Arc::clone(&falso) as Arc<dyn JevTransport>,
         JevGates::default_value(),
         "jev-de-medicao",
     );
@@ -123,15 +123,15 @@ async fn medir(
         amostras.push(inicio.elapsed().as_micros());
         assert!(!resultado.failed(), "o lote de {rotulo} falhou");
     }
-    let pedidos = falso.pedidos();
+    let pedidos = falso.requests();
     let ultimo = pedidos.last().expect("o lote chamou o Jev");
-    let bytes = serde_json::to_vec(&ultimo.para_json())
+    let bytes = serde_json::to_vec(&ultimo.to_json())
         .expect("serializa o pedido")
         .len();
     let bytes_estado = serde_json::to_vec(&ultimo.estado)
         .expect("serializa o estado")
         .len();
-    let perguntas = ultimo.perguntas.len();
+    let perguntas = ultimo.questions.len();
 
     let mut ordenadas = amostras.clone();
     ordenadas.sort_unstable();

@@ -9,8 +9,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use poph_jev::{
-    BatchResponse, DecisionOrigin, G7, G7_ABUSE, G7_INJECTION, G7_NORMAL, Gate, GateEvaluator,
-    IdGate, JevEngine, JevFalso, JevMessage, JevResponse, JevState, QuestionType,
+    BatchResponse, DecisionOrigin, FakeJev, G7, G7_ABUSE, G7_INJECTION, G7_NORMAL, Gate,
+    GateEvaluator, IdGate, JevEngine, JevMessage, JevResponse, JevState, QuestionType,
     g7_requests_action,
 };
 use poph_types::JevGates;
@@ -128,10 +128,10 @@ fn sem_arquivo_o_estado_nao_ganha_o_campo() {
 }
 
 /// Jev falso que responde a escolha dada quando o pedido traz a pergunta do G7.
-fn jev_da_escolha(escolha: &'static str, confianca: f64) -> Arc<JevFalso> {
-    Arc::new(JevFalso::novo(move |pedido| {
+fn jev_da_escolha(escolha: &'static str, confianca: f64) -> Arc<FakeJev> {
+    Arc::new(FakeJev::new(move |pedido| {
         let mut respostas = BTreeMap::new();
-        if pedido.perguntas.contains_key("g7_injecao") {
+        if pedido.questions.contains_key("g7_injecao") {
             respostas.insert(
                 "g7_injecao".to_owned(),
                 JevResponse {

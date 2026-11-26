@@ -266,8 +266,8 @@ pub fn montar(
             None => eprintln!(
                 "[aviso] Jev ligado na configuração, mas sem TYPESAFE_API_KEY: seguindo sem Jev"
             ),
-            Some(chave) => match poph_jev::ConfigJev::da_config(&configuracao.jev, chave)
-                .and_then(|cliente| poph_jev::ClienteJev::novo(cliente, metricas_jev))
+            Some(chave) => match poph_jev::JevClientConfig::from_config(&configuracao.jev, chave)
+                .and_then(|cliente| poph_jev::JevClient::new(cliente, metricas_jev))
             {
                 Ok(transporte) => {
                     let avaliador = poph_jev::JevEngine::new(

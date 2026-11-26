@@ -10,8 +10,8 @@
 use std::collections::BTreeMap;
 
 use poph_jev::{
-    BatchResponse, DecisionOrigin, G4, Gate, GateEvaluator, IdGate, JevEngine, JevFalso,
-    JevMessage, JevResponse, JevState, Pedido, eval::ajuste_de_gate, match_candidate,
+    BatchResponse, DecisionOrigin, FakeJev, G4, Gate, GateEvaluator, IdGate, JevEngine, JevMessage,
+    JevRequest, JevResponse, JevState, eval::ajuste_de_gate, match_candidate,
 };
 
 fn estado(departamentos: &[&str], texto: &str) -> JevState {
@@ -176,9 +176,9 @@ fn casamento_de_nomes_e_estrito_sem_ser_burro() {
 /// escolha crua preservada (é o que o `poph jev eval` mostra).
 #[tokio::test]
 async fn lote_do_g4_e_o_fallback_preserva_a_escolha_crua() {
-    let jev = std::sync::Arc::new(JevFalso::novo(|pedido: &Pedido| {
+    let jev = std::sync::Arc::new(FakeJev::new(|pedido: &JevRequest| {
         assert_eq!(
-            pedido.perguntas.keys().collect::<Vec<_>>(),
+            pedido.questions.keys().collect::<Vec<_>>(),
             vec![IdGate::G4.question_id()]
         );
         let mut respostas = BTreeMap::new();
@@ -218,7 +218,7 @@ async fn lote_do_g4_e_o_fallback_preserva_a_escolha_crua() {
 /// Gate desligado não gera decisão nenhuma (o turno cai no padrão do agente).
 #[tokio::test]
 async fn gate_desligado_nao_decide_nada() {
-    let jev = std::sync::Arc::new(JevFalso::com_escolhas(BTreeMap::from([(
+    let jev = std::sync::Arc::new(FakeJev::with_choices(BTreeMap::from([(
         IdGate::G4.question_id().to_owned(),
         "Suporte".to_owned(),
     )])));

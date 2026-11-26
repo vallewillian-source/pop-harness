@@ -36,7 +36,7 @@ use poph_agent::turno::{
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, Usage};
 use poph_jev::{
-    BatchResponse, G8_DEFAULT_FAREWELL, JevEngine, JevError, JevFalso, JevResponse as RespostaJev,
+    BatchResponse, FakeJev, G8_DEFAULT_FAREWELL, JevEngine, JevError, JevResponse as RespostaJev,
 };
 use poph_store::{
     AgentChange, ConversationStatus, Direction, NewAgent, NewConversation, NewMessage, Page, Role,
@@ -364,7 +364,7 @@ type RespostaRoteirizada = (&'static str, &'static str, f64);
 /// Respostas de um texto de cliente, dono e tradução para o Jev falso.
 type RespostasDoTexto = Vec<(String, String, f64)>;
 
-fn jev_por_texto(tabela: &[(&str, &[RespostaRoteirizada])]) -> Arc<JevFalso> {
+fn jev_por_texto(tabela: &[(&str, &[RespostaRoteirizada])]) -> Arc<FakeJev> {
     let tabela: Vec<(String, RespostasDoTexto)> = tabela
         .iter()
         .map(|(texto, itens)| {
@@ -379,7 +379,7 @@ fn jev_por_texto(tabela: &[(&str, &[RespostaRoteirizada])]) -> Arc<JevFalso> {
             )
         })
         .collect();
-    Arc::new(JevFalso::novo(move |pedido| {
+    Arc::new(FakeJev::new(move |pedido| {
         let ultimo = ultima_fala_do_cliente(&pedido.estado);
         let mut respostas = BTreeMap::new();
         if let Some((_, itens)) = tabela.iter().find(|(texto, _)| *texto == ultimo) {
@@ -416,7 +416,7 @@ fn ultima_fala_do_cliente(estado: &serde_json::Value) -> String {
         .to_owned()
 }
 
-fn motor_jev(jev: Arc<JevFalso>, gates: JevGates) -> Arc<JevEngine> {
+fn motor_jev(jev: Arc<FakeJev>, gates: JevGates) -> Arc<JevEngine> {
     Arc::new(JevEngine::new(jev, gates, "jev-latest"))
 }
 
@@ -632,7 +632,7 @@ async fn g8_primeira_mensagem_nao_pergunta_nem_fecha() {
     let resumo = cenario.turno(&motor, gatilho).await;
 
     assert_eq!(
-        jev.chamadas(),
+        jev.calls(),
         0,
         "sem fala anterior do agente, o G8 nem é perguntado"
     );
@@ -654,7 +654,7 @@ async fn g8_desligado_nao_pergunta_nem_fecha() {
     let gatilho = cenario.falar(ENCERRA);
     let resumo = cenario.turno(&motor, gatilho).await;
 
-    assert_eq!(jev.chamadas(), 0, "com o G8 desligado nenhuma pergunta");
+    assert_eq!(jev.calls(), 0, "com o G8 desligado nenhuma pergunta");
     assert_eq!(resumo.texto, "Até mais, qualquer coisa estou aqui.");
     assert_eq!(
         provedor.received().len(),
@@ -665,10 +665,10 @@ async fn g8_desligado_nao_pergunta_nem_fecha() {
 
 #[tokio::test]
 async fn g8_falha_ou_duvida_do_jev_segue_como_hoje() {
-    let casos: Vec<(&str, Arc<JevFalso>)> = vec![
+    let casos: Vec<(&str, Arc<FakeJev>)> = vec![
         (
             "jev fora do ar",
-            Arc::new(JevFalso::falhando(JevError::TimedOut { ms: 8000 })),
+            Arc::new(FakeJev::failing(JevError::TimedOut { ms: 8000 })),
         ),
         (
             "confiança 0,79",

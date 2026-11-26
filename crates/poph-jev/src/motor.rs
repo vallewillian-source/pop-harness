@@ -7,7 +7,7 @@ use poph_types::JevGates;
 use serde_json::{Value, json};
 
 use crate::cache::{CacheOptions, DecisionCache};
-use crate::cliente::{Pedido, TransporteJev};
+use crate::client::{JevRequest, JevTransport};
 use crate::flags::GateOverrides;
 use crate::gate::{Decisao, DecisionOrigin, Gate, Thresholds};
 use crate::gates;
@@ -141,7 +141,7 @@ pub trait GateEvaluator: Send + Sync {
 }
 
 pub struct JevEngine {
-    transport: Arc<dyn TransporteJev>,
+    transport: Arc<dyn JevTransport>,
     gates: Vec<Box<dyn Gate>>,
     globals: JevGates,
     modelo: String,
@@ -165,7 +165,7 @@ impl std::fmt::Debug for JevEngine {
 
 impl JevEngine {
     pub fn new(
-        transport: Arc<dyn TransporteJev>,
+        transport: Arc<dyn JevTransport>,
         globals: JevGates,
         modelo: impl Into<String>,
     ) -> Self {
@@ -270,13 +270,13 @@ impl JevEngine {
                 .map(|gate| (gate.id().question_id().to_owned(), gate.question(&estado)))
                 .collect();
             report.questions = questions.len();
-            let request = Pedido {
+            let request = JevRequest {
                 estado: estado.to_json(),
                 modelo: self.modelo.clone(),
-                perguntas: questions,
+                questions,
             };
             let started = Instant::now();
-            match tokio::time::timeout(self.batch_timeout, self.transport.julgar(request)).await {
+            match tokio::time::timeout(self.batch_timeout, self.transport.judge(request)).await {
                 Ok(Ok(batch)) => {
                     report.ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
                     report.tokens = batch.tokens;
@@ -382,13 +382,13 @@ impl GateEvaluator for JevEngine {
                 crate::handoff::RISK_QUESTION_ID.to_owned(),
                 crate::handoff::risk_question(),
             );
-            let request = Pedido {
+            let request = JevRequest {
                 estado: estado.to_json(),
                 modelo: self.modelo.clone(),
-                perguntas: questions,
+                questions,
             };
             let started = Instant::now();
-            match tokio::time::timeout(deadline, self.transport.julgar(request)).await {
+            match tokio::time::timeout(deadline, self.transport.judge(request)).await {
                 Ok(Ok(batch)) => {
                     let response = batch.answers.get(crate::handoff::RISK_QUESTION_ID);
                     GuidanceResult {

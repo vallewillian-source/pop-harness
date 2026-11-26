@@ -10,7 +10,7 @@ use poph_agent::turno::{
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, ToolCall, Usage};
 use poph_fluxos::{Limites, compilar};
-use poph_jev::{JevEngine, JevFalso};
+use poph_jev::{FakeJev, JevEngine};
 use poph_store::{
     ConversationStatus, Direction, NewAgent, NewConversation, NewFlow, NewMessage, NewOrg,
     RevisionPublication, Role, Store, TurnState,
@@ -317,7 +317,7 @@ fn gates_com_g9() -> JevGates {
     }
 }
 
-fn motor_jev(jev: Arc<JevFalso>) -> Arc<JevEngine> {
+fn motor_jev(jev: Arc<FakeJev>) -> Arc<JevEngine> {
     Arc::new(JevEngine::new(jev, gates_com_g9(), "jev-latest"))
 }
 
@@ -372,7 +372,7 @@ async fn executar(
     slug: &str,
     roteiros: Vec<Script>,
 ) -> Arc<FakeProvider> {
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
+    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g9_iniciar_fluxo",
         slug,
     )])));
@@ -739,7 +739,7 @@ async fn jev_falha_reserva_inicia_permitido_e_recusa_nao_liberado() {
     let permitido = c.criar_fluxo("agendar_visita", "Agendar visita", VISITA, true);
     c.criar_fluxo("triagem_suporte", "Triagem de suporte", TRIAGEM, false);
     let conversa = c.conversa();
-    let jev = Arc::new(JevFalso::falhando(poph_jev::JevError::Network(
+    let jev = Arc::new(FakeJev::failing(poph_jev::JevError::Network(
         "indisponível no teste".into(),
     )));
     let (motor, provedor) = c.motor(

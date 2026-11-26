@@ -33,18 +33,25 @@
 Resposta: `{"answers": {"g1_transferir": {"type":"choice","choice":"…","probabilities":{…},"confidence":0.93}}, "usage": {…}}`.
 `score` e `noul` também são lidos (ficam em `Resposta.score`/`.noul`); os gates da V1 usam `choice`.
 
-Regras do cliente (`crates/poph-jev/src/cliente.rs`):
+Regras do cliente (`crates/poph-jev/src/client.rs`):
 
-- **uma retentativa**, só em 429, 5xx, queda de conexão ou prazo;
+- **uma retentativa**, só em 429, 5xx, queda de conexão ou prazo; a configuração aceita de 0 a 3
+  (`[jev].retentativas`), e cada retentativa espera 500 ms antes de ser enviada;
 - **prazo por tentativa**: `[jev].timeout_segundos` (padrão 8 s); o lote inteiro tem prazo próprio
   (12 s) para nunca segurar o turno;
-- a chave vem **só de `TYPESAFE_API_KEY`** e só entra no cabeçalho `Authorization`; erro carrega o
-  código HTTP e o motivo, nunca o corpo (que pode ecoar a chave) — há teste com subscriber global
-  provando que a chave não aparece em log nem em erro;
+- a chave vem **só de `TYPESAFE_API_KEY`** e só entra no cabeçalho `Authorization`; o `Debug` da
+  configuração e do pedido não a mostra; erro carrega o código HTTP e o motivo, nunca o corpo (que
+  pode ecoar a chave) — há teste com subscriber global provando que a chave não aparece em log nem
+  em erro;
 - **`http://` e `https://` são aceitos** (HR-10b): o TLS usa `rustls` com as raízes do sistema, então
   `[jev].url_base = https://api.typesafe.ai` (o padrão da configuração) funciona. Falha de TLS —
   certificado não confiável, nome errado, handshake recusado — é **definitiva** e não é retentada;
-  queda de rede e prazo continuam transitórios. Ver a D-16 em `docs/DECISOES.md`.
+  queda de rede e prazo continuam transitórios. A falha de TLS é reconhecida pelo texto das causas
+  do erro (a mesma lista do cliente do LLM, porque o `rustls` não é dependência deste crate), e o
+  detalhe sai numa linha só, com até 200 caracteres. Ver a D-16 em `docs/DECISOES.md`.
+- **só para teste**: `JevClient::with_test_root` acrescenta uma raiz de confiança sem desligar a
+  validação de certificado, nome e cadeia; `FakeJev` nunca fala com a rede — conta as chamadas e
+  guarda os pedidos, o que prova, por exemplo, que três gates ligados geram uma requisição.
 
 ### 1.1 O que o estado leva e até onde
 

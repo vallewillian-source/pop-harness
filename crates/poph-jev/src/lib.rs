@@ -4,7 +4,7 @@
 //! departamento) em ~255–315 ms e custo de entrada, sem gastar o modelo de texto. Aqui ficam:
 //!
 //! - [`cliente`]: `POST /v1/systemone` com uma retentativa, prazo por tentativa e a chave só no
-//!   cabeçalho — mais o [`cliente::JevFalso`] que os testes usam;
+//!   cabeçalho — mais o [`client::FakeJev`] que os testes usam;
 //! - [`estado`]: o que o Jev enxerga (conversa recente, política da empresa, capacidades) e o hash
 //!   que identifica a decisão no cache;
 //! - [`gate`]: o molde `Gate` (pergunta, aplicabilidade, limiares, interpretação, fallback);
@@ -21,7 +21,7 @@
 //! das tarefas HR-29 a HR-36, que medem antes de ligar.
 
 pub mod cache;
-pub mod cliente;
+pub mod client;
 pub mod eval;
 pub mod flags;
 pub mod gate;
@@ -32,7 +32,7 @@ pub mod state;
 pub mod types;
 
 pub use cache::{CacheOptions, DecisionCache};
-pub use cliente::{ClienteJev, ConfigJev, JevFalso, Pedido, TransporteJev};
+pub use client::{FakeJev, JevClient, JevClientConfig, JevRequest, JevTransport};
 pub use eval::{
     CasoRotulado, DetalheCaso, ErroConjunto, RelatorioEval, avaliar_conjunto, ler_conjunto,
 };

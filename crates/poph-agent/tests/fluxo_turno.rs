@@ -24,7 +24,7 @@ use poph_agent::turno::{
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, Usage};
 use poph_fluxos::{Limites, compilar};
-use poph_jev::{G9_NONE, IdGate, JevEngine, JevError, JevFalso};
+use poph_jev::{FakeJev, G9_NONE, IdGate, JevEngine, JevError};
 use poph_store::{
     AgentChange, Direction, NewAgent, NewConversation, NewFlow, NewMessage, NewOrg,
     RevisionPublication, Role, Store,
@@ -352,7 +352,7 @@ fn so_g9() -> JevGates {
     }
 }
 
-fn motor_jev(jev: Arc<JevFalso>) -> Arc<JevEngine> {
+fn motor_jev(jev: Arc<FakeJev>) -> Arc<JevEngine> {
     Arc::new(JevEngine::new(jev, so_g9(), "jev-latest"))
 }
 
@@ -381,7 +381,7 @@ async fn inicio_acontece_antes_da_chamada_do_modelo() {
     let cenario = Cenario::novo("antes");
     let fluxo = cenario.fluxo(cenario.agente);
     let conversa = cenario.conversa(cenario.agente);
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
+    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g9_iniciar_fluxo",
         &fluxo.slug,
     )])));
@@ -429,7 +429,7 @@ async fn prefixo_estavel_identico_com_e_sem_fluxo() {
 
     // Conversa A: o Jev escolhe o fluxo.
     let com_fluxo = cenario.conversa(cenario.agente);
-    let jev_com = Arc::new(JevFalso::com_escolhas(escolhas(&[(
+    let jev_com = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g9_iniciar_fluxo",
         &fluxo.slug,
     )])));
@@ -444,7 +444,7 @@ async fn prefixo_estavel_identico_com_e_sem_fluxo() {
 
     // Conversa B: o Jev responde "nenhum" — turno sem fluxo, mesmo agente.
     let sem_fluxo = cenario.conversa(cenario.agente);
-    let jev_sem = Arc::new(JevFalso::com_escolhas(escolhas(&[(
+    let jev_sem = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g9_iniciar_fluxo",
         G9_NONE,
     )])));
@@ -483,7 +483,7 @@ async fn nenhum_e_limiar_baixo_nao_iniciam_e_nao_oferecem_catalogo() {
 
     // (a) `nenhum`.
     let conversa = cenario.conversa(cenario.agente);
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
+    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g9_iniciar_fluxo",
         G9_NONE,
     )])));
@@ -511,7 +511,7 @@ async fn nenhum_e_limiar_baixo_nao_iniciam_e_nao_oferecem_catalogo() {
 
     // (b) o mesmo fluxo, com o Jev escolhendo com confiança baixa.
     let conversa = cenario.conversa(cenario.agente);
-    let baixa = Arc::new(JevFalso::novo(|_pedido| {
+    let baixa = Arc::new(FakeJev::new(|_pedido| {
         let mut respostas = std::collections::BTreeMap::new();
         respostas.insert(
             "g9_iniciar_fluxo".to_owned(),
@@ -551,7 +551,7 @@ async fn jev_fora_entrega_a_reserva() {
     let cenario = Cenario::novo("reserva");
     let fluxo = cenario.fluxo(cenario.agente);
     let conversa = cenario.conversa(cenario.agente);
-    let jev = Arc::new(JevFalso::falhando(JevError::Network(
+    let jev = Arc::new(FakeJev::failing(JevError::Network(
         "sem rede no teste".to_owned(),
     )));
     let g9 = MetricasG9::proprias();
@@ -616,7 +616,7 @@ async fn fluxo_inativo_nao_entra_nas_opcoes_nem_inicia() {
         .expect("desativa o fluxo");
 
     let conversa = cenario.conversa(cenario.agente);
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
+    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g9_iniciar_fluxo",
         &fluxo.slug,
     )])));
@@ -661,7 +661,7 @@ async fn fluxo_nao_liberado_nao_entra_nas_opcoes_nem_inicia() {
     let fluxo = cenario.fluxo(outro);
 
     let conversa = cenario.conversa(cenario.agente);
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
+    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g9_iniciar_fluxo",
         &fluxo.slug,
     )])));
@@ -753,7 +753,7 @@ async fn fluxo_de_outra_org_nunca_inicia() {
         .expect("libera para o vizinho");
 
     let conversa = cenario.conversa(cenario.agente);
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
+    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g9_iniciar_fluxo",
         "agendar_visita",
     )])));
@@ -828,7 +828,7 @@ async fn execucao_ativa_nao_pergunta_o_jev() {
         )
         .expect("o atendente abre a execução");
 
-    let jev = Arc::new(JevFalso::com_escolhas(std::collections::BTreeMap::new()));
+    let jev = Arc::new(FakeJev::with_choices(std::collections::BTreeMap::new()));
     let (motor, provedor) = cenario.motor(
         cenario.agente,
         Some(motor_jev(Arc::clone(&jev))),
@@ -838,11 +838,7 @@ async fn execucao_ativa_nao_pergunta_o_jev() {
     let gatilho = cenario.falar(conversa, "meu nome é Ana Teste");
     cenario.turno(&motor, conversa, gatilho).await;
 
-    assert_eq!(
-        jev.chamadas(),
-        0,
-        "com execução ativa não há pergunta ao Jev"
-    );
+    assert_eq!(jev.calls(), 0, "com execução ativa não há pergunta ao Jev");
     let pedidos = provedor.received();
     assert!(pedido(&pedidos[0], "Fluxo em andamento: Agendar visita."));
     let turno = cenario.ultimo_turno(conversa);
@@ -856,7 +852,7 @@ async fn fluxos_desligados_ignoram_tudo_e_a_ficha_segue() {
     let cenario = Cenario::novo("desligado");
     let fluxo = cenario.fluxo(cenario.agente);
     let conversa = cenario.conversa(cenario.agente);
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
+    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g9_iniciar_fluxo",
         &fluxo.slug,
     )])));
@@ -876,7 +872,7 @@ async fn fluxos_desligados_ignoram_tudo_e_a_ficha_segue() {
         cenario.ativa(conversa).is_none(),
         "motor desligado não inicia"
     );
-    assert_eq!(jev.chamadas(), 0, "motor desligado não pergunta ao Jev");
+    assert_eq!(jev.calls(), 0, "motor desligado não pergunta ao Jev");
     assert!(!pedido(&provedor.received()[0], "<fluxos_de_atendimento>"));
     assert!(
         cenario
@@ -895,7 +891,7 @@ async fn painel_por_que_mostra_a_decisao() {
     let cenario = Cenario::novo("painel");
     let fluxo = cenario.fluxo(cenario.agente);
     let conversa = cenario.conversa(cenario.agente);
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
+    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g9_iniciar_fluxo",
         &fluxo.slug,
     )])));
@@ -929,7 +925,7 @@ async fn gate_desligado_no_agente_entrega_a_reserva_sem_perguntar() {
     let fluxo = cenario.fluxo(cenario.agente);
     cenario.ajustar_jev_do_agente(cenario.agente, r#"{"g9": false}"#);
     let conversa = cenario.conversa(cenario.agente);
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
+    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g9_iniciar_fluxo",
         &fluxo.slug,
     )])));
@@ -942,7 +938,7 @@ async fn gate_desligado_no_agente_entrega_a_reserva_sem_perguntar() {
     let gatilho = cenario.falar(conversa, "quero marcar uma visita");
     cenario.turno(&motor, conversa, gatilho).await;
 
-    assert_eq!(jev.chamadas(), 0, "gate desligado não é perguntado");
+    assert_eq!(jev.calls(), 0, "gate desligado não é perguntado");
     assert!(cenario.ativa(conversa).is_none(), "e nada inicia sozinho");
     let pedidos = provedor.received();
     assert!(
@@ -960,7 +956,7 @@ async fn estado_do_g9_leva_os_fluxos_liberados() {
     let cenario = Cenario::novo("estado");
     let fluxo = cenario.fluxo(cenario.agente);
     let conversa = cenario.conversa(cenario.agente);
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
+    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g9_iniciar_fluxo",
         &fluxo.slug,
     )])));
@@ -973,8 +969,8 @@ async fn estado_do_g9_leva_os_fluxos_liberados() {
     let gatilho = cenario.falar(conversa, "quero marcar uma visita");
     cenario.turno(&motor, conversa, gatilho).await;
 
-    let pedido = &jev.pedidos()[0];
-    assert!(pedido.perguntas.contains_key("g9_iniciar_fluxo"));
+    let pedido = &jev.requests()[0];
+    assert!(pedido.questions.contains_key("g9_iniciar_fluxo"));
     let liberados = &pedido.estado["fluxos"]["liberados"];
     assert_eq!(liberados[0]["id"], "agendar_visita");
     assert_eq!(liberados[0]["nome"], "Agendar visita");

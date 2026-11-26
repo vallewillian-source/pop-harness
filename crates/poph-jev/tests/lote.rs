@@ -9,8 +9,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use poph_jev::{
-    DecisionOrigin, G1_CONTINUE, G1_TRANSFER, G2_PROCESS, G3_BASE, G3_NOTHING, GateEvaluator,
-    GateOverrides, IdGate, JevEngine, JevError, JevFalso, JevMessage, JevOptions, JevState,
+    DecisionOrigin, FakeJev, G1_CONTINUE, G1_TRANSFER, G2_PROCESS, G3_BASE, G3_NOTHING,
+    GateEvaluator, GateOverrides, IdGate, JevEngine, JevError, JevMessage, JevOptions, JevState,
 };
 use poph_types::JevGates;
 
@@ -44,14 +44,14 @@ fn escolhas(itens: &[(&str, &str)]) -> BTreeMap<String, String> {
         .collect()
 }
 
-fn motor(jev: Arc<JevFalso>, globais: JevGates) -> Arc<JevEngine> {
+fn motor(jev: Arc<FakeJev>, globais: JevGates) -> Arc<JevEngine> {
     Arc::new(JevEngine::new(jev, globais, "jev-latest"))
 }
 
 /// Aceite 1: três gates ligados geram **uma** requisição, e a resposta é distribuída certo.
 #[tokio::test]
 async fn tres_gates_ligados_geram_uma_requisicao_e_distribuem_as_respostas() {
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[
+    let jev = Arc::new(FakeJev::with_choices(escolhas(&[
         ("g1_transferir", G1_CONTINUE),
         ("g2_esperar", G2_PROCESS),
         ("g3_precisa", G3_BASE),
@@ -60,9 +60,9 @@ async fn tres_gates_ligados_geram_uma_requisicao_e_distribuem_as_respostas() {
 
     let resultado = avaliador.evaluate(estado(), None).await;
 
-    assert_eq!(jev.chamadas(), 1, "o lote é um pedido só");
-    let pedido = &jev.pedidos()[0];
-    assert_eq!(pedido.perguntas.len(), 3, "três perguntas no mesmo pedido");
+    assert_eq!(jev.calls(), 1, "o lote é um pedido só");
+    let pedido = &jev.requests()[0];
+    assert_eq!(pedido.questions.len(), 3, "três perguntas no mesmo pedido");
     assert_eq!(pedido.modelo, "jev-latest");
     assert_eq!(resultado.call.questions, 3);
     assert_eq!(resultado.call.tokens, 12);
@@ -86,14 +86,14 @@ async fn tres_gates_ligados_geram_uma_requisicao_e_distribuem_as_respostas() {
 /// O estado vai no pedido: conversa, política e capacidades.
 #[tokio::test]
 async fn o_pedido_leva_o_estado_da_conversa() {
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
+    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g1_transferir",
         G1_CONTINUE,
     )])));
     let avaliador = motor(Arc::clone(&jev), gates(true, false, false, false));
     avaliador.evaluate(estado(), None).await;
 
-    let enviado = &jev.pedidos()[0].estado;
+    let enviado = &jev.requests()[0].estado;
     assert_eq!(enviado["canal"], "cli");
     assert_eq!(
         enviado["conversa"]["mensagens"][2]["texto"],
@@ -106,12 +106,12 @@ async fn o_pedido_leva_o_estado_da_conversa() {
 /// Aceite: flag desligada não gera pergunta — e sem gate ligado o motor nem chama o Jev.
 #[tokio::test]
 async fn sem_gate_ligado_nenhuma_pergunta_e_enviada() {
-    let jev = Arc::new(JevFalso::com_escolhas(BTreeMap::new()));
+    let jev = Arc::new(FakeJev::with_choices(BTreeMap::new()));
     let avaliador = motor(Arc::clone(&jev), JevGates::default());
 
     let resultado = avaliador.evaluate(estado(), None).await;
 
-    assert_eq!(jev.chamadas(), 0);
+    assert_eq!(jev.calls(), 0);
     assert!(resultado.decisions.is_empty());
     assert!(!resultado.failed());
 }
@@ -119,7 +119,7 @@ async fn sem_gate_ligado_nenhuma_pergunta_e_enviada() {
 /// Aceite: cache evita a mesma pergunta no mesmo estado.
 #[tokio::test]
 async fn cache_evita_pergunta_repetida_no_mesmo_estado() {
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
+    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g1_transferir",
         G1_TRANSFER,
     )])));
@@ -128,7 +128,7 @@ async fn cache_evita_pergunta_repetida_no_mesmo_estado() {
     let primeiro = avaliador.evaluate(estado(), None).await;
     let segundo = avaliador.evaluate(estado(), None).await;
 
-    assert_eq!(jev.chamadas(), 1, "a segunda vez veio do cache");
+    assert_eq!(jev.calls(), 1, "a segunda vez veio do cache");
     assert_eq!(primeiro.choice(IdGate::G1), Some(G1_TRANSFER));
     assert_eq!(segundo.choice(IdGate::G1), Some(G1_TRANSFER));
     assert_eq!(
@@ -141,7 +141,7 @@ async fn cache_evita_pergunta_repetida_no_mesmo_estado() {
 /// Estado diferente não reaproveita a decisão.
 #[tokio::test]
 async fn estado_diferente_nao_reaproveita_a_decisao() {
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
+    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g1_transferir",
         G1_CONTINUE,
     )])));
@@ -151,13 +151,13 @@ async fn estado_diferente_nao_reaproveita_a_decisao() {
     let outro = estado().with_messages([JevMessage::from_customer("quero falar com um atendente")]);
     avaliador.evaluate(outro, None).await;
 
-    assert_eq!(jev.chamadas(), 2);
+    assert_eq!(jev.calls(), 2);
 }
 
 /// Aceite: timeout e erro fazem todos os gates caírem no fallback — o turno não é derrubado.
 #[tokio::test]
 async fn falha_do_jev_leva_todos_os_gates_ao_fallback() {
-    let jev = Arc::new(JevFalso::falhando(JevError::Status {
+    let jev = Arc::new(FakeJev::failing(JevError::Status {
         code: 503,
         motivo: "Service Unavailable".to_owned(),
     }));
@@ -186,12 +186,12 @@ async fn falha_do_jev_leva_todos_os_gates_ao_fallback() {
 #[tokio::test]
 async fn prazo_do_lote_estourado_cai_no_fallback() {
     let jev = Arc::new(
-        JevFalso::com_escolhas(escolhas(&[("g1_transferir", G1_TRANSFER)]))
-            .com_atraso(Duration::from_secs(5)),
+        FakeJev::with_choices(escolhas(&[("g1_transferir", G1_TRANSFER)]))
+            .with_delay(Duration::from_secs(5)),
     );
     let avaliador = Arc::new(
         JevEngine::new(
-            Arc::clone(&jev) as Arc<dyn poph_jev::TransporteJev>,
+            Arc::clone(&jev) as Arc<dyn poph_jev::JevTransport>,
             gates(true, false, false, false),
             "jev-latest",
         )
@@ -221,9 +221,9 @@ async fn prazo_do_lote_estourado_cai_no_fallback() {
 /// Resposta sem escolha (score/noul), fora das opções ou com confiança baixa: fallback com motivo.
 #[tokio::test]
 async fn resposta_ambigua_cai_no_fallback_com_o_motivo() {
-    let jev = Arc::new(JevFalso::novo(|pedido| {
+    let jev = Arc::new(FakeJev::new(|pedido| {
         let mut respostas = BTreeMap::new();
-        for id in pedido.perguntas.keys() {
+        for id in pedido.questions.keys() {
             respostas.insert(
                 id.clone(),
                 poph_jev::JevResponse {
@@ -263,9 +263,9 @@ async fn resposta_ambigua_cai_no_fallback_com_o_motivo() {
 /// Confiança abaixo do limiar do gate também é abstenção (não vira decisão).
 #[tokio::test]
 async fn confianca_abaixo_do_limiar_e_abstencao() {
-    let jev = Arc::new(JevFalso::novo(|pedido| {
+    let jev = Arc::new(FakeJev::new(|pedido| {
         let mut respostas = BTreeMap::new();
-        for id in pedido.perguntas.keys() {
+        for id in pedido.questions.keys() {
             respostas.insert(
                 id.clone(),
                 poph_jev::JevResponse {
@@ -300,7 +300,7 @@ async fn confianca_abaixo_do_limiar_e_abstencao() {
 /// Gate que não se aplica ao estado fica de fora do pedido (agente sem transferência, G1 não pergunta).
 #[tokio::test]
 async fn gate_que_nao_se_aplica_nao_e_perguntado() {
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
+    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g1_transferir",
         G1_TRANSFER,
     )])));
@@ -309,14 +309,14 @@ async fn gate_que_nao_se_aplica_nao_e_perguntado() {
 
     let resultado = avaliador.evaluate(sem_handoff, None).await;
 
-    assert_eq!(jev.chamadas(), 0);
+    assert_eq!(jev.calls(), 0);
     assert!(resultado.decisions.is_empty());
 }
 
 /// Ajuste do agente sobre a configuração global: só o que ele declara muda.
 #[tokio::test]
 async fn ajuste_do_agente_sobrepoe_so_o_que_declara() {
-    let jev = Arc::new(JevFalso::com_escolhas(BTreeMap::new()));
+    let jev = Arc::new(FakeJev::with_choices(BTreeMap::new()));
     let avaliador = motor(Arc::clone(&jev), gates(true, true, false, false));
 
     let ajuste = GateOverrides::from_json(r#"{"gates": {"g1": false}}"#).expect("ajuste do agente");
@@ -337,7 +337,7 @@ async fn ajuste_do_agente_sobrepoe_so_o_que_declara() {
 /// O mesmo estado com dois gates gera duas perguntas no mesmo pedido (não duas chamadas).
 #[tokio::test]
 async fn dois_gates_no_mesmo_pedido_e_uma_chamada() {
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[
+    let jev = Arc::new(FakeJev::with_choices(escolhas(&[
         ("g1_transferir", G1_CONTINUE),
         ("g3_precisa", G3_NOTHING),
     ])));
@@ -345,7 +345,7 @@ async fn dois_gates_no_mesmo_pedido_e_uma_chamada() {
 
     let resultado = avaliador.evaluate(estado(), None).await;
 
-    assert_eq!(jev.chamadas(), 1);
-    assert_eq!(jev.pedidos()[0].perguntas.len(), 2);
+    assert_eq!(jev.calls(), 1);
+    assert_eq!(jev.requests()[0].questions.len(), 2);
     assert_eq!(resultado.choice(IdGate::G3), Some(G3_NOTHING));
 }

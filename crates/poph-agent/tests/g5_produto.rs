@@ -32,8 +32,8 @@ use poph_agent::turno::{
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, ToolCall, Usage};
 use poph_jev::{
-    BatchResponse, Decisao, DecisionOrigin, G3_NOTHING, G5_NONE, GateEvaluator, GateOverrides,
-    IdGate, JevEngine, JevError, JevFalso, JevOptions, JevResponse as RespostaJev, JevResult,
+    BatchResponse, Decisao, DecisionOrigin, FakeJev, G3_NOTHING, G5_NONE, GateEvaluator,
+    GateOverrides, IdGate, JevEngine, JevError, JevOptions, JevResponse as RespostaJev, JevResult,
     JevState,
 };
 use poph_store::{Direction, NewAgent, NewConversation, NewMessage, NewOrg, Role, Store};
@@ -347,7 +347,7 @@ fn so_g5() -> JevGates {
     }
 }
 
-fn motor_jev(jev: Arc<JevFalso>, gates: JevGates) -> Arc<dyn GateEvaluator> {
+fn motor_jev(jev: Arc<FakeJev>, gates: JevGates) -> Arc<dyn GateEvaluator> {
     Arc::new(JevEngine::new(jev, gates, "jev-latest"))
 }
 
@@ -410,7 +410,7 @@ fn turnos_json(cenario: &Cenario) -> (String, String) {
 async fn g5_escolhe_o_produto_e_dispensa_a_ferramenta() {
     let cenario = Cenario::novo("escolhe", false);
     let baratas = cenario.baratas.to_string();
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
+    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g5_produto",
         baratas.as_str(),
     )])));
@@ -538,7 +538,7 @@ async fn g5_id_fora_dos_candidatos_nunca_e_injetado_pelo_codigo() {
 #[tokio::test]
 async fn g5_id_inventado_mantem_o_comportamento_de_hoje() {
     let cenario = Cenario::novo("inventado", false);
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
+    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g5_produto",
         "p-produto-que-nao-existe",
     )])));
@@ -570,7 +570,7 @@ async fn g5_id_inventado_mantem_o_comportamento_de_hoje() {
 #[tokio::test]
 async fn g5_nenhum_mantem_o_comportamento_de_hoje() {
     let cenario = Cenario::novo("nenhum", false);
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[("g5_produto", G5_NONE)])));
+    let jev = Arc::new(FakeJev::with_choices(escolhas(&[("g5_produto", G5_NONE)])));
     let (motor, provedor) = cenario.motor(
         vec![roteiro_texto("Posso ajudar com o prazo e o orçamento.")],
         Some(motor_jev(Arc::clone(&jev), so_g5())),
@@ -595,9 +595,9 @@ async fn g5_confianca_baixa_mantem_o_comportamento_de_hoje() {
     let cenario = Cenario::novo("confianca", false);
     let baratas = cenario.baratas.to_string();
     let escolha = baratas.clone();
-    let jev = Arc::new(JevFalso::novo(move |pedido: &poph_jev::Pedido| {
+    let jev = Arc::new(FakeJev::new(move |pedido: &poph_jev::JevRequest| {
         let mut respostas = BTreeMap::new();
-        for id in pedido.perguntas.keys() {
+        for id in pedido.questions.keys() {
             let mut resposta = RespostaJev {
                 choice: Some(escolha.clone()),
                 confidence: 0.4,
@@ -631,7 +631,7 @@ async fn g5_confianca_baixa_mantem_o_comportamento_de_hoje() {
 #[tokio::test]
 async fn g5_jev_fora_do_ar_mantem_o_comportamento_de_hoje() {
     let cenario = Cenario::novo("fora", false);
-    let jev = Arc::new(JevFalso::falhando(JevError::Status {
+    let jev = Arc::new(FakeJev::failing(JevError::Status {
         code: 503,
         motivo: "Service Unavailable".to_owned(),
     }));
@@ -654,8 +654,7 @@ async fn g5_jev_fora_do_ar_mantem_o_comportamento_de_hoje() {
 async fn g5_jev_que_nao_responde_em_prazo_mantem_o_comportamento_de_hoje() {
     let cenario = Cenario::novo("prazo", false);
     // Atraso maior que o prazo do lote: `avaliar_agora` desiste e cai no fallback de cada gate.
-    let jev =
-        Arc::new(JevFalso::com_escolhas(escolhas(&[])).com_atraso(Duration::from_millis(200)));
+    let jev = Arc::new(FakeJev::with_choices(escolhas(&[])).with_delay(Duration::from_millis(200)));
     let avaliador: Arc<dyn GateEvaluator> = Arc::new(
         JevEngine::new(jev, so_g5(), "jev-latest").with_options(JevOptions {
             batch_timeout: Duration::from_millis(30),
@@ -688,7 +687,7 @@ async fn g5_jev_que_nao_responde_em_prazo_mantem_o_comportamento_de_hoje() {
 #[tokio::test]
 async fn g5_sem_candidatos_nao_pergunta() {
     let cenario = Cenario::novo("vazio", true);
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[])));
+    let jev = Arc::new(FakeJev::with_choices(escolhas(&[])));
     let (motor, provedor) = cenario.motor(
         vec![roteiro_texto("Não encontrei esse produto no catálogo.")],
         Some(motor_jev(Arc::clone(&jev), so_g5())),
@@ -699,9 +698,9 @@ async fn g5_sem_candidatos_nao_pergunta() {
 
     assert_eq!(resumo.estado, poph_store::TurnState::Completed);
     assert!(
-        jev.pedidos().is_empty(),
+        jev.requests().is_empty(),
         "sem candidatos o G5 nem é perguntado: {:?}",
-        jev.pedidos()
+        jev.requests()
     );
     let pedido = &provedor.received()[0];
     assert!(nomes_das_ferramentas(pedido).contains(&"buscar_produto".to_owned()));
@@ -711,7 +710,7 @@ async fn g5_sem_candidatos_nao_pergunta() {
 #[tokio::test]
 async fn g5_desligado_nao_faz_busca_de_produto_nem_pergunta() {
     let cenario = Cenario::novo("desligado", false);
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[])));
+    let jev = Arc::new(FakeJev::with_choices(escolhas(&[])));
     let (motor, provedor) = cenario.motor(
         vec![roteiro_texto("Olá! Como posso ajudar?")],
         Some(motor_jev(Arc::clone(&jev), JevGates::default())),
@@ -742,7 +741,7 @@ async fn g5_desligado_nao_faz_busca_de_produto_nem_pergunta() {
 async fn g5_ferramenta_inventada_pelo_modelo_nao_e_executada() {
     let cenario = Cenario::novo("inventada", false);
     let baratas = cenario.baratas.to_string();
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
+    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g5_produto",
         baratas.as_str(),
     )])));
@@ -784,7 +783,7 @@ async fn g5_ferramenta_inventada_pelo_modelo_nao_e_executada() {
 async fn g3_nada_dispensa_o_g5() {
     let cenario = Cenario::novo("g3nada", false);
     let baratas = cenario.baratas.to_string();
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[
+    let jev = Arc::new(FakeJev::with_choices(escolhas(&[
         ("g3_precisa", G3_NOTHING),
         ("g5_produto", baratas.as_str()),
     ])));
@@ -836,7 +835,7 @@ fn ajuste_apenas_liga_so_o_gate_pedido() {
 async fn medicao_rodadas_de_ferramenta_por_turno() {
     // 1. Sem o G5: o modelo precisa da ferramenta para falar de preço.
     let sem = Cenario::novo("medicao-sem", false);
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[])));
+    let jev = Arc::new(FakeJev::with_choices(escolhas(&[])));
     let (motor_sem, _) = sem.motor(
         vec![
             Script::Events(vec![
@@ -862,7 +861,7 @@ async fn medicao_rodadas_de_ferramenta_por_turno() {
     // 2. Com o G5: o produto escolhido já está no prompt, sem rodada.
     let com = Cenario::novo("medicao-com", false);
     let baratas = com.baratas.to_string();
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
+    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g5_produto",
         baratas.as_str(),
     )])));
@@ -890,7 +889,7 @@ async fn medicao_rodadas_de_ferramenta_por_turno() {
 async fn padrao_de_instalacao_liga_o_g5_sem_configurar_o_agente() {
     let cenario = Cenario::novo("padrao-g5", false);
     let baratas = cenario.baratas.to_string();
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[
+    let jev = Arc::new(FakeJev::with_choices(escolhas(&[
         ("g3_precisa", poph_jev::G3_PRODUCT),
         ("g5_produto", baratas.as_str()),
     ])));

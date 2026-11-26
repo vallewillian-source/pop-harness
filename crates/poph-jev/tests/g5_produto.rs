@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use poph_jev::{
-    DecisionOrigin, G5, G5_NONE, Gate, GateEvaluator, IdGate, JevEngine, JevFalso, JevMessage,
+    DecisionOrigin, FakeJev, G5, G5_NONE, Gate, GateEvaluator, IdGate, JevEngine, JevMessage,
     JevResponse, JevState, ProductCandidate, eval::ajuste_de_gate,
 };
 use poph_types::JevGates;
@@ -149,12 +149,12 @@ fn sem_resposta_vira_fallback() {
 async fn g5_e_perguntado_fora_do_lote_so_com_candidatos() {
     let mut escolhas: BTreeMap<String, String> = BTreeMap::new();
     escolhas.insert("g5_produto".to_owned(), "p-baratas".to_owned());
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas));
+    let jev = Arc::new(FakeJev::with_choices(escolhas));
     let globais = JevGates {
         g5: true,
         ..JevGates::default()
     };
-    let transporte: Arc<dyn poph_jev::TransporteJev> = jev.clone();
+    let transporte: Arc<dyn poph_jev::JevTransport> = jev.clone();
     let avaliador = JevEngine::new(transporte, globais, "jev-latest");
 
     // 1. Lote normal (sem candidatos): o G5 não se aplica, então nenhuma pergunta é enviada.
@@ -163,18 +163,18 @@ async fn g5_e_perguntado_fora_do_lote_so_com_candidatos() {
         .with_capabilities(true, true);
     let lote = avaliador.evaluate(sem_candidatos, None).await;
     assert!(lote.decisions.is_empty(), "{:?}", lote.decisions);
-    assert!(jev.pedidos().is_empty(), "nenhum pedido ao Jev");
+    assert!(jev.requests().is_empty(), "nenhum pedido ao Jev");
 
     // 2. Chamada só do G5, com candidatos: uma pergunta, uma decisão.
     let com_candidatos = estado("quero dedetizar contra baratas", candidatos());
     let resultado = avaliador
         .evaluate(com_candidatos, Some(ajuste_de_gate(IdGate::G5)))
         .await;
-    let pedidos = jev.pedidos();
+    let pedidos = jev.requests();
     assert_eq!(pedidos.len(), 1);
     assert_eq!(
         pedidos[0]
-            .perguntas
+            .questions
             .keys()
             .cloned()
             .collect::<Vec<String>>(),

@@ -11,7 +11,9 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use poph_jev::{BatchResponse, ClienteJev, ConfigJev, JevError, Pedido, Question, TransporteJev};
+use poph_jev::{
+    BatchResponse, JevClient, JevClientConfig, JevError, JevRequest, JevTransport, Question,
+};
 use poph_types::{BaseMetrics, JevConfig, Registry, Secret};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::{ServerConfig, ServerConnection, StreamOwned};
@@ -30,7 +32,7 @@ fn metricas() -> BaseMetrics {
     BaseMetrics::register(&Registry::new()).expect("métricas base")
 }
 
-fn config(url_base: &str, retentativas: u32) -> ConfigJev {
+fn config(url_base: &str, retentativas: u32) -> JevClientConfig {
     let jev = JevConfig {
         enabled: true,
         url_base: url_base.to_owned(),
@@ -39,10 +41,11 @@ fn config(url_base: &str, retentativas: u32) -> ConfigJev {
         retries: retentativas,
         ..JevConfig::default()
     };
-    ConfigJev::da_config(&jev, Secret::new(CHAVE.to_owned())).expect("configuração do cliente")
+    JevClientConfig::from_config(&jev, Secret::new(CHAVE.to_owned()))
+        .expect("configuração do cliente")
 }
 
-fn pedido() -> Pedido {
+fn pedido() -> JevRequest {
     let mut criterios = BTreeMap::new();
     criterios.insert("continuar_agente".to_owned(), "o cliente segue".to_owned());
     criterios.insert("transferir_agora".to_owned(), "quer atendente".to_owned());
@@ -51,10 +54,10 @@ fn pedido() -> Pedido {
         "g1_transferir".to_owned(),
         Question::choice("transfere?", criterios),
     );
-    Pedido {
+    JevRequest {
         estado: serde_json::json!({"mensagens": [{"texto": "quero falar com alguém"}]}),
         modelo: "jev-latest".to_owned(),
-        perguntas,
+        questions: perguntas,
     }
 }
 
@@ -135,12 +138,12 @@ fn ler_pedido(fluxo: &mut StreamOwned<ServerConnection, TcpStream>) -> std::io::
 async fn https_funciona_quando_o_certificado_e_confiavel() {
     let (url, conexoes) = servidor_tls(SERVIDOR_IP);
     assert!(url.starts_with("https://"));
-    let cliente = ClienteJev::novo(config(&url, 0), metricas())
+    let cliente = JevClient::new(config(&url, 0), metricas())
         .expect("cliente")
-        .com_raiz_de_teste(CA)
+        .with_test_root(CA)
         .expect("raiz de teste aceita");
 
-    let lote: BatchResponse = cliente.julgar(pedido()).await.expect("responde por https");
+    let lote: BatchResponse = cliente.judge(pedido()).await.expect("responde por https");
 
     let resposta = &lote.answers["g1_transferir"];
     assert_eq!(resposta.choice.as_deref(), Some("continuar_agente"));
@@ -153,10 +156,10 @@ async fn https_funciona_quando_o_certificado_e_confiavel() {
 async fn certificado_de_ca_desconhecida_e_recusado_sem_retentativa() {
     let (url, conexoes) = servidor_tls(SERVIDOR_IP);
     // Cliente padrão: confia só nas raízes do sistema, não na CA de teste.
-    let cliente = ClienteJev::novo(config(&url, 1), metricas()).expect("cliente");
+    let cliente = JevClient::new(config(&url, 1), metricas()).expect("cliente");
 
     let erro = cliente
-        .julgar(pedido())
+        .judge(pedido())
         .await
         .expect_err("certificado não confiável");
 
@@ -178,12 +181,12 @@ async fn certificado_de_ca_desconhecida_e_recusado_sem_retentativa() {
 async fn nome_do_servidor_diferente_do_certificado_e_recusado() {
     // O servidor apresenta certificado para `localhost`; o cliente conecta em `127.0.0.1`.
     let (url, _conexoes) = servidor_tls(SERVIDOR_NOME);
-    let cliente = ClienteJev::novo(config(&url, 0), metricas())
+    let cliente = JevClient::new(config(&url, 0), metricas())
         .expect("cliente")
-        .com_raiz_de_teste(CA)
+        .with_test_root(CA)
         .expect("raiz de teste aceita");
 
-    let erro = cliente.julgar(pedido()).await.expect_err("nome errado");
+    let erro = cliente.judge(pedido()).await.expect_err("nome errado");
 
     assert!(matches!(erro, JevError::Tls(_)), "erro: {erro:?}");
     assert!(!erro.is_transient());
@@ -205,10 +208,10 @@ async fn http_continua_funcionando() {
             let _ = conexao.write_all(resposta.as_bytes());
         }
     });
-    let cliente = ClienteJev::novo(config(&format!("http://127.0.0.1:{porta}"), 0), metricas())
+    let cliente = JevClient::new(config(&format!("http://127.0.0.1:{porta}"), 0), metricas())
         .expect("cliente");
 
-    let lote = cliente.julgar(pedido()).await.expect("responde por http");
+    let lote = cliente.judge(pedido()).await.expect("responde por http");
 
     assert_eq!(
         lote.answers["g1_transferir"].choice.as_deref(),

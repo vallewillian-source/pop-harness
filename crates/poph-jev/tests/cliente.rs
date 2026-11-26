@@ -9,7 +9,9 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use poph_jev::{ClienteJev, ConfigJev, JevError, JevResponse, Pedido, QuestionType, TransporteJev};
+use poph_jev::{
+    JevClient, JevClientConfig, JevError, JevRequest, JevResponse, JevTransport, QuestionType,
+};
 use poph_types::{BaseMetrics, JevConfig, Registry, Secret};
 
 const CHAVE: &str = "chave-do-jev-nao-pode-vazar";
@@ -97,7 +99,7 @@ fn responder(mut fluxo: &TcpStream, codigo: u16, corpo: &str) -> std::io::Result
     fluxo.flush()
 }
 
-fn config(url_base: &str, timeout_ms: u64, retentativas: u32) -> ConfigJev {
+fn config(url_base: &str, timeout_ms: u64, retentativas: u32) -> JevClientConfig {
     let jev = JevConfig {
         enabled: true,
         url_base: url_base.to_owned(),
@@ -106,16 +108,16 @@ fn config(url_base: &str, timeout_ms: u64, retentativas: u32) -> ConfigJev {
         retries: retentativas,
         ..JevConfig::default()
     };
-    ConfigJev::da_config(&jev, Secret::new(CHAVE.to_owned()))
+    JevClientConfig::from_config(&jev, Secret::new(CHAVE.to_owned()))
         .expect("configuração do cliente")
-        .com_timeout(Duration::from_millis(timeout_ms))
+        .with_timeout(Duration::from_millis(timeout_ms))
 }
 
 fn metricas() -> BaseMetrics {
     BaseMetrics::register(&Registry::new()).expect("métricas base")
 }
 
-fn pedido() -> Pedido {
+fn pedido() -> JevRequest {
     let mut criterios = std::collections::BTreeMap::new();
     criterios.insert("continuar_agente".to_owned(), "segue".to_owned());
     let mut perguntas = std::collections::BTreeMap::new();
@@ -123,10 +125,10 @@ fn pedido() -> Pedido {
         "g1_transferir".to_owned(),
         poph_jev::Question::choice("julgue", criterios),
     );
-    Pedido {
+    JevRequest {
         estado: serde_json::json!({"canal": "cli"}),
         modelo: "jev-latest".to_owned(),
-        perguntas,
+        questions: perguntas,
     }
 }
 
@@ -135,9 +137,9 @@ async fn envia_o_contrato_e_le_a_resposta() {
     let (url, recebidas) = servidor(vec![ok(
         r#"{"answers":{"g1_transferir":{"type":"choice","choice":"transferir_agora","probabilities":{"transferir_agora":0.9,"continuar_agente":0.1},"confidence":0.9}},"usage":{"input_tokens":21}}"#,
     )]);
-    let cliente = ClienteJev::novo(config(&url, 2_000, 1), metricas()).expect("cliente");
+    let cliente = JevClient::new(config(&url, 2_000, 1), metricas()).expect("cliente");
 
-    let lote = cliente.julgar(pedido()).await.expect("resposta");
+    let lote = cliente.judge(pedido()).await.expect("resposta");
 
     let resposta = lote.answers.get("g1_transferir").expect("resposta do G1");
     assert_eq!(resposta.choice.as_deref(), Some("transferir_agora"));
@@ -165,10 +167,10 @@ async fn retenta_uma_vez_em_erro_transitorio() {
         status(429),
         ok(r#"{"answers":{"g1_transferir":{"choice":"continuar_agente","confidence":1.0}}}"#),
     ]);
-    let cliente = ClienteJev::novo(config(&url, 2_000, 1), metricas()).expect("cliente");
+    let cliente = JevClient::new(config(&url, 2_000, 1), metricas()).expect("cliente");
 
     let lote = cliente
-        .julgar(pedido())
+        .judge(pedido())
         .await
         .expect("a segunda tentativa passa");
 
@@ -184,9 +186,9 @@ async fn retenta_uma_vez_em_erro_transitorio() {
 #[tokio::test]
 async fn nao_retenta_em_erro_definitivo_e_nao_vaza_a_chave() {
     let (url, recebidas) = servidor(vec![status(400)]);
-    let cliente = ClienteJev::novo(config(&url, 2_000, 1), metricas()).expect("cliente");
+    let cliente = JevClient::new(config(&url, 2_000, 1), metricas()).expect("cliente");
 
-    let erro = cliente.julgar(pedido()).await.expect_err("400 não retenta");
+    let erro = cliente.judge(pedido()).await.expect_err("400 não retenta");
 
     assert!(matches!(erro, JevError::Status { code: 400, .. }));
     assert!(!erro.to_string().contains(CHAVE));
@@ -201,9 +203,9 @@ async fn prazo_por_tentativa_devolve_erro_de_tempo() {
         corpo: "{}".to_owned(),
         atraso: Duration::from_secs(3),
     }]);
-    let cliente = ClienteJev::novo(config(&url, 200, 0), metricas()).expect("cliente");
+    let cliente = JevClient::new(config(&url, 200, 0), metricas()).expect("cliente");
 
-    let erro = cliente.julgar(pedido()).await.expect_err("prazo estourado");
+    let erro = cliente.judge(pedido()).await.expect_err("prazo estourado");
 
     assert!(matches!(erro, JevError::TimedOut { .. }), "erro: {erro:?}");
     assert!(erro.is_transient());
@@ -217,7 +219,8 @@ fn configuracao_aceita_https_recusa_endereco_invalido_e_chave_vazia() {
         url_base: "https://api.typesafe.ai/".to_owned(),
         ..JevConfig::default()
     };
-    let config = ConfigJev::da_config(&https, Secret::new("x".to_owned())).expect("https aceito");
+    let config =
+        JevClientConfig::from_config(&https, Secret::new("x".to_owned())).expect("https aceito");
     assert_eq!(config.url_base, "https://api.typesafe.ai");
     assert_eq!(config.endpoint(), "https://api.typesafe.ai/v1/systemone");
 
@@ -226,7 +229,7 @@ fn configuracao_aceita_https_recusa_endereco_invalido_e_chave_vazia() {
         url_base: "api.typesafe.ai".to_owned(),
         ..JevConfig::default()
     };
-    let erro = ConfigJev::da_config(&sem_esquema, Secret::new("x".to_owned()))
+    let erro = JevClientConfig::from_config(&sem_esquema, Secret::new("x".to_owned()))
         .expect_err("endereço sem esquema");
     assert!(erro.to_string().contains("http:// ou https://"));
 
@@ -235,8 +238,8 @@ fn configuracao_aceita_https_recusa_endereco_invalido_e_chave_vazia() {
         url_base: "http://127.0.0.1:9".to_owned(),
         ..JevConfig::default()
     };
-    let sem_chave =
-        ConfigJev::da_config(&http, Secret::new("   ".to_owned())).expect_err("recusa chave vazia");
+    let sem_chave = JevClientConfig::from_config(&http, Secret::new("   ".to_owned()))
+        .expect_err("recusa chave vazia");
     assert!(matches!(sem_chave, JevError::MissingKey));
     assert!(!format!("{http:?}").contains(CHAVE));
 }

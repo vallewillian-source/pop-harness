@@ -19,7 +19,7 @@ use poph_agent::turno::{
 };
 use poph_core::llm::{FakeProvider, Script};
 use poph_jev::{
-    G1_CONTINUE, G1_TRANSFER, G4, GateEvaluator, IdGate, JevEngine, JevError, JevFalso, JevMessage,
+    FakeJev, G1_CONTINUE, G1_TRANSFER, G4, GateEvaluator, IdGate, JevEngine, JevError, JevMessage,
     JevState,
 };
 use poph_store::{
@@ -267,7 +267,7 @@ fn escolhas(itens: &[(&str, &str)]) -> BTreeMap<String, String> {
         .collect()
 }
 
-fn motor_jev(jev: Arc<JevFalso>, globais: JevGates) -> Arc<JevEngine> {
+fn motor_jev(jev: Arc<FakeJev>, globais: JevGates) -> Arc<JevEngine> {
     Arc::new(JevEngine::new(jev, globais, "jev-latest"))
 }
 
@@ -276,7 +276,7 @@ fn motor_jev(jev: Arc<JevFalso>, globais: JevGates) -> Arc<JevEngine> {
 async fn turno_grava_a_decisao_do_jev_no_registro() {
     let cenario = Cenario::novo("registro");
     let conversa = cenario.conversa();
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
+    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g1_transferir",
         G1_CONTINUE,
     )])));
@@ -305,7 +305,7 @@ async fn turno_grava_a_decisao_do_jev_no_registro() {
 async fn estado_do_turno_leva_conversa_e_politica() {
     let cenario = Cenario::novo("estado");
     let conversa = cenario.conversa();
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
+    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g1_transferir",
         G1_TRANSFER,
     )])));
@@ -318,14 +318,14 @@ async fn estado_do_turno_leva_conversa_e_politica() {
         Some(G1_TRANSFER)
     );
 
-    let pedido = &jev.pedidos()[0];
+    let pedido = &jev.requests()[0];
     assert_eq!(pedido.estado["canal"], "cli");
     assert_eq!(
         pedido.estado["conversa"]["mensagens"][0]["texto"],
         "quero falar com um atendente agora"
     );
     assert_eq!(pedido.estado["politica"]["transferencia_habilitada"], true);
-    assert!(pedido.perguntas.contains_key("g1_transferir"));
+    assert!(pedido.questions.contains_key("g1_transferir"));
 }
 
 /// Sem gate ligado, o turno não chama o Jev e o registro fica com o padrão.
@@ -333,7 +333,7 @@ async fn estado_do_turno_leva_conversa_e_politica() {
 async fn gates_desligados_nao_geram_pergunta() {
     let cenario = Cenario::novo("desligado");
     let conversa = cenario.conversa();
-    let jev = Arc::new(JevFalso::com_escolhas(BTreeMap::new()));
+    let jev = Arc::new(FakeJev::with_choices(BTreeMap::new()));
     let motor = cenario.motor(
         JevGates::default(),
         Some(motor_jev(Arc::clone(&jev), JevGates::default())),
@@ -344,7 +344,7 @@ async fn gates_desligados_nao_geram_pergunta() {
 
     assert_eq!(resumo.estado, TurnState::Completed);
     assert!(resumo.jev.is_none());
-    assert_eq!(jev.chamadas(), 0);
+    assert_eq!(jev.calls(), 0);
     assert_eq!(cenario.ultimo_turno(conversa).jev_json, "{}");
 }
 
@@ -354,7 +354,7 @@ async fn ajuste_do_agente_desliga_o_gate_no_turno() {
     let cenario = Cenario::novo("ajuste");
     let conversa = cenario.conversa();
     cenario.ajustar_jev_do_agente(r#"{"gates": {"g1": false}}"#);
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
+    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g1_transferir",
         G1_TRANSFER,
     )])));
@@ -364,7 +364,7 @@ async fn ajuste_do_agente_desliga_o_gate_no_turno() {
     let resumo = cenario.turno(&motor, conversa, gatilho).await;
 
     assert_eq!(resumo.estado, TurnState::Completed);
-    assert_eq!(jev.chamadas(), 0, "o agente desligou o G1");
+    assert_eq!(jev.calls(), 0, "o agente desligou o G1");
     assert!(resumo.jev.is_none());
 }
 
@@ -373,7 +373,7 @@ async fn ajuste_do_agente_desliga_o_gate_no_turno() {
 async fn falha_do_jev_nao_derruba_o_turno() {
     let cenario = Cenario::novo("falha");
     let conversa = cenario.conversa();
-    let jev = Arc::new(JevFalso::falhando(JevError::Status {
+    let jev = Arc::new(FakeJev::failing(JevError::Status {
         code: 503,
         motivo: "Service Unavailable".to_owned(),
     }));
@@ -410,7 +410,7 @@ async fn g4_leva_os_departamentos_ativos_da_org() {
         g4: true,
         ..JevGates::default()
     };
-    let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
+    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g4_departamento",
         "Suporte",
     )])));
@@ -423,9 +423,9 @@ async fn g4_leva_os_departamentos_ativos_da_org() {
         resumo.jev.as_ref().and_then(|jev| jev.choice(IdGate::G4)),
         Some("Suporte")
     );
-    let pedido = &jev.pedidos()[0];
-    assert_eq!(pedido.perguntas.len(), 1, "só o G4 está ligado");
-    let criterios = &pedido.perguntas["g4_departamento"].rubric;
+    let pedido = &jev.requests()[0];
+    assert_eq!(pedido.questions.len(), 1, "só o G4 está ligado");
+    let criterios = &pedido.questions["g4_departamento"].rubric;
     assert!(criterios.contains_key("Comercial"));
     assert!(criterios.contains_key("Suporte"));
     assert_eq!(
@@ -468,7 +468,7 @@ async fn motor_sem_jev_responde_igual() {
 #[tokio::test]
 async fn g4_sem_departamentos_nao_pergunta() {
     let estado = JevState::new("cli").with_messages([JevMessage::from_customer("oi")]);
-    let jev = Arc::new(JevFalso::com_escolhas(BTreeMap::new()));
+    let jev = Arc::new(FakeJev::with_choices(BTreeMap::new()));
     let motor = motor_jev(
         Arc::clone(&jev),
         JevGates {
@@ -481,7 +481,7 @@ async fn g4_sem_departamentos_nao_pergunta() {
         .evaluate(estado, Some(poph_jev::eval::ajuste_de_gate(IdGate::G4)))
         .await;
 
-    assert_eq!(jev.chamadas(), 0);
+    assert_eq!(jev.calls(), 0);
     assert!(resultado.decisions.is_empty());
     let _ = G4;
 }
@@ -511,8 +511,8 @@ async fn jev_e_busca_correm_juntos() {
     let cenario = Cenario::novo("paralelo");
     let conversa = cenario.conversa();
     let jev = Arc::new(
-        JevFalso::com_escolhas(escolhas(&[("g1_transferir", G1_CONTINUE)]))
-            .com_atraso(Duration::from_millis(300)),
+        FakeJev::with_choices(escolhas(&[("g1_transferir", G1_CONTINUE)]))
+            .with_delay(Duration::from_millis(300)),
     );
     let motor = cenario
         .motor(so_g1(), Some(motor_jev(Arc::clone(&jev), so_g1())))

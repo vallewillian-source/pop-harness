@@ -22,7 +22,8 @@ use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
 use poph_agent::turno::{Entrada, FuturoPausa, Motor, ObservadorNulo, OpcoesTurno, Pausa};
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, Usage};
 use poph_jev::{
-    BatchResponse, G1_TRANSFER, HandoffGuidance, IdGate, JevEngine, JevFalso, JevResponse, Pedido,
+    BatchResponse, FakeJev, G1_TRANSFER, HandoffGuidance, IdGate, JevEngine, JevRequest,
+    JevResponse,
 };
 use poph_store::{
     AgentChange, DepartmentChange, Direction, NewAgent, NewConversation, NewDepartment, NewMessage,
@@ -346,17 +347,17 @@ fn resposta(escolha: &str, confianca: f64) -> JevResponse {
 /// `departamento` `None` = o lote volta **sem** resposta para o G4 (é o mesmo efeito de uma resposta
 /// ausente/ilegível por gate; erro e prazo do lote atingem todos os gates juntos, e aí não há
 /// transferência para rotear).
-fn jev(departamento: Option<(&'static str, f64)>, veio_o_g4: bool) -> Arc<JevFalso> {
-    Arc::new(JevFalso::novo(move |pedido: &Pedido| {
+fn jev(departamento: Option<(&'static str, f64)>, veio_o_g4: bool) -> Arc<FakeJev> {
+    Arc::new(FakeJev::new(move |pedido: &JevRequest| {
         let mut respostas = BTreeMap::new();
-        if pedido.perguntas.contains_key(IdGate::G1.question_id()) {
+        if pedido.questions.contains_key(IdGate::G1.question_id()) {
             respostas.insert(
                 IdGate::G1.question_id().to_owned(),
                 resposta(G1_TRANSFER, 0.96),
             );
         }
         if veio_o_g4
-            && pedido.perguntas.contains_key(IdGate::G4.question_id())
+            && pedido.questions.contains_key(IdGate::G4.question_id())
             && let Some((nome, confianca)) = departamento
         {
             respostas.insert(
@@ -372,7 +373,7 @@ fn jev(departamento: Option<(&'static str, f64)>, veio_o_g4: bool) -> Arc<JevFal
     }))
 }
 
-fn motor_jev(jev: Arc<JevFalso>, com_g4: bool) -> Arc<JevEngine> {
+fn motor_jev(jev: Arc<FakeJev>, com_g4: bool) -> Arc<JevEngine> {
     let gates = JevGates {
         g1: true,
         g4: com_g4,
@@ -593,11 +594,11 @@ async fn jev_fora_do_ar_nao_trava_o_turno() {
     let conversa = cenario.conversa();
 
     let jev = Arc::new(
-        JevFalso::com_escolhas(BTreeMap::from([(
+        FakeJev::with_choices(BTreeMap::from([(
             IdGate::G1.question_id().to_owned(),
             G1_TRANSFER.to_owned(),
         )]))
-        .com_atraso(Duration::from_millis(400)),
+        .with_delay(Duration::from_millis(400)),
     );
     let avaliador = Arc::new(
         JevEngine::new(
@@ -649,11 +650,11 @@ async fn g4_desligado_e_o_comportamento_de_hoje() {
     assert_eq!(gravada.target_department, Some(padrao));
 
     // Nenhuma pergunta de departamento foi enviada ao Jev.
-    let pedidos = jev.pedidos();
+    let pedidos = jev.requests();
     assert!(
         pedidos
             .iter()
-            .all(|pedido| !pedido.perguntas.contains_key(IdGate::G4.question_id())),
+            .all(|pedido| !pedido.questions.contains_key(IdGate::G4.question_id())),
         "G4 desligado não pode perguntar o departamento"
     );
     let detalhe = cenario.auditoria_da_transferencia();
