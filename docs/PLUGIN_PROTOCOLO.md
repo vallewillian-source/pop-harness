@@ -145,7 +145,7 @@ Attachment, in the two forms from the PRD:
 (`fonte` means source: `blob` or `bytes`.)
 
 The supervisor refuses an event without `id_externo`/`peer`/`ocorrido_em`, with a sha256 that does not have 64 hex
-characters, or with an empty attachment — and counts it in `eventos_invalidos` without delivering it to the engine.
+characters, or with an empty attachment — and counts it in `invalid_events` without delivering it to the engine.
 
 ## 5. Limits, deadlines and restart policy
 
