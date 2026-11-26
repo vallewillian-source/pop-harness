@@ -569,7 +569,7 @@ editáveis:
 | `effects()` | `orgs_with_pending`, `list_pending`, `get`, `start_send`, `confirm_send`, `fail_send`, `defer` |
 | `matrix()` | `link`, `unlink`, `state`, `linked_orgs`, `ensure_room`, `mark_room_ready`, `mark_room_ready_with_name`, `set_mirrored_customer_name`, `room`, `rooms_ready`, `room_by_room_id`, `define_last_status`, `set_space_of_room`, `ensure_space`, `space`, `list_spaces`, `disable_space`, `read_cursors`, `delay_of_messages`, `advance_messages`, `advance_messages_with_id`, `rewind_cursor_messages`, `advance_conversations`, `register_failure`, `count_failures`, `list_failures`, `remove_failure`, `human_response_failures`, `record_notice_outcome` |
 | `matrix_asset()` | `register`, `pending`, `mark_draft`, `mark_deleted`, `defer`, `org_pending` |
-| `retention()` | `scan` |
+| `retention()` | `scan_table` (org, corte, simulação) |
 | `analytics()`, `conversation_analytics()`, `sla_analytics()`, `usage()` | leituras agregadas (ver §10 e as seções de análise) |
 
 O crate não tem mais repositório pendente: todos os módulos acima estão em
@@ -931,7 +931,7 @@ Esta seção reúne as invariantes que estavam escritas como comentário dentro 
 - **Nome publicado fica congelado:** tabela, coluna, índice, gatilho, rota, `operationId`, chave JSON,
   chave de configuração, métrica e termo de protocolo de plugin não mudam com o código interno.
 
-### 12.2 Retenção (`retention().scan`)
+### 12.2 Retenção (`retention().scan_table`)
 
 - **O que sai**, sempre com a org varrida e data anterior ao corte: mensagens e os anexos delas;
   linhas de `outbox` já enviadas; linhas de `inbox` já processadas; turnos encerrados (fora
