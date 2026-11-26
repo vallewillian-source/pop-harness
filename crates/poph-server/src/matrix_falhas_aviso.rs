@@ -46,7 +46,7 @@ use std::time::Duration;
 use tokio::sync::watch;
 
 use poph_matrix::{ClienteMatrix, ErroChamada, IdsFantasmas, erro::Classificacao};
-use poph_store::{DesfechoAviso, FalhaDeRespostaHumana, Store, StoreError};
+use poph_store::{HumanResponseFailure, OutcomeNotice, Store, StoreError};
 use poph_types::{ConversationId, OrgId, OutboxId};
 use serde_json::json;
 
@@ -134,7 +134,7 @@ pub struct ContextoDaFalha {
 pub trait PortaFalhasDeResposta: Send + Sync {
     /// Falhas definitivas de resposta humana sem desfecho, das orgs com o módulo ligado, até
     /// `limite` no total.
-    fn pendentes(&self, limite: u32) -> Result<Vec<FalhaDeRespostaHumana>, StoreError>;
+    fn pendentes(&self, limite: u32) -> Result<Vec<HumanResponseFailure>, StoreError>;
 
     /// Sala e agente da conversa, ou `None` quando a conversa não tem sala.
     fn contexto(
@@ -148,7 +148,7 @@ pub trait PortaFalhasDeResposta: Send + Sync {
         &self,
         org: OrgId,
         falha: OutboxId,
-        desfecho: DesfechoAviso,
+        desfecho: OutcomeNotice,
         motivo: MotivoFalha,
     ) -> Result<(), StoreError>;
 }
@@ -167,9 +167,9 @@ impl PortaFalhasDoHarness {
 }
 
 impl PortaFalhasDeResposta for PortaFalhasDoHarness {
-    fn pendentes(&self, limite: u32) -> Result<Vec<FalhaDeRespostaHumana>, StoreError> {
+    fn pendentes(&self, limite: u32) -> Result<Vec<HumanResponseFailure>, StoreError> {
         let mut falhas = Vec::new();
-        for estado in self.store.matrix().orgs_ligadas()? {
+        for estado in self.store.matrix().linked_orgs()? {
             let faltam = limite.saturating_sub(falhas.len() as u32);
             if faltam == 0 {
                 break;
@@ -177,7 +177,7 @@ impl PortaFalhasDeResposta for PortaFalhasDoHarness {
             falhas.extend(
                 self.store
                     .matrix()
-                    .falhas_de_resposta_humana(estado.org_id, faltam)?,
+                    .human_response_failures(estado.org_id, faltam)?,
             );
         }
         Ok(falhas)
@@ -188,10 +188,10 @@ impl PortaFalhasDeResposta for PortaFalhasDoHarness {
         org: OrgId,
         conversa: ConversationId,
     ) -> Result<Option<ContextoDaFalha>, StoreError> {
-        let Some(sala) = self.store.matrix().sala(org, conversa)? else {
+        let Some(sala) = self.store.matrix().room(org, conversa)? else {
             return Ok(None);
         };
-        let agente = self.store.conversas().get(org, conversa)?.agent_id;
+        let agente = self.store.conversations().get(org, conversa)?.agent_id;
         Ok(Some(ContextoDaFalha {
             sala: sala.room_id,
             agente: agente.to_string(),
@@ -202,12 +202,12 @@ impl PortaFalhasDeResposta for PortaFalhasDoHarness {
         &self,
         org: OrgId,
         falha: OutboxId,
-        desfecho: DesfechoAviso,
+        desfecho: OutcomeNotice,
         motivo: MotivoFalha,
     ) -> Result<(), StoreError> {
         self.store
             .matrix()
-            .registrar_desfecho_de_aviso(org, falha, desfecho, motivo.codigo())
+            .record_notice_outcome(org, falha, desfecho, motivo.codigo())
             .map(|_| ())
     }
 }
@@ -348,22 +348,22 @@ impl AvisoDeFalhas {
 
     async fn tratar(
         &self,
-        falha: &FalhaDeRespostaHumana,
+        falha: &HumanResponseFailure,
         relato: &mut RelatoAviso,
     ) -> Result<(), StoreError> {
         let motivo = MotivoFalha::classificar(falha.ultimo_erro.as_deref());
-        let Some(contexto) = self.porta.contexto(falha.org_id, falha.conversa)? else {
+        let Some(contexto) = self.porta.contexto(falha.org_id, falha.conversation)? else {
             self.porta.registrar(
                 falha.org_id,
                 falha.outbox_id,
-                DesfechoAviso::SemSala,
+                OutcomeNotice::WithoutRoom,
                 motivo,
             )?;
             relato.sem_sala += 1;
             tracing::info!(
                 target: "poph_server::matrix_falhas_aviso",
                 org = %falha.org_id,
-                conversa = %falha.conversa,
+                conversa = %falha.conversation,
                 saida = %falha.outbox_id,
                 motivo = motivo.codigo(),
                 "falha de resposta humana sem sala: nada a avisar"
@@ -381,14 +381,14 @@ impl AvisoDeFalhas {
                 self.porta.registrar(
                     falha.org_id,
                     falha.outbox_id,
-                    DesfechoAviso::Avisado,
+                    OutcomeNotice::Notify,
                     motivo,
                 )?;
                 relato.avisados += 1;
                 tracing::info!(
                     target: "poph_server::matrix_falhas_aviso",
                     org = %falha.org_id,
-                    conversa = %falha.conversa,
+                    conversa = %falha.conversation,
                     saida = %falha.outbox_id,
                     motivo = motivo.codigo(),
                     "aviso de falha de resposta humana escrito na sala"
@@ -411,7 +411,7 @@ impl AvisoDeFalhas {
                 self.porta.registrar(
                     falha.org_id,
                     falha.outbox_id,
-                    DesfechoAviso::Recusado,
+                    OutcomeNotice::Refused,
                     motivo,
                 )?;
                 relato.recusados += 1;

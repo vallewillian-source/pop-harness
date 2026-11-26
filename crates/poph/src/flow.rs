@@ -316,8 +316,8 @@ fn publicar(sessao: &Sessao, org: Option<&str>, args: PublicarArgs) -> Result<Ex
     let ator = Ator::cli();
     let existente = sessao
         .store
-        .fluxos()
-        .por_slug(org, &ir.fluxo.id)
+        .flows()
+        .by_slug(org, &ir.fluxo.id)
         .map_err(|erro| descrever(&erro))?;
     match existente {
         None => {
@@ -386,8 +386,8 @@ fn listar(sessao: &Sessao, org: Option<&str>, args: ListarArgs) -> Result<ExitCo
     };
     let fluxos = sessao
         .store
-        .fluxos()
-        .listar(org, &filtro, pagina)
+        .flows()
+        .list(org, &filtro, pagina)
         .map_err(|erro| descrever(&erro))?;
     let next_cursor = if fluxos.len() < pagina.limit as usize {
         None
@@ -429,7 +429,7 @@ fn mostrar(sessao: &Sessao, org: Option<&str>, args: ReferenciaArgs) -> Result<E
     let revisao = sessao
         .store
         .revisions()
-        .atual(org, fluxo.id)
+        .current(org, fluxo.id)
         .map_err(|erro| descrever(&erro))?;
     let mut corpo = json_fluxo_com_rascunho(&fluxo);
     corpo["revision"] = revisao.as_ref().map_or(Value::Null, json_revisao_resumo);
@@ -489,9 +489,9 @@ fn permissao(
     let fluxo = resolver_fluxo(&sessao.store, org, &args.fluxo)?;
     let agente = resolver_agente(&sessao.store, org, &args.agente)?;
     let resultado = if liberar {
-        sessao.store.fluxos().liberar(org, agente.id, fluxo.id)
+        sessao.store.flows().release(org, agente.id, fluxo.id)
     } else {
-        sessao.store.fluxos().revogar(org, agente.id, fluxo.id)
+        sessao.store.flows().revoke(org, agente.id, fluxo.id)
     };
     resultado.map_err(|erro| descrever(&erro))?;
     auditar(

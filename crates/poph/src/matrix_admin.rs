@@ -29,7 +29,7 @@ use poph_matrix::{
     Classificacao, ClienteMatrix, DepartamentoEspaco, ErroEspaco, Espacos, ModuloMatrix,
 };
 use poph_server::matrix_inicio::PortaEspacosStore;
-use poph_store::{EstadoMatrixOrg, NewAuditEntry, Store};
+use poph_store::{NewAuditEntry, StateMatrixOrg, Store};
 use poph_types::{DepartmentId, HarnessConfig, OrgId};
 use serde_json::{Value, json};
 
@@ -199,18 +199,18 @@ fn erro(mensagem: &str) -> ExitCode {
 
 /// `poph matrix estado`: ligado, corte do backfill, atraso, falhas e a versão do estado.
 fn mostrar_estado(ctx: &Contexto, json: bool) -> Resultado {
-    let linha = ler(ctx.store.matrix().estado(ctx.org))?;
-    let cursores = ler(ctx.store.matrix().ler_cursores(ctx.org))?;
+    let linha = ler(ctx.store.matrix().state(ctx.org))?;
+    let cursores = ler(ctx.store.matrix().read_cursors(ctx.org))?;
     let atraso = ler(ctx
         .store
         .matrix()
-        .atraso_das_mensagens(ctx.org, cursores.mensagens))?;
+        .delay_of_messages(ctx.org, cursores.messages))?;
     let idade_s = atraso
-        .mais_antiga_em
+        .oldest_at
         .map(|criada_em| ((ctx.store.now() - criada_em).max(0) / 1000) as u64)
         .unwrap_or(0);
-    let falhas = ler(ctx.store.matrix().contar_falhas(ctx.org))?;
-    let ultima_falha = ler(ctx.store.matrix().listar_falhas(ctx.org, 1))?
+    let falhas = ler(ctx.store.matrix().count_failures(ctx.org))?;
+    let ultima_falha = ler(ctx.store.matrix().list_failures(ctx.org, 1))?
         .first()
         .map(|falha| falha.motivo.clone());
     let slug = ler(ctx.store.orgs().get(ctx.org))?.slug;
@@ -219,29 +219,29 @@ fn mostrar_estado(ctx: &Contexto, json: bool) -> Resultado {
         imprimir_json(&json!({
             "versao_relatorio": 1,
             "org": slug,
-            "ligado": linha.ligado,
-            "corte_do_backfill_ms": linha.ligado_em,
-            "versao": linha.atualizado_em,
+            "ligado": linha.linked,
+            "corte_do_backfill_ms": linha.linked_at,
+            "versao": linha.updated_at,
             "conectado": Value::Null,
-            "atraso": { "mensagens": atraso.pendentes, "idade_mais_antiga_s": idade_s },
+            "atraso": { "mensagens": atraso.pending, "idade_mais_antiga_s": idade_s },
             "falhas_pendentes": falhas,
             "ultima_falha": ultima_falha,
         }));
     } else {
         println!("módulo Matrix da org `{slug}`");
-        println!("  ligado:                 {}", sim_nao(linha.ligado));
+        println!("  ligado:                 {}", sim_nao(linha.linked));
         println!(
             "  corte do backfill:      {}",
             linha
-                .ligado_em
+                .linked_at
                 .map(data_utc)
                 .unwrap_or_else(|| "nunca ligado".to_owned())
         );
         println!("  conectado ao Synapse:   desconhecido pela CLI (a sonda roda no servidor)");
         println!(
             "  pendentes de espelhar:  {} mensagem(ns){}",
-            atraso.pendentes,
-            if atraso.pendentes > 0 {
+            atraso.pending,
+            if atraso.pending > 0 {
                 format!(", a mais antiga há {idade_s} s")
             } else {
                 String::new()
@@ -269,8 +269,8 @@ enum ErroLigacao {
 
 /// `poph matrix ligar|desligar`: lê a versão, confere e grava.
 fn alterar_ligacao(ctx: &Contexto, ligar: bool, json: bool) -> Resultado {
-    let antes = ler(ctx.store.matrix().estado(ctx.org))?;
-    let esperada = antes.atualizado_em;
+    let antes = ler(ctx.store.matrix().state(ctx.org))?;
+    let esperada = antes.updated_at;
     match aplicar_ligacao(ctx, ligar, esperada) {
         Ok(depois) => {
             let slug = ler(ctx.store.orgs().get(ctx.org))?.slug;
@@ -278,15 +278,15 @@ fn alterar_ligacao(ctx: &Contexto, ligar: bool, json: bool) -> Resultado {
                 imprimir_json(&json!({
                     "versao_relatorio": 1,
                     "org": slug,
-                    "ligado": depois.ligado,
-                    "corte_do_backfill_ms": depois.ligado_em,
-                    "versao": depois.atualizado_em,
+                    "ligado": depois.linked,
+                    "corte_do_backfill_ms": depois.linked_at,
+                    "versao": depois.updated_at,
                 }));
             } else if ligar {
                 println!("módulo Matrix ligado na org `{slug}`.");
                 println!(
                     "  corte do backfill: {} (só o que chegar daqui em diante é espelhado)",
-                    depois.ligado_em.map(data_utc).unwrap_or_default()
+                    depois.linked_at.map(data_utc).unwrap_or_default()
                 );
                 println!("  o servidor pega a mudança no próximo ciclo, sem reiniciar.");
             } else {
@@ -313,19 +313,19 @@ fn aplicar_ligacao(
     ctx: &Contexto,
     ligar: bool,
     esperada: i64,
-) -> Result<EstadoMatrixOrg, ErroLigacao> {
+) -> Result<StateMatrixOrg, ErroLigacao> {
     let atual = ctx
         .store
         .matrix()
-        .estado(ctx.org)
+        .state(ctx.org)
         .map_err(|erro| ErroLigacao::Outro(descrever(&erro)))?;
-    if atual.atualizado_em != esperada {
+    if atual.updated_at != esperada {
         return Err(ErroLigacao::VersaoMudou);
     }
     let depois = if ligar {
-        ctx.store.matrix().ligar(ctx.org)
+        ctx.store.matrix().enable(ctx.org)
     } else {
-        ctx.store.matrix().desligar(ctx.org)
+        ctx.store.matrix().disable(ctx.org)
     }
     .map_err(|erro| ErroLigacao::Outro(descrever(&erro)))?;
     auditar(ctx, "update", "matrix", ctx.org.to_string()).map_err(ErroLigacao::Outro)?;
@@ -337,13 +337,13 @@ fn aplicar_ligacao(
 /// `poph matrix espaco` (sem `--departamento`): lista os espaços da org.
 fn listar_espacos(ctx: &Contexto, json: bool) -> Resultado {
     let slug = ler(ctx.store.orgs().get(ctx.org))?.slug;
-    let espacos = ler(ctx.store.matrix().listar_espacos(ctx.org))?;
+    let espacos = ler(ctx.store.matrix().list_spaces(ctx.org))?;
     let mut itens = Vec::new();
     for espaco in &espacos {
         let nome = ctx
             .store
             .departments()
-            .obter(ctx.org, espaco.departamento)
+            .get(ctx.org, espaco.departamento)
             .ok()
             .map(|departamento| departamento.name);
         itens.push((espaco, nome));
@@ -357,7 +357,7 @@ fn listar_espacos(ctx: &Contexto, json: bool) -> Resultado {
                     "departamento_nome": nome,
                     "espaco": espaco.room_id,
                     "alias": espaco.alias,
-                    "origem": espaco.origem.como_texto(),
+                    "origem": espaco.origin.as_text(),
                 })
             })
             .collect();
@@ -371,7 +371,7 @@ fn listar_espacos(ctx: &Contexto, json: bool) -> Resultado {
                 "  - {} → {} ({})",
                 nome.as_deref().unwrap_or("departamento sem nome"),
                 espaco.room_id,
-                descricao_origem(espaco.origem.como_texto())
+                descricao_origem(espaco.origin.as_text())
             );
         }
     }
@@ -386,7 +386,7 @@ fn garantir_espaco(
     json: bool,
 ) -> Resultado {
     let departamento_id: DepartmentId = parse_id(departamento_texto)?;
-    let departamento = ler(ctx.store.departments().obter(ctx.org, departamento_id))?;
+    let departamento = ler(ctx.store.departments().get(ctx.org, departamento_id))?;
     let existente = existente.map(str::trim).filter(|texto| !texto.is_empty());
 
     let modulo = match ModuloMatrix::preparar(ctx.config.matrix.clone()) {
@@ -448,20 +448,20 @@ fn garantir_espaco(
 fn desligar_espaco(ctx: &Contexto, departamento_texto: &str, json: bool) -> Resultado {
     let departamento_id: DepartmentId = parse_id(departamento_texto)?;
     // Departamento de outra org (ou inexistente) não passa daqui: nada muda.
-    let departamento = ler(ctx.store.departments().obter(ctx.org, departamento_id))?;
-    let desligado = ler(ctx.store.matrix().desligar_espaco(ctx.org, departamento.id))?;
+    let departamento = ler(ctx.store.departments().get(ctx.org, departamento_id))?;
+    let desligado = ler(ctx.store.matrix().disable_space(ctx.org, departamento.id))?;
     auditar(ctx, "delete", "matrix_space", departamento.id.to_string())?;
     if json {
         imprimir_json(&json!({
             "versao_relatorio": 1,
             "departamento": departamento.id.to_string(),
-            "removido": desligado.removido,
-            "salas_esquecidas": desligado.salas_esquecidas,
+            "removido": desligado.removed,
+            "salas_esquecidas": desligado.rooms_forgotten,
         }));
-    } else if desligado.removido {
+    } else if desligado.removed {
         println!(
             "espaço do departamento `{}` desligado: {} sala(s) deixaram de estar registradas nele.",
-            departamento.name, desligado.salas_esquecidas
+            departamento.name, desligado.rooms_forgotten
         );
         println!(
             "  nada foi apagado no Element. Na próxima alteração de conversa desse departamento, a sala volta a ser posicionada no mesmo espaço."
@@ -525,7 +525,7 @@ fn ler<T>(resultado: Result<T, poph_store::StoreError>) -> Result<T, String> {
 
 /// Auditoria da alteração, com ator `cli` (a API grava `admin_token`).
 fn auditar(ctx: &Contexto, acao: &str, entidade: &str, id: String) -> Result<(), String> {
-    ler(ctx.store.audit().registrar(
+    ler(ctx.store.audit().register(
         Some(ctx.org),
         NewAuditEntry {
             ator_tipo: "cli".into(),
@@ -593,7 +593,7 @@ mod testes {
             .expect("abre o banco de teste");
         let org = store
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: "Loja".into(),
                 slug: "loja-412".into(),
                 config_json: "{}".into(),
@@ -604,12 +604,7 @@ mod testes {
             org: org.id,
             config: HarnessConfig::default(),
         };
-        let atual = ctx
-            .store
-            .matrix()
-            .estado(org.id)
-            .expect("estado")
-            .atualizado_em;
+        let atual = ctx.store.matrix().state(org.id).expect("estado").updated_at;
 
         let recusado = aplicar_ligacao(&ctx, true, atual + 1);
         assert!(
@@ -617,12 +612,12 @@ mod testes {
             "com versão velha tem que recusar: {recusado:?}"
         );
         assert!(
-            !ctx.store.matrix().estado(org.id).expect("estado").ligado,
+            !ctx.store.matrix().state(org.id).expect("estado").linked,
             "recusado não pode ter ligado o módulo"
         );
 
         let gravado = aplicar_ligacao(&ctx, true, atual).expect("com a versão certa grava");
-        assert!(gravado.ligado);
+        assert!(gravado.linked);
         let _ = fs::remove_dir_all(&pasta);
     }
 }

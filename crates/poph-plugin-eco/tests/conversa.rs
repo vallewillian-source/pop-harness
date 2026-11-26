@@ -51,7 +51,7 @@ async fn texto_sai_pelo_plugin_e_volta_invertido_pela_inbox() {
     assert_eq!(mensagens[0].texto, "odnum ,álo");
     assert_eq!(mensagens[0].direction.as_text(), "in");
     assert_eq!(
-        mensagens[0].id_externo.as_deref(),
+        mensagens[0].external_id.as_deref(),
         Some(&*format!("eco-{turno}:0"))
     );
 
@@ -88,7 +88,7 @@ async fn texto_sai_pelo_plugin_e_volta_invertido_pela_inbox() {
         cenario
             .store
             .outbox()
-            .contar_por_estado(cenario.org, OutboxState::Pending)
+            .count_by_state(cenario.org, OutboxState::Pending)
             .expect("conta pendentes"),
         0
     );
@@ -106,7 +106,7 @@ async fn arquivo_da_biblioteca_vira_comando_de_envio() {
     let item = cenario
         .store
         .outbox()
-        .enfileirar(
+        .enqueue(
             cenario.org,
             NewOutboxItem {
                 conversation_id: cenario.conversa_id(),
@@ -159,9 +159,9 @@ async fn conversa_sem_contato_falha_sem_travar_a_fila() {
     let gravado = cenario
         .store
         .outbox()
-        .obter(cenario.org, item.id)
+        .get(cenario.org, item.id)
         .expect("lê o item");
-    assert_eq!(gravado.estado, OutboxState::Failed);
+    assert_eq!(gravado.state, OutboxState::Failed);
     let motivo = gravado.ultimo_erro.unwrap_or_default();
     assert!(motivo.contains("peer"), "{motivo}");
 
@@ -214,8 +214,8 @@ async fn agente_sem_contato_usa_o_do_evento() {
 
     let conversas = cenario
         .store
-        .conversas()
-        .listar(cenario.org, None, poph_store::Page::with_limit(10))
+        .conversations()
+        .list(cenario.org, None, poph_store::Page::with_limit(10))
         .expect("lista conversas");
     assert_eq!(conversas.len(), 2, "cada contato tem a sua conversa");
 
@@ -229,7 +229,7 @@ async fn transporte_recusa_item_de_tipo_desconhecido_sem_chamar_o_plugin() {
     let item = cenario
         .store
         .outbox()
-        .enfileirar(
+        .enqueue(
             cenario.org,
             NewOutboxItem {
                 conversation_id: cenario.conversa_id(),

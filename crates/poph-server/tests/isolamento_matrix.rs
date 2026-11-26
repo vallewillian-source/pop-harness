@@ -599,7 +599,7 @@ impl Cenario {
     ) -> (OrgId, ConversationId, AgentId) {
         let org = store
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: format!("Org {slug}"),
                 slug: slug.to_owned(),
                 config_json: String::new(),
@@ -608,7 +608,7 @@ impl Cenario {
             .id;
         let agente = store
             .agents()
-            .criar(
+            .create(
                 org,
                 NewAgent {
                     name: nome_agente.to_owned(),
@@ -625,8 +625,8 @@ impl Cenario {
             .parse()
             .expect("id da integração");
         let conversa = store
-            .conversas()
-            .criar(
+            .conversations()
+            .create(
                 org,
                 NewConversation {
                     agent_id: agente,
@@ -639,14 +639,14 @@ impl Cenario {
             )
             .expect("cria a conversa")
             .id;
-        store.matrix().ligar(org).expect("liga o módulo na org");
+        store.matrix().enable(org).expect("liga o módulo na org");
         store
             .matrix()
-            .garantir_sala(org, conversa, sala, None)
+            .ensure_room(org, conversa, sala, None)
             .expect("grava a sala");
         store
             .matrix()
-            .marcar_sala_pronta(org, conversa)
+            .mark_room_ready(org, conversa)
             .expect("sala pronta");
         (org, conversa, agente)
     }
@@ -654,7 +654,7 @@ impl Cenario {
     fn departamento(store: &Store, org: OrgId, nome: &str) -> DepartmentId {
         store
             .departments()
-            .criar(
+            .create(
                 org,
                 NewDepartment {
                     name: nome.to_owned(),
@@ -670,7 +670,7 @@ impl Cenario {
         let segredo = format!("segredo-{rotulo}");
         let criado = store
             .tokens()
-            .criar(Some(org), rotulo, &hash_argon2(&segredo))
+            .create(Some(org), rotulo, &hash_argon2(&segredo))
             .expect("cria o token");
         format!("poph_{}_{segredo}", criado.id)
     }
@@ -710,7 +710,7 @@ impl Cenario {
     fn canal(&self, org: OrgId, conversa: ConversationId) -> CanalEvolution {
         let integracao = self
             .store
-            .conversas()
+            .conversations()
             .get(org, conversa)
             .expect("lê a conversa")
             .integration_id
@@ -736,13 +736,13 @@ impl Cenario {
     fn mensagens(&self, org: OrgId) -> Vec<poph_store::Mensagem> {
         self.store
             .messages()
-            .listar(org, self.conversa(org), Page::with_limit(50))
+            .list(org, self.conversa(org), Page::with_limit(50))
             .expect("lista as mensagens")
     }
 
     fn status(&self, org: OrgId) -> ConversationStatus {
         self.store
-            .conversas()
+            .conversations()
             .get(org, self.conversa(org))
             .expect("lê a conversa")
             .status
@@ -750,7 +750,7 @@ impl Cenario {
 
     fn nome_cliente(&self, org: OrgId) -> Option<String> {
         self.store
-            .conversas()
+            .conversations()
             .get(org, self.conversa(org))
             .expect("lê a conversa")
             .customer_name
@@ -759,23 +759,23 @@ impl Cenario {
     fn nome_espelhado(&self, org: OrgId) -> Option<String> {
         self.store
             .matrix()
-            .sala(org, self.conversa(org))
+            .room(org, self.conversa(org))
             .expect("lê a sala")
             .expect("a sala existe")
-            .nome_cliente_espelhado
+            .name_client_mirrored
     }
 
     fn pendentes(&self, org: OrgId) -> u64 {
         self.store
             .outbox()
-            .contar_por_estado(org, poph_store::OutboxState::Pending)
+            .count_by_state(org, poph_store::OutboxState::Pending)
             .expect("conta a fila de saída")
     }
 
     fn espacos_gravados(&self, org: OrgId) -> usize {
         self.store
             .matrix()
-            .listar_espacos(org)
+            .list_spaces(org)
             .expect("lista os espaços")
             .len()
     }
@@ -977,7 +977,7 @@ async fn evento_da_sala_a_com_ids_da_org_b_nao_toca_a_conversa_da_b() {
     assert_eq!(mensagens_a[0].origin, Origin::Human);
     assert_eq!(mensagens_a[0].texto, TEXTO_ATENDENTE);
     assert_eq!(
-        mensagens_a[0].id_externo.as_deref(),
+        mensagens_a[0].external_id.as_deref(),
         Some("$evento-cruzado:matrix-dev.local")
     );
     assert_eq!(
@@ -1098,7 +1098,7 @@ async fn token_da_org_a_nao_opera_as_rotas_da_org_b() {
     cenario
         .store
         .matrix()
-        .desligar(cenario.org_b)
+        .disable(cenario.org_b)
         .expect("desliga o módulo na org B");
     let mut estado = cenario.estado();
     let config = cenario.config.matrix.clone().expect("seção [matrix]");
@@ -1183,9 +1183,9 @@ async fn token_da_org_a_nao_opera_as_rotas_da_org_b() {
         !cenario
             .store
             .matrix()
-            .estado(cenario.org_b)
+            .state(cenario.org_b)
             .expect("estado")
-            .ligado,
+            .linked,
         "o ataque não liga o módulo na outra org"
     );
     assert_eq!(cenario.espacos_gravados(cenario.org_b), 0);
@@ -1307,7 +1307,7 @@ async fn espaco_com_departamento_da_outra_org_e_recusado() {
         cenario
             .store
             .departments()
-            .obter(cenario.org_b, cenario.dept_b)
+            .get(cenario.org_b, cenario.dept_b)
             .is_ok(),
         "o departamento da org B continua existindo"
     );
@@ -1393,7 +1393,7 @@ async fn nome_do_cliente_fica_na_org_do_webhook_e_nao_renomeia_a_sala_da_outra()
     assert_eq!(
         cenario
             .store
-            .conversas()
+            .conversations()
             .get(cenario.org_b, cenario.conversa_b)
             .expect("lê a conversa de B")
             .status,
@@ -1634,7 +1634,7 @@ async fn tokens_canario_nao_aparecem_em_resposta_log_arquivo_nem_fila() {
         for item in cenario
             .store
             .outbox()
-            .listar_pendentes(org, 50)
+            .list_pending(org, 50)
             .expect("lista a fila")
         {
             let texto = format!(

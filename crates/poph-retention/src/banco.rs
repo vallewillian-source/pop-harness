@@ -38,7 +38,7 @@ impl Armazem for BancoHarness<'_> {
             let pagina = self
                 .store
                 .orgs()
-                .listar(Page {
+                .list(Page {
                     after: apos,
                     limit: PAGINA,
                 })
@@ -78,16 +78,16 @@ impl Armazem for BancoHarness<'_> {
         let varredura = self
             .store
             .retention()
-            .varrer(org, corte_ms, simular)
+            .scan_table(org, corte_ms, simular)
             .map_err(banco)?;
         Ok(VarreduraBanco {
-            mensagens: varredura.mensagens,
-            anexos: varredura.anexos,
-            turnos: varredura.turnos,
+            mensagens: varredura.messages,
+            anexos: varredura.attachments,
+            turnos: varredura.turns,
             inbox: varredura.inbox,
             outbox: varredura.outbox,
-            conversas: varredura.conversas,
-            ids_conversas: varredura.ids_conversas,
+            conversas: varredura.conversations,
+            ids_conversas: varredura.conversation_ids,
             hashes_referenciados: varredura.hashes_referenciados,
         })
     }
@@ -104,7 +104,7 @@ impl Armazem for BancoHarness<'_> {
     ) -> Result<(), ErroRetencao> {
         self.store
             .audit()
-            .registrar(
+            .register(
                 Some(org),
                 NewAuditEntry {
                     ator_tipo: ator_tipo.to_owned(),

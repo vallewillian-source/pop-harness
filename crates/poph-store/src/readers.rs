@@ -21,7 +21,7 @@ impl ReaderPool {
         }
     }
 
-    pub fn com<T>(&self, query: impl FnOnce(&Connection) -> Resultado<T>) -> Resultado<T> {
+    pub fn run<T>(&self, query: impl FnOnce(&Connection) -> Resultado<T>) -> Resultado<T> {
         let mut connection = {
             let mut free = self.free.lock().unwrap_or_else(|e| e.into_inner());
             free.pop()

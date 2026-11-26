@@ -52,7 +52,7 @@ impl Cenario {
     fn org(&self, slug: &str) -> Org {
         self.store
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: format!("Org {slug}"),
                 slug: slug.to_owned(),
                 config_json: String::new(),
@@ -70,7 +70,7 @@ impl Cenario {
         let criado = self
             .store
             .tokens()
-            .criar(Some(org), rotulo, &hash)
+            .create(Some(org), rotulo, &hash)
             .expect("cria o token");
         format!("poph_{}_{segredo}", criado.id)
     }
@@ -78,7 +78,7 @@ impl Cenario {
     fn agente(&self, org: &Org, slug: &str) -> Agente {
         self.store
             .agents()
-            .criar(
+            .create(
                 org.id,
                 NewAgent {
                     name: format!("Agente {slug}"),
@@ -92,7 +92,7 @@ impl Cenario {
     fn departamento(&self, org: &Org, nome: &str) -> poph_types::DepartmentId {
         self.store
             .departments()
-            .criar(
+            .create(
                 org.id,
                 NewDepartment {
                     name: nome.to_owned(),
@@ -163,8 +163,8 @@ async fn pedir(
 
 fn conversa(c: &Cenario, org: &Org, agente: AgentId, peer: &str) -> Conversa {
     c.store
-        .conversas()
-        .criar(
+        .conversations()
+        .create(
             org.id,
             NewConversation {
                 agent_id: agente,
@@ -206,7 +206,7 @@ async fn transferir_marca_a_conversa_e_audita_o_motivo() {
 
     let gravada = c
         .store
-        .conversas()
+        .conversations()
         .get(org.id, alvo.id)
         .expect("lê a conversa");
     assert_eq!(gravada.status, poph_store::ConversationStatus::Transferred);
@@ -216,7 +216,7 @@ async fn transferir_marca_a_conversa_e_audita_o_motivo() {
     let auditoria = c
         .store
         .audit()
-        .listar(org.id, poph_store::Page::with_limit(10))
+        .list(org.id, poph_store::Page::with_limit(10))
         .expect("lê a auditoria");
     let registro = auditoria
         .iter()
@@ -255,8 +255,8 @@ async fn transferir_recusa_conversa_encerrada_da_outra_org_e_corpo_invalido() {
     let da_outra = conversa(&c, &outra, agente_b.id, "5522");
     let encerrada = conversa(&c, &org, agente.id, "5533");
     c.store
-        .conversas()
-        .fechar_pelo_agente(org.id, encerrada.id, agente.id, "fim".to_owned())
+        .conversations()
+        .close_by_agent(org.id, encerrada.id, agente.id, "fim".to_owned())
         .expect("fecha a conversa");
     let (base, desligar) = servir(c.estado()).await;
 
@@ -342,7 +342,7 @@ async fn transferir_recusa_conversa_encerrada_da_outra_org_e_corpo_invalido() {
 
     let gravada = c
         .store
-        .conversas()
+        .conversations()
         .get(org.id, alvo.id)
         .expect("lê a conversa");
     assert_eq!(gravada.status, poph_store::ConversationStatus::Open);

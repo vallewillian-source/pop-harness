@@ -119,7 +119,7 @@ pub fn chave_idempotencia(item: &OutboxItem) -> String {
 /// Destino do item: o identificador do cliente no canal, gravado na conversa.
 fn peer_da_conversa(store: &Store, item: &OutboxItem) -> std::result::Result<String, FalhaEnvio> {
     let conversa = store
-        .conversas()
+        .conversations()
         .get(item.org_id, item.conversation_id)
         .map_err(|erro| FalhaEnvio::definitiva(format!("não consegui ler a conversa: {erro}")))?;
     conversa.peer_externo.clone().ok_or_else(|| {
@@ -278,7 +278,7 @@ impl ConversaDoCanal {
                 .unwrap_or_else(|veneno| veneno.into_inner());
             cache.get(peer).copied()
         }?;
-        let conversa = self.store.conversas().get(org, lembrada).ok();
+        let conversa = self.store.conversations().get(org, lembrada).ok();
         let vale = conversa.is_some_and(|conversa| {
             conversa.canal == self.canal
                 && conversa.peer_externo.as_deref() == Some(peer)
@@ -314,7 +314,7 @@ impl ResolvedorConversa for ConversaDoCanal {
             self.lembrar(&evento.peer, conversa.id);
             return Ok(conversa.id);
         }
-        let nova = self.store.conversas().criar(
+        let nova = self.store.conversations().create(
             org,
             NewConversation {
                 agent_id: self.agente,
@@ -343,7 +343,7 @@ impl ConversaDoCanal {
                 after: apos,
                 limit: 200,
             };
-            let conversas = self.store.conversas().listar(org, None, pagina)?;
+            let conversas = self.store.conversations().list(org, None, pagina)?;
             if conversas.is_empty() {
                 break;
             }
@@ -490,7 +490,7 @@ impl InboxDoCanal {
             anexos_json: anexos_json(&evento),
         };
         match self.fluxo.receber_mensagem(self.org, recebida) {
-            Ok(gravado) => match gravado.situacao {
+            Ok(gravado) => match gravado.situation {
                 Received::New => {
                     self.contadores.gravados.fetch_add(1, Ordering::Relaxed);
                     Some(Received::New)
@@ -565,8 +565,8 @@ mod testes {
             seq: 3,
             tipo: tipo.to_owned(),
             content_json: conteudo.to_string(),
-            estado: OutboxState::Pending,
-            tentativas: 0,
+            state: OutboxState::Pending,
+            attempts: 0,
             ultimo_erro: None,
             created_at: 0,
             enviado_em: None,

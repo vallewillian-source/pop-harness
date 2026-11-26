@@ -481,8 +481,8 @@ async fn exportar_devolve_o_arquivo_da_org_sem_segredo_nem_caminho() {
     // `com_conversas=true` leva o histórico.
     let conversa = c
         .store()
-        .conversas()
-        .criar(
+        .conversations()
+        .create(
             org.parse().expect("org id"),
             poph_store::NewConversation {
                 agent_id: documento["tabelas"]["agents"][0]["id"]
@@ -499,7 +499,7 @@ async fn exportar_devolve_o_arquivo_da_org_sem_segredo_nem_caminho() {
         .expect("conversa");
     c.store()
         .messages()
-        .gravar(
+        .write(
             org.parse().expect("org id"),
             poph_store::NewMessage {
                 conversation_id: conversa.id,
@@ -507,7 +507,7 @@ async fn exportar_devolve_o_arquivo_da_org_sem_segredo_nem_caminho() {
                 role: poph_store::Role::User,
                 texto: "tudo bem?".to_owned(),
                 attachments_json: "[]".to_owned(),
-                id_externo: None,
+                external_id: None,
                 turn_id: None,
                 origin: poph_store::Origin::Agente,
                 author_name: None,

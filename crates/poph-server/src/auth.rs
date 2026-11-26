@@ -114,7 +114,7 @@ pub async fn autenticar(valor: &str, estado: &Estado) -> Result<Identidade, ApiE
     let registro = estado
         .store
         .tokens()
-        .por_id(id)
+        .by_id(id)
         .map_err(ApiError::from)?
         .ok_or_else(ApiError::nao_autorizado)?;
     if registro.revoked_at.is_some() {

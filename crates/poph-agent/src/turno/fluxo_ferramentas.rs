@@ -113,7 +113,7 @@ impl FerramentaInterna for EncerrarAtendimento {
         let store = Arc::clone(&self.0);
         Box::pin(async move {
             let motivo = texto_obrigatorio(&argumentos, "motivo")?;
-            match store.conversas().fechar_pelo_agente(
+            match store.conversations().close_by_agent(
                 contexto.org,
                 contexto.conversa,
                 contexto.agente,
@@ -230,7 +230,7 @@ impl FluxoDoTurno {
         let gravada = self
             .store
             .executions()
-            .aplicar_transicao(
+            .apply_transition(
                 contexto.org,
                 execucao.id,
                 execucao.version,
@@ -263,7 +263,7 @@ impl FluxoDoTurno {
         let aplicada = self
             .store
             .executions()
-            .transicao_ja_aplicada(contexto.org, execucao.id, chave)
+            .transition_already_applied(contexto.org, execucao.id, chave)
             .map_err(|erro| falha_de_leitura(erro, "a chave da ação"))?;
         if !aplicada {
             return Ok(None);
@@ -283,8 +283,8 @@ impl FluxoDoTurno {
     ) -> Result<(Ficha, Execution), String> {
         let ficha = self
             .store
-            .fichas()
-            .por_conversa(contexto.org, contexto.conversa)
+            .cases()
+            .by_conversation(contexto.org, contexto.conversa)
             .map_err(|erro| falha_de_leitura(erro, "a Ficha do atendimento"))?
             .ok_or_else(|| {
                 "erro: este atendimento ainda não tem Ficha; não há fluxo para agir".to_owned()
@@ -298,7 +298,7 @@ impl FluxoDoTurno {
         let execucao = self
             .store
             .executions()
-            .ativa_da_ficha(contexto.org, ficha.id)
+            .active_of_case(contexto.org, ficha.id)
             .map_err(|erro| falha_de_leitura(erro, "a execução do fluxo"))?
             .ok_or_else(|| {
                 "erro: não há fluxo em andamento neste atendimento; siga a conversa normalmente"
@@ -364,7 +364,7 @@ impl FluxoDoTurno {
         if self
             .store
             .executions()
-            .transicao_ja_aplicada(contexto.org, execucao.id, &chave)
+            .transition_already_applied(contexto.org, execucao.id, &chave)
             .map_err(|erro| falha_de_leitura(erro, "a chave do abandono"))?
         {
             return Ok("Este fluxo já tinha sido abandonado; nada mudou.".to_owned());
@@ -378,7 +378,7 @@ impl FluxoDoTurno {
             .map_err(|erro| format!("erro: {erro}"))?;
         self.store
             .executions()
-            .aplicar_transicao(
+            .apply_transition(
                 contexto.org,
                 execucao.id,
                 execucao.version,
@@ -444,8 +444,8 @@ impl FluxoDoTurno {
         let pedido = texto_obrigatorio(&argumentos, "fluxo_id")?;
         let ficha = self
             .store
-            .fichas()
-            .por_conversa(contexto.org, contexto.conversa)
+            .cases()
+            .by_conversation(contexto.org, contexto.conversa)
             .map_err(|erro| falha_de_leitura(erro, "a Ficha do atendimento"))?
             .ok_or_else(|| {
                 "erro: este atendimento ainda não tem Ficha; não há fluxo para iniciar".to_owned()
@@ -507,8 +507,8 @@ impl FluxoDoTurno {
         let pedido = pedido.trim();
         let liberados = self
             .store
-            .fluxos()
-            .listar_do_agente(org, agente)
+            .flows()
+            .list_from_agent(org, agente)
             .map_err(|erro| falha_de_leitura(erro, "os fluxos liberados"))?;
         if let Some(fluxo) = liberados.iter().find(|fluxo| fluxo.slug == pedido) {
             return Ok(fluxo.slug.clone());

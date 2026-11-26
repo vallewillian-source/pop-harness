@@ -203,11 +203,11 @@ impl PortaAtendimento for PortaDoHarness {
     fn conversa_da_sala(&self, sala: &str) -> Result<Option<ConversaDaSala>, StoreError> {
         // Só orgs com o módulo ligado: sala de org desligada não recebe resposta nenhuma (o
         // espelhamento e o módulo inteiro estão parados para ela).
-        for estado in self.store.matrix().orgs_ligadas()? {
-            if let Some(gravada) = self.store.matrix().sala_por_room_id(estado.org_id, sala)? {
+        for estado in self.store.matrix().linked_orgs()? {
+            if let Some(gravada) = self.store.matrix().room_by_room_id(estado.org_id, sala)? {
                 return Ok(Some(ConversaDaSala {
                     org: estado.org_id,
-                    conversa: gravada.conversa,
+                    conversa: gravada.conversation,
                 }));
             }
         }
@@ -215,7 +215,7 @@ impl PortaAtendimento for PortaDoHarness {
     }
 
     fn agente_da_conversa(&self, alvo: ConversaDaSala) -> Result<Option<AgentId>, StoreError> {
-        match self.store.conversas().get(alvo.org, alvo.conversa) {
+        match self.store.conversations().get(alvo.org, alvo.conversa) {
             Ok(conversa) => Ok(Some(conversa.agent_id)),
             // A conversa sumiu entre a leitura da sala e esta: nada a assinar, e reenviar não
             // traria a conversa de volta.
@@ -231,7 +231,7 @@ impl PortaAtendimento for PortaDoHarness {
     ) -> Result<HumanResponse, StoreError> {
         self.store
             .messages()
-            .registrar_resposta_humana(alvo.org, alvo.conversa, nova)
+            .register_response_human(alvo.org, alvo.conversa, nova)
     }
 
     fn registrar_resposta_com_arquivo(
@@ -241,7 +241,7 @@ impl PortaAtendimento for PortaDoHarness {
     ) -> Result<HumanResponse, StoreError> {
         self.store
             .messages()
-            .registrar_resposta_humana_com_arquivo(alvo.org, alvo.conversa, nova)
+            .record_human_response_with_file(alvo.org, alvo.conversa, nova)
     }
 }
 

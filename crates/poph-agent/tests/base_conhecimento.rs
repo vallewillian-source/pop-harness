@@ -47,7 +47,7 @@ impl Cenario {
         );
         let org = store
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: format!("Org {rotulo}"),
                 slug: format!("org-{rotulo}-{}", AgentId::generate()),
                 config_json: "{}".to_owned(),
@@ -56,7 +56,7 @@ impl Cenario {
             .id;
         let agente = store
             .agents()
-            .criar(
+            .create(
                 org,
                 NewAgent {
                     name: format!("Atendente {rotulo}"),
@@ -68,7 +68,7 @@ impl Cenario {
             .id;
         let grupo = store
             .knowledge()
-            .criar_grupo(
+            .create_group(
                 org,
                 NewKnowledgeGroup {
                     name: "Políticas".to_owned(),
@@ -79,7 +79,7 @@ impl Cenario {
             .id;
         store
             .knowledge()
-            .vincular_agente(org, agente, grupo)
+            .link_agent(org, agente, grupo)
             .expect("liga o grupo ao agente");
         let embedder: Arc<dyn Embedder> = Arc::new(EmbedderFake::new());
         let (indice, _) = Indice::abrir(store.rag_path(), embedder, ConfigIndice::default())
@@ -98,7 +98,7 @@ impl Cenario {
     fn criar_item(&self, titulo: &str, conteudo: &str) -> KnowledgeItemId {
         self.store
             .knowledge()
-            .criar_item(
+            .create_item(
                 self.org,
                 NewKnowledgeItem {
                     group_id: self.grupo,
@@ -157,13 +157,13 @@ async fn indice_acompanha_criar_editar_e_apagar() {
     let versao = cenario
         .store
         .knowledge()
-        .obter_item(cenario.org, item)
+        .get_item(cenario.org, item)
         .expect("lê o item")
         .version;
     cenario
         .store
         .knowledge()
-        .atualizar_item(
+        .update_item(
             cenario.org,
             item,
             versao,
@@ -184,7 +184,7 @@ async fn indice_acompanha_criar_editar_e_apagar() {
     cenario
         .store
         .knowledge()
-        .excluir_item(cenario.org, item)
+        .delete_item(cenario.org, item)
         .expect("apaga o item");
     cenario.sincronizar().await;
     assert!(
@@ -274,7 +274,7 @@ async fn busca_nao_cruza_org() {
     let outra_org = cenario
         .store
         .orgs()
-        .criar(NewOrg {
+        .create(NewOrg {
             name: "Outra".to_owned(),
             slug: format!("outra-{}", AgentId::generate()),
             config_json: "{}".to_owned(),
@@ -303,7 +303,7 @@ async fn limite_de_mil_caracteres_e_validado_com_erro_claro() {
         cenario
             .store
             .knowledge()
-            .obter_item(cenario.org, item)
+            .get_item(cenario.org, item)
             .expect("lê")
             .content
             .chars()
@@ -314,7 +314,7 @@ async fn limite_de_mil_caracteres_e_validado_com_erro_claro() {
     let erro = cenario
         .store
         .knowledge()
-        .criar_item(
+        .create_item(
             cenario.org,
             NewKnowledgeItem {
                 group_id: cenario.grupo,
@@ -346,13 +346,13 @@ async fn item_e_grupo_inativos_saem_do_indice() {
     let versao = cenario
         .store
         .knowledge()
-        .obter_item(cenario.org, item)
+        .get_item(cenario.org, item)
         .expect("lê")
         .version;
     cenario
         .store
         .knowledge()
-        .atualizar_item(
+        .update_item(
             cenario.org,
             item,
             versao,
@@ -372,13 +372,13 @@ async fn item_e_grupo_inativos_saem_do_indice() {
     let versao = cenario
         .store
         .knowledge()
-        .obter_item(cenario.org, item)
+        .get_item(cenario.org, item)
         .expect("lê")
         .version;
     cenario
         .store
         .knowledge()
-        .atualizar_item(
+        .update_item(
             cenario.org,
             item,
             versao,
@@ -391,13 +391,13 @@ async fn item_e_grupo_inativos_saem_do_indice() {
     let versao = cenario
         .store
         .knowledge()
-        .obter_grupo(cenario.org, cenario.grupo)
+        .get_group(cenario.org, cenario.grupo)
         .expect("lê o grupo")
         .version;
     cenario
         .store
         .knowledge()
-        .atualizar_grupo(
+        .update_group(
             cenario.org,
             cenario.grupo,
             versao,
@@ -417,7 +417,7 @@ async fn item_e_grupo_inativos_saem_do_indice() {
     let itens = cenario
         .store
         .knowledge()
-        .itens_do_agente(cenario.org, cenario.agente)
+        .agent_items(cenario.org, cenario.agente)
         .expect("lista");
     assert!(itens.is_empty());
 }
@@ -449,10 +449,10 @@ async fn busca_filtra_elegibilidade_mesmo_com_indice_desatualizado() {
         c.buscar("prazo entrega", 0.0).await,
         "top-3 permanece igual"
     );
-    let grupo = c.store.knowledge().obter_grupo(c.org, c.grupo).unwrap();
+    let grupo = c.store.knowledge().get_group(c.org, c.grupo).unwrap();
     c.store
         .knowledge()
-        .atualizar_grupo(
+        .update_group(
             c.org,
             c.grupo,
             grupo.version,
@@ -466,10 +466,10 @@ async fn busca_filtra_elegibilidade_mesmo_com_indice_desatualizado() {
         c.buscar("prazo entrega", 0.0).await.is_empty(),
         "grupo inativo"
     );
-    let grupo = c.store.knowledge().obter_grupo(c.org, c.grupo).unwrap();
+    let grupo = c.store.knowledge().get_group(c.org, c.grupo).unwrap();
     c.store
         .knowledge()
-        .atualizar_grupo(
+        .update_group(
             c.org,
             c.grupo,
             grupo.version,
@@ -484,7 +484,7 @@ async fn busca_filtra_elegibilidade_mesmo_com_indice_desatualizado() {
     let agente = c
         .store
         .agents()
-        .atualizar(
+        .update(
             c.org,
             c.agente,
             agente.version,
@@ -500,7 +500,7 @@ async fn busca_filtra_elegibilidade_mesmo_com_indice_desatualizado() {
     );
     c.store
         .agents()
-        .atualizar(
+        .update(
             c.org,
             c.agente,
             agente.version,
@@ -512,7 +512,7 @@ async fn busca_filtra_elegibilidade_mesmo_com_indice_desatualizado() {
         .unwrap();
     c.store
         .knowledge()
-        .desvincular_agente(c.org, c.agente, c.grupo)
+        .unlink_agent(c.org, c.agente, c.grupo)
         .unwrap();
     assert!(
         c.buscar("prazo entrega", 0.0).await.is_empty(),
@@ -521,7 +521,7 @@ async fn busca_filtra_elegibilidade_mesmo_com_indice_desatualizado() {
     let novo = c
         .store
         .knowledge()
-        .criar_grupo(
+        .create_group(
             c.org,
             NewKnowledgeGroup {
                 name: "Novo".into(),
@@ -531,11 +531,11 @@ async fn busca_filtra_elegibilidade_mesmo_com_indice_desatualizado() {
         .unwrap();
     c.store
         .knowledge()
-        .vincular_agente(c.org, c.agente, novo.id)
+        .link_agent(c.org, c.agente, novo.id)
         .unwrap();
     c.store
         .knowledge()
-        .criar_item(
+        .create_item(
             c.org,
             NewKnowledgeItem {
                 group_id: novo.id,

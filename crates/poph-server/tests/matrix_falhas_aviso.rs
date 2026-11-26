@@ -35,8 +35,8 @@ use poph_server::evolution::CanalEvolution;
 use poph_server::matrix_falhas_aviso::{AvisoDeFalhas, AvisoNoSynapse, PortaFalhasDoHarness};
 use poph_server::saida_whatsapp::{OpcoesSaidaWhatsApp, SaidaWhatsApp};
 use poph_store::{
-    DesfechoAviso, HumanResponse, NewAgent, NewConversation, NewHumanResponse, NewOrg,
-    NewOutboxItem, OutboxItem, OutboxState, Store,
+    HumanResponse, NewAgent, NewConversation, NewHumanResponse, NewOrg, NewOutboxItem, OutboxItem,
+    OutboxState, OutcomeNotice, Store,
 };
 use poph_types::{AgentId, ConversationId, IntegrationId, OrgId, Secret, TurnId};
 use serde_json::{Value, json};
@@ -257,7 +257,7 @@ impl Cenario {
         let org = criar_org(&store, "loja-falhas", "Loja Falhas");
         let agente = store
             .agents()
-            .criar(
+            .create(
                 org,
                 NewAgent {
                     name: "Atendente Falhas".to_owned(),
@@ -274,15 +274,15 @@ impl Cenario {
             .id
             .parse()
             .expect("id da integração");
-        store.matrix().ligar(org).expect("liga o módulo");
+        store.matrix().enable(org).expect("liga o módulo");
         let conversa = conversa_whatsapp(&store, org, agente_id, integracao, TELEFONE);
         store
             .matrix()
-            .garantir_sala(org, conversa, SALA, None)
+            .ensure_room(org, conversa, SALA, None)
             .expect("grava a sala");
         store
             .matrix()
-            .marcar_sala_pronta(org, conversa)
+            .mark_room_ready(org, conversa)
             .expect("sala pronta");
 
         let (url_synapse, synapse) = subir_synapse_falso().await;
@@ -338,11 +338,11 @@ impl Cenario {
         if com_sala {
             self.store
                 .matrix()
-                .garantir_sala(self.org, conversa, "!outra-mx19:matrix-dev.local", None)
+                .ensure_room(self.org, conversa, "!outra-mx19:matrix-dev.local", None)
                 .expect("grava a sala");
             self.store
                 .matrix()
-                .marcar_sala_pronta(self.org, conversa)
+                .mark_room_ready(self.org, conversa)
                 .expect("sala pronta");
         }
         conversa
@@ -360,7 +360,7 @@ impl Cenario {
         match self
             .store
             .messages()
-            .registrar_resposta_humana(self.org, conversa, nova)
+            .register_response_human(self.org, conversa, nova)
             .expect("grava a resposta humana")
         {
             HumanResponse::Stored(_) => {}
@@ -373,7 +373,7 @@ impl Cenario {
         let (_, item) = self
             .store
             .outbox()
-            .enfileirar(
+            .enqueue(
                 self.org,
                 NewOutboxItem {
                     conversation_id: conversa,
@@ -421,7 +421,7 @@ impl Cenario {
     fn estado(&self, estado: OutboxState) -> u64 {
         self.store
             .outbox()
-            .contar_por_estado(self.org, estado)
+            .count_by_state(self.org, estado)
             .expect("conta a fila")
     }
 
@@ -444,7 +444,7 @@ impl Drop for Cenario {
 fn criar_org(store: &Store, slug: &str, nome: &str) -> OrgId {
     store
         .orgs()
-        .criar(NewOrg {
+        .create(NewOrg {
             name: nome.to_owned(),
             slug: slug.to_owned(),
             config_json: String::new(),
@@ -461,8 +461,8 @@ fn conversa_whatsapp(
     telefone: &str,
 ) -> ConversationId {
     store
-        .conversas()
-        .criar(
+        .conversations()
+        .create(
             org,
             NewConversation {
                 agent_id: agente,
@@ -735,7 +735,7 @@ async fn org_com_o_modulo_desligado_nao_recebe_aviso() {
     cenario
         .store
         .matrix()
-        .desligar(cenario.org)
+        .disable(cenario.org)
         .expect("desliga o módulo");
     let relato = cenario.aviso(Arc::clone(&cenario.store)).passar().await;
     assert_eq!(
@@ -796,7 +796,7 @@ fn desfecho_do_aviso_e_idempotente_e_isolado_por_org() {
     let org = criar_org(&store, "loja-desfecho", "Loja Desfecho");
     let agente = store
         .agents()
-        .criar(
+        .create(
             org,
             NewAgent {
                 name: "A".to_owned(),
@@ -815,7 +815,7 @@ fn desfecho_do_aviso_e_idempotente_e_isolado_por_org() {
     let conversa = conversa_whatsapp(&store, org, agente, integracao, TELEFONE);
     let (_, item) = store
         .outbox()
-        .enfileirar(
+        .enqueue(
             org,
             NewOutboxItem {
                 conversation_id: conversa,
@@ -829,11 +829,11 @@ fn desfecho_do_aviso_e_idempotente_e_isolado_por_org() {
 
     let primeira = store
         .matrix()
-        .registrar_desfecho_de_aviso(org, item.id, DesfechoAviso::Avisado, "recusado_pelo_canal")
+        .record_notice_outcome(org, item.id, OutcomeNotice::Notify, "recusado_pelo_canal")
         .expect("grava");
     let segunda = store
         .matrix()
-        .registrar_desfecho_de_aviso(org, item.id, DesfechoAviso::Avisado, "recusado_pelo_canal")
+        .record_notice_outcome(org, item.id, OutcomeNotice::Notify, "recusado_pelo_canal")
         .expect("grava de novo");
     assert!(primeira, "a primeira gravação é nova");
     assert!(!segunda, "a segunda não muda nada");
@@ -842,12 +842,12 @@ fn desfecho_do_aviso_e_idempotente_e_isolado_por_org() {
     let outra = criar_org(&store, "loja-desfecho-b", "Loja B");
     let de_outra = store
         .matrix()
-        .registrar_desfecho_de_aviso(outra, item.id, DesfechoAviso::Recusado, "nao_informado")
+        .record_notice_outcome(outra, item.id, OutcomeNotice::Refused, "nao_informado")
         .expect("grava");
     assert!(!de_outra, "item de outra org não ganha desfecho");
     let falhas_da_outra = store
         .matrix()
-        .falhas_de_resposta_humana(outra, 10)
+        .human_response_failures(outra, 10)
         .expect("lista");
     assert!(
         falhas_da_outra.is_empty(),

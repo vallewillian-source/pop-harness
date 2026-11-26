@@ -310,7 +310,7 @@ fn executar_doctor(
     let agentes_por_provedor = carregada
         .as_ref()
         .ok()
-        .and_then(|config| poph_store::agentes_por_provedor_em(&config.harness_db()).ok());
+        .and_then(|config| poph_store::agents_by_provider_at(&config.harness_db()).ok());
     let relatorio = doctor::gerar(doctor::Entrada {
         config: carregada.as_ref(),
         arquivo: arquivo.as_deref(),

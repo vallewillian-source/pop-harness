@@ -36,7 +36,7 @@ use poph_server::matrix_expiracao::{ExpiracaoMidia, RelatoExpiracao};
 use poph_server::matrix_inicio::expiracao_do_modulo;
 use poph_server::matrix_metricas::MetricasMatrix;
 use poph_store::{
-    CategoriaMidia, Conversa, NewAgent, NewConversation, NewOrg, NovaMidia, Org, Store,
+    CategoryAsset, Conversa, NewAgent, NewAsset, NewConversation, NewOrg, Org, Store,
 };
 use poph_types::{AttachmentId, MatrixConfig, Secret};
 use serde_json::{Value, json};
@@ -348,7 +348,7 @@ impl Cenario {
 
         let org = store
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: "Loja MX-46".to_owned(),
                 slug: "loja-mx46".to_owned(),
                 config_json: String::new(),
@@ -356,7 +356,7 @@ impl Cenario {
             .expect("cria a org");
         let agente = store
             .agents()
-            .criar(
+            .create(
                 org.id,
                 NewAgent {
                     name: "Atendente".to_owned(),
@@ -366,8 +366,8 @@ impl Cenario {
             )
             .expect("cria o agente");
         let conversa = store
-            .conversas()
-            .criar(
+            .conversations()
+            .create(
                 org.id,
                 NewConversation {
                     agent_id: agente.id,
@@ -378,14 +378,14 @@ impl Cenario {
                 },
             )
             .expect("cria a conversa");
-        store.matrix().ligar(org.id).expect("liga o módulo");
+        store.matrix().enable(org.id).expect("liga o módulo");
         store
             .matrix()
-            .garantir_sala(org.id, conversa.id, SALA, None)
+            .ensure_room(org.id, conversa.id, SALA, None)
             .expect("grava a sala");
         store
             .matrix()
-            .marcar_sala_pronta(org.id, conversa.id)
+            .mark_room_ready(org.id, conversa.id)
             .expect("sala pronta");
 
         logs_capturados();
@@ -415,32 +415,32 @@ impl Cenario {
     fn publicar(&self, nome: &str, enviada_em: i64) -> AttachmentId {
         let id = AttachmentId::generate();
         let categoria = if nome.ends_with(".jpg") {
-            CategoriaMidia::Imagem
+            CategoryAsset::Image
         } else {
-            CategoriaMidia::Documento
+            CategoryAsset::Document
         };
-        let mime = if categoria == CategoriaMidia::Imagem {
+        let mime = if categoria == CategoryAsset::Image {
             "image/jpeg"
         } else {
             "application/pdf"
         };
-        let registro = NovaMidia {
+        let registro = NewAsset {
             id,
-            conversa: self.conversa.id,
-            agente: AGENTE.to_owned(),
-            sala: SALA.to_owned(),
+            conversation: self.conversa.id,
+            agent: AGENTE.to_owned(),
+            room: SALA.to_owned(),
             evento: format!("$midia-{id}:matrix-dev.local"),
             mxc: format!("mxc://{SERVIDOR}/media-{id}"),
             nome: nome.to_owned(),
             mime: mime.to_owned(),
-            categoria,
-            tamanho_bytes: 2_048,
-            enviada_em,
+            category: categoria,
+            size_bytes: 2_048,
+            sent_at: enviada_em,
         };
         assert!(
             self.store()
-                .matrix_midia()
-                .registrar(self.org.id, &registro)
+                .matrix_asset()
+                .register(self.org.id, &registro)
                 .expect("grava a mídia"),
             "a primeira gravação é nova"
         );
@@ -473,8 +473,8 @@ impl Cenario {
 
     fn pendentes(&self) -> u32 {
         self.store()
-            .matrix_midia()
-            .pendentes_da_org(self.org.id)
+            .matrix_asset()
+            .org_pending(self.org.id)
             .expect("conta as pendentes")
     }
 }
@@ -506,11 +506,11 @@ async fn antes_do_prazo_nada_acontece() {
     assert_eq!(cenario.pendentes(), 1, "a linha continua pendente");
     let linha = cenario
         .store()
-        .matrix_midia()
-        .pendentes(cenario.org.id, cenario.agora(), cenario.agora(), 10)
+        .matrix_asset()
+        .pending(cenario.org.id, cenario.agora(), cenario.agora(), 10)
         .expect("lê a fila");
     assert_eq!(linha[0].id, id);
-    assert!(linha[0].falta_redigir() && linha[0].falta_apagar());
+    assert!(linha[0].still_to_draft() && linha[0].still_to_delete());
 }
 
 #[tokio::test]
@@ -645,7 +645,7 @@ async fn org_com_o_modulo_desligado_nao_e_tocada() {
     cenario
         .store()
         .matrix()
-        .desligar(cenario.org.id)
+        .disable(cenario.org.id)
         .expect("desliga o módulo na org");
 
     let relato = cenario.servico().passar().await;
@@ -806,8 +806,8 @@ async fn o_prazo_configurado_manda_no_corte() {
     assert_eq!(padrao.passar().await.redigidas, 0);
     let pendente = outro
         .store()
-        .matrix_midia()
-        .pendentes(outro.org.id, outro.agora(), outro.agora(), 10)
+        .matrix_asset()
+        .pending(outro.org.id, outro.agora(), outro.agora(), 10)
         .expect("lê a fila");
     assert_eq!(pendente[0].id, id);
 }

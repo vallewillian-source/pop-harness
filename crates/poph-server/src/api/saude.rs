@@ -170,14 +170,14 @@ fn atualizar_medidores(estado: &Estado) {
     let mut pendentes_entrada = 0i64;
     let mut pendentes_saida = 0i64;
     for org in todas_as_orgs(estado) {
-        match estado.store.inbox().contar_pendentes(org) {
+        match estado.store.inbox().count_pending(org) {
             Ok(quantos) => pendentes_entrada += quantos as i64,
             Err(erro) => tracing::warn!(erro = %erro, "métrica: não contei a entrada"),
         }
         match estado
             .store
             .outbox()
-            .contar_por_estado(org, OutboxState::Pending)
+            .count_by_state(org, OutboxState::Pending)
         {
             Ok(quantos) => pendentes_saida += quantos as i64,
             Err(erro) => tracing::warn!(erro = %erro, "métrica: não contei a saída"),
@@ -199,7 +199,7 @@ fn todas_as_orgs(estado: &Estado) -> Vec<poph_types::OrgId> {
             after: apos,
             limit: 200,
         };
-        match estado.store.orgs().listar(pagina) {
+        match estado.store.orgs().list(pagina) {
             Ok(orgs) => {
                 let quantidade = orgs.len();
                 if let Some(ultima) = orgs.last() {

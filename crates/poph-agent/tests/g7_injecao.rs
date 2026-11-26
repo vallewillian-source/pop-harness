@@ -67,7 +67,7 @@ impl Cenario {
         );
         let org = store
             .orgs()
-            .criar(poph_store::NewOrg {
+            .create(poph_store::NewOrg {
                 name: format!("Org {rotulo}"),
                 slug: format!("org-{rotulo}-{}-{}", std::process::id(), fastrand()),
                 config_json: "{}".to_owned(),
@@ -76,7 +76,7 @@ impl Cenario {
             .id;
         let agente = store
             .agents()
-            .criar(
+            .create(
                 org,
                 NewAgent {
                     name: format!("Bia {rotulo}"),
@@ -89,7 +89,7 @@ impl Cenario {
         let estruturado = StructuredInstructions::default();
         store
             .instructions()
-            .salvar(
+            .save(
                 org,
                 agente.id,
                 0,
@@ -101,7 +101,7 @@ impl Cenario {
         if !jev_json.is_empty() {
             store
                 .agents()
-                .atualizar(
+                .update(
                     org,
                     agente.id,
                     agente.version,
@@ -113,8 +113,8 @@ impl Cenario {
                 .expect("grava o jev_json do agente");
         }
         let conversa = store
-            .conversas()
-            .criar(
+            .conversations()
+            .create(
                 org,
                 NewConversation {
                     agent_id: agente.id,
@@ -138,7 +138,7 @@ impl Cenario {
     fn falar(&self, texto: &str) -> MessageId {
         self.store
             .messages()
-            .gravar(
+            .write(
                 self.org,
                 NewMessage {
                     conversation_id: self.conversa,
@@ -146,7 +146,7 @@ impl Cenario {
                     role: Role::User,
                     texto: texto.to_owned(),
                     attachments_json: "[]".to_owned(),
-                    id_externo: None,
+                    external_id: None,
                     turn_id: None,
                     origin: poph_store::Origin::Agente,
                     author_name: None,
@@ -234,7 +234,7 @@ impl Cenario {
     fn saidas(&self) -> Vec<String> {
         self.store
             .messages()
-            .listar(self.org, self.conversa, Page::with_limit(200))
+            .list(self.org, self.conversa, Page::with_limit(200))
             .expect("lista as mensagens")
             .into_iter()
             .filter(|mensagem| mensagem.direction == Direction::Outbound)
@@ -245,7 +245,7 @@ impl Cenario {
     fn fila(&self) -> Vec<String> {
         self.store
             .outbox()
-            .listar_pendentes(self.org, 50)
+            .list_pending(self.org, 50)
             .expect("lista a fila de saída")
             .into_iter()
             .map(|item| item.content_json)
@@ -255,14 +255,14 @@ impl Cenario {
     fn turno_gravado(&self, turno: &ResumoTurno) -> String {
         self.store
             .turns()
-            .obter(self.org, turno.turno)
+            .get(self.org, turno.turno)
             .expect("lê o turno")
             .jev_json
     }
 
     fn conversa_gravada(&self) -> poph_store::Conversa {
         self.store
-            .conversas()
+            .conversations()
             .get(self.org, self.conversa)
             .expect("lê a conversa")
     }

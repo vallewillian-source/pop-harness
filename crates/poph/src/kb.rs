@@ -396,7 +396,7 @@ impl Contexto {
             Ok(nome) => nome,
             Err(erro) => return falha(erro),
         };
-        match self.store.knowledge().criar_grupo(
+        match self.store.knowledge().create_group(
             self.org,
             NewKnowledgeGroup {
                 name: nome,
@@ -424,7 +424,7 @@ impl Contexto {
 
     fn listar_grupos(&self, args: ListarGrupos) -> ExitCode {
         let pagina = Page::with_limit(args.limit);
-        match self.store.knowledge().listar_grupos(self.org, pagina) {
+        match self.store.knowledge().list_groups(self.org, pagina) {
             Ok(grupos) => {
                 if args.json {
                     let itens: Vec<Value> = grupos.iter().map(json_grupo).collect();
@@ -458,12 +458,12 @@ impl Contexto {
             Ok(id) => id,
             Err(erro) => return falha(erro),
         };
-        match self.store.knowledge().obter_grupo(self.org, id) {
+        match self.store.knowledge().get_group(self.org, id) {
             Ok(grupo) => {
                 let agentes = self
                     .store
                     .knowledge()
-                    .agentes_do_grupo(self.org, id)
+                    .agents_from_group(self.org, id)
                     .unwrap_or_default();
                 if args.json {
                     imprimir(&json!({
@@ -514,7 +514,7 @@ impl Contexto {
         match self
             .store
             .knowledge()
-            .atualizar_grupo(self.org, id, args.if_match, mudanca)
+            .update_group(self.org, id, args.if_match, mudanca)
         {
             Ok(grupo) => {
                 let aviso = self.sincronizar_grupo(id);
@@ -552,9 +552,9 @@ impl Contexto {
         let agentes = self
             .store
             .knowledge()
-            .agentes_do_grupo(self.org, id)
+            .agents_from_group(self.org, id)
             .unwrap_or_default();
-        match self.store.knowledge().excluir_grupo(self.org, id) {
+        match self.store.knowledge().delete_group(self.org, id) {
             Ok(()) => {
                 // O grupo saiu; os agentes que o usavam precisam perder os trechos do índice.
                 let aviso = self.reindexar_agentes(&agentes);
@@ -598,7 +598,7 @@ impl Contexto {
             tags: args.tag,
             position: args.position,
         };
-        match self.store.knowledge().criar_item(self.org, novo) {
+        match self.store.knowledge().create_item(self.org, novo) {
             Ok(item) => {
                 let estado = self.sincronizar_grupo(grupo);
                 self.saida_item(&item, args.json, "item criado", estado)
@@ -613,7 +613,7 @@ impl Contexto {
             Err(erro) => return falha(erro),
         };
         let pagina = Page::with_limit(args.limit);
-        match self.store.knowledge().listar_itens(self.org, grupo, pagina) {
+        match self.store.knowledge().list_items(self.org, grupo, pagina) {
             Ok(itens) => {
                 if args.json {
                     let base = self.base().ok();
@@ -663,7 +663,7 @@ impl Contexto {
             Ok(id) => id,
             Err(erro) => return falha(erro),
         };
-        match self.store.knowledge().obter_item(self.org, id) {
+        match self.store.knowledge().get_item(self.org, id) {
             Ok(item) => {
                 let base = self.base().ok();
                 let estado = base
@@ -728,7 +728,7 @@ impl Contexto {
         match self
             .store
             .knowledge()
-            .atualizar_item(self.org, id, args.if_match, mudanca)
+            .update_item(self.org, id, args.if_match, mudanca)
         {
             Ok(item) => {
                 let estado = self.sincronizar_grupo(item.group_id);
@@ -746,10 +746,10 @@ impl Contexto {
         let grupo = self
             .store
             .knowledge()
-            .obter_item(self.org, id)
+            .get_item(self.org, id)
             .map(|item| item.group_id)
             .ok();
-        match self.store.knowledge().excluir_item(self.org, id) {
+        match self.store.knowledge().delete_item(self.org, id) {
             Ok(()) => {
                 let aviso = grupo.and_then(|grupo| self.sincronizar_grupo(grupo));
                 if args.json {
@@ -784,12 +784,10 @@ impl Contexto {
         let resultado = if ligar {
             self.store
                 .knowledge()
-                .vincular_agente(self.org, agente, grupo)
+                .link_agent(self.org, agente, grupo)
                 .map(|()| true)
         } else {
-            self.store
-                .knowledge()
-                .desvincular_agente(self.org, agente, grupo)
+            self.store.knowledge().unlink_agent(self.org, agente, grupo)
         };
         match resultado {
             Ok(mudou) => {
@@ -938,7 +936,7 @@ impl Contexto {
     fn status(&self, args: StatusArgs) -> ExitCode {
         let grupos = match &args.group {
             Some(texto) => match parse_id::<KnowledgeGroupId>(texto) {
-                Ok(id) => match self.store.knowledge().obter_grupo(self.org, id) {
+                Ok(id) => match self.store.knowledge().get_group(self.org, id) {
                     Ok(grupo) => vec![grupo],
                     Err(erro) => return falha(descrever(&erro)),
                 },
@@ -947,7 +945,7 @@ impl Contexto {
             None => match self
                 .store
                 .knowledge()
-                .listar_grupos(self.org, Page::with_limit(200))
+                .list_groups(self.org, Page::with_limit(200))
             {
                 Ok(grupos) => grupos,
                 Err(erro) => return falha(descrever(&erro)),
@@ -959,7 +957,7 @@ impl Contexto {
             let itens = self
                 .store
                 .knowledge()
-                .listar_itens(self.org, grupo.id, Page::with_limit(200))
+                .list_items(self.org, grupo.id, Page::with_limit(200))
                 .unwrap_or_default();
             for item in itens {
                 let estado = base
@@ -1024,7 +1022,7 @@ impl Contexto {
         let agentes = self
             .store
             .knowledge()
-            .agentes_do_grupo(self.org, grupo)
+            .agents_from_group(self.org, grupo)
             .ok()?;
         self.reindexar_agentes(&agentes)
     }
@@ -1053,7 +1051,7 @@ impl Contexto {
             let lote = self
                 .store
                 .agents()
-                .listar(self.org, pagina)
+                .list(self.org, pagina)
                 .map_err(|erro| descrever(&erro))?;
             if lote.is_empty() {
                 return Ok(agentes);
@@ -1067,7 +1065,7 @@ impl Contexto {
         let grupo_inativo = self
             .store
             .knowledge()
-            .obter_grupo(self.org, item.group_id)
+            .get_group(self.org, item.group_id)
             .map(|grupo| grupo.status != Status::Active)
             .unwrap_or(true);
         if item.status != Status::Active || grupo_inativo {
@@ -1076,7 +1074,7 @@ impl Contexto {
         let agentes = match self
             .store
             .knowledge()
-            .agentes_do_grupo(self.org, item.group_id)
+            .agents_from_group(self.org, item.group_id)
         {
             Ok(agentes) => agentes,
             Err(_) => return EstadoIndice::Erro,
@@ -1099,7 +1097,7 @@ impl Contexto {
     fn total_itens(&self, grupo: KnowledgeGroupId) -> usize {
         self.store
             .knowledge()
-            .listar_itens(self.org, grupo, Page::with_limit(200))
+            .list_items(self.org, grupo, Page::with_limit(200))
             .map(|itens| itens.len())
             .unwrap_or(0)
     }
@@ -1116,7 +1114,7 @@ impl Contexto {
         }
         self.store
             .agents()
-            .por_slug(self.org, texto)
+            .by_slug(self.org, texto)
             .map(|agente| agente.id)
             .map_err(|erro| descrever(&erro))
     }

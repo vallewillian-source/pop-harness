@@ -198,8 +198,8 @@ impl Cenario {
     fn criar_fluxo(&self, org_id: &str, slug: &str) -> String {
         let org: OrgId = org_id.parse().expect("org válida");
         self.store()
-            .fluxos()
-            .criar(
+            .flows()
+            .create(
                 org,
                 NewFlow {
                     slug: slug.to_owned(),
@@ -218,7 +218,7 @@ impl Cenario {
         let agente: AgentId = agente_id.parse().expect("agente válido");
         self.store()
             .agents()
-            .versao(org, agente)
+            .version(org, agente)
             .expect("versão do agente")
     }
 }
@@ -487,7 +487,7 @@ async fn agente_fluxos_lista_substitui_com_versao_teto_isolamento_e_auditoria() 
     let registros = c
         .store()
         .audit()
-        .listar(oa.parse().unwrap(), Page::default())
+        .list(oa.parse().unwrap(), Page::default())
         .unwrap();
     let do_agente: Vec<_> = registros
         .iter()

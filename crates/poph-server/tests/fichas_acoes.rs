@@ -251,8 +251,8 @@ impl Cenario {
     fn fluxo_liberado(&self, org: &str, agente: &str, slug: &str) -> (FlowId, RevisionId) {
         let (fluxo, revisao) = self.fluxo_publicado(org, slug);
         self.store
-            .fluxos()
-            .liberar(parse_org(org), parse_agente(agente), fluxo)
+            .flows()
+            .release(parse_org(org), parse_agente(agente), fluxo)
             .expect("libera o fluxo ao agente");
         (fluxo, revisao)
     }
@@ -262,8 +262,8 @@ impl Cenario {
         let org_id = parse_org(org);
         let fluxo = self
             .store
-            .fluxos()
-            .criar(
+            .flows()
+            .create(
                 org_id,
                 NewFlow {
                     slug: slug.to_owned(),
@@ -281,7 +281,7 @@ impl Cenario {
         let revisao = self
             .store
             .revisions()
-            .publicar_revisao(
+            .publish_revision(
                 org_id,
                 fluxo.id,
                 RevisionPublication {
@@ -301,8 +301,8 @@ impl Cenario {
     /// Ficha sem conversa, do agente.
     fn ficha_avulsa(&self, org: &str, agente: &str) -> RecordId {
         self.store
-            .fichas()
-            .criar(
+            .cases()
+            .create(
                 parse_org(org),
                 NewRecord {
                     conversation_id: None,
@@ -319,8 +319,8 @@ impl Cenario {
     fn ficha_com_conversa(&self, org: &str, agente: &str) -> (poph_store::Conversa, RecordId) {
         let conversa = self
             .store
-            .conversas()
-            .criar(
+            .conversations()
+            .create(
                 parse_org(org),
                 NewConversation {
                     agent_id: parse_agente(agente),
@@ -333,8 +333,8 @@ impl Cenario {
             .expect("cria a conversa");
         let ficha = self
             .store
-            .fichas()
-            .por_conversa(parse_org(org), conversa.id)
+            .cases()
+            .by_conversation(parse_org(org), conversa.id)
             .expect("consulta a Ficha")
             .expect("a conversa tem Ficha")
             .id;
@@ -343,8 +343,8 @@ impl Cenario {
 
     fn versao_da_ficha(&self, org: &str, ficha: RecordId) -> u64 {
         self.store
-            .fichas()
-            .obter(parse_org(org), ficha)
+            .cases()
+            .get(parse_org(org), ficha)
             .expect("lê a Ficha")
             .version
     }
@@ -352,22 +352,22 @@ impl Cenario {
     fn execucao(&self, org: &str, run: &str) -> Execution {
         self.store
             .executions()
-            .obter(parse_org(org), run.parse().expect("id da execução"))
+            .get(parse_org(org), run.parse().expect("id da execução"))
             .expect("lê a execução")
     }
 
     fn quantas_execucoes(&self, org: &str, ficha: RecordId) -> usize {
         self.store
             .executions()
-            .da_ficha(parse_org(org), ficha, 100)
+            .from_case(parse_org(org), ficha, 100)
             .expect("lista as execuções")
             .len()
     }
 
     fn quantos_eventos(&self, org: &str, ficha: RecordId) -> usize {
         self.store
-            .fichas()
-            .eventos(parse_org(org), ficha, None, 500)
+            .cases()
+            .events(parse_org(org), ficha, None, 500)
             .expect("lista os eventos")
             .len()
     }
@@ -381,13 +381,13 @@ impl Cenario {
         let revisao = self
             .store
             .revisions()
-            .obter_por_id(org_id, execucao.revisao_id)
+            .get_by_id(org_id, execucao.revisao_id)
             .expect("lê a revisão");
         let ir = Ir::de_json(&revisao.definicao_json).expect("IR da revisão");
         let atores_que_agiram = self
             .store
             .executions()
-            .etapas(org_id, run_id)
+            .stages(org_id, run_id)
             .expect("lê as etapas")
             .iter()
             .rev()
@@ -424,7 +424,7 @@ impl Cenario {
         .expect("o agente age na etapa");
         self.store
             .executions()
-            .aplicar_transicao(
+            .apply_transition(
                 org_id,
                 run_id,
                 execucao.version,
@@ -605,8 +605,8 @@ async fn iniciar_em_ficha_fechada_da_409() {
     let b = base(&c, "ficha-fechada").await;
     let ficha = c.ficha_avulsa(&b.org, &b.agente);
     c.store
-        .fichas()
-        .fechar_sem_conversa(parse_org(&b.org), ficha, 1, "encerrada no teste")
+        .cases()
+        .close_without_conversation(parse_org(&b.org), ficha, 1, "encerrada no teste")
         .expect("fecha a Ficha");
     let versao = c.versao_da_ficha(&b.org, ficha);
 
@@ -1028,7 +1028,7 @@ async fn close_fecha_conversa_ficha_e_abandona_a_execucao() {
 
     let conversa_depois = c
         .store
-        .conversas()
+        .conversations()
         .get(parse_org(&org), conversa.id)
         .expect("lê a conversa");
     assert_eq!(conversa_depois.status.as_text(), "closed");

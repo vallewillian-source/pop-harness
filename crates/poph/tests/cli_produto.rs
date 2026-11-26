@@ -47,7 +47,7 @@ impl Cenario {
             .expect("abre o banco");
             let org = store
                 .orgs()
-                .criar(NewOrg {
+                .create(NewOrg {
                     name: format!("Org {rotulo}"),
                     slug: slug.clone(),
                     config_json: "{}".to_owned(),
@@ -56,7 +56,7 @@ impl Cenario {
                 .id;
             store
                 .agents()
-                .criar(
+                .create(
                     org,
                     poph_store::NewAgent {
                         name: "Bia".to_owned(),
@@ -67,7 +67,7 @@ impl Cenario {
                 .expect("cria o agente");
             store
                 .categories()
-                .criar(
+                .create(
                     org,
                     NewCategory {
                         name: "Pragas urbanas".to_owned(),

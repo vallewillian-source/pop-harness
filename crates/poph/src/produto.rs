@@ -289,7 +289,7 @@ fn criar(
         conditions: args.conditions,
         tags: args.tag,
     };
-    match store.products().criar(org, novo) {
+    match store.products().create(org, novo) {
         Ok(produto) => {
             aviso_de_indice(reindexar_org(configuracao, store, org));
             saida(&produto, args.json, "produto criado")
@@ -304,9 +304,9 @@ fn listar(store: &Arc<Store>, org: OrgId, args: ListarProdutos) -> ExitCode {
         Err(erro) => return falha(erro),
     };
     let resultado = if args.all {
-        store.products().listar(org, pagina)
+        store.products().list(org, pagina)
     } else {
-        store.products().listar_ativos(org, pagina)
+        store.products().list_active(org, pagina)
     };
     match resultado {
         Ok(produtos) => {
@@ -387,7 +387,7 @@ fn atualizar(
     };
     match store
         .products()
-        .atualizar(org, atual.id, args.if_match, mudanca)
+        .update(org, atual.id, args.if_match, mudanca)
     {
         Ok(produto) => {
             aviso_de_indice(reindexar_org(configuracao, store, org));
@@ -409,21 +409,21 @@ fn excluir(
     };
     // Conta antes de apagar: a exclusão faz os itens de carrinho ficarem sem produto (com o preço
     // gravado), e a recusa e a saída precisam dizer quantos foram.
-    let refs = match store.products().referencias(org, produto.id) {
+    let refs = match store.products().references(org, produto.id) {
         Ok(refs) => refs,
         Err(erro) => return falha(descrever(&erro)),
     };
     if !args.force {
-        return falha(if refs.itens_de_carrinho > 0 {
+        return falha(if refs.cart_items > 0 {
             format!(
                 "a exclusão apaga o produto do catálogo e deixa {} item(ns) de {} carrinho(s) como \"produto removido do catálogo\"; confirme com --force",
-                refs.itens_de_carrinho, refs.carrinhos
+                refs.cart_items, refs.carts
             )
         } else {
             "a exclusão apaga o produto do catálogo; confirme com --force".to_owned()
         });
     }
-    match store.products().excluir(org, produto.id) {
+    match store.products().delete(org, produto.id) {
         Ok(()) => {
             aviso_de_indice(reindexar_org(configuracao, store, org));
             if args.json {
@@ -435,10 +435,10 @@ fn excluir(
                 }));
             } else {
                 println!("produto excluído: {} ({})", produto.name, produto.id);
-                if refs.itens_de_carrinho > 0 {
+                if refs.cart_items > 0 {
                     println!(
                         "{} item(ns) de {} carrinho(s) ficaram como \"produto removido do catálogo\" (o preço gravado continua)",
-                        refs.itens_de_carrinho, refs.carrinhos
+                        refs.cart_items, refs.carts
                     );
                 }
             }
@@ -564,12 +564,12 @@ fn obter(store: &Store, org: OrgId, texto: &str) -> Result<Product, String> {
         let id: ProductId = parse_id(texto)?;
         return store
             .products()
-            .obter(org, id)
+            .get(org, id)
             .map_err(|erro| descrever(&erro));
     }
     store
         .products()
-        .por_slug(org, texto)
+        .by_slug(org, texto)
         .map_err(|erro| descrever(&erro))
 }
 
@@ -583,7 +583,7 @@ fn resolver_categoria(store: &Store, org: OrgId, texto: &str) -> Result<ProductC
         let id: ProductCategoryId = parse_id(limpo)?;
         return store
             .categories()
-            .obter(org, id)
+            .get(org, id)
             .map(|categoria| categoria.id)
             .map_err(|erro| descrever(&erro));
     }
@@ -591,7 +591,7 @@ fn resolver_categoria(store: &Store, org: OrgId, texto: &str) -> Result<ProductC
     loop {
         let lote = store
             .categories()
-            .listar(org, pagina)
+            .list(org, pagina)
             .map_err(|erro| descrever(&erro))?;
         if lote.is_empty() {
             return Err(format!("não existe categoria `{limpo}` na org"));
@@ -618,7 +618,7 @@ fn resolver_agente(store: &Store, org: OrgId, texto: &str) -> Result<AgentId, St
     }
     store
         .agents()
-        .por_slug(org, texto)
+        .by_slug(org, texto)
         .map(|agente| agente.id)
         .map_err(|erro| descrever(&erro))
 }

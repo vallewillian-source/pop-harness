@@ -143,7 +143,7 @@ fn criar(store: &Store, org: OrgId, args: CriarCategoria) -> ExitCode {
         name: nome,
         description: args.description.trim().to_owned(),
     };
-    match store.categories().criar(org, nova) {
+    match store.categories().create(org, nova) {
         Ok(categoria) => saida(&categoria, args.json, "categoria criada"),
         Err(erro) => falha(descrever(&erro)),
     }
@@ -154,7 +154,7 @@ fn listar(store: &Store, org: OrgId, args: ListarCategorias) -> ExitCode {
         Ok(pagina) => pagina,
         Err(erro) => return falha(erro),
     };
-    match store.categories().listar(org, pagina) {
+    match store.categories().list(org, pagina) {
         Ok(categorias) => {
             if args.json {
                 let itens: Vec<Value> = categorias.iter().map(json_categoria).collect();
@@ -218,10 +218,7 @@ fn atualizar(store: &Store, org: OrgId, args: AtualizarCategoria) -> ExitCode {
         description: descricao,
         status,
     };
-    match store
-        .categories()
-        .atualizar(org, id, args.if_match, mudanca)
-    {
+    match store.categories().update(org, id, args.if_match, mudanca) {
         Ok(categoria) => saida(&categoria, args.json, "categoria alterada"),
         Err(erro) => falha(descrever(&erro)),
     }
@@ -239,10 +236,10 @@ fn excluir(store: &Store, org: OrgId, args: ExcluirCategoria) -> ExitCode {
         );
     }
     // Confere que existe nesta org antes de apagar, para a mensagem sair certa.
-    if let Err(erro) = store.categories().obter(org, id) {
+    if let Err(erro) = store.categories().get(org, id) {
         return falha(mensagem_de_ausencia(erro, &args.categoria));
     }
-    match store.categories().excluir(org, id) {
+    match store.categories().delete(org, id) {
         Ok(()) => {
             if args.json {
                 imprimir_json(&json!({
@@ -264,7 +261,7 @@ fn obter(store: &Store, org: OrgId, texto: &str) -> Result<ProductCategory, Stri
     let id: ProductCategoryId = parse_id(texto)?;
     store
         .categories()
-        .obter(org, id)
+        .get(org, id)
         .map_err(|erro| mensagem_de_ausencia(erro, texto))
 }
 

@@ -96,7 +96,7 @@ impl PausaVirtual {
             if continuacao.instante_ms <= agora {
                 self.store
                     .messages()
-                    .gravar(
+                    .write(
                         self.org,
                         NewMessage {
                             conversation_id: self.conversa,
@@ -104,7 +104,7 @@ impl PausaVirtual {
                             role: Role::User,
                             texto: continuacao.texto,
                             attachments_json: "[]".to_owned(),
-                            id_externo: None,
+                            external_id: None,
                             turn_id: None,
                             origin: poph_store::Origin::Agente,
                             author_name: None,
@@ -150,7 +150,7 @@ impl Cenario {
         );
         let org = store
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: format!("Org {rotulo}"),
                 slug: format!("org-{rotulo}-{}", AgentId::generate()),
                 config_json: "{}".to_owned(),
@@ -159,7 +159,7 @@ impl Cenario {
             .id;
         let agente = store
             .agents()
-            .criar(
+            .create(
                 org,
                 NewAgent {
                     name: format!("Bia {rotulo}"),
@@ -171,7 +171,7 @@ impl Cenario {
             .id;
         store
             .instructions()
-            .salvar(
+            .save(
                 org,
                 agente,
                 0,
@@ -184,7 +184,7 @@ impl Cenario {
         // desligado não teria como provar que ele continua sendo consultado.
         store
             .agents()
-            .atualizar(
+            .update(
                 org,
                 agente,
                 1,
@@ -204,8 +204,8 @@ impl Cenario {
 
     fn conversa(&self) -> ConversationId {
         self.store
-            .conversas()
-            .criar(
+            .conversations()
+            .create(
                 self.org,
                 NewConversation {
                     agent_id: self.agente,
@@ -222,7 +222,7 @@ impl Cenario {
     fn falar(&self, conversa: ConversationId, texto: &str) -> MessageId {
         self.store
             .messages()
-            .gravar(
+            .write(
                 self.org,
                 NewMessage {
                     conversation_id: conversa,
@@ -230,7 +230,7 @@ impl Cenario {
                     role: Role::User,
                     texto: texto.to_owned(),
                     attachments_json: "[]".to_owned(),
-                    id_externo: None,
+                    external_id: None,
                     turn_id: None,
                     origin: poph_store::Origin::Agente,
                     author_name: None,
@@ -686,8 +686,8 @@ async fn conversa_transferida_nao_responde_nem_consulta_o_jev() {
     let conversa = cenario.conversa();
     cenario
         .store
-        .conversas()
-        .transferir(
+        .conversations()
+        .transfer(
             cenario.org,
             conversa,
             None,
@@ -721,7 +721,7 @@ async fn conversa_transferida_nao_responde_nem_consulta_o_jev() {
     let mensagens = cenario
         .store
         .messages()
-        .ultimas(cenario.org, conversa, 10)
+        .last_set(cenario.org, conversa, 10)
         .expect("lê as mensagens");
     assert!(mensagens.iter().any(|mensagem| mensagem.id == gatilho));
 }

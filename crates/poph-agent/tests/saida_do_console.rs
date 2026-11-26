@@ -75,7 +75,7 @@ impl Cenario {
         );
         let org = store
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: "Org HR-26f".to_owned(),
                 slug: format!("org-hr26f-{rotulo}"),
                 config_json: String::new(),
@@ -84,7 +84,7 @@ impl Cenario {
             .id;
         let agente = store
             .agents()
-            .criar(
+            .create(
                 org,
                 NewAgent {
                     name: "Agente HR-26f".to_owned(),
@@ -101,8 +101,8 @@ impl Cenario {
             .parse()
             .expect("id da integração");
         let console = store
-            .conversas()
-            .criar(
+            .conversations()
+            .create(
                 org,
                 NewConversation {
                     agent_id: agente,
@@ -115,8 +115,8 @@ impl Cenario {
             .expect("abre a conversa do console")
             .id;
         let whatsapp = store
-            .conversas()
-            .criar(
+            .conversations()
+            .create(
                 org,
                 NewConversation {
                     agent_id: agente,
@@ -155,7 +155,7 @@ impl Cenario {
         let (_novo, item) = self
             .store
             .outbox()
-            .enfileirar(
+            .enqueue(
                 self.org,
                 NewOutboxItem {
                     conversation_id: conversa,
@@ -172,9 +172,9 @@ impl Cenario {
     fn estado(&self, item: &OutboxItem) -> OutboxState {
         self.store
             .outbox()
-            .obter(self.org, item.id)
+            .get(self.org, item.id)
             .expect("lê o item")
-            .estado
+            .state
     }
 }
 
@@ -213,9 +213,9 @@ async fn chat_confirma_o_do_console_e_nao_toca_no_whatsapp() {
     let gravado = cenario
         .store
         .outbox()
-        .obter(cenario.org, do_whatsapp.id)
+        .get(cenario.org, do_whatsapp.id)
         .expect("lê o item de WhatsApp");
-    assert_eq!(gravado.tentativas, 0, "nenhuma tentativa foi gasta nele");
+    assert_eq!(gravado.attempts, 0, "nenhuma tentativa foi gasta nele");
     assert!(
         gravado.ultimo_erro.is_none(),
         "nenhum erro foi gravado nele"

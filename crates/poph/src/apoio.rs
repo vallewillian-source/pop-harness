@@ -65,7 +65,7 @@ pub fn resolver_agente(
         let id: AgentId = parse_id(texto)?;
         store.agents().get(org, id)
     } else {
-        store.agents().por_slug(org, texto)
+        store.agents().by_slug(org, texto)
     };
     encontrado.map_err(|erro| {
         if erro.is_not_found() {
@@ -80,9 +80,9 @@ pub fn resolver_agente(
 pub fn resolver_fluxo(store: &Store, org: OrgId, texto: &str) -> Result<Fluxo, String> {
     let achado = if uuid::Uuid::parse_str(texto).is_ok() {
         let id: FlowId = parse_id(texto)?;
-        store.fluxos().obter(org, id).map(Some)
+        store.flows().get(org, id).map(Some)
     } else {
-        store.fluxos().por_slug(org, texto)
+        store.flows().by_slug(org, texto)
     };
     match achado {
         Ok(Some(fluxo)) => Ok(fluxo),
@@ -131,7 +131,7 @@ pub fn resolver_org(store: &Store, texto: &str) -> Result<OrgId, String> {
             Err(erro) => Err(descrever(&erro)),
         };
     }
-    match store.orgs().por_slug(texto) {
+    match store.orgs().by_slug(texto) {
         Ok(org) => Ok(org.id),
         Err(erro) if erro.is_not_found() => Err(format!("não existe org com o slug `{texto}`")),
         Err(erro) => Err(descrever(&erro)),

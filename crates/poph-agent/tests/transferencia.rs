@@ -89,7 +89,7 @@ impl Cenario {
         );
         let org = store
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: format!("Org {rotulo}"),
                 slug: format!("org-{rotulo}-{}", AgentId::generate()),
                 config_json: "{}".to_owned(),
@@ -98,7 +98,7 @@ impl Cenario {
             .id;
         let agente = store
             .agents()
-            .criar(
+            .create(
                 org,
                 NewAgent {
                     name: format!("Bia {rotulo}"),
@@ -110,7 +110,7 @@ impl Cenario {
             .id;
         store
             .instructions()
-            .salvar(
+            .save(
                 org,
                 agente,
                 0,
@@ -122,7 +122,7 @@ impl Cenario {
         if handoff_ativo {
             store
                 .agents()
-                .atualizar(
+                .update(
                     org,
                     agente,
                     1,
@@ -148,8 +148,8 @@ impl Cenario {
 
     fn conversa(&self) -> ConversationId {
         self.store
-            .conversas()
-            .criar(
+            .conversations()
+            .create(
                 self.org,
                 NewConversation {
                     agent_id: self.agente,
@@ -166,7 +166,7 @@ impl Cenario {
     fn falar(&self, conversa: ConversationId, texto: &str) -> MessageId {
         self.store
             .messages()
-            .gravar(
+            .write(
                 self.org,
                 NewMessage {
                     conversation_id: conversa,
@@ -174,7 +174,7 @@ impl Cenario {
                     role: Role::User,
                     texto: texto.to_owned(),
                     attachments_json: "[]".to_owned(),
-                    id_externo: None,
+                    external_id: None,
                     turn_id: None,
                     origin: poph_store::Origin::Agente,
                     author_name: None,
@@ -193,7 +193,7 @@ impl Cenario {
         let json = serde_json::json!({ "situacoes_de_handoff": situacoes }).to_string();
         self.store
             .agents()
-            .atualizar(
+            .update(
                 self.org,
                 self.agente,
                 atual.version,
@@ -258,7 +258,7 @@ impl Cenario {
     fn conversa_gravada(&self, conversa: ConversationId) -> Vec<(Role, String)> {
         self.store
             .messages()
-            .ultimas(self.org, conversa, 50)
+            .last_set(self.org, conversa, 50)
             .expect("lê as mensagens")
             .into_iter()
             .map(|mensagem| (mensagem.role, mensagem.texto))
@@ -275,7 +275,7 @@ impl Cenario {
 
     fn status(&self, conversa: ConversationId) -> poph_store::ConversationStatus {
         self.store
-            .conversas()
+            .conversations()
             .get(self.org, conversa)
             .expect("lê a conversa")
             .status
@@ -284,7 +284,7 @@ impl Cenario {
     fn ultimo_turno(&self, conversa: ConversationId) -> poph_store::Turno {
         self.store
             .turns()
-            .listar(self.org, conversa, Page::with_limit(20))
+            .list(self.org, conversa, Page::with_limit(20))
             .expect("lista os turnos")
             .into_iter()
             .next_back()
@@ -294,19 +294,19 @@ impl Cenario {
     fn auditoria(&self) -> Vec<poph_store::AuditEntry> {
         self.store
             .audit()
-            .listar(self.org, Page::with_limit(50))
+            .list(self.org, Page::with_limit(50))
             .expect("lê a auditoria")
     }
 
     fn reabrir(&self, conversa: ConversationId) {
         let atual = self
             .store
-            .conversas()
+            .conversations()
             .get(self.org, conversa)
             .expect("lê a conversa");
         self.store
-            .conversas()
-            .reabrir_auditado(self.org, conversa, atual.version, "teste".to_owned())
+            .conversations()
+            .reopen_audited(self.org, conversa, atual.version, "teste".to_owned())
             .expect("reabre a conversa");
     }
 }
@@ -416,7 +416,7 @@ async fn transfere_com_orientacao_e_nao_chama_o_modelo() {
     let pendentes = cenario
         .store
         .outbox()
-        .listar_pendentes(cenario.org, 10)
+        .list_pending(cenario.org, 10)
         .expect("lista a outbox");
     assert_eq!(pendentes.len(), 1);
     assert_eq!(pendentes[0].tipo, "text");
@@ -433,7 +433,7 @@ async fn transfere_com_orientacao_e_nao_chama_o_modelo() {
     assert_eq!(gravado["decisoes"][0]["gate"], "g1");
     assert_eq!(gravado["decisoes"][0]["escolha"], G1_TRANSFERIR);
     assert_eq!(gravado["risco"]["tipo"], RISCO_INGESTAO);
-    assert_eq!(turno.estado, TurnState::Completed);
+    assert_eq!(turno.state, TurnState::Completed);
 
     // Auditoria: ator do sistema, ação `transfer`, na conversa certa.
     let registros = cenario.auditoria();
@@ -777,7 +777,7 @@ async fn transferencia_guarda_o_departamento_do_agente() {
     let padrao = cenario
         .store
         .departments()
-        .criar(
+        .create(
             cenario.org,
             poph_store::NewDepartment {
                 name: "Atendimento humano".to_owned(),
@@ -794,7 +794,7 @@ async fn transferencia_guarda_o_departamento_do_agente() {
     cenario
         .store
         .agents()
-        .atualizar(
+        .update(
             cenario.org,
             cenario.agente,
             atual.version,
@@ -813,7 +813,7 @@ async fn transferencia_guarda_o_departamento_do_agente() {
 
     let gravada = cenario
         .store
-        .conversas()
+        .conversations()
         .get(cenario.org, conversa)
         .expect("lê a conversa");
     assert_eq!(gravada.status, poph_store::ConversationStatus::Transferred);

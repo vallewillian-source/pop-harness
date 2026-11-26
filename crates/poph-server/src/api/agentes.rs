@@ -109,7 +109,7 @@ pub async fn listar(
     let items: Vec<_> = e
         .store
         .agents()
-        .listar(org, pagina)?
+        .list(org, pagina)?
         .iter()
         .map(json_agente)
         .collect();
@@ -131,12 +131,12 @@ pub async fn mostrar(
     valor["product_category_ids"] = json!(
         e.store
             .agents()
-            .categorias(org, id)?
+            .categories(org, id)?
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>()
     );
-    valor["instructions"] = match e.store.instructions().obter(org, id) {
+    valor["instructions"] = match e.store.instructions().get(org, id) {
         Ok(i) => {
             json!({"agent_id":i.agent_id.to_string(),"org_id":i.org_id.to_string(),"structured":serde_json::from_str::<Value>(&i.structured_json).unwrap_or(json!(i.structured_json)),"markdown":i.markdown,"derived_from_json":i.derived_from_json,"version":i.version,"created_at":i.created_at,"updated_at":i.updated_at})
         }
@@ -202,7 +202,7 @@ pub async fn criar(
     n.default_department = dep(d.department)?;
     let handoff = dep(d.handoff_department)?;
     if let Some(id) = handoff {
-        e.store.departments().obter(org, id)?;
+        e.store.departments().get(org, id)?;
     }
     if let Some(x) = d.provider {
         if let Err(erro) = e.config.validate_provider_choice(&x) {
@@ -233,10 +233,10 @@ pub async fn criar(
     if let Some(x) = d.rag_min_score {
         n.rag_cutoff = x;
     }
-    let mut a = e.store.agents().criar(org, n)?;
+    let mut a = e.store.agents().create(org, n)?;
     super::auditoria::registrar(&e, &ident, Some(org), "create", "agent", a.id.to_string())?;
     if let Some(h) = handoff {
-        a = e.store.agents().atualizar(
+        a = e.store.agents().update(
             org,
             a.id,
             a.version,
@@ -324,7 +324,7 @@ pub async fn atualizar(
         return Err(ApiError::invalido("nada a alterar"));
     }
     let mut a = if tem {
-        e.store.agents().atualizar(org, id, versao, m)?
+        e.store.agents().update(org, id, versao, m)?
     } else {
         let a = e.store.agents().get(org, id)?;
         if a.version != versao {
@@ -344,7 +344,7 @@ pub async fn atualizar(
         a = e
             .store
             .agents()
-            .definir_categorias(org, id, a.version, &cats)?;
+            .define_categories(org, id, a.version, &cats)?;
         super::auditoria::registrar(&e, &ident, Some(org), "update", "agent", id.to_string())?;
     }
     Ok(Json(json_agente(&a)))
@@ -358,7 +358,7 @@ pub async fn excluir(
     let org = id_da_url::<OrgId>(&c.org_id)?;
     ident.exigir_org(org)?;
     let id = id_da_url::<AgentId>(&c.agent_id)?;
-    e.store.agents().excluir(org, id)?;
+    e.store.agents().delete(org, id)?;
     super::auditoria::registrar(&e, &ident, Some(org), "delete", "agent", id.to_string())?;
     Ok(Json(json!({"removido":true,"agent_id":id.to_string()})))
 }

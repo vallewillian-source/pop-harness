@@ -150,7 +150,7 @@ fn criar(store: &Store, args: CriarOrg) -> ExitCode {
             "slug `{slug}` inválido: use de 3 a 64 caracteres, só a-z, 0-9 e `-`"
         ));
     }
-    match store.orgs().por_slug(&slug) {
+    match store.orgs().by_slug(&slug) {
         Ok(_) => return falha(format!("já existe uma org com o slug `{slug}`")),
         Err(erro) if erro.is_not_found() => {}
         Err(erro) => return falha(descrever(&erro)),
@@ -160,7 +160,7 @@ fn criar(store: &Store, args: CriarOrg) -> ExitCode {
         slug,
         config_json: String::new(),
     };
-    match store.orgs().criar(nova) {
+    match store.orgs().create(nova) {
         Ok(org) => saida(&org, args.json, "org criada", None),
         Err(erro) => falha(descrever(&erro)),
     }
@@ -171,7 +171,7 @@ fn listar(store: &Store, args: ListarOrgs) -> ExitCode {
         Ok(pagina) => pagina,
         Err(erro) => return falha(erro),
     };
-    match store.orgs().listar(pagina) {
+    match store.orgs().list(pagina) {
         Ok(orgs) => {
             if args.json {
                 let itens: Vec<Value> = orgs.iter().map(json_org).collect();
@@ -251,7 +251,7 @@ fn atualizar(store: &Store, args: AtualizarOrg) -> ExitCode {
         status,
         config_json,
     };
-    match store.orgs().atualizar(id, args.if_match, mudanca) {
+    match store.orgs().update(id, args.if_match, mudanca) {
         Ok(org) => saida(&org, args.json, "org alterada", None),
         Err(erro) => falha(descrever(&erro)),
     }
@@ -276,10 +276,10 @@ fn excluir(store: &Store, args: ExcluirOrg) -> ExitCode {
     let resultado = if args.force {
         store
             .orgs()
-            .excluir_forcado(id)
+            .delete_forced(id)
             .map_err(|erro| descrever(&erro))
     } else {
-        store.orgs().excluir(id).map(|()| 0u64).map_err(|erro| {
+        store.orgs().delete(id).map(|()| 0u64).map_err(|erro| {
             if matches!(
                 erro,
                 poph_store::StoreError::Domain(poph_types::DomainError::Conflict { .. })
@@ -336,15 +336,15 @@ fn conteudo_da_org(store: &Store, org: poph_types::OrgId) -> Result<Conteudo, St
     Ok(Conteudo {
         agentes: contar_agentes(store, org)?,
         categorias: contar_todos(
-            |pagina| store.categories().listar(org, pagina),
+            |pagina| store.categories().list(org, pagina),
             |item| item.id.as_uuid(),
         )?,
         departamentos: contar_todos(
-            |pagina| store.departments().listar(org, pagina),
+            |pagina| store.departments().list(org, pagina),
             |item| item.id.as_uuid(),
         )?,
         tokens: contar_todos(
-            |pagina| store.tokens().listar(org, pagina),
+            |pagina| store.tokens().list(org, pagina),
             |item| item.id.as_uuid(),
         )?,
     })
@@ -352,7 +352,7 @@ fn conteudo_da_org(store: &Store, org: poph_types::OrgId) -> Result<Conteudo, St
 
 fn contar_agentes(store: &Store, org: poph_types::OrgId) -> Result<usize, String> {
     contar_todos(
-        |pagina| store.agents().listar(org, pagina),
+        |pagina| store.agents().list(org, pagina),
         |item| item.id.as_uuid(),
     )
 }

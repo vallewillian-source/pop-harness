@@ -299,7 +299,7 @@ impl Servidor {
         let id = org.id.parse::<OrgId>().expect("id da org");
         self.store
             .audit()
-            .listar(id, Page::with_limit(200))
+            .list(id, Page::with_limit(200))
             .expect("auditoria da org")
     }
 }
@@ -569,7 +569,7 @@ async fn montar_org(s: &Servidor, slug: &str, marcador: &'static str) -> Org {
     let mensagem = s
         .store
         .messages()
-        .gravar_com_anexos(
+        .write_with_attachments(
             org_id,
             NewMessage {
                 conversation_id: conversa_id,
@@ -577,7 +577,7 @@ async fn montar_org(s: &Servidor, slug: &str, marcador: &'static str) -> Org {
                 role: Role::User,
                 texto: format!("anexo {marcador}"),
                 attachments_json: "[]".to_owned(),
-                id_externo: None,
+                external_id: None,
                 turn_id: None,
                 origin: poph_store::Origin::Agente,
                 author_name: None,
@@ -596,7 +596,7 @@ async fn montar_org(s: &Servidor, slug: &str, marcador: &'static str) -> Org {
     let anexo = s
         .store
         .messages()
-        .anexos(org_id, mensagem.id)
+        .attachments(org_id, mensagem.id)
         .expect("anexos da mensagem")
         .remove(0)
         .id
@@ -1821,7 +1821,7 @@ fn itens_de_saida(s: &Servidor, org: poph_types::OrgId) -> u64 {
     .map(|estado| {
         s.store
             .outbox()
-            .contar_por_estado(org, estado)
+            .count_by_state(org, estado)
             .expect("contagem da caixa de saída")
     })
     .sum()
@@ -1958,12 +1958,12 @@ async fn ferramentas_do_llm_nao_alcancam_outra_org() {
     let carrinho_a = s
         .store
         .carts()
-        .resumo(oa, id(&a.conversa))
+        .summary(oa, id(&a.conversa))
         .expect("carrinho de A");
-    if !carrinho_a.itens.is_empty() {
+    if !carrinho_a.items.is_empty() {
         falhas.push(format!(
             "o carrinho de A recebeu item do produto de B: {:?}",
-            carrinho_a.itens
+            carrinho_a.items
         ));
     }
     // A caixa de saída de A: só a resposta de texto do turno (1 item). Arquivo de B não entra.

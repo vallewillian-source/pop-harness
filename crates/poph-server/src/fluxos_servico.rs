@@ -206,7 +206,7 @@ impl<'a> Operacoes<'a> {
         let mut todos: Vec<Departamento> = Vec::new();
         let mut apos: Option<uuid::Uuid> = None;
         loop {
-            let lote = self.store.departments().listar(
+            let lote = self.store.departments().list(
                 org,
                 Page {
                     after: apos,
@@ -269,14 +269,14 @@ impl<'a> Operacoes<'a> {
             return Err(FalhaFluxo::Interno);
         };
         // Teto de fluxos por org (PRD §9). Conta todos os fluxos, ativos ou não.
-        let hoje = self.store.fluxos().contar(org)?;
+        let hoje = self.store.flows().count_rows(org)?;
         if hoje >= self.max_fluxos_por_org {
             return Err(FalhaFluxo::TetoDeFluxos {
                 atual: hoje,
                 teto: self.max_fluxos_por_org,
             });
         }
-        let fluxo = self.store.fluxos().criar(
+        let fluxo = self.store.flows().create(
             org,
             NewFlow {
                 slug: ir.fluxo.id.clone(),
@@ -349,7 +349,7 @@ impl<'a> Operacoes<'a> {
         })?;
         let resolucoes_json = serde_json::to_string(&json!({ "departamentos": resolucoes }))
             .map_err(|_| FalhaFluxo::Interno)?;
-        let revisao = self.store.revisions().publicar_revisao(
+        let revisao = self.store.revisions().publish_revision(
             org,
             fluxo.id,
             RevisionPublication {
@@ -362,7 +362,7 @@ impl<'a> Operacoes<'a> {
                 actor_id: ator.id.clone(),
             },
         )?;
-        let versao_do_fluxo = self.store.fluxos().obter(org, fluxo.id)?.version;
+        let versao_do_fluxo = self.store.flows().get(org, fluxo.id)?.version;
         let mut avisos: Vec<Diagnostico> = compilado
             .diagnosticos
             .into_iter()
@@ -422,12 +422,12 @@ impl<'a> Operacoes<'a> {
             None => fluxo.revisao_atual.ok_or(FalhaFluxo::SemRevisao)?,
         };
         let de = de.unwrap_or_else(|| para.saturating_sub(1).max(1));
-        let revisao_de = self.store.revisions().obter(org, fluxo.id, de)?;
-        let revisao_para = self.store.revisions().obter(org, fluxo.id, para)?;
+        let revisao_de = self.store.revisions().get(org, fluxo.id, de)?;
+        let revisao_para = self.store.revisions().get(org, fluxo.id, para)?;
         let ir_de = self.ir_da_revisao(fluxo, &revisao_de)?;
         let ir_para = self.ir_da_revisao(fluxo, &revisao_para)?;
         let mudancas = diferenca(&ir_de, &ir_para);
-        let contagens = self.store.executions().ativas_por_revisao(org, fluxo.id)?;
+        let contagens = self.store.executions().active_by_revision(org, fluxo.id)?;
         let ativas = |revisao: &FlowRevision| -> u64 {
             contagens
                 .iter()
@@ -453,7 +453,7 @@ impl<'a> Operacoes<'a> {
         let revisao = self
             .store
             .revisions()
-            .atual(org, fluxo.id)?
+            .current(org, fluxo.id)?
             .ok_or(FalhaFluxo::SemRevisao)?;
         let ir = self.ir_da_revisao(fluxo, &revisao)?;
         let etapa = etapa
@@ -478,7 +478,7 @@ pub fn auditar(
     entidade: &str,
     id: String,
 ) -> Result<(), StoreError> {
-    store.audit().registrar(
+    store.audit().register(
         Some(org),
         NewAuditEntry {
             ator_tipo: ator.tipo.clone(),

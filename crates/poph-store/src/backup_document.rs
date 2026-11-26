@@ -359,9 +359,9 @@ mod tests {
         assert_eq!(read.blobs, real_blobs);
         assert!(!read.com_conversas);
         assert_eq!(read.snapshot.tables["agents"], snapshot.tables["agents"]);
-        let integracao = &read.snapshot.tables["integrations"][0];
-        assert_eq!(integracao["tem_segredo"], true);
-        assert!(integracao["segredos_campos"].is_null());
+        let integration = &read.snapshot.tables["integrations"][0];
+        assert_eq!(integration["tem_segredo"], true);
+        assert!(integration["segredos_campos"].is_null());
         assert!(read.snapshot.encrypted_secrets.is_empty());
     }
 

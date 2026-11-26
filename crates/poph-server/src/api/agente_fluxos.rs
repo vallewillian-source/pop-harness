@@ -55,8 +55,8 @@ pub async fn listar(
     e.store.agents().get(org, agente)?;
     let items: Vec<Value> = e
         .store
-        .fluxos()
-        .listar_do_agente(org, agente)?
+        .flows()
+        .list_from_agent(org, agente)?
         .iter()
         .map(json_fluxo)
         .collect();
@@ -88,11 +88,9 @@ pub async fn substituir(
         .collect::<Result<Vec<FlowId>, _>>()?;
     // Agente de outra org ou inexistente: 404 antes de mexer em qualquer permissão.
     e.store.agents().get(org, agente)?;
-    let antes = e.store.fluxos().listar_do_agente(org, agente)?;
-    e.store
-        .fluxos()
-        .substituir_lista(org, agente, versao, &ids)?;
-    let depois = e.store.fluxos().listar_do_agente(org, agente)?;
+    let antes = e.store.flows().list_from_agent(org, agente)?;
+    e.store.flows().replace_list(org, agente, versao, &ids)?;
+    let depois = e.store.flows().list_from_agent(org, agente)?;
     let do_antes: Vec<String> = antes.iter().map(|f| f.id.to_string()).collect();
     let do_depois: Vec<String> = depois.iter().map(|f| f.id.to_string()).collect();
     let adicionados: Vec<Value> = depois

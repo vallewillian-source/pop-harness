@@ -61,7 +61,7 @@ pub async fn listar(
     let items: Vec<_> = e
         .store
         .knowledge()
-        .listar_grupos(org, p)?
+        .list_groups(org, p)?
         .iter()
         .map(grupo)
         .collect();
@@ -78,8 +78,8 @@ pub async fn mostrar(
 ) -> Result<Json<Value>, ApiError> {
     let (org, id) = ids(c, &ident)?;
     let id = id.ok_or_else(|| ApiError::invalido("grupo ausente"))?;
-    let mut valor = grupo(&e.store.knowledge().obter_grupo(org, id)?);
-    let agentes = e.store.knowledge().agentes_do_grupo(org, id)?;
+    let mut valor = grupo(&e.store.knowledge().get_group(org, id)?);
+    let agentes = e.store.knowledge().agents_from_group(org, id)?;
     valor["agents"] = json!(agentes.iter().map(ToString::to_string).collect::<Vec<_>>());
     Ok(Json(valor))
 }
@@ -95,7 +95,7 @@ pub async fn criar(
     if d.status.is_some() {
         return Err(ApiError::invalido("status não é aceito na criação"));
     }
-    let g = e.store.knowledge().criar_grupo(
+    let g = e.store.knowledge().create_group(
         org,
         NewKnowledgeGroup {
             name: d
@@ -126,7 +126,7 @@ pub async fn atualizar(
     let id = id.ok_or_else(|| ApiError::invalido("grupo ausente"))?;
     let versao = versao_do_if_match(&h, "grupo")?;
     let Json(d) = corpo.map_err(|_| ApiError::invalido("corpo JSON inválido"))?;
-    let g = e.store.knowledge().atualizar_grupo(
+    let g = e.store.knowledge().update_group(
         org,
         id,
         versao,
@@ -164,8 +164,8 @@ pub async fn excluir(
             "grupo pode conter itens e vínculos; confirme com force=true",
         ));
     }
-    let agentes = e.store.knowledge().agentes_do_grupo(org, id)?;
-    e.store.knowledge().excluir_grupo(org, id)?;
+    let agentes = e.store.knowledge().agents_from_group(org, id)?;
+    e.store.knowledge().delete_group(org, id)?;
     super::auditoria::registrar(
         &e,
         &ident,
@@ -229,7 +229,7 @@ fn conferir_item(
     group: KnowledgeGroupId,
     id: poph_types::KnowledgeItemId,
 ) -> Result<poph_store::KnowledgeItem, ApiError> {
-    let i = e.store.knowledge().obter_item(org, id)?;
+    let i = e.store.knowledge().get_item(org, id)?;
     if i.group_id != group {
         return Err(ApiError::novo(
             StatusCode::NOT_FOUND,
@@ -247,13 +247,13 @@ pub async fn listar_itens(
     q: Result<Query<ConsultaPagina>, QueryRejection>,
 ) -> Result<Json<ListaJson<Value>>, ApiError> {
     let (org, g, _) = ids_item(c, &ident)?;
-    e.store.knowledge().obter_grupo(org, g)?;
+    e.store.knowledge().get_group(org, g)?;
     let Query(q) = q.map_err(|_| ApiError::invalido("parâmetros de paginação inválidos"))?;
     let p = q.pagina()?;
     let items: Vec<_> = e
         .store
         .knowledge()
-        .listar_itens_por_id(org, g, p)?
+        .list_items_by_id(org, g, p)?
         .iter()
         .map(item_json)
         .collect();
@@ -290,7 +290,7 @@ pub async fn criar_item(
             "status e group_id não são aceitos na criação",
         ));
     }
-    let i = e.store.knowledge().criar_item(
+    let i = e.store.knowledge().create_item(
         org,
         poph_store::NewKnowledgeItem {
             group_id: g,
@@ -338,7 +338,7 @@ pub async fn atualizar_item(
                 .map_err(|_| ApiError::invalido("id de grupo inválido"))
         })
         .transpose()?;
-    let i = e.store.knowledge().atualizar_item(
+    let i = e.store.knowledge().update_item(
         org,
         id,
         versao,
@@ -377,7 +377,7 @@ pub async fn excluir_item(
     let (org, g, id) = ids_item(c, &ident)?;
     let id = id.ok_or_else(|| ApiError::invalido("item ausente"))?;
     conferir_item(&e, org, g, id)?;
-    e.store.knowledge().excluir_item(org, id)?;
+    e.store.knowledge().delete_item(org, id)?;
     super::auditoria::registrar(
         &e,
         &ident,
@@ -424,7 +424,7 @@ pub async fn vincular(
 ) -> Result<Json<Value>, ApiError> {
     let (org, agente, grupo) = ids_agente(c, &ident)?;
     let grupo = grupo.ok_or_else(|| ApiError::invalido("grupo ausente"))?;
-    e.store.knowledge().vincular_agente(org, agente, grupo)?;
+    e.store.knowledge().link_agent(org, agente, grupo)?;
     super::auditoria::registrar(
         &e,
         &ident,
@@ -447,8 +447,8 @@ pub async fn desvincular(
     let (org, agente, grupo) = ids_agente(c, &ident)?;
     let grupo = grupo.ok_or_else(|| ApiError::invalido("grupo ausente"))?;
     e.store.agents().get(org, agente)?;
-    e.store.knowledge().obter_grupo(org, grupo)?;
-    let mudou = e.store.knowledge().desvincular_agente(org, agente, grupo)?;
+    e.store.knowledge().get_group(org, grupo)?;
+    let mudou = e.store.knowledge().unlink_agent(org, agente, grupo)?;
     super::auditoria::registrar(
         &e,
         &ident,
@@ -541,7 +541,7 @@ async fn aviso_sincronizar(
     falhou.then_some("índice não atualizado; execute reindex para os agentes afetados")
 }
 async fn aviso_grupo(e: &Estado, org: OrgId, grupo: KnowledgeGroupId) -> Option<&'static str> {
-    match e.store.knowledge().agentes_do_grupo(org, grupo) {
+    match e.store.knowledge().agents_from_group(org, grupo) {
         Ok(agentes) => aviso_sincronizar(e, org, agentes).await,
         Err(_) => Some("índice não atualizado; execute reindex para o agente"),
     }

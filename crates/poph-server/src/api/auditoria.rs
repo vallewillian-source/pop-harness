@@ -11,7 +11,7 @@ pub(super) fn registrar(
     entidade: &str,
     id: String,
 ) -> Result<(), ApiError> {
-    estado.store.audit().registrar(
+    estado.store.audit().register(
         org,
         NewAuditEntry {
             ator_tipo: "admin_token".into(),

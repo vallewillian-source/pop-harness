@@ -383,7 +383,7 @@ impl Fluxo {
     /// Grava o evento na `inbox`. Só retorna depois do commit: quem chama pode dar o ACK do canal
     /// em seguida. Reentrega devolve [`Recebido::Duplicado`] sem erro.
     pub fn receber(&self, org: OrgId, nova: NewInboxItem) -> Resultado<Received> {
-        let (situacao, _item) = self.interno.store.inbox().receber(org, nova)?;
+        let (situacao, _item) = self.interno.store.inbox().receive(org, nova)?;
         match situacao {
             Received::New => self.interno.metricas.entradas_novas.increment(1),
             Received::Duplicate => self.interno.metricas.entradas_duplicadas.increment(1),
@@ -407,11 +407,11 @@ impl Fluxo {
             mensagem,
         }
         .para_json()?;
-        let gravado = self.interno.store.inbox().receber_com_mensagem(
+        let gravado = self.interno.store.inbox().receive_with_message(
             org,
             NewInboxItemWithMessage {
                 integration_id: recebida.integration_id,
-                id_externo: recebida.id_externo,
+                external_id: recebida.id_externo,
                 event_json: evento,
                 conversation_id: recebida.conversa,
                 message_id: mensagem,
@@ -419,7 +419,7 @@ impl Fluxo {
                 attachments_json: recebida.anexos_json,
             },
         )?;
-        match gravado.situacao {
+        match gravado.situation {
             Received::New => self.interno.metricas.entradas_novas.increment(1),
             Received::Duplicate => self.interno.metricas.entradas_duplicadas.increment(1),
         }
@@ -431,10 +431,7 @@ impl Fluxo {
     /// Deve ser chamada pelo processador de turno (HR-13) com `tarefa.entrada`. Sem ela, o item
     /// continua pendente e volta a ser despachado na próxima retomada.
     pub fn concluir_entrada(&self, org: OrgId, id: InboxId, erro: Option<&str>) -> Resultado<()> {
-        self.interno
-            .store
-            .inbox()
-            .marcar_processado(org, id, erro)?;
+        self.interno.store.inbox().mark_processed(org, id, erro)?;
         self.interno.em_voo().remove(&id);
         self.interno.agenda_entrada().remove(&id);
         self.interno.metricas.entradas_concluidas.increment(1);
@@ -484,7 +481,7 @@ impl Fluxo {
             .interno
             .store
             .inbox()
-            .listar_pendentes(org, self.interno.opcoes.lote_entrada)?;
+            .list_pending(org, self.interno.opcoes.lote_entrada)?;
         self.despachar_itens(org, itens)
     }
 
@@ -507,7 +504,7 @@ impl Fluxo {
             // A lista pode ter sido lida antes de o turno concluir este item. A conclusão grava o
             // `processado_em` antes de soltar a reserva, então com a reserva na mão o banco já diz a
             // verdade: se o item está processado, não é despachado de novo.
-            match self.interno.store.inbox().obter(org, id) {
+            match self.interno.store.inbox().get(org, id) {
                 Ok(atual) if atual.processed_at.is_some() => {
                     self.interno.agenda_entrada().remove(&id);
                     self.interno.liberar_entrada(id);
@@ -530,7 +527,7 @@ impl Fluxo {
             let evento = match EventoEntrada::de_json(&item.event_json) {
                 Ok(evento) => evento,
                 Err(erro) => {
-                    let marcado = self.interno.store.inbox().marcar_processado(
+                    let marcado = self.interno.store.inbox().mark_processed(
                         org,
                         id,
                         Some(&format!("evento de entrada inválido: {erro}")),
@@ -560,7 +557,7 @@ impl Fluxo {
                     self.interno.liberar_entrada(id);
                     if tentativa >= self.interno.opcoes.max_tentativas {
                         // Não some: fica gravado na inbox com o motivo, para a operação ver.
-                        let marcado = self.interno.store.inbox().marcar_processado(
+                        let marcado = self.interno.store.inbox().mark_processed(
                             org,
                             id,
                             Some(&format!("despacho desistiu: {erro}")),
@@ -604,7 +601,7 @@ impl Fluxo {
         org: OrgId,
         nova: poph_store::NewOutboxItem,
     ) -> Resultado<(bool, OutboxItem)> {
-        Ok(self.interno.store.outbox().enfileirar(org, nova)?)
+        Ok(self.interno.store.outbox().enqueue(org, nova)?)
     }
 
     /// Envia o que está aguardando numa org: `pending` e `sending` (o `sending` inclui o reenvio da
@@ -619,7 +616,7 @@ impl Fluxo {
             .interno
             .store
             .outbox()
-            .listar_pendentes(org, self.interno.opcoes.lote_saida)?;
+            .list_pending(org, self.interno.opcoes.lote_saida)?;
         self.enviar_itens(org, itens, transporte).await
     }
 
@@ -636,13 +633,13 @@ impl Fluxo {
             .interno
             .store
             .outbox()
-            .listar_pendentes(org, LOTE_MAXIMO_DO_CONSOLE)?;
+            .list_pending(org, LOTE_MAXIMO_DO_CONSOLE)?;
         let mut itens = Vec::new();
         for item in pendentes {
             let conversa = self
                 .interno
                 .store
-                .conversas()
+                .conversations()
                 .get(org, item.conversation_id)?;
             if conversa.integration_id.is_none() {
                 itens.push(item);
@@ -692,8 +689,8 @@ impl Fluxo {
         {
             return Ok(DesfechoEnvio::Adiado);
         }
-        if item.tentativas >= self.interno.opcoes.max_tentativas {
-            self.interno.store.outbox().falhar_envio(
+        if item.attempts >= self.interno.opcoes.max_tentativas {
+            self.interno.store.outbox().fail_send(
                 org,
                 id,
                 "tentativas de envio esgotadas",
@@ -705,7 +702,7 @@ impl Fluxo {
         }
 
         // A transição precisa estar no banco antes do efeito externo (D11).
-        let tentativa = match self.interno.store.outbox().iniciar_envio(org, id) {
+        let tentativa = match self.interno.store.outbox().start_send(org, id) {
             Ok(tentativa) => tentativa,
             Err(erro) => {
                 tracing::warn!(
@@ -720,7 +717,7 @@ impl Fluxo {
 
         match transporte.enviar(item).await {
             Ok(()) => {
-                self.interno.store.outbox().confirmar_envio(org, id)?;
+                self.interno.store.outbox().confirm_send(org, id)?;
                 self.interno.agenda_saida().remove(&id);
                 self.interno.metricas.saidas_enviadas.increment(1);
                 Ok(DesfechoEnvio::Enviado)
@@ -729,7 +726,7 @@ impl Fluxo {
                 self.interno
                     .store
                     .outbox()
-                    .falhar_envio(org, id, &falha.motivo, false)?;
+                    .fail_send(org, id, &falha.motivo, false)?;
                 let proximo_em = agora + self.interno.opcoes.backoff.espera(tentativa);
                 self.interno.agenda_saida().insert(
                     id,
@@ -745,7 +742,7 @@ impl Fluxo {
                 self.interno
                     .store
                     .outbox()
-                    .falhar_envio(org, id, &falha.motivo, true)?;
+                    .fail_send(org, id, &falha.motivo, true)?;
                 self.interno.agenda_saida().remove(&id);
                 self.interno.metricas.saidas_definitivas.increment(1);
                 Ok(DesfechoEnvio::Falhou)
@@ -765,7 +762,7 @@ impl Fluxo {
                 self.interno
                     .store
                     .outbox()
-                    .contar_por_estado(*org, OutboxState::Sending)?,
+                    .count_by_state(*org, OutboxState::Sending)?,
             )
             .unwrap_or(u32::MAX);
         }
@@ -802,7 +799,7 @@ impl Fluxo {
                 self.interno
                     .store
                     .outbox()
-                    .contar_por_estado(*org, OutboxState::Sending)?,
+                    .count_by_state(*org, OutboxState::Sending)?,
             )
             .unwrap_or(u32::MAX);
             entrada.somar(self.despachar(*org)?);
@@ -843,7 +840,7 @@ impl Fluxo {
         let mut apos = None;
         loop {
             let limite = 200u32;
-            let pagina = self.interno.store.orgs().listar(Page {
+            let pagina = self.interno.store.orgs().list(Page {
                 after: apos,
                 limit: limite,
             })?;
@@ -863,22 +860,22 @@ impl Fluxo {
     /// Tamanho das filas de uma org.
     pub fn estatisticas(&self, org: OrgId) -> Resultado<Estatisticas> {
         Ok(Estatisticas {
-            entrada_pendente: self.interno.store.inbox().contar_pendentes(org)?,
+            entrada_pendente: self.interno.store.inbox().count_pending(org)?,
             saida_enviando: self
                 .interno
                 .store
                 .outbox()
-                .contar_por_estado(org, OutboxState::Sending)?,
+                .count_by_state(org, OutboxState::Sending)?,
             saida_pendente: self
                 .interno
                 .store
                 .outbox()
-                .contar_por_estado(org, OutboxState::Pending)?,
+                .count_by_state(org, OutboxState::Pending)?,
             saida_falhou: self
                 .interno
                 .store
                 .outbox()
-                .contar_por_estado(org, OutboxState::Failed)?,
+                .count_by_state(org, OutboxState::Failed)?,
         })
     }
 
@@ -887,12 +884,12 @@ impl Fluxo {
         let mut entrada = 0u64;
         let mut enviando = 0u64;
         for org in self.orgs()? {
-            entrada += self.interno.store.inbox().contar_pendentes(org)?;
+            entrada += self.interno.store.inbox().count_pending(org)?;
             enviando += self
                 .interno
                 .store
                 .outbox()
-                .contar_por_estado(org, OutboxState::Sending)?;
+                .count_by_state(org, OutboxState::Sending)?;
         }
         self.interno
             .metricas

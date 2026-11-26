@@ -52,7 +52,7 @@ fn preparar(rotulo: &str) -> Preparo {
     let store = Store::open(&config).expect("cria o banco");
     let org = store
         .orgs()
-        .criar(NewOrg {
+        .create(NewOrg {
             name: "Loja HR-26f".to_owned(),
             slug: format!("loja-hr26f-{rotulo}"),
             config_json: String::new(),
@@ -61,7 +61,7 @@ fn preparar(rotulo: &str) -> Preparo {
         .id;
     let agente = store
         .agents()
-        .criar(
+        .create(
             org,
             NewAgent {
                 name: "Atendente HR-26f".to_owned(),

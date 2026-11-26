@@ -1,12 +1,3 @@
-//! Repositórios por entidade.
-//!
-//! Regra que vale para todos: **`org_id` é obrigatório na assinatura de leitura e escrita**.
-//! Não existe método que consulte uma tabela de negócio sem o escopo da org; o teste de
-//! isolamento do crate passa por todos os repositórios.
-//!
-//! Escrita passa pelo escritor dedicado (`Store::escrita`), leitura pelo pool (`Store::leitura`).
-//! Toda entidade editável tem `versao`, exigida no `If-Match` do `atualizar`.
-
 use poph_types::DomainError;
 use rusqlite::types::Type;
 use rusqlite::{Connection, OptionalExtension, Row};
@@ -14,164 +5,155 @@ use rusqlite::{Connection, OptionalExtension, Row};
 use crate::error::StoreError;
 use crate::model::Status;
 
-mod agentes;
+mod agents;
 mod analytics;
-mod biblioteca;
-mod caixas;
-mod carrinho;
-mod categorias;
-mod conhecimento;
-mod conversas;
-mod departamentos;
-mod efeitos;
-mod execucoes;
-mod fichas;
-mod fluxos;
-mod instrucoes;
+mod boxes;
+mod cart;
+mod cases;
+mod categories;
+mod conversations;
+mod departments;
+mod effects;
+mod executions;
+mod flows;
+mod instructions;
+mod knowledge;
+mod library;
 mod matrix;
-mod matrix_midia;
-mod mensagens;
-mod orgaos;
-mod produtos;
-mod retencao;
-mod revisoes;
+mod matrix_asset;
+mod messages;
+mod orgs;
+mod products;
+mod retention;
+mod revisions;
 mod tokens;
-mod turnos;
+mod turns;
 mod usage;
 pub use usage::{AgentUsage, DayUsage, TokenUsage, Usage};
 
-pub use agentes::{Agentes, agentes_por_provedor_em};
+pub use agents::{Agents, agents_by_provider_at};
 pub use analytics::{Analytics, NodeCount, OperationalSummary};
-pub use biblioteca::{Biblioteca, LIMITE_DESCRICAO_ARQUIVO, LIMITE_NOME_ARQUIVO};
-pub use caixas::{CaixaEntrada, CaixaSaida};
-pub use carrinho::{Carrinhos, ItemCarrinho, LIMITE_QUANTIDADE, ResumoCarrinho};
-pub use categorias::Categorias;
-pub use conhecimento::Conhecimento;
-pub use conversas::{
-    Conversas, FiltroConversas, LIMITE_NOME_CLIENTE, OrdemConversas, normalizar_nome_cliente,
+pub use boxes::{Inbox, Outbox};
+pub use cart::{CartItem, CartSummary, Carts, LIMIT_QUANTITY};
+pub use cases::{Fichas, REASON_ABANDONMENT_SERVICE};
+pub use categories::Categories;
+pub use conversations::{
+    Conversas, FilterConversations, LIMIT_NAME_CLIENT, OrderConversations, normalise_name_client,
 };
-pub use departamentos::Departamentos;
-pub use efeitos::Efeitos;
-pub use execucoes::{Execucoes, LIMITE_EXECUCOES};
-pub use fichas::{Fichas, MOTIVO_ABANDONO_ATENDIMENTO};
-pub use fluxos::{Fluxos, MOTIVO_EXCLUSAO_FLUXO, TETO_FLUXOS_POR_AGENTE};
-pub use instrucoes::InstrucoesRepo;
+pub use departments::Departments;
+pub use effects::Effects;
+pub use executions::{Executions, LIMIT_EXECUTIONS};
+pub use flows::{CAP_FLOWS_BY_AGENT, Fluxos, REASON_EXCLUSION_FLOW};
+pub use instructions::InstructionsRepo;
+pub use knowledge::Knowledge;
+pub use library::{LIMIT_DESCRIPTION_FILE, LIMIT_NAME_FILE, Library};
 pub use matrix::{
-    AtrasoMatrix, CursorConversas, CursoresMatrix, DesfechoAviso, EspacoDesligado, EspacoMatrix,
-    EstadoMatrixOrg, EstadoSala, FalhaDeRespostaHumana, FalhaMatrix, LIMITE_FALHAS,
-    LIMITE_MOTIVO_FALHA, Matrix, OrigemEspaco, SalaMatrix,
+    CursorConversations, CursorsMatrix, DelayMatrix, FailureMatrix, HumanResponseFailure,
+    LIMIT_FAILURES, LIMIT_REASON_FAILURE, Matrix, OutcomeNotice, RoomMatrix, SpaceDisabled,
+    SpaceMatrix, SpaceOrigin, StateMatrixOrg, StateRoom,
 };
-pub use matrix_midia::{
-    CategoriaMidia, LIMITE_ERRO_MIDIA, LIMITE_PENDENTES, MatrixMidia, MidiaDaSala, NovaMidia,
+pub use matrix_asset::{
+    CategoryAsset, LIMIT_ERROR_ASSET, LIMIT_PENDING, MatrixAsset, NewAsset, RoomAsset,
 };
-pub use mensagens::{LIMITE_DESDE, MensagemDesde, Mensagens};
-pub use orgaos::Orgaos;
-pub use produtos::{Produtos, ReferenciasProduto};
-pub use retencao::{Retencao, VarreduraRetencao};
-pub use revisoes::{ACAO_PUBLICAR, ATORES_DE_AUDITORIA, LIMITE_REVISOES, Revisoes};
+pub use messages::{LIMIT_SINCE, MessageSince, Messages};
+pub use orgs::Orgs;
+pub use products::{ProductReferences, Products};
+pub use retention::{Retencao, ScanRetention};
+pub use revisions::{ACTION_PUBLISH, ACTORS_OF_AUDIT, LIMIT_REVISIONS, Revisions};
 pub use tokens::Tokens;
-pub use turnos::{Auditoria, Turnos};
+pub use turns::{Audit, Turns};
 
 pub(crate) use crate::readers::require;
 
-/// Lê um id tipado de uma coluna de texto.
-pub(crate) fn id_da_coluna<T>(linha: &Row<'_>, indice: usize) -> rusqlite::Result<T>
+pub(crate) fn column_id<T>(row: &Row<'_>, index: usize) -> rusqlite::Result<T>
 where
     T: std::str::FromStr<Err = DomainError>,
 {
-    let texto: String = linha.get(indice)?;
-    texto.parse().map_err(|erro: DomainError| {
-        rusqlite::Error::FromSqlConversionFailure(indice, Type::Text, Box::new(erro))
+    let texto: String = row.get(index)?;
+    texto.parse().map_err(|error: DomainError| {
+        rusqlite::Error::FromSqlConversionFailure(index, Type::Text, Box::new(error))
     })
 }
 
-/// Lê um id opcional.
-pub(crate) fn id_opcional<T>(linha: &Row<'_>, indice: usize) -> rusqlite::Result<Option<T>>
+pub(crate) fn id_optional<T>(row: &Row<'_>, index: usize) -> rusqlite::Result<Option<T>>
 where
     T: std::str::FromStr<Err = DomainError>,
 {
-    let texto: Option<String> = linha.get(indice)?;
+    let texto: Option<String> = row.get(index)?;
     match texto {
-        Some(texto) => texto.parse().map(Some).map_err(|erro: DomainError| {
-            rusqlite::Error::FromSqlConversionFailure(indice, Type::Text, Box::new(erro))
+        Some(texto) => texto.parse().map(Some).map_err(|error: DomainError| {
+            rusqlite::Error::FromSqlConversionFailure(index, Type::Text, Box::new(error))
         }),
         None => Ok(None),
     }
 }
 
-/// Lê o campo `status`.
-pub(crate) fn status_da_coluna(linha: &Row<'_>, indice: usize) -> rusqlite::Result<Status> {
-    let texto: String = linha.get(indice)?;
-    Status::from_text(&texto).map_err(|erro| {
-        rusqlite::Error::FromSqlConversionFailure(indice, Type::Text, Box::new(erro))
+pub(crate) fn column_status(row: &Row<'_>, index: usize) -> rusqlite::Result<Status> {
+    let texto: String = row.get(index)?;
+    Status::from_text(&texto).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(index, Type::Text, Box::new(error))
     })
 }
 
-/// Converte INTEGER em `u64` (versões e contadores nunca são negativos).
-pub(crate) fn u64_da_coluna(linha: &Row<'_>, indice: usize) -> rusqlite::Result<u64> {
-    let valor: i64 = linha.get(indice)?;
-    Ok(valor.max(0) as u64)
+pub(crate) fn column_u64(row: &Row<'_>, index: usize) -> rusqlite::Result<u64> {
+    let value: i64 = row.get(index)?;
+    Ok(value.max(0) as u64)
 }
 
-/// Confere que o registro referenciado existe **na mesma org**. Usado nas referências opcionais,
-/// que a chave estrangeira simples não consegue proteger por org.
-pub(crate) fn pertence(
+pub(crate) fn belongs(
     conn: &Connection,
-    tabela: &'static str,
-    entidade: &'static str,
+    table: &'static str,
+    entity: &'static str,
     org_id: &str,
     id: &str,
 ) -> crate::error::Resultado<()> {
-    let existe: Option<i64> = conn
+    let exists: Option<i64> = conn
         .query_row(
-            &format!("SELECT 1 FROM {tabela} WHERE org_id = ?1 AND id = ?2"),
+            &format!("SELECT 1 FROM {table} WHERE org_id = ?1 AND id = ?2"),
             rusqlite::params![org_id, id],
-            |linha| linha.get(0),
+            |row| row.get(0),
         )
         .optional()
         .map_err(StoreError::from)?;
-    match existe {
+    match exists {
         Some(_) => Ok(()),
         None => Err(StoreError::Domain(DomainError::NotFound {
-            entity: entidade,
+            entity,
             id: id.to_owned(),
         })),
     }
 }
 
-/// Converte INTEGER em `u32`.
-pub(crate) fn u32_da_coluna(linha: &Row<'_>, indice: usize) -> rusqlite::Result<u32> {
-    let valor: i64 = linha.get(indice)?;
-    Ok(valor.clamp(0, i64::from(u32::MAX)) as u32)
+pub(crate) fn column_u32(row: &Row<'_>, index: usize) -> rusqlite::Result<u32> {
+    let value: i64 = row.get(index)?;
+    Ok(value.clamp(0, i64::from(u32::MAX)) as u32)
 }
 
-/// Monta o erro certo quando o `UPDATE ... WHERE version = ?` não pegou nenhuma linha:
-/// conflito de versão se o registro existe, "não encontrado" se não existe (ou é de outra org).
-pub(crate) fn conflito_ou_ausente(
+pub(crate) fn conflict_or_missing(
     conn: &Connection,
-    tabela: &'static str,
-    entidade: &'static str,
+    table: &'static str,
+    entity: &'static str,
     id: &str,
     org_id: &str,
-    esperada: u64,
+    expected: u64,
 ) -> StoreError {
-    let atual: Result<Option<i64>, StoreError> = conn
+    let current: Result<Option<i64>, StoreError> = conn
         .query_row(
-            &format!("SELECT version FROM {tabela} WHERE id = ?1 AND org_id = ?2"),
+            &format!("SELECT version FROM {table} WHERE id = ?1 AND org_id = ?2"),
             rusqlite::params![id, org_id],
-            |linha| linha.get(0),
+            |row| row.get(0),
         )
         .optional()
         .map_err(StoreError::from);
-    match atual {
-        Ok(Some(atual)) => StoreError::Domain(DomainError::VersionConflict {
-            entity: entidade,
+    match current {
+        Ok(Some(current)) => StoreError::Domain(DomainError::VersionConflict {
+            entity,
             id: id.to_owned(),
-            expected: esperada,
-            current: atual.max(0) as u64,
+            expected,
+            current: current.max(0) as u64,
         }),
         Ok(None) | Err(_) => StoreError::Domain(DomainError::NotFound {
-            entity: entidade,
+            entity,
             id: id.to_owned(),
         }),
     }

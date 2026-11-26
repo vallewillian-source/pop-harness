@@ -37,7 +37,7 @@ impl Cenario {
                 .expect("abre o banco");
             let org = store
                 .orgs()
-                .criar(NewOrg {
+                .create(NewOrg {
                     name: format!("Org {rotulo}"),
                     slug: slug.clone(),
                     config_json: String::new(),
@@ -45,7 +45,7 @@ impl Cenario {
                 .expect("cria a org");
             store
                 .departments()
-                .criar(
+                .create(
                     org.id,
                     NewDepartment {
                         name: "Atendimento".to_owned(),
@@ -75,7 +75,7 @@ impl Cenario {
         .expect("abre o banco");
         store
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: format!("Org {slug}"),
                 slug: slug.to_owned(),
                 config_json: String::new(),
@@ -91,10 +91,10 @@ impl Cenario {
             &self.dados().join("rag.db"),
         )
         .expect("abre o banco");
-        let org = store.orgs().por_slug(org_slug).expect("org da categoria");
+        let org = store.orgs().by_slug(org_slug).expect("org da categoria");
         store
             .categories()
-            .criar(
+            .create(
                 org.id,
                 poph_store::NewCategory {
                     name: nome.to_owned(),

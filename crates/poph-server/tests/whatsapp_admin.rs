@@ -313,7 +313,7 @@ impl Cenario {
         let store = Arc::new(Store::open(&config).expect("abre o banco"));
         let org = store
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: "Loja WhatsApp".to_owned(),
                 slug: "loja-whatsapp".to_owned(),
                 config_json: String::new(),
@@ -322,7 +322,7 @@ impl Cenario {
             .id;
         let agente = store
             .agents()
-            .criar(
+            .create(
                 org,
                 NewAgent {
                     name: "Atendente".to_owned(),
@@ -551,7 +551,7 @@ async fn pareamento_devolve_qr_e_grava_estado() {
     let registros = c
         .store
         .audit()
-        .listar(c.org, Page::default())
+        .list(c.org, Page::default())
         .expect("auditoria da org");
     let linha = registros
         .iter()
@@ -677,7 +677,7 @@ async fn desconectar_exige_if_match_e_chama_o_logout() {
     let registros = c
         .store
         .audit()
-        .listar(c.org, Page::default())
+        .list(c.org, Page::default())
         .expect("auditoria da org");
     assert!(
         registros
@@ -799,7 +799,7 @@ async fn token_de_outra_org_da_403() {
     let outra = c
         .store
         .orgs()
-        .criar(NewOrg {
+        .create(NewOrg {
             name: "Outra Loja".to_owned(),
             slug: "outra-loja".to_owned(),
             config_json: String::new(),

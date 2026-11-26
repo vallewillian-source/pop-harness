@@ -133,7 +133,7 @@ fn criar(store: &Store, org: OrgId, args: CriarToken) -> ExitCode {
         Ok(hash) => hash,
         Err(erro) => return falha(erro),
     };
-    match store.tokens().criar(Some(org), &rotulo, &hash) {
+    match store.tokens().create(Some(org), &rotulo, &hash) {
         Ok(registro) => {
             let valor = format!("{PREFIXO}{}_{segredo}", registro.id);
             if args.json {
@@ -199,7 +199,7 @@ fn listar(store: &Store, org: OrgId, args: ListarTokens) -> ExitCode {
         Ok(pagina) => pagina,
         Err(erro) => return falha(erro),
     };
-    match store.tokens().listar(org, pagina) {
+    match store.tokens().list(org, pagina) {
         Ok(tokens) => {
             if args.json {
                 let itens: Vec<Value> = tokens.iter().map(json_token).collect();
@@ -248,7 +248,7 @@ fn revogar(store: &Store, org: OrgId, args: ReferenciaToken) -> ExitCode {
         Err(erro) => return falha(erro),
     };
     let ja_estava_revogado = token.revoked_at.is_some();
-    if let Err(erro) = store.tokens().revogar(org, token.id) {
+    if let Err(erro) = store.tokens().revoke(org, token.id) {
         return falha(descrever(&erro));
     }
     if args.json {
@@ -273,7 +273,7 @@ fn revogar(store: &Store, org: OrgId, args: ReferenciaToken) -> ExitCode {
 /// Busca o token pelo id, dentro da org. Id inválido e token de outra org viram erro legível.
 fn obter(store: &Store, org: OrgId, texto: &str) -> Result<TokenAdmin, String> {
     let id: AdminTokenId = parse_id(texto)?;
-    match store.tokens().obter(org, id) {
+    match store.tokens().get(org, id) {
         Ok(token) => Ok(token),
         Err(erro) if erro.is_not_found() => Err(format!("não existe token `{texto}` nesta org")),
         Err(erro) => Err(descrever(&erro)),

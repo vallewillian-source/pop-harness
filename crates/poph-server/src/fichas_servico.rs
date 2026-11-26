@@ -15,18 +15,18 @@ pub const LIMITE_EXECUCOES_NA_FICHA: u32 = 500;
 /// fluxos liberados ao agente da Ficha. Ficha de outra org ou inexistente vira o erro do repositório
 /// (`NaoEncontrado`), que a API traduz para `404`.
 pub fn detalhe(store: &Store, org: OrgId, ficha_id: RecordId) -> Result<Value, StoreError> {
-    let ficha = store.fichas().obter(org, ficha_id)?;
+    let ficha = store.cases().get(org, ficha_id)?;
     let execucoes = store
         .executions()
-        .da_ficha(org, ficha_id, LIMITE_EXECUCOES_NA_FICHA)?;
+        .from_case(org, ficha_id, LIMITE_EXECUCOES_NA_FICHA)?;
     let mut lista_execucoes = Vec::with_capacity(execucoes.len());
     for execucao in &execucoes {
-        let etapas = store.executions().etapas(org, execucao.id)?;
+        let etapas = store.executions().stages(org, execucao.id)?;
         lista_execucoes.push(execucao_json(execucao, &etapas));
     }
     let liberados: Vec<Value> = store
-        .fluxos()
-        .listar_do_agente(org, ficha.agent_id)?
+        .flows()
+        .list_from_agent(org, ficha.agent_id)?
         .iter()
         .map(fluxo_liberado_json)
         .collect();

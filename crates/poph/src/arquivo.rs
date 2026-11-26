@@ -186,7 +186,7 @@ fn enviar(
         sha256: metadados.sha256.clone(),
         blob_path: blob_relativo,
     };
-    match store.library().criar(org, novo) {
+    match store.library().create(org, novo) {
         Ok(arquivo) => saida_arquivo(
             &arquivo,
             args.json,
@@ -209,11 +209,11 @@ fn listar(store: &Store, org: OrgId, args: ListarArquivos) -> ExitCode {
         Ok(pagina) => pagina,
         Err(erro) => return falha(erro),
     };
-    let total = match store.library().contar(org, agente) {
+    let total = match store.library().count_rows(org, agente) {
         Ok(total) => total,
         Err(erro) => return falha(descrever(&erro)),
     };
-    let arquivos = match store.library().listar(org, agente, pagina) {
+    let arquivos = match store.library().list(org, agente, pagina) {
         Ok(arquivos) => arquivos,
         Err(erro) => return falha(descrever(&erro)),
     };
@@ -260,7 +260,7 @@ fn mostrar(store: &Store, org: OrgId, args: ReferenciaArquivo) -> ExitCode {
         Ok(id) => id,
         Err(erro) => return falha(erro),
     };
-    match store.library().obter(org, agente, id) {
+    match store.library().get(org, agente, id) {
         Ok(arquivo) => saida_arquivo(&arquivo, args.json, ""),
         Err(erro) => falha(descrever(&erro)),
     }
@@ -275,11 +275,11 @@ fn excluir(store: &Store, org: OrgId, args: ExcluirArquivo) -> ExitCode {
         Ok(id) => id,
         Err(erro) => return falha(erro),
     };
-    let arquivo = match store.library().obter(org, agente, id) {
+    let arquivo = match store.library().get(org, agente, id) {
         Ok(arquivo) => arquivo,
         Err(erro) => return falha(descrever(&erro)),
     };
-    if let Err(erro) = store.library().excluir(org, agente, id) {
+    if let Err(erro) = store.library().delete(org, agente, id) {
         return falha(descrever(&erro));
     }
     if args.json {
@@ -375,7 +375,7 @@ fn resolver_agente(store: &Store, org: OrgId, texto: &str) -> Result<AgentId, St
     }
     store
         .agents()
-        .por_slug(org, texto)
+        .by_slug(org, texto)
         .map(|agente| agente.id)
         .map_err(|erro| descrever(&erro))
 }

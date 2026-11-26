@@ -68,7 +68,7 @@ impl Cenario {
     fn org(&self, slug: &str) -> Org {
         self.store
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: format!("Org {slug}"),
                 slug: slug.to_owned(),
                 config_json: String::new(),
@@ -87,7 +87,7 @@ impl Cenario {
         let criado = self
             .store
             .tokens()
-            .criar(Some(org), rotulo, &hash)
+            .create(Some(org), rotulo, &hash)
             .expect("cria o token");
         format!("poph_{}_{segredo}", criado.id)
     }
@@ -95,7 +95,7 @@ impl Cenario {
     fn agente(&self, org: &Org, slug: &str, nome: &str) -> Agente {
         self.store
             .agents()
-            .criar(
+            .create(
                 org.id,
                 NewAgent {
                     name: nome.to_owned(),
@@ -168,8 +168,8 @@ async fn pedir(
 /// Conversa do canal WhatsApp com o cliente dado, criada direto pelo repositório.
 fn conversa_do_cliente(c: &Cenario, org: &Org, agente: AgentId, peer: &str) -> Conversa {
     c.store
-        .conversas()
-        .criar(
+        .conversations()
+        .create(
             org.id,
             NewConversation {
                 agent_id: agente,
@@ -215,12 +215,12 @@ async fn filtro_por_cliente_e_situacao_ficam_dentro_da_org() {
     let c3 = conversa_do_cliente(&c, &a, agente_a.id, "5522");
     let d1 = conversa_do_cliente(&c, &b, agente_b.id, "5511");
     c.store
-        .conversas()
-        .transferir(a.id, c2.id, None, None, "{}".to_owned())
+        .conversations()
+        .transfer(a.id, c2.id, None, None, "{}".to_owned())
         .expect("transfere c2");
     c.store
-        .conversas()
-        .mudar_status(a.id, c3.id, 1, ConversationStatus::Closed, None)
+        .conversations()
+        .change_status(a.id, c3.id, 1, ConversationStatus::Closed, None)
         .expect("fecha c3");
     let (base, desligar) = servir(c.estado()).await;
     let lista = caminho_lista(a.id);
@@ -302,12 +302,12 @@ async fn sort_recent_ordena_pela_atividade_e_devolve_next_cursor_nulo() {
     let c3 = conversa_do_cliente(&c, &org, agente.id, "5533");
     // c1 e c3 com a mesma atividade mais recente (empate vai pelo id maior); c2 só pela criação.
     c.store
-        .conversas()
-        .tocar(org.id, c1.id, 9_000_000)
+        .conversations()
+        .touch(org.id, c1.id, 9_000_000)
         .expect("toca c1");
     c.store
-        .conversas()
-        .tocar(org.id, c3.id, 9_000_000)
+        .conversations()
+        .touch(org.id, c3.id, 9_000_000)
         .expect("toca c3");
     let (base, desligar) = servir(c.estado()).await;
     let lista = caminho_lista(org.id);

@@ -128,7 +128,7 @@ impl Store {
 
     pub(crate) fn count_execution_outcome(&self, status: ExecutionStatus) {
         if let Some(metrics) = self.execution_metrics() {
-            metrics.desfecho(status, 1);
+            metrics.outcome(status, 1);
         }
     }
 
@@ -208,50 +208,50 @@ impl Store {
 
     pub(crate) fn read<T>(&self, query: impl FnOnce(&Connection) -> Resultado<T>) -> Resultado<T> {
         self.reads.fetch_add(1, Ordering::Relaxed);
-        self.readers.com(query)
+        self.readers.run(query)
     }
 
     pub fn reads_done(&self) -> u64 {
         self.reads.load(Ordering::Relaxed)
     }
 
-    pub fn orgs(&self) -> Orgaos<'_> {
-        Orgaos(self)
+    pub fn orgs(&self) -> Orgs<'_> {
+        Orgs(self)
     }
 
     pub fn tokens(&self) -> Tokens<'_> {
         Tokens(self)
     }
 
-    pub fn knowledge(&self) -> Conhecimento<'_> {
-        Conhecimento(self)
+    pub fn knowledge(&self) -> Knowledge<'_> {
+        Knowledge(self)
     }
 
-    pub fn categories(&self) -> Categorias<'_> {
-        Categorias(self)
+    pub fn categories(&self) -> Categories<'_> {
+        Categories(self)
     }
 
-    pub fn products(&self) -> Produtos<'_> {
-        Produtos(self)
+    pub fn products(&self) -> Products<'_> {
+        Products(self)
     }
 
-    pub fn departments(&self) -> Departamentos<'_> {
-        Departamentos(self)
+    pub fn departments(&self) -> Departments<'_> {
+        Departments(self)
     }
 
-    pub fn agents(&self) -> Agentes<'_> {
-        Agentes(self)
+    pub fn agents(&self) -> Agents<'_> {
+        Agents(self)
     }
 
-    pub fn instructions(&self) -> InstrucoesRepo<'_> {
-        InstrucoesRepo(self)
+    pub fn instructions(&self) -> InstructionsRepo<'_> {
+        InstructionsRepo(self)
     }
 
-    pub fn conversas(&self) -> Conversas<'_> {
+    pub fn conversations(&self) -> Conversas<'_> {
         Conversas(self)
     }
 
-    pub fn fichas(&self) -> Fichas<'_> {
+    pub fn cases(&self) -> Fichas<'_> {
         Fichas(self)
     }
 
@@ -271,60 +271,60 @@ impl Store {
         Analytics(self)
     }
 
-    pub fn fluxos(&self) -> Fluxos<'_> {
+    pub fn flows(&self) -> Fluxos<'_> {
         Fluxos(self)
     }
 
-    pub fn revisions(&self) -> Revisoes<'_> {
-        Revisoes(self)
+    pub fn revisions(&self) -> Revisions<'_> {
+        Revisions(self)
     }
 
-    pub fn executions(&self) -> Execucoes<'_> {
-        Execucoes(self)
+    pub fn executions(&self) -> Executions<'_> {
+        Executions(self)
     }
 
-    pub fn effects(&self) -> Efeitos<'_> {
-        Efeitos(self)
+    pub fn effects(&self) -> Effects<'_> {
+        Effects(self)
     }
 
-    pub fn messages(&self) -> Mensagens<'_> {
-        Mensagens(self)
+    pub fn messages(&self) -> Messages<'_> {
+        Messages(self)
     }
 
-    pub fn inbox(&self) -> CaixaEntrada<'_> {
-        CaixaEntrada(self)
+    pub fn inbox(&self) -> Inbox<'_> {
+        Inbox(self)
     }
 
-    pub fn outbox(&self) -> CaixaSaida<'_> {
-        CaixaSaida(self)
+    pub fn outbox(&self) -> Outbox<'_> {
+        Outbox(self)
     }
 
-    pub fn turns(&self) -> Turnos<'_> {
-        Turnos(self)
+    pub fn turns(&self) -> Turns<'_> {
+        Turns(self)
     }
 
-    pub fn audit(&self) -> Auditoria<'_> {
-        Auditoria(self)
+    pub fn audit(&self) -> Audit<'_> {
+        Audit(self)
     }
 
     pub fn retention(&self) -> Retencao<'_> {
         Retencao(self)
     }
 
-    pub fn carts(&self) -> Carrinhos<'_> {
-        Carrinhos(self)
+    pub fn carts(&self) -> Carts<'_> {
+        Carts(self)
     }
 
     pub fn matrix(&self) -> Matrix<'_> {
         Matrix(self)
     }
 
-    pub fn matrix_midia(&self) -> MatrixMidia<'_> {
-        MatrixMidia(self)
+    pub fn matrix_asset(&self) -> MatrixAsset<'_> {
+        MatrixAsset(self)
     }
 
-    pub fn library(&self) -> Biblioteca<'_> {
-        Biblioteca(self)
+    pub fn library(&self) -> Library<'_> {
+        Library(self)
     }
 }
 

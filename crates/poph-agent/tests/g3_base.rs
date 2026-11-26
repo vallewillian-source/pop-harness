@@ -153,7 +153,7 @@ impl Cenario {
         );
         let org = store
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: format!("Org {rotulo}"),
                 slug: format!("org-{rotulo}-{}", AgentId::generate()),
                 config_json: "{}".to_owned(),
@@ -162,7 +162,7 @@ impl Cenario {
             .id;
         let agente = store
             .agents()
-            .criar(
+            .create(
                 org,
                 NewAgent {
                     name: format!("Bia {rotulo}"),
@@ -190,7 +190,7 @@ impl Cenario {
         };
         store
             .instructions()
-            .salvar(
+            .save(
                 org,
                 agente,
                 0,
@@ -200,8 +200,8 @@ impl Cenario {
             )
             .expect("grava as instruções");
         let conversa = store
-            .conversas()
-            .criar(
+            .conversations()
+            .create(
                 org,
                 NewConversation {
                     agent_id: agente,
@@ -232,8 +232,8 @@ impl Cenario {
     /// Nova conversa no mesmo agente (a medição usa uma por mensagem, sem histórico acumulado).
     fn nova_conversa(&self) -> ConversationId {
         self.store
-            .conversas()
-            .criar(
+            .conversations()
+            .create(
                 self.org,
                 NewConversation {
                     agent_id: self.agente,
@@ -254,7 +254,7 @@ impl Cenario {
     fn falar_em(&self, conversa: ConversationId, texto: &str) -> MessageId {
         self.store
             .messages()
-            .gravar(
+            .write(
                 self.org,
                 NewMessage {
                     conversation_id: conversa,
@@ -262,7 +262,7 @@ impl Cenario {
                     role: Role::User,
                     texto: texto.to_owned(),
                     attachments_json: "[]".to_owned(),
-                    id_externo: None,
+                    external_id: None,
                     turn_id: None,
                     origin: poph_store::Origin::Agente,
                     author_name: None,
@@ -437,7 +437,7 @@ async fn g3_nada_descarta_a_busca_e_nao_oferece_base_nem_catalogo() {
     let turnos = cenario
         .store
         .turns()
-        .listar(
+        .list(
             cenario.org,
             cenario.conversa,
             poph_store::Page::with_limit(5),
@@ -697,7 +697,7 @@ async fn g3_nada_com_transferencia_nao_quebra_o_turno() {
     cenario
         .store
         .agents()
-        .atualizar(
+        .update(
             cenario.org,
             cenario.agente,
             atual.version,
@@ -945,7 +945,7 @@ async fn agente_que_desliga_o_g3_volta_ao_comportamento_de_hoje() {
     cenario
         .store
         .agents()
-        .atualizar(
+        .update(
             cenario.org,
             cenario.agente,
             atual.version,
@@ -993,7 +993,7 @@ async fn agente_com_ativo_false_nao_consulta_o_jev_nem_o_g3() {
     cenario
         .store
         .agents()
-        .atualizar(
+        .update(
             cenario.org,
             cenario.agente,
             atual.version,

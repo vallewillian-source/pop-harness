@@ -294,10 +294,7 @@ pub async fn listar(
     }
     .pagina()?;
     let limite = pagina.limit;
-    let fluxos = e
-        .store
-        .fluxos()
-        .listar(org, &FlowFilter { status }, pagina)?;
+    let fluxos = e.store.flows().list(org, &FlowFilter { status }, pagina)?;
     let items: Vec<Value> = fluxos.iter().map(json_fluxo).collect();
     let next_cursor = proximo_cursor(&fluxos, limite, |f| f.id.to_string());
     Ok(Json(ListaJson { items, next_cursor }))
@@ -377,11 +374,8 @@ pub async fn mostrar(
 ) -> Result<Json<Value>, ApiError> {
     let org = id_da_url::<OrgId>(&c.org_id)?;
     ident.exigir_org(org)?;
-    let fluxo = e
-        .store
-        .fluxos()
-        .obter(org, id_da_url::<FlowId>(&c.flow_id)?)?;
-    let atual = e.store.revisions().atual(org, fluxo.id)?;
+    let fluxo = e.store.flows().get(org, id_da_url::<FlowId>(&c.flow_id)?)?;
+    let atual = e.store.revisions().current(org, fluxo.id)?;
     let mut corpo = json_fluxo_com_rascunho(&fluxo);
     corpo["revision"] = atual.as_ref().map_or(Value::Null, json_revisao_resumo);
     Ok(Json(corpo))
@@ -428,7 +422,7 @@ pub async fn atualizar(
         None => None,
         Some(texto) => Some(status_pedido(texto)?),
     };
-    let fluxo = e.store.fluxos().atualizar(
+    let fluxo = e.store.flows().update(
         org,
         id,
         versao,
@@ -482,11 +476,11 @@ pub async fn excluir(
         }
     };
     // O fluxo tem de existir nesta org: 404 antes de contar qualquer coisa.
-    e.store.fluxos().obter(org, id)?;
+    e.store.flows().get(org, id)?;
     let ativas: u64 = e
         .store
         .executions()
-        .ativas_por_revisao(org, id)?
+        .active_by_revision(org, id)?
         .iter()
         .map(|(_, quantas)| *quantas)
         .sum();
@@ -501,7 +495,7 @@ pub async fn excluir(
         )
         .com_detalhes(json!({ "active_runs": ativas })));
     }
-    let abandonadas = e.store.fluxos().excluir(org, id, force)?;
+    let abandonadas = e.store.flows().delete(org, id, force)?;
     super::auditoria::registrar(&e, &ident, Some(org), "flow_delete", "flow", id.to_string())?;
     Ok(Json(json!({
         "id": id.to_string(),
@@ -547,7 +541,7 @@ pub async fn publicar(
         Ok(Json(d)) => d,
         Err(_) => DadosPublicacao::default(),
     };
-    let fluxo = e.store.fluxos().obter(org, id)?;
+    let fluxo = e.store.flows().get(org, id)?;
     let fonte = dados.source.unwrap_or_else(|| fluxo.rascunho_fonte.clone());
     let ops = Operacoes::novo(&e.store, &e.cache_fluxos, &e.config);
     let feita = ops.publicar(org, &fluxo, versao, &fonte, &Ator::token(ident.ator_id()))?;
@@ -600,7 +594,7 @@ pub async fn listar_revisoes(
                 .com_detalhes(json!({ "field": "cursor", "value": texto }))
         })?),
     };
-    let revisoes = e.store.revisions().listar(org, id, apos, limite)?;
+    let revisoes = e.store.revisions().list(org, id, apos, limite)?;
     let next_cursor = if revisoes.len() < limite as usize {
         None
     } else {
@@ -640,7 +634,7 @@ pub async fn mostrar_revisao(
         ApiError::invalido(format!("`{}` não é um número de revisão", c.number))
             .com_detalhes(json!({ "field": "revision", "value": c.number }))
     })?;
-    let revisao = e.store.revisions().obter(org, id, numero)?;
+    let revisao = e.store.revisions().get(org, id, numero)?;
     Ok(Json(json_revisao_completa(&revisao)))
 }
 
@@ -677,7 +671,7 @@ pub async fn diff(
     let org = id_da_url::<OrgId>(&c.org_id)?;
     ident.exigir_org(org)?;
     let id = id_da_url::<FlowId>(&c.flow_id)?;
-    let fluxo = e.store.fluxos().obter(org, id)?;
+    let fluxo = e.store.flows().get(org, id)?;
     let numero = |texto: &str, campo: &'static str| -> Result<u64, ApiError> {
         texto.parse::<u64>().map_err(|_| {
             ApiError::invalido(format!("`{texto}` não é um número de revisão"))
@@ -724,7 +718,7 @@ pub async fn preview(
     let org = id_da_url::<OrgId>(&c.org_id)?;
     ident.exigir_org(org)?;
     let id = id_da_url::<FlowId>(&c.flow_id)?;
-    let fluxo = e.store.fluxos().obter(org, id)?;
+    let fluxo = e.store.flows().get(org, id)?;
     let ops = Operacoes::novo(&e.store, &e.cache_fluxos, &e.config);
     let previa = ops.preview(org, &fluxo, q.etapa.as_deref())?;
     Ok(Json(json_previa(&previa)))

@@ -70,7 +70,7 @@ pub fn anexar_biblioteca(
     else {
         return;
     };
-    let total = store.library().contar(org, agente).unwrap_or(0);
+    let total = store.library().count_rows(org, agente).unwrap_or(0);
     if total == 0 {
         oferecidas[posicao].descricao.push_str(
             "\n\nSua biblioteca de arquivos está vazia: não há arquivo para enviar nesta conversa.",
@@ -79,7 +79,7 @@ pub fn anexar_biblioteca(
     }
     let arquivos = match store
         .library()
-        .listar(org, agente, Page::with_limit(LIMITE_LISTAGEM))
+        .list(org, agente, Page::with_limit(LIMITE_LISTAGEM))
     {
         Ok(arquivos) => arquivos,
         Err(_) => return,
@@ -161,7 +161,7 @@ fn executar(
     let id = arquivo_id(argumentos)?;
     let arquivo = store
         .library()
-        .obter(contexto.org, contexto.agente, id)
+        .get(contexto.org, contexto.agente, id)
         .map_err(|erro| texto_erro(&erro))?;
 
     let seq = seq_do_arquivo(id);
@@ -201,7 +201,7 @@ fn enfileirar(
 ) -> Result<bool, poph_store::StoreError> {
     let mut seq = seq_inicial;
     for _ in 0..TENTATIVAS_SEQ {
-        let (novo, item) = store.outbox().enfileirar(
+        let (novo, item) = store.outbox().enqueue(
             contexto.org,
             NewOutboxItem {
                 conversation_id: contexto.conversa,

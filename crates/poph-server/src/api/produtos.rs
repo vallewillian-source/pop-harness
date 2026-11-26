@@ -50,9 +50,9 @@ pub async fn listar(
     let Query(q) = query.map_err(|_| ApiError::invalido("parâmetros de paginação inválidos"))?;
     let pagina = q.pagina.pagina()?;
     let produtos = if q.all.unwrap_or(false) {
-        e.store.products().listar(org, pagina)?
+        e.store.products().list(org, pagina)?
     } else {
-        e.store.products().listar_ativos(org, pagina)?
+        e.store.products().list_active(org, pagina)?
     };
     let items: Vec<_> = produtos.iter().map(produto_json).collect();
     let next_cursor = proximo_cursor(&items, pagina.limit, |v| {
@@ -70,7 +70,7 @@ pub async fn mostrar(
     let org = id_da_url::<OrgId>(&c.org_id)?;
     ident.exigir_org(org)?;
     let id = id_da_url::<ProductId>(&c.product_id)?;
-    Ok(Json(produto_json(&e.store.products().obter(org, id)?)))
+    Ok(Json(produto_json(&e.store.products().get(org, id)?)))
 }
 
 #[derive(Debug, Default, Deserialize, utoipa::ToSchema)]
@@ -124,7 +124,7 @@ pub async fn criar(
     if d.status.is_some() {
         return Err(ApiError::validacao("status", "não permitido na criação"));
     }
-    let p = e.store.products().criar(org, novo)?;
+    let p = e.store.products().create(org, novo)?;
     super::auditoria::registrar(&e, &ident, Some(org), "create", "product", p.id.to_string())?;
     let mut resposta = produto_json(&p);
     resposta["index_warning"] = json!(sincronizar_catalogo(&e, org).await);
@@ -163,7 +163,7 @@ pub async fn atualizar(
         tags: d.tags,
         status: d.status.as_deref().map(super::status_pedido).transpose()?,
     };
-    let p = e.store.products().atualizar(org, id, versao, mudanca)?;
+    let p = e.store.products().update(org, id, versao, mudanca)?;
     super::auditoria::registrar(&e, &ident, Some(org), "update", "product", id.to_string())?;
     let mut resposta = produto_json(&p);
     resposta["index_warning"] = json!(sincronizar_catalogo(&e, org).await);
@@ -211,21 +211,21 @@ pub async fn excluir(
     let id = id_da_url::<ProductId>(&c.product_id)?;
     let forcado = exclusao.force.unwrap_or(false);
     if !forcado {
-        let refs = e.store.products().referencias(org, id)?;
-        if refs.itens_de_carrinho > 0 {
+        let refs = e.store.products().references(org, id)?;
+        if refs.cart_items > 0 {
             return Err(ApiError::conflito(format!(
                 "o produto está em {} item(ns) de {} carrinho(s); excluir faz esses itens ficarem \
                  como \"produto removido do catálogo\" (o preço gravado continua). \
                  Para confirmar, repita com force=true",
-                refs.itens_de_carrinho, refs.carrinhos
+                refs.cart_items, refs.carts
             ))
             .com_detalhes(json!({
-                "itens_de_carrinho": refs.itens_de_carrinho,
-                "carrinhos": refs.carrinhos
+                "itens_de_carrinho": refs.cart_items,
+                "carrinhos": refs.carts
             })));
         }
     }
-    e.store.products().excluir(org, id)?;
+    e.store.products().delete(org, id)?;
     super::auditoria::registrar(
         &e,
         &ident,

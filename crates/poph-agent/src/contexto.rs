@@ -110,9 +110,9 @@ pub fn do_banco(
     conversa: ConversationId,
     agente: AgentId,
 ) -> Resultado<Janela> {
-    let registro = store.agents().obter_para_turno(org, agente)?;
+    let registro = store.agents().get_for_turn(org, agente)?;
     let limite = registro.max_context_messages.clamp(1, TETO_DE_LEITURA);
-    let mensagens = store.messages().ultimas(org, conversa, limite)?;
+    let mensagens = store.messages().last_set(org, conversa, limite)?;
     Ok(montar(
         mensagens,
         u64::from(registro.max_context_tokens),

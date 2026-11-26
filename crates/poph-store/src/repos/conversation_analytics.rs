@@ -74,7 +74,7 @@ impl ConversationAnalytics<'_> {
             let mut channels = BTreeMap::<String, i64>::new();
             let mut message_total = 0i64;
             let mut with_messages = 0i64;
-            let mut with_ficha = 0i64;
+            let mut with_case = 0i64;
             {
                 let mut statement = tx.prepare("WITH selected AS MATERIALIZED (SELECT c.id,c.agent_id,c.channel,c.status, COALESCE((SELECT MIN(m.created_at) FROM messages m WHERE m.org_id=c.org_id AND m.conversation_id=c.id),c.created_at) AS first_at FROM conversations c WHERE c.org_id=?1 AND (?4 IS NULL OR c.agent_id=?4) AND (?5 IS NULL OR c.channel=?5)) SELECT s.agent_id,COALESCE(a.name,s.agent_id),s.channel,s.status,date((s.first_at + ?6 * 60000)/1000,'unixepoch'),(SELECT COUNT(*) FROM messages m WHERE m.org_id=?1 AND m.conversation_id=s.id),EXISTS(SELECT 1 FROM fichas f WHERE f.org_id=?1 AND f.conversation_id=s.id) FROM selected s LEFT JOIN agents a ON a.org_id=?1 AND a.id=s.agent_id WHERE s.first_at>=?2 AND s.first_at<?3").map_err(StoreError::from)?;
                 let mut rows = statement.query(params![org,from,to,agent,channel,offset]).map_err(StoreError::from)?;
@@ -85,18 +85,18 @@ impl ConversationAnalytics<'_> {
                     let status: String = row.get(3).map_err(StoreError::from)?;
                     let date: String = row.get(4).map_err(StoreError::from)?;
                     let messages: i64 = row.get(5).map_err(StoreError::from)?;
-                    let ficha: bool = row.get(6).map_err(StoreError::from)?;
+                    let case: bool = row.get(6).map_err(StoreError::from)?;
                     summary.add(&status);
                     days.entry(date).or_default().add(&status);
                     agents.entry((id,name)).or_default().add(&status);
                     *channels.entry(channel).or_default() += 1;
                     if messages > 0 { message_total += messages; with_messages += 1; }
-                    if ficha { with_ficha += 1; }
+                    if case { with_case += 1; }
                 }
             }
             tx.commit().map_err(StoreError::from)?;
             let avg = (with_messages > 0).then(|| message_total as f64 / with_messages as f64);
-            let rate = (summary.total > 0).then(|| with_ficha as f64 / summary.total as f64);
+            let rate = (summary.total > 0).then(|| with_case as f64 / summary.total as f64);
             let by_day = days.into_iter().map(|(date,counts)| ConversationDay {date,counts}).collect();
             let mut by_agent: Vec<_> = agents.into_iter().map(|((agent_id,agent_name),counts)| ConversationAgent {agent_id,agent_name,counts}).collect();
             by_agent.sort_by(|a,b| b.counts.total.cmp(&a.counts.total).then(a.agent_name.cmp(&b.agent_name)).then(a.agent_id.cmp(&b.agent_id)));

@@ -257,7 +257,7 @@ async fn listagem_traz_agentes_ativos_por_org() {
     cenario
         .store
         .agents()
-        .atualizar(
+        .update(
             org,
             agente,
             atual.version,

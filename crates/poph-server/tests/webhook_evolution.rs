@@ -175,7 +175,7 @@ impl Cenario {
         let store = Arc::new(Store::open(&config).expect("abre o banco"));
         let org = store
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: "Loja Webhook".to_owned(),
                 slug: "loja-webhook".to_owned(),
                 config_json: String::new(),
@@ -184,7 +184,7 @@ impl Cenario {
             .id;
         let agente = store
             .agents()
-            .criar(
+            .create(
                 org,
                 NewAgent {
                     name: "Atendente Loja".to_owned(),
@@ -319,14 +319,14 @@ impl Cenario {
     fn pendentes(&self) -> u64 {
         self.store
             .inbox()
-            .contar_pendentes(self.org)
+            .count_pending(self.org)
             .expect("contagem da inbox")
     }
 
     fn conversas(&self) -> Vec<poph_store::Conversa> {
         self.store
-            .conversas()
-            .listar(
+            .conversations()
+            .list(
                 self.org,
                 None,
                 Page {
@@ -341,7 +341,7 @@ impl Cenario {
     fn ligar_matrix(&self) {
         self.store
             .matrix()
-            .ligar(self.org)
+            .enable(self.org)
             .expect("liga o módulo Matrix da org");
     }
 
@@ -469,7 +469,7 @@ async fn texto_grava_inbox_conversa_e_mensagem_e_reentrega_nao_duplica() {
     assert_eq!(
         c.store
             .messages()
-            .contar(c.org, conversas[0].id)
+            .count_rows(c.org, conversas[0].id)
             .expect("conta mensagens"),
         1
     );
@@ -489,7 +489,7 @@ async fn texto_grava_inbox_conversa_e_mensagem_e_reentrega_nao_duplica() {
     assert_eq!(
         c.store
             .messages()
-            .contar(c.org, conversas[0].id)
+            .count_rows(c.org, conversas[0].id)
             .expect("conta mensagens"),
         1,
         "reentrega não duplica a mensagem"
@@ -639,7 +639,7 @@ async fn imagem_vira_anexo_com_blob_no_disco_e_reentrega_nao_baixa_de_novo() {
     let anexos = c
         .store
         .messages()
-        .anexos(c.org, mensagem)
+        .attachments(c.org, mensagem)
         .expect("lista anexos");
     assert_eq!(anexos.len(), 1, "a imagem virou um anexo");
     assert_eq!(anexos[0].mime, "image/png");
@@ -660,7 +660,7 @@ async fn imagem_vira_anexo_com_blob_no_disco_e_reentrega_nao_baixa_de_novo() {
     let texto = c
         .store
         .messages()
-        .obter(c.org, c.conversas()[0].id, mensagem)
+        .get(c.org, c.conversas()[0].id, mensagem)
         .expect("lê a mensagem");
     assert_eq!(
         texto.texto, "foto do produto",
@@ -681,7 +681,7 @@ async fn imagem_vira_anexo_com_blob_no_disco_e_reentrega_nao_baixa_de_novo() {
     assert_eq!(
         c.store
             .messages()
-            .anexos(c.org, mensagem)
+            .attachments(c.org, mensagem)
             .expect("lista anexos")
             .len(),
         1
@@ -710,13 +710,13 @@ async fn midia_expirada_preserva_o_texto_da_mensagem() {
     let gravada = c
         .store
         .messages()
-        .obter(c.org, c.conversas()[0].id, mensagem)
+        .get(c.org, c.conversas()[0].id, mensagem)
         .expect("lê a mensagem");
     assert_eq!(gravada.texto, "segue a legenda mesmo sem a imagem");
     assert!(
         c.store
             .messages()
-            .anexos(c.org, mensagem)
+            .attachments(c.org, mensagem)
             .expect("lista anexos")
             .is_empty(),
         "sem anexo quando a mídia expirou"

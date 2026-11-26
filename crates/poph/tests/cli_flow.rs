@@ -316,12 +316,12 @@ fn publicar_revisao_nova_exige_versao_e_deixa_a_revisao_1_intacta() {
     let fluxo = fluxo_id(&cenario, &org);
     let revisao_1 = store
         .revisions()
-        .obter(org_id(&org), fluxo, 1)
+        .get(org_id(&org), fluxo, 1)
         .expect("revisão 1");
     assert_eq!(revisao_1.fonte, SCRIPT_V1);
     let revisao_2 = store
         .revisions()
-        .obter(org_id(&org), fluxo, 2)
+        .get(org_id(&org), fluxo, 2)
         .expect("revisão 2");
     assert_eq!(revisao_2.fonte, SCRIPT_V2);
 }
@@ -467,8 +467,8 @@ fn liberar_e_retirar_mudam_a_permissao_do_agente() {
     assert_eq!(codigo(&liberar), 0, "{}", texto(&liberar.stderr));
     let liberados = cenario
         .store()
-        .fluxos()
-        .listar_do_agente(org_id(&org), agente.parse::<AgentId>().expect("id"))
+        .flows()
+        .list_from_agent(org_id(&org), agente.parse::<AgentId>().expect("id"))
         .expect("lista");
     assert_eq!(liberados.len(), 1);
 
@@ -484,8 +484,8 @@ fn liberar_e_retirar_mudam_a_permissao_do_agente() {
     assert_eq!(codigo(&retirar), 0, "{}", texto(&retirar.stderr));
     let depois = cenario
         .store()
-        .fluxos()
-        .listar_do_agente(org_id(&org), agente.parse::<AgentId>().expect("id"))
+        .flows()
+        .list_from_agent(org_id(&org), agente.parse::<AgentId>().expect("id"))
         .expect("lista");
     assert!(depois.is_empty());
 
@@ -554,8 +554,8 @@ fn ficha_com_filtro_e_detalhe_aparecem_na_cli() {
     let agente = cenario.criar_agente(&org, "Bia Atendente");
     let ficha = cenario
         .store()
-        .fichas()
-        .criar(
+        .cases()
+        .create(
             org_id(&org),
             NewRecord {
                 conversation_id: None,
@@ -606,8 +606,8 @@ fn ficha_com_filtro_e_detalhe_aparecem_na_cli() {
 fn fluxo_id(cenario: &Cenario, org: &str) -> FlowId {
     let fluxo = cenario
         .store()
-        .fluxos()
-        .por_slug(org_id(org), "agendar_visita")
+        .flows()
+        .by_slug(org_id(org), "agendar_visita")
         .expect("consulta o fluxo")
         .expect("o fluxo existe");
     fluxo.id

@@ -204,7 +204,7 @@ impl Cenario {
         );
         let org = store
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: "Loja Turno".to_owned(),
                 slug: format!("loja-turno-{rotulo}"),
                 config_json: String::new(),
@@ -213,7 +213,7 @@ impl Cenario {
             .id;
         let agente = store
             .agents()
-            .criar(
+            .create(
                 org,
                 NewAgent {
                     name: "Atendente Loja".to_owned(),
@@ -228,7 +228,7 @@ impl Cenario {
             .id;
         store
             .instructions()
-            .salvar(
+            .save(
                 org,
                 agente,
                 0,
@@ -369,8 +369,8 @@ impl Cenario {
     /// Conversa do cliente (a primeira da org; o teste só abre uma).
     fn conversa(&self) -> Option<ConversationId> {
         self.store
-            .conversas()
-            .listar(self.org, None, Page::with_limit(10))
+            .conversations()
+            .list(self.org, None, Page::with_limit(10))
             .ok()?
             .first()
             .map(|conversa| conversa.id)
@@ -379,14 +379,14 @@ impl Cenario {
     fn entradas_pendentes(&self) -> u64 {
         self.store
             .inbox()
-            .contar_pendentes(self.org)
+            .count_pending(self.org)
             .expect("conta a fila de entrada")
     }
 
     fn saidas(&self, estado: OutboxState) -> u64 {
         self.store
             .outbox()
-            .contar_por_estado(self.org, estado)
+            .count_by_state(self.org, estado)
             .expect("conta a fila de saída")
     }
 
@@ -395,7 +395,7 @@ impl Cenario {
             Some(conversa) => self
                 .store
                 .turns()
-                .listar(self.org, conversa, Page::with_limit(50))
+                .list(self.org, conversa, Page::with_limit(50))
                 .expect("lista os turnos"),
             None => Vec::new(),
         }
@@ -407,7 +407,7 @@ impl Cenario {
         };
         self.store
             .messages()
-            .listar(self.org, conversa, Page::with_limit(100))
+            .list(self.org, conversa, Page::with_limit(100))
             .expect("lista as mensagens")
             .into_iter()
             .filter(|mensagem| mensagem.direction == Direction::Outbound)
@@ -587,7 +587,7 @@ async fn mensagem_do_cliente_vira_resposta_pela_evolution_uma_vez() {
     assert_eq!(cenario.entradas_pendentes(), 0);
     let turnos = cenario.turnos();
     assert_eq!(turnos.len(), 1);
-    assert_eq!(turnos[0].estado, TurnState::Completed);
+    assert_eq!(turnos[0].state, TurnState::Completed);
     assert_eq!(cenario.respostas_gravadas(), vec![RESPOSTA.to_owned()]);
 
     // Logs: o turno deixou linha, e nada sensível saiu nelas.
@@ -658,13 +658,13 @@ async fn conversa_transferida_nao_responde_e_conclui_com_motivo() {
     let conversa = cenario.conversa().expect("a conversa existe");
     let atual = cenario
         .store
-        .conversas()
+        .conversations()
         .get(cenario.org, conversa)
         .expect("lê a conversa");
     cenario
         .store
-        .conversas()
-        .mudar_status(
+        .conversations()
+        .change_status(
             cenario.org,
             conversa,
             atual.version,
@@ -695,7 +695,7 @@ async fn conversa_transferida_nao_responde_e_conclui_com_motivo() {
     assert_eq!(cenario.saidas(OutboxState::Pending), 0);
     let turnos = cenario.turnos();
     let ultimo = turnos.last().expect("há turno");
-    assert_eq!(ultimo.estado, TurnState::Skipped);
+    assert_eq!(ultimo.state, TurnState::Skipped);
     assert!(
         ultimo
             .error
@@ -719,7 +719,7 @@ async fn mensagem_do_aparelho_nao_e_respondida_pelo_agente() {
     cenario
         .store
         .matrix()
-        .ligar(cenario.org)
+        .enable(cenario.org)
         .expect("liga o módulo Matrix da org");
     let servidor = cenario
         .subir(
@@ -755,7 +755,7 @@ async fn mensagem_do_aparelho_nao_e_respondida_pelo_agente() {
     let gravadas = cenario
         .store
         .messages()
-        .listar(cenario.org, conversa, Page::with_limit(20))
+        .list(cenario.org, conversa, Page::with_limit(20))
         .expect("lista as mensagens");
     assert_eq!(gravadas.len(), 1);
     assert_eq!(gravadas[0].direction, Direction::Outbound);
@@ -777,7 +777,7 @@ async fn mensagem_do_aparelho_nao_e_respondida_pelo_agente() {
     assert_eq!(cenario.evo.envios().len(), 0, "nada sai depois da pausa");
     let turnos = cenario.turnos();
     let ultimo = turnos.last().expect("há turno");
-    assert_eq!(ultimo.estado, TurnState::Skipped);
+    assert_eq!(ultimo.state, TurnState::Skipped);
 
     servidor.desligar().await;
 }
@@ -823,7 +823,7 @@ async fn integracao_inativa_nao_responde_e_conclui_com_motivo() {
     assert_eq!(cenario.saidas(OutboxState::Pending), 0);
     let turnos = cenario.turnos();
     assert_eq!(turnos.len(), 1);
-    assert_eq!(turnos[0].estado, TurnState::Skipped);
+    assert_eq!(turnos[0].state, TurnState::Skipped);
     assert!(
         turnos[0]
             .error
@@ -891,8 +891,8 @@ async fn resposta_que_ficou_em_envio_na_queda_sai_na_subida() {
     // Simula a queda no meio do envio: a resposta já está na fila, marcada como em envio.
     let conversa = cenario
         .store
-        .conversas()
-        .criar(
+        .conversations()
+        .create(
             cenario.org,
             NewConversation {
                 agent_id: cenario.agente,
@@ -907,12 +907,12 @@ async fn resposta_que_ficou_em_envio_na_queda_sai_na_subida() {
     let turno = cenario
         .store
         .turns()
-        .iniciar(cenario.org, conversa, Some(cenario.agente))
+        .start(cenario.org, conversa, Some(cenario.agente))
         .expect("abre o turno");
     let (_, item) = cenario
         .store
         .outbox()
-        .enfileirar(
+        .enqueue(
             cenario.org,
             NewOutboxItem {
                 conversation_id: conversa,
@@ -926,7 +926,7 @@ async fn resposta_que_ficou_em_envio_na_queda_sai_na_subida() {
     cenario
         .store
         .outbox()
-        .iniciar_envio(cenario.org, item.id)
+        .start_send(cenario.org, item.id)
         .expect("marca como em envio");
     assert_eq!(cenario.saidas(OutboxState::Sending), 1);
 
@@ -952,17 +952,17 @@ async fn turno_interrompido_por_queda_e_retomado_uma_vez_na_subida() {
     let entrega = cenario
         .store
         .inbox()
-        .receber_do_canal(
+        .receive_from_channel(
             cenario.org,
             poph_store::NewChannelInboxItem {
                 integration_id: cenario.integracao,
                 agent_id: cenario.agente,
                 canal: "whatsapp".to_owned(),
-                id_externo: "MSG-QUEDA-TURNO".to_owned(),
+                external_id: "MSG-QUEDA-TURNO".to_owned(),
                 peer: TELEFONE.to_owned(),
                 event_json: json!({"texto": PERGUNTA}).to_string(),
                 texto: PERGUNTA.to_owned(),
-                anexos: Vec::new(),
+                attachments: Vec::new(),
                 customer_name: None,
             },
         )
@@ -971,7 +971,7 @@ async fn turno_interrompido_por_queda_e_retomado_uma_vez_na_subida() {
     let turno_interrompido = cenario
         .store
         .turns()
-        .iniciar(cenario.org, conversa, Some(cenario.agente))
+        .start(cenario.org, conversa, Some(cenario.agente))
         .expect("turno do processo anterior");
 
     // A subida: o turno interrompido fecha como falha e a entrega pendente é processada de novo.
@@ -986,9 +986,9 @@ async fn turno_interrompido_por_queda_e_retomado_uma_vez_na_subida() {
     let gravado = cenario
         .store
         .turns()
-        .obter(cenario.org, turno_interrompido.id)
+        .get(cenario.org, turno_interrompido.id)
         .expect("turno interrompido");
-    assert_eq!(gravado.estado, TurnState::Failed);
+    assert_eq!(gravado.state, TurnState::Failed);
     assert_eq!(
         gravado.error.as_deref(),
         Some(poph_server::entrada_turno::MOTIVO_INTERROMPIDO)
@@ -1077,7 +1077,7 @@ async fn falha_do_modelo_repete_e_a_resposta_sai_uma_vez_pela_evolution() {
     assert_eq!(
         turnos
             .iter()
-            .filter(|t| t.estado == TurnState::Failed)
+            .filter(|t| t.state == TurnState::Failed)
             .count(),
         2
     );

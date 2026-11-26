@@ -195,7 +195,7 @@ impl EfeitosFluxo {
 
     /// Um ciclo: percorre as orgs com efeito na fila e tenta entregar o que venceu a espera.
     pub async fn ciclo(&self) -> Result<Vec<RelatoEfeitos>, StoreError> {
-        let orgs = self.store.effects().orgs_com_pendentes()?;
+        let orgs = self.store.effects().orgs_with_pending()?;
         let mut relatos = Vec::with_capacity(orgs.len());
         for org in orgs {
             relatos.push(self.ciclo_da_org(org).await?);
@@ -206,10 +206,7 @@ impl EfeitosFluxo {
     /// Um ciclo numa org.
     pub async fn ciclo_da_org(&self, org: OrgId) -> Result<RelatoEfeitos, StoreError> {
         let mut relato = RelatoEfeitos::default();
-        let efeitos = self
-            .store
-            .effects()
-            .listar_pendentes(org, self.opcoes.lote)?;
+        let efeitos = self.store.effects().list_pending(org, self.opcoes.lote)?;
         for efeito in efeitos {
             let id = efeito.id;
             if let Err(erro) = self.tratar(org, efeito, &mut relato).await {
@@ -235,13 +232,13 @@ impl EfeitosFluxo {
         // "Entrou na fila": a primeira vez que o laço vê o efeito, ele ainda está `pendente`, sem
         // tentativa e sem espera marcada. Depois disso a espera é sempre gravada, então não conta
         // duas vezes.
-        if efeito.estado == poph_types::EffectState::Pending
-            && efeito.tentativas == 0
+        if efeito.state == poph_types::EffectState::Pending
+            && efeito.attempts == 0
             && efeito.proxima_tentativa.is_none()
         {
             self.contar(&|metricas| &metricas.efeitos_pendentes);
         }
-        if efeito.tentativas >= self.opcoes.max_tentativas {
+        if efeito.attempts >= self.opcoes.max_tentativas {
             self.falhar(org, &efeito, MOTIVO_TENTATIVAS_ESGOTADAS, true, relato)
                 .await?;
             return Ok(());
@@ -269,10 +266,10 @@ impl EfeitosFluxo {
             }
             Plano::Entregar(entrega) => {
                 // A tentativa precisa estar gravada antes da chamada externa (D11).
-                let tentativa = self.store.effects().iniciar_envio(org, id)?;
+                let tentativa = self.store.effects().start_send(org, id)?;
                 match self.entregar(org, &efeito, entrega).await {
                     Ok(departamento) => {
-                        self.store.effects().confirmar_envio(org, id)?;
+                        self.store.effects().confirm_send(org, id)?;
                         self.contar(&|metricas| &metricas.efeitos_enviados);
                         self.registrar_evento(
                             org,
@@ -303,7 +300,7 @@ impl EfeitosFluxo {
                     }
                     Err(EntregaFalhou::Transitoria(motivo)) => {
                         let espera = self.opcoes.backoff.espera(tentativa);
-                        self.store.effects().falhar_envio(
+                        self.store.effects().fail_send(
                             org,
                             id,
                             &motivo,
@@ -354,13 +351,13 @@ impl EfeitosFluxo {
                         "mensagem ao cliente sem `texto` no efeito".to_owned(),
                     ));
                 };
-                let ficha = self.store.fichas().obter(org, efeito.ficha_id)?;
+                let ficha = self.store.cases().get(org, efeito.ficha_id)?;
                 let Some(conversa) = ficha.conversation_id else {
                     return Ok(Plano::Falhar(
                         "a Ficha do efeito não tem conversa (apagada pela retenção)".to_owned(),
                     ));
                 };
-                let atual = self.store.conversas().get(org, conversa)?;
+                let atual = self.store.conversations().get(org, conversa)?;
                 if atual.status != poph_store::ConversationStatus::Open {
                     return Ok(Plano::Falhar(format!(
                         "a conversa está {} e não recebe mensagem do fluxo",
@@ -368,7 +365,7 @@ impl EfeitosFluxo {
                     )));
                 }
                 // PRD §6.8: depois da resposta do turno. Enquanto o turno roda, a mensagem espera.
-                if self.store.turns().em_andamento(org, conversa)? {
+                if self.store.turns().in_progress(org, conversa)? {
                     return Ok(Plano::Esperar(
                         "o turno da conversa ainda está em andamento",
                     ));
@@ -381,14 +378,14 @@ impl EfeitosFluxo {
                         "notificação sem `para` ou sem `mensagem` no efeito".to_owned(),
                     ));
                 };
-                let ficha = self.store.fichas().obter(org, efeito.ficha_id)?;
+                let ficha = self.store.cases().get(org, efeito.ficha_id)?;
                 let Some(conversa) = ficha.conversation_id else {
                     return Ok(Plano::Falhar(
                         "a Ficha do efeito não tem conversa: não há integração para notificar"
                             .to_owned(),
                     ));
                 };
-                let atual = self.store.conversas().get(org, conversa)?;
+                let atual = self.store.conversations().get(org, conversa)?;
                 let Some(integracao) = atual.integration_id else {
                     return Ok(Plano::Esperar(
                         "a conversa não tem integração de WhatsApp (console ou CLI)",
@@ -414,13 +411,13 @@ impl EfeitosFluxo {
                         "encaminhamento sem `departamento` no efeito".to_owned(),
                     ));
                 };
-                let ficha = self.store.fichas().obter(org, efeito.ficha_id)?;
+                let ficha = self.store.cases().get(org, efeito.ficha_id)?;
                 let Some(conversa) = ficha.conversation_id else {
                     return Ok(Plano::Falhar(
                         "a Ficha do efeito não tem conversa: não há o que encaminhar".to_owned(),
                     ));
                 };
-                let Some(departamento) = self.store.departments().por_nome(org, &nome)? else {
+                let Some(departamento) = self.store.departments().by_name(org, &nome)? else {
                     return Ok(Plano::Falhar(format!(
                         "o departamento `{nome}` não existe na organização"
                     )));
@@ -456,7 +453,7 @@ impl EfeitosFluxo {
                     tipo: "text".to_owned(),
                     content_json: serde_json::json!({ "texto": texto }).to_string(),
                 };
-                self.store.outbox().enfileirar(org, nova).map_err(|erro| {
+                self.store.outbox().enqueue(org, nova).map_err(|erro| {
                     EntregaFalhou::Transitoria(format!(
                         "não consegui enfileirar a mensagem ao cliente: {erro}"
                     ))
@@ -494,8 +491,8 @@ impl EfeitosFluxo {
                 })
                 .to_string();
                 self.store
-                    .conversas()
-                    .transferir(
+                    .conversations()
+                    .transfer(
                         org,
                         conversa,
                         Some(departamento),
@@ -523,7 +520,7 @@ impl EfeitosFluxo {
     ) -> Result<(), StoreError> {
         self.store
             .effects()
-            .falhar_envio(org, efeito.id, motivo, true, None)?;
+            .fail_send(org, efeito.id, motivo, true, None)?;
         self.contar(&|metricas| &metricas.efeitos_falhas);
         if esgotado {
             relato.esgotados += 1;
@@ -535,13 +532,13 @@ impl EfeitosFluxo {
             efeito,
             RecordEventKind::EffectFailed,
             motivo,
-            efeito.tentativas,
+            efeito.attempts,
         );
         tracing::warn!(
             target: "poph_server::fluxos_efeitos",
             efeito = %efeito.id,
             tipo = %efeito.tipo,
-            tentativas = efeito.tentativas,
+            tentativas = efeito.attempts,
             motivo,
             "efeito de fluxo falhou de vez: a transição continua valendo"
         );
@@ -580,8 +577,8 @@ impl EfeitosFluxo {
         };
         if let Err(erro) = self
             .store
-            .fichas()
-            .registrar_evento(org, efeito.ficha_id, novo)
+            .cases()
+            .register_event(org, efeito.ficha_id, novo)
         {
             tracing::warn!(
                 target: "poph_server::fluxos_efeitos",

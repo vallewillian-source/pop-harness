@@ -373,7 +373,7 @@ impl Cenario {
 
         let org = store
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: "Org do cenário".to_owned(),
                 slug: "loja-a".to_owned(),
                 config_json: String::new(),
@@ -382,7 +382,7 @@ impl Cenario {
             .id;
         let agente = store
             .agents()
-            .criar(
+            .create(
                 org,
                 NewAgent {
                     name: "Agente de Teste".to_owned(),
@@ -399,8 +399,8 @@ impl Cenario {
             .parse()
             .expect("id da integração");
         let conversa = store
-            .conversas()
-            .criar(
+            .conversations()
+            .create(
                 org,
                 NewConversation {
                     agent_id: agente,
@@ -413,14 +413,14 @@ impl Cenario {
             .expect("cria a conversa")
             .id;
 
-        store.matrix().ligar(org).expect("liga o módulo na org");
+        store.matrix().enable(org).expect("liga o módulo na org");
         store
             .matrix()
-            .garantir_sala(org, conversa, SALA, None)
+            .ensure_room(org, conversa, SALA, None)
             .expect("grava a sala");
         store
             .matrix()
-            .marcar_sala_pronta(org, conversa)
+            .mark_room_ready(org, conversa)
             .expect("sala pronta");
 
         let (url_synapse, synapse) = subir_synapse_falso().await;
@@ -472,7 +472,7 @@ impl Cenario {
         .expect("cliente da Evolution falsa");
         let integracao = self
             .store
-            .conversas()
+            .conversations()
             .get(self.org, self.conversa)
             .expect("lê a conversa")
             .integration_id
@@ -546,7 +546,7 @@ impl Cenario {
     fn messages(&self) -> Vec<poph_store::Mensagem> {
         self.store
             .messages()
-            .listar(self.org, self.conversa, Page::with_limit(50))
+            .list(self.org, self.conversa, Page::with_limit(50))
             .expect("lista as mensagens")
     }
 
@@ -554,14 +554,14 @@ impl Cenario {
         let mensagens = self.messages();
         self.store
             .messages()
-            .anexos(self.org, mensagens[indice].id)
+            .attachments(self.org, mensagens[indice].id)
             .expect("lista os anexos")
     }
 
     fn arquivos_na_fila(&self) -> Vec<poph_store::OutboxItem> {
         self.store
             .outbox()
-            .listar_arquivos_da_conversa(self.org, self.conversa, 50)
+            .list_files_of_conversation(self.org, self.conversa, 50)
             .expect("lista os itens de arquivo da fila")
     }
 
@@ -574,7 +574,7 @@ impl Cenario {
     fn fantasma_do_agente(&self) -> String {
         let agente = self
             .store
-            .conversas()
+            .conversations()
             .get(self.org, self.conversa)
             .expect("lê a conversa")
             .agent_id;
@@ -889,7 +889,7 @@ async fn imagem_e_pdf_do_element_chegam_ao_whatsapp_com_a_legenda_do_atendente()
         assert_eq!(mensagem.author_name.as_deref(), Some(NOME_ATENDENTE));
         assert_eq!(mensagem.texto, "", "o atendente não digitou texto");
         assert_eq!(
-            mensagem.id_externo.as_deref(),
+            mensagem.external_id.as_deref(),
             Some(if indice == 0 {
                 "$img-mx44:matrix-dev.local"
             } else {
@@ -933,7 +933,7 @@ async fn imagem_e_pdf_do_element_chegam_ao_whatsapp_com_a_legenda_do_atendente()
     assert_eq!(
         cenario
             .store
-            .conversas()
+            .conversations()
             .get(cenario.org, cenario.conversa)
             .expect("lê a conversa")
             .status,
@@ -943,7 +943,7 @@ async fn imagem_e_pdf_do_element_chegam_ao_whatsapp_com_a_legenda_do_atendente()
         cenario
             .store
             .outbox()
-            .contar_por_estado(cenario.org, OutboxState::Sent)
+            .count_by_state(cenario.org, OutboxState::Sent)
             .expect("conta a fila"),
         2
     );
@@ -1045,7 +1045,7 @@ async fn reentrega_do_mesmo_arquivo_nao_duplica_o_envio() {
         cenario
             .store
             .outbox()
-            .contar_por_estado(cenario.org, OutboxState::Sent)
+            .count_by_state(cenario.org, OutboxState::Sent)
             .unwrap_or(0)
             == 1
     })
@@ -1179,14 +1179,14 @@ async fn conversa_encerrada_nao_envia_o_arquivo_e_avisa_na_sala() {
     let url = cenario.publicar("png-encerrada", PNG);
     let versao = cenario
         .store
-        .conversas()
+        .conversations()
         .get(cenario.org, cenario.conversa)
         .expect("lê a conversa")
         .version;
     cenario
         .store
-        .conversas()
-        .fechar_auditado(cenario.org, cenario.conversa, versao, "teste".to_owned())
+        .conversations()
+        .close_audited(cenario.org, cenario.conversa, versao, "teste".to_owned())
         .expect("encerra a conversa");
 
     let servidor = cenario.subir().await;
@@ -1221,7 +1221,7 @@ async fn conversa_encerrada_nao_envia_o_arquivo_e_avisa_na_sala() {
     assert_eq!(
         cenario
             .store
-            .conversas()
+            .conversations()
             .get(cenario.org, cenario.conversa)
             .expect("lê a conversa")
             .status,

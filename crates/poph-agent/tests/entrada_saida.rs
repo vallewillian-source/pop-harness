@@ -51,7 +51,7 @@ impl Cenario {
         );
         let org = store
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: "Org HR-12".to_owned(),
                 slug: format!("org-hr12-{rotulo}"),
                 config_json: String::new(),
@@ -60,7 +60,7 @@ impl Cenario {
             .id;
         let agente = store
             .agents()
-            .criar(
+            .create(
                 org,
                 NewAgent {
                     name: format!("Agente {rotulo}"),
@@ -70,8 +70,8 @@ impl Cenario {
             )
             .expect("cria o agente");
         let conversa = store
-            .conversas()
-            .criar(
+            .conversations()
+            .create(
                 org,
                 NewConversation {
                     agent_id: agente.id,
@@ -279,7 +279,7 @@ fn gravar_mensagem(cenario: &Cenario, turno: Option<TurnId>) -> MessageId {
     cenario
         .store
         .messages()
-        .gravar(
+        .write(
             cenario.org,
             NewMessage {
                 conversation_id: cenario.conversa,
@@ -287,7 +287,7 @@ fn gravar_mensagem(cenario: &Cenario, turno: Option<TurnId>) -> MessageId {
                 role: Role::User,
                 texto: "oi".to_owned(),
                 attachments_json: "[]".to_owned(),
-                id_externo: None,
+                external_id: None,
                 turn_id: turno,
                 origin: poph_store::Origin::Agente,
                 author_name: None,
@@ -319,7 +319,7 @@ async fn mesma_mensagem_entregue_duas_vezes_e_processada_uma_vez() {
         )
         .expect("primeira entrega");
     assert_eq!(
-        primeira.situacao,
+        primeira.situation,
         poph_store::Received::New,
         "a primeira entrega é nova"
     );
@@ -338,7 +338,7 @@ async fn mesma_mensagem_entregue_duas_vezes_e_processada_uma_vez() {
         )
         .expect("reentrega não é erro");
     assert_eq!(
-        segunda.situacao,
+        segunda.situation,
         poph_store::Received::Duplicate,
         "a segunda entrega é descartada como duplicada"
     );
@@ -357,7 +357,7 @@ async fn mesma_mensagem_entregue_duas_vezes_e_processada_uma_vez() {
             cenario.org,
             NewInboxItem {
                 integration_id: cenario.integracao,
-                id_externo: "wamid-1".to_owned(),
+                external_id: "wamid-1".to_owned(),
                 event_json: cenario.evento(mensagem),
             },
         )
@@ -433,7 +433,7 @@ fn filho_grava_entrada_e_trava() {
             },
         )
         .expect("grava a entrada");
-    assert_eq!(gravado.situacao, poph_store::Received::New);
+    assert_eq!(gravado.situation, poph_store::Received::New);
 
     // Ponto controlado: já está no banco, ainda não foi processado.
     std::fs::write(&marcador, "gravado").expect("escreve o marcador");
@@ -475,16 +475,12 @@ fn sigkill_entre_gravar_e_processar_nao_perde_a_mensagem() {
     // O item ficou gravado e pendente: a queda não perdeu a mensagem.
     cenario.reabrir();
     assert_eq!(
-        cenario.store.inbox().contar_pendentes(org).expect("conta"),
+        cenario.store.inbox().count_pending(org).expect("conta"),
         1,
         "a entrada pendente sobreviveu à queda"
     );
-    let pendentes = cenario
-        .store
-        .inbox()
-        .listar_pendentes(org, 10)
-        .expect("lista");
-    assert_eq!(pendentes[0].id_externo, "wamid-sigkill");
+    let pendentes = cenario.store.inbox().list_pending(org, 10).expect("lista");
+    assert_eq!(pendentes[0].external_id, "wamid-sigkill");
 
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -507,7 +503,7 @@ fn sigkill_entre_gravar_e_processar_nao_perde_a_mensagem() {
     );
     assert_eq!(registro.quantidade(), 1, "processado uma vez na retomada");
     assert_eq!(
-        cenario.store.inbox().contar_pendentes(org).expect("conta"),
+        cenario.store.inbox().count_pending(org).expect("conta"),
         0,
         "depois de processado, a fila fica vazia"
     );
@@ -515,7 +511,7 @@ fn sigkill_entre_gravar_e_processar_nao_perde_a_mensagem() {
     let mensagens = cenario
         .store
         .messages()
-        .listar(org, conversa, poph_store::Page::with_limit(10))
+        .list(org, conversa, poph_store::Page::with_limit(10))
         .expect("lista mensagens");
     assert!(
         mensagens
@@ -554,7 +550,7 @@ fn filho_fica_em_sending_e_trava() {
         Arc::new(Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre"));
     let (_novo, item) = store
         .outbox()
-        .enfileirar(
+        .enqueue(
             org,
             NewOutboxItem {
                 conversation_id: conversa,
@@ -568,7 +564,7 @@ fn filho_fica_em_sending_e_trava() {
     // Transição gravada antes do efeito externo; o filho morre antes de chamar o canal.
     store
         .outbox()
-        .iniciar_envio(org, item.id)
+        .start_send(org, item.id)
         .expect("entra em sending");
     std::fs::write(&marcador, "sending").expect("escreve o marcador");
     std::thread::sleep(Duration::from_secs(30));
@@ -611,7 +607,7 @@ fn sigkill_entre_sending_e_sent_reenvia_uma_vez() {
         cenario
             .store
             .outbox()
-            .contar_por_estado(org, OutboxState::Sending)
+            .count_by_state(org, OutboxState::Sending)
             .expect("conta"),
         1,
         "o item ficou em sending depois da queda"
@@ -635,16 +631,12 @@ fn sigkill_entre_sending_e_sent_reenvia_uma_vez() {
         1,
         "a métrica de reenvio conta a retomada"
     );
-    let pendentes = cenario
-        .store
-        .outbox()
-        .listar_pendentes(org, 10)
-        .expect("lista");
+    let pendentes = cenario.store.outbox().list_pending(org, 10).expect("lista");
     assert!(pendentes.is_empty(), "nada sobrou na fila de saída");
     let itens = cenario
         .store
         .outbox()
-        .contar_por_estado(org, OutboxState::Sent)
+        .count_by_state(org, OutboxState::Sent)
         .expect("conta");
     assert_eq!(itens, 1, "e o item terminou como enviado");
 
@@ -684,11 +676,11 @@ async fn falha_repetida_vai_para_failed_com_motivo_e_contador() {
     let gravado = cenario
         .store
         .outbox()
-        .obter(cenario.org, item.id)
+        .get(cenario.org, item.id)
         .expect("busca");
-    assert_eq!(gravado.estado, OutboxState::Failed);
+    assert_eq!(gravado.state, OutboxState::Failed);
     assert_eq!(
-        gravado.tentativas, 3,
+        gravado.attempts, 3,
         "três tentativas reais antes de desistir"
     );
     assert_eq!(
@@ -721,14 +713,14 @@ async fn falha_definitiva_nao_retenta() {
     let gravado = cenario
         .store
         .outbox()
-        .obter(cenario.org, item.id)
+        .get(cenario.org, item.id)
         .expect("busca");
-    assert_eq!(gravado.estado, OutboxState::Failed);
+    assert_eq!(gravado.state, OutboxState::Failed);
     assert_eq!(
         gravado.ultimo_erro.as_deref(),
         Some("destinatário inválido")
     );
-    assert_eq!(gravado.tentativas, 1, "erro definitivo não repete");
+    assert_eq!(gravado.attempts, 1, "erro definitivo não repete");
     assert_eq!(transporte.envios(), 1);
     assert_eq!(fluxo.metricas().saidas_definitivas.value(), 1);
 }
@@ -850,7 +842,7 @@ async fn caixas_nao_cruzam_org() {
     let outra = cenario
         .store
         .orgs()
-        .criar(NewOrg {
+        .create(NewOrg {
             name: "Outra org".to_owned(),
             slug: "outra-org-hr12".to_owned(),
             config_json: String::new(),
@@ -875,11 +867,7 @@ async fn caixas_nao_cruzam_org() {
     let saida = enfileirar_texto(&fluxo, &cenario, TurnId::generate(), 0);
 
     assert_eq!(
-        cenario
-            .store
-            .inbox()
-            .contar_pendentes(outra)
-            .expect("conta"),
+        cenario.store.inbox().count_pending(outra).expect("conta"),
         0,
         "a org B não vê a entrada da org A"
     );
@@ -887,53 +875,45 @@ async fn caixas_nao_cruzam_org() {
         cenario
             .store
             .inbox()
-            .listar_pendentes(outra, 10)
+            .list_pending(outra, 10)
             .expect("lista")
             .is_empty()
     );
     assert!(
-        cenario
-            .store
-            .inbox()
-            .obter(outra, recebido.item.id)
-            .is_err(),
+        cenario.store.inbox().get(outra, recebido.item.id).is_err(),
         "buscar o item da org A com a org B falha"
     );
     assert!(
         cenario
             .store
             .outbox()
-            .listar_pendentes(outra, 10)
+            .list_pending(outra, 10)
             .expect("lista")
             .is_empty()
     );
     assert!(
-        cenario.store.outbox().obter(outra, saida.id).is_err(),
+        cenario.store.outbox().get(outra, saida.id).is_err(),
         "buscar a saída da org A com a org B falha"
     );
     assert!(
         cenario
             .store
             .outbox()
-            .contar_por_estado(outra, OutboxState::Pending)
+            .count_by_state(outra, OutboxState::Pending)
             .expect("conta")
             == 0
     );
     assert!(
-        cenario
-            .store
-            .outbox()
-            .iniciar_envio(outra, saida.id)
-            .is_err(),
+        cenario.store.outbox().start_send(outra, saida.id).is_err(),
         "não dá para mexer no estado da saída de outra org"
     );
     assert_eq!(
         cenario
             .store
             .outbox()
-            .obter(cenario.org, saida.id)
+            .get(cenario.org, saida.id)
             .expect("na org certa, existe")
-            .estado,
+            .state,
         OutboxState::Pending,
         "a tentativa da org errada não mudou nada"
     );
@@ -982,7 +962,7 @@ async fn fila_cheia_adia_e_nao_perde_o_evento() {
         cenario
             .store
             .inbox()
-            .contar_pendentes(cenario.org)
+            .count_pending(cenario.org)
             .expect("conta"),
         3,
         "nada foi marcado como processado no despacho"
@@ -1008,7 +988,7 @@ async fn fila_cheia_adia_e_nao_perde_o_evento() {
         cenario
             .store
             .inbox()
-            .contar_pendentes(cenario.org)
+            .count_pending(cenario.org)
             .expect("conta"),
         0
     );
@@ -1049,7 +1029,7 @@ async fn lista_lida_antes_da_conclusao_nao_repete_item_processado() {
     let antiga = cenario
         .store
         .inbox()
-        .listar_pendentes(cenario.org, 10)
+        .list_pending(cenario.org, 10)
         .expect("lista");
     assert_eq!(antiga.len(), 1, "a lista antiga traz o item");
 
@@ -1062,7 +1042,7 @@ async fn lista_lida_antes_da_conclusao_nao_repete_item_processado() {
         cenario
             .store
             .inbox()
-            .contar_pendentes(cenario.org)
+            .count_pending(cenario.org)
             .expect("conta"),
         0,
         "o item já está processado no banco"
@@ -1265,7 +1245,7 @@ async fn medir_ingestao() {
         cenario
             .store
             .inbox()
-            .contar_pendentes(cenario.org)
+            .count_pending(cenario.org)
             .expect("conta"),
         (THREADS * POR_THREAD) as u64,
         "todas as mensagens ficaram na fila, nenhuma duplicada nem perdida"

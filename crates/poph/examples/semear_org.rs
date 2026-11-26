@@ -31,7 +31,7 @@ fn main() {
             std::process::exit(1);
         }
     };
-    let org = match store.orgs().criar(NewOrg {
+    let org = match store.orgs().create(NewOrg {
         name: nome,
         slug: slug.clone(),
         config_json: String::new(),
@@ -44,7 +44,7 @@ fn main() {
     };
     let departamento = store
         .departments()
-        .criar(
+        .create(
             org.id,
             NewDepartment {
                 name: "Atendimento".to_owned(),

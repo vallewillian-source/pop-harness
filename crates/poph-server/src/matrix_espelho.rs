@@ -94,8 +94,8 @@ use poph_matrix::salas::{
 };
 use poph_matrix::usuarios::{ErroFantasmas, Fantasma, IdsFantasmas};
 use poph_store::{
-    AttachmentRecord, CategoriaMidia, ConversationStatus, Direction, EstadoSala, MensagemDesde,
-    NovaMidia, Origin, Role, Store, StoreError,
+    AttachmentRecord, CategoryAsset, ConversationStatus, Direction, MessageSince, NewAsset, Origin,
+    Role, StateRoom, Store, StoreError,
 };
 use poph_types::{AgentId, ConversationId, MatrixConfig, MessageId, OrgId};
 use serde_json::json;
@@ -351,7 +351,7 @@ impl DestinoReal {
     ) -> Result<Option<DepartamentoEspaco>, &'static str> {
         let conversa = self
             .store
-            .conversas()
+            .conversations()
             .get(dados.org, dados.conversa)
             .map_err(|_| "conversa_indisponivel")?;
         let padrao = self
@@ -363,7 +363,7 @@ impl DestinoReal {
         let Some(escolhido) = resolver_departamento(conversa.target_department, padrao) else {
             return Ok(None);
         };
-        match self.store.departments().obter(dados.org, escolhido) {
+        match self.store.departments().get(dados.org, escolhido) {
             Ok(departamento) => Ok(Some(DepartamentoEspaco {
                 id: departamento.id,
                 nome: departamento.name,
@@ -479,10 +479,10 @@ impl PortaSalas for PortaSalasStore {
     ) -> impl Future<Output = Result<Option<SalaGravada>, ErroPorta>> + Send {
         let store = Arc::clone(&self.0);
         async move {
-            let sala = store.matrix().sala(org, conversa).map_err(erro_porta)?;
+            let sala = store.matrix().room(org, conversa).map_err(erro_porta)?;
             Ok(sala.map(|sala| SalaGravada {
                 room_id: sala.room_id,
-                estado: estado_gravado(sala.estado),
+                estado: estado_gravado(sala.state),
             }))
         }
     }
@@ -498,11 +498,11 @@ impl PortaSalas for PortaSalasStore {
         async move {
             let sala = store
                 .matrix()
-                .garantir_sala(org, conversa, &room_id, None)
+                .ensure_room(org, conversa, &room_id, None)
                 .map_err(erro_porta)?;
             Ok(SalaGravada {
                 room_id: sala.room_id,
-                estado: estado_gravado(sala.estado),
+                estado: estado_gravado(sala.state),
             })
         }
     }
@@ -518,11 +518,11 @@ impl PortaSalas for PortaSalasStore {
         async move {
             let sala = store
                 .matrix()
-                .marcar_sala_pronta_com_nome(org, conversa, nome.as_deref())
+                .mark_room_ready_with_name(org, conversa, nome.as_deref())
                 .map_err(erro_porta)?;
             Ok(SalaGravada {
                 room_id: sala.room_id,
-                estado: estado_gravado(sala.estado),
+                estado: estado_gravado(sala.state),
             })
         }
     }
@@ -537,7 +537,7 @@ impl PortaSalas for PortaSalasStore {
         async move {
             store
                 .messages()
-                .teve_mensagens_antes(org, conversa, corte)
+                .had_messages_before(org, conversa, corte)
                 .map_err(erro_porta)
         }
     }
@@ -548,10 +548,10 @@ fn erro_porta(_: StoreError) -> ErroPorta {
     ErroPorta::nova("armazenamento do módulo Matrix indisponível")
 }
 
-fn estado_gravado(estado: EstadoSala) -> EstadoGravado {
+fn estado_gravado(estado: StateRoom) -> EstadoGravado {
     match estado {
-        EstadoSala::Criando => EstadoGravado::Criando,
-        EstadoSala::Pronta => EstadoGravado::Pronta,
+        StateRoom::Creating => EstadoGravado::Criando,
+        StateRoom::Ready => EstadoGravado::Pronta,
     }
 }
 
@@ -855,20 +855,20 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
     /// Um ciclo completo: lê, decide, entrega e avança o cursor até a primeira pendência.
     pub async fn ciclo(&self) -> Result<RelatorioCiclo, ErroEspelho> {
         let mut relatorio = RelatorioCiclo::default();
-        let ligadas = self.store.matrix().orgs_ligadas()?;
+        let ligadas = self.store.matrix().linked_orgs()?;
         if ligadas.is_empty() {
             self.metricas.atraso_cursor_segundos.set(0);
             return Ok(relatorio);
         }
 
         let mut orgs: HashMap<OrgId, OrgLigada> = HashMap::new();
-        for estado in ligadas.iter().filter(|estado| estado.ligado) {
-            let cursores = self.store.matrix().ler_cursores(estado.org_id)?;
+        for estado in ligadas.iter().filter(|estado| estado.linked) {
+            let cursores = self.store.matrix().read_cursors(estado.org_id)?;
             orgs.insert(
                 estado.org_id,
                 OrgLigada {
-                    corte: estado.ligado_em.unwrap_or(0),
-                    cursor: (cursores.mensagens, cursores.mensagens_id),
+                    corte: estado.linked_at.unwrap_or(0),
+                    cursor: (cursores.messages, cursores.message_ids),
                 },
             );
         }
@@ -879,7 +879,7 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
 
         // R5: cursor à frente do maior rowid que existe (banco restaurado ou linhas apagadas).
         // Volta para o ponto seguro; o que vier depois é lido normalmente.
-        let (maior, maior_id) = match self.store.messages().ultima_rowid()? {
+        let (maior, maior_id) = match self.store.messages().last_rowid()? {
             Some((rowid, id)) => (rowid, id.to_string()),
             None => (0, String::new()),
         };
@@ -887,7 +887,7 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
             if info.cursor.0 > maior {
                 self.store
                     .matrix()
-                    .recuar_cursor_mensagens(*org, maior, &maior_id)?;
+                    .rewind_cursor_messages(*org, maior, &maior_id)?;
                 info.cursor = (maior, maior_id.clone());
                 relatorio.recuos += 1;
             }
@@ -900,7 +900,7 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
 
         let mut paginas = 0u32;
         while paginas < MAX_PAGINAS_POR_CICLO && !*self.parar.borrow() {
-            let pagina = self.store.messages().desde(posicao, self.pagina)?;
+            let pagina = self.store.messages().since(posicao, self.pagina)?;
             if pagina.is_empty() {
                 break;
             }
@@ -919,7 +919,7 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
                     if *rowid > info.cursor.0 {
                         self.store
                             .matrix()
-                            .avancar_mensagens_com_id(*org, *rowid, &id_texto)?;
+                            .advance_messages_with_id(*org, *rowid, &id_texto)?;
                         info.cursor = (*rowid, id_texto.clone());
                     }
                 }
@@ -945,8 +945,8 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
             self.metricas.atraso_cursor_segundos.set(0);
             return Ok(());
         };
-        let atraso_ms = match self.store.messages().desde(menor, 1)?.first() {
-            Some(primeira) => ((self.agora_ms)() - primeira.criado_em).max(0),
+        let atraso_ms = match self.store.messages().since(menor, 1)?.first() {
+            Some(primeira) => ((self.agora_ms)() - primeira.created_at).max(0),
             None => 0,
         };
         self.metricas.atraso_cursor_segundos.set(atraso_ms / 1000);
@@ -957,7 +957,7 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
     async fn processar_pagina(
         &self,
         orgs: &HashMap<OrgId, OrgLigada>,
-        pagina: Vec<MensagemDesde>,
+        pagina: Vec<MessageSince>,
         relatorio: &mut RelatorioCiclo,
     ) -> Result<ResultadoPagina, ErroEspelho> {
         let mut estados = vec![Estado::Resolvida; pagina.len()];
@@ -977,7 +977,7 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
                 relatorio.ja_espelhadas += 1;
                 continue;
             }
-            if mensagem.criado_em < org.corte {
+            if mensagem.created_at < org.corte {
                 relatorio.antes_do_corte += 1;
                 continue;
             }
@@ -1025,9 +1025,9 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
                 &MensagemParaEspelho {
                     id: mensagem.id,
                     conversa: mensagem.conversation_id,
-                    origem: origem_de(mensagem.origem),
-                    sentido: sentido_de(mensagem.direcao),
-                    papel: papel_de(mensagem.papel),
+                    origem: origem_de(mensagem.origin),
+                    sentido: sentido_de(mensagem.direction),
+                    papel: papel_de(mensagem.role),
                     texto: &mensagem.texto,
                     identificador_cliente: &dados.identificador,
                     id_agente: &dados.agente,
@@ -1059,7 +1059,7 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
                 match self
                     .store
                     .matrix()
-                    .registrar_falha(mensagem.org_id, mensagem.id, motivo, 1)
+                    .register_failure(mensagem.org_id, mensagem.id, motivo, 1)
                 {
                     Ok(_) => {
                         relatorio.isoladas += 1;
@@ -1134,7 +1134,7 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
                 Desfecho::Isolar { motivo, tentativas } => match self
                     .store
                     .matrix()
-                    .registrar_falha(org, id, &motivo, tentativas)
+                    .register_failure(org, id, &motivo, tentativas)
                 {
                     Ok(_) => {
                         estados[indice] = Estado::Resolvida;
@@ -1430,23 +1430,26 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
     /// não entregar o texto escondendo a mídia.
     fn anexos_do_cliente(
         &self,
-        mensagem: &MensagemDesde,
+        mensagem: &MessageSince,
     ) -> Result<Vec<AttachmentRecord>, StoreError> {
-        if mensagem.origem != Origin::Agente
-            || mensagem.papel != Role::User
-            || mensagem.direcao != Direction::Inbound
+        if mensagem.origin != Origin::Agente
+            || mensagem.role != Role::User
+            || mensagem.direction != Direction::Inbound
         {
             return Ok(Vec::new());
         }
-        let ids: Vec<String> = serde_json::from_str(&mensagem.anexos_json).map_err(|erro| {
-            StoreError::Internal(format!(
-                "lista de anexos da mensagem não lê como JSON: {erro}"
-            ))
-        })?;
+        let ids: Vec<String> =
+            serde_json::from_str(&mensagem.attachments_json).map_err(|erro| {
+                StoreError::Internal(format!(
+                    "lista de anexos da mensagem não lê como JSON: {erro}"
+                ))
+            })?;
         if ids.is_empty() {
             return Ok(Vec::new());
         }
-        self.store.messages().anexos(mensagem.org_id, mensagem.id)
+        self.store
+            .messages()
+            .attachments(mensagem.org_id, mensagem.id)
     }
 
     /// Um passo de mídia de um anexo: o envio pronto, ou o aviso de por que ele não entra.
@@ -1505,28 +1508,28 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
         publicada: &MidiaPublicada,
     ) {
         let midia = &envio.midia;
-        let registro = NovaMidia {
+        let registro = NewAsset {
             id: midia.id_anexo.parse().unwrap_or_else(|_| {
                 // O id vem do banco (é `attachments.id`); se não for um id do Harness, a gravação
                 // falha na validação e é registrada como as demais.
                 poph_types::AttachmentId::generate()
             }),
-            conversa: envio.conversa,
-            agente: agente.to_owned(),
-            sala: sala.to_owned(),
+            conversation: envio.conversa,
+            agent: agente.to_owned(),
+            room: sala.to_owned(),
             evento: publicada.evento.clone(),
             mxc: publicada.mxc.clone(),
             nome: midia.nome.clone(),
             mime: midia.mime.clone(),
-            categoria: if midia.msgtype == midia::MSGTYPE_IMAGEM {
-                CategoriaMidia::Imagem
+            category: if midia.msgtype == midia::MSGTYPE_IMAGEM {
+                CategoryAsset::Image
             } else {
-                CategoriaMidia::Documento
+                CategoryAsset::Document
             },
-            tamanho_bytes: midia.tamanho_bytes,
-            enviada_em: (self.agora_ms)(),
+            size_bytes: midia.tamanho_bytes,
+            sent_at: (self.agora_ms)(),
         };
-        if let Err(erro) = self.store.matrix_midia().registrar(org, &registro) {
+        if let Err(erro) = self.store.matrix_asset().register(org, &registro) {
             tracing::warn!(
                 target: "poph_server::matrix_espelho",
                 org = %org,
@@ -1585,9 +1588,9 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
         conversa: ConversationId,
         corte: i64,
     ) -> Result<DadosConversa, StoreError> {
-        let conversa_lida = self.store.conversas().get(org, conversa)?;
+        let conversa_lida = self.store.conversations().get(org, conversa)?;
         // Mesma regra que a listagem usa para `external_peer` (RP-02): um só lugar, na store.
-        let identificador = conversa_lida.identificador_cliente();
+        let identificador = conversa_lida.identifier_client();
         let nome_agente = self
             .store
             .agents()

@@ -137,7 +137,7 @@ impl CatalogoProdutos {
         org: OrgId,
         agente: AgentId,
     ) -> Resultado<RelatorioIndexacao> {
-        let itens = self.store.products().para_indice(org, agente)?;
+        let itens = self.store.products().for_index(org, agente)?;
         let para_indice: Vec<ProdutoRag> = itens
             .into_iter()
             .map(|item| ProdutoRag {
@@ -166,7 +166,7 @@ impl CatalogoProdutos {
         let mut relatorios = Vec::new();
         let mut pagina = Page::with_limit(200);
         loop {
-            let lote = self.store.agents().listar(org, pagina)?;
+            let lote = self.store.agents().list(org, pagina)?;
             if lote.is_empty() {
                 return Ok(relatorios);
             }
@@ -185,7 +185,7 @@ impl CatalogoProdutos {
         categoria: ProductCategoryId,
     ) -> Resultado<bool> {
         Ok(
-            match self.store.products().categorias_visiveis(org, agente)? {
+            match self.store.products().categories_visible(org, agente)? {
                 None => true,
                 Some(vinculadas) => vinculadas.contains(&categoria),
             },
@@ -203,13 +203,13 @@ impl CatalogoProdutos {
             return Ok(self
                 .store
                 .categories()
-                .obter(org, id)
+                .get(org, id)
                 .ok()
                 .map(|categoria| categoria.id));
         }
         let mut pagina = Page::with_limit(200);
         loop {
-            let lote = self.store.categories().listar(org, pagina)?;
+            let lote = self.store.categories().list(org, pagina)?;
             if lote.is_empty() {
                 return Ok(None);
             }
@@ -271,7 +271,7 @@ impl BuscadorProdutos for CatalogoProdutos {
 
             // O preço e as condições vêm do registro agora, não do índice.
             let ids: Vec<ProductId> = achados.iter().map(|achado| achado.produto).collect();
-            let atuais = self.store.products().ativos_por_ids(org, &ids)?;
+            let atuais = self.store.products().active_by_ids(org, &ids)?;
             let mut saida = Vec::with_capacity(top_k);
             for achado in &achados {
                 if saida.len() == top_k {
@@ -288,7 +288,7 @@ impl BuscadorProdutos for CatalogoProdutos {
                 let categoria = self
                     .store
                     .products()
-                    .nome_da_categoria(org, produto.category_id)?;
+                    .category_name(org, produto.category_id)?;
                 saida.push(encontrado(produto, categoria, achado));
             }
             Ok(saida)

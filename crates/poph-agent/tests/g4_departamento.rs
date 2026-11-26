@@ -63,7 +63,7 @@ impl Cenario {
         );
         let org = store
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: format!("Org {rotulo}"),
                 slug: format!("org-{rotulo}-{}", AgentId::generate()),
                 config_json: "{}".to_owned(),
@@ -72,7 +72,7 @@ impl Cenario {
             .id;
         let agente = store
             .agents()
-            .criar(
+            .create(
                 org,
                 NewAgent {
                     name: format!("Bia {rotulo}"),
@@ -84,7 +84,7 @@ impl Cenario {
             .id;
         store
             .instructions()
-            .salvar(
+            .save(
                 org,
                 agente,
                 0,
@@ -96,7 +96,7 @@ impl Cenario {
         let atual = store.agents().get(org, agente).expect("lê o agente");
         store
             .agents()
-            .atualizar(
+            .update(
                 org,
                 agente,
                 atual.version,
@@ -121,7 +121,7 @@ impl Cenario {
     fn departamento(&self, nome: &str) -> DepartmentId {
         self.store
             .departments()
-            .criar(
+            .create(
                 self.org,
                 NewDepartment {
                     name: nome.to_owned(),
@@ -135,7 +135,7 @@ impl Cenario {
     fn departamento_em(&self, org: OrgId, nome: &str) -> DepartmentId {
         self.store
             .departments()
-            .criar(
+            .create(
                 org,
                 NewDepartment {
                     name: nome.to_owned(),
@@ -149,7 +149,7 @@ impl Cenario {
     fn outra_org(&self) -> OrgId {
         self.store
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: "Outra org".to_owned(),
                 slug: format!("outra-{}", AgentId::generate()),
                 config_json: "{}".to_owned(),
@@ -162,11 +162,11 @@ impl Cenario {
         let atual = self
             .store
             .departments()
-            .obter(self.org, departamento)
+            .get(self.org, departamento)
             .expect("lê o departamento");
         self.store
             .departments()
-            .atualizar(
+            .update(
                 self.org,
                 departamento,
                 atual.version,
@@ -181,7 +181,7 @@ impl Cenario {
     fn apagar(&self, departamento: DepartmentId) {
         self.store
             .departments()
-            .excluir(self.org, departamento)
+            .delete(self.org, departamento)
             .expect("apaga o departamento");
     }
 
@@ -193,7 +193,7 @@ impl Cenario {
             .expect("agente");
         self.store
             .agents()
-            .atualizar(
+            .update(
                 self.org,
                 self.agente,
                 atual.version,
@@ -207,8 +207,8 @@ impl Cenario {
 
     fn conversa(&self) -> ConversationId {
         self.store
-            .conversas()
-            .criar(
+            .conversations()
+            .create(
                 self.org,
                 NewConversation {
                     agent_id: self.agente,
@@ -225,7 +225,7 @@ impl Cenario {
     fn falar(&self, conversa: ConversationId, texto: &str) -> MessageId {
         self.store
             .messages()
-            .gravar(
+            .write(
                 self.org,
                 NewMessage {
                     conversation_id: conversa,
@@ -233,7 +233,7 @@ impl Cenario {
                     role: Role::User,
                     texto: texto.to_owned(),
                     attachments_json: "[]".to_owned(),
-                    id_externo: None,
+                    external_id: None,
                     turn_id: None,
                     origin: poph_store::Origin::Agente,
                     author_name: None,
@@ -286,7 +286,7 @@ impl Cenario {
 
     fn conversa_gravada(&self, conversa: ConversationId) -> poph_store::Conversa {
         self.store
-            .conversas()
+            .conversations()
             .get(self.org, conversa)
             .expect("lê a conversa")
     }
@@ -294,7 +294,7 @@ impl Cenario {
     fn ultimo_turno(&self, conversa: ConversationId) -> poph_store::Turno {
         self.store
             .turns()
-            .listar(self.org, conversa, Page::with_limit(20))
+            .list(self.org, conversa, Page::with_limit(20))
             .expect("lista os turnos")
             .into_iter()
             .next_back()
@@ -305,7 +305,7 @@ impl Cenario {
         let registro = self
             .store
             .audit()
-            .listar(self.org, Page::with_limit(50))
+            .list(self.org, Page::with_limit(50))
             .expect("lê a auditoria")
             .into_iter()
             .find(|registro| registro.acao == "transfer")
@@ -530,7 +530,7 @@ fn o_banco_nao_deixa_dois_departamentos_com_o_mesmo_nome() {
     let erro = cenario
         .store
         .departments()
-        .criar(
+        .create(
             cenario.org,
             NewDepartment {
                 name: "FINANCEIRO".to_owned(),
@@ -705,8 +705,8 @@ async fn sem_padrao_configurado_transfere_sem_departamento() {
         // Reabre para o caso seguinte poder abrir turno.
         cenario
             .store
-            .conversas()
-            .reabrir_auditado(cenario.org, conversa, gravada.version, "teste".to_owned())
+            .conversations()
+            .reopen_audited(cenario.org, conversa, gravada.version, "teste".to_owned())
             .expect("reabre");
     }
 }

@@ -192,8 +192,8 @@ pub async fn atualizar(
     identidade.exigir_org(org)?;
     estado.store.orgs().get(org)?;
     let esperada = versao_do_if_match(&headers, "módulo Matrix da org")?;
-    let atual = estado.store.matrix().estado(org)?;
-    let atual_etag = u64::try_from(atual.atualizado_em).unwrap_or(0);
+    let atual = estado.store.matrix().state(org)?;
+    let atual_etag = u64::try_from(atual.updated_at).unwrap_or(0);
     if esperada != atual_etag {
         // `updated_at` é o ETag e também o que muda quando a org liga ou desliga (o `ligar`/`desligar`
         // só escreve quando o estado muda de fato): repetir o mesmo pedido com o mesmo `If-Match` é
@@ -206,9 +206,9 @@ pub async fn atualizar(
         ));
     }
     if corpo.enabled {
-        estado.store.matrix().ligar(org)?;
+        estado.store.matrix().enable(org)?;
     } else {
-        estado.store.matrix().desligar(org)?;
+        estado.store.matrix().disable(org)?;
     }
     super::auditoria::registrar(
         &estado,
@@ -224,38 +224,38 @@ pub async fn atualizar(
 /// Monta o estado da org e devolve com o `ETag` da linha.
 fn estado_da_org(estado: &Estado, org: OrgId) -> Result<Response, ApiError> {
     estado.store.orgs().get(org)?;
-    let linha = estado.store.matrix().estado(org)?;
-    let cursores = estado.store.matrix().ler_cursores(org)?;
+    let linha = estado.store.matrix().state(org)?;
+    let cursores = estado.store.matrix().read_cursors(org)?;
     let atraso = estado
         .store
         .matrix()
-        .atraso_das_mensagens(org, cursores.mensagens)?;
+        .delay_of_messages(org, cursores.messages)?;
     let agora = estado.store.now();
     let idade_segundos = atraso
-        .mais_antiga_em
+        .oldest_at
         .map(|criada_em| u64::try_from((agora - criada_em).max(0) / 1000).unwrap_or(0))
         .unwrap_or(0);
-    let falhas = estado.store.matrix().contar_falhas(org)?;
+    let falhas = estado.store.matrix().count_failures(org)?;
     let ultima_falha = estado
         .store
         .matrix()
-        .listar_falhas(org, 1)?
+        .list_failures(org, 1)?
         .first()
         .map(|falha| falha.motivo.clone());
     let corpo = EstadoMatrixJson {
         org_id: org.to_string(),
-        enabled: linha.ligado,
-        enabled_at: linha.ligado_em,
-        updated_at: linha.atualizado_em,
+        enabled: linha.linked,
+        enabled_at: linha.linked_at,
+        updated_at: linha.updated_at,
         connected: estado.matrix_conectado(),
         backlog: AtrasoJson {
-            messages: atraso.pendentes,
+            messages: atraso.pending,
             oldest_seconds: idade_segundos,
         },
         pending_failures: falhas,
         last_failure: ultima_falha,
     };
-    com_etag(corpo, linha.atualizado_em)
+    com_etag(corpo, linha.updated_at)
 }
 
 /// Resposta com o `ETag` do estado, para o cliente guardar e mandar no `If-Match`.
@@ -294,21 +294,21 @@ pub async fn listar_espacos(
     let items = estado
         .store
         .matrix()
-        .listar_espacos(org)?
+        .list_spaces(org)?
         .iter()
         .map(|espaco| EspacoJson {
             department_id: espaco.departamento.to_string(),
             department_name: estado
                 .store
                 .departments()
-                .obter(org, espaco.departamento)
+                .get(org, espaco.departamento)
                 .ok()
                 .map(|departamento| departamento.name),
             space_room_id: espaco.room_id.clone(),
             alias: espaco.alias.clone(),
-            origin: espaco.origem.como_texto().to_owned(),
-            created_at: espaco.criada_em,
-            updated_at: espaco.atualizada_em,
+            origin: espaco.origin.as_text().to_owned(),
+            created_at: espaco.created_at,
+            updated_at: espaco.updated_at,
         })
         .collect();
     Ok(Json(EspacosJson { items }))
@@ -343,7 +343,7 @@ pub async fn ligar_espaco(
     identidade.exigir_org(org)?;
     estado.store.orgs().get(org)?;
     let departamento_id = id_da_url::<DepartmentId>(&corpo.department_id)?;
-    let departamento = estado.store.departments().obter(org, departamento_id)?;
+    let departamento = estado.store.departments().get(org, departamento_id)?;
     let espacos = estado.matrix_espacos().ok_or_else(modulo_desligado)?;
     let alvo = DepartamentoEspaco {
         id: departamento.id,
@@ -408,8 +408,8 @@ pub async fn desligar_espaco(
     estado.store.orgs().get(org)?;
     let departamento = id_da_url::<DepartmentId>(&caminho.department_id)?;
     // Departamento de outra org (ou inexistente) é 404 e nada muda.
-    estado.store.departments().obter(org, departamento)?;
-    let desligado = estado.store.matrix().desligar_espaco(org, departamento)?;
+    estado.store.departments().get(org, departamento)?;
+    let desligado = estado.store.matrix().disable_space(org, departamento)?;
     super::auditoria::registrar(
         &estado,
         &identidade,
@@ -420,8 +420,8 @@ pub async fn desligar_espaco(
     )?;
     Ok(Json(EspacoDesligadoJson {
         department_id: departamento.to_string(),
-        removed: desligado.removido,
-        rooms_forgotten: desligado.salas_esquecidas,
+        removed: desligado.removed,
+        rooms_forgotten: desligado.rooms_forgotten,
     }))
 }
 

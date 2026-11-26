@@ -178,7 +178,7 @@ fn turno_json(t: &Turno, arquivos: &[Value]) -> Value {
     let (nomes, chamadas) = super::partes_das_ferramentas(&t.tools_json);
     json!({
         "id": t.id.to_string(),
-        "state": t.estado.as_text(),
+        "state": t.state.as_text(),
         "jev": serde_json::from_str::<Value>(&t.jev_json).unwrap_or(Value::Null),
         "retrieved": serde_json::from_str::<Value>(&t.passages_json).unwrap_or(Value::Null),
         "tools": nomes,
@@ -212,7 +212,7 @@ fn arquivo_enviado_json(item: &OutboxItem) -> Value {
         "mime": campo("mime"),
         "size_bytes": campo("tamanho_bytes"),
         "sha256": campo("sha256"),
-        "state": item.estado.as_text(),
+        "state": item.state.as_text(),
         "created_at": item.created_at,
     })
 }
@@ -225,7 +225,7 @@ fn agente_e_conversa(
     conversa: ConversationId,
 ) -> Result<Conversa, ApiError> {
     estado.store.agents().get(org, agente)?;
-    let conversa = estado.store.conversas().get(org, conversa)?;
+    let conversa = estado.store.conversations().get(org, conversa)?;
     if conversa.agent_id != agente || conversa.canal != CANAL_DE_TESTE {
         return Err(ApiError::nao_encontrado(
             "conversa de teste",
@@ -246,7 +246,7 @@ pub async fn criar(
     let agente = id_da_url::<AgentId>(&c.agent_id)?;
     estado.store.agents().get(org, agente)?;
 
-    let conversa = estado.store.conversas().criar(
+    let conversa = estado.store.conversations().create(
         org,
         NewConversation {
             agent_id: agente,
@@ -285,7 +285,7 @@ pub async fn listar(
         .map(|id| id.to_string().parse::<ConversationId>())
         .transpose()
         .map_err(|_| ApiError::invalido("cursor não é um id de conversa"))?;
-    let conversas = estado.store.conversas().listar_por_agente_canal(
+    let conversas = estado.store.conversations().list_by_agent_channel(
         org,
         agente,
         CANAL_DE_TESTE,
@@ -298,7 +298,7 @@ pub async fn listar(
             let contagem = estado
                 .store
                 .messages()
-                .contar(org, conversa.id)
+                .count_rows(org, conversa.id)
                 .unwrap_or(0);
             conversa_json(conversa, contagem)
         })
@@ -325,7 +325,7 @@ pub async fn historico(
         estado
             .store
             .messages()
-            .listar(org, conversa_id, Page::with_limit(LIMITE_HISTORICO))?;
+            .list(org, conversa_id, Page::with_limit(LIMITE_HISTORICO))?;
     let messages: Vec<Value> = mensagens
         .iter()
         .map(|mensagem| {
@@ -335,7 +335,7 @@ pub async fn historico(
                 estado
                     .store
                     .messages()
-                    .anexos(org, mensagem.id)
+                    .attachments(org, mensagem.id)
                     .unwrap_or_default()
             };
             mensagem_json(mensagem, &anexos)
@@ -344,10 +344,10 @@ pub async fn historico(
     let turnos = estado
         .store
         .turns()
-        .listar(org, conversa_id, Page::with_limit(LIMITE_TURNOS))?;
+        .list(org, conversa_id, Page::with_limit(LIMITE_TURNOS))?;
     // HR-46d: arquivos que o agente mandou nesta conversa, agrupados por turno. A leitura é uma
     // consulta só na `outbox`; o turno que não mandou arquivo fica com a lista vazia.
-    let arquivos = estado.store.outbox().listar_arquivos_da_conversa(
+    let arquivos = estado.store.outbox().list_files_of_conversation(
         org,
         conversa_id,
         LIMITE_ARQUIVOS_ENVIADOS,
@@ -406,8 +406,8 @@ pub async fn anexo_conteudo(
     let anexo = id_da_url::<AttachmentId>(&c.attachment_id)?;
     agente_e_conversa(&estado, org, agente, conversa)?;
     // A mensagem precisa ser desta conversa (o repositório já filtra por org e conversa).
-    estado.store.messages().obter(org, conversa, mensagem)?;
-    let anexos = estado.store.messages().anexos(org, mensagem)?;
+    estado.store.messages().get(org, conversa, mensagem)?;
+    let anexos = estado.store.messages().attachments(org, mensagem)?;
     let anexo = anexos
         .into_iter()
         .find(|a| a.id == anexo)
@@ -442,12 +442,12 @@ pub async fn reabrir(
     let conversa =
         estado
             .store
-            .conversas()
-            .reabrir_auditado(org, conversa_id, versao, ident.ator_id())?;
+            .conversations()
+            .reopen_audited(org, conversa_id, versao, ident.ator_id())?;
     let contagem = estado
         .store
         .messages()
-        .contar(org, conversa.id)
+        .count_rows(org, conversa.id)
         .unwrap_or(0);
     Ok(Json(conversa_json(&conversa, contagem)))
 }
@@ -505,7 +505,7 @@ pub async fn mensagem(
     }
     let (anexos, recebidos) = receber_arquivos(&estado, org, arquivos).await?;
 
-    let mensagem = estado.store.messages().gravar_com_anexos(
+    let mensagem = estado.store.messages().write_with_attachments(
         org,
         NewMessage {
             conversation_id: conversa_id,
@@ -513,7 +513,7 @@ pub async fn mensagem(
             role: Role::User,
             texto: texto.clone(),
             attachments_json: "[]".to_owned(),
-            id_externo: None,
+            external_id: None,
             turn_id: None,
             origin: poph_store::Origin::Agente,
             author_name: None,
@@ -522,8 +522,8 @@ pub async fn mensagem(
     )?;
     estado
         .store
-        .conversas()
-        .tocar(org, conversa_id, estado.store.now())?;
+        .conversations()
+        .touch(org, conversa_id, estado.store.now())?;
     super::auditoria::registrar(
         &estado,
         &ident,

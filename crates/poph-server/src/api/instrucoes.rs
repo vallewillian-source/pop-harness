@@ -40,7 +40,7 @@ fn representar(i: &Instructions) -> Value {
         "created_at":i.created_at,"updated_at":i.updated_at})
 }
 fn existente(e: &Estado, org: OrgId, id: AgentId) -> Result<Option<Instructions>, ApiError> {
-    match e.store.instructions().obter(org, id) {
+    match e.store.instructions().get(org, id) {
         Ok(i) => Ok(Some(i)),
         Err(poph_store::StoreError::Domain(poph_types::DomainError::NotFound { .. })) => Ok(None),
         Err(erro) => Err(erro.into()),
@@ -67,7 +67,7 @@ pub async fn mostrar(
     Path(c): Path<Caminho>,
 ) -> Result<Json<Value>, ApiError> {
     let (org, id) = ids(c, &ident)?;
-    Ok(Json(representar(&e.store.instructions().obter(org, id)?)))
+    Ok(Json(representar(&e.store.instructions().get(org, id)?)))
 }
 fn preparar(
     e: &Estado,
@@ -108,7 +108,7 @@ async fn gravar(
     let i = e
         .store
         .instructions()
-        .salvar(org, id, versao, &estruturado, &markdown, derivado)?;
+        .save(org, id, versao, &estruturado, &markdown, derivado)?;
     super::auditoria::registrar(
         &e,
         &ident,
@@ -154,7 +154,7 @@ pub async fn excluir(
     Path(c): Path<Caminho>,
 ) -> Result<Json<Value>, ApiError> {
     let (org, id) = ids(c, &ident)?;
-    e.store.instructions().apagar(org, id)?;
+    e.store.instructions().delete(org, id)?;
     super::auditoria::registrar(
         &e,
         &ident,

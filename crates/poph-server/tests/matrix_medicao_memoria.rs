@@ -37,7 +37,7 @@ fn numero(nome: &str, padrao: u64) -> u64 {
 fn criar_org(store: &Store) -> OrgId {
     store
         .orgs()
-        .criar(NewOrg {
+        .create(NewOrg {
             name: "Loja da medição".to_owned(),
             slug: "loja".to_owned(),
             config_json: String::new(),
@@ -65,11 +65,11 @@ fn semeia_conversas_para_a_medicao_de_memoria() {
     if ligado {
         // Antes de qualquer mensagem: o corte do backfill fica para trás e tudo que vier depois é
         // espelhado pelo laço do módulo quando o `poph serve` subir.
-        store.matrix().ligar(org).expect("liga a org no módulo");
+        store.matrix().enable(org).expect("liga a org no módulo");
     }
     let agente = store
         .agents()
-        .criar(
+        .create(
             org,
             NewAgent {
                 name: "Bia".to_owned(),
@@ -82,8 +82,8 @@ fn semeia_conversas_para_a_medicao_de_memoria() {
 
     for indice in 0..salas {
         let conversa = store
-            .conversas()
-            .criar(
+            .conversations()
+            .create(
                 org,
                 NewConversation {
                     agent_id: agente,
@@ -98,7 +98,7 @@ fn semeia_conversas_para_a_medicao_de_memoria() {
         for n in 0..mensagens_por_sala {
             store
                 .messages()
-                .gravar(
+                .write(
                     org,
                     NewMessage {
                         conversation_id: conversa,
@@ -108,7 +108,7 @@ fn semeia_conversas_para_a_medicao_de_memoria() {
                         author_name: None,
                         texto: format!("mensagem {n} do cliente {indice}"),
                         attachments_json: "[]".to_owned(),
-                        id_externo: None,
+                        external_id: None,
                         turn_id: None,
                     },
                 )

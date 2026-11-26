@@ -147,7 +147,7 @@ impl Cenario {
         let org = estado
             .store
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: format!("Org {rotulo}"),
                 slug: format!("org-{rotulo}-{}", poph_types::AgentId::generate()),
                 config_json: "{}".to_owned(),
@@ -157,7 +157,7 @@ impl Cenario {
         let agente = estado
             .store
             .agents()
-            .criar(
+            .create(
                 org,
                 NewAgent {
                     name: format!("Bia {rotulo}"),
@@ -192,8 +192,8 @@ impl Cenario {
     fn fluxo(&self, script: &str, slug: &str) -> (FlowId, RevisionId) {
         let fluxo = self
             .store()
-            .fluxos()
-            .criar(
+            .flows()
+            .create(
                 self.org,
                 NewFlow {
                     slug: slug.to_owned(),
@@ -210,7 +210,7 @@ impl Cenario {
         let revisao = self
             .store()
             .revisions()
-            .publicar_revisao(
+            .publish_revision(
                 self.org,
                 fluxo.id,
                 RevisionPublication {
@@ -225,8 +225,8 @@ impl Cenario {
             )
             .expect("publica a revisão");
         self.store()
-            .fluxos()
-            .liberar(self.org, self.agente, fluxo.id)
+            .flows()
+            .release(self.org, self.agente, fluxo.id)
             .expect("libera o fluxo");
         (fluxo.id, revisao.id)
     }
@@ -235,8 +235,8 @@ impl Cenario {
     fn ficha(&self) -> (poph_types::ConversationId, poph_types::RecordId) {
         let conversa = self
             .store()
-            .conversas()
-            .criar(
+            .conversations()
+            .create(
                 self.org,
                 NewConversation {
                     agent_id: self.agente,
@@ -252,8 +252,8 @@ impl Cenario {
             .expect("abre a conversa");
         let ficha = self
             .store()
-            .fichas()
-            .por_conversa(self.org, conversa.id)
+            .cases()
+            .by_conversation(self.org, conversa.id)
             .expect("lê a Ficha")
             .expect("a conversa tem Ficha");
         (conversa.id, ficha.id)
@@ -269,11 +269,11 @@ impl Cenario {
     ) -> poph_store::Execution {
         self.store()
             .executions()
-            .iniciar_execucao(
+            .start_execution(
                 self.org,
                 ExecutionStart {
-                    ficha,
-                    fluxo,
+                    case: ficha,
+                    flow: fluxo,
                     revision: revisao,
                     actor: EventActor::Agent,
                     ator_ref: Some("atendente-de-teste"),
@@ -325,7 +325,7 @@ impl Cenario {
         .unwrap_or_else(|erro| panic!("a passagem devia voltar desfecho: {erro}"));
         self.store()
             .executions()
-            .aplicar_transicao(
+            .apply_transition(
                 self.org,
                 execucao.id,
                 execucao.version,
@@ -400,11 +400,11 @@ fn abertura_conta_uma_vez_e_repetir_a_chave_nao_conta_de_novo() {
     let repetida = cenario
         .store()
         .executions()
-        .iniciar_execucao(
+        .start_execution(
             cenario.org,
             ExecutionStart {
-                ficha,
-                fluxo,
+                case: ficha,
+                flow: fluxo,
                 revision: revisao,
                 actor: EventActor::Agent,
                 ator_ref: Some("atendente-de-teste"),
@@ -446,7 +446,7 @@ fn conclusao_conta_concluida_e_repetir_a_chave_nao_soma() {
     let de_novo = cenario
         .store()
         .executions()
-        .aplicar_transicao(
+        .apply_transition(
             cenario.org,
             gravada.execution.id,
             gravada.execution.version,
@@ -485,7 +485,7 @@ fn abandono_pelo_agente_conta_abandonada() {
     cenario
         .store()
         .executions()
-        .aplicar_transicao(
+        .apply_transition(
             cenario.org,
             execucao.id,
             execucao.version,
@@ -514,14 +514,14 @@ fn fechar_o_atendimento_com_execucao_ativa_conta_abandono() {
     // execução ativa da Ficha na mesma escrita.
     let versao = cenario
         .store()
-        .conversas()
+        .conversations()
         .get(cenario.org, conversa)
         .expect("lê a conversa")
         .version;
     cenario
         .store()
-        .conversas()
-        .fechar_auditado(
+        .conversations()
+        .close_audited(
             cenario.org,
             conversa,
             versao,

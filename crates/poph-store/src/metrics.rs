@@ -16,7 +16,7 @@ impl ExecutionMetrics {
         }
     }
 
-    pub(crate) fn desfecho(&self, status: ExecutionStatus, how_many: u64) {
+    pub(crate) fn outcome(&self, status: ExecutionStatus, how_many: u64) {
         if how_many == 0 {
             return;
         }

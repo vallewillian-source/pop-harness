@@ -144,8 +144,8 @@ impl ConfigQuente {
         agente: AgentId,
     ) -> Resultado<Arc<AgenteQuente>> {
         let chave = Chave { org, agente };
-        let versao = self.store.agents().versao(org, agente)?;
-        let versao_instrucoes = self.store.instructions().versao(org, agente)?.unwrap_or(0);
+        let versao = self.store.agents().version(org, agente)?;
+        let versao_instrucoes = self.store.instructions().version(org, agente)?.unwrap_or(0);
         if let Some(quente) = self.cache.get(&chave)
             && quente.versao_composta() == (versao, versao_instrucoes)
         {
@@ -196,11 +196,8 @@ impl ConfigQuente {
 
     fn recarregar(&self, chave: Chave) -> Resultado<Arc<AgenteQuente>> {
         self.metricas.config_erros.increment(1);
-        let agente = self
-            .store
-            .agents()
-            .obter_para_turno(chave.org, chave.agente)?;
-        let instrucoes = match self.store.instructions().obter(chave.org, chave.agente) {
+        let agente = self.store.agents().get_for_turn(chave.org, chave.agente)?;
+        let instrucoes = match self.store.instructions().get(chave.org, chave.agente) {
             Ok(instrucoes) => Some(instrucoes),
             Err(erro) if erro.is_not_found() => None,
             Err(erro) => return Err(ErroAgente::Store(erro)),

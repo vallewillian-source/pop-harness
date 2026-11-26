@@ -494,7 +494,7 @@ impl Cenario {
     fn org(&self, slug: &str) -> OrgId {
         self.store
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: format!("Org {slug}"),
                 slug: slug.to_owned(),
                 config_json: String::new(),
@@ -509,7 +509,7 @@ impl Cenario {
         let criado = self
             .store
             .tokens()
-            .criar(Some(org), rotulo, &hash_argon2(&segredo))
+            .create(Some(org), rotulo, &hash_argon2(&segredo))
             .expect("cria o token");
         format!("poph_{}_{segredo}", criado.id)
     }
@@ -517,7 +517,7 @@ impl Cenario {
     fn agente(&self, org: OrgId) -> AgentId {
         self.store
             .agents()
-            .criar(
+            .create(
                 org,
                 NewAgent {
                     name: "Bia".to_owned(),
@@ -531,8 +531,8 @@ impl Cenario {
 
     fn conversa(&self, org: OrgId, agente: AgentId) -> poph_types::ConversationId {
         self.store
-            .conversas()
-            .criar(
+            .conversations()
+            .create(
                 org,
                 NewConversation {
                     agent_id: agente,
@@ -550,7 +550,7 @@ impl Cenario {
         let mensagem = self
             .store
             .messages()
-            .gravar(
+            .write(
                 org,
                 NewMessage {
                     conversation_id: conversa,
@@ -560,14 +560,14 @@ impl Cenario {
                     author_name: None,
                     texto: texto.to_owned(),
                     attachments_json: "[]".to_owned(),
-                    id_externo: None,
+                    external_id: None,
                     turn_id: None,
                 },
             )
             .expect("grava a mensagem");
         self.store
             .messages()
-            .desde(0, 1000)
+            .since(0, 1000)
             .expect("lê as mensagens")
             .into_iter()
             .find(|lida| lida.id == mensagem.id)
@@ -578,7 +578,7 @@ impl Cenario {
     fn departamento(&self, org: OrgId, nome: &str) -> DepartmentId {
         self.store
             .departments()
-            .criar(
+            .create(
                 org,
                 NewDepartment {
                     name: nome.to_owned(),
@@ -699,16 +699,16 @@ async fn estado_da_org_traz_atraso_falhas_e_etag() {
     cenario
         .store
         .matrix()
-        .avancar_mensagens(org, primeira)
+        .advance_messages(org, primeira)
         .expect("avança o cursor");
     // A mensagem pendente é mais velha que o relógio atual em 40 s.
     let pendente = cenario
         .store
         .messages()
-        .desde(primeira, 10)
+        .since(primeira, 10)
         .expect("lê a leitura incremental")
         .first()
-        .map(|mensagem| mensagem.criado_em)
+        .map(|mensagem| mensagem.created_at)
         .expect("mensagem pendente");
     // Relógio 65 s à frente da mensagem pendente: a idade tem de ser 65 s.
     cenario.relogio.store(pendente + 65_000, Ordering::SeqCst);
@@ -716,7 +716,7 @@ async fn estado_da_org_traz_atraso_falhas_e_etag() {
     cenario
         .store
         .matrix()
-        .registrar_falha(
+        .register_failure(
             org,
             poph_types::MessageId::generate(),
             "formato_invalido",
@@ -727,7 +727,7 @@ async fn estado_da_org_traz_atraso_falhas_e_etag() {
     cenario
         .store
         .matrix()
-        .registrar_falha(
+        .register_failure(
             outra,
             poph_types::MessageId::generate(),
             "formato_invalido",
@@ -881,7 +881,7 @@ async fn ligar_e_desligar_exigem_if_match_e_preservam_o_corte() {
     );
     assert_eq!(velha.json["code"], json!("version_conflict"));
     assert!(
-        cenario.store.matrix().estado(org).expect("estado").ligado,
+        cenario.store.matrix().state(org).expect("estado").linked,
         "o 412 não pode desligar a org"
     );
 
@@ -956,7 +956,7 @@ async fn token_de_outra_org_e_org_inexistente() {
     .await;
     assert_eq!(cruzado_put.status, StatusCode::FORBIDDEN);
     assert!(
-        !cenario.store.matrix().estado(org_b).expect("estado").ligado,
+        !cenario.store.matrix().state(org_b).expect("estado").linked,
         "o ataque não liga o módulo na outra org"
     );
 
@@ -1090,7 +1090,7 @@ async fn espaco_do_departamento_e_criado_uma_vez_ligado_e_desligado() {
         cenario
             .store
             .matrix()
-            .espaco(org, outro)
+            .space(org, outro)
             .expect("lê")
             .is_none(),
         "a falha de permissão não grava espaço"
@@ -1127,7 +1127,7 @@ async fn espaco_do_departamento_e_criado_uma_vez_ligado_e_desligado() {
     cenario
         .store
         .matrix()
-        .garantir_sala(org, conversa, "!sala:matrix-dev.local", Some(&espaco))
+        .ensure_room(org, conversa, "!sala:matrix-dev.local", Some(&espaco))
         .expect("sala no espaço");
 
     // Desligar: apaga a linha e esquece o vínculo da sala; nada é apagado no Synapse.
@@ -1154,10 +1154,10 @@ async fn espaco_do_departamento_e_criado_uma_vez_ligado_e_desligado() {
         cenario
             .store
             .matrix()
-            .sala(org, conversa)
+            .room(org, conversa)
             .expect("sala")
             .expect("existe")
-            .espaco,
+            .space,
         None,
         "a sala continua existindo, só sai do registro do módulo"
     );

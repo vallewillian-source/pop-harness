@@ -275,10 +275,10 @@ fn run_nao_apaga_ficha_execucao_evento_nem_efeito() {
     {
         let store = Store::open_at(&dados.join("harness.db"), &dados.join("rag.db"))
             .expect("abre o banco do teste");
-        let org = store.orgs().por_slug(slug).expect("org criada pela CLI").id;
+        let org = store.orgs().by_slug(slug).expect("org criada pela CLI").id;
         let agente = store
             .agents()
-            .criar(
+            .create(
                 org,
                 poph_store::NewAgent {
                     name: "Agente fictício".to_owned(),
@@ -288,8 +288,8 @@ fn run_nao_apaga_ficha_execucao_evento_nem_efeito() {
             )
             .expect("agente");
         let fluxo = store
-            .fluxos()
-            .criar(
+            .flows()
+            .create(
                 org,
                 NewFlow {
                     slug: "agendar_visita".to_owned(),
@@ -301,7 +301,7 @@ fn run_nao_apaga_ficha_execucao_evento_nem_efeito() {
             .expect("fluxo");
         let revisao = store
             .revisions()
-            .publicar_revisao(
+            .publish_revision(
                 org,
                 fluxo.id,
                 RevisionPublication {
@@ -316,12 +316,12 @@ fn run_nao_apaga_ficha_execucao_evento_nem_efeito() {
             )
             .expect("revisão");
         store
-            .fluxos()
-            .liberar(org, agente.id, fluxo.id)
+            .flows()
+            .release(org, agente.id, fluxo.id)
             .expect("libera o fluxo");
         let conversa = store
-            .conversas()
-            .criar(
+            .conversations()
+            .create(
                 org,
                 NewConversation {
                     agent_id: agente.id,
@@ -333,17 +333,17 @@ fn run_nao_apaga_ficha_execucao_evento_nem_efeito() {
             )
             .expect("conversa com Ficha");
         let ficha = store
-            .fichas()
-            .por_conversa(org, conversa.id)
+            .cases()
+            .by_conversation(org, conversa.id)
             .expect("consulta")
             .expect("a conversa tem Ficha");
         store
             .executions()
-            .iniciar_execucao(
+            .start_execution(
                 org,
                 ExecutionStart {
-                    ficha: ficha.id,
-                    fluxo: fluxo.id,
+                    case: ficha.id,
+                    flow: fluxo.id,
                     revision: revisao.id,
                     actor: EventActor::Agent,
                     ator_ref: Some("agente-ficticio"),

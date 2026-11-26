@@ -106,7 +106,7 @@ pub async fn listar(
     let org = id_da_url::<OrgId>(&caminho.org_id)?;
     identidade.exigir_org(org)?;
     let pagina = consulta.pagina()?;
-    let departamentos = estado.store.departments().listar(org, pagina)?;
+    let departamentos = estado.store.departments().list(org, pagina)?;
     let items: Vec<DepartamentoJson> = departamentos.iter().map(DepartamentoJson::de).collect();
     let next_cursor = proximo_cursor(&items, pagina.limit, |item| item.id.clone());
     Ok(Json(ListaJson { items, next_cursor }))
@@ -135,7 +135,7 @@ pub async fn criar(
     let org = id_da_url::<OrgId>(&caminho.org_id)?;
     identidade.exigir_org(org)?;
     let nome = validar_nome(&corpo.name)?;
-    let departamento = estado.store.departments().criar(
+    let departamento = estado.store.departments().create(
         org,
         NewDepartment {
             name: nome,
@@ -180,7 +180,7 @@ pub async fn mostrar(
     let org = id_da_url::<OrgId>(&caminho.org_id)?;
     let id = id_da_url::<DepartmentId>(&caminho.department_id)?;
     identidade.exigir_org(org)?;
-    let departamento = estado.store.departments().obter(org, id)?;
+    let departamento = estado.store.departments().get(org, id)?;
     Ok(Json(DepartamentoJson::de(&departamento)))
 }
 
@@ -225,7 +225,7 @@ pub async fn atualizar(
     let departamento = estado
         .store
         .departments()
-        .atualizar(org, id, esperada, mudanca)?;
+        .update(org, id, esperada, mudanca)?;
     super::auditoria::registrar(
         &estado,
         &identidade,
@@ -261,7 +261,7 @@ pub async fn excluir(
     let org = id_da_url::<OrgId>(&caminho.org_id)?;
     let id = id_da_url::<DepartmentId>(&caminho.department_id)?;
     identidade.exigir_org(org)?;
-    estado.store.departments().excluir(org, id)?;
+    estado.store.departments().delete(org, id)?;
     super::auditoria::registrar(
         &estado,
         &identidade,

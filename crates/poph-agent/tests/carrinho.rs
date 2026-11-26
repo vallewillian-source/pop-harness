@@ -63,7 +63,7 @@ impl Cenario {
         );
         let org = store
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: format!("Org {rotulo}"),
                 slug: format!("org-{rotulo}-{}", AgentId::generate()),
                 config_json: "{}".to_owned(),
@@ -72,7 +72,7 @@ impl Cenario {
             .id;
         let agente = store
             .agents()
-            .criar(
+            .create(
                 org,
                 NewAgent {
                     name: format!("Bia {rotulo}"),
@@ -96,7 +96,7 @@ impl Cenario {
         };
         store
             .instructions()
-            .salvar(
+            .save(
                 org,
                 agente,
                 0,
@@ -107,7 +107,7 @@ impl Cenario {
             .expect("grava as instruções");
         let pragas = store
             .categories()
-            .criar(
+            .create(
                 org,
                 NewCategory {
                     name: "Pragas".to_owned(),
@@ -118,7 +118,7 @@ impl Cenario {
             .id;
         let jardim_categoria = store
             .categories()
-            .criar(
+            .create(
                 org,
                 NewCategory {
                     name: "Jardim".to_owned(),
@@ -136,7 +136,7 @@ impl Cenario {
         ] {
             let produto = store
                 .products()
-                .criar(
+                .create(
                     org,
                     NewProduct {
                         category_id: Some(pragas),
@@ -152,7 +152,7 @@ impl Cenario {
         }
         let jardim = store
             .products()
-            .criar(
+            .create(
                 org,
                 NewProduct {
                     category_id: Some(jardim_categoria),
@@ -177,8 +177,8 @@ impl Cenario {
 
     fn abrir_conversa(store: &Store, org: OrgId, agente: AgentId) -> ConversationId {
         store
-            .conversas()
-            .criar(
+            .conversations()
+            .create(
                 org,
                 NewConversation {
                     agent_id: agente,
@@ -220,9 +220,9 @@ impl Cenario {
         let resumo = self
             .store
             .carts()
-            .resumo(self.org, conversa)
+            .summary(self.org, conversa)
             .expect("lê o carrinho");
-        (resumo.total_centavos, resumo.itens.len())
+        (resumo.total_cents, resumo.items.len())
     }
 
     fn motor(&self, roteiros: Vec<Roteiro>) -> (Motor, Arc<ProvedorFake>) {
@@ -254,7 +254,7 @@ impl Cenario {
     fn falar(&self, conversa: ConversationId, texto: &str) -> poph_types::MessageId {
         self.store
             .messages()
-            .gravar(
+            .write(
                 self.org,
                 poph_store::NewMessage {
                     conversation_id: conversa,
@@ -262,7 +262,7 @@ impl Cenario {
                     role: poph_store::Role::User,
                     texto: texto.to_owned(),
                     attachments_json: "[]".to_owned(),
-                    id_externo: None,
+                    external_id: None,
                     turn_id: None,
                     origin: poph_store::Origin::Agente,
                     author_name: None,
@@ -592,7 +592,7 @@ async fn org_de_outro_token_nao_mexe_no_carrinho() {
     let outra = cenario
         .store
         .orgs()
-        .criar(NewOrg {
+        .create(NewOrg {
             name: "Outra".to_owned(),
             slug: format!("outra-{}", AgentId::generate()),
             config_json: "{}".to_owned(),
@@ -600,13 +600,13 @@ async fn org_de_outro_token_nao_mexe_no_carrinho() {
         .expect("cria a outra org")
         .id;
     // Conversa da primeira org não é lida nem alterada por quem tem a segunda.
-    let resumo = cenario.store.carts().resumo(outra, conversa).expect("lê");
-    assert!(resumo.itens.is_empty());
-    assert!(resumo.carrinho.is_none());
+    let resumo = cenario.store.carts().summary(outra, conversa).expect("lê");
+    assert!(resumo.items.is_empty());
+    assert!(resumo.cart.is_none());
     let erro = cenario
         .store
         .carts()
-        .adicionar(outra, conversa, cenario.agente, cenario.produtos[1], 1)
+        .add(outra, conversa, cenario.agente, cenario.produtos[1], 1)
         .expect_err("org alheia não adiciona");
     assert!(erro.is_not_found(), "{erro}");
     assert_eq!(
@@ -622,7 +622,7 @@ async fn produto_fora_das_categorias_do_agente_nao_entra() {
     let categorias = cenario
         .store
         .categories()
-        .listar(cenario.org, Page::default())
+        .list(cenario.org, Page::default())
         .expect("lista")
         .into_iter()
         .filter(|categoria| categoria.name == "Pragas")
@@ -636,7 +636,7 @@ async fn produto_fora_das_categorias_do_agente_nao_entra() {
     cenario
         .store
         .agents()
-        .definir_categorias(cenario.org, cenario.agente, agente.version, &categorias)
+        .define_categories(cenario.org, cenario.agente, agente.version, &categorias)
         .expect("vincula o agente a Pragas");
 
     let erro = cenario
@@ -724,7 +724,7 @@ async fn limpar_esvazia_e_conta_as_linhas() {
         cenario
             .store
             .carts()
-            .adicionar(
+            .add(
                 cenario.org,
                 cenario.conversa,
                 cenario.agente,
@@ -743,7 +743,7 @@ async fn limpar_esvazia_e_conta_as_linhas() {
     cenario
         .store
         .carts()
-        .adicionar(
+        .add(
             cenario.org,
             cenario.conversa,
             cenario.agente,
@@ -754,10 +754,7 @@ async fn limpar_esvazia_e_conta_as_linhas() {
     let resumo = cenario
         .store
         .carts()
-        .resumo(cenario.org, cenario.conversa)
+        .summary(cenario.org, cenario.conversa)
         .expect("lê");
-    assert!(
-        resumo.carrinho.is_some(),
-        "o carrinho aberto continua o mesmo"
-    );
+    assert!(resumo.cart.is_some(), "o carrinho aberto continua o mesmo");
 }

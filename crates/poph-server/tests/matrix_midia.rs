@@ -111,7 +111,7 @@ fn config() -> MatrixConfig {
 fn criar_org(store: &Store, slug: &str) -> OrgId {
     store
         .orgs()
-        .criar(NewOrg {
+        .create(NewOrg {
             name: format!("Org {slug}"),
             slug: slug.to_owned(),
             config_json: String::new(),
@@ -123,7 +123,7 @@ fn criar_org(store: &Store, slug: &str) -> OrgId {
 fn criar_agente(store: &Store, org: OrgId) -> AgentId {
     store
         .agents()
-        .criar(
+        .create(
             org,
             NewAgent {
                 name: "Bia".to_owned(),
@@ -137,8 +137,8 @@ fn criar_agente(store: &Store, org: OrgId) -> AgentId {
 
 fn criar_conversa(store: &Store, org: OrgId, agente: AgentId, peer: &str) -> ConversationId {
     store
-        .conversas()
-        .criar(
+        .conversations()
+        .create(
             org,
             NewConversation {
                 agent_id: agente,
@@ -162,7 +162,7 @@ fn msg_cliente(
 ) -> poph_types::MessageId {
     store
         .messages()
-        .gravar_com_anexos(
+        .write_with_attachments(
             org,
             NewMessage {
                 conversation_id: conversa,
@@ -172,7 +172,7 @@ fn msg_cliente(
                 author_name: None,
                 texto: texto.to_owned(),
                 attachments_json: "[]".to_owned(),
-                id_externo: None,
+                external_id: None,
                 turn_id: None,
             },
             anexos,
@@ -443,15 +443,15 @@ const PNG: &[u8] = b"\x89PNG\r\n\x1a\nimagem-de-teste";
 const PDF: &[u8] = b"%PDF-1.4\nlaudo de teste\n%%EOF\n";
 
 fn cursor(store: &Store, org: OrgId) -> (u64, String) {
-    let cursores = store.matrix().ler_cursores(org).expect("lê os cursores");
-    (cursores.mensagens, cursores.mensagens_id)
+    let cursores = store.matrix().read_cursors(org).expect("lê os cursores");
+    (cursores.messages, cursores.message_ids)
 }
 
 /// Id da última mensagem: o cursor tem de chegar nela quando não há pendência.
 fn maior_rowid_e_id(store: &Store) -> (u64, String) {
     let (rowid, id) = store
         .messages()
-        .ultima_rowid()
+        .last_rowid()
         .expect("lê a última rowid")
         .expect("tem mensagem");
     (rowid, id.to_string())
@@ -475,7 +475,7 @@ async fn imagem_e_pdf_do_cliente_vao_para_a_sala_depois_da_legenda() {
     let agente = criar_agente(&store, org);
     let peer = "5521988887777";
     let conversa = criar_conversa(&store, org, agente, peer);
-    store.matrix().ligar(org).expect("liga");
+    store.matrix().enable(org).expect("liga");
 
     let imagem = cenario.anexo(org, "foto.jpg", "image/jpeg", PNG);
     let pdf = cenario.anexo(org, "laudo.pdf", "application/pdf", PDF);
@@ -550,12 +550,12 @@ async fn imagem_e_pdf_do_cliente_vao_para_a_sala_depois_da_legenda() {
     // MX-46: cada mídia entregue ficou registrada para expirar, com o evento e o `mxc` que a sala
     // recebeu — é o que a rotina de expiração lê depois do prazo.
     let registradas = store
-        .matrix_midia()
-        .pendentes(org, i64::MAX, i64::MAX, 10)
+        .matrix_asset()
+        .pending(org, i64::MAX, i64::MAX, 10)
         .expect("lê o registro da mídia");
     assert_eq!(registradas.len(), 2, "as duas mídias registradas");
     for (midia, registrada) in midias.iter().zip(&registradas) {
-        assert_eq!(registrada.sala, midia.sala);
+        assert_eq!(registrada.room, midia.sala);
         assert_eq!(
             registrada.evento,
             format!("$midia-{}:matrix-dev.local", midia.txn)
@@ -565,20 +565,20 @@ async fn imagem_e_pdf_do_cliente_vao_para_a_sala_depois_da_legenda() {
             registrada.nome,
             midia.conteudo["body"].as_str().unwrap_or_default()
         );
-        assert_eq!(registrada.agente, agente.to_string());
+        assert_eq!(registrada.agent, agente.to_string());
         // A categoria segue o que o evento é: imagem ou documento (o frontend só separa os dois).
         assert_eq!(
-            registrada.categoria,
+            registrada.category,
             if midia.msgtype() == MSGTYPE_IMAGEM {
-                poph_store::CategoriaMidia::Imagem
+                poph_store::CategoryAsset::Image
             } else {
-                poph_store::CategoriaMidia::Documento
+                poph_store::CategoryAsset::Document
             },
             "categoria da mídia registrada"
         );
-        assert_eq!(registrada.tamanho_bytes, midia.bytes as u64);
+        assert_eq!(registrada.size_bytes, midia.bytes as u64);
         assert!(
-            registrada.falta_redigir() && registrada.falta_apagar(),
+            registrada.still_to_draft() && registrada.still_to_delete(),
             "recém-publicada: as duas etapas pendentes"
         );
     }
@@ -591,7 +591,7 @@ async fn reprocessar_a_mesma_midia_nao_duplica_o_evento() {
     let org = criar_org(&store, "b");
     let agente = criar_agente(&store, org);
     let conversa = criar_conversa(&store, org, agente, "5511911112222");
-    store.matrix().ligar(org).expect("liga");
+    store.matrix().enable(org).expect("liga");
     let imagem = cenario.anexo(org, "foto.png", "image/png", PNG);
     msg_cliente(&store, org, conversa, "foto", &[imagem]);
 
@@ -630,7 +630,7 @@ async fn arquivo_acima_do_limite_vira_aviso_e_o_cursor_segue() {
     let org = criar_org(&store, "c");
     let agente = criar_agente(&store, org);
     let conversa = criar_conversa(&store, org, agente, "5511933334444");
-    store.matrix().ligar(org).expect("liga");
+    store.matrix().enable(org).expect("liga");
 
     // A linha diz que o arquivo passa do limite (o blob no disco é pequeno de propósito: nada é
     // lido antes da decisão, e o laço não pode depender do disco para recusar).
@@ -676,7 +676,7 @@ async fn anexo_sem_blob_no_disco_vira_aviso_sem_prender_o_cursor() {
     let org = criar_org(&store, "d");
     let agente = criar_agente(&store, org);
     let conversa = criar_conversa(&store, org, agente, "5511955556666");
-    store.matrix().ligar(org).expect("liga");
+    store.matrix().enable(org).expect("liga");
 
     let anexo = cenario.anexo(org, "foto.jpg", "image/jpeg", PNG);
     // Apaga o blob do disco, como um volume que sumiu.
@@ -709,7 +709,7 @@ async fn midia_recusada_de_vez_deixa_o_aviso_antes_de_isolar() {
     let org = criar_org(&store, "e");
     let agente = criar_agente(&store, org);
     let conversa = criar_conversa(&store, org, agente, "5511977778888");
-    store.matrix().ligar(org).expect("liga");
+    store.matrix().enable(org).expect("liga");
     let pdf = cenario.anexo(org, "laudo.pdf", "application/pdf", PDF);
     msg_cliente(&store, org, conversa, "laudo", &[pdf]);
 
@@ -732,7 +732,7 @@ async fn midia_recusada_de_vez_deixa_o_aviso_antes_de_isolar() {
     // O cursor passou: a mídia foi isolada em `matrix_falhas` e a fila não fica presa.
     assert_eq!(cursor(&store, org), maior_rowid_e_id(&store));
     // A mensagem ficou isolada em `matrix_falhas`, com o motivo da mídia recusada.
-    let falhas = store.matrix().listar_falhas(org, 10).expect("lê as falhas");
+    let falhas = store.matrix().list_failures(org, 10).expect("lê as falhas");
     assert_eq!(falhas.len(), 1, "uma mensagem isolada: {falhas:?}");
     assert_eq!(falhas[0].motivo, "M_FORBIDDEN");
     assert_eq!(ciclos, 3, "as tentativas definitivas do laço");

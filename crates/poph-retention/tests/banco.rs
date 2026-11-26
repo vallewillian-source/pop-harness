@@ -796,8 +796,8 @@ fn ficha_execucao_etapa_evento_e_efeito_sobrevivem_a_varredura() {
     // vazia e antiga que a varredura apaga.
     let conversa = cenario
         .store
-        .conversas()
-        .criar(
+        .conversations()
+        .create(
             org,
             NewConversation {
                 agent_id: agente,
@@ -817,8 +817,8 @@ fn ficha_execucao_etapa_evento_e_efeito_sobrevivem_a_varredura() {
     // Fluxo publicado (revisão 1), liberado ao agente e com execução aberta na Ficha.
     let fluxo = cenario
         .store
-        .fluxos()
-        .criar(
+        .flows()
+        .create(
             org,
             NewFlow {
                 slug: "agendar_visita".to_owned(),
@@ -831,7 +831,7 @@ fn ficha_execucao_etapa_evento_e_efeito_sobrevivem_a_varredura() {
     let revisao = cenario
         .store
         .revisions()
-        .publicar_revisao(
+        .publish_revision(
             org,
             fluxo.id,
             RevisionPublication {
@@ -847,23 +847,23 @@ fn ficha_execucao_etapa_evento_e_efeito_sobrevivem_a_varredura() {
         .expect("revisão publicada");
     cenario
         .store
-        .fluxos()
-        .liberar(org, agente, fluxo.id)
+        .flows()
+        .release(org, agente, fluxo.id)
         .expect("libera o fluxo ao agente");
     let ficha = cenario
         .store
-        .fichas()
-        .por_conversa(org, conversa.id)
+        .cases()
+        .by_conversation(org, conversa.id)
         .expect("consulta")
         .expect("a conversa tem Ficha");
     cenario
         .store
         .executions()
-        .iniciar_execucao(
+        .start_execution(
             org,
             ExecutionStart {
-                ficha: ficha.id,
-                fluxo: fluxo.id,
+                case: ficha.id,
+                flow: fluxo.id,
                 revision: revisao.id,
                 actor: EventActor::Agent,
                 ator_ref: Some("agente-ficticio"),

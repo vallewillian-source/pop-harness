@@ -321,8 +321,8 @@ impl Cenario {
         let org: OrgId = org_id.parse().expect("org válida");
         let agente: AgentId = agente_id.parse().expect("agente válido");
         self.store()
-            .fichas()
-            .criar(
+            .cases()
+            .create(
                 org,
                 poph_store::NewRecord {
                     conversation_id: None,
@@ -350,17 +350,17 @@ impl Cenario {
         let fluxo: FlowId = fluxo_id.parse().expect("fluxo válido");
         let revisao: RevisionId = revisao_id.parse().expect("revisão válida");
         self.store()
-            .fluxos()
-            .liberar(org, agente, fluxo)
+            .flows()
+            .release(org, agente, fluxo)
             .expect("libera o fluxo ao agente");
         self.store()
             .executions()
-            .iniciar_execucao(
+            .start_execution(
                 org,
                 poph_store::ExecutionStart {
                     chave_idempotencia: None,
-                    ficha,
-                    fluxo,
+                    case: ficha,
+                    flow: fluxo,
                     revision: revisao,
                     actor: EventActor::Agent,
                     ator_ref: Some("atendente-de-teste"),
@@ -383,8 +383,8 @@ impl Cenario {
     fn criar_fluxo(&self, org_id: &str, slug: &str) -> FlowId {
         let org: OrgId = org_id.parse().expect("org válida");
         self.store()
-            .fluxos()
-            .criar(
+            .flows()
+            .create(
                 org,
                 NewFlow {
                     slug: slug.to_owned(),
@@ -401,7 +401,7 @@ impl Cenario {
         let org: OrgId = org_id.parse().expect("org válida");
         self.store()
             .audit()
-            .listar(org, Page::default())
+            .list(org, Page::default())
             .expect("lê a auditoria")
     }
 }

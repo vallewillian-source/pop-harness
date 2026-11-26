@@ -102,7 +102,7 @@ use poph_matrix::espacos::{
 use poph_matrix::salas::{ConversaParaSala, MetadataSala, TIPO_METADATA, TIPO_NOME};
 use poph_matrix::usuarios::{ErroFantasmas, IdsFantasmas, UsuariosVirtuais};
 use poph_store::error::StoreError;
-use poph_store::{ConversationStatus, EstadoSala, Store};
+use poph_store::{ConversationStatus, StateRoom, Store};
 use poph_types::{AgentId, ConversationId, MatrixConfig, OrgId};
 use serde_json::json;
 
@@ -334,12 +334,12 @@ impl PortaEstado for PortaEstadoStore {
     fn orgs(&self) -> impl Future<Output = Result<Vec<EstadoOrg>, StoreError>> + Send {
         let store = Arc::clone(&self.store);
         async move {
-            let estados = store.matrix().orgs_ligadas()?;
+            let estados = store.matrix().linked_orgs()?;
             Ok(estados
                 .into_iter()
                 .map(|estado| EstadoOrg {
                     org: estado.org_id,
-                    ligado: estado.ligado,
+                    ligado: estado.linked,
                 })
                 .collect())
         }
@@ -351,9 +351,9 @@ impl PortaEstado for PortaEstadoStore {
     ) -> impl Future<Output = Result<CursorGravado, StoreError>> + Send {
         let store = Arc::clone(&self.store);
         async move {
-            let cursores = store.matrix().ler_cursores(org)?.conversas;
+            let cursores = store.matrix().read_cursors(org)?.conversations;
             Ok(CursorGravado {
-                atualizado_em: cursores.atualizado_em,
+                atualizado_em: cursores.updated_at,
                 id: cursores.id.parse::<ConversationId>().ok(),
             })
         }
@@ -366,7 +366,7 @@ impl PortaEstado for PortaEstadoStore {
     ) -> impl Future<Output = Result<Vec<ConversaAlterada>, StoreError>> + Send {
         let store = Arc::clone(&self.store);
         async move {
-            let conversas = store.conversas().alteradas_desde(apos, limite)?;
+            let conversas = store.conversations().changed_since(apos, limite)?;
             Ok(conversas
                 .into_iter()
                 .map(|conversa| ConversaAlterada {
@@ -385,7 +385,7 @@ impl PortaEstado for PortaEstadoStore {
     ) -> impl Future<Output = Result<Option<ConversaEstado>, StoreError>> + Send {
         let store = Arc::clone(&self.store);
         async move {
-            let lida = match store.conversas().get(org, conversa) {
+            let lida = match store.conversations().get(org, conversa) {
                 Ok(lida) => lida,
                 Err(erro) if erro.is_not_found() => return Ok(None),
                 Err(erro) => return Err(erro),
@@ -394,7 +394,7 @@ impl PortaEstado for PortaEstadoStore {
             let departamento = |id: poph_types::DepartmentId| {
                 store
                     .departments()
-                    .obter(org, id)
+                    .get(org, id)
                     .ok()
                     .map(|departamento| DepartamentoEspaco {
                         id: departamento.id,
@@ -402,7 +402,7 @@ impl PortaEstado for PortaEstadoStore {
                     })
             };
             // Mesma regra que a listagem usa para `external_peer` (RP-02): um só lugar, na store.
-            let identificador = lida.identificador_cliente();
+            let identificador = lida.identifier_client();
             Ok(Some(ConversaEstado {
                 org,
                 conversa,
@@ -431,13 +431,13 @@ impl PortaEstado for PortaEstadoStore {
     ) -> impl Future<Output = Result<Option<SalaEstado>, StoreError>> + Send {
         let store = Arc::clone(&self.store);
         async move {
-            let sala = store.matrix().sala(org, conversa)?;
+            let sala = store.matrix().room(org, conversa)?;
             Ok(sala.map(|sala| SalaEstado {
                 room_id: sala.room_id,
-                espaco: sala.espaco,
-                ultimo_status: sala.ultimo_status,
-                nome_espelhado: sala.nome_cliente_espelhado,
-                pronta: sala.estado == EstadoSala::Pronta,
+                espaco: sala.space,
+                ultimo_status: sala.last_status,
+                nome_espelhado: sala.name_client_mirrored,
+                pronta: sala.state == StateRoom::Ready,
             }))
         }
     }
@@ -452,7 +452,7 @@ impl PortaEstado for PortaEstadoStore {
         async move {
             store
                 .matrix()
-                .definir_ultimo_status(org, conversa, status)
+                .define_last_status(org, conversa, status)
                 .map(|_| ())
         }
     }
@@ -468,7 +468,7 @@ impl PortaEstado for PortaEstadoStore {
         async move {
             store
                 .matrix()
-                .definir_nome_cliente_espelhado(org, conversa, &nome)
+                .set_mirrored_customer_name(org, conversa, &nome)
                 .map(|_| ())
         }
     }
@@ -484,7 +484,7 @@ impl PortaEstado for PortaEstadoStore {
         async move {
             store
                 .matrix()
-                .avancar_conversas(org, atualizado_em, &id)
+                .advance_conversations(org, atualizado_em, &id)
                 .map(|_| ())
         }
     }

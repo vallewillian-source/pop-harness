@@ -113,7 +113,7 @@ fn config() -> MatrixConfig {
 fn criar_org(store: &Store, slug: &str) -> OrgId {
     store
         .orgs()
-        .criar(NewOrg {
+        .create(NewOrg {
             name: format!("Org {slug}"),
             slug: slug.to_owned(),
             config_json: String::new(),
@@ -125,7 +125,7 @@ fn criar_org(store: &Store, slug: &str) -> OrgId {
 fn criar_departamento(store: &Store, org: OrgId, nome: &str) -> DepartmentId {
     store
         .departments()
-        .criar(
+        .create(
             org,
             NewDepartment {
                 name: nome.to_owned(),
@@ -144,7 +144,7 @@ fn criar_agente(
 ) -> AgentId {
     store
         .agents()
-        .criar(
+        .create(
             org,
             NewAgent {
                 name: "Bia".to_owned(),
@@ -159,8 +159,8 @@ fn criar_agente(
 
 fn criar_conversa(store: &Store, org: OrgId, agente: AgentId, peer: &str) -> ConversationId {
     store
-        .conversas()
-        .criar(
+        .conversations()
+        .create(
             org,
             NewConversation {
                 agent_id: agente,
@@ -178,11 +178,11 @@ fn criar_conversa(store: &Store, org: OrgId, agente: AgentId, peer: &str) -> Con
 fn sala_pronta(store: &Store, org: OrgId, conversa: ConversationId) {
     store
         .matrix()
-        .garantir_sala(org, conversa, &sala_de(conversa), None)
+        .ensure_room(org, conversa, &sala_de(conversa), None)
         .expect("grava a sala");
     store
         .matrix()
-        .marcar_sala_pronta(org, conversa)
+        .mark_room_ready(org, conversa)
         .expect("marca pronta");
 }
 
@@ -190,7 +190,7 @@ fn sala_pronta(store: &Store, org: OrgId, conversa: ConversationId) {
 fn sala_em_criacao(store: &Store, org: OrgId, conversa: ConversationId) {
     store
         .matrix()
-        .garantir_sala(org, conversa, &sala_de(conversa), None)
+        .ensure_room(org, conversa, &sala_de(conversa), None)
         .expect("grava a sala");
 }
 
@@ -201,26 +201,26 @@ fn sala_de(conversa: ConversationId) -> String {
 /// Muda a situação da conversa pelo caminho de verdade (transfere, fecha, reabre).
 fn definir_status(store: &Store, org: OrgId, conversa: ConversationId, status: ConversationStatus) {
     let atual = store
-        .conversas()
+        .conversations()
         .get(org, conversa)
         .expect("conversa existe");
     match status {
         ConversationStatus::Open => {
             store
-                .conversas()
-                .reabrir_auditado(org, conversa, atual.version, "teste".to_owned())
+                .conversations()
+                .reopen_audited(org, conversa, atual.version, "teste".to_owned())
                 .expect("reabre");
         }
         ConversationStatus::Closed => {
             store
-                .conversas()
-                .fechar_auditado(org, conversa, atual.version, "teste".to_owned())
+                .conversations()
+                .close_audited(org, conversa, atual.version, "teste".to_owned())
                 .expect("fecha");
         }
         ConversationStatus::Transferred => {
             store
-                .conversas()
-                .transferir(org, conversa, None, None, "{}".to_owned())
+                .conversations()
+                .transfer(org, conversa, None, None, "{}".to_owned())
                 .expect("transfere");
         }
     }
@@ -455,7 +455,7 @@ struct Mundo {
 }
 
 fn mundo(store: &Store, org: OrgId) -> Mundo {
-    store.matrix().ligar(org).expect("liga o módulo");
+    store.matrix().enable(org).expect("liga o módulo");
     let agente = criar_agente(store, org, "bia", None);
     let conversa = criar_conversa(store, org, agente, "5511999990000");
     sala_pronta(store, org, conversa);
@@ -493,10 +493,10 @@ async fn transferencia_avisa_e_reescreve_o_metadata() {
     // A sala guardou a situação espelhada: a próxima passagem não repete nada.
     let sala = store
         .matrix()
-        .sala(org, mundo.conversa)
+        .room(org, mundo.conversa)
         .expect("lê a sala")
         .expect("sala existe");
-    assert_eq!(sala.ultimo_status, Some(ConversationStatus::Transferred));
+    assert_eq!(sala.last_status, Some(ConversationStatus::Transferred));
 }
 
 #[tokio::test]
@@ -562,8 +562,8 @@ async fn mesma_situacao_nao_escreve_nada() {
     // A conversa volta a ser lida (mensagem nova sobe o `updated_at`), com a mesma situação: a
     // passagem seguinte não pode escrever nada no Synapse.
     store
-        .conversas()
-        .tocar(org, mundo.conversa, 3_000_000)
+        .conversations()
+        .touch(org, mundo.conversa, 3_000_000)
         .expect("toca a conversa");
     let relatorio = estado.ciclo().await.expect("segunda passagem");
     assert_eq!(relatorio.conferidas, 1, "{relatorio:?}");
@@ -597,7 +597,7 @@ async fn conversa_sem_sala_nao_avisa_e_o_cursor_passa() {
     let cenario = Cenario::novo("sem-sala");
     let store = cenario.store();
     let org = criar_org(&store, "a");
-    store.matrix().ligar(org).expect("liga");
+    store.matrix().enable(org).expect("liga");
     let agente = criar_agente(&store, org, "bia", None);
     let conversa = criar_conversa(&store, org, agente, "5511999990000");
     // Sem sala: a MX-14 é quem cria.
@@ -609,8 +609,8 @@ async fn conversa_sem_sala_nao_avisa_e_o_cursor_passa() {
     assert_eq!(relatorio.sem_sala, 1, "{relatorio:?}");
     assert_eq!(destino.escritas(), 0);
     // O cursor passou: a conversa não fica presa.
-    let cursores = store.matrix().ler_cursores(org).expect("cursores");
-    assert!(cursores.conversas.atualizado_em > 0);
+    let cursores = store.matrix().read_cursors(org).expect("cursores");
+    assert!(cursores.conversations.updated_at > 0);
 }
 
 #[tokio::test]
@@ -618,7 +618,7 @@ async fn sala_em_criacao_espera_a_passagem_seguinte() {
     let cenario = Cenario::novo("em-criacao");
     let store = cenario.store();
     let org = criar_org(&store, "a");
-    store.matrix().ligar(org).expect("liga");
+    store.matrix().enable(org).expect("liga");
     let agente = criar_agente(&store, org, "bia", None);
     let conversa = criar_conversa(&store, org, agente, "5511999990000");
     sala_em_criacao(&store, org, conversa);
@@ -633,13 +633,13 @@ async fn sala_em_criacao_espera_a_passagem_seguinte() {
         0,
         "nada no Synapse antes da sala pronta"
     );
-    let cursores = store.matrix().ler_cursores(org).expect("cursores");
-    assert_eq!(cursores.conversas.atualizado_em, 0, "cursor não andou");
+    let cursores = store.matrix().read_cursors(org).expect("cursores");
+    assert_eq!(cursores.conversations.updated_at, 0, "cursor não andou");
 
     // A MX-11 termina a criação; a passagem seguinte avisa.
     store
         .matrix()
-        .marcar_sala_pronta(org, conversa)
+        .mark_room_ready(org, conversa)
         .expect("marca pronta");
     let relatorio = estado.ciclo().await.expect("segunda passagem");
     assert_eq!(relatorio.avisadas, 1, "{relatorio:?}");
@@ -660,17 +660,17 @@ async fn falha_transitoria_nao_avanca_o_cursor_e_a_passagem_seguinte_aplica() {
     let relatorio = estado.ciclo().await.expect("passagem com falha");
     assert_eq!(relatorio.adiadas, 1, "{relatorio:?}");
     assert_eq!(destino.avisos().len(), 0);
-    let cursores = store.matrix().ler_cursores(org).expect("cursores");
+    let cursores = store.matrix().read_cursors(org).expect("cursores");
     assert_eq!(
-        cursores.conversas.atualizado_em, 0,
+        cursores.conversations.updated_at, 0,
         "o cursor não pode consumir a conversa em silêncio"
     );
     let sala = store
         .matrix()
-        .sala(org, mundo.conversa)
+        .room(org, mundo.conversa)
         .expect("lê")
         .expect("existe");
-    assert_eq!(sala.ultimo_status, None, "nada espelhado");
+    assert_eq!(sala.last_status, None, "nada espelhado");
 
     // Synapse de volta: a passagem seguinte aplica o estado.
     let relatorio = estado.ciclo().await.expect("passagem seguinte");
@@ -695,9 +695,9 @@ async fn erro_definitivo_pula_a_conversa_e_nao_trava_a_fila() {
     assert_eq!(relatorio.puladas, 1, "{relatorio:?}");
     assert_eq!(relatorio.adiadas, 0);
     assert!(destino.avisos().is_empty(), "nada foi escrito na sala");
-    let cursores = store.matrix().ler_cursores(org).expect("cursores");
+    let cursores = store.matrix().read_cursors(org).expect("cursores");
     assert!(
-        cursores.conversas.atualizado_em > 0,
+        cursores.conversations.updated_at > 0,
         "recusa definitiva não pode travar o cursor"
     );
     // A conversa volta na próxima alteração dela, com o Synapse bom.
@@ -714,7 +714,7 @@ async fn duas_conversas_no_mesmo_milissegundo_nao_se_perdem() {
     let cenario = Cenario::novo("mesmo-instante");
     let store = cenario.store();
     let org = criar_org(&store, "a");
-    store.matrix().ligar(org).expect("liga");
+    store.matrix().enable(org).expect("liga");
     let agente = criar_agente(&store, org, "bia", None);
     let uma = criar_conversa(&store, org, agente, "5511999990001");
     let outra = criar_conversa(&store, org, agente, "5511999990002");
@@ -729,7 +729,7 @@ async fn duas_conversas_no_mesmo_milissegundo_nao_se_perdem() {
         .iter()
         .map(|conversa| {
             store
-                .conversas()
+                .conversations()
                 .get(org, *conversa)
                 .expect("existe")
                 .updated_at
@@ -758,7 +758,7 @@ async fn paginas_cobrem_todas_as_conversas_alteradas() {
     let cenario = Cenario::novo("paginas");
     let store = cenario.store();
     let org = criar_org(&store, "a");
-    store.matrix().ligar(org).expect("liga");
+    store.matrix().enable(org).expect("liga");
     let agente = criar_agente(&store, org, "bia", None);
     // Página de 2 e 5 conversas: são 3 páginas.
     let mut conversas = Vec::new();
@@ -790,7 +790,7 @@ async fn mudanca_de_departamento_move_a_sala_sem_aviso_duplicado() {
     let cenario = Cenario::novo("departamento");
     let store = cenario.store();
     let org = criar_org(&store, "a");
-    store.matrix().ligar(org).expect("liga");
+    store.matrix().enable(org).expect("liga");
     let suporte = criar_departamento(&store, org, "Suporte");
     let comercial = criar_departamento(&store, org, "Comercial");
     let agente = criar_agente(&store, org, "bia", Some(suporte));
@@ -799,7 +799,7 @@ async fn mudanca_de_departamento_move_a_sala_sem_aviso_duplicado() {
     // A sala já está no espaço do departamento padrão.
     store
         .matrix()
-        .definir_espaco_da_sala(org, conversa, Some("!espaco-suporte:matrix-dev.local"))
+        .set_space_of_room(org, conversa, Some("!espaco-suporte:matrix-dev.local"))
         .expect("grava o espaço");
 
     let destino = Falso::novo();
@@ -808,8 +808,8 @@ async fn mudanca_de_departamento_move_a_sala_sem_aviso_duplicado() {
 
     // Transferência para outro departamento: um aviso, um metadata e uma mudança de espaço.
     store
-        .conversas()
-        .transferir(org, conversa, Some(comercial), None, "{}".to_owned())
+        .conversations()
+        .transfer(org, conversa, Some(comercial), None, "{}".to_owned())
         .expect("transfere");
     let relatorio = estado.ciclo().await.expect("passagem");
     assert_eq!(relatorio.avisadas, 1, "{relatorio:?}");
@@ -859,7 +859,7 @@ async fn falha_de_espaco_nao_desfaz_o_estado_ja_espelhado() {
     let cenario = Cenario::novo("espaco-falha");
     let store = cenario.store();
     let org = criar_org(&store, "a");
-    store.matrix().ligar(org).expect("liga");
+    store.matrix().enable(org).expect("liga");
     let suporte = criar_departamento(&store, org, "Suporte");
     let agente = criar_agente(&store, org, "bia", Some(suporte));
     let conversa = criar_conversa(&store, org, agente, "5511999990000");
@@ -876,10 +876,10 @@ async fn falha_de_espaco_nao_desfaz_o_estado_ja_espelhado() {
     assert_eq!(destino.avisos().len(), 1);
     let sala = store
         .matrix()
-        .sala(org, conversa)
+        .room(org, conversa)
         .expect("lê")
         .expect("existe");
-    assert_eq!(sala.ultimo_status, Some(ConversationStatus::Transferred));
+    assert_eq!(sala.last_status, Some(ConversationStatus::Transferred));
 }
 
 // ───────────────────────────── corrida da situação ─────────────────────────────
@@ -988,7 +988,7 @@ async fn conversa_fechada_no_meio_da_passagem_nao_recebe_metadata_de_reabertura(
     // A sala já espelhou a transferência; a conversa está aberta de novo (reabertura pendente).
     store
         .matrix()
-        .definir_ultimo_status(org, mundo.conversa, ConversationStatus::Transferred)
+        .define_last_status(org, mundo.conversa, ConversationStatus::Transferred)
         .expect("grava a situação anterior");
     let destino = Falso::novo();
     let porta = PortaQueMente::nova(Arc::clone(&store));
@@ -1098,9 +1098,9 @@ async fn conversa_apagada_entre_a_pagina_e_a_leitura_nao_quebra_a_passagem() {
     assert_eq!(relatorio.sem_mudanca, 1, "{relatorio:?}");
     assert_eq!(relatorio.adiadas, 0, "{relatorio:?}");
     assert_eq!(destino.escritas(), 0);
-    let cursores = store.matrix().ler_cursores(org).expect("cursores");
+    let cursores = store.matrix().read_cursors(org).expect("cursores");
     assert!(
-        cursores.conversas.atualizado_em >= INSTANTE_INVENTADO,
+        cursores.conversations.updated_at >= INSTANTE_INVENTADO,
         "conversa que sumiu não prende o cursor"
     );
     let _ = mundo;
@@ -1218,7 +1218,7 @@ async fn resposta_e_metadata_nao_levam_dado_de_cliente() {
 /// Grava o nome do cliente pelo caminho de verdade da MX-32 (sobe `updated_at`, não `version`).
 fn definir_nome(store: &Store, org: OrgId, conversa: ConversationId, nome: &str) {
     let mudou = store
-        .conversas()
+        .conversations()
         .set_customer_name(org, conversa, nome)
         .expect("grava o nome do cliente");
     assert!(mudou, "o nome precisa ter mudado para o cursor enxergar");
@@ -1228,10 +1228,10 @@ fn definir_nome(store: &Store, org: OrgId, conversa: ConversationId, nome: &str)
 fn nome_espelhado(store: &Store, org: OrgId, conversa: ConversationId) -> Option<String> {
     store
         .matrix()
-        .sala(org, conversa)
+        .room(org, conversa)
         .expect("lê a sala")
         .expect("sala existe")
-        .nome_cliente_espelhado
+        .name_client_mirrored
 }
 
 /// Toca a conversa sem mudar nada: o cursor volta a vê-la, como uma mensagem nova do cliente.
@@ -1241,8 +1241,8 @@ fn nome_espelhado(store: &Store, org: OrgId, conversa: ConversationId) -> Option
 fn tocar(cenario: &Cenario, store: &Store, org: OrgId, conversa: ConversationId) {
     let quando = cenario.relogio.agora.fetch_add(60_000, Ordering::SeqCst) + 60_000;
     store
-        .conversas()
-        .tocar(org, conversa, quando)
+        .conversations()
+        .touch(org, conversa, quando)
         .expect("toca a conversa");
 }
 
@@ -1347,7 +1347,7 @@ async fn queda_entre_o_nome_e_o_metadata_retoma_sem_sala_nem_aviso_duplicado() {
     assert_eq!(
         store
             .matrix()
-            .sala(org, mundo.conversa)
+            .room(org, mundo.conversa)
             .expect("lê a sala")
             .expect("sala existe")
             .room_id,
@@ -1395,7 +1395,7 @@ async fn nome_atrasado_nao_devolve_conversa_fechada_para_active_no_metadata() {
     // A conversa continua encerrada (o nome atrasado não reabriu nada).
     assert_eq!(
         store
-            .conversas()
+            .conversations()
             .get(org, mundo.conversa)
             .expect("lê a conversa")
             .status,
@@ -1406,10 +1406,10 @@ async fn nome_atrasado_nao_devolve_conversa_fechada_para_active_no_metadata() {
     assert_eq!(
         store
             .matrix()
-            .sala(org, mundo.conversa)
+            .room(org, mundo.conversa)
             .expect("lê a sala")
             .expect("sala existe")
-            .ultimo_status,
+            .last_status,
         None,
         "renomear não espelha situação"
     );
@@ -1441,7 +1441,7 @@ async fn conversa_sem_nome_novo_e_org_desligada_nao_falam_com_o_synapse() {
     assert_eq!(destino.escritas(), escritas);
 
     // Org com o módulo desligado não gera chamada nenhuma, mesmo com nome novo na conversa.
-    store.matrix().desligar(org).expect("desliga a org");
+    store.matrix().disable(org).expect("desliga a org");
     definir_nome(&store, org, mundo.conversa, "Ana Maria");
     let escritas = destino.escritas();
     let relatorio = estado.ciclo().await.expect("passagem com a org desligada");

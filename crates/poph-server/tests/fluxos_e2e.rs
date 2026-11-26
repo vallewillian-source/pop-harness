@@ -54,7 +54,7 @@ impl Cenario {
         );
         let org = store
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: format!("Org {rotulo}"),
                 slug: format!("org-{rotulo}-{}", AgentId::generate()),
                 config_json: "{}".to_owned(),
@@ -63,7 +63,7 @@ impl Cenario {
             .id;
         let agente = store
             .agents()
-            .criar(
+            .create(
                 org,
                 NewAgent {
                     name: format!("Bia {rotulo}"),
@@ -93,14 +93,14 @@ impl Cenario {
                 .collect::<Vec<_>>()
         })
         .to_string();
-        let atual = self.store.instructions().versao(self.org, self.agente);
+        let atual = self.store.instructions().version(self.org, self.agente);
         let esperada = match atual {
             Ok(Some(versao)) => versao,
             _ => 0,
         };
         self.store
             .instructions()
-            .salvar(
+            .save(
                 self.org,
                 self.agente,
                 esperada,
@@ -121,8 +121,8 @@ impl Cenario {
     ) -> poph_types::FlowId {
         let fluxo = self
             .store
-            .fluxos()
-            .criar(
+            .flows()
+            .create(
                 self.org,
                 NewFlow {
                     slug: slug.to_owned(),
@@ -136,7 +136,7 @@ impl Cenario {
         let ir = compilado.ir().expect("o script do teste compila");
         self.store
             .revisions()
-            .publicar_revisao(
+            .publish_revision(
                 self.org,
                 fluxo.id,
                 RevisionPublication {
@@ -152,8 +152,8 @@ impl Cenario {
             .expect("publica a revisão");
         if liberar {
             self.store
-                .fluxos()
-                .liberar(self.org, self.agente, fluxo.id)
+                .flows()
+                .release(self.org, self.agente, fluxo.id)
                 .expect("libera o fluxo");
         }
         fluxo.id
@@ -161,8 +161,8 @@ impl Cenario {
 
     fn conversa(&self) -> ConversationId {
         self.store
-            .conversas()
-            .criar(
+            .conversations()
+            .create(
                 self.org,
                 NewConversation {
                     agent_id: self.agente,
@@ -179,7 +179,7 @@ impl Cenario {
     fn falar(&self, conversa: ConversationId, texto: &str) -> MessageId {
         self.store
             .messages()
-            .gravar(
+            .write(
                 self.org,
                 NewMessage {
                     conversation_id: conversa,
@@ -187,7 +187,7 @@ impl Cenario {
                     role: Role::User,
                     texto: texto.to_owned(),
                     attachments_json: "[]".to_owned(),
-                    id_externo: None,
+                    external_id: None,
                     turn_id: None,
                     origin: poph_store::Origin::Agente,
                     author_name: None,
@@ -262,8 +262,8 @@ impl Cenario {
 
     fn ficha(&self, conversa: ConversationId) -> poph_store::Ficha {
         self.store
-            .fichas()
-            .por_conversa(self.org, conversa)
+            .cases()
+            .by_conversation(self.org, conversa)
             .expect("lê a Ficha")
             .expect("a conversa tem Ficha")
     }
@@ -271,7 +271,7 @@ impl Cenario {
     fn execucao(&self, conversa: ConversationId) -> poph_store::Execution {
         self.store
             .executions()
-            .da_ficha(self.org, self.ficha(conversa).id, 20)
+            .from_case(self.org, self.ficha(conversa).id, 20)
             .expect("lê as execuções")
             .into_iter()
             .next()
@@ -490,7 +490,7 @@ async fn exemplo_entrega_notificacao_unica_e_transferencia_com_ficha_aberta() {
     c.criar_fluxo("confirmar_entrega", "Confirmar entrega", ENTREGA, true);
     c.store
         .departments()
-        .criar(
+        .create(
             c.org,
             poph_store::NewDepartment {
                 name: "Logística".into(),
@@ -535,8 +535,8 @@ async fn exemplo_entrega_notificacao_unica_e_transferencia_com_ficha_aberta() {
     );
     let conversa = |peer: &str| {
         c.store
-            .conversas()
-            .criar(
+            .conversations()
+            .create(
                 c.org,
                 NewConversation {
                     agent_id: c.agente,
@@ -622,7 +622,7 @@ async fn exemplo_entrega_notificacao_unica_e_transferencia_com_ficha_aberta() {
     .await;
     efeitos.ciclo_da_org(c.org).await.unwrap();
     assert_eq!(
-        c.store.conversas().get(c.org, segunda).unwrap().status,
+        c.store.conversations().get(c.org, segunda).unwrap().status,
         ConversationStatus::Transferred
     );
     assert_eq!(c.ficha(segunda).status, RecordStatus::Open);
@@ -661,11 +661,11 @@ async fn revisao_antiga_acao_humana_e_dois_fluxos_na_mesma_ficha() {
     let nova_fonte = visita_humana.replace("Visita agendada", "Resultado da versão nova");
     let compilado = compilar(&nova_fonte, &Limites::default());
     let ir = compilado.ir().unwrap();
-    let versao = c.store.fluxos().obter(c.org, fluxo).unwrap().version;
+    let versao = c.store.flows().get(c.org, fluxo).unwrap().version;
     let nova = c
         .store
         .revisions()
-        .publicar_revisao(
+        .publish_revision(
             c.org,
             fluxo,
             RevisionPublication {
@@ -766,7 +766,7 @@ async fn jev_falha_reserva_inicia_permitido_e_recusa_nao_liberado() {
     let runs = c
         .store
         .executions()
-        .da_ficha(c.org, c.ficha(conversa).id, 20)
+        .from_case(c.org, c.ficha(conversa).id, 20)
         .unwrap();
     assert_eq!(runs.len(), 1);
     assert_eq!(runs[0].fluxo_id, permitido);
@@ -787,17 +787,17 @@ async fn encerramento_do_agente_e_proxima_mensagem_abrem_nova_ficha() {
         integration_id: integracao,
         agent_id: c.agente,
         canal: "whatsapp".into(),
-        id_externo: id.into(),
+        external_id: id.into(),
         peer: "5511999990001".into(),
         event_json: "{}".into(),
         texto: "Olá".into(),
-        anexos: vec![],
+        attachments: vec![],
         customer_name: None,
     };
     let mensagem = c
         .store
         .inbox()
-        .receber_do_canal(c.org, entrada("fx35-1"))
+        .receive_from_channel(c.org, entrada("fx35-1"))
         .unwrap()
         .mensagem;
     let conversa = mensagem.conversation_id;
@@ -815,7 +815,7 @@ async fn encerramento_do_agente_e_proxima_mensagem_abrem_nova_ficha() {
     let proxima = c
         .store
         .inbox()
-        .receber_do_canal(c.org, entrada("fx35-2"))
+        .receive_from_channel(c.org, entrada("fx35-2"))
         .unwrap()
         .mensagem;
     assert_ne!(proxima.conversation_id, conversa);

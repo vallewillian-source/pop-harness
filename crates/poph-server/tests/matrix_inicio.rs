@@ -28,7 +28,7 @@ use poph_matrix::salas::TIPO_METADATA;
 use poph_server::matrix_inicio::AjustesDeInicio;
 use poph_server::{Estado, matrix_inicio};
 use poph_store::{
-    ConversationStatus, Direction, FiltroConversas, NewAgent, NewConversation, NewDepartment,
+    ConversationStatus, Direction, FilterConversations, NewAgent, NewConversation, NewDepartment,
     NewMessage, NewOrg, Origin, OutboxState, Page, Role, Store,
 };
 use poph_types::{
@@ -532,7 +532,7 @@ impl Cenario {
     fn org(&self, slug: &str) -> OrgId {
         self.store
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: format!("Org {slug}"),
                 slug: slug.to_owned(),
                 config_json: String::new(),
@@ -544,7 +544,7 @@ impl Cenario {
     fn agente(&self, org: OrgId) -> AgentId {
         self.store
             .agents()
-            .criar(
+            .create(
                 org,
                 NewAgent {
                     name: "Bia".to_owned(),
@@ -559,7 +559,7 @@ impl Cenario {
     fn departamento(&self, org: OrgId, nome: &str) -> DepartmentId {
         self.store
             .departments()
-            .criar(
+            .create(
                 org,
                 NewDepartment {
                     name: nome.to_owned(),
@@ -574,7 +574,7 @@ impl Cenario {
     fn agente_com_departamento(&self, org: OrgId, departamento: DepartmentId) -> AgentId {
         self.store
             .agents()
-            .criar(
+            .create(
                 org,
                 NewAgent {
                     name: "Bia".to_owned(),
@@ -589,8 +589,8 @@ impl Cenario {
 
     fn conversa(&self, org: OrgId, agente: AgentId, peer: &str) -> ConversationId {
         self.store
-            .conversas()
-            .criar(
+            .conversations()
+            .create(
                 org,
                 NewConversation {
                     agent_id: agente,
@@ -608,7 +608,7 @@ impl Cenario {
         self.relogio.fetch_add(10, Ordering::SeqCst);
         self.store
             .messages()
-            .gravar(
+            .write(
                 org,
                 NewMessage {
                     conversation_id: conversa,
@@ -618,7 +618,7 @@ impl Cenario {
                     author_name: None,
                     texto: texto.to_owned(),
                     attachments_json: "[]".to_owned(),
-                    id_externo: None,
+                    external_id: None,
                     turn_id: None,
                 },
             )
@@ -823,10 +823,10 @@ fn cena(rotulo: &str, endereco: String) -> Cena {
     let conversa = cenario.conversa(org, agente, "5511999999999");
     cenario
         .store
-        .conversas()
+        .conversations()
         .set_customer_name(org, conversa, "Ana Souza")
         .expect("grava o nome do cliente");
-    cenario.store.matrix().ligar(org).expect("liga a org");
+    cenario.store.matrix().enable(org).expect("liga a org");
     let primeiro = cenario.mensagem(org, conversa, "primeira resposta do agente");
     Cena {
         cenario,
@@ -879,12 +879,12 @@ async fn sala_criada_usa_o_nome_do_cliente_e_espelha_a_mensagem() {
         .cenario
         .store
         .matrix()
-        .sala(cena.org, cena.conversa)
+        .room(cena.org, cena.conversa)
         .expect("lê a sala")
         .expect("linha da sala");
     assert_eq!(
-        gravada.estado,
-        poph_store::EstadoSala::Pronta,
+        gravada.state,
+        poph_store::StateRoom::Ready,
         "a linha fica pronta depois da criação"
     );
     assert_eq!(gravada.room_id, sala);
@@ -903,7 +903,7 @@ async fn sala_criada_depois_da_passagem_do_estado_ja_entra_no_espaco_do_departam
     let departamento = cenario.departamento(org, "Comercial");
     let agente = cenario.agente_com_departamento(org, departamento);
     let conversa = cenario.conversa(org, agente, "5511988887777");
-    cenario.store.matrix().ligar(org).expect("liga a org");
+    cenario.store.matrix().enable(org).expect("liga a org");
 
     let mut estado = cenario.estado();
     let rodando = matrix_inicio::iniciar_com(&mut estado, cenario.modulo()).expect("módulo ligado");
@@ -911,15 +911,15 @@ async fn sala_criada_depois_da_passagem_do_estado_ja_entra_no_espaco_do_departam
     // O laço de estado vê a conversa **antes** de a sala existir (não há mensagem ainda): é o caso
     // em que antes a sala nascia fora do espaço e só entrava na próxima alteração da conversa.
     esperar_ate("o laço de estado passar pela conversa sem sala", || {
-        let cursores = cenario.store.matrix().ler_cursores(org).expect("cursores");
-        cursores.conversas.id == conversa.to_string()
+        let cursores = cenario.store.matrix().read_cursors(org).expect("cursores");
+        cursores.conversations.id == conversa.to_string()
     })
     .await;
     assert_eq!(
         cenario
             .store
             .matrix()
-            .sala(org, conversa)
+            .room(org, conversa)
             .expect("lê a sala"),
         None,
         "o laço de estado não cria sala: quem cria é o espelho"
@@ -950,7 +950,7 @@ async fn sala_criada_depois_da_passagem_do_estado_ja_entra_no_espaco_do_departam
     let espaco = cenario
         .store
         .matrix()
-        .espaco(org, departamento)
+        .space(org, departamento)
         .expect("lê o espaço")
         .expect("o espaço do departamento foi criado");
     let filho = synapse
@@ -963,11 +963,11 @@ async fn sala_criada_depois_da_passagem_do_estado_ja_entra_no_espaco_do_departam
     let gravada = cenario
         .store
         .matrix()
-        .sala(org, conversa)
+        .room(org, conversa)
         .expect("lê a sala")
         .expect("linha da sala");
     assert_eq!(
-        gravada.espaco.as_deref(),
+        gravada.space.as_deref(),
         Some(espaco.room_id.as_str()),
         "o vínculo da sala com o espaço fica gravado"
     );
@@ -1012,7 +1012,7 @@ async fn desligar_org_para_o_espelho_dela_sem_reiniciar() {
     cena.cenario
         .store
         .matrix()
-        .desligar(cena.org)
+        .disable(cena.org)
         .expect("desliga");
     cena.cenario
         .mensagem(cena.org, cena.conversa, "mensagem com a org desligada");
@@ -1026,7 +1026,11 @@ async fn desligar_org_para_o_espelho_dela_sem_reiniciar() {
     // Religar volta a espelhar: a org reaparece para o laço sem reiniciar o servidor. O que foi
     // escrito **enquanto** ela estava desligada fica de fora de propósito — religar move o corte do
     // backfill (P8), e só o que vem depois entra. Por isso a mensagem que prova a volta é nova.
-    cena.cenario.store.matrix().ligar(cena.org).expect("religa");
+    cena.cenario
+        .store
+        .matrix()
+        .enable(cena.org)
+        .expect("religa");
     cena.cenario
         .mensagem(cena.org, cena.conversa, "mensagem depois de religar");
     esperar_ate("a mensagem nova sair depois de religar", || {
@@ -1062,9 +1066,9 @@ async fn termino_ordenado_nao_perde_mensagem_pendente() {
         .cenario
         .store
         .matrix()
-        .ler_cursores(cena.org)
+        .read_cursors(cena.org)
         .expect("cursor")
-        .mensagens;
+        .messages;
     assert_eq!(cursor, 0, "o cursor não anda sem sucesso");
 
     rodando
@@ -1132,7 +1136,7 @@ async fn resposta_do_atendente_esta_ligada_no_servidor() {
         cena.cenario
             .store
             .outbox()
-            .contar_por_estado(cena.org, OutboxState::Pending)
+            .count_by_state(cena.org, OutboxState::Pending)
             .map(|total| total >= 1)
             .unwrap_or(false)
     })
@@ -1140,7 +1144,7 @@ async fn resposta_do_atendente_esta_ligada_no_servidor() {
     let conversa = cena
         .cenario
         .store
-        .conversas()
+        .conversations()
         .get(cena.org, cena.conversa)
         .expect("lê a conversa");
     assert_eq!(
@@ -1232,7 +1236,7 @@ async fn metadata_leva_o_external_peer_sem_espacos_na_criacao_e_no_fechamento() 
     let agente = cenario.agente(org);
     // O espaço nas pontas fica gravado no banco de propósito: o identificador tem de sair sem ele.
     let conversa = cenario.conversa(org, agente, "  5511999999999 ");
-    cenario.store.matrix().ligar(org).expect("liga a org");
+    cenario.store.matrix().enable(org).expect("liga a org");
     cenario.mensagem(org, conversa, "primeira resposta do agente");
 
     let mut estado = cenario.estado();
@@ -1252,13 +1256,13 @@ async fn metadata_leva_o_external_peer_sem_espacos_na_criacao_e_no_fechamento() 
     // Fechar a conversa faz o laço de estado reescrever o metadata: a regra tem de ser a mesma.
     let atual = cenario
         .store
-        .conversas()
+        .conversations()
         .get(org, conversa)
         .expect("conversa");
     cenario
         .store
-        .conversas()
-        .fechar_auditado(org, conversa, atual.version, "teste".to_owned())
+        .conversations()
+        .close_audited(org, conversa, atual.version, "teste".to_owned())
         .expect("fecha a conversa");
     esperar_ate("o metadata reescrito no fechamento", || {
         synapse
@@ -1289,8 +1293,8 @@ async fn conversa_sem_peer_usa_o_id_da_conversa_no_metadata() {
     let agente = cenario.agente(org);
     let conversa = cenario
         .store
-        .conversas()
-        .criar(
+        .conversations()
+        .create(
             org,
             NewConversation {
                 agent_id: agente,
@@ -1302,7 +1306,7 @@ async fn conversa_sem_peer_usa_o_id_da_conversa_no_metadata() {
         )
         .expect("cria a conversa sem cliente")
         .id;
-    cenario.store.matrix().ligar(org).expect("liga a org");
+    cenario.store.matrix().enable(org).expect("liga a org");
     cenario.mensagem(org, conversa, "primeira resposta do agente");
 
     let mut estado = cenario.estado();
@@ -1336,7 +1340,7 @@ async fn listagem_por_cliente_acha_so_a_conversa_do_identificador_do_metadata() 
     let org_b = cenario.org("b");
     let agente_b = cenario.agente(org_b);
     let conversa_b = cenario.conversa(org_b, agente_b, "5511888888888");
-    cenario.store.matrix().ligar(org_a).expect("liga a org");
+    cenario.store.matrix().enable(org_a).expect("liga a org");
     cenario.mensagem(org_a, conversa_a, "primeira resposta do agente");
 
     let mut estado = cenario.estado();
@@ -1354,15 +1358,15 @@ async fn listagem_por_cliente_acha_so_a_conversa_do_identificador_do_metadata() 
     assert_eq!(identificador, "5511888888888");
 
     // O que o Element pede ao Harness para achar o histórico: a lista filtrada pelo mesmo valor.
-    let filtro = FiltroConversas {
+    let filtro = FilterConversations {
         status: None,
         external_peer: Some(identificador),
         ..Default::default()
     };
     let da_a: Vec<String> = cenario
         .store
-        .conversas()
-        .listar_filtrado(org_a, &filtro, Page::default())
+        .conversations()
+        .list_filter(org_a, &filtro, Page::default())
         .expect("lista a org A")
         .iter()
         .map(|conversa| conversa.id.to_string())
@@ -1374,8 +1378,8 @@ async fn listagem_por_cliente_acha_so_a_conversa_do_identificador_do_metadata() 
     );
     let da_b: Vec<String> = cenario
         .store
-        .conversas()
-        .listar_filtrado(org_b, &filtro, Page::default())
+        .conversations()
+        .list_filter(org_b, &filtro, Page::default())
         .expect("lista a org B")
         .iter()
         .map(|conversa| conversa.id.to_string())

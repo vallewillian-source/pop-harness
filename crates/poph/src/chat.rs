@@ -156,7 +156,7 @@ fn rodar(
 
             let mensagem = store
                 .messages()
-                .gravar(
+                .write(
                     org,
                     NewMessage {
                         conversation_id: conversa.id,
@@ -164,7 +164,7 @@ fn rodar(
                         role: Role::User,
                         texto: texto.to_owned(),
                         attachments_json: "[]".to_owned(),
-                        id_externo: None,
+                        external_id: None,
                         turn_id: None,
                         origin: poph_store::Origin::Agente,
                         author_name: None,
@@ -284,7 +284,7 @@ fn resolver_agente(store: &Store, org: OrgId, texto: &str) -> Result<poph_store:
     }
     store
         .agents()
-        .por_slug(org, texto)
+        .by_slug(org, texto)
         .map_err(|erro| apoio::descrever(&erro))
 }
 
@@ -299,7 +299,7 @@ fn resolver_conversa(
         Some(texto) => {
             let id: ConversationId = apoio::parse_id(texto)?;
             let conversa = store
-                .conversas()
+                .conversations()
                 .get(org, id)
                 .map_err(|erro| apoio::descrever(&erro))?;
             if conversa.agent_id != *agente {
@@ -311,8 +311,8 @@ fn resolver_conversa(
             Ok(conversa)
         }
         None => store
-            .conversas()
-            .criar(
+            .conversations()
+            .create(
                 org,
                 NewConversation {
                     agent_id: *agente,

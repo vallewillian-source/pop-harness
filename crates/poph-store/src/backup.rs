@@ -476,14 +476,17 @@ fn import(
             FROM conversations c WHERE c.org_id = '{}' AND NOT EXISTS
                 (SELECT 1 FROM fichas f WHERE f.conversation_id = c.id);"#, org_id))?;
     }
-    if let Some(conversas) = snapshot.tables.get("conversations") {
-        for conversa in conversas {
-            let id = conversa.get("id").and_then(Value::as_str).ok_or_else(|| {
-                StoreError::Domain(DomainError::Validation {
-                    field: "backup",
-                    reason: "conversa sem id".to_owned(),
-                })
-            })?;
+    if let Some(conversations) = snapshot.tables.get("conversations") {
+        for conversation in conversations {
+            let id = conversation
+                .get("id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    StoreError::Domain(DomainError::Validation {
+                        field: "backup",
+                        reason: "conversa sem id".to_owned(),
+                    })
+                })?;
             let exists: bool = conn.query_row(
                 "SELECT EXISTS(SELECT 1 FROM fichas WHERE org_id = ?1 AND conversation_id = ?2)",
                 rusqlite::params![org_id.to_string(), id],
@@ -762,11 +765,11 @@ fn write_row(
         );
     }
     if table.name == "fichas"
-        && let Some(conversa) = object.get("conversation_id").and_then(Value::as_str)
+        && let Some(conversation) = object.get("conversation_id").and_then(Value::as_str)
     {
         let exists: bool = conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM conversations WHERE org_id = ?1 AND id = ?2)",
-            rusqlite::params![org_id.to_string(), conversa],
+            rusqlite::params![org_id.to_string(), conversation],
             |row| row.get(0),
         )?;
         if !exists {
@@ -998,7 +1001,7 @@ mod tests {
     fn org_with_data(store: &Store, slug: &str) -> OrgId {
         let org = store
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: format!("Org {slug}"),
                 slug: slug.to_owned(),
                 config_json: "{\"retencao\":{\"dias\":7}}".to_owned(),
@@ -1007,7 +1010,7 @@ mod tests {
             .id;
         store
             .agents()
-            .criar(
+            .create(
                 org,
                 NewAgent {
                     name: "Bia".to_owned(),
@@ -1018,7 +1021,7 @@ mod tests {
             .expect("cria o agente");
         store
             .categories()
-            .criar(
+            .create(
                 org,
                 NewCategory {
                     name: "Pragas".to_owned(),
@@ -1064,7 +1067,7 @@ mod tests {
             .expect("segunda importação");
         assert!(second.tables.values().all(|t| t.inserted == 0));
         assert_eq!(second.total(), first.total());
-        let agents = store.agents().listar(origin, Page::default()).unwrap();
+        let agents = store.agents().list(origin, Page::default()).unwrap();
         assert_eq!(agents.len(), 1);
     }
 
@@ -1072,7 +1075,7 @@ mod tests {
     fn import_into_clean_instance_creates_org_and_preserves_ids() {
         let origin = database();
         let org = org_with_data(&origin, "origem");
-        let agente = origin.agents().listar(org, Page::default()).unwrap()[0].id;
+        let agent = origin.agents().list(org, Page::default()).unwrap()[0].id;
         let snapshot = origin.org_snapshot(org, true).expect("retrato");
 
         let target = database();
@@ -1081,7 +1084,7 @@ mod tests {
             .expect("importa");
         assert!(report.created_org);
         assert_eq!(report.org, org);
-        let imported_agent = target.agents().get(org, agente).expect("agente");
+        let imported_agent = target.agents().get(org, agent).expect("agente");
         assert_eq!(imported_agent.slug, "bia");
         let imported_org = target.orgs().get(org).expect("org");
         assert_eq!(imported_org.config_json, "{\"retencao\":{\"dias\":7}}");
@@ -1096,7 +1099,7 @@ mod tests {
         let destination = database();
         let target = destination
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: "Alvo".to_owned(),
                 slug: "alvo".to_owned(),
                 config_json: "{}".to_owned(),
@@ -1114,13 +1117,13 @@ mod tests {
     }
 
     fn conversation_with_name(store: &Store, org: OrgId, name: &str) -> crate::Conversa {
-        let agente = store.agents().listar(org, Page::default()).unwrap()[0].id;
-        let conversa = store
-            .conversas()
-            .criar(
+        let agent = store.agents().list(org, Page::default()).unwrap()[0].id;
+        let conversation = store
+            .conversations()
+            .create(
                 org,
                 crate::NewConversation {
-                    agent_id: agente,
+                    agent_id: agent,
                     integration_id: None,
                     canal: "whatsapp".to_owned(),
                     peer_externo: Some("5511999990000".to_owned()),
@@ -1129,35 +1132,35 @@ mod tests {
             )
             .expect("cria a conversa");
         store
-            .conversas()
-            .set_customer_name(org, conversa.id, name)
+            .conversations()
+            .set_customer_name(org, conversation.id, name)
             .expect("grava o nome do cliente");
-        conversa
+        conversation
     }
 
     #[test]
     fn backup_of_flows_records_and_revisions_preserves_state() {
         let origin = database();
         let org = org_with_data(&origin, "origem");
-        let conversa = conversation_with_name(&origin, org, "Cliente fictício");
-        let agente = origin.agents().listar(org, Page::default()).unwrap()[0].id;
-        let ficha = origin.org_snapshot(org, true).unwrap().tables["fichas"][0]["id"]
+        let conversation = conversation_with_name(&origin, org, "Cliente fictício");
+        let agent = origin.agents().list(org, Page::default()).unwrap()[0].id;
+        let case = origin.org_snapshot(org, true).unwrap().tables["fichas"][0]["id"]
             .as_str()
             .unwrap()
             .to_owned();
         origin.write(move |conn| {
             let org = org.to_string();
-            let agente = agente.to_string();
+            let agent = agent.to_string();
             for (id, slug, current) in [("flow-a", "first", 2), ("flow-b", "second", 1)] {
                 conn.execute("INSERT INTO fluxos (id, org_id, slug, nome, revisao_atual) VALUES (?1, ?2, ?3, ?3, ?4)", rusqlite::params![id, org, slug, current])?;
-                conn.execute("INSERT INTO agente_fluxos (org_id, agent_id, fluxo_id, liberado_em) VALUES (?1, ?2, ?3, 1)", rusqlite::params![org, agente, id])?;
+                conn.execute("INSERT INTO agente_fluxos (org_id, agent_id, fluxo_id, liberado_em) VALUES (?1, ?2, ?3, 1)", rusqlite::params![org, agent, id])?;
             }
-            for (id, fluxo, numero) in [("rev-a1", "flow-a", 1), ("rev-a2", "flow-a", 2), ("rev-b1", "flow-b", 1)] {
-                conn.execute("INSERT INTO fluxo_revisoes (id, org_id, fluxo_id, numero, fonte, fonte_sha256, definicao_json, publicada_em, publicada_por) VALUES (?1, ?2, ?3, ?4, 'fonte', 'hash', '{}', 1, 'cli')", rusqlite::params![id, org, fluxo, numero])?;
+            for (id, flow, numero) in [("rev-a1", "flow-a", 1), ("rev-a2", "flow-a", 2), ("rev-b1", "flow-b", 1)] {
+                conn.execute("INSERT INTO fluxo_revisoes (id, org_id, fluxo_id, numero, fonte, fonte_sha256, definicao_json, publicada_em, publicada_por) VALUES (?1, ?2, ?3, ?4, 'fonte', 'hash', '{}', 1, 'cli')", rusqlite::params![id, org, flow, numero])?;
             }
-            conn.execute("INSERT INTO fluxo_execucoes (id, org_id, ficha_id, fluxo_id, revisao_id, no_atual, iniciada_em) VALUES ('exec', ?1, ?2, 'flow-a', 'rev-a1', 'etapa', 1)", rusqlite::params![org, ficha])?;
+            conn.execute("INSERT INTO fluxo_execucoes (id, org_id, ficha_id, fluxo_id, revisao_id, no_atual, iniciada_em) VALUES ('exec', ?1, ?2, 'flow-a', 'rev-a1', 'etapa', 1)", rusqlite::params![org, case])?;
             conn.execute("INSERT INTO fluxo_execucao_etapas (id, org_id, execucao_id, no_id, ordem, entrou_em) VALUES ('etapa', ?1, 'exec', 'etapa', 1, 1)", [&org])?;
-            conn.execute("INSERT INTO fluxo_efeitos (id, org_id, ficha_id, execucao_id, chave, tipo, created_at) VALUES ('efeito', ?1, ?2, 'exec', 'um', 'mensagem_ao_cliente', 1)", rusqlite::params![org, ficha])?;
+            conn.execute("INSERT INTO fluxo_efeitos (id, org_id, ficha_id, execucao_id, chave, tipo, created_at) VALUES ('efeito', ?1, ?2, 'exec', 'um', 'mensagem_ao_cliente', 1)", rusqlite::params![org, case])?;
             Ok(())
         }).unwrap();
         let snapshot = origin.org_snapshot(org, true).unwrap();
@@ -1175,7 +1178,7 @@ mod tests {
         }
         assert_eq!(
             snapshot.tables["fichas"][0]["conversation_id"],
-            conversa.id.to_string()
+            conversation.id.to_string()
         );
         let target = database();
         target
@@ -1218,11 +1221,11 @@ mod tests {
         assert!(incomplete_database.orgs().get(org).is_err());
         let without = origin.org_snapshot(org, false).unwrap();
         assert!(!without.tables.contains_key("fichas"));
-        let vazio = database();
-        vazio
+        let empty = database();
+        empty
             .import_snapshot(without, ImportTarget::Origin)
             .unwrap();
-        assert!(vazio.org_snapshot(org, true).unwrap().tables["fichas"].is_empty());
+        assert!(empty.org_snapshot(org, true).unwrap().tables["fichas"].is_empty());
         let mut old = snapshot.clone();
         for name in [
             "fluxos",
@@ -1244,21 +1247,21 @@ mod tests {
         old_target
             .import_snapshot(old, ImportTarget::Origin)
             .unwrap();
-        let fichas = old_target
+        let cases = old_target
             .org_snapshot(org, true)
             .unwrap()
             .tables
             .remove("fichas")
             .unwrap();
-        assert_eq!(fichas.len(), 1);
-        assert_eq!(fichas[0]["conversation_id"], conversa.id.to_string());
+        assert_eq!(cases.len(), 1);
+        assert_eq!(cases[0]["conversation_id"], conversation.id.to_string());
     }
 
     #[test]
     fn backup_with_conversations_carries_the_customer_name() {
         let origin = database();
         let org = org_with_data(&origin, "origem");
-        let conversa = conversation_with_name(&origin, org, "Ana Cliente");
+        let conversation = conversation_with_name(&origin, org, "Ana Cliente");
         let snapshot = origin.org_snapshot(org, true).expect("retrato");
         assert_eq!(
             snapshot.tables["conversations"][0]["client_name"],
@@ -1270,8 +1273,8 @@ mod tests {
             .import_snapshot(snapshot, ImportTarget::Origin)
             .expect("importa");
         let imported = target
-            .conversas()
-            .get(org, conversa.id)
+            .conversations()
+            .get(org, conversation.id)
             .expect("conversa importada");
         assert_eq!(imported.customer_name.as_deref(), Some("Ana Cliente"));
     }
@@ -1280,7 +1283,7 @@ mod tests {
     fn old_backup_without_the_column_imports_and_leaves_the_name_null() {
         let origin = database();
         let org = org_with_data(&origin, "origem");
-        let conversa = conversation_with_name(&origin, org, "Ana Cliente");
+        let conversation = conversation_with_name(&origin, org, "Ana Cliente");
         let mut snapshot = origin.org_snapshot(org, true).expect("retrato");
         for row in snapshot.tables.get_mut("conversations").expect("conversas") {
             row.as_object_mut().expect("objeto").remove("client_name");
@@ -1291,8 +1294,8 @@ mod tests {
             .import_snapshot(snapshot, ImportTarget::Origin)
             .expect("importa o backup antigo");
         let imported = target
-            .conversas()
-            .get(org, conversa.id)
+            .conversations()
+            .get(org, conversation.id)
             .expect("conversa importada");
         assert_eq!(imported.customer_name, None);
     }
@@ -1301,7 +1304,7 @@ mod tests {
     fn old_backup_does_not_erase_the_name_already_stored_at_the_target() {
         let origin = database();
         let org = org_with_data(&origin, "origem");
-        let conversa = conversation_with_name(&origin, org, "Ana Cliente");
+        let conversation = conversation_with_name(&origin, org, "Ana Cliente");
         let new_snapshot = origin.org_snapshot(org, true).expect("retrato");
         let mut old_snapshot = new_snapshot.clone();
         for row in old_snapshot
@@ -1319,7 +1322,10 @@ mod tests {
         target
             .import_snapshot(old_snapshot, ImportTarget::Origin)
             .expect("reimporta o backup antigo");
-        let after = target.conversas().get(org, conversa.id).expect("conversa");
+        let after = target
+            .conversations()
+            .get(org, conversation.id)
+            .expect("conversa");
         assert_eq!(
             after.customer_name.as_deref(),
             Some("Ana Cliente"),
@@ -1336,7 +1342,7 @@ mod tests {
         let destination = database();
         let target = destination
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: "Alvo".to_owned(),
                 slug: "alvo".to_owned(),
                 config_json: "{}".to_owned(),
@@ -1345,7 +1351,7 @@ mod tests {
             .id;
         destination
             .agents()
-            .criar(
+            .create(
                 target,
                 NewAgent {
                     name: "Outra Bia".to_owned(),
@@ -1361,7 +1367,7 @@ mod tests {
         assert_eq!(
             destination
                 .categories()
-                .listar(target, Page::default())
+                .list(target, Page::default())
                 .unwrap()
                 .len(),
             0
@@ -1385,7 +1391,7 @@ mod tests {
         let destination = database();
         let target = destination
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: "Alvo".to_owned(),
                 slug: "alvo".to_owned(),
                 config_json: "{}".to_owned(),
@@ -1394,7 +1400,7 @@ mod tests {
             .id;
         destination
             .agents()
-            .criar(
+            .create(
                 target,
                 NewAgent {
                     name: "Outra Bia".to_owned(),
@@ -1411,7 +1417,7 @@ mod tests {
         assert_eq!(
             destination
                 .categories()
-                .listar(target, Page::default())
+                .list(target, Page::default())
                 .unwrap()
                 .len(),
             0
@@ -1426,12 +1432,12 @@ mod tests {
         let file_rows: u64 = snapshot.tables.values().map(|l| l.len() as u64).sum();
 
         let clean = database();
-        let vazio = clean
+        let empty = clean
             .check_import_updates(&snapshot, ImportTarget::Origin)
             .expect("confere");
-        assert!(vazio.empty(), "{vazio:?}");
-        assert_eq!(vazio.total, 0);
-        assert!(vazio.examples.is_empty());
+        assert!(empty.empty(), "{empty:?}");
+        assert_eq!(empty.total, 0);
+        assert!(empty.examples.is_empty());
         assert!(
             clean.orgs().get(org_origem).is_err(),
             "a conferência é leitura: não pode criar a org"
@@ -1467,7 +1473,7 @@ mod tests {
         let destination = database();
         let target = destination
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: "Alvo".to_owned(),
                 slug: "alvo".to_owned(),
                 config_json: "{}".to_owned(),

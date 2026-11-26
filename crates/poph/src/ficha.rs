@@ -108,7 +108,7 @@ fn listar(store: &Store, org: OrgId, args: ListarArgs) -> Result<ExitCode, Strin
             .map(RecordStatus::from_text)
             .transpose()
             .map_err(|erro| erro.to_string())?,
-        agente: match args.agente.as_deref() {
+        agent: match args.agente.as_deref() {
             Some(texto) => Some(resolver_agente(store, org, texto)?.id),
             None => None,
         },
@@ -119,11 +119,11 @@ fn listar(store: &Store, org: OrgId, args: ListarArgs) -> Result<ExitCode, Strin
             Some(texto) => Some(texto.trim().to_owned()),
             None => None,
         },
-        desde: args.desde,
+        since: args.desde,
     };
     let fichas = store
-        .fichas()
-        .listar(org, &filtro, pagina)
+        .cases()
+        .list(org, &filtro, pagina)
         .map_err(|erro| descrever(&erro))?;
     let next_cursor = if fichas.len() < pagina.limit as usize {
         None

@@ -107,7 +107,7 @@ pub async fn listar(
     let org = id_da_url::<OrgId>(&caminho.org_id)?;
     identidade.exigir_org(org)?;
     let pagina = consulta.pagina()?;
-    let tokens = estado.store.tokens().listar(org, pagina)?;
+    let tokens = estado.store.tokens().list(org, pagina)?;
     let items: Vec<TokenJson> = tokens.iter().map(TokenJson::de).collect();
     let next_cursor = proximo_cursor(&items, pagina.limit, |item| item.id.clone());
     Ok(Json(ListaJson { items, next_cursor }))
@@ -147,7 +147,7 @@ pub async fn criar(
     estado.store.orgs().get(org)?;
     let segredo = gerar_segredo();
     let hash = gerar_hash(&segredo)?;
-    let token = estado.store.tokens().criar(Some(org), rotulo, &hash)?;
+    let token = estado.store.tokens().create(Some(org), rotulo, &hash)?;
     super::auditoria::registrar(
         &estado,
         &identidade,
@@ -190,7 +190,7 @@ pub async fn mostrar(
     let org = id_da_url::<OrgId>(&caminho.org_id)?;
     let token = id_da_url::<AdminTokenId>(&caminho.token_id)?;
     identidade.exigir_org(org)?;
-    let registro = estado.store.tokens().obter(org, token)?;
+    let registro = estado.store.tokens().get(org, token)?;
     Ok(Json(TokenJson::de(&registro)))
 }
 
@@ -219,8 +219,8 @@ pub async fn revogar(
     let token = id_da_url::<AdminTokenId>(&caminho.token_id)?;
     identidade.exigir_global()?;
     // Revogar token de outra org não pode acontecer por engano: confere a existência na org.
-    estado.store.tokens().obter(org, token)?;
-    estado.store.tokens().revogar(org, token)?;
+    estado.store.tokens().get(org, token)?;
+    estado.store.tokens().revoke(org, token)?;
     super::auditoria::registrar(
         &estado,
         &identidade,

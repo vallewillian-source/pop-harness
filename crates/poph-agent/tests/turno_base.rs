@@ -67,7 +67,7 @@ impl Cenario {
         );
         let org = store
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: format!("Org {rotulo}"),
                 slug: format!("org-{rotulo}-{}", AgentId::generate()),
                 config_json: "{}".to_owned(),
@@ -76,7 +76,7 @@ impl Cenario {
             .id;
         let agente = store
             .agents()
-            .criar(
+            .create(
                 org,
                 NewAgent {
                     name: format!("Bia {rotulo}"),
@@ -90,7 +90,7 @@ impl Cenario {
             .id;
         store
             .instructions()
-            .salvar(
+            .save(
                 org,
                 agente,
                 0,
@@ -101,7 +101,7 @@ impl Cenario {
             .expect("grava as instruções");
         let grupo = store
             .knowledge()
-            .criar_grupo(
+            .create_group(
                 org,
                 NewKnowledgeGroup {
                     name: "Políticas".to_owned(),
@@ -112,15 +112,15 @@ impl Cenario {
             .id;
         store
             .knowledge()
-            .vincular_agente(org, agente, grupo)
+            .link_agent(org, agente, grupo)
             .expect("liga o grupo");
         let embedder: Arc<dyn Embedder> = Arc::new(EmbedderFake::new());
         let (indice, _) = Indice::abrir(store.rag_path(), embedder, ConfigIndice::default())
             .expect("abre o índice");
         let base = BaseConhecimento::nova(Arc::clone(&store), Arc::new(indice));
         let conversa = store
-            .conversas()
-            .criar(
+            .conversations()
+            .create(
                 org,
                 NewConversation {
                     agent_id: agente,
@@ -147,7 +147,7 @@ impl Cenario {
     fn criar_item(&self, titulo: &str, conteudo: &str) {
         self.store
             .knowledge()
-            .criar_item(
+            .create_item(
                 self.org,
                 NewKnowledgeItem {
                     group_id: self.grupo,
@@ -163,7 +163,7 @@ impl Cenario {
     fn falar(&self, texto: &str) -> MessageId {
         self.store
             .messages()
-            .gravar(
+            .write(
                 self.org,
                 NewMessage {
                     conversation_id: self.conversa,
@@ -171,7 +171,7 @@ impl Cenario {
                     role: Role::User,
                     texto: texto.to_owned(),
                     attachments_json: "[]".to_owned(),
-                    id_externo: None,
+                    external_id: None,
                     turn_id: None,
                     origin: poph_store::Origin::Agente,
                     author_name: None,
@@ -239,7 +239,7 @@ impl Cenario {
     fn turnos(&self) -> Vec<poph_store::Turno> {
         self.store
             .turns()
-            .listar(self.org, self.conversa, Page::with_limit(50))
+            .list(self.org, self.conversa, Page::with_limit(50))
             .expect("lista os turnos")
     }
 }
@@ -385,7 +385,7 @@ async fn pergunta_sem_resposta_na_base_nao_injeta_bloco() {
     cenario
         .store
         .agents()
-        .atualizar(
+        .update(
             cenario.org,
             cenario.agente,
             versao,

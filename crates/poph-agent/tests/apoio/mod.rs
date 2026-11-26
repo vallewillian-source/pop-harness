@@ -89,7 +89,7 @@ impl Cenario {
         );
         let org = store
             .orgs()
-            .criar(poph_store::NewOrg {
+            .create(poph_store::NewOrg {
                 name: format!("Org {rotulo}"),
                 slug: format!("org-{rotulo}-{}-{}", std::process::id(), fastrand()),
                 config_json: "{}".to_owned(),
@@ -98,7 +98,7 @@ impl Cenario {
             .id;
         let agente = store
             .agents()
-            .criar(
+            .create(
                 org,
                 NewAgent {
                     name: format!("Bia {rotulo}"),
@@ -111,7 +111,7 @@ impl Cenario {
         let estruturado = StructuredInstructions::default();
         store
             .instructions()
-            .salvar(
+            .save(
                 org,
                 agente.id,
                 0,
@@ -121,8 +121,8 @@ impl Cenario {
             )
             .expect("grava as instruções");
         let conversa = store
-            .conversas()
-            .criar(
+            .conversations()
+            .create(
                 org,
                 NewConversation {
                     agent_id: agente.id,
@@ -173,7 +173,7 @@ impl Cenario {
         }
         self.store
             .messages()
-            .gravar_com_anexos(
+            .write_with_attachments(
                 self.org,
                 NewMessage {
                     conversation_id: self.conversa,
@@ -181,7 +181,7 @@ impl Cenario {
                     role: Role::User,
                     texto: texto.to_owned(),
                     attachments_json: "[]".to_owned(),
-                    id_externo: None,
+                    external_id: None,
                     turn_id: None,
                     origin: poph_store::Origin::Agente,
                     author_name: None,

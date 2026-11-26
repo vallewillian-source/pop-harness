@@ -65,7 +65,7 @@ impl Cenario {
     fn org(&self, slug: &str) -> Org {
         self.store
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: format!("Org {slug}"),
                 slug: slug.to_owned(),
                 config_json: String::new(),
@@ -84,7 +84,7 @@ impl Cenario {
         let criado = self
             .store
             .tokens()
-            .criar(Some(org), rotulo, &hash)
+            .create(Some(org), rotulo, &hash)
             .expect("cria o token");
         format!("poph_{}_{segredo}", criado.id)
     }
@@ -92,7 +92,7 @@ impl Cenario {
     fn agente(&self, org: &Org, slug: &str, nome: &str) -> Agente {
         self.store
             .agents()
-            .criar(
+            .create(
                 org.id,
                 NewAgent {
                     name: nome.to_owned(),
@@ -105,8 +105,8 @@ impl Cenario {
 
     fn conversa(&self, org: &Org, agente: AgentId) -> Conversa {
         self.store
-            .conversas()
-            .criar(
+            .conversations()
+            .create(
                 org.id,
                 NewConversation {
                     agent_id: agente,
@@ -123,12 +123,12 @@ impl Cenario {
     fn sala(&self, org: &Org, conversa: ConversationId, room: &str, pronta: bool) {
         self.store
             .matrix()
-            .garantir_sala(org.id, conversa, room, None)
+            .ensure_room(org.id, conversa, room, None)
             .expect("garante a sala");
         if pronta {
             self.store
                 .matrix()
-                .marcar_sala_pronta(org.id, conversa)
+                .mark_room_ready(org.id, conversa)
                 .expect("sala pronta");
         }
     }
@@ -224,10 +224,10 @@ async fn detalhe_fechar_reabrir_e_lista_trazem_nome_agente_e_sala_pronta() {
     let agente = c.agente(&org, "bia", "Bia");
     let conversa = c.conversa(&org, agente.id);
     c.store
-        .conversas()
+        .conversations()
         .set_customer_name(org.id, conversa.id, "Ana Souza")
         .expect("nome do cliente");
-    c.store.matrix().ligar(org.id).expect("liga o módulo");
+    c.store.matrix().enable(org.id).expect("liga o módulo");
     c.sala(&org, conversa.id, "!ana:matrix-dev.local", true);
     let (base, desligar) = servir(c.estado()).await;
 
@@ -277,12 +277,12 @@ async fn detalhe_fechar_reabrir_e_lista_trazem_nome_agente_e_sala_pronta() {
     assert_eq!(encerrada.json["code"], "conversa_encerrada");
 
     c.store
-        .conversas()
-        .mudar_status(
+        .conversations()
+        .change_status(
             org.id,
             conversa.id,
             c.store
-                .conversas()
+                .conversations()
                 .get(org.id, conversa.id)
                 .unwrap()
                 .version,
@@ -292,7 +292,7 @@ async fn detalhe_fechar_reabrir_e_lista_trazem_nome_agente_e_sala_pronta() {
         .expect("transfere para humano");
     let versao_transferida = c
         .store
-        .conversas()
+        .conversations()
         .get(org.id, conversa.id)
         .unwrap()
         .version
@@ -328,22 +328,22 @@ async fn sala_em_criacao_nome_vazio_e_modulo_desligado_viram_nulo() {
     let agente_b = c.agente(&b, "bia", "Bia");
     let agente_c = c.agente(&d, "bia", "Bia");
 
-    c.store.matrix().ligar(a.id).expect("liga A");
+    c.store.matrix().enable(a.id).expect("liga A");
     let sem_nome = c.conversa(&a, agente_a.id);
     c.sala(&a, sem_nome.id, "!criando:matrix-dev.local", false);
 
     let nunca_ligada = c.conversa(&b, agente_b.id);
     c.store
-        .conversas()
+        .conversations()
         .set_customer_name(b.id, nunca_ligada.id, "Bruno Lima")
         .expect("nome do cliente");
     c.sala(&b, nunca_ligada.id, "!pronta-b:matrix-dev.local", true);
 
-    c.store.matrix().ligar(d.id).expect("liga C");
-    c.store.matrix().desligar(d.id).expect("desliga C");
+    c.store.matrix().enable(d.id).expect("liga C");
+    c.store.matrix().disable(d.id).expect("desliga C");
     let desligada = c.conversa(&d, agente_c.id);
     c.store
-        .conversas()
+        .conversations()
         .set_customer_name(d.id, desligada.id, "Carla Dias")
         .expect("nome do cliente");
     c.sala(&d, desligada.id, "!pronta-c:matrix-dev.local", true);
@@ -404,13 +404,13 @@ async fn lista_le_nomes_e_salas_em_lote_sem_consulta_por_linha() {
     let c = Cenario::novo("lote");
     let org = c.org("a");
     let token = c.token(org.id, "a");
-    c.store.matrix().ligar(org.id).expect("liga");
+    c.store.matrix().enable(org.id).expect("liga");
     // Trinta conversas, cada uma com o seu agente: uma consulta por linha seria trinta leituras.
     for n in 0..30 {
         let agente = c.agente(&org, &format!("ag-{n}"), &format!("Agente {n}"));
         let conversa = c.conversa(&org, agente.id);
         c.store
-            .conversas()
+            .conversations()
             .set_customer_name(org.id, conversa.id, &format!("Cliente {n}"))
             .expect("nome");
         if n % 2 == 0 {
@@ -475,10 +475,10 @@ async fn conversa_de_outra_org_continua_404_e_nao_vaza_o_nome() {
     let agente_b = c.agente(&b, "bia", "Bia da B");
     let conversa_b = c.conversa(&b, agente_b.id);
     c.store
-        .conversas()
+        .conversations()
         .set_customer_name(b.id, conversa_b.id, "Cliente Secreto B")
         .expect("nome");
-    c.store.matrix().ligar(b.id).expect("liga a B");
+    c.store.matrix().enable(b.id).expect("liga a B");
     c.sala(&b, conversa_b.id, "!secreta:matrix-dev.local", true);
     let (base, desligar) = servir(c.estado()).await;
 

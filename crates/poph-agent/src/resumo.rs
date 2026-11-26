@@ -343,7 +343,7 @@ impl Resumidor {
                     erro = %erro,
                     "resumo rolante não gerado: o turno segue com a janela de mensagens"
                 );
-                let _ = este.store.audit().registrar(
+                let _ = este.store.audit().register(
                     Some(org),
                     NewAuditEntry {
                         ator_tipo: "system".to_owned(),
@@ -413,10 +413,13 @@ impl Resumidor {
         conversa: ConversationId,
         modelo: &str,
     ) -> Resultado<Rodada> {
-        let registro = self.store.conversas().get(org, conversa)?;
+        let registro = self.store.conversations().get(org, conversa)?;
         let agente = self.store.agents().get(org, registro.agent_id)?;
         let atual = Resumo::decodificar(registro.summary.as_deref());
-        let ultimas = self.store.messages().ultimas(org, conversa, TETO_LEITURA)?;
+        let ultimas = self
+            .store
+            .messages()
+            .last_set(org, conversa, TETO_LEITURA)?;
         if ultimas.is_empty() {
             return Ok(Rodada::Nada);
         }
@@ -496,8 +499,8 @@ impl Resumidor {
             ate: Some(ate),
         };
         self.store
-            .conversas()
-            .definir_resumo(org, conversa, &novo.codificar())?;
+            .conversations()
+            .define_summary(org, conversa, &novo.codificar())?;
         Ok(Rodada::Gravou { completa })
     }
 
@@ -512,7 +515,7 @@ impl Resumidor {
         let mut candidatas = Vec::new();
         let mut cursor = ate;
         'paginas: loop {
-            let pagina = self.store.messages().listar(
+            let pagina = self.store.messages().list(
                 org,
                 conversa,
                 Page {
@@ -627,7 +630,7 @@ mod testes {
             author_name: None,
             texto: texto.to_owned(),
             attachments_json: "[]".to_owned(),
-            id_externo: None,
+            external_id: None,
             turn_id: None,
             created_at: 0,
         }

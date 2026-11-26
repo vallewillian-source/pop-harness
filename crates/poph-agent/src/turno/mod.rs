@@ -682,7 +682,7 @@ impl Motor {
         let conversa_id = entrada.conversa;
         let cancelamento = entrada.cancelamento.clone();
 
-        let conversa = self.store.conversas().get(org, conversa_id)?;
+        let conversa = self.store.conversations().get(org, conversa_id)?;
         let agente_id = conversa.agent_id;
         if self
             .cancelamento
@@ -738,7 +738,7 @@ impl Motor {
         let gatilho = match self
             .store
             .messages()
-            .obter(org, conversa_id, entrada.mensagem)
+            .get(org, conversa_id, entrada.mensagem)
         {
             Ok(mensagem) => mensagem,
             Err(erro) if erro.is_not_found() => {
@@ -847,7 +847,7 @@ impl Motor {
         let turno = self
             .store
             .turns()
-            .iniciar(org, conversa_id, Some(agente_id))?;
+            .start(org, conversa_id, Some(agente_id))?;
         self.metricas.turnos_iniciados.increment(1);
         observador.evento(EventoTurno::Inicio {
             turno: turno.id,
@@ -1331,7 +1331,7 @@ impl Motor {
         // envio.
         let texto = resposta.texto.trim().to_owned();
         if !texto.is_empty() {
-            self.store.messages().gravar_com_saida(
+            self.store.messages().write_with_output(
                 org,
                 NewMessage {
                     conversation_id: conversa_id,
@@ -1339,7 +1339,7 @@ impl Motor {
                     role: Role::Assistant,
                     texto: texto.clone(),
                     attachments_json: "[]".to_owned(),
-                    id_externo: None,
+                    external_id: None,
                     turn_id: Some(turno.id),
                     origin: poph_store::Origin::Agente,
                     author_name: None,
@@ -1355,8 +1355,8 @@ impl Motor {
             self.metricas.respostas_gravadas.increment(1);
         }
         self.store
-            .conversas()
-            .tocar(org, conversa_id, self.store.now())?;
+            .conversations()
+            .touch(org, conversa_id, self.store.now())?;
 
         let modelo = self.modelo_usado(&quente);
         // `turns.jev_json` é o painel "por quê" do turno: as decisões do Jev **e** o que o código
@@ -1376,7 +1376,7 @@ impl Motor {
             _ => None,
         };
         let fim = TurnFinalization {
-            estado: Some(TurnState::Completed),
+            state: Some(TurnState::Completed),
             jev_json,
             times_json: Some(tempos_json(&tempos, &modelo, resposta.motivo.as_ref())),
             passages_json: Some(utilizados_json(&trechos, &uso.produtos())),
@@ -1386,7 +1386,7 @@ impl Motor {
             output_tokens: Some(u32::try_from(resposta.uso.saida).unwrap_or(u32::MAX)),
             ..TurnFinalization::default()
         };
-        self.store.turns().finalizar(org, turno.id, fim)?;
+        self.store.turns().finalise(org, turno.id, fim)?;
         self.metricas.turnos_concluidos.increment(1);
         self.metricas.tokens_entrada.increment(resposta.uso.entrada);
         self.metricas.tokens_saida.increment(resposta.uso.saida);
@@ -2015,7 +2015,7 @@ impl Motor {
         if anexos_json.is_empty() || anexos_json == "[]" {
             return Vec::new();
         }
-        let anexos = match self.store.messages().anexos(org, mensagem.id) {
+        let anexos = match self.store.messages().attachments(org, mensagem.id) {
             Ok(anexos) => anexos,
             Err(erro) => {
                 tracing::warn!(erro = %erro, "não consegui ler os anexos da mensagem");
@@ -2120,7 +2120,7 @@ impl Motor {
             if anexos.is_empty() || anexos == "[]" {
                 continue;
             }
-            match self.store.messages().anexos(org, mensagem.id) {
+            match self.store.messages().attachments(org, mensagem.id) {
                 Ok(anexos) => {
                     for anexo in anexos {
                         if let Some(texto) = anexo.extracted_text {
@@ -2157,7 +2157,7 @@ impl Motor {
     /// validada contra esta mesma lista lida no momento da transferência (HR-32) — departamento
     /// apagado ou desativado no meio do caminho é recusado, e a conversa vai para o padrão.
     fn departamentos_ativos_com_id(&self, org: OrgId) -> Vec<departamento::Candidato> {
-        match self.store.departments().listar(org, Page::with_limit(200)) {
+        match self.store.departments().list(org, Page::with_limit(200)) {
             Ok(departamentos) => departamentos
                 .iter()
                 .filter(|departamento| departamento.status == poph_store::Status::Active)
@@ -2253,7 +2253,7 @@ impl Motor {
         org: OrgId,
         conversa: ConversationId,
     ) -> Resultado<Vec<MensagemGravada>> {
-        Ok(self.store.messages().ultimas(
+        Ok(self.store.messages().last_set(
             org,
             conversa,
             self.opcoes.teto_leitura_mensagens.max(1),
@@ -2366,7 +2366,7 @@ impl Motor {
                 "transferência sem mensagem automática configurada: cliente não recebe texto"
             );
         } else {
-            self.store.messages().gravar_com_saida(
+            self.store.messages().write_with_output(
                 org,
                 NewMessage {
                     conversation_id: conversa_id,
@@ -2374,7 +2374,7 @@ impl Motor {
                     role: Role::Assistant,
                     texto: texto.clone(),
                     attachments_json: "[]".to_owned(),
-                    id_externo: None,
+                    external_id: None,
                     turn_id: Some(turno),
                     origin: poph_store::Origin::Agente,
                     author_name: None,
@@ -2419,8 +2419,8 @@ impl Motor {
 
         // 4. Conversa transferida, com auditoria na mesma transação.
         self.store
-            .conversas()
-            .tocar(org, conversa_id, self.store.now())?;
+            .conversations()
+            .touch(org, conversa_id, self.store.now())?;
         let departamento = destino.departamento;
         let detalhe = json!({
             "gate": origem.como_texto(),
@@ -2436,7 +2436,7 @@ impl Motor {
             "departamento_motivo": destino.motivo,
         })
         .to_string();
-        self.store.conversas().transferir(
+        self.store.conversations().transfer(
             org,
             conversa_id,
             departamento,
@@ -2465,11 +2465,11 @@ impl Motor {
             "escolha_do_jev": escolha_do_g4,
             "motivo": destino.motivo,
         });
-        self.store.turns().finalizar(
+        self.store.turns().finalise(
             org,
             turno,
             TurnFinalization {
-                estado: Some(TurnState::Completed),
+                state: Some(TurnState::Completed),
                 jev_json: Some(registro.to_string()),
                 times_json: Some(tempos_json(&tempos, &modelo, None)),
                 ..TurnFinalization::default()
@@ -2536,7 +2536,7 @@ impl Motor {
 
         let texto = poph_jev::resposta_g7_do_agente(&quente.agente.jev_json)
             .unwrap_or_else(|| G7_RESPOSTA_PADRAO.to_owned());
-        self.store.messages().gravar_com_saida(
+        self.store.messages().write_with_output(
             org,
             NewMessage {
                 conversation_id: conversa_id,
@@ -2544,7 +2544,7 @@ impl Motor {
                 role: Role::Assistant,
                 texto: texto.clone(),
                 attachments_json: "[]".to_owned(),
-                id_externo: None,
+                external_id: None,
                 turn_id: Some(turno),
                 origin: poph_store::Origin::Agente,
                 author_name: None,
@@ -2559,8 +2559,8 @@ impl Motor {
         )?;
         self.metricas.respostas_gravadas.increment(1);
         self.store
-            .conversas()
-            .tocar(org, conversa_id, self.store.now())?;
+            .conversations()
+            .touch(org, conversa_id, self.store.now())?;
 
         let tempos = Tempos {
             fila_ms,
@@ -2578,11 +2578,11 @@ impl Motor {
             "confianca": jev.decisao(IdGate::G7).map(|decisao| decisao.confianca),
             "acao": AcaoG7::ResponderPadrao.como_texto(),
         });
-        self.store.turns().finalizar(
+        self.store.turns().finalise(
             org,
             turno,
             TurnFinalization {
-                estado: Some(TurnState::Completed),
+                state: Some(TurnState::Completed),
                 jev_json: Some(registro.to_string()),
                 times_json: Some(tempos_json(&tempos, &modelo, None)),
                 ..TurnFinalization::default()
@@ -2644,7 +2644,7 @@ impl Motor {
             .trim()
             .to_owned();
         if !texto.is_empty() {
-            self.store.messages().gravar_com_saida(
+            self.store.messages().write_with_output(
                 org,
                 NewMessage {
                     conversation_id: conversa_id,
@@ -2652,7 +2652,7 @@ impl Motor {
                     role: Role::Assistant,
                     texto: texto.clone(),
                     attachments_json: "[]".to_owned(),
-                    id_externo: None,
+                    external_id: None,
                     turn_id: Some(turno),
                     origin: poph_store::Origin::Agente,
                     author_name: None,
@@ -2668,8 +2668,8 @@ impl Motor {
             self.metricas.respostas_gravadas.increment(1);
         }
         self.store
-            .conversas()
-            .tocar(org, conversa_id, self.store.now())?;
+            .conversations()
+            .touch(org, conversa_id, self.store.now())?;
 
         let tempos = Tempos {
             fila_ms,
@@ -2686,11 +2686,11 @@ impl Motor {
             "confianca": jev.decisao(IdGate::G8).map(|decisao| decisao.confianca),
             "despedida": !texto.is_empty(),
         });
-        self.store.turns().finalizar(
+        self.store.turns().finalise(
             org,
             turno,
             TurnFinalization {
-                estado: Some(TurnState::Completed),
+                state: Some(TurnState::Completed),
                 jev_json: Some(registro.to_string()),
                 times_json: Some(tempos_json(&tempos, &modelo, None)),
                 ..TurnFinalization::default()
@@ -2771,16 +2771,16 @@ impl Motor {
         motivo: String,
         inicio: Instant,
     ) -> Resultado<ResumoTurno> {
-        let turno = self.store.turns().iniciar(org, conversa, agente)?;
+        let turno = self.store.turns().start(org, conversa, agente)?;
         let tempos = Tempos {
             total_ms: u64::try_from(inicio.elapsed().as_millis()).unwrap_or(u64::MAX),
             ..Tempos::default()
         };
-        self.store.turns().finalizar(
+        self.store.turns().finalise(
             org,
             turno.id,
             TurnFinalization {
-                estado: Some(TurnState::Skipped),
+                state: Some(TurnState::Skipped),
                 times_json: Some(tempos_json(&tempos, "", None)),
                 error: Some(motivo.clone()),
                 ..TurnFinalization::default()
@@ -2788,7 +2788,7 @@ impl Motor {
         )?;
         self.metricas.turnos_ignorados.increment(1);
         if let Some(agente) = agente {
-            let _ = self.store.audit().registrar(
+            let _ = self.store.audit().register(
                 Some(org),
                 NewAuditEntry {
                     ator_tipo: "system".to_owned(),
@@ -2845,11 +2845,11 @@ impl Motor {
             total_ms: u64::try_from(inicio.elapsed().as_millis()).unwrap_or(u64::MAX),
             rodadas_ferramenta: 0,
         };
-        self.store.turns().finalizar(
+        self.store.turns().finalise(
             org,
             turno,
             TurnFinalization {
-                estado: Some(TurnState::Failed),
+                state: Some(TurnState::Failed),
                 times_json: Some(tempos_json(&tempos, modelo, None)),
                 // HR-47b: o que já tinha rodado antes da falha não se perde. Nomes ficam vazios
                 // porque o contrato `tools` só lista chamadas de turno concluído.
@@ -3065,7 +3065,7 @@ fn concluir_entradas(
     mensagens: &[MessageId],
     erro: Option<&str>,
 ) -> Resultado<()> {
-    let pendentes = fluxo.store().inbox().listar_abertos(org, LOTE_CONCLUSAO)?;
+    let pendentes = fluxo.store().inbox().list_opens(org, LOTE_CONCLUSAO)?;
     let mut concluidos = Vec::new();
     for item in pendentes {
         let da_propria = Some(item.id) == propria;
@@ -3136,7 +3136,7 @@ fn itens_do_turno(
     propria: Option<poph_types::InboxId>,
     mensagens: &[MessageId],
 ) -> Resultado<Vec<poph_types::InboxId>> {
-    let abertos = fluxo.store().inbox().listar_abertos(org, LOTE_CONCLUSAO)?;
+    let abertos = fluxo.store().inbox().list_opens(org, LOTE_CONCLUSAO)?;
     Ok(abertos
         .into_iter()
         .filter(|item| {
@@ -3171,7 +3171,7 @@ fn tratar_falha_modelo(
     let org = tarefa.org;
     let motivo = motivo_para_log(erro);
     let ids = itens_do_turno(fluxo, org, tarefa.conversa, tarefa.entrada, mensagens)?;
-    let ja_enfileirou = fluxo.store().outbox().contar_do_turno(org, turno)? > 0;
+    let ja_enfileirou = fluxo.store().outbox().count_turn(org, turno)? > 0;
     let politica = fluxo.opcoes();
     let maximo = politica.tentativas_falha_modelo.max(1);
 
@@ -3205,7 +3205,7 @@ fn tratar_falha_modelo(
     let tentativas = fluxo
         .store()
         .inbox()
-        .tentativas(org, &ids)?
+        .attempts(org, &ids)?
         .into_iter()
         .max()
         .unwrap_or(0)
@@ -3547,7 +3547,7 @@ mod testes {
             author_name: None,
             texto: String::new(),
             attachments_json: "[]".to_owned(),
-            id_externo: None,
+            external_id: None,
             turn_id: None,
             created_at: 0,
         }

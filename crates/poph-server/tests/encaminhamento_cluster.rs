@@ -343,7 +343,7 @@ async fn duas_instancias(
     let org = preparo_b
         .store
         .orgs()
-        .criar(NewOrg {
+        .create(NewOrg {
             name: "Org da instância b".to_owned(),
             slug: "org-da-instancia-b".to_owned(),
             config_json: String::new(),
@@ -463,7 +463,7 @@ async fn admin_e_webhook_de_org_remota_chegam_na_dona() {
 
     // `a` não tem a org no banco: quem respondeu foi `b`.
     assert!(
-        a.store.orgs().por_slug("org-da-instancia-b").is_err(),
+        a.store.orgs().by_slug("org-da-instancia-b").is_err(),
         "a org não pode existir no banco de `a`"
     );
 
@@ -751,7 +751,7 @@ async fn dona_fora_do_ar_da_503() {
     let org = preparo
         .store
         .orgs()
-        .criar(NewOrg {
+        .create(NewOrg {
             name: "Org fora do ar".to_owned(),
             slug: "org-fora-do-ar".to_owned(),
             config_json: String::new(),
@@ -1028,7 +1028,7 @@ async fn listagem_com_cluster_soma_instancias_e_marca_a_fora_do_ar() {
     let local_org = a
         .store
         .orgs()
-        .criar(NewOrg {
+        .create(NewOrg {
             name: "Org local".to_owned(),
             slug: "org-local-hr50b2".to_owned(),
             config_json: String::new(),
@@ -1078,7 +1078,7 @@ async fn listagem_com_cluster_traz_agentes_ativos_de_cada_instancia() {
     for slug in ["agente-um", "agente-dois"] {
         b.store
             .agents()
-            .criar(
+            .create(
                 org,
                 poph_store::NewAgent {
                     name: format!("Agente {slug}"),
@@ -1091,7 +1091,7 @@ async fn listagem_com_cluster_traz_agentes_ativos_de_cada_instancia() {
     let inativo = b
         .store
         .agents()
-        .criar(
+        .create(
             org,
             poph_store::NewAgent {
                 name: "Agente inativo".to_owned(),
@@ -1103,7 +1103,7 @@ async fn listagem_com_cluster_traz_agentes_ativos_de_cada_instancia() {
     let lido = b.store.agents().get(org, inativo.id).expect("lê o agente");
     b.store
         .agents()
-        .atualizar(
+        .update(
             org,
             inativo.id,
             lido.version,
@@ -1119,7 +1119,7 @@ async fn listagem_com_cluster_traz_agentes_ativos_de_cada_instancia() {
     let local_org = a
         .store
         .orgs()
-        .criar(NewOrg {
+        .create(NewOrg {
             name: "Org local".to_owned(),
             slug: "org-local-cf03a".to_owned(),
             config_json: String::new(),
@@ -1128,7 +1128,7 @@ async fn listagem_com_cluster_traz_agentes_ativos_de_cada_instancia() {
         .id;
     a.store
         .agents()
-        .criar(
+        .create(
             local_org,
             poph_store::NewAgent {
                 name: "Agente local".to_owned(),
@@ -1211,7 +1211,7 @@ async fn rotas_de_fluxos_e_fichas_sao_encaminhadas_para_a_dona() {
 
     // `a` não tem a org: se atendesse localmente, tudo abaixo sairia 404.
     assert!(
-        a.store.orgs().por_slug("org-da-instancia-b").is_err(),
+        a.store.orgs().by_slug("org-da-instancia-b").is_err(),
         "a org não pode existir no banco de `a`"
     );
 
@@ -1265,16 +1265,16 @@ async fn rotas_de_fluxos_e_fichas_sao_encaminhadas_para_a_dona() {
     assert_eq!(criado.corpo["slug"], json!("agendar_visita"));
     assert!(
         b.store
-            .fluxos()
-            .por_slug(org, "agendar_visita")
+            .flows()
+            .by_slug(org, "agendar_visita")
             .expect("consulta em b")
             .is_some(),
         "o fluxo criado por `a` tem de existir em `b`"
     );
     assert!(
         a.store
-            .fluxos()
-            .por_slug(org, "agendar_visita")
+            .flows()
+            .by_slug(org, "agendar_visita")
             .expect("consulta em a")
             .is_none(),
         "`a` não grava nada: a org nem existe no banco dela"
@@ -1346,22 +1346,22 @@ async fn rotas_de_fluxos_e_fichas_sao_encaminhadas_para_a_dona() {
     assert_eq!(fechada.corpo["status"], json!("closed"));
     let na_dona = b
         .store
-        .fichas()
-        .obter(org, ficha.parse().expect("id da Ficha"))
+        .cases()
+        .get(org, ficha.parse().expect("id da Ficha"))
         .expect("Ficha em b");
     assert_eq!(na_dona.status, RecordStatus::Closed);
     assert_eq!(
         b.store
-            .fichas()
-            .listar(org, &Default::default(), Page::default())
+            .cases()
+            .list(org, &Default::default(), Page::default())
             .expect("lista em b")
             .len(),
         1
     );
     assert_eq!(
         b.store
-            .conversas()
-            .listar(org, None, Page::default())
+            .conversations()
+            .list(org, None, Page::default())
             .expect("conversas em b")
             .len(),
         1,

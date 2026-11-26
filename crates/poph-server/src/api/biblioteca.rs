@@ -70,7 +70,7 @@ pub async fn listar(
     let agente = id_da_url::<AgentId>(&c.agent_id)?;
     estado.store.agents().get(org, agente)?;
     let pagina = consulta.pagina()?;
-    let arquivos = estado.store.library().listar(org, agente, pagina)?;
+    let arquivos = estado.store.library().list(org, agente, pagina)?;
     let items: Vec<_> = arquivos.iter().map(ArquivoJson::from).collect();
     let next_cursor = proximo_cursor(&items, pagina.limit, |item| item.id.clone());
     Ok(Json(ListaJson { items, next_cursor }))
@@ -86,7 +86,7 @@ pub async fn mostrar(
     identidade.exigir_org(org)?;
     let agente = id_da_url::<AgentId>(&c.agent_id)?;
     let id = id_da_url::<FileId>(&c.file_id)?;
-    let arquivo = estado.store.library().obter(org, agente, id)?;
+    let arquivo = estado.store.library().get(org, agente, id)?;
     Ok(Json(ArquivoJson::from(&arquivo)))
 }
 
@@ -106,7 +106,7 @@ pub async fn conteudo(
     identidade.exigir_org(org)?;
     let agente = id_da_url::<AgentId>(&c.agent_id)?;
     let id = id_da_url::<FileId>(&c.file_id)?;
-    let arquivo = estado.store.library().obter(org, agente, id)?;
+    let arquivo = estado.store.library().get(org, agente, id)?;
     let pasta = estado.config.blobs();
     let sha256 = arquivo.sha256.clone();
     // A leitura do disco é síncrona e pode levar alguns milissegundos num arquivo de 16 MB.
@@ -136,7 +136,7 @@ pub async fn excluir(
     estado
         .store
         .library()
-        .excluir_auditado(org, agente, id, identidade.ator_id())?;
+        .delete_audited(org, agente, id, identidade.ator_id())?;
     Ok(Json(serde_json::json!({"deleted": true})))
 }
 
@@ -225,7 +225,7 @@ pub async fn criar(
     .await
     .map_err(|_| ApiError::interno())??;
 
-    let arquivo = estado.store.library().criar(org, novo)?;
+    let arquivo = estado.store.library().create(org, novo)?;
     super::auditoria::registrar(
         &estado,
         &identidade,

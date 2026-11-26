@@ -129,7 +129,7 @@ pub async fn listar(
         cursor: q.cursor.clone(),
     }
     .pagina()?;
-    let fichas = e.store.fichas().listar(org, &filtro, pagina)?;
+    let fichas = e.store.cases().list(org, &filtro, pagina)?;
     let next_cursor = proximo_cursor(&fichas, pagina.limit, |ficha| ficha.id.to_string());
     let items: Vec<Value> = fichas.iter().map(ficha_json).collect();
     Ok(Json(ListaJson { items, next_cursor }))
@@ -197,7 +197,7 @@ pub async fn eventos(
     let limite = q.limit.unwrap_or(LIMITE_PADRAO_EVENTOS).clamp(1, 200);
     let apos = cursor_de_seq(q.cursor.as_deref())?;
     // O repositório confere a Ficha antes de ler: Ficha de outra org sai como 404.
-    let eventos = e.store.fichas().eventos(org, ficha_id, apos, limite)?;
+    let eventos = e.store.cases().events(org, ficha_id, apos, limite)?;
     let next_cursor = proximo_cursor(&eventos, limite, |evento| evento.seq.to_string());
     let items: Vec<Value> = eventos.iter().map(evento_json).collect();
     Ok(Json(ListaJson { items, next_cursor }))
@@ -235,9 +235,9 @@ fn filtro_da_consulta(q: &ConsultaFichas) -> Result<RecordFilter, ApiError> {
     };
     Ok(RecordFilter {
         status,
-        agente,
+        agent: agente,
         canal,
-        desde,
+        since: desde,
     })
 }
 
@@ -346,14 +346,14 @@ pub async fn iniciar_fluxo(
     if let Some(ja_aberta) = e
         .store
         .executions()
-        .abertura_ja_feita(org, ficha_id, fluxo, &chave)?
+        .opening_already_done(org, ficha_id, fluxo, &chave)?
     {
         return Ok((
             StatusCode::OK,
             Json(resposta_execucao(&e, org, &ja_aberta, true, &[])?),
         ));
     }
-    let ficha = e.store.fichas().obter(org, ficha_id)?;
+    let ficha = e.store.cases().get(org, ficha_id)?;
     if ficha.status == RecordStatus::Closed {
         return Err(dominio(DomainError::RecordClosed {
             id: ficha_id.to_string(),
@@ -370,7 +370,7 @@ pub async fn iniciar_fluxo(
     let revisao = e
         .store
         .revisions()
-        .atual(org, fluxo)?
+        .current(org, fluxo)?
         .ok_or_else(|| ApiError::conflito("o fluxo ainda não tem revisão publicada"))?;
     let ir = ir_da_revisao(&e, &revisao)?;
     let avaliador = avaliador_da_revisao(&e, &revisao, &ir)?;
@@ -383,11 +383,11 @@ pub async fn iniciar_fluxo(
     let efeitos =
         efeitos_de_entrada(&ir, estado.no_atual.id(), &estado.dados, &contexto).map_err(dominio)?;
     let token = ident.ator_id();
-    let gravada = e.store.executions().iniciar_execucao(
+    let gravada = e.store.executions().start_execution(
         org,
         ExecutionStart {
-            ficha: ficha_id,
-            fluxo,
+            case: ficha_id,
+            flow: fluxo,
             revision: revisao.id,
             actor: EventActor::Attendant,
             ator_ref: Some(&token),
@@ -473,11 +473,11 @@ pub async fn acao(
     let atual = execucao_da_ficha(&e, org, ficha_id, run)?;
     if e.store
         .executions()
-        .transicao_ja_aplicada(org, run, &chave)?
+        .transition_already_applied(org, run, &chave)?
     {
         return Ok(Json(resposta_execucao(&e, org, &atual, true, &[])?));
     }
-    let ficha = e.store.fichas().obter(org, ficha_id)?;
+    let ficha = e.store.cases().get(org, ficha_id)?;
     if ficha.status == RecordStatus::Closed {
         return Err(dominio(DomainError::RecordClosed {
             id: ficha_id.to_string(),
@@ -508,7 +508,7 @@ pub async fn acao(
     )
     .map_err(dominio)?;
     let token = ident.ator_id();
-    let gravada = e.store.executions().aplicar_transicao(
+    let gravada = e.store.executions().apply_transition(
         org,
         run,
         versao,
@@ -585,11 +585,11 @@ pub async fn abandonar(
     let atual = execucao_da_ficha(&e, org, ficha_id, run)?;
     if e.store
         .executions()
-        .transicao_ja_aplicada(org, run, &chave)?
+        .transition_already_applied(org, run, &chave)?
     {
         return Ok(Json(resposta_execucao(&e, org, &atual, true, &[])?));
     }
-    let ficha = e.store.fichas().obter(org, ficha_id)?;
+    let ficha = e.store.cases().get(org, ficha_id)?;
     if ficha.status == RecordStatus::Closed {
         return Err(dominio(DomainError::RecordClosed {
             id: ficha_id.to_string(),
@@ -607,7 +607,7 @@ pub async fn abandonar(
     let resultado = abandonar_motor(&estado, &dados.motivo, ActionActor::Attendant, Some(&chave))
         .map_err(dominio)?;
     let token = ident.ator_id();
-    let gravada = e.store.executions().aplicar_transicao(
+    let gravada = e.store.executions().apply_transition(
         org,
         run,
         versao,
@@ -673,7 +673,7 @@ pub async fn fechar(
     ident.exigir_org(org)?;
     let ficha_id = id_da_url::<RecordId>(&c.ficha_id)?;
     let esperada = versao_do_if_match(&h, "ficha")?;
-    let ficha = e.store.fichas().obter(org, ficha_id)?;
+    let ficha = e.store.cases().get(org, ficha_id)?;
     if ficha.status == RecordStatus::Closed {
         return Err(dominio(DomainError::RecordClosed {
             id: ficha_id.to_string(),
@@ -690,8 +690,8 @@ pub async fn fechar(
     match ficha.conversation_id {
         Some(conversa) => {
             // A conversa confere a própria versão na escrita: se mudou entre as duas leituras, `412`.
-            let registro = e.store.conversas().get(org, conversa)?;
-            e.store.conversas().fechar_auditado(
+            let registro = e.store.conversations().get(org, conversa)?;
+            e.store.conversations().close_audited(
                 org,
                 conversa,
                 registro.version,
@@ -699,7 +699,7 @@ pub async fn fechar(
             )?;
         }
         None => {
-            e.store.fichas().fechar_sem_conversa(
+            e.store.cases().close_without_conversation(
                 org,
                 ficha_id,
                 esperada,
@@ -707,7 +707,7 @@ pub async fn fechar(
             )?;
         }
     }
-    let atual = e.store.fichas().obter(org, ficha_id)?;
+    let atual = e.store.cases().get(org, ficha_id)?;
     Ok(Json(ficha_json(&atual)))
 }
 
@@ -749,7 +749,7 @@ fn execucao_da_ficha(
     ficha: RecordId,
     run: ExecutionId,
 ) -> Result<Execution, ApiError> {
-    let execucao = e.store.executions().obter(org, run)?;
+    let execucao = e.store.executions().get(org, run)?;
     if execucao.ficha_id != ficha {
         return Err(ApiError::nao_encontrado(
             "execução de fluxo",
@@ -812,10 +812,10 @@ fn estado_para_agir(
     org: OrgId,
     execucao: &Execution,
 ) -> Result<(Arc<Ir>, Avaliador, EstadoMotor), ApiError> {
-    let revisao = e.store.revisions().obter_por_id(org, execucao.revisao_id)?;
+    let revisao = e.store.revisions().get_by_id(org, execucao.revisao_id)?;
     let ir = ir_da_revisao(e, &revisao)?;
     let avaliador = avaliador_da_revisao(e, &revisao, &ir)?;
-    let etapas = e.store.executions().etapas(org, execucao.id)?;
+    let etapas = e.store.executions().stages(org, execucao.id)?;
     let atores_que_agiram = etapas
         .iter()
         .rev()
@@ -868,7 +868,7 @@ fn resposta_execucao(
     repetida: bool,
     eventos: &[RecordEvent],
 ) -> Result<Value, ApiError> {
-    let etapas: Vec<ExecutionStep> = e.store.executions().etapas(org, execucao.id)?;
+    let etapas: Vec<ExecutionStep> = e.store.executions().stages(org, execucao.id)?;
     let mut corpo = execucao_json(execucao, &etapas);
     corpo["repetida"] = json!(repetida);
     corpo["eventos"] = Value::Array(eventos.iter().map(evento_json).collect());

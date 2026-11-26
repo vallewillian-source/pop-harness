@@ -173,7 +173,7 @@ pub(crate) fn preparar(
     if !ajustes.ativo {
         return None;
     }
-    let ficha = match store.fichas().por_conversa(org, conversa) {
+    let ficha = match store.cases().by_conversation(org, conversa) {
         Ok(Some(ficha)) => ficha,
         Ok(None) => {
             tracing::debug!(
@@ -187,7 +187,7 @@ pub(crate) fn preparar(
             return None;
         }
     };
-    let ativa = match store.executions().ativa_da_ficha(org, ficha.id) {
+    let ativa = match store.executions().active_of_case(org, ficha.id) {
         Ok(ativa) => ativa,
         Err(erro) => {
             tracing::warn!(erro = %erro, ficha = %ficha.id, "não consegui ler a execução ativa");
@@ -201,7 +201,7 @@ pub(crate) fn preparar(
             liberados: Vec::new(),
         });
     }
-    let fluxos = match store.fluxos().listar_do_agente(org, agente) {
+    let fluxos = match store.flows().list_from_agent(org, agente) {
         Ok(fluxos) => fluxos,
         Err(erro) => {
             tracing::warn!(erro = %erro, agente = %agente, "não consegui listar os fluxos do agente");
@@ -247,7 +247,7 @@ fn ir_vigente(
     org: OrgId,
     fluxo: &Fluxo,
 ) -> Option<Arc<Ir>> {
-    let revisao = match store.revisions().atual(org, fluxo.id) {
+    let revisao = match store.revisions().current(org, fluxo.id) {
         Ok(Some(revisao)) => revisao,
         Ok(None) => return None,
         Err(erro) => {
@@ -355,14 +355,14 @@ pub(crate) fn bloco_da_execucao(
     org: OrgId,
     execucao: &Execution,
 ) -> Option<(String, Arc<Ir>)> {
-    let revisao = match store.revisions().obter_por_id(org, execucao.revisao_id) {
+    let revisao = match store.revisions().get_by_id(org, execucao.revisao_id) {
         Ok(revisao) => revisao,
         Err(erro) => {
             tracing::warn!(erro = %erro, revisao = %execucao.revisao_id, "revisão da execução não lê");
             return None;
         }
     };
-    let fluxo = match store.fluxos().obter(org, execucao.fluxo_id) {
+    let fluxo = match store.flows().get(org, execucao.fluxo_id) {
         Ok(fluxo) => fluxo,
         Err(erro) => {
             tracing::warn!(erro = %erro, fluxo = %execucao.fluxo_id, "fluxo da execução não lê");
@@ -397,14 +397,14 @@ pub(crate) fn carga_para_agir(
     org: OrgId,
     execucao: &Execution,
 ) -> Option<CargaDaAcao> {
-    let revisao = match store.revisions().obter_por_id(org, execucao.revisao_id) {
+    let revisao = match store.revisions().get_by_id(org, execucao.revisao_id) {
         Ok(revisao) => revisao,
         Err(erro) => {
             tracing::warn!(erro = %erro, revisao = %execucao.revisao_id, "revisão da execução não lê");
             return None;
         }
     };
-    let fluxo = match store.fluxos().obter(org, execucao.fluxo_id) {
+    let fluxo = match store.flows().get(org, execucao.fluxo_id) {
         Ok(fluxo) => fluxo,
         Err(erro) => {
             tracing::warn!(erro = %erro, fluxo = %execucao.fluxo_id, "fluxo da execução não lê");
@@ -413,7 +413,7 @@ pub(crate) fn carga_para_agir(
     };
     let ir = carregar_ir(ajustes, &fluxo, &revisao)?;
     let avaliador = avaliador_da_revisao(&revisao, &ir, &ajustes.limites)?;
-    let atores = match store.executions().etapas(org, execucao.id) {
+    let atores = match store.executions().stages(org, execucao.id) {
         Ok(etapas) => etapas
             .iter()
             .rev()
@@ -512,7 +512,7 @@ pub(crate) fn iniciar(
     quem: QuemInicia<'_>,
     chave_idempotencia: Option<&str>,
 ) -> Result<Inicio, StoreError> {
-    let fluxo = match store.fluxos().por_slug(org, slug) {
+    let fluxo = match store.flows().by_slug(org, slug) {
         Ok(Some(fluxo)) => fluxo,
         Ok(None) => {
             return Ok(Inicio::Recusado(format!(
@@ -526,13 +526,13 @@ pub(crate) fn iniciar(
             "o fluxo `{slug}` está inativo e não inicia execução nova"
         )));
     }
-    let liberados = store.fluxos().listar_do_agente(org, ficha.agent_id)?;
+    let liberados = store.flows().list_from_agent(org, ficha.agent_id)?;
     if !liberados.iter().any(|liberado| liberado.id == fluxo.id) {
         return Ok(Inicio::Recusado(format!(
             "o fluxo `{slug}` não está liberado para o agente deste atendimento"
         )));
     }
-    let revisao = match store.revisions().atual(org, fluxo.id)? {
+    let revisao = match store.revisions().current(org, fluxo.id)? {
         Some(revisao) => revisao,
         None => {
             return Ok(Inicio::Recusado(format!(
@@ -578,8 +578,8 @@ pub(crate) fn iniciar(
     let (ator, ator_ref) = quem.ator();
     let inicio_efeitos = efeitos.len();
     let inicio = ExecutionStart {
-        ficha: ficha.id,
-        fluxo: fluxo.id,
+        case: ficha.id,
+        flow: fluxo.id,
         revision: revisao.id,
         actor: ator,
         ator_ref,
@@ -591,7 +591,7 @@ pub(crate) fn iniciar(
         chave_idempotencia,
     };
     let efeitos_na_entrada = inicio_efeitos;
-    match store.executions().iniciar_execucao(org, inicio) {
+    match store.executions().start_execution(org, inicio) {
         Ok(gravada) => Ok(Inicio::Aberta {
             execucao: Box::new(gravada.execution),
             efeitos: efeitos_na_entrada,
@@ -785,7 +785,7 @@ pub(crate) fn decidir(
                     fluxo = slug,
                     "o G9 escolheu um fluxo, mas a Ficha já tinha execução ativa"
                 );
-                match store.executions().ativa_da_ficha(org, preparo.ficha.id) {
+                match store.executions().active_of_case(org, preparo.ficha.id) {
                     Ok(Some(ativa)) => {
                         let bloco = bloco_da_execucao(ajustes, store, org, &ativa);
                         DesfechoDoFluxo {
@@ -920,7 +920,7 @@ etapa(
             );
             let org = store
                 .orgs()
-                .criar(NewOrg {
+                .create(NewOrg {
                     name: format!("Org {rotulo}"),
                     slug: format!("org-{rotulo}-{}", AgentId::generate()),
                     config_json: "{}".to_owned(),
@@ -929,7 +929,7 @@ etapa(
                 .id;
             let agente = store
                 .agents()
-                .criar(
+                .create(
                     org,
                     NewAgent {
                         name: "Bia".to_owned(),
@@ -941,11 +941,11 @@ etapa(
                 .id;
             store
                 .instructions()
-                .salvar(org, agente, 0, "{}", "# Bia", true)
+                .save(org, agente, 0, "{}", "# Bia", true)
                 .expect("grava as instruções");
             let conversa = store
-                .conversas()
-                .criar(
+                .conversations()
+                .create(
                     org,
                     NewConversation {
                         agent_id: agente,
@@ -958,13 +958,13 @@ etapa(
                 .expect("abre a conversa")
                 .id;
             let ficha = store
-                .fichas()
-                .por_conversa(org, conversa)
+                .cases()
+                .by_conversation(org, conversa)
                 .expect("lê a Ficha")
                 .expect("a conversa nasce com Ficha");
             let fluxo = store
-                .fluxos()
-                .criar(
+                .flows()
+                .create(
                     org,
                     NewFlow {
                         slug: "agendar_visita".to_owned(),
@@ -978,7 +978,7 @@ etapa(
             let ir = compilado.ir().expect("o script do teste compila");
             store
                 .revisions()
-                .publicar_revisao(
+                .publish_revision(
                     org,
                     fluxo.id,
                     RevisionPublication {
@@ -1004,8 +1004,8 @@ etapa(
 
         fn liberar(&self) {
             self.store
-                .fluxos()
-                .liberar(self.org, self.agente, self.fluxo)
+                .flows()
+                .release(self.org, self.agente, self.fluxo)
                 .expect("libera o fluxo");
         }
 
@@ -1049,8 +1049,8 @@ etapa(
         assert_eq!(execucao.no_atual, "coleta");
         let eventos = cenario
             .store
-            .fichas()
-            .eventos(cenario.org, cenario.ficha.id, None, 20)
+            .cases()
+            .events(cenario.org, cenario.ficha.id, None, 20)
             .expect("lê os eventos");
         let iniciado = eventos
             .iter()
@@ -1072,13 +1072,13 @@ etapa(
         cenario.liberar();
         let atual = cenario
             .store
-            .fluxos()
-            .obter(cenario.org, cenario.fluxo)
+            .flows()
+            .get(cenario.org, cenario.fluxo)
             .expect("lê o fluxo");
         cenario
             .store
-            .fluxos()
-            .atualizar(
+            .flows()
+            .update(
                 cenario.org,
                 cenario.fluxo,
                 atual.version,
@@ -1108,7 +1108,7 @@ etapa(
             cenario
                 .store
                 .executions()
-                .da_ficha(cenario.org, cenario.ficha.id, 10)
+                .from_case(cenario.org, cenario.ficha.id, 10)
                 .expect("lê as execuções")
                 .is_empty()
         );
@@ -1166,8 +1166,8 @@ etapa(
         let cenario = Cenario::novo("sem-revisao");
         let sem_revisao = cenario
             .store
-            .fluxos()
-            .criar(
+            .flows()
+            .create(
                 cenario.org,
                 NewFlow {
                     slug: "sem_revisao".to_owned(),
@@ -1179,8 +1179,8 @@ etapa(
             .expect("cria o fluxo");
         cenario
             .store
-            .fluxos()
-            .liberar(cenario.org, cenario.agente, sem_revisao.id)
+            .flows()
+            .release(cenario.org, cenario.agente, sem_revisao.id)
             .expect("libera");
         let ajustes = cenario.ajustes();
         let inicio = iniciar(
@@ -1231,7 +1231,7 @@ etapa(
             cenario
                 .store
                 .executions()
-                .da_ficha(cenario.org, cenario.ficha.id, 10)
+                .from_case(cenario.org, cenario.ficha.id, 10)
                 .expect("lê as execuções")
                 .len(),
             1,

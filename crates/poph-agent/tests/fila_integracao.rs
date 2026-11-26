@@ -27,7 +27,7 @@ impl Cenario {
         );
         let org = store
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: format!("Org {rotulo}"),
                 slug: format!("org-{rotulo}"),
                 config_json: String::new(),
@@ -36,7 +36,7 @@ impl Cenario {
             .id;
         let agente = store
             .agents()
-            .criar(
+            .create(
                 org,
                 NewAgent {
                     name: format!("Agente {rotulo}"),
@@ -98,8 +98,8 @@ fn um_contato_uma_conversa_com_cache_por_contato() {
 
     let conversas = cenario
         .store
-        .conversas()
-        .listar(cenario.org, None, poph_store::Page::with_limit(10))
+        .conversations()
+        .list(cenario.org, None, poph_store::Page::with_limit(10))
         .expect("lista as conversas");
     assert_eq!(conversas.len(), 2);
     assert!(
@@ -121,8 +121,8 @@ fn conversa_transferida_nao_e_servida_do_cache() {
     // Transferida para humano (D12): o agente para de responder nela.
     cenario
         .store
-        .conversas()
-        .mudar_status(
+        .conversations()
+        .change_status(
             cenario.org,
             conversa,
             1,
@@ -135,8 +135,8 @@ fn conversa_transferida_nao_e_servida_do_cache() {
     // conversa que deixou de estar aberta).
     let nova = cenario
         .store
-        .conversas()
-        .criar(
+        .conversations()
+        .create(
             cenario.org,
             NewConversation {
                 agent_id: cenario.agente,

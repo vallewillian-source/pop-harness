@@ -58,7 +58,7 @@ impl Cenario {
         );
         let org = store
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: format!("Org {rotulo}"),
                 slug: format!("org-{rotulo}-{}", AgentId::generate()),
                 config_json: "{}".to_owned(),
@@ -67,7 +67,7 @@ impl Cenario {
             .id;
         let agente = store
             .agents()
-            .criar(
+            .create(
                 org,
                 NewAgent {
                     name: format!("Bia {rotulo}"),
@@ -79,7 +79,7 @@ impl Cenario {
             .id;
         store
             .instructions()
-            .salvar(
+            .save(
                 org,
                 agente,
                 0,
@@ -91,7 +91,7 @@ impl Cenario {
         // Handoff ligado: sem isso o G1 nem se aplica (regra do POP Atende).
         store
             .agents()
-            .atualizar(
+            .update(
                 org,
                 agente,
                 1,
@@ -111,8 +111,8 @@ impl Cenario {
 
     fn conversa(&self) -> ConversationId {
         self.store
-            .conversas()
-            .criar(
+            .conversations()
+            .create(
                 self.org,
                 NewConversation {
                     agent_id: self.agente,
@@ -129,7 +129,7 @@ impl Cenario {
     fn falar(&self, conversa: ConversationId, texto: &str) -> MessageId {
         self.store
             .messages()
-            .gravar(
+            .write(
                 self.org,
                 NewMessage {
                     conversation_id: conversa,
@@ -137,7 +137,7 @@ impl Cenario {
                     role: Role::User,
                     texto: texto.to_owned(),
                     attachments_json: "[]".to_owned(),
-                    id_externo: None,
+                    external_id: None,
                     turn_id: None,
                     origin: poph_store::Origin::Agente,
                     author_name: None,
@@ -150,7 +150,7 @@ impl Cenario {
     fn departamento(&self, nome: &str) {
         self.store
             .departments()
-            .criar(
+            .create(
                 self.org,
                 NewDepartment {
                     name: nome.to_owned(),
@@ -168,7 +168,7 @@ impl Cenario {
             .expect("lê o agente");
         self.store
             .agents()
-            .atualizar(
+            .update(
                 self.org,
                 self.agente,
                 atual.version,
@@ -228,7 +228,7 @@ impl Cenario {
     fn ultimo_turno(&self, conversa: ConversationId) -> poph_store::Turno {
         self.store
             .turns()
-            .listar(self.org, conversa, poph_store::Page::with_limit(10))
+            .list(self.org, conversa, poph_store::Page::with_limit(10))
             .expect("lista os turnos")
             .into_iter()
             .next()

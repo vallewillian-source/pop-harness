@@ -55,7 +55,7 @@ impl Cenario {
         );
         let org = store
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: format!("Org {rotulo}"),
                 slug: format!("org-{rotulo}-{}", AgentId::generate()),
                 config_json: "{}".to_owned(),
@@ -64,7 +64,7 @@ impl Cenario {
             .id;
         let agente = store
             .agents()
-            .criar(
+            .create(
                 org,
                 NewAgent {
                     name: format!("Bia {rotulo}"),
@@ -85,7 +85,7 @@ impl Cenario {
         };
         store
             .instructions()
-            .salvar(
+            .save(
                 org,
                 agente,
                 0,
@@ -96,7 +96,7 @@ impl Cenario {
             .expect("grava as instruções");
         let categoria = store
             .categories()
-            .criar(
+            .create(
                 org,
                 NewCategory {
                     name: "Pragas urbanas".to_owned(),
@@ -107,7 +107,7 @@ impl Cenario {
             .id;
         store
             .products()
-            .criar(
+            .create(
                 org,
                 NewProduct {
                     category_id: Some(categoria),
@@ -128,8 +128,8 @@ impl Cenario {
             .expect("abre o índice");
         let catalogo = CatalogoProdutos::novo(Arc::clone(&store), Arc::new(indice));
         let conversa = store
-            .conversas()
-            .criar(
+            .conversations()
+            .create(
                 org,
                 NewConversation {
                     agent_id: agente,
@@ -182,7 +182,7 @@ impl Cenario {
     fn falar(&self, texto: &str) -> poph_types::MessageId {
         self.store
             .messages()
-            .gravar(
+            .write(
                 self.org,
                 NewMessage {
                     conversation_id: self.conversa,
@@ -190,7 +190,7 @@ impl Cenario {
                     role: poph_store::Role::User,
                     texto: texto.to_owned(),
                     attachments_json: "[]".to_owned(),
-                    id_externo: None,
+                    external_id: None,
                     turn_id: None,
                     origin: poph_store::Origin::Agente,
                     author_name: None,
@@ -203,7 +203,7 @@ impl Cenario {
     fn turnos(&self) -> Vec<poph_store::Turno> {
         self.store
             .turns()
-            .listar(self.org, self.conversa, Page::default())
+            .list(self.org, self.conversa, Page::default())
             .expect("lista os turnos")
     }
 }

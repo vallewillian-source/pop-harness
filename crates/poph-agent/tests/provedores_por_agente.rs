@@ -31,7 +31,7 @@ fn primeiro_agente(cenario: &Cenario) -> AgentId {
     cenario
         .store
         .agents()
-        .listar(cenario.org, Page::with_limit(10))
+        .list(cenario.org, Page::with_limit(10))
         .expect("lista os agentes")
         .first()
         .expect("o cenário cria um agente")
@@ -48,7 +48,7 @@ fn definir_provedor_do_agente(cenario: &Cenario, provedor: &str) {
     cenario
         .store
         .agents()
-        .atualizar(
+        .update(
             cenario.org,
             id,
             agente.version,
@@ -140,7 +140,7 @@ async fn agente_com_provedor_nomeado_recebe_a_resposta_dele() {
         .cenario
         .store
         .messages()
-        .listar(
+        .list(
             palco.cenario.org,
             palco.cenario.conversa,
             Page::with_limit(50),

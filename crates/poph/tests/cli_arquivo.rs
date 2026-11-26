@@ -36,7 +36,7 @@ impl Cenario {
             .expect("abre o banco");
             let org = store
                 .orgs()
-                .criar(NewOrg {
+                .create(NewOrg {
                     name: format!("Org {rotulo}"),
                     slug: slug.clone(),
                     config_json: "{}".to_owned(),
@@ -45,7 +45,7 @@ impl Cenario {
                 .id;
             store
                 .agents()
-                .criar(
+                .create(
                     org,
                     NewAgent {
                         name: "Bia".to_owned(),
@@ -306,10 +306,10 @@ fn biblioteca_e_por_agente() {
             &cenario.pasta.join("dados").join("rag.db"),
         )
         .expect("abre o banco");
-        let org = store.orgs().por_slug(&cenario.slug).expect("org criada").id;
+        let org = store.orgs().by_slug(&cenario.slug).expect("org criada").id;
         store
             .agents()
-            .criar(
+            .create(
                 org,
                 NewAgent {
                     name: "Caio".to_owned(),

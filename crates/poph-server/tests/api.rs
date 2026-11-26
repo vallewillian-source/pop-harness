@@ -247,7 +247,7 @@ async fn biblioteca_consulta_isola_org_e_agente() {
     let agente = c
         .store()
         .agents()
-        .criar(
+        .create(
             b.parse().unwrap(),
             poph_store::NewAgent {
                 name: "Agente".into(),
@@ -259,7 +259,7 @@ async fn biblioteca_consulta_isola_org_e_agente() {
     let arquivo = c
         .store()
         .library()
-        .criar(
+        .create(
             b.parse().unwrap(),
             poph_store::NewLibraryFile {
                 agent_id: agente.id,
@@ -297,7 +297,7 @@ async fn biblioteca_consulta_isola_org_e_agente() {
     let outro = c
         .store()
         .agents()
-        .criar(
+        .create(
             b.parse().unwrap(),
             poph_store::NewAgent {
                 name: "Outro".into(),
@@ -342,7 +342,7 @@ async fn biblioteca_consulta_isola_org_e_agente() {
     let registros = c
         .store()
         .audit()
-        .listar(b.parse().unwrap(), poph_store::Page::default())
+        .list(b.parse().unwrap(), poph_store::Page::default())
         .unwrap();
     let auditoria = registros
         .iter()
@@ -815,7 +815,7 @@ async fn org_com_agentes_so_sai_com_force() {
     // Cria um agente direto pelo armazenamento (a API de agentes é tarefa posterior).
     c.store()
         .agents()
-        .criar(
+        .create(
             id.parse().expect("org id"),
             poph_store::NewAgent {
                 name: "Bia".to_owned(),
@@ -1288,7 +1288,7 @@ async fn conversas_mensagens_turnos_isolam_org_e_mostram_dados() {
     let agente = c
         .store()
         .agents()
-        .criar(
+        .create(
             org,
             poph_store::NewAgent {
                 name: "Agente".into(),
@@ -1299,8 +1299,8 @@ async fn conversas_mensagens_turnos_isolam_org_e_mostram_dados() {
         .unwrap();
     let conversa = c
         .store()
-        .conversas()
-        .criar(
+        .conversations()
+        .create(
             org,
             poph_store::NewConversation {
                 agent_id: agente.id,
@@ -1313,7 +1313,7 @@ async fn conversas_mensagens_turnos_isolam_org_e_mostram_dados() {
         .unwrap();
     c.store()
         .messages()
-        .gravar(
+        .write(
             org,
             poph_store::NewMessage {
                 conversation_id: conversa.id,
@@ -1321,7 +1321,7 @@ async fn conversas_mensagens_turnos_isolam_org_e_mostram_dados() {
                 role: poph_store::Role::User,
                 texto: "olá".into(),
                 attachments_json: "[]".into(),
-                id_externo: None,
+                external_id: None,
                 turn_id: None,
                 origin: poph_store::Origin::Agente,
                 author_name: None,
@@ -1330,7 +1330,7 @@ async fn conversas_mensagens_turnos_isolam_org_e_mostram_dados() {
         .unwrap();
     c.store()
         .turns()
-        .iniciar(org, conversa.id, Some(agente.id))
+        .start(org, conversa.id, Some(agente.id))
         .unwrap();
     let raiz = format!("/admin/v1/orgs/{b}/conversations");
     let detalhe = format!("{raiz}/{}", conversa.id);
@@ -1375,8 +1375,8 @@ async fn conversas_mensagens_turnos_isolam_org_e_mostram_dados() {
     assert_eq!(corpo["items"][0]["state"], "running");
     let transferida = c
         .store()
-        .conversas()
-        .mudar_status(
+        .conversations()
+        .change_status(
             org,
             conversa.id,
             conversa.version,
@@ -1417,7 +1417,7 @@ async fn conversas_mensagens_turnos_isolam_org_e_mostram_dados() {
     let registros = c
         .store()
         .audit()
-        .listar(org, poph_store::Page::default())
+        .list(org, poph_store::Page::default())
         .unwrap();
     let registro = registros
         .iter()
@@ -1443,7 +1443,7 @@ async fn produtos_consultas_isolam_organizacoes() {
     let categoria = c
         .store()
         .categories()
-        .criar(
+        .create(
             org_b.parse().unwrap(),
             poph_store::NewCategory {
                 name: "Serviços".into(),
@@ -1454,7 +1454,7 @@ async fn produtos_consultas_isolam_organizacoes() {
     let produto = c
         .store()
         .products()
-        .criar(
+        .create(
             org_b.parse().unwrap(),
             poph_store::NewProduct {
                 category_id: Some(categoria.id),
@@ -1560,7 +1560,7 @@ async fn auditoria_de_escritas_identifica_ator_e_nao_registra_segredo() {
         let registros = c
             .store()
             .audit()
-            .listar(org_id.parse().unwrap(), poph_store::Page::default())
+            .list(org_id.parse().unwrap(), poph_store::Page::default())
             .unwrap();
         for acao in ["create", "update", "delete"] {
             let linha = registros
@@ -1577,7 +1577,7 @@ async fn auditoria_de_escritas_identifica_ator_e_nao_registra_segredo() {
     let registros = c
         .store()
         .audit()
-        .listar(org_id.parse().unwrap(), poph_store::Page::default())
+        .list(org_id.parse().unwrap(), poph_store::Page::default())
         .unwrap();
     assert!(registros.iter().any(|r| r.entity == "org"
         && r.acao == "create"
@@ -1599,7 +1599,7 @@ async fn auditoria_de_escritas_identifica_ator_e_nao_registra_segredo() {
     let registros = c
         .store()
         .audit()
-        .listar(org_id.parse().unwrap(), poph_store::Page::default())
+        .list(org_id.parse().unwrap(), poph_store::Page::default())
         .unwrap();
     assert!(registros.iter().any(|r| r.entity == "token"
         && r.acao == "revoke"
@@ -1783,7 +1783,7 @@ async fn exclusao_de_org_com_e_sem_force_fica_na_auditoria_global() {
         if force {
             c.store()
                 .agents()
-                .criar(
+                .create(
                     id.parse().unwrap(),
                     poph_store::NewAgent {
                         name: "Agente".into(),
@@ -1803,7 +1803,7 @@ async fn exclusao_de_org_com_e_sem_force_fica_na_auditoria_global() {
         let registros = c
             .store()
             .audit()
-            .listar_globais(poph_store::Page::default())
+            .list_globals(poph_store::Page::default())
             .unwrap();
         let acao = if force { "delete_force" } else { "delete" };
         let registro = registros
@@ -1916,7 +1916,7 @@ async fn agentes_crud_escopo_versao_e_auditoria() {
     let registros = c
         .store()
         .audit()
-        .listar(ob.parse().unwrap(), poph_store::Page::default())
+        .list(ob.parse().unwrap(), poph_store::Page::default())
         .unwrap();
     for acao in ["create", "update", "delete"] {
         let registro = registros
@@ -2039,13 +2039,13 @@ async fn instrucoes_api_paridade_isolamento_e_auditoria() {
     let cli_id = c
         .store()
         .agents()
-        .criar(org, novo("instrucoes-cli"))
+        .create(org, novo("instrucoes-cli"))
         .unwrap()
         .id;
     let api_id = c
         .store()
         .agents()
-        .criar(org, novo("instrucoes-api"))
+        .create(org, novo("instrucoes-api"))
         .unwrap()
         .id;
     let col = format!("/admin/v1/orgs/{ob}/agents/{api_id}/instructions");
@@ -2167,8 +2167,8 @@ async fn instrucoes_api_paridade_isolamento_e_auditoria() {
         c.pedir(Method::DELETE, &item, &tb, None, None).await.0,
         StatusCode::OK
     );
-    assert!(c.store().instructions().obter(org, cli_id).is_err());
-    assert!(c.store().instructions().obter(org, api_id).is_err());
+    assert!(c.store().instructions().get(org, cli_id).is_err());
+    assert!(c.store().instructions().get(org, api_id).is_err());
     let (status, erro) = c
         .pedir(
             Method::PATCH,
@@ -2180,7 +2180,7 @@ async fn instrucoes_api_paridade_isolamento_e_auditoria() {
         .await;
     assert_eq!(status, StatusCode::PRECONDITION_FAILED);
     assert_eq!(erro["details"]["current_version"], 0);
-    assert!(c.store().instructions().obter(org, api_id).is_err());
+    assert!(c.store().instructions().get(org, api_id).is_err());
     fs::write(&file, "{}").unwrap();
     let cli_estruturado = cli(&["create", &id, "--file", file_path, "--json"]);
     let (status, api_estruturado) = c
@@ -2219,7 +2219,7 @@ async fn instrucoes_api_paridade_isolamento_e_auditoria() {
     let registros = c
         .store()
         .audit()
-        .listar(org, poph_store::Page::default())
+        .list(org, poph_store::Page::default())
         .unwrap();
     for acao in ["create", "update", "delete"] {
         let r = registros
@@ -2352,7 +2352,7 @@ async fn conhecimento_crud_conflito_e_isolamento() {
     let registros = c
         .store()
         .audit()
-        .listar(aid.parse().unwrap(), poph_store::Page::default())
+        .list(aid.parse().unwrap(), poph_store::Page::default())
         .unwrap();
     for (entidade, id) in [
         ("knowledge_group", g["id"].as_str().unwrap()),
@@ -2383,7 +2383,7 @@ async fn vinculo_base_autorizacao_e_modelo_ausente() {
     let agente = c
         .store()
         .agents()
-        .criar(
+        .create(
             aid.parse().unwrap(),
             poph_store::NewAgent {
                 name: "Teste".into(),
@@ -2395,7 +2395,7 @@ async fn vinculo_base_autorizacao_e_modelo_ausente() {
     let grupo = c
         .store()
         .knowledge()
-        .criar_grupo(
+        .create_group(
             aid.parse().unwrap(),
             poph_store::NewKnowledgeGroup {
                 name: "Grupo".into(),
@@ -2438,7 +2438,7 @@ async fn vinculo_base_autorizacao_e_modelo_ausente() {
     assert_eq!(
         c.store()
             .knowledge()
-            .grupos_do_agente(aid.parse().unwrap(), agente.id)
+            .agent_groups(aid.parse().unwrap(), agente.id)
             .unwrap()
             .len(),
         1
@@ -2455,7 +2455,7 @@ async fn vinculo_base_autorizacao_e_modelo_ausente() {
     assert!(
         c.store()
             .knowledge()
-            .grupos_do_agente(aid.parse().unwrap(), agente.id)
+            .agent_groups(aid.parse().unwrap(), agente.id)
             .unwrap()
             .is_empty()
     );
@@ -2468,7 +2468,7 @@ async fn vinculo_base_autorizacao_e_modelo_ausente() {
     let registros = c
         .store()
         .audit()
-        .listar(aid.parse().unwrap(), poph_store::Page::default())
+        .list(aid.parse().unwrap(), poph_store::Page::default())
         .unwrap();
     let group_id = grupo.id.to_string();
     for acao in ["link", "unlink"] {
@@ -2497,7 +2497,7 @@ async fn reindex_com_modelo_real_torna_item_pesquisavel_e_preserva_inalterado() 
     let agente = c
         .store()
         .agents()
-        .criar(
+        .create(
             org_id,
             poph_store::NewAgent {
                 name: "Teste".into(),
@@ -2509,7 +2509,7 @@ async fn reindex_com_modelo_real_torna_item_pesquisavel_e_preserva_inalterado() 
     let grupo = c
         .store()
         .knowledge()
-        .criar_grupo(
+        .create_group(
             org_id,
             poph_store::NewKnowledgeGroup {
                 name: "Guia".into(),
@@ -2519,12 +2519,12 @@ async fn reindex_com_modelo_real_torna_item_pesquisavel_e_preserva_inalterado() 
         .unwrap();
     c.store()
         .knowledge()
-        .vincular_agente(org_id, agente.id, grupo.id)
+        .link_agent(org_id, agente.id, grupo.id)
         .unwrap();
     let item = c
         .store()
         .knowledge()
-        .criar_item(
+        .create_item(
             org_id,
             poph_store::NewKnowledgeItem {
                 group_id: grupo.id,
@@ -2570,7 +2570,7 @@ async fn reindex_com_modelo_real_torna_item_pesquisavel_e_preserva_inalterado() 
     let registros = c
         .store()
         .audit()
-        .listar(org_id, poph_store::Page::default())
+        .list(org_id, poph_store::Page::default())
         .unwrap();
     let token_id = token
         .strip_prefix("poph_")
@@ -2670,7 +2670,7 @@ async fn conhecimento_paridade_cli_criacao_edicao_exclusao() {
     let agente_cli = c
         .store()
         .agents()
-        .criar(
+        .create(
             oid.parse().unwrap(),
             poph_store::NewAgent {
                 name: "CLI".into(),
@@ -2682,7 +2682,7 @@ async fn conhecimento_paridade_cli_criacao_edicao_exclusao() {
     let agente_api = c
         .store()
         .agents()
-        .criar(
+        .create(
             oid.parse().unwrap(),
             poph_store::NewAgent {
                 name: "API".into(),
@@ -2706,7 +2706,7 @@ async fn conhecimento_paridade_cli_criacao_edicao_exclusao() {
     assert_eq!(
         c.store()
             .knowledge()
-            .grupos_do_agente(oid.parse().unwrap(), agente_cli.id)
+            .agent_groups(oid.parse().unwrap(), agente_cli.id)
             .unwrap()
             .len(),
         1
@@ -2714,7 +2714,7 @@ async fn conhecimento_paridade_cli_criacao_edicao_exclusao() {
     assert_eq!(
         c.store()
             .knowledge()
-            .grupos_do_agente(oid.parse().unwrap(), agente_api.id)
+            .agent_groups(oid.parse().unwrap(), agente_api.id)
             .unwrap()
             .len(),
         1
@@ -2729,14 +2729,14 @@ async fn conhecimento_paridade_cli_criacao_edicao_exclusao() {
     assert!(
         c.store()
             .knowledge()
-            .grupos_do_agente(oid.parse().unwrap(), agente_cli.id)
+            .agent_groups(oid.parse().unwrap(), agente_cli.id)
             .unwrap()
             .is_empty()
     );
     assert!(
         c.store()
             .knowledge()
-            .grupos_do_agente(oid.parse().unwrap(), agente_api.id)
+            .agent_groups(oid.parse().unwrap(), agente_api.id)
             .unwrap()
             .is_empty()
     );
@@ -2801,13 +2801,13 @@ async fn conhecimento_paridade_cli_criacao_edicao_exclusao() {
     assert!(
         c.store()
             .knowledge()
-            .obter_item(oid.parse().unwrap(), ci.parse().unwrap())
+            .get_item(oid.parse().unwrap(), ci.parse().unwrap())
             .is_err()
     );
     assert!(
         c.store()
             .knowledge()
-            .obter_item(oid.parse().unwrap(), ai.parse().unwrap())
+            .get_item(oid.parse().unwrap(), ai.parse().unwrap())
             .is_err()
     );
     assert_eq!(
@@ -2832,13 +2832,13 @@ async fn conhecimento_paridade_cli_criacao_edicao_exclusao() {
     assert!(
         c.store()
             .knowledge()
-            .obter_grupo(oid.parse().unwrap(), cid.parse().unwrap())
+            .get_group(oid.parse().unwrap(), cid.parse().unwrap())
             .is_err()
     );
     assert!(
         c.store()
             .knowledge()
-            .obter_grupo(oid.parse().unwrap(), aid.parse().unwrap())
+            .get_group(oid.parse().unwrap(), aid.parse().unwrap())
             .is_err()
     );
 }
@@ -2854,7 +2854,7 @@ async fn produtos_escritas_controle_de_versao_e_isolamento() {
     let cat = c
         .store()
         .categories()
-        .criar(
+        .create(
             org_b.parse().unwrap(),
             poph_store::NewCategory {
                 name: "Serviços".into(),
@@ -2940,7 +2940,7 @@ async fn produtos_escritas_controle_de_versao_e_isolamento() {
     let registros = c
         .store()
         .audit()
-        .listar(org_b.parse().unwrap(), poph_store::Page::default())
+        .list(org_b.parse().unwrap(), poph_store::Page::default())
         .unwrap();
     for acao in ["create", "update"] {
         let linha = registros
@@ -2970,7 +2970,7 @@ async fn produtos_escritas_controle_de_versao_e_isolamento() {
     let registros = c
         .store()
         .audit()
-        .listar(org_b.parse().unwrap(), poph_store::Page::default())
+        .list(org_b.parse().unwrap(), poph_store::Page::default())
         .unwrap();
     let linha = registros
         .iter()
@@ -3015,7 +3015,7 @@ async fn integracoes_ciclo_isolamento_e_segredos() {
     let agente = c
         .store()
         .agents()
-        .criar(
+        .create(
             ob.parse().unwrap(),
             poph_store::NewAgent {
                 name: "Agente".into(),
@@ -3093,7 +3093,7 @@ async fn integracoes_ciclo_isolamento_e_segredos() {
     let outro_agente = c
         .store()
         .agents()
-        .criar(
+        .create(
             ob.parse().unwrap(),
             poph_store::NewAgent {
                 name: "Outro agente".into(),
@@ -3168,7 +3168,7 @@ async fn integracoes_ciclo_isolamento_e_segredos() {
     let registros = c
         .store()
         .audit()
-        .listar(ob.parse().unwrap(), poph_store::Page::default())
+        .list(ob.parse().unwrap(), poph_store::Page::default())
         .unwrap();
     let token_id = token_b.split('_').nth(1).unwrap();
     for acao in ["create", "update", "delete"] {
@@ -3193,7 +3193,7 @@ async fn produtos_paridade_cli_estado_no_banco() {
     let categoria = c
         .store()
         .categories()
-        .criar(
+        .create(
             oid.parse().unwrap(),
             poph_store::NewCategory {
                 name: "Serviços".into(),
@@ -3237,12 +3237,12 @@ async fn produtos_paridade_cli_estado_no_banco() {
         let a = c
             .store()
             .products()
-            .obter(oid.parse().unwrap(), cli_id.parse().unwrap())
+            .get(oid.parse().unwrap(), cli_id.parse().unwrap())
             .unwrap();
         let b = c
             .store()
             .products()
-            .obter(oid.parse().unwrap(), api_id.parse().unwrap())
+            .get(oid.parse().unwrap(), api_id.parse().unwrap())
             .unwrap();
         assert_eq!(
             (
@@ -3299,13 +3299,13 @@ async fn produtos_paridade_cli_estado_no_banco() {
     assert!(
         c.store()
             .products()
-            .obter(oid.parse().unwrap(), cli_id.parse().unwrap())
+            .get(oid.parse().unwrap(), cli_id.parse().unwrap())
             .is_err()
     );
     assert!(
         c.store()
             .products()
-            .obter(oid.parse().unwrap(), api_id.parse().unwrap())
+            .get(oid.parse().unwrap(), api_id.parse().unwrap())
             .is_err()
     );
 }
@@ -3684,8 +3684,8 @@ async fn todas_as_edicoes_rejeitam_versao_desatualizada() {
     let org_id = id.parse().unwrap();
     let conversa = c
         .store()
-        .conversas()
-        .criar(
+        .conversations()
+        .create(
             org_id,
             poph_store::NewConversation {
                 agent_id: agent_id.parse().unwrap(),
@@ -3697,8 +3697,8 @@ async fn todas_as_edicoes_rejeitam_versao_desatualizada() {
         )
         .unwrap();
     c.store()
-        .conversas()
-        .mudar_status(
+        .conversations()
+        .change_status(
             org_id,
             conversa.id,
             conversa.version,
@@ -4026,7 +4026,7 @@ async fn biblioteca_paridade_consulta_e_exclusao_cli_api() {
     let agent = c
         .store()
         .agents()
-        .criar(
+        .create(
             org_id,
             poph_store::NewAgent {
                 name: "Agente".into(),
@@ -4044,8 +4044,8 @@ async fn biblioteca_paridade_consulta_e_exclusao_cli_api() {
         sha256: "a".repeat(64),
         blob_path: "exemplo".into(),
     };
-    let a = c.store().library().criar(org_id, novo()).unwrap();
-    let b = c.store().library().criar(org_id, novo()).unwrap();
+    let a = c.store().library().create(org_id, novo()).unwrap();
+    let b = c.store().library().create(org_id, novo()).unwrap();
     let agente = agent.id.to_string();
     let cli = |args: &[&str]| -> Value {
         let exe = cli_poph_exe();
@@ -4096,8 +4096,8 @@ async fn biblioteca_paridade_consulta_e_exclusao_cli_api() {
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{resp}");
-    assert!(c.store().library().obter(org_id, agent.id, a.id).is_err());
-    assert!(c.store().library().obter(org_id, agent.id, b.id).is_err());
+    assert!(c.store().library().get(org_id, agent.id, a.id).is_err());
+    assert!(c.store().library().get(org_id, agent.id, b.id).is_err());
 }
 
 /// PNG mínimo: a detecção por conteúdo lê a assinatura e imagem não passa pelo extrator.
@@ -4207,7 +4207,7 @@ async fn biblioteca_upload_paridade_cli_api() {
     let registros = c
         .store()
         .library()
-        .listar(
+        .list(
             org_id,
             agent_id.parse().unwrap(),
             poph_store::Page::default(),
@@ -4230,7 +4230,7 @@ async fn biblioteca_upload_paridade_cli_api() {
     let auditoria = c
         .store()
         .audit()
-        .listar(org_id, poph_store::Page::default())
+        .list(org_id, poph_store::Page::default())
         .expect("auditoria");
     assert!(
         auditoria
@@ -4267,7 +4267,7 @@ async fn biblioteca_upload_paridade_cli_api() {
     assert_eq!(
         c.store()
             .library()
-            .contar(org_id, agent_id.parse().unwrap())
+            .count_rows(org_id, agent_id.parse().unwrap())
             .unwrap(),
         2,
         "arquivo recusado não pode virar registro"
@@ -4297,7 +4297,7 @@ async fn vinculo_grupo_agente_paridade_cli_api() {
     let agente = c
         .store()
         .agents()
-        .criar(
+        .create(
             org_id,
             poph_store::NewAgent {
                 name: "Agente".into(),
@@ -4367,7 +4367,7 @@ async fn vinculo_grupo_agente_paridade_cli_api() {
         let mut agentes: Vec<String> = c
             .store()
             .knowledge()
-            .agentes_do_grupo(org_id, grupo.parse().unwrap())
+            .agents_from_group(org_id, grupo.parse().unwrap())
             .expect("agentes do grupo")
             .iter()
             .map(ToString::to_string)
@@ -4410,7 +4410,7 @@ async fn vinculo_grupo_agente_paridade_cli_api() {
     let auditoria = c
         .store()
         .audit()
-        .listar(org_id, poph_store::Page::default())
+        .list(org_id, poph_store::Page::default())
         .expect("auditoria");
     for acao in ["link", "unlink"] {
         assert!(
@@ -4436,7 +4436,7 @@ async fn reindex_paridade_cli_api() {
     let agente = c
         .store()
         .agents()
-        .criar(
+        .create(
             org_id,
             poph_store::NewAgent {
                 name: "Agente".into(),
@@ -4449,7 +4449,7 @@ async fn reindex_paridade_cli_api() {
     let grupo = c
         .store()
         .knowledge()
-        .criar_grupo(
+        .create_group(
             org_id,
             poph_store::NewKnowledgeGroup {
                 name: "Guia".into(),
@@ -4459,7 +4459,7 @@ async fn reindex_paridade_cli_api() {
         .expect("grupo");
     c.store()
         .knowledge()
-        .vincular_agente(org_id, agente.id, grupo.id)
+        .link_agent(org_id, agente.id, grupo.id)
         .expect("vínculo");
     for (titulo, conteudo) in [
         (
@@ -4473,7 +4473,7 @@ async fn reindex_paridade_cli_api() {
     ] {
         c.store()
             .knowledge()
-            .criar_item(
+            .create_item(
                 org_id,
                 poph_store::NewKnowledgeItem {
                     group_id: grupo.id,
@@ -4515,7 +4515,7 @@ async fn reindex_paridade_cli_api() {
     // reindexa e a CLI, em seguida, encontra o índice exatamente como a API deixou.
     c.store()
         .knowledge()
-        .criar_item(
+        .create_item(
             org_id,
             poph_store::NewKnowledgeItem {
                 group_id: grupo.id,
@@ -4723,7 +4723,7 @@ async fn fechar_conversa_cumpre_codigos_e_audita_uma_vez() {
     let agente = c
         .store()
         .agents()
-        .criar(
+        .create(
             org,
             poph_store::NewAgent {
                 name: "Agente".into(),
@@ -4734,8 +4734,8 @@ async fn fechar_conversa_cumpre_codigos_e_audita_uma_vez() {
         .unwrap();
     let conversa = c
         .store()
-        .conversas()
-        .criar(
+        .conversations()
+        .create(
             org,
             poph_store::NewConversation {
                 agent_id: agente.id,
@@ -4750,7 +4750,7 @@ async fn fechar_conversa_cumpre_codigos_e_audita_uma_vez() {
     let auditorias_close = |c: &Cenario| {
         c.store()
             .audit()
-            .listar(org, poph_store::Page::default())
+            .list(org, poph_store::Page::default())
             .unwrap()
             .iter()
             .filter(|r| {
@@ -4759,7 +4759,7 @@ async fn fechar_conversa_cumpre_codigos_e_audita_uma_vez() {
             .count()
     };
     let estado = |c: &Cenario| {
-        let atual = c.store().conversas().get(org, conversa.id).unwrap();
+        let atual = c.store().conversations().get(org, conversa.id).unwrap();
         (atual.status.as_text(), atual.version)
     };
 
@@ -4824,7 +4824,7 @@ async fn fechar_conversa_cumpre_codigos_e_audita_uma_vez() {
     let registro = c
         .store()
         .audit()
-        .listar(org, poph_store::Page::default())
+        .list(org, poph_store::Page::default())
         .unwrap()
         .into_iter()
         .find(|r| r.acao == "close")
@@ -4850,7 +4850,7 @@ async fn mensagem_depois_do_fechamento_abre_conversa_nova() {
     let agente = c
         .store()
         .agents()
-        .criar(
+        .create(
             org,
             poph_store::NewAgent {
                 name: "Agente".into(),
@@ -4870,20 +4870,25 @@ async fn mensagem_depois_do_fechamento_abre_conversa_nova() {
         integration_id: integracao,
         agent_id: agente.id,
         canal: "whatsapp".to_owned(),
-        id_externo: id_externo.to_owned(),
+        external_id: id_externo.to_owned(),
         peer: "5521999990000".to_owned(),
         event_json: "{}".to_owned(),
         texto: "oi".to_owned(),
-        anexos: Vec::new(),
+        attachments: Vec::new(),
         customer_name: None,
     };
     let primeira = c
         .store()
         .inbox()
-        .receber_do_canal(org, entrada("MSG-1"))
+        .receive_from_channel(org, entrada("MSG-1"))
         .unwrap();
     let conversa_1 = primeira.mensagem.conversation_id;
-    let versao = c.store().conversas().get(org, conversa_1).unwrap().version;
+    let versao = c
+        .store()
+        .conversations()
+        .get(org, conversa_1)
+        .unwrap()
+        .version;
     let (status, _) = c
         .pedir(
             Method::POST,
@@ -4898,7 +4903,7 @@ async fn mensagem_depois_do_fechamento_abre_conversa_nova() {
     let segunda = c
         .store()
         .inbox()
-        .receber_do_canal(org, entrada("MSG-2"))
+        .receive_from_channel(org, entrada("MSG-2"))
         .unwrap();
     let conversa_2 = segunda.mensagem.conversation_id;
     assert_ne!(
@@ -4906,11 +4911,19 @@ async fn mensagem_depois_do_fechamento_abre_conversa_nova() {
         "a mensagem seguinte abre conversa nova"
     );
     assert_eq!(
-        c.store().conversas().get(org, conversa_1).unwrap().status,
+        c.store()
+            .conversations()
+            .get(org, conversa_1)
+            .unwrap()
+            .status,
         poph_store::ConversationStatus::Closed
     );
     assert_eq!(
-        c.store().conversas().get(org, conversa_2).unwrap().status,
+        c.store()
+            .conversations()
+            .get(org, conversa_2)
+            .unwrap()
+            .status,
         poph_store::ConversationStatus::Open
     );
 }
@@ -4929,7 +4942,7 @@ async fn reabrir_conversa_encerrada_devolve_409_conversa_encerrada() {
     let agente = c
         .store()
         .agents()
-        .criar(
+        .create(
             org,
             poph_store::NewAgent {
                 name: "Agente".into(),
@@ -4940,8 +4953,8 @@ async fn reabrir_conversa_encerrada_devolve_409_conversa_encerrada() {
         .unwrap();
     let conversa = c
         .store()
-        .conversas()
-        .criar(
+        .conversations()
+        .create(
             org,
             poph_store::NewConversation {
                 agent_id: agente.id,
@@ -4964,7 +4977,7 @@ async fn reabrir_conversa_encerrada_devolve_409_conversa_encerrada() {
         .await;
     assert_eq!(status, StatusCode::OK);
 
-    let fechada = c.store().conversas().get(org, conversa.id).unwrap();
+    let fechada = c.store().conversations().get(org, conversa.id).unwrap();
     let (status, corpo) = c
         .pedir(
             Method::POST,
@@ -4978,7 +4991,7 @@ async fn reabrir_conversa_encerrada_devolve_409_conversa_encerrada() {
     assert_eq!(corpo["code"], "conversa_encerrada");
 
     // A conversa continua `closed` e a Ficha do atendimento também.
-    let depois = c.store().conversas().get(org, conversa.id).unwrap();
+    let depois = c.store().conversations().get(org, conversa.id).unwrap();
     assert_eq!(depois.status, poph_store::ConversationStatus::Closed);
     assert_eq!(
         depois.version, fechada.version,
@@ -4986,8 +4999,8 @@ async fn reabrir_conversa_encerrada_devolve_409_conversa_encerrada() {
     );
     let ficha = c
         .store()
-        .fichas()
-        .por_conversa(org, conversa.id)
+        .cases()
+        .by_conversation(org, conversa.id)
         .unwrap()
         .expect("a conversa fechada pelo administrador tem Ficha fechada");
     assert_eq!(ficha.status, poph_types::RecordStatus::Closed);

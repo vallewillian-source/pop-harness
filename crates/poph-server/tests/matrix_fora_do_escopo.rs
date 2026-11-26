@@ -84,7 +84,7 @@ fn config() -> MatrixConfig {
 fn criar_org(store: &Store, slug: &str) -> OrgId {
     store
         .orgs()
-        .criar(NewOrg {
+        .create(NewOrg {
             name: format!("Org {slug}"),
             slug: slug.to_owned(),
             config_json: String::new(),
@@ -96,7 +96,7 @@ fn criar_org(store: &Store, slug: &str) -> OrgId {
 fn criar_agente(store: &Store, org: OrgId) -> AgentId {
     store
         .agents()
-        .criar(
+        .create(
             org,
             NewAgent {
                 name: "Bia".to_owned(),
@@ -110,8 +110,8 @@ fn criar_agente(store: &Store, org: OrgId) -> AgentId {
 
 fn criar_conversa(store: &Store, org: OrgId, agente: AgentId, peer: &str) -> ConversationId {
     store
-        .conversas()
-        .criar(
+        .conversations()
+        .create(
             org,
             NewConversation {
                 agent_id: agente,
@@ -129,7 +129,7 @@ fn criar_conversa(store: &Store, org: OrgId, agente: AgentId, peer: &str) -> Con
 fn msg_cliente(store: &Store, org: OrgId, conversa: ConversationId, texto: &str) {
     store
         .messages()
-        .gravar_com_anexos(
+        .write_with_attachments(
             org,
             NewMessage {
                 conversation_id: conversa,
@@ -139,7 +139,7 @@ fn msg_cliente(store: &Store, org: OrgId, conversa: ConversationId, texto: &str)
                 author_name: None,
                 texto: texto.to_owned(),
                 attachments_json: "[]".to_owned(),
-                id_externo: None,
+                external_id: None,
                 turn_id: None,
             },
             &[],
@@ -151,7 +151,7 @@ fn msg_cliente(store: &Store, org: OrgId, conversa: ConversationId, texto: &str)
 fn msg_agente(store: &Store, org: OrgId, conversa: ConversationId, texto: &str) {
     store
         .messages()
-        .gravar_com_anexos(
+        .write_with_attachments(
             org,
             NewMessage {
                 conversation_id: conversa,
@@ -161,7 +161,7 @@ fn msg_agente(store: &Store, org: OrgId, conversa: ConversationId, texto: &str) 
                 author_name: None,
                 texto: texto.to_owned(),
                 attachments_json: "[]".to_owned(),
-                id_externo: None,
+                external_id: None,
                 turn_id: None,
             },
             &[],
@@ -170,15 +170,15 @@ fn msg_agente(store: &Store, org: OrgId, conversa: ConversationId, texto: &str) 
 }
 
 fn cursor(store: &Store, org: OrgId) -> (u64, String) {
-    let cursores = store.matrix().ler_cursores(org).expect("lê os cursores");
-    (cursores.mensagens, cursores.mensagens_id)
+    let cursores = store.matrix().read_cursors(org).expect("lê os cursores");
+    (cursores.messages, cursores.message_ids)
 }
 
 /// Id da última mensagem: o cursor tem de chegar nela quando não há pendência.
 fn maior_rowid_e_id(store: &Store) -> (u64, String) {
     let (rowid, id) = store
         .messages()
-        .ultima_rowid()
+        .last_rowid()
         .expect("lê a última rowid")
         .expect("tem mensagem");
     (rowid, id.to_string())
@@ -314,7 +314,7 @@ async fn os_seis_tipos_viram_aviso_na_sala_e_a_legenda_seguinte_passa() {
     let org = criar_org(&store, "a");
     let agente = criar_agente(&store, org);
     let conversa = criar_conversa(&store, org, agente, "5511977770001");
-    store.matrix().ligar(org).expect("liga o módulo");
+    store.matrix().enable(org).expect("liga o módulo");
 
     for tipo in UnsupportedContent::ALL_VALUES {
         msg_cliente(&store, org, conversa, tipo.history_text());
@@ -368,7 +368,7 @@ async fn reprocessar_o_aviso_nao_duplica_na_sala() {
     let org = criar_org(&store, "b");
     let agente = criar_agente(&store, org);
     let conversa = criar_conversa(&store, org, agente, "5511977770002");
-    store.matrix().ligar(org).expect("liga o módulo");
+    store.matrix().enable(org).expect("liga o módulo");
     msg_cliente(
         &store,
         org,
@@ -400,7 +400,7 @@ async fn historico_escrito_pelo_atendente_segue_como_texto() {
     let org = criar_org(&store, "c");
     let agente = criar_agente(&store, org);
     let conversa = criar_conversa(&store, org, agente, "5511977770003");
-    store.matrix().ligar(org).expect("liga o módulo");
+    store.matrix().enable(org).expect("liga o módulo");
     msg_agente(
         &store,
         org,

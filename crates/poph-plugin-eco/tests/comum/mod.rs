@@ -80,7 +80,7 @@ impl Cenario {
         );
         let org = store
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: format!("Org {rotulo}"),
                 slug: format!("org-{rotulo}"),
                 config_json: String::new(),
@@ -89,7 +89,7 @@ impl Cenario {
             .id;
         let agente = store
             .agents()
-            .criar(
+            .create(
                 org,
                 NewAgent {
                     name: format!("Agente {rotulo}"),
@@ -100,8 +100,8 @@ impl Cenario {
             .expect("cria o agente")
             .id;
         let conversa = store
-            .conversas()
-            .criar(
+            .conversations()
+            .create(
                 org,
                 NewConversation {
                     agent_id: agente,
@@ -158,7 +158,7 @@ impl Cenario {
     pub fn enfileirar_texto(&self, turno: poph_types::TurnId, texto: &str) -> OutboxItem {
         self.store
             .outbox()
-            .enfileirar(
+            .enqueue(
                 self.org,
                 NewOutboxItem {
                     conversation_id: self.conversa.id,
@@ -176,16 +176,16 @@ impl Cenario {
     pub fn estado_do_item(&self, id: poph_types::OutboxId) -> OutboxState {
         self.store
             .outbox()
-            .obter(self.org, id)
+            .get(self.org, id)
             .expect("lê o item de saída")
-            .estado
+            .state
     }
 
     /// Mensagens gravadas na conversa do cenário.
     pub fn mensagens(&self) -> Vec<poph_store::Mensagem> {
         self.store
             .messages()
-            .listar(self.org, self.conversa.id, Page::with_limit(50))
+            .list(self.org, self.conversa.id, Page::with_limit(50))
             .expect("lista as mensagens")
     }
 

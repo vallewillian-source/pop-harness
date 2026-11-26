@@ -387,7 +387,7 @@ fn criar(store: &Store, org: OrgId, configuracao: &HarnessConfig, args: CriarAge
         rag_top_k: args.rag_top_k,
         rag_cutoff: args.rag_min_score,
     };
-    match store.agents().criar(org, novo) {
+    match store.agents().create(org, novo) {
         Ok(agente) => {
             if args.handoff_department.is_some() {
                 let mudanca = AgentChange {
@@ -397,7 +397,7 @@ fn criar(store: &Store, org: OrgId, configuracao: &HarnessConfig, args: CriarAge
                 };
                 match store
                     .agents()
-                    .atualizar(org, agente.id, agente.version, mudanca)
+                    .update(org, agente.id, agente.version, mudanca)
                 {
                     Ok(agente) => return sucesso_agente(&agente, args.json, "agente criado"),
                     Err(erro) => {
@@ -413,9 +413,9 @@ fn criar(store: &Store, org: OrgId, configuracao: &HarnessConfig, args: CriarAge
 
 fn listar(store: &Store, org: OrgId, args: ListarAgentes) -> ExitCode {
     let agentes = if args.only_active {
-        store.agents().listar_ativos(org)
+        store.agents().list_active(org)
     } else {
-        store.agents().listar(org, Page::with_limit(args.limit))
+        store.agents().list(org, Page::with_limit(args.limit))
     };
     match agentes {
         Ok(agentes) => {
@@ -446,11 +446,11 @@ fn mostrar(store: &Store, org: OrgId, args: ReferenciaAgente) -> ExitCode {
         Ok(agente) => agente,
         Err(erro) => return falha(erro),
     };
-    let categorias = match store.agents().categorias(org, agente.id) {
+    let categorias = match store.agents().categories(org, agente.id) {
         Ok(categorias) => categorias,
         Err(erro) => return falha(format!("não consegui ler as categorias: {erro}")),
     };
-    let instrucoes = store.instructions().obter(org, agente.id).ok();
+    let instrucoes = store.instructions().get(org, agente.id).ok();
 
     if args.json {
         let mut valor = json_agente(&agente);
@@ -567,10 +567,7 @@ fn atualizar(
     };
     let mut atual = agente;
     if tem_mudanca {
-        atual = match store
-            .agents()
-            .atualizar(org, atual.id, args.if_match, mudanca)
-        {
+        atual = match store.agents().update(org, atual.id, args.if_match, mudanca) {
             Ok(atual) => atual,
             Err(erro) => return falha(format!("não consegui alterar o agente: {erro}")),
         };
@@ -578,7 +575,7 @@ fn atualizar(
     if let Some(categorias) = args.categorias {
         atual = match store
             .agents()
-            .definir_categorias(org, atual.id, atual.version, &categorias)
+            .define_categories(org, atual.id, atual.version, &categorias)
         {
             Ok(atual) => atual,
             Err(erro) => return falha(format!("não consegui definir as categorias: {erro}")),
@@ -595,7 +592,7 @@ fn excluir(store: &Store, org: OrgId, args: ReferenciaAgente) -> ExitCode {
         Ok(agente) => agente,
         Err(erro) => return falha(erro),
     };
-    match store.agents().excluir(org, agente.id) {
+    match store.agents().delete(org, agente.id) {
         Ok(()) => {
             if args.json {
                 imprimir_json(&json!({
@@ -644,7 +641,7 @@ fn gravar_instrucoes(store: &Store, org: OrgId, args: GravarInstrucoes, esperada
             };
             let estruturado = store
                 .instructions()
-                .obter(org, agente.id)
+                .get(org, agente.id)
                 .map(|instrucoes| instrucoes.structured_json)
                 .unwrap_or_else(|_| "{}".to_owned());
             (estruturado, markdown, false)
@@ -663,7 +660,7 @@ fn gravar_instrucoes(store: &Store, org: OrgId, args: GravarInstrucoes, esperada
 
     match store
         .instructions()
-        .salvar(org, agente.id, esperada, &estruturado, &markdown, derivado)
+        .save(org, agente.id, esperada, &estruturado, &markdown, derivado)
     {
         Ok(instrucoes) => {
             if args.json {
@@ -689,7 +686,7 @@ fn mostrar_instrucoes(store: &Store, org: OrgId, args: ReferenciaAgente) -> Exit
         Ok(agente) => agente,
         Err(erro) => return falha(erro),
     };
-    match store.instructions().obter(org, agente.id) {
+    match store.instructions().get(org, agente.id) {
         Ok(instrucoes) => {
             if args.json {
                 imprimir_json(&json!({
@@ -718,7 +715,7 @@ fn apagar_instrucoes(store: &Store, org: OrgId, args: ReferenciaAgente) -> ExitC
         Ok(agente) => agente,
         Err(erro) => return falha(erro),
     };
-    match store.instructions().apagar(org, agente.id) {
+    match store.instructions().delete(org, agente.id) {
         Ok(()) => {
             if args.json {
                 imprimir_json(&json!({
@@ -736,10 +733,7 @@ fn apagar_instrucoes(store: &Store, org: OrgId, args: ReferenciaAgente) -> ExitC
 }
 
 fn listar_instrucoes(store: &Store, org: OrgId, args: ListarInstrucoes) -> ExitCode {
-    match store
-        .instructions()
-        .listar(org, Page::with_limit(args.limit))
-    {
+    match store.instructions().list(org, Page::with_limit(args.limit)) {
         Ok(instrucoes) => {
             if args.json {
                 let itens: Vec<Value> = instrucoes.iter().map(json_instrucoes).collect();
@@ -797,7 +791,7 @@ fn resolver_org(store: &Store, texto: &str) -> Result<OrgId, String> {
     }
     store
         .orgs()
-        .por_slug(texto)
+        .by_slug(texto)
         .map(|org| org.id)
         .map_err(|erro| format!("org `{texto}`: {erro}"))
 }
@@ -811,7 +805,7 @@ fn resolver_agente(store: &Store, org: OrgId, texto: &str) -> Result<Agente, Str
     }
     store
         .agents()
-        .por_slug(org, texto)
+        .by_slug(org, texto)
         .map_err(|erro| format!("agente `{texto}`: {erro}"))
 }
 

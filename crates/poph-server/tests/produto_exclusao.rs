@@ -215,8 +215,8 @@ impl Cenario {
         let produto: ProductId = produto_id.parse().expect("produto");
         let conversa = self
             .store
-            .conversas()
-            .criar(
+            .conversations()
+            .create(
                 org,
                 NewConversation {
                     agent_id: agente,
@@ -230,7 +230,7 @@ impl Cenario {
             .id;
         self.store
             .carts()
-            .adicionar(org, conversa, agente, produto, quantidade)
+            .add(org, conversa, agente, produto, quantidade)
             .expect("põe o produto no carrinho");
     }
 
@@ -245,8 +245,8 @@ impl Cenario {
         let mut linhas = Vec::new();
         let conversas = self
             .store
-            .conversas()
-            .listar(
+            .conversations()
+            .list(
                 org,
                 None,
                 poph_store::Page {
@@ -262,13 +262,13 @@ impl Cenario {
             let resumo = self
                 .store
                 .carts()
-                .resumo(org, conversa.id)
+                .summary(org, conversa.id)
                 .expect("resumo do carrinho");
-            for item in resumo.itens {
+            for item in resumo.items {
                 linhas.push((
-                    item.produto.map(|p| p.to_string()),
+                    item.product.map(|p| p.to_string()),
                     item.nome,
-                    item.preco_unitario_centavos,
+                    item.price_unit_cents,
                 ));
             }
         }

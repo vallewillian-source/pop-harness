@@ -151,12 +151,12 @@ fn run_batch(conn: &mut Connection, commands: Vec<Command>) {
         let result = match transaction.execute_batch("SAVEPOINT poph_command") {
             Ok(()) => {
                 let result = (command.task)(&transaction);
-                let desfecho = if result.is_ok() {
+                let outcome = if result.is_ok() {
                     transaction.execute_batch("RELEASE poph_command")
                 } else {
                     transaction.execute_batch("ROLLBACK TO poph_command; RELEASE poph_command")
                 };
-                match desfecho {
+                match outcome {
                     Ok(()) => result,
                     Err(error) => Err(StoreError::Internal(format!(
                         "não consegui fechar o savepoint: {error}"

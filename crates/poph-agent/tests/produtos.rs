@@ -47,7 +47,7 @@ impl Cenario {
         );
         let org = store
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: format!("Org {rotulo}"),
                 slug: format!("org-{rotulo}-{}", AgentId::generate()),
                 config_json: "{}".to_owned(),
@@ -56,7 +56,7 @@ impl Cenario {
             .id;
         let agente = store
             .agents()
-            .criar(
+            .create(
                 org,
                 NewAgent {
                     name: format!("Atendente {rotulo}"),
@@ -68,7 +68,7 @@ impl Cenario {
             .id;
         let categoria = store
             .categories()
-            .criar(
+            .create(
                 org,
                 NewCategory {
                     name: "Pragas urbanas".to_owned(),
@@ -94,7 +94,7 @@ impl Cenario {
     fn nova_categoria(&self, nome: &str) -> ProductCategoryId {
         self.store
             .categories()
-            .criar(
+            .create(
                 self.org,
                 NewCategory {
                     name: nome.to_owned(),
@@ -115,7 +115,7 @@ impl Cenario {
     ) -> Product {
         self.store
             .products()
-            .criar(
+            .create(
                 self.org,
                 NewProduct {
                     category_id: Some(categoria),
@@ -246,12 +246,12 @@ async fn produto_inativo_ou_arquivado_sai_da_busca_e_da_ferramenta() {
     let atual = cenario
         .store
         .products()
-        .obter(cenario.org, produto.id)
+        .get(cenario.org, produto.id)
         .expect("lê o produto");
     cenario
         .store
         .products()
-        .atualizar(
+        .update(
             cenario.org,
             produto.id,
             atual.version,
@@ -271,12 +271,12 @@ async fn produto_inativo_ou_arquivado_sai_da_busca_e_da_ferramenta() {
     let atual = cenario
         .store
         .products()
-        .obter(cenario.org, produto.id)
+        .get(cenario.org, produto.id)
         .expect("lê o produto");
     cenario
         .store
         .products()
-        .atualizar(
+        .update(
             cenario.org,
             produto.id,
             atual.version,
@@ -312,12 +312,12 @@ async fn mudar_preco_aparece_na_resposta_seguinte_sem_reindexar() {
     let atual = cenario
         .store
         .products()
-        .obter(cenario.org, produto.id)
+        .get(cenario.org, produto.id)
         .expect("lê o produto");
     cenario
         .store
         .products()
-        .atualizar(
+        .update(
             cenario.org,
             produto.id,
             atual.version,
@@ -388,7 +388,7 @@ async fn busca_e_leitura_nao_cruzam_org() {
     let outra = cenario
         .store
         .orgs()
-        .criar(NewOrg {
+        .create(NewOrg {
             name: "Outra org".to_owned(),
             slug: format!("outra-{}", AgentId::generate()),
             config_json: "{}".to_owned(),
@@ -398,7 +398,7 @@ async fn busca_e_leitura_nao_cruzam_org() {
     let outro_agente = cenario
         .store
         .agents()
-        .criar(
+        .create(
             outra,
             NewAgent {
                 name: "Atendente da outra".to_owned(),
@@ -433,14 +433,14 @@ async fn busca_e_leitura_nao_cruzam_org() {
 
     // Leitura direta por id também não cruza.
     assert!(
-        cenario.store.products().obter(outra, produto.id).is_err(),
+        cenario.store.products().get(outra, produto.id).is_err(),
         "obter com a org errada não devolve o produto"
     );
     assert!(
         cenario
             .store
             .products()
-            .ativos_por_ids(outra, &[produto.id])
+            .active_by_ids(outra, &[produto.id])
             .expect("lê por ids")
             .is_empty(),
         "leitura em lote com a org errada não devolve nada"
@@ -481,7 +481,7 @@ async fn filtro_por_categoria_vinculada() {
     cenario
         .store
         .agents()
-        .definir_categorias(cenario.org, cenario.agente, agente.version, &[pragas])
+        .define_categories(cenario.org, cenario.agente, agente.version, &[pragas])
         .expect("vincula a categoria");
     cenario.sincronizar().await;
 
@@ -532,5 +532,5 @@ async fn filtro_por_categoria_vinculada() {
     assert!(negado.is_err(), "categoria fora do vínculo é recusada");
 
     // O produto da outra categoria continua no banco (só saiu do índice do agente).
-    assert!(cenario.store.products().obter(cenario.org, pia.id).is_ok());
+    assert!(cenario.store.products().get(cenario.org, pia.id).is_ok());
 }

@@ -207,7 +207,7 @@ impl Cenario {
                 .expect("abre o banco de teste");
             let org = store
                 .orgs()
-                .criar(NewOrg {
+                .create(NewOrg {
                     name: "Org HR-46f".to_owned(),
                     slug: "org-hr46f".to_owned(),
                     config_json: "{}".to_owned(),
@@ -216,7 +216,7 @@ impl Cenario {
                 .id;
             let agente = store
                 .agents()
-                .criar(
+                .create(
                     org,
                     NewAgent {
                         name: "Bia".to_owned(),
@@ -240,7 +240,7 @@ impl Cenario {
             };
             store
                 .instructions()
-                .salvar(
+                .save(
                     org,
                     agente,
                     0,
@@ -253,7 +253,7 @@ impl Cenario {
                 poph_files::blob::gravar(&dados.join("blobs"), org, &bytes).expect("blob");
             let arquivo = store
                 .library()
-                .criar(
+                .create(
                     org,
                     poph_store::NewLibraryFile {
                         agent_id: agente,
@@ -491,7 +491,7 @@ async fn sem_modelo_de_embedding_a_ferramenta_nao_habilitada_continua_fora() {
             .expect("abre o banco de teste");
         let org = store
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: "Org HR-46f filtro".to_owned(),
                 slug: "org-hr46f-filtro".to_owned(),
                 config_json: "{}".to_owned(),
@@ -500,7 +500,7 @@ async fn sem_modelo_de_embedding_a_ferramenta_nao_habilitada_continua_fora() {
             .id;
         let agente = store
             .agents()
-            .criar(
+            .create(
                 org,
                 NewAgent {
                     name: "Bia".to_owned(),
@@ -521,7 +521,7 @@ async fn sem_modelo_de_embedding_a_ferramenta_nao_habilitada_continua_fora() {
         };
         store
             .instructions()
-            .salvar(
+            .save(
                 org,
                 agente,
                 0,

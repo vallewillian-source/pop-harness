@@ -197,7 +197,7 @@ impl Cenario {
         let store = Arc::new(Store::open(&config).expect("abre o banco"));
         let org = store
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: "Loja Saída".to_owned(),
                 slug: "loja-saida".to_owned(),
                 config_json: String::new(),
@@ -206,7 +206,7 @@ impl Cenario {
             .id;
         let agente = store
             .agents()
-            .criar(
+            .create(
                 org,
                 NewAgent {
                     name: "Atendente Saída".to_owned(),
@@ -230,8 +230,8 @@ impl Cenario {
             .expect("id da integração");
 
         let conversa_wa = store
-            .conversas()
-            .criar(
+            .conversations()
+            .create(
                 org,
                 NewConversation {
                     agent_id: agente,
@@ -244,8 +244,8 @@ impl Cenario {
             .expect("cria a conversa de WhatsApp")
             .id;
         let conversa_console = store
-            .conversas()
-            .criar(
+            .conversations()
+            .create(
                 org,
                 NewConversation {
                     agent_id: agente,
@@ -258,8 +258,8 @@ impl Cenario {
             .expect("cria a conversa do console")
             .id;
         let conversa_nao_configurada = store
-            .conversas()
-            .criar(
+            .conversations()
+            .create(
                 org,
                 NewConversation {
                     agent_id: agente,
@@ -331,7 +331,7 @@ impl Cenario {
         let (_, item) = self
             .store
             .outbox()
-            .enfileirar(
+            .enqueue(
                 self.org,
                 NewOutboxItem {
                     conversation_id: conversa,
@@ -352,7 +352,7 @@ impl Cenario {
     fn estado(&self, item: &OutboxItem) -> OutboxItem {
         self.store
             .outbox()
-            .obter(self.org, item.id)
+            .get(self.org, item.id)
             .expect("lê o item de saída")
     }
 
@@ -393,7 +393,7 @@ async fn texto_sai_uma_vez_no_formato_do_canal_com_a_chave_so_no_cabecalho() {
     let relato = cenario.saida.ciclo().await.expect("ciclo");
 
     assert_eq!(relato.enviados, 1, "{relato:?}");
-    assert_eq!(cenario.estado(&item).estado, OutboxState::Sent);
+    assert_eq!(cenario.estado(&item).state, OutboxState::Sent);
     let registros = cenario.registros();
     assert_eq!(registros.len(), 1, "uma requisição, sem repetição");
     assert_eq!(registros[0].caminho, "instancia=loja");
@@ -415,7 +415,7 @@ async fn texto_acima_de_4000_sai_cortado_em_uma_mensagem_so() {
     let relato = cenario.saida.ciclo().await.expect("ciclo");
 
     assert_eq!(relato.enviados, 1, "{relato:?}");
-    assert_eq!(cenario.estado(&item).estado, OutboxState::Sent);
+    assert_eq!(cenario.estado(&item).state, OutboxState::Sent);
     let registros = cenario.registros();
     assert_eq!(registros.len(), 1, "uma mensagem só, nunca dividida");
     let enviado = registros[0].corpo["text"].as_str().expect("texto");
@@ -447,7 +447,7 @@ async fn arquivo_da_biblioteca_sai_como_midia_com_o_blob() {
     let relato = cenario.saida.ciclo().await.expect("ciclo");
 
     assert_eq!(relato.enviados, 1, "{relato:?}");
-    assert_eq!(cenario.estado(&item).estado, OutboxState::Sent);
+    assert_eq!(cenario.estado(&item).state, OutboxState::Sent);
     let registros = cenario.registros();
     assert_eq!(registros.len(), 1);
     assert_eq!(registros[0].corpo["mediatype"], "document");
@@ -490,9 +490,9 @@ async fn arquivo_acima_de_16_mb_nao_sai_e_o_texto_do_turno_segue() {
 
     assert_eq!(relato.enviados, 1, "o texto sai: {relato:?}");
     assert_eq!(relato.definitivos, 1, "o arquivo não sai: {relato:?}");
-    assert_eq!(cenario.estado(&texto).estado, OutboxState::Sent);
+    assert_eq!(cenario.estado(&texto).state, OutboxState::Sent);
     let arquivo = cenario.estado(&grande);
-    assert_eq!(arquivo.estado, OutboxState::Failed);
+    assert_eq!(arquivo.state, OutboxState::Failed);
     assert!(arquivo.ultimo_erro.is_some(), "o motivo fica registrado");
     assert_eq!(
         cenario.chamadas(),
@@ -522,15 +522,15 @@ async fn erro_5xx_volta_para_a_fila_e_so_repete_na_tentativa_seguinte() {
         "um 5xx não dispara uma segunda requisição dentro da mesma tentativa"
     );
     let depois = cenario.estado(&item);
-    assert_eq!(depois.estado, OutboxState::Sending, "volta para a fila");
-    assert_eq!(depois.tentativas, 1);
+    assert_eq!(depois.state, OutboxState::Sending, "volta para a fila");
+    assert_eq!(depois.attempts, 1);
     assert!(depois.ultimo_erro.is_some());
 
     tokio::time::sleep(Duration::from_millis(30)).await;
     let segundo = cenario.saida.ciclo().await.expect("segundo ciclo");
 
     assert_eq!(segundo.enviados, 1, "{segundo:?}");
-    assert_eq!(cenario.estado(&item).estado, OutboxState::Sent);
+    assert_eq!(cenario.estado(&item).state, OutboxState::Sent);
     assert_eq!(
         cenario.chamadas(),
         2,
@@ -552,14 +552,14 @@ async fn falha_transitoria_que_nunca_passa_esgota_as_tentativas_e_vira_failed() 
         tokio::time::sleep(Duration::from_millis(8)).await;
     }
     assert_eq!(cenario.chamadas(), 8, "uma requisição por tentativa");
-    assert_eq!(cenario.estado(&item).tentativas, 8);
+    assert_eq!(cenario.estado(&item).attempts, 8);
 
     let relato = cenario.saida.ciclo().await.expect("ciclo final");
 
     assert_eq!(relato.esgotados, 1, "{relato:?}");
     assert_eq!(cenario.chamadas(), 8, "depois de esgotar, nada mais sai");
     let depois = cenario.estado(&item);
-    assert_eq!(depois.estado, OutboxState::Failed);
+    assert_eq!(depois.state, OutboxState::Failed);
     assert_eq!(
         depois.ultimo_erro.as_deref(),
         Some("tentativas de envio esgotadas")
@@ -583,7 +583,7 @@ async fn erro_4xx_e_definitivo_nao_repete_e_nao_vaza_o_telefone() {
 
     assert_eq!(primeiro.definitivos, 1, "{primeiro:?}");
     let depois = cenario.estado(&item);
-    assert_eq!(depois.estado, OutboxState::Failed);
+    assert_eq!(depois.state, OutboxState::Failed);
     let erro = depois.ultimo_erro.clone().unwrap_or_default();
     assert!(
         !erro.contains(TELEFONE),
@@ -598,7 +598,7 @@ async fn erro_4xx_e_definitivo_nao_repete_e_nao_vaza_o_telefone() {
     cenario.saida.ciclo().await.expect("segundo ciclo");
 
     assert_eq!(cenario.chamadas(), 1, "4xx nunca é repetido");
-    assert_eq!(cenario.estado(&item).estado, OutboxState::Failed);
+    assert_eq!(cenario.estado(&item).state, OutboxState::Failed);
 }
 
 #[tokio::test]
@@ -609,7 +609,7 @@ async fn rede_fora_do_ar_e_transitoria() {
     let relato = cenario.saida.ciclo().await.expect("ciclo");
 
     assert_eq!(relato.transitorios, 1, "{relato:?}");
-    assert_eq!(cenario.estado(&item).estado, OutboxState::Sending);
+    assert_eq!(cenario.estado(&item).state, OutboxState::Sending);
 }
 
 // ───────────────────────── o que não é deste consumidor fica como está ─────────────────────────
@@ -638,10 +638,10 @@ async fn conversa_do_console_e_de_integracao_nao_configurada_nao_sao_tocadas() {
         "nada foi contado como deste consumidor"
     );
     assert_eq!(cenario.chamadas(), 0);
-    assert_eq!(cenario.estado(&console).estado, OutboxState::Pending);
-    assert_eq!(cenario.estado(&console).tentativas, 0);
-    assert_eq!(cenario.estado(&fora).estado, OutboxState::Pending);
-    assert_eq!(cenario.estado(&fora).tentativas, 0);
+    assert_eq!(cenario.estado(&console).state, OutboxState::Pending);
+    assert_eq!(cenario.estado(&console).attempts, 0);
+    assert_eq!(cenario.estado(&fora).state, OutboxState::Pending);
+    assert_eq!(cenario.estado(&fora).attempts, 0);
 }
 
 #[tokio::test]
@@ -653,8 +653,8 @@ async fn sem_chave_da_evolution_a_mensagem_fica_pendente_e_nao_falha() {
 
     assert_eq!(relato.adiados, 1, "{relato:?}");
     let depois = cenario.estado(&item);
-    assert_eq!(depois.estado, OutboxState::Pending, "não vira falha");
-    assert_eq!(depois.tentativas, 0, "nenhuma tentativa gasta");
+    assert_eq!(depois.state, OutboxState::Pending, "não vira falha");
+    assert_eq!(depois.attempts, 0, "nenhuma tentativa gasta");
     assert_eq!(cenario.chamadas(), 0);
 }
 
@@ -716,7 +716,7 @@ async fn envio_enviado_e_adiado_deixam_uma_linha_cada_sem_dado_sensivel() {
     let enviado = Cenario::novo("log-enviado", Instancia::Normal, vec![]).await;
     let item_ok = enviado.texto(TEXTO_ENVIADO);
     enviado.saida.ciclo().await.expect("ciclo");
-    assert_eq!(enviado.estado(&item_ok).estado, OutboxState::Sent);
+    assert_eq!(enviado.estado(&item_ok).state, OutboxState::Sent);
 
     let adiado = Cenario::novo(
         "log-adiado",
@@ -726,7 +726,7 @@ async fn envio_enviado_e_adiado_deixam_uma_linha_cada_sem_dado_sensivel() {
     .await;
     let item_adiado = adiado.texto(TEXTO_ADIADO);
     adiado.saida.ciclo().await.expect("ciclo");
-    assert_eq!(adiado.estado(&item_adiado).estado, OutboxState::Sending);
+    assert_eq!(adiado.estado(&item_adiado).state, OutboxState::Sending);
 
     let registro = String::from_utf8_lossy(&logs_capturados().lock().unwrap()).into_owned();
     // Captura viva: as duas linhas precisam aparecer, senão a ausência de dado não prova nada.
@@ -783,7 +783,7 @@ async fn texto_enviado_grava_o_id_que_a_evolution_devolveu() {
     let gravado = cenario
         .store
         .outbox()
-        .id_externo(cenario.org, item.id)
+        .external_id(cenario.org, item.id)
         .expect("lê o id externo");
     assert_eq!(
         gravado.as_deref(),
@@ -791,7 +791,7 @@ async fn texto_enviado_grava_o_id_que_a_evolution_devolveu() {
         "o id da resposta do envio tem de ficar na outbox"
     );
     // O id vem da resposta (`key.id`), não do pedido: a Evolution é quem nomeia a mensagem.
-    assert_eq!(cenario.estado(&item).estado, OutboxState::Sent);
+    assert_eq!(cenario.estado(&item).state, OutboxState::Sent);
 }
 
 #[tokio::test]
@@ -825,7 +825,7 @@ async fn arquivo_enviado_grava_o_id_que_a_evolution_devolveu() {
         cenario
             .store
             .outbox()
-            .id_externo(cenario.org, item.id)
+            .external_id(cenario.org, item.id)
             .expect("lê o id externo")
             .as_deref(),
         Some("MSG-ARQUIVO-7"),
@@ -849,7 +849,7 @@ async fn envio_que_falha_nao_grava_id() {
         recusado
             .store
             .outbox()
-            .id_externo(recusado.org, item_recusado.id)
+            .external_id(recusado.org, item_recusado.id)
             .expect("lê o id externo"),
         None,
         "envio recusado não pode ficar com id"
@@ -869,7 +869,7 @@ async fn envio_que_falha_nao_grava_id() {
         adiado
             .store
             .outbox()
-            .id_externo(adiado.org, item_adiado.id)
+            .external_id(adiado.org, item_adiado.id)
             .expect("lê o id externo"),
         None,
         "envio adiado não pode ficar com id"
@@ -890,12 +890,12 @@ async fn canal_sem_id_na_resposta_envia_e_fica_sem_id() {
     let relato = cenario.saida.ciclo().await.expect("ciclo");
 
     assert_eq!(relato.enviados, 1, "{relato:?}");
-    assert_eq!(cenario.estado(&item).estado, OutboxState::Sent);
+    assert_eq!(cenario.estado(&item).state, OutboxState::Sent);
     assert_eq!(
         cenario
             .store
             .outbox()
-            .id_externo(cenario.org, item.id)
+            .external_id(cenario.org, item.id)
             .expect("lê o id externo"),
         None
     );

@@ -51,7 +51,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?);
     let org = store
         .orgs()
-        .criar(NewOrg {
+        .create(NewOrg {
             name: "Org do exemplo".to_owned(),
             slug: "org-do-exemplo".to_owned(),
             config_json: String::new(),
@@ -59,7 +59,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .id;
     let agente = store
         .agents()
-        .criar(
+        .create(
             org,
             NewAgent {
                 name: "Agente do eco".to_owned(),
@@ -68,7 +68,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
         )?
         .id;
-    let conversa = store.conversas().criar(
+    let conversa = store.conversations().create(
         org,
         NewConversation {
             agent_id: agente,
@@ -113,7 +113,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Saída: um item de texto na fila, entregue ao plugin pelo mesmo transporte do WhatsApp.
     let turno = TurnId::generate();
-    let enfileirado = store.outbox().enfileirar(
+    let enfileirado = store.outbox().enqueue(
         org,
         NewOutboxItem {
             conversation_id: conversa.id,
@@ -125,21 +125,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     println!(
         "3. item na fila de saída: `olá, mundo` (estado {:?})",
-        enfileirado.1.estado
+        enfileirado.1.state
     );
 
     let transporte = EnvioPeloCanal::novo(Arc::clone(&store), Arc::clone(&canal));
     let relato = fluxo.enviar_pendentes(org, &transporte).await?;
-    let item = store.outbox().obter(org, enfileirado.1.id)?;
+    let item = store.outbox().get(org, enfileirado.1.id)?;
     println!(
         "4. envio pelo plugin: enviados={} falharam={} → estado {:?}",
-        relato.enviados, relato.falharam, item.estado
+        relato.enviados, relato.falharam, item.state
     );
 
     esperar(|| entrada.contadores().gravados >= 1).await?;
     let mensagens = store
         .messages()
-        .listar(org, conversa.id, Page::with_limit(10))?;
+        .list(org, conversa.id, Page::with_limit(10))?;
     for mensagem in &mensagens {
         println!(
             "5. inbox → mensagem ({}/{}): {:?}",
@@ -165,7 +165,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let mensagens = store
         .messages()
-        .listar(org, conversa.id, Page::with_limit(10))?;
+        .list(org, conversa.id, Page::with_limit(10))?;
     println!("7. mensagens na conversa no fim: {}", mensagens.len());
 
     let saude = canal.health().await?;
@@ -176,10 +176,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     println!(
         "9. fila de saída no fim: pendentes={} enviados={}",
-        store
-            .outbox()
-            .contar_por_estado(org, OutboxState::Pending)?,
-        store.outbox().contar_por_estado(org, OutboxState::Sent)?
+        store.outbox().count_by_state(org, OutboxState::Pending)?,
+        store.outbox().count_by_state(org, OutboxState::Sent)?
     );
 
     supervisor.encerrar().await;

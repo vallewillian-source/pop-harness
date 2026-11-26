@@ -168,10 +168,7 @@ impl SaidaWhatsApp {
     pub async fn ciclo(&self) -> Result<RelatoSaidaWhatsApp, StoreError> {
         let mut relato = RelatoSaidaWhatsApp::default();
         for org in self.orgs() {
-            let itens = self
-                .store
-                .outbox()
-                .listar_pendentes(org, self.opcoes.lote)?;
+            let itens = self.store.outbox().list_pending(org, self.opcoes.lote)?;
             for item in itens {
                 let id = item.id;
                 if let Err(erro) = self.tratar(org, item, &mut relato).await {
@@ -194,7 +191,7 @@ impl SaidaWhatsApp {
         item: OutboxItem,
         relato: &mut RelatoSaidaWhatsApp,
     ) -> Result<(), StoreError> {
-        let conversa = self.store.conversas().get(org, item.conversation_id)?;
+        let conversa = self.store.conversations().get(org, item.conversation_id)?;
         // Destino no canal: é o identificador do cliente (o "peer") gravado na conversa.
         let peer_externo = conversa.peer_externo.clone();
         // Não é do WhatsApp configurado aqui: não é deste consumidor, e não se mexe nele.
@@ -217,10 +214,10 @@ impl SaidaWhatsApp {
             relato.adiados += 1;
             return Ok(());
         }
-        if item.tentativas >= self.opcoes.max_tentativas {
+        if item.attempts >= self.opcoes.max_tentativas {
             self.store
                 .outbox()
-                .falhar_envio(org, id, MOTIVO_TENTATIVAS_ESGOTADAS, true)?;
+                .fail_send(org, id, MOTIVO_TENTATIVAS_ESGOTADAS, true)?;
             self.esquecer(id);
             relato.esgotados += 1;
             tracing::warn!(
@@ -234,11 +231,11 @@ impl SaidaWhatsApp {
         }
 
         // A tentativa precisa estar gravada antes da chamada externa (D11).
-        let tentativa = self.store.outbox().iniciar_envio(org, id)?;
+        let tentativa = self.store.outbox().start_send(org, id)?;
         let Some(peer) = peer_externo else {
             // Sem destino não há envio, e repetir não adianta (mesmo desfecho de antes, quando a
             // tradução do item é que reprovava a conversa sem peer).
-            self.store.outbox().falhar_envio(
+            self.store.outbox().fail_send(
                 org,
                 id,
                 "a conversa não tem identificador do cliente no canal",
@@ -261,7 +258,7 @@ impl SaidaWhatsApp {
                 // Payload inválido ou destino ausente: nada a enviar, e repetir não adianta.
                 self.store
                     .outbox()
-                    .falhar_envio(org, id, &falha.motivo, true)?;
+                    .fail_send(org, id, &falha.motivo, true)?;
                 self.esquecer(id);
                 relato.definitivos += 1;
                 tracing::warn!(
@@ -281,7 +278,7 @@ impl SaidaWhatsApp {
                 // para reconhecer o eco do próprio envio. Canal sem id grava sem id.
                 self.store
                     .outbox()
-                    .confirmar_envio_com_id(org, id, id_externo.as_deref())?;
+                    .confirm_send_with_id(org, id, id_externo.as_deref())?;
                 self.esquecer(id);
                 relato.enviados += 1;
                 tracing::info!(
@@ -299,7 +296,7 @@ impl SaidaWhatsApp {
                 // e, aqui, uma linha por tentativa; sem a chave da Evolution nem o corpo do evento.
                 self.store
                     .outbox()
-                    .falhar_envio(org, id, &falha.motivo, false)?;
+                    .fail_send(org, id, &falha.motivo, false)?;
                 self.agendar(id, self.opcoes.backoff.espera(tentativa));
                 relato.transitorios += 1;
                 tracing::warn!(
@@ -316,7 +313,7 @@ impl SaidaWhatsApp {
                 let falha = FalhaEnvio::definitiva(erro.to_string());
                 self.store
                     .outbox()
-                    .falhar_envio(org, id, &falha.motivo, true)?;
+                    .fail_send(org, id, &falha.motivo, true)?;
                 self.esquecer(id);
                 relato.definitivos += 1;
                 tracing::warn!(

@@ -69,7 +69,7 @@ impl Cenario {
         );
         let org = store
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: format!("Org {rotulo}"),
                 slug: format!("org-{rotulo}-{}", AgentId::generate()),
                 config_json: "{}".to_owned(),
@@ -97,7 +97,7 @@ impl Cenario {
         let sufixo = AgentId::generate().to_string();
         let agente = store
             .agents()
-            .criar(
+            .create(
                 org,
                 NewAgent {
                     name: format!("Bia {rotulo}"),
@@ -121,7 +121,7 @@ impl Cenario {
         };
         store
             .instructions()
-            .salvar(
+            .save(
                 org,
                 agente,
                 0,
@@ -136,7 +136,7 @@ impl Cenario {
     fn arquivo(store: &Store, org: OrgId, agente: AgentId, nome: &str, descricao: &str) -> FileId {
         store
             .library()
-            .criar(
+            .create(
                 org,
                 NewLibraryFile {
                     agent_id: agente,
@@ -154,8 +154,8 @@ impl Cenario {
 
     fn abrir_conversa(store: &Store, org: OrgId, agente: AgentId) -> ConversationId {
         store
-            .conversas()
-            .criar(
+            .conversations()
+            .create(
                 org,
                 NewConversation {
                     agent_id: agente,
@@ -200,7 +200,7 @@ impl Cenario {
     fn saidas(&self, turno: TurnId) -> Vec<OutboxItem> {
         self.store
             .outbox()
-            .listar_pendentes(self.org, 50)
+            .list_pending(self.org, 50)
             .expect("lê a outbox")
             .into_iter()
             .filter(|item| item.turn_id == turno)
@@ -236,7 +236,7 @@ impl Cenario {
     fn falar(&self, texto: &str) -> poph_types::MessageId {
         self.store
             .messages()
-            .gravar(
+            .write(
                 self.org,
                 poph_store::NewMessage {
                     conversation_id: self.conversa,
@@ -244,7 +244,7 @@ impl Cenario {
                     role: poph_store::Role::User,
                     texto: texto.to_owned(),
                     attachments_json: "[]".to_owned(),
-                    id_externo: None,
+                    external_id: None,
                     turn_id: None,
                     origin: poph_store::Origin::Agente,
                     author_name: None,
@@ -321,7 +321,7 @@ async fn id_de_outra_org_e_recusado_mesmo_com_org_forjada() {
     let outra_org = cenario
         .store
         .orgs()
-        .criar(NewOrg {
+        .create(NewOrg {
             name: "Outra".to_owned(),
             slug: format!("outra-{}", AgentId::generate()),
             config_json: "{}".to_owned(),
@@ -494,7 +494,7 @@ async fn biblioteca_vazia_aparece_como_tal_e_nao_quebra_o_turno() {
         cenario
             .store
             .library()
-            .excluir(cenario.org, cenario.agente, arquivo)
+            .delete(cenario.org, cenario.agente, arquivo)
             .expect("apaga o arquivo");
     }
     let (motor, fake) = cenario.motor(vec![resposta("ok")]);
@@ -600,19 +600,19 @@ async fn falha_do_modelo_depois_de_arquivo_enfileirado_nao_repete_o_envio() {
         let pendentes = cenario
             .store
             .inbox()
-            .contar_pendentes(cenario.org)
+            .count_pending(cenario.org)
             .expect("pendentes");
         let rodando = cenario
             .store
             .turns()
-            .listar(
+            .list(
                 cenario.org,
                 cenario.conversa,
                 poph_store::Page::with_limit(10),
             )
             .expect("turnos")
             .iter()
-            .any(|turno| turno.estado == poph_store::TurnState::Running);
+            .any(|turno| turno.state == poph_store::TurnState::Running);
         if pendentes == 0 && !rodando {
             break;
         }
@@ -628,7 +628,7 @@ async fn falha_do_modelo_depois_de_arquivo_enfileirado_nao_repete_o_envio() {
     let turnos = cenario
         .store
         .turns()
-        .listar(
+        .list(
             cenario.org,
             cenario.conversa,
             poph_store::Page::with_limit(10),
@@ -638,7 +638,7 @@ async fn falha_do_modelo_depois_de_arquivo_enfileirado_nao_repete_o_envio() {
     let saidas = cenario
         .store
         .outbox()
-        .listar_pendentes(cenario.org, 50)
+        .list_pending(cenario.org, 50)
         .expect("saída");
     let arquivos = saidas.iter().filter(|item| item.tipo == "file").count();
     assert_eq!(arquivos, 1, "o arquivo sai uma vez");
@@ -646,7 +646,7 @@ async fn falha_do_modelo_depois_de_arquivo_enfileirado_nao_repete_o_envio() {
         cenario
             .store
             .inbox()
-            .contar_pendentes(cenario.org)
+            .count_pending(cenario.org)
             .expect("pendentes"),
         0,
         "a entrada saiu da fila (concluída com o motivo)"

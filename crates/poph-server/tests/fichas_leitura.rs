@@ -230,16 +230,16 @@ impl Cenario {
 
     fn liberar(&self, org: &str, agente: &str, fluxo: FlowId) {
         self.store
-            .fluxos()
-            .liberar(parse_org(org), parse_agente(agente), fluxo)
+            .flows()
+            .release(parse_org(org), parse_agente(agente), fluxo)
             .expect("libera o fluxo ao agente");
     }
 
     /// Ficha sem conversa, do agente, no canal dado.
     fn ficha_avulsa(&self, org: &str, agente: &str, canal: &str) -> RecordId {
         self.store
-            .fichas()
-            .criar(
+            .cases()
+            .create(
                 parse_org(org),
                 NewRecord {
                     conversation_id: None,
@@ -256,8 +256,8 @@ impl Cenario {
     fn conversa(&self, org: &str, agente: &str, canal: &str) -> (Conversa, RecordId) {
         let conversa = self
             .store
-            .conversas()
-            .criar(
+            .conversations()
+            .create(
                 parse_org(org),
                 NewConversation {
                     agent_id: parse_agente(agente),
@@ -270,8 +270,8 @@ impl Cenario {
             .expect("cria a conversa");
         let ficha = self
             .store
-            .fichas()
-            .por_conversa(parse_org(org), conversa.id)
+            .cases()
+            .by_conversation(parse_org(org), conversa.id)
             .expect("consulta a Ficha")
             .expect("a conversa tem Ficha")
             .id;
@@ -280,8 +280,8 @@ impl Cenario {
 
     fn fechar_conversa(&self, org: &str, conversa: &Conversa) {
         self.store
-            .conversas()
-            .fechar_auditado(
+            .conversations()
+            .close_audited(
                 parse_org(org),
                 conversa.id,
                 conversa.version,
@@ -302,12 +302,12 @@ impl Cenario {
         self.liberar(org, agente, fluxo);
         self.store
             .executions()
-            .iniciar_execucao(
+            .start_execution(
                 parse_org(org),
                 ExecutionStart {
                     chave_idempotencia: None,
-                    ficha,
-                    fluxo,
+                    case: ficha,
+                    flow: fluxo,
                     revision: revisao,
                     actor: EventActor::Agent,
                     ator_ref: Some("agente-de-teste"),
@@ -349,7 +349,7 @@ impl Cenario {
         };
         self.store
             .executions()
-            .aplicar_transicao(
+            .apply_transition(
                 parse_org(org),
                 gravada.execution.id,
                 gravada.execution.version,

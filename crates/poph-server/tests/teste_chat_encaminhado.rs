@@ -225,7 +225,7 @@ async fn sse_de_org_remota_flui_pelo_encaminhamento_e_desconexao_cancela_na_dona
     let store_b = Arc::new(Store::open(&config_b).expect("banco de b"));
     let org: OrgId = store_b
         .orgs()
-        .criar(NewOrg {
+        .create(NewOrg {
             name: "Org da dona".to_owned(),
             slug: "org-da-dona-hr50b2".to_owned(),
             config_json: "{}".to_owned(),
@@ -234,7 +234,7 @@ async fn sse_de_org_remota_flui_pelo_encaminhamento_e_desconexao_cancela_na_dona
         .id;
     let agente: AgentId = store_b
         .agents()
-        .criar(
+        .create(
             org,
             NewAgent {
                 name: "Bia".to_owned(),
@@ -345,12 +345,12 @@ async fn sse_de_org_remota_flui_pelo_encaminhamento_e_desconexao_cancela_na_dona
     let estado = loop {
         let turnos = store_b
             .turns()
-            .listar(org, id, Page::with_limit(50))
+            .list(org, id, Page::with_limit(50))
             .expect("turnos de b");
         if let Some(turno) = turnos.last()
-            && turno.estado != TurnState::Running
+            && turno.state != TurnState::Running
         {
-            break (turno.estado.as_text().to_owned(), turno.error.clone());
+            break (turno.state.as_text().to_owned(), turno.error.clone());
         }
         assert!(
             inicio_da_espera.elapsed() < Duration::from_secs(15),
@@ -370,7 +370,7 @@ async fn sse_de_org_remota_flui_pelo_encaminhamento_e_desconexao_cancela_na_dona
     );
     let saidas = store_b
         .messages()
-        .listar(org, id, Page::with_limit(200))
+        .list(org, id, Page::with_limit(200))
         .expect("mensagens de b")
         .iter()
         .filter(|mensagem| mensagem.direction == Direction::Outbound)
@@ -379,7 +379,7 @@ async fn sse_de_org_remota_flui_pelo_encaminhamento_e_desconexao_cancela_na_dona
     assert_eq!(
         store_b
             .outbox()
-            .listar_pendentes(org, POPH_LOTE)
+            .list_pending(org, POPH_LOTE)
             .expect("fila de b")
             .len(),
         0,

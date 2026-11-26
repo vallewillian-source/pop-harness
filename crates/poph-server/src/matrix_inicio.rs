@@ -40,7 +40,7 @@ use poph_matrix::config::{ErroMatrix, ModuloMatrix};
 use poph_matrix::espacos::{EspacoGravado, OrigemEspaco, PortaEspacos};
 use poph_matrix::salas::ErroPorta;
 use poph_matrix::{ClienteMatrix, Espacos, IdsFantasmas, UsuariosVirtuais};
-use poph_store::{OrigemEspaco as OrigemGravada, Store, StoreError};
+use poph_store::{SpaceOrigin as OrigemGravada, Store, StoreError};
 use poph_types::{ConversationId, DepartmentId, OrgId};
 use tokio::sync::watch;
 
@@ -569,12 +569,12 @@ impl PortaEspacos for PortaEspacosStore {
         async move {
             let espaco = store
                 .matrix()
-                .espaco(org, departamento)
+                .space(org, departamento)
                 .map_err(erro_porta)?;
             Ok(espaco.map(|espaco| EspacoGravado {
                 room_id: espaco.room_id,
                 alias: espaco.alias,
-                origem: origem_da_gravada(espaco.origem),
+                origem: origem_da_gravada(espaco.origin),
             }))
         }
     }
@@ -593,12 +593,12 @@ impl PortaEspacos for PortaEspacosStore {
         async move {
             let gravado = store
                 .matrix()
-                .garantir_espaco(org, departamento, &room_id, &alias, origem_gravada(origem))
+                .ensure_space(org, departamento, &room_id, &alias, origem_gravada(origem))
                 .map_err(erro_porta)?;
             Ok(EspacoGravado {
                 room_id: gravado.room_id,
                 alias: gravado.alias,
-                origem: origem_da_gravada(gravado.origem),
+                origem: origem_da_gravada(gravado.origin),
             })
         }
     }
@@ -610,8 +610,8 @@ impl PortaEspacos for PortaEspacosStore {
     ) -> impl std::future::Future<Output = Result<Option<String>, ErroPorta>> + Send {
         let store = Arc::clone(&self.0);
         async move {
-            let sala = store.matrix().sala(org, conversa).map_err(erro_porta)?;
-            Ok(sala.and_then(|sala| sala.espaco))
+            let sala = store.matrix().room(org, conversa).map_err(erro_porta)?;
+            Ok(sala.and_then(|sala| sala.space))
         }
     }
 
@@ -626,7 +626,7 @@ impl PortaEspacos for PortaEspacosStore {
         async move {
             store
                 .matrix()
-                .definir_espaco_da_sala(org, conversa, espaco.as_deref())
+                .set_space_of_room(org, conversa, espaco.as_deref())
                 .map(|_| ())
                 .map_err(erro_porta)
         }
@@ -640,15 +640,15 @@ fn erro_porta(_: StoreError) -> ErroPorta {
 
 fn origem_da_gravada(origem: OrigemGravada) -> OrigemEspaco {
     match origem {
-        OrigemGravada::Automatico => OrigemEspaco::Automatico,
-        OrigemGravada::Ligado => OrigemEspaco::Ligado,
+        OrigemGravada::Automatic => OrigemEspaco::Automatico,
+        OrigemGravada::Linked => OrigemEspaco::Ligado,
     }
 }
 
 fn origem_gravada(origem: OrigemEspaco) -> OrigemGravada {
     match origem {
-        OrigemEspaco::Automatico => OrigemGravada::Automatico,
-        OrigemEspaco::Ligado => OrigemGravada::Ligado,
+        OrigemEspaco::Automatico => OrigemGravada::Automatic,
+        OrigemEspaco::Ligado => OrigemGravada::Linked,
     }
 }
 

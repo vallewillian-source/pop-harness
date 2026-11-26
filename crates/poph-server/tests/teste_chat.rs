@@ -207,7 +207,7 @@ impl Cenario {
         let store = Arc::new(Store::open(&config).expect("abre o banco"));
         let org = store
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: "Org HR-22".to_owned(),
                 slug: "org-hr22".to_owned(),
                 config_json: "{}".to_owned(),
@@ -216,7 +216,7 @@ impl Cenario {
             .id;
         let agente = store
             .agents()
-            .criar(
+            .create(
                 org,
                 NewAgent {
                     name: "Bia".to_owned(),
@@ -236,7 +236,7 @@ impl Cenario {
             let gravado = poph_files::blob::gravar(&blobs, org, bytes).expect("grava o blob");
             let arquivo = store
                 .library()
-                .criar(
+                .create(
                     org,
                     poph_store::NewLibraryFile {
                         agent_id: agente,
@@ -259,7 +259,7 @@ impl Cenario {
             };
             store
                 .instructions()
-                .salvar(
+                .save(
                     org,
                     agente,
                     0,
@@ -424,13 +424,13 @@ impl Cenario {
             let turnos = self
                 .store
                 .turns()
-                .listar(self.org, id, Page::with_limit(50))
+                .list(self.org, id, Page::with_limit(50))
                 .expect("turnos");
             if let Some(turno) = turnos.last()
-                && turno.estado != TurnState::Running
+                && turno.state != TurnState::Running
             {
                 return json!({
-                    "state": turno.estado.as_text(),
+                    "state": turno.state.as_text(),
                     "error": turno.error,
                 });
             }
@@ -446,7 +446,7 @@ impl Cenario {
         let id: ConversationId = conversa.parse().expect("id da conversa");
         self.store
             .messages()
-            .listar(self.org, id, Page::with_limit(200))
+            .list(self.org, id, Page::with_limit(200))
             .expect("mensagens")
             .iter()
             .filter(|m| m.direction == Direction::Outbound)
@@ -558,7 +558,7 @@ async fn conversa_de_teste_recebe_sse_em_ordem_e_anexo_com_texto_no_prompt() {
     assert_eq!(
         c.store
             .outbox()
-            .listar_pendentes(c.org, POPH_LOTE)
+            .list_pending(c.org, POPH_LOTE)
             .expect("fila de saída")
             .len(),
         0,
@@ -663,7 +663,7 @@ async fn desconexao_cancela_o_turno_sem_fila_presa() {
     assert_eq!(
         c.store
             .outbox()
-            .listar_pendentes(c.org, POPH_LOTE)
+            .list_pending(c.org, POPH_LOTE)
             .expect("fila")
             .len(),
         0
@@ -689,7 +689,7 @@ async fn isolamento_por_org_e_reabertura_com_if_match() {
     let outra = c
         .store
         .orgs()
-        .criar(NewOrg {
+        .create(NewOrg {
             name: "Outra".to_owned(),
             slug: "outra-org-hr22".to_owned(),
             config_json: "{}".to_owned(),
@@ -727,7 +727,7 @@ async fn isolamento_por_org_e_reabertura_com_if_match() {
     let outro_agente = c
         .store
         .agents()
-        .criar(
+        .create(
             c.org,
             NewAgent {
                 name: "Outro".to_owned(),
@@ -752,8 +752,8 @@ async fn isolamento_por_org_e_reabertura_com_if_match() {
     // Reabrir: sem `If-Match` 428, versão velha 412, versão certa 200 (volta para `open`).
     let id: ConversationId = conversa.parse().expect("id");
     c.store
-        .conversas()
-        .mudar_status(c.org, id, 1, ConversationStatus::Transferred, None)
+        .conversations()
+        .change_status(c.org, id, 1, ConversationStatus::Transferred, None)
         .expect("transfere");
     let url = format!("{}{}/{conversa}/reopen", c.base, c.raiz());
     let sem = c
@@ -967,7 +967,7 @@ async fn historico_mostra_o_arquivo_do_agente_e_o_download_devolve_os_bytes() {
     let outra = c
         .store
         .orgs()
-        .criar(NewOrg {
+        .create(NewOrg {
             name: "Outra".to_owned(),
             slug: "outra-org-hr46d".to_owned(),
             config_json: "{}".to_owned(),

@@ -42,7 +42,7 @@ impl Cenario {
         );
         let org = store
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: "Org HR-11".to_owned(),
                 slug: format!("org-hr11-{rotulo}"),
                 config_json: String::new(),
@@ -63,7 +63,7 @@ impl Cenario {
         let agente = self
             .store
             .agents()
-            .criar(
+            .create(
                 self.org,
                 NewAgent {
                     name: format!("Agente {slug}"),
@@ -80,8 +80,8 @@ impl Cenario {
     fn abrir_conversa(&mut self) {
         let conversa = self
             .store
-            .conversas()
-            .criar(
+            .conversations()
+            .create(
                 self.org,
                 NewConversation {
                     agent_id: self.agente,
@@ -98,7 +98,7 @@ impl Cenario {
     fn textos(&self) -> Vec<String> {
         self.store
             .messages()
-            .listar(self.org, self.conversa, poph_store::Page::with_limit(200))
+            .list(self.org, self.conversa, poph_store::Page::with_limit(200))
             .expect("lista as mensagens")
             .into_iter()
             .map(|mensagem| mensagem.texto)
@@ -206,7 +206,7 @@ impl Processador for ContadorDeEco {
             let numero = recebidas.fetch_add(1, Ordering::SeqCst) + 1;
             store
                 .messages()
-                .gravar(
+                .write(
                     org,
                     NewMessage {
                         conversation_id: conversa,
@@ -214,7 +214,7 @@ impl Processador for ContadorDeEco {
                         role: Role::Assistant,
                         texto: format!("eco {numero}"),
                         attachments_json: String::new(),
-                        id_externo: None,
+                        external_id: None,
                         turn_id: None,
                         origin: poph_store::Origin::Agente,
                         author_name: None,
@@ -234,7 +234,7 @@ impl Processador for ContadorDeEco {
         Box::pin(async move {
             store
                 .messages()
-                .ultimas(org, conversa, 10)
+                .last_set(org, conversa, 10)
                 .expect("lê o histórico ao acordar");
             acordadas.fetch_add(1, Ordering::SeqCst);
             Ok(())
@@ -314,7 +314,7 @@ async fn mudanca_de_versao_invalida_o_cache() {
     cenario
         .store
         .instructions()
-        .salvar(
+        .save(
             cenario.org,
             agente,
             0,
@@ -348,12 +348,12 @@ async fn mudanca_de_versao_invalida_o_cache() {
     let instrucoes = cenario
         .store
         .instructions()
-        .obter(cenario.org, agente)
+        .get(cenario.org, agente)
         .expect("lê as instruções");
     cenario
         .store
         .instructions()
-        .salvar(
+        .save(
             cenario.org,
             agente,
             instrucoes.version,
@@ -378,7 +378,7 @@ async fn mudanca_de_versao_invalida_o_cache() {
     cenario
         .store
         .agents()
-        .atualizar(
+        .update(
             cenario.org,
             agente,
             atual.version,
@@ -398,7 +398,7 @@ async fn mudanca_de_versao_invalida_o_cache() {
     let outra_org = cenario
         .store
         .orgs()
-        .criar(NewOrg {
+        .create(NewOrg {
             name: "Outra".to_owned(),
             slug: "outra-org".to_owned(),
             config_json: String::new(),
@@ -509,7 +509,7 @@ async fn cache_respeita_o_teto_de_memoria_com_dez_mil_agentes() {
         let agente = cenario
             .store
             .agents()
-            .criar(
+            .create(
                 cenario.org,
                 NewAgent {
                     name: format!("Agente de carga {indice}"),
@@ -552,7 +552,7 @@ fn mensagem_de(texto: &str) -> Mensagem {
         author_name: None,
         texto: texto.to_owned(),
         attachments_json: String::new(),
-        id_externo: None,
+        external_id: None,
         turn_id: None,
         created_at: 0,
     }

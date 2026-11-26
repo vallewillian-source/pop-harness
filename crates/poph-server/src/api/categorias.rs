@@ -107,7 +107,7 @@ pub async fn listar(
     let org = id_da_url::<OrgId>(&caminho.org_id)?;
     identidade.exigir_org(org)?;
     let pagina = consulta.pagina()?;
-    let categorias = estado.store.categories().listar(org, pagina)?;
+    let categorias = estado.store.categories().list(org, pagina)?;
     let items: Vec<CategoriaJson> = categorias.iter().map(CategoriaJson::de).collect();
     let next_cursor = proximo_cursor(&items, pagina.limit, |item| item.id.clone());
     Ok(Json(ListaJson { items, next_cursor }))
@@ -138,7 +138,7 @@ pub async fn criar(
     identidade.exigir_org(org)?;
     let nome = validar_nome(&corpo.name)?;
     let descricao = corpo.description.unwrap_or_default();
-    let categoria = estado.store.categories().criar(
+    let categoria = estado.store.categories().create(
         org,
         NewCategory {
             name: nome,
@@ -180,7 +180,7 @@ pub async fn mostrar(
     let org = id_da_url::<OrgId>(&caminho.org_id)?;
     let id = id_da_url::<ProductCategoryId>(&caminho.category_id)?;
     identidade.exigir_org(org)?;
-    let categoria = estado.store.categories().obter(org, id)?;
+    let categoria = estado.store.categories().get(org, id)?;
     Ok(Json(CategoriaJson::de(&categoria)))
 }
 
@@ -226,7 +226,7 @@ pub async fn atualizar(
     let categoria = estado
         .store
         .categories()
-        .atualizar(org, id, esperada, mudanca)?;
+        .update(org, id, esperada, mudanca)?;
     super::auditoria::registrar(
         &estado,
         &identidade,
@@ -258,7 +258,7 @@ fn contar_vinculos(
     let mut produtos = 0u64;
     let mut apos = None;
     loop {
-        let lote = estado.store.products().listar(
+        let lote = estado.store.products().list(
             org,
             Page {
                 after: apos,
@@ -274,7 +274,7 @@ fn contar_vinculos(
     let mut agentes = 0u64;
     let mut apos = None;
     loop {
-        let lote = estado.store.agents().listar(
+        let lote = estado.store.agents().list(
             org,
             Page {
                 after: apos,
@@ -282,7 +282,7 @@ fn contar_vinculos(
             },
         )?;
         for agente in &lote {
-            let usadas = estado.store.agents().categorias(org, agente.id)?;
+            let usadas = estado.store.agents().categories(org, agente.id)?;
             if usadas.contains(&id) {
                 agentes += 1;
             }
@@ -338,7 +338,7 @@ pub async fn excluir(
             .com_detalhes(json!({ "produtos": produtos, "agentes": agentes })));
         }
     }
-    estado.store.categories().excluir(org, id)?;
+    estado.store.categories().delete(org, id)?;
     super::auditoria::registrar(
         &estado,
         &identidade,

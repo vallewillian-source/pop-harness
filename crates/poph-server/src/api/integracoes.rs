@@ -403,7 +403,7 @@ pub async fn atualizar(
         IntegrationChange {
             version: versao,
             status: status.as_deref(),
-            estado: d.connection_state.as_deref(),
+            state: d.connection_state.as_deref(),
             configuracao: configuracao.as_ref(),
             segredos: segredos.as_ref().map(|blob| blob.as_deref()),
         },

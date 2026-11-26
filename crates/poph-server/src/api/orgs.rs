@@ -89,7 +89,7 @@ fn itens_com_agentes_ativos(
     instancia: Option<&str>,
 ) -> Result<Vec<OrgJson>, ApiError> {
     let ids: Vec<OrgId> = orgs.iter().map(|org| org.id).collect();
-    let contagem = estado.store.agents().contar_ativos_por_org(&ids)?;
+    let contagem = estado.store.agents().count_active_by_org(&ids)?;
     Ok(orgs
         .iter()
         .map(|org| {
@@ -251,7 +251,7 @@ pub async fn listar(
         return listar_no_cluster(&estado, &cabecalhos).await.map(Json);
     }
     let pagina = consulta.pagina()?;
-    let orgs = estado.store.orgs().listar(pagina)?;
+    let orgs = estado.store.orgs().list(pagina)?;
     let items = itens_com_agentes_ativos(&estado, &orgs, None)?;
     let next_cursor = proximo_cursor(&items, pagina.limit, |item| item.id.clone());
     Ok(Json(ListaOrgsJson::local(ListaJson { items, next_cursor })))
@@ -273,7 +273,7 @@ async fn listar_no_cluster(
     let mut todas = Vec::new();
     let mut apos = None;
     for _ in 0..PAGINAS_DA_LISTA_REMOTA {
-        let pagina = estado.store.orgs().listar(Page {
+        let pagina = estado.store.orgs().list(Page {
             after: apos,
             limit: 200,
         })?;
@@ -458,7 +458,7 @@ pub async fn criar(
             format!("`{slug}`: use de 3 a 64 caracteres, só a-z, 0-9 e `-`"),
         ));
     }
-    if estado.store.orgs().por_slug(&slug).is_ok() {
+    if estado.store.orgs().by_slug(&slug).is_ok() {
         return Err(ApiError::conflito(format!(
             "já existe uma org com o slug `{slug}`"
         )));
@@ -474,7 +474,7 @@ pub async fn criar(
             ));
         }
     };
-    let org = estado.store.orgs().criar(NewOrg {
+    let org = estado.store.orgs().create(NewOrg {
         name: nome,
         slug,
         config_json,
@@ -566,7 +566,7 @@ pub async fn atualizar(
         status,
         config_json,
     };
-    let org = estado.store.orgs().atualizar(id, esperada, mudanca)?;
+    let org = estado.store.orgs().update(id, esperada, mudanca)?;
     super::auditoria::registrar(
         &estado,
         &identidade,
@@ -606,9 +606,9 @@ pub async fn excluir(
     let id = id_da_url::<OrgId>(&caminho.org_id)?;
     identidade.exigir_global()?;
     if exclusao.force.unwrap_or(false) {
-        estado.store.orgs().excluir_forcado(id)?;
+        estado.store.orgs().delete_forced(id)?;
     } else {
-        estado.store.orgs().excluir(id)?;
+        estado.store.orgs().delete(id)?;
     }
     super::auditoria::registrar(
         &estado,

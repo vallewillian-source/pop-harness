@@ -28,7 +28,7 @@ async fn turno_ignorado_grava_auditoria_com_ator_system() {
     );
     let org: OrgId = store
         .orgs()
-        .criar(NewOrg {
+        .create(NewOrg {
             name: "Org auditoria".to_owned(),
             slug: format!("org-auditoria-{}", AgentId::generate()),
             config_json: "{}".to_owned(),
@@ -37,7 +37,7 @@ async fn turno_ignorado_grava_auditoria_com_ator_system() {
         .id;
     let agente = store
         .agents()
-        .criar(
+        .create(
             org,
             NewAgent {
                 name: "Bia".to_owned(),
@@ -49,8 +49,8 @@ async fn turno_ignorado_grava_auditoria_com_ator_system() {
         .expect("cria o agente")
         .id;
     let conversa: ConversationId = store
-        .conversas()
-        .criar(
+        .conversations()
+        .create(
             org,
             NewConversation {
                 agent_id: agente,
@@ -63,10 +63,14 @@ async fn turno_ignorado_grava_auditoria_com_ator_system() {
         .expect("abre a conversa")
         .id;
     // Conversa fechada: o turno é ignorado (D12) e cai no caminho de auditoria.
-    let versao = store.conversas().get(org, conversa).expect("lê").version;
+    let versao = store
+        .conversations()
+        .get(org, conversa)
+        .expect("lê")
+        .version;
     store
-        .conversas()
-        .mudar_status(org, conversa, versao, ConversationStatus::Closed, None)
+        .conversations()
+        .change_status(org, conversa, versao, ConversationStatus::Closed, None)
         .expect("fecha a conversa");
 
     let provedor: Arc<dyn LlmProvider> = Arc::new(ProvedorFake::com_roteiros(Vec::new()));
@@ -89,7 +93,7 @@ async fn turno_ignorado_grava_auditoria_com_ator_system() {
     );
     let mensagem = store
         .messages()
-        .gravar(
+        .write(
             org,
             poph_store::NewMessage {
                 conversation_id: conversa,
@@ -97,7 +101,7 @@ async fn turno_ignorado_grava_auditoria_com_ator_system() {
                 role: poph_store::Role::User,
                 texto: "oi".to_owned(),
                 attachments_json: "[]".to_owned(),
-                id_externo: None,
+                external_id: None,
                 turn_id: None,
                 origin: poph_store::Origin::Agente,
                 author_name: None,
@@ -114,7 +118,7 @@ async fn turno_ignorado_grava_auditoria_com_ator_system() {
 
     let registros = store
         .audit()
-        .listar(org, Page::with_limit(50))
+        .list(org, Page::with_limit(50))
         .expect("lê a auditoria");
     let turno_ignorado = registros
         .iter()

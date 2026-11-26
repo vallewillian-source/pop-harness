@@ -128,7 +128,7 @@ fn criar(store: &Store, org: OrgId, args: CriarDepartamento) -> ExitCode {
         name: nome,
         description: args.description.trim().to_owned(),
     };
-    match store.departments().criar(org, novo) {
+    match store.departments().create(org, novo) {
         Ok(departamento) => saida(&departamento, args.json, "departamento criado"),
         Err(erro) => falha(descrever(&erro)),
     }
@@ -139,7 +139,7 @@ fn listar(store: &Store, org: OrgId, args: ListarDepartamentos) -> ExitCode {
         Ok(pagina) => pagina,
         Err(erro) => return falha(erro),
     };
-    match store.departments().listar(org, pagina) {
+    match store.departments().list(org, pagina) {
         Ok(departamentos) => {
             if args.json {
                 let itens: Vec<Value> = departamentos.iter().map(json_departamento).collect();
@@ -172,7 +172,7 @@ fn mostrar(store: &Store, org: OrgId, args: ReferenciaDepartamento) -> ExitCode 
     let departamento = match parse_id::<DepartmentId>(&args.departamento).and_then(|id| {
         store
             .departments()
-            .obter(org, id)
+            .get(org, id)
             .map_err(|erro| mensagem_de_ausencia(erro, &args.departamento))
     }) {
         Ok(departamento) => departamento,
@@ -208,10 +208,7 @@ fn atualizar(store: &Store, org: OrgId, args: AtualizarDepartamento) -> ExitCode
         description: descricao,
         status,
     };
-    match store
-        .departments()
-        .atualizar(org, id, args.if_match, mudanca)
-    {
+    match store.departments().update(org, id, args.if_match, mudanca) {
         Ok(departamento) => saida(&departamento, args.json, "departamento alterado"),
         Err(erro) => falha(descrever(&erro)),
     }
@@ -223,10 +220,10 @@ fn excluir(store: &Store, org: OrgId, args: ReferenciaDepartamento) -> ExitCode 
         Err(erro) => return falha(erro),
     };
     // Confere que existe nesta org antes de apagar, para a mensagem sair certa.
-    if let Err(erro) = store.departments().obter(org, id) {
+    if let Err(erro) = store.departments().get(org, id) {
         return falha(mensagem_de_ausencia(erro, &args.departamento));
     }
-    match store.departments().excluir(org, id) {
+    match store.departments().delete(org, id) {
         Ok(()) => {
             if args.json {
                 imprimir_json(&json!({

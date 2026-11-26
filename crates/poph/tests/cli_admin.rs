@@ -315,7 +315,7 @@ fn token_de_org_aparece_uma_unica_vez_e_fica_so_como_hash() {
     let store = cenario.store();
     let token = store
         .tokens()
-        .obter(
+        .get(
             org.parse::<OrgId>().expect("id da org"),
             id_token.parse::<AdminTokenId>().expect("id do token"),
         )
@@ -403,7 +403,7 @@ fn org_com_agentes_so_sai_com_force() {
         let id = org.parse::<OrgId>().expect("id da org");
         store
             .agents()
-            .criar(
+            .create(
                 id,
                 NewAgent {
                     name: "Bia".to_owned(),

@@ -265,7 +265,7 @@ async fn receber_entrada(
     let ja_recebida = estado
         .store
         .inbox()
-        .entrega_recebida(canal.integracao, &entrada.evento.id_externo)
+        .delivery_received(canal.integracao, &entrada.evento.id_externo)
         .map_err(|erro| falha_de_gravacao("consulta da entrada", &erro))?;
     if let Some(recebido) = ja_recebida {
         return Ok(Json(resposta_da_entrada(&recebido)));
@@ -289,23 +289,23 @@ async fn receber_entrada(
         integration_id: canal.integracao,
         agent_id: integracao.agent_id,
         canal: "whatsapp".to_owned(),
-        id_externo: evento.id_externo,
+        external_id: evento.id_externo,
         peer: evento.peer,
         event_json: evento_json,
         texto: evento.text,
-        anexos,
+        attachments: anexos,
         customer_name: nome_cliente,
     };
     let recebido = estado
         .store
         .inbox()
-        .receber_do_canal(canal.org, nova)
+        .receive_from_channel(canal.org, nova)
         .map_err(|erro| falha_de_gravacao("mensagem", &erro))?;
 
     tracing::info!(
         target: "poph_server::evolution",
         instancia = %canal.instancia,
-        situacao = if matches!(recebido.situacao, Received::New) { "nova" } else { "duplicada" },
+        situacao = if matches!(recebido.situation, Received::New) { "nova" } else { "duplicada" },
         anexos = recebido_anexos(&recebido),
         "mensagem do WhatsApp registrada"
     );
@@ -317,8 +317,8 @@ fn modulo_matrix_ligado(estado: &Estado, canal: &CanalEvolution) -> Result<bool,
     estado
         .store
         .matrix()
-        .estado(canal.org)
-        .map(|estado| estado.ligado)
+        .state(canal.org)
+        .map(|estado| estado.linked)
         .map_err(|erro| falha_de_gravacao("estado do módulo Matrix", &erro))
 }
 
@@ -377,7 +377,7 @@ fn receber_do_aparelho(
     let eco = estado
         .store
         .outbox()
-        .enviado_com_id_externo(canal.org, &evento.id_externo)
+        .sent_with_external_id(canal.org, &evento.id_externo)
         .map_err(|erro| falha_de_gravacao("consulta da fila de saída", &erro))?;
     if eco {
         tracing::debug!(
@@ -402,14 +402,14 @@ fn receber_do_aparelho(
     let recebido = estado
         .store
         .inbox()
-        .receber_do_aparelho(
+        .receive_from_device(
             canal.org,
             NewDeviceMessage {
                 integration_id: canal.integracao,
                 agent_id: integracao.agent_id,
                 canal: "whatsapp".to_owned(),
                 peer: evento.peer,
-                id_externo: evento.id_externo,
+                external_id: evento.id_externo,
                 texto: evento.text,
             },
         )
@@ -418,7 +418,7 @@ fn receber_do_aparelho(
     tracing::info!(
         target: "poph_server::evolution",
         instancia = %canal.instancia,
-        situacao = if matches!(recebido.situacao, Received::New) { "nova" } else { "duplicada" },
+        situacao = if matches!(recebido.situation, Received::New) { "nova" } else { "duplicada" },
         pausou = recebido.just_transferred,
         "mensagem digitada no aparelho registrada"
     );
@@ -429,8 +429,8 @@ fn resposta_do_aparelho(recebido: &ReceivedFromDevice) -> Value {
     json!({
         "recebido": true,
         "efeito": "aparelho",
-        "situacao": if matches!(recebido.situacao, Received::New) { "nova" } else { "duplicada" },
-        "conversa_id": recebido.conversa.to_string(),
+        "situacao": if matches!(recebido.situation, Received::New) { "nova" } else { "duplicada" },
+        "conversa_id": recebido.conversation.to_string(),
         "mensagem_id": recebido.mensagem.id.to_string(),
     })
 }
@@ -444,7 +444,7 @@ fn recebido_anexos(recebido: &ReceivedWithMessage) -> usize {
 fn resposta_da_entrada(recebido: &ReceivedWithMessage) -> Value {
     json!({
         "recebido": true,
-        "situacao": if matches!(recebido.situacao, Received::New) { "nova" } else { "duplicada" },
+        "situacao": if matches!(recebido.situation, Received::New) { "nova" } else { "duplicada" },
         "entrada_id": recebido.item.id.to_string(),
         "mensagem_id": recebido.mensagem.id.to_string(),
     })

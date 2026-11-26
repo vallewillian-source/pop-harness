@@ -113,7 +113,7 @@ impl Cenario {
         );
         let org = store
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: format!("Org {rotulo}"),
                 slug: format!("org-{rotulo}-{}", AgentId::generate()),
                 config_json: "{}".to_owned(),
@@ -122,7 +122,7 @@ impl Cenario {
             .id;
         let agente = store
             .agents()
-            .criar(
+            .create(
                 org,
                 NewAgent {
                     name: format!("Atendente {rotulo}"),
@@ -145,7 +145,7 @@ impl Cenario {
         };
         store
             .instructions()
-            .salvar(
+            .save(
                 org,
                 agente,
                 0,
@@ -155,8 +155,8 @@ impl Cenario {
             )
             .expect("grava as instruções");
         let conversa = store
-            .conversas()
-            .criar(
+            .conversations()
+            .create(
                 org,
                 NewConversation {
                     agent_id: agente,
@@ -208,7 +208,7 @@ impl Cenario {
     fn falar(&self, texto: &str) -> poph_types::MessageId {
         self.store
             .messages()
-            .gravar(
+            .write(
                 self.org,
                 NewMessage {
                     conversation_id: self.conversa,
@@ -216,7 +216,7 @@ impl Cenario {
                     role: poph_store::Role::User,
                     texto: texto.to_owned(),
                     attachments_json: "[]".to_owned(),
-                    id_externo: None,
+                    external_id: None,
                     turn_id: None,
                     origin: poph_store::Origin::Agente,
                     author_name: None,
@@ -230,7 +230,7 @@ impl Cenario {
         let turnos = self
             .store
             .turns()
-            .listar(self.org, self.conversa, Page::default())
+            .list(self.org, self.conversa, Page::default())
             .expect("lista os turnos");
         assert_eq!(turnos.len(), 1, "um turno por mensagem");
         turnos.into_iter().next().expect("o turno")

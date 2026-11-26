@@ -198,7 +198,7 @@ impl Cenario {
         let store = Arc::new(Store::open(&config).expect("abre o banco"));
         let org = store
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: "Org do manifesto".to_owned(),
                 slug: "org-do-manifesto".to_owned(),
                 config_json: String::new(),
@@ -207,7 +207,7 @@ impl Cenario {
             .id;
         let agente = store
             .agents()
-            .criar(
+            .create(
                 org,
                 NewAgent {
                     name: "Atendente".to_owned(),

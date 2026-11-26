@@ -50,8 +50,8 @@ use poph_server::evolution::CanalEvolution;
 use poph_server::matrix_inicio::{self, AjustesDeInicio, MatrixRodando, PortaEspacosStore};
 use poph_server::{entrada_turno, saida_whatsapp};
 use poph_store::{
-    Direction, EstadoSala, NewAgent, NewConversation, NewDepartment, NewMessage, NewOrg, Origin,
-    OutboxState, Page, Role, Store,
+    Direction, NewAgent, NewConversation, NewDepartment, NewMessage, NewOrg, Origin, OutboxState,
+    Page, Role, StateRoom, Store,
 };
 use poph_types::{
     AgentId, ConversationId, DepartmentId, HarnessConfig, IntegrationId, MatrixConfig, OrgId,
@@ -768,7 +768,7 @@ impl Base {
         );
         let org = loja
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: format!("Org {rotulo}"),
                 slug: format!("org-{rotulo}"),
                 config_json: String::new(),
@@ -777,7 +777,7 @@ impl Base {
             .id;
         let agente = loja
             .agents()
-            .criar(
+            .create(
                 org,
                 NewAgent {
                     name: "Bia".to_owned(),
@@ -790,8 +790,8 @@ impl Base {
             .expect("cria o agente")
             .id;
         let conversa = loja
-            .conversas()
-            .criar(
+            .conversations()
+            .create(
                 org,
                 NewConversation {
                     agent_id: agente,
@@ -822,13 +822,13 @@ impl Base {
 
     /// Liga o módulo nesta org (o corte do backfill fica em agora).
     fn ligar(&self) {
-        self.loja.matrix().ligar(self.org).expect("liga o módulo");
+        self.loja.matrix().enable(self.org).expect("liga o módulo");
     }
 
     fn gravar(&self, direcao: Direction, papel: Role, texto: &str) -> String {
         self.loja
             .messages()
-            .gravar(
+            .write(
                 self.org,
                 NewMessage {
                     conversation_id: self.conversa,
@@ -838,7 +838,7 @@ impl Base {
                     author_name: None,
                     texto: texto.to_owned(),
                     attachments_json: "[]".to_owned(),
-                    id_externo: None,
+                    external_id: None,
                     turn_id: None,
                 },
             )
@@ -1098,7 +1098,7 @@ async fn subir_servidor(
     };
     store
         .instructions()
-        .salvar(
+        .save(
             base.org,
             base.agente,
             0,
@@ -1306,9 +1306,9 @@ async fn volta_do_synapse_esgota_a_fila_em_ordem_sem_duplicata() {
     assert_eq!(
         base.loja
             .matrix()
-            .ler_cursores(base.org)
+            .read_cursors(base.org)
             .expect("cursores")
-            .mensagens,
+            .messages,
         0,
         "com o Synapse fora, o cursor não anda"
     );
@@ -1357,7 +1357,7 @@ async fn mensagem_venenosa_e_isolada_e_a_fila_segue() {
     esperar_ate(
         "as mensagens boas chegarem e a venenosa for isolada",
         || {
-            let falhas = base.loja.matrix().contar_falhas(base.org).unwrap_or(0);
+            let falhas = base.loja.matrix().count_failures(base.org).unwrap_or(0);
             if falhas != 1 {
                 return false;
             }
@@ -1379,7 +1379,7 @@ async fn mensagem_venenosa_e_isolada_e_a_fila_segue() {
     let falhas = base
         .loja
         .matrix()
-        .listar_falhas(base.org, 10)
+        .list_failures(base.org, 10)
         .expect("falhas");
     assert_eq!(falhas.len(), 1, "uma mensagem isolada");
     let motivo = falhas[0].motivo.clone();
@@ -1423,10 +1423,10 @@ async fn queda_na_criacao_de_sala_nao_duplica_a_sala() {
     let linha = base
         .loja
         .matrix()
-        .sala(base.org, base.conversa)
+        .room(base.org, base.conversa)
         .expect("linha");
     assert!(
-        linha.is_none_or(|sala| !matches!(sala.estado, EstadoSala::Pronta)),
+        linha.is_none_or(|sala| !matches!(sala.state, StateRoom::Ready)),
         "a linha ainda não estava pronta na queda"
     );
 
@@ -1448,7 +1448,7 @@ async fn queda_na_criacao_de_sala_nao_duplica_a_sala() {
     let gravada = base
         .loja
         .matrix()
-        .sala(base.org, base.conversa)
+        .room(base.org, base.conversa)
         .expect("linha")
         .expect("a conversa tem sala");
     assert_eq!(
@@ -1456,7 +1456,7 @@ async fn queda_na_criacao_de_sala_nao_duplica_a_sala() {
         "a linha aponta para a sala do Synapse"
     );
     assert!(
-        matches!(gravada.estado, EstadoSala::Pronta),
+        matches!(gravada.state, StateRoom::Ready),
         "a linha termina pronta"
     );
     drop(synapse);
@@ -1735,14 +1735,14 @@ impl Modo {
 /// Conta as respostas do agente já gravadas na conversa da org (o que o turno produziu).
 fn respostas_gravadas(loja: &Store, org: OrgId) -> usize {
     // Soma em todas as conversas da org: a conversa de teste da base também está lá, vazia.
-    let Ok(conversas) = loja.conversas().listar(org, None, Page::with_limit(50)) else {
+    let Ok(conversas) = loja.conversations().list(org, None, Page::with_limit(50)) else {
         return 0;
     };
     conversas
         .iter()
         .map(|conversa| {
             loja.messages()
-                .listar(org, conversa.id, Page::with_limit(1000))
+                .list(org, conversa.id, Page::with_limit(1000))
                 .map(|mensagens| {
                     mensagens
                         .iter()
@@ -1912,7 +1912,7 @@ fn montar_espaco(base: &Base, synapse: &Synapse, config: &MatrixConfig) -> Dados
     let departamento = base
         .loja
         .departments()
-        .criar(
+        .create(
             base.org,
             NewDepartment {
                 name: "Vendas".to_owned(),
@@ -1937,11 +1937,11 @@ fn montar_espaco(base: &Base, synapse: &Synapse, config: &MatrixConfig) -> Dados
     synapse.semear_sala(&sala, &[], Vec::new());
     base.loja
         .matrix()
-        .garantir_sala(base.org, base.conversa, &sala, None)
+        .ensure_room(base.org, base.conversa, &sala, None)
         .expect("linha da sala");
     base.loja
         .matrix()
-        .marcar_sala_pronta(base.org, base.conversa)
+        .mark_room_ready(base.org, base.conversa)
         .expect("sala pronta");
     DadosEspaco {
         org: base.org,
@@ -1997,11 +1997,11 @@ fn sala_pronta_para_resposta(base: &Base) -> (ConversationId, String) {
     let sala = format!("!resposta-mx29:{SERVIDOR}");
     base.loja
         .matrix()
-        .garantir_sala(base.org, base.conversa, &sala, None)
+        .ensure_room(base.org, base.conversa, &sala, None)
         .expect("linha da sala");
     base.loja
         .matrix()
-        .marcar_sala_pronta(base.org, base.conversa)
+        .mark_room_ready(base.org, base.conversa)
         .expect("sala pronta");
     (base.conversa, sala)
 }
@@ -2046,7 +2046,7 @@ async fn enviar_transacao(endereco: SocketAddr, txn: String, corpo: Value) -> (S
 fn fila_pendente(base: &Base) -> u64 {
     base.loja
         .outbox()
-        .contar_por_estado(base.org, OutboxState::Pending)
+        .count_by_state(base.org, OutboxState::Pending)
         .expect("conta a fila")
 }
 
@@ -2054,7 +2054,7 @@ fn fila_pendente(base: &Base) -> u64 {
 fn respostas_humanas(base: &Base) -> usize {
     base.loja
         .messages()
-        .listar(base.org, base.conversa, Page::with_limit(100))
+        .list(base.org, base.conversa, Page::with_limit(100))
         .expect("mensagens")
         .into_iter()
         .filter(|mensagem| mensagem.origin == Origin::Human)

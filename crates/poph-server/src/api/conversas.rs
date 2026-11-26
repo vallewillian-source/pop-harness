@@ -10,7 +10,7 @@ use axum::{
     Json,
     extract::{Path, Query, State, rejection::JsonRejection},
 };
-use poph_store::{ConversationStatus, FiltroConversas, OrdemConversas};
+use poph_store::{ConversationStatus, FilterConversations, OrderConversations};
 use poph_types::{AgentId, ConversationId, DepartmentId, OrgId};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -44,10 +44,10 @@ fn complementos_de(
     let mut agentes_ids: Vec<AgentId> = conversas.iter().map(|c| c.agent_id).collect();
     agentes_ids.sort();
     agentes_ids.dedup();
-    let agentes = e.store.agents().nomes(org, &agentes_ids)?;
-    let salas = if e.store.matrix().estado(org)?.ligado {
+    let agentes = e.store.agents().names(org, &agentes_ids)?;
+    let salas = if e.store.matrix().state(org)?.linked {
         let ids: Vec<ConversationId> = conversas.iter().map(|c| c.id).collect();
-        e.store.matrix().salas_prontas(org, &ids)?
+        e.store.matrix().rooms_ready(org, &ids)?
     } else {
         HashMap::new()
     };
@@ -89,7 +89,7 @@ pub struct ConsultaConversas {
 
 /// Lê os filtros da consulta. Valor presente mas vazio, ou desconhecido, devolve 400 sem repetir o
 /// valor recebido.
-fn filtro_da_consulta(q: &ConsultaConversas) -> Result<FiltroConversas, ApiError> {
+fn filtro_da_consulta(q: &ConsultaConversas) -> Result<FilterConversations, ApiError> {
     let status = match q.status.as_deref() {
         None => None,
         Some("open") => Some(ConversationStatus::Open),
@@ -121,7 +121,7 @@ fn filtro_da_consulta(q: &ConsultaConversas) -> Result<FiltroConversas, ApiError
             )
         })?),
     };
-    Ok(FiltroConversas {
+    Ok(FilterConversations {
         status,
         external_peer,
         last_activity_before,
@@ -129,10 +129,10 @@ fn filtro_da_consulta(q: &ConsultaConversas) -> Result<FiltroConversas, ApiError
 }
 
 /// Lê a ordem pedida. Sem `sort` vale a ordem de id com cursor.
-fn ordem_da_consulta(q: &ConsultaConversas) -> Result<OrdemConversas, ApiError> {
+fn ordem_da_consulta(q: &ConsultaConversas) -> Result<OrderConversations, ApiError> {
     match q.sort.as_deref() {
-        None => Ok(OrdemConversas::Id),
-        Some("recent") => Ok(OrdemConversas::Recente),
+        None => Ok(OrderConversations::Id),
+        Some("recent") => Ok(OrderConversations::Recent),
         Some(_) => Err(ApiError::invalido(
             "sort inválido: use recent ou não envie sort",
         )),
@@ -151,16 +151,16 @@ pub async fn listar(
     let filtro = filtro_da_consulta(&q)?;
     let ordem = ordem_da_consulta(&q)?;
     let (conversas, proximo) = match ordem {
-        OrdemConversas::Id => {
+        OrderConversations::Id => {
             let p = ConsultaPagina {
                 limit: q.limit,
                 cursor: q.cursor.clone(),
             }
             .pagina()?;
-            let conversas = e.store.conversas().listar_filtrado(org, &filtro, p)?;
+            let conversas = e.store.conversations().list_filter(org, &filtro, p)?;
             (conversas, Some(p))
         }
-        OrdemConversas::Recente => {
+        OrderConversations::Recent => {
             if q.cursor.as_deref().is_some_and(|cursor| !cursor.is_empty()) {
                 return Err(ApiError::invalido(
                     "sort=recent não usa cursor: peça só limit",
@@ -170,7 +170,7 @@ pub async fn listar(
             if !(1..=200).contains(&limite) {
                 return Err(ApiError::invalido("limit deve ficar entre 1 e 200"));
             }
-            let conversas = e.store.conversas().listar_recentes(org, &filtro, limite)?;
+            let conversas = e.store.conversations().list_recents(org, &filtro, limite)?;
             (conversas, None)
         }
     };
@@ -196,7 +196,7 @@ pub async fn mostrar(
     let org = id_da_url::<OrgId>(&c.org_id)?;
     ident.exigir_org(org)?;
     let id = id_da_url::<ConversationId>(&c.conversation_id)?;
-    let conversa = e.store.conversas().get(org, id)?;
+    let conversa = e.store.conversations().get(org, id)?;
     let complementos = complementos_de(&e, org, std::slice::from_ref(&conversa))?;
     Ok(Json(conversa_json(&conversa, &complementos)))
 }
@@ -210,9 +210,9 @@ pub async fn mensagens(
     let org = id_da_url::<OrgId>(&c.org_id)?;
     ident.exigir_org(org)?;
     let id = id_da_url::<ConversationId>(&c.conversation_id)?;
-    e.store.conversas().get(org, id)?;
+    e.store.conversations().get(org, id)?;
     let p = q.pagina()?;
-    let items:Vec<_>=e.store.messages().listar(org,id,p)?.iter().map(|m|json!({"id":m.id.to_string(),"org_id":m.org_id.to_string(),"conversation_id":m.conversation_id.to_string(),"direction":m.direction.as_text(),"role":m.role.as_text(),"text":m.texto,"attachments":serde_json::from_str::<Value>(&m.attachments_json).unwrap_or(Value::Null),"turn_id":m.turn_id.map(|v|v.to_string()),"created_at":m.created_at})).collect();
+    let items:Vec<_>=e.store.messages().list(org,id,p)?.iter().map(|m|json!({"id":m.id.to_string(),"org_id":m.org_id.to_string(),"conversation_id":m.conversation_id.to_string(),"direction":m.direction.as_text(),"role":m.role.as_text(),"text":m.texto,"attachments":serde_json::from_str::<Value>(&m.attachments_json).unwrap_or(Value::Null),"turn_id":m.turn_id.map(|v|v.to_string()),"created_at":m.created_at})).collect();
     let next_cursor = proximo_cursor(&items, p.limit, |v| {
         v["id"].as_str().unwrap_or_default().to_owned()
     });
@@ -228,12 +228,12 @@ pub async fn turnos(
     let org = id_da_url::<OrgId>(&c.org_id)?;
     ident.exigir_org(org)?;
     let id = id_da_url::<ConversationId>(&c.conversation_id)?;
-    e.store.conversas().get(org, id)?;
+    e.store.conversations().get(org, id)?;
     let p = q.pagina()?;
     let items: Vec<_> = e
         .store
         .turns()
-        .listar(org, id, p)?
+        .list(org, id, p)?
         .iter()
         .map(|t| {
             // HR-47b: nomes em `tools`, detalhe por chamada em `tool_calls`.
@@ -242,7 +242,7 @@ pub async fn turnos(
                 "id": t.id.to_string(),
                 "org_id": t.org_id.to_string(),
                 "conversation_id": t.conversation_id.to_string(),
-                "state": t.estado.as_text(),
+                "state": t.state.as_text(),
                 "retrieved": serde_json::from_str::<Value>(&t.passages_json).unwrap_or(Value::Null),
                 "tools": nomes,
                 "tool_calls": chamadas,
@@ -275,8 +275,8 @@ pub async fn reabrir(
     let versao = super::versao_do_if_match(&headers, "conversa")?;
     let conversa = e
         .store
-        .conversas()
-        .reabrir_auditado(org, id, versao, ident.ator_id())?;
+        .conversations()
+        .reopen_audited(org, id, versao, ident.ator_id())?;
     let complementos = complementos_de(&e, org, std::slice::from_ref(&conversa))?;
     Ok(Json(conversa_json(&conversa, &complementos)))
 }
@@ -294,8 +294,8 @@ pub async fn fechar(
     let versao = super::versao_do_if_match(&headers, "conversa")?;
     let conversa = e
         .store
-        .conversas()
-        .fechar_auditado(org, id, versao, ident.ator_id())?;
+        .conversations()
+        .close_audited(org, id, versao, ident.ator_id())?;
     let complementos = complementos_de(&e, org, std::slice::from_ref(&conversa))?;
     Ok(Json(conversa_json(&conversa, &complementos)))
 }
@@ -344,7 +344,7 @@ pub async fn transferir(
         "department_id": departamento.map(|destino| destino.to_string()),
     })
     .to_string();
-    let conversa = e.store.conversas().transferir_auditado(
+    let conversa = e.store.conversations().transfer_audited(
         org,
         id,
         departamento,

@@ -88,7 +88,7 @@ impl Cenario {
         );
         let org = store
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: format!("Org {rotulo}"),
                 slug: format!("org-{rotulo}-{}", AgentId::generate()),
                 config_json: "{}".to_owned(),
@@ -97,7 +97,7 @@ impl Cenario {
             .id;
         let agente = store
             .agents()
-            .criar(
+            .create(
                 org,
                 NewAgent {
                     name: format!("Bia {rotulo}"),
@@ -110,7 +110,7 @@ impl Cenario {
             .id;
         store
             .instructions()
-            .salvar(
+            .save(
                 org,
                 agente,
                 0,
@@ -131,8 +131,8 @@ impl Cenario {
     fn fluxo(&self, agente: AgentId) -> FluxoDoTeste {
         let fluxo = self
             .store
-            .fluxos()
-            .criar(
+            .flows()
+            .create(
                 self.org,
                 NewFlow {
                     slug: "agendar_visita".to_owned(),
@@ -144,8 +144,8 @@ impl Cenario {
             .expect("cria o fluxo");
         self.publicar(fluxo.id);
         self.store
-            .fluxos()
-            .liberar(self.org, agente, fluxo.id)
+            .flows()
+            .release(self.org, agente, fluxo.id)
             .expect("libera o fluxo");
         FluxoDoTeste {
             id: fluxo.id,
@@ -157,14 +157,10 @@ impl Cenario {
     fn publicar(&self, fluxo: poph_types::FlowId) {
         let compilado = compilar(SCRIPT, &Limites::default());
         let ir = compilado.ir().expect("o script do teste compila");
-        let atual = self
-            .store
-            .fluxos()
-            .obter(self.org, fluxo)
-            .expect("lê o fluxo");
+        let atual = self.store.flows().get(self.org, fluxo).expect("lê o fluxo");
         self.store
             .revisions()
-            .publicar_revisao(
+            .publish_revision(
                 self.org,
                 fluxo,
                 RevisionPublication {
@@ -182,8 +178,8 @@ impl Cenario {
 
     fn conversa(&self, agente: AgentId) -> ConversationId {
         self.store
-            .conversas()
-            .criar(
+            .conversations()
+            .create(
                 self.org,
                 NewConversation {
                     agent_id: agente,
@@ -200,7 +196,7 @@ impl Cenario {
     fn falar(&self, conversa: ConversationId, texto: &str) -> MessageId {
         self.store
             .messages()
-            .gravar(
+            .write(
                 self.org,
                 NewMessage {
                     conversation_id: conversa,
@@ -208,7 +204,7 @@ impl Cenario {
                     role: Role::User,
                     texto: texto.to_owned(),
                     attachments_json: "[]".to_owned(),
-                    id_externo: None,
+                    external_id: None,
                     turn_id: None,
                     origin: poph_store::Origin::Agente,
                     author_name: None,
@@ -226,7 +222,7 @@ impl Cenario {
             .expect("lê o agente");
         self.store
             .agents()
-            .atualizar(
+            .update(
                 self.org,
                 agente,
                 atual.version,
@@ -300,8 +296,8 @@ impl Cenario {
 
     fn ficha(&self, conversa: ConversationId) -> poph_store::Ficha {
         self.store
-            .fichas()
-            .por_conversa(self.org, conversa)
+            .cases()
+            .by_conversation(self.org, conversa)
             .expect("lê a Ficha")
             .expect("a conversa tem Ficha")
     }
@@ -309,21 +305,21 @@ impl Cenario {
     fn ativa(&self, conversa: ConversationId) -> Option<poph_store::Execution> {
         self.store
             .executions()
-            .ativa_da_ficha(self.org, self.ficha(conversa).id)
+            .active_of_case(self.org, self.ficha(conversa).id)
             .expect("lê a execução ativa")
     }
 
     fn eventos(&self, conversa: ConversationId) -> Vec<poph_store::RecordEvent> {
         self.store
-            .fichas()
-            .eventos(self.org, self.ficha(conversa).id, None, 50)
+            .cases()
+            .events(self.org, self.ficha(conversa).id, None, 50)
             .expect("lê os eventos")
     }
 
     fn ultimo_turno(&self, conversa: ConversationId) -> poph_store::Turno {
         self.store
             .turns()
-            .listar(self.org, conversa, poph_store::Page::with_limit(5))
+            .list(self.org, conversa, poph_store::Page::with_limit(5))
             .expect("lista os turnos")
             .into_iter()
             .next()
@@ -602,13 +598,13 @@ async fn fluxo_inativo_nao_entra_nas_opcoes_nem_inicia() {
     let fluxo = cenario.fluxo(cenario.agente);
     let atual = cenario
         .store
-        .fluxos()
-        .obter(cenario.org, fluxo.id)
+        .flows()
+        .get(cenario.org, fluxo.id)
         .expect("lê o fluxo");
     cenario
         .store
-        .fluxos()
-        .atualizar(
+        .flows()
+        .update(
             cenario.org,
             fluxo.id,
             atual.version,
@@ -652,7 +648,7 @@ async fn fluxo_nao_liberado_nao_entra_nas_opcoes_nem_inicia() {
     let outro = cenario
         .store
         .agents()
-        .criar(
+        .create(
             cenario.org,
             NewAgent {
                 name: "Outro".to_owned(),
@@ -693,7 +689,7 @@ async fn fluxo_de_outra_org_nunca_inicia() {
     let outra_org = cenario
         .store
         .orgs()
-        .criar(NewOrg {
+        .create(NewOrg {
             name: "Org vizinha".to_owned(),
             slug: format!("vizinha-{}", AgentId::generate()),
             config_json: "{}".to_owned(),
@@ -703,7 +699,7 @@ async fn fluxo_de_outra_org_nunca_inicia() {
     let agente_vizinho = cenario
         .store
         .agents()
-        .criar(
+        .create(
             outra_org,
             NewAgent {
                 name: "Vizinho".to_owned(),
@@ -715,8 +711,8 @@ async fn fluxo_de_outra_org_nunca_inicia() {
         .id;
     let fluxo_vizinho = cenario
         .store
-        .fluxos()
-        .criar(
+        .flows()
+        .create(
             outra_org,
             NewFlow {
                 slug: "agendar_visita".to_owned(),
@@ -728,15 +724,15 @@ async fn fluxo_de_outra_org_nunca_inicia() {
         .expect("cria o fluxo da vizinha");
     let atual = cenario
         .store
-        .fluxos()
-        .obter(outra_org, fluxo_vizinho.id)
+        .flows()
+        .get(outra_org, fluxo_vizinho.id)
         .expect("lê o fluxo da vizinha");
     let compilado = compilar(SCRIPT, &Limites::default());
     let ir = compilado.ir().expect("compila");
     cenario
         .store
         .revisions()
-        .publicar_revisao(
+        .publish_revision(
             outra_org,
             fluxo_vizinho.id,
             RevisionPublication {
@@ -752,8 +748,8 @@ async fn fluxo_de_outra_org_nunca_inicia() {
         .expect("publica na vizinha");
     cenario
         .store
-        .fluxos()
-        .liberar(outra_org, agente_vizinho, fluxo_vizinho.id)
+        .flows()
+        .release(outra_org, agente_vizinho, fluxo_vizinho.id)
         .expect("libera para o vizinho");
 
     let conversa = cenario.conversa(cenario.agente);
@@ -781,7 +777,7 @@ async fn fluxo_de_outra_org_nunca_inicia() {
         cenario
             .store
             .executions()
-            .da_ficha(cenario.org, cenario.ficha(conversa).id, 10)
+            .from_case(cenario.org, cenario.ficha(conversa).id, 10)
             .expect("lê as execuções")
             .is_empty()
     );
@@ -799,7 +795,7 @@ async fn execucao_ativa_nao_pergunta_o_jev() {
     let revisao = cenario
         .store
         .revisions()
-        .atual(cenario.org, fluxo.id)
+        .current(cenario.org, fluxo.id)
         .expect("lê a revisão")
         .expect("há revisão publicada");
     let compilado = compilar(SCRIPT, &Limites::default());
@@ -816,11 +812,11 @@ async fn execucao_ativa_nao_pergunta_o_jev() {
     cenario
         .store
         .executions()
-        .iniciar_execucao(
+        .start_execution(
             cenario.org,
             poph_store::ExecutionStart {
-                ficha: ficha.id,
-                fluxo: fluxo.id,
+                case: ficha.id,
+                flow: fluxo.id,
                 revision: revisao.id,
                 actor: poph_types::EventActor::Attendant,
                 ator_ref: Some("token-de-teste"),
@@ -885,8 +881,8 @@ async fn fluxos_desligados_ignoram_tudo_e_a_ficha_segue() {
     assert!(
         cenario
             .store
-            .fichas()
-            .por_conversa(cenario.org, conversa)
+            .cases()
+            .by_conversation(cenario.org, conversa)
             .expect("lê")
             .is_some(),
         "a Ficha continua sendo criada com o motor desligado"

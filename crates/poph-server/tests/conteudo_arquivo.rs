@@ -236,8 +236,8 @@ impl Cenario {
         let org_id: OrgId = org.parse().expect("org");
         let conversa = self
             .store()
-            .conversas()
-            .criar(
+            .conversations()
+            .create(
                 org_id,
                 NewConversation {
                     agent_id: agente.parse().expect("agente"),
@@ -251,7 +251,7 @@ impl Cenario {
         let mensagem = self
             .store()
             .messages()
-            .gravar_com_anexos(
+            .write_with_attachments(
                 org_id,
                 NewMessage {
                     conversation_id: conversa.id,
@@ -259,7 +259,7 @@ impl Cenario {
                     role: Role::User,
                     texto: "segue o arquivo".to_owned(),
                     attachments_json: "[]".to_owned(),
-                    id_externo: None,
+                    external_id: None,
                     turn_id: None,
                     origin: poph_store::Origin::Agente,
                     author_name: None,
@@ -434,7 +434,7 @@ async fn biblioteca_conteudo_isola_org_agente_e_id() {
     let sem_blob = c
         .store()
         .library()
-        .criar(
+        .create(
             org_a.parse().unwrap(),
             poph_store::NewLibraryFile {
                 agent_id: agente_a.parse().unwrap(),
@@ -483,7 +483,7 @@ async fn anexo_conteudo_entrega_os_bytes_do_chat_de_teste() {
     let anexos = c
         .store()
         .messages()
-        .anexos(org_a.parse().unwrap(), mensagem.id)
+        .attachments(org_a.parse().unwrap(), mensagem.id)
         .expect("anexos da mensagem");
     assert_eq!(anexos.len(), 1);
     let anexo = anexos[0].id;
@@ -522,8 +522,8 @@ async fn anexo_conteudo_entrega_os_bytes_do_chat_de_teste() {
     // Anexo que não é da mensagem, mensagem de outra conversa, anexo inexistente.
     let outra_conversa = c
         .store()
-        .conversas()
-        .criar(
+        .conversations()
+        .create(
             org_a.parse().unwrap(),
             NewConversation {
                 agent_id: agente_a.parse().unwrap(),
@@ -571,7 +571,7 @@ async fn anexo_conteudo_entrega_os_bytes_do_chat_de_teste() {
     let anexo2 = c
         .store()
         .messages()
-        .anexos(org_a.parse().unwrap(), mensagem2.id)
+        .attachments(org_a.parse().unwrap(), mensagem2.id)
         .expect("anexos")
         .remove(0)
         .id;

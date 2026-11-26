@@ -363,24 +363,30 @@ impl Cenario {
         let b = Self::org_com_conversa(&store, "loja-b", "Sala B", "bia-b");
 
         // Sala da org A pronta no banco (a provisão de sala é a MX-11).
-        store.matrix().ligar(a.org).expect("liga o módulo na org A");
         store
             .matrix()
-            .garantir_sala(a.org, a.conversa, SALA, None)
+            .enable(a.org)
+            .expect("liga o módulo na org A");
+        store
+            .matrix()
+            .ensure_room(a.org, a.conversa, SALA, None)
             .expect("grava a sala da org A");
         store
             .matrix()
-            .marcar_sala_pronta(a.org, a.conversa)
+            .mark_room_ready(a.org, a.conversa)
             .expect("sala pronta");
         // A org B também tem o módulo ligado e uma sala, para o isolamento valer nos dois sentidos.
-        store.matrix().ligar(b.org).expect("liga o módulo na org B");
         store
             .matrix()
-            .garantir_sala(b.org, b.conversa, SALA_B, None)
+            .enable(b.org)
+            .expect("liga o módulo na org B");
+        store
+            .matrix()
+            .ensure_room(b.org, b.conversa, SALA_B, None)
             .expect("grava a sala da org B");
         store
             .matrix()
-            .marcar_sala_pronta(b.org, b.conversa)
+            .mark_room_ready(b.org, b.conversa)
             .expect("sala B pronta");
 
         let (url_synapse, synapse) = subir_synapse_falso().await;
@@ -409,7 +415,7 @@ impl Cenario {
     ) -> ConversaDoCenario {
         let org = store
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: format!("Org {slug}"),
                 slug: slug.to_owned(),
                 config_json: String::new(),
@@ -418,7 +424,7 @@ impl Cenario {
             .id;
         let agente = store
             .agents()
-            .criar(
+            .create(
                 org,
                 NewAgent {
                     name: nome_agente.to_owned(),
@@ -435,8 +441,8 @@ impl Cenario {
             .parse()
             .expect("id da integração");
         let conversa = store
-            .conversas()
-            .criar(
+            .conversations()
+            .create(
                 org,
                 NewConversation {
                     agent_id: agente,
@@ -464,7 +470,7 @@ impl Cenario {
         .expect("cliente da Evolution falsa");
         let integracao = self
             .store
-            .conversas()
+            .conversations()
             .get(org, conversa)
             .expect("lê a conversa")
             .integration_id
@@ -546,7 +552,7 @@ impl Cenario {
 
     fn status(&self, org: OrgId) -> poph_store::ConversationStatus {
         self.store
-            .conversas()
+            .conversations()
             .get(org, self.conversa_da_org(org))
             .expect("lê a conversa")
             .status
@@ -555,21 +561,21 @@ impl Cenario {
     fn messages(&self, org: OrgId) -> Vec<poph_store::Mensagem> {
         self.store
             .messages()
-            .listar(org, self.conversa_da_org(org), Page::with_limit(50))
+            .list(org, self.conversa_da_org(org), Page::with_limit(50))
             .expect("lista as mensagens")
     }
 
     fn enviados(&self, org: OrgId) -> u64 {
         self.store
             .outbox()
-            .contar_por_estado(org, OutboxState::Sent)
+            .count_by_state(org, OutboxState::Sent)
             .expect("conta a fila de saída")
     }
 
     fn pendentes(&self, org: OrgId) -> u64 {
         self.store
             .outbox()
-            .contar_por_estado(org, OutboxState::Pending)
+            .count_by_state(org, OutboxState::Pending)
             .expect("conta a fila de saída")
     }
 
@@ -587,7 +593,7 @@ impl Cenario {
     fn fantasma_do_agente(&self) -> String {
         let agente = self
             .store
-            .conversas()
+            .conversations()
             .get(self.org, self.conversa)
             .expect("lê a conversa")
             .agent_id;
@@ -776,7 +782,7 @@ async fn resposta_do_atendente_vira_um_envio_com_prefixo_e_transfere_a_conversa(
     assert_eq!(mensagem.origin, Origin::Human);
     assert_eq!(mensagem.texto, "olá, tudo bem?");
     assert_eq!(
-        mensagem.id_externo.as_deref(),
+        mensagem.external_id.as_deref(),
         Some("$evento-1:matrix-dev.local")
     );
     assert_eq!(mensagem.author_name.as_deref(), Some("Ana Atendente"));
@@ -952,13 +958,13 @@ async fn conversa_encerrada_nao_envia_e_avisa_na_sala() {
     let cenario = Cenario::novo("encerrada").await;
     let conversa = cenario
         .store
-        .conversas()
+        .conversations()
         .get(cenario.org, cenario.conversa)
         .expect("lê a conversa");
     cenario
         .store
-        .conversas()
-        .fechar_auditado(
+        .conversations()
+        .close_audited(
             cenario.org,
             cenario.conversa,
             conversa.version,

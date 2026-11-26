@@ -9,8 +9,8 @@ use poph_fluxos::{Ir, Limites, compilar};
 use poph_server::Estado;
 use poph_store::{
     Direction, NewAgent, NewCategory, NewConversation, NewDepartment, NewFlow, NewKnowledgeGroup,
-    NewKnowledgeItem, NewLibraryFile, NewMessage, NewOrg, NewProduct, NewRecord, OrigemEspaco,
-    Origin, RevisionPublication, Role, Store,
+    NewKnowledgeItem, NewLibraryFile, NewMessage, NewOrg, NewProduct, NewRecord, Origin,
+    RevisionPublication, Role, SpaceOrigin, Store,
 };
 use poph_types::HarnessConfig;
 use poph_types::config::GlobalTokenConfig;
@@ -283,7 +283,7 @@ impl Scenario {
         let store = &self.store;
         let org = store
             .orgs()
-            .criar(NewOrg {
+            .create(NewOrg {
                 name: "Contratos Ltda".to_owned(),
                 slug: "contratos".to_owned(),
                 config_json: String::new(),
@@ -291,7 +291,7 @@ impl Scenario {
             .expect("org");
         let department = store
             .departments()
-            .criar(
+            .create(
                 org.id,
                 NewDepartment {
                     name: "Suporte".to_owned(),
@@ -301,7 +301,7 @@ impl Scenario {
             .expect("department");
         let agent = store
             .agents()
-            .criar(
+            .create(
                 org.id,
                 NewAgent {
                     name: "Ana".to_owned(),
@@ -315,7 +315,7 @@ impl Scenario {
             .expect("agent");
         store
             .instructions()
-            .salvar(
+            .save(
                 org.id,
                 agent.id,
                 0,
@@ -326,7 +326,7 @@ impl Scenario {
             .expect("instructions");
         let category = store
             .categories()
-            .criar(
+            .create(
                 org.id,
                 NewCategory {
                     name: "Planos".to_owned(),
@@ -336,7 +336,7 @@ impl Scenario {
             .expect("category");
         let product = store
             .products()
-            .criar(
+            .create(
                 org.id,
                 NewProduct {
                     category_id: Some(category.id),
@@ -356,7 +356,7 @@ impl Scenario {
             .expect("product");
         let group = store
             .knowledge()
-            .criar_grupo(
+            .create_group(
                 org.id,
                 NewKnowledgeGroup {
                     name: "Perguntas frequentes".to_owned(),
@@ -366,7 +366,7 @@ impl Scenario {
             .expect("knowledge group");
         let item = store
             .knowledge()
-            .criar_item(
+            .create_item(
                 org.id,
                 NewKnowledgeItem {
                     group_id: group.id,
@@ -379,13 +379,13 @@ impl Scenario {
             .expect("knowledge item");
         store
             .knowledge()
-            .vincular_agente(org.id, agent.id, group.id)
+            .link_agent(org.id, agent.id, group.id)
             .expect("link group");
         let content = b"conteudo de exemplo";
         let blob = poph_files::blob::gravar(&self.blobs, org.id, content).expect("blob");
         let file = store
             .library()
-            .criar(
+            .create(
                 org.id,
                 NewLibraryFile {
                     agent_id: agent.id,
@@ -402,8 +402,8 @@ impl Scenario {
         let compiled = compilar(FLOW_SCRIPT, &Limites::default());
         let ir: Ir = compiled.ir().expect("valid flow script").clone();
         let flow = store
-            .fluxos()
-            .criar(
+            .flows()
+            .create(
                 org.id,
                 NewFlow {
                     slug: "agendar_visita".to_owned(),
@@ -420,7 +420,7 @@ impl Scenario {
         for (expected, script) in [(1u64, FLOW_SCRIPT.to_owned()), (2, second_script)] {
             store
                 .revisions()
-                .publicar_revisao(
+                .publish_revision(
                     org.id,
                     flow.id,
                     RevisionPublication {
@@ -439,13 +439,13 @@ impl Scenario {
                 .expect("publish revision");
         }
         store
-            .fluxos()
-            .liberar(org.id, agent.id, flow.id)
+            .flows()
+            .release(org.id, agent.id, flow.id)
             .expect("release flow");
 
         let conversation = store
-            .conversas()
-            .criar(
+            .conversations()
+            .create(
                 org.id,
                 NewConversation {
                     agent_id: agent.id,
@@ -458,7 +458,7 @@ impl Scenario {
             .expect("conversation");
         let turn = store
             .turns()
-            .iniciar(org.id, conversation.id, Some(agent.id))
+            .start(org.id, conversation.id, Some(agent.id))
             .expect("turn");
         for (direction, role, origin, text) in [
             (Direction::Inbound, Role::User, Origin::Device, "Ola"),
@@ -471,7 +471,7 @@ impl Scenario {
         ] {
             store
                 .messages()
-                .gravar(
+                .write(
                     org.id,
                     NewMessage {
                         conversation_id: conversation.id,
@@ -481,15 +481,15 @@ impl Scenario {
                         author_name: None,
                         texto: text.to_owned(),
                         attachments_json: "[]".to_owned(),
-                        id_externo: None,
+                        external_id: None,
                         turn_id: Some(turn.id),
                     },
                 )
                 .expect("message");
         }
         let test_chat = store
-            .conversas()
-            .criar(
+            .conversations()
+            .create(
                 org.id,
                 NewConversation {
                     agent_id: agent.id,
@@ -502,7 +502,7 @@ impl Scenario {
             .expect("test chat conversation");
         store
             .messages()
-            .gravar(
+            .write(
                 org.id,
                 NewMessage {
                     conversation_id: test_chat.id,
@@ -512,19 +512,19 @@ impl Scenario {
                     author_name: None,
                     texto: "Mensagem do chat de teste".to_owned(),
                     attachments_json: "[]".to_owned(),
-                    id_externo: None,
+                    external_id: None,
                     turn_id: None,
                 },
             )
             .expect("test chat message");
         let ficha = store
-            .fichas()
-            .por_conversa(org.id, conversation.id)
+            .cases()
+            .by_conversation(org.id, conversation.id)
             .expect("ficha lookup")
             .unwrap_or_else(|| {
                 store
-                    .fichas()
-                    .criar(
+                    .cases()
+                    .create(
                         org.id,
                         NewRecord {
                             conversation_id: Some(conversation.id),
@@ -537,20 +537,20 @@ impl Scenario {
             });
         let token = store
             .tokens()
-            .criar(Some(org.id), "leitura", &hash_argon2("poph_contracts"))
+            .create(Some(org.id), "leitura", &hash_argon2("poph_contracts"))
             .expect("token");
         let integration = store
             .create_integration(org.id, agent.id, "whatsapp".to_owned(), "active".to_owned())
             .expect("integration");
-        store.matrix().ligar(org.id).expect("matrix on");
+        store.matrix().enable(org.id).expect("matrix on");
         store
             .matrix()
-            .garantir_espaco(
+            .ensure_space(
                 org.id,
                 department.id,
                 "!espaco:contratos.test",
                 "#suporte:contratos.test",
-                OrigemEspaco::Automatico,
+                SpaceOrigin::Automatic,
             )
             .expect("matrix space");
 

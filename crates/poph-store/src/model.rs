@@ -501,7 +501,7 @@ pub struct Mensagem {
     pub author_name: Option<String>,
     pub texto: String,
     pub attachments_json: String,
-    pub id_externo: Option<String>,
+    pub external_id: Option<String>,
     pub turn_id: Option<TurnId>,
     pub created_at: i64,
 }
@@ -558,7 +558,7 @@ pub struct NewMessage {
     pub author_name: Option<String>,
     pub texto: String,
     pub attachments_json: String,
-    pub id_externo: Option<String>,
+    pub external_id: Option<String>,
     pub turn_id: Option<TurnId>,
 }
 
@@ -614,9 +614,9 @@ pub struct NewRecordEvent<'a> {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RecordFilter {
     pub status: Option<RecordStatus>,
-    pub agente: Option<AgentId>,
+    pub agent: Option<AgentId>,
     pub canal: Option<String>,
-    pub desde: Option<i64>,
+    pub since: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -719,8 +719,8 @@ pub struct FlowEffect {
     pub key: String,
     pub tipo: String,
     pub payload_json: String,
-    pub estado: EffectState,
-    pub tentativas: u32,
+    pub state: EffectState,
+    pub attempts: u32,
     pub ultimo_erro: Option<String>,
     pub proxima_tentativa: Option<i64>,
     pub enviado_em: Option<i64>,
@@ -769,8 +769,8 @@ pub struct JevDecision<'a> {
 
 #[derive(Debug, Clone)]
 pub struct ExecutionStart<'a> {
-    pub ficha: RecordId,
-    pub fluxo: FlowId,
+    pub case: RecordId,
+    pub flow: FlowId,
     pub revision: RevisionId,
     pub actor: EventActor,
     pub ator_ref: Option<&'a str>,
@@ -801,18 +801,18 @@ pub struct InboxItem {
     pub id: poph_types::InboxId,
     pub org_id: OrgId,
     pub integration_id: IntegrationId,
-    pub id_externo: String,
+    pub external_id: String,
     pub event_json: String,
     pub received_at: i64,
     pub processed_at: Option<i64>,
-    pub tentativas: u32,
+    pub attempts: u32,
     pub ultimo_erro: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 pub struct NewInboxItem {
     pub integration_id: IntegrationId,
-    pub id_externo: String,
+    pub external_id: String,
     pub event_json: String,
 }
 
@@ -825,7 +825,7 @@ pub enum Received {
 #[derive(Debug, Clone)]
 pub struct NewInboxItemWithMessage {
     pub integration_id: IntegrationId,
-    pub id_externo: String,
+    pub external_id: String,
     pub event_json: String,
     pub conversation_id: ConversationId,
     pub message_id: MessageId,
@@ -835,7 +835,7 @@ pub struct NewInboxItemWithMessage {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReceivedWithMessage {
-    pub situacao: Received,
+    pub situation: Received,
     pub item: InboxItem,
     pub mensagem: Mensagem,
 }
@@ -880,8 +880,8 @@ pub struct OutboxItem {
     pub seq: u32,
     pub tipo: String,
     pub content_json: String,
-    pub estado: OutboxState,
-    pub tentativas: u32,
+    pub state: OutboxState,
+    pub attempts: u32,
     pub ultimo_erro: Option<String>,
     pub created_at: i64,
     pub enviado_em: Option<i64>,
@@ -933,7 +933,7 @@ pub struct Turno {
     pub org_id: OrgId,
     pub conversation_id: ConversationId,
     pub agent_id: Option<AgentId>,
-    pub estado: TurnState,
+    pub state: TurnState,
     pub jev_json: String,
     pub passages_json: String,
     pub tools_json: String,
@@ -961,7 +961,7 @@ pub struct AuditEntry {
 
 #[derive(Debug, Clone, Default)]
 pub struct TurnFinalization {
-    pub estado: Option<TurnState>,
+    pub state: Option<TurnState>,
     pub jev_json: Option<String>,
     pub passages_json: Option<String>,
     pub tools_json: Option<String>,
@@ -975,7 +975,7 @@ pub struct TurnFinalization {
 impl TurnFinalization {
     pub fn completed(times_json: &str) -> Self {
         Self {
-            estado: Some(TurnState::Completed),
+            state: Some(TurnState::Completed),
             times_json: Some(times_json.to_owned()),
             ..Self::default()
         }
@@ -983,7 +983,7 @@ impl TurnFinalization {
 
     pub fn failed(error: &str) -> Self {
         Self {
-            estado: Some(TurnState::Failed),
+            state: Some(TurnState::Failed),
             error: Some(error.to_owned()),
             ..Self::default()
         }
@@ -1112,11 +1112,11 @@ pub struct NewChannelInboxItem {
     pub integration_id: poph_types::IntegrationId,
     pub agent_id: poph_types::AgentId,
     pub canal: String,
-    pub id_externo: String,
+    pub external_id: String,
     pub peer: String,
     pub event_json: String,
     pub texto: String,
-    pub anexos: Vec<NewChannelAttachment>,
+    pub attachments: Vec<NewChannelAttachment>,
     pub customer_name: Option<String>,
 }
 
@@ -1126,14 +1126,14 @@ pub struct NewDeviceMessage {
     pub agent_id: poph_types::AgentId,
     pub canal: String,
     pub peer: String,
-    pub id_externo: String,
+    pub external_id: String,
     pub texto: String,
 }
 
 #[derive(Debug, Clone)]
 pub struct ReceivedFromDevice {
-    pub situacao: Received,
-    pub conversa: ConversationId,
+    pub situation: Received,
+    pub conversation: ConversationId,
     pub mensagem: Mensagem,
     pub just_transferred: bool,
 }

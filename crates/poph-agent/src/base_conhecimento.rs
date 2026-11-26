@@ -110,7 +110,7 @@ impl BaseConhecimento {
         org: OrgId,
         agente: AgentId,
     ) -> Resultado<RelatorioIndexacao> {
-        let itens = self.store.knowledge().itens_do_agente(org, agente)?;
+        let itens = self.store.knowledge().agent_items(org, agente)?;
         let para_indice: Vec<poph_rag::ItemRag> = itens
             .into_iter()
             .map(|item| poph_rag::ItemRag {
@@ -132,7 +132,7 @@ impl BaseConhecimento {
         org: OrgId,
         grupo: KnowledgeGroupId,
     ) -> Resultado<Vec<(AgentId, RelatorioIndexacao)>> {
-        let agentes = self.store.knowledge().agentes_do_grupo(org, grupo)?;
+        let agentes = self.store.knowledge().agents_from_group(org, grupo)?;
         let mut relatorios = Vec::with_capacity(agentes.len());
         for agente in agentes {
             relatorios.push((agente, self.sincronizar_agente(org, agente).await?));
@@ -148,7 +148,7 @@ impl BaseConhecimento {
         let mut relatorios = Vec::new();
         let mut pagina = poph_store::Page::with_limit(200);
         loop {
-            let lote = self.store.agents().listar(org, pagina)?;
+            let lote = self.store.agents().list(org, pagina)?;
             if lote.is_empty() {
                 return Ok(relatorios);
             }
@@ -201,7 +201,7 @@ impl BuscadorBase for BaseConhecimento {
             let elegiveis: std::collections::HashMap<_, _> = self
                 .store
                 .knowledge()
-                .itens_do_agente(org, agente)?
+                .agent_items(org, agente)?
                 .into_iter()
                 .filter(|item| {
                     let atual = poph_rag::trechos::hash_origem(

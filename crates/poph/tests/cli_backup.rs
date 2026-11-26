@@ -120,7 +120,7 @@ impl Cenario {
     fn org_por_slug(&self, slug: &str) -> OrgId {
         self.abrir_store()
             .orgs()
-            .por_slug(slug)
+            .by_slug(slug)
             .expect("org do cenário")
             .id
     }
@@ -277,8 +277,8 @@ fn semear_origem(cenario: &Cenario) {
 
     // O resto é semeado direto pelo repositório: integração com segredo cifrado e histórico.
     let store = cenario.abrir_store();
-    let org = store.orgs().por_slug(&cenario.slug).unwrap().id;
-    let agente = store.agents().por_slug(org, "bia").unwrap().id;
+    let org = store.orgs().by_slug(&cenario.slug).unwrap().id;
+    let agente = store.agents().by_slug(org, "bia").unwrap().id;
     let chave = poph_server::ChaveDeCifra::derivar(CHAVE_CIFRA).expect("deriva a chave");
     let mut segredos = std::collections::BTreeMap::new();
     segredos.insert("token".to_owned(), SENTINELA_SEGREDO.to_owned());
@@ -295,8 +295,8 @@ fn semear_origem(cenario: &Cenario) {
         .expect("cria a integração");
 
     let conversa = store
-        .conversas()
-        .criar(
+        .conversations()
+        .create(
             org,
             NewConversation {
                 agent_id: agente,
@@ -316,7 +316,7 @@ fn semear_origem(cenario: &Cenario) {
     .expect("grava o blob do anexo");
     store
         .messages()
-        .gravar_com_anexos(
+        .write_with_attachments(
             org,
             NewMessage {
                 conversation_id: conversa.id,
@@ -324,7 +324,7 @@ fn semear_origem(cenario: &Cenario) {
                 role: Role::User,
                 texto: "Qual o prazo? Segue o comprovante.".to_owned(),
                 attachments_json: "[]".to_owned(),
-                id_externo: None,
+                external_id: None,
                 turn_id: None,
                 origin: poph_store::Origin::Agente,
                 author_name: None,
@@ -342,11 +342,11 @@ fn semear_origem(cenario: &Cenario) {
         .expect("grava a mensagem com anexo");
     let turno = store
         .turns()
-        .iniciar(org, conversa.id, Some(agente))
+        .start(org, conversa.id, Some(agente))
         .expect("abre o turno");
     store
         .turns()
-        .finalizar(
+        .finalise(
             org,
             turno.id,
             TurnFinalization::completed("{\"total_ms\":12}"),
@@ -354,7 +354,7 @@ fn semear_origem(cenario: &Cenario) {
         .expect("fecha o turno");
     store
         .messages()
-        .gravar(
+        .write(
             org,
             NewMessage {
                 conversation_id: conversa.id,
@@ -362,7 +362,7 @@ fn semear_origem(cenario: &Cenario) {
                 role: Role::Assistant,
                 texto: "O prazo é de 5 dias úteis.".to_owned(),
                 attachments_json: "[]".to_owned(),
-                id_externo: None,
+                external_id: None,
                 turn_id: Some(turno.id),
                 origin: poph_store::Origin::Agente,
                 author_name: None,
@@ -371,7 +371,7 @@ fn semear_origem(cenario: &Cenario) {
         .expect("grava a resposta");
     store
         .outbox()
-        .enfileirar(
+        .enqueue(
             org,
             NewOutboxItem {
                 conversation_id: conversa.id,
@@ -463,7 +463,7 @@ fn comparar_blobs(origem: &Cenario, destino: &Cenario, org_origem: OrgId, org_de
 }
 
 fn agente_por_slug(store: &Store, org: OrgId, slug: &str) -> AgentId {
-    store.agents().por_slug(org, slug).expect("agente").id
+    store.agents().by_slug(org, slug).expect("agente").id
 }
 
 #[test]
@@ -623,7 +623,7 @@ fn exportar_e_importar_reconstroi_a_org_num_arquivo_so() {
     let agentes = destino
         .abrir_store()
         .agents()
-        .listar(org_origem, poph_store::Page::default());
+        .list(org_origem, poph_store::Page::default());
     assert_eq!(agentes.expect("lista").len(), 1);
 }
 
@@ -692,12 +692,12 @@ fn importar_numa_org_existente_nao_mexe_na_org_vizinha() {
         "um agente importado além do próprio"
     );
     let store = destino.abrir_store();
-    assert!(store.agents().por_slug(vizinha, "vizinho").is_ok());
-    assert!(store.agents().por_slug(vizinha, "bia").is_ok());
+    assert!(store.agents().by_slug(vizinha, "vizinho").is_ok());
+    assert!(store.agents().by_slug(vizinha, "bia").is_ok());
     assert_eq!(
         store
             .products()
-            .listar(vizinha, poph_store::Page::default())
+            .list(vizinha, poph_store::Page::default())
             .expect("produtos")
             .len(),
         1
@@ -763,7 +763,7 @@ fn arquivo_corrompido_ou_de_outra_versao_e_recusado_sem_gravar() {
         destino
             .abrir_store()
             .orgs()
-            .listar(poph_store::Page::default())
+            .list(poph_store::Page::default())
             .expect("orgs")
             .is_empty()
     );

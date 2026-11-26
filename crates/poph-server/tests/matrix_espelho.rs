@@ -83,7 +83,7 @@ fn config() -> MatrixConfig {
 fn criar_org(store: &Store, slug: &str) -> OrgId {
     store
         .orgs()
-        .criar(NewOrg {
+        .create(NewOrg {
             name: format!("Org {slug}"),
             slug: slug.to_owned(),
             config_json: String::new(),
@@ -95,7 +95,7 @@ fn criar_org(store: &Store, slug: &str) -> OrgId {
 fn criar_agente(store: &Store, org: OrgId) -> AgentId {
     store
         .agents()
-        .criar(
+        .create(
             org,
             NewAgent {
                 name: "Bia".to_owned(),
@@ -109,8 +109,8 @@ fn criar_agente(store: &Store, org: OrgId) -> AgentId {
 
 fn criar_conversa(store: &Store, org: OrgId, agente: AgentId, peer: &str) -> ConversationId {
     store
-        .conversas()
-        .criar(
+        .conversations()
+        .create(
             org,
             NewConversation {
                 agent_id: agente,
@@ -161,7 +161,7 @@ fn gravar(
 ) -> String {
     store
         .messages()
-        .gravar(
+        .write(
             org,
             NewMessage {
                 conversation_id: conversa,
@@ -171,7 +171,7 @@ fn gravar(
                 author_name: None,
                 texto: texto.to_owned(),
                 attachments_json: "[]".to_owned(),
-                id_externo: None,
+                external_id: None,
                 turn_id: None,
             },
         )
@@ -466,7 +466,7 @@ async fn ordem_dentro_da_sala_e_paralelo_entre_salas() {
     let agente = criar_agente(&store, org);
     let ana = criar_conversa(&store, org, agente, "+5511111");
     let bruno = criar_conversa(&store, org, agente, "+5522222");
-    store.matrix().ligar(org).expect("liga");
+    store.matrix().enable(org).expect("liga");
 
     let mut esperado_ana = Vec::new();
     let mut esperado_bruno = Vec::new();
@@ -502,7 +502,7 @@ async fn queda_no_meio_nao_pula_nem_duplica() {
     let agente = criar_agente(&store, org);
     let ana = criar_conversa(&store, org, agente, "+5511111");
     let bruno = criar_conversa(&store, org, agente, "+5522222");
-    store.matrix().ligar(org).expect("liga");
+    store.matrix().enable(org).expect("liga");
 
     let mut todas = Vec::new();
     for i in 0..6 {
@@ -521,7 +521,7 @@ async fn queda_no_meio_nao_pula_nem_duplica() {
     let primeiro = espelho.ciclo().await.expect("ciclo 1");
     assert!(primeiro.pendentes >= 1, "a falha no meio deixa pendência");
     // O cursor não passou da primeira linha não resolvida.
-    let cursor = store.matrix().ler_cursores(org).expect("cursor").mensagens;
+    let cursor = store.matrix().read_cursors(org).expect("cursor").messages;
     assert!(cursor < 6, "cursor não pode andar além da falha: {cursor}");
 
     espelho.ciclo().await.expect("ciclo 2");
@@ -551,7 +551,7 @@ async fn mensagem_venenosa_nao_trava_a_fila() {
     let org = criar_org(&store, "a");
     let agente = criar_agente(&store, org);
     let conversa = criar_conversa(&store, org, agente, "+5511111");
-    store.matrix().ligar(org).expect("liga");
+    store.matrix().enable(org).expect("liga");
 
     let antes = txn_de(&msg_cliente(&store, org, conversa, "primeira"));
     let veneno = txn_de(&msg_cliente(&store, org, conversa, "VENENO aqui"));
@@ -577,10 +577,10 @@ async fn mensagem_venenosa_nao_trava_a_fila() {
     assert!(enviadas.contains(&ultima));
     assert!(!enviadas.contains(&veneno));
 
-    let falhas = store.matrix().listar_falhas(org, 10).expect("falhas");
+    let falhas = store.matrix().list_failures(org, 10).expect("falhas");
     assert_eq!(falhas.len(), 1, "a venenosa foi isolada uma vez");
     assert_eq!(falhas[0].motivo, "M_FORBIDDEN");
-    assert_eq!(falhas[0].tentativas, TENTATIVAS_DEFINITIVAS);
+    assert_eq!(falhas[0].attempts, TENTATIVAS_DEFINITIVAS);
 }
 
 #[tokio::test]
@@ -590,7 +590,7 @@ async fn synapse_fora_acumula_sem_avancar_e_depois_drena() {
     let org = criar_org(&store, "a");
     let agente = criar_agente(&store, org);
     let conversa = criar_conversa(&store, org, agente, "+5511111");
-    store.matrix().ligar(org).expect("liga");
+    store.matrix().enable(org).expect("liga");
 
     let mut todas = Vec::new();
     for i in 0..5 {
@@ -610,7 +610,7 @@ async fn synapse_fora_acumula_sem_avancar_e_depois_drena() {
         assert!(relatorio.pendentes >= 1);
     }
     assert_eq!(
-        store.matrix().ler_cursores(org).expect("cursor").mensagens,
+        store.matrix().read_cursors(org).expect("cursor").messages,
         0
     );
     assert!(
@@ -634,7 +634,7 @@ async fn org_desligada_nao_gera_chamada_alguma() {
     let agente_d = criar_agente(&store, desligada);
     let conv_l = criar_conversa(&store, ligada, agente_l, "+5511111");
     let conv_d = criar_conversa(&store, desligada, agente_d, "+5522222");
-    store.matrix().ligar(ligada).expect("liga");
+    store.matrix().enable(ligada).expect("liga");
 
     msg_cliente(&store, ligada, conv_l, "da ligada");
     msg_cliente(&store, desligada, conv_d, "da desligada");
@@ -661,7 +661,7 @@ async fn mensagem_anterior_ao_corte_nao_e_espelhada() {
     let conversa = criar_conversa(&store, org, agente, "+5511111");
 
     msg_cliente(&store, org, conversa, "antes de ligar");
-    store.matrix().ligar(org).expect("liga");
+    store.matrix().enable(org).expect("liga");
     let depois = txn_de(&msg_cliente(&store, org, conversa, "depois de ligar"));
 
     let destino = Falso::novo(Modo::Normal);
@@ -681,7 +681,7 @@ async fn resposta_humana_e_ferramenta_nao_viram_evento() {
     let org = criar_org(&store, "a");
     let agente = criar_agente(&store, org);
     let conversa = criar_conversa(&store, org, agente, "+5511111");
-    store.matrix().ligar(org).expect("liga");
+    store.matrix().enable(org).expect("liga");
 
     gravar(
         &store,
@@ -721,7 +721,7 @@ async fn rowid_reaproveitado_nao_perde_a_mensagem_nova() {
     let org = criar_org(&store, "a");
     let agente = criar_agente(&store, org);
     let conversa = criar_conversa(&store, org, agente, "+5511111");
-    store.matrix().ligar(org).expect("liga");
+    store.matrix().enable(org).expect("liga");
 
     msg_cliente(&store, org, conversa, "um");
     msg_cliente(&store, org, conversa, "dois");
@@ -772,21 +772,21 @@ async fn cursor_a_frente_do_maior_rowid_volta_ao_ponto_seguro() {
     let org = criar_org(&store, "a");
     let agente = criar_agente(&store, org);
     let conversa = criar_conversa(&store, org, agente, "+5511111");
-    store.matrix().ligar(org).expect("liga");
+    store.matrix().enable(org).expect("liga");
     msg_cliente(&store, org, conversa, "um");
     msg_cliente(&store, org, conversa, "dois");
 
     // Cursor inventado, à frente de tudo que existe.
     store
         .matrix()
-        .avancar_mensagens_com_id(org, 99, "00000000-0000-7000-8000-000000000000")
+        .advance_messages_with_id(org, 99, "00000000-0000-7000-8000-000000000000")
         .expect("cursor");
 
     let destino = Falso::novo(Modo::Normal);
     let espelho = espelho(Arc::clone(&store), Arc::clone(&destino));
     let relatorio = espelho.ciclo().await.expect("ciclo");
     assert_eq!(relatorio.recuos, 1);
-    assert!(store.matrix().ler_cursores(org).expect("cursor").mensagens <= 2);
+    assert!(store.matrix().read_cursors(org).expect("cursor").messages <= 2);
 
     // Mensagem nova depois do recuo é lida normalmente.
     let nova = txn_de(&msg_cliente(&store, org, conversa, "tres"));
@@ -801,7 +801,7 @@ async fn memoria_do_ciclo_fica_limitada_a_uma_pagina() {
     let org = criar_org(&store, "a");
     let agente = criar_agente(&store, org);
     let conversa = criar_conversa(&store, org, agente, "+5511111");
-    store.matrix().ligar(org).expect("liga");
+    store.matrix().enable(org).expect("liga");
 
     let total = PAGINA as usize * 3 + 17;
     for i in 0..total {
@@ -855,7 +855,7 @@ async fn memoria_com_50_mil_pendentes() {
     let org = criar_org(&store, "a");
     let agente = criar_agente(&store, org);
     let conversa = criar_conversa(&store, org, agente, "+5511111");
-    store.matrix().ligar(org).expect("liga");
+    store.matrix().enable(org).expect("liga");
     let inicio = std::time::Instant::now();
     for i in 0..50_000 {
         msg_cliente(&store, org, conversa, &format!("m{i}"));
@@ -876,7 +876,7 @@ async fn memoria_com_50_mil_pendentes() {
     assert!(relatorio.maior_pagina <= PAGINA);
     assert_eq!(relatorio.paginas, 1, "para na primeira página com falha");
     assert_eq!(
-        store.matrix().ler_cursores(org).expect("cursor").mensagens,
+        store.matrix().read_cursors(org).expect("cursor").messages,
         0
     );
 }
@@ -896,7 +896,7 @@ fn org_com_aparelho(store: &Store) -> (OrgId, AgentId, IntegrationId) {
         .id
         .parse()
         .expect("id da integração");
-    store.matrix().ligar(org).expect("liga");
+    store.matrix().enable(org).expect("liga");
     (org, agente, integracao)
 }
 
@@ -911,19 +911,19 @@ fn receber_aparelho(
 ) -> (ConversationId, MessageId) {
     let recebido = store
         .inbox()
-        .receber_do_aparelho(
+        .receive_from_device(
             org,
             NewDeviceMessage {
                 integration_id: integracao,
                 agent_id: agente,
                 canal: "whatsapp".to_owned(),
                 peer: PEER_APARELHO.to_owned(),
-                id_externo: id_externo.to_owned(),
+                external_id: id_externo.to_owned(),
                 texto: texto.to_owned(),
             },
         )
         .expect("recebe a mensagem do aparelho");
-    (recebido.conversa, recebido.mensagem.id)
+    (recebido.conversation, recebido.mensagem.id)
 }
 
 /// Id do usuário do aparelho desta integração, como o espelho monta.
@@ -958,7 +958,7 @@ async fn mensagem_do_aparelho_entra_na_sala_pelo_usuario_do_aparelho() {
     );
     // O nome que o WhatsApp deu ao cliente: a mensagem do aparelho não pode trocá-lo.
     store
-        .conversas()
+        .conversations()
         .set_customer_name(org, conversa, "Maria")
         .expect("grava o nome do cliente");
     // Uma resposta do cliente na mesma conversa, para provar que cada um fala com o próprio usuário.
@@ -995,7 +995,7 @@ async fn mensagem_do_aparelho_entra_na_sala_pelo_usuario_do_aparelho() {
         "o espelho não cria linha na fila de saída: a mensagem já saiu pelo celular"
     );
     let nome = store
-        .conversas()
+        .conversations()
         .get(org, conversa)
         .expect("lê a conversa")
         .customer_name;
@@ -1011,7 +1011,11 @@ async fn aparelho_entra_uma_vez_por_passagem_e_repeticao_nao_duplica() {
         receber_aparelho(&store, org, agente, integracao, "AP-1", "primeira");
     let (_, segunda) = receber_aparelho(&store, org, agente, integracao, "AP-2", "segunda");
     assert_eq!(
-        store.conversas().get(org, conversa).expect("conversa").id,
+        store
+            .conversations()
+            .get(org, conversa)
+            .expect("conversa")
+            .id,
         conversa,
         "as duas mensagens caem na mesma conversa"
     );
@@ -1029,7 +1033,7 @@ async fn aparelho_entra_uma_vez_por_passagem_e_repeticao_nao_duplica() {
     // Passagem repetida do laço (como depois de uma queda): lê tudo de novo a partir do início.
     store
         .matrix()
-        .recuar_cursor_mensagens(org, 0, "")
+        .rewind_cursor_messages(org, 0, "")
         .expect("recua o cursor");
     espelho.ciclo().await.expect("ciclo 2");
 

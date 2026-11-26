@@ -77,7 +77,7 @@ fn config() -> MatrixConfig {
 fn criar_org(store: &Store, slug: &str) -> OrgId {
     store
         .orgs()
-        .criar(NewOrg {
+        .create(NewOrg {
             name: format!("Org {slug}"),
             slug: slug.to_owned(),
             config_json: String::new(),
@@ -89,7 +89,7 @@ fn criar_org(store: &Store, slug: &str) -> OrgId {
 fn criar_agente(store: &Store, org: OrgId) -> AgentId {
     store
         .agents()
-        .criar(
+        .create(
             org,
             NewAgent {
                 name: "Bia".to_owned(),
@@ -103,8 +103,8 @@ fn criar_agente(store: &Store, org: OrgId) -> AgentId {
 
 fn criar_conversa(store: &Store, org: OrgId, agente: AgentId, peer: &str) -> ConversationId {
     store
-        .conversas()
-        .criar(
+        .conversations()
+        .create(
             org,
             NewConversation {
                 agent_id: agente,
@@ -121,7 +121,7 @@ fn criar_conversa(store: &Store, org: OrgId, agente: AgentId, peer: &str) -> Con
 fn msg_cliente(store: &Store, org: OrgId, conversa: ConversationId, texto: &str) -> String {
     store
         .messages()
-        .gravar(
+        .write(
             org,
             NewMessage {
                 conversation_id: conversa,
@@ -131,7 +131,7 @@ fn msg_cliente(store: &Store, org: OrgId, conversa: ConversationId, texto: &str)
                 author_name: None,
                 texto: texto.to_owned(),
                 attachments_json: "[]".to_owned(),
-                id_externo: None,
+                external_id: None,
                 turn_id: None,
             },
         )
@@ -297,7 +297,7 @@ async fn atraso_do_cursor_sobe_com_synapse_fora_e_volta_a_zero() {
     let org = criar_org(&store, "atraso");
     let agente = criar_agente(&store, org);
     let conversa = criar_conversa(&store, org, agente, "5521977770001");
-    store.matrix().ligar(org).expect("liga o módulo");
+    store.matrix().enable(org).expect("liga o módulo");
     msg_cliente(&store, org, conversa, "primeira");
     msg_cliente(&store, org, conversa, "segunda");
 
@@ -346,7 +346,7 @@ async fn contadores_do_espelho_contam_tentativas_erros_e_429() {
     let org = criar_org(&store, "contadores");
     let agente = criar_agente(&store, org);
     let conversa = criar_conversa(&store, org, agente, "5521977770002");
-    store.matrix().ligar(org).expect("liga o módulo");
+    store.matrix().enable(org).expect("liga o módulo");
     msg_cliente(&store, org, conversa, "um");
     msg_cliente(&store, org, conversa, "dois");
 
@@ -387,7 +387,7 @@ async fn mensagem_venenosa_isolada_conta_e_loga_org_e_conversa() {
     let org = criar_org(&store, "isolada");
     let agente = criar_agente(&store, org);
     let conversa = criar_conversa(&store, org, agente, "5521977770003");
-    store.matrix().ligar(org).expect("liga o módulo");
+    store.matrix().enable(org).expect("liga o módulo");
     msg_cliente(&store, org, conversa, "VENENO aqui");
     msg_cliente(&store, org, conversa, "depois");
 
@@ -436,7 +436,7 @@ async fn valor_canario_nunca_aparece_no_log_do_modulo() {
     let org = criar_org(&store, "canario");
     let agente = criar_agente(&store, org);
     let conversa = criar_conversa(&store, org, agente, CANARIO_TELEFONE);
-    store.matrix().ligar(org).expect("liga o módulo");
+    store.matrix().enable(org).expect("liga o módulo");
     msg_cliente(&store, org, conversa, CANARIO_TEXTO);
     // O Synapse devolve o token-canário dentro da mensagem de erro (não pode ir para o log).
     let falso = Falso::novo(Modo::Venenoso(CANARIO_TEXTO), CANARIO_TOKEN);
@@ -457,11 +457,11 @@ async fn valor_canario_nunca_aparece_no_log_do_modulo() {
     let sala = "!canario-sala:matrix-dev.local";
     store
         .matrix()
-        .garantir_sala(org, conversa, sala, None)
+        .ensure_room(org, conversa, sala, None)
         .expect("grava a sala");
     store
         .matrix()
-        .marcar_sala_pronta(org, conversa)
+        .mark_room_ready(org, conversa)
         .expect("sala pronta");
     let ids = IdsFantasmas::da_config(&config()).expect("ids");
     let entrega = RespostaDoAtendente::com_tetos(
@@ -510,15 +510,15 @@ async fn contadores_da_resposta_do_atendente_viram_metrica() {
     let org = criar_org(&store, "contadores-resposta");
     let agente = criar_agente(&store, org);
     let conversa = criar_conversa(&store, org, agente, "5521977770004");
-    store.matrix().ligar(org).expect("liga o módulo");
+    store.matrix().enable(org).expect("liga o módulo");
     let sala = "!contadores-sala:matrix-dev.local";
     store
         .matrix()
-        .garantir_sala(org, conversa, sala, None)
+        .ensure_room(org, conversa, sala, None)
         .expect("grava a sala");
     store
         .matrix()
-        .marcar_sala_pronta(org, conversa)
+        .mark_room_ready(org, conversa)
         .expect("sala pronta");
 
     let metricas = metricas_novas();
@@ -600,13 +600,13 @@ async fn contadores_da_resposta_do_atendente_viram_metrica() {
 
     // 5) Conversa encerrada: nada enviado, aviso na sala.
     let versao = store
-        .conversas()
+        .conversations()
         .get(org, conversa)
         .expect("lê a conversa")
         .version;
     store
-        .conversas()
-        .fechar_auditado(org, conversa, versao, "teste".to_owned())
+        .conversations()
+        .close_audited(org, conversa, versao, "teste".to_owned())
         .expect("encerra a conversa");
     entrega
         .entregar(
