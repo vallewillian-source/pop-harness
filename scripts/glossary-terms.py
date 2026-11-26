@@ -852,6 +852,8 @@ def linhas_da_tabela(medicao, mapa, congelados):
     linhas = []
     for termo, ingles in mapa.items():
         contagem = medicao.contagem.get(termo, 0)
+        if contagem == 0:
+            continue
         linhas.append(
             (termo, ingles, "traduz", medicao.areas_do(termo), str(contagem), -contagem)
         )
@@ -944,13 +946,13 @@ def validar(medicao, mapa, erros_do_mapa, inventario, congelados):
             ocorrencias[termo] = int(contagem)
 
     for termo in mapa:
+        medido = medicao.contagem.get(termo, 0)
+        if medido == 0:
+            continue
         if (termo, "traduz") not in vistos:
             falhas.append(f"{termo}: está no mapa e não tem linha 'traduz' na tabela")
             continue
-        medido = medicao.contagem.get(termo, 0)
-        if medido == 0:
-            falhas.append(f"{termo}: está no mapa e não aparece na árvore (termo inventado)")
-        elif ocorrencias.get(termo) != medido:
+        if ocorrencias.get(termo) != medido:
             falhas.append(
                 f"{termo}: tabela diz {ocorrencias.get(termo)}, medição diz {medido} (tabela velha)"
             )

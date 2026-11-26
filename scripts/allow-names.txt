@@ -38,10 +38,13 @@ name	actor_id	published coluna: actor_id
 name	actor_kind	published coluna: actor_kind
 name	admin	published rota: admin
 name	admin_tokens	published tabela: admin_tokens
+name	age_buckets	published campo json: age_buckets
+name	age_ms	published campo json: age_ms
 name	agent	published comando cli: agent
 name	agent_id	published coluna: agent_id
 name	agent_instructions	published tabela: agent_instructions
 name	agent_knowledge_groups	published tabela: agent_knowledge_groups
+name	agent_name	published campo json: agent_name
 name	agent_product_categories	published tabela: agent_product_categories
 name	agent_type	published coluna: agent_type
 name	agente	published flag cli: agente
@@ -75,6 +78,7 @@ name	atualizar	published operation id: atualizar
 name	atualizar_item	published operation id: atualizar_item
 name	audit_log	published tabela: audit_log
 name	author_name	published coluna: author_name
+name	avg_messages_per_conversation	published campo json: avg_messages_per_conversation
 name	avg_resolution_ms	published campo json: avg_resolution_ms
 name	backlog	published campo json: backlog
 name	backup	published rota: backup
@@ -84,6 +88,7 @@ name	blob_path	published coluna: blob_path
 name	blobs	published backup: blobs
 name	bool	flow language word, frozen by P6
 name	by_agent	published campo json: by_agent
+name	by_channel	published campo json: by_channel
 name	by_day	published campo json: by_day
 name	cache_revisoes_mb	published chave toml: cache_revisoes_mb
 name	calls	published flag cli: calls
@@ -111,6 +116,7 @@ name	check	published comando cli: check
 name	client_name	published coluna: client_name
 name	client_name_espelhado	published coluna: client_name_espelhado
 name	close	published rota: close
+name	closed	published campo json: closed
 name	closed_fichas	published campo json: closed_fichas
 name	cluster	published rota: cluster
 name	cluster_map_fingerprint	published campo json: cluster_map_fingerprint
@@ -134,7 +140,9 @@ name	conversas_listar	published operation id: conversas_listar
 name	conversas_mostrar	published operation id: conversas_mostrar
 name	conversas_reabrir	published operation id: conversas_reabrir
 name	conversas_transferir	published operation id: conversas_transferir
+name	conversation_analytics	published operation id: conversation_analytics
 name	conversation_id	published coluna: conversation_id
+name	conversation_to_ficha_rate	published campo json: conversation_to_ficha_rate
 name	conversations	published tabela: conversations
 name	conversations_cursor_at	published coluna: conversations_cursor_at
 name	conversations_cursor_id	published coluna: conversations_cursor_id
@@ -145,6 +153,7 @@ name	created_at	published coluna: created_at
 name	criar	published operation id: criar
 name	criar_item	published operation id: criar_item
 name	current	published rota: current
+name	current_step_key	published campo json: current_step_key
 name	cursor	published flag cli: cursor
 name	dados	published chave toml: dados
 name	dados_json	published coluna: dados_json
@@ -299,6 +308,7 @@ name	human_handoff_department_id	published coluna: human_handoff_department_id
 name	human_handoff_enabled	published coluna: human_handoff_enabled
 name	id	published coluna: id
 name	id_externo	published protocolo plugin: id_externo
+name	idle_ms	published campo json: idle_ms
 name	if	published flag cli: if
 name	igual	flow language word, frozen by P6
 name	image_in	published protocolo plugin: image_in
@@ -411,6 +421,7 @@ name	max_dados_bytes	published chave toml: max_dados_bytes
 name	max_fluxos_por_org	published chave toml: max_fluxos_por_org
 name	max_fonte_bytes	published chave toml: max_fonte_bytes
 name	max_heap_regra	published chave toml: max_heap_regra
+name	max_minutes	published campo json: max_minutes
 name	max_nos	published chave toml: max_nos
 name	max_output_tokens	published coluna: max_output_tokens
 name	max_saltos_decisao	published chave toml: max_saltos_decisao
@@ -436,6 +447,7 @@ name	metrics	published rota: metrics
 name	migrate	published comando cli: migrate
 name	mime	published coluna: mime
 name	min	flow language word, frozen by P6
+name	min_minutes	published campo json: min_minutes
 name	model	published coluna: model
 name	modelo	published chave toml: modelo
 name	mostrar	published operation id: mostrar
@@ -461,6 +473,7 @@ name	ocorrido_em	published protocolo plugin: ocorrido_em
 name	offline	published flag cli: offline
 name	oldest_seconds	published campo json: oldest_seconds
 name	only	published flag cli: only
+name	open	published campo json: open
 name	open_conversations	published campo json: open_conversations
 name	open_fichas	published campo json: open_fichas
 name	openapi	published comando cli: openapi
@@ -492,7 +505,7 @@ name	output	published flag cli: output
 name	output_tokens	published coluna: output_tokens
 name	para	published flag cli: para
 name	payload_json	published coluna: payload_json
-name	peer	published protocolo plugin: peer
+name	peer	published campo json: peer
 name	peer_externo	published coluna: peer_externo
 name	pending_failures	published campo json: pending_failures
 name	plugin	published binario: plugin
@@ -656,6 +669,8 @@ name	show	published comando cli: show
 name	simultaneos	published chave toml: simultaneos
 name	situacao	published campo json: situacao
 name	size_bytes	published coluna: size_bytes
+name	sla	published rota: sla
+name	sla_analytics	published operation id: sla_analytics
 name	slug	published coluna: slug
 name	sobrescrever	published flag cli: sobrescrever
 name	somente	published flag cli: somente
@@ -665,6 +680,7 @@ name	source_type	published coluna: source_type
 name	space	published campo json: space
 name	space_room_id	published coluna: space_room_id
 name	spaces	published rota: spaces
+name	stale_items	published campo json: stale_items
 name	started_at	published coluna: started_at
 name	state	published coluna: state
 name	status	published coluna: status
@@ -708,12 +724,14 @@ name	tokens_revogar	published operation id: tokens_revogar
 name	tool	published flag cli: tool
 name	tools_json	published coluna: tools_json
 name	top	published flag cli: top
+name	total	published campo json: total
 name	total_cost_micros	published campo json: total_cost_micros
 name	total_input_tokens	published campo json: total_input_tokens
 name	total_output_tokens	published campo json: total_output_tokens
 name	tr_fluxo_revisoes_sem_delete	published gatilho: tr_fluxo_revisoes_sem_delete
 name	tr_fluxo_revisoes_sem_update	published gatilho: tr_fluxo_revisoes_sem_update
 name	transfer	published rota: transfer
+name	transferred	published campo json: transferred
 name	True	flow language word, frozen by P6
 name	tuple	flow language word, frozen by P6
 name	turn_count	published campo json: turn_count
