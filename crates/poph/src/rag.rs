@@ -6,12 +6,12 @@
 use std::sync::Arc;
 
 use poph_agent::{BaseConhecimento, CatalogoProdutos};
-use poph_rag::{ConfigIndice, ConfigModelo, Embedder, EmbedderOrt, Indice, QueueConfig};
+use poph_rag::{ConfigModelo, Embedder, EmbedderOrt, Index, IndexConfig, QueueConfig};
 use poph_store::Store;
 use poph_types::HarnessConfig;
 
 /// Abre o índice de trechos sobre o `rag.db` do store.
-pub fn abrir_indice(config: &HarnessConfig, store: &Arc<Store>) -> Result<Indice, String> {
+pub fn abrir_indice(config: &HarnessConfig, store: &Arc<Store>) -> Result<Index, String> {
     let modelo = ConfigModelo {
         diretorio: config.models(),
         ..ConfigModelo::default()
@@ -23,9 +23,9 @@ pub fn abrir_indice(config: &HarnessConfig, store: &Arc<Store>) -> Result<Indice
         )
     })?;
     let embedder: Arc<dyn Embedder> = Arc::new(embedder);
-    let (indice, abertura) = Indice::abrir(store.rag_path(), embedder, ConfigIndice::default())
+    let (indice, abertura) = Index::open(store.rag_path(), embedder, IndexConfig::default())
         .map_err(|erro| format!("não consegui abrir o índice: {erro}"))?;
-    if abertura.limpo_por_divergencia {
+    if abertura.cleaned_by_divergence {
         eprintln!(
             "[aviso] o índice foi limpo: os vetores eram de outro modelo ou de outro divisor de \
              trechos. Rode `poph kb reindex` para reindexar."
@@ -121,9 +121,9 @@ pub fn abrir_base_com_fila(
     };
     let da_org = poph_rag::QueuedEmbedder::with_runtime(fila, org, identidade, runtime);
     let (indice, abertura) =
-        Indice::abrir(store.rag_path(), Arc::new(da_org), ConfigIndice::default())
+        Index::open(store.rag_path(), Arc::new(da_org), IndexConfig::default())
             .map_err(|erro| format!("não consegui abrir o índice: {erro}"))?;
-    if abertura.limpo_por_divergencia {
+    if abertura.cleaned_by_divergence {
         eprintln!(
             "[aviso] o índice foi limpo: os vetores eram de outro modelo ou de outro divisor de \
              trechos. Rode `poph kb reindex` para reindexar."

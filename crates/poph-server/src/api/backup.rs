@@ -566,7 +566,7 @@ fn tabelas_do_relatorio(relatorio: &ImportReport) -> Map<String, Value> {
 /// entraram. Sem o modelo, o material importado continua gravado, o índice **não** é dado como
 /// pronto e o relatório traz o aviso com o comando para reindexar depois.
 async fn reindexar(e: &Estado, org: OrgId) -> (Value, Option<String>) {
-    use poph_rag::{ConfigIndice, ConfigModelo, Embedder, EmbedderOrt, Indice};
+    use poph_rag::{ConfigModelo, Embedder, EmbedderOrt, Index, IndexConfig};
 
     static SINCRONIZACAO: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
     let _guarda = SINCRONIZACAO.lock().await;
@@ -610,10 +610,10 @@ async fn reindexar(e: &Estado, org: OrgId) -> (Value, Option<String>) {
 
     let mut agentes = 0usize;
     let mut trechos = 0usize;
-    match Indice::abrir(
+    match Index::open(
         e.store.rag_path(),
         Arc::clone(&embedder),
-        ConfigIndice::default(),
+        IndexConfig::default(),
     ) {
         Ok((indice, _)) => {
             let base = poph_agent::BaseConhecimento::nova(Arc::clone(&e.store), Arc::new(indice));
@@ -622,7 +622,7 @@ async fn reindexar(e: &Estado, org: OrgId) -> (Value, Option<String>) {
                     agentes = relatorios.len();
                     trechos = relatorios
                         .iter()
-                        .map(|(_, relatorio)| relatorio.trechos_gravados)
+                        .map(|(_, relatorio)| relatorio.stored_chunks)
                         .sum();
                 }
                 Err(erro) => {
@@ -641,10 +641,10 @@ async fn reindexar(e: &Estado, org: OrgId) -> (Value, Option<String>) {
     }
 
     let mut trechos_produtos = 0usize;
-    match Indice::abrir(
+    match Index::open(
         e.store.rag_path(),
         Arc::clone(&embedder),
-        ConfigIndice::default(),
+        IndexConfig::default(),
     ) {
         Ok((indice, _)) => {
             let catalogo =
@@ -653,7 +653,7 @@ async fn reindexar(e: &Estado, org: OrgId) -> (Value, Option<String>) {
                 Ok(relatorios) => {
                     trechos_produtos = relatorios
                         .iter()
-                        .map(|(_, relatorio)| relatorio.trechos_gravados)
+                        .map(|(_, relatorio)| relatorio.stored_chunks)
                         .sum();
                 }
                 Err(erro) => {

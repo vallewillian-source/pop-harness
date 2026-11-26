@@ -2,7 +2,7 @@ pub mod chunks;
 pub mod embedder;
 pub mod erro;
 pub mod fake;
-pub mod indice;
+pub mod index;
 pub mod installation;
 pub mod memory;
 pub mod metrics;
@@ -18,9 +18,9 @@ pub use embedder::{
 };
 pub use erro::RagError;
 pub use fake::FakeEmbedder;
-pub use indice::{
-    Achado, AchadoProduto, ConfigBusca, ConfigIndice, Encontrado, Indice, ItemRag, ProdutoRag,
-    RelatorioAbertura, RelatorioIndexacao, Trecho,
+pub use index::{
+    Chunk, Found, Hit, Index, IndexConfig, IndexReport, ItemRag, OpenReport, ProductHit,
+    ProductRag, SearchConfig,
 };
 pub use metrics::RagMetrics;
 pub use onnx::{CargaModelo, ConfigModelo, EmbedderOrt};

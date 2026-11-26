@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use poph_rag::{
-    BatchFuture, ConfigIndice, Embedder, FakeEmbedder, Indice, ItemRag, ModelIdentity, RagError,
+    BatchFuture, Embedder, FakeEmbedder, Index, IndexConfig, ItemRag, ModelIdentity, RagError,
 };
 use poph_types::{AgentId, KnowledgeItemId, OrgId};
 
@@ -87,12 +87,12 @@ fn apagar_rag_db(caminho: &Path) {
     }
 }
 
-fn abrir(caminho: &Path, embedder: Arc<dyn Embedder>, orcamento: usize) -> Indice {
-    let (indice, _) = Indice::abrir(
+fn abrir(caminho: &Path, embedder: Arc<dyn Embedder>, orcamento: usize) -> Index {
+    let (indice, _) = Index::open(
         caminho,
         embedder,
-        ConfigIndice {
-            orcamento_memoria_bytes: orcamento,
+        IndexConfig {
+            memory_budget_bytes: orcamento,
         },
     )
     .expect("abre o rag.db");
@@ -102,7 +102,7 @@ fn abrir(caminho: &Path, embedder: Arc<dyn Embedder>, orcamento: usize) -> Indic
 fn item(titulo: &str, texto: &str) -> ItemRag {
     ItemRag {
         id: KnowledgeItemId::generate(),
-        titulo: titulo.to_owned(),
+        title: titulo.to_owned(),
         texto: texto.to_owned(),
         versao: 1,
     }
@@ -129,11 +129,11 @@ async fn editar_um_item_reindexa_so_ele() {
         item("Pagamento", "Aceitamos pix e cartão."),
     ];
     let primeira = indice
-        .indexar_agente(org, agente, &itens)
+        .index_agent(org, agente, &itens)
         .await
         .expect("indexa");
-    assert_eq!(primeira.itens_novos, 3);
-    assert_eq!(primeira.embeddings_gerados, 3);
+    assert_eq!(primeira.new_items, 3);
+    assert_eq!(primeira.generated_embeddings, 3);
     assert_eq!(contador.textos(), 3);
 
     // Edita só o segundo item.
@@ -141,14 +141,14 @@ async fn editar_um_item_reindexa_so_ele() {
     itens[1].versao = 2;
     let antes = contador.textos();
     let editada = indice
-        .indexar_agente(org, agente, &itens)
+        .index_agent(org, agente, &itens)
         .await
         .expect("reindexa");
-    assert_eq!(editada.itens_alterados, 1);
-    assert_eq!(editada.itens_inalterados, 2);
-    assert_eq!(editada.itens_novos, 0);
+    assert_eq!(editada.changed_items, 1);
+    assert_eq!(editada.unchanged_items, 2);
+    assert_eq!(editada.new_items, 0);
     assert_eq!(
-        editada.embeddings_gerados, 1,
+        editada.generated_embeddings, 1,
         "só o item editado vai ao modelo"
     );
     assert_eq!(contador.textos() - antes, 1);
@@ -156,19 +156,19 @@ async fn editar_um_item_reindexa_so_ele() {
     // Sem mudança nenhuma: nada vai ao modelo e nada é regravado.
     let antes = contador.textos();
     let sem_mudanca = indice
-        .indexar_agente(org, agente, &itens)
+        .index_agent(org, agente, &itens)
         .await
         .expect("reindexa");
-    assert_eq!(sem_mudanca.itens_inalterados, 3);
-    assert_eq!(sem_mudanca.embeddings_gerados, 0);
-    assert_eq!(sem_mudanca.trechos_gravados, 0);
+    assert_eq!(sem_mudanca.unchanged_items, 3);
+    assert_eq!(sem_mudanca.generated_embeddings, 0);
+    assert_eq!(sem_mudanca.stored_chunks, 0);
     assert_eq!(contador.textos(), antes);
 
     // O texto novo é o que a busca acha.
     let achados = indice
-        .buscar_palavras(org, agente, "vinte e quatro", 3)
+        .search_words(org, agente, "vinte e quatro", 3)
         .expect("busca");
-    assert_eq!(achados.first().map(|a| a.trecho.item), Some(itens[1].id));
+    assert_eq!(achados.first().map(|a| a.chunk.item), Some(itens[1].id));
 }
 
 #[tokio::test]
@@ -182,21 +182,21 @@ async fn item_que_sai_da_lista_some_do_indice() {
         item("Frete", "Frete grátis acima de cem reais."),
     ];
     indice
-        .indexar_agente(org, agente, &itens)
+        .index_agent(org, agente, &itens)
         .await
         .expect("indexa");
     let removido = itens.remove(1);
 
     let relatorio = indice
-        .indexar_agente(org, agente, &itens)
+        .index_agent(org, agente, &itens)
         .await
         .expect("reindexa");
-    assert_eq!(relatorio.itens_removidos, 1);
-    let trechos = indice.listar_trechos(org, agente).expect("lista");
+    assert_eq!(relatorio.removed_items, 1);
+    let trechos = indice.list_chunks(org, agente).expect("lista");
     assert!(trechos.iter().all(|t| t.item != removido.id));
     assert!(
         indice
-            .buscar_palavras(org, agente, "frete", 3)
+            .search_words(org, agente, "frete", 3)
             .expect("busca")
             .is_empty(),
         "item removido não pode aparecer no texto"
@@ -215,16 +215,16 @@ async fn apagar_o_rag_db_e_reindexar_reproduz_trechos_e_resultados() {
 
     let indice = abrir(&pasta.rag_db(), Contador::novo(), 64 * 1024 * 1024);
     indice
-        .indexar_agente(org, agente, &itens)
+        .index_agent(org, agente, &itens)
         .await
         .expect("indexa");
-    let trechos_antes = indice.listar_trechos(org, agente).expect("lista");
+    let trechos_antes = indice.list_chunks(org, agente).expect("lista");
     let vetor_antes = indice
-        .buscar_vetor(org, agente, "devolução de produto", 3)
+        .search_vector(org, agente, "devolução de produto", 3)
         .await
         .expect("busca vetor");
     let palavras_antes = indice
-        .buscar_palavras(org, agente, "prazo entrega", 5)
+        .search_words(org, agente, "prazo entrega", 5)
         .expect("busca palavras");
     assert!(
         trechos_antes.len() > 3,
@@ -235,25 +235,25 @@ async fn apagar_o_rag_db_e_reindexar_reproduz_trechos_e_resultados() {
     apagar_rag_db(&pasta.rag_db());
     let refeito = abrir(&pasta.rag_db(), Contador::novo(), 64 * 1024 * 1024);
     let relatorio = refeito
-        .indexar_agente(org, agente, &itens)
+        .index_agent(org, agente, &itens)
         .await
         .expect("reindexa");
-    assert_eq!(relatorio.itens_novos, 3);
+    assert_eq!(relatorio.new_items, 3);
 
     assert_eq!(
-        refeito.listar_trechos(org, agente).expect("lista"),
+        refeito.list_chunks(org, agente).expect("lista"),
         trechos_antes
     );
     assert_eq!(
         refeito
-            .buscar_vetor(org, agente, "devolução de produto", 3)
+            .search_vector(org, agente, "devolução de produto", 3)
             .await
             .expect("busca vetor"),
         vetor_antes
     );
     assert_eq!(
         refeito
-            .buscar_palavras(org, agente, "prazo entrega", 5)
+            .search_words(org, agente, "prazo entrega", 5)
             .expect("busca palavras"),
         palavras_antes
     );
@@ -277,7 +277,7 @@ async fn agente_ocioso_sai_com_o_teto_e_volta_sem_resultado_errado() {
             item("B", &format!("Assunto {n} segundo item.")),
         ];
         indice
-            .indexar_agente(org, *agente, &itens)
+            .index_agent(org, *agente, &itens)
             .await
             .expect("indexa");
     }
@@ -286,26 +286,26 @@ async fn agente_ocioso_sai_com_o_teto_e_volta_sem_resultado_errado() {
     for agente in &agentes {
         primeiros.push(
             indice
-                .buscar_vetor(org, *agente, "primeiro item", 2)
+                .search_vector(org, *agente, "primeiro item", 2)
                 .await
                 .expect("busca"),
         );
-        assert!(indice.bytes_em_memoria() <= indice.orcamento_memoria_bytes());
+        assert!(indice.bytes_in_memory() <= indice.memory_budget_bytes());
     }
     assert_eq!(
-        indice.agentes_em_memoria(),
+        indice.agents_in_memory(),
         2,
         "o terceiro expulsou o mais antigo"
     );
 
     // O agente expulso volta do rag.db e responde igual.
     let de_novo = indice
-        .buscar_vetor(org, agentes[0], "primeiro item", 2)
+        .search_vector(org, agentes[0], "primeiro item", 2)
         .await
         .expect("busca");
     assert_eq!(de_novo, primeiros[0]);
-    assert_eq!(indice.agentes_em_memoria(), 2);
-    assert!(indice.bytes_em_memoria() <= indice.orcamento_memoria_bytes());
+    assert_eq!(indice.agents_in_memory(), 2);
+    assert!(indice.bytes_in_memory() <= indice.memory_budget_bytes());
 }
 
 #[tokio::test]
@@ -317,7 +317,7 @@ async fn org_a_nao_alcanca_trecho_de_org_b_mesmo_com_id_forjado() {
     let agente_b = AgentId::generate();
 
     indice
-        .indexar_agente(
+        .index_agent(
             org_a,
             agente_a,
             &[item("Segredo", "Código interno da org A.")],
@@ -325,38 +325,38 @@ async fn org_a_nao_alcanca_trecho_de_org_b_mesmo_com_id_forjado() {
         .await
         .expect("indexa A");
     indice
-        .indexar_agente(org_b, agente_b, &[item("Público", "Horário da org B.")])
+        .index_agent(org_b, agente_b, &[item("Público", "Horário da org B.")])
         .await
         .expect("indexa B");
 
     // Org B com o agente da org A: nada.
     assert!(
         indice
-            .buscar_vetor(org_b, agente_a, "código interno", 3)
+            .search_vector(org_b, agente_a, "código interno", 3)
             .await
             .expect("busca")
             .is_empty()
     );
     assert!(
         indice
-            .buscar_palavras(org_b, agente_a, "código interno", 3)
+            .search_words(org_b, agente_a, "código interno", 3)
             .expect("busca")
             .is_empty()
     );
     assert!(
         indice
-            .listar_trechos(org_b, agente_a)
+            .list_chunks(org_b, agente_a)
             .expect("lista")
             .is_empty()
     );
 
     // Org A com o agente dela: acha o próprio conteúdo.
     let achados = indice
-        .buscar_vetor(org_a, agente_a, "código interno", 3)
+        .search_vector(org_a, agente_a, "código interno", 3)
         .await
         .expect("busca");
     assert_eq!(achados.len(), 1);
-    assert!(achados[0].trecho.texto.contains("org A"));
+    assert!(achados[0].chunk.texto.contains("org A"));
 }
 
 #[tokio::test]
@@ -369,30 +369,30 @@ async fn mesmo_id_de_item_em_orgs_diferentes_nao_se_mistura() {
     let compartilhado = KnowledgeItemId::generate();
     let de = |texto: &str| ItemRag {
         id: compartilhado,
-        titulo: "Mesmo".to_owned(),
+        title: "Mesmo".to_owned(),
         texto: texto.to_owned(),
         versao: 1,
     };
 
     indice
-        .indexar_agente(org_a, agente_a, &[de("texto da org A")])
+        .index_agent(org_a, agente_a, &[de("texto da org A")])
         .await
         .expect("A");
     let relatorio_b = indice
-        .indexar_agente(org_b, agente_b, &[de("texto da org B")])
+        .index_agent(org_b, agente_b, &[de("texto da org B")])
         .await
         .expect("B");
     assert_eq!(
-        relatorio_b.itens_novos, 1,
+        relatorio_b.new_items, 1,
         "a org B não reaproveita o item da A"
     );
 
     // Editar na org A não toca a org B.
     indice
-        .indexar_agente(org_a, agente_a, &[de("texto da org A revisado")])
+        .index_agent(org_a, agente_a, &[de("texto da org A revisado")])
         .await
         .expect("A revisado");
-    let da_b = indice.listar_trechos(org_b, agente_b).expect("lista B");
+    let da_b = indice.list_chunks(org_b, agente_b).expect("lista B");
     assert_eq!(da_b.len(), 1);
     assert_eq!(da_b[0].texto, "texto da org B");
 }
@@ -404,33 +404,28 @@ async fn troca_de_modelo_limpa_o_rag_db_e_so_limpa_uma_vez() {
     {
         let indice = abrir(&pasta.rag_db(), Contador::novo(), 64 * 1024 * 1024);
         indice
-            .indexar_agente(org, agente, &[item("X", "Algum texto.")])
+            .index_agent(org, agente, &[item("X", "Algum texto.")])
             .await
             .expect("indexa");
     }
 
-    let (trocado, relatorio) = Indice::abrir(
+    let (trocado, relatorio) = Index::open(
         &pasta.rag_db(),
         Contador::com_outro_modelo(),
-        ConfigIndice::default(),
+        IndexConfig::default(),
     )
     .expect("abre com outro modelo");
-    assert!(relatorio.limpo_por_divergencia);
-    assert!(
-        trocado
-            .listar_trechos(org, agente)
-            .expect("lista")
-            .is_empty()
-    );
+    assert!(relatorio.cleaned_by_divergence);
+    assert!(trocado.list_chunks(org, agente).expect("lista").is_empty());
 
-    let (_, de_novo) = Indice::abrir(
+    let (_, de_novo) = Index::open(
         &pasta.rag_db(),
         Contador::com_outro_modelo(),
-        ConfigIndice::default(),
+        IndexConfig::default(),
     )
     .expect("abre de novo");
     assert!(
-        !de_novo.limpo_por_divergencia,
+        !de_novo.cleaned_by_divergence,
         "a identidade já foi gravada"
     );
 }
@@ -441,7 +436,7 @@ async fn busca_de_palavras_ignora_acento_e_maiusculas() {
     let indice = abrir(&pasta.rag_db(), Contador::novo(), 64 * 1024 * 1024);
     let (org, agente) = (OrgId::generate(), AgentId::generate());
     indice
-        .indexar_agente(
+        .index_agent(
             org,
             agente,
             &[
@@ -452,25 +447,20 @@ async fn busca_de_palavras_ignora_acento_e_maiusculas() {
         .await
         .expect("indexa");
 
-    let achados = indice
-        .buscar_palavras(org, agente, "preco", 3)
-        .expect("busca");
+    let achados = indice.search_words(org, agente, "preco", 3).expect("busca");
     assert_eq!(achados.len(), 1);
-    assert!(
-        achados[0].pontuacao > 0.0,
-        "relevância positiva para quem acha"
-    );
+    assert!(achados[0].score > 0.0, "relevância positiva para quem acha");
     // Aspas e símbolos na consulta não quebram a busca.
     assert!(
         indice
-            .buscar_palavras(org, agente, "\"cadeira\" OR (\"", 3)
+            .search_words(org, agente, "\"cadeira\" OR (\"", 3)
             .expect("busca com símbolos")
             .len()
             == 1
     );
     assert!(
         indice
-            .buscar_palavras(org, agente, "   !!!  ", 3)
+            .search_words(org, agente, "   !!!  ", 3)
             .expect("só símbolos")
             .is_empty()
     );
@@ -486,33 +476,33 @@ async fn entradas_invalidas_sao_recusadas_com_erro_claro() {
     let dois = vec![
         ItemRag {
             id: repetido,
-            titulo: "a".to_owned(),
+            title: "a".to_owned(),
             texto: "x".to_owned(),
             versao: 1,
         },
         ItemRag {
             id: repetido,
-            titulo: "b".to_owned(),
+            title: "b".to_owned(),
             texto: "y".to_owned(),
             versao: 1,
         },
     ];
-    match indice.indexar_agente(org, agente, &dois).await {
+    match indice.index_agent(org, agente, &dois).await {
         Err(RagError::Item(mensagem)) => assert!(mensagem.contains("repetido")),
         outro => panic!("esperava erro de item repetido, veio {outro:?}"),
     }
 
     assert!(matches!(
-        indice.buscar_vetor(org, agente, "algo", 0).await,
+        indice.search_vector(org, agente, "algo", 0).await,
         Err(RagError::Configuration(_))
     ));
     assert!(matches!(
-        indice.buscar_palavras(org, agente, "algo", 0),
+        indice.search_words(org, agente, "algo", 0),
         Err(RagError::Configuration(_))
     ));
     assert!(
         indice
-            .buscar_vetor(org, agente, "   ", 3)
+            .search_vector(org, agente, "   ", 3)
             .await
             .expect("consulta vazia")
             .is_empty()

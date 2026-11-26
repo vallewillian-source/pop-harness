@@ -1,7 +1,7 @@
 # Knowledge base, hybrid search and `consultar_base` (HR-17)
 
 > What the agent knows beyond the prompt: the customer's knowledge items, indexed in `rag.db` (HR-16) and
-> searched before each reply. Code: `crates/poph-rag/src/indice.rs` (search),
+> searched before each reply. Code: `crates/poph-rag/src/index.rs` (search),
 > `crates/poph-agent/src/base_conhecimento.rs` (service and tool), `crates/poph/src/kb.rs` (CLI)
 > and `crates/poph-agent/src/turno/` (connection to the turn).
 
@@ -184,3 +184,22 @@ poph --offline --org <org> kb status [--group <id>]
 its own tables in `rag.db` (`rag_produtos*`) and **price read from the record** at reply time. The block
 returned to the model is `<produtos_encontrados>` (`<found_products>`, a tag emitted by the code) — the same
 idea of untrusted content, with its own mark. Details in `docs/PRODUTOS.md`.
+
+## 9. Index in memory and incremental reindexing
+
+- **One write at a time.** `Index::index_agent` and `Index::index_products` take the write lock, because the
+  item list and the write must see the same state. A duplicated id in the list is refused before any write.
+- **Reindexing compares the origin hash per item**: only a new or changed item is embedded again, and an item
+  that left the list is deleted. Deletion goes in foreign-key order: FTS row, chunks, then the item row.
+- **Chunks go to the model in batches of 64** (`INDEXING_BATCH`); the batch only limits transient memory.
+  The vectors are handed back to each item in the same order they were requested.
+- **The cache is per loaded agent**: ids, int8 vectors and norms (one norm per chunk). The budget is
+  `IndexConfig::memory_budget_bytes`, 512 MB by default (decision D-07, M5 of the HR-01 spike). When the
+  budget would be exceeded, the agent idle for the longest time leaves the cache and is read back from
+  `rag.db` on its next query; an agent larger than the whole budget is answered without being cached.
+- **A read that started before a write does not store its result** (`Cache::generations`): this is what keeps
+  an outdated index from being cached after a reindex.
+- **Every operation takes the org**: cache keys, database rows and FTS rows are all filtered by it, so one
+  organization never sees another's chunks or products.
+- A poisoned mutex does not block a read: the stored state is still valid, so the lock is taken with the panic
+  payload recovered.

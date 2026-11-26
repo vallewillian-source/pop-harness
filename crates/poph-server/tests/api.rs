@@ -2564,14 +2564,14 @@ async fn reindex_com_modelo_real_torna_item_pesquisavel_e_preserva_inalterado() 
         ..Default::default()
     };
     let modelo = poph_rag::EmbedderOrt::abrir(&cfg, None).unwrap();
-    let (indice, _) = poph_rag::Indice::abrir(
+    let (indice, _) = poph_rag::Index::open(
         c.store().rag_path(),
         std::sync::Arc::new(modelo),
         Default::default(),
     )
     .unwrap();
     let achados = indice
-        .buscar_hibrida(
+        .search_hybrid(
             org_id,
             agente.id,
             "qual o prazo de entrega?",
@@ -2579,7 +2579,7 @@ async fn reindex_com_modelo_real_torna_item_pesquisavel_e_preserva_inalterado() 
         )
         .await
         .unwrap();
-    assert!(achados.iter().any(|a| a.trecho.item == item.id));
+    assert!(achados.iter().any(|a| a.chunk.item == item.id));
     let registros = c
         .store()
         .audit()
@@ -2602,7 +2602,7 @@ async fn reindex_com_modelo_real_torna_item_pesquisavel_e_preserva_inalterado() 
     assert_eq!(status, StatusCode::OK, "{resposta}");
     assert!(resposta["index_warning"].is_null());
     let achados = indice
-        .buscar_hibrida(
+        .search_hybrid(
             org_id,
             agente.id,
             "qual o prazo de entrega?",
@@ -2610,7 +2610,7 @@ async fn reindex_com_modelo_real_torna_item_pesquisavel_e_preserva_inalterado() 
         )
         .await
         .unwrap();
-    assert!(!achados.iter().any(|a| a.trecho.item == item.id));
+    assert!(!achados.iter().any(|a| a.chunk.item == item.id));
 }
 
 #[tokio::test]

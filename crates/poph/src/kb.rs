@@ -1009,7 +1009,7 @@ impl Contexto {
         &self,
         base: &BaseConhecimento,
         agente: AgentId,
-    ) -> Result<poph_rag::RelatorioIndexacao, String> {
+    ) -> Result<poph_rag::IndexReport, String> {
         let runtime = runtime()?;
         runtime
             .block_on(base.sincronizar_agente(self.org, agente))
@@ -1082,9 +1082,9 @@ impl Contexto {
         if agentes.is_empty() {
             return EstadoIndice::NaoVinculado;
         }
-        let esperado = source_hash(base.indice().identidade(), &item.title, &item.content);
+        let esperado = source_hash(base.indice().identity(), &item.title, &item.content);
         for agente in agentes {
-            let Ok(mapa) = base.indice().itens_indexados(self.org, agente) else {
+            let Ok(mapa) = base.indice().indexed_items(self.org, agente) else {
                 return EstadoIndice::Erro;
             };
             if mapa.get(&item.id) != Some(&esperado) {
@@ -1202,14 +1202,14 @@ fn json_grupo(grupo: &KnowledgeGroup) -> Value {
     })
 }
 
-fn json_indexacao(relatorio: &poph_rag::RelatorioIndexacao) -> Value {
+fn json_indexacao(relatorio: &poph_rag::IndexReport) -> Value {
     json!({
-        "items_new": relatorio.itens_novos,
-        "items_changed": relatorio.itens_alterados,
-        "items_unchanged": relatorio.itens_inalterados,
-        "items_removed": relatorio.itens_removidos,
-        "embeddings": relatorio.embeddings_gerados,
-        "chunks": relatorio.trechos_gravados,
+        "items_new": relatorio.new_items,
+        "items_changed": relatorio.changed_items,
+        "items_unchanged": relatorio.unchanged_items,
+        "items_removed": relatorio.removed_items,
+        "embeddings": relatorio.generated_embeddings,
+        "chunks": relatorio.stored_chunks,
     })
 }
 

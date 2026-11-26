@@ -17,7 +17,7 @@ use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
 use poph_agent::metricas::MetricasMemoria;
 use poph_agent::turno::{ContextoFerramenta, RegistroFerramentas, UsoFerramentas, oferecidas};
 use poph_agent::{BaseConhecimento, BuscadorBase, ConsultarBase};
-use poph_rag::{ConfigIndice, Embedder, FakeEmbedder, Indice};
+use poph_rag::{Embedder, FakeEmbedder, Index, IndexConfig};
 use poph_store::{
     KnowledgeGroupChange, KnowledgeItemChange, NewAgent, NewKnowledgeGroup, NewKnowledgeItem,
     NewOrg, Status, Store,
@@ -82,8 +82,8 @@ impl Cenario {
             .link_agent(org, agente, grupo)
             .expect("liga o grupo ao agente");
         let embedder: Arc<dyn Embedder> = Arc::new(FakeEmbedder::new());
-        let (indice, _) = Indice::abrir(store.rag_path(), embedder, ConfigIndice::default())
-            .expect("abre o índice");
+        let (indice, _) =
+            Index::open(store.rag_path(), embedder, IndexConfig::default()).expect("abre o índice");
         let base = BaseConhecimento::nova(Arc::clone(&store), Arc::new(indice));
         Self {
             pasta,
@@ -546,10 +546,10 @@ async fn busca_filtra_elegibilidade_mesmo_com_indice_desatualizado() {
             },
         )
         .unwrap();
-    let (indice, _) = Indice::abrir(
+    let (indice, _) = Index::open(
         c.store.rag_path(),
         Arc::new(Falha(FakeEmbedder::new())),
-        ConfigIndice::default(),
+        IndexConfig::default(),
     )
     .unwrap();
     let falha = BaseConhecimento::nova(Arc::clone(&c.store), Arc::new(indice));

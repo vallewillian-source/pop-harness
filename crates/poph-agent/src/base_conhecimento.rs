@@ -17,7 +17,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use poph_rag::{ConfigBusca, Indice, RelatorioIndexacao};
+use poph_rag::{Index, IndexReport, SearchConfig};
 use poph_store::Store;
 use poph_types::{AgentId, KnowledgeGroupId, KnowledgeItemId, OrgId};
 use serde::Serialize;
@@ -84,17 +84,17 @@ pub trait BuscadorBase: Send + Sync {
 /// Base de conhecimento de uma instalação: o `harness.db` como fonte e o `rag.db` como índice.
 pub struct BaseConhecimento {
     store: Arc<Store>,
-    indice: Arc<Indice>,
+    indice: Arc<Index>,
 }
 
 impl BaseConhecimento {
     /// Cria a base a partir do store e do índice já abertos (o índice exige o modelo instalado).
-    pub fn nova(store: Arc<Store>, indice: Arc<Indice>) -> Arc<Self> {
+    pub fn nova(store: Arc<Store>, indice: Arc<Index>) -> Arc<Self> {
         Arc::new(Self { store, indice })
     }
 
     /// Índice por trás (a CLI usa para conferir o estado e reindexar).
-    pub fn indice(&self) -> &Arc<Indice> {
+    pub fn indice(&self) -> &Arc<Index> {
         &self.indice
     }
 
@@ -105,25 +105,18 @@ impl BaseConhecimento {
 
     /// Deixa o índice do agente igual à base ativa dele. Item novo ou alterado é reembedado; item
     /// que saiu (ou ficou inativo, D-05) sai do índice.
-    pub async fn sincronizar_agente(
-        &self,
-        org: OrgId,
-        agente: AgentId,
-    ) -> Resultado<RelatorioIndexacao> {
+    pub async fn sincronizar_agente(&self, org: OrgId, agente: AgentId) -> Resultado<IndexReport> {
         let itens = self.store.knowledge().agent_items(org, agente)?;
         let para_indice: Vec<poph_rag::ItemRag> = itens
             .into_iter()
             .map(|item| poph_rag::ItemRag {
                 id: item.id,
-                titulo: item.title,
+                title: item.title,
                 texto: item.content,
                 versao: item.version,
             })
             .collect();
-        Ok(self
-            .indice
-            .indexar_agente(org, agente, &para_indice)
-            .await?)
+        Ok(self.indice.index_agent(org, agente, &para_indice).await?)
     }
 
     /// Sincroniza todos os agentes ligados ao grupo. É o que a escrita de item/grupo/vínculo usa.
@@ -131,7 +124,7 @@ impl BaseConhecimento {
         &self,
         org: OrgId,
         grupo: KnowledgeGroupId,
-    ) -> Resultado<Vec<(AgentId, RelatorioIndexacao)>> {
+    ) -> Resultado<Vec<(AgentId, IndexReport)>> {
         let agentes = self.store.knowledge().agents_from_group(org, grupo)?;
         let mut relatorios = Vec::with_capacity(agentes.len());
         for agente in agentes {
@@ -141,10 +134,7 @@ impl BaseConhecimento {
     }
 
     /// Sincroniza todos os agentes da org (depois de uma exclusão de grupo, por exemplo).
-    pub async fn sincronizar_org(
-        &self,
-        org: OrgId,
-    ) -> Resultado<Vec<(AgentId, RelatorioIndexacao)>> {
+    pub async fn sincronizar_org(&self, org: OrgId) -> Resultado<Vec<(AgentId, IndexReport)>> {
         let mut relatorios = Vec::new();
         let mut pagina = poph_store::Page::with_limit(200);
         loop {
@@ -178,14 +168,14 @@ impl BuscadorBase for BaseConhecimento {
             let top_k = parametros.top_k.max(1);
             let achados = self
                 .indice
-                .buscar_hibrida(
+                .search_hybrid(
                     org,
                     agente,
                     &consulta,
-                    &ConfigBusca {
+                    &SearchConfig {
                         top_k,
-                        corte: parametros.corte,
-                        profundidade: (top_k * 6).max(20),
+                        cutoff: parametros.corte,
+                        depth: (top_k * 6).max(20),
                     },
                 )
                 .await?;
@@ -197,7 +187,7 @@ impl BuscadorBase for BaseConhecimento {
                 Err(e) if e.is_not_found() => return Ok(Vec::new()),
                 Err(e) => return Err(e.into()),
             }
-            let indexados = self.indice.itens_indexados(org, agente)?;
+            let indexados = self.indice.indexed_items(org, agente)?;
             let elegiveis: std::collections::HashMap<_, _> = self
                 .store
                 .knowledge()
@@ -205,7 +195,7 @@ impl BuscadorBase for BaseConhecimento {
                 .into_iter()
                 .filter(|item| {
                     let atual = poph_rag::chunks::source_hash(
-                        self.indice.identidade(),
+                        self.indice.identity(),
                         &item.title,
                         &item.content,
                     );
@@ -215,16 +205,16 @@ impl BuscadorBase for BaseConhecimento {
                 .collect();
             let mut saida = Vec::with_capacity(achados.len());
             for achado in achados {
-                let Some(grupo) = elegiveis.get(&achado.trecho.item).cloned() else {
+                let Some(grupo) = elegiveis.get(&achado.chunk.item).cloned() else {
                     continue;
                 };
                 saida.push(TrechoRecuperado {
-                    item: achado.trecho.item,
-                    titulo: achado.trecho.titulo,
+                    item: achado.chunk.item,
+                    titulo: achado.chunk.title,
                     grupo,
-                    texto: achado.trecho.texto,
-                    similaridade: achado.similaridade,
-                    relevancia: achado.relevancia,
+                    texto: achado.chunk.texto,
+                    similaridade: achado.similarity,
+                    relevancia: achado.relevance,
                 });
             }
             Ok(saida)

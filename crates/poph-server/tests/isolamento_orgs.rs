@@ -52,7 +52,7 @@ use poph_core::llm::{
     Script, ToolCall,
 };
 use poph_files::FileConfig;
-use poph_rag::{ConfigIndice, FakeEmbedder, Indice};
+use poph_rag::{FakeEmbedder, Index, IndexConfig};
 use poph_server::Estado;
 use poph_store::{
     AuditEntry, Direction, NewChannelAttachment, NewMessage, OutboxState, Page, Role, Store,
@@ -1821,10 +1821,10 @@ async fn subir_com_turno(
         )
         .com_modelo_padrao("modelo-teste")
         .com_arquivos(FileConfig::default(blobs));
-        let indice = Indice::abrir(
+        let indice = Index::open(
             store.rag_path(),
             Arc::new(FakeEmbedder::new()),
-            ConfigIndice::default(),
+            IndexConfig::default(),
         )
         .expect("índice de teste")
         .0;

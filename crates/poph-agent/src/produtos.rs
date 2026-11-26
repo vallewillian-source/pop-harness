@@ -22,7 +22,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use poph_rag::{AchadoProduto, ConfigBusca, Indice, ProdutoRag, RelatorioIndexacao};
+use poph_rag::{Index, IndexReport, ProductHit, ProductRag, SearchConfig};
 use poph_store::{Page, Product, Store};
 use poph_types::{AgentId, OrgId, ProductCategoryId, ProductId};
 use serde::Serialize;
@@ -112,17 +112,17 @@ pub trait BuscadorProdutos: Send + Sync {
 /// Catálogo de uma instalação: o `harness.db` como fonte e o `rag.db` como índice.
 pub struct CatalogoProdutos {
     store: Arc<Store>,
-    indice: Arc<Indice>,
+    indice: Arc<Index>,
 }
 
 impl CatalogoProdutos {
     /// Cria o catálogo a partir do store e do índice já abertos (o índice exige o modelo instalado).
-    pub fn novo(store: Arc<Store>, indice: Arc<Indice>) -> Arc<Self> {
+    pub fn novo(store: Arc<Store>, indice: Arc<Index>) -> Arc<Self> {
         Arc::new(Self { store, indice })
     }
 
     /// Índice por trás (a CLI usa para conferir e reindexar).
-    pub fn indice(&self) -> &Arc<Indice> {
+    pub fn indice(&self) -> &Arc<Index> {
         &self.indice
     }
 
@@ -132,15 +132,11 @@ impl CatalogoProdutos {
     }
 
     /// Deixa o índice de produtos do agente igual ao catálogo que ele enxerga agora.
-    pub async fn sincronizar_agente(
-        &self,
-        org: OrgId,
-        agente: AgentId,
-    ) -> Resultado<RelatorioIndexacao> {
+    pub async fn sincronizar_agente(&self, org: OrgId, agente: AgentId) -> Resultado<IndexReport> {
         let itens = self.store.products().for_index(org, agente)?;
-        let para_indice: Vec<ProdutoRag> = itens
+        let para_indice: Vec<ProductRag> = itens
             .into_iter()
-            .map(|item| ProdutoRag {
+            .map(|item| ProductRag {
                 id: item.id,
                 nome: item.name,
                 texto: item.texto,
@@ -149,7 +145,7 @@ impl CatalogoProdutos {
             .collect();
         Ok(self
             .indice
-            .indexar_produtos(org, agente, &para_indice)
+            .index_products(org, agente, &para_indice)
             .await?)
     }
 
@@ -159,10 +155,7 @@ impl CatalogoProdutos {
     /// pode ser qualquer agente (o de categoria vinculada ou o que vê o catálogo inteiro), e a
     /// comparação por hash evita reembedar o que não mudou. Custo por agente: uma consulta e,
     /// quando nada mudou, nenhum embedding.
-    pub async fn sincronizar_org(
-        &self,
-        org: OrgId,
-    ) -> Resultado<Vec<(AgentId, RelatorioIndexacao)>> {
+    pub async fn sincronizar_org(&self, org: OrgId) -> Resultado<Vec<(AgentId, IndexReport)>> {
         let mut relatorios = Vec::new();
         let mut pagina = Page::with_limit(200);
         loop {
@@ -257,27 +250,27 @@ impl BuscadorProdutos for CatalogoProdutos {
 
             let achados = self
                 .indice
-                .buscar_produtos(
+                .search_products(
                     org,
                     agente,
                     &termo,
-                    &ConfigBusca {
+                    &SearchConfig {
                         top_k: top_k * FATOR_CANDIDATOS,
-                        corte: parametros.corte,
-                        profundidade: (top_k * FATOR_CANDIDATOS * 6).max(20),
+                        cutoff: parametros.corte,
+                        depth: (top_k * FATOR_CANDIDATOS * 6).max(20),
                     },
                 )
                 .await?;
 
             // O preço e as condições vêm do registro agora, não do índice.
-            let ids: Vec<ProductId> = achados.iter().map(|achado| achado.produto).collect();
+            let ids: Vec<ProductId> = achados.iter().map(|achado| achado.product).collect();
             let atuais = self.store.products().active_by_ids(org, &ids)?;
             let mut saida = Vec::with_capacity(top_k);
             for achado in &achados {
                 if saida.len() == top_k {
                     break;
                 }
-                let Some(produto) = atuais.iter().find(|produto| produto.id == achado.produto)
+                let Some(produto) = atuais.iter().find(|produto| produto.id == achado.product)
                 else {
                     // Produto saiu do catálogo (ou ficou inativo) entre a busca e a leitura.
                     continue;
@@ -297,7 +290,7 @@ impl BuscadorProdutos for CatalogoProdutos {
 }
 
 /// Monta o resultado com o registro do produto e as notas da busca.
-fn encontrado(produto: &Product, categoria: String, achado: &AchadoProduto) -> ProdutoEncontrado {
+fn encontrado(produto: &Product, categoria: String, achado: &ProductHit) -> ProdutoEncontrado {
     ProdutoEncontrado {
         produto: produto.id,
         nome: produto.name.clone(),
@@ -308,8 +301,8 @@ fn encontrado(produto: &Product, categoria: String, achado: &AchadoProduto) -> P
         inclui: produto.includes.clone(),
         exclui: produto.exclui.clone(),
         condicoes: produto.conditions.clone(),
-        similaridade: achado.similaridade,
-        relevancia: achado.relevancia,
+        similaridade: achado.similarity,
+        relevancia: achado.relevance,
     }
 }
 

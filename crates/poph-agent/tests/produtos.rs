@@ -18,7 +18,7 @@ use poph_agent::metricas::MetricasMemoria;
 use poph_agent::produtos::{NOME_FERRAMENTA, ParametrosProdutos};
 use poph_agent::turno::{ContextoFerramenta, RegistroFerramentas, UsoFerramentas, oferecidas};
 use poph_agent::{BuscadorProdutos, BuscarProduto, CatalogoProdutos};
-use poph_rag::{ConfigIndice, Embedder, FakeEmbedder, Indice};
+use poph_rag::{Embedder, FakeEmbedder, Index, IndexConfig};
 use poph_store::{
     NewAgent, NewCategory, NewOrg, NewProduct, Product, ProductChange, Status, Store,
 };
@@ -78,8 +78,8 @@ impl Cenario {
             .expect("cria a categoria")
             .id;
         let embedder: Arc<dyn Embedder> = Arc::new(FakeEmbedder::new());
-        let (indice, _) = Indice::abrir(store.rag_path(), embedder, ConfigIndice::default())
-            .expect("abre o índice");
+        let (indice, _) =
+            Index::open(store.rag_path(), embedder, IndexConfig::default()).expect("abre o índice");
         let catalogo = CatalogoProdutos::novo(Arc::clone(&store), Arc::new(indice));
         Self {
             pasta,
@@ -305,7 +305,7 @@ async fn mudar_preco_aparece_na_resposta_seguinte_sem_reindexar() {
     let antes = cenario
         .catalogo
         .indice()
-        .produtos_indexados(cenario.org, cenario.agente)
+        .indexed_products(cenario.org, cenario.agente)
         .expect("hashes");
     assert_eq!(cenario.buscar("ratos").await[0].preco_centavos, 25_000);
 
@@ -339,7 +339,7 @@ async fn mudar_preco_aparece_na_resposta_seguinte_sem_reindexar() {
         cenario
             .catalogo
             .indice()
-            .produtos_indexados(cenario.org, cenario.agente)
+            .indexed_products(cenario.org, cenario.agente)
             .expect("hashes"),
         "mudar preço não mexe no índice"
     );

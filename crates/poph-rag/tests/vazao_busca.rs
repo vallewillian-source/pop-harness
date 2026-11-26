@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use poph_rag::memory::rss_bytes;
-use poph_rag::{ConfigIndice, FakeEmbedder, Indice, ItemRag};
+use poph_rag::{FakeEmbedder, Index, IndexConfig, ItemRag};
 use poph_types::{AgentId, KnowledgeItemId, OrgId};
 
 const TRECHOS: usize = 100_000;
@@ -32,11 +32,11 @@ async fn busca_exata_em_100_mil_trechos_int8() {
     let caminho = pasta.join("rag.db");
 
     let rss_antes = rss_bytes();
-    let (indice, _) = Indice::abrir(
+    let (indice, _) = Index::open(
         &caminho,
         Arc::new(FakeEmbedder::new()),
-        ConfigIndice {
-            orcamento_memoria_bytes: 1 << 30,
+        IndexConfig {
+            memory_budget_bytes: 1 << 30,
         },
     )
     .expect("abre o rag.db");
@@ -45,7 +45,7 @@ async fn busca_exata_em_100_mil_trechos_int8() {
     let itens: Vec<ItemRag> = (0..TRECHOS)
         .map(|n| ItemRag {
             id: KnowledgeItemId::generate(),
-            titulo: format!("Item {n}"),
+            title: format!("Item {n}"),
             texto: format!(
                 "Texto do item número {n}, com a palavra{} e o termo grupo{}.",
                 n % 997,
@@ -56,16 +56,16 @@ async fn busca_exata_em_100_mil_trechos_int8() {
         .collect();
     let inicio = Instant::now();
     let relatorio = indice
-        .indexar_agente(org, agente, &itens)
+        .index_agent(org, agente, &itens)
         .await
         .expect("indexa 100 mil itens");
     let indexacao_s = inicio.elapsed().as_secs_f64();
-    assert_eq!(relatorio.trechos_gravados, TRECHOS);
+    assert_eq!(relatorio.stored_chunks, TRECHOS);
 
     // Primeira consulta: carrega o agente do rag.db para a memória.
     let inicio = Instant::now();
     indice
-        .buscar_vetor(org, agente, "palavra5 grupo3", 3)
+        .search_vector(org, agente, "palavra5 grupo3", 3)
         .await
         .expect("primeira busca");
     let carga_ms = inicio.elapsed().as_secs_f64() * 1000.0;
@@ -84,12 +84,12 @@ async fn busca_exata_em_100_mil_trechos_int8() {
         );
         let inicio = Instant::now();
         let achados = indice
-            .buscar_vetor(org, agente, &consulta, 3)
+            .search_vector(org, agente, &consulta, 3)
             .await
             .expect("busca");
         tempos_ms.push(inicio.elapsed().as_secs_f64() * 1000.0);
         // Texto idêntico ao do item: o vetor é igual, então o item tem que sair em primeiro.
-        if achados.first().map(|a| a.trecho.titulo.clone()) == Some(format!("Item {alvo}")) {
+        if achados.first().map(|a| a.chunk.title.clone()) == Some(format!("Item {alvo}")) {
             acertos += 1;
         }
     }
@@ -103,8 +103,8 @@ async fn busca_exata_em_100_mil_trechos_int8() {
     println!("acerto do item exato no 1º lugar: {acertos}/{CONSULTAS}");
     println!(
         "memória do índice (estimativa pelos vetores): {:.1} MB ({} bytes por trecho)",
-        indice.bytes_em_memoria() as f64 / 1e6,
-        indice.bytes_em_memoria() / TRECHOS
+        indice.bytes_in_memory() as f64 / 1e6,
+        indice.bytes_in_memory() / TRECHOS
     );
     if let (Some(antes), Some(depois)) = (rss_antes, rss_depois_carga) {
         println!(
@@ -123,17 +123,17 @@ async fn busca_exata_em_100_mil_trechos_int8() {
     let pequenos: Vec<ItemRag> = (0..200)
         .map(|n| ItemRag {
             id: KnowledgeItemId::generate(),
-            titulo: format!("Item {n}"),
+            title: format!("Item {n}"),
             texto: format!("Texto do item número {n}, com a palavra{}.", n % 97),
             versao: 1,
         })
         .collect();
     indice
-        .indexar_agente(org_pequeno, agente_pequeno, &pequenos)
+        .index_agent(org_pequeno, agente_pequeno, &pequenos)
         .await
         .expect("indexa 200 itens");
     indice
-        .buscar_vetor(org_pequeno, agente_pequeno, "palavra3", 3)
+        .search_vector(org_pequeno, agente_pequeno, "palavra3", 3)
         .await
         .expect("carrega o agente pequeno");
     let mut pequenos_ms = Vec::with_capacity(CONSULTAS);
@@ -145,7 +145,7 @@ async fn busca_exata_em_100_mil_trechos_int8() {
         );
         let inicio = Instant::now();
         indice
-            .buscar_vetor(org_pequeno, agente_pequeno, &consulta, 3)
+            .search_vector(org_pequeno, agente_pequeno, &consulta, 3)
             .await
             .expect("busca pequena");
         pequenos_ms.push(inicio.elapsed().as_secs_f64() * 1000.0);

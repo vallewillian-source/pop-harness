@@ -509,10 +509,10 @@ fn reindexar(
         json!({
             "base_conhecimento": {
                 "agentes": base.len(),
-                "trechos": base.iter().map(|(_, relatorio)| relatorio.trechos_gravados).sum::<usize>(),
+                "trechos": base.iter().map(|(_, relatorio)| relatorio.stored_chunks).sum::<usize>(),
             },
             "produtos": {
-                "trechos": produtos.iter().map(|(_, relatorio)| relatorio.trechos_gravados).sum::<usize>(),
+                "trechos": produtos.iter().map(|(_, relatorio)| relatorio.stored_chunks).sum::<usize>(),
             },
         }),
         None,

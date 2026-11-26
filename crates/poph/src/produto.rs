@@ -489,11 +489,11 @@ fn reindexar(
                     .map(|(agente, relatorio)| {
                         json!({
                             "agent_id": agente.to_string(),
-                            "new": relatorio.itens_novos,
-                            "changed": relatorio.itens_alterados,
-                            "unchanged": relatorio.itens_inalterados,
-                            "removed": relatorio.itens_removidos,
-                            "chunks_written": relatorio.trechos_gravados,
+                            "new": relatorio.new_items,
+                            "changed": relatorio.changed_items,
+                            "unchanged": relatorio.unchanged_items,
+                            "removed": relatorio.removed_items,
+                            "chunks_written": relatorio.stored_chunks,
                         })
                     })
                     .collect();
@@ -509,10 +509,10 @@ fn reindexar(
                     println!(
                         "{}: novos {}, alterados {}, inalterados {}, removidos {}",
                         agente,
-                        relatorio.itens_novos,
-                        relatorio.itens_alterados,
-                        relatorio.itens_inalterados,
-                        relatorio.itens_removidos
+                        relatorio.new_items,
+                        relatorio.changed_items,
+                        relatorio.unchanged_items,
+                        relatorio.removed_items
                     );
                 }
             }

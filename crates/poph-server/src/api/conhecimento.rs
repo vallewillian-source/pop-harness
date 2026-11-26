@@ -480,7 +480,7 @@ pub async fn reindexar(
         agente.to_string(),
     )?;
     Ok(Json(
-        json!({"agent":agente.to_string(),"indexed":{"itens_novos":r.itens_novos,"itens_alterados":r.itens_alterados,"itens_inalterados":r.itens_inalterados,"itens_removidos":r.itens_removidos,"embeddings_gerados":r.embeddings_gerados,"trechos_gravados":r.trechos_gravados}}),
+        json!({"agent":agente.to_string(),"indexed":{"itens_novos":r.new_items,"itens_alterados":r.changed_items,"itens_inalterados":r.unchanged_items,"itens_removidos":r.removed_items,"embeddings_gerados":r.generated_embeddings,"trechos_gravados":r.stored_chunks}}),
     ))
 }
 
@@ -488,9 +488,9 @@ async fn sincronizar(
     e: &Estado,
     org: OrgId,
     agente: poph_types::AgentId,
-) -> Result<poph_rag::RelatorioIndexacao, ApiError> {
+) -> Result<poph_rag::IndexReport, ApiError> {
     use poph_rag::{
-        ConfigIndice, ConfigModelo, Embedder, EmbedderOrt, EmbeddingQueue, Indice, QueueConfig,
+        ConfigModelo, Embedder, EmbedderOrt, EmbeddingQueue, Index, IndexConfig, QueueConfig,
         QueuedEmbedder,
     };
     use std::sync::Arc;
@@ -519,7 +519,7 @@ async fn sincronizar(
             .map_err(|_| ApiError::interno())?,
     );
     let adaptador = Arc::new(QueuedEmbedder::new(fila, org, identidade));
-    let (indice, _) = Indice::abrir(e.store.rag_path(), adaptador, ConfigIndice::default())
+    let (indice, _) = Index::open(e.store.rag_path(), adaptador, IndexConfig::default())
         .map_err(|_| ApiError::interno())?;
     let base = poph_agent::BaseConhecimento::nova(Arc::clone(&e.store), Arc::new(indice));
     base.sincronizar_agente(org, agente)

@@ -13,8 +13,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use poph_rag::{
-    ConfigBusca, ConfigIndice, ConfigModelo, Embedder, EmbedderOrt, FakeEmbedder, Indice,
-    ProdutoRag,
+    ConfigModelo, Embedder, EmbedderOrt, FakeEmbedder, Index, IndexConfig, ProductRag, SearchConfig,
 };
 use poph_types::{AgentId, OrgId, ProductId};
 use serde_json::Value;
@@ -148,7 +147,7 @@ async fn hibrida_de_produtos_acerta_top3_pelo_menos_tanto_quanto_so_vetor() {
         .expect("abre o modelo"),
     );
     let (indice, _) =
-        Indice::abrir(&pasta.rag_db(), embedder, ConfigIndice::default()).expect("abre o índice");
+        Index::open(&pasta.rag_db(), embedder, IndexConfig::default()).expect("abre o índice");
     let org = OrgId::generate();
     let agente = AgentId::generate();
 
@@ -157,7 +156,7 @@ async fn hibrida_de_produtos_acerta_top3_pelo_menos_tanto_quanto_so_vetor() {
     for produto in &produtos {
         let id = ProductId::generate();
         ids.push((produto.id.clone(), id));
-        para_indice.push(ProdutoRag {
+        para_indice.push(ProductRag {
             id,
             nome: produto.nome.clone(),
             texto: texto_do_produto(produto),
@@ -165,14 +164,14 @@ async fn hibrida_de_produtos_acerta_top3_pelo_menos_tanto_quanto_so_vetor() {
         });
     }
     indice
-        .indexar_produtos(org, agente, &para_indice)
+        .index_products(org, agente, &para_indice)
         .await
         .expect("indexa a fixtura");
 
-    let config = ConfigBusca {
+    let config = SearchConfig {
         top_k: 3,
-        corte: 0.0,
-        profundidade: 20,
+        cutoff: 0.0,
+        depth: 20,
     };
     let mut vetor_acertos = 0;
     let mut hibrida_acertos = 0;
@@ -186,12 +185,12 @@ async fn hibrida_de_produtos_acerta_top3_pelo_menos_tanto_quanto_so_vetor() {
             .collect();
 
         let vetor = indice
-            .buscar_produtos_vetor(org, agente, consulta, 3)
+            .search_products_vector(org, agente, consulta, 3)
             .await
             .expect("busca vetorial");
         if vetor
             .iter()
-            .any(|achado| esperado.contains(&achado.produto))
+            .any(|achado| esperado.contains(&achado.product))
         {
             vetor_acertos += 1;
         } else {
@@ -199,12 +198,12 @@ async fn hibrida_de_produtos_acerta_top3_pelo_menos_tanto_quanto_so_vetor() {
         }
 
         let hibrida = indice
-            .buscar_produtos(org, agente, consulta, &config)
+            .search_products(org, agente, consulta, &config)
             .await
             .expect("busca híbrida");
         if hibrida
             .iter()
-            .any(|achado| esperado.contains(&achado.produto))
+            .any(|achado| esperado.contains(&achado.product))
         {
             hibrida_acertos += 1;
         } else {
@@ -237,34 +236,29 @@ async fn mudar_preco_nao_muda_o_hash_do_indice() {
     let pasta = Pasta::nova("preco");
     let embedder: Arc<dyn Embedder> = Arc::new(FakeEmbedder::new());
     let (indice, _) =
-        Indice::abrir(&pasta.rag_db(), embedder, ConfigIndice::default()).expect("abre o índice");
+        Index::open(&pasta.rag_db(), embedder, IndexConfig::default()).expect("abre o índice");
     let org = OrgId::generate();
     let agente = AgentId::generate();
-    let produto = ProdutoRag {
+    let produto = ProductRag {
         id: ProductId::generate(),
         nome: "Dedetização de baratas".to_owned(),
         texto: "Dedetização de baratas\nTambém chamado de: baratas, barata".to_owned(),
         versao: 1,
     };
     indice
-        .indexar_produtos(org, agente, std::slice::from_ref(&produto))
+        .index_products(org, agente, std::slice::from_ref(&produto))
         .await
         .expect("indexa");
-    let antes = indice
-        .produtos_indexados(org, agente)
-        .expect("lê os hashes");
+    let antes = indice.indexed_products(org, agente).expect("lê os hashes");
 
     // Só o preço mudou no banco: a lista que vai ao índice é a mesma.
     let depois = indice
-        .indexar_produtos(org, agente, std::slice::from_ref(&produto))
+        .index_products(org, agente, std::slice::from_ref(&produto))
         .await
         .expect("reindexa");
-    assert_eq!(depois.itens_alterados, 0);
-    assert_eq!(depois.embeddings_gerados, 0, "nada foi reembedado");
-    assert_eq!(
-        antes,
-        indice.produtos_indexados(org, agente).expect("hashes")
-    );
+    assert_eq!(depois.changed_items, 0);
+    assert_eq!(depois.generated_embeddings, 0, "nada foi reembedado");
+    assert_eq!(antes, indice.indexed_products(org, agente).expect("hashes"));
 }
 
 #[tokio::test]
@@ -272,48 +266,48 @@ async fn produto_que_sai_da_lista_sai_do_indice() {
     let pasta = Pasta::nova("sai");
     let embedder: Arc<dyn Embedder> = Arc::new(FakeEmbedder::new());
     let (indice, _) =
-        Indice::abrir(&pasta.rag_db(), embedder, ConfigIndice::default()).expect("abre o índice");
+        Index::open(&pasta.rag_db(), embedder, IndexConfig::default()).expect("abre o índice");
     let org = OrgId::generate();
     let agente = AgentId::generate();
-    let baratas = ProdutoRag {
+    let baratas = ProductRag {
         id: ProductId::generate(),
         nome: "Dedetização de baratas".to_owned(),
         texto: "Dedetização de baratas\nTambém chamado de: baratas".to_owned(),
         versao: 1,
     };
-    let cupins = ProdutoRag {
+    let cupins = ProductRag {
         id: ProductId::generate(),
         nome: "Dedetização de cupins".to_owned(),
         texto: "Dedetização de cupins\nTambém chamado de: cupins".to_owned(),
         versao: 1,
     };
     indice
-        .indexar_produtos(org, agente, &[baratas.clone(), cupins.clone()])
+        .index_products(org, agente, &[baratas.clone(), cupins.clone()])
         .await
         .expect("indexa");
-    let config = ConfigBusca {
+    let config = SearchConfig {
         top_k: 5,
-        corte: 0.0,
-        profundidade: 20,
+        cutoff: 0.0,
+        depth: 20,
     };
     let achados = indice
-        .buscar_produtos(org, agente, "cupins", &config)
+        .search_products(org, agente, "cupins", &config)
         .await
         .expect("busca");
-    assert!(achados.iter().any(|achado| achado.produto == cupins.id));
+    assert!(achados.iter().any(|achado| achado.product == cupins.id));
 
     // A lista nova não tem mais cupins (produto ficou inativo no harness.db).
     let relatorio = indice
-        .indexar_produtos(org, agente, std::slice::from_ref(&baratas))
+        .index_products(org, agente, std::slice::from_ref(&baratas))
         .await
         .expect("reindexa");
-    assert_eq!(relatorio.itens_removidos, 1);
+    assert_eq!(relatorio.removed_items, 1);
     let achados = indice
-        .buscar_produtos(org, agente, "cupins", &config)
+        .search_products(org, agente, "cupins", &config)
         .await
         .expect("busca");
     assert!(
-        achados.iter().all(|achado| achado.produto != cupins.id),
+        achados.iter().all(|achado| achado.product != cupins.id),
         "produto fora da lista não volta da busca"
     );
 }

@@ -2,7 +2,7 @@
 
 > How the agent stops answering prices "from memory": the catalog is indexed in `rag.db` (text only), the
 > price comes from the record at the moment of the reply, and the model only receives a value through the tool.
-> Code: `crates/poph-store/src/repos/produtos.rs` (record), `crates/poph-rag/src/indice.rs` (product index),
+> Code: `crates/poph-store/src/repos/produtos.rs` (record), `crates/poph-rag/src/index.rs` (product index),
 > `crates/poph-agent/src/produtos.rs` (service and tool), `crates/poph/src/produto.rs` (CLI) and
 > `crates/poph-agent/src/turno/` (link with the turn).
 

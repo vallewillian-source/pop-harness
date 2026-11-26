@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use poph_rag::{
-    ConfigBusca, ConfigIndice, ConfigModelo, Embedder, EmbedderOrt, FakeEmbedder, Indice, ItemRag,
+    ConfigModelo, Embedder, EmbedderOrt, FakeEmbedder, Index, IndexConfig, ItemRag, SearchConfig,
 };
 use poph_types::{AgentId, KnowledgeItemId, OrgId};
 use serde_json::Value;
@@ -127,7 +127,7 @@ async fn hibrida_acerta_top3_pelo_menos_tanto_quanto_so_vetor() {
         .expect("abre o modelo"),
     );
     let (indice, _) =
-        Indice::abrir(&pasta.rag_db(), embedder, ConfigIndice::default()).expect("abre o índice");
+        Index::open(&pasta.rag_db(), embedder, IndexConfig::default()).expect("abre o índice");
     let org = OrgId::generate();
     let agente = AgentId::generate();
 
@@ -138,13 +138,13 @@ async fn hibrida_acerta_top3_pelo_menos_tanto_quanto_so_vetor() {
         ids.push((item.id.clone(), id));
         para_indice.push(ItemRag {
             id,
-            titulo: item.titulo.clone(),
+            title: item.titulo.clone(),
             texto: item.texto.clone(),
             versao: 1,
         });
     }
     indice
-        .indexar_agente(org, agente, &para_indice)
+        .index_agent(org, agente, &para_indice)
         .await
         .expect("indexa a fixtura");
 
@@ -160,12 +160,12 @@ async fn hibrida_acerta_top3_pelo_menos_tanto_quanto_so_vetor() {
             .collect();
 
         let vetor = indice
-            .buscar_vetor(org, agente, pergunta, 3)
+            .search_vector(org, agente, pergunta, 3)
             .await
             .expect("busca vetorial");
         let acertou_vetor = vetor
             .iter()
-            .any(|achado| esperado.contains(&achado.trecho.item));
+            .any(|achado| esperado.contains(&achado.chunk.item));
         if acertou_vetor {
             vetor_acertos += 1;
         } else {
@@ -173,21 +173,21 @@ async fn hibrida_acerta_top3_pelo_menos_tanto_quanto_so_vetor() {
         }
 
         let hibrida = indice
-            .buscar_hibrida(
+            .search_hybrid(
                 org,
                 agente,
                 pergunta,
-                &ConfigBusca {
+                &SearchConfig {
                     top_k: 3,
-                    corte: 0.0,
-                    profundidade: 20,
+                    cutoff: 0.0,
+                    depth: 20,
                 },
             )
             .await
             .expect("busca híbrida");
         let acertou_hibrida = hibrida
             .iter()
-            .any(|achado| esperado.contains(&achado.trecho.item));
+            .any(|achado| esperado.contains(&achado.chunk.item));
         if acertou_hibrida {
             hibrida_acertos += 1;
         } else {
@@ -219,17 +219,17 @@ async fn corte_de_relevancia_barra_trecho_sem_relacao() {
     let pasta = Pasta::nova("corte");
     let embedder: Arc<dyn Embedder> = Arc::new(FakeEmbedder::new());
     let (indice, _) =
-        Indice::abrir(&pasta.rag_db(), embedder, ConfigIndice::default()).expect("abre o índice");
+        Index::open(&pasta.rag_db(), embedder, IndexConfig::default()).expect("abre o índice");
     let org = OrgId::generate();
     let agente = AgentId::generate();
     let item = id_do_item("prazo");
     indice
-        .indexar_agente(
+        .index_agent(
             org,
             agente,
             &[ItemRag {
                 id: item,
-                titulo: "Prazo de agendamento".to_owned(),
+                title: "Prazo de agendamento".to_owned(),
                 texto: "O prazo para agendar uma dedetização é de até 48 horas úteis.".to_owned(),
                 versao: 1,
             }],
@@ -238,14 +238,14 @@ async fn corte_de_relevancia_barra_trecho_sem_relacao() {
         .expect("indexa");
 
     let sem_corte = indice
-        .buscar_hibrida(
+        .search_hybrid(
             org,
             agente,
             "qual o preço do sapato de couro",
-            &ConfigBusca {
+            &SearchConfig {
                 top_k: 3,
-                corte: 0.0,
-                profundidade: 20,
+                cutoff: 0.0,
+                depth: 20,
             },
         )
         .await
@@ -253,14 +253,14 @@ async fn corte_de_relevancia_barra_trecho_sem_relacao() {
     assert!(!sem_corte.is_empty(), "sem corte, o top-3 volta");
 
     let com_corte = indice
-        .buscar_hibrida(
+        .search_hybrid(
             org,
             agente,
             "qual o preço do sapato de couro",
-            &ConfigBusca {
+            &SearchConfig {
                 top_k: 3,
-                corte: 0.6,
-                profundidade: 20,
+                cutoff: 0.6,
+                depth: 20,
             },
         )
         .await
@@ -276,18 +276,18 @@ async fn hibrida_nao_cruza_org() {
     let pasta = Pasta::nova("orgs");
     let embedder: Arc<dyn Embedder> = Arc::new(FakeEmbedder::new());
     let (indice, _) =
-        Indice::abrir(&pasta.rag_db(), embedder, ConfigIndice::default()).expect("abre o índice");
+        Index::open(&pasta.rag_db(), embedder, IndexConfig::default()).expect("abre o índice");
     let org_a = OrgId::generate();
     let org_b = OrgId::generate();
     let agente = AgentId::generate();
     let item = id_do_item("segredo");
     indice
-        .indexar_agente(
+        .index_agent(
             org_a,
             agente,
             &[ItemRag {
                 id: item,
-                titulo: "Código interno".to_owned(),
+                title: "Código interno".to_owned(),
                 texto: "O código interno do cliente é azul-turquesa.".to_owned(),
                 versao: 1,
             }],
@@ -295,11 +295,11 @@ async fn hibrida_nao_cruza_org() {
         .await
         .expect("indexa");
     let na_outra = indice
-        .buscar_hibrida(
+        .search_hybrid(
             org_b,
             agente,
             "código interno azul turquesa",
-            &ConfigBusca::default(),
+            &SearchConfig::default(),
         )
         .await
         .expect("busca na outra org");

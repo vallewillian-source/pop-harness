@@ -355,7 +355,7 @@ mod testes {
 
     use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
     use poph_agent::metricas::MetricasMemoria;
-    use poph_rag::{ConfigIndice, Embedder, Indice};
+    use poph_rag::{Embedder, Index, IndexConfig};
 
     use super::*;
 
@@ -393,10 +393,10 @@ mod testes {
     ) -> (Arc<BaseConhecimento>, Arc<CatalogoProdutos>) {
         let abrir = || {
             let embedder: Arc<dyn Embedder> = Arc::new(poph_rag::FakeEmbedder::new());
-            Indice::abrir(
+            Index::open(
                 &pasta.join("dados").join("rag.db"),
                 embedder,
-                ConfigIndice::default(),
+                IndexConfig::default(),
             )
             .expect("abre o índice de teste")
             .0
