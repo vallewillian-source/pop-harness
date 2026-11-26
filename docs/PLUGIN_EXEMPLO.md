@@ -38,7 +38,12 @@ apps/pop-harness/scripts/plugin-eco.sh
 ```
 
 The script builds the plugin and the demonstration, runs everything in a temporary database and deletes the folder at
-the end. Expected output (summarized; the lines are printed by the code and stay in Portuguese):
+the end. Run by hand, the demonstration takes an optional folder (`plugin-eco-demo [folder]`, default: a temporary
+folder, deleted at the end) and processes **no turn**: only the round trip through the queues. It looks for the
+`plugin-eco` binary in the same build tree, up to three parent folders of the example, so build the binaries first with
+`cargo build -p poph-plugin-eco --bins`.
+
+Expected output (summarized; the lines are printed by the code and stay in Portuguese):
 
 ```text
 2. supervisor pronto: Eco (exemplo) v0.1.0 (kind=eco, protocolo=1)
@@ -115,7 +120,7 @@ Counters (`InboxDoCanal::contadores`) — per integration, never summed across o
 
 ## 4. How to write a new plugin based on this one
 
-1. Copy the structure of `crates/poph-plugin-eco/src/main.rs`: line loop, `MensagemHost` on input, `MensagemPlugin` on output.
+1. Copy the structure of `crates/poph-plugin-eco/src/main.rs`: line loop, `HostMessage` on input, `PluginMessage` on output.
 2. Answer the `handshake` with a truthful manifest (capabilities and configuration schema) and refuse a different protocol version.
 3. Confirm **every** command with `resultado` and the same `id` — this is what turns the `outbox` item into `sent`.
 4. Deliver what arrives from the customer as `evento`, with a **stable** `id_externo` (the channel's id). Redelivery is
@@ -130,8 +135,10 @@ A plugin in another language follows the same JSON as `docs/PLUGIN_PROTOCOLO.md`
 
 ## 5. What the test suite proves
 
-`crates/poph-plugin-eco/tests/conversa.rs` (5 tests) and `tests/queda.rs` (1 test), with `plugin-eco` as a real child
-process:
+`crates/poph-plugin-eco/tests/conversation.rs` (5 tests) and `tests/crash.rs` (1 test), with `plugin-eco` as a real child
+process. The tests swap the supervisor's timeouts for shorter ones (same behaviour as the default, shorter waiting), and
+the crash test copies the binary under a unique name so that `kill -9` hits exactly that test's process and no other
+plugin running on the machine:
 
 - **full conversation:** `outbox` item → supervisor → plugin → event → `inbox` → message in the conversation, with the
   reversed text checked;
