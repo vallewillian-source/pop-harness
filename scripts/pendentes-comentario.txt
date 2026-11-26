@@ -1,7 +1,6 @@
 # Arquivos com comentário fora da allowlist, um por linha: módulo, quantidade de comentários e caminho,
 # separados por TAB. Gerado por `bash scripts/check-comments.sh --atualizar-pendentes`; não editar à mão.
 M04	6	crates/poph-rag/Cargo.toml
-M04	134	crates/poph-rag/src/indice.rs
 M04	33	crates/poph-rag/src/onnx.rs
 M04	5	crates/poph-rag/tests/apoio/mod.rs
 M04	3	crates/poph-rag/tests/fila.rs
@@ -89,8 +88,6 @@ M07b	24	crates/poph-matrix/tests/salas_synapse_real.rs
 M07b	21	crates/poph-matrix/tests/usuarios_synapse_falso.rs
 M07b	13	tests/matrix/registro-python-teste.yaml.template
 M07b	19	tests/matrix/registro-teste.yaml.template
-M09	55	crates/poph-retention/tests/banco.rs
-M09	4	crates/poph-retention/tests/execucao.rs
 M10a	52	crates/poph-agent/src/atores.rs
 M10a	48	crates/poph-agent/src/base_conhecimento.rs
 M10a	41	crates/poph-agent/src/biblioteca.rs
