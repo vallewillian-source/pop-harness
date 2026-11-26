@@ -8,8 +8,6 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-# Os tipos do protocolo são os mesmos que o Harness usa: se o contrato mudar, este exemplo não
-# compila. Um plugin em outra linguagem troca isto pelo JSON de `docs/PLUGIN_PROTOCOLO.md`.
 poph-types = { path = "../poph-types" }
 serde_json.workspace = true
 
@@ -19,14 +17,10 @@ poph-plugins = { path = "../poph-plugins" }
 poph-store = { path = "../poph-store" }
 tokio = { version = "1.54", features = ["rt-multi-thread", "macros", "time", "sync"] }
 
-# O plugin: lê o protocolo na entrada padrão e responde na saída padrão.
 [[bin]]
 name = "plugin-eco"
 path = "src/main.rs"
 
-# Demonstração de ponta a ponta (outbox → plugin → inbox) usada por `scripts/plugin-eco.sh`.
-# É um `example` de propósito: ele usa o motor (`poph-agent`) só nas dependências de teste, então o
-# binário do plugin continua leve e sem arrastar SQLite/RAG para quem for escrever um plugin.
 [[example]]
 name = "plugin-eco-demo"
 path = "src/demo.rs"

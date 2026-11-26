@@ -1,24 +1,3 @@
-//! Plugin de exemplo (eco) do POP Harness — HR-27.
-//!
-//! Implementa o protocolo de `docs/PLUGIN_PROTOCOLO.md` em processo externo: lê uma mensagem JSON
-//! por linha na entrada padrão e responde na saída padrão. O que ele faz:
-//!
-//! - responde o `handshake` com o manifesto (nome, tipo, versão, capacidades, esquema de
-//!   configuração);
-//! - a cada `enviar_texto` confirma a entrega (`resultado`) **e** devolve um `evento` de entrada com
-//!   o texto **invertido** — é assim que se prova, sem WhatsApp, que o caminho de volta
-//!   (plugin → evento → `inbox`) funciona;
-//! - `enviar_arquivo` e `definir_presenca` são confirmados sem efeito;
-//! - `saude` responde `ok` com o número de mensagens tratadas;
-//! - `encerrar` termina o processo.
-//!
-//! O `id_externo` do evento sai da chave de idempotência do comando (`eco-<turno:seq>`): se o
-//! Harness reenviar o mesmo comando depois de uma queda, o evento chega com o mesmo id e a `inbox`
-//! descarta a repetição. É a regra do protocolo: a entrega é "pelo menos uma vez", quem deduplica é
-//! a `inbox`.
-//!
-//! Este binário **não** entra no pacote de distribuição: o `poph` não depende deste crate.
-
 use std::io::{BufRead, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -28,42 +7,40 @@ use poph_types::{
 };
 
 fn main() {
-    let codigo = atender();
-    std::process::exit(codigo);
+    let exit_code = serve();
+    std::process::exit(exit_code);
 }
 
-fn atender() -> i32 {
-    let entrada = std::io::stdin();
-    let mut linhas = entrada.lock().lines();
-    let mut eco = Eco::default();
+fn serve() -> i32 {
+    let input = std::io::stdin();
+    let mut lines = input.lock().lines();
+    let mut echo = Echo::default();
 
     loop {
-        let Some(linha) = linhas.next() else {
-            // O Harness fechou a entrada: nada mais a fazer.
+        let Some(line) = lines.next() else {
             return 0;
         };
-        let linha = match linha {
-            Ok(linha) => linha,
-            Err(erro) => {
-                eprintln!("eco: erro ao ler a entrada: {erro}");
+        let line = match line {
+            Ok(line) => line,
+            Err(error) => {
+                eprintln!("eco: erro ao ler a entrada: {error}");
                 return 1;
             }
         };
-        if linha.trim().is_empty() {
+        if line.trim().is_empty() {
             continue;
         }
-        let mensagem: HostMessage = match serde_json::from_str(&linha) {
-            Ok(mensagem) => mensagem,
-            Err(erro) => {
-                // Regra do protocolo: linha fora do contrato é lixo, e lixo se ignora.
-                eprintln!("eco: linha fora do protocolo ignorada: {erro}");
+        let message: HostMessage = match serde_json::from_str(&line) {
+            Ok(message) => message,
+            Err(error) => {
+                eprintln!("eco: linha fora do protocolo ignorada: {error}");
                 continue;
             }
         };
-        match mensagem {
+        match message {
             HostMessage::Handshake(handshake) => {
                 if handshake.protocol != PROTOCOL_VERSION {
-                    responder(&PluginMessage::Error {
+                    respond(&PluginMessage::Error {
                         code: "protocolo_incompativel".to_owned(),
                         message: format!(
                             "o eco fala a versão {PROTOCOL_VERSION} e o host falou {}",
@@ -73,18 +50,16 @@ fn atender() -> i32 {
                     });
                     return 2;
                 }
-                eco.integracao = Some(handshake.integration);
-                // Os segredos do handshake não são usados aqui (o eco não tem canal de verdade).
-                // Um plugin real usa este ponto para autenticar no canal.
+                echo.integration = Some(handshake.integration);
                 let _ = &handshake.secrets;
-                responder(&PluginMessage::HandshakeOk {
+                respond(&PluginMessage::HandshakeOk {
                     protocolo: PROTOCOL_VERSION,
-                    manifest: manifesto(),
+                    manifest: manifest(),
                 });
             }
             HostMessage::Command { id, command } => {
-                let Some(integracao) = eco.integracao else {
-                    responder(&PluginMessage::Result {
+                let Some(integration) = echo.integration else {
+                    respond(&PluginMessage::Result {
                         id,
                         ok: false,
                         error: Some(poph_types::CommandError {
@@ -95,41 +70,40 @@ fn atender() -> i32 {
                     });
                     continue;
                 };
-                let mut evento = None;
+                let mut event = None;
                 match command {
-                    OutboundCommand::Text(texto) => {
-                        eco.mensagens += 1;
-                        evento = Some(eco.evento_do_texto(integracao, &texto));
+                    OutboundCommand::Text(text) => {
+                        echo.messages += 1;
+                        event = Some(echo.event_for_text(integration, &text));
                     }
-                    OutboundCommand::File(arquivo) => {
-                        // Um plugin real subiria o arquivo para o canal. O eco só confirma.
+                    OutboundCommand::File(file) => {
                         eprintln!(
                             "eco: arquivo confirmado ({} bytes): {}",
-                            arquivo.size_bytes, arquivo.name
+                            file.size_bytes, file.name
                         );
                     }
-                    OutboundCommand::Presence(presenca) => {
-                        if presenca.state == Presence::Typing {
-                            eprintln!("eco: digitando para {}", presenca.peer);
+                    OutboundCommand::Presence(presence) => {
+                        if presence.state == Presence::Typing {
+                            eprintln!("eco: digitando para {}", presence.peer);
                         }
                     }
                 }
-                responder(&PluginMessage::Result {
+                respond(&PluginMessage::Result {
                     id,
                     ok: true,
                     error: None,
                 });
-                if let Some(evento) = evento {
-                    responder(&PluginMessage::Evento { evento });
+                if let Some(event) = event {
+                    respond(&PluginMessage::Evento { evento: event });
                 }
             }
             HostMessage::Health { id } => {
-                responder(&PluginMessage::Health {
+                respond(&PluginMessage::Health {
                     id,
                     health: Health::ok(format!(
                         "eco {} — {} mensagem(ns) tratada(s)",
                         env!("CARGO_PKG_VERSION"),
-                        eco.mensagens
+                        echo.messages
                     )),
                 });
             }
@@ -138,40 +112,36 @@ fn atender() -> i32 {
     }
 }
 
-/// Estado mínimo do plugin: de quem é o handshake e quantas mensagens passaram.
 #[derive(Default)]
-struct Eco {
-    integracao: Option<IntegrationId>,
-    mensagens: u64,
+struct Echo {
+    integration: Option<IntegrationId>,
+    messages: u64,
 }
 
-impl Eco {
-    /// Evento de volta com o texto invertido. O `id_externo` sai da chave de idempotência do
-    /// comando, então reenviar o mesmo comando não duplica a mensagem na `inbox`.
-    fn evento_do_texto(&self, integracao: IntegrationId, texto: &SendText) -> InboundEvent {
-        let invertido: String = texto.text.chars().rev().collect();
+impl Echo {
+    fn event_for_text(&self, integration: IntegrationId, text: &SendText) -> InboundEvent {
+        let reversed: String = text.text.chars().rev().collect();
         InboundEvent {
-            integration: integracao,
-            id_externo: format!("eco-{}", texto.idempotency),
-            peer: texto.peer.clone(),
+            integration,
+            id_externo: format!("eco-{}", text.idempotency),
+            peer: text.peer.clone(),
             remetente: None,
-            text: invertido,
+            text: reversed,
             attachments: Vec::new(),
-            occurred_at: agora_ms(),
+            occurred_at: now_ms(),
             metadata: serde_json::Value::Null,
         }
     }
 }
 
-fn agora_ms() -> i64 {
+fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|duracao| duracao.as_millis() as i64)
+        .map(|elapsed| elapsed.as_millis() as i64)
         .unwrap_or(0)
 }
 
-/// O que o Harness precisa saber deste plugin (PRD §8.3).
-fn manifesto() -> Manifest {
+fn manifest() -> Manifest {
     Manifest {
         name: "Eco (exemplo)".to_owned(),
         kind: "eco".to_owned(),
@@ -202,9 +172,6 @@ fn manifesto() -> Manifest {
             },
             "required": ["remetente"]
         })),
-        // O eco não usa segredo de verdade, mas declara um para o exemplo mostrar o formulário de
-        // segredo do Console e o caminho de cifra em repouso (HR-44c). O campo é obrigatório para
-        // que a API tenha o que cobrar.
         secrets: JsonSchema(serde_json::json!({
             "type": "object",
             "properties": {
@@ -219,14 +186,13 @@ fn manifesto() -> Manifest {
     }
 }
 
-/// Escreve uma mensagem do protocolo (uma por linha) e descarrega no cano.
-fn responder(mensagem: &PluginMessage) {
-    let Ok(linha) = serde_json::to_string(mensagem) else {
+fn respond(message: &PluginMessage) {
+    let Ok(line) = serde_json::to_string(message) else {
         return;
     };
-    let mut saida = std::io::stdout().lock();
-    if writeln!(saida, "{linha}").is_err() {
+    let mut output = std::io::stdout().lock();
+    if writeln!(output, "{line}").is_err() {
         return;
     }
-    let _ = saida.flush();
+    let _ = output.flush();
 }

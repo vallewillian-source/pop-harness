@@ -1,15 +1,3 @@
-//! Demonstração de ponta a ponta do plugin de exemplo (HR-27).
-//!
-//! Sobe o **`plugin-eco`** de verdade como processo filho, enfileira uma mensagem na `outbox` e
-//! mostra o caminho completo que o WhatsApp vai usar:
-//!
-//! ```text
-//! outbox (texto) → supervisor → plugin eco → evento de entrada → inbox → mensagem na conversa
-//! ```
-//!
-//! Uso: `plugin-eco-demo [pasta]` (pasta padrão: temporária, apagada no fim).
-//! Normalmente chamado por `scripts/plugin-eco.sh`.
-
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -22,32 +10,30 @@ use poph_plugins::{OpcoesPlugin, Supervisor};
 use poph_store::{NewAgent, NewConversation, NewOrg, NewOutboxItem, OutboxState, Page, Store};
 use poph_types::{EventSink, Integration, IntegrationId, SendText, TurnId};
 
-/// Nenhum turno é processado nesta demonstração: só a ida e a volta das filas.
-struct SemTurno;
+struct NoTurn;
 
-impl Processador for SemTurno {
-    fn processar(&self, _tarefa: Tarefa) -> Futuro {
+impl Processador for NoTurn {
+    fn processar(&self, _task: Tarefa) -> Futuro {
         Box::pin(async { Ok(()) })
     }
 }
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let pasta = match std::env::args().nth(1) {
-        Some(caminho) => PathBuf::from(caminho),
+    let directory = match std::env::args().nth(1) {
+        Some(path) => PathBuf::from(path),
         None => std::env::temp_dir().join(format!("poph-eco-demo-{}", std::process::id())),
     };
-    let temporaria = std::env::args().nth(1).is_none();
-    let _ = std::fs::remove_dir_all(&pasta);
-    std::fs::create_dir_all(&pasta)?;
+    let temporary = std::env::args().nth(1).is_none();
+    let _ = std::fs::remove_dir_all(&directory);
+    std::fs::create_dir_all(&directory)?;
 
-    let programa = programa_eco()?;
-    println!("0. plugin de exemplo: {}", programa.display());
+    let program = echo_program()?;
+    println!("0. plugin de exemplo: {}", program.display());
 
-    // Banco temporário com org, agente e a conversa do contato.
     let store = Arc::new(Store::open_at(
-        &pasta.join("harness.db"),
-        &pasta.join("rag.db"),
+        &directory.join("harness.db"),
+        &directory.join("rag.db"),
     )?);
     let org = store
         .orgs()
@@ -57,7 +43,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             config_json: String::new(),
         })?
         .id;
-    let agente = store
+    let agent = store
         .agents()
         .create(
             org,
@@ -68,10 +54,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
         )?
         .id;
-    let conversa = store.conversations().create(
+    let conversation = store.conversations().create(
         org,
         NewConversation {
-            agent_id: agente,
+            agent_id: agent,
             integration_id: None,
             canal: "eco".to_owned(),
             peer_externo: Some("5511999999999".to_owned()),
@@ -80,44 +66,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     println!(
         "1. conversa aberta com o contato {} (canal eco)",
-        conversa.peer_externo.as_deref().unwrap_or("-")
+        conversation.peer_externo.as_deref().unwrap_or("-")
     );
 
-    let atores = Atores::novo(
-        Arc::new(SemTurno),
+    let actors = Atores::novo(
+        Arc::new(NoTurn),
         OpcoesAtores::default(),
         MetricasMemoria::proprio(),
     );
-    let fluxo = Fluxo::nova(Arc::clone(&store), atores, OpcoesFluxo::default());
+    let flow = Fluxo::nova(Arc::clone(&store), actors, OpcoesFluxo::default());
 
-    // Entrada: o evento do plugin cai na inbox da conversa do contato.
-    let resolvedor = Arc::new(ConversaDoCanal::novo(
+    let resolver = Arc::new(ConversaDoCanal::novo(
         Arc::clone(&store),
-        agente,
+        agent,
         "eco",
         None,
     ));
-    let entrada = InboxDoCanal::iniciar(fluxo.clone(), org, resolvedor);
+    let inbox = InboxDoCanal::iniciar(flow.clone(), org, resolver);
 
-    // O canal: o supervisor do plugin em processo externo.
-    let integracao = IntegrationId::generate();
-    let opcoes = OpcoesPlugin::novo(&programa, integracao, org).com_kind("eco");
-    let supervisor =
-        Supervisor::iniciar(opcoes, Arc::clone(&entrada) as Arc<dyn EventSink>).await?;
-    let manifesto = supervisor.manifesto().expect("manifesto do handshake");
+    let integration = IntegrationId::generate();
+    let options = OpcoesPlugin::novo(&program, integration, org).com_kind("eco");
+    let supervisor = Supervisor::iniciar(options, Arc::clone(&inbox) as Arc<dyn EventSink>).await?;
+    let manifest = supervisor.manifesto().expect("manifesto do handshake");
     println!(
         "2. supervisor pronto: {} v{} (kind={}, protocolo={})",
-        manifesto.name, manifesto.version, manifesto.kind, manifesto.protocol
+        manifest.name, manifest.version, manifest.kind, manifest.protocol
     );
-    let canal: Arc<dyn Integration> = Arc::new(supervisor.clone());
+    let channel: Arc<dyn Integration> = Arc::new(supervisor.clone());
 
-    // Saída: um item de texto na fila, entregue ao plugin pelo mesmo transporte do WhatsApp.
-    let turno = TurnId::generate();
-    let enfileirado = store.outbox().enqueue(
+    let turn = TurnId::generate();
+    let enqueued = store.outbox().enqueue(
         org,
         NewOutboxItem {
-            conversation_id: conversa.id,
-            turn_id: turno,
+            conversation_id: conversation.id,
+            turn_id: turn,
             seq: 0,
             tipo: "text".to_owned(),
             content_json: serde_json::json!({"texto": "olá, mundo"}).to_string(),
@@ -125,54 +107,53 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     println!(
         "3. item na fila de saída: `olá, mundo` (estado {:?})",
-        enfileirado.1.state
+        enqueued.1.state
     );
 
-    let transporte = EnvioPeloCanal::novo(Arc::clone(&store), Arc::clone(&canal));
-    let relato = fluxo.enviar_pendentes(org, &transporte).await?;
-    let item = store.outbox().get(org, enfileirado.1.id)?;
+    let transport = EnvioPeloCanal::novo(Arc::clone(&store), Arc::clone(&channel));
+    let report = flow.enviar_pendentes(org, &transport).await?;
+    let item = store.outbox().get(org, enqueued.1.id)?;
     println!(
         "4. envio pelo plugin: enviados={} falharam={} → estado {:?}",
-        relato.enviados, relato.falharam, item.state
+        report.enviados, report.falharam, item.state
     );
 
-    esperar(|| entrada.contadores().gravados >= 1).await?;
-    let mensagens = store
+    wait_until(|| inbox.contadores().gravados >= 1).await?;
+    let messages = store
         .messages()
-        .list(org, conversa.id, Page::with_limit(10))?;
-    for mensagem in &mensagens {
+        .list(org, conversation.id, Page::with_limit(10))?;
+    for message in &messages {
         println!(
             "5. inbox → mensagem ({}/{}): {:?}",
-            mensagem.direction.as_text(),
-            mensagem.role.as_text(),
-            mensagem.texto
+            message.direction.as_text(),
+            message.role.as_text(),
+            message.texto
         );
     }
 
-    // Reentrega do mesmo comando: o `id_externo` estável faz a inbox descartar a repetição.
-    canal
+    channel
         .send_text(SendText {
-            idempotency: format!("{turno}:0"),
+            idempotency: format!("{turn}:0"),
             peer: "5511999999999".to_owned(),
             text: "olá, mundo".to_owned(),
         })
         .await?;
-    esperar(|| entrada.contadores().duplicados >= 1).await?;
-    let contadores = entrada.contadores();
+    wait_until(|| inbox.contadores().duplicados >= 1).await?;
+    let counters = inbox.contadores();
     println!(
         "6. reentrega do mesmo comando: gravados={} duplicados={} (nada duplicado na conversa)",
-        contadores.gravados, contadores.duplicados
+        counters.gravados, counters.duplicados
     );
-    let mensagens = store
+    let messages = store
         .messages()
-        .list(org, conversa.id, Page::with_limit(10))?;
-    println!("7. mensagens na conversa no fim: {}", mensagens.len());
+        .list(org, conversation.id, Page::with_limit(10))?;
+    println!("7. mensagens na conversa no fim: {}", messages.len());
 
-    let saude = canal.health().await?;
+    let health = channel.health().await?;
     println!(
         "8. saúde do canal: ok={} ({})",
-        saude.ok,
-        saude.detail.unwrap_or_default()
+        health.ok,
+        health.detail.unwrap_or_default()
     );
     println!(
         "9. fila de saída no fim: pendentes={} enviados={}",
@@ -181,46 +162,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     supervisor.encerrar().await;
-    drop(entrada);
-    if temporaria {
-        let _ = std::fs::remove_dir_all(&pasta);
+    drop(inbox);
+    if temporary {
+        let _ = std::fs::remove_dir_all(&directory);
     }
     Ok(())
 }
 
-/// Binário do `plugin-eco` perto deste executável (os dois saem do mesmo `cargo build`).
-///
-/// O `example` fica em `target/debug/examples/` e o binário em `target/debug/`, então a busca
-/// sobe as pastas até achar.
-fn programa_eco() -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let atual = std::env::current_exe()?;
-    let nome = if cfg!(windows) {
+fn echo_program() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let current = std::env::current_exe()?;
+    let name = if cfg!(windows) {
         "plugin-eco.exe"
     } else {
         "plugin-eco"
     };
-    let mut pasta = atual.parent();
+    let mut directory = current.parent();
     for _ in 0..3 {
-        let Some(diretorio) = pasta else { break };
-        let caminho = diretorio.join(nome);
-        if caminho.exists() {
-            return Ok(caminho);
+        let Some(here) = directory else { break };
+        let path = here.join(name);
+        if path.exists() {
+            return Ok(path);
         }
-        pasta = diretorio.parent();
+        directory = here.parent();
     }
     Err(format!(
         "não encontrei o `{}` perto de {}: rode `cargo build -p poph-plugin-eco --bins`",
-        nome,
-        atual.display()
+        name,
+        current.display()
     )
     .into())
 }
 
-/// Espera a condição virar verdadeira, conferindo a cada 10 ms (até 5 s).
-async fn esperar(condicao: impl Fn() -> bool) -> Result<(), Box<dyn std::error::Error>> {
-    let limite = Instant::now() + Duration::from_secs(5);
-    while Instant::now() < limite {
-        if condicao() {
+async fn wait_until(condition: impl Fn() -> bool) -> Result<(), Box<dyn std::error::Error>> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if condition() {
             return Ok(());
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
