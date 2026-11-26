@@ -44,9 +44,11 @@ it); it only leaves the turn path.
 
 ### D-04 — enabled tool filters for real
 
-`StructuredInstructions::ferramentas_habilitadas()` is the agent's toolset. The list is closed
-(`FERRAMENTAS_V1`): `consultar_base`, `buscar_produto`, `enviar_arquivo`, `transferir`,
-`cart_add_item`, `cart_remove_item`, `cart_summary`, `cart_clear`.
+`StructuredInstructions::enabled_tools()` is the agent's toolset. The list is closed
+(`TOOLS_V1`): `consultar_base`, `buscar_produto`, `enviar_arquivo`, `transferir`,
+`cart_add_item`, `cart_remove_item`, `cart_summary`, `cart_clear`, `fluxo_executar_acao`,
+`fluxo_abandonar`, `fluxo_iniciar`, `atendimento_encerrar` and `register_lead`.
+The last tool requires an [HTTP declaration for the organization](CONFIGURACAO.md#internal-http-tools).
 
 `validar()` runs **on write** (CLI/API): a name outside the list is refused, with the engine's list in the
 message. It does not run on read: legacy POP Atende JSON, with names such as `search_knowledge_base`, must

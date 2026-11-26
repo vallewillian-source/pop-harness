@@ -1,17 +1,20 @@
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, SaltString};
+use axum::extract::State;
+use axum::http::HeaderMap;
+use axum::{Json, Router, routing::post};
 use futures::StreamExt;
 use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
 use poph_agent::limites::{Limitador, OpcoesLimites};
 use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
-use poph_agent::turno::{Motor, OpcoesTurno};
+use poph_agent::turno::{HttpToolRegistry, Motor, OpcoesTurno};
 use poph_core::llm::{
     FakeProvider, FinishReason, LlmError, LlmEvent, LlmLimiter, LlmProvider, Message,
-    OpenAiCompatibleClient, OpenAiCompatibleConfig, Part, Request, Script,
+    OpenAiCompatibleClient, OpenAiCompatibleConfig, Part, Request, Script, ToolCall,
 };
 use poph_server::Estado;
 use poph_store::{
@@ -89,6 +92,12 @@ impl Fixture {
             OpcoesTurno::default(),
             MetricasTurno::proprio(),
         );
+        let http_tools = HttpToolRegistry::from_config(&self.config.http_tools, |name| {
+            (name == "POPH_HTTP_TOOL_TEST")
+                .then(|| Secret::new("Bearer chave-ficticia-do-servico".to_owned()))
+        })
+        .expect("HTTP tools");
+        let motor = motor.with_http_tools(http_tools);
         let state = Estado::novo(self.store.clone(), self.config.clone())
             .expect("state")
             .com_motor(Arc::new(motor));
@@ -961,4 +970,284 @@ async fn measure_site_real_model() {
     )
     .expect("model provider");
     measure(Arc::new(provider), &model, 20).await;
+}
+
+#[derive(Default)]
+struct HttpToolStub {
+    calls: Vec<(HeaderMap, Value)>,
+    effects: usize,
+}
+
+async fn lead_stub(
+    State(stub): State<Arc<Mutex<HttpToolStub>>>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> (StatusCode, Json<Value>) {
+    let outcome = body["arguments"]["consent"].as_bool();
+    {
+        let mut state = stub.lock().expect("stub lock");
+        if outcome == Some(true) {
+            state.effects += 1;
+        }
+        state.calls.push((headers, body));
+    }
+    match outcome {
+        Some(true) => (
+            StatusCode::OK,
+            Json(json!({"lead":{"status":"registered_notified"},"discard":"internal"})),
+        ),
+        Some(false) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"discard":"private details"})),
+        ),
+        None => {
+            tokio::time::sleep(Duration::from_secs(3)).await;
+            (StatusCode::OK, Json(json!({})))
+        }
+    }
+}
+
+fn register_lead_call(id: &str, consent: Option<bool>) -> Script {
+    Script::Events(vec![LlmEvent::Tool(ToolCall {
+        id: id.to_owned(),
+        nome: "register_lead".to_owned(),
+        arguments: json!({"consent": consent, "org_id": "ignorar", "message_id": "ignorar"}),
+    })])
+}
+
+#[tokio::test]
+async fn configured_http_tool_carries_site_context_and_replays_without_repeating_effects() {
+    let mut fixture = Fixture::new();
+    let stub = Arc::new(Mutex::new(HttpToolStub::default()));
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("stub listener");
+    let url = format!(
+        "http://{}/register",
+        listener.local_addr().expect("stub address")
+    );
+    let router = Router::new()
+        .route("/register", post(lead_stub))
+        .with_state(stub.clone());
+    let stub_task = tokio::spawn(async move { axum::serve(listener, router).await });
+
+    let account = &fixture.account;
+    let config: HarnessConfig = toml::from_str(&format!(
+        r#"
+[site_chat]
+allowed_tools = ["register_lead"]
+
+[http_tools."{}".register_lead]
+url = "{}"
+method = "POST"
+authorization_env = "POPH_HTTP_TOOL_TEST"
+description = "Registra o interesse do visitante."
+parameters = {{ type = "object" }}
+response_fields = {{ status = "/lead/status" }}
+"#,
+        account.org, url
+    ))
+    .expect("TOML");
+    config.validar().expect("configured tool and site policy");
+    fixture.config.site_chat = config.site_chat;
+    fixture.config.http_tools = config.http_tools;
+    let definition = fixture
+        .config
+        .http_tools
+        .get_mut(&account.org)
+        .and_then(|tools| tools.get_mut("register_lead"))
+        .expect("definition");
+    assert_eq!(definition.timeout_ms, 5_000);
+    definition.timeout_ms = 500;
+
+    let instructions = StructuredInstructions {
+        tools: vec![ToolConfig::new("register_lead")],
+        ..Default::default()
+    };
+    instructions.validar().expect("closed list");
+    fixture
+        .store
+        .instructions()
+        .save(
+            account.org,
+            account.agent,
+            0,
+            &instructions.to_json(),
+            "Orientações.",
+            true,
+        )
+        .expect("save");
+
+    let other = add_account(&fixture.store, "outra-org");
+    fixture
+        .store
+        .instructions()
+        .save(
+            other.org,
+            other.agent,
+            0,
+            &instructions.to_json(),
+            "Orientações.",
+            true,
+        )
+        .expect("other organization instructions");
+
+    let fake = Arc::new(FakeProvider::with_scripts(vec![
+        register_lead_call("original-call", Some(true)),
+        register_lead_call("original-call", Some(true)),
+        answer("O aviso foi enviado."),
+        register_lead_call("original-call", Some(false)),
+        answer("O serviço de registro está indisponível."),
+        register_lead_call("slow-call", None),
+        answer("O serviço demorou para responder."),
+        register_lead_call("foreign-call", Some(true)),
+        answer("O registro não está disponível."),
+    ]));
+    let server = fixture.start(fake.clone()).await;
+    let conversation = server
+        .create(account, account.agent, "visitante", StatusCode::CREATED)
+        .await;
+    let conversation_id = conversation["conversation_id"]
+        .as_str()
+        .expect("conversation");
+
+    let mut submitted = Vec::new();
+    let mut after = 0;
+    for n in 0..3 {
+        let message = server
+            .send(
+                account,
+                conversation_id,
+                &format!("message-{n}"),
+                "Autorizo o contato.",
+                StatusCode::ACCEPTED,
+            )
+            .await;
+        let turn_id = message["turn_id"].as_str().expect("turn id");
+        let events = wait_for_event(
+            server.stream(account, conversation_id, after).await,
+            "turn_end",
+        )
+        .await;
+        after = events
+            .last()
+            .and_then(|event| event["seq"].as_i64())
+            .expect("sequence");
+        assert!(
+            events
+                .iter()
+                .any(|event| event["turn_id"] == turn_id && event["type"] == "turn_end")
+        );
+        let turn = read(
+            server
+                .request(
+                    account,
+                    Method::GET,
+                    &format!("/site-conversations/{conversation_id}/turns/{turn_id}"),
+                    None,
+                )
+                .await,
+            StatusCode::OK,
+        )
+        .await;
+        assert_eq!(turn["status"], "succeeded");
+        submitted.push(message);
+    }
+
+    let other_conversation = server
+        .create(&other, other.agent, "outro visitante", StatusCode::CREATED)
+        .await;
+    let other_id = other_conversation["conversation_id"]
+        .as_str()
+        .expect("other conversation");
+    server
+        .send(
+            &other,
+            other_id,
+            "other-message",
+            "Autorizo o contato.",
+            StatusCode::ACCEPTED,
+        )
+        .await;
+    wait_for_event(server.stream(&other, other_id, 0).await, "turn_end").await;
+
+    {
+        let state = stub.lock().expect("stub lock");
+        assert_eq!(state.effects, 1);
+        assert_eq!(state.calls.len(), 3);
+        let expected_ids = ["original-call", "original-call", "slow-call"];
+        for ((headers, body), (message, call_id)) in
+            state.calls.iter().zip(submitted.iter().zip(expected_ids))
+        {
+            assert_eq!(headers["authorization"], "Bearer chave-ficticia-do-servico");
+            assert_eq!(
+                headers["idempotency-key"].to_str().expect("key"),
+                format!(
+                    "{}:{call_id}",
+                    message["turn_id"].as_str().expect("turn id")
+                )
+            );
+            assert_eq!(
+                body,
+                &json!({
+                    "context": {
+                        "org_id": account.org,
+                        "agent_id": account.agent,
+                        "conversation_id": conversation_id,
+                        "turn_id": message["turn_id"],
+                        "message_id": message["message_id"]
+                    },
+                    "call_id": call_id,
+                    "arguments": {
+                        "consent": body["arguments"]["consent"],
+                        "org_id": "ignorar",
+                        "message_id": "ignorar"
+                    }
+                })
+            );
+        }
+    }
+
+    let requests = fake.received();
+    assert_eq!(requests[7].org, other.org);
+    assert!(requests[7].tools.is_empty());
+    assert!(matches!(
+        requests[8].messages.last(),
+        Some(Message::Resultado { id, content })
+            if id == "foreign-call" && content.starts_with("erro:")
+    ));
+    let tool = &requests[0].tools[0];
+    assert_eq!(tool.nome, "register_lead");
+    assert_eq!(tool.parameters, json!({"type": "object"}));
+    for (request, id, result) in [
+        (
+            &requests[1],
+            "original-call",
+            r#"{"status":"registered_notified"}"#,
+        ),
+        (
+            &requests[2],
+            "original-call",
+            r#"{"status":"registered_notified"}"#,
+        ),
+        (
+            &requests[4],
+            "original-call",
+            "erro: http_tool_http_error: serviço recusou a chamada",
+        ),
+        (
+            &requests[6],
+            "slow-call",
+            "erro: http_tool_timeout: serviço demorou para responder",
+        ),
+    ] {
+        assert_eq!(
+            request.messages.last(),
+            Some(&Message::Resultado {
+                id: id.to_owned(),
+                content: result.to_owned()
+            }),
+        );
+    }
+    stub_task.abort();
 }

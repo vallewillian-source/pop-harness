@@ -571,6 +571,7 @@ name	POPH_FLUXOS_MAX_TICKS_REGRA	published variavel ambiente: POPH_FLUXOS_MAX_TI
 name	poph_fluxos_revisoes_em_cache	published metrica: poph_fluxos_revisoes_em_cache
 name	poph_fluxos_revisoes_em_uso	published metrica: poph_fluxos_revisoes_em_uso
 name	poph_harness_db_bytes	published metrica: poph_harness_db_bytes
+name	POPH_HTTP_TOOL_SITE_LEADS_AUTHORIZATION	published variavel ambiente: POPH_HTTP_TOOL_SITE_LEADS_AUTHORIZATION
 name	POPH_JEV_ATIVO	published variavel ambiente: POPH_JEV_ATIVO
 name	POPH_JEV_URL_BASE	published variavel ambiente: POPH_JEV_URL_BASE
 name	poph_latencia_etapa_segundos	published metrica: poph_latencia_etapa_segundos

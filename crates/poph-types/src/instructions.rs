@@ -3,6 +3,8 @@ use serde_json::Value;
 
 use crate::error::DomainError;
 
+pub(crate) const REGISTER_LEAD: &str = "register_lead";
+
 pub const TOOLS_V1: &[&str] = &[
     "consultar_base",
     "buscar_produto",
@@ -16,6 +18,7 @@ pub const TOOLS_V1: &[&str] = &[
     "fluxo_abandonar",
     "fluxo_iniciar",
     "atendimento_encerrar",
+    REGISTER_LEAD,
 ];
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

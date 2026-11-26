@@ -149,6 +149,7 @@ impl Motor {
                 },
                 &hot,
                 Preparo {
+                    trigger_message_id: job.message,
                     mensagens: messages,
                     uso: UsoFerramentas::nova(),
                     chamadas: RegistroChamadas::nova(),

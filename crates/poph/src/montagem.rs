@@ -222,6 +222,10 @@ pub fn montar(
         }
     };
 
+    let http_tools =
+        poph_agent::turno::HttpToolRegistry::from_config(&configuracao.http_tools, |name| {
+            config::chave_llm(ambiente, name)
+        })?;
     let mut motor = Motor::novo(
         Arc::clone(&store),
         ConfigQuente::nova(
@@ -238,6 +242,7 @@ pub fn montar(
         OpcoesTurno::default(),
         metricas.turno,
     )
+    .with_http_tools(http_tools)
     .com_modelo_padrao(configuracao.llm.model.clone())
     .com_provedores(Arc::new(provedores))
     // Arquivos do cliente (HR-23b): pasta dos blobs e limites, para a imagem do anexo chegar ao

@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{DomainError, DomainResult};
+use crate::ids::OrgId;
+use crate::instructions::REGISTER_LEAD;
 use crate::integration::PluginsConfig;
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -37,6 +39,41 @@ pub struct HarnessConfig {
     pub plugins: PluginsConfig,
     pub admin: AdminConfig,
     pub site_chat: SiteChatConfig,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub http_tools: HttpToolsConfig,
+}
+
+pub type HttpToolsConfig = BTreeMap<OrgId, BTreeMap<String, HttpToolConfig>>;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HttpToolConfig {
+    pub url: String,
+    pub method: HttpToolMethod,
+    #[serde(default = "default_http_tool_timeout_ms")]
+    pub timeout_ms: u64,
+    pub authorization_env: String,
+    pub description: String,
+    pub parameters: serde_json::Value,
+    pub response_fields: BTreeMap<String, String>,
+}
+
+fn default_http_tool_timeout_ms() -> u64 {
+    5_000
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HttpToolMethod {
+    #[serde(rename = "POST")]
+    Post,
+    #[serde(rename = "PUT")]
+    Put,
+    #[serde(rename = "PATCH")]
+    Patch,
+    #[serde(rename = "GET")]
+    Get,
+    #[serde(rename = "DELETE")]
+    Delete,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -65,6 +102,7 @@ impl SiteChatConfig {
                 | "cart_remove_item"
                 | "cart_summary"
                 | "cart_clear"
+                | REGISTER_LEAD
         ) && self.allowed_tools.contains(name)
     }
 }
@@ -558,6 +596,7 @@ impl HarnessConfig {
                     .to_owned(),
             });
         }
+        validate_http_tools(&self.http_tools)?;
         validate_plugins(&self.plugins)?;
         if let Some(evolution) = &self.evolution {
             validate_url("evolution.url_base", &evolution.url_base)?;
@@ -965,6 +1004,58 @@ fn validate_evolution_instances(instances: &[EvolutionInstanceConfig]) -> Domain
                 "evolution.instancias",
                 "a mesma instância aparece duas vezes para a mesma org",
             ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_http_tools(tools: &HttpToolsConfig) -> DomainResult<()> {
+    for definitions in tools.values() {
+        for (name, definition) in definitions {
+            if name != REGISTER_LEAD {
+                return Err(invalid(
+                    "http_tools",
+                    "ferramenta HTTP fora da lista fechada",
+                ));
+            }
+            validate_url("http_tools.url", &definition.url)?;
+            if !(1..=60_000).contains(&definition.timeout_ms) {
+                return Err(invalid("http_tools.timeout_ms", "informe de 1 a 60000 ms"));
+            }
+            if !definition.authorization_env.starts_with("POPH_HTTP_TOOL_")
+                || !definition
+                    .authorization_env
+                    .bytes()
+                    .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
+            {
+                return Err(invalid(
+                    "http_tools.authorization_env",
+                    "use o nome de uma variável POPH_HTTP_TOOL_*",
+                ));
+            }
+            if definition.description.trim().is_empty()
+                || definition
+                    .parameters
+                    .get("type")
+                    .and_then(serde_json::Value::as_str)
+                    != Some("object")
+            {
+                return Err(invalid(
+                    "http_tools.parameters",
+                    "informe a descrição e um esquema JSON do tipo object",
+                ));
+            }
+            if definition.response_fields.is_empty()
+                || definition
+                    .response_fields
+                    .iter()
+                    .any(|(name, pointer)| name.is_empty() || !pointer.starts_with('/'))
+            {
+                return Err(invalid(
+                    "http_tools.response_fields",
+                    "informe nomes de campos e ponteiros JSON iniciados por /",
+                ));
+            }
         }
     }
     Ok(())

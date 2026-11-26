@@ -56,6 +56,7 @@ mod departamento;
 mod ferramentas;
 mod fluxo;
 mod fluxo_ferramentas;
+mod http_tools;
 mod pausa;
 mod prompt;
 mod site_chat;
@@ -108,6 +109,8 @@ pub use fluxo_ferramentas::{
     registrar_com as registrar_ferramentas_do_fluxo_com,
     registrar_encerramento as registrar_ferramenta_encerramento,
 };
+pub use http_tools::HttpToolRegistry;
+use http_tools::{HttpToolCalls, HttpToolContext};
 pub use pausa::{FuturoPausa, Pausa, PausaReal};
 pub use prompt::{
     ABRE_BASE, ABRE_CONTEXTO, AVISO_BASE, FECHA_BASE, FECHA_CONTEXTO, Prompt, bloco_base,
@@ -360,6 +363,7 @@ impl ResumoTurno {
 
 /// O que o turno leva para a conversa com o modelo: as mensagens montadas e o coletor de uso.
 struct Preparo {
+    trigger_message_id: MessageId,
     /// Mensagens prontas (prefixo estável, bloco volátil e histórico).
     mensagens: Vec<Message>,
     /// Coletor do que as ferramentas usarem (vai para o registro do turno).
@@ -478,6 +482,7 @@ pub struct Motor {
     provedor: Arc<dyn LlmProvider>,
     provedores: Option<Arc<Provedores>>,
     ferramentas: Arc<dyn RegistroFerramentas>,
+    http_tools: Arc<HttpToolRegistry>,
     /// Busca na base de conhecimento (HR-17). Sem ela, o turno roda sem RAG.
     busca: Option<Arc<dyn BuscadorBase>>,
     /// Busca no catálogo de produtos (HR-33): com ela o G5 pré-consulta os candidatos do turno.
@@ -507,6 +512,11 @@ pub struct Motor {
 }
 
 impl Motor {
+    pub fn with_http_tools(mut self, registry: HttpToolRegistry) -> Self {
+        self.http_tools = Arc::new(registry);
+        self
+    }
+
     /// Cria o motor com o registro de ferramentas de produção (vazio até a fase 2) e espera real.
     pub fn novo(
         store: Arc<Store>,
@@ -529,6 +539,7 @@ impl Motor {
             provedor,
             provedores: None,
             ferramentas: Arc::new(SemFerramentas),
+            http_tools: Arc::default(),
             busca: None,
             produtos: None,
             opcoes,
@@ -1237,6 +1248,7 @@ impl Motor {
             self.metricas.produtos_escolhidos_g5.increment(1);
         }
         let preparo = Preparo {
+            trigger_message_id: entrada.mensagem,
             mensagens,
             uso: Arc::clone(&uso),
             chamadas: Arc::clone(&chamadas),
@@ -1441,6 +1453,19 @@ impl Motor {
         let max_por_mensagem = quente.agente.max_tools_per_message.max(1);
         let mut oferecidas =
             ferramentas::oferecidas(self.ferramentas.as_ref(), &quente.ferramentas);
+        oferecidas.extend(quente.ferramentas.iter().filter_map(|name| {
+            self.http_tools
+                .tool(alvo.org, name)
+                .map(|tool| tool.definition(name))
+        }));
+        let http_context = HttpToolContext {
+            org_id: alvo.org,
+            agent_id: quente.agente.id,
+            conversation_id: alvo.conversa,
+            turn_id: alvo.turno,
+            message_id: preparo.trigger_message_id,
+        };
+        let mut http_calls = HttpToolCalls::default();
         // HR-31: o G3 em `nada` tira do turno as ferramentas que consultam base e catálogo. O
         // modelo não pode chamar o que não é oferecido (o laço de ferramentas só executa as
         // oferecidas), então não há resposta inventada de política nem de preço.
@@ -1526,6 +1551,12 @@ impl Motor {
                 calls: chamadas.clone(),
             });
             for (indice, chamada) in chamadas.iter().enumerate() {
+                let http_tool = self.http_tools.tool(alvo.org, &chamada.nome);
+                let audit_arguments = if http_tool.is_some() {
+                    &serde_json::Value::Null
+                } else {
+                    &chamada.arguments
+                };
                 if indice >= max_por_mensagem as usize {
                     let conteudo = format!(
                         "erro: limite de {max_por_mensagem} chamadas de ferramenta por \
@@ -1538,7 +1569,7 @@ impl Motor {
                         rodada,
                         Desfecho::Recusada(MOTIVO_LIMITE_DE_CHAMADAS),
                         Duration::ZERO,
-                        &chamada.arguments,
+                        audit_arguments,
                         &conteudo,
                     );
                     conversa.push(Message::Resultado {
@@ -1584,6 +1615,17 @@ impl Motor {
                          <produtos_encontrados> deste turno; não chame buscar_produto de novo"
                             .to_owned(),
                     )
+                } else if let Some(tool) = http_tool
+                    && rodada < max_rodadas
+                    && quente.ferramenta_habilitada(&chamada.nome)
+                {
+                    match http_calls.execute(tool, http_context, chamada).await {
+                        Ok(text) => DesfechoFerramenta::Executada(text),
+                        Err(error) => DesfechoFerramenta::recusada(
+                            motivo_do_erro_da_ferramenta(&error),
+                            format!("erro: {error}"),
+                        ),
+                    }
                 } else {
                     self.executar_ferramenta(alvo, quente, uso, chamada).await
                 };
@@ -1593,8 +1635,12 @@ impl Motor {
                     rodada,
                     desfecho.para_registro(),
                     duracao,
-                    &chamada.arguments,
-                    desfecho.texto(),
+                    audit_arguments,
+                    if http_tool.is_some() {
+                        ""
+                    } else {
+                        desfecho.texto()
+                    },
                 );
                 conversa.push(Message::Resultado {
                     id: chamada.id.clone(),

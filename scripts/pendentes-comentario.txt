@@ -1,7 +1,6 @@
 # Arquivos com comentário fora da allowlist, um por linha: módulo, quantidade de comentários e caminho,
 # separados por TAB. Gerado por `bash scripts/check-comments.sh --atualizar-pendentes`; não editar à mão.
 M05	4	crates/poph-jev/Cargo.toml
-M05	59	crates/poph-jev/src/cliente.rs
 M05	75	crates/poph-jev/src/eval.rs
 M05	21	crates/poph-jev/src/lib.rs
 M05	11	crates/poph-jev/tests/cliente.rs
@@ -15,9 +14,7 @@ M05	12	crates/poph-jev/tests/g8_encerrada.rs
 M05	24	crates/poph-jev/tests/g9_fluxo.rs
 M05	26	crates/poph-jev/tests/g9_medicao.rs
 M05	30	crates/poph-jev/tests/handoff.rs
-M05	38	crates/poph-jev/tests/instrucao_g1.rs
 M05	20	crates/poph-jev/tests/lote.rs
-M05	5	crates/poph-jev/tests/padrao_gates.rs
 M06a	142	crates/poph-fluxos/src/cache.rs
 M06a	73	crates/poph-fluxos/src/compilador.rs
 M06a	79	crates/poph-fluxos/src/compilador/forma.rs

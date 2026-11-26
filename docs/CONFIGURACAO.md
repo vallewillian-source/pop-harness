@@ -96,9 +96,48 @@ integration configuration. Without the declaration, an integration `config_json`
 `[site_chat]` configures the administrative routes for trusted website adapters. The
 `max_text_bytes` limit defaults to 16384 and accepts 1–262144 UTF-8 bytes. The `allowed_tools`
 list defaults to empty. It accepts `consultar_base`, `buscar_produto`, `cart_add_item`,
-`cart_remove_item`, `cart_summary` and `cart_clear`. Agents with any enabled tool missing from
+`cart_remove_item`, `cart_summary`, `cart_clear` and `register_lead`. Agents with any enabled tool missing from
 this list are refused. The setting is server-side and requires no additional credential.
 See [Site conversations](API.md#site-conversations) for the HTTP contract.
+
+### Internal HTTP tools
+
+Declare a tool under `[http_tools."<organization UUID>".<tool name>]` in the server's `poph.toml`.
+The agent must enable the same name in its structured instructions. Site agents also need the name
+in `[site_chat].allowed_tools`. The current HTTP tool name is `register_lead`.
+
+~~~toml
+[http_tools."0199a11d-2000-7000-8000-000000000001".register_lead]
+url = "https://site-service.internal/internal/leads"
+method = "POST"
+authorization_env = "POPH_HTTP_TOOL_SITE_LEADS_AUTHORIZATION"
+description = "Registra o interesse do visitante com o consentimento confirmado."
+parameters = { type = "object", properties = { consent = { type = "boolean" } }, required = ["consent"] }
+response_fields = { ok = "/ok", status = "/status" }
+~~~
+
+Set the named environment variable to the complete `Authorization` header value, such as
+`Bearer <org service token>`. Use an organization-scoped credential, provisioned by the receiving
+service. The destination and schema are trusted server configuration. Supported methods are
+`POST`, `PUT`, `PATCH`, `GET` and `DELETE`. Each sends a JSON body. The
+`timeout_ms` setting defaults to 5000 and accepts 1–60000. Redirects, proxies and automatic
+HTTP retries are disabled.
+
+The request carries `Idempotency-Key: <turn_id>:<call_id>`. The body has `context` with
+`org_id`, `agent_id`, `conversation_id`, `turn_id` and `message_id`, plus the original
+provider `call_id` and a separate `arguments` object from the model. The receiving service
+resolves the organization from the credential and verifies the supplied context. Treat
+`arguments` as untrusted input. The message ID identifies the message that triggered the turn.
+
+The tool returns the selected response fields as JSON. Each configured field maps to a JSON Pointer
+in the service response. Missing fields are omitted. A non-success status, timeout, malformed
+response or response with no selected fields returns a stable tool error and lets the model
+finish the turn. JSON responses may be up to 64 KiB.
+
+Within the same turn, an identical call ID and arguments replay the recorded outcome.
+Changing the arguments under that ID returns a conflict. The receiving service must enforce
+durable uniqueness for the same turn and call ID, including when a request reaches it and the
+Harness times out waiting for the response.
 
 ## Environment variables
 
