@@ -11,15 +11,25 @@ The map (`--map`) has one rename per line, applied in the order it lists them:
 
     # comment
     VarreduraBanco -> DatabaseScan
+    VarreduraBanco @ crates/poph-types/src/config.rs -> DatabaseScan
     crates/poph-retention/src/armazem.rs -> crates/poph-retention/src/warehouse.rs
 
 A line whose left side contains `/` is a file (module) rename; everything else is an identifier.
-The tool refuses, with a message and exit code 3, a rename of a name published by the contract
-(table, column, index, trigger, route, operationId, JSON field, `poph.toml` key, CLI command or
-flag, environment variable, metric, plugin protocol term, backup key, flow language word), a new
-name that is not a valid identifier, a new name that still carries a Portuguese term, and an
-identifier no language tool can rename safely. Exit code 4 means a leftover of the old name was
-found outside strings and comments after the edit; exit code 5 means the language tool is missing.
+An identifier may be anchored to a path (`@ <path>`, or `@ <path>:<line>`), which is how a name
+that exists in more than one crate is renamed in the one the map means: the anchor limits the
+candidates, the leftover check and the report to that scope, and a rename outside the anchor is
+printed as a reference the same language tool moved. Without an anchor, a name declared in more
+than one crate or Node package is refused instead of renamed, because picking one of them would
+rename the wrong symbol. The tool refuses, with a message and exit code 3, a rename of a name
+published by the contract (table, column, index, trigger, route, operationId, JSON field,
+`poph.toml` key, CLI command or flag, environment variable, metric, plugin protocol term, backup
+key, flow language word), a new name that is not a valid identifier, a new name that still carries
+a Portuguese term, and an identifier no language tool can rename safely. Exit code 4 means a
+leftover of the old name was found outside strings and comments after the edit; exit code 5 means
+the language tool is missing.
+
+Scope is the source this project writes: everything except `design_assets/`, where only
+`design_assets/<asset>/scripts/` counts, so rendered captures and images are never read.
 
 Commands:
 
@@ -117,7 +127,7 @@ def scanned_files(root):
         relative = path.relative_to(root).as_posix()
         if visible is not None and relative not in visible:
             continue
-        if relative.startswith(("design_assets/",)):
+        if not glossary.in_code_scope(relative):
             continue
         if scanner.language_of(path) in (None, "html"):
             continue
@@ -176,16 +186,24 @@ def declaration_rank(language, source_line, name):
     return 2
 
 
-def ordered_candidates(root, found, language):
+def ordered_candidates(root, found, language, name, scope=None):
+    """Occurrences that can be renamed, most likely declaration first, inside the anchor only.
+
+    A line that declares `name` itself comes first: that is the symbol the map means. Ranking by
+    the file stem instead left this list in path order, so a name declared in another crate could
+    be picked first and renamed there — the leak the anchor and the ambiguity refusal close.
+    """
     ordered = []
     for hit in found:
+        if not in_scope(hit, scope):
+            continue
         suffix = hit["path"].suffix.lower()
         if language == "rust" and suffix not in RUST_SUFFIXES:
             continue
         if language == "ts" and suffix not in TS_SUFFIXES:
             continue
         source_line = hit["path"].read_text(encoding="utf-8", errors="replace").splitlines()[hit["line"] - 1]
-        ordered.append((declaration_rank(language, source_line, hit["path"].stem), hit["relative"], hit))
+        ordered.append((declaration_rank(language, source_line, name), hit["relative"], hit))
     ordered.sort(key=lambda entry: (entry[0], entry[1], entry[2]["line"]))
     return [entry[2] for entry in ordered]
 
@@ -522,6 +540,26 @@ class TypeScriptServer:
                 self.proc.terminate()
 
 
+def parse_scope(anchor):
+    """Turns `path` or `path:line` into the scope of one identifier rename."""
+    path, line = anchor, None
+    head, separator, tail = anchor.rpartition(":")
+    if separator and tail.isdigit():
+        path, line = head, int(tail)
+    return {"path": path.rstrip("/"), "line": line or None}
+
+
+def in_scope_path(relative, scope):
+    path = scope["path"]
+    return relative == path or relative.startswith(path + "/")
+
+
+def in_scope(hit, scope):
+    if scope is None:
+        return True
+    return in_scope_path(hit["relative"], scope) and scope["line"] in (None, hit["line"])
+
+
 def read_map(path):
     pairs = []
     errors = []
@@ -539,9 +577,59 @@ def read_map(path):
         if not old or not new:
             errors.append(f"line {number}: empty side: {raw!r}")
             continue
-        kind = "path" if "/" in old or old.endswith(RUST_SUFFIXES + TS_SUFFIXES) else "identifier"
-        pairs.append({"kind": kind, "old": old, "new": new, "line": number})
+        name, _, anchor = old.partition("@")
+        name, anchor = name.strip(), anchor.strip()
+        if anchor and not name:
+            errors.append(f"line {number}: the anchor has no identifier before `@`: {raw!r}")
+            continue
+        if not anchor and ("/" in old or old.endswith(RUST_SUFFIXES + TS_SUFFIXES)):
+            pairs.append({"kind": "path", "old": old, "new": new, "line": number})
+            continue
+        pairs.append(
+            {
+                "kind": "identifier",
+                "old": name,
+                "new": new,
+                "line": number,
+                "scope": parse_scope(anchor) if anchor else None,
+            }
+        )
     return pairs, errors
+
+
+UNIT_MARKERS = ("Cargo.toml", "package.json")
+
+
+def unit_of(root, relative):
+    """The building block a file belongs to: the nearest crate or Node package above it."""
+    path = (root / relative).resolve()
+    for parent in path.parents:
+        if not parent.is_dir():
+            continue
+        for marker in UNIT_MARKERS:
+            if (parent / marker).is_file():
+                try:
+                    return parent.relative_to(root).as_posix() or "."
+                except ValueError:
+                    return parent.as_posix()
+        if parent == root:
+            break
+    return "."
+
+
+def declared_units(root, found, count):
+    """Units where `count`'s name is declared, so two symbols sharing it are told apart."""
+    units = {}
+    for hit in found:
+        suffix = hit["path"].suffix.lower()
+        if suffix not in RUST_SUFFIXES + TS_SUFFIXES:
+            continue
+        language = "rust" if suffix in RUST_SUFFIXES else "ts"
+        source_line = hit["path"].read_text(encoding="utf-8", errors="replace").splitlines()[hit["line"] - 1]
+        if declaration_rank(language, source_line, count["old"]) != 0:
+            continue
+        units.setdefault(unit_of(root, hit["relative"]), hit["relative"])
+    return units
 
 
 def published_names():
@@ -599,23 +687,60 @@ def changes_files(changes):
     return sorted({change["file"] for change in changes})
 
 
-def leftover_findings(found, allow_leftover):
-    """Splits the remaining occurrences into accepted (allowed path) and blocking ones."""
-    accepted = [hit for hit in found if any(hit["relative"].startswith(prefix) for prefix in allow_leftover)]
-    leftover = [hit for hit in found if hit not in accepted]
+def leftover_findings(found, allow_leftover, scope=None):
+    """Splits the remaining occurrences into accepted (allowed path) and blocking ones.
+
+    Under an anchor only the occurrences inside it block: a name that also exists in another crate
+    is a different symbol, and a reference the language tool missed in Rust breaks the build anyway.
+    """
+    inside = [hit for hit in found if in_scope(hit, scope)]
+    accepted = [hit for hit in inside if any(hit["relative"].startswith(prefix) for prefix in allow_leftover)]
+    leftover = [hit for hit in inside if hit not in accepted]
     return leftover, accepted
+
+
+def report_scope(root, pair, tally):
+    """Prints what left the anchor: a reference elsewhere, renamed by the same language tool."""
+    scope = pair.get("scope")
+    if scope is None or not tally:
+        return
+    outside = {}
+    for file, count in tally.items():
+        try:
+            relative = Path(file).resolve().relative_to(root).as_posix()
+        except ValueError:
+            relative = file
+        if not in_scope_path(relative, scope):
+            outside[relative] = count
+    if outside:
+        shown = ", ".join(f"{relative}:{count}" for relative, count in sorted(outside.items()))
+        print(f"rename: {len(outside)} file(s) outside the anchor also changed, as references: {shown}")
 
 
 def rename_identifier(root, pair, dry_run, tools, allow_leftover):
     old, new = pair["old"], pair["new"]
+    scope = pair.get("scope")
     found = occurrences(root, old)
     if not found:
         raise Refused(f"rename: {old!r} does not appear as an identifier outside strings and comments")
+    if scope is not None and not [hit for hit in found if in_scope(hit, scope)]:
+        raise Refused(
+            f"rename: the anchor {scope['path']} of {old!r} holds no occurrence of it; "
+            "the map points at the wrong file"
+        )
+    if scope is None:
+        units = declared_units(root, found, pair)
+        if len(units) > 1:
+            shown = ", ".join(f"{unit} ({path})" for unit, path in sorted(units.items()))
+            raise Refused(
+                f"rename: {old!r} is declared in {len(units)} modules: {shown}; anchor the rename "
+                f"in the map with `{old} @ <path> -> {new}` so one symbol is renamed"
+            )
     tally = {}
     attempted = False
     snapshot = None
     for language in ("rust", "ts"):
-        candidates = ordered_candidates(root, found, language)
+        candidates = ordered_candidates(root, found, language, old, scope)
         if not candidates:
             continue
         attempted = True
@@ -658,7 +783,7 @@ def rename_identifier(root, pair, dry_run, tools, allow_leftover):
             f"rename: no language tool owns {old!r}: it only appears outside Rust and TypeScript ({places}); "
             "it is data, a serialized key or a frozen example, not an identifier to rename"
         )
-    leftover, accepted = leftover_findings(found, allow_leftover)
+    leftover, accepted = leftover_findings(found, allow_leftover, scope)
     for hit in accepted:
         print(f"rename: accepted leftover of {old!r} in {hit['relative']}:{hit['line']}")
     if leftover:
@@ -669,6 +794,7 @@ def rename_identifier(root, pair, dry_run, tools, allow_leftover):
             f"rename: {len(leftover)} occurrence(s) of {old!r} left outside strings and comments ({shown}); "
             "the edit was undone"
         )
+    report_scope(root, pair, tally)
     return tally
 
 

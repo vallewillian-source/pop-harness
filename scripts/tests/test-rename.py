@@ -3,9 +3,11 @@
 
 The live half (rust-analyzer and the TypeScript language service actually renaming a symbol) is
 the rehearsed run reported with the task: it is too expensive for the CI, which needs seconds, so
-this file stubs the language tool and proves the parts this repository owns: map parsing, the
-refusals of the contract, the edit applier in both protocol units, the leftover decision and that
-`--dry-run` writes nothing.
+this file stubs the language tool and proves the parts this repository owns: map parsing (with and
+without the anchor), the refusals of the contract, the refusal of a name declared in more than one
+module, the anchored rename that must leave a same-named symbol in another crate alone, the order
+of the candidates, the code scope shared with the two gates, the edit applier in both protocol
+units, the leftover decision and that `--dry-run` writes nothing.
 
 Run: `python3 scripts/tests/test-rename.py`.
 """
@@ -230,6 +232,175 @@ def test_stub_run(tool, root):
         check("recusa nome que nenhuma ferramenta vê", "no language tool owns" in str(error), str(error))
 
 
+class UnitStubTool:
+    """Stands in for a language tool that renames one symbol: it moves every hit of its unit.
+
+    `StubTool` renames a fixed list of files; this one reads the position it is asked about and
+    renames the occurrences of that directory only, which is what rust-analyzer does for a symbol
+    declared in one crate. It is what lets the test tell "renamed the anchored symbol" apart from
+    "renamed something else that happened to have the same name".
+    """
+
+    def __init__(self, root, old):
+        self.root = root
+        self.old = old
+        self.calls = []
+
+    def can_rename(self, hit):
+        return True
+
+    def rename(self, hit, new_name):
+        self.calls.append(hit["relative"])
+        changes = []
+        directory = (self.root / hit["relative"]).parent
+        for path in sorted(directory.rglob("*.rs")):
+            source = path.read_text(encoding="utf-8")
+            cursor = 0
+            while True:
+                position = source.find(self.old, cursor)
+                if position < 0:
+                    break
+                cursor = position + len(self.old)
+                prefix = source[:position]
+                line = prefix.count("\n")
+                character = len(prefix.split("\n")[-1].encode("utf-8"))
+                changes.append(
+                    {
+                        "file": str(path),
+                        "range": {
+                            "start": {"line": line, "character": character},
+                            "end": {"line": line, "character": character + len(self.old)},
+                        },
+                        "newText": new_name,
+                    }
+                )
+        return changes
+
+    def close_documents(self):
+        pass
+
+
+def two_crates(root):
+    """Two crates declaring the same name: the map has to say which symbol it means."""
+    work = root / "two"
+    write(work, "Cargo.toml", "[workspace]\n")
+    write(work, "alfa/Cargo.toml", "[package]\nname = \"alfa\"\n")
+    write(work, "alfa/src/lib.rs", "pub struct VarreduraBanco;\n\npub fn usar() -> VarreduraBanco {\n    VarreduraBanco\n}\n")
+    write(work, "zebra/Cargo.toml", "[package]\nname = \"zebra\"\n")
+    write(work, "zebra/src/lib.rs", "pub struct VarreduraBanco;\n")
+    write(work, "zebra/src/uso.rs", "use crate::VarreduraBanco;\n\npub fn chamar(valor: VarreduraBanco) -> VarreduraBanco {\n    valor\n}\n")
+    return work
+
+
+def test_anchor_parsing(tool, root):
+    print("âncora do mapa:")
+    path = write(
+        root,
+        "map-anchor.txt",
+        "VarreduraBanco -> DatabaseScan\n"
+        "VarreduraBanco @ crates/zebra/src/lib.rs -> DatabaseScan\n"
+        "VarreduraBanco @ crates/zebra:12 -> DatabaseScan\n"
+        "crates/a/src/armazem.rs -> crates/a/src/warehouse.rs\n",
+    )
+    pairs, errors = tool.read_map(path)
+    check("quatro linhas lidas", not errors and len(pairs) == 4, str(errors))
+    check("sem âncora o escopo é nulo", pairs[0]["scope"] is None, str(pairs[0]))
+    check("âncora de arquivo", pairs[1]["scope"] == {"path": "crates/zebra/src/lib.rs", "line": None}, str(pairs[1]))
+    check("âncora de diretório com linha", pairs[2]["scope"] == {"path": "crates/zebra", "line": 12}, str(pairs[2]))
+    check("linha de caminho continua caminho", pairs[3]["kind"] == "path", str(pairs[3]))
+    check("nome sem âncora fica limpo", pairs[1]["old"] == "VarreduraBanco", pairs[1]["old"])
+    broken = write(root, "map-anchor-broken.txt", "@ crates/zebra/src/lib.rs -> DatabaseScan\n")
+    _, errors = tool.read_map(broken)
+    check("âncora sem nome reprova", len(errors) == 1, str(errors))
+
+
+def test_ambiguous_name(tool, root):
+    print("nome declarado em dois módulos:")
+    work = two_crates(root)
+    pair = {"kind": "identifier", "old": "VarreduraBanco", "new": "DatabaseScan", "line": 1, "scope": None}
+    tool_ = UnitStubTool(work, "VarreduraBanco")
+    try:
+        tool.rename_identifier(work, pair, False, StubTools(tool_), [])
+        check("sem âncora, recusa nome declarado em dois módulos", False, "renomeou")
+    except tool.Refused as error:
+        check("sem âncora, recusa nome declarado em dois módulos", "declared in 2 modules" in str(error), str(error))
+        check("a recusa ensina a âncora", "@ <path>" in str(error), str(error))
+    check("a recusa não tocou em nenhum arquivo", not tool_.calls, str(tool_.calls))
+    check(
+        "alfa continua em português",
+        "VarreduraBanco" in (work / "alfa/src/lib.rs").read_text(encoding="utf-8"),
+    )
+
+
+def test_anchored_rename(tool, root):
+    print("renomeação ancorada:")
+    work = two_crates(root)
+    pair = {
+        "kind": "identifier",
+        "old": "VarreduraBanco",
+        "new": "DatabaseScan",
+        "line": 1,
+        "scope": {"path": "zebra", "line": None},
+    }
+    tool_ = UnitStubTool(work, "VarreduraBanco")
+    tally = tool.rename_identifier(work, pair, False, StubTools(tool_), [])
+    check("só a unidade ancorada é renomeada", all(call.startswith("zebra/") for call in tool_.calls), str(tool_.calls))
+    zebra = (work / "zebra/src/lib.rs").read_text(encoding="utf-8") + (work / "zebra/src/uso.rs").read_text(encoding="utf-8")
+    check("zebra em inglês", "DatabaseScan" in zebra and "VarreduraBanco" not in zebra, zebra)
+    untouched = (work / "alfa/src/lib.rs").read_text(encoding="utf-8")
+    check("alfa intocado", "VarreduraBanco" in untouched and "DatabaseScan" not in untouched, untouched)
+    check("edição contada só no escopo", sum(tally.values()) == 4, str(tally))
+
+    wrong = dict(pair)
+    wrong["scope"] = {"path": "nao-existe", "line": None}
+    try:
+        tool.rename_identifier(work, wrong, False, StubTools(UnitStubTool(work, "DatabaseScan")), [])
+        check("âncora sem ocorrência reprova", False, "aceitou")
+    except tool.Refused as error:
+        check("âncora sem ocorrência reprova", "holds no occurrence" in str(error), str(error))
+
+
+def test_declaration_ranking(tool, root):
+    print("ordem dos candidatos:")
+    work = root / "ranking"
+    write(work, "a.rs", "pub fn usar() -> VarreduraBanco {\n    VarreduraBanco\n}\n")
+    write(work, "b.rs", "pub struct VarreduraBanco;\n")
+    found = tool.occurrences(work, "VarreduraBanco")
+    ordered = tool.ordered_candidates(work, found, "rust", "VarreduraBanco")
+    check("a declaração vem primeiro, não o arquivo de nome igual", ordered[0]["relative"] == "b.rs", str(ordered[0]))
+    scoped = tool.ordered_candidates(work, found, "rust", "VarreduraBanco", {"path": "a.rs", "line": None})
+    check(
+        "a âncora corta os candidatos",
+        {hit["relative"] for hit in scoped} == {"a.rs"} and len(scoped) == 2,
+        str(scoped),
+    )
+
+
+def test_code_scope(tool, root):
+    print("escopo das travas:")
+    work = root / "scope"
+    write(work, "design_assets/captura/scripts/seed.py", "valor = 1\n")
+    write(work, "design_assets/captura/scripts/capturar.sh", "echo 1\n")
+    write(work, "design_assets/captura/01-tela.html", "<html></html>\n")
+    write(work, "design_assets/captura/tela.png", "\x89PNG\n")
+    write(work, "design_assets/captura/capture.mjs", "const a = 1;\n")
+    write(work, "crates/a/src/lib.rs", "pub struct A;\n")
+    seen = sorted(relative for relative, _ in tool.scanned_files(work))
+    check("o script de design_assets é lido", "design_assets/captura/scripts/seed.py" in seen, str(seen))
+    check("o shell de design_assets é lido", "design_assets/captura/scripts/capturar.sh" in seen, str(seen))
+    check("a captura html não é lida", "design_assets/captura/01-tela.html" not in seen, str(seen))
+    check("a imagem não é lida", "design_assets/captura/tela.png" not in seen, str(seen))
+    check("o script fora de scripts/ não é lido", "design_assets/captura/capture.mjs" not in seen, str(seen))
+    check("o código do produto continua lido", "crates/a/src/lib.rs" in seen, str(seen))
+    check("a regra é a do medidor", tool.glossary.in_code_scope("design_assets/x/scripts/a.py"))
+    check("a regra exclui a imagem", not tool.glossary.in_code_scope("design_assets/x/a.png"))
+    write(work, "design_assets/captura/scripts/capture.mjs", "const VarreduraBanco = 1;\n")
+    written = tool.occurrences(work, "VarreduraBanco")
+    check("o script de captura é visto", any("capture.mjs" in hit["relative"] for hit in written), str(written))
+    units = tool.declared_units(work, written, {"old": "VarreduraBanco"})
+    check("declaração fora de Rust e TypeScript não é unidade", not units, str(units))
+
+
 def test_path_refusals(tool, root):
     print("recusa de renomeação de arquivo:")
     work = root / "paths"
@@ -280,6 +451,11 @@ def main():
         test_apply_changes(tool, root)
         test_leftover_decision(tool)
         test_stub_run(tool, root)
+        test_anchor_parsing(tool, root)
+        test_ambiguous_name(tool, root)
+        test_anchored_rename(tool, root)
+        test_declaration_ranking(tool, root)
+        test_code_scope(tool, root)
         test_path_refusals(tool, root)
         test_cli(tool, root)
     finally:

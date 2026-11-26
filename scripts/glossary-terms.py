@@ -31,6 +31,10 @@ Escopo da medição: só o que o repositório publica. A varredura usa `git ls-f
 contagem — sem isso a tabela gerada aqui diverge da que um clone limpo valida. A extração dos
 nomes publicados segue o mesmo escopo: variável de ambiente citada só em documento interno não
 entra no inventário. Sem `git` disponível, a varredura cai para a árvore de trabalho inteira.
+
+Em `design_assets/` só os scripts utilitários contam: `design_assets/<ativo>/scripts/**` entra na
+medição, e capturas, imagens e artefatos visuais ficam fora. A regra é a de `in_code_scope`, usada
+também pela trava de nomes e pelo renomeador, para os três nunca divergirem de escopo.
 """
 
 import argparse
@@ -60,7 +64,8 @@ MIGRACOES = RAIZ / "crates" / "poph-store" / "migrations" / "harness"
 BASE_CONTRATOS = RAIZ / "tests" / "contratos" / "base"
 TOML_PADRAO = RAIZ / "tests" / "contratos" / "base" / "config" / "default.toml"
 
-NAO_CODIGO = ("design_assets/",)
+DESIGN_ASSETS = "design_assets/"
+DESIGN_ASSETS_SCRIPTS = re.compile(r"^design_assets/[^/]+/scripts/")
 
 IDENT_START = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_$")
 JSX_ABRE_APOS = set("(,=:[!&|?{};") | {"=>"}
@@ -599,6 +604,18 @@ def caminhos_do_repositorio():
     return {nome for nome in nomes if nome}
 
 
+def in_code_scope(path):
+    """Whether a repository path is source this project writes, and so measured and gated.
+
+    `design_assets/` holds rendered captures, images and binaries next to the scripts that produce
+    them; only `design_assets/<asset>/scripts/` is source. Excluding the whole directory would
+    leave that source ungated, so the rule is the narrow one and every gate shares it.
+    """
+    if not path.startswith(DESIGN_ASSETS):
+        return True
+    return bool(DESIGN_ASSETS_SCRIPTS.match(path))
+
+
 def medir():
     medicao = Medicao()
     visiveis = caminhos_do_repositorio()
@@ -606,7 +623,7 @@ def medir():
         relativo = caminho.relative_to(RAIZ).as_posix()
         if visiveis is not None and relativo not in visiveis:
             continue
-        if relativo.startswith(NAO_CODIGO):
+        if not in_code_scope(relativo):
             continue
         if leitor.is_skipped(caminho):
             continue
