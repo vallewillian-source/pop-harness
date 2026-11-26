@@ -9,9 +9,6 @@ M02	41	crates/poph-plugin-eco/src/demo.rs
 M02	33	crates/poph-plugin-eco/tests/common/mod.rs
 M02	26	crates/poph-plugin-eco/tests/conversation.rs
 M02	12	crates/poph-plugin-eco/tests/crash.rs
-M03	24	crates/poph-evolution/tests/evolucao_real.rs
-M03	387	crates/poph-evolution/tests/evolution.rs
-M03	177	crates/poph-evolution/tests/webhook.rs
 M04	78	crates/poph-rag/src/banco.rs
 M04	20	crates/poph-rag/src/embedder.rs
 M04	13	crates/poph-rag/src/erro.rs

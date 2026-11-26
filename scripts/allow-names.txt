@@ -525,6 +525,8 @@ name	poph_erros_evolution_total	published metrica: poph_erros_evolution_total
 name	poph_erros_jev_total	published metrica: poph_erros_jev_total
 name	poph_erros_llm_total	published metrica: poph_erros_llm_total
 name	POPH_EVO_SEGREDO_LOJA	published variavel ambiente: POPH_EVO_SEGREDO_LOJA
+name	POPH_EVOLUTION_REAL_CHAVE	published variavel ambiente: POPH_EVOLUTION_REAL_CHAVE
+name	POPH_EVOLUTION_REAL_URL	published variavel ambiente: POPH_EVOLUTION_REAL_URL
 name	poph_fila_saida	published metrica: poph_fila_saida
 name	poph_fila_turnos	published metrica: poph_fila_turnos
 name	POPH_FLUXOS_ATIVO	published variavel ambiente: POPH_FLUXOS_ATIVO
