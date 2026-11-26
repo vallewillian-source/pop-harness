@@ -1,11 +1,6 @@
 # Arquivos com comentário fora da allowlist, um por linha: módulo, quantidade de comentários e caminho,
 # separados por TAB. Gerado por `bash scripts/check-comments.sh --atualizar-pendentes`; não editar à mão.
 M05	4	crates/poph-jev/Cargo.toml
-M05	75	crates/poph-jev/src/eval.rs
-M05	21	crates/poph-jev/src/lib.rs
-M05	11	crates/poph-jev/tests/cliente.rs
-M05	14	crates/poph-jev/tests/cliente_tls.rs
-M05	14	crates/poph-jev/tests/eval.rs
 M05	26	crates/poph-jev/tests/g4_departamento.rs
 M05	24	crates/poph-jev/tests/g5_produto.rs
 M05	26	crates/poph-jev/tests/g6_revisao.rs
@@ -13,7 +8,6 @@ M05	8	crates/poph-jev/tests/g7_injecao.rs
 M05	12	crates/poph-jev/tests/g8_encerrada.rs
 M05	24	crates/poph-jev/tests/g9_fluxo.rs
 M05	26	crates/poph-jev/tests/g9_medicao.rs
-M05	30	crates/poph-jev/tests/handoff.rs
 M05	20	crates/poph-jev/tests/lote.rs
 M06a	142	crates/poph-fluxos/src/cache.rs
 M06a	73	crates/poph-fluxos/src/compilador.rs
@@ -91,7 +85,6 @@ M10a	40	crates/poph-agent/src/turno/departamento.rs
 M10a	100	crates/poph-agent/src/turno/ferramentas.rs
 M10a	159	crates/poph-agent/src/turno/fluxo.rs
 M10a	93	crates/poph-agent/src/turno/fluxo_ferramentas.rs
-M10a	576	crates/poph-agent/src/turno/mod.rs
 M10a	9	crates/poph-agent/src/turno/pausa.rs
 M10a	83	crates/poph-agent/src/turno/prompt.rs
 M10b	10	crates/poph-agent/Cargo.toml
