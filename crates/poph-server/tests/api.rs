@@ -3549,6 +3549,7 @@ async fn isolamento_por_org_cobre_todas_as_operacoes_publicadas() {
             "/admin/v1/orgs/{org_id}/fichas/{ficha_id}/flow-runs/{run_id}/abandon",
         ),
         ("post", "/admin/v1/orgs/{org_id}/fichas/{ficha_id}/close"),
+        ("get", "/admin/v1/orgs/{org_id}/analytics/conversations"),
         ("get", "/admin/v1/orgs/{org_id}/usage/tokens"),
         (
             "get",

@@ -331,6 +331,10 @@ impl Store {
         Fichas(self)
     }
 
+    pub fn conversation_analytics(&self) -> ConversationAnalytics<'_> {
+        ConversationAnalytics(self)
+    }
+
     pub fn usage(&self) -> Usage<'_> {
         Usage(self)
     }

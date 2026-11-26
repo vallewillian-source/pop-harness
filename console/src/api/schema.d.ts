@@ -396,6 +396,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/v1/orgs/{org_id}/analytics/conversations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["conversation_analytics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/v1/orgs/{org_id}/analytics/operational-summary": {
         parameters: {
             query?: never;
@@ -1217,6 +1233,18 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        AgentJson: {
+            agent_id: string;
+            agent_name: string;
+            /** Format: int64 */
+            closed: number;
+            /** Format: int64 */
+            open: number;
+            /** Format: int64 */
+            total: number;
+            /** Format: int64 */
+            transferred: number;
+        };
         AgentUsageJson: {
             agent_id?: string | null;
             /** Format: int64 */
@@ -1307,6 +1335,17 @@ export interface components {
              * @description Versão para `If-Match`.
              */
             version: number;
+        };
+        ChannelJson: {
+            channel: string;
+            /** Format: int64 */
+            total: number;
+        };
+        ConversationReportJson: {
+            by_agent: components["schemas"]["AgentJson"][];
+            by_channel: components["schemas"]["ChannelJson"][];
+            by_day: components["schemas"]["DayJson"][];
+            summary: components["schemas"]["SummaryJson"];
         };
         CorpoTransferencia: {
             department_id?: string | null;
@@ -1470,6 +1509,17 @@ export interface components {
         DadosScript: {
             /** @description Texto do script de fluxo. */
             source: string;
+        };
+        DayJson: {
+            /** Format: int64 */
+            closed: number;
+            date: string;
+            /** Format: int64 */
+            open: number;
+            /** Format: int64 */
+            total: number;
+            /** Format: int64 */
+            transferred: number;
         };
         DayUsageJson: {
             date: string;
@@ -1891,6 +1941,20 @@ export interface components {
             details: unknown;
             /** @description Mensagem legível, em português. */
             message: string;
+        };
+        SummaryJson: {
+            /** Format: double */
+            avg_messages_per_conversation?: number | null;
+            /** Format: int64 */
+            closed: number;
+            /** Format: double */
+            conversation_to_ficha_rate?: number | null;
+            /** Format: int64 */
+            open: number;
+            /** Format: int64 */
+            total: number;
+            /** Format: int64 */
+            transferred: number;
         };
         /** @description Resposta da criação: o token e o valor em claro (só aparece aqui). */
         TokenCriadoJson: {
@@ -3283,6 +3347,49 @@ export interface operations {
             };
             /** @description Versão desatualizada */
             412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+        };
+    };
+    conversation_analytics: {
+        parameters: {
+            query: {
+                from: number;
+                to: number;
+                agent_id?: string;
+                channel?: string;
+                tz_offset_minutes?: number;
+            };
+            header?: never;
+            path: {
+                org_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationReportJson"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

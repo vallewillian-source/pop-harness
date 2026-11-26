@@ -329,6 +329,7 @@ Colunas:
 | Execuções de fluxo | POST | `/admin/v1/orgs/{org_id}/fichas/{ficha_id}/flow-runs` | exceção: CLI vem na FX-31 | sim | sim | sim |
 | Execuções de fluxo | POST | `/admin/v1/orgs/{org_id}/fichas/{ficha_id}/flow-runs/{run_id}/actions` | exceção: CLI vem na FX-31 | sim | sim | sim |
 | Execuções de fluxo | POST | `/admin/v1/orgs/{org_id}/fichas/{ficha_id}/flow-runs/{run_id}/abandon` | exceção: CLI vem na FX-31 | sim | sim | sim |
+| Conversation analytics | GET | `/admin/v1/orgs/{org_id}/analytics/conversations` | exceção: sem equivalente na CLI | n/a | n/a | sim |
 | Token usage | GET | `/admin/v1/orgs/{org_id}/usage/tokens` | exceção: sem equivalente na CLI | n/a | n/a | sim |
 | Atendimento (resumo) | GET | `/admin/v1/orgs/{org_id}/analytics/operational-summary` | exceção: sem equivalente na CLI | n/a | n/a | sim |
 
@@ -1406,3 +1407,19 @@ Paridade de CLI: ainda não existe; entra na FX-31.
 `GET /admin/v1/orgs/{org_id}/usage/tokens?from=<ms>&to=<ms>` requires an organization or global bearer token and an existing organization. Both integer epoch-millisecond bounds are required; the interval is `[from, to]` over `turns.started_at`. Invalid bounds return 422, unauthorized requests 401, another organization's token 403, and a missing organization 404.
 
 The response contains `total_input_tokens`, `total_output_tokens`, `total_cost_micros` and `turn_count`, plus `by_agent` and `by_day` arrays. Each agent entry has `agent_id`, `input_tokens`, `output_tokens` and `turn_count`; a null agent is included and sorted last. Day entries contain `date` (UTC, YYYY-MM-DD), `output_tokens` and `turn_count`, ordered by date. Empty periods produce zero totals and empty arrays. Counts refer to turns, not model calls; retained history may be incomplete. The queries share a read snapshot. Migration 0018 indexes `turns(org_id, started_at)`.
+
+
+### Conversation analytics
+
+`GET /admin/v1/orgs/{org_id}/analytics/conversations` requires an organization token and
+`from` and `to` in epoch milliseconds, selecting `[from, to)`. It uses the first message
+timestamp, or conversation creation when no message exists. Optional `agent_id` and `channel`
+filter the whole result; empty values do not filter. `tz_offset_minutes` defaults to zero and
+must be between -840 and 840; it changes daily grouping only.
+
+The response contains `summary`, `by_day`, `by_agent`, and `by_channel`. Counts separate open,
+transferred, and closed statuses. The message average excludes conversations with no messages
+and counts all retained messages per selected conversation. The Case rate is the fraction of
+selected conversations linked to a Case. Both are null without a denominator. Agent names
+reflect the current record. All blocks are read from the same database snapshot. Retention can
+change message counts and the earliest message available.

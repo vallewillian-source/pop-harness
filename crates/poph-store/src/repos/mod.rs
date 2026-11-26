@@ -176,3 +176,9 @@ pub(crate) fn conflito_ou_ausente(
         }),
     }
 }
+
+mod conversation_analytics;
+pub use conversation_analytics::{
+    ConversationAgent, ConversationAnalytics, ConversationChannel, ConversationCounts,
+    ConversationDay, ConversationReport, ConversationSummary,
+};

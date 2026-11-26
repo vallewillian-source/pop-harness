@@ -12,6 +12,7 @@ mod cluster;
 mod conhecimento;
 mod conteudo;
 mod conversas;
+mod conversation_analytics;
 mod departamentos;
 /// Leitura das Fichas (FX-29): lista com filtros, detalhe com execuções e linha do tempo.
 mod fichas;
@@ -156,6 +157,7 @@ pub fn router(estado: Estado) -> Router {
             "/admin/v1/orgs/{org_id}/fichas/{ficha_id}/close",
             axum::routing::post(fichas::fechar),
         )
+        .route("/admin/v1/orgs/{org_id}/analytics/conversations", get(conversation_analytics::report))
         .route("/admin/v1/orgs/{org_id}/usage/tokens", get(usage::tokens))
         .route(
             "/admin/v1/orgs/{org_id}/analytics/operational-summary",
@@ -549,6 +551,7 @@ pub fn documento() -> utoipa::openapi::OpenApi {
         fichas::listar, fichas::mostrar, fichas::eventos, fichas::iniciar_fluxo, fichas::acao,
         fichas::abandonar, fichas::fechar,
         analytics::operational_summary,
+        conversation_analytics::report,
         usage::tokens,
         saude::healthz,
         saude::metrics,
@@ -591,6 +594,7 @@ pub fn documento() -> utoipa::openapi::OpenApi {
         matrix::EspacoDesligadoJson,
         saude::HealthJson,
         saude::MetricasJson,
+        conversation_analytics::ConversationReportJson, conversation_analytics::SummaryJson, conversation_analytics::DayJson, conversation_analytics::AgentJson, conversation_analytics::ChannelJson,
         analytics::OperationalSummaryJson,
         analytics::NodeCountJson,
         usage::TokenUsageJson, usage::AgentUsageJson, usage::DayUsageJson,
