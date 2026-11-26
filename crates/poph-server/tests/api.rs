@@ -1739,6 +1739,19 @@ async fn toda_escrita_da_openapi_precisa_de_cobertura_de_auditoria() {
         ("post", "/admin/v1/orgs/{org_id}/fichas/{ficha_id}/flow-runs/{run_id}/actions"),
         ("post", "/admin/v1/orgs/{org_id}/fichas/{ficha_id}/flow-runs/{run_id}/abandon"),
         ("post", "/admin/v1/orgs/{org_id}/fichas/{ficha_id}/close"),
+        // PA-82b: conversas do site (abrir, aceitar mensagem e cancelar turno auditam).
+        (
+            "post",
+            "/admin/v1/orgs/{org_id}/agents/{agent_id}/site-conversations",
+        ),
+        (
+            "post",
+            "/admin/v1/orgs/{org_id}/site-conversations/{id}/messages",
+        ),
+        (
+            "post",
+            "/admin/v1/orgs/{org_id}/site-conversations/{id}/turns/{turn_id}/cancel",
+        ),
     ]
     .into_iter()
     .map(|(m, p)| (m.to_owned(), p.to_owned()))
@@ -3552,6 +3565,35 @@ async fn isolamento_por_org_cobre_todas_as_operacoes_publicadas() {
             "get",
             "/admin/v1/orgs/{org_id}/analytics/operational-summary",
         ),
+        // PA-82b: conversas do site.
+        (
+            "post",
+            "/admin/v1/orgs/{org_id}/agents/{agent_id}/site-conversations",
+        ),
+        (
+            "get",
+            "/admin/v1/orgs/{org_id}/site-conversations/{id}/messages",
+        ),
+        (
+            "post",
+            "/admin/v1/orgs/{org_id}/site-conversations/{id}/messages",
+        ),
+        (
+            "get",
+            "/admin/v1/orgs/{org_id}/site-conversations/{id}/turns/{turn_id}",
+        ),
+        (
+            "post",
+            "/admin/v1/orgs/{org_id}/site-conversations/{id}/turns/{turn_id}/cancel",
+        ),
+        (
+            "get",
+            "/admin/v1/orgs/{org_id}/site-conversations/{id}/events",
+        ),
+        (
+            "get",
+            "/admin/v1/orgs/{org_id}/site-conversations/{id}/events/stream",
+        ),
     ];
     let esperadas_set: BTreeSet<_> = esperadas
         .iter()
@@ -3591,6 +3633,8 @@ async fn isolamento_por_org_cobre_todas_as_operacoes_publicadas() {
             "ficha_id",
             "run_id",
             "number",
+            "id",
+            "turn_id",
         ] {
             caminho = caminho.replace(&format!("{{{nome}}}"), org_b);
         }

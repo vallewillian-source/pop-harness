@@ -333,6 +333,13 @@ Colunas:
 | SLA analytics | GET | `/admin/v1/orgs/{org_id}/analytics/sla` | exceção: sem equivalente na CLI | n/a | n/a | sim |
 | Token usage | GET | `/admin/v1/orgs/{org_id}/usage/tokens` | exceção: sem equivalente na CLI | n/a | n/a | sim |
 | Atendimento (resumo) | GET | `/admin/v1/orgs/{org_id}/analytics/operational-summary` | exceção: sem equivalente na CLI | n/a | n/a | sim |
+| Conversas do site | POST | `/admin/v1/orgs/{org_id}/agents/{agent_id}/site-conversations` | exceção: sem equivalente na CLI | n/a | sim | sim |
+| Conversas do site | GET | `/admin/v1/orgs/{org_id}/site-conversations/{id}/messages` | exceção: sem equivalente na CLI | n/a | n/a | sim |
+| Conversas do site | POST | `/admin/v1/orgs/{org_id}/site-conversations/{id}/messages` | exceção: sem equivalente na CLI | n/a | sim | sim |
+| Conversas do site | GET | `/admin/v1/orgs/{org_id}/site-conversations/{id}/turns/{turn_id}` | exceção: sem equivalente na CLI | n/a | n/a | sim |
+| Conversas do site | POST | `/admin/v1/orgs/{org_id}/site-conversations/{id}/turns/{turn_id}/cancel` | exceção: sem equivalente na CLI | n/a | sim | sim |
+| Conversas do site | GET | `/admin/v1/orgs/{org_id}/site-conversations/{id}/events` | exceção: sem equivalente na CLI | n/a | n/a | sim |
+| Conversas do site | GET | `/admin/v1/orgs/{org_id}/site-conversations/{id}/events/stream` | exceção: sem equivalente na CLI | n/a | n/a | sim |
 
 ## Fechar conversa (MX-06)
 

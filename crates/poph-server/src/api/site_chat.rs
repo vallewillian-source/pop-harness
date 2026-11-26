@@ -214,6 +214,16 @@ pub async fn create(
         .store
         .site_chat()
         .create(org, agent, data.external_ref)?;
+    if created {
+        super::auditoria::registrar(
+            &state,
+            &identity,
+            Some(org),
+            "site_chat_open",
+            "conversation",
+            conversation.to_string(),
+        )?;
+    }
     let status = if created {
         StatusCode::CREATED
     } else {
@@ -248,6 +258,14 @@ pub async fn submit(
             .submit(org, conversation, data.idempotency_key, data.text)?
         {
             SiteSubmission::Accepted(message, turn) => {
+                super::auditoria::registrar(
+                    &state,
+                    &identity,
+                    Some(org),
+                    "site_chat_message",
+                    "message",
+                    message.to_string(),
+                )?;
                 crate::site_chat::launch(
                     state,
                     SiteTurnKey {
@@ -299,11 +317,22 @@ pub async fn cancel(
     Path(path): Path<TurnPath>,
 ) -> Result<Json<Value>, ApiError> {
     let key = scoped_turn(&state, &identity, &path)?;
+    let previous = state.store.site_chat().turn(key.clone())?;
     let result = state
         .store
         .site_chat()
-        .finish(key, SiteOutcome::Cancelled)?;
-    state.site_workers.cancel(key);
+        .finish(key.clone(), SiteOutcome::Cancelled)?;
+    state.site_workers.cancel(key.clone());
+    if previous.status != "cancelled" && result.status == "cancelled" {
+        super::auditoria::registrar(
+            &state,
+            &identity,
+            Some(key.org),
+            "site_chat_cancel",
+            "turn",
+            key.turn.to_string(),
+        )?;
+    }
     Ok(Json(json!(result)))
 }
 

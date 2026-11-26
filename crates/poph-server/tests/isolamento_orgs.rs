@@ -128,6 +128,7 @@ impl Servidor {
             label: "teste".to_owned(),
             hash: hash_argon2(TOKEN_GLOBAL),
         }];
+        // PA-82b: o agente do site é semeado sem ferramentas, então a política do site o aceita.
         config.validar().expect("configuração válida");
 
         let store = Arc::new(Store::open(&config).expect("abre o banco"));
@@ -366,6 +367,10 @@ struct Org {
     mensagem: String,
     /// Anexo dessa mensagem (HR-46b).
     anexo: String,
+    /// Conversa do site da org (PA-82b), semeada no repositório.
+    site: String,
+    /// Id de turno bem formado que não existe nesta org.
+    site_turn: String,
     marcador: &'static str,
 }
 
@@ -388,6 +393,8 @@ impl Org {
             ("flow_id", self.fluxo.clone()),
             ("ficha_id", self.ficha.clone()),
             ("run_id", self.execucao.clone()),
+            ("id", self.site.clone()),
+            ("turn_id", self.site_turn.clone()),
             ("kind", "sms".to_owned()),
         ]
     }
@@ -686,6 +693,30 @@ async fn montar_org(s: &Servidor, slug: &str, marcador: &'static str) -> Org {
     );
     let execucao = abertura.json["id"].as_str().unwrap().to_owned();
 
+    let agente_site = s
+        .criar(
+            &format!("{raiz}/agents"),
+            &token,
+            json!({"name": format!("Agente site {marcador}"), "slug": format!("site-{slug}")}),
+            StatusCode::CREATED,
+        )
+        .await["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let site = s
+        .store
+        .site_chat()
+        .create(
+            org_id,
+            agente_site.parse().unwrap(),
+            format!("isola-{slug}"),
+        )
+        .expect("conversa do site")
+        .0
+        .to_string();
+    let site_turn = uuid::Uuid::new_v4().to_string();
+
     Org {
         id,
         token,
@@ -705,6 +736,8 @@ async fn montar_org(s: &Servidor, slug: &str, marcador: &'static str) -> Org {
         execucao,
         mensagem: mensagem.id.to_string(),
         anexo,
+        site,
+        site_turn,
         marcador,
     }
 }
@@ -1023,6 +1056,41 @@ fn casos() -> Vec<Caso> {
             "/admin/v1/orgs/{org_id}/analytics/operational-summary",
             Vazio,
         ),
+        caso(
+            "post",
+            "/admin/v1/orgs/{org_id}/agents/{agent_id}/site-conversations",
+            Json(r#"{"external_ref":"Invadido"}"#),
+        ),
+        caso(
+            "get",
+            "/admin/v1/orgs/{org_id}/site-conversations/{id}/messages",
+            Vazio,
+        ),
+        caso(
+            "post",
+            "/admin/v1/orgs/{org_id}/site-conversations/{id}/messages",
+            Json(r#"{"text":"Invadido","idempotency_key":"invasao"}"#),
+        ),
+        caso(
+            "get",
+            "/admin/v1/orgs/{org_id}/site-conversations/{id}/turns/{turn_id}",
+            Vazio,
+        ),
+        caso(
+            "post",
+            "/admin/v1/orgs/{org_id}/site-conversations/{id}/turns/{turn_id}/cancel",
+            Vazio,
+        ),
+        caso(
+            "get",
+            "/admin/v1/orgs/{org_id}/site-conversations/{id}/events",
+            Vazio,
+        ),
+        caso(
+            "get",
+            "/admin/v1/orgs/{org_id}/site-conversations/{id}/events/stream",
+            Vazio,
+        ),
     ]
 }
 
@@ -1183,6 +1251,14 @@ fn controle_esperado(metodo: &str, modelo: &str) -> Option<u16> {
     }
     if modelo.ends_with("/analytics/operational-summary") {
         return Some(422);
+    }
+    if modelo.ends_with("/site-conversations/{id}/events/stream") {
+        // SSE fica aberto enquanto a conversa vive: o controle não tem fim de resposta.
+        return None;
+    }
+    if modelo.ends_with("/site-conversations/{id}/turns/{turn_id}") {
+        // A org semeada tem conversa do site, mas não turno: o controle do turno não se aplica.
+        return None;
     }
     Some(200)
 }
@@ -2165,6 +2241,8 @@ fn detector_de_vazamento_so_usa_id_em_sucesso() {
         execucao: "00000000-9999".to_owned(),
         mensagem: "cccccccc-5555".to_owned(),
         anexo: "dddddddd-6666".to_owned(),
+        site: "eeeeeeee-9999".to_owned(),
+        site_turn: "ffffffff-0000".to_owned(),
         marcador: MARCADOR_B,
     };
     let resposta = |status: u16, texto: &str| Resposta {

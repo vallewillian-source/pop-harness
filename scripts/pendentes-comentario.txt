@@ -212,7 +212,7 @@ M11a-c	33	crates/poph-server/src/matrix_metricas.rs
 M11a-c	264	crates/poph-server/src/matrix_resposta.rs
 M11a-c	57	crates/poph-server/src/saida_whatsapp.rs
 M11d	34	crates/poph-server/tests/agente_fluxos.rs
-M11d	121	crates/poph-server/tests/api.rs
+M11d	123	crates/poph-server/tests/api.rs
 M11d	71	crates/poph-server/tests/backup_http.rs
 M11d	24	crates/poph-server/tests/cluster_reload.rs
 M11d	22	crates/poph-server/tests/console.rs
@@ -229,7 +229,7 @@ M11d	88	crates/poph-server/tests/fluxos_efeitos.rs
 M11d	9	crates/poph-server/tests/fluxos_limites.rs
 M11d	12	crates/poph-server/tests/fluxos_metricas.rs
 M11d	95	crates/poph-server/tests/isolamento_matrix.rs
-M11d	129	crates/poph-server/tests/isolamento_orgs.rs
+M11d	134	crates/poph-server/tests/isolamento_orgs.rs
 M11d	46	crates/poph-server/tests/manifestos_plugins.rs
 M11d	58	crates/poph-server/tests/matrix_api.rs
 M11d	41	crates/poph-server/tests/matrix_as.rs

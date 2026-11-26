@@ -194,7 +194,7 @@ M11a-c	253	crates/poph-server/src/api/orgs.rs
 M11a-c	16	crates/poph-server/src/api/paginacao.rs
 M11a-c	129	crates/poph-server/src/api/produtos.rs
 M11a-c	82	crates/poph-server/src/api/saude.rs
-M11a-c	32	crates/poph-server/src/api/site_chat.rs
+M11a-c	38	crates/poph-server/src/api/site_chat.rs
 M11a-c	12	crates/poph-server/src/api/sla_analytics.rs
 M11a-c	378	crates/poph-server/src/api/teste_chat.rs
 M11a-c	103	crates/poph-server/src/api/tokens.rs
@@ -247,7 +247,7 @@ M11d	738	crates/poph-server/tests/fluxos_efeitos.rs
 M11d	119	crates/poph-server/tests/fluxos_limites.rs
 M11d	67	crates/poph-server/tests/fluxos_metricas.rs
 M11d	906	crates/poph-server/tests/isolamento_matrix.rs
-M11d	988	crates/poph-server/tests/isolamento_orgs.rs
+M11d	997	crates/poph-server/tests/isolamento_orgs.rs
 M11d	347	crates/poph-server/tests/manifestos_plugins.rs
 M11d	633	crates/poph-server/tests/matrix_api.rs
 M11d	326	crates/poph-server/tests/matrix_as.rs
