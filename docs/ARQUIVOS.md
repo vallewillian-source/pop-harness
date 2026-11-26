@@ -6,6 +6,7 @@ no real LLM, and no `attachments` table (that is HR-24). No `unsafe` in this cra
 ## What the crate does
 
 1. **Size:** rejects anything above 16 MB (configurable, up to 256 MB) before anything else. Nothing is written.
+   Exactly 16 MB passes this check; the type decides after it.
 2. **Real type:** decides by content (file signature), not by name. The name is only used for two things: rejecting
    program or script extensions and catching a misleading file.
 3. **Accepted:** JPEG, PNG, WebP and GIF (sent to the LLM as images); PDF, Word (`.docx`), Excel (`.xlsx` and `.xls`)
@@ -18,7 +19,8 @@ no real LLM, and no `attachments` table (that is HR-24). No `unsafe` in this cra
 7. **PDF with no text** (scanned): does not invent content; the LLM receives the instruction to tell the customer it
    could not read the file.
 8. **Blob:** written to `<blobs folder>/<org id>/<sha256>`, once per content. Repeating the same file reuses the blob.
-   The name the customer sent never becomes a disk path.
+   The name the customer sent never becomes a disk path. Each org has its own folder: another org never reuses
+   a blob, even with the same content, and it does not appear as "already existed" for it.
 
 ## How the text reaches the LLM
 
@@ -50,6 +52,14 @@ does not know the composer (which is still in `poph-core`).
   by the system in ~0.4 s (release build); the main process carries on.
 - Zip bomb (Word/Excel/PowerPoint): if any uncompressed XML block exceeds 32 MB or the total exceeds 64 MB, the read is
   refused before decompressing (tested with the 200 MB fixture, in ~3 ms).
+
+## Dependencies with a reason
+
+- **PDF, Excel and Office readers:** chosen in the HR-02 spike (`RELATORIO_HR02.md` §1 and §5). Do not replace them
+  without consulting the maintainer.
+- **`zip` with `deflate` only, and no default features:** pure Rust. The default features pull `bzip2` and `zstd`
+  written in C, which breaks the ARM build.
+- **`rlimit`:** sets the memory ceiling of the reading process (RLIMIT_AS), so the crate itself needs no `unsafe` code.
 
 ## Configuration
 
@@ -92,8 +102,10 @@ export PATH="$HOME/.cargo/bin:$PATH"
 cd apps/pop-harness
 cargo test -p poph-files                                  # 13 unit + 26 end-to-end
 cargo clippy -p poph-files --all-targets -- -D warnings
-cargo test --release -p poph-files --test recebimento     # optional
+cargo test --release -p poph-files --test receiving       # optional
 ```
+
+The end-to-end tests (`tests/receiving.rs`) run the real `poph-extrator` program as a child process, as in production.
 
 Fixtures in `crates/poph-files/tests/fixtures/`: PDFs (text, table, scanned, broken, bomb and injection), `.docx`
 (includes a decompression bomb), `.pptx`, `.xlsx`, `.xls`, `.doc` and `.ppt`. The `.doc`/`.ppt`/`.xls`/injection files
