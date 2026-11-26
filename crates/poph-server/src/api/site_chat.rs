@@ -317,12 +317,12 @@ pub async fn cancel(
     Path(path): Path<TurnPath>,
 ) -> Result<Json<Value>, ApiError> {
     let key = scoped_turn(&state, &identity, &path)?;
-    let previous = state.store.site_chat().turn(key.clone())?;
+    let previous = state.store.site_chat().turn(key)?;
     let result = state
         .store
         .site_chat()
-        .finish(key.clone(), SiteOutcome::Cancelled)?;
-    state.site_workers.cancel(key.clone());
+        .finish(key, SiteOutcome::Cancelled)?;
+    state.site_workers.cancel(key);
     if previous.status != "cancelled" && result.status == "cancelled" {
         super::auditoria::registrar(
             &state,
