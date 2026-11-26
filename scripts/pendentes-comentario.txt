@@ -1,17 +1,6 @@
 # Arquivos com comentário fora da allowlist, um por linha: módulo, quantidade de comentários e caminho,
 # separados por TAB. Gerado por `bash scripts/check-comments.sh --atualizar-pendentes`; não editar à mão.
 M02	5	crates/poph-core/Cargo.toml
-M02	8	crates/poph-core/src/lib.rs
-M02	4	crates/poph-core/src/llm/base64.rs
-M02	14	crates/poph-core/src/llm/erro.rs
-M02	13	crates/poph-core/src/llm/fake.rs
-M02	12	crates/poph-core/src/llm/limites.rs
-M02	9	crates/poph-core/src/llm/mod.rs
-M02	49	crates/poph-core/src/llm/openai.rs
-M02	10	crates/poph-core/src/llm/provedor.rs
-M02	9	crates/poph-core/src/llm/sse.rs
-M02	58	crates/poph-core/src/llm/tipos.rs
-M02	22	crates/poph-core/src/llm/tls.rs
 M02	16	crates/poph-core/tests/apoio/mod.rs
 M02	8	crates/poph-core/tests/llm_logs.rs
 M02	7	crates/poph-core/tests/llm_real.rs
@@ -360,6 +349,3 @@ M12b	9	crates/poph/tests/serve.rs
 M12b	18	crates/poph/tests/serve_logs.rs
 M12b	13	crates/poph/tests/token_api.rs
 M14	16	scripts/Dockerfile.build-arm
-M14	8	scripts/medicao-memoria/synapse_falso.py
-M14	11	scripts/medir-memoria-roteiro.sh
-M14	29	scripts/medir-memoria.sh
