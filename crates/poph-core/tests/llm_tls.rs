@@ -1,38 +1,31 @@
-//! https de verdade no cliente do provedor (HR-10b): servidor TLS local com certificado de fixtura.
-//!
-//! Prova, sem rede externa: (a) requisição https completada e stream lido; (b) certificado de uma CA
-//! desconhecida é recusado com erro de TLS definitivo, uma única tentativa, mensagem legível e sem a
-//! chave; (c) nome do servidor diferente do certificado também é recusado; (d) `http://` continua
-//! funcionando.
-
-mod apoio;
+#[path = "apoio/mod.rs"]
+mod support;
 
 use std::time::Duration;
 
-use apoio::{
-    Resposta, Servidor, ServidorTls, certificados, colher, montar, pergunta, so_eventos, sse,
-};
 use futures::StreamExt;
 use poph_core::llm::{FinishReason, LlmError, LlmEvent, LlmProvider};
+use support::{
+    Resposta, Servidor, ServidorTls, certificados, colher, montar, pergunta, so_eventos, sse,
+};
 
-const TEXTO_OLA: &str = r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":"Olá"},"finish_reason":null}]}"#;
+const HELLO_CHUNK: &str = r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":"Olá"},"finish_reason":null}]}"#;
 const FIM: &str = r#"{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}}"#;
 
-/// Cliente do teste: o `montar` padrão mais a raiz extra (a CA de teste).
-fn montar_confiando_no_certificado(url_base: &str, retentativas: u32) -> apoio::Montagem {
-    let mut montagem = montar(url_base, retentativas, Duration::from_secs(5));
-    montagem.cliente = montagem
+fn setup_trusting_certificate(url_base: &str, retentativas: u32) -> support::Montagem {
+    let mut setup = montar(url_base, retentativas, Duration::from_secs(5));
+    setup.cliente = setup
         .cliente
         .clone()
         .with_test_root(certificados::CA)
         .expect("raiz de teste aceita");
-    montagem
+    setup
 }
 
 #[tokio::test]
-async fn https_funciona_quando_o_certificado_e_confiavel() {
+async fn https_works_when_certificate_is_trusted() {
     let servidor = ServidorTls::iniciar(
-        vec![Resposta::ok(sse(&[TEXTO_OLA, FIM, "[DONE]"]))],
+        vec![Resposta::ok(sse(&[HELLO_CHUNK, FIM, "[DONE]"]))],
         certificados::SERVIDOR_IP,
     )
     .await;
@@ -41,51 +34,48 @@ async fn https_funciona_quando_o_certificado_e_confiavel() {
         "{}",
         servidor.url_base
     );
-    let m = montar_confiando_no_certificado(&servidor.url_base, 2);
+    let m = setup_trusting_certificate(&servidor.url_base, 2);
 
     let fluxo = m
         .cliente
         .stream(pergunta("oi"))
         .await
         .expect("abre por https");
-    let eventos = so_eventos(colher(fluxo).await);
+    let events = so_eventos(colher(fluxo).await);
 
-    assert_eq!(eventos[0], LlmEvent::Texto("Olá".into()));
-    assert_eq!(
-        eventos.last(),
-        Some(&LlmEvent::Fim(FinishReason::Completed))
-    );
-    // O pedido chegou inteiro pelo túnel TLS.
-    let corpo = &servidor.pedidos()[0];
-    assert_eq!(corpo["model"], "gemini-3.8-flash-tiered");
-    assert_eq!(corpo["messages"][1]["content"], "oi");
+    assert_eq!(events[0], LlmEvent::Texto("Olá".into()));
+    assert_eq!(events.last(), Some(&LlmEvent::Fim(FinishReason::Completed)));
+    let body = &servidor.pedidos()[0];
+    assert_eq!(body["model"], "gemini-3.8-flash-tiered");
+    assert_eq!(body["messages"][1]["content"], "oi");
     assert_eq!(m.metricas.llm_calls.value(), 1);
     assert_eq!(servidor.conexoes(), 1);
 }
 
 #[tokio::test]
-async fn certificado_de_ca_desconhecida_e_recusado_e_nao_retenta() {
+async fn unknown_ca_certificate_is_refused_without_retry() {
     let servidor = ServidorTls::iniciar(
-        vec![Resposta::ok(sse(&[TEXTO_OLA, "[DONE]"]))],
+        vec![Resposta::ok(sse(&[HELLO_CHUNK, "[DONE]"]))],
         certificados::SERVIDOR_IP,
     )
     .await;
-    // Cliente padrão: confia só nas raízes do sistema, não na CA de teste.
     let m = montar(&servidor.url_base, 2, Duration::from_secs(5));
 
-    let erro = match m.cliente.stream(pergunta("oi")).await {
+    let error = match m.cliente.stream(pergunta("oi")).await {
         Ok(_) => panic!("certificado de CA desconhecida foi aceito"),
-        Err(erro) => erro,
+        Err(error) => error,
     };
 
-    let LlmError::Tls(detalhe) = &erro else {
-        panic!("esperava erro de TLS, veio {erro:?}");
+    let LlmError::Tls(detail) = &error else {
+        panic!("esperava erro de TLS, veio {error:?}");
     };
-    assert!(!detalhe.is_empty(), "detalhe vazio");
-    let texto = erro.to_string();
+    assert!(!detail.is_empty(), "detalhe vazio");
+    let texto = error.to_string();
     assert!(texto.contains("TLS"), "mensagem: {texto}");
-    // Erro definitivo: a política de retentativa não pode tentar de novo um certificado recusado.
-    assert!(!erro.is_transient(), "erro de TLS não pode ser transitório");
+    assert!(
+        !error.is_transient(),
+        "erro de TLS não pode ser transitório"
+    );
     assert_eq!(
         servidor.conexoes(),
         1,
@@ -95,38 +85,36 @@ async fn certificado_de_ca_desconhecida_e_recusado_e_nao_retenta() {
         servidor.pedidos().is_empty(),
         "o pedido não pode ter chegado"
     );
-    // A chave continua fora do erro, inclusive do erro novo.
     assert!(
-        !texto.contains(apoio::CHAVE),
+        !texto.contains(support::CHAVE),
         "chave vazou no erro: {texto}"
     );
-    assert!(!format!("{erro:?}").contains(apoio::CHAVE));
+    assert!(!format!("{error:?}").contains(support::CHAVE));
     assert_eq!(m.metricas.llm_errors.value(), 1);
 }
 
 #[tokio::test]
-async fn nome_do_servidor_diferente_do_certificado_e_recusado() {
-    // O servidor apresenta certificado para `localhost`; o cliente conecta em `127.0.0.1`.
+async fn server_name_mismatch_is_refused() {
     let servidor = ServidorTls::iniciar(
-        vec![Resposta::ok(sse(&[TEXTO_OLA, "[DONE]"]))],
+        vec![Resposta::ok(sse(&[HELLO_CHUNK, "[DONE]"]))],
         certificados::SERVIDOR_NOME,
     )
     .await;
-    let m = montar_confiando_no_certificado(&servidor.url_base, 0);
+    let m = setup_trusting_certificate(&servidor.url_base, 0);
 
-    let erro = match m.cliente.stream(pergunta("oi")).await {
+    let error = match m.cliente.stream(pergunta("oi")).await {
         Ok(_) => panic!("certificado com nome errado foi aceito"),
-        Err(erro) => erro,
+        Err(error) => error,
     };
 
-    assert!(matches!(erro, LlmError::Tls(_)), "erro: {erro:?}");
-    assert!(!erro.is_transient());
+    assert!(matches!(error, LlmError::Tls(_)), "erro: {error:?}");
+    assert!(!error.is_transient());
     assert!(servidor.pedidos().is_empty());
 }
 
 #[tokio::test]
-async fn http_continua_funcionando() {
-    let servidor = Servidor::iniciar(vec![Resposta::ok(sse(&[TEXTO_OLA, FIM, "[DONE]"]))]).await;
+async fn http_keeps_working() {
+    let servidor = Servidor::iniciar(vec![Resposta::ok(sse(&[HELLO_CHUNK, FIM, "[DONE]"]))]).await;
     let m = montar(&servidor.url_base, 0, Duration::from_secs(5));
 
     let fluxo = m
@@ -134,39 +122,37 @@ async fn http_continua_funcionando() {
         .stream(pergunta("oi"))
         .await
         .expect("abre por http");
-    let eventos: Vec<LlmEvent> = colher(fluxo)
+    let events: Vec<LlmEvent> = colher(fluxo)
         .await
         .into_iter()
         .map(|item| item.expect("evento"))
         .collect();
 
-    assert_eq!(eventos[0], LlmEvent::Texto("Olá".into()));
-    assert_eq!(eventos.len(), 3);
+    assert_eq!(events[0], LlmEvent::Texto("Olá".into()));
+    assert_eq!(events.len(), 3);
 }
 
 #[tokio::test]
-async fn erro_de_tls_no_meio_do_stream_vira_conexao_interrompida() {
-    // Servidor que completa o handshake TLS e fecha sem responder o corpo: prova que ler depois do
-    // handshake continua caindo no erro já existente, e não no erro de TLS novo.
+async fn tls_error_mid_stream_becomes_interrupted_connection() {
     let servidor =
         ServidorTls::iniciar(vec![Resposta::ok(String::new())], certificados::SERVIDOR_IP).await;
-    let m = montar_confiando_no_certificado(&servidor.url_base, 0);
+    let m = setup_trusting_certificate(&servidor.url_base, 0);
 
     let fluxo = m
         .cliente
         .stream(pergunta("oi"))
         .await
         .expect("abre por https");
-    let itens: Vec<_> = fluxo.collect().await;
-    let erro = itens
+    let items: Vec<_> = fluxo.collect().await;
+    let error = items
         .into_iter()
         .find_map(|item| item.err())
         .expect("falha ao ler o corpo vazio");
     assert!(
         matches!(
-            erro,
+            error,
             LlmError::InvalidResponse(_) | LlmError::ConnectionInterrupted(_)
         ),
-        "erro: {erro:?}"
+        "erro: {error:?}"
     );
 }

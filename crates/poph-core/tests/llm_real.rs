@@ -1,11 +1,3 @@
-//! Teste manual com o gateway real (antigravity2api em 127.0.0.1:8045). Fica fora do CI.
-//!
-//! Uso (a chave vem só do ambiente; o teste não a imprime):
-//!   ANTIGRAVITY_API_KEY=... cargo test -p poph-core --test llm_real -- --ignored --nocapture
-//!
-//! Faz uma única chamada em stream, com uma ferramenta oferecida e uma instrução que pede o uso
-//! dela. Imprime só tempos, tipos de evento e uso de tokens.
-
 use std::time::{Duration, Instant};
 
 use futures::StreamExt;
@@ -18,7 +10,7 @@ use serde_json::json;
 
 #[tokio::test]
 #[ignore = "chamada real ao gateway; roda só com ANTIGRAVITY_API_KEY definida"]
-async fn uma_chamada_real_com_stream_e_ferramenta() {
+async fn real_call_with_stream_and_tool() {
     let chave =
         std::env::var("ANTIGRAVITY_API_KEY").expect("defina ANTIGRAVITY_API_KEY no ambiente");
     let url_base = std::env::var("ANTIGRAVITY_BASE_URL")
@@ -37,15 +29,15 @@ async fn uma_chamada_real_com_stream_e_ferramenta() {
         max_tokens_saida: 512,
         recusa_turno_modelo: true,
     };
-    let metricas = BaseMetrics::register(&Registry::new()).expect("catálogo");
-    let cliente = OpenAiCompatibleClient::new(
+    let metrics = BaseMetrics::register(&Registry::new()).expect("catálogo");
+    let client = OpenAiCompatibleClient::new(
         config,
         LlmLimiter::new(1, 1).expect("limites"),
-        metricas.clone(),
+        metrics.clone(),
     )
     .expect("cliente");
 
-    let mut pedido = Request::new(
+    let mut request = Request::new(
         OrgId::generate(),
         vec![
             Message::System("Você é um atendente objetivo. Responda em português do Brasil.".to_owned()),
@@ -54,7 +46,7 @@ async fn uma_chamada_real_com_stream_e_ferramenta() {
             )]),
         ],
     );
-    pedido.tools = vec![Tool {
+    request.tools = vec![Tool {
         nome: "buscar_produto".to_owned(),
         descricao: "Busca um produto no catálogo e devolve preço e condições".to_owned(),
         parameters: json!({
@@ -64,56 +56,53 @@ async fn uma_chamada_real_com_stream_e_ferramenta() {
         }),
     }];
 
-    let inicio = Instant::now();
-    let mut fluxo = cliente.stream(pedido).await.expect("abre o stream");
-    let primeiro = fluxo.next().await;
-    let primeiro_evento_ms = inicio.elapsed().as_millis();
+    let started = Instant::now();
+    let mut fluxo = client.stream(request).await.expect("abre o stream");
+    let first_item = fluxo.next().await;
+    let first_event_ms = started.elapsed().as_millis();
 
-    let mut eventos = Vec::new();
-    if let Some(item) = primeiro {
-        eventos.push(item);
+    let mut events = Vec::new();
+    if let Some(item) = first_item {
+        events.push(item);
     }
     while let Some(item) = fluxo.next().await {
-        eventos.push(item);
+        events.push(item);
     }
-    let total_ms = inicio.elapsed().as_millis();
+    let total_ms = started.elapsed().as_millis();
 
-    let mut textos = 0usize;
-    let mut ferramentas = Vec::new();
-    let mut uso = None;
+    let mut text_chunks = 0usize;
+    let mut tool_calls = Vec::new();
+    let mut usage = None;
     let mut fim = None;
-    for item in eventos {
+    for item in events {
         match item.expect("evento sem erro") {
-            LlmEvent::Texto(_) => textos += 1,
-            LlmEvent::Tool(chamada) => ferramentas.push(chamada),
-            LlmEvent::Usage(u) => uso = Some(u),
+            LlmEvent::Texto(_) => text_chunks += 1,
+            LlmEvent::Tool(call) => tool_calls.push(call),
+            LlmEvent::Usage(u) => usage = Some(u),
             LlmEvent::Fim(motivo) => fim = Some(motivo),
         }
     }
 
     println!("modelo: {modelo}");
-    println!("primeiro evento: {primeiro_evento_ms} ms; fim do stream: {total_ms} ms");
-    println!("trechos de texto: {textos}");
+    println!("primeiro evento: {first_event_ms} ms; fim do stream: {total_ms} ms");
+    println!("trechos de texto: {text_chunks}");
     println!(
         "chamadas de ferramenta: {} {:?}",
-        ferramentas.len(),
-        ferramentas
+        tool_calls.len(),
+        tool_calls
             .iter()
             .map(|c| c.nome.as_str())
             .collect::<Vec<_>>()
     );
-    for chamada in &ferramentas {
-        println!(
-            "argumentos da ferramenta {}: {}",
-            chamada.nome, chamada.arguments
-        );
+    for call in &tool_calls {
+        println!("argumentos da ferramenta {}: {}", call.nome, call.arguments);
     }
-    println!("uso: {uso:?}");
+    println!("uso: {usage:?}");
     println!("motivo do fim: {fim:?}");
 
     assert!(fim.is_some(), "o stream precisa terminar com Fim");
     assert!(
-        !ferramentas.is_empty() || textos > 0,
+        !tool_calls.is_empty() || text_chunks > 0,
         "a resposta precisa trazer texto ou chamada de ferramenta"
     );
 }

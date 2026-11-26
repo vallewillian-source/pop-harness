@@ -54,6 +54,8 @@ provedor a ecoar. As vagas de simultaneidade ficam presas até o stream terminar
 
 A detecção de falha de TLS examina o texto da cadeia de causas antes da classificação de rede. Ela usa marcadores de falhas do rustls e webpki, pois o erro de conexão também pode representar uma porta fechada. Uma falha de TLS sem marcador é tratada como falha de rede transitória. O detalhe usa a causa mais interna com marcador, sem caracteres de controle e limitado a 200 caracteres.
 
+O TLS do cliente usa a feature `rustls` do `reqwest`, com `aws-lc-rs` e o verificador de raízes do sistema, a mesma escolha do `poph-rag`. Assim o provedor TLS é um só no binário e não há OpenSSL (o `deny.toml` proíbe). Como essa feature compila código C, o `cargo check` aarch64 da estação não cobre este crate: a verificação para ARM vale pelo build na máquina ARM64 de testes.
+
 ## 3. Duas formas de usar um endpoint novo
 
 ### (a) Um provedor para a instância inteira — bloco `[llm]`
@@ -120,7 +122,7 @@ ferramenta sem nome ou com nome repetido, tipo de imagem fora dos quatro aceitos
 
 ## 5. Como provar sem gastar chave
 
-`crates/poph-core/tests/llm_servidor_falso.rs` sobe um servidor HTTP falso que fala o protocolo
+`crates/poph-core/tests/llm_fake_server.rs` sobe um servidor HTTP falso que fala o protocolo
 completo. É o teste de conformidade a copiar e estender quando surgir um provedor novo. Ele cobre:
 texto em stream com uso e fim; chamada de ferramenta de ida e volta com argumentos completos;
 imagem como `data:`; retentativa em 429 e 5xx sem alterar o pedido; erro definitivo sem retentativa e
@@ -130,13 +132,44 @@ regra ligada nada é enviado; desligada, o pedido chega ao servidor).
 
 ```bash
 export PATH="$HOME/.cargo/bin:$PATH"
-cargo test -p poph-core --locked --test llm_servidor_falso
+cargo test -p poph-core --locked --test llm_fake_server
 ```
 
-Conferido em 24/11/2026: **11 passed; 0 failed**.
+Conferido em 26/11/2026: **11 passed; 0 failed**.
 
-`crates/poph-core/tests/llm_real.rs` faz uma chamada real, está marcado como `#[ignore]` e exige
-`ANTIGRAVITY_API_KEY` definida. Só rode com autorização para gastar a chave.
+`crates/poph-core/tests/llm_logs.rs` prova que a chave não aparece no log nem no erro, nos formatos
+JSON e legível. Fica num binário próprio de propósito: o cache de interesse do `tracing` é global, e
+os outros testes já disparam os mesmos pontos de log sem assinante. Por isso o teste reconstrói esse
+cache antes de ler o que foi escrito.
+
+```bash
+cargo test -p poph-core --locked --test llm_logs
+```
+
+Conferido em 26/11/2026: **1 passed; 0 failed**.
+
+`crates/poph-core/tests/llm_tls.rs` prova https sem rede externa, com um servidor TLS local e o
+certificado de fixtura em `crates/poph-core/tests/fixtures/tls`. A CA de teste é raiz extra só desse
+teste: o cliente padrão confia apenas nas raízes do sistema. Cobre: https completo com stream lido;
+certificado de CA desconhecida recusado com erro de TLS definitivo, numa única tentativa e sem a chave
+no erro; nome do servidor diferente do certificado também recusado; `http://` continuando a
+funcionar. Quando o handshake completa e a conexão fecha antes do corpo, o erro continua sendo de
+conexão interrompida, não de TLS.
+
+```bash
+cargo test -p poph-core --locked --test llm_tls
+```
+
+Conferido em 26/11/2026: **5 passed; 0 failed**.
+
+`crates/poph-core/tests/llm_real.rs` faz uma chamada real em stream, com uma ferramenta oferecida, e
+imprime o que a chamada devolveu. Está marcado como `#[ignore]` e fica fora do CI. Exige
+`ANTIGRAVITY_API_KEY`; `ANTIGRAVITY_BASE_URL` (padrão `http://127.0.0.1:8045/v1`) e
+`ANTIGRAVITY_MODEL` trocam o endereço e o modelo. Só rode com autorização para gastar a chave:
+
+```bash
+ANTIGRAVITY_API_KEY=... cargo test -p poph-core --locked --test llm_real -- --ignored --nocapture
+```
 
 ## 6. Erros comuns
 

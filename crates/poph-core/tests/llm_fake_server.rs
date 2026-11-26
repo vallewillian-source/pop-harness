@@ -1,14 +1,8 @@
-//! Cliente OpenAI-compatível contra um servidor HTTP falso local (sem rede externa).
-//!
-//! Cobre: texto em stream, chamada de ferramenta (ida e volta), imagem, 429 e 5xx com
-//! retentativa, timeout, cancelamento no meio do stream, erro definitivo, resposta cortada,
-//! pedido recusado antes do envio. O teste de logs e chave fica em `llm_logs.rs`.
-
-mod apoio;
+#[path = "apoio/mod.rs"]
+mod support;
 
 use std::time::Duration;
 
-use apoio::*;
 use futures::StreamExt;
 use poph_core::llm::base64::encode;
 use poph_core::llm::{
@@ -16,28 +10,29 @@ use poph_core::llm::{
 };
 use poph_types::OrgId;
 use serde_json::json;
+use support::*;
 
-const TEXTO_OLA: &str = r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":"Olá"},"finish_reason":null}]}"#;
-const TEXTO_FIM: &str =
+const HELLO_CHUNK: &str = r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":"Olá"},"finish_reason":null}]}"#;
+const CONTINUATION_CHUNK: &str =
     r#"{"choices":[{"index":0,"delta":{"content":", tudo bem?"},"finish_reason":null}]}"#;
-const FIM_COM_USO: &str = r#"{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":110,"completion_tokens":7,"total_tokens":117}}"#;
+const END_WITH_USAGE: &str = r#"{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":110,"completion_tokens":7,"total_tokens":117}}"#;
 
 #[tokio::test]
-async fn texto_chega_em_stream_com_uso_e_fim() {
+async fn text_arrives_in_stream_with_usage_and_end() {
     let servidor = Servidor::iniciar(vec![Resposta::ok(sse(&[
-        TEXTO_OLA,
-        TEXTO_FIM,
-        FIM_COM_USO,
+        HELLO_CHUNK,
+        CONTINUATION_CHUNK,
+        END_WITH_USAGE,
         "[DONE]",
     ]))])
     .await;
     let m = montar(&servidor.url_base, 2, Duration::from_secs(5));
 
     let fluxo = m.cliente.stream(pergunta("oi")).await.expect("abre");
-    let eventos = so_eventos(colher(fluxo).await);
+    let events = so_eventos(colher(fluxo).await);
 
     assert_eq!(
-        eventos,
+        events,
         vec![
             LlmEvent::Texto("Olá".into()),
             LlmEvent::Texto(", tudo bem?".into()),
@@ -48,44 +43,48 @@ async fn texto_chega_em_stream_com_uso_e_fim() {
             LlmEvent::Fim(FinishReason::Completed),
         ]
     );
-    let corpo = &servidor.pedidos()[0];
-    assert_eq!(corpo["stream"], json!(true));
-    assert_eq!(corpo["model"], "gemini-3.8-flash-tiered");
-    let mensagens = corpo["messages"].as_array().expect("lista");
-    assert_eq!(mensagens.last().expect("última")["role"], "user");
+    let body = &servidor.pedidos()[0];
+    assert_eq!(body["stream"], json!(true));
+    assert_eq!(body["model"], "gemini-3.8-flash-tiered");
+    let messages = body["messages"].as_array().expect("lista");
+    assert_eq!(messages.last().expect("última")["role"], "user");
     assert_eq!(m.metricas.tokens_total.value(), 117);
     assert_eq!(m.metricas.llm_calls.value(), 1);
 }
 
 #[tokio::test]
-async fn chamada_de_ferramenta_sai_com_argumentos_inteiros_e_volta_com_resultado() {
-    let chamada_1 = sse(&[
+async fn tool_call_round_trip_sends_full_arguments_and_gets_result() {
+    let tool_call_stream = sse(&[
         r#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"buscar_produto","arguments":"{\"termo\":"}}]}}]}"#,
         r#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"dedetização\"}"}}]}}]}"#,
         r#"{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"#,
         "[DONE]",
     ]);
-    let chamada_2 = sse(&[
+    let answer_stream = sse(&[
         r#"{"choices":[{"index":0,"delta":{"content":"O preço é R$ 350."},"finish_reason":"stop"}]}"#,
         "[DONE]",
     ]);
-    let servidor = Servidor::iniciar(vec![Resposta::ok(chamada_1), Resposta::ok(chamada_2)]).await;
+    let servidor = Servidor::iniciar(vec![
+        Resposta::ok(tool_call_stream),
+        Resposta::ok(answer_stream),
+    ])
+    .await;
     let m = montar(&servidor.url_base, 2, Duration::from_secs(5));
     let org = OrgId::generate();
 
-    let mut primeiro = Request::new(
+    let mut first = Request::new(
         org,
         vec![Message::User(vec![Part::Texto("quanto custa?".into())])],
     );
-    primeiro.tools = vec![Tool {
+    first.tools = vec![Tool {
         nome: "buscar_produto".into(),
         descricao: "Busca um produto e devolve o preço".into(),
         parameters: json!({"type": "object", "properties": {"termo": {"type": "string"}}}),
     }];
-    let fluxo = m.cliente.stream(primeiro).await.expect("abre");
-    let eventos = so_eventos(colher(fluxo).await);
+    let fluxo = m.cliente.stream(first).await.expect("abre");
+    let events = so_eventos(colher(fluxo).await);
     assert_eq!(
-        eventos,
+        events,
         vec![
             LlmEvent::Tool(ToolCall {
                 id: "call_1".into(),
@@ -95,11 +94,10 @@ async fn chamada_de_ferramenta_sai_com_argumentos_inteiros_e_volta_com_resultado
             LlmEvent::Fim(FinishReason::ToolCalls),
         ]
     );
-    let corpo_1 = &servidor.pedidos()[0];
-    assert_eq!(corpo_1["tools"][0]["function"]["name"], "buscar_produto");
+    let first_body = &servidor.pedidos()[0];
+    assert_eq!(first_body["tools"][0]["function"]["name"], "buscar_produto");
 
-    // Volta com o resultado: a última mensagem é do resultado, e a chamada aparece antes dele.
-    let segundo = pedido_com(vec![
+    let second = pedido_com(vec![
         Message::User(vec![Part::Texto("quanto custa?".into())]),
         Message::Assistant {
             texto: String::new(),
@@ -114,30 +112,30 @@ async fn chamada_de_ferramenta_sai_com_argumentos_inteiros_e_volta_com_resultado
             content: "R$ 350,00".into(),
         },
     ]);
-    let fluxo = m.cliente.stream(segundo).await.expect("abre");
-    let eventos = so_eventos(colher(fluxo).await);
+    let fluxo = m.cliente.stream(second).await.expect("abre");
+    let events = so_eventos(colher(fluxo).await);
     assert_eq!(
-        eventos,
+        events,
         vec![
             LlmEvent::Texto("O preço é R$ 350.".into()),
             LlmEvent::Fim(FinishReason::Completed),
         ]
     );
-    let corpo_2 = &servidor.pedidos()[1];
-    let mensagens = corpo_2["messages"].as_array().expect("lista");
-    assert_eq!(mensagens[1]["role"], "assistant");
-    assert_eq!(mensagens[1]["tool_calls"][0]["id"], "call_1");
+    let second_body = &servidor.pedidos()[1];
+    let messages = second_body["messages"].as_array().expect("lista");
+    assert_eq!(messages[1]["role"], "assistant");
+    assert_eq!(messages[1]["tool_calls"][0]["id"], "call_1");
     assert_eq!(
-        mensagens[1]["tool_calls"][0]["function"]["arguments"],
+        messages[1]["tool_calls"][0]["function"]["arguments"],
         "{\"termo\":\"dedetização\"}"
     );
-    assert_eq!(mensagens[2]["role"], "tool");
-    assert_eq!(mensagens[2]["tool_call_id"], "call_1");
-    assert_eq!(mensagens[2]["content"], "R$ 350,00");
+    assert_eq!(messages[2]["role"], "tool");
+    assert_eq!(messages[2]["tool_call_id"], "call_1");
+    assert_eq!(messages[2]["content"], "R$ 350,00");
 }
 
 #[tokio::test]
-async fn imagem_vai_como_data_url_junto_do_texto() {
+async fn image_goes_as_data_url_with_text() {
     let servidor = Servidor::iniciar(vec![Resposta::ok(sse(&[
         r#"{"choices":[{"index":0,"delta":{"content":"ARARA AZUL 42"},"finish_reason":"stop"}]}"#,
         "[DONE]",
@@ -145,7 +143,7 @@ async fn imagem_vai_como_data_url_junto_do_texto() {
     .await;
     let m = montar(&servidor.url_base, 0, Duration::from_secs(5));
     let bytes = b"\x89PNG\r\n\x1a\nconteudo".to_vec();
-    let pedido = pedido_com(vec![Message::User(vec![
+    let request = pedido_com(vec![Message::User(vec![
         Part::Texto("o que está escrito?".into()),
         Part::Image {
             mime: "image/png".into(),
@@ -153,22 +151,22 @@ async fn imagem_vai_como_data_url_junto_do_texto() {
         },
     ])]);
 
-    let fluxo = m.cliente.stream(pedido).await.expect("abre");
-    let eventos = so_eventos(colher(fluxo).await);
-    assert_eq!(eventos[0], LlmEvent::Texto("ARARA AZUL 42".into()));
+    let fluxo = m.cliente.stream(request).await.expect("abre");
+    let events = so_eventos(colher(fluxo).await);
+    assert_eq!(events[0], LlmEvent::Texto("ARARA AZUL 42".into()));
 
-    let corpo = &servidor.pedidos()[0];
-    let partes = corpo["messages"][0]["content"].as_array().expect("partes");
-    assert_eq!(partes[0]["type"], "text");
-    assert_eq!(partes[1]["type"], "image_url");
+    let body = &servidor.pedidos()[0];
+    let parts = body["messages"][0]["content"].as_array().expect("partes");
+    assert_eq!(parts[0]["type"], "text");
+    assert_eq!(parts[1]["type"], "image_url");
     assert_eq!(
-        partes[1]["image_url"]["url"],
+        parts[1]["image_url"]["url"],
         format!("data:image/png;base64,{}", encode(&bytes))
     );
 }
 
 #[tokio::test]
-async fn retenta_429_e_5xx_sem_mudar_o_pedido() {
+async fn retries_429_and_5xx_without_changing_request() {
     let servidor = Servidor::iniciar(vec![
         Resposta::erro(429, r#"{"error":{"message":"muitas requisições"}}"#),
         Resposta::erro(503, "indisponível"),
@@ -185,47 +183,47 @@ async fn retenta_429_e_5xx_sem_mudar_o_pedido() {
         .stream(pergunta("oi"))
         .await
         .expect("3ª tentativa dá certo");
-    let eventos = so_eventos(colher(fluxo).await);
-    assert_eq!(eventos[0], LlmEvent::Texto("ok".into()));
+    let events = so_eventos(colher(fluxo).await);
+    assert_eq!(events[0], LlmEvent::Texto("ok".into()));
 
-    let pedidos = servidor.pedidos();
-    assert_eq!(pedidos.len(), 3);
-    assert_eq!(pedidos[0], pedidos[1]);
-    assert_eq!(pedidos[1], pedidos[2]);
+    let requests = servidor.pedidos();
+    assert_eq!(requests.len(), 3);
+    assert_eq!(requests[0], requests[1]);
+    assert_eq!(requests[1], requests[2]);
 }
 
 #[tokio::test]
-async fn erro_definitivo_nao_e_retentado_e_nao_ecoa_a_chave() {
-    let corpo = format!(r#"{{"error":{{"message":"chave recusada: {CHAVE}"}}}}"#);
-    let servidor = Servidor::iniciar(vec![Resposta::erro(401, &corpo)]).await;
+async fn definitive_error_is_not_retried_and_does_not_echo_key() {
+    let body = format!(r#"{{"error":{{"message":"chave recusada: {CHAVE}"}}}}"#);
+    let servidor = Servidor::iniciar(vec![Resposta::erro(401, &body)]).await;
     let m = montar(&servidor.url_base, 2, Duration::from_secs(5));
 
-    let erro = m
+    let error = m
         .cliente
         .stream(pergunta("oi"))
         .await
         .err()
         .expect("recusado");
-    match &erro {
+    match &error {
         LlmError::Rejected { status, mensagem } => {
             assert_eq!(*status, 401);
             assert!(!mensagem.contains(CHAVE));
         }
-        outro => panic!("esperava Recusado, veio {outro:?}"),
+        other => panic!("esperava Recusado, veio {other:?}"),
     }
-    assert!(!format!("{erro} {erro:?}").contains(CHAVE));
+    assert!(!format!("{error} {error:?}").contains(CHAVE));
     assert_eq!(servidor.pedidos().len(), 1, "401 não pode ser retentado");
     assert_eq!(m.metricas.llm_errors.value(), 1);
 }
 
 #[tokio::test]
-async fn esgotar_retentativas_devolve_indisponivel() {
+async fn exhausted_retries_return_unavailable() {
     let servidor = Servidor::iniciar(vec![Resposta::erro(500, "falhou")]).await;
     let m = montar(&servidor.url_base, 2, Duration::from_secs(5));
 
-    let erro = m.cliente.stream(pergunta("oi")).await.err().expect("falha");
+    let error = m.cliente.stream(pergunta("oi")).await.err().expect("falha");
     assert_eq!(
-        erro,
+        error,
         LlmError::Unavailable {
             tentativas: 3,
             last_error: "HTTP 500".into()
@@ -235,7 +233,7 @@ async fn esgotar_retentativas_devolve_indisponivel() {
 }
 
 #[tokio::test]
-async fn timeout_devolve_tempo_esgotado_sem_retentar() {
+async fn timeout_returns_timed_out_without_retry() {
     let servidor = Servidor::iniciar(vec![
         Resposta::ok(sse(&["[DONE]"])).com_atraso(Duration::from_secs(3)),
         Resposta::ok(sse(&["[DONE]"])),
@@ -243,13 +241,13 @@ async fn timeout_devolve_tempo_esgotado_sem_retentar() {
     .await;
     let m = montar(&servidor.url_base, 2, Duration::from_secs(1));
 
-    let erro = m
+    let error = m
         .cliente
         .stream(pergunta("oi"))
         .await
         .err()
         .expect("expira");
-    assert_eq!(erro, LlmError::TimedOut { seconds: 1 });
+    assert_eq!(error, LlmError::TimedOut { seconds: 1 });
     assert_eq!(
         servidor.pedidos().len(),
         1,
@@ -258,7 +256,7 @@ async fn timeout_devolve_tempo_esgotado_sem_retentar() {
 }
 
 #[tokio::test]
-async fn cancelamento_no_meio_do_stream_fecha_e_libera_as_vagas() {
+async fn cancel_mid_stream_closes_and_releases_slots() {
     let servidor = Servidor::iniciar(vec![
         Resposta::ok(sse(&[
             r#"{"choices":[{"index":0,"delta":{"content":"Começando"},"finish_reason":null}]}"#,
@@ -267,10 +265,10 @@ async fn cancelamento_no_meio_do_stream_fecha_e_libera_as_vagas() {
     ])
     .await;
     let m = montar(&servidor.url_base, 0, Duration::from_secs(30));
-    let pedido = pergunta("conta uma história longa");
-    let cancelamento = pedido.cancellation.clone();
+    let request = pergunta("conta uma história longa");
+    let cancellation = request.cancellation.clone();
 
-    let mut fluxo = m.cliente.stream(pedido).await.expect("abre");
+    let mut fluxo = m.cliente.stream(request).await.expect("abre");
     assert_eq!(
         fluxo.next().await.expect("há evento").expect("sem erro"),
         LlmEvent::Texto("Começando".into())
@@ -281,11 +279,11 @@ async fn cancelamento_no_meio_do_stream_fecha_e_libera_as_vagas() {
         "a chamada segura uma vaga global"
     );
 
-    cancelamento.cancel();
-    let proximo = tokio::time::timeout(Duration::from_secs(2), fluxo.next())
+    cancellation.cancel();
+    let next_item = tokio::time::timeout(Duration::from_secs(2), fluxo.next())
         .await
         .expect("cancelamento não pode ficar pendurado");
-    assert_eq!(proximo, Some(Err(LlmError::Cancelled)));
+    assert_eq!(next_item, Some(Err(LlmError::Cancelled)));
     assert!(
         fluxo.next().await.is_none(),
         "depois do cancelamento o stream acaba"
@@ -303,8 +301,7 @@ async fn cancelamento_no_meio_do_stream_fecha_e_libera_as_vagas() {
 }
 
 #[tokio::test]
-async fn resposta_cortada_vira_erro_e_nao_repete() {
-    // Sem [DONE] nem finish_reason: a conexão fecha no meio da resposta.
+async fn truncated_response_becomes_error_and_is_not_repeated() {
     let servidor = Servidor::iniciar(vec![Resposta::ok(sse(&[
         r#"{"choices":[{"index":0,"delta":{"content":"Oi"},"finish_reason":null}]}"#,
     ]))])
@@ -312,10 +309,10 @@ async fn resposta_cortada_vira_erro_e_nao_repete() {
     let m = montar(&servidor.url_base, 2, Duration::from_secs(5));
 
     let fluxo = m.cliente.stream(pergunta("oi")).await.expect("abre");
-    let itens = colher(fluxo).await;
-    assert_eq!(itens.len(), 2);
-    assert_eq!(itens[0], Ok(LlmEvent::Texto("Oi".into())));
-    assert!(matches!(itens[1], Err(LlmError::InvalidResponse(_))));
+    let items = colher(fluxo).await;
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0], Ok(LlmEvent::Texto("Oi".into())));
+    assert!(matches!(items[1], Err(LlmError::InvalidResponse(_))));
     assert_eq!(
         servidor.pedidos().len(),
         1,
@@ -324,7 +321,7 @@ async fn resposta_cortada_vira_erro_e_nao_repete() {
 }
 
 #[tokio::test]
-async fn pedido_que_termina_em_turno_do_modelo_sai_quando_a_regra_esta_desligada() {
+async fn request_ending_in_model_turn_leaves_when_rule_is_off() {
     let servidor = Servidor::iniciar(vec![Resposta::ok(sse(&[
         r#"{"choices":[{"index":0,"delta":{"content":"Oi"}}]}"#,
         r#"{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#,
@@ -332,7 +329,7 @@ async fn pedido_que_termina_em_turno_do_modelo_sai_quando_a_regra_esta_desligada
     ]))])
     .await;
     let m = montar_com_regra(&servidor.url_base, 0, Duration::from_secs(5), false);
-    let pedido = pedido_com(vec![
+    let request = pedido_com(vec![
         Message::User(vec![Part::Texto("oi".into())]),
         Message::Assistant {
             texto: "olá".into(),
@@ -340,23 +337,20 @@ async fn pedido_que_termina_em_turno_do_modelo_sai_quando_a_regra_esta_desligada
         },
     ]);
 
-    let fluxo = m.cliente.stream(pedido).await.expect("pedido aceito");
-    let eventos = so_eventos(colher(fluxo).await);
-    assert!(
-        eventos.contains(&LlmEvent::Texto("Oi".into())),
-        "{eventos:?}"
-    );
-    let enviados = servidor.pedidos();
-    assert_eq!(enviados.len(), 1, "o pedido tem de chegar ao servidor");
-    let mensagens = enviados[0]["messages"].as_array().expect("lista");
-    assert_eq!(mensagens.last().expect("última")["role"], "assistant");
+    let fluxo = m.cliente.stream(request).await.expect("pedido aceito");
+    let events = so_eventos(colher(fluxo).await);
+    assert!(events.contains(&LlmEvent::Texto("Oi".into())), "{events:?}");
+    let sent = servidor.pedidos();
+    assert_eq!(sent.len(), 1, "o pedido tem de chegar ao servidor");
+    let messages = sent[0]["messages"].as_array().expect("lista");
+    assert_eq!(messages.last().expect("última")["role"], "assistant");
 }
 
 #[tokio::test]
-async fn pedido_que_termina_em_turno_do_modelo_nao_sai_do_processo() {
+async fn request_ending_in_model_turn_does_not_leave_process() {
     let servidor = Servidor::iniciar(vec![Resposta::ok(sse(&["[DONE]"]))]).await;
     let m = montar(&servidor.url_base, 2, Duration::from_secs(5));
-    let pedido = pedido_com(vec![
+    let request = pedido_com(vec![
         Message::User(vec![Part::Texto("oi".into())]),
         Message::Assistant {
             texto: "olá".into(),
@@ -364,8 +358,8 @@ async fn pedido_que_termina_em_turno_do_modelo_nao_sai_do_processo() {
         },
     ]);
 
-    let erro = m.cliente.stream(pedido).await.err().expect("recusado");
-    assert!(matches!(erro, LlmError::InvalidRequest(_)));
+    let error = m.cliente.stream(request).await.err().expect("recusado");
+    assert!(matches!(error, LlmError::InvalidRequest(_)));
     assert!(
         servidor.pedidos().is_empty(),
         "nada pode ser enviado ao gateway"
