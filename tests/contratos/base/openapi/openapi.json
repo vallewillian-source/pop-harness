@@ -1512,6 +1512,62 @@
         ],
         "type": "object"
       },
+      "NodeCountJson": {
+        "properties": {
+          "count": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "node_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "node_id",
+          "count"
+        ],
+        "type": "object"
+      },
+      "OperationalSummaryJson": {
+        "properties": {
+          "active_flow_nodes": {
+            "items": {
+              "$ref": "#/components/schemas/NodeCountJson"
+            },
+            "type": "array"
+          },
+          "avg_resolution_ms": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "closed_fichas": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "open_conversations": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "open_fichas": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "open_fichas",
+          "closed_fichas",
+          "open_conversations",
+          "active_flow_nodes"
+        ],
+        "type": "object"
+      },
       "OrgJson": {
         "description": "Org na resposta da API.",
         "properties": {
@@ -4090,6 +4146,81 @@
         ],
         "tags": [
           "test-chat"
+        ]
+      }
+    },
+    "/admin/v1/orgs/{org_id}/analytics/operational-summary": {
+      "get": {
+        "operationId": "analytics_resumo_operacional",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Começo da janela, em milissegundos desde 1970",
+            "in": "query",
+            "name": "from",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Fim da janela (exclusivo), em milissegundos desde 1970",
+            "in": "query",
+            "name": "to",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationalSummaryJson"
+                }
+              }
+            },
+            "description": "Contadores e execuções ativas por nó"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RespostaErro"
+                }
+              }
+            },
+            "description": "Org inexistente"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RespostaErro"
+                }
+              }
+            },
+            "description": "`from` ou `to` ausente ou inválido, ou `from` não anterior a `to`"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "analytics"
         ]
       }
     },
@@ -8719,6 +8850,10 @@
     {
       "description": "Fichas do atendimento, execuções de fluxo e ações humanas",
       "name": "fichas"
+    },
+    {
+      "description": "Leitura agregada do atendimento: contadores e execuções ativas por nó",
+      "name": "analytics"
     }
   ]
 }

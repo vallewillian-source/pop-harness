@@ -30,7 +30,7 @@
     {
       "nome": "banco harness.db",
       "nivel": "ok",
-      "detalhe": "formato SQLite, esquema versão 16"
+      "detalhe": "formato SQLite, esquema versão 17"
     },
     {
       "nome": "banco rag.db",

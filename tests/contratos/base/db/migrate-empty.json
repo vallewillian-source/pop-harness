@@ -60,12 +60,16 @@
       {
         "nome": "0016_matrix_midia_expiracao",
         "versao": 16
+      },
+      {
+        "nome": "0017_analytics_operational_summary",
+        "versao": 17
       }
     ],
     "banco": "harness.db",
     "caminho": "data/harness.db",
     "versao_antes": 0,
-    "versao_depois": 16
+    "versao_depois": 17
   },
   "ja_estava_em_dia": false,
   "rag": {
