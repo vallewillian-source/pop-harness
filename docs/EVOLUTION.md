@@ -143,6 +143,15 @@ not the customer who sent it.
 send). In a group the `peer` is the full JID (`…@g.us`) and whoever wrote goes in `remetente`, so the reply reaches the
 group and the turn knows the person.
 
+**Customer name (MX-32).** The name WhatsApp shows is the `pushName` field of the body. It is copied to the event
+`metadata` as `push_name`, with the surrounding spaces trimmed. Two cases leave the field out: a group (there the
+`pushName` is whoever wrote, not the customer) and a message with `fromMe = true` (that is the name of the instance
+owner, not the customer's — the message still enters when the caller accepts `fromMe`, only the name is dropped). An
+empty or whitespace-only `pushName` also leaves the field out, instead of recording an empty string.
+
+**No recognized content.** A vote on a poll, an album, a reaction or a type of message newer than this code is not a
+customer message with content: the webhook answers 200 with no effect and the delivery is not broken by it.
+
 **Conversation.** A message goes to the open or transferred conversation of the same contact, in that integration. If
 there is none, a new one opens with the integration's agent and its default department. A transferred conversation
 keeps recording, with no reply from the agent (D12).
@@ -152,7 +161,8 @@ repeats nothing.
 
 **Security.** The event body carries the instance's `apikey`. It is not stored raw, not logged and not returned in the
 response. Errors and logs contain only internal ids and categories: no phone number, JID, key or secret. The secret
-comparison is in constant time.
+comparison is in constant time. An **empty configured secret accepts nothing**: with no secret to compare against, the
+channel refuses the delivery before reading the body.
 
 **Limits of this stage.**
 
@@ -244,3 +254,16 @@ cargo test -p poph-server --test turno_whatsapp --locked
 
 The tests use a fake server on `127.0.0.1` with a script of responses. None of them talks to the real Evolution or to a
 WhatsApp number.
+
+**The one test against the real Evolution** (`crates/poph-evolution/tests/evolution_real.rs`) is `#[ignore]`, so it only
+runs when asked, and it needs the address and the key in the environment:
+
+```
+POPH_EVOLUTION_REAL_URL=http://127.0.0.1:18081 \
+POPH_EVOLUTION_REAL_CHAVE=... \
+  cargo test -p poph-evolution --test evolution_real -- --ignored --nocapture
+```
+
+It never touches a WhatsApp number: it creates an instance without pairing a phone, checks the wrong-key error, the
+connection state, the QR and the instance list, and deletes the instance at the end even if a check fails. The instance
+name carries the current time, so two runs do not collide.

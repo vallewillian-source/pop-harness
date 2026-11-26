@@ -139,3 +139,15 @@ what the test sends. There is no real key and no real Evolution.
 - **`WEBHOOK_GLOBAL_ENABLED` stays `false`** in both POP Atende compose files
   (`infra/docker-compose.dev.yml:107`, `infra/docker-compose.oci.yml:197`): the configuration is always per instance,
   never global.
+
+## 6. Dependencies and why
+
+- **`reqwest` with the `rustls` feature** (HR-10b): the same TLS stack as the LLM client and the Jev client. Evolution
+  speaks `http` on the local network and `https` when exposed; `http://` keeps working. Because this feature compiles C
+  (`aws-lc-sys`), this crate is **out of the station's `cargo check` for aarch64** — the ARM verification is the build on
+  the ARM64 test machine (HR-56), not a host-side check.
+- **`base64` 0.22**: already in the tree (rustls depends on it), so depending on it adds nothing new to the lock. It
+  encodes the media sent to `sendMedia` and decodes what comes back from `getBase64FromMediaMessage`.
+- **`regex` 1.x**: already in the tree as a transitive dependency. The channel's Markdown conversion uses the same rules
+  as POP Atende, and writing those rules by hand would be more fragile than porting the regular expressions.
+
