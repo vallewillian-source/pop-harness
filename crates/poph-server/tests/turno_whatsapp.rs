@@ -26,11 +26,11 @@ use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::post;
 use axum::{Json, Router};
-use poph_agent::atores::{Atores, OpcoesAtores};
-use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
-use poph_agent::entrada_saida::{Fluxo, OpcoesFluxo};
-use poph_agent::limites::{Limitador, OpcoesLimites};
-use poph_agent::metricas::{MetricasFluxo, MetricasMemoria, MetricasTurno};
+use poph_agent::actors::{ActorOptions, Actors};
+use poph_agent::config_hot::{ConfigHot, HotConfigOptions};
+use poph_agent::entry_output::{FlowOptions, Fluxo};
+use poph_agent::limites::{LimitOptions, Limiter};
+use poph_agent::metrics::{MetricsFlow, MetricsMemory, MetricsTurn};
 use poph_agent::turno::{TurnEngine, TurnOptions, TurnProcessor};
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, LlmProvider, Script, Usage};
 use poph_evolution::webhook::SECRET_HEADER;
@@ -284,38 +284,35 @@ impl Cenario {
         &self,
         registro: &Registry,
         roteiros: Vec<Script>,
-        opcoes: OpcoesFluxo,
+        opcoes: FlowOptions,
     ) -> (Fluxo, Arc<FakeProvider>) {
         let fake = Arc::new(FakeProvider::with_scripts(roteiros));
         let provedor: Arc<dyn LlmProvider> = fake.clone();
-        let config = ConfigQuente::nova(
+        let config = ConfigHot::new(
             Arc::clone(&self.store),
-            OpcoesConfigQuente::default(),
-            MetricasMemoria::proprio(),
+            HotConfigOptions::default(),
+            MetricsMemory::own(),
         );
-        let limitador = Arc::new(Limitador::novo(
-            OpcoesLimites::default(),
-            MetricasMemoria::proprio(),
-        ));
+        let limitador = Arc::new(Limiter::new(LimitOptions::default(), MetricsMemory::own()));
         let motor = TurnEngine::new(
             Arc::clone(&self.store),
             config,
             limitador,
             provedor,
             TurnOptions::default(),
-            MetricasTurno::registrar(registro).expect("métricas do turno"),
+            MetricsTurn::register(registro).expect("métricas do turno"),
         );
         let processador = Arc::new(TurnProcessor::new(Arc::new(motor)));
-        let atores = Atores::novo(
+        let atores = Actors::new(
             processador.clone(),
-            OpcoesAtores::default(),
-            MetricasMemoria::proprio(),
+            ActorOptions::default(),
+            MetricsMemory::own(),
         );
-        let fluxo = Fluxo::com_metricas(
+        let fluxo = Fluxo::with_metrics(
             Arc::clone(&self.store),
             atores,
             opcoes,
-            MetricasFluxo::registrar(registro).expect("métricas da fila"),
+            MetricsFlow::register(registro).expect("métricas da fila"),
         );
         processador.attach_io(fluxo.clone());
         (fluxo, fake)
@@ -323,7 +320,7 @@ impl Cenario {
 
     /// Sobe o servidor. Com `ligar_turno = false`, ele recebe e grava, mas não roda turno.
     async fn subir(&self, roteiros: Vec<Script>, ligar_turno: bool) -> Servidor {
-        self.subir_com(roteiros, ligar_turno, OpcoesFluxo::default())
+        self.subir_com(roteiros, ligar_turno, FlowOptions::default())
             .await
     }
 
@@ -332,7 +329,7 @@ impl Cenario {
         &self,
         roteiros: Vec<Script>,
         ligar_turno: bool,
-        opcoes: OpcoesFluxo,
+        opcoes: FlowOptions,
     ) -> Servidor {
         let estado = Estado::novo(Arc::clone(&self.store), HarnessConfig::default())
             .expect("estado do servidor")
@@ -1048,7 +1045,7 @@ fn falha_do_provedor() -> Script {
 async fn falha_do_modelo_repete_e_a_resposta_sai_uma_vez_pela_evolution() {
     let cenario = Cenario::novo("falha-repete").await;
     // Espera curta para o teste: 50 ms antes da segunda tentativa e 200 ms antes da terceira.
-    let opcoes = OpcoesFluxo::default().com_falha_modelo(3, Duration::from_millis(50));
+    let opcoes = FlowOptions::default().with_failure_model(3, Duration::from_millis(50));
     let servidor = cenario
         .subir_com(
             vec![falha_do_provedor(), falha_do_provedor(), resposta(RESPOSTA)],
@@ -1108,7 +1105,7 @@ async fn falha_do_modelo_repete_e_a_resposta_sai_uma_vez_pela_evolution() {
 #[tokio::test]
 async fn falha_do_modelo_esgotada_nao_manda_nada_e_registra_o_motivo() {
     let cenario = Cenario::novo("falha-esgota").await;
-    let opcoes = OpcoesFluxo::default().com_falha_modelo(3, Duration::from_millis(50));
+    let opcoes = FlowOptions::default().with_failure_model(3, Duration::from_millis(50));
     let servidor = cenario
         .subir_com(
             vec![
@@ -1156,7 +1153,7 @@ async fn falha_do_modelo_esgotada_nao_manda_nada_e_registra_o_motivo() {
 #[tokio::test]
 async fn recusa_do_provedor_401_nao_repete_avisa_a_operacao_e_nao_manda_nada() {
     let cenario = Cenario::novo("recusa-401").await;
-    let opcoes = OpcoesFluxo::default().com_falha_modelo(3, Duration::from_millis(50));
+    let opcoes = FlowOptions::default().with_failure_model(3, Duration::from_millis(50));
     let servidor = cenario
         .subir_com(
             vec![Script::Failure(poph_core::llm::LlmError::Rejected {

@@ -1,27 +1,16 @@
-//! Biblioteca de arquivos do agente e ferramenta `enviar_arquivo` (HR-24).
-//!
-//! Cobra o que a tarefa pede:
-//! - id de outro agente/org é recusado, inclusive com org forjada no contexto, e o turno não cai;
-//! - id inexistente devolve erro legível ao modelo, sem quebrar o turno;
-//! - o envio enfileira `SendFile` (tipo `file`) na `outbox` com `blob_ref`, e repetir no mesmo turno
-//!   não duplica;
-//! - agente sem a ferramenta habilitada não a recebe; com ela, recebe e vê a descrição do arquivo.
-//!
-//! Provedor falso e pausa que não dorme: nenhum teste toca a rede nem espera de verdade.
-
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use poph_agent::atores::{Atores, OpcoesAtores};
-use poph_agent::biblioteca::{self, NOME_FERRAMENTA};
-use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
-use poph_agent::entrada_saida::{Fluxo, MensagemRecebida, OpcoesFluxo};
-use poph_agent::limites::{Limitador, OpcoesLimites};
-use poph_agent::metricas::{MetricasFluxo, MetricasMemoria, MetricasTurno};
+use poph_agent::actors::{ActorOptions, Actors};
+use poph_agent::config_hot::{ConfigHot, HotConfigOptions};
+use poph_agent::entry_output::{FlowOptions, Fluxo, ReceivedMessage};
+use poph_agent::library::{self, NAME_TOOL};
+use poph_agent::limites::{LimitOptions, Limiter};
+use poph_agent::metrics::{MetricsFlow, MetricsMemory, MetricsTurn};
 use poph_agent::turno::{
-    ContextoFerramenta, FerramentaInterna, FuturoPausa, NoopObserver, Pausa, RegistroFerramentas,
-    RegistroPadrao, TurnEngine, TurnOptions, TurnProcessor, UsoFerramentas,
+    DefaultRegistry, FuturePause, InternalTool, NoopObserver, Pause, ToolContext, ToolRegistry,
+    TurnEngine, TurnOptions, TurnProcessor, UseTools,
 };
 use poph_core::llm::{
     FakeProvider, FinishReason, LlmError, LlmEvent, LlmProvider, Script, ToolCall,
@@ -34,82 +23,82 @@ use poph_types::{
 };
 use serde_json::{Value, json};
 
-/// Pausa que não dorme.
 #[derive(Default, Clone)]
 struct PausaFalsa;
 
-impl Pausa for PausaFalsa {
-    fn esperar(&self, _duracao: Duration) -> FuturoPausa {
+impl Pause for PausaFalsa {
+    fn wait(&self, _duracao: Duration) -> FuturePause {
         Box::pin(async {})
     }
 }
 
-struct Cenario {
-    pasta: PathBuf,
+struct Scenario {
+    folder: PathBuf,
     store: Arc<Store>,
     org: OrgId,
     agente: AgentId,
     outro_agente: AgentId,
     conversa: ConversationId,
-    catalogo: FileId,
+    catalog: FileId,
     proposta: FileId,
 }
 
-impl Cenario {
-    fn novo(rotulo: &str, ferramentas: &[&str]) -> Self {
-        let pasta = std::env::temp_dir().join(format!(
-            "poph-biblioteca-{rotulo}-{}-{}",
+impl Scenario {
+    fn new(label: &str, tools: &[&str]) -> Self {
+        let folder = std::env::temp_dir().join(format!(
+            "poph-biblioteca-{label}-{}-{}",
             std::process::id(),
             AgentId::generate()
         ));
-        let _ = std::fs::remove_dir_all(&pasta);
-        std::fs::create_dir_all(&pasta).expect("cria a pasta");
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).expect("cria a pasta");
         let store = Arc::new(
-            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco"),
+            Store::open_at(&folder.join("harness.db"), &folder.join("rag.db"))
+                .expect("abre o banco"),
         );
         let org = store
             .orgs()
             .create(NewOrg {
-                name: format!("Org {rotulo}"),
-                slug: format!("org-{rotulo}-{}", AgentId::generate()),
+                name: format!("Org {label}"),
+                slug: format!("org-{label}-{}", AgentId::generate()),
                 config_json: "{}".to_owned(),
             })
             .expect("cria a org")
             .id;
-        let agente = Self::criar_agente(&store, org, rotulo, ferramentas);
-        let outro_agente = Self::criar_agente(&store, org, &format!("{rotulo}-2"), &[]);
-        let catalogo = Self::arquivo(&store, org, agente, "catalogo.pdf", "catálogo de serviços");
-        let proposta = Self::arquivo(&store, org, agente, "proposta.pdf", "modelo de proposta");
+        let agente = Self::criar_agente(&store, org, label, tools);
+        let outro_agente = Self::criar_agente(&store, org, &format!("{label}-2"), &[]);
+        let catalog = Self::file(&store, org, agente, "catalogo.pdf", "catálogo de serviços");
+        let proposta = Self::file(&store, org, agente, "proposta.pdf", "modelo de proposta");
         let conversa = Self::abrir_conversa(&store, org, agente);
         Self {
-            pasta,
+            folder,
             store,
             org,
             agente,
             outro_agente,
             conversa,
-            catalogo,
+            catalog,
             proposta,
         }
     }
 
-    fn criar_agente(store: &Store, org: OrgId, rotulo: &str, ferramentas: &[&str]) -> AgentId {
+    fn criar_agente(store: &Store, org: OrgId, label: &str, tools: &[&str]) -> AgentId {
         let sufixo = AgentId::generate().to_string();
         let agente = store
             .agents()
             .create(
                 org,
                 NewAgent {
-                    name: format!("Bia {rotulo}"),
-                    slug: format!("bia-{rotulo}-{}", &sufixo[..8]),
+                    name: format!("Bia {label}"),
+                    slug: format!("bia-{label}-{}", &sufixo[..8]),
                     grouping_window_ms: 0,
                     ..NewAgent::default()
                 },
             )
             .expect("cria o agente")
             .id;
-        let estruturado = StructuredInstructions {
-            tools: ferramentas
+        let structured = StructuredInstructions {
+            tools: tools
                 .iter()
                 .map(|nome| ToolConfig {
                     name: (*nome).to_owned(),
@@ -125,7 +114,7 @@ impl Cenario {
                 org,
                 agente,
                 0,
-                &estruturado.to_json(),
+                &structured.to_json(),
                 "# Bia\n\nVocê é a atendente da FixProLar.",
                 true,
             )
@@ -133,7 +122,7 @@ impl Cenario {
         agente
     }
 
-    fn arquivo(store: &Store, org: OrgId, agente: AgentId, nome: &str, descricao: &str) -> FileId {
+    fn file(store: &Store, org: OrgId, agente: AgentId, nome: &str, descricao: &str) -> FileId {
         store
             .library()
             .create(
@@ -169,34 +158,30 @@ impl Cenario {
             .id
     }
 
-    fn contexto(&self, turno: TurnId) -> ContextoFerramenta {
-        ContextoFerramenta {
+    fn context(&self, turno: TurnId) -> ToolContext {
+        ToolContext {
             org: self.org,
             conversa: self.conversa,
             agente: self.agente,
             turno,
-            uso: UsoFerramentas::nova(),
+            usage: UseTools::new(),
         }
     }
 
-    fn registro(&self) -> RegistroPadrao {
-        biblioteca::registrar(RegistroPadrao::novo(), Arc::clone(&self.store))
+    fn registro(&self) -> DefaultRegistry {
+        library::register(DefaultRegistry::new(), Arc::clone(&self.store))
     }
 
-    fn ferramenta(&self) -> Arc<dyn FerramentaInterna> {
+    fn tool(&self) -> Arc<dyn InternalTool> {
         self.registro()
-            .ferramenta(NOME_FERRAMENTA)
+            .tool(NAME_TOOL)
             .expect("ferramenta registrada")
     }
 
-    /// Chama a ferramenta direto, como o motor faria.
-    async fn chamar(&self, turno: TurnId, argumentos: Value) -> Result<String, String> {
-        self.ferramenta()
-            .executar(self.contexto(turno), argumentos)
-            .await
+    async fn chamar(&self, turno: TurnId, arguments: Value) -> Result<String, String> {
+        self.tool().run(self.context(turno), arguments).await
     }
 
-    /// Itens da `outbox` do turno que ainda estão pendentes (nenhum transporte roda nestes testes).
     fn saidas(&self, turno: TurnId) -> Vec<OutboxItem> {
         self.store
             .outbox()
@@ -207,29 +192,26 @@ impl Cenario {
             .collect()
     }
 
-    fn motor(&self, roteiros: Vec<Script>) -> (TurnEngine, Arc<FakeProvider>) {
+    fn engine(&self, roteiros: Vec<Script>) -> (TurnEngine, Arc<FakeProvider>) {
         let fake = Arc::new(FakeProvider::with_scripts(roteiros));
         let provedor: Arc<dyn LlmProvider> = fake.clone();
-        let config = ConfigQuente::nova(
+        let config = ConfigHot::new(
             Arc::clone(&self.store),
-            OpcoesConfigQuente::default(),
-            MetricasMemoria::proprio(),
+            HotConfigOptions::default(),
+            MetricsMemory::own(),
         );
-        let limitador = Arc::new(Limitador::novo(
-            OpcoesLimites::default(),
-            MetricasMemoria::proprio(),
-        ));
-        let motor = TurnEngine::new(
+        let limiter = Arc::new(Limiter::new(LimitOptions::default(), MetricsMemory::own()));
+        let engine = TurnEngine::new(
             Arc::clone(&self.store),
             config,
-            limitador,
+            limiter,
             provedor,
             TurnOptions::default(),
-            MetricasTurno::proprio(),
+            MetricsTurn::own(),
         )
         .with_pause(Arc::new(PausaFalsa));
-        let motor = motor.with_tools(Arc::new(self.registro()) as Arc<dyn RegistroFerramentas>);
-        (motor, fake)
+        let engine = engine.with_tools(Arc::new(self.registro()) as Arc<dyn ToolRegistry>);
+        (engine, fake)
     }
 
     fn falar(&self, texto: &str) -> poph_types::MessageId {
@@ -253,9 +235,9 @@ impl Cenario {
             .id
     }
 
-    async fn rodar_turno(&self, motor: &TurnEngine) -> poph_agent::turno::TurnSummary {
+    async fn rodar_turno(&self, engine: &TurnEngine) -> poph_agent::turno::TurnSummary {
         let mensagem = self.falar("manda o catálogo por favor");
-        motor
+        engine
             .run(
                 poph_agent::turno::TurnInput::new(self.org, self.conversa, mensagem),
                 &mut NoopObserver,
@@ -265,59 +247,57 @@ impl Cenario {
     }
 }
 
-impl Drop for Cenario {
+impl Drop for Scenario {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.pasta);
+        let _ = std::fs::remove_dir_all(&self.folder);
     }
 }
 
-fn resposta(texto: &str) -> Script {
+fn response(texto: &str) -> Script {
     Script::Events(vec![
         LlmEvent::Texto(texto.to_owned()),
         LlmEvent::Fim(FinishReason::Completed),
     ])
 }
 
-fn chamada(id: &str, argumentos: Value) -> Script {
+fn call(id: &str, arguments: Value) -> Script {
     Script::Events(vec![
         LlmEvent::Tool(ToolCall {
             id: id.to_owned(),
-            nome: NOME_FERRAMENTA.to_owned(),
-            arguments: argumentos,
+            nome: NAME_TOOL.to_owned(),
+            arguments,
         }),
         LlmEvent::Fim(FinishReason::ToolCalls),
     ])
 }
 
-fn arquivo_do_item(item: &OutboxItem) -> Option<Value> {
+fn file_item(item: &OutboxItem) -> Option<Value> {
     serde_json::from_str(&item.content_json).ok()
 }
 
 #[tokio::test]
 async fn id_de_outro_agente_da_mesma_org_e_recusado() {
-    let cenario = Cenario::novo("outro-agente", &[NOME_FERRAMENTA]);
-    // Arquivo do outro agente: o id existe, mas não na biblioteca deste agente.
-    let alheio = Cenario::arquivo(
-        &cenario.store,
-        cenario.org,
-        cenario.outro_agente,
+    let scenario = Scenario::new("outro-agente", &[NAME_TOOL]);
+    let alheio = Scenario::file(
+        &scenario.store,
+        scenario.org,
+        scenario.outro_agente,
         "interno.pdf",
         "documento interno",
     );
     let turno = TurnId::generate();
-    let erro = cenario
+    let error = scenario
         .chamar(turno, json!({"id": alheio.to_string()}))
         .await
         .expect_err("id de outro agente é recusado");
-    assert!(erro.contains("não existe arquivo"), "{erro}");
-    assert!(cenario.saidas(turno).is_empty(), "nada foi enfileirado");
+    assert!(error.contains("não existe arquivo"), "{error}");
+    assert!(scenario.saidas(turno).is_empty(), "nada foi enfileirado");
 }
 
 #[tokio::test]
 async fn id_de_outra_org_e_recusado_mesmo_com_org_forjada() {
-    let cenario = Cenario::novo("outra-org", &[NOME_FERRAMENTA]);
-    // Org e agente de fora, com um arquivo dentro.
-    let outra_org = cenario
+    let scenario = Scenario::new("outra-org", &[NAME_TOOL]);
+    let outra_org = scenario
         .store
         .orgs()
         .create(NewOrg {
@@ -326,60 +306,56 @@ async fn id_de_outra_org_e_recusado_mesmo_com_org_forjada() {
             config_json: "{}".to_owned(),
         })
         .expect("cria a outra org");
-    let agente_alheio = Cenario::criar_agente(&cenario.store, outra_org.id, "fora", &[]);
-    let arquivo_alheio = Cenario::arquivo(
-        &cenario.store,
+    let agente_alheio = Scenario::criar_agente(&scenario.store, outra_org.id, "fora", &[]);
+    let arquivo_alheio = Scenario::file(
+        &scenario.store,
         outra_org.id,
         agente_alheio,
         "segredo.pdf",
         "não é desta org",
     );
 
-    // 1) coexistência: cada org enxerga só o seu.
-    let erro = cenario
+    let error = scenario
         .chamar(
             TurnId::generate(),
             json!({"id": arquivo_alheio.to_string()}),
         )
         .await
         .expect_err("arquivo de outra org é recusado");
-    assert!(erro.contains("não existe arquivo"), "{erro}");
+    assert!(error.contains("não existe arquivo"), "{error}");
 
-    // 2) org forjada no contexto: o mesmo id do próprio agente, mas alegando a outra org.
     let turno = TurnId::generate();
-    let ferramenta = cenario.ferramenta();
-    let mut contexto = cenario.contexto(turno);
-    contexto.org = outra_org.id;
-    let erro = ferramenta
-        .executar(contexto, json!({"id": cenario.catalogo.to_string()}))
+    let tool = scenario.tool();
+    let mut context = scenario.context(turno);
+    context.org = outra_org.id;
+    let error = tool
+        .run(context, json!({"id": scenario.catalog.to_string()}))
         .await
         .expect_err("id do próprio agente não vale com a org trocada");
-    assert!(erro.contains("não existe arquivo"), "{erro}");
-    assert!(cenario.saidas(turno).is_empty());
+    assert!(error.contains("não existe arquivo"), "{error}");
+    assert!(scenario.saidas(turno).is_empty());
 }
 
 #[tokio::test]
 async fn id_inexistente_devolve_erro_legivel_e_o_turno_segue() {
-    let cenario = Cenario::novo("inexistente", &[NOME_FERRAMENTA]);
-    // Erro direto na ferramenta, com texto que o modelo entende.
-    let erro = cenario
+    let scenario = Scenario::new("inexistente", &[NAME_TOOL]);
+    let error = scenario
         .chamar(
             TurnId::generate(),
             json!({"id": FileId::generate().to_string()}),
         )
         .await
         .expect_err("id inexistente é recusado");
-    assert!(erro.starts_with("erro:"), "{erro}");
-    assert!(erro.contains("lista de arquivos"), "{erro}");
+    assert!(error.starts_with("erro:"), "{error}");
+    assert!(error.contains("lista de arquivos"), "{error}");
 
-    // No turno: o modelo recebe o erro como resultado da ferramenta e a resposta sai.
-    let (motor, _fake) = cenario.motor(vec![
-        chamada("c1", json!({"id": FileId::generate().to_string()})),
-        resposta("Não achei esse arquivo; posso te mandar o catálogo."),
+    let (engine, _fake) = scenario.engine(vec![
+        call("c1", json!({"id": FileId::generate().to_string()})),
+        response("Não achei esse arquivo; posso te mandar o catálogo."),
     ]);
-    let resumo = cenario.rodar_turno(&motor).await;
-    assert!(resumo.texto.contains("catálogo"), "{}", resumo.texto);
-    let saidas = cenario.saidas(resumo.turno);
+    let summary = scenario.rodar_turno(&engine).await;
+    assert!(summary.texto.contains("catálogo"), "{}", summary.texto);
+    let saidas = scenario.saidas(summary.turno);
     assert!(
         saidas.iter().all(|item| item.tipo == "text"),
         "nenhum arquivo enfileirado: {saidas:?}"
@@ -388,51 +364,49 @@ async fn id_inexistente_devolve_erro_legivel_e_o_turno_segue() {
 
 #[tokio::test]
 async fn envio_enfileira_arquivo_na_outbox_e_repetir_nao_duplica() {
-    let cenario = Cenario::novo("envio", &[NOME_FERRAMENTA]);
+    let scenario = Scenario::new("envio", &[NAME_TOOL]);
     let turno = TurnId::generate();
-    let primeiro = cenario
-        .chamar(turno, json!({"id": cenario.catalogo.to_string()}))
+    let first = scenario
+        .chamar(turno, json!({"id": scenario.catalog.to_string()}))
         .await
         .expect("enfileira");
-    assert!(primeiro.contains("enfileirado"), "{primeiro}");
+    assert!(first.contains("enfileirado"), "{first}");
 
-    let saidas = cenario.saidas(turno);
+    let saidas = scenario.saidas(turno);
     assert_eq!(saidas.len(), 1);
     let item = &saidas[0];
     assert_eq!(item.tipo, "file");
-    let payload = arquivo_do_item(item).expect("conteúdo em JSON");
+    let payload = file_item(item).expect("conteúdo em JSON");
     assert_eq!(
         payload["blob_ref"],
-        json!(format!("{}/catalogo.pdf", cenario.org))
+        json!(format!("{}/catalogo.pdf", scenario.org))
     );
-    assert_eq!(payload["arquivo_id"], json!(cenario.catalogo.to_string()));
+    assert_eq!(payload["arquivo_id"], json!(scenario.catalog.to_string()));
     assert_eq!(payload["mime"], json!("application/pdf"));
 
-    // Repetir a chamada no mesmo turno não cria item novo (idempotência por turno + seq).
-    let segundo = cenario
-        .chamar(turno, json!({"id": cenario.catalogo.to_string()}))
+    let second = scenario
+        .chamar(turno, json!({"id": scenario.catalog.to_string()}))
         .await
         .expect("repetição é aceita");
-    assert!(segundo.contains("já estava enfileirado"), "{segundo}");
-    assert_eq!(cenario.saidas(turno).len(), 1);
+    assert!(second.contains("já estava enfileirado"), "{second}");
+    assert_eq!(scenario.saidas(turno).len(), 1);
 
-    // Outro arquivo no mesmo turno entra em item separado.
-    cenario
-        .chamar(turno, json!({"id": cenario.proposta.to_string()}))
+    scenario
+        .chamar(turno, json!({"id": scenario.proposta.to_string()}))
         .await
         .expect("enfileira o segundo");
-    assert_eq!(cenario.saidas(turno).len(), 2);
+    assert_eq!(scenario.saidas(turno).len(), 2);
 }
 
 #[tokio::test]
 async fn turno_completo_envia_arquivo_e_responde() {
-    let cenario = Cenario::novo("turno", &[NOME_FERRAMENTA]);
-    let (motor, _fake) = cenario.motor(vec![
-        chamada("c1", json!({"id": cenario.catalogo.to_string()})),
-        resposta("Estou enviando o catálogo."),
+    let scenario = Scenario::new("turno", &[NAME_TOOL]);
+    let (engine, _fake) = scenario.engine(vec![
+        call("c1", json!({"id": scenario.catalog.to_string()})),
+        response("Estou enviando o catálogo."),
     ]);
-    let resumo = cenario.rodar_turno(&motor).await;
-    let saidas = cenario.saidas(resumo.turno);
+    let summary = scenario.rodar_turno(&engine).await;
+    let saidas = scenario.saidas(summary.turno);
     let tipos: Vec<&str> = saidas.iter().map(|item| item.tipo.as_str()).collect();
     assert!(tipos.contains(&"file"), "{tipos:?}");
     assert!(tipos.contains(&"text"), "{tipos:?}");
@@ -440,101 +414,95 @@ async fn turno_completo_envia_arquivo_e_responde() {
 
 #[tokio::test]
 async fn agente_sem_a_ferramenta_nao_a_recebe() {
-    let cenario = Cenario::novo("sem-ferramenta", &[]);
-    let (motor, fake) = cenario.motor(vec![resposta("ok")]);
-    cenario.rodar_turno(&motor).await;
-    let nomes: Vec<String> = fake.received()[0]
+    let scenario = Scenario::new("sem-ferramenta", &[]);
+    let (engine, fake) = scenario.engine(vec![response("ok")]);
+    scenario.rodar_turno(&engine).await;
+    let names: Vec<String> = fake.received()[0]
         .tools
         .iter()
-        .map(|ferramenta| ferramenta.nome.clone())
+        .map(|tool| tool.nome.clone())
         .collect();
-    assert!(nomes.is_empty(), "{nomes:?}");
+    assert!(names.is_empty(), "{names:?}");
 }
 
 #[tokio::test]
 async fn agente_com_a_ferramenta_ve_a_descricao_dos_arquivos() {
-    let cenario = Cenario::novo("com-ferramenta", &[NOME_FERRAMENTA]);
-    let (motor, fake) = cenario.motor(vec![resposta("ok")]);
-    cenario.rodar_turno(&motor).await;
-    let pedido = &fake.received()[0];
-    let ferramenta = pedido
+    let scenario = Scenario::new("com-ferramenta", &[NAME_TOOL]);
+    let (engine, fake) = scenario.engine(vec![response("ok")]);
+    scenario.rodar_turno(&engine).await;
+    let request = &fake.received()[0];
+    let tool = request
         .tools
         .iter()
-        .find(|ferramenta| ferramenta.nome == NOME_FERRAMENTA)
+        .find(|tool| tool.nome == NAME_TOOL)
         .expect("a ferramenta vai no pedido");
     assert!(
-        ferramenta.descricao.contains(&cenario.catalogo.to_string()),
+        tool.descricao.contains(&scenario.catalog.to_string()),
         "a descrição traz o id do arquivo: {}",
-        ferramenta.descricao
+        tool.descricao
     );
     assert!(
-        ferramenta.descricao.contains("catálogo de serviços"),
+        tool.descricao.contains("catálogo de serviços"),
         "{}",
-        ferramenta.descricao
+        tool.descricao
     );
     assert!(
-        ferramenta.descricao.contains("modelo de proposta"),
+        tool.descricao.contains("modelo de proposta"),
         "{}",
-        ferramenta.descricao
+        tool.descricao
     );
-    // O esquema aceita só `id`.
     assert_eq!(
-        ferramenta.parameters["properties"]
+        tool.parameters["properties"]
             .as_object()
-            .map(|mapa| mapa.keys().cloned().collect::<Vec<_>>()),
+            .map(|map| map.keys().cloned().collect::<Vec<_>>()),
         Some(vec!["id".to_owned()])
     );
 }
 
 #[tokio::test]
 async fn biblioteca_vazia_aparece_como_tal_e_nao_quebra_o_turno() {
-    let cenario = Cenario::novo("vazia", &[NOME_FERRAMENTA]);
-    for arquivo in [cenario.catalogo, cenario.proposta] {
-        cenario
+    let scenario = Scenario::new("vazia", &[NAME_TOOL]);
+    for file in [scenario.catalog, scenario.proposta] {
+        scenario
             .store
             .library()
-            .delete(cenario.org, cenario.agente, arquivo)
+            .delete(scenario.org, scenario.agente, file)
             .expect("apaga o arquivo");
     }
-    let (motor, fake) = cenario.motor(vec![resposta("ok")]);
-    cenario.rodar_turno(&motor).await;
-    let recebidos = fake.received();
-    let ferramenta = recebidos[0]
+    let (engine, fake) = scenario.engine(vec![response("ok")]);
+    scenario.rodar_turno(&engine).await;
+    let received = fake.received();
+    let tool = received[0]
         .tools
         .iter()
-        .find(|ferramenta| ferramenta.nome == NOME_FERRAMENTA)
+        .find(|tool| tool.nome == NAME_TOOL)
         .expect("a ferramenta continua no pedido");
     assert!(
-        ferramenta
-            .descricao
-            .contains("biblioteca de arquivos está vazia"),
+        tool.descricao.contains("biblioteca de arquivos está vazia"),
         "{}",
-        ferramenta.descricao
+        tool.descricao
     );
 }
 
 #[tokio::test]
 async fn argumento_alem_do_id_e_recusado() {
-    let cenario = Cenario::novo("argumentos", &[NOME_FERRAMENTA]);
+    let scenario = Scenario::new("argumentos", &[NAME_TOOL]);
     let turno = TurnId::generate();
-    // O modelo não manda caminho nem conteúdo (D13).
-    let erro = cenario
+    let error = scenario
         .chamar(
             turno,
-            json!({"id": cenario.catalogo.to_string(), "caminho": "/etc/passwd"}),
+            json!({"id": scenario.catalog.to_string(), "caminho": "/etc/passwd"}),
         )
         .await
         .expect_err("caminho não é aceito");
-    assert!(erro.contains("não existe nesta ferramenta"), "{erro}");
-    assert!(cenario.saidas(turno).is_empty());
-    // Nem id vazio.
-    assert!(cenario.chamar(turno, json!({"id": "  "})).await.is_err());
+    assert!(error.contains("não existe nesta ferramenta"), "{error}");
+    assert!(scenario.saidas(turno).is_empty());
+    assert!(scenario.chamar(turno, json!({"id": "  "})).await.is_err());
 }
 
 #[test]
 fn arquivo_da_biblioteca_traz_o_caminho_relativo_do_blob() {
-    // O caminho gravado é relativo à pasta de blobs (`<org>/<sha256>`), como a retenção espera.
-    let arquivo = LibraryFile {
+    let file = LibraryFile {
         id: FileId::generate(),
         org_id: OrgId::generate(),
         agent_id: AgentId::generate(),
@@ -546,106 +514,99 @@ fn arquivo_da_biblioteca_traz_o_caminho_relativo_do_blob() {
         blob_path: "org/hash".to_owned(),
         created_at: 0,
     };
-    assert!(!arquivo.blob_path.starts_with('/'));
+    assert!(!file.blob_path.starts_with('/'));
 }
 
-/// HR-26i: a primeira tentativa já mandou o arquivo para a saída e depois o modelo falhou. Repetir
-/// o turno mandaria o arquivo de novo, então a falha é definitiva: uma saída só, uma chamada a
-/// mais ao modelo (a da falha), e a entrada sai da fila.
 #[tokio::test]
 async fn falha_do_modelo_depois_de_arquivo_enfileirado_nao_repete_o_envio() {
-    let cenario = Cenario::novo("falha-arquivo", &[NOME_FERRAMENTA]);
-    let falha = Script::Failure(LlmError::Unavailable {
+    let scenario = Scenario::new("falha-arquivo", &[NAME_TOOL]);
+    let failure = Script::Failure(LlmError::Unavailable {
         tentativas: 3,
         last_error: "503".to_owned(),
     });
-    let (motor, fake) = cenario.motor(vec![
-        chamada("c1", json!({"id": cenario.catalogo.to_string()})),
-        falha,
-        resposta("não deveria sair"),
+    let (engine, fake) = scenario.engine(vec![
+        call("c1", json!({"id": scenario.catalog.to_string()})),
+        failure,
+        response("não deveria sair"),
     ]);
-    let motor = Arc::new(motor);
-    let processador = Arc::new(TurnProcessor::new(Arc::clone(&motor)));
-    let atores = Atores::novo(
-        processador.clone(),
-        OpcoesAtores::default(),
-        MetricasMemoria::proprio(),
+    let engine = Arc::new(engine);
+    let processor = Arc::new(TurnProcessor::new(Arc::clone(&engine)));
+    let actors = Actors::new(
+        processor.clone(),
+        ActorOptions::default(),
+        MetricsMemory::own(),
     );
-    // Repetição curta (50 ms), para que o teste espere de verdade só o necessário. Se o turno
-    // repetisse, a segunda rodada chamaria o modelo de novo e mandaria o arquivo outra vez.
-    let fluxo = Fluxo::com_metricas(
-        Arc::clone(&cenario.store),
-        atores,
-        OpcoesFluxo::default().com_falha_modelo(3, Duration::from_millis(50)),
-        MetricasFluxo::proprio(),
+    let fluxo = Fluxo::with_metrics(
+        Arc::clone(&scenario.store),
+        actors,
+        FlowOptions::default().with_failure_model(3, Duration::from_millis(50)),
+        MetricsFlow::own(),
     );
-    processador.attach_io(fluxo.clone());
+    processor.attach_io(fluxo.clone());
 
     fluxo
-        .receber_mensagem(
-            cenario.org,
-            MensagemRecebida {
+        .receive_message(
+            scenario.org,
+            ReceivedMessage {
                 integration_id: poph_types::IntegrationId::generate(),
                 id_externo: "ext-arquivo-falha-1".to_owned(),
-                conversa: cenario.conversa,
+                conversa: scenario.conversa,
                 texto: "manda o catálogo".to_owned(),
-                anexos_json: "[]".to_owned(),
+                attachments_json: "[]".to_owned(),
             },
         )
         .expect("grava a entrada");
-    fluxo.despachar(cenario.org).expect("despacha");
+    fluxo.dispatch(scenario.org).expect("despacha");
 
     for _ in 0..500 {
-        let pendentes = cenario
+        let pending = scenario
             .store
             .inbox()
-            .count_pending(cenario.org)
+            .count_pending(scenario.org)
             .expect("pendentes");
-        let rodando = cenario
+        let rodando = scenario
             .store
             .turns()
             .list(
-                cenario.org,
-                cenario.conversa,
+                scenario.org,
+                scenario.conversa,
                 poph_store::Page::with_limit(10),
             )
             .expect("turnos")
             .iter()
             .any(|turno| turno.state == poph_store::TurnState::Running);
-        if pendentes == 0 && !rodando {
+        if pending == 0 && !rodando {
             break;
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
-    // Espera que a repetição (se existisse) tivesse tempo de rodar.
     tokio::time::sleep(Duration::from_millis(150)).await;
-    fluxo.despachar(cenario.org).expect("despacha de novo");
+    fluxo.dispatch(scenario.org).expect("despacha de novo");
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    // Duas chamadas ao modelo (a do arquivo e a da falha), um turno só, e um arquivo só na saída.
     assert_eq!(fake.received().len(), 2, "sem repetição do turno");
-    let turnos = cenario
+    let turnos = scenario
         .store
         .turns()
         .list(
-            cenario.org,
-            cenario.conversa,
+            scenario.org,
+            scenario.conversa,
             poph_store::Page::with_limit(10),
         )
         .expect("turnos");
     assert_eq!(turnos.len(), 1, "um turno só");
-    let saidas = cenario
+    let saidas = scenario
         .store
         .outbox()
-        .list_pending(cenario.org, 50)
+        .list_pending(scenario.org, 50)
         .expect("saída");
-    let arquivos = saidas.iter().filter(|item| item.tipo == "file").count();
-    assert_eq!(arquivos, 1, "o arquivo sai uma vez");
+    let files = saidas.iter().filter(|item| item.tipo == "file").count();
+    assert_eq!(files, 1, "o arquivo sai uma vez");
     assert_eq!(
-        cenario
+        scenario
             .store
             .inbox()
-            .count_pending(cenario.org)
+            .count_pending(scenario.org)
             .expect("pendentes"),
         0,
         "a entrada saiu da fila (concluída com o motivo)"

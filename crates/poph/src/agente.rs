@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Args, Subcommand};
-use poph_agent::compor_instrucoes;
+use poph_agent::compose_instructions;
 use poph_store::{AgentChange, Agente, Instructions, NewAgent, Page, Status, Store};
 use poph_types::{
     AgentId, DepartmentId, HarnessConfig, OrgId, ProductCategoryId, StructuredInstructions,
@@ -629,7 +629,7 @@ fn gravar_instrucoes(store: &Store, org: OrgId, args: GravarInstrucoes, esperada
             if let Err(erro) = dados.validar() {
                 return falha(erro.to_string());
             }
-            let markdown = compor_instrucoes(&dados);
+            let markdown = compose_instructions(&dados);
             (dados.to_json(), markdown, true)
         }
         (None, Some(arquivo)) => {

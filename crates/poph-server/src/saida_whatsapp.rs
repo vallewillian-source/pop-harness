@@ -25,8 +25,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use poph_agent::Backoff;
-use poph_agent::entrada_saida::FalhaEnvio;
-use poph_agent::fila_integracao::{chave_idempotencia, comando_do_item};
+use poph_agent::entry_output::SendFailure;
+use poph_agent::queue_integration::{chave_idempotencia, command_item};
 use poph_evolution::{AttachmentSource, DiskBlobs, WhatsAppEvolution};
 use poph_store::{OutboxItem, Store, StoreError};
 use poph_types::{IntegrationId, OrgId, OutboxId};
@@ -252,7 +252,7 @@ impl SaidaWhatsApp {
             );
             return Ok(());
         };
-        let comando = match comando_do_item(&item, &peer, &chave_idempotencia(&item)) {
+        let comando = match command_item(&item, &peer, &chave_idempotencia(&item)) {
             Ok(comando) => comando,
             Err(falha) => {
                 // Payload inválido ou destino ausente: nada a enviar, e repetir não adianta.
@@ -291,13 +291,13 @@ impl SaidaWhatsApp {
                 );
             }
             Err(erro) if erro.is_transient() => {
-                let falha = FalhaEnvio::transitoria(erro.to_string());
+                let falha = SendFailure::transient(erro.to_string());
                 // O motivo já vem limpo do cliente (sem telefone, JID ou chave). Vai para o banco
                 // e, aqui, uma linha por tentativa; sem a chave da Evolution nem o corpo do evento.
                 self.store
                     .outbox()
                     .fail_send(org, id, &falha.motivo, false)?;
-                self.agendar(id, self.opcoes.backoff.espera(tentativa));
+                self.agendar(id, self.opcoes.backoff.wait(tentativa));
                 relato.transitorios += 1;
                 tracing::warn!(
                     target: "poph_server::saida_whatsapp",
@@ -310,7 +310,7 @@ impl SaidaWhatsApp {
                 );
             }
             Err(erro) => {
-                let falha = FalhaEnvio::definitiva(erro.to_string());
+                let falha = SendFailure::definitive(erro.to_string());
                 self.store
                     .outbox()
                     .fail_send(org, id, &falha.motivo, true)?;

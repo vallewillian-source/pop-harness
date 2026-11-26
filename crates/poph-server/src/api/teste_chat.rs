@@ -31,7 +31,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use futures::stream;
-use poph_agent::turno::{TransporteConsole, TurnEvent, TurnInput, TurnObserver, TurnSummary};
+use poph_agent::turno::{TransportConsole, TurnEvent, TurnInput, TurnObserver, TurnSummary};
 use poph_files::{Content, FileError};
 use poph_store::{
     AttachmentRecord, Conversa, Direction, Mensagem, NewChannelAttachment, NewConversation,
@@ -546,7 +546,7 @@ pub async fn mensagem(
         // que só passou o motor), o item fica pendente na fila e nada se perde.
         if let Some(fluxo) = fluxo {
             let _ = fluxo
-                .enviar_pendentes_do_console(org, &TransporteConsole::silencioso())
+                .send_pending_console(org, &TransportConsole::silencioso())
                 .await;
         }
         match resultado {

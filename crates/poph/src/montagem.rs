@@ -8,15 +8,15 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use poph_agent::atores::{Atores, OpcoesAtores};
-use poph_agent::base_conhecimento::BaseConhecimento;
-use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
-use poph_agent::entrada_saida::{Fluxo, OpcoesFluxo};
-use poph_agent::limites::{Limitador, OpcoesLimites};
-use poph_agent::metricas::{MetricasFluxo, MetricasMemoria, MetricasTurno};
-use poph_agent::provedores::{ProvedorResolvido, Provedores};
-use poph_agent::turno::{AjustesDoFluxo, RegistroPadrao, TurnEngine, TurnOptions, TurnProcessor};
-use poph_agent::{BuscadorBase, BuscadorProdutos, CatalogoProdutos, ConsultarBase, registro_com};
+use poph_agent::actors::{ActorOptions, Actors};
+use poph_agent::base_knowledge::KnowledgeBase;
+use poph_agent::config_hot::{ConfigHot, HotConfigOptions};
+use poph_agent::entry_output::{FlowOptions, Fluxo};
+use poph_agent::limites::{LimitOptions, Limiter};
+use poph_agent::metrics::{MetricsFlow, MetricsMemory, MetricsTurn};
+use poph_agent::providers::{Providers, ResolvedProvider};
+use poph_agent::turno::{AdjustmentsFlow, DefaultRegistry, TurnEngine, TurnOptions, TurnProcessor};
+use poph_agent::{KnowledgeSearcher, ProductCatalog, ProductSearcher, QueryKnowledge, record_with};
 use poph_core::llm::{LlmLimiter, LlmProvider, OpenAiCompatibleClient, OpenAiCompatibleConfig};
 use poph_fluxos::cache::CacheRevisoes;
 use poph_store::Store;
@@ -35,9 +35,9 @@ pub struct Chaves {
 /// Métricas que a montagem publica. O servidor passa as dele; o chat usa as próprias.
 pub struct Metricas {
     base: BaseMetrics,
-    turno: MetricasTurno,
-    fluxo: MetricasFluxo,
-    memoria: MetricasMemoria,
+    turno: MetricsTurn,
+    fluxo: MetricsFlow,
+    memoria: MetricsMemory,
 }
 
 impl Metricas {
@@ -45,9 +45,9 @@ impl Metricas {
     pub fn proprias(base: BaseMetrics) -> Self {
         Self {
             base,
-            turno: MetricasTurno::proprio(),
-            fluxo: MetricasFluxo::proprio(),
-            memoria: MetricasMemoria::proprio(),
+            turno: MetricsTurn::own(),
+            fluxo: MetricsFlow::own(),
+            memoria: MetricsMemory::own(),
         }
     }
 
@@ -55,11 +55,11 @@ impl Metricas {
     pub fn registradas(base: BaseMetrics, registro: &Registry) -> Result<Self, String> {
         Ok(Self {
             base,
-            turno: MetricasTurno::registrar(registro)
+            turno: MetricsTurn::register(registro)
                 .map_err(|erro| format!("métricas do turno: {erro}"))?,
-            fluxo: MetricasFluxo::registrar(registro)
+            fluxo: MetricsFlow::register(registro)
                 .map_err(|erro| format!("métricas da fila: {erro}"))?,
-            memoria: MetricasMemoria::registrar(registro)
+            memoria: MetricsMemory::register(registro)
                 .map_err(|erro| format!("métricas de memória: {erro}"))?,
         })
     }
@@ -74,7 +74,7 @@ impl Metricas {
 #[derive(Default)]
 pub struct FluxosDoProcesso {
     cache: Option<Arc<CacheRevisoes>>,
-    g9: Option<poph_agent::metricas::MetricasG9>,
+    g9: Option<poph_agent::metrics::MetricsG9>,
 }
 
 impl FluxosDoProcesso {
@@ -82,10 +82,10 @@ impl FluxosDoProcesso {
     pub fn do_servidor(estado: &poph_server::Estado) -> Self {
         let g9 = estado
             .metricas_fluxos()
-            .map(|metricas| poph_agent::metricas::MetricasG9 {
-                iniciou: metricas.g9_iniciou.clone(),
-                nenhum: metricas.g9_nenhum.clone(),
-                abaixo_do_limiar: metricas.g9_abaixo_do_limiar.clone(),
+            .map(|metricas| poph_agent::metrics::MetricsG9 {
+                start: metricas.g9_iniciou.clone(),
+                none: metricas.g9_nenhum.clone(),
+                below_threshold: metricas.g9_abaixo_do_limiar.clone(),
                 fallback: metricas.g9_fallback.clone(),
             });
         Self {
@@ -102,9 +102,9 @@ pub struct Montagem {
     /// Fluxo de entrada e saída, com o processador de turno ligado.
     pub fluxo: Fluxo,
     /// Base de conhecimento (RAG). `None` quando o índice não abre: o turno roda sem RAG.
-    pub base: Option<Arc<BaseConhecimento>>,
+    pub base: Option<Arc<KnowledgeBase>>,
     /// Catálogo de produtos, no mesmo índice da base.
-    pub catalogo: Option<Arc<CatalogoProdutos>>,
+    pub catalogo: Option<Arc<ProductCatalog>>,
 }
 
 /// Ferramentas que dependem da base de conhecimento (índice de trechos + modelo de embedding).
@@ -112,17 +112,17 @@ pub struct Montagem {
 /// Sem o índice aberto elas não são registradas nem oferecidas (HR-46f). A lista existe para o
 /// aviso de subida dizer exatamente o que ficou de fora.
 const FERRAMENTAS_DA_BASE: [&str; 2] = [
-    poph_agent::base_conhecimento::NOME_FERRAMENTA,
-    poph_agent::produtos::NOME_FERRAMENTA,
+    poph_agent::base_knowledge::NAME_TOOL,
+    poph_agent::products::NAME_TOOL,
 ];
 
 /// Ferramentas que só usam o banco: carrinho de orçamento (HR-19) e envio de arquivo (HR-24).
 ///
 /// Elas não dependem do índice de embedding, então valem mesmo numa instalação sem
 /// `poph model install` — é o que garante que o agente continua podendo enviar arquivo (HR-46f).
-fn ferramentas_do_banco(store: Arc<Store>) -> RegistroPadrao {
-    let registro = poph_agent::carrinho::registrar(RegistroPadrao::novo(), Arc::clone(&store));
-    poph_agent::biblioteca::registrar(registro, store)
+fn ferramentas_do_banco(store: Arc<Store>) -> DefaultRegistry {
+    let registro = poph_agent::cart::register(DefaultRegistry::new(), Arc::clone(&store));
+    poph_agent::library::register(registro, store)
 }
 
 /// O registro que o motor recebe: o banco sempre; `consultar_base` e `buscar_produto` só com a base.
@@ -131,16 +131,16 @@ fn ferramentas_do_banco(store: Arc<Store>) -> RegistroPadrao {
 /// as quatro do carrinho e `enviar_arquivo`. Sem ela, ficam as do banco.
 fn registro_do_turno(
     store: Arc<Store>,
-    quente: Arc<ConfigQuente>,
-    base: Option<(&Arc<BaseConhecimento>, &Arc<CatalogoProdutos>)>,
-) -> RegistroPadrao {
+    quente: Arc<ConfigHot>,
+    base: Option<(&Arc<KnowledgeBase>, &Arc<ProductCatalog>)>,
+) -> DefaultRegistry {
     let Some((base, catalogo)) = base else {
         return ferramentas_do_banco(store);
     };
-    let busca: Arc<dyn BuscadorBase> = Arc::clone(base) as Arc<dyn BuscadorBase>;
-    let produtos: Arc<dyn BuscadorProdutos> = Arc::clone(catalogo) as Arc<dyn BuscadorProdutos>;
-    let registro = ConsultarBase::registro(Arc::clone(&quente), busca);
-    registro_com(registro, quente, produtos)
+    let busca: Arc<dyn KnowledgeSearcher> = Arc::clone(base) as Arc<dyn KnowledgeSearcher>;
+    let produtos: Arc<dyn ProductSearcher> = Arc::clone(catalogo) as Arc<dyn ProductSearcher>;
+    let registro = QueryKnowledge::registro(Arc::clone(&quente), busca);
+    record_with(registro, quente, produtos)
 }
 
 fn cliente_llm(
@@ -163,8 +163,8 @@ fn registro_de_provedores(
     ambiente: &config::Ambiente,
     metricas: BaseMetrics,
     padrao: &Arc<dyn LlmProvider>,
-) -> Result<(Provedores, BTreeMap<String, u32>), String> {
-    let padrao = ProvedorResolvido::novo(
+) -> Result<(Providers, BTreeMap<String, u32>), String> {
+    let padrao = ResolvedProvider::new(
         configuracao.llm.provider.as_str(),
         Arc::clone(padrao),
         configuracao.llm.model.clone(),
@@ -184,10 +184,10 @@ fn registro_de_provedores(
         tetos.insert(nome.clone(), efetivo.concurrent_calls);
         nomeados.insert(
             nome.clone(),
-            ProvedorResolvido::novo(nome.as_str(), cliente, efetivo.model.clone()),
+            ResolvedProvider::new(nome.as_str(), cliente, efetivo.model.clone()),
         );
     }
-    Ok((Provedores::novo(padrao, nomeados), tetos))
+    Ok((Providers::new(padrao, nomeados), tetos))
 }
 
 /// Monta o turno completo a partir da configuração e do banco.
@@ -228,14 +228,14 @@ pub fn montar(
         })?;
     let mut motor = TurnEngine::new(
         Arc::clone(&store),
-        ConfigQuente::nova(
+        ConfigHot::new(
             Arc::clone(&store),
-            OpcoesConfigQuente::default(),
+            HotConfigOptions::default(),
             metricas.memoria.clone(),
         ),
-        Arc::new(Limitador::novo(
-            OpcoesLimites::da_config(&configuracao.limits, &configuracao.llm)
-                .com_tetos_por_provedor(tetos),
+        Arc::new(Limiter::new(
+            LimitOptions::of_config(&configuracao.limits, &configuracao.llm)
+                .with_cap_by_provider(tetos),
             metricas.memoria.clone(),
         )),
         provedor,
@@ -289,7 +289,7 @@ pub fn montar(
     // Catálogo de produtos (HR-18): mesmo índice, ferramenta `buscar_produto`.
     let catalogo = base
         .as_ref()
-        .map(|base| CatalogoProdutos::novo(Arc::clone(&store), Arc::clone(base.indice())));
+        .map(|base| ProductCatalog::new(Arc::clone(&store), Arc::clone(base.index())));
     // HR-46f: o registro de ferramentas **não** depende da base de conhecimento. As ferramentas que
     // só usam o banco (`enviar_arquivo` e o carrinho) entram sempre; `consultar_base` e
     // `buscar_produto` só quando o índice abriu. Antes, tudo era registrado dentro do bloco da base:
@@ -303,8 +303,8 @@ pub fn montar(
     // FX-24: as três ferramentas do fluxo (ação, abandono e o início da reserva). Registradas só
     // com `[fluxos] ativo = true`, com o mesmo cache de revisões da API quando o processo tem um.
     let ajustes_do_fluxo = match fluxos.cache.clone() {
-        Some(cache) => AjustesDoFluxo::da_config(&configuracao.flows).com_cache(cache),
-        None => AjustesDoFluxo::da_config(&configuracao.flows),
+        Some(cache) => AdjustmentsFlow::of_config(&configuracao.flows).with_cache(cache),
+        None => AdjustmentsFlow::of_config(&configuracao.flows),
     };
     let registro = poph_agent::turno::registrar_ferramentas_do_fluxo_com(
         registro,
@@ -315,9 +315,9 @@ pub fn montar(
         poph_agent::turno::registrar_ferramenta_encerramento(registro, Arc::clone(&store));
     match (&base, &catalogo) {
         (Some(base), Some(catalogo)) => {
-            let busca: Arc<dyn BuscadorBase> = Arc::clone(base) as Arc<dyn BuscadorBase>;
-            let produtos: Arc<dyn BuscadorProdutos> =
-                Arc::clone(catalogo) as Arc<dyn BuscadorProdutos>;
+            let busca: Arc<dyn KnowledgeSearcher> = Arc::clone(base) as Arc<dyn KnowledgeSearcher>;
+            let produtos: Arc<dyn ProductSearcher> =
+                Arc::clone(catalogo) as Arc<dyn ProductSearcher>;
             // HR-33: a mesma busca de produtos alimenta o G5 (candidatos do turno), além da
             // ferramenta `buscar_produto`.
             motor = motor.with_products(produtos).with_search(busca);
@@ -335,17 +335,17 @@ pub fn montar(
     motor = motor.with_tools(Arc::new(registro));
     let motor = Arc::new(motor);
     let processador = Arc::new(TurnProcessor::new(Arc::clone(&motor)));
-    let atores = Atores::novo(
+    let atores = Actors::new(
         processador.clone(),
-        OpcoesAtores::default(),
+        ActorOptions::default(),
         metricas.memoria,
     );
     // Falha do modelo (HR-26i): a política vem do `[turno]` do `poph.toml`.
-    let opcoes_fluxo = OpcoesFluxo::default().com_falha_modelo(
+    let opcoes_fluxo = FlowOptions::default().with_failure_model(
         configuracao.turn.model_failure_attempts,
         std::time::Duration::from_millis(configuracao.turn.model_failure_delay_ms),
     );
-    let fluxo = Fluxo::com_metricas(Arc::clone(&store), atores, opcoes_fluxo, metricas.fluxo);
+    let fluxo = Fluxo::with_metrics(Arc::clone(&store), atores, opcoes_fluxo, metricas.fluxo);
     processador.attach_io(fluxo.clone());
 
     Ok(Montagem {
@@ -360,8 +360,8 @@ pub fn montar(
 mod testes {
     use std::path::PathBuf;
 
-    use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
-    use poph_agent::metricas::MetricasMemoria;
+    use poph_agent::config_hot::{ConfigHot, HotConfigOptions};
+    use poph_agent::metrics::MetricsMemory;
     use poph_rag::{Embedder, Index, IndexConfig};
 
     use super::*;
@@ -385,11 +385,11 @@ mod testes {
         )
     }
 
-    fn quente(store: &Arc<Store>) -> Arc<ConfigQuente> {
-        Arc::new(ConfigQuente::nova(
+    fn quente(store: &Arc<Store>) -> Arc<ConfigHot> {
+        Arc::new(ConfigHot::new(
             Arc::clone(store),
-            OpcoesConfigQuente::default(),
-            MetricasMemoria::proprio(),
+            HotConfigOptions::default(),
+            MetricsMemory::own(),
         ))
     }
 
@@ -397,7 +397,7 @@ mod testes {
     fn base_e_catalogo(
         store: &Arc<Store>,
         pasta: &std::path::Path,
-    ) -> (Arc<BaseConhecimento>, Arc<CatalogoProdutos>) {
+    ) -> (Arc<KnowledgeBase>, Arc<ProductCatalog>) {
         let abrir = || {
             let embedder: Arc<dyn Embedder> = Arc::new(poph_rag::FakeEmbedder::new());
             Index::open(
@@ -408,8 +408,8 @@ mod testes {
             .expect("abre o índice de teste")
             .0
         };
-        let base = BaseConhecimento::nova(Arc::clone(store), Arc::new(abrir()));
-        let catalogo = CatalogoProdutos::novo(Arc::clone(store), Arc::new(abrir()));
+        let base = KnowledgeBase::new(Arc::clone(store), Arc::new(abrir()));
+        let catalogo = ProductCatalog::new(Arc::clone(store), Arc::new(abrir()));
         (base, catalogo)
     }
 
@@ -417,10 +417,10 @@ mod testes {
     fn sem_base_ficam_enviar_arquivo_e_carrinho_sem_consultar_base_nem_produto() {
         let pasta = pasta("sem-base");
         let store = store(&pasta);
-        let nomes = ferramentas_do_banco(Arc::clone(&store)).nomes();
+        let nomes = ferramentas_do_banco(Arc::clone(&store)).names();
         // HR-46f: sem `poph model install` o modelo continua recebendo a ferramenta de arquivo.
         assert!(
-            nomes.contains(&poph_agent::NOME_ENVIAR_ARQUIVO.to_owned()),
+            nomes.contains(&poph_agent::NAME_SEND_FILE.to_owned()),
             "enviar_arquivo fora da lista: {nomes:?}"
         );
         for carrinho in [
@@ -447,7 +447,7 @@ mod testes {
         // O registro sem base tem exatamente as cinco ferramentas do banco (4 do carrinho + arquivo).
         let pasta = pasta("sem-base-contagem");
         let store = store(&pasta);
-        let nomes = ferramentas_do_banco(Arc::clone(&store)).nomes();
+        let nomes = ferramentas_do_banco(Arc::clone(&store)).names();
         assert_eq!(
             nomes,
             vec![
@@ -455,7 +455,7 @@ mod testes {
                 "cart_clear".to_owned(),
                 "cart_remove_item".to_owned(),
                 "cart_summary".to_owned(),
-                poph_agent::NOME_ENVIAR_ARQUIVO.to_owned(),
+                poph_agent::NAME_SEND_FILE.to_owned(),
             ]
         );
     }
@@ -467,7 +467,7 @@ mod testes {
         let (base, catalogo) = base_e_catalogo(&store, &pasta);
         let registro =
             registro_do_turno(Arc::clone(&store), quente(&store), Some((&base, &catalogo)));
-        let nomes = registro.nomes();
+        let nomes = registro.names();
         assert_eq!(
             nomes,
             vec![
@@ -477,7 +477,7 @@ mod testes {
                 "cart_remove_item".to_owned(),
                 "cart_summary".to_owned(),
                 "consultar_base".to_owned(),
-                poph_agent::NOME_ENVIAR_ARQUIVO.to_owned(),
+                poph_agent::NAME_SEND_FILE.to_owned(),
             ],
             "a lista com base ligada mudou; era a de antes da HR-46f"
         );
@@ -487,9 +487,9 @@ mod testes {
     fn registro_do_turno_sem_base_nao_toca_no_indice() {
         let pasta = pasta("sem-base-helper");
         let store = store(&pasta);
-        let nomes = registro_do_turno(Arc::clone(&store), quente(&store), None).nomes();
+        let nomes = registro_do_turno(Arc::clone(&store), quente(&store), None).names();
         assert_eq!(nomes.len(), 5, "lista sem base: {nomes:?}");
-        assert!(nomes.contains(&poph_agent::NOME_ENVIAR_ARQUIVO.to_owned()));
+        assert!(nomes.contains(&poph_agent::NAME_SEND_FILE.to_owned()));
         assert!(!nomes.contains(&"consultar_base".to_owned()));
     }
 }

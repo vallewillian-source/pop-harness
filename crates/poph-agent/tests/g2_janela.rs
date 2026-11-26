@@ -1,28 +1,13 @@
-//! G2 com efeito: a janela de agrupamento governada pelo Jev (HR-30).
-//!
-//! O que se prova aqui:
-//! 1. `esperar_mais` estica a janela (dentro do teto do PRD §6.3) e a mensagem seguinte do cliente
-//!    entra no **mesmo** turno — uma resposta, uma chamada ao modelo, as duas mensagens no prompt;
-//! 2. `processar_agora` encurta a espera para a confirmação curta;
-//! 3. gate desligado, Jev fora, erro, prazo, escolha fora das opções e confiança baixa mantêm a
-//!    janela fixa do agente — o comportamento de antes da HR-30;
-//! 4. conversa transferida continua sem responder e sem consultar o Jev (D12);
-//! 5. o teste de latência do conjunto rotulado: nas mensagens completas o tempo até processar é
-//!    menor que a janela fixa, e o percentual de frases partidas não piora.
-//!
-//! A espera é a `Pausa` injetável com **relógio virtual**: ela registra o que foi pedido e, ao
-//! avançar o relógio, grava no banco as mensagens que o cliente "continuou digitando".
-
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
-use poph_agent::limites::{Limitador, OpcoesLimites};
-use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
+use poph_agent::config_hot::{ConfigHot, HotConfigOptions};
+use poph_agent::limites::{LimitOptions, Limiter};
+use poph_agent::metrics::{MetricsMemory, MetricsTurn};
 use poph_agent::turno::{
-    CONFIRMATION_WINDOW, FuturoPausa, NoopObserver, Pausa, TurnEngine, TurnInput, TurnOptions,
+    CONFIRMATION_WINDOW, FuturePause, NoopObserver, Pause, TurnEngine, TurnInput, TurnOptions,
     TurnSummary, window_with_g2,
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Message, Script, Usage};
@@ -34,66 +19,56 @@ use poph_store::{
 };
 use poph_types::{AgentId, ConversationId, JevGates, MessageId, OrgId};
 
-// ───────────────────────────── Pausa com relógio virtual ─────────────────────────────
-
-/// Mensagem que o cliente manda enquanto o turno espera a janela.
 #[derive(Debug, Clone)]
 struct Continuacao {
-    /// Instante (ms, no relógio virtual do teste) em que a mensagem chega.
     instante_ms: u64,
-    /// Texto digitado pelo cliente.
     texto: String,
 }
 
-/// Pausa de teste: registra a espera pedida e avança um relógio virtual, gravando as continuações
-/// que chegam até aquele instante — é a forma de provar "a mensagem seguinte entrou na mesma
-/// janela" sem dormir.
 struct PausaVirtual {
     store: Arc<Store>,
     org: OrgId,
     conversa: ConversationId,
-    agora_ms: Mutex<u64>,
+    now_ms: Mutex<u64>,
     esperas: Mutex<Vec<Duration>>,
     continuacoes: Mutex<Vec<Continuacao>>,
 }
 
 impl PausaVirtual {
-    fn nova(store: Arc<Store>, org: OrgId, conversa: ConversationId) -> Self {
+    fn new(store: Arc<Store>, org: OrgId, conversa: ConversationId) -> Self {
         Self {
             store,
             org,
             conversa,
-            agora_ms: Mutex::new(0),
+            now_ms: Mutex::new(0),
             esperas: Mutex::new(Vec::new()),
             continuacoes: Mutex::new(Vec::new()),
         }
     }
 
-    fn agendar(&self, em_ms: u64, texto: &str) {
+    fn schedule(&self, em_ms: u64, texto: &str) {
         self.continuacoes.lock().expect("agenda").push(Continuacao {
             instante_ms: em_ms,
             texto: texto.to_owned(),
         });
     }
 
-    /// Esperas pedidas, na ordem.
     fn esperas(&self) -> Vec<Duration> {
         self.esperas.lock().expect("esperas").clone()
     }
 
-    /// Espera total pedida.
     fn espera_total(&self) -> Duration {
         self.esperas().iter().copied().sum()
     }
 
-    fn avancar(&self, duracao: Duration) {
-        let mut agora = self.agora_ms.lock().expect("relógio");
-        *agora = agora.saturating_add(u64::try_from(duracao.as_millis()).unwrap_or(u64::MAX));
-        let agora = *agora;
+    fn avancar(&self, duration: Duration) {
+        let mut now = self.now_ms.lock().expect("relógio");
+        *now = now.saturating_add(u64::try_from(duration.as_millis()).unwrap_or(u64::MAX));
+        let now = *now;
         let mut continuacoes = self.continuacoes.lock().expect("continuações");
-        let mut pendentes = Vec::new();
+        let mut pending = Vec::new();
         for continuacao in continuacoes.drain(..) {
-            if continuacao.instante_ms <= agora {
+            if continuacao.instante_ms <= now {
                 self.store
                     .messages()
                     .write(
@@ -112,47 +87,46 @@ impl PausaVirtual {
                     )
                     .expect("grava a continuação do cliente");
             } else {
-                pendentes.push(continuacao);
+                pending.push(continuacao);
             }
         }
-        *continuacoes = pendentes;
+        *continuacoes = pending;
     }
 }
 
-impl Pausa for PausaVirtual {
-    fn esperar(&self, duracao: Duration) -> FuturoPausa {
-        self.esperas.lock().expect("esperas").push(duracao);
-        self.avancar(duracao);
+impl Pause for PausaVirtual {
+    fn wait(&self, duration: Duration) -> FuturePause {
+        self.esperas.lock().expect("esperas").push(duration);
+        self.avancar(duration);
         Box::pin(async {})
     }
 }
 
-// ───────────────────────────── Cenário ─────────────────────────────
-
-struct Cenario {
-    pasta: PathBuf,
+struct Scenario {
+    folder: PathBuf,
     store: Arc<Store>,
     org: OrgId,
     agente: AgentId,
 }
 
-impl Cenario {
-    fn novo(rotulo: &str) -> Self {
-        let pasta = std::env::temp_dir().join(format!(
-            "poph-hr30-{rotulo}-{}-{}",
+impl Scenario {
+    fn new(label: &str) -> Self {
+        let folder = std::env::temp_dir().join(format!(
+            "poph-hr30-{label}-{}-{}",
             std::process::id(),
             AgentId::generate()
         ));
-        let _ = std::fs::remove_dir_all(&pasta);
-        std::fs::create_dir_all(&pasta).expect("pasta do teste");
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).expect("pasta do teste");
         let store = Arc::new(
-            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco"),
+            Store::open_at(&folder.join("harness.db"), &folder.join("rag.db"))
+                .expect("abre o banco"),
         );
         let org = store
             .orgs()
             .create(NewOrg {
-                name: format!("Org {rotulo}"),
-                slug: format!("org-{rotulo}-{}", AgentId::generate()),
+                name: format!("Org {label}"),
+                slug: format!("org-{label}-{}", AgentId::generate()),
                 config_json: "{}".to_owned(),
             })
             .expect("cria a org")
@@ -162,8 +136,8 @@ impl Cenario {
             .create(
                 org,
                 NewAgent {
-                    name: format!("Bia {rotulo}"),
-                    slug: format!("bia-{rotulo}"),
+                    name: format!("Bia {label}"),
+                    slug: format!("bia-{label}"),
                     ..NewAgent::default()
                 },
             )
@@ -180,8 +154,6 @@ impl Cenario {
                 true,
             )
             .expect("grava as instruções");
-        // Handoff ligado: sem isso o G1 nem se aplica (regra do POP Atende) e o teste do gate
-        // desligado não teria como provar que ele continua sendo consultado.
         store
             .agents()
             .update(
@@ -195,7 +167,7 @@ impl Cenario {
             )
             .expect("liga o handoff");
         Self {
-            pasta,
+            folder,
             store,
             org,
             agente,
@@ -240,43 +212,40 @@ impl Cenario {
             .id
     }
 
-    fn motor(
+    fn engine(
         &self,
         jev: Option<Arc<JevEngine>>,
         pausa: Arc<PausaVirtual>,
         provedor: Arc<FakeProvider>,
     ) -> TurnEngine {
-        let config = ConfigQuente::nova(
+        let config = ConfigHot::new(
             Arc::clone(&self.store),
-            OpcoesConfigQuente::default(),
-            MetricasMemoria::proprio(),
+            HotConfigOptions::default(),
+            MetricsMemory::own(),
         );
-        let limitador = Arc::new(Limitador::novo(
-            OpcoesLimites::default(),
-            MetricasMemoria::proprio(),
-        ));
-        let mut motor = TurnEngine::new(
+        let limiter = Arc::new(Limiter::new(LimitOptions::default(), MetricsMemory::own()));
+        let mut engine = TurnEngine::new(
             Arc::clone(&self.store),
             config,
-            limitador,
+            limiter,
             provedor,
             TurnOptions::default(),
-            MetricasTurno::proprio(),
+            MetricsTurn::own(),
         )
         .with_pause(pausa);
         if let Some(jev) = jev {
-            motor = motor.with_jev(jev);
+            engine = engine.with_jev(jev);
         }
-        motor
+        engine
     }
 
     async fn turno(
         &self,
-        motor: &TurnEngine,
+        engine: &TurnEngine,
         conversa: ConversationId,
         gatilho: MessageId,
     ) -> TurnSummary {
-        motor
+        engine
             .run(
                 TurnInput::new(self.org, conversa, gatilho),
                 &mut NoopObserver,
@@ -286,13 +255,11 @@ impl Cenario {
     }
 }
 
-impl Drop for Cenario {
+impl Drop for Scenario {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.pasta);
+        let _ = std::fs::remove_dir_all(&self.folder);
     }
 }
-
-// ───────────────────────────── Apoio ─────────────────────────────
 
 fn provedor() -> Arc<FakeProvider> {
     Arc::new(FakeProvider::with_scripts(vec![Script::Events(vec![
@@ -316,65 +283,57 @@ fn motor_jev(jev: Arc<FakeJev>, gates: JevGates) -> Arc<JevEngine> {
     Arc::new(JevEngine::new(jev, gates, "jev-latest"))
 }
 
-/// Motor do Jev com opções trocadas (prazo do lote, testes de timeout).
-fn motor_jev_com(jev: Arc<FakeJev>, gates: JevGates, opcoes: JevOptions) -> Arc<JevEngine> {
-    Arc::new(JevEngine::new(jev, gates, "jev-latest").with_options(opcoes))
+fn motor_jev_com(jev: Arc<FakeJev>, gates: JevGates, options: JevOptions) -> Arc<JevEngine> {
+    Arc::new(JevEngine::new(jev, gates, "jev-latest").with_options(options))
 }
 
-fn escolha(pergunta: &str, escolha: &str) -> BTreeMap<String, String> {
-    BTreeMap::from([(pergunta.to_owned(), escolha.to_owned())])
+fn choice(pergunta: &str, choice: &str) -> BTreeMap<String, String> {
+    BTreeMap::from([(pergunta.to_owned(), choice.to_owned())])
 }
 
-/// Janela padrão do agente (2 s), tolerância para o tempo real decorrido entre a gravação da
-/// mensagem e a leitura do relógio pelo motor.
 const JANELA: Duration = Duration::from_secs(2);
 const TOLERANCIA: Duration = Duration::from_millis(150);
 
-fn perto(medido: Duration, esperado: Duration) -> bool {
-    medido <= esperado && medido + TOLERANCIA >= esperado
+fn perto(medido: Duration, expected: Duration) -> bool {
+    medido <= expected && medido + TOLERANCIA >= expected
 }
 
-// ───────────────────────────── 1. esperar mais ─────────────────────────────
-
-/// `esperar_mais` estica a janela até o teto e a mensagem seguinte do cliente entra no mesmo turno:
-/// uma resposta só, uma chamada ao modelo, as duas mensagens no prompt.
 #[tokio::test]
 async fn esperar_mais_estica_a_janela_e_agrupa_a_mensagem_seguinte() {
-    let cenario = Cenario::novo("esperar");
-    let conversa = cenario.conversa();
-    let pausa = Arc::new(PausaVirtual::nova(
-        Arc::clone(&cenario.store),
-        cenario.org,
+    let scenario = Scenario::new("esperar");
+    let conversa = scenario.conversa();
+    let pausa = Arc::new(PausaVirtual::new(
+        Arc::clone(&scenario.store),
+        scenario.org,
         conversa,
     ));
-    // O cliente manda o endereço 3 s depois — depois da janela fixa de 2 s e dentro dos 4 s do G2.
-    pausa.agendar(3000, "Rua das Flores, 120 — apto 3");
+    pausa.schedule(3000, "Rua das Flores, 120 — apto 3");
 
-    let jev = Arc::new(FakeJev::with_choices(escolha("g2_esperar", G2_WAIT)));
+    let jev = Arc::new(FakeJev::with_choices(choice("g2_esperar", G2_WAIT)));
     let provedor = provedor();
-    let motor = cenario.motor(
+    let engine = scenario.engine(
         Some(motor_jev(Arc::clone(&jev), so_g2())),
         Arc::clone(&pausa),
         Arc::clone(&provedor),
     );
 
-    let gatilho = cenario.falar(conversa, "vou te passar meu endereço");
-    let resumo = cenario.turno(&motor, conversa, gatilho).await;
+    let gatilho = scenario.falar(conversa, "vou te passar meu endereço");
+    let summary = scenario.turno(&engine, conversa, gatilho).await;
 
-    assert_eq!(resumo.estado, TurnState::Completed);
+    assert_eq!(summary.estado, TurnState::Completed);
     assert!(
         perto(pausa.espera_total(), Duration::from_secs(4)),
         "espera devia ser uma janela esticada (4 s), foi {:?}",
         pausa.espera_total()
     );
     assert_eq!(
-        resumo.messages.len(),
+        summary.messages.len(),
         2,
         "a mensagem seguinte entra na mesma janela"
     );
     assert_eq!(provedor.received().len(), 1, "uma chamada ao modelo");
-    let pedido = &provedor.received()[0];
-    let do_cliente = pedido
+    let request = &provedor.received()[0];
+    let do_cliente = request
         .messages
         .iter()
         .filter(|mensagem| matches!(mensagem, Message::User(_)))
@@ -384,72 +343,66 @@ async fn esperar_mais_estica_a_janela_e_agrupa_a_mensagem_seguinte() {
         "o prompt leva as duas mensagens do cliente no mesmo turno"
     );
     assert_eq!(
-        resumo.jev.as_ref().and_then(|jev| jev.choice(IdGate::G2)),
+        summary.jev.as_ref().and_then(|jev| jev.choice(IdGate::G2)),
         Some(G2_WAIT)
     );
 }
 
-/// Dois lotes: um na chegada (que decidiu "esperar mais") e outro depois da mensagem nova, porque o
-/// estado mudou. O registro do turno guarda a decisão mais recente.
 #[tokio::test]
 async fn mensagem_nova_durante_a_espera_refaz_o_lote() {
-    let cenario = Cenario::novo("refaz");
-    let conversa = cenario.conversa();
-    let pausa = Arc::new(PausaVirtual::nova(
-        Arc::clone(&cenario.store),
-        cenario.org,
+    let scenario = Scenario::new("refaz");
+    let conversa = scenario.conversa();
+    let pausa = Arc::new(PausaVirtual::new(
+        Arc::clone(&scenario.store),
+        scenario.org,
         conversa,
     ));
-    pausa.agendar(3000, "o produto que eu quero é o azul");
+    pausa.schedule(3000, "o produto que eu quero é o azul");
 
-    let jev = Arc::new(FakeJev::with_choices(escolha("g2_esperar", G2_WAIT)));
-    let motor = cenario.motor(
+    let jev = Arc::new(FakeJev::with_choices(choice("g2_esperar", G2_WAIT)));
+    let engine = scenario.engine(
         Some(motor_jev(Arc::clone(&jev), so_g2())),
         Arc::clone(&pausa),
         provedor(),
     );
 
-    let gatilho = cenario.falar(conversa, "queria saber do");
-    let resumo = cenario.turno(&motor, conversa, gatilho).await;
+    let gatilho = scenario.falar(conversa, "queria saber do");
+    let summary = scenario.turno(&engine, conversa, gatilho).await;
 
-    assert_eq!(resumo.estado, TurnState::Completed);
-    assert_eq!(resumo.messages.len(), 2);
+    assert_eq!(summary.estado, TurnState::Completed);
+    assert_eq!(summary.messages.len(), 2);
     assert_eq!(
         jev.calls(),
         2,
         "o lote é refeito quando o cliente fala durante a espera"
     );
-    let ultimo = jev.requests().pop().expect("há pedido");
+    let last = jev.requests().pop().expect("há pedido");
     assert_eq!(
-        ultimo.estado["conversa"]["mensagens"][1]["texto"],
+        last.estado["conversa"]["mensagens"][1]["texto"],
         "o produto que eu quero é o azul"
     );
 }
 
-// ───────────────────────────── 2. processar agora ─────────────────────────────
-
-/// `processar_agora` encurta a espera para a confirmação curta: menos tempo até a resposta, sem o
-/// lote refeito (ninguém falou durante a janela).
 #[tokio::test]
 async fn processar_agora_encurta_a_espera() {
-    let cenario = Cenario::novo("processar");
-    let conversa = cenario.conversa();
-    let pausa = Arc::new(PausaVirtual::nova(
-        Arc::clone(&cenario.store),
-        cenario.org,
+    let scenario = Scenario::new("processar");
+    let conversa = scenario.conversa();
+    let pausa = Arc::new(PausaVirtual::new(
+        Arc::clone(&scenario.store),
+        scenario.org,
         conversa,
     ));
-    let jev = Arc::new(FakeJev::with_choices(escolha("g2_esperar", G2_PROCESS)));
-    let motor = cenario.motor(
+    let jev = Arc::new(FakeJev::with_choices(choice("g2_esperar", G2_PROCESS)));
+    let engine = scenario.engine(
         Some(motor_jev(Arc::clone(&jev), so_g2())),
         Arc::clone(&pausa),
         provedor(),
     );
 
-    let gatilho = cenario.falar(conversa, "vocês atendem no domingo?");
-    let resumo = cenario.turno(&motor, conversa, gatilho).await;
+    let gatilho = scenario.falar(conversa, "vocês atendem no domingo?");
+    let summary = scenario.turno(&engine, conversa, gatilho).await;
 
-    assert_eq!(resumo.estado, TurnState::Completed);
+    assert_eq!(summary.estado, TurnState::Completed);
     assert!(
         pausa.espera_total() < JANELA,
         "processar agora tem de esperar menos que a janela fixa, esperou {:?}",
@@ -462,37 +415,33 @@ async fn processar_agora_encurta_a_espera() {
         pausa.espera_total()
     );
     assert_eq!(jev.calls(), 1, "sem mensagem nova, um lote só");
-    assert_eq!(resumo.messages.len(), 1);
+    assert_eq!(summary.messages.len(), 1);
 }
 
-// ───────────────────────────── 3. janela fixa (fallback) ─────────────────────────────
-
-/// Gate desligado: uma espera de janela fixa, o lote continua acontecendo depois da janela — o
-/// comportamento de antes da HR-30.
 #[tokio::test]
 async fn gate_desligado_mantem_a_janela_fixa() {
-    let cenario = Cenario::novo("desligado");
-    let conversa = cenario.conversa();
-    let pausa = Arc::new(PausaVirtual::nova(
-        Arc::clone(&cenario.store),
-        cenario.org,
+    let scenario = Scenario::new("desligado");
+    let conversa = scenario.conversa();
+    let pausa = Arc::new(PausaVirtual::new(
+        Arc::clone(&scenario.store),
+        scenario.org,
         conversa,
     ));
     let gates = JevGates {
         g1: true,
         ..JevGates::default()
     };
-    let jev = Arc::new(FakeJev::with_choices(escolha("g1_transferir", G1_CONTINUE)));
-    let motor = cenario.motor(
+    let jev = Arc::new(FakeJev::with_choices(choice("g1_transferir", G1_CONTINUE)));
+    let engine = scenario.engine(
         Some(motor_jev(Arc::clone(&jev), gates)),
         Arc::clone(&pausa),
         provedor(),
     );
 
-    let gatilho = cenario.falar(conversa, "bom dia");
-    let resumo = cenario.turno(&motor, conversa, gatilho).await;
+    let gatilho = scenario.falar(conversa, "bom dia");
+    let summary = scenario.turno(&engine, conversa, gatilho).await;
 
-    assert_eq!(resumo.estado, TurnState::Completed);
+    assert_eq!(summary.estado, TurnState::Completed);
     assert_eq!(pausa.esperas().len(), 1);
     assert!(
         perto(pausa.espera_total(), JANELA),
@@ -500,63 +449,61 @@ async fn gate_desligado_mantem_a_janela_fixa() {
         pausa.espera_total()
     );
     assert_eq!(jev.calls(), 1, "o G1 continua sendo consultado");
-    assert!(resumo.jev.is_some());
+    assert!(summary.jev.is_some());
 }
 
-/// Sem Jev nenhum: janela fixa, nenhuma chamada.
 #[tokio::test]
 async fn sem_jev_a_janela_e_a_de_hoje() {
-    let cenario = Cenario::novo("sem-jev");
-    let conversa = cenario.conversa();
-    let pausa = Arc::new(PausaVirtual::nova(
-        Arc::clone(&cenario.store),
-        cenario.org,
+    let scenario = Scenario::new("sem-jev");
+    let conversa = scenario.conversa();
+    let pausa = Arc::new(PausaVirtual::new(
+        Arc::clone(&scenario.store),
+        scenario.org,
         conversa,
     ));
-    let motor = cenario.motor(None, Arc::clone(&pausa), provedor());
+    let engine = scenario.engine(None, Arc::clone(&pausa), provedor());
 
-    let gatilho = cenario.falar(conversa, "bom dia");
-    let resumo = cenario.turno(&motor, conversa, gatilho).await;
+    let gatilho = scenario.falar(conversa, "bom dia");
+    let summary = scenario.turno(&engine, conversa, gatilho).await;
 
-    assert_eq!(resumo.estado, TurnState::Completed);
+    assert_eq!(summary.estado, TurnState::Completed);
     assert!(
         perto(pausa.espera_total(), JANELA),
         "{:?}",
         pausa.espera_total()
     );
-    assert!(resumo.jev.is_none());
+    assert!(summary.jev.is_none());
 }
 
-/// Erro do Jev: janela fixa e o turno responde normalmente.
 #[tokio::test]
 async fn falha_do_jev_mantem_a_janela_fixa() {
-    let cenario = Cenario::novo("falha");
-    let conversa = cenario.conversa();
-    let pausa = Arc::new(PausaVirtual::nova(
-        Arc::clone(&cenario.store),
-        cenario.org,
+    let scenario = Scenario::new("falha");
+    let conversa = scenario.conversa();
+    let pausa = Arc::new(PausaVirtual::new(
+        Arc::clone(&scenario.store),
+        scenario.org,
         conversa,
     ));
     let jev = Arc::new(FakeJev::failing(poph_jev::JevError::Status {
         code: 503,
         motivo: "Service Unavailable".to_owned(),
     }));
-    let motor = cenario.motor(
+    let engine = scenario.engine(
         Some(motor_jev(Arc::clone(&jev), so_g2())),
         Arc::clone(&pausa),
         provedor(),
     );
 
-    let gatilho = cenario.falar(conversa, "me deixa ver aqui");
-    let resumo = cenario.turno(&motor, conversa, gatilho).await;
+    let gatilho = scenario.falar(conversa, "me deixa ver aqui");
+    let summary = scenario.turno(&engine, conversa, gatilho).await;
 
-    assert_eq!(resumo.estado, TurnState::Completed);
+    assert_eq!(summary.estado, TurnState::Completed);
     assert!(
         perto(pausa.espera_total(), JANELA),
         "{:?}",
         pausa.espera_total()
     );
-    let registro = resumo.jev.expect("o turno registra a tentativa");
+    let registro = summary.jev.expect("o turno registra a tentativa");
     assert!(registro.failed());
     assert_eq!(
         registro.choice(IdGate::G2),
@@ -565,27 +512,26 @@ async fn falha_do_jev_mantem_a_janela_fixa() {
     );
 }
 
-/// Resposta fora das opções (ambígua): janela fixa.
 #[tokio::test]
 async fn escolha_fora_das_opcoes_mantem_a_janela_fixa() {
-    let cenario = Cenario::novo("ambigua");
-    let conversa = cenario.conversa();
-    let pausa = Arc::new(PausaVirtual::nova(
-        Arc::clone(&cenario.store),
-        cenario.org,
+    let scenario = Scenario::new("ambigua");
+    let conversa = scenario.conversa();
+    let pausa = Arc::new(PausaVirtual::new(
+        Arc::clone(&scenario.store),
+        scenario.org,
         conversa,
     ));
-    let jev = Arc::new(FakeJev::with_choices(escolha("g2_esperar", "talvez")));
-    let motor = cenario.motor(
+    let jev = Arc::new(FakeJev::with_choices(choice("g2_esperar", "talvez")));
+    let engine = scenario.engine(
         Some(motor_jev(Arc::clone(&jev), so_g2())),
         Arc::clone(&pausa),
         provedor(),
     );
 
-    let gatilho = cenario.falar(conversa, "oi");
-    let resumo = cenario.turno(&motor, conversa, gatilho).await;
+    let gatilho = scenario.falar(conversa, "oi");
+    let summary = scenario.turno(&engine, conversa, gatilho).await;
 
-    assert_eq!(resumo.estado, TurnState::Completed);
+    assert_eq!(summary.estado, TurnState::Completed);
     assert!(
         perto(pausa.espera_total(), JANELA),
         "{:?}",
@@ -593,42 +539,41 @@ async fn escolha_fora_das_opcoes_mantem_a_janela_fixa() {
     );
 }
 
-/// Confiança abaixo do limiar: janela fixa (o modelo queria esperar, mas a decisão não é confiável).
 #[tokio::test]
 async fn confianca_baixa_mantem_a_janela_fixa() {
-    let cenario = Cenario::novo("confianca");
-    let conversa = cenario.conversa();
-    let pausa = Arc::new(PausaVirtual::nova(
-        Arc::clone(&cenario.store),
-        cenario.org,
+    let scenario = Scenario::new("confianca");
+    let conversa = scenario.conversa();
+    let pausa = Arc::new(PausaVirtual::new(
+        Arc::clone(&scenario.store),
+        scenario.org,
         conversa,
     ));
-    let jev = Arc::new(FakeJev::new(|pedido: &poph_jev::JevRequest| {
+    let jev = Arc::new(FakeJev::new(|request: &poph_jev::JevRequest| {
         let mut respostas = BTreeMap::new();
-        for id in pedido.questions.keys() {
-            let mut resposta = poph_jev::JevResponse {
+        for id in request.questions.keys() {
+            let mut response = poph_jev::JevResponse {
                 choice: Some(G2_WAIT.to_owned()),
                 confidence: 0.4,
                 ..poph_jev::JevResponse::default()
             };
-            resposta.probabilities.insert(G2_WAIT.to_owned(), 0.4);
-            respostas.insert(id.clone(), resposta);
+            response.probabilities.insert(G2_WAIT.to_owned(), 0.4);
+            respostas.insert(id.clone(), response);
         }
         Ok(poph_jev::BatchResponse {
             answers: respostas,
             ..poph_jev::BatchResponse::default()
         })
     }));
-    let motor = cenario.motor(
+    let engine = scenario.engine(
         Some(motor_jev(Arc::clone(&jev), so_g2())),
         Arc::clone(&pausa),
         provedor(),
     );
 
-    let gatilho = cenario.falar(conversa, "me deixa ver");
-    let resumo = cenario.turno(&motor, conversa, gatilho).await;
+    let gatilho = scenario.falar(conversa, "me deixa ver");
+    let summary = scenario.turno(&engine, conversa, gatilho).await;
 
-    assert_eq!(resumo.estado, TurnState::Completed);
+    assert_eq!(summary.estado, TurnState::Completed);
     assert!(
         perto(pausa.espera_total(), JANELA),
         "confiança 0,4 é fallback: janela fixa, foi {:?}",
@@ -636,56 +581,50 @@ async fn confianca_baixa_mantem_a_janela_fixa() {
     );
 }
 
-/// Prazo estourado no lote: janela fixa e o turno termina.
 #[tokio::test]
 async fn prazo_do_jev_mantem_a_janela_fixa() {
-    let cenario = Cenario::novo("prazo");
-    let conversa = cenario.conversa();
-    let pausa = Arc::new(PausaVirtual::nova(
-        Arc::clone(&cenario.store),
-        cenario.org,
+    let scenario = Scenario::new("prazo");
+    let conversa = scenario.conversa();
+    let pausa = Arc::new(PausaVirtual::new(
+        Arc::clone(&scenario.store),
+        scenario.org,
         conversa,
     ));
     let jev = Arc::new(
-        FakeJev::with_choices(escolha("g2_esperar", G2_WAIT))
-            .with_delay(Duration::from_millis(250)),
+        FakeJev::with_choices(choice("g2_esperar", G2_WAIT)).with_delay(Duration::from_millis(250)),
     );
-    let opcoes = JevOptions {
+    let options = JevOptions {
         batch_timeout: Duration::from_millis(50),
         ..JevOptions::default()
     };
-    let motor = cenario.motor(
-        Some(motor_jev_com(Arc::clone(&jev), so_g2(), opcoes)),
+    let engine = scenario.engine(
+        Some(motor_jev_com(Arc::clone(&jev), so_g2(), options)),
         Arc::clone(&pausa),
         provedor(),
     );
 
-    let gatilho = cenario.falar(conversa, "peraí");
-    let resumo = cenario.turno(&motor, conversa, gatilho).await;
+    let gatilho = scenario.falar(conversa, "peraí");
+    let summary = scenario.turno(&engine, conversa, gatilho).await;
 
-    assert_eq!(resumo.estado, TurnState::Completed);
+    assert_eq!(summary.estado, TurnState::Completed);
     assert!(
         perto(pausa.espera_total(), JANELA),
         "{:?}",
         pausa.espera_total()
     );
-    let registro = resumo.jev.expect("registra a tentativa");
+    let registro = summary.jev.expect("registra a tentativa");
     assert!(registro.failed());
 }
 
-// ───────────────────────────── 4. conversa transferida ─────────────────────────────
-
-/// Conversa transferida (D12) não abre turno, não consulta o Jev e não chama o modelo — mesmo com o
-/// G2 ligado.
 #[tokio::test]
 async fn conversa_transferida_nao_responde_nem_consulta_o_jev() {
-    let cenario = Cenario::novo("transferida");
-    let conversa = cenario.conversa();
-    cenario
+    let scenario = Scenario::new("transferida");
+    let conversa = scenario.conversa();
+    scenario
         .store
         .conversations()
         .transfer(
-            cenario.org,
+            scenario.org,
             conversa,
             None,
             Some("teste".to_owned()),
@@ -693,77 +632,70 @@ async fn conversa_transferida_nao_responde_nem_consulta_o_jev() {
         )
         .expect("transfere a conversa");
 
-    let pausa = Arc::new(PausaVirtual::nova(
-        Arc::clone(&cenario.store),
-        cenario.org,
+    let pausa = Arc::new(PausaVirtual::new(
+        Arc::clone(&scenario.store),
+        scenario.org,
         conversa,
     ));
-    let jev = Arc::new(FakeJev::with_choices(escolha("g2_esperar", G2_WAIT)));
+    let jev = Arc::new(FakeJev::with_choices(choice("g2_esperar", G2_WAIT)));
     let provedor = provedor();
-    let motor = cenario.motor(
+    let engine = scenario.engine(
         Some(motor_jev(Arc::clone(&jev), so_g2())),
         Arc::clone(&pausa),
         Arc::clone(&provedor),
     );
 
-    let gatilho = cenario.falar(conversa, "oi, ainda estou aqui");
-    let resumo = cenario.turno(&motor, conversa, gatilho).await;
+    let gatilho = scenario.falar(conversa, "oi, ainda estou aqui");
+    let summary = scenario.turno(&engine, conversa, gatilho).await;
 
-    assert_eq!(resumo.estado, TurnState::Skipped);
-    assert!(resumo.texto.is_empty());
+    assert_eq!(summary.estado, TurnState::Skipped);
+    assert!(summary.texto.is_empty());
     assert_eq!(jev.calls(), 0, "nem consulta o Jev");
     assert!(provedor.received().is_empty(), "nem chama o modelo");
     assert!(pausa.esperas().is_empty(), "nem espera a janela");
-    // A mensagem do cliente continua gravada (D12).
-    let mensagens = cenario
+    let messages = scenario
         .store
         .messages()
-        .last_set(cenario.org, conversa, 10)
+        .last_set(scenario.org, conversa, 10)
         .expect("lê as mensagens");
-    assert!(mensagens.iter().any(|mensagem| mensagem.id == gatilho));
+    assert!(messages.iter().any(|mensagem| mensagem.id == gatilho));
 }
 
-// ───────────────────────────── 5. janela efetiva (unidade) ─────────────────────────────
-
-/// A regra da janela, isolada: teto do PRD, esticar, encurtar e fallback.
 #[test]
 fn janela_com_g2_respeita_o_teto_e_o_fallback() {
     let base = Duration::from_secs(2);
-    let teto = Duration::from_secs(8);
+    let cap = Duration::from_secs(8);
     let confirmacao = CONFIRMATION_WINDOW;
 
     assert_eq!(
-        window_with_g2(base, teto, confirmacao, Some(G2_WAIT)),
+        window_with_g2(base, cap, confirmacao, Some(G2_WAIT)),
         Duration::from_secs(4)
     );
     assert_eq!(
-        window_with_g2(Duration::from_secs(6), teto, confirmacao, Some(G2_WAIT)),
-        teto,
+        window_with_g2(Duration::from_secs(6), cap, confirmacao, Some(G2_WAIT)),
+        cap,
         "esticar nunca passa do teto do PRD §6.3"
     );
     assert_eq!(
-        window_with_g2(base, teto, confirmacao, Some(G2_PROCESS)),
+        window_with_g2(base, cap, confirmacao, Some(G2_PROCESS)),
         confirmacao
     );
-    assert_eq!(window_with_g2(base, teto, confirmacao, None), base);
+    assert_eq!(window_with_g2(base, cap, confirmacao, None), base);
     assert_eq!(
-        window_with_g2(base, teto, confirmacao, Some("opcao_desconhecida")),
+        window_with_g2(base, cap, confirmacao, Some("opcao_desconhecida")),
         base
     );
 }
 
-// ───────────────────────────── 6. latência e frases partidas ─────────────────────────────
-
-/// Caso do conjunto `tests/jev/g2.jsonl` com a continuação que o cliente digitaria depois.
 #[derive(Debug, serde::Deserialize)]
 struct CasoDoConjunto {
     estado: JevState,
-    esperado: String,
+    #[serde(rename = "esperado")]
+    expected: String,
     #[serde(default)]
     continuacao: Option<ContinuacaoDoConjunto>,
 }
 
-/// Texto que o cliente continua digitando e quanto tempo depois.
 #[derive(Debug, serde::Deserialize)]
 struct ContinuacaoDoConjunto {
     texto: String,
@@ -776,12 +708,11 @@ fn ler_conjunto() -> Vec<CasoDoConjunto> {
     texto
         .lines()
         .map(str::trim)
-        .filter(|linha| !linha.is_empty() && !linha.starts_with('#'))
-        .map(|linha| serde_json::from_str(linha).expect("caso do conjunto em JSON"))
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(|line| serde_json::from_str(line).expect("caso do conjunto em JSON"))
         .collect()
 }
 
-/// Texto da última mensagem do cliente no caso.
 fn texto_do_caso(caso: &CasoDoConjunto) -> String {
     caso.estado
         .messages
@@ -792,38 +723,35 @@ fn texto_do_caso(caso: &CasoDoConjunto) -> String {
         .unwrap_or_default()
 }
 
-/// Roda um turno para um caso do conjunto, com o G2 respondendo o que o caso espera.
 async fn rodar_caso(
-    cenario: &Cenario,
+    scenario: &Scenario,
     conversa: ConversationId,
     caso: &CasoDoConjunto,
     decisao: Option<&str>,
 ) -> (Arc<PausaVirtual>, TurnSummary) {
-    let pausa = Arc::new(PausaVirtual::nova(
-        Arc::clone(&cenario.store),
-        cenario.org,
+    let pausa = Arc::new(PausaVirtual::new(
+        Arc::clone(&scenario.store),
+        scenario.org,
         conversa,
     ));
     if let Some(continuacao) = &caso.continuacao {
-        pausa.agendar(continuacao.atraso_ms, &continuacao.texto);
+        pausa.schedule(continuacao.atraso_ms, &continuacao.texto);
     }
     let escolhas = match decisao {
-        Some(decidido) => escolha("g2_esperar", decidido),
+        Some(decidido) => choice("g2_esperar", decidido),
         None => BTreeMap::new(),
     };
     let jev = Arc::new(FakeJev::with_choices(escolhas));
-    let motor = cenario.motor(
+    let engine = scenario.engine(
         Some(motor_jev(Arc::clone(&jev), so_g2())),
         Arc::clone(&pausa),
         provedor(),
     );
-    let gatilho = cenario.falar(conversa, &texto_do_caso(caso));
-    let resumo = cenario.turno(&motor, conversa, gatilho).await;
-    (pausa, resumo)
+    let gatilho = scenario.falar(conversa, &texto_do_caso(caso));
+    let summary = scenario.turno(&engine, conversa, gatilho).await;
+    (pausa, summary)
 }
 
-/// Aceite da HR-30: nas mensagens completas do conjunto o tempo até processar é menor que a janela
-/// fixa, e o percentual de frases partidas **não piora** com o G2 ligado.
 #[tokio::test]
 async fn latencia_menor_nas_completas_sem_partir_mais_frases() {
     let casos = ler_conjunto();
@@ -832,13 +760,11 @@ async fn latencia_menor_nas_completas_sem_partir_mais_frases() {
         "o conjunto do G2 precisa de pelo menos 60 casos (tem {})",
         casos.len()
     );
-    let cenario = Cenario::novo("latencia");
+    let scenario = Scenario::new("latencia");
 
-    // (a) Mensagens completas: com o G2 dizendo "processar agora", a espera tem de ser menor que a
-    // janela fixa. O mesmo caso sem o gate é a linha de base.
     let completas: Vec<&CasoDoConjunto> = casos
         .iter()
-        .filter(|caso| caso.esperado == G2_PROCESS)
+        .filter(|caso| caso.expected == G2_PROCESS)
         .collect();
     assert!(
         completas.len() >= 30,
@@ -848,14 +774,14 @@ async fn latencia_menor_nas_completas_sem_partir_mais_frases() {
     let mut soma_com = Duration::ZERO;
     let mut soma_sem = Duration::ZERO;
     for caso in &completas {
-        let conversa = cenario.conversa();
-        let (pausa, resumo) = rodar_caso(&cenario, conversa, caso, Some(G2_PROCESS)).await;
-        assert_eq!(resumo.estado, TurnState::Completed);
+        let conversa = scenario.conversa();
+        let (pausa, summary) = rodar_caso(&scenario, conversa, caso, Some(G2_PROCESS)).await;
+        assert_eq!(summary.estado, TurnState::Completed);
         soma_com += pausa.espera_total();
 
-        let conversa = cenario.conversa();
-        let (pausa, resumo) = rodar_caso(&cenario, conversa, caso, None).await;
-        assert_eq!(resumo.estado, TurnState::Completed);
+        let conversa = scenario.conversa();
+        let (pausa, summary) = rodar_caso(&scenario, conversa, caso, None).await;
+        assert_eq!(summary.estado, TurnState::Completed);
         soma_sem += pausa.espera_total();
     }
     let media_com = soma_com / u32::try_from(completas.len()).expect("casos");
@@ -874,9 +800,6 @@ async fn latencia_menor_nas_completas_sem_partir_mais_frases() {
     );
     assert!(media_com < media_sem);
 
-    // (b) Frases partidas: nos casos com continuação, contamos quantas vezes a mensagem seguinte NÃO
-    // entrou na mesma resposta. Com o G2 (usando o rótulo do próprio caso) não pode ser pior que sem
-    // ele.
     let com_continuacao: Vec<&CasoDoConjunto> = casos
         .iter()
         .filter(|caso| caso.continuacao.is_some())
@@ -889,15 +812,15 @@ async fn latencia_menor_nas_completas_sem_partir_mais_frases() {
     let mut partidas_com = 0;
     let mut partidas_sem = 0;
     for caso in &com_continuacao {
-        let conversa = cenario.conversa();
-        let (_, resumo) = rodar_caso(&cenario, conversa, caso, Some(&caso.esperado)).await;
-        if resumo.messages.len() < 2 {
+        let conversa = scenario.conversa();
+        let (_, summary) = rodar_caso(&scenario, conversa, caso, Some(&caso.expected)).await;
+        if summary.messages.len() < 2 {
             partidas_com += 1;
         }
 
-        let conversa = cenario.conversa();
-        let (_, resumo) = rodar_caso(&cenario, conversa, caso, None).await;
-        if resumo.messages.len() < 2 {
+        let conversa = scenario.conversa();
+        let (_, summary) = rodar_caso(&scenario, conversa, caso, None).await;
+        if summary.messages.len() < 2 {
             partidas_sem += 1;
         }
     }

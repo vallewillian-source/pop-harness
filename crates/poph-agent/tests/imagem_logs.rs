@@ -1,23 +1,13 @@
-//! A imagem do cliente nunca vai para o log (HR-23b).
-//!
-//! Fica num binário próprio de propósito: o cache de interesse do `tracing` é global, e os outros
-//! testes de imagem já disparam os mesmos pontos de log sem assinante. Aqui só há este teste.
-//!
-//! O que se prova: os bytes da imagem (e o base64 deles) não aparecem no log, nem no caminho em que
-//! a imagem entra no pedido, nem nos caminhos de degradação (blob ausente e imagem acima do teto) —
-//! que registram o fato com o id do anexo e o tamanho, nunca o conteúdo.
-
 mod apoio;
 
 use std::io;
 use std::sync::{Arc, Mutex};
 
-use apoio::{Anexo, Cenario};
+use apoio::{Anexo, Scenario};
 use poph_agent::turno::MAX_BYTES_PER_IMAGE;
 use poph_core::llm::{Message, Part};
 use poph_store::TurnState;
 
-/// Escritor que guarda tudo em memória, para ler o que o tracing escreveu.
 #[derive(Clone, Default)]
 struct Captura(Arc<Mutex<Vec<u8>>>);
 
@@ -50,43 +40,38 @@ async fn imagem_do_cliente_nao_vai_para_o_log() {
             move || captura.clone()
         })
         .finish();
-    let _guarda = tracing::subscriber::set_default(assinante);
-    // Outros testes deste binário já dispararam os mesmos pontos de log sem assinante; sem isto o
-    // cache de interesse do tracing os marca como "ignorar" e o log não aparece.
+    let _guard = tracing::subscriber::set_default(assinante);
     tracing::callsite::rebuild_interest_cache();
 
-    let cenario = Cenario::novo("logs");
+    let scenario = Scenario::new("logs");
     let segredo = b"BYTES-SECRETOS-DA-IMAGEM-DO-CLIENTE-4f1c9a".to_vec();
     let segredo_base64 = poph_core::llm::base64::encode(&segredo);
 
-    // Três anexos num turno: a imagem que entra no pedido, uma cujo blob não está no disco e uma
-    // acima do teto de bytes. Os dois últimos exercitam os avisos do caminho de degradação.
     let mut ausente = Anexo::imagem("foto-sumida.png", b"bytes-da-foto-sumida");
     ausente.sem_blob = true;
-    let mut grande = Anexo::imagem("foto-grande.png", b"x");
-    grande.tamanho_declarado = Some(MAX_BYTES_PER_IMAGE + 1);
-    let gatilho = cenario.falar_com_arquivos(
+    let mut large = Anexo::imagem("foto-grande.png", b"x");
+    large.tamanho_declarado = Some(MAX_BYTES_PER_IMAGE + 1);
+    let gatilho = scenario.falar_com_arquivos(
         "olha as fotos e o contrato",
         vec![
             Anexo::imagem("foto-boa.png", &segredo),
             Anexo::documento("contrato.pdf", "cláusula primeira: prazo de 5 dias"),
             ausente,
-            grande,
+            large,
         ],
     );
-    let (motor, fake) = cenario.motor(true);
+    let (engine, fake) = scenario.engine(true);
 
-    let resumo = cenario.turno(&motor, gatilho).await;
+    let summary = scenario.turno(&engine, gatilho).await;
 
-    assert_eq!(resumo.estado, TurnState::Completed, "{:?}", resumo.error);
+    assert_eq!(summary.estado, TurnState::Completed, "{:?}", summary.error);
 
-    // A imagem boa chegou ao modelo: o log é o do caminho real, não de um turno vazio.
-    let pedido = &fake.received()[0];
-    let achadas: Vec<&Vec<u8>> = pedido
+    let request = &fake.received()[0];
+    let achadas: Vec<&Vec<u8>> = request
         .messages
         .iter()
         .filter_map(|mensagem| match mensagem {
-            Message::User(partes) => Some(partes),
+            Message::User(parts) => Some(parts),
             _ => None,
         })
         .flatten()

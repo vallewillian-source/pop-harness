@@ -1,33 +1,16 @@
-//! Testes do motor do turno (HR-13).
-//!
-//! Cobrem os sete grupos que a tarefa exige:
-//! 1. cinco mensagens: stream, mensagens e turno gravados, tempos por etapa preenchidos;
-//! 2. prefixo do prompt idêntico byte a byte em três turnos consecutivos;
-//! 3. duas orgs rodando juntas não se misturam (prompt, contexto, resposta, registro);
-//! 4. janela de agrupamento: duas seguidas viram um turno, depois do teto vira outro;
-//! 5. ferramenta não habilitada não é oferecida e o laço para no limite de rodadas;
-//! 6. cancelamento no meio do stream encerra o turno e conclui a entrada;
-//! 7. erro do provedor no meio conclui a entrada, grava o turno e não deixa item em `sending`.
-//!
-//! Mais o caminho completo da integração: `inbox` → ator → turno → `outbox` → envio.
-//!
-//! O provedor é o [`ProvedorFake`] e a espera é uma [`PausaFalsa`]: nenhum teste dorme de verdade.
-
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use poph_agent::atores::{Atores, OpcoesAtores};
-use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
-use poph_agent::entrada_saida::{
-    Fluxo, FuturoEnvio, MensagemRecebida, OpcoesFluxo, TransporteSaida,
-};
-use poph_agent::limites::{Limitador, OpcoesLimites};
-use poph_agent::metricas::{MetricasFluxo, MetricasMemoria, MetricasTurno};
+use poph_agent::actors::{ActorOptions, Actors};
+use poph_agent::config_hot::{ConfigHot, HotConfigOptions};
+use poph_agent::entry_output::{FlowOptions, Fluxo, OutputTransport, ReceivedMessage, SendFuture};
+use poph_agent::limites::{LimitOptions, Limiter};
+use poph_agent::metrics::{MetricsFlow, MetricsMemory, MetricsTurn};
 use poph_agent::turno::{
-    FuturoPausa, NoopObserver, Pausa, RegistroFerramentas, TurnEngine, TurnEvent, TurnInput,
-    TurnObserver, TurnOptions, TurnProcessor,
+    FuturePause, NoopObserver, Pause, ToolRegistry, TurnEngine, TurnEvent, TurnInput, TurnObserver,
+    TurnOptions, TurnProcessor,
 };
 use poph_core::llm::{
     Cancellation, FakeProvider, FinishReason, LlmError, LlmEvent, LlmProvider, Script, ToolCall,
@@ -39,12 +22,8 @@ use poph_store::{
 };
 use poph_types::{AgentId, ConversationId, IntegrationId, MessageId, OrgId, ToolConfig};
 
-// ───────────────────────────── Infraestrutura ─────────────────────────────
-
-/// O que fazer enquanto a janela "passa": é como o teste simula a mensagem que chega durante ela.
 type AoEsperar = Arc<dyn Fn() + Send + Sync>;
 
-/// Espera que não dorme: registra o que foi pedido, roda o gatilho e volta na hora.
 #[derive(Default, Clone)]
 struct PausaFalsa {
     pedidos: Arc<Mutex<Vec<Duration>>>,
@@ -52,7 +31,6 @@ struct PausaFalsa {
 }
 
 impl PausaFalsa {
-    /// Pausa que, ao ser chamada a primeira vez, roda a ação (ex.: grava a segunda mensagem).
     fn com_acao(acao: impl Fn() + Send + Sync + 'static) -> Self {
         Self {
             pedidos: Arc::default(),
@@ -63,19 +41,19 @@ impl PausaFalsa {
     fn pedidos(&self) -> Vec<Duration> {
         self.pedidos
             .lock()
-            .unwrap_or_else(|veneno| veneno.into_inner())
+            .unwrap_or_else(|poison| poison.into_inner())
             .clone()
     }
 }
 
-impl Pausa for PausaFalsa {
-    fn esperar(&self, duracao: Duration) -> FuturoPausa {
+impl Pause for PausaFalsa {
+    fn wait(&self, duration: Duration) -> FuturePause {
         self.pedidos
             .lock()
-            .unwrap_or_else(|veneno| veneno.into_inner())
-            .push(duracao);
+            .unwrap_or_else(|poison| poison.into_inner())
+            .push(duration);
         if let Some(acao) = &self.ao_esperar
-            && !duracao.is_zero()
+            && !duration.is_zero()
         {
             acao();
         }
@@ -83,18 +61,17 @@ impl Pausa for PausaFalsa {
     }
 }
 
-/// Observador que guarda os eventos do turno.
 #[derive(Default)]
 struct Coletor {
-    eventos: Vec<TurnEvent>,
+    events: Vec<TurnEvent>,
 }
 
 impl Coletor {
     fn texto(&self) -> String {
         let mut texto = String::new();
-        for evento in &self.eventos {
-            if let TurnEvent::Texto(pedaco) = evento {
-                texto.push_str(pedaco);
+        for evento in &self.events {
+            if let TurnEvent::Texto(piece) = evento {
+                texto.push_str(piece);
             }
         }
         texto
@@ -103,43 +80,42 @@ impl Coletor {
 
 impl TurnObserver for Coletor {
     fn evento(&mut self, evento: TurnEvent) {
-        self.eventos.push(evento);
+        self.events.push(evento);
     }
 }
 
-/// Um banco de verdade em pasta temporária, com org, agente, instruções e conversa.
-struct Cenario {
-    pasta: PathBuf,
+struct Scenario {
+    folder: PathBuf,
     store: Arc<Store>,
     org: OrgId,
     conversa: ConversationId,
     agente: AgentId,
-    relogio: Arc<AtomicI64>,
+    clock: Arc<AtomicI64>,
     integracao: IntegrationId,
 }
 
-impl Cenario {
-    fn novo(rotulo: &str) -> Self {
-        let pasta = std::env::temp_dir().join(format!(
-            "poph-hr13-{rotulo}-{}-{}",
+impl Scenario {
+    fn new(label: &str) -> Self {
+        let folder = std::env::temp_dir().join(format!(
+            "poph-hr13-{label}-{}-{}",
             std::process::id(),
             AgentId::generate()
         ));
-        let _ = std::fs::remove_dir_all(&pasta);
-        std::fs::create_dir_all(&pasta).expect("cria a pasta do teste");
-        let relogio = Arc::new(AtomicI64::new(1_795_130_160_000));
-        let store = Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db"))
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).expect("cria a pasta do teste");
+        let clock = Arc::new(AtomicI64::new(1_795_130_160_000));
+        let store = Store::open_at(&folder.join("harness.db"), &folder.join("rag.db"))
             .expect("abre o banco")
             .with_clock({
-                let relogio = Arc::clone(&relogio);
-                Arc::new(move || relogio.load(Ordering::SeqCst))
+                let clock = Arc::clone(&clock);
+                Arc::new(move || clock.load(Ordering::SeqCst))
             });
         let store = Arc::new(store);
         let org = store
             .orgs()
             .create(NewOrg {
-                name: format!("Org {rotulo}"),
-                slug: format!("org-{rotulo}-{}", AgentId::generate()),
+                name: format!("Org {label}"),
+                slug: format!("org-{label}-{}", AgentId::generate()),
                 config_json: "{}".to_owned(),
             })
             .expect("cria a org")
@@ -149,8 +125,8 @@ impl Cenario {
             .create(
                 org,
                 NewAgent {
-                    name: format!("Bia {rotulo}"),
-                    slug: format!("bia-{rotulo}"),
+                    name: format!("Bia {label}"),
+                    slug: format!("bia-{label}"),
                     modelo: "gemini-3.8-flash-tiered".to_owned(),
                     grouping_window_ms: 2_000,
                     ..NewAgent::default()
@@ -170,12 +146,12 @@ impl Cenario {
             .expect("grava as instruções");
         let conversa = Self::abrir_conversa(&store, org, agente.id, "cli");
         Self {
-            pasta,
+            folder,
             store,
             org,
             conversa,
             agente: agente.id,
-            relogio,
+            clock,
             integracao: IntegrationId::generate(),
         }
     }
@@ -198,10 +174,9 @@ impl Cenario {
     }
 
     fn avancar(&self, ms: i64) {
-        self.relogio.fetch_add(ms, Ordering::SeqCst);
+        self.clock.fetch_add(ms, Ordering::SeqCst);
     }
 
-    /// Grava a mensagem do cliente e devolve o id (é o que o `chat` faz antes do turno).
     fn falar(&self, texto: &str) -> MessageId {
         self.store
             .messages()
@@ -227,7 +202,7 @@ impl Cenario {
         Arc::new(PausaFalsa::default())
     }
 
-    fn motor(
+    fn engine(
         &self,
         roteiros: Vec<Script>,
         pausa: Arc<PausaFalsa>,
@@ -239,54 +214,46 @@ impl Cenario {
         &self,
         roteiros: Vec<Script>,
         pausa: Arc<PausaFalsa>,
-        opcoes: TurnOptions,
+        options: TurnOptions,
     ) -> (TurnEngine, Arc<FakeProvider>) {
         let fake = Arc::new(FakeProvider::with_scripts(roteiros));
         let provedor: Arc<dyn LlmProvider> = fake.clone();
-        let config = ConfigQuente::nova(
+        let config = ConfigHot::new(
             Arc::clone(&self.store),
-            OpcoesConfigQuente::default(),
-            MetricasMemoria::proprio(),
+            HotConfigOptions::default(),
+            MetricsMemory::own(),
         );
-        let limitador = Arc::new(Limitador::novo(
-            OpcoesLimites::default(),
-            MetricasMemoria::proprio(),
-        ));
-        let motor = TurnEngine::new(
+        let limiter = Arc::new(Limiter::new(LimitOptions::default(), MetricsMemory::own()));
+        let engine = TurnEngine::new(
             Arc::clone(&self.store),
             config,
-            limitador,
+            limiter,
             provedor,
-            opcoes,
-            MetricasTurno::proprio(),
+            options,
+            MetricsTurn::own(),
         )
         .with_pause(pausa);
-        (motor, fake)
+        (engine, fake)
     }
 
-    /// Fluxo de entrada e saída ligado a um motor, com o processador de turno de verdade.
-    fn fluxo(&self, motor: Arc<TurnEngine>) -> Fluxo {
-        self.fluxo_com(motor, OpcoesFluxo::default())
+    fn fluxo(&self, engine: Arc<TurnEngine>) -> Fluxo {
+        self.fluxo_com(engine, FlowOptions::default())
     }
 
-    fn fluxo_com(&self, motor: Arc<TurnEngine>, opcoes: OpcoesFluxo) -> Fluxo {
-        let processador = Arc::new(TurnProcessor::new(motor));
-        let atores = Atores::novo(
-            processador.clone(),
-            OpcoesAtores::default(),
-            MetricasMemoria::proprio(),
+    fn fluxo_com(&self, engine: Arc<TurnEngine>, options: FlowOptions) -> Fluxo {
+        let processor = Arc::new(TurnProcessor::new(engine));
+        let actors = Actors::new(
+            processor.clone(),
+            ActorOptions::default(),
+            MetricsMemory::own(),
         );
-        let fluxo = Fluxo::com_metricas(
-            Arc::clone(&self.store),
-            atores,
-            opcoes,
-            MetricasFluxo::proprio(),
-        );
-        processador.attach_io(fluxo.clone());
+        let fluxo =
+            Fluxo::with_metrics(Arc::clone(&self.store), actors, options, MetricsFlow::own());
+        processor.attach_io(fluxo.clone());
         fluxo
     }
 
-    fn mensagens(&self) -> Vec<poph_store::Mensagem> {
+    fn messages(&self) -> Vec<poph_store::Mensagem> {
         self.store
             .messages()
             .list(self.org, self.conversa, Page::with_limit(200))
@@ -301,13 +268,13 @@ impl Cenario {
     }
 }
 
-impl Drop for Cenario {
+impl Drop for Scenario {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.pasta);
+        let _ = std::fs::remove_dir_all(&self.folder);
     }
 }
 
-fn resposta(texto: &str) -> Script {
+fn response(texto: &str) -> Script {
     Script::Events(vec![
         LlmEvent::Texto(texto.to_owned()),
         LlmEvent::Usage(Usage {
@@ -318,48 +285,49 @@ fn resposta(texto: &str) -> Script {
     ])
 }
 
-// ───────────────────────────── 1. Cinco mensagens ─────────────────────────────
-
 #[tokio::test]
 async fn cinco_mensagens_gravam_stream_mensagens_e_turno() {
-    let cenario = Cenario::novo("cinco");
+    let scenario = Scenario::new("cinco");
     let roteiros: Vec<Script> = (1..=5)
-        .map(|n| resposta(&format!("resposta {n}")))
+        .map(|n| response(&format!("resposta {n}")))
         .collect();
-    let pausa = cenario.pausa();
-    let (motor, fake) = cenario.motor(roteiros, Arc::clone(&pausa));
+    let pausa = scenario.pausa();
+    let (engine, fake) = scenario.engine(roteiros, Arc::clone(&pausa));
 
     let mut textos = Vec::new();
     for n in 1..=5 {
-        let gatilho = cenario.falar(&format!("pergunta {n}"));
+        let gatilho = scenario.falar(&format!("pergunta {n}"));
         let mut coletor = Coletor::default();
-        let resumo = motor
+        let summary = engine
             .run(
-                TurnInput::new(cenario.org, cenario.conversa, gatilho),
+                TurnInput::new(scenario.org, scenario.conversa, gatilho),
                 &mut coletor,
             )
             .await
             .expect("turno roda");
-        assert_eq!(resumo.estado, TurnState::Completed, "{:?}", resumo.error);
-        assert_eq!(resumo.texto, format!("resposta {n}"));
-        assert_eq!(coletor.texto(), resumo.texto, "o stream é a resposta final");
+        assert_eq!(summary.estado, TurnState::Completed, "{:?}", summary.error);
+        assert_eq!(summary.texto, format!("resposta {n}"));
+        assert_eq!(
+            coletor.texto(),
+            summary.texto,
+            "o stream é a resposta final"
+        );
         assert!(
             coletor
-                .eventos
+                .events
                 .iter()
                 .any(|evento| matches!(evento, TurnEvent::Started { .. })),
             "o turno avisa o início"
         );
-        textos.push(resumo);
+        textos.push(summary);
     }
 
     assert_eq!(fake.received().len(), 5, "uma chamada ao modelo por turno");
 
-    // Mensagens: 5 do cliente e 5 do agente, na ordem.
-    let mensagens = cenario.mensagens();
-    assert_eq!(mensagens.len(), 10);
-    for (indice, mensagem) in mensagens.iter().enumerate() {
-        if indice % 2 == 0 {
+    let messages = scenario.messages();
+    assert_eq!(messages.len(), 10);
+    for (index, mensagem) in messages.iter().enumerate() {
+        if index % 2 == 0 {
             assert_eq!(mensagem.role, Role::User);
             assert_eq!(mensagem.direction, Direction::Inbound);
         } else {
@@ -368,8 +336,7 @@ async fn cinco_mensagens_gravam_stream_mensagens_e_turno() {
         }
     }
 
-    // Turno: estado, tokens, tempos por etapa e modelo.
-    let turnos = cenario.turnos();
+    let turnos = scenario.turnos();
     assert_eq!(turnos.len(), 5);
     for turno in &turnos {
         assert_eq!(turno.state, TurnState::Completed);
@@ -390,11 +357,10 @@ async fn cinco_mensagens_gravam_stream_mensagens_e_turno() {
         assert_eq!(tempos["motivo_fim"], "concluido");
     }
 
-    // A saída fica na outbox, pronta para o transporte.
-    let saida = cenario
+    let saida = scenario
         .store
         .outbox()
-        .list_pending(cenario.org, 10)
+        .list_pending(scenario.org, 10)
         .expect("lista a saída");
     assert_eq!(saida.len(), 5);
     assert_eq!(
@@ -403,24 +369,21 @@ async fn cinco_mensagens_gravam_stream_mensagens_e_turno() {
     );
 }
 
-// ───────────────────────────── 2. Prefixo estável ─────────────────────────────
-
 #[tokio::test]
 async fn prefixo_identico_em_tres_turnos() {
-    let cenario = Cenario::novo("prefixo");
-    let pausa = cenario.pausa();
-    let (motor, fake) = cenario.motor(
-        vec![resposta("um"), resposta("dois"), resposta("três")],
+    let scenario = Scenario::new("prefixo");
+    let pausa = scenario.pausa();
+    let (engine, fake) = scenario.engine(
+        vec![response("um"), response("dois"), response("três")],
         pausa,
     );
 
     for n in 1..=3 {
-        let gatilho = cenario.falar(&format!("mensagem {n}"));
-        // O relógio avança entre os turnos: o bloco volátil muda, o prefixo não.
-        cenario.avancar(60_000);
-        motor
+        let gatilho = scenario.falar(&format!("mensagem {n}"));
+        scenario.avancar(60_000);
+        engine
             .run(
-                TurnInput::new(cenario.org, cenario.conversa, gatilho),
+                TurnInput::new(scenario.org, scenario.conversa, gatilho),
                 &mut NoopObserver,
             )
             .await
@@ -429,33 +392,30 @@ async fn prefixo_identico_em_tres_turnos() {
 
     let pedidos = fake.received();
     assert_eq!(pedidos.len(), 3);
-    let prefixo = |pedido: &poph_core::llm::Request| match &pedido.messages[0] {
+    let prefix = |request: &poph_core::llm::Request| match &request.messages[0] {
         poph_core::llm::Message::System(texto) => texto.clone(),
-        outro => panic!("a primeira mensagem devia ser o prefixo: {outro:?}"),
+        other => panic!("a primeira mensagem devia ser o prefixo: {other:?}"),
     };
-    let primeiro = prefixo(&pedidos[0]);
-    assert!(primeiro.contains("FixProLar"), "{primeiro}");
-    for pedido in &pedidos[1..] {
-        assert_eq!(prefixo(pedido), primeiro, "prefixo mudou entre turnos");
+    let first = prefix(&pedidos[0]);
+    assert!(first.contains("FixProLar"), "{first}");
+    for request in &pedidos[1..] {
+        assert_eq!(prefix(request), first, "prefixo mudou entre turnos");
     }
 
-    // O bloco volátil (segunda mensagem de sistema) traz a hora e muda entre turnos.
-    let volatil = |pedido: &poph_core::llm::Request| match &pedido.messages[1] {
+    let volatile = |request: &poph_core::llm::Request| match &request.messages[1] {
         poph_core::llm::Message::System(texto) => texto.clone(),
-        outro => panic!("a segunda mensagem devia ser o bloco volátil: {outro:?}"),
+        other => panic!("a segunda mensagem devia ser o bloco volátil: {other:?}"),
     };
-    assert!(volatil(&pedidos[0]).contains("hora:"));
-    assert_ne!(volatil(&pedidos[0]), volatil(&pedidos[1]));
+    assert!(volatile(&pedidos[0]).contains("hora:"));
+    assert_ne!(volatile(&pedidos[0]), volatile(&pedidos[1]));
 }
-
-// ───────────────────────────── 3. Duas orgs ─────────────────────────────
 
 #[tokio::test]
 async fn duas_orgs_nao_se_misturam() {
-    let alfa = Cenario::novo("org-alfa");
-    let beta = Cenario::novo("org-beta");
-    let (motor_alfa, fake_alfa) = alfa.motor(vec![resposta("sou a alfa")], alfa.pausa());
-    let (motor_beta, fake_beta) = beta.motor(vec![resposta("sou a beta")], beta.pausa());
+    let alfa = Scenario::new("org-alfa");
+    let beta = Scenario::new("org-beta");
+    let (motor_alfa, fake_alfa) = alfa.engine(vec![response("sou a alfa")], alfa.pausa());
+    let (motor_beta, fake_beta) = beta.engine(vec![response("sou a beta")], beta.pausa());
 
     let gatilho_alfa = alfa.falar("quem é você?");
     let gatilho_beta = beta.falar("e você?");
@@ -476,41 +436,35 @@ async fn duas_orgs_nao_se_misturam() {
     assert_eq!(resumo_alfa.texto, "sou a alfa");
     assert_eq!(resumo_beta.texto, "sou a beta");
 
-    // Cada provedor falso só viu pedidos da sua org.
-    for pedido in fake_alfa.received() {
-        assert_eq!(pedido.org, alfa.org);
+    for request in fake_alfa.received() {
+        assert_eq!(request.org, alfa.org);
     }
-    for pedido in fake_beta.received() {
-        assert_eq!(pedido.org, beta.org);
+    for request in fake_beta.received() {
+        assert_eq!(request.org, beta.org);
     }
 
-    // O registro não vaza: cada org enxerga a sua conversa e a sua mensagem do agente.
     assert_eq!(alfa.turnos().len(), 1);
     assert_eq!(beta.turnos().len(), 1);
-    let mensagens_beta = beta.mensagens();
+    let mensagens_beta = beta.messages();
     assert_eq!(mensagens_beta.len(), 2);
     assert_eq!(mensagens_beta[1].texto, "sou a beta");
     assert_eq!(mensagens_beta[1].conversation_id, beta.conversa);
 }
 
-// ───────────────────────────── 4. Janela de agrupamento ─────────────────────────────
-
 #[tokio::test]
 async fn janela_de_agrupamento_junta_duas_e_separa_depois_do_teto() {
-    let cenario = Cenario::novo("janela");
-    // A pausa falsa grava a segunda mensagem no meio da janela — é o que o cliente faz de verdade:
-    // manda uma mensagem e completa o pensamento dois segundos depois.
+    let scenario = Scenario::new("janela");
     let segunda: Arc<Mutex<Option<String>>> = Arc::default();
     let segunda_texto = "queria um orçamento";
     let escrever = {
         let segunda = Arc::clone(&segunda);
-        let cenario_pasta = cenario.pasta.clone();
-        let store = Arc::clone(&cenario.store);
-        let org = cenario.org;
-        let conversa = cenario.conversa;
+        let cenario_pasta = scenario.folder.clone();
+        let store = Arc::clone(&scenario.store);
+        let org = scenario.org;
+        let conversa = scenario.conversa;
         move || {
-            let mut guarda = segunda.lock().unwrap_or_else(|v| v.into_inner());
-            if guarda.is_none() {
+            let mut guard = segunda.lock().unwrap_or_else(|v| v.into_inner());
+            if guard.is_none() {
                 let mensagem = store
                     .messages()
                     .write(
@@ -528,26 +482,26 @@ async fn janela_de_agrupamento_junta_duas_e_separa_depois_do_teto() {
                         },
                     )
                     .expect("grava a mensagem que chega na janela");
-                *guarda = Some(mensagem.id.to_string());
+                *guard = Some(mensagem.id.to_string());
                 let _ = cenario_pasta;
             }
         }
     };
     let pausa = Arc::new(PausaFalsa::com_acao(escrever));
-    let (motor, fake) = cenario.motor(
-        vec![resposta("juntas"), resposta("sozinha")],
+    let (engine, fake) = scenario.engine(
+        vec![response("juntas"), response("sozinha")],
         Arc::clone(&pausa),
     );
 
-    let primeira = cenario.falar("oi");
-    let resumo = motor
+    let first = scenario.falar("oi");
+    let summary = engine
         .run(
-            TurnInput::new(cenario.org, cenario.conversa, primeira),
+            TurnInput::new(scenario.org, scenario.conversa, first),
             &mut NoopObserver,
         )
         .await
         .expect("turno roda");
-    assert_eq!(resumo.estado, TurnState::Completed);
+    assert_eq!(summary.estado, TurnState::Completed);
     let segunda_id: MessageId = segunda
         .lock()
         .unwrap_or_else(|v| v.into_inner())
@@ -556,44 +510,38 @@ async fn janela_de_agrupamento_junta_duas_e_separa_depois_do_teto() {
         .parse()
         .expect("id da segunda mensagem");
     assert_eq!(
-        resumo.messages,
-        vec![primeira, segunda_id],
+        summary.messages,
+        vec![first, segunda_id],
         "as duas mensagens da janela entraram no mesmo turno"
     );
     assert_eq!(fake.received().len(), 1, "um turno, uma chamada ao modelo");
 
-    // A janela foi esperada uma vez, com o valor do agente (2 s).
     let pedidos = pausa.pedidos();
     assert_eq!(pedidos, vec![Duration::from_millis(2_000)]);
 
-    // A terceira chega depois do teto da janela: turno novo, com uma mensagem só.
-    cenario.avancar(9_000);
-    let terceira = cenario.falar("e o prazo?");
-    let resumo = motor
+    scenario.avancar(9_000);
+    let terceira = scenario.falar("e o prazo?");
+    let summary = engine
         .run(
-            TurnInput::new(cenario.org, cenario.conversa, terceira),
+            TurnInput::new(scenario.org, scenario.conversa, terceira),
             &mut NoopObserver,
         )
         .await
         .expect("segundo turno roda");
-    assert_eq!(resumo.estado, TurnState::Completed);
-    assert_eq!(resumo.messages, vec![terceira], "turno novo, uma mensagem");
+    assert_eq!(summary.estado, TurnState::Completed);
+    assert_eq!(summary.messages, vec![terceira], "turno novo, uma mensagem");
     assert_eq!(fake.received().len(), 2);
 
-    // Nada se perdeu: 3 mensagens do cliente, 2 respostas, 2 turnos.
-    let mensagens = cenario.mensagens();
-    assert_eq!(mensagens.len(), 5);
-    assert_eq!(cenario.turnos().len(), 2);
+    let messages = scenario.messages();
+    assert_eq!(messages.len(), 5);
+    assert_eq!(scenario.turnos().len(), 2);
 }
 
-// ───────────────────────────── 5. Ferramentas ─────────────────────────────
-
-/// Ferramenta de teste que responde sempre a mesma coisa.
 struct FerramentaDeTeste {
     nome: &'static str,
 }
 
-impl poph_agent::turno::FerramentaInterna for FerramentaDeTeste {
+impl poph_agent::turno::InternalTool for FerramentaDeTeste {
     fn nome(&self) -> &'static str {
         self.nome
     }
@@ -602,23 +550,23 @@ impl poph_agent::turno::FerramentaInterna for FerramentaDeTeste {
         "ferramenta de teste"
     }
 
-    fn parametros(&self) -> serde_json::Value {
+    fn parameters(&self) -> serde_json::Value {
         serde_json::json!({"type": "object", "properties": {}})
     }
 
-    fn executar(
+    fn run(
         &self,
-        _contexto: poph_agent::turno::ContextoFerramenta,
-        _argumentos: serde_json::Value,
-    ) -> poph_agent::turno::FuturoFerramenta {
+        _context: poph_agent::turno::ToolContext,
+        _arguments: serde_json::Value,
+    ) -> poph_agent::turno::ToolFuture {
         Box::pin(async { Ok("resultado da ferramenta".to_owned()) })
     }
 }
 
 struct DoisRegistros;
 
-impl RegistroFerramentas for DoisRegistros {
-    fn ferramenta(&self, nome: &str) -> Option<Arc<dyn poph_agent::turno::FerramentaInterna>> {
+impl ToolRegistry for DoisRegistros {
+    fn tool(&self, nome: &str) -> Option<Arc<dyn poph_agent::turno::InternalTool>> {
         match nome {
             "consultar_base" => Some(Arc::new(FerramentaDeTeste {
                 nome: "consultar_base",
@@ -633,14 +581,13 @@ impl RegistroFerramentas for DoisRegistros {
 
 #[tokio::test]
 async fn ferramenta_nao_habilitada_nao_e_oferecida_e_laco_para_no_limite() {
-    let cenario = Cenario::novo("ferramentas");
-    // Agente com uma ferramenta habilitada e outra desabilitada, e limite de 1 rodada.
-    cenario
+    let scenario = Scenario::new("ferramentas");
+    scenario
         .store
         .agents()
         .update(
-            cenario.org,
-            cenario.agente,
+            scenario.org,
+            scenario.agente,
             1,
             poph_store::AgentChange {
                 max_tool_rounds: Some(1),
@@ -649,12 +596,12 @@ async fn ferramenta_nao_habilitada_nao_e_oferecida_e_laco_para_no_limite() {
             },
         )
         .expect("ajusta o agente");
-    let instrucoes = cenario
+    let instructions = scenario
         .store
         .instructions()
-        .get(cenario.org, cenario.agente)
+        .get(scenario.org, scenario.agente)
         .expect("lê as instruções");
-    let estruturado = poph_types::StructuredInstructions {
+    let structured = poph_types::StructuredInstructions {
         tools: vec![
             ToolConfig {
                 name: "consultar_base".to_owned(),
@@ -669,20 +616,19 @@ async fn ferramenta_nao_habilitada_nao_e_oferecida_e_laco_para_no_limite() {
         ],
         ..poph_types::StructuredInstructions::default()
     };
-    cenario
+    scenario
         .store
         .instructions()
         .save(
-            cenario.org,
-            cenario.agente,
-            instrucoes.version,
-            &estruturado.to_json(),
-            &instrucoes.markdown,
+            scenario.org,
+            scenario.agente,
+            instructions.version,
+            &structured.to_json(),
+            &instructions.markdown,
             false,
         )
         .expect("grava as ferramentas");
 
-    // Primeira resposta do modelo: pede a ferramenta desabilitada e a habilitada na mesma mensagem.
     let duas_chamadas = Script::Events(vec![
         LlmEvent::Tool(ToolCall {
             id: "c1".to_owned(),
@@ -696,19 +642,19 @@ async fn ferramenta_nao_habilitada_nao_e_oferecida_e_laco_para_no_limite() {
         }),
         LlmEvent::Fim(FinishReason::ToolCalls),
     ]);
-    let (motor, fake) = cenario.motor(vec![duas_chamadas, resposta("pronto")], cenario.pausa());
-    let motor = motor.with_tools(Arc::new(DoisRegistros));
+    let (engine, fake) = scenario.engine(vec![duas_chamadas, response("pronto")], scenario.pausa());
+    let engine = engine.with_tools(Arc::new(DoisRegistros));
 
-    let gatilho = cenario.falar("quanto custa a dedetização?");
-    let resumo = motor
+    let gatilho = scenario.falar("quanto custa a dedetização?");
+    let summary = engine
         .run(
-            TurnInput::new(cenario.org, cenario.conversa, gatilho),
+            TurnInput::new(scenario.org, scenario.conversa, gatilho),
             &mut NoopObserver,
         )
         .await
         .expect("turno roda");
-    assert_eq!(resumo.estado, TurnState::Completed);
-    assert_eq!(resumo.texto, "pronto");
+    assert_eq!(summary.estado, TurnState::Completed);
+    assert_eq!(summary.texto, "pronto");
 
     let pedidos = fake.received();
     assert_eq!(
@@ -717,22 +663,18 @@ async fn ferramenta_nao_habilitada_nao_e_oferecida_e_laco_para_no_limite() {
         "uma rodada de ferramenta (o limite) e o fecho em texto"
     );
 
-    // Rodada 0: só a ferramenta habilitada é oferecida.
-    let nomes: Vec<String> = pedidos[0]
+    let names: Vec<String> = pedidos[0]
         .tools
         .iter()
-        .map(|ferramenta| ferramenta.nome.clone())
+        .map(|tool| tool.nome.clone())
         .collect();
-    assert_eq!(nomes, vec!["consultar_base".to_owned()]);
+    assert_eq!(names, vec!["consultar_base".to_owned()]);
 
-    // Chamada de ferramenta desabilitada vira resultado de erro, não execução.
     let resultados: Vec<String> = pedidos[1]
         .messages
         .iter()
         .filter_map(|mensagem| match mensagem {
-            poph_core::llm::Message::Resultado {
-                content: conteudo, ..
-            } => Some(conteudo.clone()),
+            poph_core::llm::Message::Resultado { content, .. } => Some(content.clone()),
             _ => None,
         })
         .collect();
@@ -742,54 +684,48 @@ async fn ferramenta_nao_habilitada_nao_e_oferecida_e_laco_para_no_limite() {
         resultados
     );
 
-    // A habilitada foi pedida junto e o limite de chamadas por mensagem a recusou: uma rodada só.
     assert!(
         resultados[1].contains("limite de 1 chamadas"),
         "{:?}",
         resultados
     );
 
-    // Rodada final (limite atingido): o modelo recebe o pedido sem ferramenta nenhuma.
     assert!(pedidos[1].tools.is_empty());
 }
 
-// ───────────────────────────── 6. Cancelamento ─────────────────────────────
-
 #[tokio::test]
 async fn cancelamento_encerra_o_turno_e_conclui_a_entrada() {
-    let cenario = Cenario::novo("cancelamento");
-    let (motor, _fake) = cenario.motor(
+    let scenario = Scenario::new("cancelamento");
+    let (engine, _fake) = scenario.engine(
         vec![Script::Pending {
             events: vec![LlmEvent::Texto("parcial ".to_owned())],
             after: Duration::from_secs(30),
             error: LlmError::TimedOut { seconds: 30 },
         }],
-        cenario.pausa(),
+        scenario.pausa(),
     );
-    // Cancelamento do processo, como o Ctrl-C do `chat`.
     let compartilhado = Cancellation::new();
-    let fluxo = cenario.fluxo(Arc::new(motor.with_cancellation(compartilhado.clone())));
+    let fluxo = scenario.fluxo(Arc::new(engine.with_cancellation(compartilhado.clone())));
 
     fluxo
-        .receber_mensagem(
-            cenario.org,
-            MensagemRecebida {
-                integration_id: cenario.integracao,
+        .receive_message(
+            scenario.org,
+            ReceivedMessage {
+                integration_id: scenario.integracao,
                 id_externo: "ext-cancel-1".to_owned(),
-                conversa: cenario.conversa,
+                conversa: scenario.conversa,
                 texto: "me conta tudo, com detalhes".to_owned(),
-                anexos_json: "[]".to_owned(),
+                attachments_json: "[]".to_owned(),
             },
         )
         .expect("grava a entrada");
-    fluxo.despachar(cenario.org).expect("despacha");
+    fluxo.dispatch(scenario.org).expect("despacha");
 
-    // Dá tempo de o turno começar e ficar pendurado no provedor, e então cancela.
     tokio::time::sleep(Duration::from_millis(150)).await;
     compartilhado.cancel();
-    esperar_fila_vazia(&fluxo, &cenario).await;
+    esperar_fila_vazia(&fluxo, &scenario).await;
 
-    let turnos = cenario.turnos();
+    let turnos = scenario.turnos();
     assert_eq!(turnos.len(), 1);
     assert_eq!(turnos[0].state, TurnState::Failed);
     assert!(
@@ -803,67 +739,59 @@ async fn cancelamento_encerra_o_turno_e_conclui_a_entrada() {
     );
     assert!(turnos[0].finished_at.is_some(), "o turno foi fechado");
 
-    // A entrada foi concluída (com erro) — não fica pendente nem volta em laço.
-    let pendentes = cenario
+    let pending = scenario
         .store
         .inbox()
-        .count_pending(cenario.org)
+        .count_pending(scenario.org)
         .expect("conta a entrada");
-    assert_eq!(
-        pendentes, 0,
-        "a entrada foi concluída mesmo no cancelamento"
-    );
+    assert_eq!(pending, 0, "a entrada foi concluída mesmo no cancelamento");
 
-    // Resposta parcial não vai para o cliente e não vira mensagem do agente.
-    let saida = cenario
+    let saida = scenario
         .store
         .outbox()
-        .list_pending(cenario.org, 10)
+        .list_pending(scenario.org, 10)
         .expect("lista a saída");
     assert!(saida.is_empty(), "nada de resposta parcial na outbox");
-    let mensagens = cenario.mensagens();
-    assert_eq!(mensagens.len(), 1, "só a mensagem do cliente");
-    assert_eq!(mensagens[0].role, Role::User);
+    let messages = scenario.messages();
+    assert_eq!(messages.len(), 1, "só a mensagem do cliente");
+    assert_eq!(messages[0].role, Role::User);
 }
-
-// ───────────────────────────── 7. Erro do provedor ─────────────────────────────
 
 #[tokio::test]
 async fn erro_do_provedor_grava_o_turno_e_nao_deixa_item_preso() {
-    let cenario = Cenario::novo("erro-provedor");
-    let (motor, _fake) = cenario.motor(
+    let scenario = Scenario::new("erro-provedor");
+    let (engine, _fake) = scenario.engine(
         vec![Script::Failure(LlmError::Unavailable {
             tentativas: 3,
             last_error: "503".to_owned(),
         })],
-        cenario.pausa(),
+        scenario.pausa(),
     );
-    let fluxo = cenario.fluxo(Arc::new(motor));
+    let fluxo = scenario.fluxo(Arc::new(engine));
 
     let recebido = fluxo
-        .receber_mensagem(
-            cenario.org,
-            MensagemRecebida {
+        .receive_message(
+            scenario.org,
+            ReceivedMessage {
                 integration_id: IntegrationId::generate(),
                 id_externo: "ext-erro-1".to_owned(),
-                conversa: cenario.conversa,
+                conversa: scenario.conversa,
                 texto: "oi".to_owned(),
-                anexos_json: "[]".to_owned(),
+                attachments_json: "[]".to_owned(),
             },
         )
         .expect("grava a entrada");
     assert_eq!(recebido.situation, poph_store::Received::New);
-    fluxo.despachar(cenario.org).expect("despacha");
-    esperar_tentativas(&cenario, recebido.item.id, 1).await;
+    fluxo.dispatch(scenario.org).expect("despacha");
+    esperar_tentativas(&scenario, recebido.item.id, 1).await;
 
-    let transporte = TransporteDeTeste::default();
+    let transport = TransporteDeTeste::default();
     fluxo
-        .enviar_pendentes(cenario.org, &transporte)
+        .send_pending(scenario.org, &transport)
         .await
         .expect("envia");
 
-    // Turno gravado como falho, com o motivo do provedor.
-    let turnos = cenario.turnos();
+    let turnos = scenario.turnos();
     assert_eq!(turnos.len(), 1);
     assert_eq!(turnos[0].state, TurnState::Failed);
     assert!(
@@ -875,94 +803,87 @@ async fn erro_do_provedor_grava_o_turno_e_nao_deixa_item_preso() {
         "{:?}",
         turnos[0].error
     );
-    // HR-26i: a falha do modelo adia a entrada (uma tentativa contada), não a conclui.
-    let pendentes = cenario
+    let pending = scenario
         .store
         .inbox()
-        .count_pending(cenario.org)
+        .count_pending(scenario.org)
         .expect("conta a entrada");
-    assert_eq!(pendentes, 1, "a entrada fica para nova tentativa");
-    let tentativas = cenario
+    assert_eq!(pending, 1, "a entrada fica para nova tentativa");
+    let tentativas = scenario
         .store
         .inbox()
-        .attempts(cenario.org, &[recebido.item.id])
+        .attempts(scenario.org, &[recebido.item.id])
         .expect("tentativas");
     assert_eq!(tentativas, vec![1]);
-    // Nenhum item preso em `sending` e nada enviado.
-    let enviando = cenario
+    let sending = scenario
         .store
         .outbox()
-        .count_by_state(cenario.org, OutboxState::Sending)
+        .count_by_state(scenario.org, OutboxState::Sending)
         .expect("conta a saída");
-    assert_eq!(enviando, 0);
-    assert!(
-        transporte.enviados().is_empty(),
-        "não há resposta para enviar"
-    );
-    // Nenhuma resposta gravada no histórico.
-    let mensagens = cenario.mensagens();
-    assert_eq!(mensagens.len(), 1);
-    assert_eq!(mensagens[0].role, Role::User);
+    assert_eq!(sending, 0);
+    assert!(transport.sent().is_empty(), "não há resposta para enviar");
+    let messages = scenario.messages();
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].role, Role::User);
 }
 
 #[tokio::test]
 async fn sem_vaga_deixa_a_entrada_pendente_para_nova_tentativa() {
-    let cenario = Cenario::novo("sem-vaga");
-    let (motor, fake) = cenario.motor(vec![resposta("não deveria ser chamada")], cenario.pausa());
-    let _ = &motor; // o motor do cenário só serve para criar o provedor falso
+    let scenario = Scenario::new("sem-vaga");
+    let (engine, fake) =
+        scenario.engine(vec![response("não deveria ser chamada")], scenario.pausa());
+    let _ = &engine;
     let provedor: Arc<dyn LlmProvider> = fake.clone();
-    // Um único turno simultâneo na instância e a vaga já ocupada por outro turno.
-    let limitador = Arc::new(Limitador::novo(
-        OpcoesLimites {
-            turnos_global: 1,
-            turnos_por_org: 1,
-            turnos_por_agente: 0,
-            chamadas_por_provedor: 8,
-            tetos_por_provedor: Default::default(),
+    let limiter = Arc::new(Limiter::new(
+        LimitOptions {
+            turns_global: 1,
+            turns_by_org: 1,
+            turns_by_agent: 0,
+            calls_by_provider: 8,
+            cap_by_provider: Default::default(),
             taxa_por_org_por_minuto: 0,
         },
-        MetricasMemoria::proprio(),
+        MetricsMemory::own(),
     ));
-    let vaga = limitador
-        .adquirir_turno(cenario.org, cenario.agente, Duration::from_millis(10))
+    let slot = limiter
+        .acquire_turn(scenario.org, scenario.agente, Duration::from_millis(10))
         .await
         .expect("pega a única vaga");
-    let config = ConfigQuente::nova(
-        Arc::clone(&cenario.store),
-        OpcoesConfigQuente::default(),
-        MetricasMemoria::proprio(),
+    let config = ConfigHot::new(
+        Arc::clone(&scenario.store),
+        HotConfigOptions::default(),
+        MetricsMemory::own(),
     );
-    let motor = TurnEngine::new(
-        Arc::clone(&cenario.store),
+    let engine = TurnEngine::new(
+        Arc::clone(&scenario.store),
         config,
-        Arc::clone(&limitador),
+        Arc::clone(&limiter),
         provedor,
         TurnOptions {
             slot_wait: Duration::from_millis(20),
             ..TurnOptions::default()
         },
-        MetricasTurno::proprio(),
+        MetricsTurn::own(),
     )
-    .with_pause(cenario.pausa());
-    let fluxo = cenario.fluxo(Arc::new(motor));
+    .with_pause(scenario.pausa());
+    let fluxo = scenario.fluxo(Arc::new(engine));
 
     fluxo
-        .receber_mensagem(
-            cenario.org,
-            MensagemRecebida {
-                integration_id: cenario.integracao,
+        .receive_message(
+            scenario.org,
+            ReceivedMessage {
+                integration_id: scenario.integracao,
                 id_externo: "ext-vaga-1".to_owned(),
-                conversa: cenario.conversa,
+                conversa: scenario.conversa,
                 texto: "oi".to_owned(),
-                anexos_json: "[]".to_owned(),
+                attachments_json: "[]".to_owned(),
             },
         )
         .expect("grava a entrada");
-    fluxo.despachar(cenario.org).expect("despacha");
-    esperar_turno_fechado(&cenario).await;
+    fluxo.dispatch(scenario.org).expect("despacha");
+    esperar_turno_fechado(&scenario).await;
 
-    // O turno foi gravado como falho, mas a mensagem continua na fila para nova tentativa.
-    let turnos = cenario.turnos();
+    let turnos = scenario.turnos();
     assert_eq!(turnos.len(), 1);
     assert_eq!(turnos[0].state, TurnState::Failed);
     assert!(
@@ -974,117 +895,111 @@ async fn sem_vaga_deixa_a_entrada_pendente_para_nova_tentativa() {
         "{:?}",
         turnos[0].error
     );
-    let pendentes = cenario
+    let pending = scenario
         .store
         .inbox()
-        .count_pending(cenario.org)
+        .count_pending(scenario.org)
         .expect("conta a entrada");
     assert_eq!(
-        pendentes, 1,
+        pending, 1,
         "a entrada fica adiada e pendente quando a falta de vaga é transitória"
     );
-    drop(vaga);
+    drop(slot);
 }
 
-// ───────────────────────────── 7b. Falta de vaga e recusa do provedor (HR-26k) ─────────────────────────────
-
-/// Limitador com uma única vaga de turno e uma de chamada ao provedor. O teste segura as vagas para
-/// simular a instância ocupada, ou o provedor sem vaga livre.
-fn limitador_de_uma_vaga() -> Arc<Limitador> {
-    Arc::new(Limitador::novo(
-        OpcoesLimites {
-            turnos_global: 1,
-            turnos_por_org: 1,
-            turnos_por_agente: 0,
-            chamadas_por_provedor: 1,
-            tetos_por_provedor: Default::default(),
+fn limitador_de_uma_vaga() -> Arc<Limiter> {
+    Arc::new(Limiter::new(
+        LimitOptions {
+            turns_global: 1,
+            turns_by_org: 1,
+            turns_by_agent: 0,
+            calls_by_provider: 1,
+            cap_by_provider: Default::default(),
             taxa_por_org_por_minuto: 0,
         },
-        MetricasMemoria::proprio(),
+        MetricsMemory::own(),
     ))
 }
 
-/// Motor com espera curta por vaga (20 ms reais: a espera do turno é relógio de parede, a do adiamento
-/// é o relógio falso do teste).
 fn motor_com_limitador(
-    cenario: &Cenario,
+    scenario: &Scenario,
     roteiros: Vec<Script>,
-    limitador: Arc<Limitador>,
+    limiter: Arc<Limiter>,
 ) -> (TurnEngine, Arc<FakeProvider>) {
     let fake = Arc::new(FakeProvider::with_scripts(roteiros));
     let provedor: Arc<dyn LlmProvider> = fake.clone();
-    let config = ConfigQuente::nova(
-        Arc::clone(&cenario.store),
-        OpcoesConfigQuente::default(),
-        MetricasMemoria::proprio(),
+    let config = ConfigHot::new(
+        Arc::clone(&scenario.store),
+        HotConfigOptions::default(),
+        MetricsMemory::own(),
     );
-    let motor = TurnEngine::new(
-        Arc::clone(&cenario.store),
+    let engine = TurnEngine::new(
+        Arc::clone(&scenario.store),
         config,
-        limitador,
+        limiter,
         provedor,
         TurnOptions {
             slot_wait: Duration::from_millis(20),
             ..TurnOptions::default()
         },
-        MetricasTurno::proprio(),
+        MetricsTurn::own(),
     )
-    .with_pause(cenario.pausa());
-    (motor, fake)
+    .with_pause(scenario.pausa());
+    (engine, fake)
 }
 
-/// Provedor do agente de teste (o padrão da configuração).
 const PROVEDOR_DO_AGENTE: &str = "antigravity2api";
 
 #[tokio::test]
 async fn falta_de_vaga_do_turno_entra_na_escada_e_esgota_em_tres_tentativas() {
-    let cenario = Cenario::novo("vaga-turno-esgota");
-    let limitador = limitador_de_uma_vaga();
-    // A vaga da instância fica ocupada o tempo todo: nenhum turno chega ao modelo.
-    let _ocupada = limitador
-        .adquirir_turno(cenario.org, cenario.agente, Duration::from_millis(10))
+    let scenario = Scenario::new("vaga-turno-esgota");
+    let limiter = limitador_de_uma_vaga();
+    let _ocupada = limiter
+        .acquire_turn(scenario.org, scenario.agente, Duration::from_millis(10))
         .await
         .expect("ocupa a vaga da instância");
-    let (motor, fake) = motor_com_limitador(
-        &cenario,
-        vec![resposta("não deveria ser chamada")],
-        Arc::clone(&limitador),
+    let (engine, fake) = motor_com_limitador(
+        &scenario,
+        vec![response("não deveria ser chamada")],
+        Arc::clone(&limiter),
     );
-    let motor = Arc::new(motor);
-    let fluxo = cenario.fluxo_com(
-        Arc::clone(&motor),
-        OpcoesFluxo::default().com_falha_modelo(3, Duration::from_millis(1_000)),
+    let engine = Arc::new(engine);
+    let fluxo = scenario.fluxo_com(
+        Arc::clone(&engine),
+        FlowOptions::default().with_failure_model(3, Duration::from_millis(1_000)),
     );
-    let item = entregar(&fluxo, &cenario, "ext-vaga-turno-1", "oi");
+    let item = entregar(&fluxo, &scenario, "ext-vaga-turno-1", "oi");
 
-    fluxo.despachar(cenario.org).expect("despacha");
-    esperar_tentativas(&cenario, item, 1).await;
-    // Entre as tentativas nada vai para a saída, e a entrada segue pendente (adiada).
+    fluxo.dispatch(scenario.org).expect("despacha");
+    esperar_tentativas(&scenario, item, 1).await;
     assert!(
-        cenario
+        scenario
             .store
             .outbox()
-            .list_pending(cenario.org, 10)
+            .list_pending(scenario.org, 10)
             .expect("saída")
             .is_empty()
     );
-    cenario.avancar(1_000);
-    fluxo.despachar(cenario.org).expect("despacha 2");
-    esperar_tentativas(&cenario, item, 2).await;
-    cenario.avancar(4_000);
-    fluxo.despachar(cenario.org).expect("despacha 3");
-    esperar_fila_vazia(&fluxo, &cenario).await;
+    scenario.avancar(1_000);
+    fluxo.dispatch(scenario.org).expect("despacha 2");
+    esperar_tentativas(&scenario, item, 2).await;
+    scenario.avancar(4_000);
+    fluxo.dispatch(scenario.org).expect("despacha 3");
+    esperar_fila_vazia(&fluxo, &scenario).await;
 
-    // Três turnos falhos e nenhuma chamada ao modelo: a vaga nunca liberou.
-    assert_eq!(cenario.turnos().len(), 3);
+    assert_eq!(scenario.turnos().len(), 3);
     assert!(
-        cenario
+        scenario
             .turnos()
             .iter()
             .all(|t| t.state == TurnState::Failed)
     );
     assert_eq!(fake.received().len(), 0);
-    let concluido = cenario.store.inbox().get(cenario.org, item).expect("item");
+    let concluido = scenario
+        .store
+        .inbox()
+        .get(scenario.org, item)
+        .expect("item");
     assert!(
         concluido.processed_at.is_some(),
         "concluída depois do limite"
@@ -1098,149 +1013,146 @@ async fn falta_de_vaga_do_turno_entra_na_escada_e_esgota_em_tres_tentativas() {
         "{:?}",
         concluido.ultimo_erro
     );
-    assert_eq!(cenario.mensagens().len(), 1, "só a mensagem do cliente");
+    assert_eq!(scenario.messages().len(), 1, "só a mensagem do cliente");
 
-    // Passado o instante, a entrada não volta: nem turno novo, nem tentativa nova.
-    cenario.avancar(3_600_000);
-    fluxo.despachar(cenario.org).expect("despacha de novo");
+    scenario.avancar(3_600_000);
+    fluxo.dispatch(scenario.org).expect("despacha de novo");
     deixar_passar(60).await;
     assert_eq!(
-        cenario.turnos().len(),
+        scenario.turnos().len(),
         3,
         "nenhuma repetição depois do limite"
     );
     assert_eq!(fake.received().len(), 0);
 
-    let metricas = motor.metrics();
-    assert_eq!(metricas.falhas_modelo_adiadas.value(), 2);
-    assert_eq!(metricas.falhas_modelo_definitivas.value(), 1);
-    assert_eq!(metricas.falhas_modelo_recusadas.value(), 0);
+    let metrics = engine.metrics();
+    assert_eq!(metrics.failures_model_deferred.value(), 2);
+    assert_eq!(metrics.failures_model_definitive.value(), 1);
+    assert_eq!(metrics.failures_model_refused.value(), 0);
 }
 
 #[tokio::test]
 async fn falta_de_vaga_do_turno_na_primeira_tentativa_e_resposta_na_segunda() {
-    let cenario = Cenario::novo("vaga-turno-repete");
-    let limitador = limitador_de_uma_vaga();
-    let ocupada = limitador
-        .adquirir_turno(cenario.org, cenario.agente, Duration::from_millis(10))
+    let scenario = Scenario::new("vaga-turno-repete");
+    let limiter = limitador_de_uma_vaga();
+    let ocupada = limiter
+        .acquire_turn(scenario.org, scenario.agente, Duration::from_millis(10))
         .await
         .expect("ocupa a vaga da instância");
-    let (motor, fake) = motor_com_limitador(
-        &cenario,
-        vec![resposta("bom dia, em que posso ajudar")],
-        Arc::clone(&limitador),
+    let (engine, fake) = motor_com_limitador(
+        &scenario,
+        vec![response("bom dia, em que posso ajudar")],
+        Arc::clone(&limiter),
     );
-    let motor = Arc::new(motor);
-    let fluxo = cenario.fluxo_com(
-        Arc::clone(&motor),
-        OpcoesFluxo::default().com_falha_modelo(3, Duration::from_millis(1_000)),
+    let engine = Arc::new(engine);
+    let fluxo = scenario.fluxo_com(
+        Arc::clone(&engine),
+        FlowOptions::default().with_failure_model(3, Duration::from_millis(1_000)),
     );
-    let item = entregar(&fluxo, &cenario, "ext-vaga-turno-2", "oi");
+    let item = entregar(&fluxo, &scenario, "ext-vaga-turno-2", "oi");
 
-    fluxo.despachar(cenario.org).expect("despacha");
-    esperar_tentativas(&cenario, item, 1).await;
-    // A vaga volta a ficar livre antes da segunda tentativa.
+    fluxo.dispatch(scenario.org).expect("despacha");
+    esperar_tentativas(&scenario, item, 1).await;
     drop(ocupada);
-    cenario.avancar(1_000);
-    fluxo.despachar(cenario.org).expect("despacha 2");
-    esperar_fila_vazia(&fluxo, &cenario).await;
+    scenario.avancar(1_000);
+    fluxo.dispatch(scenario.org).expect("despacha 2");
+    esperar_fila_vazia(&fluxo, &scenario).await;
 
-    // Uma chamada ao modelo, uma resposta, uma saída: a falta de vaga não duplica nada.
     assert_eq!(fake.received().len(), 1);
-    let respostas = cenario
-        .mensagens()
+    let respostas = scenario
+        .messages()
         .into_iter()
         .filter(|m| m.role == Role::Assistant)
         .count();
     assert_eq!(respostas, 1);
     assert_eq!(
-        cenario
+        scenario
             .store
             .outbox()
-            .list_pending(cenario.org, 10)
+            .list_pending(scenario.org, 10)
             .expect("saída")
             .len(),
         1
     );
-    let metricas = motor.metrics();
-    assert_eq!(metricas.falhas_modelo_adiadas.value(), 1);
-    assert_eq!(metricas.falhas_modelo_definitivas.value(), 0);
+    let metrics = engine.metrics();
+    assert_eq!(metrics.failures_model_deferred.value(), 1);
+    assert_eq!(metrics.failures_model_definitive.value(), 0);
 }
 
 #[tokio::test]
 async fn falta_de_vaga_do_provedor_entra_na_escada_e_nao_chama_o_modelo() {
-    let cenario = Cenario::novo("vaga-provedor");
-    let limitador = limitador_de_uma_vaga();
-    // A única chamada ao provedor está em uso por outro turno: este não consegue a vez.
+    let scenario = Scenario::new("vaga-provedor");
+    let limiter = limitador_de_uma_vaga();
     let mut ocupada = Some(
-        limitador
-            .adquirir_provedor(PROVEDOR_DO_AGENTE, Duration::from_millis(10))
+        limiter
+            .acquire_provider(PROVEDOR_DO_AGENTE, Duration::from_millis(10))
             .await
             .expect("ocupa a vaga do provedor"),
     );
-    let (motor, fake) = motor_com_limitador(
-        &cenario,
-        vec![resposta("bom dia, em que posso ajudar")],
-        Arc::clone(&limitador),
+    let (engine, fake) = motor_com_limitador(
+        &scenario,
+        vec![response("bom dia, em que posso ajudar")],
+        Arc::clone(&limiter),
     );
-    let motor = Arc::new(motor);
-    let fluxo = cenario.fluxo_com(
-        Arc::clone(&motor),
-        OpcoesFluxo::default().com_falha_modelo(3, Duration::from_millis(1_000)),
+    let engine = Arc::new(engine);
+    let fluxo = scenario.fluxo_com(
+        Arc::clone(&engine),
+        FlowOptions::default().with_failure_model(3, Duration::from_millis(1_000)),
     );
-    let item = entregar(&fluxo, &cenario, "ext-vaga-prov-1", "oi");
+    let item = entregar(&fluxo, &scenario, "ext-vaga-prov-1", "oi");
 
-    fluxo.despachar(cenario.org).expect("despacha");
-    esperar_tentativas(&cenario, item, 1).await;
-    // Primeira tentativa sem vaga: nenhuma chamada saiu e a saída está vazia.
+    fluxo.dispatch(scenario.org).expect("despacha");
+    esperar_tentativas(&scenario, item, 1).await;
     assert_eq!(fake.received().len(), 0);
     assert!(
-        cenario
+        scenario
             .store
             .outbox()
-            .list_pending(cenario.org, 10)
+            .list_pending(scenario.org, 10)
             .expect("saída")
             .is_empty()
     );
-    // Segunda tentativa: a vaga já foi devolvida, o modelo responde.
     drop(ocupada.take());
-    cenario.avancar(1_000);
-    fluxo.despachar(cenario.org).expect("despacha 2");
-    esperar_fila_vazia(&fluxo, &cenario).await;
+    scenario.avancar(1_000);
+    fluxo.dispatch(scenario.org).expect("despacha 2");
+    esperar_fila_vazia(&fluxo, &scenario).await;
 
     assert_eq!(fake.received().len(), 1, "uma única chamada ao provedor");
-    assert_eq!(cenario.turnos().len(), 2);
-    let metricas = motor.metrics();
-    assert_eq!(metricas.falhas_modelo_adiadas.value(), 1);
-    assert_eq!(metricas.falhas_modelo_definitivas.value(), 0);
+    assert_eq!(scenario.turnos().len(), 2);
+    let metrics = engine.metrics();
+    assert_eq!(metrics.failures_model_deferred.value(), 1);
+    assert_eq!(metrics.failures_model_definitive.value(), 0);
 }
 
 #[tokio::test]
 async fn provedor_que_recusa_a_chave_nao_gasta_a_escada() {
-    let cenario = Cenario::novo("recusa-401");
-    let (motor, fake) = cenario.motor(
+    let scenario = Scenario::new("recusa-401");
+    let (engine, fake) = scenario.engine(
         vec![Script::Failure(LlmError::Rejected {
             status: 401,
             mensagem: "chave recusada".to_owned(),
         })],
-        cenario.pausa(),
+        scenario.pausa(),
     );
-    let motor = Arc::new(motor);
-    let fluxo = cenario.fluxo_com(
-        Arc::clone(&motor),
-        OpcoesFluxo::default().com_falha_modelo(3, Duration::from_millis(1_000)),
+    let engine = Arc::new(engine);
+    let fluxo = scenario.fluxo_com(
+        Arc::clone(&engine),
+        FlowOptions::default().with_failure_model(3, Duration::from_millis(1_000)),
     );
-    let item = entregar(&fluxo, &cenario, "ext-401-1", "oi");
+    let item = entregar(&fluxo, &scenario, "ext-401-1", "oi");
 
-    fluxo.despachar(cenario.org).expect("despacha");
-    esperar_fila_vazia(&fluxo, &cenario).await;
+    fluxo.dispatch(scenario.org).expect("despacha");
+    esperar_fila_vazia(&fluxo, &scenario).await;
 
-    // Uma única chamada: a recusa não se resolve repetindo.
     assert_eq!(fake.received().len(), 1);
-    let turnos = cenario.turnos();
+    let turnos = scenario.turnos();
     assert_eq!(turnos.len(), 1);
     assert_eq!(turnos[0].state, TurnState::Failed);
-    let concluido = cenario.store.inbox().get(cenario.org, item).expect("item");
+    let concluido = scenario
+        .store
+        .inbox()
+        .get(scenario.org, item)
+        .expect("item");
     assert!(
         concluido.processed_at.is_some(),
         "concluída na primeira tentativa"
@@ -1255,48 +1167,44 @@ async fn provedor_que_recusa_a_chave_nao_gasta_a_escada() {
         concluido.ultimo_erro
     );
     assert!(
-        cenario
+        scenario
             .store
             .outbox()
-            .list_pending(cenario.org, 10)
+            .list_pending(scenario.org, 10)
             .expect("saída")
             .is_empty()
     );
 
-    // Passado o tempo da escada, nada volta a ser chamado.
-    cenario.avancar(3_600_000);
-    fluxo.despachar(cenario.org).expect("despacha de novo");
+    scenario.avancar(3_600_000);
+    fluxo.dispatch(scenario.org).expect("despacha de novo");
     deixar_passar(60).await;
     assert_eq!(fake.received().len(), 1);
 
-    let metricas = motor.metrics();
-    assert_eq!(metricas.falhas_modelo_recusadas.value(), 1);
-    assert_eq!(metricas.falhas_modelo_definitivas.value(), 1);
-    assert_eq!(metricas.falhas_modelo_adiadas.value(), 0);
+    let metrics = engine.metrics();
+    assert_eq!(metrics.failures_model_refused.value(), 1);
+    assert_eq!(metrics.failures_model_definitive.value(), 1);
+    assert_eq!(metrics.failures_model_deferred.value(), 0);
 }
 
-// ───────────────────────────── 8. Caminho completo ─────────────────────────────
-
-/// Transporte de teste que guarda o que "enviou".
 #[derive(Default)]
 struct TransporteDeTeste {
-    enviados: Mutex<Vec<OutboxItem>>,
+    sent: Mutex<Vec<OutboxItem>>,
 }
 
 impl TransporteDeTeste {
-    fn enviados(&self) -> Vec<OutboxItem> {
-        self.enviados
+    fn sent(&self) -> Vec<OutboxItem> {
+        self.sent
             .lock()
-            .unwrap_or_else(|veneno| veneno.into_inner())
+            .unwrap_or_else(|poison| poison.into_inner())
             .clone()
     }
 }
 
-impl TransporteSaida for TransporteDeTeste {
-    fn enviar(&self, item: OutboxItem) -> FuturoEnvio {
-        self.enviados
+impl OutputTransport for TransporteDeTeste {
+    fn send(&self, item: OutboxItem) -> SendFuture {
+        self.sent
             .lock()
-            .unwrap_or_else(|veneno| veneno.into_inner())
+            .unwrap_or_else(|poison| poison.into_inner())
             .push(item);
         Box::pin(async { Ok(()) })
     }
@@ -1304,27 +1212,26 @@ impl TransporteSaida for TransporteDeTeste {
 
 #[tokio::test]
 async fn fluxo_completo_da_inbox_ate_a_outbox_entrega_a_resposta() {
-    let cenario = Cenario::novo("fluxo-completo");
-    let (motor, fake) = cenario.motor(vec![resposta("claro, posso ajudar")], cenario.pausa());
-    let fluxo = cenario.fluxo(Arc::new(motor));
+    let scenario = Scenario::new("fluxo-completo");
+    let (engine, fake) = scenario.engine(vec![response("claro, posso ajudar")], scenario.pausa());
+    let fluxo = scenario.fluxo(Arc::new(engine));
 
-    // Duas entregas da mesma mensagem: a segunda é duplicata e não gera segundo turno.
-    let entrega = || MensagemRecebida {
-        integration_id: cenario.integracao,
+    let entrega = || ReceivedMessage {
+        integration_id: scenario.integracao,
         id_externo: "ext-1".to_owned(),
-        conversa: cenario.conversa,
+        conversa: scenario.conversa,
         texto: "bom dia".to_owned(),
-        anexos_json: "[]".to_owned(),
+        attachments_json: "[]".to_owned(),
     };
     assert_eq!(
         fluxo
-            .receber_mensagem(cenario.org, entrega())
+            .receive_message(scenario.org, entrega())
             .expect("grava")
             .situation,
         poph_store::Received::New
     );
     let segunda = fluxo
-        .receber_mensagem(cenario.org, entrega())
+        .receive_message(scenario.org, entrega())
         .expect("reentrega da mesma mensagem");
     assert_eq!(
         segunda.situation,
@@ -1332,39 +1239,37 @@ async fn fluxo_completo_da_inbox_ate_a_outbox_entrega_a_resposta() {
         "a segunda entrega é duplicata, não erro"
     );
 
-    fluxo.despachar(cenario.org).expect("despacha");
-    esperar_fila_vazia(&fluxo, &cenario).await;
+    fluxo.dispatch(scenario.org).expect("despacha");
+    esperar_fila_vazia(&fluxo, &scenario).await;
 
-    let transporte = TransporteDeTeste::default();
-    let relato = fluxo
-        .enviar_pendentes(cenario.org, &transporte)
+    let transport = TransporteDeTeste::default();
+    let report = fluxo
+        .send_pending(scenario.org, &transport)
         .await
         .expect("envia");
-    assert_eq!(relato.enviados, 1);
-    let enviados = transporte.enviados();
-    assert_eq!(enviados.len(), 1);
+    assert_eq!(report.sent, 1);
+    let sent = transport.sent();
+    assert_eq!(sent.len(), 1);
     assert_eq!(
-        enviados[0].content_json,
+        sent[0].content_json,
         serde_json::json!({"texto": "claro, posso ajudar"}).to_string()
     );
     assert_eq!(
-        enviados[0].conversation_id, cenario.conversa,
+        sent[0].conversation_id, scenario.conversa,
         "o item de saída é da conversa do turno"
     );
 
-    // A reentrega não gerou segundo turno: uma chamada ao modelo, um turno, uma resposta.
     assert_eq!(fake.received().len(), 1, "a duplicata não abre turno");
-    let turnos = cenario.turnos();
+    let turnos = scenario.turnos();
     assert_eq!(turnos.len(), 1);
     assert_eq!(turnos[0].state, TurnState::Completed);
-    let mensagens = cenario.mensagens();
-    assert_eq!(mensagens.len(), 2, "uma fala do cliente e uma do agente");
+    let messages = scenario.messages();
+    assert_eq!(messages.len(), 2, "uma fala do cliente e uma do agente");
 }
 
-/// Espera o turno sair de `running` (a entrada pode continuar pendente, de propósito).
-async fn esperar_turno_fechado(cenario: &Cenario) {
+async fn esperar_turno_fechado(scenario: &Scenario) {
     for _ in 0..300 {
-        if cenario
+        if scenario
             .turnos()
             .iter()
             .any(|turno| turno.state != TurnState::Running)
@@ -1376,26 +1281,23 @@ async fn esperar_turno_fechado(cenario: &Cenario) {
     panic!("o turno não fechou a tempo");
 }
 
-/// Espera a `inbox` esvaziar (o turno concluiu a entrada).
-async fn esperar_fila_vazia(fluxo: &Fluxo, cenario: &Cenario) {
+async fn esperar_fila_vazia(fluxo: &Fluxo, scenario: &Scenario) {
     for _ in 0..300 {
-        let pendentes = fluxo
-            .estatisticas(cenario.org)
+        let pending = fluxo
+            .statistics(scenario.org)
             .expect("lê as estatísticas")
-            .entrada_pendente;
-        let turno_rodando = cenario
+            .entry_pending;
+        let turno_rodando = scenario
             .turnos()
             .iter()
             .any(|turno| turno.state == TurnState::Running);
-        if pendentes == 0 && !turno_rodando {
+        if pending == 0 && !turno_rodando {
             return;
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     panic!("a fila não esvaziou a tempo");
 }
-
-// ───────────────────────────── 8. Falha do modelo (HR-26i) ─────────────────────────────
 
 fn falha_do_provedor() -> Script {
     Script::Failure(LlmError::Unavailable {
@@ -1404,22 +1306,21 @@ fn falha_do_provedor() -> Script {
     })
 }
 
-/// Entrega uma mensagem de cliente pela `inbox` (o caminho da integração) e devolve o id do item.
 fn entregar(
     fluxo: &Fluxo,
-    cenario: &Cenario,
+    scenario: &Scenario,
     id_externo: &str,
     texto: &str,
 ) -> poph_types::InboxId {
     fluxo
-        .receber_mensagem(
-            cenario.org,
-            MensagemRecebida {
-                integration_id: cenario.integracao,
+        .receive_message(
+            scenario.org,
+            ReceivedMessage {
+                integration_id: scenario.integracao,
                 id_externo: id_externo.to_owned(),
-                conversa: cenario.conversa,
+                conversa: scenario.conversa,
                 texto: texto.to_owned(),
-                anexos_json: "[]".to_owned(),
+                attachments_json: "[]".to_owned(),
             },
         )
         .expect("grava a entrada")
@@ -1427,15 +1328,14 @@ fn entregar(
         .id
 }
 
-/// Espera a tentativa do item chegar ao `minimo` (o adiamento é a última coisa que o turno grava).
-async fn esperar_tentativas(cenario: &Cenario, id: poph_types::InboxId, minimo: u32) {
+async fn esperar_tentativas(scenario: &Scenario, id: poph_types::InboxId, minimo: u32) {
     for _ in 0..500 {
-        let atual = cenario
+        let current = scenario
             .store
             .inbox()
-            .attempts(cenario.org, &[id])
+            .attempts(scenario.org, &[id])
             .expect("tentativas")[0];
-        if atual >= minimo {
+        if current >= minimo {
             return;
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
@@ -1443,70 +1343,65 @@ async fn esperar_tentativas(cenario: &Cenario, id: poph_types::InboxId, minimo: 
     panic!("a tentativa {minimo} do item não foi registrada a tempo");
 }
 
-/// Espera a passagem do despacho terminar sem nenhum turno novo (usado para provar que nada rodou).
 async fn deixar_passar(ms: u64) {
     tokio::time::sleep(Duration::from_millis(ms)).await;
 }
 
 #[tokio::test]
 async fn falha_do_modelo_repete_com_espera_crescente_e_responde_na_terceira() {
-    let cenario = Cenario::novo("falha-repete");
-    let (motor, fake) = cenario.motor(
+    let scenario = Scenario::new("falha-repete");
+    let (engine, fake) = scenario.engine(
         vec![
             falha_do_provedor(),
             falha_do_provedor(),
-            resposta("bom dia, em que posso ajudar"),
+            response("bom dia, em que posso ajudar"),
         ],
-        cenario.pausa(),
+        scenario.pausa(),
     );
-    let motor = Arc::new(motor);
-    let fluxo = cenario.fluxo_com(
-        Arc::clone(&motor),
-        OpcoesFluxo::default().com_falha_modelo(3, Duration::from_millis(1_000)),
+    let engine = Arc::new(engine);
+    let fluxo = scenario.fluxo_com(
+        Arc::clone(&engine),
+        FlowOptions::default().with_failure_model(3, Duration::from_millis(1_000)),
     );
-    let item = entregar(&fluxo, &cenario, "ext-repete-1", "oi");
+    let item = entregar(&fluxo, &scenario, "ext-repete-1", "oi");
 
-    // Primeira tentativa: falha, e o item fica adiado (não concluído, não vai para a saída).
-    fluxo.despachar(cenario.org).expect("despacha");
-    esperar_tentativas(&cenario, item, 1).await;
+    fluxo.dispatch(scenario.org).expect("despacha");
+    esperar_tentativas(&scenario, item, 1).await;
     assert_eq!(fake.received().len(), 1);
     assert_eq!(
-        cenario
+        scenario
             .store
             .inbox()
-            .count_pending(cenario.org)
+            .count_pending(scenario.org)
             .expect("pendentes"),
         1,
         "adiado continua pendente"
     );
     assert!(
-        cenario
+        scenario
             .store
             .outbox()
-            .list_pending(cenario.org, 10)
+            .list_pending(scenario.org, 10)
             .expect("saída")
             .is_empty(),
         "nada foi para a saída por causa da falha"
     );
 
-    // Antes da hora, o despacho não pega o item: nenhum turno novo e nenhuma chamada ao modelo.
     fluxo
-        .despachar(cenario.org)
+        .dispatch(scenario.org)
         .expect("despacha antes da hora");
     deixar_passar(60).await;
-    assert_eq!(cenario.turnos().len(), 1, "nada roda antes do instante");
+    assert_eq!(scenario.turnos().len(), 1, "nada roda antes do instante");
     assert_eq!(fake.received().len(), 1);
 
-    // Vencida a primeira espera (1 s): segunda tentativa, que também falha.
-    cenario.avancar(1_000);
-    fluxo.despachar(cenario.org).expect("despacha vencido");
-    esperar_tentativas(&cenario, item, 2).await;
+    scenario.avancar(1_000);
+    fluxo.dispatch(scenario.org).expect("despacha vencido");
+    esperar_tentativas(&scenario, item, 2).await;
     assert_eq!(fake.received().len(), 2);
 
-    // A segunda espera é quatro vezes a primeira (4 s): antes disso, nada; depois, a resposta.
-    cenario.avancar(3_000);
+    scenario.avancar(3_000);
     fluxo
-        .despachar(cenario.org)
+        .dispatch(scenario.org)
         .expect("despacha antes da segunda espera");
     deixar_passar(60).await;
     assert_eq!(
@@ -1514,87 +1409,87 @@ async fn falha_do_modelo_repete_com_espera_crescente_e_responde_na_terceira() {
         2,
         "espera crescente: ainda não venceu"
     );
-    cenario.avancar(1_000);
-    fluxo.despachar(cenario.org).expect("despacha vencido 2");
-    esperar_fila_vazia(&fluxo, &cenario).await;
+    scenario.avancar(1_000);
+    fluxo.dispatch(scenario.org).expect("despacha vencido 2");
+    esperar_fila_vazia(&fluxo, &scenario).await;
 
-    // Chamadas ao modelo: exatamente uma por tentativa, sem repetição extra.
     assert_eq!(fake.received().len(), 3);
-    let estados: Vec<TurnState> = cenario.turnos().iter().map(|t| t.state).collect();
+    let states: Vec<TurnState> = scenario.turnos().iter().map(|t| t.state).collect();
     assert_eq!(
-        estados.iter().filter(|e| **e == TurnState::Failed).count(),
+        states.iter().filter(|e| **e == TurnState::Failed).count(),
         2
     );
     assert_eq!(
-        estados
+        states
             .iter()
             .filter(|e| **e == TurnState::Completed)
             .count(),
         1
     );
 
-    // Uma resposta só, uma só na saída, e a entrada concluída.
-    let mensagens = cenario.mensagens();
-    let respostas: Vec<_> = mensagens
+    let messages = scenario.messages();
+    let respostas: Vec<_> = messages
         .iter()
         .filter(|m| m.role == Role::Assistant)
         .collect();
     assert_eq!(respostas.len(), 1, "uma resposta do agente");
-    let saida = cenario
+    let saida = scenario
         .store
         .outbox()
-        .list_pending(cenario.org, 10)
+        .list_pending(scenario.org, 10)
         .expect("saída");
     assert_eq!(saida.len(), 1, "uma mensagem na outbox");
     assert_eq!(
-        cenario
+        scenario
             .store
             .inbox()
-            .count_pending(cenario.org)
+            .count_pending(scenario.org)
             .expect("pendentes"),
         0
     );
 
-    let metricas = motor.metrics();
-    assert_eq!(metricas.falhas_modelo_adiadas.value(), 2);
-    assert_eq!(metricas.falhas_modelo_definitivas.value(), 0);
+    let metrics = engine.metrics();
+    assert_eq!(metrics.failures_model_deferred.value(), 2);
+    assert_eq!(metrics.failures_model_definitive.value(), 0);
 }
 
 #[tokio::test]
 async fn falha_do_modelo_sempre_esgota_em_tres_tentativas_e_conclui_sem_resposta() {
-    let cenario = Cenario::novo("falha-esgota");
-    let (motor, fake) = cenario.motor(
+    let scenario = Scenario::new("falha-esgota");
+    let (engine, fake) = scenario.engine(
         vec![
             falha_do_provedor(),
             falha_do_provedor(),
             falha_do_provedor(),
         ],
-        cenario.pausa(),
+        scenario.pausa(),
     );
-    let motor = Arc::new(motor);
-    let fluxo = cenario.fluxo_com(
-        Arc::clone(&motor),
-        OpcoesFluxo::default().com_falha_modelo(3, Duration::from_millis(1_000)),
+    let engine = Arc::new(engine);
+    let fluxo = scenario.fluxo_com(
+        Arc::clone(&engine),
+        FlowOptions::default().with_failure_model(3, Duration::from_millis(1_000)),
     );
-    let item = entregar(&fluxo, &cenario, "ext-esgota-1", "oi");
+    let item = entregar(&fluxo, &scenario, "ext-esgota-1", "oi");
 
-    fluxo.despachar(cenario.org).expect("despacha");
-    esperar_tentativas(&cenario, item, 1).await;
-    cenario.avancar(1_000);
-    fluxo.despachar(cenario.org).expect("despacha 2");
-    esperar_tentativas(&cenario, item, 2).await;
-    cenario.avancar(4_000);
-    fluxo.despachar(cenario.org).expect("despacha 3");
-    esperar_fila_vazia(&fluxo, &cenario).await;
+    fluxo.dispatch(scenario.org).expect("despacha");
+    esperar_tentativas(&scenario, item, 1).await;
+    scenario.avancar(1_000);
+    fluxo.dispatch(scenario.org).expect("despacha 2");
+    esperar_tentativas(&scenario, item, 2).await;
+    scenario.avancar(4_000);
+    fluxo.dispatch(scenario.org).expect("despacha 3");
+    esperar_fila_vazia(&fluxo, &scenario).await;
 
-    // Exatamente três chamadas e três turnos, todos falhos.
     assert_eq!(fake.received().len(), 3);
-    let turnos = cenario.turnos();
+    let turnos = scenario.turnos();
     assert_eq!(turnos.len(), 3);
     assert!(turnos.iter().all(|t| t.state == TurnState::Failed));
 
-    // Concluída (não volta para a fila), com o motivo guardado, sem resposta nem saída.
-    let concluido = cenario.store.inbox().get(cenario.org, item).expect("item");
+    let concluido = scenario
+        .store
+        .inbox()
+        .get(scenario.org, item)
+        .expect("item");
     assert!(concluido.processed_at.is_some(), "a entrada foi concluída");
     assert!(
         concluido
@@ -1606,47 +1501,46 @@ async fn falha_do_modelo_sempre_esgota_em_tres_tentativas_e_conclui_sem_resposta
         concluido.ultimo_erro
     );
     assert!(
-        cenario
+        scenario
             .store
             .outbox()
-            .list_pending(cenario.org, 10)
+            .list_pending(scenario.org, 10)
             .expect("saída")
             .is_empty()
     );
-    assert_eq!(cenario.mensagens().len(), 1, "só a mensagem do cliente");
+    assert_eq!(scenario.messages().len(), 1, "só a mensagem do cliente");
 
-    // Passado o instante, o item não volta: nenhum turno novo, nenhuma chamada nova.
-    cenario.avancar(3_600_000);
-    fluxo.despachar(cenario.org).expect("despacha de novo");
+    scenario.avancar(3_600_000);
+    fluxo.dispatch(scenario.org).expect("despacha de novo");
     deixar_passar(60).await;
-    assert_eq!(cenario.turnos().len(), 3);
+    assert_eq!(scenario.turnos().len(), 3);
     assert_eq!(fake.received().len(), 3);
 
-    let metricas = motor.metrics();
-    assert_eq!(metricas.falhas_modelo_adiadas.value(), 2);
-    assert_eq!(metricas.falhas_modelo_definitivas.value(), 1);
+    let metrics = engine.metrics();
+    assert_eq!(metrics.failures_model_deferred.value(), 2);
+    assert_eq!(metrics.failures_model_definitive.value(), 1);
 }
 
 #[tokio::test]
 async fn com_limite_de_uma_tentativa_a_primeira_falha_ja_e_definitiva() {
-    let cenario = Cenario::novo("falha-uma");
-    let (motor, fake) = cenario.motor(vec![falha_do_provedor()], cenario.pausa());
-    let motor = Arc::new(motor);
-    let fluxo = cenario.fluxo_com(
-        Arc::clone(&motor),
-        OpcoesFluxo::default().com_falha_modelo(1, Duration::from_millis(1_000)),
+    let scenario = Scenario::new("falha-uma");
+    let (engine, fake) = scenario.engine(vec![falha_do_provedor()], scenario.pausa());
+    let engine = Arc::new(engine);
+    let fluxo = scenario.fluxo_com(
+        Arc::clone(&engine),
+        FlowOptions::default().with_failure_model(1, Duration::from_millis(1_000)),
     );
-    entregar(&fluxo, &cenario, "ext-uma-1", "oi");
-    fluxo.despachar(cenario.org).expect("despacha");
-    esperar_fila_vazia(&fluxo, &cenario).await;
+    entregar(&fluxo, &scenario, "ext-uma-1", "oi");
+    fluxo.dispatch(scenario.org).expect("despacha");
+    esperar_fila_vazia(&fluxo, &scenario).await;
     assert_eq!(fake.received().len(), 1);
-    assert_eq!(motor.metrics().falhas_modelo_definitivas.value(), 1);
-    assert_eq!(motor.metrics().falhas_modelo_adiadas.value(), 0);
+    assert_eq!(engine.metrics().failures_model_definitive.value(), 1);
+    assert_eq!(engine.metrics().failures_model_deferred.value(), 0);
 }
 
 #[tokio::test]
 async fn tempo_maximo_do_turno_conta_como_falha_do_modelo_e_entra_na_escada() {
-    let cenario = Cenario::novo("tempo-maximo");
+    let scenario = Scenario::new("tempo-maximo");
     let pendurado = Script::Pending {
         events: Vec::new(),
         after: Duration::from_secs(10),
@@ -1656,21 +1550,21 @@ async fn tempo_maximo_do_turno_conta_como_falha_do_modelo_e_entra_na_escada() {
         turn_timeout: Duration::from_millis(50),
         ..TurnOptions::default()
     };
-    let (motor, fake) = cenario.motor_com(
-        vec![pendurado, resposta("consegui responder")],
-        cenario.pausa(),
+    let (engine, fake) = scenario.motor_com(
+        vec![pendurado, response("consegui responder")],
+        scenario.pausa(),
         opcoes_turno,
     );
-    let motor = Arc::new(motor);
-    let fluxo = cenario.fluxo_com(
-        Arc::clone(&motor),
-        OpcoesFluxo::default().com_falha_modelo(3, Duration::from_millis(1_000)),
+    let engine = Arc::new(engine);
+    let fluxo = scenario.fluxo_com(
+        Arc::clone(&engine),
+        FlowOptions::default().with_failure_model(3, Duration::from_millis(1_000)),
     );
-    let item = entregar(&fluxo, &cenario, "ext-tempo-1", "oi");
+    let item = entregar(&fluxo, &scenario, "ext-tempo-1", "oi");
 
-    fluxo.despachar(cenario.org).expect("despacha");
-    esperar_tentativas(&cenario, item, 1).await;
-    let turno = cenario.turnos().into_iter().next().expect("um turno");
+    fluxo.dispatch(scenario.org).expect("despacha");
+    esperar_tentativas(&scenario, item, 1).await;
+    let turno = scenario.turnos().into_iter().next().expect("um turno");
     assert_eq!(turno.state, TurnState::Failed);
     assert!(
         turno
@@ -1681,15 +1575,15 @@ async fn tempo_maximo_do_turno_conta_como_falha_do_modelo_e_entra_na_escada() {
         "{:?}",
         turno.error
     );
-    assert_eq!(motor.metrics().falhas_modelo_adiadas.value(), 1);
+    assert_eq!(engine.metrics().failures_model_deferred.value(), 1);
 
-    cenario.avancar(1_000);
-    fluxo.despachar(cenario.org).expect("despacha 2");
-    esperar_fila_vazia(&fluxo, &cenario).await;
+    scenario.avancar(1_000);
+    fluxo.dispatch(scenario.org).expect("despacha 2");
+    esperar_fila_vazia(&fluxo, &scenario).await;
     assert_eq!(fake.received().len(), 2);
     assert_eq!(
-        cenario
-            .mensagens()
+        scenario
+            .messages()
             .iter()
             .filter(|m| m.role == Role::Assistant)
             .count(),
@@ -1699,30 +1593,28 @@ async fn tempo_maximo_do_turno_conta_como_falha_do_modelo_e_entra_na_escada() {
 
 #[tokio::test]
 async fn repetir_depois_de_resposta_ja_gravada_nao_chama_o_modelo() {
-    let cenario = Cenario::novo("ja-respondida");
-    let (motor, fake) = cenario.motor(
-        vec![falha_do_provedor(), resposta("não deveria ser usada")],
-        cenario.pausa(),
+    let scenario = Scenario::new("ja-respondida");
+    let (engine, fake) = scenario.engine(
+        vec![falha_do_provedor(), response("não deveria ser usada")],
+        scenario.pausa(),
     );
-    let motor = Arc::new(motor);
-    let fluxo = cenario.fluxo_com(
-        Arc::clone(&motor),
-        OpcoesFluxo::default().com_falha_modelo(3, Duration::from_millis(1_000)),
+    let engine = Arc::new(engine);
+    let fluxo = scenario.fluxo_com(
+        Arc::clone(&engine),
+        FlowOptions::default().with_failure_model(3, Duration::from_millis(1_000)),
     );
-    let item = entregar(&fluxo, &cenario, "ext-ja-1", "oi");
-    fluxo.despachar(cenario.org).expect("despacha");
-    esperar_tentativas(&cenario, item, 1).await;
+    let item = entregar(&fluxo, &scenario, "ext-ja-1", "oi");
+    fluxo.dispatch(scenario.org).expect("despacha");
+    esperar_tentativas(&scenario, item, 1).await;
     assert_eq!(fake.received().len(), 1);
 
-    // Uma resposta chegou ao cliente antes da repetição (a entrada ficou aberta por queda, por
-    // exemplo). A repetição tem de reconhecer isso e não chamar o modelo de novo.
-    cenario
+    scenario
         .store
         .messages()
         .write(
-            cenario.org,
+            scenario.org,
             NewMessage {
-                conversation_id: cenario.conversa,
+                conversation_id: scenario.conversa,
                 direction: Direction::Outbound,
                 role: Role::Assistant,
                 texto: "resposta que já saiu".to_owned(),
@@ -1735,24 +1627,24 @@ async fn repetir_depois_de_resposta_ja_gravada_nao_chama_o_modelo() {
         )
         .expect("grava a resposta anterior");
 
-    cenario.avancar(1_000);
-    fluxo.despachar(cenario.org).expect("despacha de novo");
-    esperar_fila_vazia(&fluxo, &cenario).await;
+    scenario.avancar(1_000);
+    fluxo.dispatch(scenario.org).expect("despacha de novo");
+    esperar_fila_vazia(&fluxo, &scenario).await;
 
     assert_eq!(fake.received().len(), 1, "o modelo não foi chamado de novo");
     assert_eq!(
-        cenario
+        scenario
             .store
             .inbox()
-            .count_pending(cenario.org)
+            .count_pending(scenario.org)
             .expect("pendentes"),
         0
     );
     assert!(
-        cenario
+        scenario
             .store
             .outbox()
-            .list_pending(cenario.org, 10)
+            .list_pending(scenario.org, 10)
             .expect("saída")
             .is_empty(),
         "nenhuma resposta nova"
@@ -1761,45 +1653,45 @@ async fn repetir_depois_de_resposta_ja_gravada_nao_chama_o_modelo() {
 
 #[tokio::test]
 async fn item_adiado_so_volta_junto_com_a_mensagem_nova_e_nao_antes_do_instante() {
-    // Adiado, o item não é despachado sozinho antes do instante. Quando o cliente manda outra
-    // mensagem, o turno dela atende as duas (o grupo), e a entrada adiada sai da fila com ela.
-    let cenario = Cenario::novo("adiado-com-nova");
-    let (motor, fake) = cenario.motor(
-        vec![falha_do_provedor(), resposta("respondi as duas")],
-        cenario.pausa(),
+    let scenario = Scenario::new("adiado-com-nova");
+    let (engine, fake) = scenario.engine(
+        vec![falha_do_provedor(), response("respondi as duas")],
+        scenario.pausa(),
     );
-    let fluxo = cenario.fluxo_com(
-        Arc::new(motor),
-        OpcoesFluxo::default().com_falha_modelo(3, Duration::from_millis(5_000)),
+    let fluxo = scenario.fluxo_com(
+        Arc::new(engine),
+        FlowOptions::default().with_failure_model(3, Duration::from_millis(5_000)),
     );
-    let primeira = entregar(&fluxo, &cenario, "ext-antecipa-1", "primeira");
-    fluxo.despachar(cenario.org).expect("despacha");
-    esperar_tentativas(&cenario, primeira, 1).await;
-    assert_eq!(cenario.turnos().len(), 1);
+    let first = entregar(&fluxo, &scenario, "ext-antecipa-1", "primeira");
+    fluxo.dispatch(scenario.org).expect("despacha");
+    esperar_tentativas(&scenario, first, 1).await;
+    assert_eq!(scenario.turnos().len(), 1);
 
-    // Sem o instante vencido, o despacho não relança a primeira sozinha.
-    fluxo.despachar(cenario.org).expect("despacha sem vencer");
+    fluxo.dispatch(scenario.org).expect("despacha sem vencer");
     deixar_passar(60).await;
-    assert_eq!(cenario.turnos().len(), 1, "o adiado não roda antes da hora");
+    assert_eq!(
+        scenario.turnos().len(),
+        1,
+        "o adiado não roda antes da hora"
+    );
     assert_eq!(fake.received().len(), 1);
 
-    // A mensagem nova entra e é despachada; o turno dela leva a primeira junto, no grupo.
-    entregar(&fluxo, &cenario, "ext-antecipa-2", "segunda");
-    fluxo.despachar(cenario.org).expect("despacha a nova");
-    esperar_fila_vazia(&fluxo, &cenario).await;
+    entregar(&fluxo, &scenario, "ext-antecipa-2", "segunda");
+    fluxo.dispatch(scenario.org).expect("despacha a nova");
+    esperar_fila_vazia(&fluxo, &scenario).await;
 
     assert_eq!(fake.received().len(), 2);
-    let respostas = cenario
-        .mensagens()
+    let respostas = scenario
+        .messages()
         .iter()
         .filter(|m| m.role == Role::Assistant)
         .count();
     assert_eq!(respostas, 1, "uma resposta para as duas mensagens");
     assert_eq!(
-        cenario
+        scenario
             .store
             .inbox()
-            .count_pending(cenario.org)
+            .count_pending(scenario.org)
             .expect("pendentes"),
         0
     );

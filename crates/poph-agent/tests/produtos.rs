@@ -1,55 +1,44 @@
-//! Catálogo de produtos e ferramenta `buscar_produto` (HR-18).
-//!
-//! Usa o embedder falso (bag of words determinístico): roda sem o modelo instalado e sem rede.
-//! O que se prova aqui:
-//! 1. `buscar_produto` respeita a lista habilitada (D-04) e devolve id e preço;
-//! 2. produto inativo ou arquivado sai da busca e da ferramenta (D-05 aplicado a produto);
-//! 3. mudar preço aparece na resposta seguinte sem reindexar (o preço vem do registro);
-//! 4. preço zero e preço com centavos saem exatos;
-//! 5. busca e leitura não cruzam org;
-//! 6. filtro por categoria vinculada (com e sem vínculo);
-//! 7. o produto usado fica registrado no coletor do turno (`UsoFerramentas`).
-
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
-use poph_agent::metricas::MetricasMemoria;
-use poph_agent::produtos::{NOME_FERRAMENTA, ParametrosProdutos};
-use poph_agent::turno::{ContextoFerramenta, RegistroFerramentas, UsoFerramentas, oferecidas};
-use poph_agent::{BuscadorProdutos, BuscarProduto, CatalogoProdutos};
+use poph_agent::config_hot::{ConfigHot, HotConfigOptions};
+use poph_agent::metrics::MetricsMemory;
+use poph_agent::products::{NAME_TOOL, ProductParameters};
+use poph_agent::turno::{ToolContext, ToolRegistry, UseTools, offered};
+use poph_agent::{ProductCatalog, ProductSearcher, SearchProduct};
 use poph_rag::{Embedder, FakeEmbedder, Index, IndexConfig};
 use poph_store::{
     NewAgent, NewCategory, NewOrg, NewProduct, Product, ProductChange, Status, Store,
 };
 use poph_types::{AgentId, ConversationId, OrgId, ProductCategoryId, TurnId};
 
-struct Cenario {
-    pasta: PathBuf,
+struct Scenario {
+    folder: PathBuf,
     store: Arc<Store>,
     org: OrgId,
     agente: AgentId,
-    categoria: ProductCategoryId,
-    catalogo: Arc<CatalogoProdutos>,
+    category: ProductCategoryId,
+    catalog: Arc<ProductCatalog>,
 }
 
-impl Cenario {
-    fn novo(rotulo: &str) -> Self {
-        let pasta = std::env::temp_dir().join(format!(
-            "poph-produtos-{rotulo}-{}-{}",
+impl Scenario {
+    fn new(label: &str) -> Self {
+        let folder = std::env::temp_dir().join(format!(
+            "poph-produtos-{label}-{}-{}",
             std::process::id(),
             AgentId::generate()
         ));
-        let _ = std::fs::remove_dir_all(&pasta);
-        std::fs::create_dir_all(&pasta).expect("cria a pasta");
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).expect("cria a pasta");
         let store = Arc::new(
-            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco"),
+            Store::open_at(&folder.join("harness.db"), &folder.join("rag.db"))
+                .expect("abre o banco"),
         );
         let org = store
             .orgs()
             .create(NewOrg {
-                name: format!("Org {rotulo}"),
-                slug: format!("org-{rotulo}-{}", AgentId::generate()),
+                name: format!("Org {label}"),
+                slug: format!("org-{label}-{}", AgentId::generate()),
                 config_json: "{}".to_owned(),
             })
             .expect("cria a org")
@@ -59,14 +48,14 @@ impl Cenario {
             .create(
                 org,
                 NewAgent {
-                    name: format!("Atendente {rotulo}"),
-                    slug: format!("atendente-{rotulo}"),
+                    name: format!("Atendente {label}"),
+                    slug: format!("atendente-{label}"),
                     ..NewAgent::default()
                 },
             )
             .expect("cria o agente")
             .id;
-        let categoria = store
+        let category = store
             .categories()
             .create(
                 org,
@@ -78,16 +67,16 @@ impl Cenario {
             .expect("cria a categoria")
             .id;
         let embedder: Arc<dyn Embedder> = Arc::new(FakeEmbedder::new());
-        let (indice, _) =
+        let (index, _) =
             Index::open(store.rag_path(), embedder, IndexConfig::default()).expect("abre o índice");
-        let catalogo = CatalogoProdutos::novo(Arc::clone(&store), Arc::new(indice));
+        let catalog = ProductCatalog::new(Arc::clone(&store), Arc::new(index));
         Self {
-            pasta,
+            folder,
             store,
             org,
             agente,
-            categoria,
-            catalogo,
+            category,
+            catalog,
         }
     }
 
@@ -107,23 +96,23 @@ impl Cenario {
 
     fn criar_produto(
         &self,
-        categoria: ProductCategoryId,
+        category: ProductCategoryId,
         nome: &str,
         aliases: &[&str],
-        preco_texto: &str,
-        centavos: i64,
+        price_text: &str,
+        cents: i64,
     ) -> Product {
         self.store
             .products()
             .create(
                 self.org,
                 NewProduct {
-                    category_id: Some(categoria),
+                    category_id: Some(category),
                     name: nome.to_owned(),
                     aliases: aliases.iter().map(|alias| (*alias).to_owned()).collect(),
                     description: format!("Serviço de {nome} com garantia."),
-                    price_text: preco_texto.to_owned(),
-                    price_cents: centavos,
+                    price_text: price_text.to_owned(),
+                    price_cents: cents,
                     unit: "por visita".to_owned(),
                     conditions: "Pagamento em até 3x".to_owned(),
                     ..NewProduct::default()
@@ -132,25 +121,25 @@ impl Cenario {
             .expect("cria o produto")
     }
 
-    async fn sincronizar(&self) {
-        self.catalogo
-            .sincronizar_agente(self.org, self.agente)
+    async fn synchronise(&self) {
+        self.catalog
+            .synchronise_agent(self.org, self.agente)
             .await
             .expect("sincroniza o índice");
     }
 
-    async fn buscar(&self, termo: &str) -> Vec<poph_agent::ProdutoEncontrado> {
-        let catalogo: Arc<dyn BuscadorProdutos> =
-            Arc::clone(&self.catalogo) as Arc<dyn BuscadorProdutos>;
-        catalogo
-            .buscar(
+    async fn search(&self, term: &str) -> Vec<poph_agent::FoundProduct> {
+        let catalog: Arc<dyn ProductSearcher> =
+            Arc::clone(&self.catalog) as Arc<dyn ProductSearcher>;
+        catalog
+            .search(
                 self.org,
                 self.agente,
-                termo.to_owned(),
+                term.to_owned(),
                 None,
-                ParametrosProdutos {
+                ProductParameters {
                     top_k: 3,
-                    corte: 0.0,
+                    cutoff: 0.0,
                 },
             )
             .await
@@ -158,169 +147,167 @@ impl Cenario {
     }
 }
 
-impl Drop for Cenario {
+impl Drop for Scenario {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.pasta);
+        let _ = std::fs::remove_dir_all(&self.folder);
     }
 }
 
-fn contexto(cenario: &Cenario, uso: Arc<UsoFerramentas>) -> ContextoFerramenta {
-    ContextoFerramenta {
-        org: cenario.org,
+fn context(scenario: &Scenario, usage: Arc<UseTools>) -> ToolContext {
+    ToolContext {
+        org: scenario.org,
         conversa: ConversationId::generate(),
-        agente: cenario.agente,
+        agente: scenario.agente,
         turno: TurnId::generate(),
-        uso,
+        usage,
     }
 }
 
 #[tokio::test]
 async fn ferramenta_respeita_d04_e_devolve_preco_do_registro() {
-    let cenario = Cenario::novo("d04");
-    let produto = cenario.criar_produto(
-        cenario.categoria,
+    let scenario = Scenario::new("d04");
+    let product = scenario.criar_produto(
+        scenario.category,
         "Dedetização de baratas",
         &["baratas", "barata"],
         "R$ 320,00",
         32_000,
     );
-    cenario.sincronizar().await;
+    scenario.synchronise().await;
 
-    let config = Arc::new(ConfigQuente::nova(
-        Arc::clone(&cenario.store),
-        OpcoesConfigQuente::default(),
-        MetricasMemoria::proprio(),
+    let config = Arc::new(ConfigHot::new(
+        Arc::clone(&scenario.store),
+        HotConfigOptions::default(),
+        MetricsMemory::own(),
     ));
-    let catalogo: Arc<dyn BuscadorProdutos> =
-        Arc::clone(&cenario.catalogo) as Arc<dyn BuscadorProdutos>;
-    let registro = BuscarProduto::registro(Arc::clone(&config), catalogo);
-    assert_eq!(registro.nomes(), vec![NOME_FERRAMENTA.to_owned()]);
+    let catalog: Arc<dyn ProductSearcher> =
+        Arc::clone(&scenario.catalog) as Arc<dyn ProductSearcher>;
+    let registro = SearchProduct::registro(Arc::clone(&config), catalog);
+    assert_eq!(registro.names(), vec![NAME_TOOL.to_owned()]);
 
     assert!(
-        oferecidas(&registro, &[]).is_empty(),
+        offered(&registro, &[]).is_empty(),
         "D-04: sem habilitação, a ferramenta não é oferecida"
     );
-    let habilitada = oferecidas(&registro, &[NOME_FERRAMENTA.to_owned()]);
-    assert_eq!(habilitada.len(), 1);
-    assert_eq!(habilitada[0].nome, NOME_FERRAMENTA);
+    let enabled = offered(&registro, &[NAME_TOOL.to_owned()]);
+    assert_eq!(enabled.len(), 1);
+    assert_eq!(enabled[0].nome, NAME_TOOL);
 
-    let ferramenta = registro.ferramenta(NOME_FERRAMENTA).expect("existe");
-    let uso = UsoFerramentas::nova();
-    let resposta = ferramenta
-        .executar(
-            contexto(&cenario, Arc::clone(&uso)),
+    let tool = registro.tool(NAME_TOOL).expect("existe");
+    let usage = UseTools::new();
+    let response = tool
+        .run(
+            context(&scenario, Arc::clone(&usage)),
             serde_json::json!({"termo": "baratas"}),
         )
         .await
         .expect("a ferramenta executa");
-    assert!(resposta.contains(&produto.id.to_string()), "{resposta}");
-    assert!(resposta.contains("R$ 320,00"), "{resposta}");
-    assert!(resposta.contains("32000 centavos"), "{resposta}");
-    assert!(resposta.contains("<produtos_encontrados>"), "{resposta}");
+    assert!(response.contains(&product.id.to_string()), "{response}");
+    assert!(response.contains("R$ 320,00"), "{response}");
+    assert!(response.contains("32000 centavos"), "{response}");
+    assert!(response.contains("<produtos_encontrados>"), "{response}");
 
-    let usados = uso.produtos();
-    assert_eq!(usados.len(), 1);
-    assert_eq!(usados[0].produto, produto.id);
-    assert_eq!(usados[0].preco_centavos, 32_000);
+    let used = usage.products();
+    assert_eq!(used.len(), 1);
+    assert_eq!(used[0].product, product.id);
+    assert_eq!(used[0].price_cents, 32_000);
 
-    let sem_argumento = ferramenta
-        .executar(contexto(&cenario, uso), serde_json::json!({}))
+    let sem_argumento = tool
+        .run(context(&scenario, usage), serde_json::json!({}))
         .await;
     assert!(sem_argumento.is_err(), "termo vazio devolve erro ao modelo");
 }
 
 #[tokio::test]
 async fn produto_inativo_ou_arquivado_sai_da_busca_e_da_ferramenta() {
-    let cenario = Cenario::novo("inativo");
-    let produto = cenario.criar_produto(
-        cenario.categoria,
+    let scenario = Scenario::new("inativo");
+    let product = scenario.criar_produto(
+        scenario.category,
         "Dedetização de cupins",
         &["cupins"],
         "R$ 450,00",
         45_000,
     );
-    cenario.sincronizar().await;
-    assert_eq!(cenario.buscar("cupins").await.len(), 1);
+    scenario.synchronise().await;
+    assert_eq!(scenario.search("cupins").await.len(), 1);
 
-    // Inativo: sai do índice na sincronização.
-    let atual = cenario
+    let current = scenario
         .store
         .products()
-        .get(cenario.org, produto.id)
+        .get(scenario.org, product.id)
         .expect("lê o produto");
-    cenario
+    scenario
         .store
         .products()
         .update(
-            cenario.org,
-            produto.id,
-            atual.version,
+            scenario.org,
+            product.id,
+            current.version,
             ProductChange {
                 status: Some(Status::Inactive),
                 ..ProductChange::default()
             },
         )
         .expect("inativa o produto");
-    cenario.sincronizar().await;
+    scenario.synchronise().await;
     assert!(
-        cenario.buscar("cupins").await.is_empty(),
+        scenario.search("cupins").await.is_empty(),
         "produto inativo não volta da busca"
     );
 
-    // Arquivado: mesma coisa.
-    let atual = cenario
+    let current = scenario
         .store
         .products()
-        .get(cenario.org, produto.id)
+        .get(scenario.org, product.id)
         .expect("lê o produto");
-    cenario
+    scenario
         .store
         .products()
         .update(
-            cenario.org,
-            produto.id,
-            atual.version,
+            scenario.org,
+            product.id,
+            current.version,
             ProductChange {
                 status: Some(Status::Archived),
                 ..ProductChange::default()
             },
         )
         .expect("arquiva o produto");
-    cenario.sincronizar().await;
-    assert!(cenario.buscar("cupins").await.is_empty());
+    scenario.synchronise().await;
+    assert!(scenario.search("cupins").await.is_empty());
 }
 
 #[tokio::test]
 async fn mudar_preco_aparece_na_resposta_seguinte_sem_reindexar() {
-    let cenario = Cenario::novo("preco");
-    let produto = cenario.criar_produto(
-        cenario.categoria,
+    let scenario = Scenario::new("preco");
+    let product = scenario.criar_produto(
+        scenario.category,
         "Desratização",
         &["ratos", "ratazanas"],
         "R$ 250,00",
         25_000,
     );
-    cenario.sincronizar().await;
+    scenario.synchronise().await;
 
-    let antes = cenario
-        .catalogo
-        .indice()
-        .indexed_products(cenario.org, cenario.agente)
+    let antes = scenario
+        .catalog
+        .index()
+        .indexed_products(scenario.org, scenario.agente)
         .expect("hashes");
-    assert_eq!(cenario.buscar("ratos").await[0].preco_centavos, 25_000);
+    assert_eq!(scenario.search("ratos").await[0].price_cents, 25_000);
 
-    let atual = cenario
+    let current = scenario
         .store
         .products()
-        .get(cenario.org, produto.id)
+        .get(scenario.org, product.id)
         .expect("lê o produto");
-    cenario
+    scenario
         .store
         .products()
         .update(
-            cenario.org,
-            produto.id,
-            atual.version,
+            scenario.org,
+            product.id,
+            current.version,
             ProductChange {
                 price_text: Some("R$ 279,90".to_owned()),
                 price_cents: Some(27_990),
@@ -329,17 +316,16 @@ async fn mudar_preco_aparece_na_resposta_seguinte_sem_reindexar() {
         )
         .expect("muda o preço");
 
-    // Nenhuma reindexação: o índice nem foi tocado, e a resposta já traz o preço novo.
-    let achados = cenario.buscar("ratos").await;
-    assert_eq!(achados.len(), 1);
-    assert_eq!(achados[0].preco_centavos, 27_990);
-    assert_eq!(achados[0].preco_texto, "R$ 279,90");
+    let findings = scenario.search("ratos").await;
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].price_cents, 27_990);
+    assert_eq!(findings[0].price_text, "R$ 279,90");
     assert_eq!(
         antes,
-        cenario
-            .catalogo
-            .indice()
-            .indexed_products(cenario.org, cenario.agente)
+        scenario
+            .catalog
+            .index()
+            .indexed_products(scenario.org, scenario.agente)
             .expect("hashes"),
         "mudar preço não mexe no índice"
     );
@@ -347,45 +333,45 @@ async fn mudar_preco_aparece_na_resposta_seguinte_sem_reindexar() {
 
 #[tokio::test]
 async fn preco_zero_e_centavos_saem_exatos() {
-    let cenario = Cenario::novo("precos");
-    cenario.criar_produto(
-        cenario.categoria,
+    let scenario = Scenario::new("precos");
+    scenario.criar_produto(
+        scenario.category,
         "Visita de avaliação",
         &["avaliação", "visita"],
         "",
         0,
     );
-    cenario.criar_produto(
-        cenario.categoria,
+    scenario.criar_produto(
+        scenario.category,
         "Desentupimento de pia",
         &["ralo entupido"],
         "",
         12_345,
     );
-    cenario.sincronizar().await;
+    scenario.synchronise().await;
 
-    let gratis = cenario.buscar("visita de avaliação").await;
-    assert_eq!(gratis[0].preco_centavos, 0);
-    assert_eq!(gratis[0].preco_texto, "R$ 0,00");
+    let gratis = scenario.search("visita de avaliação").await;
+    assert_eq!(gratis[0].price_cents, 0);
+    assert_eq!(gratis[0].price_text, "R$ 0,00");
 
-    let com_centavos = cenario.buscar("ralo entupido").await;
-    assert_eq!(com_centavos[0].preco_centavos, 12_345);
-    assert_eq!(com_centavos[0].preco_texto, "R$ 123,45");
+    let com_centavos = scenario.search("ralo entupido").await;
+    assert_eq!(com_centavos[0].price_cents, 12_345);
+    assert_eq!(com_centavos[0].price_text, "R$ 123,45");
 }
 
 #[tokio::test]
 async fn busca_e_leitura_nao_cruzam_org() {
-    let cenario = Cenario::novo("orgs");
-    let produto = cenario.criar_produto(
-        cenario.categoria,
+    let scenario = Scenario::new("orgs");
+    let product = scenario.criar_produto(
+        scenario.category,
         "Dedetização de formigas",
         &["formigas"],
         "R$ 190,00",
         19_000,
     );
-    cenario.sincronizar().await;
+    scenario.synchronise().await;
 
-    let outra = cenario
+    let other = scenario
         .store
         .orgs()
         .create(NewOrg {
@@ -395,11 +381,11 @@ async fn busca_e_leitura_nao_cruzam_org() {
         })
         .expect("cria a outra org")
         .id;
-    let outro_agente = cenario
+    let outro_agente = scenario
         .store
         .agents()
         .create(
-            outra,
+            other,
             NewAgent {
                 name: "Atendente da outra".to_owned(),
                 slug: format!("outro-{}", AgentId::generate()),
@@ -408,39 +394,38 @@ async fn busca_e_leitura_nao_cruzam_org() {
         )
         .expect("cria o outro agente")
         .id;
-    cenario
-        .catalogo
-        .sincronizar_agente(outra, outro_agente)
+    scenario
+        .catalog
+        .synchronise_agent(other, outro_agente)
         .await
         .expect("sincroniza a outra org");
 
-    let catalogo: Arc<dyn BuscadorProdutos> =
-        Arc::clone(&cenario.catalogo) as Arc<dyn BuscadorProdutos>;
-    let achados = catalogo
-        .buscar(
-            outra,
+    let catalog: Arc<dyn ProductSearcher> =
+        Arc::clone(&scenario.catalog) as Arc<dyn ProductSearcher>;
+    let findings = catalog
+        .search(
+            other,
             outro_agente,
             "formigas".to_owned(),
             None,
-            ParametrosProdutos {
+            ProductParameters {
                 top_k: 5,
-                corte: 0.0,
+                cutoff: 0.0,
             },
         )
         .await
         .expect("busca na outra org");
-    assert!(achados.is_empty(), "produto de outra org não aparece");
+    assert!(findings.is_empty(), "produto de outra org não aparece");
 
-    // Leitura direta por id também não cruza.
     assert!(
-        cenario.store.products().get(outra, produto.id).is_err(),
+        scenario.store.products().get(other, product.id).is_err(),
         "obter com a org errada não devolve o produto"
     );
     assert!(
-        cenario
+        scenario
             .store
             .products()
-            .active_by_ids(outra, &[produto.id])
+            .active_by_ids(other, &[product.id])
             .expect("lê por ids")
             .is_empty(),
         "leitura em lote com a org errada não devolve nada"
@@ -449,88 +434,83 @@ async fn busca_e_leitura_nao_cruzam_org() {
 
 #[tokio::test]
 async fn filtro_por_categoria_vinculada() {
-    let cenario = Cenario::novo("categorias");
-    let pragas = cenario.categoria;
-    let hidraulica = cenario.nova_categoria("Hidráulica");
-    let baratas = cenario.criar_produto(
+    let scenario = Scenario::new("categorias");
+    let pragas = scenario.category;
+    let hidraulica = scenario.nova_categoria("Hidráulica");
+    let baratas = scenario.criar_produto(
         pragas,
         "Dedetização de baratas",
         &["baratas"],
         "R$ 320,00",
         32_000,
     );
-    let pia = cenario.criar_produto(
+    let pia = scenario.criar_produto(
         hidraulica,
         "Desentupimento de pia",
         &["pia entupida", "ralo"],
         "R$ 180,00",
         18_000,
     );
-    cenario.sincronizar().await;
+    scenario.synchronise().await;
 
-    // Sem vínculo: o agente vê o catálogo inteiro (com corte 0, o top-k volta inteiro).
-    assert_eq!(cenario.buscar("baratas").await[0].produto, baratas.id);
-    assert_eq!(cenario.buscar("ralo").await[0].produto, pia.id);
+    assert_eq!(scenario.search("baratas").await[0].product, baratas.id);
+    assert_eq!(scenario.search("ralo").await[0].product, pia.id);
 
-    // Com vínculo só em pragas: hidráulica sai do índice do agente.
-    let agente = cenario
+    let agente = scenario
         .store
         .agents()
-        .get(cenario.org, cenario.agente)
+        .get(scenario.org, scenario.agente)
         .expect("lê o agente");
-    cenario
+    scenario
         .store
         .agents()
-        .define_categories(cenario.org, cenario.agente, agente.version, &[pragas])
+        .define_categories(scenario.org, scenario.agente, agente.version, &[pragas])
         .expect("vincula a categoria");
-    cenario.sincronizar().await;
+    scenario.synchronise().await;
 
-    let achados = cenario.buscar("baratas").await;
-    assert_eq!(achados.len(), 1, "só o produto da categoria vinculada");
-    assert_eq!(achados[0].produto, baratas.id);
+    let findings = scenario.search("baratas").await;
+    assert_eq!(findings.len(), 1, "só o produto da categoria vinculada");
+    assert_eq!(findings[0].product, baratas.id);
     assert!(
-        cenario
-            .buscar("ralo")
+        scenario
+            .search("ralo")
             .await
             .iter()
-            .all(|achado| achado.produto != pia.id),
+            .all(|finding| finding.product != pia.id),
         "produto de categoria não vinculada sai da busca"
     );
 
-    // Filtro pedido pelo modelo dentro da categoria visível funciona.
-    let catalogo: Arc<dyn BuscadorProdutos> =
-        Arc::clone(&cenario.catalogo) as Arc<dyn BuscadorProdutos>;
-    let filtrado = catalogo
-        .buscar(
-            cenario.org,
-            cenario.agente,
+    let catalog: Arc<dyn ProductSearcher> =
+        Arc::clone(&scenario.catalog) as Arc<dyn ProductSearcher>;
+    let filtrado = catalog
+        .search(
+            scenario.org,
+            scenario.agente,
             "baratas".to_owned(),
             Some("pragas urbanas".to_owned()),
-            ParametrosProdutos {
+            ProductParameters {
                 top_k: 3,
-                corte: 0.0,
+                cutoff: 0.0,
             },
         )
         .await
         .expect("busca com filtro");
     assert_eq!(filtrado.len(), 1);
-    assert_eq!(filtrado[0].produto, baratas.id);
+    assert_eq!(filtrado[0].product, baratas.id);
 
-    // Categoria não vinculada é recusada (paridade com o POP Atende).
-    let negado = catalogo
-        .buscar(
-            cenario.org,
-            cenario.agente,
+    let negado = catalog
+        .search(
+            scenario.org,
+            scenario.agente,
             "pia".to_owned(),
             Some("hidráulica".to_owned()),
-            ParametrosProdutos {
+            ProductParameters {
                 top_k: 3,
-                corte: 0.0,
+                cutoff: 0.0,
             },
         )
         .await;
     assert!(negado.is_err(), "categoria fora do vínculo é recusada");
 
-    // O produto da outra categoria continua no banco (só saiu do índice do agente).
-    assert!(cenario.store.products().get(cenario.org, pia.id).is_ok());
+    assert!(scenario.store.products().get(scenario.org, pia.id).is_ok());
 }

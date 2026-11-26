@@ -1,23 +1,15 @@
-//! Carrinho de orçamento (HR-19).
-//!
-//! Cobre o que a tarefa pede: totais corretos em 10 casos (quantidade, preço zero, item repetido,
-//! item removido, carrinho vazio), o modelo não consegue gravar preço, agente sem a ferramenta não a
-//! recebe, o carrinho é por conversa, e a org de outro token não mexe nele.
-//!
-//! Provedor falso e pausa que não dorme: nenhum teste toca a rede nem espera de verdade.
-
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use poph_agent::carrinho::formatar_reais;
-use poph_agent::carrinho::{self, NOME_ADICIONAR, NOME_LIMPAR, NOME_REMOVER, NOME_RESUMO};
-use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
-use poph_agent::limites::{Limitador, OpcoesLimites};
-use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
+use poph_agent::cart::format_brl;
+use poph_agent::cart::{self, NAME_ADD, NAME_CLEAN, NAME_REMOVE, NAME_SUMMARY};
+use poph_agent::config_hot::{ConfigHot, HotConfigOptions};
+use poph_agent::limites::{LimitOptions, Limiter};
+use poph_agent::metrics::{MetricsMemory, MetricsTurn};
 use poph_agent::turno::{
-    ContextoFerramenta, FuturoPausa, NoopObserver, Pausa, RegistroFerramentas, RegistroPadrao,
-    TurnEngine, TurnOptions, UsoFerramentas,
+    DefaultRegistry, FuturePause, NoopObserver, Pause, ToolContext, ToolRegistry, TurnEngine,
+    TurnOptions, UseTools,
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, LlmProvider, Script, ToolCall};
 use poph_store::{NewAgent, NewCategory, NewConversation, NewOrg, NewProduct, Page, Store};
@@ -26,46 +18,43 @@ use poph_types::{
 };
 use serde_json::{Value, json};
 
-/// Pausa que não dorme.
 #[derive(Default, Clone)]
 struct PausaFalsa;
 
-impl Pausa for PausaFalsa {
-    fn esperar(&self, _duracao: Duration) -> FuturoPausa {
+impl Pause for PausaFalsa {
+    fn wait(&self, _duracao: Duration) -> FuturePause {
         Box::pin(async {})
     }
 }
 
-/// Catálogo de teste: quatro produtos com preços conhecidos e um fora das categorias do agente.
-struct Cenario {
-    pasta: PathBuf,
+struct Scenario {
+    folder: PathBuf,
     store: Arc<Store>,
     org: OrgId,
     agente: AgentId,
     conversa: ConversationId,
-    /// Dedetização R$ 320,00; desentupimento R$ 90,00; visita grátis R$ 0,00; projeto R$ 1.234,56.
-    produtos: Vec<ProductId>,
-    /// Produto da categoria "Jardim", que o agente não enxerga quando ele tem vínculo com "Pragas".
+    products: Vec<ProductId>,
     jardim: ProductId,
 }
 
-impl Cenario {
-    fn novo(rotulo: &str, ferramentas: &[&str]) -> Self {
-        let pasta = std::env::temp_dir().join(format!(
-            "poph-carrinho-{rotulo}-{}-{}",
+impl Scenario {
+    fn new(label: &str, tools: &[&str]) -> Self {
+        let folder = std::env::temp_dir().join(format!(
+            "poph-carrinho-{label}-{}-{}",
             std::process::id(),
             AgentId::generate()
         ));
-        let _ = std::fs::remove_dir_all(&pasta);
-        std::fs::create_dir_all(&pasta).expect("cria a pasta");
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).expect("cria a pasta");
         let store = Arc::new(
-            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco"),
+            Store::open_at(&folder.join("harness.db"), &folder.join("rag.db"))
+                .expect("abre o banco"),
         );
         let org = store
             .orgs()
             .create(NewOrg {
-                name: format!("Org {rotulo}"),
-                slug: format!("org-{rotulo}-{}", AgentId::generate()),
+                name: format!("Org {label}"),
+                slug: format!("org-{label}-{}", AgentId::generate()),
                 config_json: "{}".to_owned(),
             })
             .expect("cria a org")
@@ -75,16 +64,16 @@ impl Cenario {
             .create(
                 org,
                 NewAgent {
-                    name: format!("Bia {rotulo}"),
-                    slug: format!("bia-{rotulo}"),
+                    name: format!("Bia {label}"),
+                    slug: format!("bia-{label}"),
                     grouping_window_ms: 0,
                     ..NewAgent::default()
                 },
             )
             .expect("cria o agente")
             .id;
-        let estruturado = StructuredInstructions {
-            tools: ferramentas
+        let structured = StructuredInstructions {
+            tools: tools
                 .iter()
                 .map(|nome| ToolConfig {
                     name: (*nome).to_owned(),
@@ -100,7 +89,7 @@ impl Cenario {
                 org,
                 agente,
                 0,
-                &estruturado.to_json(),
+                &structured.to_json(),
                 "# Bia\n\nVocê é a atendente da FixProLar.",
                 true,
             )
@@ -127,14 +116,14 @@ impl Cenario {
             )
             .expect("cria a categoria")
             .id;
-        let mut produtos = Vec::new();
-        for (nome, centavos) in [
+        let mut products = Vec::new();
+        for (nome, cents) in [
             ("Dedetização de baratas", 32_000),
             ("Desentupimento", 9_000),
             ("Visita técnica gratuita", 0),
             ("Projeto completo", 123_456),
         ] {
-            let produto = store
+            let product = store
                 .products()
                 .create(
                     org,
@@ -142,13 +131,13 @@ impl Cenario {
                         category_id: Some(pragas),
                         name: nome.to_owned(),
                         price_text: String::new(),
-                        price_cents: centavos,
+                        price_cents: cents,
                         unit: "por serviço".to_owned(),
                         ..NewProduct::default()
                     },
                 )
                 .expect("cria o produto");
-            produtos.push(produto.id);
+            products.push(product.id);
         }
         let jardim = store
             .products()
@@ -165,12 +154,12 @@ impl Cenario {
             .id;
         let conversa = Self::abrir_conversa(&store, org, agente);
         Self {
-            pasta,
+            folder,
             store,
             org,
             agente,
             conversa,
-            produtos,
+            products,
             jardim,
         }
     }
@@ -192,63 +181,57 @@ impl Cenario {
             .id
     }
 
-    fn contexto(&self, conversa: ConversationId) -> ContextoFerramenta {
-        ContextoFerramenta {
+    fn context(&self, conversa: ConversationId) -> ToolContext {
+        ToolContext {
             org: self.org,
             conversa,
             agente: self.agente,
             turno: TurnId::generate(),
-            uso: UsoFerramentas::nova(),
+            usage: UseTools::new(),
         }
     }
 
-    /// Chama uma ferramenta do carrinho direto, como o motor faria.
     async fn chamar(
         &self,
         conversa: ConversationId,
         nome: &str,
-        argumentos: Value,
+        arguments: Value,
     ) -> Result<String, String> {
-        let registro = carrinho::registrar(RegistroPadrao::novo(), Arc::clone(&self.store));
-        let ferramenta = registro.ferramenta(nome).expect("ferramenta registrada");
-        ferramenta
-            .executar(self.contexto(conversa), argumentos)
-            .await
+        let registro = cart::register(DefaultRegistry::new(), Arc::clone(&self.store));
+        let tool = registro.tool(nome).expect("ferramenta registrada");
+        tool.run(self.context(conversa), arguments).await
     }
 
     fn total(&self, conversa: ConversationId) -> (i64, usize) {
-        let resumo = self
+        let summary = self
             .store
             .carts()
             .summary(self.org, conversa)
             .expect("lê o carrinho");
-        (resumo.total_cents, resumo.items.len())
+        (summary.total_cents, summary.items.len())
     }
 
-    fn motor(&self, roteiros: Vec<Script>) -> (TurnEngine, Arc<FakeProvider>) {
+    fn engine(&self, roteiros: Vec<Script>) -> (TurnEngine, Arc<FakeProvider>) {
         let fake = Arc::new(FakeProvider::with_scripts(roteiros));
         let provedor: Arc<dyn LlmProvider> = fake.clone();
-        let config = ConfigQuente::nova(
+        let config = ConfigHot::new(
             Arc::clone(&self.store),
-            OpcoesConfigQuente::default(),
-            MetricasMemoria::proprio(),
+            HotConfigOptions::default(),
+            MetricsMemory::own(),
         );
-        let limitador = Arc::new(Limitador::novo(
-            OpcoesLimites::default(),
-            MetricasMemoria::proprio(),
-        ));
-        let motor = TurnEngine::new(
+        let limiter = Arc::new(Limiter::new(LimitOptions::default(), MetricsMemory::own()));
+        let engine = TurnEngine::new(
             Arc::clone(&self.store),
             config,
-            limitador,
+            limiter,
             provedor,
             TurnOptions::default(),
-            MetricasTurno::proprio(),
+            MetricsTurn::own(),
         )
         .with_pause(Arc::new(PausaFalsa));
-        let registro = carrinho::registrar(RegistroPadrao::novo(), Arc::clone(&self.store));
-        let motor = motor.with_tools(Arc::new(registro) as Arc<dyn RegistroFerramentas>);
-        (motor, fake)
+        let registro = cart::register(DefaultRegistry::new(), Arc::clone(&self.store));
+        let engine = engine.with_tools(Arc::new(registro) as Arc<dyn ToolRegistry>);
+        (engine, fake)
     }
 
     fn falar(&self, conversa: ConversationId, texto: &str) -> poph_types::MessageId {
@@ -273,31 +256,30 @@ impl Cenario {
     }
 }
 
-impl Drop for Cenario {
+impl Drop for Scenario {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.pasta);
+        let _ = std::fs::remove_dir_all(&self.folder);
     }
 }
 
-fn resposta(texto: &str) -> Script {
+fn response(texto: &str) -> Script {
     Script::Events(vec![
         LlmEvent::Texto(texto.to_owned()),
         LlmEvent::Fim(FinishReason::Completed),
     ])
 }
 
-fn chamada(nome: &str, id: &str, argumentos: Value) -> Script {
+fn call(nome: &str, id: &str, arguments: Value) -> Script {
     Script::Events(vec![
         LlmEvent::Tool(ToolCall {
             id: id.to_owned(),
             nome: nome.to_owned(),
-            arguments: argumentos,
+            arguments,
         }),
         LlmEvent::Fim(FinishReason::ToolCalls),
     ])
 }
 
-/// Operação de um caso de total.
 enum Op {
     Add(usize, Option<u32>),
     Rem(usize, Option<u32>),
@@ -305,7 +287,6 @@ enum Op {
 
 #[tokio::test]
 async fn dez_casos_de_total_batem_com_o_servidor() {
-    // (nome, operações, total esperado em centavos, linhas esperadas)
     let casos: Vec<(&str, Vec<Op>, i64, usize)> = vec![
         (
             "um item, quantidade padrão",
@@ -360,74 +341,73 @@ async fn dez_casos_de_total_batem_com_o_servidor() {
     ];
     assert_eq!(casos.len(), 10);
 
-    let cenario = Cenario::novo("totais", &[NOME_ADICIONAR, NOME_REMOVER, NOME_RESUMO]);
+    let scenario = Scenario::new("totais", &[NAME_ADD, NAME_REMOVE, NAME_SUMMARY]);
     for (nome, operacoes, total_esperado, linhas_esperadas) in casos {
-        let conversa = Cenario::abrir_conversa(&cenario.store, cenario.org, cenario.agente);
+        let conversa = Scenario::abrir_conversa(&scenario.store, scenario.org, scenario.agente);
         for operacao in operacoes {
-            let (nome_ferramenta, argumentos) = match operacao {
-                Op::Add(indice, quantidade) => (
-                    NOME_ADICIONAR,
-                    produto_e_quantidade(cenario.produtos[indice], quantidade),
+            let (nome_ferramenta, arguments) = match operacao {
+                Op::Add(index, quantity) => (
+                    NAME_ADD,
+                    produto_e_quantidade(scenario.products[index], quantity),
                 ),
-                Op::Rem(indice, quantidade) => (
-                    NOME_REMOVER,
-                    produto_e_quantidade(cenario.produtos[indice], quantidade),
+                Op::Rem(index, quantity) => (
+                    NAME_REMOVE,
+                    produto_e_quantidade(scenario.products[index], quantity),
                 ),
             };
-            cenario
-                .chamar(conversa, nome_ferramenta, argumentos)
+            scenario
+                .chamar(conversa, nome_ferramenta, arguments)
                 .await
-                .unwrap_or_else(|erro| panic!("{nome}: a ferramenta recusou: {erro}"));
+                .unwrap_or_else(|error| panic!("{nome}: a ferramenta recusou: {error}"));
         }
-        let (total, linhas) = cenario.total(conversa);
+        let (total, linhas) = scenario.total(conversa);
         assert_eq!(total, total_esperado, "caso: {nome} (total)");
         assert_eq!(linhas, linhas_esperadas, "caso: {nome} (linhas)");
 
-        // O texto que vai ao modelo traz o mesmo total que o banco calculou.
-        let texto = cenario
-            .chamar(conversa, NOME_RESUMO, json!({}))
+        let texto = scenario
+            .chamar(conversa, NAME_SUMMARY, json!({}))
             .await
             .expect("resumo");
         assert!(
-            texto.contains(&format!("Total: {}", formatar_reais(total_esperado))),
+            texto.contains(&format!("Total: {}", format_brl(total_esperado))),
             "caso: {nome}: texto sem o total certo: {texto}"
         );
     }
 }
 
-fn produto_e_quantidade(produto: ProductId, quantidade: Option<u32>) -> Value {
-    match quantidade {
-        Some(quantidade) => json!({"produto_id": produto.to_string(), "quantidade": quantidade}),
-        None => json!({"produto_id": produto.to_string()}),
+fn produto_e_quantidade(product: ProductId, quantity: Option<u32>) -> Value {
+    match quantity {
+        Some(quantity) => json!({"produto_id": product.to_string(), "quantidade": quantity}),
+        None => json!({"produto_id": product.to_string()}),
     }
 }
 
 #[tokio::test]
 async fn ferramenta_recusa_preco_e_nao_grava_nada() {
-    let cenario = Cenario::novo("recusa", &[NOME_ADICIONAR]);
-    let conversa = cenario.conversa;
-    let produto = cenario.produtos[0].to_string();
+    let scenario = Scenario::new("recusa", &[NAME_ADD]);
+    let conversa = scenario.conversa;
+    let product = scenario.products[0].to_string();
 
-    for argumentos in [
-        json!({"produto_id": produto, "preco_centavos": 1}),
-        json!({"produto_id": produto, "quantidade": 1, "price": 1}),
-        json!({"produto_id": produto, "total": 1}),
+    for arguments in [
+        json!({"produto_id": product, "preco_centavos": 1}),
+        json!({"produto_id": product, "quantidade": 1, "price": 1}),
+        json!({"produto_id": product, "total": 1}),
     ] {
-        let erro = cenario
-            .chamar(conversa, NOME_ADICIONAR, argumentos)
+        let error = scenario
+            .chamar(conversa, NAME_ADD, arguments)
             .await
             .expect_err("preço não pode entrar");
-        assert!(erro.contains("não é aceito"), "{erro}");
-        assert!(erro.contains("catálogo"), "{erro}");
+        assert!(error.contains("não é aceito"), "{error}");
+        assert!(error.contains("catálogo"), "{error}");
     }
-    assert_eq!(cenario.total(conversa), (0, 0), "nada foi gravado");
+    assert_eq!(scenario.total(conversa), (0, 0), "nada foi gravado");
 }
 
 #[test]
 fn esquema_da_ferramenta_so_tem_id_e_quantidade() {
-    let registro = carrinho::registrar(RegistroPadrao::novo(), Arc::new(armazem_vazio()));
-    let ferramenta = registro.ferramenta(NOME_ADICIONAR).expect("registrada");
-    let propriedades: Vec<String> = ferramenta.parametros()["properties"]
+    let registro = cart::register(DefaultRegistry::new(), Arc::new(armazem_vazio()));
+    let tool = registro.tool(NAME_ADD).expect("registrada");
+    let propriedades: Vec<String> = tool.parameters()["properties"]
         .as_object()
         .expect("objeto")
         .keys()
@@ -436,113 +416,100 @@ fn esquema_da_ferramenta_so_tem_id_e_quantidade() {
     assert_eq!(propriedades.len(), 2);
     assert!(propriedades.contains(&"produto_id".to_owned()));
     assert!(propriedades.contains(&"quantidade".to_owned()));
-    assert_eq!(
-        ferramenta.parametros()["additionalProperties"],
-        json!(false)
-    );
+    assert_eq!(tool.parameters()["additionalProperties"], json!(false));
 }
 
-/// Armazém vazio só para olhar o esquema da ferramenta.
 fn armazem_vazio() -> Store {
-    let pasta = std::env::temp_dir().join(format!("poph-carrinho-esquema-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&pasta);
-    std::fs::create_dir_all(&pasta).expect("pasta");
-    Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("banco")
+    let folder = std::env::temp_dir().join(format!("poph-carrinho-esquema-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&folder);
+    std::fs::create_dir_all(&folder).expect("pasta");
+    Store::open_at(&folder.join("harness.db"), &folder.join("rag.db")).expect("banco")
 }
 
 #[tokio::test]
 async fn llm_manda_preco_no_turno_e_o_total_continua_do_catalogo() {
-    let cenario = Cenario::novo("turno-preco", &[NOME_ADICIONAR, NOME_RESUMO]);
-    let produto = cenario.produtos[0].to_string();
-    let (motor, fake) = cenario.motor(vec![
-        // 1ª tentativa: o modelo tenta mandar o preço junto.
-        chamada(
-            NOME_ADICIONAR,
+    let scenario = Scenario::new("turno-preco", &[NAME_ADD, NAME_SUMMARY]);
+    let product = scenario.products[0].to_string();
+    let (engine, fake) = scenario.engine(vec![
+        call(
+            NAME_ADD,
             "c1",
-            json!({"produto_id": produto, "quantidade": 1, "preco_centavos": 1}),
+            json!({"produto_id": product, "quantidade": 1, "preco_centavos": 1}),
         ),
-        // 2ª tentativa: sem preço.
-        chamada(
-            NOME_ADICIONAR,
+        call(
+            NAME_ADD,
             "c2",
-            json!({"produto_id": produto, "quantidade": 1}),
+            json!({"produto_id": product, "quantidade": 1}),
         ),
-        resposta("Anotado, a dedetização está no orçamento."),
+        response("Anotado, a dedetização está no orçamento."),
     ]);
-    let mensagem = cenario.falar(cenario.conversa, "quero a dedetização");
-    let resumo = motor
+    let mensagem = scenario.falar(scenario.conversa, "quero a dedetização");
+    let summary = engine
         .run(
-            poph_agent::turno::TurnInput::new(cenario.org, cenario.conversa, mensagem),
+            poph_agent::turno::TurnInput::new(scenario.org, scenario.conversa, mensagem),
             &mut NoopObserver,
         )
         .await
         .expect("o turno roda");
-    assert_eq!(resumo.estado.as_text(), "done");
+    assert_eq!(summary.estado.as_text(), "done");
 
-    // O erro da primeira tentativa volta ao modelo como resultado de ferramenta.
     let pedidos = fake.received();
     let resultado = pedidos[1]
         .messages
         .iter()
         .find_map(|mensagem| match mensagem {
-            poph_core::llm::Message::Resultado {
-                id,
-                content: conteudo,
-            } if id == "c1" => Some(conteudo.clone()),
+            poph_core::llm::Message::Resultado { id, content } if id == "c1" => {
+                Some(content.clone())
+            }
             _ => None,
         })
         .expect("resultado da primeira chamada");
     assert!(resultado.contains("não é aceito"), "{resultado}");
 
-    // O carrinho tem uma unidade pelo preço do catálogo, não o que o modelo mandou.
-    assert_eq!(cenario.total(cenario.conversa), (32_000, 1));
+    assert_eq!(scenario.total(scenario.conversa), (32_000, 1));
 }
 
 #[tokio::test]
 async fn agente_sem_a_ferramenta_nao_a_recebe() {
-    // Só o resumo está habilitado: o modelo não deve ver a de adicionar.
-    let cenario = Cenario::novo("habilitacao", &[NOME_RESUMO]);
-    let (motor, fake) = cenario.motor(vec![resposta("Seu carrinho está vazio.")]);
-    let mensagem = cenario.falar(cenario.conversa, "quanto deu até agora?");
-    motor
+    let scenario = Scenario::new("habilitacao", &[NAME_SUMMARY]);
+    let (engine, fake) = scenario.engine(vec![response("Seu carrinho está vazio.")]);
+    let mensagem = scenario.falar(scenario.conversa, "quanto deu até agora?");
+    engine
         .run(
-            poph_agent::turno::TurnInput::new(cenario.org, cenario.conversa, mensagem),
+            poph_agent::turno::TurnInput::new(scenario.org, scenario.conversa, mensagem),
             &mut NoopObserver,
         )
         .await
         .expect("o turno roda");
-    let nomes: Vec<String> = fake.received()[0]
+    let names: Vec<String> = fake.received()[0]
         .tools
         .iter()
-        .map(|ferramenta| ferramenta.nome.clone())
+        .map(|tool| tool.nome.clone())
         .collect();
-    assert_eq!(nomes, vec![NOME_RESUMO.to_owned()]);
+    assert_eq!(names, vec![NAME_SUMMARY.to_owned()]);
 }
 
 #[tokio::test]
 async fn agente_com_as_quatro_recebe_as_quatro() {
-    let cenario = Cenario::novo(
-        "quatro",
-        &[NOME_ADICIONAR, NOME_REMOVER, NOME_RESUMO, NOME_LIMPAR],
-    );
-    let (motor, fake) = cenario.motor(vec![resposta("ok")]);
-    let mensagem = cenario.falar(cenario.conversa, "oi");
-    motor
+    let scenario = Scenario::new("quatro", &[NAME_ADD, NAME_REMOVE, NAME_SUMMARY, NAME_CLEAN]);
+    let (engine, fake) = scenario.engine(vec![response("ok")]);
+    let mensagem = scenario.falar(scenario.conversa, "oi");
+    engine
         .run(
-            poph_agent::turno::TurnInput::new(cenario.org, cenario.conversa, mensagem),
+            poph_agent::turno::TurnInput::new(scenario.org, scenario.conversa, mensagem),
             &mut NoopObserver,
         )
         .await
         .expect("o turno roda");
-    let mut nomes: Vec<String> = fake.received()[0]
+    let mut names: Vec<String> = fake.received()[0]
         .tools
         .iter()
-        .map(|ferramenta| ferramenta.nome.clone())
+        .map(|tool| tool.nome.clone())
         .collect();
-    nomes.sort();
+    names.sort();
     assert_eq!(
-        nomes,
-        vec![NOME_ADICIONAR, NOME_LIMPAR, NOME_REMOVER, NOME_RESUMO]
+        names,
+        vec![NAME_ADD, NAME_CLEAN, NAME_REMOVE, NAME_SUMMARY]
             .into_iter()
             .map(str::to_owned)
             .collect::<Vec<_>>()
@@ -551,27 +518,27 @@ async fn agente_com_as_quatro_recebe_as_quatro() {
 
 #[tokio::test]
 async fn carrinho_e_por_conversa_e_conversa_nova_comeca_vazia() {
-    let cenario = Cenario::novo("conversas", &[NOME_ADICIONAR, NOME_RESUMO]);
-    let primeira = cenario.conversa;
-    cenario
+    let scenario = Scenario::new("conversas", &[NAME_ADD, NAME_SUMMARY]);
+    let first = scenario.conversa;
+    scenario
         .chamar(
-            primeira,
-            NOME_ADICIONAR,
-            produto_e_quantidade(cenario.produtos[1], Some(2)),
+            first,
+            NAME_ADD,
+            produto_e_quantidade(scenario.products[1], Some(2)),
         )
         .await
         .expect("adiciona");
-    assert_eq!(cenario.total(primeira), (18_000, 1));
+    assert_eq!(scenario.total(first), (18_000, 1));
 
-    let nova = Cenario::abrir_conversa(&cenario.store, cenario.org, cenario.agente);
-    assert_eq!(cenario.total(nova), (0, 0), "conversa nova começa vazia");
-    let texto = cenario
-        .chamar(nova, NOME_RESUMO, json!({}))
+    let new = Scenario::abrir_conversa(&scenario.store, scenario.org, scenario.agente);
+    assert_eq!(scenario.total(new), (0, 0), "conversa nova começa vazia");
+    let texto = scenario
+        .chamar(new, NAME_SUMMARY, json!({}))
         .await
         .expect("resumo");
     assert!(texto.contains("vazio"), "{texto}");
     assert_eq!(
-        cenario.total(primeira),
+        scenario.total(first),
         (18_000, 1),
         "a antiga continua com o item"
     );
@@ -579,18 +546,18 @@ async fn carrinho_e_por_conversa_e_conversa_nova_comeca_vazia() {
 
 #[tokio::test]
 async fn org_de_outro_token_nao_mexe_no_carrinho() {
-    let cenario = Cenario::novo("isolamento", &[NOME_ADICIONAR]);
-    let conversa = cenario.conversa;
-    cenario
+    let scenario = Scenario::new("isolamento", &[NAME_ADD]);
+    let conversa = scenario.conversa;
+    scenario
         .chamar(
             conversa,
-            NOME_ADICIONAR,
-            produto_e_quantidade(cenario.produtos[0], None),
+            NAME_ADD,
+            produto_e_quantidade(scenario.products[0], None),
         )
         .await
         .expect("adiciona");
 
-    let outra = cenario
+    let other = scenario
         .store
         .orgs()
         .create(NewOrg {
@@ -600,18 +567,17 @@ async fn org_de_outro_token_nao_mexe_no_carrinho() {
         })
         .expect("cria a outra org")
         .id;
-    // Conversa da primeira org não é lida nem alterada por quem tem a segunda.
-    let resumo = cenario.store.carts().summary(outra, conversa).expect("lê");
-    assert!(resumo.items.is_empty());
-    assert!(resumo.cart.is_none());
-    let erro = cenario
+    let summary = scenario.store.carts().summary(other, conversa).expect("lê");
+    assert!(summary.items.is_empty());
+    assert!(summary.cart.is_none());
+    let error = scenario
         .store
         .carts()
-        .add(outra, conversa, cenario.agente, cenario.produtos[1], 1)
+        .add(other, conversa, scenario.agente, scenario.products[1], 1)
         .expect_err("org alheia não adiciona");
-    assert!(erro.is_not_found(), "{erro}");
+    assert!(error.is_not_found(), "{error}");
     assert_eq!(
-        cenario.total(conversa),
+        scenario.total(conversa),
         (32_000, 1),
         "o carrinho da dona não mudou"
     );
@@ -619,99 +585,98 @@ async fn org_de_outro_token_nao_mexe_no_carrinho() {
 
 #[tokio::test]
 async fn produto_fora_das_categorias_do_agente_nao_entra() {
-    let cenario = Cenario::novo("visibilidade", &[NOME_ADICIONAR]);
-    let categorias = cenario
+    let scenario = Scenario::new("visibilidade", &[NAME_ADD]);
+    let categorias = scenario
         .store
         .categories()
-        .list(cenario.org, Page::default())
+        .list(scenario.org, Page::default())
         .expect("lista")
         .into_iter()
-        .filter(|categoria| categoria.name == "Pragas")
-        .map(|categoria| categoria.id)
+        .filter(|category| category.name == "Pragas")
+        .map(|category| category.id)
         .collect::<Vec<_>>();
-    let agente = cenario
+    let agente = scenario
         .store
         .agents()
-        .get(cenario.org, cenario.agente)
+        .get(scenario.org, scenario.agente)
         .expect("agente");
-    cenario
+    scenario
         .store
         .agents()
-        .define_categories(cenario.org, cenario.agente, agente.version, &categorias)
+        .define_categories(scenario.org, scenario.agente, agente.version, &categorias)
         .expect("vincula o agente a Pragas");
 
-    let erro = cenario
+    let error = scenario
         .chamar(
-            cenario.conversa,
-            NOME_ADICIONAR,
-            produto_e_quantidade(cenario.jardim, Some(1)),
+            scenario.conversa,
+            NAME_ADD,
+            produto_e_quantidade(scenario.jardim, Some(1)),
         )
         .await
         .expect_err("produto de Jardim não é visível");
-    assert!(erro.contains("não está disponível"), "{erro}");
-    assert_eq!(cenario.total(cenario.conversa), (0, 0));
+    assert!(error.contains("não está disponível"), "{error}");
+    assert_eq!(scenario.total(scenario.conversa), (0, 0));
 
-    cenario
+    scenario
         .chamar(
-            cenario.conversa,
-            NOME_ADICIONAR,
-            produto_e_quantidade(cenario.produtos[0], Some(1)),
+            scenario.conversa,
+            NAME_ADD,
+            produto_e_quantidade(scenario.products[0], Some(1)),
         )
         .await
         .expect("produto de Pragas entra");
-    assert_eq!(cenario.total(cenario.conversa), (32_000, 1));
+    assert_eq!(scenario.total(scenario.conversa), (32_000, 1));
 }
 
 #[tokio::test]
 async fn remover_o_que_nao_esta_no_carrinho_falha_sem_mudar_nada() {
-    let cenario = Cenario::novo("remover", &[NOME_REMOVER]);
-    cenario
+    let scenario = Scenario::new("remover", &[NAME_REMOVE]);
+    scenario
         .chamar(
-            cenario.conversa,
-            NOME_ADICIONAR,
-            produto_e_quantidade(cenario.produtos[0], Some(2)),
+            scenario.conversa,
+            NAME_ADD,
+            produto_e_quantidade(scenario.products[0], Some(2)),
         )
         .await
         .expect("adiciona");
-    let erro = cenario
+    let error = scenario
         .chamar(
-            cenario.conversa,
-            NOME_REMOVER,
-            produto_e_quantidade(cenario.produtos[1], None),
+            scenario.conversa,
+            NAME_REMOVE,
+            produto_e_quantidade(scenario.products[1], None),
         )
         .await
         .expect_err("não estava no carrinho");
-    assert!(erro.contains("não está no carrinho"), "{erro}");
-    assert_eq!(cenario.total(cenario.conversa), (64_000, 1));
+    assert!(error.contains("não está no carrinho"), "{error}");
+    assert_eq!(scenario.total(scenario.conversa), (64_000, 1));
 }
 
 #[tokio::test]
 async fn quantidade_acumulada_acima_de_999_e_recusada() {
-    let cenario = Cenario::novo("limite", &[NOME_ADICIONAR]);
-    cenario
+    let scenario = Scenario::new("limite", &[NAME_ADD]);
+    scenario
         .chamar(
-            cenario.conversa,
-            NOME_ADICIONAR,
-            produto_e_quantidade(cenario.produtos[2], Some(999)),
+            scenario.conversa,
+            NAME_ADD,
+            produto_e_quantidade(scenario.products[2], Some(999)),
         )
         .await
         .expect("999 cabem");
-    let erro = cenario
+    let error = scenario
         .chamar(
-            cenario.conversa,
-            NOME_ADICIONAR,
-            produto_e_quantidade(cenario.produtos[2], Some(1)),
+            scenario.conversa,
+            NAME_ADD,
+            produto_e_quantidade(scenario.products[2], Some(1)),
         )
         .await
         .expect_err("passa de 999");
-    assert!(erro.contains("999"), "{erro}");
-    // Quantidade fora do intervalo nem chega ao banco.
+    assert!(error.contains("999"), "{error}");
     assert!(
-        cenario
+        scenario
             .chamar(
-                cenario.conversa,
-                NOME_ADICIONAR,
-                json!({"produto_id": cenario.produtos[0].to_string(), "quantidade": 0}),
+                scenario.conversa,
+                NAME_ADD,
+                json!({"produto_id": scenario.products[0].to_string(), "quantidade": 0}),
             )
             .await
             .is_err()
@@ -720,42 +685,41 @@ async fn quantidade_acumulada_acima_de_999_e_recusada() {
 
 #[tokio::test]
 async fn limpar_esvazia_e_conta_as_linhas() {
-    let cenario = Cenario::novo("limpar", &[NOME_LIMPAR]);
-    for indice in [0, 1, 3] {
-        cenario
+    let scenario = Scenario::new("limpar", &[NAME_CLEAN]);
+    for index in [0, 1, 3] {
+        scenario
             .store
             .carts()
             .add(
-                cenario.org,
-                cenario.conversa,
-                cenario.agente,
-                cenario.produtos[indice],
+                scenario.org,
+                scenario.conversa,
+                scenario.agente,
+                scenario.products[index],
                 1,
             )
             .expect("adiciona");
     }
-    let texto = cenario
-        .chamar(cenario.conversa, NOME_LIMPAR, json!({}))
+    let texto = scenario
+        .chamar(scenario.conversa, NAME_CLEAN, json!({}))
         .await
         .expect("limpa");
     assert!(texto.contains("3 item(ns) removido(s)"), "{texto}");
-    assert_eq!(cenario.total(cenario.conversa), (0, 0));
-    // O carrinho continua aberto: a próxima adição não precisa criar outro.
-    cenario
+    assert_eq!(scenario.total(scenario.conversa), (0, 0));
+    scenario
         .store
         .carts()
         .add(
-            cenario.org,
-            cenario.conversa,
-            cenario.agente,
-            cenario.produtos[0],
+            scenario.org,
+            scenario.conversa,
+            scenario.agente,
+            scenario.products[0],
             1,
         )
         .expect("volta a adicionar");
-    let resumo = cenario
+    let summary = scenario
         .store
         .carts()
-        .summary(cenario.org, cenario.conversa)
+        .summary(scenario.org, scenario.conversa)
         .expect("lê");
-    assert!(resumo.cart.is_some(), "o carrinho aberto continua o mesmo");
+    assert!(summary.cart.is_some(), "o carrinho aberto continua o mesmo");
 }

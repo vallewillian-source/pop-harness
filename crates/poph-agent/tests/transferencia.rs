@@ -1,23 +1,13 @@
-//! G1 com efeito: transferir para humano e orientar o cliente (HR-29).
-//!
-//! O que se prova aqui, no turno de verdade (banco, agente, conversa e `outbox` reais):
-//! - decidida a transferência, a conversa vira `transferred`, o cliente recebe **uma** mensagem com
-//!   a orientação aprovada + a mensagem automática e o **modelo de texto não é chamado**;
-//! - daí em diante nada responde (mensagem do cliente continua gravada) até `reopen`;
-//! - todo fail-safe (risco com erro, prazo, `nenhum`, confiança baixa, texto vazio) transfere
-//!   mandando só a mensagem automática, sem derrubar o turno;
-//! - com o G1 desligado, ou agente sem handoff, o comportamento é o de antes da HR-29.
-
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
-use poph_agent::limites::{Limitador, OpcoesLimites};
-use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
+use poph_agent::config_hot::{ConfigHot, HotConfigOptions};
+use poph_agent::limites::{LimitOptions, Limiter};
+use poph_agent::metrics::{MetricsMemory, MetricsTurn};
 use poph_agent::turno::{
-    FuturoPausa, NoopObserver, Pausa, TurnEngine, TurnEvent, TurnInput, TurnObserver, TurnOptions,
+    FuturePause, NoopObserver, Pause, TurnEngine, TurnEvent, TurnInput, TurnObserver, TurnOptions,
     TurnSummary,
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, Usage};
@@ -31,7 +21,6 @@ use poph_store::{
 };
 use poph_types::{AgentId, ConversationId, JevGates, MessageId, OrgId};
 
-/// Textos aprovados em 19/11/2026 (`HUMAN_HANDOFF_GUIDANCE_PRD.md` §5.3), literais do documento.
 const APROVADO_INGESTAO: &str = "⚠️ Se alguém engoliu ou teve contato com o produto, procure \
 atendimento médico agora ou ligue para o SAMU (192) ou para o Disque-Intoxicação \
 (0800 722 6001). Leve a embalagem do produto. Não provoque vômito e não dê nada para beber ou \
@@ -48,50 +37,49 @@ const RESPOSTA_DO_MODELO: &str = "Olá! Como posso ajudar?";
 
 struct SemEspera;
 
-impl Pausa for SemEspera {
-    fn esperar(&self, _duracao: Duration) -> FuturoPausa {
+impl Pause for SemEspera {
+    fn wait(&self, _duracao: Duration) -> FuturePause {
         Box::pin(async {})
     }
 }
 
-/// Observador que guarda os eventos (para conferir o aviso de transferência).
 #[derive(Default)]
 struct Gravador {
-    eventos: Vec<TurnEvent>,
+    events: Vec<TurnEvent>,
 }
 
 impl TurnObserver for Gravador {
     fn evento(&mut self, evento: TurnEvent) {
-        self.eventos.push(evento);
+        self.events.push(evento);
     }
 }
 
-/// Banco, org, agente e conversa de verdade numa pasta temporária.
-struct Cenario {
-    pasta: PathBuf,
+struct Scenario {
+    folder: PathBuf,
     store: Arc<Store>,
     org: OrgId,
     agente: AgentId,
     provedor: Arc<FakeProvider>,
 }
 
-impl Cenario {
-    fn novo(rotulo: &str, handoff_ativo: bool) -> Self {
-        let pasta = std::env::temp_dir().join(format!(
-            "poph-hr29-{rotulo}-{}-{}",
+impl Scenario {
+    fn new(label: &str, handoff_ativo: bool) -> Self {
+        let folder = std::env::temp_dir().join(format!(
+            "poph-hr29-{label}-{}-{}",
             std::process::id(),
             AgentId::generate()
         ));
-        let _ = std::fs::remove_dir_all(&pasta);
-        std::fs::create_dir_all(&pasta).expect("pasta do teste");
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).expect("pasta do teste");
         let store = Arc::new(
-            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco"),
+            Store::open_at(&folder.join("harness.db"), &folder.join("rag.db"))
+                .expect("abre o banco"),
         );
         let org = store
             .orgs()
             .create(NewOrg {
-                name: format!("Org {rotulo}"),
-                slug: format!("org-{rotulo}-{}", AgentId::generate()),
+                name: format!("Org {label}"),
+                slug: format!("org-{label}-{}", AgentId::generate()),
                 config_json: "{}".to_owned(),
             })
             .expect("cria a org")
@@ -101,8 +89,8 @@ impl Cenario {
             .create(
                 org,
                 NewAgent {
-                    name: format!("Bia {rotulo}"),
-                    slug: format!("bia-{rotulo}"),
+                    name: format!("Bia {label}"),
+                    slug: format!("bia-{label}"),
                     ..NewAgent::default()
                 },
             )
@@ -133,12 +121,11 @@ impl Cenario {
                 )
                 .expect("liga o handoff");
         }
-        // Roteiros de sobra: quem prova que o modelo não foi chamado é o contador do provedor.
         let provedor = Arc::new(FakeProvider::with_scripts(
             (0..8).map(|_| roteiro(RESPOSTA_DO_MODELO)).collect(),
         ));
         Self {
-            pasta,
+            folder,
             store,
             org,
             agente,
@@ -185,7 +172,7 @@ impl Cenario {
     }
 
     fn situacoes_de_handoff(&self, situacoes: &[&str]) {
-        let atual = self
+        let current = self
             .store
             .agents()
             .get(self.org, self.agente)
@@ -196,7 +183,7 @@ impl Cenario {
             .update(
                 self.org,
                 self.agente,
-                atual.version,
+                current.version,
                 AgentChange {
                     jev_json: Some(json),
                     ..AgentChange::default()
@@ -205,56 +192,52 @@ impl Cenario {
             .expect("ajusta o jev_json do agente");
     }
 
-    fn motor(&self, jev: Option<Arc<JevEngine>>, orientacao: HandoffGuidance) -> TurnEngine {
-        let config = ConfigQuente::nova(
+    fn engine(&self, jev: Option<Arc<JevEngine>>, orientacao: HandoffGuidance) -> TurnEngine {
+        let config = ConfigHot::new(
             Arc::clone(&self.store),
-            OpcoesConfigQuente::default(),
-            MetricasMemoria::proprio(),
+            HotConfigOptions::default(),
+            MetricsMemory::own(),
         );
-        let limitador = Arc::new(Limitador::novo(
-            OpcoesLimites::default(),
-            MetricasMemoria::proprio(),
-        ));
-        let mut motor = TurnEngine::new(
+        let limiter = Arc::new(Limiter::new(LimitOptions::default(), MetricsMemory::own()));
+        let mut engine = TurnEngine::new(
             Arc::clone(&self.store),
             config,
-            limitador,
+            limiter,
             Arc::clone(&self.provedor) as Arc<dyn poph_core::llm::LlmProvider>,
             TurnOptions::default(),
-            MetricasTurno::proprio(),
+            MetricsTurn::own(),
         )
         .with_pause(Arc::new(SemEspera))
         .with_handoff(orientacao);
         if let Some(jev) = jev {
-            motor = motor.with_jev(jev);
+            engine = engine.with_jev(jev);
         }
-        motor
+        engine
     }
 
     async fn turno(
         &self,
-        motor: &TurnEngine,
+        engine: &TurnEngine,
         conversa: ConversationId,
         gatilho: MessageId,
     ) -> TurnSummary {
-        self.turno_observado(motor, conversa, gatilho, &mut NoopObserver)
+        self.turno_observado(engine, conversa, gatilho, &mut NoopObserver)
             .await
     }
 
     async fn turno_observado(
         &self,
-        motor: &TurnEngine,
+        engine: &TurnEngine,
         conversa: ConversationId,
         gatilho: MessageId,
         observador: &mut dyn TurnObserver,
     ) -> TurnSummary {
-        motor
+        engine
             .run(TurnInput::new(self.org, conversa, gatilho), observador)
             .await
             .expect("o turno roda")
     }
 
-    /// Textos das mensagens da conversa, na ordem (quem falou, texto).
     fn conversa_gravada(&self, conversa: ConversationId) -> Vec<(Role, String)> {
         self.store
             .messages()
@@ -268,7 +251,7 @@ impl Cenario {
     fn respostas_do_agente(&self, conversa: ConversationId) -> Vec<String> {
         self.conversa_gravada(conversa)
             .into_iter()
-            .filter(|(papel, _)| *papel == Role::Assistant)
+            .filter(|(role, _)| *role == Role::Assistant)
             .map(|(_, texto)| texto)
             .collect()
     }
@@ -299,21 +282,21 @@ impl Cenario {
     }
 
     fn reabrir(&self, conversa: ConversationId) {
-        let atual = self
+        let current = self
             .store
             .conversations()
             .get(self.org, conversa)
             .expect("lê a conversa");
         self.store
             .conversations()
-            .reopen_audited(self.org, conversa, atual.version, "teste".to_owned())
+            .reopen_audited(self.org, conversa, current.version, "teste".to_owned())
             .expect("reabre a conversa");
     }
 }
 
-impl Drop for Cenario {
+impl Drop for Scenario {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.pasta);
+        let _ = std::fs::remove_dir_all(&self.folder);
     }
 }
 
@@ -335,27 +318,26 @@ fn so_g1() -> JevGates {
     }
 }
 
-fn resposta(escolha: &str, confianca: f64) -> JevResponse {
+fn response(choice: &str, confidence: f64) -> JevResponse {
     let mut item = JevResponse {
-        choice: Some(escolha.to_owned()),
-        confidence: confianca,
+        choice: Some(choice.to_owned()),
+        confidence,
         ..JevResponse::default()
     };
-    item.probabilities.insert(escolha.to_owned(), confianca);
+    item.probabilities.insert(choice.to_owned(), confidence);
     item
 }
 
-/// Jev falso que decide o G1 e responde a pergunta de risco como pedido.
-fn jev(decisao: &'static str, confianca: f64, risco: Option<(&'static str, f64)>) -> Arc<FakeJev> {
-    Arc::new(FakeJev::new(move |pedido: &JevRequest| {
+fn jev(decisao: &'static str, confidence: f64, risco: Option<(&'static str, f64)>) -> Arc<FakeJev> {
+    Arc::new(FakeJev::new(move |request: &JevRequest| {
         let mut respostas = BTreeMap::new();
-        if pedido.questions.contains_key("g1_transferir") {
-            respostas.insert("g1_transferir".to_owned(), resposta(decisao, confianca));
+        if request.questions.contains_key("g1_transferir") {
+            respostas.insert("g1_transferir".to_owned(), response(decisao, confidence));
         }
-        if pedido.questions.contains_key(RISK_QUESTION_ID)
-            && let Some((tipo, confianca)) = risco
+        if request.questions.contains_key(RISK_QUESTION_ID)
+            && let Some((tipo, confidence)) = risco
         {
-            respostas.insert(RISK_QUESTION_ID.to_owned(), resposta(tipo, confianca));
+            respostas.insert(RISK_QUESTION_ID.to_owned(), response(tipo, confidence));
         }
         Ok(BatchResponse {
             answers: respostas,
@@ -369,77 +351,64 @@ fn motor_jev(jev: Arc<FakeJev>) -> Arc<JevEngine> {
     Arc::new(JevEngine::new(jev, so_g1(), "jev-latest"))
 }
 
-// ───────────────────────────── aceite: transfere de verdade ─────────────────────────────
-
-/// Aceite 1 e 2: com risco de ingestão, a conversa fica `transferred`, o cliente recebe a
-/// orientação aprovada + mensagem automática, a auditoria registra o ator e o **modelo não é
-/// chamado**.
 #[tokio::test]
 async fn transfere_com_orientacao_e_nao_chama_o_modelo() {
-    let cenario = Cenario::novo("orientacao", true);
-    cenario.situacoes_de_handoff(&["risco com produto"]);
-    let conversa = cenario.conversa();
+    let scenario = Scenario::new("orientacao", true);
+    scenario.situacoes_de_handoff(&["risco com produto"]);
+    let conversa = scenario.conversa();
     let jev = jev(G1_TRANSFER, 0.95, Some((INGESTION_RISK, 0.9)));
-    let motor = cenario.motor(
+    let engine = scenario.engine(
         Some(motor_jev(Arc::clone(&jev))),
         HandoffGuidance::default(),
     );
 
-    let gatilho = cenario.falar(conversa, "meu filho engoliu o veneno da isca, e agora?");
+    let gatilho = scenario.falar(conversa, "meu filho engoliu o veneno da isca, e agora?");
     let mut observador = Gravador::default();
-    let resumo = cenario
-        .turno_observado(&motor, conversa, gatilho, &mut observador)
+    let summary = scenario
+        .turno_observado(&engine, conversa, gatilho, &mut observador)
         .await;
 
-    // O modelo de texto não foi chamado nenhuma vez.
     assert!(
-        cenario.provedor.received().is_empty(),
+        scenario.provedor.received().is_empty(),
         "conversa transferida não pode chamar o LLM"
     );
-    // O turno terminou bem, com o texto que o cliente recebeu.
-    assert_eq!(resumo.estado, TurnState::Completed);
-    let esperado = format!("{APROVADO_INGESTAO}\n\n{APROVADA_AUTOMATICA}");
-    assert_eq!(resumo.texto, esperado);
+    assert_eq!(summary.estado, TurnState::Completed);
+    let expected = format!("{APROVADO_INGESTAO}\n\n{APROVADA_AUTOMATICA}");
+    assert_eq!(summary.texto, expected);
     assert_eq!(
-        resumo.motivo_fim.as_deref(),
+        summary.motivo_fim.as_deref(),
         Some("transferida para humano")
     );
 
-    // Uma única mensagem do agente, exatamente com os textos aprovados.
     assert_eq!(
-        cenario.respostas_do_agente(conversa),
-        vec![esperado.clone()]
+        scenario.respostas_do_agente(conversa),
+        vec![expected.clone()]
     );
-    // A conversa ficou transferida.
     assert_eq!(
-        cenario.status(conversa),
+        scenario.status(conversa),
         poph_store::ConversationStatus::Transferred
     );
-    // O mesmo texto foi para a `outbox` (é o que o canal entrega).
-    let pendentes = cenario
+    let pending = scenario
         .store
         .outbox()
-        .list_pending(cenario.org, 10)
+        .list_pending(scenario.org, 10)
         .expect("lista a outbox");
-    assert_eq!(pendentes.len(), 1);
-    assert_eq!(pendentes[0].tipo, "text");
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].tipo, "text");
     assert_eq!(
-        serde_json::from_str::<serde_json::Value>(&pendentes[0].content_json)
+        serde_json::from_str::<serde_json::Value>(&pending[0].content_json)
             .expect("conteúdo é JSON")["texto"],
-        esperado
+        expected
     );
 
-    // Registro do turno: decisão do G1 e classificação de risco.
-    let turno = cenario.ultimo_turno(conversa);
-    let gravado: serde_json::Value =
-        serde_json::from_str(&turno.jev_json).expect("jev_json é JSON");
-    assert_eq!(gravado["decisoes"][0]["gate"], "g1");
-    assert_eq!(gravado["decisoes"][0]["escolha"], G1_TRANSFER);
-    assert_eq!(gravado["risco"]["tipo"], INGESTION_RISK);
+    let turno = scenario.ultimo_turno(conversa);
+    let stored: serde_json::Value = serde_json::from_str(&turno.jev_json).expect("jev_json é JSON");
+    assert_eq!(stored["decisoes"][0]["gate"], "g1");
+    assert_eq!(stored["decisoes"][0]["escolha"], G1_TRANSFER);
+    assert_eq!(stored["risco"]["tipo"], INGESTION_RISK);
     assert_eq!(turno.state, TurnState::Completed);
 
-    // Auditoria: ator do sistema, ação `transfer`, na conversa certa.
-    let registros = cenario.auditoria();
+    let registros = scenario.auditoria();
     let transferencia = registros
         .iter()
         .find(|registro| registro.acao == "transfer")
@@ -455,9 +424,8 @@ async fn transfere_com_orientacao_e_nao_chama_o_modelo() {
     assert_eq!(detalhe["gate"], "g1");
     assert_eq!(detalhe["risco"], INGESTION_RISK);
 
-    // O aviso de transferência chegou a quem observa o turno.
     assert!(
-        observador.eventos.iter().any(|evento| matches!(
+        observador.events.iter().any(|evento| matches!(
             evento,
             TurnEvent::Handoff {
                 guidance: true,
@@ -466,9 +434,8 @@ async fn transfere_com_orientacao_e_nao_chama_o_modelo() {
             } if tipo == INGESTION_RISK
         )),
         "faltou o evento de transferência: {:?}",
-        observador.eventos
+        observador.events
     );
-    // A segunda pergunta saiu numa chamada própria, com o estado do turno.
     let pedidos = jev.requests();
     assert_eq!(pedidos.len(), 2);
     assert_eq!(
@@ -478,50 +445,45 @@ async fn transfere_com_orientacao_e_nao_chama_o_modelo() {
     assert_eq!(pedidos[1].estado["canal"], "cli");
 }
 
-/// Os outros dois textos de risco são os aprovados, byte a byte.
 #[tokio::test]
 async fn outros_dois_tipos_de_risco_usam_os_textos_aprovados() {
     for (tipo, aprovado) in [(ANIMAL_RISK, APROVADO_ANIMAL), (OTHER_RISK, APROVADO_OUTRO)] {
-        let cenario = Cenario::novo(&format!("tipo-{tipo}"), true);
-        let conversa = cenario.conversa();
+        let scenario = Scenario::new(&format!("tipo-{tipo}"), true);
+        let conversa = scenario.conversa();
         let jev = jev(G1_TRANSFER, 0.95, Some((tipo, 0.8)));
-        let motor = cenario.motor(Some(motor_jev(jev)), HandoffGuidance::default());
-        let gatilho = cenario.falar(conversa, "tem um escorpião no berço do meu filho");
-        let resumo = cenario.turno(&motor, conversa, gatilho).await;
+        let engine = scenario.engine(Some(motor_jev(jev)), HandoffGuidance::default());
+        let gatilho = scenario.falar(conversa, "tem um escorpião no berço do meu filho");
+        let summary = scenario.turno(&engine, conversa, gatilho).await;
         assert_eq!(
-            resumo.texto,
+            summary.texto,
             format!("{aprovado}\n\n{APROVADA_AUTOMATICA}"),
             "texto errado para {tipo}"
         );
     }
 }
 
-/// Aceite 1: conversa transferida não gera turno de LLM e `reopen` a reativa; as mensagens do
-/// cliente continuam gravadas enquanto está transferida.
 #[tokio::test]
 async fn transferida_nao_responde_ate_reabrir() {
-    let cenario = Cenario::novo("reabrir", true);
-    let conversa = cenario.conversa();
-    // O Jev só transfere quando a última mensagem fala da cobra: depois de reabrir, a conversa
-    // segue normalmente, como aconteceria com o Jev de verdade.
-    let jev = Arc::new(FakeJev::new(|pedido: &JevRequest| {
-        let ultima = pedido.estado["conversa"]["mensagens"]
+    let scenario = Scenario::new("reabrir", true);
+    let conversa = scenario.conversa();
+    let jev = Arc::new(FakeJev::new(|request: &JevRequest| {
+        let last = request.estado["conversa"]["mensagens"]
             .as_array()
-            .and_then(|mensagens| mensagens.last())
+            .and_then(|messages| messages.last())
             .and_then(|mensagem| mensagem["texto"].as_str())
             .unwrap_or("")
             .to_owned();
         let mut respostas = BTreeMap::new();
-        if pedido.questions.contains_key("g1_transferir") {
-            let escolha = if ultima.contains("cobra") {
+        if request.questions.contains_key("g1_transferir") {
+            let choice = if last.contains("cobra") {
                 G1_TRANSFER
             } else {
                 G1_CONTINUE
             };
-            respostas.insert("g1_transferir".to_owned(), resposta(escolha, 0.95));
+            respostas.insert("g1_transferir".to_owned(), response(choice, 0.95));
         }
-        if pedido.questions.contains_key(RISK_QUESTION_ID) {
-            respostas.insert(RISK_QUESTION_ID.to_owned(), resposta(ANIMAL_RISK, 0.9));
+        if request.questions.contains_key(RISK_QUESTION_ID) {
+            respostas.insert(RISK_QUESTION_ID.to_owned(), response(ANIMAL_RISK, 0.9));
         }
         Ok(BatchResponse {
             answers: respostas,
@@ -529,94 +491,84 @@ async fn transferida_nao_responde_ate_reabrir() {
             ..BatchResponse::default()
         })
     }));
-    let motor = cenario.motor(Some(motor_jev(jev)), HandoffGuidance::default());
+    let engine = scenario.engine(Some(motor_jev(jev)), HandoffGuidance::default());
 
-    let gatilho = cenario.falar(conversa, "quero falar com uma pessoa, tem uma cobra aqui");
-    let primeira = cenario.turno(&motor, conversa, gatilho).await;
-    assert_eq!(primeira.estado, TurnState::Completed);
-    assert_eq!(cenario.provedor.received().len(), 0);
+    let gatilho = scenario.falar(conversa, "quero falar com uma pessoa, tem uma cobra aqui");
+    let first = scenario.turno(&engine, conversa, gatilho).await;
+    assert_eq!(first.estado, TurnState::Completed);
+    assert_eq!(scenario.provedor.received().len(), 0);
 
-    // Cliente insiste: a mensagem é gravada, o turno é ignorado e o modelo continua sem ser chamado.
-    let segundo_gatilho = cenario.falar(conversa, "alguém aí?");
-    let segundo = cenario.turno(&motor, conversa, segundo_gatilho).await;
-    assert_eq!(segundo.estado, TurnState::Skipped);
+    let segundo_gatilho = scenario.falar(conversa, "alguém aí?");
+    let second = scenario.turno(&engine, conversa, segundo_gatilho).await;
+    assert_eq!(second.estado, TurnState::Skipped);
     assert!(
-        segundo.error.unwrap_or_default().contains("transferred"),
+        second.error.unwrap_or_default().contains("transferred"),
         "o motivo do turno ignorado diz que a conversa está transferida"
     );
-    assert_eq!(cenario.provedor.received().len(), 0);
-    let textos: Vec<String> = cenario
+    assert_eq!(scenario.provedor.received().len(), 0);
+    let textos: Vec<String> = scenario
         .conversa_gravada(conversa)
         .into_iter()
         .map(|(_, texto)| texto)
         .collect();
     assert!(textos.contains(&"alguém aí?".to_owned()));
 
-    // Reaberta, volta a responder normalmente.
-    cenario.reabrir(conversa);
+    scenario.reabrir(conversa);
     assert_eq!(
-        cenario.status(conversa),
+        scenario.status(conversa),
         poph_store::ConversationStatus::Open
     );
-    let terceiro_gatilho = cenario.falar(conversa, "e o prazo de entrega?");
-    let terceiro = cenario.turno(&motor, conversa, terceiro_gatilho).await;
+    let terceiro_gatilho = scenario.falar(conversa, "e o prazo de entrega?");
+    let terceiro = scenario.turno(&engine, conversa, terceiro_gatilho).await;
     assert_eq!(terceiro.estado, TurnState::Completed);
     assert_eq!(terceiro.texto, RESPOSTA_DO_MODELO);
-    assert_eq!(cenario.provedor.received().len(), 1);
+    assert_eq!(scenario.provedor.received().len(), 1);
 }
 
-// ───────────────────────────── fail-safe ─────────────────────────────
-
-/// Aceite 3: risco com erro transfere mandando só a mensagem automática, sem derrubar o turno.
 #[tokio::test]
 async fn erro_na_pergunta_de_risco_transfere_com_a_mensagem_automatica() {
-    let cenario = Cenario::novo("risco-erro", true);
-    let conversa = cenario.conversa();
-    // O G1 responde; a pergunta de risco recebe erro do provedor.
-    let jev = Arc::new(FakeJev::new(|pedido: &JevRequest| {
-        if pedido.questions.contains_key(RISK_QUESTION_ID) {
+    let scenario = Scenario::new("risco-erro", true);
+    let conversa = scenario.conversa();
+    let jev = Arc::new(FakeJev::new(|request: &JevRequest| {
+        if request.questions.contains_key(RISK_QUESTION_ID) {
             return Err(poph_jev::JevError::Status {
                 code: 503,
                 motivo: "Service Unavailable".to_owned(),
             });
         }
         let mut respostas = BTreeMap::new();
-        respostas.insert("g1_transferir".to_owned(), resposta(G1_TRANSFER, 0.99));
+        respostas.insert("g1_transferir".to_owned(), response(G1_TRANSFER, 0.99));
         Ok(BatchResponse {
             answers: respostas,
             tokens: 9,
             ..BatchResponse::default()
         })
     }));
-    let motor = cenario.motor(Some(motor_jev(jev)), HandoffGuidance::default());
+    let engine = scenario.engine(Some(motor_jev(jev)), HandoffGuidance::default());
 
-    let gatilho = cenario.falar(conversa, "quero um atendente");
-    let resumo = cenario.turno(&motor, conversa, gatilho).await;
+    let gatilho = scenario.falar(conversa, "quero um atendente");
+    let summary = scenario.turno(&engine, conversa, gatilho).await;
 
-    assert_eq!(resumo.estado, TurnState::Completed);
-    assert_eq!(resumo.texto, APROVADA_AUTOMATICA);
+    assert_eq!(summary.estado, TurnState::Completed);
+    assert_eq!(summary.texto, APROVADA_AUTOMATICA);
     assert_eq!(
-        cenario.status(conversa),
+        scenario.status(conversa),
         poph_store::ConversationStatus::Transferred
     );
     assert_eq!(
-        cenario.respostas_do_agente(conversa),
+        scenario.respostas_do_agente(conversa),
         vec![APROVADA_AUTOMATICA.to_owned()]
     );
-    assert!(cenario.provedor.received().is_empty());
-    // A falha fica registrada no turno, para diagnóstico.
-    let turno = cenario.ultimo_turno(conversa);
-    let gravado: serde_json::Value = serde_json::from_str(&turno.jev_json).expect("JSON");
-    assert!(gravado["risco"]["falha"].as_str().is_some());
+    assert!(scenario.provedor.received().is_empty());
+    let turno = scenario.ultimo_turno(conversa);
+    let stored: serde_json::Value = serde_json::from_str(&turno.jev_json).expect("JSON");
+    assert!(stored["risco"]["falha"].as_str().is_some());
 }
 
-/// Aceite 3: prazo estourado na pergunta de risco também só suprime a orientação.
 #[tokio::test]
 async fn prazo_na_pergunta_de_risco_suprime_so_a_orientacao() {
-    let cenario = Cenario::novo("risco-prazo", true);
-    let conversa = cenario.conversa();
-    // O Jev falso responde com 200 ms de atraso nas duas chamadas; o prazo da pergunta de risco
-    // (20 ms) é o que se mede aqui — o lote do G1 tem prazo próprio, bem maior.
+    let scenario = Scenario::new("risco-prazo", true);
+    let conversa = scenario.conversa();
     let jev = Arc::new(
         FakeJev::with_choices(BTreeMap::from([
             ("g1_transferir".to_owned(), G1_TRANSFER.to_owned()),
@@ -625,157 +577,151 @@ async fn prazo_na_pergunta_de_risco_suprime_so_a_orientacao() {
         .with_delay(Duration::from_millis(200)),
     );
     let orientacao = HandoffGuidance::default().with_timeout(Duration::from_millis(20));
-    let motor = cenario.motor(Some(motor_jev(jev)), orientacao);
+    let engine = scenario.engine(Some(motor_jev(jev)), orientacao);
 
-    let gatilho = cenario.falar(conversa, "meu filho tomou o veneno");
-    let inicio = Instant::now();
-    let resumo = cenario.turno(&motor, conversa, gatilho).await;
-    assert!(inicio.elapsed() < Duration::from_secs(5));
+    let gatilho = scenario.falar(conversa, "meu filho tomou o veneno");
+    let beginning = Instant::now();
+    let summary = scenario.turno(&engine, conversa, gatilho).await;
+    assert!(beginning.elapsed() < Duration::from_secs(5));
 
-    assert_eq!(resumo.estado, TurnState::Completed);
-    assert_eq!(resumo.texto, APROVADA_AUTOMATICA);
+    assert_eq!(summary.estado, TurnState::Completed);
+    assert_eq!(summary.texto, APROVADA_AUTOMATICA);
     assert_eq!(
-        cenario.status(conversa),
+        scenario.status(conversa),
         poph_store::ConversationStatus::Transferred
     );
 }
 
-/// Aceite 3: `nenhum` e confiança abaixo do limiar não orientam.
 #[tokio::test]
 async fn sem_risco_confiavel_manda_so_a_mensagem_automatica() {
-    for (rotulo, risco) in [
+    for (label, risco) in [
         ("nenhum", (NO_RISK, 0.99)),
         ("confianca-baixa", (INGESTION_RISK, 0.2)),
     ] {
-        let cenario = Cenario::novo(&format!("risco-{rotulo}"), true);
-        let conversa = cenario.conversa();
+        let scenario = Scenario::new(&format!("risco-{label}"), true);
+        let conversa = scenario.conversa();
         let jev = jev(G1_TRANSFER, 0.95, Some(risco));
-        let motor = cenario.motor(Some(motor_jev(jev)), HandoffGuidance::default());
-        let gatilho = cenario.falar(conversa, "quero falar com o atendente, por favor");
-        let resumo = cenario.turno(&motor, conversa, gatilho).await;
-        assert_eq!(resumo.texto, APROVADA_AUTOMATICA, "caso {rotulo}");
+        let engine = scenario.engine(Some(motor_jev(jev)), HandoffGuidance::default());
+        let gatilho = scenario.falar(conversa, "quero falar com o atendente, por favor");
+        let summary = scenario.turno(&engine, conversa, gatilho).await;
+        assert_eq!(summary.texto, APROVADA_AUTOMATICA, "caso {label}");
         assert_eq!(
-            cenario.status(conversa),
+            scenario.status(conversa),
             poph_store::ConversationStatus::Transferred
         );
     }
 }
 
-/// Orientação desligada na configuração: nenhuma segunda pergunta é feita.
 #[tokio::test]
 async fn orientacao_desligada_nao_faz_a_segunda_pergunta() {
-    let cenario = Cenario::novo("orientacao-desligada", true);
-    let conversa = cenario.conversa();
+    let scenario = Scenario::new("orientacao-desligada", true);
+    let conversa = scenario.conversa();
     let jev = jev(G1_TRANSFER, 0.95, Some((INGESTION_RISK, 0.9)));
     let orientacao = HandoffGuidance {
         ativo: false,
         ..HandoffGuidance::default()
     };
-    let motor = cenario.motor(Some(motor_jev(Arc::clone(&jev))), orientacao);
+    let engine = scenario.engine(Some(motor_jev(Arc::clone(&jev))), orientacao);
 
-    let gatilho = cenario.falar(conversa, "quero falar com alguém");
-    let resumo = cenario.turno(&motor, conversa, gatilho).await;
+    let gatilho = scenario.falar(conversa, "quero falar com alguém");
+    let summary = scenario.turno(&engine, conversa, gatilho).await;
 
-    assert_eq!(resumo.texto, APROVADA_AUTOMATICA);
+    assert_eq!(summary.texto, APROVADA_AUTOMATICA);
     assert_eq!(jev.requests().len(), 1, "só o lote do turno foi chamado");
     assert_eq!(jev.calls(), 1);
 }
 
-/// Texto de orientação vazio na configuração: o tipo não orienta (§5.3).
 #[tokio::test]
 async fn texto_vazio_na_configuracao_nao_orienta() {
-    let cenario = Cenario::novo("texto-vazio", true);
-    let conversa = cenario.conversa();
+    let scenario = Scenario::new("texto-vazio", true);
+    let conversa = scenario.conversa();
     let jev = jev(G1_TRANSFER, 0.95, Some((INGESTION_RISK, 0.9)));
     let orientacao = HandoffGuidance::default().with_text(INGESTION_RISK, "");
-    let motor = cenario.motor(Some(motor_jev(jev)), orientacao);
+    let engine = scenario.engine(Some(motor_jev(jev)), orientacao);
 
-    let gatilho = cenario.falar(conversa, "meu filho engoliu o veneno");
-    let resumo = cenario.turno(&motor, conversa, gatilho).await;
-    assert_eq!(resumo.texto, APROVADA_AUTOMATICA);
+    let gatilho = scenario.falar(conversa, "meu filho engoliu o veneno");
+    let summary = scenario.turno(&engine, conversa, gatilho).await;
+    assert_eq!(summary.texto, APROVADA_AUTOMATICA);
 }
 
-// ───────────────────────────── sem efeito quando não deve ─────────────────────────────
-
-/// Aceite 3: G1 desligado não pergunta nada e o comportamento é o de antes da HR-29.
 #[tokio::test]
 async fn g1_desligado_nao_transfere() {
-    let cenario = Cenario::novo("g1-desligado", true);
-    let conversa = cenario.conversa();
+    let scenario = Scenario::new("g1-desligado", true);
+    let conversa = scenario.conversa();
     let jev = jev(G1_TRANSFER, 0.99, Some((INGESTION_RISK, 0.99)));
-    let avaliador = Arc::new(JevEngine::new(jev, JevGates::default(), "jev-latest"));
-    let motor = cenario.motor(Some(avaliador), HandoffGuidance::default());
+    let evaluator = Arc::new(JevEngine::new(jev, JevGates::default(), "jev-latest"));
+    let engine = scenario.engine(Some(evaluator), HandoffGuidance::default());
 
-    let gatilho = cenario.falar(conversa, "quero falar com um atendente humano");
-    let resumo = cenario.turno(&motor, conversa, gatilho).await;
+    let gatilho = scenario.falar(conversa, "quero falar com um atendente humano");
+    let summary = scenario.turno(&engine, conversa, gatilho).await;
 
-    assert_eq!(resumo.estado, TurnState::Completed);
-    assert_eq!(resumo.texto, RESPOSTA_DO_MODELO);
+    assert_eq!(summary.estado, TurnState::Completed);
+    assert_eq!(summary.texto, RESPOSTA_DO_MODELO);
     assert_eq!(
-        cenario.status(conversa),
+        scenario.status(conversa),
         poph_store::ConversationStatus::Open
     );
-    assert_eq!(cenario.provedor.received().len(), 1);
-    assert!(resumo.jev.is_none() || resumo.jev.as_ref().unwrap().decisions.is_empty());
+    assert_eq!(scenario.provedor.received().len(), 1);
+    assert!(summary.jev.is_none() || summary.jev.as_ref().unwrap().decisions.is_empty());
 }
 
-/// Agente com handoff desligado: o G1 nem se aplica (regra do POP Atende).
 #[tokio::test]
 async fn agente_sem_handoff_nao_transfere() {
-    let cenario = Cenario::novo("sem-handoff", false);
-    let conversa = cenario.conversa();
+    let scenario = Scenario::new("sem-handoff", false);
+    let conversa = scenario.conversa();
     let jev = jev(G1_TRANSFER, 0.99, Some((INGESTION_RISK, 0.99)));
-    let motor = cenario.motor(Some(motor_jev(jev)), HandoffGuidance::default());
+    let engine = scenario.engine(Some(motor_jev(jev)), HandoffGuidance::default());
 
-    let gatilho = cenario.falar(conversa, "quero falar com um atendente humano");
-    let resumo = cenario.turno(&motor, conversa, gatilho).await;
+    let gatilho = scenario.falar(conversa, "quero falar com um atendente humano");
+    let summary = scenario.turno(&engine, conversa, gatilho).await;
 
-    assert_eq!(resumo.texto, RESPOSTA_DO_MODELO);
+    assert_eq!(summary.texto, RESPOSTA_DO_MODELO);
     assert_eq!(
-        cenario.status(conversa),
+        scenario.status(conversa),
         poph_store::ConversationStatus::Open
     );
 }
 
-/// Jev decidindo continuar: nada muda, o modelo responde normalmente.
 #[tokio::test]
 async fn g1_continuar_responde_normalmente() {
-    let cenario = Cenario::novo("continuar", true);
-    let conversa = cenario.conversa();
+    let scenario = Scenario::new("continuar", true);
+    let conversa = scenario.conversa();
     let jev = jev(G1_CONTINUE, 0.99, None);
-    let motor = cenario.motor(Some(motor_jev(jev)), HandoffGuidance::default());
+    let engine = scenario.engine(Some(motor_jev(jev)), HandoffGuidance::default());
 
-    let gatilho = cenario.falar(conversa, "qual é o prazo de entrega?");
-    let resumo = cenario.turno(&motor, conversa, gatilho).await;
+    let gatilho = scenario.falar(conversa, "qual é o prazo de entrega?");
+    let summary = scenario.turno(&engine, conversa, gatilho).await;
 
-    assert_eq!(resumo.estado, TurnState::Completed);
-    assert_eq!(resumo.texto, RESPOSTA_DO_MODELO);
+    assert_eq!(summary.estado, TurnState::Completed);
+    assert_eq!(summary.texto, RESPOSTA_DO_MODELO);
     assert_eq!(
-        cenario.status(conversa),
+        scenario.status(conversa),
         poph_store::ConversationStatus::Open
     );
     assert_eq!(
-        resumo.jev.as_ref().and_then(|item| item.choice(IdGate::G1)),
+        summary
+            .jev
+            .as_ref()
+            .and_then(|item| item.choice(IdGate::G1)),
         Some(G1_CONTINUE)
     );
-    assert_eq!(cenario.provedor.received().len(), 1);
+    assert_eq!(scenario.provedor.received().len(), 1);
     assert!(
-        !cenario
+        !scenario
             .auditoria()
             .iter()
             .any(|registro| registro.acao == "transfer")
     );
 }
 
-/// A conversa transferida guarda o departamento humano configurado no agente.
 #[tokio::test]
 async fn transferencia_guarda_o_departamento_do_agente() {
-    let cenario = Cenario::novo("departamento", true);
-    let padrao = cenario
+    let scenario = Scenario::new("departamento", true);
+    let default = scenario
         .store
         .departments()
         .create(
-            cenario.org,
+            scenario.org,
             poph_store::NewDepartment {
                 name: "Atendimento humano".to_owned(),
                 description: String::new(),
@@ -783,58 +729,55 @@ async fn transferencia_guarda_o_departamento_do_agente() {
         )
         .expect("cria o departamento")
         .id;
-    let atual = cenario
+    let current = scenario
         .store
         .agents()
-        .get(cenario.org, cenario.agente)
+        .get(scenario.org, scenario.agente)
         .expect("lê o agente");
-    cenario
+    scenario
         .store
         .agents()
         .update(
-            cenario.org,
-            cenario.agente,
-            atual.version,
+            scenario.org,
+            scenario.agente,
+            current.version,
             AgentChange {
-                handoff_department: Some(padrao),
+                handoff_department: Some(default),
                 ..AgentChange::default()
             },
         )
         .expect("define o departamento humano");
 
-    let conversa = cenario.conversa();
+    let conversa = scenario.conversa();
     let jev = jev(G1_TRANSFER, 0.95, Some((ANIMAL_RISK, 0.9)));
-    let motor = cenario.motor(Some(motor_jev(jev)), HandoffGuidance::default());
-    let gatilho = cenario.falar(conversa, "tem uma aranha no quarto");
-    cenario.turno(&motor, conversa, gatilho).await;
+    let engine = scenario.engine(Some(motor_jev(jev)), HandoffGuidance::default());
+    let gatilho = scenario.falar(conversa, "tem uma aranha no quarto");
+    scenario.turno(&engine, conversa, gatilho).await;
 
-    let gravada = cenario
+    let stored = scenario
         .store
         .conversations()
-        .get(cenario.org, conversa)
+        .get(scenario.org, conversa)
         .expect("lê a conversa");
-    assert_eq!(gravada.status, poph_store::ConversationStatus::Transferred);
-    assert_eq!(gravada.target_department, Some(padrao));
+    assert_eq!(stored.status, poph_store::ConversationStatus::Transferred);
+    assert_eq!(stored.target_department, Some(default));
 }
 
-/// A classificação de risco não é guardada no cache de decisões: a segunda pergunta é uma vez só.
 #[tokio::test]
 async fn segunda_pergunta_nao_usa_o_cache_do_lote() {
-    let cenario = Cenario::novo("cache", true);
-    let conversa = cenario.conversa();
+    let scenario = Scenario::new("cache", true);
+    let conversa = scenario.conversa();
     let jev = jev(G1_TRANSFER, 0.95, Some((INGESTION_RISK, 0.9)));
-    let avaliador = motor_jev(Arc::clone(&jev));
-    let motor = cenario.motor(Some(avaliador), HandoffGuidance::default());
+    let evaluator = motor_jev(Arc::clone(&jev));
+    let engine = scenario.engine(Some(evaluator), HandoffGuidance::default());
 
-    let gatilho = cenario.falar(conversa, "engoliu o produto");
-    cenario.turno(&motor, conversa, gatilho).await;
-    // Uma chamada para o lote e uma para o risco — o risco não vem do cache do G1.
+    let gatilho = scenario.falar(conversa, "engoliu o produto");
+    scenario.turno(&engine, conversa, gatilho).await;
     assert_eq!(jev.requests().len(), 2);
     assert_eq!(
         jev.requests()[1].questions.keys().collect::<Vec<_>>(),
         vec![RISK_QUESTION_ID]
     );
-    // O estado da segunda pergunta é o mesmo da primeira (mesma conversa).
     assert_eq!(
         jev.requests()[0].estado["conversa"],
         jev.requests()[1].estado["conversa"]

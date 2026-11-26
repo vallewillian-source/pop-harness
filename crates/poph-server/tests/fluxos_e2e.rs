@@ -2,11 +2,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
-use poph_agent::limites::{Limitador, OpcoesLimites};
-use poph_agent::metricas::{MetricasG9, MetricasMemoria, MetricasTurno};
+use poph_agent::config_hot::{ConfigHot, HotConfigOptions};
+use poph_agent::limites::{LimitOptions, Limiter};
+use poph_agent::metrics::{MetricsG9, MetricsMemory, MetricsTurn};
 use poph_agent::turno::{
-    FuturoPausa, NoopObserver, Pausa, TurnEngine, TurnInput, TurnOptions, TurnSummary,
+    FuturePause, NoopObserver, Pause, TurnEngine, TurnInput, TurnOptions, TurnSummary,
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, ToolCall, Usage};
 use poph_fluxos::{Limites, compilar};
@@ -20,17 +20,17 @@ use serde_json::{Value, json};
 
 struct SemEspera;
 
-impl Pausa for SemEspera {
-    fn esperar(&self, _duracao: Duration) -> FuturoPausa {
+impl Pause for SemEspera {
+    fn wait(&self, _duracao: Duration) -> FuturePause {
         Box::pin(async {})
     }
 }
 
 /// As três ferramentas do fluxo, como o agente as habilita (D-04).
 const TODAS: [&str; 3] = [
-    poph_agent::turno::NOME_EXECUTAR_ACAO,
-    poph_agent::turno::NOME_ABANDONAR,
-    poph_agent::turno::NOME_FERRAMENTA_INICIAR,
+    poph_agent::turno::NAME_RUN_ACTION,
+    poph_agent::turno::NAME_ABANDON,
+    poph_agent::turno::NAME_TOOL_START,
 ];
 
 /// Banco, org, agente e conversa de verdade numa pasta temporária.
@@ -203,15 +203,12 @@ impl Cenario {
         jev: Option<Arc<JevEngine>>,
         fluxos: Option<FlowsConfig>,
     ) -> (TurnEngine, Arc<FakeProvider>) {
-        let config = ConfigQuente::nova(
+        let config = ConfigHot::new(
             Arc::clone(&self.store),
-            OpcoesConfigQuente::default(),
-            MetricasMemoria::proprio(),
+            HotConfigOptions::default(),
+            MetricsMemory::own(),
         );
-        let limitador = Arc::new(Limitador::novo(
-            OpcoesLimites::default(),
-            MetricasMemoria::proprio(),
-        ));
+        let limitador = Arc::new(Limiter::new(LimitOptions::default(), MetricsMemory::own()));
         let provedor = Arc::new(FakeProvider::with_scripts(roteiros));
         let mut motor = TurnEngine::new(
             Arc::clone(&self.store),
@@ -219,17 +216,17 @@ impl Cenario {
             limitador,
             provedor.clone(),
             TurnOptions::default(),
-            MetricasTurno::proprio(),
+            MetricsTurn::own(),
         )
         .with_pause(Arc::new(SemEspera))
-        .with_summary(poph_agent::resumo::OpcoesResumo {
+        .with_summary(poph_agent::summary::SummaryOptions {
             ativo: false,
-            ..poph_agent::resumo::OpcoesResumo::default()
+            ..poph_agent::summary::SummaryOptions::default()
         })
-        .with_g9_metrics(MetricasG9::proprias());
+        .with_g9_metrics(MetricsG9::own());
         // FX-24: as ferramentas do fluxo entram no registro do turno, como na montagem real.
         let registro = poph_agent::turno::registrar_ferramentas_do_fluxo(
-            poph_agent::turno::RegistroPadrao::novo(),
+            poph_agent::turno::DefaultRegistry::new(),
             Arc::clone(&self.store),
             &fluxos.clone().unwrap_or_default(),
         );

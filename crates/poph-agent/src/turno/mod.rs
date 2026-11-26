@@ -1,12 +1,12 @@
 mod console;
-mod departamento;
-mod ferramentas;
+mod department;
 mod fluxo;
 mod fluxo_ferramentas;
 mod http_tools;
-mod pausa;
+mod pause;
 mod prompt;
 mod site_chat;
+mod tools;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -30,40 +30,39 @@ use poph_types::{
 };
 use serde_json::json;
 
-use crate::atores::{Futuro, Processador, Tarefa};
-use crate::base_conhecimento::{BuscadorBase, ParametrosBusca, TrechoRecuperado};
-use crate::config_quente::{AgenteQuente, ConfigQuente};
-use crate::entrada_saida::{EventoEntrada, Fluxo};
-use crate::erro::{ErroAgente, Resultado};
-use crate::limites::Limitador;
-use crate::metricas::{MetricasG9, MetricasTurno};
-use crate::produtos::{BuscadorProdutos, ParametrosProdutos, ProdutoEncontrado};
-use crate::provedores::{ProvedorResolvido, Provedores};
-use crate::resumo::{self, OpcoesResumo, Resumidor};
+use crate::actors::{BoxFuture, Processor, Task};
+use crate::base_knowledge::{KnowledgeSearcher, RecoveredPassage, SearchParameters};
+use crate::config_hot::{ConfigHot, HotAgent};
+use crate::entry_output::{Fluxo, InputEvent};
+use crate::error::{AgentError, Resultado};
+use crate::limites::Limiter;
+use crate::metrics::{MetricsG9, MetricsTurn};
+use crate::products::{FoundProduct, ProductParameters, ProductSearcher};
+use crate::providers::{Providers, ResolvedProvider};
+use crate::summary::{self, Resumidor, SummaryOptions};
 
-pub use console::{TransporteConsole, texto_do_item};
-pub use ferramentas::{
-    ChamadaRegistrada, ContextoFerramenta, Desfecho, FerramentaInterna, FuturoFerramenta,
-    MARCA_DE_CORTE, MOTIVO_ARGUMENTO_INVALIDO, MOTIVO_DESCONHECIDA, MOTIVO_ERRO_DE_EXECUCAO,
-    MOTIVO_FORA_DO_TURNO, MOTIVO_LIMITE_DE_CHAMADAS, MOTIVO_NAO_HABILITADA, ProdutoUsado,
-    RegistroChamadas, RegistroFerramentas, RegistroPadrao, SemFerramentas, TETO_RESUMO_FERRAMENTA,
-    UsoFerramentas, cortar, oferecidas, registro_do_turno, resumo_de_argumentos,
-};
-pub use fluxo::{ABRE_FLUXOS, AjustesDoFluxo, FECHA_FLUXOS, NOME_FERRAMENTA_INICIAR};
+pub use console::{TransportConsole, text_item};
+pub use fluxo::{ABRE_FLOWS, AdjustmentsFlow, CLOSES_FLOWS, NAME_TOOL_START};
 pub use fluxo_ferramentas::{
-    NOME_ABANDONAR, NOME_EXECUTAR_ACAO, eh_ferramenta_do_fluxo,
-    registrar as registrar_ferramentas_do_fluxo,
-    registrar_com as registrar_ferramentas_do_fluxo_com,
-    registrar_encerramento as registrar_ferramenta_encerramento,
+    NAME_ABANDON, NAME_RUN_ACTION, eh_tool_flow, register as registrar_ferramentas_do_fluxo,
+    register_closure as registrar_ferramenta_encerramento,
+    register_with as registrar_ferramentas_do_fluxo_com,
 };
 pub use http_tools::HttpToolRegistry;
 use http_tools::{HttpToolCalls, HttpToolContext};
-pub use pausa::{FuturoPausa, Pausa, PausaReal};
+pub use pause::{FuturePause, Pause, PauseReal};
 pub use prompt::{
-    ABRE_BASE, ABRE_CONTEXTO, AVISO_BASE, FECHA_BASE, FECHA_CONTEXTO, Prompt, bloco_base,
-    bloco_volatil, bloco_volatil_com_base, data_utc,
+    ABRE_BASE, ABRE_CONTEXT, CLOSES_BASE, CLOSES_CONTEXT, NOTICE_BASE, Prompt, block_base,
+    block_volatile, block_volatile_with_base, data_utc,
 };
 pub use site_chat::{SiteRun, SiteTurnError};
+pub use tools::{
+    CAP_SUMMARY_TOOL, CallRecorded, DefaultRegistry, Desfecho, InternalTool, MARK_OF_CUTOFF,
+    NoTools, ProductUsed, REASON_ARGUMENT_INVALID, REASON_ERROR_OF_EXECUTION,
+    REASON_LIMIT_OF_CALLS, REASON_NOT_ENABLED, REASON_OUTSIDE_DO_TURN, REASON_UNKNOWN, RecordCalls,
+    ToolContext, ToolFuture, ToolRegistry, UseTools, cut, offered, record_turn,
+    summary_of_arguments,
+};
 
 const MESSAGE_READ_LIMIT: u32 = 200;
 
@@ -223,8 +222,8 @@ impl TurnSummary {
 struct PreparedTurn {
     trigger_message_id: MessageId,
     messages: Vec<Message>,
-    usage: Arc<UsoFerramentas>,
-    calls: Arc<RegistroChamadas>,
+    usage: Arc<UseTools>,
+    calls: Arc<RecordCalls>,
     skip_knowledge_and_products: bool,
     skip_product_search: bool,
     active_flow: bool,
@@ -234,8 +233,8 @@ struct PreparedTurn {
 impl PreparedTurn {
     fn retain_flow_tools(&self, offered: &mut Vec<poph_core::llm::Tool>) {
         offered.retain(|tool| match tool.nome.as_str() {
-            fluxo_ferramentas::NOME_INICIAR => self.flow_fallback,
-            fluxo_ferramentas::NOME_EXECUTAR_ACAO | fluxo_ferramentas::NOME_ABANDONAR => {
+            fluxo_ferramentas::NAME_START => self.flow_fallback,
+            fluxo_ferramentas::NAME_RUN_ACTION | fluxo_ferramentas::NAME_ABANDON => {
                 self.active_flow
             }
             _ => true,
@@ -246,7 +245,7 @@ impl PreparedTurn {
 struct G5Context<'a> {
     org: OrgId,
     conversa: &'a poph_store::Conversa,
-    hot_agent: &'a AgenteQuente,
+    hot_agent: &'a HotAgent,
     recent_messages: &'a [StoredMessage],
     group: &'a [StoredMessage],
     g3_nothing: bool,
@@ -254,11 +253,11 @@ struct G5Context<'a> {
 
 struct G6Context<'a> {
     org: OrgId,
-    hot_agent: &'a AgenteQuente,
+    hot_agent: &'a HotAgent,
     recent_messages: &'a [StoredMessage],
     conversa: &'a poph_store::Conversa,
     messages: &'a [Message],
-    products: Vec<ProdutoUsado>,
+    products: Vec<ProductUsed>,
     modelo: String,
     cancellation: Cancellation,
 }
@@ -299,25 +298,25 @@ struct TurnTarget {
 #[derive(Clone)]
 pub struct TurnEngine {
     store: Arc<Store>,
-    config: Arc<ConfigQuente>,
-    limiter: Arc<Limitador>,
+    config: Arc<ConfigHot>,
+    limiter: Arc<Limiter>,
     provedor: Arc<dyn LlmProvider>,
-    providers: Option<Arc<Provedores>>,
-    tools: Arc<dyn RegistroFerramentas>,
+    providers: Option<Arc<Providers>>,
+    tools: Arc<dyn ToolRegistry>,
     http_tools: Arc<HttpToolRegistry>,
-    search: Option<Arc<dyn BuscadorBase>>,
-    products: Option<Arc<dyn BuscadorProdutos>>,
+    search: Option<Arc<dyn KnowledgeSearcher>>,
+    products: Option<Arc<dyn ProductSearcher>>,
     options: TurnOptions,
-    metrics: MetricasTurno,
-    pause: Arc<dyn Pausa>,
+    metrics: MetricsTurn,
+    pause: Arc<dyn Pause>,
     default_model: String,
     cancellation: Option<Cancellation>,
     summarizer: Arc<Resumidor>,
     jev: Option<Arc<dyn GateEvaluator>>,
     handoff: HandoffGuidance,
     files: Option<poph_files::FileConfig>,
-    fluxos: Option<AjustesDoFluxo>,
-    g9_metrics: MetricasG9,
+    fluxos: Option<AdjustmentsFlow>,
+    g9_metrics: MetricsG9,
 }
 
 impl TurnEngine {
@@ -328,17 +327,17 @@ impl TurnEngine {
 
     pub fn new(
         store: Arc<Store>,
-        config: ConfigQuente,
-        limiter: Arc<Limitador>,
+        config: ConfigHot,
+        limiter: Arc<Limiter>,
         provedor: Arc<dyn LlmProvider>,
         options: TurnOptions,
-        metrics: MetricasTurno,
+        metrics: MetricsTurn,
     ) -> Self {
-        let summarizer = Arc::new(Resumidor::novo(
+        let summarizer = Arc::new(Resumidor::new(
             Arc::clone(&store),
             Arc::clone(&provedor),
             Arc::clone(&limiter),
-            OpcoesResumo::default(),
+            SummaryOptions::default(),
         ));
         Self {
             store,
@@ -346,13 +345,13 @@ impl TurnEngine {
             limiter,
             provedor,
             providers: None,
-            tools: Arc::new(SemFerramentas),
+            tools: Arc::new(NoTools),
             http_tools: Arc::default(),
             search: None,
             products: None,
             options,
             metrics,
-            pause: Arc::new(PausaReal),
+            pause: Arc::new(PauseReal),
             default_model: LlmConfig::default().model,
             cancellation: None,
             summarizer,
@@ -360,12 +359,12 @@ impl TurnEngine {
             handoff: HandoffGuidance::default(),
             files: None,
             fluxos: None,
-            g9_metrics: MetricasG9::proprias(),
+            g9_metrics: MetricsG9::own(),
         }
     }
 
-    pub fn with_summary(mut self, options: OpcoesResumo) -> Self {
-        self.summarizer = Arc::new(Resumidor::novo(
+    pub fn with_summary(mut self, options: SummaryOptions) -> Self {
+        self.summarizer = Arc::new(Resumidor::new(
             Arc::clone(&self.store),
             Arc::clone(&self.provedor),
             Arc::clone(&self.limiter),
@@ -375,7 +374,7 @@ impl TurnEngine {
     }
 
     pub async fn wait_for_summaries(&self, limit: Duration) -> bool {
-        self.summarizer.aguardar_ocioso(limit).await
+        self.summarizer.wait_ocioso(limit).await
     }
 
     pub fn with_cancellation(mut self, cancellation: Cancellation) -> Self {
@@ -391,7 +390,7 @@ impl TurnEngine {
         self
     }
 
-    pub fn with_providers(mut self, providers: Arc<Provedores>) -> Self {
+    pub fn with_providers(mut self, providers: Arc<Providers>) -> Self {
         self.providers = Some(providers);
         self
     }
@@ -406,17 +405,17 @@ impl TurnEngine {
         self
     }
 
-    pub fn with_tools(mut self, registro: Arc<dyn RegistroFerramentas>) -> Self {
+    pub fn with_tools(mut self, registro: Arc<dyn ToolRegistry>) -> Self {
         self.tools = registro;
         self
     }
 
-    pub fn with_search(mut self, search: Arc<dyn BuscadorBase>) -> Self {
+    pub fn with_search(mut self, search: Arc<dyn KnowledgeSearcher>) -> Self {
         self.search = Some(search);
         self
     }
 
-    pub fn with_products(mut self, products: Arc<dyn BuscadorProdutos>) -> Self {
+    pub fn with_products(mut self, products: Arc<dyn ProductSearcher>) -> Self {
         self.products = Some(products);
         self
     }
@@ -427,7 +426,7 @@ impl TurnEngine {
     }
 
     pub fn with_flows(mut self, config: &poph_types::FlowsConfig) -> Self {
-        self.fluxos = Some(AjustesDoFluxo::da_config(config));
+        self.fluxos = Some(AdjustmentsFlow::of_config(config));
         self
     }
 
@@ -435,21 +434,21 @@ impl TurnEngine {
         let Some(settings) = self.fluxos.take() else {
             return self;
         };
-        self.fluxos = Some(settings.com_cache(cache));
+        self.fluxos = Some(settings.with_cache(cache));
         self
     }
 
-    pub fn with_g9_metrics(mut self, metrics: MetricasG9) -> Self {
+    pub fn with_g9_metrics(mut self, metrics: MetricsG9) -> Self {
         self.g9_metrics = metrics;
         self
     }
 
-    pub fn with_pause(mut self, pause: Arc<dyn Pausa>) -> Self {
+    pub fn with_pause(mut self, pause: Arc<dyn Pause>) -> Self {
         self.pause = pause;
         self
     }
 
-    pub fn hot_config(&self) -> &Arc<ConfigQuente> {
+    pub fn hot_config(&self) -> &Arc<ConfigHot> {
         &self.config
     }
 
@@ -457,7 +456,7 @@ impl TurnEngine {
         &self.store
     }
 
-    pub fn metrics(&self) -> &MetricasTurno {
+    pub fn metrics(&self) -> &MetricsTurn {
         &self.metrics
     }
 
@@ -478,7 +477,7 @@ impl TurnEngine {
         let conversa = self.store.conversations().get(org, conversation_id)?;
         let agent_id = conversa.agent_id;
         if conversa.canal == "site" {
-            return Err(ErroAgente::Interno(
+            return Err(AgentError::Internal(
                 "conversa do site exige execução própria".to_owned(),
             ));
         }
@@ -490,9 +489,9 @@ impl TurnEngine {
             cancellation.cancel();
         }
 
-        let hot_agent = match self.config.carregar_verificando(org, agent_id) {
+        let hot_agent = match self.config.load_verify(org, agent_id) {
             Ok(hot_agent) => hot_agent,
-            Err(ErroAgente::Dominio(DomainError::AgentInactive { status, .. })) => {
+            Err(AgentError::Domain(DomainError::AgentInactive { status, .. })) => {
                 let motivo =
                     format!("agente inativo ({status}): mensagem registrada e não respondida");
                 return self.finish_skipped(
@@ -571,12 +570,12 @@ impl TurnEngine {
         };
 
         let flow_preparation = self.fluxos.as_ref().and_then(|settings| {
-            fluxo::preparar(settings, &self.store, org, conversation_id, agent_id)
+            fluxo::prepare(settings, &self.store, org, conversation_id, agent_id)
         });
         let g9_flows: Vec<poph_jev::JevFlow> = flow_preparation
             .as_ref()
-            .filter(|prepared| prepared.ativa.is_none())
-            .map(|prepared| prepared.liberados.clone())
+            .filter(|prepared| prepared.active.is_none())
+            .map(|prepared| prepared.released.clone())
             .unwrap_or_default();
         let g9_flows = (!g9_flows.is_empty()).then_some(g9_flows);
         let g9_flows = g9_flows.as_deref();
@@ -602,18 +601,18 @@ impl TurnEngine {
             );
             match decisao {
                 Some(poph_jev::G2_WAIT) if adjusted_window > window => {
-                    self.metrics.janelas_esticadas.increment(1);
+                    self.metrics.window_esticadas.increment(1);
                 }
                 Some(poph_jev::G2_PROCESS) if adjusted_window < window => {
-                    self.metrics.janelas_diretas.increment(1);
+                    self.metrics.window_direct.increment(1);
                 }
                 _ => {}
             }
             wait = adjusted_window.saturating_sub(elapsed());
         }
-        self.pause.esperar(wait).await;
+        self.pause.wait(wait).await;
         self.metrics
-            .espera_agrupamento_ms
+            .wait_grouping_ms
             .observe(wait.as_secs_f64() * 1000.0);
 
         let recent_messages = self.read_recent_messages(org, conversation_id)?;
@@ -652,7 +651,7 @@ impl TurnEngine {
             .store
             .turns()
             .start(org, conversation_id, Some(agent_id))?;
-        self.metrics.turnos_iniciados.increment(1);
+        self.metrics.turns_started.increment(1);
         observer.evento(TurnEvent::Started {
             turno: turno.id,
             agente: agent_id,
@@ -661,7 +660,7 @@ impl TurnEngine {
 
         let slot = match self
             .limiter
-            .adquirir_turno(org, agent_id, self.options.slot_wait)
+            .acquire_turn(org, agent_id, self.options.slot_wait)
             .await
         {
             Ok(slot) => slot,
@@ -694,8 +693,8 @@ impl TurnEngine {
             .agente
             .max_context_messages
             .clamp(1, self.options.message_read_limit.max(1));
-        let conversation_summary = resumo::Resumo::decodificar(conversa.summary.as_deref());
-        let history_assembly = resumo::montar(
+        let conversation_summary = summary::Summary::decode(conversa.summary.as_deref());
+        let history_assembly = summary::build(
             &recent_messages,
             &conversation_summary,
             u64::from(hot_agent.agente.max_context_tokens),
@@ -703,14 +702,14 @@ impl TurnEngine {
         );
         let mut history: Vec<Message> = Vec::new();
         let mut images = ImageBudget::default();
-        for mensagem in &history_assembly.mensagens {
+        for mensagem in &history_assembly.messages {
             let parts = if mensagem.role == Role::User {
                 self.attachment_parts(org, mensagem, &mut images)
             } else {
                 Vec::new()
             };
             let empty_text = mensagem.role == Role::User && mensagem.texto.trim().is_empty();
-            if let Some(item) = prompt::da_mensagem_gravada(mensagem)
+            if let Some(item) = prompt::of_message_stored(mensagem)
                 && !(empty_text && !parts.is_empty())
             {
                 history.push(item);
@@ -747,7 +746,7 @@ impl TurnEngine {
             Some(Ok(chunks)) => chunks,
             Some(Err(error)) => {
                 tracing::warn!(error = %error, "busca na base falhou; turno segue sem trechos");
-                self.metrics.busca_falhas.increment(1);
+                self.metrics.search_failures.increment(1);
                 Vec::new()
             }
             None => Vec::new(),
@@ -760,7 +759,7 @@ impl TurnEngine {
                 );
             }
             chunks.clear();
-            self.metrics.buscas_puladas_g3.increment(1);
+            self.metrics.searches_puladas_g3.increment(1);
         }
         if let Some(jev) = &jev
             && (jev.failed() || !jev.decisions.is_empty())
@@ -840,7 +839,7 @@ impl TurnEngine {
                     );
                 }
                 G7Action::Transfer => {
-                    self.metrics.g7_transferencias.increment(1);
+                    self.metrics.g7_transfer.increment(1);
                     return self
                         .transfer_to_human(
                             TurnTarget {
@@ -914,17 +913,15 @@ impl TurnEngine {
 
         let g9_enabled = self.jev.is_some() && self.agent_gates(&hot_agent.agente).g9;
         let turn_flow = match self.fluxos.as_ref() {
-            Some(settings) => fluxo::decidir(
+            Some(settings) => fluxo::decide(
                 settings,
                 &self.store,
                 org,
                 flow_preparation.as_ref(),
                 jev.as_ref(),
                 g9_enabled,
-                self.tools
-                    .ferramenta(fluxo::NOME_FERRAMENTA_INICIAR)
-                    .is_some()
-                    && hot_agent.ferramenta_habilitada(fluxo::NOME_FERRAMENTA_INICIAR),
+                self.tools.tool(fluxo::NAME_TOOL_START).is_some()
+                    && hot_agent.tool_enabled(fluxo::NAME_TOOL_START),
             ),
             None => Default::default(),
         };
@@ -932,46 +929,45 @@ impl TurnEngine {
 
         if !chunks.is_empty() {
             self.metrics
-                .trechos_recuperados
+                .passages_recovered
                 .increment(chunks.len() as u64);
             observer.evento(TurnEvent::Base {
                 sources: chunks
                     .iter()
-                    .map(|chunk| format!("{} ({})", chunk.titulo, chunk.grupo))
+                    .map(|chunk| format!("{} ({})", chunk.title, chunk.group))
                     .collect(),
             });
         }
-        let block = prompt::BlocoVolatil {
-            agora_ms: self.store.now(),
+        let block = prompt::BlockVolatile {
+            now_ms: self.store.now(),
             canal: &conversa.canal,
             status: conversation_status(conversa.status),
             conversa: &conversa.id.to_string(),
-            resumo: history_assembly.resumo.as_deref(),
-            trechos: &chunks,
-            catalogo_de_produtos: !g3_nothing
-                && hot_agent.ferramenta_habilitada(crate::produtos::NOME_FERRAMENTA),
-            produto_escolhido: g5_product.as_ref(),
+            summary: history_assembly.summary.as_deref(),
+            passages: &chunks,
+            catalog_of_products: !g3_nothing && hot_agent.tool_enabled(crate::products::NAME_TOOL),
+            product_chosen: g5_product.as_ref(),
             fluxos: turn_flow.texto.as_deref(),
         }
-        .montar();
-        let messages = Prompt::novo(hot_agent.markdown.clone())
-            .com_volatil(block)
-            .mensagens(history);
+        .build();
+        let messages = Prompt::new(hot_agent.markdown.clone())
+            .with_volatile(block)
+            .messages(history);
         let assembly_ms =
             u64::try_from(assembly_started_at.elapsed().as_millis()).unwrap_or(u64::MAX);
 
-        let usage = UsoFerramentas::nova();
-        let calls = RegistroChamadas::nova();
+        let usage = UseTools::new();
+        let calls = RecordCalls::new();
         if let Some(product) = &g5_product {
-            usage.registrar_produto(ProdutoUsado {
-                produto: product.produto,
+            usage.register_product(ProductUsed {
+                product: product.product,
                 nome: product.nome.clone(),
-                preco_centavos: product.preco_centavos,
-                preco_texto: product.preco_texto.clone(),
-                unidade: product.unidade.clone(),
-                condicoes: product.condicoes.clone(),
+                price_cents: product.price_cents,
+                price_text: product.price_text.clone(),
+                unit: product.unit.clone(),
+                conditions: product.conditions.clone(),
             });
-            self.metrics.produtos_escolhidos_g5.increment(1);
+            self.metrics.products_chosen_g5.increment(1);
         }
         let prepared = PreparedTurn {
             trigger_message_id: input.mensagem,
@@ -980,8 +976,8 @@ impl TurnEngine {
             calls: Arc::clone(&calls),
             skip_knowledge_and_products: g3_nothing,
             skip_product_search: g5_product.is_some(),
-            active_flow: turn_flow.em_andamento,
-            flow_fallback: turn_flow.reserva,
+            active_flow: turn_flow.in_progress,
+            flow_fallback: turn_flow.reservation,
         };
         let run_model_loop = self.run_model_loop(
             TurnTarget {
@@ -1046,7 +1042,7 @@ impl TurnEngine {
                     recent_messages: &recent_messages,
                     conversa: &conversa,
                     messages: &final_conversation,
-                    products: usage.produtos(),
+                    products: usage.products(),
                     modelo: self.selected_model(&hot_agent),
                     cancellation: cancellation.clone(),
                 },
@@ -1086,7 +1082,7 @@ impl TurnEngine {
                     content_json: json!({ "texto": texto }).to_string(),
                 },
             )?;
-            self.metrics.respostas_gravadas.increment(1);
+            self.metrics.responses_stored.increment(1);
         }
         self.store
             .conversations()
@@ -1111,21 +1107,21 @@ impl TurnEngine {
             state: Some(TurnState::Completed),
             jev_json,
             times_json: Some(timings_json(&timings, &modelo, reply.motivo.as_ref())),
-            passages_json: Some(retrieved_json(&chunks, &usage.produtos())),
-            tools_json: Some(registro_do_turno(&reply.tools, &calls)),
+            passages_json: Some(retrieved_json(&chunks, &usage.products())),
+            tools_json: Some(record_turn(&reply.tools, &calls)),
             input_tokens: Some(u32::try_from(reply.usage.input).unwrap_or(u32::MAX)),
             output_tokens: Some(u32::try_from(reply.usage.saida).unwrap_or(u32::MAX)),
             ..TurnFinalization::default()
         };
         self.store.turns().finalise(org, turno.id, fim)?;
-        self.metrics.turnos_concluidos.increment(1);
-        self.metrics.tokens_entrada.increment(reply.usage.input);
-        self.metrics.tokens_saida.increment(reply.usage.saida);
+        self.metrics.turns_finished.increment(1);
+        self.metrics.tokens_entry.increment(reply.usage.input);
+        self.metrics.tokens_output.increment(reply.usage.saida);
         self.metrics
-            .duracao_turno_ms
+            .duration_turn_ms
             .observe(timings.total_ms as f64);
         if let Some(first) = timings.first_text_ms {
-            self.metrics.primeiro_texto_ms.observe(first as f64);
+            self.metrics.first_text_ms.observe(first as f64);
         }
         observer.evento(TurnEvent::Fim {
             estado: TurnState::Completed.as_text().to_owned(),
@@ -1133,7 +1129,7 @@ impl TurnEngine {
         });
 
         self.summarizer
-            .agendar(org, conversation_id, modelo.clone());
+            .schedule(org, conversation_id, modelo.clone());
 
         Ok(TurnSummary {
             turno: turno.id,
@@ -1154,7 +1150,7 @@ impl TurnEngine {
     async fn run_model_loop(
         &self,
         target: TurnTarget,
-        hot_agent: &AgenteQuente,
+        hot_agent: &HotAgent,
         prepared: PreparedTurn,
         cancellation: &Cancellation,
         observer: &mut dyn TurnObserver,
@@ -1162,8 +1158,8 @@ impl TurnEngine {
     ) -> Result<(ModelReply, Vec<Message>), LlmError> {
         let max_rounds = hot_agent.agente.max_tool_rounds.max(1);
         let max_per_message = hot_agent.agente.max_tools_per_message.max(1);
-        let mut offered = ferramentas::oferecidas(self.tools.as_ref(), &hot_agent.ferramentas);
-        offered.extend(hot_agent.ferramentas.iter().filter_map(|name| {
+        let mut offered = tools::offered(self.tools.as_ref(), &hot_agent.tools);
+        offered.extend(hot_agent.tools.iter().filter_map(|name| {
             self.http_tools
                 .tool(target.org, name)
                 .map(|tool| tool.definition(name))
@@ -1179,15 +1175,10 @@ impl TurnEngine {
         if prepared.skip_knowledge_and_products {
             offered.retain(|tool| !is_knowledge_or_product_tool(&tool.nome));
         } else if prepared.skip_product_search {
-            offered.retain(|tool| tool.nome != crate::produtos::NOME_FERRAMENTA);
+            offered.retain(|tool| tool.nome != crate::products::NAME_TOOL);
         }
         prepared.retain_flow_tools(&mut offered);
-        crate::biblioteca::anexar_biblioteca(
-            &mut offered,
-            &self.store,
-            target.org,
-            hot_agent.agente.id,
-        );
+        crate::library::attach_library(&mut offered, &self.store, target.org, hot_agent.agente.id);
         let modelo = self.selected_model(hot_agent);
         let turn_provider = self.turn_provider(hot_agent)?;
 
@@ -1213,11 +1204,11 @@ impl TurnEngine {
 
             let provider_slot = self
                 .limiter
-                .adquirir_provedor(turn_provider.nome(), self.options.slot_wait)
+                .acquire_provider(turn_provider.nome(), self.options.slot_wait)
                 .await
                 .map_err(provider_slot_error)?;
 
-            let mut fluxo = turn_provider.cliente().stream(request).await?;
+            let mut fluxo = turn_provider.client().stream(request).await?;
             let mut round_text = String::new();
             let mut calls: Vec<ToolCall> = Vec::new();
             while let Some(evento) = self.next_event(&mut fluxo, cancellation).await? {
@@ -1259,10 +1250,10 @@ impl TurnEngine {
                         "erro: limite de {max_per_message} chamadas de ferramenta por \
                          mensagem excedido"
                     );
-                    turn_calls.registrar(
+                    turn_calls.register(
                         &call.nome,
                         round,
-                        Desfecho::Recusada(MOTIVO_LIMITE_DE_CHAMADAS),
+                        Desfecho::Refused(REASON_LIMIT_OF_CALLS),
                         Duration::ZERO,
                         audit_arguments,
                         &content,
@@ -1283,31 +1274,29 @@ impl TurnEngine {
                     && is_knowledge_or_product_tool(&call.nome)
                 {
                     ToolOutcome::rejected(
-                        MOTIVO_FORA_DO_TURNO,
+                        REASON_OUTSIDE_DO_TURN,
                         format!(
                             "erro: a ferramenta `{}` não faz parte deste turno (a mensagem não \
                              exige consulta)",
                             call.nome
                         ),
                     )
-                } else if call.nome == fluxo_ferramentas::NOME_INICIAR && !prepared.flow_fallback {
+                } else if call.nome == fluxo_ferramentas::NAME_START && !prepared.flow_fallback {
                     ToolOutcome::rejected(
-                        MOTIVO_FORA_DO_TURNO,
+                        REASON_OUTSIDE_DO_TURN,
                         "erro: iniciar fluxo não é sua decisão neste turno; siga a orientação do bloco <fluxo_em_andamento>"
                             .to_owned(),
                     )
-                } else if prepared.skip_product_search
-                    && call.nome == crate::produtos::NOME_FERRAMENTA
-                {
+                } else if prepared.skip_product_search && call.nome == crate::products::NAME_TOOL {
                     ToolOutcome::rejected(
-                        MOTIVO_FORA_DO_TURNO,
+                        REASON_OUTSIDE_DO_TURN,
                         "erro: o catálogo já foi consultado e o produto do cliente está no bloco \
                          <produtos_encontrados> deste turno; não chame buscar_produto de novo"
                             .to_owned(),
                     )
                 } else if let Some(tool) = http_tool
                     && round < max_rounds
-                    && hot_agent.ferramenta_habilitada(&call.nome)
+                    && hot_agent.tool_enabled(&call.nome)
                 {
                     match http_calls.execute(tool, http_context, call).await {
                         Ok(text) => ToolOutcome::Executed(text),
@@ -1320,7 +1309,7 @@ impl TurnEngine {
                     self.execute_tool(target, hot_agent, usage, call).await
                 };
                 let duration = call_started_at.elapsed();
-                turn_calls.registrar(
+                turn_calls.register(
                     &call.nome,
                     round,
                     desfecho.for_record(),
@@ -1346,20 +1335,20 @@ impl TurnEngine {
         org: OrgId,
         agente: AgentId,
         group: &[StoredMessage],
-        hot_agent: &AgenteQuente,
-    ) -> Option<crate::base_conhecimento::FuturoBusca<'a>> {
+        hot_agent: &HotAgent,
+    ) -> Option<crate::base_knowledge::SearchFuture<'a>> {
         let base = self.search.as_ref()?;
         let query = group_query(group);
         if query.is_empty() {
             return None;
         }
-        Some(base.buscar(
+        Some(base.search(
             org,
             agente,
             query,
-            ParametrosBusca {
+            SearchParameters {
                 top_k: usize::try_from(hot_agent.top_k).unwrap_or(3).max(1),
-                corte: hot_agent.corte as f32,
+                cutoff: hot_agent.cutoff as f32,
             },
         ))
     }
@@ -1368,7 +1357,7 @@ impl TurnEngine {
         &self,
         context: G5Context<'_>,
         jev: &mut Option<JevResult>,
-    ) -> Option<ProdutoEncontrado> {
+    ) -> Option<FoundProduct> {
         let G5Context {
             org,
             conversa,
@@ -1380,7 +1369,7 @@ impl TurnEngine {
         let evaluator = Arc::clone(self.jev.as_ref()?);
         if g3_nothing
             || !self.agent_gates(&hot_agent.agente).g5
-            || !hot_agent.ferramenta_habilitada(crate::produtos::NOME_FERRAMENTA)
+            || !hot_agent.tool_enabled(crate::products::NAME_TOOL)
         {
             return None;
         }
@@ -1389,12 +1378,12 @@ impl TurnEngine {
         if query.is_empty() {
             return None;
         }
-        let parameters = ParametrosProdutos {
+        let parameters = ProductParameters {
             top_k: usize::try_from(hot_agent.top_k).unwrap_or(3).clamp(1, 10),
-            corte: hot_agent.corte as f32,
+            cutoff: hot_agent.cutoff as f32,
         };
         let candidates = match products
-            .buscar(org, hot_agent.agente.id, query, None, parameters)
+            .search(org, hot_agent.agente.id, query, None, parameters)
             .await
         {
             Ok(candidates) => candidates,
@@ -1436,7 +1425,7 @@ impl TurnEngine {
         let choice = choice?;
         candidates
             .into_iter()
-            .find(|product| product.produto.to_string() == choice)
+            .find(|product| product.product.to_string() == choice)
     }
 
     async fn review_g6(
@@ -1545,7 +1534,7 @@ impl TurnEngine {
         if let Some(safe_reply) = poph_jev::safe_response_from_agent(&hot_agent.agente.jev_json) {
             reply.texto = safe_reply;
             review.safe_reply = true;
-            self.metrics.respostas_seguras_g6.increment(1);
+            self.metrics.responses_safe_g6.increment(1);
         }
         review
     }
@@ -1554,10 +1543,10 @@ impl TurnEngine {
     async fn review_text(
         &self,
         org: OrgId,
-        hot_agent: &AgenteQuente,
+        hot_agent: &HotAgent,
         recent_messages: &[StoredMessage],
         conversa: &poph_store::Conversa,
-        products: &[ProdutoUsado],
+        products: &[ProductUsed],
         texto: &str,
         evaluator: &dyn GateEvaluator,
         jev: &mut Option<JevResult>,
@@ -1566,11 +1555,11 @@ impl TurnEngine {
         let candidates: Vec<poph_jev::ProductCandidate> = products
             .iter()
             .map(|product| poph_jev::ProductCandidate {
-                id: product.produto.to_string(),
+                id: product.product.to_string(),
                 nome: product.nome.clone(),
                 detail: format!(
                     "{} {} · {}",
-                    product.preco_texto, product.unidade, product.condicoes
+                    product.price_text, product.unit, product.conditions
                 ),
             })
             .collect();
@@ -1583,7 +1572,7 @@ impl TurnEngine {
             .await;
         let choice = resultado.reliable_choice(IdGate::G6).map(str::to_owned);
         merge_jev_result(jev, resultado);
-        self.metrics.revisoes_g6.increment(1);
+        self.metrics.revisions_g6.increment(1);
         choice
     }
 
@@ -1591,7 +1580,7 @@ impl TurnEngine {
     async fn regenerate(
         &self,
         org: OrgId,
-        hot_agent: &AgenteQuente,
+        hot_agent: &HotAgent,
         messages: &[Message],
         draft: &str,
         guidance: &str,
@@ -1615,10 +1604,10 @@ impl TurnEngine {
         let turn_provider = self.turn_provider(hot_agent)?;
         let _slot = self
             .limiter
-            .adquirir_provedor(turn_provider.nome(), self.options.slot_wait)
+            .acquire_provider(turn_provider.nome(), self.options.slot_wait)
             .await
             .map_err(provider_slot_error)?;
-        let mut fluxo = turn_provider.cliente().stream(request).await?;
+        let mut fluxo = turn_provider.client().stream(request).await?;
         let mut regenerated = RegeneratedReply::default();
         while let Some(evento) = self.next_event(&mut fluxo, cancellation).await? {
             match evento? {
@@ -1634,7 +1623,7 @@ impl TurnEngine {
     fn start_jev(
         &self,
         org: OrgId,
-        hot_agent: &AgenteQuente,
+        hot_agent: &HotAgent,
         recent_messages: &[StoredMessage],
         conversa: &poph_store::Conversa,
         fluxos: Option<&[poph_jev::JevFlow]>,
@@ -1655,7 +1644,7 @@ impl TurnEngine {
     fn jev_state(
         &self,
         org: OrgId,
-        hot_agent: &AgenteQuente,
+        hot_agent: &HotAgent,
         recent_messages: &[StoredMessage],
         conversa: &poph_store::Conversa,
         gates: JevGates,
@@ -1673,7 +1662,7 @@ impl TurnEngine {
             )
             .with_capabilities(
                 self.search.is_some(),
-                hot_agent.ferramenta_habilitada(crate::produtos::NOME_FERRAMENTA),
+                hot_agent.tool_enabled(crate::products::NAME_TOOL),
             );
         if gates.g4 {
             estado = estado.with_departments(self.active_department_names(org));
@@ -1821,12 +1810,12 @@ impl TurnEngine {
             .collect()
     }
 
-    fn active_departments_with_id(&self, org: OrgId) -> Vec<departamento::Candidato> {
+    fn active_departments_with_id(&self, org: OrgId) -> Vec<department::Candidate> {
         match self.store.departments().list(org, Page::with_limit(200)) {
             Ok(departments) => departments
                 .iter()
                 .filter(|departamento| departamento.status == poph_store::Status::Active)
-                .map(departamento::Candidato::de)
+                .map(department::Candidate::de)
                 .collect(),
             Err(error) => {
                 tracing::warn!(error = %error, "não consegui listar departamentos para o G4");
@@ -1855,36 +1844,36 @@ impl TurnEngine {
     async fn execute_tool(
         &self,
         target: TurnTarget,
-        hot_agent: &AgenteQuente,
-        usage: &Arc<UsoFerramentas>,
+        hot_agent: &HotAgent,
+        usage: &Arc<UseTools>,
         call: &ToolCall,
     ) -> ToolOutcome {
-        if !hot_agent.ferramenta_habilitada(&call.nome) {
+        if !hot_agent.tool_enabled(&call.nome) {
             return ToolOutcome::rejected(
-                MOTIVO_NAO_HABILITADA,
+                REASON_NOT_ENABLED,
                 format!(
                     "erro: a ferramenta `{}` não está habilitada para este agente",
                     call.nome
                 ),
             );
         }
-        let Some(tool) = self.tools.ferramenta(&call.nome) else {
+        let Some(tool) = self.tools.tool(&call.nome) else {
             return ToolOutcome::rejected(
-                MOTIVO_DESCONHECIDA,
+                REASON_UNKNOWN,
                 format!(
                     "erro: a ferramenta `{}` não está disponível neste motor",
                     call.nome
                 ),
             );
         };
-        let context = ContextoFerramenta {
+        let context = ToolContext {
             org: target.org,
             conversa: target.conversa,
             agente: hot_agent.agente.id,
             turno: target.turno,
-            uso: Arc::clone(usage),
+            usage: Arc::clone(usage),
         };
-        match tool.executar(context, call.arguments.clone()).await {
+        match tool.run(context, call.arguments.clone()).await {
             Ok(texto) => ToolOutcome::Executed(texto),
             Err(error) => {
                 ToolOutcome::rejected(tool_error_reason(&error), format!("erro: {error}"))
@@ -1913,7 +1902,7 @@ impl TurnEngine {
             .last_set(org, conversa, self.options.message_read_limit.max(1))?)
     }
 
-    fn record_g9_result(&self, desfecho: &fluxo::DesfechoDoFluxo) {
+    fn record_g9_result(&self, desfecho: &fluxo::FlowOutcome) {
         let Some(registro) = desfecho.registro.as_ref() else {
             return;
         };
@@ -1921,9 +1910,9 @@ impl TurnEngine {
             .get("resultado")
             .and_then(serde_json::Value::as_str)
         {
-            Some("iniciou" | "iniciou_sem_bloco") => self.g9_metrics.iniciou.increment(1),
-            Some("nenhum") => self.g9_metrics.nenhum.increment(1),
-            Some("abaixo_do_limiar") => self.g9_metrics.abaixo_do_limiar.increment(1),
+            Some("iniciou" | "iniciou_sem_bloco") => self.g9_metrics.start.increment(1),
+            Some("nenhum") => self.g9_metrics.none.increment(1),
+            Some("abaixo_do_limiar") => self.g9_metrics.below_threshold.increment(1),
             Some("fallback" | "falhou" | "nao_iniciou") => self.g9_metrics.fallback.increment(1),
             _ => {}
         }
@@ -1940,7 +1929,7 @@ impl TurnEngine {
         self.jev.is_some() && self.agent_gates(agente).g2
     }
 
-    fn selected_model(&self, hot_agent: &AgenteQuente) -> String {
+    fn selected_model(&self, hot_agent: &HotAgent) -> String {
         let modelo = hot_agent.agente.modelo.trim();
         if !modelo.is_empty() {
             return modelo.to_owned();
@@ -1951,9 +1940,9 @@ impl TurnEngine {
         }
     }
 
-    fn turn_provider(&self, hot_agent: &AgenteQuente) -> Result<ProvedorResolvido, LlmError> {
+    fn turn_provider(&self, hot_agent: &HotAgent) -> Result<ResolvedProvider, LlmError> {
         let Some(providers) = &self.providers else {
-            return Ok(ProvedorResolvido::novo(
+            return Ok(ResolvedProvider::new(
                 hot_agent.agente.provedor.clone(),
                 Arc::clone(&self.provedor),
                 self.default_model.clone(),
@@ -1966,7 +1955,7 @@ impl TurnEngine {
     async fn transfer_to_human(
         &self,
         target: TurnTarget,
-        hot_agent: &AgenteQuente,
+        hot_agent: &HotAgent,
         recent_messages: &[StoredMessage],
         conversa: &poph_store::Conversa,
         jev: &JevResult,
@@ -2013,7 +2002,7 @@ impl TurnEngine {
                     content_json: json!({ "texto": texto }).to_string(),
                 },
             )?;
-            self.metrics.respostas_gravadas.increment(1);
+            self.metrics.responses_stored.increment(1);
         }
 
         let g4_choice = jev.reliable_choice(IdGate::G4);
@@ -2025,7 +2014,7 @@ impl TurnEngine {
         } else {
             Vec::new()
         };
-        let destination = departamento::resolver(
+        let destination = department::resolver(
             g4_choice,
             &candidates,
             hot_agent.agente.handoff_department,
@@ -2052,7 +2041,7 @@ impl TurnEngine {
             "risco": tipo,
             "orientacao": tipo.is_some(),
             "departamento": departamento.map(|dep| dep.to_string()),
-            "departamento_origem": destination.origem.como_texto(),
+            "departamento_origem": destination.origin.as_text(),
             "departamento_escolhido_pelo_jev": g4_choice,
             "departamento_motivo": destination.motivo,
         })
@@ -2078,7 +2067,7 @@ impl TurnEngine {
         registro["transferencia"] = json!({
             "gate": origin.as_text(),
             "departamento": departamento.map(|dep| dep.to_string()),
-            "origem": destination.origem.como_texto(),
+            "origem": destination.origin.as_text(),
             "escolha_do_jev": g4_choice,
             "motivo": destination.motivo,
         });
@@ -2092,14 +2081,14 @@ impl TurnEngine {
                 ..TurnFinalization::default()
             },
         )?;
-        self.metrics.turnos_concluidos.increment(1);
+        self.metrics.turns_finished.increment(1);
         self.metrics
-            .duracao_turno_ms
+            .duration_turn_ms
             .observe(timings.total_ms as f64);
         tracing::info!(
             conversation_id = %conversation_id,
             department_id = ?departamento,
-            department_source = destination.origem.como_texto(),
+            department_source = destination.origin.as_text(),
             guidance_included = tipo.is_some(),
             "conversa transferida para humano (G1)"
         );
@@ -2134,7 +2123,7 @@ impl TurnEngine {
     fn send_g7_reply(
         &self,
         target: TurnTarget,
-        hot_agent: &AgenteQuente,
+        hot_agent: &HotAgent,
         jev: &JevResult,
         group_ids: Vec<MessageId>,
         (queue_ms, assembly_ms): (u64, u64),
@@ -2168,7 +2157,7 @@ impl TurnEngine {
                 content_json: json!({ "texto": texto }).to_string(),
             },
         )?;
-        self.metrics.respostas_gravadas.increment(1);
+        self.metrics.responses_stored.increment(1);
         self.store
             .conversations()
             .touch(org, conversation_id, self.store.now())?;
@@ -2199,10 +2188,10 @@ impl TurnEngine {
                 ..TurnFinalization::default()
             },
         )?;
-        self.metrics.turnos_concluidos.increment(1);
-        self.metrics.g7_respostas_padrao.increment(1);
+        self.metrics.turns_finished.increment(1);
+        self.metrics.g7_responses_default.increment(1);
         self.metrics
-            .duracao_turno_ms
+            .duration_turn_ms
             .observe(timings.total_ms as f64);
         tracing::warn!(
             conversation_id = %conversation_id,
@@ -2234,7 +2223,7 @@ impl TurnEngine {
     fn handle_g8_farewell(
         &self,
         target: TurnTarget,
-        hot_agent: &AgenteQuente,
+        hot_agent: &HotAgent,
         jev: &JevResult,
         group_ids: Vec<MessageId>,
         (queue_ms, assembly_ms): (u64, u64),
@@ -2271,7 +2260,7 @@ impl TurnEngine {
                     content_json: json!({ "texto": texto }).to_string(),
                 },
             )?;
-            self.metrics.respostas_gravadas.increment(1);
+            self.metrics.responses_stored.increment(1);
         }
         self.store
             .conversations()
@@ -2302,10 +2291,10 @@ impl TurnEngine {
                 ..TurnFinalization::default()
             },
         )?;
-        self.metrics.turnos_concluidos.increment(1);
-        self.metrics.encerradas_g8.increment(1);
+        self.metrics.turns_finished.increment(1);
+        self.metrics.closed_g8.increment(1);
         self.metrics
-            .duracao_turno_ms
+            .duration_turn_ms
             .observe(timings.total_ms as f64);
         tracing::info!(
             conversation_id = %conversation_id,
@@ -2339,7 +2328,7 @@ impl TurnEngine {
     async fn classify_risk(
         &self,
         org: OrgId,
-        hot_agent: &AgenteQuente,
+        hot_agent: &HotAgent,
         recent_messages: &[StoredMessage],
         conversa: &poph_store::Conversa,
     ) -> GuidanceResult {
@@ -2389,7 +2378,7 @@ impl TurnEngine {
                 ..TurnFinalization::default()
             },
         )?;
-        self.metrics.turnos_ignorados.increment(1);
+        self.metrics.turns_ignored.increment(1);
         if let Some(agente) = agente {
             let _ = self.store.audit().register(
                 Some(org),
@@ -2437,7 +2426,7 @@ impl TurnEngine {
         first_text_ms: Option<u64>,
         error: String,
         class: FailureClass,
-        calls: Option<&RegistroChamadas>,
+        calls: Option<&RecordCalls>,
         observer: &mut dyn TurnObserver,
     ) -> Resultado<TurnSummary> {
         let timings = TurnTimings {
@@ -2453,15 +2442,15 @@ impl TurnEngine {
             TurnFinalization {
                 state: Some(TurnState::Failed),
                 times_json: Some(timings_json(&timings, modelo, None)),
-                tools_json: calls.map(|registro| registro_do_turno(&[], registro)),
+                tools_json: calls.map(|registro| record_turn(&[], registro)),
                 error: Some(error.clone()),
                 ..TurnFinalization::default()
             },
         )?;
-        self.metrics.turnos_falhos.increment(1);
+        self.metrics.turns_faulty.increment(1);
         if class == FailureClass::ProviderRejected {
-            self.metrics.falhas_modelo_recusadas.increment(1);
-            self.metrics.falhas_modelo_definitivas.increment(1);
+            self.metrics.failures_model_refused.increment(1);
+            self.metrics.failures_model_definitive.increment(1);
             tracing::warn!(
                 target: "poph_agent::turno",
                 org = %org,
@@ -2522,13 +2511,13 @@ impl TurnProcessor {
     }
 }
 
-impl Processador for TurnProcessor {
-    fn processar(&self, task: Tarefa) -> Futuro {
+impl Processor for TurnProcessor {
+    fn process(&self, task: Task) -> BoxFuture {
         let engine = Arc::clone(&self.engine);
         let fluxo = self.fluxo.get().cloned();
         Box::pin(async move {
             let Some(fluxo) = fluxo else {
-                return Err(ErroAgente::Interno(
+                return Err(AgentError::Internal(
                     "processador do turno sem fluxo ligado (ligar_fluxo não foi chamado)"
                         .to_owned(),
                 ));
@@ -2559,7 +2548,7 @@ impl Processador for TurnProcessor {
                     &fluxo,
                     task.org,
                     task.conversa,
-                    task.entrada,
+                    task.entry,
                     &messages,
                     error.as_deref(),
                 )?;
@@ -2569,7 +2558,7 @@ impl Processador for TurnProcessor {
     }
 }
 
-fn log_turn_end(task: &Tarefa, summary: &Resultado<TurnSummary>) {
+fn log_turn_end(task: &Task, summary: &Resultado<TurnSummary>) {
     match summary {
         Ok(summary) => {
             let estado = summary.estado.as_text();
@@ -2648,7 +2637,7 @@ fn complete_inputs(
     for item in pending {
         let own = Some(item.id) == own;
         let group_tools = messages.iter().any(|mensagem| {
-            EventoEntrada::de_json(&item.event_json)
+            InputEvent::of_json(&item.event_json)
                 .map(|evento| evento.conversa == conversa && evento.mensagem == *mensagem)
                 .unwrap_or(false)
         });
@@ -2657,7 +2646,7 @@ fn complete_inputs(
         }
     }
     for id in completed {
-        fluxo.concluir_entrada(org, id, error)?;
+        fluxo.concluir_entry(org, id, error)?;
     }
     Ok(())
 }
@@ -2680,12 +2669,9 @@ fn llm_error_class(error: &LlmError) -> FailureClass {
     }
 }
 
-fn provider_slot_error(error: ErroAgente) -> LlmError {
+fn provider_slot_error(error: AgentError) -> LlmError {
     match error {
-        ErroAgente::SemVagaProvedor {
-            provedor,
-            espera_ms: wait_ms,
-        } => LlmError::Unavailable {
+        AgentError::WithoutSlotProvider { provedor, wait_ms } => LlmError::Unavailable {
             tentativas: 0,
             last_error: format!("sem vaga de chamada ao provedor `{provedor}` em {wait_ms} ms"),
         },
@@ -2709,7 +2695,7 @@ fn turn_items(
         .filter(|item| {
             Some(item.id) == own
                 || messages.iter().any(|mensagem| {
-                    EventoEntrada::de_json(&item.event_json)
+                    InputEvent::of_json(&item.event_json)
                         .map(|evento| evento.conversa == conversa && evento.mensagem == *mensagem)
                         .unwrap_or(false)
                 })
@@ -2719,18 +2705,18 @@ fn turn_items(
 }
 
 fn handle_model_failure(
-    metrics: &MetricasTurno,
+    metrics: &MetricsTurn,
     fluxo: &Fluxo,
-    task: &Tarefa,
+    task: &Task,
     turno: TurnId,
     messages: &[MessageId],
     error: &str,
 ) -> Resultado<()> {
     let org = task.org;
     let motivo = log_safe_reason(error);
-    let ids = turn_items(fluxo, org, task.conversa, task.entrada, messages)?;
+    let ids = turn_items(fluxo, org, task.conversa, task.entry, messages)?;
     let already_queued = fluxo.store().outbox().count_turn(org, turno)? > 0;
-    let policy = fluxo.opcoes();
+    let policy = fluxo.options();
     let maximum = policy.tentativas_falha_modelo.max(1);
 
     if ids.is_empty() {
@@ -2746,9 +2732,9 @@ fn handle_model_failure(
     }
     if already_queued {
         for id in &ids {
-            fluxo.concluir_entrada(org, *id, Some(motivo.as_str()))?;
+            fluxo.concluir_entry(org, *id, Some(motivo.as_str()))?;
         }
-        metrics.falhas_modelo_definitivas.increment(1);
+        metrics.failures_model_definitive.increment(1);
         tracing::warn!(
             target: "poph_agent::turno",
             org = %org,
@@ -2770,9 +2756,9 @@ fn handle_model_failure(
         .saturating_add(1);
     if tentativas >= maximum {
         for id in &ids {
-            fluxo.concluir_entrada(org, *id, Some(motivo.as_str()))?;
+            fluxo.concluir_entry(org, *id, Some(motivo.as_str()))?;
         }
-        metrics.falhas_modelo_definitivas.increment(1);
+        metrics.failures_model_definitive.increment(1);
         tracing::warn!(
             target: "poph_agent::turno",
             org = %org,
@@ -2785,13 +2771,13 @@ fn handle_model_failure(
         return Ok(());
     }
 
-    let wait = policy.atraso_falha_modelo.espera(tentativas);
+    let wait = policy.delay_failure_model.wait(tentativas);
     let next_attempt_at = fluxo
         .store()
         .now()
         .saturating_add(i64::try_from(wait.as_millis()).unwrap_or(i64::MAX));
-    fluxo.adiar_entradas(org, &ids, next_attempt_at, &motivo)?;
-    metrics.falhas_modelo_adiadas.increment(1);
+    fluxo.adiar_entries(org, &ids, next_attempt_at, &motivo)?;
+    metrics.failures_model_deferred.increment(1);
     tracing::warn!(
         target: "poph_agent::turno",
         org = %org,
@@ -2859,8 +2845,8 @@ impl ToolOutcome {
 
     fn for_record(&self) -> Desfecho {
         match self {
-            Self::Executed(_) => Desfecho::Executada,
-            Self::Rejected { motivo, .. } => Desfecho::Recusada(motivo),
+            Self::Executed(_) => Desfecho::Executed,
+            Self::Rejected { motivo, .. } => Desfecho::Refused(motivo),
         }
     }
 
@@ -2875,9 +2861,9 @@ impl ToolOutcome {
 fn tool_error_reason(error: &str) -> &'static str {
     let normalized_error = error.to_lowercase();
     if normalized_error.contains("argumento") || normalized_error.contains("não é um id") {
-        MOTIVO_ARGUMENTO_INVALIDO
+        REASON_ARGUMENT_INVALID
     } else {
-        MOTIVO_ERRO_DE_EXECUCAO
+        REASON_ERROR_OF_EXECUTION
     }
 }
 
@@ -2954,19 +2940,19 @@ fn finish_reason_text(motivo: &FinishReason) -> String {
 
 const MAX_QUERY_CHARS: usize = 2000;
 
-fn g5_candidate(product: &ProdutoEncontrado) -> poph_jev::ProductCandidate {
+fn g5_candidate(product: &FoundProduct) -> poph_jev::ProductCandidate {
     let mut parts: Vec<String> = Vec::new();
-    if !product.categoria.trim().is_empty() {
-        parts.push(format!("categoria: {}", product.categoria.trim()));
+    if !product.category.trim().is_empty() {
+        parts.push(format!("categoria: {}", product.category.trim()));
     }
-    if !product.preco_texto.trim().is_empty() {
-        parts.push(format!("preço: {}", product.preco_texto.trim()));
+    if !product.price_text.trim().is_empty() {
+        parts.push(format!("preço: {}", product.price_text.trim()));
     }
-    if !product.unidade.trim().is_empty() {
-        parts.push(format!("unidade: {}", product.unidade.trim()));
+    if !product.unit.trim().is_empty() {
+        parts.push(format!("unidade: {}", product.unit.trim()));
     }
     poph_jev::ProductCandidate {
-        id: product.produto.to_string(),
+        id: product.product.to_string(),
         nome: product.nome.clone(),
         detail: parts.join("; "),
     }
@@ -2993,7 +2979,7 @@ fn group_query(group: &[StoredMessage]) -> String {
     texto.chars().take(MAX_QUERY_CHARS).collect()
 }
 
-fn retrieved_json(chunks: &[TrechoRecuperado], products: &[ProdutoUsado]) -> String {
+fn retrieved_json(chunks: &[RecoveredPassage], products: &[ProductUsed]) -> String {
     let mut items: Vec<serde_json::Value> = Vec::with_capacity(chunks.len() + products.len());
     for chunk in chunks {
         let mut value = serde_json::to_value(chunk).unwrap_or(serde_json::Value::Null);
@@ -3013,7 +2999,7 @@ fn retrieved_json(chunks: &[TrechoRecuperado], products: &[ProdutoUsado]) -> Str
 }
 
 fn is_knowledge_or_product_tool(nome: &str) -> bool {
-    nome == crate::base_conhecimento::NOME_FERRAMENTA || nome == crate::produtos::NOME_FERRAMENTA
+    nome == crate::base_knowledge::NAME_TOOL || nome == crate::products::NAME_TOOL
 }
 
 fn timings_json(timings: &TurnTimings, modelo: &str, motivo: Option<&FinishReason>) -> String {

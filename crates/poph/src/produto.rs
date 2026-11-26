@@ -12,8 +12,8 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use clap::{Args, Subcommand};
-use poph_agent::CatalogoProdutos;
-use poph_agent::preco_texto;
+use poph_agent::ProductCatalog;
+use poph_agent::price_text;
 use poph_store::{NewProduct, Page, Product, ProductChange, Store};
 use poph_types::{AgentId, HarnessConfig, OrgId, ProductCategoryId, ProductId};
 use serde_json::{Value, json};
@@ -326,7 +326,7 @@ fn listar(store: &Arc<Store>, org: OrgId, args: ListarProdutos) -> ExitCode {
                         "{}  {:<9} {:>12}  {}",
                         produto.id,
                         status_em_portugues(produto.status),
-                        preco_texto(produto),
+                        price_text(produto),
                         produto.name
                     );
                 }
@@ -470,13 +470,13 @@ fn reindexar(
             Some(texto) => {
                 let agente = resolver_agente(store, org, texto)?;
                 let relatorio = catalogo
-                    .sincronizar_agente(org, agente)
+                    .synchronise_agent(org, agente)
                     .await
                     .map_err(|erro| format!("{erro}"))?;
                 Ok(vec![(agente, relatorio)])
             }
             None => catalogo
-                .sincronizar_org(org)
+                .synchronise_org(org)
                 .await
                 .map_err(|erro| format!("{erro}")),
         }
@@ -537,7 +537,7 @@ fn reindexar_org(configuracao: &HarnessConfig, store: &Arc<Store>, org: OrgId) -
         Err(erro) => return Some(format!("não consegui iniciar o runtime: {erro}")),
     };
     runtime
-        .block_on(catalogo.sincronizar_org(org))
+        .block_on(catalogo.synchronise_org(org))
         .err()
         .map(|erro| format!("{erro}"))
 }
@@ -554,7 +554,7 @@ fn aviso_de_indice(erro: Option<String>) {
 fn abrir_catalogo(
     configuracao: &HarnessConfig,
     store: &Arc<Store>,
-) -> Result<Arc<CatalogoProdutos>, String> {
+) -> Result<Arc<ProductCatalog>, String> {
     crate::rag::abrir_catalogo(configuracao, Arc::clone(store))
 }
 
@@ -638,7 +638,7 @@ fn saida(produto: &Product, json_saida: bool, aviso: &str) -> ExitCode {
         println!("  categoria: {}", produto.category_id);
         println!(
             "  preço: {} ({} centavos)",
-            preco_texto(produto),
+            price_text(produto),
             produto.price_cents
         );
         if !produto.unit.is_empty() {
@@ -664,7 +664,7 @@ fn json_produto(produto: &Product) -> Value {
         "slug": produto.slug,
         "aliases": produto.aliases,
         "description": produto.description,
-        "price_text": preco_texto(produto),
+        "price_text": price_text(produto),
         "price_cents": produto.price_cents,
         "unit": produto.unit,
         "includes": produto.includes,

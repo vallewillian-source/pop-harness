@@ -1,35 +1,33 @@
-//! Testes do resolvedor de conversa do canal (HR-27): um contato, uma conversa; conversa que deixou
-//! de estar aberta não é servida do cache.
-
 use std::sync::Arc;
 
-use poph_agent::fila_integracao::{ConversaDoCanal, ResolvedorConversa};
+use poph_agent::queue_integration::{ConversationChannel, ResolverConversation};
 use poph_store::{ConversationStatus, NewAgent, NewConversation, NewOrg, Store};
 use poph_types::{AgentId, InboundEvent, IntegrationId, OrgId};
 
-struct Cenario {
-    pasta: std::path::PathBuf,
+struct Scenario {
+    folder: std::path::PathBuf,
     store: Arc<Store>,
     org: OrgId,
     agente: AgentId,
 }
 
-impl Cenario {
-    fn novo(rotulo: &str) -> Self {
-        let pasta = std::env::temp_dir().join(format!(
-            "poph-fila-integracao-{rotulo}-{}",
+impl Scenario {
+    fn new(label: &str) -> Self {
+        let folder = std::env::temp_dir().join(format!(
+            "poph-fila-integracao-{label}-{}",
             std::process::id()
         ));
-        let _ = std::fs::remove_dir_all(&pasta);
-        std::fs::create_dir_all(&pasta).expect("cria a pasta");
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).expect("cria a pasta");
         let store = Arc::new(
-            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco"),
+            Store::open_at(&folder.join("harness.db"), &folder.join("rag.db"))
+                .expect("abre o banco"),
         );
         let org = store
             .orgs()
             .create(NewOrg {
-                name: format!("Org {rotulo}"),
-                slug: format!("org-{rotulo}"),
+                name: format!("Org {label}"),
+                slug: format!("org-{label}"),
                 config_json: String::new(),
             })
             .expect("cria a org")
@@ -39,15 +37,15 @@ impl Cenario {
             .create(
                 org,
                 NewAgent {
-                    name: format!("Agente {rotulo}"),
-                    slug: format!("agente-{rotulo}"),
+                    name: format!("Agente {label}"),
+                    slug: format!("agente-{label}"),
                     ..NewAgent::default()
                 },
             )
             .expect("cria o agente")
             .id;
         Self {
-            pasta,
+            folder,
             store,
             org,
             agente,
@@ -55,9 +53,9 @@ impl Cenario {
     }
 }
 
-impl Drop for Cenario {
+impl Drop for Scenario {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.pasta);
+        let _ = std::fs::remove_dir_all(&self.folder);
     }
 }
 
@@ -76,54 +74,53 @@ fn evento(peer: &str) -> InboundEvent {
 
 #[test]
 fn um_contato_uma_conversa_com_cache_por_contato() {
-    let cenario = Cenario::novo("cache");
-    let resolvedor = ConversaDoCanal::novo(Arc::clone(&cenario.store), cenario.agente, "eco", None);
+    let scenario = Scenario::new("cache");
+    let resolver =
+        ConversationChannel::new(Arc::clone(&scenario.store), scenario.agente, "eco", None);
 
-    let primeira = resolvedor
-        .resolver(cenario.org, &evento("5511911111111"))
+    let first = resolver
+        .resolver(scenario.org, &evento("5511911111111"))
         .expect("resolve o primeiro contato");
-    // O mesmo contato, de novo: mesma conversa, e o cache não cresce.
-    let repetida = resolvedor
-        .resolver(cenario.org, &evento("5511911111111"))
+    let repeated = resolver
+        .resolver(scenario.org, &evento("5511911111111"))
         .expect("resolve de novo");
-    assert_eq!(primeira, repetida);
-    assert_eq!(resolvedor.em_cache(), 1);
+    assert_eq!(first, repeated);
+    assert_eq!(resolver.em_cache(), 1);
 
-    // Outro contato abre outra conversa.
-    let outra = resolvedor
-        .resolver(cenario.org, &evento("5511922222222"))
+    let other = resolver
+        .resolver(scenario.org, &evento("5511922222222"))
         .expect("resolve o segundo contato");
-    assert_ne!(primeira, outra);
-    assert_eq!(resolvedor.em_cache(), 2);
+    assert_ne!(first, other);
+    assert_eq!(resolver.em_cache(), 2);
 
-    let conversas = cenario
+    let conversas = scenario
         .store
         .conversations()
-        .list(cenario.org, None, poph_store::Page::with_limit(10))
+        .list(scenario.org, None, poph_store::Page::with_limit(10))
         .expect("lista as conversas");
     assert_eq!(conversas.len(), 2);
     assert!(
         conversas
             .iter()
-            .all(|conversa| conversa.canal == "eco" && conversa.agent_id == cenario.agente)
+            .all(|conversa| conversa.canal == "eco" && conversa.agent_id == scenario.agente)
     );
 }
 
 #[test]
 fn conversa_transferida_nao_e_servida_do_cache() {
-    let cenario = Cenario::novo("transferida");
-    let resolvedor = ConversaDoCanal::novo(Arc::clone(&cenario.store), cenario.agente, "eco", None);
+    let scenario = Scenario::new("transferida");
+    let resolver =
+        ConversationChannel::new(Arc::clone(&scenario.store), scenario.agente, "eco", None);
     let peer = "5511933333333";
 
-    let conversa = resolvedor
-        .resolver(cenario.org, &evento(peer))
+    let conversa = resolver
+        .resolver(scenario.org, &evento(peer))
         .expect("resolve o contato");
-    // Transferida para humano (D12): o agente para de responder nela.
-    cenario
+    scenario
         .store
         .conversations()
         .change_status(
-            cenario.org,
+            scenario.org,
             conversa,
             1,
             ConversationStatus::Transferred,
@@ -131,15 +128,13 @@ fn conversa_transferida_nao_e_servida_do_cache() {
         )
         .expect("transfere a conversa");
 
-    // Uma conversa nova e aberta do mesmo contato passa a ser a escolhida (o cache não insiste na
-    // conversa que deixou de estar aberta).
-    let nova = cenario
+    let new = scenario
         .store
         .conversations()
         .create(
-            cenario.org,
+            scenario.org,
             NewConversation {
-                agent_id: cenario.agente,
+                agent_id: scenario.agente,
                 integration_id: None,
                 canal: "eco".to_owned(),
                 peer_externo: Some(peer.to_owned()),
@@ -147,8 +142,8 @@ fn conversa_transferida_nao_e_servida_do_cache() {
             },
         )
         .expect("abre a conversa nova");
-    let escolhida = resolvedor
-        .resolver(cenario.org, &evento(peer))
+    let escolhida = resolver
+        .resolver(scenario.org, &evento(peer))
         .expect("resolve de novo");
-    assert_eq!(escolhida, nova.id);
+    assert_eq!(escolhida, new.id);
 }

@@ -37,15 +37,15 @@ use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, SaltString};
 use futures::StreamExt;
 use futures::future::BoxFuture;
-use poph_agent::atores::{Atores, OpcoesAtores};
-use poph_agent::base_conhecimento::{
-    BaseConhecimento, BuscadorBase, ConsultarBase, ParametrosBusca,
+use poph_agent::actors::{ActorOptions, Actors};
+use poph_agent::base_knowledge::{
+    KnowledgeBase, KnowledgeSearcher, QueryKnowledge, SearchParameters,
 };
-use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
-use poph_agent::entrada_saida::{Fluxo, OpcoesFluxo};
-use poph_agent::limites::{Limitador, OpcoesLimites};
-use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
-use poph_agent::produtos::{BuscadorProdutos, BuscarProduto, CatalogoProdutos, ParametrosProdutos};
+use poph_agent::config_hot::{ConfigHot, HotConfigOptions};
+use poph_agent::entry_output::{FlowOptions, Fluxo};
+use poph_agent::limites::{LimitOptions, Limiter};
+use poph_agent::metrics::{MetricsMemory, MetricsTurn};
+use poph_agent::products::{ProductCatalog, ProductParameters, ProductSearcher, SearchProduct};
 use poph_agent::turno::{TurnEngine, TurnOptions, TurnProcessor};
 use poph_core::llm::{
     FakeProvider, FinishReason, LlmError, LlmEvent, LlmProvider, LlmStream, Message, Request,
@@ -1791,33 +1791,30 @@ async fn subir_com_turno(
 ) -> (
     Servidor,
     Arc<Repassa>,
-    Arc<BaseConhecimento>,
-    Arc<CatalogoProdutos>,
+    Arc<KnowledgeBase>,
+    Arc<ProductCatalog>,
 ) {
     let repassa = Arc::new(Repassa(std::sync::OnceLock::new()));
     let provedor: Arc<dyn LlmProvider> = Arc::clone(&repassa) as Arc<dyn LlmProvider>;
-    let mut saida: Option<(Arc<BaseConhecimento>, Arc<CatalogoProdutos>)> = None;
+    let mut saida: Option<(Arc<KnowledgeBase>, Arc<ProductCatalog>)> = None;
     let servidor = Servidor::novo(rotulo, |store, config, pasta| {
         let blobs = pasta.join("dados").join("blobs");
         let estado = Estado::novo(Arc::clone(store), config.clone())
             .expect("estado do servidor")
             .com_arquivos(FileConfig::default(blobs.clone()));
-        let config_quente = ConfigQuente::nova(
+        let config_quente = ConfigHot::new(
             Arc::clone(store),
-            OpcoesConfigQuente::default(),
-            MetricasMemoria::proprio(),
+            HotConfigOptions::default(),
+            MetricsMemory::own(),
         );
-        let limitador = Arc::new(Limitador::novo(
-            OpcoesLimites::default(),
-            MetricasMemoria::proprio(),
-        ));
+        let limitador = Arc::new(Limiter::new(LimitOptions::default(), MetricsMemory::own()));
         let motor = TurnEngine::new(
             Arc::clone(store),
             config_quente,
             limitador,
             provedor,
             TurnOptions::default(),
-            MetricasTurno::proprio(),
+            MetricsTurn::own(),
         )
         .with_default_model("modelo-teste")
         .with_files(FileConfig::default(blobs));
@@ -1829,24 +1826,24 @@ async fn subir_com_turno(
         .expect("índice de teste")
         .0;
         let indice = Arc::new(indice);
-        let base = BaseConhecimento::nova(Arc::clone(store), Arc::clone(&indice));
-        let catalogo = CatalogoProdutos::novo(Arc::clone(store), indice);
-        let busca: Arc<dyn BuscadorBase> = Arc::clone(&base) as Arc<dyn BuscadorBase>;
-        let registro = ConsultarBase::registro(Arc::clone(motor.hot_config()), Arc::clone(&busca));
-        let registro = registro.com(BuscarProduto::nova(
+        let base = KnowledgeBase::new(Arc::clone(store), Arc::clone(&indice));
+        let catalogo = ProductCatalog::new(Arc::clone(store), indice);
+        let busca: Arc<dyn KnowledgeSearcher> = Arc::clone(&base) as Arc<dyn KnowledgeSearcher>;
+        let registro = QueryKnowledge::registro(Arc::clone(motor.hot_config()), Arc::clone(&busca));
+        let registro = registro.com(SearchProduct::new(
             Arc::clone(motor.hot_config()),
-            Arc::clone(&catalogo) as Arc<dyn BuscadorProdutos>,
+            Arc::clone(&catalogo) as Arc<dyn ProductSearcher>,
         ));
-        let registro = poph_agent::carrinho::registrar(registro, Arc::clone(store));
-        let registro = poph_agent::biblioteca::registrar(registro, Arc::clone(store));
+        let registro = poph_agent::cart::register(registro, Arc::clone(store));
+        let registro = poph_agent::library::register(registro, Arc::clone(store));
         let motor = Arc::new(motor.with_tools(Arc::new(registro)).with_search(busca));
         let processador = Arc::new(TurnProcessor::new(Arc::clone(&motor)));
-        let atores = Atores::novo(
+        let atores = Actors::new(
             processador.clone(),
-            OpcoesAtores::default(),
-            MetricasMemoria::proprio(),
+            ActorOptions::default(),
+            MetricsMemory::own(),
         );
-        let fluxo = Fluxo::nova(Arc::clone(store), atores, OpcoesFluxo::default());
+        let fluxo = Fluxo::new(Arc::clone(store), atores, FlowOptions::default());
         processador.attach_io(fluxo.clone());
         saida = Some((base, catalogo));
         estado
@@ -1938,18 +1935,18 @@ async fn ferramentas_do_llm_nao_alcancam_outra_org() {
     let b = montar_org(&s, "ferr-b", MARCADOR_B).await;
     let (oa, ob): (poph_types::OrgId, poph_types::OrgId) = (id(&a.id), id(&b.id));
     let (aa, ab): (poph_types::AgentId, poph_types::AgentId) = (id(&a.agente), id(&b.agente));
-    base.sincronizar_agente(oa, aa)
+    base.synchronise_agent(oa, aa)
         .await
         .expect("indexa base de A");
-    base.sincronizar_agente(ob, ab)
+    base.synchronise_agent(ob, ab)
         .await
         .expect("indexa base de B");
     catalogo
-        .sincronizar_agente(oa, aa)
+        .synchronise_agent(oa, aa)
         .await
         .expect("indexa produtos de A");
     catalogo
-        .sincronizar_agente(ob, ab)
+        .synchronise_agent(ob, ab)
         .await
         .expect("indexa produtos de B");
 
@@ -2117,26 +2114,26 @@ async fn busca_da_base_nao_devolve_trecho_de_outra_org() {
     let b = montar_org(&s, "rag-b", MARCADOR_B).await;
     let (oa, ob): (poph_types::OrgId, poph_types::OrgId) = (id(&a.id), id(&b.id));
     let (aa, ab): (poph_types::AgentId, poph_types::AgentId) = (id(&a.agente), id(&b.agente));
-    base.sincronizar_agente(oa, aa).await.expect("indexa A");
-    base.sincronizar_agente(ob, ab).await.expect("indexa B");
+    base.synchronise_agent(oa, aa).await.expect("indexa A");
+    base.synchronise_agent(ob, ab).await.expect("indexa B");
     catalogo
-        .sincronizar_agente(oa, aa)
+        .synchronise_agent(oa, aa)
         .await
         .expect("produtos A");
     catalogo
-        .sincronizar_agente(ob, ab)
+        .synchronise_agent(ob, ab)
         .await
         .expect("produtos B");
 
-    let params = ParametrosBusca {
+    let params = SearchParameters {
         top_k: 10,
-        corte: 0.0,
+        cutoff: 0.0,
     };
     let mut falhas = Vec::new();
 
     // Controle: a org e o agente certos acham o próprio item.
     let proprio_b = base
-        .buscar(ob, ab, MARCADOR_B.to_owned(), params)
+        .search(ob, ab, MARCADOR_B.to_owned(), params)
         .await
         .expect("busca B");
     if !proprio_b.iter().any(|t| t.texto.contains(MARCADOR_B)) {
@@ -2145,7 +2142,7 @@ async fn busca_da_base_nao_devolve_trecho_de_outra_org() {
         );
     }
     let proprio_a = base
-        .buscar(oa, aa, MARCADOR_A.to_owned(), params)
+        .search(oa, aa, MARCADOR_A.to_owned(), params)
         .await
         .expect("busca A");
     if !proprio_a.iter().any(|t| t.texto.contains(MARCADOR_A)) {
@@ -2161,11 +2158,11 @@ async fn busca_da_base_nao_devolve_trecho_de_outra_org() {
     ];
     for (nome, org, agente) in cenarios {
         let trechos = base
-            .buscar(org, agente, MARCADOR_B.to_owned(), params)
+            .search(org, agente, MARCADOR_B.to_owned(), params)
             .await
             .expect("busca");
         for t in &trechos {
-            if t.texto.contains(MARCADOR_B) || t.titulo.contains(MARCADOR_B) {
+            if t.texto.contains(MARCADOR_B) || t.title.contains(MARCADOR_B) {
                 falhas.push(format!("{nome}: trecho de B voltou: {}", t.texto));
             }
         }
@@ -2176,15 +2173,15 @@ async fn busca_da_base_nao_devolve_trecho_de_outra_org() {
         }
     }
     // Produtos: o catálogo com a org de A não acha o produto de B.
-    let produtos_a = BuscadorProdutos::buscar(
+    let produtos_a = ProductSearcher::search(
         catalogo.as_ref(),
         oa,
         aa,
         MARCADOR_B.to_owned(),
         None,
-        ParametrosProdutos {
+        ProductParameters {
             top_k: 10,
-            corte: 0.0,
+            cutoff: 0.0,
         },
     )
     .await
@@ -2192,15 +2189,15 @@ async fn busca_da_base_nao_devolve_trecho_de_outra_org() {
     if produtos_a.iter().any(|p| p.nome.contains(MARCADOR_B)) {
         falhas.push("catálogo de A devolveu produto de B".to_owned());
     }
-    let produtos_b = BuscadorProdutos::buscar(
+    let produtos_b = ProductSearcher::search(
         catalogo.as_ref(),
         ob,
         ab,
         MARCADOR_B.to_owned(),
         None,
-        ParametrosProdutos {
+        ProductParameters {
             top_k: 10,
-            corte: 0.0,
+            cutoff: 0.0,
         },
     )
     .await

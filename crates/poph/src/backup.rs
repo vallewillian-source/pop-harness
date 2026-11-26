@@ -482,7 +482,7 @@ fn reindexar(
             );
         }
     };
-    let base = match runtime.block_on(base.sincronizar_org(org)) {
+    let base = match runtime.block_on(base.synchronise_org(org)) {
         Ok(relatorios) => relatorios,
         Err(erro) => {
             return (
@@ -494,7 +494,7 @@ fn reindexar(
             );
         }
     };
-    let produtos = match runtime.block_on(catalogo.sincronizar_org(org)) {
+    let produtos = match runtime.block_on(catalogo.synchronise_org(org)) {
         Ok(relatorios) => relatorios,
         Err(erro) => {
             return (

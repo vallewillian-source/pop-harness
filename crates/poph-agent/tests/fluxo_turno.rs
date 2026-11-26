@@ -1,26 +1,12 @@
-//! O fluxo do atendimento no turno (FX-23).
-//!
-//! O que se prova aqui, com Jev e modelo falsos e banco de verdade:
-//!
-//! 1. o fluxo é iniciado **antes** da chamada do modelo, e o prompt já nasce com o bloco da etapa de
-//!    entrada;
-//! 2. o prefixo estável é idêntico byte a byte com e sem fluxo em execução (o bloco é volátil);
-//! 3. `nenhum` não inicia e **não** põe o catálogo no prompt; confiança baixa também não;
-//! 4. Jev fora do ar entrega a reserva (catálogo) e o turno registra isso no `turns.jev_json`;
-//! 5. fluxo de outra org, inativo ou não liberado **nunca** inicia, mesmo que o Jev escolha;
-//! 6. execução ativa não volta a perguntar ao Jev, e o bloco dela entra no prompt;
-//! 7. `[fluxos] ativo = false` desliga tudo e a Ficha continua existindo;
-//! 8. o painel "por quê" mostra a decisão do G9 e o que o código fez com ela.
-
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
-use poph_agent::limites::{Limitador, OpcoesLimites};
-use poph_agent::metricas::{MetricasG9, MetricasMemoria, MetricasTurno};
+use poph_agent::config_hot::{ConfigHot, HotConfigOptions};
+use poph_agent::limites::{LimitOptions, Limiter};
+use poph_agent::metrics::{MetricsG9, MetricsMemory, MetricsTurn};
 use poph_agent::turno::{
-    FuturoPausa, NoopObserver, Pausa, TurnEngine, TurnInput, TurnOptions, TurnSummary,
+    FuturePause, NoopObserver, Pause, TurnEngine, TurnInput, TurnOptions, TurnSummary,
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, Usage};
 use poph_fluxos::{Limites, compilar};
@@ -33,13 +19,12 @@ use poph_types::{AgentId, ConversationId, FlowsConfig, JevGates, MessageId, OrgI
 
 struct SemEspera;
 
-impl Pausa for SemEspera {
-    fn esperar(&self, _duracao: Duration) -> FuturoPausa {
+impl Pause for SemEspera {
+    fn wait(&self, _duracao: Duration) -> FuturePause {
         Box::pin(async {})
     }
 }
 
-/// Script de um fluxo de duas etapas, com gatilho e um efeito de entrada.
 const SCRIPT: &str = r#"fluxo(
     id = "agendar_visita",
     nome = "Agendar visita",
@@ -60,37 +45,36 @@ etapa(
 )
 "#;
 
-/// Um fluxo publicado, liberado ao agente, pronto para ser escolhido pelo G9.
 struct FluxoDoTeste {
     id: poph_types::FlowId,
     slug: String,
 }
 
-/// Banco, org, agente e conversa de verdade numa pasta temporária.
-struct Cenario {
-    pasta: PathBuf,
+struct Scenario {
+    folder: PathBuf,
     store: Arc<Store>,
     org: OrgId,
     agente: AgentId,
 }
 
-impl Cenario {
-    fn novo(rotulo: &str) -> Self {
-        let pasta = std::env::temp_dir().join(format!(
-            "poph-fx23-{rotulo}-{}-{}",
+impl Scenario {
+    fn new(label: &str) -> Self {
+        let folder = std::env::temp_dir().join(format!(
+            "poph-fx23-{label}-{}-{}",
             std::process::id(),
             AgentId::generate()
         ));
-        let _ = std::fs::remove_dir_all(&pasta);
-        std::fs::create_dir_all(&pasta).expect("pasta do teste");
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).expect("pasta do teste");
         let store = Arc::new(
-            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco"),
+            Store::open_at(&folder.join("harness.db"), &folder.join("rag.db"))
+                .expect("abre o banco"),
         );
         let org = store
             .orgs()
             .create(NewOrg {
-                name: format!("Org {rotulo}"),
-                slug: format!("org-{rotulo}-{}", AgentId::generate()),
+                name: format!("Org {label}"),
+                slug: format!("org-{label}-{}", AgentId::generate()),
                 config_json: "{}".to_owned(),
             })
             .expect("cria a org")
@@ -100,8 +84,8 @@ impl Cenario {
             .create(
                 org,
                 NewAgent {
-                    name: format!("Bia {rotulo}"),
-                    slug: format!("bia-{rotulo}"),
+                    name: format!("Bia {label}"),
+                    slug: format!("bia-{label}"),
                     grouping_window_ms: 0,
                     ..NewAgent::default()
                 },
@@ -120,14 +104,13 @@ impl Cenario {
             )
             .expect("grava as instruções");
         Self {
-            pasta,
+            folder,
             store,
             org,
             agente,
         }
     }
 
-    /// Cria o fluxo, publica a primeira revisão (IR compilada do script) e o libera ao agente.
     fn fluxo(&self, agente: AgentId) -> FluxoDoTeste {
         let fluxo = self
             .store
@@ -153,18 +136,17 @@ impl Cenario {
         }
     }
 
-    /// Publica a revisão do fluxo com a IR compilada do script do teste.
     fn publicar(&self, fluxo: poph_types::FlowId) {
-        let compilado = compilar(SCRIPT, &Limites::default());
-        let ir = compilado.ir().expect("o script do teste compila");
-        let atual = self.store.flows().get(self.org, fluxo).expect("lê o fluxo");
+        let compiled = compilar(SCRIPT, &Limites::default());
+        let ir = compiled.ir().expect("o script do teste compila");
+        let current = self.store.flows().get(self.org, fluxo).expect("lê o fluxo");
         self.store
             .revisions()
             .publish_revision(
                 self.org,
                 fluxo,
                 RevisionPublication {
-                    expected: atual.version,
+                    expected: current.version,
                     fonte: SCRIPT.to_owned(),
                     definicao_json: serde_json::to_string(ir).expect("IR em JSON"),
                     schema_versao: Some(ir.schema_versao),
@@ -215,7 +197,7 @@ impl Cenario {
     }
 
     fn ajustar_jev_do_agente(&self, agente: AgentId, jev_json: &str) {
-        let atual = self
+        let current = self
             .store
             .agents()
             .get(self.org, agente)
@@ -225,7 +207,7 @@ impl Cenario {
             .update(
                 self.org,
                 agente,
-                atual.version,
+                current.version,
                 AgentChange {
                     jev_json: Some(jev_json.to_owned()),
                     ..AgentChange::default()
@@ -234,58 +216,55 @@ impl Cenario {
             .expect("ajusta o jev_json do agente");
     }
 
-    fn motor(
+    fn engine(
         &self,
         agente: AgentId,
         jev: Option<Arc<JevEngine>>,
         fluxos: Option<FlowsConfig>,
-        g9: MetricasG9,
+        g9: MetricsG9,
     ) -> (TurnEngine, Arc<FakeProvider>) {
         let _ = agente;
-        let config = ConfigQuente::nova(
+        let config = ConfigHot::new(
             Arc::clone(&self.store),
-            OpcoesConfigQuente::default(),
-            MetricasMemoria::proprio(),
+            HotConfigOptions::default(),
+            MetricsMemory::own(),
         );
-        let limitador = Arc::new(Limitador::novo(
-            OpcoesLimites::default(),
-            MetricasMemoria::proprio(),
-        ));
+        let limiter = Arc::new(Limiter::new(LimitOptions::default(), MetricsMemory::own()));
         let provedor = Arc::new(FakeProvider::with_scripts(vec![
             roteiro("Certo! Vou anotar."),
             roteiro("Certo! Vou anotar."),
             roteiro("Certo! Vou anotar."),
         ]));
-        let mut motor = TurnEngine::new(
+        let mut engine = TurnEngine::new(
             Arc::clone(&self.store),
             config,
-            limitador,
+            limiter,
             provedor.clone(),
             TurnOptions::default(),
-            MetricasTurno::proprio(),
+            MetricsTurn::own(),
         )
         .with_pause(Arc::new(SemEspera))
-        .with_summary(poph_agent::resumo::OpcoesResumo {
+        .with_summary(poph_agent::summary::SummaryOptions {
             ativo: false,
-            ..poph_agent::resumo::OpcoesResumo::default()
+            ..poph_agent::summary::SummaryOptions::default()
         })
         .with_g9_metrics(g9);
-        if let Some(ajustes) = fluxos {
-            motor = motor.with_flows(&ajustes);
+        if let Some(adjustments) = fluxos {
+            engine = engine.with_flows(&adjustments);
         }
         if let Some(jev) = jev {
-            motor = motor.with_jev(jev);
+            engine = engine.with_jev(jev);
         }
-        (motor, provedor)
+        (engine, provedor)
     }
 
     async fn turno(
         &self,
-        motor: &TurnEngine,
+        engine: &TurnEngine,
         conversa: ConversationId,
         gatilho: MessageId,
     ) -> TurnSummary {
-        motor
+        engine
             .run(
                 TurnInput::new(self.org, conversa, gatilho),
                 &mut NoopObserver,
@@ -302,14 +281,14 @@ impl Cenario {
             .expect("a conversa tem Ficha")
     }
 
-    fn ativa(&self, conversa: ConversationId) -> Option<poph_store::Execution> {
+    fn active(&self, conversa: ConversationId) -> Option<poph_store::Execution> {
         self.store
             .executions()
             .active_of_case(self.org, self.ficha(conversa).id)
             .expect("lê a execução ativa")
     }
 
-    fn eventos(&self, conversa: ConversationId) -> Vec<poph_store::RecordEvent> {
+    fn events(&self, conversa: ConversationId) -> Vec<poph_store::RecordEvent> {
         self.store
             .cases()
             .events(self.org, self.ficha(conversa).id, None, 50)
@@ -327,9 +306,9 @@ impl Cenario {
     }
 }
 
-impl Drop for Cenario {
+impl Drop for Scenario {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.pasta);
+        let _ = std::fs::remove_dir_all(&self.folder);
     }
 }
 
@@ -344,7 +323,6 @@ fn roteiro(texto: &str) -> Script {
     ])
 }
 
-/// Gates com o G9 ligado, como no padrão de instalação (os outros ficam fora para o teste isolar).
 fn so_g9() -> JevGates {
     JevGates {
         g9: true,
@@ -356,9 +334,8 @@ fn motor_jev(jev: Arc<FakeJev>) -> Arc<JevEngine> {
     Arc::new(JevEngine::new(jev, so_g9(), "jev-latest"))
 }
 
-/// Sistema de mensagens do pedido ao modelo, na ordem em que foram enviadas.
-fn sistemas(pedido: &poph_core::llm::Request) -> Vec<String> {
-    pedido
+fn sistemas(request: &poph_core::llm::Request) -> Vec<String> {
+    request
         .messages
         .iter()
         .filter_map(|mensagem| match mensagem {
@@ -368,94 +345,89 @@ fn sistemas(pedido: &poph_core::llm::Request) -> Vec<String> {
         .collect()
 }
 
-fn pedido(pedido: &poph_core::llm::Request, trecho: &str) -> bool {
-    pedido.messages.iter().any(|mensagem| match mensagem {
-        poph_core::llm::Message::System(texto) => texto.contains(trecho),
+fn request(request: &poph_core::llm::Request, passage: &str) -> bool {
+    request.messages.iter().any(|mensagem| match mensagem {
+        poph_core::llm::Message::System(texto) => texto.contains(passage),
         _ => false,
     })
 }
 
-/// 1. A execução é aberta **antes** do modelo, e o primeiro pedido já leva o bloco da etapa.
 #[tokio::test]
 async fn inicio_acontece_antes_da_chamada_do_modelo() {
-    let cenario = Cenario::novo("antes");
-    let fluxo = cenario.fluxo(cenario.agente);
-    let conversa = cenario.conversa(cenario.agente);
+    let scenario = Scenario::new("antes");
+    let fluxo = scenario.fluxo(scenario.agente);
+    let conversa = scenario.conversa(scenario.agente);
     let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g9_iniciar_fluxo",
         &fluxo.slug,
     )])));
-    let (motor, provedor) = cenario.motor(
-        cenario.agente,
+    let (engine, provedor) = scenario.engine(
+        scenario.agente,
         Some(motor_jev(Arc::clone(&jev))),
         Some(FlowsConfig::default()),
-        MetricasG9::proprias(),
+        MetricsG9::own(),
     );
 
-    let gatilho = cenario.falar(conversa, "queria marcar uma visita técnica");
-    let resumo = cenario.turno(&motor, conversa, gatilho).await;
-    assert_eq!(resumo.estado, poph_store::TurnState::Completed);
+    let gatilho = scenario.falar(conversa, "queria marcar uma visita técnica");
+    let summary = scenario.turno(&engine, conversa, gatilho).await;
+    assert_eq!(summary.estado, poph_store::TurnState::Completed);
 
-    let ativa = cenario.ativa(conversa).expect("a execução foi aberta");
-    assert_eq!(ativa.fluxo_id, fluxo.id);
-    assert_eq!(ativa.no_atual, "coleta");
+    let active = scenario.active(conversa).expect("a execução foi aberta");
+    assert_eq!(active.fluxo_id, fluxo.id);
+    assert_eq!(active.no_atual, "coleta");
 
     let pedidos = provedor.received();
     assert_eq!(pedidos.len(), 1, "uma chamada ao modelo");
     assert!(
-        pedido(&pedidos[0], "Fluxo em andamento: Agendar visita."),
+        request(&pedidos[0], "Fluxo em andamento: Agendar visita."),
         "o prompt do modelo já nasce com o bloco da etapa de entrada"
     );
-    assert!(pedido(&pedidos[0], "Peça o nome e o endereço."));
+    assert!(request(&pedidos[0], "Peça o nome e o endereço."));
 
-    // O evento da abertura leva a decisão do Jev.
-    let eventos = cenario.eventos(conversa);
-    let iniciado = eventos
+    let events = scenario.events(conversa);
+    let started = events
         .iter()
         .find(|evento| evento.tipo == poph_types::RecordEventKind::FlowStarted)
         .expect("há o evento fluxo_iniciado");
     let detalhe: serde_json::Value =
-        serde_json::from_str(&iniciado.payload_json).expect("payload é JSON");
+        serde_json::from_str(&started.payload_json).expect("payload é JSON");
     assert_eq!(detalhe["fluxo"], "agendar_visita");
     assert_eq!(detalhe["ator"], "jev");
     assert_eq!(detalhe["jev"]["escolha"], "agendar_visita");
 }
 
-/// 2. O prefixo estável (primeira mensagem de sistema) é o mesmo com e sem fluxo em execução.
 #[tokio::test]
 async fn prefixo_estavel_identico_com_e_sem_fluxo() {
-    let cenario = Cenario::novo("prefixo");
-    let fluxo = cenario.fluxo(cenario.agente);
+    let scenario = Scenario::new("prefixo");
+    let fluxo = scenario.fluxo(scenario.agente);
 
-    // Conversa A: o Jev escolhe o fluxo.
-    let com_fluxo = cenario.conversa(cenario.agente);
+    let com_fluxo = scenario.conversa(scenario.agente);
     let jev_com = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g9_iniciar_fluxo",
         &fluxo.slug,
     )])));
-    let (motor_com, provedor_com) = cenario.motor(
-        cenario.agente,
+    let (motor_com, provedor_com) = scenario.engine(
+        scenario.agente,
         Some(motor_jev(Arc::clone(&jev_com))),
         Some(FlowsConfig::default()),
-        MetricasG9::proprias(),
+        MetricsG9::own(),
     );
-    let gatilho = cenario.falar(com_fluxo, "quero marcar visita");
-    cenario.turno(&motor_com, com_fluxo, gatilho).await;
+    let gatilho = scenario.falar(com_fluxo, "quero marcar visita");
+    scenario.turno(&motor_com, com_fluxo, gatilho).await;
 
-    // Conversa B: o Jev responde "nenhum" — turno sem fluxo, mesmo agente.
-    let sem_fluxo = cenario.conversa(cenario.agente);
+    let without_flow = scenario.conversa(scenario.agente);
     let jev_sem = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g9_iniciar_fluxo",
         G9_NONE,
     )])));
-    let (motor_sem, provedor_sem) = cenario.motor(
-        cenario.agente,
+    let (motor_sem, provedor_sem) = scenario.engine(
+        scenario.agente,
         Some(motor_jev(Arc::clone(&jev_sem))),
         Some(FlowsConfig::default()),
-        MetricasG9::proprias(),
+        MetricsG9::own(),
     );
-    let gatilho = cenario.falar(sem_fluxo, "só queria saber o horário");
-    cenario.turno(&motor_sem, sem_fluxo, gatilho).await;
+    let gatilho = scenario.falar(without_flow, "só queria saber o horário");
+    scenario.turno(&motor_sem, without_flow, gatilho).await;
 
     let prefixo_com = sistemas(&provedor_com.received()[0])[0].clone();
     let prefixo_sem = sistemas(&provedor_sem.received()[0])[0].clone();
@@ -463,10 +435,9 @@ async fn prefixo_estavel_identico_com_e_sem_fluxo() {
         prefixo_com, prefixo_sem,
         "o prefixo estável não pode mudar por causa do fluxo"
     );
-    // E o bloco do fluxo está fora dele.
     assert!(!prefixo_com.contains("Fluxo em andamento"));
     assert!(
-        pedido(
+        request(
             &provedor_com.received()[0],
             "Fluxo em andamento: Agendar visita."
         ),
@@ -475,42 +446,39 @@ async fn prefixo_estavel_identico_com_e_sem_fluxo() {
     assert_eq!(sistemas(&provedor_com.received()[0]).len(), 2);
 }
 
-/// 3. `nenhum` não inicia e o catálogo **não** vai ao prompt; confiança baixa também não.
 #[tokio::test]
 async fn nenhum_e_limiar_baixo_nao_iniciam_e_nao_oferecem_catalogo() {
-    let cenario = Cenario::novo("nenhum");
-    let fluxo = cenario.fluxo(cenario.agente);
+    let scenario = Scenario::new("nenhum");
+    let fluxo = scenario.fluxo(scenario.agente);
 
-    // (a) `nenhum`.
-    let conversa = cenario.conversa(cenario.agente);
+    let conversa = scenario.conversa(scenario.agente);
     let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g9_iniciar_fluxo",
         G9_NONE,
     )])));
-    let g9 = MetricasG9::proprias();
-    let (motor, provedor) = cenario.motor(
-        cenario.agente,
+    let g9 = MetricsG9::own();
+    let (engine, provedor) = scenario.engine(
+        scenario.agente,
         Some(motor_jev(Arc::clone(&jev))),
         Some(FlowsConfig::default()),
         g9.clone(),
     );
-    let gatilho = cenario.falar(conversa, "bom dia, tudo bem?");
-    cenario.turno(&motor, conversa, gatilho).await;
+    let gatilho = scenario.falar(conversa, "bom dia, tudo bem?");
+    scenario.turno(&engine, conversa, gatilho).await;
     assert!(
-        cenario.ativa(conversa).is_none(),
+        scenario.active(conversa).is_none(),
         "nada inicia com `nenhum`"
     );
     assert!(
-        !pedido(&provedor.received()[0], "<fluxos_de_atendimento>"),
+        !request(&provedor.received()[0], "<fluxos_de_atendimento>"),
         "o catálogo não vai ao prompt com `nenhum`"
     );
-    assert_eq!(g9.nenhum.value(), 1);
-    let turno = cenario.ultimo_turno(conversa);
-    let gravado: serde_json::Value = serde_json::from_str(&turno.jev_json).expect("JSON");
-    assert_eq!(gravado["fluxo"]["resultado"], "nenhum");
+    assert_eq!(g9.none.value(), 1);
+    let turno = scenario.ultimo_turno(conversa);
+    let stored: serde_json::Value = serde_json::from_str(&turno.jev_json).expect("JSON");
+    assert_eq!(stored["fluxo"]["resultado"], "nenhum");
 
-    // (b) o mesmo fluxo, com o Jev escolhendo com confiança baixa.
-    let conversa = cenario.conversa(cenario.agente);
+    let conversa = scenario.conversa(scenario.agente);
     let baixa = Arc::new(FakeJev::new(|_pedido| {
         let mut respostas = std::collections::BTreeMap::new();
         respostas.insert(
@@ -527,87 +495,84 @@ async fn nenhum_e_limiar_baixo_nao_iniciam_e_nao_oferecem_catalogo() {
             ..poph_jev::BatchResponse::default()
         })
     }));
-    let g9 = MetricasG9::proprias();
-    let (motor, provedor) = cenario.motor(
-        cenario.agente,
+    let g9 = MetricsG9::own();
+    let (engine, provedor) = scenario.engine(
+        scenario.agente,
         Some(motor_jev(Arc::clone(&baixa))),
         Some(FlowsConfig::default()),
         g9.clone(),
     );
-    let gatilho = cenario.falar(conversa, "acho que queria algo de visita");
-    cenario.turno(&motor, conversa, gatilho).await;
+    let gatilho = scenario.falar(conversa, "acho que queria algo de visita");
+    scenario.turno(&engine, conversa, gatilho).await;
     assert!(
-        cenario.ativa(conversa).is_none(),
+        scenario.active(conversa).is_none(),
         "confiança baixa não inicia nada, mesmo escolhendo o fluxo certo"
     );
-    assert!(!pedido(&provedor.received()[0], "<fluxos_de_atendimento>"));
-    assert_eq!(g9.abaixo_do_limiar.value(), 1);
+    assert!(!request(&provedor.received()[0], "<fluxos_de_atendimento>"));
+    assert_eq!(g9.below_threshold.value(), 1);
     let _ = fluxo;
 }
 
-/// 4. Jev fora do ar entrega a reserva: o catálogo vai ao prompt e o turno registra o fallback.
 #[tokio::test]
 async fn jev_fora_entrega_a_reserva() {
-    let cenario = Cenario::novo("reserva");
-    let fluxo = cenario.fluxo(cenario.agente);
-    let conversa = cenario.conversa(cenario.agente);
+    let scenario = Scenario::new("reserva");
+    let fluxo = scenario.fluxo(scenario.agente);
+    let conversa = scenario.conversa(scenario.agente);
     let jev = Arc::new(FakeJev::failing(JevError::Network(
         "sem rede no teste".to_owned(),
     )));
-    let g9 = MetricasG9::proprias();
-    let (motor, provedor) = cenario.motor(
-        cenario.agente,
+    let g9 = MetricsG9::own();
+    let (engine, provedor) = scenario.engine(
+        scenario.agente,
         Some(motor_jev(Arc::clone(&jev))),
         Some(FlowsConfig::default()),
         g9.clone(),
     );
 
-    let gatilho = cenario.falar(conversa, "quero marcar uma visita");
-    let resumo = cenario.turno(&motor, conversa, gatilho).await;
-    assert_eq!(resumo.estado, poph_store::TurnState::Completed);
+    let gatilho = scenario.falar(conversa, "quero marcar uma visita");
+    let summary = scenario.turno(&engine, conversa, gatilho).await;
+    assert_eq!(summary.estado, poph_store::TurnState::Completed);
     assert!(
-        cenario.ativa(conversa).is_none(),
+        scenario.active(conversa).is_none(),
         "Jev fora do ar não inicia nada: quem inicia é o código"
     );
     let pedidos = provedor.received();
     assert!(
-        pedido(&pedidos[0], "<fluxos_de_atendimento>"),
+        request(&pedidos[0], "<fluxos_de_atendimento>"),
         "a reserva põe o catálogo no prompt"
     );
     assert!(
-        pedido(&pedidos[0], &fluxo.slug),
+        request(&pedidos[0], &fluxo.slug),
         "o catálogo traz o id do fluxo"
     );
-    assert!(pedido(
+    assert!(request(
         &pedidos[0],
         "O cliente quer marcar uma visita técnica."
     ));
-    // Sem a ferramenta (FX-24), o catálogo vai como informação, não como instrução impossível.
-    assert!(!pedido(&pedidos[0], "chame fluxo_iniciar"));
+    assert!(!request(&pedidos[0], "chame fluxo_iniciar"));
 
-    let turno = cenario.ultimo_turno(conversa);
-    let gravado: serde_json::Value = serde_json::from_str(&turno.jev_json).expect("JSON");
-    assert_eq!(gravado["fluxo"]["resultado"], "fallback");
+    let turno = scenario.ultimo_turno(conversa);
+    let stored: serde_json::Value = serde_json::from_str(&turno.jev_json).expect("JSON");
+    assert_eq!(stored["fluxo"]["resultado"], "fallback");
     assert_eq!(g9.fallback.value(), 1);
 }
 
-/// 5a. Fluxo inativo não entra nas opções do G9 e nunca inicia, mesmo escolhido pelo Jev.
 #[tokio::test]
 async fn fluxo_inativo_nao_entra_nas_opcoes_nem_inicia() {
-    let cenario = Cenario::novo("inativo");
-    let fluxo = cenario.fluxo(cenario.agente);
-    let atual = cenario
+    let scenario = Scenario::new("inativo");
+    let fluxo = scenario.fluxo(scenario.agente);
+    let current = scenario
         .store
         .flows()
-        .get(cenario.org, fluxo.id)
+        .get(scenario.org, fluxo.id)
         .expect("lê o fluxo");
-    cenario
+    scenario
         .store
         .flows()
         .update(
-            cenario.org,
+            scenario.org,
             fluxo.id,
-            atual.version,
+            current.version,
             poph_store::FlowChange {
                 status: Some(poph_store::Status::Inactive),
                 ..poph_store::FlowChange::default()
@@ -615,41 +580,36 @@ async fn fluxo_inativo_nao_entra_nas_opcoes_nem_inicia() {
         )
         .expect("desativa o fluxo");
 
-    let conversa = cenario.conversa(cenario.agente);
+    let conversa = scenario.conversa(scenario.agente);
     let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g9_iniciar_fluxo",
         &fluxo.slug,
     )])));
-    let (motor, provedor) = cenario.motor(
-        cenario.agente,
+    let (engine, provedor) = scenario.engine(
+        scenario.agente,
         Some(motor_jev(Arc::clone(&jev))),
         Some(FlowsConfig::default()),
-        MetricasG9::proprias(),
+        MetricsG9::own(),
     );
-    let gatilho = cenario.falar(conversa, "quero marcar visita");
-    cenario.turno(&motor, conversa, gatilho).await;
+    let gatilho = scenario.falar(conversa, "quero marcar visita");
+    scenario.turno(&engine, conversa, gatilho).await;
     assert!(
-        cenario.ativa(conversa).is_none(),
+        scenario.active(conversa).is_none(),
         "fluxo inativo não inicia execução nova (PRD §6.2)"
     );
-    // Ele nem entra nas opções do G9 (é o que `fluxo::preparar` filtra) — e por isso não aparece
-    // em prompt nenhum. A recusa da validação para um fluxo que ficou inativo no meio do turno é
-    // provada nos testes de unidade de `fluxo::iniciar`.
     let pedidos = provedor.received();
-    assert!(!pedido(&pedidos[0], "agendar_visita"));
-    assert!(!pedido(&pedidos[0], "<fluxos_de_atendimento>"));
+    assert!(!request(&pedidos[0], "agendar_visita"));
+    assert!(!request(&pedidos[0], "<fluxos_de_atendimento>"));
 }
 
-/// 5b. Fluxo não liberado ao agente não entra nas opções nem inicia, mesmo escolhido pelo Jev.
 #[tokio::test]
 async fn fluxo_nao_liberado_nao_entra_nas_opcoes_nem_inicia() {
-    let cenario = Cenario::novo("nao-liberado");
-    // Outro agente é quem recebe a permissão: o agente da conversa não pode iniciar.
-    let outro = cenario
+    let scenario = Scenario::new("nao-liberado");
+    let other = scenario
         .store
         .agents()
         .create(
-            cenario.org,
+            scenario.org,
             NewAgent {
                 name: "Outro".to_owned(),
                 slug: "outro".to_owned(),
@@ -658,35 +618,33 @@ async fn fluxo_nao_liberado_nao_entra_nas_opcoes_nem_inicia() {
         )
         .expect("cria o outro agente")
         .id;
-    let fluxo = cenario.fluxo(outro);
+    let fluxo = scenario.fluxo(other);
 
-    let conversa = cenario.conversa(cenario.agente);
+    let conversa = scenario.conversa(scenario.agente);
     let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g9_iniciar_fluxo",
         &fluxo.slug,
     )])));
-    let (motor, provedor) = cenario.motor(
-        cenario.agente,
+    let (engine, provedor) = scenario.engine(
+        scenario.agente,
         Some(motor_jev(Arc::clone(&jev))),
         Some(FlowsConfig::default()),
-        MetricasG9::proprias(),
+        MetricsG9::own(),
     );
-    let gatilho = cenario.falar(conversa, "quero marcar visita");
-    cenario.turno(&motor, conversa, gatilho).await;
+    let gatilho = scenario.falar(conversa, "quero marcar visita");
+    scenario.turno(&engine, conversa, gatilho).await;
     assert!(
-        cenario.ativa(conversa).is_none(),
+        scenario.active(conversa).is_none(),
         "sem a permissão, o fluxo não é oferecido nem iniciado"
     );
     let pedidos = provedor.received();
-    assert!(!pedido(&pedidos[0], "agendar_visita"));
+    assert!(!request(&pedidos[0], "agendar_visita"));
 }
 
-/// 5c. Fluxo de outra organização nunca inicia, mesmo com o Jev escolhendo o slug dele.
 #[tokio::test]
 async fn fluxo_de_outra_org_nunca_inicia() {
-    let cenario = Cenario::novo("outra-org");
-    // A org vizinha tem um fluxo com o **mesmo slug**; ele não pode ser iniciado aqui.
-    let outra_org = cenario
+    let scenario = Scenario::new("outra-org");
+    let outra_org = scenario
         .store
         .orgs()
         .create(NewOrg {
@@ -696,7 +654,7 @@ async fn fluxo_de_outra_org_nunca_inicia() {
         })
         .expect("cria a org vizinha")
         .id;
-    let agente_vizinho = cenario
+    let agente_vizinho = scenario
         .store
         .agents()
         .create(
@@ -709,7 +667,7 @@ async fn fluxo_de_outra_org_nunca_inicia() {
         )
         .expect("cria o agente vizinho")
         .id;
-    let fluxo_vizinho = cenario
+    let fluxo_vizinho = scenario
         .store
         .flows()
         .create(
@@ -722,21 +680,21 @@ async fn fluxo_de_outra_org_nunca_inicia() {
             },
         )
         .expect("cria o fluxo da vizinha");
-    let atual = cenario
+    let current = scenario
         .store
         .flows()
         .get(outra_org, fluxo_vizinho.id)
         .expect("lê o fluxo da vizinha");
-    let compilado = compilar(SCRIPT, &Limites::default());
-    let ir = compilado.ir().expect("compila");
-    cenario
+    let compiled = compilar(SCRIPT, &Limites::default());
+    let ir = compiled.ir().expect("compila");
+    scenario
         .store
         .revisions()
         .publish_revision(
             outra_org,
             fluxo_vizinho.id,
             RevisionPublication {
-                expected: atual.version,
+                expected: current.version,
                 fonte: SCRIPT.to_owned(),
                 definicao_json: serde_json::to_string(ir).expect("IR em JSON"),
                 schema_versao: Some(ir.schema_versao),
@@ -746,244 +704,236 @@ async fn fluxo_de_outra_org_nunca_inicia() {
             },
         )
         .expect("publica na vizinha");
-    cenario
+    scenario
         .store
         .flows()
         .release(outra_org, agente_vizinho, fluxo_vizinho.id)
         .expect("libera para o vizinho");
 
-    let conversa = cenario.conversa(cenario.agente);
+    let conversa = scenario.conversa(scenario.agente);
     let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g9_iniciar_fluxo",
         "agendar_visita",
     )])));
-    let (motor, provedor) = cenario.motor(
-        cenario.agente,
+    let (engine, provedor) = scenario.engine(
+        scenario.agente,
         Some(motor_jev(Arc::clone(&jev))),
         Some(FlowsConfig::default()),
-        MetricasG9::proprias(),
+        MetricsG9::own(),
     );
-    let gatilho = cenario.falar(conversa, "quero marcar visita");
-    cenario.turno(&motor, conversa, gatilho).await;
+    let gatilho = scenario.falar(conversa, "quero marcar visita");
+    scenario.turno(&engine, conversa, gatilho).await;
     assert!(
-        cenario.ativa(conversa).is_none(),
+        scenario.active(conversa).is_none(),
         "fluxo de outra org não existe para esta organização"
     );
-    // O slug existe só na org vizinha: não está nas opções, nem no prompt, nem em execução.
     let pedidos = provedor.received();
-    assert!(!pedido(&pedidos[0], "agendar_visita"));
-    // E a Ficha daqui continua sem execução nenhuma.
+    assert!(!request(&pedidos[0], "agendar_visita"));
     assert!(
-        cenario
+        scenario
             .store
             .executions()
-            .from_case(cenario.org, cenario.ficha(conversa).id, 10)
+            .from_case(scenario.org, scenario.ficha(conversa).id, 10)
             .expect("lê as execuções")
             .is_empty()
     );
 }
 
-/// 6. Com execução ativa o G9 não é perguntado (e o bloco dela entra no prompt).
 #[tokio::test]
 async fn execucao_ativa_nao_pergunta_o_jev() {
-    let cenario = Cenario::novo("ativa");
-    let fluxo = cenario.fluxo(cenario.agente);
-    let conversa = cenario.conversa(cenario.agente);
+    let scenario = Scenario::new("ativa");
+    let fluxo = scenario.fluxo(scenario.agente);
+    let conversa = scenario.conversa(scenario.agente);
 
-    // O atendente abriu o fluxo pela API (FX-30) antes da mensagem.
-    let ficha = cenario.ficha(conversa);
-    let revisao = cenario
+    let ficha = scenario.ficha(conversa);
+    let revision = scenario
         .store
         .revisions()
-        .current(cenario.org, fluxo.id)
+        .current(scenario.org, fluxo.id)
         .expect("lê a revisão")
         .expect("há revisão publicada");
-    let compilado = compilar(SCRIPT, &Limites::default());
-    let ir = compilado.ir().expect("compila");
+    let compiled = compilar(SCRIPT, &Limites::default());
+    let ir = compiled.ir().expect("compila");
     let estado = poph_fluxos::motor::iniciar(ir).expect("estado inicial");
-    let avaliador = poph_fluxos::Avaliador::sem_funcoes();
-    let contexto = poph_fluxos::motor::Contexto::novo(&avaliador);
-    let efeitos =
-        poph_fluxos::motor::efeitos_de_entrada(ir, estado.no_atual.id(), &estado.dados, &contexto)
+    let evaluator = poph_fluxos::Avaliador::sem_funcoes();
+    let context = poph_fluxos::motor::Contexto::novo(&evaluator);
+    let effects =
+        poph_fluxos::motor::efeitos_de_entrada(ir, estado.no_atual.id(), &estado.dados, &context)
             .expect("efeitos de entrada")
             .iter()
-            .map(poph_agent::fluxos_transicao::efeito_da_transicao)
+            .map(poph_agent::flows_transition::effect_of_transition)
             .collect();
-    cenario
+    scenario
         .store
         .executions()
         .start_execution(
-            cenario.org,
+            scenario.org,
             poph_store::ExecutionStart {
                 case: ficha.id,
                 flow: fluxo.id,
-                revision: revisao.id,
+                revision: revision.id,
                 actor: poph_types::EventActor::Attendant,
                 ator_ref: Some("token-de-teste"),
                 jev_decision: None,
-                initial_state: poph_agent::fluxos_transicao::estado_para_banco(&estado),
-                inbound_effects: efeitos,
+                initial_state: poph_agent::flows_transition::state_for_database(&estado),
+                inbound_effects: effects,
                 chave_idempotencia: Some("abertura-do-atendente"),
             },
         )
         .expect("o atendente abre a execução");
 
     let jev = Arc::new(FakeJev::with_choices(std::collections::BTreeMap::new()));
-    let (motor, provedor) = cenario.motor(
-        cenario.agente,
+    let (engine, provedor) = scenario.engine(
+        scenario.agente,
         Some(motor_jev(Arc::clone(&jev))),
         Some(FlowsConfig::default()),
-        MetricasG9::proprias(),
+        MetricsG9::own(),
     );
-    let gatilho = cenario.falar(conversa, "meu nome é Ana Teste");
-    cenario.turno(&motor, conversa, gatilho).await;
+    let gatilho = scenario.falar(conversa, "meu nome é Ana Teste");
+    scenario.turno(&engine, conversa, gatilho).await;
 
     assert_eq!(jev.calls(), 0, "com execução ativa não há pergunta ao Jev");
     let pedidos = provedor.received();
-    assert!(pedido(&pedidos[0], "Fluxo em andamento: Agendar visita."));
-    let turno = cenario.ultimo_turno(conversa);
-    let gravado: serde_json::Value = serde_json::from_str(&turno.jev_json).expect("JSON");
-    assert_eq!(gravado["fluxo"]["resultado"], "execucao_ativa");
+    assert!(request(&pedidos[0], "Fluxo em andamento: Agendar visita."));
+    let turno = scenario.ultimo_turno(conversa);
+    let stored: serde_json::Value = serde_json::from_str(&turno.jev_json).expect("JSON");
+    assert_eq!(stored["fluxo"]["resultado"], "execucao_ativa");
 }
 
-/// 7. `[fluxos] ativo = false` desliga tudo isso e a Ficha continua existindo.
 #[tokio::test]
 async fn fluxos_desligados_ignoram_tudo_e_a_ficha_segue() {
-    let cenario = Cenario::novo("desligado");
-    let fluxo = cenario.fluxo(cenario.agente);
-    let conversa = cenario.conversa(cenario.agente);
+    let scenario = Scenario::new("desligado");
+    let fluxo = scenario.fluxo(scenario.agente);
+    let conversa = scenario.conversa(scenario.agente);
     let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g9_iniciar_fluxo",
         &fluxo.slug,
     )])));
-    let (motor, provedor) = cenario.motor(
-        cenario.agente,
+    let (engine, provedor) = scenario.engine(
+        scenario.agente,
         Some(motor_jev(Arc::clone(&jev))),
         Some(FlowsConfig {
             enabled: false,
             ..FlowsConfig::default()
         }),
-        MetricasG9::proprias(),
+        MetricsG9::own(),
     );
-    let gatilho = cenario.falar(conversa, "quero marcar visita");
-    cenario.turno(&motor, conversa, gatilho).await;
+    let gatilho = scenario.falar(conversa, "quero marcar visita");
+    scenario.turno(&engine, conversa, gatilho).await;
 
     assert!(
-        cenario.ativa(conversa).is_none(),
+        scenario.active(conversa).is_none(),
         "motor desligado não inicia"
     );
     assert_eq!(jev.calls(), 0, "motor desligado não pergunta ao Jev");
-    assert!(!pedido(&provedor.received()[0], "<fluxos_de_atendimento>"));
+    assert!(!request(&provedor.received()[0], "<fluxos_de_atendimento>"));
     assert!(
-        cenario
+        scenario
             .store
             .cases()
-            .by_conversation(cenario.org, conversa)
+            .by_conversation(scenario.org, conversa)
             .expect("lê")
             .is_some(),
         "a Ficha continua sendo criada com o motor desligado"
     );
 }
 
-/// 8. O painel "por quê" (`turns.jev_json`) mostra a decisão do G9 e o que o código fez.
 #[tokio::test]
 async fn painel_por_que_mostra_a_decisao() {
-    let cenario = Cenario::novo("painel");
-    let fluxo = cenario.fluxo(cenario.agente);
-    let conversa = cenario.conversa(cenario.agente);
+    let scenario = Scenario::new("painel");
+    let fluxo = scenario.fluxo(scenario.agente);
+    let conversa = scenario.conversa(scenario.agente);
     let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g9_iniciar_fluxo",
         &fluxo.slug,
     )])));
-    let g9 = MetricasG9::proprias();
-    let (motor, _provedor) = cenario.motor(
-        cenario.agente,
+    let g9 = MetricsG9::own();
+    let (engine, _provedor) = scenario.engine(
+        scenario.agente,
         Some(motor_jev(Arc::clone(&jev))),
         Some(FlowsConfig::default()),
         g9.clone(),
     );
-    let gatilho = cenario.falar(conversa, "quero marcar uma visita");
-    let resumo = cenario.turno(&motor, conversa, gatilho).await;
+    let gatilho = scenario.falar(conversa, "quero marcar uma visita");
+    let summary = scenario.turno(&engine, conversa, gatilho).await;
 
-    let registrado = resumo.jev.expect("o turno devolve o Jev");
+    let registrado = summary.jev.expect("o turno devolve o Jev");
     assert_eq!(registrado.choice(IdGate::G9), Some(fluxo.slug.as_str()));
-    let turno = cenario.ultimo_turno(conversa);
-    let gravado: serde_json::Value = serde_json::from_str(&turno.jev_json).expect("JSON");
-    assert_eq!(gravado["decisoes"][0]["gate"], "g9");
-    assert_eq!(gravado["decisoes"][0]["escolha"], "agendar_visita");
-    assert_eq!(gravado["fluxo"]["resultado"], "iniciou");
-    assert_eq!(gravado["fluxo"]["fluxo"], "agendar_visita");
-    assert_eq!(gravado["fluxo"]["etapa"], "coleta");
-    assert!(gravado["fluxo"]["execucao"].as_str().is_some());
-    assert_eq!(g9.iniciou.value(), 1);
+    let turno = scenario.ultimo_turno(conversa);
+    let stored: serde_json::Value = serde_json::from_str(&turno.jev_json).expect("JSON");
+    assert_eq!(stored["decisoes"][0]["gate"], "g9");
+    assert_eq!(stored["decisoes"][0]["escolha"], "agendar_visita");
+    assert_eq!(stored["fluxo"]["resultado"], "iniciou");
+    assert_eq!(stored["fluxo"]["fluxo"], "agendar_visita");
+    assert_eq!(stored["fluxo"]["etapa"], "coleta");
+    assert!(stored["fluxo"]["execucao"].as_str().is_some());
+    assert_eq!(g9.start.value(), 1);
 }
 
-/// 4b. Gate desligado no agente: o Jev não é perguntado e o catálogo vai ao prompt (reserva).
 #[tokio::test]
 async fn gate_desligado_no_agente_entrega_a_reserva_sem_perguntar() {
-    let cenario = Cenario::novo("gate-off");
-    let fluxo = cenario.fluxo(cenario.agente);
-    cenario.ajustar_jev_do_agente(cenario.agente, r#"{"g9": false}"#);
-    let conversa = cenario.conversa(cenario.agente);
+    let scenario = Scenario::new("gate-off");
+    let fluxo = scenario.fluxo(scenario.agente);
+    scenario.ajustar_jev_do_agente(scenario.agente, r#"{"g9": false}"#);
+    let conversa = scenario.conversa(scenario.agente);
     let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g9_iniciar_fluxo",
         &fluxo.slug,
     )])));
-    let (motor, provedor) = cenario.motor(
-        cenario.agente,
+    let (engine, provedor) = scenario.engine(
+        scenario.agente,
         Some(motor_jev(Arc::clone(&jev))),
         Some(FlowsConfig::default()),
-        MetricasG9::proprias(),
+        MetricsG9::own(),
     );
-    let gatilho = cenario.falar(conversa, "quero marcar uma visita");
-    cenario.turno(&motor, conversa, gatilho).await;
+    let gatilho = scenario.falar(conversa, "quero marcar uma visita");
+    scenario.turno(&engine, conversa, gatilho).await;
 
     assert_eq!(jev.calls(), 0, "gate desligado não é perguntado");
-    assert!(cenario.ativa(conversa).is_none(), "e nada inicia sozinho");
+    assert!(scenario.active(conversa).is_none(), "e nada inicia sozinho");
     let pedidos = provedor.received();
     assert!(
-        pedido(&pedidos[0], "<fluxos_de_atendimento>"),
+        request(&pedidos[0], "<fluxos_de_atendimento>"),
         "a reserva entrega o catálogo ao modelo"
     );
-    let turno = cenario.ultimo_turno(conversa);
-    let gravado: serde_json::Value = serde_json::from_str(&turno.jev_json).expect("JSON");
-    assert_eq!(gravado["fluxo"]["resultado"], "reserva");
+    let turno = scenario.ultimo_turno(conversa);
+    let stored: serde_json::Value = serde_json::from_str(&turno.jev_json).expect("JSON");
+    assert_eq!(stored["fluxo"]["resultado"], "reserva");
 }
 
-/// O estado enviado ao Jev leva os fluxos liberados (opções do G9), com o gatilho do script.
 #[tokio::test]
 async fn estado_do_g9_leva_os_fluxos_liberados() {
-    let cenario = Cenario::novo("estado");
-    let fluxo = cenario.fluxo(cenario.agente);
-    let conversa = cenario.conversa(cenario.agente);
+    let scenario = Scenario::new("estado");
+    let fluxo = scenario.fluxo(scenario.agente);
+    let conversa = scenario.conversa(scenario.agente);
     let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g9_iniciar_fluxo",
         &fluxo.slug,
     )])));
-    let (motor, _provedor) = cenario.motor(
-        cenario.agente,
+    let (engine, _provedor) = scenario.engine(
+        scenario.agente,
         Some(motor_jev(Arc::clone(&jev))),
         Some(FlowsConfig::default()),
-        MetricasG9::proprias(),
+        MetricsG9::own(),
     );
-    let gatilho = cenario.falar(conversa, "quero marcar uma visita");
-    cenario.turno(&motor, conversa, gatilho).await;
+    let gatilho = scenario.falar(conversa, "quero marcar uma visita");
+    scenario.turno(&engine, conversa, gatilho).await;
 
-    let pedido = &jev.requests()[0];
-    assert!(pedido.questions.contains_key("g9_iniciar_fluxo"));
-    let liberados = &pedido.estado["fluxos"]["liberados"];
-    assert_eq!(liberados[0]["id"], "agendar_visita");
-    assert_eq!(liberados[0]["nome"], "Agendar visita");
+    let request = &jev.requests()[0];
+    assert!(request.questions.contains_key("g9_iniciar_fluxo"));
+    let released = &request.estado["fluxos"]["liberados"];
+    assert_eq!(released[0]["id"], "agendar_visita");
+    assert_eq!(released[0]["nome"], "Agendar visita");
     assert_eq!(
-        liberados[0]["quando"],
+        released[0]["quando"],
         "O cliente quer marcar uma visita técnica."
     );
-    assert_eq!(liberados[0]["exemplos"][0], "quero marcar uma visita");
+    assert_eq!(released[0]["exemplos"][0], "quero marcar uma visita");
 }
 
-fn escolhas(itens: &[(&str, &str)]) -> std::collections::BTreeMap<String, String> {
-    itens
+fn escolhas(items: &[(&str, &str)]) -> std::collections::BTreeMap<String, String> {
+    items
         .iter()
-        .map(|(id, escolha)| ((*id).to_owned(), (*escolha).to_owned()))
+        .map(|(id, choice)| ((*id).to_owned(), (*choice).to_owned()))
         .collect()
 }

@@ -14,7 +14,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use clap::Args;
-use poph_agent::turno::{TransporteConsole, TurnEvent, TurnInput, TurnObserver};
+use poph_agent::turno::{TransportConsole, TurnEvent, TurnInput, TurnObserver};
 use poph_core::llm::Cancellation;
 use poph_store::{Conversa, Direction, NewConversation, NewMessage, Role, Store};
 use poph_types::{AgentId, BaseMetrics, ConversationId, OrgId, Registry};
@@ -106,7 +106,7 @@ fn rodar(
         .map_err(|erro| format!("não consegui iniciar o runtime: {erro}"))?;
 
     // O canal do chat confirma os itens da `outbox` sem imprimir de novo: o texto já saiu no stream.
-    let transporte = TransporteConsole::silencioso();
+    let transporte = TransportConsole::silencioso();
     if args.json {
         println!(
             "{}",
@@ -129,12 +129,12 @@ fn rodar(
         // Rede de segurança: a base pode ter sido escrita fora da CLI (importador, Console) ou o
         // índice pode ter sido limpo por troca de modelo. Sincronizar aqui só reembeda o que mudou.
         if let Some(base) = &base
-            && let Err(erro) = base.sincronizar_agente(org, agente.id).await
+            && let Err(erro) = base.synchronise_agent(org, agente.id).await
         {
             eprintln!("[aviso] não consegui sincronizar o índice da base: {erro}");
         }
         if let Some(catalogo) = &catalogo
-            && let Err(erro) = catalogo.sincronizar_agente(org, agente.id).await
+            && let Err(erro) = catalogo.synchronise_agent(org, agente.id).await
         {
             eprintln!("[aviso] não consegui sincronizar o índice de produtos: {erro}");
         }
@@ -234,7 +234,7 @@ fn rodar(
 
             // Confirma a saída no canal do chat (o texto já foi impresso pelo stream).
             // Só os itens do console: a fila da org também tem WhatsApp, que este processo não entrega (HR-26f).
-            if let Err(erro) = fluxo.enviar_pendentes_do_console(org, &transporte).await {
+            if let Err(erro) = fluxo.send_pending_console(org, &transporte).await {
                 if args.json {
                     println!(
                         "{}",

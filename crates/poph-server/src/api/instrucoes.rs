@@ -82,7 +82,11 @@ fn preparar(
             dados
                 .validar()
                 .map_err(|err| ApiError::validacao("structured", err.to_string()))?;
-            Ok((dados.to_json(), poph_agent::compor_instrucoes(&dados), true))
+            Ok((
+                dados.to_json(),
+                poph_agent::compose_instructions(&dados),
+                true,
+            ))
         }
         (None, Some(markdown)) => {
             let estruturado =

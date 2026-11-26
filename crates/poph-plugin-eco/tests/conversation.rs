@@ -3,7 +3,7 @@ mod common;
 use std::path::PathBuf;
 
 use common::Scenario;
-use poph_agent::fila_integracao::EnvioPeloCanal;
+use poph_agent::queue_integration::SendByChannel;
 use poph_store::{NewOutboxItem, OutboxState};
 use poph_types::{OutboxId, SendText, TurnId};
 
@@ -22,15 +22,15 @@ async fn text_goes_out_through_the_plugin_and_comes_back_inverted_through_the_in
     let transport = scenario.transport();
     let report = scenario
         .flow
-        .enviar_pendentes(scenario.org, &transport)
+        .send_pending(scenario.org, &transport)
         .await
         .expect("envia o pendente");
-    assert_eq!(report.enviados, 1, "{report:?}");
+    assert_eq!(report.sent, 1, "{report:?}");
     assert_eq!(scenario.item_state(item.id), OutboxState::Sent);
 
     scenario
         .wait_until("o evento chegar na inbox", || {
-            scenario.inbox.contadores().gravados >= 1
+            scenario.inbox.counters().stored >= 1
         })
         .await;
     let messages = scenario.messages();
@@ -53,14 +53,14 @@ async fn text_goes_out_through_the_plugin_and_comes_back_inverted_through_the_in
         .expect("o plugin aceita a repetição");
     scenario
         .wait_until("a repetição ser descartada", || {
-            scenario.inbox.contadores().duplicados >= 1
+            scenario.inbox.counters().duplicated >= 1
         })
         .await;
 
-    let counters = scenario.inbox.contadores();
-    assert_eq!(counters.gravados, 1, "{counters:?}");
-    assert_eq!(counters.duplicados, 1, "{counters:?}");
-    assert_eq!(counters.falhas, 0, "{counters:?}");
+    let counters = scenario.inbox.counters();
+    assert_eq!(counters.stored, 1, "{counters:?}");
+    assert_eq!(counters.duplicated, 1, "{counters:?}");
+    assert_eq!(counters.failures, 0, "{counters:?}");
     assert_eq!(
         scenario.messages().len(),
         1,
@@ -114,12 +114,12 @@ async fn library_file_becomes_a_send_command() {
     let transport = scenario.transport();
     scenario
         .flow
-        .enviar_pendentes(scenario.org, &transport)
+        .send_pending(scenario.org, &transport)
         .await
         .expect("envia o arquivo");
     assert_eq!(scenario.item_state(item.id), OutboxState::Sent);
 
-    assert_eq!(scenario.inbox.contadores().gravados, 0);
+    assert_eq!(scenario.inbox.counters().stored, 0);
     assert!(scenario.messages().is_empty());
 
     scenario.shutdown().await;
@@ -133,11 +133,11 @@ async fn conversation_without_a_contact_fails_without_blocking_the_queue() {
     let transport = scenario.transport();
     let report = scenario
         .flow
-        .enviar_pendentes(scenario.org, &transport)
+        .send_pending(scenario.org, &transport)
         .await
         .expect("o ciclo termina");
 
-    assert_eq!(report.falharam, 1, "{report:?}");
+    assert_eq!(report.failed, 1, "{report:?}");
     let stored = scenario
         .store
         .outbox()
@@ -147,7 +147,7 @@ async fn conversation_without_a_contact_fails_without_blocking_the_queue() {
     let reason = stored.ultimo_erro.unwrap_or_default();
     assert!(reason.contains("peer"), "{reason}");
 
-    assert_eq!(scenario.inbox.contadores().gravados, 0);
+    assert_eq!(scenario.inbox.counters().stored, 0);
     assert_eq!(scenario.supervisor.counters().commands, 0);
 
     scenario.shutdown().await;
@@ -168,7 +168,7 @@ async fn agent_without_a_contact_uses_the_one_from_the_event() {
         .expect("envia para o contato da conversa");
     scenario
         .wait_until("gravar o primeiro contato", || {
-            scenario.inbox.contadores().gravados >= 1
+            scenario.inbox.counters().stored >= 1
         })
         .await;
 
@@ -183,7 +183,7 @@ async fn agent_without_a_contact_uses_the_one_from_the_event() {
         .expect("envia para outro contato");
     scenario
         .wait_until("gravar o segundo contato", || {
-            scenario.inbox.contadores().gravados >= 2
+            scenario.inbox.counters().stored >= 2
         })
         .await;
 
@@ -221,13 +221,13 @@ async fn transport_rejects_item_of_unknown_type_without_calling_the_plugin() {
         .expect("enfileira")
         .1;
 
-    let transport: EnvioPeloCanal = scenario.transport();
+    let transport: SendByChannel = scenario.transport();
     let report = scenario
         .flow
-        .enviar_pendentes(scenario.org, &transport)
+        .send_pending(scenario.org, &transport)
         .await
         .expect("o ciclo termina");
-    assert_eq!(report.falharam, 1, "{report:?}");
+    assert_eq!(report.failed, 1, "{report:?}");
     let stored: OutboxId = item.id;
     assert_eq!(
         scenario.item_state(stored),

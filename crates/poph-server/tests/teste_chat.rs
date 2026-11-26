@@ -17,14 +17,12 @@ use std::time::{Duration, Instant, SystemTime};
 
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, SaltString};
-use poph_agent::atores::{Atores, OpcoesAtores};
-use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
-use poph_agent::entrada_saida::{Fluxo, OpcoesFluxo};
-use poph_agent::limites::{Limitador, OpcoesLimites};
-use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
-use poph_agent::turno::{
-    RegistroFerramentas, RegistroPadrao, TurnEngine, TurnOptions, TurnProcessor,
-};
+use poph_agent::actors::{ActorOptions, Actors};
+use poph_agent::config_hot::{ConfigHot, HotConfigOptions};
+use poph_agent::entry_output::{FlowOptions, Fluxo};
+use poph_agent::limites::{LimitOptions, Limiter};
+use poph_agent::metrics::{MetricsMemory, MetricsTurn};
+use poph_agent::turno::{DefaultRegistry, ToolRegistry, TurnEngine, TurnOptions, TurnProcessor};
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, LlmProvider, Request, Script};
 use poph_files::FileConfig;
 use poph_server::Estado;
@@ -251,7 +249,7 @@ impl Cenario {
                 .expect("arquivo na biblioteca");
             let instrucoes = StructuredInstructions {
                 tools: vec![ToolConfig {
-                    name: poph_agent::NOME_ENVIAR_ARQUIVO.to_owned(),
+                    name: poph_agent::NAME_SEND_FILE.to_owned(),
                     enabled: true,
                     when_to_use: String::new(),
                 }],
@@ -281,32 +279,29 @@ impl Cenario {
             let provedor: Arc<dyn LlmProvider> = fake.clone();
             let mut motor = TurnEngine::new(
                 Arc::clone(&store),
-                ConfigQuente::nova(
+                ConfigHot::new(
                     Arc::clone(&store),
-                    OpcoesConfigQuente::default(),
-                    MetricasMemoria::proprio(),
+                    HotConfigOptions::default(),
+                    MetricsMemory::own(),
                 ),
-                Arc::new(Limitador::novo(
-                    OpcoesLimites::default(),
-                    MetricasMemoria::proprio(),
-                )),
+                Arc::new(Limiter::new(LimitOptions::default(), MetricsMemory::own())),
                 provedor,
                 TurnOptions::default(),
-                MetricasTurno::proprio(),
+                MetricsTurn::own(),
             );
             if arquivo.is_some() {
                 let registro =
-                    poph_agent::biblioteca::registrar(RegistroPadrao::novo(), Arc::clone(&store));
-                motor = motor.with_tools(Arc::new(registro) as Arc<dyn RegistroFerramentas>);
+                    poph_agent::library::register(DefaultRegistry::new(), Arc::clone(&store));
+                motor = motor.with_tools(Arc::new(registro) as Arc<dyn ToolRegistry>);
             }
             let motor = Arc::new(motor);
             let processador = Arc::new(TurnProcessor::new(Arc::clone(&motor)));
-            let atores = Atores::novo(
+            let atores = Actors::new(
                 processador.clone(),
-                OpcoesAtores::default(),
-                MetricasMemoria::proprio(),
+                ActorOptions::default(),
+                MetricsMemory::own(),
             );
-            let fluxo = Fluxo::nova(Arc::clone(&store), atores, OpcoesFluxo::default());
+            let fluxo = Fluxo::new(Arc::clone(&store), atores, FlowOptions::default());
             processador.attach_io(fluxo.clone());
             estado = estado
                 .com_motor(motor)
@@ -867,7 +862,7 @@ fn roteiro_envia_arquivo(arquivo: FileId) -> Vec<Script> {
         Script::Events(vec![
             LlmEvent::Tool(poph_core::llm::ToolCall {
                 id: "call-catalogo".to_owned(),
-                nome: poph_agent::NOME_ENVIAR_ARQUIVO.to_owned(),
+                nome: poph_agent::NAME_SEND_FILE.to_owned(),
                 arguments: json!({ "id": arquivo.to_string() }),
             }),
             LlmEvent::Fim(FinishReason::ToolCalls),
@@ -1032,14 +1027,14 @@ async fn historico_traz_o_registro_das_chamadas_de_ferramenta() {
     // `tools` continua sendo a lista de nomes, no formato antigo.
     assert_eq!(
         turno["tools"],
-        json!([poph_agent::NOME_ENVIAR_ARQUIVO]),
+        json!([poph_agent::NAME_SEND_FILE]),
         "{historico}"
     );
 
     let chamadas = turno["tool_calls"].as_array().expect("tool_calls");
     assert_eq!(chamadas.len(), 1, "uma chamada: {historico}");
     let chamada = &chamadas[0];
-    assert_eq!(chamada["nome"], poph_agent::NOME_ENVIAR_ARQUIVO);
+    assert_eq!(chamada["nome"], poph_agent::NAME_SEND_FILE);
     assert_eq!(chamada["estado"], "executada");
     assert!(chamada["motivo"].is_null());
     assert_eq!(chamada["rodada"], 0);

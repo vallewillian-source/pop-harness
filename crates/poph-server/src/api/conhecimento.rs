@@ -521,8 +521,8 @@ async fn sincronizar(
     let adaptador = Arc::new(QueuedEmbedder::new(fila, org, identidade));
     let (indice, _) = Index::open(e.store.rag_path(), adaptador, IndexConfig::default())
         .map_err(|_| ApiError::interno())?;
-    let base = poph_agent::BaseConhecimento::nova(Arc::clone(&e.store), Arc::new(indice));
-    base.sincronizar_agente(org, agente)
+    let base = poph_agent::KnowledgeBase::new(Arc::clone(&e.store), Arc::new(indice));
+    base.synchronise_agent(org, agente)
         .await
         .map_err(|_| ApiError::interno())
 }

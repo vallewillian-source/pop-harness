@@ -1,25 +1,12 @@
-//! G4 com efeito: o departamento que recebe a transferência (HR-32).
-//!
-//! O que se prova aqui, no turno de verdade (banco, agente, departamentos e conversa reais):
-//! - escolha válida do Jev manda a conversa para o departamento escolhido, com a origem registrada;
-//! - departamento de outra org, apagado, inativo, com nome ambíguo, fora das opções ou com confiança
-//!   baixa é **recusado pelo código** e a conversa vai para o departamento de transferência do
-//!   agente, com o motivo gravado;
-//! - sem resposta para o G4, vale o padrão (o comportamento de hoje);
-//! - com o G4 desligado, o turno grava exatamente o que gravava antes: o padrão, e uma decisão só no
-//!   registro (o G1);
-//! - agente sem departamento de transferência continua transferindo, sem departamento;
-//! - Jev fora do ar não trava o turno (e, sem o G1, não transfere: fallback é continuar).
-
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
-use poph_agent::limites::{Limitador, OpcoesLimites};
-use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
-use poph_agent::turno::{FuturoPausa, NoopObserver, Pausa, TurnEngine, TurnInput, TurnOptions};
+use poph_agent::config_hot::{ConfigHot, HotConfigOptions};
+use poph_agent::limites::{LimitOptions, Limiter};
+use poph_agent::metrics::{MetricsMemory, MetricsTurn};
+use poph_agent::turno::{FuturePause, NoopObserver, Pause, TurnEngine, TurnInput, TurnOptions};
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, Usage};
 use poph_jev::{
     BatchResponse, FakeJev, G1_TRANSFER, HandoffGuidance, IdGate, JevEngine, JevRequest,
@@ -35,38 +22,38 @@ const RESPOSTA_DO_MODELO: &str = "Olá! Como posso ajudar?";
 
 struct SemEspera;
 
-impl Pausa for SemEspera {
-    fn esperar(&self, _duracao: Duration) -> FuturoPausa {
+impl Pause for SemEspera {
+    fn wait(&self, _duracao: Duration) -> FuturePause {
         Box::pin(async {})
     }
 }
 
-/// Banco, org, agente e conversa de verdade numa pasta temporária.
-struct Cenario {
-    pasta: PathBuf,
+struct Scenario {
+    folder: PathBuf,
     store: Arc<Store>,
     org: OrgId,
     agente: AgentId,
     provedor: Arc<FakeProvider>,
 }
 
-impl Cenario {
-    fn novo(rotulo: &str) -> Self {
-        let pasta = std::env::temp_dir().join(format!(
-            "poph-hr32-{rotulo}-{}-{}",
+impl Scenario {
+    fn new(label: &str) -> Self {
+        let folder = std::env::temp_dir().join(format!(
+            "poph-hr32-{label}-{}-{}",
             std::process::id(),
             AgentId::generate()
         ));
-        let _ = std::fs::remove_dir_all(&pasta);
-        std::fs::create_dir_all(&pasta).expect("pasta do teste");
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).expect("pasta do teste");
         let store = Arc::new(
-            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco"),
+            Store::open_at(&folder.join("harness.db"), &folder.join("rag.db"))
+                .expect("abre o banco"),
         );
         let org = store
             .orgs()
             .create(NewOrg {
-                name: format!("Org {rotulo}"),
-                slug: format!("org-{rotulo}-{}", AgentId::generate()),
+                name: format!("Org {label}"),
+                slug: format!("org-{label}-{}", AgentId::generate()),
                 config_json: "{}".to_owned(),
             })
             .expect("cria a org")
@@ -76,8 +63,8 @@ impl Cenario {
             .create(
                 org,
                 NewAgent {
-                    name: format!("Bia {rotulo}"),
-                    slug: format!("bia-{rotulo}"),
+                    name: format!("Bia {label}"),
+                    slug: format!("bia-{label}"),
                     ..NewAgent::default()
                 },
             )
@@ -94,13 +81,13 @@ impl Cenario {
                 true,
             )
             .expect("grava as instruções");
-        let atual = store.agents().get(org, agente).expect("lê o agente");
+        let current = store.agents().get(org, agente).expect("lê o agente");
         store
             .agents()
             .update(
                 org,
                 agente,
-                atual.version,
+                current.version,
                 AgentChange {
                     handoff_active: Some(true),
                     ..AgentChange::default()
@@ -111,7 +98,7 @@ impl Cenario {
             (0..8).map(|_| roteiro(RESPOSTA_DO_MODELO)).collect(),
         ));
         Self {
-            pasta,
+            folder,
             store,
             org,
             agente,
@@ -160,7 +147,7 @@ impl Cenario {
     }
 
     fn desativar(&self, departamento: DepartmentId) {
-        let atual = self
+        let current = self
             .store
             .departments()
             .get(self.org, departamento)
@@ -170,7 +157,7 @@ impl Cenario {
             .update(
                 self.org,
                 departamento,
-                atual.version,
+                current.version,
                 DepartmentChange {
                     status: Some(Status::Inactive),
                     ..DepartmentChange::default()
@@ -187,7 +174,7 @@ impl Cenario {
     }
 
     fn definir_padrao(&self, departamento: DepartmentId) {
-        let atual = self
+        let current = self
             .store
             .agents()
             .get(self.org, self.agente)
@@ -197,7 +184,7 @@ impl Cenario {
             .update(
                 self.org,
                 self.agente,
-                atual.version,
+                current.version,
                 AgentChange {
                     handoff_department: Some(departamento),
                     ..AgentChange::default()
@@ -244,39 +231,36 @@ impl Cenario {
             .id
     }
 
-    fn motor(&self, jev: Option<Arc<JevEngine>>) -> TurnEngine {
-        let config = ConfigQuente::nova(
+    fn engine(&self, jev: Option<Arc<JevEngine>>) -> TurnEngine {
+        let config = ConfigHot::new(
             Arc::clone(&self.store),
-            OpcoesConfigQuente::default(),
-            MetricasMemoria::proprio(),
+            HotConfigOptions::default(),
+            MetricsMemory::own(),
         );
-        let limitador = Arc::new(Limitador::novo(
-            OpcoesLimites::default(),
-            MetricasMemoria::proprio(),
-        ));
-        let mut motor = TurnEngine::new(
+        let limiter = Arc::new(Limiter::new(LimitOptions::default(), MetricsMemory::own()));
+        let mut engine = TurnEngine::new(
             Arc::clone(&self.store),
             config,
-            limitador,
+            limiter,
             Arc::clone(&self.provedor) as Arc<dyn poph_core::llm::LlmProvider>,
             TurnOptions::default(),
-            MetricasTurno::proprio(),
+            MetricsTurn::own(),
         )
         .with_pause(Arc::new(SemEspera))
         .with_handoff(HandoffGuidance::default());
         if let Some(jev) = jev {
-            motor = motor.with_jev(jev);
+            engine = engine.with_jev(jev);
         }
-        motor
+        engine
     }
 
     async fn turno(
         &self,
-        motor: &TurnEngine,
+        engine: &TurnEngine,
         conversa: ConversationId,
         gatilho: MessageId,
     ) -> poph_agent::turno::TurnSummary {
-        motor
+        engine
             .run(
                 TurnInput::new(self.org, conversa, gatilho),
                 &mut NoopObserver,
@@ -315,9 +299,9 @@ impl Cenario {
     }
 }
 
-impl Drop for Cenario {
+impl Drop for Scenario {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.pasta);
+        let _ = std::fs::remove_dir_all(&self.folder);
     }
 }
 
@@ -332,37 +316,32 @@ fn roteiro(texto: &str) -> Script {
     ])
 }
 
-fn resposta(escolha: &str, confianca: f64) -> JevResponse {
+fn response(choice: &str, confidence: f64) -> JevResponse {
     let mut item = JevResponse {
-        choice: Some(escolha.to_owned()),
-        confidence: confianca,
+        choice: Some(choice.to_owned()),
+        confidence,
         ..JevResponse::default()
     };
-    item.probabilities.insert(escolha.to_owned(), confianca);
+    item.probabilities.insert(choice.to_owned(), confidence);
     item
 }
 
-/// Jev falso: o G1 transfere e o G4 responde o que o caso pedir.
-///
-/// `departamento` `None` = o lote volta **sem** resposta para o G4 (é o mesmo efeito de uma resposta
-/// ausente/ilegível por gate; erro e prazo do lote atingem todos os gates juntos, e aí não há
-/// transferência para rotear).
 fn jev(departamento: Option<(&'static str, f64)>, veio_o_g4: bool) -> Arc<FakeJev> {
-    Arc::new(FakeJev::new(move |pedido: &JevRequest| {
+    Arc::new(FakeJev::new(move |request: &JevRequest| {
         let mut respostas = BTreeMap::new();
-        if pedido.questions.contains_key(IdGate::G1.question_id()) {
+        if request.questions.contains_key(IdGate::G1.question_id()) {
             respostas.insert(
                 IdGate::G1.question_id().to_owned(),
-                resposta(G1_TRANSFER, 0.96),
+                response(G1_TRANSFER, 0.96),
             );
         }
         if veio_o_g4
-            && pedido.questions.contains_key(IdGate::G4.question_id())
-            && let Some((nome, confianca)) = departamento
+            && request.questions.contains_key(IdGate::G4.question_id())
+            && let Some((nome, confidence)) = departamento
         {
             respostas.insert(
                 IdGate::G4.question_id().to_owned(),
-                resposta(nome, confianca),
+                response(nome, confidence),
             );
         }
         Ok(BatchResponse {
@@ -382,47 +361,42 @@ fn motor_jev(jev: Arc<FakeJev>, com_g4: bool) -> Arc<JevEngine> {
     Arc::new(JevEngine::new(jev, gates, "jev-latest"))
 }
 
-// ───────────────────────────── escolha válida ─────────────────────────────
-
-/// O Jev escolhe um departamento ativo e a conversa vai para ele — não para o padrão.
 #[tokio::test]
 async fn g4_manda_a_conversa_para_o_departamento_escolhido() {
-    let cenario = Cenario::novo("escolha-valida");
-    let padrao = cenario.departamento("Atendimento humano");
-    let escolhido = cenario.departamento("Financeiro");
-    cenario.definir_padrao(padrao);
-    let conversa = cenario.conversa();
+    let scenario = Scenario::new("escolha-valida");
+    let default = scenario.departamento("Atendimento humano");
+    let escolhido = scenario.departamento("Financeiro");
+    scenario.definir_padrao(default);
+    let conversa = scenario.conversa();
     let jev = jev(Some(("Financeiro", 0.93)), true);
-    let motor = cenario.motor(Some(motor_jev(jev, true)));
+    let engine = scenario.engine(Some(motor_jev(jev, true)));
 
-    let gatilho = cenario.falar(conversa, "vocês cobraram duas vezes no meu cartão");
-    let resumo = cenario.turno(&motor, conversa, gatilho).await;
+    let gatilho = scenario.falar(conversa, "vocês cobraram duas vezes no meu cartão");
+    let summary = scenario.turno(&engine, conversa, gatilho).await;
 
-    assert_eq!(resumo.estado, TurnState::Completed);
+    assert_eq!(summary.estado, TurnState::Completed);
     assert!(
-        cenario.provedor.received().is_empty(),
+        scenario.provedor.received().is_empty(),
         "transferida não chama o modelo"
     );
-    let gravada = cenario.conversa_gravada(conversa);
-    assert_eq!(gravada.status, poph_store::ConversationStatus::Transferred);
-    assert_eq!(gravada.target_department, Some(escolhido));
+    let stored = scenario.conversa_gravada(conversa);
+    assert_eq!(stored.status, poph_store::ConversationStatus::Transferred);
+    assert_eq!(stored.target_department, Some(escolhido));
 
-    // Auditoria: origem do departamento e a escolha do Jev registradas.
-    let detalhe = cenario.auditoria_da_transferencia();
+    let detalhe = scenario.auditoria_da_transferencia();
     assert_eq!(detalhe["departamento_origem"], "g4");
     assert_eq!(detalhe["departamento_escolhido_pelo_jev"], "Financeiro");
     assert_eq!(detalhe["departamento"], escolhido.to_string());
     assert_eq!(detalhe["departamento_motivo"], serde_json::Value::Null);
 
-    // Registro do turno: a decisão do G4 e o efeito, juntos.
-    let turno = cenario.ultimo_turno(conversa);
-    let gravado: serde_json::Value = serde_json::from_str(&turno.jev_json).expect("JSON");
-    assert_eq!(gravado["transferencia"]["origem"], "g4");
+    let turno = scenario.ultimo_turno(conversa);
+    let stored: serde_json::Value = serde_json::from_str(&turno.jev_json).expect("JSON");
+    assert_eq!(stored["transferencia"]["origem"], "g4");
     assert_eq!(
-        gravado["transferencia"]["departamento"],
+        stored["transferencia"]["departamento"],
         escolhido.to_string()
     );
-    let g4 = gravado["decisoes"]
+    let g4 = stored["decisoes"]
         .as_array()
         .expect("decisões")
         .iter()
@@ -431,44 +405,39 @@ async fn g4_manda_a_conversa_para_o_departamento_escolhido() {
     assert_eq!(g4["escolha"], "Financeiro");
 }
 
-/// Escolha igual ao padrão: efeito igual, mas a origem registrada é a do Jev.
 #[tokio::test]
 async fn escolha_igual_ao_padrao_continua_vindo_do_g4() {
-    let cenario = Cenario::novo("escolha-igual");
-    let padrao = cenario.departamento("Suporte");
-    cenario.departamento("Comercial");
-    cenario.definir_padrao(padrao);
-    let conversa = cenario.conversa();
-    let motor = cenario.motor(Some(motor_jev(jev(Some(("Suporte", 0.9)), true), true)));
-    let gatilho = cenario.falar(conversa, "o produto chegou quebrado");
-    cenario.turno(&motor, conversa, gatilho).await;
+    let scenario = Scenario::new("escolha-igual");
+    let default = scenario.departamento("Suporte");
+    scenario.departamento("Comercial");
+    scenario.definir_padrao(default);
+    let conversa = scenario.conversa();
+    let engine = scenario.engine(Some(motor_jev(jev(Some(("Suporte", 0.9)), true), true)));
+    let gatilho = scenario.falar(conversa, "o produto chegou quebrado");
+    scenario.turno(&engine, conversa, gatilho).await;
 
-    let detalhe = cenario.auditoria_da_transferencia();
+    let detalhe = scenario.auditoria_da_transferencia();
     assert_eq!(detalhe["departamento_origem"], "g4");
-    assert_eq!(detalhe["departamento"], padrao.to_string());
+    assert_eq!(detalhe["departamento"], default.to_string());
 }
 
-// ───────────────────────────── escolha recusada pelo código ─────────────────────────────
-
-/// Departamento que só existe em outra org: o nome não está entre os candidatos daqui → padrão.
 #[tokio::test]
 async fn departamento_de_outra_org_cai_no_padrao() {
-    let cenario = Cenario::novo("outra-org");
-    let padrao = cenario.departamento("Atendimento humano");
-    cenario.departamento("Comercial");
-    cenario.definir_padrao(padrao);
-    // "Jurídico" só existe na outra org.
-    cenario.departamento_em(cenario.outra_org(), "Jurídico");
+    let scenario = Scenario::new("outra-org");
+    let default = scenario.departamento("Atendimento humano");
+    scenario.departamento("Comercial");
+    scenario.definir_padrao(default);
+    scenario.departamento_em(scenario.outra_org(), "Jurídico");
 
-    let conversa = cenario.conversa();
-    let motor = cenario.motor(Some(motor_jev(jev(Some(("Jurídico", 0.97)), true), true)));
-    let gatilho = cenario.falar(conversa, "quero falar do contrato");
-    cenario.turno(&motor, conversa, gatilho).await;
+    let conversa = scenario.conversa();
+    let engine = scenario.engine(Some(motor_jev(jev(Some(("Jurídico", 0.97)), true), true)));
+    let gatilho = scenario.falar(conversa, "quero falar do contrato");
+    scenario.turno(&engine, conversa, gatilho).await;
 
-    let gravada = cenario.conversa_gravada(conversa);
-    assert_eq!(gravada.status, poph_store::ConversationStatus::Transferred);
-    assert_eq!(gravada.target_department, Some(padrao));
-    let detalhe = cenario.auditoria_da_transferencia();
+    let stored = scenario.conversa_gravada(conversa);
+    assert_eq!(stored.status, poph_store::ConversationStatus::Transferred);
+    assert_eq!(stored.target_department, Some(default));
+    let detalhe = scenario.auditoria_da_transferencia();
     assert_eq!(detalhe["departamento_origem"], "padrao");
     assert!(
         detalhe["departamento_motivo"]
@@ -479,60 +448,55 @@ async fn departamento_de_outra_org_cai_no_padrao() {
     );
 }
 
-/// Departamento desativado entre a pergunta e a decisão é recusado (a validação é no banco, agora).
 #[tokio::test]
 async fn departamento_inativo_cai_no_padrao() {
-    let cenario = Cenario::novo("inativo");
-    let padrao = cenario.departamento("Atendimento humano");
-    let desativado = cenario.departamento("Fiscal");
-    cenario.departamento("Comercial");
-    cenario.definir_padrao(padrao);
-    cenario.desativar(desativado);
+    let scenario = Scenario::new("inativo");
+    let default = scenario.departamento("Atendimento humano");
+    let desativado = scenario.departamento("Fiscal");
+    scenario.departamento("Comercial");
+    scenario.definir_padrao(default);
+    scenario.desativar(desativado);
 
-    let conversa = cenario.conversa();
-    let motor = cenario.motor(Some(motor_jev(jev(Some(("Fiscal", 0.95)), true), true)));
-    let gatilho = cenario.falar(conversa, "preciso da nota fiscal da compra");
-    cenario.turno(&motor, conversa, gatilho).await;
+    let conversa = scenario.conversa();
+    let engine = scenario.engine(Some(motor_jev(jev(Some(("Fiscal", 0.95)), true), true)));
+    let gatilho = scenario.falar(conversa, "preciso da nota fiscal da compra");
+    scenario.turno(&engine, conversa, gatilho).await;
 
     assert_eq!(
-        cenario.conversa_gravada(conversa).target_department,
-        Some(padrao)
+        scenario.conversa_gravada(conversa).target_department,
+        Some(default)
     );
 }
 
-/// Departamento apagado também.
 #[tokio::test]
 async fn departamento_apagado_cai_no_padrao() {
-    let cenario = Cenario::novo("apagado");
-    let padrao = cenario.departamento("Atendimento humano");
-    let apagado = cenario.departamento("Logística");
-    cenario.departamento("Comercial");
-    cenario.definir_padrao(padrao);
-    cenario.apagar(apagado);
+    let scenario = Scenario::new("apagado");
+    let default = scenario.departamento("Atendimento humano");
+    let apagado = scenario.departamento("Logística");
+    scenario.departamento("Comercial");
+    scenario.definir_padrao(default);
+    scenario.apagar(apagado);
 
-    let conversa = cenario.conversa();
-    let motor = cenario.motor(Some(motor_jev(jev(Some(("Logística", 0.95)), true), true)));
-    let gatilho = cenario.falar(conversa, "meu pedido não chegou");
-    cenario.turno(&motor, conversa, gatilho).await;
+    let conversa = scenario.conversa();
+    let engine = scenario.engine(Some(motor_jev(jev(Some(("Logística", 0.95)), true), true)));
+    let gatilho = scenario.falar(conversa, "meu pedido não chegou");
+    scenario.turno(&engine, conversa, gatilho).await;
 
     assert_eq!(
-        cenario.conversa_gravada(conversa).target_department,
-        Some(padrao)
+        scenario.conversa_gravada(conversa).target_department,
+        Some(default)
     );
 }
 
-/// Nome ambíguo não acontece no banco (o esquema tem índice único por `lower(name)` dentro da org),
-/// então a recusa por ambiguidade do resolvedor é defesa em profundidade — provada no teste unitário
-/// dele e no do `casar_candidato`. Aqui se prova o que o banco garante.
 #[test]
 fn o_banco_nao_deixa_dois_departamentos_com_o_mesmo_nome() {
-    let cenario = Cenario::novo("nome-unico");
-    cenario.departamento("Financeiro");
-    let erro = cenario
+    let scenario = Scenario::new("nome-unico");
+    scenario.departamento("Financeiro");
+    let error = scenario
         .store
         .departments()
         .create(
-            cenario.org,
+            scenario.org,
             NewDepartment {
                 name: "FINANCEIRO".to_owned(),
                 description: String::new(),
@@ -540,58 +504,51 @@ fn o_banco_nao_deixa_dois_departamentos_com_o_mesmo_nome() {
         )
         .expect_err("nome repetido (sem diferenciar maiúsculas) devia ser recusado");
     assert!(
-        erro.to_string().contains("já existe"),
-        "erro inesperado: {erro}"
+        error.to_string().contains("já existe"),
+        "erro inesperado: {error}"
     );
 }
 
-// ───────────────────────────── abstenção ─────────────────────────────
-
-/// Escolha fora das opções, sem resposta para o G4 e confiança baixa: todas caem no padrão, o turno
-/// termina e nada fica preso.
 #[tokio::test]
 async fn abstencao_do_g4_cai_no_padrao_sem_travar_o_turno() {
-    // (rótulo, resposta do G4, o Jev respondeu o G4?)
     type Caso = (&'static str, Option<(&'static str, f64)>, bool);
     let casos: [Caso; 3] = [
         ("fora-das-opcoes", Some(("Marketing", 0.99)), true),
         ("sem-resposta", None, false),
         ("confianca-baixa", Some(("Comercial", 0.41)), true),
     ];
-    for (rotulo, departamento, veio) in casos {
-        let cenario = Cenario::novo(rotulo);
-        let padrao = cenario.departamento("Atendimento humano");
-        cenario.departamento("Comercial");
-        cenario.definir_padrao(padrao);
-        let conversa = cenario.conversa();
-        let motor = cenario.motor(Some(motor_jev(jev(departamento, veio), true)));
-        let gatilho = cenario.falar(conversa, "quero falar com alguém sobre o pedido");
-        let resumo = cenario.turno(&motor, conversa, gatilho).await;
+    for (label, departamento, veio) in casos {
+        let scenario = Scenario::new(label);
+        let default = scenario.departamento("Atendimento humano");
+        scenario.departamento("Comercial");
+        scenario.definir_padrao(default);
+        let conversa = scenario.conversa();
+        let engine = scenario.engine(Some(motor_jev(jev(departamento, veio), true)));
+        let gatilho = scenario.falar(conversa, "quero falar com alguém sobre o pedido");
+        let summary = scenario.turno(&engine, conversa, gatilho).await;
 
-        assert_eq!(resumo.estado, TurnState::Completed, "caso {rotulo}");
+        assert_eq!(summary.estado, TurnState::Completed, "caso {label}");
         assert_eq!(
-            cenario.conversa_gravada(conversa).target_department,
-            Some(padrao),
-            "caso {rotulo}"
+            scenario.conversa_gravada(conversa).target_department,
+            Some(default),
+            "caso {label}"
         );
-        let detalhe = cenario.auditoria_da_transferencia();
-        assert_eq!(detalhe["departamento_origem"], "padrao", "caso {rotulo}");
+        let detalhe = scenario.auditoria_da_transferencia();
+        assert_eq!(detalhe["departamento_origem"], "padrao", "caso {label}");
         assert!(
             detalhe["departamento_motivo"].as_str().is_some(),
-            "caso {rotulo} precisa registrar o motivo da recusa"
+            "caso {label} precisa registrar o motivo da recusa"
         );
     }
 }
 
-/// Jev fora do ar (prazo estourado no lote): o turno termina normalmente e, sem o G1, não transfere
-/// — o fallback do G1 é continuar. Nada trava por causa do G4.
 #[tokio::test]
 async fn jev_fora_do_ar_nao_trava_o_turno() {
-    let cenario = Cenario::novo("jev-fora");
-    let padrao = cenario.departamento("Atendimento humano");
-    cenario.departamento("Comercial");
-    cenario.definir_padrao(padrao);
-    let conversa = cenario.conversa();
+    let scenario = Scenario::new("jev-fora");
+    let default = scenario.departamento("Atendimento humano");
+    scenario.departamento("Comercial");
+    scenario.definir_padrao(default);
+    let conversa = scenario.conversa();
 
     let jev = Arc::new(
         FakeJev::with_choices(BTreeMap::from([(
@@ -600,7 +557,7 @@ async fn jev_fora_do_ar_nao_trava_o_turno() {
         )]))
         .with_delay(Duration::from_millis(400)),
     );
-    let avaliador = Arc::new(
+    let evaluator = Arc::new(
         JevEngine::new(
             jev,
             JevGates {
@@ -615,114 +572,106 @@ async fn jev_fora_do_ar_nao_trava_o_turno() {
             ..poph_jev::JevOptions::default()
         }),
     );
-    let motor = cenario.motor(Some(avaliador));
-    let gatilho = cenario.falar(conversa, "quero falar com um atendente");
-    let resumo = cenario.turno(&motor, conversa, gatilho).await;
+    let engine = scenario.engine(Some(evaluator));
+    let gatilho = scenario.falar(conversa, "quero falar com um atendente");
+    let summary = scenario.turno(&engine, conversa, gatilho).await;
 
-    assert_eq!(resumo.estado, TurnState::Completed);
+    assert_eq!(summary.estado, TurnState::Completed);
     assert_eq!(
-        cenario.conversa_gravada(conversa).status,
+        scenario.conversa_gravada(conversa).status,
         poph_store::ConversationStatus::Open
     );
-    assert_eq!(resumo.texto, RESPOSTA_DO_MODELO);
+    assert_eq!(summary.texto, RESPOSTA_DO_MODELO);
 }
 
-// ───────────────────────────── desligado = como hoje ─────────────────────────────
-
-/// Com o G4 desligado o turno faz exatamente o que fazia antes: grava o padrão do agente e o
-/// registro traz só a decisão do G1 — nenhuma pergunta de departamento foi feita.
 #[tokio::test]
 async fn g4_desligado_e_o_comportamento_de_hoje() {
-    let cenario = Cenario::novo("desligado");
-    let padrao = cenario.departamento("Atendimento humano");
-    cenario.departamento("Comercial");
-    cenario.definir_padrao(padrao);
-    let conversa = cenario.conversa();
+    let scenario = Scenario::new("desligado");
+    let default = scenario.departamento("Atendimento humano");
+    scenario.departamento("Comercial");
+    scenario.definir_padrao(default);
+    let conversa = scenario.conversa();
     let jev = jev(Some(("Comercial", 0.99)), true);
-    let avaliador = motor_jev(Arc::clone(&jev), false);
-    let motor = cenario.motor(Some(avaliador));
+    let evaluator = motor_jev(Arc::clone(&jev), false);
+    let engine = scenario.engine(Some(evaluator));
 
-    let gatilho = cenario.falar(conversa, "quero falar com um atendente");
-    cenario.turno(&motor, conversa, gatilho).await;
+    let gatilho = scenario.falar(conversa, "quero falar com um atendente");
+    scenario.turno(&engine, conversa, gatilho).await;
 
-    let gravada = cenario.conversa_gravada(conversa);
-    assert_eq!(gravada.status, poph_store::ConversationStatus::Transferred);
-    assert_eq!(gravada.target_department, Some(padrao));
+    let stored = scenario.conversa_gravada(conversa);
+    assert_eq!(stored.status, poph_store::ConversationStatus::Transferred);
+    assert_eq!(stored.target_department, Some(default));
 
-    // Nenhuma pergunta de departamento foi enviada ao Jev.
     let pedidos = jev.requests();
     assert!(
         pedidos
             .iter()
-            .all(|pedido| !pedido.questions.contains_key(IdGate::G4.question_id())),
+            .all(|request| !request.questions.contains_key(IdGate::G4.question_id())),
         "G4 desligado não pode perguntar o departamento"
     );
-    let detalhe = cenario.auditoria_da_transferencia();
-    assert_eq!(detalhe["departamento"], padrao.to_string());
+    let detalhe = scenario.auditoria_da_transferencia();
+    assert_eq!(detalhe["departamento"], default.to_string());
     assert_eq!(detalhe["departamento_origem"], "padrao");
     assert_eq!(
         detalhe["departamento_escolhido_pelo_jev"],
         serde_json::Value::Null
     );
 
-    let turno = cenario.ultimo_turno(conversa);
-    let gravado: serde_json::Value = serde_json::from_str(&turno.jev_json).expect("JSON");
-    let gates: Vec<&str> = gravado["decisoes"]
+    let turno = scenario.ultimo_turno(conversa);
+    let stored: serde_json::Value = serde_json::from_str(&turno.jev_json).expect("JSON");
+    let gates: Vec<&str> = stored["decisoes"]
         .as_array()
         .expect("decisões")
         .iter()
         .filter_map(|decisao| decisao["gate"].as_str())
         .collect();
     assert_eq!(gates, vec!["g1"], "só o G1 decide com o G4 desligado");
-    assert_eq!(gravado["transferencia"]["origem"], "padrao");
-    assert_eq!(gravado["transferencia"]["departamento"], padrao.to_string());
+    assert_eq!(stored["transferencia"]["origem"], "padrao");
+    assert_eq!(stored["transferencia"]["departamento"], default.to_string());
     assert_eq!(
-        gravado["transferencia"]["motivo"],
+        stored["transferencia"]["motivo"],
         serde_json::Value::Null,
         "G4 desligado não inventa motivo de fallback"
     );
 }
 
-/// Agente sem departamento de transferência: a conversa transfere sem departamento, como hoje.
 #[tokio::test]
 async fn sem_padrao_configurado_transfere_sem_departamento() {
-    let cenario = Cenario::novo("sem-padrao");
-    cenario.departamento("Comercial");
-    let conversa = cenario.conversa();
-    // G4 desligado (comportamento de hoje) e ligado com escolha recusada: os dois terminam sem
-    // departamento, porque não há padrão para onde cair.
-    for (rotulo, com_g4) in [("desligado", false), ("ligado-recusado", true)] {
+    let scenario = Scenario::new("sem-padrao");
+    scenario.departamento("Comercial");
+    let conversa = scenario.conversa();
+    for (label, com_g4) in [("desligado", false), ("ligado-recusado", true)] {
         let jev = jev(Some(("Marketing", 0.97)), true);
-        let motor = cenario.motor(Some(motor_jev(jev, com_g4)));
-        let gatilho = cenario.falar(conversa, "quero falar com uma pessoa");
-        cenario.turno(&motor, conversa, gatilho).await;
-        let gravada = cenario.conversa_gravada(conversa);
+        let engine = scenario.engine(Some(motor_jev(jev, com_g4)));
+        let gatilho = scenario.falar(conversa, "quero falar com uma pessoa");
+        scenario.turno(&engine, conversa, gatilho).await;
+        let stored = scenario.conversa_gravada(conversa);
         assert_eq!(
-            gravada.status,
+            stored.status,
             poph_store::ConversationStatus::Transferred,
-            "caso {rotulo}"
+            "caso {label}"
         );
-        assert_eq!(gravada.target_department, None, "caso {rotulo}");
-        // Reabre para o caso seguinte poder abrir turno.
-        cenario
+        assert_eq!(stored.target_department, None, "caso {label}");
+        scenario
             .store
             .conversations()
-            .reopen_audited(cenario.org, conversa, gravada.version, "teste".to_owned())
+            .reopen_audited(scenario.org, conversa, stored.version, "teste".to_owned())
             .expect("reabre");
     }
 }
 
-/// A escolha do G4 não muda o que o cliente recebe: a orientação e a mensagem automática são as
-/// mesmas, com ou sem departamento escolhido.
 #[tokio::test]
 async fn a_escolha_do_departamento_nao_muda_o_texto_ao_cliente() {
-    let cenario = Cenario::novo("texto");
-    let padrao = cenario.departamento("Atendimento humano");
-    cenario.departamento("Financeiro");
-    cenario.definir_padrao(padrao);
-    let conversa = cenario.conversa();
-    let motor = cenario.motor(Some(motor_jev(jev(Some(("Financeiro", 0.95)), true), true)));
-    let gatilho = cenario.falar(conversa, "quero falar com um atendente sobre a cobrança");
-    let resumo = cenario.turno(&motor, conversa, gatilho).await;
-    assert_eq!(resumo.texto, HandoffGuidance::default().mensagem_automatica);
+    let scenario = Scenario::new("texto");
+    let default = scenario.departamento("Atendimento humano");
+    scenario.departamento("Financeiro");
+    scenario.definir_padrao(default);
+    let conversa = scenario.conversa();
+    let engine = scenario.engine(Some(motor_jev(jev(Some(("Financeiro", 0.95)), true), true)));
+    let gatilho = scenario.falar(conversa, "quero falar com um atendente sobre a cobrança");
+    let summary = scenario.turno(&engine, conversa, gatilho).await;
+    assert_eq!(
+        summary.texto,
+        HandoffGuidance::default().mensagem_automatica
+    );
 }

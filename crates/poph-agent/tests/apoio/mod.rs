@@ -1,18 +1,12 @@
-//! Cenário de turno com armazenamento real e provedor falso (HR-23b).
-//!
-//! Vive em `tests/apoio/` porque só assim é compartilhado entre binários de teste: um arquivo
-//! `.rs` solto em `tests/` viraria um binário próprio. O mesmo desenho do `tests/apoio` de
-//! `poph-core`.
-
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
-use poph_agent::limites::{Limitador, OpcoesLimites};
-use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
+use poph_agent::config_hot::{ConfigHot, HotConfigOptions};
+use poph_agent::limites::{LimitOptions, Limiter};
+use poph_agent::metrics::{MetricsMemory, MetricsTurn};
 use poph_agent::turno::{
-    FuturoPausa, NoopObserver, Pausa, TurnEngine, TurnInput, TurnOptions, TurnSummary,
+    FuturePause, NoopObserver, Pause, TurnEngine, TurnInput, TurnOptions, TurnSummary,
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, Usage};
 use poph_store::{
@@ -20,33 +14,28 @@ use poph_store::{
 };
 use poph_types::{ConversationId, MessageId, OrgId, StructuredInstructions};
 
-/// Pausa que não dorme: a janela de agrupamento do turno não atrasa o teste.
 pub struct SemEspera;
 
-impl Pausa for SemEspera {
-    fn esperar(&self, _duracao: Duration) -> FuturoPausa {
+impl Pause for SemEspera {
+    fn wait(&self, _duracao: Duration) -> FuturePause {
         Box::pin(async {})
     }
 }
 
-/// Um turno pronto para rodar: banco, org, agente, conversa e pasta de blobs.
-pub struct Cenario {
-    pub pasta: PathBuf,
+pub struct Scenario {
+    pub folder: PathBuf,
     pub store: Arc<Store>,
     pub org: OrgId,
     pub conversa: ConversationId,
-    pub arquivos: poph_files::FileConfig,
-    pub metricas: MetricasTurno,
+    pub files: poph_files::FileConfig,
+    pub metrics: MetricsTurn,
 }
 
-/// Anexo pronto para gravar: bytes no blob (ou não) e a linha em `attachments`.
 pub struct Anexo {
     pub nome: String,
     pub mime: String,
     pub bytes: Vec<u8>,
-    /// `true` = grava só a linha, sem o blob no disco (blob ausente).
     pub sem_blob: bool,
-    /// Tamanho declarado na linha, quando difere do real (prova o teto sem gravar 5 MB).
     pub tamanho_declarado: Option<u64>,
     pub texto_extraido: Option<String>,
 }
@@ -75,23 +64,24 @@ impl Anexo {
     }
 }
 
-impl Cenario {
-    pub fn novo(rotulo: &str) -> Self {
-        let pasta = std::env::temp_dir().join(format!(
-            "poph-hr23b-{rotulo}-{}-{}",
+impl Scenario {
+    pub fn new(label: &str) -> Self {
+        let folder = std::env::temp_dir().join(format!(
+            "poph-hr23b-{label}-{}-{}",
             std::process::id(),
             fastrand()
         ));
-        let _ = std::fs::remove_dir_all(&pasta);
-        std::fs::create_dir_all(&pasta).expect("pasta do teste");
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).expect("pasta do teste");
         let store = Arc::new(
-            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco"),
+            Store::open_at(&folder.join("harness.db"), &folder.join("rag.db"))
+                .expect("abre o banco"),
         );
         let org = store
             .orgs()
             .create(poph_store::NewOrg {
-                name: format!("Org {rotulo}"),
-                slug: format!("org-{rotulo}-{}-{}", std::process::id(), fastrand()),
+                name: format!("Org {label}"),
+                slug: format!("org-{label}-{}-{}", std::process::id(), fastrand()),
                 config_json: "{}".to_owned(),
             })
             .expect("cria a org")
@@ -101,21 +91,21 @@ impl Cenario {
             .create(
                 org,
                 NewAgent {
-                    name: format!("Bia {rotulo}"),
-                    slug: format!("bia-{rotulo}-{}", fastrand()),
+                    name: format!("Bia {label}"),
+                    slug: format!("bia-{label}-{}", fastrand()),
                     grouping_window_ms: 0,
                     ..NewAgent::default()
                 },
             )
             .expect("cria o agente");
-        let estruturado = StructuredInstructions::default();
+        let structured = StructuredInstructions::default();
         store
             .instructions()
             .save(
                 org,
                 agente.id,
                 0,
-                &estruturado.to_json(),
+                &structured.to_json(),
                 "# Bia\n\nVocê é a atendente da loja.",
                 true,
             )
@@ -134,25 +124,24 @@ impl Cenario {
             )
             .expect("abre a conversa")
             .id;
-        let arquivos = poph_files::FileConfig::default(pasta.join("blobs"));
+        let files = poph_files::FileConfig::default(folder.join("blobs"));
         Self {
-            pasta,
+            folder,
             store,
             org,
             conversa,
-            arquivos,
-            metricas: MetricasTurno::proprio(),
+            files,
+            metrics: MetricsTurn::own(),
         }
     }
 
-    /// Grava a mensagem do cliente com os anexos dados, pondo o blob no disco quando for o caso.
     pub fn falar_com_arquivos(&self, texto: &str, anexos: Vec<Anexo>) -> MessageId {
         let mut linhas: Vec<NewChannelAttachment> = Vec::with_capacity(anexos.len());
         for anexo in anexos {
             let sha256 = if anexo.sem_blob {
                 poph_files::blob::sha256_hex(&anexo.bytes)
             } else {
-                poph_files::blob::write(&self.arquivos.blob_folder, self.org, &anexo.bytes)
+                poph_files::blob::write(&self.files.blob_folder, self.org, &anexo.bytes)
                     .expect("grava o blob")
                     .sha256
             };
@@ -192,40 +181,37 @@ impl Cenario {
             .id
     }
 
-    pub fn motor(&self, com_arquivos: bool) -> (TurnEngine, Arc<FakeProvider>) {
+    pub fn engine(&self, com_arquivos: bool) -> (TurnEngine, Arc<FakeProvider>) {
         let fake = Arc::new(FakeProvider::with_scripts(vec![roteiro_texto(
             "recebi o arquivo",
         )]));
-        let config = ConfigQuente::nova(
+        let config = ConfigHot::new(
             Arc::clone(&self.store),
-            OpcoesConfigQuente::default(),
-            MetricasMemoria::proprio(),
+            HotConfigOptions::default(),
+            MetricsMemory::own(),
         );
-        let limitador = Arc::new(Limitador::novo(
-            OpcoesLimites::default(),
-            MetricasMemoria::proprio(),
-        ));
-        let mut motor = TurnEngine::new(
+        let limiter = Arc::new(Limiter::new(LimitOptions::default(), MetricsMemory::own()));
+        let mut engine = TurnEngine::new(
             Arc::clone(&self.store),
             config,
-            limitador,
+            limiter,
             fake.clone(),
             TurnOptions::default(),
-            self.metricas.clone(),
+            self.metrics.clone(),
         )
         .with_pause(Arc::new(SemEspera))
-        .with_summary(poph_agent::resumo::OpcoesResumo {
+        .with_summary(poph_agent::summary::SummaryOptions {
             ativo: false,
-            ..poph_agent::resumo::OpcoesResumo::default()
+            ..poph_agent::summary::SummaryOptions::default()
         });
         if com_arquivos {
-            motor = motor.with_files(self.arquivos.clone());
+            engine = engine.with_files(self.files.clone());
         }
-        (motor, fake)
+        (engine, fake)
     }
 
-    pub async fn turno(&self, motor: &TurnEngine, gatilho: MessageId) -> TurnSummary {
-        motor
+    pub async fn turno(&self, engine: &TurnEngine, gatilho: MessageId) -> TurnSummary {
+        engine
             .run(
                 TurnInput::new(self.org, self.conversa, gatilho),
                 &mut NoopObserver,
@@ -235,9 +221,9 @@ impl Cenario {
     }
 }
 
-impl Drop for Cenario {
+impl Drop for Scenario {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.pasta);
+        let _ = std::fs::remove_dir_all(&self.folder);
     }
 }
 

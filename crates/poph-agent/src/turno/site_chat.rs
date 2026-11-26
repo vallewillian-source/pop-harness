@@ -70,23 +70,20 @@ impl TurnEngine {
         }
         let hot = self
             .config
-            .carregar_verificando(org, job.agent)
+            .load_verify(org, job.agent)
             .map_err(|_| SiteTurnError::AgentUnavailable)?;
-        if !hot.pode_abrir_turno() {
+        if !hot.can_open_turn() {
             return Err(SiteTurnError::AgentUnavailable);
         }
-        if (hot.instrucoes.is_some() && hot.estruturado.is_none())
-            || hot
-                .ferramentas
-                .iter()
-                .any(|name| !policy.permits_tool(name))
+        if (hot.instructions.is_some() && hot.structured.is_none())
+            || hot.tools.iter().any(|name| !policy.permits_tool(name))
         {
             return Err(SiteTurnError::Policy);
         }
 
         let _permit = self
             .limiter
-            .adquirir_turno(org, job.agent, self.options.slot_wait)
+            .acquire_turn(org, job.agent, self.options.slot_wait)
             .await
             .map_err(|_| SiteTurnError::Failed)?;
         let mut recent = self
@@ -100,7 +97,7 @@ impl TurnEngine {
             .iter()
             .find(|message| message.id == job.message)
             .ok_or(SiteTurnError::Failed)?;
-        let passages = if hot.ferramenta_habilitada("consultar_base") {
+        let passages = if hot.tool_enabled("consultar_base") {
             match self.start_search(org, job.agent, std::slice::from_ref(trigger), &hot) {
                 Some(search) => search.await.unwrap_or_default(),
                 None => Vec::new(),
@@ -108,8 +105,8 @@ impl TurnEngine {
         } else {
             Vec::new()
         };
-        let summary = resumo::Resumo::decodificar(conversation.summary.as_deref());
-        let context = resumo::montar(
+        let summary = summary::Summary::decode(conversation.summary.as_deref());
+        let context = summary::build(
             &recent,
             &summary,
             u64::from(hot.agente.max_context_tokens),
@@ -117,25 +114,25 @@ impl TurnEngine {
                 .max_context_messages
                 .clamp(1, self.options.message_read_limit.max(1)),
         );
-        let block = prompt::BlocoVolatil {
-            agora_ms: self.store.now(),
+        let block = prompt::BlockVolatile {
+            now_ms: self.store.now(),
             canal: &conversation.canal,
             status: conversation_status(conversation.status),
             conversa: &id.to_string(),
-            resumo: context.resumo.as_deref(),
-            trechos: &passages,
-            catalogo_de_produtos: hot.ferramenta_habilitada("buscar_produto"),
-            produto_escolhido: None,
+            summary: context.summary.as_deref(),
+            passages: &passages,
+            catalog_of_products: hot.tool_enabled("buscar_produto"),
+            product_chosen: None,
             fluxos: None,
         }
-        .montar();
-        let messages = Prompt::novo(hot.markdown.clone())
-            .com_volatil(block)
-            .mensagens(
+        .build();
+        let messages = Prompt::new(hot.markdown.clone())
+            .with_volatile(block)
+            .messages(
                 context
-                    .mensagens
+                    .messages
                     .iter()
-                    .filter_map(prompt::da_mensagem_gravada)
+                    .filter_map(prompt::of_message_stored)
                     .collect(),
             );
         self.turn_provider(&hot)
@@ -151,8 +148,8 @@ impl TurnEngine {
                 PreparedTurn {
                     trigger_message_id: job.message,
                     messages,
-                    usage: UsoFerramentas::nova(),
-                    calls: RegistroChamadas::nova(),
+                    usage: UseTools::new(),
+                    calls: RecordCalls::new(),
                     skip_knowledge_and_products: false,
                     skip_product_search: false,
                     active_flow: false,

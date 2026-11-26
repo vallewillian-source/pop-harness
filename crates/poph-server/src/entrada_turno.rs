@@ -15,8 +15,8 @@
 
 use std::time::Duration;
 
-use poph_agent::entrada_saida::Fluxo;
-use poph_agent::turno::TransporteConsole;
+use poph_agent::entry_output::Fluxo;
+use poph_agent::turno::TransportConsole;
 use tokio::task::JoinHandle;
 
 use crate::estado::Estado;
@@ -111,13 +111,13 @@ async fn confirmar_saidas_do_console(fluxo: &Fluxo) {
             return;
         }
     };
-    let transporte = TransporteConsole::silencioso();
+    let transporte = TransportConsole::silencioso();
     for org in orgs {
-        match fluxo.enviar_pendentes_do_console(org, &transporte).await {
-            Ok(relato) if relato.enviados > 0 => tracing::info!(
+        match fluxo.send_pending_console(org, &transporte).await {
+            Ok(relato) if relato.sent > 0 => tracing::info!(
                 target: "poph_server::turno",
                 org = %org,
-                itens = relato.enviados,
+                itens = relato.sent,
                 "saída do console confirmada na subida"
             ),
             Ok(_) => {}
@@ -175,7 +175,7 @@ fn despachar_uma_vez(fluxo: &Fluxo) {
         }
     };
     for org in orgs {
-        if let Err(erro) = fluxo.despachar(org) {
+        if let Err(erro) = fluxo.dispatch(org) {
             tracing::warn!(
                 target: "poph_server::turno",
                 org = %org,
@@ -184,7 +184,7 @@ fn despachar_uma_vez(fluxo: &Fluxo) {
             );
         }
     }
-    if let Err(erro) = fluxo.atualizar_medidores() {
+    if let Err(erro) = fluxo.update_medidores() {
         tracing::warn!(
             target: "poph_server::turno",
             motivo = %erro,

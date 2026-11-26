@@ -1,14 +1,9 @@
-//! Turno ignorado deixa trilha na auditoria (correção da HR-14).
-//!
-//! Antes, a linha saía com `actor_kind = 'engine'`, que a tabela não aceita: o erro era descartado em
-//! silêncio e a trilha de turnos ignorados se perdia. Aqui a prova é a linha gravada e lida de volta.
-
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
-use poph_agent::limites::{Limitador, OpcoesLimites};
-use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
+use poph_agent::config_hot::{ConfigHot, HotConfigOptions};
+use poph_agent::limites::{LimitOptions, Limiter};
+use poph_agent::metrics::{MetricsMemory, MetricsTurn};
 use poph_agent::turno::{NoopObserver, TurnEngine, TurnInput, TurnOptions};
 use poph_core::llm::{FakeProvider, LlmProvider};
 use poph_store::{ConversationStatus, NewAgent, NewConversation, NewOrg, Page, Store};
@@ -16,15 +11,15 @@ use poph_types::{AgentId, ConversationId, OrgId};
 
 #[tokio::test]
 async fn turno_ignorado_grava_auditoria_com_ator_system() {
-    let pasta: PathBuf = std::env::temp_dir().join(format!(
+    let folder: PathBuf = std::env::temp_dir().join(format!(
         "poph-auditoria-ignorado-{}-{}",
         std::process::id(),
         AgentId::generate()
     ));
-    let _ = std::fs::remove_dir_all(&pasta);
-    std::fs::create_dir_all(&pasta).expect("cria a pasta");
+    let _ = std::fs::remove_dir_all(&folder);
+    std::fs::create_dir_all(&folder).expect("cria a pasta");
     let store = Arc::new(
-        Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco"),
+        Store::open_at(&folder.join("harness.db"), &folder.join("rag.db")).expect("abre o banco"),
     );
     let org: OrgId = store
         .orgs()
@@ -62,7 +57,6 @@ async fn turno_ignorado_grava_auditoria_com_ator_system() {
         )
         .expect("abre a conversa")
         .id;
-    // Conversa fechada: o turno é ignorado (D12) e cai no caminho de auditoria.
     let versao = store
         .conversations()
         .get(org, conversa)
@@ -74,22 +68,19 @@ async fn turno_ignorado_grava_auditoria_com_ator_system() {
         .expect("fecha a conversa");
 
     let provedor: Arc<dyn LlmProvider> = Arc::new(FakeProvider::with_scripts(Vec::new()));
-    let config = ConfigQuente::nova(
+    let config = ConfigHot::new(
         Arc::clone(&store),
-        OpcoesConfigQuente::default(),
-        MetricasMemoria::proprio(),
+        HotConfigOptions::default(),
+        MetricsMemory::own(),
     );
-    let limitador = Arc::new(Limitador::novo(
-        OpcoesLimites::default(),
-        MetricasMemoria::proprio(),
-    ));
-    let motor = TurnEngine::new(
+    let limiter = Arc::new(Limiter::new(LimitOptions::default(), MetricsMemory::own()));
+    let engine = TurnEngine::new(
         Arc::clone(&store),
         config,
-        limitador,
+        limiter,
         provedor,
         TurnOptions::default(),
-        MetricasTurno::proprio(),
+        MetricsTurn::own(),
     );
     let mensagem = store
         .messages()
@@ -110,11 +101,11 @@ async fn turno_ignorado_grava_auditoria_com_ator_system() {
         .expect("grava a mensagem")
         .id;
 
-    let resumo = motor
+    let summary = engine
         .run(TurnInput::new(org, conversa, mensagem), &mut NoopObserver)
         .await
         .expect("o turno roda");
-    assert_eq!(resumo.estado.as_text(), "skipped");
+    assert_eq!(summary.estado.as_text(), "skipped");
 
     let registros = store
         .audit()
@@ -128,8 +119,8 @@ async fn turno_ignorado_grava_auditoria_com_ator_system() {
     assert_eq!(turno_ignorado.entity, "turn");
     assert_eq!(
         turno_ignorado.entity_id.as_deref(),
-        Some(resumo.turno.to_string().as_str())
+        Some(summary.turno.to_string().as_str())
     );
 
-    let _ = std::fs::remove_dir_all(&pasta);
+    let _ = std::fs::remove_dir_all(&folder);
 }

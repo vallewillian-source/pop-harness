@@ -1,38 +1,28 @@
-//! `poph chat` só confirma a saída das conversas do console (HR-26f).
-//!
-//! A caixa de saída é da org inteira. Com WhatsApp configurado, há itens de conversa de WhatsApp
-//! pendentes ao lado dos do console. O envio do chat não pode tocar nos de WhatsApp: se tocasse,
-//! a mensagem seria confirmada ou marcada como falha sem sair para o cliente.
-//!
-//! Banco de verdade em pasta temporária, transporte falso que conta cada envio.
-
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use poph_agent::atores::{Atores, Futuro, OpcoesAtores, Processador, Tarefa};
-use poph_agent::entrada_saida::{Fluxo, FuturoEnvio, OpcoesFluxo, TransporteSaida};
-use poph_agent::metricas::MetricasMemoria;
+use poph_agent::actors::{ActorOptions, Actors, BoxFuture, Processor, Task};
+use poph_agent::entry_output::{FlowOptions, Fluxo, OutputTransport, SendFuture};
+use poph_agent::metrics::MetricsMemory;
 use poph_store::{
     NewAgent, NewConversation, NewOrg, NewOutboxItem, OutboxItem, OutboxState, Store,
 };
 use poph_types::{ConversationId, OrgId, TurnId};
 
-/// Processador que não faz nada: este teste só mexe na saída.
 struct SemProcessar;
 
-impl Processador for SemProcessar {
-    fn processar(&self, _tarefa: Tarefa) -> Futuro {
+impl Processor for SemProcessar {
+    fn process(&self, _tarefa: Task) -> BoxFuture {
         Box::pin(async { Ok(()) })
     }
 }
 
-/// Transporte que conta os envios e guarda o que recebeu.
 #[derive(Default)]
 struct TransporteDeTeste {
     envios: AtomicUsize,
-    recebidos: Mutex<Vec<ConversationId>>,
+    received: Mutex<Vec<ConversationId>>,
 }
 
 impl TransporteDeTeste {
@@ -41,14 +31,14 @@ impl TransporteDeTeste {
     }
 
     fn conversas_enviadas(&self) -> Vec<ConversationId> {
-        self.recebidos.lock().expect("sem veneno").clone()
+        self.received.lock().expect("sem veneno").clone()
     }
 }
 
-impl TransporteSaida for TransporteDeTeste {
-    fn enviar(&self, item: OutboxItem) -> FuturoEnvio {
+impl OutputTransport for TransporteDeTeste {
+    fn send(&self, item: OutboxItem) -> SendFuture {
         self.envios.fetch_add(1, Ordering::SeqCst);
-        self.recebidos
+        self.received
             .lock()
             .expect("sem veneno")
             .push(item.conversation_id);
@@ -56,28 +46,29 @@ impl TransporteSaida for TransporteDeTeste {
     }
 }
 
-struct Cenario {
-    pasta: PathBuf,
+struct Scenario {
+    folder: PathBuf,
     store: Arc<Store>,
     org: OrgId,
     console: ConversationId,
     whatsapp: ConversationId,
 }
 
-impl Cenario {
-    fn novo(rotulo: &str) -> Self {
-        let pasta =
-            std::env::temp_dir().join(format!("poph-hr26f-{rotulo}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&pasta);
-        std::fs::create_dir_all(&pasta).expect("cria a pasta do teste");
+impl Scenario {
+    fn new(label: &str) -> Self {
+        let folder =
+            std::env::temp_dir().join(format!("poph-hr26f-{label}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).expect("cria a pasta do teste");
         let store = Arc::new(
-            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco"),
+            Store::open_at(&folder.join("harness.db"), &folder.join("rag.db"))
+                .expect("abre o banco"),
         );
         let org = store
             .orgs()
             .create(NewOrg {
                 name: "Org HR-26f".to_owned(),
-                slug: format!("org-hr26f-{rotulo}"),
+                slug: format!("org-hr26f-{label}"),
                 config_json: String::new(),
             })
             .expect("cria a org")
@@ -88,7 +79,7 @@ impl Cenario {
                 org,
                 NewAgent {
                     name: "Agente HR-26f".to_owned(),
-                    slug: format!("agente-hr26f-{rotulo}"),
+                    slug: format!("agente-hr26f-{label}"),
                     ..NewAgent::default()
                 },
             )
@@ -129,7 +120,7 @@ impl Cenario {
             .expect("abre a conversa do WhatsApp")
             .id;
         Self {
-            pasta,
+            folder,
             store,
             org,
             console,
@@ -138,20 +129,19 @@ impl Cenario {
     }
 
     fn fluxo(&self) -> Fluxo {
-        let atores = Atores::novo(
+        let actors = Actors::new(
             Arc::new(SemProcessar),
-            OpcoesAtores {
+            ActorOptions {
                 ociosidade: Duration::from_secs(60),
-                fila_por_conversa: 8,
-                max_atores: 8,
+                queue_by_conversation: 8,
+                max_actors: 8,
             },
-            MetricasMemoria::proprio(),
+            MetricsMemory::own(),
         );
-        Fluxo::nova(Arc::clone(&self.store), atores, OpcoesFluxo::default())
+        Fluxo::new(Arc::clone(&self.store), actors, FlowOptions::default())
     }
 
-    /// Põe um texto na caixa de saída da conversa e devolve o item.
-    fn enfileirar(&self, conversa: ConversationId, seq: u32) -> OutboxItem {
+    fn enqueue(&self, conversa: ConversationId, seq: u32) -> OutboxItem {
         let (_novo, item) = self
             .store
             .outbox()
@@ -178,80 +168,76 @@ impl Cenario {
     }
 }
 
-impl Drop for Cenario {
+impl Drop for Scenario {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.pasta);
+        let _ = std::fs::remove_dir_all(&self.folder);
     }
 }
 
 #[tokio::test]
 async fn chat_confirma_o_do_console_e_nao_toca_no_whatsapp() {
-    let cenario = Cenario::novo("chat");
-    let do_console = cenario.enfileirar(cenario.console, 0);
-    let do_whatsapp = cenario.enfileirar(cenario.whatsapp, 0);
-    let transporte = TransporteDeTeste::default();
+    let scenario = Scenario::new("chat");
+    let do_console = scenario.enqueue(scenario.console, 0);
+    let do_whatsapp = scenario.enqueue(scenario.whatsapp, 0);
+    let transport = TransporteDeTeste::default();
 
-    let relato = cenario
+    let report = scenario
         .fluxo()
-        .enviar_pendentes_do_console(cenario.org, &transporte)
+        .send_pending_console(scenario.org, &transport)
         .await
         .expect("envia o que é do console");
 
-    assert_eq!(relato.enviados, 1, "só o do console sai");
-    assert_eq!(transporte.envios(), 1, "o transporte foi chamado uma vez");
+    assert_eq!(report.sent, 1, "só o do console sai");
+    assert_eq!(transport.envios(), 1, "o transporte foi chamado uma vez");
     assert_eq!(
-        transporte.conversas_enviadas(),
-        vec![cenario.console],
+        transport.conversas_enviadas(),
+        vec![scenario.console],
         "a única chamada é da conversa do console"
     );
-    assert_eq!(cenario.estado(&do_console), OutboxState::Sent);
+    assert_eq!(scenario.estado(&do_console), OutboxState::Sent);
     assert_eq!(
-        cenario.estado(&do_whatsapp),
+        scenario.estado(&do_whatsapp),
         OutboxState::Pending,
         "o item de WhatsApp continua pendente"
     );
-    let gravado = cenario
+    let stored = scenario
         .store
         .outbox()
-        .get(cenario.org, do_whatsapp.id)
+        .get(scenario.org, do_whatsapp.id)
         .expect("lê o item de WhatsApp");
-    assert_eq!(gravado.attempts, 0, "nenhuma tentativa foi gasta nele");
-    assert!(
-        gravado.ultimo_erro.is_none(),
-        "nenhum erro foi gravado nele"
-    );
+    assert_eq!(stored.attempts, 0, "nenhuma tentativa foi gasta nele");
+    assert!(stored.ultimo_erro.is_none(), "nenhum erro foi gravado nele");
 }
 
 #[tokio::test]
 async fn o_envio_geral_pegaria_o_whatsapp_e_por_isso_o_chat_nao_usa_ele() {
-    // Prova do defeito: o método geral confirma tudo da org, inclusive o de WhatsApp.
-    let cenario = Cenario::novo("geral");
-    let do_whatsapp = cenario.enfileirar(cenario.whatsapp, 0);
-    let transporte = TransporteDeTeste::default();
+    let scenario = Scenario::new("geral");
+    let do_whatsapp = scenario.enqueue(scenario.whatsapp, 0);
+    let transport = TransporteDeTeste::default();
 
-    cenario
+    scenario
         .fluxo()
-        .enviar_pendentes(cenario.org, &transporte)
+        .send_pending(scenario.org, &transport)
         .await
         .expect("envio geral");
 
-    assert_eq!(transporte.envios(), 1, "o geral tocou no item de WhatsApp");
-    assert_eq!(cenario.estado(&do_whatsapp), OutboxState::Sent);
+    assert_eq!(transport.envios(), 1, "o geral tocou no item de WhatsApp");
+    assert_eq!(scenario.estado(&do_whatsapp), OutboxState::Sent);
 }
 
 #[tokio::test]
 async fn so_whatsapp_pendente_nao_chama_o_transporte() {
-    let cenario = Cenario::novo("so-whatsapp");
-    cenario.enfileirar(cenario.whatsapp, 0);
-    cenario.enfileirar(cenario.whatsapp, 1);
-    let transporte = TransporteDeTeste::default();
+    let scenario = Scenario::new("so-whatsapp");
+    scenario.enqueue(scenario.whatsapp, 0);
+    scenario.enqueue(scenario.whatsapp, 1);
+    let transport = TransporteDeTeste::default();
 
-    let relato = cenario
+    let report = scenario
         .fluxo()
-        .enviar_pendentes_do_console(cenario.org, &transporte)
+        .send_pending_console(scenario.org, &transport)
         .await
         .expect("envio do console");
 
-    assert_eq!(transporte.envios(), 0, "nenhuma chamada ao canal do chat");
-    assert_eq!(relato.enviados, 0);
+    assert_eq!(transport.envios(), 0, "nenhuma chamada ao canal do chat");
+    assert_eq!(report.sent, 0);
 }

@@ -617,8 +617,8 @@ async fn reindexar(e: &Estado, org: OrgId) -> (Value, Option<String>) {
         IndexConfig::default(),
     ) {
         Ok((indice, _)) => {
-            let base = poph_agent::BaseConhecimento::nova(Arc::clone(&e.store), Arc::new(indice));
-            match base.sincronizar_org(org).await {
+            let base = poph_agent::KnowledgeBase::new(Arc::clone(&e.store), Arc::new(indice));
+            match base.synchronise_org(org).await {
                 Ok(relatorios) => {
                     agentes = relatorios.len();
                     trechos = relatorios
@@ -648,9 +648,8 @@ async fn reindexar(e: &Estado, org: OrgId) -> (Value, Option<String>) {
         IndexConfig::default(),
     ) {
         Ok((indice, _)) => {
-            let catalogo =
-                poph_agent::CatalogoProdutos::novo(Arc::clone(&e.store), Arc::new(indice));
-            match catalogo.sincronizar_org(org).await {
+            let catalogo = poph_agent::ProductCatalog::new(Arc::clone(&e.store), Arc::new(indice));
+            match catalogo.synchronise_org(org).await {
                 Ok(relatorios) => {
                     trechos_produtos = relatorios
                         .iter()

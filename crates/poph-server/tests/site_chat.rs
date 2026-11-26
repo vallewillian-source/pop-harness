@@ -8,9 +8,9 @@ use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::{Json, Router, routing::post};
 use futures::StreamExt;
-use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
-use poph_agent::limites::{Limitador, OpcoesLimites};
-use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
+use poph_agent::config_hot::{ConfigHot, HotConfigOptions};
+use poph_agent::limites::{LimitOptions, Limiter};
+use poph_agent::metrics::{MetricsMemory, MetricsTurn};
 use poph_agent::turno::{HttpToolRegistry, TurnEngine, TurnOptions};
 use poph_core::llm::{
     FakeProvider, FinishReason, LlmError, LlmEvent, LlmLimiter, LlmProvider, Message,
@@ -79,18 +79,18 @@ impl Fixture {
     }
 
     async fn start(&self, provider: Arc<dyn LlmProvider>) -> Server {
-        let memory = MetricasMemoria::proprio();
+        let memory = MetricsMemory::own();
         let motor = TurnEngine::new(
             self.store.clone(),
-            ConfigQuente::nova(
+            ConfigHot::new(
                 self.store.clone(),
-                OpcoesConfigQuente::default(),
+                HotConfigOptions::default(),
                 memory.clone(),
             ),
-            Arc::new(Limitador::novo(OpcoesLimites::default(), memory)),
+            Arc::new(Limiter::new(LimitOptions::default(), memory)),
             provider,
             TurnOptions::default(),
-            MetricasTurno::proprio(),
+            MetricsTurn::own(),
         );
         let http_tools = HttpToolRegistry::from_config(&self.config.http_tools, |name| {
             (name == "POPH_HTTP_TOOL_TEST")

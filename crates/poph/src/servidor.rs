@@ -216,12 +216,12 @@ async fn ligar_turno(
             }
         };
         if let Some(base) = &montagem.base
-            && let Err(erro) = base.sincronizar_agente(canal.org, agente).await
+            && let Err(erro) = base.synchronise_agent(canal.org, agente).await
         {
             eprintln!("[aviso] não consegui sincronizar o índice da base: {erro}");
         }
         if let Some(catalogo) = &montagem.catalogo
-            && let Err(erro) = catalogo.sincronizar_agente(canal.org, agente).await
+            && let Err(erro) = catalogo.synchronise_agent(canal.org, agente).await
         {
             eprintln!("[aviso] não consegui sincronizar o índice de produtos: {erro}");
         }

@@ -33,7 +33,7 @@ pub struct CaminhoProduto {
 fn produto_json(p: &poph_store::Product) -> Value {
     json!({"id":p.id.to_string(), "org_id":p.org_id.to_string(), "category_id":p.category_id.to_string(),
         "name":p.name, "slug":p.slug, "aliases":p.aliases, "description":p.description,
-        "price_text":poph_agent::preco_texto(p), "price_cents":p.price_cents, "unit":p.unit,
+        "price_text":poph_agent::price_text(p), "price_cents":p.price_cents, "unit":p.unit,
         "includes":p.includes, "excludes":p.exclui, "conditions":p.conditions, "tags":p.tags,
         "status":p.status.as_text(), "version":p.version, "created_at":p.created_at, "updated_at":p.updated_at})
 }
@@ -258,8 +258,8 @@ async fn sincronizar_catalogo(e: &Estado, org: OrgId) -> Option<&'static str> {
         Ok(indice) => indice,
         Err(_) => return Some("índice de produtos não atualizado; execute product reindex"),
     };
-    let catalogo = poph_agent::CatalogoProdutos::novo(Arc::clone(&e.store), Arc::new(indice));
-    if catalogo.sincronizar_org(org).await.is_err() {
+    let catalogo = poph_agent::ProductCatalog::new(Arc::clone(&e.store), Arc::new(indice));
+    if catalogo.synchronise_org(org).await.is_err() {
         return Some("índice de produtos não atualizado; execute product reindex");
     }
     None

@@ -2,18 +2,18 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use poph_agent::atores::{Atores, Futuro, OpcoesAtores, Processador, Tarefa};
-use poph_agent::entrada_saida::{Fluxo, OpcoesFluxo};
-use poph_agent::fila_integracao::{ConversaDoCanal, EnvioPeloCanal, InboxDoCanal};
-use poph_agent::metricas::MetricasMemoria;
+use poph_agent::actors::{ActorOptions, Actors, BoxFuture, Processor, Task};
+use poph_agent::entry_output::{FlowOptions, Fluxo};
+use poph_agent::metrics::MetricsMemory;
+use poph_agent::queue_integration::{ConversationChannel, InboxChannel, SendByChannel};
 use poph_plugins::{PluginOptions, Supervisor};
 use poph_store::{NewAgent, NewConversation, NewOrg, NewOutboxItem, OutboxState, Page, Store};
 use poph_types::{EventSink, Integration, IntegrationId, SendText, TurnId};
 
 struct NoTurn;
 
-impl Processador for NoTurn {
-    fn processar(&self, _task: Tarefa) -> Futuro {
+impl Processor for NoTurn {
+    fn process(&self, _task: Task) -> BoxFuture {
         Box::pin(async { Ok(()) })
     }
 }
@@ -69,20 +69,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         conversation.peer_externo.as_deref().unwrap_or("-")
     );
 
-    let actors = Atores::novo(
+    let actors = Actors::new(
         Arc::new(NoTurn),
-        OpcoesAtores::default(),
-        MetricasMemoria::proprio(),
+        ActorOptions::default(),
+        MetricsMemory::own(),
     );
-    let flow = Fluxo::nova(Arc::clone(&store), actors, OpcoesFluxo::default());
+    let flow = Fluxo::new(Arc::clone(&store), actors, FlowOptions::default());
 
-    let resolver = Arc::new(ConversaDoCanal::novo(
+    let resolver = Arc::new(ConversationChannel::new(
         Arc::clone(&store),
         agent,
         "eco",
         None,
     ));
-    let inbox = InboxDoCanal::iniciar(flow.clone(), org, resolver);
+    let inbox = InboxChannel::start(flow.clone(), org, resolver);
 
     let integration = IntegrationId::generate();
     let options = PluginOptions::new(&program, integration, org).with_kind("eco");
@@ -110,15 +110,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         enqueued.1.state
     );
 
-    let transport = EnvioPeloCanal::novo(Arc::clone(&store), Arc::clone(&channel));
-    let report = flow.enviar_pendentes(org, &transport).await?;
+    let transport = SendByChannel::new(Arc::clone(&store), Arc::clone(&channel));
+    let report = flow.send_pending(org, &transport).await?;
     let item = store.outbox().get(org, enqueued.1.id)?;
     println!(
         "4. envio pelo plugin: enviados={} falharam={} → estado {:?}",
-        report.enviados, report.falharam, item.state
+        report.sent, report.failed, item.state
     );
 
-    wait_until(|| inbox.contadores().gravados >= 1).await?;
+    wait_until(|| inbox.counters().stored >= 1).await?;
     let messages = store
         .messages()
         .list(org, conversation.id, Page::with_limit(10))?;
@@ -138,11 +138,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             text: "olá, mundo".to_owned(),
         })
         .await?;
-    wait_until(|| inbox.contadores().duplicados >= 1).await?;
-    let counters = inbox.contadores();
+    wait_until(|| inbox.counters().duplicated >= 1).await?;
+    let counters = inbox.counters();
     println!(
         "6. reentrega do mesmo comando: gravados={} duplicados={} (nada duplicado na conversa)",
-        counters.gravados, counters.duplicados
+        counters.stored, counters.duplicated
     );
     let messages = store
         .messages()

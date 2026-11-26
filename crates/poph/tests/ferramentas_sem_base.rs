@@ -245,7 +245,7 @@ impl Cenario {
                     agente,
                     0,
                     &instrucoes.to_json(),
-                    &poph_agent::compor_instrucoes(&instrucoes),
+                    &poph_agent::compose_instructions(&instrucoes),
                     true,
                 )
                 .expect("instruções");
@@ -525,7 +525,7 @@ async fn sem_modelo_de_embedding_a_ferramenta_nao_habilitada_continua_fora() {
                 agente,
                 0,
                 &instrucoes.to_json(),
-                &poph_agent::compor_instrucoes(&instrucoes),
+                &poph_agent::compose_instructions(&instrucoes),
                 true,
             )
             .expect("instruções");

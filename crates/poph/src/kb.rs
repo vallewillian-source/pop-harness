@@ -11,7 +11,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use clap::{Args, Subcommand};
-use poph_agent::BaseConhecimento;
+use poph_agent::KnowledgeBase;
 use poph_rag::chunks::source_hash;
 use poph_store::{
     KnowledgeGroup, KnowledgeGroupChange, KnowledgeItem, KnowledgeItemChange, NewKnowledgeGroup,
@@ -889,16 +889,16 @@ impl Contexto {
             Err(erro) => return falha(erro),
         };
         let trechos = runtime.block_on(async {
-            use poph_agent::{BuscadorBase, ParametrosBusca};
-            let busca: &dyn BuscadorBase = base.as_ref();
+            use poph_agent::{KnowledgeSearcher, SearchParameters};
+            let busca: &dyn KnowledgeSearcher = base.as_ref();
             busca
-                .buscar(
+                .search(
                     self.org,
                     agente,
                     args.consulta.clone(),
-                    ParametrosBusca {
+                    SearchParameters {
                         top_k,
-                        corte: agente_registro.rag_cutoff as f32,
+                        cutoff: agente_registro.rag_cutoff as f32,
                     },
                 )
                 .await
@@ -920,9 +920,9 @@ impl Contexto {
                         println!(
                             "[{}] {:.3}  fonte: {} ({})",
                             indice + 1,
-                            trecho.similaridade,
-                            trecho.titulo,
-                            trecho.grupo
+                            trecho.similarity,
+                            trecho.title,
+                            trecho.group
                         );
                         println!("    {}\n", trecho.texto.replace('\n', " "));
                     }
@@ -1001,18 +1001,18 @@ impl Contexto {
 
     /// Base pronta para escrever e reindexar. O embedding passa pela fila da HR-15, com o limite
     /// por org: escrever um item de uma org não ocupa o modelo das outras.
-    fn base(&self) -> Result<Arc<BaseConhecimento>, String> {
+    fn base(&self) -> Result<Arc<KnowledgeBase>, String> {
         crate::rag::abrir_base_com_fila(&self.configuracao, Arc::clone(&self.store), self.org)
     }
 
     fn sincronizar(
         &self,
-        base: &BaseConhecimento,
+        base: &KnowledgeBase,
         agente: AgentId,
     ) -> Result<poph_rag::IndexReport, String> {
         let runtime = runtime()?;
         runtime
-            .block_on(base.sincronizar_agente(self.org, agente))
+            .block_on(base.synchronise_agent(self.org, agente))
             .map_err(|erro| format!("não consegui reindexar o agente {agente}: {erro}"))
     }
 
@@ -1061,7 +1061,7 @@ impl Contexto {
         }
     }
 
-    fn estado_do_item(&self, base: &BaseConhecimento, item: &KnowledgeItem) -> EstadoIndice {
+    fn estado_do_item(&self, base: &KnowledgeBase, item: &KnowledgeItem) -> EstadoIndice {
         let grupo_inativo = self
             .store
             .knowledge()
@@ -1082,9 +1082,9 @@ impl Contexto {
         if agentes.is_empty() {
             return EstadoIndice::NaoVinculado;
         }
-        let esperado = source_hash(base.indice().identity(), &item.title, &item.content);
+        let esperado = source_hash(base.index().identity(), &item.title, &item.content);
         for agente in agentes {
-            let Ok(mapa) = base.indice().indexed_items(self.org, agente) else {
+            let Ok(mapa) = base.index().indexed_items(self.org, agente) else {
                 return EstadoIndice::Erro;
             };
             if mapa.get(&item.id) != Some(&esperado) {

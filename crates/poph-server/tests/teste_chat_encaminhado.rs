@@ -21,11 +21,11 @@ use std::time::{Duration, Instant, SystemTime};
 
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, SaltString};
-use poph_agent::atores::{Atores, OpcoesAtores};
-use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
-use poph_agent::entrada_saida::{Fluxo, OpcoesFluxo};
-use poph_agent::limites::{Limitador, OpcoesLimites};
-use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
+use poph_agent::actors::{ActorOptions, Actors};
+use poph_agent::config_hot::{ConfigHot, HotConfigOptions};
+use poph_agent::entry_output::{FlowOptions, Fluxo};
+use poph_agent::limites::{LimitOptions, Limiter};
+use poph_agent::metrics::{MetricsMemory, MetricsTurn};
 use poph_agent::turno::{TurnEngine, TurnOptions, TurnProcessor};
 use poph_core::llm::{FakeProvider, LlmError, LlmEvent, LlmProvider, Script};
 use poph_server::Estado;
@@ -139,26 +139,23 @@ async fn iniciar(
         let provedor: Arc<dyn LlmProvider> = fake.clone();
         let motor = Arc::new(TurnEngine::new(
             Arc::clone(&store),
-            ConfigQuente::nova(
+            ConfigHot::new(
                 Arc::clone(&store),
-                OpcoesConfigQuente::default(),
-                MetricasMemoria::proprio(),
+                HotConfigOptions::default(),
+                MetricsMemory::own(),
             ),
-            Arc::new(Limitador::novo(
-                OpcoesLimites::default(),
-                MetricasMemoria::proprio(),
-            )),
+            Arc::new(Limiter::new(LimitOptions::default(), MetricsMemory::own())),
             provedor,
             TurnOptions::default(),
-            MetricasTurno::proprio(),
+            MetricsTurn::own(),
         ));
         let processador = Arc::new(TurnProcessor::new(Arc::clone(&motor)));
-        let atores = Atores::novo(
+        let atores = Actors::new(
             processador.clone(),
-            OpcoesAtores::default(),
-            MetricasMemoria::proprio(),
+            ActorOptions::default(),
+            MetricsMemory::own(),
         );
-        let fluxo = Fluxo::nova(Arc::clone(&store), atores, OpcoesFluxo::default());
+        let fluxo = Fluxo::new(Arc::clone(&store), atores, FlowOptions::default());
         processador.attach_io(fluxo.clone());
         estado = estado
             .com_motor(motor)

@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime};
 
 use argon2::password_hash::PasswordHash;
-use poph_agent::entrada_saida::Fluxo;
+use poph_agent::entry_output::Fluxo;
 use poph_agent::turno::TurnEngine;
 use poph_files::FileConfig;
 use poph_fluxos::{

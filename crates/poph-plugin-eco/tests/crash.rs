@@ -5,7 +5,7 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use common::{Scenario, temporary_dir};
-use poph_agent::fila_integracao::EnvioPeloCanal;
+use poph_agent::queue_integration::SendByChannel;
 use poph_types::IntegrationState;
 use poph_types::TurnId;
 
@@ -48,18 +48,18 @@ fn kill(name: &str) -> bool {
 async fn kill_9_on_the_plugin_does_not_drop_the_supervisor_and_the_message_comes_back() {
     let (_cleanup, program, name) = unique_copy();
     let scenario = Scenario::new("queda", &program, Some("5511999999999")).await;
-    let transport: EnvioPeloCanal = scenario.transport();
+    let transport: SendByChannel = scenario.transport();
 
     scenario.enqueue_text(TurnId::generate(), "antes");
     let report = scenario
         .flow
-        .enviar_pendentes(scenario.org, &transport)
+        .send_pending(scenario.org, &transport)
         .await
         .expect("envia o primeiro texto");
-    assert_eq!(report.enviados, 1, "{report:?}");
+    assert_eq!(report.sent, 1, "{report:?}");
     scenario
         .wait_until("a primeira mensagem chegar", || {
-            scenario.inbox.contadores().gravados >= 1
+            scenario.inbox.counters().stored >= 1
         })
         .await;
 
@@ -81,7 +81,7 @@ async fn kill_9_on_the_plugin_does_not_drop_the_supervisor_and_the_message_comes
         attempts += 1;
         scenario
             .flow
-            .enviar_pendentes(scenario.org, &transport)
+            .send_pending(scenario.org, &transport)
             .await
             .expect("o ciclo de envio termina mesmo com o plugin caindo");
         if scenario.item_state(item.id) == poph_store::OutboxState::Sent {
@@ -113,14 +113,14 @@ async fn kill_9_on_the_plugin_does_not_drop_the_supervisor_and_the_message_comes
 
     scenario
         .wait_until("a segunda mensagem chegar", || {
-            scenario.inbox.contadores().gravados >= 2
+            scenario.inbox.counters().stored >= 2
         })
         .await;
     let messages = scenario.messages();
     assert_eq!(messages.len(), 2, "{messages:#?}");
     assert_eq!(messages[0].texto, "setna");
     assert_eq!(messages[1].texto, "adeuq ad sioped");
-    assert_eq!(scenario.inbox.contadores().duplicados, 0);
+    assert_eq!(scenario.inbox.counters().duplicated, 0);
 
     let health = scenario.channel.health().await.expect("consulta a saúde");
     assert!(health.ok, "{health:?}");

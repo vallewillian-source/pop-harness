@@ -1,25 +1,12 @@
-//! Imagem do cliente no prompt do turno (HR-23b).
-//!
-//! Antes desta tarefa o turno só lia `attachments.extracted_text`: imagem era gravada, aparecia no
-//! histórico e **não** chegava ao modelo. Uma mensagem só com imagem gerava pedido sem conteúdo.
-//!
-//! O que se prova aqui, com provedor e armazenamento reais (nenhum teste toca a rede):
-//! 1. mensagem só com imagem chega ao provedor com `Parte::Imagem` — mime e bytes do blob — e o
-//!    pedido não fica sem conteúdo;
-//! 2. imagem + documento mantém o texto do documento marcado como não confiável **e** a imagem;
-//! 3. blob ausente (ou hash inválido) não derruba o turno: ele conclui sem a imagem;
-//! 4. acima do teto do turno (quantidade e tamanho) a imagem é omitida e o turno segue;
-//! 5. turno sem configuração de arquivos continua igual a hoje (só texto), sem imagem.
-
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
-use poph_agent::limites::{Limitador, OpcoesLimites};
-use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
+use poph_agent::config_hot::{ConfigHot, HotConfigOptions};
+use poph_agent::limites::{LimitOptions, Limiter};
+use poph_agent::metrics::{MetricsMemory, MetricsTurn};
 use poph_agent::turno::{
-    FuturoPausa, MAX_IMAGES_PER_TURN, NoopObserver, Pausa, TurnEngine, TurnInput, TurnOptions,
+    FuturePause, MAX_IMAGES_PER_TURN, NoopObserver, Pause, TurnEngine, TurnInput, TurnOptions,
     TurnSummary,
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Message, Part, Script, Usage};
@@ -30,29 +17,26 @@ use poph_types::{ConversationId, MessageId, OrgId, StructuredInstructions};
 
 struct SemEspera;
 
-impl Pausa for SemEspera {
-    fn esperar(&self, _duracao: Duration) -> FuturoPausa {
+impl Pause for SemEspera {
+    fn wait(&self, _duracao: Duration) -> FuturePause {
         Box::pin(async {})
     }
 }
 
-struct Cenario {
-    pasta: PathBuf,
+struct Scenario {
+    folder: PathBuf,
     store: Arc<Store>,
     org: OrgId,
     conversa: ConversationId,
-    arquivos: poph_files::FileConfig,
-    metricas: MetricasTurno,
+    files: poph_files::FileConfig,
+    metrics: MetricsTurn,
 }
 
-/// Anexo pronto para gravar: bytes no blob (ou não) e a linha em `attachments`.
 struct Anexo {
     nome: String,
     mime: String,
     bytes: Vec<u8>,
-    /// `true` = grava só a linha, sem o blob no disco (blob ausente).
     sem_blob: bool,
-    /// Tamanho declarado na linha, quando difere do real (prova o teto sem gravar 5 MB).
     tamanho_declarado: Option<u64>,
     texto_extraido: Option<String>,
 }
@@ -81,26 +65,27 @@ impl Anexo {
     }
 }
 
-impl Cenario {
-    fn novo(rotulo: &str) -> Self {
-        let pasta = std::env::temp_dir().join(format!(
-            "poph-hr23b-{rotulo}-{}-{}",
+impl Scenario {
+    fn new(label: &str) -> Self {
+        let folder = std::env::temp_dir().join(format!(
+            "poph-hr23b-{label}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|tempo| tempo.as_nanos())
                 .unwrap_or(0)
         ));
-        let _ = std::fs::remove_dir_all(&pasta);
-        std::fs::create_dir_all(&pasta).expect("pasta do teste");
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).expect("pasta do teste");
         let store = Arc::new(
-            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco"),
+            Store::open_at(&folder.join("harness.db"), &folder.join("rag.db"))
+                .expect("abre o banco"),
         );
         let org = store
             .orgs()
             .create(poph_store::NewOrg {
-                name: format!("Org {rotulo}"),
-                slug: format!("org-{rotulo}-{}-{}", std::process::id(), fastrand()),
+                name: format!("Org {label}"),
+                slug: format!("org-{label}-{}-{}", std::process::id(), fastrand()),
                 config_json: "{}".to_owned(),
             })
             .expect("cria a org")
@@ -110,21 +95,21 @@ impl Cenario {
             .create(
                 org,
                 NewAgent {
-                    name: format!("Bia {rotulo}"),
-                    slug: format!("bia-{rotulo}-{}", fastrand()),
+                    name: format!("Bia {label}"),
+                    slug: format!("bia-{label}-{}", fastrand()),
                     grouping_window_ms: 0,
                     ..NewAgent::default()
                 },
             )
             .expect("cria o agente");
-        let estruturado = StructuredInstructions::default();
+        let structured = StructuredInstructions::default();
         store
             .instructions()
             .save(
                 org,
                 agente.id,
                 0,
-                &estruturado.to_json(),
+                &structured.to_json(),
                 "# Bia\n\nVocê é a atendente da loja.",
                 true,
             )
@@ -143,25 +128,24 @@ impl Cenario {
             )
             .expect("abre a conversa")
             .id;
-        let arquivos = poph_files::FileConfig::default(pasta.join("blobs"));
+        let files = poph_files::FileConfig::default(folder.join("blobs"));
         Self {
-            pasta,
+            folder,
             store,
             org,
             conversa,
-            arquivos,
-            metricas: MetricasTurno::proprio(),
+            files,
+            metrics: MetricsTurn::own(),
         }
     }
 
-    /// Grava a mensagem do cliente com os anexos dados, pondo o blob no disco quando for o caso.
     fn falar_com_arquivos(&self, texto: &str, anexos: Vec<Anexo>) -> MessageId {
         let mut linhas: Vec<NewChannelAttachment> = Vec::with_capacity(anexos.len());
         for anexo in anexos {
             let sha256 = if anexo.sem_blob {
                 poph_files::blob::sha256_hex(&anexo.bytes)
             } else {
-                poph_files::blob::write(&self.arquivos.blob_folder, self.org, &anexo.bytes)
+                poph_files::blob::write(&self.files.blob_folder, self.org, &anexo.bytes)
                     .expect("grava o blob")
                     .sha256
             };
@@ -201,40 +185,37 @@ impl Cenario {
             .id
     }
 
-    fn motor(&self, com_arquivos: bool) -> (TurnEngine, Arc<FakeProvider>) {
+    fn engine(&self, com_arquivos: bool) -> (TurnEngine, Arc<FakeProvider>) {
         let fake = Arc::new(FakeProvider::with_scripts(vec![roteiro_texto(
             "recebi o arquivo",
         )]));
-        let config = ConfigQuente::nova(
+        let config = ConfigHot::new(
             Arc::clone(&self.store),
-            OpcoesConfigQuente::default(),
-            MetricasMemoria::proprio(),
+            HotConfigOptions::default(),
+            MetricsMemory::own(),
         );
-        let limitador = Arc::new(Limitador::novo(
-            OpcoesLimites::default(),
-            MetricasMemoria::proprio(),
-        ));
-        let mut motor = TurnEngine::new(
+        let limiter = Arc::new(Limiter::new(LimitOptions::default(), MetricsMemory::own()));
+        let mut engine = TurnEngine::new(
             Arc::clone(&self.store),
             config,
-            limitador,
+            limiter,
             fake.clone(),
             TurnOptions::default(),
-            self.metricas.clone(),
+            self.metrics.clone(),
         )
         .with_pause(Arc::new(SemEspera))
-        .with_summary(poph_agent::resumo::OpcoesResumo {
+        .with_summary(poph_agent::summary::SummaryOptions {
             ativo: false,
-            ..poph_agent::resumo::OpcoesResumo::default()
+            ..poph_agent::summary::SummaryOptions::default()
         });
         if com_arquivos {
-            motor = motor.with_files(self.arquivos.clone());
+            engine = engine.with_files(self.files.clone());
         }
-        (motor, fake)
+        (engine, fake)
     }
 
-    async fn turno(&self, motor: &TurnEngine, gatilho: MessageId) -> TurnSummary {
-        motor
+    async fn turno(&self, engine: &TurnEngine, gatilho: MessageId) -> TurnSummary {
+        engine
             .run(
                 TurnInput::new(self.org, self.conversa, gatilho),
                 &mut NoopObserver,
@@ -244,9 +225,9 @@ impl Cenario {
     }
 }
 
-impl Drop for Cenario {
+impl Drop for Scenario {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.pasta);
+        let _ = std::fs::remove_dir_all(&self.folder);
     }
 }
 
@@ -268,12 +249,11 @@ fn roteiro_texto(texto: &str) -> Script {
     ])
 }
 
-/// Partes de imagem de um pedido, na ordem.
-fn imagens(pedido: &poph_core::llm::Request) -> Vec<(String, Vec<u8>)> {
+fn imagens(request: &poph_core::llm::Request) -> Vec<(String, Vec<u8>)> {
     let mut achadas = Vec::new();
-    for mensagem in &pedido.messages {
-        if let Message::User(partes) = mensagem {
-            for parte in partes {
+    for mensagem in &request.messages {
+        if let Message::User(parts) = mensagem {
+            for parte in parts {
                 if let Part::Image { mime, bytes } = parte {
                     achadas.push((mime.clone(), bytes.clone()));
                 }
@@ -283,27 +263,24 @@ fn imagens(pedido: &poph_core::llm::Request) -> Vec<(String, Vec<u8>)> {
     achadas
 }
 
-/// Todo o texto (de sistema e de usuário) de um pedido, junto.
-fn texto_do_pedido(pedido: &poph_core::llm::Request) -> String {
+fn texto_do_pedido(request: &poph_core::llm::Request) -> String {
     let mut texto = String::new();
-    for mensagem in &pedido.messages {
+    for mensagem in &request.messages {
         match mensagem {
-            Message::System(conteudo) => {
-                texto.push_str(conteudo);
+            Message::System(content) => {
+                texto.push_str(content);
                 texto.push('\n');
             }
-            Message::User(partes) => {
-                for parte in partes {
-                    if let Part::Texto(conteudo) = parte {
-                        texto.push_str(conteudo);
+            Message::User(parts) => {
+                for parte in parts {
+                    if let Part::Texto(content) = parte {
+                        texto.push_str(content);
                         texto.push('\n');
                     }
                 }
             }
-            Message::Assistant {
-                texto: conteudo, ..
-            } => {
-                texto.push_str(conteudo);
+            Message::Assistant { texto: content, .. } => {
+                texto.push_str(content);
                 texto.push('\n');
             }
             _ => {}
@@ -313,33 +290,32 @@ fn texto_do_pedido(pedido: &poph_core::llm::Request) -> String {
 }
 
 async fn imagem_chega_ao_provedor() {
-    let cenario = Cenario::novo("so-imagem");
+    let scenario = Scenario::new("so-imagem");
     let bytes = b"bytes-de-uma-png-de-teste".to_vec();
-    let gatilho = cenario.falar_com_arquivos("", vec![Anexo::imagem("foto.png", &bytes)]);
-    let (motor, fake) = cenario.motor(true);
+    let gatilho = scenario.falar_com_arquivos("", vec![Anexo::imagem("foto.png", &bytes)]);
+    let (engine, fake) = scenario.engine(true);
 
-    let resumo = cenario.turno(&motor, gatilho).await;
+    let summary = scenario.turno(&engine, gatilho).await;
 
-    assert_eq!(resumo.estado, TurnState::Completed, "{:?}", resumo.error);
-    let pedido = &fake.received()[0];
-    let achadas = imagens(pedido);
+    assert_eq!(summary.estado, TurnState::Completed, "{:?}", summary.error);
+    let request = &fake.received()[0];
+    let achadas = imagens(request);
     assert_eq!(achadas.len(), 1, "a imagem tem de ir ao modelo");
     assert_eq!(achadas[0].0, "image/png");
     assert_eq!(achadas[0].1, bytes, "os bytes vêm do blob, sem reextração");
-    // O pedido não fica sem conteúdo: há a parte de imagem e não sobra texto em branco do cliente.
-    let vazios = pedido
+    let vazios = request
         .messages
         .iter()
         .filter(|mensagem| {
             matches!(
                 mensagem,
-                Message::User(partes)
-                    if partes.iter().all(|parte| matches!(parte, Part::Texto(t) if t.trim().is_empty()))
+                Message::User(parts)
+                    if parts.iter().all(|parte| matches!(parte, Part::Texto(t) if t.trim().is_empty()))
             )
         })
         .count();
     assert_eq!(vazios, 0, "mensagem só com imagem não gera texto vazio");
-    assert_eq!(resumo.texto, "recebi o arquivo");
+    assert_eq!(summary.texto, "recebi o arquivo");
 }
 
 #[tokio::test]
@@ -349,9 +325,9 @@ async fn imagem_chega_ao_provedor_como_parte_multimodal() {
 
 #[tokio::test]
 async fn imagem_e_documento_vao_juntos_com_o_aviso_de_conteudo_nao_confiavel() {
-    let cenario = Cenario::novo("imagem-e-pdf");
+    let scenario = Scenario::new("imagem-e-pdf");
     let bytes = b"bytes-de-uma-jpeg".to_vec();
-    let gatilho = cenario.falar_com_arquivos(
+    let gatilho = scenario.falar_com_arquivos(
         "segue a foto e o contrato",
         vec![
             Anexo::documento(
@@ -361,18 +337,16 @@ async fn imagem_e_documento_vao_juntos_com_o_aviso_de_conteudo_nao_confiavel() {
             Anexo::imagem("foto.jpg", &bytes),
         ],
     );
-    let (motor, fake) = cenario.motor(true);
+    let (engine, fake) = scenario.engine(true);
 
-    let resumo = cenario.turno(&motor, gatilho).await;
+    let summary = scenario.turno(&engine, gatilho).await;
 
-    assert_eq!(resumo.estado, TurnState::Completed, "{:?}", resumo.error);
-    let pedido = &fake.received()[0];
-    // A imagem do segundo anexo vem com o mime dela (o anexo é o mesmo tipo gravado pelo canal).
-    let achadas = imagens(pedido);
+    assert_eq!(summary.estado, TurnState::Completed, "{:?}", summary.error);
+    let request = &fake.received()[0];
+    let achadas = imagens(request);
     assert_eq!(achadas.len(), 1);
     assert_eq!(achadas[0].1, bytes);
-    // O texto do documento continua marcado como dado, nunca instrução.
-    let texto = texto_do_pedido(pedido);
+    let texto = texto_do_pedido(request);
     assert!(
         texto.contains(poph_files::envelope::UNTRUSTED_NOTICE),
         "o aviso de conteúdo não confiável tem de continuar no prompt"
@@ -382,16 +356,16 @@ async fn imagem_e_documento_vao_juntos_com_o_aviso_de_conteudo_nao_confiavel() {
 
 #[tokio::test]
 async fn blob_ausente_nao_derruba_o_turno() {
-    let cenario = Cenario::novo("blob-ausente");
+    let scenario = Scenario::new("blob-ausente");
     let mut anexo = Anexo::imagem("foto.png", b"nao-vai-para-o-disco");
     anexo.sem_blob = true;
-    let gatilho = cenario.falar_com_arquivos("olha a foto", vec![anexo]);
-    let (motor, fake) = cenario.motor(true);
+    let gatilho = scenario.falar_com_arquivos("olha a foto", vec![anexo]);
+    let (engine, fake) = scenario.engine(true);
 
-    let resumo = cenario.turno(&motor, gatilho).await;
+    let summary = scenario.turno(&engine, gatilho).await;
 
-    assert_eq!(resumo.estado, TurnState::Completed, "{:?}", resumo.error);
-    assert_eq!(resumo.texto, "recebi o arquivo");
+    assert_eq!(summary.estado, TurnState::Completed, "{:?}", summary.error);
+    assert_eq!(summary.texto, "recebi o arquivo");
     assert!(
         imagens(&fake.received()[0]).is_empty(),
         "sem blob não há parte de imagem"
@@ -400,24 +374,23 @@ async fn blob_ausente_nao_derruba_o_turno() {
 
 #[tokio::test]
 async fn imagem_acima_do_teto_e_omitida_e_o_turno_segue() {
-    let cenario = Cenario::novo("teto");
+    let scenario = Scenario::new("teto");
     let mut anexos = Vec::new();
-    for indice in 0..(MAX_IMAGES_PER_TURN + 1) {
+    for index in 0..(MAX_IMAGES_PER_TURN + 1) {
         anexos.push(Anexo::imagem(
-            &format!("foto-{indice}.png"),
-            format!("conteudo-{indice}").as_bytes(),
+            &format!("foto-{index}.png"),
+            format!("conteudo-{index}").as_bytes(),
         ));
     }
-    // A última passa do teto de bytes por imagem: omitida sem nem ler o disco.
-    let mut grande = Anexo::imagem("foto-grande.png", b"x");
-    grande.tamanho_declarado = Some(poph_agent::turno::MAX_BYTES_PER_IMAGE + 1);
-    anexos.push(grande);
-    let gatilho = cenario.falar_com_arquivos("varias fotos", anexos);
-    let (motor, fake) = cenario.motor(true);
+    let mut large = Anexo::imagem("foto-grande.png", b"x");
+    large.tamanho_declarado = Some(poph_agent::turno::MAX_BYTES_PER_IMAGE + 1);
+    anexos.push(large);
+    let gatilho = scenario.falar_com_arquivos("varias fotos", anexos);
+    let (engine, fake) = scenario.engine(true);
 
-    let resumo = cenario.turno(&motor, gatilho).await;
+    let summary = scenario.turno(&engine, gatilho).await;
 
-    assert_eq!(resumo.estado, TurnState::Completed, "{:?}", resumo.error);
+    assert_eq!(summary.estado, TurnState::Completed, "{:?}", summary.error);
     let achadas = imagens(&fake.received()[0]);
     assert_eq!(
         achadas.len(),
@@ -432,16 +405,16 @@ async fn imagem_acima_do_teto_e_omitida_e_o_turno_segue() {
 
 #[tokio::test]
 async fn sem_configuracao_de_arquivos_o_turno_continua_como_hoje() {
-    let cenario = Cenario::novo("sem-config");
-    let gatilho = cenario.falar_com_arquivos(
+    let scenario = Scenario::new("sem-config");
+    let gatilho = scenario.falar_com_arquivos(
         "olha a foto",
         vec![Anexo::imagem("foto.png", b"bytes-da-foto")],
     );
-    let (motor, fake) = cenario.motor(false);
+    let (engine, fake) = scenario.engine(false);
 
-    let resumo = cenario.turno(&motor, gatilho).await;
+    let summary = scenario.turno(&engine, gatilho).await;
 
-    assert_eq!(resumo.estado, TurnState::Completed, "{:?}", resumo.error);
+    assert_eq!(summary.estado, TurnState::Completed, "{:?}", summary.error);
     assert!(
         imagens(&fake.received()[0]).is_empty(),
         "sem pasta de blobs configurada, nenhuma imagem é lida do disco"

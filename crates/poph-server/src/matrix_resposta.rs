@@ -994,7 +994,7 @@ impl RespostaDoAtendente {
             .await;
     }
 
-    async fn processar(&self, transacao: &str, eventos: Vec<Value>) -> Result<(), ErroEntrega> {
+    async fn process(&self, transacao: &str, eventos: Vec<Value>) -> Result<(), ErroEntrega> {
         for evento in &eventos {
             match classificar(&self.ids, evento) {
                 Acao::RespostaHumana {
@@ -1046,7 +1046,7 @@ impl EntregaDeEventos for RespostaDoAtendente {
         // O id da transação vira dono: o futuro devolvido só empresta `self` (é o que o trait
         // permite), e `transacao` chega emprestada de quem chamou.
         let transacao = transacao.to_owned();
-        Box::pin(async move { self.processar(&transacao, eventos).await })
+        Box::pin(async move { self.process(&transacao, eventos).await })
     }
 }
 

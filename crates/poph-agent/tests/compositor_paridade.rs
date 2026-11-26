@@ -1,17 +1,6 @@
-//! Paridade do compositor com o POP Atende, byte a byte.
-//!
-//! As fixturas são `<nome>.json` (entrada do formulário) e `<nome>.esperado.txt` (saída real de
-//! `core/agent/instructions_composer.compose_instructions`). Elas foram geradas por
-//! `fixtures/compositor/gerar_referencia.py`, que importa o compositor do backend e chama a mesma
-//! função que o `PATCH /agents/{id}/instructions` chama. Nada do backend foi alterado.
-//!
-//! Se este teste falhar, o Harness mudou o texto do prompt do agente — o que quebra a paridade com
-//! o POP Atende e o cache de prefixo do provedor.
-
-use poph_agent::compositor::compor_instrucoes;
+use poph_agent::compositor::compose_instructions;
 use poph_types::StructuredInstructions;
 
-/// Pares (nome, JSON de entrada, texto esperado) versionados no repositório.
 const FIXTURAS: &[(&str, &str, &str)] = &[
     (
         "exemplo_bia",
@@ -62,26 +51,26 @@ const FIXTURAS: &[(&str, &str, &str)] = &[
 
 #[test]
 fn paridade_byte_a_byte_com_o_pop_atende() {
-    for (nome, entrada, esperado) in FIXTURAS {
-        let dados = StructuredInstructions::from_tolerant_json(entrada)
-            .unwrap_or_else(|erro| panic!("fixtura `{nome}` não é JSON válido: {erro}"));
-        let obtido = compor_instrucoes(&dados);
+    for (nome, entry, expected) in FIXTURAS {
+        let dados = StructuredInstructions::from_tolerant_json(entry)
+            .unwrap_or_else(|error| panic!("fixtura `{nome}` não é JSON válido: {error}"));
+        let obtido = compose_instructions(&dados);
         assert_eq!(
-            obtido, *esperado,
+            obtido, *expected,
             "saída diferente da referência do POP Atende na fixtura `{nome}`\n\
-             --- obtido ---\n{obtido}\n--- esperado ---\n{esperado}"
+             --- obtido ---\n{obtido}\n--- esperado ---\n{expected}"
         );
     }
 }
 
 #[test]
 fn exemplo_do_documento_de_paridade_tem_658_caracteres_e_677_bytes() {
-    let (_nome, entrada, esperado) = FIXTURAS
+    let (_name, entry, expected) = FIXTURAS
         .iter()
         .find(|(nome, _, _)| *nome == "exemplo_bia")
         .expect("fixtura exemplo_bia");
-    let texto = compor_instrucoes(&StructuredInstructions::from_tolerant_json(entrada).unwrap());
-    assert_eq!(texto, *esperado);
+    let texto = compose_instructions(&StructuredInstructions::from_tolerant_json(entry).unwrap());
+    assert_eq!(texto, *expected);
     assert_eq!(texto.chars().count(), 658, "contagem de caracteres do §9.3");
     assert_eq!(texto.len(), 677, "contagem de bytes UTF-8 do §9.3");
     assert!(
@@ -92,12 +81,12 @@ fn exemplo_do_documento_de_paridade_tem_658_caracteres_e_677_bytes() {
 
 #[test]
 fn composicao_e_deterministica() {
-    for (nome, entrada, _esperado) in FIXTURAS {
-        let dados = StructuredInstructions::from_tolerant_json(entrada).unwrap();
-        let primeira = compor_instrucoes(&dados);
-        let segunda = compor_instrucoes(&dados);
+    for (nome, entry, _esperado) in FIXTURAS {
+        let dados = StructuredInstructions::from_tolerant_json(entry).unwrap();
+        let first = compose_instructions(&dados);
+        let segunda = compose_instructions(&dados);
         assert_eq!(
-            primeira.as_bytes(),
+            first.as_bytes(),
             segunda.as_bytes(),
             "duas composições da fixtura `{nome}` divergiram"
         );
@@ -106,12 +95,11 @@ fn composicao_e_deterministica() {
 
 #[test]
 fn caso_de_borda_identity_sem_nome_nem_empresa_nao_emite_cabecalho() {
-    // §9.3: o gate é `name or company`; só papel + descrição não emitem identidade.
     let dados = StructuredInstructions::from_tolerant_json(
         r#"{"identity":{"role":"atendente","company_description":"perdida"}}"#,
     )
     .unwrap();
-    let texto = compor_instrucoes(&dados);
+    let texto = compose_instructions(&dados);
     assert!(texto.starts_with("\n## Tom e Comunicacao\n"), "{texto}");
     assert!(!texto.contains("perdida"));
     assert!(
@@ -125,7 +113,7 @@ fn caso_de_borda_empresa_sem_nome_tem_dois_espacos_no_cabecalho() {
     let dados =
         StructuredInstructions::from_tolerant_json(r#"{"identity":{"company":"FixProLar"}}"#)
             .unwrap();
-    let texto = compor_instrucoes(&dados);
+    let texto = compose_instructions(&dados);
     assert!(texto.starts_with("#  da FixProLar\n"), "{texto}");
 }
 
@@ -135,7 +123,7 @@ fn caso_de_borda_ferramenta_desabilitada_nao_entra_no_markdown() {
         r#"{"tools":[{"name":"enviar_arquivo","enabled":false,"when_to_use":"catálogo"}]}"#,
     )
     .unwrap();
-    let texto = compor_instrucoes(&dados);
+    let texto = compose_instructions(&dados);
     assert!(!texto.contains("Ferramentas Disponiveis"));
     assert!(!texto.contains("enviar_arquivo"));
 }
@@ -149,8 +137,8 @@ fn caso_de_borda_flow_steps_nao_alteram_a_saida() {
     )
     .unwrap();
     assert_eq!(
-        compor_instrucoes(&sem_passos),
-        compor_instrucoes(&com_passos)
+        compose_instructions(&sem_passos),
+        compose_instructions(&com_passos)
     );
 }
 
@@ -164,7 +152,6 @@ fn le_o_duplo_encoding_legado_do_jsonb() {
 
 #[test]
 fn campo_desconhecido_e_ignorado_na_leitura() {
-    // `linked_template_id` (Fichas) é fora da V1 e não pode fazer a leitura falhar.
     let dados = StructuredInstructions::from_tolerant_json(r#"{"linked_template_id":"tpl_1"}"#)
         .expect("ignora campo fora da V1");
     assert_eq!(dados, StructuredInstructions::default());
@@ -172,15 +159,14 @@ fn campo_desconhecido_e_ignorado_na_leitura() {
 
 #[test]
 fn nomes_antigos_de_ferramenta_sao_recusados_na_escrita() {
-    // D-04: lista fechada. Quem importa do POP Atende (HR-52) precisa mapear os nomes antigos.
     let dados = StructuredInstructions::from_tolerant_json(
         r#"{"tools":[{"name":"search_knowledge_base","enabled":true}]}"#,
     )
     .unwrap();
-    let erro = dados
+    let error = dados
         .validar()
         .expect_err("nome fora da V1 deve ser recusado");
-    let mensagem = erro.to_string();
+    let mensagem = error.to_string();
     assert!(mensagem.contains("search_knowledge_base"), "{mensagem}");
     assert!(mensagem.contains("consultar_base"), "{mensagem}");
 }

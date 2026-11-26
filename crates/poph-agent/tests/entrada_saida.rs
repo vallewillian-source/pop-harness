@@ -1,59 +1,43 @@
-//! Testes da entrada e da saída (HR-12).
-//!
-//! Cobrem os seis grupos que a tarefa exige:
-//! 1. a mesma mensagem entregue 2× é processada uma vez (e a segunda responde "duplicada");
-//! 2. `SIGKILL` entre gravar na `inbox` e processar não perde nada — a retomada processa;
-//! 3. `SIGKILL` entre `sending` e `sent` reenvia exatamente uma vez na retomada;
-//! 4. falha repetida termina em `failed` com motivo e contador de tentativas;
-//! 5. o backoff cresce e para no teto;
-//! 6. nenhuma leitura de `inbox`/`outbox` cruza org.
-//!
-//! Os dois testes de `SIGKILL` matam um **processo filho de verdade**: o filho é este mesmo binário
-//! de teste, rodado com `--exact <nome>`, que grava no banco, escreve um marcador e fica dormindo;
-//! o pai espera o marcador e manda `SIGKILL`.
-
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use poph_agent::atores::{Atores, Futuro, OpcoesAtores, Processador, Tarefa};
-use poph_agent::entrada_saida::{
-    Backoff, EventoEntrada, FalhaEnvio, Fluxo, FuturoEnvio, MensagemRecebida, OpcoesFluxo,
-    TransporteSaida,
+use poph_agent::actors::{ActorOptions, Actors, BoxFuture, Processor, Task};
+use poph_agent::entry_output::{
+    Backoff, FlowOptions, Fluxo, InputEvent, OutputTransport, ReceivedMessage, SendFailure,
+    SendFuture,
 };
-use poph_agent::metricas::MetricasMemoria;
+use poph_agent::metrics::MetricsMemory;
 use poph_store::{
     Direction, NewAgent, NewConversation, NewInboxItem, NewMessage, NewOrg, NewOutboxItem,
     OutboxItem, OutboxState, Role, Store,
 };
 use poph_types::{ConversationId, IntegrationId, MessageId, OrgId, TurnId};
 
-// ───────────────────────────── Infraestrutura dos testes ─────────────────────────────
-
-/// Banco de verdade em pasta temporária, com org, agente e conversa prontos.
-struct Cenario {
-    pasta: PathBuf,
+struct Scenario {
+    folder: PathBuf,
     store: Arc<Store>,
     org: OrgId,
     integracao: IntegrationId,
     conversa: ConversationId,
 }
 
-impl Cenario {
-    fn novo(rotulo: &str) -> Self {
-        let pasta = std::env::temp_dir().join(format!("poph-hr12-{rotulo}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&pasta);
-        std::fs::create_dir_all(&pasta).expect("cria a pasta do teste");
+impl Scenario {
+    fn new(label: &str) -> Self {
+        let folder = std::env::temp_dir().join(format!("poph-hr12-{label}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).expect("cria a pasta do teste");
         let store = Arc::new(
-            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco"),
+            Store::open_at(&folder.join("harness.db"), &folder.join("rag.db"))
+                .expect("abre o banco"),
         );
         let org = store
             .orgs()
             .create(NewOrg {
                 name: "Org HR-12".to_owned(),
-                slug: format!("org-hr12-{rotulo}"),
+                slug: format!("org-hr12-{label}"),
                 config_json: String::new(),
             })
             .expect("cria a org")
@@ -63,8 +47,8 @@ impl Cenario {
             .create(
                 org,
                 NewAgent {
-                    name: format!("Agente {rotulo}"),
-                    slug: format!("agente-{rotulo}"),
+                    name: format!("Agente {label}"),
+                    slug: format!("agente-{label}"),
                     ..NewAgent::default()
                 },
             )
@@ -83,7 +67,7 @@ impl Cenario {
             )
             .expect("abre a conversa");
         Self {
-            pasta,
+            folder,
             store,
             org,
             integracao: IntegrationId::generate(),
@@ -91,31 +75,29 @@ impl Cenario {
         }
     }
 
-    /// Reabre o banco (o filho do teste de `SIGKILL` usa isto depois que o pai soltou o `Store`).
     fn reabrir(&mut self) {
         self.store = Arc::new(
-            Store::open_at(&self.pasta.join("harness.db"), &self.pasta.join("rag.db"))
+            Store::open_at(&self.folder.join("harness.db"), &self.folder.join("rag.db"))
                 .expect("reabre o banco"),
         );
     }
 
     fn evento(&self, mensagem: MessageId) -> String {
-        EventoEntrada {
+        InputEvent {
             conversa: self.conversa,
             mensagem,
         }
-        .para_json()
+        .for_json()
         .expect("serializa o evento")
     }
 }
 
-impl Drop for Cenario {
+impl Drop for Scenario {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.pasta);
+        let _ = std::fs::remove_dir_all(&self.folder);
     }
 }
 
-/// Processador de teste: registra o que recebeu e conclui o item da `inbox`.
 struct ProcessadorDeTeste {
     registro: Arc<Registro>,
     fluxo: Arc<OnceLock<Fluxo>>,
@@ -123,115 +105,111 @@ struct ProcessadorDeTeste {
 
 #[derive(Default)]
 struct Registro {
-    recebidas: Mutex<Vec<Tarefa>>,
-    /// Espera antes de concluir (simula um turno lento).
-    espera: Duration,
+    recebidas: Mutex<Vec<Task>>,
+    wait: Duration,
 }
 
 impl Registro {
-    fn quantidade(&self) -> usize {
+    fn quantity(&self) -> usize {
         self.recebidas.lock().expect("sem veneno").len()
     }
 }
 
-impl Processador for ProcessadorDeTeste {
-    fn processar(&self, tarefa: Tarefa) -> Futuro {
+impl Processor for ProcessadorDeTeste {
+    fn process(&self, task: Task) -> BoxFuture {
         let registro = Arc::clone(&self.registro);
         let fluxo = Arc::clone(&self.fluxo);
         Box::pin(async move {
-            if !registro.espera.is_zero() {
-                tokio::time::sleep(registro.espera).await;
+            if !registro.wait.is_zero() {
+                tokio::time::sleep(registro.wait).await;
             }
-            registro.recebidas.lock().expect("sem veneno").push(tarefa);
-            if let (Some(entrada), Some(fluxo)) = (tarefa.entrada, fluxo.get()) {
-                fluxo.concluir_entrada(tarefa.org, entrada, None)?;
+            registro.recebidas.lock().expect("sem veneno").push(task);
+            if let (Some(entry), Some(fluxo)) = (task.entry, fluxo.get()) {
+                fluxo.concluir_entry(task.org, entry, None)?;
             }
             Ok(())
         })
     }
 }
 
-/// Processador que não faz nada (filho do teste de `SIGKILL`).
 struct SemProcessar;
 
-impl Processador for SemProcessar {
-    fn processar(&self, _tarefa: Tarefa) -> Futuro {
+impl Processor for SemProcessar {
+    fn process(&self, _tarefa: Task) -> BoxFuture {
         Box::pin(async { Ok(()) })
     }
 }
 
-/// Monta um fluxo com o processador de teste. Devolve o fluxo, os atores e o registro.
 fn montar_fluxo(
-    cenario: &Cenario,
-    opcoes: OpcoesFluxo,
-    opcoes_atores: OpcoesAtores,
-    espera: Duration,
-) -> (Fluxo, Atores, Arc<Registro>) {
+    scenario: &Scenario,
+    options: FlowOptions,
+    opcoes_atores: ActorOptions,
+    wait: Duration,
+) -> (Fluxo, Actors, Arc<Registro>) {
     let registro = Arc::new(Registro {
         recebidas: Mutex::new(Vec::new()),
-        espera,
+        wait,
     });
     let fluxo_guardado: Arc<OnceLock<Fluxo>> = Arc::new(OnceLock::new());
-    let atores = Atores::novo(
+    let actors = Actors::new(
         Arc::new(ProcessadorDeTeste {
             registro: Arc::clone(&registro),
             fluxo: Arc::clone(&fluxo_guardado),
         }),
         opcoes_atores,
-        MetricasMemoria::proprio(),
+        MetricsMemory::own(),
     );
-    let fluxo = Fluxo::nova(Arc::clone(&cenario.store), atores.clone(), opcoes);
+    let fluxo = Fluxo::new(Arc::clone(&scenario.store), actors.clone(), options);
     let _ = fluxo_guardado.set(fluxo.clone());
-    (fluxo, atores, registro)
+    (fluxo, actors, registro)
 }
 
-fn opcoes_rapidas() -> OpcoesFluxo {
-    OpcoesFluxo {
+fn opcoes_rapidas() -> FlowOptions {
+    FlowOptions {
         backoff: Backoff {
             base: Duration::ZERO,
-            fator: 2,
-            teto: Duration::ZERO,
+            factor: 2,
+            cap: Duration::ZERO,
         },
-        ..OpcoesFluxo::default()
+        ..FlowOptions::default()
     }
 }
 
-fn opcoes_atores(teto_fila: usize) -> OpcoesAtores {
-    OpcoesAtores {
+fn opcoes_atores(teto_fila: usize) -> ActorOptions {
+    ActorOptions {
         ociosidade: Duration::from_secs(60),
-        fila_por_conversa: teto_fila,
-        max_atores: 32,
+        queue_by_conversation: teto_fila,
+        max_actors: 32,
     }
 }
 
-/// Transporte que conta envios e responde com o roteiro dado.
 struct TransporteDeTeste {
     envios: AtomicUsize,
-    recebidos: Mutex<Vec<OutboxItem>>,
-    falha: Mutex<Option<FalhaEnvio>>,
-    espera: Duration,
+    received: Mutex<Vec<OutboxItem>>,
+    failure: Mutex<Option<SendFailure>>,
+    wait: Duration,
 }
 
 impl TransporteDeTeste {
-    fn novo() -> Arc<Self> {
+    fn new() -> Arc<Self> {
         Arc::new(Self {
             envios: AtomicUsize::new(0),
-            recebidos: Mutex::new(Vec::new()),
-            falha: Mutex::new(None),
-            espera: Duration::ZERO,
+            received: Mutex::new(Vec::new()),
+            failure: Mutex::new(None),
+            wait: Duration::ZERO,
         })
     }
 
-    fn com_espera(espera: Duration) -> Arc<Self> {
-        let mut transporte = Self::novo();
-        Arc::get_mut(&mut transporte).expect("recém-criado").espera = espera;
-        transporte
+    fn com_espera(wait: Duration) -> Arc<Self> {
+        let mut transport = Self::new();
+        Arc::get_mut(&mut transport).expect("recém-criado").wait = wait;
+        transport
     }
 
-    fn com_falha(falha: FalhaEnvio) -> Arc<Self> {
-        let transporte = Self::novo();
-        *transporte.falha.lock().expect("sem veneno") = Some(falha);
-        transporte
+    fn com_falha(failure: SendFailure) -> Arc<Self> {
+        let transport = Self::new();
+        *transport.failure.lock().expect("sem veneno") = Some(failure);
+        transport
     }
 
     fn envios(&self) -> usize {
@@ -239,31 +217,30 @@ impl TransporteDeTeste {
     }
 }
 
-impl TransporteSaida for TransporteDeTeste {
-    fn enviar(&self, item: OutboxItem) -> FuturoEnvio {
+impl OutputTransport for TransporteDeTeste {
+    fn send(&self, item: OutboxItem) -> SendFuture {
         self.envios.fetch_add(1, Ordering::SeqCst);
-        self.recebidos.lock().expect("sem veneno").push(item);
-        let falha = self.falha.lock().expect("sem veneno").clone();
-        let espera = self.espera;
+        self.received.lock().expect("sem veneno").push(item);
+        let failure = self.failure.lock().expect("sem veneno").clone();
+        let wait = self.wait;
         Box::pin(async move {
-            if !espera.is_zero() {
-                tokio::time::sleep(espera).await;
+            if !wait.is_zero() {
+                tokio::time::sleep(wait).await;
             }
-            match falha {
-                Some(falha) => Err(falha),
+            match failure {
+                Some(failure) => Err(failure),
                 None => Ok(()),
             }
         })
     }
 }
 
-/// Enfileira uma saída de texto simples para a conversa do cenário.
-fn enfileirar_texto(fluxo: &Fluxo, cenario: &Cenario, turno: TurnId, seq: u32) -> OutboxItem {
+fn enfileirar_texto(fluxo: &Fluxo, scenario: &Scenario, turno: TurnId, seq: u32) -> OutboxItem {
     let (_novo, item) = fluxo
-        .enfileirar_saida(
-            cenario.org,
+        .enqueue_output(
+            scenario.org,
             NewOutboxItem {
-                conversation_id: cenario.conversa,
+                conversation_id: scenario.conversa,
                 turn_id: turno,
                 seq,
                 tipo: "text".to_owned(),
@@ -274,15 +251,14 @@ fn enfileirar_texto(fluxo: &Fluxo, cenario: &Cenario, turno: TurnId, seq: u32) -
     item
 }
 
-/// Grava uma mensagem de cliente no banco (sem passar pela inbox) e devolve o id.
-fn gravar_mensagem(cenario: &Cenario, turno: Option<TurnId>) -> MessageId {
-    cenario
+fn gravar_mensagem(scenario: &Scenario, turno: Option<TurnId>) -> MessageId {
+    scenario
         .store
         .messages()
         .write(
-            cenario.org,
+            scenario.org,
             NewMessage {
-                conversation_id: cenario.conversa,
+                conversation_id: scenario.conversa,
                 direction: Direction::Inbound,
                 role: Role::User,
                 texto: "oi".to_owned(),
@@ -297,43 +273,44 @@ fn gravar_mensagem(cenario: &Cenario, turno: Option<TurnId>) -> MessageId {
         .id
 }
 
-// ───────────────────── 1. Duas entregas, um processamento ─────────────────────
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mesma_mensagem_entregue_duas_vezes_e_processada_uma_vez() {
-    let cenario = Cenario::novo("duplicada");
-    let (fluxo, atores, registro) =
-        montar_fluxo(&cenario, opcoes_rapidas(), opcoes_atores(8), Duration::ZERO);
-    let mensagem = gravar_mensagem(&cenario, None);
+    let scenario = Scenario::new("duplicada");
+    let (fluxo, actors, registro) = montar_fluxo(
+        &scenario,
+        opcoes_rapidas(),
+        opcoes_atores(8),
+        Duration::ZERO,
+    );
+    let mensagem = gravar_mensagem(&scenario, None);
 
-    let primeira = fluxo
-        .receber_mensagem(
-            cenario.org,
-            MensagemRecebida {
-                integration_id: cenario.integracao,
+    let first = fluxo
+        .receive_message(
+            scenario.org,
+            ReceivedMessage {
+                integration_id: scenario.integracao,
                 id_externo: "wamid-1".to_owned(),
-                conversa: cenario.conversa,
+                conversa: scenario.conversa,
                 texto: "oi".to_owned(),
-                anexos_json: "[]".to_owned(),
+                attachments_json: "[]".to_owned(),
             },
         )
         .expect("primeira entrega");
     assert_eq!(
-        primeira.situation,
+        first.situation,
         poph_store::Received::New,
         "a primeira entrega é nova"
     );
 
-    // Reentrega do webhook: mesmo par (integração, id externo).
     let segunda = fluxo
-        .receber_mensagem(
-            cenario.org,
-            MensagemRecebida {
-                integration_id: cenario.integracao,
+        .receive_message(
+            scenario.org,
+            ReceivedMessage {
+                integration_id: scenario.integracao,
                 id_externo: "wamid-1".to_owned(),
-                conversa: cenario.conversa,
+                conversa: scenario.conversa,
                 texto: "oi".to_owned(),
-                anexos_json: "[]".to_owned(),
+                attachments_json: "[]".to_owned(),
             },
         )
         .expect("reentrega não é erro");
@@ -343,61 +320,57 @@ async fn mesma_mensagem_entregue_duas_vezes_e_processada_uma_vez() {
         "a segunda entrega é descartada como duplicada"
     );
     assert_eq!(
-        segunda.item.id, primeira.item.id,
+        segunda.item.id, first.item.id,
         "as duas entregas apontam para o mesmo item da inbox"
     );
     assert_eq!(
-        segunda.mensagem.id, primeira.mensagem.id,
+        segunda.mensagem.id, first.mensagem.id,
         "e para a mesma mensagem"
     );
 
-    // O mesmo evento cru, pelo caminho de baixo, também é duplicado.
     let cru = fluxo
-        .receber(
-            cenario.org,
+        .receive(
+            scenario.org,
             NewInboxItem {
-                integration_id: cenario.integracao,
+                integration_id: scenario.integracao,
                 external_id: "wamid-1".to_owned(),
-                event_json: cenario.evento(mensagem),
+                event_json: scenario.evento(mensagem),
             },
         )
         .expect("entrega crua");
     assert_eq!(cru, poph_store::Received::Duplicate);
 
     for _ in 0..3 {
-        fluxo.despachar(cenario.org).expect("despacha");
-        assert!(atores.aguardar_filas_vazias(Duration::from_secs(5)).await);
+        fluxo.dispatch(scenario.org).expect("despacha");
+        assert!(actors.wait_queues_empty(Duration::from_secs(5)).await);
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
 
-    assert_eq!(registro.quantidade(), 1, "um único processamento");
+    assert_eq!(registro.quantity(), 1, "um único processamento");
     assert_eq!(
         fluxo
-            .estatisticas(cenario.org)
+            .statistics(scenario.org)
             .expect("estatísticas")
-            .entrada_pendente,
+            .entry_pending,
         0,
         "o item saiu da fila depois de concluído"
     );
     assert_eq!(
-        fluxo.metricas().entradas_duplicadas.value(),
+        fluxo.metrics().entries_duplicated.value(),
         2,
         "as duas reentregas contam como duplicadas"
     );
 }
 
-// ───────────────────── 2. SIGKILL entre gravar e processar ─────────────────────
-
-/// Cenário do filho: grava a mensagem + inbox e para antes de processar.
 #[test]
 fn filho_grava_entrada_e_trava() {
-    let Ok(rotulo) = std::env::var("POPH_HR12_FILHO") else {
+    let Ok(label) = std::env::var("POPH_HR12_FILHO") else {
         return;
     };
-    if rotulo != "entrada" {
+    if label != "entrada" {
         return;
     }
-    let pasta = PathBuf::from(std::env::var("POPH_HR12_PASTA").expect("pasta no ambiente"));
+    let folder = PathBuf::from(std::env::var("POPH_HR12_PASTA").expect("pasta no ambiente"));
     let marcador = PathBuf::from(std::env::var("POPH_HR12_MARCADOR").expect("marcador"));
     let org: OrgId = std::env::var("POPH_HR12_ORG")
         .expect("org")
@@ -413,29 +386,28 @@ fn filho_grava_entrada_e_trava() {
         .expect("integração válida");
 
     let store = Arc::new(
-        Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco"),
+        Store::open_at(&folder.join("harness.db"), &folder.join("rag.db")).expect("abre o banco"),
     );
-    let atores = Atores::novo(
+    let actors = Actors::new(
         Arc::new(SemProcessar),
         opcoes_atores(8),
-        MetricasMemoria::proprio(),
+        MetricsMemory::own(),
     );
-    let fluxo = Fluxo::nova(store, atores, opcoes_rapidas());
-    let gravado = fluxo
-        .receber_mensagem(
+    let fluxo = Fluxo::new(store, actors, opcoes_rapidas());
+    let stored = fluxo
+        .receive_message(
             org,
-            MensagemRecebida {
+            ReceivedMessage {
                 integration_id: integracao,
                 id_externo: "wamid-sigkill".to_owned(),
                 conversa,
                 texto: "mensagem que não pode se perder".to_owned(),
-                anexos_json: "[]".to_owned(),
+                attachments_json: "[]".to_owned(),
             },
         )
         .expect("grava a entrada");
-    assert_eq!(gravado.situation, poph_store::Received::New);
+    assert_eq!(stored.situation, poph_store::Received::New);
 
-    // Ponto controlado: já está no banco, ainda não foi processado.
     std::fs::write(&marcador, "gravado").expect("escreve o marcador");
     std::thread::sleep(Duration::from_secs(30));
     panic!("o pai devia ter matado o filho antes disso");
@@ -443,15 +415,15 @@ fn filho_grava_entrada_e_trava() {
 
 #[test]
 fn sigkill_entre_gravar_e_processar_nao_perde_a_mensagem() {
-    let mut cenario = Cenario::novo("sigkill-entrada");
-    let org = cenario.org;
-    let conversa = cenario.conversa;
-    let integracao = cenario.integracao;
-    let pasta = cenario.pasta.clone();
-    let marcador = pasta.join("marcador-entrada");
-    // Solta o Store antes de o filho abrir o banco (um escritor por processo de cada vez).
-    cenario.store =
-        Arc::new(Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("reabre"));
+    let mut scenario = Scenario::new("sigkill-entrada");
+    let org = scenario.org;
+    let conversa = scenario.conversa;
+    let integracao = scenario.integracao;
+    let folder = scenario.folder.clone();
+    let marcador = folder.join("marcador-entrada");
+    scenario.store = Arc::new(
+        Store::open_at(&folder.join("harness.db"), &folder.join("rag.db")).expect("reabre"),
+    );
 
     let filho = std::process::Command::new(std::env::current_exe().expect("binário de teste"))
         .args([
@@ -461,7 +433,7 @@ fn sigkill_entre_gravar_e_processar_nao_perde_a_mensagem() {
             "--test-threads=1",
         ])
         .env("POPH_HR12_FILHO", "entrada")
-        .env("POPH_HR12_PASTA", &pasta)
+        .env("POPH_HR12_PASTA", &folder)
         .env("POPH_HR12_MARCADOR", &marcador)
         .env("POPH_HR12_ORG", org.to_string())
         .env("POPH_HR12_CONVERSA", conversa.to_string())
@@ -472,66 +444,66 @@ fn sigkill_entre_gravar_e_processar_nao_perde_a_mensagem() {
     esperar_marcador(&marcador);
     matar(filho);
 
-    // O item ficou gravado e pendente: a queda não perdeu a mensagem.
-    cenario.reabrir();
+    scenario.reabrir();
     assert_eq!(
-        cenario.store.inbox().count_pending(org).expect("conta"),
+        scenario.store.inbox().count_pending(org).expect("conta"),
         1,
         "a entrada pendente sobreviveu à queda"
     );
-    let pendentes = cenario.store.inbox().list_pending(org, 10).expect("lista");
-    assert_eq!(pendentes[0].external_id, "wamid-sigkill");
+    let pending = scenario.store.inbox().list_pending(org, 10).expect("lista");
+    assert_eq!(pending[0].external_id, "wamid-sigkill");
 
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .expect("runtime");
-    let (fluxo, atores, registro) =
-        montar_fluxo(&cenario, opcoes_rapidas(), opcoes_atores(8), Duration::ZERO);
-    let transporte = TransporteDeTeste::novo();
+    let (fluxo, actors, registro) = montar_fluxo(
+        &scenario,
+        opcoes_rapidas(),
+        opcoes_atores(8),
+        Duration::ZERO,
+    );
+    let transport = TransporteDeTeste::new();
     let retomada = runtime
         .block_on(async {
-            let retomada = fluxo.retomar(transporte.as_ref()).await?;
-            assert!(atores.aguardar_filas_vazias(Duration::from_secs(10)).await);
-            Ok::<_, poph_agent::ErroAgente>(retomada)
+            let retomada = fluxo.retomar(transport.as_ref()).await?;
+            assert!(actors.wait_queues_empty(Duration::from_secs(10)).await);
+            Ok::<_, poph_agent::AgentError>(retomada)
         })
         .expect("retomada");
 
     assert_eq!(
-        retomada.entrada.despachados, 1,
+        retomada.entry.dispatch, 1,
         "a retomada despachou o item pendente"
     );
-    assert_eq!(registro.quantidade(), 1, "processado uma vez na retomada");
+    assert_eq!(registro.quantity(), 1, "processado uma vez na retomada");
     assert_eq!(
-        cenario.store.inbox().count_pending(org).expect("conta"),
+        scenario.store.inbox().count_pending(org).expect("conta"),
         0,
         "depois de processado, a fila fica vazia"
     );
-    // A mensagem do cliente também sobreviveu à queda.
-    let mensagens = cenario
+    let messages = scenario
         .store
         .messages()
         .list(org, conversa, poph_store::Page::with_limit(10))
         .expect("lista mensagens");
     assert!(
-        mensagens
+        messages
             .iter()
             .any(|mensagem| mensagem.texto == "mensagem que não pode se perder"),
         "a mensagem gravada na mesma transação continua lá"
     );
 }
 
-// ───────────────────── 3. SIGKILL entre sending e sent ─────────────────────
-
 #[test]
 fn filho_fica_em_sending_e_trava() {
-    let Ok(rotulo) = std::env::var("POPH_HR12_FILHO") else {
+    let Ok(label) = std::env::var("POPH_HR12_FILHO") else {
         return;
     };
-    if rotulo != "saida" {
+    if label != "saida" {
         return;
     }
-    let pasta = PathBuf::from(std::env::var("POPH_HR12_PASTA").expect("pasta"));
+    let folder = PathBuf::from(std::env::var("POPH_HR12_PASTA").expect("pasta"));
     let marcador = PathBuf::from(std::env::var("POPH_HR12_MARCADOR").expect("marcador"));
     let org: OrgId = std::env::var("POPH_HR12_ORG")
         .expect("org")
@@ -547,7 +519,7 @@ fn filho_fica_em_sending_e_trava() {
         .expect("turno");
 
     let store =
-        Arc::new(Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre"));
+        Arc::new(Store::open_at(&folder.join("harness.db"), &folder.join("rag.db")).expect("abre"));
     let (_novo, item) = store
         .outbox()
         .enqueue(
@@ -561,7 +533,6 @@ fn filho_fica_em_sending_e_trava() {
             },
         )
         .expect("enfileira");
-    // Transição gravada antes do efeito externo; o filho morre antes de chamar o canal.
     store
         .outbox()
         .start_send(org, item.id)
@@ -573,15 +544,15 @@ fn filho_fica_em_sending_e_trava() {
 
 #[test]
 fn sigkill_entre_sending_e_sent_reenvia_uma_vez() {
-    let mut cenario = Cenario::novo("sigkill-saida");
-    let org = cenario.org;
-    let conversa = cenario.conversa;
+    let mut scenario = Scenario::new("sigkill-saida");
+    let org = scenario.org;
+    let conversa = scenario.conversa;
     let turno = TurnId::generate();
-    let pasta = cenario.pasta.clone();
-    let marcador = pasta.join("marcador-saida");
-    // Deixa o banco fechado para o filho.
-    cenario.store =
-        Arc::new(Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("reabre"));
+    let folder = scenario.folder.clone();
+    let marcador = folder.join("marcador-saida");
+    scenario.store = Arc::new(
+        Store::open_at(&folder.join("harness.db"), &folder.join("rag.db")).expect("reabre"),
+    );
 
     let filho = std::process::Command::new(std::env::current_exe().expect("binário de teste"))
         .args([
@@ -591,7 +562,7 @@ fn sigkill_entre_sending_e_sent_reenvia_uma_vez() {
             "--test-threads=1",
         ])
         .env("POPH_HR12_FILHO", "saida")
-        .env("POPH_HR12_PASTA", &pasta)
+        .env("POPH_HR12_PASTA", &folder)
         .env("POPH_HR12_MARCADOR", &marcador)
         .env("POPH_HR12_ORG", org.to_string())
         .env("POPH_HR12_CONVERSA", conversa.to_string())
@@ -602,9 +573,9 @@ fn sigkill_entre_sending_e_sent_reenvia_uma_vez() {
     esperar_marcador(&marcador);
     matar(filho);
 
-    cenario.reabrir();
+    scenario.reabrir();
     assert_eq!(
-        cenario
+        scenario
             .store
             .outbox()
             .count_by_state(org, OutboxState::Sending)
@@ -617,126 +588,136 @@ fn sigkill_entre_sending_e_sent_reenvia_uma_vez() {
         .enable_all()
         .build()
         .expect("runtime");
-    let (fluxo, atores, _registro) =
-        montar_fluxo(&cenario, opcoes_rapidas(), opcoes_atores(8), Duration::ZERO);
-    let transporte = TransporteDeTeste::novo();
+    let (fluxo, actors, _registro) = montar_fluxo(
+        &scenario,
+        opcoes_rapidas(),
+        opcoes_atores(8),
+        Duration::ZERO,
+    );
+    let transport = TransporteDeTeste::new();
     let retomada = runtime
-        .block_on(fluxo.retomar(transporte.as_ref()))
+        .block_on(fluxo.retomar(transport.as_ref()))
         .expect("retomada");
 
-    assert_eq!(retomada.reenvios, 1, "um item estava em sending");
-    assert_eq!(transporte.envios(), 1, "reenviou exatamente uma vez");
+    assert_eq!(retomada.resends, 1, "um item estava em sending");
+    assert_eq!(transport.envios(), 1, "reenviou exatamente uma vez");
     assert_eq!(
-        fluxo.metricas().reenvios_retomada.value(),
+        fluxo.metrics().resends_resumption.value(),
         1,
         "a métrica de reenvio conta a retomada"
     );
-    let pendentes = cenario.store.outbox().list_pending(org, 10).expect("lista");
-    assert!(pendentes.is_empty(), "nada sobrou na fila de saída");
-    let itens = cenario
+    let pending = scenario
+        .store
+        .outbox()
+        .list_pending(org, 10)
+        .expect("lista");
+    assert!(pending.is_empty(), "nada sobrou na fila de saída");
+    let items = scenario
         .store
         .outbox()
         .count_by_state(org, OutboxState::Sent)
         .expect("conta");
-    assert_eq!(itens, 1, "e o item terminou como enviado");
+    assert_eq!(items, 1, "e o item terminou como enviado");
 
-    // Rodar a retomada de novo não reenvia nada (o item já está sent).
     let segunda = runtime
-        .block_on(fluxo.retomar(transporte.as_ref()))
+        .block_on(fluxo.retomar(transport.as_ref()))
         .expect("segunda retomada");
-    assert_eq!(segunda.reenvios, 0);
-    assert_eq!(transporte.envios(), 1, "nada duplicado na segunda subida");
-    drop(atores);
+    assert_eq!(segunda.resends, 0);
+    assert_eq!(transport.envios(), 1, "nada duplicado na segunda subida");
+    drop(actors);
 }
-
-// ───────────────────── 4. Falha repetida termina em failed ─────────────────────
 
 #[tokio::test]
 async fn falha_repetida_vai_para_failed_com_motivo_e_contador() {
-    let cenario = Cenario::novo("falha-repetida");
+    let scenario = Scenario::new("falha-repetida");
     let (fluxo, _atores, _registro) = montar_fluxo(
-        &cenario,
-        OpcoesFluxo {
-            max_tentativas: 3,
+        &scenario,
+        FlowOptions {
+            max_attempts: 3,
             ..opcoes_rapidas()
         },
         opcoes_atores(8),
         Duration::ZERO,
     );
-    let transporte = TransporteDeTeste::com_falha(FalhaEnvio::transitoria("net::ERR_CONNECTION"));
-    let item = enfileirar_texto(&fluxo, &cenario, TurnId::generate(), 0);
+    let transport = TransporteDeTeste::com_falha(SendFailure::transient("net::ERR_CONNECTION"));
+    let item = enfileirar_texto(&fluxo, &scenario, TurnId::generate(), 0);
 
     for _ in 0..4 {
         fluxo
-            .enviar_pendentes(cenario.org, transporte.as_ref())
+            .send_pending(scenario.org, transport.as_ref())
             .await
             .expect("envia");
     }
 
-    let gravado = cenario
+    let stored = scenario
         .store
         .outbox()
-        .get(cenario.org, item.id)
+        .get(scenario.org, item.id)
         .expect("busca");
-    assert_eq!(gravado.state, OutboxState::Failed);
+    assert_eq!(stored.state, OutboxState::Failed);
     assert_eq!(
-        gravado.attempts, 3,
+        stored.attempts, 3,
         "três tentativas reais antes de desistir"
     );
     assert_eq!(
-        gravado.ultimo_erro.as_deref(),
+        stored.ultimo_erro.as_deref(),
         Some("tentativas de envio esgotadas"),
         "o motivo fica legível no banco"
     );
-    assert_eq!(transporte.envios(), 3, "não tentou depois de esgotar");
-    assert_eq!(fluxo.metricas().saidas_transitorias.value(), 3);
-    assert_eq!(fluxo.metricas().saidas_esgotadas.value(), 1);
+    assert_eq!(transport.envios(), 3, "não tentou depois de esgotar");
+    assert_eq!(fluxo.metrics().outputs_transient.value(), 3);
+    assert_eq!(fluxo.metrics().outputs_exhausted.value(), 1);
 }
 
 #[tokio::test]
 async fn falha_definitiva_nao_retenta() {
-    let cenario = Cenario::novo("falha-definitiva");
-    let (fluxo, _atores, _registro) =
-        montar_fluxo(&cenario, opcoes_rapidas(), opcoes_atores(8), Duration::ZERO);
-    let transporte = TransporteDeTeste::com_falha(FalhaEnvio::definitiva("destinatário inválido"));
-    let item = enfileirar_texto(&fluxo, &cenario, TurnId::generate(), 0);
+    let scenario = Scenario::new("falha-definitiva");
+    let (fluxo, _atores, _registro) = montar_fluxo(
+        &scenario,
+        opcoes_rapidas(),
+        opcoes_atores(8),
+        Duration::ZERO,
+    );
+    let transport = TransporteDeTeste::com_falha(SendFailure::definitive("destinatário inválido"));
+    let item = enfileirar_texto(&fluxo, &scenario, TurnId::generate(), 0);
 
     fluxo
-        .enviar_pendentes(cenario.org, transporte.as_ref())
+        .send_pending(scenario.org, transport.as_ref())
         .await
         .expect("envia");
     fluxo
-        .enviar_pendentes(cenario.org, transporte.as_ref())
+        .send_pending(scenario.org, transport.as_ref())
         .await
         .expect("envia de novo");
 
-    let gravado = cenario
+    let stored = scenario
         .store
         .outbox()
-        .get(cenario.org, item.id)
+        .get(scenario.org, item.id)
         .expect("busca");
-    assert_eq!(gravado.state, OutboxState::Failed);
-    assert_eq!(
-        gravado.ultimo_erro.as_deref(),
-        Some("destinatário inválido")
-    );
-    assert_eq!(gravado.attempts, 1, "erro definitivo não repete");
-    assert_eq!(transporte.envios(), 1);
-    assert_eq!(fluxo.metricas().saidas_definitivas.value(), 1);
+    assert_eq!(stored.state, OutboxState::Failed);
+    assert_eq!(stored.ultimo_erro.as_deref(), Some("destinatário inválido"));
+    assert_eq!(stored.attempts, 1, "erro definitivo não repete");
+    assert_eq!(transport.envios(), 1);
+    assert_eq!(fluxo.metrics().outputs_definitive.value(), 1);
 }
 
 #[tokio::test]
 async fn saida_idempotente_por_turno_e_sequencia() {
-    let cenario = Cenario::novo("saida-idempotente");
-    let (fluxo, _atores, _registro) =
-        montar_fluxo(&cenario, opcoes_rapidas(), opcoes_atores(8), Duration::ZERO);
+    let scenario = Scenario::new("saida-idempotente");
+    let (fluxo, _atores, _registro) = montar_fluxo(
+        &scenario,
+        opcoes_rapidas(),
+        opcoes_atores(8),
+        Duration::ZERO,
+    );
     let turno = TurnId::generate();
-    let primeira = enfileirar_texto(&fluxo, &cenario, turno, 0);
+    let first = enfileirar_texto(&fluxo, &scenario, turno, 0);
     let (_novo, segunda) = fluxo
-        .enfileirar_saida(
-            cenario.org,
+        .enqueue_output(
+            scenario.org,
             NewOutboxItem {
-                conversation_id: cenario.conversa,
+                conversation_id: scenario.conversa,
                 turn_id: turno,
                 seq: 0,
                 tipo: "text".to_owned(),
@@ -744,24 +725,22 @@ async fn saida_idempotente_por_turno_e_sequencia() {
             },
         )
         .expect("enfileira de novo");
-    assert_eq!(primeira.id, segunda.id, "a mesma chave não duplica a linha");
+    assert_eq!(first.id, segunda.id, "a mesma chave não duplica a linha");
     assert_eq!(
         segunda.content_json, "{\"texto\":\"resposta 0\"}",
         "o conteúdo original é preservado"
     );
 }
 
-// ───────────────────── 5. Backoff cresce e para no teto ─────────────────────
-
 #[test]
 fn backoff_cresce_e_para_no_teto() {
     let backoff = Backoff {
         base: Duration::from_millis(100),
-        fator: 2,
-        teto: Duration::from_secs(1),
+        factor: 2,
+        cap: Duration::from_secs(1),
     };
     let esperas: Vec<u128> = (1..=8)
-        .map(|tentativa| backoff.espera(tentativa).as_millis())
+        .map(|attempt| backoff.wait(attempt).as_millis())
         .collect();
     assert_eq!(esperas, vec![100, 200, 400, 800, 1000, 1000, 1000, 1000]);
     assert!(
@@ -769,7 +748,7 @@ fn backoff_cresce_e_para_no_teto() {
         "nunca diminui"
     );
     assert_eq!(
-        backoff.espera(0),
+        backoff.wait(0),
         Duration::from_millis(100),
         "tentativa 0 = base"
     );
@@ -777,69 +756,64 @@ fn backoff_cresce_e_para_no_teto() {
 
 #[tokio::test]
 async fn item_em_backoff_nao_e_reenviado_antes_da_hora() {
-    let cenario = Cenario::novo("backoff-virtual");
-    let relogio = Arc::new(Mutex::new(Instant::now()));
-    let relogio_para_o_fluxo = Arc::clone(&relogio);
+    let scenario = Scenario::new("backoff-virtual");
+    let clock = Arc::new(Mutex::new(Instant::now()));
+    let relogio_para_o_fluxo = Arc::clone(&clock);
     let (fluxo, _atores, _registro) = montar_fluxo(
-        &cenario,
-        OpcoesFluxo {
+        &scenario,
+        FlowOptions {
             backoff: Backoff {
                 base: Duration::from_secs(2),
-                fator: 2,
-                teto: Duration::from_secs(30),
+                factor: 2,
+                cap: Duration::from_secs(30),
             },
-            ..OpcoesFluxo::default()
+            ..FlowOptions::default()
         },
         opcoes_atores(8),
         Duration::ZERO,
     );
-    fluxo.com_relogio(Arc::new(move || {
+    fluxo.with_clock(Arc::new(move || {
         *relogio_para_o_fluxo.lock().expect("sem veneno")
     }));
 
-    let transporte = TransporteDeTeste::com_falha(FalhaEnvio::transitoria("429"));
-    enfileirar_texto(&fluxo, &cenario, TurnId::generate(), 0);
+    let transport = TransporteDeTeste::com_falha(SendFailure::transient("429"));
+    enfileirar_texto(&fluxo, &scenario, TurnId::generate(), 0);
 
-    let primeiro = fluxo
-        .enviar_pendentes(cenario.org, transporte.as_ref())
+    let first = fluxo
+        .send_pending(scenario.org, transport.as_ref())
         .await
         .expect("envia");
-    assert_eq!(primeiro.falharam, 1);
-    assert_eq!(transporte.envios(), 1);
+    assert_eq!(first.failed, 1);
+    assert_eq!(transport.envios(), 1);
 
-    // Sem andar o relógio, a repetição fica adiada.
     let adiado = fluxo
-        .enviar_pendentes(cenario.org, transporte.as_ref())
+        .send_pending(scenario.org, transport.as_ref())
         .await
         .expect("envia");
-    assert_eq!(adiado.adiados, 1, "ainda dentro do backoff");
-    assert_eq!(transporte.envios(), 1, "não chamou o canal de novo");
+    assert_eq!(adiado.deferred, 1, "ainda dentro do backoff");
+    assert_eq!(transport.envios(), 1, "não chamou o canal de novo");
 
-    // Avança 2 s (a espera da primeira tentativa) e a repetição acontece.
-    *relogio.lock().expect("sem veneno") += Duration::from_secs(2);
-    let segundo = fluxo
-        .enviar_pendentes(cenario.org, transporte.as_ref())
+    *clock.lock().expect("sem veneno") += Duration::from_secs(2);
+    let second = fluxo
+        .send_pending(scenario.org, transport.as_ref())
         .await
         .expect("envia");
-    assert_eq!(segundo.falharam, 1);
-    assert_eq!(transporte.envios(), 2, "repetiu depois da espera");
+    assert_eq!(second.failed, 1);
+    assert_eq!(transport.envios(), 2, "repetiu depois da espera");
 
-    // A segunda espera é maior (4 s): 3 s depois ainda não é hora.
-    *relogio.lock().expect("sem veneno") += Duration::from_secs(3);
+    *clock.lock().expect("sem veneno") += Duration::from_secs(3);
     let ainda = fluxo
-        .enviar_pendentes(cenario.org, transporte.as_ref())
+        .send_pending(scenario.org, transport.as_ref())
         .await
         .expect("envia");
-    assert_eq!(ainda.adiados, 1, "a espera dobrou");
-    assert_eq!(transporte.envios(), 2);
+    assert_eq!(ainda.deferred, 1, "a espera dobrou");
+    assert_eq!(transport.envios(), 2);
 }
-
-// ───────────────────── 6. Isolamento por org ─────────────────────
 
 #[tokio::test]
 async fn caixas_nao_cruzam_org() {
-    let cenario = Cenario::novo("isolamento");
-    let outra = cenario
+    let scenario = Scenario::new("isolamento");
+    let other = scenario
         .store
         .orgs()
         .create(NewOrg {
@@ -849,69 +823,73 @@ async fn caixas_nao_cruzam_org() {
         })
         .expect("cria a outra org")
         .id;
-    let (fluxo, _atores, _registro) =
-        montar_fluxo(&cenario, opcoes_rapidas(), opcoes_atores(8), Duration::ZERO);
+    let (fluxo, _atores, _registro) = montar_fluxo(
+        &scenario,
+        opcoes_rapidas(),
+        opcoes_atores(8),
+        Duration::ZERO,
+    );
 
     let recebido = fluxo
-        .receber_mensagem(
-            cenario.org,
-            MensagemRecebida {
-                integration_id: cenario.integracao,
+        .receive_message(
+            scenario.org,
+            ReceivedMessage {
+                integration_id: scenario.integracao,
                 id_externo: "wamid-org-a".to_owned(),
-                conversa: cenario.conversa,
+                conversa: scenario.conversa,
                 texto: "da org A".to_owned(),
-                anexos_json: "[]".to_owned(),
+                attachments_json: "[]".to_owned(),
             },
         )
         .expect("grava na org A");
-    let saida = enfileirar_texto(&fluxo, &cenario, TurnId::generate(), 0);
+    let saida = enfileirar_texto(&fluxo, &scenario, TurnId::generate(), 0);
 
     assert_eq!(
-        cenario.store.inbox().count_pending(outra).expect("conta"),
+        scenario.store.inbox().count_pending(other).expect("conta"),
         0,
         "a org B não vê a entrada da org A"
     );
     assert!(
-        cenario
+        scenario
             .store
             .inbox()
-            .list_pending(outra, 10)
+            .list_pending(other, 10)
             .expect("lista")
             .is_empty()
     );
     assert!(
-        cenario.store.inbox().get(outra, recebido.item.id).is_err(),
+        scenario.store.inbox().get(other, recebido.item.id).is_err(),
         "buscar o item da org A com a org B falha"
     );
     assert!(
-        cenario
+        scenario
             .store
             .outbox()
-            .list_pending(outra, 10)
+            .list_pending(other, 10)
             .expect("lista")
             .is_empty()
     );
     assert!(
-        cenario.store.outbox().get(outra, saida.id).is_err(),
+        scenario.store.outbox().get(other, saida.id).is_err(),
         "buscar a saída da org A com a org B falha"
     );
     assert!(
-        cenario
+        scenario
             .store
             .outbox()
-            .count_by_state(outra, OutboxState::Pending)
+            .count_by_state(other, OutboxState::Pending)
             .expect("conta")
             == 0
     );
     assert!(
-        cenario.store.outbox().start_send(outra, saida.id).is_err(),
+        scenario.store.outbox().start_send(other, saida.id).is_err(),
         "não dá para mexer no estado da saída de outra org"
     );
     assert_eq!(
-        cenario
+        scenario
             .store
             .outbox()
-            .get(cenario.org, saida.id)
+            .get(scenario.org, saida.id)
             .expect("na org certa, existe")
             .state,
         OutboxState::Pending,
@@ -919,188 +897,176 @@ async fn caixas_nao_cruzam_org() {
     );
 }
 
-// ───────────────────── Extra: fila cheia não perde evento ─────────────────────
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn fila_cheia_adia_e_nao_perde_o_evento() {
-    let cenario = Cenario::novo("fila-cheia");
-    let (fluxo, atores, registro) = montar_fluxo(
-        &cenario,
+    let scenario = Scenario::new("fila-cheia");
+    let (fluxo, actors, registro) = montar_fluxo(
+        &scenario,
         opcoes_rapidas(),
         opcoes_atores(1),
         Duration::from_millis(120),
     );
 
-    let mut itens = HashMap::new();
-    for indice in 0..3 {
+    let mut items = HashMap::new();
+    for index in 0..3 {
         let recebido = fluxo
-            .receber_mensagem(
-                cenario.org,
-                MensagemRecebida {
-                    integration_id: cenario.integracao,
-                    id_externo: format!("wamid-fila-{indice}"),
-                    conversa: cenario.conversa,
-                    texto: format!("mensagem {indice}"),
-                    anexos_json: "[]".to_owned(),
+            .receive_message(
+                scenario.org,
+                ReceivedMessage {
+                    integration_id: scenario.integracao,
+                    id_externo: format!("wamid-fila-{index}"),
+                    conversa: scenario.conversa,
+                    texto: format!("mensagem {index}"),
+                    attachments_json: "[]".to_owned(),
                 },
             )
             .expect("grava");
-        itens.insert(indice, recebido.item.id);
+        items.insert(index, recebido.item.id);
     }
 
-    let primeiro = fluxo.despachar(cenario.org).expect("despacha");
-    // A fila da conversa é de 1. O ator pode tirar o primeiro evento da fila entre um envio e o
-    // seguinte (a janela é de microssegundos e depende do escalonador), então o que se cobra é
-    // "nada se perdeu", não a divisão exata entre despachados e adiados.
+    let first = fluxo.dispatch(scenario.org).expect("despacha");
     assert_eq!(
-        primeiro.despachados + primeiro.adiados,
+        first.dispatch + first.deferred,
         3,
         "todos os eventos foram vistos no despacho"
     );
-    assert!(primeiro.despachados >= 1, "ao menos um foi despachado");
+    assert!(first.dispatch >= 1, "ao menos um foi despachado");
     assert_eq!(
-        cenario
+        scenario
             .store
             .inbox()
-            .count_pending(cenario.org)
+            .count_pending(scenario.org)
             .expect("conta"),
         3,
         "nada foi marcado como processado no despacho"
     );
 
-    // Deixa o turno lento terminar e o ator esvaziar; o próximo despacho pega os adiados.
     for _ in 0..60 {
         tokio::time::sleep(Duration::from_millis(60)).await;
-        fluxo.despachar(cenario.org).expect("despacha");
-        if registro.quantidade() == 3 {
+        fluxo.dispatch(scenario.org).expect("despacha");
+        if registro.quantity() == 3 {
             break;
         }
     }
-    assert!(atores.aguardar_filas_vazias(Duration::from_secs(10)).await);
+    assert!(actors.wait_queues_empty(Duration::from_secs(10)).await);
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     assert_eq!(
-        registro.quantidade(),
+        registro.quantity(),
         3,
         "as três mensagens foram processadas"
     );
     assert_eq!(
-        cenario
+        scenario
             .store
             .inbox()
-            .count_pending(cenario.org)
+            .count_pending(scenario.org)
             .expect("conta"),
         0
     );
-    if primeiro.adiados > 0 {
+    if first.deferred > 0 {
         assert!(
-            fluxo.metricas().entradas_adiadas.value() >= 1,
+            fluxo.metrics().entries_deferred.value() >= 1,
             "evento adiado conta na métrica"
         );
     }
-    let _ = itens;
+    let _ = items;
 }
 
-// ───────────────────── Extra: lista lida antes da conclusão não repete o item ─────────────────────
-
-/// Corrida que a intermitência de `fila_cheia_adia_e_nao_perde_o_evento` revelou: o despacho lê a
-/// lista de pendentes, o turno conclui o item, e só então o despacho chega a ele com a lista antiga.
-/// A reserva já foi solta, então sem conferir o banco o item sairia de novo e o turno rodaria duas
-/// vezes (uma resposta duplicada para o cliente).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn lista_lida_antes_da_conclusao_nao_repete_item_processado() {
-    let cenario = Cenario::novo("lista-antiga");
-    let (fluxo, atores, registro) =
-        montar_fluxo(&cenario, opcoes_rapidas(), opcoes_atores(4), Duration::ZERO);
+    let scenario = Scenario::new("lista-antiga");
+    let (fluxo, actors, registro) = montar_fluxo(
+        &scenario,
+        opcoes_rapidas(),
+        opcoes_atores(4),
+        Duration::ZERO,
+    );
     fluxo
-        .receber_mensagem(
-            cenario.org,
-            MensagemRecebida {
-                integration_id: cenario.integracao,
+        .receive_message(
+            scenario.org,
+            ReceivedMessage {
+                integration_id: scenario.integracao,
                 id_externo: "wamid-lista-antiga".to_owned(),
-                conversa: cenario.conversa,
+                conversa: scenario.conversa,
                 texto: "mensagem única".to_owned(),
-                anexos_json: "[]".to_owned(),
+                attachments_json: "[]".to_owned(),
             },
         )
         .expect("grava");
 
-    // Lista lida pelo despacho antes de o turno existir (o item ainda está pendente).
-    let antiga = cenario
+    let antiga = scenario
         .store
         .inbox()
-        .list_pending(cenario.org, 10)
+        .list_pending(scenario.org, 10)
         .expect("lista");
     assert_eq!(antiga.len(), 1, "a lista antiga traz o item");
 
-    let primeiro = fluxo.despachar(cenario.org).expect("despacha");
-    assert_eq!(primeiro.despachados, 1);
-    assert!(atores.aguardar_filas_vazias(Duration::from_secs(10)).await);
+    let first = fluxo.dispatch(scenario.org).expect("despacha");
+    assert_eq!(first.dispatch, 1);
+    assert!(actors.wait_queues_empty(Duration::from_secs(10)).await);
     tokio::time::sleep(Duration::from_millis(50)).await;
-    assert_eq!(registro.quantidade(), 1, "o turno rodou uma vez");
+    assert_eq!(registro.quantity(), 1, "o turno rodou uma vez");
     assert_eq!(
-        cenario
+        scenario
             .store
             .inbox()
-            .count_pending(cenario.org)
+            .count_pending(scenario.org)
             .expect("conta"),
         0,
         "o item já está processado no banco"
     );
 
-    // Agora chega o despacho com a lista antiga.
-    let relato = fluxo
-        .despachar_itens(cenario.org, antiga)
+    let report = fluxo
+        .dispatch_items(scenario.org, antiga)
         .expect("despacha a lista antiga");
     assert_eq!(
-        relato.despachados, 0,
+        report.dispatch, 0,
         "item já processado não pode ser despachado de novo"
     );
-    assert!(atores.aguardar_filas_vazias(Duration::from_secs(10)).await);
+    assert!(actors.wait_queues_empty(Duration::from_secs(10)).await);
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert_eq!(
-        registro.quantidade(),
+        registro.quantity(),
         1,
         "o turno não pode rodar duas vezes para o mesmo item"
     );
 }
 
-// ───────────────────── Extra: ciclos concorrentes não duplicam ─────────────────────
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn dois_despachos_concorrentes_nao_duplicam_o_evento() {
-    let cenario = Cenario::novo("concorrencia-entrada");
-    let (fluxo, atores, registro) = montar_fluxo(
-        &cenario,
+    let scenario = Scenario::new("concorrencia-entrada");
+    let (fluxo, actors, registro) = montar_fluxo(
+        &scenario,
         opcoes_rapidas(),
         opcoes_atores(64),
         Duration::ZERO,
     );
-    for indice in 0..6 {
+    for index in 0..6 {
         fluxo
-            .receber_mensagem(
-                cenario.org,
-                MensagemRecebida {
-                    integration_id: cenario.integracao,
-                    id_externo: format!("wamid-concorrente-{indice}"),
-                    conversa: cenario.conversa,
-                    texto: format!("concorrente {indice}"),
-                    anexos_json: "[]".to_owned(),
+            .receive_message(
+                scenario.org,
+                ReceivedMessage {
+                    integration_id: scenario.integracao,
+                    id_externo: format!("wamid-concorrente-{index}"),
+                    conversa: scenario.conversa,
+                    texto: format!("concorrente {index}"),
+                    attachments_json: "[]".to_owned(),
                 },
             )
             .expect("grava");
     }
 
     let handle = tokio::runtime::Handle::current();
-    let resultados: Vec<poph_agent::entrada_saida::RelatoDespacho> = std::thread::scope(|escopo| {
+    let resultados: Vec<poph_agent::entry_output::DispatchReport> = std::thread::scope(|scope| {
         let mut handles = Vec::new();
         for _ in 0..2 {
             let fluxo = fluxo.clone();
-            let org = cenario.org;
+            let org = scenario.org;
             let handle = handle.clone();
-            handles.push(escopo.spawn(move || {
-                let _contexto = handle.enter();
-                fluxo.despachar(org).expect("despacha")
+            handles.push(scope.spawn(move || {
+                let _context = handle.enter();
+                fluxo.dispatch(org).expect("despacha")
             }));
         }
         handles
@@ -1109,55 +1075,52 @@ async fn dois_despachos_concorrentes_nao_duplicam_o_evento() {
             .collect()
     });
 
-    let despachados: u32 = resultados.iter().map(|relato| relato.despachados).sum();
-    assert_eq!(despachados, 6, "cada item foi reservado uma única vez");
-    assert!(atores.aguardar_filas_vazias(Duration::from_secs(10)).await);
+    let dispatch: u32 = resultados.iter().map(|report| report.dispatch).sum();
+    assert_eq!(dispatch, 6, "cada item foi reservado uma única vez");
+    assert!(actors.wait_queues_empty(Duration::from_secs(10)).await);
     tokio::time::sleep(Duration::from_millis(50)).await;
-    assert_eq!(
-        registro.quantidade(),
-        6,
-        "seis processamentos, nem um a mais"
-    );
+    assert_eq!(registro.quantity(), 6, "seis processamentos, nem um a mais");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn dois_envios_concorrentes_nao_duplicam_a_saida() {
-    let cenario = Cenario::novo("concorrencia-saida");
-    let (fluxo, _atores, _registro) =
-        montar_fluxo(&cenario, opcoes_rapidas(), opcoes_atores(8), Duration::ZERO);
-    for _ in 0..4 {
-        enfileirar_texto(&fluxo, &cenario, TurnId::generate(), 0);
-    }
-    let transporte = TransporteDeTeste::com_espera(Duration::from_millis(40));
-
-    let (primeiro, segundo) = tokio::join!(
-        fluxo.enviar_pendentes(cenario.org, transporte.as_ref()),
-        fluxo.enviar_pendentes(cenario.org, transporte.as_ref()),
+    let scenario = Scenario::new("concorrencia-saida");
+    let (fluxo, _atores, _registro) = montar_fluxo(
+        &scenario,
+        opcoes_rapidas(),
+        opcoes_atores(8),
+        Duration::ZERO,
     );
-    let primeiro = primeiro.expect("envia");
-    let segundo = segundo.expect("envia");
+    for _ in 0..4 {
+        enfileirar_texto(&fluxo, &scenario, TurnId::generate(), 0);
+    }
+    let transport = TransporteDeTeste::com_espera(Duration::from_millis(40));
 
-    assert_eq!(transporte.envios(), 4, "cada item foi ao canal uma vez só");
+    let (first, second) = tokio::join!(
+        fluxo.send_pending(scenario.org, transport.as_ref()),
+        fluxo.send_pending(scenario.org, transport.as_ref()),
+    );
+    let first = first.expect("envia");
+    let second = second.expect("envia");
+
+    assert_eq!(transport.envios(), 4, "cada item foi ao canal uma vez só");
     assert_eq!(
-        primeiro.enviados + segundo.enviados,
+        first.sent + second.sent,
         4,
         "as duas passagens somam os quatro envios"
     );
     assert_eq!(
         fluxo
-            .estatisticas(cenario.org)
+            .statistics(scenario.org)
             .expect("estatísticas")
-            .saida_pendente,
+            .output_pending,
         0
     );
 }
 
-// ───────────────────── Utilidades ─────────────────────
-
-/// Espera o filho escrever o marcador (até 30 s).
 fn esperar_marcador(marcador: &Path) {
-    let inicio = Instant::now();
-    while inicio.elapsed() < Duration::from_secs(30) {
+    let beginning = Instant::now();
+    while beginning.elapsed() < Duration::from_secs(30) {
         if marcador.exists() {
             return;
         }
@@ -1166,7 +1129,6 @@ fn esperar_marcador(marcador: &Path) {
     panic!("o filho não escreveu o marcador em {} s", 30);
 }
 
-/// Mata o filho com `SIGKILL` e espera ele sair.
 fn matar(mut filho: std::process::Child) {
     filho.kill().expect("SIGKILL no filho");
     let saida = filho.wait().expect("espera o filho");
@@ -1176,43 +1138,42 @@ fn matar(mut filho: std::process::Child) {
     );
 }
 
-// ───────────────────── Medição (fora do CI) ─────────────────────
-
-/// Mede a vazão e a latência do ACK da ingestão atômica (mensagem + inbox numa transação).
-///
-/// `cargo test --release -p poph-agent --test entrada_saida -- --ignored --nocapture medir_ingestao`
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "medição, não checagem"]
 async fn medir_ingestao() {
     const THREADS: usize = 8;
     const POR_THREAD: usize = 1500;
 
-    let cenario = Cenario::novo("medir-ingestao");
-    let (fluxo, _atores, _registro) =
-        montar_fluxo(&cenario, opcoes_rapidas(), opcoes_atores(8), Duration::ZERO);
+    let scenario = Scenario::new("medir-ingestao");
+    let (fluxo, _atores, _registro) = montar_fluxo(
+        &scenario,
+        opcoes_rapidas(),
+        opcoes_atores(8),
+        Duration::ZERO,
+    );
 
-    let inicio = Instant::now();
-    let mut latencias: Vec<u64> = std::thread::scope(|escopo| {
+    let beginning = Instant::now();
+    let mut latencias: Vec<u64> = std::thread::scope(|scope| {
         let mut handles = Vec::new();
         for thread in 0..THREADS {
             let fluxo = fluxo.clone();
-            let org = cenario.org;
-            let integracao = cenario.integracao;
-            let conversa = cenario.conversa;
-            handles.push(escopo.spawn(move || {
+            let org = scenario.org;
+            let integracao = scenario.integracao;
+            let conversa = scenario.conversa;
+            handles.push(scope.spawn(move || {
                 let mut micros = Vec::with_capacity(POR_THREAD);
-                for indice in 0..POR_THREAD {
-                    let id = format!("wamid-medir-{thread}-{indice}");
+                for index in 0..POR_THREAD {
+                    let id = format!("wamid-medir-{thread}-{index}");
                     let comeco = Instant::now();
                     fluxo
-                        .receber_mensagem(
+                        .receive_message(
                             org,
-                            MensagemRecebida {
+                            ReceivedMessage {
                                 integration_id: integracao,
                                 id_externo: id,
                                 conversa,
                                 texto: "mensagem de medição".to_owned(),
-                                anexos_json: "[]".to_owned(),
+                                attachments_json: "[]".to_owned(),
                             },
                         )
                         .expect("ingere");
@@ -1227,25 +1188,25 @@ async fn medir_ingestao() {
         }
         todas
     });
-    let total = inicio.elapsed();
+    let total = beginning.elapsed();
     latencias.sort_unstable();
     let p = |fracao: f64| {
         latencias[((latencias.len() as f64 * fracao) as usize).min(latencias.len() - 1)]
     };
-    let quantidade = latencias.len();
+    let quantity = latencias.len();
     println!(
-        "ingestão atômica: {quantidade} mensagens em {:.2} s = {:.0} msg/s; ACK p50 {} µs, p95 {} µs, p99 {} µs",
+        "ingestão atômica: {quantity} mensagens em {:.2} s = {:.0} msg/s; ACK p50 {} µs, p95 {} µs, p99 {} µs",
         total.as_secs_f64(),
-        quantidade as f64 / total.as_secs_f64(),
+        quantity as f64 / total.as_secs_f64(),
         p(0.50),
         p(0.95),
         p(0.99)
     );
     assert_eq!(
-        cenario
+        scenario
             .store
             .inbox()
-            .count_pending(cenario.org)
+            .count_pending(scenario.org)
             .expect("conta"),
         (THREADS * POR_THREAD) as u64,
         "todas as mensagens ficaram na fila, nenhuma duplicada nem perdida"

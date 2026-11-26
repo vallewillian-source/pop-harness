@@ -1,35 +1,20 @@
-//! Efeito do G3 no turno (HR-31): `nada` dispensa base e catálogo.
-//!
-//! O que se prova aqui:
-//! 1. com o gate ligado e a decisão `nada`, os trechos da busca em andamento são descartados, a
-//!    busca é abandonada sem ser aguardada, as ferramentas `consultar_base` e `buscar_produto` não
-//!    vão no pedido ao modelo e não são executadas nem se o modelo inventar a chamada;
-//! 2. com a decisão `base`, tudo continua como antes (trechos no prompt, ferramentas oferecidas);
-//! 3. gate desligado, abstenção, confiança baixa e Jev fora do ar caem no comportamento de hoje —
-//!    o gate nunca bloqueia a resposta.
-//!
-//! Provedor falso, busca falsa e pausa que não dorme: nenhum teste toca a rede.
-//!
-//! A medição de tokens e latência fica no fim do arquivo, num teste `#[ignore]`:
-//! `cargo test -p poph-agent --test g3_base medicao -- --ignored --nocapture`.
-
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use poph_agent::base_conhecimento::{
-    BuscadorBase, ConsultarBase, FuturoBusca, ParametrosBusca, TrechoRecuperado,
+use poph_agent::base_knowledge::{
+    KnowledgeSearcher, QueryKnowledge, RecoveredPassage, SearchFuture, SearchParameters,
 };
-use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
-use poph_agent::limites::{Limitador, OpcoesLimites};
-use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
-use poph_agent::produtos::{
-    BuscadorProdutos, BuscarProduto, FuturoProdutos, ParametrosProdutos, ProdutoEncontrado,
+use poph_agent::config_hot::{ConfigHot, HotConfigOptions};
+use poph_agent::limites::{LimitOptions, Limiter};
+use poph_agent::metrics::{MetricsMemory, MetricsTurn};
+use poph_agent::products::{
+    FoundProduct, FutureProducts, ProductParameters, ProductSearcher, SearchProduct,
 };
 use poph_agent::turno::{
-    FuturoPausa, NoopObserver, Pausa, TurnEngine, TurnInput, TurnOptions, TurnSummary,
+    FuturePause, NoopObserver, Pause, TurnEngine, TurnInput, TurnOptions, TurnSummary,
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, ToolCall, Usage};
 use poph_jev::{
@@ -41,26 +26,24 @@ use poph_types::{
     AgentId, ConversationId, JevGates, MessageId, OrgId, StructuredInstructions, ToolConfig,
 };
 
-/// Texto do trecho que a busca falsa devolve. Se ele aparecer no prompt, a base foi usada.
 const TEXTO_DO_TRECHO: &str = "Prazo de entrega: até 8 dias úteis após a confirmação.";
 
 struct SemEspera;
 
-impl Pausa for SemEspera {
-    fn esperar(&self, _duracao: Duration) -> FuturoPausa {
+impl Pause for SemEspera {
+    fn wait(&self, _duracao: Duration) -> FuturePause {
         Box::pin(async {})
     }
 }
 
-/// Busca falsa: conta as buscas, demora o que for pedido e devolve um trecho fixo.
 struct BuscaContada {
     buscas: Arc<AtomicU64>,
     demora: Duration,
-    trechos: Vec<TrechoRecuperado>,
+    passages: Vec<RecoveredPassage>,
 }
 
 impl BuscaContada {
-    fn nova() -> Arc<Self> {
+    fn new() -> Arc<Self> {
         Self::com_demora(Duration::ZERO)
     }
 
@@ -68,13 +51,13 @@ impl BuscaContada {
         Arc::new(Self {
             buscas: Arc::new(AtomicU64::new(0)),
             demora,
-            trechos: vec![TrechoRecuperado {
+            passages: vec![RecoveredPassage {
                 item: poph_types::KnowledgeItemId::generate(),
-                titulo: "Prazo de entrega".to_owned(),
-                grupo: "Políticas da loja".to_owned(),
+                title: "Prazo de entrega".to_owned(),
+                group: "Políticas da loja".to_owned(),
                 texto: TEXTO_DO_TRECHO.to_owned(),
-                similaridade: 0.82,
-                relevancia: 0.5,
+                similarity: 0.82,
+                relevance: 0.5,
             }],
         })
     }
@@ -84,79 +67,78 @@ impl BuscaContada {
     }
 }
 
-impl BuscadorBase for BuscaContada {
-    fn buscar(
+impl KnowledgeSearcher for BuscaContada {
+    fn search(
         &self,
         _org: OrgId,
-        _agente: AgentId,
+        _agent: AgentId,
         _consulta: String,
-        _parametros: ParametrosBusca,
-    ) -> FuturoBusca<'_> {
+        _parametros: SearchParameters,
+    ) -> SearchFuture<'_> {
         self.buscas.fetch_add(1, Ordering::SeqCst);
-        let trechos = self.trechos.clone();
+        let passages = self.passages.clone();
         let demora = self.demora;
         Box::pin(async move {
             if !demora.is_zero() {
                 tokio::time::sleep(demora).await;
             }
-            Ok(trechos)
+            Ok(passages)
         })
     }
 }
 
-/// Catálogo falso: existe para a ferramenta `buscar_produto` entrar na lista de oferecidas.
 struct CatalogoVazio;
 
-impl BuscadorProdutos for CatalogoVazio {
-    fn buscar(
+impl ProductSearcher for CatalogoVazio {
+    fn search(
         &self,
         _org: OrgId,
-        _agente: AgentId,
+        _agent: AgentId,
         _termo: String,
         _categoria: Option<String>,
-        _parametros: ParametrosProdutos,
-    ) -> FuturoProdutos<'_> {
-        let vazio: Vec<ProdutoEncontrado> = Vec::new();
+        _parametros: ProductParameters,
+    ) -> FutureProducts<'_> {
+        let vazio: Vec<FoundProduct> = Vec::new();
         Box::pin(async move { Ok(vazio) })
     }
 }
 
-/// Banco, org, agente (com base e catálogo habilitados) e conversa de verdade.
-struct Cenario {
-    pasta: PathBuf,
+struct Scenario {
+    folder: PathBuf,
     store: Arc<Store>,
     org: OrgId,
     agente: AgentId,
     conversa: ConversationId,
-    busca: Arc<dyn BuscadorBase>,
+    busca: Arc<dyn KnowledgeSearcher>,
     buscas: Arc<AtomicU64>,
-    metricas: MetricasTurno,
+    metrics: MetricsTurn,
 }
 
-impl Cenario {
-    fn novo(rotulo: &str) -> Self {
-        let busca = BuscaContada::nova();
+impl Scenario {
+    fn new(label: &str) -> Self {
+        let busca = BuscaContada::new();
         let contador = busca.contador();
-        let base: Arc<dyn BuscadorBase> = busca;
-        Self::com_busca(rotulo, base, contador)
+        let base: Arc<dyn KnowledgeSearcher> = busca;
+        Self::com_busca(label, base, contador)
     }
 
-    fn com_busca(rotulo: &str, busca: Arc<dyn BuscadorBase>, buscas: Arc<AtomicU64>) -> Self {
-        let pasta = std::env::temp_dir().join(format!(
-            "poph-hr31-{rotulo}-{}-{}",
+    fn com_busca(label: &str, busca: Arc<dyn KnowledgeSearcher>, buscas: Arc<AtomicU64>) -> Self {
+        let folder = std::env::temp_dir().join(format!(
+            "poph-hr31-{label}-{}-{}",
             std::process::id(),
             AgentId::generate()
         ));
-        let _ = std::fs::remove_dir_all(&pasta);
-        std::fs::create_dir_all(&pasta).expect("pasta do teste");
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).expect("pasta do teste");
         let store = Arc::new(
-            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco"),
+            Store::open_at(&folder.join("harness.db"), &folder.join("rag.db"))
+                .expect("abre o banco"),
         );
         let org = store
             .orgs()
             .create(NewOrg {
-                name: format!("Org {rotulo}"),
-                slug: format!("org-{rotulo}-{}", AgentId::generate()),
+                name: format!("Org {label}"),
+                slug: format!("org-{label}-{}", AgentId::generate()),
                 config_json: "{}".to_owned(),
             })
             .expect("cria a org")
@@ -166,15 +148,15 @@ impl Cenario {
             .create(
                 org,
                 NewAgent {
-                    name: format!("Bia {rotulo}"),
-                    slug: format!("bia-{rotulo}"),
+                    name: format!("Bia {label}"),
+                    slug: format!("bia-{label}"),
                     grouping_window_ms: 0,
                     ..NewAgent::default()
                 },
             )
             .expect("cria o agente")
             .id;
-        let estruturado = StructuredInstructions {
+        let structured = StructuredInstructions {
             tools: vec![
                 ToolConfig {
                     name: "consultar_base".to_owned(),
@@ -195,7 +177,7 @@ impl Cenario {
                 org,
                 agente,
                 0,
-                &estruturado.to_json(),
+                &structured.to_json(),
                 "# Bia\n\nVocê é a atendente da FixProLar.",
                 true,
             )
@@ -215,14 +197,14 @@ impl Cenario {
             .expect("abre a conversa")
             .id;
         Self {
-            pasta,
+            folder,
             store,
             org,
             agente,
             conversa,
             busca,
             buscas,
-            metricas: MetricasTurno::proprio(),
+            metrics: MetricsTurn::own(),
         }
     }
 
@@ -230,7 +212,6 @@ impl Cenario {
         self.buscas.load(Ordering::SeqCst)
     }
 
-    /// Nova conversa no mesmo agente (a medição usa uma por mensagem, sem histórico acumulado).
     fn nova_conversa(&self) -> ConversationId {
         self.store
             .conversations()
@@ -273,54 +254,50 @@ impl Cenario {
             .id
     }
 
-    fn motor(
+    fn engine(
         &self,
         roteiros: Vec<Script>,
         jev: Option<Arc<JevEngine>>,
     ) -> (TurnEngine, Arc<FakeProvider>) {
         let fake = Arc::new(FakeProvider::with_scripts(roteiros));
-        let config = ConfigQuente::nova(
+        let config = ConfigHot::new(
             Arc::clone(&self.store),
-            OpcoesConfigQuente::default(),
-            MetricasMemoria::proprio(),
+            HotConfigOptions::default(),
+            MetricsMemory::own(),
         );
-        let limitador = Arc::new(Limitador::novo(
-            OpcoesLimites::default(),
-            MetricasMemoria::proprio(),
-        ));
-        let catalogo: Arc<dyn BuscadorProdutos> = Arc::new(CatalogoVazio);
-        let mut motor = TurnEngine::new(
+        let limiter = Arc::new(Limiter::new(LimitOptions::default(), MetricsMemory::own()));
+        let catalog: Arc<dyn ProductSearcher> = Arc::new(CatalogoVazio);
+        let mut engine = TurnEngine::new(
             Arc::clone(&self.store),
             config,
-            limitador,
+            limiter,
             fake.clone(),
             TurnOptions::default(),
-            self.metricas.clone(),
+            self.metrics.clone(),
         )
         .with_pause(Arc::new(SemEspera))
         .with_search(Arc::clone(&self.busca));
         let registro =
-            ConsultarBase::registro(Arc::clone(motor.hot_config()), Arc::clone(&self.busca)).com(
-                BuscarProduto::nova(Arc::clone(motor.hot_config()), catalogo),
-            );
-        motor = motor.with_tools(Arc::new(registro));
+            QueryKnowledge::registro(Arc::clone(engine.hot_config()), Arc::clone(&self.busca))
+                .com(SearchProduct::new(Arc::clone(engine.hot_config()), catalog));
+        engine = engine.with_tools(Arc::new(registro));
         if let Some(jev) = jev {
-            motor = motor.with_jev(jev);
+            engine = engine.with_jev(jev);
         }
-        (motor, fake)
+        (engine, fake)
     }
 
-    async fn turno(&self, motor: &TurnEngine, gatilho: MessageId) -> TurnSummary {
-        self.turno_em(motor, self.conversa, gatilho).await
+    async fn turno(&self, engine: &TurnEngine, gatilho: MessageId) -> TurnSummary {
+        self.turno_em(engine, self.conversa, gatilho).await
     }
 
     async fn turno_em(
         &self,
-        motor: &TurnEngine,
+        engine: &TurnEngine,
         conversa: ConversationId,
         gatilho: MessageId,
     ) -> TurnSummary {
-        motor
+        engine
             .run(
                 TurnInput::new(self.org, conversa, gatilho),
                 &mut NoopObserver,
@@ -330,9 +307,9 @@ impl Cenario {
     }
 }
 
-impl Drop for Cenario {
+impl Drop for Scenario {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.pasta);
+        let _ = std::fs::remove_dir_all(&self.folder);
     }
 }
 
@@ -358,30 +335,24 @@ fn motor_jev(jev: Arc<FakeJev>) -> Arc<JevEngine> {
     Arc::new(JevEngine::new(jev, so_g3(), "jev-latest"))
 }
 
-fn escolhas(itens: &[(&str, &str)]) -> BTreeMap<String, String> {
-    itens
+fn escolhas(items: &[(&str, &str)]) -> BTreeMap<String, String> {
+    items
         .iter()
-        .map(|(id, escolha)| ((*id).to_owned(), (*escolha).to_owned()))
+        .map(|(id, choice)| ((*id).to_owned(), (*choice).to_owned()))
         .collect()
 }
 
-/// Nomes das ferramentas enviadas no pedido ao modelo.
-fn nomes_das_ferramentas(pedido: &poph_core::llm::Request) -> Vec<String> {
-    pedido
-        .tools
-        .iter()
-        .map(|ferramenta| ferramenta.nome.clone())
-        .collect()
+fn nomes_das_ferramentas(request: &poph_core::llm::Request) -> Vec<String> {
+    request.tools.iter().map(|tool| tool.nome.clone()).collect()
 }
 
-/// Todo o texto do prompt, para procurar o trecho da base.
-fn texto_do_prompt(pedido: &poph_core::llm::Request) -> String {
-    pedido
+fn texto_do_prompt(request: &poph_core::llm::Request) -> String {
+    request
         .messages
         .iter()
         .map(|mensagem| match mensagem {
             poph_core::llm::Message::System(texto) => texto.clone(),
-            poph_core::llm::Message::User(partes) => partes
+            poph_core::llm::Message::User(parts) => parts
                 .iter()
                 .map(|parte| match parte {
                     poph_core::llm::Part::Texto(texto) => texto.clone(),
@@ -390,38 +361,34 @@ fn texto_do_prompt(pedido: &poph_core::llm::Request) -> String {
                 .collect::<Vec<_>>()
                 .join("\n"),
             poph_core::llm::Message::Assistant { texto, .. } => texto.clone(),
-            poph_core::llm::Message::Resultado {
-                content: conteudo, ..
-            } => conteudo.clone(),
+            poph_core::llm::Message::Resultado { content, .. } => content.clone(),
         })
         .collect::<Vec<_>>()
         .join("\n")
 }
 
-/// Com o G3 em `nada`: nada de trechos no prompt e nada de base/catálogo entre as ferramentas.
 #[tokio::test]
 async fn g3_nada_descarta_a_busca_e_nao_oferece_base_nem_catalogo() {
-    let cenario = Cenario::novo("nada");
+    let scenario = Scenario::new("nada");
     let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g3_precisa",
         G3_NOTHING,
     )])));
-    let (motor, provedor) = cenario.motor(
+    let (engine, provedor) = scenario.engine(
         vec![roteiro_texto("Oi! Tudo bem? Como posso ajudar?")],
         Some(motor_jev(Arc::clone(&jev))),
     );
 
-    let gatilho = cenario.falar("oi, bom dia");
-    let resumo = cenario.turno(&motor, gatilho).await;
+    let gatilho = scenario.falar("oi, bom dia");
+    let summary = scenario.turno(&engine, gatilho).await;
 
-    assert_eq!(resumo.estado, poph_store::TurnState::Completed);
-    assert_eq!(resumo.texto, "Oi! Tudo bem? Como posso ajudar?");
+    assert_eq!(summary.estado, poph_store::TurnState::Completed);
+    assert_eq!(summary.texto, "Oi! Tudo bem? Como posso ajudar?");
     assert_eq!(
-        resumo.jev.as_ref().and_then(|jev| jev.choice(IdGate::G3)),
+        summary.jev.as_ref().and_then(|jev| jev.choice(IdGate::G3)),
         Some(G3_NOTHING)
     );
 
-    // O resultado da busca não entra no prompt nem no registro.
     let pedidos = provedor.received();
     assert_eq!(pedidos.len(), 1, "uma chamada ao modelo");
     let prompt = texto_do_prompt(&pedidos[0]);
@@ -429,21 +396,21 @@ async fn g3_nada_descarta_a_busca_e_nao_oferece_base_nem_catalogo() {
         !prompt.contains(TEXTO_DO_TRECHO),
         "o trecho da base não pode entrar no prompt quando o G3 diz nada"
     );
-    let ferramentas = nomes_das_ferramentas(&pedidos[0]);
+    let tools = nomes_das_ferramentas(&pedidos[0]);
     assert!(
-        !ferramentas.contains(&"consultar_base".to_owned()),
-        "consultar_base não deve ser oferecida: {ferramentas:?}"
+        !tools.contains(&"consultar_base".to_owned()),
+        "consultar_base não deve ser oferecida: {tools:?}"
     );
     assert!(
-        !ferramentas.contains(&"buscar_produto".to_owned()),
-        "buscar_produto não deve ser oferecida: {ferramentas:?}"
+        !tools.contains(&"buscar_produto".to_owned()),
+        "buscar_produto não deve ser oferecida: {tools:?}"
     );
-    let turnos = cenario
+    let turnos = scenario
         .store
         .turns()
         .list(
-            cenario.org,
-            cenario.conversa,
+            scenario.org,
+            scenario.conversa,
             poph_store::Page::with_limit(5),
         )
         .expect("lista os turnos");
@@ -452,21 +419,20 @@ async fn g3_nada_descarta_a_busca_e_nao_oferece_base_nem_catalogo() {
         "o registro não guarda trecho quando o G3 diz nada"
     );
     assert_eq!(
-        cenario.metricas.buscas_puladas_g3.value(),
+        scenario.metrics.searches_puladas_g3.value(),
         1,
         "a métrica de buscas dispensadas pelo G3 conta o turno"
     );
 }
 
-/// Mesmo que o modelo invente a chamada, `consultar_base` não é executada quando o G3 diz `nada`.
 #[tokio::test]
 async fn g3_nada_nao_executa_ferramenta_inventada_pelo_modelo() {
-    let cenario = Cenario::novo("inventada");
+    let scenario = Scenario::new("inventada");
     let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g3_precisa",
         G3_NOTHING,
     )])));
-    let (motor, _) = cenario.motor(
+    let (engine, _) = scenario.engine(
         vec![
             Script::Events(vec![
                 LlmEvent::Tool(ToolCall {
@@ -481,114 +447,94 @@ async fn g3_nada_nao_executa_ferramenta_inventada_pelo_modelo() {
         Some(motor_jev(Arc::clone(&jev))),
     );
 
-    let gatilho = cenario.falar("ok, obrigado");
-    let resumo = cenario.turno(&motor, gatilho).await;
+    let gatilho = scenario.falar("ok, obrigado");
+    let summary = scenario.turno(&engine, gatilho).await;
 
-    assert_eq!(resumo.estado, poph_store::TurnState::Completed);
+    assert_eq!(summary.estado, poph_store::TurnState::Completed);
     assert_eq!(
-        cenario.buscas(),
+        scenario.buscas(),
         1,
         "só a busca prévia do turno rodou; a ferramenta inventada não pode consultar a base"
     );
 }
 
-/// Com o G3 em `base` (ou `ambos`), o turno continua consultando a base e oferecendo as ferramentas.
 #[tokio::test]
 async fn g3_base_mantem_a_busca_e_as_ferramentas() {
-    let cenario = Cenario::novo("base");
+    let scenario = Scenario::new("base");
     let jev = Arc::new(FakeJev::with_choices(escolhas(&[("g3_precisa", G3_BASE)])));
-    let (motor, provedor) = cenario.motor(
+    let (engine, provedor) = scenario.engine(
         vec![roteiro_texto("O prazo é de até 8 dias úteis.")],
         Some(motor_jev(Arc::clone(&jev))),
     );
 
-    let gatilho = cenario.falar("qual é o prazo de entrega para o interior?");
-    let resumo = cenario.turno(&motor, gatilho).await;
+    let gatilho = scenario.falar("qual é o prazo de entrega para o interior?");
+    let summary = scenario.turno(&engine, gatilho).await;
 
-    assert_eq!(resumo.estado, poph_store::TurnState::Completed);
+    assert_eq!(summary.estado, poph_store::TurnState::Completed);
     let pedidos = provedor.received();
     assert_eq!(pedidos.len(), 1);
     assert!(
         texto_do_prompt(&pedidos[0]).contains(TEXTO_DO_TRECHO),
         "com o G3 em base, o trecho recuperado entra no prompt"
     );
-    let ferramentas = nomes_das_ferramentas(&pedidos[0]);
-    assert!(
-        ferramentas.contains(&"consultar_base".to_owned()),
-        "{ferramentas:?}"
-    );
-    assert!(
-        ferramentas.contains(&"buscar_produto".to_owned()),
-        "{ferramentas:?}"
-    );
+    let tools = nomes_das_ferramentas(&pedidos[0]);
+    assert!(tools.contains(&"consultar_base".to_owned()), "{tools:?}");
+    assert!(tools.contains(&"buscar_produto".to_owned()), "{tools:?}");
 }
 
-/// Gate desligado é o comportamento anterior à HR-31: sem Jev, com trechos e ferramentas.
 #[tokio::test]
 async fn g3_desligado_nao_muda_o_comportamento() {
-    let cenario = Cenario::novo("desligado");
-    let (motor, provedor) = cenario.motor(vec![roteiro_texto("Olá! Como posso ajudar?")], None);
+    let scenario = Scenario::new("desligado");
+    let (engine, provedor) = scenario.engine(vec![roteiro_texto("Olá! Como posso ajudar?")], None);
 
-    let gatilho = cenario.falar("oi");
-    let resumo = cenario.turno(&motor, gatilho).await;
+    let gatilho = scenario.falar("oi");
+    let summary = scenario.turno(&engine, gatilho).await;
 
-    assert_eq!(resumo.estado, poph_store::TurnState::Completed);
+    assert_eq!(summary.estado, poph_store::TurnState::Completed);
     assert!(
-        resumo.jev.is_none(),
+        summary.jev.is_none(),
         "sem gate ligado o turno não consulta o Jev"
     );
     let pedidos = provedor.received();
     assert!(texto_do_prompt(&pedidos[0]).contains(TEXTO_DO_TRECHO));
-    let ferramentas = nomes_das_ferramentas(&pedidos[0]);
-    assert!(
-        ferramentas.contains(&"consultar_base".to_owned()),
-        "{ferramentas:?}"
-    );
-    assert!(
-        ferramentas.contains(&"buscar_produto".to_owned()),
-        "{ferramentas:?}"
-    );
+    let tools = nomes_das_ferramentas(&pedidos[0]);
+    assert!(tools.contains(&"consultar_base".to_owned()), "{tools:?}");
+    assert!(tools.contains(&"buscar_produto".to_owned()), "{tools:?}");
 }
 
-/// Abstenção (o Jev não respondeu a pergunta) cai no comportamento de hoje: oferece tudo.
 #[tokio::test]
 async fn g3_sem_resposta_cai_no_comportamento_de_hoje() {
-    let cenario = Cenario::novo("abstencao");
-    // Mapa vazio: o Jev falso responde o lote sem `g3_precisa`, e o gate cai no fallback `tudo`.
+    let scenario = Scenario::new("abstencao");
     let jev = Arc::new(FakeJev::with_choices(BTreeMap::new()));
-    let (motor, provedor) = cenario.motor(
+    let (engine, provedor) = scenario.engine(
         vec![roteiro_texto("Olá! Como posso ajudar?")],
         Some(motor_jev(Arc::clone(&jev))),
     );
 
-    let gatilho = cenario.falar("oi");
-    let resumo = cenario.turno(&motor, gatilho).await;
+    let gatilho = scenario.falar("oi");
+    let summary = scenario.turno(&engine, gatilho).await;
 
-    assert_eq!(resumo.estado, poph_store::TurnState::Completed);
+    assert_eq!(summary.estado, poph_store::TurnState::Completed);
     let pedidos = provedor.received();
     assert!(texto_do_prompt(&pedidos[0]).contains(TEXTO_DO_TRECHO));
-    let ferramentas = nomes_das_ferramentas(&pedidos[0]);
-    assert!(
-        ferramentas.contains(&"consultar_base".to_owned()),
-        "{ferramentas:?}"
-    );
+    let tools = nomes_das_ferramentas(&pedidos[0]);
+    assert!(tools.contains(&"consultar_base".to_owned()), "{tools:?}");
 }
 
-/// Confiança abaixo do limiar também é abstenção: nada é descartado.
 #[tokio::test]
 async fn g3_confianca_baixa_cai_no_comportamento_de_hoje() {
-    let cenario = Cenario::novo("confianca");
-    let jev = Arc::new(FakeJev::new(|pedido: &poph_jev::JevRequest| {
+    let scenario = Scenario::new("confianca");
+    let jev = Arc::new(FakeJev::new(|request: &poph_jev::JevRequest| {
         let mut respostas = BTreeMap::new();
-        for id in pedido.questions.keys() {
-            let mut resposta = RespostaJev {
+        for id in request.questions.keys() {
+            let mut response = RespostaJev {
                 choice: Some(G3_NOTHING.to_owned()),
                 confidence: 0.4,
                 ..RespostaJev::default()
             };
-            resposta.probabilities.insert(G3_NOTHING.to_owned(), 0.4);
-            resposta.probabilities.insert(G3_BASE.to_owned(), 0.4);
-            respostas.insert(id.clone(), resposta);
+            response.probabilities.insert(G3_NOTHING.to_owned(), 0.4);
+            response.probabilities.insert(G3_BASE.to_owned(), 0.4);
+            respostas.insert(id.clone(), response);
         }
         Ok(BatchResponse {
             answers: respostas,
@@ -596,15 +542,15 @@ async fn g3_confianca_baixa_cai_no_comportamento_de_hoje() {
             ..BatchResponse::default()
         })
     }));
-    let (motor, provedor) = cenario.motor(
+    let (engine, provedor) = scenario.engine(
         vec![roteiro_texto("Olá! Como posso ajudar?")],
         Some(motor_jev(Arc::clone(&jev))),
     );
 
-    let gatilho = cenario.falar("oi");
-    let resumo = cenario.turno(&motor, gatilho).await;
+    let gatilho = scenario.falar("oi");
+    let summary = scenario.turno(&engine, gatilho).await;
 
-    assert_eq!(resumo.estado, poph_store::TurnState::Completed);
+    assert_eq!(summary.estado, poph_store::TurnState::Completed);
     let pedidos = provedor.received();
     assert!(
         texto_do_prompt(&pedidos[0]).contains(TEXTO_DO_TRECHO),
@@ -612,41 +558,33 @@ async fn g3_confianca_baixa_cai_no_comportamento_de_hoje() {
     );
 }
 
-/// Jev fora do ar não bloqueia nada: o turno responde com base e ferramentas, como sem o Jev.
 #[tokio::test]
 async fn g3_jev_fora_do_ar_cai_no_comportamento_de_hoje() {
-    let cenario = Cenario::novo("fora");
+    let scenario = Scenario::new("fora");
     let jev = Arc::new(FakeJev::failing(JevError::Status {
         code: 503,
         motivo: "Service Unavailable".to_owned(),
     }));
-    let (motor, provedor) = cenario.motor(
+    let (engine, provedor) = scenario.engine(
         vec![roteiro_texto("Olá! Como posso ajudar?")],
         Some(motor_jev(Arc::clone(&jev))),
     );
 
-    let gatilho = cenario.falar("oi");
-    let resumo = cenario.turno(&motor, gatilho).await;
+    let gatilho = scenario.falar("oi");
+    let summary = scenario.turno(&engine, gatilho).await;
 
-    assert_eq!(resumo.estado, poph_store::TurnState::Completed);
+    assert_eq!(summary.estado, poph_store::TurnState::Completed);
     let pedidos = provedor.received();
     assert!(texto_do_prompt(&pedidos[0]).contains(TEXTO_DO_TRECHO));
-    let ferramentas = nomes_das_ferramentas(&pedidos[0]);
-    assert!(
-        ferramentas.contains(&"consultar_base".to_owned()),
-        "{ferramentas:?}"
-    );
+    let tools = nomes_das_ferramentas(&pedidos[0]);
+    assert!(tools.contains(&"consultar_base".to_owned()), "{tools:?}");
 }
 
-/// A busca em andamento é **abandonada** quando o G3 diz `nada`: o turno não paga o tempo dela.
-///
-/// Busca falsa de 300 ms e Jev instantâneo: com `nada` o turno termina antes dos 300 ms; com `base`
-/// ele espera a busca, como hoje.
 #[tokio::test]
 async fn g3_nada_abandona_a_busca_em_andamento() {
-    let cenario = Cenario::com_busca(
+    let scenario = Scenario::com_busca(
         "abandona",
-        BuscaContada::com_demora(Duration::from_millis(300)) as Arc<dyn BuscadorBase>,
+        BuscaContada::com_demora(Duration::from_millis(300)) as Arc<dyn KnowledgeSearcher>,
         Arc::new(AtomicU64::new(0)),
     );
 
@@ -654,63 +592,60 @@ async fn g3_nada_abandona_a_busca_em_andamento() {
         "g3_precisa",
         G3_NOTHING,
     )])));
-    let (motor, _) = cenario.motor(
+    let (engine, _) = scenario.engine(
         vec![roteiro_texto("Oi! Como posso ajudar?")],
         Some(motor_jev(Arc::clone(&jev_nada))),
     );
-    let gatilho = cenario.falar("oi, bom dia");
-    let inicio = Instant::now();
-    let resumo = cenario.turno(&motor, gatilho).await;
-    let com_nada = inicio.elapsed();
-    assert_eq!(resumo.estado, poph_store::TurnState::Completed);
+    let gatilho = scenario.falar("oi, bom dia");
+    let beginning = Instant::now();
+    let summary = scenario.turno(&engine, gatilho).await;
+    let com_nada = beginning.elapsed();
+    assert_eq!(summary.estado, poph_store::TurnState::Completed);
     assert!(
         com_nada < Duration::from_millis(250),
         "com o G3 em nada o turno não pode esperar a busca: levou {com_nada:?}"
     );
 
-    let cenario_base = Cenario::com_busca(
+    let cenario_base = Scenario::com_busca(
         "espera",
-        BuscaContada::com_demora(Duration::from_millis(300)) as Arc<dyn BuscadorBase>,
+        BuscaContada::com_demora(Duration::from_millis(300)) as Arc<dyn KnowledgeSearcher>,
         Arc::new(AtomicU64::new(0)),
     );
     let jev_base = Arc::new(FakeJev::with_choices(escolhas(&[("g3_precisa", G3_BASE)])));
-    let (motor, _) = cenario_base.motor(
+    let (engine, _) = cenario_base.engine(
         vec![roteiro_texto("O prazo é de até 8 dias úteis.")],
         Some(motor_jev(Arc::clone(&jev_base))),
     );
     let gatilho = cenario_base.falar("qual é o prazo de entrega?");
-    let inicio = Instant::now();
-    let resumo = cenario_base.turno(&motor, gatilho).await;
-    let com_base = inicio.elapsed();
-    assert_eq!(resumo.estado, poph_store::TurnState::Completed);
+    let beginning = Instant::now();
+    let summary = cenario_base.turno(&engine, gatilho).await;
+    let com_base = beginning.elapsed();
+    assert_eq!(summary.estado, poph_store::TurnState::Completed);
     assert!(
         com_base >= Duration::from_millis(300),
         "com o G3 em base a busca é aguardada: levou {com_base:?}"
     );
 }
 
-/// G1 e G3 ligados ao mesmo tempo: se o G1 transfere e o G3 diz `nada`, a busca é abandonada e a
-/// transferência segue igual — o caminho da transferência não depende dos trechos.
 #[tokio::test]
 async fn g3_nada_com_transferencia_nao_quebra_o_turno() {
-    let cenario = Cenario::com_busca(
+    let scenario = Scenario::com_busca(
         "transferencia",
-        BuscaContada::com_demora(Duration::from_millis(300)) as Arc<dyn BuscadorBase>,
+        BuscaContada::com_demora(Duration::from_millis(300)) as Arc<dyn KnowledgeSearcher>,
         Arc::new(AtomicU64::new(0)),
     );
-    // Handoff ligado: sem isso o G1 nem se aplica.
-    let atual = cenario
+    let current = scenario
         .store
         .agents()
-        .get(cenario.org, cenario.agente)
+        .get(scenario.org, scenario.agente)
         .expect("lê o agente");
-    cenario
+    scenario
         .store
         .agents()
         .update(
-            cenario.org,
-            cenario.agente,
-            atual.version,
+            scenario.org,
+            scenario.agente,
+            current.version,
             poph_store::AgentChange {
                 handoff_active: Some(true),
                 ..poph_store::AgentChange::default()
@@ -728,73 +663,61 @@ async fn g3_nada_com_transferencia_nao_quebra_o_turno() {
         ..JevGates::default()
     };
     let motor_jev = Arc::new(JevEngine::new(jev, gates, "jev-latest"));
-    let (motor, _) = cenario.motor(
+    let (engine, _) = scenario.engine(
         vec![roteiro_texto("Vou te passar para um atendente.")],
         Some(motor_jev),
     );
 
-    let gatilho = cenario.falar("quero falar com uma pessoa de verdade");
-    let inicio = Instant::now();
-    let resumo = cenario.turno(&motor, gatilho).await;
-    let decorrido = inicio.elapsed();
+    let gatilho = scenario.falar("quero falar com uma pessoa de verdade");
+    let beginning = Instant::now();
+    let summary = scenario.turno(&engine, gatilho).await;
+    let decorrido = beginning.elapsed();
 
-    // A transferência não espera os 300 ms da busca.
     assert!(
         decorrido < Duration::from_millis(250),
         "a busca não devia ser aguardada: levou {decorrido:?}"
     );
     assert_eq!(
-        resumo.jev.as_ref().and_then(|jev| jev.choice(IdGate::G1)),
+        summary.jev.as_ref().and_then(|jev| jev.choice(IdGate::G1)),
         Some(poph_jev::G1_TRANSFER)
     );
     assert_eq!(
-        cenario.metricas.buscas_puladas_g3.value(),
+        scenario.metrics.searches_puladas_g3.value(),
         1,
         "o G3 contou a busca dispensada"
     );
 }
 
-// ───────────────────────────── Medição da redução (HR-31) ─────────────────────────────
-//
-// Roda as mensagens que o conjunto `tests/jev/g3.jsonl` rotula como `nada` em duas condições, com
-// a mesma base (três trechos de ~1000 caracteres, como o trecho do RAG no PRD):
-//   * **sem o G3** — comportamento de hoje: trechos no prompt e base/catálogo oferecidos;
-//   * **com o G3 em `nada`** — sem trechos e sem as duas ferramentas.
-// Imprime o tamanho do prompt, a diferença e a duração do turno em cada condição.
-//
-// `cargo test -p poph-agent --test g3_base medicao -- --ignored --nocapture`
-
-/// Busca com o material que o RAG injeta de verdade: três trechos de ~1000 caracteres.
 struct BuscaRealista {
-    trechos: Vec<TrechoRecuperado>,
+    passages: Vec<RecoveredPassage>,
 }
 
-impl BuscadorBase for BuscaRealista {
-    fn buscar(
+impl KnowledgeSearcher for BuscaRealista {
+    fn search(
         &self,
         _org: OrgId,
-        _agente: AgentId,
+        _agent: AgentId,
         _consulta: String,
-        _parametros: ParametrosBusca,
-    ) -> FuturoBusca<'_> {
-        let trechos = self.trechos.clone();
-        Box::pin(async move { Ok(trechos) })
+        _parametros: SearchParameters,
+    ) -> SearchFuture<'_> {
+        let passages = self.passages.clone();
+        Box::pin(async move { Ok(passages) })
     }
 }
 
-fn trechos_realistas() -> Vec<TrechoRecuperado> {
+fn trechos_realistas() -> Vec<RecoveredPassage> {
     let texto =
         "Política da loja: o prazo de entrega para o interior é de até 8 dias úteis após a \
 confirmação do pagamento, e o frete é grátis acima de R$ 199,00. "
             .repeat(11);
     (0..3)
-        .map(|indice| TrechoRecuperado {
+        .map(|index| RecoveredPassage {
             item: poph_types::KnowledgeItemId::generate(),
-            titulo: format!("Item {} de política", indice + 1),
-            grupo: "Políticas da loja".to_owned(),
+            title: format!("Item {} de política", index + 1),
+            group: "Políticas da loja".to_owned(),
             texto: texto.clone(),
-            similaridade: 0.8 - (indice as f32) * 0.05,
-            relevancia: 0.5,
+            similarity: 0.8 - (index as f32) * 0.05,
+            relevance: 0.5,
         })
         .collect()
 }
@@ -802,30 +725,30 @@ confirmação do pagamento, e o frete é grátis acima de R$ 199,00. "
 #[tokio::test]
 #[ignore = "medição da HR-31: rodar com --ignored --nocapture"]
 async fn medicao_de_tokens_e_latencia_do_g3() {
-    let arquivo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/jev/g3.jsonl");
-    let texto = std::fs::read_to_string(&arquivo).expect("lê o conjunto g3.jsonl");
-    let mut mensagens: Vec<String> = Vec::new();
-    for linha in texto.lines() {
-        let linha = linha.trim();
-        if linha.is_empty() || linha.starts_with('#') {
+    let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/jev/g3.jsonl");
+    let texto = std::fs::read_to_string(&file).expect("lê o conjunto g3.jsonl");
+    let mut messages: Vec<String> = Vec::new();
+    for line in texto.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let caso: serde_json::Value = serde_json::from_str(linha).expect("caso é JSON");
+        let caso: serde_json::Value = serde_json::from_str(line).expect("caso é JSON");
         if caso["esperado"] == "nada" {
-            let ultima = caso["estado"]["mensagens"]
+            let last = caso["estado"]["mensagens"]
                 .as_array()
-                .and_then(|itens| itens.last())
+                .and_then(|items| items.last())
                 .and_then(|item| item["texto"].as_str())
                 .unwrap_or_default()
                 .to_owned();
-            mensagens.push(ultima);
+            messages.push(last);
         }
     }
 
-    let trechos = trechos_realistas();
-    let tamanho_da_base: usize = trechos
+    let passages = trechos_realistas();
+    let tamanho_da_base: usize = passages
         .iter()
-        .map(|trecho| trecho.texto.chars().count())
+        .map(|passage| passage.texto.chars().count())
         .sum();
 
     let mut total_sem = 0usize;
@@ -835,31 +758,30 @@ async fn medicao_de_tokens_e_latencia_do_g3() {
     let mut ferramentas_sem = 0usize;
     let mut ferramentas_com = 0usize;
 
-    for mensagem in &mensagens {
-        // Condição A: sem o G3 (comportamento de hoje).
-        let cenario = Cenario::com_busca(
+    for mensagem in &messages {
+        let scenario = Scenario::com_busca(
             "medicao-sem",
             Arc::new(BuscaRealista {
-                trechos: trechos.clone(),
+                passages: passages.clone(),
             }),
             Arc::new(AtomicU64::new(0)),
         );
-        let (motor, provedor) = cenario.motor(vec![roteiro_texto("Oi! Como posso ajudar?")], None);
-        let conversa = cenario.nova_conversa();
-        let gatilho = cenario.falar_em(conversa, mensagem);
-        let inicio = Instant::now();
-        let resumo = cenario.turno_em(&motor, conversa, gatilho).await;
-        duracao_sem += inicio.elapsed().as_micros();
-        assert_eq!(resumo.estado, poph_store::TurnState::Completed);
-        let pedido = provedor.received().remove(0);
-        total_sem += texto_do_prompt(&pedido).chars().count();
-        ferramentas_sem += pedido.tools.len();
+        let (engine, provedor) =
+            scenario.engine(vec![roteiro_texto("Oi! Como posso ajudar?")], None);
+        let conversa = scenario.nova_conversa();
+        let gatilho = scenario.falar_em(conversa, mensagem);
+        let beginning = Instant::now();
+        let summary = scenario.turno_em(&engine, conversa, gatilho).await;
+        duracao_sem += beginning.elapsed().as_micros();
+        assert_eq!(summary.estado, poph_store::TurnState::Completed);
+        let request = provedor.received().remove(0);
+        total_sem += texto_do_prompt(&request).chars().count();
+        ferramentas_sem += request.tools.len();
 
-        // Condição B: com o G3 ligado e a decisão `nada` (a que o Jev real deu para estas mensagens).
-        let cenario = Cenario::com_busca(
+        let scenario = Scenario::com_busca(
             "medicao-com",
             Arc::new(BuscaRealista {
-                trechos: trechos.clone(),
+                passages: passages.clone(),
             }),
             Arc::new(AtomicU64::new(0)),
         );
@@ -867,29 +789,29 @@ async fn medicao_de_tokens_e_latencia_do_g3() {
             "g3_precisa",
             G3_NOTHING,
         )])));
-        let (motor, provedor) = cenario.motor(
+        let (engine, provedor) = scenario.engine(
             vec![roteiro_texto("Oi! Como posso ajudar?")],
             Some(motor_jev(Arc::clone(&jev))),
         );
-        let conversa = cenario.nova_conversa();
-        let gatilho = cenario.falar_em(conversa, mensagem);
-        let inicio = Instant::now();
-        let resumo = cenario.turno_em(&motor, conversa, gatilho).await;
-        duracao_com += inicio.elapsed().as_micros();
-        assert_eq!(resumo.estado, poph_store::TurnState::Completed);
-        let pedido = provedor.received().remove(0);
-        total_com += texto_do_prompt(&pedido).chars().count();
-        ferramentas_com += pedido.tools.len();
+        let conversa = scenario.nova_conversa();
+        let gatilho = scenario.falar_em(conversa, mensagem);
+        let beginning = Instant::now();
+        let summary = scenario.turno_em(&engine, conversa, gatilho).await;
+        duracao_com += beginning.elapsed().as_micros();
+        assert_eq!(summary.estado, poph_store::TurnState::Completed);
+        let request = provedor.received().remove(0);
+        total_com += texto_do_prompt(&request).chars().count();
+        ferramentas_com += request.tools.len();
     }
 
-    let casos = mensagens.len();
+    let casos = messages.len();
     let media_sem = total_sem / casos;
     let media_com = total_com / casos;
     let economia = media_sem.saturating_sub(media_com);
     println!("\n=== Medição G3 (HR-31) — {casos} mensagens rotuladas `nada` ===");
     println!(
         "base de exemplo: {} trechos, {tamanho_da_base} caracteres no total",
-        trechos.len()
+        passages.len()
     );
     println!("prompt médio SEM o G3: {media_sem} caracteres");
     println!("prompt médio COM o G3 em `nada`: {media_com} caracteres");
@@ -912,28 +834,26 @@ async fn medicao_de_tokens_e_latencia_do_g3() {
     assert!(economia > 0, "com o G3 em nada o prompt tem de encolher");
 }
 
-/// Padrão de instalação (decisão do mantenedor, 20/11/2026): agente sem configuração de gates e
-/// Jev com a configuração padrão. O G3 pergunta e age: `nada` dispensa base e catálogo.
 #[tokio::test]
 async fn padrao_de_instalacao_liga_o_g3_sem_configurar_o_agente() {
-    let cenario = Cenario::novo("padrao-g3");
+    let scenario = Scenario::new("padrao-g3");
     let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g3_precisa",
         G3_NOTHING,
     )])));
     let gates_padrao = poph_types::JevConfig::default().gates;
-    let avaliador = Arc::new(JevEngine::new(jev, gates_padrao, "jev-latest"));
-    let (motor, provedor) = cenario.motor(
+    let evaluator = Arc::new(JevEngine::new(jev, gates_padrao, "jev-latest"));
+    let (engine, provedor) = scenario.engine(
         vec![roteiro_texto("Oi! Como posso ajudar?")],
-        Some(avaliador),
+        Some(evaluator),
     );
 
-    let gatilho = cenario.falar("oi, bom dia");
-    let resumo = cenario.turno(&motor, gatilho).await;
+    let gatilho = scenario.falar("oi, bom dia");
+    let summary = scenario.turno(&engine, gatilho).await;
 
-    assert_eq!(resumo.estado, poph_store::TurnState::Completed);
+    assert_eq!(summary.estado, poph_store::TurnState::Completed);
     assert_eq!(
-        resumo.jev.as_ref().and_then(|jev| jev.choice(IdGate::G3)),
+        summary.jev.as_ref().and_then(|jev| jev.choice(IdGate::G3)),
         Some(G3_NOTHING),
         "sem configuração no agente, o G3 do padrão de instalação precisa perguntar"
     );
@@ -948,23 +868,21 @@ async fn padrao_de_instalacao_liga_o_g3_sem_configurar_o_agente() {
     );
 }
 
-/// Agente com `{"g3": false}` desliga o G3 mesmo com o padrão ligado: volta ao comportamento de
-/// hoje (base no prompt, ferramenta oferecida) e o Jev não é perguntado sobre o G3.
 #[tokio::test]
 async fn agente_que_desliga_o_g3_volta_ao_comportamento_de_hoje() {
-    let cenario = Cenario::novo("agente-g3-off");
-    let atual = cenario
+    let scenario = Scenario::new("agente-g3-off");
+    let current = scenario
         .store
         .agents()
-        .get(cenario.org, cenario.agente)
+        .get(scenario.org, scenario.agente)
         .expect("lê o agente");
-    cenario
+    scenario
         .store
         .agents()
         .update(
-            cenario.org,
-            cenario.agente,
-            atual.version,
+            scenario.org,
+            scenario.agente,
+            current.version,
             poph_store::AgentChange {
                 jev_json: Some(r#"{"g3": false}"#.to_owned()),
                 ..poph_store::AgentChange::default()
@@ -977,18 +895,18 @@ async fn agente_que_desliga_o_g3_volta_ao_comportamento_de_hoje() {
         G3_NOTHING,
     )])));
     let gates_padrao = poph_types::JevConfig::default().gates;
-    let avaliador = Arc::new(JevEngine::new(jev, gates_padrao, "jev-latest"));
-    let (motor, provedor) = cenario.motor(
+    let evaluator = Arc::new(JevEngine::new(jev, gates_padrao, "jev-latest"));
+    let (engine, provedor) = scenario.engine(
         vec![roteiro_texto("Olá! Como posso ajudar?")],
-        Some(avaliador),
+        Some(evaluator),
     );
 
-    let gatilho = cenario.falar("oi");
-    let resumo = cenario.turno(&motor, gatilho).await;
+    let gatilho = scenario.falar("oi");
+    let summary = scenario.turno(&engine, gatilho).await;
 
-    assert_eq!(resumo.estado, poph_store::TurnState::Completed);
+    assert_eq!(summary.estado, poph_store::TurnState::Completed);
     assert!(
-        resumo
+        summary
             .jev
             .as_ref()
             .and_then(|jev| jev.choice(IdGate::G3))
@@ -1000,22 +918,21 @@ async fn agente_que_desliga_o_g3_volta_ao_comportamento_de_hoje() {
     assert!(nomes_das_ferramentas(&pedidos[0]).contains(&"consultar_base".to_owned()));
 }
 
-/// `{"ativo": false}` no agente desliga todos os gates dele, inclusive o G3 do padrão.
 #[tokio::test]
 async fn agente_com_ativo_false_nao_consulta_o_jev_nem_o_g3() {
-    let cenario = Cenario::novo("agente-inativo-g3");
-    let atual = cenario
+    let scenario = Scenario::new("agente-inativo-g3");
+    let current = scenario
         .store
         .agents()
-        .get(cenario.org, cenario.agente)
+        .get(scenario.org, scenario.agente)
         .expect("lê o agente");
-    cenario
+    scenario
         .store
         .agents()
         .update(
-            cenario.org,
-            cenario.agente,
-            atual.version,
+            scenario.org,
+            scenario.agente,
+            current.version,
             poph_store::AgentChange {
                 jev_json: Some(r#"{"ativo": false}"#.to_owned()),
                 ..poph_store::AgentChange::default()
@@ -1028,17 +945,17 @@ async fn agente_com_ativo_false_nao_consulta_o_jev_nem_o_g3() {
         G3_NOTHING,
     )])));
     let gates_padrao = poph_types::JevConfig::default().gates;
-    let avaliador = Arc::new(JevEngine::new(jev, gates_padrao, "jev-latest"));
-    let (motor, provedor) = cenario.motor(
+    let evaluator = Arc::new(JevEngine::new(jev, gates_padrao, "jev-latest"));
+    let (engine, provedor) = scenario.engine(
         vec![roteiro_texto("Olá! Como posso ajudar?")],
-        Some(avaliador),
+        Some(evaluator),
     );
 
-    let gatilho = cenario.falar("oi");
-    let resumo = cenario.turno(&motor, gatilho).await;
+    let gatilho = scenario.falar("oi");
+    let summary = scenario.turno(&engine, gatilho).await;
 
     assert!(
-        resumo
+        summary
             .jev
             .as_ref()
             .is_none_or(|jev| jev.decisions.is_empty()),

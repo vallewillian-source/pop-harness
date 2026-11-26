@@ -304,8 +304,8 @@ impl Cenario {
             // Espera curta para a nova tentativa não depender de relógio.
             backoff: Backoff {
                 base: Duration::from_millis(1),
-                fator: 2,
-                teto: Duration::from_millis(5),
+                factor: 2,
+                cap: Duration::from_millis(5),
             },
             max_tentativas,
             ..OpcoesSaidaWhatsApp::default()

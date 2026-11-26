@@ -239,7 +239,7 @@ fn listar(store: &Store, org: OrgId, args: ListarArquivos) -> ExitCode {
             arquivo.id,
             arquivo.name,
             arquivo.mime,
-            poph_agent::biblioteca::tamanho_legivel(arquivo.size_bytes)
+            poph_agent::library::size_readable(arquivo.size_bytes)
         );
         if !arquivo.description.trim().is_empty() {
             println!("    descrição: {}", arquivo.description.trim());
@@ -314,7 +314,7 @@ fn saida_arquivo(arquivo: &LibraryFile, json_saida: bool, aviso: &str) -> ExitCo
     println!("  tipo:        {}", arquivo.mime);
     println!(
         "  tamanho:     {}",
-        poph_agent::biblioteca::tamanho_legivel(arquivo.size_bytes)
+        poph_agent::library::size_readable(arquivo.size_bytes)
     );
     println!("  sha256:      {}", arquivo.sha256);
     println!("  blob:        {}", arquivo.blob_path);

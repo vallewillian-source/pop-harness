@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use poph_agent::{BaseConhecimento, CatalogoProdutos};
+use poph_agent::{KnowledgeBase, ProductCatalog};
 use poph_rag::{Embedder, Index, IndexConfig, ModelConfig, OrtEmbedder, QueueConfig};
 use poph_store::Store;
 use poph_types::HarnessConfig;
@@ -35,21 +35,18 @@ pub fn abrir_indice(config: &HarnessConfig, store: &Arc<Store>) -> Result<Index,
 }
 
 /// Abre a base de conhecimento (store + índice) pronta para buscar e sincronizar.
-pub fn abrir_base(
-    config: &HarnessConfig,
-    store: Arc<Store>,
-) -> Result<Arc<BaseConhecimento>, String> {
+pub fn abrir_base(config: &HarnessConfig, store: Arc<Store>) -> Result<Arc<KnowledgeBase>, String> {
     let indice = abrir_indice(config, &store)?;
-    Ok(BaseConhecimento::nova(store, Arc::new(indice)))
+    Ok(KnowledgeBase::new(store, Arc::new(indice)))
 }
 
 /// Abre o catálogo de produtos (store + o mesmo índice de embedding da base).
 pub fn abrir_catalogo(
     config: &HarnessConfig,
     store: Arc<Store>,
-) -> Result<Arc<CatalogoProdutos>, String> {
+) -> Result<Arc<ProductCatalog>, String> {
     let indice = abrir_indice(config, &store)?;
-    Ok(CatalogoProdutos::novo(store, Arc::new(indice)))
+    Ok(ProductCatalog::new(store, Arc::new(indice)))
 }
 
 /// Subcomandos de `poph rag` (o índice da busca semântica).
@@ -92,7 +89,7 @@ pub fn abrir_base_com_fila(
     config: &HarnessConfig,
     store: Arc<Store>,
     org: poph_types::OrgId,
-) -> Result<Arc<BaseConhecimento>, String> {
+) -> Result<Arc<KnowledgeBase>, String> {
     let modelo = ModelConfig {
         diretorio: config.models(),
         ..ModelConfig::default()
@@ -129,5 +126,5 @@ pub fn abrir_base_com_fila(
              trechos. Rode `poph kb reindex` para reindexar."
         );
     }
-    Ok(BaseConhecimento::nova(store, Arc::new(indice)))
+    Ok(KnowledgeBase::new(store, Arc::new(indice)))
 }

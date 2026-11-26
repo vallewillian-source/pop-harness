@@ -1,31 +1,12 @@
-//! Ferramentas do fluxo no turno (FX-24, PRD §6.5).
-//!
-//! Modelo e Jev falsos, banco de verdade. O que fica provado:
-//!
-//! 1. ação válida avança e a resposta ao modelo diz a etapa nova (e o efeito vai para a fila, não
-//!    para a `outbox`: ele sai depois do texto final);
-//! 2. campo faltando devolve a lista do que falta e nada muda no banco;
-//! 3. ação inexistente devolve as válidas e nada muda;
-//! 4. ferramenta fora da lista habilitada do agente é recusada (`nao_habilitada`) e nem é oferecida;
-//! 5. `fluxo_iniciar` só existe na reserva e valida como o G9 (fluxo inativo ou não liberado nunca
-//!    inicia);
-//! 6. chave de idempotência repetida não duplica evento, efeito nem versão;
-//! 7. `max_ferramentas_por_mensagem` continua valendo com as ferramentas novas;
-//! 8. abandonar grava o motivo, não gera efeito;
-//! 9. ação que chega a um `fim(encerra_atendimento=True)` fecha a Ficha e a conversa;
-//! 10. motor desligado (`[fluxos] ativo = false`) não registra nem oferece as três ferramentas.
-//!
-//! Nomes, textos e ids são fictícios.
-
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
-use poph_agent::limites::{Limitador, OpcoesLimites};
-use poph_agent::metricas::{MetricasG9, MetricasMemoria, MetricasTurno};
+use poph_agent::config_hot::{ConfigHot, HotConfigOptions};
+use poph_agent::limites::{LimitOptions, Limiter};
+use poph_agent::metrics::{MetricsG9, MetricsMemory, MetricsTurn};
 use poph_agent::turno::{
-    FuturoPausa, NoopObserver, Pausa, TurnEngine, TurnInput, TurnOptions, TurnSummary,
+    FuturePause, NoopObserver, Pause, TurnEngine, TurnInput, TurnOptions, TurnSummary,
 };
 use poph_core::llm::{
     FakeProvider, FinishReason, LlmEvent, Message, Request, Script, ToolCall, Usage,
@@ -44,14 +25,12 @@ use serde_json::{Value, json};
 
 struct SemEspera;
 
-impl Pausa for SemEspera {
-    fn esperar(&self, _duracao: Duration) -> FuturoPausa {
+impl Pause for SemEspera {
+    fn wait(&self, _duracao: Duration) -> FuturePause {
         Box::pin(async {})
     }
 }
 
-/// Duas etapas: `coleta` (com campo obrigatório e um efeito na ação) e `confirmacao`, que conclui o
-/// fluxo e encerra o atendimento.
 const SCRIPT: &str = r#"fluxo(
     id = "agendar_visita",
     nome = "Agendar visita",
@@ -89,8 +68,6 @@ etapa(
 )
 "#;
 
-/// Fluxo auxiliar: mantém a reserva viva (um fluxo liberado no catálogo) quando o alvo do teste
-/// não pode ser liberado ou está inativo.
 const SCRIPT_B: &str = r#"fluxo(
     id = "confirmar_dados",
     nome = "Confirmar dados",
@@ -104,38 +81,37 @@ etapa(
 )
 "#;
 
-/// As três ferramentas do fluxo, como o agente as habilita (D-04).
 const TODAS: [&str; 3] = [
-    poph_agent::turno::NOME_EXECUTAR_ACAO,
-    poph_agent::turno::NOME_ABANDONAR,
-    poph_agent::turno::NOME_FERRAMENTA_INICIAR,
+    poph_agent::turno::NAME_RUN_ACTION,
+    poph_agent::turno::NAME_ABANDON,
+    poph_agent::turno::NAME_TOOL_START,
 ];
 
-/// Banco, org, agente e conversa de verdade numa pasta temporária.
-struct Cenario {
-    pasta: PathBuf,
+struct Scenario {
+    folder: PathBuf,
     store: Arc<Store>,
     org: OrgId,
     agente: AgentId,
 }
 
-impl Cenario {
-    fn novo(rotulo: &str) -> Self {
-        let pasta = std::env::temp_dir().join(format!(
-            "poph-fx24-{rotulo}-{}-{}",
+impl Scenario {
+    fn new(label: &str) -> Self {
+        let folder = std::env::temp_dir().join(format!(
+            "poph-fx24-{label}-{}-{}",
             std::process::id(),
             AgentId::generate()
         ));
-        let _ = std::fs::remove_dir_all(&pasta);
-        std::fs::create_dir_all(&pasta).expect("pasta do teste");
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).expect("pasta do teste");
         let store = Arc::new(
-            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco"),
+            Store::open_at(&folder.join("harness.db"), &folder.join("rag.db"))
+                .expect("abre o banco"),
         );
         let org = store
             .orgs()
             .create(NewOrg {
-                name: format!("Org {rotulo}"),
-                slug: format!("org-{rotulo}-{}", AgentId::generate()),
+                name: format!("Org {label}"),
+                slug: format!("org-{label}-{}", AgentId::generate()),
                 config_json: "{}".to_owned(),
             })
             .expect("cria a org")
@@ -145,35 +121,34 @@ impl Cenario {
             .create(
                 org,
                 NewAgent {
-                    name: format!("Bia {rotulo}"),
-                    slug: format!("bia-{rotulo}"),
+                    name: format!("Bia {label}"),
+                    slug: format!("bia-{label}"),
                     grouping_window_ms: 0,
                     ..NewAgent::default()
                 },
             )
             .expect("cria o agente")
             .id;
-        let cenario = Self {
-            pasta,
+        let scenario = Self {
+            folder,
             store,
             org,
             agente,
         };
-        cenario.habilitar(&TODAS);
-        cenario
+        scenario.habilitar(&TODAS);
+        scenario
     }
 
-    /// Grava as instruções com as ferramentas habilitadas informadas (D-04).
-    fn habilitar(&self, ferramentas: &[&str]) {
-        let estruturado = json!({
-            "tools": ferramentas
+    fn habilitar(&self, tools: &[&str]) {
+        let structured = json!({
+            "tools": tools
                 .iter()
                 .map(|nome| json!({ "name": nome, "enabled": true }))
                 .collect::<Vec<_>>()
         })
         .to_string();
-        let atual = self.store.instructions().version(self.org, self.agente);
-        let esperada = match atual {
+        let current = self.store.instructions().version(self.org, self.agente);
+        let esperada = match current {
             Ok(Some(versao)) => versao,
             _ => 0,
         };
@@ -183,19 +158,17 @@ impl Cenario {
                 self.org,
                 self.agente,
                 esperada,
-                &estruturado,
+                &structured,
                 "# Bia\n\nVocê é a atendente da FixProLar.",
                 true,
             )
             .expect("grava as instruções");
     }
 
-    /// Cria o fluxo, publica a primeira revisão e o libera ao agente.
     fn fluxo(&self) -> poph_types::FlowId {
         self.criar_fluxo("agendar_visita", "Agendar visita", SCRIPT, true)
     }
 
-    /// Cria um fluxo com o script dado, publica a revisão e (opcionalmente) libera ao agente.
     fn criar_fluxo(
         &self,
         slug: &str,
@@ -216,8 +189,8 @@ impl Cenario {
                 },
             )
             .expect("cria o fluxo");
-        let compilado = compilar(script, &Limites::default());
-        let ir = compilado.ir().expect("o script do teste compila");
+        let compiled = compilar(script, &Limites::default());
+        let ir = compiled.ir().expect("o script do teste compila");
         self.store
             .revisions()
             .publish_revision(
@@ -243,15 +216,14 @@ impl Cenario {
         fluxo.id
     }
 
-    /// Deixa o fluxo inativo (não inicia execução nova).
     fn desativar(&self, fluxo: poph_types::FlowId) {
-        let atual = self.store.flows().get(self.org, fluxo).expect("lê o fluxo");
+        let current = self.store.flows().get(self.org, fluxo).expect("lê o fluxo");
         self.store
             .flows()
             .update(
                 self.org,
                 fluxo,
-                atual.version,
+                current.version,
                 poph_store::FlowChange {
                     status: Some(poph_store::Status::Inactive),
                     ..poph_store::FlowChange::default()
@@ -298,61 +270,57 @@ impl Cenario {
             .id
     }
 
-    fn motor(
+    fn engine(
         &self,
         roteiros: Vec<Script>,
         jev: Option<Arc<JevEngine>>,
         fluxos: Option<FlowsConfig>,
     ) -> (TurnEngine, Arc<FakeProvider>) {
-        let config = ConfigQuente::nova(
+        let config = ConfigHot::new(
             Arc::clone(&self.store),
-            OpcoesConfigQuente::default(),
-            MetricasMemoria::proprio(),
+            HotConfigOptions::default(),
+            MetricsMemory::own(),
         );
-        let limitador = Arc::new(Limitador::novo(
-            OpcoesLimites::default(),
-            MetricasMemoria::proprio(),
-        ));
+        let limiter = Arc::new(Limiter::new(LimitOptions::default(), MetricsMemory::own()));
         let provedor = Arc::new(FakeProvider::with_scripts(roteiros));
-        let mut motor = TurnEngine::new(
+        let mut engine = TurnEngine::new(
             Arc::clone(&self.store),
             config,
-            limitador,
+            limiter,
             provedor.clone(),
             TurnOptions::default(),
-            MetricasTurno::proprio(),
+            MetricsTurn::own(),
         )
         .with_pause(Arc::new(SemEspera))
-        .with_summary(poph_agent::resumo::OpcoesResumo {
+        .with_summary(poph_agent::summary::SummaryOptions {
             ativo: false,
-            ..poph_agent::resumo::OpcoesResumo::default()
+            ..poph_agent::summary::SummaryOptions::default()
         })
-        .with_g9_metrics(MetricasG9::proprias());
-        // FX-24: as ferramentas do fluxo entram no registro do turno, como na montagem real.
+        .with_g9_metrics(MetricsG9::own());
         let registro = poph_agent::turno::registrar_ferramentas_do_fluxo(
-            poph_agent::turno::RegistroPadrao::novo(),
+            poph_agent::turno::DefaultRegistry::new(),
             Arc::clone(&self.store),
             &fluxos.clone().unwrap_or_default(),
         );
         let registro =
             poph_agent::turno::registrar_ferramenta_encerramento(registro, Arc::clone(&self.store));
-        motor = motor.with_tools(Arc::new(registro));
-        if let Some(ajustes) = fluxos {
-            motor = motor.with_flows(&ajustes);
+        engine = engine.with_tools(Arc::new(registro));
+        if let Some(adjustments) = fluxos {
+            engine = engine.with_flows(&adjustments);
         }
         if let Some(jev) = jev {
-            motor = motor.with_jev(jev);
+            engine = engine.with_jev(jev);
         }
-        (motor, provedor)
+        (engine, provedor)
     }
 
     async fn turno(
         &self,
-        motor: &TurnEngine,
+        engine: &TurnEngine,
         conversa: ConversationId,
         gatilho: MessageId,
     ) -> TurnSummary {
-        motor
+        engine
             .run(
                 TurnInput::new(self.org, conversa, gatilho),
                 &mut NoopObserver,
@@ -369,14 +337,14 @@ impl Cenario {
             .expect("a conversa tem Ficha")
     }
 
-    fn ativa(&self, conversa: ConversationId) -> Option<poph_store::Execution> {
+    fn active(&self, conversa: ConversationId) -> Option<poph_store::Execution> {
         self.store
             .executions()
             .active_of_case(self.org, self.ficha(conversa).id)
             .expect("lê a execução ativa")
     }
 
-    fn execucao(&self, conversa: ConversationId) -> poph_store::Execution {
+    fn execution(&self, conversa: ConversationId) -> poph_store::Execution {
         self.store
             .executions()
             .from_case(self.org, self.ficha(conversa).id, 20)
@@ -386,22 +354,21 @@ impl Cenario {
             .expect("a Ficha tem execução")
     }
 
-    fn eventos(&self, conversa: ConversationId) -> Vec<poph_store::RecordEvent> {
+    fn events(&self, conversa: ConversationId) -> Vec<poph_store::RecordEvent> {
         self.store
             .cases()
             .events(self.org, self.ficha(conversa).id, None, 50)
             .expect("lê os eventos")
     }
 
-    fn pendentes(&self) -> Vec<poph_store::FlowEffect> {
+    fn pending(&self) -> Vec<poph_store::FlowEffect> {
         self.store
             .effects()
             .list_pending(self.org, 20)
             .expect("lê a fila de efeitos")
     }
 
-    /// Mensagens gravadas na conversa (a `outbox` do canal não é tocada por este turno).
-    fn mensagens(&self, conversa: ConversationId) -> Vec<poph_store::Mensagem> {
+    fn messages(&self, conversa: ConversationId) -> Vec<poph_store::Mensagem> {
         self.store
             .messages()
             .list(self.org, conversa, poph_store::Page::with_limit(50))
@@ -418,37 +385,34 @@ impl Cenario {
             .expect("há um turno gravado")
     }
 
-    fn chamadas(&self, conversa: ConversationId) -> Vec<Value> {
+    fn calls(&self, conversa: ConversationId) -> Vec<Value> {
         let turno = self.turno_gravado(conversa);
         let registro: Value = serde_json::from_str(&turno.tools_json).expect("tools_json é JSON");
         registro["chamadas"].as_array().cloned().unwrap_or_default()
     }
 
-    /// Liga/desliga um ajuste do agente (o teto de chamadas por mensagem, por exemplo).
     fn ajustar(&self, mudanca: AgentChange) {
-        let atual = self
+        let current = self
             .store
             .agents()
             .get(self.org, self.agente)
             .expect("lê o agente");
         self.store
             .agents()
-            .update(self.org, self.agente, atual.version, mudanca)
+            .update(self.org, self.agente, current.version, mudanca)
             .expect("ajusta o agente");
     }
 }
 
-impl Drop for Cenario {
+impl Drop for Scenario {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.pasta);
+        let _ = std::fs::remove_dir_all(&self.folder);
     }
 }
 
-// ───────────────────────────────────────────────────────────────────────── utilidades
-
-fn texto(conteudo: &str) -> Script {
+fn texto(content: &str) -> Script {
     Script::Events(vec![
-        LlmEvent::Texto(conteudo.to_owned()),
+        LlmEvent::Texto(content.to_owned()),
         LlmEvent::Usage(Usage {
             input: 10,
             saida: 5,
@@ -457,25 +421,23 @@ fn texto(conteudo: &str) -> Script {
     ])
 }
 
-/// Roteiro do modelo que pede uma única ferramenta.
-fn chamada(nome: &str, argumentos: Value) -> Script {
+fn call(nome: &str, arguments: Value) -> Script {
     Script::Events(vec![
         LlmEvent::Tool(ToolCall {
             id: "chamada-1".to_owned(),
             nome: nome.to_owned(),
-            arguments: argumentos,
+            arguments,
         }),
         LlmEvent::Fim(FinishReason::Completed),
     ])
 }
 
-/// Roteiro do modelo que pede duas ferramentas na mesma mensagem.
-fn duas_chamadas(primeira: (&str, Value), segunda: (&str, Value)) -> Script {
+fn duas_chamadas(first: (&str, Value), segunda: (&str, Value)) -> Script {
     Script::Events(vec![
         LlmEvent::Tool(ToolCall {
             id: "chamada-1".to_owned(),
-            nome: primeira.0.to_owned(),
-            arguments: primeira.1,
+            nome: first.0.to_owned(),
+            arguments: first.1,
         }),
         LlmEvent::Tool(ToolCall {
             id: "chamada-2".to_owned(),
@@ -497,39 +459,30 @@ fn motor_jev(jev: Arc<FakeJev>) -> Arc<JevEngine> {
     Arc::new(JevEngine::new(jev, gates_com_g9(), "jev-latest"))
 }
 
-fn escolhas(itens: &[(&str, &str)]) -> std::collections::BTreeMap<String, String> {
-    itens
+fn escolhas(items: &[(&str, &str)]) -> std::collections::BTreeMap<String, String> {
+    items
         .iter()
-        .map(|(id, escolha)| ((*id).to_owned(), (*escolha).to_owned()))
+        .map(|(id, choice)| ((*id).to_owned(), (*choice).to_owned()))
         .collect()
 }
 
-/// O que o modelo recebeu como resultado das ferramentas (a mensagem de `Resultado` do pedido).
-fn resultados(pedido: &Request) -> Vec<String> {
-    pedido
+fn resultados(request: &Request) -> Vec<String> {
+    request
         .messages
         .iter()
         .filter_map(|mensagem| match mensagem {
-            Message::Resultado {
-                content: conteudo, ..
-            } => Some(conteudo.clone()),
+            Message::Resultado { content, .. } => Some(content.clone()),
             _ => None,
         })
         .collect()
 }
 
-/// Nomes das ferramentas oferecidas no pedido.
-fn oferecidas(pedido: &Request) -> Vec<String> {
-    pedido
-        .tools
-        .iter()
-        .map(|ferramenta| ferramenta.nome.clone())
-        .collect()
+fn offered(request: &Request) -> Vec<String> {
+    request.tools.iter().map(|tool| tool.nome.clone()).collect()
 }
 
-/// Um turno com o Jev escolhendo o fluxo (a execução abre antes do modelo).
 async fn turno_com_fluxo(
-    cenario: &Cenario,
+    scenario: &Scenario,
     roteiros: Vec<Script>,
     conversa: ConversationId,
 ) -> (Arc<FakeProvider>, TurnSummary) {
@@ -537,26 +490,22 @@ async fn turno_com_fluxo(
         "g9_iniciar_fluxo",
         "agendar_visita",
     )])));
-    let (motor, provedor) =
-        cenario.motor(roteiros, Some(motor_jev(jev)), Some(FlowsConfig::default()));
-    let gatilho = cenario.falar(conversa, "queria marcar uma visita técnica");
-    let resumo = cenario.turno(&motor, conversa, gatilho).await;
-    (provedor, resumo)
+    let (engine, provedor) =
+        scenario.engine(roteiros, Some(motor_jev(jev)), Some(FlowsConfig::default()));
+    let gatilho = scenario.falar(conversa, "queria marcar uma visita técnica");
+    let summary = scenario.turno(&engine, conversa, gatilho).await;
+    (provedor, summary)
 }
 
-// ──────────────────────────────────────────────────────────────────────────── testes
-
-/// 1. Ação válida avança, a resposta ao modelo diz a etapa nova e o efeito fica na fila — não vai
-///    para a `outbox` (ele sai depois do texto final do turno, FX-21).
 #[tokio::test]
 async fn acao_valida_avanca_e_a_resposta_diz_a_etapa_nova() {
-    let cenario = Cenario::novo("avanca");
-    cenario.fluxo();
-    let conversa = cenario.conversa();
-    let (provedor, resumo) = turno_com_fluxo(
-        &cenario,
+    let scenario = Scenario::new("avanca");
+    scenario.fluxo();
+    let conversa = scenario.conversa();
+    let (provedor, summary) = turno_com_fluxo(
+        &scenario,
         vec![
-            chamada(
+            call(
                 "fluxo_executar_acao",
                 json!({"acao": "seguir", "campos": {"nome": "Ana Teste"}}),
             ),
@@ -565,14 +514,12 @@ async fn acao_valida_avanca_e_a_resposta_diz_a_etapa_nova() {
         conversa,
     )
     .await;
-    assert_eq!(resumo.estado, TurnState::Completed);
+    assert_eq!(summary.estado, TurnState::Completed);
 
-    // O banco avançou de etapa.
-    let execucao = cenario.execucao(conversa);
-    assert_eq!(execucao.no_atual, "confirmacao");
-    assert_eq!(execucao.status, ExecutionStatus::Active);
+    let execution = scenario.execution(conversa);
+    assert_eq!(execution.no_atual, "confirmacao");
+    assert_eq!(execution.status, ExecutionStatus::Active);
 
-    // A ferramenta foi oferecida no primeiro pedido e a resposta da etapa nova chegou ao modelo.
     let pedidos = provedor.received();
     assert_eq!(
         pedidos.len(),
@@ -580,9 +527,9 @@ async fn acao_valida_avanca_e_a_resposta_diz_a_etapa_nova() {
         "uma rodada de ferramenta e a resposta final"
     );
     assert!(
-        oferecidas(&pedidos[0]).contains(&"fluxo_executar_acao".to_owned()),
+        offered(&pedidos[0]).contains(&"fluxo_executar_acao".to_owned()),
         "com execução ativa a ferramenta é oferecida: {:?}",
-        oferecidas(&pedidos[0])
+        offered(&pedidos[0])
     );
     let resultado = resultados(&pedidos[1])
         .into_iter()
@@ -596,21 +543,18 @@ async fn acao_valida_avanca_e_a_resposta_diz_a_etapa_nova() {
         "a resposta avisa do efeito enfileirado: {resultado}"
     );
 
-    // O evento `acao_executada` está na Ficha, assinado pelo agente.
-    let eventos = cenario.eventos(conversa);
-    let acao = eventos
+    let events = scenario.events(conversa);
+    let acao = events
         .iter()
         .find(|evento| evento.tipo == RecordEventKind::ActionExecuted)
         .expect("há o evento acao_executada");
     assert_eq!(acao.ator_tipo, poph_types::EventActor::Agent);
 
-    // O efeito `mensagem_ao_cliente` está na fila do fluxo, e não na conversa: quem entrega é o
-    // laço do servidor, que espera o turno terminar (FX-21).
-    let pendentes = cenario.pendentes();
-    assert_eq!(pendentes.len(), 1, "um efeito na fila");
-    assert_eq!(pendentes[0].tipo, "mensagem_ao_cliente");
-    let saida: Vec<_> = cenario
-        .mensagens(conversa)
+    let pending = scenario.pending();
+    assert_eq!(pending.len(), 1, "um efeito na fila");
+    assert_eq!(pending[0].tipo, "mensagem_ao_cliente");
+    let saida: Vec<_> = scenario
+        .messages(conversa)
         .into_iter()
         .filter(|mensagem| mensagem.direction == Direction::Outbound)
         .collect();
@@ -621,23 +565,21 @@ async fn acao_valida_avanca_e_a_resposta_diz_a_etapa_nova() {
     );
     assert!(saida[0].texto.contains("Pronto, Ana!"));
 
-    // O registro do turno guarda a chamada executada.
-    let chamadas = cenario.chamadas(conversa);
-    assert_eq!(chamadas.len(), 1);
-    assert_eq!(chamadas[0]["nome"], "fluxo_executar_acao");
-    assert_eq!(chamadas[0]["estado"], "executada");
+    let calls = scenario.calls(conversa);
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0]["nome"], "fluxo_executar_acao");
+    assert_eq!(calls[0]["estado"], "executada");
 }
 
-/// 2. Campo obrigatório faltando: a resposta lista o que falta e nada muda no banco.
 #[tokio::test]
 async fn campo_faltando_devolve_a_lista_e_nada_muda() {
-    let cenario = Cenario::novo("campo");
-    cenario.fluxo();
-    let conversa = cenario.conversa();
+    let scenario = Scenario::new("campo");
+    scenario.fluxo();
+    let conversa = scenario.conversa();
     let (provedor, _) = turno_com_fluxo(
-        &cenario,
+        &scenario,
         vec![
-            chamada("fluxo_executar_acao", json!({"acao": "seguir"})),
+            call("fluxo_executar_acao", json!({"acao": "seguir"})),
             texto("Pode me dizer seu nome?"),
         ],
         conversa,
@@ -657,30 +599,28 @@ async fn campo_faltando_devolve_a_lista_e_nada_muda() {
         "e a descrição da etapa repete a lista: {resultado}"
     );
 
-    // Nada mudou: mesma etapa, mesma versão, sem evento de ação.
-    let execucao = cenario.execucao(conversa);
-    assert_eq!(execucao.no_atual, "coleta");
-    assert_eq!(execucao.version, 1, "a versão não anda na recusa");
+    let execution = scenario.execution(conversa);
+    assert_eq!(execution.no_atual, "coleta");
+    assert_eq!(execution.version, 1, "a versão não anda na recusa");
     assert!(
-        cenario
-            .eventos(conversa)
+        scenario
+            .events(conversa)
             .iter()
             .all(|evento| evento.tipo != RecordEventKind::ActionExecuted),
         "nenhum evento de ação gravado"
     );
-    assert!(cenario.pendentes().is_empty(), "nenhum efeito enfileirado");
+    assert!(scenario.pending().is_empty(), "nenhum efeito enfileirado");
 }
 
-/// 3. Ação que não existe na etapa: a resposta traz as válidas e nada muda.
 #[tokio::test]
 async fn acao_inexistente_devolve_as_validas_e_nada_muda() {
-    let cenario = Cenario::novo("inexistente");
-    cenario.fluxo();
-    let conversa = cenario.conversa();
+    let scenario = Scenario::new("inexistente");
+    scenario.fluxo();
+    let conversa = scenario.conversa();
     let (provedor, _) = turno_com_fluxo(
-        &cenario,
+        &scenario,
         vec![
-            chamada("fluxo_executar_acao", json!({"acao": "cancelar_tudo"})),
+            call("fluxo_executar_acao", json!({"acao": "cancelar_tudo"})),
             texto("Certo, não vou marcar nada."),
         ],
         conversa,
@@ -696,23 +636,21 @@ async fn acao_inexistente_devolve_as_validas_e_nada_muda() {
         resultado.contains("válidas: `seguir`") || resultado.contains("Ações válidas: `seguir`"),
         "a recusa traz as ações válidas: {resultado}"
     );
-    let execucao = cenario.execucao(conversa);
-    assert_eq!(execucao.version, 1);
-    assert_eq!(execucao.no_atual, "coleta");
+    let execution = scenario.execution(conversa);
+    assert_eq!(execution.version, 1);
+    assert_eq!(execution.no_atual, "coleta");
 }
 
-/// 4. Ferramenta fora da lista habilitada do agente: não é oferecida e, se o modelo inventar a
-///    chamada, é recusada com `nao_habilitada`.
 #[tokio::test]
 async fn ferramenta_desabilitada_no_agente_e_recusada_sem_executar() {
-    let cenario = Cenario::novo("desabilitada");
-    cenario.habilitar(&["fluxo_abandonar"]);
-    cenario.fluxo();
-    let conversa = cenario.conversa();
+    let scenario = Scenario::new("desabilitada");
+    scenario.habilitar(&["fluxo_abandonar"]);
+    scenario.fluxo();
+    let conversa = scenario.conversa();
     let (provedor, _) = turno_com_fluxo(
-        &cenario,
+        &scenario,
         vec![
-            chamada(
+            call(
                 "fluxo_executar_acao",
                 json!({"acao": "seguir", "campos": {"nome": "Ana Teste"}}),
             ),
@@ -722,12 +660,12 @@ async fn ferramenta_desabilitada_no_agente_e_recusada_sem_executar() {
     )
     .await;
 
-    let nomes = oferecidas(&provedor.received()[0]);
+    let names = offered(&provedor.received()[0]);
     assert!(
-        !nomes.contains(&"fluxo_executar_acao".to_owned()),
-        "só a habilitada é oferecida: {nomes:?}"
+        !names.contains(&"fluxo_executar_acao".to_owned()),
+        "só a habilitada é oferecida: {names:?}"
     );
-    assert!(nomes.contains(&"fluxo_abandonar".to_owned()), "{nomes:?}");
+    assert!(names.contains(&"fluxo_abandonar".to_owned()), "{names:?}");
 
     let resultado = resultados(&provedor.received()[1])
         .into_iter()
@@ -735,102 +673,98 @@ async fn ferramenta_desabilitada_no_agente_e_recusada_sem_executar() {
         .expect("o modelo recebeu a recusa");
     assert!(resultado.contains("não está habilitada"), "{resultado}");
 
-    let chamadas = cenario.chamadas(conversa);
-    assert_eq!(chamadas[0]["estado"], "recusada");
-    assert_eq!(chamadas[0]["motivo"], "nao_habilitada");
+    let calls = scenario.calls(conversa);
+    assert_eq!(calls[0]["estado"], "recusada");
+    assert_eq!(calls[0]["motivo"], "nao_habilitada");
 
-    let execucao = cenario.execucao(conversa);
-    assert_eq!(execucao.no_atual, "coleta", "nada mudou");
-    assert_eq!(execucao.version, 1);
+    let execution = scenario.execution(conversa);
+    assert_eq!(execution.no_atual, "coleta", "nada mudou");
+    assert_eq!(execution.version, 1);
 }
 
-/// 5. `fluxo_iniciar` só existe na reserva e valida como o G9.
 #[tokio::test]
 async fn fluxo_iniciar_so_aparece_na_reserva_e_valida_como_o_g9() {
-    // (a) Jev respondeu `nenhum`: não é reserva, a ferramenta não é oferecida nem executada.
-    let cenario = Cenario::novo("iniciar-nenhum");
-    cenario.fluxo();
-    let conversa = cenario.conversa();
+    let scenario = Scenario::new("iniciar-nenhum");
+    scenario.fluxo();
+    let conversa = scenario.conversa();
     let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g9_iniciar_fluxo",
         G9_NONE,
     )])));
-    let (motor, provedor) = cenario.motor(
+    let (engine, provedor) = scenario.engine(
         vec![
-            chamada("fluxo_iniciar", json!({"fluxo_id": "agendar_visita"})),
+            call("fluxo_iniciar", json!({"fluxo_id": "agendar_visita"})),
             texto("Certo."),
         ],
         Some(motor_jev(jev)),
         Some(FlowsConfig::default()),
     );
-    let gatilho = cenario.falar(conversa, "bom dia, tudo bem?");
-    cenario.turno(&motor, conversa, gatilho).await;
-    let nomes = oferecidas(&provedor.received()[0]);
+    let gatilho = scenario.falar(conversa, "bom dia, tudo bem?");
+    scenario.turno(&engine, conversa, gatilho).await;
+    let names = offered(&provedor.received()[0]);
     assert!(
-        !nomes.contains(&"fluxo_iniciar".to_owned()),
-        "com o Jev respondendo, iniciar fluxo não é do modelo: {nomes:?}"
+        !names.contains(&"fluxo_iniciar".to_owned()),
+        "com o Jev respondendo, iniciar fluxo não é do modelo: {names:?}"
     );
     assert!(
         resultados(&provedor.received()[1])[0].contains("não é sua decisão"),
         "a chamada inventada é recusada"
     );
-    assert!(cenario.ativa(conversa).is_none(), "nada iniciou");
+    assert!(scenario.active(conversa).is_none(), "nada iniciou");
 
-    // (b) Jev fora do ar: reserva. A ferramenta aparece e o modelo abre a execução.
-    let cenario = Cenario::novo("iniciar-reserva");
-    cenario.fluxo();
-    let conversa = cenario.conversa();
-    let (motor, provedor) = cenario.motor(
+    let scenario = Scenario::new("iniciar-reserva");
+    scenario.fluxo();
+    let conversa = scenario.conversa();
+    let (engine, provedor) = scenario.engine(
         vec![
-            chamada("fluxo_iniciar", json!({"fluxo_id": "agendar_visita"})),
+            call("fluxo_iniciar", json!({"fluxo_id": "agendar_visita"})),
             texto("Perfeito, vou agendar."),
         ],
         None,
         Some(FlowsConfig::default()),
     );
-    let gatilho = cenario.falar(conversa, "queria marcar uma visita");
-    cenario.turno(&motor, conversa, gatilho).await;
-    let nomes = oferecidas(&provedor.received()[0]);
+    let gatilho = scenario.falar(conversa, "queria marcar uma visita");
+    scenario.turno(&engine, conversa, gatilho).await;
+    let names = offered(&provedor.received()[0]);
     assert!(
-        nomes.contains(&"fluxo_iniciar".to_owned()),
-        "na reserva a ferramenta é oferecida: {nomes:?}"
+        names.contains(&"fluxo_iniciar".to_owned()),
+        "na reserva a ferramenta é oferecida: {names:?}"
     );
-    let ativa = cenario.ativa(conversa).expect("o modelo abriu a execução");
-    assert_eq!(ativa.no_atual, "coleta");
+    let active = scenario
+        .active(conversa)
+        .expect("o modelo abriu a execução");
+    assert_eq!(active.no_atual, "coleta");
     let resultado = resultados(&provedor.received()[1])
         .into_iter()
         .next()
         .expect("o modelo recebeu o estado da etapa de entrada");
     assert!(resultado.contains("iniciado"), "{resultado}");
     assert!(resultado.contains("`seguir`"), "{resultado}");
-    // O evento fica assinado pelo agente, não pelo Jev.
-    let iniciado = cenario
-        .eventos(conversa)
+    let started = scenario
+        .events(conversa)
         .into_iter()
         .find(|evento| evento.tipo == RecordEventKind::FlowStarted)
         .expect("evento fluxo_iniciado");
-    assert_eq!(iniciado.ator_tipo, poph_types::EventActor::Agent);
+    assert_eq!(started.ator_tipo, poph_types::EventActor::Agent);
 
-    // (c) Fluxo não liberado ao agente nunca inicia, mesmo com a ferramenta na mão. O fluxo
-    //     liberado do catálogo mantém a reserva viva; o alvo é um fluxo publicado sem permissão.
-    let cenario = Cenario::novo("iniciar-nao-liberado");
-    cenario.criar_fluxo("confirmar_dados", "Confirmar dados", SCRIPT_B, true);
-    cenario.criar_fluxo("agendar_visita", "Agendar visita", SCRIPT, false);
-    let conversa = cenario.conversa();
-    let (motor, provedor) = cenario.motor(
+    let scenario = Scenario::new("iniciar-nao-liberado");
+    scenario.criar_fluxo("confirmar_dados", "Confirmar dados", SCRIPT_B, true);
+    scenario.criar_fluxo("agendar_visita", "Agendar visita", SCRIPT, false);
+    let conversa = scenario.conversa();
+    let (engine, provedor) = scenario.engine(
         vec![
-            chamada("fluxo_iniciar", json!({"fluxo_id": "agendar_visita"})),
+            call("fluxo_iniciar", json!({"fluxo_id": "agendar_visita"})),
             texto("Não encontrei esse roteiro."),
         ],
         None,
         Some(FlowsConfig::default()),
     );
-    let gatilho = cenario.falar(conversa, "queria marcar uma visita");
-    cenario.turno(&motor, conversa, gatilho).await;
-    let nomes = oferecidas(&provedor.received()[0]);
+    let gatilho = scenario.falar(conversa, "queria marcar uma visita");
+    scenario.turno(&engine, conversa, gatilho).await;
+    let names = offered(&provedor.received()[0]);
     assert!(
-        nomes.contains(&"fluxo_iniciar".to_owned()),
-        "a reserva acontece pelo fluxo liberado: {nomes:?}"
+        names.contains(&"fluxo_iniciar".to_owned()),
+        "a reserva acontece pelo fluxo liberado: {names:?}"
     );
     let resultado = resultados(&provedor.received()[1])
         .into_iter()
@@ -840,24 +774,23 @@ async fn fluxo_iniciar_so_aparece_na_reserva_e_valida_como_o_g9() {
         resultado.contains("não está entre os liberados"),
         "{resultado}"
     );
-    assert!(cenario.ativa(conversa).is_none(), "nada iniciou");
+    assert!(scenario.active(conversa).is_none(), "nada iniciou");
 
-    // (d) Fluxo liberado, mas inativo: recusado pela mesma validação do G9.
-    let cenario = Cenario::novo("iniciar-inativo");
-    let alvo = cenario.fluxo();
-    cenario.desativar(alvo);
-    cenario.criar_fluxo("confirmar_dados", "Confirmar dados", SCRIPT_B, true);
-    let conversa = cenario.conversa();
-    let (motor, provedor) = cenario.motor(
+    let scenario = Scenario::new("iniciar-inativo");
+    let target = scenario.fluxo();
+    scenario.desativar(target);
+    scenario.criar_fluxo("confirmar_dados", "Confirmar dados", SCRIPT_B, true);
+    let conversa = scenario.conversa();
+    let (engine, provedor) = scenario.engine(
         vec![
-            chamada("fluxo_iniciar", json!({"fluxo_id": "agendar_visita"})),
+            call("fluxo_iniciar", json!({"fluxo_id": "agendar_visita"})),
             texto("Esse roteiro está fora do ar."),
         ],
         None,
         Some(FlowsConfig::default()),
     );
-    let gatilho = cenario.falar(conversa, "queria marcar uma visita");
-    cenario.turno(&motor, conversa, gatilho).await;
+    let gatilho = scenario.falar(conversa, "queria marcar uma visita");
+    scenario.turno(&engine, conversa, gatilho).await;
     let resultado = resultados(&provedor.received()[1])
         .into_iter()
         .next()
@@ -866,20 +799,18 @@ async fn fluxo_iniciar_so_aparece_na_reserva_e_valida_como_o_g9() {
         resultado.contains("está inativo e não inicia execução nova"),
         "{resultado}"
     );
-    assert!(cenario.ativa(conversa).is_none(), "nada iniciou");
+    assert!(scenario.active(conversa).is_none(), "nada iniciou");
 }
 
-/// 6. Repetir a chave de idempotência não duplica evento, efeito nem versão.
 #[tokio::test]
 async fn chave_repetida_nao_duplica_evento_nem_efeito() {
-    let cenario = Cenario::novo("chave");
-    cenario.fluxo();
-    let conversa = cenario.conversa();
-    // Primeira chamada com uma ação válida, segunda com a mesma chave: o banco reconhece a marca.
+    let scenario = Scenario::new("chave");
+    scenario.fluxo();
+    let conversa = scenario.conversa();
     let (_provedor, _) = turno_com_fluxo(
-        &cenario,
+        &scenario,
         vec![
-            chamada(
+            call(
                 "fluxo_executar_acao",
                 json!({"acao": "seguir", "campos": {"nome": "Ana Teste"}, "chave_idempotencia": "acao-do-turno-1"}),
             ),
@@ -888,16 +819,15 @@ async fn chave_repetida_nao_duplica_evento_nem_efeito() {
         conversa,
     )
     .await;
-    let execucao = cenario.execucao(conversa);
-    assert_eq!(execucao.no_atual, "confirmacao");
-    let eventos_antes = cenario.eventos(conversa).len();
-    let efeitos_antes = cenario.pendentes().len();
+    let execution = scenario.execution(conversa);
+    assert_eq!(execution.no_atual, "confirmacao");
+    let eventos_antes = scenario.events(conversa).len();
+    let efeitos_antes = scenario.pending().len();
     assert_eq!(efeitos_antes, 1, "o efeito da ação entrou uma vez");
 
-    // O mesmo pedido outra vez (mesma chave), agora com a execução em `confirmacao`.
-    let (motor, provedor) = cenario.motor(
+    let (engine, provedor) = scenario.engine(
         vec![
-            chamada(
+            call(
                 "fluxo_executar_acao",
                 json!({"acao": "seguir", "campos": {"nome": "Ana Teste"}, "chave_idempotencia": "acao-do-turno-1"}),
             ),
@@ -906,8 +836,8 @@ async fn chave_repetida_nao_duplica_evento_nem_efeito() {
         None,
         Some(FlowsConfig::default()),
     );
-    let gatilho = cenario.falar(conversa, "como ficou?");
-    cenario.turno(&motor, conversa, gatilho).await;
+    let gatilho = scenario.falar(conversa, "como ficou?");
+    scenario.turno(&engine, conversa, gatilho).await;
     let resultado = resultados(&provedor.received()[1])
         .into_iter()
         .next()
@@ -917,29 +847,28 @@ async fn chave_repetida_nao_duplica_evento_nem_efeito() {
         "{resultado}"
     );
 
-    let execucao = cenario.execucao(conversa);
-    assert_eq!(execucao.no_atual, "confirmacao", "não andou de novo");
-    assert_eq!(execucao.version, 2, "a versão ficou como estava");
-    assert_eq!(cenario.pendentes().len(), efeitos_antes, "sem efeito novo");
+    let execution = scenario.execution(conversa);
+    assert_eq!(execution.no_atual, "confirmacao", "não andou de novo");
+    assert_eq!(execution.version, 2, "a versão ficou como estava");
+    assert_eq!(scenario.pending().len(), efeitos_antes, "sem efeito novo");
     assert_eq!(
-        cenario.eventos(conversa).len(),
+        scenario.events(conversa).len(),
         eventos_antes,
         "sem evento novo"
     );
 }
 
-/// 7. O teto de chamadas por mensagem continua valendo com as ferramentas novas.
 #[tokio::test]
 async fn limite_de_chamadas_por_mensagem_continua_valendo() {
-    let cenario = Cenario::novo("limite");
-    cenario.ajustar(AgentChange {
+    let scenario = Scenario::new("limite");
+    scenario.ajustar(AgentChange {
         max_tools_per_message: Some(1),
         ..AgentChange::default()
     });
-    cenario.fluxo();
-    let conversa = cenario.conversa();
+    scenario.fluxo();
+    let conversa = scenario.conversa();
     let (provedor, _) = turno_com_fluxo(
-        &cenario,
+        &scenario,
         vec![
             duas_chamadas(
                 (
@@ -961,26 +890,24 @@ async fn limite_de_chamadas_por_mensagem_continua_valendo() {
             .any(|texto| texto.contains("limite de 1 chamadas")),
         "a segunda chamada é recusada pelo teto: {resultados:?}"
     );
-    let chamadas = cenario.chamadas(conversa);
-    assert_eq!(chamadas.len(), 2);
-    assert_eq!(chamadas[1]["estado"], "recusada");
-    assert_eq!(chamadas[1]["motivo"], "limite_de_chamadas");
+    let calls = scenario.calls(conversa);
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[1]["estado"], "recusada");
+    assert_eq!(calls[1]["motivo"], "limite_de_chamadas");
 
-    // A primeira ação foi aplicada normalmente.
-    let execucao = cenario.execucao(conversa);
-    assert_eq!(execucao.no_atual, "confirmacao");
+    let execution = scenario.execution(conversa);
+    assert_eq!(execution.no_atual, "confirmacao");
 }
 
-/// 8. Abandonar grava o motivo, encerra a execução e não gera efeito.
 #[tokio::test]
 async fn abandonar_grava_motivo_e_nao_gera_efeito() {
-    let cenario = Cenario::novo("abandonar");
-    cenario.fluxo();
-    let conversa = cenario.conversa();
+    let scenario = Scenario::new("abandonar");
+    scenario.fluxo();
+    let conversa = scenario.conversa();
     let (provedor, _) = turno_com_fluxo(
-        &cenario,
+        &scenario,
         vec![
-            chamada(
+            call(
                 "fluxo_abandonar",
                 json!({"motivo": "cliente desistiu da visita"}),
             ),
@@ -996,39 +923,38 @@ async fn abandonar_grava_motivo_e_nao_gera_efeito() {
         .expect("o modelo recebeu a confirmação");
     assert!(resultado.contains("abandonado"), "{resultado}");
 
-    let execucao = cenario.execucao(conversa);
-    assert_eq!(execucao.status, ExecutionStatus::Abandoned);
+    let execution = scenario.execution(conversa);
+    assert_eq!(execution.status, ExecutionStatus::Abandoned);
     assert_eq!(
-        execucao.motivo_fim.as_deref(),
+        execution.motivo_fim.as_deref(),
         Some("cliente desistiu da visita")
     );
     assert!(
-        cenario.ativa(conversa).is_none(),
+        scenario.active(conversa).is_none(),
         "não há mais execução ativa"
     );
-    assert!(cenario.pendentes().is_empty(), "abandono não gera efeito");
-    let evento = cenario
-        .eventos(conversa)
+    assert!(scenario.pending().is_empty(), "abandono não gera efeito");
+    let evento = scenario
+        .events(conversa)
         .into_iter()
         .find(|evento| evento.tipo == RecordEventKind::ExecutionAbandoned)
         .expect("evento de abandono");
     assert_eq!(evento.ator_tipo, poph_types::EventActor::Agent);
 }
 
-/// 9. Ação que chega a um `fim(encerra_atendimento = True)` fecha a Ficha e a conversa.
 #[tokio::test]
 async fn acao_que_encerra_o_atendimento_fecha_a_ficha() {
-    let cenario = Cenario::novo("encerra");
-    cenario.fluxo();
-    let conversa = cenario.conversa();
+    let scenario = Scenario::new("encerra");
+    scenario.fluxo();
+    let conversa = scenario.conversa();
     let (provedor, _) = turno_com_fluxo(
-        &cenario,
+        &scenario,
         vec![
-            chamada(
+            call(
                 "fluxo_executar_acao",
                 json!({"acao": "seguir", "campos": {"nome": "Ana Teste"}}),
             ),
-            chamada("fluxo_executar_acao", json!({"acao": "confirmar"})),
+            call("fluxo_executar_acao", json!({"acao": "confirmar"})),
             texto("Visita confirmada, até lá!"),
         ],
         conversa,
@@ -1041,27 +967,26 @@ async fn acao_que_encerra_o_atendimento_fecha_a_ficha() {
         .expect("o modelo recebeu o desfecho");
     assert!(resultado.contains("fim"), "{resultado}");
 
-    let ficha = cenario.ficha(conversa);
+    let ficha = scenario.ficha(conversa);
     assert_eq!(ficha.status, RecordStatus::Closed);
     assert_eq!(ficha.fechada_por, Some(ClosedBy::Flow));
-    let conversa_gravada = cenario
+    let conversa_gravada = scenario
         .store
         .conversations()
-        .get(cenario.org, conversa)
+        .get(scenario.org, conversa)
         .expect("lê a conversa");
     assert_eq!(conversa_gravada.status, ConversationStatus::Closed);
-    let execucao = cenario.execucao(conversa);
-    assert_eq!(execucao.status, ExecutionStatus::Completed);
-    assert_eq!(execucao.result.as_deref(), Some("Visita agendada"));
+    let execution = scenario.execution(conversa);
+    assert_eq!(execution.status, ExecutionStatus::Completed);
+    assert_eq!(execution.result.as_deref(), Some("Visita agendada"));
 }
 
-/// 10. Motor desligado: as três ferramentas não são registradas nem oferecidas.
 #[tokio::test]
 async fn motor_desligado_nao_registra_nem_oferece_as_ferramentas() {
-    let cenario = Cenario::novo("desligado");
-    cenario.fluxo();
-    let conversa = cenario.conversa();
-    let (motor, provedor) = cenario.motor(
+    let scenario = Scenario::new("desligado");
+    scenario.fluxo();
+    let conversa = scenario.conversa();
+    let (engine, provedor) = scenario.engine(
         vec![texto("Oi! Como posso ajudar?")],
         None,
         Some(FlowsConfig {
@@ -1069,48 +994,45 @@ async fn motor_desligado_nao_registra_nem_oferece_as_ferramentas() {
             ..FlowsConfig::default()
         }),
     );
-    let gatilho = cenario.falar(conversa, "oi");
-    cenario.turno(&motor, conversa, gatilho).await;
-    let nomes = oferecidas(&provedor.received()[0]);
-    for ferramenta in TODAS {
+    let gatilho = scenario.falar(conversa, "oi");
+    scenario.turno(&engine, conversa, gatilho).await;
+    let names = offered(&provedor.received()[0]);
+    for tool in TODAS {
         assert!(
-            !nomes.contains(&ferramenta.to_owned()),
-            "`{ferramenta}` não é oferecida com o motor desligado: {nomes:?}"
+            !names.contains(&tool.to_owned()),
+            "`{tool}` não é oferecida com o motor desligado: {names:?}"
         );
     }
-    // Nem o registro as conhece: com o motor desligado, a chave `[fluxos] ativo` tira as
-    // ferramentas do processo, não só do pedido ao modelo.
     let registro = poph_agent::turno::registrar_ferramentas_do_fluxo(
-        poph_agent::turno::RegistroPadrao::novo(),
-        Arc::clone(&cenario.store),
+        poph_agent::turno::DefaultRegistry::new(),
+        Arc::clone(&scenario.store),
         &FlowsConfig {
             enabled: false,
             ..FlowsConfig::default()
         },
     );
     assert!(
-        registro.nomes().is_empty(),
+        registro.names().is_empty(),
         "motor desligado não registra ferramenta de fluxo: {:?}",
-        registro.nomes()
+        registro.names()
     );
     let ligado = poph_agent::turno::registrar_ferramentas_do_fluxo(
-        poph_agent::turno::RegistroPadrao::novo(),
-        Arc::clone(&cenario.store),
+        poph_agent::turno::DefaultRegistry::new(),
+        Arc::clone(&scenario.store),
         &FlowsConfig::default(),
     );
-    assert_eq!(ligado.nomes().len(), 3, "{:?}", ligado.nomes());
+    assert_eq!(ligado.names().len(), 3, "{:?}", ligado.names());
 
-    // A Ficha continua existindo (o módulo de Fichas não depende do motor de fluxo).
-    assert_eq!(cenario.ficha(conversa).status, RecordStatus::Open);
+    assert_eq!(scenario.ficha(conversa).status, RecordStatus::Open);
 }
 
 #[tokio::test]
 async fn encerrar_pelo_agente_fecha_e_repeticao_e_idempotente() {
-    let c = Cenario::novo("fx25-fechar");
+    let c = Scenario::new("fx25-fechar");
     c.habilitar(&["atendimento_encerrar"]);
     c.fluxo();
     let conversa = c.conversa();
-    let (provedor, resumo) = turno_com_fluxo(
+    let (provedor, summary) = turno_com_fluxo(
         &c,
         vec![
             duas_chamadas(
@@ -1122,8 +1044,8 @@ async fn encerrar_pelo_agente_fecha_e_repeticao_e_idempotente() {
         conversa,
     )
     .await;
-    assert_eq!(resumo.estado, TurnState::Completed);
-    assert!(oferecidas(&provedor.received()[0]).contains(&"atendimento_encerrar".to_owned()));
+    assert_eq!(summary.estado, TurnState::Completed);
+    assert!(offered(&provedor.received()[0]).contains(&"atendimento_encerrar".to_owned()));
     let respostas = resultados(&provedor.received()[1]);
     assert!(
         respostas.iter().any(|s| s.contains("já encerrado")),
@@ -1137,22 +1059,22 @@ async fn encerrar_pelo_agente_fecha_e_repeticao_e_idempotente() {
     assert_eq!(ficha.status, RecordStatus::Closed);
     assert_eq!(ficha.fechada_por, Some(ClosedBy::Agent));
     assert_eq!(ficha.fechada_motivo.as_deref(), Some("resolvido"));
-    assert_eq!(c.execucao(conversa).status, ExecutionStatus::Abandoned);
+    assert_eq!(c.execution(conversa).status, ExecutionStatus::Abandoned);
     assert_eq!(
-        c.eventos(conversa)
+        c.events(conversa)
             .iter()
             .filter(|e| e.tipo == RecordEventKind::RecordClosed)
             .count(),
         1
     );
     assert_eq!(
-        c.mensagens(conversa)
+        c.messages(conversa)
             .iter()
             .filter(|m| m.direction == Direction::Outbound)
             .count(),
         1
     );
-    let conn = rusqlite::Connection::open(c.pasta.join("harness.db")).unwrap();
+    let conn = rusqlite::Connection::open(c.folder.join("harness.db")).unwrap();
     let n: i64 = conn
         .query_row(
             "SELECT count(*) FROM audit_log WHERE action='close' AND entity_id=?1",
@@ -1165,19 +1087,19 @@ async fn encerrar_pelo_agente_fecha_e_repeticao_e_idempotente() {
 
 #[tokio::test]
 async fn encerramento_desabilitado_e_recusado() {
-    let c = Cenario::novo("fx25-desligada");
+    let c = Scenario::new("fx25-desligada");
     c.habilitar(&[]);
     let conversa = c.conversa();
     let (provedor, _) = turno_com_fluxo(
         &c,
         vec![
-            chamada("atendimento_encerrar", json!({"motivo":"resolvido"})),
+            call("atendimento_encerrar", json!({"motivo":"resolvido"})),
             texto("Até logo!"),
         ],
         conversa,
     )
     .await;
-    assert!(!oferecidas(&provedor.received()[0]).contains(&"atendimento_encerrar".to_owned()));
-    assert_eq!(c.chamadas(conversa)[0]["motivo"], "nao_habilitada");
+    assert!(!offered(&provedor.received()[0]).contains(&"atendimento_encerrar".to_owned()));
+    assert_eq!(c.calls(conversa)[0]["motivo"], "nao_habilitada");
     assert_eq!(c.ficha(conversa).status, RecordStatus::Open);
 }

@@ -4,6 +4,7 @@
 //! turno também a usa** para abrir a execução: um formato só, sem duplicata entre os dois crates.
 //! Este módulo existe para os chamadores da API continuarem importando daqui.
 
-pub use poph_agent::fluxos_transicao::{
-    efeito_da_transicao, estado_para_banco, transicao_do_motor,
+pub use poph_agent::flows_transition::{
+    effect_of_transition as efeito_da_transicao, state_for_database as estado_para_banco,
+    transition_engine as transicao_do_motor,
 };

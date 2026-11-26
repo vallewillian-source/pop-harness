@@ -8,7 +8,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
-use poph_agent::compor_instrucoes;
+use poph_agent::compose_instructions;
 use poph_store::{NewDepartment, NewOrg, Store};
 use poph_types::StructuredInstructions;
 use serde_json::Value;
@@ -206,7 +206,7 @@ fn cli_cria_agente_com_instrucoes_e_lista_mostrando_o_texto_composto() {
         .as_str()
         .expect("markdown no JSON")
         .to_owned();
-    let esperado = compor_instrucoes(
+    let esperado = compose_instructions(
         &StructuredInstructions::from_tolerant_json(INSTRUCOES).expect("JSON de instruções"),
     );
     assert_eq!(

@@ -5,10 +5,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use poph_agent::atores::{Atores, Futuro, OpcoesAtores, Processador, Tarefa};
-use poph_agent::entrada_saida::{Fluxo, OpcoesFluxo};
-use poph_agent::fila_integracao::{ConversaDoCanal, EnvioPeloCanal, InboxDoCanal};
-use poph_agent::metricas::MetricasMemoria;
+use poph_agent::actors::{ActorOptions, Actors, BoxFuture, Processor, Task};
+use poph_agent::entry_output::{FlowOptions, Fluxo};
+use poph_agent::metrics::MetricsMemory;
+use poph_agent::queue_integration::{ConversationChannel, InboxChannel, SendByChannel};
 use poph_plugins::{Backoff, PluginOptions, Supervisor, SupervisorLimits};
 use poph_store::{
     Conversa, NewAgent, NewConversation, NewOrg, NewOutboxItem, OutboxItem, OutboxState, Page,
@@ -33,8 +33,8 @@ pub fn fast_limits() -> SupervisorLimits {
 
 pub struct NoTurn;
 
-impl Processador for NoTurn {
-    fn processar(&self, _task: Tarefa) -> Futuro {
+impl Processor for NoTurn {
+    fn process(&self, _task: Task) -> BoxFuture {
         Box::pin(async { Ok(()) })
     }
 }
@@ -58,7 +58,7 @@ pub struct Scenario {
     pub agent: poph_types::AgentId,
     pub conversation: Conversa,
     pub flow: Fluxo,
-    pub inbox: Arc<InboxDoCanal>,
+    pub inbox: Arc<InboxChannel>,
     pub supervisor: Supervisor,
     pub channel: Arc<dyn Integration>,
     pub integration: IntegrationId,
@@ -106,19 +106,19 @@ impl Scenario {
             )
             .expect("abre a conversa");
 
-        let actors = Atores::novo(
+        let actors = Actors::new(
             Arc::new(NoTurn),
-            OpcoesAtores::default(),
-            MetricasMemoria::proprio(),
+            ActorOptions::default(),
+            MetricsMemory::own(),
         );
-        let flow = Fluxo::nova(Arc::clone(&store), actors, OpcoesFluxo::default());
-        let resolver = Arc::new(ConversaDoCanal::novo(
+        let flow = Fluxo::new(Arc::clone(&store), actors, FlowOptions::default());
+        let resolver = Arc::new(ConversationChannel::new(
             Arc::clone(&store),
             agent,
             "eco",
             None,
         ));
-        let inbox = InboxDoCanal::iniciar(flow.clone(), org, resolver);
+        let inbox = InboxChannel::start(flow.clone(), org, resolver);
 
         let integration = IntegrationId::generate();
         let options = PluginOptions::new(program, integration, org)
@@ -142,8 +142,8 @@ impl Scenario {
         }
     }
 
-    pub fn transport(&self) -> EnvioPeloCanal {
-        EnvioPeloCanal::novo(Arc::clone(&self.store), Arc::clone(&self.channel))
+    pub fn transport(&self) -> SendByChannel {
+        SendByChannel::new(Arc::clone(&self.store), Arc::clone(&self.channel))
     }
 
     pub fn enqueue_text(&self, turn: poph_types::TurnId, text: &str) -> OutboxItem {

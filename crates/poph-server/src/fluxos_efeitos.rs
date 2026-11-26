@@ -299,7 +299,7 @@ impl EfeitosFluxo {
                         );
                     }
                     Err(EntregaFalhou::Transitoria(motivo)) => {
-                        let espera = self.opcoes.backoff.espera(tentativa);
+                        let espera = self.opcoes.backoff.wait(tentativa);
                         self.store.effects().fail_send(
                             org,
                             id,
@@ -622,9 +622,9 @@ fn espera_ms(espera: Duration) -> i64 {
 
 /// Traduz o efeito do motor no que a fila grava (FX-20) — o **único** lugar do formato.
 ///
-/// A função mora em `poph-agent` ([`poph_agent::fluxos_transicao::efeito_da_transicao`]) desde a
+/// A função mora em `poph-agent` ([`poph_agent::flows_transition::effect_of_transition`]) desde a
 /// FX-23, porque o turno também abre execução; aqui ela é reexportada para os chamadores da API.
-pub use poph_agent::fluxos_transicao::efeito_da_transicao;
+pub use poph_agent::flows_transition::effect_of_transition as efeito_da_transicao;
 
 /// Sobe o laço da fila de efeitos. Sem o motor de fluxos ligado, não sobe nada.
 pub fn iniciar(estado: &Estado) -> Option<tokio::task::JoinHandle<()>> {

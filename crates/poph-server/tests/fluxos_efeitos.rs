@@ -344,8 +344,8 @@ impl Cenario {
                 // Espera curta para o teste não depender de relógio de parede.
                 backoff: Backoff {
                     base: Duration::from_millis(1),
-                    fator: 2,
-                    teto: Duration::from_millis(5),
+                    factor: 2,
+                    cap: Duration::from_millis(5),
                 },
                 espera_sem_integracao: Duration::from_millis(10),
                 ..OpcoesEfeitosFluxo::default()
@@ -361,8 +361,8 @@ impl Cenario {
             OpcoesSaidaWhatsApp {
                 backoff: Backoff {
                     base: Duration::from_millis(1),
-                    fator: 2,
-                    teto: Duration::from_millis(5),
+                    factor: 2,
+                    cap: Duration::from_millis(5),
                 },
                 ..OpcoesSaidaWhatsApp::default()
             },
@@ -1131,8 +1131,8 @@ async fn tentativas_esgotadas_viram_falhou_com_o_motivo_certo() {
             max_tentativas: 2,
             backoff: Backoff {
                 base: Duration::from_millis(1),
-                fator: 2,
-                teto: Duration::from_millis(5),
+                factor: 2,
+                cap: Duration::from_millis(5),
             },
             espera_sem_integracao: Duration::from_millis(10),
             ..OpcoesEfeitosFluxo::default()

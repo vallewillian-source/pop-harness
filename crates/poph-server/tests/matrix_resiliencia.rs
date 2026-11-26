@@ -32,11 +32,11 @@ use axum::http::header::AUTHORIZATION;
 use axum::http::{HeaderMap, Method, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
-use poph_agent::atores::{Atores, OpcoesAtores};
-use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
-use poph_agent::entrada_saida::{Fluxo, OpcoesFluxo};
-use poph_agent::limites::{Limitador, OpcoesLimites};
-use poph_agent::metricas::{MetricasFluxo, MetricasMemoria, MetricasTurno};
+use poph_agent::actors::{ActorOptions, Actors};
+use poph_agent::config_hot::{ConfigHot, HotConfigOptions};
+use poph_agent::entry_output::{FlowOptions, Fluxo};
+use poph_agent::limites::{LimitOptions, Limiter};
+use poph_agent::metrics::{MetricsFlow, MetricsMemory, MetricsTurn};
 use poph_agent::turno::{TurnEngine, TurnOptions, TurnProcessor};
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, LlmProvider, Script, Usage};
 use poph_evolution::webhook::SECRET_HEADER;
@@ -1121,15 +1121,12 @@ async fn subir_servidor(
     let fake = Arc::new(FakeProvider::with_scripts(roteiros));
     let provedor: Arc<dyn LlmProvider> = fake.clone();
     let registro = &estado.registro;
-    let config_quente = ConfigQuente::nova(
+    let config_quente = ConfigHot::new(
         Arc::clone(&store),
-        OpcoesConfigQuente::default(),
-        MetricasMemoria::proprio(),
+        HotConfigOptions::default(),
+        MetricsMemory::own(),
     );
-    let limitador = Arc::new(Limitador::novo(
-        OpcoesLimites::default(),
-        MetricasMemoria::proprio(),
-    ));
+    let limitador = Arc::new(Limiter::new(LimitOptions::default(), MetricsMemory::own()));
     let motor = TurnEngine::new(
         Arc::clone(&store),
         config_quente,
@@ -1141,19 +1138,19 @@ async fn subir_servidor(
             default_window: Duration::from_millis(1),
             ..TurnOptions::default()
         },
-        MetricasTurno::registrar(registro).expect("métricas do turno"),
+        MetricsTurn::register(registro).expect("métricas do turno"),
     );
     let processador = Arc::new(TurnProcessor::new(Arc::new(motor)));
-    let atores = Atores::novo(
+    let atores = Actors::new(
         processador.clone(),
-        OpcoesAtores::default(),
-        MetricasMemoria::proprio(),
+        ActorOptions::default(),
+        MetricsMemory::own(),
     );
-    let fluxo = Fluxo::com_metricas(
+    let fluxo = Fluxo::with_metrics(
         Arc::clone(&store),
         atores,
-        OpcoesFluxo::default(),
-        MetricasFluxo::registrar(registro).expect("métricas da fila"),
+        FlowOptions::default(),
+        MetricsFlow::register(registro).expect("métricas da fila"),
     );
     processador.attach_io(fluxo.clone());
     let mut estado = estado.com_turno(fluxo, Duration::from_millis(20));
