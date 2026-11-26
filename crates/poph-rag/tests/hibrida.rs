@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use poph_rag::{
-    ConfigModelo, Embedder, EmbedderOrt, FakeEmbedder, Index, IndexConfig, ItemRag, SearchConfig,
+    Embedder, FakeEmbedder, Index, IndexConfig, ItemRag, ModelConfig, OrtEmbedder, SearchConfig,
 };
 use poph_types::{AgentId, KnowledgeItemId, OrgId};
 use serde_json::Value;
@@ -117,10 +117,10 @@ async fn hibrida_acerta_top3_pelo_menos_tanto_quanto_so_vetor() {
 
     let pasta = Pasta::nova("top3");
     let embedder: Arc<dyn Embedder> = Arc::new(
-        EmbedderOrt::abrir(
-            &ConfigModelo {
+        OrtEmbedder::open_model(
+            &ModelConfig {
                 diretorio: pasta_modelos,
-                ..ConfigModelo::default()
+                ..ModelConfig::default()
             },
             None,
         )

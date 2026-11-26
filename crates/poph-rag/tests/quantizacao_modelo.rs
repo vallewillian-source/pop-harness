@@ -8,7 +8,7 @@
 mod apoio;
 
 use poph_rag::vector::{cosine, dot_product, norm, quantize};
-use poph_rag::{ConfigModelo, Embedder, EmbedderOrt};
+use poph_rag::{Embedder, ModelConfig, OrtEmbedder};
 use serde_json::Value;
 
 use apoio::{cosseno as cosseno_f32, modelo_disponivel};
@@ -87,8 +87,8 @@ async fn quantizacao_int8_mantem_a_busca_do_corpus_do_spike() {
         })
         .collect();
 
-    let modelo = EmbedderOrt::abrir(
-        &ConfigModelo {
+    let modelo = OrtEmbedder::open_model(
+        &ModelConfig {
             diretorio: pasta,
             threads: 4,
         },

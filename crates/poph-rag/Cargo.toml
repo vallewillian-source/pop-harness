@@ -9,19 +9,13 @@ publish.workspace = true
 
 [dependencies]
 poph-types = { path = "../poph-types" }
-# ONNX Runtime fixado na versão do spike HR-02 (RELATORIO_HR02.md §1 e §9).
-# Sem os padrões: o padrão `tls-native` puxa OpenSSL (banido no deny.toml, PRD §5.3). O download
-# do ONNX Runtime no build usa `tls-rustls`; isso só vale para o build, o binário não o carrega.
 ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "api-31", "tracing", "download-binaries", "tls-rustls"] }
-# Tokenizador sem a feature `onig` (oniguruma em C quebra o build ARM; spike §7).
 tokenizers = { version = "0.23", default-features = false, features = ["fancy-regex"] }
 sha2 = "0.11"
-# rag.db (índice de trechos, HR-16). Mesma versão do poph-store (SQLite embutido, em C).
 rusqlite.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 tokio = { version = "1.54", features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }
-# Download do modelo (`poph model install`). TLS com rustls, como pede o PRD §5.3.
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "blocking"] }
 
 [dev-dependencies]

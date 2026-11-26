@@ -42,6 +42,37 @@ require a migration.
   matches and checks each new download before renaming the temporary file to its final path. A
   failed download or checksum mismatch removes the temporary file.
 
+### ONNX Runtime session and vectors
+
+- The ONNX Runtime environment is created once per process and kept for the whole process lifetime:
+  `ort` accepts a single environment per process, even after the first one is dropped.
+- Opening the embedder verifies the SHA-256 of the model and of the tokenizer; a missing or different
+  file blocks startup with a typed error. Opening is blocking (it reads about 128 MB for the hash):
+  call it before serving, never inside a turn.
+- The model session is created on first use, or earlier with `warm_up`, and a single session is shared
+  by every organization; the embedder is meant to live in an `Arc`.
+- The tokenizer truncates at 128 tokens and pads per batch. Each text is embedded on its own, one at a
+  time, even when the caller sends a batch: with dynamic int8 quantization the scale comes from the
+  whole batch, so a chunk's vector would change with its neighbours (cosine 0.991 measured with a
+  batch of 9), and running one at a time cost the same in the spike.
+- The vector is the mean of the token vectors over the attention mask positions, then L2-normalized
+  with f64 accumulation, as in the spike, so vectors match it. An already pooled
+  `sentence_embedding` output is preferred; otherwise the tokens of `last_hidden_state` are averaged.
+  An output shape other than `[1, dimension]` or `[1, tokens, dimension]` is an error.
+- The model load log carries only load time and resident memory, never the model path.
+- The default is 4 intra-op threads, the point the spike measured (RELATORIO_HR02 §3.1).
+
+### Dependencies and why
+
+- `ort` is pinned to the spike HR-02 version (RELATORIO_HR02.md §1 and §9).
+- `ort` keeps default features off: the default `tls-native` pulls OpenSSL, banned in `deny.toml`
+  (PRD §5.3). The ONNX Runtime download at build time uses `tls-rustls`; that applies to the build
+  only, and the binary does not carry it.
+- `tokenizers` goes without the `onig` feature: oniguruma is C and breaks the ARM build (spike §7).
+- `rusqlite` uses the workspace version, the same as `poph-store`: `rag.db` is the chunk index
+  (HR-16), an embedded SQLite in C.
+- `reqwest` uses rustls for the model download (`poph model install`), as PRD §5.3 requires.
+
 ## 1. Hybrid search design
 
 ```

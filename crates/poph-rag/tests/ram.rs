@@ -8,7 +8,7 @@ mod apoio;
 
 use std::time::Instant;
 
-use poph_rag::{ConfigModelo, Embedder, EmbedderOrt};
+use poph_rag::{Embedder, ModelConfig, OrtEmbedder};
 
 use apoio::{Captura, RSS_SPIKE_BYTES, modelo_disponivel, referencia};
 
@@ -29,8 +29,8 @@ async fn ram_latencia_e_log_sem_caminho_do_modelo() {
 
     let caminho_texto = pasta.display().to_string();
     let inicio_abrir = Instant::now();
-    let modelo = EmbedderOrt::abrir(
-        &ConfigModelo {
+    let modelo = OrtEmbedder::open_model(
+        &ModelConfig {
             diretorio: pasta,
             threads: 4,
         },
@@ -38,7 +38,7 @@ async fn ram_latencia_e_log_sem_caminho_do_modelo() {
     )
     .expect("abre o modelo");
     let abrir_ms = inicio_abrir.elapsed().as_secs_f64() * 1000.0;
-    let carga = modelo.aquecer().await.expect("carrega a sessão");
+    let carga = modelo.warm_up().await.expect("carrega a sessão");
     let (textos, _) = referencia();
 
     let mut um_texto = Vec::new();
@@ -90,7 +90,7 @@ async fn ram_latencia_e_log_sem_caminho_do_modelo() {
     println!("abertura (confere sha256 dos dois arquivos): {abrir_ms:.0} ms");
     println!(
         "carga: {:.2} s | RSS antes {:?} | depois {:?} | delta {:?} bytes",
-        carga.segundos, carga.rss_antes_bytes, carga.rss_depois_bytes, delta
+        carga.seconds, carga.rss_before_bytes, carga.rss_after_bytes, delta
     );
     println!(
         "latência (CPU, 4 threads, janela 128): 1 texto p50 {p50_um:.1} ms | lote de {} p50 {p50_lote:.1} ms ({:.1} ms por trecho)",
@@ -102,7 +102,7 @@ async fn ram_latencia_e_log_sem_caminho_do_modelo() {
         p50_longo_lote / 32.0,
         1000.0 / (p50_longo_lote / 32.0)
     );
-    if let Some(rss) = carga.rss_depois_bytes {
+    if let Some(rss) = carga.rss_after_bytes {
         println!(
             "RSS depois da carga: {:.0} MB (spike HR-02: 438 MB)",
             rss as f64 / 1_000_000.0

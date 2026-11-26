@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 
-use crate::erro::RagError;
+use crate::error::RagError;
 
 pub const MODEL_FILE: &str = "model_int8.onnx";
 pub const TOKENIZER_FILE: &str = "tokenizer.json";

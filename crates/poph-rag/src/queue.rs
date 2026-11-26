@@ -7,7 +7,7 @@ use poph_types::OrgId;
 use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore, mpsc};
 
 use crate::embedder::{Embedder, ModelIdentity};
-use crate::erro::RagError;
+use crate::error::RagError;
 use crate::metrics::RagMetrics;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -1,7 +1,7 @@
 use std::future::Future;
 use std::pin::Pin;
 
-use crate::erro::RagError;
+use crate::error::RagError;
 
 pub const MODEL_NAME: &str = "paraphrase-multilingual-MiniLM-L12-v2";
 pub const QUANTIZATION: &str = "int8";

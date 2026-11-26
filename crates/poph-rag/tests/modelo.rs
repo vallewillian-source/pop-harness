@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use poph_rag::installation::{file_sha256, verify_file};
-use poph_rag::{ConfigModelo, EmbedderOrt, RagError};
+use poph_rag::{ModelConfig, OrtEmbedder, RagError};
 
 /// Pasta temporária única para o teste; apagada ao sair.
 struct Pasta(PathBuf);
@@ -40,8 +40,8 @@ fn checksum_errado_impede_a_subida_com_erro_claro() {
     fs::write(pasta.caminho().join("model_int8.onnx"), b"nao sou o modelo").expect("escreve");
     fs::write(pasta.caminho().join("tokenizer.json"), b"nem o tokenizador").expect("escreve");
 
-    let erro = EmbedderOrt::abrir(
-        &ConfigModelo {
+    let erro = OrtEmbedder::open_model(
+        &ModelConfig {
             diretorio: pasta.caminho().to_path_buf(),
             threads: 4,
         },
@@ -80,8 +80,8 @@ fn checksum_errado_impede_a_subida_com_erro_claro() {
 fn modelo_ausente_manda_rodar_o_install() {
     let pasta = Pasta::nova("ausente");
 
-    let erro = EmbedderOrt::abrir(
-        &ConfigModelo {
+    let erro = OrtEmbedder::open_model(
+        &ModelConfig {
             diretorio: pasta.caminho().to_path_buf(),
             threads: 4,
         },

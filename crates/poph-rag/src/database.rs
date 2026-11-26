@@ -5,7 +5,7 @@ use std::time::Duration;
 use rusqlite::{Connection, Transaction, params};
 
 use crate::embedder::ModelIdentity;
-use crate::erro::RagError;
+use crate::error::RagError;
 
 pub const SCHEMA_VERSION: &str = "1";
 

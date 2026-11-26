@@ -1,7 +1,7 @@
 use poph_types::{Counter, Gauge, Histogram, Registry};
 
-use crate::erro::RagError;
-use crate::onnx::CargaModelo;
+use crate::error::RagError;
+use crate::onnx::ModelLoad;
 
 #[derive(Debug, Clone)]
 pub struct RagMetrics {
@@ -72,8 +72,8 @@ impl RagMetrics {
         })
     }
 
-    pub(crate) fn record_load(&self, load: &CargaModelo) {
-        self.load_seconds.observe(load.segundos);
+    pub(crate) fn record_load(&self, load: &ModelLoad) {
+        self.load_seconds.observe(load.seconds);
         let delta = load.delta_rss_bytes().unwrap_or(0);
         self.model_memory_bytes
             .set(i64::try_from(delta).unwrap_or(i64::MAX));

@@ -240,19 +240,19 @@ pub async fn excluir(
 
 // Como na CLI, a escrita permanece válida se o modelo ou o índice estiverem indisponíveis.
 async fn sincronizar_catalogo(e: &Estado, org: OrgId) -> Option<&'static str> {
-    use poph_rag::{ConfigModelo, Embedder, EmbedderOrt, Index, IndexConfig};
+    use poph_rag::{Embedder, Index, IndexConfig, ModelConfig, OrtEmbedder};
     use std::sync::Arc;
     static SINCRONIZACAO: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
     let _guarda = SINCRONIZACAO.lock().await;
-    let config = ConfigModelo {
+    let config = ModelConfig {
         diretorio: e.config.models(),
-        ..ConfigModelo::default()
+        ..ModelConfig::default()
     };
-    let modelo = match tokio::task::spawn_blocking(move || EmbedderOrt::abrir(&config, None)).await
-    {
-        Ok(Ok(modelo)) => modelo,
-        _ => return Some("índice de produtos não atualizado; execute product reindex"),
-    };
+    let modelo =
+        match tokio::task::spawn_blocking(move || OrtEmbedder::open_model(&config, None)).await {
+            Ok(Ok(modelo)) => modelo,
+            _ => return Some("índice de produtos não atualizado; execute product reindex"),
+        };
     let embedder: Arc<dyn Embedder> = Arc::new(modelo);
     let (indice, _) = match Index::open(e.store.rag_path(), embedder, IndexConfig::default()) {
         Ok(indice) => indice,

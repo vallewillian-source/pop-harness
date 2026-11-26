@@ -6,17 +6,17 @@
 use std::sync::Arc;
 
 use poph_agent::{BaseConhecimento, CatalogoProdutos};
-use poph_rag::{ConfigModelo, Embedder, EmbedderOrt, Index, IndexConfig, QueueConfig};
+use poph_rag::{Embedder, Index, IndexConfig, ModelConfig, OrtEmbedder, QueueConfig};
 use poph_store::Store;
 use poph_types::HarnessConfig;
 
 /// Abre o índice de trechos sobre o `rag.db` do store.
 pub fn abrir_indice(config: &HarnessConfig, store: &Arc<Store>) -> Result<Index, String> {
-    let modelo = ConfigModelo {
+    let modelo = ModelConfig {
         diretorio: config.models(),
-        ..ConfigModelo::default()
+        ..ModelConfig::default()
     };
-    let embedder = EmbedderOrt::abrir(&modelo, None).map_err(|erro| {
+    let embedder = OrtEmbedder::open_model(&modelo, None).map_err(|erro| {
         format!(
             "modelo de embedding indisponível em {} ({erro}); rode `poph model install`",
             modelo.diretorio.display()
@@ -93,11 +93,11 @@ pub fn abrir_base_com_fila(
     store: Arc<Store>,
     org: poph_types::OrgId,
 ) -> Result<Arc<BaseConhecimento>, String> {
-    let modelo = ConfigModelo {
+    let modelo = ModelConfig {
         diretorio: config.models(),
-        ..ConfigModelo::default()
+        ..ModelConfig::default()
     };
-    let base = EmbedderOrt::abrir(&modelo, None).map_err(|erro| {
+    let base = OrtEmbedder::open_model(&modelo, None).map_err(|erro| {
         format!(
             "modelo de embedding indisponível em {} ({erro}); rode `poph model install`",
             modelo.diretorio.display()

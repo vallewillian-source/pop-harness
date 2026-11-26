@@ -566,7 +566,7 @@ fn tabelas_do_relatorio(relatorio: &ImportReport) -> Map<String, Value> {
 /// entraram. Sem o modelo, o material importado continua gravado, o índice **não** é dado como
 /// pronto e o relatório traz o aviso com o comando para reindexar depois.
 async fn reindexar(e: &Estado, org: OrgId) -> (Value, Option<String>) {
-    use poph_rag::{ConfigModelo, Embedder, EmbedderOrt, Index, IndexConfig};
+    use poph_rag::{Embedder, Index, IndexConfig, ModelConfig, OrtEmbedder};
 
     static SINCRONIZACAO: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
     let _guarda = SINCRONIZACAO.lock().await;
@@ -577,11 +577,12 @@ async fn reindexar(e: &Estado, org: OrgId) -> (Value, Option<String>) {
             "produtos": {"trechos": 0},
         })
     };
-    let config = ConfigModelo {
+    let config = ModelConfig {
         diretorio: e.config.models(),
-        ..ConfigModelo::default()
+        ..ModelConfig::default()
     };
-    let modelo = match tokio::task::spawn_blocking(move || EmbedderOrt::abrir(&config, None)).await
+    let modelo = match tokio::task::spawn_blocking(move || OrtEmbedder::open_model(&config, None))
+        .await
     {
         Ok(Ok(modelo)) => modelo,
         Ok(Err(erro)) => {

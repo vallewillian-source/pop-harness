@@ -490,7 +490,7 @@ async fn sincronizar(
     agente: poph_types::AgentId,
 ) -> Result<poph_rag::IndexReport, ApiError> {
     use poph_rag::{
-        ConfigModelo, Embedder, EmbedderOrt, EmbeddingQueue, Index, IndexConfig, QueueConfig,
+        Embedder, EmbeddingQueue, Index, IndexConfig, ModelConfig, OrtEmbedder, QueueConfig,
         QueuedEmbedder,
     };
     use std::sync::Arc;
@@ -498,11 +498,11 @@ async fn sincronizar(
     // sincronizações concorrentes fora de ordem e várias cargas simultâneas do modelo.
     static SINCRONIZACAO: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
     let _guarda = SINCRONIZACAO.lock().await;
-    let config = ConfigModelo {
+    let config = ModelConfig {
         diretorio: e.config.models(),
-        ..ConfigModelo::default()
+        ..ModelConfig::default()
     };
-    let modelo = tokio::task::spawn_blocking(move || EmbedderOrt::abrir(&config, None))
+    let modelo = tokio::task::spawn_blocking(move || OrtEmbedder::open_model(&config, None))
         .await
         .map_err(|_| ApiError::interno())?
         .map_err(|_| {

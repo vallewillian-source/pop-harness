@@ -9,7 +9,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use crate::chunks::{embedding_text, source_hash, split};
 use crate::database::{self, database_error};
 use crate::embedder::{DIMENSION, Embedder, ModelIdentity};
-use crate::erro::RagError;
+use crate::error::RagError;
 use crate::vector::{cosine, dot_product, norm, quantize};
 
 const INDEXING_BATCH: usize = 64;

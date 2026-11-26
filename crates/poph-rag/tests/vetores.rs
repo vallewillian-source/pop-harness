@@ -6,7 +6,7 @@
 
 mod apoio;
 
-use poph_rag::{ConfigModelo, Embedder, EmbedderOrt};
+use poph_rag::{Embedder, ModelConfig, OrtEmbedder};
 
 use apoio::{COSSENO_MINIMO, cosseno, modelo_disponivel, referencia};
 
@@ -15,8 +15,8 @@ async fn vetores_batem_com_a_referencia_do_spike() {
     let Some(pasta) = modelo_disponivel("vetores_batem_com_a_referencia_do_spike") else {
         return;
     };
-    let modelo = EmbedderOrt::abrir(
-        &ConfigModelo {
+    let modelo = OrtEmbedder::open_model(
+        &ModelConfig {
             diretorio: pasta,
             threads: 4,
         },
@@ -45,8 +45,8 @@ async fn lote_e_texto_unico_dao_o_mesmo_vetor() {
     let Some(pasta) = modelo_disponivel("lote_e_texto_unico_dao_o_mesmo_vetor") else {
         return;
     };
-    let modelo = EmbedderOrt::abrir(
-        &ConfigModelo {
+    let modelo = OrtEmbedder::open_model(
+        &ModelConfig {
             diretorio: pasta,
             threads: 4,
         },
@@ -76,8 +76,8 @@ async fn mesmo_texto_mesmo_vetor_nas_duas_vezes() {
     let Some(pasta) = modelo_disponivel("mesmo_texto_mesmo_vetor_nas_duas_vezes") else {
         return;
     };
-    let modelo = EmbedderOrt::abrir(
-        &ConfigModelo {
+    let modelo = OrtEmbedder::open_model(
+        &ModelConfig {
             diretorio: pasta,
             threads: 4,
         },

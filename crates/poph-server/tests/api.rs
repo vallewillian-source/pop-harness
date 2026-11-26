@@ -2559,11 +2559,11 @@ async fn reindex_com_modelo_real_torna_item_pesquisavel_e_preserva_inalterado() 
     assert_eq!(status, StatusCode::OK, "{corpo}");
     assert_eq!(corpo["indexed"]["itens_inalterados"], 1);
     assert_eq!(corpo["indexed"]["embeddings_gerados"], 0);
-    let cfg = poph_rag::ConfigModelo {
+    let cfg = poph_rag::ModelConfig {
         diretorio: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/modelos"),
         ..Default::default()
     };
-    let modelo = poph_rag::EmbedderOrt::abrir(&cfg, None).unwrap();
+    let modelo = poph_rag::OrtEmbedder::open_model(&cfg, None).unwrap();
     let (indice, _) = poph_rag::Index::open(
         c.store().rag_path(),
         std::sync::Arc::new(modelo),
