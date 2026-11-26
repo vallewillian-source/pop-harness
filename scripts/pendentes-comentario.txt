@@ -7,10 +7,6 @@ M02	7	crates/poph-core/tests/llm_real.rs
 M02	7	crates/poph-core/tests/llm_servidor_falso.rs
 M02	14	crates/poph-core/tests/llm_tls.rs
 M02	3	crates/poph-plugins/Cargo.toml
-M02	11	crates/poph-plugins/src/coletor.rs
-M02	17	crates/poph-plugins/src/leitor.rs
-M02	18	crates/poph-plugins/src/lib.rs
-M02	118	crates/poph-plugins/src/supervisor.rs
 M02	27	crates/poph-plugins/tests/fixtures/plugin_fixtura.rs
 M02	27	crates/poph-plugins/tests/protocolo.rs
 M03	7	crates/poph-evolution/Cargo.toml
