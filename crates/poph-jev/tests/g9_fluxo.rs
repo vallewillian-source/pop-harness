@@ -16,23 +16,23 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use poph_jev::{
-    AjusteGates, AvaliadorGates, EstadoJev, FluxoJev, G1_CONTINUAR, G3_BASE, G9, G9_NENHUM, Gate,
-    IdGate, JevFalso, Limiares, MAX_CHARS_GATILHO, MAX_FLUXOS_LIBERADOS, MensagemJev, MotorJev,
-    OrigemDecisao, Resposta, criterio_do_fluxo, ler_conjunto,
+    AvaliadorGates, DecisionOrigin, G1_CONTINUAR, G3_BASE, G9, G9_NENHUM, Gate, GateOverrides,
+    IdGate, JevFalso, JevFlow, JevMessage, JevResponse, JevState, MAX_RELEASED_FLOWS,
+    MAX_TRIGGER_CHARS, MotorJev, Thresholds, criterio_do_fluxo, ler_conjunto,
 };
 use poph_types::JevGates;
 
-fn fluxo(id: &str, nome: &str) -> FluxoJev {
-    FluxoJev {
+fn fluxo(id: &str, nome: &str) -> JevFlow {
+    JevFlow {
         id: id.to_owned(),
         nome: nome.to_owned(),
-        quando: format!("O cliente quer {nome}."),
-        nao_quando: "Só está perguntando sobre outra coisa.".to_owned(),
-        exemplos: vec![format!("queria {nome}"), format!("dá para {nome}?")],
+        when: format!("O cliente quer {nome}."),
+        not_when: "Só está perguntando sobre outra coisa.".to_owned(),
+        examples: vec![format!("queria {nome}"), format!("dá para {nome}?")],
     }
 }
 
-fn fluxos() -> Vec<FluxoJev> {
+fn fluxos() -> Vec<JevFlow> {
     vec![
         fluxo("agendar_visita", "marcar uma visita técnica"),
         fluxo("segunda_via_fatura", "receber a segunda via da fatura"),
@@ -40,23 +40,23 @@ fn fluxos() -> Vec<FluxoJev> {
     ]
 }
 
-fn estado() -> EstadoJev {
-    EstadoJev::novo("whatsapp")
-        .com_mensagens([
-            MensagemJev::agente("Boa tarde! Como posso ajudar?"),
-            MensagemJev::cliente("queria marcar uma visita técnica na minha casa"),
+fn estado() -> JevState {
+    JevState::new("whatsapp")
+        .with_messages([
+            JevMessage::from_agent("Boa tarde! Como posso ajudar?"),
+            JevMessage::from_customer("queria marcar uma visita técnica na minha casa"),
         ])
-        .com_fluxos_liberados(fluxos())
+        .with_released_flows(fluxos())
 }
 
-fn resposta(escolha: &str, confianca: f64) -> Resposta {
+fn resposta(escolha: &str, confianca: f64) -> JevResponse {
     let mut probabilidades = BTreeMap::new();
     probabilidades.insert(escolha.to_owned(), 0.9);
-    Resposta {
-        escolha: Some(escolha.to_owned()),
-        probabilidades,
-        confianca,
-        ..Resposta::default()
+    JevResponse {
+        choice: Some(escolha.to_owned()),
+        probabilities: probabilidades,
+        confidence: confianca,
+        ..JevResponse::default()
     }
 }
 
@@ -73,10 +73,10 @@ fn gates(g1: bool, g3: bool, g9: bool) -> JevGates {
 fn pergunta_tem_os_ids_dos_fluxos_e_nenhum_com_criterio_do_gatilho() {
     let gate = G9;
     assert_eq!(gate.id(), IdGate::G9);
-    assert_eq!(gate.id().pergunta_id(), "g9_iniciar_fluxo");
+    assert_eq!(gate.id().question_id(), "g9_iniciar_fluxo");
 
-    let pergunta = gate.pergunta(&estado());
-    let opcoes: Vec<&str> = pergunta.criteria.keys().map(String::as_str).collect();
+    let pergunta = gate.question(&estado());
+    let opcoes: Vec<&str> = pergunta.rubric.keys().map(String::as_str).collect();
     assert_eq!(
         opcoes,
         vec![
@@ -88,7 +88,7 @@ fn pergunta_tem_os_ids_dos_fluxos_e_nenhum_com_criterio_do_gatilho() {
         "os ids dos fluxos + nenhum, em ordem estável"
     );
 
-    let criterio = &pergunta.criteria["agendar_visita"];
+    let criterio = &pergunta.rubric["agendar_visita"];
     assert!(criterio.contains("Quando usar:"), "{criterio}");
     assert!(criterio.contains("Não usar quando:"), "{criterio}");
     assert!(
@@ -108,19 +108,19 @@ fn pergunta_tem_os_ids_dos_fluxos_e_nenhum_com_criterio_do_gatilho() {
 #[test]
 fn cada_pedaco_do_gatilho_e_cortado_em_400_caracteres() {
     let longo = "a".repeat(1000);
-    let fluxo_longo = FluxoJev {
+    let fluxo_longo = JevFlow {
         id: "agendar_visita".to_owned(),
         nome: "Agendar visita".to_owned(),
-        quando: longo.clone(),
-        nao_quando: longo.clone(),
-        exemplos: vec![longo.clone()],
+        when: longo.clone(),
+        not_when: longo.clone(),
+        examples: vec![longo.clone()],
     };
-    let estado = EstadoJev::novo("cli")
-        .com_mensagens([MensagemJev::cliente("queria agendar")])
-        .com_fluxos_liberados([fluxo_longo]);
+    let estado = JevState::new("cli")
+        .with_messages([JevMessage::from_customer("queria agendar")])
+        .with_released_flows([fluxo_longo]);
 
-    let pergunta = G9.pergunta(&estado);
-    let criterio = &pergunta.criteria["agendar_visita"];
+    let pergunta = G9.question(&estado);
+    let criterio = &pergunta.rubric["agendar_visita"];
     // Três pedaços: o corte de 400 é do estado, e o critério compõe o que veio cortado.
     for pedaco in criterio.split('\n') {
         let valor = pedaco
@@ -129,7 +129,7 @@ fn cada_pedaco_do_gatilho_e_cortado_em_400_caracteres() {
             .unwrap_or("");
         let valor = valor.trim_matches('"');
         assert!(
-            valor.chars().count() <= MAX_CHARS_GATILHO + 1,
+            valor.chars().count() <= MAX_TRIGGER_CHARS + 1,
             "pedaço sem corte: {} caracteres",
             valor.chars().count()
         );
@@ -137,19 +137,19 @@ fn cada_pedaco_do_gatilho_e_cortado_em_400_caracteres() {
     assert_eq!(criterio.matches('…').count(), 3, "{criterio}");
 
     // O estado também guarda cortado: nada de 1000 caracteres no pedido ao Jev.
-    let guardado = &estado.fluxos_liberados[0];
-    assert_eq!(guardado.quando.chars().count(), MAX_CHARS_GATILHO + 1);
-    assert_eq!(guardado.exemplos[0].chars().count(), MAX_CHARS_GATILHO + 1);
+    let guardado = &estado.released_flows[0];
+    assert_eq!(guardado.when.chars().count(), MAX_TRIGGER_CHARS + 1);
+    assert_eq!(guardado.examples[0].chars().count(), MAX_TRIGGER_CHARS + 1);
 }
 
 #[test]
 fn criterio_cai_no_nome_quando_o_gatilho_esta_vazio() {
-    let sem_gatilho = FluxoJev {
+    let sem_gatilho = JevFlow {
         id: "abrir_chamado".to_owned(),
         nome: "Abrir chamado".to_owned(),
-        quando: String::new(),
-        nao_quando: "  ".to_owned(),
-        exemplos: Vec::new(),
+        when: String::new(),
+        not_when: "  ".to_owned(),
+        examples: Vec::new(),
     };
     let criterio = criterio_do_fluxo(&sem_gatilho);
     assert_eq!(
@@ -162,36 +162,36 @@ fn criterio_cai_no_nome_quando_o_gatilho_esta_vazio() {
 fn aplicavel_so_com_fluxo_liberado_e_dentro_do_teto() {
     let gate = G9;
 
-    assert!(gate.aplicavel(&estado()), "três fluxos liberados: pergunta");
-    assert_eq!(gate.aviso(&estado()), None, "nada a avisar");
+    assert!(gate.applies(&estado()), "três fluxos liberados: pergunta");
+    assert_eq!(gate.warning(&estado()), None, "nada a avisar");
 
-    let sem_fluxo = EstadoJev::novo("whatsapp")
-        .com_mensagens([MensagemJev::cliente("queria marcar uma visita")]);
+    let sem_fluxo = JevState::new("whatsapp")
+        .with_messages([JevMessage::from_customer("queria marcar uma visita")]);
     assert!(
-        !gate.aplicavel(&sem_fluxo),
+        !gate.applies(&sem_fluxo),
         "sem fluxo liberado a pergunta não existe"
     );
-    assert_eq!(gate.aviso(&sem_fluxo), None, "ausência de fluxo é normal");
+    assert_eq!(gate.warning(&sem_fluxo), None, "ausência de fluxo é normal");
 
-    let sem_mensagem_do_cliente = EstadoJev::novo("whatsapp")
-        .com_mensagens([MensagemJev::agente("Olá!")])
-        .com_fluxos_liberados(fluxos());
+    let sem_mensagem_do_cliente = JevState::new("whatsapp")
+        .with_messages([JevMessage::from_agent("Olá!")])
+        .with_released_flows(fluxos());
     assert!(
-        !gate.aplicavel(&sem_mensagem_do_cliente),
+        !gate.applies(&sem_mensagem_do_cliente),
         "sem fala do cliente não há o que escolher"
     );
 
     // Exatamente no teto: pergunta, com os 20 ids + nenhum.
-    let no_teto: Vec<FluxoJev> = (0..MAX_FLUXOS_LIBERADOS)
+    let no_teto: Vec<JevFlow> = (0..MAX_RELEASED_FLOWS)
         .map(|indice| fluxo(&format!("fluxo_{indice:02}"), "atender o cliente"))
         .collect();
-    let estado_no_teto = EstadoJev::novo("cli")
-        .com_mensagens([MensagemJev::cliente("quero atendimento")])
-        .com_fluxos_liberados(no_teto);
-    assert!(gate.aplicavel(&estado_no_teto));
+    let estado_no_teto = JevState::new("cli")
+        .with_messages([JevMessage::from_customer("quero atendimento")])
+        .with_released_flows(no_teto);
+    assert!(gate.applies(&estado_no_teto));
     assert_eq!(
-        gate.pergunta(&estado_no_teto).criteria.len(),
-        MAX_FLUXOS_LIBERADOS + 1,
+        gate.question(&estado_no_teto).rubric.len(),
+        MAX_RELEASED_FLOWS + 1,
         "vinte fluxos + nenhum"
     );
 }
@@ -199,20 +199,20 @@ fn aplicavel_so_com_fluxo_liberado_e_dentro_do_teto() {
 #[tokio::test]
 async fn mais_de_vinte_fluxos_deixa_o_gate_inaplicavel_com_aviso() {
     let gate = G9;
-    let demais: Vec<FluxoJev> = (0..MAX_FLUXOS_LIBERADOS + 1)
+    let demais: Vec<JevFlow> = (0..MAX_RELEASED_FLOWS + 1)
         .map(|indice| fluxo(&format!("fluxo_{indice:02}"), "atender o cliente"))
         .collect();
-    let estado = EstadoJev::novo("cli")
-        .com_mensagens([MensagemJev::cliente("quero atendimento")])
-        .com_fluxos_liberados(demais);
+    let estado = JevState::new("cli")
+        .with_messages([JevMessage::from_customer("quero atendimento")])
+        .with_released_flows(demais);
 
     assert!(
-        !gate.aplicavel(&estado),
+        !gate.applies(&estado),
         "lista cortada faria o modelo escolher entre as que sobraram"
     );
-    let aviso = gate.aviso(&estado).expect("avisa o operador");
+    let aviso = gate.warning(&estado).expect("avisa o operador");
     assert!(aviso.contains("21"), "{aviso}");
-    assert!(aviso.contains(&MAX_FLUXOS_LIBERADOS.to_string()), "{aviso}");
+    assert!(aviso.contains(&MAX_RELEASED_FLOWS.to_string()), "{aviso}");
 
     // E o motor não manda pergunta nenhuma com só o G9 ligado.
     let jev = Arc::new(JevFalso::com_escolhas(BTreeMap::new()));
@@ -225,37 +225,37 @@ async fn mais_de_vinte_fluxos_deixa_o_gate_inaplicavel_com_aviso() {
 #[test]
 fn escolha_confiavel_vira_decisao() {
     let gate = G9;
-    let limiares = gate.limiares();
+    let limiares = gate.thresholds();
     assert_eq!(
         limiares,
-        Limiares::novos(0.7, 0.1),
+        Thresholds::new(0.7, 0.1),
         "confiança 0,7 e margem 0,1 no padrão do PRD"
     );
 
-    let decisao = gate.interpretar(&estado(), Some(&resposta("agendar_visita", 0.92)), limiares);
-    assert_eq!(decisao.origem, OrigemDecisao::Jev);
-    assert_eq!(decisao.escolha.as_deref(), Some("agendar_visita"));
-    assert!(decisao.confiavel());
+    let decisao = gate.interpret(&estado(), Some(&resposta("agendar_visita", 0.92)), limiares);
+    assert_eq!(decisao.origin, DecisionOrigin::Jev);
+    assert_eq!(decisao.choice.as_deref(), Some("agendar_visita"));
+    assert!(decisao.is_reliable());
     assert_eq!(decisao.motivo, None);
 }
 
 #[test]
 fn nenhum_baixa_confianca_margem_curta_e_opcao_inventada_viram_fallback_com_motivo() {
     let gate = G9;
-    let limiares = gate.limiares();
+    let limiares = gate.thresholds();
 
-    let nenhum = gate.interpretar(&estado(), Some(&resposta(G9_NENHUM, 0.95)), limiares);
-    assert_eq!(nenhum.origem, OrigemDecisao::Fallback);
-    assert_eq!(nenhum.escolha, None, "nada inicia");
+    let nenhum = gate.interpret(&estado(), Some(&resposta(G9_NENHUM, 0.95)), limiares);
+    assert_eq!(nenhum.origin, DecisionOrigin::Fallback);
+    assert_eq!(nenhum.choice, None, "nada inicia");
     assert!(
         nenhum.motivo.as_deref().unwrap_or("").contains("nenhum"),
         "{:?}",
         nenhum.motivo
     );
 
-    let baixa = gate.interpretar(&estado(), Some(&resposta("agendar_visita", 0.4)), limiares);
-    assert_eq!(baixa.origem, OrigemDecisao::Fallback);
-    assert_eq!(baixa.escolha, None);
+    let baixa = gate.interpret(&estado(), Some(&resposta("agendar_visita", 0.4)), limiares);
+    assert_eq!(baixa.origin, DecisionOrigin::Fallback);
+    assert_eq!(baixa.choice, None);
     assert!(
         baixa
             .motivo
@@ -267,28 +267,28 @@ fn nenhum_baixa_confianca_margem_curta_e_opcao_inventada_viram_fallback_com_moti
     );
 
     // Margem curta: dois fluxos empatados; 0,70 × 0,68.
-    let mut empatado = Resposta {
-        escolha: Some("agendar_visita".to_owned()),
-        confianca: 0.7,
-        ..Resposta::default()
+    let mut empatado = JevResponse {
+        choice: Some("agendar_visita".to_owned()),
+        confidence: 0.7,
+        ..JevResponse::default()
     };
     empatado
-        .probabilidades
+        .probabilities
         .insert("agendar_visita".to_owned(), 0.7);
     empatado
-        .probabilidades
+        .probabilities
         .insert("abrir_chamado".to_owned(), 0.68);
-    let margem = gate.interpretar(&estado(), Some(&empatado), limiares);
-    assert_eq!(margem.origem, OrigemDecisao::Fallback);
+    let margem = gate.interpret(&estado(), Some(&empatado), limiares);
+    assert_eq!(margem.origin, DecisionOrigin::Fallback);
     assert!(
         margem.motivo.as_deref().unwrap_or("").contains("margem"),
         "{:?}",
         margem.motivo
     );
 
-    let inventada = gate.interpretar(&estado(), Some(&resposta("cancelar_tudo", 0.99)), limiares);
-    assert_eq!(inventada.origem, OrigemDecisao::Fallback);
-    assert_eq!(inventada.escolha, None);
+    let inventada = gate.interpret(&estado(), Some(&resposta("cancelar_tudo", 0.99)), limiares);
+    assert_eq!(inventada.origin, DecisionOrigin::Fallback);
+    assert_eq!(inventada.choice, None);
     assert!(
         inventada
             .motivo
@@ -300,8 +300,8 @@ fn nenhum_baixa_confianca_margem_curta_e_opcao_inventada_viram_fallback_com_moti
     );
 
     // Sem resposta nenhuma (Jev fora): fallback com motivo, nunca fluxo por engano.
-    let ausente = gate.interpretar(&estado(), None, limiares);
-    assert_eq!(ausente.origem, OrigemDecisao::Fallback);
+    let ausente = gate.interpret(&estado(), None, limiares);
+    assert_eq!(ausente.origin, DecisionOrigin::Fallback);
     assert_eq!(
         ausente.motivo.as_deref(),
         Some("sem resposta do Jev"),
@@ -318,15 +318,15 @@ async fn tres_gates_ligados_com_fluxo_geram_uma_requisicao_so() {
     ])));
     let motor = MotorJev::novo(jev.clone(), gates(true, true, true), "jev-latest");
 
-    let estado = EstadoJev::novo("whatsapp")
-        .com_mensagens([
-            MensagemJev::cliente("oi, boa tarde"),
-            MensagemJev::agente("Boa tarde! Como posso ajudar?"),
-            MensagemJev::cliente("queria marcar uma visita técnica"),
+    let estado = JevState::new("whatsapp")
+        .with_messages([
+            JevMessage::from_customer("oi, boa tarde"),
+            JevMessage::from_agent("Boa tarde! Como posso ajudar?"),
+            JevMessage::from_customer("queria marcar uma visita técnica"),
         ])
-        .com_handoff(vec!["cliente pede segunda via".to_owned()], true)
-        .com_capacidades(true, true)
-        .com_fluxos_liberados(fluxos());
+        .with_handoff(vec!["cliente pede segunda via".to_owned()], true)
+        .with_capabilities(true, true)
+        .with_released_flows(fluxos());
 
     let resultado = motor.avaliar(estado, None).await;
 
@@ -340,8 +340,7 @@ async fn tres_gates_ligados_com_fluxo_geram_uma_requisicao_so() {
         "agendar_visita"
     );
     assert!(
-        pedido.perguntas["g9_iniciar_fluxo"].criteria["segunda_via_fatura"]
-            .contains("Quando usar:")
+        pedido.perguntas["g9_iniciar_fluxo"].rubric["segunda_via_fatura"].contains("Quando usar:")
     );
     assert_eq!(
         resultado.escolha_confiavel(IdGate::G9),
@@ -357,8 +356,8 @@ async fn sem_fluxo_liberado_o_gate_nao_e_perguntado() {
     )])));
     let motor = MotorJev::novo(jev.clone(), gates(false, false, true), "jev-latest");
 
-    let estado = EstadoJev::novo("whatsapp")
-        .com_mensagens([MensagemJev::cliente("queria marcar uma visita")]);
+    let estado = JevState::new("whatsapp")
+        .with_messages([JevMessage::from_customer("queria marcar uma visita")]);
     let resultado = motor.avaliar(estado, None).await;
 
     assert_eq!(jev.chamadas(), 0, "sem fluxo liberado não custa chamada");
@@ -374,7 +373,7 @@ async fn flag_do_agente_e_a_global_governam_a_pergunta() {
 
     // Global ligada, agente desliga: não pergunta.
     let motor = MotorJev::novo(jev.clone(), gates(false, false, true), "jev-latest");
-    let desligado = AjusteGates::de_json(r#"{"gates": {"g9": false}}"#).expect("ajuste válido");
+    let desligado = GateOverrides::from_json(r#"{"gates": {"g9": false}}"#).expect("ajuste válido");
     assert!(!motor.gates_efetivos(Some(desligado)).g9);
     let resultado = motor.avaliar(estado(), Some(desligado)).await;
     assert_eq!(jev.chamadas(), 0, "flag do agente desliga o G9");
@@ -382,7 +381,7 @@ async fn flag_do_agente_e_a_global_governam_a_pergunta() {
 
     // Global desligada, agente liga: pergunta (o agente só ajusta o que declarar).
     let motor = MotorJev::novo(jev.clone(), gates(false, false, false), "jev-latest");
-    let ligado = AjusteGates::de_json(r#"{"g9": true}"#).expect("ajuste válido");
+    let ligado = GateOverrides::from_json(r#"{"g9": true}"#).expect("ajuste válido");
     assert!(motor.gates_efetivos(Some(ligado)).g9);
     let resultado = motor.avaliar(estado(), Some(ligado)).await;
     assert_eq!(jev.chamadas(), 1);
@@ -392,21 +391,21 @@ async fn flag_do_agente_e_a_global_governam_a_pergunta() {
     );
 
     // E o ajuste que liga só um gate (`apenas`) funciona para o G9.
-    let apenas = AjusteGates::apenas(IdGate::G9);
+    let apenas = GateOverrides::only(IdGate::G9);
     assert_eq!(apenas.g9, Some(true));
     assert_eq!(apenas.g8, Some(false));
 }
 
 #[test]
 fn o_estado_so_leva_fluxos_quando_existem_e_muda_o_hash() {
-    let sem_fluxo = EstadoJev::novo("cli").com_mensagens([MensagemJev::cliente("oi")]);
+    let sem_fluxo = JevState::new("cli").with_messages([JevMessage::from_customer("oi")]);
     assert!(
-        sem_fluxo.para_json().get("fluxos").is_none(),
+        sem_fluxo.to_json().get("fluxos").is_none(),
         "sem fluxo o estado dos outros gates não muda de forma"
     );
 
-    let com_fluxo = sem_fluxo.clone().com_fluxos_liberados(fluxos());
-    let json = com_fluxo.para_json();
+    let com_fluxo = sem_fluxo.clone().with_released_flows(fluxos());
+    let json = com_fluxo.to_json();
     assert_eq!(json["fluxos"]["liberados"].as_array().unwrap().len(), 3);
     assert_eq!(json["fluxos"]["liberados"][1]["id"], "segunda_via_fatura");
     assert_ne!(sem_fluxo.hash(), com_fluxo.hash(), "o cache separa os dois");
@@ -414,17 +413,17 @@ fn o_estado_so_leva_fluxos_quando_existem_e_muda_o_hash() {
 
 #[test]
 fn exemplos_do_fluxo_sao_limitados_no_estado() {
-    let muitos = FluxoJev {
+    let muitos = JevFlow {
         id: "agendar_visita".to_owned(),
         nome: "Agendar visita".to_owned(),
-        quando: "O cliente quer marcar.".to_owned(),
-        nao_quando: String::new(),
-        exemplos: (0..20).map(|indice| format!("exemplo {indice}")).collect(),
+        when: "O cliente quer marcar.".to_owned(),
+        not_when: String::new(),
+        examples: (0..20).map(|indice| format!("exemplo {indice}")).collect(),
     };
-    let estado = EstadoJev::novo("cli")
-        .com_mensagens([MensagemJev::cliente("queria agendar")])
-        .com_fluxos_liberados([muitos]);
-    assert_eq!(estado.fluxos_liberados[0].exemplos.len(), 5);
+    let estado = JevState::new("cli")
+        .with_messages([JevMessage::from_customer("queria agendar")])
+        .with_released_flows([muitos]);
+    assert_eq!(estado.released_flows[0].examples.len(), 5);
 }
 
 /// O conjunto medido com o Jev real (FX-37) existe e é coerente com o gate.
@@ -442,12 +441,12 @@ fn conjunto_rotulado_do_g9_serve_para_a_medicao() {
     for (indice, caso) in casos.iter().enumerate() {
         let numero = indice + 1;
         assert!(
-            G9.aplicavel(&caso.estado),
+            G9.applies(&caso.estado),
             "caso {numero}: o G9 precisa se aplicar para a medição valer"
         );
         let ids: Vec<&str> = caso
             .estado
-            .fluxos_liberados
+            .released_flows
             .iter()
             .map(|fluxo| fluxo.id.as_str())
             .collect();

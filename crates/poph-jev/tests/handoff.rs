@@ -10,8 +10,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use poph_jev::{
-    AvaliadorGates, ErroJev, EstadoJev, JevFalso, LoteResposta, MensagemJev, MotorJev, Orientacao,
-    RISCO_ANIMAL, RISCO_INGESTAO, RISCO_NENHUM, RISCO_OUTRO, RISCO_PERGUNTA_ID, Resposta,
+    AvaliadorGates, BatchResponse, JevError, JevFalso, JevMessage, JevResponse, JevState, MotorJev,
+    Orientacao, RISCO_ANIMAL, RISCO_INGESTAO, RISCO_NENHUM, RISCO_OUTRO, RISCO_PERGUNTA_ID,
     ResultadoOrientacao, TIPOS_DE_RISCO,
 };
 use poph_types::JevGates;
@@ -30,12 +30,12 @@ vá a um pronto-socorro sem esperar a nossa resposta.";
 const APROVADA_AUTOMATICA: &str = "Sua conversa foi transferida para um atendente humano da nossa \
 equipe, que já irá respondê-la por aqui. 🙋";
 
-fn estado() -> EstadoJev {
-    EstadoJev::novo("cli")
-        .com_mensagens([MensagemJev::cliente(
+fn estado() -> JevState {
+    JevState::new("cli")
+        .with_messages([JevMessage::from_customer(
             "meu filho engoliu o veneno, o que eu faço?",
         )])
-        .com_handoff(Vec::new(), true)
+        .with_handoff(Vec::new(), true)
 }
 
 fn motor(jev: Arc<JevFalso>) -> MotorJev {
@@ -49,13 +49,13 @@ fn motor(jev: Arc<JevFalso>) -> MotorJev {
     )
 }
 
-fn resposta(escolha: &str, confianca: f64) -> Resposta {
-    let mut item = Resposta {
-        escolha: Some(escolha.to_owned()),
-        confianca,
-        ..Resposta::default()
+fn resposta(escolha: &str, confianca: f64) -> JevResponse {
+    let mut item = JevResponse {
+        choice: Some(escolha.to_owned()),
+        confidence: confianca,
+        ..JevResponse::default()
     };
-    item.probabilidades.insert(escolha.to_owned(), confianca);
+    item.probabilities.insert(escolha.to_owned(), confianca);
     item
 }
 
@@ -66,10 +66,10 @@ fn jev_do_risco(escolha: &'static str, confianca: f64) -> Arc<JevFalso> {
         if pedido.perguntas.contains_key(RISCO_PERGUNTA_ID) {
             respostas.insert(RISCO_PERGUNTA_ID.to_owned(), resposta(escolha, confianca));
         }
-        Ok(LoteResposta {
-            respostas,
+        Ok(BatchResponse {
+            answers: respostas,
             tokens: 7,
-            ..LoteResposta::default()
+            ..BatchResponse::default()
         })
     }))
 }
@@ -146,12 +146,12 @@ async fn pergunta_de_risco_nao_entra_no_lote() {
 #[test]
 fn pergunta_tem_as_quatro_opcoes() {
     let pergunta = poph_jev::pergunta_risco();
-    let opcoes: Vec<&String> = pergunta.criteria.keys().collect();
+    let opcoes: Vec<&String> = pergunta.rubric.keys().collect();
     assert_eq!(opcoes.len(), 4);
     for tipo in [RISCO_NENHUM, RISCO_INGESTAO, RISCO_ANIMAL, RISCO_OUTRO] {
-        assert!(pergunta.criteria.contains_key(tipo), "falta a opção {tipo}");
+        assert!(pergunta.rubric.contains_key(tipo), "falta a opção {tipo}");
     }
-    assert!(!pergunta.criteria[RISCO_NENHUM].trim().is_empty());
+    assert!(!pergunta.rubric[RISCO_NENHUM].trim().is_empty());
     assert_eq!(TIPOS_DE_RISCO.len(), 3);
 }
 
@@ -187,8 +187,8 @@ async fn prazo_da_segunda_pergunta_vira_falha() {
 /// Erro do provedor também vira falha, nunca pânico nem tipo inventado.
 #[tokio::test]
 async fn erro_do_provedor_vira_falha() {
-    let jev = Arc::new(JevFalso::falhando(ErroJev::Status {
-        codigo: 503,
+    let jev = Arc::new(JevFalso::falhando(JevError::Status {
+        code: 503,
         motivo: "Service Unavailable".to_owned(),
     }));
     let avaliador = motor(jev);

@@ -5,8 +5,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use poph_jev::{
-    CasoRotulado, ErroConjunto, EstadoJev, G1_CONTINUAR, G1_TRANSFERIR, IdGate, JevFalso,
-    MensagemJev, MotorJev, avaliar_conjunto, ler_conjunto,
+    CasoRotulado, ErroConjunto, G1_CONTINUAR, G1_TRANSFERIR, IdGate, JevFalso, JevMessage,
+    JevState, MotorJev, avaliar_conjunto, ler_conjunto,
 };
 use poph_types::JevGates;
 
@@ -19,9 +19,9 @@ fn globais(g1: bool) -> JevGates {
 
 fn caso(texto: &str, esperado: &str) -> CasoRotulado {
     CasoRotulado {
-        estado: EstadoJev::novo("whatsapp")
-            .com_mensagens([MensagemJev::cliente(texto)])
-            .com_handoff(Vec::new(), true),
+        estado: JevState::new("whatsapp")
+            .with_messages([JevMessage::from_customer(texto)])
+            .with_handoff(Vec::new(), true),
         esperado: esperado.to_owned(),
         categoria: None,
         justificativa: None,
@@ -46,18 +46,18 @@ fn jev_de_teste() -> Arc<JevFalso> {
         for id in pedido.perguntas.keys() {
             respostas.insert(
                 id.clone(),
-                poph_jev::Resposta {
-                    escolha: Some(escolha.to_owned()),
-                    confianca,
-                    probabilidades: BTreeMap::from([(escolha.to_owned(), confianca)]),
-                    ..poph_jev::Resposta::default()
+                poph_jev::JevResponse {
+                    choice: Some(escolha.to_owned()),
+                    confidence: confianca,
+                    probabilities: BTreeMap::from([(escolha.to_owned(), confianca)]),
+                    ..poph_jev::JevResponse::default()
                 },
             );
         }
-        Ok(poph_jev::LoteResposta {
-            respostas,
+        Ok(poph_jev::BatchResponse {
+            answers: respostas,
             tokens: 7,
-            ..poph_jev::LoteResposta::default()
+            ..poph_jev::BatchResponse::default()
         })
     }))
 }
@@ -97,7 +97,7 @@ async fn gate_que_nao_se_aplica_conta_como_nao_aplicavel() {
         "jev-latest",
     ));
     let mut caso = caso("quero falar com um atendente", G1_TRANSFERIR);
-    caso.estado = caso.estado.com_handoff(Vec::new(), false);
+    caso.estado = caso.estado.with_handoff(Vec::new(), false);
     let casos = vec![caso];
 
     let relatorio = avaliar_conjunto(motor.as_ref(), IdGate::G1, &casos).await;
@@ -110,8 +110,8 @@ async fn gate_que_nao_se_aplica_conta_como_nao_aplicavel() {
 /// Falha do Jev conta como abstenção e aparece no relatório.
 #[tokio::test]
 async fn falha_da_chamada_conta_como_abstencao() {
-    let jev = Arc::new(JevFalso::falhando(poph_jev::ErroJev::Status {
-        codigo: 500,
+    let jev = Arc::new(JevFalso::falhando(poph_jev::JevError::Status {
+        code: 500,
         motivo: "Internal Server Error".to_owned(),
     }));
     let motor = Arc::new(MotorJev::novo(jev, globais(true), "jev-latest"));
@@ -158,21 +158,21 @@ async fn abstencao_mostra_a_escolha_do_jev_e_o_motivo() {
         for id in pedido.perguntas.keys() {
             respostas.insert(
                 id.clone(),
-                poph_jev::Resposta {
-                    escolha: Some(G1_TRANSFERIR.to_owned()),
-                    confianca: 0.55,
-                    probabilidades: BTreeMap::from([
+                poph_jev::JevResponse {
+                    choice: Some(G1_TRANSFERIR.to_owned()),
+                    confidence: 0.55,
+                    probabilities: BTreeMap::from([
                         (G1_TRANSFERIR.to_owned(), 0.55),
                         (G1_CONTINUAR.to_owned(), 0.45),
                     ]),
-                    ..poph_jev::Resposta::default()
+                    ..poph_jev::JevResponse::default()
                 },
             );
         }
-        Ok(poph_jev::LoteResposta {
-            respostas,
+        Ok(poph_jev::BatchResponse {
+            answers: respostas,
             tokens: 4,
-            ..poph_jev::LoteResposta::default()
+            ..poph_jev::BatchResponse::default()
         })
     }));
     let motor = Arc::new(MotorJev::novo(jev, globais(true), "jev-latest"));
@@ -228,19 +228,19 @@ async fn usage_da_chamada_aparece_no_relatorio() {
         for id in pedido.perguntas.keys() {
             respostas.insert(
                 id.clone(),
-                poph_jev::Resposta {
-                    escolha: Some(G1_CONTINUAR.to_owned()),
-                    confianca: 0.95,
-                    ..poph_jev::Resposta::default()
+                poph_jev::JevResponse {
+                    choice: Some(G1_CONTINUAR.to_owned()),
+                    confidence: 0.95,
+                    ..poph_jev::JevResponse::default()
                 },
             );
         }
-        Ok(poph_jev::LoteResposta {
-            respostas,
+        Ok(poph_jev::BatchResponse {
+            answers: respostas,
             tokens: 34,
             usage: poph_jev::UsageTokens {
-                entrada: Some(30),
-                saida: Some(4),
+                input: Some(30),
+                output: Some(4),
                 total: Some(34),
             },
         })
@@ -253,8 +253,8 @@ async fn usage_da_chamada_aparece_no_relatorio() {
 
     let relatorio = avaliar_conjunto(motor.as_ref(), IdGate::G1, &casos).await;
 
-    assert_eq!(relatorio.usage.entrada, Some(60), "duas chamadas de 30");
-    assert_eq!(relatorio.usage.saida, Some(8));
+    assert_eq!(relatorio.usage.input, Some(60), "duas chamadas de 30");
+    assert_eq!(relatorio.usage.output, Some(8));
     assert_eq!(relatorio.usage.total, Some(68));
     let texto = relatorio.texto("conjunto.jsonl");
     assert!(
@@ -277,7 +277,7 @@ async fn sem_usage_o_relatorio_diz_nao_informado() {
 
     let relatorio = avaliar_conjunto(motor.as_ref(), IdGate::G1, &casos).await;
 
-    assert!(!relatorio.usage.informado());
+    assert!(!relatorio.usage.reported());
     let texto = relatorio.texto("conjunto.jsonl");
     assert!(texto.contains("tokens: não informado"), "saída: {texto}");
     let valor = serde_json::to_value(&relatorio).expect("serializa");
@@ -299,7 +299,7 @@ fn le_conjunto_com_comentarios_e_linhas_em_branco() {
     let casos = ler_conjunto(&caminho).expect("lê o conjunto");
     assert_eq!(casos.len(), 1);
     assert_eq!(casos[0].esperado, "continuar_agente");
-    assert_eq!(casos[0].estado.mensagens.len(), 1);
+    assert_eq!(casos[0].estado.messages.len(), 1);
 
     let _ = std::fs::remove_dir_all(&pasta);
 }

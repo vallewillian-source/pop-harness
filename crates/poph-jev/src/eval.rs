@@ -18,16 +18,16 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::estado::EstadoJev;
-use crate::gate::OrigemDecisao;
+use crate::gate::DecisionOrigin;
 use crate::motor::{AvaliadorGates, ResultadoJev};
-use crate::tipos::{ErroJev, IdGate, UsageTokens};
+use crate::state::JevState;
+use crate::types::{IdGate, JevError, UsageTokens};
 
 /// Um caso do conjunto rotulado.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CasoRotulado {
     /// Estado que o gate vai julgar.
-    pub estado: EstadoJev,
+    pub estado: JevState,
     /// Resposta certa para o caso (`transferir_agora`, `nada`, nome do departamento…).
     pub esperado: String,
     /// Agrupamento do caso no relatório (`insatisfacao_urgencia`, `risco_saude`…).
@@ -245,7 +245,7 @@ impl RelatorioEval {
             "confiança média (decisões confiáveis): {:.2}\n",
             self.confianca_media
         ));
-        saida.push_str(&format!("tokens: {}\n", self.usage.como_texto()));
+        saida.push_str(&format!("tokens: {}\n", self.usage.as_text()));
         if self.falhas_de_chamada > 0 {
             saida.push_str(&format!(
                 "falhas da chamada ao Jev: {} (contam como abstenção)\n",
@@ -290,7 +290,7 @@ pub async fn avaliar_conjunto(
     casos: &[CasoRotulado],
 ) -> RelatorioEval {
     let mut relatorio = RelatorioEval {
-        gate: gate.como_texto().to_owned(),
+        gate: gate.as_text().to_owned(),
         casos: casos.len(),
         acertos: 0,
         erros: 0,
@@ -312,21 +312,21 @@ pub async fn avaliar_conjunto(
             relatorio.falhas_de_chamada += 1;
         }
         // O consumo é somado por execução: chamada que veio do cache não custa nada.
-        relatorio.usage = relatorio.usage.somar(resultado.chamada.usage);
+        relatorio.usage = relatorio.usage.plus(resultado.chamada.usage);
         // O que o modelo respondeu, independentemente de a decisão ter passado no limiar.
         let escolha_do_jev = resultado
             .resposta(gate)
-            .and_then(|resposta| resposta.escolha.clone());
+            .and_then(|resposta| resposta.choice.clone());
         let motivo = resultado
             .decisao(gate)
             .and_then(|decisao| decisao.motivo.clone());
         let falha = resultado.chamada.falha.clone();
         let decisao = resultado.decisao(gate);
         let (obtido, confianca, resultado_texto) = match decisao {
-            Some(decisao) if decisao.origem != OrigemDecisao::Fallback => {
-                soma_confianca += decisao.confianca;
+            Some(decisao) if decisao.origin != DecisionOrigin::Fallback => {
+                soma_confianca += decisao.confidence;
                 confiaveis += 1;
-                let obtido = decisao.escolha.clone();
+                let obtido = decisao.choice.clone();
                 let acertou = obtido.as_deref() == Some(caso.esperado.as_str());
                 if acertou {
                     relatorio.acertos += 1;
@@ -335,7 +335,7 @@ pub async fn avaliar_conjunto(
                 }
                 (
                     obtido,
-                    format!("{:.2}", decisao.confianca),
+                    format!("{:.2}", decisao.confidence),
                     if acertou { "acerto" } else { "erro" }.to_owned(),
                 )
             }
@@ -343,7 +343,7 @@ pub async fn avaliar_conjunto(
                 relatorio.abstencoes += 1;
                 (
                     None,
-                    format!("{:.2}", decisao.confianca),
+                    format!("{:.2}", decisao.confidence),
                     "abstencao".to_owned(),
                 )
             }
@@ -377,11 +377,11 @@ pub async fn avaliar_conjunto(
 }
 
 /// Ajuste que liga só o gate medido.
-pub fn ajuste_de_gate(gate: IdGate) -> crate::flags::AjusteGates {
-    crate::flags::AjusteGates::apenas(gate)
+pub fn ajuste_de_gate(gate: IdGate) -> crate::flags::GateOverrides {
+    crate::flags::GateOverrides::only(gate)
 }
 
 /// Erro de Jev usado pelo conjunto quando a chave não está configurada.
-pub fn erro_sem_chave() -> ErroJev {
-    ErroJev::SemChave
+pub fn erro_sem_chave() -> JevError {
+    JevError::MissingKey
 }

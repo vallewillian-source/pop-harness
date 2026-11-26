@@ -11,9 +11,9 @@
 
 use std::collections::BTreeMap;
 
-use crate::estado::{EstadoJev, FluxoJev, MAX_FLUXOS_LIBERADOS, PapelJev};
-use crate::gate::{Decisao, Gate, Limiares, escolha_confiavel};
-use crate::tipos::{IdGate, Pergunta, Resposta};
+use crate::gate::{Decisao, Gate, Thresholds, reliable_choice};
+use crate::state::{JevFlow, JevRole, JevState, MAX_RELEASED_FLOWS};
+use crate::types::{IdGate, JevResponse, Question};
 
 // ───────────────────────────── G1: transferir para humano ─────────────────────────────
 
@@ -103,39 +103,39 @@ impl Gate for G1 {
         IdGate::G1
     }
 
-    fn aplicavel(&self, estado: &EstadoJev) -> bool {
+    fn applies(&self, estado: &JevState) -> bool {
         // Mesma regra do POP Atende: o gate só existe para agente com handoff habilitado.
-        estado.transferencia_habilitada && estado.ultima_do_cliente().is_some()
+        estado.transfer_enabled && estado.last_from_customer().is_some()
     }
 
-    fn pergunta(&self, _estado: &EstadoJev) -> Pergunta {
+    fn question(&self, _estado: &JevState) -> Question {
         let mut criteria = BTreeMap::new();
         criteria.insert(G1_TRANSFERIR.to_owned(), criterio_transferir());
         criteria.insert(G1_CONTINUAR.to_owned(), criterio_continuar());
-        Pergunta::escolha(G1_INSTRUCOES, criteria)
+        Question::choice(G1_INSTRUCOES, criteria)
     }
 
-    fn limiares(&self) -> Limiares {
+    fn thresholds(&self) -> Thresholds {
         // Escolha binária: o POP Atende aplica só o limiar de confiança e deixa a margem de fora.
-        Limiares::novos(0.7, 0.0)
+        Thresholds::new(0.7, 0.0)
     }
 
-    fn interpretar(
+    fn interpret(
         &self,
-        _estado: &EstadoJev,
-        resposta: Option<&Resposta>,
-        limiares: Limiares,
+        _estado: &JevState,
+        resposta: Option<&JevResponse>,
+        limiares: Thresholds,
     ) -> Decisao {
         let mut motivo = None;
         let validas = [G1_TRANSFERIR.to_owned(), G1_CONTINUAR.to_owned()];
-        let escolha = escolha_confiavel(resposta, &validas, limiares, &mut motivo);
+        let escolha = reliable_choice(resposta, &validas, limiares, &mut motivo);
         match escolha {
             Some(escolha) => Decisao {
                 gate: IdGate::G1,
-                escolha: Some(escolha.to_owned()),
-                origem: crate::gate::OrigemDecisao::Jev,
-                confianca: resposta.map(|item| item.confianca).unwrap_or(0.0),
-                margem: resposta.map(Resposta::margem).unwrap_or(0.0),
+                choice: Some(escolha.to_owned()),
+                origin: crate::gate::DecisionOrigin::Jev,
+                confidence: resposta.map(|item| item.confidence).unwrap_or(0.0),
+                margin: resposta.map(JevResponse::margin).unwrap_or(0.0),
                 motivo: None,
                 ms: 0,
                 tokens: 0,
@@ -169,11 +169,11 @@ impl Gate for G2 {
         IdGate::G2
     }
 
-    fn aplicavel(&self, estado: &EstadoJev) -> bool {
-        estado.ultima_do_cliente().is_some()
+    fn applies(&self, estado: &JevState) -> bool {
+        estado.last_from_customer().is_some()
     }
 
-    fn pergunta(&self, _estado: &EstadoJev) -> Pergunta {
+    fn question(&self, _estado: &JevState) -> Question {
         let mut criteria = BTreeMap::new();
         criteria.insert(
             G2_ESPERAR.to_owned(),
@@ -187,25 +187,25 @@ impl Gate for G2 {
              completa, dados completos, despedida."
                 .to_owned(),
         );
-        Pergunta::escolha(G2_INSTRUCOES, criteria)
+        Question::choice(G2_INSTRUCOES, criteria)
     }
 
-    fn interpretar(
+    fn interpret(
         &self,
-        _estado: &EstadoJev,
-        resposta: Option<&Resposta>,
-        limiares: Limiares,
+        _estado: &JevState,
+        resposta: Option<&JevResponse>,
+        limiares: Thresholds,
     ) -> Decisao {
         let mut motivo = None;
         let validas = [G2_ESPERAR.to_owned(), G2_PROCESSAR.to_owned()];
-        let escolha = escolha_confiavel(resposta, &validas, limiares, &mut motivo);
+        let escolha = reliable_choice(resposta, &validas, limiares, &mut motivo);
         match escolha {
             Some(escolha) => Decisao {
                 gate: IdGate::G2,
-                escolha: Some(escolha.to_owned()),
-                origem: crate::gate::OrigemDecisao::Jev,
-                confianca: resposta.map(|item| item.confianca).unwrap_or(0.0),
-                margem: resposta.map(Resposta::margem).unwrap_or(0.0),
+                choice: Some(escolha.to_owned()),
+                origin: crate::gate::DecisionOrigin::Jev,
+                confidence: resposta.map(|item| item.confidence).unwrap_or(0.0),
+                margin: resposta.map(JevResponse::margin).unwrap_or(0.0),
                 motivo: None,
                 ms: 0,
                 tokens: 0,
@@ -249,13 +249,13 @@ impl Gate for G3 {
         IdGate::G3
     }
 
-    fn aplicavel(&self, estado: &EstadoJev) -> bool {
+    fn applies(&self, estado: &JevState) -> bool {
         // Sem base e sem catálogo não há o que pular.
-        (estado.base_disponivel || estado.produtos_disponiveis)
-            && estado.ultima_do_cliente().is_some()
+        (estado.knowledge_base_available || estado.products_available)
+            && estado.last_from_customer().is_some()
     }
 
-    fn pergunta(&self, estado: &EstadoJev) -> Pergunta {
+    fn question(&self, estado: &JevState) -> Question {
         let mut criteria = BTreeMap::new();
         criteria.insert(
             G3_NADA.to_owned(),
@@ -263,7 +263,7 @@ impl Gate for G3 {
              emoji, mensagem de abertura. Reclamação ou desabafo não conta como nada."
                 .to_owned(),
         );
-        if estado.base_disponivel {
+        if estado.knowledge_base_available {
             criteria.insert(
                 G3_BASE.to_owned(),
                 "A resposta está na base de conhecimento do agente: política da empresa, prazo, \
@@ -272,7 +272,7 @@ impl Gate for G3 {
                     .to_owned(),
             );
         }
-        if estado.produtos_disponiveis {
+        if estado.products_available {
             criteria.insert(
                 G3_PRODUTO.to_owned(),
                 "A resposta exige o catálogo: preço, disponibilidade, tamanho, modelo, qual produto \
@@ -280,7 +280,7 @@ impl Gate for G3 {
                     .to_owned(),
             );
         }
-        if estado.base_disponivel && estado.produtos_disponiveis {
+        if estado.knowledge_base_available && estado.products_available {
             criteria.insert(
                 G3_AMBOS.to_owned(),
                 "A mensagem precisa dos dois: comparar produtos informando condições da empresa, \
@@ -288,34 +288,34 @@ impl Gate for G3 {
                     .to_owned(),
             );
         }
-        Pergunta::escolha(G3_INSTRUCOES, criteria)
+        Question::choice(G3_INSTRUCOES, criteria)
     }
 
-    fn interpretar(
+    fn interpret(
         &self,
-        estado: &EstadoJev,
-        resposta: Option<&Resposta>,
-        limiares: Limiares,
+        estado: &JevState,
+        resposta: Option<&JevResponse>,
+        limiares: Thresholds,
     ) -> Decisao {
         let mut validas = vec![G3_NADA.to_owned()];
-        if estado.base_disponivel {
+        if estado.knowledge_base_available {
             validas.push(G3_BASE.to_owned());
         }
-        if estado.produtos_disponiveis {
+        if estado.products_available {
             validas.push(G3_PRODUTO.to_owned());
         }
-        if estado.base_disponivel && estado.produtos_disponiveis {
+        if estado.knowledge_base_available && estado.products_available {
             validas.push(G3_AMBOS.to_owned());
         }
         let mut motivo = None;
-        let escolha = escolha_confiavel(resposta, &validas, limiares, &mut motivo);
+        let escolha = reliable_choice(resposta, &validas, limiares, &mut motivo);
         match escolha {
             Some(escolha) => Decisao {
                 gate: IdGate::G3,
-                escolha: Some(escolha.to_owned()),
-                origem: crate::gate::OrigemDecisao::Jev,
-                confianca: resposta.map(|item| item.confianca).unwrap_or(0.0),
-                margem: resposta.map(Resposta::margem).unwrap_or(0.0),
+                choice: Some(escolha.to_owned()),
+                origin: crate::gate::DecisionOrigin::Jev,
+                confidence: resposta.map(|item| item.confidence).unwrap_or(0.0),
+                margin: resposta.map(JevResponse::margin).unwrap_or(0.0),
                 motivo: None,
                 ms: 0,
                 tokens: 0,
@@ -388,14 +388,14 @@ impl Gate for G4 {
         IdGate::G4
     }
 
-    fn aplicavel(&self, estado: &EstadoJev) -> bool {
+    fn applies(&self, estado: &JevState) -> bool {
         // Com um departamento só não há escolha; com zero não há candidato.
-        estado.departamentos.len() >= 2 && estado.ultima_do_cliente().is_some()
+        estado.departments.len() >= 2 && estado.last_from_customer().is_some()
     }
 
-    fn pergunta(&self, estado: &EstadoJev) -> Pergunta {
+    fn question(&self, estado: &JevState) -> Question {
         let criteria = estado
-            .departamentos
+            .departments
             .iter()
             .map(|departamento| {
                 (
@@ -406,29 +406,29 @@ impl Gate for G4 {
                 )
             })
             .collect();
-        Pergunta::escolha(G4_INSTRUCOES, criteria)
+        Question::choice(G4_INSTRUCOES, criteria)
     }
 
-    fn limiares(&self) -> Limiares {
+    fn thresholds(&self) -> Thresholds {
         // Só confiança, como o G1. A margem sai de fora de propósito: o número de candidatos varia
         // de 2 a 12, e uma escolha **correta** entre 12 departamentos tem margem pequena por
         // construção (a probabilidade se espalha entre as opções). O erro grave do G4 — mandar a
         // conversa para o time errado — fica contido pela confiança (0,7) e, principalmente, pela
         // validação do nome pelo código no turno.
-        Limiares::novos(0.7, 0.0)
+        Thresholds::new(0.7, 0.0)
     }
 
-    fn interpretar(
+    fn interpret(
         &self,
-        estado: &EstadoJev,
-        resposta: Option<&Resposta>,
-        limiares: Limiares,
+        estado: &JevState,
+        resposta: Option<&JevResponse>,
+        limiares: Thresholds,
     ) -> Decisao {
         // 1. A escolha existe e casa com um candidato? Casar antes do limiar é proposital: um nome
         //    que não é departamento da empresa não vira decisão confiável nem com confiança 1,0.
-        let canonico = match resposta.and_then(|item| item.escolha.as_deref()) {
+        let canonico = match resposta.and_then(|item| item.choice.as_deref()) {
             None => None,
-            Some(escolha) => match casar_candidato(escolha, &estado.departamentos) {
+            Some(escolha) => match casar_candidato(escolha, &estado.departments) {
                 Ok(canonico) => Some(canonico),
                 Err(motivo) => {
                     return Decisao::fallback(IdGate::G4, None, motivo);
@@ -446,33 +446,33 @@ impl Gate for G4 {
             );
         };
         // 2. Limiares.
-        if resposta.confianca < limiares.confianca {
+        if resposta.confidence < limiares.confidence {
             return Decisao::fallback(
                 IdGate::G4,
                 None,
                 format!(
                     "confiança {:.2} abaixo do limiar {:.2}",
-                    resposta.confianca, limiares.confianca
+                    resposta.confidence, limiares.confidence
                 ),
             );
         }
-        if resposta.margem() < limiares.margem {
+        if resposta.margin() < limiares.margin {
             return Decisao::fallback(
                 IdGate::G4,
                 None,
                 format!(
                     "margem {:.2} abaixo do limiar {:.2}",
-                    resposta.margem(),
-                    limiares.margem
+                    resposta.margin(),
+                    limiares.margin
                 ),
             );
         }
         Decisao {
             gate: IdGate::G4,
-            escolha: Some(canonico),
-            origem: crate::gate::OrigemDecisao::Jev,
-            confianca: resposta.confianca,
-            margem: resposta.margem(),
+            choice: Some(canonico),
+            origin: crate::gate::DecisionOrigin::Jev,
+            confidence: resposta.confidence,
+            margin: resposta.margin(),
             motivo: None,
             ms: 0,
             tokens: 0,
@@ -508,16 +508,16 @@ impl Gate for G5 {
         IdGate::G5
     }
 
-    fn aplicavel(&self, estado: &EstadoJev) -> bool {
+    fn applies(&self, estado: &JevState) -> bool {
         // Sem candidato não há escolha a fazer.
-        !estado.produtos_candidatos.is_empty() && estado.ultima_do_cliente().is_some()
+        !estado.product_candidates.is_empty() && estado.last_from_customer().is_some()
     }
 
-    fn pergunta(&self, estado: &EstadoJev) -> Pergunta {
+    fn question(&self, estado: &JevState) -> Question {
         let mut criteria = BTreeMap::new();
-        for candidato in &estado.produtos_candidatos {
+        for candidato in &estado.product_candidates {
             let mut criterio = format!("O cliente quer o produto \"{}\"", candidato.nome);
-            let detalhe = candidato.detalhe.trim();
+            let detalhe = candidato.detail.trim();
             if !detalhe.is_empty() {
                 criterio.push_str(&format!(" ({detalhe})"));
             }
@@ -530,25 +530,25 @@ impl Gate for G5 {
              quer."
                 .to_owned(),
         );
-        Pergunta::escolha(G5_INSTRUCOES, criteria)
+        Question::choice(G5_INSTRUCOES, criteria)
     }
 
-    fn limiares(&self) -> Limiares {
+    fn thresholds(&self) -> Thresholds {
         // Só confiança, como o G4: o número de candidatos varia (1 a 10) e uma escolha certa entre
         // muitos tem margem pequena por construção. O erro grave — injetar o produto errado no
         // turno — é contido pela confiança e, principalmente, pela validação do id pelo código.
-        Limiares::novos(0.7, 0.0)
+        Thresholds::new(0.7, 0.0)
     }
 
-    fn interpretar(
+    fn interpret(
         &self,
-        estado: &EstadoJev,
-        resposta: Option<&Resposta>,
-        limiares: Limiares,
+        estado: &JevState,
+        resposta: Option<&JevResponse>,
+        limiares: Thresholds,
     ) -> Decisao {
         // "Nenhum" é abstenção explícita: os candidatos vão ao LLM, como sem o gate.
         if let Some(resposta) = resposta
-            && resposta.escolha.as_deref() == Some(G5_NENHUM)
+            && resposta.choice.as_deref() == Some(G5_NENHUM)
         {
             return Decisao::fallback(
                 IdGate::G5,
@@ -557,20 +557,20 @@ impl Gate for G5 {
             );
         }
         let mut validas: Vec<String> = estado
-            .produtos_candidatos
+            .product_candidates
             .iter()
             .map(|candidato| candidato.id.clone())
             .collect();
         validas.push(G5_NENHUM.to_owned());
         let mut motivo = None;
-        let escolha = escolha_confiavel(resposta, &validas, limiares, &mut motivo);
+        let escolha = reliable_choice(resposta, &validas, limiares, &mut motivo);
         match escolha {
             Some(escolha) => Decisao {
                 gate: IdGate::G5,
-                escolha: Some(escolha.to_owned()),
-                origem: crate::gate::OrigemDecisao::Jev,
-                confianca: resposta.map(|item| item.confianca).unwrap_or(0.0),
-                margem: resposta.map(Resposta::margem).unwrap_or(0.0),
+                choice: Some(escolha.to_owned()),
+                origin: crate::gate::DecisionOrigin::Jev,
+                confidence: resposta.map(|item| item.confidence).unwrap_or(0.0),
+                margin: resposta.map(JevResponse::margin).unwrap_or(0.0),
                 motivo: None,
                 ms: 0,
                 tokens: 0,
@@ -638,12 +638,12 @@ impl Gate for G6 {
         IdGate::G6
     }
 
-    fn aplicavel(&self, estado: &EstadoJev) -> bool {
+    fn applies(&self, estado: &JevState) -> bool {
         // Sem resposta em revisão não há o que julgar.
-        estado.resposta_candidata.is_some() && estado.ultima_do_cliente().is_some()
+        estado.candidate_response.is_some() && estado.last_from_customer().is_some()
     }
 
-    fn pergunta(&self, _estado: &EstadoJev) -> Pergunta {
+    fn question(&self, _estado: &JevState) -> Question {
         let mut criteria = BTreeMap::new();
         criteria.insert(
             G6_APROVADA.to_owned(),
@@ -679,36 +679,36 @@ impl Gate for G6 {
             "A resposta é grosseira, ofensiva, irônica ou inadequada para um atendimento."
                 .to_owned(),
         );
-        Pergunta::escolha(G6_INSTRUCOES, criteria)
+        Question::choice(G6_INSTRUCOES, criteria)
     }
 
-    fn limiares(&self) -> Limiares {
+    fn thresholds(&self) -> Thresholds {
         // Só confiança, como G4 e G5: são seis opções, e uma escolha certa entre muitas tem margem
         // pequena por construção. **0,5, e não 0,7**, porque o erro do G6 é assimétrico: deixar
         // passar uma resposta com preço inventado é erro visível ao cliente, enquanto revisar à toa
         // custa uma chamada de modelo e a segunda revisão limita o dano. Medido na HR-34: com 0,7
         // eram 27/31 respostas reprováveis pegas; com 0,5, 28/31, sem nenhum falso positivo nos 31
         // casos aprovados. Abstenção = aprova (o comportamento de hoje, sem revisão).
-        Limiares::novos(0.5, 0.0)
+        Thresholds::new(0.5, 0.0)
     }
 
-    fn interpretar(
+    fn interpret(
         &self,
-        _estado: &EstadoJev,
-        resposta: Option<&Resposta>,
-        limiares: Limiares,
+        _estado: &JevState,
+        resposta: Option<&JevResponse>,
+        limiares: Thresholds,
     ) -> Decisao {
         let mut validas: Vec<String> = vec![G6_APROVADA.to_owned()];
         validas.extend(G6_REVISAR.iter().map(|opcao| (*opcao).to_owned()));
         let mut motivo = None;
-        let escolha = escolha_confiavel(resposta, &validas, limiares, &mut motivo);
+        let escolha = reliable_choice(resposta, &validas, limiares, &mut motivo);
         match escolha {
             Some(escolha) => Decisao {
                 gate: IdGate::G6,
-                escolha: Some(escolha.to_owned()),
-                origem: crate::gate::OrigemDecisao::Jev,
-                confianca: resposta.map(|item| item.confianca).unwrap_or(0.0),
-                margem: resposta.map(Resposta::margem).unwrap_or(0.0),
+                choice: Some(escolha.to_owned()),
+                origin: crate::gate::DecisionOrigin::Jev,
+                confidence: resposta.map(|item| item.confidence).unwrap_or(0.0),
+                margin: resposta.map(JevResponse::margin).unwrap_or(0.0),
                 motivo: None,
                 ms: 0,
                 tokens: 0,
@@ -804,11 +804,11 @@ impl Gate for G7 {
         IdGate::G7
     }
 
-    fn aplicavel(&self, estado: &EstadoJev) -> bool {
-        estado.ultima_do_cliente().is_some()
+    fn applies(&self, estado: &JevState) -> bool {
+        estado.last_from_customer().is_some()
     }
 
-    fn pergunta(&self, _estado: &EstadoJev) -> Pergunta {
+    fn question(&self, _estado: &JevState) -> Question {
         let mut criteria = BTreeMap::new();
         criteria.insert(
             G7_INJECAO.to_owned(),
@@ -833,22 +833,22 @@ impl Gate for G7 {
              desobedecer. Palavras do serviço (veneno, matar, dedetizar, praga) não são abuso."
                 .to_owned(),
         );
-        Pergunta::escolha(G7_INSTRUCOES, criteria)
+        Question::choice(G7_INSTRUCOES, criteria)
     }
 
-    fn limiares(&self) -> Limiares {
+    fn thresholds(&self) -> Thresholds {
         // 0,7, e não 0,8 como o G8: medido na HR-35 (71 casos), o limiar de 0,8 deixava passar 6
         // ataques com resposta correta entre 0,72 e 0,79, e o de 0,7 recupera 5 deles **sem**
         // nenhum falso positivo nos 36 casos legítimos (a maior confiança de "abuso" num caso
         // normal foi 0,26). Abstenção = `normal`, o comportamento de hoje.
-        Limiares::novos(0.7, 0.0)
+        Thresholds::new(0.7, 0.0)
     }
 
-    fn interpretar(
+    fn interpret(
         &self,
-        _estado: &EstadoJev,
-        resposta: Option<&Resposta>,
-        limiares: Limiares,
+        _estado: &JevState,
+        resposta: Option<&JevResponse>,
+        limiares: Thresholds,
     ) -> Decisao {
         let validas = [
             G7_NORMAL.to_owned(),
@@ -856,13 +856,13 @@ impl Gate for G7 {
             G7_ABUSO.to_owned(),
         ];
         let mut motivo = None;
-        match escolha_confiavel(resposta, &validas, limiares, &mut motivo) {
+        match reliable_choice(resposta, &validas, limiares, &mut motivo) {
             Some(escolha) => Decisao {
                 gate: IdGate::G7,
-                escolha: Some(escolha.to_owned()),
-                origem: crate::gate::OrigemDecisao::Jev,
-                confianca: resposta.map(|item| item.confianca).unwrap_or(0.0),
-                margem: resposta.map(Resposta::margem).unwrap_or(0.0),
+                choice: Some(escolha.to_owned()),
+                origin: crate::gate::DecisionOrigin::Jev,
+                confidence: resposta.map(|item| item.confidence).unwrap_or(0.0),
+                margin: resposta.map(JevResponse::margin).unwrap_or(0.0),
                 motivo: None,
                 ms: 0,
                 tokens: 0,
@@ -913,17 +913,17 @@ impl Gate for G8 {
         IdGate::G8
     }
 
-    fn aplicavel(&self, estado: &EstadoJev) -> bool {
+    fn applies(&self, estado: &JevState) -> bool {
         // Sem nenhuma fala anterior do agente não há conversa para encerrar: a primeira mensagem
         // nunca fecha, e o Jev nem é perguntado (medido na HR-36: "obrigado" de abertura fechava).
-        estado.ultima_do_cliente().is_some()
+        estado.last_from_customer().is_some()
             && estado
-                .mensagens
+                .messages
                 .iter()
-                .any(|mensagem| mensagem.papel == PapelJev::Agente)
+                .any(|mensagem| mensagem.role == JevRole::Agent)
     }
 
-    fn pergunta(&self, _estado: &EstadoJev) -> Pergunta {
+    fn question(&self, _estado: &JevState) -> Question {
         let mut criteria = BTreeMap::new();
         criteria.insert(
             G8_ENCERRADA.to_owned(),
@@ -939,30 +939,30 @@ impl Gate for G8 {
              nova conversa depois de uma despedida."
                 .to_owned(),
         );
-        Pergunta::escolha(G8_INSTRUCOES, criteria)
+        Question::choice(G8_INSTRUCOES, criteria)
     }
 
-    fn limiares(&self) -> Limiares {
+    fn thresholds(&self) -> Thresholds {
         // Escolha binária, sem margem: só a confiança conta. 0,8, e não 0,7, porque fechar por
         // engano é o erro caro (ver a doc do gate).
-        Limiares::novos(0.8, 0.0)
+        Thresholds::new(0.8, 0.0)
     }
 
-    fn interpretar(
+    fn interpret(
         &self,
-        _estado: &EstadoJev,
-        resposta: Option<&Resposta>,
-        limiares: Limiares,
+        _estado: &JevState,
+        resposta: Option<&JevResponse>,
+        limiares: Thresholds,
     ) -> Decisao {
         let validas = [G8_ENCERRADA.to_owned(), G8_CONTINUA.to_owned()];
         let mut motivo = None;
-        match escolha_confiavel(resposta, &validas, limiares, &mut motivo) {
+        match reliable_choice(resposta, &validas, limiares, &mut motivo) {
             Some(escolha) => Decisao {
                 gate: IdGate::G8,
-                escolha: Some(escolha.to_owned()),
-                origem: crate::gate::OrigemDecisao::Jev,
-                confianca: resposta.map(|item| item.confianca).unwrap_or(0.0),
-                margem: resposta.map(Resposta::margem).unwrap_or(0.0),
+                choice: Some(escolha.to_owned()),
+                origin: crate::gate::DecisionOrigin::Jev,
+                confidence: resposta.map(|item| item.confidence).unwrap_or(0.0),
+                margin: resposta.map(JevResponse::margin).unwrap_or(0.0),
                 motivo: None,
                 ms: 0,
                 tokens: 0,
@@ -1000,20 +1000,20 @@ pediu.";
 /// Critério de uma opção do G9: o que o fluxo faz, o que não é ele e exemplos de fala do cliente.
 ///
 /// Os três pedaços vêm do gatilho do fluxo e já chegam cortados em
-/// [`crate::estado::MAX_CHARS_GATILHO`] (o corte é do estado, num lugar só). Campo vazio é omitido;
+/// [`crate::state::MAX_CHARS_GATILHO`] (o corte é do estado, num lugar só). Campo vazio é omitido;
 /// gatilho vazio nos três cai no nome do fluxo, para a opção nunca ir sem critério.
-pub fn criterio_do_fluxo(fluxo: &FluxoJev) -> String {
+pub fn criterio_do_fluxo(fluxo: &JevFlow) -> String {
     let mut partes: Vec<String> = Vec::new();
-    let quando = fluxo.quando.trim();
+    let quando = fluxo.when.trim();
     if !quando.is_empty() {
         partes.push(format!("Quando usar: {quando}"));
     }
-    let nao_quando = fluxo.nao_quando.trim();
+    let nao_quando = fluxo.not_when.trim();
     if !nao_quando.is_empty() {
         partes.push(format!("Não usar quando: {nao_quando}"));
     }
     let exemplos: Vec<String> = fluxo
-        .exemplos
+        .examples
         .iter()
         .map(|exemplo| exemplo.trim())
         .filter(|exemplo| !exemplo.is_empty())
@@ -1035,10 +1035,10 @@ pub fn criterio_do_fluxo(fluxo: &FluxoJev) -> String {
 }
 
 /// Critério da opção `nenhum`, com os fluxos que ficaram de fora pelo nome.
-fn criterio_nenhum(fluxos: &[FluxoJev]) -> String {
+fn criterio_nenhum(fluxos: &[JevFlow]) -> String {
     let nomes: Vec<String> = fluxos
         .iter()
-        .take(MAX_FLUXOS_LIBERADOS)
+        .take(MAX_RELEASED_FLOWS)
         .map(|fluxo| format!("\"{}\"", fluxo.nome.trim()))
         .filter(|nome| nome != "\"\"")
         .collect();
@@ -1068,53 +1068,53 @@ impl Gate for G9 {
         IdGate::G9
     }
 
-    fn aplicavel(&self, estado: &EstadoJev) -> bool {
+    fn applies(&self, estado: &JevState) -> bool {
         // Sem fluxo liberado não há escolha a fazer — e nenhuma pergunta a pagar. Acima do teto de
         // opções o gate também não pergunta: lista cortada faria o modelo escolher entre as que
         // sobraram, o que é pior que não decidir.
-        estado.ultima_do_cliente().is_some()
-            && !estado.fluxos_liberados.is_empty()
-            && estado.fluxos_liberados.len() <= MAX_FLUXOS_LIBERADOS
+        estado.last_from_customer().is_some()
+            && !estado.released_flows.is_empty()
+            && estado.released_flows.len() <= MAX_RELEASED_FLOWS
     }
 
-    fn aviso(&self, estado: &EstadoJev) -> Option<String> {
-        let total = estado.fluxos_liberados.len();
-        (total > MAX_FLUXOS_LIBERADOS).then(|| {
+    fn warning(&self, estado: &JevState) -> Option<String> {
+        let total = estado.released_flows.len();
+        (total > MAX_RELEASED_FLOWS).then(|| {
             format!(
                 "G9 não perguntado: {total} fluxos liberados para o agente, acima do teto de \
-                 {MAX_FLUXOS_LIBERADOS} opções da pergunta; o atendimento segue sem iniciar fluxo \
+                 {MAX_RELEASED_FLOWS} opções da pergunta; o atendimento segue sem iniciar fluxo \
                  pelo Jev"
             )
         })
     }
 
-    fn pergunta(&self, estado: &EstadoJev) -> Pergunta {
+    fn question(&self, estado: &JevState) -> Question {
         let mut criteria = BTreeMap::new();
-        for fluxo in estado.fluxos_liberados.iter().take(MAX_FLUXOS_LIBERADOS) {
+        for fluxo in estado.released_flows.iter().take(MAX_RELEASED_FLOWS) {
             criteria.insert(fluxo.id.clone(), criterio_do_fluxo(fluxo));
         }
         criteria.insert(
             G9_NENHUM.to_owned(),
-            criterio_nenhum(&estado.fluxos_liberados),
+            criterio_nenhum(&estado.released_flows),
         );
-        Pergunta::escolha(G9_INSTRUCOES, criteria)
+        Question::choice(G9_INSTRUCOES, criteria)
     }
 
-    fn limiares(&self) -> Limiares {
+    fn thresholds(&self) -> Thresholds {
         // Confiança 0,7 e margem 0,1, como as opções são fluxos parecidos entre si (agendar visita
         // × abrir chamado): a margem é o que impede iniciar um roteiro quando dois empatam.
-        Limiares::novos(0.7, 0.1)
+        Thresholds::new(0.7, 0.1)
     }
 
-    fn interpretar(
+    fn interpret(
         &self,
-        estado: &EstadoJev,
-        resposta: Option<&Resposta>,
-        limiares: Limiares,
+        estado: &JevState,
+        resposta: Option<&JevResponse>,
+        limiares: Thresholds,
     ) -> Decisao {
         // "Nenhum" é abstenção explícita: nada inicia e o prompt não oferece o catálogo.
         if let Some(resposta) = resposta
-            && resposta.escolha.as_deref() == Some(G9_NENHUM)
+            && resposta.choice.as_deref() == Some(G9_NENHUM)
         {
             return Decisao::fallback(
                 IdGate::G9,
@@ -1123,20 +1123,20 @@ impl Gate for G9 {
             );
         }
         let mut validas: Vec<String> = estado
-            .fluxos_liberados
+            .released_flows
             .iter()
-            .take(MAX_FLUXOS_LIBERADOS)
+            .take(MAX_RELEASED_FLOWS)
             .map(|fluxo| fluxo.id.clone())
             .collect();
         validas.push(G9_NENHUM.to_owned());
         let mut motivo = None;
-        match escolha_confiavel(resposta, &validas, limiares, &mut motivo) {
+        match reliable_choice(resposta, &validas, limiares, &mut motivo) {
             Some(escolha) => Decisao {
                 gate: IdGate::G9,
-                escolha: Some(escolha.to_owned()),
-                origem: crate::gate::OrigemDecisao::Jev,
-                confianca: resposta.map(|item| item.confianca).unwrap_or(0.0),
-                margem: resposta.map(Resposta::margem).unwrap_or(0.0),
+                choice: Some(escolha.to_owned()),
+                origin: crate::gate::DecisionOrigin::Jev,
+                confidence: resposta.map(|item| item.confidence).unwrap_or(0.0),
+                margin: resposta.map(JevResponse::margin).unwrap_or(0.0),
                 motivo: None,
                 ms: 0,
                 tokens: 0,

@@ -2,19 +2,19 @@
 //! cinco desligados — e o G9, que a configuração `[fluxos]` ligou em seguida (FX-26), sem pergunta
 //! quando o agente não tem fluxo liberado. O agente sobrepõe esse padrão pelo `jev_json`, campo a campo.
 
-use poph_jev::AjusteGates;
+use poph_jev::GateOverrides;
 use poph_types::JevGates;
 
 fn efetivos(texto: &str) -> JevGates {
-    AjusteGates::de_json(texto)
+    GateOverrides::from_json(texto)
         .expect("o ajuste é lido")
-        .sobre(JevGates::default_value())
+        .with_base(JevGates::default_value())
 }
 
 #[test]
 fn agente_sem_ajuste_herda_o_padrao() {
     // Sem nada declarado, o agente não tem ajuste: vale a configuração global (padrão).
-    assert!(AjusteGates::de_json("{}").is_none());
+    assert!(GateOverrides::from_json("{}").is_none());
     assert!(JevGates::default_value().g3);
     assert!(JevGates::default_value().g5);
     assert!(JevGates::default_value().g8);

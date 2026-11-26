@@ -24,7 +24,7 @@ use poph_agent::turno::{
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, Usage};
 use poph_fluxos::{Limites, compilar};
-use poph_jev::{ErroJev, G9_NENHUM, IdGate, JevFalso, MotorJev};
+use poph_jev::{G9_NENHUM, IdGate, JevError, JevFalso, MotorJev};
 use poph_store::{
     AgentChange, Direction, NewAgent, NewConversation, NewFlow, NewMessage, NewOrg,
     RevisionPublication, Role, Store,
@@ -515,16 +515,16 @@ async fn nenhum_e_limiar_baixo_nao_iniciam_e_nao_oferecem_catalogo() {
         let mut respostas = std::collections::BTreeMap::new();
         respostas.insert(
             "g9_iniciar_fluxo".to_owned(),
-            poph_jev::Resposta {
-                escolha: Some("agendar_visita".to_owned()),
-                confianca: 0.3,
-                ..poph_jev::Resposta::default()
+            poph_jev::JevResponse {
+                choice: Some("agendar_visita".to_owned()),
+                confidence: 0.3,
+                ..poph_jev::JevResponse::default()
             },
         );
-        Ok(poph_jev::LoteResposta {
-            respostas,
+        Ok(poph_jev::BatchResponse {
+            answers: respostas,
             tokens: 1,
-            ..poph_jev::LoteResposta::default()
+            ..poph_jev::BatchResponse::default()
         })
     }));
     let g9 = MetricasG9::proprias();
@@ -551,7 +551,7 @@ async fn jev_fora_entrega_a_reserva() {
     let cenario = Cenario::novo("reserva");
     let fluxo = cenario.fluxo(cenario.agente);
     let conversa = cenario.conversa(cenario.agente);
-    let jev = Arc::new(JevFalso::falhando(ErroJev::Rede(
+    let jev = Arc::new(JevFalso::falhando(JevError::Network(
         "sem rede no teste".to_owned(),
     )));
     let g9 = MetricasG9::proprias();

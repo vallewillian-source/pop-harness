@@ -22,8 +22,8 @@ use poph_agent::turno::{
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, Usage};
 use poph_jev::{
-    ErroJev, G7_ABUSO, G7_INJECAO, G7_RESPOSTA_PADRAO, JevFalso, LoteResposta, MotorJev,
-    Resposta as RespostaJev,
+    BatchResponse, G7_ABUSO, G7_INJECAO, G7_RESPOSTA_PADRAO, JevError, JevFalso,
+    JevResponse as RespostaJev, MotorJev,
 };
 use poph_store::{
     AgentChange, Direction, NewAgent, NewConversation, NewMessage, Page, Role, Store, TurnState,
@@ -305,11 +305,11 @@ fn motor_jev(jev: Arc<JevFalso>, gates: JevGates) -> Arc<MotorJev> {
 
 fn resposta(escolha: &str, confianca: f64) -> RespostaJev {
     let mut item = RespostaJev {
-        escolha: Some(escolha.to_owned()),
-        confianca,
+        choice: Some(escolha.to_owned()),
+        confidence: confianca,
         ..RespostaJev::default()
     };
-    item.probabilidades.insert(escolha.to_owned(), confianca);
+    item.probabilities.insert(escolha.to_owned(), confianca);
     item
 }
 
@@ -333,10 +333,10 @@ fn jev_por_texto(tabela: &[(&str, (&'static str, f64))]) -> Arc<JevFalso> {
         {
             respostas.insert("g7_injecao".to_owned(), resposta(escolha, *confianca));
         }
-        Ok(LoteResposta {
-            respostas,
+        Ok(BatchResponse {
+            answers: respostas,
             tokens: 20,
-            ..LoteResposta::default()
+            ..BatchResponse::default()
         })
     }))
 }
@@ -351,18 +351,18 @@ fn jev_por_arquivo(escolha: &'static str, confianca: f64) -> Arc<JevFalso> {
         {
             respostas.insert("g7_injecao".to_owned(), resposta(escolha, confianca));
         }
-        Ok(LoteResposta {
-            respostas,
+        Ok(BatchResponse {
+            answers: respostas,
             tokens: 20,
-            ..LoteResposta::default()
+            ..BatchResponse::default()
         })
     }))
 }
 
 fn jev_fora() -> Arc<JevFalso> {
     Arc::new(JevFalso::novo(|_pedido: &poph_jev::Pedido| {
-        Err(ErroJev::Status {
-            codigo: 503,
+        Err(JevError::Status {
+            code: 503,
             motivo: "Service Unavailable".to_owned(),
         })
     }))

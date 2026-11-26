@@ -22,7 +22,7 @@ use std::time::Duration;
 
 use poph_types::HandoffConfig;
 
-use crate::tipos::Pergunta;
+use crate::types::Question;
 
 /// Id da pergunta de risco no pedido ao Jev.
 pub const RISCO_PERGUNTA_ID: &str = "risco_imediato";
@@ -116,7 +116,7 @@ impl Orientacao {
     }
 
     /// A pergunta que vai ao Jev (uma chamada só, depois da decisão de transferir).
-    pub fn pergunta(&self) -> Pergunta {
+    pub fn pergunta(&self) -> Question {
         pergunta_risco()
     }
 
@@ -157,8 +157,8 @@ impl Orientacao {
 }
 
 /// A pergunta de risco, pronta para o pedido ao Jev.
-pub fn pergunta_risco() -> Pergunta {
-    Pergunta::escolha(INSTRUCOES, criterios())
+pub fn pergunta_risco() -> Question {
+    Question::choice(INSTRUCOES, criterios())
 }
 
 /// Critério de cada opção, como o POP Atende escreve (`_GUIDANCE_CRITERIA`).

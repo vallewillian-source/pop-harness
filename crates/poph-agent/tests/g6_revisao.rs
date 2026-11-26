@@ -25,7 +25,7 @@ use poph_agent::turno::{
     Entrada, FuturoPausa, Motor, ObservadorNulo, OpcoesTurno, Pausa, ResumoTurno,
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmError, LlmEvent, Script, Usage};
-use poph_jev::{ErroJev, JevFalso, LoteResposta, MotorJev, Resposta as RespostaJev};
+use poph_jev::{BatchResponse, JevError, JevFalso, JevResponse as RespostaJev, MotorJev};
 use poph_store::{
     AgentChange, Direction, NewAgent, NewConversation, NewMessage, Page, Role, Store, TurnState,
 };
@@ -287,16 +287,16 @@ fn jev_por_texto(tabela: &[(&str, RespostaRoteirizada)]) -> Arc<JevFalso> {
             respostas.insert(
                 "g6_revisao".to_owned(),
                 RespostaJev {
-                    escolha: Some(escolha.clone()),
-                    confianca: *confianca,
+                    choice: Some(escolha.clone()),
+                    confidence: *confianca,
                     ..RespostaJev::default()
                 },
             );
         }
-        Ok(LoteResposta {
-            respostas,
+        Ok(BatchResponse {
+            answers: respostas,
             tokens: 20,
-            ..LoteResposta::default()
+            ..BatchResponse::default()
         })
     }))
 }
@@ -304,8 +304,8 @@ fn jev_por_texto(tabela: &[(&str, RespostaRoteirizada)]) -> Arc<JevFalso> {
 /// Jev falso que falha em todas as chamadas.
 fn jev_fora() -> Arc<JevFalso> {
     Arc::new(JevFalso::novo(|_pedido: &poph_jev::Pedido| {
-        Err(ErroJev::Status {
-            codigo: 503,
+        Err(JevError::Status {
+            code: 503,
             motivo: "Service Unavailable".to_owned(),
         })
     }))
@@ -317,8 +317,8 @@ fn jev_que_falha_na_segunda(primeira: RespostaRoteirizada) -> Arc<JevFalso> {
     Arc::new(JevFalso::novo(move |_pedido: &poph_jev::Pedido| {
         let chamada = chamadas.fetch_add(1, Ordering::SeqCst);
         if chamada > 0 {
-            return Err(ErroJev::Status {
-                codigo: 503,
+            return Err(JevError::Status {
+                code: 503,
                 motivo: "Service Unavailable".to_owned(),
             });
         }
@@ -326,15 +326,15 @@ fn jev_que_falha_na_segunda(primeira: RespostaRoteirizada) -> Arc<JevFalso> {
         respostas.insert(
             "g6_revisao".to_owned(),
             RespostaJev {
-                escolha: Some(primeira.0.to_owned()),
-                confianca: primeira.1,
+                choice: Some(primeira.0.to_owned()),
+                confidence: primeira.1,
                 ..RespostaJev::default()
             },
         );
-        Ok(LoteResposta {
-            respostas,
+        Ok(BatchResponse {
+            answers: respostas,
             tokens: 20,
-            ..LoteResposta::default()
+            ..BatchResponse::default()
         })
     }))
 }
@@ -634,16 +634,16 @@ async fn medicao_do_g6() {
                 respostas.insert(
                     "g6_revisao".to_owned(),
                     RespostaJev {
-                        escolha: Some(escolha.clone()),
-                        confianca: *confianca,
+                        choice: Some(escolha.clone()),
+                        confidence: *confianca,
                         ..RespostaJev::default()
                     },
                 );
             }
-            Ok(LoteResposta {
-                respostas,
+            Ok(BatchResponse {
+                answers: respostas,
                 tokens: 20,
-                ..LoteResposta::default()
+                ..BatchResponse::default()
             })
         }));
         let gates = if ligado { so_g6() } else { JevGates::default() };

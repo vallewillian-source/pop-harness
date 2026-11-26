@@ -22,30 +22,26 @@
 
 pub mod cache;
 pub mod cliente;
-pub mod estado;
 pub mod eval;
 pub mod flags;
 pub mod gate;
 pub mod gates;
 pub mod handoff;
 pub mod motor;
-pub mod tipos;
+pub mod state;
+pub mod types;
 
-pub use cache::{CacheDecisoes, OpcoesCache};
+pub use cache::{CacheOptions, DecisionCache};
 pub use cliente::{ClienteJev, ConfigJev, JevFalso, Pedido, TransporteJev};
-pub use estado::{
-    CandidatoProduto, EstadoJev, FluxoJev, MAX_CANDIDATOS_PRODUTO, MAX_CHARS_ARQUIVO,
-    MAX_CHARS_GATILHO, MAX_CHARS_MENSAGEM, MAX_CHARS_RESPOSTA, MAX_FLUXOS_LIBERADOS, MAX_MENSAGENS,
-    MensagemJev, PapelJev,
-};
 pub use eval::{
     CasoRotulado, DetalheCaso, ErroConjunto, RelatorioEval, avaliar_conjunto, ler_conjunto,
 };
 pub use flags::{
-    AcaoG7, AjusteGates, acao_g7_do_agente, despedida_do_agente, do_agente as ajuste_do_agente,
-    resposta_g7_do_agente, resposta_segura_do_agente, situacoes_do_agente,
+    G7Action, GateOverrides, farewell_from_agent, from_agent as ajuste_do_agente,
+    g7_action_from_agent, g7_response_from_agent, handoff_situations_from_agent,
+    safe_response_from_agent,
 };
-pub use gate::{CONFIANCA_PADRAO, Decisao, Gate, Limiares, MARGEM_PADRAO, OrigemDecisao};
+pub use gate::{DEFAULT_CONFIDENCE, DEFAULT_MARGIN, Decisao, DecisionOrigin, Gate, Thresholds};
 pub use gates::{
     G1, G1_CONTINUAR, G1_TRANSFERIR, G2, G2_ESPERAR, G2_PROCESSAR, G3, G3_AMBOS, G3_BASE, G3_NADA,
     G3_PRODUTO, G3_TUDO, G4, G5, G5_NENHUM, G6, G6_APROVADA, G6_REVISAR, G6_REVISAR_ESCOPO,
@@ -61,4 +57,11 @@ pub use handoff::{
 pub use motor::{
     AvaliadorGates, MotorJev, OpcoesJev, RelatoChamada, ResultadoJev, TEMPO_MAXIMO_PADRAO,
 };
-pub use tipos::{ErroJev, IdGate, LoteResposta, Pergunta, Resposta, TipoPergunta, UsageTokens};
+pub use state::{
+    JevFlow, JevMessage, JevRole, JevState, MAX_CANDIDATE_RESPONSE_CHARS, MAX_FILE_TEXT_CHARS,
+    MAX_MESSAGE_CHARS, MAX_MESSAGES, MAX_PRODUCT_CANDIDATES, MAX_RELEASED_FLOWS, MAX_TRIGGER_CHARS,
+    ProductCandidate,
+};
+pub use types::{
+    BatchResponse, IdGate, JevError, JevResponse, Question, QuestionType, UsageTokens,
+};

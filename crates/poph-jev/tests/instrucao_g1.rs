@@ -14,7 +14,7 @@
 
 use std::path::Path;
 
-use poph_jev::{EstadoJev, G1, G1_CONTINUAR, G1_TRANSFERIR, Gate, MensagemJev, Pergunta};
+use poph_jev::{G1, G1_CONTINUAR, G1_TRANSFERIR, Gate, JevMessage, JevState, Question};
 
 /// `_INSTRUCTIONS` de `core/jev/human_handoff.py`.
 const INSTRUCOES_PRODUCAO: &str = "Julgue se a ÚLTIMA mensagem do cliente, lida no contexto das mensagens anteriores e das \
@@ -70,11 +70,11 @@ fn criterio_continuar_esperado() -> String {
     format!("{CRITERIO_CONTINUAR_PRODUCAO}{ADICAO_PRECO}")
 }
 
-fn pergunta_do_g1() -> Pergunta {
-    let estado = EstadoJev::novo("whatsapp")
-        .com_mensagens([MensagemJev::cliente("quero falar com um atendente")])
-        .com_handoff(vec!["segunda via de nota fiscal".to_owned()], true);
-    G1.pergunta(&estado)
+fn pergunta_do_g1() -> Question {
+    let estado = JevState::new("whatsapp")
+        .with_messages([JevMessage::from_customer("quero falar com um atendente")])
+        .with_handoff(vec!["segunda via de nota fiscal".to_owned()], true);
+    G1.question(&estado)
 }
 
 #[test]
@@ -85,7 +85,7 @@ fn instrucao_do_g1_e_byte_a_byte_a_de_producao() {
         "a instrução do G1 divergiu da de produção"
     );
     // O gate é escolha binária: nenhuma opção a mais entra por engano.
-    assert_eq!(pergunta.criteria.len(), 2);
+    assert_eq!(pergunta.rubric.len(), 2);
 }
 
 /// A trava da HR-29b: as criteria são **produção + os três acréscimos declarados**, nada mais. Se um
@@ -94,12 +94,12 @@ fn instrucao_do_g1_e_byte_a_byte_a_de_producao() {
 fn criteria_do_g1_sao_as_de_producao_com_os_tres_acrescimos() {
     let pergunta = pergunta_do_g1();
     let transferir = pergunta
-        .criteria
+        .rubric
         .get(G1_TRANSFERIR)
         .cloned()
         .unwrap_or_default();
     let continuar = pergunta
-        .criteria
+        .rubric
         .get(G1_CONTINUAR)
         .cloned()
         .unwrap_or_default();
@@ -143,7 +143,7 @@ fn os_tres_pontos_da_hr_29a_continuam_corrigidos() {
     // A criteria como o modelo a recebe (produção + acréscimos da HR-29b): a frase da dúvida tem de
     // continuar no fim dela.
     let transferir = pergunta
-        .criteria
+        .rubric
         .get(G1_TRANSFERIR)
         .cloned()
         .unwrap_or_default();

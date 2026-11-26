@@ -739,7 +739,7 @@ async fn jev_falha_reserva_inicia_permitido_e_recusa_nao_liberado() {
     let permitido = c.criar_fluxo("agendar_visita", "Agendar visita", VISITA, true);
     c.criar_fluxo("triagem_suporte", "Triagem de suporte", TRIAGEM, false);
     let conversa = c.conversa();
-    let jev = Arc::new(JevFalso::falhando(poph_jev::ErroJev::Rede(
+    let jev = Arc::new(JevFalso::falhando(poph_jev::JevError::Network(
         "indisponível no teste".into(),
     )));
     let (motor, provedor) = c.motor(

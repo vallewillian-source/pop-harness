@@ -33,7 +33,8 @@ use poph_agent::turno::{
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, ToolCall, Usage};
 use poph_jev::{
-    ErroJev, G3_BASE, G3_NADA, IdGate, JevFalso, LoteResposta, MotorJev, Resposta as RespostaJev,
+    BatchResponse, G3_BASE, G3_NADA, IdGate, JevError, JevFalso, JevResponse as RespostaJev,
+    MotorJev,
 };
 use poph_store::{Direction, NewAgent, NewConversation, NewMessage, NewOrg, Role, Store};
 use poph_types::{
@@ -577,18 +578,18 @@ async fn g3_confianca_baixa_cai_no_comportamento_de_hoje() {
         let mut respostas = BTreeMap::new();
         for id in pedido.perguntas.keys() {
             let mut resposta = RespostaJev {
-                escolha: Some(G3_NADA.to_owned()),
-                confianca: 0.4,
+                choice: Some(G3_NADA.to_owned()),
+                confidence: 0.4,
                 ..RespostaJev::default()
             };
-            resposta.probabilidades.insert(G3_NADA.to_owned(), 0.4);
-            resposta.probabilidades.insert(G3_BASE.to_owned(), 0.4);
+            resposta.probabilities.insert(G3_NADA.to_owned(), 0.4);
+            resposta.probabilities.insert(G3_BASE.to_owned(), 0.4);
             respostas.insert(id.clone(), resposta);
         }
-        Ok(LoteResposta {
-            respostas,
+        Ok(BatchResponse {
+            answers: respostas,
             tokens: 7,
-            ..LoteResposta::default()
+            ..BatchResponse::default()
         })
     }));
     let (motor, provedor) = cenario.motor(
@@ -611,8 +612,8 @@ async fn g3_confianca_baixa_cai_no_comportamento_de_hoje() {
 #[tokio::test]
 async fn g3_jev_fora_do_ar_cai_no_comportamento_de_hoje() {
     let cenario = Cenario::novo("fora");
-    let jev = Arc::new(JevFalso::falhando(ErroJev::Status {
-        codigo: 503,
+    let jev = Arc::new(JevFalso::falhando(JevError::Status {
+        code: 503,
         motivo: "Service Unavailable".to_owned(),
     }));
     let (motor, provedor) = cenario.motor(

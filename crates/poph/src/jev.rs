@@ -52,7 +52,7 @@ fn rodar_eval(
     ambiente: &config::Ambiente,
     args: EvalArgs,
 ) -> Result<(), String> {
-    let gate = IdGate::de_texto(&args.gate).ok_or_else(|| {
+    let gate = IdGate::from_text(&args.gate).ok_or_else(|| {
         format!(
             "gate `{}` desconhecido: use g1, g2, g3, g4, g5, g6, g7, g8 ou g9",
             args.gate

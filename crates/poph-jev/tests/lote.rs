@@ -9,22 +9,22 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use poph_jev::{
-    AjusteGates, AvaliadorGates, ErroJev, EstadoJev, G1_CONTINUAR, G1_TRANSFERIR, G2_PROCESSAR,
-    G3_BASE, G3_NADA, IdGate, JevFalso, MensagemJev, MotorJev, OpcoesJev, OrigemDecisao,
+    AvaliadorGates, DecisionOrigin, G1_CONTINUAR, G1_TRANSFERIR, G2_PROCESSAR, G3_BASE, G3_NADA,
+    GateOverrides, IdGate, JevError, JevFalso, JevMessage, JevState, MotorJev, OpcoesJev,
 };
 use poph_types::JevGates;
 
 /// Estado que faz G1, G2 e G3 se aplicarem (e G4, com dois departamentos).
-fn estado() -> EstadoJev {
-    EstadoJev::novo("cli")
-        .com_mensagens([
-            MensagemJev::cliente("oi, boa tarde"),
-            MensagemJev::agente("Boa tarde! Como posso ajudar?"),
-            MensagemJev::cliente("queria saber o prazo de entrega"),
+fn estado() -> JevState {
+    JevState::new("cli")
+        .with_messages([
+            JevMessage::from_customer("oi, boa tarde"),
+            JevMessage::from_agent("Boa tarde! Como posso ajudar?"),
+            JevMessage::from_customer("queria saber o prazo de entrega"),
         ])
-        .com_handoff(vec!["cliente pede segunda via".to_owned()], true)
-        .com_capacidades(true, true)
-        .com_departamentos(vec!["Comercial".to_owned(), "Suporte".to_owned()])
+        .with_handoff(vec!["cliente pede segunda via".to_owned()], true)
+        .with_capabilities(true, true)
+        .with_departments(vec!["Comercial".to_owned(), "Suporte".to_owned()])
 }
 
 fn gates(g1: bool, g2: bool, g3: bool, g4: bool) -> JevGates {
@@ -79,7 +79,7 @@ async fn tres_gates_ligados_geram_uma_requisicao_e_distribuem_as_respostas() {
         resultado
             .decisoes
             .iter()
-            .all(|decisao| decisao.origem == OrigemDecisao::Jev)
+            .all(|decisao| decisao.origin == DecisionOrigin::Jev)
     );
 }
 
@@ -132,8 +132,8 @@ async fn cache_evita_pergunta_repetida_no_mesmo_estado() {
     assert_eq!(primeiro.escolha(IdGate::G1), Some(G1_TRANSFERIR));
     assert_eq!(segundo.escolha(IdGate::G1), Some(G1_TRANSFERIR));
     assert_eq!(
-        segundo.decisao(IdGate::G1).unwrap().origem,
-        OrigemDecisao::Cache
+        segundo.decisao(IdGate::G1).unwrap().origin,
+        DecisionOrigin::Cache
     );
     assert_eq!(segundo.chamada.decididas_por_cache, 1);
 }
@@ -148,7 +148,7 @@ async fn estado_diferente_nao_reaproveita_a_decisao() {
     let avaliador = motor(Arc::clone(&jev), gates(true, false, false, false));
 
     avaliador.avaliar(estado(), None).await;
-    let outro = estado().com_mensagens([MensagemJev::cliente("quero falar com um atendente")]);
+    let outro = estado().with_messages([JevMessage::from_customer("quero falar com um atendente")]);
     avaliador.avaliar(outro, None).await;
 
     assert_eq!(jev.chamadas(), 2);
@@ -157,8 +157,8 @@ async fn estado_diferente_nao_reaproveita_a_decisao() {
 /// Aceite: timeout e erro fazem todos os gates caírem no fallback — o turno não é derrubado.
 #[tokio::test]
 async fn falha_do_jev_leva_todos_os_gates_ao_fallback() {
-    let jev = Arc::new(JevFalso::falhando(ErroJev::Status {
-        codigo: 503,
+    let jev = Arc::new(JevFalso::falhando(JevError::Status {
+        code: 503,
         motivo: "Service Unavailable".to_owned(),
     }));
     let avaliador = motor(Arc::clone(&jev), gates(true, true, false, false));
@@ -175,7 +175,7 @@ async fn falha_do_jev_leva_todos_os_gates_ao_fallback() {
         resultado
             .decisoes
             .iter()
-            .all(|decisao| decisao.origem == OrigemDecisao::Fallback)
+            .all(|decisao| decisao.origin == DecisionOrigin::Fallback)
     );
     // Fallback é o comportamento sem o Jev, não uma escolha inventada.
     assert_eq!(resultado.escolha(IdGate::G1), Some(G1_CONTINUAR));
@@ -213,8 +213,8 @@ async fn prazo_do_lote_estourado_cai_no_fallback() {
             .contains("não respondeu")
     );
     assert_eq!(
-        resultado.decisao(IdGate::G1).unwrap().origem,
-        OrigemDecisao::Fallback
+        resultado.decisao(IdGate::G1).unwrap().origin,
+        DecisionOrigin::Fallback
     );
 }
 
@@ -226,17 +226,17 @@ async fn resposta_ambigua_cai_no_fallback_com_o_motivo() {
         for id in pedido.perguntas.keys() {
             respostas.insert(
                 id.clone(),
-                poph_jev::Resposta {
-                    escolha: Some("opcao_que_nao_existe".to_owned()),
-                    confianca: 0.9,
-                    ..poph_jev::Resposta::default()
+                poph_jev::JevResponse {
+                    choice: Some("opcao_que_nao_existe".to_owned()),
+                    confidence: 0.9,
+                    ..poph_jev::JevResponse::default()
                 },
             );
         }
-        Ok(poph_jev::LoteResposta {
-            respostas,
+        Ok(poph_jev::BatchResponse {
+            answers: respostas,
             tokens: 3,
-            ..poph_jev::LoteResposta::default()
+            ..poph_jev::BatchResponse::default()
         })
     }));
     let avaliador = motor(Arc::clone(&jev), gates(true, false, false, false));
@@ -244,7 +244,7 @@ async fn resposta_ambigua_cai_no_fallback_com_o_motivo() {
     let resultado = avaliador.avaliar(estado(), None).await;
     let decisao = resultado.decisao(IdGate::G1).expect("decisão do G1");
 
-    assert_eq!(decisao.origem, OrigemDecisao::Fallback);
+    assert_eq!(decisao.origin, DecisionOrigin::Fallback);
     assert!(
         decisao
             .motivo
@@ -255,7 +255,7 @@ async fn resposta_ambigua_cai_no_fallback_com_o_motivo() {
         decisao.motivo
     );
     assert_eq!(
-        decisao.confianca, 0.9,
+        decisao.confidence, 0.9,
         "a confiança do Jev fica registrada mesmo no fallback"
     );
 }
@@ -268,17 +268,17 @@ async fn confianca_abaixo_do_limiar_e_abstencao() {
         for id in pedido.perguntas.keys() {
             respostas.insert(
                 id.clone(),
-                poph_jev::Resposta {
-                    escolha: Some(G1_TRANSFERIR.to_owned()),
-                    confianca: 0.55,
-                    ..poph_jev::Resposta::default()
+                poph_jev::JevResponse {
+                    choice: Some(G1_TRANSFERIR.to_owned()),
+                    confidence: 0.55,
+                    ..poph_jev::JevResponse::default()
                 },
             );
         }
-        Ok(poph_jev::LoteResposta {
-            respostas,
+        Ok(poph_jev::BatchResponse {
+            answers: respostas,
             tokens: 1,
-            ..poph_jev::LoteResposta::default()
+            ..poph_jev::BatchResponse::default()
         })
     }));
     let avaliador = motor(Arc::clone(&jev), gates(true, false, false, false));
@@ -286,7 +286,7 @@ async fn confianca_abaixo_do_limiar_e_abstencao() {
     let resultado = avaliador.avaliar(estado(), None).await;
     let decisao = resultado.decisao(IdGate::G1).unwrap();
 
-    assert_eq!(decisao.origem, OrigemDecisao::Fallback);
+    assert_eq!(decisao.origin, DecisionOrigin::Fallback);
     assert!(
         decisao
             .motivo
@@ -305,7 +305,7 @@ async fn gate_que_nao_se_aplica_nao_e_perguntado() {
         G1_TRANSFERIR,
     )])));
     let avaliador = motor(Arc::clone(&jev), gates(true, false, false, false));
-    let sem_handoff = estado().com_handoff(Vec::new(), false);
+    let sem_handoff = estado().with_handoff(Vec::new(), false);
 
     let resultado = avaliador.avaliar(sem_handoff, None).await;
 
@@ -319,7 +319,7 @@ async fn ajuste_do_agente_sobrepoe_so_o_que_declara() {
     let jev = Arc::new(JevFalso::com_escolhas(BTreeMap::new()));
     let avaliador = motor(Arc::clone(&jev), gates(true, true, false, false));
 
-    let ajuste = AjusteGates::de_json(r#"{"gates": {"g1": false}}"#).expect("ajuste do agente");
+    let ajuste = GateOverrides::from_json(r#"{"gates": {"g1": false}}"#).expect("ajuste do agente");
     let efetivos = avaliador.gates_efetivos(Some(ajuste));
 
     assert!(!efetivos.g1, "o agente desligou o G1");
@@ -327,7 +327,7 @@ async fn ajuste_do_agente_sobrepoe_so_o_que_declara() {
     assert!(!efetivos.g3);
 
     // `{"ativo": false}` desliga tudo no agente.
-    let desligado = AjusteGates::de_json(r#"{"ativo": false}"#).unwrap();
+    let desligado = GateOverrides::from_json(r#"{"ativo": false}"#).unwrap();
     assert_eq!(
         avaliador.gates_efetivos(Some(desligado)),
         JevGates::default()

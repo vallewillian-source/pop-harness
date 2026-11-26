@@ -36,7 +36,7 @@ use poph_agent::turno::{
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, Usage};
 use poph_jev::{
-    ErroJev, G8_DESPEDIDA_PADRAO, JevFalso, LoteResposta, MotorJev, Resposta as RespostaJev,
+    BatchResponse, G8_DESPEDIDA_PADRAO, JevError, JevFalso, JevResponse as RespostaJev, MotorJev,
 };
 use poph_store::{
     AgentChange, ConversationStatus, Direction, NewAgent, NewConversation, NewMessage, Page, Role,
@@ -387,17 +387,17 @@ fn jev_por_texto(tabela: &[(&str, &[RespostaRoteirizada])]) -> Arc<JevFalso> {
                 respostas.insert(
                     id.clone(),
                     RespostaJev {
-                        escolha: Some(escolha.clone()),
-                        confianca: *confianca,
+                        choice: Some(escolha.clone()),
+                        confidence: *confianca,
                         ..RespostaJev::default()
                     },
                 );
             }
         }
-        Ok(LoteResposta {
-            respostas,
+        Ok(BatchResponse {
+            answers: respostas,
             tokens: 12,
-            ..LoteResposta::default()
+            ..BatchResponse::default()
         })
     }))
 }
@@ -668,7 +668,7 @@ async fn g8_falha_ou_duvida_do_jev_segue_como_hoje() {
     let casos: Vec<(&str, Arc<JevFalso>)> = vec![
         (
             "jev fora do ar",
-            Arc::new(JevFalso::falhando(ErroJev::TempoEsgotado { ms: 8000 })),
+            Arc::new(JevFalso::falhando(JevError::TimedOut { ms: 8000 })),
         ),
         (
             "confiança 0,79",

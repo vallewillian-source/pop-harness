@@ -11,7 +11,7 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use poph_jev::{ClienteJev, ConfigJev, ErroJev, LoteResposta, Pedido, Pergunta, TransporteJev};
+use poph_jev::{BatchResponse, ClienteJev, ConfigJev, JevError, Pedido, Question, TransporteJev};
 use poph_types::{BaseMetrics, JevConfig, Registry, Secret};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::{ServerConfig, ServerConnection, StreamOwned};
@@ -49,7 +49,7 @@ fn pedido() -> Pedido {
     let mut perguntas = BTreeMap::new();
     perguntas.insert(
         "g1_transferir".to_owned(),
-        Pergunta::escolha("transfere?", criterios),
+        Question::choice("transfere?", criterios),
     );
     Pedido {
         estado: serde_json::json!({"mensagens": [{"texto": "quero falar com alguém"}]}),
@@ -140,11 +140,11 @@ async fn https_funciona_quando_o_certificado_e_confiavel() {
         .com_raiz_de_teste(CA)
         .expect("raiz de teste aceita");
 
-    let lote: LoteResposta = cliente.julgar(pedido()).await.expect("responde por https");
+    let lote: BatchResponse = cliente.julgar(pedido()).await.expect("responde por https");
 
-    let resposta = &lote.respostas["g1_transferir"];
-    assert_eq!(resposta.escolha.as_deref(), Some("continuar_agente"));
-    assert!((resposta.confianca - 0.95).abs() < 0.001);
+    let resposta = &lote.answers["g1_transferir"];
+    assert_eq!(resposta.choice.as_deref(), Some("continuar_agente"));
+    assert!((resposta.confidence - 0.95).abs() < 0.001);
     assert_eq!(lote.tokens, 24);
     assert_eq!(conexoes.load(Ordering::SeqCst), 1);
 }
@@ -160,14 +160,11 @@ async fn certificado_de_ca_desconhecida_e_recusado_sem_retentativa() {
         .await
         .expect_err("certificado não confiável");
 
-    assert!(matches!(erro, ErroJev::Tls(_)), "erro: {erro:?}");
+    assert!(matches!(erro, JevError::Tls(_)), "erro: {erro:?}");
     let texto = erro.to_string();
     assert!(texto.contains("TLS"), "mensagem: {texto}");
     // Definitivo: a política de retentativa não pode repetir certificado recusado.
-    assert!(
-        !erro.eh_transitorio(),
-        "erro de TLS não pode ser transitório"
-    );
+    assert!(!erro.is_transient(), "erro de TLS não pode ser transitório");
     assert_eq!(
         conexoes.load(Ordering::SeqCst),
         1,
@@ -188,8 +185,8 @@ async fn nome_do_servidor_diferente_do_certificado_e_recusado() {
 
     let erro = cliente.julgar(pedido()).await.expect_err("nome errado");
 
-    assert!(matches!(erro, ErroJev::Tls(_)), "erro: {erro:?}");
-    assert!(!erro.eh_transitorio());
+    assert!(matches!(erro, JevError::Tls(_)), "erro: {erro:?}");
+    assert!(!erro.is_transient());
 }
 
 #[tokio::test]
@@ -214,12 +211,12 @@ async fn http_continua_funcionando() {
     let lote = cliente.julgar(pedido()).await.expect("responde por http");
 
     assert_eq!(
-        lote.respostas["g1_transferir"].escolha.as_deref(),
+        lote.answers["g1_transferir"].choice.as_deref(),
         Some("continuar_agente")
     );
     assert!(
-        lote.respostas["g1_transferir"]
-            .probabilidades
+        lote.answers["g1_transferir"]
+            .probabilities
             .contains_key("continuar_agente")
     );
 }

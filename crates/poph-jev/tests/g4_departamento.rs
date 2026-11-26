@@ -10,14 +10,14 @@
 use std::collections::BTreeMap;
 
 use poph_jev::{
-    AvaliadorGates, EstadoJev, G4, Gate, IdGate, JevFalso, LoteResposta, MensagemJev, MotorJev,
-    OrigemDecisao, Pedido, Resposta, casar_candidato, eval::ajuste_de_gate,
+    AvaliadorGates, BatchResponse, DecisionOrigin, G4, Gate, IdGate, JevFalso, JevMessage,
+    JevResponse, JevState, MotorJev, Pedido, casar_candidato, eval::ajuste_de_gate,
 };
 
-fn estado(departamentos: &[&str], texto: &str) -> EstadoJev {
-    EstadoJev::novo("whatsapp")
-        .com_mensagens(vec![MensagemJev::cliente(texto)])
-        .com_departamentos(
+fn estado(departamentos: &[&str], texto: &str) -> JevState {
+    JevState::new("whatsapp")
+        .with_messages(vec![JevMessage::from_customer(texto)])
+        .with_departments(
             departamentos
                 .iter()
                 .map(|nome| (*nome).to_owned())
@@ -25,13 +25,13 @@ fn estado(departamentos: &[&str], texto: &str) -> EstadoJev {
         )
 }
 
-fn resposta(escolha: &str, confianca: f64) -> Resposta {
-    let mut item = Resposta {
-        escolha: Some(escolha.to_owned()),
-        confianca,
-        ..Resposta::default()
+fn resposta(escolha: &str, confianca: f64) -> JevResponse {
+    let mut item = JevResponse {
+        choice: Some(escolha.to_owned()),
+        confidence: confianca,
+        ..JevResponse::default()
     };
-    item.probabilidades.insert(escolha.to_owned(), confianca);
+    item.probabilities.insert(escolha.to_owned(), confianca);
     item
 }
 
@@ -47,22 +47,22 @@ fn candidatos() -> Vec<String> {
 /// Uma opção por departamento candidato, no id estável do gate.
 #[test]
 fn pergunta_tem_uma_opcao_por_departamento() {
-    let pergunta = G4.pergunta(&estado(
+    let pergunta = G4.question(&estado(
         &["Comercial", "Suporte", "Financeiro"],
         "chegou quebrado",
     ));
-    assert_eq!(pergunta.tipo, poph_jev::TipoPergunta::Choice);
+    assert_eq!(pergunta.tipo, poph_jev::QuestionType::Choice);
     assert!(!pergunta.instructions.is_empty());
-    let opcoes: Vec<&String> = pergunta.criteria.keys().collect();
+    let opcoes: Vec<&String> = pergunta.rubric.keys().collect();
     assert_eq!(opcoes, vec!["Comercial", "Financeiro", "Suporte"]);
 }
 
 /// Com menos de dois candidatos não há escolha a fazer: o gate não se aplica.
 #[test]
 fn sem_escolha_possivel_o_gate_nao_se_aplica() {
-    assert!(!G4.aplicavel(&estado(&["Suporte"], "chegou quebrado")));
-    assert!(!G4.aplicavel(&estado(&[], "chegou quebrado")));
-    assert!(G4.aplicavel(&estado(&["Suporte", "Comercial"], "chegou quebrado")));
+    assert!(!G4.applies(&estado(&["Suporte"], "chegou quebrado")));
+    assert!(!G4.applies(&estado(&[], "chegou quebrado")));
+    assert!(G4.applies(&estado(&["Suporte", "Comercial"], "chegou quebrado")));
 }
 
 // ───────────────────────────── decisão ─────────────────────────────
@@ -74,11 +74,11 @@ fn escolha_valida_vira_decisao_confiavel() {
         &["Comercial", "Suporte", "Financeiro"],
         "o produto chegou quebrado",
     );
-    let decisao = G4.interpretar(&estado, Some(&resposta("Suporte", 0.94)), G4.limiares());
-    assert_eq!(decisao.escolha.as_deref(), Some("Suporte"));
-    assert_eq!(decisao.origem, OrigemDecisao::Jev);
+    let decisao = G4.interpret(&estado, Some(&resposta("Suporte", 0.94)), G4.thresholds());
+    assert_eq!(decisao.choice.as_deref(), Some("Suporte"));
+    assert_eq!(decisao.origin, DecisionOrigin::Jev);
     assert_eq!(decisao.motivo, None);
-    assert!(decisao.confiavel());
+    assert!(decisao.is_reliable());
 }
 
 /// O modelo respondendo em caixa diferente casa com o nome cadastrado (e o registro mostra o
@@ -89,9 +89,9 @@ fn escolha_com_caixa_diferente_vira_o_nome_canonico() {
         &["Comercial", "Suporte", "Financeiro"],
         "quero a segunda via do boleto",
     );
-    let decisao = G4.interpretar(&estado, Some(&resposta("financeiro", 0.9)), G4.limiares());
-    assert_eq!(decisao.escolha.as_deref(), Some("Financeiro"));
-    assert!(decisao.confiavel());
+    let decisao = G4.interpret(&estado, Some(&resposta("financeiro", 0.9)), G4.thresholds());
+    assert_eq!(decisao.choice.as_deref(), Some("Financeiro"));
+    assert!(decisao.is_reliable());
 }
 
 /// Nome que não é candidato **nunca** vira decisão, por mais confiança que o modelo declare.
@@ -101,9 +101,9 @@ fn escolha_fora_das_opcoes_cai_no_fallback_com_motivo() {
         &["Comercial", "Suporte", "Financeiro"],
         "quero falar do contrato",
     );
-    let decisao = G4.interpretar(&estado, Some(&resposta("Jurídico", 0.99)), G4.limiares());
-    assert_eq!(decisao.escolha, None);
-    assert_eq!(decisao.origem, OrigemDecisao::Fallback);
+    let decisao = G4.interpret(&estado, Some(&resposta("Jurídico", 0.99)), G4.thresholds());
+    assert_eq!(decisao.choice, None);
+    assert_eq!(decisao.origin, DecisionOrigin::Fallback);
     let motivo = decisao.motivo.unwrap_or_default();
     assert!(
         motivo.contains("não é um departamento ativo"),
@@ -119,9 +119,9 @@ fn confianca_abaixo_do_limiar_cai_no_fallback() {
         &["Comercial", "Suporte", "Financeiro"],
         "quero negociar um desconto",
     );
-    let decisao = G4.interpretar(&estado, Some(&resposta("Comercial", 0.61)), G4.limiares());
-    assert_eq!(decisao.escolha, None);
-    assert_eq!(decisao.origem, OrigemDecisao::Fallback);
+    let decisao = G4.interpret(&estado, Some(&resposta("Comercial", 0.61)), G4.thresholds());
+    assert_eq!(decisao.choice, None);
+    assert_eq!(decisao.origin, DecisionOrigin::Fallback);
     let motivo = decisao.motivo.unwrap_or_default();
     assert!(motivo.contains("confiança 0.61"), "motivo: {motivo}");
 }
@@ -130,19 +130,19 @@ fn confianca_abaixo_do_limiar_cai_no_fallback() {
 #[test]
 fn sem_resposta_cai_no_fallback() {
     let estado = estado(&["Comercial", "Suporte"], "oi");
-    let decisao = G4.interpretar(&estado, None, G4.limiares());
-    assert_eq!(decisao.escolha, None);
-    assert_eq!(decisao.origem, OrigemDecisao::Fallback);
+    let decisao = G4.interpret(&estado, None, G4.thresholds());
+    assert_eq!(decisao.choice, None);
+    assert_eq!(decisao.origin, DecisionOrigin::Fallback);
     assert!(decisao.motivo.unwrap_or_default().contains("sem resposta"));
 
-    let sem_escolha = Resposta {
-        escolha: None,
-        confianca: 0.9,
-        ..Resposta::default()
+    let sem_escolha = JevResponse {
+        choice: None,
+        confidence: 0.9,
+        ..JevResponse::default()
     };
-    let decisao = G4.interpretar(&estado, Some(&sem_escolha), G4.limiares());
-    assert_eq!(decisao.escolha, None);
-    assert!(!decisao.confiavel());
+    let decisao = G4.interpret(&estado, Some(&sem_escolha), G4.thresholds());
+    assert_eq!(decisao.choice, None);
+    assert!(!decisao.is_reliable());
 }
 
 // ───────────────────────────── casamento de nomes ─────────────────────────────
@@ -179,17 +179,17 @@ async fn lote_do_g4_e_o_fallback_preserva_a_escolha_crua() {
     let jev = std::sync::Arc::new(JevFalso::novo(|pedido: &Pedido| {
         assert_eq!(
             pedido.perguntas.keys().collect::<Vec<_>>(),
-            vec![IdGate::G4.pergunta_id()]
+            vec![IdGate::G4.question_id()]
         );
         let mut respostas = BTreeMap::new();
         respostas.insert(
-            IdGate::G4.pergunta_id().to_owned(),
+            IdGate::G4.question_id().to_owned(),
             resposta("Marketing", 0.95),
         );
-        Ok(LoteResposta {
-            respostas,
+        Ok(BatchResponse {
+            answers: respostas,
             tokens: 7,
-            ..LoteResposta::default()
+            ..BatchResponse::default()
         })
     }));
     let motor = MotorJev::novo(jev, poph_types::JevGates::default(), "jev-latest");
@@ -204,13 +204,13 @@ async fn lote_do_g4_e_o_fallback_preserva_a_escolha_crua() {
         .await;
 
     let decisao = resultado.decisao(IdGate::G4).expect("o G4 rodou");
-    assert_eq!(decisao.escolha, None);
-    assert_eq!(decisao.origem, OrigemDecisao::Fallback);
+    assert_eq!(decisao.choice, None);
+    assert_eq!(decisao.origin, DecisionOrigin::Fallback);
     // O que o modelo respondeu fica registrado, mesmo recusado.
     assert_eq!(
         resultado
             .resposta(IdGate::G4)
-            .and_then(|bruta| bruta.escolha.as_deref()),
+            .and_then(|bruta| bruta.choice.as_deref()),
         Some("Marketing")
     );
 }
@@ -219,14 +219,14 @@ async fn lote_do_g4_e_o_fallback_preserva_a_escolha_crua() {
 #[tokio::test]
 async fn gate_desligado_nao_decide_nada() {
     let jev = std::sync::Arc::new(JevFalso::com_escolhas(BTreeMap::from([(
-        IdGate::G4.pergunta_id().to_owned(),
+        IdGate::G4.question_id().to_owned(),
         "Suporte".to_owned(),
     )])));
     let motor = MotorJev::novo(jev, poph_types::JevGates::default(), "jev-latest");
     let resultado = motor
         .avaliar(
             estado(&["Comercial", "Suporte"], "chegou quebrado"),
-            Some(poph_jev::AjusteGates::default()),
+            Some(poph_jev::GateOverrides::default()),
         )
         .await;
     assert!(resultado.decisao(IdGate::G4).is_none());

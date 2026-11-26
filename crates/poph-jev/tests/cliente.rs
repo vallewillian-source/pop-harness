@@ -9,7 +9,7 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use poph_jev::{ClienteJev, ConfigJev, ErroJev, Pedido, Resposta, TipoPergunta, TransporteJev};
+use poph_jev::{ClienteJev, ConfigJev, JevError, JevResponse, Pedido, QuestionType, TransporteJev};
 use poph_types::{BaseMetrics, JevConfig, Registry, Secret};
 
 const CHAVE: &str = "chave-do-jev-nao-pode-vazar";
@@ -121,7 +121,7 @@ fn pedido() -> Pedido {
     let mut perguntas = std::collections::BTreeMap::new();
     perguntas.insert(
         "g1_transferir".to_owned(),
-        poph_jev::Pergunta::escolha("julgue", criterios),
+        poph_jev::Question::choice("julgue", criterios),
     );
     Pedido {
         estado: serde_json::json!({"canal": "cli"}),
@@ -139,10 +139,10 @@ async fn envia_o_contrato_e_le_a_resposta() {
 
     let lote = cliente.julgar(pedido()).await.expect("resposta");
 
-    let resposta = lote.respostas.get("g1_transferir").expect("resposta do G1");
-    assert_eq!(resposta.escolha.as_deref(), Some("transferir_agora"));
-    assert_eq!(resposta.confianca, 0.9);
-    assert!((resposta.margem() - 0.8).abs() < 1e-9);
+    let resposta = lote.answers.get("g1_transferir").expect("resposta do G1");
+    assert_eq!(resposta.choice.as_deref(), Some("transferir_agora"));
+    assert_eq!(resposta.confidence, 0.9);
+    assert!((resposta.margin() - 0.8).abs() < 1e-9);
     assert_eq!(lote.tokens, 21);
 
     let pedidos = recebidas.lock().expect("registro").clone();
@@ -173,9 +173,9 @@ async fn retenta_uma_vez_em_erro_transitorio() {
         .expect("a segunda tentativa passa");
 
     assert_eq!(
-        lote.respostas
+        lote.answers
             .get("g1_transferir")
-            .and_then(|r| r.escolha.clone()),
+            .and_then(|r| r.choice.clone()),
         Some("continuar_agente".to_owned())
     );
     assert_eq!(recebidas.lock().expect("registro").len(), 2);
@@ -188,7 +188,7 @@ async fn nao_retenta_em_erro_definitivo_e_nao_vaza_a_chave() {
 
     let erro = cliente.julgar(pedido()).await.expect_err("400 não retenta");
 
-    assert!(matches!(erro, ErroJev::Status { codigo: 400, .. }));
+    assert!(matches!(erro, JevError::Status { code: 400, .. }));
     assert!(!erro.to_string().contains(CHAVE));
     assert!(!format!("{erro:?}").contains(CHAVE));
     assert_eq!(recebidas.lock().expect("registro").len(), 1);
@@ -205,11 +205,8 @@ async fn prazo_por_tentativa_devolve_erro_de_tempo() {
 
     let erro = cliente.julgar(pedido()).await.expect_err("prazo estourado");
 
-    assert!(
-        matches!(erro, ErroJev::TempoEsgotado { .. }),
-        "erro: {erro:?}"
-    );
-    assert!(erro.eh_transitorio());
+    assert!(matches!(erro, JevError::TimedOut { .. }), "erro: {erro:?}");
+    assert!(erro.is_transient());
 }
 
 #[test]
@@ -240,7 +237,7 @@ fn configuracao_aceita_https_recusa_endereco_invalido_e_chave_vazia() {
     };
     let sem_chave =
         ConfigJev::da_config(&http, Secret::new("   ".to_owned())).expect_err("recusa chave vazia");
-    assert!(matches!(sem_chave, ErroJev::SemChave));
+    assert!(matches!(sem_chave, JevError::MissingKey));
     assert!(!format!("{http:?}").contains(CHAVE));
 }
 
@@ -255,23 +252,23 @@ fn lote_le_o_formato_de_resposta_da_api() {
         },
         "usage": {"input_tokens": 10, "output_tokens": 5}
     });
-    let lote = poph_jev::LoteResposta::de_json(&corpo).expect("lote");
-    assert_eq!(lote.respostas.len(), 3);
+    let lote = poph_jev::BatchResponse::from_json(&corpo).expect("lote");
+    assert_eq!(lote.answers.len(), 3);
     assert_eq!(lote.tokens, 15);
     // O `usage` detalhado é lido separado, sem estimar nada.
-    assert_eq!(lote.usage.entrada, Some(10));
-    assert_eq!(lote.usage.saida, Some(5));
+    assert_eq!(lote.usage.input, Some(10));
+    assert_eq!(lote.usage.output, Some(5));
     assert_eq!(
         lote.usage.total,
         Some(15),
         "sem total_tokens, soma entrada e saída"
     );
-    let nota: &Resposta = &lote.respostas["b"];
+    let nota: &JevResponse = &lote.answers["b"];
     assert_eq!(nota.score, Some(0.42));
-    assert!(nota.escolha.is_none());
+    assert!(nota.choice.is_none());
 
-    let pergunta = poph_jev::Pergunta::escolha("julgue", Default::default());
-    assert_eq!(pergunta.tipo, TipoPergunta::Choice);
+    let pergunta = poph_jev::Question::choice("julgue", Default::default());
+    assert_eq!(pergunta.tipo, QuestionType::Choice);
 }
 
 /// `usage` em outras formas: nomes alternativos do provedor, `total_tokens` explícito e ausência.
@@ -281,33 +278,33 @@ fn le_usage_em_variantes_e_sem_usage() {
         "answers": {},
         "usage": {"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 11}
     });
-    let lote = poph_jev::LoteResposta::de_json(&alternativo).expect("lote");
-    assert_eq!(lote.usage.entrada, Some(7));
-    assert_eq!(lote.usage.saida, Some(3));
+    let lote = poph_jev::BatchResponse::from_json(&alternativo).expect("lote");
+    assert_eq!(lote.usage.input, Some(7));
+    assert_eq!(lote.usage.output, Some(3));
     assert_eq!(
         lote.usage.total,
         Some(11),
         "total_tokens informado manda sobre a soma"
     );
     assert_eq!(lote.tokens, 11);
-    assert!(lote.usage.informado());
+    assert!(lote.usage.reported());
 
     let sem_usage = serde_json::json!({"answers": {}});
-    let lote = poph_jev::LoteResposta::de_json(&sem_usage).expect("lote");
-    assert!(!lote.usage.informado());
-    assert_eq!(lote.usage.como_texto(), "não informado");
+    let lote = poph_jev::BatchResponse::from_json(&sem_usage).expect("lote");
+    assert!(!lote.usage.reported());
+    assert_eq!(lote.usage.as_text(), "não informado");
     assert_eq!(lote.tokens, 0);
 
     let so_entrada = serde_json::json!({"answers": {}, "usage": {"input_tokens": 4}});
-    let lote = poph_jev::LoteResposta::de_json(&so_entrada).expect("lote");
-    assert_eq!(lote.usage.entrada, Some(4));
-    assert_eq!(lote.usage.saida, None);
+    let lote = poph_jev::BatchResponse::from_json(&so_entrada).expect("lote");
+    assert_eq!(lote.usage.input, Some(4));
+    assert_eq!(lote.usage.output, None);
     assert_eq!(
         lote.usage.total, None,
         "sem um dos lados, não inventa total"
     );
     assert_eq!(
-        lote.usage.como_texto(),
+        lote.usage.as_text(),
         "entrada 4 · saída não informado · total não informado"
     );
 }

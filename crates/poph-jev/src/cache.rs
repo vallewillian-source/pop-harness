@@ -1,101 +1,79 @@
-//! Cache de decisão do Jev, por hash do estado.
-//!
-//! Por que existe: a mesma pergunta sobre o mesmo estado não muda de resposta, e cada chamada custa
-//! dinheiro (~255–315 ms no POP Atende). Um turno reexecutado, um retry do canal ou duas conversas
-//! com a mesma fala reaproveitam a decisão.
-//!
-//! Regras:
-//! - chave = gate + hash do estado; a validade é curta (padrão 5 min) porque o estado muda a cada
-//!   mensagem;
-//! - teto de entradas: ao encher, sai a mais antiga (FIFO) — o cache não cresce sem limite;
-//! - guarda a **resposta do Jev**, não a interpretação: mudar limiar ou critério no código passa a
-//!   valer na hora, com a mesma resposta gravada.
-
 use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use crate::tipos::Resposta;
+use crate::types::JevResponse;
 
-/// Ajustes do cache.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct OpcoesCache {
-    /// Quanto tempo uma resposta vale.
-    pub validade: Duration,
-    /// Quantas respostas cabem.
-    pub capacidade: usize,
+pub struct CacheOptions {
+    pub ttl: Duration,
+    pub capacity: usize,
 }
 
-impl Default for OpcoesCache {
+impl Default for CacheOptions {
     fn default() -> Self {
         Self {
-            // 5 min: cobre retry do canal e turno reexecutado sem guardar decisão velha.
-            validade: Duration::from_secs(300),
-            // 4096 respostas: ~40 gates por org ativa, com folga para várias orgs.
-            capacidade: 4096,
+            ttl: Duration::from_secs(300),
+            capacity: 4096,
         }
     }
 }
 
 #[derive(Debug)]
-struct Entrada {
-    resposta: Resposta,
-    criada: Instant,
+struct Entry {
+    response: JevResponse,
+    created: Instant,
 }
 
-/// Cache em memória, seguro entre tarefas.
 #[derive(Debug)]
-pub struct CacheDecisoes {
-    opcoes: OpcoesCache,
-    entradas: Mutex<Estado>,
+pub struct DecisionCache {
+    options: CacheOptions,
+    entries: Mutex<Estado>,
 }
 
 #[derive(Debug, Default)]
 struct Estado {
-    mapa: HashMap<u64, Entrada>,
+    map: HashMap<u64, Entry>,
     ordem: VecDeque<u64>,
 }
 
-impl CacheDecisoes {
-    /// Cache com os ajustes dados.
-    pub fn novo(opcoes: OpcoesCache) -> Self {
+impl DecisionCache {
+    pub fn new(options: CacheOptions) -> Self {
         Self {
-            opcoes,
-            entradas: Mutex::new(Estado::default()),
+            options,
+            entries: Mutex::new(Estado::default()),
         }
     }
 
-    /// Resposta guardada para a chave, se ainda valer.
-    pub fn obter(&self, chave: u64) -> Option<Resposta> {
-        let mut estado = self.travar();
-        let entrada = estado.mapa.get(&chave)?;
-        if entrada.criada.elapsed() > self.opcoes.validade {
-            estado.mapa.remove(&chave);
+    pub fn get(&self, chave: u64) -> Option<JevResponse> {
+        let mut estado = self.lock();
+        let entry = estado.map.get(&chave)?;
+        if entry.created.elapsed() > self.options.ttl {
+            estado.map.remove(&chave);
             estado.ordem.retain(|item| *item != chave);
             return None;
         }
-        Some(entrada.resposta.clone())
+        Some(entry.response.clone())
     }
 
-    /// Guarda a resposta da chave, descartando o que venceu ou o mais antigo quando o teto estoura.
-    pub fn guardar(&self, chave: u64, resposta: Resposta) {
-        let mut estado = self.travar();
-        self.descartar_vencidas(&mut estado);
-        while estado.mapa.len() >= self.opcoes.capacidade.max(1) {
+    pub fn insert(&self, chave: u64, response: JevResponse) {
+        let mut estado = self.lock();
+        self.remove_expired(&mut estado);
+        while estado.map.len() >= self.options.capacity.max(1) {
             match estado.ordem.pop_front() {
-                Some(antiga) => {
-                    estado.mapa.remove(&antiga);
+                Some(oldest) => {
+                    estado.map.remove(&oldest);
                 }
                 None => break,
             }
         }
         if estado
-            .mapa
+            .map
             .insert(
                 chave,
-                Entrada {
-                    resposta,
-                    criada: Instant::now(),
+                Entry {
+                    response,
+                    created: Instant::now(),
                 },
             )
             .is_none()
@@ -104,38 +82,36 @@ impl CacheDecisoes {
         }
     }
 
-    /// Quantas entradas válidas existem agora (teste e métrica).
-    pub fn tamanho(&self) -> usize {
-        self.travar().mapa.len()
+    pub fn len(&self) -> usize {
+        self.lock().map.len()
     }
 
-    /// Esvazia o cache.
-    pub fn limpar(&self) {
-        let mut estado = self.travar();
-        estado.mapa.clear();
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn clear(&self) {
+        let mut estado = self.lock();
+        estado.map.clear();
         estado.ordem.clear();
     }
 
-    fn descartar_vencidas(&self, estado: &mut Estado) {
-        let validade = self.opcoes.validade;
-        estado
-            .mapa
-            .retain(|_, entrada| entrada.criada.elapsed() <= validade);
-        let vivos: Vec<u64> = estado.mapa.keys().copied().collect();
-        estado.ordem.retain(|chave| vivos.contains(chave));
+    fn remove_expired(&self, estado: &mut Estado) {
+        let ttl = self.options.ttl;
+        estado.map.retain(|_, entry| entry.created.elapsed() <= ttl);
+        let live_keys: Vec<u64> = estado.map.keys().copied().collect();
+        estado.ordem.retain(|chave| live_keys.contains(chave));
     }
 
-    fn travar(&self) -> std::sync::MutexGuard<'_, Estado> {
-        match self.entradas.lock() {
-            Ok(guarda) => guarda,
-            Err(veneno) => veneno.into_inner(),
+    fn lock(&self) -> std::sync::MutexGuard<'_, Estado> {
+        match self.entries.lock() {
+            Ok(guard) => guard,
+            Err(poison) => poison.into_inner(),
         }
     }
 }
 
-/// Chave do cache: o gate e o estado que ele julgou.
-pub fn chave(gate: crate::tipos::IdGate, estado_hash: u64) -> u64 {
-    // Mistura simples (xor + rotação) para o mesmo estado em gates diferentes não colidir.
-    let base = estado_hash.rotate_left(7) ^ ((gate as u64) << 59);
+pub fn chave(gate: crate::types::IdGate, state_hash: u64) -> u64 {
+    let base = state_hash.rotate_left(7) ^ ((gate as u64) << 59);
     base.wrapping_mul(0x9e37_79b9_7f4a_7c15)
 }

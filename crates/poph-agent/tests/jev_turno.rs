@@ -19,8 +19,8 @@ use poph_agent::turno::{
 };
 use poph_core::llm::{FakeProvider, Script};
 use poph_jev::{
-    AvaliadorGates, ErroJev, EstadoJev, G1_CONTINUAR, G1_TRANSFERIR, G4, IdGate, JevFalso,
-    MensagemJev, MotorJev,
+    AvaliadorGates, G1_CONTINUAR, G1_TRANSFERIR, G4, IdGate, JevError, JevFalso, JevMessage,
+    JevState, MotorJev,
 };
 use poph_store::{
     AgentChange, Direction, NewAgent, NewConversation, NewDepartment, NewMessage, NewOrg, Role,
@@ -373,8 +373,8 @@ async fn ajuste_do_agente_desliga_o_gate_no_turno() {
 async fn falha_do_jev_nao_derruba_o_turno() {
     let cenario = Cenario::novo("falha");
     let conversa = cenario.conversa();
-    let jev = Arc::new(JevFalso::falhando(ErroJev::Status {
-        codigo: 503,
+    let jev = Arc::new(JevFalso::falhando(JevError::Status {
+        code: 503,
         motivo: "Service Unavailable".to_owned(),
     }));
     let motor = cenario.motor(so_g1(), Some(motor_jev(Arc::clone(&jev), so_g1())));
@@ -429,7 +429,7 @@ async fn g4_leva_os_departamentos_ativos_da_org() {
     );
     let pedido = &jev.pedidos()[0];
     assert_eq!(pedido.perguntas.len(), 1, "só o G4 está ligado");
-    let criterios = &pedido.perguntas["g4_departamento"].criteria;
+    let criterios = &pedido.perguntas["g4_departamento"].rubric;
     assert!(criterios.contains_key("Comercial"));
     assert!(criterios.contains_key("Suporte"));
     assert_eq!(
@@ -443,17 +443,14 @@ async fn g4_leva_os_departamentos_ativos_da_org() {
 /// A janela de mensagens do estado é a mesma janela recente do turno, truncada.
 #[tokio::test]
 async fn estado_tem_no_maximo_dez_mensagens() {
-    let estado = EstadoJev::novo("cli")
-        .com_mensagens((0..15).map(|i| MensagemJev::cliente(format!("m{i}"))));
-    assert_eq!(estado.mensagens.len(), 10);
-    assert_eq!(estado.mensagens[0].texto, "m5");
-    assert_eq!(
-        estado.ultima_mensagem().map(|m| m.texto.as_str()),
-        Some("m14")
-    );
+    let estado = JevState::new("cli")
+        .with_messages((0..15).map(|i| JevMessage::from_customer(format!("m{i}"))));
+    assert_eq!(estado.messages.len(), 10);
+    assert_eq!(estado.messages[0].texto, "m5");
+    assert_eq!(estado.last_message().map(|m| m.texto.as_str()), Some("m14"));
 
-    let longa = EstadoJev::novo("cli").com_mensagens([MensagemJev::cliente("a".repeat(2000))]);
-    assert!(longa.mensagens[0].texto.chars().count() <= 801);
+    let longa = JevState::new("cli").with_messages([JevMessage::from_customer("a".repeat(2000))]);
+    assert!(longa.messages[0].texto.chars().count() <= 801);
 }
 
 /// O motor sem Jev continua exatamente como antes (nenhum gate é consultado).
@@ -474,7 +471,7 @@ async fn motor_sem_jev_responde_igual() {
 /// A "letra miúda": `MotorJev` com G4 e estado sem departamentos não pergunta nada.
 #[tokio::test]
 async fn g4_sem_departamentos_nao_pergunta() {
-    let estado = EstadoJev::novo("cli").com_mensagens([MensagemJev::cliente("oi")]);
+    let estado = JevState::new("cli").with_messages([JevMessage::from_customer("oi")]);
     let jev = Arc::new(JevFalso::com_escolhas(BTreeMap::new()));
     let motor = motor_jev(
         Arc::clone(&jev),

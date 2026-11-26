@@ -27,7 +27,7 @@ use poph_agent::turno::{
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Message, Script, Usage};
 use poph_jev::{
-    EstadoJev, G1_CONTINUAR, G2_ESPERAR, G2_PROCESSAR, IdGate, JevFalso, MotorJev, OpcoesJev,
+    G1_CONTINUAR, G2_ESPERAR, G2_PROCESSAR, IdGate, JevFalso, JevState, MotorJev, OpcoesJev,
 };
 use poph_store::{
     AgentChange, Direction, NewAgent, NewConversation, NewMessage, NewOrg, Role, Store, TurnState,
@@ -540,8 +540,8 @@ async fn falha_do_jev_mantem_a_janela_fixa() {
         cenario.org,
         conversa,
     ));
-    let jev = Arc::new(JevFalso::falhando(poph_jev::ErroJev::Status {
-        codigo: 503,
+    let jev = Arc::new(JevFalso::falhando(poph_jev::JevError::Status {
+        code: 503,
         motivo: "Service Unavailable".to_owned(),
     }));
     let motor = cenario.motor(
@@ -609,17 +609,17 @@ async fn confianca_baixa_mantem_a_janela_fixa() {
     let jev = Arc::new(JevFalso::novo(|pedido: &poph_jev::Pedido| {
         let mut respostas = BTreeMap::new();
         for id in pedido.perguntas.keys() {
-            let mut resposta = poph_jev::Resposta {
-                escolha: Some(G2_ESPERAR.to_owned()),
-                confianca: 0.4,
-                ..poph_jev::Resposta::default()
+            let mut resposta = poph_jev::JevResponse {
+                choice: Some(G2_ESPERAR.to_owned()),
+                confidence: 0.4,
+                ..poph_jev::JevResponse::default()
             };
-            resposta.probabilidades.insert(G2_ESPERAR.to_owned(), 0.4);
+            resposta.probabilities.insert(G2_ESPERAR.to_owned(), 0.4);
             respostas.insert(id.clone(), resposta);
         }
-        Ok(poph_jev::LoteResposta {
-            respostas,
-            ..poph_jev::LoteResposta::default()
+        Ok(poph_jev::BatchResponse {
+            answers: respostas,
+            ..poph_jev::BatchResponse::default()
         })
     }));
     let motor = cenario.motor(
@@ -760,7 +760,7 @@ fn janela_com_g2_respeita_o_teto_e_o_fallback() {
 /// Caso do conjunto `tests/jev/g2.jsonl` com a continuação que o cliente digitaria depois.
 #[derive(Debug, serde::Deserialize)]
 struct CasoDoConjunto {
-    estado: EstadoJev,
+    estado: JevState,
     esperado: String,
     #[serde(default)]
     continuacao: Option<ContinuacaoDoConjunto>,
@@ -787,10 +787,10 @@ fn ler_conjunto() -> Vec<CasoDoConjunto> {
 /// Texto da última mensagem do cliente no caso.
 fn texto_do_caso(caso: &CasoDoConjunto) -> String {
     caso.estado
-        .mensagens
+        .messages
         .iter()
         .rev()
-        .find(|mensagem| mensagem.papel == poph_jev::PapelJev::Cliente)
+        .find(|mensagem| mensagem.role == poph_jev::JevRole::Customer)
         .map(|mensagem| mensagem.texto.clone())
         .unwrap_or_default()
 }

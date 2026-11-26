@@ -17,14 +17,14 @@ use futures::future::BoxFuture;
 use poph_types::JevGates;
 use serde_json::{Value, json};
 
-use crate::cache::{CacheDecisoes, OpcoesCache};
+use crate::cache::{CacheOptions, DecisionCache};
 use crate::cliente::{Pedido, TransporteJev};
-use crate::estado::EstadoJev;
-use crate::flags::AjusteGates;
-use crate::gate::{Decisao, Gate, Limiares, OrigemDecisao};
+use crate::flags::GateOverrides;
+use crate::gate::{Decisao, DecisionOrigin, Gate, Thresholds};
 use crate::gates;
 use crate::handoff::ResultadoOrientacao;
-use crate::tipos::{IdGate, Resposta, UsageTokens};
+use crate::state::JevState;
+use crate::types::{IdGate, JevResponse, UsageTokens};
 
 /// Prazo do lote inteiro, contando as retentativas do cliente (8 s + folga da retentativa).
 pub const TEMPO_MAXIMO_PADRAO: Duration = Duration::from_secs(12);
@@ -33,7 +33,7 @@ pub const TEMPO_MAXIMO_PADRAO: Duration = Duration::from_secs(12);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OpcoesJev {
     /// Cache de decisão.
-    pub cache: OpcoesCache,
+    pub cache: CacheOptions,
     /// Prazo do lote inteiro (a chamada do cliente tem prazo próprio por tentativa).
     pub tempo_maximo: Duration,
 }
@@ -41,7 +41,7 @@ pub struct OpcoesJev {
 impl Default for OpcoesJev {
     fn default() -> Self {
         Self {
-            cache: OpcoesCache::default(),
+            cache: CacheOptions::default(),
             tempo_maximo: TEMPO_MAXIMO_PADRAO,
         }
     }
@@ -73,7 +73,7 @@ pub struct ResultadoJev {
     ///
     /// É o que permite medir calibração: a decisão já é o que vale para o turno (com o padrão do
     /// gate no fallback), e a escolha do modelo fica aqui, sem alterar comportamento nenhum.
-    pub brutas: BTreeMap<IdGate, Resposta>,
+    pub brutas: BTreeMap<IdGate, JevResponse>,
     /// O que a chamada custou.
     pub chamada: RelatoChamada,
 }
@@ -85,20 +85,20 @@ impl ResultadoJev {
     }
 
     /// Resposta crua do Jev para um gate (existe mesmo quando a decisão caiu no fallback).
-    pub fn resposta(&self, gate: IdGate) -> Option<&Resposta> {
+    pub fn resposta(&self, gate: IdGate) -> Option<&JevResponse> {
         self.brutas.get(&gate)
     }
 
     /// Escolha de um gate, quando houve.
     pub fn escolha(&self, gate: IdGate) -> Option<&str> {
-        self.decisao(gate)?.escolha.as_deref()
+        self.decisao(gate)?.choice.as_deref()
     }
 
     /// Escolha confiável de um gate (não é fallback).
     pub fn escolha_confiavel(&self, gate: IdGate) -> Option<&str> {
         let decisao = self.decisao(gate)?;
-        if decisao.confiavel() {
-            decisao.escolha.as_deref()
+        if decisao.is_reliable() {
+            decisao.choice.as_deref()
         } else {
             None
         }
@@ -117,7 +117,7 @@ impl ResultadoJev {
                 "decididas_por_cache": self.chamada.decididas_por_cache,
                 "ms": self.chamada.ms,
                 "tokens": self.chamada.tokens,
-                "usage": self.chamada.usage.para_json(),
+                "usage": self.chamada.usage.to_json(),
                 "falha": self.chamada.falha,
             },
             "decisoes": self
@@ -127,11 +127,11 @@ impl ResultadoJev {
                     // A escolha crua do Jev vai junto: `escolha` é o que vale para o turno
                     // (inclui o padrão do gate no fallback) e `escolha_do_jev` é o que o modelo
                     // respondeu, mesmo quando a confiança não passou no limiar.
-                    let mut valor = decisao.para_json();
+                    let mut valor = decisao.to_json();
                     if let Some(bruta) = self.brutas.get(&decisao.gate) {
                         // Só a escolha: as probabilidades dobrariam o tamanho do registro do turno
                         // e não são necessárias para decidir nada.
-                        valor["escolha_do_jev"] = json!(bruta.escolha);
+                        valor["escolha_do_jev"] = json!(bruta.choice);
                     }
                     valor
                 })
@@ -151,10 +151,10 @@ impl ResultadoJev {
             .map(|decisao| {
                 format!(
                     "{}={} ({}, confiança {:.2})",
-                    decisao.gate.como_texto(),
-                    decisao.escolha.as_deref().unwrap_or("—"),
-                    decisao.origem.como_texto(),
-                    decisao.confianca
+                    decisao.gate.as_text(),
+                    decisao.choice.as_deref().unwrap_or("—"),
+                    decisao.origin.as_text(),
+                    decisao.confidence
                 )
             })
             .collect()
@@ -167,13 +167,13 @@ impl ResultadoJev {
 /// turno de produção recebe o [`MotorJev`].
 pub trait AvaliadorGates: Send + Sync {
     /// Gates ligados para este agente (global ajustado pelo agente).
-    fn gates_efetivos(&self, ajuste: Option<AjusteGates>) -> JevGates;
+    fn gates_efetivos(&self, ajuste: Option<GateOverrides>) -> JevGates;
 
     /// Avalia os gates ligados num lote só. Nunca falha: erro vira fallback.
     fn avaliar<'a>(
         &'a self,
-        estado: EstadoJev,
-        ajuste: Option<AjusteGates>,
+        estado: JevState,
+        ajuste: Option<GateOverrides>,
     ) -> BoxFuture<'a, ResultadoJev>;
 
     /// Segunda pergunta do G1 (HR-29): classifica o risco imediato à saúde **depois** de a
@@ -183,7 +183,7 @@ pub trait AvaliadorGates: Send + Sync {
     /// [`ResultadoOrientacao::falha`], e quem chama segue com a mensagem automática só.
     fn orientar<'a>(
         &'a self,
-        estado: EstadoJev,
+        estado: JevState,
         prazo: Duration,
     ) -> BoxFuture<'a, ResultadoOrientacao> {
         let _ = (estado, prazo);
@@ -199,8 +199,8 @@ pub struct MotorJev {
     gates: Vec<Box<dyn Gate>>,
     globais: JevGates,
     modelo: String,
-    limiares: BTreeMap<IdGate, Limiares>,
-    cache: CacheDecisoes,
+    limiares: BTreeMap<IdGate, Thresholds>,
+    cache: DecisionCache,
     tempo_maximo: Duration,
 }
 
@@ -230,20 +230,20 @@ impl MotorJev {
             globais,
             modelo: modelo.into(),
             limiares: BTreeMap::new(),
-            cache: CacheDecisoes::novo(OpcoesCache::default()),
+            cache: DecisionCache::new(CacheOptions::default()),
             tempo_maximo: TEMPO_MAXIMO_PADRAO,
         }
     }
 
     /// Troca os ajustes (cache e prazo do lote).
     pub fn com_opcoes(mut self, opcoes: OpcoesJev) -> Self {
-        self.cache = CacheDecisoes::novo(opcoes.cache);
+        self.cache = DecisionCache::new(opcoes.cache);
         self.tempo_maximo = opcoes.tempo_maximo;
         self
     }
 
     /// Fixa os limiares de um gate (calibração por medição; ver `poph jev eval`).
-    pub fn com_limiares(mut self, gate: IdGate, limiares: Limiares) -> Self {
+    pub fn com_limiares(mut self, gate: IdGate, limiares: Thresholds) -> Self {
         self.limiares.insert(gate, limiares);
         self
     }
@@ -255,12 +255,12 @@ impl MotorJev {
     }
 
     /// Cache em uso (teste e observação).
-    pub fn cache(&self) -> &CacheDecisoes {
+    pub fn cache(&self) -> &DecisionCache {
         &self.cache
     }
 
     /// Limiares em uso para um gate.
-    pub fn limiares_de(&self, gate: IdGate) -> Limiares {
+    pub fn limiares_de(&self, gate: IdGate) -> Thresholds {
         self.limiares
             .get(&gate)
             .copied()
@@ -268,7 +268,7 @@ impl MotorJev {
                 self.gates
                     .iter()
                     .find(|item| item.id() == gate)
-                    .map(|item| item.limiares())
+                    .map(|item| item.thresholds())
             })
             .unwrap_or_default()
     }
@@ -288,7 +288,7 @@ impl MotorJev {
         }
     }
 
-    async fn avaliar_agora(&self, estado: EstadoJev, gates: JevGates) -> ResultadoJev {
+    async fn avaliar_agora(&self, estado: JevState, gates: JevGates) -> ResultadoJev {
         let hash = estado.hash();
         let ligados: Vec<&Box<dyn Gate>> = self
             .gates
@@ -298,21 +298,21 @@ impl MotorJev {
         // Gate ligado que não se aplica pode ter o que dizer ao operador (o G9, quando o agente tem
         // mais fluxos liberados do que opções na pergunta). Vai para o log, não para o turno.
         for gate in &ligados {
-            if !gate.aplicavel(&estado)
-                && let Some(aviso) = gate.aviso(&estado)
+            if !gate.applies(&estado)
+                && let Some(aviso) = gate.warning(&estado)
             {
                 tracing::warn!(gate = %gate.id(), aviso, "gate não perguntado neste turno");
             }
         }
         let aplicaveis: Vec<&Box<dyn Gate>> = ligados
             .into_iter()
-            .filter(|gate| gate.aplicavel(&estado))
+            .filter(|gate| gate.applies(&estado))
             .collect();
 
-        let mut do_cache: BTreeMap<IdGate, Resposta> = BTreeMap::new();
+        let mut do_cache: BTreeMap<IdGate, JevResponse> = BTreeMap::new();
         let mut pendentes: Vec<IdGate> = Vec::new();
         for gate in &aplicaveis {
-            match self.cache.obter(crate::cache::chave(gate.id(), hash)) {
+            match self.cache.get(crate::cache::chave(gate.id(), hash)) {
                 Some(resposta) => {
                     do_cache.insert(gate.id(), resposta);
                 }
@@ -320,21 +320,21 @@ impl MotorJev {
             }
         }
 
-        let mut do_jev: BTreeMap<IdGate, Resposta> = BTreeMap::new();
+        let mut do_jev: BTreeMap<IdGate, JevResponse> = BTreeMap::new();
         let mut relato = RelatoChamada {
             decididas_por_cache: do_cache.len(),
             ..RelatoChamada::default()
         };
 
         if !pendentes.is_empty() {
-            let perguntas: BTreeMap<String, crate::tipos::Pergunta> = aplicaveis
+            let perguntas: BTreeMap<String, crate::types::Question> = aplicaveis
                 .iter()
                 .filter(|gate| pendentes.contains(&gate.id()))
-                .map(|gate| (gate.id().pergunta_id().to_owned(), gate.pergunta(&estado)))
+                .map(|gate| (gate.id().question_id().to_owned(), gate.question(&estado)))
                 .collect();
             relato.perguntas = perguntas.len();
             let pedido = Pedido {
-                estado: estado.para_json(),
+                estado: estado.to_json(),
                 modelo: self.modelo.clone(),
                 perguntas,
             };
@@ -348,9 +348,9 @@ impl MotorJev {
                         if !pendentes.contains(&gate.id()) {
                             continue;
                         }
-                        if let Some(resposta) = lote.respostas.get(gate.id().pergunta_id()) {
+                        if let Some(resposta) = lote.answers.get(gate.id().question_id()) {
                             self.cache
-                                .guardar(crate::cache::chave(gate.id(), hash), resposta.clone());
+                                .insert(crate::cache::chave(gate.id(), hash), resposta.clone());
                             do_jev.insert(gate.id(), resposta.clone());
                         }
                     }
@@ -372,33 +372,33 @@ impl MotorJev {
             }
         }
 
-        let mut brutas: BTreeMap<IdGate, crate::tipos::Resposta> = BTreeMap::new();
+        let mut brutas: BTreeMap<IdGate, crate::types::JevResponse> = BTreeMap::new();
         let mut decisoes = Vec::with_capacity(aplicaveis.len());
         for gate in &aplicaveis {
             let id = gate.id();
             let limiares = self.limiares_de(id);
             let (resposta, origem) = match (do_jev.get(&id), do_cache.get(&id)) {
-                (Some(resposta), _) => (Some(resposta), OrigemDecisao::Jev),
-                (None, Some(resposta)) => (Some(resposta), OrigemDecisao::Cache),
-                (None, None) => (None, OrigemDecisao::Fallback),
+                (Some(resposta), _) => (Some(resposta), DecisionOrigin::Jev),
+                (None, Some(resposta)) => (Some(resposta), DecisionOrigin::Cache),
+                (None, None) => (None, DecisionOrigin::Fallback),
             };
-            let mut decisao = gate.interpretar(&estado, resposta, limiares);
+            let mut decisao = gate.interpret(&estado, resposta, limiares);
             // Decisão aceita veio desta chamada ou do cache; o gate não tem como saber a diferença.
-            if decisao.confiavel() {
-                decisao.origem = origem;
+            if decisao.is_reliable() {
+                decisao.origin = origem;
             }
             // O gate devolve `Fallback` quando a resposta existe mas não passa no limiar: guarda a
             // confiança e a margem mesmo assim, para o relatório dizer o quanto faltou.
             if let Some(resposta) = resposta {
                 brutas.insert(id, resposta.clone());
-                decisao.confianca = resposta.confianca;
-                decisao.margem = resposta.margem();
-                decisao.ms = if origem == OrigemDecisao::Jev {
+                decisao.confidence = resposta.confidence;
+                decisao.margin = resposta.margin();
+                decisao.ms = if origem == DecisionOrigin::Jev {
                     relato.ms
                 } else {
                     0
                 };
-                decisao.tokens = if origem == OrigemDecisao::Jev {
+                decisao.tokens = if origem == DecisionOrigin::Jev {
                     relato.tokens
                 } else {
                     0
@@ -416,17 +416,17 @@ impl MotorJev {
 }
 
 impl AvaliadorGates for MotorJev {
-    fn gates_efetivos(&self, ajuste: Option<AjusteGates>) -> JevGates {
+    fn gates_efetivos(&self, ajuste: Option<GateOverrides>) -> JevGates {
         match ajuste {
-            Some(ajuste) => ajuste.sobre(self.globais),
+            Some(ajuste) => ajuste.with_base(self.globais),
             None => self.globais,
         }
     }
 
     fn avaliar<'a>(
         &'a self,
-        estado: EstadoJev,
-        ajuste: Option<AjusteGates>,
+        estado: JevState,
+        ajuste: Option<GateOverrides>,
     ) -> BoxFuture<'a, ResultadoJev> {
         let gates = self.gates_efetivos(ajuste);
         Box::pin(async move {
@@ -445,7 +445,7 @@ impl AvaliadorGates for MotorJev {
     /// não pode esperar por ela.
     fn orientar<'a>(
         &'a self,
-        estado: EstadoJev,
+        estado: JevState,
         prazo: Duration,
     ) -> BoxFuture<'a, ResultadoOrientacao> {
         Box::pin(async move {
@@ -455,18 +455,18 @@ impl AvaliadorGates for MotorJev {
                 crate::handoff::pergunta_risco(),
             );
             let pedido = Pedido {
-                estado: estado.para_json(),
+                estado: estado.to_json(),
                 modelo: self.modelo.clone(),
                 perguntas,
             };
             let inicio = Instant::now();
             match tokio::time::timeout(prazo, self.transporte.julgar(pedido)).await {
                 Ok(Ok(lote)) => {
-                    let resposta = lote.respostas.get(crate::handoff::RISCO_PERGUNTA_ID);
+                    let resposta = lote.answers.get(crate::handoff::RISCO_PERGUNTA_ID);
                     ResultadoOrientacao {
                         consultado: true,
-                        tipo: resposta.and_then(|item| item.escolha.clone()),
-                        confianca: resposta.map(|item| item.confianca).unwrap_or(0.0),
+                        tipo: resposta.and_then(|item| item.choice.clone()),
+                        confianca: resposta.map(|item| item.confidence).unwrap_or(0.0),
                         ms: u64::try_from(inicio.elapsed().as_millis()).unwrap_or(u64::MAX),
                         tokens: lote.tokens,
                         falha: None,
@@ -495,7 +495,7 @@ impl AvaliadorGates for MotorJev {
 impl MotorJev {
     /// `true` quando nenhum gate está ligado.
     pub fn nenhum(gates: JevGates) -> bool {
-        IdGate::TODOS
+        IdGate::ALL
             .into_iter()
             .all(|gate| !Self::ligado(gates, gate))
     }

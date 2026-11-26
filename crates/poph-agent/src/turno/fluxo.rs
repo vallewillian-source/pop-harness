@@ -33,7 +33,7 @@ use poph_fluxos::ir::Ir;
 use poph_fluxos::motor::{self, Contexto as ContextoDoMotor, Estado as EstadoDoMotor};
 use poph_fluxos::prompt::renderizar_bloco;
 use poph_fluxos::regras::{Avaliador, Dados, LimitesRegra};
-use poph_jev::{FluxoJev, G9_NENHUM, IdGate, ResultadoJev};
+use poph_jev::{G9_NENHUM, IdGate, JevFlow, ResultadoJev};
 use poph_store::{
     Execution, ExecutionStart, Ficha, FlowRevision, Fluxo, JevDecision, Status, Store, StoreError,
     TransitionEffect,
@@ -123,7 +123,7 @@ pub(crate) struct Preparo {
     /// Execução ativa no instante da leitura.
     pub ativa: Option<Execution>,
     /// Fluxos liberados ao agente, ativos e com revisão publicada, com o gatilho lido da IR.
-    pub liberados: Vec<FluxoJev>,
+    pub liberados: Vec<JevFlow>,
 }
 
 /// O que fazer com o fluxo neste turno, já decidido.
@@ -227,13 +227,13 @@ pub(crate) fn preparar(
 }
 
 /// O gatilho do fluxo como o G9 o lê (FX-22): id = `slug`, nome e os três textos do script.
-fn fluxo_do_jev(fluxo: &Fluxo, ir: &Ir) -> FluxoJev {
-    FluxoJev {
+fn fluxo_do_jev(fluxo: &Fluxo, ir: &Ir) -> JevFlow {
+    JevFlow {
         id: fluxo.slug.clone(),
         nome: fluxo.name.clone(),
-        quando: ir.gatilho.quando.clone(),
-        nao_quando: ir.gatilho.nao_quando.clone().unwrap_or_default(),
-        exemplos: ir.gatilho.exemplos.clone(),
+        when: ir.gatilho.quando.clone(),
+        not_when: ir.gatilho.nao_quando.clone().unwrap_or_default(),
+        examples: ir.gatilho.exemplos.clone(),
     }
 }
 
@@ -607,7 +607,7 @@ pub(crate) fn iniciar(
 /// `fluxos` são os liberados ao agente; `ferramenta` diz se `fluxo_iniciar` está registrada nesta
 /// instância (FX-24). Sem a ferramenta, o catálogo vai como **informação** — instruir o modelo a
 /// chamar ferramenta inexistente só produz erro no laço.
-pub(crate) fn bloco_do_catalogo(fluxos: &[FluxoJev], ferramenta: bool) -> Option<String> {
+pub(crate) fn bloco_do_catalogo(fluxos: &[JevFlow], ferramenta: bool) -> Option<String> {
     if fluxos.is_empty() {
         return None;
     }
@@ -626,7 +626,7 @@ pub(crate) fn bloco_do_catalogo(fluxos: &[FluxoJev], ferramenta: bool) -> Option
         );
     }
     for fluxo in fluxos {
-        let quando = fluxo.quando.trim();
+        let quando = fluxo.when.trim();
         if quando.is_empty() {
             bloco.push_str(&format!("- {}: {}\n", fluxo.id, fluxo.nome));
         } else {
@@ -673,7 +673,7 @@ pub(crate) fn motivo_sem_inicio(jev: Option<&ResultadoJev>, g9_ligado: bool) -> 
         return MotivoSemInicio::NaoPerguntado;
     };
     match jev.resposta(IdGate::G9) {
-        Some(bruta) if bruta.escolha.as_deref() == Some(G9_NENHUM) => MotivoSemInicio::Nenhum,
+        Some(bruta) if bruta.choice.as_deref() == Some(G9_NENHUM) => MotivoSemInicio::Nenhum,
         Some(_) => MotivoSemInicio::AbaixoDoLimiar,
         None if g9_ligado && jev.falhou() => MotivoSemInicio::Falhou,
         None => MotivoSemInicio::NaoPerguntado,
@@ -743,7 +743,7 @@ pub(crate) fn decidir(
     if let Some(slug) = jev.and_then(|resultado| resultado.escolha_confiavel(IdGate::G9)) {
         let confianca = jev
             .and_then(|resultado| resultado.decisao(IdGate::G9))
-            .map(|decisao| decisao.confianca);
+            .map(|decisao| decisao.confidence);
         let decisao = JevDecision {
             choice: slug,
             confidence: confianca,

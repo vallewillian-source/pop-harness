@@ -21,7 +21,7 @@ use poph_types::{BaseMetrics, JevConfig, Secret};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde_json::{Value, json};
 
-use crate::tipos::{ErroJev, LoteResposta, Pergunta};
+use crate::types::{BatchResponse, JevError, Question};
 
 /// Espera antes da retentativa (o POP Atende usa 500 ms).
 const ESPERA_RETENTATIVA: Duration = Duration::from_millis(500);
@@ -43,20 +43,22 @@ pub struct ConfigJev {
 
 impl ConfigJev {
     /// Monta a configuração a partir do bloco `[jev]` e da chave lida do ambiente.
-    pub fn da_config(jev: &JevConfig, chave: Secret) -> Result<Self, ErroJev> {
+    pub fn da_config(jev: &JevConfig, chave: Secret) -> Result<Self, JevError> {
         if chave.expose().trim().is_empty() {
-            return Err(ErroJev::SemChave);
+            return Err(JevError::MissingKey);
         }
         let url_base = jev.url_base.trim_end_matches('/').to_owned();
         // http (gateway local) e https (API real da TypeSafe) são aceitos; o TLS usa rustls com as
         // raízes do sistema (HR-10b).
         if !(url_base.starts_with("http://") || url_base.starts_with("https://")) {
-            return Err(ErroJev::Configuracao(
+            return Err(JevError::InvalidConfiguration(
                 "o endereço do Jev deve começar com http:// ou https://".to_owned(),
             ));
         }
         if jev.model.trim().is_empty() {
-            return Err(ErroJev::Configuracao("modelo do Jev vazio".to_owned()));
+            return Err(JevError::InvalidConfiguration(
+                "modelo do Jev vazio".to_owned(),
+            ));
         }
         Ok(Self {
             url_base,
@@ -87,7 +89,7 @@ pub struct Pedido {
     /// Modelo do Jev.
     pub modelo: String,
     /// Perguntas por id.
-    pub perguntas: BTreeMap<String, Pergunta>,
+    pub perguntas: BTreeMap<String, Question>,
 }
 
 impl Pedido {
@@ -104,7 +106,7 @@ impl Pedido {
 /// Quem entrega um pedido ao Jev. Existe como trait para o teste injetar um Jev falso local.
 pub trait TransporteJev: Send + Sync {
     /// Faz a chamada e devolve as respostas por id.
-    fn julgar<'a>(&'a self, pedido: Pedido) -> BoxFuture<'a, Result<LoteResposta, ErroJev>>;
+    fn julgar<'a>(&'a self, pedido: Pedido) -> BoxFuture<'a, Result<BatchResponse, JevError>>;
 }
 
 struct Interno {
@@ -120,7 +122,7 @@ pub struct ClienteJev(Arc<Interno>);
 
 impl ClienteJev {
     /// Cria o cliente HTTP.
-    pub fn novo(config: ConfigJev, metricas: BaseMetrics) -> Result<Self, ErroJev> {
+    pub fn novo(config: ConfigJev, metricas: BaseMetrics) -> Result<Self, JevError> {
         let http = construir_http(&config, None)?;
         let endpoint = config.endpoint();
         Ok(Self(Arc::new(Interno {
@@ -138,7 +140,7 @@ impl ClienteJev {
     /// Serve para o servidor TLS local dos testes usar um certificado próprio. Não desliga a
     /// validação: é uma raiz a mais, e certificado, nome e cadeia continuam sendo conferidos.
     #[doc(hidden)]
-    pub fn com_raiz_de_teste(self, raiz_der: &[u8]) -> Result<Self, ErroJev> {
+    pub fn com_raiz_de_teste(self, raiz_der: &[u8]) -> Result<Self, JevError> {
         let http = construir_http(&self.0.config, Some(raiz_der))?;
         Ok(Self(Arc::new(Interno {
             http,
@@ -154,11 +156,11 @@ impl ClienteJev {
 fn construir_http(
     config: &ConfigJev,
     raiz_extra: Option<&[u8]>,
-) -> Result<reqwest::Client, ErroJev> {
+) -> Result<reqwest::Client, JevError> {
     let mut construtor = reqwest::Client::builder().timeout(config.timeout);
     if let Some(der) = raiz_extra {
         let certificado = reqwest::Certificate::from_der(der).map_err(|erro| {
-            ErroJev::Configuracao(format!(
+            JevError::InvalidConfiguration(format!(
                 "raiz de confiança inválida: {}",
                 erro.without_url()
             ))
@@ -167,17 +169,17 @@ fn construir_http(
     }
     construtor
         .build()
-        .map_err(|erro| ErroJev::Rede(erro.without_url().to_string()))
+        .map_err(|erro| JevError::Network(erro.without_url().to_string()))
 }
 
 impl TransporteJev for ClienteJev {
-    fn julgar<'a>(&'a self, pedido: Pedido) -> BoxFuture<'a, Result<LoteResposta, ErroJev>> {
+    fn julgar<'a>(&'a self, pedido: Pedido) -> BoxFuture<'a, Result<BatchResponse, JevError>> {
         Box::pin(async move {
             let interno = Arc::clone(&self.0);
             let corpo = serde_json::to_vec(&pedido.para_json()).map_err(|erro| {
-                ErroJev::Resposta(format!("não consegui montar o corpo: {erro}"))
+                JevError::InvalidResponse(format!("não consegui montar o corpo: {erro}"))
             })?;
-            let mut ultimo: Option<ErroJev> = None;
+            let mut ultimo: Option<JevError> = None;
             for tentativa in 0..=interno.config.retentativas {
                 if tentativa > 0 {
                     tokio::time::sleep(ESPERA_RETENTATIVA).await;
@@ -187,7 +189,7 @@ impl TransporteJev for ClienteJev {
                     Ok(lote) => return Ok(lote),
                     Err(erro) => {
                         interno.metricas.jev_errors.increment(1);
-                        if !erro.eh_transitorio() || tentativa == interno.config.retentativas {
+                        if !erro.is_transient() || tentativa == interno.config.retentativas {
                             return Err(erro);
                         }
                         tracing::debug!(erro = %erro, "Jev falhou; tentando de novo");
@@ -195,12 +197,12 @@ impl TransporteJev for ClienteJev {
                     }
                 }
             }
-            Err(ultimo.unwrap_or_else(|| ErroJev::Rede("sem resposta do Jev".to_owned())))
+            Err(ultimo.unwrap_or_else(|| JevError::Network("sem resposta do Jev".to_owned())))
         })
     }
 }
 
-async fn tentar(interno: &Interno, corpo: &[u8]) -> Result<LoteResposta, ErroJev> {
+async fn tentar(interno: &Interno, corpo: &[u8]) -> Result<BatchResponse, JevError> {
     let resposta = interno
         .http
         .post(&interno.endpoint)
@@ -214,30 +216,30 @@ async fn tentar(interno: &Interno, corpo: &[u8]) -> Result<LoteResposta, ErroJev
         .await
         .map_err(|erro| {
             if erro.is_timeout() {
-                return ErroJev::TempoEsgotado {
+                return JevError::TimedOut {
                     ms: u64::try_from(interno.config.timeout.as_millis()).unwrap_or(u64::MAX),
                 };
             }
             // Falha de TLS é definitiva: repetir não conserta certificado nem nome errado.
             if let Some(detalhe) = detalhe_de_falha_tls(&erro) {
-                return ErroJev::Tls(detalhe);
+                return JevError::Tls(detalhe);
             }
-            ErroJev::Rede(erro.without_url().to_string())
+            JevError::Network(erro.without_url().to_string())
         })?;
     let codigo = resposta.status();
     if !codigo.is_success() {
-        return Err(ErroJev::Status {
-            codigo: codigo.as_u16(),
+        return Err(JevError::Status {
+            code: codigo.as_u16(),
             motivo: codigo.canonical_reason().unwrap_or("sem motivo").to_owned(),
         });
     }
     let texto = resposta
         .text()
         .await
-        .map_err(|erro| ErroJev::Rede(erro.without_url().to_string()))?;
+        .map_err(|erro| JevError::Network(erro.without_url().to_string()))?;
     let corpo: Value = serde_json::from_str(&texto)
-        .map_err(|erro| ErroJev::Resposta(format!("JSON inválido: {erro}")))?;
-    LoteResposta::de_json(&corpo)
+        .map_err(|erro| JevError::InvalidResponse(format!("JSON inválido: {erro}")))?;
+    BatchResponse::from_json(&corpo)
 }
 
 /// Marcadores (em minúsculas) de falha de TLS na cadeia de causas do erro do `reqwest`.
@@ -291,7 +293,7 @@ fn detalhe_de_falha_tls(erro: &dyn std::error::Error) -> Option<String> {
 ///
 /// Nunca fala com a rede. É o que permite provar "3 gates ligados geram 1 requisição" sem chave real.
 /// Função que responde um pedido no Jev falso.
-type Roteiro = Box<dyn Fn(&Pedido) -> Result<LoteResposta, ErroJev> + Send + Sync>;
+type Roteiro = Box<dyn Fn(&Pedido) -> Result<BatchResponse, JevError> + Send + Sync>;
 
 pub struct JevFalso {
     roteiro: Roteiro,
@@ -311,7 +313,7 @@ impl std::fmt::Debug for JevFalso {
 impl JevFalso {
     /// Jev falso que responde com a função dada.
     pub fn novo(
-        roteiro: impl Fn(&Pedido) -> Result<LoteResposta, ErroJev> + Send + Sync + 'static,
+        roteiro: impl Fn(&Pedido) -> Result<BatchResponse, JevError> + Send + Sync + 'static,
     ) -> Self {
         Self {
             roteiro: Box::new(roteiro),
@@ -330,25 +332,25 @@ impl JevFalso {
             let mut respostas = BTreeMap::new();
             for id in pedido.perguntas.keys() {
                 if let Some(escolha) = escolhas.get(id) {
-                    let mut resposta = crate::tipos::Resposta {
-                        escolha: Some(escolha.clone()),
-                        confianca: 1.0,
-                        ..crate::tipos::Resposta::default()
+                    let mut resposta = crate::types::JevResponse {
+                        choice: Some(escolha.clone()),
+                        confidence: 1.0,
+                        ..crate::types::JevResponse::default()
                     };
-                    resposta.probabilidades.insert(escolha.clone(), 1.0);
+                    resposta.probabilities.insert(escolha.clone(), 1.0);
                     respostas.insert(id.clone(), resposta);
                 }
             }
-            Ok(LoteResposta {
-                respostas,
+            Ok(BatchResponse {
+                answers: respostas,
                 tokens: 12,
-                ..LoteResposta::default()
+                ..BatchResponse::default()
             })
         })
     }
 
     /// Jev falso que sempre falha com o erro dado.
-    pub fn falhando(erro: ErroJev) -> Self {
+    pub fn falhando(erro: JevError) -> Self {
         Self::novo(move |_| Err(erro.clone()))
     }
 
@@ -373,7 +375,7 @@ impl JevFalso {
 }
 
 impl TransporteJev for JevFalso {
-    fn julgar<'a>(&'a self, pedido: Pedido) -> BoxFuture<'a, Result<LoteResposta, ErroJev>> {
+    fn julgar<'a>(&'a self, pedido: Pedido) -> BoxFuture<'a, Result<BatchResponse, JevError>> {
         Box::pin(async move {
             if !self.atraso.is_zero() {
                 tokio::time::sleep(self.atraso).await;

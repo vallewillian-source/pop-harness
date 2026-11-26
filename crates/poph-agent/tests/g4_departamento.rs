@@ -22,7 +22,7 @@ use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
 use poph_agent::turno::{Entrada, FuturoPausa, Motor, ObservadorNulo, OpcoesTurno, Pausa};
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, Usage};
 use poph_jev::{
-    G1_TRANSFERIR, IdGate, JevFalso, LoteResposta, MotorJev, Orientacao, Pedido, Resposta,
+    BatchResponse, G1_TRANSFERIR, IdGate, JevFalso, JevResponse, MotorJev, Orientacao, Pedido,
 };
 use poph_store::{
     AgentChange, DepartmentChange, Direction, NewAgent, NewConversation, NewDepartment, NewMessage,
@@ -331,13 +331,13 @@ fn roteiro(texto: &str) -> Script {
     ])
 }
 
-fn resposta(escolha: &str, confianca: f64) -> Resposta {
-    let mut item = Resposta {
-        escolha: Some(escolha.to_owned()),
-        confianca,
-        ..Resposta::default()
+fn resposta(escolha: &str, confianca: f64) -> JevResponse {
+    let mut item = JevResponse {
+        choice: Some(escolha.to_owned()),
+        confidence: confianca,
+        ..JevResponse::default()
     };
-    item.probabilidades.insert(escolha.to_owned(), confianca);
+    item.probabilities.insert(escolha.to_owned(), confianca);
     item
 }
 
@@ -349,25 +349,25 @@ fn resposta(escolha: &str, confianca: f64) -> Resposta {
 fn jev(departamento: Option<(&'static str, f64)>, veio_o_g4: bool) -> Arc<JevFalso> {
     Arc::new(JevFalso::novo(move |pedido: &Pedido| {
         let mut respostas = BTreeMap::new();
-        if pedido.perguntas.contains_key(IdGate::G1.pergunta_id()) {
+        if pedido.perguntas.contains_key(IdGate::G1.question_id()) {
             respostas.insert(
-                IdGate::G1.pergunta_id().to_owned(),
+                IdGate::G1.question_id().to_owned(),
                 resposta(G1_TRANSFERIR, 0.96),
             );
         }
         if veio_o_g4
-            && pedido.perguntas.contains_key(IdGate::G4.pergunta_id())
+            && pedido.perguntas.contains_key(IdGate::G4.question_id())
             && let Some((nome, confianca)) = departamento
         {
             respostas.insert(
-                IdGate::G4.pergunta_id().to_owned(),
+                IdGate::G4.question_id().to_owned(),
                 resposta(nome, confianca),
             );
         }
-        Ok(LoteResposta {
-            respostas,
+        Ok(BatchResponse {
+            answers: respostas,
             tokens: 11,
-            ..LoteResposta::default()
+            ..BatchResponse::default()
         })
     }))
 }
@@ -594,7 +594,7 @@ async fn jev_fora_do_ar_nao_trava_o_turno() {
 
     let jev = Arc::new(
         JevFalso::com_escolhas(BTreeMap::from([(
-            IdGate::G1.pergunta_id().to_owned(),
+            IdGate::G1.question_id().to_owned(),
             G1_TRANSFERIR.to_owned(),
         )]))
         .com_atraso(Duration::from_millis(400)),
@@ -653,7 +653,7 @@ async fn g4_desligado_e_o_comportamento_de_hoje() {
     assert!(
         pedidos
             .iter()
-            .all(|pedido| !pedido.perguntas.contains_key(IdGate::G4.pergunta_id())),
+            .all(|pedido| !pedido.perguntas.contains_key(IdGate::G4.question_id())),
         "G4 desligado não pode perguntar o departamento"
     );
     let detalhe = cenario.auditoria_da_transferencia();

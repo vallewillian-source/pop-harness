@@ -132,7 +132,7 @@ Done in HR-10b (20/11/2026). The two HTTP clients (`poph-core` for the provider,
 **system trust roots** (rustls-platform-verifier) and without OpenSSL, which stays banned in `deny.toml`. `http://`
 is still accepted (local gateway).
 - **A TLS failure is definitive**: an untrusted certificate, a server name that does not match the certificate, or a
-  refused handshake become their own errors (`ErroLlm::Tls` / `ErroJev::Tls`), with no retry, carrying the cause's
+  refused handshake become their own errors (`ErroLlm::Tls` / `JevError::Tls`), with no retry, carrying the cause's
   message (e.g. `invalid peer certificate: UnknownIssuer`). There is no public option to "ignore the certificate";
   the test uses an extra root, never disabled validation.
 - **What the workstation's `cargo check --target aarch64` stopped covering:** `poph-core` and `poph-jev` were

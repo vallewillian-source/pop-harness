@@ -10,20 +10,20 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use poph_jev::{
-    AvaliadorGates, CandidatoProduto, EstadoJev, G5, G5_NENHUM, Gate, IdGate, JevFalso,
-    MensagemJev, MotorJev, OrigemDecisao, Resposta, eval::ajuste_de_gate,
+    AvaliadorGates, DecisionOrigin, G5, G5_NENHUM, Gate, IdGate, JevFalso, JevMessage, JevResponse,
+    JevState, MotorJev, ProductCandidate, eval::ajuste_de_gate,
 };
 use poph_types::JevGates;
 
-fn candidato(id: &str, nome: &str, detalhe: &str) -> CandidatoProduto {
-    CandidatoProduto {
+fn candidato(id: &str, nome: &str, detalhe: &str) -> ProductCandidate {
+    ProductCandidate {
         id: id.to_owned(),
         nome: nome.to_owned(),
-        detalhe: detalhe.to_owned(),
+        detail: detalhe.to_owned(),
     }
 }
 
-fn candidatos() -> Vec<CandidatoProduto> {
+fn candidatos() -> Vec<ProductCandidate> {
     vec![
         candidato(
             "p-baratas",
@@ -43,20 +43,20 @@ fn candidatos() -> Vec<CandidatoProduto> {
     ]
 }
 
-fn estado(texto: &str, candidatos: Vec<CandidatoProduto>) -> EstadoJev {
-    EstadoJev::novo("whatsapp")
-        .com_mensagens(vec![MensagemJev::cliente(texto)])
-        .com_capacidades(true, true)
-        .com_produtos_candidatos(candidatos)
+fn estado(texto: &str, candidatos: Vec<ProductCandidate>) -> JevState {
+    JevState::new("whatsapp")
+        .with_messages(vec![JevMessage::from_customer(texto)])
+        .with_capabilities(true, true)
+        .with_product_candidates(candidatos)
 }
 
-fn resposta(escolha: &str, confianca: f64) -> Resposta {
-    let mut item = Resposta {
-        escolha: Some(escolha.to_owned()),
-        confianca,
-        ..Resposta::default()
+fn resposta(escolha: &str, confianca: f64) -> JevResponse {
+    let mut item = JevResponse {
+        choice: Some(escolha.to_owned()),
+        confidence: confianca,
+        ..JevResponse::default()
     };
-    item.probabilidades.insert(escolha.to_owned(), confianca);
+    item.probabilities.insert(escolha.to_owned(), confianca);
     item
 }
 
@@ -65,13 +65,13 @@ fn resposta(escolha: &str, confianca: f64) -> Resposta {
 /// Uma opção por candidato (pelo id) mais `nenhum`.
 #[test]
 fn pergunta_tem_uma_opcao_por_candidato_e_nenhum() {
-    let pergunta = G5.pergunta(&estado("quanto custa para matar barata?", candidatos()));
-    assert_eq!(pergunta.tipo, poph_jev::TipoPergunta::Choice);
+    let pergunta = G5.question(&estado("quanto custa para matar barata?", candidatos()));
+    assert_eq!(pergunta.tipo, poph_jev::QuestionType::Choice);
     assert!(!pergunta.instructions.is_empty());
-    let opcoes: Vec<&String> = pergunta.criteria.keys().collect();
+    let opcoes: Vec<&String> = pergunta.rubric.keys().collect();
     assert_eq!(opcoes, vec!["nenhum", "p-baratas", "p-cupins", "p-ratos"]);
     // O critério do candidato diz o nome e o detalhe, para o Jev reconhecer o produto.
-    let criterio = &pergunta.criteria["p-baratas"];
+    let criterio = &pergunta.rubric["p-baratas"];
     assert!(criterio.contains("Dedetização de baratas"), "{criterio}");
     assert!(criterio.contains("R$ 180,00"), "{criterio}");
 }
@@ -79,8 +79,8 @@ fn pergunta_tem_uma_opcao_por_candidato_e_nenhum() {
 /// Sem candidatos o gate não se aplica (a busca devolveu vazio ou o turno não consultou o catálogo).
 #[test]
 fn sem_candidato_o_gate_nao_se_aplica() {
-    assert!(!G5.aplicavel(&estado("quanto custa?", Vec::new())));
-    assert!(G5.aplicavel(&estado("quanto custa?", candidatos())));
+    assert!(!G5.applies(&estado("quanto custa?", Vec::new())));
+    assert!(G5.applies(&estado("quanto custa?", candidatos())));
 }
 
 // ───────────────────────────── decisão ─────────────────────────────
@@ -89,9 +89,9 @@ fn sem_candidato_o_gate_nao_se_aplica() {
 #[test]
 fn id_de_candidato_vira_decisao_confiavel() {
     let estado = estado("quanto custa para matar barata?", candidatos());
-    let decisao = G5.interpretar(&estado, Some(&resposta("p-baratas", 0.92)), G5.limiares());
-    assert_eq!(decisao.escolha.as_deref(), Some("p-baratas"));
-    assert_eq!(decisao.origem, OrigemDecisao::Jev);
+    let decisao = G5.interpret(&estado, Some(&resposta("p-baratas", 0.92)), G5.thresholds());
+    assert_eq!(decisao.choice.as_deref(), Some("p-baratas"));
+    assert_eq!(decisao.origin, DecisionOrigin::Jev);
     assert_eq!(decisao.motivo, None);
 }
 
@@ -99,13 +99,13 @@ fn id_de_candidato_vira_decisao_confiavel() {
 #[test]
 fn id_fora_dos_candidatos_e_recusado() {
     let estado = estado("quanto custa para matar barata?", candidatos());
-    let decisao = G5.interpretar(
+    let decisao = G5.interpret(
         &estado,
         Some(&resposta("p-produto-que-nao-existe", 1.0)),
-        G5.limiares(),
+        G5.thresholds(),
     );
-    assert_eq!(decisao.origem, OrigemDecisao::Fallback);
-    assert_eq!(decisao.escolha, None);
+    assert_eq!(decisao.origin, DecisionOrigin::Fallback);
+    assert_eq!(decisao.choice, None);
     let motivo = decisao.motivo.unwrap_or_default();
     assert!(motivo.contains("fora das opções"), "{motivo}");
 }
@@ -114,9 +114,9 @@ fn id_fora_dos_candidatos_e_recusado() {
 #[test]
 fn nenhum_e_abstencao_com_motivo() {
     let estado = estado("qual o prazo de entrega?", candidatos());
-    let decisao = G5.interpretar(&estado, Some(&resposta(G5_NENHUM, 0.95)), G5.limiares());
-    assert_eq!(decisao.origem, OrigemDecisao::Fallback);
-    assert_eq!(decisao.escolha, None);
+    let decisao = G5.interpret(&estado, Some(&resposta(G5_NENHUM, 0.95)), G5.thresholds());
+    assert_eq!(decisao.origin, DecisionOrigin::Fallback);
+    assert_eq!(decisao.choice, None);
     let motivo = decisao.motivo.unwrap_or_default();
     assert!(motivo.contains("não reconheceu o produto"), "{motivo}");
 }
@@ -125,9 +125,9 @@ fn nenhum_e_abstencao_com_motivo() {
 #[test]
 fn confianca_baixa_vira_fallback() {
     let estado = estado("quanto custa para matar barata?", candidatos());
-    let decisao = G5.interpretar(&estado, Some(&resposta("p-baratas", 0.55)), G5.limiares());
-    assert_eq!(decisao.origem, OrigemDecisao::Fallback);
-    assert_eq!(decisao.escolha, None);
+    let decisao = G5.interpret(&estado, Some(&resposta("p-baratas", 0.55)), G5.thresholds());
+    assert_eq!(decisao.origin, DecisionOrigin::Fallback);
+    assert_eq!(decisao.choice, None);
     let motivo = decisao.motivo.unwrap_or_default();
     assert!(motivo.contains("abaixo do limiar"), "{motivo}");
 }
@@ -136,8 +136,8 @@ fn confianca_baixa_vira_fallback() {
 #[test]
 fn sem_resposta_vira_fallback() {
     let estado = estado("quanto custa?", candidatos());
-    let decisao = G5.interpretar(&estado, None, G5.limiares());
-    assert_eq!(decisao.origem, OrigemDecisao::Fallback);
+    let decisao = G5.interpret(&estado, None, G5.thresholds());
+    assert_eq!(decisao.origin, DecisionOrigin::Fallback);
     assert_eq!(decisao.motivo.as_deref(), Some("sem resposta do Jev"));
 }
 
@@ -158,9 +158,9 @@ async fn g5_e_perguntado_fora_do_lote_so_com_candidatos() {
     let avaliador = MotorJev::novo(transporte, globais, "jev-latest");
 
     // 1. Lote normal (sem candidatos): o G5 não se aplica, então nenhuma pergunta é enviada.
-    let sem_candidatos = EstadoJev::novo("whatsapp")
-        .com_mensagens(vec![MensagemJev::cliente("oi")])
-        .com_capacidades(true, true);
+    let sem_candidatos = JevState::new("whatsapp")
+        .with_messages(vec![JevMessage::from_customer("oi")])
+        .with_capabilities(true, true);
     let lote = avaliador.avaliar(sem_candidatos, None).await;
     assert!(lote.decisoes.is_empty(), "{:?}", lote.decisoes);
     assert!(jev.pedidos().is_empty(), "nenhum pedido ao Jev");
@@ -188,11 +188,11 @@ async fn g5_e_perguntado_fora_do_lote_so_com_candidatos() {
 #[test]
 fn resposta_com_id_inventado_pelo_transporte_vira_fallback() {
     let estado = estado("quero dedetizar", candidatos());
-    let decisao = G5.interpretar(
+    let decisao = G5.interpret(
         &estado,
         Some(&resposta("p-de-outra-org", 0.99)),
-        G5.limiares(),
+        G5.thresholds(),
     );
-    assert_eq!(decisao.origem, OrigemDecisao::Fallback);
-    assert!(decisao.escolha.is_none());
+    assert_eq!(decisao.origin, DecisionOrigin::Fallback);
+    assert!(decisao.choice.is_none());
 }

@@ -24,22 +24,22 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use poph_jev::{
-    AjusteGates, AvaliadorGates, EstadoJev, FluxoJev, JevFalso, LoteResposta, MensagemJev,
-    MotorJev, Pedido, Resposta, TransporteJev,
+    AvaliadorGates, BatchResponse, GateOverrides, JevFalso, JevFlow, JevMessage, JevResponse,
+    JevState, MotorJev, Pedido, TransporteJev,
 };
 use poph_types::JevGates;
 
 /// Teto de caracteres do texto de gatilho na pergunta (PRD §6.3).
 const MAX_GATILHO: usize = 400;
 
-fn fluxo(indice: usize) -> FluxoJev {
+fn fluxo(indice: usize) -> JevFlow {
     let recheio = "a".repeat(MAX_GATILHO);
-    FluxoJev {
+    JevFlow {
         id: format!("fluxo_{indice}"),
         nome: format!("Fluxo {indice}"),
-        quando: format!("O cliente quer o fluxo {indice}. {recheio}"),
-        nao_quando: format!("Só está falando de outra coisa. {recheio}"),
-        exemplos: vec![
+        when: format!("O cliente quer o fluxo {indice}. {recheio}"),
+        not_when: format!("Só está falando de outra coisa. {recheio}"),
+        examples: vec![
             format!("quero o fluxo {indice}"),
             format!("dá para o fluxo {indice}?"),
             format!("preciso do fluxo {indice}"),
@@ -49,19 +49,19 @@ fn fluxo(indice: usize) -> FluxoJev {
 
 /// Estado de um turno com conversa em andamento: base disponível e uma resposta do agente (assim o
 /// G3 e o G8 também perguntam, e o lote não é só o G9), sem fluxo liberado.
-fn estado(rodada: usize, fluxos: usize) -> EstadoJev {
+fn estado(rodada: usize, fluxos: usize) -> JevState {
     let mensagens = [
-        MensagemJev::cliente("Oi, preciso de ajuda com a minha internet."),
-        MensagemJev::agente("Claro, posso ajudar. O que aconteceu?"),
-        MensagemJev::cliente(format!("A conexão caiu de novo, é a {rodada}ª vez hoje.")),
+        JevMessage::from_customer("Oi, preciso de ajuda com a minha internet."),
+        JevMessage::from_agent("Claro, posso ajudar. O que aconteceu?"),
+        JevMessage::from_customer(format!("A conexão caiu de novo, é a {rodada}ª vez hoje.")),
     ];
-    let base = EstadoJev::novo("whatsapp")
-        .com_mensagens(mensagens)
-        .com_capacidades(true, false);
+    let base = JevState::new("whatsapp")
+        .with_messages(mensagens)
+        .with_capabilities(true, false);
     if fluxos == 0 {
         base
     } else {
-        base.com_fluxos_liberados((0..fluxos).map(fluxo))
+        base.with_released_flows((0..fluxos).map(fluxo))
     }
 }
 
@@ -71,22 +71,22 @@ fn motor() -> (Arc<JevFalso>, MotorJev) {
         let mut respostas = BTreeMap::new();
         for (id, pergunta) in &pedido.perguntas {
             let escolha = pergunta
-                .criteria
+                .rubric
                 .keys()
                 .next()
                 .cloned()
                 .unwrap_or_else(|| "nenhum".to_owned());
-            let mut resposta = Resposta {
-                escolha: Some(escolha.clone()),
-                confianca: 1.0,
-                ..Resposta::default()
+            let mut resposta = JevResponse {
+                choice: Some(escolha.clone()),
+                confidence: 1.0,
+                ..JevResponse::default()
             };
-            resposta.probabilidades.insert(escolha, 1.0);
+            resposta.probabilities.insert(escolha, 1.0);
             respostas.insert(id.clone(), resposta);
         }
-        Ok(LoteResposta {
-            respostas,
-            ..LoteResposta::default()
+        Ok(BatchResponse {
+            answers: respostas,
+            ..BatchResponse::default()
         })
     }));
     let motor = MotorJev::novo(
@@ -110,7 +110,7 @@ fn percentil(ordenadas: &[u128], p: f64) -> u128 {
 async fn medir(
     rodadas: usize,
     fluxos: usize,
-    ajuste: Option<AjusteGates>,
+    ajuste: Option<GateOverrides>,
     rotulo: &str,
 ) -> (u128, u128, usize, usize, usize) {
     let (falso, motor) = motor();
@@ -157,9 +157,9 @@ async fn custo_do_g9_no_lote_com_20_fluxos() {
     let (_, _, bytes_flag, estado_flag, perguntas_flag) = medir(
         RODADAS,
         20,
-        Some(AjusteGates {
+        Some(GateOverrides {
             g9: Some(false),
-            ..AjusteGates::default()
+            ..GateOverrides::default()
         }),
         "20 fluxos, G9 desligado pela flag",
     )

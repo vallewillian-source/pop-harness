@@ -69,8 +69,8 @@ use poph_core::llm::{
     Usage,
 };
 use poph_jev::{
-    AcaoG7, AjusteGates, AvaliadorGates, EstadoJev, G1_TRANSFERIR, G3_NADA, G6_APROVADA,
-    G7_RESPOSTA_PADRAO, G8_DESPEDIDA_PADRAO, G8_ENCERRADA, IdGate, MensagemJev, MotorJev,
+    AvaliadorGates, G1_TRANSFERIR, G3_NADA, G6_APROVADA, G7_RESPOSTA_PADRAO, G7Action,
+    G8_DESPEDIDA_PADRAO, G8_ENCERRADA, GateOverrides, IdGate, JevMessage, JevState, MotorJev,
     Orientacao, ResultadoJev, ResultadoOrientacao,
 };
 use poph_store::{
@@ -449,7 +449,7 @@ impl RevisaoG6 {
     /// O bloco que entra em `turns.jev_json`.
     fn para_json(&self) -> serde_json::Value {
         json!({
-            "gate": IdGate::G6.como_texto(),
+            "gate": IdGate::G6.as_text(),
             "escolha": self.escolha,
             "confianca": self.confianca,
             "regenerou": self.regenerou,
@@ -775,7 +775,7 @@ impl Motor {
             .and_then(|ajustes| fluxo::preparar(ajustes, &self.store, org, conversa_id, agente_id));
         // Só os fluxos de uma Ficha **sem** execução ativa entram no estado do G9 (PRD L6): com
         // execução em andamento, a pergunta não existe e o custo é zero.
-        let fluxos_do_g9: Vec<poph_jev::FluxoJev> = fluxo_preparo
+        let fluxos_do_g9: Vec<poph_jev::JevFlow> = fluxo_preparo
             .as_ref()
             .filter(|preparo| preparo.ativa.is_none())
             .map(|preparo| preparo.liberados.clone())
@@ -1046,7 +1046,7 @@ impl Motor {
         // segue como hoje; `responder_padrao` manda o texto neutro **sem chamar o modelo**;
         // `transferir` usa o caminho do G1. Abstenção, confiança baixa, resposta inválida e Jev
         // fora = `normal`, isto é, o comportamento de sempre.
-        let acao_g7 = poph_jev::acao_g7_do_agente(&quente.agente.jev_json);
+        let acao_g7 = poph_jev::g7_action_from_agent(&quente.agente.jev_json);
         if jev
             .as_ref()
             .and_then(|resultado| resultado.escolha_confiavel(IdGate::G7))
@@ -1060,12 +1060,12 @@ impl Motor {
                     .as_ref()
                     .and_then(|resultado| resultado.escolha_confiavel(IdGate::G7))
                     .unwrap_or("—"),
-                acao = acao_g7.como_texto(),
+                acao = acao_g7.as_text(),
                 "G7: mensagem classificada como injeção ou abuso"
             );
             match acao_g7 {
-                AcaoG7::Registrar => {}
-                AcaoG7::ResponderPadrao => {
+                G7Action::Record => {}
+                G7Action::DefaultReply => {
                     return self.responder_g7(
                         Alvo {
                             org,
@@ -1084,7 +1084,7 @@ impl Motor {
                         observador,
                     );
                 }
-                AcaoG7::Transferir => {
+                G7Action::Transfer => {
                     self.metricas.g7_transferencias.increment(1);
                     return self
                         .transferir(
@@ -1160,7 +1160,7 @@ impl Motor {
             && jev.decisao(IdGate::G5).is_some()
         {
             tracing::debug!(
-                decisao = ?jev.decisao(IdGate::G5).map(|decisao| decisao.para_json()),
+                decisao = ?jev.decisao(IdGate::G5).map(|decisao| decisao.to_json()),
                 "G5 do turno"
             );
         }
@@ -1687,16 +1687,16 @@ impl Motor {
         if candidatos.is_empty() {
             return None;
         }
-        let do_estado: Vec<poph_jev::CandidatoProduto> =
+        let do_estado: Vec<poph_jev::ProductCandidate> =
             candidatos.iter().map(candidato_do_g5).collect();
         let gates = self.gates_do_agente(&quente.agente);
         let estado = self
             .estado_jev(org, quente, ultimas, conversa, gates, None)?
-            .com_produtos_candidatos(do_estado);
+            .with_product_candidates(do_estado);
         // Só o G5 nesta chamada: os outros gates já foram perguntados no lote, e repeti-los aqui
         // gastaria uma segunda rodada sem mudar nada.
         let resultado = avaliador
-            .avaliar(estado, Some(poph_jev::AjusteGates::apenas(IdGate::G5)))
+            .avaliar(estado, Some(poph_jev::GateOverrides::only(IdGate::G5)))
             .await;
         let escolha = resultado.escolha_confiavel(IdGate::G5).map(str::to_owned);
         // A pergunta do G5 é uma chamada própria: o custo dela entra no mesmo registro do turno.
@@ -1710,7 +1710,7 @@ impl Motor {
                     .chamada
                     .tokens
                     .saturating_add(resultado.chamada.tokens);
-                atual.chamada.usage = atual.chamada.usage.somar(resultado.chamada.usage);
+                atual.chamada.usage = atual.chamada.usage.plus(resultado.chamada.usage);
                 if atual.chamada.falha.is_none() {
                     atual.chamada.falha = resultado.chamada.falha;
                 }
@@ -1776,7 +1776,7 @@ impl Motor {
         revisao.confianca = jev
             .as_ref()
             .and_then(|resultado| resultado.decisao(IdGate::G6))
-            .map(|decisao| decisao.confianca)
+            .map(|decisao| decisao.confidence)
             .unwrap_or(0.0);
         if escolha == G6_APROVADA {
             return revisao;
@@ -1837,7 +1837,7 @@ impl Motor {
         if segunda.as_deref() == Some(G6_APROVADA) {
             return revisao;
         }
-        if let Some(segura) = poph_jev::resposta_segura_do_agente(&quente.agente.jev_json) {
+        if let Some(segura) = poph_jev::safe_response_from_agent(&quente.agente.jev_json) {
             resposta.texto = segura;
             revisao.segura = true;
             self.metricas.respostas_seguras_g6.increment(1);
@@ -1862,12 +1862,12 @@ impl Motor {
         jev: &mut Option<ResultadoJev>,
     ) -> Option<String> {
         let gates = self.gates_do_agente(&quente.agente);
-        let candidatos: Vec<poph_jev::CandidatoProduto> = produtos
+        let candidatos: Vec<poph_jev::ProductCandidate> = produtos
             .iter()
-            .map(|produto| poph_jev::CandidatoProduto {
+            .map(|produto| poph_jev::ProductCandidate {
                 id: produto.produto.to_string(),
                 nome: produto.nome.clone(),
-                detalhe: format!(
+                detail: format!(
                     "{} {} · {}",
                     produto.preco_texto, produto.unidade, produto.condicoes
                 ),
@@ -1875,11 +1875,11 @@ impl Motor {
             .collect();
         let estado = self
             .estado_jev(org, quente, ultimas, conversa, gates, None)?
-            .com_resposta_candidata(texto)
-            .com_produtos_candidatos(candidatos);
+            .with_candidate_response(texto)
+            .with_product_candidates(candidatos);
         // Só o G6 nesta chamada: os outros gates já foram perguntados no lote do turno.
         let resultado = avaliador
-            .avaliar(estado, Some(AjusteGates::apenas(IdGate::G6)))
+            .avaliar(estado, Some(GateOverrides::only(IdGate::G6)))
             .await;
         let escolha = resultado.escolha_confiavel(IdGate::G6).map(str::to_owned);
         somar_resultado_jev(jev, resultado);
@@ -1947,10 +1947,10 @@ impl Motor {
         quente: &AgenteQuente,
         ultimas: &[MensagemGravada],
         conversa: &poph_store::Conversa,
-        fluxos: Option<&[poph_jev::FluxoJev]>,
+        fluxos: Option<&[poph_jev::JevFlow]>,
     ) -> Option<futures::future::BoxFuture<'static, ResultadoJev>> {
         let avaliador = Arc::clone(self.jev.as_ref()?);
-        let ajuste: Option<AjusteGates> = poph_jev::ajuste_do_agente(&quente.agente.jev_json);
+        let ajuste: Option<GateOverrides> = poph_jev::ajuste_do_agente(&quente.agente.jev_json);
         let gates: JevGates = avaliador.gates_efetivos(ajuste);
         if MotorJev::nenhum(gates) {
             return None;
@@ -1972,36 +1972,36 @@ impl Motor {
         ultimas: &[MensagemGravada],
         conversa: &poph_store::Conversa,
         gates: JevGates,
-        fluxos: Option<&[poph_jev::FluxoJev]>,
-    ) -> Option<EstadoJev> {
-        let mensagens: Vec<MensagemJev> = ultimas.iter().filter_map(mensagem_do_jev).collect();
+        fluxos: Option<&[poph_jev::JevFlow]>,
+    ) -> Option<JevState> {
+        let mensagens: Vec<JevMessage> = ultimas.iter().filter_map(mensagem_do_jev).collect();
         if mensagens.is_empty() {
             return None;
         }
-        let mut estado = EstadoJev::novo(conversa.canal.clone())
-            .com_mensagens(mensagens)
-            .com_handoff(
-                poph_jev::situacoes_do_agente(&quente.agente.jev_json),
+        let mut estado = JevState::new(conversa.canal.clone())
+            .with_messages(mensagens)
+            .with_handoff(
+                poph_jev::handoff_situations_from_agent(&quente.agente.jev_json),
                 quente.agente.handoff_active,
             )
-            .com_capacidades(
+            .with_capabilities(
                 self.busca.is_some(),
                 quente.ferramenta_habilitada(crate::produtos::NOME_FERRAMENTA),
             );
         if gates.g4 {
-            estado = estado.com_departamentos(self.departamentos_ativos(org));
+            estado = estado.with_departments(self.departamentos_ativos(org));
         }
         // FX-23: os fluxos liberados vão no estado **só** quando o G9 está ligado para o agente —
         // com o gate desligado o estado fica como era, e as medições dos outros gates não mudam.
         if gates.g9
             && let Some(fluxos) = fluxos
         {
-            estado = estado.com_fluxos_liberados(fluxos.iter().cloned());
+            estado = estado.with_released_flows(fluxos.iter().cloned());
         }
         // G7 (HR-35): o texto extraído do arquivo do cliente vai junto com a mensagem, para o Jev
         // julgar injeção embutida no documento. Sem arquivo com texto, o campo não existe.
         if let Some(texto) = self.texto_de_arquivos(org, ultimas) {
-            estado = estado.com_texto_de_arquivo(texto);
+            estado = estado.with_file_text(texto);
         }
         Some(estado)
     }
@@ -2430,9 +2430,9 @@ impl Motor {
             .touch(org, conversa_id, self.store.now())?;
         let departamento = destino.departamento;
         let detalhe = json!({
-            "gate": origem.como_texto(),
+            "gate": origem.as_text(),
             "decisao": jev.escolha(origem),
-            "confianca": jev.decisao(origem).map(|decisao| decisao.confianca),
+            "confianca": jev.decisao(origem).map(|decisao| decisao.confidence),
             // A decisão do G1 vai sempre: a transferência do G7 (HR-35) usa este mesmo caminho.
             "g1_decisao": jev.escolha(IdGate::G1),
             "risco": tipo,
@@ -2466,7 +2466,7 @@ impl Motor {
         // conversa foi e, quando não foi a escolha do Jev, por quê.
         registro["transferencia"] = json!({
             // Gate que pediu a transferência: G1 (pedido do cliente) ou G7 (injeção/abuso).
-            "gate": origem.como_texto(),
+            "gate": origem.as_text(),
             "departamento": departamento.map(|dep| dep.to_string()),
             "origem": destino.origem.como_texto(),
             "escolha_do_jev": escolha_do_g4,
@@ -2541,7 +2541,7 @@ impl Motor {
         let conversa_id = alvo.conversa;
         let turno = alvo.turno;
 
-        let texto = poph_jev::resposta_g7_do_agente(&quente.agente.jev_json)
+        let texto = poph_jev::g7_response_from_agent(&quente.agente.jev_json)
             .unwrap_or_else(|| G7_RESPOSTA_PADRAO.to_owned());
         self.store.messages().write_with_output(
             org,
@@ -2580,10 +2580,10 @@ impl Motor {
         let motivo = "mensagem classificada como injeção ou abuso (G7)".to_owned();
         let mut registro = jev.para_json();
         registro["classificacao"] = json!({
-            "gate": IdGate::G7.como_texto(),
+            "gate": IdGate::G7.as_text(),
             "escolha": jev.escolha(IdGate::G7),
-            "confianca": jev.decisao(IdGate::G7).map(|decisao| decisao.confianca),
-            "acao": AcaoG7::ResponderPadrao.como_texto(),
+            "confianca": jev.decisao(IdGate::G7).map(|decisao| decisao.confidence),
+            "acao": G7Action::DefaultReply.as_text(),
         });
         self.store.turns().finalise(
             org,
@@ -2646,7 +2646,7 @@ impl Motor {
         let conversa_id = alvo.conversa;
         let turno = alvo.turno;
 
-        let texto = poph_jev::despedida_do_agente(&quente.agente.jev_json)
+        let texto = poph_jev::farewell_from_agent(&quente.agente.jev_json)
             .unwrap_or_else(|| G8_DESPEDIDA_PADRAO.to_owned())
             .trim()
             .to_owned();
@@ -2689,8 +2689,8 @@ impl Motor {
         let motivo = "conversa encerrada pelo cliente (G8)".to_owned();
         let mut registro = jev.para_json();
         registro["encerramento"] = json!({
-            "gate": IdGate::G8.como_texto(),
-            "confianca": jev.decisao(IdGate::G8).map(|decisao| decisao.confianca),
+            "gate": IdGate::G8.as_text(),
+            "confianca": jev.decisao(IdGate::G8).map(|decisao| decisao.confidence),
             "despedida": !texto.is_empty(),
         });
         self.store.turns().finalise(
@@ -2755,7 +2755,7 @@ impl Motor {
         let Some(avaliador) = self.jev.as_ref() else {
             return ResultadoOrientacao::nao_consultado("Jev desligado no motor");
         };
-        let ajuste: Option<AjusteGates> = poph_jev::ajuste_do_agente(&quente.agente.jev_json);
+        let ajuste: Option<GateOverrides> = poph_jev::ajuste_do_agente(&quente.agente.jev_json);
         let gates: JevGates = avaliador.gates_efetivos(ajuste);
         let Some(estado) = self.estado_jev(org, quente, ultimas, conversa, gates, None) else {
             return ResultadoOrientacao::nao_consultado("sem mensagem para julgar");
@@ -2906,10 +2906,10 @@ impl Motor {
 ///
 /// Mensagem de ferramenta e de sistema ficam fora: o Jev decide sobre a conversa, não sobre o
 /// resultado de ferramenta.
-fn mensagem_do_jev(mensagem: &MensagemGravada) -> Option<MensagemJev> {
+fn mensagem_do_jev(mensagem: &MensagemGravada) -> Option<JevMessage> {
     match mensagem.direction {
-        poph_store::Direction::Inbound => Some(MensagemJev::cliente(mensagem.texto.clone())),
-        poph_store::Direction::Outbound => Some(MensagemJev::agente(mensagem.texto.clone())),
+        poph_store::Direction::Inbound => Some(JevMessage::from_customer(mensagem.texto.clone())),
+        poph_store::Direction::Outbound => Some(JevMessage::from_agent(mensagem.texto.clone())),
     }
     .filter(|_| mensagem.role != Role::Tool && mensagem.role != Role::System)
 }
@@ -3398,7 +3398,7 @@ fn somar_resultado_jev(jev: &mut Option<ResultadoJev>, resultado: ResultadoJev) 
                 .chamada
                 .tokens
                 .saturating_add(resultado.chamada.tokens);
-            atual.chamada.usage = atual.chamada.usage.somar(resultado.chamada.usage);
+            atual.chamada.usage = atual.chamada.usage.plus(resultado.chamada.usage);
             if atual.chamada.falha.is_none() {
                 atual.chamada.falha = resultado.chamada.falha;
             }
@@ -3457,7 +3457,7 @@ const CONSULTA_MAX_CARACTERES: usize = 2000;
 /// O `id` é a opção enviada e a chave validada de volta; o `detalhe` leva o que ajuda o Jev a
 /// reconhecer o produto na fala do cliente (categoria, preço, unidade), sem despejar o cadastro
 /// inteiro no pedido.
-fn candidato_do_g5(produto: &ProdutoEncontrado) -> poph_jev::CandidatoProduto {
+fn candidato_do_g5(produto: &ProdutoEncontrado) -> poph_jev::ProductCandidate {
     let mut partes: Vec<String> = Vec::new();
     if !produto.categoria.trim().is_empty() {
         partes.push(format!("categoria: {}", produto.categoria.trim()));
@@ -3468,10 +3468,10 @@ fn candidato_do_g5(produto: &ProdutoEncontrado) -> poph_jev::CandidatoProduto {
     if !produto.unidade.trim().is_empty() {
         partes.push(format!("unidade: {}", produto.unidade.trim()));
     }
-    poph_jev::CandidatoProduto {
+    poph_jev::ProductCandidate {
         id: produto.produto.to_string(),
         nome: produto.nome.clone(),
-        detalhe: partes.join("; "),
+        detail: partes.join("; "),
     }
 }
 

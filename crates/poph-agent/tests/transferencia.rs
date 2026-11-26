@@ -22,8 +22,8 @@ use poph_agent::turno::{
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, Usage};
 use poph_jev::{
-    G1_CONTINUAR, G1_TRANSFERIR, IdGate, JevFalso, LoteResposta, MotorJev, Orientacao, Pedido,
-    RISCO_ANIMAL, RISCO_INGESTAO, RISCO_NENHUM, RISCO_OUTRO, RISCO_PERGUNTA_ID, Resposta,
+    BatchResponse, G1_CONTINUAR, G1_TRANSFERIR, IdGate, JevFalso, JevResponse, MotorJev,
+    Orientacao, Pedido, RISCO_ANIMAL, RISCO_INGESTAO, RISCO_NENHUM, RISCO_OUTRO, RISCO_PERGUNTA_ID,
 };
 use poph_store::{
     AgentChange, Direction, NewAgent, NewConversation, NewMessage, NewOrg, Page, Role, Store,
@@ -335,13 +335,13 @@ fn so_g1() -> JevGates {
     }
 }
 
-fn resposta(escolha: &str, confianca: f64) -> Resposta {
-    let mut item = Resposta {
-        escolha: Some(escolha.to_owned()),
-        confianca,
-        ..Resposta::default()
+fn resposta(escolha: &str, confianca: f64) -> JevResponse {
+    let mut item = JevResponse {
+        choice: Some(escolha.to_owned()),
+        confidence: confianca,
+        ..JevResponse::default()
     };
-    item.probabilidades.insert(escolha.to_owned(), confianca);
+    item.probabilities.insert(escolha.to_owned(), confianca);
     item
 }
 
@@ -357,10 +357,10 @@ fn jev(decisao: &'static str, confianca: f64, risco: Option<(&'static str, f64)>
         {
             respostas.insert(RISCO_PERGUNTA_ID.to_owned(), resposta(tipo, confianca));
         }
-        Ok(LoteResposta {
-            respostas,
+        Ok(BatchResponse {
+            answers: respostas,
             tokens: 9,
-            ..LoteResposta::default()
+            ..BatchResponse::default()
         })
     }))
 }
@@ -523,10 +523,10 @@ async fn transferida_nao_responde_ate_reabrir() {
         if pedido.perguntas.contains_key(RISCO_PERGUNTA_ID) {
             respostas.insert(RISCO_PERGUNTA_ID.to_owned(), resposta(RISCO_ANIMAL, 0.9));
         }
-        Ok(LoteResposta {
-            respostas,
+        Ok(BatchResponse {
+            answers: respostas,
             tokens: 9,
-            ..LoteResposta::default()
+            ..BatchResponse::default()
         })
     }));
     let motor = cenario.motor(Some(motor_jev(jev)), Orientacao::default());
@@ -575,17 +575,17 @@ async fn erro_na_pergunta_de_risco_transfere_com_a_mensagem_automatica() {
     // O G1 responde; a pergunta de risco recebe erro do provedor.
     let jev = Arc::new(JevFalso::novo(|pedido: &Pedido| {
         if pedido.perguntas.contains_key(RISCO_PERGUNTA_ID) {
-            return Err(poph_jev::ErroJev::Status {
-                codigo: 503,
+            return Err(poph_jev::JevError::Status {
+                code: 503,
                 motivo: "Service Unavailable".to_owned(),
             });
         }
         let mut respostas = BTreeMap::new();
         respostas.insert("g1_transferir".to_owned(), resposta(G1_TRANSFERIR, 0.99));
-        Ok(LoteResposta {
-            respostas,
+        Ok(BatchResponse {
+            answers: respostas,
             tokens: 9,
-            ..LoteResposta::default()
+            ..BatchResponse::default()
         })
     }));
     let motor = cenario.motor(Some(motor_jev(jev)), Orientacao::default());

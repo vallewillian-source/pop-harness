@@ -11,30 +11,30 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use poph_jev::{
-    AvaliadorGates, EstadoJev, G6, G6_APROVADA, G6_REVISAR, G6_REVISAR_ESCOPO, G6_REVISAR_LONGA,
-    G6_REVISAR_PRECO, G6_REVISAR_TOM, G6_REVISAR_TRANSFERENCIA, Gate, IdGate, JevFalso,
-    MensagemJev, MotorJev, OrigemDecisao, Resposta, TipoPergunta, eval::ajuste_de_gate,
+    AvaliadorGates, DecisionOrigin, G6, G6_APROVADA, G6_REVISAR, G6_REVISAR_ESCOPO,
+    G6_REVISAR_LONGA, G6_REVISAR_PRECO, G6_REVISAR_TOM, G6_REVISAR_TRANSFERENCIA, Gate, IdGate,
+    JevFalso, JevMessage, JevResponse, JevState, MotorJev, QuestionType, eval::ajuste_de_gate,
     g6_orientacao, g6_precisa_revisar,
 };
 use poph_types::JevGates;
 
-fn estado(resposta: &str) -> EstadoJev {
-    EstadoJev::novo("whatsapp")
-        .com_mensagens(vec![
-            MensagemJev::agente("Qual é a sua dúvida?"),
-            MensagemJev::cliente("quanto custa para dedetizar baratas?"),
+fn estado(resposta: &str) -> JevState {
+    JevState::new("whatsapp")
+        .with_messages(vec![
+            JevMessage::from_agent("Qual é a sua dúvida?"),
+            JevMessage::from_customer("quanto custa para dedetizar baratas?"),
         ])
-        .com_capacidades(true, true)
-        .com_resposta_candidata(resposta)
+        .with_capabilities(true, true)
+        .with_candidate_response(resposta)
 }
 
-fn resposta(escolha: &str, confianca: f64) -> Resposta {
-    let mut item = Resposta {
-        escolha: Some(escolha.to_owned()),
-        confianca,
-        ..Resposta::default()
+fn resposta(escolha: &str, confianca: f64) -> JevResponse {
+    let mut item = JevResponse {
+        choice: Some(escolha.to_owned()),
+        confidence: confianca,
+        ..JevResponse::default()
     };
-    item.probabilidades.insert(escolha.to_owned(), confianca);
+    item.probabilities.insert(escolha.to_owned(), confianca);
     item
 }
 
@@ -43,10 +43,10 @@ fn resposta(escolha: &str, confianca: f64) -> Resposta {
 /// Seis opções: `aprovada` e os cinco motivos de revisão.
 #[test]
 fn pergunta_tem_aprovada_e_os_cinco_motivos() {
-    let pergunta = G6.pergunta(&estado("Sai R$ 180,00."));
-    assert_eq!(pergunta.tipo, TipoPergunta::Choice);
+    let pergunta = G6.question(&estado("Sai R$ 180,00."));
+    assert_eq!(pergunta.tipo, QuestionType::Choice);
     assert!(!pergunta.instructions.is_empty());
-    let opcoes: Vec<&String> = pergunta.criteria.keys().collect();
+    let opcoes: Vec<&String> = pergunta.rubric.keys().collect();
     assert_eq!(
         opcoes,
         vec![
@@ -63,20 +63,23 @@ fn pergunta_tem_aprovada_e_os_cinco_motivos() {
 /// Sem resposta em revisão não há o que julgar: o gate não se aplica (e não pergunta).
 #[test]
 fn sem_resposta_em_revisao_o_gate_nao_se_aplica() {
-    let sem_resposta = EstadoJev::novo("whatsapp")
-        .com_mensagens(vec![MensagemJev::cliente("oi")])
-        .com_capacidades(true, true);
-    assert!(!G6.aplicavel(&sem_resposta));
-    assert!(G6.aplicavel(&estado("Sai R$ 180,00.")));
+    let sem_resposta = JevState::new("whatsapp")
+        .with_messages(vec![JevMessage::from_customer("oi")])
+        .with_capabilities(true, true);
+    assert!(!G6.applies(&sem_resposta));
+    assert!(G6.applies(&estado("Sai R$ 180,00.")));
 }
 
 /// A resposta em revisão é truncada, para o pedido ao Jev não crescer com o texto.
 #[test]
 fn resposta_em_revisao_e_truncada() {
-    let longa = "a".repeat(poph_jev::MAX_CHARS_RESPOSTA + 50);
-    let estado = EstadoJev::novo("whatsapp").com_resposta_candidata(longa);
-    let texto = estado.resposta_candidata.unwrap_or_default();
-    assert_eq!(texto.chars().count(), poph_jev::MAX_CHARS_RESPOSTA + 1);
+    let longa = "a".repeat(poph_jev::MAX_CANDIDATE_RESPONSE_CHARS + 50);
+    let estado = JevState::new("whatsapp").with_candidate_response(longa);
+    let texto = estado.candidate_response.unwrap_or_default();
+    assert_eq!(
+        texto.chars().count(),
+        poph_jev::MAX_CANDIDATE_RESPONSE_CHARS + 1
+    );
     assert!(texto.ends_with('…'));
 }
 
@@ -85,13 +88,13 @@ fn resposta_em_revisao_e_truncada() {
 /// `aprovada` com confiança no limiar é decisão confiável e mantém a resposta.
 #[test]
 fn aprovada_e_decisao_confiavel() {
-    let decisao = G6.interpretar(
+    let decisao = G6.interpret(
         &estado("Sai R$ 180,00 por visita."),
         Some(&resposta(G6_APROVADA, 0.93)),
-        G6.limiares(),
+        G6.thresholds(),
     );
-    assert_eq!(decisao.origem, OrigemDecisao::Jev);
-    assert_eq!(decisao.escolha.as_deref(), Some(G6_APROVADA));
+    assert_eq!(decisao.origin, DecisionOrigin::Jev);
+    assert_eq!(decisao.choice.as_deref(), Some(G6_APROVADA));
     assert_eq!(decisao.motivo, None);
 }
 
@@ -99,13 +102,13 @@ fn aprovada_e_decisao_confiavel() {
 #[test]
 fn cada_motivo_de_revisao_e_decisao_confiavel_com_orientacao() {
     for motivo in G6_REVISAR {
-        let decisao = G6.interpretar(
+        let decisao = G6.interpret(
             &estado("Amanhã mandamos alguém."),
             Some(&resposta(motivo, 0.88)),
-            G6.limiares(),
+            G6.thresholds(),
         );
-        assert_eq!(decisao.origem, OrigemDecisao::Jev, "{motivo}");
-        assert_eq!(decisao.escolha.as_deref(), Some(motivo));
+        assert_eq!(decisao.origin, DecisionOrigin::Jev, "{motivo}");
+        assert_eq!(decisao.choice.as_deref(), Some(motivo));
         assert!(g6_precisa_revisar(motivo));
         let orientacao = g6_orientacao(motivo);
         assert!(
@@ -119,13 +122,13 @@ fn cada_motivo_de_revisao_e_decisao_confiavel_com_orientacao() {
 /// Confiança abaixo do limiar (0,5) vira fallback que **aprova**: o comportamento de hoje.
 #[test]
 fn confianca_baixa_aprova() {
-    let decisao = G6.interpretar(
+    let decisao = G6.interpret(
         &estado("Sai R$ 180,00."),
         Some(&resposta(G6_REVISAR_PRECO, 0.45)),
-        G6.limiares(),
+        G6.thresholds(),
     );
-    assert_eq!(decisao.origem, OrigemDecisao::Fallback);
-    assert_eq!(decisao.escolha.as_deref(), Some(G6_APROVADA));
+    assert_eq!(decisao.origin, DecisionOrigin::Fallback);
+    assert_eq!(decisao.choice.as_deref(), Some(G6_APROVADA));
     let motivo = decisao.motivo.unwrap_or_default();
     assert!(motivo.contains("abaixo do limiar"), "{motivo}");
 }
@@ -133,13 +136,13 @@ fn confianca_baixa_aprova() {
 /// Opção fora do contrato (o transporte pode devolver qualquer coisa) cai no fallback que aprova.
 #[test]
 fn opcao_fora_do_contrato_aprova() {
-    let decisao = G6.interpretar(
+    let decisao = G6.interpret(
         &estado("Sai R$ 180,00."),
         Some(&resposta("reescrever_tudo", 1.0)),
-        G6.limiares(),
+        G6.thresholds(),
     );
-    assert_eq!(decisao.origem, OrigemDecisao::Fallback);
-    assert_eq!(decisao.escolha.as_deref(), Some(G6_APROVADA));
+    assert_eq!(decisao.origin, DecisionOrigin::Fallback);
+    assert_eq!(decisao.choice.as_deref(), Some(G6_APROVADA));
     let motivo = decisao.motivo.unwrap_or_default();
     assert!(motivo.contains("fora das opções"), "{motivo}");
 }
@@ -147,9 +150,9 @@ fn opcao_fora_do_contrato_aprova() {
 /// Sem resposta do Jev, fallback que aprova, com o motivo.
 #[test]
 fn sem_resposta_do_jev_aprova() {
-    let decisao = G6.interpretar(&estado("Sai R$ 180,00."), None, G6.limiares());
-    assert_eq!(decisao.origem, OrigemDecisao::Fallback);
-    assert_eq!(decisao.escolha.as_deref(), Some(G6_APROVADA));
+    let decisao = G6.interpret(&estado("Sai R$ 180,00."), None, G6.thresholds());
+    assert_eq!(decisao.origin, DecisionOrigin::Fallback);
+    assert_eq!(decisao.choice.as_deref(), Some(G6_APROVADA));
     assert_eq!(decisao.motivo.as_deref(), Some("sem resposta do Jev"));
 }
 
@@ -170,9 +173,9 @@ async fn g6_e_perguntado_fora_do_lote_so_com_resposta_em_revisao() {
     let avaliador = MotorJev::novo(transporte, globais, "jev-latest");
 
     // 1. Lote normal, sem resposta em revisão: o G6 não se aplica e nenhuma pergunta sai.
-    let sem_resposta = EstadoJev::novo("whatsapp")
-        .com_mensagens(vec![MensagemJev::cliente("quanto custa?")])
-        .com_capacidades(true, true);
+    let sem_resposta = JevState::new("whatsapp")
+        .with_messages(vec![JevMessage::from_customer("quanto custa?")])
+        .with_capabilities(true, true);
     let lote = avaliador.avaliar(sem_resposta, None).await;
     assert!(lote.decisoes.is_empty(), "{:?}", lote.decisoes);
     assert!(jev.pedidos().is_empty(), "nenhum pedido ao Jev");
@@ -205,8 +208,8 @@ async fn g6_e_perguntado_fora_do_lote_so_com_resposta_em_revisao() {
 /// O estado sem resposta em revisão não muda de forma (os conjuntos já medidos continuam iguais).
 #[test]
 fn estado_sem_resposta_nao_leva_o_campo() {
-    let estado = EstadoJev::novo("whatsapp").com_mensagens(vec![MensagemJev::cliente("oi")]);
-    let json = estado.para_json();
+    let estado = JevState::new("whatsapp").with_messages(vec![JevMessage::from_customer("oi")]);
+    let json = estado.to_json();
     assert!(json.get("resposta_candidata").is_none());
 }
 

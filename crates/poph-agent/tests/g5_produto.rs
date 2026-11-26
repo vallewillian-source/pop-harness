@@ -32,8 +32,9 @@ use poph_agent::turno::{
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, ToolCall, Usage};
 use poph_jev::{
-    AjusteGates, AvaliadorGates, Decisao, ErroJev, EstadoJev, G3_NADA, G5_NENHUM, IdGate, JevFalso,
-    LoteResposta, MotorJev, OpcoesJev, OrigemDecisao, Resposta as RespostaJev, ResultadoJev,
+    AvaliadorGates, BatchResponse, Decisao, DecisionOrigin, G3_NADA, G5_NENHUM, GateOverrides,
+    IdGate, JevError, JevFalso, JevResponse as RespostaJev, JevState, MotorJev, OpcoesJev,
+    ResultadoJev,
 };
 use poph_store::{Direction, NewAgent, NewConversation, NewMessage, NewOrg, Role, Store};
 use poph_types::{
@@ -475,7 +476,7 @@ struct JevInventor {
 }
 
 impl AvaliadorGates for JevInventor {
-    fn gates_efetivos(&self, _ajuste: Option<AjusteGates>) -> JevGates {
+    fn gates_efetivos(&self, _ajuste: Option<GateOverrides>) -> JevGates {
         JevGates {
             g5: true,
             ..JevGates::default()
@@ -484,18 +485,18 @@ impl AvaliadorGates for JevInventor {
 
     fn avaliar<'a>(
         &'a self,
-        _estado: EstadoJev,
-        _ajuste: Option<AjusteGates>,
+        _estado: JevState,
+        _ajuste: Option<GateOverrides>,
     ) -> futures::future::BoxFuture<'a, ResultadoJev> {
         let produto = self.produto.clone();
         Box::pin(async move {
             ResultadoJev {
                 decisoes: vec![Decisao {
                     gate: IdGate::G5,
-                    escolha: Some(produto),
-                    origem: OrigemDecisao::Jev,
-                    confianca: 0.99,
-                    margem: 0.9,
+                    choice: Some(produto),
+                    origin: DecisionOrigin::Jev,
+                    confidence: 0.99,
+                    margin: 0.9,
                     motivo: None,
                     ms: 1,
                     tokens: 1,
@@ -601,18 +602,18 @@ async fn g5_confianca_baixa_mantem_o_comportamento_de_hoje() {
         let mut respostas = BTreeMap::new();
         for id in pedido.perguntas.keys() {
             let mut resposta = RespostaJev {
-                escolha: Some(escolha.clone()),
-                confianca: 0.4,
+                choice: Some(escolha.clone()),
+                confidence: 0.4,
                 ..RespostaJev::default()
             };
-            resposta.probabilidades.insert(escolha.clone(), 0.4);
-            resposta.probabilidades.insert(G5_NENHUM.to_owned(), 0.4);
+            resposta.probabilities.insert(escolha.clone(), 0.4);
+            resposta.probabilities.insert(G5_NENHUM.to_owned(), 0.4);
             respostas.insert(id.clone(), resposta);
         }
-        Ok(LoteResposta {
-            respostas,
+        Ok(BatchResponse {
+            answers: respostas,
             tokens: 7,
-            ..LoteResposta::default()
+            ..BatchResponse::default()
         })
     }));
     let (motor, provedor) = cenario.motor(
@@ -633,8 +634,8 @@ async fn g5_confianca_baixa_mantem_o_comportamento_de_hoje() {
 #[tokio::test]
 async fn g5_jev_fora_do_ar_mantem_o_comportamento_de_hoje() {
     let cenario = Cenario::novo("fora", false);
-    let jev = Arc::new(JevFalso::falhando(ErroJev::Status {
-        codigo: 503,
+    let jev = Arc::new(JevFalso::falhando(JevError::Status {
+        code: 503,
         motivo: "Service Unavailable".to_owned(),
     }));
     let (motor, provedor) = cenario.motor(
@@ -815,8 +816,8 @@ async fn g3_nada_dispensa_o_g5() {
 /// O ajuste `apenas` liga só o gate pedido (usado na chamada fora do lote).
 #[test]
 fn ajuste_apenas_liga_so_o_gate_pedido() {
-    let ajuste = AjusteGates::apenas(IdGate::G5);
-    let efetivos = ajuste.sobre(JevGates {
+    let ajuste = GateOverrides::only(IdGate::G5);
+    let efetivos = ajuste.with_base(JevGates {
         g1: true,
         g3: true,
         ..JevGates::default()

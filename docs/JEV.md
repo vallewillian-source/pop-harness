@@ -46,6 +46,25 @@ Regras do cliente (`crates/poph-jev/src/cliente.rs`):
   certificado não confiável, nome errado, handshake recusado — é **definitiva** e não é retentada;
   queda de rede e prazo continuam transitórios. Ver a D-16 em `docs/DECISOES.md`.
 
+### 1.1 O que o estado leva e até onde
+
+`JevState` (`crates/poph-jev/src/state.rs`) espelha o estado do POP Atende e é a chave do cache. Ele
+leva **só o texto da conversa** — telefone, nome e id do cliente não são acrescentados —, e todo
+texto é cortado antes de sair:
+
+| Campo | Teto |
+|---|---|
+| mensagens | 10 (as últimas), 800 caracteres cada |
+| situações de transferência | 15, 300 caracteres cada |
+| candidatos de produto (G5) | 10, 300 caracteres por campo (`id`, `nome`, `detalhe`) |
+| resposta em revisão (G6) | 4 000 caracteres |
+| texto de arquivo (G7) | 20 000 caracteres |
+| fluxos liberados (G9) | 20; cada gatilho em 400 caracteres e até 5 exemplos |
+
+Os nomes dos campos no JSON continuam os de antes do refactor (`mensagens`, `situacoes_de_handoff`,
+`transferencia_habilitada`, `base_disponivel`, …) por `#[serde(rename)]`: nem o formato lido em
+`tests/jev/*.jsonl` nem o estado enviado ao Jev mudam quando o identificador Rust muda.
+
 ## 2. Gates
 
 Molde único (`crates/poph-jev/src/gate.rs`): pergunta, aplicabilidade, limiares, interpretação e
@@ -533,7 +552,7 @@ candidatos são o resultado da busca de produtos, que só existe depois do estad
 1. o lote normal (G1–G4) e a busca na base, em paralelo, como sempre;
 2. se o G3 disse `nada`, o G5 nem roda (o catálogo já saiu do turno);
 3. com o G5 ligado, **uma** busca de produtos e **uma** chamada com só o G5 ligado
-   (`AjusteGates::apenas`), com os candidatos no estado;
+   (`GateOverrides::only`), com os candidatos no estado;
 4. a decisão e o custo dela entram no mesmo `turns.jev_json` dos outros gates.
 
 Com o gate desligado, nenhuma dessas duas coisas acontece: nem busca extra, nem pergunta.
@@ -858,7 +877,7 @@ ordem: o texto em revisão só existe depois de o modelo responder. O turno faz:
 
 1. o lote normal (G1–G4) e a busca na base, em paralelo, como sempre;
 2. o laço do modelo até o texto final;
-3. com o G6 ligado, **uma** chamada com só o G6 ligado (`AjusteGates::apenas`) e o texto no estado;
+3. com o G6 ligado, **uma** chamada com só o G6 ligado (`GateOverrides::only`) e o texto no estado;
 4. se reprovada, **uma** regeneração (sem ferramentas) e **uma** segunda revisão, se houve
    regeneração. O custo das chamadas entra no mesmo `turns.jev_json` do turno.
 
