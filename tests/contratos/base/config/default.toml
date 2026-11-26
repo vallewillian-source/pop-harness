@@ -20,6 +20,8 @@ taxa_por_org_por_minuto = 600
 [llm]
 provedor = "antigravity2api"
 url_base = "http://127.0.0.1:8045/v1"
+chave_env = "ANTIGRAVITY_API_KEY"
+recusa_turno_modelo = true
 modelo = "gemini-3.8-flash-tiered"
 timeout_segundos = 150
 retentativas = 2

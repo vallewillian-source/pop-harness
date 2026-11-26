@@ -99,6 +99,7 @@ name	category_id	published coluna: category_id
 name	channel	published coluna: channel
 name	chat	published rota: chat
 name	chave	published coluna: chave
+name	chave_env	published chave toml: chave_env
 name	chave_idempotencia	published coluna: chave_idempotencia
 name	check	published comando cli: check
 name	client_name	published coluna: client_name
@@ -125,6 +126,7 @@ name	conversas_fechar	published operation id: conversas_fechar
 name	conversas_listar	published operation id: conversas_listar
 name	conversas_mostrar	published operation id: conversas_mostrar
 name	conversas_reabrir	published operation id: conversas_reabrir
+name	conversas_transferir	published operation id: conversas_transferir
 name	conversation_id	published coluna: conversation_id
 name	conversations	published tabela: conversations
 name	conversations_cursor_at	published coluna: conversations_cursor_at
@@ -590,8 +592,10 @@ name	rag_top_k	published coluna: rag_top_k
 name	range	flow language word, frozen by P6
 name	rascunho_fonte	published coluna: rascunho_fonte
 name	read_receipt	published protocolo plugin: read_receipt
+name	reason	published campo json: reason
 name	recarregar_cluster	published operation id: recarregar_cluster
 name	received_at	published coluna: received_at
+name	recusa_turno_modelo	published chave toml: recusa_turno_modelo
 name	redacted_at	published coluna: redacted_at
 name	registrado_em	published coluna: registrado_em
 name	registro	published comando cli: registro
@@ -690,6 +694,7 @@ name	tools_json	published coluna: tools_json
 name	top	published flag cli: top
 name	tr_fluxo_revisoes_sem_delete	published gatilho: tr_fluxo_revisoes_sem_delete
 name	tr_fluxo_revisoes_sem_update	published gatilho: tr_fluxo_revisoes_sem_update
+name	transfer	published rota: transfer
 name	True	flow language word, frozen by P6
 name	tuple	flow language word, frozen by P6
 name	turn_id	published coluna: turn_id
