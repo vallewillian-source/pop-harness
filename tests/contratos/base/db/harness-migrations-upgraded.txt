@@ -14,3 +14,4 @@
 15|0015_conversas_por_cliente
 16|0016_matrix_midia_expiracao
 17|0017_analytics_operational_summary
+18|0018_usage_tokens

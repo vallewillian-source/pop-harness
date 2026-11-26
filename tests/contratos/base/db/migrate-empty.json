@@ -64,12 +64,16 @@
       {
         "nome": "0017_analytics_operational_summary",
         "versao": 17
+      },
+      {
+        "nome": "0018_usage_tokens",
+        "versao": 18
       }
     ],
     "banco": "harness.db",
     "caminho": "data/harness.db",
     "versao_antes": 0,
-    "versao_depois": 17
+    "versao_depois": 18
   },
   "ja_estava_em_dia": false,
   "rag": {

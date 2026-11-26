@@ -220,32 +220,33 @@ async fn aggregate_and_isolate() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
         empty,
-        json!({"total_input_tokens":0,"total_output_tokens":0,"total_cost_micros":0,"turns":0,"by_agent":[],"by_day":[]})
+        json!({"total_input_tokens":0,"total_output_tokens":0,"total_cost_micros":0,"turn_count":0,"by_agent":[],"by_day":[]})
     );
     scenario.insert_turn(&org, Some(&agent), &agent, -1, 90, 90);
     scenario.insert_turn(&org, Some(&agent), &agent, 0, 3, 4);
     scenario.insert_turn(&org, None, &agent, 86399999, 5, 6);
     scenario.insert_turn(&org, Some(&agent), &agent, 86400000, 7, 8);
-    scenario.insert_turn(&org, Some(&agent), &agent, 86400001, 90, 90);
+    scenario.insert_turn(&org, Some(&agent), &agent, 86400001, 1, 2);
+    scenario.insert_turn(&org, Some(&agent), &agent, 86400002, 90, 90);
     scenario.insert_turn(&other, Some(&other_agent), &other_agent, 0, 90, 90);
     let (status, body) = scenario.get(&path, &token).await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["total_input_tokens"], 15);
-    assert_eq!(body["total_output_tokens"], 18);
-    assert_eq!(body["total_cost_micros"], 6);
-    assert_eq!(body["turns"], 3);
+    assert_eq!(body["total_input_tokens"], 16);
+    assert_eq!(body["total_output_tokens"], 20);
+    assert_eq!(body["total_cost_micros"], 8);
+    assert_eq!(body["turn_count"], 4);
     assert_eq!(
         body["by_agent"],
-        json!([{"agent_id":agent,"input_tokens":10,"output_tokens":12,"turns":2},{"agent_id":null,"input_tokens":5,"output_tokens":6,"turns":1}])
+        json!([{"agent_id":agent,"input_tokens":11,"output_tokens":14,"turn_count":3},{"agent_id":null,"input_tokens":5,"output_tokens":6,"turn_count":1}])
     );
     assert_eq!(
         body["by_day"],
-        json!([{"date":"1970-01-01","output_tokens":10,"turns":2},{"date":"1970-01-02","output_tokens":8,"turns":1}])
+        json!([{"date":"1970-01-01","output_tokens":10,"turn_count":2},{"date":"1970-01-02","output_tokens":10,"turn_count":2}])
     );
     let (_, second) = scenario
         .get(&format!("{}?from=0&to=1", usage_path(&other)), &other_token)
         .await;
-    assert_eq!(second["turns"], 1);
+    assert_eq!(second["turn_count"], 1);
     assert_eq!(second["total_output_tokens"], 90);
     assert_eq!(scenario.get(&path, "").await.0, StatusCode::UNAUTHORIZED);
     assert_eq!(

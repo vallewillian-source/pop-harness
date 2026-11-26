@@ -27,20 +27,20 @@ pub struct AgentUsageJson {
     agent_id: Option<String>,
     input_tokens: i64,
     output_tokens: i64,
-    turns: i64,
+    turn_count: i64,
 }
 #[derive(Serialize, ToSchema)]
 pub struct DayUsageJson {
     date: String,
     output_tokens: i64,
-    turns: i64,
+    turn_count: i64,
 }
 #[derive(Serialize, ToSchema)]
 pub struct TokenUsageJson {
     total_input_tokens: i64,
     total_output_tokens: i64,
     total_cost_micros: i64,
-    turns: i64,
+    turn_count: i64,
     by_agent: Vec<AgentUsageJson>,
     by_day: Vec<DayUsageJson>,
 }
@@ -65,7 +65,7 @@ pub async fn tokens(
         total_input_tokens: result.total_input_tokens,
         total_output_tokens: result.total_output_tokens,
         total_cost_micros: result.total_cost_micros,
-        turns: result.turns,
+        turn_count: result.turn_count,
         by_agent: result
             .by_agent
             .into_iter()
@@ -73,7 +73,7 @@ pub async fn tokens(
                 agent_id: a.agent_id,
                 input_tokens: a.input_tokens,
                 output_tokens: a.output_tokens,
-                turns: a.turns,
+                turn_count: a.turn_count,
             })
             .collect(),
         by_day: result
@@ -82,7 +82,7 @@ pub async fn tokens(
             .map(|d| DayUsageJson {
                 date: d.date,
                 output_tokens: d.output_tokens,
-                turns: d.turns,
+                turn_count: d.turn_count,
             })
             .collect(),
     }))

@@ -3,8 +3,8 @@
     "aplicadas": [],
     "banco": "harness.db",
     "caminho": "data/harness.db",
-    "versao_antes": 17,
-    "versao_depois": 17
+    "versao_antes": 18,
+    "versao_depois": 18
   },
   "ja_estava_em_dia": true,
   "rag": {

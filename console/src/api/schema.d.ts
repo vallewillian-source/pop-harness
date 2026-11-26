@@ -1224,7 +1224,7 @@ export interface components {
             /** Format: int64 */
             output_tokens: number;
             /** Format: int64 */
-            turns: number;
+            turn_count: number;
         };
         /** @description Metadados de arquivo, sem caminho interno ou conteúdo. */
         ArquivoJson: {
@@ -1476,7 +1476,7 @@ export interface components {
             /** Format: int64 */
             output_tokens: number;
             /** Format: int64 */
-            turns: number;
+            turn_count: number;
         };
         /** @description Departamento na resposta da API. */
         DepartamentoJson: {
@@ -1930,7 +1930,7 @@ export interface components {
             /** Format: int64 */
             total_output_tokens: number;
             /** Format: int64 */
-            turns: number;
+            turn_count: number;
         };
         /** @description Versões de esquema lidas do disco. */
         VersaoBancos: {

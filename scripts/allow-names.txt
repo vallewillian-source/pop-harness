@@ -83,6 +83,8 @@ name	backup_importar	published operation id: backup_importar
 name	blob_path	published coluna: blob_path
 name	blobs	published backup: blobs
 name	bool	flow language word, frozen by P6
+name	by_agent	published campo json: by_agent
+name	by_day	published campo json: by_day
 name	cache_revisoes_mb	published chave toml: cache_revisoes_mb
 name	calls	published flag cli: calls
 name	campo	flow language word, frozen by P6
@@ -147,6 +149,7 @@ name	cursor	published flag cli: cursor
 name	dados	published chave toml: dados
 name	dados_json	published coluna: dados_json
 name	databases	published campo json: databases
+name	date	published campo json: date
 name	de	published flag cli: de
 name	decisao	flow language word, frozen by P6
 name	default_department_id	published coluna: default_department_id
@@ -705,11 +708,15 @@ name	tokens_revogar	published operation id: tokens_revogar
 name	tool	published flag cli: tool
 name	tools_json	published coluna: tools_json
 name	top	published flag cli: top
+name	total_cost_micros	published campo json: total_cost_micros
+name	total_input_tokens	published campo json: total_input_tokens
+name	total_output_tokens	published campo json: total_output_tokens
 name	tr_fluxo_revisoes_sem_delete	published gatilho: tr_fluxo_revisoes_sem_delete
 name	tr_fluxo_revisoes_sem_update	published gatilho: tr_fluxo_revisoes_sem_update
 name	transfer	published rota: transfer
 name	True	flow language word, frozen by P6
 name	tuple	flow language word, frozen by P6
+name	turn_count	published campo json: turn_count
 name	turn_id	published coluna: turn_id
 name	turno	published chave toml: turno
 name	turnos_listar	published operation id: turnos_listar
@@ -729,6 +736,8 @@ name	upload	published comando cli: upload
 name	uptime_seconds	published campo json: uptime_seconds
 name	url	published campo json: url
 name	url_base	published chave toml: url_base
+name	usage	published rota: usage
+name	usage_tokens	published operation id: usage_tokens
 name	ux_admin_tokens_hash	published indice: ux_admin_tokens_hash
 name	ux_agents_org_id	published indice: ux_agents_org_id
 name	ux_agents_slug	published indice: ux_agents_slug
