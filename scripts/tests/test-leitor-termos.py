@@ -11,7 +11,7 @@ GLOSSARY = ROOT / "scripts" / "glossary-terms.py"
 spec = importlib.util.spec_from_file_location("glossary_terms", GLOSSARY)
 glossary = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(glossary)
-reader = glossary.leitor_termos
+reader = glossary.term_reader
 
 failures = []
 

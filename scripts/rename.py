@@ -141,7 +141,7 @@ def occurrences(root, name):
     for relative, path in scanned_files(root):
         language = scanner.language_of(path)
         try:
-            tokens = glossary.leitor_termos.tokens(path, language)
+            tokens = glossary.term_reader.tokens(path, language)
         except (OSError, UnicodeError):
             continue
         if name not in tokens:
@@ -656,7 +656,7 @@ def declared_units(root, found, count):
 
 
 def published_names():
-    inventory = glossary.inventario_publicado()
+    inventory = glossary.published_inventory()
     names = {}
     for _, value, reason in names_gate.generated_entries(inventory):
         names.setdefault(value.lower(), reason)

@@ -73,7 +73,7 @@ def module_of(relative):
 def load_scanner(path):
     spec = importlib.util.spec_from_file_location("strip_comments", path)
     if spec is None or spec.loader is None:
-        raise ValueError(f"não foi possível carregar o removedor de comentários em {path.as_posix()}")
+        raise ValueError(f"could not load the comment scanner at {path.as_posix()}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -86,14 +86,14 @@ def read_pending(path):
             continue
         parts = line.split("\t")
         if len(parts) != 3:
-            raise ValueError(f"linha {number}: esperado módulo, quantidade e caminho separados por TAB: {line!r}")
+            raise ValueError(f"line {number}: expected module, count and path separated by TAB: {line!r}")
         module, count, relative = parts[0].strip(), parts[1].strip(), parts[2].strip()
         if not count.isdigit():
-            raise ValueError(f"linha {number}: quantidade inválida: {count!r}")
+            raise ValueError(f"line {number}: invalid count: {count!r}")
         if not relative:
-            raise ValueError(f"linha {number}: caminho vazio")
+            raise ValueError(f"line {number}: empty path")
         if relative in listed:
-            raise ValueError(f"linha {number}: caminho repetido: {relative}")
+            raise ValueError(f"line {number}: repeated path: {relative}")
         listed[relative] = int(count)
     return listed
 
@@ -155,23 +155,41 @@ def orphan_rules(rules, matched):
 def main(argv):
     parser = argparse.ArgumentParser(
         prog="check-comments.sh",
-        description="Trava de CI: reprova comentário fora da allowlist e fora da lista de pendentes por módulo.",
+        description="CI gate: fails on a comment outside the allowlist and outside the per-module pending list.",
     )
-    parser.add_argument("paths", nargs="*", help="caminhos a conferir; sem eles, confere o repositório contra a lista de pendentes")
-    parser.add_argument("--atualizar-pendentes", action="store_true", help="regenera a lista de pendentes a partir da árvore")
-    parser.add_argument("--pendentes", default=PENDING_DEFAULT, help=f"lista de pendentes (padrão: {PENDING_DEFAULT})")
-    parser.add_argument("--allow-list", default=ALLOW_LIST_DEFAULT, help=f"allowlist das exceções (padrão: {ALLOW_LIST_DEFAULT})")
-    parser.add_argument("--raiz", default=".", help="raiz do repositório (padrão: .)")
-    parser.add_argument("--scanner", default=SCANNER_DEFAULT, help=f"removedor de comentários (padrão: {SCANNER_DEFAULT})")
+    parser.add_argument(
+        "paths", nargs="*", help="paths to check; without them, checks the repository against the pending list"
+    )
+    parser.add_argument(
+        "--atualizar-pendentes",
+        dest="update_pending",
+        action="store_true",
+        help="regenerates the pending list from the tree",
+    )
+    parser.add_argument(
+        "--pendentes",
+        dest="pending",
+        default=PENDING_DEFAULT,
+        help=f"pending list (default: {PENDING_DEFAULT})",
+    )
+    parser.add_argument(
+        "--allow-list",
+        default=ALLOW_LIST_DEFAULT,
+        help=f"allowlist of the exceptions (default: {ALLOW_LIST_DEFAULT})",
+    )
+    parser.add_argument("--root", default=".", help="repository root (default: .)")
+    parser.add_argument(
+        "--scanner", default=SCANNER_DEFAULT, help=f"comment scanner (default: {SCANNER_DEFAULT})"
+    )
     arguments = parser.parse_args(argv)
 
-    if arguments.atualizar_pendentes and arguments.paths:
-        print("check-comments: --atualizar-pendentes não aceita caminhos", file=sys.stderr)
+    if arguments.update_pending and arguments.paths:
+        print("check-comments: --atualizar-pendentes does not take paths", file=sys.stderr)
         return 2
 
-    root = Path(arguments.raiz).resolve()
+    root = Path(arguments.root).resolve()
     if not root.is_dir():
-        print(f"check-comments: raiz não encontrada: {root.as_posix()}", file=sys.stderr)
+        print(f"check-comments: root not found: {root.as_posix()}", file=sys.stderr)
         return 2
     scanner_path = Path(arguments.scanner)
     if not scanner_path.is_absolute():
@@ -193,65 +211,65 @@ def main(argv):
     try:
         dirty, findings, matched = scan(scanner, rules, arguments.paths or ["."], repository_paths(root))
     except FileNotFoundError as error:
-        print(f"check-comments: caminho não encontrado: {error}", file=sys.stderr)
+        print(f"check-comments: path not found: {error}", file=sys.stderr)
         return 2
 
-    if not arguments.paths and not arguments.atualizar_pendentes:
+    if not arguments.paths and not arguments.update_pending:
         orphans = orphan_rules(rules, matched)
         if orphans:
             for rule, _ in orphans:
                 print(
-                    f"check-comments: allowlist: exceção não casa mais em nenhum comentário: "
+                    f"check-comments: allowlist: the exception matches no comment any more: "
                     f"{rule.pattern} [{rule.kind} {rule.match}] {rule.reason}",
                     file=sys.stderr,
                 )
-            print("check-comments: remova a exceção ou corrija o caminho", file=sys.stderr)
+            print("check-comments: remove the exception or fix the path", file=sys.stderr)
             return 2
 
-    pending_path = Path(arguments.pendentes)
+    pending_path = Path(arguments.pending)
 
-    if arguments.atualizar_pendentes:
+    if arguments.update_pending:
         write_pending(pending_path, dirty)
         total = sum(dirty.values())
-        print(f"pendentes: {total} comentário(s) em {len(dirty)} arquivo(s) gravado(s) em {pending_path.as_posix()}")
+        print(f"pending: {total} comment(s) in {len(dirty)} file(s) written to {pending_path.as_posix()}")
         return 0
 
     if arguments.paths:
         if not findings:
             return 0
         for finding in findings:
-            print(f"{finding.path}:{finding.line}:{finding.column}: comentário fora da allowlist: {finding.text}")
-        print(f"comentários: {len(findings)} fora da allowlist em {len(dirty)} arquivo(s) conferido(s)")
+            print(f"{finding.path}:{finding.line}:{finding.column}: comment outside the allowlist: {finding.text}")
+        print(f"comments: {len(findings)} outside the allowlist in {len(dirty)} file(s) checked")
         return 1
 
     if not pending_path.exists():
-        print(f"check-comments: lista de pendentes não encontrada: {pending_path.as_posix()}", file=sys.stderr)
-        print("check-comments: rode bash scripts/check-comments.sh --atualizar-pendentes", file=sys.stderr)
+        print(f"check-comments: pending list not found: {pending_path.as_posix()}", file=sys.stderr)
+        print("check-comments: run bash scripts/check-comments.sh --atualizar-pendentes", file=sys.stderr)
         return 2
     try:
         listed = read_pending(pending_path)
     except ValueError as error:
-        print(f"check-comments: pendentes: {error}", file=sys.stderr)
+        print(f"check-comments: pending: {error}", file=sys.stderr)
         return 2
 
     appeared = sorted(set(dirty) - set(listed))
     vanished = sorted(set(listed) - set(dirty))
     drifted = [relative for relative in sorted(set(dirty) & set(listed)) if dirty[relative] != listed[relative]]
     if not appeared and not vanished and not drifted:
-        print(f"comentários: {len(dirty)} arquivo(s) pendente(s) como listado(s), nenhum comentário novo")
+        print(f"comments: {len(dirty)} file(s) pending as listed, no new comment")
         return 0
 
     for relative in appeared:
-        print(f"+ {relative}: {dirty[relative]} comentário(s) fora da lista de pendentes")
+        print(f"+ {relative}: {dirty[relative]} comment(s) outside the pending list")
     for relative in vanished:
-        print(f"- {relative}: está na lista de pendentes e não tem mais comentário na árvore")
+        print(f"- {relative}: it is in the pending list and has no comment left in the tree")
     for relative in drifted:
-        print(f"! {relative}: a lista diz {listed[relative]} comentário(s) e a árvore tem {dirty[relative]}")
+        print(f"! {relative}: the list says {listed[relative]} comment(s) and the tree has {dirty[relative]}")
     print(
-        f"comentários: trava reprovada ({len(appeared)} arquivo(s) novo(s), "
-        f"{len(vanished)} entrada(s) vencida(s), {len(drifted)} contagem(ns) diferente(s))"
+        f"comments: gate failed ({len(appeared)} new file(s), "
+        f"{len(vanished)} stale entr(ies), {len(drifted)} count(s) differing)"
     )
-    print("comentários: rode bash scripts/check-comments.sh --atualizar-pendentes depois de limpar o módulo")
+    print("comments: run bash scripts/check-comments.sh --atualizar-pendentes after cleaning the module")
     return 1
 
 

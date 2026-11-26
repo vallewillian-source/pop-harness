@@ -18,39 +18,39 @@ env:
 
 jobs:
   rust:
-    name: Rust (fmt, clippy, build, testes)
+    name: Rust (fmt, clippy, build, tests)
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-      - name: Instalar a toolchain fixada
+      - name: Install the pinned toolchain
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
-      - name: Formatação
+      - name: Formatting
         run: cargo fmt --all -- --check
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Build
         run: cargo build --workspace --locked
-      - name: Testes
+      - name: Tests
         run: cargo test --workspace --locked
 
   arm64:
-    name: Checagem ARM64 (crates sem código C)
+    name: ARM64 check (crates without C code)
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - name: Instalar a toolchain fixada
+      - name: Install the pinned toolchain
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
-      - name: cargo check para aarch64
+      - name: cargo check for aarch64
         run: |
           cargo check --locked --target aarch64-unknown-linux-gnu \
             -p poph-types -p poph-files -p poph-plugins -p poph-fluxos -p poph-plugin-eco
 
-  dependencias:
-    name: Dependências (licenças e vulnerabilidades)
+  dependencies:
+    name: Dependencies (licenses and vulnerabilities)
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:

@@ -149,11 +149,11 @@ def inflected_forms(term):
 def split_identifier(token):
     """Terms of an identifier.
 
-    `dividir_termo` splits camelCase from the second capital on, so an all caps acronym loses all
+    `split_term` splits camelCase from the second capital on, so an all caps acronym loses all
     but its last two letters (`CASCADE` would become `de`). Tokens without a single lowercase
     letter are lowered first, which keeps them whole words.
     """
-    return glossary.dividir_termo(token if any(char.islower() for char in token) else token.lower())
+    return glossary.split_term(token if any(char.islower() for char in token) else token.lower())
 
 
 def read_map():
@@ -245,7 +245,7 @@ def render_allow(manual, generated):
 
 
 def repository_paths():
-    return glossary.caminhos_do_repositorio()
+    return glossary.repository_paths()
 
 
 def collect_hits(state, paths, visible):
@@ -267,7 +267,7 @@ def collect_hits(state, paths, visible):
         if language in (None, "html"):
             continue
         try:
-            tokens = glossary.leitor_termos.tokens(path, language)
+            tokens = glossary.term_reader.tokens(path, language)
         except (OSError, UnicodeError):
             continue
         if not tokens:
@@ -369,7 +369,7 @@ def main(argv):
     if not allow_path.is_absolute():
         allow_path = root / allow_path
 
-    inventory = glossary.inventario_publicado()
+    inventory = glossary.published_inventory()
     expected = generated_entries(inventory)
 
     if arguments.update_allowlist:
@@ -418,7 +418,7 @@ def main(argv):
     if arguments.update_pending:
         pending_path = Path(arguments.pending)
         write_pending(pending_path, dirty)
-        print(f"pendentes: {sum(dirty.values())} identifier(s) in {len(dirty)} file(s) written to {pending_path.as_posix()}")
+        print(f"pending: {sum(dirty.values())} identifier(s) in {len(dirty)} file(s) written to {pending_path.as_posix()}")
         return 0
 
     if arguments.paths:
@@ -426,7 +426,7 @@ def main(argv):
             return 0
         for finding in findings:
             print(describe(finding))
-        print(f"nomes: {len(findings)} Portuguese identifier(s) outside the allowlist in {len(dirty)} file(s) checked")
+        print(f"names: {len(findings)} Portuguese identifier(s) outside the allowlist in {len(dirty)} file(s) checked")
         return 1
 
     pending_path = Path(arguments.pending)
@@ -439,14 +439,14 @@ def main(argv):
     try:
         listed = read_pending(pending_path)
     except (OSError, ValueError) as error:
-        print(f"check-names: pendentes: {error}", file=sys.stderr)
+        print(f"check-names: pending: {error}", file=sys.stderr)
         return 2
 
     appeared = sorted(set(dirty) - set(listed))
     vanished = sorted(set(listed) - set(dirty))
     drifted = [relative for relative in sorted(set(dirty) & set(listed)) if dirty[relative] != listed[relative]]
     if not appeared and not vanished and not drifted:
-        print(f"nomes: {len(dirty)} file(s) pending as listed, no new Portuguese identifier")
+        print(f"names: {len(dirty)} file(s) pending as listed, no new Portuguese identifier")
         return 0
 
     for relative in appeared:
@@ -456,10 +456,10 @@ def main(argv):
     for relative in drifted:
         print(f"! {relative}: the list says {listed[relative]} identifier(s) and the tree has {dirty[relative]}")
     print(
-        "nomes: gate failed "
+        "names: gate failed "
         f"({len(appeared)} new file(s), {len(vanished)} stale entr(ies), {len(drifted)} count(s) differing)"
     )
-    print("nomes: run bash scripts/check-names.sh --atualizar-pendentes after renaming the module")
+    print("names: run bash scripts/check-names.sh --atualizar-pendentes after renaming the module")
     return 1
 
 
