@@ -29,7 +29,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use futures::StreamExt;
-use poph_core::llm::{EventoLlm, LlmProvider, Mensagem as MensagemLlm, Parte, Pedido};
+use poph_core::llm::{LlmEvent, LlmProvider, Message as MensagemLlm, Part, Request};
 use poph_store::{Mensagem as MensagemGravada, NewAuditEntry, Page, Role, Store};
 use poph_types::{ConversationId, MessageId, OrgId};
 use serde_json::{Value, json};
@@ -543,11 +543,11 @@ impl Resumidor {
 
     /// Uma chamada ao modelo, sem ferramentas, com o tempo máximo. Devolve o texto inteiro.
     async fn gerar(&self, org: OrgId, modelo: &str, corpo: String) -> Resultado<String> {
-        let mut pedido = Pedido::new(
+        let mut pedido = Request::new(
             org,
             vec![
                 MensagemLlm::Sistema(INSTRUCOES_RESUMO.to_owned()),
-                MensagemLlm::Usuario(vec![Parte::Texto(corpo)]),
+                MensagemLlm::Usuario(vec![Part::Texto(corpo)]),
             ],
         );
         pedido.modelo = Some(modelo.to_owned());
@@ -564,7 +564,7 @@ impl Resumidor {
             while let Some(evento) = fluxo.next().await {
                 let evento =
                     evento.map_err(|erro| ErroAgente::Interno(format!("resumo: {erro}")))?;
-                if let EventoLlm::Texto(pedaco) = evento {
+                if let LlmEvent::Texto(pedaco) = evento {
                     texto.push_str(&pedaco);
                 }
             }

@@ -5,23 +5,23 @@
 
 /// Acumula bytes e devolve os payloads `data:` de cada linha completa.
 #[derive(Debug, Default)]
-pub struct LeitorSse {
+pub struct SseReader {
     pendente: Vec<u8>,
 }
 
-impl LeitorSse {
+impl SseReader {
     /// Novo leitor, sem bytes pendentes.
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Recebe o próximo pedaço e devolve os payloads completos que ele fechou, na ordem.
-    pub fn empurrar(&mut self, bytes: &[u8]) -> Vec<String> {
+    pub fn push(&mut self, bytes: &[u8]) -> Vec<String> {
         self.pendente.extend_from_slice(bytes);
         let mut payloads = Vec::new();
         while let Some(posicao) = self.pendente.iter().position(|b| *b == b'\n') {
             let linha: Vec<u8> = self.pendente.drain(..=posicao).collect();
-            if let Some(payload) = payload_da_linha(&linha) {
+            if let Some(payload) = line_payload(&linha) {
                 payloads.push(payload);
             }
         }
@@ -31,11 +31,11 @@ impl LeitorSse {
     /// Fim do corpo: entrega o que ficou numa última linha sem `\n`, se for um `data:`.
     pub fn encerrar(&mut self) -> Vec<String> {
         let resto = std::mem::take(&mut self.pendente);
-        payload_da_linha(&resto).into_iter().collect()
+        line_payload(&resto).into_iter().collect()
     }
 }
 
-fn payload_da_linha(bruta: &[u8]) -> Option<String> {
+fn line_payload(bruta: &[u8]) -> Option<String> {
     let texto = String::from_utf8_lossy(bruta);
     let linha = texto.trim_end_matches(['\r', '\n']);
     let dados = linha.strip_prefix("data:")?;
@@ -47,38 +47,38 @@ mod testes {
     use super::*;
 
     #[test]
-    fn entrega_so_linhas_completas() {
-        let mut leitor = LeitorSse::new();
-        assert!(leitor.empurrar(b"data: {\"a\"").is_empty());
+    fn delivers_only_complete_lines() {
+        let mut leitor = SseReader::new();
+        assert!(leitor.push(b"data: {\"a\"").is_empty());
         assert_eq!(
-            leitor.empurrar(b":1}\n\ndata: [DONE]\n"),
+            leitor.push(b":1}\n\ndata: [DONE]\n"),
             vec!["{\"a\":1}", "[DONE]"]
         );
         assert!(leitor.encerrar().is_empty());
     }
 
     #[test]
-    fn caractere_utf8_cortado_entre_pedacos_nao_vira_lixo() {
+    fn utf8_character_split_across_chunks_is_preserved() {
         let texto = "data: dedetização\n";
         let bytes = texto.as_bytes();
         // Corta no meio do "ç" (dois bytes em UTF-8).
         let corte = texto.find('ç').expect("tem ç") + 1;
-        let mut leitor = LeitorSse::new();
-        assert!(leitor.empurrar(&bytes[..corte]).is_empty());
-        assert_eq!(leitor.empurrar(&bytes[corte..]), vec!["dedetização"]);
+        let mut leitor = SseReader::new();
+        assert!(leitor.push(&bytes[..corte]).is_empty());
+        assert_eq!(leitor.push(&bytes[corte..]), vec!["dedetização"]);
     }
 
     #[test]
     fn ignora_linhas_que_nao_sao_dados_e_aceita_crlf() {
-        let mut leitor = LeitorSse::new();
+        let mut leitor = SseReader::new();
         let entrada: &[u8] = b": comentario\r\nevent: x\r\ndata: ok\r\n";
-        assert_eq!(leitor.empurrar(entrada), vec!["ok"]);
+        assert_eq!(leitor.push(entrada), vec!["ok"]);
     }
 
     #[test]
-    fn encerrar_entrega_a_ultima_linha_sem_quebra() {
-        let mut leitor = LeitorSse::new();
-        assert!(leitor.empurrar(b"data: fim").is_empty());
+    fn finish_delivers_last_line_without_newline() {
+        let mut leitor = SseReader::new();
+        assert!(leitor.push(b"data: fim").is_empty());
         assert_eq!(leitor.encerrar(), vec!["fim"]);
     }
 }

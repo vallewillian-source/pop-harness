@@ -38,7 +38,7 @@ use poph_agent::entrada_saida::{Fluxo, OpcoesFluxo};
 use poph_agent::limites::{Limitador, OpcoesLimites};
 use poph_agent::metricas::{MetricasFluxo, MetricasMemoria, MetricasTurno};
 use poph_agent::turno::{Motor, OpcoesTurno, ProcessadorTurno};
-use poph_core::llm::{EventoLlm, LlmProvider, MotivoFim, ProvedorFake, Roteiro, Uso};
+use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, LlmProvider, Script, Usage};
 use poph_evolution::webhook::CABECALHO_SEGREDO;
 use poph_evolution::{ClienteEvolution, ConfigEvolution, TETO_MIDIA};
 use poph_matrix::cliente::{ClienteMatrix, ConfigCliente};
@@ -985,21 +985,21 @@ async fn subir_evolucao(evo: EvolucaoFalsa) -> String {
     format!("http://{endereco}")
 }
 
-fn resposta_do_agente(i: usize) -> Roteiro {
-    Roteiro::Eventos(vec![
-        EventoLlm::Texto(format!("resposta do agente {}", marcador(i))),
-        EventoLlm::Uso(Uso {
+fn resposta_do_agente(i: usize) -> Script {
+    Script::Eventos(vec![
+        LlmEvent::Texto(format!("resposta do agente {}", marcador(i))),
+        LlmEvent::Usage(Usage {
             entrada: 120,
             saida: 30,
         }),
-        EventoLlm::Fim(MotivoFim::Concluido),
+        LlmEvent::Fim(FinishReason::Concluido),
     ])
 }
 
 /// Servidor no ar: webhook, turno, saída e (opcionalmente) o módulo Matrix.
 struct Servidor {
     /// Provedor de LLM falso do turno: conta as chamadas feitas por ele.
-    llm: Arc<ProvedorFake>,
+    llm: Arc<FakeProvider>,
     base_url: String,
     http: reqwest::Client,
     org: OrgId,
@@ -1040,7 +1040,7 @@ impl Servidor {
 
     /// Quantas vezes o turno chamou o provedor de LLM (falso) até agora.
     fn chamadas_llm(&self) -> usize {
-        self.llm.recebidos().len()
+        self.llm.received().len()
     }
 
     fn chegadas(&self) -> Vec<Instant> {
@@ -1117,8 +1117,8 @@ async fn subir_servidor(
         .com_canais_evolution(vec![canal]);
 
     // Turno com provedor falso, como em `turno_whatsapp`.
-    let roteiros: Vec<Roteiro> = (0..respostas).map(resposta_do_agente).collect();
-    let fake = Arc::new(ProvedorFake::com_roteiros(roteiros));
+    let roteiros: Vec<Script> = (0..respostas).map(resposta_do_agente).collect();
+    let fake = Arc::new(FakeProvider::with_scripts(roteiros));
     let provedor: Arc<dyn LlmProvider> = fake.clone();
     let registro = &estado.registro;
     let config_quente = ConfigQuente::nova(

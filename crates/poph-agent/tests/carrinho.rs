@@ -19,7 +19,7 @@ use poph_agent::turno::{
     ContextoFerramenta, FuturoPausa, Motor, ObservadorNulo, OpcoesTurno, Pausa,
     RegistroFerramentas, RegistroPadrao, UsoFerramentas,
 };
-use poph_core::llm::{ChamadaFerramenta, EventoLlm, LlmProvider, MotivoFim, ProvedorFake, Roteiro};
+use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, LlmProvider, Script, ToolCall};
 use poph_store::{NewAgent, NewCategory, NewConversation, NewOrg, NewProduct, Page, Store};
 use poph_types::{
     AgentId, ConversationId, OrgId, ProductId, StructuredInstructions, ToolConfig, TurnId,
@@ -225,8 +225,8 @@ impl Cenario {
         (resumo.total_cents, resumo.items.len())
     }
 
-    fn motor(&self, roteiros: Vec<Roteiro>) -> (Motor, Arc<ProvedorFake>) {
-        let fake = Arc::new(ProvedorFake::com_roteiros(roteiros));
+    fn motor(&self, roteiros: Vec<Script>) -> (Motor, Arc<FakeProvider>) {
+        let fake = Arc::new(FakeProvider::with_scripts(roteiros));
         let provedor: Arc<dyn LlmProvider> = fake.clone();
         let config = ConfigQuente::nova(
             Arc::clone(&self.store),
@@ -279,21 +279,21 @@ impl Drop for Cenario {
     }
 }
 
-fn resposta(texto: &str) -> Roteiro {
-    Roteiro::Eventos(vec![
-        EventoLlm::Texto(texto.to_owned()),
-        EventoLlm::Fim(MotivoFim::Concluido),
+fn resposta(texto: &str) -> Script {
+    Script::Eventos(vec![
+        LlmEvent::Texto(texto.to_owned()),
+        LlmEvent::Fim(FinishReason::Concluido),
     ])
 }
 
-fn chamada(nome: &str, id: &str, argumentos: Value) -> Roteiro {
-    Roteiro::Eventos(vec![
-        EventoLlm::Ferramenta(ChamadaFerramenta {
+fn chamada(nome: &str, id: &str, argumentos: Value) -> Script {
+    Script::Eventos(vec![
+        LlmEvent::Tool(ToolCall {
             id: id.to_owned(),
             nome: nome.to_owned(),
             argumentos,
         }),
-        EventoLlm::Fim(MotivoFim::ChamadasFerramenta),
+        LlmEvent::Fim(FinishReason::ChamadasFerramenta),
     ])
 }
 
@@ -480,12 +480,12 @@ async fn llm_manda_preco_no_turno_e_o_total_continua_do_catalogo() {
     assert_eq!(resumo.estado.as_text(), "done");
 
     // O erro da primeira tentativa volta ao modelo como resultado de ferramenta.
-    let pedidos = fake.recebidos();
+    let pedidos = fake.received();
     let resultado = pedidos[1]
         .mensagens
         .iter()
         .find_map(|mensagem| match mensagem {
-            poph_core::llm::Mensagem::Resultado { id, conteudo } if id == "c1" => {
+            poph_core::llm::Message::Resultado { id, conteudo } if id == "c1" => {
                 Some(conteudo.clone())
             }
             _ => None,
@@ -510,7 +510,7 @@ async fn agente_sem_a_ferramenta_nao_a_recebe() {
         )
         .await
         .expect("o turno roda");
-    let nomes: Vec<String> = fake.recebidos()[0]
+    let nomes: Vec<String> = fake.received()[0]
         .ferramentas
         .iter()
         .map(|ferramenta| ferramenta.nome.clone())
@@ -533,7 +533,7 @@ async fn agente_com_as_quatro_recebe_as_quatro() {
         )
         .await
         .expect("o turno roda");
-    let mut nomes: Vec<String> = fake.recebidos()[0]
+    let mut nomes: Vec<String> = fake.received()[0]
         .ferramentas
         .iter()
         .map(|ferramenta| ferramenta.nome.clone())

@@ -10,7 +10,7 @@ use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
 use poph_agent::limites::{Limitador, OpcoesLimites};
 use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
 use poph_agent::turno::{Entrada, Motor, ObservadorNulo, OpcoesTurno};
-use poph_core::llm::{LlmProvider, ProvedorFake};
+use poph_core::llm::{FakeProvider, LlmProvider};
 use poph_store::{ConversationStatus, NewAgent, NewConversation, NewOrg, Page, Store};
 use poph_types::{AgentId, ConversationId, OrgId};
 
@@ -73,7 +73,7 @@ async fn turno_ignorado_grava_auditoria_com_ator_system() {
         .change_status(org, conversa, versao, ConversationStatus::Closed, None)
         .expect("fecha a conversa");
 
-    let provedor: Arc<dyn LlmProvider> = Arc::new(ProvedorFake::com_roteiros(Vec::new()));
+    let provedor: Arc<dyn LlmProvider> = Arc::new(FakeProvider::with_scripts(Vec::new()));
     let config = ConfigQuente::nova(
         Arc::clone(&store),
         OpcoesConfigQuente::default(),

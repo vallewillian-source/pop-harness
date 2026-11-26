@@ -149,7 +149,7 @@ fn cliente_llm(
     metricas: BaseMetrics,
     rotulo: &str,
 ) -> Result<Arc<dyn LlmProvider>, String> {
-    let cliente = OpenAiCompatibleConfig::da_config(llm, chave)
+    let cliente = OpenAiCompatibleConfig::from_config(llm, chave)
         .map_err(|erro| format!("configuração do provedor {rotulo}: {erro}"))?;
     let limites_llm = LlmLimiter::new(llm.concurrent_calls as usize, llm.concurrent_calls as usize)
         .map_err(|erro| format!("limites do provedor {rotulo}: {erro}"))?;

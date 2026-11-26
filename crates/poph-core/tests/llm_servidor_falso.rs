@@ -10,10 +10,9 @@ use std::time::Duration;
 
 use apoio::*;
 use futures::StreamExt;
-use poph_core::llm::base64::codificar;
+use poph_core::llm::base64::encode;
 use poph_core::llm::{
-    ChamadaFerramenta, EventoLlm, Ferramenta, LlmError, LlmProvider, Mensagem, MotivoFim, Parte,
-    Pedido, Uso,
+    FinishReason, LlmError, LlmEvent, LlmProvider, Message, Part, Request, Tool, ToolCall, Usage,
 };
 use poph_types::OrgId;
 use serde_json::json;
@@ -40,13 +39,13 @@ async fn texto_chega_em_stream_com_uso_e_fim() {
     assert_eq!(
         eventos,
         vec![
-            EventoLlm::Texto("Olá".into()),
-            EventoLlm::Texto(", tudo bem?".into()),
-            EventoLlm::Uso(Uso {
+            LlmEvent::Texto("Olá".into()),
+            LlmEvent::Texto(", tudo bem?".into()),
+            LlmEvent::Usage(Usage {
                 entrada: 110,
                 saida: 7
             }),
-            EventoLlm::Fim(MotivoFim::Concluido),
+            LlmEvent::Fim(FinishReason::Concluido),
         ]
     );
     let corpo = &servidor.pedidos()[0];
@@ -74,13 +73,11 @@ async fn chamada_de_ferramenta_sai_com_argumentos_inteiros_e_volta_com_resultado
     let m = montar(&servidor.url_base, 2, Duration::from_secs(5));
     let org = OrgId::generate();
 
-    let mut primeiro = Pedido::new(
+    let mut primeiro = Request::new(
         org,
-        vec![Mensagem::Usuario(vec![Parte::Texto(
-            "quanto custa?".into(),
-        )])],
+        vec![Message::Usuario(vec![Part::Texto("quanto custa?".into())])],
     );
-    primeiro.ferramentas = vec![Ferramenta {
+    primeiro.ferramentas = vec![Tool {
         nome: "buscar_produto".into(),
         descricao: "Busca um produto e devolve o preço".into(),
         parametros: json!({"type": "object", "properties": {"termo": {"type": "string"}}}),
@@ -90,12 +87,12 @@ async fn chamada_de_ferramenta_sai_com_argumentos_inteiros_e_volta_com_resultado
     assert_eq!(
         eventos,
         vec![
-            EventoLlm::Ferramenta(ChamadaFerramenta {
+            LlmEvent::Tool(ToolCall {
                 id: "call_1".into(),
                 nome: "buscar_produto".into(),
                 argumentos: json!({"termo": "dedetização"}),
             }),
-            EventoLlm::Fim(MotivoFim::ChamadasFerramenta),
+            LlmEvent::Fim(FinishReason::ChamadasFerramenta),
         ]
     );
     let corpo_1 = &servidor.pedidos()[0];
@@ -103,16 +100,16 @@ async fn chamada_de_ferramenta_sai_com_argumentos_inteiros_e_volta_com_resultado
 
     // Volta com o resultado: a última mensagem é do resultado, e a chamada aparece antes dele.
     let segundo = pedido_com(vec![
-        Mensagem::Usuario(vec![Parte::Texto("quanto custa?".into())]),
-        Mensagem::Assistente {
+        Message::Usuario(vec![Part::Texto("quanto custa?".into())]),
+        Message::Assistente {
             texto: String::new(),
-            chamadas: vec![ChamadaFerramenta {
+            chamadas: vec![ToolCall {
                 id: "call_1".into(),
                 nome: "buscar_produto".into(),
                 argumentos: json!({"termo": "dedetização"}),
             }],
         },
-        Mensagem::Resultado {
+        Message::Resultado {
             id: "call_1".into(),
             conteudo: "R$ 350,00".into(),
         },
@@ -122,8 +119,8 @@ async fn chamada_de_ferramenta_sai_com_argumentos_inteiros_e_volta_com_resultado
     assert_eq!(
         eventos,
         vec![
-            EventoLlm::Texto("O preço é R$ 350.".into()),
-            EventoLlm::Fim(MotivoFim::Concluido),
+            LlmEvent::Texto("O preço é R$ 350.".into()),
+            LlmEvent::Fim(FinishReason::Concluido),
         ]
     );
     let corpo_2 = &servidor.pedidos()[1];
@@ -148,9 +145,9 @@ async fn imagem_vai_como_data_url_junto_do_texto() {
     .await;
     let m = montar(&servidor.url_base, 0, Duration::from_secs(5));
     let bytes = b"\x89PNG\r\n\x1a\nconteudo".to_vec();
-    let pedido = pedido_com(vec![Mensagem::Usuario(vec![
-        Parte::Texto("o que está escrito?".into()),
-        Parte::Imagem {
+    let pedido = pedido_com(vec![Message::Usuario(vec![
+        Part::Texto("o que está escrito?".into()),
+        Part::Imagem {
             mime: "image/png".into(),
             bytes: bytes.clone(),
         },
@@ -158,7 +155,7 @@ async fn imagem_vai_como_data_url_junto_do_texto() {
 
     let fluxo = m.cliente.stream(pedido).await.expect("abre");
     let eventos = so_eventos(colher(fluxo).await);
-    assert_eq!(eventos[0], EventoLlm::Texto("ARARA AZUL 42".into()));
+    assert_eq!(eventos[0], LlmEvent::Texto("ARARA AZUL 42".into()));
 
     let corpo = &servidor.pedidos()[0];
     let partes = corpo["messages"][0]["content"].as_array().expect("partes");
@@ -166,7 +163,7 @@ async fn imagem_vai_como_data_url_junto_do_texto() {
     assert_eq!(partes[1]["type"], "image_url");
     assert_eq!(
         partes[1]["image_url"]["url"],
-        format!("data:image/png;base64,{}", codificar(&bytes))
+        format!("data:image/png;base64,{}", encode(&bytes))
     );
 }
 
@@ -189,7 +186,7 @@ async fn retenta_429_e_5xx_sem_mudar_o_pedido() {
         .await
         .expect("3ª tentativa dá certo");
     let eventos = so_eventos(colher(fluxo).await);
-    assert_eq!(eventos[0], EventoLlm::Texto("ok".into()));
+    assert_eq!(eventos[0], LlmEvent::Texto("ok".into()));
 
     let pedidos = servidor.pedidos();
     assert_eq!(pedidos.len(), 3);
@@ -276,7 +273,7 @@ async fn cancelamento_no_meio_do_stream_fecha_e_libera_as_vagas() {
     let mut fluxo = m.cliente.stream(pedido).await.expect("abre");
     assert_eq!(
         fluxo.next().await.expect("há evento").expect("sem erro"),
-        EventoLlm::Texto("Começando".into())
+        LlmEvent::Texto("Começando".into())
     );
     assert_eq!(
         m.limites.available_globally(),
@@ -317,7 +314,7 @@ async fn resposta_cortada_vira_erro_e_nao_repete() {
     let fluxo = m.cliente.stream(pergunta("oi")).await.expect("abre");
     let itens = colher(fluxo).await;
     assert_eq!(itens.len(), 2);
-    assert_eq!(itens[0], Ok(EventoLlm::Texto("Oi".into())));
+    assert_eq!(itens[0], Ok(LlmEvent::Texto("Oi".into())));
     assert!(matches!(itens[1], Err(LlmError::InvalidResponse(_))));
     assert_eq!(
         servidor.pedidos().len(),
@@ -336,8 +333,8 @@ async fn pedido_que_termina_em_turno_do_modelo_sai_quando_a_regra_esta_desligada
     .await;
     let m = montar_com_regra(&servidor.url_base, 0, Duration::from_secs(5), false);
     let pedido = pedido_com(vec![
-        Mensagem::Usuario(vec![Parte::Texto("oi".into())]),
-        Mensagem::Assistente {
+        Message::Usuario(vec![Part::Texto("oi".into())]),
+        Message::Assistente {
             texto: "olá".into(),
             chamadas: vec![],
         },
@@ -346,7 +343,7 @@ async fn pedido_que_termina_em_turno_do_modelo_sai_quando_a_regra_esta_desligada
     let fluxo = m.cliente.stream(pedido).await.expect("pedido aceito");
     let eventos = so_eventos(colher(fluxo).await);
     assert!(
-        eventos.contains(&EventoLlm::Texto("Oi".into())),
+        eventos.contains(&LlmEvent::Texto("Oi".into())),
         "{eventos:?}"
     );
     let enviados = servidor.pedidos();
@@ -360,8 +357,8 @@ async fn pedido_que_termina_em_turno_do_modelo_nao_sai_do_processo() {
     let servidor = Servidor::iniciar(vec![Resposta::ok(sse(&["[DONE]"]))]).await;
     let m = montar(&servidor.url_base, 2, Duration::from_secs(5));
     let pedido = pedido_com(vec![
-        Mensagem::Usuario(vec![Parte::Texto("oi".into())]),
-        Mensagem::Assistente {
+        Message::Usuario(vec![Part::Texto("oi".into())]),
+        Message::Assistente {
             texto: "olá".into(),
             chamadas: vec![],
         },

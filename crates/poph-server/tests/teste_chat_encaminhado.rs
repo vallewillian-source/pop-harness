@@ -27,7 +27,7 @@ use poph_agent::entrada_saida::{Fluxo, OpcoesFluxo};
 use poph_agent::limites::{Limitador, OpcoesLimites};
 use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
 use poph_agent::turno::{Motor, OpcoesTurno, ProcessadorTurno};
-use poph_core::llm::{EventoLlm, LlmError, LlmProvider, ProvedorFake, Roteiro};
+use poph_core::llm::{FakeProvider, LlmError, LlmEvent, LlmProvider, Script};
 use poph_server::Estado;
 use poph_server::cluster::ClusterVivo;
 use poph_store::{Direction, NewAgent, NewOrg, Page, Store, TurnState};
@@ -131,8 +131,8 @@ async fn iniciar(
     if com_turno {
         // O turno de `b`: entrega "começou" e fica pendurado 30 s (tempo de sobra para provar que
         // o SSE atravessa sem esperar o fim).
-        let fake = Arc::new(ProvedorFake::com_roteiros(vec![Roteiro::Pendurado {
-            eventos: vec![EventoLlm::Texto("começou ".into())],
+        let fake = Arc::new(FakeProvider::with_scripts(vec![Script::Pendurado {
+            eventos: vec![LlmEvent::Texto("começou ".into())],
             depois: Duration::from_secs(30),
             erro: LlmError::TimedOut { segundos: 30 },
         }]));

@@ -19,14 +19,14 @@ pub mod tipos;
 pub mod tls;
 
 pub use erro::LlmError;
-pub use fake::{ProvedorFake, Roteiro};
+pub use fake::{FakeProvider, Script};
 pub use limites::{LlmLimiter, LlmPermit};
 pub use openai::{
-    OpenAiCompatibleClient, OpenAiCompatibleConfig, PROVEDOR_ANTIGRAVITY,
-    PROVEDOR_OPENAI_COMPATIVEL,
+    ANTIGRAVITY_PROVIDER, OPENAI_COMPATIBLE_PROVIDER, OpenAiCompatibleClient,
+    OpenAiCompatibleConfig,
 };
-pub use provedor::{FluxoLlm, LlmProvider, MIMES_IMAGEM, validar_pedido};
+pub use provedor::{IMAGE_MIMES, LlmProvider, LlmStream, validate_request};
 pub use tipos::{
-    Cancelamento, ChamadaFerramenta, EventoLlm, Ferramenta, Mensagem, MotivoFim, Parte, Pedido,
-    PrecoModelo, Uso, custo_micros,
+    Cancellation, FinishReason, LlmEvent, Message, ModelPrice, Part, Request, Tool, ToolCall,
+    Usage, cost_micros,
 };

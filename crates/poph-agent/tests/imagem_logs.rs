@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 
 use apoio::{Anexo, Cenario};
 use poph_agent::turno::MAX_BYTES_POR_IMAGEM;
-use poph_core::llm::{Mensagem, Parte};
+use poph_core::llm::{Message, Part};
 use poph_store::TurnState;
 
 /// Escritor que guarda tudo em memória, para ler o que o tracing escreveu.
@@ -57,7 +57,7 @@ async fn imagem_do_cliente_nao_vai_para_o_log() {
 
     let cenario = Cenario::novo("logs");
     let segredo = b"BYTES-SECRETOS-DA-IMAGEM-DO-CLIENTE-4f1c9a".to_vec();
-    let segredo_base64 = poph_core::llm::base64::codificar(&segredo);
+    let segredo_base64 = poph_core::llm::base64::encode(&segredo);
 
     // Três anexos num turno: a imagem que entra no pedido, uma cujo blob não está no disco e uma
     // acima do teto de bytes. Os dois últimos exercitam os avisos do caminho de degradação.
@@ -81,17 +81,17 @@ async fn imagem_do_cliente_nao_vai_para_o_log() {
     assert_eq!(resumo.estado, TurnState::Completed, "{:?}", resumo.erro);
 
     // A imagem boa chegou ao modelo: o log é o do caminho real, não de um turno vazio.
-    let pedido = &fake.recebidos()[0];
+    let pedido = &fake.received()[0];
     let achadas: Vec<&Vec<u8>> = pedido
         .mensagens
         .iter()
         .filter_map(|mensagem| match mensagem {
-            Mensagem::Usuario(partes) => Some(partes),
+            Message::Usuario(partes) => Some(partes),
             _ => None,
         })
         .flatten()
         .filter_map(|parte| match parte {
-            Parte::Imagem { bytes, .. } => Some(bytes),
+            Part::Imagem { bytes, .. } => Some(bytes),
             _ => None,
         })
         .collect();

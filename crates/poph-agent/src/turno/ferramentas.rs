@@ -18,7 +18,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use poph_core::llm::Ferramenta;
+use poph_core::llm::Tool;
 use poph_types::{AgentId, ConversationId, OrgId, ProductId, TurnId};
 use serde::Serialize;
 
@@ -373,11 +373,11 @@ impl RegistroFerramentas for RegistroPadrao {
 
 /// Lista que vai no pedido ao modelo: as habilitadas do agente (D-04), na ordem delas, restritas às
 /// que o registro sabe executar.
-pub fn oferecidas(registro: &dyn RegistroFerramentas, habilitadas: &[String]) -> Vec<Ferramenta> {
+pub fn oferecidas(registro: &dyn RegistroFerramentas, habilitadas: &[String]) -> Vec<Tool> {
     habilitadas
         .iter()
         .filter_map(|nome| registro.ferramenta(nome))
-        .map(|ferramenta| Ferramenta {
+        .map(|ferramenta| Tool {
             nome: ferramenta.nome().to_owned(),
             descricao: ferramenta.descricao().to_owned(),
             parametros: ferramenta.parametros(),

@@ -24,7 +24,7 @@ use poph_agent::entrada_saida::{Fluxo, OpcoesFluxo};
 use poph_agent::limites::{Limitador, OpcoesLimites};
 use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
 use poph_agent::turno::{Motor, OpcoesTurno, ProcessadorTurno};
-use poph_core::llm::{EventoLlm, LlmError, LlmProvider, MotivoFim, ProvedorFake, Roteiro};
+use poph_core::llm::{FakeProvider, FinishReason, LlmError, LlmEvent, LlmProvider, Script};
 use poph_server::Estado;
 use poph_server::entrada_turno::MOTIVO_INTERROMPIDO;
 use poph_store::{
@@ -192,14 +192,14 @@ impl Servidor {
     async fn subir(
         rotulo: &str,
         preparar: impl FnOnce(&Store) -> (OrgId, poph_types::AgentId),
-        roteiros: Vec<Roteiro>,
+        roteiros: Vec<Script>,
         validade_da_reserva: Option<Duration>,
     ) -> Self {
         let pasta = pasta_de_teste(rotulo);
         let (store, config) = abrir_store(&pasta);
         let (org, agente) = preparar(&store);
 
-        let fake = Arc::new(ProvedorFake::com_roteiros(roteiros));
+        let fake = Arc::new(FakeProvider::with_scripts(roteiros));
         let provedor: Arc<dyn LlmProvider> = fake.clone();
         let motor = Motor::novo(
             Arc::clone(&store),
@@ -354,10 +354,10 @@ impl Servidor {
     }
 }
 
-fn roteiro_ok() -> Roteiro {
-    Roteiro::Eventos(vec![
-        EventoLlm::Texto(RESPOSTA.into()),
-        EventoLlm::Fim(MotivoFim::Concluido),
+fn roteiro_ok() -> Script {
+    Script::Eventos(vec![
+        LlmEvent::Texto(RESPOSTA.into()),
+        LlmEvent::Fim(FinishReason::Concluido),
     ])
 }
 
@@ -443,7 +443,7 @@ async fn modelo_indisponivel_deixa_turno_falho_sem_perder_a_mensagem() {
         "indisponivel",
         semear_org_e_agente,
         vec![
-            Roteiro::Falha(LlmError::Unavailable {
+            Script::Falha(LlmError::Unavailable {
                 tentativas: 2,
                 ultimo: "HTTP 503".to_owned(),
             }),
@@ -503,8 +503,8 @@ async fn stream_cortado_no_meio_deixa_turno_falho_sem_resposta_parcial() {
         "stream-cortado",
         semear_org_e_agente,
         vec![
-            Roteiro::Pendurado {
-                eventos: vec![EventoLlm::Texto("o prazo é de ".into())],
+            Script::Pendurado {
+                eventos: vec![LlmEvent::Texto("o prazo é de ".into())],
                 depois: Duration::from_millis(50),
                 erro: LlmError::ConnectionInterrupted("conexão caiu".to_owned()),
             },

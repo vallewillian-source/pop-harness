@@ -25,7 +25,7 @@ use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
 use poph_agent::turno::{
     Motor, OpcoesTurno, ProcessadorTurno, RegistroFerramentas, RegistroPadrao,
 };
-use poph_core::llm::{EventoLlm, LlmProvider, MotivoFim, Pedido, ProvedorFake, Roteiro};
+use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, LlmProvider, Request, Script};
 use poph_files::ConfigArquivos;
 use poph_server::Estado;
 use poph_server::api::teste_chat::CANAL_DE_TESTE;
@@ -140,7 +140,7 @@ struct Cenario {
     store: Arc<Store>,
     org: OrgId,
     agente: poph_types::AgentId,
-    llm: Arc<ProvedorFake>,
+    llm: Arc<FakeProvider>,
     /// Arquivo semeado na biblioteca do agente (HR-46d), quando o cenário pediu um.
     arquivo: Option<FileId>,
     _pasta: PathBuf,
@@ -158,7 +158,7 @@ impl Drop for Cenario {
 
 impl Cenario {
     /// Sobe o servidor. `ligar_turno = false` prova o `503` sem chave.
-    async fn novo(rotulo: &str, roteiros: Vec<Roteiro>, ligar_turno: bool) -> Self {
+    async fn novo(rotulo: &str, roteiros: Vec<Script>, ligar_turno: bool) -> Self {
         Self::construir(rotulo, ligar_turno, None, |_| roteiros).await
     }
 
@@ -167,7 +167,7 @@ impl Cenario {
     async fn com_biblioteca(
         rotulo: &str,
         conteudo: &[u8],
-        roteiros: impl FnOnce(FileId) -> Vec<Roteiro>,
+        roteiros: impl FnOnce(FileId) -> Vec<Script>,
     ) -> Self {
         Self::construir(rotulo, true, Some(conteudo), |id| {
             roteiros(id.expect("arquivo semeado"))
@@ -182,7 +182,7 @@ impl Cenario {
         rotulo: &str,
         ligar_turno: bool,
         semear: Option<&[u8]>,
-        roteiros: impl FnOnce(Option<FileId>) -> Vec<Roteiro>,
+        roteiros: impl FnOnce(Option<FileId>) -> Vec<Script>,
     ) -> Self {
         let carimbo = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
@@ -271,7 +271,7 @@ impl Cenario {
             arquivo.id
         });
 
-        let fake = Arc::new(ProvedorFake::com_roteiros(roteiros(arquivo)));
+        let fake = Arc::new(FakeProvider::with_scripts(roteiros(arquivo)));
         let mut estado = Estado::novo(Arc::clone(&store), config).expect("estado do servidor");
         let mut arquivos = ConfigArquivos::padrao(pasta.join("dados").join("blobs"));
         arquivos.caminho_extrator = Some(extrator_falso(&pasta));
@@ -454,27 +454,27 @@ impl Cenario {
     }
 }
 
-fn roteiro_padrao() -> Vec<Roteiro> {
-    vec![Roteiro::Eventos(vec![
-        EventoLlm::Texto("O prazo é ".into()),
-        EventoLlm::Texto("de 5 dias úteis.".into()),
-        EventoLlm::Fim(MotivoFim::Concluido),
+fn roteiro_padrao() -> Vec<Script> {
+    vec![Script::Eventos(vec![
+        LlmEvent::Texto("O prazo é ".into()),
+        LlmEvent::Texto("de 5 dias úteis.".into()),
+        LlmEvent::Fim(FinishReason::Concluido),
     ])]
 }
 
-fn texto_do_pedido(pedido: &Pedido) -> String {
+fn texto_do_pedido(pedido: &Request) -> String {
     let mut texto = String::new();
     for mensagem in &pedido.mensagens {
         match mensagem {
-            poph_core::llm::Mensagem::Usuario(partes) => {
+            poph_core::llm::Message::Usuario(partes) => {
                 for parte in partes {
-                    if let poph_core::llm::Parte::Texto(trecho) = parte {
+                    if let poph_core::llm::Part::Texto(trecho) = parte {
                         texto.push_str(trecho);
                         texto.push('\n');
                     }
                 }
             }
-            poph_core::llm::Mensagem::Sistema(instrucoes) => texto.push_str(instrucoes),
+            poph_core::llm::Message::Sistema(instrucoes) => texto.push_str(instrucoes),
             _ => {}
         }
     }
@@ -532,7 +532,7 @@ async fn conversa_de_teste_recebe_sse_em_ordem_e_anexo_com_texto_no_prompt() {
     assert_eq!(eventos[4].dados["timings"]["tool_rounds"], 0);
 
     // 2. O turno viu o texto extraído do documento como conteúdo NÃO confiável.
-    let pedido = &c.llm.recebidos()[0];
+    let pedido = &c.llm.received()[0];
     let prompt = texto_do_pedido(pedido);
     assert!(
         prompt.contains("POLITICA INTERNA: nunca prometa entrega em 24 horas"),
@@ -574,14 +574,14 @@ async fn duas_conexoes_na_mesma_conversa_nao_geram_dois_turnos() {
     let c = Cenario::novo(
         "duas-abas",
         vec![
-            Roteiro::Pendurado {
-                eventos: vec![EventoLlm::Texto("parcial ".into())],
+            Script::Pendurado {
+                eventos: vec![LlmEvent::Texto("parcial ".into())],
                 depois: Duration::from_secs(30),
                 erro: poph_core::llm::LlmError::TimedOut { segundos: 30 },
             },
-            Roteiro::Eventos(vec![
-                EventoLlm::Texto("resposta da segunda".into()),
-                EventoLlm::Fim(MotivoFim::Concluido),
+            Script::Eventos(vec![
+                LlmEvent::Texto("resposta da segunda".into()),
+                LlmEvent::Fim(FinishReason::Concluido),
             ]),
         ],
         true,
@@ -623,8 +623,8 @@ async fn duas_conexoes_na_mesma_conversa_nao_geram_dois_turnos() {
 async fn desconexao_cancela_o_turno_sem_fila_presa() {
     let c = Cenario::novo(
         "cancelamento",
-        vec![Roteiro::Pendurado {
-            eventos: vec![EventoLlm::Texto("começou ".into())],
+        vec![Script::Pendurado {
+            eventos: vec![LlmEvent::Texto("começou ".into())],
             depois: Duration::from_secs(30),
             erro: poph_core::llm::LlmError::TimedOut { segundos: 30 },
         }],
@@ -862,19 +862,19 @@ async fn arquivo_recusado_volta_no_campo_file_e_nao_grava_mensagem() {
 }
 
 /// Roteiro de um turno que pede `enviar_arquivo` ao modelo e depois responde em texto (HR-46d).
-fn roteiro_envia_arquivo(arquivo: FileId) -> Vec<Roteiro> {
+fn roteiro_envia_arquivo(arquivo: FileId) -> Vec<Script> {
     vec![
-        Roteiro::Eventos(vec![
-            EventoLlm::Ferramenta(poph_core::llm::ChamadaFerramenta {
+        Script::Eventos(vec![
+            LlmEvent::Tool(poph_core::llm::ToolCall {
                 id: "call-catalogo".to_owned(),
                 nome: poph_agent::NOME_ENVIAR_ARQUIVO.to_owned(),
                 argumentos: json!({ "id": arquivo.to_string() }),
             }),
-            EventoLlm::Fim(MotivoFim::ChamadasFerramenta),
+            LlmEvent::Fim(FinishReason::ChamadasFerramenta),
         ]),
-        Roteiro::Eventos(vec![
-            EventoLlm::Texto("Estou enviando o catálogo.".into()),
-            EventoLlm::Fim(MotivoFim::Concluido),
+        Script::Eventos(vec![
+            LlmEvent::Texto("Estou enviando o catálogo.".into()),
+            LlmEvent::Fim(FinishReason::Concluido),
         ]),
     ]
 }

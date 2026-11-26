@@ -18,7 +18,7 @@ use poph_agent::limites::{Limitador, OpcoesLimites};
 use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
 use poph_agent::turno::{FuturoPausa, Motor, Observador, ObservadorNulo, OpcoesTurno, Pausa};
 use poph_agent::{BaseConhecimento, BuscadorBase, ConsultarBase};
-use poph_core::llm::{EventoLlm, LlmProvider, MotivoFim, ProvedorFake, Roteiro, Uso};
+use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, LlmProvider, Script, Usage};
 use poph_rag::{ConfigIndice, Embedder, EmbedderFake, Indice};
 use poph_store::{
     Direction, NewAgent, NewConversation, NewKnowledgeGroup, NewKnowledgeItem, NewMessage, NewOrg,
@@ -188,16 +188,16 @@ impl Cenario {
             .expect("sincroniza");
     }
 
-    fn motor(&self) -> (Motor, Arc<ProvedorFake>) {
-        let roteiro = Roteiro::Eventos(vec![
-            EventoLlm::Texto("resposta".to_owned()),
-            EventoLlm::Uso(Uso {
+    fn motor(&self) -> (Motor, Arc<FakeProvider>) {
+        let roteiro = Script::Eventos(vec![
+            LlmEvent::Texto("resposta".to_owned()),
+            LlmEvent::Usage(Usage {
                 entrada: 100,
                 saida: 10,
             }),
-            EventoLlm::Fim(MotivoFim::Concluido),
+            LlmEvent::Fim(FinishReason::Concluido),
         ]);
-        let fake = Arc::new(ProvedorFake::com_roteiros(vec![
+        let fake = Arc::new(FakeProvider::with_scripts(vec![
             roteiro.clone(),
             roteiro.clone(),
             roteiro,
@@ -250,12 +250,12 @@ impl Drop for Cenario {
     }
 }
 
-fn textos_do_pedido(pedido: &poph_core::llm::Pedido) -> Vec<String> {
+fn textos_do_pedido(pedido: &poph_core::llm::Request) -> Vec<String> {
     pedido
         .mensagens
         .iter()
         .filter_map(|mensagem| match mensagem {
-            poph_core::llm::Mensagem::Sistema(texto) => Some(texto.clone()),
+            poph_core::llm::Message::Sistema(texto) => Some(texto.clone()),
             _ => None,
         })
         .collect()
@@ -281,7 +281,7 @@ async fn trecho_da_base_entra_no_bloco_volatil_e_o_registro_guarda_a_fonte() {
         .expect("o turno roda");
     assert_eq!(resumo.estado, poph_store::TurnState::Completed);
 
-    let pedidos = fake.recebidos();
+    let pedidos = fake.received();
     assert_eq!(pedidos.len(), 1, "uma chamada ao modelo");
     let sistemas = textos_do_pedido(&pedidos[0]);
     assert_eq!(sistemas.len(), 2, "prefixo + bloco volátil");
@@ -338,7 +338,7 @@ async fn injecao_em_item_da_base_nao_muda_o_prefixo_do_agente() {
         .await
         .expect("o segundo turno roda");
 
-    let pedidos = fake.recebidos();
+    let pedidos = fake.received();
     assert_eq!(pedidos.len(), 2);
     let primeiro = textos_do_pedido(&pedidos[0]);
     let segundo = textos_do_pedido(&pedidos[1]);
@@ -406,7 +406,7 @@ async fn pergunta_sem_resposta_na_base_nao_injeta_bloco() {
         .await
         .expect("o turno roda");
 
-    let pedidos = fake.recebidos();
+    let pedidos = fake.received();
     let sistemas = textos_do_pedido(&pedidos[0]);
     assert!(
         !sistemas

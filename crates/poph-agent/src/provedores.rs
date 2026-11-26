@@ -85,14 +85,14 @@ impl Provedores {
 
 #[cfg(test)]
 mod testes {
-    use poph_core::llm::{MotivoFim, ProvedorFake, Roteiro};
+    use poph_core::llm::{FakeProvider, FinishReason, Script};
 
     use super::*;
 
     fn fake(nome: &str) -> Arc<dyn LlmProvider> {
-        Arc::new(ProvedorFake::com_roteiros(vec![Roteiro::Eventos(vec![
-            poph_core::llm::EventoLlm::Texto(nome.to_owned()),
-            poph_core::llm::EventoLlm::Fim(MotivoFim::Concluido),
+        Arc::new(FakeProvider::with_scripts(vec![Script::Eventos(vec![
+            poph_core::llm::LlmEvent::Texto(nome.to_owned()),
+            poph_core::llm::LlmEvent::Fim(FinishReason::Concluido),
         ])]))
     }
 

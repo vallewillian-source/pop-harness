@@ -24,7 +24,7 @@ use poph_agent::turno::{
     ProcessadorTurno, RegistroFerramentas, RegistroPadrao, UsoFerramentas,
 };
 use poph_core::llm::{
-    ChamadaFerramenta, EventoLlm, LlmError, LlmProvider, MotivoFim, ProvedorFake, Roteiro,
+    FakeProvider, FinishReason, LlmError, LlmEvent, LlmProvider, Script, ToolCall,
 };
 use poph_store::{
     LibraryFile, NewAgent, NewConversation, NewLibraryFile, NewOrg, OutboxItem, Store,
@@ -207,8 +207,8 @@ impl Cenario {
             .collect()
     }
 
-    fn motor(&self, roteiros: Vec<Roteiro>) -> (Motor, Arc<ProvedorFake>) {
-        let fake = Arc::new(ProvedorFake::com_roteiros(roteiros));
+    fn motor(&self, roteiros: Vec<Script>) -> (Motor, Arc<FakeProvider>) {
+        let fake = Arc::new(FakeProvider::with_scripts(roteiros));
         let provedor: Arc<dyn LlmProvider> = fake.clone();
         let config = ConfigQuente::nova(
             Arc::clone(&self.store),
@@ -272,21 +272,21 @@ impl Drop for Cenario {
     }
 }
 
-fn resposta(texto: &str) -> Roteiro {
-    Roteiro::Eventos(vec![
-        EventoLlm::Texto(texto.to_owned()),
-        EventoLlm::Fim(MotivoFim::Concluido),
+fn resposta(texto: &str) -> Script {
+    Script::Eventos(vec![
+        LlmEvent::Texto(texto.to_owned()),
+        LlmEvent::Fim(FinishReason::Concluido),
     ])
 }
 
-fn chamada(id: &str, argumentos: Value) -> Roteiro {
-    Roteiro::Eventos(vec![
-        EventoLlm::Ferramenta(ChamadaFerramenta {
+fn chamada(id: &str, argumentos: Value) -> Script {
+    Script::Eventos(vec![
+        LlmEvent::Tool(ToolCall {
             id: id.to_owned(),
             nome: NOME_FERRAMENTA.to_owned(),
             argumentos,
         }),
-        EventoLlm::Fim(MotivoFim::ChamadasFerramenta),
+        LlmEvent::Fim(FinishReason::ChamadasFerramenta),
     ])
 }
 
@@ -444,7 +444,7 @@ async fn agente_sem_a_ferramenta_nao_a_recebe() {
     let cenario = Cenario::novo("sem-ferramenta", &[]);
     let (motor, fake) = cenario.motor(vec![resposta("ok")]);
     cenario.rodar_turno(&motor).await;
-    let nomes: Vec<String> = fake.recebidos()[0]
+    let nomes: Vec<String> = fake.received()[0]
         .ferramentas
         .iter()
         .map(|ferramenta| ferramenta.nome.clone())
@@ -457,7 +457,7 @@ async fn agente_com_a_ferramenta_ve_a_descricao_dos_arquivos() {
     let cenario = Cenario::novo("com-ferramenta", &[NOME_FERRAMENTA]);
     let (motor, fake) = cenario.motor(vec![resposta("ok")]);
     cenario.rodar_turno(&motor).await;
-    let pedido = &fake.recebidos()[0];
+    let pedido = &fake.received()[0];
     let ferramenta = pedido
         .ferramentas
         .iter()
@@ -499,7 +499,7 @@ async fn biblioteca_vazia_aparece_como_tal_e_nao_quebra_o_turno() {
     }
     let (motor, fake) = cenario.motor(vec![resposta("ok")]);
     cenario.rodar_turno(&motor).await;
-    let recebidos = fake.recebidos();
+    let recebidos = fake.received();
     let ferramenta = recebidos[0]
         .ferramentas
         .iter()
@@ -556,7 +556,7 @@ fn arquivo_da_biblioteca_traz_o_caminho_relativo_do_blob() {
 #[tokio::test]
 async fn falha_do_modelo_depois_de_arquivo_enfileirado_nao_repete_o_envio() {
     let cenario = Cenario::novo("falha-arquivo", &[NOME_FERRAMENTA]);
-    let falha = Roteiro::Falha(LlmError::Unavailable {
+    let falha = Script::Falha(LlmError::Unavailable {
         tentativas: 3,
         ultimo: "503".to_owned(),
     });
@@ -624,7 +624,7 @@ async fn falha_do_modelo_depois_de_arquivo_enfileirado_nao_repete_o_envio() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Duas chamadas ao modelo (a do arquivo e a da falha), um turno só, e um arquivo só na saída.
-    assert_eq!(fake.recebidos().len(), 2, "sem repetição do turno");
+    assert_eq!(fake.received().len(), 2, "sem repetição do turno");
     let turnos = cenario
         .store
         .turns()

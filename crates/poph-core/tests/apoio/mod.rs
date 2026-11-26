@@ -8,10 +8,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures::StreamExt;
-use poph_core::llm::base64::codificar;
+use poph_core::llm::base64::encode;
 use poph_core::llm::{
-    ChamadaFerramenta, EventoLlm, Ferramenta, FluxoLlm, LlmError, LlmLimiter, LlmProvider,
-    Mensagem, MotivoFim, OpenAiCompatibleClient, OpenAiCompatibleConfig, Parte, Pedido, Uso,
+    FinishReason, LlmError, LlmEvent, LlmLimiter, LlmProvider, LlmStream, Message,
+    OpenAiCompatibleClient, OpenAiCompatibleConfig, Part, Request, Tool, ToolCall, Usage,
 };
 use poph_types::{BaseMetrics, OrgId, Registry, Secret};
 use serde_json::{Value, json};
@@ -201,18 +201,18 @@ pub fn montar_com_regra(
     }
 }
 
-pub fn pedido_com(mensagens: Vec<Mensagem>) -> Pedido {
-    Pedido::new(OrgId::generate(), mensagens)
+pub fn pedido_com(mensagens: Vec<Message>) -> Request {
+    Request::new(OrgId::generate(), mensagens)
 }
 
-pub fn pergunta(texto: &str) -> Pedido {
+pub fn pergunta(texto: &str) -> Request {
     pedido_com(vec![
-        Mensagem::Sistema("Você é um assistente de atendimento.".to_owned()),
-        Mensagem::Usuario(vec![Parte::Texto(texto.to_owned())]),
+        Message::Sistema("Você é um assistente de atendimento.".to_owned()),
+        Message::Usuario(vec![Part::Texto(texto.to_owned())]),
     ])
 }
 
-pub async fn colher(mut fluxo: FluxoLlm) -> Vec<Result<EventoLlm, LlmError>> {
+pub async fn colher(mut fluxo: LlmStream) -> Vec<Result<LlmEvent, LlmError>> {
     let mut itens = Vec::new();
     while let Some(item) = fluxo.next().await {
         itens.push(item);
@@ -220,7 +220,7 @@ pub async fn colher(mut fluxo: FluxoLlm) -> Vec<Result<EventoLlm, LlmError>> {
     itens
 }
 
-pub fn so_eventos(itens: Vec<Result<EventoLlm, LlmError>>) -> Vec<EventoLlm> {
+pub fn so_eventos(itens: Vec<Result<LlmEvent, LlmError>>) -> Vec<LlmEvent> {
     itens
         .into_iter()
         .map(|item| item.expect("evento sem erro"))

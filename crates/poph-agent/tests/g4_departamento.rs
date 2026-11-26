@@ -20,7 +20,7 @@ use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
 use poph_agent::limites::{Limitador, OpcoesLimites};
 use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
 use poph_agent::turno::{Entrada, FuturoPausa, Motor, ObservadorNulo, OpcoesTurno, Pausa};
-use poph_core::llm::{EventoLlm, MotivoFim, ProvedorFake, Roteiro, Uso};
+use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, Usage};
 use poph_jev::{
     G1_TRANSFERIR, IdGate, JevFalso, LoteResposta, MotorJev, Orientacao, Pedido, Resposta,
 };
@@ -46,7 +46,7 @@ struct Cenario {
     store: Arc<Store>,
     org: OrgId,
     agente: AgentId,
-    provedor: Arc<ProvedorFake>,
+    provedor: Arc<FakeProvider>,
 }
 
 impl Cenario {
@@ -106,7 +106,7 @@ impl Cenario {
                 },
             )
             .expect("liga o handoff");
-        let provedor = Arc::new(ProvedorFake::com_roteiros(
+        let provedor = Arc::new(FakeProvider::with_scripts(
             (0..8).map(|_| roteiro(RESPOSTA_DO_MODELO)).collect(),
         ));
         Self {
@@ -320,14 +320,14 @@ impl Drop for Cenario {
     }
 }
 
-fn roteiro(texto: &str) -> Roteiro {
-    Roteiro::Eventos(vec![
-        EventoLlm::Texto(texto.to_owned()),
-        EventoLlm::Uso(Uso {
+fn roteiro(texto: &str) -> Script {
+    Script::Eventos(vec![
+        LlmEvent::Texto(texto.to_owned()),
+        LlmEvent::Usage(Usage {
             entrada: 10,
             saida: 5,
         }),
-        EventoLlm::Fim(MotivoFim::Concluido),
+        LlmEvent::Fim(FinishReason::Concluido),
     ])
 }
 
@@ -399,7 +399,7 @@ async fn g4_manda_a_conversa_para_o_departamento_escolhido() {
 
     assert_eq!(resumo.estado, TurnState::Completed);
     assert!(
-        cenario.provedor.recebidos().is_empty(),
+        cenario.provedor.received().is_empty(),
         "transferida não chama o modelo"
     );
     let gravada = cenario.conversa_gravada(conversa);

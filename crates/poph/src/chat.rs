@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use clap::Args;
 use poph_agent::turno::{Entrada, EventoTurno, Observador, TransporteConsole};
-use poph_core::llm::Cancelamento;
+use poph_core::llm::Cancellation;
 use poph_store::{Conversa, Direction, NewConversation, NewMessage, Role, Store};
 use poph_types::{AgentId, BaseMetrics, ConversationId, OrgId, Registry};
 use serde_json::json;
@@ -183,7 +183,7 @@ fn rodar(
             }
 
             let mut entrada = Entrada::nova(org, conversa.id, mensagem.id);
-            let cancelamento = Cancelamento::novo();
+            let cancelamento = Cancellation::novo();
             entrada.cancelamento = cancelamento.clone();
             let mut observador = ObservadorChat::novo(args.json);
             let turno = motor.executar(entrada, &mut observador);

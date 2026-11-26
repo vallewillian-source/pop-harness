@@ -25,7 +25,7 @@ use poph_agent::turno::{
     Entrada, FuturoPausa, JANELA_CONFIRMACAO, Motor, ObservadorNulo, OpcoesTurno, Pausa,
     ResumoTurno, janela_com_g2,
 };
-use poph_core::llm::{EventoLlm, Mensagem, MotivoFim, ProvedorFake, Roteiro, Uso};
+use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Message, Script, Usage};
 use poph_jev::{
     EstadoJev, G1_CONTINUAR, G2_ESPERAR, G2_PROCESSAR, IdGate, JevFalso, MotorJev, OpcoesJev,
 };
@@ -244,7 +244,7 @@ impl Cenario {
         &self,
         jev: Option<Arc<MotorJev>>,
         pausa: Arc<PausaVirtual>,
-        provedor: Arc<ProvedorFake>,
+        provedor: Arc<FakeProvider>,
     ) -> Motor {
         let config = ConfigQuente::nova(
             Arc::clone(&self.store),
@@ -294,14 +294,14 @@ impl Drop for Cenario {
 
 // ───────────────────────────── Apoio ─────────────────────────────
 
-fn provedor() -> Arc<ProvedorFake> {
-    Arc::new(ProvedorFake::com_roteiros(vec![Roteiro::Eventos(vec![
-        EventoLlm::Texto("Claro, como posso ajudar?".to_owned()),
-        EventoLlm::Uso(Uso {
+fn provedor() -> Arc<FakeProvider> {
+    Arc::new(FakeProvider::with_scripts(vec![Script::Eventos(vec![
+        LlmEvent::Texto("Claro, como posso ajudar?".to_owned()),
+        LlmEvent::Usage(Usage {
             entrada: 10,
             saida: 5,
         }),
-        EventoLlm::Fim(MotivoFim::Concluido),
+        LlmEvent::Fim(FinishReason::Concluido),
     ])]))
 }
 
@@ -372,12 +372,12 @@ async fn esperar_mais_estica_a_janela_e_agrupa_a_mensagem_seguinte() {
         2,
         "a mensagem seguinte entra na mesma janela"
     );
-    assert_eq!(provedor.recebidos().len(), 1, "uma chamada ao modelo");
-    let pedido = &provedor.recebidos()[0];
+    assert_eq!(provedor.received().len(), 1, "uma chamada ao modelo");
+    let pedido = &provedor.received()[0];
     let do_cliente = pedido
         .mensagens
         .iter()
-        .filter(|mensagem| matches!(mensagem, Mensagem::Usuario(_)))
+        .filter(|mensagem| matches!(mensagem, Message::Usuario(_)))
         .count();
     assert_eq!(
         do_cliente, 2,
@@ -715,7 +715,7 @@ async fn conversa_transferida_nao_responde_nem_consulta_o_jev() {
     assert_eq!(resumo.estado, TurnState::Skipped);
     assert!(resumo.texto.is_empty());
     assert_eq!(jev.chamadas(), 0, "nem consulta o Jev");
-    assert!(provedor.recebidos().is_empty(), "nem chama o modelo");
+    assert!(provedor.received().is_empty(), "nem chama o modelo");
     assert!(pausa.esperas().is_empty(), "nem espera a janela");
     // A mensagem do cliente continua gravada (D12).
     let mensagens = cenario

@@ -30,8 +30,8 @@ use poph_agent::turno::{
     ProcessadorTurno, RegistroFerramentas,
 };
 use poph_core::llm::{
-    Cancelamento, ChamadaFerramenta, EventoLlm, LlmError, LlmProvider, MotivoFim, ProvedorFake,
-    Roteiro, Uso,
+    Cancellation, FakeProvider, FinishReason, LlmError, LlmEvent, LlmProvider, Script, ToolCall,
+    Usage,
 };
 use poph_store::{
     Direction, NewAgent, NewConversation, NewMessage, NewOrg, OutboxItem, OutboxState, Page, Role,
@@ -227,17 +227,17 @@ impl Cenario {
         Arc::new(PausaFalsa::default())
     }
 
-    fn motor(&self, roteiros: Vec<Roteiro>, pausa: Arc<PausaFalsa>) -> (Motor, Arc<ProvedorFake>) {
+    fn motor(&self, roteiros: Vec<Script>, pausa: Arc<PausaFalsa>) -> (Motor, Arc<FakeProvider>) {
         self.motor_com(roteiros, pausa, OpcoesTurno::default())
     }
 
     fn motor_com(
         &self,
-        roteiros: Vec<Roteiro>,
+        roteiros: Vec<Script>,
         pausa: Arc<PausaFalsa>,
         opcoes: OpcoesTurno,
-    ) -> (Motor, Arc<ProvedorFake>) {
-        let fake = Arc::new(ProvedorFake::com_roteiros(roteiros));
+    ) -> (Motor, Arc<FakeProvider>) {
+        let fake = Arc::new(FakeProvider::with_scripts(roteiros));
         let provedor: Arc<dyn LlmProvider> = fake.clone();
         let config = ConfigQuente::nova(
             Arc::clone(&self.store),
@@ -303,14 +303,14 @@ impl Drop for Cenario {
     }
 }
 
-fn resposta(texto: &str) -> Roteiro {
-    Roteiro::Eventos(vec![
-        EventoLlm::Texto(texto.to_owned()),
-        EventoLlm::Uso(Uso {
+fn resposta(texto: &str) -> Script {
+    Script::Eventos(vec![
+        LlmEvent::Texto(texto.to_owned()),
+        LlmEvent::Usage(Usage {
             entrada: 120,
             saida: 30,
         }),
-        EventoLlm::Fim(MotivoFim::Concluido),
+        LlmEvent::Fim(FinishReason::Concluido),
     ])
 }
 
@@ -319,7 +319,7 @@ fn resposta(texto: &str) -> Roteiro {
 #[tokio::test]
 async fn cinco_mensagens_gravam_stream_mensagens_e_turno() {
     let cenario = Cenario::novo("cinco");
-    let roteiros: Vec<Roteiro> = (1..=5)
+    let roteiros: Vec<Script> = (1..=5)
         .map(|n| resposta(&format!("resposta {n}")))
         .collect();
     let pausa = cenario.pausa();
@@ -349,7 +349,7 @@ async fn cinco_mensagens_gravam_stream_mensagens_e_turno() {
         textos.push(resumo);
     }
 
-    assert_eq!(fake.recebidos().len(), 5, "uma chamada ao modelo por turno");
+    assert_eq!(fake.received().len(), 5, "uma chamada ao modelo por turno");
 
     // Mensagens: 5 do cliente e 5 do agente, na ordem.
     let mensagens = cenario.mensagens();
@@ -423,10 +423,10 @@ async fn prefixo_identico_em_tres_turnos() {
             .expect("turno roda");
     }
 
-    let pedidos = fake.recebidos();
+    let pedidos = fake.received();
     assert_eq!(pedidos.len(), 3);
-    let prefixo = |pedido: &poph_core::llm::Pedido| match &pedido.mensagens[0] {
-        poph_core::llm::Mensagem::Sistema(texto) => texto.clone(),
+    let prefixo = |pedido: &poph_core::llm::Request| match &pedido.mensagens[0] {
+        poph_core::llm::Message::Sistema(texto) => texto.clone(),
         outro => panic!("a primeira mensagem devia ser o prefixo: {outro:?}"),
     };
     let primeiro = prefixo(&pedidos[0]);
@@ -436,8 +436,8 @@ async fn prefixo_identico_em_tres_turnos() {
     }
 
     // O bloco volátil (segunda mensagem de sistema) traz a hora e muda entre turnos.
-    let volatil = |pedido: &poph_core::llm::Pedido| match &pedido.mensagens[1] {
-        poph_core::llm::Mensagem::Sistema(texto) => texto.clone(),
+    let volatil = |pedido: &poph_core::llm::Request| match &pedido.mensagens[1] {
+        poph_core::llm::Message::Sistema(texto) => texto.clone(),
         outro => panic!("a segunda mensagem devia ser o bloco volátil: {outro:?}"),
     };
     assert!(volatil(&pedidos[0]).contains("hora:"));
@@ -473,10 +473,10 @@ async fn duas_orgs_nao_se_misturam() {
     assert_eq!(resumo_beta.texto, "sou a beta");
 
     // Cada provedor falso só viu pedidos da sua org.
-    for pedido in fake_alfa.recebidos() {
+    for pedido in fake_alfa.received() {
         assert_eq!(pedido.org, alfa.org);
     }
-    for pedido in fake_beta.recebidos() {
+    for pedido in fake_beta.received() {
         assert_eq!(pedido.org, beta.org);
     }
 
@@ -556,7 +556,7 @@ async fn janela_de_agrupamento_junta_duas_e_separa_depois_do_teto() {
         vec![primeira, segunda_id],
         "as duas mensagens da janela entraram no mesmo turno"
     );
-    assert_eq!(fake.recebidos().len(), 1, "um turno, uma chamada ao modelo");
+    assert_eq!(fake.received().len(), 1, "um turno, uma chamada ao modelo");
 
     // A janela foi esperada uma vez, com o valor do agente (2 s).
     let pedidos = pausa.pedidos();
@@ -574,7 +574,7 @@ async fn janela_de_agrupamento_junta_duas_e_separa_depois_do_teto() {
         .expect("segundo turno roda");
     assert_eq!(resumo.estado, TurnState::Completed);
     assert_eq!(resumo.mensagens, vec![terceira], "turno novo, uma mensagem");
-    assert_eq!(fake.recebidos().len(), 2);
+    assert_eq!(fake.received().len(), 2);
 
     // Nada se perdeu: 3 mensagens do cliente, 2 respostas, 2 turnos.
     let mensagens = cenario.mensagens();
@@ -679,18 +679,18 @@ async fn ferramenta_nao_habilitada_nao_e_oferecida_e_laco_para_no_limite() {
         .expect("grava as ferramentas");
 
     // Primeira resposta do modelo: pede a ferramenta desabilitada e a habilitada na mesma mensagem.
-    let duas_chamadas = Roteiro::Eventos(vec![
-        EventoLlm::Ferramenta(ChamadaFerramenta {
+    let duas_chamadas = Script::Eventos(vec![
+        LlmEvent::Tool(ToolCall {
             id: "c1".to_owned(),
             nome: "buscar_produto".to_owned(),
             argumentos: serde_json::json!({}),
         }),
-        EventoLlm::Ferramenta(ChamadaFerramenta {
+        LlmEvent::Tool(ToolCall {
             id: "c2".to_owned(),
             nome: "consultar_base".to_owned(),
             argumentos: serde_json::json!({}),
         }),
-        EventoLlm::Fim(MotivoFim::ChamadasFerramenta),
+        LlmEvent::Fim(FinishReason::ChamadasFerramenta),
     ]);
     let (motor, fake) = cenario.motor(vec![duas_chamadas, resposta("pronto")], cenario.pausa());
     let motor = motor.com_ferramentas(Arc::new(DoisRegistros));
@@ -706,7 +706,7 @@ async fn ferramenta_nao_habilitada_nao_e_oferecida_e_laco_para_no_limite() {
     assert_eq!(resumo.estado, TurnState::Completed);
     assert_eq!(resumo.texto, "pronto");
 
-    let pedidos = fake.recebidos();
+    let pedidos = fake.received();
     assert_eq!(
         pedidos.len(),
         2,
@@ -726,7 +726,7 @@ async fn ferramenta_nao_habilitada_nao_e_oferecida_e_laco_para_no_limite() {
         .mensagens
         .iter()
         .filter_map(|mensagem| match mensagem {
-            poph_core::llm::Mensagem::Resultado { conteudo, .. } => Some(conteudo.clone()),
+            poph_core::llm::Message::Resultado { conteudo, .. } => Some(conteudo.clone()),
             _ => None,
         })
         .collect();
@@ -753,15 +753,15 @@ async fn ferramenta_nao_habilitada_nao_e_oferecida_e_laco_para_no_limite() {
 async fn cancelamento_encerra_o_turno_e_conclui_a_entrada() {
     let cenario = Cenario::novo("cancelamento");
     let (motor, _fake) = cenario.motor(
-        vec![Roteiro::Pendurado {
-            eventos: vec![EventoLlm::Texto("parcial ".to_owned())],
+        vec![Script::Pendurado {
+            eventos: vec![LlmEvent::Texto("parcial ".to_owned())],
             depois: Duration::from_secs(30),
             erro: LlmError::TimedOut { segundos: 30 },
         }],
         cenario.pausa(),
     );
     // Cancelamento do processo, como o Ctrl-C do `chat`.
-    let compartilhado = Cancelamento::novo();
+    let compartilhado = Cancellation::novo();
     let fluxo = cenario.fluxo(Arc::new(motor.com_cancelamento(compartilhado.clone())));
 
     fluxo
@@ -826,7 +826,7 @@ async fn cancelamento_encerra_o_turno_e_conclui_a_entrada() {
 async fn erro_do_provedor_grava_o_turno_e_nao_deixa_item_preso() {
     let cenario = Cenario::novo("erro-provedor");
     let (motor, _fake) = cenario.motor(
-        vec![Roteiro::Falha(LlmError::Unavailable {
+        vec![Script::Falha(LlmError::Unavailable {
             tentativas: 3,
             ultimo: "503".to_owned(),
         })],
@@ -1002,10 +1002,10 @@ fn limitador_de_uma_vaga() -> Arc<Limitador> {
 /// é o relógio falso do teste).
 fn motor_com_limitador(
     cenario: &Cenario,
-    roteiros: Vec<Roteiro>,
+    roteiros: Vec<Script>,
     limitador: Arc<Limitador>,
-) -> (Motor, Arc<ProvedorFake>) {
-    let fake = Arc::new(ProvedorFake::com_roteiros(roteiros));
+) -> (Motor, Arc<FakeProvider>) {
+    let fake = Arc::new(FakeProvider::with_scripts(roteiros));
     let provedor: Arc<dyn LlmProvider> = fake.clone();
     let config = ConfigQuente::nova(
         Arc::clone(&cenario.store),
@@ -1077,7 +1077,7 @@ async fn falta_de_vaga_do_turno_entra_na_escada_e_esgota_em_tres_tentativas() {
             .iter()
             .all(|t| t.state == TurnState::Failed)
     );
-    assert_eq!(fake.recebidos().len(), 0);
+    assert_eq!(fake.received().len(), 0);
     let concluido = cenario.store.inbox().get(cenario.org, item).expect("item");
     assert!(
         concluido.processed_at.is_some(),
@@ -1103,7 +1103,7 @@ async fn falta_de_vaga_do_turno_entra_na_escada_e_esgota_em_tres_tentativas() {
         3,
         "nenhuma repetição depois do limite"
     );
-    assert_eq!(fake.recebidos().len(), 0);
+    assert_eq!(fake.received().len(), 0);
 
     let metricas = motor.metricas();
     assert_eq!(metricas.falhas_modelo_adiadas.value(), 2);
@@ -1140,7 +1140,7 @@ async fn falta_de_vaga_do_turno_na_primeira_tentativa_e_resposta_na_segunda() {
     esperar_fila_vazia(&fluxo, &cenario).await;
 
     // Uma chamada ao modelo, uma resposta, uma saída: a falta de vaga não duplica nada.
-    assert_eq!(fake.recebidos().len(), 1);
+    assert_eq!(fake.received().len(), 1);
     let respostas = cenario
         .mensagens()
         .into_iter()
@@ -1187,7 +1187,7 @@ async fn falta_de_vaga_do_provedor_entra_na_escada_e_nao_chama_o_modelo() {
     fluxo.despachar(cenario.org).expect("despacha");
     esperar_tentativas(&cenario, item, 1).await;
     // Primeira tentativa sem vaga: nenhuma chamada saiu e a saída está vazia.
-    assert_eq!(fake.recebidos().len(), 0);
+    assert_eq!(fake.received().len(), 0);
     assert!(
         cenario
             .store
@@ -1202,7 +1202,7 @@ async fn falta_de_vaga_do_provedor_entra_na_escada_e_nao_chama_o_modelo() {
     fluxo.despachar(cenario.org).expect("despacha 2");
     esperar_fila_vazia(&fluxo, &cenario).await;
 
-    assert_eq!(fake.recebidos().len(), 1, "uma única chamada ao provedor");
+    assert_eq!(fake.received().len(), 1, "uma única chamada ao provedor");
     assert_eq!(cenario.turnos().len(), 2);
     let metricas = motor.metricas();
     assert_eq!(metricas.falhas_modelo_adiadas.value(), 1);
@@ -1213,7 +1213,7 @@ async fn falta_de_vaga_do_provedor_entra_na_escada_e_nao_chama_o_modelo() {
 async fn provedor_que_recusa_a_chave_nao_gasta_a_escada() {
     let cenario = Cenario::novo("recusa-401");
     let (motor, fake) = cenario.motor(
-        vec![Roteiro::Falha(LlmError::Rejected {
+        vec![Script::Falha(LlmError::Rejected {
             status: 401,
             mensagem: "chave recusada".to_owned(),
         })],
@@ -1230,7 +1230,7 @@ async fn provedor_que_recusa_a_chave_nao_gasta_a_escada() {
     esperar_fila_vazia(&fluxo, &cenario).await;
 
     // Uma única chamada: a recusa não se resolve repetindo.
-    assert_eq!(fake.recebidos().len(), 1);
+    assert_eq!(fake.received().len(), 1);
     let turnos = cenario.turnos();
     assert_eq!(turnos.len(), 1);
     assert_eq!(turnos[0].state, TurnState::Failed);
@@ -1261,7 +1261,7 @@ async fn provedor_que_recusa_a_chave_nao_gasta_a_escada() {
     cenario.avancar(3_600_000);
     fluxo.despachar(cenario.org).expect("despacha de novo");
     deixar_passar(60).await;
-    assert_eq!(fake.recebidos().len(), 1);
+    assert_eq!(fake.received().len(), 1);
 
     let metricas = motor.metricas();
     assert_eq!(metricas.falhas_modelo_recusadas.value(), 1);
@@ -1347,7 +1347,7 @@ async fn fluxo_completo_da_inbox_ate_a_outbox_entrega_a_resposta() {
     );
 
     // A reentrega não gerou segundo turno: uma chamada ao modelo, um turno, uma resposta.
-    assert_eq!(fake.recebidos().len(), 1, "a duplicata não abre turno");
+    assert_eq!(fake.received().len(), 1, "a duplicata não abre turno");
     let turnos = cenario.turnos();
     assert_eq!(turnos.len(), 1);
     assert_eq!(turnos[0].state, TurnState::Completed);
@@ -1391,8 +1391,8 @@ async fn esperar_fila_vazia(fluxo: &Fluxo, cenario: &Cenario) {
 
 // ───────────────────────────── 8. Falha do modelo (HR-26i) ─────────────────────────────
 
-fn falha_do_provedor() -> Roteiro {
-    Roteiro::Falha(LlmError::Unavailable {
+fn falha_do_provedor() -> Script {
+    Script::Falha(LlmError::Unavailable {
         tentativas: 3,
         ultimo: "503 indisponível".to_owned(),
     })
@@ -1463,7 +1463,7 @@ async fn falha_do_modelo_repete_com_espera_crescente_e_responde_na_terceira() {
     // Primeira tentativa: falha, e o item fica adiado (não concluído, não vai para a saída).
     fluxo.despachar(cenario.org).expect("despacha");
     esperar_tentativas(&cenario, item, 1).await;
-    assert_eq!(fake.recebidos().len(), 1);
+    assert_eq!(fake.received().len(), 1);
     assert_eq!(
         cenario
             .store
@@ -1489,13 +1489,13 @@ async fn falha_do_modelo_repete_com_espera_crescente_e_responde_na_terceira() {
         .expect("despacha antes da hora");
     deixar_passar(60).await;
     assert_eq!(cenario.turnos().len(), 1, "nada roda antes do instante");
-    assert_eq!(fake.recebidos().len(), 1);
+    assert_eq!(fake.received().len(), 1);
 
     // Vencida a primeira espera (1 s): segunda tentativa, que também falha.
     cenario.avancar(1_000);
     fluxo.despachar(cenario.org).expect("despacha vencido");
     esperar_tentativas(&cenario, item, 2).await;
-    assert_eq!(fake.recebidos().len(), 2);
+    assert_eq!(fake.received().len(), 2);
 
     // A segunda espera é quatro vezes a primeira (4 s): antes disso, nada; depois, a resposta.
     cenario.avancar(3_000);
@@ -1504,7 +1504,7 @@ async fn falha_do_modelo_repete_com_espera_crescente_e_responde_na_terceira() {
         .expect("despacha antes da segunda espera");
     deixar_passar(60).await;
     assert_eq!(
-        fake.recebidos().len(),
+        fake.received().len(),
         2,
         "espera crescente: ainda não venceu"
     );
@@ -1513,7 +1513,7 @@ async fn falha_do_modelo_repete_com_espera_crescente_e_responde_na_terceira() {
     esperar_fila_vazia(&fluxo, &cenario).await;
 
     // Chamadas ao modelo: exatamente uma por tentativa, sem repetição extra.
-    assert_eq!(fake.recebidos().len(), 3);
+    assert_eq!(fake.received().len(), 3);
     let estados: Vec<TurnState> = cenario.turnos().iter().map(|t| t.state).collect();
     assert_eq!(
         estados.iter().filter(|e| **e == TurnState::Failed).count(),
@@ -1582,7 +1582,7 @@ async fn falha_do_modelo_sempre_esgota_em_tres_tentativas_e_conclui_sem_resposta
     esperar_fila_vazia(&fluxo, &cenario).await;
 
     // Exatamente três chamadas e três turnos, todos falhos.
-    assert_eq!(fake.recebidos().len(), 3);
+    assert_eq!(fake.received().len(), 3);
     let turnos = cenario.turnos();
     assert_eq!(turnos.len(), 3);
     assert!(turnos.iter().all(|t| t.state == TurnState::Failed));
@@ -1614,7 +1614,7 @@ async fn falha_do_modelo_sempre_esgota_em_tres_tentativas_e_conclui_sem_resposta
     fluxo.despachar(cenario.org).expect("despacha de novo");
     deixar_passar(60).await;
     assert_eq!(cenario.turnos().len(), 3);
-    assert_eq!(fake.recebidos().len(), 3);
+    assert_eq!(fake.received().len(), 3);
 
     let metricas = motor.metricas();
     assert_eq!(metricas.falhas_modelo_adiadas.value(), 2);
@@ -1633,7 +1633,7 @@ async fn com_limite_de_uma_tentativa_a_primeira_falha_ja_e_definitiva() {
     entregar(&fluxo, &cenario, "ext-uma-1", "oi");
     fluxo.despachar(cenario.org).expect("despacha");
     esperar_fila_vazia(&fluxo, &cenario).await;
-    assert_eq!(fake.recebidos().len(), 1);
+    assert_eq!(fake.received().len(), 1);
     assert_eq!(motor.metricas().falhas_modelo_definitivas.value(), 1);
     assert_eq!(motor.metricas().falhas_modelo_adiadas.value(), 0);
 }
@@ -1641,7 +1641,7 @@ async fn com_limite_de_uma_tentativa_a_primeira_falha_ja_e_definitiva() {
 #[tokio::test]
 async fn tempo_maximo_do_turno_conta_como_falha_do_modelo_e_entra_na_escada() {
     let cenario = Cenario::novo("tempo-maximo");
-    let pendurado = Roteiro::Pendurado {
+    let pendurado = Script::Pendurado {
         eventos: Vec::new(),
         depois: Duration::from_secs(10),
         erro: LlmError::TimedOut { segundos: 10 },
@@ -1680,7 +1680,7 @@ async fn tempo_maximo_do_turno_conta_como_falha_do_modelo_e_entra_na_escada() {
     cenario.avancar(1_000);
     fluxo.despachar(cenario.org).expect("despacha 2");
     esperar_fila_vazia(&fluxo, &cenario).await;
-    assert_eq!(fake.recebidos().len(), 2);
+    assert_eq!(fake.received().len(), 2);
     assert_eq!(
         cenario
             .mensagens()
@@ -1706,7 +1706,7 @@ async fn repetir_depois_de_resposta_ja_gravada_nao_chama_o_modelo() {
     let item = entregar(&fluxo, &cenario, "ext-ja-1", "oi");
     fluxo.despachar(cenario.org).expect("despacha");
     esperar_tentativas(&cenario, item, 1).await;
-    assert_eq!(fake.recebidos().len(), 1);
+    assert_eq!(fake.received().len(), 1);
 
     // Uma resposta chegou ao cliente antes da repetição (a entrada ficou aberta por queda, por
     // exemplo). A repetição tem de reconhecer isso e não chamar o modelo de novo.
@@ -1733,11 +1733,7 @@ async fn repetir_depois_de_resposta_ja_gravada_nao_chama_o_modelo() {
     fluxo.despachar(cenario.org).expect("despacha de novo");
     esperar_fila_vazia(&fluxo, &cenario).await;
 
-    assert_eq!(
-        fake.recebidos().len(),
-        1,
-        "o modelo não foi chamado de novo"
-    );
+    assert_eq!(fake.received().len(), 1, "o modelo não foi chamado de novo");
     assert_eq!(
         cenario
             .store
@@ -1779,14 +1775,14 @@ async fn item_adiado_so_volta_junto_com_a_mensagem_nova_e_nao_antes_do_instante(
     fluxo.despachar(cenario.org).expect("despacha sem vencer");
     deixar_passar(60).await;
     assert_eq!(cenario.turnos().len(), 1, "o adiado não roda antes da hora");
-    assert_eq!(fake.recebidos().len(), 1);
+    assert_eq!(fake.received().len(), 1);
 
     // A mensagem nova entra e é despachada; o turno dela leva a primeira junto, no grupo.
     entregar(&fluxo, &cenario, "ext-antecipa-2", "segunda");
     fluxo.despachar(cenario.org).expect("despacha a nova");
     esperar_fila_vazia(&fluxo, &cenario).await;
 
-    assert_eq!(fake.recebidos().len(), 2);
+    assert_eq!(fake.received().len(), 2);
     let respostas = cenario
         .mensagens()
         .iter()

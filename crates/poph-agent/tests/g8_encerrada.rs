@@ -34,7 +34,7 @@ use poph_agent::produtos::{
 use poph_agent::turno::{
     Entrada, FuturoPausa, Motor, ObservadorNulo, OpcoesTurno, Pausa, ResumoTurno,
 };
-use poph_core::llm::{EventoLlm, MotivoFim, ProvedorFake, Roteiro, Uso};
+use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, Usage};
 use poph_jev::{
     ErroJev, G8_DESPEDIDA_PADRAO, JevFalso, LoteResposta, MotorJev, Resposta as RespostaJev,
 };
@@ -254,10 +254,10 @@ impl Cenario {
 
     fn motor(
         &self,
-        roteiros: Vec<Roteiro>,
+        roteiros: Vec<Script>,
         jev: Option<Arc<MotorJev>>,
-    ) -> (Motor, Arc<ProvedorFake>) {
-        let fake = Arc::new(ProvedorFake::com_roteiros(roteiros));
+    ) -> (Motor, Arc<FakeProvider>) {
+        let fake = Arc::new(FakeProvider::with_scripts(roteiros));
         let config = ConfigQuente::nova(
             Arc::clone(&self.store),
             OpcoesConfigQuente::default(),
@@ -339,14 +339,14 @@ impl Drop for Cenario {
     }
 }
 
-fn roteiro_texto(texto: &str) -> Roteiro {
-    Roteiro::Eventos(vec![
-        EventoLlm::Texto(texto.to_owned()),
-        EventoLlm::Uso(Uso {
+fn roteiro_texto(texto: &str) -> Script {
+    Script::Eventos(vec![
+        LlmEvent::Texto(texto.to_owned()),
+        LlmEvent::Usage(Usage {
             entrada: 100,
             saida: 10,
         }),
-        EventoLlm::Fim(MotivoFim::Concluido),
+        LlmEvent::Fim(FinishReason::Concluido),
     ])
 }
 
@@ -440,7 +440,7 @@ async fn g8_encerra_sem_chamar_o_modelo_e_grava_a_despedida_padrao() {
     assert_eq!(resumo.estado, TurnState::Completed);
     assert_eq!(resumo.texto, G8_DESPEDIDA_PADRAO);
     assert_eq!(
-        provedor.recebidos().len(),
+        provedor.received().len(),
         0,
         "o modelo de texto não é chamado"
     );
@@ -480,7 +480,7 @@ async fn g8_usa_a_despedida_configurada_no_agente() {
     let resumo = cenario.turno(&motor, gatilho).await;
 
     assert_eq!(resumo.texto, "Valeu, até a próxima!");
-    assert_eq!(provedor.recebidos().len(), 0);
+    assert_eq!(provedor.received().len(), 0);
     assert_eq!(
         cenario.saidas().last().map(String::as_str),
         Some("Valeu, até a próxima!")
@@ -502,7 +502,7 @@ async fn g8_despedida_vazia_encerra_sem_mandar_mensagem() {
 
     assert_eq!(resumo.estado, TurnState::Completed);
     assert!(resumo.texto.is_empty());
-    assert_eq!(provedor.recebidos().len(), 0);
+    assert_eq!(provedor.received().len(), 0);
     assert_eq!(
         cenario.saidas(),
         vec!["Mais alguma dúvida?"],
@@ -527,14 +527,14 @@ async fn g8_a_mensagem_seguinte_reabre_a_conversa_e_volta_ao_modelo() {
 
     let primeiro = cenario.falar(ENCERRA);
     cenario.turno(&motor, primeiro).await;
-    assert_eq!(provedor.recebidos().len(), 0);
+    assert_eq!(provedor.received().len(), 0);
 
     let segundo = cenario.falar(VOLTOU);
     let resumo = cenario.turno(&motor, segundo).await;
 
     assert_eq!(resumo.texto, "Claro! Qual o tamanho do imóvel?");
     assert_eq!(
-        provedor.recebidos().len(),
+        provedor.received().len(),
         1,
         "a mensagem seguinte entra no turno normal"
     );
@@ -563,7 +563,7 @@ async fn g8_despedida_vazia_nao_engole_a_mensagem_seguinte() {
     let resumo = cenario.turno(&motor, segundo).await;
 
     assert_eq!(resumo.texto, "Claro, em que posso ajudar?");
-    assert_eq!(provedor.recebidos().len(), 1);
+    assert_eq!(provedor.received().len(), 1);
     assert_eq!(
         cenario.saidas().last().map(String::as_str),
         Some("Claro, em que posso ajudar?")
@@ -589,7 +589,7 @@ async fn g8_agradecimento_com_duvida_nao_fecha() {
         resumo.texto,
         "Se a praga voltar, a garantia cobre a visita."
     );
-    assert_eq!(provedor.recebidos().len(), 1, "a dúvida segue ao modelo");
+    assert_eq!(provedor.received().len(), 1, "a dúvida segue ao modelo");
     assert_eq!(cenario.metricas.encerradas_g8.value(), 0);
 }
 
@@ -614,7 +614,7 @@ async fn g8_mensagens_agrupadas_nao_fecham() {
         resumo.texto, "A garantia vale por 6 meses.",
         "a dúvida é respondida"
     );
-    assert_eq!(provedor.recebidos().len(), 1);
+    assert_eq!(provedor.received().len(), 1);
     assert_eq!(cenario.metricas.encerradas_g8.value(), 0);
 }
 
@@ -637,7 +637,7 @@ async fn g8_primeira_mensagem_nao_pergunta_nem_fecha() {
         "sem fala anterior do agente, o G8 nem é perguntado"
     );
     assert_eq!(resumo.texto, "De nada! Como posso ajudar?");
-    assert_eq!(provedor.recebidos().len(), 1);
+    assert_eq!(provedor.received().len(), 1);
     assert_eq!(cenario.metricas.encerradas_g8.value(), 0);
 }
 
@@ -657,7 +657,7 @@ async fn g8_desligado_nao_pergunta_nem_fecha() {
     assert_eq!(jev.chamadas(), 0, "com o G8 desligado nenhuma pergunta");
     assert_eq!(resumo.texto, "Até mais, qualquer coisa estou aqui.");
     assert_eq!(
-        provedor.recebidos().len(),
+        provedor.received().len(),
         1,
         "comportamento de antes da HR-36"
     );
@@ -695,7 +695,7 @@ async fn g8_falha_ou_duvida_do_jev_segue_como_hoje() {
             resumo.texto, "Certo, qualquer coisa estou aqui.",
             "{rotulo}"
         );
-        assert_eq!(provedor.recebidos().len(), 1, "{rotulo}: o modelo responde");
+        assert_eq!(provedor.received().len(), 1, "{rotulo}: o modelo responde");
         assert_eq!(
             cenario.metricas.encerradas_g8.value(),
             0,
@@ -738,7 +738,7 @@ async fn g8_com_transferencia_do_g1_a_transferencia_vence() {
         ConversationStatus::Transferred,
         "o G1 transfere"
     );
-    assert_eq!(provedor.recebidos().len(), 0);
+    assert_eq!(provedor.received().len(), 0);
     assert_eq!(
         cenario.metricas.encerradas_g8.value(),
         0,
@@ -762,7 +762,7 @@ async fn g8_encerrando_nao_espera_a_busca_em_andamento() {
     let levou = inicio.elapsed();
 
     assert_eq!(resumo.estado, TurnState::Completed);
-    assert_eq!(provedor.recebidos().len(), 0);
+    assert_eq!(provedor.received().len(), 0);
     assert!(
         levou < Duration::from_millis(250),
         "encerrando, o turno não pode esperar a busca de 300 ms: levou {levou:?}"
@@ -791,7 +791,7 @@ async fn padrao_de_instalacao_liga_o_g8_sem_configurar_o_agente() {
 
     assert_eq!(encerrou.texto, G8_DESPEDIDA_PADRAO);
     assert_eq!(
-        provedor.recebidos().len(),
+        provedor.received().len(),
         0,
         "sem configuração no agente, o encerramento não chama o modelo de texto"
     );
@@ -802,7 +802,7 @@ async fn padrao_de_instalacao_liga_o_g8_sem_configurar_o_agente() {
 
     assert_eq!(resumo.texto, "Claro! Qual o tamanho do imóvel?");
     assert_eq!(
-        provedor.recebidos().len(),
+        provedor.received().len(),
         1,
         "a mensagem seguinte reabre e volta ao modelo"
     );
@@ -827,7 +827,7 @@ async fn agente_que_desliga_o_g8_volta_ao_comportamento_de_hoje() {
 
     assert_eq!(resumo.texto, "Até mais, qualquer coisa estou aqui.");
     assert_eq!(
-        provedor.recebidos().len(),
+        provedor.received().len(),
         1,
         "o modelo responde, como antes"
     );
@@ -843,21 +843,21 @@ async fn agente_que_desliga_o_g8_volta_ao_comportamento_de_hoje() {
 }
 
 /// Todo o texto de um pedido ao modelo (sistema, usuário, assistente e resultado de ferramenta).
-fn caracteres_do_pedido(pedido: &poph_core::llm::Pedido) -> usize {
+fn caracteres_do_pedido(pedido: &poph_core::llm::Request) -> usize {
     pedido
         .mensagens
         .iter()
         .map(|mensagem| match mensagem {
-            poph_core::llm::Mensagem::Sistema(texto) => texto.chars().count(),
-            poph_core::llm::Mensagem::Usuario(partes) => partes
+            poph_core::llm::Message::Sistema(texto) => texto.chars().count(),
+            poph_core::llm::Message::Usuario(partes) => partes
                 .iter()
                 .map(|parte| match parte {
-                    poph_core::llm::Parte::Texto(texto) => texto.chars().count(),
+                    poph_core::llm::Part::Texto(texto) => texto.chars().count(),
                     _ => 0,
                 })
                 .sum(),
-            poph_core::llm::Mensagem::Assistente { texto, .. } => texto.chars().count(),
-            poph_core::llm::Mensagem::Resultado { conteudo, .. } => conteudo.chars().count(),
+            poph_core::llm::Message::Assistente { texto, .. } => texto.chars().count(),
+            poph_core::llm::Message::Resultado { conteudo, .. } => conteudo.chars().count(),
         })
         .sum()
 }
@@ -892,7 +892,7 @@ async fn medicao_do_encerramento() {
             );
             let gatilho = cenario.falar(texto);
             cenario.turno(&motor, gatilho).await;
-            for pedido in provedor.recebidos() {
+            for pedido in provedor.received() {
                 chamadas += 1;
                 caracteres += caracteres_do_pedido(&pedido);
             }

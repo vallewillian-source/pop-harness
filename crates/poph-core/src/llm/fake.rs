@@ -13,20 +13,20 @@ use futures::future::BoxFuture;
 use futures::stream;
 
 use super::erro::LlmError;
-use super::provedor::{FluxoLlm, LlmProvider, validar_pedido};
-use super::tipos::{EventoLlm, Pedido};
+use super::provedor::{LlmProvider, LlmStream, validate_request};
+use super::tipos::{LlmEvent, Request};
 
 /// Resultado previsto de uma chamada ao provedor falso.
 #[derive(Debug, Clone)]
-pub enum Roteiro {
+pub enum Script {
     /// Eventos na ordem, terminando no `Fim` que estiver na lista.
-    Eventos(Vec<EventoLlm>),
+    Eventos(Vec<LlmEvent>),
     /// Falha antes de a resposta começar (ex.: 429 ou 5xx já esgotados).
     Falha(LlmError),
     /// Entrega os eventos e depois fica parado por `depois`. Se a chamada for cancelada
     /// antes, devolve `Cancelada`; se o tempo passar, devolve `erro` (ex.: `TempoEsgotado`).
     Pendurado {
-        eventos: Vec<EventoLlm>,
+        eventos: Vec<LlmEvent>,
         depois: Duration,
         erro: LlmError,
     },
@@ -34,29 +34,29 @@ pub enum Roteiro {
 
 /// Provedor falso. Compartilhável entre tarefas.
 #[derive(Debug, Default)]
-pub struct ProvedorFake {
-    roteiros: Mutex<VecDeque<Roteiro>>,
-    recebidos: Mutex<Vec<Pedido>>,
+pub struct FakeProvider {
+    roteiros: Mutex<VecDeque<Script>>,
+    received: Mutex<Vec<Request>>,
 }
 
-impl ProvedorFake {
+impl FakeProvider {
     /// Provedor com os roteiros na ordem em que serão usados.
-    pub fn com_roteiros(roteiros: Vec<Roteiro>) -> Self {
+    pub fn with_scripts(roteiros: Vec<Script>) -> Self {
         Self {
             roteiros: Mutex::new(roteiros.into()),
-            recebidos: Mutex::new(Vec::new()),
+            received: Mutex::new(Vec::new()),
         }
     }
 
     /// Pedidos recebidos até agora, na ordem.
-    pub fn recebidos(&self) -> Vec<Pedido> {
-        match self.recebidos.lock() {
+    pub fn received(&self) -> Vec<Request> {
+        match self.received.lock() {
             Ok(guarda) => guarda.clone(),
             Err(veneno) => veneno.into_inner().clone(),
         }
     }
 
-    fn proximo(&self) -> Option<Roteiro> {
+    fn proximo(&self) -> Option<Script> {
         match self.roteiros.lock() {
             Ok(mut guarda) => guarda.pop_front(),
             Err(veneno) => veneno.into_inner().pop_front(),
@@ -64,12 +64,12 @@ impl ProvedorFake {
     }
 }
 
-impl LlmProvider for ProvedorFake {
-    fn stream<'a>(&'a self, pedido: Pedido) -> BoxFuture<'a, Result<FluxoLlm, LlmError>> {
+impl LlmProvider for FakeProvider {
+    fn stream<'a>(&'a self, pedido: Request) -> BoxFuture<'a, Result<LlmStream, LlmError>> {
         Box::pin(async move {
-            validar_pedido(&pedido, true)?;
+            validate_request(&pedido, true)?;
             let cancelamento = pedido.cancelamento.clone();
-            match self.recebidos.lock() {
+            match self.received.lock() {
                 Ok(mut guarda) => guarda.push(pedido),
                 Err(veneno) => veneno.into_inner().push(pedido),
             }
@@ -77,12 +77,12 @@ impl LlmProvider for ProvedorFake {
                 LlmError::Configuracao("provedor falso sem roteiro para esta chamada".to_owned())
             })?;
             match roteiro {
-                Roteiro::Falha(erro) => Err(erro),
-                Roteiro::Eventos(eventos) => {
+                Script::Falha(erro) => Err(erro),
+                Script::Eventos(eventos) => {
                     let fluxo = stream::iter(eventos.into_iter().map(Ok));
-                    Ok(Box::pin(fluxo) as FluxoLlm)
+                    Ok(Box::pin(fluxo) as LlmStream)
                 }
-                Roteiro::Pendurado {
+                Script::Pendurado {
                     eventos,
                     depois,
                     erro,
@@ -96,7 +96,7 @@ impl LlmProvider for ProvedorFake {
                     };
                     let fluxo =
                         stream::iter(eventos.into_iter().map(Ok)).chain(stream::once(espera));
-                    Ok(Box::pin(fluxo) as FluxoLlm)
+                    Ok(Box::pin(fluxo) as LlmStream)
                 }
             }
         })
@@ -108,33 +108,33 @@ mod testes {
     use poph_types::OrgId;
 
     use super::*;
-    use crate::llm::tipos::{Mensagem, MotivoFim, Parte};
+    use crate::llm::tipos::{FinishReason, Message, Part};
 
     #[tokio::test]
-    async fn entrega_o_roteiro_e_registra_o_pedido() {
-        let fake = ProvedorFake::com_roteiros(vec![Roteiro::Eventos(vec![
-            EventoLlm::Texto("oi".into()),
-            EventoLlm::Fim(MotivoFim::Concluido),
+    async fn delivers_script_and_records_request() {
+        let fake = FakeProvider::with_scripts(vec![Script::Eventos(vec![
+            LlmEvent::Texto("oi".into()),
+            LlmEvent::Fim(FinishReason::Concluido),
         ])]);
-        let pedido = Pedido::new(
+        let pedido = Request::new(
             OrgId::generate(),
-            vec![Mensagem::Usuario(vec![Parte::Texto("olá".into())])],
+            vec![Message::Usuario(vec![Part::Texto("olá".into())])],
         );
         let mut fluxo = fake.stream(pedido).await.expect("abre");
         let eventos: Vec<_> = fluxo.by_ref().collect().await;
         assert_eq!(eventos.len(), 2);
-        assert_eq!(fake.recebidos().len(), 1);
+        assert_eq!(fake.received().len(), 1);
     }
 
     #[tokio::test]
-    async fn falha_de_roteiro_chega_como_erro_ao_abrir() {
-        let fake = ProvedorFake::com_roteiros(vec![Roteiro::Falha(LlmError::Unavailable {
+    async fn script_failure_is_open_error() {
+        let fake = FakeProvider::with_scripts(vec![Script::Falha(LlmError::Unavailable {
             tentativas: 3,
             ultimo: "HTTP 503".into(),
         })]);
-        let pedido = Pedido::new(
+        let pedido = Request::new(
             OrgId::generate(),
-            vec![Mensagem::Usuario(vec![Parte::Texto("x".into())])],
+            vec![Message::Usuario(vec![Part::Texto("x".into())])],
         );
         assert!(matches!(
             fake.stream(pedido).await,
@@ -143,19 +143,19 @@ mod testes {
     }
 
     #[tokio::test]
-    async fn pendurado_respeita_cancelamento() {
-        let fake = ProvedorFake::com_roteiros(vec![Roteiro::Pendurado {
-            eventos: vec![EventoLlm::Texto("parcial".into())],
+    async fn pending_respects_cancellation() {
+        let fake = FakeProvider::with_scripts(vec![Script::Pendurado {
+            eventos: vec![LlmEvent::Texto("parcial".into())],
             depois: Duration::from_secs(30),
             erro: LlmError::TimedOut { segundos: 30 },
         }]);
-        let pedido = Pedido::new(
+        let pedido = Request::new(
             OrgId::generate(),
-            vec![Mensagem::Usuario(vec![Parte::Texto("x".into())])],
+            vec![Message::Usuario(vec![Part::Texto("x".into())])],
         );
         let cancelamento = pedido.cancelamento.clone();
         let mut fluxo = fake.stream(pedido).await.expect("abre");
-        assert!(matches!(fluxo.next().await, Some(Ok(EventoLlm::Texto(_)))));
+        assert!(matches!(fluxo.next().await, Some(Ok(LlmEvent::Texto(_)))));
         cancelamento.cancelar();
         assert_eq!(fluxo.next().await, Some(Err(LlmError::Cancelled)));
     }

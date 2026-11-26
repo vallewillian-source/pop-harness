@@ -17,7 +17,7 @@
 
 use std::sync::Arc;
 
-use poph_core::llm::Ferramenta;
+use poph_core::llm::Tool;
 use poph_store::{LibraryFile, NewOutboxItem, Page, Store};
 use poph_types::{AgentId, FileId, OrgId};
 use serde_json::{Value, json};
@@ -58,12 +58,7 @@ pub fn registrar(base: RegistroPadrao, store: Arc<Store>) -> RegistroPadrao {
 /// Faz parte do pedido ao modelo: é assim que ele sabe **o que** pode enviar. Sem a ferramenta entre
 /// as oferecidas, não faz nada. Falha de banco não derruba o turno: a ferramenta continua valendo e
 /// devolve erro legível se o modelo chamar com um id qualquer.
-pub fn anexar_biblioteca(
-    oferecidas: &mut [Ferramenta],
-    store: &Store,
-    org: OrgId,
-    agente: AgentId,
-) {
+pub fn anexar_biblioteca(oferecidas: &mut [Tool], store: &Store, org: OrgId, agente: AgentId) {
     let Some(posicao) = oferecidas
         .iter()
         .position(|ferramenta| ferramenta.nome == NOME_FERRAMENTA)

@@ -17,7 +17,7 @@ use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
 use poph_agent::turno::{
     Entrada, FuturoPausa, Motor, ObservadorNulo, OpcoesTurno, Pausa, ResumoTurno,
 };
-use poph_core::llm::{ProvedorFake, Roteiro};
+use poph_core::llm::{FakeProvider, Script};
 use poph_jev::{
     AvaliadorGates, ErroJev, EstadoJev, G1_CONTINUAR, G1_TRANSFERIR, G4, IdGate, JevFalso,
     MensagemJev, MotorJev,
@@ -190,7 +190,7 @@ impl Cenario {
             OpcoesLimites::default(),
             MetricasMemoria::proprio(),
         ));
-        let provedor = Arc::new(ProvedorFake::com_roteiros(vec![roteiro(
+        let provedor = Arc::new(FakeProvider::with_scripts(vec![roteiro(
             "Olá! Como posso ajudar?",
         )]));
         let _ = globais;
@@ -242,14 +242,14 @@ impl Drop for Cenario {
     }
 }
 
-fn roteiro(texto: &str) -> Roteiro {
-    Roteiro::Eventos(vec![
-        poph_core::llm::EventoLlm::Texto(texto.to_owned()),
-        poph_core::llm::EventoLlm::Uso(poph_core::llm::Uso {
+fn roteiro(texto: &str) -> Script {
+    Script::Eventos(vec![
+        poph_core::llm::LlmEvent::Texto(texto.to_owned()),
+        poph_core::llm::LlmEvent::Usage(poph_core::llm::Usage {
             entrada: 10,
             saida: 5,
         }),
-        poph_core::llm::EventoLlm::Fim(poph_core::llm::MotivoFim::Concluido),
+        poph_core::llm::LlmEvent::Fim(poph_core::llm::FinishReason::Concluido),
     ])
 }
 

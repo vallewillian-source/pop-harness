@@ -24,7 +24,7 @@ use poph_agent::turno::{
     RegistroPadrao, TETO_RESUMO_FERRAMENTA,
 };
 use poph_core::llm::{
-    ChamadaFerramenta, EventoLlm, LlmProvider, Mensagem, MotivoFim, ProvedorFake, Roteiro,
+    FakeProvider, FinishReason, LlmEvent, LlmProvider, Message, Script, ToolCall,
 };
 use poph_store::{NewAgent, NewConversation, NewMessage, NewOrg, Page, Store, Turno};
 use poph_types::{AgentId, ConversationId, OrgId, StructuredInstructions, ToolConfig};
@@ -176,12 +176,8 @@ impl Cenario {
         }
     }
 
-    fn motor(
-        &self,
-        roteiros: Vec<Roteiro>,
-        registro: RegistroPadrao,
-    ) -> (Motor, Arc<ProvedorFake>) {
-        let fake = Arc::new(ProvedorFake::com_roteiros(roteiros));
+    fn motor(&self, roteiros: Vec<Script>, registro: RegistroPadrao) -> (Motor, Arc<FakeProvider>) {
+        let fake = Arc::new(FakeProvider::with_scripts(roteiros));
         let provedor: Arc<dyn LlmProvider> = fake.clone();
         let config = ConfigQuente::nova(
             Arc::clone(&self.store),
@@ -256,21 +252,21 @@ impl Drop for Cenario {
     }
 }
 
-fn resposta(texto: &str) -> Roteiro {
-    Roteiro::Eventos(vec![
-        EventoLlm::Texto(texto.to_owned()),
-        EventoLlm::Fim(MotivoFim::Concluido),
+fn resposta(texto: &str) -> Script {
+    Script::Eventos(vec![
+        LlmEvent::Texto(texto.to_owned()),
+        LlmEvent::Fim(FinishReason::Concluido),
     ])
 }
 
-fn chamada(nome: &str, argumentos: serde_json::Value) -> Roteiro {
-    Roteiro::Eventos(vec![
-        EventoLlm::Ferramenta(ChamadaFerramenta {
+fn chamada(nome: &str, argumentos: serde_json::Value) -> Script {
+    Script::Eventos(vec![
+        LlmEvent::Tool(ToolCall {
             id: "c1".to_owned(),
             nome: nome.to_owned(),
             argumentos,
         }),
-        EventoLlm::Fim(MotivoFim::ChamadasFerramenta),
+        LlmEvent::Fim(FinishReason::ChamadasFerramenta),
     ])
 }
 
@@ -358,13 +354,13 @@ async fn ferramenta_nao_habilitada_grava_recusa_e_o_modelo_recebe_o_erro() {
     assert_eq!(registro["nomes"], serde_json::json!(["cart_add_item"]));
 
     // O modelo recebeu o erro como resultado da chamada, não a execução.
-    let pedidos = fake.recebidos();
+    let pedidos = fake.received();
     assert_eq!(pedidos.len(), 2);
     let erro = pedidos[1]
         .mensagens
         .iter()
         .find_map(|mensagem| match mensagem {
-            Mensagem::Resultado { conteudo, .. } => Some(conteudo.clone()),
+            Message::Resultado { conteudo, .. } => Some(conteudo.clone()),
             _ => None,
         })
         .expect("o resultado da chamada vai para o modelo");

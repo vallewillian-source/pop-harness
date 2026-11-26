@@ -22,7 +22,7 @@ use poph_agent::turno::{
     Entrada, FuturoPausa, MAX_IMAGENS_POR_TURNO, Motor, ObservadorNulo, OpcoesTurno, Pausa,
     ResumoTurno,
 };
-use poph_core::llm::{EventoLlm, Mensagem, MotivoFim, Parte, ProvedorFake, Roteiro, Uso};
+use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Message, Part, Script, Usage};
 use poph_store::{
     Direction, NewAgent, NewChannelAttachment, NewConversation, NewMessage, Role, Store, TurnState,
 };
@@ -201,8 +201,8 @@ impl Cenario {
             .id
     }
 
-    fn motor(&self, com_arquivos: bool) -> (Motor, Arc<ProvedorFake>) {
-        let fake = Arc::new(ProvedorFake::com_roteiros(vec![roteiro_texto(
+    fn motor(&self, com_arquivos: bool) -> (Motor, Arc<FakeProvider>) {
+        let fake = Arc::new(FakeProvider::with_scripts(vec![roteiro_texto(
             "recebi o arquivo",
         )]));
         let config = ConfigQuente::nova(
@@ -257,24 +257,24 @@ fn fastrand() -> u64 {
         .unwrap_or(0)
 }
 
-fn roteiro_texto(texto: &str) -> Roteiro {
-    Roteiro::Eventos(vec![
-        EventoLlm::Texto(texto.to_owned()),
-        EventoLlm::Uso(Uso {
+fn roteiro_texto(texto: &str) -> Script {
+    Script::Eventos(vec![
+        LlmEvent::Texto(texto.to_owned()),
+        LlmEvent::Usage(Usage {
             entrada: 100,
             saida: 10,
         }),
-        EventoLlm::Fim(MotivoFim::Concluido),
+        LlmEvent::Fim(FinishReason::Concluido),
     ])
 }
 
 /// Partes de imagem de um pedido, na ordem.
-fn imagens(pedido: &poph_core::llm::Pedido) -> Vec<(String, Vec<u8>)> {
+fn imagens(pedido: &poph_core::llm::Request) -> Vec<(String, Vec<u8>)> {
     let mut achadas = Vec::new();
     for mensagem in &pedido.mensagens {
-        if let Mensagem::Usuario(partes) = mensagem {
+        if let Message::Usuario(partes) = mensagem {
             for parte in partes {
-                if let Parte::Imagem { mime, bytes } = parte {
+                if let Part::Imagem { mime, bytes } = parte {
                     achadas.push((mime.clone(), bytes.clone()));
                 }
             }
@@ -284,23 +284,23 @@ fn imagens(pedido: &poph_core::llm::Pedido) -> Vec<(String, Vec<u8>)> {
 }
 
 /// Todo o texto (de sistema e de usuário) de um pedido, junto.
-fn texto_do_pedido(pedido: &poph_core::llm::Pedido) -> String {
+fn texto_do_pedido(pedido: &poph_core::llm::Request) -> String {
     let mut texto = String::new();
     for mensagem in &pedido.mensagens {
         match mensagem {
-            Mensagem::Sistema(conteudo) => {
+            Message::Sistema(conteudo) => {
                 texto.push_str(conteudo);
                 texto.push('\n');
             }
-            Mensagem::Usuario(partes) => {
+            Message::Usuario(partes) => {
                 for parte in partes {
-                    if let Parte::Texto(conteudo) = parte {
+                    if let Part::Texto(conteudo) = parte {
                         texto.push_str(conteudo);
                         texto.push('\n');
                     }
                 }
             }
-            Mensagem::Assistente {
+            Message::Assistente {
                 texto: conteudo, ..
             } => {
                 texto.push_str(conteudo);
@@ -321,7 +321,7 @@ async fn imagem_chega_ao_provedor() {
     let resumo = cenario.turno(&motor, gatilho).await;
 
     assert_eq!(resumo.estado, TurnState::Completed, "{:?}", resumo.erro);
-    let pedido = &fake.recebidos()[0];
+    let pedido = &fake.received()[0];
     let achadas = imagens(pedido);
     assert_eq!(achadas.len(), 1, "a imagem tem de ir ao modelo");
     assert_eq!(achadas[0].0, "image/png");
@@ -333,8 +333,8 @@ async fn imagem_chega_ao_provedor() {
         .filter(|mensagem| {
             matches!(
                 mensagem,
-                Mensagem::Usuario(partes)
-                    if partes.iter().all(|parte| matches!(parte, Parte::Texto(t) if t.trim().is_empty()))
+                Message::Usuario(partes)
+                    if partes.iter().all(|parte| matches!(parte, Part::Texto(t) if t.trim().is_empty()))
             )
         })
         .count();
@@ -366,7 +366,7 @@ async fn imagem_e_documento_vao_juntos_com_o_aviso_de_conteudo_nao_confiavel() {
     let resumo = cenario.turno(&motor, gatilho).await;
 
     assert_eq!(resumo.estado, TurnState::Completed, "{:?}", resumo.erro);
-    let pedido = &fake.recebidos()[0];
+    let pedido = &fake.received()[0];
     // A imagem do segundo anexo vem com o mime dela (o anexo é o mesmo tipo gravado pelo canal).
     let achadas = imagens(pedido);
     assert_eq!(achadas.len(), 1);
@@ -393,7 +393,7 @@ async fn blob_ausente_nao_derruba_o_turno() {
     assert_eq!(resumo.estado, TurnState::Completed, "{:?}", resumo.erro);
     assert_eq!(resumo.texto, "recebi o arquivo");
     assert!(
-        imagens(&fake.recebidos()[0]).is_empty(),
+        imagens(&fake.received()[0]).is_empty(),
         "sem blob não há parte de imagem"
     );
 }
@@ -418,7 +418,7 @@ async fn imagem_acima_do_teto_e_omitida_e_o_turno_segue() {
     let resumo = cenario.turno(&motor, gatilho).await;
 
     assert_eq!(resumo.estado, TurnState::Completed, "{:?}", resumo.erro);
-    let achadas = imagens(&fake.recebidos()[0]);
+    let achadas = imagens(&fake.received()[0]);
     assert_eq!(
         achadas.len(),
         MAX_IMAGENS_POR_TURNO,
@@ -443,7 +443,7 @@ async fn sem_configuracao_de_arquivos_o_turno_continua_como_hoje() {
 
     assert_eq!(resumo.estado, TurnState::Completed, "{:?}", resumo.erro);
     assert!(
-        imagens(&fake.recebidos()[0]).is_empty(),
+        imagens(&fake.received()[0]).is_empty(),
         "sem pasta de blobs configurada, nenhuma imagem é lida do disco"
     );
 }

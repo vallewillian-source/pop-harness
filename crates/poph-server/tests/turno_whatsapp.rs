@@ -32,7 +32,7 @@ use poph_agent::entrada_saida::{Fluxo, OpcoesFluxo};
 use poph_agent::limites::{Limitador, OpcoesLimites};
 use poph_agent::metricas::{MetricasFluxo, MetricasMemoria, MetricasTurno};
 use poph_agent::turno::{Motor, OpcoesTurno, ProcessadorTurno};
-use poph_core::llm::{EventoLlm, LlmProvider, MotivoFim, ProvedorFake, Roteiro, Uso};
+use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, LlmProvider, Script, Usage};
 use poph_evolution::webhook::CABECALHO_SEGREDO;
 use poph_evolution::{ClienteEvolution, ConfigEvolution, TETO_MIDIA};
 use poph_server::Estado;
@@ -283,10 +283,10 @@ impl Cenario {
     fn fluxo(
         &self,
         registro: &Registry,
-        roteiros: Vec<Roteiro>,
+        roteiros: Vec<Script>,
         opcoes: OpcoesFluxo,
-    ) -> (Fluxo, Arc<ProvedorFake>) {
-        let fake = Arc::new(ProvedorFake::com_roteiros(roteiros));
+    ) -> (Fluxo, Arc<FakeProvider>) {
+        let fake = Arc::new(FakeProvider::with_scripts(roteiros));
         let provedor: Arc<dyn LlmProvider> = fake.clone();
         let config = ConfigQuente::nova(
             Arc::clone(&self.store),
@@ -322,7 +322,7 @@ impl Cenario {
     }
 
     /// Sobe o servidor. Com `ligar_turno = false`, ele recebe e grava, mas não roda turno.
-    async fn subir(&self, roteiros: Vec<Roteiro>, ligar_turno: bool) -> Servidor {
+    async fn subir(&self, roteiros: Vec<Script>, ligar_turno: bool) -> Servidor {
         self.subir_com(roteiros, ligar_turno, OpcoesFluxo::default())
             .await
     }
@@ -330,7 +330,7 @@ impl Cenario {
     /// Como [`Cenario::subir`], com a política do fluxo escolhida pelo teste.
     async fn subir_com(
         &self,
-        roteiros: Vec<Roteiro>,
+        roteiros: Vec<Script>,
         ligar_turno: bool,
         opcoes: OpcoesFluxo,
     ) -> Servidor {
@@ -428,7 +428,7 @@ struct Servidor {
     cliente: Client,
     org: OrgId,
     /// Provedor falso do turno (`None` quando o turno não está ligado neste servidor).
-    llm: Option<Arc<ProvedorFake>>,
+    llm: Option<Arc<FakeProvider>>,
     desligar: Option<oneshot::Sender<()>>,
 }
 
@@ -461,7 +461,7 @@ impl Servidor {
     }
 
     fn llm_recebidos(&self) -> usize {
-        self.llm.as_ref().map_or(0, |llm| llm.recebidos().len())
+        self.llm.as_ref().map_or(0, |llm| llm.received().len())
     }
 
     async fn desligar(mut self) {
@@ -537,14 +537,14 @@ fn evento_do_aparelho(id: &str, texto: &str) -> Value {
     corpo
 }
 
-fn resposta(texto: &str) -> Roteiro {
-    Roteiro::Eventos(vec![
-        EventoLlm::Texto(texto.to_owned()),
-        EventoLlm::Uso(Uso {
+fn resposta(texto: &str) -> Script {
+    Script::Eventos(vec![
+        LlmEvent::Texto(texto.to_owned()),
+        LlmEvent::Usage(Usage {
             entrada: 120,
             saida: 30,
         }),
-        EventoLlm::Fim(MotivoFim::Concluido),
+        LlmEvent::Fim(FinishReason::Concluido),
     ])
 }
 
@@ -1037,8 +1037,8 @@ async fn metricas_do_turno_aparecem_no_metrics() {
 
 // ───────────────────────── falha do modelo (HR-26i) ─────────────────────────
 
-fn falha_do_provedor() -> Roteiro {
-    Roteiro::Falha(poph_core::llm::LlmError::Unavailable {
+fn falha_do_provedor() -> Script {
+    Script::Falha(poph_core::llm::LlmError::Unavailable {
         tentativas: 3,
         ultimo: "503 indisponível".to_owned(),
     })
@@ -1159,7 +1159,7 @@ async fn recusa_do_provedor_401_nao_repete_avisa_a_operacao_e_nao_manda_nada() {
     let opcoes = OpcoesFluxo::default().com_falha_modelo(3, Duration::from_millis(50));
     let servidor = cenario
         .subir_com(
-            vec![Roteiro::Falha(poph_core::llm::LlmError::Rejected {
+            vec![Script::Falha(poph_core::llm::LlmError::Rejected {
                 status: 401,
                 mensagem: "chave recusada".to_owned(),
             })],

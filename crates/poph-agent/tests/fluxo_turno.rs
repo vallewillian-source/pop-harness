@@ -22,7 +22,7 @@ use poph_agent::metricas::{MetricasG9, MetricasMemoria, MetricasTurno};
 use poph_agent::turno::{
     Entrada, FuturoPausa, Motor, ObservadorNulo, OpcoesTurno, Pausa, ResumoTurno,
 };
-use poph_core::llm::{EventoLlm, MotivoFim, ProvedorFake, Roteiro, Uso};
+use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, Usage};
 use poph_fluxos::{Limites, compilar};
 use poph_jev::{ErroJev, G9_NENHUM, IdGate, JevFalso, MotorJev};
 use poph_store::{
@@ -240,7 +240,7 @@ impl Cenario {
         jev: Option<Arc<MotorJev>>,
         fluxos: Option<FlowsConfig>,
         g9: MetricasG9,
-    ) -> (Motor, Arc<ProvedorFake>) {
+    ) -> (Motor, Arc<FakeProvider>) {
         let _ = agente;
         let config = ConfigQuente::nova(
             Arc::clone(&self.store),
@@ -251,7 +251,7 @@ impl Cenario {
             OpcoesLimites::default(),
             MetricasMemoria::proprio(),
         ));
-        let provedor = Arc::new(ProvedorFake::com_roteiros(vec![
+        let provedor = Arc::new(FakeProvider::with_scripts(vec![
             roteiro("Certo! Vou anotar."),
             roteiro("Certo! Vou anotar."),
             roteiro("Certo! Vou anotar."),
@@ -333,14 +333,14 @@ impl Drop for Cenario {
     }
 }
 
-fn roteiro(texto: &str) -> Roteiro {
-    Roteiro::Eventos(vec![
-        EventoLlm::Texto(texto.to_owned()),
-        EventoLlm::Uso(Uso {
+fn roteiro(texto: &str) -> Script {
+    Script::Eventos(vec![
+        LlmEvent::Texto(texto.to_owned()),
+        LlmEvent::Usage(Usage {
             entrada: 10,
             saida: 5,
         }),
-        EventoLlm::Fim(MotivoFim::Concluido),
+        LlmEvent::Fim(FinishReason::Concluido),
     ])
 }
 
@@ -357,20 +357,20 @@ fn motor_jev(jev: Arc<JevFalso>) -> Arc<MotorJev> {
 }
 
 /// Sistema de mensagens do pedido ao modelo, na ordem em que foram enviadas.
-fn sistemas(pedido: &poph_core::llm::Pedido) -> Vec<String> {
+fn sistemas(pedido: &poph_core::llm::Request) -> Vec<String> {
     pedido
         .mensagens
         .iter()
         .filter_map(|mensagem| match mensagem {
-            poph_core::llm::Mensagem::Sistema(texto) => Some(texto.clone()),
+            poph_core::llm::Message::Sistema(texto) => Some(texto.clone()),
             _ => None,
         })
         .collect()
 }
 
-fn pedido(pedido: &poph_core::llm::Pedido, trecho: &str) -> bool {
+fn pedido(pedido: &poph_core::llm::Request, trecho: &str) -> bool {
     pedido.mensagens.iter().any(|mensagem| match mensagem {
-        poph_core::llm::Mensagem::Sistema(texto) => texto.contains(trecho),
+        poph_core::llm::Message::Sistema(texto) => texto.contains(trecho),
         _ => false,
     })
 }
@@ -400,7 +400,7 @@ async fn inicio_acontece_antes_da_chamada_do_modelo() {
     assert_eq!(ativa.fluxo_id, fluxo.id);
     assert_eq!(ativa.no_atual, "coleta");
 
-    let pedidos = provedor.recebidos();
+    let pedidos = provedor.received();
     assert_eq!(pedidos.len(), 1, "uma chamada ao modelo");
     assert!(
         pedido(&pedidos[0], "Fluxo em andamento: Agendar visita."),
@@ -457,8 +457,8 @@ async fn prefixo_estavel_identico_com_e_sem_fluxo() {
     let gatilho = cenario.falar(sem_fluxo, "só queria saber o horário");
     cenario.turno(&motor_sem, sem_fluxo, gatilho).await;
 
-    let prefixo_com = sistemas(&provedor_com.recebidos()[0])[0].clone();
-    let prefixo_sem = sistemas(&provedor_sem.recebidos()[0])[0].clone();
+    let prefixo_com = sistemas(&provedor_com.received()[0])[0].clone();
+    let prefixo_sem = sistemas(&provedor_sem.received()[0])[0].clone();
     assert_eq!(
         prefixo_com, prefixo_sem,
         "o prefixo estável não pode mudar por causa do fluxo"
@@ -467,12 +467,12 @@ async fn prefixo_estavel_identico_com_e_sem_fluxo() {
     assert!(!prefixo_com.contains("Fluxo em andamento"));
     assert!(
         pedido(
-            &provedor_com.recebidos()[0],
+            &provedor_com.received()[0],
             "Fluxo em andamento: Agendar visita."
         ),
         "o bloco do fluxo entra no bloco volátil, que é o segundo sistema"
     );
-    assert_eq!(sistemas(&provedor_com.recebidos()[0]).len(), 2);
+    assert_eq!(sistemas(&provedor_com.received()[0]).len(), 2);
 }
 
 /// 3. `nenhum` não inicia e o catálogo **não** vai ao prompt; confiança baixa também não.
@@ -501,7 +501,7 @@ async fn nenhum_e_limiar_baixo_nao_iniciam_e_nao_oferecem_catalogo() {
         "nada inicia com `nenhum`"
     );
     assert!(
-        !pedido(&provedor.recebidos()[0], "<fluxos_de_atendimento>"),
+        !pedido(&provedor.received()[0], "<fluxos_de_atendimento>"),
         "o catálogo não vai ao prompt com `nenhum`"
     );
     assert_eq!(g9.nenhum.value(), 1);
@@ -540,7 +540,7 @@ async fn nenhum_e_limiar_baixo_nao_iniciam_e_nao_oferecem_catalogo() {
         cenario.ativa(conversa).is_none(),
         "confiança baixa não inicia nada, mesmo escolhendo o fluxo certo"
     );
-    assert!(!pedido(&provedor.recebidos()[0], "<fluxos_de_atendimento>"));
+    assert!(!pedido(&provedor.received()[0], "<fluxos_de_atendimento>"));
     assert_eq!(g9.abaixo_do_limiar.value(), 1);
     let _ = fluxo;
 }
@@ -569,7 +569,7 @@ async fn jev_fora_entrega_a_reserva() {
         cenario.ativa(conversa).is_none(),
         "Jev fora do ar não inicia nada: quem inicia é o código"
     );
-    let pedidos = provedor.recebidos();
+    let pedidos = provedor.received();
     assert!(
         pedido(&pedidos[0], "<fluxos_de_atendimento>"),
         "a reserva põe o catálogo no prompt"
@@ -635,7 +635,7 @@ async fn fluxo_inativo_nao_entra_nas_opcoes_nem_inicia() {
     // Ele nem entra nas opções do G9 (é o que `fluxo::preparar` filtra) — e por isso não aparece
     // em prompt nenhum. A recusa da validação para um fluxo que ficou inativo no meio do turno é
     // provada nos testes de unidade de `fluxo::iniciar`.
-    let pedidos = provedor.recebidos();
+    let pedidos = provedor.received();
     assert!(!pedido(&pedidos[0], "agendar_visita"));
     assert!(!pedido(&pedidos[0], "<fluxos_de_atendimento>"));
 }
@@ -677,7 +677,7 @@ async fn fluxo_nao_liberado_nao_entra_nas_opcoes_nem_inicia() {
         cenario.ativa(conversa).is_none(),
         "sem a permissão, o fluxo não é oferecido nem iniciado"
     );
-    let pedidos = provedor.recebidos();
+    let pedidos = provedor.received();
     assert!(!pedido(&pedidos[0], "agendar_visita"));
 }
 
@@ -770,7 +770,7 @@ async fn fluxo_de_outra_org_nunca_inicia() {
         "fluxo de outra org não existe para esta organização"
     );
     // O slug existe só na org vizinha: não está nas opções, nem no prompt, nem em execução.
-    let pedidos = provedor.recebidos();
+    let pedidos = provedor.received();
     assert!(!pedido(&pedidos[0], "agendar_visita"));
     // E a Ficha daqui continua sem execução nenhuma.
     assert!(
@@ -843,7 +843,7 @@ async fn execucao_ativa_nao_pergunta_o_jev() {
         0,
         "com execução ativa não há pergunta ao Jev"
     );
-    let pedidos = provedor.recebidos();
+    let pedidos = provedor.received();
     assert!(pedido(&pedidos[0], "Fluxo em andamento: Agendar visita."));
     let turno = cenario.ultimo_turno(conversa);
     let gravado: serde_json::Value = serde_json::from_str(&turno.jev_json).expect("JSON");
@@ -877,7 +877,7 @@ async fn fluxos_desligados_ignoram_tudo_e_a_ficha_segue() {
         "motor desligado não inicia"
     );
     assert_eq!(jev.chamadas(), 0, "motor desligado não pergunta ao Jev");
-    assert!(!pedido(&provedor.recebidos()[0], "<fluxos_de_atendimento>"));
+    assert!(!pedido(&provedor.received()[0], "<fluxos_de_atendimento>"));
     assert!(
         cenario
             .store
@@ -944,7 +944,7 @@ async fn gate_desligado_no_agente_entrega_a_reserva_sem_perguntar() {
 
     assert_eq!(jev.chamadas(), 0, "gate desligado não é perguntado");
     assert!(cenario.ativa(conversa).is_none(), "e nada inicia sozinho");
-    let pedidos = provedor.recebidos();
+    let pedidos = provedor.received();
     assert!(
         pedido(&pedidos[0], "<fluxos_de_atendimento>"),
         "a reserva entrega o catálogo ao modelo"

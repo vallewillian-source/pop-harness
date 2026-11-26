@@ -24,7 +24,7 @@ use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
 use poph_agent::turno::{
     Entrada, FuturoPausa, Motor, ObservadorNulo, OpcoesTurno, Pausa, ResumoTurno,
 };
-use poph_core::llm::{EventoLlm, LlmError, MotivoFim, ProvedorFake, Roteiro, Uso};
+use poph_core::llm::{FakeProvider, FinishReason, LlmError, LlmEvent, Script, Usage};
 use poph_jev::{ErroJev, JevFalso, LoteResposta, MotorJev, Resposta as RespostaJev};
 use poph_store::{
     AgentChange, Direction, NewAgent, NewConversation, NewMessage, Page, Role, Store, TurnState,
@@ -159,10 +159,10 @@ impl Cenario {
 
     fn motor(
         &self,
-        roteiros: Vec<Roteiro>,
+        roteiros: Vec<Script>,
         jev: Option<Arc<MotorJev>>,
-    ) -> (Motor, Arc<ProvedorFake>) {
-        let fake = Arc::new(ProvedorFake::com_roteiros(roteiros));
+    ) -> (Motor, Arc<FakeProvider>) {
+        let fake = Arc::new(FakeProvider::with_scripts(roteiros));
         let config = ConfigQuente::nova(
             Arc::clone(&self.store),
             OpcoesConfigQuente::default(),
@@ -245,14 +245,14 @@ fn fastrand() -> u64 {
         .unwrap_or(0)
 }
 
-fn roteiro_texto(texto: &str) -> Roteiro {
-    Roteiro::Eventos(vec![
-        EventoLlm::Texto(texto.to_owned()),
-        EventoLlm::Uso(Uso {
+fn roteiro_texto(texto: &str) -> Script {
+    Script::Eventos(vec![
+        LlmEvent::Texto(texto.to_owned()),
+        LlmEvent::Usage(Usage {
             entrada: 100,
             saida: 10,
         }),
-        EventoLlm::Fim(MotivoFim::Concluido),
+        LlmEvent::Fim(FinishReason::Concluido),
     ])
 }
 
@@ -360,7 +360,7 @@ async fn g6_aprovada_mantem_a_resposta_e_faz_uma_chamada_ao_modelo() {
 
     assert_eq!(resumo.estado, TurnState::Completed);
     assert_eq!(resumo.texto, RASCUNHO);
-    assert_eq!(provedor.recebidos().len(), 1, "uma chamada ao modelo");
+    assert_eq!(provedor.received().len(), 1, "uma chamada ao modelo");
     assert_eq!(cenario.saidas(), vec![RASCUNHO]);
     assert_eq!(cenario.fila().len(), 1, "um item na fila de saída");
     assert_eq!(cenario.metricas.revisoes_g6.value(), 1);
@@ -388,14 +388,14 @@ async fn g6_reprovada_regenera_uma_vez_e_envia_o_texto_novo() {
 
     assert_eq!(resumo.estado, TurnState::Completed);
     assert_eq!(resumo.texto, REESCRITA, "sai o texto regenerado");
-    let pedidos = provedor.recebidos();
+    let pedidos = provedor.received();
     assert_eq!(pedidos.len(), 2, "exatamente uma regeneração");
     // O pedido de regeneração leva o rascunho como resposta do modelo e a orientação como usuário.
     let ultimo = pedidos.last().expect("o pedido da regeneração");
     assert!(
         matches!(
             ultimo.mensagens.last(),
-            Some(poph_core::llm::Mensagem::Usuario(_))
+            Some(poph_core::llm::Message::Usuario(_))
         ),
         "o pedido da regeneração termina com a orientação do usuário"
     );
@@ -435,7 +435,7 @@ async fn g6_duas_reprovacoes_usam_a_resposta_segura() {
 
     assert_eq!(resumo.estado, TurnState::Completed);
     assert_eq!(resumo.texto, SEGURA, "a resposta segura é a que sai");
-    assert_eq!(provedor.recebidos().len(), 2, "sem terceira tentativa");
+    assert_eq!(provedor.received().len(), 2, "sem terceira tentativa");
     assert_eq!(cenario.saidas(), vec![SEGURA]);
     assert_eq!(cenario.fila().len(), 1);
     assert_eq!(cenario.metricas.respostas_seguras_g6.value(), 1);
@@ -482,7 +482,7 @@ async fn g6_segunda_revisao_sem_resposta_usa_a_segura() {
     let resumo = cenario.turno(&motor, gatilho).await;
 
     assert_eq!(resumo.texto, SEGURA);
-    assert_eq!(provedor.recebidos().len(), 2);
+    assert_eq!(provedor.received().len(), 2);
     assert_eq!(cenario.metricas.respostas_seguras_g6.value(), 1);
 }
 
@@ -499,7 +499,7 @@ async fn g6_jev_fora_nao_revisa_e_mantem_a_resposta() {
 
     assert_eq!(resumo.estado, TurnState::Completed);
     assert_eq!(resumo.texto, RASCUNHO, "Jev fora = comportamento de hoje");
-    assert_eq!(provedor.recebidos().len(), 1, "sem regeneração");
+    assert_eq!(provedor.received().len(), 1, "sem regeneração");
     assert_eq!(cenario.metricas.reprovadas_g6.value(), 0);
 }
 
@@ -520,7 +520,7 @@ async fn g6_abstencao_e_confianca_baixa_mantem_a_resposta() {
         let gatilho = cenario.falar(PERGUNTA);
         let resumo = cenario.turno(&motor, gatilho).await;
         assert_eq!(resumo.texto, RASCUNHO, "{rotulo}");
-        assert_eq!(provedor.recebidos().len(), 1, "{rotulo}: sem regeneração");
+        assert_eq!(provedor.received().len(), 1, "{rotulo}: sem regeneração");
         assert_eq!(cenario.metricas.reprovadas_g6.value(), 0, "{rotulo}");
     }
 }
@@ -539,7 +539,7 @@ async fn g6_desligado_nao_pergunta_e_mantem_a_resposta() {
     let resumo = cenario.turno(&motor, gatilho).await;
 
     assert_eq!(resumo.texto, RASCUNHO);
-    assert_eq!(provedor.recebidos().len(), 1);
+    assert_eq!(provedor.received().len(), 1);
     assert!(jev.pedidos().is_empty(), "o G6 desligado não pergunta nada");
     assert_eq!(cenario.metricas.revisoes_g6.value(), 0);
     assert!(
@@ -555,7 +555,7 @@ async fn g6_falha_do_modelo_na_regeneracao_mantem_a_resposta_original() {
     let (motor, provedor) = cenario.motor(
         vec![
             roteiro_texto(RASCUNHO),
-            Roteiro::Falha(LlmError::ConnectionInterrupted("conexão caiu".to_owned())),
+            Script::Falha(LlmError::ConnectionInterrupted("conexão caiu".to_owned())),
         ],
         Some(motor_jev(jev, so_g6())),
     );
@@ -568,7 +568,7 @@ async fn g6_falha_do_modelo_na_regeneracao_mantem_a_resposta_original() {
         resumo.texto, RASCUNHO,
         "a falha da reescrita não derruba o turno"
     );
-    assert_eq!(provedor.recebidos().len(), 2);
+    assert_eq!(provedor.received().len(), 2);
     assert_eq!(cenario.saidas(), vec![RASCUNHO]);
     assert_eq!(cenario.metricas.respostas_seguras_g6.value(), 0);
 }
@@ -591,7 +591,7 @@ async fn medicao_do_g6() {
     let total = aprovadas + regeneradas + seguras;
 
     let mut mensagens: Vec<String> = Vec::new();
-    let mut roteiros: Vec<Roteiro> = Vec::new();
+    let mut roteiros: Vec<Script> = Vec::new();
     let mut tabela: Vec<(String, String, f64)> = Vec::new();
     for indice in 0..total {
         let pergunta = format!("mensagem {indice}: quero um orçamento de dedetização");
@@ -663,7 +663,7 @@ async fn medicao_do_g6() {
         }
         resultados.push((
             rotulo,
-            provedor.recebidos().len(),
+            provedor.received().len(),
             jev.pedidos().len(),
             cenario.metricas.reprovadas_g6.value(),
             cenario.metricas.respostas_seguras_g6.value(),

@@ -14,7 +14,7 @@ use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
 use poph_agent::turno::{
     Entrada, FuturoPausa, Motor, ObservadorNulo, OpcoesTurno, Pausa, ResumoTurno,
 };
-use poph_core::llm::{EventoLlm, MotivoFim, ProvedorFake, Roteiro, Uso};
+use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, Usage};
 use poph_store::{
     Direction, NewAgent, NewChannelAttachment, NewConversation, NewMessage, Role, Store,
 };
@@ -192,8 +192,8 @@ impl Cenario {
             .id
     }
 
-    pub fn motor(&self, com_arquivos: bool) -> (Motor, Arc<ProvedorFake>) {
-        let fake = Arc::new(ProvedorFake::com_roteiros(vec![roteiro_texto(
+    pub fn motor(&self, com_arquivos: bool) -> (Motor, Arc<FakeProvider>) {
+        let fake = Arc::new(FakeProvider::with_scripts(vec![roteiro_texto(
             "recebi o arquivo",
         )]));
         let config = ConfigQuente::nova(
@@ -248,13 +248,13 @@ fn fastrand() -> u64 {
         .unwrap_or(0)
 }
 
-fn roteiro_texto(texto: &str) -> Roteiro {
-    Roteiro::Eventos(vec![
-        EventoLlm::Texto(texto.to_owned()),
-        EventoLlm::Uso(Uso {
+fn roteiro_texto(texto: &str) -> Script {
+    Script::Eventos(vec![
+        LlmEvent::Texto(texto.to_owned()),
+        LlmEvent::Usage(Usage {
             entrada: 100,
             saida: 10,
         }),
-        EventoLlm::Fim(MotivoFim::Concluido),
+        LlmEvent::Fim(FinishReason::Concluido),
     ])
 }

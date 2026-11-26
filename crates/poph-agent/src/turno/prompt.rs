@@ -8,7 +8,7 @@
 //! vem **depois** do prefixo, num bloco delimitado próprio. O teste
 //! `prefixo_identico_em_tres_turnos` (tests/turno.rs) compara o primeiro bloco de três turnos.
 
-use poph_core::llm::Mensagem;
+use poph_core::llm::Message;
 use poph_store::Mensagem as MensagemGravada;
 
 use crate::base_conhecimento::TrechoRecuperado;
@@ -67,11 +67,11 @@ impl Prompt {
     /// O prefixo vai sempre — mesmo vazio — porque a invariante que o teste cobra é "a primeira
     /// mensagem de sistema é idêntica entre turnos", e uma posição fixa é mais simples de garantir
     /// do que uma condicional.
-    pub fn mensagens(&self, historico: Vec<Mensagem>) -> Vec<Mensagem> {
+    pub fn mensagens(&self, historico: Vec<Message>) -> Vec<Message> {
         let mut mensagens = Vec::with_capacity(historico.len() + 2);
-        mensagens.push(Mensagem::Sistema(self.prefixo.clone()));
+        mensagens.push(Message::Sistema(self.prefixo.clone()));
         if let Some(volatil) = &self.volatil {
-            mensagens.push(Mensagem::Sistema(volatil.clone()));
+            mensagens.push(Message::Sistema(volatil.clone()));
         }
         mensagens.extend(historico);
         mensagens
@@ -246,13 +246,13 @@ fn sem_escape(texto: &str) -> String {
 ///
 /// Só entram no prompt as falas do cliente e do agente. Mensagem de ferramenta e de sistema não são
 /// persistidas no formato do provedor nesta fase; ficam de fora para não inventar papel.
-pub fn da_mensagem_gravada(mensagem: &MensagemGravada) -> Option<Mensagem> {
+pub fn da_mensagem_gravada(mensagem: &MensagemGravada) -> Option<Message> {
     use poph_store::Role;
     match mensagem.role {
-        Role::User => Some(Mensagem::Usuario(vec![poph_core::llm::Parte::Texto(
+        Role::User => Some(Message::Usuario(vec![poph_core::llm::Part::Texto(
             mensagem.texto.clone(),
         )])),
-        Role::Assistant => Some(Mensagem::Assistente {
+        Role::Assistant => Some(Message::Assistente {
             texto: mensagem.texto.clone(),
             chamadas: Vec::new(),
         }),
@@ -297,15 +297,15 @@ mod testes {
         let prompt =
             Prompt::novo("# Bia").com_volatil("<contexto_do_turno>\nhora: x\n</contexto_do_turno>");
         let mensagens =
-            prompt.mensagens(vec![Mensagem::Usuario(vec![poph_core::llm::Parte::Texto(
+            prompt.mensagens(vec![Message::Usuario(vec![poph_core::llm::Part::Texto(
                 "oi".into(),
             )])]);
         assert_eq!(mensagens.len(), 3);
-        assert_eq!(mensagens[0], Mensagem::Sistema("# Bia".to_owned()));
+        assert_eq!(mensagens[0], Message::Sistema("# Bia".to_owned()));
         assert!(
-            matches!(&mensagens[1], Mensagem::Sistema(texto) if texto.starts_with(ABRE_CONTEXTO))
+            matches!(&mensagens[1], Message::Sistema(texto) if texto.starts_with(ABRE_CONTEXTO))
         );
-        assert!(matches!(&mensagens[2], Mensagem::Usuario(_)));
+        assert!(matches!(&mensagens[2], Message::Usuario(_)));
     }
 
     #[test]

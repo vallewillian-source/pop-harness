@@ -20,7 +20,7 @@ use poph_agent::turno::{
     Entrada, EventoTurno, FuturoPausa, Motor, Observador, ObservadorNulo, OpcoesTurno, Pausa,
     ResumoTurno,
 };
-use poph_core::llm::{EventoLlm, MotivoFim, ProvedorFake, Roteiro, Uso};
+use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, Usage};
 use poph_jev::{
     G1_CONTINUAR, G1_TRANSFERIR, IdGate, JevFalso, LoteResposta, MotorJev, Orientacao, Pedido,
     RISCO_ANIMAL, RISCO_INGESTAO, RISCO_NENHUM, RISCO_OUTRO, RISCO_PERGUNTA_ID, Resposta,
@@ -72,7 +72,7 @@ struct Cenario {
     store: Arc<Store>,
     org: OrgId,
     agente: AgentId,
-    provedor: Arc<ProvedorFake>,
+    provedor: Arc<FakeProvider>,
 }
 
 impl Cenario {
@@ -134,7 +134,7 @@ impl Cenario {
                 .expect("liga o handoff");
         }
         // Roteiros de sobra: quem prova que o modelo não foi chamado é o contador do provedor.
-        let provedor = Arc::new(ProvedorFake::com_roteiros(
+        let provedor = Arc::new(FakeProvider::with_scripts(
             (0..8).map(|_| roteiro(RESPOSTA_DO_MODELO)).collect(),
         ));
         Self {
@@ -317,14 +317,14 @@ impl Drop for Cenario {
     }
 }
 
-fn roteiro(texto: &str) -> Roteiro {
-    Roteiro::Eventos(vec![
-        EventoLlm::Texto(texto.to_owned()),
-        EventoLlm::Uso(Uso {
+fn roteiro(texto: &str) -> Script {
+    Script::Eventos(vec![
+        LlmEvent::Texto(texto.to_owned()),
+        LlmEvent::Usage(Usage {
             entrada: 10,
             saida: 5,
         }),
-        EventoLlm::Fim(MotivoFim::Concluido),
+        LlmEvent::Fim(FinishReason::Concluido),
     ])
 }
 
@@ -390,7 +390,7 @@ async fn transfere_com_orientacao_e_nao_chama_o_modelo() {
 
     // O modelo de texto não foi chamado nenhuma vez.
     assert!(
-        cenario.provedor.recebidos().is_empty(),
+        cenario.provedor.received().is_empty(),
         "conversa transferida não pode chamar o LLM"
     );
     // O turno terminou bem, com o texto que o cliente recebeu.
@@ -534,7 +534,7 @@ async fn transferida_nao_responde_ate_reabrir() {
     let gatilho = cenario.falar(conversa, "quero falar com uma pessoa, tem uma cobra aqui");
     let primeira = cenario.turno(&motor, conversa, gatilho).await;
     assert_eq!(primeira.estado, TurnState::Completed);
-    assert_eq!(cenario.provedor.recebidos().len(), 0);
+    assert_eq!(cenario.provedor.received().len(), 0);
 
     // Cliente insiste: a mensagem é gravada, o turno é ignorado e o modelo continua sem ser chamado.
     let segundo_gatilho = cenario.falar(conversa, "alguém aí?");
@@ -544,7 +544,7 @@ async fn transferida_nao_responde_ate_reabrir() {
         segundo.erro.unwrap_or_default().contains("transferred"),
         "o motivo do turno ignorado diz que a conversa está transferida"
     );
-    assert_eq!(cenario.provedor.recebidos().len(), 0);
+    assert_eq!(cenario.provedor.received().len(), 0);
     let textos: Vec<String> = cenario
         .conversa_gravada(conversa)
         .into_iter()
@@ -562,7 +562,7 @@ async fn transferida_nao_responde_ate_reabrir() {
     let terceiro = cenario.turno(&motor, conversa, terceiro_gatilho).await;
     assert_eq!(terceiro.estado, TurnState::Completed);
     assert_eq!(terceiro.texto, RESPOSTA_DO_MODELO);
-    assert_eq!(cenario.provedor.recebidos().len(), 1);
+    assert_eq!(cenario.provedor.received().len(), 1);
 }
 
 // ───────────────────────────── fail-safe ─────────────────────────────
@@ -603,7 +603,7 @@ async fn erro_na_pergunta_de_risco_transfere_com_a_mensagem_automatica() {
         cenario.respostas_do_agente(conversa),
         vec![APROVADA_AUTOMATICA.to_owned()]
     );
-    assert!(cenario.provedor.recebidos().is_empty());
+    assert!(cenario.provedor.received().is_empty());
     // A falha fica registrada no turno, para diagnóstico.
     let turno = cenario.ultimo_turno(conversa);
     let gravado: serde_json::Value = serde_json::from_str(&turno.jev_json).expect("JSON");
@@ -715,7 +715,7 @@ async fn g1_desligado_nao_transfere() {
         cenario.status(conversa),
         poph_store::ConversationStatus::Open
     );
-    assert_eq!(cenario.provedor.recebidos().len(), 1);
+    assert_eq!(cenario.provedor.received().len(), 1);
     assert!(resumo.jev.is_none() || resumo.jev.as_ref().unwrap().decisoes.is_empty());
 }
 
@@ -761,7 +761,7 @@ async fn g1_continuar_responde_normalmente() {
             .and_then(|item| item.escolha(IdGate::G1)),
         Some(G1_CONTINUAR)
     );
-    assert_eq!(cenario.provedor.recebidos().len(), 1);
+    assert_eq!(cenario.provedor.received().len(), 1);
     assert!(
         !cenario
             .auditoria()

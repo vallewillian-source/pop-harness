@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 
 use futures::StreamExt;
 use poph_core::llm::{
-    EventoLlm, Ferramenta, LlmLimiter, LlmProvider, Mensagem, OpenAiCompatibleClient,
-    OpenAiCompatibleConfig, Parte, Pedido,
+    LlmEvent, LlmLimiter, LlmProvider, Message, OpenAiCompatibleClient, OpenAiCompatibleConfig,
+    Part, Request, Tool,
 };
 use poph_types::{BaseMetrics, OrgId, Registry, Secret};
 use serde_json::json;
@@ -45,16 +45,16 @@ async fn uma_chamada_real_com_stream_e_ferramenta() {
     )
     .expect("cliente");
 
-    let mut pedido = Pedido::new(
+    let mut pedido = Request::new(
         OrgId::generate(),
         vec![
-            Mensagem::Sistema("Você é um atendente objetivo. Responda em português do Brasil.".to_owned()),
-            Mensagem::Usuario(vec![Parte::Texto(
+            Message::Sistema("Você é um atendente objetivo. Responda em português do Brasil.".to_owned()),
+            Message::Usuario(vec![Part::Texto(
                 "Use a ferramenta buscar_produto com o termo 'dedetização de baratas' antes de responder.".to_owned(),
             )]),
         ],
     );
-    pedido.ferramentas = vec![Ferramenta {
+    pedido.ferramentas = vec![Tool {
         nome: "buscar_produto".to_owned(),
         descricao: "Busca um produto no catálogo e devolve preço e condições".to_owned(),
         parametros: json!({
@@ -84,10 +84,10 @@ async fn uma_chamada_real_com_stream_e_ferramenta() {
     let mut fim = None;
     for item in eventos {
         match item.expect("evento sem erro") {
-            EventoLlm::Texto(_) => textos += 1,
-            EventoLlm::Ferramenta(chamada) => ferramentas.push(chamada),
-            EventoLlm::Uso(u) => uso = Some(u),
-            EventoLlm::Fim(motivo) => fim = Some(motivo),
+            LlmEvent::Texto(_) => textos += 1,
+            LlmEvent::Tool(chamada) => ferramentas.push(chamada),
+            LlmEvent::Usage(u) => uso = Some(u),
+            LlmEvent::Fim(motivo) => fim = Some(motivo),
         }
     }
 

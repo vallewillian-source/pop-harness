@@ -6,30 +6,30 @@ use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 
 use super::erro::LlmError;
-use super::tipos::{EventoLlm, Mensagem, Parte, Pedido};
+use super::tipos::{LlmEvent, Message, Part, Request};
 
 /// Stream de eventos de uma resposta. Quem consome pode parar a qualquer momento: soltar o stream cancela a chamada.
-pub type FluxoLlm = BoxStream<'static, Result<EventoLlm, LlmError>>;
+pub type LlmStream = BoxStream<'static, Result<LlmEvent, LlmError>>;
 
 /// Provedor de LLM. Hoje só existe o cliente OpenAI-compatível e o provedor falso para testes.
 pub trait LlmProvider: Send + Sync {
     /// Abre a resposta. Quando devolve `Ok`, o stream já está no ar; os eventos chegam por ele.
-    fn stream<'a>(&'a self, pedido: Pedido) -> BoxFuture<'a, Result<FluxoLlm, LlmError>>;
+    fn stream<'a>(&'a self, pedido: Request) -> BoxFuture<'a, Result<LlmStream, LlmError>>;
 }
 
 /// Tipos de imagem que o cliente aceita.
-pub const MIMES_IMAGEM: [&str; 4] = ["image/jpeg", "image/png", "image/gif", "image/webp"];
+pub const IMAGE_MIMES: [&str; 4] = ["image/jpeg", "image/png", "image/gif", "image/webp"];
 
 /// Confere o pedido antes de qualquer envio.
 ///
 /// Com `recusa_turno_modelo` (padrão), evita o HTTP 400 "Requests ending with a model turn are
 /// not supported" do gateway: a última mensagem tem de ser do usuário ou um resultado de
 /// ferramenta. Esta função não corrige o pedido, só recusa, para o erro aparecer aqui com a causa.
-pub fn validar_pedido(pedido: &Pedido, recusa_turno_modelo: bool) -> Result<(), LlmError> {
+pub fn validate_request(pedido: &Request, recusa_turno_modelo: bool) -> Result<(), LlmError> {
     let Some(ultima) = pedido.mensagens.last() else {
         return Err(LlmError::InvalidRequest("nenhuma mensagem".to_owned()));
     };
-    if recusa_turno_modelo && let Mensagem::Assistente { .. } = ultima {
+    if recusa_turno_modelo && let Message::Assistente { .. } = ultima {
         return Err(LlmError::InvalidRequest(
             "a última mensagem é do modelo e o provedor recusa esse formato (llm.recusa_turno_modelo = true). Termine com a instrução do usuário ou com o resultado de uma ferramenta".to_owned(),
         ));
@@ -49,10 +49,10 @@ pub fn validar_pedido(pedido: &Pedido, recusa_turno_modelo: bool) -> Result<(), 
     }
 
     for mensagem in &pedido.mensagens {
-        if let Mensagem::Usuario(partes) = mensagem {
+        if let Message::Usuario(partes) = mensagem {
             for parte in partes {
-                if let Parte::Imagem { mime, bytes } = parte {
-                    if !MIMES_IMAGEM.contains(&mime.as_str()) {
+                if let Part::Imagem { mime, bytes } = parte {
+                    if !IMAGE_MIMES.contains(&mime.as_str()) {
                         return Err(LlmError::InvalidRequest(format!(
                             "tipo de imagem não aceito: {mime}"
                         )));
@@ -72,16 +72,16 @@ mod testes {
     use poph_types::OrgId;
 
     use super::*;
-    use crate::llm::tipos::Ferramenta;
+    use crate::llm::tipos::Tool;
 
-    fn pedido(mensagens: Vec<Mensagem>) -> Pedido {
-        Pedido::new(OrgId::generate(), mensagens)
+    fn pedido(mensagens: Vec<Message>) -> Request {
+        Request::new(OrgId::generate(), mensagens)
     }
 
-    fn pedido_terminando_no_modelo() -> Pedido {
+    fn request_ending_with_model() -> Request {
         pedido(vec![
-            Mensagem::Usuario(vec![Parte::Texto("oi".into())]),
-            Mensagem::Assistente {
+            Message::Usuario(vec![Part::Texto("oi".into())]),
+            Message::Assistente {
                 texto: "olá".into(),
                 chamadas: vec![],
             },
@@ -91,52 +91,52 @@ mod testes {
     #[test]
     fn recusa_pedido_que_termina_em_turno_do_modelo() {
         assert!(matches!(
-            validar_pedido(&pedido_terminando_no_modelo(), true),
+            validate_request(&request_ending_with_model(), true),
             Err(LlmError::InvalidRequest(_))
         ));
     }
 
     #[test]
-    fn aceita_pedido_que_termina_em_turno_do_modelo_com_a_regra_desligada() {
-        assert!(validar_pedido(&pedido_terminando_no_modelo(), false).is_ok());
-        assert!(validar_pedido(&pedido_terminando_no_modelo(), true).is_err());
+    fn accepts_model_turn_when_rule_disabled() {
+        assert!(validate_request(&request_ending_with_model(), false).is_ok());
+        assert!(validate_request(&request_ending_with_model(), true).is_err());
     }
 
     #[test]
-    fn aceita_pedido_que_termina_em_resultado_de_ferramenta() {
+    fn accepts_request_ending_with_tool_result() {
         let p = pedido(vec![
-            Mensagem::Usuario(vec![Parte::Texto("preço?".into())]),
-            Mensagem::Assistente {
+            Message::Usuario(vec![Part::Texto("preço?".into())]),
+            Message::Assistente {
                 texto: String::new(),
-                chamadas: vec![crate::llm::tipos::ChamadaFerramenta {
+                chamadas: vec![crate::llm::tipos::ToolCall {
                     id: "c1".into(),
                     nome: "buscar".into(),
                     argumentos: serde_json::json!({}),
                 }],
             },
-            Mensagem::Resultado {
+            Message::Resultado {
                 id: "c1".into(),
                 conteudo: "R$ 10".into(),
             },
         ]);
-        assert!(validar_pedido(&p, true).is_ok());
+        assert!(validate_request(&p, true).is_ok());
     }
 
     #[test]
-    fn recusa_tipo_de_imagem_e_ferramenta_repetida() {
-        let mut p = pedido(vec![Mensagem::Usuario(vec![Parte::Imagem {
+    fn rejects_image_type_and_duplicate_tool() {
+        let mut p = pedido(vec![Message::Usuario(vec![Part::Imagem {
             mime: "image/bmp".into(),
             bytes: vec![1],
         }])]);
-        assert!(validar_pedido(&p, true).is_err());
+        assert!(validate_request(&p, true).is_err());
 
-        p.mensagens = vec![Mensagem::Usuario(vec![Parte::Texto("x".into())])];
-        let f = Ferramenta {
+        p.mensagens = vec![Message::Usuario(vec![Part::Texto("x".into())])];
+        let f = Tool {
             nome: "a".into(),
             descricao: String::new(),
             parametros: serde_json::json!({"type": "object"}),
         };
         p.ferramentas = vec![f.clone(), f];
-        assert!(validar_pedido(&p, true).is_err());
+        assert!(validate_request(&p, true).is_err());
     }
 }

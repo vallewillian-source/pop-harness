@@ -12,18 +12,18 @@ use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
 use poph_agent::provedores::{ProvedorResolvido, Provedores};
 use poph_agent::resumo::OpcoesResumo;
 use poph_agent::turno::{Motor, OpcoesTurno};
-use poph_core::llm::{EventoLlm, MotivoFim, ProvedorFake, Roteiro, Uso};
+use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, Usage};
 use poph_store::{AgentChange, Page};
 use poph_types::AgentId;
 
-fn roteiro(texto: &str) -> Roteiro {
-    Roteiro::Eventos(vec![
-        EventoLlm::Texto(texto.to_owned()),
-        EventoLlm::Uso(Uso {
+fn roteiro(texto: &str) -> Script {
+    Script::Eventos(vec![
+        LlmEvent::Texto(texto.to_owned()),
+        LlmEvent::Usage(Usage {
             entrada: 10,
             saida: 5,
         }),
-        EventoLlm::Fim(MotivoFim::Concluido),
+        LlmEvent::Fim(FinishReason::Concluido),
     ])
 }
 
@@ -63,16 +63,16 @@ fn definir_provedor_do_agente(cenario: &Cenario, provedor: &str) {
 
 struct Palco {
     cenario: Cenario,
-    padrao: Arc<ProvedorFake>,
-    nomeado: Arc<ProvedorFake>,
+    padrao: Arc<FakeProvider>,
+    nomeado: Arc<FakeProvider>,
 }
 
 impl Palco {
     fn novo(rotulo: &str, resposta_padrao: &str, resposta_nomeada: &str) -> Self {
         let cenario = Cenario::novo(rotulo);
         Self {
-            padrao: Arc::new(ProvedorFake::com_roteiros(vec![roteiro(resposta_padrao)])),
-            nomeado: Arc::new(ProvedorFake::com_roteiros(vec![roteiro(resposta_nomeada)])),
+            padrao: Arc::new(FakeProvider::with_scripts(vec![roteiro(resposta_padrao)])),
+            nomeado: Arc::new(FakeProvider::with_scripts(vec![roteiro(resposta_nomeada)])),
             cenario,
         }
     }
@@ -129,11 +129,11 @@ async fn agente_com_provedor_nomeado_recebe_a_resposta_dele() {
     let resumo = palco.cenario.turno(&motor, gatilho).await;
 
     assert_eq!(resumo.modelo, "modelo-do-forte");
-    assert_eq!(palco.nomeado.recebidos().len(), 1);
-    let pedido = &palco.nomeado.recebidos()[0];
+    assert_eq!(palco.nomeado.received().len(), 1);
+    let pedido = &palco.nomeado.received()[0];
     assert_eq!(pedido.modelo.as_deref(), Some("modelo-do-forte"));
     assert!(
-        palco.padrao.recebidos().is_empty(),
+        palco.padrao.received().is_empty(),
         "o provedor padrão não deveria receber pedido"
     );
     let texto = palco
@@ -163,9 +163,9 @@ async fn escolha_vazia_e_nome_de_protocolo_caem_no_provedor_padrao() {
         let gatilho = palco.cenario.falar_com_arquivos("oi", Vec::new());
         let resumo = palco.cenario.turno(&motor, gatilho).await;
         assert_eq!(resumo.modelo, "modelo-do-padrao", "escolha `{escolha}`");
-        assert_eq!(palco.padrao.recebidos().len(), 1, "escolha `{escolha}`");
+        assert_eq!(palco.padrao.received().len(), 1, "escolha `{escolha}`");
         assert!(
-            palco.nomeado.recebidos().is_empty(),
+            palco.nomeado.received().is_empty(),
             "escolha `{escolha}`: o nomeado não deveria receber pedido"
         );
     }
@@ -183,6 +183,6 @@ async fn provedor_desconhecido_falha_o_turno_sem_chamar_ninguem() {
     let erro = resumo.erro.unwrap_or_default();
     assert!(erro.contains("sumiu-do-toml"), "{erro}");
     assert!(erro.contains("openai-forte"), "{erro}");
-    assert!(palco.padrao.recebidos().is_empty());
-    assert!(palco.nomeado.recebidos().is_empty());
+    assert!(palco.padrao.received().is_empty());
+    assert!(palco.nomeado.received().is_empty());
 }

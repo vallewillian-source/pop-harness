@@ -27,8 +27,8 @@ use poph_agent::turno::{
     Entrada, FuturoPausa, Motor, ObservadorNulo, OpcoesTurno, Pausa, ResumoTurno,
 };
 use poph_core::llm::{
-    EventoLlm, FluxoLlm, LlmError, LlmProvider, Mensagem, MotivoFim, Parte, Pedido, ProvedorFake,
-    Roteiro, Uso,
+    FakeProvider, FinishReason, LlmError, LlmEvent, LlmProvider, LlmStream, Message, Part, Request,
+    Script, Usage,
 };
 use poph_store::{
     Direction, NewAgent, NewConversation, NewMessage, NewOrg, Page, Role, Store, TurnState,
@@ -57,30 +57,30 @@ fn texto(i: usize) -> String {
 }
 
 /// Texto de um pedido de resumo: é o que começa com as instruções do resumidor.
-fn e_pedido_de_resumo(pedido: &Pedido) -> bool {
-    matches!(pedido.mensagens.first(), Some(Mensagem::Sistema(texto)) if texto.starts_with("Você mantém o resumo"))
+fn e_pedido_de_resumo(pedido: &Request) -> bool {
+    matches!(pedido.mensagens.first(), Some(Message::Sistema(texto)) if texto.starts_with("Você mantém o resumo"))
 }
 
 /// Mensagens de histórico (cliente e agente) de um pedido, em ordem.
-fn historico(pedido: &Pedido) -> Vec<String> {
+fn historico(pedido: &Request) -> Vec<String> {
     pedido
         .mensagens
         .iter()
         .filter_map(|mensagem| match mensagem {
-            Mensagem::Usuario(partes) => partes.iter().find_map(|parte| match parte {
-                Parte::Texto(texto) => Some(texto.clone()),
-                Parte::Imagem { .. } => None,
+            Message::Usuario(partes) => partes.iter().find_map(|parte| match parte {
+                Part::Texto(texto) => Some(texto.clone()),
+                Part::Imagem { .. } => None,
             }),
-            Mensagem::Assistente { texto, .. } => Some(texto.clone()),
+            Message::Assistente { texto, .. } => Some(texto.clone()),
             _ => None,
         })
         .collect()
 }
 
 /// Bloco volátil do turno (o que começa com a marca de contexto), se houver.
-fn bloco_volatil(pedido: &Pedido) -> Option<String> {
+fn bloco_volatil(pedido: &Request) -> Option<String> {
     pedido.mensagens.iter().find_map(|mensagem| match mensagem {
-        Mensagem::Sistema(texto) if texto.starts_with("<contexto_do_turno>") => Some(texto.clone()),
+        Message::Sistema(texto) if texto.starts_with("<contexto_do_turno>") => Some(texto.clone()),
         _ => None,
     })
 }
@@ -100,7 +100,7 @@ struct ProvedorLento {
 }
 
 impl LlmProvider for ProvedorLento {
-    fn stream<'a>(&'a self, pedido: Pedido) -> BoxFuture<'a, Result<FluxoLlm, LlmError>> {
+    fn stream<'a>(&'a self, pedido: Request) -> BoxFuture<'a, Result<LlmStream, LlmError>> {
         Box::pin(async move {
             tokio::time::sleep(self.latencia).await;
             self.chamadas.fetch_add(1, Ordering::SeqCst);
@@ -111,31 +111,31 @@ impl LlmProvider for ProvedorLento {
                 format!("[#zz] {ENCHIMENTO}")
             };
             let eventos = vec![
-                EventoLlm::Texto(texto),
-                EventoLlm::Uso(Uso {
+                LlmEvent::Texto(texto),
+                LlmEvent::Usage(Usage {
                     entrada: 100,
                     saida: 20,
                 }),
-                EventoLlm::Fim(MotivoFim::Concluido),
+                LlmEvent::Fim(FinishReason::Concluido),
             ];
-            Ok(Box::pin(stream::iter(eventos.into_iter().map(Ok))) as FluxoLlm)
+            Ok(Box::pin(stream::iter(eventos.into_iter().map(Ok))) as LlmStream)
         })
     }
 }
 
-fn resposta(texto: &str) -> Roteiro {
-    Roteiro::Eventos(vec![
-        EventoLlm::Texto(texto.to_owned()),
-        EventoLlm::Uso(Uso {
+fn resposta(texto: &str) -> Script {
+    Script::Eventos(vec![
+        LlmEvent::Texto(texto.to_owned()),
+        LlmEvent::Usage(Usage {
             entrada: 1,
             saida: 1,
         }),
-        EventoLlm::Fim(MotivoFim::Concluido),
+        LlmEvent::Fim(FinishReason::Concluido),
     ])
 }
 
-fn falha() -> Roteiro {
-    Roteiro::Falha(LlmError::Configuracao(
+fn falha() -> Script {
+    Script::Falha(LlmError::Configuracao(
         "modelo indisponível neste teste".to_owned(),
     ))
 }
@@ -339,7 +339,7 @@ async fn janela_cabe_no_orcamento_e_o_resumo_e_usado_no_turno_seguinte() {
     cenario.historico_inicial(conversa, 0, 59);
     let gatilho = cenario.falar(conversa, texto(59));
 
-    let fake = Arc::new(ProvedorFake::com_roteiros(vec![
+    let fake = Arc::new(FakeProvider::with_scripts(vec![
         resposta(&texto(60)),
         resposta("Resumo: cliente pediu orçamento de produto."),
         resposta(&texto(62)),
@@ -354,7 +354,7 @@ async fn janela_cabe_no_orcamento_e_o_resumo_e_usado_no_turno_seguinte() {
         "o resumo não terminou a tempo"
     );
 
-    let pedidos = fake.recebidos();
+    let pedidos = fake.received();
     assert_eq!(pedidos.len(), 2, "um pedido do turno e um do resumo");
     let hist1 = historico(&pedidos[0]);
     assert!(hist1.len() < 60, "a janela não pode ser a conversa inteira");
@@ -382,8 +382,8 @@ async fn janela_cabe_no_orcamento_e_o_resumo_e_usado_no_turno_seguinte() {
     let pedido_resumo = &pedidos[1];
     assert!(e_pedido_de_resumo(pedido_resumo));
     let corpo = match pedido_resumo.mensagens.last() {
-        Some(Mensagem::Usuario(partes)) => match partes.first() {
-            Some(Parte::Texto(texto)) => texto.clone(),
+        Some(Message::Usuario(partes)) => match partes.first() {
+            Some(Part::Texto(texto)) => texto.clone(),
             _ => String::new(),
         },
         _ => String::new(),
@@ -400,7 +400,7 @@ async fn janela_cabe_no_orcamento_e_o_resumo_e_usado_no_turno_seguinte() {
     assert_eq!(segundo.estado, TurnState::Completed);
     assert!(motor.aguardar_resumos(Duration::from_secs(10)).await);
 
-    let pedidos = fake.recebidos();
+    let pedidos = fake.received();
     let pedido_turno2 = &pedidos[2];
     let hist2 = historico(pedido_turno2);
     let bloco = bloco_volatil(pedido_turno2).expect("o turno leva o bloco volátil");
@@ -430,7 +430,7 @@ async fn falha_do_resumo_nao_derruba_o_turno() {
     cenario.historico_inicial(conversa, 0, 40);
     let gatilho = cenario.falar(conversa, texto(40));
 
-    let fake = Arc::new(ProvedorFake::com_roteiros(vec![
+    let fake = Arc::new(FakeProvider::with_scripts(vec![
         resposta(&texto(41)),
         falha(),
         resposta(&texto(43)),
@@ -478,7 +478,7 @@ async fn conversa_nova_nao_herda_o_resumo() {
     let antiga = cenario.conversa();
     cenario.historico_inicial(antiga, 0, 40);
     let gatilho = cenario.falar(antiga, texto(40));
-    let fake = Arc::new(ProvedorFake::com_roteiros(vec![
+    let fake = Arc::new(FakeProvider::with_scripts(vec![
         resposta(&texto(41)),
         resposta("Resumo: cliente da conversa antiga pediu orçamento."),
     ]));
@@ -492,14 +492,14 @@ async fn conversa_nova_nao_herda_o_resumo() {
 
     let nova = cenario.conversa();
     let gatilho_nova = cenario.falar(nova, "oi, sou um cliente novo".to_owned());
-    let fake2 = Arc::new(ProvedorFake::com_roteiros(vec![resposta(
+    let fake2 = Arc::new(FakeProvider::with_scripts(vec![resposta(
         "Olá! Como posso ajudar?",
     )]));
     let motor2 = cenario.motor(fake2.clone(), OpcoesResumo::default());
     let resultado = cenario.turno(&motor2, nova, gatilho_nova).await;
     assert_eq!(resultado.estado, TurnState::Completed);
 
-    let pedido = &fake2.recebidos()[0];
+    let pedido = &fake2.received()[0];
     let bloco = bloco_volatil(pedido).expect("o turno leva o bloco volátil");
     assert!(
         !bloco.contains("resumo da conversa"),

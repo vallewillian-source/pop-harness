@@ -30,7 +30,7 @@ use poph_agent::produtos::{
 use poph_agent::turno::{
     Entrada, FuturoPausa, Motor, ObservadorNulo, OpcoesTurno, Pausa, ResumoTurno,
 };
-use poph_core::llm::{ChamadaFerramenta, EventoLlm, MotivoFim, ProvedorFake, Roteiro, Uso};
+use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, ToolCall, Usage};
 use poph_jev::{
     AjusteGates, AvaliadorGates, Decisao, ErroJev, EstadoJev, G3_NADA, G5_NENHUM, IdGate, JevFalso,
     LoteResposta, MotorJev, OpcoesJev, OrigemDecisao, Resposta as RespostaJev, ResultadoJev,
@@ -274,10 +274,10 @@ impl Cenario {
 
     fn motor(
         &self,
-        roteiros: Vec<Roteiro>,
+        roteiros: Vec<Script>,
         jev: Option<Arc<dyn AvaliadorGates>>,
-    ) -> (Motor, Arc<ProvedorFake>) {
-        let fake = Arc::new(ProvedorFake::com_roteiros(roteiros));
+    ) -> (Motor, Arc<FakeProvider>) {
+        let fake = Arc::new(FakeProvider::with_scripts(roteiros));
         let config = ConfigQuente::nova(
             Arc::clone(&self.store),
             OpcoesConfigQuente::default(),
@@ -328,14 +328,14 @@ impl Drop for Cenario {
     }
 }
 
-fn roteiro_texto(texto: &str) -> Roteiro {
-    Roteiro::Eventos(vec![
-        EventoLlm::Texto(texto.to_owned()),
-        EventoLlm::Uso(Uso {
+fn roteiro_texto(texto: &str) -> Script {
+    Script::Eventos(vec![
+        LlmEvent::Texto(texto.to_owned()),
+        LlmEvent::Usage(Usage {
             entrada: 100,
             saida: 10,
         }),
-        EventoLlm::Fim(MotivoFim::Concluido),
+        LlmEvent::Fim(FinishReason::Concluido),
     ])
 }
 
@@ -357,7 +357,7 @@ fn escolhas(itens: &[(&str, &str)]) -> BTreeMap<String, String> {
         .collect()
 }
 
-fn nomes_das_ferramentas(pedido: &poph_core::llm::Pedido) -> Vec<String> {
+fn nomes_das_ferramentas(pedido: &poph_core::llm::Request) -> Vec<String> {
     pedido
         .ferramentas
         .iter()
@@ -365,22 +365,22 @@ fn nomes_das_ferramentas(pedido: &poph_core::llm::Pedido) -> Vec<String> {
         .collect()
 }
 
-fn texto_do_prompt(pedido: &poph_core::llm::Pedido) -> String {
+fn texto_do_prompt(pedido: &poph_core::llm::Request) -> String {
     pedido
         .mensagens
         .iter()
         .map(|mensagem| match mensagem {
-            poph_core::llm::Mensagem::Sistema(texto) => texto.clone(),
-            poph_core::llm::Mensagem::Usuario(partes) => partes
+            poph_core::llm::Message::Sistema(texto) => texto.clone(),
+            poph_core::llm::Message::Usuario(partes) => partes
                 .iter()
                 .map(|parte| match parte {
-                    poph_core::llm::Parte::Texto(texto) => texto.clone(),
+                    poph_core::llm::Part::Texto(texto) => texto.clone(),
                     _ => String::new(),
                 })
                 .collect::<Vec<_>>()
                 .join("\n"),
-            poph_core::llm::Mensagem::Assistente { texto, .. } => texto.clone(),
-            poph_core::llm::Mensagem::Resultado { conteudo, .. } => conteudo.clone(),
+            poph_core::llm::Message::Assistente { texto, .. } => texto.clone(),
+            poph_core::llm::Message::Resultado { conteudo, .. } => conteudo.clone(),
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -424,11 +424,11 @@ async fn g5_escolhe_o_produto_e_dispensa_a_ferramenta() {
     assert_eq!(resumo.estado, poph_store::TurnState::Completed);
     assert_eq!(resumo.tempos.rodadas_ferramenta, 0);
     assert_eq!(
-        provedor.recebidos().len(),
+        provedor.received().len(),
         1,
         "uma chamada ao modelo, sem ferramenta"
     );
-    let pedido = &provedor.recebidos()[0];
+    let pedido = &provedor.received()[0];
     let prompt = texto_do_prompt(pedido);
     assert!(
         prompt.contains(NOME_BARATAS),
@@ -520,7 +520,7 @@ async fn g5_id_fora_dos_candidatos_nunca_e_injetado_pelo_codigo() {
     let resumo = cenario.turno(&motor, gatilho).await;
 
     assert_eq!(resumo.estado, poph_store::TurnState::Completed);
-    let pedido = &provedor.recebidos()[0];
+    let pedido = &provedor.received()[0];
     let prompt = texto_do_prompt(pedido);
     assert!(
         !prompt.contains(PRECO_BARATAS),
@@ -548,7 +548,7 @@ async fn g5_id_inventado_mantem_o_comportamento_de_hoje() {
     let resumo = cenario.turno(&motor, gatilho).await;
 
     assert_eq!(resumo.estado, poph_store::TurnState::Completed);
-    let pedido = &provedor.recebidos()[0];
+    let pedido = &provedor.received()[0];
     let prompt = texto_do_prompt(pedido);
     assert!(
         !prompt.contains(NOME_BARATAS),
@@ -580,7 +580,7 @@ async fn g5_nenhum_mantem_o_comportamento_de_hoje() {
     let resumo = cenario.turno(&motor, gatilho).await;
 
     assert_eq!(resumo.estado, poph_store::TurnState::Completed);
-    let pedido = &provedor.recebidos()[0];
+    let pedido = &provedor.received()[0];
     assert!(!texto_do_prompt(pedido).contains(PRECO_CUPINS));
     let ferramentas = nomes_das_ferramentas(pedido);
     assert!(
@@ -622,7 +622,7 @@ async fn g5_confianca_baixa_mantem_o_comportamento_de_hoje() {
     let resumo = cenario.turno(&motor, gatilho).await;
 
     assert_eq!(resumo.estado, poph_store::TurnState::Completed);
-    let pedido = &provedor.recebidos()[0];
+    let pedido = &provedor.received()[0];
     assert!(!texto_do_prompt(pedido).contains(PRECO_BARATAS));
     assert!(nomes_das_ferramentas(pedido).contains(&"buscar_produto".to_owned()));
 }
@@ -644,7 +644,7 @@ async fn g5_jev_fora_do_ar_mantem_o_comportamento_de_hoje() {
     let resumo = cenario.turno(&motor, gatilho).await;
 
     assert_eq!(resumo.estado, poph_store::TurnState::Completed);
-    let pedido = &provedor.recebidos()[0];
+    let pedido = &provedor.received()[0];
     assert!(!texto_do_prompt(pedido).contains(PRECO_BARATAS));
     assert!(nomes_das_ferramentas(pedido).contains(&"buscar_produto".to_owned()));
 }
@@ -671,7 +671,7 @@ async fn g5_jev_que_nao_responde_em_prazo_mantem_o_comportamento_de_hoje() {
     let resumo = cenario.turno(&motor, gatilho).await;
 
     assert_eq!(resumo.estado, poph_store::TurnState::Completed);
-    let pedido = &provedor.recebidos()[0];
+    let pedido = &provedor.received()[0];
     assert!(!texto_do_prompt(pedido).contains(PRECO_BARATAS));
     assert!(nomes_das_ferramentas(pedido).contains(&"buscar_produto".to_owned()));
     let jev = resumo
@@ -703,7 +703,7 @@ async fn g5_sem_candidatos_nao_pergunta() {
         "sem candidatos o G5 nem é perguntado: {:?}",
         jev.pedidos()
     );
-    let pedido = &provedor.recebidos()[0];
+    let pedido = &provedor.received()[0];
     assert!(nomes_das_ferramentas(pedido).contains(&"buscar_produto".to_owned()));
 }
 
@@ -733,7 +733,7 @@ async fn g5_desligado_nao_faz_busca_de_produto_nem_pergunta() {
         0,
         "o gate desligado não faz pré-consulta"
     );
-    let pedido = &provedor.recebidos()[0];
+    let pedido = &provedor.received()[0];
     assert!(nomes_das_ferramentas(pedido).contains(&"buscar_produto".to_owned()));
 }
 
@@ -748,13 +748,13 @@ async fn g5_ferramenta_inventada_pelo_modelo_nao_e_executada() {
     )])));
     let (motor, provedor) = cenario.motor(
         vec![
-            Roteiro::Eventos(vec![
-                EventoLlm::Ferramenta(ChamadaFerramenta {
+            Script::Eventos(vec![
+                LlmEvent::Tool(ToolCall {
                     id: "c1".to_owned(),
                     nome: "buscar_produto".to_owned(),
                     argumentos: serde_json::json!({"termo": "baratas"}),
                 }),
-                EventoLlm::Fim(MotivoFim::ChamadasFerramenta),
+                LlmEvent::Fim(FinishReason::ChamadasFerramenta),
             ]),
             roteiro_texto("A dedetização de baratas custa R$ 180,00."),
         ],
@@ -770,7 +770,7 @@ async fn g5_ferramenta_inventada_pelo_modelo_nao_e_executada() {
         1,
         "só a pré-consulta do G5; a chamada inventada não busca de novo"
     );
-    let pedidos = provedor.recebidos();
+    let pedidos = provedor.received();
     assert_eq!(pedidos.len(), 2);
     let resultado = texto_do_prompt(&pedidos[1]);
     assert!(
@@ -803,7 +803,7 @@ async fn g3_nada_dispensa_o_g5() {
 
     assert_eq!(resumo.estado, poph_store::TurnState::Completed);
     assert_eq!(cenario.catalogo_buscas(), 0);
-    let ferramentas = nomes_das_ferramentas(&provedor.recebidos()[0]);
+    let ferramentas = nomes_das_ferramentas(&provedor.received()[0]);
     assert!(
         !ferramentas.contains(&"buscar_produto".to_owned()),
         "o G3 em nada já tira o catálogo do turno: {ferramentas:?}"
@@ -839,13 +839,13 @@ async fn medicao_rodadas_de_ferramenta_por_turno() {
     let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[])));
     let (motor_sem, _) = sem.motor(
         vec![
-            Roteiro::Eventos(vec![
-                EventoLlm::Ferramenta(ChamadaFerramenta {
+            Script::Eventos(vec![
+                LlmEvent::Tool(ToolCall {
                     id: "c1".to_owned(),
                     nome: "buscar_produto".to_owned(),
                     argumentos: serde_json::json!({"termo": "baratas"}),
                 }),
-                EventoLlm::Fim(MotivoFim::ChamadasFerramenta),
+                LlmEvent::Fim(FinishReason::ChamadasFerramenta),
             ]),
             roteiro_texto("A dedetização de baratas custa R$ 180,00."),
         ],
@@ -910,7 +910,7 @@ async fn padrao_de_instalacao_liga_o_g5_sem_configurar_o_agente() {
         resumo.tempos.rodadas_ferramenta, 0,
         "sem rodada de ferramenta"
     );
-    let pedido = &provedor.recebidos()[0];
+    let pedido = &provedor.received()[0];
     assert!(
         texto_do_prompt(pedido).contains(NOME_BARATAS),
         "o produto escolhido entra no prompt"

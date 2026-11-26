@@ -28,7 +28,7 @@ use poph_agent::turno::{
     Entrada, FuturoPausa, Motor, ObservadorNulo, OpcoesTurno, Pausa, ResumoTurno,
 };
 use poph_core::llm::{
-    ChamadaFerramenta, EventoLlm, Mensagem, MotivoFim, Pedido, ProvedorFake, Roteiro, Uso,
+    FakeProvider, FinishReason, LlmEvent, Message, Request, Script, ToolCall, Usage,
 };
 use poph_fluxos::{Limites, compilar};
 use poph_jev::{G9_NENHUM, JevFalso, MotorJev};
@@ -300,10 +300,10 @@ impl Cenario {
 
     fn motor(
         &self,
-        roteiros: Vec<Roteiro>,
+        roteiros: Vec<Script>,
         jev: Option<Arc<MotorJev>>,
         fluxos: Option<FlowsConfig>,
-    ) -> (Motor, Arc<ProvedorFake>) {
+    ) -> (Motor, Arc<FakeProvider>) {
         let config = ConfigQuente::nova(
             Arc::clone(&self.store),
             OpcoesConfigQuente::default(),
@@ -313,7 +313,7 @@ impl Cenario {
             OpcoesLimites::default(),
             MetricasMemoria::proprio(),
         ));
-        let provedor = Arc::new(ProvedorFake::com_roteiros(roteiros));
+        let provedor = Arc::new(FakeProvider::with_scripts(roteiros));
         let mut motor = Motor::novo(
             Arc::clone(&self.store),
             config,
@@ -446,43 +446,43 @@ impl Drop for Cenario {
 
 // ───────────────────────────────────────────────────────────────────────── utilidades
 
-fn texto(conteudo: &str) -> Roteiro {
-    Roteiro::Eventos(vec![
-        EventoLlm::Texto(conteudo.to_owned()),
-        EventoLlm::Uso(Uso {
+fn texto(conteudo: &str) -> Script {
+    Script::Eventos(vec![
+        LlmEvent::Texto(conteudo.to_owned()),
+        LlmEvent::Usage(Usage {
             entrada: 10,
             saida: 5,
         }),
-        EventoLlm::Fim(MotivoFim::Concluido),
+        LlmEvent::Fim(FinishReason::Concluido),
     ])
 }
 
 /// Roteiro do modelo que pede uma única ferramenta.
-fn chamada(nome: &str, argumentos: Value) -> Roteiro {
-    Roteiro::Eventos(vec![
-        EventoLlm::Ferramenta(ChamadaFerramenta {
+fn chamada(nome: &str, argumentos: Value) -> Script {
+    Script::Eventos(vec![
+        LlmEvent::Tool(ToolCall {
             id: "chamada-1".to_owned(),
             nome: nome.to_owned(),
             argumentos,
         }),
-        EventoLlm::Fim(MotivoFim::Concluido),
+        LlmEvent::Fim(FinishReason::Concluido),
     ])
 }
 
 /// Roteiro do modelo que pede duas ferramentas na mesma mensagem.
-fn duas_chamadas(primeira: (&str, Value), segunda: (&str, Value)) -> Roteiro {
-    Roteiro::Eventos(vec![
-        EventoLlm::Ferramenta(ChamadaFerramenta {
+fn duas_chamadas(primeira: (&str, Value), segunda: (&str, Value)) -> Script {
+    Script::Eventos(vec![
+        LlmEvent::Tool(ToolCall {
             id: "chamada-1".to_owned(),
             nome: primeira.0.to_owned(),
             argumentos: primeira.1,
         }),
-        EventoLlm::Ferramenta(ChamadaFerramenta {
+        LlmEvent::Tool(ToolCall {
             id: "chamada-2".to_owned(),
             nome: segunda.0.to_owned(),
             argumentos: segunda.1,
         }),
-        EventoLlm::Fim(MotivoFim::Concluido),
+        LlmEvent::Fim(FinishReason::Concluido),
     ])
 }
 
@@ -505,19 +505,19 @@ fn escolhas(itens: &[(&str, &str)]) -> std::collections::BTreeMap<String, String
 }
 
 /// O que o modelo recebeu como resultado das ferramentas (a mensagem de `Resultado` do pedido).
-fn resultados(pedido: &Pedido) -> Vec<String> {
+fn resultados(pedido: &Request) -> Vec<String> {
     pedido
         .mensagens
         .iter()
         .filter_map(|mensagem| match mensagem {
-            Mensagem::Resultado { conteudo, .. } => Some(conteudo.clone()),
+            Message::Resultado { conteudo, .. } => Some(conteudo.clone()),
             _ => None,
         })
         .collect()
 }
 
 /// Nomes das ferramentas oferecidas no pedido.
-fn oferecidas(pedido: &Pedido) -> Vec<String> {
+fn oferecidas(pedido: &Request) -> Vec<String> {
     pedido
         .ferramentas
         .iter()
@@ -528,9 +528,9 @@ fn oferecidas(pedido: &Pedido) -> Vec<String> {
 /// Um turno com o Jev escolhendo o fluxo (a execução abre antes do modelo).
 async fn turno_com_fluxo(
     cenario: &Cenario,
-    roteiros: Vec<Roteiro>,
+    roteiros: Vec<Script>,
     conversa: ConversationId,
-) -> (Arc<ProvedorFake>, ResumoTurno) {
+) -> (Arc<FakeProvider>, ResumoTurno) {
     let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
         "g9_iniciar_fluxo",
         "agendar_visita",
@@ -571,7 +571,7 @@ async fn acao_valida_avanca_e_a_resposta_diz_a_etapa_nova() {
     assert_eq!(execucao.status, ExecutionStatus::Active);
 
     // A ferramenta foi oferecida no primeiro pedido e a resposta da etapa nova chegou ao modelo.
-    let pedidos = provedor.recebidos();
+    let pedidos = provedor.received();
     assert_eq!(
         pedidos.len(),
         2,
@@ -642,7 +642,7 @@ async fn campo_faltando_devolve_a_lista_e_nada_muda() {
     )
     .await;
 
-    let resultado = resultados(&provedor.recebidos()[1])
+    let resultado = resultados(&provedor.received()[1])
         .into_iter()
         .next()
         .expect("o modelo recebeu a recusa");
@@ -685,7 +685,7 @@ async fn acao_inexistente_devolve_as_validas_e_nada_muda() {
     )
     .await;
 
-    let resultado = resultados(&provedor.recebidos()[1])
+    let resultado = resultados(&provedor.received()[1])
         .into_iter()
         .next()
         .expect("o modelo recebeu a recusa");
@@ -720,14 +720,14 @@ async fn ferramenta_desabilitada_no_agente_e_recusada_sem_executar() {
     )
     .await;
 
-    let nomes = oferecidas(&provedor.recebidos()[0]);
+    let nomes = oferecidas(&provedor.received()[0]);
     assert!(
         !nomes.contains(&"fluxo_executar_acao".to_owned()),
         "só a habilitada é oferecida: {nomes:?}"
     );
     assert!(nomes.contains(&"fluxo_abandonar".to_owned()), "{nomes:?}");
 
-    let resultado = resultados(&provedor.recebidos()[1])
+    let resultado = resultados(&provedor.received()[1])
         .into_iter()
         .next()
         .expect("o modelo recebeu a recusa");
@@ -763,13 +763,13 @@ async fn fluxo_iniciar_so_aparece_na_reserva_e_valida_como_o_g9() {
     );
     let gatilho = cenario.falar(conversa, "bom dia, tudo bem?");
     cenario.turno(&motor, conversa, gatilho).await;
-    let nomes = oferecidas(&provedor.recebidos()[0]);
+    let nomes = oferecidas(&provedor.received()[0]);
     assert!(
         !nomes.contains(&"fluxo_iniciar".to_owned()),
         "com o Jev respondendo, iniciar fluxo não é do modelo: {nomes:?}"
     );
     assert!(
-        resultados(&provedor.recebidos()[1])[0].contains("não é sua decisão"),
+        resultados(&provedor.received()[1])[0].contains("não é sua decisão"),
         "a chamada inventada é recusada"
     );
     assert!(cenario.ativa(conversa).is_none(), "nada iniciou");
@@ -788,14 +788,14 @@ async fn fluxo_iniciar_so_aparece_na_reserva_e_valida_como_o_g9() {
     );
     let gatilho = cenario.falar(conversa, "queria marcar uma visita");
     cenario.turno(&motor, conversa, gatilho).await;
-    let nomes = oferecidas(&provedor.recebidos()[0]);
+    let nomes = oferecidas(&provedor.received()[0]);
     assert!(
         nomes.contains(&"fluxo_iniciar".to_owned()),
         "na reserva a ferramenta é oferecida: {nomes:?}"
     );
     let ativa = cenario.ativa(conversa).expect("o modelo abriu a execução");
     assert_eq!(ativa.no_atual, "coleta");
-    let resultado = resultados(&provedor.recebidos()[1])
+    let resultado = resultados(&provedor.received()[1])
         .into_iter()
         .next()
         .expect("o modelo recebeu o estado da etapa de entrada");
@@ -825,12 +825,12 @@ async fn fluxo_iniciar_so_aparece_na_reserva_e_valida_como_o_g9() {
     );
     let gatilho = cenario.falar(conversa, "queria marcar uma visita");
     cenario.turno(&motor, conversa, gatilho).await;
-    let nomes = oferecidas(&provedor.recebidos()[0]);
+    let nomes = oferecidas(&provedor.received()[0]);
     assert!(
         nomes.contains(&"fluxo_iniciar".to_owned()),
         "a reserva acontece pelo fluxo liberado: {nomes:?}"
     );
-    let resultado = resultados(&provedor.recebidos()[1])
+    let resultado = resultados(&provedor.received()[1])
         .into_iter()
         .next()
         .expect("o modelo recebeu a recusa");
@@ -856,7 +856,7 @@ async fn fluxo_iniciar_so_aparece_na_reserva_e_valida_como_o_g9() {
     );
     let gatilho = cenario.falar(conversa, "queria marcar uma visita");
     cenario.turno(&motor, conversa, gatilho).await;
-    let resultado = resultados(&provedor.recebidos()[1])
+    let resultado = resultados(&provedor.received()[1])
         .into_iter()
         .next()
         .expect("o modelo recebeu a recusa");
@@ -906,7 +906,7 @@ async fn chave_repetida_nao_duplica_evento_nem_efeito() {
     );
     let gatilho = cenario.falar(conversa, "como ficou?");
     cenario.turno(&motor, conversa, gatilho).await;
-    let resultado = resultados(&provedor.recebidos()[1])
+    let resultado = resultados(&provedor.received()[1])
         .into_iter()
         .next()
         .expect("o modelo recebeu a resposta da repetição");
@@ -952,7 +952,7 @@ async fn limite_de_chamadas_por_mensagem_continua_valendo() {
     )
     .await;
 
-    let resultados = resultados(&provedor.recebidos()[1]);
+    let resultados = resultados(&provedor.received()[1]);
     assert!(
         resultados
             .iter()
@@ -988,7 +988,7 @@ async fn abandonar_grava_motivo_e_nao_gera_efeito() {
     )
     .await;
 
-    let resultado = resultados(&provedor.recebidos()[1])
+    let resultado = resultados(&provedor.received()[1])
         .into_iter()
         .next()
         .expect("o modelo recebeu a confirmação");
@@ -1033,7 +1033,7 @@ async fn acao_que_encerra_o_atendimento_fecha_a_ficha() {
     )
     .await;
 
-    let resultado = resultados(&provedor.recebidos()[2])
+    let resultado = resultados(&provedor.received()[2])
         .into_iter()
         .last()
         .expect("o modelo recebeu o desfecho");
@@ -1069,7 +1069,7 @@ async fn motor_desligado_nao_registra_nem_oferece_as_ferramentas() {
     );
     let gatilho = cenario.falar(conversa, "oi");
     cenario.turno(&motor, conversa, gatilho).await;
-    let nomes = oferecidas(&provedor.recebidos()[0]);
+    let nomes = oferecidas(&provedor.received()[0]);
     for ferramenta in TODAS {
         assert!(
             !nomes.contains(&ferramenta.to_owned()),
@@ -1121,8 +1121,8 @@ async fn encerrar_pelo_agente_fecha_e_repeticao_e_idempotente() {
     )
     .await;
     assert_eq!(resumo.estado, TurnState::Completed);
-    assert!(oferecidas(&provedor.recebidos()[0]).contains(&"atendimento_encerrar".to_owned()));
-    let respostas = resultados(&provedor.recebidos()[1]);
+    assert!(oferecidas(&provedor.received()[0]).contains(&"atendimento_encerrar".to_owned()));
+    let respostas = resultados(&provedor.received()[1]);
     assert!(
         respostas.iter().any(|s| s.contains("já encerrado")),
         "{respostas:?}"
@@ -1175,7 +1175,7 @@ async fn encerramento_desabilitado_e_recusado() {
         conversa,
     )
     .await;
-    assert!(!oferecidas(&provedor.recebidos()[0]).contains(&"atendimento_encerrar".to_owned()));
+    assert!(!oferecidas(&provedor.received()[0]).contains(&"atendimento_encerrar".to_owned()));
     assert_eq!(c.chamadas(conversa)[0]["motivo"], "nao_habilitada");
     assert_eq!(c.ficha(conversa).status, RecordStatus::Open);
 }

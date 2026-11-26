@@ -15,7 +15,7 @@ use poph_agent::limites::{Limitador, OpcoesLimites};
 use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
 use poph_agent::turno::{FuturoPausa, Motor, ObservadorNulo, OpcoesTurno, Pausa};
 use poph_agent::{BuscadorProdutos, BuscarProduto, CatalogoProdutos};
-use poph_core::llm::{ChamadaFerramenta, EventoLlm, LlmProvider, MotivoFim, ProvedorFake, Roteiro};
+use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, LlmProvider, Script, ToolCall};
 use poph_rag::{ConfigIndice, Embedder, EmbedderFake, Indice};
 use poph_store::{
     NewAgent, NewCategory, NewConversation, NewMessage, NewOrg, NewProduct, Page, Store,
@@ -151,8 +151,8 @@ impl Cenario {
         }
     }
 
-    fn motor(&self, roteiros: Vec<Roteiro>) -> (Motor, Arc<ProvedorFake>) {
-        let fake = Arc::new(ProvedorFake::com_roteiros(roteiros));
+    fn motor(&self, roteiros: Vec<Script>) -> (Motor, Arc<FakeProvider>) {
+        let fake = Arc::new(FakeProvider::with_scripts(roteiros));
         let provedor: Arc<dyn LlmProvider> = fake.clone();
         let config = ConfigQuente::nova(
             Arc::clone(&self.store),
@@ -214,10 +214,10 @@ impl Drop for Cenario {
     }
 }
 
-fn resposta(texto: &str) -> Roteiro {
-    Roteiro::Eventos(vec![
-        EventoLlm::Texto(texto.to_owned()),
-        EventoLlm::Fim(MotivoFim::Concluido),
+fn resposta(texto: &str) -> Script {
+    Script::Eventos(vec![
+        LlmEvent::Texto(texto.to_owned()),
+        LlmEvent::Fim(FinishReason::Concluido),
     ])
 }
 
@@ -230,13 +230,13 @@ async fn turno_grava_o_produto_usado_com_o_preco_do_registro() {
         .await
         .expect("sincroniza o índice");
 
-    let chamada = Roteiro::Eventos(vec![
-        EventoLlm::Ferramenta(ChamadaFerramenta {
+    let chamada = Script::Eventos(vec![
+        LlmEvent::Tool(ToolCall {
             id: "c1".to_owned(),
             nome: "buscar_produto".to_owned(),
             argumentos: serde_json::json!({"termo": "baratas"}),
         }),
-        EventoLlm::Fim(MotivoFim::ChamadasFerramenta),
+        LlmEvent::Fim(FinishReason::ChamadasFerramenta),
     ]);
     let (motor, fake) = cenario.motor(vec![chamada, resposta("A dedetização custa R$ 320,00.")]);
 
@@ -252,7 +252,7 @@ async fn turno_grava_o_produto_usado_com_o_preco_do_registro() {
     assert_eq!(resumo.texto, "A dedetização custa R$ 320,00.");
 
     // O modelo pediu a ferramenta na primeira rodada e recebeu o preço do registro.
-    let pedidos = fake.recebidos();
+    let pedidos = fake.received();
     assert_eq!(
         pedidos.len(),
         2,

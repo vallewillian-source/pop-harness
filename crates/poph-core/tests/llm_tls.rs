@@ -13,7 +13,7 @@ use apoio::{
     Resposta, Servidor, ServidorTls, certificados, colher, montar, pergunta, so_eventos, sse,
 };
 use futures::StreamExt;
-use poph_core::llm::{EventoLlm, LlmError, LlmProvider, MotivoFim};
+use poph_core::llm::{FinishReason, LlmError, LlmEvent, LlmProvider};
 
 const TEXTO_OLA: &str = r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":"Olá"},"finish_reason":null}]}"#;
 const FIM: &str = r#"{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}}"#;
@@ -24,7 +24,7 @@ fn montar_confiando_no_certificado(url_base: &str, retentativas: u32) -> apoio::
     montagem.cliente = montagem
         .cliente
         .clone()
-        .com_raiz_de_teste(certificados::CA)
+        .with_test_root(certificados::CA)
         .expect("raiz de teste aceita");
     montagem
 }
@@ -50,8 +50,11 @@ async fn https_funciona_quando_o_certificado_e_confiavel() {
         .expect("abre por https");
     let eventos = so_eventos(colher(fluxo).await);
 
-    assert_eq!(eventos[0], EventoLlm::Texto("Olá".into()));
-    assert_eq!(eventos.last(), Some(&EventoLlm::Fim(MotivoFim::Concluido)));
+    assert_eq!(eventos[0], LlmEvent::Texto("Olá".into()));
+    assert_eq!(
+        eventos.last(),
+        Some(&LlmEvent::Fim(FinishReason::Concluido))
+    );
     // O pedido chegou inteiro pelo túnel TLS.
     let corpo = &servidor.pedidos()[0];
     assert_eq!(corpo["model"], "gemini-3.8-flash-tiered");
@@ -131,13 +134,13 @@ async fn http_continua_funcionando() {
         .stream(pergunta("oi"))
         .await
         .expect("abre por http");
-    let eventos: Vec<EventoLlm> = colher(fluxo)
+    let eventos: Vec<LlmEvent> = colher(fluxo)
         .await
         .into_iter()
         .map(|item| item.expect("evento"))
         .collect();
 
-    assert_eq!(eventos[0], EventoLlm::Texto("Olá".into()));
+    assert_eq!(eventos[0], LlmEvent::Texto("Olá".into()));
     assert_eq!(eventos.len(), 3);
 }
 

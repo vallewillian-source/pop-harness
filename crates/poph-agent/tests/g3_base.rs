@@ -31,7 +31,7 @@ use poph_agent::produtos::{
 use poph_agent::turno::{
     Entrada, FuturoPausa, Motor, ObservadorNulo, OpcoesTurno, Pausa, ResumoTurno,
 };
-use poph_core::llm::{ChamadaFerramenta, EventoLlm, MotivoFim, ProvedorFake, Roteiro, Uso};
+use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, ToolCall, Usage};
 use poph_jev::{
     ErroJev, G3_BASE, G3_NADA, IdGate, JevFalso, LoteResposta, MotorJev, Resposta as RespostaJev,
 };
@@ -274,10 +274,10 @@ impl Cenario {
 
     fn motor(
         &self,
-        roteiros: Vec<Roteiro>,
+        roteiros: Vec<Script>,
         jev: Option<Arc<MotorJev>>,
-    ) -> (Motor, Arc<ProvedorFake>) {
-        let fake = Arc::new(ProvedorFake::com_roteiros(roteiros));
+    ) -> (Motor, Arc<FakeProvider>) {
+        let fake = Arc::new(FakeProvider::with_scripts(roteiros));
         let config = ConfigQuente::nova(
             Arc::clone(&self.store),
             OpcoesConfigQuente::default(),
@@ -337,14 +337,14 @@ impl Drop for Cenario {
     }
 }
 
-fn roteiro_texto(texto: &str) -> Roteiro {
-    Roteiro::Eventos(vec![
-        EventoLlm::Texto(texto.to_owned()),
-        EventoLlm::Uso(Uso {
+fn roteiro_texto(texto: &str) -> Script {
+    Script::Eventos(vec![
+        LlmEvent::Texto(texto.to_owned()),
+        LlmEvent::Usage(Usage {
             entrada: 100,
             saida: 10,
         }),
-        EventoLlm::Fim(MotivoFim::Concluido),
+        LlmEvent::Fim(FinishReason::Concluido),
     ])
 }
 
@@ -367,7 +367,7 @@ fn escolhas(itens: &[(&str, &str)]) -> BTreeMap<String, String> {
 }
 
 /// Nomes das ferramentas enviadas no pedido ao modelo.
-fn nomes_das_ferramentas(pedido: &poph_core::llm::Pedido) -> Vec<String> {
+fn nomes_das_ferramentas(pedido: &poph_core::llm::Request) -> Vec<String> {
     pedido
         .ferramentas
         .iter()
@@ -376,22 +376,22 @@ fn nomes_das_ferramentas(pedido: &poph_core::llm::Pedido) -> Vec<String> {
 }
 
 /// Todo o texto do prompt, para procurar o trecho da base.
-fn texto_do_prompt(pedido: &poph_core::llm::Pedido) -> String {
+fn texto_do_prompt(pedido: &poph_core::llm::Request) -> String {
     pedido
         .mensagens
         .iter()
         .map(|mensagem| match mensagem {
-            poph_core::llm::Mensagem::Sistema(texto) => texto.clone(),
-            poph_core::llm::Mensagem::Usuario(partes) => partes
+            poph_core::llm::Message::Sistema(texto) => texto.clone(),
+            poph_core::llm::Message::Usuario(partes) => partes
                 .iter()
                 .map(|parte| match parte {
-                    poph_core::llm::Parte::Texto(texto) => texto.clone(),
+                    poph_core::llm::Part::Texto(texto) => texto.clone(),
                     _ => String::new(),
                 })
                 .collect::<Vec<_>>()
                 .join("\n"),
-            poph_core::llm::Mensagem::Assistente { texto, .. } => texto.clone(),
-            poph_core::llm::Mensagem::Resultado { conteudo, .. } => conteudo.clone(),
+            poph_core::llm::Message::Assistente { texto, .. } => texto.clone(),
+            poph_core::llm::Message::Resultado { conteudo, .. } => conteudo.clone(),
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -418,7 +418,7 @@ async fn g3_nada_descarta_a_busca_e_nao_oferece_base_nem_catalogo() {
     );
 
     // O resultado da busca não entra no prompt nem no registro.
-    let pedidos = provedor.recebidos();
+    let pedidos = provedor.received();
     assert_eq!(pedidos.len(), 1, "uma chamada ao modelo");
     let prompt = texto_do_prompt(&pedidos[0]);
     assert!(
@@ -461,13 +461,13 @@ async fn g3_nada_nao_executa_ferramenta_inventada_pelo_modelo() {
     let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[("g3_precisa", G3_NADA)])));
     let (motor, _) = cenario.motor(
         vec![
-            Roteiro::Eventos(vec![
-                EventoLlm::Ferramenta(ChamadaFerramenta {
+            Script::Eventos(vec![
+                LlmEvent::Tool(ToolCall {
                     id: "c1".to_owned(),
                     nome: "consultar_base".to_owned(),
                     argumentos: serde_json::json!({"consulta": "prazo"}),
                 }),
-                EventoLlm::Fim(MotivoFim::ChamadasFerramenta),
+                LlmEvent::Fim(FinishReason::ChamadasFerramenta),
             ]),
             roteiro_texto("Tudo certo por aqui!"),
         ],
@@ -499,7 +499,7 @@ async fn g3_base_mantem_a_busca_e_as_ferramentas() {
     let resumo = cenario.turno(&motor, gatilho).await;
 
     assert_eq!(resumo.estado, poph_store::TurnState::Completed);
-    let pedidos = provedor.recebidos();
+    let pedidos = provedor.received();
     assert_eq!(pedidos.len(), 1);
     assert!(
         texto_do_prompt(&pedidos[0]).contains(TEXTO_DO_TRECHO),
@@ -530,7 +530,7 @@ async fn g3_desligado_nao_muda_o_comportamento() {
         resumo.jev.is_none(),
         "sem gate ligado o turno não consulta o Jev"
     );
-    let pedidos = provedor.recebidos();
+    let pedidos = provedor.received();
     assert!(texto_do_prompt(&pedidos[0]).contains(TEXTO_DO_TRECHO));
     let ferramentas = nomes_das_ferramentas(&pedidos[0]);
     assert!(
@@ -558,7 +558,7 @@ async fn g3_sem_resposta_cai_no_comportamento_de_hoje() {
     let resumo = cenario.turno(&motor, gatilho).await;
 
     assert_eq!(resumo.estado, poph_store::TurnState::Completed);
-    let pedidos = provedor.recebidos();
+    let pedidos = provedor.received();
     assert!(texto_do_prompt(&pedidos[0]).contains(TEXTO_DO_TRECHO));
     let ferramentas = nomes_das_ferramentas(&pedidos[0]);
     assert!(
@@ -598,7 +598,7 @@ async fn g3_confianca_baixa_cai_no_comportamento_de_hoje() {
     let resumo = cenario.turno(&motor, gatilho).await;
 
     assert_eq!(resumo.estado, poph_store::TurnState::Completed);
-    let pedidos = provedor.recebidos();
+    let pedidos = provedor.received();
     assert!(
         texto_do_prompt(&pedidos[0]).contains(TEXTO_DO_TRECHO),
         "confiança baixa não pode descartar a base"
@@ -622,7 +622,7 @@ async fn g3_jev_fora_do_ar_cai_no_comportamento_de_hoje() {
     let resumo = cenario.turno(&motor, gatilho).await;
 
     assert_eq!(resumo.estado, poph_store::TurnState::Completed);
-    let pedidos = provedor.recebidos();
+    let pedidos = provedor.received();
     assert!(texto_do_prompt(&pedidos[0]).contains(TEXTO_DO_TRECHO));
     let ferramentas = nomes_das_ferramentas(&pedidos[0]);
     assert!(
@@ -841,7 +841,7 @@ async fn medicao_de_tokens_e_latencia_do_g3() {
         let resumo = cenario.turno_em(&motor, conversa, gatilho).await;
         duracao_sem += inicio.elapsed().as_micros();
         assert_eq!(resumo.estado, poph_store::TurnState::Completed);
-        let pedido = provedor.recebidos().remove(0);
+        let pedido = provedor.received().remove(0);
         total_sem += texto_do_prompt(&pedido).chars().count();
         ferramentas_sem += pedido.ferramentas.len();
 
@@ -864,7 +864,7 @@ async fn medicao_de_tokens_e_latencia_do_g3() {
         let resumo = cenario.turno_em(&motor, conversa, gatilho).await;
         duracao_com += inicio.elapsed().as_micros();
         assert_eq!(resumo.estado, poph_store::TurnState::Completed);
-        let pedido = provedor.recebidos().remove(0);
+        let pedido = provedor.received().remove(0);
         total_com += texto_do_prompt(&pedido).chars().count();
         ferramentas_com += pedido.ferramentas.len();
     }
@@ -921,7 +921,7 @@ async fn padrao_de_instalacao_liga_o_g3_sem_configurar_o_agente() {
         Some(G3_NADA),
         "sem configuração no agente, o G3 do padrão de instalação precisa perguntar"
     );
-    let pedidos = provedor.recebidos();
+    let pedidos = provedor.received();
     assert!(
         !texto_do_prompt(&pedidos[0]).contains(TEXTO_DO_TRECHO),
         "com `nada`, a base não entra no prompt"
@@ -976,7 +976,7 @@ async fn agente_que_desliga_o_g3_volta_ao_comportamento_de_hoje() {
             .is_none(),
         "com o G3 desligado no agente, o Jev não decide o G3"
     );
-    let pedidos = provedor.recebidos();
+    let pedidos = provedor.received();
     assert!(texto_do_prompt(&pedidos[0]).contains(TEXTO_DO_TRECHO));
     assert!(nomes_das_ferramentas(&pedidos[0]).contains(&"consultar_base".to_owned()));
 }
@@ -1022,7 +1022,7 @@ async fn agente_com_ativo_false_nao_consulta_o_jev_nem_o_g3() {
             .is_none_or(|jev| jev.decisoes.is_empty()),
         "agente com ativo=false não recebe decisão nenhuma do Jev"
     );
-    let pedidos = provedor.recebidos();
+    let pedidos = provedor.received();
     assert!(texto_do_prompt(&pedidos[0]).contains(TEXTO_DO_TRECHO));
     assert!(nomes_das_ferramentas(&pedidos[0]).contains(&"consultar_base".to_owned()));
 }

@@ -27,18 +27,18 @@ use serde_json::{Value, json};
 use super::base64;
 use super::erro::LlmError;
 use super::limites::{LlmLimiter, LlmPermit};
-use super::provedor::{FluxoLlm, LlmProvider, validar_pedido};
-use super::sse::LeitorSse;
+use super::provedor::{LlmProvider, LlmStream, validate_request};
+use super::sse::SseReader;
 use super::tipos::{
-    Cancelamento, ChamadaFerramenta, EventoLlm, Ferramenta, Mensagem, MotivoFim, Parte, Pedido, Uso,
+    Cancellation, FinishReason, LlmEvent, Message, Part, Request, Tool, ToolCall, Usage,
 };
 use super::tls;
 
-pub const PROVEDOR_OPENAI_COMPATIVEL: &str = "openai_compativel";
-pub const PROVEDOR_ANTIGRAVITY: &str = "antigravity2api";
+pub const OPENAI_COMPATIBLE_PROVIDER: &str = "openai_compativel";
+pub const ANTIGRAVITY_PROVIDER: &str = "antigravity2api";
 
 /// Teto de espera entre retentativas.
-const ESPERA_MAXIMA: Duration = Duration::from_secs(30);
+const MAXIMUM_WAIT: Duration = Duration::from_secs(30);
 
 /// Parâmetros do cliente, já validados.
 #[derive(Clone, Debug)]
@@ -65,10 +65,10 @@ pub struct OpenAiCompatibleConfig {
 
 impl OpenAiCompatibleConfig {
     /// Monta a configuração a partir do bloco `[llm]` e da chave lida do ambiente.
-    pub fn da_config(llm: &LlmConfig, chave: Secret) -> Result<Self, LlmError> {
+    pub fn from_config(llm: &LlmConfig, chave: Secret) -> Result<Self, LlmError> {
         if !poph_types::llm_provider_accepted(&llm.provider) {
             return Err(LlmError::Configuracao(format!(
-                "provedor {} não suportado; use {PROVEDOR_OPENAI_COMPATIVEL} ou {PROVEDOR_ANTIGRAVITY}",
+                "provedor {} não suportado; use {OPENAI_COMPATIBLE_PROVIDER} ou {ANTIGRAVITY_PROVIDER}",
                 llm.provider
             )));
         }
@@ -118,7 +118,7 @@ impl OpenAiCompatibleClient {
         limites: LlmLimiter,
         metricas: BaseMetrics,
     ) -> Result<Self, LlmError> {
-        let http = construir_http(None)?;
+        let http = build_http(None)?;
         let endpoint = format!("{}/chat/completions", config.url_base);
         Ok(Self(Arc::new(Interno {
             http,
@@ -135,8 +135,8 @@ impl OpenAiCompatibleClient {
     /// validação nem existe para produção: é uma raiz a mais, e o certificado continua sendo
     /// conferido (nome, validade, cadeia).
     #[doc(hidden)]
-    pub fn com_raiz_de_teste(self, raiz_der: &[u8]) -> Result<Self, LlmError> {
-        let http = construir_http(Some(raiz_der))?;
+    pub fn with_test_root(self, raiz_der: &[u8]) -> Result<Self, LlmError> {
+        let http = build_http(Some(raiz_der))?;
         Ok(Self(Arc::new(Interno {
             http,
             endpoint: self.0.endpoint.clone(),
@@ -148,7 +148,7 @@ impl OpenAiCompatibleClient {
 }
 
 /// Monta o cliente HTTP. Com `raiz_extra`, acrescenta uma raiz de confiança (só teste).
-fn construir_http(raiz_extra: Option<&[u8]>) -> Result<reqwest::Client, LlmError> {
+fn build_http(raiz_extra: Option<&[u8]>) -> Result<reqwest::Client, LlmError> {
     let mut construtor = reqwest::Client::builder();
     if let Some(der) = raiz_extra {
         let certificado = reqwest::Certificate::from_der(der).map_err(|erro| {
@@ -165,14 +165,14 @@ fn construir_http(raiz_extra: Option<&[u8]>) -> Result<reqwest::Client, LlmError
 }
 
 impl LlmProvider for OpenAiCompatibleClient {
-    fn stream<'a>(&'a self, pedido: Pedido) -> BoxFuture<'a, Result<FluxoLlm, LlmError>> {
+    fn stream<'a>(&'a self, pedido: Request) -> BoxFuture<'a, Result<LlmStream, LlmError>> {
         Box::pin(abrir(Arc::clone(&self.0), pedido))
     }
 }
 
-async fn abrir(interno: Arc<Interno>, pedido: Pedido) -> Result<FluxoLlm, LlmError> {
-    validar_pedido(&pedido, interno.config.recusa_turno_modelo)
-        .map_err(|erro| interno.registrar_falha(erro))?;
+async fn abrir(interno: Arc<Interno>, pedido: Request) -> Result<LlmStream, LlmError> {
+    validate_request(&pedido, interno.config.recusa_turno_modelo)
+        .map_err(|erro| interno.record_failure(erro))?;
     interno.metricas.llm_calls.increment(1);
 
     let cancelamento = pedido.cancelamento.clone();
@@ -180,11 +180,11 @@ async fn abrir(interno: Arc<Interno>, pedido: Pedido) -> Result<FluxoLlm, LlmErr
         biased;
         _ = cancelamento.aguardar() => return Err(LlmError::Cancelled),
         resultado = interno.limites.acquire(pedido.org) => {
-            resultado.map_err(|erro| interno.registrar_falha(erro))?
+            resultado.map_err(|erro| interno.record_failure(erro))?
         }
     };
 
-    let corpo = montar_corpo(&pedido, &interno.config);
+    let corpo = build_body(&pedido, &interno.config);
     let modelo = pedido
         .modelo
         .clone()
@@ -192,13 +192,13 @@ async fn abrir(interno: Arc<Interno>, pedido: Pedido) -> Result<FluxoLlm, LlmErr
     let inicio = Instant::now();
     let resposta = enviar(&interno, &corpo, &cancelamento)
         .await
-        .map_err(|erro| interno.registrar_falha(erro))?;
+        .map_err(|erro| interno.record_failure(erro))?;
 
     tracing::debug!(modelo = %modelo, "resposta do LLM começou a chegar");
     let estado = Estado {
         interno: Arc::clone(&interno),
         resposta,
-        leitor: LeitorSse::new(),
+        leitor: SseReader::new(),
         parciais: BTreeMap::new(),
         pendentes: VecDeque::new(),
         motivo: None,
@@ -215,7 +215,7 @@ async fn abrir(interno: Arc<Interno>, pedido: Pedido) -> Result<FluxoLlm, LlmErr
 
 impl Interno {
     /// Conta a falha nas métricas e devolve o mesmo erro. Cancelamento não conta como falha.
-    fn registrar_falha(&self, erro: LlmError) -> LlmError {
+    fn record_failure(&self, erro: LlmError) -> LlmError {
         if erro != LlmError::Cancelled {
             self.metricas.llm_errors.increment(1);
             tracing::warn!(erro = %erro, "chamada ao LLM falhou");
@@ -228,7 +228,7 @@ impl Interno {
 async fn enviar(
     interno: &Interno,
     corpo: &Value,
-    cancelamento: &Cancelamento,
+    cancelamento: &Cancellation,
 ) -> Result<reqwest::Response, LlmError> {
     let total = interno.config.retentativas + 1;
     let corpo_texto = corpo.to_string();
@@ -263,7 +263,7 @@ async fn enviar(
                 } else {
                     return Err(LlmError::Rejected {
                         status,
-                        mensagem: resumir_erro(&texto, interno.config.chave.expose()),
+                        mensagem: summarize_error(&texto, interno.config.chave.expose()),
                     });
                 }
             }
@@ -286,7 +286,7 @@ async fn enviar(
         }
 
         if tentativa < total {
-            let espera = espera_da_tentativa(interno.config.espera_base, tentativa);
+            let espera = retry_wait(interno.config.espera_base, tentativa);
             tracing::info!(tentativa, motivo = %ultimo, "nova tentativa no LLM");
             let seguir = tokio::select! {
                 biased;
@@ -304,13 +304,13 @@ async fn enviar(
     })
 }
 
-fn espera_da_tentativa(base: Duration, tentativa: u32) -> Duration {
+fn retry_wait(base: Duration, tentativa: u32) -> Duration {
     let fator = 1u32 << (tentativa - 1).min(10);
-    base.saturating_mul(fator).min(ESPERA_MAXIMA)
+    base.saturating_mul(fator).min(MAXIMUM_WAIT)
 }
 
 /// Tira do texto de erro do provedor a mensagem útil, sem a chave, e limita o tamanho.
-fn resumir_erro(texto: &str, chave: &str) -> String {
+fn summarize_error(texto: &str, chave: &str) -> String {
     let mensagem = serde_json::from_str::<Value>(texto)
         .ok()
         .and_then(|v| v["error"]["message"].as_str().map(str::to_owned))
@@ -323,9 +323,9 @@ fn resumir_erro(texto: &str, chave: &str) -> String {
 }
 
 /// Monta o corpo do pedido no formato OpenAI (que o gateway aceita).
-pub fn montar_corpo(pedido: &Pedido, config: &OpenAiCompatibleConfig) -> Value {
+pub fn build_body(pedido: &Request, config: &OpenAiCompatibleConfig) -> Value {
     let modelo = pedido.modelo.as_deref().unwrap_or(&config.modelo);
-    let mensagens: Vec<Value> = pedido.mensagens.iter().map(mensagem_json).collect();
+    let mensagens: Vec<Value> = pedido.mensagens.iter().map(message_json).collect();
     // Temperatura e teto de tokens podem vir do agente (configuração por agente); o bloco `[llm]`
     // é o padrão quando o pedido não traz nada.
     let temperatura = pedido.temperatura.unwrap_or(config.temperatura);
@@ -338,22 +338,22 @@ pub fn montar_corpo(pedido: &Pedido, config: &OpenAiCompatibleConfig) -> Value {
         "messages": mensagens,
     });
     if !pedido.ferramentas.is_empty() {
-        corpo["tools"] = Value::Array(pedido.ferramentas.iter().map(ferramenta_json).collect());
+        corpo["tools"] = Value::Array(pedido.ferramentas.iter().map(tool_json).collect());
     }
     corpo
 }
 
-fn mensagem_json(mensagem: &Mensagem) -> Value {
+fn message_json(mensagem: &Message) -> Value {
     match mensagem {
-        Mensagem::Sistema(texto) => json!({"role": "system", "content": texto}),
-        Mensagem::Usuario(partes) => {
-            if let [Parte::Texto(texto)] = partes.as_slice() {
+        Message::Sistema(texto) => json!({"role": "system", "content": texto}),
+        Message::Usuario(partes) => {
+            if let [Part::Texto(texto)] = partes.as_slice() {
                 return json!({"role": "user", "content": texto});
             }
-            let conteudo: Vec<Value> = partes.iter().map(parte_json).collect();
+            let conteudo: Vec<Value> = partes.iter().map(part_json).collect();
             json!({"role": "user", "content": conteudo})
         }
-        Mensagem::Assistente { texto, chamadas } => {
+        Message::Assistente { texto, chamadas } => {
             let mut obj = json!({"role": "assistant"});
             obj["content"] = if texto.is_empty() && !chamadas.is_empty() {
                 Value::Null
@@ -376,23 +376,23 @@ fn mensagem_json(mensagem: &Mensagem) -> Value {
             }
             obj
         }
-        Mensagem::Resultado { id, conteudo } => {
+        Message::Resultado { id, conteudo } => {
             json!({"role": "tool", "tool_call_id": id, "content": conteudo})
         }
     }
 }
 
-fn parte_json(parte: &Parte) -> Value {
+fn part_json(parte: &Part) -> Value {
     match parte {
-        Parte::Texto(texto) => json!({"type": "text", "text": texto}),
-        Parte::Imagem { mime, bytes } => json!({
+        Part::Texto(texto) => json!({"type": "text", "text": texto}),
+        Part::Imagem { mime, bytes } => json!({
             "type": "image_url",
-            "image_url": {"url": format!("data:{mime};base64,{}", base64::codificar(bytes))},
+            "image_url": {"url": format!("data:{mime};base64,{}", base64::encode(bytes))},
         }),
     }
 }
 
-fn ferramenta_json(ferramenta: &Ferramenta) -> Value {
+fn tool_json(ferramenta: &Tool) -> Value {
     json!({
         "type": "function",
         "function": {
@@ -415,20 +415,20 @@ struct Parcial {
 struct Estado {
     interno: Arc<Interno>,
     resposta: reqwest::Response,
-    leitor: LeitorSse,
+    leitor: SseReader,
     parciais: BTreeMap<u64, Parcial>,
-    pendentes: VecDeque<Result<EventoLlm, LlmError>>,
-    motivo: Option<MotivoFim>,
-    uso: Option<Uso>,
+    pendentes: VecDeque<Result<LlmEvent, LlmError>>,
+    motivo: Option<FinishReason>,
+    uso: Option<Usage>,
     encerrado: bool,
     permissao: Option<LlmPermit>,
-    cancelamento: Cancelamento,
+    cancelamento: Cancellation,
     inicio: Instant,
     modelo: String,
     org: poph_types::OrgId,
 }
 
-async fn avancar(mut e: Estado) -> Option<(Result<EventoLlm, LlmError>, Estado)> {
+async fn avancar(mut e: Estado) -> Option<(Result<LlmEvent, LlmError>, Estado)> {
     loop {
         if let Some(item) = e.pendentes.pop_front() {
             if item.is_err() {
@@ -457,15 +457,15 @@ async fn avancar(mut e: Estado) -> Option<(Result<EventoLlm, LlmError>, Estado)>
             Err(erro) => {
                 e.encerrado = true;
                 e.permissao = None;
-                let erro = e.interno.registrar_falha(erro);
+                let erro = e.interno.record_failure(erro);
                 e.pendentes.push_back(Err(erro));
             }
             Ok(Some(bytes)) => {
-                for payload in e.leitor.empurrar(&bytes) {
+                for payload in e.leitor.push(&bytes) {
                     if e.encerrado {
                         break;
                     }
-                    processar_payload(&mut e, &payload);
+                    process_payload(&mut e, &payload);
                 }
             }
             Ok(None) => {
@@ -473,11 +473,11 @@ async fn avancar(mut e: Estado) -> Option<(Result<EventoLlm, LlmError>, Estado)>
                     if e.encerrado {
                         break;
                     }
-                    processar_payload(&mut e, &payload);
+                    process_payload(&mut e, &payload);
                 }
                 if !e.encerrado {
                     if e.motivo.is_none() {
-                        let erro = e.interno.registrar_falha(LlmError::InvalidResponse(
+                        let erro = e.interno.record_failure(LlmError::InvalidResponse(
                             "a resposta terminou antes do fim (conexão fechada sem motivo de fim)"
                                 .to_owned(),
                         ));
@@ -494,7 +494,7 @@ async fn avancar(mut e: Estado) -> Option<(Result<EventoLlm, LlmError>, Estado)>
 }
 
 /// Trata um payload `data:` do stream: texto, ferramenta, uso, motivo de fim ou erro.
-fn processar_payload(e: &mut Estado, payload: &str) {
+fn process_payload(e: &mut Estado, payload: &str) {
     if payload == "[DONE]" {
         finalizar(e);
         return;
@@ -506,16 +506,16 @@ fn processar_payload(e: &mut Estado, payload: &str) {
     if !valor["error"].is_null() {
         let mensagem = valor["error"]["message"]
             .as_str()
-            .map(|m| resumir_erro(m, e.interno.config.chave.expose()))
+            .map(|m| summarize_error(m, e.interno.config.chave.expose()))
             .unwrap_or_else(|| "erro sem detalhe".to_owned());
-        let erro = e.interno.registrar_falha(LlmError::StreamError(mensagem));
+        let erro = e.interno.record_failure(LlmError::StreamError(mensagem));
         e.pendentes.push_back(Err(erro));
         e.encerrado = true;
         e.permissao = None;
         return;
     }
     if let Some(uso) = valor.get("usage").filter(|u| !u.is_null()) {
-        e.uso = Some(Uso {
+        e.uso = Some(Usage {
             entrada: uso["prompt_tokens"].as_u64().unwrap_or(0),
             saida: uso["completion_tokens"].as_u64().unwrap_or(0),
         });
@@ -523,8 +523,7 @@ fn processar_payload(e: &mut Estado, payload: &str) {
     let escolha = &valor["choices"][0];
     let delta = &escolha["delta"];
     if let Some(texto) = delta["content"].as_str().filter(|t| !t.is_empty()) {
-        e.pendentes
-            .push_back(Ok(EventoLlm::Texto(texto.to_owned())));
+        e.pendentes.push_back(Ok(LlmEvent::Texto(texto.to_owned())));
     }
     if let Some(chamadas) = delta["tool_calls"].as_array() {
         for chamada in chamadas {
@@ -546,10 +545,10 @@ fn processar_payload(e: &mut Estado, payload: &str) {
     }
     if let Some(motivo) = escolha["finish_reason"].as_str() {
         e.motivo = Some(match motivo {
-            "stop" => MotivoFim::Concluido,
-            "tool_calls" | "function_call" => MotivoFim::ChamadasFerramenta,
-            "length" => MotivoFim::LimiteDeTokens,
-            outro => MotivoFim::Outro(outro.to_owned()),
+            "stop" => FinishReason::Concluido,
+            "tool_calls" | "function_call" => FinishReason::ChamadasFerramenta,
+            "length" => FinishReason::LimiteDeTokens,
+            outro => FinishReason::Outro(outro.to_owned()),
         });
     }
 }
@@ -566,7 +565,7 @@ fn finalizar(e: &mut Estado) {
     let mut total_ferramentas = 0usize;
     for (indice, parcial) in parciais {
         let Some(nome) = parcial.nome else {
-            let erro = e.interno.registrar_falha(LlmError::InvalidResponse(
+            let erro = e.interno.record_failure(LlmError::InvalidResponse(
                 "chamada de ferramenta sem nome".to_owned(),
             ));
             e.pendentes.push_back(Err(erro));
@@ -578,7 +577,7 @@ fn finalizar(e: &mut Estado) {
             match serde_json::from_str::<Value>(&parcial.argumentos) {
                 Ok(valor) => valor,
                 Err(_) => {
-                    let erro = e.interno.registrar_falha(LlmError::InvalidResponse(format!(
+                    let erro = e.interno.record_failure(LlmError::InvalidResponse(format!(
                         "argumentos da ferramenta {nome} não são JSON válido"
                     )));
                     e.pendentes.push_back(Err(erro));
@@ -588,24 +587,23 @@ fn finalizar(e: &mut Estado) {
         };
         let id = parcial.id.unwrap_or_else(|| format!("chamada_{indice}"));
         total_ferramentas += 1;
-        e.pendentes
-            .push_back(Ok(EventoLlm::Ferramenta(ChamadaFerramenta {
-                id,
-                nome,
-                argumentos,
-            })));
+        e.pendentes.push_back(Ok(LlmEvent::Tool(ToolCall {
+            id,
+            nome,
+            argumentos,
+        })));
     }
 
     if let Some(uso) = e.uso {
         e.interno.metricas.tokens_total.increment(uso.total());
-        e.pendentes.push_back(Ok(EventoLlm::Uso(uso)));
+        e.pendentes.push_back(Ok(LlmEvent::Usage(uso)));
     }
     let motivo = match e.motivo.take() {
         Some(motivo) => motivo,
-        None if total_ferramentas > 0 => MotivoFim::ChamadasFerramenta,
-        None => MotivoFim::Concluido,
+        None if total_ferramentas > 0 => FinishReason::ChamadasFerramenta,
+        None => FinishReason::Concluido,
     };
-    e.pendentes.push_back(Ok(EventoLlm::Fim(motivo)));
+    e.pendentes.push_back(Ok(LlmEvent::Fim(motivo)));
 
     tracing::info!(
         org = %e.org,
@@ -624,7 +622,7 @@ mod testes {
 
     fn config(url: &str, chave: &str) -> Result<OpenAiCompatibleConfig, LlmError> {
         let llm = LlmConfig {
-            provider: PROVEDOR_OPENAI_COMPATIVEL.to_owned(),
+            provider: OPENAI_COMPATIBLE_PROVIDER.to_owned(),
             url_base: url.to_owned(),
             api_key_env: "ANTIGRAVITY_API_KEY".to_owned(),
             refuse_model_turn: true,
@@ -635,11 +633,11 @@ mod testes {
             temperature: 0.0,
             max_output_tokens: 512,
         };
-        OpenAiCompatibleConfig::da_config(&llm, Secret::new(chave.to_owned()))
+        OpenAiCompatibleConfig::from_config(&llm, Secret::new(chave.to_owned()))
     }
 
     #[test]
-    fn aceita_https_recusa_endereco_invalido_e_chave_vazia() {
+    fn accepts_https_rejects_invalid_address_and_empty_key() {
         // HR-10b: https é aceito (TLS via rustls); só o que não é http(s) é recusado.
         let https = config("https://exemplo.test/v1", "k").expect("https aceito");
         assert_eq!(https.url_base, "https://exemplo.test/v1");
@@ -660,19 +658,19 @@ mod testes {
             temperature: 0.0,
             max_output_tokens: 1,
         };
-        assert!(OpenAiCompatibleConfig::da_config(&llm, Secret::new("k".into())).is_err());
+        assert!(OpenAiCompatibleConfig::from_config(&llm, Secret::new("k".into())).is_err());
     }
 
     #[test]
     fn monta_corpo_com_imagem_ferramenta_e_modelo_do_pedido() {
         let cfg = config("http://127.0.0.1:8045/v1", "segredo-de-teste").expect("config");
-        let mut pedido = Pedido::new(
+        let mut pedido = Request::new(
             OrgId::generate(),
             vec![
-                Mensagem::Sistema("instruções".into()),
-                Mensagem::Usuario(vec![
-                    Parte::Texto("o que tem na foto?".into()),
-                    Parte::Imagem {
+                Message::Sistema("instruções".into()),
+                Message::Usuario(vec![
+                    Part::Texto("o que tem na foto?".into()),
+                    Part::Imagem {
                         mime: "image/png".into(),
                         bytes: b"foo".to_vec(),
                     },
@@ -680,12 +678,12 @@ mod testes {
             ],
         );
         pedido.modelo = Some("outro-modelo".into());
-        pedido.ferramentas = vec![Ferramenta {
+        pedido.ferramentas = vec![Tool {
             nome: "buscar".into(),
             descricao: "busca".into(),
             parametros: json!({"type": "object"}),
         }];
-        let corpo = montar_corpo(&pedido, &cfg);
+        let corpo = build_body(&pedido, &cfg);
         assert_eq!(corpo["model"], "outro-modelo");
         assert_eq!(corpo["stream"], true);
         assert_eq!(corpo["messages"][0]["role"], "system");
@@ -696,18 +694,18 @@ mod testes {
     }
 
     #[test]
-    fn espera_dobra_e_tem_teto() {
+    fn wait_doubles_with_a_cap() {
         let base = Duration::from_secs(1);
-        assert_eq!(espera_da_tentativa(base, 1), Duration::from_secs(1));
-        assert_eq!(espera_da_tentativa(base, 2), Duration::from_secs(2));
-        assert_eq!(espera_da_tentativa(base, 3), Duration::from_secs(4));
-        assert_eq!(espera_da_tentativa(base, 30), ESPERA_MAXIMA);
+        assert_eq!(retry_wait(base, 1), Duration::from_secs(1));
+        assert_eq!(retry_wait(base, 2), Duration::from_secs(2));
+        assert_eq!(retry_wait(base, 3), Duration::from_secs(4));
+        assert_eq!(retry_wait(base, 30), MAXIMUM_WAIT);
     }
 
     #[test]
-    fn erro_do_provedor_nao_ecoa_a_chave() {
+    fn provider_error_does_not_echo_key() {
         let corpo = r#"{"error":{"message":"chave inválida: abc-123-segredo"}}"#;
-        let texto = resumir_erro(corpo, "abc-123-segredo");
+        let texto = summarize_error(corpo, "abc-123-segredo");
         assert!(!texto.contains("abc-123-segredo"));
         assert!(texto.contains("[oculto]"));
     }

@@ -48,8 +48,8 @@ use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
 use poph_agent::produtos::{BuscadorProdutos, BuscarProduto, CatalogoProdutos, ParametrosProdutos};
 use poph_agent::turno::{Motor, OpcoesTurno, ProcessadorTurno};
 use poph_core::llm::{
-    ChamadaFerramenta, EventoLlm, FluxoLlm, LlmError, LlmProvider, Mensagem, MotivoFim, Pedido,
-    ProvedorFake, Roteiro,
+    FakeProvider, FinishReason, LlmError, LlmEvent, LlmProvider, LlmStream, Message, Request,
+    Script, ToolCall,
 };
 use poph_files::ConfigArquivos;
 use poph_rag::{ConfigIndice, EmbedderFake, Indice};
@@ -1693,10 +1693,10 @@ fn caso_faltando_reprova_a_cobertura() {
 
 /// Provedor que repassa ao falso. Os roteiros precisam dos ids que a API gera, então o falso só
 /// é ligado depois que o cenário existe.
-struct Repassa(std::sync::OnceLock<Arc<ProvedorFake>>);
+struct Repassa(std::sync::OnceLock<Arc<FakeProvider>>);
 
 impl LlmProvider for Repassa {
-    fn stream<'a>(&'a self, pedido: Pedido) -> BoxFuture<'a, Result<FluxoLlm, LlmError>> {
+    fn stream<'a>(&'a self, pedido: Request) -> BoxFuture<'a, Result<LlmStream, LlmError>> {
         Box::pin(async move {
             match self.0.get() {
                 Some(falso) => falso.stream(pedido).await,
@@ -1783,8 +1783,8 @@ async fn subir_com_turno(
     (servidor, repassa, base, catalogo)
 }
 
-fn chamada(id: &str, nome: &str, argumentos: Value) -> EventoLlm {
-    EventoLlm::Ferramenta(ChamadaFerramenta {
+fn chamada(id: &str, nome: &str, argumentos: Value) -> LlmEvent {
+    LlmEvent::Tool(ToolCall {
         id: id.to_owned(),
         nome: nome.to_owned(),
         argumentos,
@@ -1793,11 +1793,11 @@ fn chamada(id: &str, nome: &str, argumentos: Value) -> EventoLlm {
 
 /// Resultados das ferramentas (texto que o modelo lê), um por chamada: cada pedido repete o
 /// histórico, então conta-se pelo id da chamada, mantendo a ordem da primeira aparição.
-fn resultados(pedidos: &[Pedido], prefixo: &str) -> Vec<(String, String)> {
+fn resultados(pedidos: &[Request], prefixo: &str) -> Vec<(String, String)> {
     let mut vistos: Vec<(String, String)> = Vec::new();
     for pedido in pedidos {
         for mensagem in &pedido.mensagens {
-            if let Mensagem::Resultado { id, conteudo } = mensagem
+            if let Message::Resultado { id, conteudo } = mensagem
                 && id.starts_with(prefixo)
                 && !vistos.iter().any(|(visto, _)| visto == id)
             {
@@ -1878,48 +1878,48 @@ async fn ferramentas_do_llm_nao_alcancam_outra_org() {
     // Turno de A (atacante): tudo com ids/termos de B. Turno de B (controle): os mesmos pedidos
     // com os próprios ids de B.
     let roteiros = vec![
-        Roteiro::Eventos(vec![
+        Script::Eventos(vec![
             chamada("a1", "enviar_arquivo", json!({"id": b.arquivo})),
-            EventoLlm::Fim(MotivoFim::ChamadasFerramenta),
+            LlmEvent::Fim(FinishReason::ChamadasFerramenta),
         ]),
-        Roteiro::Eventos(vec![
+        Script::Eventos(vec![
             chamada(
                 "a2",
                 "cart_add_item",
                 json!({"produto_id": b.produto, "quantidade": 1}),
             ),
-            EventoLlm::Fim(MotivoFim::ChamadasFerramenta),
+            LlmEvent::Fim(FinishReason::ChamadasFerramenta),
         ]),
-        Roteiro::Eventos(vec![
+        Script::Eventos(vec![
             chamada("a3", "consultar_base", json!({"consulta": MARCADOR_B})),
-            EventoLlm::Fim(MotivoFim::ChamadasFerramenta),
+            LlmEvent::Fim(FinishReason::ChamadasFerramenta),
         ]),
-        Roteiro::Eventos(vec![
+        Script::Eventos(vec![
             chamada("a4", "buscar_produto", json!({"termo": MARCADOR_B})),
-            EventoLlm::Fim(MotivoFim::ChamadasFerramenta),
+            LlmEvent::Fim(FinishReason::ChamadasFerramenta),
         ]),
-        Roteiro::Eventos(vec![
-            EventoLlm::Texto("Não tenho nada para enviar.".to_owned()),
-            EventoLlm::Fim(MotivoFim::Concluido),
+        Script::Eventos(vec![
+            LlmEvent::Texto("Não tenho nada para enviar.".to_owned()),
+            LlmEvent::Fim(FinishReason::Concluido),
         ]),
-        Roteiro::Eventos(vec![
+        Script::Eventos(vec![
             chamada("b1", "enviar_arquivo", json!({"id": b.arquivo})),
-            EventoLlm::Fim(MotivoFim::ChamadasFerramenta),
+            LlmEvent::Fim(FinishReason::ChamadasFerramenta),
         ]),
-        Roteiro::Eventos(vec![
+        Script::Eventos(vec![
             chamada("b2", "consultar_base", json!({"consulta": MARCADOR_B})),
-            EventoLlm::Fim(MotivoFim::ChamadasFerramenta),
+            LlmEvent::Fim(FinishReason::ChamadasFerramenta),
         ]),
-        Roteiro::Eventos(vec![
+        Script::Eventos(vec![
             chamada("b3", "buscar_produto", json!({"termo": MARCADOR_B})),
-            EventoLlm::Fim(MotivoFim::ChamadasFerramenta),
+            LlmEvent::Fim(FinishReason::ChamadasFerramenta),
         ]),
-        Roteiro::Eventos(vec![
-            EventoLlm::Texto("Pronto.".to_owned()),
-            EventoLlm::Fim(MotivoFim::Concluido),
+        Script::Eventos(vec![
+            LlmEvent::Texto("Pronto.".to_owned()),
+            LlmEvent::Fim(FinishReason::Concluido),
         ]),
     ];
-    let falso = Arc::new(ProvedorFake::com_roteiros(roteiros));
+    let falso = Arc::new(FakeProvider::with_scripts(roteiros));
     assert!(repassa.0.set(Arc::clone(&falso)).is_ok());
 
     let mut falhas: Vec<String> = Vec::new();
@@ -1930,7 +1930,7 @@ async fn ferramentas_do_llm_nao_alcancam_outra_org() {
             r_a.status, r_a.texto
         ));
     }
-    let pedidos = falso.recebidos();
+    let pedidos = falso.received();
     let res_a = resultados(&pedidos, "a");
     println!("resultados das ferramentas no turno de A (atacante):");
     for (id, texto) in &res_a {
@@ -1982,7 +1982,7 @@ async fn ferramentas_do_llm_nao_alcancam_outra_org() {
             r_b.status
         ));
     }
-    let pedidos = falso.recebidos();
+    let pedidos = falso.received();
     let res_b = resultados(&pedidos, "b");
     println!("resultados das ferramentas no turno de B (controle):");
     for (id, texto) in &res_b {

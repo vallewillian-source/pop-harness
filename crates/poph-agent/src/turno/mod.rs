@@ -64,8 +64,8 @@ use std::time::{Duration, Instant};
 
 use futures::StreamExt;
 use poph_core::llm::{
-    Cancelamento, ChamadaFerramenta, EventoLlm, LlmError, LlmProvider, Mensagem, MotivoFim, Parte,
-    Pedido, Uso,
+    Cancellation, FinishReason, LlmError, LlmEvent, LlmProvider, Message, Part, Request, ToolCall,
+    Usage,
 };
 use poph_jev::{
     AcaoG7, AjusteGates, AvaliadorGates, EstadoJev, G1_TRANSFERIR, G3_NADA, G6_APROVADA,
@@ -229,7 +229,7 @@ pub struct Entrada {
     /// Mensagem que disparou o turno (já gravada em `messages`).
     pub mensagem: MessageId,
     /// Cancelamento do turno (Ctrl-C no `chat`, timeout do chamador).
-    pub cancelamento: Cancelamento,
+    pub cancelamento: Cancellation,
 }
 
 impl Entrada {
@@ -239,7 +239,7 @@ impl Entrada {
             org,
             conversa,
             mensagem,
-            cancelamento: Cancelamento::novo(),
+            cancelamento: Cancellation::novo(),
         }
     }
 }
@@ -359,7 +359,7 @@ impl ResumoTurno {
 /// O que o turno leva para a conversa com o modelo: as mensagens montadas e o coletor de uso.
 struct Preparo {
     /// Mensagens prontas (prefixo estável, bloco volátil e histórico).
-    mensagens: Vec<Mensagem>,
+    mensagens: Vec<Message>,
     /// Coletor do que as ferramentas usarem (vai para o registro do turno).
     uso: Arc<UsoFerramentas>,
     /// Coletor das chamadas de ferramenta (vai para `turns.tools_json`, HR-47b).
@@ -376,7 +376,7 @@ struct Preparo {
 
 impl Preparo {
     /// Tira da lista oferecida as ferramentas do fluxo que não valem neste turno (FX-24).
-    fn retain_ferramentas_do_fluxo(&self, oferecidas: &mut Vec<poph_core::llm::Ferramenta>) {
+    fn retain_ferramentas_do_fluxo(&self, oferecidas: &mut Vec<poph_core::llm::Tool>) {
         oferecidas.retain(|ferramenta| match ferramenta.nome.as_str() {
             fluxo_ferramentas::NOME_INICIAR => self.fluxo_reserva,
             fluxo_ferramentas::NOME_EXECUTAR_ACAO | fluxo_ferramentas::NOME_ABANDONAR => {
@@ -414,13 +414,13 @@ struct ContextoG6<'a> {
     /// Conversa (canal e id).
     conversa: &'a poph_store::Conversa,
     /// Conversa final enviada ao modelo, como base da regeneração.
-    mensagens: &'a [Mensagem],
+    mensagens: &'a [Message],
     /// Produtos que o turno consultou: a evidência de preço da revisão.
     produtos: Vec<ProdutoUsado>,
     /// Modelo do turno (a regeneração usa o mesmo).
     modelo: String,
     /// Cancelamento do turno.
-    cancelamento: Cancelamento,
+    cancelamento: Cancellation,
 }
 
 /// O que a revisão do G6 fez com a resposta (vai para o `turns.jev_json`).
@@ -486,7 +486,7 @@ pub struct Motor {
     /// Modelo usado quando o agente não define um.
     modelo_padrao: String,
     /// Cancelamento do processo (desligamento ordenado, teste): vale para qualquer turno em voo.
-    cancelamento: Option<Cancelamento>,
+    cancelamento: Option<Cancellation>,
     /// Resumo rolante das conversas (HR-14), gerado em segundo plano depois de cada turno.
     resumidor: Arc<Resumidor>,
     /// Jev (HR-28): decide os portões antes da primeira chamada ao modelo. Sem ele, o turno roda
@@ -560,7 +560,7 @@ impl Motor {
     }
 
     /// Liga um cancelamento que vale para todos os turnos (Ctrl-C do processo, desligamento).
-    pub fn com_cancelamento(mut self, cancelamento: Cancelamento) -> Self {
+    pub fn com_cancelamento(mut self, cancelamento: Cancellation) -> Self {
         self.cancelamento = Some(cancelamento);
         self
     }
@@ -687,7 +687,7 @@ impl Motor {
         if self
             .cancelamento
             .as_ref()
-            .is_some_and(Cancelamento::cancelado)
+            .is_some_and(Cancellation::cancelado)
         {
             cancelamento.cancelar();
         }
@@ -916,7 +916,7 @@ impl Motor {
         // - **imagem** (HR-23b): vai como parte multimodal, no mesmo lugar (depois da mensagem), lida
         //   do blob pelo hash. O aviso de conteúdo não confiável é textual e não se aplica à imagem,
         //   que o modelo vê como dado do cliente.
-        let mut historico: Vec<Mensagem> = Vec::new();
+        let mut historico: Vec<Message> = Vec::new();
         let mut imagens = OrcamentoImagens::default();
         for mensagem in &montagem_historico.mensagens {
             let partes = if mensagem.role == Role::User {
@@ -933,7 +933,7 @@ impl Motor {
                 historico.push(item);
             }
             if !partes.is_empty() {
-                historico.push(Mensagem::Usuario(partes));
+                historico.push(Message::Usuario(partes));
             }
         }
         let (resultado_busca, jev_pos_janela) = match (busca_futuro, jev_futuro) {
@@ -1426,10 +1426,10 @@ impl Motor {
         alvo: Alvo,
         quente: &AgenteQuente,
         preparo: Preparo,
-        cancelamento: &Cancelamento,
+        cancelamento: &Cancellation,
         observador: &mut dyn Observador,
         inicio: Instant,
-    ) -> Result<(Resposta, Vec<Mensagem>), LlmError> {
+    ) -> Result<(Resposta, Vec<Message>), LlmError> {
         let max_rodadas = quente.agente.max_tool_rounds.max(1);
         let max_por_mensagem = quente.agente.max_tools_per_message.max(1);
         let mut oferecidas =
@@ -1472,7 +1472,7 @@ impl Motor {
             } else {
                 oferecidas.clone()
             };
-            let mut pedido = Pedido::new(alvo.org, conversa.clone());
+            let mut pedido = Request::new(alvo.org, conversa.clone());
             pedido.ferramentas = lista;
             pedido.modelo = Some(modelo.clone());
             pedido.cancelamento = cancelamento.clone();
@@ -1490,10 +1490,10 @@ impl Motor {
 
             let mut fluxo = provedor_do_turno.cliente().stream(pedido).await?;
             let mut texto_da_rodada = String::new();
-            let mut chamadas: Vec<ChamadaFerramenta> = Vec::new();
+            let mut chamadas: Vec<ToolCall> = Vec::new();
             while let Some(evento) = self.proximo_evento(&mut fluxo, cancelamento).await? {
                 match evento? {
-                    EventoLlm::Texto(pedaco) => {
+                    LlmEvent::Texto(pedaco) => {
                         if resposta.primeiro_texto_ms.is_none() {
                             resposta.primeiro_texto_ms = Some(
                                 u64::try_from(inicio.elapsed().as_millis()).unwrap_or(u64::MAX),
@@ -1502,9 +1502,9 @@ impl Motor {
                         texto_da_rodada.push_str(&pedaco);
                         observador.evento(EventoTurno::Texto(pedaco));
                     }
-                    EventoLlm::Ferramenta(chamada) => chamadas.push(chamada),
-                    EventoLlm::Uso(uso) => resposta.uso = somar_uso(resposta.uso, uso),
-                    EventoLlm::Fim(motivo) => resposta.motivo = Some(motivo),
+                    LlmEvent::Tool(chamada) => chamadas.push(chamada),
+                    LlmEvent::Usage(uso) => resposta.uso = somar_uso(resposta.uso, uso),
+                    LlmEvent::Fim(motivo) => resposta.motivo = Some(motivo),
                 }
             }
             drop(vaga_provedor);
@@ -1514,7 +1514,7 @@ impl Motor {
                 break;
             }
             resposta.rodadas += 1;
-            conversa.push(Mensagem::Assistente {
+            conversa.push(Message::Assistente {
                 texto: texto_da_rodada,
                 chamadas: chamadas.clone(),
             });
@@ -1534,7 +1534,7 @@ impl Motor {
                         &chamada.argumentos,
                         &conteudo,
                     );
-                    conversa.push(Mensagem::Resultado {
+                    conversa.push(Message::Resultado {
                         id: chamada.id.clone(),
                         conteudo,
                     });
@@ -1589,7 +1589,7 @@ impl Motor {
                     &chamada.argumentos,
                     desfecho.texto(),
                 );
-                conversa.push(Mensagem::Resultado {
+                conversa.push(Message::Resultado {
                     id: chamada.id.clone(),
                     conteudo: desfecho.em_texto(),
                 });
@@ -1889,19 +1889,19 @@ impl Motor {
         &self,
         org: OrgId,
         quente: &AgenteQuente,
-        mensagens: &[Mensagem],
+        mensagens: &[Message],
         rascunho: &str,
         orientacao: &str,
         modelo: &str,
-        cancelamento: &Cancelamento,
+        cancelamento: &Cancellation,
     ) -> Result<RespostaRegenerada, LlmError> {
         let mut conversa = mensagens.to_vec();
-        conversa.push(Mensagem::Assistente {
+        conversa.push(Message::Assistente {
             texto: rascunho.to_owned(),
             chamadas: Vec::new(),
         });
-        conversa.push(Mensagem::Usuario(vec![Parte::Texto(orientacao.to_owned())]));
-        let mut pedido = Pedido::new(org, conversa);
+        conversa.push(Message::Usuario(vec![Part::Texto(orientacao.to_owned())]));
+        let mut pedido = Request::new(org, conversa);
         pedido.modelo = Some(modelo.to_owned());
         pedido.cancelamento = cancelamento.clone();
         pedido.temperatura = quente.agente.temperatura.map(|valor| valor as f32);
@@ -1919,11 +1919,11 @@ impl Motor {
         let mut regenerada = RespostaRegenerada::default();
         while let Some(evento) = self.proximo_evento(&mut fluxo, cancelamento).await? {
             match evento? {
-                EventoLlm::Texto(pedaco) => regenerada.texto.push_str(&pedaco),
+                LlmEvent::Texto(pedaco) => regenerada.texto.push_str(&pedaco),
                 // Sem ferramentas no pedido: uma chamada aqui é ignorada de propósito.
-                EventoLlm::Ferramenta(_) => {}
-                EventoLlm::Uso(uso) => regenerada.uso = somar_uso(regenerada.uso, uso),
-                EventoLlm::Fim(motivo) => regenerada.motivo = Some(motivo),
+                LlmEvent::Tool(_) => {}
+                LlmEvent::Usage(uso) => regenerada.uso = somar_uso(regenerada.uso, uso),
+                LlmEvent::Fim(motivo) => regenerada.motivo = Some(motivo),
             }
         }
         Ok(regenerada)
@@ -2010,7 +2010,7 @@ impl Motor {
         org: OrgId,
         mensagem: &MensagemGravada,
         imagens: &mut OrcamentoImagens,
-    ) -> Vec<Parte> {
+    ) -> Vec<Part> {
         let anexos_json = mensagem.attachments_json.trim();
         if anexos_json.is_empty() || anexos_json == "[]" {
             return Vec::new();
@@ -2022,11 +2022,11 @@ impl Motor {
                 return Vec::new();
             }
         };
-        let mut partes: Vec<Parte> = Vec::new();
+        let mut partes: Vec<Part> = Vec::new();
         let mut textos: Vec<String> = Vec::new();
         for anexo in &anexos {
             // Imagem vai como parte multimodal; o texto extraído (documento) vai como bloco.
-            if poph_core::llm::MIMES_IMAGEM.contains(&anexo.mime.as_str()) {
+            if poph_core::llm::IMAGE_MIMES.contains(&anexo.mime.as_str()) {
                 if let Some(parte) = self.imagem_do_anexo(org, anexo, imagens) {
                     partes.push(parte);
                 }
@@ -2043,9 +2043,9 @@ impl Motor {
             // Vários documentos da mesma mensagem viram um texto só, como o G7 já os lê.
             partes.insert(
                 0,
-                Parte::Texto(poph_files::envelope::AVISO_NAO_CONFIAVEL.to_owned()),
+                Part::Texto(poph_files::envelope::AVISO_NAO_CONFIAVEL.to_owned()),
             );
-            partes.insert(1, Parte::Texto(textos.join("\n\n")));
+            partes.insert(1, Part::Texto(textos.join("\n\n")));
         }
         partes
     }
@@ -2060,7 +2060,7 @@ impl Motor {
         org: OrgId,
         anexo: &poph_store::AttachmentRecord,
         imagens: &mut OrcamentoImagens,
-    ) -> Option<Parte> {
+    ) -> Option<Part> {
         let Some(arquivos) = self.arquivos.as_ref() else {
             tracing::debug!(
                 anexo = %anexo.id,
@@ -2084,7 +2084,7 @@ impl Motor {
         ) {
             Ok(bytes) if !bytes.is_empty() => {
                 imagens.consumir(bytes.len() as u64);
-                Some(Parte::Imagem {
+                Some(Part::Imagem {
                     mime: anexo.mime.clone(),
                     bytes,
                 })
@@ -2173,9 +2173,9 @@ impl Motor {
     /// Próximo evento do stream, interrompido também pelo cancelamento do processo.
     async fn proximo_evento(
         &self,
-        fluxo: &mut poph_core::llm::FluxoLlm,
-        cancelamento: &Cancelamento,
-    ) -> Result<Option<Result<EventoLlm, LlmError>>, LlmError> {
+        fluxo: &mut poph_core::llm::LlmStream,
+        cancelamento: &Cancellation,
+    ) -> Result<Option<Result<LlmEvent, LlmError>>, LlmError> {
         match &self.cancelamento {
             Some(compartilhado) => tokio::select! {
                 evento = fluxo.next() => Ok(evento),
@@ -2194,7 +2194,7 @@ impl Motor {
         alvo: Alvo,
         quente: &AgenteQuente,
         uso: &Arc<UsoFerramentas>,
-        chamada: &ChamadaFerramenta,
+        chamada: &ToolCall,
     ) -> DesfechoFerramenta {
         // D-04: ferramenta desabilitada nunca é executada, mesmo que o modelo invente o nome.
         if !quente.ferramenta_habilitada(&chamada.nome) {
@@ -3357,8 +3357,8 @@ fn motivo_do_erro_da_ferramenta(erro: &str) -> &'static str {
 #[derive(Debug, Default)]
 struct Resposta {
     texto: String,
-    uso: Uso,
-    motivo: Option<MotivoFim>,
+    uso: Usage,
+    motivo: Option<FinishReason>,
     primeiro_texto_ms: Option<u64>,
     rodadas: u32,
     ferramentas: Vec<String>,
@@ -3370,9 +3370,9 @@ struct RespostaRegenerada {
     /// Texto novo do modelo.
     texto: String,
     /// Tokens da chamada de regeneração.
-    uso: Uso,
+    uso: Usage,
     /// Motivo do fim informado pelo provedor.
-    motivo: Option<MotivoFim>,
+    motivo: Option<FinishReason>,
 }
 
 /// Soma o resultado de uma pergunta avulsa (G6) ao registro do turno.
@@ -3400,8 +3400,8 @@ fn somar_resultado_jev(jev: &mut Option<ResultadoJev>, resultado: ResultadoJev) 
     }
 }
 
-fn somar_uso(total: Uso, outro: Uso) -> Uso {
-    Uso {
+fn somar_uso(total: Usage, outro: Usage) -> Usage {
+    Usage {
         entrada: total.entrada.saturating_add(outro.entrada),
         saida: total.saida.saturating_add(outro.saida),
     }
@@ -3431,12 +3431,12 @@ fn status_do_atendimento(status: poph_store::ConversationStatus) -> &'static str
     }
 }
 
-fn motivo_texto(motivo: &MotivoFim) -> String {
+fn motivo_texto(motivo: &FinishReason) -> String {
     match motivo {
-        MotivoFim::Concluido => "concluido".to_owned(),
-        MotivoFim::ChamadasFerramenta => "chamadas_ferramenta".to_owned(),
-        MotivoFim::LimiteDeTokens => "limite_de_tokens".to_owned(),
-        MotivoFim::Outro(texto) => texto.clone(),
+        FinishReason::Concluido => "concluido".to_owned(),
+        FinishReason::ChamadasFerramenta => "chamadas_ferramenta".to_owned(),
+        FinishReason::LimiteDeTokens => "limite_de_tokens".to_owned(),
+        FinishReason::Outro(texto) => texto.clone(),
     }
 }
 
@@ -3519,7 +3519,7 @@ fn eh_base_ou_produto(nome: &str) -> bool {
 
 /// JSON dos tempos por etapa. `modelo` e `motivo_fim` viajam aqui porque `turns` não tem coluna
 /// própria para eles e a HR-04b fechou o esquema (migração nova exige autorização do mantenedor).
-fn tempos_json(tempos: &Tempos, modelo: &str, motivo: Option<&MotivoFim>) -> String {
+fn tempos_json(tempos: &Tempos, modelo: &str, motivo: Option<&FinishReason>) -> String {
     json!({
         "fila_ms": tempos.fila_ms,
         "montagem_ms": tempos.montagem_ms,

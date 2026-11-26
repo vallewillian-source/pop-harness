@@ -8,7 +8,7 @@ use poph_agent::metricas::{MetricasG9, MetricasMemoria, MetricasTurno};
 use poph_agent::turno::{
     Entrada, FuturoPausa, Motor, ObservadorNulo, OpcoesTurno, Pausa, ResumoTurno,
 };
-use poph_core::llm::{ChamadaFerramenta, EventoLlm, MotivoFim, ProvedorFake, Roteiro, Uso};
+use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, ToolCall, Usage};
 use poph_fluxos::{Limites, compilar};
 use poph_jev::{JevFalso, MotorJev};
 use poph_store::{
@@ -199,10 +199,10 @@ impl Cenario {
 
     fn motor(
         &self,
-        roteiros: Vec<Roteiro>,
+        roteiros: Vec<Script>,
         jev: Option<Arc<MotorJev>>,
         fluxos: Option<FlowsConfig>,
-    ) -> (Motor, Arc<ProvedorFake>) {
+    ) -> (Motor, Arc<FakeProvider>) {
         let config = ConfigQuente::nova(
             Arc::clone(&self.store),
             OpcoesConfigQuente::default(),
@@ -212,7 +212,7 @@ impl Cenario {
             OpcoesLimites::default(),
             MetricasMemoria::proprio(),
         ));
-        let provedor = Arc::new(ProvedorFake::com_roteiros(roteiros));
+        let provedor = Arc::new(FakeProvider::with_scripts(roteiros));
         let mut motor = Motor::novo(
             Arc::clone(&self.store),
             config,
@@ -287,26 +287,26 @@ impl Drop for Cenario {
 
 // ───────────────────────────────────────────────────────────────────────── utilidades
 
-fn texto(conteudo: &str) -> Roteiro {
-    Roteiro::Eventos(vec![
-        EventoLlm::Texto(conteudo.to_owned()),
-        EventoLlm::Uso(Uso {
+fn texto(conteudo: &str) -> Script {
+    Script::Eventos(vec![
+        LlmEvent::Texto(conteudo.to_owned()),
+        LlmEvent::Usage(Usage {
             entrada: 10,
             saida: 5,
         }),
-        EventoLlm::Fim(MotivoFim::Concluido),
+        LlmEvent::Fim(FinishReason::Concluido),
     ])
 }
 
 /// Roteiro do modelo que pede uma única ferramenta.
-fn chamada(nome: &str, argumentos: Value) -> Roteiro {
-    Roteiro::Eventos(vec![
-        EventoLlm::Ferramenta(ChamadaFerramenta {
+fn chamada(nome: &str, argumentos: Value) -> Script {
+    Script::Eventos(vec![
+        LlmEvent::Tool(ToolCall {
             id: "chamada-1".to_owned(),
             nome: nome.to_owned(),
             argumentos,
         }),
-        EventoLlm::Fim(MotivoFim::Concluido),
+        LlmEvent::Fim(FinishReason::Concluido),
     ])
 }
 
@@ -370,8 +370,8 @@ async fn executar(
     c: &Cenario,
     conversa: ConversationId,
     slug: &str,
-    roteiros: Vec<Roteiro>,
-) -> Arc<ProvedorFake> {
+    roteiros: Vec<Script>,
+) -> Arc<FakeProvider> {
     let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
         "g9_iniciar_fluxo",
         slug,
@@ -404,7 +404,7 @@ async fn exemplo_visita_com_jev_campos_e_historico_http() {
         ],
     )
     .await;
-    let pedidos = provedor.recebidos();
+    let pedidos = provedor.received();
     assert!(format!("{:?}", pedidos[0].mensagens).contains("Coletar dados"));
     let base = api(&c).await;
     let ficha = c.ficha(conversa);
@@ -753,7 +753,7 @@ async fn jev_falha_reserva_inicia_permitido_e_recusa_nao_liberado() {
     );
     let mensagem = c.falar(conversa, "Quero agendar");
     c.turno(&motor, conversa, mensagem).await;
-    let pedidos = provedor.recebidos();
+    let pedidos = provedor.received();
     assert!(
         pedidos[0]
             .ferramentas
