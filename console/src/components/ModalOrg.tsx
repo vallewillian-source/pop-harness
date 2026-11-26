@@ -101,7 +101,7 @@ export function ModalOrg({ opened: isOpen, onClose, org, onSave }: ModalOrgProps
     }
 
     function showErrorApi(failure: ApiError, criar: boolean) {
-        const details = failure.detalhes as Record<string, unknown> | null | undefined;
+        const details = failure.details as Record<string, unknown> | null | undefined;
         const campo = typeof details?.["field"] === "string" ? details["field"] : undefined;
         if (failure.status === 409 || failure.code === "conflict") {
             if (criar) {

@@ -413,7 +413,7 @@ export function AgentChatTest() {
                 };
             }
             if (failure.status === 400) {
-                const details = (failure.detalhes ?? {}) as Record<string, unknown>;
+                const details = (failure.details ?? {}) as Record<string, unknown>;
                 const campo = details.field === "file" ? "file" : "text";
                 setFieldError({ campo, mensagem: failure.message });
                 return null;

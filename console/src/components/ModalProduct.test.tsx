@@ -90,7 +90,7 @@ describe("ModalProduto", () => {
         const user = userEvent.setup();
         const created = productBase({ id: "prod_9", name: "Implante unitário", price_cents: 320000 });
         const servidor = new FakeServer()
-            .respond("POST", `/admin/v1/orgs/${ORG}/products`, { status: 201, corpo: created })
+            .respond("POST", `/admin/v1/orgs/${ORG}/products`, { status: 201, body: created })
             .install();
         const { onSave, onClose } = build();
         await waitForModalFocus();
@@ -105,7 +105,7 @@ describe("ModalProduto", () => {
         await waitFor(() => expect(onSave).toHaveBeenCalledWith(created));
         expect(onClose).toHaveBeenCalled();
         const [request] = servidor.callsFor("POST", "/products");
-        expect(request?.corpo).toEqual({
+        expect(request?.body).toEqual({
             category_id: "cat_2",
             name: "Implante unitário",
             aliases: ["implante", "pino", "implante simples"],
@@ -118,8 +118,8 @@ describe("ModalProduto", () => {
             conditions: "",
             tags: ["cirurgia"],
         });
-        expect(request?.corpo).not.toHaveProperty("status");
-        expect(request?.corpo).not.toHaveProperty("slug");
+        expect(request?.body).not.toHaveProperty("status");
+        expect(request?.body).not.toHaveProperty("slug");
     });
 
     it("na criação não existe o campo Situação, que a API recusa", async () => {
@@ -182,11 +182,11 @@ describe("ModalProduto", () => {
                         expected_version: 2,
                     });
                 }
-                return { status: 200, corpo: productBase({ version: 4, name: "Clareamento caseiro" }) };
+                return { status: 200, body: productBase({ version: 4, name: "Clareamento caseiro" }) };
             })
             .respond("GET", `/admin/v1/orgs/${ORG}/products/prod_1`, {
                 status: 200,
-                corpo: productBase({ version: 3, price_cents: 50000, price_text: "R$ 500,00" }),
+                body: productBase({ version: 3, price_cents: 50000, price_text: "R$ 500,00" }),
             })
             .install();
         build({ product: productBase(), onSave });
@@ -208,13 +208,13 @@ describe("ModalProduto", () => {
         expect(patches).toHaveLength(2);
         expect(patches[0]?.headers["if-match"]).toBe("2");
         expect(patches[1]?.headers["if-match"]).toBe("3");
-        expect(patches[1]?.corpo).toMatchObject({
+        expect(patches[1]?.body).toMatchObject({
             name: "Clareamento caseiro",
             price_cents: 45000,
             status: "active",
         });
-        expect(patches[1]?.corpo).not.toHaveProperty("slug");
-        expect(patches[1]?.corpo).toMatchObject({ price_text: "" });
+        expect(patches[1]?.body).not.toHaveProperty("slug");
+        expect(patches[1]?.body).toMatchObject({ price_text: "" });
     });
 });
 
@@ -224,7 +224,7 @@ describe("preço como o cliente vê", () => {
     it("editar sem mexer no preço não envia o texto e mostra o que o cliente vê", async () => {
         const user = userEvent.setup();
         const servidor = new FakeServer()
-            .respond("PATCH", URL_PRODUCT, { status: 200, corpo: productBase({ version: 3 }) })
+            .respond("PATCH", URL_PRODUCT, { status: 200, body: productBase({ version: 3 }) })
             .install();
         build({ product: productBase() });
         await waitForModalFocus();
@@ -236,8 +236,8 @@ describe("preço como o cliente vê", () => {
         await waitFor(() => expect(servidor.callsFor("PATCH", "/products/prod_1")).toHaveLength(1));
 
         const [patch] = servidor.callsFor("PATCH", "/products/prod_1");
-        expect(patch?.corpo).not.toHaveProperty("price_text");
-        expect(patch?.corpo).toMatchObject({ price_cents: 45000 });
+        expect(patch?.body).not.toHaveProperty("price_text");
+        expect(patch?.body).toMatchObject({ price_cents: 45000 });
     });
 
     it("mudar só o valor em centavos envia o texto vazio, a prévia acompanha e a lista recebe o preço novo", async () => {
@@ -246,7 +246,7 @@ describe("preço como o cliente vê", () => {
         const servidor = new FakeServer()
             .respond("PATCH", URL_PRODUCT, {
                 status: 200,
-                corpo: productBase({ version: 3, price_cents: 50000, price_text: "R$ 500,00" }),
+                body: productBase({ version: 3, price_cents: 50000, price_text: "R$ 500,00" }),
             })
             .install();
         build({ product: productBase(), onSave });
@@ -261,14 +261,14 @@ describe("preço como o cliente vê", () => {
         await waitFor(() => expect(onSave).toHaveBeenCalled());
 
         const [patch] = servidor.callsFor("PATCH", "/products/prod_1");
-        expect(patch?.corpo).toMatchObject({ price_cents: 50000, price_text: "" });
+        expect(patch?.body).toMatchObject({ price_cents: 50000, price_text: "" });
         expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ price_text: "R$ 500,00" }));
     });
 
     it("texto digitado pelo operador vai no corpo como foi digitado", async () => {
         const user = userEvent.setup();
         const servidor = new FakeServer()
-            .respond("PATCH", URL_PRODUCT, { status: 200, corpo: productBase({ version: 3 }) })
+            .respond("PATCH", URL_PRODUCT, { status: 200, body: productBase({ version: 3 }) })
             .install();
         build({ product: productBase({ price_cents: 32000, price_text: "R$ 320,00" }) });
         await waitForModalFocus();
@@ -280,13 +280,13 @@ describe("preço como o cliente vê", () => {
         await waitFor(() => expect(servidor.callsFor("PATCH", "/products/prod_1")).toHaveLength(1));
 
         const [patch] = servidor.callsFor("PATCH", "/products/prod_1");
-        expect(patch?.corpo).toMatchObject({ price_cents: 32000, price_text: "R$ 320,00 por visita" });
+        expect(patch?.body).toMatchObject({ price_cents: 32000, price_text: "R$ 320,00 por visita" });
     });
 
     it("apagar o texto digitado envia vazio e a prévia volta ao valor calculado", async () => {
         const user = userEvent.setup();
         const servidor = new FakeServer()
-            .respond("PATCH", URL_PRODUCT, { status: 200, corpo: productBase({ version: 3 }) })
+            .respond("PATCH", URL_PRODUCT, { status: 200, body: productBase({ version: 3 }) })
             .install();
         build({ product: productBase({ price_cents: 32000, price_text: "R$ 320,00" }) });
         await waitForModalFocus();
@@ -299,13 +299,13 @@ describe("preço como o cliente vê", () => {
         await waitFor(() => expect(servidor.callsFor("PATCH", "/products/prod_1")).toHaveLength(1));
 
         const [patch] = servidor.callsFor("PATCH", "/products/prod_1");
-        expect(patch?.corpo).toMatchObject({ price_text: "" });
+        expect(patch?.body).toMatchObject({ price_text: "" });
     });
 
     it("com texto próprio gravado, o botão volta o texto a ser calculado pelo valor", async () => {
         const user = userEvent.setup();
         const servidor = new FakeServer()
-            .respond("PATCH", URL_PRODUCT, { status: 200, corpo: productBase({ version: 3 }) })
+            .respond("PATCH", URL_PRODUCT, { status: 200, body: productBase({ version: 3 }) })
             .install();
         build({ product: productBase({ price_cents: 32000, price_text: "R$ 320,00 por visita" }) });
         await waitForModalFocus();
@@ -319,7 +319,7 @@ describe("preço como o cliente vê", () => {
 
         await user.click(screen.getByRole("button", { name: "Salvar alterações" }));
         await waitFor(() => expect(servidor.callsFor("PATCH", "/products/prod_1")).toHaveLength(1));
-        expect(servidor.callsFor("PATCH", "/products/prod_1")[0]?.corpo).toMatchObject({
+        expect(servidor.callsFor("PATCH", "/products/prod_1")[0]?.body).toMatchObject({
             price_text: "",
         });
     });

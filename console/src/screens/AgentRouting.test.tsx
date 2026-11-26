@@ -52,7 +52,7 @@ function build() {
 
 function serverWith(options: {
     agente?: Record<string, unknown>;
-    patches?: Array<{ status: number; corpo?: unknown }>;
+    patches?: Array<{ status: number; body?: unknown }>;
     relido?: Record<string, unknown>;
 } = {}) {
     let reads = 0;
@@ -61,21 +61,21 @@ function serverWith(options: {
     const servidor = new FakeServer()
         .respond("GET", `/admin/v1/orgs/${ORG}/departments`, {
             status: 200,
-            corpo: { items: DEPARTMENTS, next_cursor: null },
+            body: { items: DEPARTMENTS, next_cursor: null },
         })
         .respond("PATCH", `/agents/${AGENTE}`, () => {
-            const response = options.patches?.[patches] ?? { status: 200, corpo: agentJson({ version: 2 }) };
+            const response = options.patches?.[patches] ?? { status: 200, body: agentJson({ version: 2 }) };
             patches += 1;
             return response;
         })
         .respond("GET", `/agents/${AGENTE}`, () => {
             reads += 1;
-            if (reads > 1 && options.relido) return { status: 200, corpo: options.relido };
-            return { status: 200, corpo: agente };
+            if (reads > 1 && options.relido) return { status: 200, body: options.relido };
+            return { status: 200, body: agente };
         })
         .respond("GET", `/admin/v1/orgs/${ORG}`, {
             status: 200,
-            corpo: { id: ORG, name: "Clínica Teste", status: "active", version: 1 },
+            body: { id: ORG, name: "Clínica Teste", status: "active", version: 1 },
         });
     return servidor.install();
 }
@@ -106,7 +106,7 @@ describe("Aba Roteamento", () => {
         await waitFor(() => expect(servidor.callsFor("PATCH", `/agents/${AGENTE}`)).toHaveLength(1));
         const send = servidor.callsFor("PATCH", `/agents/${AGENTE}`)[0]!;
         expect(send.headers["if-match"]).toBe("1");
-        expect(send.corpo).toEqual({ department: "dep_2", handoff: true, handoff_department: "dep_2" });
+        expect(send.body).toEqual({ department: "dep_2", handoff: true, handoff_department: "dep_2" });
         expect(await screen.findByRole("status")).toHaveTextContent("Roteamento gravado (versão 2)");
     });
 
@@ -121,20 +121,20 @@ describe("Aba Roteamento", () => {
         await user.click(screen.getByRole("button", { name: "Salvar roteamento" }));
 
         await waitFor(() => expect(servidor.callsFor("PATCH", `/agents/${AGENTE}`)).toHaveLength(1));
-        const corpo = servidor.callsFor("PATCH", `/agents/${AGENTE}`)[0]!.corpo as { jev_json: string };
-        expect(JSON.parse(corpo.jev_json)).toEqual({
+        const body = servidor.callsFor("PATCH", `/agents/${AGENTE}`)[0]!.body as { jev_json: string };
+        expect(JSON.parse(body.jev_json)).toEqual({
             despedida: "Até logo!",
             situacoes_de_handoff: ["cliente pede segunda via", "reclamação de atraso"],
         });
-        expect(Object.keys(corpo)).toEqual(["jev_json"]);
+        expect(Object.keys(body)).toEqual(["jev_json"]);
     });
 
     it("no 412 relê o agente, mantém o que foi digitado e grava de novo na versão atual", async () => {
         const servidor = serverWith({
             relido: agentJson({ version: 2, default_department_id: "dep_1", jev: { despedida: "Até logo!", situacoes_de_handoff: ["cliente pede segunda via"] } }),
             patches: [
-                { status: 412, corpo: { code: "version_conflict", message: "agente mudou desde a leitura", details: { current_version: 2, expected_version: 1 } } },
-                { status: 200, corpo: agentJson({ version: 3, default_department_id: "dep_2" }) },
+                { status: 412, body: { code: "version_conflict", message: "agente mudou desde a leitura", details: { current_version: 2, expected_version: 1 } } },
+                { status: 200, body: agentJson({ version: 3, default_department_id: "dep_2" }) },
             ],
         });
         build();
@@ -152,7 +152,7 @@ describe("Aba Roteamento", () => {
         await user.click(screen.getByRole("button", { name: "Salvar roteamento" }));
         await waitFor(() => expect(servidor.callsFor("PATCH", `/agents/${AGENTE}`)).toHaveLength(2));
         expect(servidor.callsFor("PATCH", `/agents/${AGENTE}`)[1]!.headers["if-match"]).toBe("2");
-        expect(servidor.callsFor("PATCH", `/agents/${AGENTE}`)[1]!.corpo).toEqual({ department: "dep_2" });
+        expect(servidor.callsFor("PATCH", `/agents/${AGENTE}`)[1]!.body).toEqual({ department: "dep_2" });
     });
 
     it("exige o departamento humano para ligar a transferência, sem chamar a API", async () => {
@@ -212,9 +212,9 @@ describe("Aba Roteamento", () => {
 
     it("sem departamentos na org, mostra o estado vazio com caminho para Estrutura", async () => {
         const servidor = new FakeServer()
-            .respond("GET", `/admin/v1/orgs/${ORG}/departments`, { status: 200, corpo: { items: [], next_cursor: null } })
-            .respond("GET", `/agents/${AGENTE}`, { status: 200, corpo: agentJson() })
-            .respond("GET", `/admin/v1/orgs/${ORG}`, { status: 200, corpo: { id: ORG, name: "Clínica", status: "active", version: 1 } });
+            .respond("GET", `/admin/v1/orgs/${ORG}/departments`, { status: 200, body: { items: [], next_cursor: null } })
+            .respond("GET", `/agents/${AGENTE}`, { status: 200, body: agentJson() })
+            .respond("GET", `/admin/v1/orgs/${ORG}`, { status: 200, body: { id: ORG, name: "Clínica", status: "active", version: 1 } });
         servidor.install();
         build();
 
@@ -319,7 +319,7 @@ describe("I18N-07: aba de Roteamento em en-US", () => {
     it("o aviso de conflito e a barra de status falam inglês depois de gravar", async () => {
         const user = userEvent.setup();
         setLocale("en-US");
-        const servidor = serverWith({ patches: [{ status: 200, corpo: agentJson({ version: 2 }) }] });
+        const servidor = serverWith({ patches: [{ status: 200, body: agentJson({ version: 2 }) }] });
         build();
         await screen.findByLabelText("Default department");
 

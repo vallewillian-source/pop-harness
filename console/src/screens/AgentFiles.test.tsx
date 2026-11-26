@@ -66,7 +66,7 @@ function build() {
     );
 }
 
-function serverWith(library: StoredFile[], send?: () => { status: number; corpo?: unknown }) {
+function serverWith(library: StoredFile[], send?: () => { status: number; body?: unknown }) {
     const estado = { library: [...library] };
     const servidor = new FakeServer()
         .respond("POST", `/agents/${AGENTE}/files`, (call) => {
@@ -79,21 +79,21 @@ function serverWith(library: StoredFile[], send?: () => { status: number; corpo?
                 size_bytes: 69,
             });
             estado.library = [...estado.library, created];
-            return { status: 201, corpo: created };
+            return { status: 201, body: created };
         })
         .respond("DELETE", `/files/`, (call) => {
             const id = call.url.split("/files/")[1] ?? "";
             estado.library = estado.library.filter((a) => a.id !== id);
-            return { status: 200, corpo: { deleted: true } };
+            return { status: 200, body: { deleted: true } };
         })
         .respond("GET", `/agents/${AGENTE}/files`, () => ({
             status: 200,
-            corpo: { items: estado.library, next_cursor: null },
+            body: { items: estado.library, next_cursor: null },
         }))
-        .respond("GET", `/agents/${AGENTE}`, { status: 200, corpo: AGENT_JSON })
+        .respond("GET", `/agents/${AGENTE}`, { status: 200, body: AGENT_JSON })
         .respond("GET", `/admin/v1/orgs/${ORG}`, {
             status: 200,
-            corpo: { id: ORG, name: "Clínica Teste", status: "active", version: 1 },
+            body: { id: ORG, name: "Clínica Teste", status: "active", version: 1 },
         });
     return servidor.install();
 }

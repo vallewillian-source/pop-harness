@@ -24,14 +24,14 @@ export type ClusterOrgList = {
 export class ApiError extends Error {
     readonly status: number;
     readonly "code": string;
-    readonly "detalhes"?: unknown;
+    readonly "details"?: unknown;
 
     constructor(status: number, code: string, mensagem: string, details?: unknown) {
         super(mensagem);
         this.name = "ErroApi";
         this.status = status;
         this["code"] = code;
-        this["detalhes"] = details;
+        this["details"] = details;
     }
 
     get "naoAutorizado"(): boolean {

@@ -90,7 +90,7 @@ afterEach(() => {
 describe("Topbar", () => {
     it("mostra 'Token global' e o endereço local na sessão global", () => {
         prepareSession("pophg_teste", "global");
-        new FakeServer().respond("GET", "/healthz", { status: 200, corpo: HEALTH }).install();
+        new FakeServer().respond("GET", "/healthz", { status: 200, body: HEALTH }).install();
 
         build();
 
@@ -102,7 +102,7 @@ describe("Topbar", () => {
 
     it("mostra 'Token de org' com token de organização", () => {
         prepareSession("poph_org_teste", "org");
-        new FakeServer().respond("GET", "/healthz", { status: 200, corpo: HEALTH }).install();
+        new FakeServer().respond("GET", "/healthz", { status: 200, body: HEALTH }).install();
 
         build();
 
@@ -123,7 +123,7 @@ describe("Topbar", () => {
     it("o botão sair limpa a sessão e vai para /login", async () => {
         const user = userEvent.setup();
         prepareSession("pophg_teste", "global");
-        new FakeServer().respond("GET", "/healthz", { status: 200, corpo: HEALTH }).install();
+        new FakeServer().respond("GET", "/healthz", { status: 200, body: HEALTH }).install();
 
         build();
 
@@ -135,7 +135,7 @@ describe("Topbar", () => {
 
     it("a trilha mostra 'Modelo e Jev' na aba model-jev", () => {
         prepareSession("pophg_teste", "global");
-        new FakeServer().respond("GET", "/healthz", { status: 200, corpo: HEALTH }).install();
+        new FakeServer().respond("GET", "/healthz", { status: 200, body: HEALTH }).install();
 
         build("/orgs/org_1/agents/agt_1/model-jev");
 
@@ -144,7 +144,7 @@ describe("Topbar", () => {
 
     it("não renderiza mais o selo 'DEV LOCAL'", () => {
         prepareSession("pophg_teste", "global");
-        new FakeServer().respond("GET", "/healthz", { status: 200, corpo: HEALTH }).install();
+        new FakeServer().respond("GET", "/healthz", { status: 200, body: HEALTH }).install();
 
         build();
 
@@ -155,7 +155,7 @@ describe("Topbar", () => {
 describe("busca rápida de organizações (RL-04)", () => {
     it("o campo tem nome acessível de verdade", () => {
         prepareSession("pophg_teste", "global", THREE_ORGS);
-        new FakeServer().respond("GET", "/healthz", { status: 200, corpo: HEALTH }).install();
+        new FakeServer().respond("GET", "/healthz", { status: 200, body: HEALTH }).install();
 
         build();
 
@@ -165,7 +165,7 @@ describe("busca rápida de organizações (RL-04)", () => {
     it("Ctrl+K foca o campo de busca", async () => {
         const user = userEvent.setup();
         prepareSession("pophg_teste", "global", THREE_ORGS);
-        new FakeServer().respond("GET", "/healthz", { status: 200, corpo: HEALTH }).install();
+        new FakeServer().respond("GET", "/healthz", { status: 200, body: HEALTH }).install();
 
         build();
         await user.keyboard("{Control>}k{/Control}");
@@ -176,7 +176,7 @@ describe("busca rápida de organizações (RL-04)", () => {
     it("⌘K (Meta+K) também foca o campo de busca", async () => {
         const user = userEvent.setup();
         prepareSession("pophg_teste", "global", THREE_ORGS);
-        new FakeServer().respond("GET", "/healthz", { status: 200, corpo: HEALTH }).install();
+        new FakeServer().respond("GET", "/healthz", { status: 200, body: HEALTH }).install();
 
         build();
         await user.keyboard("{Meta>}k{/Meta}");
@@ -187,7 +187,7 @@ describe("busca rápida de organizações (RL-04)", () => {
     it("o atalho não sequestra a combinação quando o foco está em outro campo de texto", async () => {
         const user = userEvent.setup();
         prepareSession("pophg_teste", "global", THREE_ORGS);
-        new FakeServer().respond("GET", "/healthz", { status: 200, corpo: HEALTH }).install();
+        new FakeServer().respond("GET", "/healthz", { status: 200, body: HEALTH }).install();
 
         build("/orgs", { withFieldExternal: true });
         const other = screen.getByRole("textbox", { name: "Campo de outra tela" });
@@ -201,7 +201,7 @@ describe("busca rápida de organizações (RL-04)", () => {
     it("filtra por nome e por slug, sem acento e sem caixa", async () => {
         const user = userEvent.setup();
         prepareSession("pophg_teste", "global", THREE_ORGS);
-        new FakeServer().respond("GET", "/healthz", { status: 200, corpo: HEALTH }).install();
+        new FakeServer().respond("GET", "/healthz", { status: 200, body: HEALTH }).install();
 
         build();
         await user.click(fieldSearch());
@@ -221,7 +221,7 @@ describe("busca rápida de organizações (RL-04)", () => {
     it("setas escolhem a organização e Enter abre /orgs/:id", async () => {
         const user = userEvent.setup();
         prepareSession("pophg_teste", "global", THREE_ORGS);
-        new FakeServer().respond("GET", "/healthz", { status: 200, corpo: HEALTH }).install();
+        new FakeServer().respond("GET", "/healthz", { status: 200, body: HEALTH }).install();
 
         build();
         await user.type(fieldSearch(), "a");
@@ -240,7 +240,7 @@ describe("busca rápida de organizações (RL-04)", () => {
     it("Enter com alterações não salvas abre o aviso e não sai da tela", async () => {
         const user = userEvent.setup();
         prepareSession("pophg_teste", "global", THREE_ORGS);
-        new FakeServer().respond("GET", "/healthz", { status: 200, corpo: HEALTH }).install();
+        new FakeServer().respond("GET", "/healthz", { status: 200, body: HEALTH }).install();
 
         build("/orgs", { dirty: true });
         await user.type(fieldSearch(), "padaria");
@@ -254,7 +254,7 @@ describe("busca rápida de organizações (RL-04)", () => {
     it("Esc limpa o campo e fecha a lista", async () => {
         const user = userEvent.setup();
         prepareSession("pophg_teste", "global", THREE_ORGS);
-        new FakeServer().respond("GET", "/healthz", { status: 200, corpo: HEALTH }).install();
+        new FakeServer().respond("GET", "/healthz", { status: 200, body: HEALTH }).install();
 
         build();
         await user.type(fieldSearch(), "loja");
@@ -270,7 +270,7 @@ describe("busca rápida de organizações (RL-04)", () => {
     it("sem resultado mostra 'Nenhuma organização encontrada'", async () => {
         const user = userEvent.setup();
         prepareSession("pophg_teste", "global", THREE_ORGS);
-        new FakeServer().respond("GET", "/healthz", { status: 200, corpo: HEALTH }).install();
+        new FakeServer().respond("GET", "/healthz", { status: 200, body: HEALTH }).install();
 
         build();
         await user.type(fieldSearch(), "zzzz");
@@ -290,7 +290,7 @@ describe("busca global, versão e estado da instância (CF-04)", () => {
 
     it("mostra o chip de versão da instância ao lado da marca", async () => {
         prepareSession("pophg_teste", "global");
-        new FakeServer().respond("GET", "/healthz", { status: 200, corpo: HEALTH_VERSION }).install();
+        new FakeServer().respond("GET", "/healthz", { status: 200, body: HEALTH_VERSION }).install();
 
         build();
 
@@ -300,7 +300,7 @@ describe("busca global, versão e estado da instância (CF-04)", () => {
     it("mostra 'Engine: 200 OK · 125 MB' com a memória lida de /metrics", async () => {
         prepareSession("pophg_teste", "global");
         new FakeServer()
-            .respond("GET", "/healthz", { status: 200, corpo: HEALTH_VERSION })
+            .respond("GET", "/healthz", { status: 200, body: HEALTH_VERSION })
             .respond("GET", "/metrics", {
                 status: 200,
                 texto: "# TYPE poph_memoria_processo_bytes gauge\npoph_memoria_processo_bytes 131072000\n",
@@ -314,7 +314,7 @@ describe("busca global, versão e estado da instância (CF-04)", () => {
 
     it("sem a memória, mostra só 'Engine: 200 OK' (sem MB inventado)", async () => {
         prepareSession("pophg_teste", "global");
-        new FakeServer().respond("GET", "/healthz", { status: 200, corpo: HEALTH_VERSION }).install();
+        new FakeServer().respond("GET", "/healthz", { status: 200, body: HEALTH_VERSION }).install();
 
         build();
 
@@ -325,7 +325,7 @@ describe("busca global, versão e estado da instância (CF-04)", () => {
     it("saúde 503 aparece como 'degradada', e não como 'Sem conexão'", async () => {
         prepareSession("pophg_teste", "global");
         new FakeServer()
-            .respond("GET", "/healthz", { status: 503, corpo: { ...HEALTH_VERSION, status: "degraded" } })
+            .respond("GET", "/healthz", { status: 503, body: { ...HEALTH_VERSION, status: "degraded" } })
             .install();
 
         build();
@@ -337,7 +337,7 @@ describe("busca global, versão e estado da instância (CF-04)", () => {
     it("agrupa o resultado em Organizações, Telas e Comandos do poph", async () => {
         const user = userEvent.setup();
         prepareSession("pophg_teste", "global", THREE_ORGS);
-        new FakeServer().respond("GET", "/healthz", { status: 200, corpo: HEALTH_VERSION }).install();
+        new FakeServer().respond("GET", "/healthz", { status: 200, body: HEALTH_VERSION }).install();
 
         build();
         await user.type(fieldSearch(), "organiz");
@@ -350,7 +350,7 @@ describe("busca global, versão e estado da instância (CF-04)", () => {
     it("tela do menu só aparece na busca quando a organização está aberta na URL", async () => {
         const user = userEvent.setup();
         prepareSession("pophg_teste", "global", THREE_ORGS);
-        new FakeServer().respond("GET", "/healthz", { status: 200, corpo: HEALTH_VERSION }).install();
+        new FakeServer().respond("GET", "/healthz", { status: 200, body: HEALTH_VERSION }).install();
 
         build("/orgs/org_2/structure");
         await user.type(fieldSearch(), "produtos");
@@ -364,7 +364,7 @@ describe("busca global, versão e estado da instância (CF-04)", () => {
     it("sem organização aberta, as telas que exigem organização não aparecem", async () => {
         const user = userEvent.setup();
         prepareSession("pophg_teste", "global", THREE_ORGS);
-        new FakeServer().respond("GET", "/healthz", { status: 200, corpo: HEALTH_VERSION }).install();
+        new FakeServer().respond("GET", "/healthz", { status: 200, body: HEALTH_VERSION }).install();
 
         build("/orgs");
         await user.type(fieldSearch(), "produtos");
@@ -381,7 +381,7 @@ describe("busca global, versão e estado da instância (CF-04)", () => {
             configurable: true,
         });
         prepareSession("pophg_teste", "global", THREE_ORGS);
-        new FakeServer().respond("GET", "/healthz", { status: 200, corpo: HEALTH_VERSION }).install();
+        new FakeServer().respond("GET", "/healthz", { status: 200, body: HEALTH_VERSION }).install();
 
         build();
         await user.type(fieldSearch(), "doctor");
@@ -397,7 +397,7 @@ describe("busca global, versão e estado da instância (CF-04)", () => {
         const user = userEvent.setup();
         Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
         prepareSession("pophg_teste", "global", THREE_ORGS);
-        new FakeServer().respond("GET", "/healthz", { status: 200, corpo: HEALTH_VERSION }).install();
+        new FakeServer().respond("GET", "/healthz", { status: 200, body: HEALTH_VERSION }).install();
 
         build();
         await user.type(fieldSearch(), "doctor");
@@ -409,7 +409,7 @@ describe("busca global, versão e estado da instância (CF-04)", () => {
     it("Enter numa organização continua abrindo /orgs/:id pela busca global", async () => {
         const user = userEvent.setup();
         prepareSession("pophg_teste", "global", THREE_ORGS);
-        new FakeServer().respond("GET", "/healthz", { status: 200, corpo: HEALTH_VERSION }).install();
+        new FakeServer().respond("GET", "/healthz", { status: 200, body: HEALTH_VERSION }).install();
 
         build();
         await user.type(fieldSearch(), "padaria");
@@ -424,7 +424,7 @@ describe("cabeçalho da visão do agente (CF-10)", () => {
 
     it("a busca da visão do agente usa o placeholder contextual", () => {
         prepareSession("pophg_teste", "global");
-        new FakeServer().respond("GET", "/healthz", { status: 200, corpo: HEALTH_OK }).install();
+        new FakeServer().respond("GET", "/healthz", { status: 200, body: HEALTH_OK }).install();
 
         build("/orgs/org_1/agents/agt_ctx/instructions");
 
@@ -437,7 +437,7 @@ describe("cabeçalho da visão do agente (CF-10)", () => {
     it("a busca da visão do agente abre a aba do agente pela rota real", async () => {
         const user = userEvent.setup();
         prepareSession("pophg_teste", "global", THREE_ORGS);
-        new FakeServer().respond("GET", "/healthz", { status: 200, corpo: HEALTH_OK }).install();
+        new FakeServer().respond("GET", "/healthz", { status: 200, body: HEALTH_OK }).install();
 
         build("/orgs/org_1/agents/agt_busca/instructions");
         await user.type(fieldSearch(), "roteamento");
@@ -453,7 +453,7 @@ describe("cabeçalho da visão do agente (CF-10)", () => {
     it("a busca da visão do agente lista as seis abas com rota", async () => {
         const user = userEvent.setup();
         prepareSession("pophg_teste", "global", THREE_ORGS);
-        new FakeServer().respond("GET", "/healthz", { status: 200, corpo: HEALTH_OK }).install();
+        new FakeServer().respond("GET", "/healthz", { status: 200, body: HEALTH_OK }).install();
 
         build("/orgs/org_1/agents/agt_abas/instructions");
         await user.type(fieldSearch(), "e");
@@ -478,7 +478,7 @@ describe("cabeçalho da visão do agente (CF-10)", () => {
 
     it("fora da visão do agente a busca continua global", () => {
         prepareSession("pophg_teste", "global");
-        new FakeServer().respond("GET", "/healthz", { status: 200, corpo: HEALTH_OK }).install();
+        new FakeServer().respond("GET", "/healthz", { status: 200, body: HEALTH_OK }).install();
 
         build("/orgs/org_1/structure");
 
@@ -491,7 +491,7 @@ describe("cabeçalho da visão do agente (CF-10)", () => {
     it("a busca da organização não oferece as abas do agente", async () => {
         const user = userEvent.setup();
         prepareSession("pophg_teste", "global", THREE_ORGS);
-        new FakeServer().respond("GET", "/healthz", { status: 200, corpo: HEALTH_OK }).install();
+        new FakeServer().respond("GET", "/healthz", { status: 200, body: HEALTH_OK }).install();
 
         build("/orgs/org_1/structure");
         await user.type(fieldSearch(), "conhecimento");
@@ -502,7 +502,7 @@ describe("cabeçalho da visão do agente (CF-10)", () => {
 
     it("o chip mostra o modelo do agente aberto e a saúde da instância", async () => {
         prepareSession("pophg_teste", "global");
-        new FakeServer().respond("GET", "/healthz", { status: 200, corpo: HEALTH_OK }).install();
+        new FakeServer().respond("GET", "/healthz", { status: 200, body: HEALTH_OK }).install();
         publishAgentModel("agt_chip", "gemini-3.8-flash");
 
         build("/orgs/org_1/agents/agt_chip/instructions");
@@ -513,7 +513,7 @@ describe("cabeçalho da visão do agente (CF-10)", () => {
 
     it("sem modelo publicado o chip mostra 'Modelo: —'", async () => {
         prepareSession("pophg_teste", "global");
-        new FakeServer().respond("GET", "/healthz", { status: 200, corpo: HEALTH_OK }).install();
+        new FakeServer().respond("GET", "/healthz", { status: 200, body: HEALTH_OK }).install();
 
         build("/orgs/org_1/agents/agt_sem_modelo/instructions");
 
@@ -523,7 +523,7 @@ describe("cabeçalho da visão do agente (CF-10)", () => {
     it("o chip avisa quando a instância responde 503", async () => {
         prepareSession("pophg_teste", "global");
         new FakeServer()
-            .respond("GET", "/healthz", { status: 503, corpo: { ...HEALTH_OK, status: "degraded" } })
+            .respond("GET", "/healthz", { status: 503, body: { ...HEALTH_OK, status: "degraded" } })
             .install();
         publishAgentModel("agt_degradado", "gemini-3.8-flash");
 
@@ -545,7 +545,7 @@ describe("cabeçalho da visão do agente (CF-10)", () => {
 
     it("na visão do agente o botão de sair aparece com o texto 'Sair'", () => {
         prepareSession("pophg_teste", "global");
-        new FakeServer().respond("GET", "/healthz", { status: 200, corpo: HEALTH_OK }).install();
+        new FakeServer().respond("GET", "/healthz", { status: 200, body: HEALTH_OK }).install();
 
         build("/orgs/org_1/agents/agt_sair/instructions");
 
@@ -555,7 +555,7 @@ describe("cabeçalho da visão do agente (CF-10)", () => {
 
     it("fora da visão do agente o botão de sair continua só com o ícone", () => {
         prepareSession("pophg_teste", "global");
-        new FakeServer().respond("GET", "/healthz", { status: 200, corpo: HEALTH_OK }).install();
+        new FakeServer().respond("GET", "/healthz", { status: 200, body: HEALTH_OK }).install();
 
         build("/orgs/org_1/structure");
 
@@ -569,7 +569,7 @@ describe("cabeçalho da visão do agente sem selo de token e com trilha curta (C
 
     it("na visão do agente o selo de token sai e o escopo fica só na dica do chip", async () => {
         prepareSession("pophg_teste", "global");
-        new FakeServer().respond("GET", "/healthz", { status: 200, corpo: HEALTH_OK }).install();
+        new FakeServer().respond("GET", "/healthz", { status: 200, body: HEALTH_OK }).install();
 
         build("/orgs/org_1/agents/agt_selo/instructions");
 
@@ -581,7 +581,7 @@ describe("cabeçalho da visão do agente sem selo de token e com trilha curta (C
 
     it("na visão do agente com token de organização o selo também sai", async () => {
         prepareSession("poph_org_teste", "org");
-        new FakeServer().respond("GET", "/healthz", { status: 200, corpo: HEALTH_OK }).install();
+        new FakeServer().respond("GET", "/healthz", { status: 200, body: HEALTH_OK }).install();
 
         build("/orgs/org_1/agents/agt_selo_org/instructions");
 
@@ -591,7 +591,7 @@ describe("cabeçalho da visão do agente sem selo de token e com trilha curta (C
 
     it("fora da visão do agente o selo de token continua", () => {
         prepareSession("pophg_teste", "global");
-        new FakeServer().respond("GET", "/healthz", { status: 200, corpo: HEALTH_OK }).install();
+        new FakeServer().respond("GET", "/healthz", { status: 200, body: HEALTH_OK }).install();
 
         build("/orgs/org_1/structure");
 
@@ -600,7 +600,7 @@ describe("cabeçalho da visão do agente sem selo de token e com trilha curta (C
 
     it("a trilha da visão do agente tem três passos, sem Organizações e sem Agentes", () => {
         prepareSession("pophg_teste", "global");
-        new FakeServer().respond("GET", "/healthz", { status: 200, corpo: HEALTH_OK }).install();
+        new FakeServer().respond("GET", "/healthz", { status: 200, body: HEALTH_OK }).install();
 
         build("/orgs/org_1/agents/agt_trilha/instructions");
 
@@ -616,7 +616,7 @@ describe("cabeçalho da visão do agente sem selo de token e com trilha curta (C
 
     it("na lista de agentes da organização a trilha continua como era", () => {
         prepareSession("pophg_teste", "global");
-        new FakeServer().respond("GET", "/healthz", { status: 200, corpo: HEALTH_OK }).install();
+        new FakeServer().respond("GET", "/healthz", { status: 200, body: HEALTH_OK }).install();
 
         build("/orgs/org_1/agents");
 
@@ -634,7 +634,7 @@ describe("trilha do agente de três passos em 1280 (CF-11 rodada 1)", () => {
 
     it("na visão do agente o cabeçalho e a trilha levam a marca --agent", async () => {
         prepareSession("pophg_teste", "global");
-        new FakeServer().respond("GET", "/healthz", { status: 200, corpo: HEALTH_OK }).install();
+        new FakeServer().respond("GET", "/healthz", { status: 200, body: HEALTH_OK }).install();
 
         const { container } = build("/orgs/org_1/agents/agt_largura/instructions");
 
@@ -647,7 +647,7 @@ describe("trilha do agente de três passos em 1280 (CF-11 rodada 1)", () => {
 
     it("na rota de organização nem o cabeçalho nem a trilha levam a marca", () => {
         prepareSession("pophg_teste", "global");
-        new FakeServer().respond("GET", "/healthz", { status: 200, corpo: HEALTH_OK }).install();
+        new FakeServer().respond("GET", "/healthz", { status: 200, body: HEALTH_OK }).install();
 
         const { container } = build("/orgs/org_1/structure");
 
@@ -659,7 +659,7 @@ describe("trilha do agente de três passos em 1280 (CF-11 rodada 1)", () => {
 
     it("na lista de agentes da organização a trilha também fica sem a marca", () => {
         prepareSession("pophg_teste", "global");
-        new FakeServer().respond("GET", "/healthz", { status: 200, corpo: HEALTH_OK }).install();
+        new FakeServer().respond("GET", "/healthz", { status: 200, body: HEALTH_OK }).install();
 
         const { container } = build("/orgs/org_1/agents");
 
@@ -673,7 +673,7 @@ describe("Topbar i18n", () => {
     it("switches Topbar, global search, and unsaved guard to en-US", async () => {
         const user = userEvent.setup();
         prepareSession("pophg_teste", "global", THREE_ORGS);
-        new FakeServer().respond("GET", "/healthz", { status: 200, corpo: HEALTH }).install();
+        new FakeServer().respond("GET", "/healthz", { status: 200, body: HEALTH }).install();
 
         build("/orgs", { dirty: true });
 

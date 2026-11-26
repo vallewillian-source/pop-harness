@@ -72,7 +72,7 @@ describe("Casca do Console (HR-61)", () => {
     it("botão de ajuda no header abre o modal de atalhos", async () => {
         const user = userEvent.setup();
         prepareSession();
-        new FakeServer().respond("GET", "/healthz", { status: 200, corpo: HEALTH }).install();
+        new FakeServer().respond("GET", "/healthz", { status: 200, body: HEALTH }).install();
         build("/orgs");
 
         await user.click(screen.getByRole("button", { name: "Atalhos do teclado" }));
@@ -84,8 +84,8 @@ describe("Casca do Console (HR-61)", () => {
         const user = userEvent.setup();
         prepareSession();
         const servidor = new FakeServer()
-            .respond("GET", "/healthz", { status: 200, corpo: HEALTH })
-            .respond("GET", "/admin/v1/orgs/org_1/agents", { status: 200, corpo: THREE_AGENTS })
+            .respond("GET", "/healthz", { status: 200, body: HEALTH })
+            .respond("GET", "/admin/v1/orgs/org_1/agents", { status: 200, body: THREE_AGENTS })
             .install();
         build("/orgs/org_1/structure");
 
@@ -102,10 +102,10 @@ describe("Casca do Console (HR-61)", () => {
         const user = userEvent.setup();
         prepareSession();
         const servidor = new FakeServer()
-            .respond("GET", "/healthz", { status: 200, corpo: HEALTH })
+            .respond("GET", "/healthz", { status: 200, body: HEALTH })
             .respond("GET", "/admin/v1/orgs/org_1/agents", {
                 status: 200,
-                corpo: AGENTS_WITH_STATUS,
+                body: AGENTS_WITH_STATUS,
             })
             .install();
         build("/orgs/org_1/structure");
@@ -126,7 +126,7 @@ describe("Casca do Console (HR-61)", () => {
     it("sem organização aberta, o item Agentes não tem contador nem faz consulta", () => {
         prepareSession();
         const servidor = new FakeServer()
-            .respond("GET", "/healthz", { status: 200, corpo: HEALTH })
+            .respond("GET", "/healthz", { status: 200, body: HEALTH })
             .install();
         build("/orgs");
 
@@ -138,7 +138,7 @@ describe("Casca do Console (HR-61)", () => {
     it("se a consulta de agentes falha, o item fica sem contador e a tela segue", async () => {
         prepareSession();
         const servidor = new FakeServer()
-            .respond("GET", "/healthz", { status: 200, corpo: HEALTH })
+            .respond("GET", "/healthz", { status: 200, body: HEALTH })
             .respond("GET", "/admin/v1/orgs/org_1/agents", apiError(500, "interno", "falha de teste"))
             .install();
         build("/orgs/org_1/structure");
@@ -156,7 +156,7 @@ describe("Casca do Console (HR-61)", () => {
     it("switches the shortcuts modal to en-US when clicking EN", async () => {
         const user = userEvent.setup();
         prepareSession();
-        new FakeServer().respond("GET", "/healthz", { status: 200, corpo: HEALTH }).install();
+        new FakeServer().respond("GET", "/healthz", { status: 200, body: HEALTH }).install();
         build("/orgs");
 
         await user.click(screen.getByRole("button", { name: "Inglês (Estados Unidos)" }));

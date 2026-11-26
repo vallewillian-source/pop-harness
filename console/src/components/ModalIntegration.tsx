@@ -256,7 +256,7 @@ export function ModalIntegration({
     }, [manifesto, kindValues, editing, integracao, kind]);
 
     function showErrorApi(failure: ApiError) {
-        const details = failure.detalhes as Record<string, unknown> | null | undefined;
+        const details = failure.details as Record<string, unknown> | null | undefined;
         const campo = typeof details?.["field"] === "string" ? details["field"] : undefined;
         const motivo =
             typeof details?.["reason"] === "string" ? details["reason"] : failure.message;

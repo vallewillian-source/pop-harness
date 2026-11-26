@@ -110,10 +110,10 @@ function serverWith(items: Org[]) {
     servidor
         .respond("GET", "/agents", () => ({
             status: 200,
-            corpo: { items: [AGENTE], next_cursor: null },
+            body: { items: [AGENTE], next_cursor: null },
         }))
-        .respond("GET", "/matrix", { status: 200, corpo: MATRIX_CONNECTED })
-        .respond("GET", "/admin/v1/orgs", { status: 200, corpo: { items, next_cursor: null } })
+        .respond("GET", "/matrix", { status: 200, body: MATRIX_CONNECTED })
+        .respond("GET", "/admin/v1/orgs", { status: 200, body: { items, next_cursor: null } })
         .install();
     return servidor;
 }
@@ -307,7 +307,7 @@ describe("Orgs", () => {
         servidor
             .respond("GET", "/admin/v1/orgs", () => ({
                 status: 200,
-                corpo: {
+                body: {
                     items: reativada
                         ? [ACTIVE, { ...INACTIVE, status: "active", version: 8 }]
                         : [ACTIVE, INACTIVE],
@@ -316,7 +316,7 @@ describe("Orgs", () => {
             }))
             .respond("PATCH", "/admin/v1/orgs/org_2", () => {
                 reativada = true;
-                return { status: 200, corpo: { ...INACTIVE, status: "active", version: 8 } };
+                return { status: 200, body: { ...INACTIVE, status: "active", version: 8 } };
             })
             .install();
 
@@ -332,7 +332,7 @@ describe("Orgs", () => {
             expect(servidor.callsFor("PATCH", "/admin/v1/orgs/org_2")).toHaveLength(1),
         );
         const call = servidor.callsFor("PATCH", "/admin/v1/orgs/org_2")[0]!;
-        expect(call.corpo).toEqual({ status: "active" });
+        expect(call.body).toEqual({ status: "active" });
         expect(call.headers["if-match"]).toBe("7");
 
         await waitFor(() =>
@@ -347,7 +347,7 @@ describe("Orgs", () => {
         const servidor = serverWith([INACTIVE]);
         servidor.respond("PATCH", "/admin/v1/orgs/org_2", {
             status: 412,
-            corpo: {
+            body: {
                 code: "version_conflict",
                 message: "a versão mudou",
                 details: { expected_version: 7, current_version: 9 },
@@ -381,7 +381,7 @@ describe("Orgs", () => {
         new FakeServer()
             .respond("GET", "/admin/v1/orgs", {
                 status: 500,
-                corpo: { code: "internal", message: "falha inesperada", details: null },
+                body: { code: "internal", message: "falha inesperada", details: null },
             })
             .install();
         vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -507,11 +507,11 @@ describe("Orgs", () => {
         servidor
             .respond("GET", "/agents", {
                 status: 500,
-                corpo: { code: "internal", message: "falha ao listar agentes", details: null },
+                body: { code: "internal", message: "falha ao listar agentes", details: null },
             })
             .respond("GET", "/admin/v1/orgs", {
                 status: 200,
-                corpo: { items: [ACTIVE], next_cursor: null },
+                body: { items: [ACTIVE], next_cursor: null },
             })
             .install();
 
@@ -599,7 +599,7 @@ describe("Orgs · layout da prancha 01 (CF-03b)", () => {
     function clusterServer(items: OrgInList[], instances: ListInstance[] | null) {
         const servidor = new FakeServer();
         servidor
-            .respond("GET", "/agents", () => ({ status: 200, corpo: { items: [AGENTE], next_cursor: null } }))
+            .respond("GET", "/agents", () => ({ status: 200, body: { items: [AGENTE], next_cursor: null } }))
             .respond("GET", "/backup", {
                 status: 200,
                 texto: "{}",
@@ -607,11 +607,11 @@ describe("Orgs · layout da prancha 01 (CF-03b)", () => {
             })
             .respond("GET", "/admin/v1/orgs", {
                 status: 200,
-                corpo: { items, next_cursor: null, ...(instances ? { instancias: instances } : {}) },
+                body: { items, next_cursor: null, ...(instances ? { instancias: instances } : {}) },
             })
             .respond("GET", "/healthz", {
                 status: 200,
-                corpo: { status: "ok", version: "0.1.0", uptime_seconds: 15120, databases: { harness: 1, rag: 1 } },
+                body: { status: "ok", version: "0.1.0", uptime_seconds: 15120, databases: { harness: 1, rag: 1 } },
             })
             .respond("GET", "/metrics", { status: 200, texto: "poph_memoria_processo_bytes 131072000\n" })
             .install();

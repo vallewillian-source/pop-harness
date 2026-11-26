@@ -174,11 +174,11 @@ export function AgentFiles() {
         );
     }
 
-    let corpo;
+    let content;
     if (loadingFiles && files.length === 0) {
-        corpo = <SofaSkeleton lines={5} />;
+        content = <SofaSkeleton lines={5} />;
     } else if (errorFiles) {
-        corpo = (
+        content = (
             <SofaErrorState
                 title={t("files.libraryErrorTitle")}
                 description={t("files.libraryErrorDescription")}
@@ -187,7 +187,7 @@ export function AgentFiles() {
             />
         );
     } else if (files.length === 0) {
-        corpo = (
+        content = (
             <SofaEmptyState
                 icon={<IconFile aria-hidden="true" />}
                 title={t("files.emptyTitle")}
@@ -204,7 +204,7 @@ export function AgentFiles() {
             />
         );
     } else {
-        corpo = (
+        content = (
             <SofaTable
                 className="poph-files__table"
                 label={t("files.tableLabel")}
@@ -265,7 +265,7 @@ export function AgentFiles() {
                     </>
                 }
             >
-                {corpo}
+                {content}
             </SectionAgent>
 
             <ModalFile

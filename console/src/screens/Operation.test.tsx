@@ -80,8 +80,8 @@ function section(title: string): HTMLElement {
 }
 
 function serverDefault(
-    health: { status: number; corpo?: unknown } = { status: 200, corpo: HEALTH_OK },
-    list: { status: number; corpo?: unknown } = { status: 200, corpo: { items: [] } },
+    health: { status: number; body?: unknown } = { status: 200, body: HEALTH_OK },
+    list: { status: number; body?: unknown } = { status: 200, body: { items: [] } },
 ) {
     return new FakeServer()
         .respond("GET", "/healthz", health)
@@ -143,7 +143,7 @@ describe("Operacao: saúde e métricas", () => {
     });
 
     it("saúde 503 com corpo aparece como no ar, com um banco sem resposta", async () => {
-        serverDefault({ status: 503, corpo: { ...HEALTH_OK, status: "degraded" } });
+        serverDefault({ status: 503, body: { ...HEALTH_OK, status: "degraded" } });
 
         build();
 
@@ -152,7 +152,7 @@ describe("Operacao: saúde e métricas", () => {
     });
 
     it("erro no servidor mostra 'Tentar de novo' e não derruba as métricas", async () => {
-        serverDefault({ status: 500, corpo: { code: "interno", message: "falha" } });
+        serverDefault({ status: 500, body: { code: "interno", message: "falha" } });
 
         build();
 
@@ -169,7 +169,7 @@ describe("Operacao: saúde e métricas", () => {
         const servidor = new FakeServer()
             .respond("GET", "/healthz", apiError(500, "interno", "falha"))
             .respond("GET", "/metrics", { status: 200, texto: METRICS })
-            .respond("GET", "/manifests", { status: 200, corpo: { items: [] } })
+            .respond("GET", "/manifests", { status: 200, body: { items: [] } })
             .install();
         build();
 
@@ -186,9 +186,9 @@ describe("Operacao: saúde e métricas", () => {
 
     it("métricas sem nenhum valor conhecido mostram 'não informado', sem zero inventado", async () => {
         new FakeServer()
-            .respond("GET", "/healthz", { status: 200, corpo: HEALTH_OK })
+            .respond("GET", "/healthz", { status: 200, body: HEALTH_OK })
             .respond("GET", "/metrics", { status: 200, texto: "# só comentário\n" })
-            .respond("GET", "/manifests", { status: 200, corpo: { items: [] } })
+            .respond("GET", "/manifests", { status: 200, body: { items: [] } })
             .install();
 
         build();
@@ -203,9 +203,9 @@ describe("Operacao: saúde e métricas", () => {
 
     it("erro nas métricas mostra 'Tentar de novo' e segue com a saúde", async () => {
         new FakeServer()
-            .respond("GET", "/healthz", { status: 200, corpo: HEALTH_OK })
+            .respond("GET", "/healthz", { status: 200, body: HEALTH_OK })
             .respond("GET", "/metrics", apiError(500, "interno", "falha"))
-            .respond("GET", "/manifests", { status: 200, corpo: { items: [] } })
+            .respond("GET", "/manifests", { status: 200, body: { items: [] } })
             .install();
 
         build();
@@ -265,7 +265,7 @@ describe("Operacao: saúde e métricas", () => {
 
 describe("Operacao: lista de plugins declarados (HR-48c)", () => {
     it("mostra a lista: o plugin no ar com botão de detalhe, e o indisponível marcado sem botão", async () => {
-        serverDefault(undefined, { status: 200, corpo: LIST_TWO_PLUGINS });
+        serverDefault(undefined, { status: 200, body: LIST_TWO_PLUGINS });
         build();
 
         const list = await screen.findByRole("list", { name: "Plugins declarados" });
@@ -287,7 +287,7 @@ describe("Operacao: lista de plugins declarados (HR-48c)", () => {
     });
 
     it("lista vazia mostra a explicação de como declarar, sem tratar como erro", async () => {
-        serverDefault(undefined, { status: 200, corpo: { items: [] } });
+        serverDefault(undefined, { status: 200, body: { items: [] } });
         build();
 
         expect(
@@ -298,7 +298,7 @@ describe("Operacao: lista de plugins declarados (HR-48c)", () => {
     });
 
     it("enquanto a lista carrega, avisa que a primeira consulta pode demorar", async () => {
-        serverDefault(undefined, { status: 200, corpo: LIST_TWO_PLUGINS });
+        serverDefault(undefined, { status: 200, body: LIST_TWO_PLUGINS });
         build();
 
         expect(screen.getByText(/Consultando plugins/)).toBeInTheDocument();
@@ -309,13 +309,13 @@ describe("Operacao: lista de plugins declarados (HR-48c)", () => {
     it("erro 403 na lista explica o token e 'Tentar de novo' recupera a lista", async () => {
         let calls = 0;
         new FakeServer()
-            .respond("GET", "/healthz", { status: 200, corpo: HEALTH_OK })
+            .respond("GET", "/healthz", { status: 200, body: HEALTH_OK })
             .respond("GET", "/metrics", { status: 200, texto: METRICS })
             .respond("GET", "/manifests", () => {
                 calls += 1;
                 return calls === 1
                     ? apiError(403, "forbidden", "outra org")
-                    : { status: 200, corpo: LIST_TWO_PLUGINS };
+                    : { status: 200, body: LIST_TWO_PLUGINS };
             })
             .install();
         build();
@@ -344,10 +344,10 @@ describe("Operacao: lista de plugins declarados (HR-48c)", () => {
 
     it("o detalhe abre pela linha da lista e mostra nome, versão e a contagem de campos", async () => {
         const servidor = new FakeServer()
-            .respond("GET", "/healthz", { status: 200, corpo: HEALTH_OK })
+            .respond("GET", "/healthz", { status: 200, body: HEALTH_OK })
             .respond("GET", "/metrics", { status: 200, texto: METRICS })
-            .respond("GET", "/admin/v1/orgs/org_1/manifests/eco", { status: 200, corpo: MANIFEST_ECHO })
-            .respond("GET", "/manifests", { status: 200, corpo: LIST_TWO_PLUGINS })
+            .respond("GET", "/admin/v1/orgs/org_1/manifests/eco", { status: 200, body: MANIFEST_ECHO })
+            .respond("GET", "/manifests", { status: 200, body: LIST_TWO_PLUGINS })
             .install();
         build();
 
@@ -370,10 +370,10 @@ describe("Operacao: lista de plugins declarados (HR-48c)", () => {
 
     it("plugin que não responde no detalhe (503) explica e oferece 'Tentar de novo'", async () => {
         new FakeServer()
-            .respond("GET", "/healthz", { status: 200, corpo: HEALTH_OK })
+            .respond("GET", "/healthz", { status: 200, body: HEALTH_OK })
             .respond("GET", "/metrics", { status: 200, texto: METRICS })
             .respond("GET", "/admin/v1/orgs/org_1/manifests/eco", apiError(503, "manifesto_indisponivel", "sem resposta"))
-            .respond("GET", "/manifests", { status: 200, corpo: LIST_TWO_PLUGINS })
+            .respond("GET", "/manifests", { status: 200, body: LIST_TWO_PLUGINS })
             .install();
         build();
 
@@ -388,7 +388,7 @@ describe("Operacao: lista de plugins declarados (HR-48c)", () => {
 
 describe("Operacao: exportar e importar a organização (HR-48e-2)", () => {
     it("a tela de operação mostra a seção, e a atualização automática não baixa nem envia nada", async () => {
-        const servidor = serverDefault(undefined, { status: 200, corpo: { items: [] } });
+        const servidor = serverDefault(undefined, { status: 200, body: { items: [] } });
         build();
 
         expect(await screen.findByRole("heading", { level: 2, name: "Exportar e importar a organização" })).toBeInTheDocument();
@@ -454,9 +454,9 @@ describe("Operacao: cluster, recarga do mapa (HR-48f)", () => {
 
     function serverWithReload(response: Parameters<FakeServer["respond"]>[2]) {
         return new FakeServer()
-            .respond("GET", "/healthz", { status: 200, corpo: HEALTH_OK })
+            .respond("GET", "/healthz", { status: 200, body: HEALTH_OK })
             .respond("GET", "/metrics", { status: 200, texto: METRICS })
-            .respond("GET", "/manifests", { status: 200, corpo: { items: [] } })
+            .respond("GET", "/manifests", { status: 200, body: { items: [] } })
             .respond("POST", "/admin/v1/cluster/reload", response)
             .install();
     }
@@ -474,7 +474,7 @@ describe("Operacao: cluster, recarga do mapa (HR-48f)", () => {
     }
 
     it("a seção aparece, e o botão só abre a confirmação: nada é enviado antes de confirmar", async () => {
-        const servidor = serverWithReload({ status: 200, corpo: REPORT_NO_CHANGE });
+        const servidor = serverWithReload({ status: 200, body: REPORT_NO_CHANGE });
         build();
         await screen.findByText("No ar, com os bancos respondendo");
 
@@ -485,7 +485,7 @@ describe("Operacao: cluster, recarga do mapa (HR-48f)", () => {
     });
 
     it("cancelar a confirmação não envia nada", async () => {
-        const servidor = serverWithReload({ status: 200, corpo: REPORT_NO_CHANGE });
+        const servidor = serverWithReload({ status: 200, body: REPORT_NO_CHANGE });
         build();
         await screen.findByText("No ar, com os bancos respondendo");
         const dialog = await openConfirmation();
@@ -498,7 +498,7 @@ describe("Operacao: cluster, recarga do mapa (HR-48f)", () => {
     });
 
     it("200 com mudança: mostra o que mudou, a impressão digital completa no title e as orgs que trocaram", async () => {
-        const servidor = serverWithReload({ status: 200, corpo: REPORT_WITH_CHANGE });
+        const servidor = serverWithReload({ status: 200, body: REPORT_WITH_CHANGE });
         build();
         await screen.findByText("No ar, com os bancos respondendo");
 
@@ -521,7 +521,7 @@ describe("Operacao: cluster, recarga do mapa (HR-48f)", () => {
     });
 
     it("sem segredo na tela: aparece só 'configurado' ou 'não configurado'", async () => {
-        serverWithReload({ status: 200, corpo: REPORT_WITH_CHANGE });
+        serverWithReload({ status: 200, body: REPORT_WITH_CHANGE });
         build();
         await screen.findByText("No ar, com os bancos respondendo");
 
@@ -533,7 +533,7 @@ describe("Operacao: cluster, recarga do mapa (HR-48f)", () => {
     });
 
     it("200 sem mudança: diz que nada mudou e que o conteúdo já estava em uso", async () => {
-        serverWithReload({ status: 200, corpo: REPORT_NO_CHANGE });
+        serverWithReload({ status: 200, body: REPORT_NO_CHANGE });
         build();
         await screen.findByText("No ar, com os bancos respondendo");
 
@@ -549,7 +549,7 @@ describe("Operacao: cluster, recarga do mapa (HR-48f)", () => {
     });
 
     it("modo instância única aparece como situação normal, não como erro", async () => {
-        serverWithReload({ status: 200, corpo: REPORT_SINGLE_INSTANCE });
+        serverWithReload({ status: 200, body: REPORT_SINGLE_INSTANCE });
         build();
         await screen.findByText("No ar, com os bancos respondendo");
 
@@ -593,7 +593,7 @@ describe("Operacao: cluster, recarga do mapa (HR-48f)", () => {
         serverWithReload(() => {
             calls += 1;
             return calls === 1
-                ? { status: 200, corpo: REPORT_WITH_CHANGE }
+                ? { status: 200, body: REPORT_WITH_CHANGE }
                 : apiError(400, "cluster_invalido", "cluster.toml inválido", { arquivo: "/x/cluster.toml", problemas: ["linha 3: erro"] });
         });
         build();
@@ -628,7 +628,7 @@ describe("Operacao: cluster, recarga do mapa (HR-48f)", () => {
     });
 
     it("enquanto a recarga roda, o botão fica bloqueado e um segundo clique não envia outro pedido", async () => {
-        const servidor = serverWithReload({ status: 200, corpo: REPORT_NO_CHANGE });
+        const servidor = serverWithReload({ status: 200, body: REPORT_NO_CHANGE });
         const fetchFake = fetch as unknown as Mock;
         const original = fetchFake.getMockImplementation();
         if (!original) throw new Error("fetch falso sem implementação");
@@ -662,7 +662,7 @@ describe("Operacao: cluster, recarga do mapa (HR-48f)", () => {
     });
 
     it("falha de rede não quebra a tela: avisa que não sabe se foi aplicada e oferece 'Tentar de novo'", async () => {
-        const servidor = serverWithReload({ status: 200, corpo: REPORT_NO_CHANGE });
+        const servidor = serverWithReload({ status: 200, body: REPORT_NO_CHANGE });
         const fetchFake = fetch as unknown as Mock;
         const original = fetchFake.getMockImplementation();
         if (!original) throw new Error("fetch falso sem implementação");
@@ -746,7 +746,7 @@ describe("Operacao em en-US", () => {
 
     it("erro de seção em inglês, com o botão de tentar de novo", async () => {
         setLocale("en-US");
-        serverDefault({ status: 500, corpo: { code: "interno", message: "falha" } });
+        serverDefault({ status: 500, body: { code: "interno", message: "falha" } });
         build();
 
         const block = await waitFor(() => {
@@ -761,10 +761,10 @@ describe("Operacao em en-US", () => {
     it("lista de plugins e detalhe em inglês", async () => {
         setLocale("en-US");
         new FakeServer()
-            .respond("GET", "/healthz", { status: 200, corpo: HEALTH_OK })
+            .respond("GET", "/healthz", { status: 200, body: HEALTH_OK })
             .respond("GET", "/metrics", { status: 200, texto: METRICS })
-            .respond("GET", "/admin/v1/orgs/org_1/manifests/eco", { status: 200, corpo: MANIFEST_ECHO })
-            .respond("GET", "/manifests", { status: 200, corpo: LIST_TWO_PLUGINS })
+            .respond("GET", "/admin/v1/orgs/org_1/manifests/eco", { status: 200, body: MANIFEST_ECHO })
+            .respond("GET", "/manifests", { status: 200, body: LIST_TWO_PLUGINS })
             .install();
         build();
 
@@ -818,10 +818,10 @@ describe("Operacao em en-US", () => {
             instancias_removidas: [],
         };
         new FakeServer()
-            .respond("GET", "/healthz", { status: 200, corpo: HEALTH_OK })
+            .respond("GET", "/healthz", { status: 200, body: HEALTH_OK })
             .respond("GET", "/metrics", { status: 200, texto: METRICS })
-            .respond("GET", "/manifests", { status: 200, corpo: { items: [] } })
-            .respond("POST", "/admin/v1/cluster/reload", { status: 200, corpo: report })
+            .respond("GET", "/manifests", { status: 200, body: { items: [] } })
+            .respond("POST", "/admin/v1/cluster/reload", { status: 200, body: report })
             .install();
         build();
         await screen.findByText("Up, with the databases responding");

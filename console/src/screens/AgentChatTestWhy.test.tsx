@@ -21,8 +21,8 @@ let routes: RouteEntry[] = [];
 let readConversation1: () => Response = () => json(200, historyConversation1());
 let readsConversation1 = 0;
 
-function json(status: number, corpo: unknown): Response {
-    return new Response(JSON.stringify(corpo), {
+function json(status: number, body: unknown): Response {
+    return new Response(JSON.stringify(body), {
         status,
         headers: { "content-type": "application/json" },
     });

@@ -42,7 +42,7 @@ describe("Estrutura", () => {
         new FakeServer()
             .respond("GET", `/admin/v1/orgs/${ORG}/departments`, {
                 status: 200,
-                corpo: {
+                body: {
                     items: [
                         departamento("dep_1", "Financeiro", "Cobrança e convênios"),
                         departamento("dep_2", "Plantão"),
@@ -55,7 +55,7 @@ describe("Estrutura", () => {
                 `/admin/v1/orgs/${ORG}/agents`,
                 {
                     status: 200,
-                    corpo: {
+                    body: {
                         items: [
                             { id: "ag_1", name: "Atendente", default_department_id: "dep_1", human_handoff_department_id: "dep_1" },
                             { id: "ag_2", name: "Triagem", default_department_id: null, human_handoff_department_id: "dep_1" },
@@ -66,11 +66,11 @@ describe("Estrutura", () => {
             )
             .respond("GET", `/admin/v1/orgs/${ORG}/categories`, {
                 status: 200,
-                corpo: { items: [category("cat_1", "Ortodontia")], next_cursor: null },
+                body: { items: [category("cat_1", "Ortodontia")], next_cursor: null },
             })
             .respond("GET", `/admin/v1/orgs/${ORG}`, {
                 status: 200,
-                corpo: { id: ORG, name: "Exemplo Odontologia" },
+                body: { id: ORG, name: "Exemplo Odontologia" },
             })
             .install();
 
@@ -92,14 +92,14 @@ describe("Estrutura", () => {
         new FakeServer()
             .respond("GET", `/admin/v1/orgs/${ORG}/departments`, {
                 status: 200,
-                corpo: { items: [], next_cursor: null },
+                body: { items: [], next_cursor: null },
             })
-            .respond("GET", `/admin/v1/orgs/${ORG}/agents`, { status: 200, corpo: { items: [], next_cursor: null } })
+            .respond("GET", `/admin/v1/orgs/${ORG}/agents`, { status: 200, body: { items: [], next_cursor: null } })
             .respond("GET", `/admin/v1/orgs/${ORG}/categories`, {
                 status: 200,
-                corpo: { items: [category("cat_1", "Ortodontia")], next_cursor: null },
+                body: { items: [category("cat_1", "Ortodontia")], next_cursor: null },
             })
-            .respond("GET", `/admin/v1/orgs/${ORG}`, { status: 200, corpo: { id: ORG, name: "Exemplo" } })
+            .respond("GET", `/admin/v1/orgs/${ORG}`, { status: 200, body: { id: ORG, name: "Exemplo" } })
             .install();
 
         build();
@@ -114,14 +114,14 @@ describe("Estrutura", () => {
         new FakeServer()
             .respond("GET", `/admin/v1/orgs/${ORG}/departments`, {
                 status: 200,
-                corpo: { items: [], next_cursor: null },
+                body: { items: [], next_cursor: null },
             })
-            .respond("GET", `/admin/v1/orgs/${ORG}/agents`, { status: 200, corpo: { items: [], next_cursor: null } })
+            .respond("GET", `/admin/v1/orgs/${ORG}/agents`, { status: 200, body: { items: [], next_cursor: null } })
             .respond("GET", `/admin/v1/orgs/${ORG}/categories`, {
                 status: 200,
-                corpo: { items: [], next_cursor: null },
+                body: { items: [], next_cursor: null },
             })
-            .respond("GET", `/admin/v1/orgs/${ORG}`, { status: 200, corpo: { id: ORG, name: "Exemplo" } })
+            .respond("GET", `/admin/v1/orgs/${ORG}`, { status: 200, body: { id: ORG, name: "Exemplo" } })
             .install();
 
         build();
@@ -142,19 +142,19 @@ describe("Estrutura", () => {
             })
             .respond("GET", `/admin/v1/orgs/${ORG}/departments`, () => ({
                 status: 200,
-                corpo: { items: departments, next_cursor: null },
+                body: { items: departments, next_cursor: null },
             }))
             .respond("GET", `/admin/v1/orgs/${ORG}/agents`, {
                 status: 200,
-                corpo: {
+                body: {
                     items: [
                         { id: "ag_1", name: "Atendente", default_department_id: "dep_1", human_handoff_department_id: null },
                     ],
                     next_cursor: null,
                 },
             })
-            .respond("GET", `/admin/v1/orgs/${ORG}/categories`, { status: 200, corpo: { items: [], next_cursor: null } })
-            .respond("GET", `/admin/v1/orgs/${ORG}`, { status: 200, corpo: { id: ORG, name: "Exemplo" } })
+            .respond("GET", `/admin/v1/orgs/${ORG}/categories`, { status: 200, body: { items: [], next_cursor: null } })
+            .respond("GET", `/admin/v1/orgs/${ORG}`, { status: 200, body: { id: ORG, name: "Exemplo" } })
             .install();
 
         build();
@@ -193,17 +193,17 @@ describe("Estrutura", () => {
         new FakeServer()
             .respond("GET", `/admin/v1/orgs/${ORG}/departments`, {
                 status: 200,
-                corpo: { items: [departamento("dep_1", "Financeiro")], next_cursor: null },
+                body: { items: [departamento("dep_1", "Financeiro")], next_cursor: null },
             })
-            .respond("GET", `/admin/v1/orgs/${ORG}/agents`, { status: 200, corpo: { items: [], next_cursor: null } })
+            .respond("GET", `/admin/v1/orgs/${ORG}/agents`, { status: 200, body: { items: [], next_cursor: null } })
             .respond("GET", `/admin/v1/orgs/${ORG}/categories`, () => {
                 if (failures > 0) {
                     failures -= 1;
                     return apiError(500, "internal", "falha simulada");
                 }
-                return { status: 200, corpo: { items: [category("cat_1", "Implantes")], next_cursor: null } };
+                return { status: 200, body: { items: [category("cat_1", "Implantes")], next_cursor: null } };
             })
-            .respond("GET", `/admin/v1/orgs/${ORG}`, { status: 200, corpo: { id: ORG, name: "Exemplo" } })
+            .respond("GET", `/admin/v1/orgs/${ORG}`, { status: 200, body: { id: ORG, name: "Exemplo" } })
             .install();
 
         build();
@@ -218,10 +218,10 @@ describe("Estrutura", () => {
 
     it("é duas seções planas com título, sem cartão", async () => {
         new FakeServer()
-            .respond("GET", `/admin/v1/orgs/${ORG}/departments`, { status: 200, corpo: { items: [departamento("dep_1", "Financeiro")], next_cursor: null } })
-            .respond("GET", `/admin/v1/orgs/${ORG}/agents`, { status: 200, corpo: { items: [], next_cursor: null } })
-            .respond("GET", `/admin/v1/orgs/${ORG}/categories`, { status: 200, corpo: { items: [category("cat_1", "Ortodontia")], next_cursor: null } })
-            .respond("GET", `/admin/v1/orgs/${ORG}`, { status: 200, corpo: { id: ORG, name: "Exemplo" } })
+            .respond("GET", `/admin/v1/orgs/${ORG}/departments`, { status: 200, body: { items: [departamento("dep_1", "Financeiro")], next_cursor: null } })
+            .respond("GET", `/admin/v1/orgs/${ORG}/agents`, { status: 200, body: { items: [], next_cursor: null } })
+            .respond("GET", `/admin/v1/orgs/${ORG}/categories`, { status: 200, body: { items: [category("cat_1", "Ortodontia")], next_cursor: null } })
+            .respond("GET", `/admin/v1/orgs/${ORG}`, { status: 200, body: { id: ORG, name: "Exemplo" } })
             .install();
 
         const { container } = build();
@@ -238,19 +238,19 @@ describe("Estrutura", () => {
         new FakeServer()
             .respond("GET", `/admin/v1/orgs/${ORG}/departments`, {
                 status: 200,
-                corpo: { items: [departamento("dep_1", "Finance")], next_cursor: null },
+                body: { items: [departamento("dep_1", "Finance")], next_cursor: null },
             })
             .respond("GET", `/admin/v1/orgs/${ORG}/agents`, {
                 status: 200,
-                corpo: { items: [], next_cursor: null },
+                body: { items: [], next_cursor: null },
             })
             .respond("GET", `/admin/v1/orgs/${ORG}/categories`, {
                 status: 200,
-                corpo: { items: [category("cat_1", "Orthodontics")], next_cursor: null },
+                body: { items: [category("cat_1", "Orthodontics")], next_cursor: null },
             })
             .respond("GET", `/admin/v1/orgs/${ORG}`, {
                 status: 200,
-                corpo: { id: ORG, name: "Example" },
+                body: { id: ORG, name: "Example" },
             })
             .install();
 

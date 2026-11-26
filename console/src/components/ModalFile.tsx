@@ -116,7 +116,7 @@ export function ModalFile({ org, agente, opened: isOpen, onClose, onSend }: Moda
             onClose();
         } catch (failure) {
             if (failure instanceof ApiError) {
-                const details = failure.detalhes as Record<string, unknown> | null | undefined;
+                const details = failure.details as Record<string, unknown> | null | undefined;
                 const motivo =
                     typeof details?.["reason"] === "string" ? details["reason"] : null;
                 if (motivo && failure.status === 400) {

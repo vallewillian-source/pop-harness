@@ -53,7 +53,7 @@ describe("interpretarMetricas", () => {
 
 describe("consultarSaude", () => {
     it("200 vira situação ok com o corpo", async () => {
-        const servidor = new FakeServer()["respond"]("GET", "/healthz", { status: 200, "corpo": HEALTH_OK })["install"]();
+        const servidor = new FakeServer()["respond"]("GET", "/healthz", { status: 200, "body": HEALTH_OK })["install"]();
 
         const response = await fetchHealth();
 
@@ -65,7 +65,7 @@ describe("consultarSaude", () => {
     it("503 com corpo vira situação degradada, sem jogar fora o resumo", async () => {
         new FakeServer()["respond"]("GET", "/healthz", {
                 status: 503,
-                "corpo": { ...HEALTH_OK, status: "degraded" },
+                "body": { ...HEALTH_OK, status: "degraded" },
             })["install"]();
 
         const response = await fetchHealth();
@@ -101,7 +101,7 @@ describe("consultarMetricas", () => {
     });
 
     it("status diferente de 200 vira erro", async () => {
-        new FakeServer()["respond"]("GET", "/metrics", { status: 500, "corpo": { code: "x", message: "y" } })["install"]();
+        new FakeServer()["respond"]("GET", "/metrics", { status: 500, "body": { code: "x", message: "y" } })["install"]();
 
         await expect(fetchMetrics()).rejects.toMatchObject({ status: 500 });
     });
@@ -111,7 +111,7 @@ describe("listarPlugins (HR-48c)", () => {
     it("chama a lista da org com o token da sessão e mantém a ordem recebida", async () => {
         const servidor = new FakeServer()["respond"]("GET", "/admin/v1/orgs/org_1/manifests", {
                 status: 200,
-                "corpo": {
+                "body": {
                     items: [
                         { kind: "eco", situacao: "ok", nome: "Eco", versao: "0.1.0" },
                         { kind: "whatsapp", situacao: "indisponivel", mensagem: "sem resposta" },
@@ -131,7 +131,7 @@ describe("listarPlugins (HR-48c)", () => {
     it("plugin indisponível sem mensagem ganha a frase de operação, sem nome nem versão", async () => {
         new FakeServer()["respond"]("GET", "/manifests", {
                 status: 200,
-                "corpo": { items: [{ kind: "quebrado", situacao: "indisponivel" }] },
+                "body": { items: [{ kind: "quebrado", situacao: "indisponivel" }] },
             })["install"]();
 
         const [item] = await listPlugins("org_1");
@@ -145,7 +145,7 @@ describe("listarPlugins (HR-48c)", () => {
     it("item sem tipo de texto é descartado, e situação que não é ok vira indisponível", async () => {
         new FakeServer()["respond"]("GET", "/manifests", {
                 status: 200,
-                "corpo": {
+                "body": {
                     items: [
                         { situacao: "ok", nome: "Sem tipo" },
                         null,
@@ -161,7 +161,7 @@ describe("listarPlugins (HR-48c)", () => {
     });
 
     it("resposta sem items vira lista vazia, não erro", async () => {
-        new FakeServer()["respond"]("GET", "/manifests", { status: 200, "corpo": {} })["install"]();
+        new FakeServer()["respond"]("GET", "/manifests", { status: 200, "body": {} })["install"]();
 
         expect(await listPlugins("org_1")).toEqual([]);
     });
@@ -197,7 +197,7 @@ describe("recarregarCluster (HR-48f)", () => {
     it("faz POST na rota global, sem corpo, e devolve o relatório tipado", async () => {
         const servidor = new FakeServer()["respond"]("POST", "/admin/v1/cluster/reload", {
                 status: 200,
-                "corpo": {
+                "body": {
                     "mudou": true,
                     "fingerprint_antes": "aaaa1111bbbb2222",
                     "fingerprint_depois": "cccc3333dddd4444",
@@ -237,7 +237,7 @@ describe("recarregarCluster (HR-48f)", () => {
     it("não leva o endereço das instâncias para o resultado", async () => {
         new FakeServer()["respond"]("POST", "/admin/v1/cluster/reload", {
                 status: 200,
-                "corpo": { "mudou": false, "fingerprint_antes": "x", "fingerprint_depois": "x", "antes": CLUSTER_MAP, "depois": CLUSTER_MAP, "orgs_que_trocaram": [], "instancias_adicionadas": [], "instancias_removidas": [] },
+                "body": { "mudou": false, "fingerprint_antes": "x", "fingerprint_depois": "x", "antes": CLUSTER_MAP, "depois": CLUSTER_MAP, "orgs_que_trocaram": [], "instancias_adicionadas": [], "instancias_removidas": [] },
             })["install"]();
 
         const report = await reloadCluster();
@@ -260,7 +260,7 @@ describe("recarregarCluster (HR-48f)", () => {
         expect(error).toBeInstanceOf(ApiError);
         expect((error as ApiError).status).toBe(400);
         expect((error as ApiError)["code"]).toBe("cluster_invalido");
-        expect((error as ApiError)["detalhes"]).toMatchObject({
+        expect((error as ApiError)["details"]).toMatchObject({
             "problemas": ["instância 'b' sem endereço", "org 'org_9' aponta para instância inexistente"],
         });
     });
@@ -274,7 +274,7 @@ describe("recarregarCluster (HR-48f)", () => {
     });
 
     it("corpo de sucesso sem o resumo esperado vira erro de formato, não resultado inventado", async () => {
-        new FakeServer()["respond"]("POST", "/admin/v1/cluster/reload", { status: 200, "corpo": { ok: true } })["install"]();
+        new FakeServer()["respond"]("POST", "/admin/v1/cluster/reload", { status: 200, "body": { ok: true } })["install"]();
 
         const error = await reloadCluster().catch((e: unknown) => e);
 
@@ -340,7 +340,7 @@ describe("mensagens em en-US", () => {
         new FakeServer()["respond"]("GET", "/healthz", apiError(500, "interno", "falha"))["install"]();
         await expect(fetchHealth()).rejects.toThrow(/answered 500 to the health request/);
 
-        new FakeServer()["respond"]("GET", "/healthz", { status: 200, "corpo": { status: "ok" } })["install"]();
+        new FakeServer()["respond"]("GET", "/healthz", { status: 200, "body": { status: "ok" } })["install"]();
         await expect(fetchHealth()).rejects.toThrow(/answered 200 without the health summary/);
     });
 
@@ -352,7 +352,7 @@ describe("mensagens em en-US", () => {
 
     it("plugin sem resposta usa a frase de reserva em inglês", async () => {
         setLocale("en-US");
-        new FakeServer()["respond"]("GET", "/manifests", { status: 200, "corpo": { items: [{ kind: "eco", situacao: "indisponivel" }] } })["install"]();
+        new FakeServer()["respond"]("GET", "/manifests", { status: 200, "body": { items: [{ kind: "eco", situacao: "indisponivel" }] } })["install"]();
 
         const [item] = await listPlugins("org_1");
         expect(item?.mensagem).toMatch(/check the program declared in the instance configuration/);

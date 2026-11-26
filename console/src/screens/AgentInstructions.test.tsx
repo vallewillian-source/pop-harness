@@ -103,12 +103,12 @@ function serverWith(instructionsCurrent: unknown = instructions()) {
     return new FakeServer()
         .respond("GET", `/agents/${AGENTE}/instructions/current`, {
             status: 200,
-            corpo: instructionsCurrent,
+            body: instructionsCurrent,
         })
-        .respond("GET", `/agents/${AGENTE}`, { status: 200, corpo: agente() })
+        .respond("GET", `/agents/${AGENTE}`, { status: 200, body: agente() })
         .respond("GET", `/admin/v1/orgs/${ORG}`, {
             status: 200,
-            corpo: { id: ORG, name: "Exemplo Odontologia" },
+            body: { id: ORG, name: "Exemplo Odontologia" },
         })
         .install();
 }
@@ -130,16 +130,16 @@ describe("AgenteInstrucoes", () => {
         const servidor = new FakeServer()
             .respond("GET", `/agents/${AGENTE}/instructions/current`, {
                 status: 200,
-                corpo: instructions(),
+                body: instructions(),
             })
-            .respond("GET", `/agents/${AGENTE}`, { status: 200, corpo: agente() })
+            .respond("GET", `/agents/${AGENTE}`, { status: 200, body: agente() })
             .respond("GET", `/admin/v1/orgs/${ORG}`, {
                 status: 200,
-                corpo: { id: ORG, name: "Exemplo Odontologia" },
+                body: { id: ORG, name: "Exemplo Odontologia" },
             })
             .respond("PATCH", `/agents/${AGENTE}/instructions/current`, {
                 status: 200,
-                corpo: instructions({
+                body: instructions({
                     version: 3,
                     structured: { ...STRUCTURED, identity: { ...STRUCTURED.identity, name: "Beatriz Lima" } },
                     markdown: "# Beatriz Lima, Atendente da Exemplo Odontologia",
@@ -156,8 +156,8 @@ describe("AgenteInstrucoes", () => {
         await waitFor(() => expect(screen.getByText(/If-Match: v3/)).toBeInTheDocument());
         const [order] = servidor.callsFor("PATCH", `/agents/${AGENTE}/instructions/current`);
         expect(order?.headers["if-match"]).toBe("2");
-        const corpo = order?.corpo as { structured: typeof STRUCTURED };
-        expect(corpo.structured.identity.name).toBe("Beatriz Lima");
+        const body = order?.body as { structured: typeof STRUCTURED };
+        expect(body.structured.identity.name).toBe("Beatriz Lima");
         expect(screen.getByText(/# Beatriz Lima/)).toBeInTheDocument();
     });
 
@@ -167,7 +167,7 @@ describe("AgenteInstrucoes", () => {
         new FakeServer()
             .respond("GET", `/agents/${AGENTE}/instructions/current`, () => ({
                 status: 200,
-                corpo:
+                body:
                     versionCurrent === 2
                         ? instructions()
                         : instructions({
@@ -175,10 +175,10 @@ describe("AgenteInstrucoes", () => {
                               markdown: "# Beatriz (salva por outra pessoa)",
                           }),
             }))
-            .respond("GET", `/agents/${AGENTE}`, { status: 200, corpo: agente() })
+            .respond("GET", `/agents/${AGENTE}`, { status: 200, body: agente() })
             .respond("GET", `/admin/v1/orgs/${ORG}`, {
                 status: 200,
-                corpo: { id: ORG, name: "Exemplo Odontologia" },
+                body: { id: ORG, name: "Exemplo Odontologia" },
             })
             .respond("PATCH", `/agents/${AGENTE}/instructions/current`, () => {
                 versionCurrent = 3;
@@ -224,14 +224,14 @@ describe("AgenteInstrucoes", () => {
                 `/agents/${AGENTE}/instructions/current`,
                 apiError(404, "not_found", "instruções não encontradas"),
             )
-            .respond("GET", `/agents/${AGENTE}`, { status: 200, corpo: agente() })
+            .respond("GET", `/agents/${AGENTE}`, { status: 200, body: agente() })
             .respond("GET", `/admin/v1/orgs/${ORG}`, {
                 status: 200,
-                corpo: { id: ORG, name: "Exemplo Odontologia" },
+                body: { id: ORG, name: "Exemplo Odontologia" },
             })
             .respond("POST", `/agents/${AGENTE}/instructions`, {
                 status: 201,
-                corpo: instructions({ version: 1, markdown: "# Beatriz, Atendente" }),
+                body: instructions({ version: 1, markdown: "# Beatriz, Atendente" }),
             })
             .install();
         build();
@@ -243,7 +243,7 @@ describe("AgenteInstrucoes", () => {
         await waitFor(() => expect(screen.getByText(/If-Match: v1/)).toBeInTheDocument());
         const [order] = servidor.callsFor("POST", `/agents/${AGENTE}/instructions`);
         expect(order?.headers["if-match"]).toBeUndefined();
-        expect((order?.corpo as { structured: typeof STRUCTURED }).structured.identity.name).toBe(
+        expect((order?.body as { structured: typeof STRUCTURED }).structured.identity.name).toBe(
             "Beatriz",
         );
     });
@@ -253,12 +253,12 @@ describe("AgenteInstrucoes", () => {
         const servidor = new FakeServer()
             .respond("GET", `/agents/${AGENTE}/instructions/current`, {
                 status: 200,
-                corpo: instructions(),
+                body: instructions(),
             })
-            .respond("GET", `/agents/${AGENTE}`, { status: 200, corpo: agente() })
+            .respond("GET", `/agents/${AGENTE}`, { status: 200, body: agente() })
             .respond("GET", `/admin/v1/orgs/${ORG}`, {
                 status: 200,
-                corpo: { id: ORG, name: "Exemplo Odontologia" },
+                body: { id: ORG, name: "Exemplo Odontologia" },
             })
             .respond(
                 "PATCH",

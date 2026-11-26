@@ -30,7 +30,7 @@ describe("ModalEstrutura", () => {
         const onClose = vi.fn();
         const created: Registro = { ...CATEGORY, id: "cat_9", name: "Implantes", description: "" };
         const servidor = new FakeServer()
-            .respond("POST", "/admin/v1/orgs/org_1/categories", { status: 201, corpo: created })
+            .respond("POST", "/admin/v1/orgs/org_1/categories", { status: 201, body: created })
             .install();
 
         render(
@@ -51,7 +51,7 @@ describe("ModalEstrutura", () => {
         await waitFor(() => expect(onSave).toHaveBeenCalledWith(created));
         expect(onClose).toHaveBeenCalled();
         const [request] = servidor.callsFor("POST", "/categories");
-        expect(request?.corpo).toEqual({ name: "Implantes" });
+        expect(request?.body).toEqual({ name: "Implantes" });
     });
 
     it("o título de criar categoria é 'Nova categoria' (o feminino não vaza)", async () => {
@@ -141,12 +141,12 @@ describe("ModalEstrutura", () => {
                 }
                 return {
                     status: 200,
-                    corpo: { ...CATEGORY, name: "Ortodontia digitada", version: 5 },
+                    body: { ...CATEGORY, name: "Ortodontia digitada", version: 5 },
                 };
             })
             .respond("GET", "/categories/cat_1", {
                 status: 200,
-                corpo: { ...CATEGORY, name: "Ortodontia (outra pessoa)", version: 4 },
+                body: { ...CATEGORY, name: "Ortodontia (outra pessoa)", version: 4 },
             })
             .install();
 
@@ -177,7 +177,7 @@ describe("ModalEstrutura", () => {
         const patches = servidor.callsFor("PATCH", "/categories/cat_1");
         expect(patches[0]?.headers["if-match"]).toBe("2");
         expect(patches[1]?.headers["if-match"]).toBe("4");
-        expect(patches[1]?.corpo).toMatchObject({
+        expect(patches[1]?.body).toMatchObject({
             name: "Ortodontia digitada",
             status: "active",
         });

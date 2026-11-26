@@ -143,15 +143,15 @@ async function chooseInMenu(
 function serverWith(
     initial: Integracao[],
     options: {
-        onCreate?: () => { status: number; corpo?: unknown };
-        onChange?: () => { status: number; corpo?: unknown };
-        onQrcode?: () => { status: number; corpo?: unknown };
-        onState?: () => { status: number; corpo?: unknown };
+        onCreate?: () => { status: number; body?: unknown };
+        onChange?: () => { status: number; body?: unknown };
+        onQrcode?: () => { status: number; body?: unknown };
+        onState?: () => { status: number; body?: unknown };
         onDisconnect?: (call: { headers: Record<string, string> }) => {
             status: number;
-            corpo?: unknown;
+            body?: unknown;
         };
-        onManifest?: (kind: string) => { status: number; corpo?: unknown } | undefined;
+        onManifest?: (kind: string) => { status: number; body?: unknown } | undefined;
         connected?: boolean;
     } = {},
 ) {
@@ -164,7 +164,7 @@ function serverWith(
             if (own) return own;
             const manifesto = MANIFESTS[kind];
             return manifesto
-                ? { status: 200, corpo: manifesto }
+                ? { status: 200, body: manifesto }
                 : apiError(404, "not_found", `manifesto \`${kind}\` não encontrado`);
         })
         .respond("POST", "/whatsapp/qrcode", (call) => {
@@ -178,7 +178,7 @@ function serverWith(
                 );
                 return {
                     status: 200,
-                    corpo: {
+                    body: {
                         integration_id: id,
                         instance: "loja",
                         state: "open",
@@ -194,7 +194,7 @@ function serverWith(
             );
             return {
                 status: 200,
-                corpo: {
+                body: {
                     integration_id: id,
                     instance: "loja",
                     state: "connecting",
@@ -218,7 +218,7 @@ function serverWith(
             );
             return {
                 status: 200,
-                corpo: {
+                body: {
                     integration_id: id,
                     instance: "loja",
                     state: estado.opened ? "open" : "close",
@@ -235,7 +235,7 @@ function serverWith(
             );
             return {
                 status: 200,
-                corpo: {
+                body: {
                     integration_id: id,
                     instance: "loja",
                     connection_state: "disconnected",
@@ -246,47 +246,47 @@ function serverWith(
         .respond("PATCH", `${LIST}/`, (call) => {
             if (options.onChange) return options.onChange();
             const id = call.url.split(`${LIST}/`)[1] ?? "";
-            const corpo = call.corpo as {
+            const body = call.body as {
                 status?: string;
                 config_json?: Record<string, unknown>;
                 secrets?: Record<string, string>;
             };
             const current = estado.itens.find((item) => item.id === id);
             if (!current) return apiError(404, "not_found", "integração não encontrada");
-            const filled = corpo.secrets
+            const filled = body.secrets
                 ? [
                       ...new Set([
                           ...(current.segredos_preenchidos ?? []),
-                          ...Object.keys(corpo.secrets),
+                          ...Object.keys(body.secrets),
                       ]),
-                  ].filter((nome) => (corpo.secrets![nome] ?? "x") !== "")
+                  ].filter((nome) => (body.secrets![nome] ?? "x") !== "")
                 : (current.segredos_preenchidos ?? []);
             const changed = {
                 ...current,
-                status: corpo.status ?? current.status,
-                configuracao: corpo.config_json ?? current.configuracao ?? null,
+                status: body.status ?? current.status,
+                configuracao: body.config_json ?? current.configuracao ?? null,
                 segredos_preenchidos: filled,
                 tem_segredo: filled.length > 0 || current.tem_segredo,
                 version: current.version + 1,
             };
             estado.itens = estado.itens.map((item) => (item.id === id ? changed : item));
-            return { status: 200, corpo: changed };
+            return { status: 200, body: changed };
         })
         .respond("GET", `${LIST}/`, (call) => {
             const id = call.url.split(`${LIST}/`)[1] ?? "";
             const found = estado.itens.find((item) => item.id === id);
             return found
-                ? { status: 200, corpo: found }
+                ? { status: 200, body: found }
                 : apiError(404, "not_found", "integração não encontrada");
         })
         .respond("DELETE", `${LIST}/`, (call) => {
             const id = call.url.split(`${LIST}/`)[1] ?? "";
             estado.itens = estado.itens.filter((item) => item.id !== id);
-            return { status: 200, corpo: { deleted: true } };
+            return { status: 200, body: { deleted: true } };
         })
         .respond("POST", LIST, (call) => {
             if (options.onCreate) return options.onCreate();
-            const corpo = call.corpo as {
+            const body = call.body as {
                 kind: string;
                 status?: string;
                 config_json?: Record<string, unknown>;
@@ -294,24 +294,24 @@ function serverWith(
             };
             const created = integracao({
                 id: "int_nova",
-                kind: corpo.kind,
-                status: corpo.status ?? "active",
+                kind: body.kind,
+                status: body.status ?? "active",
                 connection_state: "disconnected",
-                configuracao: corpo.config_json ?? null,
-                segredos_preenchidos: corpo.secrets ? Object.keys(corpo.secrets) : [],
-                tem_segredo: !!corpo.secrets,
+                configuracao: body.config_json ?? null,
+                segredos_preenchidos: body.secrets ? Object.keys(body.secrets) : [],
+                tem_segredo: !!body.secrets,
             });
             estado.itens = [...estado.itens, created];
-            return { status: 201, corpo: created };
+            return { status: 201, body: created };
         })
         .respond("GET", LIST, () => ({
             status: 200,
-            corpo: { items: estado.itens, next_cursor: null },
+            body: { items: estado.itens, next_cursor: null },
         }))
-        .respond("GET", `/agents/${AGENTE}`, { status: 200, corpo: AGENT_JSON })
+        .respond("GET", `/agents/${AGENTE}`, { status: 200, body: AGENT_JSON })
         .respond("GET", `/admin/v1/orgs/${ORG}`, {
             status: 200,
-            corpo: { id: ORG, name: "Clínica Teste", status: "active", version: 1 },
+            body: { id: ORG, name: "Clínica Teste", status: "active", version: 1 },
         });
     return { servidor: servidor.install(), estado };
 }
@@ -365,7 +365,7 @@ describe("Aba Integrações", () => {
 
         await waitFor(() => expect(servidor.callsFor("POST", LIST)).toHaveLength(1));
         const send = servidor.callsFor("POST", LIST)[0]!;
-        expect(send.corpo).toEqual({ kind: "whatsapp", status: "inactive" });
+        expect(send.body).toEqual({ kind: "whatsapp", status: "inactive" });
         expect(await screen.findByText("Integração whatsapp criada.")).toBeInTheDocument();
         expect(await screen.findByText("whatsapp")).toBeInTheDocument();
     });
@@ -426,7 +426,7 @@ describe("Aba Integrações", () => {
                 estado.itens = estado.itens.map((item) =>
                     item.id === "int_1" ? changed : item,
                 );
-                return { status: 200, corpo: changed };
+                return { status: 200, body: changed };
             },
         });
         build();
@@ -511,7 +511,7 @@ describe("Formulário do manifesto na integração (HR-44e)", () => {
         await user.click(within(modal).getByRole("button", { name: "Criar integração" }));
 
         await waitFor(() => expect(servidor.callsFor("POST", LIST)).toHaveLength(1));
-        expect(servidor.callsFor("POST", LIST)[0]!.corpo).toEqual({
+        expect(servidor.callsFor("POST", LIST)[0]!.body).toEqual({
             kind: "whatsapp",
             status: "active",
         });
@@ -533,7 +533,7 @@ describe("Formulário do manifesto na integração (HR-44e)", () => {
 
         await waitFor(() => expect(servidor.callsFor("POST", LIST)).toHaveLength(1));
         const send = servidor.callsFor("POST", LIST)[0]!;
-        expect(send.corpo).toEqual({
+        expect(send.body).toEqual({
             kind: "sms",
             status: "active",
             config_json: { remetente: "5511999999999", tentativas: 4 },
@@ -560,7 +560,7 @@ describe("Formulário do manifesto na integração (HR-44e)", () => {
 
         await waitFor(() => expect(servidor.callsFor("POST", LIST)).toHaveLength(1));
         const send = servidor.callsFor("POST", LIST)[0]!;
-        expect(send.corpo).toEqual({
+        expect(send.body).toEqual({
             kind: "eco",
             status: "active",
             config_json: { modo: "inverter", remetente: "Loja" },
@@ -626,7 +626,7 @@ describe("Formulário do manifesto na integração (HR-44e)", () => {
                     estado.itens = estado.itens.map((item) =>
                         item.id === "int_1" ? changed : item,
                     );
-                    return { status: 200, corpo: changed };
+                    return { status: 200, body: changed };
                 },
             },
         );
@@ -653,7 +653,7 @@ describe("Formulário do manifesto na integração (HR-44e)", () => {
         );
         const second = servidor.callsFor("PATCH", `${LIST}/int_1`)[1]!;
         expect(second.headers["if-match"]).toBe("5");
-        expect(second.corpo).toEqual({
+        expect(second.body).toEqual({
             status: "active",
             config_json: { modo: "inverter", remetente: "Novo remetente" },
             secrets: { token: "chave-nova" },
@@ -692,7 +692,7 @@ describe("Formulário do manifesto na integração (HR-44e)", () => {
         serverWith([], {
             onManifest: () => ({
                 status: 503,
-                corpo: {
+                body: {
                     code: "manifesto_indisponivel",
                     message: "o plugin deste tipo não respondeu ao handshake",
                     details: { kind: "eco" },
@@ -757,7 +757,7 @@ describe("Painel do WhatsApp (HR-44d)", () => {
         await waitFor(() =>
             expect(servidor.callsFor("POST", "/whatsapp/qrcode")).toHaveLength(1),
         );
-        expect(servidor.callsFor("POST", "/whatsapp/qrcode")[0]!.corpo).toEqual({
+        expect(servidor.callsFor("POST", "/whatsapp/qrcode")[0]!.body).toEqual({
             number: "5511999998888",
         });
     });
@@ -782,7 +782,7 @@ describe("Painel do WhatsApp (HR-44d)", () => {
         serverWith([integracao({ id: "int_1", connection_state: "disconnected" })], {
             onQrcode: () => ({
                 status: 409,
-                corpo: {
+                body: {
                     code: "whatsapp_nao_configurado",
                     message:
                         "esta integração não tem instância da Evolution declarada na configuração do servidor",
@@ -810,7 +810,7 @@ describe("Painel do WhatsApp (HR-44d)", () => {
         serverWith([integracao({ id: "int_1", connection_state: "disconnected" })], {
             onState: () => ({
                 status: 503,
-                corpo: {
+                body: {
                     code: "evolution_indisponivel",
                     message:
                         "o servidor não tem como falar com a Evolution: falta `EVOLUTION_API_KEY` no ambiente",
@@ -894,7 +894,7 @@ describe("Painel do WhatsApp (HR-44d)", () => {
                     );
                     return {
                         status: 412,
-                        corpo: {
+                        body: {
                             code: "version_conflict",
                             message: "conflito de versão",
                             details: { current_version: 5, expected_version: 1 },
@@ -909,7 +909,7 @@ describe("Painel do WhatsApp (HR-44d)", () => {
                 );
                 return {
                     status: 200,
-                    corpo: {
+                    body: {
                         integration_id: "int_1",
                         instance: "loja",
                         connection_state: "disconnected",

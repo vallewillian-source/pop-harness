@@ -282,9 +282,9 @@ export function Products() {
     const noProducts = !loading && !error && products.length === 0;
     const noResult = !loading && !error && products.length > 0 && visible.length === 0;
 
-    let corpo: ReactNode;
+    let content: ReactNode;
     if (error && !loading) {
-        corpo = (
+        content = (
             <SofaErrorState
                 title={translate("products.errorTitle")}
                 description={translate("products.errorDescription")}
@@ -293,14 +293,14 @@ export function Products() {
             />
         );
     } else if (loading && products.length === 0) {
-        corpo = (
+        content = (
             <div aria-busy="true" aria-label={translate("products.loadingAria")}>
                 <SofaSkeleton lines={4} />
             </div>
         );
     } else if (noProducts) {
         const noCategories = categories.length === 0;
-        corpo = (
+        content = (
             <SofaEmptyState
                 icon={<IconTag aria-hidden="true" />}
                 title={translate("products.emptyTitle")}
@@ -330,7 +330,7 @@ export function Products() {
             />
         );
     } else if (noResult) {
-        corpo = (
+        content = (
             <SofaEmptyState
                 icon={<IconTag aria-hidden="true" />}
                 title={translate("products.filteredEmptyTitle")}
@@ -343,7 +343,7 @@ export function Products() {
             />
         );
     } else {
-        corpo = (
+        content = (
             <div className="poph-products__table">
                 <SofaTable
                     label={translate("products.tableLabel")}
@@ -484,7 +484,7 @@ export function Products() {
                             </SofaField>
                         </div>
                     </div>
-                    {corpo}
+                    {content}
                 </section>
             </div>
 

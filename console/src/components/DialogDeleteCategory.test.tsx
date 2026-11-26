@@ -37,7 +37,7 @@ function listProducts(products: Array<{ id: string; name: string; category_id: s
         if (call.url.includes("limit=")) {
             return apiError(400, "invalid_request", "parâmetros de paginação inválidos");
         }
-        return { status: 200, corpo: { items: products, next_cursor: null } };
+        return { status: 200, body: { items: products, next_cursor: null } };
     };
 }
 
@@ -56,15 +56,15 @@ function serverLinks(usedBy: Array<"ag_1" | "ag_2">, withProducts: boolean) {
         .respond("GET", "/products?all=true", listProducts(products))
         .respond("GET", "/agents?limit", {
             status: 200,
-            corpo: { items: agents, next_cursor: null },
+            body: { items: agents, next_cursor: null },
         })
         .respond("GET", "/agents/ag_1", {
             status: 200,
-            corpo: { ...agents[0], product_category_ids: usedBy.includes("ag_1") ? ["cat_1"] : [] },
+            body: { ...agents[0], product_category_ids: usedBy.includes("ag_1") ? ["cat_1"] : [] },
         })
         .respond("GET", "/agents/ag_2", {
             status: 200,
-            corpo: { ...agents[1], product_category_ids: usedBy.includes("ag_2") ? ["cat_1"] : [] },
+            body: { ...agents[1], product_category_ids: usedBy.includes("ag_2") ? ["cat_1"] : [] },
         });
 }
 
@@ -152,7 +152,7 @@ describe("DialogoExcluirCategoria · contagem dos produtos", () => {
                 if (call.url.includes("cursor=cur_1")) {
                     return {
                         status: 200,
-                        corpo: {
+                        body: {
                             items: [{ id: "p3", name: "Clareamento caseiro", category_id: "cat_1" }],
                             next_cursor: null,
                         },
@@ -160,7 +160,7 @@ describe("DialogoExcluirCategoria · contagem dos produtos", () => {
                 }
                 return {
                     status: 200,
-                    corpo: {
+                    body: {
                         items: [{ id: "p1", name: "Clareamento a laser", category_id: "cat_1" }],
                         next_cursor: "cur_1",
                     },
@@ -168,7 +168,7 @@ describe("DialogoExcluirCategoria · contagem dos produtos", () => {
             })
             .respond("GET", "/agents?limit", {
                 status: 200,
-                corpo: { items: [], next_cursor: null },
+                body: { items: [], next_cursor: null },
             })
             .respond("DELETE", "/categories/cat_1", { status: 204 })
             .install();
@@ -201,7 +201,7 @@ describe("DialogoExcluirCategoria · contagem dos produtos", () => {
         new FakeServer()
             .respond("GET", "/products?all=true", {
                 status: 200,
-                corpo: {
+                body: {
                     items: [
                         { id: "p1", name: "Laser whitening", category_id: "cat_1" },
                         { id: "p2", name: "Home whitening", category_id: "cat_1" },
@@ -211,7 +211,7 @@ describe("DialogoExcluirCategoria · contagem dos produtos", () => {
             })
             .respond("GET", "/agents?limit", {
                 status: 200,
-                corpo: { items: [], next_cursor: null },
+                body: { items: [], next_cursor: null },
             })
             .install();
 

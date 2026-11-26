@@ -961,7 +961,7 @@ describe("CF-07: seletor de agente no topo do rail", () => {
         if (standalone && "agente" in standalone) {
             servidor.respond("GET", `/agents/${standalone.agente.id}`, {
                 status: 200,
-                corpo: standalone.agente,
+                body: standalone.agente,
             });
         } else if (standalone) {
             servidor.respond("GET", "/agents/", () =>
@@ -973,7 +973,7 @@ describe("CF-07: seletor de agente no topo do rail", () => {
                 ? apiError(500, "interno", "falha ao ler os agentes")
                 : {
                       status: 200,
-                      corpo: { items: options.agents ?? [MATRIX, PATINHAS, TRIAGEM], next_cursor: null },
+                      body: { items: options.agents ?? [MATRIX, PATINHAS, TRIAGEM], next_cursor: null },
                   },
         );
         servidor.install();
@@ -1256,7 +1256,7 @@ describe("CF-09: cockpit do agente no rail", () => {
         const servidor = new FakeServer();
         servidor.respond("GET", "/agents", {
             status: 200,
-            corpo: { items: [AGENTE], next_cursor: null },
+            body: { items: [AGENTE], next_cursor: null },
         });
         servidor.install();
         return servidor;
@@ -1436,7 +1436,7 @@ describe("I18N-04: rail e seletores em en-US", () => {
         return new FakeServer()
             .respond("GET", "/agents", {
                 status: 200,
-                corpo: { items: agents, next_cursor: null },
+                body: { items: agents, next_cursor: null },
             })
             .install();
     }

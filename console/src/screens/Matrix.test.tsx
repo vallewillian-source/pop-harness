@@ -84,31 +84,31 @@ function serverDefault(
     return new FakeServer()
         .respond("GET", `${PATH}/spaces`, {
             status: options.spacesStatus ?? 200,
-            corpo: options.spacesStatus === 500
+            body: options.spacesStatus === 500
                 ? { code: "interno", message: "falha" }
                 : { items: options.spaces ?? [] },
         })
         .respond("PUT", `${PATH}/spaces`, {
             status: 200,
-            corpo: { ...SPACE_SUPPORT, department_id: "dep_1", space_room_id: "!novo:matrix-dev.local" },
+            body: { ...SPACE_SUPPORT, department_id: "dep_1", space_room_id: "!novo:matrix-dev.local" },
         })
         .respond("DELETE", `${PATH}/spaces/`, {
             status: 200,
-            corpo: { department_id: "dep_2", removed: true, rooms_forgotten: 1 },
+            body: { department_id: "dep_2", removed: true, rooms_forgotten: 1 },
         })
         .respond("GET", "/departments", {
             status: 200,
-            corpo: options.departments ?? DEPARTMENTS,
+            body: options.departments ?? DEPARTMENTS,
         })
         .respond("GET", PATH, {
             status: options.moduleStatus ?? 200,
-            corpo: options.moduleStatus && options.moduleStatus !== 200
+            body: options.moduleStatus && options.moduleStatus !== 200
                 ? { code: "interno", message: "falha" }
                 : options.module ?? MODULE_OFF,
         })
         .respond("PUT", PATH, (call) => ({
             status: 200,
-            corpo: { ...MODULE_ON, enabled: (call.corpo as { enabled: boolean }).enabled },
+            body: { ...MODULE_ON, enabled: (call.body as { enabled: boolean }).enabled },
         }))
         .install();
 }
@@ -285,8 +285,8 @@ describe("módulo nesta organização", () => {
 
     it("erro 403 na leitura diz que o token não alcança a organização", async () => {
         new FakeServer()
-            .respond("GET", `${PATH}/spaces`, { status: 200, corpo: { items: [] } })
-            .respond("GET", "/departments", { status: 200, corpo: DEPARTMENTS })
+            .respond("GET", `${PATH}/spaces`, { status: 200, body: { items: [] } })
+            .respond("GET", "/departments", { status: 200, body: DEPARTMENTS })
             .respond("GET", PATH, apiError(403, "forbidden", "token de outra org"))
             .install();
 
@@ -306,7 +306,7 @@ describe("módulo nesta organização", () => {
         await waitFor(() => expect(servidor.callsFor("PUT", PATH)).toHaveLength(1));
         const call = first(servidor.callsFor("PUT", PATH));
         expect(call.headers["if-match"]).toBe("1700");
-        expect(call.corpo).toEqual({ enabled: true });
+        expect(call.body).toEqual({ enabled: true });
         expect(await screen.findByText("Módulo ligado. Só o que chegar daqui em diante é espelhado.")).toBeInTheDocument();
         expect(screen.getByRole("button", { name: "Desligar módulo" })).toBeInTheDocument();
     });
@@ -325,15 +325,15 @@ describe("módulo nesta organização", () => {
         await waitFor(() => expect(servidor.callsFor("PUT", PATH)).toHaveLength(1));
         const call = first(servidor.callsFor("PUT", PATH));
         expect(call.headers["if-match"]).toBe("2400");
-        expect(call.corpo).toEqual({ enabled: false });
+        expect(call.body).toEqual({ enabled: false });
     });
 
     it("412 mostra a frase de conflito e relê o estado", async () => {
         const servidor = new FakeServer()
-            .respond("GET", `${PATH}/spaces`, { status: 200, corpo: { items: [] } })
-            .respond("GET", "/departments", { status: 200, corpo: DEPARTMENTS })
+            .respond("GET", `${PATH}/spaces`, { status: 200, body: { items: [] } })
+            .respond("GET", "/departments", { status: 200, body: DEPARTMENTS })
             .respond("PUT", PATH, apiError(412, "version_conflict", "mudou"))
-            .respond("GET", PATH, { status: 200, corpo: MODULE_OFF })
+            .respond("GET", PATH, { status: 200, body: MODULE_OFF })
             .install();
         build();
 
@@ -361,12 +361,12 @@ describe("módulo nesta organização", () => {
                     await pending;
                     return { status: 200, ok: true, headers: new Headers(), text: async () => JSON.stringify(MODULE_ON) } as Response;
                 }
-                const corpo = url.includes("/spaces")
+                const body = url.includes("/spaces")
                     ? { items: [] }
                     : url.includes("/departments")
                       ? DEPARTMENTS
                       : MODULE_OFF;
-                return { status: 200, ok: true, headers: new Headers(), text: async () => JSON.stringify(corpo) } as Response;
+                return { status: 200, ok: true, headers: new Headers(), text: async () => JSON.stringify(body) } as Response;
             }),
         );
         build();
@@ -386,8 +386,8 @@ describe("módulo nesta organização", () => {
         setToken("poph_token_da_sessao");
         whenExpired(end);
         new FakeServer()
-            .respond("GET", `${PATH}/spaces`, { status: 200, corpo: { items: [] } })
-            .respond("GET", "/departments", { status: 200, corpo: DEPARTMENTS })
+            .respond("GET", `${PATH}/spaces`, { status: 200, body: { items: [] } })
+            .respond("GET", "/departments", { status: 200, body: DEPARTMENTS })
             .respond("GET", PATH, apiError(401, "invalid_token", "sessão caiu"))
             .install();
 
@@ -466,7 +466,7 @@ describe("espaços por departamento", () => {
 
         await waitFor(() => expect(servidor.callsFor("PUT", `${PATH}/spaces`)).toHaveLength(1));
         const call = first(servidor.callsFor("PUT", `${PATH}/spaces`));
-        expect(call.corpo).toEqual({ department_id: "dep_1" });
+        expect(call.body).toEqual({ department_id: "dep_1" });
         expect(await screen.findByText("Espaço do departamento criado.")).toBeInTheDocument();
     });
 
@@ -486,7 +486,7 @@ describe("espaços por departamento", () => {
         await userEvent.click(within(dialog).getByRole("button", { name: "Ligar espaço" }));
 
         await waitFor(() => expect(servidor.callsFor("PUT", `${PATH}/spaces`)).toHaveLength(1));
-        expect(first(servidor.callsFor("PUT", `${PATH}/spaces`)).corpo).toEqual({
+        expect(first(servidor.callsFor("PUT", `${PATH}/spaces`)).body).toEqual({
             department_id: "dep_1",
             space: "!abc:matrix-dev.local",
         });
@@ -524,8 +524,8 @@ describe("espaços por departamento", () => {
 
     it("409 do servidor aparece dentro do diálogo com a instrução do que fazer no Element", async () => {
         new FakeServer()
-            .respond("GET", `${PATH}/spaces`, { status: 200, corpo: { items: [] } })
-            .respond("GET", "/departments", { status: 200, corpo: DEPARTMENTS })
+            .respond("GET", `${PATH}/spaces`, { status: 200, body: { items: [] } })
+            .respond("GET", "/departments", { status: 200, body: DEPARTMENTS })
             .respond("PUT", `${PATH}/spaces`, apiError(409, "conflito", "convide o bot do módulo e dê a ele poder 50"))
             .install();
         build();

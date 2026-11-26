@@ -62,37 +62,37 @@ export function listOf(texto: string): string[] {
 }
 
 type Errors = {
-    categoria?: string;
+    category?: string;
     nome?: string;
     slug?: string;
-    preco?: string;
-    precoTexto?: string;
+    price?: string;
+    priceText?: string;
     aliases?: string;
     etiquetas?: string;
-    unidade?: string;
+    unit?: string;
     descricao?: string;
-    inclui?: string;
+    includes?: string;
     exclui?: string;
-    condicoes?: string;
+    conditions?: string;
     situacao?: string;
 };
 
 const FIELDS_API: Record<string, keyof Errors> = {
-    category_id: "categoria",
-    categoria: "categoria",
+    category_id: "category",
+    categoria: "category",
     name: "nome",
     nome: "nome",
     slug: "slug",
-    price_cents: "preco",
-    preco: "preco",
-    price_text: "precoTexto",
+    price_cents: "price",
+    price: "price",
+    price_text: "priceText",
     aliases: "aliases",
     tags: "etiquetas",
-    unit: "unidade",
+    unit: "unit",
     description: "descricao",
-    includes: "inclui",
+    includes: "includes",
     excludes: "exclui",
-    conditions: "condicoes",
+    conditions: "conditions",
     status: "situacao",
     situacao: "situacao",
 };
@@ -190,7 +190,7 @@ export function ModalProduct({
     function validar(): { errors: Errors; cents: number } {
         const freshItems: Errors = {};
         if (!category) {
-            freshItems.categoria = translate("products.validationCategoryRequired");
+            freshItems.category = translate("products.validationCategoryRequired");
         }
         if (!nome.trim()) {
             freshItems.nome = translate("products.validationNameRequired");
@@ -199,13 +199,13 @@ export function ModalProduct({
         }
         const cents = centsOf(price);
         if (cents === null) {
-            freshItems.preco = translate("products.validationPriceFormat");
+            freshItems.price = translate("products.validationPriceFormat");
         }
         return { errors: freshItems, cents: cents ?? 0 };
     }
 
     function showErrorApi(failure: ApiError) {
-        const details = failure.detalhes as Record<string, unknown> | null | undefined;
+        const details = failure.details as Record<string, unknown> | null | undefined;
         const campo = typeof details?.["field"] === "string" ? details["field"] : undefined;
         const motivo =
             typeof details?.["reason"] === "string" ? details["reason"] : failure.message;
@@ -359,7 +359,7 @@ export function ModalProduct({
                 <SofaField
                     label={translate("products.fieldCategoryLabel")}
                     hint={translate("products.fieldCategoryHint")}
-                    error={errors.categoria}
+                    error={errors.category}
                     required
                     htmlFor="poph-produto-categoria"
                 >
@@ -432,7 +432,7 @@ export function ModalProduct({
                     <SofaField
                         label={translate("products.fieldPriceLabel")}
                         hint={translate("products.fieldPriceHint")}
-                        error={errors.preco}
+                        error={errors.price}
                         htmlFor="poph-produto-preco"
                     >
                         {(control) => (
@@ -449,7 +449,7 @@ export function ModalProduct({
                     <SofaField
                         label={translate("products.fieldPriceTextLabel")}
                         hint={helpPriceClient}
-                        error={errors.precoTexto}
+                        error={errors.priceText}
                         htmlFor="poph-produto-preco-texto"
                     >
                         {(control) => (
@@ -485,7 +485,7 @@ export function ModalProduct({
                 <SofaField
                     label={translate("products.fieldUnitLabel")}
                     hint={translate("products.fieldUnitHint")}
-                    error={errors.unidade}
+                    error={errors.unit}
                     htmlFor="poph-produto-unidade"
                 >
                     {(control) => (
@@ -514,7 +514,7 @@ export function ModalProduct({
                 </SofaField>
 
                 <div className="poph-two-columns">
-                    <SofaField label={translate("products.fieldIncludesLabel")} error={errors.inclui} htmlFor="poph-produto-inclui">
+                    <SofaField label={translate("products.fieldIncludesLabel")} error={errors.includes} htmlFor="poph-produto-inclui">
                         {(control) => (
                             <SofaTextarea
                                 {...withoutDescribedBy(control)}
@@ -539,7 +539,7 @@ export function ModalProduct({
                 <SofaField
                     label={translate("products.fieldConditionsLabel")}
                     hint={translate("products.fieldConditionsHint")}
-                    error={errors.condicoes}
+                    error={errors.conditions}
                     htmlFor="poph-produto-condicoes"
                 >
                     {(control) => (

@@ -40,7 +40,7 @@ function serveOrgs(items: { id: string; name: string; slug: string; status: stri
     return new FakeServer()
         .respond("GET", "/admin/v1/orgs", {
             status: 200,
-            corpo: { items, next_cursor: null },
+            body: { items, next_cursor: null },
         })
         .install();
 }
@@ -134,7 +134,7 @@ describe("Login", () => {
     it("token recusado mostra o erro no campo e não navega", async () => {
         const servidor = new FakeServer();
         servidor
-            .respond("GET", "/admin/v1/orgs", { status: 401, corpo: { error: "unauthorized" } })
+            .respond("GET", "/admin/v1/orgs", { status: 401, body: { error: "unauthorized" } })
             .install();
         build();
 

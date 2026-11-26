@@ -87,7 +87,7 @@ describe("backup em en-US", () => {
                 texto: CONTENT_FILE,
                 headers: headerAttachment,
             })
-            .respond("POST", "/backup/import", { status: 200, corpo: REPORT })
+            .respond("POST", "/backup/import", { status: 200, body: REPORT })
             .install();
         build();
 
@@ -117,7 +117,7 @@ describe("backup em en-US", () => {
         new FakeServer()
             .respond("POST", "/backup/import", {
                 status: 409,
-                corpo: {
+                body: {
                     code: "importacao_sobrescreve",
                     message: "cru",
                     details: {
@@ -221,7 +221,7 @@ describe("exportar", () => {
     it("não dispara exportação nem importação ao montar a seção", () => {
         const servidor = new FakeServer()
             .respond("GET", "/backup", { status: 200, texto: CONTENT_FILE, headers: headerAttachment })
-            .respond("POST", "/backup/import", { status: 200, corpo: REPORT })
+            .respond("POST", "/backup/import", { status: 200, body: REPORT })
             .install();
         build();
 
@@ -231,7 +231,7 @@ describe("exportar", () => {
 
 describe("importar", () => {
     it("sucesso: envia o texto do arquivo como JSON cru e mostra o relatório com segredos e índice", async () => {
-        const servidor = new FakeServer().respond("POST", "/backup/import", { status: 200, corpo: REPORT }).install();
+        const servidor = new FakeServer().respond("POST", "/backup/import", { status: 200, body: REPORT }).install();
         build();
 
         await choose(fileJson());
@@ -260,7 +260,7 @@ describe("importar", () => {
         new FakeServer()
             .respond("POST", "/backup/import", {
                 status: 200,
-                corpo: {
+                body: {
                     ...REPORT,
                     segredos_a_redigitar: 0,
                     indice: { base_conhecimento: { agentes: 0, trechos: 0 }, produtos: { trechos: 0 } },
@@ -363,7 +363,7 @@ describe("importar", () => {
         const servidor = new FakeServer()
             .respond("POST", "/backup/import", () => {
                 attempt += 1;
-                return attempt === 1 ? apiError(403, "forbidden", "sem permissão") : { status: 200, corpo: REPORT };
+                return attempt === 1 ? apiError(403, "forbidden", "sem permissão") : { status: 200, body: REPORT };
             })
             .install();
         build();
@@ -383,7 +383,7 @@ describe("importar", () => {
     });
 
     it("arquivo acima de 64 MB é recusado na tela e nada é enviado", async () => {
-        const servidor = new FakeServer().respond("POST", "/backup/import", { status: 200, corpo: REPORT }).install();
+        const servidor = new FakeServer().respond("POST", "/backup/import", { status: 200, body: REPORT }).install();
         build();
 
         await choose(fileJson(CONTENT_FILE, "grande.json", LIMIT_IMPORT_BYTES + 1));
@@ -400,7 +400,7 @@ describe("importar", () => {
     });
 
     it("Esc e 'Cancelar' fecham a confirmação sem enviar nada", async () => {
-        const servidor = new FakeServer().respond("POST", "/backup/import", { status: 200, corpo: REPORT }).install();
+        const servidor = new FakeServer().respond("POST", "/backup/import", { status: 200, body: REPORT }).install();
         build();
 
         await choose(fileJson());
@@ -476,7 +476,7 @@ describe("recusa de sobrescrita (HR-48e-4)", () => {
                 attempt += 1;
                 return attempt === 1
                     ? apiError(409, "importacao_sobrescreve", "a importação atualizaria 4 linha(s)", DETAIL_OVERWRITES)
-                    : { status: 200, corpo: REPORT };
+                    : { status: 200, body: REPORT };
             })
             .install();
         build();

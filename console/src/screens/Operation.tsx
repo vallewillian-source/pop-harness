@@ -188,7 +188,7 @@ export type FailureReload =
 export function failureReload(error: unknown): FailureReload {
     if (error instanceof ApiError) {
         if (error.status === 400) {
-            const raw: unknown = error.detalhes;
+            const raw: unknown = error.details;
             const details =
                 raw !== null && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
             const problems = Array.isArray(details.problemas)

@@ -8,10 +8,10 @@ export const LIMIT_REASONS = 15;
 export const LIMIT_REASON = 300;
 
 export type Routing = {
-    "departamentoPadrao": string | null;
-    "transferenciaHumana": boolean;
-    "departamentoHumano": string | null;
-    "motivos": string[];
+    "defaultDepartment": string | null;
+    "humanHandoff": boolean;
+    "handoffDepartment": string | null;
+    "reasons": string[];
 };
 
 export type RoutingChange = {
@@ -24,34 +24,34 @@ export type RoutingChange = {
 export function agentRouting(agente: Agente): Routing {
     const raw = agente.jev?.["situacoes_de_handoff"];
     const reasons = Array.isArray(raw)
-        ? raw.filter((motivo): motivo is string => typeof motivo === "string")
+        ? raw.filter((reason): reason is string => typeof reason === "string")
         : [];
     return {
-        "departamentoPadrao": agente.default_department_id,
-        "transferenciaHumana": agente.human_handoff_enabled ?? false,
-        "departamentoHumano": agente.human_handoff_department_id,
-        "motivos": reasons,
+        "defaultDepartment": agente.default_department_id,
+        "humanHandoff": agente.human_handoff_enabled ?? false,
+        "handoffDepartment": agente.human_handoff_department_id,
+        "reasons": reasons,
     };
 }
 
 export function cleanReasons(reasons: string[]): string[] {
-    return reasons.map((motivo) => motivo.trim()).filter((motivo) => motivo.length > 0);
+    return reasons.map((reason) => reason.trim()).filter((reason) => reason.length > 0);
 }
 
 export function validateRouting(value: Routing): Record<string, string> {
     const errors: Record<string, string> = {};
-    if (value["transferenciaHumana"] && !value["departamentoHumano"]) {
-        errors["departamentoHumano"] = translate("routing.validationHumanDepartment");
+    if (value["humanHandoff"] && !value["handoffDepartment"]) {
+        errors["handoffDepartment"] = translate("routing.validationHumanDepartment");
     }
-    const cleaned = cleanReasons(value["motivos"]);
+    const cleaned = cleanReasons(value["reasons"]);
     if (cleaned.length > LIMIT_REASONS) {
-        errors["motivos"] = translate("routing.validationTooManyReasons", {
+        errors["reasons"] = translate("routing.validationTooManyReasons", {
             limit: LIMIT_REASONS,
             count: cleaned.length,
         });
     }
-    value["motivos"].forEach((motivo, index) => {
-        if (motivo.trim().length > LIMIT_REASON) {
+    value["reasons"].forEach((reason, index) => {
+        if (reason.trim().length > LIMIT_REASON) {
             errors[`motivo-${index}`] = translate("routing.validationReasonTooLong", {
                 limit: LIMIT_REASON,
             });

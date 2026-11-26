@@ -153,7 +153,7 @@ describe("mounted shell", () => {
         const { FakeServer } = await import("../testing/server");
         new FakeServer()["respond"]("GET", "/healthz", {
                 status: 200,
-                "corpo": {
+                "body": {
                     status: "ok",
                     version: "0.4.2",
                     uptime_seconds: 10,

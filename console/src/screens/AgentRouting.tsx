@@ -44,10 +44,10 @@ import "../styles/routing.css";
 
 function sameRouting(a: Routing, b: Routing): boolean {
     return (
-        a.departamentoPadrao === b.departamentoPadrao &&
-        a.transferenciaHumana === b.transferenciaHumana &&
-        a.departamentoHumano === b.departamentoHumano &&
-        JSON.stringify(cleanReasons(a.motivos)) === JSON.stringify(cleanReasons(b.motivos))
+        a.defaultDepartment === b.defaultDepartment &&
+        a.humanHandoff === b.humanHandoff &&
+        a.handoffDepartment === b.handoffDepartment &&
+        JSON.stringify(cleanReasons(a.reasons)) === JSON.stringify(cleanReasons(b.reasons))
     );
 }
 
@@ -57,17 +57,17 @@ export function routingChange(
     currentJev: Record<string, unknown> | undefined,
 ): RoutingChange {
     const change: RoutingChange = {};
-    if (draft.departamentoPadrao && draft.departamentoPadrao !== saved.departamentoPadrao) {
-        change.department = draft.departamentoPadrao;
+    if (draft.defaultDepartment && draft.defaultDepartment !== saved.defaultDepartment) {
+        change.department = draft.defaultDepartment;
     }
-    if (draft.transferenciaHumana !== saved.transferenciaHumana) {
-        change.handoff = draft.transferenciaHumana;
+    if (draft.humanHandoff !== saved.humanHandoff) {
+        change.handoff = draft.humanHandoff;
     }
-    if (draft.departamentoHumano && draft.departamentoHumano !== saved.departamentoHumano) {
-        change.handoff_department = draft.departamentoHumano;
+    if (draft.handoffDepartment && draft.handoffDepartment !== saved.handoffDepartment) {
+        change.handoff_department = draft.handoffDepartment;
     }
-    if (JSON.stringify(cleanReasons(draft.motivos)) !== JSON.stringify(cleanReasons(saved.motivos))) {
-        change.jev_json = jevWithReasons(currentJev, cleanReasons(draft.motivos));
+    if (JSON.stringify(cleanReasons(draft.reasons)) !== JSON.stringify(cleanReasons(saved.reasons))) {
+        change.jev_json = jevWithReasons(currentJev, cleanReasons(draft.reasons));
     }
     return change;
 }
@@ -78,10 +78,10 @@ function calls(control: SofaFieldControlProps) {
 }
 
 const API_FIELDS: Record<string, string> = {
-    department: "departamentoPadrao",
-    handoff: "transferenciaHumana",
-    handoff_department: "departamentoHumano",
-    jev_json: "motivos",
+    department: "defaultDepartment",
+    handoff: "humanHandoff",
+    handoff_department: "handoffDepartment",
+    jev_json: "reasons",
 };
 
 export function AgentRouting() {
@@ -194,20 +194,20 @@ export function AgentRouting() {
                 return false;
             }
             if (failure instanceof ApiError) {
-                const details = failure.detalhes as Record<string, unknown> | null | undefined;
+                const details = failure.details as Record<string, unknown> | null | undefined;
                 const campo = typeof details?.["field"] === "string" ? details["field"] : "";
-                const motivo =
+                const reason =
                     typeof details?.["reason"] === "string" ? details["reason"] : null;
                 const chave = API_FIELDS[campo];
-                if (chave && motivo) {
-                    setErrors((current) => ({ ...current, [chave]: motivo }));
+                if (chave && reason) {
+                    setErrors((current) => ({ ...current, [chave]: reason }));
                     return false;
                 }
                 setGeneralError(
-                    motivo
+                    reason
                         ? t("routing.errorWithDetails", {
                               message: failure.message,
-                              reason: motivo,
+                              reason: reason,
                               code: failure.code,
                           })
                         : t("routing.errorWithCode", {
@@ -247,18 +247,18 @@ export function AgentRouting() {
     const optionsDepartment = useMemo(() => {
         const options = departments.map((departamento) => ({
             value: departamento.id,
-            rotulo:
+            label:
                 departamento.status === "active"
                     ? departamento.name
                     : t("routing.departmentInactive", { name: departamento.name }),
         }));
-        for (const id of [draft?.departamentoPadrao, draft?.departamentoHumano]) {
+        for (const id of [draft?.defaultDepartment, draft?.handoffDepartment]) {
             if (id && !options.some((option) => option.value === id)) {
-                options.push({ value: id, rotulo: t("routing.departmentNotFound") });
+                options.push({ value: id, label: t("routing.departmentNotFound") });
             }
         }
         return options;
-    }, [departments, draft?.departamentoPadrao, draft?.departamentoHumano, t]);
+    }, [departments, draft?.defaultDepartment, draft?.handoffDepartment, t]);
 
     function change(partial: Partial<Routing>) {
         setDraft((current) => (current ? { ...current, ...partial } : current));
@@ -267,20 +267,20 @@ export function AgentRouting() {
 
     function changeReason(index: number, texto: string) {
         if (!draft) return;
-        const reasons = draft.motivos.map((motivo, position) =>
-            position === index ? texto : motivo,
+        const reasons = draft.reasons.map((reason, position) =>
+            position === index ? texto : reason,
         );
-        change({ motivos: reasons });
+        change({ reasons: reasons });
     }
 
     function removeReason(index: number) {
         if (!draft) return;
-        change({ motivos: draft.motivos.filter((_, position) => position !== index) });
+        change({ reasons: draft.reasons.filter((_, position) => position !== index) });
     }
 
     function addReason() {
         if (!draft) return;
-        change({ motivos: [...draft.motivos, ""] });
+        change({ reasons: [...draft.reasons, ""] });
     }
 
     function descartar() {
@@ -323,7 +323,7 @@ export function AgentRouting() {
     }
 
     const noDepartments = !loadingDepartments && !errorDepartments && departments.length === 0;
-    const reasonsFull = draft.motivos.length >= LIMIT_REASONS;
+    const reasonsFull = draft.reasons.length >= LIMIT_REASONS;
 
     return (
         <div className="poph-page">
@@ -397,23 +397,23 @@ export function AgentRouting() {
                         <SofaField
                             label={t("routing.defaultDepartmentLabel")}
                             hint={t("routing.defaultDepartmentHint")}
-                            error={errors["departamentoPadrao"]}
+                            error={errors["defaultDepartment"]}
                             htmlFor="poph-roteamento-padrao"
                         >
                             {(control) => (
                                 <SofaSelect
                                     {...calls(control)}
-                                    value={draft.departamentoPadrao ?? ""}
+                                    value={draft.defaultDepartment ?? ""}
                                     onChange={(evento) =>
-                                        change({ departamentoPadrao: evento.target.value || null })
+                                        change({ defaultDepartment: evento.target.value || null })
                                     }
                                 >
-                                    {draft.departamentoPadrao === null && (
+                                    {draft.defaultDepartment === null && (
                                         <option value="">{t("routing.chooseDepartment")}</option>
                                     )}
                                     {optionsDepartment.map((option) => (
                                         <option key={option.value} value={option.value}>
-                                            {option.rotulo}
+                                            {option.label}
                                         </option>
                                     ))}
                                 </SofaSelect>
@@ -423,32 +423,32 @@ export function AgentRouting() {
                         <SofaSwitch
                             label={t("routing.handoffLabel")}
                             description={t("routing.handoffDescription")}
-                            checked={draft.transferenciaHumana}
+                            checked={draft.humanHandoff}
                             onChange={(evento) =>
-                                change({ transferenciaHumana: evento.target.checked })
+                                change({ humanHandoff: evento.target.checked })
                             }
                         />
 
                         <SofaField
                             label={t("routing.humanDepartmentLabel")}
                             hint={t("routing.humanDepartmentHint")}
-                            error={errors["departamentoHumano"]}
+                            error={errors["handoffDepartment"]}
                             htmlFor="poph-roteamento-humano"
                         >
                             {(control) => (
                                 <SofaSelect
                                     {...calls(control)}
-                                    value={draft.departamentoHumano ?? ""}
+                                    value={draft.handoffDepartment ?? ""}
                                     onChange={(evento) =>
-                                        change({ departamentoHumano: evento.target.value || null })
+                                        change({ handoffDepartment: evento.target.value || null })
                                     }
                                 >
-                                    {draft.departamentoHumano === null && (
+                                    {draft.handoffDepartment === null && (
                                         <option value="">{t("routing.chooseDepartment")}</option>
                                     )}
                                     {optionsDepartment.map((option) => (
                                         <option key={option.value} value={option.value}>
-                                            {option.rotulo}
+                                            {option.label}
                                         </option>
                                     ))}
                                 </SofaSelect>
@@ -476,23 +476,23 @@ export function AgentRouting() {
                     </SofaButton>
                 }
             >
-                {draft.motivos.length === 0 ? (
+                {draft.reasons.length === 0 ? (
                     <p className="poph-mono-muted poph-routing__empty">{t("routing.noReasons")}</p>
                 ) : (
                     <div className="poph-routing__reasons">
-                        {draft.motivos.map((motivo, index) => (
+                        {draft.reasons.map((reason, index) => (
                             <div key={index} className="poph-routing__reason">
                                 <div className="poph-routing__reason-field">
                                     <SofaField
                                         label={t("routing.reasonLabel", { number: index + 1 })}
-                                        hint={`${motivo.trim().length}/${LIMIT_REASON}`}
+                                        hint={`${reason.trim().length}/${LIMIT_REASON}`}
                                         error={errors[`motivo-${index}`]}
                                         htmlFor={`poph-motivo-${index}`}
                                     >
                                         {(control) => (
                                             <SofaInput
                                                 {...calls(control)}
-                                                value={motivo}
+                                                value={reason}
                                                 autoComplete="off"
                                                 onChange={(evento) =>
                                                     changeReason(index, evento.target.value)
@@ -511,9 +511,9 @@ export function AgentRouting() {
                         ))}
                     </div>
                 )}
-                {errors["motivos"] && (
+                {errors["reasons"] && (
                     <p role="alert" className="poph-routing__error">
-                        {errors["motivos"]}
+                        {errors["reasons"]}
                     </p>
                 )}
             </SectionAgent>

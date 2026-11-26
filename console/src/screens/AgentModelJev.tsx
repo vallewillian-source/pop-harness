@@ -184,7 +184,7 @@ export function AgentModelJev() {
                 return false;
             }
             if (failure instanceof ApiError) {
-                const details = failure.detalhes as Record<string, unknown> | null | undefined;
+                const details = failure.details as Record<string, unknown> | null | undefined;
                 const campo = typeof details?.["field"] === "string" ? details["field"] : "";
                 const motivo = typeof details?.["reason"] === "string" ? details["reason"] : null;
                 const campos = baseModel ? (Object.keys(baseModel) as string[]) : [];

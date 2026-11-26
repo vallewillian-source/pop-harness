@@ -112,7 +112,7 @@ export function DialogDeleteProduct({
                     noticeRef.current = resultado.index_warning ?? null;
                 } catch (failure) {
                     if (failure instanceof ApiError && failure.status === 409) {
-                        setCount(refusalCount(failure.detalhes));
+                        setCount(refusalCount(failure.details));
                     }
                     throw failure;
                 }

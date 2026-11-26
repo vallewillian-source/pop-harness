@@ -60,13 +60,13 @@ function servidor({ agentes: agents = [AGENT_MATRIX], matrix = stateMatrix() }: 
     const fake = new FakeServer();
     fake.respond("GET", "/agents", () =>
         agents === "erro"
-            ? { status: 500, corpo: { code: "internal", message: "falha ao listar agentes", details: null } }
-            : { status: 200, corpo: { items: agents, next_cursor: null } },
+            ? { status: 500, body: { code: "internal", message: "falha ao listar agentes", details: null } }
+            : { status: 200, body: { items: agents, next_cursor: null } },
     );
     fake.respond("GET", "/matrix", () =>
         matrix === "erro"
-            ? { status: 500, corpo: { code: "internal", message: "falha ao ler o matrix", details: null } }
-            : { status: 200, corpo: matrix },
+            ? { status: 500, body: { code: "internal", message: "falha ao ler o matrix", details: null } }
+            : { status: 200, body: matrix },
     );
     return fake.install();
 }

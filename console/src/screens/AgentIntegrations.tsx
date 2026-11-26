@@ -202,11 +202,11 @@ export function AgentIntegrations() {
         ];
     }
 
-    let corpo;
+    let content;
     if (loading && integrations.length === 0) {
-        corpo = <SofaSkeleton lines={5} />;
+        content = <SofaSkeleton lines={5} />;
     } else if (error) {
-        corpo = (
+        content = (
             <SofaErrorState
                 title={t("integrations.loadListErrorTitle")}
                 description={t("integrations.loadListErrorDescription")}
@@ -215,7 +215,7 @@ export function AgentIntegrations() {
             />
         );
     } else if (integrations.length === 0) {
-        corpo = (
+        content = (
             <SofaEmptyState
                 icon={<IconWorkflow aria-hidden="true" />}
                 title={t("integrations.emptyTitle")}
@@ -235,7 +235,7 @@ export function AgentIntegrations() {
             />
         );
     } else {
-        corpo = (
+        content = (
             <>
             <div
                 className="poph-table poph-integrations__table"
@@ -389,7 +389,7 @@ export function AgentIntegrations() {
                             </p>
                         </div>
                     </div>
-                    {corpo}
+                    {content}
                 </section>
 
                 <section className="poph-section">

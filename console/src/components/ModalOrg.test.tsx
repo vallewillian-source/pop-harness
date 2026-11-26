@@ -37,7 +37,7 @@ describe("ModalOrg", () => {
         const onClose = vi.fn();
         const created = orgFalse({ id: "org_9", name: "Loja Nova", slug: "loja-nova" });
         const servidor = new FakeServer()
-            .respond("POST", "/admin/v1/orgs", { status: 201, corpo: created })
+            .respond("POST", "/admin/v1/orgs", { status: 201, body: created })
             .install();
 
         render(<ModalOrg opened org={null} onClose={onClose} onSave={onSave} />);
@@ -51,7 +51,7 @@ describe("ModalOrg", () => {
         await waitFor(() => expect(onSave).toHaveBeenCalledWith(created));
         expect(onClose).toHaveBeenCalled();
         const [request] = servidor.callsFor("POST", "/admin/v1/orgs");
-        expect(request?.corpo).toEqual({
+        expect(request?.body).toEqual({
             name: "Loja Nova",
             slug: "loja-nova",
             config: { retention_days: 7 },
@@ -85,11 +85,11 @@ describe("ModalOrg", () => {
                           expected_version: 3,
                           current_version: 4,
                       })
-                    : { status: 200, corpo: orgFalse({ name: "Loja Editada", version: 5 }) };
+                    : { status: 200, body: orgFalse({ name: "Loja Editada", version: 5 }) };
             })
             .respond("GET", "/admin/v1/orgs/org_1", {
                 status: 200,
-                corpo: orgFalse({ name: "Loja do Outro", version: 4 }),
+                body: orgFalse({ name: "Loja do Outro", version: 4 }),
             })
             .install();
 
@@ -115,7 +115,7 @@ describe("ModalOrg", () => {
         const [first, second] = servidor.callsFor("PATCH", "/admin/v1/orgs/org_1");
         expect(first?.headers["if-match"]).toBe("3");
         expect(second?.headers["if-match"]).toBe("4");
-        expect(second?.corpo).toMatchObject({ name: "Loja Editada", status: "active" });
+        expect(second?.body).toMatchObject({ name: "Loja Editada", status: "active" });
     });
 
     it("mostra o erro de validação da API no campo que ela aponta", async () => {

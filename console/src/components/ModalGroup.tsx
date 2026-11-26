@@ -84,7 +84,7 @@ export function ModalGroup({ org, opened: isOpen, onClose, group, onSave }: Moda
     }
 
     function showErrorApi(failure: ApiError) {
-        const details = failure.detalhes as Record<string, unknown> | null | undefined;
+        const details = failure.details as Record<string, unknown> | null | undefined;
         const campo = typeof details?.["field"] === "string" ? details["field"] : undefined;
         const motivo =
             typeof details?.["reason"] === "string" ? details["reason"] : failure.message;

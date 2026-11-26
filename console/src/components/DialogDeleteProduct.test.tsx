@@ -86,7 +86,7 @@ describe("DialogoExcluirProduto", () => {
         const servidor = new FakeServer()
             .respond("DELETE", `/admin/v1/orgs/${ORG}/products/prod_1`, {
                 status: 200,
-                corpo: {
+                body: {
                     deleted: true,
                     index_warning: "índice de produtos não atualizado; execute product reindex",
                 },
@@ -132,7 +132,7 @@ describe("DialogoExcluirProduto", () => {
         const servidor = new FakeServer()
             .respond("DELETE", `/admin/v1/orgs/${ORG}/products/prod_1`, (call) =>
                 call.url.includes("force=true")
-                    ? { status: 200, corpo: { deleted: true, index_warning: null } }
+                    ? { status: 200, body: { deleted: true, index_warning: null } }
                     : refusalCart(3, 2),
             )
             .install();

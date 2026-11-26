@@ -99,26 +99,26 @@ function build() {
 type Scenario = {
     groups: Group[];
     itens: Record<string, Item[]>;
-    errorCreateGroup?: { status: number; corpo: unknown } | null;
+    errorCreateGroup?: { status: number; body: unknown } | null;
 };
 
 function serverWith(scenario: Scenario): FakeServer {
     const servidor = new FakeServer()
-        .respond("GET", `/agents/${AGENTE}`, { status: 200, corpo: AGENT_JSON })
+        .respond("GET", `/agents/${AGENTE}`, { status: 200, body: AGENT_JSON })
         .respond("GET", `/admin/v1/orgs/${ORG}/agents`, {
             status: 200,
-            corpo: { items: [AGENT_JSON], next_cursor: null },
+            body: { items: [AGENT_JSON], next_cursor: null },
         });
 
     servidor.respond("GET", "/items", (call) => {
         const groupId = call.url.split("/knowledge/")[1]?.split("/")[0] ?? "";
         return {
             status: 200,
-            corpo: { items: scenario.itens[groupId] ?? [], next_cursor: null },
+            body: { items: scenario.itens[groupId] ?? [], next_cursor: null },
         };
     });
     servidor.respond("POST", "/items", (call) => {
-        const corpo = call.corpo as {
+        const body = call.body as {
             title: string;
             content: string;
             tags?: string[];
@@ -128,42 +128,42 @@ function serverWith(scenario: Scenario): FakeServer {
         const created = item({
             id: "item-novo",
             group_id: groupId,
-            title: corpo.title,
-            content: corpo.content,
-            tags: corpo.tags ?? [],
-            position: corpo.position ?? 0,
+            title: body.title,
+            content: body.content,
+            tags: body.tags ?? [],
+            position: body.position ?? 0,
         });
         scenario.itens[groupId] = [...(scenario.itens[groupId] ?? []), created];
-        return { status: 201, corpo: created };
+        return { status: 201, body: created };
     });
 
     servidor.respond("GET", "/knowledge/grupo-", (call) => {
         const id = call.url.split("/knowledge/")[1]?.split("?")[0] ?? "";
         const found = scenario.groups.find((current) => current.id === id);
         return found
-            ? { status: 200, corpo: found }
+            ? { status: 200, body: found }
             : apiError(404, "not_found", "grupo não encontrado");
     });
 
     servidor
         .respond("GET", `/admin/v1/orgs/${ORG}/knowledge`, () => ({
             status: 200,
-            corpo: { items: scenario.groups, next_cursor: null },
+            body: { items: scenario.groups, next_cursor: null },
         }))
         .respond("POST", `/admin/v1/orgs/${ORG}/knowledge`, (call) => {
             if (scenario.errorCreateGroup) return scenario.errorCreateGroup;
-            const corpo = call.corpo as { name: string; description?: string };
+            const body = call.body as { name: string; description?: string };
             const created = group({
                 id: "grupo-novo",
-                name: corpo.name,
-                description: corpo.description ?? "",
+                name: body.name,
+                description: body.description ?? "",
             });
             scenario.groups.push({ ...created, agents: [] });
-            return { status: 201, corpo: created };
+            return { status: 201, body: created };
         })
         .respond("POST", `/agents/${AGENTE}/knowledge/reindex`, {
             status: 200,
-            corpo: {
+            body: {
                 agent: AGENTE,
                 indexed: {
                     itens_novos: 2,
@@ -175,13 +175,13 @@ function serverWith(scenario: Scenario): FakeServer {
                 },
             },
         })
-        .respond("DELETE", `/agents/${AGENTE}/knowledge/`, { status: 200, corpo: {} })
-        .respond("POST", `/agents/${AGENTE}/knowledge/`, { status: 200, corpo: {} })
-        .respond("DELETE", `/knowledge/grupo-1`, { status: 200, corpo: {} });
+        .respond("DELETE", `/agents/${AGENTE}/knowledge/`, { status: 200, body: {} })
+        .respond("POST", `/agents/${AGENTE}/knowledge/`, { status: 200, body: {} })
+        .respond("DELETE", `/knowledge/grupo-1`, { status: 200, body: {} });
 
     servidor.respond("GET", `/admin/v1/orgs/${ORG}`, {
         status: 200,
-        corpo: { id: ORG, name: "Exemplo Odontologia" },
+        body: { id: ORG, name: "Exemplo Odontologia" },
     });
 
     return servidor.install();
@@ -289,7 +289,7 @@ describe("AgenteConhecimento", () => {
 
         await waitFor(() => expect(screen.getByText("Horários")).toBeInTheDocument());
         const [order] = servidor.callsFor("POST", `/admin/v1/orgs/${ORG}/knowledge`);
-        expect(order?.corpo).toEqual({ name: "Horários" });
+        expect(order?.body).toEqual({ name: "Horários" });
     });
 
     it("cria trecho no grupo aberto, com o contador de caracteres e as tags em lista", async () => {
@@ -317,7 +317,7 @@ describe("AgenteConhecimento", () => {
             "POST",
             `/admin/v1/orgs/${ORG}/knowledge/grupo-1/items`,
         );
-        expect(order?.corpo).toEqual({
+        expect(order?.body).toEqual({
             title: "Frete grátis",
             content: "Acima de R$ 199,00 o frete é grátis.",
             tags: ["frete", "preço"],
@@ -346,7 +346,7 @@ describe("AgenteConhecimento", () => {
             ...scenarioDefault(),
             errorCreateGroup: {
                 status: 400,
-                corpo: {
+                body: {
                     code: "validation_error",
                     message: "nome já existe",
                     details: { field: "name", reason: "já existe um grupo com este nome" },
@@ -473,7 +473,7 @@ describe("AgenteConhecimento", () => {
     it("exclui trecho só depois da confirmação pelo título", async () => {
         const user = userEvent.setup();
         const servidor = serverWith(scenarioDefault());
-        servidor.respond("DELETE", "/items/item-1", { status: 200, corpo: { removido: true } });
+        servidor.respond("DELETE", "/items/item-1", { status: 200, body: { removido: true } });
         build();
 
         await screen.findByText("Prazo de entrega");
@@ -521,17 +521,17 @@ describe("AgenteConhecimento", () => {
         const scenario = scenarioDefault();
         let fail = true;
         new FakeServer()
-            .respond("GET", `/agents/${AGENTE}`, { status: 200, corpo: AGENT_JSON })
+            .respond("GET", `/agents/${AGENTE}`, { status: 200, body: AGENT_JSON })
             .respond("GET", `/admin/v1/orgs/${ORG}/agents`, {
                 status: 200,
-                corpo: { items: [AGENT_JSON], next_cursor: null },
+                body: { items: [AGENT_JSON], next_cursor: null },
             })
             .respond("GET", "/items", () =>
                 fail
                     ? apiError(500, "internal", "falha inesperada")
                     : {
                           status: 200,
-                          corpo: {
+                          body: {
                               items: scenario.itens["grupo-1"] ?? [],
                               next_cursor: null,
                           },
@@ -539,15 +539,15 @@ describe("AgenteConhecimento", () => {
             )
             .respond("GET", "/knowledge/grupo-", {
                 status: 200,
-                corpo: scenario.groups[0],
+                body: scenario.groups[0],
             })
             .respond("GET", `/admin/v1/orgs/${ORG}/knowledge`, {
                 status: 200,
-                corpo: { items: scenario.groups, next_cursor: null },
+                body: { items: scenario.groups, next_cursor: null },
             })
             .respond("GET", `/admin/v1/orgs/${ORG}`, {
                 status: 200,
-                corpo: { id: ORG, name: "Exemplo Odontologia" },
+                body: { id: ORG, name: "Exemplo Odontologia" },
             })
             .install();
         build();
@@ -577,19 +577,19 @@ describe("AgenteConhecimento", () => {
     it("explica quando o modelo de embedding não está instalado", async () => {
         const user = userEvent.setup();
         const servidor = new FakeServer()
-            .respond("GET", `/agents/${AGENTE}`, { status: 200, corpo: AGENT_JSON })
+            .respond("GET", `/agents/${AGENTE}`, { status: 200, body: AGENT_JSON })
             .respond("GET", `/admin/v1/orgs/${ORG}/agents`, {
                 status: 200,
-                corpo: { items: [AGENT_JSON], next_cursor: null },
+                body: { items: [AGENT_JSON], next_cursor: null },
             })
-            .respond("GET", "/items", { status: 200, corpo: { items: [], next_cursor: null } })
+            .respond("GET", "/items", { status: 200, body: { items: [], next_cursor: null } })
             .respond("GET", `/knowledge/grupo-1`, {
                 status: 200,
-                corpo: group({ id: "grupo-1", name: "Políticas da loja", agents: [AGENTE] }),
+                body: group({ id: "grupo-1", name: "Políticas da loja", agents: [AGENTE] }),
             })
             .respond("GET", `/admin/v1/orgs/${ORG}/knowledge`, {
                 status: 200,
-                corpo: {
+                body: {
                     items: [group({ id: "grupo-1", name: "Políticas da loja", agents: [AGENTE] })],
                     next_cursor: null,
                 },
@@ -599,7 +599,7 @@ describe("AgenteConhecimento", () => {
             )
             .respond("GET", `/admin/v1/orgs/${ORG}`, {
                 status: 200,
-                corpo: { id: ORG, name: "Exemplo Odontologia" },
+                body: { id: ORG, name: "Exemplo Odontologia" },
             })
             .install();
         build();

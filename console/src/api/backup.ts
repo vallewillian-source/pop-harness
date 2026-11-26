@@ -150,8 +150,8 @@ export function overwriteRefusal(error: unknown): OverwriteRefusal | null {
     if (!(error instanceof ApiError)) return null;
     if (error.status !== 409 || error["code"] !== "importacao_sobrescreve") return null;
 
-    const details = error["detalhes"] && typeof error["detalhes"] === "object"
-        ? (error["detalhes"] as Record<string, unknown>)
+    const details = error["details"] && typeof error["details"] === "object"
+        ? (error["details"] as Record<string, unknown>)
         : {};
     const raw = details.tabelas && typeof details.tabelas === "object"
         ? (details.tabelas as Record<string, unknown>)
@@ -242,8 +242,8 @@ export function backupFailure(error: unknown, operation: "exportar" | "importar"
     }
 
     if (error.status === 409 && error["code"] === "conflict") {
-        const conflicts = detailList(error["detalhes"], "conflicts");
-        const more = detailNumber(error["detalhes"], "conflicts_more") ?? 0;
+        const conflicts = detailList(error["details"], "conflicts");
+        const more = detailNumber(error["details"], "conflicts_more") ?? 0;
         return {
             "title": translate("orgs.backupConflictTitle"),
             texto: translate("orgs.backupConflictText"),
@@ -256,8 +256,8 @@ export function backupFailure(error: unknown, operation: "exportar" | "importar"
     }
 
     if (error.status === 400 && error["code"] === "invalid_backup") {
-        const file = detailNumber(error["detalhes"], "version");
-        const installation = detailNumber(error["detalhes"], "supported_version");
+        const file = detailNumber(error["details"], "version");
+        const installation = detailNumber(error["details"], "supported_version");
         return {
             "title": translate("orgs.backupInvalidTitle"),
             texto: translate("orgs.backupInvalidText"),

@@ -77,7 +77,7 @@ export type VersionConflict = {
 
 export function versionConflict(error: unknown): VersionConflict | null {
     if (!(error instanceof ApiError) || error.status !== 412) return null;
-    const details = error["detalhes"] as Record<string, unknown> | null | undefined;
+    const details = error["details"] as Record<string, unknown> | null | undefined;
     const expected = details?.["expected_version"];
     const current = details?.["current_version"];
     return {

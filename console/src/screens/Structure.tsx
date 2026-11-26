@@ -133,9 +133,9 @@ function SectionStructure({ tipo, org, agentCount, onChange }: ColumnProps) {
         </SofaButton>
     );
 
-    let corpo: ReactNode;
+    let content: ReactNode;
     if (estado.loading && estado.itens.length === 0) {
-        corpo = (
+        content = (
             <div
                 aria-busy="true"
                 aria-label={
@@ -148,7 +148,7 @@ function SectionStructure({ tipo, org, agentCount, onChange }: ColumnProps) {
             </div>
         );
     } else if (estado.erro) {
-        corpo = (
+        content = (
             <SofaErrorState
                 title={
                     isDepartment
@@ -161,7 +161,7 @@ function SectionStructure({ tipo, org, agentCount, onChange }: ColumnProps) {
             />
         );
     } else if (estado.itens.length === 0) {
-        corpo = (
+        content = (
             <SofaEmptyState
                 icon={isDepartment ? <IconBuilding aria-hidden="true" /> : <IconGrid aria-hidden="true" />}
                 title={
@@ -188,7 +188,7 @@ function SectionStructure({ tipo, org, agentCount, onChange }: ColumnProps) {
             />
         );
     } else {
-        corpo = (
+        content = (
             <ul
                 className="poph-structure__list"
                 aria-label={
@@ -277,7 +277,7 @@ function SectionStructure({ tipo, org, agentCount, onChange }: ColumnProps) {
                 </div>
             </div>
 
-            {corpo}
+            {content}
 
             <ModalStructure
                 tipo={tipo}

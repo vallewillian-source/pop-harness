@@ -42,7 +42,7 @@ function serverWith(items: unknown[]) {
     return new FakeServer()
         .respond("GET", `/admin/v1/orgs/${ORG}/departments`, {
             status: 200,
-            corpo: {
+            body: {
                 items: [
                     {
                         id: "dep_1",
@@ -60,11 +60,11 @@ function serverWith(items: unknown[]) {
         })
         .respond("GET", `/admin/v1/orgs/${ORG}/agents`, {
             status: 200,
-            corpo: { items, next_cursor: null },
+            body: { items, next_cursor: null },
         })
         .respond("GET", `/admin/v1/orgs/${ORG}`, {
             status: 200,
-            corpo: { id: ORG, name: "Exemplo Odontologia" },
+            body: { id: ORG, name: "Exemplo Odontologia" },
         })
         .install();
 }
@@ -150,13 +150,13 @@ describe("Agentes", () => {
         const user = userEvent.setup();
         let fail = true;
         new FakeServer()
-            .respond("GET", `/admin/v1/orgs/${ORG}/departments`, { status: 200, corpo: { items: [], next_cursor: null } })
+            .respond("GET", `/admin/v1/orgs/${ORG}/departments`, { status: 200, body: { items: [], next_cursor: null } })
             .respond("GET", `/admin/v1/orgs/${ORG}/agents`, () =>
                 fail
                     ? apiError(500, "internal_error", "a instância falhou")
-                    : { status: 200, corpo: { items: [agente()], next_cursor: null } },
+                    : { status: 200, body: { items: [agente()], next_cursor: null } },
             )
-            .respond("GET", `/admin/v1/orgs/${ORG}`, { status: 200, corpo: { id: ORG, name: "Exemplo" } })
+            .respond("GET", `/admin/v1/orgs/${ORG}`, { status: 200, body: { id: ORG, name: "Exemplo" } })
             .install();
         build();
 
@@ -287,16 +287,16 @@ describe("I18N-04: tela de agentes e abas em en-US", () => {
         new FakeServer()
             .respond("GET", `/admin/v1/orgs/${ORG}/departments`, {
                 status: 200,
-                corpo: { items: [], next_cursor: null },
+                body: { items: [], next_cursor: null },
             })
             .respond("GET", `/admin/v1/orgs/${ORG}/agents`, () =>
                 fail
                     ? apiError(500, "internal_error", "the instance failed")
-                    : { status: 200, corpo: { items: [agente()], next_cursor: null } },
+                    : { status: 200, body: { items: [agente()], next_cursor: null } },
             )
             .respond("GET", `/admin/v1/orgs/${ORG}`, {
                 status: 200,
-                corpo: { id: ORG, name: "Exemplo" },
+                body: { id: ORG, name: "Exemplo" },
             })
             .install();
         setLocale("en-US");

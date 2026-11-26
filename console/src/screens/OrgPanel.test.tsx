@@ -30,8 +30,8 @@ function prepareSession(token: string, escopo: "global" | "org") {
 function serverWithOrg(org: Org = ORG) {
     const servidor = new FakeServer();
     servidor
-        .respond("GET", "/admin/v1/orgs/org_1", { status: 200, corpo: org })
-        .respond("GET", "/admin/v1/orgs", { status: 200, corpo: { items: [org], next_cursor: null } })
+        .respond("GET", "/admin/v1/orgs/org_1", { status: 200, body: org })
+        .respond("GET", "/admin/v1/orgs", { status: 200, body: { items: [org], next_cursor: null } })
         .install();
     return servidor;
 }

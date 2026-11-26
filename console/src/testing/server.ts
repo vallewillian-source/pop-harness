@@ -5,13 +5,13 @@ export type Call = {
     "method": string;
     url: string;
     "headers": Record<string, string>;
-    "corpo": unknown;
+    "body": unknown;
     "raw"?: unknown;
 };
 
 type ApiResponse = {
     status: number;
-    "corpo"?: unknown;
+    "body"?: unknown;
     texto?: string;
     "headers"?: Record<string, string>;
 };
@@ -62,7 +62,7 @@ export class FakeServer {
                         body = init.body;
                     }
                 }
-                const call: Call = { "method": method, url, "headers": headers, "corpo": body, "raw": init?.body };
+                const call: Call = { "method": method, url, "headers": headers, "body": body, "raw": init?.body };
                 this["calls"].push(call);
 
                 const route = this["routes"].find(
@@ -72,7 +72,7 @@ export class FakeServer {
                 if (!route) {
                     throw new Error(`sem rota falsa para ${method} ${url}`);
                 }
-                const { status, "corpo": dados, texto, "headers": responseHeaders } = route["respond"](call);
+                const { status, "body": dados, texto, "headers": responseHeaders } = route["respond"](call);
                 const content =
                     texto !== undefined
                         ? texto
@@ -105,5 +105,5 @@ export function apiError(
     message: string,
     details: unknown = null,
 ): ApiResponse {
-    return { status, "corpo": { code, message, details } };
+    return { status, "body": { code, message, details } };
 }

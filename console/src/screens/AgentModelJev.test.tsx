@@ -66,7 +66,7 @@ function build() {
 
 function serverWith(options: {
     agente?: Record<string, unknown>;
-    patches?: Array<{ status: number; corpo?: unknown }>;
+    patches?: Array<{ status: number; body?: unknown }>;
     relido?: Record<string, unknown>;
     readFailure?: boolean;
 } = {}) {
@@ -75,25 +75,25 @@ function serverWith(options: {
     const agente = options.agente ?? agentJson();
     const servidor = new FakeServer()
         .respond("PATCH", `/agents/${AGENTE}`, () => {
-            const response = options.patches?.[patches] ?? { status: 200, corpo: agentJson({ version: 2 }) };
+            const response = options.patches?.[patches] ?? { status: 200, body: agentJson({ version: 2 }) };
             patches += 1;
             return response;
         })
         .respond("GET", `/agents/${AGENTE}`, () => {
             reads += 1;
             if (options.readFailure) return apiError(500, "internal", "falha simulada");
-            if (reads > 1 && options.relido) return { status: 200, corpo: options.relido };
-            return { status: 200, corpo: agente };
+            if (reads > 1 && options.relido) return { status: 200, body: options.relido };
+            return { status: 200, body: agente };
         })
         .respond("GET", `/admin/v1/orgs/${ORG}`, {
             status: 200,
-            corpo: { id: ORG, name: "Clínica Teste", status: "active", version: 1 },
+            body: { id: ORG, name: "Clínica Teste", status: "active", version: 1 },
         });
     return servidor.install();
 }
 
 function patchBody(servidor: FakeServer, index = 0): Record<string, unknown> {
-    return servidor.callsFor("PATCH", `/agents/${AGENTE}`)[index]!.corpo as Record<string, unknown>;
+    return servidor.callsFor("PATCH", `/agents/${AGENTE}`)[index]!.body as Record<string, unknown>;
 }
 
 describe("Aba Modelo e Jev", () => {
@@ -136,7 +136,7 @@ describe("Aba Modelo e Jev", () => {
         await waitFor(() => expect(servidor.callsFor("PATCH", `/agents/${AGENTE}`)).toHaveLength(1));
         const send = servidor.callsFor("PATCH", `/agents/${AGENTE}`)[0]!;
         expect(send.headers["if-match"]).toBe("1");
-        expect(send.corpo).toEqual({ model: "gemini-3.8-flash-high", rag_top_k: 5 });
+        expect(send.body).toEqual({ model: "gemini-3.8-flash-high", rag_top_k: 5 });
         expect(await screen.findByRole("status")).toHaveTextContent("Modelo e Jev gravados (versão 2)");
     });
 
@@ -161,9 +161,9 @@ describe("Aba Modelo e Jev", () => {
         await user.click(screen.getByRole("button", { name: "Salvar modelo e Jev" }));
 
         await waitFor(() => expect(servidor.callsFor("PATCH", `/agents/${AGENTE}`)).toHaveLength(1));
-        const corpo = patchBody(servidor);
-        expect(Object.keys(corpo)).toEqual(["jev_json"]);
-        expect(JSON.parse(corpo.jev_json as string)).toEqual({
+        const body = patchBody(servidor);
+        expect(Object.keys(body)).toEqual(["jev_json"]);
+        expect(JSON.parse(body.jev_json as string)).toEqual({
             despedida: "Até logo!",
             situacoes_de_handoff: ["cliente pede segunda via"],
             resposta_segura: "Vou confirmar e já te respondo.",
@@ -238,8 +238,8 @@ describe("Aba Modelo e Jev", () => {
     it("412 relê, adota a versão atual e mantém o que foi digitado; o próximo salvamento usa a nova versão", async () => {
         const servidor = serverWith({
             patches: [
-                { status: 412, corpo: { code: "version_conflict", message: "versão desatualizada", details: { current_version: 2, expected_version: 1 } } },
-                { status: 200, corpo: agentJson({ version: 3, model: "gemini-3.8-flash-high" }) },
+                { status: 412, body: { code: "version_conflict", message: "versão desatualizada", details: { current_version: 2, expected_version: 1 } } },
+                { status: 200, body: agentJson({ version: 3, model: "gemini-3.8-flash-high" }) },
             ],
             relido: agentJson({ version: 2, model: "outro-modelo" }),
         });
@@ -265,7 +265,7 @@ describe("Aba Modelo e Jev", () => {
             patches: [
                 {
                     status: 400,
-                    corpo: {
+                    body: {
                         code: "validation_error",
                         message: "dados inválidos",
                         details: { field: "max_tool_calls", reason: "use no mínimo 1 chamada" },

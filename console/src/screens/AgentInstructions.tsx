@@ -44,7 +44,7 @@ export function validateInstructions(value: Structured): ErrorsForm {
 }
 
 function fieldError(failure: ApiError): "ferramentas" | "nome" | null {
-    const details = failure.detalhes as Record<string, unknown> | null | undefined;
+    const details = failure.details as Record<string, unknown> | null | undefined;
     const campo = typeof details?.["field"] === "string" ? details["field"] : "";
     if (campo.startsWith("tools")) return "ferramentas";
     if (campo.startsWith("identity")) return "nome";
@@ -56,7 +56,7 @@ function fieldError(failure: ApiError): "ferramentas" | "nome" | null {
 }
 
 function reasonError(failure: ApiError): string {
-    const details = failure.detalhes as Record<string, unknown> | null | undefined;
+    const details = failure.details as Record<string, unknown> | null | undefined;
     return typeof details?.["reason"] === "string" ? details["reason"] : failure.message;
 }
 

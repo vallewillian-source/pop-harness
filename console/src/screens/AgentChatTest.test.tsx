@@ -16,7 +16,7 @@ type Order = {
     method: string;
     caminho: string;
     headers: Headers;
-    corpo: unknown;
+    body: unknown;
     signal?: AbortSignal | null;
 };
 
@@ -30,8 +30,8 @@ const codificador = new TextEncoder();
 let orders: Order[] = [];
 let routes: RouteEntry[] = [];
 
-function json(status: number, corpo: unknown): Response {
-    return new Response(corpo === undefined ? null : JSON.stringify(corpo), {
+function json(status: number, body: unknown): Response {
+    return new Response(body === undefined ? null : JSON.stringify(body), {
         status,
         headers: { "content-type": "application/json" },
     });
@@ -46,7 +46,7 @@ function frame(evento: string, dados: unknown): string {
 }
 
 function turno(pieces: string[], options: { opened?: boolean; signal?: AbortSignal | null } = {}): Response {
-    const corpo = new ReadableStream<Uint8Array>({
+    const body = new ReadableStream<Uint8Array>({
         start(control) {
             for (const piece of pieces) control.enqueue(codificador.encode(piece));
             if (!options.opened) {
@@ -58,7 +58,7 @@ function turno(pieces: string[], options: { opened?: boolean; signal?: AbortSign
             });
         },
     });
-    return new Response(corpo, { status: 200, headers: { "content-type": "text/event-stream" } });
+    return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
 }
 
 function conversa(id: string, partial: Record<string, unknown> = {}) {
@@ -167,19 +167,19 @@ function installServer() {
             const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
             const path = url.split("?")[0] ?? url;
             const method = (init?.method ?? "GET").toUpperCase();
-            let corpo: unknown = init?.body;
+            let body: unknown = init?.body;
             if (typeof init?.body === "string") {
                 try {
-                    corpo = JSON.parse(init.body);
+                    body = JSON.parse(init.body);
                 } catch {
-                    corpo = init.body;
+                    body = init.body;
                 }
             }
             const order: Order = {
                 method,
                 caminho: path,
                 headers: new Headers(init?.headers),
-                corpo,
+                body,
                 signal: init?.signal,
             };
             orders.push(order);
@@ -271,8 +271,8 @@ describe("envio e streaming", () => {
 
         await waitFor(() => expect(screen.getByText("Turno concluído · entrada 120 tokens · saída 16 tokens · 83 ms")).toBeInTheDocument());
         const send = calls("POST", `${BASE}/conv_1/messages`)[0]!;
-        expect(send.corpo).toBeInstanceOf(FormData);
-        expect((send.corpo as FormData).get("text")).toBe("qual o prazo de entrega?");
+        expect(send.body).toBeInstanceOf(FormData);
+        expect((send.body as FormData).get("text")).toBe("qual o prazo de entrega?");
         expect(fieldMessage()).toHaveValue("");
     });
 
@@ -289,10 +289,10 @@ describe("envio e streaming", () => {
         await user.click(screen.getByRole("button", { name: "Enviar" }));
 
         await waitFor(() => expect(calls("POST", `${BASE}/conv_1/messages`)).toHaveLength(1));
-        const corpo = calls("POST", `${BASE}/conv_1/messages`)[0]!.corpo as FormData;
-        const sent = corpo.get("file") as File;
+        const body = calls("POST", `${BASE}/conv_1/messages`)[0]!.body as FormData;
+        const sent = body.get("file") as File;
         expect(sent.name).toBe("procedimento.pdf");
-        expect(corpo.get("text")).toBeNull();
+        expect(body.get("text")).toBeNull();
     });
 
     it("recusa envio sem texto e sem arquivo, sem chamar a API", async () => {

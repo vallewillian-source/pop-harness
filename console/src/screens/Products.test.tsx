@@ -56,21 +56,21 @@ const AGENTS = [
 
 function serverDefault(products = PRODUCTS, categories = CATEGORIES) {
     return new FakeServer()
-        .respond("GET", `${BASE}/agents/ag_1`, { status: 200, corpo: AGENTS[0] })
-        .respond("GET", `${BASE}/agents/ag_2`, { status: 200, corpo: AGENTS[1] })
+        .respond("GET", `${BASE}/agents/ag_1`, { status: 200, body: AGENTS[0] })
+        .respond("GET", `${BASE}/agents/ag_2`, { status: 200, body: AGENTS[1] })
         .respond("GET", `${BASE}/agents`, {
             status: 200,
-            corpo: { items: AGENTS.map(({ id, name }) => ({ id, name })), next_cursor: null },
+            body: { items: AGENTS.map(({ id, name }) => ({ id, name })), next_cursor: null },
         })
         .respond("GET", `${BASE}/products`, {
             status: 200,
-            corpo: { items: products, next_cursor: null },
+            body: { items: products, next_cursor: null },
         })
         .respond("GET", `${BASE}/categories`, {
             status: 200,
-            corpo: { items: categories, next_cursor: null },
+            body: { items: categories, next_cursor: null },
         })
-        .respond("GET", BASE, { status: 200, corpo: { id: ORG, name: "Clínica Teste" } })
+        .respond("GET", BASE, { status: 200, body: { id: ORG, name: "Clínica Teste" } })
         .install();
 }
 
@@ -161,9 +161,9 @@ describe("Produtos", () => {
     it("falha ao carregar os produtos mostra o erro com tentar de novo, sem derrubar a tela", async () => {
         new FakeServer()
             .respond("GET", `${BASE}/products`, apiError(500, "internal", "falha interna ao listar"))
-            .respond("GET", `${BASE}/categories`, { status: 200, corpo: { items: CATEGORIES, next_cursor: null } })
-            .respond("GET", `${BASE}/agents`, { status: 200, corpo: { items: [], next_cursor: null } })
-            .respond("GET", BASE, { status: 200, corpo: { id: ORG, name: "Clínica Teste" } })
+            .respond("GET", `${BASE}/categories`, { status: 200, body: { items: CATEGORIES, next_cursor: null } })
+            .respond("GET", `${BASE}/agents`, { status: 200, body: { items: [], next_cursor: null } })
+            .respond("GET", BASE, { status: 200, body: { id: ORG, name: "Clínica Teste" } })
             .install();
         build();
 
@@ -177,7 +177,7 @@ describe("Produtos", () => {
         const servidor = serverDefault();
         servidor.respond("PATCH", `${BASE}/products/prod_1`, {
             status: 200,
-            corpo: product("prod_1", "Clareamento dental", "cat_1", {
+            body: product("prod_1", "Clareamento dental", "cat_1", {
                 price_cents: 50000,
                 price_text: "R$ 500,00",
                 version: 2,
@@ -196,7 +196,7 @@ describe("Produtos", () => {
         expect(await within(rowOf("Clareamento dental")).findByText("R$ 500,00")).toBeInTheDocument();
         expect(within(rowOf("Clareamento dental")).queryByText("R$ 450,00")).not.toBeInTheDocument();
         const [patch] = servidor.callsFor("PATCH", `${BASE}/products/prod_1`);
-        expect(patch?.corpo).toMatchObject({ price_cents: 50000, price_text: "" });
+        expect(patch?.body).toMatchObject({ price_cents: 50000, price_text: "" });
     });
 
     it("o catálogo é uma seção plana com tabela contínua, sem cartão", async () => {
