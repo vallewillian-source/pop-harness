@@ -101,9 +101,9 @@ fn log_capture() -> &'static Arc<Mutex<Vec<u8>>> {
     struct Writer(Arc<Mutex<Vec<u8>>>);
 
     impl std::io::Write for Writer {
-        fn write(&mut self, dados: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(dados);
-            Ok(dados.len())
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
         }
 
         fn flush(&mut self) -> std::io::Result<()> {
@@ -483,11 +483,11 @@ async fn a_message_above_the_cap_is_refused_without_taking_the_plugin_down() {
     let scenario = Scenario::new("teto");
     let collector = Arc::new(EventCollector::new());
     let receiver: Arc<dyn EventSink> = collector.clone();
-    let limites = SupervisorLimits {
+    let limits = SupervisorLimits {
         max_message_bytes: 1024,
         ..fast_limits()
     };
-    let options = scenario.options("normal").with_limits(limites);
+    let options = scenario.options("normal").with_limits(limits);
     let supervisor = Supervisor::start(options, receiver.clone())
         .await
         .expect("handshake");

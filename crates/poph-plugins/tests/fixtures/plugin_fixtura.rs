@@ -74,19 +74,19 @@ fn main() {
             }
         }));
     }
-    if let Some(texto) = config.get("emitir_estado").and_then(Value::as_str) {
-        respond(json!({"tipo": "estado", "estado": {"estado": texto}}));
+    if let Some(state) = config.get("emitir_estado").and_then(Value::as_str) {
+        respond(json!({"tipo": "estado", "estado": {"estado": state}}));
     }
 
     for line in input.lines() {
-        let Ok(mensagem) = line else { break };
-        let Ok(request) = serde_json::from_str::<Value>(&mensagem) else {
+        let Ok(message) = line else { break };
+        let Ok(request) = serde_json::from_str::<Value>(&message) else {
             continue;
         };
         match request.get("tipo").and_then(Value::as_str) {
             Some("comando") => {
                 if let Some(dir) = &dump {
-                    append_line(dir.join("comandos.jsonl"), &mensagem);
+                    append_line(dir.join("comandos.jsonl"), &message);
                 }
                 if mode == "trava_no_comando" {
                     continue;
