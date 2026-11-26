@@ -16,8 +16,6 @@ M03	93	crates/poph-evolution/src/webhook.rs
 M03	12	crates/poph-evolution/tests/evolucao_real.rs
 M03	24	crates/poph-evolution/tests/evolution.rs
 M03	18	crates/poph-evolution/tests/webhook.rs
-M03	5	crates/poph-files/Cargo.toml
-M03	15	crates/poph-files/tests/recebimento.rs
 M04	6	crates/poph-rag/Cargo.toml
 M04	14	crates/poph-rag/src/banco.rs
 M04	27	crates/poph-rag/src/embedder.rs

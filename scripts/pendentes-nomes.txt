@@ -19,7 +19,6 @@ M03	250	crates/poph-evolution/src/webhook.rs
 M03	39	crates/poph-evolution/tests/evolucao_real.rs
 M03	524	crates/poph-evolution/tests/evolution.rs
 M03	297	crates/poph-evolution/tests/webhook.rs
-M03	207	crates/poph-files/tests/recebimento.rs
 M04	78	crates/poph-rag/src/banco.rs
 M04	20	crates/poph-rag/src/embedder.rs
 M04	13	crates/poph-rag/src/erro.rs
