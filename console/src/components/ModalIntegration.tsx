@@ -520,7 +520,7 @@ export function ModalIntegration({
                         >
                             {INTEGRATION_STATUSES.map((option) => (
                                 <option key={option.value} value={option.value}>
-                                    {option.rotulo}
+                                    {option.label}
                                 </option>
                             ))}
                         </SofaSelect>

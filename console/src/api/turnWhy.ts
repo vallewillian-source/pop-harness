@@ -5,62 +5,62 @@ import { GATE_DESCRIPTION, type IdGate } from "./modelJev";
 
 export type GateDecision = {
     gate: string;
-    "escolha": string | null;
+    "choice": string | null;
     "jevChoice": string | null;
-    "origem": string | null;
-    "confianca": number | null;
-    "margem": number | null;
+    "origin": string | null;
+    "confidence": number | null;
+    "margin": number | null;
     motivo: string | null;
     ms: number | null;
     tokens: number | null;
 };
 
 export type JevCall = {
-    "perguntas": number | null;
+    "questions": number | null;
     "decidedByCache": number | null;
     ms: number | null;
     tokens: number | null;
-    "entrada": number | null;
+    "input": number | null;
     saida: number | null;
     total: number | null;
-    "falha": string | null;
+    "failure": string | null;
 };
 
 export type ReviewG6 = {
-    "escolha": string | null;
-    "confianca": number | null;
+    "choice": string | null;
+    "confidence": number | null;
     regenerou: boolean;
     "secondChoice": string | null;
     "responseSafe": boolean;
 };
 
 export type TurnJev = {
-    "chamada": JevCall | null;
-    "decisoes": GateDecision[];
-    "revisao": ReviewG6 | null;
+    "call": JevCall | null;
+    "decisions": GateDecision[];
+    "review": ReviewG6 | null;
 };
 
 export type TurnExcerpt = {
     item: string | null;
-    "titulo": string;
-    "grupo": string;
+    "title": string;
+    "group": string;
     texto: string;
-    "similaridade": number | null;
-    "relevancia": number | null;
+    "similarity": number | null;
+    "relevance": number | null;
 };
 
 export type TurnProduct = {
-    "produto": string | null;
+    "product": string | null;
     nome: string;
-    "precoTexto": string | null;
+    "priceText": string | null;
     "priceCents": number | null;
-    "unidade": string;
-    "condicoes": string;
+    "unit": string;
+    "conditions": string;
 };
 
 export type TurnRetrieved = {
-    "trechos": TurnExcerpt[];
-    "produtos": TurnProduct[];
+    "excerpts": TurnExcerpt[];
+    "products": TurnProduct[];
 };
 
 export type TurnTimings = {
@@ -102,14 +102,14 @@ export function readTurnJev(value: unknown): TurnJev | null {
     const usage = rawCall && isObject(rawCall.usage) ? rawCall.usage : null;
     const call: JevCall | null = rawCall
         ? {
-              "perguntas": numero(rawCall["perguntas"]),
+              "questions": numero(rawCall["perguntas"]),
               "decidedByCache": numero(rawCall["decididas_por_cache"]),
               ms: numero(rawCall.ms),
               tokens: numero(rawCall.tokens),
-              "entrada": usage ? numero(usage["entrada"]) : null,
+              "input": usage ? numero(usage["entrada"]) : null,
               saida: usage ? numero(usage.saida) : null,
               total: usage ? numero(usage.total) : null,
-              "falha": texto(rawCall["falha"]),
+              "failure": texto(rawCall["falha"]),
           }
         : null;
 
@@ -117,11 +117,11 @@ export function readTurnJev(value: unknown): TurnJev | null {
         .filter(isObject)
         .map((item) => ({
             gate: texto(item.gate) ?? translate("testChat.unknownGate"),
-            "escolha": texto(item["escolha"]),
+            "choice": texto(item["escolha"]),
             "jevChoice": texto(item["escolha_do_jev"]),
-            "origem": texto(item["origem"]),
-            "confianca": numero(item["confianca"]),
-            "margem": numero(item["margem"]),
+            "origin": texto(item["origem"]),
+            "confidence": numero(item["confianca"]),
+            "margin": numero(item["margem"]),
             motivo: texto(item.motivo),
             ms: numero(item.ms),
             tokens: numero(item.tokens),
@@ -130,8 +130,8 @@ export function readTurnJev(value: unknown): TurnJev | null {
     const rawReview = isObject(value["revisao"]) ? value["revisao"] : null;
     const review: ReviewG6 | null = rawReview
         ? {
-              "escolha": texto(rawReview["escolha"]),
-              "confianca": numero(rawReview["confianca"]),
+              "choice": texto(rawReview["escolha"]),
+              "confidence": numero(rawReview["confianca"]),
               regenerou: logico(rawReview.regenerou),
               "secondChoice": texto(rawReview["segunda_escolha"]),
               "responseSafe": logico(rawReview["resposta_segura"]),
@@ -139,7 +139,7 @@ export function readTurnJev(value: unknown): TurnJev | null {
         : null;
 
     if (!call && decisions.length === 0 && !review) return null;
-    return { "chamada": call, "decisoes": decisions, "revisao": review };
+    return { "call": call, "decisions": decisions, "review": review };
 }
 
 export function readTurnRetrieved(value: unknown): TurnRetrieved {
@@ -149,25 +149,25 @@ export function readTurnRetrieved(value: unknown): TurnRetrieved {
         if (!isObject(item)) continue;
         if (item.tipo === "produto") {
             products.push({
-                "produto": texto(item["produto"]),
+                "product": texto(item["produto"]),
                 nome: texto(item.nome) ?? translate("testChat.productWithoutName"),
-                "precoTexto": texto(item["preco_texto"]),
+                "priceText": texto(item["preco_texto"]),
                 "priceCents": numero(item["preco_centavos"]),
-                "unidade": texto(item["unidade"]) ?? "",
-                "condicoes": texto(item["condicoes"]) ?? "",
+                "unit": texto(item["unidade"]) ?? "",
+                "conditions": texto(item["condicoes"]) ?? "",
             });
         } else if (item.tipo === "trecho" || texto(item["titulo"]) !== null) {
             excerpts.push({
                 item: texto(item.item),
-                "titulo": texto(item["titulo"]) ?? translate("testChat.snippetWithoutTitle"),
-                "grupo": texto(item["grupo"]) ?? "",
+                "title": texto(item["titulo"]) ?? translate("testChat.snippetWithoutTitle"),
+                "group": texto(item["grupo"]) ?? "",
                 texto: texto(item.texto) ?? "",
-                "similaridade": numero(item["similaridade"]),
-                "relevancia": numero(item["relevancia"]),
+                "similarity": numero(item["similaridade"]),
+                "relevance": numero(item["relevancia"]),
             });
         }
     }
-    return { "trechos": excerpts, "produtos": products };
+    return { "excerpts": excerpts, "products": products };
 }
 
 export function readTurnTools(value: unknown): string[] {
@@ -176,12 +176,12 @@ export function readTurnTools(value: unknown): string[] {
 
 export type ToolCall = {
     nome: string;
-    "rodada": number | null;
+    "round": number | null;
     ordem: number | null;
     estado: "executada" | "recusada" | "nao_registrado";
     motivo: string | null;
     "durationMs": number | null;
-    "argumentos": string | null;
+    "arguments": string | null;
     resultado: string | null;
 };
 
@@ -195,16 +195,16 @@ export function readToolCalls(value: unknown): ToolCall[] {
             item.estado === "executada" || item.estado === "recusada" ? item.estado : "nao_registrado";
         calls.push({
             nome,
-            "rodada": numero(item["rodada"]),
+            "round": numero(item["rodada"]),
             ordem: numero(item.ordem),
             estado,
             motivo: estado === "recusada" ? texto(item.motivo) : null,
             "durationMs": numero(item["duracao_ms"]),
-            "argumentos": texto(item["argumentos"]),
+            "arguments": texto(item["argumentos"]),
             resultado: texto(item.resultado),
         });
     }
-    return calls.sort((a, b) => (a["rodada"] ?? 0) - (b["rodada"] ?? 0) || (a.ordem ?? 0) - (b.ordem ?? 0));
+    return calls.sort((a, b) => (a["round"] ?? 0) - (b["round"] ?? 0) || (a.ordem ?? 0) - (b.ordem ?? 0));
 }
 
 export function refusalReasonLabel(motivo: string | null): string {

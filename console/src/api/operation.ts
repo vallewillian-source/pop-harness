@@ -154,11 +154,11 @@ export function manifestSummary(manifesto: PluginManifest): {
 
 
 export type ClusterMapSummary = {
-    "modo": "cluster" | "instancia_unica";
+    "mode": "cluster" | "instancia_unica";
     "localInstance": string;
     "instanceDefault": string | null;
     "secretConfigured": boolean;
-    "instancias": { id: string; local: boolean }[];
+    "instances": { id: string; local: boolean }[];
     "quantityOrgs": number;
 };
 
@@ -169,11 +169,11 @@ export type OrgSwitch = {
 };
 
 export type ReloadReport = {
-    "mudou": boolean;
+    "changed": boolean;
     "printBefore": string;
     "printAfter": string;
-    "antes": ClusterMapSummary;
-    "depois": ClusterMapSummary;
+    "before": ClusterMapSummary;
+    "after": ClusterMapSummary;
     "orgsChanged": OrgSwitch[];
     "instancesAdded": string[];
     "instancesRemoved": string[];
@@ -198,11 +198,11 @@ function readSummary(raw: unknown): ClusterMapSummary {
     const instances = Array.isArray(registro["instancias"]) ? registro["instancias"] : [];
     const orgs = asObject(registro.orgs);
     return {
-        "modo": registro["modo"] === "cluster" ? "cluster" : "instancia_unica",
+        "mode": registro["modo"] === "cluster" ? "cluster" : "instancia_unica",
         "localInstance": typeof registro.instance_id === "string" ? registro.instance_id : "",
         "instanceDefault": textOrNull(registro.default_instance),
         "secretConfigured": registro["segredo_configurado"] === true,
-        "instancias": instances
+        "instances": instances
             .map((item) => asObject(item))
             .filter((item): item is Record<string, unknown> => item !== null)
             .map((item) => ({
@@ -220,11 +220,11 @@ export function parseReport(body: unknown): ReloadReport {
     }
     const trocas = Array.isArray(registro["orgs_que_trocaram"]) ? registro["orgs_que_trocaram"] : [];
     return {
-        "mudou": registro["mudou"],
+        "changed": registro["mudou"],
         "printBefore": typeof registro["fingerprint_antes"] === "string" ? registro["fingerprint_antes"] : "",
         "printAfter": typeof registro["fingerprint_depois"] === "string" ? registro["fingerprint_depois"] : "",
-        "antes": readSummary(registro["antes"]),
-        "depois": readSummary(registro["depois"]),
+        "before": readSummary(registro["antes"]),
+        "after": readSummary(registro["depois"]),
         "orgsChanged": trocas
             .map((item) => asObject(item))
             .filter((item): item is Record<string, unknown> => item !== null)

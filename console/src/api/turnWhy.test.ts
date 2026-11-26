@@ -63,31 +63,31 @@ describe("lerJevDoTurno", () => {
     it("lê a chamada, as decisões e a escolha do Jev, sem inventar o que não veio", () => {
         const jev = readTurnJev(JEV_REAL);
 
-        expect(jev?.["chamada"]).toEqual({
-            "perguntas": 2,
+        expect(jev?.["call"]).toEqual({
+            "questions": 2,
             "decidedByCache": 1,
             ms: 310,
             tokens: 480,
-            "entrada": 400,
+            "input": 400,
             saida: 80,
             total: 480,
-            "falha": null,
+            "failure": null,
         });
-        expect(jev?.["decisoes"]).toHaveLength(2);
-        expect(jev?.["decisoes"][0]).toEqual({
+        expect(jev?.["decisions"]).toHaveLength(2);
+        expect(jev?.["decisions"][0]).toEqual({
             gate: "g3",
-            "escolha": "base",
+            "choice": "base",
             "jevChoice": "base",
-            "origem": "jev",
-            "confianca": 0.92,
-            "margem": 0.61,
+            "origin": "jev",
+            "confidence": 0.92,
+            "margin": 0.61,
             motivo: null,
             ms: 310,
             tokens: 240,
         });
-        expect(jev?.["decisoes"][1]?.["jevChoice"]).toBeNull();
-        expect(jev?.["decisoes"][1]?.motivo).toBe("o Jev não respondeu a tempo");
-        expect(jev?.["revisao"]).toBeNull();
+        expect(jev?.["decisions"][1]?.["jevChoice"]).toBeNull();
+        expect(jev?.["decisions"][1]?.motivo).toBe("o Jev não respondeu a tempo");
+        expect(jev?.["review"]).toBeNull();
     });
 
     it("sem registro de Jev, devolve null (nenhum gate decidiu)", () => {
@@ -110,9 +110,9 @@ describe("lerJevDoTurno", () => {
             },
         });
 
-        expect(jev?.["revisao"]).toEqual({
-            "escolha": "revisar_tom",
-            "confianca": 0.81,
+        expect(jev?.["review"]).toEqual({
+            "choice": "revisar_tom",
+            "confidence": 0.81,
             regenerou: true,
             "secondChoice": "aprovada",
             "responseSafe": false,
@@ -125,13 +125,13 @@ describe("lerJevDoTurno", () => {
             "decisoes": [{ gate: "g5", "confianca": "alta", "escolha": 7 }, "lixo", null],
         });
 
-        expect(jev?.["chamada"]?.["perguntas"]).toBeNull();
-        expect(jev?.["chamada"]?.ms).toBeNull();
-        expect(jev?.["chamada"]?.["entrada"]).toBeNull();
-        expect(jev?.["chamada"]?.["falha"]).toBe("prazo de 8 s estourado");
-        expect(jev?.["decisoes"]).toHaveLength(1);
-        expect(jev?.["decisoes"][0]?.["confianca"]).toBeNull();
-        expect(jev?.["decisoes"][0]?.["escolha"]).toBeNull();
+        expect(jev?.["call"]?.["questions"]).toBeNull();
+        expect(jev?.["call"]?.ms).toBeNull();
+        expect(jev?.["call"]?.["input"]).toBeNull();
+        expect(jev?.["call"]?.["failure"]).toBe("prazo de 8 s estourado");
+        expect(jev?.["decisions"]).toHaveLength(1);
+        expect(jev?.["decisions"][0]?.["confidence"]).toBeNull();
+        expect(jev?.["decisions"][0]?.["choice"]).toBeNull();
     });
 });
 
@@ -158,33 +158,33 @@ describe("lerRecuperadosDoTurno", () => {
             },
         ]);
 
-        expect(retrieved["trechos"]).toEqual([
+        expect(retrieved["excerpts"]).toEqual([
             {
                 item: "item-1",
-                "titulo": "Prazo de entrega",
-                "grupo": "Logística",
+                "title": "Prazo de entrega",
+                "group": "Logística",
                 texto: "Entregamos em 5 dias úteis.",
-                "similaridade": 0.83,
-                "relevancia": 0.0163,
+                "similarity": 0.83,
+                "relevance": 0.0163,
             },
         ]);
-        expect(retrieved["produtos"]).toEqual([
+        expect(retrieved["products"]).toEqual([
             {
-                "produto": "prod-1",
+                "product": "prod-1",
                 nome: "Dedetização",
-                "precoTexto": "R$ 450,00 por visita",
+                "priceText": "R$ 450,00 por visita",
                 "priceCents": 45000,
-                "unidade": "por visita",
-                "condicoes": "Até 50 m²",
+                "unit": "por visita",
+                "conditions": "Até 50 m²",
             },
         ]);
     });
 
     it("sem uso nenhum, ou com formato inesperado, devolve listas vazias", () => {
-        expect(readTurnRetrieved([])).toEqual({ "trechos": [], "produtos": [] });
-        expect(readTurnRetrieved(null)).toEqual({ "trechos": [], "produtos": [] });
-        expect(readTurnRetrieved({ "trechos": [] })).toEqual({ "trechos": [], "produtos": [] });
-        expect(readTurnRetrieved(["texto solto", 3])).toEqual({ "trechos": [], "produtos": [] });
+        expect(readTurnRetrieved([])).toEqual({ "excerpts": [], "products": [] });
+        expect(readTurnRetrieved(null)).toEqual({ "excerpts": [], "products": [] });
+        expect(readTurnRetrieved({ "trechos": [] })).toEqual({ "excerpts": [], "products": [] });
+        expect(readTurnRetrieved(["texto solto", 3])).toEqual({ "excerpts": [], "products": [] });
     });
 });
 
@@ -314,7 +314,7 @@ describe("chamadas de ferramenta (HR-47c)", () => {
             expect.objectContaining({
                 estado: "nao_registrado",
                 motivo: null,
-                "rodada": null,
+                round: null,
                 "durationMs": null,
             }),
         ]);
@@ -328,7 +328,7 @@ describe("chamadas de ferramenta (HR-47c)", () => {
             { nome: "z", estado: "executada", "rodada": "1", "duracao_ms": "9", "argumentos": "  ", resultado: 4 },
         ]);
         expect(readCalls).toEqual([
-            expect.objectContaining({ "rodada": null, "durationMs": null, "argumentos": null, resultado: null }),
+            expect.objectContaining({ round: null, "durationMs": null, arguments: null, resultado: null }),
         ]);
     });
 
@@ -446,7 +446,7 @@ describe("I18N-10: rótulos e formatação em en-US", () => {
             { tipo: "produto", "produto": "p1", "preco_centavos": null },
             { tipo: "trecho", item: "i1" },
         ]);
-        expect(retrieved["produtos"][0]?.nome).toBe("Product without a name");
-        expect(retrieved["trechos"][0]?.["titulo"]).toBe("Snippet without a title");
+        expect(retrieved["products"][0]?.nome).toBe("Product without a name");
+        expect(retrieved["excerpts"][0]?.["title"]).toBe("Snippet without a title");
     });
 });

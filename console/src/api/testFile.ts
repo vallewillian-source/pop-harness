@@ -9,7 +9,7 @@ export type FileOrigin = {
     nome: string;
     mime: string;
     de: "cliente" | "agente";
-    "caminho": string;
+    "path": string;
 };
 
 export type DownloadedFile = {
@@ -72,7 +72,7 @@ export function clientAttachmentOrigin(
         nome: attachment.name,
         mime: attachment.mime,
         de: "cliente",
-        "caminho": attachmentPath(org, agente, conversa, mensagem, attachment.id),
+        "path": attachmentPath(org, agente, conversa, mensagem, attachment.id),
     };
 }
 
@@ -86,7 +86,7 @@ export function agentFileOrigin(
         nome: file.name,
         mime: file.mime,
         de: "agente",
-        "caminho": agentFilePath(org, agente, file["arquivo_id"]),
+        "path": agentFilePath(org, agente, file["arquivo_id"]),
     };
 }
 

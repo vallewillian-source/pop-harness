@@ -211,7 +211,7 @@ function listOrNone(items: string[]): string {
 }
 
 function modeText(summary: ClusterMapSummary): string {
-    return summary.modo === "cluster"
+    return summary.mode === "cluster"
         ? translate("operation.mapModeCluster")
         : translate("operation.mapModeSingle");
 }
@@ -237,8 +237,8 @@ function TableMap({ before, after, printBefore, printAfter }: {
         },
         {
             rotulo: t("operation.mapDeclaredInstances"),
-            antes: listOrNone(before.instancias.map((item) => item.id)),
-            depois: listOrNone(after.instancias.map((item) => item.id)),
+            antes: listOrNone(before.instances.map((item) => item.id)),
+            depois: listOrNone(after.instances.map((item) => item.id)),
         },
         {
             rotulo: t("operation.mapRoutedOrgs"),
@@ -286,23 +286,23 @@ function ReportReload({ report, title }: { report: ReloadReport; title: string }
         <div className="poph-operation__report">
             <h3 className="poph-operation__subtitle">{title}</h3>
             <SofaBanner
-                tone={report.mudou ? "success" : "info"}
+                tone={report.changed ? "success" : "info"}
                 title={
-                    report.mudou
+                    report.changed
                         ? t("operation.clusterChangedTitle")
                         : t("operation.clusterUnchangedTitle")
                 }
             >
-                {report.mudou
+                {report.changed
                     ? t("operation.clusterChangedText")
                     : t("operation.clusterUnchangedText")}
             </SofaBanner>
-            {report.depois.modo === "instancia_unica" ? (
+            {report.after.mode === "instancia_unica" ? (
                 <p className="poph-operation__help">{t("operation.clusterSingleInstance")}</p>
             ) : null}
             <TableMap
-                before={report.antes}
-                after={report.depois}
+                before={report.before}
+                after={report.after}
                 printBefore={report.printBefore}
                 printAfter={report.printAfter}
             />

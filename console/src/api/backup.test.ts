@@ -170,8 +170,8 @@ describe("recusa de sobrescrita (HR-48e-4)", () => {
         );
         expect(refusal).toEqual({
             tabelas: { agents: 1, products: 3 },
-            "linhas": 4,
-            "exemplos": ["agents: bia", "products: dedetizacao"],
+            "lines": 4,
+            "examples": ["agents: bia", "products: dedetizacao"],
         });
     });
 
@@ -183,8 +183,8 @@ describe("recusa de sobrescrita (HR-48e-4)", () => {
             }),
         );
         expect(refusal?.tabelas).toEqual({ agents: 2 });
-        expect(refusal?.["linhas"]).toBe(2);
-        expect(refusal?.["exemplos"]).toHaveLength(5);
+        expect(refusal?.["lines"]).toBe(2);
+        expect(refusal?.["examples"]).toHaveLength(5);
     });
 
     it("não é recusa de sobrescrita: conflito de nome, outro status ou erro que não é da API", () => {

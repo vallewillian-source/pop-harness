@@ -18,19 +18,19 @@ export type Integracao = {
 export const INTEGRATION_STATUSES = [
     {
         "value": "active",
-        get "rotulo"() {
+        get "label"() {
             return translate("integrations.statusActive");
         },
     },
     {
         "value": "inactive",
-        get "rotulo"() {
+        get "label"() {
             return translate("integrations.statusInactive");
         },
     },
     {
         "value": "archived",
-        get "rotulo"() {
+        get "label"() {
             return translate("integrations.statusArchived");
         },
     },

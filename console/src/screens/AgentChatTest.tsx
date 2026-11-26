@@ -463,7 +463,7 @@ export function AgentChatTest() {
                 orgId,
                 agentId,
                 conversa,
-                { texto: textClient, arquivos: sent },
+                { texto: textClient, files: sent },
                 {
                     sinal: control.signal,
                     onEvent: (evento) => {
@@ -508,7 +508,7 @@ export function AgentChatTest() {
         const order = ++orderPreviewRef.current;
         setPreview({ origem: source, estado: "carregando", src: null, erro: null });
         try {
-            const file = await downloadContent(source.caminho);
+            const file = await downloadContent(source.path);
             const src = await readAsDataUrl(file.blob, source.mime);
             if (order !== orderPreviewRef.current) return;
             setPreview({ origem: source, estado: "pronta", src, erro: null });
@@ -529,7 +529,7 @@ export function AgentChatTest() {
         setDownloadingAttachment(source.chave);
         setDownloadError(null);
         try {
-            const file = await downloadContent(source.caminho);
+            const file = await downloadContent(source.path);
             if (activeRef.current !== conversa) return;
             const url = URL.createObjectURL(file.blob);
             downloadUrlsRef.current.add(url);

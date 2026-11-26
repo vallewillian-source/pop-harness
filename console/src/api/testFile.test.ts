@@ -100,7 +100,7 @@ describe("origens de arquivo (HR-46e)", () => {
             nome: "Catalogo.pdf",
             mime: "application/pdf",
             de: "agente",
-            "caminho": "/admin/v1/orgs/org_1/agents/ag_1/files/arq_9/content",
+            "path": "/admin/v1/orgs/org_1/agents/ag_1/files/arq_9/content",
         });
     });
 
@@ -112,7 +112,7 @@ describe("origens de arquivo (HR-46e)", () => {
         });
         expect(origin.de).toBe("cliente");
         expect(origin.chave).toBe("anexo:anx_1");
-        expect(origin["caminho"]).toBe(
+        expect(origin["path"]).toBe(
             "/admin/v1/orgs/org_1/agents/ag_1/test-chat/conv_1/messages/m1/attachments/anx_1/content",
         );
     });

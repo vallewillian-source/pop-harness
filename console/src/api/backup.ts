@@ -140,8 +140,8 @@ function detailList(details: unknown, campo: string): string[] {
 
 export type OverwriteRefusal = {
     tabelas: Record<string, number>;
-    "linhas": number;
-    "exemplos": string[];
+    "lines": number;
+    "examples": string[];
 };
 
 export const SHOWN_EXAMPLES = 5;
@@ -163,7 +163,7 @@ export function overwriteRefusal(error: unknown): OverwriteRefusal | null {
     const sumOfTables = Object.values(tabelas).reduce((sum, value) => sum + value, 0);
     const lines = detailNumber(details, "linhas") ?? sumOfTables;
     const examples = detailList(details, "exemplos").slice(0, SHOWN_EXAMPLES);
-    return { tabelas, "linhas": lines, "exemplos": examples };
+    return { tabelas, "lines": lines, "examples": examples };
 }
 
 export function sampleText(item: string): string {

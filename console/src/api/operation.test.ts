@@ -214,17 +214,17 @@ describe("recarregarCluster (HR-48f)", () => {
         const call = servidor["callsFor"]("POST", "/admin/v1/cluster/reload")[0];
         expect(call?.["method"]).toBe("POST");
         expect(call?.["raw"]).toBeUndefined();
-        expect(report["mudou"]).toBe(true);
+        expect(report["changed"]).toBe(true);
         expect(report["printBefore"]).toBe("aaaa1111bbbb2222");
         expect(report["printAfter"]).toBe("cccc3333dddd4444");
-        expect(report["antes"]["modo"]).toBe("instancia_unica");
-        expect(report["depois"]).toMatchObject({
-            "modo": "cluster",
+        expect(report["before"]["mode"]).toBe("instancia_unica");
+        expect(report["after"]).toMatchObject({
+            "mode": "cluster",
             "localInstance": "a",
             "instanceDefault": "a",
             "secretConfigured": true,
             "quantityOrgs": 2,
-            "instancias": [
+            "instances": [
                 { id: "a", local: true },
                 { id: "b", local: false },
             ],
@@ -296,12 +296,12 @@ describe("interpretarRelatorio (HR-48f)", () => {
             "instancias_removidas": [],
         });
 
-        expect(report["depois"]).toEqual({
-            "modo": "instancia_unica",
+        expect(report["after"]).toEqual({
+            "mode": "instancia_unica",
             "localInstance": "",
             "instanceDefault": null,
             "secretConfigured": false,
-            "instancias": [],
+            "instances": [],
             "quantityOrgs": 0,
         });
         expect(report["orgsChanged"]).toEqual([]);
@@ -319,8 +319,8 @@ describe("interpretarRelatorio (HR-48f)", () => {
             "instancias_removidas": null,
         });
 
-        expect(report["antes"]["instancias"]).toEqual([{ id: "a", local: true }]);
-        expect(report["antes"]["quantityOrgs"]).toBe(0);
+        expect(report["before"]["instances"]).toEqual([{ id: "a", local: true }]);
+        expect(report["before"]["quantityOrgs"]).toBe(0);
         expect(report["orgsChanged"]).toEqual([{ org: "org_1", de: "b", para: null }]);
         expect(report["instancesAdded"]).toEqual(["c"]);
         expect(report["instancesRemoved"]).toEqual([]);

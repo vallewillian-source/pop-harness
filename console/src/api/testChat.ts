@@ -102,7 +102,7 @@ export type TurnEvent = {
 
 export type ClientMessage = {
     texto: string;
-    "arquivos": File[];
+    files: File[];
 };
 
 const EVENT_NAMES = new Set<string>([
@@ -169,7 +169,7 @@ export async function sendTestMessage(
     if (texto) {
         body.append("text", texto);
     }
-    for (const file of mensagem["arquivos"]) {
+    for (const file of mensagem.files) {
         body.append("file", file, file.name);
     }
 

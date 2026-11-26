@@ -193,53 +193,53 @@ function SectionJev({ jev }: { jev: TurnJev | null }) {
                 <p className="poph-why__empty">{t("testChat.jevEmpty")}</p>
             ) : (
                 <>
-                    {jev.chamada && (
+                    {jev.call && (
                         <dl className="poph-why__lines">
                             <div>
                                 <dt>{t("testChat.fieldJevCall")}</dt>
                                 <dd>
-                                    {jev.chamada.perguntas === null
+                                    {jev.call.questions === null
                                         ? t("testChat.notRecorded")
                                         : t("testChat.jevCallSummary", {
-                                              questions: jev.chamada.perguntas,
-                                              cached: jev.chamada.decidedByCache ?? 0,
+                                              questions: jev.call.questions,
+                                              cached: jev.call.decidedByCache ?? 0,
                                           })}
                                 </dd>
                             </div>
                             <div>
                                 <dt>{t("testChat.fieldBatchTime")}</dt>
-                                <dd>{formatMs(jev.chamada.ms)}</dd>
+                                <dd>{formatMs(jev.call.ms)}</dd>
                             </div>
                             <div>
                                 <dt>{t("testChat.fieldJevTokens")}</dt>
                                 <dd>
-                                    {jev.chamada.total !== null || jev.chamada.tokens !== null
-                                        ? `${formatTokens(jev.chamada.total ?? jev.chamada.tokens)}${
-                                              jev.chamada.entrada !== null || jev.chamada.saida !== null
+                                    {jev.call.total !== null || jev.call.tokens !== null
+                                        ? `${formatTokens(jev.call.total ?? jev.call.tokens)}${
+                                              jev.call.input !== null || jev.call.saida !== null
                                                   ? ` ${t("testChat.tokensBreakdownOnly", {
-                                                        input: formatTokens(jev.chamada.entrada),
-                                                        output: formatTokens(jev.chamada.saida),
+                                                        input: formatTokens(jev.call.input),
+                                                        output: formatTokens(jev.call.saida),
                                                     })}`
                                                   : ""
                                           }`
                                         : t("testChat.jevTokensNotInformed")}
                                 </dd>
                             </div>
-                            {jev.chamada.falha && (
+                            {jev.call.failure && (
                                 <div>
                                     <dt>{t("testChat.fieldCallFailure")}</dt>
-                                    <dd className="poph-why__error">{jev.chamada.falha}</dd>
+                                    <dd className="poph-why__error">{jev.call.failure}</dd>
                                 </div>
                             )}
                         </dl>
                     )}
 
-                    {jev.decisoes.length === 0 && <p className="poph-why__empty">{t("testChat.jevNoDecisions")}</p>}
-                    {jev.decisoes.map((decisao, index) => (
+                    {jev.decisions.length === 0 && <p className="poph-why__empty">{t("testChat.jevNoDecisions")}</p>}
+                    {jev.decisions.map((decisao, index) => (
                         <CardGate key={`${decisao.gate}-${index}`} decisao={decisao} />
                     ))}
 
-                    {jev.revisao && (
+                    {jev.review && (
                         <article className="poph-why__card" aria-labelledby="porque-g6">
                             <h4 id="porque-g6" className="poph-why__subtitle">
                                 {t("testChat.g6Title")}
@@ -247,25 +247,25 @@ function SectionJev({ jev }: { jev: TurnJev | null }) {
                             <dl className="poph-why__lines">
                                 <div>
                                     <dt>{t("testChat.fieldG6Choice")}</dt>
-                                    <dd>{jev.revisao.escolha ?? t("testChat.notRecorded")}</dd>
+                                    <dd>{jev.review.choice ?? t("testChat.notRecorded")}</dd>
                                 </div>
                                 <div>
                                     <dt>{t("testChat.fieldConfidence")}</dt>
-                                    <dd>{formatConfidence(jev.revisao.confianca)}</dd>
+                                    <dd>{formatConfidence(jev.review.confidence)}</dd>
                                 </div>
                                 <div>
                                     <dt>{t("testChat.fieldRewrote")}</dt>
-                                    <dd>{jev.revisao.regenerou ? t("testChat.yes") : t("testChat.no")}</dd>
+                                    <dd>{jev.review.regenerou ? t("testChat.yes") : t("testChat.no")}</dd>
                                 </div>
-                                {jev.revisao.secondChoice && (
+                                {jev.review.secondChoice && (
                                     <div>
                                         <dt>{t("testChat.fieldSecondChoice")}</dt>
-                                        <dd>{jev.revisao.secondChoice}</dd>
+                                        <dd>{jev.review.secondChoice}</dd>
                                     </div>
                                 )}
                                 <div>
                                     <dt>{t("testChat.fieldSafeResponse")}</dt>
-                                    <dd>{jev.revisao.responseSafe ? t("testChat.yes") : t("testChat.no")}</dd>
+                                    <dd>{jev.review.responseSafe ? t("testChat.yes") : t("testChat.no")}</dd>
                                 </div>
                             </dl>
                         </article>
@@ -280,7 +280,7 @@ function SectionJev({ jev }: { jev: TurnJev | null }) {
 
 function CardGate({ decisao }: { decisao: GateDecision }) {
     const { translate: t } = useI18n();
-    const id = `porque-gate-${decisao.gate}-${decisao.escolha ?? "sem"}`;
+    const id = `porque-gate-${decisao.gate}-${decisao.choice ?? "sem"}`;
     return (
         <article className="poph-why__card" aria-labelledby={id}>
             <h4 id={id} className="poph-why__subtitle">
@@ -289,7 +289,7 @@ function CardGate({ decisao }: { decisao: GateDecision }) {
             <dl className="poph-why__lines">
                 <div>
                     <dt>{t("testChat.fieldChosen")}</dt>
-                    <dd>{decisao.escolha ?? t("testChat.none")}</dd>
+                    <dd>{decisao.choice ?? t("testChat.none")}</dd>
                 </div>
                 <div>
                     <dt>{t("testChat.fieldJevChoice")}</dt>
@@ -297,15 +297,15 @@ function CardGate({ decisao }: { decisao: GateDecision }) {
                 </div>
                 <div>
                     <dt>{t("testChat.fieldOrigin")}</dt>
-                    <dd>{originLabel(decisao.origem)}</dd>
+                    <dd>{originLabel(decisao.origin)}</dd>
                 </div>
                 <div>
                     <dt>{t("testChat.fieldConfidence")}</dt>
-                    <dd>{formatConfidence(decisao.confianca)}</dd>
+                    <dd>{formatConfidence(decisao.confidence)}</dd>
                 </div>
                 <div>
                     <dt>{t("testChat.fieldMargin")}</dt>
-                    <dd>{formatMargin(decisao.margem)}</dd>
+                    <dd>{formatMargin(decisao.margin)}</dd>
                 </div>
                 {decisao.motivo && (
                     <div>
@@ -328,7 +328,7 @@ function CardGate({ decisao }: { decisao: GateDecision }) {
 
 function SectionRecovered({ recovered }: { recovered: TurnRetrieved }) {
     const { translate: t, formatNumber } = useI18n();
-    const vazio = recovered.trechos.length === 0 && recovered.produtos.length === 0;
+    const vazio = recovered.excerpts.length === 0 && recovered.products.length === 0;
     return (
         <section className="poph-why__section" aria-labelledby="porque-recuperados">
             <h3 id="porque-recuperados" className="poph-why__title">
@@ -338,21 +338,21 @@ function SectionRecovered({ recovered }: { recovered: TurnRetrieved }) {
                 <p className="poph-why__empty">{t("testChat.retrievedEmpty")}</p>
             ) : (
                 <>
-                    {recovered.trechos.length > 0 && (
+                    {recovered.excerpts.length > 0 && (
                         <>
                             <h4 className="poph-why__subtitle">{t("testChat.subheadingKnowledge")}</h4>
                             <ul className="poph-why__list">
-                                {recovered.trechos.map((passage, index) => (
+                                {recovered.excerpts.map((passage, index) => (
                                     <li key={`${passage.item ?? "trecho"}-${index}`} className="poph-why__item">
-                                        <strong>{passage.titulo}</strong>
+                                        <strong>{passage.title}</strong>
                                         <span className="poph-why__meta">
                                             {t("testChat.snippetMeta", {
-                                                group: passage.grupo || t("testChat.notRecorded"),
-                                                similarity: formatConfidence(passage.similaridade),
+                                                group: passage.group || t("testChat.notRecorded"),
+                                                similarity: formatConfidence(passage.similarity),
                                                 relevance:
-                                                    passage.relevancia === null
+                                                    passage.relevance === null
                                                         ? t("testChat.notRecordedF")
-                                                        : formatNumber(passage.relevancia, {
+                                                        : formatNumber(passage.relevance, {
                                                               minimumFractionDigits: 4,
                                                               maximumFractionDigits: 4,
                                                           }),
@@ -369,25 +369,25 @@ function SectionRecovered({ recovered }: { recovered: TurnRetrieved }) {
                             </ul>
                         </>
                     )}
-                    {recovered.produtos.length > 0 && (
+                    {recovered.products.length > 0 && (
                         <>
                             <h4 className="poph-why__subtitle">{t("testChat.subheadingProducts")}</h4>
                             <ul className="poph-why__list">
-                                {recovered.produtos.map((product, index) => {
+                                {recovered.products.map((product, index) => {
                                     const price =
-                                        product.precoTexto ??
+                                        product.priceText ??
                                         formatPriceCents(product.priceCents) ??
                                         t("testChat.priceNotRecorded");
                                     return (
-                                        <li key={`${product.produto ?? "produto"}-${index}`} className="poph-why__item">
+                                        <li key={`${product.product ?? "produto"}-${index}`} className="poph-why__item">
                                             <strong>{product.nome}</strong>
                                             <span className="poph-why__meta">
                                                 {t("testChat.productPriceSeen", { price })}
-                                                {product.unidade ? ` · ${product.unidade}` : ""}
+                                                {product.unit ? ` · ${product.unit}` : ""}
                                             </span>
-                                            {product.condicoes && (
+                                            {product.conditions && (
                                                 <span className="poph-why__meta">
-                                                    {t("testChat.productConditions", { conditions: product.condicoes })}
+                                                    {t("testChat.productConditions", { conditions: product.conditions })}
                                                 </span>
                                             )}
                                         </li>
@@ -420,7 +420,7 @@ function SectionTools({
             {calls.length > 0 && (
                 <ol className="poph-why__list" aria-label={t("testChat.toolCallsLabel")}>
                     {calls.map((call, index) => (
-                        <CallTool key={`${call.rodada ?? "r"}-${call.ordem ?? index}`} call={call} />
+                        <CallTool key={`${call.round ?? "r"}-${call.ordem ?? index}`} call={call} />
                     ))}
                 </ol>
             )}
@@ -460,9 +460,9 @@ function CallTool({ call }: { call: ToolCall }) {
               : t("testChat.toolStateUnrecorded");
     const tom = call.estado === "executada" ? "success" : refused ? "attention" : "muted";
     const round =
-        call.rodada === null
+        call.round === null
             ? t("testChat.roundUnrecorded")
-            : t("testChat.roundNumber", { number: formatNumber(call.rodada + 1) });
+            : t("testChat.roundNumber", { number: formatNumber(call.round + 1) });
     const ordem = call.ordem === null ? "" : t("testChat.callOrder", { number: formatNumber(call.ordem) });
     return (
         <li className={`poph-why__item poph-why__call${refused ? " poph-why__call--refused" : ""}`}>
@@ -487,7 +487,7 @@ function CallTool({ call }: { call: ToolCall }) {
                 <div>
                     <dt>{t("testChat.fieldArguments")}</dt>
                     <dd>
-                        {call.argumentos === null ? (
+                        {call.arguments === null ? (
                             t("testChat.notRecordedPlural")
                         ) : (
                             <pre
@@ -495,7 +495,7 @@ function CallTool({ call }: { call: ToolCall }) {
                                 tabIndex={0}
                                 aria-label={t("testChat.argumentsLabel", { name: call.nome })}
                             >
-                                {formatToolContent(call.argumentos)}
+                                {formatToolContent(call.arguments)}
                             </pre>
                         )}
                     </dd>
@@ -534,11 +534,11 @@ function SectionTimes({ timings: times }: { timings: TurnTimings | null }) {
         );
     }
     const total = times.totalMs;
-    const steps: Array<{ rotulo: string; ms: number | null }> = [
-        { rotulo: t("testChat.timeQueue"), ms: times.queueMs },
-        { rotulo: t("testChat.timeAssembly"), ms: times.buildMs },
-        { rotulo: t("testChat.timeFirstText"), ms: times.firstTextMs },
-        { rotulo: t("testChat.timeTotal"), ms: total },
+    const steps: Array<{ label: string; ms: number | null }> = [
+        { label: t("testChat.timeQueue"), ms: times.queueMs },
+        { label: t("testChat.timeAssembly"), ms: times.buildMs },
+        { label: t("testChat.timeFirstText"), ms: times.firstTextMs },
+        { label: t("testChat.timeTotal"), ms: total },
     ];
     return (
         <section className="poph-why__section" aria-labelledby="porque-tempos">
@@ -547,8 +547,8 @@ function SectionTimes({ timings: times }: { timings: TurnTimings | null }) {
             </h3>
             <ul className="poph-why__list">
                 {steps.map((etapa) => (
-                    <li key={etapa.rotulo} className="poph-why__item poph-why__time">
-                        <span>{etapa.rotulo}</span>
+                    <li key={etapa.label} className="poph-why__item poph-why__time">
+                        <span>{etapa.label}</span>
                         <span className="poph-why__meta">{formatMs(etapa.ms)}</span>
                         {etapa.ms !== null && total !== null && total > 0 && (
                             <progress
@@ -556,7 +556,7 @@ function SectionTimes({ timings: times }: { timings: TurnTimings | null }) {
                                 max={total}
                                 value={Math.min(etapa.ms, total)}
                                 aria-label={t("testChat.timeBarLabel", {
-                                    label: etapa.rotulo,
+                                    label: etapa.label,
                                     value: formatMs(etapa.ms),
                                     total: formatMs(total),
                                 })}

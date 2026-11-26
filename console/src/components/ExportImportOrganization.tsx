@@ -116,10 +116,10 @@ function RefusalOverwritten({
         <SofaBanner tone="warn" title={t("orgs.backupOverwriteTitle")}>
             <p style={{ margin: 0 }}>
                 {t(
-                    refusal.linhas === 1
+                    refusal.lines === 1
                         ? "orgs.backupOverwriteLinesOne"
                         : "orgs.backupOverwriteLinesMany",
-                    { count: numero(refusal.linhas) },
+                    { count: numero(refusal.lines) },
                 )}
             </p>
             {tabelas.length > 0 ? (
@@ -144,14 +144,14 @@ function RefusalOverwritten({
                     </tbody>
                 </table>
             ) : null}
-            {refusal.exemplos.length > 0 ? (
+            {refusal.examples.length > 0 ? (
                 <>
                     <p style={{ margin: "6px 0 0" }}>{t("orgs.backupExamplesHeading")}</p>
                     <ul
                         className="poph-operation__conflicts"
                         aria-label={t("orgs.backupExamplesLabel")}
                     >
-                        {refusal.exemplos.map((item, index) => (
+                        {refusal.examples.map((item, index) => (
                             <li key={`${index}-${item}`}>{sampleText(item)}</li>
                         ))}
                     </ul>
