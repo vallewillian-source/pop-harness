@@ -243,6 +243,8 @@ class RustAnalyzer:
         self.lock = threading.Lock()
         self.messages = queue.Queue()
         self.opened = set()
+        self.status = None
+        self.ready = False
         environment = dict(os.environ)
         environment["PATH"] = os.path.expanduser("~/.cargo/bin") + ":" + environment.get("PATH", "")
         probe = subprocess.run(
@@ -298,9 +300,11 @@ class RustAnalyzer:
                 self._send({"jsonrpc": "2.0", "id": message["id"], "result": None})
             elif method == "workspace/applyEdit":
                 self._send({"jsonrpc": "2.0", "id": message["id"], "result": {"applied": False}})
-            elif method == "experimental/serverStatus" and self.verbose:
+            elif method == "experimental/serverStatus":
                 params = message.get("params", {})
-                print(f"rename: rust-analyzer {params.get('health')} quiescent={params.get('quiescent')}", file=sys.stderr)
+                self.status = params
+                if self.verbose:
+                    print(f"rename: rust-analyzer {params.get('health')} quiescent={params.get('quiescent')}", file=sys.stderr)
 
     def _send(self, message):
         body = json.dumps(message).encode("utf-8")
@@ -367,7 +371,26 @@ class RustAnalyzer:
             self.notify("textDocument/didClose", {"textDocument": {"uri": uri}})
         self.opened.clear()
 
+    def wait_ready(self, timeout=600.0, grace=20.0):
+        """Waits for the workspace load: while it runs, prepareRename answers nothing.
+
+        The server reports its health and whether it is quiescent; asking to rename before that
+        made every candidate look unrenameable. A server that never reports a status is left alone
+        after `grace` seconds instead of blocking the tool.
+        """
+        started = time.monotonic()
+        while time.monotonic() - started < timeout:
+            status = self.status
+            if status is not None and status.get("quiescent"):
+                return True
+            if status is None and time.monotonic() - started >= grace:
+                return True
+            time.sleep(1.0)
+        return False
+
     def can_rename(self, hit):
+        if not self.ready:
+            self.ready = self.wait_ready()
         self.open_document(hit["path"])
         try:
             result = self.request(
