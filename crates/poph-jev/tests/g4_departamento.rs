@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 
 use poph_jev::{
     BatchResponse, DecisionOrigin, FakeJev, G4, Gate, GateEvaluator, IdGate, JevEngine, JevMessage,
-    JevRequest, JevResponse, JevState, eval::ajuste_de_gate, match_candidate,
+    JevRequest, JevResponse, JevState, eval::gate_override, match_candidate,
 };
 
 fn estado(departamentos: &[&str], texto: &str) -> JevState {
@@ -199,7 +199,7 @@ async fn lote_do_g4_e_o_fallback_preserva_a_escolha_crua() {
                 &["Comercial", "Suporte", "Financeiro"],
                 "quero o preço do produto",
             ),
-            Some(ajuste_de_gate(IdGate::G4)),
+            Some(gate_override(IdGate::G4)),
         )
         .await;
 

@@ -3,8 +3,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use poph_jev::{
-    CasoRotulado, ErroConjunto, FakeJev, G1_CONTINUE, G1_TRANSFER, IdGate, JevEngine, JevMessage,
-    JevState, avaliar_conjunto, ler_conjunto,
+    DatasetError, FakeJev, G1_CONTINUE, G1_TRANSFER, IdGate, JevEngine, JevMessage, JevState,
+    LabeledCase, evaluate_dataset, read_dataset,
 };
 use poph_types::JevGates;
 
@@ -15,14 +15,14 @@ fn globals(g1: bool) -> JevGates {
     }
 }
 
-fn labeled_case(texto: &str, expected: &str) -> CasoRotulado {
-    CasoRotulado {
+fn labeled_case(texto: &str, expected: &str) -> LabeledCase {
+    LabeledCase {
         estado: JevState::new("whatsapp")
             .with_messages([JevMessage::from_customer(texto)])
             .with_handoff(Vec::new(), true),
-        esperado: expected.to_owned(),
-        categoria: None,
-        justificativa: None,
+        expected: expected.to_owned(),
+        category: None,
+        rationale: None,
     }
 }
 
@@ -69,17 +69,17 @@ async fn measures_hits_abstentions_and_latency() {
         labeled_case("isso sim, talvez eu precise", G1_CONTINUE),
     ];
 
-    let report = avaliar_conjunto(engine.as_ref(), IdGate::G1, &cases).await;
+    let report = evaluate_dataset(engine.as_ref(), IdGate::G1, &cases).await;
 
     assert_eq!(report.gate, "g1");
-    assert_eq!(report.casos, 3);
-    assert_eq!(report.acertos, 2, "o terceiro é abstenção, não acerto");
-    assert_eq!(report.erros, 0);
-    assert_eq!(report.abstencoes, 1);
-    assert!((report.taxa_acerto() - 2.0 / 3.0).abs() < 1e-9);
-    assert!((report.taxa_abstencao() - 1.0 / 3.0).abs() < 1e-9);
-    assert_eq!(report.latencias_ms.len(), 3);
-    assert_eq!(report.detalhes[2].resultado, "abstencao");
+    assert_eq!(report.cases, 3);
+    assert_eq!(report.correct, 2, "o terceiro é abstenção, não acerto");
+    assert_eq!(report.errors, 0);
+    assert_eq!(report.abstentions, 1);
+    assert!((report.accuracy_rate() - 2.0 / 3.0).abs() < 1e-9);
+    assert!((report.abstention_rate() - 1.0 / 3.0).abs() < 1e-9);
+    assert_eq!(report.latencies_ms.len(), 3);
+    assert_eq!(report.details[2].resultado, "abstencao");
     assert!(!report.texto("conjunto.jsonl").is_empty());
 }
 
@@ -95,11 +95,11 @@ async fn gate_that_does_not_apply_counts_as_not_applicable() {
     case.estado = case.estado.with_handoff(Vec::new(), false);
     let cases = vec![case];
 
-    let report = avaliar_conjunto(engine.as_ref(), IdGate::G1, &cases).await;
+    let report = evaluate_dataset(engine.as_ref(), IdGate::G1, &cases).await;
 
-    assert_eq!(report.abstencoes, 1);
-    assert_eq!(report.acertos, 0);
-    assert_eq!(report.detalhes[0].resultado, "nao_aplicavel");
+    assert_eq!(report.abstentions, 1);
+    assert_eq!(report.correct, 0);
+    assert_eq!(report.details[0].resultado, "nao_aplicavel");
 }
 
 #[tokio::test]
@@ -111,11 +111,11 @@ async fn call_failure_counts_as_abstention() {
     let engine = Arc::new(JevEngine::new(jev, globals(true), "jev-latest"));
     let cases = vec![labeled_case("quero falar com um atendente", G1_TRANSFER)];
 
-    let report = avaliar_conjunto(engine.as_ref(), IdGate::G1, &cases).await;
+    let report = evaluate_dataset(engine.as_ref(), IdGate::G1, &cases).await;
 
-    assert_eq!(report.falhas_de_chamada, 1);
-    assert_eq!(report.abstencoes, 1);
-    assert_eq!(report.acertos, 0);
+    assert_eq!(report.call_failures, 1);
+    assert_eq!(report.abstentions, 1);
+    assert_eq!(report.correct, 0);
 }
 
 #[tokio::test]
@@ -137,9 +137,9 @@ async fn engine_cache_shows_as_zero_latency() {
         labeled_case("qual o prazo?", G1_CONTINUE),
     ];
 
-    let report = avaliar_conjunto(engine.as_ref(), IdGate::G1, &cases).await;
+    let report = evaluate_dataset(engine.as_ref(), IdGate::G1, &cases).await;
 
-    assert_eq!(report.acertos, 2);
+    assert_eq!(report.correct, 2);
     assert_eq!(jev.calls(), 1, "o segundo caso veio do cache");
 }
 
@@ -170,21 +170,21 @@ async fn abstention_shows_the_jev_choice_and_reason() {
     let engine = Arc::new(JevEngine::new(jev, globals(true), "jev-latest"));
     let cases = vec![labeled_case("quero falar com um atendente", G1_TRANSFER)];
 
-    let report = avaliar_conjunto(engine.as_ref(), IdGate::G1, &cases).await;
+    let report = evaluate_dataset(engine.as_ref(), IdGate::G1, &cases).await;
 
-    assert_eq!(report.abstencoes, 1);
-    assert_eq!(report.erros, 0, "abstenção não é erro");
-    let detail = &report.detalhes[0];
+    assert_eq!(report.abstentions, 1);
+    assert_eq!(report.errors, 0, "abstenção não é erro");
+    let detail = &report.details[0];
     assert_eq!(
-        detail.obtido, None,
+        detail.obtained, None,
         "no fallback o turno não recebe a escolha"
     );
     assert_eq!(
-        detail.escolha.as_deref(),
+        detail.choice.as_deref(),
         Some(G1_TRANSFER),
         "a escolha do modelo aparece mesmo no fallback"
     );
-    assert_eq!(detail.confianca, "0.55");
+    assert_eq!(detail.confidence, "0.55");
     assert!(
         detail
             .motivo
@@ -241,7 +241,7 @@ async fn call_usage_appears_in_the_report() {
         labeled_case("e o frete?", G1_CONTINUE),
     ];
 
-    let report = avaliar_conjunto(engine.as_ref(), IdGate::G1, &cases).await;
+    let report = evaluate_dataset(engine.as_ref(), IdGate::G1, &cases).await;
 
     assert_eq!(report.usage.input, Some(60), "duas chamadas de 30");
     assert_eq!(report.usage.output, Some(8));
@@ -264,7 +264,7 @@ async fn without_usage_the_report_says_not_reported() {
     let engine = Arc::new(JevEngine::new(jev, globals(true), "jev-latest"));
     let cases = vec![labeled_case("qual o prazo?", G1_CONTINUE)];
 
-    let report = avaliar_conjunto(engine.as_ref(), IdGate::G1, &cases).await;
+    let report = evaluate_dataset(engine.as_ref(), IdGate::G1, &cases).await;
 
     assert!(!report.usage.reported());
     let texto = report.texto("conjunto.jsonl");
@@ -283,9 +283,9 @@ fn reads_set_with_comments_and_blank_lines() {
     let content = "\n# comentário\n{\"estado\": {\"canal\": \"cli\", \"mensagens\": [{\"papel\": \"cliente\", \"texto\": \"oi\"}]}, \"esperado\": \"continuar_agente\"}\n\n";
     std::fs::write(&path, content).expect("grava");
 
-    let cases = ler_conjunto(&path).expect("lê o conjunto");
+    let cases = read_dataset(&path).expect("lê o conjunto");
     assert_eq!(cases.len(), 1);
-    assert_eq!(cases[0].esperado, "continuar_agente");
+    assert_eq!(cases[0].expected, "continuar_agente");
     assert_eq!(cases[0].estado.messages.len(), 1);
 
     let _ = std::fs::remove_dir_all(&folder);
@@ -303,17 +303,17 @@ fn invalid_set_reports_the_line() {
     )
     .expect("grava");
 
-    let error = ler_conjunto(&path).expect_err("recusa a segunda linha");
+    let error = read_dataset(&path).expect_err("recusa a segunda linha");
     match error {
-        ErroConjunto::Caso { linha: line, .. } => assert_eq!(line, 2),
+        DatasetError::InvalidCase { line, .. } => assert_eq!(line, 2),
         other => panic!("erro inesperado: {other:?}"),
     }
 
     let vazio = folder.join("vazio.jsonl");
     std::fs::write(&vazio, "# só comentário\n").expect("grava");
     assert!(matches!(
-        ler_conjunto(&vazio).expect_err("conjunto vazio"),
-        ErroConjunto::Vazio { .. }
+        read_dataset(&vazio).expect_err("conjunto vazio"),
+        DatasetError::Vazio { .. }
     ));
 
     let _ = std::fs::remove_dir_all(&folder);
@@ -334,24 +334,24 @@ async fn category_and_justification_appear_in_the_report() {
     )
     .unwrap();
 
-    let cases = ler_conjunto(&path).unwrap();
+    let cases = read_dataset(&path).unwrap();
     std::fs::remove_file(&path).ok();
     assert_eq!(cases.len(), 2);
-    assert_eq!(cases[0].categoria.as_deref(), Some("pedido_explicito"));
+    assert_eq!(cases[0].category.as_deref(), Some("pedido_explicito"));
     assert_eq!(
-        cases[0].justificativa.as_deref(),
+        cases[0].rationale.as_deref(),
         Some("o cliente pede explicitamente uma pessoa")
     );
-    assert_eq!(cases[1].categoria, None);
+    assert_eq!(cases[1].category, None);
 
     let engine = Arc::new(JevEngine::new(test_jev(), globals(true), "jev-latest"));
-    let report = avaliar_conjunto(engine.as_ref(), IdGate::G1, &cases).await;
-    assert_eq!(report.acertos, 2);
+    let report = evaluate_dataset(engine.as_ref(), IdGate::G1, &cases).await;
+    assert_eq!(report.correct, 2);
     assert_eq!(
-        report.detalhes[0].categoria.as_deref(),
+        report.details[0].category.as_deref(),
         Some("pedido_explicito")
     );
-    let summary = report.resumo_por_categoria().expect("há categoria");
+    let summary = report.summary_by_category().expect("há categoria");
     assert!(
         summary.contains("pedido_explicito: 1 casos · 1 acerto"),
         "{summary}"

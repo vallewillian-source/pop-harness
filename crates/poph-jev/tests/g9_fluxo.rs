@@ -18,7 +18,7 @@ use std::sync::Arc;
 use poph_jev::{
     DecisionOrigin, FakeJev, G1_CONTINUE, G3_BASE, G9, G9_NONE, Gate, GateEvaluator, GateOverrides,
     IdGate, JevEngine, JevFlow, JevMessage, JevResponse, JevState, MAX_RELEASED_FLOWS,
-    MAX_TRIGGER_CHARS, Thresholds, flow_policy, ler_conjunto,
+    MAX_TRIGGER_CHARS, Thresholds, flow_policy, read_dataset,
 };
 use poph_types::JevGates;
 
@@ -430,7 +430,7 @@ fn exemplos_do_fluxo_sao_limitados_no_estado() {
 #[test]
 fn conjunto_rotulado_do_g9_serve_para_a_medicao() {
     let caminho = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/jev/g9.jsonl");
-    let casos = ler_conjunto(&caminho).expect("lê tests/jev/g9.jsonl");
+    let casos = read_dataset(&caminho).expect("lê tests/jev/g9.jsonl");
 
     assert!(
         casos.len() >= 40,
@@ -451,17 +451,17 @@ fn conjunto_rotulado_do_g9_serve_para_a_medicao() {
             .map(|fluxo| fluxo.id.as_str())
             .collect();
         assert!(
-            caso.esperado == G9_NONE || ids.contains(&caso.esperado.as_str()),
+            caso.expected == G9_NONE || ids.contains(&caso.expected.as_str()),
             "caso {numero}: esperado `{}` não é um fluxo do caso nem `nenhum`",
-            caso.esperado
+            caso.expected
         );
         assert!(
-            caso.categoria.is_some() && caso.justificativa.is_some(),
+            caso.category.is_some() && caso.rationale.is_some(),
             "caso {numero}: falta categoria ou justificativa"
         );
     }
 
-    let positivos = casos.iter().filter(|caso| caso.esperado != G9_NONE).count();
+    let positivos = casos.iter().filter(|caso| caso.expected != G9_NONE).count();
     let negativos = casos.len() - positivos;
     assert!(
         positivos >= 15 && negativos >= 15,

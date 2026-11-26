@@ -1824,3 +1824,11 @@ python3 scripts/jev-report.py /tmp/g1-real.json --conjunto tests/jev/g1.jsonl
 - **`reopen` só pela API**: o caminho do operador para devolver a conversa ao agente é
   `POST …/conversations/{id}/reopen` (HR-21). A CLI não tem subcomando de conversa; sem a API no ar,
   reabrir exige acesso ao banco. Gravidade média para operação até o Console (HR-46).
+
+## Evaluation datasets
+
+- The `poph jev eval` input is JSON Lines: one labeled case per line. Empty lines and lines beginning with `#` are ignored.
+- A correct result is a reliable decision equal to the expected label; an error is a reliable decision different from it; an abstention is a fallback or a gate that did not apply.
+- Per-case latency is zero when the decision came from cache. Usage totals include the Jev call usage and therefore do not charge cache hits.
+- Category summaries count cases by category and report reliable correct decisions, reliable errors, and abstentions separately.
+- The evaluator enables only the gate being measured, so the other gates cannot affect the result.

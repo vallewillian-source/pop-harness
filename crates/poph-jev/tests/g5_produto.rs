@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use poph_jev::{
     DecisionOrigin, FakeJev, G5, G5_NONE, Gate, GateEvaluator, IdGate, JevEngine, JevMessage,
-    JevResponse, JevState, ProductCandidate, eval::ajuste_de_gate,
+    JevResponse, JevState, ProductCandidate, eval::gate_override,
 };
 use poph_types::JevGates;
 
@@ -168,7 +168,7 @@ async fn g5_e_perguntado_fora_do_lote_so_com_candidatos() {
     // 2. Chamada só do G5, com candidatos: uma pergunta, uma decisão.
     let com_candidatos = estado("quero dedetizar contra baratas", candidatos());
     let resultado = avaliador
-        .evaluate(com_candidatos, Some(ajuste_de_gate(IdGate::G5)))
+        .evaluate(com_candidatos, Some(gate_override(IdGate::G5)))
         .await;
     let pedidos = jev.requests();
     assert_eq!(pedidos.len(), 1);

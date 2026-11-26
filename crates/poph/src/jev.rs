@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Args, Subcommand};
-use poph_jev::{IdGate, JevClient, JevClientConfig, JevEngine, avaliar_conjunto, ler_conjunto};
+use poph_jev::{IdGate, JevClient, JevClientConfig, JevEngine, evaluate_dataset, read_dataset};
 use poph_types::BaseMetrics;
 
 use crate::apoio;
@@ -58,7 +58,7 @@ fn rodar_eval(
             args.gate
         )
     })?;
-    let casos = ler_conjunto(&args.arquivo).map_err(|erro| erro.to_string())?;
+    let casos = read_dataset(&args.arquivo).map_err(|erro| erro.to_string())?;
 
     let pasta = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let arquivo = config::resolver_arquivo(flag.as_deref(), ambiente, &pasta);
@@ -84,7 +84,7 @@ fn rodar_eval(
         .enable_all()
         .build()
         .map_err(|erro| format!("não consegui iniciar o runtime: {erro}"))?;
-    let relatorio = runtime.block_on(avaliar_conjunto(&motor, gate, &casos));
+    let relatorio = runtime.block_on(evaluate_dataset(&motor, gate, &casos));
 
     if args.json {
         let valor = serde_json::json!({

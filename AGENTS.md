@@ -128,7 +128,7 @@ check it against the table. Two rules the table makes clear:
 | Knowledge base and hybrid search | `poph-agent/src/base_conhecimento.rs`, `poph-rag` | `docs/BASE_DE_CONHECIMENTO.md` |
 | Products and `buscar_produto` | `poph-agent/src/produtos.rs`, `carrinho.rs` | `docs/PRODUTOS.md` |
 | Files and the agent library | `poph-files`, `poph-agent/src/biblioteca.rs` | `docs/ARQUIVOS.md`, `docs/BIBLIOTECA_ARQUIVOS.md` |
-| Jev: gates and fast decisions | `poph-jev/` (`gates.rs`, `motor.rs`, `cache.rs`) | `docs/JEV.md` |
+| Jev: gates and fast decisions | `poph-jev/` (`gates.rs`, `engine.rs`, `cache.rs`) | `docs/JEV.md` |
 | Authentication: global and org token | `poph-server/src/auth.rs` | `docs/API.md` (Authentication section) |
 | Encryption of stored secrets | `poph-server/src/cifra.rs` | `docs/CONFIGURACAO.md` |
 | Cluster: map, fingerprint, reload | `poph-server/src/cluster.rs`, `poph/src/cluster.rs`, `poph-types/src/config.rs` | `docs/CLUSTER.md` |

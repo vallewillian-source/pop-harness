@@ -13,7 +13,7 @@ use std::sync::Arc;
 use poph_jev::{
     DecisionOrigin, FakeJev, G6, G6_APPROVED, G6_REVIEW, G6_REVIEW_LONG, G6_REVIEW_PRICE,
     G6_REVIEW_SCOPE, G6_REVIEW_TONE, G6_REVIEW_TRANSFER, Gate, GateEvaluator, IdGate, JevEngine,
-    JevMessage, JevResponse, JevState, QuestionType, eval::ajuste_de_gate, g6_guidance,
+    JevMessage, JevResponse, JevState, QuestionType, eval::gate_override, g6_guidance,
     g6_needs_review,
 };
 use poph_types::JevGates;
@@ -182,7 +182,7 @@ async fn g6_e_perguntado_fora_do_lote_so_com_resposta_em_revisao() {
 
     // 2. Chamada só do G6: uma pergunta, uma decisão.
     let resultado = avaliador
-        .evaluate(estado("Sai R$ 180,00."), Some(ajuste_de_gate(IdGate::G6)))
+        .evaluate(estado("Sai R$ 180,00."), Some(gate_override(IdGate::G6)))
         .await;
     let pedidos = jev.requests();
     assert_eq!(pedidos.len(), 1);

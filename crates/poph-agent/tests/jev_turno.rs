@@ -478,7 +478,7 @@ async fn g4_sem_departamentos_nao_pergunta() {
     );
 
     let resultado = motor
-        .evaluate(estado, Some(poph_jev::eval::ajuste_de_gate(IdGate::G4)))
+        .evaluate(estado, Some(poph_jev::eval::gate_override(IdGate::G4)))
         .await;
 
     assert_eq!(jev.calls(), 0);

@@ -1641,7 +1641,7 @@ impl TurnEngine {
     ) -> Option<futures::future::BoxFuture<'static, JevResult>> {
         let evaluator = Arc::clone(self.jev.as_ref()?);
         let override_config: Option<GateOverrides> =
-            poph_jev::ajuste_do_agente(&hot_agent.agente.jev_json);
+            poph_jev::agent_overrides(&hot_agent.agente.jev_json);
         let gates: JevGates = evaluator.effective_gates(override_config);
         if JevEngine::none_enabled(gates) {
             return None;
@@ -1933,7 +1933,7 @@ impl TurnEngine {
         let Some(evaluator) = self.jev.as_ref() else {
             return JevGates::default();
         };
-        evaluator.effective_gates(poph_jev::ajuste_do_agente(&agente.jev_json))
+        evaluator.effective_gates(poph_jev::agent_overrides(&agente.jev_json))
     }
 
     fn g2_enabled(&self, agente: &poph_store::Agente) -> bool {
@@ -2350,7 +2350,7 @@ impl TurnEngine {
             return GuidanceResult::not_queried("Jev desligado no motor");
         };
         let override_config: Option<GateOverrides> =
-            poph_jev::ajuste_do_agente(&hot_agent.agente.jev_json);
+            poph_jev::agent_overrides(&hot_agent.agente.jev_json);
         let gates: JevGates = evaluator.effective_gates(override_config);
         let Some(estado) = self.jev_state(org, hot_agent, recent_messages, conversa, gates, None)
         else {

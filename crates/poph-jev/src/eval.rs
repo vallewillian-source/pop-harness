@@ -1,281 +1,224 @@
-//! Conjunto rotulado e medição de um gate (`poph jev eval <gate> <arquivo>`).
-//!
-//! O PRD §10 pede, para cada gate, um conjunto rotulado com casos difíceis e de abstenção, e um
-//! relatório de acerto, abstenção e latência. Formato do arquivo (JSON Lines, uma linha por caso):
-//!
-//! ```json
-//! {"estado": {"canal": "cli", "mensagens": [{"papel": "cliente", "texto": "quero falar com alguém"}]},
-//!  "esperado": "transferir_agora"}
-//! ```
-//!
-//! Regras de contagem:
-//! - **abstenção** = o gate não deu decisão confiável (fallback) — é o que mede o quanto ele cala;
-//! - **acerto** = decisão confiável igual ao esperado;
-//! - **erro** = decisão confiável diferente do esperado;
-//! - latência por caso: do pedido ao Jev até a decisão (0 quando veio do cache).
-
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use crate::engine::{GateEvaluator, JevResult};
 use crate::gate::DecisionOrigin;
-use crate::motor::{GateEvaluator, JevResult};
 use crate::state::JevState;
 use crate::types::{IdGate, JevError, UsageTokens};
 
-/// Um caso do conjunto rotulado.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CasoRotulado {
-    /// Estado que o gate vai julgar.
+pub struct LabeledCase {
     pub estado: JevState,
-    /// Resposta certa para o caso (`transferir_agora`, `nada`, nome do departamento…).
-    pub esperado: String,
-    /// Agrupamento do caso no relatório (`insatisfacao_urgencia`, `risco_saude`…).
-    ///
-    /// Opcional: conjunto antigo sem categoria continua valendo e medindo igual.
+    #[serde(rename = "esperado")]
+    pub expected: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub categoria: Option<String>,
-    /// Por que este rótulo é o certo, em uma linha.
-    ///
-    /// Fica no conjunto, não só no relatório: quem revisa um caso discutível lê o motivo ao lado
-    /// dele, e a próxima medição herda a explicação.
+    #[serde(rename = "categoria")]
+    pub category: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub justificativa: Option<String>,
+    #[serde(rename = "justificativa")]
+    pub rationale: Option<String>,
 }
 
-/// Erro ao ler o conjunto.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ErroConjunto {
-    /// Arquivo não encontrado ou sem permissão.
-    #[error("não consegui ler {caminho}: {motivo}")]
-    Leitura {
-        /// Caminho pedido.
-        caminho: String,
-        /// Motivo do sistema.
+pub enum DatasetError {
+    #[error("não consegui ler {path}: {motivo}")]
+    Read { path: String, motivo: String },
+    #[error("{path}:{line}: caso inválido ({motivo})")]
+    InvalidCase {
+        path: String,
+        line: usize,
         motivo: String,
     },
-    /// Linha fora do formato.
-    #[error("{caminho}:{linha}: caso inválido ({motivo})")]
-    Caso {
-        /// Caminho do conjunto.
-        caminho: String,
-        /// Número da linha (1-based).
-        linha: usize,
-        /// O que o parser reclamou.
-        motivo: String,
-    },
-    /// Conjunto vazio.
-    #[error("{caminho}: o conjunto está vazio")]
-    Vazio {
-        /// Caminho do conjunto.
-        caminho: String,
-    },
+    #[error("{path}: o conjunto está vazio")]
+    Vazio { path: String },
 }
 
-/// Lê um conjunto rotulado em JSON Lines.
-pub fn ler_conjunto(caminho: &Path) -> Result<Vec<CasoRotulado>, ErroConjunto> {
-    let texto = std::fs::read_to_string(caminho).map_err(|erro| ErroConjunto::Leitura {
-        caminho: caminho.display().to_string(),
-        motivo: erro.to_string(),
+pub fn read_dataset(path: &Path) -> Result<Vec<LabeledCase>, DatasetError> {
+    let texto = std::fs::read_to_string(path).map_err(|error| DatasetError::Read {
+        path: path.display().to_string(),
+        motivo: error.to_string(),
     })?;
-    let mut casos = Vec::new();
-    for (indice, linha) in texto.lines().enumerate() {
-        let linha = linha.trim();
-        if linha.is_empty() || linha.starts_with('#') {
+    let mut cases = Vec::new();
+    for (line_index, line) in texto.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let caso: CasoRotulado =
-            serde_json::from_str(linha).map_err(|erro| ErroConjunto::Caso {
-                caminho: caminho.display().to_string(),
-                linha: indice + 1,
-                motivo: erro.to_string(),
+        let case: LabeledCase =
+            serde_json::from_str(line).map_err(|error| DatasetError::InvalidCase {
+                path: path.display().to_string(),
+                line: line_index + 1,
+                motivo: error.to_string(),
             })?;
-        casos.push(caso);
+        cases.push(case);
     }
-    if casos.is_empty() {
-        return Err(ErroConjunto::Vazio {
-            caminho: caminho.display().to_string(),
+    if cases.is_empty() {
+        return Err(DatasetError::Vazio {
+            path: path.display().to_string(),
         });
     }
-    Ok(casos)
+    Ok(cases)
 }
 
-/// O que aconteceu em um caso.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct DetalheCaso {
-    /// Esperado (do conjunto).
-    pub esperado: String,
-    /// O que o gate decidiu (`None` quando absteve).
-    pub obtido: Option<String>,
-    /// Opção que o **Jev respondeu**, mesmo quando a decisão caiu no fallback.
-    ///
-    /// É o dado que faltava para calibrar limiar: `obtido` diz o que vale para o turno, `escolha`
-    /// diz o que o modelo queria — quando os dois divergem, a resposta existia e não passou no
-    /// limiar (ou veio fora das opções).
-    pub escolha: Option<String>,
-    /// Confiança da resposta, como o Jev declarou (0 quando não houve resposta).
-    pub confianca: String,
-    /// Motivo do fallback (limiar, margem, escolha inválida, falta de resposta).
+pub struct CaseDetail {
+    #[serde(rename = "esperado")]
+    pub expected: String,
+    #[serde(rename = "obtido")]
+    pub obtained: Option<String>,
+    #[serde(rename = "escolha")]
+    pub choice: Option<String>,
+    #[serde(rename = "confianca")]
+    pub confidence: String,
     pub motivo: Option<String>,
-    /// Por que a chamada ao Jev falhou neste caso (prazo, erro do provedor).
-    pub falha: Option<String>,
-    /// Categoria do caso no conjunto (quando declarada).
-    pub categoria: Option<String>,
-    /// Acertou, errou ou absteve.
+    #[serde(rename = "falha")]
+    pub failure: Option<String>,
+    #[serde(rename = "categoria")]
+    pub category: Option<String>,
     pub resultado: String,
 }
 
-/// Relatório de um gate sobre um conjunto.
 #[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct RelatorioEval {
-    /// Gate medido.
+pub struct EvalReport {
     pub gate: String,
-    /// Quantos casos.
-    pub casos: usize,
-    /// Decisões confiáveis iguais ao esperado.
-    pub acertos: usize,
-    /// Decisões confiáveis diferentes do esperado.
-    pub erros: usize,
-    /// Casos em que o gate não decidiu (fallback).
-    pub abstencoes: usize,
-    /// Casos em que o lote do Jev falhou.
-    pub falhas_de_chamada: usize,
-    /// Latências por caso, em ms.
-    pub latencias_ms: Vec<u64>,
-    /// Confiança média das decisões confiáveis.
-    pub confianca_media: f64,
-    /// Tokens consumidos na execução, somando o `usage` de cada chamada (o cache não conta).
+    #[serde(rename = "casos")]
+    pub cases: usize,
+    #[serde(rename = "acertos")]
+    pub correct: usize,
+    #[serde(rename = "erros")]
+    pub errors: usize,
+    #[serde(rename = "abstencoes")]
+    pub abstentions: usize,
+    #[serde(rename = "falhas_de_chamada")]
+    pub call_failures: usize,
+    #[serde(rename = "latencias_ms")]
+    pub latencies_ms: Vec<u64>,
+    #[serde(rename = "confianca_media")]
+    pub mean_confidence: f64,
     pub usage: UsageTokens,
-    /// Detalhe por caso.
-    pub detalhes: Vec<DetalheCaso>,
+    #[serde(rename = "detalhes")]
+    pub details: Vec<CaseDetail>,
 }
 
-impl RelatorioEval {
-    /// Fração de acertos sobre o total.
-    pub fn taxa_acerto(&self) -> f64 {
-        if self.casos == 0 {
+impl EvalReport {
+    pub fn accuracy_rate(&self) -> f64 {
+        if self.cases == 0 {
             return 0.0;
         }
-        self.acertos as f64 / self.casos as f64
+        self.correct as f64 / self.cases as f64
     }
 
-    /// Uma linha por categoria: quantos casos, acertos, abstenções e erros.
-    ///
-    /// `None` quando o conjunto não declara categoria (compatível com o formato antigo).
-    pub fn resumo_por_categoria(&self) -> Option<String> {
-        let mut por_categoria: std::collections::BTreeMap<&str, (usize, usize, usize, usize)> =
+    pub fn summary_by_category(&self) -> Option<String> {
+        let mut by_category: std::collections::BTreeMap<&str, (usize, usize, usize, usize)> =
             std::collections::BTreeMap::new();
-        for detalhe in &self.detalhes {
-            let Some(categoria) = detalhe.categoria.as_deref() else {
+        for detail in &self.details {
+            let Some(category_name) = detail.category.as_deref() else {
                 continue;
             };
-            let item = por_categoria.entry(categoria).or_insert((0, 0, 0, 0));
+            let item = by_category.entry(category_name).or_insert((0, 0, 0, 0));
             item.0 += 1;
-            match detalhe.resultado.as_str() {
+            match detail.resultado.as_str() {
                 "acerto" => item.1 += 1,
                 "erro" => item.3 += 1,
                 _ => item.2 += 1,
             }
         }
-        if por_categoria.is_empty() {
+        if by_category.is_empty() {
             return None;
         }
         let mut saida = String::new();
-        for (categoria, (casos, acertos, abstencoes, erros)) in por_categoria {
+        for (category_name, (cases, correct_count, abstention_count, error_count)) in by_category {
             saida.push_str(&format!(
-                "  {categoria}: {casos} casos · {acertos} acerto · {abstencoes} abstenção · {erros} erro\n"
+                "  {category_name}: {cases} casos · {correct_count} acerto · {abstention_count} abstenção · {error_count} erro\n"
             ));
         }
         Some(saida)
     }
 
-    /// Fração de abstenções sobre o total.
-    pub fn taxa_abstencao(&self) -> f64 {
-        if self.casos == 0 {
+    pub fn abstention_rate(&self) -> f64 {
+        if self.cases == 0 {
             return 0.0;
         }
-        self.abstencoes as f64 / self.casos as f64
+        self.abstentions as f64 / self.cases as f64
     }
 
-    /// Latência média, em ms.
-    pub fn latencia_media(&self) -> f64 {
-        if self.latencias_ms.is_empty() {
+    pub fn mean_latency(&self) -> f64 {
+        if self.latencies_ms.is_empty() {
             return 0.0;
         }
-        let soma: u64 = self.latencias_ms.iter().sum();
-        soma as f64 / self.latencias_ms.len() as f64
+        let sum: u64 = self.latencies_ms.iter().sum();
+        sum as f64 / self.latencies_ms.len() as f64
     }
 
-    /// Percentil da latência (0–100), em ms.
-    pub fn latencia_percentil(&self, percentil: f64) -> u64 {
-        if self.latencias_ms.is_empty() {
+    pub fn latency_percentile(&self, percentile: f64) -> u64 {
+        if self.latencies_ms.is_empty() {
             return 0;
         }
-        let mut ordenadas = self.latencias_ms.clone();
-        ordenadas.sort_unstable();
-        let posicao = ((percentil / 100.0) * (ordenadas.len() as f64 - 1.0)).round() as usize;
-        ordenadas[posicao.min(ordenadas.len() - 1)]
+        let mut sorted = self.latencies_ms.clone();
+        sorted.sort_unstable();
+        let position = ((percentile / 100.0) * (sorted.len() as f64 - 1.0)).round() as usize;
+        sorted[position.min(sorted.len() - 1)]
     }
 
-    /// Texto para o terminal.
-    pub fn texto(&self, titulo: &str) -> String {
+    pub fn texto(&self, title: &str) -> String {
         let mut saida = String::new();
-        saida.push_str(&format!("Jev · {} — {titulo}\n", self.gate));
-        saida.push_str(&format!("casos: {}\n", self.casos));
+        saida.push_str(&format!("Jev · {} — {title}\n", self.gate));
+        saida.push_str(&format!("casos: {}\n", self.cases));
         saida.push_str(&format!(
             "acerto: {}/{} ({:.1}%)\n",
-            self.acertos,
-            self.casos,
-            self.taxa_acerto() * 100.0
+            self.correct,
+            self.cases,
+            self.accuracy_rate() * 100.0
         ));
         saida.push_str(&format!(
             "abstenção: {}/{} ({:.1}%)\n",
-            self.abstencoes,
-            self.casos,
-            self.taxa_abstencao() * 100.0
+            self.abstentions,
+            self.cases,
+            self.abstention_rate() * 100.0
         ));
-        saida.push_str(&format!("erros: {}\n", self.erros));
+        saida.push_str(&format!("erros: {}\n", self.errors));
         saida.push_str(&format!(
             "latência: média {:.0} ms · p50 {} ms · p95 {} ms\n",
-            self.latencia_media(),
-            self.latencia_percentil(50.0),
-            self.latencia_percentil(95.0)
+            self.mean_latency(),
+            self.latency_percentile(50.0),
+            self.latency_percentile(95.0)
         ));
         saida.push_str(&format!(
             "confiança média (decisões confiáveis): {:.2}\n",
-            self.confianca_media
+            self.mean_confidence
         ));
         saida.push_str(&format!("tokens: {}\n", self.usage.as_text()));
-        if self.falhas_de_chamada > 0 {
+        if self.call_failures > 0 {
             saida.push_str(&format!(
                 "falhas da chamada ao Jev: {} (contam como abstenção)\n",
-                self.falhas_de_chamada
+                self.call_failures
             ));
         }
-        if let Some(resumo) = self.resumo_por_categoria() {
+        if let Some(summary) = self.summary_by_category() {
             saida.push_str("\npor categoria (acerto/abstenção/erro):\n");
-            saida.push_str(&resumo);
+            saida.push_str(&summary);
         }
         saida.push_str("\ndetalhe por caso (escolha do Jev · confiança · motivo do fallback):\n");
-        for (indice, detalhe) in self.detalhes.iter().enumerate() {
+        for (index, detail) in self.details.iter().enumerate() {
             saida.push_str(&format!(
                 "  #{:02} {} · esperado {} · jev {}{}\n",
-                indice + 1,
-                detalhe.resultado,
-                detalhe.esperado,
-                detalhe.escolha.as_deref().unwrap_or("—"),
-                detalhe
-                    .categoria
+                index + 1,
+                detail.resultado,
+                detail.expected,
+                detail.choice.as_deref().unwrap_or("—"),
+                detail
+                    .category
                     .as_deref()
-                    .map(|categoria| format!(" · {categoria}"))
+                    .map(|category_name| format!(" · {category_name}"))
                     .unwrap_or_default()
             ));
-            let mut extras = vec![format!("confiança {}", detalhe.confianca)];
-            if let Some(motivo) = &detalhe.motivo {
+            let mut extras = vec![format!("confiança {}", detail.confidence)];
+            if let Some(motivo) = &detail.motivo {
                 extras.push(format!("motivo: {motivo}"));
             }
-            if let Some(falha) = &detalhe.falha {
-                extras.push(format!("falha: {falha}"));
+            if let Some(failure_text) = &detail.failure {
+                extras.push(format!("falha: {failure_text}"));
             }
             saida.push_str(&format!("      {}\n", extras.join(" · ")));
         }
@@ -283,64 +226,62 @@ impl RelatorioEval {
     }
 }
 
-/// Roda o conjunto por um avaliador, com **só** o gate medido ligado.
-pub async fn avaliar_conjunto(
-    avaliador: &dyn GateEvaluator,
+pub async fn evaluate_dataset(
+    evaluator: &dyn GateEvaluator,
     gate: IdGate,
-    casos: &[CasoRotulado],
-) -> RelatorioEval {
-    let mut relatorio = RelatorioEval {
+    cases: &[LabeledCase],
+) -> EvalReport {
+    let mut report = EvalReport {
         gate: gate.as_text().to_owned(),
-        casos: casos.len(),
-        acertos: 0,
-        erros: 0,
-        abstencoes: 0,
-        falhas_de_chamada: 0,
-        latencias_ms: Vec::with_capacity(casos.len()),
-        confianca_media: 0.0,
+        cases: cases.len(),
+        correct: 0,
+        errors: 0,
+        abstentions: 0,
+        call_failures: 0,
+        latencies_ms: Vec::with_capacity(cases.len()),
+        mean_confidence: 0.0,
         usage: UsageTokens::default(),
-        detalhes: Vec::with_capacity(casos.len()),
+        details: Vec::with_capacity(cases.len()),
     };
-    let mut soma_confianca = 0.0_f64;
-    let mut confiaveis = 0_usize;
+    let mut confidence_sum = 0.0_f64;
+    let mut reliable_count = 0_usize;
 
-    for caso in casos {
-        // O conjunto pede um gate só: o avaliador é chamado com esse ajuste explícito.
-        let ajuste = ajuste_de_gate(gate);
-        let resultado: JevResult = avaliador.evaluate(caso.estado.clone(), Some(ajuste)).await;
+    for case in cases {
+        let r#override = gate_override(gate);
+        let resultado: JevResult = evaluator
+            .evaluate(case.estado.clone(), Some(r#override))
+            .await;
         if resultado.failed() {
-            relatorio.falhas_de_chamada += 1;
+            report.call_failures += 1;
         }
-        // O consumo é somado por execução: chamada que veio do cache não custa nada.
-        relatorio.usage = relatorio.usage.plus(resultado.call.usage);
-        // O que o modelo respondeu, independentemente de a decisão ter passado no limiar.
-        let escolha_do_jev = resultado
+        report.usage = report.usage.plus(resultado.call.usage);
+        let model_choice = resultado
             .response(gate)
-            .and_then(|resposta| resposta.choice.clone());
+            .and_then(|response| response.choice.clone());
         let motivo = resultado
             .decision(gate)
             .and_then(|decisao| decisao.motivo.clone());
-        let falha = resultado.call.failure.clone();
+        let failure_value = resultado.call.failure.clone();
         let decisao = resultado.decision(gate);
-        let (obtido, confianca, resultado_texto) = match decisao {
+        let (obtained_value, confidence_text, outcome_text) = match decisao {
             Some(decisao) if decisao.origin != DecisionOrigin::Fallback => {
-                soma_confianca += decisao.confidence;
-                confiaveis += 1;
-                let obtido = decisao.choice.clone();
-                let acertou = obtido.as_deref() == Some(caso.esperado.as_str());
-                if acertou {
-                    relatorio.acertos += 1;
+                confidence_sum += decisao.confidence;
+                reliable_count += 1;
+                let chosen_value = decisao.choice.clone();
+                let correct = chosen_value.as_deref() == Some(case.expected.as_str());
+                if correct {
+                    report.correct += 1;
                 } else {
-                    relatorio.erros += 1;
+                    report.errors += 1;
                 }
                 (
-                    obtido,
+                    chosen_value,
                     format!("{:.2}", decisao.confidence),
-                    if acertou { "acerto" } else { "erro" }.to_owned(),
+                    if correct { "acerto" } else { "erro" }.to_owned(),
                 )
             }
             Some(decisao) => {
-                relatorio.abstencoes += 1;
+                report.abstentions += 1;
                 (
                     None,
                     format!("{:.2}", decisao.confidence),
@@ -348,40 +289,37 @@ pub async fn avaliar_conjunto(
                 )
             }
             None => {
-                // Gate não se aplicou a este estado: conta como abstenção, não como erro.
-                relatorio.abstencoes += 1;
+                report.abstentions += 1;
                 (None, "0.00".to_owned(), "nao_aplicavel".to_owned())
             }
         };
-        relatorio
-            .latencias_ms
+        report
+            .latencies_ms
             .push(resultado.call.ms.max(decisao.map(|d| d.ms).unwrap_or(0)));
-        relatorio.detalhes.push(DetalheCaso {
-            esperado: caso.esperado.clone(),
-            obtido,
-            escolha: escolha_do_jev,
-            confianca,
+        report.details.push(CaseDetail {
+            expected: case.expected.clone(),
+            obtained: obtained_value,
+            choice: model_choice,
+            confidence: confidence_text,
             motivo,
-            falha,
-            categoria: caso.categoria.clone(),
-            resultado: resultado_texto,
+            failure: failure_value,
+            category: case.category.clone(),
+            resultado: outcome_text,
         });
     }
 
-    relatorio.confianca_media = if confiaveis == 0 {
+    report.mean_confidence = if reliable_count == 0 {
         0.0
     } else {
-        soma_confianca / confiaveis as f64
+        confidence_sum / reliable_count as f64
     };
-    relatorio
+    report
 }
 
-/// Ajuste que liga só o gate medido.
-pub fn ajuste_de_gate(gate: IdGate) -> crate::flags::GateOverrides {
+pub fn gate_override(gate: IdGate) -> crate::flags::GateOverrides {
     crate::flags::GateOverrides::only(gate)
 }
 
-/// Erro de Jev usado pelo conjunto quando a chave não está configurada.
-pub fn erro_sem_chave() -> JevError {
+pub fn missing_key_error() -> JevError {
     JevError::MissingKey
 }
