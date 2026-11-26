@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Args, Subcommand};
-use poph_store::{Departamento, MudancaDepartamento, NovoDepartamento, Store};
+use poph_store::{Departamento, DepartmentChange, NewDepartment, Store};
 use poph_types::{DepartmentId, OrgId};
 use serde_json::{Value, json};
 
@@ -124,11 +124,11 @@ fn criar(store: &Store, org: OrgId, args: CriarDepartamento) -> ExitCode {
         Ok(nome) => nome,
         Err(erro) => return falha(erro),
     };
-    let novo = NovoDepartamento {
-        nome,
-        descricao: args.description.trim().to_owned(),
+    let novo = NewDepartment {
+        name: nome,
+        description: args.description.trim().to_owned(),
     };
-    match store.departamentos().criar(org, novo) {
+    match store.departments().criar(org, novo) {
         Ok(departamento) => saida(&departamento, args.json, "departamento criado"),
         Err(erro) => falha(descrever(&erro)),
     }
@@ -139,7 +139,7 @@ fn listar(store: &Store, org: OrgId, args: ListarDepartamentos) -> ExitCode {
         Ok(pagina) => pagina,
         Err(erro) => return falha(erro),
     };
-    match store.departamentos().listar(org, pagina) {
+    match store.departments().listar(org, pagina) {
         Ok(departamentos) => {
             if args.json {
                 let itens: Vec<Value> = departamentos.iter().map(json_departamento).collect();
@@ -157,7 +157,7 @@ fn listar(store: &Store, org: OrgId, args: ListarDepartamentos) -> ExitCode {
                         "{}  {:<9} {}",
                         departamento.id,
                         status_em_portugues(departamento.status),
-                        departamento.nome
+                        departamento.name
                     );
                 }
                 println!("\n{} departamento(s).", departamentos.len());
@@ -171,7 +171,7 @@ fn listar(store: &Store, org: OrgId, args: ListarDepartamentos) -> ExitCode {
 fn mostrar(store: &Store, org: OrgId, args: ReferenciaDepartamento) -> ExitCode {
     let departamento = match parse_id::<DepartmentId>(&args.departamento).and_then(|id| {
         store
-            .departamentos()
+            .departments()
             .obter(org, id)
             .map_err(|erro| mensagem_de_ausencia(erro, &args.departamento))
     }) {
@@ -203,13 +203,13 @@ fn atualizar(store: &Store, org: OrgId, args: AtualizarDepartamento) -> ExitCode
     if nome.is_none() && descricao.is_none() && status.is_none() {
         return falha("nada a alterar: informe --name, --description ou --status");
     }
-    let mudanca = MudancaDepartamento {
-        nome,
-        descricao,
+    let mudanca = DepartmentChange {
+        name: nome,
+        description: descricao,
         status,
     };
     match store
-        .departamentos()
+        .departments()
         .atualizar(org, id, args.if_match, mudanca)
     {
         Ok(departamento) => saida(&departamento, args.json, "departamento alterado"),
@@ -223,10 +223,10 @@ fn excluir(store: &Store, org: OrgId, args: ReferenciaDepartamento) -> ExitCode 
         Err(erro) => return falha(erro),
     };
     // Confere que existe nesta org antes de apagar, para a mensagem sair certa.
-    if let Err(erro) = store.departamentos().obter(org, id) {
+    if let Err(erro) = store.departments().obter(org, id) {
         return falha(mensagem_de_ausencia(erro, &args.departamento));
     }
-    match store.departamentos().excluir(org, id) {
+    match store.departments().excluir(org, id) {
         Ok(()) => {
             if args.json {
                 imprimir_json(&json!({
@@ -246,8 +246,8 @@ fn excluir(store: &Store, org: OrgId, args: ReferenciaDepartamento) -> ExitCode 
     }
 }
 
-fn mensagem_de_ausencia(erro: poph_store::ErroStore, texto: &str) -> String {
-    if erro.eh_nao_encontrado() {
+fn mensagem_de_ausencia(erro: poph_store::StoreError, texto: &str) -> String {
+    if erro.is_not_found() {
         format!("não existe departamento `{texto}` nesta org")
     } else {
         descrever(&erro)
@@ -275,12 +275,12 @@ fn json_departamento(departamento: &Departamento) -> Value {
     json!({
         "id": departamento.id.to_string(),
         "org_id": departamento.org_id.to_string(),
-        "name": departamento.nome,
-        "description": departamento.descricao,
-        "status": departamento.status.como_texto(),
-        "version": departamento.versao,
-        "created_at": departamento.criado_em,
-        "updated_at": departamento.atualizado_em,
+        "name": departamento.name,
+        "description": departamento.description,
+        "status": departamento.status.as_text(),
+        "version": departamento.version,
+        "created_at": departamento.created_at,
+        "updated_at": departamento.updated_at,
     })
 }
 
@@ -288,13 +288,13 @@ fn texto_departamento(departamento: &Departamento) -> String {
     format!(
         "departamento {}\n  nome: {}\n  descrição: {}\n  situação: {}\n  versão: {}\n",
         departamento.id,
-        departamento.nome,
-        if departamento.descricao.is_empty() {
+        departamento.name,
+        if departamento.description.is_empty() {
             "-"
         } else {
-            &departamento.descricao
+            &departamento.description
         },
         status_em_portugues(departamento.status),
-        departamento.versao
+        departamento.version
     )
 }

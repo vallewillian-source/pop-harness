@@ -21,7 +21,7 @@ use poph_server::fluxos_servico::{
     Ator, CacheRevisoes, Diagnostico, FalhaFluxo, Operacoes, auditar, json_comparacao, json_fluxo,
     json_fluxo_com_rascunho, json_revisao_resumo, json_validacao,
 };
-use poph_store::{FiltroFluxos, Store};
+use poph_store::{FlowFilter, Store};
 use poph_types::{HarnessConfig, OrgId};
 use serde_json::{Value, json};
 
@@ -381,7 +381,7 @@ fn publicar(sessao: &Sessao, org: Option<&str>, args: PublicarArgs) -> Result<Ex
 fn listar(sessao: &Sessao, org: Option<&str>, args: ListarArgs) -> Result<ExitCode, String> {
     let org = sessao.org(org)?;
     let pagina = pagina_de(args.limit, args.cursor.as_deref())?;
-    let filtro = FiltroFluxos {
+    let filtro = FlowFilter {
         status: args.status.as_deref().map(status_de_texto).transpose()?,
     };
     let fluxos = sessao
@@ -389,7 +389,7 @@ fn listar(sessao: &Sessao, org: Option<&str>, args: ListarArgs) -> Result<ExitCo
         .fluxos()
         .listar(org, &filtro, pagina)
         .map_err(|erro| descrever(&erro))?;
-    let next_cursor = if fluxos.len() < pagina.limite as usize {
+    let next_cursor = if fluxos.len() < pagina.limit as usize {
         None
     } else {
         fluxos.last().map(|fluxo| fluxo.id.to_string())
@@ -428,7 +428,7 @@ fn mostrar(sessao: &Sessao, org: Option<&str>, args: ReferenciaArgs) -> Result<E
     let fluxo = resolver_fluxo(&sessao.store, org, &args.fluxo)?;
     let revisao = sessao
         .store
-        .revisoes()
+        .revisions()
         .atual(org, fluxo.id)
         .map_err(|erro| descrever(&erro))?;
     let mut corpo = json_fluxo_com_rascunho(&fluxo);
@@ -437,10 +437,10 @@ fn mostrar(sessao: &Sessao, org: Option<&str>, args: ReferenciaArgs) -> Result<E
         imprimir_json(&com_versao(corpo));
         return Ok(ExitCode::SUCCESS);
     }
-    println!("fluxo `{}` — {}", fluxo.slug, fluxo.nome);
+    println!("fluxo `{}` — {}", fluxo.slug, fluxo.name);
     println!("  id: {}", fluxo.id);
     println!("  situação: {}", texto_de(&corpo["status"]));
-    println!("  versão: {}", fluxo.versao);
+    println!("  versão: {}", fluxo.version);
     match &revisao {
         Some(r) => println!(
             "  revisão que vale hoje: {} (publicada por {})",
@@ -515,12 +515,12 @@ fn permissao(
     } else if liberar {
         println!(
             "fluxo `{}` liberado ao agente `{}`.",
-            fluxo.slug, agente.nome
+            fluxo.slug, agente.name
         );
     } else {
         println!(
             "fluxo `{}` retirado do agente `{}`.",
-            fluxo.slug, agente.nome
+            fluxo.slug, agente.name
         );
     }
     Ok(ExitCode::SUCCESS)

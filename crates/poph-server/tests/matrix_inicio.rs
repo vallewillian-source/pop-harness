@@ -28,8 +28,8 @@ use poph_matrix::salas::TIPO_METADATA;
 use poph_server::matrix_inicio::AjustesDeInicio;
 use poph_server::{Estado, matrix_inicio};
 use poph_store::{
-    Direcao, EstadoSaida, FiltroConversas, NovaConversa, NovaMensagem, NovaOrg, NovoAgente,
-    NovoDepartamento, Origem, Pagina, Papel, StatusConversa, Store,
+    ConversationStatus, Direction, FiltroConversas, NewAgent, NewConversation, NewDepartment,
+    NewMessage, NewOrg, Origin, OutboxState, Page, Role, Store,
 };
 use poph_types::{
     AgentId, ConversationId, DepartmentId, HarnessConfig, MatrixConfig, OrgId, Secret,
@@ -502,9 +502,9 @@ impl Cenario {
         let relogio = Arc::new(AtomicI64::new(1_000_000));
         let proprio = Arc::clone(&relogio);
         let store = Arc::new(
-            Store::abrir(&config)
+            Store::open(&config)
                 .expect("abre o banco")
-                .com_relogio(Arc::new(move || proprio.fetch_add(10, Ordering::SeqCst))),
+                .with_clock(Arc::new(move || proprio.fetch_add(10, Ordering::SeqCst))),
         );
         Self {
             pasta,
@@ -531,9 +531,9 @@ impl Cenario {
 
     fn org(&self, slug: &str) -> OrgId {
         self.store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: format!("Org {slug}"),
+            .orgs()
+            .criar(NewOrg {
+                name: format!("Org {slug}"),
                 slug: slug.to_owned(),
                 config_json: String::new(),
             })
@@ -543,13 +543,13 @@ impl Cenario {
 
     fn agente(&self, org: OrgId) -> AgentId {
         self.store
-            .agentes()
+            .agents()
             .criar(
                 org,
-                NovoAgente {
-                    nome: "Bia".to_owned(),
+                NewAgent {
+                    name: "Bia".to_owned(),
                     slug: "bia".to_owned(),
-                    ..NovoAgente::default()
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente")
@@ -558,12 +558,12 @@ impl Cenario {
 
     fn departamento(&self, org: OrgId, nome: &str) -> DepartmentId {
         self.store
-            .departamentos()
+            .departments()
             .criar(
                 org,
-                NovoDepartamento {
-                    nome: nome.to_owned(),
-                    descricao: String::new(),
+                NewDepartment {
+                    name: nome.to_owned(),
+                    description: String::new(),
                 },
             )
             .expect("cria o departamento")
@@ -573,14 +573,14 @@ impl Cenario {
     /// Agente já com departamento padrão (é ele que manda a sala para o espaço).
     fn agente_com_departamento(&self, org: OrgId, departamento: DepartmentId) -> AgentId {
         self.store
-            .agentes()
+            .agents()
             .criar(
                 org,
-                NovoAgente {
-                    nome: "Bia".to_owned(),
+                NewAgent {
+                    name: "Bia".to_owned(),
                     slug: "bia".to_owned(),
-                    departamento_padrao: Some(departamento),
-                    ..NovoAgente::default()
+                    default_department: Some(departamento),
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente")
@@ -592,12 +592,12 @@ impl Cenario {
             .conversas()
             .criar(
                 org,
-                NovaConversa {
+                NewConversation {
                     agent_id: agente,
                     integration_id: None,
                     canal: "whatsapp".to_owned(),
                     peer_externo: Some(peer.to_owned()),
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("cria a conversa")
@@ -607,17 +607,17 @@ impl Cenario {
     fn mensagem(&self, org: OrgId, conversa: ConversationId, texto: &str) -> String {
         self.relogio.fetch_add(10, Ordering::SeqCst);
         self.store
-            .mensagens()
+            .messages()
             .gravar(
                 org,
-                NovaMensagem {
+                NewMessage {
                     conversation_id: conversa,
-                    direcao: Direcao::Saida,
-                    papel: Papel::Assistente,
-                    origem: Origem::Agente,
-                    autor_nome: None,
+                    direction: Direction::Outbound,
+                    role: Role::Assistant,
+                    origin: Origin::Agente,
+                    author_name: None,
                     texto: texto.to_owned(),
-                    anexos_json: "[]".to_owned(),
+                    attachments_json: "[]".to_owned(),
                     id_externo: None,
                     turn_id: None,
                 },
@@ -824,7 +824,7 @@ fn cena(rotulo: &str, endereco: String) -> Cena {
     cenario
         .store
         .conversas()
-        .definir_nome_cliente(org, conversa, "Ana Souza")
+        .set_customer_name(org, conversa, "Ana Souza")
         .expect("grava o nome do cliente");
     cenario.store.matrix().ligar(org).expect("liga a org");
     let primeiro = cenario.mensagem(org, conversa, "primeira resposta do agente");
@@ -1131,8 +1131,8 @@ async fn resposta_do_atendente_esta_ligada_no_servidor() {
     esperar_ate("a resposta entrar na fila de saída", || {
         cena.cenario
             .store
-            .caixa_saida()
-            .contar_por_estado(cena.org, EstadoSaida::Pendente)
+            .outbox()
+            .contar_por_estado(cena.org, OutboxState::Pending)
             .map(|total| total >= 1)
             .unwrap_or(false)
     })
@@ -1141,11 +1141,11 @@ async fn resposta_do_atendente_esta_ligada_no_servidor() {
         .cenario
         .store
         .conversas()
-        .obter(cena.org, cena.conversa)
+        .get(cena.org, cena.conversa)
         .expect("lê a conversa");
     assert_eq!(
         conversa.status,
-        StatusConversa::Transferida,
+        ConversationStatus::Transferred,
         "a resposta do atendente pausa o agente"
     );
 
@@ -1253,12 +1253,12 @@ async fn metadata_leva_o_external_peer_sem_espacos_na_criacao_e_no_fechamento() 
     let atual = cenario
         .store
         .conversas()
-        .obter(org, conversa)
+        .get(org, conversa)
         .expect("conversa");
     cenario
         .store
         .conversas()
-        .fechar_auditado(org, conversa, atual.versao, "teste".to_owned())
+        .fechar_auditado(org, conversa, atual.version, "teste".to_owned())
         .expect("fecha a conversa");
     esperar_ate("o metadata reescrito no fechamento", || {
         synapse
@@ -1292,12 +1292,12 @@ async fn conversa_sem_peer_usa_o_id_da_conversa_no_metadata() {
         .conversas()
         .criar(
             org,
-            NovaConversa {
+            NewConversation {
                 agent_id: agente,
                 integration_id: None,
                 canal: "whatsapp".to_owned(),
                 peer_externo: None,
-                departamento_alvo: None,
+                target_department: None,
             },
         )
         .expect("cria a conversa sem cliente")
@@ -1362,7 +1362,7 @@ async fn listagem_por_cliente_acha_so_a_conversa_do_identificador_do_metadata() 
     let da_a: Vec<String> = cenario
         .store
         .conversas()
-        .listar_filtrado(org_a, &filtro, Pagina::default())
+        .listar_filtrado(org_a, &filtro, Page::default())
         .expect("lista a org A")
         .iter()
         .map(|conversa| conversa.id.to_string())
@@ -1375,7 +1375,7 @@ async fn listagem_por_cliente_acha_so_a_conversa_do_identificador_do_metadata() 
     let da_b: Vec<String> = cenario
         .store
         .conversas()
-        .listar_filtrado(org_b, &filtro, Pagina::default())
+        .listar_filtrado(org_b, &filtro, Page::default())
         .expect("lista a org B")
         .iter()
         .map(|conversa| conversa.id.to_string())

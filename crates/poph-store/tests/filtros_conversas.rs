@@ -17,8 +17,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 
 use poph_store::{
-    Agente, Conversa, FiltroConversas, NovaConversa, NovaOrg, NovoAgente, OrdemConversas, Org,
-    Pagina, StatusConversa, Store,
+    Agente, Conversa, ConversationStatus, FiltroConversas, NewAgent, NewConversation, NewOrg,
+    OrdemConversas, Org, Page, Store,
 };
 use poph_types::{ConversationId, OrgId};
 
@@ -40,9 +40,9 @@ impl Cenario {
         fs::create_dir_all(&pasta).expect("cria a pasta do teste");
         let relogio = Arc::new(AtomicI64::new(1_000));
         let agora = Arc::clone(&relogio);
-        let store = Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
+        let store = Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db"))
             .expect("abre o banco")
-            .com_relogio(Arc::new(move || agora.fetch_add(10, Ordering::SeqCst)));
+            .with_clock(Arc::new(move || agora.fetch_add(10, Ordering::SeqCst)));
         Self {
             pasta,
             store: Arc::new(store),
@@ -51,9 +51,9 @@ impl Cenario {
 
     fn org(&self, slug: &str) -> Org {
         self.store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: format!("Org {slug}"),
+            .orgs()
+            .criar(NewOrg {
+                name: format!("Org {slug}"),
                 slug: slug.to_owned(),
                 config_json: String::new(),
             })
@@ -62,13 +62,13 @@ impl Cenario {
 
     fn agente(&self, org: &Org, slug: &str) -> Agente {
         self.store
-            .agentes()
+            .agents()
             .criar(
                 org.id,
-                NovoAgente {
-                    nome: format!("Agente {slug}"),
+                NewAgent {
+                    name: format!("Agente {slug}"),
                     slug: slug.to_owned(),
-                    ..NovoAgente::default()
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente")
@@ -79,12 +79,12 @@ impl Cenario {
             .conversas()
             .criar(
                 org.id,
-                NovaConversa {
+                NewConversation {
                     agent_id: agente.id,
                     integration_id: None,
                     canal: "whatsapp".to_owned(),
                     peer_externo: peer.map(str::to_owned),
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("cria a conversa")
@@ -93,7 +93,7 @@ impl Cenario {
     fn listar(&self, org: OrgId, filtro: &FiltroConversas) -> Vec<ConversationId> {
         self.store
             .conversas()
-            .listar_filtrado(org, filtro, Pagina::com_limite(200))
+            .listar_filtrado(org, filtro, Page::with_limit(200))
             .expect("lista com filtro")
             .into_iter()
             .map(|c| c.id)
@@ -163,7 +163,7 @@ fn filtro_por_situacao_e_os_dois_juntos() {
         .expect("transfere");
     c.store
         .conversas()
-        .mudar_status(org.id, fechada.id, 1, StatusConversa::Fechada, None)
+        .mudar_status(org.id, fechada.id, 1, ConversationStatus::Closed, None)
         .expect("fecha");
     c.store
         .conversas()
@@ -171,7 +171,7 @@ fn filtro_por_situacao_e_os_dois_juntos() {
         .expect("transfere a quarta");
 
     let so_transferidas = FiltroConversas {
-        status: Some(StatusConversa::Transferida),
+        status: Some(ConversationStatus::Transferred),
         external_peer: None,
         ..Default::default()
     };
@@ -181,21 +181,21 @@ fn filtro_por_situacao_e_os_dois_juntos() {
     );
 
     let so_fechadas = FiltroConversas {
-        status: Some(StatusConversa::Fechada),
+        status: Some(ConversationStatus::Closed),
         external_peer: None,
         ..Default::default()
     };
     assert_eq!(c.listar(org.id, &so_fechadas), vec![fechada.id]);
 
     let so_abertas = FiltroConversas {
-        status: Some(StatusConversa::Aberta),
+        status: Some(ConversationStatus::Open),
         external_peer: None,
         ..Default::default()
     };
     assert_eq!(c.listar(org.id, &so_abertas), vec![aberta.id]);
 
     let cliente_e_transferida = FiltroConversas {
-        status: Some(StatusConversa::Transferida),
+        status: Some(ConversationStatus::Transferred),
         external_peer: Some("5511".to_owned()),
         ..Default::default()
     };
@@ -222,7 +222,7 @@ fn sem_filtro_a_listagem_e_por_id_com_cursor() {
     let primeira = c
         .store
         .conversas()
-        .listar_filtrado(org.id, &vazio, Pagina::com_limite(2))
+        .listar_filtrado(org.id, &vazio, Page::with_limit(2))
         .expect("página 1");
     assert_eq!(primeira.iter().map(|c| c.id).collect::<Vec<_>>(), ids[..2]);
 
@@ -232,9 +232,9 @@ fn sem_filtro_a_listagem_e_por_id_com_cursor() {
         .listar_filtrado(
             org.id,
             &vazio,
-            Pagina {
-                apos: Some(ids[1].as_uuid()),
-                limite: 2,
+            Page {
+                after: Some(ids[1].as_uuid()),
+                limit: 2,
             },
         )
         .expect("página 2");
@@ -312,7 +312,7 @@ fn plano_da_consulta_por_cliente_usa_o_indice_novo_e_nao_varre_a_tabela() {
 
     let por_cliente = FiltroConversas {
         external_peer: Some("5511".to_owned()),
-        status: Some(StatusConversa::Aberta),
+        status: Some(ConversationStatus::Open),
         ..Default::default()
     };
     for ordem in [OrdemConversas::Id, OrdemConversas::Recente] {
@@ -389,10 +389,10 @@ fn filtro_por_ultima_atividade_traz_so_as_conversas_paradas_da_org() {
     let segunda = c.conversa(&org, &agente, Some("5522"));
     let terceira = c.conversa(&org, &agente, Some("5533"));
     let alheia = c.conversa(&outra, &agente_b, Some("5511"));
-    assert!(alheia.criado_em >= terceira.criado_em);
+    assert!(alheia.created_at >= terceira.created_at);
 
     let paradas_ate = FiltroConversas {
-        last_activity_before: Some(segunda.criado_em + 1),
+        last_activity_before: Some(segunda.created_at + 1),
         ..Default::default()
     };
     assert_eq!(
@@ -401,15 +401,15 @@ fn filtro_por_ultima_atividade_traz_so_as_conversas_paradas_da_org() {
     );
 
     let nada = FiltroConversas {
-        last_activity_before: Some(primeira.criado_em),
+        last_activity_before: Some(primeira.created_at),
         ..Default::default()
     };
     assert!(c.listar(org.id, &nada).is_empty());
 
     let abertas_paradas = FiltroConversas {
-        status: Some(StatusConversa::Aberta),
+        status: Some(ConversationStatus::Open),
         external_peer: None,
-        last_activity_before: Some(segunda.criado_em + 1),
+        last_activity_before: Some(segunda.created_at + 1),
     };
     assert_eq!(
         c.listar(org.id, &abertas_paradas),
@@ -418,7 +418,7 @@ fn filtro_por_ultima_atividade_traz_so_as_conversas_paradas_da_org() {
 
     c.store
         .conversas()
-        .mudar_status(org.id, primeira.id, 1, StatusConversa::Fechada, None)
+        .mudar_status(org.id, primeira.id, 1, ConversationStatus::Closed, None)
         .expect("fecha a primeira");
     assert_eq!(c.listar(org.id, &abertas_paradas), vec![segunda.id]);
 }

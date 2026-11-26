@@ -30,7 +30,7 @@ use std::time::{Duration, Instant};
 
 use futures::StreamExt;
 use poph_core::llm::{EventoLlm, LlmProvider, Mensagem as MensagemLlm, Parte, Pedido};
-use poph_store::{Mensagem as MensagemGravada, NovoRegistroAuditoria, Pagina, Papel, Store};
+use poph_store::{Mensagem as MensagemGravada, NewAuditEntry, Page, Role, Store};
 use poph_types::{ConversationId, MessageId, OrgId};
 use serde_json::{Value, json};
 use tokio::sync::Semaphore;
@@ -343,15 +343,15 @@ impl Resumidor {
                     erro = %erro,
                     "resumo rolante não gerado: o turno segue com a janela de mensagens"
                 );
-                let _ = este.store.auditoria().registrar(
+                let _ = este.store.audit().registrar(
                     Some(org),
-                    NovoRegistroAuditoria {
+                    NewAuditEntry {
                         ator_tipo: "system".to_owned(),
-                        ator_id: Some("resumo".to_owned()),
+                        actor_id: Some("resumo".to_owned()),
                         acao: "resumo_falhou".to_owned(),
-                        entidade: "conversation".to_owned(),
-                        entidade_id: Some(conversa.to_string()),
-                        detalhe_json: json!({ "motivo": erro.to_string() }).to_string(),
+                        entity: "conversation".to_owned(),
+                        entity_id: Some(conversa.to_string()),
+                        detail_json: json!({ "motivo": erro.to_string() }).to_string(),
                     },
                 );
             }
@@ -413,13 +413,10 @@ impl Resumidor {
         conversa: ConversationId,
         modelo: &str,
     ) -> Resultado<Rodada> {
-        let registro = self.store.conversas().obter(org, conversa)?;
-        let agente = self.store.agentes().obter(org, registro.agent_id)?;
-        let atual = Resumo::decodificar(registro.resumo.as_deref());
-        let ultimas = self
-            .store
-            .mensagens()
-            .ultimas(org, conversa, TETO_LEITURA)?;
+        let registro = self.store.conversas().get(org, conversa)?;
+        let agente = self.store.agents().get(org, registro.agent_id)?;
+        let atual = Resumo::decodificar(registro.summary.as_deref());
+        let ultimas = self.store.messages().ultimas(org, conversa, TETO_LEITURA)?;
         if ultimas.is_empty() {
             return Ok(Rodada::Nada);
         }
@@ -456,10 +453,10 @@ impl Resumidor {
 
         let mut transcricao = String::new();
         for (mensagem, texto) in &incluidas {
-            let quem = match mensagem.papel {
-                Papel::Usuario => "Cliente",
-                Papel::Assistente => "Agente",
-                Papel::Ferramenta | Papel::Sistema => continue,
+            let quem = match mensagem.role {
+                Role::User => "Cliente",
+                Role::Assistant => "Agente",
+                Role::Tool | Role::System => continue,
             };
             transcricao.push_str(quem);
             transcricao.push_str(": ");
@@ -515,12 +512,12 @@ impl Resumidor {
         let mut candidatas = Vec::new();
         let mut cursor = ate;
         'paginas: loop {
-            let pagina = self.store.mensagens().listar(
+            let pagina = self.store.messages().listar(
                 org,
                 conversa,
-                Pagina {
-                    apos: cursor.map(|id| id.as_uuid()),
-                    limite: PAGINA,
+                Page {
+                    after: cursor.map(|id| id.as_uuid()),
+                    limit: PAGINA,
                 },
             )?;
             let Some(ultima) = pagina.last().map(|mensagem| mensagem.id) else {
@@ -615,24 +612,24 @@ mod testes {
     use super::*;
     use crate::contexto::montar as montar_simples;
 
-    fn mensagem(texto: &str, papel: Papel) -> MensagemGravada {
+    fn mensagem(texto: &str, papel: Role) -> MensagemGravada {
         let (direcao, papel) = match papel {
-            Papel::Usuario => (poph_store::Direcao::Entrada, Papel::Usuario),
-            outro => (poph_store::Direcao::Saida, outro),
+            Role::User => (poph_store::Direction::Inbound, Role::User),
+            outro => (poph_store::Direction::Outbound, outro),
         };
         MensagemGravada {
             id: MessageId::generate(),
             org_id: OrgId::generate(),
             conversation_id: ConversationId::generate(),
-            direcao,
-            papel,
-            origem: poph_store::Origem::Agente,
-            autor_nome: None,
+            direction: direcao,
+            role: papel,
+            origin: poph_store::Origin::Agente,
+            author_name: None,
             texto: texto.to_owned(),
-            anexos_json: "[]".to_owned(),
+            attachments_json: "[]".to_owned(),
             id_externo: None,
             turn_id: None,
-            criado_em: 0,
+            created_at: 0,
         }
     }
 
@@ -643,7 +640,7 @@ mod testes {
         ids.into_iter()
             .enumerate()
             .map(|(i, id)| {
-                let mut m = mensagem(&format!("[#{i:02}] {}", "x".repeat(chars)), Papel::Usuario);
+                let mut m = mensagem(&format!("[#{i:02}] {}", "x".repeat(chars)), Role::User);
                 m.id = id;
                 m
             })

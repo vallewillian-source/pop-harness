@@ -28,7 +28,7 @@ use poph_core::llm::{ErroLlm, EventoLlm, LlmProvider, MotivoFim, ProvedorFake, R
 use poph_server::Estado;
 use poph_server::entrada_turno::MOTIVO_INTERROMPIDO;
 use poph_store::{
-    Direcao, EstadoTurno, NovaConversa, NovaMensagem, NovaOrg, NovoAgente, Pagina, Papel, Store,
+    Direction, NewAgent, NewConversation, NewMessage, NewOrg, Page, Role, Store, TurnState,
 };
 use poph_types::config::GlobalTokenConfig;
 use poph_types::{ConversationId, HarnessConfig, OrgId};
@@ -87,29 +87,29 @@ fn configuracao(pasta: &Path) -> HarnessConfig {
 
 fn abrir_store(pasta: &Path) -> (Arc<Store>, HarnessConfig) {
     let config = configuracao(pasta);
-    let store = Arc::new(Store::abrir(&config).expect("abre o banco"));
+    let store = Arc::new(Store::open(&config).expect("abre o banco"));
     (store, config)
 }
 
 fn semear_org_e_agente(store: &Store) -> (OrgId, poph_types::AgentId) {
     let org = store
-        .orgaos()
-        .criar(NovaOrg {
-            nome: "Org HR-57".to_owned(),
+        .orgs()
+        .criar(NewOrg {
+            name: "Org HR-57".to_owned(),
             slug: "org-hr57".to_owned(),
             config_json: "{}".to_owned(),
         })
         .expect("org")
         .id;
     let agente = store
-        .agentes()
+        .agents()
         .criar(
             org,
-            NovoAgente {
-                nome: "Bia".to_owned(),
+            NewAgent {
+                name: "Bia".to_owned(),
                 slug: "bia".to_owned(),
                 // Sem janela de agrupamento: o teste não espera 2 s por turno.
-                janela_agrupamento_ms: 1,
+                grouping_window_ms: 1,
                 ..Default::default()
             },
         )
@@ -129,12 +129,12 @@ fn abrir_conversa(
         .conversas()
         .criar(
             org,
-            NovaConversa {
+            NewConversation {
                 agent_id: agente,
                 integration_id: None,
                 canal: canal.to_owned(),
                 peer_externo: None,
-                departamento_alvo: None,
+                target_department: None,
             },
         )
         .expect("conversa")
@@ -149,19 +149,19 @@ fn gravar_pergunta(
     texto: &str,
 ) -> poph_types::MessageId {
     store
-        .mensagens()
+        .messages()
         .gravar(
             org,
-            NovaMensagem {
+            NewMessage {
                 conversation_id: conversa,
-                direcao: Direcao::Entrada,
-                papel: Papel::Usuario,
+                direction: Direction::Inbound,
+                role: Role::User,
                 texto: texto.to_owned(),
-                anexos_json: "[]".to_owned(),
+                attachments_json: "[]".to_owned(),
                 id_externo: None,
                 turn_id: None,
-                origem: poph_store::Origem::Agente,
-                autor_nome: None,
+                origin: poph_store::Origin::Agente,
+                author_name: None,
             },
         )
         .expect("mensagem")
@@ -317,13 +317,13 @@ impl Servidor {
         loop {
             let turnos = self
                 .store
-                .turnos()
-                .listar(self.org, conversa, Pagina::com_limite(50))
+                .turns()
+                .listar(self.org, conversa, Page::with_limit(50))
                 .expect("turnos");
             if let Some(turno) = turnos.last()
-                && turno.estado != EstadoTurno::Rodando
+                && turno.estado != TurnState::Running
             {
-                return (turno.estado.como_texto().to_owned(), turno.erro.clone());
+                return (turno.estado.as_text().to_owned(), turno.error.clone());
             }
             assert!(
                 inicio.elapsed() < Duration::from_secs(15),
@@ -335,21 +335,21 @@ impl Servidor {
 
     fn mensagens_de_saida(&self, conversa: ConversationId) -> usize {
         self.store
-            .mensagens()
-            .listar(self.org, conversa, Pagina::com_limite(200))
+            .messages()
+            .listar(self.org, conversa, Page::with_limit(200))
             .expect("mensagens")
             .iter()
-            .filter(|mensagem| mensagem.direcao == Direcao::Saida)
+            .filter(|mensagem| mensagem.direction == Direction::Outbound)
             .count()
     }
 
     fn mensagens_de_entrada(&self, conversa: ConversationId) -> usize {
         self.store
-            .mensagens()
-            .listar(self.org, conversa, Pagina::com_limite(200))
+            .messages()
+            .listar(self.org, conversa, Page::with_limit(200))
             .expect("mensagens")
             .iter()
-            .filter(|mensagem| mensagem.direcao == Direcao::Entrada)
+            .filter(|mensagem| mensagem.direction == Direction::Inbound)
             .count()
     }
 }
@@ -377,7 +377,7 @@ async fn turno_interrompido_vira_falha_na_subida_e_a_conversa_aceita_a_proxima_m
             let conversa = abrir_conversa(store, org, agente, "test");
             gravar_pergunta(store, org, conversa, PERGUNTA);
             let turno = store
-                .turnos()
+                .turns()
                 .iniciar(org, conversa, Some(agente))
                 .expect("turno do processo anterior");
             conversa_anterior.set(Some(conversa));
@@ -395,13 +395,13 @@ async fn turno_interrompido_vira_falha_na_subida_e_a_conversa_aceita_a_proxima_m
     // (ii) o turno não fica órfão em "em andamento": vira falha, com o motivo da queda.
     let gravado = servidor
         .store
-        .turnos()
+        .turns()
         .obter(servidor.org, turno)
         .expect("turno gravado");
-    assert_eq!(gravado.estado, EstadoTurno::Falhou);
-    assert_eq!(gravado.erro.as_deref(), Some(MOTIVO_INTERROMPIDO));
+    assert_eq!(gravado.estado, TurnState::Failed);
+    assert_eq!(gravado.error.as_deref(), Some(MOTIVO_INTERROMPIDO));
     assert!(
-        gravado.finalizado_em.is_some(),
+        gravado.finished_at.is_some(),
         "o turno órfão ganha hora de fim"
     );
 
@@ -554,24 +554,24 @@ async fn saida_do_console_presa_em_sending_e_confirmada_na_subida() {
             let (org, agente) = semear_org_e_agente(store);
             let conversa = abrir_conversa(store, org, agente, "test");
             let turno = store
-                .turnos()
+                .turns()
                 .iniciar(org, conversa, Some(agente))
                 .expect("turno do processo anterior");
             let (_, item) = store
-                .caixa_saida()
+                .outbox()
                 .enfileirar(
                     org,
-                    poph_store::NovaSaida {
+                    poph_store::NewOutboxItem {
                         conversation_id: conversa,
                         turn_id: turno.id,
                         seq: 0,
                         tipo: "text".to_owned(),
-                        conteudo_json: "{\"texto\":\"resposta já mostrada\"}".to_owned(),
+                        content_json: "{\"texto\":\"resposta já mostrada\"}".to_owned(),
                     },
                 )
                 .expect("enfileira a resposta");
             store
-                .caixa_saida()
+                .outbox()
                 .iniciar_envio(org, item.id)
                 .expect("marca como em envio");
             (org, agente)
@@ -585,8 +585,8 @@ async fn saida_do_console_presa_em_sending_e_confirmada_na_subida() {
     loop {
         let enviados = servidor
             .store
-            .caixa_saida()
-            .contar_por_estado(servidor.org, poph_store::EstadoSaida::Enviado)
+            .outbox()
+            .contar_por_estado(servidor.org, poph_store::OutboxState::Sent)
             .expect("conta a fila");
         if enviados == 1 {
             break;
@@ -600,8 +600,8 @@ async fn saida_do_console_presa_em_sending_e_confirmada_na_subida() {
     assert_eq!(
         servidor
             .store
-            .caixa_saida()
-            .contar_por_estado(servidor.org, poph_store::EstadoSaida::Enviando)
+            .outbox()
+            .contar_por_estado(servidor.org, poph_store::OutboxState::Sending)
             .expect("conta a fila"),
         0,
         "nada fica em sending"

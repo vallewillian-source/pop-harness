@@ -14,9 +14,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use poph_files::ConfigArquivos;
-use poph_store::backup::RetratoOrg;
+use poph_store::backup::OrgSnapshot;
 use poph_store::{
-    Direcao, FinalizacaoTurno, NovaConversa, NovaMensagem, NovaSaida, NovoAnexoCanal, Papel, Store,
+    Direction, NewChannelAttachment, NewConversation, NewMessage, NewOutboxItem, Role, Store,
+    TurnFinalization,
 };
 use poph_types::{AgentId, OrgId};
 use serde_json::Value;
@@ -109,7 +110,7 @@ impl Cenario {
     }
 
     fn abrir_store(&self) -> Store {
-        Store::abrir_em(
+        Store::open_at(
             &self.dados().join("harness.db"),
             &self.dados().join("rag.db"),
         )
@@ -118,7 +119,7 @@ impl Cenario {
 
     fn org_por_slug(&self, slug: &str) -> OrgId {
         self.abrir_store()
-            .orgaos()
+            .orgs()
             .por_slug(slug)
             .expect("org do cenário")
             .id
@@ -276,14 +277,14 @@ fn semear_origem(cenario: &Cenario) {
 
     // O resto é semeado direto pelo repositório: integração com segredo cifrado e histórico.
     let store = cenario.abrir_store();
-    let org = store.orgaos().por_slug(&cenario.slug).unwrap().id;
-    let agente = store.agentes().por_slug(org, "bia").unwrap().id;
+    let org = store.orgs().por_slug(&cenario.slug).unwrap().id;
+    let agente = store.agents().por_slug(org, "bia").unwrap().id;
     let chave = poph_server::ChaveDeCifra::derivar(CHAVE_CIFRA).expect("deriva a chave");
     let mut segredos = std::collections::BTreeMap::new();
     segredos.insert("token".to_owned(), SENTINELA_SEGREDO.to_owned());
     let blob = chave.cifrar(&segredos).expect("cifra o segredo");
     store
-        .integracao_criar_com_configuracao(
+        .create_integration_with_config(
             org,
             agente,
             "whatsapp".to_owned(),
@@ -297,12 +298,12 @@ fn semear_origem(cenario: &Cenario) {
         .conversas()
         .criar(
             org,
-            NovaConversa {
+            NewConversation {
                 agent_id: agente,
                 integration_id: None,
                 canal: "test".to_owned(),
                 peer_externo: None,
-                departamento_alvo: None,
+                target_department: None,
             },
         )
         .expect("cria a conversa");
@@ -314,89 +315,89 @@ fn semear_origem(cenario: &Cenario) {
     )
     .expect("grava o blob do anexo");
     store
-        .mensagens()
+        .messages()
         .gravar_com_anexos(
             org,
-            NovaMensagem {
+            NewMessage {
                 conversation_id: conversa.id,
-                direcao: Direcao::Entrada,
-                papel: Papel::Usuario,
+                direction: Direction::Inbound,
+                role: Role::User,
                 texto: "Qual o prazo? Segue o comprovante.".to_owned(),
-                anexos_json: "[]".to_owned(),
+                attachments_json: "[]".to_owned(),
                 id_externo: None,
                 turn_id: None,
-                origem: poph_store::Origem::Agente,
-                autor_nome: None,
+                origin: poph_store::Origin::Agente,
+                author_name: None,
             },
-            &[NovoAnexoCanal {
-                nome: "comprovante.png".to_owned(),
+            &[NewChannelAttachment {
+                name: "comprovante.png".to_owned(),
                 mime: "image/png".to_owned(),
-                tamanho_bytes: conteudo_anexo.len() as u64,
+                size_bytes: conteudo_anexo.len() as u64,
                 sha256: anexo.sha256.clone(),
                 blob_path: format!("{org}/{}", anexo.sha256),
-                texto_extraido: None,
-                status_extracao: "skipped",
+                extracted_text: None,
+                extraction_status: "skipped",
             }],
         )
         .expect("grava a mensagem com anexo");
     let turno = store
-        .turnos()
+        .turns()
         .iniciar(org, conversa.id, Some(agente))
         .expect("abre o turno");
     store
-        .turnos()
+        .turns()
         .finalizar(
             org,
             turno.id,
-            FinalizacaoTurno::concluido("{\"total_ms\":12}"),
+            TurnFinalization::completed("{\"total_ms\":12}"),
         )
         .expect("fecha o turno");
     store
-        .mensagens()
+        .messages()
         .gravar(
             org,
-            NovaMensagem {
+            NewMessage {
                 conversation_id: conversa.id,
-                direcao: Direcao::Saida,
-                papel: Papel::Assistente,
+                direction: Direction::Outbound,
+                role: Role::Assistant,
                 texto: "O prazo é de 5 dias úteis.".to_owned(),
-                anexos_json: "[]".to_owned(),
+                attachments_json: "[]".to_owned(),
                 id_externo: None,
                 turn_id: Some(turno.id),
-                origem: poph_store::Origem::Agente,
-                autor_nome: None,
+                origin: poph_store::Origin::Agente,
+                author_name: None,
             },
         )
         .expect("grava a resposta");
     store
-        .caixa_saida()
+        .outbox()
         .enfileirar(
             org,
-            NovaSaida {
+            NewOutboxItem {
                 conversation_id: conversa.id,
                 turn_id: turno.id,
                 seq: 1,
                 tipo: "text".to_owned(),
-                conteudo_json: "{\"text\":\"O prazo é de 5 dias úteis.\"}".to_owned(),
+                content_json: "{\"text\":\"O prazo é de 5 dias úteis.\"}".to_owned(),
             },
         )
         .expect("enfileira a saída");
 }
 
 /// Compara dois retratos linha a linha; as integrações ignoram a marca de segredo.
-fn comparar_retratos(origem: &RetratoOrg, destino: &RetratoOrg) {
+fn comparar_retratos(origem: &OrgSnapshot, destino: &OrgSnapshot) {
     assert_eq!(origem.org, destino.org, "linha da org");
     assert_eq!(
-        origem.tabelas.keys().collect::<Vec<_>>(),
-        destino.tabelas.keys().collect::<Vec<_>>(),
+        origem.tables.keys().collect::<Vec<_>>(),
+        destino.tables.keys().collect::<Vec<_>>(),
         "tabelas do retrato"
     );
-    for (tabela, linhas) in &origem.tabelas {
+    for (tabela, linhas) in &origem.tables {
         let esperadas: Vec<Value> = linhas
             .iter()
             .map(|linha| normalizar(tabela, linha))
             .collect();
-        let obtidas: Vec<Value> = destino.tabelas[tabela]
+        let obtidas: Vec<Value> = destino.tables[tabela]
             .iter()
             .map(|linha| normalizar(tabela, linha))
             .collect();
@@ -417,10 +418,10 @@ fn normalizar(tabela: &str, linha: &Value) -> Value {
     linha
 }
 
-fn ler_retrato(cenario: &Cenario, org: OrgId) -> RetratoOrg {
+fn ler_retrato(cenario: &Cenario, org: OrgId) -> OrgSnapshot {
     cenario
         .abrir_store()
-        .retrato_da_org(org, true)
+        .org_snapshot(org, true)
         .expect("retrato")
 }
 
@@ -428,7 +429,7 @@ fn comparar_blobs(origem: &Cenario, destino: &Cenario, org_origem: OrgId, org_de
     let retrato = ler_retrato(origem, org_origem);
     let mut hashes = Vec::new();
     for tabela in ["file_library", "attachments"] {
-        for linha in retrato.tabelas.get(tabela).into_iter().flatten() {
+        for linha in retrato.tables.get(tabela).into_iter().flatten() {
             if let Some(sha) = linha.get("sha256").and_then(Value::as_str) {
                 hashes.push(sha.to_owned());
             }
@@ -462,7 +463,7 @@ fn comparar_blobs(origem: &Cenario, destino: &Cenario, org_origem: OrgId, org_de
 }
 
 fn agente_por_slug(store: &Store, org: OrgId, slug: &str) -> AgentId {
-    store.agentes().por_slug(org, slug).expect("agente").id
+    store.agents().por_slug(org, slug).expect("agente").id
 }
 
 #[test]
@@ -536,11 +537,11 @@ fn exportar_e_importar_reconstroi_a_org_num_arquivo_so() {
         let store = destino.abrir_store();
         let agente = agente_por_slug(&store, org_origem, "bia");
         let integracoes = store
-            .integracoes_listar(org_origem, agente, poph_store::Pagina::default())
+            .list_integrations(org_origem, agente, poph_store::Page::default())
             .expect("lista integrações");
         assert_eq!(integracoes.len(), 1);
         assert!(
-            !integracoes[0].tem_segredo,
+            !integracoes[0].has_secret,
             "o segredo não pode ser importado"
         );
         assert_eq!(integracoes[0].configuracao["instancia"], "bia");
@@ -621,8 +622,8 @@ fn exportar_e_importar_reconstroi_a_org_num_arquivo_so() {
     );
     let agentes = destino
         .abrir_store()
-        .agentes()
-        .listar(org_origem, poph_store::Pagina::default());
+        .agents()
+        .listar(org_origem, poph_store::Page::default());
     assert_eq!(agentes.expect("lista").len(), 1);
 }
 
@@ -686,28 +687,28 @@ fn importar_numa_org_existente_nao_mexe_na_org_vizinha() {
     // A vizinha ganhou os recursos importados, com os ids do arquivo, sem perder os próprios.
     let depois = ler_retrato(&destino, vizinha);
     assert_eq!(
-        depois.tabelas["agents"].len(),
-        antes.tabelas["agents"].len() + 1,
+        depois.tables["agents"].len(),
+        antes.tables["agents"].len() + 1,
         "um agente importado além do próprio"
     );
     let store = destino.abrir_store();
-    assert!(store.agentes().por_slug(vizinha, "vizinho").is_ok());
-    assert!(store.agentes().por_slug(vizinha, "bia").is_ok());
+    assert!(store.agents().por_slug(vizinha, "vizinho").is_ok());
+    assert!(store.agents().por_slug(vizinha, "bia").is_ok());
     assert_eq!(
         store
-            .produtos()
-            .listar(vizinha, poph_store::Pagina::default())
+            .products()
+            .listar(vizinha, poph_store::Page::default())
             .expect("produtos")
             .len(),
         1
     );
     // O que era da vizinha continua idêntico (agente próprio intacto).
-    let proprio = antes.tabelas["agents"]
+    let proprio = antes.tables["agents"]
         .iter()
         .find(|linha| linha["slug"] == "vizinho")
         .expect("agente próprio")
         .clone();
-    let mesmo = depois.tabelas["agents"]
+    let mesmo = depois.tables["agents"]
         .iter()
         .find(|linha| linha["slug"] == "vizinho")
         .expect("agente próprio depois");
@@ -761,8 +762,8 @@ fn arquivo_corrompido_ou_de_outra_versao_e_recusado_sem_gravar() {
     assert!(
         destino
             .abrir_store()
-            .orgaos()
-            .listar(poph_store::Pagina::default())
+            .orgs()
+            .listar(poph_store::Page::default())
             .expect("orgs")
             .is_empty()
     );
@@ -813,9 +814,9 @@ fn exportar_recusa_blob_ausente_no_disco() {
     let org = origem.org_por_slug(&origem.slug);
     let retrato = origem
         .abrir_store()
-        .retrato_da_org(org, false)
+        .org_snapshot(org, false)
         .expect("retrato");
-    let sha = retrato.tabelas["file_library"][0]["sha256"]
+    let sha = retrato.tables["file_library"][0]["sha256"]
         .as_str()
         .expect("sha do arquivo da biblioteca")
         .to_owned();
@@ -882,7 +883,7 @@ fn blob_importado_fica_na_pasta_da_org_de_destino() {
     ]);
     let retrato = ler_retrato(&destino, alvo);
     for tabela in ["file_library", "attachments"] {
-        for linha in retrato.tabelas.get(tabela).into_iter().flatten() {
+        for linha in retrato.tables.get(tabela).into_iter().flatten() {
             let sha = linha["sha256"].as_str().expect("sha");
             assert!(
                 destino

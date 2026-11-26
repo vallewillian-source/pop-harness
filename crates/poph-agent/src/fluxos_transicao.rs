@@ -14,20 +14,20 @@
 
 use poph_fluxos::EfeitoProduzido;
 use poph_fluxos::motor::{Estado as EstadoMotor, Resultado as ResultadoMotor};
-use poph_store::{EfeitoDaTransicao, EstadoDaExecucao, EventoDaTransicao, TransicaoDeFluxo};
+use poph_store::{ExecutionState, FlowTransition, TransitionEffect, TransitionEvent};
 
 /// O estado do motor no vocabulário das colunas de `fluxo_execucoes` (e da etapa de entrada).
 ///
 /// O nó vai pelo **id**: é o que a coluna `no_atual` guarda. `chaves` não é persistido (a
 /// idempotência é o índice único de `ficha_eventos`, FX-20).
-pub fn estado_para_banco(estado: &EstadoMotor) -> EstadoDaExecucao {
-    EstadoDaExecucao {
+pub fn estado_para_banco(estado: &EstadoMotor) -> ExecutionState {
+    ExecutionState {
         status: estado.status,
         no_atual: estado.no_atual.id().to_owned(),
         dados_json: serde_json::Value::Object(estado.dados.clone()).to_string(),
-        atores_que_agiram: estado.atores_que_agiram.clone(),
-        resultado: estado.resultado.clone(),
-        motivo: estado.motivo.clone(),
+        acting_actors: estado.atores_que_agiram.clone(),
+        result: estado.resultado.clone(),
+        reason: estado.motivo.clone(),
     }
 }
 
@@ -35,21 +35,21 @@ pub fn estado_para_banco(estado: &EstadoMotor) -> EstadoDaExecucao {
 ///
 /// `repetida` vem do motor, que não guarda as chaves: quem confere repetição de verdade é o store
 /// (pela marca em `ficha_eventos`), e a API checa antes de chamar o motor (ver `api::fichas`).
-pub fn transicao_do_motor(resultado: &ResultadoMotor) -> TransicaoDeFluxo {
-    TransicaoDeFluxo {
-        novo_estado: estado_para_banco(&resultado.novo_estado),
-        eventos: resultado.eventos.iter().map(evento_para_banco).collect(),
-        efeitos: resultado.efeitos.iter().map(efeito_da_transicao).collect(),
-        encerra_atendimento: resultado.encerra_atendimento,
-        repetida: resultado.repetida,
+pub fn transicao_do_motor(resultado: &ResultadoMotor) -> FlowTransition {
+    FlowTransition {
+        new_state: estado_para_banco(&resultado.novo_estado),
+        events: resultado.eventos.iter().map(evento_para_banco).collect(),
+        effects: resultado.efeitos.iter().map(efeito_da_transicao).collect(),
+        closes_service: resultado.encerra_atendimento,
+        repeated: resultado.repetida,
         // FX-40: o motivo da falha é texto no espelho; o motor diz aqui se foi regra que não avaliou.
-        erro_de_regra: resultado.erro_de_regra,
+        rule_error: resultado.erro_de_regra,
     }
 }
 
 /// Um evento do motor no vocabulário de `ficha_eventos`.
-fn evento_para_banco(evento: &poph_fluxos::motor::Evento) -> EventoDaTransicao {
-    EventoDaTransicao {
+fn evento_para_banco(evento: &poph_fluxos::motor::Evento) -> TransitionEvent {
+    TransitionEvent {
         tipo: evento.tipo,
         ator_tipo: evento.ator,
         payload_json: evento.payload.to_string(),
@@ -61,7 +61,7 @@ fn evento_para_banco(evento: &poph_fluxos::motor::Evento) -> EventoDaTransicao {
 /// O adaptador do turno e a API montam [`EfeitoDaTransicao`] com esta função, e o entregador da
 /// fila (`poph_server::fluxos_efeitos`) lê o mesmo formato: não existem dois jeitos de escrever o
 /// payload.
-pub fn efeito_da_transicao(produzido: &EfeitoProduzido) -> EfeitoDaTransicao {
+pub fn efeito_da_transicao(produzido: &EfeitoProduzido) -> TransitionEffect {
     let payload = match &produzido.efeito {
         poph_fluxos::ir::Efeito::MensagemAoCliente { texto } => {
             serde_json::json!({ "texto": texto })
@@ -73,8 +73,8 @@ pub fn efeito_da_transicao(produzido: &EfeitoProduzido) -> EfeitoDaTransicao {
             serde_json::json!({ "departamento": departamento })
         }
     };
-    EfeitoDaTransicao {
-        chave: produzido.chave.clone(),
+    TransitionEffect {
+        key: produzido.chave.clone(),
         tipo: produzido.tipo().to_owned(),
         payload_json: payload.to_string(),
     }
@@ -99,7 +99,7 @@ mod testes {
                 texto: "Já vou verificar.".to_owned(),
             }));
         assert_eq!(mensagem.tipo, "mensagem_ao_cliente");
-        assert_eq!(mensagem.chave, "etapa:coleta/0");
+        assert_eq!(mensagem.key, "etapa:coleta/0");
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&mensagem.payload_json).expect("JSON"),
             serde_json::json!({ "texto": "Já vou verificar." })

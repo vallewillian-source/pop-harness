@@ -456,9 +456,9 @@ pub fn versao_do_if_match(headers: &HeaderMap, entidade: &str) -> Result<u64, Ap
 /// Lê a situação (`active`, `inactive`, `archived`) do corpo da requisição.
 pub fn status_pedido(texto: &str) -> Result<Status, ApiError> {
     match texto {
-        "active" => Ok(Status::Ativo),
-        "inactive" => Ok(Status::Inativo),
-        "archived" => Ok(Status::Arquivado),
+        "active" => Ok(Status::Active),
+        "inactive" => Ok(Status::Inactive),
+        "archived" => Ok(Status::Archived),
         outro => Err(ApiError::validacao(
             "status",
             format!("`{outro}` não é uma situação; use active, inactive ou archived"),
@@ -468,7 +468,7 @@ pub fn status_pedido(texto: &str) -> Result<Status, ApiError> {
 
 /// Situação em texto para a resposta.
 pub fn status_texto(status: Status) -> &'static str {
-    status.como_texto()
+    status.as_text()
 }
 
 /// Documento OpenAPI da API administrativa.

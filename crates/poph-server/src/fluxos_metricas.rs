@@ -173,13 +173,13 @@ impl MetricasFluxos {
     /// Os cinco contadores que o `poph-store` incrementa (FX-40), com os **mesmos** handles das
     /// séries declaradas aqui. O `Estado` publica isto no store da instância; sem publicação (CLI,
     /// `poph migrate`) nenhuma conta de execução é feita.
-    pub fn das_execucoes(&self) -> poph_store::metricas::MetricasExecucao {
-        poph_store::metricas::MetricasExecucao {
-            iniciadas: self.execucoes_iniciadas.clone(),
-            concluidas: self.execucoes_concluidas.clone(),
-            abandonadas: self.execucoes_abandonadas.clone(),
-            falhas: self.execucoes_falhas.clone(),
-            erros_regra: self.erros_regra.clone(),
+    pub fn das_execucoes(&self) -> poph_store::metrics::ExecutionMetrics {
+        poph_store::metrics::ExecutionMetrics {
+            started: self.execucoes_iniciadas.clone(),
+            completed: self.execucoes_concluidas.clone(),
+            abandoned: self.execucoes_abandonadas.clone(),
+            failures: self.execucoes_falhas.clone(),
+            rule_errors: self.erros_regra.clone(),
         }
     }
 

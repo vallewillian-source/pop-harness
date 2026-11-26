@@ -30,8 +30,7 @@ use poph_jev::{
     EstadoJev, G1_CONTINUAR, G2_ESPERAR, G2_PROCESSAR, IdGate, JevFalso, MotorJev, OpcoesJev,
 };
 use poph_store::{
-    Direcao, EstadoTurno, MudancaAgente, NovaConversa, NovaMensagem, NovaOrg, NovoAgente, Papel,
-    Store,
+    AgentChange, Direction, NewAgent, NewConversation, NewMessage, NewOrg, Role, Store, TurnState,
 };
 use poph_types::{AgentId, ConversationId, JevGates, MessageId, OrgId};
 
@@ -96,19 +95,19 @@ impl PausaVirtual {
         for continuacao in continuacoes.drain(..) {
             if continuacao.instante_ms <= agora {
                 self.store
-                    .mensagens()
+                    .messages()
                     .gravar(
                         self.org,
-                        NovaMensagem {
+                        NewMessage {
                             conversation_id: self.conversa,
-                            direcao: Direcao::Entrada,
-                            papel: Papel::Usuario,
+                            direction: Direction::Inbound,
+                            role: Role::User,
                             texto: continuacao.texto,
-                            anexos_json: "[]".to_owned(),
+                            attachments_json: "[]".to_owned(),
                             id_externo: None,
                             turn_id: None,
-                            origem: poph_store::Origem::Agente,
-                            autor_nome: None,
+                            origin: poph_store::Origin::Agente,
+                            author_name: None,
                         },
                     )
                     .expect("grava a continuação do cliente");
@@ -147,32 +146,31 @@ impl Cenario {
         let _ = std::fs::remove_dir_all(&pasta);
         std::fs::create_dir_all(&pasta).expect("pasta do teste");
         let store = Arc::new(
-            Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
-                .expect("abre o banco"),
+            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco"),
         );
         let org = store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: format!("Org {rotulo}"),
+            .orgs()
+            .criar(NewOrg {
+                name: format!("Org {rotulo}"),
                 slug: format!("org-{rotulo}-{}", AgentId::generate()),
                 config_json: "{}".to_owned(),
             })
             .expect("cria a org")
             .id;
         let agente = store
-            .agentes()
+            .agents()
             .criar(
                 org,
-                NovoAgente {
-                    nome: format!("Bia {rotulo}"),
+                NewAgent {
+                    name: format!("Bia {rotulo}"),
                     slug: format!("bia-{rotulo}"),
-                    ..NovoAgente::default()
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente")
             .id;
         store
-            .instrucoes()
+            .instructions()
             .salvar(
                 org,
                 agente,
@@ -185,14 +183,14 @@ impl Cenario {
         // Handoff ligado: sem isso o G1 nem se aplica (regra do POP Atende) e o teste do gate
         // desligado não teria como provar que ele continua sendo consultado.
         store
-            .agentes()
+            .agents()
             .atualizar(
                 org,
                 agente,
                 1,
-                MudancaAgente {
-                    handoff_ativo: Some(true),
-                    ..MudancaAgente::default()
+                AgentChange {
+                    handoff_active: Some(true),
+                    ..AgentChange::default()
                 },
             )
             .expect("liga o handoff");
@@ -209,12 +207,12 @@ impl Cenario {
             .conversas()
             .criar(
                 self.org,
-                NovaConversa {
+                NewConversation {
                     agent_id: self.agente,
                     integration_id: None,
                     canal: "whatsapp".to_owned(),
                     peer_externo: None,
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("abre a conversa")
@@ -223,19 +221,19 @@ impl Cenario {
 
     fn falar(&self, conversa: ConversationId, texto: &str) -> MessageId {
         self.store
-            .mensagens()
+            .messages()
             .gravar(
                 self.org,
-                NovaMensagem {
+                NewMessage {
                     conversation_id: conversa,
-                    direcao: Direcao::Entrada,
-                    papel: Papel::Usuario,
+                    direction: Direction::Inbound,
+                    role: Role::User,
                     texto: texto.to_owned(),
-                    anexos_json: "[]".to_owned(),
+                    attachments_json: "[]".to_owned(),
                     id_externo: None,
                     turn_id: None,
-                    origem: poph_store::Origem::Agente,
-                    autor_nome: None,
+                    origin: poph_store::Origin::Agente,
+                    author_name: None,
                 },
             )
             .expect("grava a mensagem")
@@ -363,7 +361,7 @@ async fn esperar_mais_estica_a_janela_e_agrupa_a_mensagem_seguinte() {
     let gatilho = cenario.falar(conversa, "vou te passar meu endereço");
     let resumo = cenario.turno(&motor, conversa, gatilho).await;
 
-    assert_eq!(resumo.estado, EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, TurnState::Completed);
     assert!(
         perto(pausa.espera_total(), Duration::from_secs(4)),
         "espera devia ser uma janela esticada (4 s), foi {:?}",
@@ -414,7 +412,7 @@ async fn mensagem_nova_durante_a_espera_refaz_o_lote() {
     let gatilho = cenario.falar(conversa, "queria saber do");
     let resumo = cenario.turno(&motor, conversa, gatilho).await;
 
-    assert_eq!(resumo.estado, EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, TurnState::Completed);
     assert_eq!(resumo.mensagens.len(), 2);
     assert_eq!(
         jev.chamadas(),
@@ -451,7 +449,7 @@ async fn processar_agora_encurta_a_espera() {
     let gatilho = cenario.falar(conversa, "vocês atendem no domingo?");
     let resumo = cenario.turno(&motor, conversa, gatilho).await;
 
-    assert_eq!(resumo.estado, EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, TurnState::Completed);
     assert!(
         pausa.espera_total() < JANELA,
         "processar agora tem de esperar menos que a janela fixa, esperou {:?}",
@@ -497,7 +495,7 @@ async fn gate_desligado_mantem_a_janela_fixa() {
     let gatilho = cenario.falar(conversa, "bom dia");
     let resumo = cenario.turno(&motor, conversa, gatilho).await;
 
-    assert_eq!(resumo.estado, EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, TurnState::Completed);
     assert_eq!(pausa.esperas().len(), 1);
     assert!(
         perto(pausa.espera_total(), JANELA),
@@ -523,7 +521,7 @@ async fn sem_jev_a_janela_e_a_de_hoje() {
     let gatilho = cenario.falar(conversa, "bom dia");
     let resumo = cenario.turno(&motor, conversa, gatilho).await;
 
-    assert_eq!(resumo.estado, EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, TurnState::Completed);
     assert!(
         perto(pausa.espera_total(), JANELA),
         "{:?}",
@@ -555,7 +553,7 @@ async fn falha_do_jev_mantem_a_janela_fixa() {
     let gatilho = cenario.falar(conversa, "me deixa ver aqui");
     let resumo = cenario.turno(&motor, conversa, gatilho).await;
 
-    assert_eq!(resumo.estado, EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, TurnState::Completed);
     assert!(
         perto(pausa.espera_total(), JANELA),
         "{:?}",
@@ -590,7 +588,7 @@ async fn escolha_fora_das_opcoes_mantem_a_janela_fixa() {
     let gatilho = cenario.falar(conversa, "oi");
     let resumo = cenario.turno(&motor, conversa, gatilho).await;
 
-    assert_eq!(resumo.estado, EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, TurnState::Completed);
     assert!(
         perto(pausa.espera_total(), JANELA),
         "{:?}",
@@ -633,7 +631,7 @@ async fn confianca_baixa_mantem_a_janela_fixa() {
     let gatilho = cenario.falar(conversa, "me deixa ver");
     let resumo = cenario.turno(&motor, conversa, gatilho).await;
 
-    assert_eq!(resumo.estado, EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, TurnState::Completed);
     assert!(
         perto(pausa.espera_total(), JANELA),
         "confiança 0,4 é fallback: janela fixa, foi {:?}",
@@ -668,7 +666,7 @@ async fn prazo_do_jev_mantem_a_janela_fixa() {
     let gatilho = cenario.falar(conversa, "peraí");
     let resumo = cenario.turno(&motor, conversa, gatilho).await;
 
-    assert_eq!(resumo.estado, EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, TurnState::Completed);
     assert!(
         perto(pausa.espera_total(), JANELA),
         "{:?}",
@@ -714,7 +712,7 @@ async fn conversa_transferida_nao_responde_nem_consulta_o_jev() {
     let gatilho = cenario.falar(conversa, "oi, ainda estou aqui");
     let resumo = cenario.turno(&motor, conversa, gatilho).await;
 
-    assert_eq!(resumo.estado, EstadoTurno::Ignorado);
+    assert_eq!(resumo.estado, TurnState::Skipped);
     assert!(resumo.texto.is_empty());
     assert_eq!(jev.chamadas(), 0, "nem consulta o Jev");
     assert!(provedor.recebidos().is_empty(), "nem chama o modelo");
@@ -722,7 +720,7 @@ async fn conversa_transferida_nao_responde_nem_consulta_o_jev() {
     // A mensagem do cliente continua gravada (D12).
     let mensagens = cenario
         .store
-        .mensagens()
+        .messages()
         .ultimas(cenario.org, conversa, 10)
         .expect("lê as mensagens");
     assert!(mensagens.iter().any(|mensagem| mensagem.id == gatilho));
@@ -855,12 +853,12 @@ async fn latencia_menor_nas_completas_sem_partir_mais_frases() {
     for caso in &completas {
         let conversa = cenario.conversa();
         let (pausa, resumo) = rodar_caso(&cenario, conversa, caso, Some(G2_PROCESSAR)).await;
-        assert_eq!(resumo.estado, EstadoTurno::Concluido);
+        assert_eq!(resumo.estado, TurnState::Completed);
         soma_com += pausa.espera_total();
 
         let conversa = cenario.conversa();
         let (pausa, resumo) = rodar_caso(&cenario, conversa, caso, None).await;
-        assert_eq!(resumo.estado, EstadoTurno::Concluido);
+        assert_eq!(resumo.estado, TurnState::Completed);
         soma_sem += pausa.espera_total();
     }
     let media_com = soma_com / u32::try_from(completas.len()).expect("casos");

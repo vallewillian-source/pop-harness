@@ -8,7 +8,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
-use poph_store::{NovaCategoria, NovaOrg, Store};
+use poph_store::{NewCategory, NewOrg, Store};
 use serde_json::Value;
 
 const SENTINELA_CIFRA: &str = "SENTINELA-CIFRA-hr18";
@@ -40,38 +40,38 @@ impl Cenario {
             .expect("liga a pasta de modelos");
         let slug = format!("org-{rotulo}");
         {
-            let store = Store::abrir_em(
+            let store = Store::open_at(
                 &pasta.join("dados").join("harness.db"),
                 &pasta.join("dados").join("rag.db"),
             )
             .expect("abre o banco");
             let org = store
-                .orgaos()
-                .criar(NovaOrg {
-                    nome: format!("Org {rotulo}"),
+                .orgs()
+                .criar(NewOrg {
+                    name: format!("Org {rotulo}"),
                     slug: slug.clone(),
                     config_json: "{}".to_owned(),
                 })
                 .expect("cria a org")
                 .id;
             store
-                .agentes()
+                .agents()
                 .criar(
                     org,
-                    poph_store::NovoAgente {
-                        nome: "Bia".to_owned(),
+                    poph_store::NewAgent {
+                        name: "Bia".to_owned(),
                         slug: "bia".to_owned(),
-                        ..poph_store::NovoAgente::default()
+                        ..poph_store::NewAgent::default()
                     },
                 )
                 .expect("cria o agente");
             store
-                .categorias()
+                .categories()
                 .criar(
                     org,
-                    NovaCategoria {
-                        nome: "Pragas urbanas".to_owned(),
-                        descricao: String::new(),
+                    NewCategory {
+                        name: "Pragas urbanas".to_owned(),
+                        description: String::new(),
                     },
                 )
                 .expect("cria a categoria");

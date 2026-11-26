@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use crate::{
     Store,
-    erro::{ErroStore, Resultado},
+    error::{Resultado, StoreError},
 };
 use poph_types::OrgId;
 use rusqlite::params;
@@ -66,8 +66,8 @@ impl ConversationAnalytics<'_> {
         offset: i64,
     ) -> Resultado<ConversationReport> {
         let org = org.to_string();
-        self.0.leitura(move |conn| {
-            let tx = conn.unchecked_transaction().map_err(ErroStore::from)?;
+        self.0.read(move |conn| {
+            let tx = conn.unchecked_transaction().map_err(StoreError::from)?;
             let mut summary = ConversationCounts::default();
             let mut days = BTreeMap::<String, ConversationCounts>::new();
             let mut agents = BTreeMap::<(String, String), ConversationCounts>::new();
@@ -76,16 +76,16 @@ impl ConversationAnalytics<'_> {
             let mut with_messages = 0i64;
             let mut with_ficha = 0i64;
             {
-                let mut statement = tx.prepare("WITH selected AS MATERIALIZED (SELECT c.id,c.agent_id,c.channel,c.status, COALESCE((SELECT MIN(m.created_at) FROM messages m WHERE m.org_id=c.org_id AND m.conversation_id=c.id),c.created_at) AS first_at FROM conversations c WHERE c.org_id=?1 AND (?4 IS NULL OR c.agent_id=?4) AND (?5 IS NULL OR c.channel=?5)) SELECT s.agent_id,COALESCE(a.name,s.agent_id),s.channel,s.status,date((s.first_at + ?6 * 60000)/1000,'unixepoch'),(SELECT COUNT(*) FROM messages m WHERE m.org_id=?1 AND m.conversation_id=s.id),EXISTS(SELECT 1 FROM fichas f WHERE f.org_id=?1 AND f.conversation_id=s.id) FROM selected s LEFT JOIN agents a ON a.org_id=?1 AND a.id=s.agent_id WHERE s.first_at>=?2 AND s.first_at<?3").map_err(ErroStore::from)?;
-                let mut rows = statement.query(params![org,from,to,agent,channel,offset]).map_err(ErroStore::from)?;
-                while let Some(row) = rows.next().map_err(ErroStore::from)? {
-                    let id: String = row.get(0).map_err(ErroStore::from)?;
-                    let name: String = row.get(1).map_err(ErroStore::from)?;
-                    let channel: String = row.get(2).map_err(ErroStore::from)?;
-                    let status: String = row.get(3).map_err(ErroStore::from)?;
-                    let date: String = row.get(4).map_err(ErroStore::from)?;
-                    let messages: i64 = row.get(5).map_err(ErroStore::from)?;
-                    let ficha: bool = row.get(6).map_err(ErroStore::from)?;
+                let mut statement = tx.prepare("WITH selected AS MATERIALIZED (SELECT c.id,c.agent_id,c.channel,c.status, COALESCE((SELECT MIN(m.created_at) FROM messages m WHERE m.org_id=c.org_id AND m.conversation_id=c.id),c.created_at) AS first_at FROM conversations c WHERE c.org_id=?1 AND (?4 IS NULL OR c.agent_id=?4) AND (?5 IS NULL OR c.channel=?5)) SELECT s.agent_id,COALESCE(a.name,s.agent_id),s.channel,s.status,date((s.first_at + ?6 * 60000)/1000,'unixepoch'),(SELECT COUNT(*) FROM messages m WHERE m.org_id=?1 AND m.conversation_id=s.id),EXISTS(SELECT 1 FROM fichas f WHERE f.org_id=?1 AND f.conversation_id=s.id) FROM selected s LEFT JOIN agents a ON a.org_id=?1 AND a.id=s.agent_id WHERE s.first_at>=?2 AND s.first_at<?3").map_err(StoreError::from)?;
+                let mut rows = statement.query(params![org,from,to,agent,channel,offset]).map_err(StoreError::from)?;
+                while let Some(row) = rows.next().map_err(StoreError::from)? {
+                    let id: String = row.get(0).map_err(StoreError::from)?;
+                    let name: String = row.get(1).map_err(StoreError::from)?;
+                    let channel: String = row.get(2).map_err(StoreError::from)?;
+                    let status: String = row.get(3).map_err(StoreError::from)?;
+                    let date: String = row.get(4).map_err(StoreError::from)?;
+                    let messages: i64 = row.get(5).map_err(StoreError::from)?;
+                    let ficha: bool = row.get(6).map_err(StoreError::from)?;
                     summary.add(&status);
                     days.entry(date).or_default().add(&status);
                     agents.entry((id,name)).or_default().add(&status);
@@ -94,7 +94,7 @@ impl ConversationAnalytics<'_> {
                     if ficha { with_ficha += 1; }
                 }
             }
-            tx.commit().map_err(ErroStore::from)?;
+            tx.commit().map_err(StoreError::from)?;
             let avg = (with_messages > 0).then(|| message_total as f64 / with_messages as f64);
             let rate = (summary.total > 0).then(|| with_ficha as f64 / summary.total as f64);
             let by_day = days.into_iter().map(|(date,counts)| ConversationDay {date,counts}).collect();

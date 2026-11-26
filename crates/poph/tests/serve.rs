@@ -76,7 +76,7 @@ fn serve_recusa_banco_atras_das_migracoes() {
     // asserção para trás.
     let esperado = format!(
         "está na versão 0 e o código espera a {}",
-        poph_store::versao_alvo_harness()
+        poph_store::harness_target_version()
     );
     assert!(erro.contains(&esperado), "mensagem inesperada: {erro}");
     assert!(

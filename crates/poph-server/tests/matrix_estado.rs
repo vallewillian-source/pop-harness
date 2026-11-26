@@ -29,7 +29,7 @@ use poph_server::matrix_estado::{
     ConversaAlterada, ConversaEstado, CursorGravado, DestinoEstado, ErroEstado, EstadoDasConversas,
     EstadoOrg, PAGINA, PortaEstado, PortaEstadoStore, SalaEstado,
 };
-use poph_store::{NovaConversa, NovaOrg, NovoAgente, NovoDepartamento, StatusConversa, Store};
+use poph_store::{ConversationStatus, NewAgent, NewConversation, NewDepartment, NewOrg, Store};
 use poph_types::{AgentId, ConversationId, DepartmentId, MatrixConfig, OrgId};
 use serde_json::Value;
 
@@ -70,9 +70,9 @@ impl Cenario {
             congelado: std::sync::atomic::AtomicBool::new(false),
         });
         let pulso = Arc::clone(&relogio);
-        let store = Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
+        let store = Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db"))
             .expect("abre o banco")
-            .com_relogio(Arc::new(move || pulso.agora()));
+            .with_clock(Arc::new(move || pulso.agora()));
         Self {
             pasta,
             store: Some(Arc::new(store)),
@@ -112,9 +112,9 @@ fn config() -> MatrixConfig {
 
 fn criar_org(store: &Store, slug: &str) -> OrgId {
     store
-        .orgaos()
-        .criar(NovaOrg {
-            nome: format!("Org {slug}"),
+        .orgs()
+        .criar(NewOrg {
+            name: format!("Org {slug}"),
             slug: slug.to_owned(),
             config_json: String::new(),
         })
@@ -124,12 +124,12 @@ fn criar_org(store: &Store, slug: &str) -> OrgId {
 
 fn criar_departamento(store: &Store, org: OrgId, nome: &str) -> DepartmentId {
     store
-        .departamentos()
+        .departments()
         .criar(
             org,
-            NovoDepartamento {
-                nome: nome.to_owned(),
-                descricao: String::new(),
+            NewDepartment {
+                name: nome.to_owned(),
+                description: String::new(),
             },
         )
         .expect("cria o departamento")
@@ -143,14 +143,14 @@ fn criar_agente(
     departamento_padrao: Option<DepartmentId>,
 ) -> AgentId {
     store
-        .agentes()
+        .agents()
         .criar(
             org,
-            NovoAgente {
-                nome: "Bia".to_owned(),
+            NewAgent {
+                name: "Bia".to_owned(),
                 slug: slug.to_owned(),
-                departamento_padrao,
-                ..NovoAgente::default()
+                default_department: departamento_padrao,
+                ..NewAgent::default()
             },
         )
         .expect("cria o agente")
@@ -162,12 +162,12 @@ fn criar_conversa(store: &Store, org: OrgId, agente: AgentId, peer: &str) -> Con
         .conversas()
         .criar(
             org,
-            NovaConversa {
+            NewConversation {
                 agent_id: agente,
                 integration_id: None,
                 canal: "whatsapp".to_owned(),
                 peer_externo: Some(peer.to_owned()),
-                departamento_alvo: None,
+                target_department: None,
             },
         )
         .expect("cria a conversa")
@@ -199,25 +199,25 @@ fn sala_de(conversa: ConversationId) -> String {
 }
 
 /// Muda a situação da conversa pelo caminho de verdade (transfere, fecha, reabre).
-fn definir_status(store: &Store, org: OrgId, conversa: ConversationId, status: StatusConversa) {
+fn definir_status(store: &Store, org: OrgId, conversa: ConversationId, status: ConversationStatus) {
     let atual = store
         .conversas()
-        .obter(org, conversa)
+        .get(org, conversa)
         .expect("conversa existe");
     match status {
-        StatusConversa::Aberta => {
+        ConversationStatus::Open => {
             store
                 .conversas()
-                .reabrir_auditado(org, conversa, atual.versao, "teste".to_owned())
+                .reabrir_auditado(org, conversa, atual.version, "teste".to_owned())
                 .expect("reabre");
         }
-        StatusConversa::Fechada => {
+        ConversationStatus::Closed => {
             store
                 .conversas()
-                .fechar_auditado(org, conversa, atual.versao, "teste".to_owned())
+                .fechar_auditado(org, conversa, atual.version, "teste".to_owned())
                 .expect("fecha");
         }
-        StatusConversa::Transferida => {
+        ConversationStatus::Transferred => {
             store
                 .conversas()
                 .transferir(org, conversa, None, None, "{}".to_owned())
@@ -473,7 +473,7 @@ async fn transferencia_avisa_e_reescreve_o_metadata() {
     let destino = Falso::novo();
     let estado = laco(Arc::clone(&store), Arc::clone(&destino));
 
-    definir_status(&store, org, mundo.conversa, StatusConversa::Transferida);
+    definir_status(&store, org, mundo.conversa, ConversationStatus::Transferred);
     let relatorio = estado.ciclo().await.expect("passagem");
 
     assert_eq!(relatorio.avisadas, 1, "{relatorio:?}");
@@ -496,7 +496,7 @@ async fn transferencia_avisa_e_reescreve_o_metadata() {
         .sala(org, mundo.conversa)
         .expect("lê a sala")
         .expect("sala existe");
-    assert_eq!(sala.ultimo_status, Some(StatusConversa::Transferida));
+    assert_eq!(sala.ultimo_status, Some(ConversationStatus::Transferred));
 }
 
 #[tokio::test]
@@ -508,11 +508,11 @@ async fn reabertura_avisa_que_o_agente_voltou() {
     let destino = Falso::novo();
     let estado = laco(Arc::clone(&store), Arc::clone(&destino));
 
-    definir_status(&store, org, mundo.conversa, StatusConversa::Transferida);
+    definir_status(&store, org, mundo.conversa, ConversationStatus::Transferred);
     estado.ciclo().await.expect("primeira passagem");
     assert_eq!(destino.avisos().len(), 1);
 
-    definir_status(&store, org, mundo.conversa, StatusConversa::Aberta);
+    definir_status(&store, org, mundo.conversa, ConversationStatus::Open);
     let relatorio = estado.ciclo().await.expect("segunda passagem");
     assert_eq!(relatorio.avisadas, 1, "{relatorio:?}");
     let avisos = destino.avisos();
@@ -531,9 +531,9 @@ async fn encerramento_avisa_e_marca_o_metadata_como_closed() {
     let destino = Falso::novo();
     let estado = laco(Arc::clone(&store), Arc::clone(&destino));
 
-    definir_status(&store, org, mundo.conversa, StatusConversa::Transferida);
+    definir_status(&store, org, mundo.conversa, ConversationStatus::Transferred);
     estado.ciclo().await.expect("transferência");
-    definir_status(&store, org, mundo.conversa, StatusConversa::Fechada);
+    definir_status(&store, org, mundo.conversa, ConversationStatus::Closed);
     let relatorio = estado.ciclo().await.expect("encerramento");
 
     assert_eq!(relatorio.avisadas, 1, "{relatorio:?}");
@@ -554,7 +554,7 @@ async fn mesma_situacao_nao_escreve_nada() {
     let destino = Falso::novo();
     let estado = laco(Arc::clone(&store), Arc::clone(&destino));
 
-    definir_status(&store, org, mundo.conversa, StatusConversa::Transferida);
+    definir_status(&store, org, mundo.conversa, ConversationStatus::Transferred);
     estado.ciclo().await.expect("primeira passagem");
     let escritas = destino.escritas();
     assert_eq!(escritas, 2, "um aviso e um metadata na transição");
@@ -583,7 +583,7 @@ async fn conversa_de_org_desligada_nao_gera_chamada() {
     let conversa = criar_conversa(&store, org, agente, "5511999990000");
     sala_pronta(&store, org, conversa);
     // Módulo desligado para a org (nunca ligado).
-    definir_status(&store, org, conversa, StatusConversa::Transferida);
+    definir_status(&store, org, conversa, ConversationStatus::Transferred);
     let destino = Falso::novo();
     let estado = laco(Arc::clone(&store), Arc::clone(&destino));
 
@@ -601,7 +601,7 @@ async fn conversa_sem_sala_nao_avisa_e_o_cursor_passa() {
     let agente = criar_agente(&store, org, "bia", None);
     let conversa = criar_conversa(&store, org, agente, "5511999990000");
     // Sem sala: a MX-14 é quem cria.
-    definir_status(&store, org, conversa, StatusConversa::Transferida);
+    definir_status(&store, org, conversa, ConversationStatus::Transferred);
     let destino = Falso::novo();
     let estado = laco(Arc::clone(&store), Arc::clone(&destino));
 
@@ -622,7 +622,7 @@ async fn sala_em_criacao_espera_a_passagem_seguinte() {
     let agente = criar_agente(&store, org, "bia", None);
     let conversa = criar_conversa(&store, org, agente, "5511999990000");
     sala_em_criacao(&store, org, conversa);
-    definir_status(&store, org, conversa, StatusConversa::Transferida);
+    definir_status(&store, org, conversa, ConversationStatus::Transferred);
     let destino = Falso::novo();
     let estado = laco(Arc::clone(&store), Arc::clone(&destino));
 
@@ -656,7 +656,7 @@ async fn falha_transitoria_nao_avanca_o_cursor_e_a_passagem_seguinte_aplica() {
     destino.definir_modo(Modo::FalhaNaPrimeira);
     let estado = laco(Arc::clone(&store), Arc::clone(&destino));
 
-    definir_status(&store, org, mundo.conversa, StatusConversa::Transferida);
+    definir_status(&store, org, mundo.conversa, ConversationStatus::Transferred);
     let relatorio = estado.ciclo().await.expect("passagem com falha");
     assert_eq!(relatorio.adiadas, 1, "{relatorio:?}");
     assert_eq!(destino.avisos().len(), 0);
@@ -690,7 +690,7 @@ async fn erro_definitivo_pula_a_conversa_e_nao_trava_a_fila() {
     destino.definir_modo(Modo::Recusa);
     let estado = laco(Arc::clone(&store), Arc::clone(&destino));
 
-    definir_status(&store, org, mundo.conversa, StatusConversa::Transferida);
+    definir_status(&store, org, mundo.conversa, ConversationStatus::Transferred);
     let relatorio = estado.ciclo().await.expect("passagem");
     assert_eq!(relatorio.puladas, 1, "{relatorio:?}");
     assert_eq!(relatorio.adiadas, 0);
@@ -702,7 +702,7 @@ async fn erro_definitivo_pula_a_conversa_e_nao_trava_a_fila() {
     );
     // A conversa volta na próxima alteração dela, com o Synapse bom.
     destino.definir_modo(Modo::Normal);
-    definir_status(&store, org, mundo.conversa, StatusConversa::Fechada);
+    definir_status(&store, org, mundo.conversa, ConversationStatus::Closed);
     let relatorio = estado.ciclo().await.expect("segunda passagem");
     assert_eq!(relatorio.avisadas, 1, "{relatorio:?}");
     assert_eq!(destino.avisos().len(), 1);
@@ -723,16 +723,16 @@ async fn duas_conversas_no_mesmo_milissegundo_nao_se_perdem() {
 
     // As duas mudam no mesmo milissegundo: quem desempata é o id do cursor.
     cenario.congelar(2_000_000);
-    definir_status(&store, org, uma, StatusConversa::Transferida);
-    definir_status(&store, org, outra, StatusConversa::Transferida);
+    definir_status(&store, org, uma, ConversationStatus::Transferred);
+    definir_status(&store, org, outra, ConversationStatus::Transferred);
     let atualizadas: Vec<i64> = [uma, outra]
         .iter()
         .map(|conversa| {
             store
                 .conversas()
-                .obter(org, *conversa)
+                .get(org, *conversa)
                 .expect("existe")
-                .atualizado_em
+                .updated_at
         })
         .collect();
     assert_eq!(
@@ -765,7 +765,7 @@ async fn paginas_cobrem_todas_as_conversas_alteradas() {
     for n in 0..5 {
         let conversa = criar_conversa(&store, org, agente, &format!("55119999900{n:02}"));
         sala_pronta(&store, org, conversa);
-        definir_status(&store, org, conversa, StatusConversa::Transferida);
+        definir_status(&store, org, conversa, ConversationStatus::Transferred);
         conversas.push(conversa);
     }
     let destino = Falso::novo();
@@ -845,7 +845,7 @@ async fn conversa_sem_departamento_nao_fala_de_espaco() {
     let destino = Falso::novo();
     let estado = laco(Arc::clone(&store), Arc::clone(&destino));
 
-    definir_status(&store, org, mundo.conversa, StatusConversa::Transferida);
+    definir_status(&store, org, mundo.conversa, ConversationStatus::Transferred);
     estado.ciclo().await.expect("passagem");
     assert!(
         destino.posicoes().is_empty(),
@@ -864,7 +864,7 @@ async fn falha_de_espaco_nao_desfaz_o_estado_ja_espelhado() {
     let agente = criar_agente(&store, org, "bia", Some(suporte));
     let conversa = criar_conversa(&store, org, agente, "5511999990000");
     sala_pronta(&store, org, conversa);
-    definir_status(&store, org, conversa, StatusConversa::Transferida);
+    definir_status(&store, org, conversa, ConversationStatus::Transferred);
 
     let destino = Falso::novo();
     let estado = laco(Arc::clone(&store), Arc::clone(&destino));
@@ -879,7 +879,7 @@ async fn falha_de_espaco_nao_desfaz_o_estado_ja_espelhado() {
         .sala(org, conversa)
         .expect("lê")
         .expect("existe");
-    assert_eq!(sala.ultimo_status, Some(StatusConversa::Transferida));
+    assert_eq!(sala.ultimo_status, Some(ConversationStatus::Transferred));
 }
 
 // ───────────────────────────── corrida da situação ─────────────────────────────
@@ -889,7 +889,7 @@ async fn falha_de_espaco_nao_desfaz_o_estado_ja_espelhado() {
 struct PortaQueMente {
     real: PortaEstadoStore,
     leituras: AtomicUsize,
-    mentira: Mutex<Option<StatusConversa>>,
+    mentira: Mutex<Option<ConversationStatus>>,
 }
 
 impl PortaQueMente {
@@ -902,17 +902,17 @@ impl PortaQueMente {
     }
 
     /// Na segunda leitura de conversa devolve esta situação.
-    fn mentir_na_segunda(&self, status: StatusConversa) {
+    fn mentir_na_segunda(&self, status: ConversationStatus) {
         *self.mentira.lock().unwrap() = Some(status);
     }
 }
 
 impl PortaEstado for PortaQueMente {
-    async fn orgs(&self) -> Result<Vec<EstadoOrg>, poph_store::erro::ErroStore> {
+    async fn orgs(&self) -> Result<Vec<EstadoOrg>, poph_store::error::StoreError> {
         self.real.orgs().await
     }
 
-    async fn cursores(&self, org: OrgId) -> Result<CursorGravado, poph_store::erro::ErroStore> {
+    async fn cursores(&self, org: OrgId) -> Result<CursorGravado, poph_store::error::StoreError> {
         self.real.cursores(org).await
     }
 
@@ -920,7 +920,7 @@ impl PortaEstado for PortaQueMente {
         &self,
         apos: Option<(i64, ConversationId)>,
         limite: u32,
-    ) -> Result<Vec<ConversaAlterada>, poph_store::erro::ErroStore> {
+    ) -> Result<Vec<ConversaAlterada>, poph_store::error::StoreError> {
         self.real.alteradas(apos, limite).await
     }
 
@@ -928,7 +928,7 @@ impl PortaEstado for PortaQueMente {
         &self,
         org: OrgId,
         conversa: ConversationId,
-    ) -> Result<Option<ConversaEstado>, poph_store::erro::ErroStore> {
+    ) -> Result<Option<ConversaEstado>, poph_store::error::StoreError> {
         let leitura = self.leituras.fetch_add(1, Ordering::SeqCst) + 1;
         let real = self.real.conversa(org, conversa).await?;
         if leitura != 2 {
@@ -947,7 +947,7 @@ impl PortaEstado for PortaQueMente {
         &self,
         org: OrgId,
         conversa: ConversationId,
-    ) -> Result<Option<SalaEstado>, poph_store::erro::ErroStore> {
+    ) -> Result<Option<SalaEstado>, poph_store::error::StoreError> {
         self.real.sala(org, conversa).await
     }
 
@@ -955,8 +955,8 @@ impl PortaEstado for PortaQueMente {
         &self,
         org: OrgId,
         conversa: ConversationId,
-        status: StatusConversa,
-    ) -> Result<(), poph_store::erro::ErroStore> {
+        status: ConversationStatus,
+    ) -> Result<(), poph_store::error::StoreError> {
         self.real.definir_ultimo_status(org, conversa, status).await
     }
 
@@ -965,7 +965,7 @@ impl PortaEstado for PortaQueMente {
         org: OrgId,
         conversa: ConversationId,
         nome: &str,
-    ) -> Result<(), poph_store::erro::ErroStore> {
+    ) -> Result<(), poph_store::error::StoreError> {
         self.real.definir_nome_espelhado(org, conversa, nome).await
     }
 
@@ -974,7 +974,7 @@ impl PortaEstado for PortaQueMente {
         org: OrgId,
         atualizado_em: i64,
         id: &str,
-    ) -> Result<(), poph_store::erro::ErroStore> {
+    ) -> Result<(), poph_store::error::StoreError> {
         self.real.avancar_conversas(org, atualizado_em, id).await
     }
 }
@@ -988,12 +988,12 @@ async fn conversa_fechada_no_meio_da_passagem_nao_recebe_metadata_de_reabertura(
     // A sala já espelhou a transferência; a conversa está aberta de novo (reabertura pendente).
     store
         .matrix()
-        .definir_ultimo_status(org, mundo.conversa, StatusConversa::Transferida)
+        .definir_ultimo_status(org, mundo.conversa, ConversationStatus::Transferred)
         .expect("grava a situação anterior");
     let destino = Falso::novo();
     let porta = PortaQueMente::nova(Arc::clone(&store));
     // A leitura que dispara vê a reabertura; a reconferência vê a conversa já encerrada.
-    porta.mentir_na_segunda(StatusConversa::Fechada);
+    porta.mentir_na_segunda(ConversationStatus::Closed);
     let estado =
         EstadoDasConversas::novo(porta, Sinal(Arc::clone(&destino)), &config()).expect("monta");
 
@@ -1007,7 +1007,7 @@ async fn conversa_fechada_no_meio_da_passagem_nao_recebe_metadata_de_reabertura(
 
     // Fecha a conversa de verdade: a passagem seguinte espelha o encerramento, e o metadata de
     // reabertura nunca existiu.
-    definir_status(&store, org, mundo.conversa, StatusConversa::Fechada);
+    definir_status(&store, org, mundo.conversa, ConversationStatus::Closed);
     let relatorio = estado.ciclo().await.expect("segunda passagem");
     assert_eq!(relatorio.avisadas, 1, "{relatorio:?}");
     let metadatas = destino.metadatas();
@@ -1044,7 +1044,7 @@ async fn porta_do_store_le_o_que_o_banco_gravou() {
         .await
         .expect("conversa")
         .expect("existe");
-    assert_eq!(conversa.status, StatusConversa::Aberta);
+    assert_eq!(conversa.status, ConversationStatus::Open);
     assert_eq!(conversa.agente, mundo.agente);
     assert_eq!(conversa.canal, "whatsapp");
     assert_eq!(conversa.cliente, "5511999990000");
@@ -1059,7 +1059,7 @@ async fn porta_do_store_le_o_que_o_banco_gravou() {
     assert_eq!(sala.ultimo_status, None);
 
     porta
-        .definir_ultimo_status(org, mundo.conversa, StatusConversa::Transferida)
+        .definir_ultimo_status(org, mundo.conversa, ConversationStatus::Transferred)
         .await
         .expect("grava situação");
     let sala = porta
@@ -1067,7 +1067,7 @@ async fn porta_do_store_le_o_que_o_banco_gravou() {
         .await
         .expect("sala")
         .expect("existe");
-    assert_eq!(sala.ultimo_status, Some(StatusConversa::Transferida));
+    assert_eq!(sala.ultimo_status, Some(ConversationStatus::Transferred));
 
     porta
         .avancar_conversas(org, 5_000, &mundo.conversa.to_string())
@@ -1115,11 +1115,11 @@ struct PortaQueApaga {
 }
 
 impl PortaEstado for PortaQueApaga {
-    async fn orgs(&self) -> Result<Vec<EstadoOrg>, poph_store::erro::ErroStore> {
+    async fn orgs(&self) -> Result<Vec<EstadoOrg>, poph_store::error::StoreError> {
         self.real.orgs().await
     }
 
-    async fn cursores(&self, org: OrgId) -> Result<CursorGravado, poph_store::erro::ErroStore> {
+    async fn cursores(&self, org: OrgId) -> Result<CursorGravado, poph_store::error::StoreError> {
         self.real.cursores(org).await
     }
 
@@ -1127,7 +1127,7 @@ impl PortaEstado for PortaQueApaga {
         &self,
         apos: Option<(i64, ConversationId)>,
         limite: u32,
-    ) -> Result<Vec<ConversaAlterada>, poph_store::erro::ErroStore> {
+    ) -> Result<Vec<ConversaAlterada>, poph_store::error::StoreError> {
         let reais = self.real.alteradas(apos, limite).await?;
         let mut lista = reais;
         let org = lista.first().map(|alterada| alterada.org);
@@ -1146,7 +1146,7 @@ impl PortaEstado for PortaQueApaga {
         &self,
         org: OrgId,
         conversa: ConversationId,
-    ) -> Result<Option<ConversaEstado>, poph_store::erro::ErroStore> {
+    ) -> Result<Option<ConversaEstado>, poph_store::error::StoreError> {
         self.real.conversa(org, conversa).await
     }
 
@@ -1154,7 +1154,7 @@ impl PortaEstado for PortaQueApaga {
         &self,
         org: OrgId,
         conversa: ConversationId,
-    ) -> Result<Option<SalaEstado>, poph_store::erro::ErroStore> {
+    ) -> Result<Option<SalaEstado>, poph_store::error::StoreError> {
         self.real.sala(org, conversa).await
     }
 
@@ -1162,8 +1162,8 @@ impl PortaEstado for PortaQueApaga {
         &self,
         org: OrgId,
         conversa: ConversationId,
-        status: StatusConversa,
-    ) -> Result<(), poph_store::erro::ErroStore> {
+        status: ConversationStatus,
+    ) -> Result<(), poph_store::error::StoreError> {
         self.real.definir_ultimo_status(org, conversa, status).await
     }
 
@@ -1172,7 +1172,7 @@ impl PortaEstado for PortaQueApaga {
         org: OrgId,
         conversa: ConversationId,
         nome: &str,
-    ) -> Result<(), poph_store::erro::ErroStore> {
+    ) -> Result<(), poph_store::error::StoreError> {
         self.real.definir_nome_espelhado(org, conversa, nome).await
     }
 
@@ -1181,7 +1181,7 @@ impl PortaEstado for PortaQueApaga {
         org: OrgId,
         atualizado_em: i64,
         id: &str,
-    ) -> Result<(), poph_store::erro::ErroStore> {
+    ) -> Result<(), poph_store::error::StoreError> {
         self.real.avancar_conversas(org, atualizado_em, id).await
     }
 }
@@ -1195,7 +1195,7 @@ async fn resposta_e_metadata_nao_levam_dado_de_cliente() {
     let destino = Falso::novo();
     let estado = laco(Arc::clone(&store), Arc::clone(&destino));
 
-    definir_status(&store, org, mundo.conversa, StatusConversa::Transferida);
+    definir_status(&store, org, mundo.conversa, ConversationStatus::Transferred);
     estado.ciclo().await.expect("passagem");
 
     for aviso in destino.avisos() {
@@ -1219,7 +1219,7 @@ async fn resposta_e_metadata_nao_levam_dado_de_cliente() {
 fn definir_nome(store: &Store, org: OrgId, conversa: ConversationId, nome: &str) {
     let mudou = store
         .conversas()
-        .definir_nome_cliente(org, conversa, nome)
+        .set_customer_name(org, conversa, nome)
         .expect("grava o nome do cliente");
     assert!(mudou, "o nome precisa ter mudado para o cursor enxergar");
 }
@@ -1370,7 +1370,7 @@ async fn nome_atrasado_nao_devolve_conversa_fechada_para_active_no_metadata() {
     // A conversa é encerrada e o nome do cliente chega logo depois. A sala ainda não espelhou o
     // encerramento (`last_status` vazio = conversa aberta), e é essa a leitura que a porta atrasada
     // devolve: por isso a renomeação precisa reler antes de escrever o metadata.
-    definir_status(&store, org, mundo.conversa, StatusConversa::Fechada);
+    definir_status(&store, org, mundo.conversa, ConversationStatus::Closed);
     definir_nome(&store, org, mundo.conversa, "Ana Souza");
 
     // A porta devolve a situação velha na primeira leitura da passagem: o laço lê a conversa como
@@ -1396,10 +1396,10 @@ async fn nome_atrasado_nao_devolve_conversa_fechada_para_active_no_metadata() {
     assert_eq!(
         store
             .conversas()
-            .obter(org, mundo.conversa)
+            .get(org, mundo.conversa)
             .expect("lê a conversa")
             .status,
-        StatusConversa::Fechada
+        ConversationStatus::Closed
     );
 
     // O `last_status` não foi tocado pela renomeação: quem espelha a situação é o passo do estado.
@@ -1471,11 +1471,11 @@ impl PortaAtrasada {
 }
 
 impl PortaEstado for PortaAtrasada {
-    async fn orgs(&self) -> Result<Vec<EstadoOrg>, poph_store::erro::ErroStore> {
+    async fn orgs(&self) -> Result<Vec<EstadoOrg>, poph_store::error::StoreError> {
         self.real.orgs().await
     }
 
-    async fn cursores(&self, org: OrgId) -> Result<CursorGravado, poph_store::erro::ErroStore> {
+    async fn cursores(&self, org: OrgId) -> Result<CursorGravado, poph_store::error::StoreError> {
         self.real.cursores(org).await
     }
 
@@ -1483,7 +1483,7 @@ impl PortaEstado for PortaAtrasada {
         &self,
         apos: Option<(i64, ConversationId)>,
         limite: u32,
-    ) -> Result<Vec<ConversaAlterada>, poph_store::erro::ErroStore> {
+    ) -> Result<Vec<ConversaAlterada>, poph_store::error::StoreError> {
         self.real.alteradas(apos, limite).await
     }
 
@@ -1491,7 +1491,7 @@ impl PortaEstado for PortaAtrasada {
         &self,
         org: OrgId,
         conversa: ConversationId,
-    ) -> Result<Option<ConversaEstado>, poph_store::erro::ErroStore> {
+    ) -> Result<Option<ConversaEstado>, poph_store::error::StoreError> {
         let primeira = self.atrasadas.lock().unwrap().insert(conversa.to_string());
         let real = self.real.conversa(org, conversa).await?;
         if !primeira {
@@ -1499,7 +1499,7 @@ impl PortaEstado for PortaAtrasada {
         }
         // Primeira leitura da passagem: a conversa ainda parece aberta.
         Ok(real.map(|mut vista| {
-            vista.status = StatusConversa::Aberta;
+            vista.status = ConversationStatus::Open;
             vista
         }))
     }
@@ -1508,7 +1508,7 @@ impl PortaEstado for PortaAtrasada {
         &self,
         org: OrgId,
         conversa: ConversationId,
-    ) -> Result<Option<SalaEstado>, poph_store::erro::ErroStore> {
+    ) -> Result<Option<SalaEstado>, poph_store::error::StoreError> {
         self.real.sala(org, conversa).await
     }
 
@@ -1516,8 +1516,8 @@ impl PortaEstado for PortaAtrasada {
         &self,
         org: OrgId,
         conversa: ConversationId,
-        status: StatusConversa,
-    ) -> Result<(), poph_store::erro::ErroStore> {
+        status: ConversationStatus,
+    ) -> Result<(), poph_store::error::StoreError> {
         self.real.definir_ultimo_status(org, conversa, status).await
     }
 
@@ -1526,7 +1526,7 @@ impl PortaEstado for PortaAtrasada {
         org: OrgId,
         conversa: ConversationId,
         nome: &str,
-    ) -> Result<(), poph_store::erro::ErroStore> {
+    ) -> Result<(), poph_store::error::StoreError> {
         self.real.definir_nome_espelhado(org, conversa, nome).await
     }
 
@@ -1535,7 +1535,7 @@ impl PortaEstado for PortaAtrasada {
         org: OrgId,
         atualizado_em: i64,
         id: &str,
-    ) -> Result<(), poph_store::erro::ErroStore> {
+    ) -> Result<(), poph_store::error::StoreError> {
         self.real.avancar_conversas(org, atualizado_em, id).await
     }
 }
@@ -1543,6 +1543,6 @@ impl PortaEstado for PortaAtrasada {
 #[test]
 fn erro_de_relatorio_tem_codigo_curto() {
     // O código do erro do banco é curto e não carrega SQL nem valor de linha.
-    let erro = ErroEstado::Armazenamento(poph_store::erro::ErroStore::EscritorEncerrado);
+    let erro = ErroEstado::Armazenamento(poph_store::error::StoreError::WriterClosed);
     assert_eq!(erro.codigo(), "armazenamento_indisponivel");
 }

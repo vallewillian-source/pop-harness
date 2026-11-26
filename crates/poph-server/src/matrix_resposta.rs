@@ -79,10 +79,8 @@ use poph_matrix::midia_atendente::{self, MotivoNaoEnviar};
 use poph_matrix::{
     Acao, ClienteMatrix, ErroMidia, IdsFantasmas, ModuloMatrix, TipoMidia, classificar,
 };
-use poph_store::erro::ErroStore;
-use poph_store::{
-    ArquivoDaResposta, RespostaHumana, RespostaHumanaComArquivo, RespostaHumanaNova, Store,
-};
+use poph_store::error::StoreError;
+use poph_store::{HumanResponse, HumanResponseWithFile, NewHumanResponse, ResponseFile, Store};
 use poph_types::{AgentId, ConversationId, OrgId};
 use serde_json::{Value, json};
 
@@ -161,7 +159,7 @@ pub trait PortaAtendimento: Send + Sync {
     /// A conversa da sala, ou `None` quando nenhuma org ligada conhece essa sala.
     ///
     /// `Err` significa "não consegui olhar agora": vira `5xx` e o Synapse reenvia.
-    fn conversa_da_sala(&self, sala: &str) -> Result<Option<ConversaDaSala>, ErroStore>;
+    fn conversa_da_sala(&self, sala: &str) -> Result<Option<ConversaDaSala>, StoreError>;
 
     /// O agente dono da conversa, ou `None` quando ela sumiu entre a leitura da sala e esta.
     ///
@@ -170,22 +168,22 @@ pub trait PortaAtendimento: Send + Sync {
     /// [`RespostaDoAtendente::assinatura_da_sala`]).
     ///
     /// `Err` significa "não consegui olhar agora": vira `5xx` e o Synapse reenvia.
-    fn agente_da_conversa(&self, alvo: ConversaDaSala) -> Result<Option<AgentId>, ErroStore>;
+    fn agente_da_conversa(&self, alvo: ConversaDaSala) -> Result<Option<AgentId>, StoreError>;
 
     /// A operação atômica da MX-04 (resposta em texto).
     fn registrar_resposta(
         &self,
         alvo: ConversaDaSala,
-        nova: RespostaHumanaNova<'_>,
-    ) -> Result<RespostaHumana, ErroStore>;
+        nova: NewHumanResponse<'_>,
+    ) -> Result<HumanResponse, StoreError>;
 
     /// A operação atômica da MX-44 (resposta com arquivo): mensagem `human` com anexo, item
     /// `file` na fila de saída, passagem para `transferred` e auditoria, numa escrita só.
     fn registrar_resposta_com_arquivo(
         &self,
         alvo: ConversaDaSala,
-        nova: RespostaHumanaComArquivo<'_>,
-    ) -> Result<RespostaHumana, ErroStore>;
+        nova: HumanResponseWithFile<'_>,
+    ) -> Result<HumanResponse, StoreError>;
 }
 
 /// A porta de verdade, sobre o banco do Harness.
@@ -202,7 +200,7 @@ impl PortaDoHarness {
 }
 
 impl PortaAtendimento for PortaDoHarness {
-    fn conversa_da_sala(&self, sala: &str) -> Result<Option<ConversaDaSala>, ErroStore> {
+    fn conversa_da_sala(&self, sala: &str) -> Result<Option<ConversaDaSala>, StoreError> {
         // Só orgs com o módulo ligado: sala de org desligada não recebe resposta nenhuma (o
         // espelhamento e o módulo inteiro estão parados para ela).
         for estado in self.store.matrix().orgs_ligadas()? {
@@ -216,12 +214,12 @@ impl PortaAtendimento for PortaDoHarness {
         Ok(None)
     }
 
-    fn agente_da_conversa(&self, alvo: ConversaDaSala) -> Result<Option<AgentId>, ErroStore> {
-        match self.store.conversas().obter(alvo.org, alvo.conversa) {
+    fn agente_da_conversa(&self, alvo: ConversaDaSala) -> Result<Option<AgentId>, StoreError> {
+        match self.store.conversas().get(alvo.org, alvo.conversa) {
             Ok(conversa) => Ok(Some(conversa.agent_id)),
             // A conversa sumiu entre a leitura da sala e esta: nada a assinar, e reenviar não
             // traria a conversa de volta.
-            Err(erro) if erro.eh_nao_encontrado() => Ok(None),
+            Err(erro) if erro.is_not_found() => Ok(None),
             Err(erro) => Err(erro),
         }
     }
@@ -229,20 +227,20 @@ impl PortaAtendimento for PortaDoHarness {
     fn registrar_resposta(
         &self,
         alvo: ConversaDaSala,
-        nova: RespostaHumanaNova<'_>,
-    ) -> Result<RespostaHumana, ErroStore> {
+        nova: NewHumanResponse<'_>,
+    ) -> Result<HumanResponse, StoreError> {
         self.store
-            .mensagens()
+            .messages()
             .registrar_resposta_humana(alvo.org, alvo.conversa, nova)
     }
 
     fn registrar_resposta_com_arquivo(
         &self,
         alvo: ConversaDaSala,
-        nova: RespostaHumanaComArquivo<'_>,
-    ) -> Result<RespostaHumana, ErroStore> {
+        nova: HumanResponseWithFile<'_>,
+    ) -> Result<HumanResponse, StoreError> {
         self.store
-            .mensagens()
+            .messages()
             .registrar_resposta_humana_com_arquivo(alvo.org, alvo.conversa, nova)
     }
 }
@@ -425,7 +423,7 @@ impl RespostaDoAtendente {
     }
 
     /// A conversa da sala, pelo cache ou pela porta.
-    fn conversa_da_sala(&self, sala: &str) -> Result<Option<ConversaDaSala>, ErroStore> {
+    fn conversa_da_sala(&self, sala: &str) -> Result<Option<ConversaDaSala>, StoreError> {
         if let Some(alvo) = self.salas_guardadas().obter(sala) {
             return Ok(Some(alvo));
         }
@@ -448,7 +446,7 @@ impl RespostaDoAtendente {
     /// `Ok(None)` quando não há como assinar (conversa sem agente, ou conversa que sumiu): o
     /// chamador trata como falha explícita, sem inventar um terceiro caminho de autenticação. `Err`
     /// quando o banco não respondeu (vira `5xx`, e o Synapse reenvia).
-    fn assinatura_da_sala(&self, alvo: ConversaDaSala) -> Result<Option<String>, ErroStore> {
+    fn assinatura_da_sala(&self, alvo: ConversaDaSala) -> Result<Option<String>, StoreError> {
         let Some(agente) = self.porta.agente_da_conversa(alvo)? else {
             return Ok(None);
         };
@@ -471,7 +469,7 @@ impl RespostaDoAtendente {
         alvo: ConversaDaSala,
         transacao: &str,
         evento_id: &str,
-    ) -> Result<Option<String>, ErroStore> {
+    ) -> Result<Option<String>, StoreError> {
         match self.assinatura_da_sala(alvo) {
             Ok(Some(assinatura)) => Ok(Some(assinatura)),
             Ok(None) => {
@@ -497,7 +495,7 @@ impl RespostaDoAtendente {
                     motivo = "banco_indisponivel",
                     "não consegui ler o agente da conversa agora"
                 );
-                Err(ErroStore::Interno(
+                Err(StoreError::Internal(
                     "não consegui ler o agente da conversa".to_owned(),
                 ))
             }
@@ -612,16 +610,16 @@ impl RespostaDoAtendente {
 
         let nome = self.nome_do_atendente(remetente).await;
         let enviado = texto_enfileirado(&nome, texto);
-        let nova = RespostaHumanaNova {
-            evento_id,
-            texto_bruto: texto,
-            texto_enviado: &enviado,
-            autor_id: remetente,
-            autor_nome: &nome,
+        let nova = NewHumanResponse {
+            event_id: evento_id,
+            raw_text: texto,
+            sent_text: &enviado,
+            author_id: remetente,
+            author_name: &nome,
         };
 
         match self.porta.registrar_resposta(alvo, nova) {
-            Ok(RespostaHumana::Gravada(_)) => {
+            Ok(HumanResponse::Stored(_)) => {
                 Contadores::somar(&self.contadores.gravadas);
                 self.metricas.respostas_enfileiradas.increment(1);
                 tracing::info!(
@@ -635,7 +633,7 @@ impl RespostaDoAtendente {
                 );
                 Ok(())
             }
-            Ok(RespostaHumana::Duplicada) => {
+            Ok(HumanResponse::Duplicate) => {
                 Contadores::somar(&self.contadores.duplicadas);
                 self.metricas.respostas_duplicadas.increment(1);
                 tracing::debug!(
@@ -646,7 +644,7 @@ impl RespostaDoAtendente {
                 );
                 Ok(())
             }
-            Ok(RespostaHumana::ConversaFechada) => {
+            Ok(HumanResponse::ConversationClosed) => {
                 Contadores::somar(&self.contadores.encerradas);
                 self.metricas.respostas_conversa_encerrada.increment(1);
                 tracing::info!(
@@ -672,7 +670,7 @@ impl RespostaDoAtendente {
                 }
                 Ok(())
             }
-            Ok(RespostaHumana::ConversaInexistente) => {
+            Ok(HumanResponse::ConversationMissing) => {
                 // A sala aponta para uma conversa que sumiu (ou é de outra org): esquecer o cache
                 // evita insistir na linha errada, e a próxima mensagem procura de novo.
                 self.esquecer_sala(sala);
@@ -872,23 +870,23 @@ impl RespostaDoAtendente {
         let nome_atendente = self.nome_do_atendente(remetente).await;
         let legenda = legenda_do_arquivo(&nome_atendente);
         let blob_ref = format!("{}/{}", alvo.org, gravado.sha256);
-        let nova = RespostaHumanaComArquivo {
-            evento_id,
-            autor_id: remetente,
-            autor_nome: &nome_atendente,
-            arquivo: ArquivoDaResposta {
-                nome: &nome_arquivo,
+        let nova = HumanResponseWithFile {
+            event_id: evento_id,
+            author_id: remetente,
+            author_name: &nome_atendente,
+            file: ResponseFile {
+                name: &nome_arquivo,
                 mime: tipo_real.mime(),
-                tamanho_bytes,
+                size_bytes: tamanho_bytes,
                 sha256: &gravado.sha256,
                 blob_path: &blob_ref,
-                legenda: &legenda,
-                status_extracao: EXTRACAO_DO_ATENDENTE,
+                caption: &legenda,
+                extraction_status: EXTRACAO_DO_ATENDENTE,
             },
         };
 
         match self.porta.registrar_resposta_com_arquivo(alvo, nova) {
-            Ok(RespostaHumana::Gravada(_)) => {
+            Ok(HumanResponse::Stored(_)) => {
                 Contadores::somar(&self.contadores.arquivos_gravados);
                 self.metricas.respostas_enfileiradas.increment(1);
                 tracing::info!(
@@ -905,7 +903,7 @@ impl RespostaDoAtendente {
                 );
                 Ok(())
             }
-            Ok(RespostaHumana::Duplicada) => {
+            Ok(HumanResponse::Duplicate) => {
                 Contadores::somar(&self.contadores.duplicadas);
                 self.metricas.respostas_duplicadas.increment(1);
                 tracing::debug!(
@@ -916,7 +914,7 @@ impl RespostaDoAtendente {
                 );
                 Ok(())
             }
-            Ok(RespostaHumana::ConversaFechada) => {
+            Ok(HumanResponse::ConversationClosed) => {
                 Contadores::somar(&self.contadores.encerradas);
                 self.metricas.respostas_conversa_encerrada.increment(1);
                 tracing::info!(
@@ -938,7 +936,7 @@ impl RespostaDoAtendente {
                 .await;
                 Ok(())
             }
-            Ok(RespostaHumana::ConversaInexistente) => {
+            Ok(HumanResponse::ConversationMissing) => {
                 self.esquecer_sala(sala);
                 Contadores::somar(&self.contadores.salas_desconhecidas);
                 self.metricas.salas_desconhecidas.increment(1);

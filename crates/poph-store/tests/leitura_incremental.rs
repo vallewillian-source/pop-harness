@@ -10,9 +10,9 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use poph_store::migracoes::{MIGRACOES_HARNESS, migrar};
+use poph_store::migrations::{HARNESS_MIGRATIONS, migrate};
 use poph_store::{
-    Direcao, Mensagem, NovaConversa, NovaMensagem, NovaOrg, NovoAgente, Origem, Papel, Store,
+    Direction, Mensagem, NewAgent, NewConversation, NewMessage, NewOrg, Origin, Role, Store,
 };
 use poph_types::{ConversationId, OrgId};
 
@@ -34,24 +34,24 @@ impl Ambiente {
         let _ = fs::remove_dir_all(&pasta);
         fs::create_dir_all(&pasta).expect("cria pasta");
         let store =
-            Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre banco");
+            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre banco");
         let org = store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: format!("Org {rotulo}"),
+            .orgs()
+            .criar(NewOrg {
+                name: format!("Org {rotulo}"),
                 slug: format!("mx05-{rotulo}-{n}"),
                 config_json: String::new(),
             })
             .expect("org")
             .id;
         let agente = store
-            .agentes()
+            .agents()
             .criar(
                 org,
-                NovoAgente {
-                    nome: "Agente".to_owned(),
+                NewAgent {
+                    name: "Agente".to_owned(),
                     slug: format!("agente-{n}"),
-                    ..NovoAgente::default()
+                    ..NewAgent::default()
                 },
             )
             .expect("agente")
@@ -69,12 +69,12 @@ impl Ambiente {
             .conversas()
             .criar(
                 self.org,
-                NovaConversa {
+                NewConversation {
                     agent_id: self.agente,
                     integration_id: None,
                     canal: "whatsapp".to_owned(),
                     peer_externo: Some(peer.to_owned()),
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("conversa")
@@ -82,23 +82,23 @@ impl Ambiente {
     }
 
     /// Grava uma mensagem com o papel dado. `Usuario` entra; os demais saem.
-    fn gravar(&self, conversa: ConversationId, papel: Papel, texto: &str) -> Mensagem {
+    fn gravar(&self, conversa: ConversationId, papel: Role, texto: &str) -> Mensagem {
         let direcao = match papel {
-            Papel::Usuario => Direcao::Entrada,
-            _ => Direcao::Saida,
+            Role::User => Direction::Inbound,
+            _ => Direction::Outbound,
         };
         self.store
-            .mensagens()
+            .messages()
             .gravar(
                 self.org,
-                NovaMensagem {
+                NewMessage {
                     conversation_id: conversa,
-                    direcao,
-                    papel,
-                    origem: Origem::Agente,
-                    autor_nome: None,
+                    direction: direcao,
+                    role: papel,
+                    origin: Origin::Agente,
+                    author_name: None,
                     texto: texto.to_owned(),
-                    anexos_json: "[]".to_owned(),
+                    attachments_json: "[]".to_owned(),
                     id_externo: None,
                     turn_id: None,
                 },
@@ -111,7 +111,7 @@ impl Ambiente {
         let mut cursor = apos;
         let mut todas = Vec::new();
         loop {
-            let pagina = self.store.mensagens().desde(cursor, limite).expect("desde");
+            let pagina = self.store.messages().desde(cursor, limite).expect("desde");
             if pagina.is_empty() {
                 break;
             }
@@ -135,14 +135,14 @@ fn desde_devolve_em_ordem_crescente_de_rowid() {
     let textos = ["um", "dois", "tres", "quatro", "cinco"];
     for (i, texto) in textos.iter().enumerate() {
         let papel = if i % 2 == 0 {
-            Papel::Usuario
+            Role::User
         } else {
-            Papel::Assistente
+            Role::Assistant
         };
         amb.gravar(conversa, papel, texto);
     }
 
-    let pagina = amb.store.mensagens().desde(0, 200).expect("desde");
+    let pagina = amb.store.messages().desde(0, 200).expect("desde");
     let lidos: Vec<&str> = pagina.iter().map(|m| m.texto.as_str()).collect();
     assert_eq!(lidos, textos);
     assert!(
@@ -160,9 +160,9 @@ fn paginar_ate_o_fim_nao_perde_nem_repete_linha() {
     let gravadas: Vec<_> = (0..25)
         .map(|i| {
             let papel = if i % 3 == 0 {
-                Papel::Assistente
+                Role::Assistant
             } else {
-                Papel::Usuario
+                Role::User
             };
             amb.gravar(conversa, papel, &format!("msg {i}"))
         })
@@ -179,7 +179,7 @@ fn paginar_ate_o_fim_nao_perde_nem_repete_linha() {
     let fim = lidas.last().expect("ultima").rowid;
     assert!(
         amb.store
-            .mensagens()
+            .messages()
             .desde(fim, 7)
             .expect("desde")
             .is_empty()
@@ -191,16 +191,16 @@ fn mensagens_gravadas_entre_paginas_aparecem_depois_sem_perder_as_outras() {
     let amb = Ambiente::novo("entre-paginas");
     let conversa = amb.conversa("5511900000003");
     let inicio: Vec<_> = (0..10)
-        .map(|i| amb.gravar(conversa, Papel::Usuario, &format!("antes {i}")))
+        .map(|i| amb.gravar(conversa, Role::User, &format!("antes {i}")))
         .collect();
 
-    let primeira = amb.store.mensagens().desde(0, 4).expect("primeira");
+    let primeira = amb.store.messages().desde(0, 4).expect("primeira");
     assert_eq!(primeira.len(), 4);
     let cursor = primeira.last().expect("ultima").rowid;
 
     // Chegam mais mensagens enquanto o laço ainda está no meio.
     let depois: Vec<_> = (0..3)
-        .map(|i| amb.gravar(conversa, Papel::Assistente, &format!("depois {i}")))
+        .map(|i| amb.gravar(conversa, Role::Assistant, &format!("depois {i}")))
         .collect();
 
     let resto = amb.ler_tudo(cursor, 4);
@@ -221,11 +221,11 @@ fn mensagens_gravadas_entre_paginas_aparecem_depois_sem_perder_as_outras() {
 fn tool_e_system_nunca_aparecem_na_leitura() {
     let amb = Ambiente::novo("papeis");
     let conversa = amb.conversa("5511900000004");
-    amb.gravar(conversa, Papel::Usuario, "oi");
-    amb.gravar(conversa, Papel::Sistema, "instrucao interna");
-    amb.gravar(conversa, Papel::Ferramenta, "resultado da ferramenta");
-    amb.gravar(conversa, Papel::Assistente, "tudo bem");
-    amb.gravar(conversa, Papel::Ferramenta, "outra ferramenta");
+    amb.gravar(conversa, Role::User, "oi");
+    amb.gravar(conversa, Role::System, "instrucao interna");
+    amb.gravar(conversa, Role::Tool, "resultado da ferramenta");
+    amb.gravar(conversa, Role::Assistant, "tudo bem");
+    amb.gravar(conversa, Role::Tool, "outra ferramenta");
 
     // Com limite 1, as linhas proibidas no meio não podem travar nem sumir a paginação.
     let lidas = amb.ler_tudo(0, 1);
@@ -234,7 +234,7 @@ fn tool_e_system_nunca_aparecem_na_leitura() {
     assert!(
         lidas
             .iter()
-            .all(|m| matches!(m.papel, Papel::Usuario | Papel::Assistente)),
+            .all(|m| matches!(m.papel, Role::User | Role::Assistant)),
         "só user e assistant"
     );
 }
@@ -245,32 +245,32 @@ fn origem_autor_e_id_externo_chegam_intactos() {
     let conversa = amb.conversa("5511900000005");
     let humana = amb
         .store
-        .mensagens()
+        .messages()
         .gravar(
             amb.org,
-            NovaMensagem {
+            NewMessage {
                 conversation_id: conversa,
-                direcao: Direcao::Saida,
-                papel: Papel::Assistente,
-                origem: Origem::Humano,
-                autor_nome: Some("Ana".to_owned()),
+                direction: Direction::Outbound,
+                role: Role::Assistant,
+                origin: Origin::Human,
+                author_name: Some("Ana".to_owned()),
                 texto: "posso ajudar".to_owned(),
-                anexos_json: "[]".to_owned(),
+                attachments_json: "[]".to_owned(),
                 id_externo: Some("$evento-1".to_owned()),
                 turn_id: None,
             },
         )
         .expect("grava humana");
 
-    let lidas = amb.store.mensagens().desde(0, 10).expect("desde");
+    let lidas = amb.store.messages().desde(0, 10).expect("desde");
     assert_eq!(lidas.len(), 1);
     let m = &lidas[0];
     assert_eq!(m.id, humana.id);
-    assert_eq!(m.origem, Origem::Humano);
+    assert_eq!(m.origem, Origin::Human);
     assert_eq!(m.autor_nome.as_deref(), Some("Ana"));
     assert_eq!(m.id_externo.as_deref(), Some("$evento-1"));
-    assert_eq!(m.direcao, Direcao::Saida);
-    assert_eq!(m.papel, Papel::Assistente);
+    assert_eq!(m.direcao, Direction::Outbound);
+    assert_eq!(m.papel, Role::Assistant);
 }
 
 #[test]
@@ -278,9 +278,9 @@ fn leitura_traz_mensagens_de_mais_de_uma_org_com_a_org_de_cada_linha() {
     let amb = Ambiente::novo("duas-orgs-a");
     let outra = amb
         .store
-        .orgaos()
-        .criar(NovaOrg {
-            nome: "Outra".to_owned(),
+        .orgs()
+        .criar(NewOrg {
+            name: "Outra".to_owned(),
             slug: format!("mx05-outra-{}", std::process::id()),
             config_json: String::new(),
         })
@@ -288,13 +288,13 @@ fn leitura_traz_mensagens_de_mais_de_uma_org_com_a_org_de_cada_linha() {
         .id;
     let agente_outra = amb
         .store
-        .agentes()
+        .agents()
         .criar(
             outra,
-            NovoAgente {
-                nome: "Outro".to_owned(),
+            NewAgent {
+                name: "Outro".to_owned(),
                 slug: "outro".to_owned(),
-                ..NovoAgente::default()
+                ..NewAgent::default()
             },
         )
         .expect("agente outra")
@@ -305,29 +305,29 @@ fn leitura_traz_mensagens_de_mais_de_uma_org_com_a_org_de_cada_linha() {
         .conversas()
         .criar(
             outra,
-            NovaConversa {
+            NewConversation {
                 agent_id: agente_outra,
                 integration_id: None,
                 canal: "whatsapp".to_owned(),
                 peer_externo: Some("b".to_owned()),
-                departamento_alvo: None,
+                target_department: None,
             },
         )
         .expect("conversa outra")
         .id;
-    amb.gravar(conversa_a, Papel::Usuario, "da A");
+    amb.gravar(conversa_a, Role::User, "da A");
     amb.store
-        .mensagens()
+        .messages()
         .gravar(
             outra,
-            NovaMensagem {
+            NewMessage {
                 conversation_id: conversa_b,
-                direcao: Direcao::Entrada,
-                papel: Papel::Usuario,
-                origem: Origem::Agente,
-                autor_nome: None,
+                direction: Direction::Inbound,
+                role: Role::User,
+                origin: Origin::Agente,
+                author_name: None,
                 texto: "da B".to_owned(),
-                anexos_json: "[]".to_owned(),
+                attachments_json: "[]".to_owned(),
                 id_externo: None,
                 turn_id: None,
             },
@@ -335,7 +335,7 @@ fn leitura_traz_mensagens_de_mais_de_uma_org_com_a_org_de_cada_linha() {
         .expect("grava B");
 
     // A leitura é global: quem espelha filtra pela org da linha.
-    let lidas = amb.store.mensagens().desde(0, 10).expect("desde");
+    let lidas = amb.store.messages().desde(0, 10).expect("desde");
     assert_eq!(lidas.len(), 2);
     assert_eq!(lidas[0].org_id, amb.org);
     assert_eq!(lidas[1].org_id, outra);
@@ -377,7 +377,7 @@ fn alteradas_desde_pagina_por_instante_e_id_sem_perder_empate() {
             .alteradas_desde(cursor, 1)
             .expect("alteradas");
         let Some(ultima) = pagina.last() else { break };
-        cursor = Some((ultima.atualizado_em, ultima.id));
+        cursor = Some((ultima.updated_at, ultima.id));
         vistas.extend(pagina.iter().map(|c| c.id));
     }
 
@@ -430,7 +430,7 @@ fn migracao_0006_sobre_banco_com_dados_preserva_linhas_e_leitura_funciona() {
     let conn = rusqlite::Connection::open(&caminho).expect("abre o banco");
 
     // Banco no estado anterior (migrações 1 a 5), com conversas e mensagens gravadas.
-    migrar(&conn, "harness.db", &caminho, &MIGRACOES_HARNESS[..5], 1).expect("migra até a 5");
+    migrate(&conn, "harness.db", &caminho, &HARNESS_MIGRATIONS[..5], 1).expect("migra até a 5");
     // Org e agente de verdade: o backfill das Fichas (FX-05, migração 0012) referencia a org, então
     // uma conversa órfã aqui faria a migração falhar por chave estrangeira. A checagem continua
     // desligada nesta conexão, como estava.
@@ -453,9 +453,9 @@ fn migracao_0006_sobre_banco_com_dados_preserva_linhas_e_leitura_funciona() {
     .expect("grava dados no formato anterior");
 
     let relatorio =
-        migrar(&conn, "harness.db", &caminho, &MIGRACOES_HARNESS[..6], 2).expect("até a 6");
-    assert_eq!(relatorio.versao_antes, 5);
-    assert_eq!(relatorio.versao_depois, 6);
+        migrate(&conn, "harness.db", &caminho, &HARNESS_MIGRATIONS[..6], 2).expect("até a 6");
+    assert_eq!(relatorio.version_before, 5);
+    assert_eq!(relatorio.version_after, 6);
 
     let contagem = |sql: &str| -> i64 { conn.query_row(sql, [], |l| l.get(0)).expect("conta") };
     assert_eq!(
@@ -482,8 +482,8 @@ fn migracao_0006_sobre_banco_com_dados_preserva_linhas_e_leitura_funciona() {
     drop(conn);
 
     // A leitura nova enxerga as linhas que já existiam, na ordem certa.
-    let store = Store::abrir_em(&caminho, &pasta.join("rag.db")).expect("abre o store");
-    let mensagens = store.mensagens().desde(0, 10).expect("desde");
+    let store = Store::open_at(&caminho, &pasta.join("rag.db")).expect("abre o store");
+    let mensagens = store.messages().desde(0, 10).expect("desde");
     let textos: Vec<&str> = mensagens.iter().map(|m| m.texto.as_str()).collect();
     assert_eq!(textos, ["oi", "tudo bem"]);
     let conversas = store
@@ -491,8 +491,8 @@ fn migracao_0006_sobre_banco_com_dados_preserva_linhas_e_leitura_funciona() {
         .alteradas_desde(None, 10)
         .expect("alteradas");
     assert_eq!(conversas.len(), 2);
-    assert_eq!(conversas[0].atualizado_em, 20, "a mais antiga primeiro");
-    assert_eq!(conversas[1].atualizado_em, 30);
+    assert_eq!(conversas[0].updated_at, 20, "a mais antiga primeiro");
+    assert_eq!(conversas[1].updated_at, 30);
 
     drop(store);
     let _ = fs::remove_dir_all(&pasta);
@@ -503,7 +503,7 @@ fn plano_da_leitura_de_conversas_usa_o_indice_e_nao_varre_a_tabela() {
     // A consulta é a mesma de `Conversas::alteradas_desde`. Se ela mudar, este teste precisa
     // acompanhar, porque é ele que segura o índice `ix_conversations_atualizada`.
     let amb = Ambiente::novo("plano");
-    let caminho = amb.store.caminho_harness().to_path_buf();
+    let caminho = amb.store.harness_path().to_path_buf();
     let con = rusqlite::Connection::open(&caminho).expect("abre para ler o plano");
     let detalhes: Vec<String> = {
         let mut consulta = con

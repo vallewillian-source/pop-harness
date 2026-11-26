@@ -10,7 +10,7 @@
 
 use std::path::PathBuf;
 
-use poph_store::{NovaOrg, NovoDepartamento, Store};
+use poph_store::{NewDepartment, NewOrg, Store};
 use poph_types::HarnessConfig;
 
 fn main() {
@@ -24,15 +24,15 @@ fn main() {
     let pasta: PathBuf = std::env::var_os("POPH_DADOS_DIRETORIO")
         .map(PathBuf::from)
         .unwrap_or(config.data.directory);
-    let store = match Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db")) {
+    let store = match Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")) {
         Ok(store) => store,
         Err(erro) => {
             eprintln!("não consegui abrir o banco em {}: {erro}", pasta.display());
             std::process::exit(1);
         }
     };
-    let org = match store.orgaos().criar(NovaOrg {
-        nome,
+    let org = match store.orgs().criar(NewOrg {
+        name: nome,
         slug: slug.clone(),
         config_json: String::new(),
     }) {
@@ -43,12 +43,12 @@ fn main() {
         }
     };
     let departamento = store
-        .departamentos()
+        .departments()
         .criar(
             org.id,
-            NovoDepartamento {
-                nome: "Atendimento".to_owned(),
-                descricao: "Departamento padrão da demo".to_owned(),
+            NewDepartment {
+                name: "Atendimento".to_owned(),
+                description: "Departamento padrão da demo".to_owned(),
             },
         )
         .expect("cria o departamento da demo");

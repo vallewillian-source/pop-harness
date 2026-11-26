@@ -25,8 +25,8 @@ use poph_jev::{
     G1_TRANSFERIR, IdGate, JevFalso, LoteResposta, MotorJev, Orientacao, Pedido, Resposta,
 };
 use poph_store::{
-    Direcao, EstadoTurno, MudancaAgente, MudancaDepartamento, NovaConversa, NovaMensagem, NovaOrg,
-    NovoAgente, NovoDepartamento, Pagina, Papel, Status, Store,
+    AgentChange, DepartmentChange, Direction, NewAgent, NewConversation, NewDepartment, NewMessage,
+    NewOrg, Page, Role, Status, Store, TurnState,
 };
 use poph_types::{AgentId, ConversationId, DepartmentId, JevGates, MessageId, OrgId};
 
@@ -59,32 +59,31 @@ impl Cenario {
         let _ = std::fs::remove_dir_all(&pasta);
         std::fs::create_dir_all(&pasta).expect("pasta do teste");
         let store = Arc::new(
-            Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
-                .expect("abre o banco"),
+            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco"),
         );
         let org = store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: format!("Org {rotulo}"),
+            .orgs()
+            .criar(NewOrg {
+                name: format!("Org {rotulo}"),
                 slug: format!("org-{rotulo}-{}", AgentId::generate()),
                 config_json: "{}".to_owned(),
             })
             .expect("cria a org")
             .id;
         let agente = store
-            .agentes()
+            .agents()
             .criar(
                 org,
-                NovoAgente {
-                    nome: format!("Bia {rotulo}"),
+                NewAgent {
+                    name: format!("Bia {rotulo}"),
                     slug: format!("bia-{rotulo}"),
-                    ..NovoAgente::default()
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente")
             .id;
         store
-            .instrucoes()
+            .instructions()
             .salvar(
                 org,
                 agente,
@@ -94,16 +93,16 @@ impl Cenario {
                 true,
             )
             .expect("grava as instruções");
-        let atual = store.agentes().obter(org, agente).expect("lê o agente");
+        let atual = store.agents().get(org, agente).expect("lê o agente");
         store
-            .agentes()
+            .agents()
             .atualizar(
                 org,
                 agente,
-                atual.versao,
-                MudancaAgente {
-                    handoff_ativo: Some(true),
-                    ..MudancaAgente::default()
+                atual.version,
+                AgentChange {
+                    handoff_active: Some(true),
+                    ..AgentChange::default()
                 },
             )
             .expect("liga o handoff");
@@ -121,12 +120,12 @@ impl Cenario {
 
     fn departamento(&self, nome: &str) -> DepartmentId {
         self.store
-            .departamentos()
+            .departments()
             .criar(
                 self.org,
-                NovoDepartamento {
-                    nome: nome.to_owned(),
-                    descricao: String::new(),
+                NewDepartment {
+                    name: nome.to_owned(),
+                    description: String::new(),
                 },
             )
             .expect("cria o departamento")
@@ -135,12 +134,12 @@ impl Cenario {
 
     fn departamento_em(&self, org: OrgId, nome: &str) -> DepartmentId {
         self.store
-            .departamentos()
+            .departments()
             .criar(
                 org,
-                NovoDepartamento {
-                    nome: nome.to_owned(),
-                    descricao: String::new(),
+                NewDepartment {
+                    name: nome.to_owned(),
+                    description: String::new(),
                 },
             )
             .expect("cria o departamento")
@@ -149,9 +148,9 @@ impl Cenario {
 
     fn outra_org(&self) -> OrgId {
         self.store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: "Outra org".to_owned(),
+            .orgs()
+            .criar(NewOrg {
+                name: "Outra org".to_owned(),
                 slug: format!("outra-{}", AgentId::generate()),
                 config_json: "{}".to_owned(),
             })
@@ -162,18 +161,18 @@ impl Cenario {
     fn desativar(&self, departamento: DepartmentId) {
         let atual = self
             .store
-            .departamentos()
+            .departments()
             .obter(self.org, departamento)
             .expect("lê o departamento");
         self.store
-            .departamentos()
+            .departments()
             .atualizar(
                 self.org,
                 departamento,
-                atual.versao,
-                MudancaDepartamento {
-                    status: Some(Status::Inativo),
-                    ..MudancaDepartamento::default()
+                atual.version,
+                DepartmentChange {
+                    status: Some(Status::Inactive),
+                    ..DepartmentChange::default()
                 },
             )
             .expect("desativa o departamento");
@@ -181,7 +180,7 @@ impl Cenario {
 
     fn apagar(&self, departamento: DepartmentId) {
         self.store
-            .departamentos()
+            .departments()
             .excluir(self.org, departamento)
             .expect("apaga o departamento");
     }
@@ -189,18 +188,18 @@ impl Cenario {
     fn definir_padrao(&self, departamento: DepartmentId) {
         let atual = self
             .store
-            .agentes()
-            .obter(self.org, self.agente)
+            .agents()
+            .get(self.org, self.agente)
             .expect("agente");
         self.store
-            .agentes()
+            .agents()
             .atualizar(
                 self.org,
                 self.agente,
-                atual.versao,
-                MudancaAgente {
-                    handoff_departamento: Some(departamento),
-                    ..MudancaAgente::default()
+                atual.version,
+                AgentChange {
+                    handoff_department: Some(departamento),
+                    ..AgentChange::default()
                 },
             )
             .expect("define o departamento de transferência");
@@ -211,12 +210,12 @@ impl Cenario {
             .conversas()
             .criar(
                 self.org,
-                NovaConversa {
+                NewConversation {
                     agent_id: self.agente,
                     integration_id: None,
                     canal: "cli".to_owned(),
                     peer_externo: None,
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("abre a conversa")
@@ -225,19 +224,19 @@ impl Cenario {
 
     fn falar(&self, conversa: ConversationId, texto: &str) -> MessageId {
         self.store
-            .mensagens()
+            .messages()
             .gravar(
                 self.org,
-                NovaMensagem {
+                NewMessage {
                     conversation_id: conversa,
-                    direcao: Direcao::Entrada,
-                    papel: Papel::Usuario,
+                    direction: Direction::Inbound,
+                    role: Role::User,
                     texto: texto.to_owned(),
-                    anexos_json: "[]".to_owned(),
+                    attachments_json: "[]".to_owned(),
                     id_externo: None,
                     turn_id: None,
-                    origem: poph_store::Origem::Agente,
-                    autor_nome: None,
+                    origin: poph_store::Origin::Agente,
+                    author_name: None,
                 },
             )
             .expect("grava a mensagem")
@@ -288,14 +287,14 @@ impl Cenario {
     fn conversa_gravada(&self, conversa: ConversationId) -> poph_store::Conversa {
         self.store
             .conversas()
-            .obter(self.org, conversa)
+            .get(self.org, conversa)
             .expect("lê a conversa")
     }
 
     fn ultimo_turno(&self, conversa: ConversationId) -> poph_store::Turno {
         self.store
-            .turnos()
-            .listar(self.org, conversa, Pagina::com_limite(20))
+            .turns()
+            .listar(self.org, conversa, Page::with_limit(20))
             .expect("lista os turnos")
             .into_iter()
             .next_back()
@@ -305,13 +304,13 @@ impl Cenario {
     fn auditoria_da_transferencia(&self) -> serde_json::Value {
         let registro = self
             .store
-            .auditoria()
-            .listar(self.org, Pagina::com_limite(50))
+            .audit()
+            .listar(self.org, Page::with_limit(50))
             .expect("lê a auditoria")
             .into_iter()
             .find(|registro| registro.acao == "transfer")
             .expect("a transferência é auditada");
-        serde_json::from_str(&registro.detalhe_json).expect("detalhe é JSON")
+        serde_json::from_str(&registro.detail_json).expect("detalhe é JSON")
     }
 }
 
@@ -398,14 +397,14 @@ async fn g4_manda_a_conversa_para_o_departamento_escolhido() {
     let gatilho = cenario.falar(conversa, "vocês cobraram duas vezes no meu cartão");
     let resumo = cenario.turno(&motor, conversa, gatilho).await;
 
-    assert_eq!(resumo.estado, EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, TurnState::Completed);
     assert!(
         cenario.provedor.recebidos().is_empty(),
         "transferida não chama o modelo"
     );
     let gravada = cenario.conversa_gravada(conversa);
-    assert_eq!(gravada.status, poph_store::StatusConversa::Transferida);
-    assert_eq!(gravada.departamento_alvo, Some(escolhido));
+    assert_eq!(gravada.status, poph_store::ConversationStatus::Transferred);
+    assert_eq!(gravada.target_department, Some(escolhido));
 
     // Auditoria: origem do departamento e a escolha do Jev registradas.
     let detalhe = cenario.auditoria_da_transferencia();
@@ -466,8 +465,8 @@ async fn departamento_de_outra_org_cai_no_padrao() {
     cenario.turno(&motor, conversa, gatilho).await;
 
     let gravada = cenario.conversa_gravada(conversa);
-    assert_eq!(gravada.status, poph_store::StatusConversa::Transferida);
-    assert_eq!(gravada.departamento_alvo, Some(padrao));
+    assert_eq!(gravada.status, poph_store::ConversationStatus::Transferred);
+    assert_eq!(gravada.target_department, Some(padrao));
     let detalhe = cenario.auditoria_da_transferencia();
     assert_eq!(detalhe["departamento_origem"], "padrao");
     assert!(
@@ -495,7 +494,7 @@ async fn departamento_inativo_cai_no_padrao() {
     cenario.turno(&motor, conversa, gatilho).await;
 
     assert_eq!(
-        cenario.conversa_gravada(conversa).departamento_alvo,
+        cenario.conversa_gravada(conversa).target_department,
         Some(padrao)
     );
 }
@@ -516,7 +515,7 @@ async fn departamento_apagado_cai_no_padrao() {
     cenario.turno(&motor, conversa, gatilho).await;
 
     assert_eq!(
-        cenario.conversa_gravada(conversa).departamento_alvo,
+        cenario.conversa_gravada(conversa).target_department,
         Some(padrao)
     );
 }
@@ -530,12 +529,12 @@ fn o_banco_nao_deixa_dois_departamentos_com_o_mesmo_nome() {
     cenario.departamento("Financeiro");
     let erro = cenario
         .store
-        .departamentos()
+        .departments()
         .criar(
             cenario.org,
-            NovoDepartamento {
-                nome: "FINANCEIRO".to_owned(),
-                descricao: String::new(),
+            NewDepartment {
+                name: "FINANCEIRO".to_owned(),
+                description: String::new(),
             },
         )
         .expect_err("nome repetido (sem diferenciar maiúsculas) devia ser recusado");
@@ -568,9 +567,9 @@ async fn abstencao_do_g4_cai_no_padrao_sem_travar_o_turno() {
         let gatilho = cenario.falar(conversa, "quero falar com alguém sobre o pedido");
         let resumo = cenario.turno(&motor, conversa, gatilho).await;
 
-        assert_eq!(resumo.estado, EstadoTurno::Concluido, "caso {rotulo}");
+        assert_eq!(resumo.estado, TurnState::Completed, "caso {rotulo}");
         assert_eq!(
-            cenario.conversa_gravada(conversa).departamento_alvo,
+            cenario.conversa_gravada(conversa).target_department,
             Some(padrao),
             "caso {rotulo}"
         );
@@ -619,10 +618,10 @@ async fn jev_fora_do_ar_nao_trava_o_turno() {
     let gatilho = cenario.falar(conversa, "quero falar com um atendente");
     let resumo = cenario.turno(&motor, conversa, gatilho).await;
 
-    assert_eq!(resumo.estado, EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, TurnState::Completed);
     assert_eq!(
         cenario.conversa_gravada(conversa).status,
-        poph_store::StatusConversa::Aberta
+        poph_store::ConversationStatus::Open
     );
     assert_eq!(resumo.texto, RESPOSTA_DO_MODELO);
 }
@@ -646,8 +645,8 @@ async fn g4_desligado_e_o_comportamento_de_hoje() {
     cenario.turno(&motor, conversa, gatilho).await;
 
     let gravada = cenario.conversa_gravada(conversa);
-    assert_eq!(gravada.status, poph_store::StatusConversa::Transferida);
-    assert_eq!(gravada.departamento_alvo, Some(padrao));
+    assert_eq!(gravada.status, poph_store::ConversationStatus::Transferred);
+    assert_eq!(gravada.target_department, Some(padrao));
 
     // Nenhuma pergunta de departamento foi enviada ao Jev.
     let pedidos = jev.pedidos();
@@ -699,15 +698,15 @@ async fn sem_padrao_configurado_transfere_sem_departamento() {
         let gravada = cenario.conversa_gravada(conversa);
         assert_eq!(
             gravada.status,
-            poph_store::StatusConversa::Transferida,
+            poph_store::ConversationStatus::Transferred,
             "caso {rotulo}"
         );
-        assert_eq!(gravada.departamento_alvo, None, "caso {rotulo}");
+        assert_eq!(gravada.target_department, None, "caso {rotulo}");
         // Reabre para o caso seguinte poder abrir turno.
         cenario
             .store
             .conversas()
-            .reabrir_auditado(cenario.org, conversa, gravada.versao, "teste".to_owned())
+            .reabrir_auditado(cenario.org, conversa, gravada.version, "teste".to_owned())
             .expect("reabre");
     }
 }

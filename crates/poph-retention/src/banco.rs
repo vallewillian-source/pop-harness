@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
-use poph_store::{ErroStore, NovoRegistroAuditoria, Pagina, Store};
+use poph_store::{NewAuditEntry, Page, Store, StoreError};
 use poph_types::OrgId;
 
 use crate::armazem::{Armazem, OrgRetencao, VarreduraBanco};
@@ -37,10 +37,10 @@ impl Armazem for BancoHarness<'_> {
         loop {
             let pagina = self
                 .store
-                .orgaos()
-                .listar(Pagina {
-                    apos,
-                    limite: PAGINA,
+                .orgs()
+                .listar(Page {
+                    after: apos,
+                    limit: PAGINA,
                 })
                 .map_err(banco)?;
             let cheia = pagina.len() as u32 == PAGINA;
@@ -58,15 +58,13 @@ impl Armazem for BancoHarness<'_> {
     }
 
     fn org(&self, id: OrgId) -> Result<OrgRetencao, ErroRetencao> {
-        match self.store.orgaos().obter(id) {
+        match self.store.orgs().get(id) {
             Ok(org) => Ok(OrgRetencao {
                 id: org.id,
                 slug: org.slug,
                 config_json: org.config_json,
             }),
-            Err(erro) if erro.eh_nao_encontrado() => {
-                Err(ErroRetencao::OrgInexistente(id.to_string()))
-            }
+            Err(erro) if erro.is_not_found() => Err(ErroRetencao::OrgInexistente(id.to_string())),
             Err(erro) => Err(banco(erro)),
         }
     }
@@ -79,7 +77,7 @@ impl Armazem for BancoHarness<'_> {
     ) -> Result<VarreduraBanco, ErroRetencao> {
         let varredura = self
             .store
-            .retencao()
+            .retention()
             .varrer(org, corte_ms, simular)
             .map_err(banco)?;
         Ok(VarreduraBanco {
@@ -105,16 +103,16 @@ impl Armazem for BancoHarness<'_> {
         detalhe_json: &str,
     ) -> Result<(), ErroRetencao> {
         self.store
-            .auditoria()
+            .audit()
             .registrar(
                 Some(org),
-                NovoRegistroAuditoria {
+                NewAuditEntry {
                     ator_tipo: ator_tipo.to_owned(),
-                    ator_id: None,
+                    actor_id: None,
                     acao: "retention".to_owned(),
-                    entidade: "org".to_owned(),
-                    entidade_id: Some(org.to_string()),
-                    detalhe_json: detalhe_json.to_owned(),
+                    entity: "org".to_owned(),
+                    entity_id: Some(org.to_string()),
+                    detail_json: detalhe_json.to_owned(),
                 },
             )
             .map(|_| ())
@@ -122,6 +120,6 @@ impl Armazem for BancoHarness<'_> {
     }
 }
 
-fn banco(erro: ErroStore) -> ErroRetencao {
+fn banco(erro: StoreError) -> ErroRetencao {
     ErroRetencao::Banco(erro.to_string())
 }

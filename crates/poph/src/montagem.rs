@@ -371,7 +371,7 @@ mod testes {
 
     fn store(pasta: &std::path::Path) -> Arc<Store> {
         Arc::new(
-            Store::abrir_em(
+            Store::open_at(
                 &pasta.join("dados").join("harness.db"),
                 &pasta.join("dados").join("rag.db"),
             )

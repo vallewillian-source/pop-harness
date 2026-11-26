@@ -10,11 +10,11 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use poph_store::backup::DestinoImportacao;
-use poph_store::migracoes::{MIGRACOES_HARNESS, migrar};
+use poph_store::backup::ImportTarget;
+use poph_store::migrations::{HARNESS_MIGRATIONS, migrate};
 use poph_store::{
-    Conversa, Direcao, NovaConversa, NovaMensagem, NovaOrg, NovaSaida, NovoAgente, Org, Origem,
-    Pagina, Papel, Store,
+    Conversa, Direction, NewAgent, NewConversation, NewMessage, NewOrg, NewOutboxItem, Org, Origin,
+    Page, Role, Store,
 };
 use poph_types::{ConversationId, MessageId, TurnId};
 use serde_json::Value;
@@ -33,8 +33,8 @@ impl Cenario {
             std::env::temp_dir().join(format!("poph-origem-{rotulo}-{}-{n}", std::process::id()));
         let _ = fs::remove_dir_all(&pasta);
         fs::create_dir_all(&pasta).expect("cria a pasta do teste");
-        let store = Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
-            .expect("abre o banco");
+        let store =
+            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco");
         Self {
             pasta,
             store: Some(store),
@@ -57,21 +57,21 @@ impl Drop for Cenario {
 /// Uma org com um agente e uma conversa, para o resto do teste.
 fn org_e_conversa(store: &Store, slug: &str) -> (Org, Conversa) {
     let org = store
-        .orgaos()
-        .criar(NovaOrg {
-            nome: format!("Org {slug}"),
+        .orgs()
+        .criar(NewOrg {
+            name: format!("Org {slug}"),
             slug: slug.to_owned(),
             config_json: String::new(),
         })
         .expect("cria a org");
     let agente = store
-        .agentes()
+        .agents()
         .criar(
             org.id,
-            NovoAgente {
-                nome: "Bia".to_owned(),
+            NewAgent {
+                name: "Bia".to_owned(),
                 slug: "bia".to_owned(),
-                ..NovoAgente::default()
+                ..NewAgent::default()
             },
         )
         .expect("cria o agente");
@@ -79,27 +79,27 @@ fn org_e_conversa(store: &Store, slug: &str) -> (Org, Conversa) {
         .conversas()
         .criar(
             org.id,
-            NovaConversa {
+            NewConversation {
                 agent_id: agente.id,
                 integration_id: None,
                 canal: "cli".to_owned(),
                 peer_externo: Some("cliente-1".to_owned()),
-                departamento_alvo: None,
+                target_department: None,
             },
         )
         .expect("cria a conversa");
     (org, conversa)
 }
 
-fn saida_do_agente(conversa: ConversationId, texto: &str) -> NovaMensagem {
-    NovaMensagem {
+fn saida_do_agente(conversa: ConversationId, texto: &str) -> NewMessage {
+    NewMessage {
         conversation_id: conversa,
-        direcao: Direcao::Saida,
-        papel: Papel::Assistente,
-        origem: Origem::Agente,
-        autor_nome: None,
+        direction: Direction::Outbound,
+        role: Role::Assistant,
+        origin: Origin::Agente,
+        author_name: None,
         texto: texto.to_owned(),
-        anexos_json: "[]".to_owned(),
+        attachments_json: "[]".to_owned(),
         id_externo: None,
         turn_id: None,
     }
@@ -107,7 +107,7 @@ fn saida_do_agente(conversa: ConversationId, texto: &str) -> NovaMensagem {
 
 /// Lê origem e autor direto da tabela, sem passar pelo repositório.
 fn linha_bruta(store: &Store, id: MessageId) -> (String, Option<String>) {
-    let conn = rusqlite::Connection::open(store.caminho_harness()).expect("abre o banco");
+    let conn = rusqlite::Connection::open(store.harness_path()).expect("abre o banco");
     conn.query_row(
         "SELECT origin, author_name FROM messages WHERE id = ?1",
         [id.to_string()],
@@ -124,11 +124,11 @@ fn mensagem_do_turno_continua_agente_sem_autor() {
 
     // Gravação simples (o que o turno faz para a entrada e a resposta).
     let gravada = store
-        .mensagens()
+        .messages()
         .gravar(org.id, saida_do_agente(conversa.id, "olá"))
         .expect("grava");
-    assert_eq!(gravada.origem, Origem::Agente);
-    assert_eq!(gravada.autor_nome, None);
+    assert_eq!(gravada.origin, Origin::Agente);
+    assert_eq!(gravada.author_name, None);
     assert_eq!(
         linha_bruta(store, gravada.id),
         ("agent".to_owned(), None),
@@ -138,36 +138,36 @@ fn mensagem_do_turno_continua_agente_sem_autor() {
     // Resposta do agente com a fila de saída, na mesma transação.
     let turno = TurnId::generate();
     let (com_saida, _item) = store
-        .mensagens()
+        .messages()
         .gravar_com_saida(
             org.id,
-            NovaMensagem {
+            NewMessage {
                 turn_id: Some(turno),
                 ..saida_do_agente(conversa.id, "resposta do turno")
             },
-            NovaSaida {
+            NewOutboxItem {
                 conversation_id: conversa.id,
                 turn_id: turno,
                 seq: 0,
                 tipo: "text".to_owned(),
-                conteudo_json: "{}".to_owned(),
+                content_json: "{}".to_owned(),
             },
         )
         .expect("grava com saída");
-    assert_eq!(com_saida.origem, Origem::Agente);
-    assert_eq!(com_saida.autor_nome, None);
+    assert_eq!(com_saida.origin, Origin::Agente);
+    assert_eq!(com_saida.author_name, None);
     assert_eq!(linha_bruta(store, com_saida.id), ("agent".to_owned(), None));
 
     // Leitura pelo repositório devolve o mesmo que o banco guardou.
     let lidas = store
-        .mensagens()
-        .listar(org.id, conversa.id, Pagina::default())
+        .messages()
+        .listar(org.id, conversa.id, Page::default())
         .expect("lista");
     assert_eq!(lidas.len(), 2);
     assert!(
         lidas
             .iter()
-            .all(|m| m.origem == Origem::Agente && m.autor_nome.is_none())
+            .all(|m| m.origin == Origin::Agente && m.author_name.is_none())
     );
 }
 
@@ -177,12 +177,12 @@ fn resposta_humana_vai_e_volta_no_backup_com_o_autor() {
     let (org, conversa) = org_e_conversa(origem.store(), "humano");
     let humana = origem
         .store()
-        .mensagens()
+        .messages()
         .gravar(
             org.id,
-            NovaMensagem {
-                origem: Origem::Humano,
-                autor_nome: Some("Ana Atendente".to_owned()),
+            NewMessage {
+                origin: Origin::Human,
+                author_name: Some("Ana Atendente".to_owned()),
                 ..saida_do_agente(conversa.id, "*[Ana Atendente]*: posso ajudar")
             },
         )
@@ -194,9 +194,9 @@ fn resposta_humana_vai_e_volta_no_backup_com_o_autor() {
 
     let retrato = origem
         .store()
-        .retrato_da_org(org.id, true)
+        .org_snapshot(org.id, true)
         .expect("retrato da org");
-    let linha = retrato.tabelas["messages"]
+    let linha = retrato.tables["messages"]
         .iter()
         .find(|linha| linha["id"] == Value::String(humana.id.to_string()))
         .expect("a mensagem humana está no arquivo");
@@ -209,17 +209,17 @@ fn resposta_humana_vai_e_volta_no_backup_com_o_autor() {
     let destino = Cenario::novo("backup-destino");
     destino
         .store()
-        .importar_retrato(retrato, DestinoImportacao::DaOrigem)
+        .import_snapshot(retrato, ImportTarget::Origin)
         .expect("importa o arquivo");
 
     let lidas = destino
         .store()
-        .mensagens()
-        .listar(org.id, conversa.id, Pagina::default())
+        .messages()
+        .listar(org.id, conversa.id, Page::default())
         .expect("lista no destino");
     assert_eq!(lidas.len(), 1);
-    assert_eq!(lidas[0].origem, Origem::Humano);
-    assert_eq!(lidas[0].autor_nome.as_deref(), Some("Ana Atendente"));
+    assert_eq!(lidas[0].origin, Origin::Human);
+    assert_eq!(lidas[0].author_name.as_deref(), Some("Ana Atendente"));
 }
 
 #[test]
@@ -228,7 +228,7 @@ fn backup_antigo_sem_as_colunas_importa_como_agente() {
     let (org, conversa) = org_e_conversa(origem.store(), "antigo");
     origem
         .store()
-        .mensagens()
+        .messages()
         .gravar(
             org.id,
             saida_do_agente(conversa.id, "mensagem de antes da MX-03"),
@@ -238,9 +238,9 @@ fn backup_antigo_sem_as_colunas_importa_como_agente() {
     // Simula um arquivo gerado antes da migração: sem `origin` e `author_name`.
     let mut retrato = origem
         .store()
-        .retrato_da_org(org.id, true)
+        .org_snapshot(org.id, true)
         .expect("retrato da org");
-    for linha in retrato.tabelas.get_mut("messages").expect("tem mensagens") {
+    for linha in retrato.tables.get_mut("messages").expect("tem mensagens") {
         let objeto = linha.as_object_mut().expect("linha é objeto");
         objeto.remove("origin");
         objeto.remove("author_name");
@@ -249,17 +249,17 @@ fn backup_antigo_sem_as_colunas_importa_como_agente() {
     let destino = Cenario::novo("backup-antigo-destino");
     destino
         .store()
-        .importar_retrato(retrato, DestinoImportacao::DaOrigem)
+        .import_snapshot(retrato, ImportTarget::Origin)
         .expect("importa o arquivo antigo");
 
     let lidas = destino
         .store()
-        .mensagens()
-        .listar(org.id, conversa.id, Pagina::default())
+        .messages()
+        .listar(org.id, conversa.id, Page::default())
         .expect("lista no destino");
     assert_eq!(lidas.len(), 1);
-    assert_eq!(lidas[0].origem, Origem::Agente);
-    assert_eq!(lidas[0].autor_nome, None);
+    assert_eq!(lidas[0].origin, Origin::Agente);
+    assert_eq!(lidas[0].author_name, None);
 }
 
 #[test]
@@ -274,7 +274,7 @@ fn migracao_da_origem_preserva_mensagens_que_ja_existiam() {
     let conn = rusqlite::Connection::open(&caminho).expect("abre o banco");
 
     // Banco no estado anterior: só as migrações 1 e 2, com duas mensagens gravadas.
-    migrar(&conn, "harness.db", &caminho, &MIGRACOES_HARNESS[..2], 1).expect("migra até a 2");
+    migrate(&conn, "harness.db", &caminho, &HARNESS_MIGRATIONS[..2], 1).expect("migra até a 2");
     // As mensagens de teste não têm org nem conversa reais: o teste cobre só as colunas novas,
     // então a checagem de chave estrangeira fica desligada nesta conexão.
     conn.execute_batch("PRAGMA foreign_keys = OFF;")
@@ -288,9 +288,12 @@ fn migracao_da_origem_preserva_mensagens_que_ja_existiam() {
 
     // Aplica a migração 3 sobre o banco com dados.
     let relatorio =
-        migrar(&conn, "harness.db", &caminho, MIGRACOES_HARNESS, 2).expect("migra até a 3");
-    assert_eq!(relatorio.versao_antes, 2);
-    assert_eq!(relatorio.versao_depois, poph_store::versao_alvo_harness());
+        migrate(&conn, "harness.db", &caminho, HARNESS_MIGRATIONS, 2).expect("migra até a 3");
+    assert_eq!(relatorio.version_before, 2);
+    assert_eq!(
+        relatorio.version_after,
+        poph_store::harness_target_version()
+    );
 
     let total: i64 = conn
         .query_row("SELECT count(*) FROM messages", [], |linha| linha.get(0))

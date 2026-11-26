@@ -8,11 +8,11 @@ use poph_types::{AuditId, ConversationId, InboxId, IntegrationId, OrgId, OutboxI
 use rusqlite::{OptionalExtension, Row, params};
 
 use crate::Store;
-use crate::erro::{ErroStore, Resultado};
-use crate::modelo::{
-    AnexoRegistro, EstadoSaida, ItemEntrada, ItemSaida, Mensagem, NovaEntrada, NovaEntradaCanal,
-    NovaEntradaComMensagem, NovaMensagemDoAparelho, NovaSaida, Origem, Papel, Recebido,
-    RecebidoComMensagem, RecebidoDoAparelho,
+use crate::error::{Resultado, StoreError};
+use crate::model::{
+    AttachmentRecord, InboxItem, Mensagem, NewChannelInboxItem, NewDeviceMessage, NewInboxItem,
+    NewInboxItemWithMessage, NewOutboxItem, Origin, OutboxItem, OutboxState, Received,
+    ReceivedFromDevice, ReceivedWithMessage, Role,
 };
 use crate::repos::conversas::gravar_nome_cliente;
 use crate::repos::id_da_coluna;
@@ -33,21 +33,21 @@ pub(crate) const COLUNAS_SAIDA: &str =
 pub(crate) fn item_de_saida_novo(
     id: OutboxId,
     org: OrgId,
-    nova: NovaSaida,
+    nova: NewOutboxItem,
     criado_em: i64,
-) -> ItemSaida {
-    ItemSaida {
+) -> OutboxItem {
+    OutboxItem {
         id,
         org_id: org,
         conversation_id: nova.conversation_id,
         turn_id: nova.turn_id,
         seq: nova.seq,
         tipo: nova.tipo,
-        conteudo_json: nova.conteudo_json,
-        estado: EstadoSaida::Pendente,
+        content_json: nova.content_json,
+        estado: OutboxState::Pending,
         tentativas: 0,
         ultimo_erro: None,
-        criado_em,
+        created_at: criado_em,
         enviado_em: None,
     }
 }
@@ -58,17 +58,17 @@ pub struct CaixaEntrada<'a>(pub(crate) &'a Store);
 impl CaixaEntrada<'_> {
     /// Grava o evento recebido. Reentrega do mesmo id externo devolve `Duplicado` e o item já
     /// gravado, sem erro (o webhook responde OK nos dois casos).
-    pub fn receber(&self, org: OrgId, nova: NovaEntrada) -> Resultado<(Recebido, ItemEntrada)> {
+    pub fn receber(&self, org: OrgId, nova: NewInboxItem) -> Resultado<(Received, InboxItem)> {
         let id = InboxId::generate();
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_org = org.to_string();
-        let NovaEntrada {
+        let NewInboxItem {
             integration_id,
             id_externo,
-            evento_json,
+            event_json: evento_json,
         } = nova;
         let texto_integracao = integration_id.to_string();
-        self.0.escrita(move |conn| {
+        self.0.write(move |conn| {
             let inseriu = conn
                 .execute(
                     "INSERT OR IGNORE INTO inbox
@@ -84,7 +84,7 @@ impl CaixaEntrada<'_> {
                         agora
                     ],
                 )
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
 
             if inseriu == 0 {
                 let existente = conn
@@ -97,10 +97,10 @@ impl CaixaEntrada<'_> {
                         linha_entrada,
                     )
                     .optional()
-                    .map_err(ErroStore::from)?;
+                    .map_err(StoreError::from)?;
                 return match existente {
-                    Some(item) => Ok((Recebido::Duplicado, item)),
-                    None => Err(ErroStore::Interno(
+                    Some(item) => Ok((Received::Duplicate, item)),
+                    None => Err(StoreError::Internal(
                         "inserção da entrada ignorada, mas a original não foi encontrada"
                             .to_owned(),
                     )),
@@ -108,15 +108,15 @@ impl CaixaEntrada<'_> {
             }
 
             Ok((
-                Recebido::Novo,
-                ItemEntrada {
+                Received::New,
+                InboxItem {
                     id,
                     org_id: org,
                     integration_id,
                     id_externo,
-                    evento_json,
-                    recebido_em: agora,
-                    processado_em: None,
+                    event_json: evento_json,
+                    received_at: agora,
+                    processed_at: None,
                     tentativas: 0,
                     ultimo_erro: None,
                 },
@@ -126,11 +126,11 @@ impl CaixaEntrada<'_> {
 
     /// Marca como processado (com o erro, quando falhou). `processado_em` preenchido = sai da fila.
     pub fn marcar_processado(&self, org: OrgId, id: InboxId, erro: Option<&str>) -> Resultado<()> {
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_org = org.to_string();
         let texto_id = id.to_string();
         let erro = erro.map(str::to_owned);
-        self.0.escrita(move |conn| {
+        self.0.write(move |conn| {
             conn.execute(
                 "UPDATE inbox
                     SET processed_at = ?3, attempts = attempts + 1, last_error = ?4
@@ -138,7 +138,7 @@ impl CaixaEntrada<'_> {
                 params![texto_org, texto_id, agora, erro],
             )
             .map(|_| ())
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })
     }
 
@@ -150,23 +150,23 @@ impl CaixaEntrada<'_> {
     pub fn receber_com_mensagem(
         &self,
         org: OrgId,
-        nova: NovaEntradaComMensagem,
-    ) -> Resultado<RecebidoComMensagem> {
+        nova: NewInboxItemWithMessage,
+    ) -> Resultado<ReceivedWithMessage> {
         let id = InboxId::generate();
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_org = org.to_string();
-        let NovaEntradaComMensagem {
+        let NewInboxItemWithMessage {
             integration_id,
             id_externo,
-            evento_json,
+            event_json: evento_json,
             conversation_id,
-            mensagem_id,
+            message_id: mensagem_id,
             texto,
-            anexos_json,
+            attachments_json: anexos_json,
         } = nova;
         let texto_integracao = integration_id.to_string();
         let texto_conversa = conversation_id.to_string();
-        self.0.escrita(move |conn| {
+        self.0.write(move |conn| {
             // 1. A entrada primeiro: é ela que decide se a entrega é nova (chave única).
             let inseriu = conn
                 .execute(
@@ -183,7 +183,7 @@ impl CaixaEntrada<'_> {
                         agora
                     ],
                 )
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
 
             // 2. A mensagem do cliente, na mesma transação (idempotente por conversa + id externo).
             conn.execute(
@@ -195,14 +195,14 @@ impl CaixaEntrada<'_> {
                     mensagem_id.to_string(),
                     &texto_org,
                     &texto_conversa,
-                    Papel::Usuario.como_texto(),
+                    Role::User.as_text(),
                     &texto,
                     &anexos_json,
                     &id_externo,
                     agora
                 ],
             )
-            .map_err(ErroStore::from)?;
+            .map_err(StoreError::from)?;
 
             let mensagem = conn
                 .query_row(
@@ -214,9 +214,9 @@ impl CaixaEntrada<'_> {
                     crate::repos::mensagens::linha,
                 )
                 .optional()
-                .map_err(ErroStore::from)?
+                .map_err(StoreError::from)?
                 .ok_or_else(|| {
-                    ErroStore::Interno(
+                    StoreError::Internal(
                         "mensagem recém-gravada não encontrada na mesma transação".to_owned(),
                     )
                 })?;
@@ -232,30 +232,30 @@ impl CaixaEntrada<'_> {
                         linha_entrada,
                     )
                     .optional()
-                    .map_err(ErroStore::from)?
+                    .map_err(StoreError::from)?
                     .ok_or_else(|| {
-                        ErroStore::Interno(
+                        StoreError::Internal(
                             "inserção da entrada ignorada, mas a original não foi encontrada"
                                 .to_owned(),
                         )
                     })?;
-                return Ok(RecebidoComMensagem {
-                    situacao: Recebido::Duplicado,
+                return Ok(ReceivedWithMessage {
+                    situacao: Received::Duplicate,
                     item: existente,
                     mensagem,
                 });
             }
 
-            Ok(RecebidoComMensagem {
-                situacao: Recebido::Novo,
-                item: ItemEntrada {
+            Ok(ReceivedWithMessage {
+                situacao: Received::New,
+                item: InboxItem {
                     id,
                     org_id: org,
                     integration_id,
                     id_externo,
-                    evento_json,
-                    recebido_em: agora,
-                    processado_em: None,
+                    event_json: evento_json,
+                    received_at: agora,
+                    processed_at: None,
                     tentativas: 0,
                     ultimo_erro: None,
                 },
@@ -267,35 +267,35 @@ impl CaixaEntrada<'_> {
     /// Quantos itens da org ainda não foram processados (tamanho da fila de entrada).
     pub fn contar_pendentes(&self, org: OrgId) -> Resultado<u64> {
         let texto_org = org.to_string();
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             conn.query_row(
                 "SELECT COUNT(*) FROM inbox WHERE org_id = ?1 AND processed_at IS NULL",
                 params![texto_org],
                 |linha| linha.get::<_, i64>(0),
             )
             .map(|total| total.max(0) as u64)
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })
     }
 
     /// Itens prontos para despachar: ainda não processados e sem adiamento, ou com o adiamento
     /// vencido. É o que o despacho lê; o item adiado por falha do modelo só volta depois do instante.
-    pub fn listar_pendentes(&self, org: OrgId, limite: u32) -> Resultado<Vec<ItemEntrada>> {
+    pub fn listar_pendentes(&self, org: OrgId, limite: u32) -> Resultado<Vec<InboxItem>> {
         self.listar(org, limite, true)
     }
 
     /// Itens ainda não processados, adiados ou não. O turno usa esta lista para concluir os itens
     /// que atendeu: um adiado que entrou no grupo de um turno novo também precisa sair da fila.
-    pub fn listar_abertos(&self, org: OrgId, limite: u32) -> Resultado<Vec<ItemEntrada>> {
+    pub fn listar_abertos(&self, org: OrgId, limite: u32) -> Resultado<Vec<InboxItem>> {
         self.listar(org, limite, false)
     }
 
-    fn listar(&self, org: OrgId, limite: u32, so_vencidos: bool) -> Resultado<Vec<ItemEntrada>> {
+    fn listar(&self, org: OrgId, limite: u32, so_vencidos: bool) -> Resultado<Vec<InboxItem>> {
         let texto_org = org.to_string();
         let limite = i64::from(limite.clamp(1, 1000));
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let filtrar = i64::from(so_vencidos);
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             let mut consulta = conn.prepare(&format!(
                 "SELECT {COLUNAS_ENTRADA} FROM inbox
                   WHERE org_id = ?1 AND processed_at IS NULL
@@ -319,7 +319,7 @@ impl CaixaEntrada<'_> {
         let texto_org = org.to_string();
         let textos: Vec<String> = ids.iter().map(ToString::to_string).collect();
         let erro = erro.to_owned();
-        self.0.escrita(move |conn| {
+        self.0.write(move |conn| {
             for texto_id in &textos {
                 conn.execute(
                     "UPDATE inbox
@@ -327,7 +327,7 @@ impl CaixaEntrada<'_> {
                       WHERE org_id = ?1 AND id = ?2 AND processed_at IS NULL",
                     params![texto_org, texto_id, proxima_em, erro],
                 )
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
             }
             Ok(())
         })
@@ -343,19 +343,19 @@ impl CaixaEntrada<'_> {
     }
 
     /// Busca pelo id dentro da org.
-    pub fn obter(&self, org: OrgId, id: InboxId) -> Resultado<ItemEntrada> {
+    pub fn obter(&self, org: OrgId, id: InboxId) -> Resultado<InboxItem> {
         let texto_org = org.to_string();
         let texto_id = id.to_string();
-        let encontrado = self.0.leitura(move |conn| {
+        let encontrado = self.0.read(move |conn| {
             conn.query_row(
                 &format!("SELECT {COLUNAS_ENTRADA} FROM inbox WHERE org_id = ?1 AND id = ?2"),
                 params![texto_org, texto_id],
                 linha_entrada,
             )
             .optional()
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })?;
-        super::exigir(encontrado, "item de entrada", &id.to_string())
+        super::require(encontrado, "item de entrada", &id.to_string())
     }
 }
 
@@ -368,31 +368,31 @@ impl CaixaSaida<'_> {
     pub fn contar_do_turno(&self, org: OrgId, turno: TurnId) -> Resultado<u64> {
         let texto_org = org.to_string();
         let texto_turno = turno.to_string();
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             conn.query_row(
                 "SELECT COUNT(*) FROM outbox WHERE org_id = ?1 AND turn_id = ?2",
                 params![texto_org, texto_turno],
                 |linha| linha.get::<_, i64>(0),
             )
             .map(|total| total.max(0) as u64)
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })
     }
 
     /// Enfileira a saída. Devolve `false` quando `(turn_id, seq)` já existia (nada foi duplicado).
-    pub fn enfileirar(&self, org: OrgId, nova: NovaSaida) -> Resultado<(bool, ItemSaida)> {
+    pub fn enfileirar(&self, org: OrgId, nova: NewOutboxItem) -> Resultado<(bool, OutboxItem)> {
         let id = OutboxId::generate();
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_org = org.to_string();
-        let NovaSaida {
+        let NewOutboxItem {
             conversation_id,
             turn_id,
             seq,
             tipo,
-            conteudo_json,
+            content_json: conteudo_json,
         } = nova;
         let texto_turno = turn_id.to_string();
-        self.0.escrita(move |conn| {
+        self.0.write(move |conn| {
             let inseriu = conn
                 .execute(
                     "INSERT OR IGNORE INTO outbox
@@ -410,7 +410,7 @@ impl CaixaSaida<'_> {
                         agora
                     ],
                 )
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
 
             if inseriu == 0 {
                 let existente = conn
@@ -422,10 +422,10 @@ impl CaixaSaida<'_> {
                         linha_saida,
                     )
                     .optional()
-                    .map_err(ErroStore::from)?;
+                    .map_err(StoreError::from)?;
                 return match existente {
                     Some(item) => Ok((false, item)),
-                    None => Err(ErroStore::Interno(
+                    None => Err(StoreError::Internal(
                         "inserção da saída ignorada, mas a original não foi encontrada".to_owned(),
                     )),
                 };
@@ -436,12 +436,12 @@ impl CaixaSaida<'_> {
                 item_de_saida_novo(
                     id,
                     org,
-                    NovaSaida {
+                    NewOutboxItem {
                         conversation_id,
                         turn_id,
                         seq,
                         tipo,
-                        conteudo_json,
+                        content_json: conteudo_json,
                     },
                     agora,
                 ),
@@ -458,24 +458,24 @@ impl CaixaSaida<'_> {
         &self,
         org: OrgId,
         id: OutboxId,
-        estado: EstadoSaida,
+        estado: OutboxState,
         erro: Option<&str>,
     ) -> Resultado<()> {
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_org = org.to_string();
         let texto_id = id.to_string();
         let erro = erro.map(str::to_owned);
-        let enviado = matches!(estado, EstadoSaida::Enviado).then_some(agora);
-        self.0.escrita(move |conn| {
+        let enviado = matches!(estado, OutboxState::Sent).then_some(agora);
+        self.0.write(move |conn| {
             conn.execute(
                 "UPDATE outbox
                     SET state = ?3, attempts = attempts + 1, last_error = ?4,
                         sent_at = COALESCE(?5, sent_at)
                   WHERE org_id = ?1 AND id = ?2",
-                params![texto_org, texto_id, estado.como_texto(), erro, enviado],
+                params![texto_org, texto_id, estado.as_text(), erro, enviado],
             )
             .map(|_| ())
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })
     }
 
@@ -487,7 +487,7 @@ impl CaixaSaida<'_> {
     pub fn iniciar_envio(&self, org: OrgId, id: OutboxId) -> Resultado<u32> {
         let texto_org = org.to_string();
         let texto_id = id.to_string();
-        self.0.escrita(move |conn| {
+        self.0.write(move |conn| {
             let tentativas = conn
                 .query_row(
                     "UPDATE outbox
@@ -498,9 +498,9 @@ impl CaixaSaida<'_> {
                     |linha| linha.get::<_, i64>(0),
                 )
                 .optional()
-                .map_err(ErroStore::from)?
+                .map_err(StoreError::from)?
                 .ok_or_else(|| {
-                    ErroStore::Interno(format!(
+                    StoreError::Internal(format!(
                         "item de saída `{texto_id}` não estava aguardando envio"
                     ))
                 })?;
@@ -524,14 +524,14 @@ impl CaixaSaida<'_> {
         id: OutboxId,
         id_externo: Option<&str>,
     ) -> Resultado<()> {
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_org = org.to_string();
         let texto_id = id.to_string();
         let id_externo = id_externo
             .map(str::trim)
             .filter(|valor| !valor.is_empty())
             .map(str::to_owned);
-        self.0.escrita(move |conn| {
+        self.0.write(move |conn| {
             conn.execute(
                 "UPDATE outbox
                     SET state = 'sent', sent_at = ?3, last_error = NULL,
@@ -540,7 +540,7 @@ impl CaixaSaida<'_> {
                 params![texto_org, texto_id, agora, id_externo],
             )
             .map(|_| ())
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })
     }
 
@@ -554,42 +554,42 @@ impl CaixaSaida<'_> {
         definitivo: bool,
     ) -> Resultado<()> {
         let estado = if definitivo {
-            EstadoSaida::Falhou
+            OutboxState::Failed
         } else {
-            EstadoSaida::Enviando
+            OutboxState::Sending
         };
         let texto_org = org.to_string();
         let texto_id = id.to_string();
         let motivo = motivo.to_owned();
-        self.0.escrita(move |conn| {
+        self.0.write(move |conn| {
             conn.execute(
                 "UPDATE outbox SET state = ?3, last_error = ?4 WHERE org_id = ?1 AND id = ?2",
-                params![texto_org, texto_id, estado.como_texto(), motivo],
+                params![texto_org, texto_id, estado.as_text(), motivo],
             )
             .map(|_| ())
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })
     }
 
     /// Quantos itens da org estão num estado (tamanho da fila por estado).
-    pub fn contar_por_estado(&self, org: OrgId, estado: EstadoSaida) -> Resultado<u64> {
+    pub fn contar_por_estado(&self, org: OrgId, estado: OutboxState) -> Resultado<u64> {
         let texto_org = org.to_string();
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             conn.query_row(
                 "SELECT COUNT(*) FROM outbox WHERE org_id = ?1 AND state = ?2",
-                params![texto_org, estado.como_texto()],
+                params![texto_org, estado.as_text()],
                 |linha| linha.get::<_, i64>(0),
             )
             .map(|total| total.max(0) as u64)
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })
     }
 
     /// Itens que precisam de envio: `pending` e `sending` (o `sending` é o reenvio da retomada, D11).
-    pub fn listar_pendentes(&self, org: OrgId, limite: u32) -> Resultado<Vec<ItemSaida>> {
+    pub fn listar_pendentes(&self, org: OrgId, limite: u32) -> Resultado<Vec<OutboxItem>> {
         let texto_org = org.to_string();
         let limite = i64::from(limite.clamp(1, 1000));
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             let mut consulta = conn.prepare(&format!(
                 "SELECT {COLUNAS_SAIDA} FROM outbox
                   WHERE org_id = ?1 AND state IN ('pending', 'sending')
@@ -611,7 +611,7 @@ impl CaixaSaida<'_> {
     pub fn id_externo(&self, org: OrgId, id: OutboxId) -> Resultado<Option<String>> {
         let texto_org = org.to_string();
         let texto_id = id.to_string();
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             conn.query_row(
                 "SELECT external_message_id FROM outbox WHERE org_id = ?1 AND id = ?2",
                 params![texto_org, texto_id],
@@ -619,7 +619,7 @@ impl CaixaSaida<'_> {
             )
             .optional()
             .map(|valor| valor.flatten())
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })
     }
 
@@ -631,7 +631,7 @@ impl CaixaSaida<'_> {
     pub fn enviado_com_id_externo(&self, org: OrgId, id_externo: &str) -> Resultado<bool> {
         let texto_org = org.to_string();
         let id_externo = id_externo.trim().to_owned();
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             let achado: Option<i64> = conn
                 .query_row(
                     "SELECT 1 FROM outbox
@@ -641,7 +641,7 @@ impl CaixaSaida<'_> {
                     |linha| linha.get(0),
                 )
                 .optional()
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
             Ok(achado.is_some())
         })
     }
@@ -656,11 +656,11 @@ impl CaixaSaida<'_> {
         org: OrgId,
         conversa: ConversationId,
         limite: u32,
-    ) -> Resultado<Vec<ItemSaida>> {
+    ) -> Resultado<Vec<OutboxItem>> {
         let texto_org = org.to_string();
         let texto_conversa = conversa.to_string();
         let limite = i64::from(limite.clamp(1, 1000));
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             let mut consulta = conn.prepare(&format!(
                 "SELECT {COLUNAS_SAIDA} FROM outbox
                   WHERE org_id = ?1 AND conversation_id = ?2 AND kind = 'file'
@@ -677,46 +677,46 @@ impl CaixaSaida<'_> {
     }
 
     /// Busca pelo id dentro da org.
-    pub fn obter(&self, org: OrgId, id: OutboxId) -> Resultado<ItemSaida> {
+    pub fn obter(&self, org: OrgId, id: OutboxId) -> Resultado<OutboxItem> {
         let texto_org = org.to_string();
         let texto_id = id.to_string();
-        let encontrado = self.0.leitura(move |conn| {
+        let encontrado = self.0.read(move |conn| {
             conn.query_row(
                 &format!("SELECT {COLUNAS_SAIDA} FROM outbox WHERE org_id = ?1 AND id = ?2"),
                 params![texto_org, texto_id],
                 linha_saida,
             )
             .optional()
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })?;
-        super::exigir(encontrado, "item de saída", &id.to_string())
+        super::require(encontrado, "item de saída", &id.to_string())
     }
 }
 
-fn linha_entrada(linha: &Row<'_>) -> rusqlite::Result<ItemEntrada> {
-    Ok(ItemEntrada {
+fn linha_entrada(linha: &Row<'_>) -> rusqlite::Result<InboxItem> {
+    Ok(InboxItem {
         id: id_da_coluna(linha, 0)?,
         org_id: id_da_coluna(linha, 1)?,
         integration_id: id_da_coluna::<IntegrationId>(linha, 2)?,
         id_externo: linha.get(3)?,
-        evento_json: linha.get(4)?,
-        recebido_em: linha.get(5)?,
-        processado_em: linha.get(6)?,
+        event_json: linha.get(4)?,
+        received_at: linha.get(5)?,
+        processed_at: linha.get(6)?,
         tentativas: linha.get::<_, u32>(7)?,
         ultimo_erro: linha.get(8)?,
     })
 }
 
-pub(crate) fn linha_saida(linha: &Row<'_>) -> rusqlite::Result<ItemSaida> {
-    Ok(ItemSaida {
+pub(crate) fn linha_saida(linha: &Row<'_>) -> rusqlite::Result<OutboxItem> {
+    Ok(OutboxItem {
         id: id_da_coluna(linha, 0)?,
         org_id: id_da_coluna(linha, 1)?,
         conversation_id: id_da_coluna::<ConversationId>(linha, 2)?,
         turn_id: id_da_coluna::<TurnId>(linha, 3)?,
         seq: linha.get::<_, u32>(4)?,
         tipo: linha.get(5)?,
-        conteudo_json: linha.get(6)?,
-        estado: EstadoSaida::de_texto(&linha.get::<_, String>(7)?).map_err(|erro| {
+        content_json: linha.get(6)?,
+        estado: OutboxState::from_text(&linha.get::<_, String>(7)?).map_err(|erro| {
             rusqlite::Error::FromSqlConversionFailure(
                 7,
                 rusqlite::types::Type::Text,
@@ -725,7 +725,7 @@ pub(crate) fn linha_saida(linha: &Row<'_>) -> rusqlite::Result<ItemSaida> {
         })?,
         tentativas: linha.get(8)?,
         ultimo_erro: linha.get(9)?,
-        criado_em: linha.get(10)?,
+        created_at: linha.get(10)?,
         enviado_em: linha.get(11)?,
     })
 }
@@ -741,10 +741,10 @@ impl CaixaEntrada<'_> {
         &self,
         integracao: poph_types::IntegrationId,
         id_externo: &str,
-    ) -> Resultado<Option<RecebidoComMensagem>> {
+    ) -> Resultado<Option<ReceivedWithMessage>> {
         let texto_integracao = integracao.to_string();
         let id_externo = id_externo.to_owned();
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             let item = conn
                 .query_row(
                     &format!(
@@ -755,15 +755,15 @@ impl CaixaEntrada<'_> {
                     linha_entrada,
                 )
                 .optional()
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
             let Some(item) = item else {
                 return Ok(None);
             };
             let Some(mensagem) = mensagem_da_entrega(conn, &texto_integracao, &id_externo)? else {
                 return Ok(None);
             };
-            Ok(Some(RecebidoComMensagem {
-                situacao: Recebido::Duplicado,
+            Ok(Some(ReceivedWithMessage {
+                situacao: Received::Duplicate,
                 item,
                 mensagem,
             }))
@@ -779,24 +779,24 @@ impl CaixaEntrada<'_> {
     pub fn receber_do_canal(
         &self,
         org: OrgId,
-        nova: NovaEntradaCanal,
-    ) -> Resultado<RecebidoComMensagem> {
+        nova: NewChannelInboxItem,
+    ) -> Resultado<ReceivedWithMessage> {
         let id_entrada = InboxId::generate();
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_org = org.to_string();
-        let NovaEntradaCanal {
+        let NewChannelInboxItem {
             integration_id,
             agent_id,
             canal,
             id_externo,
             peer,
-            evento_json,
+            event_json: evento_json,
             texto,
             anexos,
-            nome_cliente,
+            customer_name: nome_cliente,
         } = nova;
         let texto_integracao = integration_id.to_string();
-        self.0.escrita(move |conn| {
+        self.0.write(move |conn| {
             let inseriu = conn
                 .execute(
                     "INSERT OR IGNORE INTO inbox
@@ -812,7 +812,7 @@ impl CaixaEntrada<'_> {
                         agora
                     ],
                 )
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
 
             if inseriu == 0 {
                 let item = conn
@@ -824,15 +824,15 @@ impl CaixaEntrada<'_> {
                         params![&texto_integracao, &id_externo],
                         linha_entrada,
                     )
-                    .map_err(ErroStore::from)?;
+                    .map_err(StoreError::from)?;
                 let mensagem = mensagem_da_entrega(conn, &texto_integracao, &id_externo)?
                     .ok_or_else(|| {
-                        ErroStore::Interno(
+                        StoreError::Internal(
                             "entrada já gravada sem a mensagem correspondente".to_owned(),
                         )
                     })?;
-                return Ok(RecebidoComMensagem {
-                    situacao: Recebido::Duplicado,
+                return Ok(ReceivedWithMessage {
+                    situacao: Received::Duplicate,
                     item,
                     mensagem,
                 });
@@ -864,13 +864,13 @@ impl CaixaEntrada<'_> {
                     &mensagem_id,
                     &texto_org,
                     &conversa_id,
-                    Papel::Usuario.como_texto(),
+                    Role::User.as_text(),
                     &texto,
                     &id_externo,
                     agora
                 ],
             )
-            .map_err(ErroStore::from)?;
+            .map_err(StoreError::from)?;
 
             // O turno lê da fila a conversa e a mensagem (HR-26h). Os dois ids só existem agora,
             // dentro da transação: o payload recebe `conversa` e `mensagem`, e o evento do canal
@@ -881,7 +881,7 @@ impl CaixaEntrada<'_> {
                 "UPDATE inbox SET payload_json = ?2 WHERE id = ?1",
                 params![id_entrada.to_string(), payload_turno],
             )
-            .map_err(ErroStore::from)?;
+            .map_err(StoreError::from)?;
 
             let mut ids_anexos: Vec<String> = Vec::with_capacity(anexos.len());
             for anexo in &anexos {
@@ -895,32 +895,32 @@ impl CaixaEntrada<'_> {
                         &id_anexo,
                         &texto_org,
                         &mensagem_id,
-                        &anexo.nome,
+                        &anexo.name,
                         &anexo.mime,
-                        anexo.tamanho_bytes as i64,
+                        anexo.size_bytes as i64,
                         &anexo.sha256,
                         &anexo.blob_path,
-                        &anexo.texto_extraido,
-                        anexo.status_extracao,
+                        &anexo.extracted_text,
+                        anexo.extraction_status,
                         agora
                     ],
                 )
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
                 ids_anexos.push(id_anexo);
             }
             let anexos_json = serde_json::to_string(&ids_anexos).map_err(|erro| {
-                ErroStore::Interno(format!("lista de anexos não serializa: {erro}"))
+                StoreError::Internal(format!("lista de anexos não serializa: {erro}"))
             })?;
             conn.execute(
                 "UPDATE messages SET attachments_json = ?2 WHERE id = ?1",
                 params![&mensagem_id, anexos_json],
             )
-            .map_err(ErroStore::from)?;
+            .map_err(StoreError::from)?;
             conn.execute(
                 "UPDATE conversations SET last_message_at = ?2, updated_at = ?2 WHERE id = ?1",
                 params![&conversa_id, agora],
             )
-            .map_err(ErroStore::from)?;
+            .map_err(StoreError::from)?;
 
             let mensagem = conn
                 .query_row(
@@ -930,18 +930,18 @@ impl CaixaEntrada<'_> {
                     params![&mensagem_id],
                     crate::repos::mensagens::linha,
                 )
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
 
-            Ok(RecebidoComMensagem {
-                situacao: Recebido::Novo,
-                item: ItemEntrada {
+            Ok(ReceivedWithMessage {
+                situacao: Received::New,
+                item: InboxItem {
                     id: id_entrada,
                     org_id: org,
                     integration_id,
                     id_externo,
-                    evento_json,
-                    recebido_em: agora,
-                    processado_em: None,
+                    event_json: evento_json,
+                    received_at: agora,
+                    processed_at: None,
                     tentativas: 0,
                     ultimo_erro: None,
                 },
@@ -967,10 +967,10 @@ impl CaixaEntrada<'_> {
     pub fn receber_do_aparelho(
         &self,
         org: OrgId,
-        nova: NovaMensagemDoAparelho,
-    ) -> Resultado<RecebidoDoAparelho> {
-        let agora = self.0.agora();
-        let NovaMensagemDoAparelho {
+        nova: NewDeviceMessage,
+    ) -> Resultado<ReceivedFromDevice> {
+        let agora = self.0.now();
+        let NewDeviceMessage {
             integration_id,
             agent_id,
             canal,
@@ -981,7 +981,7 @@ impl CaixaEntrada<'_> {
         let texto_org = org.to_string();
         let texto_integracao = integration_id.to_string();
         let texto_agente = agent_id.to_string();
-        self.0.escrita(move |conn| {
+        self.0.write(move |conn| {
             // Reentrega: o mesmo id externo nesta integração devolve a mensagem que já está lá,
             // em qualquer conversa dela (a conversa anterior pode já ter fechado).
             let ja_gravada: Option<(String, String)> = conn
@@ -995,7 +995,7 @@ impl CaixaEntrada<'_> {
                     |linha| Ok((linha.get::<_, String>(0)?, linha.get::<_, String>(1)?)),
                 )
                 .optional()
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
             if let Some((mensagem_id, conversa_id)) = ja_gravada {
                 let mensagem = conn
                     .query_row(
@@ -1006,12 +1006,12 @@ impl CaixaEntrada<'_> {
                         params![&mensagem_id],
                         crate::repos::mensagens::linha,
                     )
-                    .map_err(ErroStore::from)?;
-                return Ok(RecebidoDoAparelho {
-                    situacao: Recebido::Duplicado,
+                    .map_err(StoreError::from)?;
+                return Ok(ReceivedFromDevice {
+                    situacao: Received::Duplicate,
                     conversa: conversa_de_texto(&conversa_id)?,
                     mensagem,
-                    transferiu_agora: false,
+                    just_transferred: false,
                 });
             }
 
@@ -1035,14 +1035,14 @@ impl CaixaEntrada<'_> {
                     &mensagem_id,
                     &texto_org,
                     &conversa,
-                    Papel::Assistente.como_texto(),
+                    Role::Assistant.as_text(),
                     &texto,
                     &id_externo,
                     agora,
-                    Origem::Dispositivo.como_texto()
+                    Origin::Device.as_text()
                 ],
             )
-            .map_err(ErroStore::from)?;
+            .map_err(StoreError::from)?;
 
             // Pausa o agente na mesma regra da resposta humana (MX-04): a conversa aberta passa a
             // `transferred` e a versão sobe uma vez só; já transferida, só o carimbo de atividade.
@@ -1054,7 +1054,7 @@ impl CaixaEntrada<'_> {
                       WHERE org_id = ?1 AND id = ?2 AND status = 'open'",
                     params![&texto_org, &conversa, agora],
                 )
-                .map_err(ErroStore::from)?
+                .map_err(StoreError::from)?
                 > 0;
             if !transferiu_agora {
                 conn.execute(
@@ -1062,7 +1062,7 @@ impl CaixaEntrada<'_> {
                       WHERE org_id = ?1 AND id = ?2",
                     params![&texto_org, &conversa, agora],
                 )
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
             }
 
             let detalhe = serde_json::json!({
@@ -1082,7 +1082,7 @@ impl CaixaEntrada<'_> {
                     agora
                 ],
             )
-            .map_err(ErroStore::from)?;
+            .map_err(StoreError::from)?;
 
             let mensagem = conn
                 .query_row(
@@ -1092,13 +1092,13 @@ impl CaixaEntrada<'_> {
                     params![&mensagem_id],
                     crate::repos::mensagens::linha,
                 )
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
 
-            Ok(RecebidoDoAparelho {
-                situacao: Recebido::Novo,
+            Ok(ReceivedFromDevice {
+                situacao: Received::New,
                 conversa: conversa_de_texto(&conversa)?,
                 mensagem,
-                transferiu_agora,
+                just_transferred: transferiu_agora,
             })
         })
     }
@@ -1128,7 +1128,7 @@ fn conversa_do_contato(
             |linha| linha.get::<_, String>(0),
         )
         .optional()
-        .map_err(ErroStore::from)?;
+        .map_err(StoreError::from)?;
     if let Some(id) = existente {
         return Ok(id);
     }
@@ -1144,7 +1144,7 @@ fn conversa_do_contato(
              NULL, 1, ?7, ?7, NULL)",
         params![&id, org, agente, integracao, canal, peer, agora],
     )
-    .map_err(ErroStore::from)?;
+    .map_err(StoreError::from)?;
     // A Ficha do atendimento nasce com a conversa, no mesmo savepoint (PRD L4, FX-07). Este é o
     // caminho que o WhatsApp usa de fato: se a Ficha fosse criada só em `Conversas::criar`, o
     // atendimento real ficaria sem registro.
@@ -1156,7 +1156,7 @@ fn conversa_do_contato(
 fn conversa_de_texto(valor: &str) -> Resultado<ConversationId> {
     valor
         .parse()
-        .map_err(|_| ErroStore::Interno("conversa gravada sem id válido".to_owned()))
+        .map_err(|_| StoreError::Internal("conversa gravada sem id válido".to_owned()))
 }
 
 /// Grava o nome do cliente num savepoint próprio, dentro da transação da mensagem (MX-32).
@@ -1171,14 +1171,14 @@ fn gravar_nome_sem_derrubar(
     agora: i64,
 ) {
     if let Err(erro) = conn.execute_batch("SAVEPOINT nome_cliente") {
-        let codigo = codigo_erro_nome(&ErroStore::Sqlite(erro));
+        let codigo = codigo_erro_nome(&StoreError::Sqlite(erro));
         tracing::warn!(target: "poph_store", org, conversa, codigo, "não consegui abrir o savepoint do nome do cliente; a mensagem segue");
         return;
     }
     match gravar_nome_cliente(conn, org, conversa, nome, agora) {
         Ok(_) => {
             if let Err(erro) = conn.execute_batch("RELEASE nome_cliente") {
-                let codigo = codigo_erro_nome(&ErroStore::Sqlite(erro));
+                let codigo = codigo_erro_nome(&StoreError::Sqlite(erro));
                 tracing::warn!(target: "poph_store", org, conversa, codigo, "não consegui fechar o savepoint do nome do cliente; a mensagem segue");
             }
         }
@@ -1191,11 +1191,11 @@ fn gravar_nome_sem_derrubar(
 }
 
 /// Código curto do erro de gravação do nome, para log.
-fn codigo_erro_nome(erro: &ErroStore) -> &'static str {
+fn codigo_erro_nome(erro: &StoreError) -> &'static str {
     match erro {
-        ErroStore::Dominio(_) => "dominio",
-        ErroStore::Sqlite(_) => "banco",
-        ErroStore::EscritorEncerrado => "escritor_encerrado",
+        StoreError::Domain(_) => "dominio",
+        StoreError::Sqlite(_) => "banco",
+        StoreError::WriterClosed => "escritor_encerrado",
         _ => "armazenamento",
     }
 }
@@ -1208,14 +1208,15 @@ fn payload_da_entrada_do_canal(
     mensagem: &str,
     evento_json: &str,
 ) -> Resultado<String> {
-    let canal: serde_json::Value = serde_json::from_str(evento_json)
-        .map_err(|erro| ErroStore::Interno(format!("evento do canal não lê como JSON: {erro}")))?;
+    let canal: serde_json::Value = serde_json::from_str(evento_json).map_err(|erro| {
+        StoreError::Internal(format!("evento do canal não lê como JSON: {erro}"))
+    })?;
     serde_json::to_string(&serde_json::json!({
         "conversa": conversa,
         "mensagem": mensagem,
         "canal": canal,
     }))
-    .map_err(|erro| ErroStore::Interno(format!("payload da entrada não serializa: {erro}")))
+    .map_err(|erro| StoreError::Internal(format!("payload da entrada não serializa: {erro}")))
 }
 
 fn mensagem_da_entrega(
@@ -1234,15 +1235,15 @@ fn mensagem_da_entrega(
         crate::repos::mensagens::linha,
     )
     .optional()
-    .map_err(ErroStore::from)
+    .map_err(StoreError::from)
 }
 
 impl Mensagens<'_> {
     /// Anexos de uma mensagem, na ordem em que chegaram.
-    pub fn anexos(&self, org: OrgId, mensagem: MessageId) -> Resultado<Vec<AnexoRegistro>> {
+    pub fn anexos(&self, org: OrgId, mensagem: MessageId) -> Resultado<Vec<AttachmentRecord>> {
         let texto_org = org.to_string();
         let texto_mensagem = mensagem.to_string();
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             let mut consulta = conn.prepare(
                 "SELECT id, message_id, name, mime, size_bytes, sha256, blob_path,
                         extraction_status, extracted_text
@@ -1251,16 +1252,16 @@ impl Mensagens<'_> {
                   ORDER BY created_at, id",
             )?;
             let linhas = consulta.query_map(params![texto_org, texto_mensagem], |linha| {
-                Ok(AnexoRegistro {
+                Ok(AttachmentRecord {
                     id: id_da_coluna(linha, 0)?,
-                    mensagem_id: id_da_coluna(linha, 1)?,
-                    nome: linha.get(2)?,
+                    message_id: id_da_coluna(linha, 1)?,
+                    name: linha.get(2)?,
                     mime: linha.get(3)?,
-                    tamanho_bytes: linha.get::<_, i64>(4)?.max(0) as u64,
+                    size_bytes: linha.get::<_, i64>(4)?.max(0) as u64,
                     sha256: linha.get(5)?,
                     blob_path: linha.get(6)?,
-                    status_extracao: linha.get(7)?,
-                    texto_extraido: linha.get(8)?,
+                    extraction_status: linha.get(7)?,
+                    extracted_text: linha.get(8)?,
                 })
             })?;
             let mut anexos = Vec::new();

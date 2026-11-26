@@ -32,7 +32,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
 };
 use poph_evolution::{ClienteEvolution, ErroEvolution};
-use poph_store::IntegracaoAdmin;
+use poph_store::AdminIntegration;
 use poph_types::{AgentId, IntegrationId, OrgId};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -65,7 +65,7 @@ pub struct DadosPareamento {
 struct Alvo {
     org: OrgId,
     id: IntegrationId,
-    integracao: IntegracaoAdmin,
+    integracao: AdminIntegration,
     /// Nome da instância na Evolution (o mesmo do caminho do webhook).
     instancia: String,
     cliente: ClienteEvolution,
@@ -83,7 +83,7 @@ fn alvo(e: &Estado, ident: &Identidade, c: &Caminho) -> Result<Alvo, ApiError> {
     ident.exigir_org(org)?;
     let agente: AgentId = id_da_url(&c.agent_id)?;
     let id: IntegrationId = id_da_url(&c.integration_id)?;
-    let integracao = e.store.integracao_obter(org, agente, id)?;
+    let integracao = e.store.get_integration(org, agente, id)?;
     if !integracao.kind.trim().eq_ignore_ascii_case("whatsapp") {
         return Err(ApiError::novo(
             StatusCode::CONFLICT,
@@ -137,7 +137,7 @@ fn conferir_versao(alvo: &Alvo, h: &HeaderMap) -> Result<(), ApiError> {
 /// Grava o estado de conexão na integração (sem subir a versão).
 fn gravar_estado(e: &Estado, alvo: &Alvo, estado: &str) -> Result<(), ApiError> {
     e.store
-        .integracao_definir_estado_conexao(alvo.org, alvo.id, estado)?;
+        .set_integration_connection_state(alvo.org, alvo.id, estado)?;
     Ok(())
 }
 

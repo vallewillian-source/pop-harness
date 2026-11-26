@@ -13,11 +13,10 @@ use poph_types::{AgentId, KnowledgeGroupId, KnowledgeItemId, OrgId};
 use rusqlite::{OptionalExtension, Row, params};
 
 use crate::Store;
-use crate::erro::{ErroStore, Resultado};
-use crate::modelo::{
-    GrupoConhecimento, ItemConhecimento, ItemParaIndice, LIMITE_CONTEUDO_ITEM,
-    MudancaGrupoConhecimento, MudancaItemConhecimento, NovoGrupoConhecimento, NovoItemConhecimento,
-    Pagina, Status,
+use crate::error::{Resultado, StoreError};
+use crate::model::{
+    IndexItem, KnowledgeGroup, KnowledgeGroupChange, KnowledgeItem, KnowledgeItemChange,
+    MAX_ITEM_CONTENT, NewKnowledgeGroup, NewKnowledgeItem, Page, Status,
 };
 use crate::repos::{conflito_ou_ausente, id_da_coluna, pertence, status_da_coluna, u64_da_coluna};
 
@@ -40,34 +39,30 @@ impl Conhecimento<'_> {
     // ───────────────────────────── Grupos ─────────────────────────────
 
     /// Cria o grupo na org.
-    pub fn criar_grupo(
-        &self,
-        org: OrgId,
-        novo: NovoGrupoConhecimento,
-    ) -> Resultado<GrupoConhecimento> {
-        let nome = validar_nome("nome do grupo", &novo.nome, 120)?;
+    pub fn criar_grupo(&self, org: OrgId, novo: NewKnowledgeGroup) -> Resultado<KnowledgeGroup> {
+        let nome = validar_nome("nome do grupo", &novo.name, 120)?;
         let id = KnowledgeGroupId::generate();
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_id = id.to_string();
         let texto_org = org.to_string();
-        self.0.escrita(move |conn| {
+        self.0.write(move |conn| {
             conn.execute(
                 "INSERT INTO knowledge_groups
                     (id, org_id, name, description, status, version, created_at, updated_at)
                  VALUES (?1, ?2, ?3, ?4, 'active', 1, ?5, ?5)",
-                params![texto_id, texto_org, nome, novo.descricao.trim(), agora],
+                params![texto_id, texto_org, nome, novo.description.trim(), agora],
             )
-            .map_err(|erro| ErroStore::da_escrita("nome do grupo", erro))?;
+            .map_err(|erro| StoreError::from_write("nome do grupo", erro))?;
             Ok(())
         })?;
         self.obter_grupo(org, id)
     }
 
     /// Busca o grupo pelo id dentro da org.
-    pub fn obter_grupo(&self, org: OrgId, id: KnowledgeGroupId) -> Resultado<GrupoConhecimento> {
+    pub fn obter_grupo(&self, org: OrgId, id: KnowledgeGroupId) -> Resultado<KnowledgeGroup> {
         let texto_org = org.to_string();
         let texto_id = id.to_string();
-        let encontrado = self.0.leitura(move |conn| {
+        let encontrado = self.0.read(move |conn| {
             conn.query_row(
                 &format!(
                     "SELECT {COLUNAS_GRUPO} FROM knowledge_groups WHERE id = ?1 AND org_id = ?2"
@@ -76,17 +71,17 @@ impl Conhecimento<'_> {
                 linha_grupo,
             )
             .optional()
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })?;
-        super::exigir(encontrado, "grupo de conhecimento", &id.to_string())
+        super::require(encontrado, "grupo de conhecimento", &id.to_string())
     }
 
     /// Lista os grupos da org.
-    pub fn listar_grupos(&self, org: OrgId, pagina: Pagina) -> Resultado<Vec<GrupoConhecimento>> {
+    pub fn listar_grupos(&self, org: OrgId, pagina: Page) -> Resultado<Vec<KnowledgeGroup>> {
         let texto_org = org.to_string();
-        let apos = pagina.apos.map(|id| id.to_string());
-        let limite = i64::from(pagina.limite);
-        self.0.leitura(move |conn| {
+        let apos = pagina.after.map(|id| id.to_string());
+        let limite = i64::from(pagina.limit);
+        self.0.read(move |conn| {
             let mut consulta = conn.prepare(&format!(
                 "SELECT {COLUNAS_GRUPO} FROM knowledge_groups
                   WHERE org_id = ?1 AND (?2 IS NULL OR id > ?2)
@@ -107,18 +102,18 @@ impl Conhecimento<'_> {
         org: OrgId,
         id: KnowledgeGroupId,
         esperada: u64,
-        mudanca: MudancaGrupoConhecimento,
-    ) -> Resultado<GrupoConhecimento> {
-        let nome = match &mudanca.nome {
+        mudanca: KnowledgeGroupChange,
+    ) -> Resultado<KnowledgeGroup> {
+        let nome = match &mudanca.name {
             Some(nome) => Some(validar_nome("nome do grupo", nome, 120)?),
             None => None,
         };
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_org = org.to_string();
         let texto_id = id.to_string();
-        let status = mudanca.status.map(Status::como_texto);
+        let status = mudanca.status.map(Status::as_text);
         let esperada_i64 = esperada as i64;
-        let efeito = self.0.escrita(move |conn| {
+        let efeito = self.0.write(move |conn| {
             conn.execute(
                 "UPDATE knowledge_groups
                     SET name = COALESCE(?3, name),
@@ -131,13 +126,13 @@ impl Conhecimento<'_> {
                     texto_org,
                     texto_id,
                     nome,
-                    mudanca.descricao.map(|texto| texto.trim().to_owned()),
+                    mudanca.description.map(|texto| texto.trim().to_owned()),
                     status,
                     agora,
                     esperada_i64
                 ],
             )
-            .map_err(|erro| ErroStore::da_escrita("nome do grupo", erro))
+            .map_err(|erro| StoreError::from_write("nome do grupo", erro))
         })?;
         if efeito == 0 {
             return Err(self.conflito_grupo(org, id, esperada));
@@ -149,12 +144,12 @@ impl Conhecimento<'_> {
     pub fn excluir_grupo(&self, org: OrgId, id: KnowledgeGroupId) -> Resultado<()> {
         let texto_org = org.to_string();
         let texto_id = id.to_string();
-        let apagou = self.0.escrita(move |conn| {
+        let apagou = self.0.write(move |conn| {
             conn.execute(
                 "DELETE FROM knowledge_groups WHERE org_id = ?1 AND id = ?2",
                 params![texto_org, texto_id],
             )
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })?;
         if apagou == 0 {
             return Err(nao_encontrado("grupo de conhecimento", &id.to_string()));
@@ -167,13 +162,13 @@ impl Conhecimento<'_> {
         &self,
         org: OrgId,
         grupo: KnowledgeGroupId,
-        pagina: Pagina,
-    ) -> Resultado<Vec<ItemConhecimento>> {
+        pagina: Page,
+    ) -> Resultado<Vec<KnowledgeItem>> {
         let texto_org = org.to_string();
         let texto_grupo = grupo.to_string();
-        let apos = pagina.apos.map(|id| id.to_string());
-        let limite = i64::from(pagina.limite);
-        self.0.leitura(move |conn| {
+        let apos = pagina.after.map(|id| id.to_string());
+        let limite = i64::from(pagina.limit);
+        self.0.read(move |conn| {
             let mut consulta = conn.prepare(&format!(
                 "SELECT {COLUNAS_ITEM} FROM knowledge_items
                  WHERE org_id = ?1 AND group_id = ?2 AND (?3 IS NULL OR id > ?3)
@@ -192,20 +187,16 @@ impl Conhecimento<'_> {
     // ───────────────────────────── Itens ─────────────────────────────
 
     /// Cria o item no grupo, dentro da org.
-    pub fn criar_item(
-        &self,
-        org: OrgId,
-        novo: NovoItemConhecimento,
-    ) -> Resultado<ItemConhecimento> {
-        let titulo = validar_nome("título do item", &novo.titulo, 200)?;
-        let conteudo = validar_conteudo(&novo.conteudo)?;
+    pub fn criar_item(&self, org: OrgId, novo: NewKnowledgeItem) -> Resultado<KnowledgeItem> {
+        let titulo = validar_nome("título do item", &novo.title, 200)?;
+        let conteudo = validar_conteudo(&novo.content)?;
         let tags = serde_json::to_string(&novo.tags).unwrap_or_else(|_| "[]".to_owned());
         let id = KnowledgeItemId::generate();
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_id = id.to_string();
         let texto_org = org.to_string();
-        let grupo = novo.grupo_id.to_string();
-        self.0.escrita(move |conn| {
+        let grupo = novo.group_id.to_string();
+        self.0.write(move |conn| {
             pertence(
                 conn,
                 "knowledge_groups",
@@ -225,21 +216,21 @@ impl Conhecimento<'_> {
                     titulo,
                     conteudo,
                     tags,
-                    novo.posicao,
+                    novo.position,
                     agora
                 ],
             )
-            .map_err(|erro| ErroStore::da_escrita_em("título do item", CAMPOS_ITEM, erro))?;
+            .map_err(|erro| StoreError::from_write_with("título do item", CAMPOS_ITEM, erro))?;
             Ok(())
         })?;
         self.obter_item(org, id)
     }
 
     /// Busca o item pelo id dentro da org.
-    pub fn obter_item(&self, org: OrgId, id: KnowledgeItemId) -> Resultado<ItemConhecimento> {
+    pub fn obter_item(&self, org: OrgId, id: KnowledgeItemId) -> Resultado<KnowledgeItem> {
         let texto_org = org.to_string();
         let texto_id = id.to_string();
-        let encontrado = self.0.leitura(move |conn| {
+        let encontrado = self.0.read(move |conn| {
             conn.query_row(
                 &format!(
                     "SELECT {COLUNAS_ITEM} FROM knowledge_items WHERE id = ?1 AND org_id = ?2"
@@ -248,9 +239,9 @@ impl Conhecimento<'_> {
                 linha_item,
             )
             .optional()
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })?;
-        super::exigir(encontrado, "item de conhecimento", &id.to_string())
+        super::require(encontrado, "item de conhecimento", &id.to_string())
     }
 
     /// Lista os itens do grupo (todas as situações: a CLI precisa ver o inativo também).
@@ -258,13 +249,13 @@ impl Conhecimento<'_> {
         &self,
         org: OrgId,
         grupo: KnowledgeGroupId,
-        pagina: Pagina,
-    ) -> Resultado<Vec<ItemConhecimento>> {
+        pagina: Page,
+    ) -> Resultado<Vec<KnowledgeItem>> {
         let texto_org = org.to_string();
         let texto_grupo = grupo.to_string();
-        let apos = pagina.apos.map(|id| id.to_string());
-        let limite = i64::from(pagina.limite);
-        self.0.leitura(move |conn| {
+        let apos = pagina.after.map(|id| id.to_string());
+        let limite = i64::from(pagina.limit);
+        self.0.read(move |conn| {
             let mut consulta = conn.prepare(&format!(
                 "SELECT {COLUNAS_ITEM} FROM knowledge_items
                   WHERE org_id = ?1 AND group_id = ?2 AND (?3 IS NULL OR id > ?3)
@@ -286,13 +277,13 @@ impl Conhecimento<'_> {
         org: OrgId,
         id: KnowledgeItemId,
         esperada: u64,
-        mudanca: MudancaItemConhecimento,
-    ) -> Resultado<ItemConhecimento> {
-        let titulo = match &mudanca.titulo {
+        mudanca: KnowledgeItemChange,
+    ) -> Resultado<KnowledgeItem> {
+        let titulo = match &mudanca.title {
             Some(titulo) => Some(validar_nome("título do item", titulo, 200)?),
             None => None,
         };
-        let conteudo = match &mudanca.conteudo {
+        let conteudo = match &mudanca.content {
             Some(conteudo) => Some(validar_conteudo(conteudo)?),
             None => None,
         };
@@ -300,13 +291,13 @@ impl Conhecimento<'_> {
             .tags
             .as_ref()
             .map(|tags| serde_json::to_string(tags).unwrap_or_else(|_| "[]".to_owned()));
-        let grupo = mudanca.grupo_id.map(|grupo| grupo.to_string());
-        let status = mudanca.status.map(Status::como_texto);
-        let agora = self.0.agora();
+        let grupo = mudanca.group_id.map(|grupo| grupo.to_string());
+        let status = mudanca.status.map(Status::as_text);
+        let agora = self.0.now();
         let texto_org = org.to_string();
         let texto_id = id.to_string();
         let esperada_i64 = esperada as i64;
-        let efeito = self.0.escrita(move |conn| {
+        let efeito = self.0.write(move |conn| {
             if let Some(grupo) = &grupo {
                 pertence(
                     conn,
@@ -334,13 +325,13 @@ impl Conhecimento<'_> {
                     titulo,
                     conteudo,
                     tags,
-                    mudanca.posicao,
+                    mudanca.position,
                     status,
                     agora,
                     esperada_i64
                 ],
             )
-            .map_err(|erro| ErroStore::da_escrita_em("título do item", CAMPOS_ITEM, erro))
+            .map_err(|erro| StoreError::from_write_with("título do item", CAMPOS_ITEM, erro))
         })?;
         if efeito == 0 {
             return Err(self.conflito_item(org, id, esperada));
@@ -352,12 +343,12 @@ impl Conhecimento<'_> {
     pub fn excluir_item(&self, org: OrgId, id: KnowledgeItemId) -> Resultado<()> {
         let texto_org = org.to_string();
         let texto_id = id.to_string();
-        let apagou = self.0.escrita(move |conn| {
+        let apagou = self.0.write(move |conn| {
             conn.execute(
                 "DELETE FROM knowledge_items WHERE org_id = ?1 AND id = ?2",
                 params![texto_org, texto_id],
             )
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })?;
         if apagou == 0 {
             return Err(nao_encontrado("item de conhecimento", &id.to_string()));
@@ -374,11 +365,11 @@ impl Conhecimento<'_> {
         agente: AgentId,
         grupo: KnowledgeGroupId,
     ) -> Resultado<()> {
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_org = org.to_string();
         let texto_agente = agente.to_string();
         let texto_grupo = grupo.to_string();
-        self.0.escrita(move |conn| {
+        self.0.write(move |conn| {
             pertence(conn, "agents", "agente", &texto_org, &texto_agente)?;
             pertence(
                 conn,
@@ -393,7 +384,7 @@ impl Conhecimento<'_> {
                  ON CONFLICT (agent_id, group_id) DO NOTHING",
                 params![texto_org, texto_agente, texto_grupo, agora],
             )
-            .map_err(ErroStore::from)?;
+            .map_err(StoreError::from)?;
             Ok(())
         })?;
         Ok(())
@@ -409,26 +400,22 @@ impl Conhecimento<'_> {
         let texto_org = org.to_string();
         let texto_agente = agente.to_string();
         let texto_grupo = grupo.to_string();
-        let apagou = self.0.escrita(move |conn| {
+        let apagou = self.0.write(move |conn| {
             conn.execute(
                 "DELETE FROM agent_knowledge_groups
                   WHERE org_id = ?1 AND agent_id = ?2 AND group_id = ?3",
                 params![texto_org, texto_agente, texto_grupo],
             )
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })?;
         Ok(apagou > 0)
     }
 
     /// Grupos ligados ao agente, em ordem de nome.
-    pub fn grupos_do_agente(
-        &self,
-        org: OrgId,
-        agente: AgentId,
-    ) -> Resultado<Vec<GrupoConhecimento>> {
+    pub fn grupos_do_agente(&self, org: OrgId, agente: AgentId) -> Resultado<Vec<KnowledgeGroup>> {
         let texto_org = org.to_string();
         let texto_agente = agente.to_string();
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             let mut consulta = conn.prepare(&format!(
                 "SELECT {} FROM knowledge_groups g
                    JOIN agent_knowledge_groups v
@@ -450,7 +437,7 @@ impl Conhecimento<'_> {
     pub fn agentes_do_grupo(&self, org: OrgId, grupo: KnowledgeGroupId) -> Resultado<Vec<AgentId>> {
         let texto_org = org.to_string();
         let texto_grupo = grupo.to_string();
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             let mut consulta = conn.prepare(
                 "SELECT agent_id FROM agent_knowledge_groups
                   WHERE org_id = ?1 AND group_id = ?2 ORDER BY agent_id",
@@ -468,10 +455,10 @@ impl Conhecimento<'_> {
 
     /// Itens que entram no índice do agente: **só item ativo de grupo ativo** (D-05), dos grupos
     /// ligados a ele. Traz o nome do grupo para o registro do turno.
-    pub fn itens_do_agente(&self, org: OrgId, agente: AgentId) -> Resultado<Vec<ItemParaIndice>> {
+    pub fn itens_do_agente(&self, org: OrgId, agente: AgentId) -> Resultado<Vec<IndexItem>> {
         let texto_org = org.to_string();
         let texto_agente = agente.to_string();
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             let mut consulta = conn.prepare(
                 "SELECT i.id, i.group_id, g.name, i.title, i.content, i.version
                    FROM knowledge_items i
@@ -484,13 +471,13 @@ impl Conhecimento<'_> {
                   ORDER BY lower(g.name), i.position, i.id",
             )?;
             let linhas = consulta.query_map(params![texto_org, texto_agente], |linha| {
-                Ok(ItemParaIndice {
+                Ok(IndexItem {
                     id: id_da_coluna(linha, 0)?,
-                    grupo_id: id_da_coluna(linha, 1)?,
-                    grupo: linha.get(2)?,
-                    titulo: linha.get(3)?,
-                    conteudo: linha.get(4)?,
-                    versao: u64_da_coluna(linha, 5)?,
+                    group_id: id_da_coluna(linha, 1)?,
+                    group: linha.get(2)?,
+                    title: linha.get(3)?,
+                    content: linha.get(4)?,
+                    version: u64_da_coluna(linha, 5)?,
                 })
             })?;
             let mut itens = Vec::new();
@@ -509,7 +496,7 @@ impl Conhecimento<'_> {
     ) -> Resultado<Option<String>> {
         let texto_org = org.to_string();
         let texto_item = item.to_string();
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             conn.query_row(
                 "SELECT g.name FROM knowledge_items i
                    JOIN knowledge_groups g ON g.org_id = i.org_id AND g.id = i.group_id
@@ -518,13 +505,13 @@ impl Conhecimento<'_> {
                 |linha| linha.get(0),
             )
             .optional()
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })
     }
 
-    fn conflito_grupo(&self, org: OrgId, id: KnowledgeGroupId, esperada: u64) -> ErroStore {
+    fn conflito_grupo(&self, org: OrgId, id: KnowledgeGroupId, esperada: u64) -> StoreError {
         self.0
-            .leitura(move |conn| {
+            .read(move |conn| {
                 Ok(conflito_ou_ausente(
                     conn,
                     "knowledge_groups",
@@ -537,9 +524,9 @@ impl Conhecimento<'_> {
             .unwrap_or_else(|erro| erro)
     }
 
-    fn conflito_item(&self, org: OrgId, id: KnowledgeItemId, esperada: u64) -> ErroStore {
+    fn conflito_item(&self, org: OrgId, id: KnowledgeItemId, esperada: u64) -> StoreError {
         self.0
-            .leitura(move |conn| {
+            .read(move |conn| {
                 Ok(conflito_ou_ausente(
                     conn,
                     "knowledge_items",
@@ -565,13 +552,13 @@ fn prefixar(apelido: &str, colunas: &str) -> String {
 fn validar_nome(campo: &'static str, texto: &str, limite: usize) -> Resultado<String> {
     let limpo = texto.trim();
     if limpo.is_empty() {
-        return Err(ErroStore::Dominio(poph_types::DomainError::Validation {
+        return Err(StoreError::Domain(poph_types::DomainError::Validation {
             field: campo,
             reason: "não pode ficar em branco".to_owned(),
         }));
     }
     if limpo.chars().count() > limite {
-        return Err(ErroStore::Dominio(poph_types::DomainError::Validation {
+        return Err(StoreError::Domain(poph_types::DomainError::Validation {
             field: campo,
             reason: format!("até {limite} caracteres; vieram {}", limpo.chars().count()),
         }));
@@ -583,53 +570,53 @@ fn validar_conteudo(texto: &str) -> Resultado<String> {
     let limpo = texto.trim();
     let caracteres = limpo.chars().count();
     if caracteres == 0 {
-        return Err(ErroStore::Dominio(poph_types::DomainError::Validation {
+        return Err(StoreError::Domain(poph_types::DomainError::Validation {
             field: "conteúdo do item",
             reason: "não pode ficar em branco".to_owned(),
         }));
     }
-    if caracteres > LIMITE_CONTEUDO_ITEM {
-        return Err(ErroStore::Dominio(poph_types::DomainError::Validation {
+    if caracteres > MAX_ITEM_CONTENT {
+        return Err(StoreError::Domain(poph_types::DomainError::Validation {
             field: "conteúdo do item",
-            reason: format!("até {LIMITE_CONTEUDO_ITEM} caracteres; vieram {caracteres}"),
+            reason: format!("até {MAX_ITEM_CONTENT} caracteres; vieram {caracteres}"),
         }));
     }
     Ok(limpo.to_owned())
 }
 
-fn nao_encontrado(entidade: &'static str, id: &str) -> ErroStore {
-    ErroStore::Dominio(poph_types::DomainError::NotFound {
+fn nao_encontrado(entidade: &'static str, id: &str) -> StoreError {
+    StoreError::Domain(poph_types::DomainError::NotFound {
         entity: entidade,
         id: id.to_owned(),
     })
 }
 
-fn linha_grupo(linha: &Row<'_>) -> rusqlite::Result<GrupoConhecimento> {
-    Ok(GrupoConhecimento {
+fn linha_grupo(linha: &Row<'_>) -> rusqlite::Result<KnowledgeGroup> {
+    Ok(KnowledgeGroup {
         id: id_da_coluna(linha, 0)?,
         org_id: id_da_coluna(linha, 1)?,
-        nome: linha.get(2)?,
-        descricao: linha.get(3)?,
+        name: linha.get(2)?,
+        description: linha.get(3)?,
         status: status_da_coluna(linha, 4)?,
-        versao: u64_da_coluna(linha, 5)?,
-        criado_em: linha.get(6)?,
-        atualizado_em: linha.get(7)?,
+        version: u64_da_coluna(linha, 5)?,
+        created_at: linha.get(6)?,
+        updated_at: linha.get(7)?,
     })
 }
 
-fn linha_item(linha: &Row<'_>) -> rusqlite::Result<ItemConhecimento> {
+fn linha_item(linha: &Row<'_>) -> rusqlite::Result<KnowledgeItem> {
     let tags: String = linha.get(5)?;
-    Ok(ItemConhecimento {
+    Ok(KnowledgeItem {
         id: id_da_coluna(linha, 0)?,
         org_id: id_da_coluna(linha, 1)?,
-        grupo_id: id_da_coluna(linha, 2)?,
-        titulo: linha.get(3)?,
-        conteudo: linha.get(4)?,
+        group_id: id_da_coluna(linha, 2)?,
+        title: linha.get(3)?,
+        content: linha.get(4)?,
         tags: serde_json::from_str(&tags).unwrap_or_default(),
-        posicao: linha.get(6)?,
+        position: linha.get(6)?,
         status: status_da_coluna(linha, 7)?,
-        versao: u64_da_coluna(linha, 8)?,
-        criado_em: linha.get(9)?,
-        atualizado_em: linha.get(10)?,
+        version: u64_da_coluna(linha, 8)?,
+        created_at: linha.get(9)?,
+        updated_at: linha.get(10)?,
     })
 }

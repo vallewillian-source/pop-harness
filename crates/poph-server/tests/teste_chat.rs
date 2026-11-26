@@ -29,7 +29,7 @@ use poph_core::llm::{EventoLlm, LlmProvider, MotivoFim, Pedido, ProvedorFake, Ro
 use poph_files::ConfigArquivos;
 use poph_server::Estado;
 use poph_server::api::teste_chat::CANAL_DE_TESTE;
-use poph_store::{Direcao, EstadoTurno, NovaOrg, NovoAgente, Pagina, StatusConversa, Store};
+use poph_store::{ConversationStatus, Direction, NewAgent, NewOrg, Page, Store, TurnState};
 use poph_types::config::GlobalTokenConfig;
 use poph_types::{
     ConversationId, FileId, HarnessConfig, OrgId, StructuredInstructions, ToolConfig,
@@ -204,25 +204,25 @@ impl Cenario {
         }];
         config.validar().expect("configuração válida");
 
-        let store = Arc::new(Store::abrir(&config).expect("abre o banco"));
+        let store = Arc::new(Store::open(&config).expect("abre o banco"));
         let org = store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: "Org HR-22".to_owned(),
+            .orgs()
+            .criar(NewOrg {
+                name: "Org HR-22".to_owned(),
                 slug: "org-hr22".to_owned(),
                 config_json: "{}".to_owned(),
             })
             .expect("org")
             .id;
         let agente = store
-            .agentes()
+            .agents()
             .criar(
                 org,
-                NovoAgente {
-                    nome: "Bia".to_owned(),
+                NewAgent {
+                    name: "Bia".to_owned(),
                     slug: "bia".to_owned(),
                     // Sem janela de agrupamento: o teste não espera 2 s por turno.
-                    janela_agrupamento_ms: 1,
+                    grouping_window_ms: 1,
                     ..Default::default()
                 },
             )
@@ -235,15 +235,15 @@ impl Cenario {
             let blobs = pasta.join("dados").join("blobs");
             let gravado = poph_files::blob::gravar(&blobs, org, bytes).expect("grava o blob");
             let arquivo = store
-                .biblioteca()
+                .library()
                 .criar(
                     org,
-                    poph_store::NovoArquivoBiblioteca {
+                    poph_store::NewLibraryFile {
                         agent_id: agente,
-                        nome: "catalogo.pdf".to_owned(),
-                        descricao: "catálogo de serviços".to_owned(),
+                        name: "catalogo.pdf".to_owned(),
+                        description: "catálogo de serviços".to_owned(),
                         mime: "application/pdf".to_owned(),
-                        tamanho_bytes: bytes.len() as u64,
+                        size_bytes: bytes.len() as u64,
                         sha256: gravado.sha256.clone(),
                         blob_path: format!("{org}/{}", gravado.sha256),
                     },
@@ -258,7 +258,7 @@ impl Cenario {
                 ..StructuredInstructions::default()
             };
             store
-                .instrucoes()
+                .instructions()
                 .salvar(
                     org,
                     agente,
@@ -423,15 +423,15 @@ impl Cenario {
         loop {
             let turnos = self
                 .store
-                .turnos()
-                .listar(self.org, id, Pagina::com_limite(50))
+                .turns()
+                .listar(self.org, id, Page::with_limit(50))
                 .expect("turnos");
             if let Some(turno) = turnos.last()
-                && turno.estado != EstadoTurno::Rodando
+                && turno.estado != TurnState::Running
             {
                 return json!({
-                    "state": turno.estado.como_texto(),
-                    "error": turno.erro,
+                    "state": turno.estado.as_text(),
+                    "error": turno.error,
                 });
             }
             assert!(
@@ -445,11 +445,11 @@ impl Cenario {
     fn mensagens_saida(&self, conversa: &str) -> usize {
         let id: ConversationId = conversa.parse().expect("id da conversa");
         self.store
-            .mensagens()
-            .listar(self.org, id, Pagina::com_limite(200))
+            .messages()
+            .listar(self.org, id, Page::with_limit(200))
             .expect("mensagens")
             .iter()
-            .filter(|m| m.direcao == Direcao::Saida)
+            .filter(|m| m.direction == Direction::Outbound)
             .count()
     }
 }
@@ -557,7 +557,7 @@ async fn conversa_de_teste_recebe_sse_em_ordem_e_anexo_com_texto_no_prompt() {
     // 4. A resposta foi confirmada na fila (nada preso).
     assert_eq!(
         c.store
-            .caixa_saida()
+            .outbox()
             .listar_pendentes(c.org, POPH_LOTE)
             .expect("fila de saída")
             .len(),
@@ -662,7 +662,7 @@ async fn desconexao_cancela_o_turno_sem_fila_presa() {
     assert_eq!(c.mensagens_saida(&conversa), 0);
     assert_eq!(
         c.store
-            .caixa_saida()
+            .outbox()
             .listar_pendentes(c.org, POPH_LOTE)
             .expect("fila")
             .len(),
@@ -688,9 +688,9 @@ async fn isolamento_por_org_e_reabertura_com_if_match() {
     // Token de outra org: 403 nas três rotas.
     let outra = c
         .store
-        .orgaos()
-        .criar(NovaOrg {
-            nome: "Outra".to_owned(),
+        .orgs()
+        .criar(NewOrg {
+            name: "Outra".to_owned(),
             slug: "outra-org-hr22".to_owned(),
             config_json: "{}".to_owned(),
         })
@@ -726,11 +726,11 @@ async fn isolamento_por_org_e_reabertura_com_if_match() {
     // Conversa de um agente não abre pelo outro agente.
     let outro_agente = c
         .store
-        .agentes()
+        .agents()
         .criar(
             c.org,
-            NovoAgente {
-                nome: "Outro".to_owned(),
+            NewAgent {
+                name: "Outro".to_owned(),
                 slug: "outro-agente-hr22".to_owned(),
                 ..Default::default()
             },
@@ -753,7 +753,7 @@ async fn isolamento_por_org_e_reabertura_com_if_match() {
     let id: ConversationId = conversa.parse().expect("id");
     c.store
         .conversas()
-        .mudar_status(c.org, id, 1, StatusConversa::Transferida, None)
+        .mudar_status(c.org, id, 1, ConversationStatus::Transferred, None)
         .expect("transfere");
     let url = format!("{}{}/{conversa}/reopen", c.base, c.raiz());
     let sem = c
@@ -966,9 +966,9 @@ async fn historico_mostra_o_arquivo_do_agente_e_o_download_devolve_os_bytes() {
     // Token de outra org não lê o histórico desta.
     let outra = c
         .store
-        .orgaos()
-        .criar(NovaOrg {
-            nome: "Outra".to_owned(),
+        .orgs()
+        .criar(NewOrg {
+            name: "Outra".to_owned(),
             slug: "outra-org-hr46d".to_owned(),
             config_json: "{}".to_owned(),
         })

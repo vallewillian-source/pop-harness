@@ -59,7 +59,7 @@ pub async fn tokens(
     if from >= to {
         return Err(invalid("from", "from must be before to."));
     }
-    state.store.orgaos().obter(org)?;
+    state.store.orgs().get(org)?;
     let result = state.store.usage().tokens(org, from, to)?;
     Ok(Json(TokenUsageJson {
         total_input_tokens: result.total_input_tokens,

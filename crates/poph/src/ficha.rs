@@ -12,7 +12,7 @@ use std::process::ExitCode;
 
 use clap::{Args, Subcommand};
 use poph_server::fichas_servico::{detalhe, ficha_json};
-use poph_store::{FiltroFichas, Store};
+use poph_store::{RecordFilter, Store};
 use poph_types::{OrgId, RecordId, RecordStatus};
 use serde_json::{Value, json};
 
@@ -101,7 +101,7 @@ pub fn executar(
 
 fn listar(store: &Store, org: OrgId, args: ListarArgs) -> Result<ExitCode, String> {
     let pagina = pagina_de(args.limit, args.cursor.as_deref())?;
-    let filtro = FiltroFichas {
+    let filtro = RecordFilter {
         status: args
             .status
             .as_deref()
@@ -125,7 +125,7 @@ fn listar(store: &Store, org: OrgId, args: ListarArgs) -> Result<ExitCode, Strin
         .fichas()
         .listar(org, &filtro, pagina)
         .map_err(|erro| descrever(&erro))?;
-    let next_cursor = if fichas.len() < pagina.limite as usize {
+    let next_cursor = if fichas.len() < pagina.limit as usize {
         None
     } else {
         fichas.last().map(|ficha| ficha.id.to_string())
@@ -161,7 +161,7 @@ fn listar(store: &Store, org: OrgId, args: ListarArgs) -> Result<ExitCode, Strin
 fn mostrar(store: &Store, org: OrgId, args: MostrarArgs) -> Result<ExitCode, String> {
     let ficha_id: RecordId = parse_id(&args.ficha)?;
     let corpo = detalhe(store, org, ficha_id).map_err(|erro| {
-        if erro.eh_nao_encontrado() {
+        if erro.is_not_found() {
             format!("não existe Ficha `{}` nesta org", args.ficha)
         } else {
             descrever(&erro)

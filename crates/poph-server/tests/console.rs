@@ -49,7 +49,7 @@ impl Cenario {
         config.data.directory = pasta.join("dados");
         config.validar().expect("configuração válida");
 
-        let store = std::sync::Arc::new(Store::abrir(&config).expect("abre o banco"));
+        let store = std::sync::Arc::new(Store::open(&config).expect("abre o banco"));
         let estado = Estado::novo(store, config).expect("estado do servidor");
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")

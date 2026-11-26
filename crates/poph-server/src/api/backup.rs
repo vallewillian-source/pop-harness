@@ -24,7 +24,7 @@
 //!
 //! O que este módulo acrescenta à CLI é o transporte: limite de corpo, org de destino vindo do
 //! caminho, cabeçalhos de download, `403`/`401` das outras rotas e o relatório em JSON. O formato
-//! do arquivo é o de [`poph_store::backup_documento`], o mesmo nos dois lados.
+//! do arquivo é o de [`poph_store::backup_document`], o mesmo nos dois lados.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -35,11 +35,9 @@ use axum::extract::rejection::BytesRejection;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use poph_store::ErroStore;
-use poph_store::backup::{
-    AtualizacoesImportacao, DestinoImportacao, RelatorioImportacao, RetratoOrg,
-};
-use poph_store::backup_documento::{self, DocumentoBackup};
+use poph_store::StoreError;
+use poph_store::backup::{ImportReport, ImportTarget, ImportUpdates, OrgSnapshot};
+use poph_store::backup_document::{self, BackupDocument};
 use poph_types::{DomainError, OrgId};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
@@ -117,7 +115,7 @@ pub async fn exportar(
             ));
         }
     };
-    e.store.orgaos().obter(org)?;
+    e.store.orgs().get(org)?;
 
     let estado = e.clone();
     let (bytes, nome) =
@@ -155,7 +153,7 @@ fn montar_arquivo(
     org: OrgId,
     com_conversas: bool,
 ) -> Result<(Vec<u8>, String), ApiError> {
-    let retrato = e.store.retrato_da_org(org, com_conversas)?;
+    let retrato = e.store.org_snapshot(org, com_conversas)?;
     let blobs = ler_blobs(e, &retrato, org)?;
     let chave = e.chave_de_cifra.clone();
     // A chave só serve para ler os **nomes** dos campos de segredo; o valor nunca sai do banco.
@@ -163,10 +161,10 @@ fn montar_arquivo(
         let mapa = chave.as_ref()?.decifrar(blob).ok()?;
         Some(mapa.keys().cloned().collect())
     };
-    let documento = backup_documento::documento(
+    let documento = backup_document::document(
         &retrato,
         com_conversas,
-        e.store.agora(),
+        e.store.now(),
         &blobs,
         &nomes_do_segredo,
     );
@@ -182,18 +180,18 @@ fn montar_arquivo(
         .get("slug")
         .and_then(Value::as_str)
         .unwrap_or("org");
-    Ok((bytes, nome_do_arquivo(slug, e.store.agora())))
+    Ok((bytes, nome_do_arquivo(slug, e.store.now())))
 }
 
 /// Lê do disco o conteúdo de cada blob citado no retrato (biblioteca e anexos).
 fn ler_blobs(
     e: &Estado,
-    retrato: &RetratoOrg,
+    retrato: &OrgSnapshot,
     org: OrgId,
 ) -> Result<BTreeMap<String, Vec<u8>>, ApiError> {
     let mut nomes = BTreeMap::new();
     for tabela in ["file_library", "attachments"] {
-        for linha in retrato.tabelas.get(tabela).into_iter().flatten() {
+        for linha in retrato.tables.get(tabela).into_iter().flatten() {
             let (Some(sha), Some(nome)) = (
                 linha.get("sha256").and_then(Value::as_str),
                 linha.get("name").and_then(Value::as_str),
@@ -319,15 +317,15 @@ pub async fn importar(
     }
 
     // A org de destino tem de existir (o caminho é o destino, não a origem do arquivo).
-    e.store.orgaos().obter(org)?;
+    e.store.orgs().get(org)?;
 
-    let documento = tokio::task::spawn_blocking(move || backup_documento::ler_documento(&bytes))
+    let documento = tokio::task::spawn_blocking(move || backup_document::read_document(&bytes))
         .await
         .map_err(|_| ApiError::interno())?
         .map_err(arquivo_recusado)?;
 
-    let DocumentoBackup {
-        retrato,
+    let BackupDocument {
+        snapshot,
         blobs,
         com_conversas,
     } = documento;
@@ -338,7 +336,7 @@ pub async fn importar(
     let resultado = tokio::task::spawn_blocking(move || {
         let conflitos = estado
             .store
-            .conferir_conflitos_importacao(&retrato, DestinoImportacao::Existente(org))
+            .check_import_conflicts(&snapshot, ImportTarget::Existing(org))
             .map_err(erro_da_conferencia)?;
         if !conflitos.is_empty() {
             return Ok(Resultado::Conflito(conflitos));
@@ -346,13 +344,13 @@ pub async fn importar(
         if !sobrescrever {
             let atualizacoes = estado
                 .store
-                .conferir_atualizacoes_importacao(&retrato, DestinoImportacao::Existente(org))
+                .check_import_updates(&snapshot, ImportTarget::Existing(org))
                 .map_err(erro_da_conferencia)?;
-            if !atualizacoes.vazia() {
+            if !atualizacoes.empty() {
                 return Ok(Resultado::Sobrescreve(atualizacoes));
             }
         }
-        gravar_no_destino(&estado, org, retrato, &blobs, sobrescrever).map(|resultado| {
+        gravar_no_destino(&estado, org, snapshot, &blobs, sobrescrever).map(|resultado| {
             match resultado {
                 Ok(relatorio) => Resultado::Importado(relatorio),
                 Err(atualizacoes) => Resultado::Sobrescreve(atualizacoes),
@@ -380,11 +378,11 @@ pub async fn importar(
 
     let (indice, aviso) = reindexar(&e, org).await;
     Ok(Json(json!({
-        "org": {"id": relatorio.org.to_string(), "criada": relatorio.org_criada},
+        "org": {"id": relatorio.org.to_string(), "criada": relatorio.created_org},
         "com_conversas": com_conversas,
         "tabelas": tabelas_do_relatorio(&relatorio),
         "total": relatorio.total(),
-        "segredos_a_redigitar": relatorio.segredos_a_redigitar,
+        "segredos_a_redigitar": relatorio.secrets_to_reenter,
         "indice": indice,
         "aviso": aviso,
     })))
@@ -393,8 +391,8 @@ pub async fn importar(
 /// O que a thread de trabalho devolveu: conflito ou sobrescrita (nada gravado) ou o relatório.
 enum Resultado {
     Conflito(Vec<String>),
-    Sobrescreve(AtualizacoesImportacao),
-    Importado(RelatorioImportacao),
+    Sobrescreve(ImportUpdates),
+    Importado(ImportReport),
 }
 
 /// `413` — arquivo acima do teto.
@@ -411,20 +409,21 @@ fn arquivo_grande() -> ApiError {
 }
 
 /// Traduz o erro do formato do arquivo em `400` com mensagem clara.
-fn arquivo_recusado(erro: backup_documento::ErroDocumento) -> ApiError {
+fn arquivo_recusado(erro: backup_document::DocumentError) -> ApiError {
     match &erro {
-        backup_documento::ErroDocumento::Json(_) => ApiError::novo(
+        backup_document::DocumentError::Json(_) => ApiError::novo(
             StatusCode::BAD_REQUEST,
             "invalid_backup",
             format!("o corpo não é um backup do POP Harness ({erro})"),
         ),
-        backup_documento::ErroDocumento::Formato(_) => {
+        backup_document::DocumentError::Formato(_) => {
             ApiError::novo(StatusCode::BAD_REQUEST, "invalid_backup", erro.to_string())
         }
-        backup_documento::ErroDocumento::Versao { lida, entendida } => {
-            ApiError::novo(StatusCode::BAD_REQUEST, "invalid_backup", erro.to_string())
-                .com_detalhes(json!({ "version": lida, "supported_version": entendida }))
-        }
+        backup_document::DocumentError::Versao {
+            read: lida,
+            entendida,
+        } => ApiError::novo(StatusCode::BAD_REQUEST, "invalid_backup", erro.to_string())
+            .com_detalhes(json!({ "version": lida, "supported_version": entendida })),
     }
 }
 
@@ -463,15 +462,15 @@ fn conflito_da_importacao(conflitos: &[String]) -> ApiError {
 /// Mensagem curta (o detalhe vai nos campos); `details` traz a tabela → linhas, o total e até cinco
 /// exemplos legíveis. Nada de segredo, caminho de blob ou conteúdo de arquivo aqui: só nome de
 /// tabela e slug/nome/id.
-fn sobrescreve_a_importacao(atualizacoes: &AtualizacoesImportacao) -> ApiError {
+fn sobrescreve_a_importacao(atualizacoes: &ImportUpdates) -> ApiError {
     let exemplos: Vec<Value> = atualizacoes
-        .exemplos
+        .examples
         .iter()
         .cloned()
         .map(Value::String)
         .collect();
     let tabelas: Map<String, Value> = atualizacoes
-        .tabelas
+        .tables
         .iter()
         .map(|(tabela, linhas)| (tabela.clone(), Value::from(*linhas)))
         .collect();
@@ -494,10 +493,10 @@ fn sobrescreve_a_importacao(atualizacoes: &AtualizacoesImportacao) -> ApiError {
 fn gravar_no_destino(
     e: &Estado,
     org: OrgId,
-    retrato: RetratoOrg,
+    retrato: OrgSnapshot,
     blobs: &BTreeMap<String, Vec<u8>>,
     sobrescrever: bool,
-) -> Result<Result<RelatorioImportacao, AtualizacoesImportacao>, ApiError> {
+) -> Result<Result<ImportReport, ImportUpdates>, ApiError> {
     let pasta = &e.arquivos.pasta_blobs;
     for (sha, conteudo) in blobs {
         match poph_files::blob::gravar(pasta, org, conteudo) {
@@ -520,14 +519,14 @@ fn gravar_no_destino(
         }
     }
     e.store
-        .importar_retrato_protegido(retrato, DestinoImportacao::Existente(org), sobrescrever)
+        .import_protected_snapshot(retrato, ImportTarget::Existing(org), sobrescrever)
         .map_err(erro_da_importacao)
 }
 
 /// Erro do banco ao conferir os conflitos (é leitura: só falha de banco).
-fn erro_da_conferencia(erro: ErroStore) -> ApiError {
+fn erro_da_conferencia(erro: StoreError) -> ApiError {
     match erro {
-        ErroStore::Dominio(DomainError::NotFound {
+        StoreError::Domain(DomainError::NotFound {
             entity: entidade,
             id,
         }) => ApiError::nao_encontrado(entidade, &id),
@@ -536,9 +535,9 @@ fn erro_da_conferencia(erro: ErroStore) -> ApiError {
 }
 
 /// Erro do banco na importação: o que é do arquivo sai como `400`; o resto, como nas outras rotas.
-fn erro_da_importacao(erro: ErroStore) -> ApiError {
+fn erro_da_importacao(erro: StoreError) -> ApiError {
     match erro {
-        ErroStore::Dominio(DomainError::Validation {
+        StoreError::Domain(DomainError::Validation {
             field: "backup",
             reason,
         }) => ApiError::novo(StatusCode::BAD_REQUEST, "invalid_backup", reason)
@@ -548,14 +547,14 @@ fn erro_da_importacao(erro: ErroStore) -> ApiError {
 }
 
 /// Tabela → linhas inseridas/atualizadas, no mesmo formato da CLI.
-fn tabelas_do_relatorio(relatorio: &RelatorioImportacao) -> Map<String, Value> {
+fn tabelas_do_relatorio(relatorio: &ImportReport) -> Map<String, Value> {
     relatorio
-        .tabelas
+        .tables
         .iter()
         .map(|(nome, gravado)| {
             (
                 nome.clone(),
-                json!({"inseridas": gravado.inseridas, "atualizadas": gravado.atualizadas}),
+                json!({"inseridas": gravado.inserted, "atualizadas": gravado.updated}),
             )
         })
         .collect()
@@ -612,7 +611,7 @@ async fn reindexar(e: &Estado, org: OrgId) -> (Value, Option<String>) {
     let mut agentes = 0usize;
     let mut trechos = 0usize;
     match Indice::abrir(
-        e.store.caminho_rag(),
+        e.store.rag_path(),
         Arc::clone(&embedder),
         ConfigIndice::default(),
     ) {
@@ -643,7 +642,7 @@ async fn reindexar(e: &Estado, org: OrgId) -> (Value, Option<String>) {
 
     let mut trechos_produtos = 0usize;
     match Indice::abrir(
-        e.store.caminho_rag(),
+        e.store.rag_path(),
         Arc::clone(&embedder),
         ConfigIndice::default(),
     ) {

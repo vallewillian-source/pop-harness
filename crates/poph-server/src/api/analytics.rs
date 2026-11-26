@@ -69,7 +69,7 @@ pub async fn operational_summary(
     if from >= to {
         return Err(invalid_field("from", "from must be before to."));
     }
-    estado.store.orgaos().obter(org)?;
+    estado.store.orgs().get(org)?;
     let summary = estado
         .store
         .analytics()

@@ -24,10 +24,10 @@ use poph_fluxos::motor::{self, Campos, Contexto, Estado as EstadoMotor};
 use poph_fluxos::{Avaliador, Limites, compilar};
 use poph_server::Estado;
 use poph_server::fluxos_transicao::transicao_do_motor;
-use poph_store::metricas::MetricasExecucao;
+use poph_store::metrics::ExecutionMetrics;
 use poph_store::{
-    EstadoDaExecucao, ExtrasDaTransicao, InicioDeExecucao, NovaConversa, NovaOrg, NovoAgente,
-    NovoFluxo, PublicacaoDeRevisao, Store,
+    ExecutionStart, ExecutionState, NewAgent, NewConversation, NewFlow, NewOrg,
+    RevisionPublication, Store, TransitionExtras,
 };
 use poph_types::{ActionActor, EventActor, ExecutionStatus, FlowId, HarnessConfig, RevisionId};
 
@@ -138,7 +138,7 @@ impl Cenario {
         fs::create_dir_all(pasta.join("dados")).expect("pasta de dados");
         let mut config = HarnessConfig::default();
         config.data.directory = pasta.join("dados");
-        let store = Arc::new(Store::abrir(&config).expect("abre o banco"));
+        let store = Arc::new(Store::open(&config).expect("abre o banco"));
         let estado = Estado::novo(store, config).expect("estado do servidor");
         assert!(
             estado.metricas_fluxos().is_some(),
@@ -146,9 +146,9 @@ impl Cenario {
         );
         let org = estado
             .store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: format!("Org {rotulo}"),
+            .orgs()
+            .criar(NewOrg {
+                name: format!("Org {rotulo}"),
                 slug: format!("org-{rotulo}-{}", poph_types::AgentId::generate()),
                 config_json: "{}".to_owned(),
             })
@@ -156,13 +156,13 @@ impl Cenario {
             .id;
         let agente = estado
             .store
-            .agentes()
+            .agents()
             .criar(
                 org,
-                NovoAgente {
-                    nome: format!("Bia {rotulo}"),
+                NewAgent {
+                    name: format!("Bia {rotulo}"),
                     slug: format!("bia-{rotulo}"),
-                    ..NovoAgente::default()
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente")
@@ -195,10 +195,10 @@ impl Cenario {
             .fluxos()
             .criar(
                 self.org,
-                NovoFluxo {
+                NewFlow {
                     slug: slug.to_owned(),
-                    nome: format!("Fluxo {slug}"),
-                    descricao: String::new(),
+                    name: format!("Fluxo {slug}"),
+                    description: String::new(),
                     rascunho_fonte: script.to_owned(),
                 },
             )
@@ -209,18 +209,18 @@ impl Cenario {
             .unwrap_or_else(|diagnosticos| panic!("script do teste não compila: {diagnosticos:?}"));
         let revisao = self
             .store()
-            .revisoes()
+            .revisions()
             .publicar_revisao(
                 self.org,
                 fluxo.id,
-                PublicacaoDeRevisao {
-                    esperada: fluxo.versao,
+                RevisionPublication {
+                    expected: fluxo.version,
                     fonte: script.to_owned(),
                     definicao_json: serde_json::to_string(ir).expect("IR em JSON"),
                     schema_versao: Some(ir.schema_versao),
                     resolucoes_json: "{}".to_owned(),
                     ator_tipo: "system".to_owned(),
-                    ator_id: None,
+                    actor_id: None,
                 },
             )
             .expect("publica a revisão");
@@ -238,7 +238,7 @@ impl Cenario {
             .conversas()
             .criar(
                 self.org,
-                NovaConversa {
+                NewConversation {
                     agent_id: self.agente,
                     integration_id: None,
                     canal: "console".to_owned(),
@@ -246,7 +246,7 @@ impl Cenario {
                         "cliente-ficticio-{}",
                         poph_types::AgentId::generate()
                     )),
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("abre a conversa");
@@ -266,43 +266,43 @@ impl Cenario {
         fluxo: FlowId,
         revisao: RevisionId,
         chave: &str,
-    ) -> poph_store::Execucao {
+    ) -> poph_store::Execution {
         self.store()
-            .execucoes()
+            .executions()
             .iniciar_execucao(
                 self.org,
-                InicioDeExecucao {
+                ExecutionStart {
                     ficha,
                     fluxo,
-                    revisao,
-                    ator: EventActor::Agent,
+                    revision: revisao,
+                    actor: EventActor::Agent,
                     ator_ref: Some("atendente-de-teste"),
-                    decisao_jev: None,
-                    estado_inicial: EstadoDaExecucao {
+                    jev_decision: None,
+                    initial_state: ExecutionState {
                         status: ExecutionStatus::Active,
                         no_atual: "coleta".to_owned(),
                         dados_json: "{}".to_owned(),
-                        atores_que_agiram: Vec::new(),
-                        resultado: None,
-                        motivo: None,
+                        acting_actors: Vec::new(),
+                        result: None,
+                        reason: None,
                     },
-                    efeitos_de_entrada: Vec::new(),
+                    inbound_effects: Vec::new(),
                     chave_idempotencia: Some(chave),
                 },
             )
             .expect("abre a execução")
-            .execucao
+            .execution
     }
 
     /// Roda o motor e grava o desfecho, como a API de ações e a ferramenta do agente fazem.
     fn agir(
         &self,
         script: &str,
-        execucao: &poph_store::Execucao,
+        execucao: &poph_store::Execution,
         acao: &str,
         saltos: Option<usize>,
         chave: &str,
-    ) -> poph_store::ExecucaoGravada {
+    ) -> poph_store::StoredExecution {
         let compilado = compilar(script, &Limites::default());
         let ir = compilado
             .ir()
@@ -324,23 +324,23 @@ impl Cenario {
         )
         .unwrap_or_else(|erro| panic!("a passagem devia voltar desfecho: {erro}"));
         self.store()
-            .execucoes()
+            .executions()
             .aplicar_transicao(
                 self.org,
                 execucao.id,
-                execucao.versao,
+                execucao.version,
                 &transicao_do_motor(&resultado),
                 chave,
-                ExtrasDaTransicao {
+                TransitionExtras {
                     ator_ref: Some("atendente-de-teste"),
-                    ..ExtrasDaTransicao::default()
+                    ..TransitionExtras::default()
                 },
             )
             .expect("grava a transição")
     }
 
     /// Contadores publicados (os mesmos handles do `/metrics`).
-    fn contadores(&self) -> MetricasExecucao {
+    fn contadores(&self) -> ExecutionMetrics {
         self.estado()
             .metricas_fluxos()
             .expect("motor ligado")
@@ -350,11 +350,11 @@ impl Cenario {
     fn valores(&self) -> (u64, u64, u64, u64, u64) {
         let c = self.contadores();
         (
-            c.iniciadas.value(),
-            c.concluidas.value(),
-            c.abandonadas.value(),
-            c.falhas.value(),
-            c.erros_regra.value(),
+            c.started.value(),
+            c.completed.value(),
+            c.abandoned.value(),
+            c.failures.value(),
+            c.rule_errors.value(),
         )
     }
 }
@@ -366,7 +366,7 @@ impl Drop for Cenario {
 }
 
 /// A execução do banco no vocabulário puro do motor (o que a API e o turno montam antes de agir).
-fn estado_do_banco(execucao: &poph_store::Execucao) -> EstadoMotor {
+fn estado_do_banco(execucao: &poph_store::Execution) -> EstadoMotor {
     let ir = {
         // O estado puro só precisa do nó e dos dados; `fluxo_id` é o slug da IR.
         &execucao.no_atual
@@ -377,7 +377,7 @@ fn estado_do_banco(execucao: &poph_store::Execucao) -> EstadoMotor {
         no_atual: poph_fluxos::ir::Destino::Etapa { id: ir.clone() },
         dados: poph_fluxos::Dados::new(),
         atores_que_agiram: Vec::new(),
-        resultado: execucao.resultado.clone(),
+        resultado: execucao.result.clone(),
         motivo: execucao.motivo_fim.clone(),
         chaves: Default::default(),
     }
@@ -399,31 +399,31 @@ fn abertura_conta_uma_vez_e_repetir_a_chave_nao_conta_de_novo() {
     // Repetir a chave devolve a mesma execução e não soma nada.
     let repetida = cenario
         .store()
-        .execucoes()
+        .executions()
         .iniciar_execucao(
             cenario.org,
-            InicioDeExecucao {
+            ExecutionStart {
                 ficha,
                 fluxo,
-                revisao,
-                ator: EventActor::Agent,
+                revision: revisao,
+                actor: EventActor::Agent,
                 ator_ref: Some("atendente-de-teste"),
-                decisao_jev: None,
-                estado_inicial: EstadoDaExecucao {
+                jev_decision: None,
+                initial_state: ExecutionState {
                     status: ExecutionStatus::Active,
                     no_atual: "coleta".to_owned(),
                     dados_json: "{}".to_owned(),
-                    atores_que_agiram: Vec::new(),
-                    resultado: None,
-                    motivo: None,
+                    acting_actors: Vec::new(),
+                    result: None,
+                    reason: None,
                 },
-                efeitos_de_entrada: Vec::new(),
+                inbound_effects: Vec::new(),
                 chave_idempotencia: Some("abertura-1"),
             },
         )
         .expect("repetir a chave devolve a execução");
-    assert!(repetida.repetida, "a segunda abertura é repetição");
-    assert_eq!(repetida.execucao.id, primeira.id);
+    assert!(repetida.repeated, "a segunda abertura é repetição");
+    assert_eq!(repetida.execution.id, primeira.id);
     assert_eq!(cenario.valores().0, 1, "repetir não soma outra iniciada");
 }
 
@@ -435,7 +435,7 @@ fn conclusao_conta_concluida_e_repetir_a_chave_nao_soma() {
     let execucao = cenario.abrir(ficha, fluxo, revisao, "conclusao-1");
 
     let gravada = cenario.agir(CONCLUSIVO, &execucao, "concluir", None, "acao-1");
-    assert_eq!(gravada.execucao.status, ExecutionStatus::Completed);
+    assert_eq!(gravada.execution.status, ExecutionStatus::Completed);
     assert_eq!(
         cenario.valores(),
         (1, 1, 0, 0, 0),
@@ -445,13 +445,13 @@ fn conclusao_conta_concluida_e_repetir_a_chave_nao_soma() {
     // Repetir a chave da ação não conta de novo (nem concluída, nem falha).
     let de_novo = cenario
         .store()
-        .execucoes()
+        .executions()
         .aplicar_transicao(
             cenario.org,
-            gravada.execucao.id,
-            gravada.execucao.versao,
+            gravada.execution.id,
+            gravada.execution.version,
             &transicao_do_motor(&motor::Resultado {
-                novo_estado: estado_do_banco(&gravada.execucao),
+                novo_estado: estado_do_banco(&gravada.execution),
                 eventos: Vec::new(),
                 efeitos: Vec::new(),
                 aguardando: Vec::new(),
@@ -460,10 +460,10 @@ fn conclusao_conta_concluida_e_repetir_a_chave_nao_soma() {
                 erro_de_regra: false,
             }),
             "acao-1",
-            ExtrasDaTransicao::default(),
+            TransitionExtras::default(),
         )
         .expect("repetir devolve o desfecho");
-    assert!(de_novo.repetida, "a repetição é marcada");
+    assert!(de_novo.repeated, "a repetição é marcada");
     assert_eq!(cenario.valores(), (1, 1, 0, 0, 0), "nada somou");
 }
 
@@ -484,14 +484,14 @@ fn abandono_pelo_agente_conta_abandonada() {
     .expect("o abandono volta com o desfecho");
     cenario
         .store()
-        .execucoes()
+        .executions()
         .aplicar_transicao(
             cenario.org,
             execucao.id,
-            execucao.versao,
+            execucao.version,
             &transicao_do_motor(&resultado),
             "ab-1",
-            ExtrasDaTransicao::default(),
+            TransitionExtras::default(),
         )
         .expect("grava o abandono");
 
@@ -515,9 +515,9 @@ fn fechar_o_atendimento_com_execucao_ativa_conta_abandono() {
     let versao = cenario
         .store()
         .conversas()
-        .obter(cenario.org, conversa)
+        .get(cenario.org, conversa)
         .expect("lê a conversa")
-        .versao;
+        .version;
     cenario
         .store()
         .conversas()
@@ -544,7 +544,7 @@ fn falha_de_regra_conta_falha_e_erro_de_regra() {
     let execucao = cenario.abrir(ficha, fluxo, revisao, "regra-1");
 
     let gravada = cenario.agir(REGRA_QUEBRADA, &execucao, "ir", None, "acao-regra");
-    assert_eq!(gravada.execucao.status, ExecutionStatus::Failed);
+    assert_eq!(gravada.execution.status, ExecutionStatus::Failed);
     assert_eq!(
         cenario.valores(),
         (1, 0, 0, 1, 1),
@@ -561,7 +561,7 @@ fn falha_que_nao_e_de_regra_nao_conta_erro_de_regra() {
 
     // Teto de uma decisão encadeada: a segunda estoura e a execução para em `falha`.
     let gravada = cenario.agir(DUAS_DECISOES, &execucao, "ir", Some(1), "acao-saltos");
-    assert_eq!(gravada.execucao.status, ExecutionStatus::Failed);
+    assert_eq!(gravada.execution.status, ExecutionStatus::Failed);
     assert_eq!(
         cenario.valores(),
         (1, 0, 0, 1, 0),

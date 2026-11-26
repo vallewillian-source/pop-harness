@@ -16,10 +16,8 @@ use poph_types::{AgentId, OrgId, ProductCategoryId, ProductId};
 use rusqlite::{OptionalExtension, Row, params};
 
 use crate::Store;
-use crate::erro::{ErroStore, Resultado};
-use crate::modelo::{
-    MudancaProduto, NovoProduto, Pagina, Produto, ProdutoParaIndice, Status, slugificar,
-};
+use crate::error::{Resultado, StoreError};
+use crate::model::{NewProduct, Page, Product, ProductChange, ProductForIndex, Status, slugificar};
 use crate::repos::{conflito_ou_ausente, id_da_coluna, pertence, status_da_coluna, u64_da_coluna};
 
 const COLUNAS: &str = "id, org_id, category_id, name, slug, aliases_json, description, \
@@ -51,12 +49,12 @@ pub struct ReferenciasProduto {
 
 impl Produtos<'_> {
     /// Cria o produto na org. O slug vazio é derivado do nome.
-    pub fn criar(&self, org: OrgId, novo: NovoProduto) -> Resultado<Produto> {
-        let nome = validar_nome(&novo.nome)?;
+    pub fn criar(&self, org: OrgId, novo: NewProduct) -> Resultado<Product> {
+        let nome = validar_nome(&novo.name)?;
         let slug = validar_slug(novo.slug.as_deref().unwrap_or(""), &nome)?;
-        validar_preco(novo.preco_centavos)?;
-        let Some(categoria_id) = novo.categoria_id else {
-            return Err(ErroStore::Dominio(poph_types::DomainError::Validation {
+        validar_preco(novo.price_cents)?;
+        let Some(categoria_id) = novo.category_id else {
+            return Err(StoreError::Domain(poph_types::DomainError::Validation {
                 field: "categoria do produto",
                 reason: "informe a categoria (--category)".to_owned(),
             }));
@@ -64,11 +62,11 @@ impl Produtos<'_> {
         let aliases = lista_json(&novo.aliases);
         let tags = lista_json(&novo.tags);
         let id = ProductId::generate();
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_id = id.to_string();
         let texto_org = org.to_string();
         let categoria = categoria_id.to_string();
-        self.0.escrita(move |conn| {
+        self.0.write(move |conn| {
             pertence(
                 conn,
                 "product_categories",
@@ -90,71 +88,71 @@ impl Produtos<'_> {
                     nome,
                     slug,
                     aliases,
-                    novo.descricao.trim(),
-                    novo.preco_texto.trim(),
-                    novo.preco_centavos,
-                    texto_ou_nulo(&novo.unidade),
-                    texto_ou_nulo(&novo.inclui),
+                    novo.description.trim(),
+                    novo.price_text.trim(),
+                    novo.price_cents,
+                    texto_ou_nulo(&novo.unit),
+                    texto_ou_nulo(&novo.includes),
                     texto_ou_nulo(&novo.exclui),
-                    texto_ou_nulo(&novo.condicoes),
+                    texto_ou_nulo(&novo.conditions),
                     tags,
                     agora
                 ],
             )
-            .map_err(|erro| ErroStore::da_escrita_em("slug", CAMPOS_PRODUTO, erro))?;
+            .map_err(|erro| StoreError::from_write_with("slug", CAMPOS_PRODUTO, erro))?;
             Ok(())
         })?;
         self.obter(org, id)
     }
 
     /// Busca o produto pelo id dentro da org (qualquer situação).
-    pub fn obter(&self, org: OrgId, id: ProductId) -> Resultado<Produto> {
+    pub fn obter(&self, org: OrgId, id: ProductId) -> Resultado<Product> {
         let texto_org = org.to_string();
         let texto_id = id.to_string();
-        let encontrado = self.0.leitura(move |conn| {
+        let encontrado = self.0.read(move |conn| {
             conn.query_row(
                 &format!("SELECT {COLUNAS} FROM products WHERE id = ?1 AND org_id = ?2"),
                 params![texto_id, texto_org],
                 linha_produto,
             )
             .optional()
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })?;
-        super::exigir(encontrado, "produto", &id.to_string())
+        super::require(encontrado, "produto", &id.to_string())
     }
 
     /// Busca pelo slug dentro da org.
-    pub fn por_slug(&self, org: OrgId, slug: &str) -> Resultado<Produto> {
+    pub fn por_slug(&self, org: OrgId, slug: &str) -> Resultado<Product> {
         let texto_org = org.to_string();
         let slug = slug.trim().to_lowercase();
         let slug_erro = slug.clone();
-        let encontrado = self.0.leitura(move |conn| {
+        let encontrado = self.0.read(move |conn| {
             conn.query_row(
                 &format!("SELECT {COLUNAS} FROM products WHERE org_id = ?1 AND slug = ?2"),
                 params![texto_org, slug],
                 linha_produto,
             )
             .optional()
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })?;
-        super::exigir(encontrado, "produto", &slug_erro)
+        super::require(encontrado, "produto", &slug_erro)
     }
 
     /// Lista os produtos da org em qualquer situação (a CLI precisa ver o inativo também).
-    pub fn listar(&self, org: OrgId, pagina: Pagina) -> Resultado<Vec<Produto>> {
+    pub fn listar(&self, org: OrgId, pagina: Page) -> Resultado<Vec<Product>> {
         self.listar_com(org, pagina, false)
     }
 
     /// Lista só os produtos ativos (o que a busca e a ferramenta enxergam).
-    pub fn listar_ativos(&self, org: OrgId, pagina: Pagina) -> Resultado<Vec<Produto>> {
+    pub fn listar_ativos(&self, org: OrgId, pagina: Page) -> Resultado<Vec<Product>> {
         self.listar_com(org, pagina, true)
     }
 
-    fn listar_com(&self, org: OrgId, pagina: Pagina, so_ativos: bool) -> Resultado<Vec<Produto>> {
+    fn listar_com(&self, org: OrgId, pagina: Page, so_ativos: bool) -> Resultado<Vec<Product>> {
         let texto_org = org.to_string();
-        let apos = pagina.apos.map(|id| id.to_string());
-        let limite = i64::from(pagina.limite);
-        self.0.leitura(move |conn| {
+        let apos = pagina.after.map(|id| id.to_string());
+        let limite = i64::from(pagina.limit);
+        self.0.read(move |conn| {
             let filtro = if so_ativos {
                 "AND status = 'active'"
             } else {
@@ -180,9 +178,9 @@ impl Produtos<'_> {
         org: OrgId,
         id: ProductId,
         esperada: u64,
-        mudanca: MudancaProduto,
-    ) -> Resultado<Produto> {
-        let nome = match &mudanca.nome {
+        mudanca: ProductChange,
+    ) -> Resultado<Product> {
+        let nome = match &mudanca.name {
             Some(nome) => Some(validar_nome(nome)?),
             None => None,
         };
@@ -190,18 +188,18 @@ impl Produtos<'_> {
             Some(slug) => Some(validar_slug(slug, nome.as_deref().unwrap_or("produto"))?),
             None => None,
         };
-        if let Some(centavos) = mudanca.preco_centavos {
+        if let Some(centavos) = mudanca.price_cents {
             validar_preco(centavos)?;
         }
         let aliases = mudanca.aliases.as_ref().map(|lista| lista_json(lista));
         let tags = mudanca.tags.as_ref().map(|lista| lista_json(lista));
-        let categoria = mudanca.categoria_id.map(|categoria| categoria.to_string());
-        let status = mudanca.status.map(Status::como_texto);
-        let agora = self.0.agora();
+        let categoria = mudanca.category_id.map(|categoria| categoria.to_string());
+        let status = mudanca.status.map(Status::as_text);
+        let agora = self.0.now();
         let texto_org = org.to_string();
         let texto_id = id.to_string();
         let esperada_i64 = esperada as i64;
-        let efeito = self.0.escrita(move |conn| {
+        let efeito = self.0.write(move |conn| {
             if let Some(categoria) = &categoria {
                 pertence(
                     conn,
@@ -236,20 +234,20 @@ impl Produtos<'_> {
                     nome,
                     slug,
                     aliases,
-                    mudanca.descricao.map(|texto| texto.trim().to_owned()),
-                    mudanca.preco_texto.map(|texto| texto.trim().to_owned()),
-                    mudanca.preco_centavos,
-                    mudanca.unidade.as_deref().map(texto_ou_nulo),
-                    mudanca.inclui.as_deref().map(texto_ou_nulo),
+                    mudanca.description.map(|texto| texto.trim().to_owned()),
+                    mudanca.price_text.map(|texto| texto.trim().to_owned()),
+                    mudanca.price_cents,
+                    mudanca.unit.as_deref().map(texto_ou_nulo),
+                    mudanca.includes.as_deref().map(texto_ou_nulo),
                     mudanca.exclui.as_deref().map(texto_ou_nulo),
-                    mudanca.condicoes.as_deref().map(texto_ou_nulo),
+                    mudanca.conditions.as_deref().map(texto_ou_nulo),
                     tags,
                     status,
                     agora,
                     esperada_i64
                 ],
             )
-            .map_err(|erro| ErroStore::da_escrita_em("slug", CAMPOS_PRODUTO, erro))
+            .map_err(|erro| StoreError::from_write_with("slug", CAMPOS_PRODUTO, erro))
         })?;
         if efeito == 0 {
             return Err(self.conflito(org, id, esperada));
@@ -261,12 +259,12 @@ impl Produtos<'_> {
     pub fn excluir(&self, org: OrgId, id: ProductId) -> Resultado<()> {
         let texto_org = org.to_string();
         let texto_id = id.to_string();
-        let apagou = self.0.escrita(move |conn| {
+        let apagou = self.0.write(move |conn| {
             conn.execute(
                 "DELETE FROM products WHERE org_id = ?1 AND id = ?2",
                 params![texto_org, texto_id],
             )
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })?;
         if apagou == 0 {
             return Err(nao_encontrado(&id.to_string()));
@@ -282,7 +280,7 @@ impl Produtos<'_> {
     pub fn referencias(&self, org: OrgId, id: ProductId) -> Resultado<ReferenciasProduto> {
         let texto_org = org.to_string();
         let texto_id = id.to_string();
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             let (itens, carrinhos): (i64, i64) = conn.query_row(
                 "SELECT COUNT(*), COUNT(DISTINCT cart_id) FROM cart_items
                   WHERE org_id = ?1 AND product_id = ?2",
@@ -308,7 +306,7 @@ impl Produtos<'_> {
     ) -> Resultado<Option<Vec<ProductCategoryId>>> {
         let texto_org = org.to_string();
         let texto_agente = agente.to_string();
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             let mut consulta = conn.prepare(
                 "SELECT category_id FROM agent_product_categories
                   WHERE org_id = ?1 AND agent_id = ?2 ORDER BY category_id",
@@ -329,10 +327,10 @@ impl Produtos<'_> {
     }
 
     /// Produtos ativos que o agente enxerga, em ordem de nome (o que entra no índice dele).
-    pub fn visiveis_do_agente(&self, org: OrgId, agente: AgentId) -> Resultado<Vec<Produto>> {
+    pub fn visiveis_do_agente(&self, org: OrgId, agente: AgentId) -> Resultado<Vec<Product>> {
         let texto_org = org.to_string();
         let texto_agente = agente.to_string();
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             let mut consulta = conn.prepare(&format!(
                 "SELECT {COLUNAS} FROM products p
                   WHERE p.org_id = ?1 AND p.status = 'active'
@@ -352,10 +350,10 @@ impl Produtos<'_> {
     }
 
     /// Produtos ativos que o agente enxerga, já com o texto que vai ao índice (sem preço).
-    pub fn para_indice(&self, org: OrgId, agente: AgentId) -> Resultado<Vec<ProdutoParaIndice>> {
+    pub fn para_indice(&self, org: OrgId, agente: AgentId) -> Resultado<Vec<ProductForIndex>> {
         let texto_org = org.to_string();
         let texto_agente = agente.to_string();
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             let mut consulta = conn.prepare(
                 "SELECT p.id, p.name, c.name, p.aliases_json, p.description, p.tags_json, p.version
                    FROM products p
@@ -372,17 +370,17 @@ impl Produtos<'_> {
                 let descricao: String = linha.get::<_, Option<String>>(4)?.unwrap_or_default();
                 let tags: String = linha.get(5)?;
                 let nome: String = linha.get(1)?;
-                Ok(ProdutoParaIndice {
+                Ok(ProductForIndex {
                     id: id_da_coluna(linha, 0)?,
-                    nome: nome.clone(),
-                    categoria: linha.get(2)?,
+                    name: nome.clone(),
+                    category: linha.get(2)?,
                     texto: texto_para_indice(
                         &nome,
                         &serde_json::from_str::<Vec<String>>(&aliases).unwrap_or_default(),
                         &descricao,
                         &serde_json::from_str::<Vec<String>>(&tags).unwrap_or_default(),
                     ),
-                    versao: u64_da_coluna(linha, 6)?,
+                    version: u64_da_coluna(linha, 6)?,
                 })
             })?;
             let mut produtos = Vec::new();
@@ -395,12 +393,12 @@ impl Produtos<'_> {
 
     /// Produtos ativos com esses ids, na ordem pedida. Id de outra org ou inativo simplesmente não
     /// volta — é o que a ferramenta usa para buscar o preço atual do registro.
-    pub fn ativos_por_ids(&self, org: OrgId, ids: &[ProductId]) -> Resultado<Vec<Produto>> {
+    pub fn ativos_por_ids(&self, org: OrgId, ids: &[ProductId]) -> Resultado<Vec<Product>> {
         let mut saida = Vec::with_capacity(ids.len());
         for id in ids {
             let texto_org = org.to_string();
             let texto_id = id.to_string();
-            let achado = self.0.leitura(move |conn| {
+            let achado = self.0.read(move |conn| {
                 conn.query_row(
                     &format!(
                         "SELECT {COLUNAS} FROM products
@@ -410,7 +408,7 @@ impl Produtos<'_> {
                     linha_produto,
                 )
                 .optional()
-                .map_err(ErroStore::from)
+                .map_err(StoreError::from)
             })?;
             if let Some(produto) = achado {
                 saida.push(produto);
@@ -427,7 +425,7 @@ impl Produtos<'_> {
     ) -> Resultado<Vec<ProductId>> {
         let texto_org = org.to_string();
         let texto_categoria = categoria.to_string();
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             let mut consulta = conn.prepare(
                 "SELECT id FROM products
                   WHERE org_id = ?1 AND category_id = ?2 AND status = 'active'
@@ -448,21 +446,21 @@ impl Produtos<'_> {
     pub fn nome_da_categoria(&self, org: OrgId, id: ProductCategoryId) -> Resultado<String> {
         let texto_org = org.to_string();
         let texto_id = id.to_string();
-        let nome = self.0.leitura(move |conn| {
+        let nome = self.0.read(move |conn| {
             conn.query_row(
                 "SELECT name FROM product_categories WHERE org_id = ?1 AND id = ?2",
                 params![texto_org, texto_id],
                 |linha| linha.get(0),
             )
             .optional()
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })?;
         Ok(nome.unwrap_or_else(|| "sem categoria".to_owned()))
     }
 
-    fn conflito(&self, org: OrgId, id: ProductId, esperada: u64) -> ErroStore {
+    fn conflito(&self, org: OrgId, id: ProductId, esperada: u64) -> StoreError {
         self.0
-            .leitura(move |conn| {
+            .read(move |conn| {
                 Ok(conflito_ou_ausente(
                     conn,
                     "products",
@@ -502,13 +500,13 @@ pub fn texto_para_indice(
 fn validar_nome(nome: &str) -> Resultado<String> {
     let limpo = nome.trim();
     if limpo.is_empty() {
-        return Err(ErroStore::Dominio(poph_types::DomainError::Validation {
+        return Err(StoreError::Domain(poph_types::DomainError::Validation {
             field: "nome do produto",
             reason: "não pode ficar em branco".to_owned(),
         }));
     }
     if limpo.chars().count() > LIMITE_NOME {
-        return Err(ErroStore::Dominio(poph_types::DomainError::Validation {
+        return Err(StoreError::Domain(poph_types::DomainError::Validation {
             field: "nome do produto",
             reason: format!(
                 "até {LIMITE_NOME} caracteres; vieram {}",
@@ -527,7 +525,7 @@ fn validar_slug(slug: &str, nome: &str) -> Resultado<String> {
     };
     let tamanho = derivado.chars().count();
     if !(3..=64).contains(&tamanho) {
-        return Err(ErroStore::Dominio(poph_types::DomainError::Validation {
+        return Err(StoreError::Domain(poph_types::DomainError::Validation {
             field: "slug do produto",
             reason: format!(
                 "precisa de 3 a 64 caracteres (letras sem acento, números e hífen); o derivado \
@@ -540,7 +538,7 @@ fn validar_slug(slug: &str, nome: &str) -> Resultado<String> {
 
 fn validar_preco(centavos: i64) -> Resultado<()> {
     if centavos < 0 {
-        return Err(ErroStore::Dominio(poph_types::DomainError::Validation {
+        return Err(StoreError::Domain(poph_types::DomainError::Validation {
             field: "preço do produto",
             reason: "não pode ser negativo (o valor é em centavos)".to_owned(),
         }));
@@ -562,34 +560,34 @@ fn texto_ou_nulo(texto: &str) -> Option<String> {
     (!limpo.is_empty()).then(|| limpo.to_owned())
 }
 
-fn nao_encontrado(id: &str) -> ErroStore {
-    ErroStore::Dominio(poph_types::DomainError::NotFound {
+fn nao_encontrado(id: &str) -> StoreError {
+    StoreError::Domain(poph_types::DomainError::NotFound {
         entity: "produto",
         id: id.to_owned(),
     })
 }
 
-fn linha_produto(linha: &Row<'_>) -> rusqlite::Result<Produto> {
+fn linha_produto(linha: &Row<'_>) -> rusqlite::Result<Product> {
     let aliases: String = linha.get(5)?;
     let tags: String = linha.get(13)?;
-    Ok(Produto {
+    Ok(Product {
         id: id_da_coluna(linha, 0)?,
         org_id: id_da_coluna(linha, 1)?,
-        categoria_id: id_da_coluna(linha, 2)?,
-        nome: linha.get(3)?,
+        category_id: id_da_coluna(linha, 2)?,
+        name: linha.get(3)?,
         slug: linha.get(4)?,
         aliases: serde_json::from_str::<Vec<String>>(&aliases).unwrap_or_default(),
-        descricao: linha.get::<_, Option<String>>(6)?.unwrap_or_default(),
-        preco_texto: linha.get(7)?,
-        preco_centavos: linha.get(8)?,
-        unidade: linha.get::<_, Option<String>>(9)?.unwrap_or_default(),
-        inclui: linha.get::<_, Option<String>>(10)?.unwrap_or_default(),
+        description: linha.get::<_, Option<String>>(6)?.unwrap_or_default(),
+        price_text: linha.get(7)?,
+        price_cents: linha.get(8)?,
+        unit: linha.get::<_, Option<String>>(9)?.unwrap_or_default(),
+        includes: linha.get::<_, Option<String>>(10)?.unwrap_or_default(),
         exclui: linha.get::<_, Option<String>>(11)?.unwrap_or_default(),
-        condicoes: linha.get::<_, Option<String>>(12)?.unwrap_or_default(),
+        conditions: linha.get::<_, Option<String>>(12)?.unwrap_or_default(),
         tags: serde_json::from_str::<Vec<String>>(&tags).unwrap_or_default(),
         status: status_da_coluna(linha, 14)?,
-        versao: u64_da_coluna(linha, 15)?,
-        criado_em: linha.get(16)?,
-        atualizado_em: linha.get(17)?,
+        version: u64_da_coluna(linha, 15)?,
+        created_at: linha.get(16)?,
+        updated_at: linha.get(17)?,
     })
 }

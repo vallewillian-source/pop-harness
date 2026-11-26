@@ -7,7 +7,7 @@
 use std::path::PathBuf;
 
 use poph_store::{
-    ErroStore, NovaConversa, NovaOrg, NovoAgente, NovoDepartamento, Pagina, StatusConversa, Store,
+    ConversationStatus, NewAgent, NewConversation, NewDepartment, NewOrg, Page, Store, StoreError,
 };
 use poph_types::{AgentId, ConversationId, DomainError, OrgId};
 
@@ -28,8 +28,8 @@ impl Cenario {
         ));
         let _ = std::fs::remove_dir_all(&pasta);
         std::fs::create_dir_all(&pasta).expect("cria a pasta");
-        let store = Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
-            .expect("abre o banco");
+        let store =
+            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco");
         let org = criar_org(&store, "org-a");
         let outra_org = criar_org(&store, "org-b");
         let agente = criar_agente(&store, org, "bia");
@@ -47,12 +47,12 @@ impl Cenario {
             .conversas()
             .criar(
                 self.org,
-                NovaConversa {
+                NewConversation {
                     agent_id: self.agente,
                     integration_id: None,
                     canal: "cli".to_owned(),
                     peer_externo: None,
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("abre a conversa")
@@ -68,9 +68,9 @@ impl Drop for Cenario {
 
 fn criar_org(store: &Store, slug: &str) -> OrgId {
     store
-        .orgaos()
-        .criar(NovaOrg {
-            nome: format!("Org {slug}"),
+        .orgs()
+        .criar(NewOrg {
+            name: format!("Org {slug}"),
             slug: slug.to_owned(),
             config_json: "{}".to_owned(),
         })
@@ -80,13 +80,13 @@ fn criar_org(store: &Store, slug: &str) -> OrgId {
 
 fn criar_agente(store: &Store, org: OrgId, slug: &str) -> AgentId {
     store
-        .agentes()
+        .agents()
         .criar(
             org,
-            NovoAgente {
-                nome: format!("Agente {slug}"),
+            NewAgent {
+                name: format!("Agente {slug}"),
                 slug: slug.to_owned(),
-                ..NovoAgente::default()
+                ..NewAgent::default()
             },
         )
         .expect("cria o agente")
@@ -101,9 +101,9 @@ fn transferir_muda_situacao_e_audita() {
     let antes = cenario
         .store
         .conversas()
-        .obter(cenario.org, conversa)
+        .get(cenario.org, conversa)
         .expect("lê a conversa");
-    assert_eq!(antes.status, StatusConversa::Aberta);
+    assert_eq!(antes.status, ConversationStatus::Open);
 
     let depois = cenario
         .store
@@ -117,27 +117,27 @@ fn transferir_muda_situacao_e_audita() {
         )
         .expect("transfere");
 
-    assert_eq!(depois.status, StatusConversa::Transferida);
-    assert_eq!(depois.versao, antes.versao + 1);
-    assert!(depois.atualizado_em >= antes.atualizado_em);
+    assert_eq!(depois.status, ConversationStatus::Transferred);
+    assert_eq!(depois.version, antes.version + 1);
+    assert!(depois.updated_at >= antes.updated_at);
 
     let auditoria = cenario
         .store
-        .auditoria()
-        .listar(cenario.org, Pagina::com_limite(10))
+        .audit()
+        .listar(cenario.org, Page::with_limit(10))
         .expect("lê a auditoria");
     let registro = auditoria
         .iter()
         .find(|registro| registro.acao == "transfer")
         .expect("a transferência é auditada");
     assert_eq!(registro.ator_tipo, "system");
-    assert_eq!(registro.ator_id.as_deref(), Some("turno"));
-    assert_eq!(registro.entidade, "conversation");
+    assert_eq!(registro.actor_id.as_deref(), Some("turno"));
+    assert_eq!(registro.entity, "conversation");
     assert_eq!(
-        registro.entidade_id.as_deref(),
+        registro.entity_id.as_deref(),
         Some(conversa.to_string().as_str())
     );
-    assert_eq!(registro.detalhe_json, r#"{"gate":"g1"}"#);
+    assert_eq!(registro.detail_json, r#"{"gate":"g1"}"#);
 }
 
 /// O departamento alvo é guardado quando informado e mantido quando não é.
@@ -147,12 +147,12 @@ fn transferir_guarda_o_departamento() {
     let conversa = cenario.conversa();
     let departamento = cenario
         .store
-        .departamentos()
+        .departments()
         .criar(
             cenario.org,
-            NovoDepartamento {
-                nome: "Atendimento humano".to_owned(),
-                descricao: String::new(),
+            NewDepartment {
+                name: "Atendimento humano".to_owned(),
+                description: String::new(),
             },
         )
         .expect("cria o departamento")
@@ -169,7 +169,7 @@ fn transferir_guarda_o_departamento() {
             "{}".to_owned(),
         )
         .expect("transfere");
-    assert_eq!(depois.departamento_alvo, Some(departamento));
+    assert_eq!(depois.target_department, Some(departamento));
 
     // Sem departamento informado (ex.: G4 ainda não escolheu), o alvo não é apagado.
     let de_novo = cenario
@@ -177,7 +177,7 @@ fn transferir_guarda_o_departamento() {
         .conversas()
         .transferir(cenario.org, conversa, None, None, "{}".to_owned())
         .expect("transfere de novo");
-    assert_eq!(de_novo.departamento_alvo, Some(departamento));
+    assert_eq!(de_novo.target_department, Some(departamento));
 }
 
 /// Conversa de outra org: "não encontrado" e nenhuma auditoria na org de quem tentou.
@@ -199,21 +199,21 @@ fn nao_transfere_conversa_de_outra_org() {
         .expect_err("não pode transferir conversa de outra org");
     assert!(matches!(
         erro,
-        ErroStore::Dominio(DomainError::NotFound { .. })
+        StoreError::Domain(DomainError::NotFound { .. })
     ));
 
     // A conversa continua aberta e a org B não ganhou auditoria.
     let gravada = cenario
         .store
         .conversas()
-        .obter(cenario.org, conversa)
+        .get(cenario.org, conversa)
         .expect("lê a conversa");
-    assert_eq!(gravada.status, StatusConversa::Aberta);
+    assert_eq!(gravada.status, ConversationStatus::Open);
     assert!(
         cenario
             .store
-            .auditoria()
-            .listar(cenario.outra_org, Pagina::com_limite(10))
+            .audit()
+            .listar(cenario.outra_org, Page::with_limit(10))
             .expect("lê a auditoria")
             .is_empty()
     );
@@ -226,12 +226,12 @@ fn departamento_de_outra_org_e_recusado() {
     let conversa = cenario.conversa();
     let alheio = cenario
         .store
-        .departamentos()
+        .departments()
         .criar(
             cenario.outra_org,
-            NovoDepartamento {
-                nome: "Departamento da outra org".to_owned(),
-                descricao: String::new(),
+            NewDepartment {
+                name: "Departamento da outra org".to_owned(),
+                description: String::new(),
             },
         )
         .expect("cria o departamento")
@@ -244,14 +244,14 @@ fn departamento_de_outra_org_e_recusado() {
         .expect_err("departamento de outra org é recusado");
     assert!(matches!(
         erro,
-        ErroStore::Dominio(DomainError::NotFound { .. })
+        StoreError::Domain(DomainError::NotFound { .. })
     ));
     let gravada = cenario
         .store
         .conversas()
-        .obter(cenario.org, conversa)
+        .get(cenario.org, conversa)
         .expect("lê a conversa");
-    assert_eq!(gravada.status, StatusConversa::Aberta);
+    assert_eq!(gravada.status, ConversationStatus::Open);
 }
 
 #[test]
@@ -277,20 +277,20 @@ fn transferencia_administrativa_recusa_conversa_encerrada() {
         .expect_err("conversa encerrada não transfere");
     assert!(matches!(
         erro,
-        ErroStore::Dominio(DomainError::ConversationClosed { .. })
+        StoreError::Domain(DomainError::ConversationClosed { .. })
     ));
 
     let gravada = cenario
         .store
         .conversas()
-        .obter(cenario.org, conversa)
+        .get(cenario.org, conversa)
         .expect("lê a conversa");
-    assert_eq!(gravada.status, StatusConversa::Fechada);
+    assert_eq!(gravada.status, ConversationStatus::Closed);
     assert!(
         !cenario
             .store
-            .auditoria()
-            .listar(cenario.org, Pagina::com_limite(10))
+            .audit()
+            .listar(cenario.org, Page::with_limit(10))
             .expect("lê a auditoria")
             .iter()
             .any(|registro| registro.acao == "transfer"),
@@ -313,17 +313,17 @@ fn transferencia_administrativa_marca_transferida_e_audita_o_motivo() {
             r#"{"motivo":"rotina"}"#.to_owned(),
         )
         .expect("transfere");
-    assert_eq!(depois.status, StatusConversa::Transferida);
+    assert_eq!(depois.status, ConversationStatus::Transferred);
 
     let auditoria = cenario
         .store
-        .auditoria()
-        .listar(cenario.org, Pagina::com_limite(10))
+        .audit()
+        .listar(cenario.org, Page::with_limit(10))
         .expect("lê a auditoria");
     let registro = auditoria
         .iter()
         .find(|registro| registro.acao == "transfer")
         .expect("a transferência é auditada");
-    assert_eq!(registro.ator_id.as_deref(), Some("admin"));
-    assert_eq!(registro.detalhe_json, r#"{"motivo":"rotina"}"#);
+    assert_eq!(registro.actor_id.as_deref(), Some("admin"));
+    assert_eq!(registro.detail_json, r#"{"motivo":"rotina"}"#);
 }

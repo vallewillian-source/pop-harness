@@ -21,8 +21,8 @@ use poph_agent::{BaseConhecimento, BuscadorBase, ConsultarBase};
 use poph_core::llm::{EventoLlm, LlmProvider, MotivoFim, ProvedorFake, Roteiro, Uso};
 use poph_rag::{ConfigIndice, Embedder, EmbedderFake, Indice};
 use poph_store::{
-    Direcao, NovaConversa, NovaMensagem, NovaOrg, NovoAgente, NovoGrupoConhecimento,
-    NovoItemConhecimento, Pagina, Papel, Store,
+    Direction, NewAgent, NewConversation, NewKnowledgeGroup, NewKnowledgeItem, NewMessage, NewOrg,
+    Page, Role, Store,
 };
 use poph_types::{AgentId, ConversationId, KnowledgeGroupId, MessageId, OrgId};
 
@@ -58,38 +58,38 @@ impl Cenario {
         std::fs::create_dir_all(&pasta).expect("cria a pasta");
         let relogio = Arc::new(AtomicI64::new(1_795_130_160_000));
         let store = Arc::new(
-            Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
+            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db"))
                 .expect("abre o banco")
-                .com_relogio({
+                .with_clock({
                     let relogio = Arc::clone(&relogio);
                     Arc::new(move || relogio.load(Ordering::SeqCst))
                 }),
         );
         let org = store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: format!("Org {rotulo}"),
+            .orgs()
+            .criar(NewOrg {
+                name: format!("Org {rotulo}"),
                 slug: format!("org-{rotulo}-{}", AgentId::generate()),
                 config_json: "{}".to_owned(),
             })
             .expect("cria a org")
             .id;
         let agente = store
-            .agentes()
+            .agents()
             .criar(
                 org,
-                NovoAgente {
-                    nome: format!("Bia {rotulo}"),
+                NewAgent {
+                    name: format!("Bia {rotulo}"),
                     slug: format!("bia-{rotulo}"),
-                    janela_agrupamento_ms: 1,
+                    grouping_window_ms: 1,
                     modelo: "gemini-3.8-flash-tiered".to_owned(),
-                    ..NovoAgente::default()
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente")
             .id;
         store
-            .instrucoes()
+            .instructions()
             .salvar(
                 org,
                 agente,
@@ -100,34 +100,34 @@ impl Cenario {
             )
             .expect("grava as instruções");
         let grupo = store
-            .conhecimento()
+            .knowledge()
             .criar_grupo(
                 org,
-                NovoGrupoConhecimento {
-                    nome: "Políticas".to_owned(),
-                    descricao: String::new(),
+                NewKnowledgeGroup {
+                    name: "Políticas".to_owned(),
+                    description: String::new(),
                 },
             )
             .expect("cria o grupo")
             .id;
         store
-            .conhecimento()
+            .knowledge()
             .vincular_agente(org, agente, grupo)
             .expect("liga o grupo");
         let embedder: Arc<dyn Embedder> = Arc::new(EmbedderFake::new());
-        let (indice, _) = Indice::abrir(store.caminho_rag(), embedder, ConfigIndice::default())
+        let (indice, _) = Indice::abrir(store.rag_path(), embedder, ConfigIndice::default())
             .expect("abre o índice");
         let base = BaseConhecimento::nova(Arc::clone(&store), Arc::new(indice));
         let conversa = store
             .conversas()
             .criar(
                 org,
-                NovaConversa {
+                NewConversation {
                     agent_id: agente,
                     integration_id: None,
                     canal: "cli".to_owned(),
                     peer_externo: None,
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("abre a conversa")
@@ -146,15 +146,15 @@ impl Cenario {
 
     fn criar_item(&self, titulo: &str, conteudo: &str) {
         self.store
-            .conhecimento()
+            .knowledge()
             .criar_item(
                 self.org,
-                NovoItemConhecimento {
-                    grupo_id: self.grupo,
-                    titulo: titulo.to_owned(),
-                    conteudo: conteudo.to_owned(),
+                NewKnowledgeItem {
+                    group_id: self.grupo,
+                    title: titulo.to_owned(),
+                    content: conteudo.to_owned(),
                     tags: Vec::new(),
-                    posicao: 0,
+                    position: 0,
                 },
             )
             .expect("cria o item");
@@ -162,19 +162,19 @@ impl Cenario {
 
     fn falar(&self, texto: &str) -> MessageId {
         self.store
-            .mensagens()
+            .messages()
             .gravar(
                 self.org,
-                NovaMensagem {
+                NewMessage {
                     conversation_id: self.conversa,
-                    direcao: Direcao::Entrada,
-                    papel: Papel::Usuario,
+                    direction: Direction::Inbound,
+                    role: Role::User,
                     texto: texto.to_owned(),
-                    anexos_json: "[]".to_owned(),
+                    attachments_json: "[]".to_owned(),
                     id_externo: None,
                     turn_id: None,
-                    origem: poph_store::Origem::Agente,
-                    autor_nome: None,
+                    origin: poph_store::Origin::Agente,
+                    author_name: None,
                 },
             )
             .expect("grava a mensagem")
@@ -238,8 +238,8 @@ impl Cenario {
 
     fn turnos(&self) -> Vec<poph_store::Turno> {
         self.store
-            .turnos()
-            .listar(self.org, self.conversa, Pagina::com_limite(50))
+            .turns()
+            .listar(self.org, self.conversa, Page::with_limit(50))
             .expect("lista os turnos")
     }
 }
@@ -279,7 +279,7 @@ async fn trecho_da_base_entra_no_bloco_volatil_e_o_registro_guarda_a_fonte() {
         )
         .await
         .expect("o turno roda");
-    assert_eq!(resumo.estado, poph_store::EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, poph_store::TurnState::Completed);
 
     let pedidos = fake.recebidos();
     assert_eq!(pedidos.len(), 1, "uma chamada ao modelo");
@@ -303,11 +303,11 @@ async fn trecho_da_base_entra_no_bloco_volatil_e_o_registro_guarda_a_fonte() {
 
     let turno = &cenario.turnos()[0];
     assert!(
-        turno.trechos_json.contains("Prazo de agendamento"),
+        turno.passages_json.contains("Prazo de agendamento"),
         "o registro do turno guarda a fonte: {}",
-        turno.trechos_json
+        turno.passages_json
     );
-    assert!(turno.trechos_json.contains("48 horas úteis"));
+    assert!(turno.passages_json.contains("48 horas úteis"));
 }
 
 #[tokio::test]
@@ -378,20 +378,20 @@ async fn pergunta_sem_resposta_na_base_nao_injeta_bloco() {
     // Corte alto: nada relacionado com a pergunta passa.
     let versao = cenario
         .store
-        .agentes()
-        .obter(cenario.org, cenario.agente)
+        .agents()
+        .get(cenario.org, cenario.agente)
         .expect("lê o agente")
-        .versao;
+        .version;
     cenario
         .store
-        .agentes()
+        .agents()
         .atualizar(
             cenario.org,
             cenario.agente,
             versao,
-            poph_store::MudancaAgente {
-                rag_corte: Some(0.9),
-                ..poph_store::MudancaAgente::default()
+            poph_store::AgentChange {
+                rag_cutoff: Some(0.9),
+                ..poph_store::AgentChange::default()
             },
         )
         .expect("ajusta o corte");
@@ -414,7 +414,7 @@ async fn pergunta_sem_resposta_na_base_nao_injeta_bloco() {
             .any(|texto| texto.contains("<base_de_conhecimento>")),
         "sem trecho acima do corte, o bloco nem aparece: {sistemas:?}"
     );
-    assert!(cenario.turnos()[0].trechos_json == "[]");
+    assert!(cenario.turnos()[0].passages_json == "[]");
 }
 
 /// Teste de fumaça do observador: o evento `Base` leva as fontes para o `chat`/Console.

@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use poph_store::Store;
-use poph_store::migracoes::{MIGRACOES_HARNESS, migrar};
+use poph_store::migrations::{HARNESS_MIGRATIONS, migrate};
 use poph_types::{MessageId, OrgId};
 
 fn pasta(rotulo: &str) -> PathBuf {
@@ -27,7 +27,7 @@ fn migracao_0007_preserva_cursor_existente_e_põe_id_vazio() {
     let conn = rusqlite::Connection::open(&caminho).expect("abre o banco");
 
     // Estado anterior (migrações 1 a 6), com um cursor já gravado.
-    migrar(&conn, "harness.db", &caminho, &MIGRACOES_HARNESS[..6], 1).expect("migra até a 6");
+    migrate(&conn, "harness.db", &caminho, &HARNESS_MIGRATIONS[..6], 1).expect("migra até a 6");
     conn.execute_batch("PRAGMA foreign_keys = OFF;")
         .expect("desliga");
     conn.execute(
@@ -37,9 +37,12 @@ fn migracao_0007_preserva_cursor_existente_e_põe_id_vazio() {
     )
     .expect("grava cursor no formato anterior");
 
-    let relatorio = migrar(&conn, "harness.db", &caminho, MIGRACOES_HARNESS, 2).expect("até a 7");
-    assert_eq!(relatorio.versao_antes, 6);
-    assert_eq!(relatorio.versao_depois, poph_store::versao_alvo_harness());
+    let relatorio = migrate(&conn, "harness.db", &caminho, HARNESS_MIGRATIONS, 2).expect("até a 7");
+    assert_eq!(relatorio.version_before, 6);
+    assert_eq!(
+        relatorio.version_after,
+        poph_store::harness_target_version()
+    );
 
     let (cursor, id): (i64, String) = conn
         .query_row(
@@ -61,11 +64,11 @@ fn migracao_0007_preserva_cursor_existente_e_põe_id_vazio() {
 #[test]
 fn cursor_com_id_so_anda_para_frente_e_recuo_so_pelo_ponto_seguro() {
     let pasta = pasta("cursor");
-    let store = Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre");
+    let store = Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre");
     let org = store
-        .orgaos()
-        .criar(poph_store::NovaOrg {
-            nome: "Org".to_owned(),
+        .orgs()
+        .criar(poph_store::NewOrg {
+            name: "Org".to_owned(),
             slug: "org-cursor".to_owned(),
             config_json: String::new(),
         })
@@ -107,13 +110,13 @@ fn cursor_com_id_so_anda_para_frente_e_recuo_so_pelo_ponto_seguro() {
 #[test]
 fn ultima_rowid_e_teve_mensagens_antes_em_banco_vazio() {
     let pasta = pasta("vazio");
-    let store = Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre");
-    assert!(store.mensagens().ultima_rowid().expect("ultima").is_none());
+    let store = Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre");
+    assert!(store.messages().ultima_rowid().expect("ultima").is_none());
     let org = OrgId::generate();
     let conversa = poph_types::ConversationId::generate();
     assert!(
         !store
-            .mensagens()
+            .messages()
             .teve_mensagens_antes(org, conversa, i64::MAX)
             .expect("teve")
     );

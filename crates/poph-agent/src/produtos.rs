@@ -23,7 +23,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use poph_rag::{AchadoProduto, ConfigBusca, Indice, ProdutoRag, RelatorioIndexacao};
-use poph_store::{Pagina, Produto, Store};
+use poph_store::{Page, Product, Store};
 use poph_types::{AgentId, OrgId, ProductCategoryId, ProductId};
 use serde::Serialize;
 
@@ -137,14 +137,14 @@ impl CatalogoProdutos {
         org: OrgId,
         agente: AgentId,
     ) -> Resultado<RelatorioIndexacao> {
-        let itens = self.store.produtos().para_indice(org, agente)?;
+        let itens = self.store.products().para_indice(org, agente)?;
         let para_indice: Vec<ProdutoRag> = itens
             .into_iter()
             .map(|item| ProdutoRag {
                 id: item.id,
-                nome: item.nome,
+                nome: item.name,
                 texto: item.texto,
-                versao: item.versao,
+                versao: item.version,
             })
             .collect();
         Ok(self
@@ -164,13 +164,13 @@ impl CatalogoProdutos {
         org: OrgId,
     ) -> Resultado<Vec<(AgentId, RelatorioIndexacao)>> {
         let mut relatorios = Vec::new();
-        let mut pagina = Pagina::com_limite(200);
+        let mut pagina = Page::with_limit(200);
         loop {
-            let lote = self.store.agentes().listar(org, pagina)?;
+            let lote = self.store.agents().listar(org, pagina)?;
             if lote.is_empty() {
                 return Ok(relatorios);
             }
-            pagina.apos = lote.last().map(|agente| agente.id.as_uuid());
+            pagina.after = lote.last().map(|agente| agente.id.as_uuid());
             for agente in lote {
                 relatorios.push((agente.id, self.sincronizar_agente(org, agente.id).await?));
             }
@@ -185,7 +185,7 @@ impl CatalogoProdutos {
         categoria: ProductCategoryId,
     ) -> Resultado<bool> {
         Ok(
-            match self.store.produtos().categorias_visiveis(org, agente)? {
+            match self.store.products().categorias_visiveis(org, agente)? {
                 None => true,
                 Some(vinculadas) => vinculadas.contains(&categoria),
             },
@@ -202,23 +202,23 @@ impl CatalogoProdutos {
         if let Ok(id) = limpo.parse::<ProductCategoryId>() {
             return Ok(self
                 .store
-                .categorias()
+                .categories()
                 .obter(org, id)
                 .ok()
                 .map(|categoria| categoria.id));
         }
-        let mut pagina = Pagina::com_limite(200);
+        let mut pagina = Page::with_limit(200);
         loop {
-            let lote = self.store.categorias().listar(org, pagina)?;
+            let lote = self.store.categories().listar(org, pagina)?;
             if lote.is_empty() {
                 return Ok(None);
             }
             for categoria in &lote {
-                if categoria.nome.eq_ignore_ascii_case(limpo) {
+                if categoria.name.eq_ignore_ascii_case(limpo) {
                     return Ok(Some(categoria.id));
                 }
             }
-            pagina.apos = lote.last().map(|categoria| categoria.id.as_uuid());
+            pagina.after = lote.last().map(|categoria| categoria.id.as_uuid());
         }
     }
 }
@@ -271,7 +271,7 @@ impl BuscadorProdutos for CatalogoProdutos {
 
             // O preço e as condições vêm do registro agora, não do índice.
             let ids: Vec<ProductId> = achados.iter().map(|achado| achado.produto).collect();
-            let atuais = self.store.produtos().ativos_por_ids(org, &ids)?;
+            let atuais = self.store.products().ativos_por_ids(org, &ids)?;
             let mut saida = Vec::with_capacity(top_k);
             for achado in &achados {
                 if saida.len() == top_k {
@@ -282,13 +282,13 @@ impl BuscadorProdutos for CatalogoProdutos {
                     // Produto saiu do catálogo (ou ficou inativo) entre a busca e a leitura.
                     continue;
                 };
-                if filtro.is_some_and(|id| produto.categoria_id != id) {
+                if filtro.is_some_and(|id| produto.category_id != id) {
                     continue;
                 }
                 let categoria = self
                     .store
-                    .produtos()
-                    .nome_da_categoria(org, produto.categoria_id)?;
+                    .products()
+                    .nome_da_categoria(org, produto.category_id)?;
                 saida.push(encontrado(produto, categoria, achado));
             }
             Ok(saida)
@@ -297,17 +297,17 @@ impl BuscadorProdutos for CatalogoProdutos {
 }
 
 /// Monta o resultado com o registro do produto e as notas da busca.
-fn encontrado(produto: &Produto, categoria: String, achado: &AchadoProduto) -> ProdutoEncontrado {
+fn encontrado(produto: &Product, categoria: String, achado: &AchadoProduto) -> ProdutoEncontrado {
     ProdutoEncontrado {
         produto: produto.id,
-        nome: produto.nome.clone(),
+        nome: produto.name.clone(),
         categoria,
         preco_texto: preco_texto(produto),
-        preco_centavos: produto.preco_centavos,
-        unidade: produto.unidade.clone(),
-        inclui: produto.inclui.clone(),
+        preco_centavos: produto.price_cents,
+        unidade: produto.unit.clone(),
+        inclui: produto.includes.clone(),
         exclui: produto.exclui.clone(),
-        condicoes: produto.condicoes.clone(),
+        condicoes: produto.conditions.clone(),
         similaridade: achado.similaridade,
         relevancia: achado.relevancia,
     }
@@ -316,11 +316,11 @@ fn encontrado(produto: &Produto, categoria: String, achado: &AchadoProduto) -> P
 /// Preço como o cliente vê. Quando o texto está vazio, formata os centavos em reais no padrão
 /// brasileiro (`890000` vira `R$ 8.900,00`), com a mesma função dos totais do carrinho.
 /// Texto digitado pelo operador é devolvido como está.
-pub fn preco_texto(produto: &Produto) -> String {
-    if !produto.preco_texto.trim().is_empty() {
-        return produto.preco_texto.trim().to_owned();
+pub fn preco_texto(produto: &Product) -> String {
+    if !produto.price_text.trim().is_empty() {
+        return produto.price_text.trim().to_owned();
     }
-    formatar_reais(produto.preco_centavos)
+    formatar_reais(produto.price_cents)
 }
 
 /// A ferramenta `buscar_produto`: o modelo pede um termo e recebe produto, preço e condições.
@@ -511,26 +511,26 @@ mod testes_preco {
 
     use super::*;
 
-    fn produto(preco_texto: &str, preco_centavos: i64) -> Produto {
-        Produto {
+    fn produto(preco_texto: &str, preco_centavos: i64) -> Product {
+        Product {
             id: ProductId::generate(),
             org_id: OrgId::generate(),
-            categoria_id: ProductCategoryId::generate(),
-            nome: "Produto de teste".to_owned(),
+            category_id: ProductCategoryId::generate(),
+            name: "Produto de teste".to_owned(),
             slug: "produto-de-teste".to_owned(),
             aliases: Vec::new(),
-            descricao: String::new(),
-            preco_texto: preco_texto.to_owned(),
-            preco_centavos,
-            unidade: String::new(),
-            inclui: String::new(),
+            description: String::new(),
+            price_text: preco_texto.to_owned(),
+            price_cents: preco_centavos,
+            unit: String::new(),
+            includes: String::new(),
             exclui: String::new(),
-            condicoes: String::new(),
+            conditions: String::new(),
             tags: Vec::new(),
-            status: Status::Ativo,
-            versao: 1,
-            criado_em: 0,
-            atualizado_em: 0,
+            status: Status::Active,
+            version: 1,
+            created_at: 0,
+            updated_at: 0,
         }
     }
 

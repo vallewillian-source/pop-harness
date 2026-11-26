@@ -18,7 +18,7 @@ use poph_agent::{BuscadorProdutos, BuscarProduto, CatalogoProdutos};
 use poph_core::llm::{ChamadaFerramenta, EventoLlm, LlmProvider, MotivoFim, ProvedorFake, Roteiro};
 use poph_rag::{ConfigIndice, Embedder, EmbedderFake, Indice};
 use poph_store::{
-    NovaCategoria, NovaConversa, NovaMensagem, NovaOrg, NovoAgente, NovoProduto, Pagina, Store,
+    NewAgent, NewCategory, NewConversation, NewMessage, NewOrg, NewProduct, Page, Store,
 };
 use poph_types::{AgentId, ConversationId, OrgId, StructuredInstructions, ToolConfig};
 
@@ -51,27 +51,26 @@ impl Cenario {
         let _ = std::fs::remove_dir_all(&pasta);
         std::fs::create_dir_all(&pasta).expect("cria a pasta");
         let store = Arc::new(
-            Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
-                .expect("abre o banco"),
+            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco"),
         );
         let org = store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: format!("Org {rotulo}"),
+            .orgs()
+            .criar(NewOrg {
+                name: format!("Org {rotulo}"),
                 slug: format!("org-{rotulo}-{}", AgentId::generate()),
                 config_json: "{}".to_owned(),
             })
             .expect("cria a org")
             .id;
         let agente = store
-            .agentes()
+            .agents()
             .criar(
                 org,
-                NovoAgente {
-                    nome: format!("Bia {rotulo}"),
+                NewAgent {
+                    name: format!("Bia {rotulo}"),
                     slug: format!("bia-{rotulo}"),
-                    janela_agrupamento_ms: 0,
-                    ..NovoAgente::default()
+                    grouping_window_ms: 0,
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente")
@@ -85,7 +84,7 @@ impl Cenario {
             ..StructuredInstructions::default()
         };
         store
-            .instrucoes()
+            .instructions()
             .salvar(
                 org,
                 agente,
@@ -96,48 +95,48 @@ impl Cenario {
             )
             .expect("grava as instruções");
         let categoria = store
-            .categorias()
+            .categories()
             .criar(
                 org,
-                NovaCategoria {
-                    nome: "Pragas urbanas".to_owned(),
-                    descricao: String::new(),
+                NewCategory {
+                    name: "Pragas urbanas".to_owned(),
+                    description: String::new(),
                 },
             )
             .expect("cria a categoria")
             .id;
         store
-            .produtos()
+            .products()
             .criar(
                 org,
-                NovoProduto {
-                    categoria_id: Some(categoria),
-                    nome: "Dedetização de baratas".to_owned(),
+                NewProduct {
+                    category_id: Some(categoria),
+                    name: "Dedetização de baratas".to_owned(),
                     aliases: vec!["baratas".to_owned(), "barata".to_owned()],
-                    descricao: "Tratamento com gel e pulverização para eliminar baratas."
+                    description: "Tratamento com gel e pulverização para eliminar baratas."
                         .to_owned(),
-                    preco_texto: "R$ 320,00".to_owned(),
-                    preco_centavos: 32_000,
-                    unidade: "por visita".to_owned(),
-                    condicoes: "Pagamento em até 3x".to_owned(),
-                    ..NovoProduto::default()
+                    price_text: "R$ 320,00".to_owned(),
+                    price_cents: 32_000,
+                    unit: "por visita".to_owned(),
+                    conditions: "Pagamento em até 3x".to_owned(),
+                    ..NewProduct::default()
                 },
             )
             .expect("cria o produto");
         let embedder: Arc<dyn Embedder> = Arc::new(EmbedderFake::new());
-        let (indice, _) = Indice::abrir(store.caminho_rag(), embedder, ConfigIndice::default())
+        let (indice, _) = Indice::abrir(store.rag_path(), embedder, ConfigIndice::default())
             .expect("abre o índice");
         let catalogo = CatalogoProdutos::novo(Arc::clone(&store), Arc::new(indice));
         let conversa = store
             .conversas()
             .criar(
                 org,
-                NovaConversa {
+                NewConversation {
                     agent_id: agente,
                     integration_id: None,
                     canal: "cli".to_owned(),
                     peer_externo: None,
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("abre a conversa")
@@ -182,19 +181,19 @@ impl Cenario {
 
     fn falar(&self, texto: &str) -> poph_types::MessageId {
         self.store
-            .mensagens()
+            .messages()
             .gravar(
                 self.org,
-                NovaMensagem {
+                NewMessage {
                     conversation_id: self.conversa,
-                    direcao: poph_store::Direcao::Entrada,
-                    papel: poph_store::Papel::Usuario,
+                    direction: poph_store::Direction::Inbound,
+                    role: poph_store::Role::User,
                     texto: texto.to_owned(),
-                    anexos_json: "[]".to_owned(),
+                    attachments_json: "[]".to_owned(),
                     id_externo: None,
                     turn_id: None,
-                    origem: poph_store::Origem::Agente,
-                    autor_nome: None,
+                    origin: poph_store::Origin::Agente,
+                    author_name: None,
                 },
             )
             .expect("grava a mensagem")
@@ -203,8 +202,8 @@ impl Cenario {
 
     fn turnos(&self) -> Vec<poph_store::Turno> {
         self.store
-            .turnos()
-            .listar(self.org, self.conversa, Pagina::default())
+            .turns()
+            .listar(self.org, self.conversa, Page::default())
             .expect("lista os turnos")
     }
 }
@@ -249,7 +248,7 @@ async fn turno_grava_o_produto_usado_com_o_preco_do_registro() {
         )
         .await
         .expect("o turno roda");
-    assert_eq!(resumo.estado.como_texto(), "done");
+    assert_eq!(resumo.estado.as_text(), "done");
     assert_eq!(resumo.texto, "A dedetização custa R$ 320,00.");
 
     // O modelo pediu a ferramenta na primeira rodada e recebeu o preço do registro.
@@ -269,7 +268,7 @@ async fn turno_grava_o_produto_usado_com_o_preco_do_registro() {
     let turnos = cenario.turnos();
     assert_eq!(turnos.len(), 1);
     let registrado: serde_json::Value =
-        serde_json::from_str(&turnos[0].trechos_json).expect("JSON do registro");
+        serde_json::from_str(&turnos[0].passages_json).expect("JSON do registro");
     let itens = registrado.as_array().expect("lista");
     let produto = itens
         .iter()
@@ -294,5 +293,5 @@ async fn turno_sem_produto_mantem_o_registro_vazio() {
         .await
         .expect("o turno roda");
     let turnos = cenario.turnos();
-    assert_eq!(turnos[0].trechos_json, "[]");
+    assert_eq!(turnos[0].passages_json, "[]");
 }

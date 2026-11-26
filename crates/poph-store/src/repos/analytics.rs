@@ -2,7 +2,7 @@ use poph_types::OrgId;
 use rusqlite::params;
 
 use crate::Store;
-use crate::erro::{ErroStore, Resultado};
+use crate::error::{Resultado, StoreError};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct NodeCount {
@@ -29,7 +29,7 @@ impl Analytics<'_> {
         to: i64,
     ) -> Resultado<OperationalSummary> {
         let org_text = org.to_string();
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             let (open, closed, average, open_conversations) = conn
                 .query_row(
                     "SELECT
@@ -53,7 +53,7 @@ impl Analytics<'_> {
                         ))
                     },
                 )
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
 
             let mut statement = conn
                 .prepare(
@@ -67,7 +67,7 @@ impl Analytics<'_> {
                       GROUP BY e.no_atual
                       ORDER BY total DESC, e.no_atual ASC",
                 )
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
             let nodes = statement
                 .query_map(params![org_text, to], |row| {
                     Ok(NodeCount {
@@ -75,10 +75,10 @@ impl Analytics<'_> {
                         count: row.get::<_, i64>(1)?.max(0) as u64,
                     })
                 })
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
             let mut active_flow_nodes = Vec::new();
             for node in nodes {
-                active_flow_nodes.push(node.map_err(ErroStore::from)?);
+                active_flow_nodes.push(node.map_err(StoreError::from)?);
             }
 
             Ok(OperationalSummary {

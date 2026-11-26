@@ -17,10 +17,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 
-use poph_store::migracoes::migrar;
+use poph_store::migrations::migrate;
 use poph_store::{
-    CategoriaMidia, Conversa, ErroStore, MIGRACOES_HARNESS, MidiaDaSala, NovaConversa, NovaMidia,
-    NovaOrg, NovoAgente, Org, Store, versao_alvo_harness, versao_do_arquivo,
+    CategoriaMidia, Conversa, HARNESS_MIGRATIONS, MidiaDaSala, NewAgent, NewConversation, NewOrg,
+    NovaMidia, Org, Store, StoreError, file_version, harness_target_version,
 };
 use poph_types::{AttachmentId, DomainError};
 
@@ -64,14 +64,14 @@ impl Cenario {
         let rag = pasta.join("rag.db");
         if let Some(ate) = ate {
             let conn = rusqlite::Connection::open(&harness).expect("abre o banco antigo");
-            migrar(&conn, "harness.db", &harness, &MIGRACOES_HARNESS[..ate], 1)
+            migrate(&conn, "harness.db", &harness, &HARNESS_MIGRATIONS[..ate], 1)
                 .expect("migra até a versão antiga");
         }
         let relogio = Relogio::novo(1_000);
         let agora = Arc::clone(&relogio.0);
-        let store = Store::abrir_em(&harness, &rag)
+        let store = Store::open_at(&harness, &rag)
             .expect("abre o banco")
-            .com_relogio(Arc::new(move || agora.load(Ordering::SeqCst)));
+            .with_clock(Arc::new(move || agora.load(Ordering::SeqCst)));
         Self {
             pasta,
             relogio,
@@ -93,9 +93,9 @@ impl Drop for Cenario {
 
 fn criar_org(store: &Store, slug: &str) -> Org {
     store
-        .orgaos()
-        .criar(NovaOrg {
-            nome: format!("Org {slug}"),
+        .orgs()
+        .criar(NewOrg {
+            name: format!("Org {slug}"),
             slug: slug.to_owned(),
             config_json: String::new(),
         })
@@ -104,13 +104,13 @@ fn criar_org(store: &Store, slug: &str) -> Org {
 
 fn criar_conversa(store: &Store, org: &Org) -> Conversa {
     let agente = store
-        .agentes()
+        .agents()
         .criar(
             org.id,
-            NovoAgente {
-                nome: "Agente".to_owned(),
+            NewAgent {
+                name: "Agente".to_owned(),
                 slug: "agente".to_owned(),
-                ..NovoAgente::default()
+                ..NewAgent::default()
             },
         )
         .expect("cria o agente");
@@ -118,12 +118,12 @@ fn criar_conversa(store: &Store, org: &Org) -> Conversa {
         .conversas()
         .criar(
             org.id,
-            NovaConversa {
+            NewConversation {
                 agent_id: agente.id,
                 integration_id: None,
                 canal: "whatsapp".to_owned(),
                 peer_externo: Some("5511999990000".to_owned()),
-                departamento_alvo: None,
+                target_department: None,
             },
         )
         .expect("cria a conversa")
@@ -156,12 +156,12 @@ fn ida(midias: &[MidiaDaSala]) -> Vec<String> {
 fn migracao_nova_entra_num_banco_vazio_e_num_banco_antigo() {
     let novo = Cenario::novo("migracao-nova");
     assert_eq!(
-        versao_do_arquivo(&novo.pasta.join("harness.db")).expect("versão"),
-        Some(versao_alvo_harness())
+        file_version(&novo.pasta.join("harness.db")).expect("versão"),
+        Some(harness_target_version())
     );
 
     // Banco parado na versão anterior (sem `matrix_midia`): a 0016 entra na abertura.
-    let antigo = Cenario::com_versao("migracao-antiga", Some(MIGRACOES_HARNESS.len() - 1));
+    let antigo = Cenario::com_versao("migracao-antiga", Some(HARNESS_MIGRATIONS.len() - 1));
     let org = criar_org(antigo.store(), "antiga");
     let conversa = criar_conversa(antigo.store(), &org);
     let uma = midia(&conversa, "$e1:matrix-dev.local", 5_000);
@@ -170,7 +170,7 @@ fn migracao_nova_entra_num_banco_vazio_e_num_banco_antigo() {
             .store()
             .matrix_midia()
             .registrar(org.id, &uma)
-            .expect("grava depois de migrar")
+            .expect("grava depois de migrate")
     );
 }
 
@@ -240,7 +240,7 @@ fn recusa_midia_sem_sala_ou_sem_agente() {
             .registrar(org.id, &defeituosa)
             .expect_err("mídia incompleta deve ser recusada");
         match erro {
-            ErroStore::Dominio(DomainError::Validation { field: campo, .. }) => {
+            StoreError::Domain(DomainError::Validation { field: campo, .. }) => {
                 assert_eq!(campo, rotulo)
             }
             outro => panic!("esperado erro de validação em {rotulo}, veio {outro:?}"),
@@ -446,7 +446,7 @@ fn apagar_a_org_leva_as_midias_do_modulo_junto() {
         .expect("grava a mídia");
 
     store
-        .orgaos()
+        .orgs()
         .excluir_forcado(org.id)
         .expect("apaga a org com os agentes dela");
     assert_eq!(

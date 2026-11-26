@@ -35,7 +35,7 @@ use poph_fluxos::ir::{Destino, Ir};
 use poph_fluxos::motor::{
     self, Contexto as ContextoDoMotor, Estado as EstadoDoMotor, executar_acao,
 };
-use poph_store::{ErroStore, Execucao, ExtrasDaTransicao, Ficha, Store};
+use poph_store::{Execution, Ficha, Store, StoreError, TransitionExtras};
 use poph_types::{ActionActor, FlowsConfig, RecordStatus};
 use serde_json::{Map, Value};
 
@@ -229,19 +229,19 @@ impl FluxoDoTurno {
         })?;
         let gravada = self
             .store
-            .execucoes()
+            .executions()
             .aplicar_transicao(
                 contexto.org,
                 execucao.id,
-                execucao.versao,
+                execucao.version,
                 &transicao_do_motor(&resultado),
                 &chave,
-                ExtrasDaTransicao {
+                TransitionExtras {
                     // Sem token: o agente não tem identidade de atendente. O evento já é assinado
                     // com o ator `agente` pelo motor.
                     ator_ref: None,
                     fechada_por: None,
-                    motivo_encerramento: None,
+                    close_reason: None,
                 },
             )
             .map_err(|erro| erro_da_transicao(erro, &acao))?;
@@ -249,7 +249,7 @@ impl FluxoDoTurno {
             &carga.ir,
             &carga.estado,
             &resultado,
-            gravada.repetida,
+            gravada.repeated,
         ))
     }
 
@@ -257,12 +257,12 @@ impl FluxoDoTurno {
     fn repeticao_ja_aplicada(
         &self,
         contexto: &ContextoFerramenta,
-        execucao: &Execucao,
+        execucao: &Execution,
         chave: &str,
     ) -> Result<Option<String>, String> {
         let aplicada = self
             .store
-            .execucoes()
+            .executions()
             .transicao_ja_aplicada(contexto.org, execucao.id, chave)
             .map_err(|erro| falha_de_leitura(erro, "a chave da ação"))?;
         if !aplicada {
@@ -277,7 +277,10 @@ impl FluxoDoTurno {
     }
 
     /// A Ficha da conversa e a execução ativa dela, com as recusas que o modelo precisa entender.
-    fn ficha_e_execucao(&self, contexto: &ContextoFerramenta) -> Result<(Ficha, Execucao), String> {
+    fn ficha_e_execucao(
+        &self,
+        contexto: &ContextoFerramenta,
+    ) -> Result<(Ficha, Execution), String> {
         let ficha = self
             .store
             .fichas()
@@ -294,7 +297,7 @@ impl FluxoDoTurno {
         }
         let execucao = self
             .store
-            .execucoes()
+            .executions()
             .ativa_da_ficha(contexto.org, ficha.id)
             .map_err(|erro| falha_de_leitura(erro, "a execução do fluxo"))?
             .ok_or_else(|| {
@@ -360,7 +363,7 @@ impl FluxoDoTurno {
         });
         if self
             .store
-            .execucoes()
+            .executions()
             .transicao_ja_aplicada(contexto.org, execucao.id, &chave)
             .map_err(|erro| falha_de_leitura(erro, "a chave do abandono"))?
         {
@@ -374,17 +377,17 @@ impl FluxoDoTurno {
         let resultado = motor::abandonar(&carga.estado, &motivo, ActionActor::Agent, Some(&chave))
             .map_err(|erro| format!("erro: {erro}"))?;
         self.store
-            .execucoes()
+            .executions()
             .aplicar_transicao(
                 contexto.org,
                 execucao.id,
-                execucao.versao,
+                execucao.version,
                 &transicao_do_motor(&resultado),
                 &chave,
-                ExtrasDaTransicao {
+                TransitionExtras {
                     ator_ref: None,
                     fechada_por: None,
-                    motivo_encerramento: None,
+                    close_reason: None,
                 },
             )
             .map_err(|erro| erro_da_transicao(erro, "abandonar"))?;
@@ -512,7 +515,7 @@ impl FluxoDoTurno {
         }
         let minusculo = pedido.to_lowercase();
         let achado = liberados.iter().find(|fluxo| {
-            fluxo.slug.to_lowercase() == minusculo || fluxo.nome.to_lowercase() == minusculo
+            fluxo.slug.to_lowercase() == minusculo || fluxo.name.to_lowercase() == minusculo
         });
         match achado {
             Some(fluxo) => Ok(fluxo.slug.clone()),
@@ -703,7 +706,7 @@ fn chave_opcional(argumentos: &Value) -> Result<Option<String>, String> {
 /// mesma ação numa etapa seguinte, que é legítima, tem outra chave. O hash é o do processo: se a
 /// versão do Rust mudar, no pior caso a repetição não é reconhecida e o motor recusa a ação que já
 /// não existe na etapa — nunca grava efeito duplicado, porque a chave do efeito é do motor.
-fn chave_derivada(execucao: &Execucao, no_atual: &str, acao: &str, campos: &Value) -> String {
+fn chave_derivada(execucao: &Execution, no_atual: &str, acao: &str, campos: &Value) -> String {
     let mut hasher = DefaultHasher::new();
     campos.to_string().hash(&mut hasher);
     format!(
@@ -716,19 +719,19 @@ fn chave_derivada(execucao: &Execucao, no_atual: &str, acao: &str, campos: &Valu
 // ─────────────────────────────────────────────────────────────────────── recusas
 
 /// Falha de armazenamento: o detalhe vai para o log, o modelo recebe o caminho de saída.
-fn falha_de_leitura(erro: ErroStore, o_que: &str) -> String {
+fn falha_de_leitura(erro: StoreError, o_que: &str) -> String {
     tracing::error!(erro = %erro, o_que, "ferramenta do fluxo falhou no armazenamento");
     format!("erro: não consegui ler {o_que} agora; siga a conversa sem o fluxo nesta mensagem")
 }
 
 /// A gravação recusou a transição: versão velha é corrida com o atendente, o resto é defeito.
-fn erro_da_transicao(erro: ErroStore, acao: &str) -> String {
+fn erro_da_transicao(erro: StoreError, acao: &str) -> String {
     match erro {
-        ErroStore::Dominio(poph_types::DomainError::VersionConflict { .. }) => format!(
+        StoreError::Domain(poph_types::DomainError::VersionConflict { .. }) => format!(
             "erro: outra pessoa agiu neste fluxo ao mesmo tempo e a etapa mudou; a ação `{acao}` \
              não foi gravada"
         ),
-        ErroStore::Dominio(dominio) => format!("erro: {dominio}"),
+        StoreError::Domain(dominio) => format!("erro: {dominio}"),
         outro => falha_de_leitura(outro, "a gravação do fluxo"),
     }
 }
@@ -743,13 +746,13 @@ fn nao_consegui_ler_o_fluxo() -> String {
 mod testes {
     use poph_types::{DomainError, ExecutionId};
 
-    use poph_store::ErroStore;
+    use poph_store::StoreError;
 
     use super::{chave_derivada, erro_da_transicao};
 
     /// Execução fictícia só para derivar a chave (o resto dos campos não entra nela).
-    fn execucao() -> poph_store::Execucao {
-        poph_store::Execucao {
+    fn execucao() -> poph_store::Execution {
+        poph_store::Execution {
             id: ExecutionId::generate(),
             org_id: poph_types::OrgId::generate(),
             ficha_id: poph_types::RecordId::generate(),
@@ -758,11 +761,11 @@ mod testes {
             status: poph_types::ExecutionStatus::Active,
             no_atual: "coleta".to_owned(),
             dados_json: "{}".to_owned(),
-            resultado: None,
+            result: None,
             motivo_fim: None,
             iniciada_em: 0,
             finalizada_em: None,
-            versao: 1,
+            version: 1,
         }
     }
 
@@ -801,7 +804,7 @@ mod testes {
     /// não "erro de armazenamento".
     #[test]
     fn conflito_de_versao_vira_aviso_de_corrida() {
-        let erro = ErroStore::Dominio(DomainError::VersionConflict {
+        let erro = StoreError::Domain(DomainError::VersionConflict {
             entity: "execução de fluxo",
             id: "execucao-ficticia".to_owned(),
             expected: 1,

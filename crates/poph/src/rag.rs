@@ -23,7 +23,7 @@ pub fn abrir_indice(config: &HarnessConfig, store: &Arc<Store>) -> Result<Indice
         )
     })?;
     let embedder: Arc<dyn Embedder> = Arc::new(embedder);
-    let (indice, abertura) = Indice::abrir(store.caminho_rag(), embedder, ConfigIndice::default())
+    let (indice, abertura) = Indice::abrir(store.rag_path(), embedder, ConfigIndice::default())
         .map_err(|erro| format!("não consegui abrir o índice: {erro}"))?;
     if abertura.limpo_por_divergencia {
         eprintln!(
@@ -120,12 +120,9 @@ pub fn abrir_base_com_fila(
         )
     };
     let da_org = poph_rag::EmbedderDaFila::com_runtime(fila, org, identidade, runtime);
-    let (indice, abertura) = Indice::abrir(
-        store.caminho_rag(),
-        Arc::new(da_org),
-        ConfigIndice::default(),
-    )
-    .map_err(|erro| format!("não consegui abrir o índice: {erro}"))?;
+    let (indice, abertura) =
+        Indice::abrir(store.rag_path(), Arc::new(da_org), ConfigIndice::default())
+            .map_err(|erro| format!("não consegui abrir o índice: {erro}"))?;
     if abertura.limpo_por_divergencia {
         eprintln!(
             "[aviso] o índice foi limpo: os vetores eram de outro modelo ou de outro divisor de \

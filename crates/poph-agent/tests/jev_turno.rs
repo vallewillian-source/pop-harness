@@ -23,8 +23,8 @@ use poph_jev::{
     MensagemJev, MotorJev,
 };
 use poph_store::{
-    Direcao, EstadoTurno, MudancaAgente, NovaConversa, NovaMensagem, NovaOrg, NovoAgente,
-    NovoDepartamento, Papel, Store,
+    AgentChange, Direction, NewAgent, NewConversation, NewDepartment, NewMessage, NewOrg, Role,
+    Store, TurnState,
 };
 use poph_types::{AgentId, ConversationId, JevGates, MessageId, OrgId};
 
@@ -54,32 +54,31 @@ impl Cenario {
         let _ = std::fs::remove_dir_all(&pasta);
         std::fs::create_dir_all(&pasta).expect("pasta do teste");
         let store = Arc::new(
-            Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
-                .expect("abre o banco"),
+            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco"),
         );
         let org = store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: format!("Org {rotulo}"),
+            .orgs()
+            .criar(NewOrg {
+                name: format!("Org {rotulo}"),
                 slug: format!("org-{rotulo}-{}", AgentId::generate()),
                 config_json: "{}".to_owned(),
             })
             .expect("cria a org")
             .id;
         let agente = store
-            .agentes()
+            .agents()
             .criar(
                 org,
-                NovoAgente {
-                    nome: format!("Bia {rotulo}"),
+                NewAgent {
+                    name: format!("Bia {rotulo}"),
                     slug: format!("bia-{rotulo}"),
-                    ..NovoAgente::default()
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente")
             .id;
         store
-            .instrucoes()
+            .instructions()
             .salvar(
                 org,
                 agente,
@@ -91,14 +90,14 @@ impl Cenario {
             .expect("grava as instruções");
         // Handoff ligado: sem isso o G1 nem se aplica (regra do POP Atende).
         store
-            .agentes()
+            .agents()
             .atualizar(
                 org,
                 agente,
                 1,
-                MudancaAgente {
-                    handoff_ativo: Some(true),
-                    ..MudancaAgente::default()
+                AgentChange {
+                    handoff_active: Some(true),
+                    ..AgentChange::default()
                 },
             )
             .expect("liga o handoff");
@@ -115,12 +114,12 @@ impl Cenario {
             .conversas()
             .criar(
                 self.org,
-                NovaConversa {
+                NewConversation {
                     agent_id: self.agente,
                     integration_id: None,
                     canal: "cli".to_owned(),
                     peer_externo: None,
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("abre a conversa")
@@ -129,19 +128,19 @@ impl Cenario {
 
     fn falar(&self, conversa: ConversationId, texto: &str) -> MessageId {
         self.store
-            .mensagens()
+            .messages()
             .gravar(
                 self.org,
-                NovaMensagem {
+                NewMessage {
                     conversation_id: conversa,
-                    direcao: Direcao::Entrada,
-                    papel: Papel::Usuario,
+                    direction: Direction::Inbound,
+                    role: Role::User,
                     texto: texto.to_owned(),
-                    anexos_json: "[]".to_owned(),
+                    attachments_json: "[]".to_owned(),
                     id_externo: None,
                     turn_id: None,
-                    origem: poph_store::Origem::Agente,
-                    autor_nome: None,
+                    origin: poph_store::Origin::Agente,
+                    author_name: None,
                 },
             )
             .expect("grava a mensagem")
@@ -150,12 +149,12 @@ impl Cenario {
 
     fn departamento(&self, nome: &str) {
         self.store
-            .departamentos()
+            .departments()
             .criar(
                 self.org,
-                NovoDepartamento {
-                    nome: nome.to_owned(),
-                    descricao: String::new(),
+                NewDepartment {
+                    name: nome.to_owned(),
+                    description: String::new(),
                 },
             )
             .expect("cria o departamento");
@@ -164,18 +163,18 @@ impl Cenario {
     fn ajustar_jev_do_agente(&self, jev_json: &str) {
         let atual = self
             .store
-            .agentes()
-            .obter(self.org, self.agente)
+            .agents()
+            .get(self.org, self.agente)
             .expect("lê o agente");
         self.store
-            .agentes()
+            .agents()
             .atualizar(
                 self.org,
                 self.agente,
-                atual.versao,
-                MudancaAgente {
+                atual.version,
+                AgentChange {
                     jev_json: Some(jev_json.to_owned()),
-                    ..MudancaAgente::default()
+                    ..AgentChange::default()
                 },
             )
             .expect("ajusta o jev_json do agente");
@@ -228,8 +227,8 @@ impl Cenario {
     /// Último turno gravado da conversa.
     fn ultimo_turno(&self, conversa: ConversationId) -> poph_store::Turno {
         self.store
-            .turnos()
-            .listar(self.org, conversa, poph_store::Pagina::com_limite(10))
+            .turns()
+            .listar(self.org, conversa, poph_store::Page::with_limit(10))
             .expect("lista os turnos")
             .into_iter()
             .next()
@@ -286,7 +285,7 @@ async fn turno_grava_a_decisao_do_jev_no_registro() {
     let gatilho = cenario.falar(conversa, "queria saber o prazo de entrega");
     let resumo = cenario.turno(&motor, conversa, gatilho).await;
 
-    assert_eq!(resumo.estado, EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, TurnState::Completed);
     assert_eq!(resumo.texto, "Olá! Como posso ajudar?");
     let jev = resumo.jev.expect("o turno registra o Jev");
     assert_eq!(jev.escolha(IdGate::G1), Some(G1_CONTINUAR));
@@ -343,7 +342,7 @@ async fn gates_desligados_nao_geram_pergunta() {
     let gatilho = cenario.falar(conversa, "bom dia");
     let resumo = cenario.turno(&motor, conversa, gatilho).await;
 
-    assert_eq!(resumo.estado, EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, TurnState::Completed);
     assert!(resumo.jev.is_none());
     assert_eq!(jev.chamadas(), 0);
     assert_eq!(cenario.ultimo_turno(conversa).jev_json, "{}");
@@ -364,7 +363,7 @@ async fn ajuste_do_agente_desliga_o_gate_no_turno() {
     let gatilho = cenario.falar(conversa, "quero falar com um atendente");
     let resumo = cenario.turno(&motor, conversa, gatilho).await;
 
-    assert_eq!(resumo.estado, EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, TurnState::Completed);
     assert_eq!(jev.chamadas(), 0, "o agente desligou o G1");
     assert!(resumo.jev.is_none());
 }
@@ -383,7 +382,7 @@ async fn falha_do_jev_nao_derruba_o_turno() {
     let gatilho = cenario.falar(conversa, "quero falar com um atendente");
     let resumo = cenario.turno(&motor, conversa, gatilho).await;
 
-    assert_eq!(resumo.estado, EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, TurnState::Completed);
     assert_eq!(resumo.texto, "Olá! Como posso ajudar?");
     let jev = resumo.jev.expect("o turno registra a tentativa");
     assert!(jev.falhou());
@@ -467,7 +466,7 @@ async fn motor_sem_jev_responde_igual() {
     let gatilho = cenario.falar(conversa, "bom dia");
     let resumo = cenario.turno(&motor, conversa, gatilho).await;
 
-    assert_eq!(resumo.estado, EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, TurnState::Completed);
     assert!(resumo.jev.is_none());
     assert_eq!(cenario.ultimo_turno(conversa).jev_json, "{}");
 }
@@ -531,7 +530,7 @@ async fn jev_e_busca_correm_juntos() {
     let resumo = cenario.turno(&motor, conversa, gatilho).await;
     let decorrido = inicio.elapsed();
 
-    assert_eq!(resumo.estado, EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, TurnState::Completed);
     assert!(resumo.jev.is_some());
     // Sequencial seria ~600 ms; concorrente fica perto de 300 ms. Folga larga para máquina cheia.
     assert!(

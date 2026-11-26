@@ -10,7 +10,7 @@ use argon2::password_hash::{PasswordHasher, SaltString};
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use poph_store::{Pagina, TokenAdmin};
+use poph_store::{Page, TokenAdmin};
 use poph_types::{AdminTokenId, OrgId};
 use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
@@ -44,14 +44,14 @@ impl TokenJson {
         Self {
             id: token.id.to_string(),
             org_id: token.org_id.map(|org| org.to_string()),
-            label: token.rotulo.clone(),
-            status: if token.revogado_em.is_some() {
+            label: token.label.clone(),
+            status: if token.revoked_at.is_some() {
                 "revoked".to_owned()
             } else {
                 "active".to_owned()
             },
-            created_at: token.criado_em,
-            revoked_at: token.revogado_em,
+            created_at: token.created_at,
+            revoked_at: token.revoked_at,
         }
     }
 }
@@ -109,7 +109,7 @@ pub async fn listar(
     let pagina = consulta.pagina()?;
     let tokens = estado.store.tokens().listar(org, pagina)?;
     let items: Vec<TokenJson> = tokens.iter().map(TokenJson::de).collect();
-    let next_cursor = proximo_cursor(&items, pagina.limite, |item| item.id.clone());
+    let next_cursor = proximo_cursor(&items, pagina.limit, |item| item.id.clone());
     Ok(Json(ListaJson { items, next_cursor }))
 }
 
@@ -144,7 +144,7 @@ pub async fn criar(
         ));
     }
     // A org precisa existir (erro 404 antes de qualquer gravação).
-    estado.store.orgaos().obter(org)?;
+    estado.store.orgs().get(org)?;
     let segredo = gerar_segredo();
     let hash = gerar_hash(&segredo)?;
     let token = estado.store.tokens().criar(Some(org), rotulo, &hash)?;
@@ -255,6 +255,6 @@ fn gerar_hash(valor: &str) -> Result<String, ApiError> {
 
 /// Página padrão usada em testes e em chamadas internas.
 #[allow(dead_code)]
-pub(crate) fn pagina_padrao() -> Pagina {
-    Pagina::default()
+pub(crate) fn pagina_padrao() -> Page {
+    Page::default()
 }

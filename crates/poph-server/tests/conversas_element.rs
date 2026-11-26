@@ -20,7 +20,7 @@ use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, SaltString};
 use axum::http::StatusCode;
 use poph_server::Estado;
-use poph_store::{Agente, Conversa, NovaConversa, NovaOrg, NovoAgente, Org, Store};
+use poph_store::{Agente, Conversa, NewAgent, NewConversation, NewOrg, Org, Store};
 use poph_types::{AgentId, ConversationId, HarnessConfig, OrgId};
 use rand_core::OsRng;
 use reqwest::{Client, Method};
@@ -48,9 +48,9 @@ impl Cenario {
         config.data.directory = pasta.join("dados");
         config.validar().expect("configuração válida");
         let relogio = Arc::new(AtomicI64::new(1_000_000));
-        let store = Store::abrir(&config)
+        let store = Store::open(&config)
             .expect("abre o banco")
-            .com_relogio(Arc::new(move || relogio.fetch_add(10, Ordering::SeqCst)));
+            .with_clock(Arc::new(move || relogio.fetch_add(10, Ordering::SeqCst)));
         Self {
             pasta,
             store: Arc::new(store),
@@ -64,9 +64,9 @@ impl Cenario {
 
     fn org(&self, slug: &str) -> Org {
         self.store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: format!("Org {slug}"),
+            .orgs()
+            .criar(NewOrg {
+                name: format!("Org {slug}"),
                 slug: slug.to_owned(),
                 config_json: String::new(),
             })
@@ -91,13 +91,13 @@ impl Cenario {
 
     fn agente(&self, org: &Org, slug: &str, nome: &str) -> Agente {
         self.store
-            .agentes()
+            .agents()
             .criar(
                 org.id,
-                NovoAgente {
-                    nome: nome.to_owned(),
+                NewAgent {
+                    name: nome.to_owned(),
                     slug: slug.to_owned(),
-                    ..NovoAgente::default()
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente")
@@ -108,12 +108,12 @@ impl Cenario {
             .conversas()
             .criar(
                 org.id,
-                NovaConversa {
+                NewConversation {
                     agent_id: agente,
                     integration_id: None,
                     canal: "whatsapp".to_owned(),
                     peer_externo: Some("5511999999999".to_owned()),
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("cria a conversa")
@@ -225,7 +225,7 @@ async fn detalhe_fechar_reabrir_e_lista_trazem_nome_agente_e_sala_pronta() {
     let conversa = c.conversa(&org, agente.id);
     c.store
         .conversas()
-        .definir_nome_cliente(org.id, conversa.id, "Ana Souza")
+        .set_customer_name(org.id, conversa.id, "Ana Souza")
         .expect("nome do cliente");
     c.store.matrix().ligar(org.id).expect("liga o módulo");
     c.sala(&org, conversa.id, "!ana:matrix-dev.local", true);
@@ -283,19 +283,19 @@ async fn detalhe_fechar_reabrir_e_lista_trazem_nome_agente_e_sala_pronta() {
             conversa.id,
             c.store
                 .conversas()
-                .obter(org.id, conversa.id)
+                .get(org.id, conversa.id)
                 .unwrap()
-                .versao,
-            poph_store::StatusConversa::Transferida,
+                .version,
+            poph_store::ConversationStatus::Transferred,
             None,
         )
         .expect("transfere para humano");
     let versao_transferida = c
         .store
         .conversas()
-        .obter(org.id, conversa.id)
+        .get(org.id, conversa.id)
         .unwrap()
-        .versao
+        .version
         .to_string();
     let reaberta = pedir(
         &base,
@@ -335,7 +335,7 @@ async fn sala_em_criacao_nome_vazio_e_modulo_desligado_viram_nulo() {
     let nunca_ligada = c.conversa(&b, agente_b.id);
     c.store
         .conversas()
-        .definir_nome_cliente(b.id, nunca_ligada.id, "Bruno Lima")
+        .set_customer_name(b.id, nunca_ligada.id, "Bruno Lima")
         .expect("nome do cliente");
     c.sala(&b, nunca_ligada.id, "!pronta-b:matrix-dev.local", true);
 
@@ -344,7 +344,7 @@ async fn sala_em_criacao_nome_vazio_e_modulo_desligado_viram_nulo() {
     let desligada = c.conversa(&d, agente_c.id);
     c.store
         .conversas()
-        .definir_nome_cliente(d.id, desligada.id, "Carla Dias")
+        .set_customer_name(d.id, desligada.id, "Carla Dias")
         .expect("nome do cliente");
     c.sala(&d, desligada.id, "!pronta-c:matrix-dev.local", true);
 
@@ -411,7 +411,7 @@ async fn lista_le_nomes_e_salas_em_lote_sem_consulta_por_linha() {
         let conversa = c.conversa(&org, agente.id);
         c.store
             .conversas()
-            .definir_nome_cliente(org.id, conversa.id, &format!("Cliente {n}"))
+            .set_customer_name(org.id, conversa.id, &format!("Cliente {n}"))
             .expect("nome");
         if n % 2 == 0 {
             c.sala(
@@ -425,13 +425,13 @@ async fn lista_le_nomes_e_salas_em_lote_sem_consulta_por_linha() {
     let (base, desligar) = servir(c.estado()).await;
 
     // Mede as leituras que cada página gasta; a página pequena e a grande têm de gastar o mesmo.
-    let antes = c.store.leituras_feitas();
+    let antes = c.store.reads_done();
     let pequena = lista(&base, org.id, &token, 2).await;
-    let leituras_pequena = c.store.leituras_feitas() - antes;
+    let leituras_pequena = c.store.reads_done() - antes;
 
-    let antes = c.store.leituras_feitas();
+    let antes = c.store.reads_done();
     let grande = lista(&base, org.id, &token, 30).await;
-    let leituras_grande = c.store.leituras_feitas() - antes;
+    let leituras_grande = c.store.reads_done() - antes;
 
     assert_eq!(pequena.len(), 2);
     assert_eq!(grande.len(), 30);
@@ -476,7 +476,7 @@ async fn conversa_de_outra_org_continua_404_e_nao_vaza_o_nome() {
     let conversa_b = c.conversa(&b, agente_b.id);
     c.store
         .conversas()
-        .definir_nome_cliente(b.id, conversa_b.id, "Cliente Secreto B")
+        .set_customer_name(b.id, conversa_b.id, "Cliente Secreto B")
         .expect("nome");
     c.store.matrix().ligar(b.id).expect("liga a B");
     c.sala(&b, conversa_b.id, "!secreta:matrix-dev.local", true);

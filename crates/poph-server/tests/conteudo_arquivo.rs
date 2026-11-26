@@ -21,7 +21,9 @@ use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, SaltString};
 use poph_files::blob::sha256_hex;
 use poph_server::Estado;
-use poph_store::{Direcao, Mensagem, NovaConversa, NovaMensagem, NovoAnexoCanal, Papel, Store};
+use poph_store::{
+    Direction, Mensagem, NewChannelAttachment, NewConversation, NewMessage, Role, Store,
+};
 use poph_types::config::GlobalTokenConfig;
 use poph_types::{ConversationId, HarnessConfig, OrgId};
 use rand_core::OsRng;
@@ -72,7 +74,7 @@ impl Cenario {
         }];
         config.validar().expect("configuração válida");
 
-        let store = std::sync::Arc::new(Store::abrir(&config).expect("abre o banco"));
+        let store = std::sync::Arc::new(Store::open(&config).expect("abre o banco"));
         let estado =
             Estado::novo(std::sync::Arc::clone(&store), config).expect("estado do servidor");
 
@@ -237,39 +239,39 @@ impl Cenario {
             .conversas()
             .criar(
                 org_id,
-                NovaConversa {
+                NewConversation {
                     agent_id: agente.parse().expect("agente"),
                     integration_id: None,
                     canal: "test".to_owned(),
                     peer_externo: None,
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("conversa");
         let mensagem = self
             .store()
-            .mensagens()
+            .messages()
             .gravar_com_anexos(
                 org_id,
-                NovaMensagem {
+                NewMessage {
                     conversation_id: conversa.id,
-                    direcao: Direcao::Entrada,
-                    papel: Papel::Usuario,
+                    direction: Direction::Inbound,
+                    role: Role::User,
                     texto: "segue o arquivo".to_owned(),
-                    anexos_json: "[]".to_owned(),
+                    attachments_json: "[]".to_owned(),
                     id_externo: None,
                     turn_id: None,
-                    origem: poph_store::Origem::Agente,
-                    autor_nome: None,
+                    origin: poph_store::Origin::Agente,
+                    author_name: None,
                 },
-                &[NovoAnexoCanal {
-                    nome: "Procedimento técnico.png".to_owned(),
+                &[NewChannelAttachment {
+                    name: "Procedimento técnico.png".to_owned(),
                     mime: "image/png".to_owned(),
-                    tamanho_bytes: PNG.len() as u64,
+                    size_bytes: PNG.len() as u64,
                     sha256: sha256.to_owned(),
                     blob_path: format!("{org}/{sha256}"),
-                    texto_extraido: None,
-                    status_extracao: "skipped",
+                    extracted_text: None,
+                    extraction_status: "skipped",
                 }],
             )
             .expect("mensagem com anexo");
@@ -431,15 +433,15 @@ async fn biblioteca_conteudo_isola_org_agente_e_id() {
     // Linha na biblioteca sem blob no disco: 404 genérico, sem caminho.
     let sem_blob = c
         .store()
-        .biblioteca()
+        .library()
         .criar(
             org_a.parse().unwrap(),
-            poph_store::NovoArquivoBiblioteca {
+            poph_store::NewLibraryFile {
                 agent_id: agente_a.parse().unwrap(),
-                nome: "Sumiu".to_owned(),
-                descricao: String::new(),
+                name: "Sumiu".to_owned(),
+                description: String::new(),
                 mime: "application/pdf".to_owned(),
-                tamanho_bytes: 10,
+                size_bytes: 10,
                 sha256: "b".repeat(64),
                 blob_path: format!("{org_a}/{}", "b".repeat(64)),
             },
@@ -480,7 +482,7 @@ async fn anexo_conteudo_entrega_os_bytes_do_chat_de_teste() {
     let (conversa, mensagem) = c.semear_anexo(&org_a, &agente_a, &sha);
     let anexos = c
         .store()
-        .mensagens()
+        .messages()
         .anexos(org_a.parse().unwrap(), mensagem.id)
         .expect("anexos da mensagem");
     assert_eq!(anexos.len(), 1);
@@ -523,12 +525,12 @@ async fn anexo_conteudo_entrega_os_bytes_do_chat_de_teste() {
         .conversas()
         .criar(
             org_a.parse().unwrap(),
-            NovaConversa {
+            NewConversation {
                 agent_id: agente_a.parse().unwrap(),
                 integration_id: None,
                 canal: "test".to_owned(),
                 peer_externo: None,
-                departamento_alvo: None,
+                target_department: None,
             },
         )
         .expect("outra conversa");
@@ -568,7 +570,7 @@ async fn anexo_conteudo_entrega_os_bytes_do_chat_de_teste() {
     let (conversa2, mensagem2) = c.semear_anexo(&org_a, &agente_a, &"c".repeat(64));
     let anexo2 = c
         .store()
-        .mensagens()
+        .messages()
         .anexos(org_a.parse().unwrap(), mensagem2.id)
         .expect("anexos")
         .remove(0)

@@ -20,7 +20,7 @@ use std::time::{Duration, Instant, SystemTime};
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, SaltString};
 use poph_server::Estado;
-use poph_store::{MudancaAgente, Status, Store};
+use poph_store::{AgentChange, Status, Store};
 use poph_types::HarnessConfig;
 use poph_types::config::GlobalTokenConfig;
 use rand_core::OsRng;
@@ -70,7 +70,7 @@ impl Cenario {
         }];
         config.validar().expect("configuração válida");
 
-        let store = std::sync::Arc::new(Store::abrir(&config).expect("abre o banco"));
+        let store = std::sync::Arc::new(Store::open(&config).expect("abre o banco"));
         let estado =
             Estado::novo(std::sync::Arc::clone(&store), config).expect("estado do servidor");
 
@@ -251,19 +251,19 @@ async fn listagem_traz_agentes_ativos_por_org() {
     let agente: poph_types::AgentId = inativo.parse().expect("agente");
     let atual = cenario
         .store
-        .agentes()
-        .obter(org, agente)
+        .agents()
+        .get(org, agente)
         .expect("lê o agente");
     cenario
         .store
-        .agentes()
+        .agents()
         .atualizar(
             org,
             agente,
-            atual.versao,
-            MudancaAgente {
-                status: Some(Status::Inativo),
-                ..MudancaAgente::default()
+            atual.version,
+            AgentChange {
+                status: Some(Status::Inactive),
+                ..AgentChange::default()
             },
         )
         .expect("inativa o agente");
@@ -350,13 +350,13 @@ async fn pagina_nao_faz_consulta_por_linha() {
         cenario.criar_agente(&org, "agente-a").await;
     }
 
-    let antes = cenario.store.leituras_feitas();
+    let antes = cenario.store.reads_done();
     let pequena = cenario.listar(TOKEN_GLOBAL, "?limit=1").await;
-    let leituras_pequena = cenario.store.leituras_feitas() - antes;
+    let leituras_pequena = cenario.store.reads_done() - antes;
 
-    let antes = cenario.store.leituras_feitas();
+    let antes = cenario.store.reads_done();
     let grande = cenario.listar(TOKEN_GLOBAL, "?limit=200").await;
-    let leituras_grande = cenario.store.leituras_feitas() - antes;
+    let leituras_grande = cenario.store.reads_done() - antes;
 
     assert_eq!(
         pequena["items"].as_array().map(Vec::len),

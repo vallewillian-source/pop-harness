@@ -13,7 +13,7 @@ use poph_agent::provedores::{ProvedorResolvido, Provedores};
 use poph_agent::resumo::OpcoesResumo;
 use poph_agent::turno::{Motor, OpcoesTurno};
 use poph_core::llm::{EventoLlm, MotivoFim, ProvedorFake, Roteiro, Uso};
-use poph_store::{MudancaAgente, Pagina};
+use poph_store::{AgentChange, Page};
 use poph_types::AgentId;
 
 fn roteiro(texto: &str) -> Roteiro {
@@ -30,8 +30,8 @@ fn roteiro(texto: &str) -> Roteiro {
 fn primeiro_agente(cenario: &Cenario) -> AgentId {
     cenario
         .store
-        .agentes()
-        .listar(cenario.org, Pagina::com_limite(10))
+        .agents()
+        .listar(cenario.org, Page::with_limit(10))
         .expect("lista os agentes")
         .first()
         .expect("o cenário cria um agente")
@@ -42,20 +42,20 @@ fn definir_provedor_do_agente(cenario: &Cenario, provedor: &str) {
     let id = primeiro_agente(cenario);
     let agente = cenario
         .store
-        .agentes()
-        .obter(cenario.org, id)
+        .agents()
+        .get(cenario.org, id)
         .expect("lê o agente");
     cenario
         .store
-        .agentes()
+        .agents()
         .atualizar(
             cenario.org,
             id,
-            agente.versao,
-            MudancaAgente {
+            agente.version,
+            AgentChange {
                 provedor: Some(provedor.to_owned()),
                 modelo: Some(String::new()),
-                ..MudancaAgente::default()
+                ..AgentChange::default()
             },
         )
         .expect("troca o provedor do agente");
@@ -139,15 +139,15 @@ async fn agente_com_provedor_nomeado_recebe_a_resposta_dele() {
     let texto = palco
         .cenario
         .store
-        .mensagens()
+        .messages()
         .listar(
             palco.cenario.org,
             palco.cenario.conversa,
-            Pagina::com_limite(50),
+            Page::with_limit(50),
         )
         .expect("lista as mensagens")
         .into_iter()
-        .filter(|mensagem| mensagem.papel == poph_store::Papel::Assistente)
+        .filter(|mensagem| mensagem.role == poph_store::Role::Assistant)
         .map(|mensagem| mensagem.texto)
         .collect::<Vec<_>>()
         .join("\n");
@@ -179,7 +179,7 @@ async fn provedor_desconhecido_falha_o_turno_sem_chamar_ninguem() {
     let gatilho = palco.cenario.falar_com_arquivos("oi", Vec::new());
     let resumo = palco.cenario.turno(&motor, gatilho).await;
 
-    assert_eq!(resumo.estado, poph_store::EstadoTurno::Falhou);
+    assert_eq!(resumo.estado, poph_store::TurnState::Failed);
     let erro = resumo.erro.unwrap_or_default();
     assert!(erro.contains("sumiu-do-toml"), "{erro}");
     assert!(erro.contains("openai-forte"), "{erro}");

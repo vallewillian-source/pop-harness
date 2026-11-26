@@ -39,10 +39,10 @@ use poph_evolution::{ClienteEvolution, ConfigEvolution, TETO_MIDIA};
 use poph_matrix::{ClienteMatrix, ConfigCliente, IdsFantasmas};
 use poph_server::evolution::CanalEvolution;
 use poph_server::{Estado, PortaAtendimento, PortaDoHarness, ReceptorAs, RespostaDoAtendente};
-use poph_store::erro::ErroStore;
+use poph_store::error::StoreError;
 use poph_store::{
-    EstadoSaida, NovaConversa, NovaOrg, NovoAgente, Origem, Pagina, RespostaHumana,
-    RespostaHumanaNova, Store,
+    HumanResponse, NewAgent, NewConversation, NewHumanResponse, NewOrg, Origin, OutboxState, Page,
+    Store,
 };
 use poph_types::{ConversationId, HarnessConfig, IntegrationId, OrgId, Secret};
 use reqwest::{Client, StatusCode as StatusHttp};
@@ -247,9 +247,9 @@ impl PortaAtendimento for PortaComFalha {
     fn conversa_da_sala(
         &self,
         sala: &str,
-    ) -> Result<Option<poph_server::matrix_resposta::ConversaDaSala>, ErroStore> {
+    ) -> Result<Option<poph_server::matrix_resposta::ConversaDaSala>, StoreError> {
         if self.falhar.load(Ordering::SeqCst) {
-            return Err(ErroStore::Interno("banco fora do ar (teste)".to_owned()));
+            return Err(StoreError::Internal("banco fora do ar (teste)".to_owned()));
         }
         self.real.conversa_da_sala(sala)
     }
@@ -257,9 +257,9 @@ impl PortaAtendimento for PortaComFalha {
     fn agente_da_conversa(
         &self,
         alvo: poph_server::matrix_resposta::ConversaDaSala,
-    ) -> Result<Option<poph_types::AgentId>, ErroStore> {
+    ) -> Result<Option<poph_types::AgentId>, StoreError> {
         if self.falhar.load(Ordering::SeqCst) {
-            return Err(ErroStore::Interno("banco fora do ar (teste)".to_owned()));
+            return Err(StoreError::Internal("banco fora do ar (teste)".to_owned()));
         }
         self.real.agente_da_conversa(alvo)
     }
@@ -267,16 +267,16 @@ impl PortaAtendimento for PortaComFalha {
     fn registrar_resposta(
         &self,
         alvo: poph_server::matrix_resposta::ConversaDaSala,
-        nova: RespostaHumanaNova<'_>,
-    ) -> Result<RespostaHumana, ErroStore> {
+        nova: NewHumanResponse<'_>,
+    ) -> Result<HumanResponse, StoreError> {
         self.real.registrar_resposta(alvo, nova)
     }
 
     fn registrar_resposta_com_arquivo(
         &self,
         alvo: poph_server::matrix_resposta::ConversaDaSala,
-        nova: poph_store::RespostaHumanaComArquivo<'_>,
-    ) -> Result<RespostaHumana, ErroStore> {
+        nova: poph_store::HumanResponseWithFile<'_>,
+    ) -> Result<HumanResponse, StoreError> {
         self.real.registrar_resposta_com_arquivo(alvo, nova)
     }
 }
@@ -291,30 +291,30 @@ impl PortaAtendimento for PortaSemAgente {
     fn conversa_da_sala(
         &self,
         sala: &str,
-    ) -> Result<Option<poph_server::matrix_resposta::ConversaDaSala>, ErroStore> {
+    ) -> Result<Option<poph_server::matrix_resposta::ConversaDaSala>, StoreError> {
         self.real.conversa_da_sala(sala)
     }
 
     fn agente_da_conversa(
         &self,
         _alvo: poph_server::matrix_resposta::ConversaDaSala,
-    ) -> Result<Option<poph_types::AgentId>, ErroStore> {
+    ) -> Result<Option<poph_types::AgentId>, StoreError> {
         Ok(None)
     }
 
     fn registrar_resposta(
         &self,
         alvo: poph_server::matrix_resposta::ConversaDaSala,
-        nova: RespostaHumanaNova<'_>,
-    ) -> Result<RespostaHumana, ErroStore> {
+        nova: NewHumanResponse<'_>,
+    ) -> Result<HumanResponse, StoreError> {
         self.real.registrar_resposta(alvo, nova)
     }
 
     fn registrar_resposta_com_arquivo(
         &self,
         alvo: poph_server::matrix_resposta::ConversaDaSala,
-        nova: poph_store::RespostaHumanaComArquivo<'_>,
-    ) -> Result<RespostaHumana, ErroStore> {
+        nova: poph_store::HumanResponseWithFile<'_>,
+    ) -> Result<HumanResponse, StoreError> {
         self.real.registrar_resposta_com_arquivo(alvo, nova)
     }
 }
@@ -356,8 +356,7 @@ impl Cenario {
         let _ = fs::remove_dir_all(&pasta);
         fs::create_dir_all(&pasta).expect("pasta do teste");
         let store = Arc::new(
-            Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
-                .expect("abre o banco"),
+            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco"),
         );
 
         let a = Self::org_com_conversa(&store, "loja-a", "Sala A", "bia-a");
@@ -409,28 +408,28 @@ impl Cenario {
         slug_agente: &str,
     ) -> ConversaDoCenario {
         let org = store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: format!("Org {slug}"),
+            .orgs()
+            .criar(NewOrg {
+                name: format!("Org {slug}"),
                 slug: slug.to_owned(),
                 config_json: String::new(),
             })
             .expect("cria a org")
             .id;
         let agente = store
-            .agentes()
+            .agents()
             .criar(
                 org,
-                NovoAgente {
-                    nome: nome_agente.to_owned(),
+                NewAgent {
+                    name: nome_agente.to_owned(),
                     slug: slug_agente.to_owned(),
-                    ..NovoAgente::default()
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente")
             .id;
         let integracao: IntegrationId = store
-            .integracao_criar(org, agente, "whatsapp".to_owned(), "active".to_owned())
+            .create_integration(org, agente, "whatsapp".to_owned(), "active".to_owned())
             .expect("cria a integração")
             .id
             .parse()
@@ -439,12 +438,12 @@ impl Cenario {
             .conversas()
             .criar(
                 org,
-                NovaConversa {
+                NewConversation {
                     agent_id: agente,
                     integration_id: Some(integracao),
                     canal: "whatsapp".to_owned(),
                     peer_externo: Some(TELEFONE.to_owned()),
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("cria a conversa")
@@ -466,7 +465,7 @@ impl Cenario {
         let integracao = self
             .store
             .conversas()
-            .obter(org, conversa)
+            .get(org, conversa)
             .expect("lê a conversa")
             .integration_id
             .expect("a conversa tem integração");
@@ -545,32 +544,32 @@ impl Cenario {
         }
     }
 
-    fn status(&self, org: OrgId) -> poph_store::StatusConversa {
+    fn status(&self, org: OrgId) -> poph_store::ConversationStatus {
         self.store
             .conversas()
-            .obter(org, self.conversa_da_org(org))
+            .get(org, self.conversa_da_org(org))
             .expect("lê a conversa")
             .status
     }
 
     fn messages(&self, org: OrgId) -> Vec<poph_store::Mensagem> {
         self.store
-            .mensagens()
-            .listar(org, self.conversa_da_org(org), Pagina::com_limite(50))
+            .messages()
+            .listar(org, self.conversa_da_org(org), Page::with_limit(50))
             .expect("lista as mensagens")
     }
 
     fn enviados(&self, org: OrgId) -> u64 {
         self.store
-            .caixa_saida()
-            .contar_por_estado(org, EstadoSaida::Enviado)
+            .outbox()
+            .contar_por_estado(org, OutboxState::Sent)
             .expect("conta a fila de saída")
     }
 
     fn pendentes(&self, org: OrgId) -> u64 {
         self.store
-            .caixa_saida()
-            .contar_por_estado(org, EstadoSaida::Pendente)
+            .outbox()
+            .contar_por_estado(org, OutboxState::Pending)
             .expect("conta a fila de saída")
     }
 
@@ -589,7 +588,7 @@ impl Cenario {
         let agente = self
             .store
             .conversas()
-            .obter(self.org, self.conversa)
+            .get(self.org, self.conversa)
             .expect("lê a conversa")
             .agent_id;
         IdsFantasmas::novo(PREFIXO, SERVER_NAME)
@@ -767,20 +766,20 @@ async fn resposta_do_atendente_vira_um_envio_com_prefixo_e_transfere_a_conversa(
     // A conversa fica transferida: o agente não responde mais.
     assert_eq!(
         cenario.status(cenario.org),
-        poph_store::StatusConversa::Transferida
+        poph_store::ConversationStatus::Transferred
     );
 
     // A mensagem fica no histórico como humana, com o id do evento e o nome do autor.
     let mensagens = cenario.messages(cenario.org);
     assert_eq!(mensagens.len(), 1);
     let mensagem = &mensagens[0];
-    assert_eq!(mensagem.origem, Origem::Humano);
+    assert_eq!(mensagem.origin, Origin::Human);
     assert_eq!(mensagem.texto, "olá, tudo bem?");
     assert_eq!(
         mensagem.id_externo.as_deref(),
         Some("$evento-1:matrix-dev.local")
     );
-    assert_eq!(mensagem.autor_nome.as_deref(), Some("Ana Atendente"));
+    assert_eq!(mensagem.author_name.as_deref(), Some("Ana Atendente"));
 
     // Nada sobrou na fila: o único item foi entregue.
     assert_eq!(cenario.enviados(cenario.org), 1);
@@ -819,13 +818,13 @@ async fn resposta_do_atendente_vira_um_envio_com_prefixo_e_transfere_a_conversa(
     );
     assert_eq!(
         cenario.status(cenario.org),
-        poph_store::StatusConversa::Transferida
+        poph_store::ConversationStatus::Transferred
     );
 
     // A org vizinha não foi tocada (A9, conferido também no teste próprio).
     assert_eq!(
         cenario.status(cenario.org_b),
-        poph_store::StatusConversa::Aberta
+        poph_store::ConversationStatus::Open
     );
     assert_eq!(cenario.enviados(cenario.org_b), 0);
 }
@@ -909,11 +908,11 @@ async fn evento_de_uma_org_nao_toca_a_conversa_da_outra() {
 
     assert_eq!(
         cenario.status(cenario.org),
-        poph_store::StatusConversa::Transferida
+        poph_store::ConversationStatus::Transferred
     );
     assert_eq!(
         cenario.status(cenario.org_b),
-        poph_store::StatusConversa::Aberta,
+        poph_store::ConversationStatus::Open,
         "a conversa da org B continua aberta"
     );
     assert!(
@@ -954,7 +953,7 @@ async fn conversa_encerrada_nao_envia_e_avisa_na_sala() {
     let conversa = cenario
         .store
         .conversas()
-        .obter(cenario.org, cenario.conversa)
+        .get(cenario.org, cenario.conversa)
         .expect("lê a conversa");
     cenario
         .store
@@ -962,7 +961,7 @@ async fn conversa_encerrada_nao_envia_e_avisa_na_sala() {
         .fechar_auditado(
             cenario.org,
             cenario.conversa,
-            conversa.versao,
+            conversa.version,
             "teste".to_owned(),
         )
         .expect("encerra a conversa");
@@ -1004,7 +1003,7 @@ async fn conversa_encerrada_nao_envia_e_avisa_na_sala() {
     );
     assert_eq!(
         cenario.status(cenario.org),
-        poph_store::StatusConversa::Fechada
+        poph_store::ConversationStatus::Closed
     );
 }
 
@@ -1124,7 +1123,7 @@ async fn arquivo_que_o_synapse_nao_entrega_mais_vira_aviso_e_nao_vai_ao_cliente(
     assert!(cenario.messages(cenario.org).is_empty());
     assert_eq!(
         cenario.status(cenario.org),
-        poph_store::StatusConversa::Aberta,
+        poph_store::ConversationStatus::Open,
         "sem arquivo, a conversa não é transferida"
     );
 }

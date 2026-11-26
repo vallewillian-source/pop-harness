@@ -14,7 +14,7 @@ use std::process::ExitCode;
 
 use clap::{Args, Subcommand};
 use poph_agent::compor_instrucoes;
-use poph_store::{Agente, Instrucoes, MudancaAgente, NovoAgente, Pagina, Status, Store};
+use poph_store::{AgentChange, Agente, Instructions, NewAgent, Page, Status, Store};
 use poph_types::{
     AgentId, DepartmentId, HarnessConfig, OrgId, ProductCategoryId, StructuredInstructions,
 };
@@ -369,35 +369,35 @@ fn criar(store: &Store, org: OrgId, configuracao: &HarnessConfig, args: CriarAge
             "slug `{slug}` inválido: use 3 a 64 caracteres de a-z, 0-9 e `-`"
         ));
     }
-    let novo = NovoAgente {
-        nome: args.name,
+    let novo = NewAgent {
+        name: args.name,
         slug,
-        descricao: args.description,
+        description: args.description,
         agent_type: args.tipo,
-        categoria: args.category,
-        departamento_padrao: args.department,
+        category: args.category,
+        default_department: args.department,
         provedor: args.provider,
         modelo: args.model,
         temperatura: args.temperature,
         max_tokens_saida: args.max_output_tokens,
         max_context_tokens: args.max_context_tokens,
-        janela_agrupamento_ms: args.grouping_window_ms,
-        max_rodadas_ferramenta: args.max_tool_rounds,
-        max_ferramentas_por_mensagem: args.max_tool_calls,
+        grouping_window_ms: args.grouping_window_ms,
+        max_tool_rounds: args.max_tool_rounds,
+        max_tools_per_message: args.max_tool_calls,
         rag_top_k: args.rag_top_k,
-        rag_corte: args.rag_min_score,
+        rag_cutoff: args.rag_min_score,
     };
-    match store.agentes().criar(org, novo) {
+    match store.agents().criar(org, novo) {
         Ok(agente) => {
             if args.handoff_department.is_some() {
-                let mudanca = MudancaAgente {
-                    handoff_ativo: Some(true),
-                    handoff_departamento: args.handoff_department,
-                    ..MudancaAgente::default()
+                let mudanca = AgentChange {
+                    handoff_active: Some(true),
+                    handoff_department: args.handoff_department,
+                    ..AgentChange::default()
                 };
                 match store
-                    .agentes()
-                    .atualizar(org, agente.id, agente.versao, mudanca)
+                    .agents()
+                    .atualizar(org, agente.id, agente.version, mudanca)
                 {
                     Ok(agente) => return sucesso_agente(&agente, args.json, "agente criado"),
                     Err(erro) => {
@@ -413,9 +413,9 @@ fn criar(store: &Store, org: OrgId, configuracao: &HarnessConfig, args: CriarAge
 
 fn listar(store: &Store, org: OrgId, args: ListarAgentes) -> ExitCode {
     let agentes = if args.only_active {
-        store.agentes().listar_ativos(org)
+        store.agents().listar_ativos(org)
     } else {
-        store.agentes().listar(org, Pagina::com_limite(args.limit))
+        store.agents().listar(org, Page::with_limit(args.limit))
     };
     match agentes {
         Ok(agentes) => {
@@ -446,11 +446,11 @@ fn mostrar(store: &Store, org: OrgId, args: ReferenciaAgente) -> ExitCode {
         Ok(agente) => agente,
         Err(erro) => return falha(erro),
     };
-    let categorias = match store.agentes().categorias(org, agente.id) {
+    let categorias = match store.agents().categorias(org, agente.id) {
         Ok(categorias) => categorias,
         Err(erro) => return falha(format!("não consegui ler as categorias: {erro}")),
     };
-    let instrucoes = store.instrucoes().obter(org, agente.id).ok();
+    let instrucoes = store.instructions().obter(org, agente.id).ok();
 
     if args.json {
         let mut valor = json_agente(&agente);
@@ -485,7 +485,7 @@ fn mostrar(store: &Store, org: OrgId, args: ReferenciaAgente) -> ExitCode {
         Some(instrucoes) => {
             println!(
                 "\ninstruções (versão {}, derivado do JSON: {})",
-                instrucoes.versao, instrucoes.derivado_do_json
+                instrucoes.version, instrucoes.derived_from_json
             );
             if instrucoes.markdown.is_empty() {
                 println!("(texto composto vazio)");
@@ -509,7 +509,7 @@ fn atualizar(
         Err(erro) => return falha(erro),
     };
     let status = match args.status.as_deref() {
-        Some(texto) => match Status::de_texto(texto) {
+        Some(texto) => match Status::from_text(texto) {
             Ok(status) => Some(status),
             Err(erro) => return falha(format!("--status inválido: {erro}")),
         },
@@ -546,29 +546,29 @@ fn atualizar(
         || args.rag_top_k.is_some()
         || args.rag_min_score.is_some()
         || args.jev_json.is_some();
-    let mudanca = MudancaAgente {
-        nome: args.name,
-        descricao: args.description,
+    let mudanca = AgentChange {
+        name: args.name,
+        description: args.description,
         status,
-        departamento_padrao: args.department,
-        handoff_ativo: args.handoff,
-        handoff_departamento: args.handoff_department,
+        default_department: args.department,
+        handoff_active: args.handoff,
+        handoff_department: args.handoff_department,
         provedor: args.provider,
         modelo: args.model,
         temperatura: args.temperature,
         max_tokens_saida: args.max_output_tokens,
         max_context_tokens: args.max_context_tokens,
-        janela_agrupamento_ms: args.grouping_window_ms,
-        max_rodadas_ferramenta: args.max_tool_rounds,
-        max_ferramentas_por_mensagem: args.max_tool_calls,
+        grouping_window_ms: args.grouping_window_ms,
+        max_tool_rounds: args.max_tool_rounds,
+        max_tools_per_message: args.max_tool_calls,
         rag_top_k: args.rag_top_k,
-        rag_corte: args.rag_min_score,
+        rag_cutoff: args.rag_min_score,
         jev_json: args.jev_json,
     };
     let mut atual = agente;
     if tem_mudanca {
         atual = match store
-            .agentes()
+            .agents()
             .atualizar(org, atual.id, args.if_match, mudanca)
         {
             Ok(atual) => atual,
@@ -577,8 +577,8 @@ fn atualizar(
     }
     if let Some(categorias) = args.categorias {
         atual = match store
-            .agentes()
-            .definir_categorias(org, atual.id, atual.versao, &categorias)
+            .agents()
+            .definir_categorias(org, atual.id, atual.version, &categorias)
         {
             Ok(atual) => atual,
             Err(erro) => return falha(format!("não consegui definir as categorias: {erro}")),
@@ -595,7 +595,7 @@ fn excluir(store: &Store, org: OrgId, args: ReferenciaAgente) -> ExitCode {
         Ok(agente) => agente,
         Err(erro) => return falha(erro),
     };
-    match store.agentes().excluir(org, agente.id) {
+    match store.agents().excluir(org, agente.id) {
         Ok(()) => {
             if args.json {
                 imprimir_json(&json!({
@@ -643,9 +643,9 @@ fn gravar_instrucoes(store: &Store, org: OrgId, args: GravarInstrucoes, esperada
                 }
             };
             let estruturado = store
-                .instrucoes()
+                .instructions()
                 .obter(org, agente.id)
-                .map(|instrucoes| instrucoes.estruturado_json)
+                .map(|instrucoes| instrucoes.structured_json)
                 .unwrap_or_else(|_| "{}".to_owned());
             (estruturado, markdown, false)
         }
@@ -662,7 +662,7 @@ fn gravar_instrucoes(store: &Store, org: OrgId, args: GravarInstrucoes, esperada
     };
 
     match store
-        .instrucoes()
+        .instructions()
         .salvar(org, agente.id, esperada, &estruturado, &markdown, derivado)
     {
         Ok(instrucoes) => {
@@ -674,7 +674,7 @@ fn gravar_instrucoes(store: &Store, org: OrgId, args: GravarInstrucoes, esperada
             } else {
                 println!(
                     "instruções gravadas: agente {} · versão {} · derivado do JSON: {}",
-                    agente.id, instrucoes.versao, instrucoes.derivado_do_json
+                    agente.id, instrucoes.version, instrucoes.derived_from_json
                 );
                 println!("\n{}", instrucoes.markdown);
             }
@@ -689,7 +689,7 @@ fn mostrar_instrucoes(store: &Store, org: OrgId, args: ReferenciaAgente) -> Exit
         Ok(agente) => agente,
         Err(erro) => return falha(erro),
     };
-    match store.instrucoes().obter(org, agente.id) {
+    match store.instructions().obter(org, agente.id) {
         Ok(instrucoes) => {
             if args.json {
                 imprimir_json(&json!({
@@ -699,11 +699,11 @@ fn mostrar_instrucoes(store: &Store, org: OrgId, args: ReferenciaAgente) -> Exit
             } else {
                 println!(
                     "agente {} · versão {} · derivado do JSON: {}",
-                    agente.id, instrucoes.versao, instrucoes.derivado_do_json
+                    agente.id, instrucoes.version, instrucoes.derived_from_json
                 );
                 println!(
                     "\nestruturado:\n{}",
-                    estruturar_para_exibir(&instrucoes.estruturado_json)
+                    estruturar_para_exibir(&instrucoes.structured_json)
                 );
                 println!("\nmarkdown:\n{}", instrucoes.markdown);
             }
@@ -718,7 +718,7 @@ fn apagar_instrucoes(store: &Store, org: OrgId, args: ReferenciaAgente) -> ExitC
         Ok(agente) => agente,
         Err(erro) => return falha(erro),
     };
-    match store.instrucoes().apagar(org, agente.id) {
+    match store.instructions().apagar(org, agente.id) {
         Ok(()) => {
             if args.json {
                 imprimir_json(&json!({
@@ -737,8 +737,8 @@ fn apagar_instrucoes(store: &Store, org: OrgId, args: ReferenciaAgente) -> ExitC
 
 fn listar_instrucoes(store: &Store, org: OrgId, args: ListarInstrucoes) -> ExitCode {
     match store
-        .instrucoes()
-        .listar(org, Pagina::com_limite(args.limit))
+        .instructions()
+        .listar(org, Page::with_limit(args.limit))
     {
         Ok(instrucoes) => {
             if args.json {
@@ -755,7 +755,7 @@ fn listar_instrucoes(store: &Store, org: OrgId, args: ListarInstrucoes) -> ExitC
                 for item in &instrucoes {
                     println!(
                         "{} · versão {} · derivado do JSON: {}",
-                        item.agent_id, item.versao, item.derivado_do_json
+                        item.agent_id, item.version, item.derived_from_json
                     );
                 }
                 println!("\n{} registro(s).", instrucoes.len());
@@ -781,8 +781,8 @@ fn abrir(
     let arquivo = config::resolver_arquivo(flag.as_deref(), ambiente, &pasta);
     let configuracao = config::carregar(arquivo.as_deref(), ambiente)
         .map_err(|erro| format!("configuração inválida: {erro}"))?;
-    let store = Store::abrir(&configuracao)
-        .map_err(|erro| format!("não consegui abrir o banco: {erro}"))?;
+    let store =
+        Store::open(&configuracao).map_err(|erro| format!("não consegui abrir o banco: {erro}"))?;
     let org = resolver_org(&store, texto_org)?;
     Ok((store, org, configuracao))
 }
@@ -790,13 +790,13 @@ fn abrir(
 fn resolver_org(store: &Store, texto: &str) -> Result<OrgId, String> {
     if let Ok(id) = texto.parse::<OrgId>() {
         return store
-            .orgaos()
-            .obter(id)
+            .orgs()
+            .get(id)
             .map(|org| org.id)
             .map_err(|erro| format!("org `{texto}`: {erro}"));
     }
     store
-        .orgaos()
+        .orgs()
         .por_slug(texto)
         .map(|org| org.id)
         .map_err(|erro| format!("org `{texto}`: {erro}"))
@@ -805,12 +805,12 @@ fn resolver_org(store: &Store, texto: &str) -> Result<OrgId, String> {
 fn resolver_agente(store: &Store, org: OrgId, texto: &str) -> Result<Agente, String> {
     if let Ok(id) = texto.parse::<AgentId>() {
         return store
-            .agentes()
-            .obter(org, id)
+            .agents()
+            .get(org, id)
             .map_err(|erro| format!("agente `{texto}`: {erro}"));
     }
     store
-        .agentes()
+        .agents()
         .por_slug(org, texto)
         .map_err(|erro| format!("agente `{texto}`: {erro}"))
 }
@@ -860,7 +860,7 @@ pub(crate) fn slug_valido(slug: &str) -> bool {
 }
 
 fn linha_resumo(agente: &Agente) -> String {
-    let situacao = if agente.pode_abrir_turno() {
+    let situacao = if agente.can_open_turn() {
         "responde"
     } else {
         "não responde"
@@ -868,7 +868,7 @@ fn linha_resumo(agente: &Agente) -> String {
     format!(
         "{}  {:<24} slug={:<24} status={:<8} modelo={}",
         agente.id,
-        truncar(&agente.nome, 24),
+        truncar(&agente.name, 24),
         agente.slug,
         situacao,
         agente.modelo
@@ -877,11 +877,11 @@ fn linha_resumo(agente: &Agente) -> String {
 
 fn texto_agente(agente: &Agente, categorias: &[ProductCategoryId]) -> String {
     let departamento = agente
-        .departamento_padrao
+        .default_department
         .map(|id| id.to_string())
         .unwrap_or_else(|| "-".to_owned());
     let handoff = agente
-        .handoff_departamento
+        .handoff_department
         .map(|id| id.to_string())
         .unwrap_or_else(|| "-".to_owned());
     format!(
@@ -901,19 +901,19 @@ fn texto_agente(agente: &Agente, categorias: &[ProductCategoryId]) -> String {
          \x20 categorias de produto: {}\n\
          \x20 versão: {}\n",
         agente.id,
-        agente.nome,
+        agente.name,
         agente.slug,
-        agente.descricao,
-        agente.status.como_texto(),
-        if agente.pode_abrir_turno() {
+        agente.description,
+        agente.status.as_text(),
+        if agente.can_open_turn() {
             "abre turno"
         } else {
             "não abre turno (D-05)"
         },
         agente.agent_type,
-        agente.categoria,
+        agente.category,
         departamento,
-        if agente.handoff_ativo {
+        if agente.handoff_active {
             "ligado"
         } else {
             "desligado"
@@ -931,11 +931,11 @@ fn texto_agente(agente: &Agente, categorias: &[ProductCategoryId]) -> String {
             .unwrap_or_else(|| "padrão".to_owned()),
         agente.max_context_tokens,
         agente.max_context_messages,
-        agente.janela_agrupamento_ms,
-        agente.max_rodadas_ferramenta,
-        agente.max_ferramentas_por_mensagem,
+        agente.grouping_window_ms,
+        agente.max_tool_rounds,
+        agente.max_tools_per_message,
         agente.rag_top_k,
-        agente.rag_corte,
+        agente.rag_cutoff,
         if categorias.is_empty() {
             "nenhuma".to_owned()
         } else {
@@ -945,7 +945,7 @@ fn texto_agente(agente: &Agente, categorias: &[ProductCategoryId]) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         },
-        agente.versao
+        agente.version
     )
 }
 
@@ -953,45 +953,45 @@ fn json_agente(agente: &Agente) -> Value {
     json!({
         "id": agente.id.to_string(),
         "org_id": agente.org_id.to_string(),
-        "name": agente.nome,
+        "name": agente.name,
         "slug": agente.slug,
-        "description": agente.descricao,
-        "status": agente.status.como_texto(),
-        "abre_turno": agente.pode_abrir_turno(),
+        "description": agente.description,
+        "status": agente.status.as_text(),
+        "abre_turno": agente.can_open_turn(),
         "agent_type": agente.agent_type,
-        "category": agente.categoria,
-        "default_department_id": agente.departamento_padrao.map(|id| id.to_string()),
-        "human_handoff_enabled": agente.handoff_ativo,
-        "human_handoff_department_id": agente.handoff_departamento.map(|id| id.to_string()),
+        "category": agente.category,
+        "default_department_id": agente.default_department.map(|id| id.to_string()),
+        "human_handoff_enabled": agente.handoff_active,
+        "human_handoff_department_id": agente.handoff_department.map(|id| id.to_string()),
         "provider": agente.provedor,
         "model": agente.modelo,
         "temperature": agente.temperatura,
         "max_output_tokens": agente.max_tokens_saida,
         "max_context_messages": agente.max_context_messages,
         "max_context_tokens": agente.max_context_tokens,
-        "grouping_window_ms": agente.janela_agrupamento_ms,
-        "max_tool_rounds": agente.max_rodadas_ferramenta,
-        "max_tool_calls_per_message": agente.max_ferramentas_por_mensagem,
+        "grouping_window_ms": agente.grouping_window_ms,
+        "max_tool_rounds": agente.max_tool_rounds,
+        "max_tool_calls_per_message": agente.max_tools_per_message,
         "rag_top_k": agente.rag_top_k,
-        "rag_min_score": agente.rag_corte,
+        "rag_min_score": agente.rag_cutoff,
         "jev": serde_json::from_str::<Value>(&agente.jev_json).unwrap_or_else(|_| json!({})),
-        "version": agente.versao,
-        "created_at": agente.criado_em,
-        "updated_at": agente.atualizado_em,
+        "version": agente.version,
+        "created_at": agente.created_at,
+        "updated_at": agente.updated_at,
     })
 }
 
-fn json_instrucoes(instrucoes: &Instrucoes) -> Value {
+fn json_instrucoes(instrucoes: &Instructions) -> Value {
     json!({
         "agent_id": instrucoes.agent_id.to_string(),
         "org_id": instrucoes.org_id.to_string(),
-        "structured": serde_json::from_str::<Value>(&instrucoes.estruturado_json)
-            .unwrap_or_else(|_| json!(instrucoes.estruturado_json)),
+        "structured": serde_json::from_str::<Value>(&instrucoes.structured_json)
+            .unwrap_or_else(|_| json!(instrucoes.structured_json)),
         "markdown": instrucoes.markdown,
-        "derived_from_json": instrucoes.derivado_do_json,
-        "version": instrucoes.versao,
-        "created_at": instrucoes.criado_em,
-        "updated_at": instrucoes.atualizado_em,
+        "derived_from_json": instrucoes.derived_from_json,
+        "version": instrucoes.version,
+        "created_at": instrucoes.created_at,
+        "updated_at": instrucoes.updated_at,
     })
 }
 

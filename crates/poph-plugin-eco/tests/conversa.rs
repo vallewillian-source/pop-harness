@@ -13,7 +13,7 @@ use std::path::PathBuf;
 
 use comum::Cenario;
 use poph_agent::fila_integracao::EnvioPeloCanal;
-use poph_store::{EstadoSaida, NovaSaida};
+use poph_store::{NewOutboxItem, OutboxState};
 use poph_types::{OutboxId, SendText, TurnId};
 
 /// Binário do plugin que o cargo compila antes de rodar este teste.
@@ -28,7 +28,7 @@ async fn texto_sai_pelo_plugin_e_volta_invertido_pela_inbox() {
     // 1. Um item de texto na fila de saída, como o turno deixaria.
     let turno = TurnId::generate();
     let item = cenario.enfileirar_texto(turno, "olá, mundo");
-    assert_eq!(cenario.estado_do_item(item.id), EstadoSaida::Pendente);
+    assert_eq!(cenario.estado_do_item(item.id), OutboxState::Pending);
 
     // 2. O plugin recebe, confirma e devolve o evento.
     let transporte = cenario.transporte();
@@ -38,7 +38,7 @@ async fn texto_sai_pelo_plugin_e_volta_invertido_pela_inbox() {
         .await
         .expect("envia o pendente");
     assert_eq!(relato.enviados, 1, "{relato:?}");
-    assert_eq!(cenario.estado_do_item(item.id), EstadoSaida::Enviado);
+    assert_eq!(cenario.estado_do_item(item.id), OutboxState::Sent);
 
     // 3. O evento do plugin virou mensagem na conversa do contato, com o texto invertido.
     cenario
@@ -49,7 +49,7 @@ async fn texto_sai_pelo_plugin_e_volta_invertido_pela_inbox() {
     let mensagens = cenario.mensagens();
     assert_eq!(mensagens.len(), 1, "{mensagens:#?}");
     assert_eq!(mensagens[0].texto, "odnum ,álo");
-    assert_eq!(mensagens[0].direcao.como_texto(), "in");
+    assert_eq!(mensagens[0].direction.as_text(), "in");
     assert_eq!(
         mensagens[0].id_externo.as_deref(),
         Some(&*format!("eco-{turno}:0"))
@@ -87,8 +87,8 @@ async fn texto_sai_pelo_plugin_e_volta_invertido_pela_inbox() {
     assert_eq!(
         cenario
             .store
-            .caixa_saida()
-            .contar_por_estado(cenario.org, EstadoSaida::Pendente)
+            .outbox()
+            .contar_por_estado(cenario.org, OutboxState::Pending)
             .expect("conta pendentes"),
         0
     );
@@ -105,15 +105,15 @@ async fn arquivo_da_biblioteca_vira_comando_de_envio() {
     let sha256 = "b".repeat(64);
     let item = cenario
         .store
-        .caixa_saida()
+        .outbox()
         .enfileirar(
             cenario.org,
-            NovaSaida {
+            NewOutboxItem {
                 conversation_id: cenario.conversa_id(),
                 turn_id: turno,
                 seq: 4,
                 tipo: "file".to_owned(),
-                conteudo_json: serde_json::json!({
+                content_json: serde_json::json!({
                     "blob_ref": format!("{}/{sha256}", cenario.org),
                     "arquivo_id": "01a1f6a5-cd9b-7000-8000-000000000000",
                     "nome": "manual.pdf",
@@ -133,7 +133,7 @@ async fn arquivo_da_biblioteca_vira_comando_de_envio() {
         .enviar_pendentes(cenario.org, &transporte)
         .await
         .expect("envia o arquivo");
-    assert_eq!(cenario.estado_do_item(item.id), EstadoSaida::Enviado);
+    assert_eq!(cenario.estado_do_item(item.id), OutboxState::Sent);
 
     // O eco não devolve evento para arquivo: só a confirmação. Nada entra na inbox.
     assert_eq!(cenario.entrada.contadores().gravados, 0);
@@ -158,10 +158,10 @@ async fn conversa_sem_contato_falha_sem_travar_a_fila() {
     assert_eq!(relato.falharam, 1, "{relato:?}");
     let gravado = cenario
         .store
-        .caixa_saida()
+        .outbox()
         .obter(cenario.org, item.id)
         .expect("lê o item");
-    assert_eq!(gravado.estado, EstadoSaida::Falhou);
+    assert_eq!(gravado.estado, OutboxState::Failed);
     let motivo = gravado.ultimo_erro.unwrap_or_default();
     assert!(motivo.contains("peer"), "{motivo}");
 
@@ -215,7 +215,7 @@ async fn agente_sem_contato_usa_o_do_evento() {
     let conversas = cenario
         .store
         .conversas()
-        .listar(cenario.org, None, poph_store::Pagina::com_limite(10))
+        .listar(cenario.org, None, poph_store::Page::with_limit(10))
         .expect("lista conversas");
     assert_eq!(conversas.len(), 2, "cada contato tem a sua conversa");
 
@@ -228,15 +228,15 @@ async fn transporte_recusa_item_de_tipo_desconhecido_sem_chamar_o_plugin() {
 
     let item = cenario
         .store
-        .caixa_saida()
+        .outbox()
         .enfileirar(
             cenario.org,
-            NovaSaida {
+            NewOutboxItem {
                 conversation_id: cenario.conversa_id(),
                 turn_id: TurnId::generate(),
                 seq: 1,
                 tipo: "text".to_owned(),
-                conteudo_json: serde_json::json!({"outro": 1}).to_string(),
+                content_json: serde_json::json!({"outro": 1}).to_string(),
             },
         )
         .expect("enfileira")
@@ -252,7 +252,7 @@ async fn transporte_recusa_item_de_tipo_desconhecido_sem_chamar_o_plugin() {
     let gravado: OutboxId = item.id;
     assert_eq!(
         cenario.estado_do_item(gravado),
-        EstadoSaida::Falhou,
+        OutboxState::Failed,
         "payload sem `texto` é definitivo"
     );
 

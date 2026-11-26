@@ -885,7 +885,7 @@ mudado isso, e a tela não consegue ler essa configuração.
 
 - **Média, API (mensagem de erro errada):** quando um valor sai da faixa do banco (janela 9000 ms, top-k 51,
   corte 1,5, contexto abaixo de 1000), a API responde 400 com "campo `slug` inválido: já existe um registro
-  com esse valor nesta org". A causa é `poph-store` (`da_escrita`): qualquer violação de restrição vira
+  com esse valor nesta org". A causa é `poph-store` (`from_write`): qualquer violação de restrição vira
   "índice único repetido" no campo fixo `slug`. O valor é recusado (correto), só a mensagem engana. A tela
   não chega a enviar esses valores, mas quem usa a API ou a CLI vê a mensagem errada. Correção: mapear só
   `UNIQUE` para conflito e tratar `CHECK` como validação do campo certo. Fora do terreno do Console.

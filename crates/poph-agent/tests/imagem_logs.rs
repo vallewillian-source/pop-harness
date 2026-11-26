@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use apoio::{Anexo, Cenario};
 use poph_agent::turno::MAX_BYTES_POR_IMAGEM;
 use poph_core::llm::{Mensagem, Parte};
-use poph_store::EstadoTurno;
+use poph_store::TurnState;
 
 /// Escritor que guarda tudo em memória, para ler o que o tracing escreveu.
 #[derive(Clone, Default)]
@@ -78,7 +78,7 @@ async fn imagem_do_cliente_nao_vai_para_o_log() {
 
     let resumo = cenario.turno(&motor, gatilho).await;
 
-    assert_eq!(resumo.estado, EstadoTurno::Concluido, "{:?}", resumo.erro);
+    assert_eq!(resumo.estado, TurnState::Completed, "{:?}", resumo.erro);
 
     // A imagem boa chegou ao modelo: o log é o do caminho real, não de um turno vazio.
     let pedido = &fake.recebidos()[0];

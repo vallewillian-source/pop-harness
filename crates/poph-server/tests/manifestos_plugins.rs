@@ -20,7 +20,7 @@ use std::time::{Duration, SystemTime};
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, SaltString};
 use poph_server::{ChaveDeCifra, Estado};
-use poph_store::{NovaOrg, NovoAgente, Store};
+use poph_store::{NewAgent, NewOrg, Store};
 use poph_types::config::GlobalTokenConfig;
 use poph_types::{AgentId, DeclaredPlugin, HarnessConfig, OrgId};
 use rand_core::OsRng;
@@ -195,22 +195,22 @@ impl Cenario {
         ];
         config.validar().expect("configuração válida");
 
-        let store = Arc::new(Store::abrir(&config).expect("abre o banco"));
+        let store = Arc::new(Store::open(&config).expect("abre o banco"));
         let org = store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: "Org do manifesto".to_owned(),
+            .orgs()
+            .criar(NewOrg {
+                name: "Org do manifesto".to_owned(),
                 slug: "org-do-manifesto".to_owned(),
                 config_json: String::new(),
             })
             .expect("cria a org")
             .id;
         let agente = store
-            .agentes()
+            .agents()
             .criar(
                 org,
-                NovoAgente {
-                    nome: "Atendente".to_owned(),
+                NewAgent {
+                    name: "Atendente".to_owned(),
                     slug: "atendente".to_owned(),
                     ..Default::default()
                 },

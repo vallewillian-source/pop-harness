@@ -13,7 +13,7 @@ use std::time::{Duration, Instant, SystemTime};
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, SaltString};
 use poph_server::Estado;
-use poph_store::{NovaConversa, Store};
+use poph_store::{NewConversation, Store};
 use poph_types::config::GlobalTokenConfig;
 use poph_types::{AgentId, HarnessConfig, OrgId, ProductId};
 use rand_core::OsRng;
@@ -63,7 +63,7 @@ impl Cenario {
         }];
         config.validar().expect("configuração válida");
 
-        let store = std::sync::Arc::new(Store::abrir(&config).expect("abre o banco"));
+        let store = std::sync::Arc::new(Store::open(&config).expect("abre o banco"));
         let estado =
             Estado::novo(std::sync::Arc::clone(&store), config).expect("estado do servidor");
 
@@ -218,18 +218,18 @@ impl Cenario {
             .conversas()
             .criar(
                 org,
-                NovaConversa {
+                NewConversation {
                     agent_id: agente,
                     integration_id: None,
                     canal: "cli".to_owned(),
                     peer_externo: None,
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("abre a conversa")
             .id;
         self.store
-            .carrinhos()
+            .carts()
             .adicionar(org, conversa, agente, produto, quantidade)
             .expect("põe o produto no carrinho");
     }
@@ -249,9 +249,9 @@ impl Cenario {
             .listar(
                 org,
                 None,
-                poph_store::Pagina {
-                    apos: None,
-                    limite: 200,
+                poph_store::Page {
+                    after: None,
+                    limit: 200,
                 },
             )
             .expect("lista conversas");
@@ -261,7 +261,7 @@ impl Cenario {
             }
             let resumo = self
                 .store
-                .carrinhos()
+                .carts()
                 .resumo(org, conversa.id)
                 .expect("resumo do carrinho");
             for item in resumo.itens {

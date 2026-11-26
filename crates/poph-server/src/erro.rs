@@ -6,7 +6,7 @@
 use axum::Json;
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use poph_store::ErroStore;
+use poph_store::StoreError;
 use poph_types::DomainError;
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -164,10 +164,10 @@ impl IntoResponse for ApiError {
     }
 }
 
-impl From<ErroStore> for ApiError {
-    fn from(erro: ErroStore) -> Self {
+impl From<StoreError> for ApiError {
+    fn from(erro: StoreError) -> Self {
         match &erro {
-            ErroStore::Dominio(dominio) => Self::do_dominio(dominio),
+            StoreError::Domain(dominio) => Self::do_dominio(dominio),
             outro => {
                 tracing::error!(erro = %outro, "falha no armazenamento ao atender a API");
                 Self::interno()

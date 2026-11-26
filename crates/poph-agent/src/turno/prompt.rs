@@ -247,16 +247,16 @@ fn sem_escape(texto: &str) -> String {
 /// Só entram no prompt as falas do cliente e do agente. Mensagem de ferramenta e de sistema não são
 /// persistidas no formato do provedor nesta fase; ficam de fora para não inventar papel.
 pub fn da_mensagem_gravada(mensagem: &MensagemGravada) -> Option<Mensagem> {
-    use poph_store::Papel;
-    match mensagem.papel {
-        Papel::Usuario => Some(Mensagem::Usuario(vec![poph_core::llm::Parte::Texto(
+    use poph_store::Role;
+    match mensagem.role {
+        Role::User => Some(Mensagem::Usuario(vec![poph_core::llm::Parte::Texto(
             mensagem.texto.clone(),
         )])),
-        Papel::Assistente => Some(Mensagem::Assistente {
+        Role::Assistant => Some(Mensagem::Assistente {
             texto: mensagem.texto.clone(),
             chamadas: Vec::new(),
         }),
-        Papel::Ferramenta | Papel::Sistema => None,
+        Role::Tool | Role::System => None,
     }
 }
 

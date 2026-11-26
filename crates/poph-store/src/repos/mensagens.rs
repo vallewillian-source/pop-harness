@@ -8,10 +8,11 @@ use poph_types::{AttachmentId, AuditId, ConversationId, MessageId, OrgId, Outbox
 use rusqlite::{OptionalExtension, Row, params};
 
 use crate::Store;
-use crate::erro::{ErroStore, Resultado};
-use crate::modelo::{
-    Direcao, GravacaoHumana, ItemSaida, Mensagem, NovaMensagem, NovaSaida, NovoAnexoCanal, Origem,
-    Pagina, Papel, RespostaHumana, RespostaHumanaComArquivo, RespostaHumanaNova, StatusConversa,
+use crate::error::{Resultado, StoreError};
+use crate::model::{
+    ConversationStatus, Direction, HumanRecording, HumanResponse, HumanResponseWithFile, Mensagem,
+    NewChannelAttachment, NewHumanResponse, NewMessage, NewOutboxItem, Origin, OutboxItem, Page,
+    Role,
 };
 use crate::repos::caixas::{COLUNAS_SAIDA, item_de_saida_novo, linha_saida};
 use crate::repos::{id_da_coluna, id_opcional};
@@ -41,19 +42,19 @@ impl Mensagens<'_> {
     /// Não toca no marcador de atividade da conversa de propósito: reescrever a mesma linha a
     /// cada mensagem levava a vazão de 83 mil para 54 mil msg/s (medido na HR-07). Quem move o
     /// marcador é o turno, uma vez por lote, com [`Conversas::tocar`](crate::Conversas::tocar).
-    pub fn gravar(&self, org: OrgId, nova: NovaMensagem) -> Resultado<Mensagem> {
-        let agora = self.0.agora();
+    pub fn gravar(&self, org: OrgId, nova: NewMessage) -> Resultado<Mensagem> {
+        let agora = self.0.now();
         let id = MessageId::generate();
         let texto_org = org.to_string();
-        self.0.escrita(move |conn| {
-            let NovaMensagem {
+        self.0.write(move |conn| {
+            let NewMessage {
                 conversation_id,
-                direcao,
-                papel,
-                origem,
-                autor_nome,
+                direction: direcao,
+                role: papel,
+                origin: origem,
+                author_name: autor_nome,
                 texto,
-                anexos_json,
+                attachments_json: anexos_json,
                 id_externo,
                 turn_id,
             } = nova;
@@ -68,18 +69,18 @@ impl Mensagens<'_> {
                         id.to_string(),
                         &texto_org,
                         &conversa,
-                        direcao.como_texto(),
-                        papel.como_texto(),
+                        direcao.as_text(),
+                        papel.as_text(),
                         &texto,
                         &anexos_json,
                         id_externo.as_deref(),
                         turn_id.map(|turno| turno.to_string()),
                         agora,
-                        origem.como_texto(),
+                        origem.as_text(),
                         autor_nome.as_deref()
                     ],
                 )
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
 
             if inseriu == 0 {
                 let existente = conn
@@ -92,9 +93,9 @@ impl Mensagens<'_> {
                         linha,
                     )
                     .optional()
-                    .map_err(ErroStore::from)?;
+                    .map_err(StoreError::from)?;
                 return existente.ok_or_else(|| {
-                    ErroStore::Interno(
+                    StoreError::Internal(
                         "a inserção da mensagem foi ignorada, mas a original não foi encontrada"
                             .to_owned(),
                     )
@@ -105,15 +106,15 @@ impl Mensagens<'_> {
                 id,
                 org_id: org,
                 conversation_id,
-                direcao,
-                papel,
-                origem,
-                autor_nome,
+                direction: direcao,
+                role: papel,
+                origin: origem,
+                author_name: autor_nome,
                 texto,
-                anexos_json,
+                attachments_json: anexos_json,
                 id_externo,
                 turn_id,
-                criado_em: agora,
+                created_at: agora,
             })
         })
     }
@@ -127,22 +128,22 @@ impl Mensagens<'_> {
     pub fn gravar_com_anexos(
         &self,
         org: OrgId,
-        nova: NovaMensagem,
-        anexos: &[NovoAnexoCanal],
+        nova: NewMessage,
+        anexos: &[NewChannelAttachment],
     ) -> Resultado<Mensagem> {
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let id = MessageId::generate();
         let texto_org = org.to_string();
         let anexos = anexos.to_vec();
-        self.0.escrita(move |conn| {
-            let NovaMensagem {
+        self.0.write(move |conn| {
+            let NewMessage {
                 conversation_id,
-                direcao,
-                papel,
-                origem,
-                autor_nome,
+                direction: direcao,
+                role: papel,
+                origin: origem,
+                author_name: autor_nome,
                 texto,
-                anexos_json,
+                attachments_json: anexos_json,
                 id_externo,
                 turn_id,
             } = nova;
@@ -157,18 +158,18 @@ impl Mensagens<'_> {
                         id.to_string(),
                         &texto_org,
                         &conversa,
-                        direcao.como_texto(),
-                        papel.como_texto(),
+                        direcao.as_text(),
+                        papel.as_text(),
                         &texto,
                         &anexos_json,
                         id_externo.as_deref(),
                         turn_id.map(|turno| turno.to_string()),
                         agora,
-                        origem.como_texto(),
+                        origem.as_text(),
                         autor_nome.as_deref()
                     ],
                 )
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
             if inseriu == 0 {
                 let existente = conn
                     .query_row(
@@ -180,9 +181,9 @@ impl Mensagens<'_> {
                         linha,
                     )
                     .optional()
-                    .map_err(ErroStore::from)?;
+                    .map_err(StoreError::from)?;
                 return existente.ok_or_else(|| {
-                    ErroStore::Interno(
+                    StoreError::Internal(
                         "a inserção da mensagem foi ignorada, mas a original não foi encontrada"
                             .to_owned(),
                     )
@@ -201,50 +202,50 @@ impl Mensagens<'_> {
                         &id_anexo,
                         &texto_org,
                         id.to_string(),
-                        &anexo.nome,
+                        &anexo.name,
                         &anexo.mime,
-                        anexo.tamanho_bytes as i64,
+                        anexo.size_bytes as i64,
                         &anexo.sha256,
                         &anexo.blob_path,
-                        &anexo.texto_extraido,
-                        anexo.status_extracao,
+                        &anexo.extracted_text,
+                        anexo.extraction_status,
                         agora
                     ],
                 )
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
                 ids.push(id_anexo);
             }
             let anexos_json = if ids.is_empty() {
                 "[]".to_owned()
             } else {
                 serde_json::to_string(&ids).map_err(|erro| {
-                    ErroStore::Interno(format!("lista de anexos não serializa: {erro}"))
+                    StoreError::Internal(format!("lista de anexos não serializa: {erro}"))
                 })?
             };
             conn.execute(
                 "UPDATE messages SET attachments_json = ?2 WHERE id = ?1",
                 params![id.to_string(), &anexos_json],
             )
-            .map_err(ErroStore::from)?;
+            .map_err(StoreError::from)?;
             conn.execute(
                 "UPDATE conversations SET last_message_at = ?2, updated_at = ?2 WHERE id = ?1",
                 params![&conversa, agora],
             )
-            .map_err(ErroStore::from)?;
+            .map_err(StoreError::from)?;
 
             Ok(Mensagem {
                 id,
                 org_id: org,
                 conversation_id,
-                direcao,
-                papel,
-                origem,
-                autor_nome,
+                direction: direcao,
+                role: papel,
+                origin: origem,
+                author_name: autor_nome,
                 texto,
-                anexos_json,
+                attachments_json: anexos_json,
                 id_externo,
                 turn_id,
-                criado_em: agora,
+                created_at: agora,
             })
         })
     }
@@ -263,34 +264,34 @@ impl Mensagens<'_> {
     pub fn gravar_com_saida(
         &self,
         org: OrgId,
-        nova: NovaMensagem,
-        saida: NovaSaida,
-    ) -> Resultado<(Mensagem, ItemSaida)> {
-        let agora = self.0.agora();
+        nova: NewMessage,
+        saida: NewOutboxItem,
+    ) -> Resultado<(Mensagem, OutboxItem)> {
+        let agora = self.0.now();
         let id = MessageId::generate();
         let id_saida = OutboxId::generate();
         let texto_org = org.to_string();
-        self.0.escrita(move |conn| {
-            let NovaMensagem {
+        self.0.write(move |conn| {
+            let NewMessage {
                 conversation_id,
-                direcao,
-                papel,
-                origem,
-                autor_nome,
+                direction: direcao,
+                role: papel,
+                origin: origem,
+                author_name: autor_nome,
                 texto,
-                anexos_json,
+                attachments_json: anexos_json,
                 id_externo,
                 turn_id,
             } = nova;
-            let NovaSaida {
+            let NewOutboxItem {
                 conversation_id: conversa_da_saida,
                 turn_id: turno_da_saida,
                 seq,
                 tipo,
-                conteudo_json,
+                content_json: conteudo_json,
             } = saida;
             if conversa_da_saida != conversation_id || turn_id != Some(turno_da_saida) {
-                return Err(ErroStore::Interno(
+                return Err(StoreError::Internal(
                     "a resposta e o item de saída precisam ser da mesma conversa e do mesmo turno"
                         .to_owned(),
                 ));
@@ -306,18 +307,18 @@ impl Mensagens<'_> {
                     id.to_string(),
                     &texto_org,
                     &conversa,
-                    direcao.como_texto(),
-                    papel.como_texto(),
+                    direcao.as_text(),
+                    papel.as_text(),
                     &texto,
                     &anexos_json,
                     id_externo.as_deref(),
                     turn_id.map(|turno| turno.to_string()),
                     agora,
-                    origem.como_texto(),
+                    origem.as_text(),
                     autor_nome.as_deref()
                 ],
             )
-            .map_err(ErroStore::from)?;
+            .map_err(StoreError::from)?;
 
             let inseriu = conn
                 .execute(
@@ -336,7 +337,7 @@ impl Mensagens<'_> {
                         agora
                     ],
                 )
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
 
             let item = if inseriu == 0 {
                 conn.query_row(
@@ -345,9 +346,9 @@ impl Mensagens<'_> {
                     linha_saida,
                 )
                 .optional()
-                .map_err(ErroStore::from)?
+                .map_err(StoreError::from)?
                 .ok_or_else(|| {
-                    ErroStore::Interno(
+                    StoreError::Internal(
                         "inserção da saída ignorada, mas a original não foi encontrada".to_owned(),
                     )
                 })?
@@ -355,12 +356,12 @@ impl Mensagens<'_> {
                 item_de_saida_novo(
                     id_saida,
                     org,
-                    NovaSaida {
+                    NewOutboxItem {
                         conversation_id,
                         turn_id: turno_da_saida,
                         seq,
                         tipo,
-                        conteudo_json,
+                        content_json: conteudo_json,
                     },
                     agora,
                 )
@@ -371,15 +372,15 @@ impl Mensagens<'_> {
                     id,
                     org_id: org,
                     conversation_id,
-                    direcao,
-                    papel,
-                    origem,
-                    autor_nome,
+                    direction: direcao,
+                    role: papel,
+                    origin: origem,
+                    author_name: autor_nome,
                     texto,
-                    anexos_json,
+                    attachments_json: anexos_json,
                     id_externo,
                     turn_id,
-                    criado_em: agora,
+                    created_at: agora,
                 },
                 item,
             ))
@@ -415,17 +416,17 @@ impl Mensagens<'_> {
         &self,
         org: OrgId,
         conversa: ConversationId,
-        nova: RespostaHumanaNova<'_>,
-    ) -> Resultado<RespostaHumana> {
-        let payload = serde_json::json!({ "texto": nova.texto_enviado }).to_string();
+        nova: NewHumanResponse<'_>,
+    ) -> Resultado<HumanResponse> {
+        let payload = serde_json::json!({ "texto": nova.sent_text }).to_string();
         self.gravar_resposta_humana(
             org,
             conversa,
             EventoHumano {
-                evento_id: nova.evento_id,
-                texto_bruto: nova.texto_bruto,
-                autor_id: nova.autor_id,
-                autor_nome: nova.autor_nome,
+                evento_id: nova.event_id,
+                texto_bruto: nova.raw_text,
+                autor_id: nova.author_id,
+                autor_nome: nova.author_name,
             },
             "text",
             payload,
@@ -449,37 +450,37 @@ impl Mensagens<'_> {
         &self,
         org: OrgId,
         conversa: ConversationId,
-        nova: RespostaHumanaComArquivo<'_>,
-    ) -> Resultado<RespostaHumana> {
-        let arquivo = nova.arquivo;
+        nova: HumanResponseWithFile<'_>,
+    ) -> Resultado<HumanResponse> {
+        let arquivo = nova.file;
         let id_anexo = AttachmentId::generate();
         let payload = serde_json::json!({
             "blob_ref": arquivo.blob_path,
             "arquivo_id": id_anexo.to_string(),
-            "nome": arquivo.nome,
+            "nome": arquivo.name,
             "mime": arquivo.mime,
-            "tamanho_bytes": arquivo.tamanho_bytes,
+            "tamanho_bytes": arquivo.size_bytes,
             "sha256": arquivo.sha256,
-            "legenda": arquivo.legenda,
+            "legenda": arquivo.caption,
         })
         .to_string();
-        let anexo = NovoAnexoCanal {
-            nome: arquivo.nome.to_owned(),
+        let anexo = NewChannelAttachment {
+            name: arquivo.name.to_owned(),
             mime: arquivo.mime.to_owned(),
-            tamanho_bytes: arquivo.tamanho_bytes,
+            size_bytes: arquivo.size_bytes,
             sha256: arquivo.sha256.to_owned(),
             blob_path: arquivo.blob_path.to_owned(),
-            texto_extraido: None,
-            status_extracao: arquivo.status_extracao,
+            extracted_text: None,
+            extraction_status: arquivo.extraction_status,
         };
         self.gravar_resposta_humana(
             org,
             conversa,
             EventoHumano {
-                evento_id: nova.evento_id,
+                evento_id: nova.event_id,
                 texto_bruto: "",
-                autor_id: nova.autor_id,
-                autor_nome: nova.autor_nome,
+                autor_id: nova.author_id,
+                autor_nome: nova.author_name,
             },
             "file",
             payload,
@@ -496,9 +497,9 @@ impl Mensagens<'_> {
         nova: EventoHumano<'_>,
         tipo_saida: &str,
         conteudo_json: String,
-        anexo: Option<(AttachmentId, NovoAnexoCanal)>,
-    ) -> Resultado<RespostaHumana> {
-        let agora = self.0.agora();
+        anexo: Option<(AttachmentId, NewChannelAttachment)>,
+    ) -> Resultado<HumanResponse> {
+        let agora = self.0.now();
         let texto_org = org.to_string();
         let texto_conversa = conversa.to_string();
         let evento = nova.evento_id.to_owned();
@@ -513,7 +514,7 @@ impl Mensagens<'_> {
         let id = MessageId::generate();
         let id_saida = OutboxId::generate();
         let turno = TurnId::generate();
-        self.0.escrita(move |conn| {
+        self.0.write(move |conn| {
             let situacao: Option<String> = conn
                 .query_row(
                     "SELECT status FROM conversations WHERE org_id = ?1 AND id = ?2",
@@ -521,9 +522,9 @@ impl Mensagens<'_> {
                     |linha| linha.get::<_, String>(0),
                 )
                 .optional()
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
             let Some(situacao) = situacao else {
-                return Ok(RespostaHumana::ConversaInexistente);
+                return Ok(HumanResponse::ConversationMissing);
             };
             let ja_gravada = conn
                 .query_row(
@@ -533,16 +534,16 @@ impl Mensagens<'_> {
                     |linha| linha.get::<_, i64>(0),
                 )
                 .optional()
-                .map_err(ErroStore::from)?
+                .map_err(StoreError::from)?
                 .is_some();
             if ja_gravada {
-                return Ok(RespostaHumana::Duplicada);
+                return Ok(HumanResponse::Duplicate);
             }
-            let situacao = StatusConversa::de_texto(&situacao)?;
-            if situacao == StatusConversa::Fechada {
-                return Ok(RespostaHumana::ConversaFechada);
+            let situacao = ConversationStatus::from_text(&situacao)?;
+            if situacao == ConversationStatus::Closed {
+                return Ok(HumanResponse::ConversationClosed);
             }
-            let transferiu_agora = situacao == StatusConversa::Aberta;
+            let transferiu_agora = situacao == ConversationStatus::Open;
 
             conn.execute(
                 "INSERT INTO messages
@@ -553,18 +554,18 @@ impl Mensagens<'_> {
                     id.to_string(),
                     &texto_org,
                     &texto_conversa,
-                    Direcao::Saida.como_texto(),
-                    Papel::Assistente.como_texto(),
+                    Direction::Outbound.as_text(),
+                    Role::Assistant.as_text(),
                     &bruto,
                     &anexos_json,
                     &evento,
                     turno.to_string(),
                     agora,
-                    Origem::Humano.como_texto(),
+                    Origin::Human.as_text(),
                     &nome
                 ],
             )
-            .map_err(ErroStore::from)?;
+            .map_err(StoreError::from)?;
 
             // A linha do anexo é o que o resto do Harness lê para saber o que acompanha a mensagem
             // (e o que a retenção precisa apagar junto com ela).
@@ -578,25 +579,25 @@ impl Mensagens<'_> {
                         id_anexo.to_string(),
                         &texto_org,
                         id.to_string(),
-                        &anexo.nome,
+                        &anexo.name,
                         &anexo.mime,
-                        anexo.tamanho_bytes as i64,
+                        anexo.size_bytes as i64,
                         &anexo.sha256,
                         &anexo.blob_path,
-                        anexo.texto_extraido.as_deref(),
-                        anexo.status_extracao,
+                        anexo.extracted_text.as_deref(),
+                        anexo.extraction_status,
                         agora
                     ],
                 )
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
             }
 
-            let nova_saida = NovaSaida {
+            let nova_saida = NewOutboxItem {
                 conversation_id: conversa,
                 turn_id: turno,
                 seq: 0,
                 tipo: tipo_saida.clone(),
-                conteudo_json: conteudo_json.clone(),
+                content_json: conteudo_json.clone(),
             };
             conn.execute(
                 "INSERT INTO outbox
@@ -613,7 +614,7 @@ impl Mensagens<'_> {
                     agora
                 ],
             )
-            .map_err(ErroStore::from)?;
+            .map_err(StoreError::from)?;
             let saida = item_de_saida_novo(id_saida, org, nova_saida, agora);
 
             if transferiu_agora {
@@ -624,14 +625,14 @@ impl Mensagens<'_> {
                       WHERE org_id = ?1 AND id = ?2 AND status = 'open'",
                     params![&texto_org, &texto_conversa, agora],
                 )
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
             } else {
                 conn.execute(
                     "UPDATE conversations SET last_message_at = ?3, updated_at = ?3
                       WHERE org_id = ?1 AND id = ?2",
                     params![&texto_org, &texto_conversa, agora],
                 )
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
             }
 
             let detalhe = serde_json::json!({
@@ -652,25 +653,25 @@ impl Mensagens<'_> {
                     agora
                 ],
             )
-            .map_err(ErroStore::from)?;
+            .map_err(StoreError::from)?;
 
-            Ok(RespostaHumana::Gravada(Box::new(GravacaoHumana {
+            Ok(HumanResponse::Stored(Box::new(HumanRecording {
                 mensagem: Mensagem {
                     id,
                     org_id: org,
                     conversation_id: conversa,
-                    direcao: Direcao::Saida,
-                    papel: Papel::Assistente,
-                    origem: Origem::Humano,
-                    autor_nome: Some(nome),
+                    direction: Direction::Outbound,
+                    role: Role::Assistant,
+                    origin: Origin::Human,
+                    author_name: Some(nome),
                     texto: bruto,
-                    anexos_json,
+                    attachments_json: anexos_json,
                     id_externo: Some(evento),
                     turn_id: Some(turno),
-                    criado_em: agora,
+                    created_at: agora,
                 },
                 saida,
-                transferiu_agora,
+                just_transferred: transferiu_agora,
             })))
         })
     }
@@ -680,13 +681,13 @@ impl Mensagens<'_> {
         &self,
         org: OrgId,
         conversa: ConversationId,
-        pagina: Pagina,
+        pagina: Page,
     ) -> Resultado<Vec<Mensagem>> {
         let texto_org = org.to_string();
         let texto_conversa = conversa.to_string();
-        let apos = pagina.apos.map(|id| id.to_string());
-        let limite = i64::from(pagina.limite);
-        self.0.leitura(move |conn| {
+        let apos = pagina.after.map(|id| id.to_string());
+        let limite = i64::from(pagina.limit);
+        self.0.read(move |conn| {
             let mut consulta = conn.prepare(&format!(
                 "SELECT {COLUNAS} FROM messages
                   WHERE org_id = ?1 AND conversation_id = ?2 AND (?3 IS NULL OR id > ?3)
@@ -712,7 +713,7 @@ impl Mensagens<'_> {
         let texto_org = org.to_string();
         let texto_conversa = conversa.to_string();
         let limite = i64::from(limite.clamp(1, 1000));
-        let mut mensagens = self.0.leitura(move |conn| {
+        let mut mensagens = self.0.read(move |conn| {
             let mut consulta = conn.prepare(&format!(
                 "SELECT {COLUNAS} FROM messages
                   WHERE org_id = ?1 AND conversation_id = ?2
@@ -739,7 +740,7 @@ impl Mensagens<'_> {
         let texto_org = org.to_string();
         let texto_conversa = conversa.to_string();
         let texto_id = id.to_string();
-        let encontrada = self.0.leitura(move |conn| {
+        let encontrada = self.0.read(move |conn| {
             conn.query_row(
                 &format!(
                     "SELECT {COLUNAS} FROM messages
@@ -749,9 +750,9 @@ impl Mensagens<'_> {
                 linha,
             )
             .optional()
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })?;
-        super::exigir(encontrada, "mensagem", &id.to_string())
+        super::require(encontrada, "mensagem", &id.to_string())
     }
 
     /// A conversa tem mensagem gravada antes de `corte` (ms)? Usado pelo aviso de histórico não
@@ -764,21 +765,21 @@ impl Mensagens<'_> {
     ) -> Resultado<bool> {
         let texto_org = org.to_string();
         let texto_conversa = conversa.to_string();
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             conn.query_row(
                 "SELECT EXISTS (SELECT 1 FROM messages
                                  WHERE org_id = ?1 AND conversation_id = ?2 AND created_at < ?3)",
                 params![texto_org, texto_conversa, corte],
                 |linha| linha.get::<_, bool>(0),
             )
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })
     }
 
     /// Última mensagem da tabela (maior `rowid`) com o id dela, ou `None` quando não há nenhuma.
     /// O espelho usa para achar o ponto seguro quando o cursor ficou à frente (R5).
     pub fn ultima_rowid(&self) -> Resultado<Option<(u64, MessageId)>> {
-        self.0.leitura(|conn| {
+        self.0.read(|conn| {
             let linha: Option<(i64, String)> = conn
                 .query_row(
                     "SELECT rowid, id FROM messages ORDER BY rowid DESC LIMIT 1",
@@ -786,12 +787,12 @@ impl Mensagens<'_> {
                     |linha| Ok((linha.get(0)?, linha.get(1)?)),
                 )
                 .optional()
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
             match linha {
                 None => Ok(None),
                 Some((rowid, id)) => {
                     let id: MessageId = id.parse().map_err(|_| {
-                        ErroStore::Dominio(poph_types::DomainError::Validation {
+                        StoreError::Domain(poph_types::DomainError::Validation {
                             field: "messages.id",
                             reason: "id de mensagem inválido no banco".to_owned(),
                         })
@@ -806,14 +807,14 @@ impl Mensagens<'_> {
     pub fn contar(&self, org: OrgId, conversa: ConversationId) -> Resultado<u64> {
         let texto_org = org.to_string();
         let texto_conversa = conversa.to_string();
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             conn.query_row(
                 "SELECT count(*) FROM messages WHERE org_id = ?1 AND conversation_id = ?2",
                 params![texto_org, texto_conversa],
                 |linha| linha.get::<_, i64>(0),
             )
             .map(|total| total.max(0) as u64)
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })
     }
 
@@ -827,7 +828,7 @@ impl Mensagens<'_> {
     pub fn desde(&self, apos: u64, limite: u32) -> Resultado<Vec<MensagemDesde>> {
         let apos = i64::try_from(apos).unwrap_or(i64::MAX);
         let limite = i64::from(limite.clamp(1, LIMITE_DESDE));
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             let mut consulta = conn.prepare(
                 "SELECT rowid, id, org_id, conversation_id, direction, role, origin, author_name,
                         text, attachments_json, external_id, created_at
@@ -864,11 +865,11 @@ pub struct MensagemDesde {
     /// Conversa dona.
     pub conversation_id: ConversationId,
     /// Direção (`Entrada` ou `Saida`).
-    pub direcao: Direcao,
+    pub direcao: Direction,
     /// Papel (sempre `Usuario` ou `Assistente` nesta leitura).
-    pub papel: Papel,
+    pub papel: Role,
     /// Quem produziu.
-    pub origem: Origem,
+    pub origem: Origin,
     /// Nome do atendente, quando a origem é humana.
     pub autor_nome: Option<String>,
     /// Texto.
@@ -885,8 +886,8 @@ pub struct MensagemDesde {
 /// [`Mensagens::desde`].
 fn linha_desde(linha: &Row<'_>) -> rusqlite::Result<MensagemDesde> {
     let direcao = match linha.get::<_, String>(4)?.as_str() {
-        "in" => Direcao::Entrada,
-        "out" => Direcao::Saida,
+        "in" => Direction::Inbound,
+        "out" => Direction::Outbound,
         outro => {
             return Err(rusqlite::Error::FromSqlConversionFailure(
                 4,
@@ -895,10 +896,10 @@ fn linha_desde(linha: &Row<'_>) -> rusqlite::Result<MensagemDesde> {
             ));
         }
     };
-    let papel = Papel::de_texto(&linha.get::<_, String>(5)?).map_err(|erro| {
+    let papel = Role::from_text(&linha.get::<_, String>(5)?).map_err(|erro| {
         rusqlite::Error::FromSqlConversionFailure(5, rusqlite::types::Type::Text, Box::new(erro))
     })?;
-    let origem = Origem::de_texto(&linha.get::<_, String>(6)?).map_err(|erro| {
+    let origem = Origin::from_text(&linha.get::<_, String>(6)?).map_err(|erro| {
         rusqlite::Error::FromSqlConversionFailure(6, rusqlite::types::Type::Text, Box::new(erro))
     })?;
     Ok(MensagemDesde {
@@ -920,8 +921,8 @@ fn linha_desde(linha: &Row<'_>) -> rusqlite::Result<MensagemDesde> {
 /// Lê uma linha no formato de [`COLUNAS`] (e das consultas de `caixas.rs` com as mesmas colunas).
 pub(crate) fn linha(linha: &Row<'_>) -> rusqlite::Result<Mensagem> {
     let direcao = match linha.get::<_, String>(3)?.as_str() {
-        "in" => Direcao::Entrada,
-        "out" => Direcao::Saida,
+        "in" => Direction::Inbound,
+        "out" => Direction::Outbound,
         outro => {
             return Err(rusqlite::Error::FromSqlConversionFailure(
                 3,
@@ -930,24 +931,24 @@ pub(crate) fn linha(linha: &Row<'_>) -> rusqlite::Result<Mensagem> {
             ));
         }
     };
-    let papel = Papel::de_texto(&linha.get::<_, String>(4)?).map_err(|erro| {
+    let papel = Role::from_text(&linha.get::<_, String>(4)?).map_err(|erro| {
         rusqlite::Error::FromSqlConversionFailure(4, rusqlite::types::Type::Text, Box::new(erro))
     })?;
-    let origem = Origem::de_texto(&linha.get::<_, String>(10)?).map_err(|erro| {
+    let origem = Origin::from_text(&linha.get::<_, String>(10)?).map_err(|erro| {
         rusqlite::Error::FromSqlConversionFailure(10, rusqlite::types::Type::Text, Box::new(erro))
     })?;
     Ok(Mensagem {
         id: id_da_coluna(linha, 0)?,
         org_id: id_da_coluna(linha, 1)?,
         conversation_id: id_da_coluna(linha, 2)?,
-        direcao,
-        papel,
-        origem,
-        autor_nome: linha.get(11)?,
+        direction: direcao,
+        role: papel,
+        origin: origem,
+        author_name: linha.get(11)?,
         texto: linha.get(5)?,
-        anexos_json: linha.get(6)?,
+        attachments_json: linha.get(6)?,
         id_externo: linha.get(7)?,
         turn_id: id_opcional::<TurnId>(linha, 8)?,
-        criado_em: linha.get(9)?,
+        created_at: linha.get(9)?,
     })
 }

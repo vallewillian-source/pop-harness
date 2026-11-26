@@ -50,8 +50,8 @@ use poph_server::evolution::CanalEvolution;
 use poph_server::matrix_inicio::{self, AjustesDeInicio, MatrixRodando, PortaEspacosStore};
 use poph_server::{entrada_turno, saida_whatsapp};
 use poph_store::{
-    Direcao, EstadoSaida, EstadoSala, NovaConversa, NovaMensagem, NovaOrg, NovoAgente,
-    NovoDepartamento, Origem, Pagina, Papel, Store,
+    Direction, EstadoSala, NewAgent, NewConversation, NewDepartment, NewMessage, NewOrg, Origin,
+    OutboxState, Page, Role, Store,
 };
 use poph_types::{
     AgentId, ConversationId, DepartmentId, HarnessConfig, IntegrationId, MatrixConfig, OrgId,
@@ -764,27 +764,27 @@ impl Base {
         let _ = fs::remove_dir_all(&pasta);
         fs::create_dir_all(&pasta).expect("pasta do teste");
         let loja = Arc::new(
-            Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("banco"),
+            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("banco"),
         );
         let org = loja
-            .orgaos()
-            .criar(NovaOrg {
-                nome: format!("Org {rotulo}"),
+            .orgs()
+            .criar(NewOrg {
+                name: format!("Org {rotulo}"),
                 slug: format!("org-{rotulo}"),
                 config_json: String::new(),
             })
             .expect("cria a org")
             .id;
         let agente = loja
-            .agentes()
+            .agents()
             .criar(
                 org,
-                NovoAgente {
-                    nome: "Bia".to_owned(),
+                NewAgent {
+                    name: "Bia".to_owned(),
                     slug: "bia".to_owned(),
                     // Sem janela de agrupamento: o teste não espera o cliente terminar de digitar.
-                    janela_agrupamento_ms: 0,
-                    ..NovoAgente::default()
+                    grouping_window_ms: 0,
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente")
@@ -793,12 +793,12 @@ impl Base {
             .conversas()
             .criar(
                 org,
-                NovaConversa {
+                NewConversation {
                     agent_id: agente,
                     integration_id: None,
                     canal: "whatsapp".to_owned(),
                     peer_externo: Some(TELEFONE.to_owned()),
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("cria a conversa")
@@ -825,19 +825,19 @@ impl Base {
         self.loja.matrix().ligar(self.org).expect("liga o módulo");
     }
 
-    fn gravar(&self, direcao: Direcao, papel: Papel, texto: &str) -> String {
+    fn gravar(&self, direcao: Direction, papel: Role, texto: &str) -> String {
         self.loja
-            .mensagens()
+            .messages()
             .gravar(
                 self.org,
-                NovaMensagem {
+                NewMessage {
                     conversation_id: self.conversa,
-                    direcao,
-                    papel,
-                    origem: Origem::Agente,
-                    autor_nome: None,
+                    direction: direcao,
+                    role: papel,
+                    origin: Origin::Agente,
+                    author_name: None,
                     texto: texto.to_owned(),
-                    anexos_json: "[]".to_owned(),
+                    attachments_json: "[]".to_owned(),
                     id_externo: None,
                     turn_id: None,
                 },
@@ -849,12 +849,12 @@ impl Base {
 
     /// Mensagem do cliente (entrada, papel `user`).
     fn cliente(&self, texto: &str) -> String {
-        self.gravar(Direcao::Entrada, Papel::Usuario, texto)
+        self.gravar(Direction::Inbound, Role::User, texto)
     }
 
     /// Resposta do agente (saída, papel `assistant`).
     fn agente_fala(&self, texto: &str) -> String {
-        self.gravar(Direcao::Saida, Papel::Assistente, texto)
+        self.gravar(Direction::Outbound, Role::Assistant, texto)
     }
 }
 
@@ -911,7 +911,7 @@ fn processo_do_modulo(base: &Base, config: MatrixConfig) -> Hospedeiro {
     let db = base.db();
     let rag = base.rag();
     Hospedeiro::subir("harness-modulo", move |recebe| async move {
-        let store = Arc::new(Store::abrir_em(&db, &rag).expect("abre o banco no processo"));
+        let store = Arc::new(Store::open_at(&db, &rag).expect("abre o banco no processo"));
         let harness = HarnessConfig {
             matrix: Some(config.clone()),
             ..HarnessConfig::default()
@@ -931,7 +931,7 @@ fn processo_do_receptor(base: &Base, config: MatrixConfig, ouvinte: StdListener)
     Hospedeiro::subir("harness-receptor", move |recebe| async move {
         ouvinte.set_nonblocking(true).expect("modo não bloqueante");
         let ouvinte = tokio::net::TcpListener::from_std(ouvinte).expect("ouvinte do Harness");
-        let store = Arc::new(Store::abrir_em(&db, &rag).expect("abre o banco no processo"));
+        let store = Arc::new(Store::open_at(&db, &rag).expect("abre o banco no processo"));
         let harness = HarnessConfig {
             matrix: Some(config.clone()),
             ..HarnessConfig::default()
@@ -1069,11 +1069,11 @@ async fn subir_servidor(
     ajustes: AjustesDeInicio,
     respostas: usize,
 ) -> Servidor {
-    let store = Arc::new(Store::abrir_em(&base.db(), &base.rag()).expect("banco do servidor"));
+    let store = Arc::new(Store::open_at(&base.db(), &base.rag()).expect("banco do servidor"));
     let evo = EvolucaoFalsa::default();
     let url_evo = subir_evolucao(evo.clone()).await;
     let integracao: IntegrationId = store
-        .integracao_criar(
+        .create_integration(
             base.org,
             base.agente,
             "whatsapp".to_owned(),
@@ -1097,7 +1097,7 @@ async fn subir_servidor(
         teto_midia: TETO_MIDIA,
     };
     store
-        .instrucoes()
+        .instructions()
         .salvar(
             base.org,
             base.agente,
@@ -1543,7 +1543,7 @@ async fn queda_no_meio_do_lote_de_convites_termina_sem_perda() {
     // A queda interrompe o trabalho em qualquer `await` (o convite segurado, aqui). Sem o
     // `select`, o processo ficaria preso no convite até o cliente HTTP estourar o prazo.
     let primeiro = Hospedeiro::subir("posicionar", move |recebe| async move {
-        let store = Arc::new(Store::abrir_em(&db, &rag).expect("banco do processo"));
+        let store = Arc::new(Store::open_at(&db, &rag).expect("banco do processo"));
         tokio::select! {
             _ = posicionar_com(&do_processo, store, limites_de_lote()) => {}
             _ = recebe => {}
@@ -1735,18 +1735,18 @@ impl Modo {
 /// Conta as respostas do agente já gravadas na conversa da org (o que o turno produziu).
 fn respostas_gravadas(loja: &Store, org: OrgId) -> usize {
     // Soma em todas as conversas da org: a conversa de teste da base também está lá, vazia.
-    let Ok(conversas) = loja.conversas().listar(org, None, Pagina::com_limite(50)) else {
+    let Ok(conversas) = loja.conversas().listar(org, None, Page::with_limit(50)) else {
         return 0;
     };
     conversas
         .iter()
         .map(|conversa| {
-            loja.mensagens()
-                .listar(org, conversa.id, Pagina::com_limite(1000))
+            loja.messages()
+                .listar(org, conversa.id, Page::with_limit(1000))
                 .map(|mensagens| {
                     mensagens
                         .iter()
-                        .filter(|mensagem| mensagem.direcao == Direcao::Saida)
+                        .filter(|mensagem| mensagem.direction == Direction::Outbound)
                         .count()
                 })
                 .unwrap_or(0)
@@ -1911,12 +1911,12 @@ fn montar_espaco(base: &Base, synapse: &Synapse, config: &MatrixConfig) -> Dados
     let bot = ids.bot().user_id().to_owned();
     let departamento = base
         .loja
-        .departamentos()
+        .departments()
         .criar(
             base.org,
-            NovoDepartamento {
-                nome: "Vendas".to_owned(),
-                descricao: String::new(),
+            NewDepartment {
+                name: "Vendas".to_owned(),
+                description: String::new(),
             },
         )
         .expect("cria o departamento")
@@ -2045,18 +2045,18 @@ async fn enviar_transacao(endereco: SocketAddr, txn: String, corpo: Value) -> (S
 /// Quantas entradas estão pendentes na fila de saída da org.
 fn fila_pendente(base: &Base) -> u64 {
     base.loja
-        .caixa_saida()
-        .contar_por_estado(base.org, EstadoSaida::Pendente)
+        .outbox()
+        .contar_por_estado(base.org, OutboxState::Pending)
         .expect("conta a fila")
 }
 
 /// Quantas mensagens do atendente (origem humana) estão gravadas na conversa.
 fn respostas_humanas(base: &Base) -> usize {
     base.loja
-        .mensagens()
-        .listar(base.org, base.conversa, Pagina::com_limite(100))
+        .messages()
+        .listar(base.org, base.conversa, Page::with_limit(100))
         .expect("mensagens")
         .into_iter()
-        .filter(|mensagem| mensagem.origem == Origem::Humano)
+        .filter(|mensagem| mensagem.origin == Origin::Human)
         .count()
 }

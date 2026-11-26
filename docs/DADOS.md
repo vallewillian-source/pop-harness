@@ -56,6 +56,17 @@ pelo terminal, com o servidor parado.
 - **Leitores**: pool de até 8 conexões só de leitura; se todas estiverem ocupadas, abre uma extra e
   descarta ao devolver.
 - `Store` é `Send + Sync`: as threads da aplicação compartilham o mesmo escritor.
+- **Contador de execução conta dentro do comando, antes do `COMMIT` do lote.** Se o commit falhar
+  depois, o contador já somou uma operação que o banco desfez: é métrica de operação, não dado do
+  atendimento. O erro fica no log de quem chamou e a contagem segue; sem catálogo publicado
+  (`poph migrate` e a CLI), nenhuma conta é feita.
+- **Erro de restrição do banco vira validação com o campo certo.** `StoreError::from_write` (e
+  `from_write_with`, que recebe o mapa coluna→campo do chamador) traduz a violação em
+  `DomainError::Validation`: `UNIQUE` e `PRIMARY KEY` apontam o campo que o chamador informou (o
+  valor repetido é dele); `CHECK` e `NOT NULL` apontam a coluna citada na mensagem do SQLite quando
+  ela está no mapa, senão o campo do chamador; `FOREIGN KEY` aponta o campo do chamador, com o
+  texto de que o registro não existe nesta org. Qualquer outro código estendido continua erro cru
+  do banco (`StoreError::Sqlite`).
 - **Medido** (`cargo test --release -p poph-store --test vazao -- --ignored --nocapture`, esta
   estação x86_64 de 12 núcleos):
 
@@ -86,17 +97,17 @@ Runner próprio (decisão: ~60 linhas, sem `rusqlite_migration`), porque o PRD �
 `schema_migrations` com versão, nome e data para o `poph doctor` ler.
 
 - Cada migração é um arquivo SQL embutido no binário por `include_str!` e registrado em
-  `crates/poph-store/src/migracoes.rs`.
+  `crates/poph-store/src/migrations.rs`.
 - `poph migrate` (e a abertura do `Store`) aplica só o que falta; rodar de novo não faz nada.
 - Cada migração roda num `SAVEPOINT`: funciona sozinha ou dentro da transação do escritor, e uma
   migração que falha não leva as outras.
 - **Para criar uma migração nova:** acrescente o arquivo em `migrations/harness/NNNN_nome.sql` e
-  registre em `MIGRACOES_HARNESS` com o próximo número. Nunca edite uma migração já publicada.
+  registre em `HARNESS_MIGRATIONS` com o próximo número. Nunca edite uma migração já publicada.
 - `rag.db` hoje tem lista vazia; a versão dele é `0` e o doctor mostra `esquema versão 0`.
-- A numeração pula a `0014`: o arquivo não existe no repositório e `migracoes.rs` não a registra. As
+- A numeração pula a `0014`: o arquivo não existe no repositório e `migrations.rs` não a registra. As
   migrações do módulo de Fluxos e Fichas são a `0012` e a `0013`; o próximo número livre é o `0017`.
 
-O `poph doctor` lê a versão **sem abrir o banco para escrita**: `versao_do_arquivo` abre em modo
+O `poph doctor` lê a versão **sem abrir o banco para escrita**: `file_version` abre em modo
 somente leitura e consulta `schema_migrations` (antes ele lia o cabeçalho `user_version`, que não
 acompanha as migrações).
 

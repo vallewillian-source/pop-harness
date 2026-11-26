@@ -85,7 +85,7 @@ pub async fn report(
     if !(-840..=840).contains(&offset) {
         return Err(invalid("tz_offset_minutes", "must be between -840 and 840"));
     }
-    state.store.orgaos().obter(org)?;
+    state.store.orgs().get(org)?;
     let optional = |value: Option<String>| value.filter(|s| !s.is_empty());
     let result = state.store.conversation_analytics().report(
         org,

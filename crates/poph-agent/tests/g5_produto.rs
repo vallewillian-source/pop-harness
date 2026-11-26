@@ -35,7 +35,7 @@ use poph_jev::{
     AjusteGates, AvaliadorGates, Decisao, ErroJev, EstadoJev, G3_NADA, G5_NENHUM, IdGate, JevFalso,
     LoteResposta, MotorJev, OpcoesJev, OrigemDecisao, Resposta as RespostaJev, ResultadoJev,
 };
-use poph_store::{Direcao, NovaConversa, NovaMensagem, NovaOrg, NovoAgente, Papel, Store};
+use poph_store::{Direction, NewAgent, NewConversation, NewMessage, NewOrg, Role, Store};
 use poph_types::{
     AgentId, ConversationId, JevGates, MessageId, OrgId, ProductId, StructuredInstructions,
     ToolConfig,
@@ -152,27 +152,26 @@ impl Cenario {
         let _ = std::fs::remove_dir_all(&pasta);
         std::fs::create_dir_all(&pasta).expect("pasta do teste");
         let store = Arc::new(
-            Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
-                .expect("abre o banco"),
+            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco"),
         );
         let org = store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: format!("Org {rotulo}"),
+            .orgs()
+            .criar(NewOrg {
+                name: format!("Org {rotulo}"),
                 slug: format!("org-{rotulo}-{}", AgentId::generate()),
                 config_json: "{}".to_owned(),
             })
             .expect("cria a org")
             .id;
         let agente = store
-            .agentes()
+            .agents()
             .criar(
                 org,
-                NovoAgente {
-                    nome: format!("Bia {rotulo}"),
+                NewAgent {
+                    name: format!("Bia {rotulo}"),
                     slug: format!("bia-{rotulo}"),
-                    janela_agrupamento_ms: 0,
-                    ..NovoAgente::default()
+                    grouping_window_ms: 0,
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente")
@@ -193,7 +192,7 @@ impl Cenario {
             ..StructuredInstructions::default()
         };
         store
-            .instrucoes()
+            .instructions()
             .salvar(
                 org,
                 agente,
@@ -207,12 +206,12 @@ impl Cenario {
             .conversas()
             .criar(
                 org,
-                NovaConversa {
+                NewConversation {
                     agent_id: agente,
                     integration_id: None,
                     canal: "cli".to_owned(),
                     peer_externo: None,
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("abre a conversa")
@@ -254,19 +253,19 @@ impl Cenario {
 
     fn falar(&self, texto: &str) -> MessageId {
         self.store
-            .mensagens()
+            .messages()
             .gravar(
                 self.org,
-                NovaMensagem {
+                NewMessage {
                     conversation_id: self.conversa,
-                    direcao: Direcao::Entrada,
-                    papel: Papel::Usuario,
+                    direction: Direction::Inbound,
+                    role: Role::User,
                     texto: texto.to_owned(),
-                    anexos_json: "[]".to_owned(),
+                    attachments_json: "[]".to_owned(),
                     id_externo: None,
                     turn_id: None,
-                    origem: poph_store::Origem::Agente,
-                    autor_nome: None,
+                    origin: poph_store::Origin::Agente,
+                    author_name: None,
                 },
             )
             .expect("grava a mensagem")
@@ -390,14 +389,14 @@ fn texto_do_prompt(pedido: &poph_core::llm::Pedido) -> String {
 fn turnos_json(cenario: &Cenario) -> (String, String) {
     let turnos = cenario
         .store
-        .turnos()
+        .turns()
         .listar(
             cenario.org,
             cenario.conversa,
-            poph_store::Pagina::com_limite(5),
+            poph_store::Page::with_limit(5),
         )
         .expect("lista os turnos");
-    (turnos[0].trechos_json.clone(), turnos[0].jev_json.clone())
+    (turnos[0].passages_json.clone(), turnos[0].jev_json.clone())
 }
 
 // ───────────────────────────── efeito ─────────────────────────────
@@ -422,7 +421,7 @@ async fn g5_escolhe_o_produto_e_dispensa_a_ferramenta() {
     let gatilho = cenario.falar("quanto custa para matar as baratas daqui de casa?");
     let resumo = cenario.turno(&motor, gatilho).await;
 
-    assert_eq!(resumo.estado, poph_store::EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, poph_store::TurnState::Completed);
     assert_eq!(resumo.tempos.rodadas_ferramenta, 0);
     assert_eq!(
         provedor.recebidos().len(),
@@ -520,7 +519,7 @@ async fn g5_id_fora_dos_candidatos_nunca_e_injetado_pelo_codigo() {
     let gatilho = cenario.falar("quanto custa a dedetização?");
     let resumo = cenario.turno(&motor, gatilho).await;
 
-    assert_eq!(resumo.estado, poph_store::EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, poph_store::TurnState::Completed);
     let pedido = &provedor.recebidos()[0];
     let prompt = texto_do_prompt(pedido);
     assert!(
@@ -548,7 +547,7 @@ async fn g5_id_inventado_mantem_o_comportamento_de_hoje() {
     let gatilho = cenario.falar("quanto custa a dedetização?");
     let resumo = cenario.turno(&motor, gatilho).await;
 
-    assert_eq!(resumo.estado, poph_store::EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, poph_store::TurnState::Completed);
     let pedido = &provedor.recebidos()[0];
     let prompt = texto_do_prompt(pedido);
     assert!(
@@ -580,7 +579,7 @@ async fn g5_nenhum_mantem_o_comportamento_de_hoje() {
     let gatilho = cenario.falar("qual é o prazo de entrega?");
     let resumo = cenario.turno(&motor, gatilho).await;
 
-    assert_eq!(resumo.estado, poph_store::EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, poph_store::TurnState::Completed);
     let pedido = &provedor.recebidos()[0];
     assert!(!texto_do_prompt(pedido).contains(PRECO_CUPINS));
     let ferramentas = nomes_das_ferramentas(pedido);
@@ -622,7 +621,7 @@ async fn g5_confianca_baixa_mantem_o_comportamento_de_hoje() {
     let gatilho = cenario.falar("quanto custa a dedetização?");
     let resumo = cenario.turno(&motor, gatilho).await;
 
-    assert_eq!(resumo.estado, poph_store::EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, poph_store::TurnState::Completed);
     let pedido = &provedor.recebidos()[0];
     assert!(!texto_do_prompt(pedido).contains(PRECO_BARATAS));
     assert!(nomes_das_ferramentas(pedido).contains(&"buscar_produto".to_owned()));
@@ -644,7 +643,7 @@ async fn g5_jev_fora_do_ar_mantem_o_comportamento_de_hoje() {
     let gatilho = cenario.falar("bom dia, quanto custa a dedetização?");
     let resumo = cenario.turno(&motor, gatilho).await;
 
-    assert_eq!(resumo.estado, poph_store::EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, poph_store::TurnState::Completed);
     let pedido = &provedor.recebidos()[0];
     assert!(!texto_do_prompt(pedido).contains(PRECO_BARATAS));
     assert!(nomes_das_ferramentas(pedido).contains(&"buscar_produto".to_owned()));
@@ -671,7 +670,7 @@ async fn g5_jev_que_nao_responde_em_prazo_mantem_o_comportamento_de_hoje() {
     let gatilho = cenario.falar("quanto custa a dedetização?");
     let resumo = cenario.turno(&motor, gatilho).await;
 
-    assert_eq!(resumo.estado, poph_store::EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, poph_store::TurnState::Completed);
     let pedido = &provedor.recebidos()[0];
     assert!(!texto_do_prompt(pedido).contains(PRECO_BARATAS));
     assert!(nomes_das_ferramentas(pedido).contains(&"buscar_produto".to_owned()));
@@ -698,7 +697,7 @@ async fn g5_sem_candidatos_nao_pergunta() {
     let gatilho = cenario.falar("vocês fazem dedetização?");
     let resumo = cenario.turno(&motor, gatilho).await;
 
-    assert_eq!(resumo.estado, poph_store::EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, poph_store::TurnState::Completed);
     assert!(
         jev.pedidos().is_empty(),
         "sem candidatos o G5 nem é perguntado: {:?}",
@@ -721,7 +720,7 @@ async fn g5_desligado_nao_faz_busca_de_produto_nem_pergunta() {
     let gatilho = cenario.falar("quanto custa a dedetização?");
     let resumo = cenario.turno(&motor, gatilho).await;
 
-    assert_eq!(resumo.estado, poph_store::EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, poph_store::TurnState::Completed);
     assert!(
         resumo.jev.is_none()
             || resumo
@@ -765,7 +764,7 @@ async fn g5_ferramenta_inventada_pelo_modelo_nao_e_executada() {
     let gatilho = cenario.falar("quanto custa para matar baratas?");
     let resumo = cenario.turno(&motor, gatilho).await;
 
-    assert_eq!(resumo.estado, poph_store::EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, poph_store::TurnState::Completed);
     assert_eq!(
         cenario.catalogo_buscas(),
         1,
@@ -802,7 +801,7 @@ async fn g3_nada_dispensa_o_g5() {
     let gatilho = cenario.falar("oi, bom dia");
     let resumo = cenario.turno(&motor, gatilho).await;
 
-    assert_eq!(resumo.estado, poph_store::EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, poph_store::TurnState::Completed);
     assert_eq!(cenario.catalogo_buscas(), 0);
     let ferramentas = nomes_das_ferramentas(&provedor.recebidos()[0]);
     assert!(
@@ -854,7 +853,7 @@ async fn medicao_rodadas_de_ferramenta_por_turno() {
     );
     let gatilho = sem.falar("quanto custa para matar baratas?");
     let sem_g5 = sem.turno(&motor_sem, gatilho).await;
-    assert_eq!(sem_g5.estado, poph_store::EstadoTurno::Concluido);
+    assert_eq!(sem_g5.estado, poph_store::TurnState::Completed);
     assert_eq!(
         sem_g5.tempos.rodadas_ferramenta, 1,
         "sem o G5 há uma rodada"
@@ -873,7 +872,7 @@ async fn medicao_rodadas_de_ferramenta_por_turno() {
     );
     let gatilho = com.falar("quanto custa para matar baratas?");
     let com_g5 = com.turno(&motor_com, gatilho).await;
-    assert_eq!(com_g5.estado, poph_store::EstadoTurno::Concluido);
+    assert_eq!(com_g5.estado, poph_store::TurnState::Completed);
     assert_eq!(
         com_g5.tempos.rodadas_ferramenta, 0,
         "com o G5 não há rodada"
@@ -906,7 +905,7 @@ async fn padrao_de_instalacao_liga_o_g5_sem_configurar_o_agente() {
     let gatilho = cenario.falar("quanto custa para matar as baratas daqui de casa?");
     let resumo = cenario.turno(&motor, gatilho).await;
 
-    assert_eq!(resumo.estado, poph_store::EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, poph_store::TurnState::Completed);
     assert_eq!(
         resumo.tempos.rodadas_ferramenta, 0,
         "sem rodada de ferramenta"

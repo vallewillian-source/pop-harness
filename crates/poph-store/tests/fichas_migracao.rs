@@ -14,8 +14,8 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use poph_store::migracoes::migrar;
-use poph_store::{MIGRACOES_HARNESS, Store, versao_alvo_harness, versao_do_arquivo};
+use poph_store::migrations::migrate;
+use poph_store::{HARNESS_MIGRATIONS, Store, file_version, harness_target_version};
 use poph_types::{ClosedBy, EventActor, RecordEventKind, RecordId, RecordStatus};
 use rusqlite::Connection;
 
@@ -34,9 +34,9 @@ fn pasta_nova(rotulo: &str) -> PathBuf {
 
 /// Posição da migração das Fichas na lista (o que já existia antes dela é o banco "antigo").
 fn indice_da_migracao() -> usize {
-    MIGRACOES_HARNESS
+    HARNESS_MIGRATIONS
         .iter()
-        .position(|migracao| migracao.nome == MIGRACAO)
+        .position(|migracao| migracao.name == MIGRACAO)
         .expect("a migração das Fichas está registrada em MIGRACOES_HARNESS")
 }
 
@@ -126,11 +126,11 @@ impl BancoAntigo {
         let mut conversas = Vec::new();
         {
             let conn = Connection::open(&harness).expect("abre o banco antigo");
-            migrar(
+            migrate(
                 &conn,
                 "harness.db",
                 &harness,
-                &MIGRACOES_HARNESS[..antes],
+                &HARNESS_MIGRATIONS[..antes],
                 1,
             )
             .expect("migra até a versão anterior");
@@ -268,25 +268,21 @@ fn contar(conn: &Connection, sql: &str) -> i64 {
 fn migracao_cria_as_duas_tabelas_com_os_indices_combinados() {
     let pasta = pasta_nova("esquema");
     let harness = pasta.join("harness.db");
-    let store = Store::abrir_em(&harness, &pasta.join("rag.db")).expect("abre e migra");
+    let store = Store::open_at(&harness, &pasta.join("rag.db")).expect("abre e migra");
 
     for tabela in ["fichas", "ficha_eventos"] {
         assert!(
-            store
-                .tabelas()
-                .expect("tabelas")
-                .iter()
-                .any(|t| t == tabela),
+            store.tables().expect("tabelas").iter().any(|t| t == tabela),
             "tabela {tabela} não foi criada"
         );
     }
     assert_eq!(
-        versao_do_arquivo(&harness).expect("versão"),
-        Some(versao_alvo_harness())
+        file_version(&harness).expect("versão"),
+        Some(harness_target_version())
     );
 
     // Colunas do PRD §7.1, sem faltar nem sobrar troca de nome.
-    let colunas = store.colunas("fichas").expect("colunas de fichas");
+    let colunas = store.columns("fichas").expect("colunas de fichas");
     for esperada in [
         "id",
         "org_id",
@@ -306,7 +302,7 @@ fn migracao_cria_as_duas_tabelas_com_os_indices_combinados() {
             "fichas sem a coluna {esperada}; tem {colunas:?}"
         );
     }
-    let colunas = store.colunas("ficha_eventos").expect("colunas de eventos");
+    let colunas = store.columns("ficha_eventos").expect("colunas de eventos");
     for esperada in [
         "id",
         "org_id",
@@ -349,10 +345,10 @@ fn migracao_cria_as_duas_tabelas_com_os_indices_combinados() {
 fn backfill_cria_exatamente_uma_ficha_por_conversa() {
     let banco = BancoAntigo::montar("backfill");
     let harness = banco.harness();
-    let store = Store::abrir_em(&harness, &banco.pasta.join("rag.db")).expect("abre e migra");
+    let store = Store::open_at(&harness, &banco.pasta.join("rag.db")).expect("abre e migra");
     assert_eq!(
-        versao_do_arquivo(&harness).expect("versão"),
-        Some(versao_alvo_harness())
+        file_version(&harness).expect("versão"),
+        Some(harness_target_version())
     );
     let conn = conexao(&harness);
 
@@ -468,20 +464,20 @@ fn backfill_cria_exatamente_uma_ficha_por_conversa() {
 #[test]
 fn rodar_a_migracao_de_novo_nao_faz_nada() {
     let banco = BancoAntigo::montar("idempotente");
-    let store = Store::abrir_em(&banco.harness(), &banco.pasta.join("rag.db")).expect("abre");
+    let store = Store::open_at(&banco.harness(), &banco.pasta.join("rag.db")).expect("abre");
     let antes = {
         let conn = conexao(&banco.harness());
         contar(&conn, "SELECT count(*) FROM fichas")
     };
 
-    let relatorios = store.migrar().expect("migra de novo");
-    assert!(relatorios.ja_estava_em_dia(), "{relatorios:?}");
+    let relatorios = store.migrate().expect("migra de novo");
+    assert!(relatorios.already_up_to_date(), "{relatorios:?}");
 
     let conn = conexao(&banco.harness());
     assert_eq!(contar(&conn, "SELECT count(*) FROM fichas"), antes);
 
     // E o próprio comando do backfill é idempotente (o `NOT EXISTS`), caso alguém o repita.
-    let sql = MIGRACOES_HARNESS[indice_da_migracao()].sql;
+    let sql = HARNESS_MIGRATIONS[indice_da_migracao()].sql;
     let inicio = sql
         .find("INSERT INTO fichas")
         .expect("o backfill está na migração");
@@ -493,7 +489,7 @@ fn rodar_a_migracao_de_novo_nao_faz_nada() {
 #[test]
 fn banco_recusa_duas_fichas_para_a_mesma_conversa() {
     let banco = BancoAntigo::montar("unica");
-    let _store = Store::abrir_em(&banco.harness(), &banco.pasta.join("rag.db")).expect("abre");
+    let _store = Store::open_at(&banco.harness(), &banco.pasta.join("rag.db")).expect("abre");
     let conn = conexao(&banco.harness());
     let conversa = banco.id("aberta");
     let org: String = conn
@@ -538,7 +534,7 @@ fn banco_recusa_duas_fichas_para_a_mesma_conversa() {
 #[test]
 fn banco_recusa_ficha_com_status_e_fechamento_incoerentes() {
     let banco = BancoAntigo::montar("coerencia");
-    let _store = Store::abrir_em(&banco.harness(), &banco.pasta.join("rag.db")).expect("abre");
+    let _store = Store::open_at(&banco.harness(), &banco.pasta.join("rag.db")).expect("abre");
     let conn = conexao(&banco.harness());
     let org: String = conn
         .query_row("SELECT org_id FROM conversations LIMIT 1", [], |linha| {
@@ -590,7 +586,7 @@ fn banco_recusa_ficha_com_status_e_fechamento_incoerentes() {
 #[test]
 fn banco_recusa_evento_com_texto_fora_da_lista_e_cruzando_orgs() {
     let banco = BancoAntigo::montar("contexto");
-    let _store = Store::abrir_em(&banco.harness(), &banco.pasta.join("rag.db")).expect("abre");
+    let _store = Store::open_at(&banco.harness(), &banco.pasta.join("rag.db")).expect("abre");
     let conn = conexao(&banco.harness());
     let org: String = conn
         .query_row("SELECT org_id FROM conversations LIMIT 1", [], |linha| {
@@ -683,7 +679,7 @@ fn banco_recusa_evento_com_texto_fora_da_lista_e_cruzando_orgs() {
 fn eventos_sobrevivem_a_ficha_e_somem_com_ela() {
     // `ficha_eventos` é filha da Ficha: apagar a Ficha leva a linha do tempo junto.
     let banco = BancoAntigo::montar("cascata");
-    let _store = Store::abrir_em(&banco.harness(), &banco.pasta.join("rag.db")).expect("abre");
+    let _store = Store::open_at(&banco.harness(), &banco.pasta.join("rag.db")).expect("abre");
     let conn = conexao(&banco.harness());
     let ficha = ficha_da_conversa(&conn, banco.id("aberta"));
     conn.execute(

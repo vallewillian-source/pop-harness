@@ -42,7 +42,9 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use poph_store::{Conversa, ItemSaida, NovaConversa, Pagina, Recebido, StatusConversa, Store};
+use poph_store::{
+    Conversa, ConversationStatus, NewConversation, OutboxItem, Page, Received, Store,
+};
 use poph_types::{
     AgentId, ConversationId, EventSink, InboundEvent, Integration, IntegrationError,
     IntegrationEvent, IntegrationId, OrgId, OutboundCommand, Presence, SendFile, SendText,
@@ -92,7 +94,7 @@ impl EnvioPeloCanal {
 }
 
 impl TransporteSaida for EnvioPeloCanal {
-    fn enviar(&self, item: ItemSaida) -> FuturoEnvio {
+    fn enviar(&self, item: OutboxItem) -> FuturoEnvio {
         let store = Arc::clone(&self.store);
         let canal = Arc::clone(&self.canal);
         Box::pin(async move {
@@ -110,15 +112,15 @@ impl TransporteSaida for EnvioPeloCanal {
 }
 
 /// Chave de idempotência da saída: a mesma do protocolo e a mesma da `outbox`.
-pub fn chave_idempotencia(item: &ItemSaida) -> String {
+pub fn chave_idempotencia(item: &OutboxItem) -> String {
     format!("{}:{}", item.turn_id, item.seq)
 }
 
 /// Destino do item: o identificador do cliente no canal, gravado na conversa.
-fn peer_da_conversa(store: &Store, item: &ItemSaida) -> std::result::Result<String, FalhaEnvio> {
+fn peer_da_conversa(store: &Store, item: &OutboxItem) -> std::result::Result<String, FalhaEnvio> {
     let conversa = store
         .conversas()
-        .obter(item.org_id, item.conversation_id)
+        .get(item.org_id, item.conversation_id)
         .map_err(|erro| FalhaEnvio::definitiva(format!("não consegui ler a conversa: {erro}")))?;
     conversa.peer_externo.clone().ok_or_else(|| {
         FalhaEnvio::definitiva(format!(
@@ -134,11 +136,11 @@ fn peer_da_conversa(store: &Store, item: &ItemSaida) -> std::result::Result<Stri
 /// `{"blob_ref", "arquivo_id", "nome", "mime", "tamanho_bytes", "sha256"}` (HR-24), `presence` =
 /// `{"estado": "digitando"|"pausado"}`.
 pub fn comando_do_item(
-    item: &ItemSaida,
+    item: &OutboxItem,
     peer: &str,
     idempotencia: &str,
 ) -> std::result::Result<OutboundCommand, FalhaEnvio> {
-    let valor: Value = serde_json::from_str(&item.conteudo_json).map_err(|erro| {
+    let valor: Value = serde_json::from_str(&item.content_json).map_err(|erro| {
         FalhaEnvio::definitiva(format!("payload do item de saída inválido: {erro}"))
     })?;
     match item.tipo.as_str() {
@@ -276,11 +278,11 @@ impl ConversaDoCanal {
                 .unwrap_or_else(|veneno| veneno.into_inner());
             cache.get(peer).copied()
         }?;
-        let conversa = self.store.conversas().obter(org, lembrada).ok();
+        let conversa = self.store.conversas().get(org, lembrada).ok();
         let vale = conversa.is_some_and(|conversa| {
             conversa.canal == self.canal
                 && conversa.peer_externo.as_deref() == Some(peer)
-                && conversa.status == StatusConversa::Aberta
+                && conversa.status == ConversationStatus::Open
         });
         if vale {
             return Some(lembrada);
@@ -314,12 +316,12 @@ impl ResolvedorConversa for ConversaDoCanal {
         }
         let nova = self.store.conversas().criar(
             org,
-            NovaConversa {
+            NewConversation {
                 agent_id: self.agente,
                 integration_id: self.integracao,
                 canal: self.canal.clone(),
                 peer_externo: Some(evento.peer.clone()),
-                departamento_alvo: None,
+                target_department: None,
             },
         )?;
         self.lembrar(&evento.peer, nova.id);
@@ -337,7 +339,10 @@ impl ConversaDoCanal {
         let mut apos = None;
         let mut encontrada: Option<Conversa> = None;
         for _ in 0..PAGINAS_BUSCA {
-            let pagina = Pagina { apos, limite: 200 };
+            let pagina = Page {
+                after: apos,
+                limit: 200,
+            };
             let conversas = self.store.conversas().listar(org, None, pagina)?;
             if conversas.is_empty() {
                 break;
@@ -347,7 +352,7 @@ impl ConversaDoCanal {
                 if conversa.canal != self.canal || conversa.peer_externo.as_deref() != Some(peer) {
                     continue;
                 }
-                if conversa.status == StatusConversa::Aberta {
+                if conversa.status == ConversationStatus::Open {
                     return Ok(Some(conversa));
                 }
                 encontrada.get_or_insert(conversa);
@@ -459,7 +464,7 @@ impl InboxDoCanal {
     /// Grava o evento na `inbox` (idempotente por integração + id externo).
     ///
     /// Devolve a situação para quem quiser chamar direto (testes, reentrega manual).
-    pub fn gravar(&self, evento: InboundEvent) -> Option<Recebido> {
+    pub fn gravar(&self, evento: InboundEvent) -> Option<Received> {
         let conversa = match self.resolvedor.resolver(self.org, &evento) {
             Ok(conversa) => conversa,
             Err(erro) => {
@@ -486,13 +491,13 @@ impl InboxDoCanal {
         };
         match self.fluxo.receber_mensagem(self.org, recebida) {
             Ok(gravado) => match gravado.situacao {
-                Recebido::Novo => {
+                Received::New => {
                     self.contadores.gravados.fetch_add(1, Ordering::Relaxed);
-                    Some(Recebido::Novo)
+                    Some(Received::New)
                 }
-                Recebido::Duplicado => {
+                Received::Duplicate => {
                     self.contadores.duplicados.fetch_add(1, Ordering::Relaxed);
-                    Some(Recebido::Duplicado)
+                    Some(Received::Duplicate)
                 }
             },
             Err(erro) => {
@@ -548,22 +553,22 @@ fn anexos_json(evento: &InboundEvent) -> String {
 #[cfg(test)]
 mod testes {
     use super::*;
-    use poph_store::EstadoSaida;
+    use poph_store::OutboxState;
     use poph_types::{OutboxId, TurnId};
 
-    fn item(tipo: &str, conteudo: Value) -> ItemSaida {
-        ItemSaida {
+    fn item(tipo: &str, conteudo: Value) -> OutboxItem {
+        OutboxItem {
             id: OutboxId::generate(),
             org_id: OrgId::generate(),
             conversation_id: ConversationId::generate(),
             turn_id: TurnId::generate(),
             seq: 3,
             tipo: tipo.to_owned(),
-            conteudo_json: conteudo.to_string(),
-            estado: EstadoSaida::Pendente,
+            content_json: conteudo.to_string(),
+            estado: OutboxState::Pending,
             tentativas: 0,
             ultimo_erro: None,
-            criado_em: 0,
+            created_at: 0,
             enviado_em: None,
         }
     }

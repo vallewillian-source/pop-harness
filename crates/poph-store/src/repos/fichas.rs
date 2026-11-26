@@ -21,10 +21,10 @@ use poph_types::{
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
 use crate::Store;
-use crate::erro::{ErroStore, Resultado};
-use crate::metricas::MetricasExecucao;
-use crate::modelo::{EventoFicha, Ficha, FiltroFichas, NovaFicha, NovoEventoFicha, Pagina};
-use crate::repos::{exigir, id_da_coluna, id_opcional, u64_da_coluna};
+use crate::error::{Resultado, StoreError};
+use crate::metrics::ExecutionMetrics;
+use crate::model::{Ficha, NewRecord, NewRecordEvent, Page, RecordEvent, RecordFilter};
+use crate::repos::{id_da_coluna, id_opcional, require, u64_da_coluna};
 
 const COLUNAS: &str =
     "id, org_id, conversation_id, agent_id, canal, peer_externo, status, aberta_em,
@@ -44,16 +44,16 @@ impl Fichas<'_> {
     /// Cria a Ficha aberta. O caminho normal não passa por aqui: a Ficha nasce dentro de
     /// [`super::Conversas::criar`] e da recepção do canal. Este método existe para quem precisa criar
     /// sem conversa (importação, cenário de teste) e para a superfície do repositório ficar completa.
-    pub fn criar(&self, org: OrgId, nova: NovaFicha) -> Resultado<Ficha> {
+    pub fn criar(&self, org: OrgId, nova: NewRecord) -> Resultado<Ficha> {
         let id = RecordId::generate();
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_org = org.to_string();
         let texto_id = id.to_string();
         let conversa = nova.conversation_id.map(|conversa| conversa.to_string());
         let agente = nova.agent_id.to_string();
         let canal = nova.canal;
         let peer = nova.peer_externo;
-        self.0.escrita(move |conn| {
+        self.0.write(move |conn| {
             conn.execute(
                 "INSERT INTO fichas
                     (id, org_id, conversation_id, agent_id, canal, peer_externo, status, aberta_em,
@@ -61,12 +61,12 @@ impl Fichas<'_> {
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'open', ?7, NULL, NULL, NULL, 1)",
                 params![texto_id, texto_org, conversa, agente, canal, peer, agora],
             )
-            .map_err(|erro| ErroStore::da_escrita("conversa", erro))?;
+            .map_err(|erro| StoreError::from_write("conversa", erro))?;
             registrar_evento_conn(
                 conn,
                 &texto_org,
                 &texto_id,
-                &NovoEventoFicha {
+                &NewRecordEvent {
                     execucao_id: None,
                     tipo: RecordEventKind::RecordOpened,
                     ator_tipo: EventActor::System,
@@ -85,16 +85,16 @@ impl Fichas<'_> {
     pub fn obter(&self, org: OrgId, id: RecordId) -> Resultado<Ficha> {
         let texto_org = org.to_string();
         let texto_id = id.to_string();
-        let encontrada = self.0.leitura(move |conn| {
+        let encontrada = self.0.read(move |conn| {
             conn.query_row(
                 &format!("SELECT {COLUNAS} FROM fichas WHERE org_id = ?1 AND id = ?2"),
                 params![texto_org, texto_id],
                 linha,
             )
             .optional()
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })?;
-        exigir(encontrada, "ficha", &id.to_string())
+        require(encontrada, "ficha", &id.to_string())
     }
 
     /// Ficha da conversa, se houver.
@@ -104,14 +104,14 @@ impl Fichas<'_> {
     pub fn por_conversa(&self, org: OrgId, conversa: ConversationId) -> Resultado<Option<Ficha>> {
         let texto_org = org.to_string();
         let texto_conversa = conversa.to_string();
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             conn.query_row(
                 &format!("SELECT {COLUNAS} FROM fichas WHERE org_id = ?1 AND conversation_id = ?2"),
                 params![texto_org, texto_conversa],
                 linha,
             )
             .optional()
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })
     }
 
@@ -120,12 +120,7 @@ impl Fichas<'_> {
     ///
     /// A Ficha cuja conversa foi apagada pela retenção continua aparecendo (`conversation_id` nulo):
     /// é registro de negócio, não rascunho (PRD L12).
-    pub fn listar(
-        &self,
-        org: OrgId,
-        filtro: &FiltroFichas,
-        pagina: Pagina,
-    ) -> Resultado<Vec<Ficha>> {
+    pub fn listar(&self, org: OrgId, filtro: &RecordFilter, pagina: Page) -> Resultado<Vec<Ficha>> {
         let mut condicoes = vec!["org_id = ?1".to_owned()];
         let mut valores: Vec<rusqlite::types::Value> =
             vec![rusqlite::types::Value::Text(org.to_string())];
@@ -145,17 +140,17 @@ impl Fichas<'_> {
             valores.push(rusqlite::types::Value::Integer(desde));
             condicoes.push(format!("aberta_em >= ?{}", valores.len()));
         }
-        if let Some(apos) = pagina.apos {
+        if let Some(apos) = pagina.after {
             valores.push(rusqlite::types::Value::Text(apos.to_string()));
             condicoes.push(format!("id > ?{}", valores.len()));
         }
-        valores.push(rusqlite::types::Value::Integer(i64::from(pagina.limite)));
+        valores.push(rusqlite::types::Value::Integer(i64::from(pagina.limit)));
         let sql = format!(
             "SELECT {COLUNAS} FROM fichas WHERE {} ORDER BY id LIMIT ?{}",
             condicoes.join(" AND "),
             valores.len()
         );
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             let mut consulta = conn.prepare(&sql)?;
             let linhas = consulta.query_map(rusqlite::params_from_iter(valores.iter()), linha)?;
             let mut fichas = Vec::new();
@@ -176,13 +171,13 @@ impl Fichas<'_> {
         ficha: RecordId,
         apos: Option<i64>,
         limite: u32,
-    ) -> Resultado<Vec<EventoFicha>> {
+    ) -> Resultado<Vec<RecordEvent>> {
         // Confere a Ficha antes: sem isso, ficha de outra org devolveria lista vazia em vez de 404.
         self.obter(org, ficha)?;
         let texto_org = org.to_string();
         let texto_ficha = ficha.to_string();
         let limite = i64::from(limite.clamp(1, 500));
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             let mut consulta = conn.prepare(&format!(
                 "SELECT {COLUNAS_EVENTO} FROM ficha_eventos
                   WHERE org_id = ?1 AND ficha_id = ?2 AND (?3 IS NULL OR seq > ?3)
@@ -215,11 +210,11 @@ impl Fichas<'_> {
     ) -> Resultado<()> {
         let texto_org = org.to_string();
         let texto_ficha = ficha.to_string();
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let motivo = motivo.to_owned();
         // FX-40: os contadores das execuções atravessam o comando de escrita (os handles clonam).
-        let metricas = self.0.metricas_de_execucao();
-        self.0.escrita(move |conn| {
+        let metricas = self.0.execution_metrics();
+        self.0.write(move |conn| {
             let linha: Option<(String, Option<String>, i64)> = conn
                 .query_row(
                     "SELECT status, conversation_id, version FROM fichas
@@ -228,20 +223,20 @@ impl Fichas<'_> {
                     |linha| Ok((linha.get(0)?, linha.get(1)?, linha.get(2)?)),
                 )
                 .optional()
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
             let Some((status, conversa, versao)) = linha else {
-                return Err(ErroStore::Dominio(poph_types::DomainError::NotFound {
+                return Err(StoreError::Domain(poph_types::DomainError::NotFound {
                     entity: "ficha",
                     id: texto_ficha.clone(),
                 }));
             };
-            if RecordStatus::from_text(&status).map_err(ErroStore::from)? == RecordStatus::Closed {
-                return Err(ErroStore::Dominio(poph_types::DomainError::RecordClosed {
+            if RecordStatus::from_text(&status).map_err(StoreError::from)? == RecordStatus::Closed {
+                return Err(StoreError::Domain(poph_types::DomainError::RecordClosed {
                     id: texto_ficha.clone(),
                 }));
             }
             if conversa.is_some() {
-                return Err(ErroStore::Dominio(poph_types::DomainError::Conflict {
+                return Err(StoreError::Domain(poph_types::DomainError::Conflict {
                     entity: "ficha",
                     id: texto_ficha.clone(),
                     reason: "a Ficha tem conversa ligada: feche o atendimento pela conversa"
@@ -250,7 +245,7 @@ impl Fichas<'_> {
             }
             let atual = u64::try_from(versao).unwrap_or(0);
             if atual != esperada {
-                return Err(ErroStore::Dominio(
+                return Err(StoreError::Domain(
                     poph_types::DomainError::VersionConflict {
                         entity: "ficha",
                         id: texto_ficha.clone(),
@@ -283,9 +278,9 @@ impl Fichas<'_> {
         &self,
         org: OrgId,
         ficha: RecordId,
-        novo: NovoEventoFicha<'_>,
-    ) -> Resultado<EventoFicha> {
-        let agora = self.0.agora();
+        novo: NewRecordEvent<'_>,
+    ) -> Resultado<RecordEvent> {
+        let agora = self.0.now();
         let texto_org = org.to_string();
         let texto_ficha = ficha.to_string();
         let execucao = novo.execucao_id;
@@ -294,10 +289,10 @@ impl Fichas<'_> {
         let ator_ref = novo.ator_ref.map(str::to_owned);
         let payload_json = novo.payload_json;
         let chave = novo.chave_idempotencia.map(str::to_owned);
-        let id = self.0.escrita(move |conn| {
+        let id = self.0.write(move |conn| {
             let situacao = situacao_da_ficha(conn, &texto_org, &texto_ficha)?;
             if situacao.is_none() {
-                return Err(ErroStore::Dominio(poph_types::DomainError::NotFound {
+                return Err(StoreError::Domain(poph_types::DomainError::NotFound {
                     entity: "ficha",
                     id: texto_ficha.clone(),
                 }));
@@ -308,7 +303,7 @@ impl Fichas<'_> {
                 return Ok(evento.id.to_string());
             }
             if situacao == Some(RecordStatus::Closed) {
-                return Err(ErroStore::Dominio(poph_types::DomainError::RecordClosed {
+                return Err(StoreError::Domain(poph_types::DomainError::RecordClosed {
                     id: texto_ficha.clone(),
                 }));
             }
@@ -316,7 +311,7 @@ impl Fichas<'_> {
                 conn,
                 &texto_org,
                 &texto_ficha,
-                &NovoEventoFicha {
+                &NewRecordEvent {
                     execucao_id: execucao,
                     tipo,
                     ator_tipo,
@@ -330,8 +325,8 @@ impl Fichas<'_> {
         let texto_org = org.to_string();
         let evento_id: RecordEventId = id
             .parse()
-            .map_err(|erro: poph_types::DomainError| ErroStore::Dominio(erro))?;
-        self.0.leitura(move |conn| {
+            .map_err(|erro: poph_types::DomainError| StoreError::Domain(erro))?;
+        self.0.read(move |conn| {
             conn.query_row(
                 &format!(
                     "SELECT {COLUNAS_EVENTO} FROM ficha_eventos WHERE org_id = ?1 AND id = ?2"
@@ -340,9 +335,9 @@ impl Fichas<'_> {
                 linha_evento,
             )
             .optional()
-            .map_err(ErroStore::from)?
+            .map_err(StoreError::from)?
             .ok_or_else(|| {
-                ErroStore::Interno("o evento foi gravado mas não voltou na leitura".to_owned())
+                StoreError::Internal("o evento foi gravado mas não voltou na leitura".to_owned())
             })
         })
     }
@@ -357,9 +352,9 @@ fn situacao_da_ficha(conn: &Connection, org: &str, ficha: &str) -> Resultado<Opt
             |linha| linha.get(0),
         )
         .optional()
-        .map_err(ErroStore::from)?;
+        .map_err(StoreError::from)?;
     texto
-        .map(|texto| RecordStatus::from_text(&texto).map_err(ErroStore::from))
+        .map(|texto| RecordStatus::from_text(&texto).map_err(StoreError::from))
         .transpose()
 }
 
@@ -369,7 +364,7 @@ pub(crate) fn evento_por_chave(
     org: &str,
     ficha: &str,
     chave: &str,
-) -> Resultado<Option<EventoFicha>> {
+) -> Resultado<Option<RecordEvent>> {
     conn.query_row(
         &format!(
             "SELECT {COLUNAS_EVENTO} FROM ficha_eventos
@@ -379,7 +374,7 @@ pub(crate) fn evento_por_chave(
         linha_evento,
     )
     .optional()
-    .map_err(ErroStore::from)
+    .map_err(StoreError::from)
 }
 
 /// Eventos da Ficha com `seq` maior que `apos`, em ordem de `seq`, dentro da escrita de quem
@@ -390,20 +385,20 @@ pub(crate) fn ler_eventos_conn(
     org: &str,
     ficha: &str,
     apos: i64,
-) -> Resultado<Vec<EventoFicha>> {
+) -> Resultado<Vec<RecordEvent>> {
     let mut consulta = conn
         .prepare(&format!(
             "SELECT {COLUNAS_EVENTO} FROM ficha_eventos
               WHERE org_id = ?1 AND ficha_id = ?2 AND seq > ?3
               ORDER BY seq"
         ))
-        .map_err(ErroStore::from)?;
+        .map_err(StoreError::from)?;
     let linhas = consulta
         .query_map(params![org, ficha, apos], linha_evento)
-        .map_err(ErroStore::from)?;
+        .map_err(StoreError::from)?;
     let mut eventos = Vec::new();
     for linha in linhas {
-        eventos.push(linha.map_err(ErroStore::from)?);
+        eventos.push(linha.map_err(StoreError::from)?);
     }
     Ok(eventos)
 }
@@ -415,7 +410,7 @@ pub(crate) fn ultimo_seq(conn: &Connection, org: &str, ficha: &str) -> Resultado
         params![org, ficha],
         |linha| linha.get(0),
     )
-    .map_err(ErroStore::from)
+    .map_err(StoreError::from)
 }
 
 /// Cria a Ficha aberta de uma conversa **dentro da escrita de quem chamou** (PRD L4).
@@ -440,12 +435,12 @@ pub(crate) fn criar_ficha_da_conversa(
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'open', ?7, NULL, NULL, NULL, 1)",
         params![ficha, org, conversa, agent_id, canal, peer, agora],
     )
-    .map_err(|erro| ErroStore::da_escrita("conversa", erro))?;
+    .map_err(|erro| StoreError::from_write("conversa", erro))?;
     registrar_evento_conn(
         conn,
         org,
         &ficha,
-        &NovoEventoFicha {
+        &NewRecordEvent {
             execucao_id: None,
             tipo: RecordEventKind::RecordOpened,
             ator_tipo: EventActor::System,
@@ -474,7 +469,7 @@ pub(crate) fn fechar_ficha_da_conversa(
     por: ClosedBy,
     motivo: &str,
     agora: i64,
-    metricas: Option<&MetricasExecucao>,
+    metricas: Option<&ExecutionMetrics>,
 ) -> Resultado<bool> {
     let situacao: Option<(String, String)> = conn
         .query_row(
@@ -483,10 +478,10 @@ pub(crate) fn fechar_ficha_da_conversa(
             |linha| Ok((linha.get(0)?, linha.get(1)?)),
         )
         .optional()
-        .map_err(ErroStore::from)?;
+        .map_err(StoreError::from)?;
     let ficha = match situacao {
         Some((id, status)) => {
-            if RecordStatus::from_text(&status).map_err(ErroStore::from)? == RecordStatus::Closed {
+            if RecordStatus::from_text(&status).map_err(StoreError::from)? == RecordStatus::Closed {
                 return Ok(false);
             }
             id
@@ -503,7 +498,7 @@ pub(crate) fn fechar_ficha_da_conversa(
                        FROM conversations WHERE org_id = ?2 AND id = ?6",
                     params![ficha, org, agora, por.as_text(), motivo, conversa],
                 )
-                .map_err(|erro| ErroStore::da_escrita("conversa", erro))?;
+                .map_err(|erro| StoreError::from_write("conversa", erro))?;
             if inseridas == 0 {
                 return Ok(false);
             }
@@ -529,7 +524,7 @@ pub(crate) fn fechar_ficha_por_id(
     por: ClosedBy,
     motivo: &str,
     agora: i64,
-    metricas: Option<&MetricasExecucao>,
+    metricas: Option<&ExecutionMetrics>,
 ) -> Resultado<bool> {
     let situacao: Option<String> = conn
         .query_row(
@@ -538,14 +533,14 @@ pub(crate) fn fechar_ficha_por_id(
             |linha| linha.get(0),
         )
         .optional()
-        .map_err(ErroStore::from)?;
+        .map_err(StoreError::from)?;
     let Some(situacao) = situacao else {
-        return Err(ErroStore::Dominio(poph_types::DomainError::NotFound {
+        return Err(StoreError::Domain(poph_types::DomainError::NotFound {
             entity: "ficha",
             id: ficha.to_owned(),
         }));
     };
-    if RecordStatus::from_text(&situacao).map_err(ErroStore::from)? == RecordStatus::Closed {
+    if RecordStatus::from_text(&situacao).map_err(StoreError::from)? == RecordStatus::Closed {
         return Ok(false);
     }
 
@@ -565,12 +560,12 @@ pub(crate) fn fechar_ficha_por_id(
                 agora
             ],
         )
-        .map_err(ErroStore::from)?;
+        .map_err(StoreError::from)?;
         registrar_evento_conn(
             conn,
             org,
             ficha,
-            &NovoEventoFicha {
+            &NewRecordEvent {
                 execucao_id: execucao.parse::<ExecutionId>().ok(),
                 tipo: RecordEventKind::ExecutionAbandoned,
                 ator_tipo: EventActor::System,
@@ -600,13 +595,13 @@ pub(crate) fn fechar_ficha_por_id(
               WHERE org_id = ?1 AND id = ?2 AND status = 'open'",
             params![org, ficha, agora, por.as_text(), motivo],
         )
-        .map_err(|erro| ErroStore::da_escrita("fechada_por", erro))?;
+        .map_err(|erro| StoreError::from_write("fechada_por", erro))?;
     Ok(alteradas > 0)
 }
 
 /// Evento `ficha_fechada`, com o autor do fechamento traduzido para o ator do evento.
-fn evento_de_fechamento(por: ClosedBy, motivo: &str) -> NovoEventoFicha<'static> {
-    NovoEventoFicha {
+fn evento_de_fechamento(por: ClosedBy, motivo: &str) -> NewRecordEvent<'static> {
+    NewRecordEvent {
         execucao_id: None,
         tipo: RecordEventKind::RecordClosed,
         ator_tipo: match por {
@@ -630,13 +625,13 @@ fn execucoes_ativas(conn: &Connection, org: &str, ficha: &str) -> Resultado<Vec<
             "SELECT id FROM fluxo_execucoes
               WHERE org_id = ?1 AND ficha_id = ?2 AND status = 'ativa'",
         )
-        .map_err(ErroStore::from)?;
+        .map_err(StoreError::from)?;
     let linhas = consulta
         .query_map(params![org, ficha], |linha| linha.get::<_, String>(0))
-        .map_err(ErroStore::from)?;
+        .map_err(StoreError::from)?;
     let mut ids = Vec::new();
     for linha in linhas {
-        ids.push(linha.map_err(ErroStore::from)?);
+        ids.push(linha.map_err(StoreError::from)?);
     }
     Ok(ids)
 }
@@ -670,7 +665,7 @@ pub(crate) fn registrar_evento_conn(
     conn: &Connection,
     org: &str,
     ficha: &str,
-    novo: &NovoEventoFicha<'_>,
+    novo: &NewRecordEvent<'_>,
     agora: i64,
 ) -> Resultado<String> {
     if let Some(execucao) = novo.execucao_id {
@@ -702,7 +697,7 @@ pub(crate) fn registrar_evento_conn(
             agora
         ],
     )
-    .map_err(|erro| ErroStore::da_escrita("tipo", erro))?;
+    .map_err(|erro| StoreError::from_write("tipo", erro))?;
     Ok(id)
 }
 
@@ -715,10 +710,10 @@ fn pertence_a_ficha(conn: &Connection, org: &str, ficha: &str, execucao: &str) -
             |linha| linha.get(0),
         )
         .optional()
-        .map_err(ErroStore::from)?;
+        .map_err(StoreError::from)?;
     match existe {
         Some(_) => Ok(()),
-        None => Err(ErroStore::Dominio(poph_types::DomainError::NotFound {
+        None => Err(StoreError::Domain(poph_types::DomainError::NotFound {
             entity: "execução de fluxo",
             id: execucao.to_owned(),
         })),
@@ -743,13 +738,13 @@ fn linha(linha: &Row<'_>) -> rusqlite::Result<Ficha> {
             None => None,
         },
         fechada_motivo: linha.get(10)?,
-        versao: u64_da_coluna(linha, 11)?,
+        version: u64_da_coluna(linha, 11)?,
     })
 }
 
 /// Lê um evento da linha do resultado.
-fn linha_evento(linha: &Row<'_>) -> rusqlite::Result<EventoFicha> {
-    Ok(EventoFicha {
+fn linha_evento(linha: &Row<'_>) -> rusqlite::Result<RecordEvent> {
+    Ok(RecordEvent {
         id: id_da_coluna(linha, 0)?,
         org_id: id_da_coluna(linha, 1)?,
         ficha_id: id_da_coluna(linha, 2)?,
@@ -762,7 +757,7 @@ fn linha_evento(linha: &Row<'_>) -> rusqlite::Result<EventoFicha> {
         ator_ref: linha.get(7)?,
         payload_json: linha.get(8)?,
         chave_idempotencia: linha.get(9)?,
-        criado_em: linha.get(10)?,
+        created_at: linha.get(10)?,
     })
 }
 

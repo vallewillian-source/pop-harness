@@ -7,7 +7,7 @@ use std::sync::Arc;
 use clap::Args;
 use poph_server::Estado;
 use poph_store::Store;
-use poph_store::versao_alvo_harness;
+use poph_store::harness_target_version;
 
 use crate::config;
 use crate::montagem;
@@ -108,7 +108,7 @@ pub fn executar(flag: Option<PathBuf>, ambiente: &config::Ambiente, args: ServeA
     };
 
     runtime.block_on(async move {
-        let store = match Store::abrir(&configuracao) {
+        let store = match Store::open(&configuracao) {
             Ok(store) => Arc::new(store),
             Err(erro) => {
                 eprintln!("não consegui abrir o banco: {erro}");
@@ -204,7 +204,7 @@ async fn ligar_turno(
     // Rede de segurança, como no chat: a base pode ter sido escrita fora do servidor. Sincronizar
     // só reembeda o que mudou.
     for canal in estado.canais_evolution.iter() {
-        let agente = match store.integracao_do_canal(canal.org, canal.integracao) {
+        let agente = match store.channel_integration(canal.org, canal.integracao) {
             Ok(Some(integracao)) => integracao.agent_id,
             Ok(None) => continue,
             Err(erro) => {
@@ -269,12 +269,12 @@ pub fn executar_openapi(args: OpenapiArgs) -> ExitCode {
 /// Banco ausente é criado já migrado (instalação nova). Banco existente e desatualizado exige
 /// `poph migrate` — subir assim faria a API servir dados num esquema que o código não espera.
 fn conferir_migracao(configuracao: &poph_types::HarnessConfig) -> Result<(), String> {
-    let alvo = versao_alvo_harness();
+    let alvo = harness_target_version();
     let caminho = configuracao.harness_db();
     if !caminho.exists() {
         return Ok(());
     }
-    match poph_store::versao_do_arquivo(&caminho) {
+    match poph_store::file_version(&caminho) {
         Ok(Some(versao)) if versao < alvo => Err(format!(
             "o banco {} está na versão {versao} e o código espera a {alvo}: rode `poph migrate` \
              com o servidor parado e suba de novo",

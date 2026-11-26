@@ -10,7 +10,7 @@ use std::process::{Command, Output};
 
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHash, PasswordVerifier};
-use poph_store::{NovoAgente, Store};
+use poph_store::{NewAgent, Store};
 use poph_types::{AdminTokenId, OrgId};
 use serde_json::Value;
 
@@ -52,7 +52,7 @@ impl Cenario {
 
     /// Abre o banco direto (para semear o que a CLI ainda não cria, como agentes).
     fn store(&self) -> Store {
-        Store::abrir_em(&self.harness(), &self.dados().join("rag.db")).expect("abre o banco")
+        Store::open_at(&self.harness(), &self.dados().join("rag.db")).expect("abre o banco")
     }
 
     /// Cria a org pela CLI e devolve o id (UUID v7) lido do JSON.
@@ -402,13 +402,13 @@ fn org_com_agentes_so_sai_com_force() {
         let store = cenario.store();
         let id = org.parse::<OrgId>().expect("id da org");
         store
-            .agentes()
+            .agents()
             .criar(
                 id,
-                NovoAgente {
-                    nome: "Bia".to_owned(),
+                NewAgent {
+                    name: "Bia".to_owned(),
                     slug: "bia".to_owned(),
-                    ..NovoAgente::default()
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente");

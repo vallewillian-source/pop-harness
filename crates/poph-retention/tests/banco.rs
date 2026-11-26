@@ -16,8 +16,8 @@ use poph_retention::{
     executar_todas,
 };
 use poph_store::{
-    EfeitoDaTransicao, EstadoDaExecucao, InicioDeExecucao, NovaConversa, NovoFluxo,
-    PublicacaoDeRevisao, Store,
+    ExecutionStart, ExecutionState, NewConversation, NewFlow, RevisionPublication, Store,
+    TransitionEffect,
 };
 use poph_types::{AgentId, EventActor, ExecutionStatus, OrgId};
 use rusqlite::{Connection, params, types::Value};
@@ -91,7 +91,7 @@ impl Cenario {
         let dados = pasta.path().join("dados");
         let harness = dados.join("harness.db");
         let rag = dados.join("rag.db");
-        let store = Store::abrir_em(&harness, &rag).expect("abre o banco de teste");
+        let store = Store::open_at(&harness, &rag).expect("abre o banco de teste");
         Self {
             store,
             blobs: dados.join("blobs"),
@@ -799,12 +799,12 @@ fn ficha_execucao_etapa_evento_e_efeito_sobrevivem_a_varredura() {
         .conversas()
         .criar(
             org,
-            NovaConversa {
+            NewConversation {
                 agent_id: agente,
                 integration_id: None,
                 canal: "cli".to_owned(),
                 peer_externo: Some("cliente-ficticio".to_owned()),
-                departamento_alvo: None,
+                target_department: None,
             },
         )
         .expect("conversa com Ficha");
@@ -820,28 +820,28 @@ fn ficha_execucao_etapa_evento_e_efeito_sobrevivem_a_varredura() {
         .fluxos()
         .criar(
             org,
-            NovoFluxo {
+            NewFlow {
                 slug: "agendar_visita".to_owned(),
-                nome: "Agendar visita".to_owned(),
-                descricao: String::new(),
+                name: "Agendar visita".to_owned(),
+                description: String::new(),
                 rascunho_fonte: "fluxo()".to_owned(),
             },
         )
         .expect("fluxo");
     let revisao = cenario
         .store
-        .revisoes()
+        .revisions()
         .publicar_revisao(
             org,
             fluxo.id,
-            PublicacaoDeRevisao {
-                esperada: fluxo.versao,
+            RevisionPublication {
+                expected: fluxo.version,
                 fonte: "fluxo()".to_owned(),
                 definicao_json: "{}".to_owned(),
                 schema_versao: Some(1),
                 resolucoes_json: "{}".to_owned(),
                 ator_tipo: "cli".to_owned(),
-                ator_id: None,
+                actor_id: None,
             },
         )
         .expect("revisão publicada");
@@ -858,26 +858,26 @@ fn ficha_execucao_etapa_evento_e_efeito_sobrevivem_a_varredura() {
         .expect("a conversa tem Ficha");
     cenario
         .store
-        .execucoes()
+        .executions()
         .iniciar_execucao(
             org,
-            InicioDeExecucao {
+            ExecutionStart {
                 ficha: ficha.id,
                 fluxo: fluxo.id,
-                revisao: revisao.id,
-                ator: EventActor::Agent,
+                revision: revisao.id,
+                actor: EventActor::Agent,
                 ator_ref: Some("agente-ficticio"),
-                decisao_jev: None,
-                estado_inicial: EstadoDaExecucao {
+                jev_decision: None,
+                initial_state: ExecutionState {
                     status: ExecutionStatus::Active,
                     no_atual: "coleta".to_owned(),
                     dados_json: "{}".to_owned(),
-                    atores_que_agiram: Vec::new(),
-                    resultado: None,
-                    motivo: None,
+                    acting_actors: Vec::new(),
+                    result: None,
+                    reason: None,
                 },
-                efeitos_de_entrada: vec![EfeitoDaTransicao {
-                    chave: "entrada/0".to_owned(),
+                inbound_effects: vec![TransitionEffect {
+                    key: "entrada/0".to_owned(),
                     tipo: "mensagem_ao_cliente".to_owned(),
                     payload_json: "{\"texto\":\"olá\"}".to_owned(),
                 }],

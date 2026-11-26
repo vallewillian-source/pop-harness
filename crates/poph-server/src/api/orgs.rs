@@ -3,7 +3,7 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
-use poph_store::{MudancaOrg, NovaOrg, Org, Pagina, Status};
+use poph_store::{NewOrg, Org, OrgChange, Page, Status};
 use poph_types::OrgId;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -55,13 +55,13 @@ impl OrgJson {
             .unwrap_or_else(|_| Value::Object(Default::default()));
         Self {
             id: org.id.to_string(),
-            name: org.nome.clone(),
+            name: org.name.clone(),
             slug: org.slug.clone(),
             status: status_texto(org.status).to_owned(),
             config,
-            version: org.versao,
-            created_at: org.criado_em,
-            updated_at: org.atualizado_em,
+            version: org.version,
+            created_at: org.created_at,
+            updated_at: org.updated_at,
             agents_active_count: 0,
             instancia: None,
         }
@@ -89,7 +89,7 @@ fn itens_com_agentes_ativos(
     instancia: Option<&str>,
 ) -> Result<Vec<OrgJson>, ApiError> {
     let ids: Vec<OrgId> = orgs.iter().map(|org| org.id).collect();
-    let contagem = estado.store.agentes().contar_ativos_por_org(&ids)?;
+    let contagem = estado.store.agents().contar_ativos_por_org(&ids)?;
     Ok(orgs
         .iter()
         .map(|org| {
@@ -197,7 +197,7 @@ pub struct ConsultaOrgs {
 
 impl ConsultaOrgs {
     /// Paginação comum (cursor inválido vira 400).
-    fn pagina(&self) -> Result<Pagina, ApiError> {
+    fn pagina(&self) -> Result<Page, ApiError> {
         ConsultaPagina {
             limit: self.limit,
             cursor: self.cursor.clone(),
@@ -241,7 +241,7 @@ pub async fn listar(
     // Token de org só vê a própria org: devolve ela e ignora a paginação e o `cluster=true`
     // (um token de org nunca enxerga outra org, nem para listar).
     if let Some(propria) = identidade.org {
-        let org = estado.store.orgaos().obter(propria)?;
+        let org = estado.store.orgs().get(propria)?;
         return Ok(Json(ListaOrgsJson::local(ListaJson {
             items: itens_com_agentes_ativos(&estado, std::slice::from_ref(&org), None)?,
             next_cursor: None,
@@ -251,9 +251,9 @@ pub async fn listar(
         return listar_no_cluster(&estado, &cabecalhos).await.map(Json);
     }
     let pagina = consulta.pagina()?;
-    let orgs = estado.store.orgaos().listar(pagina)?;
+    let orgs = estado.store.orgs().listar(pagina)?;
     let items = itens_com_agentes_ativos(&estado, &orgs, None)?;
-    let next_cursor = proximo_cursor(&items, pagina.limite, |item| item.id.clone());
+    let next_cursor = proximo_cursor(&items, pagina.limit, |item| item.id.clone());
     Ok(Json(ListaOrgsJson::local(ListaJson { items, next_cursor })))
 }
 
@@ -273,7 +273,10 @@ async fn listar_no_cluster(
     let mut todas = Vec::new();
     let mut apos = None;
     for _ in 0..PAGINAS_DA_LISTA_REMOTA {
-        let pagina = estado.store.orgaos().listar(Pagina { apos, limite: 200 })?;
+        let pagina = estado.store.orgs().listar(Page {
+            after: apos,
+            limit: 200,
+        })?;
         apos = pagina.last().map(|org| org.id.into());
         let ultima = pagina.len() < 200 || apos.is_none();
         todas.extend(pagina);
@@ -455,7 +458,7 @@ pub async fn criar(
             format!("`{slug}`: use de 3 a 64 caracteres, só a-z, 0-9 e `-`"),
         ));
     }
-    if estado.store.orgaos().por_slug(&slug).is_ok() {
+    if estado.store.orgs().por_slug(&slug).is_ok() {
         return Err(ApiError::conflito(format!(
             "já existe uma org com o slug `{slug}`"
         )));
@@ -471,8 +474,8 @@ pub async fn criar(
             ));
         }
     };
-    let org = estado.store.orgaos().criar(NovaOrg {
-        nome,
+    let org = estado.store.orgs().criar(NewOrg {
+        name: nome,
         slug,
         config_json,
     })?;
@@ -509,7 +512,7 @@ pub async fn mostrar(
 ) -> Result<Json<OrgJson>, ApiError> {
     let id = id_da_url::<OrgId>(&caminho.org_id)?;
     identidade.exigir_org(id)?;
-    let org = estado.store.orgaos().obter(id)?;
+    let org = estado.store.orgs().get(id)?;
     let item = itens_com_agentes_ativos(&estado, std::slice::from_ref(&org), None)?
         .pop()
         .unwrap_or_else(|| OrgJson::de(&org));
@@ -558,12 +561,12 @@ pub async fn atualizar(
             return Err(ApiError::validacao("config", "deve ser um objeto JSON"));
         }
     };
-    let mudanca = MudancaOrg {
-        nome: corpo.name.as_deref().map(validar_nome).transpose()?,
+    let mudanca = OrgChange {
+        name: corpo.name.as_deref().map(validar_nome).transpose()?,
         status,
         config_json,
     };
-    let org = estado.store.orgaos().atualizar(id, esperada, mudanca)?;
+    let org = estado.store.orgs().atualizar(id, esperada, mudanca)?;
     super::auditoria::registrar(
         &estado,
         &identidade,
@@ -603,9 +606,9 @@ pub async fn excluir(
     let id = id_da_url::<OrgId>(&caminho.org_id)?;
     identidade.exigir_global()?;
     if exclusao.force.unwrap_or(false) {
-        estado.store.orgaos().excluir_forcado(id)?;
+        estado.store.orgs().excluir_forcado(id)?;
     } else {
-        estado.store.orgaos().excluir(id)?;
+        estado.store.orgs().excluir(id)?;
     }
     super::auditoria::registrar(
         &estado,
@@ -666,12 +669,12 @@ fn derivar_slug(nome: &str) -> String {
 
 /// Página usada pelos testes de listagem.
 #[allow(dead_code)]
-pub(crate) fn pagina_teste() -> Pagina {
-    Pagina::default()
+pub(crate) fn pagina_teste() -> Page {
+    Page::default()
 }
 
 /// Situação usada pelos testes (evita importar `Status` em dois lugares).
 #[allow(dead_code)]
 pub(crate) fn status_ativo() -> Status {
-    Status::Ativo
+    Status::Active
 }

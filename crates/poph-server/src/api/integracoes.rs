@@ -30,7 +30,7 @@ use axum::{
     },
     http::{HeaderMap, StatusCode},
 };
-use poph_store::{AlteracaoIntegracao, IntegracaoAdmin};
+use poph_store::{AdminIntegration, IntegrationChange};
 use poph_types::{AgentId, IntegrationId, Manifest, OrgId};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -73,8 +73,8 @@ fn ids(org: &str, agente: &str, ident: &Identidade) -> Result<(OrgId, AgentId), 
 ///
 /// `segredos_preenchidos` é `null` quando há segredo gravado mas a chave de cifra atual não o abre:
 /// a API prefere dizer "não sei quais" a mentir que nenhum está preenchido.
-fn valor(v: IntegracaoAdmin, chave: Option<&ChaveDeCifra>) -> Value {
-    let preenchidos = match (&v.segredos_cifrados, chave) {
+fn valor(v: AdminIntegration, chave: Option<&ChaveDeCifra>) -> Value {
+    let preenchidos = match (&v.encrypted_secrets, chave) {
         (None, _) => Some(Vec::<String>::new()),
         (Some(_), None) => None,
         (Some(blob), Some(chave)) => chave
@@ -88,7 +88,7 @@ fn valor(v: IntegracaoAdmin, chave: Option<&ChaveDeCifra>) -> Value {
         "status": v.status,
         "connection_state": v.connection_state,
         "version": v.version,
-        "tem_segredo": v.tem_segredo,
+        "tem_segredo": v.has_secret,
         "configuracao": v.configuracao,
         "segredos_preenchidos": preenchidos,
     })
@@ -273,11 +273,11 @@ pub async fn listar(
     let pagina = q.pagina()?;
     let items: Vec<_> = e
         .store
-        .integracoes_listar(org, agente, pagina)?
+        .list_integrations(org, agente, pagina)?
         .into_iter()
         .map(|v| valor(v, e.chave_de_cifra.as_deref()))
         .collect();
-    let next_cursor = proximo_cursor(&items, pagina.limite, |v| {
+    let next_cursor = proximo_cursor(&items, pagina.limit, |v| {
         v["id"].as_str().unwrap_or_default().to_owned()
     });
     Ok(Json(ListaJson { items, next_cursor }))
@@ -292,7 +292,7 @@ pub async fn mostrar(
     let (org, agente) = ids(&c.org_id, &c.agent_id, &ident)?;
     let id = id_da_url::<IntegrationId>(&c.integration_id)?;
     Ok(Json(valor(
-        e.store.integracao_obter(org, agente, id)?,
+        e.store.get_integration(org, agente, id)?,
         e.chave_de_cifra.as_deref(),
     )))
 }
@@ -338,7 +338,7 @@ pub async fn criar(
         None if enviou => return Err(sem_manifesto()),
         None => (objeto_vazio(), None),
     };
-    let v = e.store.integracao_criar_com_configuracao(
+    let v = e.store.create_integration_with_config(
         org,
         agente,
         kind,
@@ -374,7 +374,7 @@ pub async fn atualizar(
     }
     let status = validar_status(d.status)?;
     let preparado = if mexe_configuracao {
-        let atual = e.store.integracao_obter(org, agente, id)?;
+        let atual = e.store.get_integration(org, agente, id)?;
         match manifesto_do_kind(&e, &atual.kind).await? {
             Some(manifesto) => {
                 let segredos = match d.secrets.clone() {
@@ -382,7 +382,7 @@ pub async fn atualizar(
                     Some(novos) => Some(mesclar_segredos(
                         &e,
                         novos,
-                        atual.segredos_cifrados.as_deref(),
+                        atual.encrypted_secrets.as_deref(),
                     )?),
                 };
                 Some(preparar(&e, &manifesto, d.config_json.as_ref(), segredos)?)
@@ -396,12 +396,12 @@ pub async fn atualizar(
         None => (None, None),
         Some(preparado) => (preparado.configuracao, preparado.segredos),
     };
-    let v = e.store.integracao_atualizar(
+    let v = e.store.update_integration(
         org,
         agente,
         id,
-        AlteracaoIntegracao {
-            versao,
+        IntegrationChange {
+            version: versao,
             status: status.as_deref(),
             estado: d.connection_state.as_deref(),
             configuracao: configuracao.as_ref(),
@@ -427,7 +427,7 @@ pub async fn excluir(
 ) -> Result<Json<Value>, ApiError> {
     let (org, agente) = ids(&c.org_id, &c.agent_id, &ident)?;
     let id = id_da_url::<IntegrationId>(&c.integration_id)?;
-    e.store.integracao_excluir(org, agente, id)?;
+    e.store.delete_integration(org, agente, id)?;
     super::auditoria::registrar(
         &e,
         &ident,

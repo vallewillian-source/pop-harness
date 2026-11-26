@@ -54,7 +54,7 @@ impl Scenario {
         }];
         config.validar().expect("valid configuration");
 
-        let store = Arc::new(Store::abrir(&config).expect("opens the database"));
+        let store = Arc::new(Store::open(&config).expect("opens the database"));
         let estado = Estado::novo(Arc::clone(&store), config).expect("server state");
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -171,7 +171,7 @@ impl Scenario {
 
     fn connection(&self) -> rusqlite::Connection {
         let conn =
-            rusqlite::Connection::open(self.store.caminho_harness()).expect("opens the test db");
+            rusqlite::Connection::open(self.store.harness_path()).expect("opens the test db");
         conn.busy_timeout(Duration::from_secs(10))
             .expect("database timeout");
         conn

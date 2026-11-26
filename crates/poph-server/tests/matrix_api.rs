@@ -36,8 +36,7 @@ use poph_matrix::espacos::Espacos;
 use poph_server::Estado;
 use poph_server::matrix_inicio::{self, AjustesDeInicio, EspacosDoModulo, PortaEspacosStore};
 use poph_store::{
-    Direcao, NovaConversa, NovaMensagem, NovaOrg, NovoAgente, NovoDepartamento, Origem, Papel,
-    Store,
+    Direction, NewAgent, NewConversation, NewDepartment, NewMessage, NewOrg, Origin, Role, Store,
 };
 use poph_types::config::GlobalTokenConfig;
 use poph_types::{AgentId, DepartmentId, HarnessConfig, MatrixConfig, OrgId, Secret};
@@ -466,9 +465,9 @@ impl Cenario {
         let relogio = Arc::new(AtomicI64::new(1_000_000));
         let proprio = Arc::clone(&relogio);
         let store = Arc::new(
-            Store::abrir(&config)
+            Store::open(&config)
                 .expect("abre o banco")
-                .com_relogio(Arc::new(move || proprio.fetch_add(10, Ordering::SeqCst))),
+                .with_clock(Arc::new(move || proprio.fetch_add(10, Ordering::SeqCst))),
         );
         Self {
             pasta,
@@ -494,9 +493,9 @@ impl Cenario {
 
     fn org(&self, slug: &str) -> OrgId {
         self.store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: format!("Org {slug}"),
+            .orgs()
+            .criar(NewOrg {
+                name: format!("Org {slug}"),
                 slug: slug.to_owned(),
                 config_json: String::new(),
             })
@@ -517,13 +516,13 @@ impl Cenario {
 
     fn agente(&self, org: OrgId) -> AgentId {
         self.store
-            .agentes()
+            .agents()
             .criar(
                 org,
-                NovoAgente {
-                    nome: "Bia".to_owned(),
+                NewAgent {
+                    name: "Bia".to_owned(),
                     slug: "bia".to_owned(),
-                    ..NovoAgente::default()
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente")
@@ -535,12 +534,12 @@ impl Cenario {
             .conversas()
             .criar(
                 org,
-                NovaConversa {
+                NewConversation {
                     agent_id: agente,
                     integration_id: None,
                     canal: "whatsapp".to_owned(),
                     peer_externo: Some("5511999999999".to_owned()),
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("cria a conversa")
@@ -550,24 +549,24 @@ impl Cenario {
     fn mensagem(&self, org: OrgId, conversa: poph_types::ConversationId, texto: &str) -> u64 {
         let mensagem = self
             .store
-            .mensagens()
+            .messages()
             .gravar(
                 org,
-                NovaMensagem {
+                NewMessage {
                     conversation_id: conversa,
-                    direcao: Direcao::Entrada,
-                    papel: Papel::Usuario,
-                    origem: Origem::Agente,
-                    autor_nome: None,
+                    direction: Direction::Inbound,
+                    role: Role::User,
+                    origin: Origin::Agente,
+                    author_name: None,
                     texto: texto.to_owned(),
-                    anexos_json: "[]".to_owned(),
+                    attachments_json: "[]".to_owned(),
                     id_externo: None,
                     turn_id: None,
                 },
             )
             .expect("grava a mensagem");
         self.store
-            .mensagens()
+            .messages()
             .desde(0, 1000)
             .expect("lê as mensagens")
             .into_iter()
@@ -578,12 +577,12 @@ impl Cenario {
 
     fn departamento(&self, org: OrgId, nome: &str) -> DepartmentId {
         self.store
-            .departamentos()
+            .departments()
             .criar(
                 org,
-                NovoDepartamento {
-                    nome: nome.to_owned(),
-                    descricao: String::new(),
+                NewDepartment {
+                    name: nome.to_owned(),
+                    description: String::new(),
                 },
             )
             .expect("cria o departamento")
@@ -705,7 +704,7 @@ async fn estado_da_org_traz_atraso_falhas_e_etag() {
     // A mensagem pendente é mais velha que o relógio atual em 40 s.
     let pendente = cenario
         .store
-        .mensagens()
+        .messages()
         .desde(primeira, 10)
         .expect("lê a leitura incremental")
         .first()

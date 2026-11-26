@@ -97,7 +97,7 @@ async fn kill_9_no_plugin_nao_derruba_o_supervisor_e_a_mensagem_volta() {
             .enviar_pendentes(cenario.org, &transporte)
             .await
             .expect("o ciclo de envio termina mesmo com o plugin caindo");
-        if cenario.estado_do_item(item.id) == poph_store::EstadoSaida::Enviado {
+        if cenario.estado_do_item(item.id) == poph_store::OutboxState::Sent {
             break;
         }
         assert!(

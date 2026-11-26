@@ -23,10 +23,8 @@ use rusqlite::{Connection, OptionalExtension, Row, params};
 use super::fichas::registrar_evento_conn;
 use super::{conflito_ou_ausente, id_da_coluna, pertence, status_da_coluna, u64_da_coluna};
 use crate::Store;
-use crate::erro::{ErroStore, Resultado};
-use crate::modelo::{
-    FiltroFluxos, Fluxo, MudancaFluxo, NovoEventoFicha, NovoFluxo, Pagina, Status,
-};
+use crate::error::{Resultado, StoreError};
+use crate::model::{FlowChange, FlowFilter, Fluxo, NewFlow, NewRecordEvent, Page, Status};
 
 /// Quantos fluxos um agente pode ter liberados ao mesmo tempo (PRD §15: o G9 do Jev precisa de
 /// opções finitas). É do repositório: quem libera ou substitui a lista não passa dele.
@@ -43,13 +41,13 @@ pub struct Fluxos<'a>(pub(crate) &'a Store);
 
 impl Fluxos<'_> {
     /// Cria o fluxo na org, com situação `active` e sem revisão publicada.
-    pub fn criar(&self, org: OrgId, novo: NovoFluxo) -> Resultado<Fluxo> {
+    pub fn criar(&self, org: OrgId, novo: NewFlow) -> Resultado<Fluxo> {
         validar_slug(&novo.slug)?;
-        validar_nome(&novo.nome)?;
+        validar_nome(&novo.name)?;
         let id = FlowId::generate();
         let texto_id = id.to_string();
         let texto_org = org.to_string();
-        self.0.escrita(move |conn| {
+        self.0.write(move |conn| {
             conn.execute(
                 "INSERT INTO fluxos
                     (id, org_id, slug, nome, descricao, status, rascunho_fonte, revisao_atual, version)
@@ -58,13 +56,13 @@ impl Fluxos<'_> {
                     texto_id,
                     texto_org,
                     novo.slug,
-                    novo.nome,
-                    novo.descricao,
+                    novo.name,
+                    novo.description,
                     novo.rascunho_fonte
                 ],
             )
             .map_err(|erro| {
-                ErroStore::da_escrita_em(
+                StoreError::from_write_with(
                     "slug",
                     &[("nome", "nome"), ("descricao", "descricao")],
                     erro,
@@ -79,58 +77,53 @@ impl Fluxos<'_> {
     pub fn obter(&self, org: OrgId, id: FlowId) -> Resultado<Fluxo> {
         let texto_org = org.to_string();
         let texto_id = id.to_string();
-        let encontrado = self.0.leitura(move |conn| {
+        let encontrado = self.0.read(move |conn| {
             conn.query_row(
                 &format!("SELECT {COLUNAS} FROM fluxos WHERE org_id = ?1 AND id = ?2"),
                 params![texto_org, texto_id],
                 linha,
             )
             .optional()
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })?;
-        super::exigir(encontrado, "fluxo", &id.to_string())
+        super::require(encontrado, "fluxo", &id.to_string())
     }
 
     /// Fluxo pelo slug (identificador do script) dentro da org, se houver.
     pub fn por_slug(&self, org: OrgId, slug: &str) -> Resultado<Option<Fluxo>> {
         let texto_org = org.to_string();
         let texto_slug = slug.to_owned();
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             conn.query_row(
                 &format!("SELECT {COLUNAS} FROM fluxos WHERE org_id = ?1 AND slug = ?2"),
                 params![texto_org, texto_slug],
                 linha,
             )
             .optional()
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })
     }
 
     /// Lista os fluxos da org com filtro de situação, em ordem de id e paginada pelo cursor.
-    pub fn listar(
-        &self,
-        org: OrgId,
-        filtro: &FiltroFluxos,
-        pagina: Pagina,
-    ) -> Resultado<Vec<Fluxo>> {
+    pub fn listar(&self, org: OrgId, filtro: &FlowFilter, pagina: Page) -> Resultado<Vec<Fluxo>> {
         let mut condicoes = vec!["org_id = ?1".to_owned()];
         let mut valores: Vec<rusqlite::types::Value> =
             vec![rusqlite::types::Value::Text(org.to_string())];
         if let Some(status) = filtro.status {
-            valores.push(rusqlite::types::Value::Text(status.como_texto().to_owned()));
+            valores.push(rusqlite::types::Value::Text(status.as_text().to_owned()));
             condicoes.push(format!("status = ?{}", valores.len()));
         }
-        if let Some(apos) = pagina.apos {
+        if let Some(apos) = pagina.after {
             valores.push(rusqlite::types::Value::Text(apos.to_string()));
             condicoes.push(format!("id > ?{}", valores.len()));
         }
-        valores.push(rusqlite::types::Value::Integer(i64::from(pagina.limite)));
+        valores.push(rusqlite::types::Value::Integer(i64::from(pagina.limit)));
         let sql = format!(
             "SELECT {COLUNAS} FROM fluxos WHERE {} ORDER BY id LIMIT ?{}",
             condicoes.join(" AND "),
             valores.len()
         );
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             let mut consulta = conn.prepare(&sql)?;
             let linhas = consulta.query_map(rusqlite::params_from_iter(valores.iter()), linha)?;
             let mut fluxos = Vec::new();
@@ -147,13 +140,13 @@ impl Fluxos<'_> {
     /// Conta **todos** (ativos e inativos): o teto é de cadastro, não de fluxo em uso.
     pub fn contar(&self, org: OrgId) -> Resultado<u64> {
         let texto_org = org.to_string();
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             conn.query_row(
                 "SELECT COUNT(*) FROM fluxos WHERE org_id = ?1",
                 params![texto_org],
                 |linha| u64_da_coluna(linha, 0),
             )
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })
     }
 
@@ -166,22 +159,22 @@ impl Fluxos<'_> {
         org: OrgId,
         id: FlowId,
         esperada: u64,
-        mudanca: MudancaFluxo,
+        mudanca: FlowChange,
     ) -> Resultado<Fluxo> {
-        if mudanca.status == Some(Status::Arquivado) {
-            return Err(ErroStore::Dominio(DomainError::Validation {
+        if mudanca.status == Some(Status::Archived) {
+            return Err(StoreError::Domain(DomainError::Validation {
                 field: "status",
                 reason: "o fluxo fica `active` ou `inactive`".to_owned(),
             }));
         }
-        if let Some(nome) = &mudanca.nome {
+        if let Some(nome) = &mudanca.name {
             validar_nome(nome)?;
         }
         let texto_org = org.to_string();
         let texto_id = id.to_string();
-        let status = mudanca.status.map(Status::como_texto);
+        let status = mudanca.status.map(Status::as_text);
         let esperada_i64 = esperada as i64;
-        let alteradas = self.0.escrita(move |conn| {
+        let alteradas = self.0.write(move |conn| {
             conn.execute(
                 "UPDATE fluxos
                     SET nome = COALESCE(?3, nome),
@@ -193,14 +186,14 @@ impl Fluxos<'_> {
                 params![
                     texto_org,
                     texto_id,
-                    mudanca.nome,
-                    mudanca.descricao,
+                    mudanca.name,
+                    mudanca.description,
                     status,
                     mudanca.rascunho_fonte,
                     esperada_i64
                 ],
             )
-            .map_err(|erro| ErroStore::da_escrita("nome", erro))
+            .map_err(|erro| StoreError::from_write("nome", erro))
         })?;
         if alteradas == 0 {
             return Err(self.conflito(org, id, esperada));
@@ -220,12 +213,12 @@ impl Fluxos<'_> {
     ///
     /// Tudo numa escrita só: ou o fluxo sai com as execuções abandonadas, ou nada muda.
     pub fn excluir(&self, org: OrgId, id: FlowId, force: bool) -> Resultado<u64> {
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_org = org.to_string();
         let texto_id = id.to_string();
         // FX-40: com `force`, as execuções ativas viram `abandonada` e contam.
-        let metricas = self.0.metricas_de_execucao();
-        self.0.escrita(move |conn| {
+        let metricas = self.0.execution_metrics();
+        self.0.write(move |conn| {
             let existe: Option<i64> = conn
                 .query_row(
                     "SELECT 1 FROM fluxos WHERE org_id = ?1 AND id = ?2",
@@ -233,16 +226,16 @@ impl Fluxos<'_> {
                     |linha| linha.get(0),
                 )
                 .optional()
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
             if existe.is_none() {
-                return Err(ErroStore::Dominio(DomainError::NotFound {
+                return Err(StoreError::Domain(DomainError::NotFound {
                     entity: "fluxo",
                     id: texto_id.clone(),
                 }));
             }
             let ativas = execucoes_ativas_do_fluxo(conn, &texto_org, &texto_id)?;
             if !ativas.is_empty() && !force {
-                return Err(ErroStore::Dominio(DomainError::Conflict {
+                return Err(StoreError::Domain(DomainError::Conflict {
                     entity: "fluxo",
                     id: texto_id.clone(),
                     reason: format!(
@@ -260,12 +253,12 @@ impl Fluxos<'_> {
                       WHERE org_id = ?1 AND id = ?2",
                     params![texto_org, execucao, MOTIVO_EXCLUSAO_FLUXO, agora],
                 )
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
                 registrar_evento_conn(
                     conn,
                     &texto_org,
                     ficha,
-                    &NovoEventoFicha {
+                    &NewRecordEvent {
                         execucao_id: execucao.parse::<ExecutionId>().ok(),
                         tipo: RecordEventKind::ExecutionAbandoned,
                         ator_tipo: EventActor::System,
@@ -284,7 +277,7 @@ impl Fluxos<'_> {
                 "DELETE FROM fluxos WHERE org_id = ?1 AND id = ?2",
                 params![texto_org, texto_id],
             )
-            .map_err(ErroStore::from)?;
+            .map_err(StoreError::from)?;
             Ok(ativas.len() as u64)
         })
     }
@@ -294,11 +287,11 @@ impl Fluxos<'_> {
     /// Recusa com `NaoEncontrado` se o fluxo ou o agente não é desta org, e com
     /// [`DomainError::TetoDeFluxosPorAgente`] se a liberação passaria de 20.
     pub fn liberar(&self, org: OrgId, agente: AgentId, fluxo: FlowId) -> Resultado<()> {
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_org = org.to_string();
         let texto_agente = agente.to_string();
         let texto_fluxo = fluxo.to_string();
-        self.0.escrita(move |conn| {
+        self.0.write(move |conn| {
             pertence(conn, "fluxos", "fluxo", &texto_org, &texto_fluxo)?;
             pertence(conn, "agents", "agente", &texto_org, &texto_agente)?;
             if permissao_existe(conn, &texto_org, &texto_agente, &texto_fluxo)? {
@@ -313,25 +306,25 @@ impl Fluxos<'_> {
                  VALUES (?1, ?2, ?3, ?4)",
                 params![texto_org, texto_agente, texto_fluxo, agora],
             )
-            .map_err(ErroStore::from)?;
+            .map_err(StoreError::from)?;
             versao_do_agente_avanca(conn, &texto_org, &texto_agente, agora)
         })
     }
 
     /// Tira a permissão do agente. Revogar o que não estava liberado não faz nada.
     pub fn revogar(&self, org: OrgId, agente: AgentId, fluxo: FlowId) -> Resultado<()> {
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_org = org.to_string();
         let texto_agente = agente.to_string();
         let texto_fluxo = fluxo.to_string();
-        self.0.escrita(move |conn| {
+        self.0.write(move |conn| {
             let apagadas = conn
                 .execute(
                     "DELETE FROM agente_fluxos
                       WHERE org_id = ?1 AND agent_id = ?2 AND fluxo_id = ?3",
                     params![texto_org, texto_agente, texto_fluxo],
                 )
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
             if apagadas > 0 {
                 versao_do_agente_avanca(conn, &texto_org, &texto_agente, agora)?;
             }
@@ -343,7 +336,7 @@ impl Fluxos<'_> {
     pub fn listar_do_agente(&self, org: OrgId, agente: AgentId) -> Resultado<Vec<Fluxo>> {
         let texto_org = org.to_string();
         let texto_agente = agente.to_string();
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             let mut consulta = conn.prepare(&format!(
                 "SELECT {COLUNAS} FROM fluxos
                   WHERE org_id = ?1
@@ -365,7 +358,7 @@ impl Fluxos<'_> {
         self.obter(org, fluxo)?;
         let texto_org = org.to_string();
         let texto_fluxo = fluxo.to_string();
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             let mut consulta = conn.prepare(
                 "SELECT agent_id FROM agente_fluxos
                   WHERE org_id = ?1 AND fluxo_id = ?2
@@ -407,19 +400,19 @@ impl Fluxos<'_> {
                 u32::try_from(unicos.len()).unwrap_or(u32::MAX),
             ));
         }
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_org = org.to_string();
         let texto_agente = agente.to_string();
         let textos: Vec<String> = unicos.iter().map(ToString::to_string).collect();
         let esperada_i64 = esperada as i64;
-        self.0.escrita(move |conn| {
+        self.0.write(move |conn| {
             let avancou = conn
                 .execute(
                     "UPDATE agents SET version = version + 1, updated_at = ?4
                       WHERE org_id = ?1 AND id = ?2 AND version = ?3",
                     params![texto_org, texto_agente, esperada_i64, agora],
                 )
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
             if avancou == 0 {
                 return Err(conflito_ou_ausente(
                     conn,
@@ -437,25 +430,25 @@ impl Fluxos<'_> {
                 "DELETE FROM agente_fluxos WHERE org_id = ?1 AND agent_id = ?2",
                 params![texto_org, texto_agente],
             )
-            .map_err(ErroStore::from)?;
+            .map_err(StoreError::from)?;
             for texto_fluxo in &textos {
                 conn.execute(
                     "INSERT INTO agente_fluxos (org_id, agent_id, fluxo_id, liberado_em)
                      VALUES (?1, ?2, ?3, ?4)",
                     params![texto_org, texto_agente, texto_fluxo, agora],
                 )
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
             }
             Ok(())
         })
     }
 
     /// Monta o erro certo quando o `UPDATE ... WHERE version = ?` não pegou nenhuma linha.
-    fn conflito(&self, org: OrgId, id: FlowId, esperada: u64) -> ErroStore {
+    fn conflito(&self, org: OrgId, id: FlowId, esperada: u64) -> StoreError {
         let texto_org = org.to_string();
         let texto_id = id.to_string();
         self.0
-            .leitura(move |conn| {
+            .read(move |conn| {
                 Ok(conflito_ou_ausente(
                     conn, "fluxos", "fluxo", &texto_id, &texto_org, esperada,
                 ))
@@ -478,7 +471,7 @@ fn validar_slug(slug: &str) -> Resultado<()> {
     if valido {
         Ok(())
     } else {
-        Err(ErroStore::Dominio(DomainError::Validation {
+        Err(StoreError::Domain(DomainError::Validation {
             field: "slug",
             reason: "use minúsculas, números e `_`, começando por letra, com 2 a 64 caracteres"
                 .to_owned(),
@@ -488,7 +481,7 @@ fn validar_slug(slug: &str) -> Resultado<()> {
 
 fn validar_nome(nome: &str) -> Resultado<()> {
     if nome.trim().is_empty() {
-        return Err(ErroStore::Dominio(DomainError::Validation {
+        return Err(StoreError::Domain(DomainError::Validation {
             field: "nome",
             reason: "não pode ficar vazio".to_owned(),
         }));
@@ -496,8 +489,8 @@ fn validar_nome(nome: &str) -> Resultado<()> {
     Ok(())
 }
 
-fn erro_teto(agente: AgentId, pedidos: u32) -> ErroStore {
-    ErroStore::Dominio(DomainError::FlowLimitPerAgent {
+fn erro_teto(agente: AgentId, pedidos: u32) -> StoreError {
+    StoreError::Domain(DomainError::FlowLimitPerAgent {
         agent_id: agente.to_string(),
         limit: TETO_FLUXOS_POR_AGENTE,
         requested: pedidos,
@@ -512,7 +505,7 @@ fn permissao_existe(conn: &Connection, org: &str, agente: &str, fluxo: &str) -> 
             |linha| linha.get(0),
         )
         .optional()
-        .map_err(ErroStore::from)?;
+        .map_err(StoreError::from)?;
     Ok(existe.is_some())
 }
 
@@ -523,7 +516,7 @@ fn contar_permissoes(conn: &Connection, org: &str, agente: &str) -> Resultado<u3
             params![org, agente],
             |linha| linha.get(0),
         )
-        .map_err(ErroStore::from)?;
+        .map_err(StoreError::from)?;
     Ok(u32::try_from(total).unwrap_or(u32::MAX))
 }
 
@@ -539,15 +532,15 @@ fn execucoes_ativas_do_fluxo(
               WHERE org_id = ?1 AND fluxo_id = ?2 AND status = 'ativa'
               ORDER BY iniciada_em",
         )
-        .map_err(ErroStore::from)?;
+        .map_err(StoreError::from)?;
     let linhas = consulta
         .query_map(params![org, fluxo], |linha| {
             Ok((linha.get::<_, String>(0)?, linha.get::<_, String>(1)?))
         })
-        .map_err(ErroStore::from)?;
+        .map_err(StoreError::from)?;
     let mut ativas = Vec::new();
     for linha in linhas {
-        ativas.push(linha.map_err(ErroStore::from)?);
+        ativas.push(linha.map_err(StoreError::from)?);
     }
     Ok(ativas)
 }
@@ -564,7 +557,7 @@ fn versao_do_agente_avanca(
           WHERE org_id = ?1 AND id = ?2",
         params![org, agente, agora],
     )
-    .map_err(ErroStore::from)?;
+    .map_err(StoreError::from)?;
     Ok(())
 }
 
@@ -574,13 +567,13 @@ fn linha(linha: &Row<'_>) -> rusqlite::Result<Fluxo> {
         id: id_da_coluna(linha, 0)?,
         org_id: id_da_coluna(linha, 1)?,
         slug: linha.get(2)?,
-        nome: linha.get(3)?,
-        descricao: linha.get(4)?,
+        name: linha.get(3)?,
+        description: linha.get(4)?,
         status: status_da_coluna(linha, 5)?,
         rascunho_fonte: linha.get(6)?,
         revisao_atual: linha
             .get::<_, Option<i64>>(7)?
             .map(|numero| numero.max(0) as u64),
-        versao: u64_da_coluna(linha, 8)?,
+        version: u64_da_coluna(linha, 8)?,
     })
 }

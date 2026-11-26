@@ -1,6 +1,6 @@
 //! Registro de alterações administrativas sem copiar conteúdo da requisição.
 use crate::{auth::Identidade, erro::ApiError, estado::Estado};
-use poph_store::NovoRegistroAuditoria;
+use poph_store::NewAuditEntry;
 use poph_types::OrgId;
 
 pub(super) fn registrar(
@@ -11,15 +11,15 @@ pub(super) fn registrar(
     entidade: &str,
     id: String,
 ) -> Result<(), ApiError> {
-    estado.store.auditoria().registrar(
+    estado.store.audit().registrar(
         org,
-        NovoRegistroAuditoria {
+        NewAuditEntry {
             ator_tipo: "admin_token".into(),
-            ator_id: Some(identidade.ator_id()),
+            actor_id: Some(identidade.ator_id()),
             acao: acao.into(),
-            entidade: entidade.into(),
-            entidade_id: Some(id),
-            detalhe_json: "{}".into(),
+            entity: entidade.into(),
+            entity_id: Some(id),
+            detail_json: "{}".into(),
         },
     )?;
     Ok(())

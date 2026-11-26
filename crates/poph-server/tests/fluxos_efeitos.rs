@@ -43,10 +43,10 @@ use poph_server::fluxos_efeitos::{
 };
 use poph_server::fluxos_metricas::MetricasFluxos;
 use poph_server::saida_whatsapp::{OpcoesSaidaWhatsApp, SaidaWhatsApp};
-use poph_store::StatusConversa;
+use poph_store::ConversationStatus;
 use poph_store::{
-    Agente, EfeitoDaTransicao, EfeitoDoFluxo, EstadoDaExecucao, ExecucaoGravada, InicioDeExecucao,
-    NovaConversa, NovaOrg, NovoAgente, NovoDepartamento, Store,
+    Agente, ExecutionStart, ExecutionState, FlowEffect, NewAgent, NewConversation, NewDepartment,
+    NewOrg, Store, StoredExecution, TransitionEffect,
 };
 use poph_types::{
     DepartmentId, EffectState, EventActor, ExecutionStatus, FlowId, HarnessConfig, IntegrationId,
@@ -224,26 +224,26 @@ impl Cenario {
         let relogio = Arc::new(AtomicI64::new(1_700_000_000_000));
         let ponteiro = Arc::clone(&relogio);
         let store = Arc::new(
-            Store::abrir(&config)
+            Store::open(&config)
                 .expect("abre o banco")
-                .com_relogio(Arc::new(move || ponteiro.load(Ordering::SeqCst))),
+                .with_clock(Arc::new(move || ponteiro.load(Ordering::SeqCst))),
         );
 
         let org = store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: "Loja FX-21".to_owned(),
+            .orgs()
+            .criar(NewOrg {
+                name: "Loja FX-21".to_owned(),
                 slug: "loja-fx21".to_owned(),
                 config_json: String::new(),
             })
             .expect("cria a org")
             .id;
         let agente = store
-            .agentes()
+            .agents()
             .criar(
                 org,
-                NovoAgente {
-                    nome: "Atendente FX-21".to_owned(),
+                NewAgent {
+                    name: "Atendente FX-21".to_owned(),
                     slug: "atendente-fx21".to_owned(),
                     ..Default::default()
                 },
@@ -255,7 +255,7 @@ impl Cenario {
         } else {
             Some(
                 store
-                    .integracao_criar(org, agente.id, "whatsapp".to_owned(), "active".to_owned())
+                    .create_integration(org, agente.id, "whatsapp".to_owned(), "active".to_owned())
                     .expect("cria a integração")
                     .id
                     .parse()
@@ -267,12 +267,12 @@ impl Cenario {
             .conversas()
             .criar(
                 org,
-                NovaConversa {
+                NewConversation {
                     agent_id: agente.id,
                     integration_id: integracao,
                     canal: "whatsapp".to_owned(),
                     peer_externo: Some(TELEFONE.to_owned()),
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("cria a conversa")
@@ -375,36 +375,36 @@ impl Cenario {
     }
 
     /// Abre a execução com os efeitos de entrada dados, na Ficha principal.
-    fn abrir(&self, efeitos: Vec<EfeitoDaTransicao>) -> ExecucaoGravada {
+    fn abrir(&self, efeitos: Vec<TransitionEffect>) -> StoredExecution {
         self.abrir_na_ficha(self.ficha, efeitos)
     }
 
-    fn abrir_na_ficha(&self, ficha: RecordId, efeitos: Vec<EfeitoDaTransicao>) -> ExecucaoGravada {
+    fn abrir_na_ficha(&self, ficha: RecordId, efeitos: Vec<TransitionEffect>) -> StoredExecution {
         self.store
             .fluxos()
             .liberar(self.org, self.agente.id, self.fluxo)
             .expect("libera o fluxo ao agente");
         self.store
-            .execucoes()
+            .executions()
             .iniciar_execucao(
                 self.org,
-                InicioDeExecucao {
+                ExecutionStart {
                     chave_idempotencia: None,
                     ficha,
                     fluxo: self.fluxo,
-                    revisao: self.revisao,
-                    ator: EventActor::Agent,
+                    revision: self.revisao,
+                    actor: EventActor::Agent,
                     ator_ref: Some("agente-de-teste"),
-                    decisao_jev: None,
-                    estado_inicial: EstadoDaExecucao {
+                    jev_decision: None,
+                    initial_state: ExecutionState {
                         status: ExecutionStatus::Active,
                         no_atual: "boas_vindas".to_owned(),
                         dados_json: "{}".to_owned(),
-                        atores_que_agiram: Vec::new(),
-                        resultado: None,
-                        motivo: None,
+                        acting_actors: Vec::new(),
+                        result: None,
+                        reason: None,
                     },
-                    efeitos_de_entrada: efeitos,
+                    inbound_effects: efeitos,
                 },
             )
             .expect("abre a execução")
@@ -422,12 +422,12 @@ impl Cenario {
             .conversas()
             .criar(
                 self.org,
-                NovaConversa {
+                NewConversation {
                     agent_id: self.agente.id,
                     integration_id: integracao,
                     canal: canal.to_owned(),
                     peer_externo: Some("5521977770003".to_owned()),
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("cria a segunda conversa")
@@ -440,14 +440,14 @@ impl Cenario {
             .id
     }
 
-    fn efeitos_da_ficha(&self, execucao: poph_types::ExecutionId) -> Vec<EfeitoDoFluxo> {
+    fn efeitos_da_ficha(&self, execucao: poph_types::ExecutionId) -> Vec<FlowEffect> {
         self.store
-            .execucoes()
+            .executions()
             .efeitos(self.org, execucao)
             .expect("lê os efeitos")
     }
 
-    fn eventos(&self, ficha: RecordId) -> Vec<poph_store::EventoFicha> {
+    fn eventos(&self, ficha: RecordId) -> Vec<poph_store::RecordEvent> {
         self.store
             .fichas()
             .eventos(self.org, ficha, None, 100)
@@ -457,21 +457,20 @@ impl Cenario {
     fn conversa(&self) -> poph_store::Conversa {
         self.store
             .conversas()
-            .obter(self.org, self.conversa)
+            .get(self.org, self.conversa)
             .expect("lê a conversa")
     }
 
-    fn itens_da_saida(&self) -> Vec<poph_store::ItemSaida> {
+    fn itens_da_saida(&self) -> Vec<poph_store::OutboxItem> {
         self.store
-            .caixa_saida()
+            .outbox()
             .listar_pendentes(self.org, 100)
             .expect("lê a outbox")
     }
 
     /// Quantos itens existem na `outbox` da org, em qualquer estado.
     fn total_de_itens(&self) -> i64 {
-        let conn =
-            rusqlite::Connection::open(self.store.caminho_harness()).expect("abre para contar");
+        let conn = rusqlite::Connection::open(self.store.harness_path()).expect("abre para contar");
         conn.query_row(
             "SELECT COUNT(*) FROM outbox WHERE org_id = ?1",
             rusqlite::params![self.org.to_string()],
@@ -496,7 +495,7 @@ impl Drop for Cenario {
 fn fluxo_publicado(store: &Store, org: OrgId) -> (FlowId, RevisionId) {
     let fluxo: FlowId = uuid::Uuid::now_v7().to_string().parse().expect("fluxo");
     let revisao: RevisionId = uuid::Uuid::now_v7().to_string().parse().expect("revisão");
-    let conn = rusqlite::Connection::open(store.caminho_harness()).expect("abre para gravar");
+    let conn = rusqlite::Connection::open(store.harness_path()).expect("abre para gravar");
     conn.execute(
         "INSERT INTO fluxos (id, org_id, slug, nome, descricao, status, rascunho_fonte,
                              revisao_atual, version)
@@ -518,7 +517,7 @@ fn fluxo_publicado(store: &Store, org: OrgId) -> (FlowId, RevisionId) {
 // ───────────────────────── efeitos de teste (pelo tradutor do produto) ─────────────────────────
 
 /// `mensagem_ao_cliente` como o motor descreve e como a fila grava.
-fn ao_cliente(texto: &str) -> EfeitoDaTransicao {
+fn ao_cliente(texto: &str) -> TransitionEffect {
     efeito_da_transicao(&EfeitoProduzido {
         chave: "etapa:boas_vindas/0".to_owned(),
         no: "etapa:boas_vindas".to_owned(),
@@ -530,7 +529,7 @@ fn ao_cliente(texto: &str) -> EfeitoDaTransicao {
 }
 
 /// `notificar_whatsapp` para a equipe.
-fn notificar(mensagem: &str) -> EfeitoDaTransicao {
+fn notificar(mensagem: &str) -> TransitionEffect {
     efeito_da_transicao(&EfeitoProduzido {
         chave: "acao:boas_vindas.registrar/0".to_owned(),
         no: "acao:boas_vindas.registrar".to_owned(),
@@ -543,7 +542,7 @@ fn notificar(mensagem: &str) -> EfeitoDaTransicao {
 }
 
 /// `encaminhar` para o departamento pelo nome.
-fn encaminhar(departamento: &str) -> EfeitoDaTransicao {
+fn encaminhar(departamento: &str) -> TransitionEffect {
     efeito_da_transicao(&EfeitoProduzido {
         chave: "acao:boas_vindas.transferir/0".to_owned(),
         no: "acao:boas_vindas.transferir".to_owned(),
@@ -557,12 +556,12 @@ fn encaminhar(departamento: &str) -> EfeitoDaTransicao {
 fn departamento(cenario: &Cenario, nome: &str) -> DepartmentId {
     cenario
         .store
-        .departamentos()
+        .departments()
         .criar(
             cenario.org,
-            NovoDepartamento {
-                nome: nome.to_owned(),
-                descricao: String::new(),
+            NewDepartment {
+                name: nome.to_owned(),
+                description: String::new(),
             },
         )
         .expect("cria o departamento")
@@ -575,9 +574,9 @@ fn departamento(cenario: &Cenario, nome: &str) -> DepartmentId {
 async fn mensagem_ao_cliente_chega_ao_cliente_uma_vez() {
     let cenario = Cenario::novo("ao-cliente", Instancia::Normal, Vec::new()).await;
     let aberta = cenario.abrir(vec![ao_cliente("Recebemos seu pedido!")]);
-    let execucao = aberta.execucao.id;
+    let execucao = aberta.execution.id;
     assert_eq!(
-        aberta.efeitos.len(),
+        aberta.effects.len(),
         1,
         "o efeito entrou na fila na abertura"
     );
@@ -595,7 +594,7 @@ async fn mensagem_ao_cliente_chega_ao_cliente_uma_vez() {
     assert_eq!(itens.len(), 1, "um item na outbox");
     assert_eq!(itens[0].conversation_id, cenario.conversa);
     assert_eq!(
-        serde_json::from_str::<Value>(&itens[0].conteudo_json).expect("payload")["texto"],
+        serde_json::from_str::<Value>(&itens[0].content_json).expect("payload")["texto"],
         "Recebemos seu pedido!"
     );
 
@@ -640,7 +639,7 @@ async fn mensagem_ao_cliente_chega_ao_cliente_uma_vez() {
 async fn notificar_whatsapp_vai_para_a_equipe_e_nao_para_o_cliente() {
     let cenario = Cenario::novo("notificar", Instancia::Normal, Vec::new()).await;
     let aberta = cenario.abrir(vec![notificar("Visita marcada para amanhã")]);
-    let execucao = aberta.execucao.id;
+    let execucao = aberta.execution.id;
 
     let relato = cenario
         .efeitos()
@@ -676,7 +675,7 @@ async fn notificar_whatsapp_vai_para_a_equipe_e_nao_para_o_cliente() {
 async fn sem_integracao_o_efeito_fica_pendente_e_nao_trava_o_laco() {
     let cenario = Cenario::novo("sem-chave", Instancia::SemChave, Vec::new()).await;
     let aberta = cenario.abrir(vec![notificar("aviso para a equipe")]);
-    let execucao = aberta.execucao.id;
+    let execucao = aberta.execution.id;
 
     let efeitos = cenario.efeitos();
     let relato = efeitos.ciclo_da_org(cenario.org).await.expect("ciclo");
@@ -709,27 +708,27 @@ async fn sem_integracao_o_efeito_fica_pendente_e_nao_trava_o_laco() {
 async fn queda_entre_enfileirar_e_confirmar_reenvia_e_aceita_duplicata() {
     let cenario = Cenario::novo("queda", Instancia::Normal, Vec::new()).await;
     let aberta = cenario.abrir(vec![ao_cliente("Bem-vindo!")]);
-    let execucao = aberta.execucao.id;
+    let execucao = aberta.execution.id;
     let id = cenario.efeitos_da_ficha(execucao)[0].id;
 
     // Simula a janela da queda: o trabalhador pegou o efeito (`enviando`) e enfileirou a mensagem,
     // e morreu antes de confirmar. É exatamente o que o entregador faz em duas chamadas separadas.
     cenario
         .store
-        .efeitos()
+        .effects()
         .iniciar_envio(cenario.org, id)
         .expect("pega o efeito");
     let (_, item) = cenario
         .store
-        .caixa_saida()
+        .outbox()
         .enfileirar(
             cenario.org,
-            poph_store::NovaSaida {
+            poph_store::NewOutboxItem {
                 conversation_id: cenario.conversa,
                 turn_id: poph_types::TurnId::generate(),
                 seq: 0,
                 tipo: "text".to_owned(),
-                conteudo_json: json!({"texto": "Bem-vindo!"}).to_string(),
+                content_json: json!({"texto": "Bem-vindo!"}).to_string(),
             },
         )
         .expect("enfileira a mensagem");
@@ -771,7 +770,7 @@ async fn falha_definitiva_vira_falhou_com_evento_e_metrica() {
     )
     .await;
     let aberta = cenario.abrir(vec![notificar("aviso")]);
-    let execucao = aberta.execucao.id;
+    let execucao = aberta.execution.id;
 
     let relato = cenario
         .efeitos()
@@ -789,11 +788,11 @@ async fn falha_definitiva_vira_falhou_com_evento_e_metrica() {
     // A transição continua valendo (PRD L11): execução ativa, conversa aberta.
     let atual = cenario
         .store
-        .execucoes()
+        .executions()
         .obter(cenario.org, execucao)
         .expect("lê a execução");
     assert_eq!(atual.status, ExecutionStatus::Active);
-    assert_eq!(cenario.conversa().status, StatusConversa::Aberta);
+    assert_eq!(cenario.conversa().status, ConversationStatus::Open);
 
     let falhas: Vec<_> = cenario
         .eventos(cenario.ficha)
@@ -825,7 +824,7 @@ async fn falha_transitoria_tenta_de_novo_e_passa() {
     )
     .await;
     let aberta = cenario.abrir(vec![notificar("aviso")]);
-    let execucao = aberta.execucao.id;
+    let execucao = aberta.execution.id;
 
     let efeitos = cenario.efeitos();
     let relato = efeitos.ciclo_da_org(cenario.org).await.expect("ciclo");
@@ -857,7 +856,7 @@ async fn encaminhar_transfere_a_conversa_e_mantem_a_ficha_aberta() {
     let cenario = Cenario::novo("encaminhar", Instancia::Normal, Vec::new()).await;
     let comercial = departamento(&cenario, "Comercial");
     let aberta = cenario.abrir(vec![encaminhar("Comercial")]);
-    let execucao = aberta.execucao.id;
+    let execucao = aberta.execution.id;
 
     let relato = cenario
         .efeitos()
@@ -868,8 +867,8 @@ async fn encaminhar_transfere_a_conversa_e_mantem_a_ficha_aberta() {
 
     // A conversa vai para o departamento e o agente para de responder (D12, guarda do turno).
     let conversa = cenario.conversa();
-    assert_eq!(conversa.status, StatusConversa::Transferida);
-    assert_eq!(conversa.departamento_alvo, Some(comercial));
+    assert_eq!(conversa.status, ConversationStatus::Transferred);
+    assert_eq!(conversa.target_department, Some(comercial));
 
     // A Ficha continua aberta.
     let ficha = cenario
@@ -882,12 +881,12 @@ async fn encaminhar_transfere_a_conversa_e_mantem_a_ficha_aberta() {
     // Auditoria da transferência, assinada pelo sistema.
     let auditoria = cenario
         .store
-        .auditoria()
+        .audit()
         .listar(
             cenario.org,
-            poph_store::Pagina {
-                apos: None,
-                limite: 50,
+            poph_store::Page {
+                after: None,
+                limit: 50,
             },
         )
         .expect("lê a auditoria");
@@ -922,7 +921,7 @@ async fn departamento_inexistente_vira_falhou_sem_reverter_a_transicao() {
     departamento(&cenario, "Comercial");
     departamento(&cenario, "Suporte");
     let aberta = cenario.abrir(vec![encaminhar("Financeiro")]);
-    let execucao = aberta.execucao.id;
+    let execucao = aberta.execution.id;
 
     let relato = cenario
         .efeitos()
@@ -940,10 +939,10 @@ async fn departamento_inexistente_vira_falhou_sem_reverter_a_transicao() {
     );
 
     // Nada revertido: conversa aberta, execução ativa, Ficha aberta.
-    assert_eq!(cenario.conversa().status, StatusConversa::Aberta);
+    assert_eq!(cenario.conversa().status, ConversationStatus::Open);
     let atual = cenario
         .store
-        .execucoes()
+        .executions()
         .obter(cenario.org, execucao)
         .expect("lê a execução");
     assert_eq!(atual.status, ExecutionStatus::Active);
@@ -997,7 +996,7 @@ async fn o_telefone_nao_aparece_em_log_nem_no_motivo_gravado() {
     assert_eq!(relato.definitivos, 1);
 
     // O motivo gravado também não leva telefone.
-    let motivo = cenario.efeitos_da_ficha(falha.execucao.id)[0]
+    let motivo = cenario.efeitos_da_ficha(falha.execution.id)[0]
         .ultimo_erro
         .clone()
         .unwrap_or_default();
@@ -1030,12 +1029,12 @@ async fn o_telefone_nao_aparece_em_log_nem_no_motivo_gravado() {
 async fn a_mensagem_ao_cliente_espera_o_turno_da_conversa() {
     let cenario = Cenario::novo("espera-turno", Instancia::Normal, Vec::new()).await;
     let aberta = cenario.abrir(vec![ao_cliente("Mensagem fixa da etapa")]);
-    let execucao = aberta.execucao.id;
+    let execucao = aberta.execution.id;
 
     // O turno da conversa está rodando: a mensagem fixa não pode chegar antes da resposta.
     let turno = cenario
         .store
-        .turnos()
+        .turns()
         .iniciar(cenario.org, cenario.conversa, Some(cenario.agente.id))
         .expect("abre o turno");
 
@@ -1053,12 +1052,12 @@ async fn a_mensagem_ao_cliente_espera_o_turno_da_conversa() {
     // Terminado o turno, a mensagem entra na fila de saída.
     cenario
         .store
-        .turnos()
+        .turns()
         .finalizar(
             cenario.org,
             turno.id,
-            poph_store::FinalizacaoTurno {
-                estado: Some(poph_store::EstadoTurno::Concluido),
+            poph_store::TurnFinalization {
+                estado: Some(poph_store::TurnState::Completed),
                 ..Default::default()
             },
         )
@@ -1075,7 +1074,7 @@ async fn a_mensagem_ao_cliente_espera_o_turno_da_conversa() {
 async fn mensagem_ao_cliente_com_conversa_encerrada_vira_falhou() {
     let cenario = Cenario::novo("encerrada", Instancia::Normal, Vec::new()).await;
     let aberta = cenario.abrir(vec![ao_cliente("Mensagem fixa")]);
-    let execucao = aberta.execucao.id;
+    let execucao = aberta.execution.id;
 
     // O atendimento fecha antes de o efeito ser entregue.
     cenario
@@ -1084,7 +1083,7 @@ async fn mensagem_ao_cliente_com_conversa_encerrada_vira_falhou() {
         .fechar_auditado(
             cenario.org,
             cenario.conversa,
-            cenario.conversa().versao,
+            cenario.conversa().version,
             "atendente-de-teste".to_owned(),
         )
         .expect("fecha a conversa");
@@ -1125,7 +1124,7 @@ async fn tentativas_esgotadas_viram_falhou_com_o_motivo_certo() {
     )
     .await;
     let aberta = cenario.abrir(vec![notificar("aviso")]);
-    let execucao = aberta.execucao.id;
+    let execucao = aberta.execution.id;
     let efeitos = EfeitosFluxo::novo(
         Arc::clone(&cenario.store),
         &cenario.canais,

@@ -3,7 +3,7 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
-use poph_store::{CategoriaProduto, MudancaCategoria, NovaCategoria, Pagina};
+use poph_store::{CategoryChange, NewCategory, Page, ProductCategory};
 use poph_types::{OrgId, ProductCategoryId};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -38,16 +38,16 @@ pub struct CategoriaJson {
 }
 
 impl CategoriaJson {
-    fn de(categoria: &CategoriaProduto) -> Self {
+    fn de(categoria: &ProductCategory) -> Self {
         Self {
             id: categoria.id.to_string(),
             org_id: categoria.org_id.to_string(),
-            name: categoria.nome.clone(),
-            description: categoria.descricao.clone(),
+            name: categoria.name.clone(),
+            description: categoria.description.clone(),
             status: status_texto(categoria.status).to_owned(),
-            version: categoria.versao,
-            created_at: categoria.criado_em,
-            updated_at: categoria.atualizado_em,
+            version: categoria.version,
+            created_at: categoria.created_at,
+            updated_at: categoria.updated_at,
         }
     }
 }
@@ -107,9 +107,9 @@ pub async fn listar(
     let org = id_da_url::<OrgId>(&caminho.org_id)?;
     identidade.exigir_org(org)?;
     let pagina = consulta.pagina()?;
-    let categorias = estado.store.categorias().listar(org, pagina)?;
+    let categorias = estado.store.categories().listar(org, pagina)?;
     let items: Vec<CategoriaJson> = categorias.iter().map(CategoriaJson::de).collect();
-    let next_cursor = proximo_cursor(&items, pagina.limite, |item| item.id.clone());
+    let next_cursor = proximo_cursor(&items, pagina.limit, |item| item.id.clone());
     Ok(Json(ListaJson { items, next_cursor }))
 }
 
@@ -138,10 +138,13 @@ pub async fn criar(
     identidade.exigir_org(org)?;
     let nome = validar_nome(&corpo.name)?;
     let descricao = corpo.description.unwrap_or_default();
-    let categoria = estado
-        .store
-        .categorias()
-        .criar(org, NovaCategoria { nome, descricao })?;
+    let categoria = estado.store.categories().criar(
+        org,
+        NewCategory {
+            name: nome,
+            description: descricao,
+        },
+    )?;
     super::auditoria::registrar(
         &estado,
         &identidade,
@@ -177,7 +180,7 @@ pub async fn mostrar(
     let org = id_da_url::<OrgId>(&caminho.org_id)?;
     let id = id_da_url::<ProductCategoryId>(&caminho.category_id)?;
     identidade.exigir_org(org)?;
-    let categoria = estado.store.categorias().obter(org, id)?;
+    let categoria = estado.store.categories().obter(org, id)?;
     Ok(Json(CategoriaJson::de(&categoria)))
 }
 
@@ -215,14 +218,14 @@ pub async fn atualizar(
         Some(texto) => Some(status_pedido(texto)?),
         None => None,
     };
-    let mudanca = MudancaCategoria {
-        nome: corpo.name.as_deref().map(validar_nome).transpose()?,
-        descricao: corpo.description,
+    let mudanca = CategoryChange {
+        name: corpo.name.as_deref().map(validar_nome).transpose()?,
+        description: corpo.description,
         status,
     };
     let categoria = estado
         .store
-        .categorias()
+        .categories()
         .atualizar(org, id, esperada, mudanca)?;
     super::auditoria::registrar(
         &estado,
@@ -255,11 +258,14 @@ fn contar_vinculos(
     let mut produtos = 0u64;
     let mut apos = None;
     loop {
-        let lote = estado
-            .store
-            .produtos()
-            .listar(org, Pagina { apos, limite: LOTE })?;
-        produtos += lote.iter().filter(|p| p.categoria_id == id).count() as u64;
+        let lote = estado.store.products().listar(
+            org,
+            Page {
+                after: apos,
+                limit: LOTE,
+            },
+        )?;
+        produtos += lote.iter().filter(|p| p.category_id == id).count() as u64;
         if lote.len() < LOTE as usize {
             break;
         }
@@ -268,12 +274,15 @@ fn contar_vinculos(
     let mut agentes = 0u64;
     let mut apos = None;
     loop {
-        let lote = estado
-            .store
-            .agentes()
-            .listar(org, Pagina { apos, limite: LOTE })?;
+        let lote = estado.store.agents().listar(
+            org,
+            Page {
+                after: apos,
+                limit: LOTE,
+            },
+        )?;
         for agente in &lote {
-            let usadas = estado.store.agentes().categorias(org, agente.id)?;
+            let usadas = estado.store.agents().categorias(org, agente.id)?;
             if usadas.contains(&id) {
                 agentes += 1;
             }
@@ -329,7 +338,7 @@ pub async fn excluir(
             .com_detalhes(json!({ "produtos": produtos, "agentes": agentes })));
         }
     }
-    estado.store.categorias().excluir(org, id)?;
+    estado.store.categories().excluir(org, id)?;
     super::auditoria::registrar(
         &estado,
         &identidade,

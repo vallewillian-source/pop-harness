@@ -33,7 +33,7 @@ use poph_server::encaminhamento::{
     CABECALHO_TIMESTAMP, assinar, hash_do_corpo, nonce_novo,
 };
 use poph_server::evolution::CanalEvolution;
-use poph_store::{NovaOrg, Pagina, Store};
+use poph_store::{NewOrg, Page, Store};
 use poph_types::config::{ClusterConfig, ClusterInstance, GlobalTokenConfig};
 use poph_types::{HarnessConfig, IntegrationId, OrgId, RecordStatus, Secret};
 use rand_core::OsRng;
@@ -140,7 +140,7 @@ fn preparar(rotulo: &str) -> Preparo {
         hash: hash_argon2(TOKEN_GLOBAL),
     }];
     config.validar().expect("configuração válida");
-    let store = Arc::new(Store::abrir(&config).expect("abre o banco"));
+    let store = Arc::new(Store::open(&config).expect("abre o banco"));
     Preparo {
         store,
         config,
@@ -342,9 +342,9 @@ async fn duas_instancias(
     let preparo_b = preparar(&format!("{rotulo}-b"));
     let org = preparo_b
         .store
-        .orgaos()
-        .criar(NovaOrg {
-            nome: "Org da instância b".to_owned(),
+        .orgs()
+        .criar(NewOrg {
+            name: "Org da instância b".to_owned(),
             slug: "org-da-instancia-b".to_owned(),
             config_json: String::new(),
         })
@@ -463,7 +463,7 @@ async fn admin_e_webhook_de_org_remota_chegam_na_dona() {
 
     // `a` não tem a org no banco: quem respondeu foi `b`.
     assert!(
-        a.store.orgaos().por_slug("org-da-instancia-b").is_err(),
+        a.store.orgs().por_slug("org-da-instancia-b").is_err(),
         "a org não pode existir no banco de `a`"
     );
 
@@ -750,9 +750,9 @@ async fn dona_fora_do_ar_da_503() {
     let preparo = preparar("fora-do-ar-a");
     let org = preparo
         .store
-        .orgaos()
-        .criar(NovaOrg {
-            nome: "Org fora do ar".to_owned(),
+        .orgs()
+        .criar(NewOrg {
+            name: "Org fora do ar".to_owned(),
             slug: "org-fora-do-ar".to_owned(),
             config_json: String::new(),
         })
@@ -1027,9 +1027,9 @@ async fn listagem_com_cluster_soma_instancias_e_marca_a_fora_do_ar() {
     // Uma org nova direto no banco de `a`: aparece com `instancia: "a"` na mesma lista.
     let local_org = a
         .store
-        .orgaos()
-        .criar(NovaOrg {
-            nome: "Org local".to_owned(),
+        .orgs()
+        .criar(NewOrg {
+            name: "Org local".to_owned(),
             slug: "org-local-hr50b2".to_owned(),
             config_json: String::new(),
         })
@@ -1077,43 +1077,39 @@ async fn listagem_com_cluster_traz_agentes_ativos_de_cada_instancia() {
     // Na dona (`b`): 2 agentes ativos e 1 inativo na org de prova.
     for slug in ["agente-um", "agente-dois"] {
         b.store
-            .agentes()
+            .agents()
             .criar(
                 org,
-                poph_store::NovoAgente {
-                    nome: format!("Agente {slug}"),
+                poph_store::NewAgent {
+                    name: format!("Agente {slug}"),
                     slug: slug.to_owned(),
-                    ..poph_store::NovoAgente::default()
+                    ..poph_store::NewAgent::default()
                 },
             )
             .expect("cria o agente em b");
     }
     let inativo = b
         .store
-        .agentes()
+        .agents()
         .criar(
             org,
-            poph_store::NovoAgente {
-                nome: "Agente inativo".to_owned(),
+            poph_store::NewAgent {
+                name: "Agente inativo".to_owned(),
                 slug: "agente-inativo".to_owned(),
-                ..poph_store::NovoAgente::default()
+                ..poph_store::NewAgent::default()
             },
         )
         .expect("cria o agente inativo em b");
-    let lido = b
-        .store
-        .agentes()
-        .obter(org, inativo.id)
-        .expect("lê o agente");
+    let lido = b.store.agents().get(org, inativo.id).expect("lê o agente");
     b.store
-        .agentes()
+        .agents()
         .atualizar(
             org,
             inativo.id,
-            lido.versao,
-            poph_store::MudancaAgente {
-                status: Some(poph_store::Status::Inativo),
-                ..poph_store::MudancaAgente::default()
+            lido.version,
+            poph_store::AgentChange {
+                status: Some(poph_store::Status::Inactive),
+                ..poph_store::AgentChange::default()
             },
         )
         .expect("inativa o agente em b");
@@ -1122,22 +1118,22 @@ async fn listagem_com_cluster_traz_agentes_ativos_de_cada_instancia() {
     // `default_instance` (`b`), então a org local entra no mapa com o `id` dela em `a`.
     let local_org = a
         .store
-        .orgaos()
-        .criar(NovaOrg {
-            nome: "Org local".to_owned(),
+        .orgs()
+        .criar(NewOrg {
+            name: "Org local".to_owned(),
             slug: "org-local-cf03a".to_owned(),
             config_json: String::new(),
         })
         .expect("cria org local")
         .id;
     a.store
-        .agentes()
+        .agents()
         .criar(
             local_org,
-            poph_store::NovoAgente {
-                nome: "Agente local".to_owned(),
+            poph_store::NewAgent {
+                name: "Agente local".to_owned(),
                 slug: "agente-local".to_owned(),
-                ..poph_store::NovoAgente::default()
+                ..poph_store::NewAgent::default()
             },
         )
         .expect("cria o agente local");
@@ -1215,7 +1211,7 @@ async fn rotas_de_fluxos_e_fichas_sao_encaminhadas_para_a_dona() {
 
     // `a` não tem a org: se atendesse localmente, tudo abaixo sairia 404.
     assert!(
-        a.store.orgaos().por_slug("org-da-instancia-b").is_err(),
+        a.store.orgs().por_slug("org-da-instancia-b").is_err(),
         "a org não pode existir no banco de `a`"
     );
 
@@ -1357,7 +1353,7 @@ async fn rotas_de_fluxos_e_fichas_sao_encaminhadas_para_a_dona() {
     assert_eq!(
         b.store
             .fichas()
-            .listar(org, &Default::default(), Pagina::default())
+            .listar(org, &Default::default(), Page::default())
             .expect("lista em b")
             .len(),
         1
@@ -1365,7 +1361,7 @@ async fn rotas_de_fluxos_e_fichas_sao_encaminhadas_para_a_dona() {
     assert_eq!(
         b.store
             .conversas()
-            .listar(org, None, Pagina::default())
+            .listar(org, None, Page::default())
             .expect("conversas em b")
             .len(),
         1,
@@ -1374,7 +1370,7 @@ async fn rotas_de_fluxos_e_fichas_sao_encaminhadas_para_a_dona() {
 
     // Nada disso existe no banco de `a`: tudo foi gravado pela dona, via encaminhamento.
     assert!(
-        a.store.orgaos().obter(org).is_err(),
+        a.store.orgs().get(org).is_err(),
         "a org não pode passar a existir em `a`"
     );
 }

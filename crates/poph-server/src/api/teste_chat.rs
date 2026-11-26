@@ -34,8 +34,8 @@ use futures::stream;
 use poph_agent::turno::{Entrada, EventoTurno, Observador, ResumoTurno, TransporteConsole};
 use poph_files::{Conteudo, ErroArquivo};
 use poph_store::{
-    AnexoRegistro, Conversa, Direcao, ItemSaida, Mensagem, NovaConversa, NovaMensagem,
-    NovoAnexoCanal, Pagina, Papel, Turno,
+    AttachmentRecord, Conversa, Direction, Mensagem, NewChannelAttachment, NewConversation,
+    NewMessage, OutboxItem, Page, Role, Turno,
 };
 use poph_types::{AgentId, AttachmentId, ConversationId, MessageId, OrgId};
 use serde::Deserialize;
@@ -137,59 +137,59 @@ fn conversa_json(c: &Conversa, mensagens: u64) -> Value {
         "org_id": c.org_id.to_string(),
         "agent_id": c.agent_id.to_string(),
         "channel": c.canal,
-        "status": c.status.como_texto(),
-        "summary": c.resumo,
-        "version": c.versao,
+        "status": c.status.as_text(),
+        "summary": c.summary,
+        "version": c.version,
         "message_count": mensagens,
-        "created_at": c.criado_em,
-        "updated_at": c.atualizado_em,
-        "last_message_at": c.ultima_mensagem_em,
+        "created_at": c.created_at,
+        "updated_at": c.updated_at,
+        "last_message_at": c.last_message_at,
     })
 }
 
-fn anexo_json(a: &AnexoRegistro) -> Value {
+fn anexo_json(a: &AttachmentRecord) -> Value {
     json!({
         "id": a.id.to_string(),
-        "name": a.nome,
+        "name": a.name,
         "mime": a.mime,
-        "size_bytes": a.tamanho_bytes,
+        "size_bytes": a.size_bytes,
         "sha256": a.sha256,
-        "extraction_status": a.status_extracao,
-        "has_text": a.texto_extraido.as_ref().is_some_and(|t| !t.trim().is_empty()),
+        "extraction_status": a.extraction_status,
+        "has_text": a.extracted_text.as_ref().is_some_and(|t| !t.trim().is_empty()),
     })
 }
 
-fn mensagem_json(m: &Mensagem, anexos: &[AnexoRegistro]) -> Value {
+fn mensagem_json(m: &Mensagem, anexos: &[AttachmentRecord]) -> Value {
     json!({
         "id": m.id.to_string(),
         "conversation_id": m.conversation_id.to_string(),
-        "direction": m.direcao.como_texto(),
-        "role": m.papel.como_texto(),
+        "direction": m.direction.as_text(),
+        "role": m.role.as_text(),
         "text": m.texto,
         "attachments": anexos.iter().map(anexo_json).collect::<Vec<_>>(),
         "turn_id": m.turn_id.map(|v| v.to_string()),
-        "created_at": m.criado_em,
+        "created_at": m.created_at,
     })
 }
 
 fn turno_json(t: &Turno, arquivos: &[Value]) -> Value {
     // HR-47b: `tools` continua sendo só a lista de nomes (contrato antigo); `tool_calls` traz o
     // detalhe por chamada (executada/recusada, motivo, tempo, argumentos e resultado resumidos).
-    let (nomes, chamadas) = super::partes_das_ferramentas(&t.ferramentas_json);
+    let (nomes, chamadas) = super::partes_das_ferramentas(&t.tools_json);
     json!({
         "id": t.id.to_string(),
-        "state": t.estado.como_texto(),
+        "state": t.estado.as_text(),
         "jev": serde_json::from_str::<Value>(&t.jev_json).unwrap_or(Value::Null),
-        "retrieved": serde_json::from_str::<Value>(&t.trechos_json).unwrap_or(Value::Null),
+        "retrieved": serde_json::from_str::<Value>(&t.passages_json).unwrap_or(Value::Null),
         "tools": nomes,
         "tool_calls": chamadas,
-        "timings": serde_json::from_str::<Value>(&t.tempos_json).unwrap_or(Value::Null),
-        "input_tokens": t.tokens_entrada,
-        "output_tokens": t.tokens_saida,
-        "cost_micros": t.custo_micros,
-        "error": t.erro,
-        "started_at": t.iniciado_em,
-        "finished_at": t.finalizado_em,
+        "timings": serde_json::from_str::<Value>(&t.times_json).unwrap_or(Value::Null),
+        "input_tokens": t.input_tokens,
+        "output_tokens": t.output_tokens,
+        "cost_micros": t.cost_micros,
+        "error": t.error,
+        "started_at": t.started_at,
+        "finished_at": t.finished_at,
         // HR-46d: arquivos que o **agente** enfileirou para enviar neste turno.
         "files_out": arquivos,
     })
@@ -200,8 +200,8 @@ fn turno_json(t: &Turno, arquivos: &[Value]) -> Value {
 /// Só metadados de apresentação: o `arquivo_id` é a chave da biblioteca, que é o que a rota
 /// `/files/{id}/content` aceita. O `blob_ref` e o `conteudo_json` cru **nunca** saem daqui — o
 /// caminho do blob é interno, e o Console o obtém só pelo endpoint de conteúdo, com autorização.
-fn arquivo_enviado_json(item: &ItemSaida) -> Value {
-    let payload: Value = serde_json::from_str(&item.conteudo_json).unwrap_or(Value::Null);
+fn arquivo_enviado_json(item: &OutboxItem) -> Value {
+    let payload: Value = serde_json::from_str(&item.content_json).unwrap_or(Value::Null);
     let campo = |nome: &str| payload.get(nome).cloned().unwrap_or(Value::Null);
     json!({
         "id": item.id.to_string(),
@@ -212,8 +212,8 @@ fn arquivo_enviado_json(item: &ItemSaida) -> Value {
         "mime": campo("mime"),
         "size_bytes": campo("tamanho_bytes"),
         "sha256": campo("sha256"),
-        "state": item.estado.como_texto(),
-        "created_at": item.criado_em,
+        "state": item.estado.as_text(),
+        "created_at": item.created_at,
     })
 }
 
@@ -224,8 +224,8 @@ fn agente_e_conversa(
     agente: AgentId,
     conversa: ConversationId,
 ) -> Result<Conversa, ApiError> {
-    estado.store.agentes().obter(org, agente)?;
-    let conversa = estado.store.conversas().obter(org, conversa)?;
+    estado.store.agents().get(org, agente)?;
+    let conversa = estado.store.conversas().get(org, conversa)?;
     if conversa.agent_id != agente || conversa.canal != CANAL_DE_TESTE {
         return Err(ApiError::nao_encontrado(
             "conversa de teste",
@@ -244,16 +244,16 @@ pub async fn criar(
     let org = id_da_url::<OrgId>(&c.org_id)?;
     ident.exigir_org(org)?;
     let agente = id_da_url::<AgentId>(&c.agent_id)?;
-    estado.store.agentes().obter(org, agente)?;
+    estado.store.agents().get(org, agente)?;
 
     let conversa = estado.store.conversas().criar(
         org,
-        NovaConversa {
+        NewConversation {
             agent_id: agente,
             integration_id: None,
             canal: CANAL_DE_TESTE.to_owned(),
             peer_externo: None,
-            departamento_alvo: None,
+            target_department: None,
         },
     )?;
     super::auditoria::registrar(
@@ -277,11 +277,11 @@ pub async fn listar(
     let org = id_da_url::<OrgId>(&c.org_id)?;
     ident.exigir_org(org)?;
     let agente = id_da_url::<AgentId>(&c.agent_id)?;
-    estado.store.agentes().obter(org, agente)?;
+    estado.store.agents().get(org, agente)?;
     let pagina = q.pagina()?;
-    let limite = pagina.limite.min(LIMITE_LISTAGEM);
+    let limite = pagina.limit.min(LIMITE_LISTAGEM);
     let apos = pagina
-        .apos
+        .after
         .map(|id| id.to_string().parse::<ConversationId>())
         .transpose()
         .map_err(|_| ApiError::invalido("cursor não é um id de conversa"))?;
@@ -297,7 +297,7 @@ pub async fn listar(
         .map(|conversa| {
             let contagem = estado
                 .store
-                .mensagens()
+                .messages()
                 .contar(org, conversa.id)
                 .unwrap_or(0);
             conversa_json(conversa, contagem)
@@ -324,31 +324,30 @@ pub async fn historico(
     let mensagens =
         estado
             .store
-            .mensagens()
-            .listar(org, conversa_id, Pagina::com_limite(LIMITE_HISTORICO))?;
+            .messages()
+            .listar(org, conversa_id, Page::with_limit(LIMITE_HISTORICO))?;
     let messages: Vec<Value> = mensagens
         .iter()
         .map(|mensagem| {
-            let anexos = if mensagem.anexos_json.trim() == "[]" {
+            let anexos = if mensagem.attachments_json.trim() == "[]" {
                 Vec::new()
             } else {
                 estado
                     .store
-                    .mensagens()
+                    .messages()
                     .anexos(org, mensagem.id)
                     .unwrap_or_default()
             };
             mensagem_json(mensagem, &anexos)
         })
         .collect();
-    let turnos =
-        estado
-            .store
-            .turnos()
-            .listar(org, conversa_id, Pagina::com_limite(LIMITE_TURNOS))?;
+    let turnos = estado
+        .store
+        .turns()
+        .listar(org, conversa_id, Page::with_limit(LIMITE_TURNOS))?;
     // HR-46d: arquivos que o agente mandou nesta conversa, agrupados por turno. A leitura é uma
     // consulta só na `outbox`; o turno que não mandou arquivo fica com a lista vazia.
-    let arquivos = estado.store.caixa_saida().listar_arquivos_da_conversa(
+    let arquivos = estado.store.outbox().listar_arquivos_da_conversa(
         org,
         conversa_id,
         LIMITE_ARQUIVOS_ENVIADOS,
@@ -407,8 +406,8 @@ pub async fn anexo_conteudo(
     let anexo = id_da_url::<AttachmentId>(&c.attachment_id)?;
     agente_e_conversa(&estado, org, agente, conversa)?;
     // A mensagem precisa ser desta conversa (o repositório já filtra por org e conversa).
-    estado.store.mensagens().obter(org, conversa, mensagem)?;
-    let anexos = estado.store.mensagens().anexos(org, mensagem)?;
+    estado.store.messages().obter(org, conversa, mensagem)?;
+    let anexos = estado.store.messages().anexos(org, mensagem)?;
     let anexo = anexos
         .into_iter()
         .find(|a| a.id == anexo)
@@ -422,7 +421,7 @@ pub async fn anexo_conteudo(
     Ok(super::conteudo::resposta(
         bytes,
         &anexo.mime,
-        &anexo.nome,
+        &anexo.name,
         &anexo.sha256,
     ))
 }
@@ -447,7 +446,7 @@ pub async fn reabrir(
             .reabrir_auditado(org, conversa_id, versao, ident.ator_id())?;
     let contagem = estado
         .store
-        .mensagens()
+        .messages()
         .contar(org, conversa.id)
         .unwrap_or(0);
     Ok(Json(conversa_json(&conversa, contagem)))
@@ -506,25 +505,25 @@ pub async fn mensagem(
     }
     let (anexos, recebidos) = receber_arquivos(&estado, org, arquivos).await?;
 
-    let mensagem = estado.store.mensagens().gravar_com_anexos(
+    let mensagem = estado.store.messages().gravar_com_anexos(
         org,
-        NovaMensagem {
+        NewMessage {
             conversation_id: conversa_id,
-            direcao: Direcao::Entrada,
-            papel: Papel::Usuario,
+            direction: Direction::Inbound,
+            role: Role::User,
             texto: texto.clone(),
-            anexos_json: "[]".to_owned(),
+            attachments_json: "[]".to_owned(),
             id_externo: None,
             turn_id: None,
-            origem: poph_store::Origem::Agente,
-            autor_nome: None,
+            origin: poph_store::Origin::Agente,
+            author_name: None,
         },
         &anexos,
     )?;
     estado
         .store
         .conversas()
-        .tocar(org, conversa_id, estado.store.agora())?;
+        .tocar(org, conversa_id, estado.store.now())?;
     super::auditoria::registrar(
         &estado,
         &ident,
@@ -671,7 +670,7 @@ async fn receber_arquivos(
     estado: &Estado,
     org: OrgId,
     arquivos: Vec<(String, Vec<u8>)>,
-) -> Result<(Vec<NovoAnexoCanal>, Vec<Value>), ApiError> {
+) -> Result<(Vec<NewChannelAttachment>, Vec<Value>), ApiError> {
     if arquivos.is_empty() {
         return Ok((Vec::new(), Vec::new()));
     }
@@ -711,14 +710,14 @@ async fn receber_arquivos(
             "sha256": metadados.sha256,
             "extraction_status": status_extracao,
         }));
-        anexos.push(NovoAnexoCanal {
-            nome: metadados.nome_original,
+        anexos.push(NewChannelAttachment {
+            name: metadados.nome_original,
             mime: metadados.mime_real,
-            tamanho_bytes: metadados.tamanho_bytes,
+            size_bytes: metadados.tamanho_bytes,
             sha256: metadados.sha256,
             blob_path,
-            texto_extraido,
-            status_extracao,
+            extracted_text: texto_extraido,
+            extraction_status: status_extracao,
         });
     }
     Ok((anexos, resumo))
@@ -835,7 +834,7 @@ fn evento_fim(resumo: &ResumoTurno) -> Event {
         .event("fim")
         .json_data(json!({
             "turn_id": resumo.turno.to_string(),
-            "state": resumo.estado.como_texto(),
+            "state": resumo.estado.as_text(),
             "reason": resumo.motivo_fim,
             "text": resumo.texto,
             "error": resumo.erro,

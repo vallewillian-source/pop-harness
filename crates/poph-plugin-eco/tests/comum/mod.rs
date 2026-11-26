@@ -14,7 +14,8 @@ use poph_agent::fila_integracao::{ConversaDoCanal, EnvioPeloCanal, InboxDoCanal}
 use poph_agent::metricas::MetricasMemoria;
 use poph_plugins::{Espera, LimitesSupervisor, OpcoesPlugin, Supervisor};
 use poph_store::{
-    Conversa, EstadoSaida, ItemSaida, NovaConversa, NovaOrg, NovaSaida, NovoAgente, Pagina, Store,
+    Conversa, NewAgent, NewConversation, NewOrg, NewOutboxItem, OutboxItem, OutboxState, Page,
+    Store,
 };
 use poph_types::{ConversationId, EventSink, Integration, IntegrationId, OrgId};
 
@@ -75,26 +76,25 @@ impl Cenario {
     pub async fn novo(rotulo: &str, programa: &PathBuf, peer: Option<&str>) -> Self {
         let pasta = pasta_temporaria(rotulo);
         let store = Arc::new(
-            Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
-                .expect("abre o banco"),
+            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco"),
         );
         let org = store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: format!("Org {rotulo}"),
+            .orgs()
+            .criar(NewOrg {
+                name: format!("Org {rotulo}"),
                 slug: format!("org-{rotulo}"),
                 config_json: String::new(),
             })
             .expect("cria a org")
             .id;
         let agente = store
-            .agentes()
+            .agents()
             .criar(
                 org,
-                NovoAgente {
-                    nome: format!("Agente {rotulo}"),
+                NewAgent {
+                    name: format!("Agente {rotulo}"),
                     slug: format!("agente-{rotulo}"),
-                    ..NovoAgente::default()
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente")
@@ -103,12 +103,12 @@ impl Cenario {
             .conversas()
             .criar(
                 org,
-                NovaConversa {
+                NewConversation {
                     agent_id: agente,
                     integration_id: None,
                     canal: "eco".to_owned(),
                     peer_externo: peer.map(str::to_owned),
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("abre a conversa");
@@ -155,17 +155,17 @@ impl Cenario {
     }
 
     /// Enfileira um texto na `outbox` da conversa do cenário.
-    pub fn enfileirar_texto(&self, turno: poph_types::TurnId, texto: &str) -> ItemSaida {
+    pub fn enfileirar_texto(&self, turno: poph_types::TurnId, texto: &str) -> OutboxItem {
         self.store
-            .caixa_saida()
+            .outbox()
             .enfileirar(
                 self.org,
-                NovaSaida {
+                NewOutboxItem {
                     conversation_id: self.conversa.id,
                     turn_id: turno,
                     seq: 0,
                     tipo: "text".to_owned(),
-                    conteudo_json: serde_json::json!({"texto": texto}).to_string(),
+                    content_json: serde_json::json!({"texto": texto}).to_string(),
                 },
             )
             .expect("enfileira o texto")
@@ -173,9 +173,9 @@ impl Cenario {
     }
 
     /// Estado atual de um item da `outbox`.
-    pub fn estado_do_item(&self, id: poph_types::OutboxId) -> EstadoSaida {
+    pub fn estado_do_item(&self, id: poph_types::OutboxId) -> OutboxState {
         self.store
-            .caixa_saida()
+            .outbox()
             .obter(self.org, id)
             .expect("lê o item de saída")
             .estado
@@ -184,8 +184,8 @@ impl Cenario {
     /// Mensagens gravadas na conversa do cenário.
     pub fn mensagens(&self) -> Vec<poph_store::Mensagem> {
         self.store
-            .mensagens()
-            .listar(self.org, self.conversa.id, Pagina::com_limite(50))
+            .messages()
+            .listar(self.org, self.conversa.id, Page::with_limit(50))
             .expect("lista as mensagens")
     }
 

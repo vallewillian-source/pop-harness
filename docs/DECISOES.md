@@ -269,7 +269,7 @@ translation, each with its own CI gate.
   stored in the database.
 - **Migration.** A published migration may lose its comments and nothing else: file name, tables, columns, indexes
   and the SQL stay. The runner stores version and file name, with no checksum of the content
-  (`crates/poph-store/src/migracoes.rs`), so a database already migrated sees no difference; the proof is the schema
+  (`crates/poph-store/src/migrations.rs`), so a database already migrated sees no difference; the proof is the schema
   of a database migrated from scratch and of an old one, identical before and after.
 
 Why: the code has to be readable by any developer, and the repository is public.

@@ -39,8 +39,8 @@ use poph_jev::{
     ErroJev, G8_DESPEDIDA_PADRAO, JevFalso, LoteResposta, MotorJev, Resposta as RespostaJev,
 };
 use poph_store::{
-    Direcao, EstadoTurno, MudancaAgente, NovaConversa, NovaMensagem, NovoAgente, Pagina, Papel,
-    StatusConversa, Store,
+    AgentChange, ConversationStatus, Direction, NewAgent, NewConversation, NewMessage, Page, Role,
+    Store, TurnState,
 };
 use poph_types::{
     AgentId, ConversationId, JevGates, MessageId, OrgId, StructuredInstructions, ToolConfig,
@@ -127,27 +127,26 @@ impl Cenario {
         let _ = std::fs::remove_dir_all(&pasta);
         std::fs::create_dir_all(&pasta).expect("pasta do teste");
         let store = Arc::new(
-            Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
-                .expect("abre o banco"),
+            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco"),
         );
         let org = store
-            .orgaos()
-            .criar(poph_store::NovaOrg {
-                nome: format!("Org {rotulo}"),
+            .orgs()
+            .criar(poph_store::NewOrg {
+                name: format!("Org {rotulo}"),
                 slug: format!("org-{rotulo}-{}", AgentId::generate()),
                 config_json: "{}".to_owned(),
             })
             .expect("cria a org")
             .id;
         let agente = store
-            .agentes()
+            .agents()
             .criar(
                 org,
-                NovoAgente {
-                    nome: format!("Bia {rotulo}"),
+                NewAgent {
+                    name: format!("Bia {rotulo}"),
                     slug: format!("bia-{rotulo}"),
-                    janela_agrupamento_ms: 0,
-                    ..NovoAgente::default()
+                    grouping_window_ms: 0,
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente");
@@ -160,7 +159,7 @@ impl Cenario {
             ..StructuredInstructions::default()
         };
         store
-            .instrucoes()
+            .instructions()
             .salvar(
                 org,
                 agente.id,
@@ -171,15 +170,15 @@ impl Cenario {
             )
             .expect("grava as instruções");
         store
-            .agentes()
+            .agents()
             .atualizar(
                 org,
                 agente.id,
-                agente.versao,
-                MudancaAgente {
+                agente.version,
+                AgentChange {
                     jev_json: Some(jev_json.to_owned()),
-                    handoff_ativo: Some(true),
-                    ..MudancaAgente::default()
+                    handoff_active: Some(true),
+                    ..AgentChange::default()
                 },
             )
             .expect("grava o jev_json do agente");
@@ -187,12 +186,12 @@ impl Cenario {
             .conversas()
             .criar(
                 org,
-                NovaConversa {
+                NewConversation {
                     agent_id: agente.id,
                     integration_id: None,
                     canal: "cli".to_owned(),
                     peer_externo: None,
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("abre a conversa")
@@ -214,19 +213,19 @@ impl Cenario {
     /// Mensagem que o próprio agente mandou antes (a conversa já tinha resposta).
     fn resposta_do_agente(&self, texto: &str) {
         self.store
-            .mensagens()
+            .messages()
             .gravar(
                 self.org,
-                NovaMensagem {
+                NewMessage {
                     conversation_id: self.conversa,
-                    direcao: Direcao::Saida,
-                    papel: Papel::Assistente,
+                    direction: Direction::Outbound,
+                    role: Role::Assistant,
                     texto: texto.to_owned(),
-                    anexos_json: "[]".to_owned(),
+                    attachments_json: "[]".to_owned(),
                     id_externo: None,
                     turn_id: None,
-                    origem: poph_store::Origem::Agente,
-                    autor_nome: None,
+                    origin: poph_store::Origin::Agente,
+                    author_name: None,
                 },
             )
             .expect("grava a resposta anterior");
@@ -234,19 +233,19 @@ impl Cenario {
 
     fn falar(&self, texto: &str) -> MessageId {
         self.store
-            .mensagens()
+            .messages()
             .gravar(
                 self.org,
-                NovaMensagem {
+                NewMessage {
                     conversation_id: self.conversa,
-                    direcao: Direcao::Entrada,
-                    papel: Papel::Usuario,
+                    direction: Direction::Inbound,
+                    role: Role::User,
                     texto: texto.to_owned(),
-                    anexos_json: "[]".to_owned(),
+                    attachments_json: "[]".to_owned(),
                     id_externo: None,
                     turn_id: None,
-                    origem: poph_store::Origem::Agente,
-                    autor_nome: None,
+                    origin: poph_store::Origin::Agente,
+                    author_name: None,
                 },
             )
             .expect("grava a mensagem")
@@ -305,11 +304,11 @@ impl Cenario {
     /// Mensagens de saída do agente nesta conversa, da mais antiga para a mais nova.
     fn saidas(&self) -> Vec<String> {
         self.store
-            .mensagens()
-            .listar(self.org, self.conversa, Pagina::com_limite(200))
+            .messages()
+            .listar(self.org, self.conversa, Page::with_limit(200))
             .expect("lista as mensagens")
             .into_iter()
-            .filter(|mensagem| mensagem.direcao == Direcao::Saida)
+            .filter(|mensagem| mensagem.direction == Direction::Outbound)
             .map(|mensagem| mensagem.texto)
             .collect()
     }
@@ -317,18 +316,18 @@ impl Cenario {
     /// Itens de saída ainda na fila (o que o transporte entregaria).
     fn fila(&self) -> Vec<String> {
         self.store
-            .caixa_saida()
+            .outbox()
             .listar_pendentes(self.org, 50)
             .expect("lista a fila de saída")
             .into_iter()
-            .map(|item| item.conteudo_json)
+            .map(|item| item.content_json)
             .collect()
     }
 
-    fn status(&self) -> StatusConversa {
+    fn status(&self) -> ConversationStatus {
         self.store
             .conversas()
-            .obter(self.org, self.conversa)
+            .get(self.org, self.conversa)
             .expect("lê a conversa")
             .status
     }
@@ -438,7 +437,7 @@ async fn g8_encerra_sem_chamar_o_modelo_e_grava_a_despedida_padrao() {
     let gatilho = cenario.falar(ENCERRA);
     let resumo = cenario.turno(&motor, gatilho).await;
 
-    assert_eq!(resumo.estado, EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, TurnState::Completed);
     assert_eq!(resumo.texto, G8_DESPEDIDA_PADRAO);
     assert_eq!(
         provedor.recebidos().len(),
@@ -458,7 +457,7 @@ async fn g8_encerra_sem_chamar_o_modelo_e_grava_a_despedida_padrao() {
     assert_eq!(cenario.metricas.turnos_concluidos.value(), 1);
     assert_eq!(
         cenario.status(),
-        StatusConversa::Aberta,
+        ConversationStatus::Open,
         "o encerramento não muda a conversa"
     );
 }
@@ -501,7 +500,7 @@ async fn g8_despedida_vazia_encerra_sem_mandar_mensagem() {
     let gatilho = cenario.falar(ENCERRA);
     let resumo = cenario.turno(&motor, gatilho).await;
 
-    assert_eq!(resumo.estado, EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, TurnState::Completed);
     assert!(resumo.texto.is_empty());
     assert_eq!(provedor.recebidos().len(), 0);
     assert_eq!(
@@ -733,10 +732,10 @@ async fn g8_com_transferencia_do_g1_a_transferencia_vence() {
     let gatilho = cenario.falar(texto);
     let resumo = cenario.turno(&motor, gatilho).await;
 
-    assert_eq!(resumo.estado, EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, TurnState::Completed);
     assert_eq!(
         cenario.status(),
-        StatusConversa::Transferida,
+        ConversationStatus::Transferred,
         "o G1 transfere"
     );
     assert_eq!(provedor.recebidos().len(), 0);
@@ -762,7 +761,7 @@ async fn g8_encerrando_nao_espera_a_busca_em_andamento() {
     let resumo = cenario.turno(&motor, gatilho).await;
     let levou = inicio.elapsed();
 
-    assert_eq!(resumo.estado, EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, TurnState::Completed);
     assert_eq!(provedor.recebidos().len(), 0);
     assert!(
         levou < Duration::from_millis(250),

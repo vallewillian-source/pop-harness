@@ -26,8 +26,8 @@ use poph_jev::{
     RISCO_ANIMAL, RISCO_INGESTAO, RISCO_NENHUM, RISCO_OUTRO, RISCO_PERGUNTA_ID, Resposta,
 };
 use poph_store::{
-    Direcao, EstadoTurno, MudancaAgente, NovaConversa, NovaMensagem, NovaOrg, NovoAgente, Pagina,
-    Papel, Store,
+    AgentChange, Direction, NewAgent, NewConversation, NewMessage, NewOrg, Page, Role, Store,
+    TurnState,
 };
 use poph_types::{AgentId, ConversationId, JevGates, MessageId, OrgId};
 
@@ -85,32 +85,31 @@ impl Cenario {
         let _ = std::fs::remove_dir_all(&pasta);
         std::fs::create_dir_all(&pasta).expect("pasta do teste");
         let store = Arc::new(
-            Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
-                .expect("abre o banco"),
+            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco"),
         );
         let org = store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: format!("Org {rotulo}"),
+            .orgs()
+            .criar(NewOrg {
+                name: format!("Org {rotulo}"),
                 slug: format!("org-{rotulo}-{}", AgentId::generate()),
                 config_json: "{}".to_owned(),
             })
             .expect("cria a org")
             .id;
         let agente = store
-            .agentes()
+            .agents()
             .criar(
                 org,
-                NovoAgente {
-                    nome: format!("Bia {rotulo}"),
+                NewAgent {
+                    name: format!("Bia {rotulo}"),
                     slug: format!("bia-{rotulo}"),
-                    ..NovoAgente::default()
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente")
             .id;
         store
-            .instrucoes()
+            .instructions()
             .salvar(
                 org,
                 agente,
@@ -122,14 +121,14 @@ impl Cenario {
             .expect("grava as instruções");
         if handoff_ativo {
             store
-                .agentes()
+                .agents()
                 .atualizar(
                     org,
                     agente,
                     1,
-                    MudancaAgente {
-                        handoff_ativo: Some(true),
-                        ..MudancaAgente::default()
+                    AgentChange {
+                        handoff_active: Some(true),
+                        ..AgentChange::default()
                     },
                 )
                 .expect("liga o handoff");
@@ -152,12 +151,12 @@ impl Cenario {
             .conversas()
             .criar(
                 self.org,
-                NovaConversa {
+                NewConversation {
                     agent_id: self.agente,
                     integration_id: None,
                     canal: "cli".to_owned(),
                     peer_externo: None,
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("abre a conversa")
@@ -166,19 +165,19 @@ impl Cenario {
 
     fn falar(&self, conversa: ConversationId, texto: &str) -> MessageId {
         self.store
-            .mensagens()
+            .messages()
             .gravar(
                 self.org,
-                NovaMensagem {
+                NewMessage {
                     conversation_id: conversa,
-                    direcao: Direcao::Entrada,
-                    papel: Papel::Usuario,
+                    direction: Direction::Inbound,
+                    role: Role::User,
                     texto: texto.to_owned(),
-                    anexos_json: "[]".to_owned(),
+                    attachments_json: "[]".to_owned(),
                     id_externo: None,
                     turn_id: None,
-                    origem: poph_store::Origem::Agente,
-                    autor_nome: None,
+                    origin: poph_store::Origin::Agente,
+                    author_name: None,
                 },
             )
             .expect("grava a mensagem")
@@ -188,19 +187,19 @@ impl Cenario {
     fn situacoes_de_handoff(&self, situacoes: &[&str]) {
         let atual = self
             .store
-            .agentes()
-            .obter(self.org, self.agente)
+            .agents()
+            .get(self.org, self.agente)
             .expect("lê o agente");
         let json = serde_json::json!({ "situacoes_de_handoff": situacoes }).to_string();
         self.store
-            .agentes()
+            .agents()
             .atualizar(
                 self.org,
                 self.agente,
-                atual.versao,
-                MudancaAgente {
+                atual.version,
+                AgentChange {
                     jev_json: Some(json),
-                    ..MudancaAgente::default()
+                    ..AgentChange::default()
                 },
             )
             .expect("ajusta o jev_json do agente");
@@ -256,46 +255,46 @@ impl Cenario {
     }
 
     /// Textos das mensagens da conversa, na ordem (quem falou, texto).
-    fn conversa_gravada(&self, conversa: ConversationId) -> Vec<(Papel, String)> {
+    fn conversa_gravada(&self, conversa: ConversationId) -> Vec<(Role, String)> {
         self.store
-            .mensagens()
+            .messages()
             .ultimas(self.org, conversa, 50)
             .expect("lê as mensagens")
             .into_iter()
-            .map(|mensagem| (mensagem.papel, mensagem.texto))
+            .map(|mensagem| (mensagem.role, mensagem.texto))
             .collect()
     }
 
     fn respostas_do_agente(&self, conversa: ConversationId) -> Vec<String> {
         self.conversa_gravada(conversa)
             .into_iter()
-            .filter(|(papel, _)| *papel == Papel::Assistente)
+            .filter(|(papel, _)| *papel == Role::Assistant)
             .map(|(_, texto)| texto)
             .collect()
     }
 
-    fn status(&self, conversa: ConversationId) -> poph_store::StatusConversa {
+    fn status(&self, conversa: ConversationId) -> poph_store::ConversationStatus {
         self.store
             .conversas()
-            .obter(self.org, conversa)
+            .get(self.org, conversa)
             .expect("lê a conversa")
             .status
     }
 
     fn ultimo_turno(&self, conversa: ConversationId) -> poph_store::Turno {
         self.store
-            .turnos()
-            .listar(self.org, conversa, Pagina::com_limite(20))
+            .turns()
+            .listar(self.org, conversa, Page::with_limit(20))
             .expect("lista os turnos")
             .into_iter()
             .next_back()
             .expect("há um turno gravado")
     }
 
-    fn auditoria(&self) -> Vec<poph_store::RegistroAuditoria> {
+    fn auditoria(&self) -> Vec<poph_store::AuditEntry> {
         self.store
-            .auditoria()
-            .listar(self.org, Pagina::com_limite(50))
+            .audit()
+            .listar(self.org, Page::with_limit(50))
             .expect("lê a auditoria")
     }
 
@@ -303,11 +302,11 @@ impl Cenario {
         let atual = self
             .store
             .conversas()
-            .obter(self.org, conversa)
+            .get(self.org, conversa)
             .expect("lê a conversa");
         self.store
             .conversas()
-            .reabrir_auditado(self.org, conversa, atual.versao, "teste".to_owned())
+            .reabrir_auditado(self.org, conversa, atual.version, "teste".to_owned())
             .expect("reabre a conversa");
     }
 }
@@ -395,7 +394,7 @@ async fn transfere_com_orientacao_e_nao_chama_o_modelo() {
         "conversa transferida não pode chamar o LLM"
     );
     // O turno terminou bem, com o texto que o cliente recebeu.
-    assert_eq!(resumo.estado, EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, TurnState::Completed);
     let esperado = format!("{APROVADO_INGESTAO}\n\n{APROVADA_AUTOMATICA}");
     assert_eq!(resumo.texto, esperado);
     assert_eq!(
@@ -411,18 +410,18 @@ async fn transfere_com_orientacao_e_nao_chama_o_modelo() {
     // A conversa ficou transferida.
     assert_eq!(
         cenario.status(conversa),
-        poph_store::StatusConversa::Transferida
+        poph_store::ConversationStatus::Transferred
     );
     // O mesmo texto foi para a `outbox` (é o que o canal entrega).
     let pendentes = cenario
         .store
-        .caixa_saida()
+        .outbox()
         .listar_pendentes(cenario.org, 10)
         .expect("lista a outbox");
     assert_eq!(pendentes.len(), 1);
     assert_eq!(pendentes[0].tipo, "text");
     assert_eq!(
-        serde_json::from_str::<serde_json::Value>(&pendentes[0].conteudo_json)
+        serde_json::from_str::<serde_json::Value>(&pendentes[0].content_json)
             .expect("conteúdo é JSON")["texto"],
         esperado
     );
@@ -434,7 +433,7 @@ async fn transfere_com_orientacao_e_nao_chama_o_modelo() {
     assert_eq!(gravado["decisoes"][0]["gate"], "g1");
     assert_eq!(gravado["decisoes"][0]["escolha"], G1_TRANSFERIR);
     assert_eq!(gravado["risco"]["tipo"], RISCO_INGESTAO);
-    assert_eq!(turno.estado, EstadoTurno::Concluido);
+    assert_eq!(turno.estado, TurnState::Completed);
 
     // Auditoria: ator do sistema, ação `transfer`, na conversa certa.
     let registros = cenario.auditoria();
@@ -443,13 +442,13 @@ async fn transfere_com_orientacao_e_nao_chama_o_modelo() {
         .find(|registro| registro.acao == "transfer")
         .expect("a transferência é auditada");
     assert_eq!(transferencia.ator_tipo, "system");
-    assert_eq!(transferencia.entidade, "conversation");
+    assert_eq!(transferencia.entity, "conversation");
     assert_eq!(
-        transferencia.entidade_id.as_deref(),
+        transferencia.entity_id.as_deref(),
         Some(conversa.to_string().as_str())
     );
     let detalhe: serde_json::Value =
-        serde_json::from_str(&transferencia.detalhe_json).expect("detalhe é JSON");
+        serde_json::from_str(&transferencia.detail_json).expect("detalhe é JSON");
     assert_eq!(detalhe["gate"], "g1");
     assert_eq!(detalhe["risco"], RISCO_INGESTAO);
 
@@ -534,13 +533,13 @@ async fn transferida_nao_responde_ate_reabrir() {
 
     let gatilho = cenario.falar(conversa, "quero falar com uma pessoa, tem uma cobra aqui");
     let primeira = cenario.turno(&motor, conversa, gatilho).await;
-    assert_eq!(primeira.estado, EstadoTurno::Concluido);
+    assert_eq!(primeira.estado, TurnState::Completed);
     assert_eq!(cenario.provedor.recebidos().len(), 0);
 
     // Cliente insiste: a mensagem é gravada, o turno é ignorado e o modelo continua sem ser chamado.
     let segundo_gatilho = cenario.falar(conversa, "alguém aí?");
     let segundo = cenario.turno(&motor, conversa, segundo_gatilho).await;
-    assert_eq!(segundo.estado, EstadoTurno::Ignorado);
+    assert_eq!(segundo.estado, TurnState::Skipped);
     assert!(
         segundo.erro.unwrap_or_default().contains("transferred"),
         "o motivo do turno ignorado diz que a conversa está transferida"
@@ -555,10 +554,13 @@ async fn transferida_nao_responde_ate_reabrir() {
 
     // Reaberta, volta a responder normalmente.
     cenario.reabrir(conversa);
-    assert_eq!(cenario.status(conversa), poph_store::StatusConversa::Aberta);
+    assert_eq!(
+        cenario.status(conversa),
+        poph_store::ConversationStatus::Open
+    );
     let terceiro_gatilho = cenario.falar(conversa, "e o prazo de entrega?");
     let terceiro = cenario.turno(&motor, conversa, terceiro_gatilho).await;
-    assert_eq!(terceiro.estado, EstadoTurno::Concluido);
+    assert_eq!(terceiro.estado, TurnState::Completed);
     assert_eq!(terceiro.texto, RESPOSTA_DO_MODELO);
     assert_eq!(cenario.provedor.recebidos().len(), 1);
 }
@@ -591,11 +593,11 @@ async fn erro_na_pergunta_de_risco_transfere_com_a_mensagem_automatica() {
     let gatilho = cenario.falar(conversa, "quero um atendente");
     let resumo = cenario.turno(&motor, conversa, gatilho).await;
 
-    assert_eq!(resumo.estado, EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, TurnState::Completed);
     assert_eq!(resumo.texto, APROVADA_AUTOMATICA);
     assert_eq!(
         cenario.status(conversa),
-        poph_store::StatusConversa::Transferida
+        poph_store::ConversationStatus::Transferred
     );
     assert_eq!(
         cenario.respostas_do_agente(conversa),
@@ -630,11 +632,11 @@ async fn prazo_na_pergunta_de_risco_suprime_so_a_orientacao() {
     let resumo = cenario.turno(&motor, conversa, gatilho).await;
     assert!(inicio.elapsed() < Duration::from_secs(5));
 
-    assert_eq!(resumo.estado, EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, TurnState::Completed);
     assert_eq!(resumo.texto, APROVADA_AUTOMATICA);
     assert_eq!(
         cenario.status(conversa),
-        poph_store::StatusConversa::Transferida
+        poph_store::ConversationStatus::Transferred
     );
 }
 
@@ -654,7 +656,7 @@ async fn sem_risco_confiavel_manda_so_a_mensagem_automatica() {
         assert_eq!(resumo.texto, APROVADA_AUTOMATICA, "caso {rotulo}");
         assert_eq!(
             cenario.status(conversa),
-            poph_store::StatusConversa::Transferida
+            poph_store::ConversationStatus::Transferred
         );
     }
 }
@@ -707,9 +709,12 @@ async fn g1_desligado_nao_transfere() {
     let gatilho = cenario.falar(conversa, "quero falar com um atendente humano");
     let resumo = cenario.turno(&motor, conversa, gatilho).await;
 
-    assert_eq!(resumo.estado, EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, TurnState::Completed);
     assert_eq!(resumo.texto, RESPOSTA_DO_MODELO);
-    assert_eq!(cenario.status(conversa), poph_store::StatusConversa::Aberta);
+    assert_eq!(
+        cenario.status(conversa),
+        poph_store::ConversationStatus::Open
+    );
     assert_eq!(cenario.provedor.recebidos().len(), 1);
     assert!(resumo.jev.is_none() || resumo.jev.as_ref().unwrap().decisoes.is_empty());
 }
@@ -726,7 +731,10 @@ async fn agente_sem_handoff_nao_transfere() {
     let resumo = cenario.turno(&motor, conversa, gatilho).await;
 
     assert_eq!(resumo.texto, RESPOSTA_DO_MODELO);
-    assert_eq!(cenario.status(conversa), poph_store::StatusConversa::Aberta);
+    assert_eq!(
+        cenario.status(conversa),
+        poph_store::ConversationStatus::Open
+    );
 }
 
 /// Jev decidindo continuar: nada muda, o modelo responde normalmente.
@@ -740,9 +748,12 @@ async fn g1_continuar_responde_normalmente() {
     let gatilho = cenario.falar(conversa, "qual é o prazo de entrega?");
     let resumo = cenario.turno(&motor, conversa, gatilho).await;
 
-    assert_eq!(resumo.estado, EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, TurnState::Completed);
     assert_eq!(resumo.texto, RESPOSTA_DO_MODELO);
-    assert_eq!(cenario.status(conversa), poph_store::StatusConversa::Aberta);
+    assert_eq!(
+        cenario.status(conversa),
+        poph_store::ConversationStatus::Open
+    );
     assert_eq!(
         resumo
             .jev
@@ -765,31 +776,31 @@ async fn transferencia_guarda_o_departamento_do_agente() {
     let cenario = Cenario::novo("departamento", true);
     let padrao = cenario
         .store
-        .departamentos()
+        .departments()
         .criar(
             cenario.org,
-            poph_store::NovoDepartamento {
-                nome: "Atendimento humano".to_owned(),
-                descricao: String::new(),
+            poph_store::NewDepartment {
+                name: "Atendimento humano".to_owned(),
+                description: String::new(),
             },
         )
         .expect("cria o departamento")
         .id;
     let atual = cenario
         .store
-        .agentes()
-        .obter(cenario.org, cenario.agente)
+        .agents()
+        .get(cenario.org, cenario.agente)
         .expect("lê o agente");
     cenario
         .store
-        .agentes()
+        .agents()
         .atualizar(
             cenario.org,
             cenario.agente,
-            atual.versao,
-            MudancaAgente {
-                handoff_departamento: Some(padrao),
-                ..MudancaAgente::default()
+            atual.version,
+            AgentChange {
+                handoff_department: Some(padrao),
+                ..AgentChange::default()
             },
         )
         .expect("define o departamento humano");
@@ -803,10 +814,10 @@ async fn transferencia_guarda_o_departamento_do_agente() {
     let gravada = cenario
         .store
         .conversas()
-        .obter(cenario.org, conversa)
+        .get(cenario.org, conversa)
         .expect("lê a conversa");
-    assert_eq!(gravada.status, poph_store::StatusConversa::Transferida);
-    assert_eq!(gravada.departamento_alvo, Some(padrao));
+    assert_eq!(gravada.status, poph_store::ConversationStatus::Transferred);
+    assert_eq!(gravada.target_department, Some(padrao));
 }
 
 /// A classificação de risco não é guardada no cache de decisões: a segunda pergunta é uma vez só.

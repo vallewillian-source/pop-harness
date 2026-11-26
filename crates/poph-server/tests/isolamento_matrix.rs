@@ -46,8 +46,8 @@ use poph_server::matrix_estado::{DestinoDoSynapse, EstadoDasConversas, PortaEsta
 use poph_server::matrix_inicio::PortaEspacosStore;
 use poph_server::{Estado, PortaAtendimento, PortaDoHarness, ReceptorAs, RespostaDoAtendente};
 use poph_store::{
-    NovaConversa, NovaOrg, NovoAgente, NovoDepartamento, Origem, Pagina, RespostaHumana,
-    RespostaHumanaNova, StatusConversa, Store,
+    ConversationStatus, HumanResponse, NewAgent, NewConversation, NewDepartment, NewHumanResponse,
+    NewOrg, Origin, Page, Store,
 };
 use poph_types::config::GlobalTokenConfig;
 use poph_types::{
@@ -560,7 +560,7 @@ impl Cenario {
         });
         config.validar().expect("configuração válida");
 
-        let store = Arc::new(Store::abrir(&config).expect("abre o banco"));
+        let store = Arc::new(Store::open(&config).expect("abre o banco"));
 
         let a = Self::org_com_conversa(&store, "org-a", "Sala A", "bia-a", SALA_A);
         let b = Self::org_com_conversa(&store, "org-b", "Sala B", "bia-b", SALA_B);
@@ -598,28 +598,28 @@ impl Cenario {
         sala: &str,
     ) -> (OrgId, ConversationId, AgentId) {
         let org = store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: format!("Org {slug}"),
+            .orgs()
+            .criar(NewOrg {
+                name: format!("Org {slug}"),
                 slug: slug.to_owned(),
                 config_json: String::new(),
             })
             .expect("cria a org")
             .id;
         let agente = store
-            .agentes()
+            .agents()
             .criar(
                 org,
-                NovoAgente {
-                    nome: nome_agente.to_owned(),
+                NewAgent {
+                    name: nome_agente.to_owned(),
                     slug: slug_agente.to_owned(),
-                    ..NovoAgente::default()
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente")
             .id;
         let integracao: IntegrationId = store
-            .integracao_criar(org, agente, "whatsapp".to_owned(), "active".to_owned())
+            .create_integration(org, agente, "whatsapp".to_owned(), "active".to_owned())
             .expect("cria a integração")
             .id
             .parse()
@@ -628,13 +628,13 @@ impl Cenario {
             .conversas()
             .criar(
                 org,
-                NovaConversa {
+                NewConversation {
                     agent_id: agente,
                     integration_id: Some(integracao),
                     canal: "whatsapp".to_owned(),
                     // O mesmo contato nas duas orgs: é onde um cruzamento apareceria primeiro.
                     peer_externo: Some(TELEFONE.to_owned()),
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("cria a conversa")
@@ -653,12 +653,12 @@ impl Cenario {
 
     fn departamento(store: &Store, org: OrgId, nome: &str) -> DepartmentId {
         store
-            .departamentos()
+            .departments()
             .criar(
                 org,
-                NovoDepartamento {
-                    nome: nome.to_owned(),
-                    descricao: String::new(),
+                NewDepartment {
+                    name: nome.to_owned(),
+                    description: String::new(),
                 },
             )
             .expect("cria o departamento")
@@ -711,7 +711,7 @@ impl Cenario {
         let integracao = self
             .store
             .conversas()
-            .obter(org, conversa)
+            .get(org, conversa)
             .expect("lê a conversa")
             .integration_id
             .expect("a conversa tem integração");
@@ -735,15 +735,15 @@ impl Cenario {
 
     fn mensagens(&self, org: OrgId) -> Vec<poph_store::Mensagem> {
         self.store
-            .mensagens()
-            .listar(org, self.conversa(org), Pagina::com_limite(50))
+            .messages()
+            .listar(org, self.conversa(org), Page::with_limit(50))
             .expect("lista as mensagens")
     }
 
-    fn status(&self, org: OrgId) -> StatusConversa {
+    fn status(&self, org: OrgId) -> ConversationStatus {
         self.store
             .conversas()
-            .obter(org, self.conversa(org))
+            .get(org, self.conversa(org))
             .expect("lê a conversa")
             .status
     }
@@ -751,9 +751,9 @@ impl Cenario {
     fn nome_cliente(&self, org: OrgId) -> Option<String> {
         self.store
             .conversas()
-            .obter(org, self.conversa(org))
+            .get(org, self.conversa(org))
             .expect("lê a conversa")
-            .nome_cliente
+            .customer_name
     }
 
     fn nome_espelhado(&self, org: OrgId) -> Option<String> {
@@ -767,8 +767,8 @@ impl Cenario {
 
     fn pendentes(&self, org: OrgId) -> u64 {
         self.store
-            .caixa_saida()
-            .contar_por_estado(org, poph_store::EstadoSaida::Pendente)
+            .outbox()
+            .contar_por_estado(org, poph_store::OutboxState::Pending)
             .expect("conta a fila de saída")
     }
 
@@ -974,7 +974,7 @@ async fn evento_da_sala_a_com_ids_da_org_b_nao_toca_a_conversa_da_b() {
     // A conversa de A recebeu a resposta do atendente, e ela foi para a fila dela.
     let mensagens_a = cenario.mensagens(cenario.org_a);
     assert_eq!(mensagens_a.len(), 1, "a sala de A grava a resposta em A");
-    assert_eq!(mensagens_a[0].origem, Origem::Humano);
+    assert_eq!(mensagens_a[0].origin, Origin::Human);
     assert_eq!(mensagens_a[0].texto, TEXTO_ATENDENTE);
     assert_eq!(
         mensagens_a[0].id_externo.as_deref(),
@@ -985,7 +985,10 @@ async fn evento_da_sala_a_com_ids_da_org_b_nao_toca_a_conversa_da_b() {
         1,
         "a fila de A tem o item"
     );
-    assert_eq!(cenario.status(cenario.org_a), StatusConversa::Transferida);
+    assert_eq!(
+        cenario.status(cenario.org_a),
+        ConversationStatus::Transferred
+    );
 
     // A org B não foi tocada: sem mensagem, sem fila e com a conversa ainda aberta.
     assert!(
@@ -997,7 +1000,7 @@ async fn evento_da_sala_a_com_ids_da_org_b_nao_toca_a_conversa_da_b() {
         0,
         "a fila de B segue vazia"
     );
-    assert_eq!(cenario.status(cenario.org_b), StatusConversa::Aberta);
+    assert_eq!(cenario.status(cenario.org_b), ConversationStatus::Open);
 
     // A operação atômica da MX-04 também recusa o par cruzado (org de A com conversa de B): a
     // conferência de org é do banco, não do chamador.
@@ -1007,16 +1010,16 @@ async fn evento_da_sala_a_com_ids_da_org_b_nao_toca_a_conversa_da_b() {
             org: cenario.org_a,
             conversa: cenario.conversa_b,
         },
-        RespostaHumanaNova {
-            evento_id: "$evento-cruzado-na-porta:matrix-dev.local",
-            texto_bruto: TEXTO_ATENDENTE,
-            texto_enviado: TEXTO_ATENDENTE,
-            autor_id: ATENDENTE,
-            autor_nome: NOME_ATENDENTE,
+        NewHumanResponse {
+            event_id: "$evento-cruzado-na-porta:matrix-dev.local",
+            raw_text: TEXTO_ATENDENTE,
+            sent_text: TEXTO_ATENDENTE,
+            author_id: ATENDENTE,
+            author_name: NOME_ATENDENTE,
         },
     );
     assert!(
-        matches!(cruzada, Ok(RespostaHumana::ConversaInexistente)),
+        matches!(cruzada, Ok(HumanResponse::ConversationMissing)),
         "conversa de outra org é inexistente para esta org: {cruzada:?}"
     );
     assert!(
@@ -1187,7 +1190,7 @@ async fn token_da_org_a_nao_opera_as_rotas_da_org_b() {
     );
     assert_eq!(cenario.espacos_gravados(cenario.org_b), 0);
     assert_eq!(cenario.espacos_gravados(cenario.org_a), 0);
-    assert_eq!(cenario.status(cenario.org_b), StatusConversa::Aberta);
+    assert_eq!(cenario.status(cenario.org_b), ConversationStatus::Open);
 
     // A direção contrária e o controle do dono: B também não alcança A, e B lê a própria org.
     let da_a = format!("/admin/v1/orgs/{}/matrix", cenario.org_a);
@@ -1303,7 +1306,7 @@ async fn espaco_com_departamento_da_outra_org_e_recusado() {
     assert!(
         cenario
             .store
-            .departamentos()
+            .departments()
             .obter(cenario.org_b, cenario.dept_b)
             .is_ok(),
         "o departamento da org B continua existindo"
@@ -1391,10 +1394,10 @@ async fn nome_do_cliente_fica_na_org_do_webhook_e_nao_renomeia_a_sala_da_outra()
         cenario
             .store
             .conversas()
-            .obter(cenario.org_b, cenario.conversa_b)
+            .get(cenario.org_b, cenario.conversa_b)
             .expect("lê a conversa de B")
             .status,
-        StatusConversa::Aberta,
+        ConversationStatus::Open,
         "a mensagem do cliente de A não muda o estado da conversa de B"
     );
 
@@ -1630,14 +1633,14 @@ async fn tokens_canario_nao_aparecem_em_resposta_log_arquivo_nem_fila() {
     for org in [cenario.org_a, cenario.org_b] {
         for item in cenario
             .store
-            .caixa_saida()
+            .outbox()
             .listar_pendentes(org, 50)
             .expect("lista a fila")
         {
             let texto = format!(
                 "{} {} {}",
                 item.tipo,
-                item.conteudo_json,
+                item.content_json,
                 item.ultimo_erro.as_deref().unwrap_or("")
             );
             for (rotulo, valor) in proibidos {

@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::process::{Command, Output};
 
 use poph_agent::compor_instrucoes;
-use poph_store::{NovaOrg, NovoDepartamento, Store};
+use poph_store::{NewDepartment, NewOrg, Store};
 use poph_types::StructuredInstructions;
 use serde_json::Value;
 
@@ -33,23 +33,23 @@ impl Cenario {
         fs::create_dir_all(&dados).expect("cria a pasta de dados");
         let slug = format!("org-{rotulo}");
         let departamento = {
-            let store = Store::abrir_em(&dados.join("harness.db"), &dados.join("rag.db"))
+            let store = Store::open_at(&dados.join("harness.db"), &dados.join("rag.db"))
                 .expect("abre o banco");
             let org = store
-                .orgaos()
-                .criar(NovaOrg {
-                    nome: format!("Org {rotulo}"),
+                .orgs()
+                .criar(NewOrg {
+                    name: format!("Org {rotulo}"),
                     slug: slug.clone(),
                     config_json: String::new(),
                 })
                 .expect("cria a org");
             store
-                .departamentos()
+                .departments()
                 .criar(
                     org.id,
-                    NovoDepartamento {
-                        nome: "Atendimento".to_owned(),
-                        descricao: String::new(),
+                    NewDepartment {
+                        name: "Atendimento".to_owned(),
+                        description: String::new(),
                     },
                 )
                 .expect("cria o departamento")
@@ -68,15 +68,15 @@ impl Cenario {
 
     /// Cria uma segunda org na mesma pasta e devolve o slug.
     fn criar_org(&self, slug: &str) -> String {
-        let store = Store::abrir_em(
+        let store = Store::open_at(
             &self.dados().join("harness.db"),
             &self.dados().join("rag.db"),
         )
         .expect("abre o banco");
         store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: format!("Org {slug}"),
+            .orgs()
+            .criar(NewOrg {
+                name: format!("Org {slug}"),
                 slug: slug.to_owned(),
                 config_json: String::new(),
             })
@@ -86,19 +86,19 @@ impl Cenario {
 
     /// Cria uma categoria de produto na org informada e devolve o id.
     fn criar_categoria(&self, org_slug: &str, nome: &str) -> String {
-        let store = Store::abrir_em(
+        let store = Store::open_at(
             &self.dados().join("harness.db"),
             &self.dados().join("rag.db"),
         )
         .expect("abre o banco");
-        let org = store.orgaos().por_slug(org_slug).expect("org da categoria");
+        let org = store.orgs().por_slug(org_slug).expect("org da categoria");
         store
-            .categorias()
+            .categories()
             .criar(
                 org.id,
-                poph_store::NovaCategoria {
-                    nome: nome.to_owned(),
-                    descricao: String::new(),
+                poph_store::NewCategory {
+                    name: nome.to_owned(),
+                    description: String::new(),
                 },
             )
             .expect("cria a categoria")

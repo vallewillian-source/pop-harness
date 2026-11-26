@@ -101,8 +101,8 @@ use poph_matrix::espacos::{
 };
 use poph_matrix::salas::{ConversaParaSala, MetadataSala, TIPO_METADATA, TIPO_NOME};
 use poph_matrix::usuarios::{ErroFantasmas, IdsFantasmas, UsuariosVirtuais};
-use poph_store::erro::ErroStore;
-use poph_store::{EstadoSala, StatusConversa, Store};
+use poph_store::error::StoreError;
+use poph_store::{ConversationStatus, EstadoSala, Store};
 use poph_types::{AgentId, ConversationId, MatrixConfig, OrgId};
 use serde_json::json;
 
@@ -182,7 +182,7 @@ pub struct ConversaEstado {
     /// Conversa.
     pub conversa: ConversationId,
     /// Situação atual.
-    pub status: StatusConversa,
+    pub status: ConversationStatus,
     /// Agente que atende.
     pub agente: AgentId,
     /// Nome do agente (vazio cai no id).
@@ -232,7 +232,7 @@ impl ConversaEstado {
             nome_agente: self.nome_agente.clone(),
             canal: self.canal.clone(),
             departamento: departamento.map(|departamento| departamento.id),
-            fechada: self.status == StatusConversa::Fechada,
+            fechada: self.status == ConversationStatus::Closed,
             // O corte do backfill é da provisão da sala (MX-11); aqui só o metadata é montado.
             corte_backfill: None,
         }
@@ -247,7 +247,7 @@ pub struct SalaEstado {
     /// Espaço do departamento em que a sala está gravada, quando houver.
     pub espaco: Option<String>,
     /// Última situação já espelhada (`None` quando a sala nunca teve o estado espelhado).
-    pub ultimo_status: Option<StatusConversa>,
+    pub ultimo_status: Option<ConversationStatus>,
     /// Último nome do cliente já enviado ao Matrix (nome da sala, `client_name` do metadata e nome
     /// de exibição do fantasma). `None` = a sala ainda não recebeu nome (MX-33).
     pub nome_espelhado: Option<String>,
@@ -263,40 +263,42 @@ pub struct SalaEstado {
 /// laço numa tarefa própria, como nas portas da MX-11 e da MX-18.
 pub trait PortaEstado: Send + Sync {
     /// Orgs conhecidas, com o módulo ligado ou não.
-    fn orgs(&self) -> impl Future<Output = Result<Vec<EstadoOrg>, ErroStore>> + Send;
+    fn orgs(&self) -> impl Future<Output = Result<Vec<EstadoOrg>, StoreError>> + Send;
 
     /// Cursor de conversas gravado para a org.
-    fn cursores(&self, org: OrgId)
-    -> impl Future<Output = Result<CursorGravado, ErroStore>> + Send;
+    fn cursores(
+        &self,
+        org: OrgId,
+    ) -> impl Future<Output = Result<CursorGravado, StoreError>> + Send;
 
     /// Conversas alteradas depois do par dado, em ordem, no máximo `limite`.
     fn alteradas(
         &self,
         apos: Option<(i64, ConversationId)>,
         limite: u32,
-    ) -> impl Future<Output = Result<Vec<ConversaAlterada>, ErroStore>> + Send;
+    ) -> impl Future<Output = Result<Vec<ConversaAlterada>, StoreError>> + Send;
 
     /// A conversa, com agente e departamentos já resolvidos (`None` quando não existe mais).
     fn conversa(
         &self,
         org: OrgId,
         conversa: ConversationId,
-    ) -> impl Future<Output = Result<Option<ConversaEstado>, ErroStore>> + Send;
+    ) -> impl Future<Output = Result<Option<ConversaEstado>, StoreError>> + Send;
 
     /// A sala da conversa (`None` quando ainda não existe).
     fn sala(
         &self,
         org: OrgId,
         conversa: ConversationId,
-    ) -> impl Future<Output = Result<Option<SalaEstado>, ErroStore>> + Send;
+    ) -> impl Future<Output = Result<Option<SalaEstado>, StoreError>> + Send;
 
     /// Grava a situação já espelhada.
     fn definir_ultimo_status(
         &self,
         org: OrgId,
         conversa: ConversationId,
-        status: StatusConversa,
-    ) -> impl Future<Output = Result<(), ErroStore>> + Send;
+        status: ConversationStatus,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
 
     /// Grava o último nome do cliente já espelhado na sala (MX-33), idempotente.
     fn definir_nome_espelhado(
@@ -304,7 +306,7 @@ pub trait PortaEstado: Send + Sync {
         org: OrgId,
         conversa: ConversationId,
         nome: &str,
-    ) -> impl Future<Output = Result<(), ErroStore>> + Send;
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
 
     /// Avança o cursor de conversas da org (só para a frente).
     fn avancar_conversas(
@@ -312,7 +314,7 @@ pub trait PortaEstado: Send + Sync {
         org: OrgId,
         atualizado_em: i64,
         id: &str,
-    ) -> impl Future<Output = Result<(), ErroStore>> + Send;
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
 }
 
 /// A porta de verdade, sobre o banco do Harness.
@@ -329,7 +331,7 @@ impl PortaEstadoStore {
 }
 
 impl PortaEstado for PortaEstadoStore {
-    fn orgs(&self) -> impl Future<Output = Result<Vec<EstadoOrg>, ErroStore>> + Send {
+    fn orgs(&self) -> impl Future<Output = Result<Vec<EstadoOrg>, StoreError>> + Send {
         let store = Arc::clone(&self.store);
         async move {
             let estados = store.matrix().orgs_ligadas()?;
@@ -346,7 +348,7 @@ impl PortaEstado for PortaEstadoStore {
     fn cursores(
         &self,
         org: OrgId,
-    ) -> impl Future<Output = Result<CursorGravado, ErroStore>> + Send {
+    ) -> impl Future<Output = Result<CursorGravado, StoreError>> + Send {
         let store = Arc::clone(&self.store);
         async move {
             let cursores = store.matrix().ler_cursores(org)?.conversas;
@@ -361,7 +363,7 @@ impl PortaEstado for PortaEstadoStore {
         &self,
         apos: Option<(i64, ConversationId)>,
         limite: u32,
-    ) -> impl Future<Output = Result<Vec<ConversaAlterada>, ErroStore>> + Send {
+    ) -> impl Future<Output = Result<Vec<ConversaAlterada>, StoreError>> + Send {
         let store = Arc::clone(&self.store);
         async move {
             let conversas = store.conversas().alteradas_desde(apos, limite)?;
@@ -370,7 +372,7 @@ impl PortaEstado for PortaEstadoStore {
                 .map(|conversa| ConversaAlterada {
                     org: conversa.org_id,
                     conversa: conversa.id,
-                    atualizado_em: conversa.atualizado_em,
+                    atualizado_em: conversa.updated_at,
                 })
                 .collect())
         }
@@ -380,23 +382,23 @@ impl PortaEstado for PortaEstadoStore {
         &self,
         org: OrgId,
         conversa: ConversationId,
-    ) -> impl Future<Output = Result<Option<ConversaEstado>, ErroStore>> + Send {
+    ) -> impl Future<Output = Result<Option<ConversaEstado>, StoreError>> + Send {
         let store = Arc::clone(&self.store);
         async move {
-            let lida = match store.conversas().obter(org, conversa) {
+            let lida = match store.conversas().get(org, conversa) {
                 Ok(lida) => lida,
-                Err(erro) if erro.eh_nao_encontrado() => return Ok(None),
+                Err(erro) if erro.is_not_found() => return Ok(None),
                 Err(erro) => return Err(erro),
             };
-            let agente = store.agentes().obter(org, lida.agent_id).ok();
+            let agente = store.agents().get(org, lida.agent_id).ok();
             let departamento = |id: poph_types::DepartmentId| {
                 store
-                    .departamentos()
+                    .departments()
                     .obter(org, id)
                     .ok()
                     .map(|departamento| DepartamentoEspaco {
                         id: departamento.id,
-                        nome: departamento.nome,
+                        nome: departamento.name,
                     })
             };
             // Mesma regra que a listagem usa para `external_peer` (RP-02): um só lugar, na store.
@@ -406,18 +408,18 @@ impl PortaEstado for PortaEstadoStore {
                 conversa,
                 status: lida.status,
                 agente: lida.agent_id,
-                nome_agente: agente.as_ref().map(|agente| agente.nome.clone()),
+                nome_agente: agente.as_ref().map(|agente| agente.name.clone()),
                 canal: lida.canal.clone(),
                 cliente: identificador,
                 // Nome do cliente (`pushName`, MX-32). Sem ele o metadata sai sem `client_name` —
                 // e uma transferência apagaria o nome que a criação da sala já tinha posto.
-                nome_cliente: lida.nome_cliente.clone(),
-                departamento_alvo: lida.departamento_alvo.and_then(departamento),
+                nome_cliente: lida.customer_name.clone(),
+                departamento_alvo: lida.target_department.and_then(departamento),
                 departamento_padrao: agente
                     .as_ref()
-                    .and_then(|agente| agente.departamento_padrao)
+                    .and_then(|agente| agente.default_department)
                     .and_then(departamento),
-                atualizado_em: lida.atualizado_em,
+                atualizado_em: lida.updated_at,
             }))
         }
     }
@@ -426,7 +428,7 @@ impl PortaEstado for PortaEstadoStore {
         &self,
         org: OrgId,
         conversa: ConversationId,
-    ) -> impl Future<Output = Result<Option<SalaEstado>, ErroStore>> + Send {
+    ) -> impl Future<Output = Result<Option<SalaEstado>, StoreError>> + Send {
         let store = Arc::clone(&self.store);
         async move {
             let sala = store.matrix().sala(org, conversa)?;
@@ -444,8 +446,8 @@ impl PortaEstado for PortaEstadoStore {
         &self,
         org: OrgId,
         conversa: ConversationId,
-        status: StatusConversa,
-    ) -> impl Future<Output = Result<(), ErroStore>> + Send {
+        status: ConversationStatus,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send {
         let store = Arc::clone(&self.store);
         async move {
             store
@@ -460,7 +462,7 @@ impl PortaEstado for PortaEstadoStore {
         org: OrgId,
         conversa: ConversationId,
         nome: &str,
-    ) -> impl Future<Output = Result<(), ErroStore>> + Send {
+    ) -> impl Future<Output = Result<(), StoreError>> + Send {
         let store = Arc::clone(&self.store);
         let nome = nome.to_owned();
         async move {
@@ -476,7 +478,7 @@ impl PortaEstado for PortaEstadoStore {
         org: OrgId,
         atualizado_em: i64,
         id: &str,
-    ) -> impl Future<Output = Result<(), ErroStore>> + Send {
+    ) -> impl Future<Output = Result<(), StoreError>> + Send {
         let store = Arc::clone(&self.store);
         let id = id.to_owned();
         async move {
@@ -751,19 +753,19 @@ impl CacheRemetentes {
 ///
 /// Curto e sem dado de cliente: o aviso aparece na sala para qualquer membro.
 pub fn aviso_de_status(
-    status: StatusConversa,
+    status: ConversationStatus,
     departamento: Option<&DepartamentoEspaco>,
 ) -> String {
     match status {
-        StatusConversa::Transferida => match departamento {
+        ConversationStatus::Transferred => match departamento {
             Some(departamento) => format!(
                 "Atendimento humano assumiu a conversa (departamento {}): o agente automático está pausado até ela ser reaberta.",
                 departamento.nome_do_espaco()
             ),
             None => AVISO_TRANSFERIDA.to_owned(),
         },
-        StatusConversa::Aberta => AVISO_REABERTA.to_owned(),
-        StatusConversa::Fechada => AVISO_ENCERRADA.to_owned(),
+        ConversationStatus::Open => AVISO_REABERTA.to_owned(),
+        ConversationStatus::Closed => AVISO_ENCERRADA.to_owned(),
     }
 }
 
@@ -781,7 +783,7 @@ pub fn txn_do_aviso(conversa: &ConversaEstado) -> String {
     format!(
         "{MARCA_AVISO}_{corpo}_{}_{}",
         conversa.atualizado_em,
-        conversa.status.como_texto()
+        conversa.status.as_text()
     )
 }
 
@@ -819,7 +821,7 @@ fn motivo_do_espaco(erro: &ErroEspaco) -> &'static str {
 pub enum ErroEstado {
     /// O armazenamento falhou antes ou no meio da passagem.
     #[error("armazenamento do estado do Matrix falhou: {0}")]
-    Armazenamento(#[from] ErroStore),
+    Armazenamento(#[from] StoreError),
 }
 
 impl ErroEstado {
@@ -1092,7 +1094,7 @@ impl<D: DestinoEstado, P: PortaEstado> EstadoDasConversas<D, P> {
 
         // `last_status` vazio é "nunca espelhei": a sala nasceu com o metadata da criação, e a
         // referência é a conversa aberta (o estado em que toda conversa nasce).
-        let espelhada = sala.ultimo_status.unwrap_or(StatusConversa::Aberta);
+        let espelhada = sala.ultimo_status.unwrap_or(ConversationStatus::Open);
         let mut fresca: Option<ConversaEstado> = None;
 
         if espelhada != alvo.status {
@@ -1140,7 +1142,7 @@ impl<D: DestinoEstado, P: PortaEstado> EstadoDasConversas<D, P> {
                 target: "poph_server::matrix_estado",
                 org = %atual.org,
                 conversa = %atual.conversa,
-                situacao = atual.status.como_texto(),
+                situacao = atual.status.as_text(),
                 "estado da conversa espelhado na sala"
             );
             fresca = Some(atual);
@@ -1405,7 +1407,7 @@ mod testes {
         }
     }
 
-    fn conversa(status: StatusConversa, atualizado_em: i64) -> ConversaEstado {
+    fn conversa(status: ConversationStatus, atualizado_em: i64) -> ConversaEstado {
         ConversaEstado {
             org: OrgId::generate(),
             conversa: ConversationId::generate(),
@@ -1424,19 +1426,19 @@ mod testes {
     #[test]
     fn aviso_de_cada_situacao_e_curto_e_sem_dado_de_cliente() {
         assert_eq!(
-            aviso_de_status(StatusConversa::Aberta, None),
+            aviso_de_status(ConversationStatus::Open, None),
             AVISO_REABERTA
         );
         assert_eq!(
-            aviso_de_status(StatusConversa::Fechada, None),
+            aviso_de_status(ConversationStatus::Closed, None),
             AVISO_ENCERRADA
         );
         assert_eq!(
-            aviso_de_status(StatusConversa::Transferida, None),
+            aviso_de_status(ConversationStatus::Transferred, None),
             AVISO_TRANSFERIDA
         );
         let com_departamento = aviso_de_status(
-            StatusConversa::Transferida,
+            ConversationStatus::Transferred,
             Some(&departamento("Suporte técnico")),
         );
         assert!(com_departamento.contains("departamento Suporte técnico"));
@@ -1448,16 +1450,16 @@ mod testes {
 
     #[test]
     fn txn_do_aviso_muda_com_instante_e_situacao() {
-        let mut uma = conversa(StatusConversa::Transferida, 1_000);
+        let mut uma = conversa(ConversationStatus::Transferred, 1_000);
         let primeira = txn_do_aviso(&uma);
         assert_eq!(primeira, txn_do_aviso(&uma), "repetir dá a mesma chave");
         assert!(primeira.starts_with("ph_est_"));
         assert!(!primeira.contains('-'), "{primeira}");
         uma.atualizado_em = 2_000;
         assert_ne!(primeira, txn_do_aviso(&uma), "outra transição, outra chave");
-        uma.status = StatusConversa::Fechada;
+        uma.status = ConversationStatus::Closed;
         assert_ne!(primeira, txn_do_aviso(&uma));
-        let outra = conversa(StatusConversa::Transferida, 1_000);
+        let outra = conversa(ConversationStatus::Transferred, 1_000);
         assert_ne!(
             primeira,
             txn_do_aviso(&outra),
@@ -1480,7 +1482,7 @@ mod testes {
     fn departamento_resolve_alvo_antes_do_padrao() {
         let padrao = departamento("Geral");
         let alvo = departamento("Suporte");
-        let mut uma = conversa(StatusConversa::Aberta, 1);
+        let mut uma = conversa(ConversationStatus::Open, 1);
         uma.departamento_padrao = Some(padrao.clone());
         assert_eq!(uma.departamento(), Some(padrao));
         uma.departamento_alvo = Some(alvo.clone());
@@ -1546,11 +1548,11 @@ mod testes {
     struct PortaNula;
 
     impl PortaEstado for PortaNula {
-        async fn orgs(&self) -> Result<Vec<EstadoOrg>, ErroStore> {
+        async fn orgs(&self) -> Result<Vec<EstadoOrg>, StoreError> {
             Ok(Vec::new())
         }
 
-        async fn cursores(&self, _org: OrgId) -> Result<CursorGravado, ErroStore> {
+        async fn cursores(&self, _org: OrgId) -> Result<CursorGravado, StoreError> {
             Ok(CursorGravado {
                 atualizado_em: 0,
                 id: None,
@@ -1561,7 +1563,7 @@ mod testes {
             &self,
             _apos: Option<(i64, ConversationId)>,
             _limite: u32,
-        ) -> Result<Vec<ConversaAlterada>, ErroStore> {
+        ) -> Result<Vec<ConversaAlterada>, StoreError> {
             Ok(Vec::new())
         }
 
@@ -1569,7 +1571,7 @@ mod testes {
             &self,
             _org: OrgId,
             _conversa: ConversationId,
-        ) -> Result<Option<ConversaEstado>, ErroStore> {
+        ) -> Result<Option<ConversaEstado>, StoreError> {
             Ok(None)
         }
 
@@ -1577,7 +1579,7 @@ mod testes {
             &self,
             _org: OrgId,
             _conversa: ConversationId,
-        ) -> Result<Option<SalaEstado>, ErroStore> {
+        ) -> Result<Option<SalaEstado>, StoreError> {
             Ok(None)
         }
 
@@ -1585,8 +1587,8 @@ mod testes {
             &self,
             _org: OrgId,
             _conversa: ConversationId,
-            _status: StatusConversa,
-        ) -> Result<(), ErroStore> {
+            _status: ConversationStatus,
+        ) -> Result<(), StoreError> {
             Ok(())
         }
 
@@ -1595,7 +1597,7 @@ mod testes {
             _org: OrgId,
             _conversa: ConversationId,
             _nome: &str,
-        ) -> Result<(), ErroStore> {
+        ) -> Result<(), StoreError> {
             Ok(())
         }
 
@@ -1604,7 +1606,7 @@ mod testes {
             _org: OrgId,
             _atualizado_em: i64,
             _id: &str,
-        ) -> Result<(), ErroStore> {
+        ) -> Result<(), StoreError> {
             Ok(())
         }
     }

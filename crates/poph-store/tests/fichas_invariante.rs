@@ -19,8 +19,9 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use poph_store::{
-    Agente, Conversa, MOTIVO_ABANDONO_ATENDIMENTO, NovaConversa, NovaEntradaCanal, NovaFicha,
-    NovaOrg, NovoAgente, NovoEventoFicha, Org, Pagina, Recebido, StatusConversa, Store,
+    Agente, Conversa, ConversationStatus, MOTIVO_ABANDONO_ATENDIMENTO, NewAgent,
+    NewChannelInboxItem, NewConversation, NewOrg, NewRecord, NewRecordEvent, Org, Page, Received,
+    Store,
 };
 use poph_types::{
     AgentId, ClosedBy, ConversationId, DomainError, EventActor, OrgId, RecordEventKind, RecordId,
@@ -42,8 +43,8 @@ impl Cenario {
             std::env::temp_dir().join(format!("poph-fichas-{rotulo}-{}-{n}", std::process::id()));
         let _ = fs::remove_dir_all(&pasta);
         fs::create_dir_all(&pasta).expect("cria a pasta do teste");
-        let store = Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
-            .expect("abre o banco");
+        let store =
+            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco");
         Self {
             pasta,
             store: Some(store),
@@ -65,9 +66,9 @@ impl Cenario {
 
     fn org(&self, slug: &str) -> Org {
         self.store()
-            .orgaos()
-            .criar(NovaOrg {
-                nome: format!("Org {slug}"),
+            .orgs()
+            .criar(NewOrg {
+                name: format!("Org {slug}"),
                 slug: slug.to_owned(),
                 config_json: String::new(),
             })
@@ -76,13 +77,13 @@ impl Cenario {
 
     fn agente(&self, org: &Org, slug: &str) -> Agente {
         self.store()
-            .agentes()
+            .agents()
             .criar(
                 org.id,
-                NovoAgente {
-                    nome: format!("Agente {slug}"),
+                NewAgent {
+                    name: format!("Agente {slug}"),
                     slug: slug.to_owned(),
-                    ..NovoAgente::default()
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente")
@@ -93,12 +94,12 @@ impl Cenario {
             .conversas()
             .criar(
                 org.id,
-                NovaConversa {
+                NewConversation {
                     agent_id: agente.id,
                     integration_id: None,
                     canal: "console".to_owned(),
                     peer_externo: Some("cliente-1".to_owned()),
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("abre a conversa")
@@ -111,7 +112,7 @@ impl Cenario {
             .fechar_auditado(
                 org.id,
                 conversa.id,
-                conversa.versao,
+                conversa.version,
                 "token-de-teste".to_owned(),
             )
             .expect("fecha a conversa")
@@ -160,7 +161,7 @@ impl Cenario {
     /// Cria uma integração de WhatsApp para o agente (o caminho da recepção do canal exige uma).
     fn integracao(&self, org: &Org, agente: &Agente) -> poph_types::IntegrationId {
         self.store()
-            .integracao_criar(org.id, agente.id, "whatsapp".into(), "active".into())
+            .create_integration(org.id, agente.id, "whatsapp".into(), "active".into())
             .expect("integração")
             .id
             .parse()
@@ -179,17 +180,17 @@ fn entrada(
     integracao: poph_types::IntegrationId,
     agente: AgentId,
     id_externo: &str,
-) -> NovaEntradaCanal {
-    NovaEntradaCanal {
+) -> NewChannelInboxItem {
+    NewChannelInboxItem {
         integration_id: integracao,
         agent_id: agente,
         canal: "whatsapp".to_owned(),
         id_externo: id_externo.to_owned(),
         peer: "5521999990000".to_owned(),
-        evento_json: "{}".to_owned(),
+        event_json: "{}".to_owned(),
         texto: "oi".to_owned(),
         anexos: Vec::new(),
-        nome_cliente: None,
+        customer_name: None,
     }
 }
 
@@ -213,10 +214,10 @@ fn criar_conversa_cria_a_ficha_na_mesma_escrita() {
     assert_eq!(ficha.agent_id, agente.id);
     assert_eq!(ficha.canal, "console");
     assert_eq!(ficha.peer_externo.as_deref(), Some("cliente-1"));
-    assert_eq!(ficha.aberta_em, conversa.criado_em);
+    assert_eq!(ficha.aberta_em, conversa.created_at);
     assert_eq!(ficha.fechada_em, None);
     assert_eq!(ficha.fechada_por, None);
-    assert_eq!(ficha.versao, 1);
+    assert_eq!(ficha.version, 1);
 
     // A linha do tempo começa com a abertura do atendimento.
     let eventos = cenario
@@ -239,15 +240,15 @@ fn recepcao_do_canal_cria_uma_ficha_por_conversa_e_nao_por_mensagem() {
 
     let primeira = cenario
         .store()
-        .caixa_entrada()
+        .inbox()
         .receber_do_canal(org.id, entrada(integracao, agente.id, "MSG-1"))
         .expect("recebe a primeira");
-    assert!(matches!(primeira.situacao, Recebido::Novo));
+    assert!(matches!(primeira.situacao, Received::New));
     let conversa = primeira.mensagem.conversation_id;
 
     let segunda = cenario
         .store()
-        .caixa_entrada()
+        .inbox()
         .receber_do_canal(org.id, entrada(integracao, agente.id, "MSG-2"))
         .expect("recebe a segunda");
     assert_eq!(
@@ -283,7 +284,7 @@ fn recepcao_do_canal_cria_uma_ficha_por_conversa_e_nao_por_mensagem() {
     let todas = cenario
         .store()
         .fichas()
-        .listar(org.id, &Default::default(), Pagina::default())
+        .listar(org.id, &Default::default(), Page::default())
         .expect("lista");
     assert_eq!(todas.len(), 1);
 }
@@ -298,7 +299,7 @@ fn conversa_criada_pelo_repositorio_e_a_do_canal_convivem_cada_uma_com_sua_ficha
     let do_repositorio = cenario.conversa(&org, &agente);
     let do_canal = cenario
         .store()
-        .caixa_entrada()
+        .inbox()
         .receber_do_canal(org.id, entrada(integracao, agente.id, "MSG-1"))
         .expect("recebe")
         .mensagem
@@ -319,7 +320,7 @@ fn conversa_criada_pelo_repositorio_e_a_do_canal_convivem_cada_uma_com_sua_ficha
         cenario
             .store()
             .fichas()
-            .listar(org.id, &Default::default(), Pagina::default())
+            .listar(org.id, &Default::default(), Page::default())
             .expect("lista")
             .len(),
         2
@@ -342,7 +343,7 @@ fn fechar_conversa_fecha_a_ficha_e_registra_o_evento() {
         .expect("Ficha");
 
     let fechada = cenario.fechar(&org, &conversa);
-    assert_eq!(fechada.status, StatusConversa::Fechada);
+    assert_eq!(fechada.status, ConversationStatus::Closed);
 
     let depois = cenario
         .store()
@@ -351,9 +352,9 @@ fn fechar_conversa_fecha_a_ficha_e_registra_o_evento() {
         .expect("Ficha fechada continua legível");
     assert_eq!(depois.status, RecordStatus::Closed);
     assert_eq!(depois.fechada_por, Some(ClosedBy::Admin));
-    assert_eq!(depois.fechada_em, Some(fechada.atualizado_em));
+    assert_eq!(depois.fechada_em, Some(fechada.updated_at));
     assert!(depois.fechada_motivo.is_some());
-    assert_eq!(depois.versao, 2, "fechar a Ficha sobe a versão dela");
+    assert_eq!(depois.version, 2, "fechar a Ficha sobe a versão dela");
 
     let eventos = cenario
         .store()
@@ -382,8 +383,8 @@ fn mudar_status_para_fechada_tambem_fecha_a_ficha() {
         .mudar_status(
             org.id,
             conversa.id,
-            conversa.versao,
-            StatusConversa::Fechada,
+            conversa.version,
+            ConversationStatus::Closed,
             None,
         )
         .expect("fecha pela mudança de situação");
@@ -410,7 +411,7 @@ fn fechar_com_execucao_ativa_abandona_a_execucao_na_mesma_escrita() {
         .por_conversa(org.id, conversa.id)
         .expect("consulta")
         .expect("Ficha");
-    let execucao = cenario.execucao_ativa(&org, ficha.id, cenario.store().agora());
+    let execucao = cenario.execucao_ativa(&org, ficha.id, cenario.store().now());
 
     cenario.fechar(&org, &conversa);
 
@@ -478,7 +479,7 @@ fn falha_no_meio_do_fechamento_nao_deixa_conversa_fechada_com_ficha_aberta() {
     let erro = cenario
         .store()
         .conversas()
-        .fechar_auditado(org.id, conversa.id, conversa.versao, "token".to_owned())
+        .fechar_auditado(org.id, conversa.id, conversa.version, "token".to_owned())
         .expect_err("o fechamento falha no meio");
     assert!(
         format!("{erro}").contains("falha injetada"),
@@ -493,15 +494,15 @@ fn falha_no_meio_do_fechamento_nao_deixa_conversa_fechada_com_ficha_aberta() {
     let conversa_depois = cenario
         .store()
         .conversas()
-        .obter(org.id, conversa.id)
+        .get(org.id, conversa.id)
         .expect("lê a conversa");
     assert_eq!(
         conversa_depois.status,
-        StatusConversa::Aberta,
+        ConversationStatus::Open,
         "a conversa não pode ficar fechada se a Ficha não fechou"
     );
     assert_eq!(
-        conversa_depois.versao, conversa.versao,
+        conversa_depois.version, conversa.version,
         "nem a versão subiu"
     );
 
@@ -535,7 +536,7 @@ fn mensagem_depois_do_fechamento_abre_conversa_e_ficha_novas() {
 
     let primeira = cenario
         .store()
-        .caixa_entrada()
+        .inbox()
         .receber_do_canal(org.id, entrada(integracao, agente.id, "MSG-1"))
         .expect("recebe");
     let conversa_1 = primeira.mensagem.conversation_id;
@@ -549,9 +550,9 @@ fn mensagem_depois_do_fechamento_abre_conversa_e_ficha_novas() {
     let versao = cenario
         .store()
         .conversas()
-        .obter(org.id, conversa_1)
+        .get(org.id, conversa_1)
         .expect("conversa")
-        .versao;
+        .version;
     cenario
         .store()
         .conversas()
@@ -560,7 +561,7 @@ fn mensagem_depois_do_fechamento_abre_conversa_e_ficha_novas() {
 
     let segunda = cenario
         .store()
-        .caixa_entrada()
+        .inbox()
         .receber_do_canal(org.id, entrada(integracao, agente.id, "MSG-2"))
         .expect("recebe depois do fechamento");
     let conversa_2 = segunda.mensagem.conversation_id;
@@ -589,7 +590,7 @@ fn mensagem_depois_do_fechamento_abre_conversa_e_ficha_novas() {
         .registrar_evento(
             org.id,
             ficha_1.id,
-            NovoEventoFicha {
+            NewRecordEvent {
                 execucao_id: None,
                 tipo: RecordEventKind::StepEntered,
                 ator_tipo: EventActor::Agent,
@@ -601,7 +602,7 @@ fn mensagem_depois_do_fechamento_abre_conversa_e_ficha_novas() {
         .expect_err("Ficha fechada não recebe evento");
     assert!(matches!(
         erro,
-        poph_store::ErroStore::Dominio(DomainError::RecordClosed { .. })
+        poph_store::StoreError::Domain(DomainError::RecordClosed { .. })
     ));
 }
 
@@ -621,23 +622,23 @@ fn reabrir_conversa_fechada_e_recusado_e_transferida_continua_reabrindo() {
         .mudar_status(
             org.id,
             transferida.id,
-            transferida.versao,
-            StatusConversa::Transferida,
+            transferida.version,
+            ConversationStatus::Transferred,
             None,
         )
         .expect("transfere");
     let versao = cenario
         .store()
         .conversas()
-        .obter(org.id, transferida.id)
+        .get(org.id, transferida.id)
         .expect("conversa")
-        .versao;
+        .version;
     let reaberta = cenario
         .store()
         .conversas()
         .reabrir_auditado(org.id, transferida.id, versao, "token".to_owned())
         .expect("conversa transferida reabre");
-    assert_eq!(reaberta.status, StatusConversa::Aberta);
+    assert_eq!(reaberta.status, ConversationStatus::Open);
 
     // `closed` não volta.
     let fechada = cenario.conversa(&org, &agente);
@@ -648,14 +649,14 @@ fn reabrir_conversa_fechada_e_recusado_e_transferida_continua_reabrindo() {
         .reabrir_auditado(
             org.id,
             fechada.id,
-            depois_de_fechar.versao,
+            depois_de_fechar.version,
             "token".to_owned(),
         )
         .expect_err("conversa encerrada não reabre");
     assert!(
         matches!(
             erro,
-            poph_store::ErroStore::Dominio(DomainError::ConversationClosed { .. })
+            poph_store::StoreError::Domain(DomainError::ConversationClosed { .. })
         ),
         "veio {erro:?}"
     );
@@ -667,24 +668,24 @@ fn reabrir_conversa_fechada_e_recusado_e_transferida_continua_reabrindo() {
         .mudar_status(
             org.id,
             fechada.id,
-            depois_de_fechar.versao,
-            StatusConversa::Aberta,
+            depois_de_fechar.version,
+            ConversationStatus::Open,
             None,
         )
         .expect_err("mudar_status não reabre conversa encerrada");
     assert!(matches!(
         erro,
-        poph_store::ErroStore::Dominio(DomainError::ConversationClosed { .. })
+        poph_store::StoreError::Domain(DomainError::ConversationClosed { .. })
     ));
 
     // A conversa e a Ficha continuam como estavam.
     let conversa_depois = cenario
         .store()
         .conversas()
-        .obter(org.id, fechada.id)
+        .get(org.id, fechada.id)
         .expect("conversa");
-    assert_eq!(conversa_depois.status, StatusConversa::Fechada);
-    assert_eq!(conversa_depois.versao, depois_de_fechar.versao);
+    assert_eq!(conversa_depois.status, ConversationStatus::Closed);
+    assert_eq!(conversa_depois.version, depois_de_fechar.version);
     let ficha = cenario
         .store()
         .fichas()
@@ -704,11 +705,16 @@ fn reabrir_conversa_com_versao_velha_devolve_conflito_de_versao() {
     let erro = cenario
         .store()
         .conversas()
-        .reabrir_auditado(org.id, conversa.id, conversa.versao + 7, "token".to_owned())
+        .reabrir_auditado(
+            org.id,
+            conversa.id,
+            conversa.version + 7,
+            "token".to_owned(),
+        )
         .expect_err("versão velha não reabre");
     assert!(matches!(
         erro,
-        poph_store::ErroStore::Dominio(DomainError::VersionConflict { .. })
+        poph_store::StoreError::Domain(DomainError::VersionConflict { .. })
     ));
 }
 
@@ -727,12 +733,12 @@ fn lista_filtra_por_situacao_agente_canal_e_instante() {
         .conversas()
         .criar(
             org.id,
-            NovaConversa {
+            NewConversation {
                 agent_id: agente_b.id,
                 integration_id: None,
                 canal: "whatsapp".to_owned(),
                 peer_externo: Some("5521988887777".to_owned()),
-                departamento_alvo: None,
+                target_department: None,
             },
         )
         .expect("segunda conversa");
@@ -743,11 +749,11 @@ fn lista_filtra_por_situacao_agente_canal_e_instante() {
         .fichas()
         .listar(
             org.id,
-            &poph_store::FiltroFichas {
+            &poph_store::RecordFilter {
                 status: Some(RecordStatus::Open),
                 ..Default::default()
             },
-            Pagina::default(),
+            Page::default(),
         )
         .expect("lista abertas");
     assert_eq!(aberta.len(), 1);
@@ -761,11 +767,11 @@ fn lista_filtra_por_situacao_agente_canal_e_instante() {
         .fichas()
         .listar(
             org.id,
-            &poph_store::FiltroFichas {
+            &poph_store::RecordFilter {
                 agente: Some(agente_b.id),
                 ..Default::default()
             },
-            Pagina::default(),
+            Page::default(),
         )
         .expect("lista do agente");
     assert_eq!(do_agente.len(), 1);
@@ -776,27 +782,27 @@ fn lista_filtra_por_situacao_agente_canal_e_instante() {
         .fichas()
         .listar(
             org.id,
-            &poph_store::FiltroFichas {
+            &poph_store::RecordFilter {
                 canal: Some("console".to_owned()),
                 ..Default::default()
             },
-            Pagina::default(),
+            Page::default(),
         )
         .expect("lista do canal");
     assert_eq!(do_canal.len(), 1);
     assert_eq!(do_canal[0].canal, "console");
 
-    let depois_de_tudo = cenario.store().agora() + 1;
+    let depois_de_tudo = cenario.store().now() + 1;
     let nenhuma = cenario
         .store()
         .fichas()
         .listar(
             org.id,
-            &poph_store::FiltroFichas {
+            &poph_store::RecordFilter {
                 desde: Some(depois_de_tudo),
                 ..Default::default()
             },
-            Pagina::default(),
+            Page::default(),
         )
         .expect("lista desde o futuro");
     assert!(nenhuma.is_empty());
@@ -805,7 +811,7 @@ fn lista_filtra_por_situacao_agente_canal_e_instante() {
     let primeira_pagina = cenario
         .store()
         .fichas()
-        .listar(org.id, &Default::default(), Pagina::com_limite(1))
+        .listar(org.id, &Default::default(), Page::with_limit(1))
         .expect("primeira página");
     assert_eq!(primeira_pagina.len(), 1);
     let segunda_pagina = cenario
@@ -814,9 +820,9 @@ fn lista_filtra_por_situacao_agente_canal_e_instante() {
         .listar(
             org.id,
             &Default::default(),
-            Pagina {
-                apos: Some(primeira_pagina[0].id.as_uuid()),
-                limite: 1,
+            Page {
+                after: Some(primeira_pagina[0].id.as_uuid()),
+                limit: 1,
             },
         )
         .expect("segunda página");
@@ -848,7 +854,7 @@ fn ficha_de_outra_org_nao_aparece_nem_aceita_evento() {
     assert!(
         matches!(
             erro,
-            poph_store::ErroStore::Dominio(DomainError::NotFound { .. })
+            poph_store::StoreError::Domain(DomainError::NotFound { .. })
         ),
         "veio {erro:?}"
     );
@@ -859,7 +865,7 @@ fn ficha_de_outra_org_nao_aparece_nem_aceita_evento() {
         .registrar_evento(
             org_b.id,
             ficha_a.id,
-            NovoEventoFicha {
+            NewRecordEvent {
                 execucao_id: None,
                 tipo: RecordEventKind::StepEntered,
                 ator_tipo: EventActor::Agent,
@@ -871,13 +877,13 @@ fn ficha_de_outra_org_nao_aparece_nem_aceita_evento() {
         .expect_err("evento em Ficha de outra org é recusado");
     assert!(matches!(
         erro,
-        poph_store::ErroStore::Dominio(DomainError::NotFound { .. })
+        poph_store::StoreError::Domain(DomainError::NotFound { .. })
     ));
 
     let da_org_b: Vec<_> = cenario
         .store()
         .fichas()
-        .listar(org_b.id, &Default::default(), Pagina::default())
+        .listar(org_b.id, &Default::default(), Page::default())
         .expect("lista da org B");
     assert_eq!(da_org_b.len(), 1);
     assert!(
@@ -892,7 +898,7 @@ fn ficha_de_outra_org_nao_aparece_nem_aceita_evento() {
         .expect_err("linha do tempo de outra org não é legível");
     assert!(matches!(
         erro,
-        poph_store::ErroStore::Dominio(DomainError::NotFound { .. })
+        poph_store::StoreError::Domain(DomainError::NotFound { .. })
     ));
 }
 
@@ -920,7 +926,7 @@ fn eventos_saem_em_ordem_e_paginam_pelo_seq() {
             .registrar_evento(
                 org.id,
                 ficha.id,
-                NovoEventoFicha {
+                NewRecordEvent {
                     execucao_id: None,
                     tipo,
                     ator_tipo: EventActor::Agent,
@@ -977,7 +983,7 @@ fn evento_com_a_mesma_chave_nao_duplica() {
         .expect("consulta")
         .expect("Ficha");
 
-    let novo = || NovoEventoFicha {
+    let novo = || NewRecordEvent {
         execucao_id: None,
         tipo: RecordEventKind::ActionExecuted,
         ator_tipo: EventActor::Attendant,
@@ -1022,7 +1028,7 @@ fn evento_de_execucao_de_outra_org_e_recusado() {
         .por_conversa(org_b.id, conversa_b.id)
         .expect("consulta")
         .expect("Ficha B");
-    let execucao_de_b = cenario.execucao_ativa(&org_b, ficha_b.id, cenario.store().agora());
+    let execucao_de_b = cenario.execucao_ativa(&org_b, ficha_b.id, cenario.store().now());
     let execucao_de_b: poph_types::ExecutionId = execucao_de_b.parse().expect("id");
 
     let conversa_a = cenario.conversa(&org_a, &agente_a);
@@ -1039,7 +1045,7 @@ fn evento_de_execucao_de_outra_org_e_recusado() {
         .registrar_evento(
             org_a.id,
             ficha_a.id,
-            NovoEventoFicha {
+            NewRecordEvent {
                 execucao_id: Some(execucao_de_b),
                 tipo: RecordEventKind::StepEntered,
                 ator_tipo: EventActor::Agent,
@@ -1052,7 +1058,7 @@ fn evento_de_execucao_de_outra_org_e_recusado() {
     assert!(
         matches!(
             erro,
-            poph_store::ErroStore::Dominio(DomainError::NotFound { .. })
+            poph_store::StoreError::Domain(DomainError::NotFound { .. })
         ),
         "veio {erro:?}"
     );
@@ -1069,7 +1075,7 @@ fn ficha_criada_pelo_repositorio_nasce_aberta_e_sem_conversa() {
         .fichas()
         .criar(
             org.id,
-            NovaFicha {
+            NewRecord {
                 conversation_id: None,
                 agent_id: agente.id,
                 canal: "whatsapp".to_owned(),
@@ -1122,7 +1128,7 @@ fn ficha_sobrevive_a_conversa_apagada() {
     let lista = cenario
         .store()
         .fichas()
-        .listar(org.id, &Default::default(), Pagina::default())
+        .listar(org.id, &Default::default(), Page::default())
         .expect("lista");
     assert_eq!(lista.len(), 1, "Ficha órfã continua na lista");
 }
@@ -1162,7 +1168,7 @@ fn evento_de_execucao_de_outra_ficha_da_mesma_org_e_recusado() {
         .por_conversa(org.id, conversa_1.id)
         .expect("consulta")
         .expect("Ficha 1");
-    let execucao = cenario.execucao_ativa(&org, ficha_1.id, cenario.store().agora());
+    let execucao = cenario.execucao_ativa(&org, ficha_1.id, cenario.store().now());
     let execucao: poph_types::ExecutionId = execucao.parse().expect("id");
 
     // Outra Ficha da mesma org.
@@ -1180,7 +1186,7 @@ fn evento_de_execucao_de_outra_ficha_da_mesma_org_e_recusado() {
         .registrar_evento(
             org.id,
             ficha_1.id,
-            NovoEventoFicha {
+            NewRecordEvent {
                 execucao_id: Some(execucao),
                 tipo: RecordEventKind::StepEntered,
                 ator_tipo: EventActor::Agent,
@@ -1201,7 +1207,7 @@ fn evento_de_execucao_de_outra_ficha_da_mesma_org_e_recusado() {
         .registrar_evento(
             org.id,
             ficha_2.id,
-            NovoEventoFicha {
+            NewRecordEvent {
                 execucao_id: Some(execucao),
                 tipo: RecordEventKind::StepEntered,
                 ator_tipo: EventActor::Agent,
@@ -1214,7 +1220,7 @@ fn evento_de_execucao_de_outra_ficha_da_mesma_org_e_recusado() {
     assert!(
         matches!(
             erro,
-            poph_store::ErroStore::Dominio(DomainError::NotFound { .. })
+            poph_store::StoreError::Domain(DomainError::NotFound { .. })
         ),
         "veio {erro:?}"
     );
@@ -1246,7 +1252,7 @@ fn conversa_sem_ficha_que_e_fechada_ganha_ficha_fechada() {
         .expect("remove a Ficha");
 
     let fechada = cenario.fechar(&org, &conversa);
-    assert_eq!(fechada.status, StatusConversa::Fechada);
+    assert_eq!(fechada.status, ConversationStatus::Closed);
 
     let ficha = cenario
         .store()
@@ -1256,7 +1262,7 @@ fn conversa_sem_ficha_que_e_fechada_ganha_ficha_fechada() {
         .expect("a conversa fechada ganhou Ficha");
     assert_eq!(ficha.status, RecordStatus::Closed);
     assert_eq!(ficha.fechada_por, Some(ClosedBy::Admin));
-    assert_eq!(ficha.aberta_em, conversa.criado_em);
+    assert_eq!(ficha.aberta_em, conversa.created_at);
 
     let eventos = cenario
         .store()
@@ -1293,10 +1299,10 @@ fn fechamento_pelo_agente_e_atomico_com_auditoria() {
     assert_eq!(
         c.store()
             .conversas()
-            .obter(org.id, conversa.id)
+            .get(org.id, conversa.id)
             .unwrap()
             .status,
-        StatusConversa::Aberta
+        ConversationStatus::Open
     );
     assert_eq!(
         c.store().fichas().obter(org.id, ficha.id).unwrap().status,
@@ -1350,7 +1356,7 @@ fn mensagem_apos_encerramento_pelo_agente_abre_nova_ficha() {
     let integracao = c.integracao(&org, &agente);
     let primeira = c
         .store()
-        .caixa_entrada()
+        .inbox()
         .receber_do_canal(org.id, entrada(integracao, agente.id, "FX25-1"))
         .unwrap();
     let conversa = primeira.mensagem.conversation_id;
@@ -1366,7 +1372,7 @@ fn mensagem_apos_encerramento_pelo_agente_abre_nova_ficha() {
         .unwrap();
     let segunda = c
         .store()
-        .caixa_entrada()
+        .inbox()
         .receber_do_canal(org.id, entrada(integracao, agente.id, "FX25-2"))
         .unwrap();
     let outra = segunda.mensagem.conversation_id;
@@ -1403,11 +1409,7 @@ fn encerramento_pelo_agente_respeita_org_e_identidade() {
             .is_err()
     );
     assert_eq!(
-        c.store()
-            .conversas()
-            .obter(a.id, conversa.id)
-            .unwrap()
-            .status,
-        StatusConversa::Aberta
+        c.store().conversas().get(a.id, conversa.id).unwrap().status,
+        ConversationStatus::Open
     );
 }

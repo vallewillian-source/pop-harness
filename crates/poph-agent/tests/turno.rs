@@ -34,8 +34,8 @@ use poph_core::llm::{
     Roteiro, Uso,
 };
 use poph_store::{
-    Direcao, EstadoSaida, EstadoTurno, ItemSaida, NovaConversa, NovaMensagem, NovaOrg, NovoAgente,
-    Pagina, Papel, Store,
+    Direction, NewAgent, NewConversation, NewMessage, NewOrg, OutboxItem, OutboxState, Page, Role,
+    Store, TurnState,
 };
 use poph_types::{AgentId, ConversationId, IntegrationId, MessageId, OrgId, ToolConfig};
 
@@ -128,37 +128,37 @@ impl Cenario {
         let _ = std::fs::remove_dir_all(&pasta);
         std::fs::create_dir_all(&pasta).expect("cria a pasta do teste");
         let relogio = Arc::new(AtomicI64::new(1_795_130_160_000));
-        let store = Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
+        let store = Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db"))
             .expect("abre o banco")
-            .com_relogio({
+            .with_clock({
                 let relogio = Arc::clone(&relogio);
                 Arc::new(move || relogio.load(Ordering::SeqCst))
             });
         let store = Arc::new(store);
         let org = store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: format!("Org {rotulo}"),
+            .orgs()
+            .criar(NewOrg {
+                name: format!("Org {rotulo}"),
                 slug: format!("org-{rotulo}-{}", AgentId::generate()),
                 config_json: "{}".to_owned(),
             })
             .expect("cria a org")
             .id;
         let agente = store
-            .agentes()
+            .agents()
             .criar(
                 org,
-                NovoAgente {
-                    nome: format!("Bia {rotulo}"),
+                NewAgent {
+                    name: format!("Bia {rotulo}"),
                     slug: format!("bia-{rotulo}"),
                     modelo: "gemini-3.8-flash-tiered".to_owned(),
-                    janela_agrupamento_ms: 2_000,
-                    ..NovoAgente::default()
+                    grouping_window_ms: 2_000,
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente");
         store
-            .instrucoes()
+            .instructions()
             .salvar(
                 org,
                 agente.id,
@@ -185,12 +185,12 @@ impl Cenario {
             .conversas()
             .criar(
                 org,
-                NovaConversa {
+                NewConversation {
                     agent_id: agente,
                     integration_id: None,
                     canal: canal.to_owned(),
                     peer_externo: None,
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("abre a conversa")
@@ -204,19 +204,19 @@ impl Cenario {
     /// Grava a mensagem do cliente e devolve o id (é o que o `chat` faz antes do turno).
     fn falar(&self, texto: &str) -> MessageId {
         self.store
-            .mensagens()
+            .messages()
             .gravar(
                 self.org,
-                NovaMensagem {
+                NewMessage {
                     conversation_id: self.conversa,
-                    direcao: Direcao::Entrada,
-                    papel: Papel::Usuario,
+                    direction: Direction::Inbound,
+                    role: Role::User,
                     texto: texto.to_owned(),
-                    anexos_json: "[]".to_owned(),
+                    attachments_json: "[]".to_owned(),
                     id_externo: None,
                     turn_id: None,
-                    origem: poph_store::Origem::Agente,
-                    autor_nome: None,
+                    origin: poph_store::Origin::Agente,
+                    author_name: None,
                 },
             )
             .expect("grava a mensagem do cliente")
@@ -284,15 +284,15 @@ impl Cenario {
 
     fn mensagens(&self) -> Vec<poph_store::Mensagem> {
         self.store
-            .mensagens()
-            .listar(self.org, self.conversa, Pagina::com_limite(200))
+            .messages()
+            .listar(self.org, self.conversa, Page::with_limit(200))
             .expect("lista as mensagens")
     }
 
     fn turnos(&self) -> Vec<poph_store::Turno> {
         self.store
-            .turnos()
-            .listar(self.org, self.conversa, Pagina::com_limite(200))
+            .turns()
+            .listar(self.org, self.conversa, Page::with_limit(200))
             .expect("lista os turnos")
     }
 }
@@ -336,7 +336,7 @@ async fn cinco_mensagens_gravam_stream_mensagens_e_turno() {
             )
             .await
             .expect("turno roda");
-        assert_eq!(resumo.estado, EstadoTurno::Concluido, "{:?}", resumo.erro);
+        assert_eq!(resumo.estado, TurnState::Completed, "{:?}", resumo.erro);
         assert_eq!(resumo.texto, format!("resposta {n}"));
         assert_eq!(coletor.texto(), resumo.texto, "o stream é a resposta final");
         assert!(
@@ -356,11 +356,11 @@ async fn cinco_mensagens_gravam_stream_mensagens_e_turno() {
     assert_eq!(mensagens.len(), 10);
     for (indice, mensagem) in mensagens.iter().enumerate() {
         if indice % 2 == 0 {
-            assert_eq!(mensagem.papel, Papel::Usuario);
-            assert_eq!(mensagem.direcao, Direcao::Entrada);
+            assert_eq!(mensagem.role, Role::User);
+            assert_eq!(mensagem.direction, Direction::Inbound);
         } else {
-            assert_eq!(mensagem.papel, Papel::Assistente);
-            assert_eq!(mensagem.direcao, Direcao::Saida);
+            assert_eq!(mensagem.role, Role::Assistant);
+            assert_eq!(mensagem.direction, Direction::Outbound);
         }
     }
 
@@ -368,11 +368,11 @@ async fn cinco_mensagens_gravam_stream_mensagens_e_turno() {
     let turnos = cenario.turnos();
     assert_eq!(turnos.len(), 5);
     for turno in &turnos {
-        assert_eq!(turno.estado, EstadoTurno::Concluido);
-        assert_eq!(turno.tokens_entrada, 120);
-        assert_eq!(turno.tokens_saida, 30);
+        assert_eq!(turno.estado, TurnState::Completed);
+        assert_eq!(turno.input_tokens, 120);
+        assert_eq!(turno.output_tokens, 30);
         let tempos: serde_json::Value =
-            serde_json::from_str(&turno.tempos_json).expect("tempos em JSON");
+            serde_json::from_str(&turno.times_json).expect("tempos em JSON");
         for chave in [
             "fila_ms",
             "montagem_ms",
@@ -389,12 +389,12 @@ async fn cinco_mensagens_gravam_stream_mensagens_e_turno() {
     // A saída fica na outbox, pronta para o transporte.
     let saida = cenario
         .store
-        .caixa_saida()
+        .outbox()
         .listar_pendentes(cenario.org, 10)
         .expect("lista a saída");
     assert_eq!(saida.len(), 5);
     assert_eq!(
-        saida[0].conteudo_json,
+        saida[0].content_json,
         serde_json::json!({"texto": "resposta 1"}).to_string()
     );
 }
@@ -508,19 +508,19 @@ async fn janela_de_agrupamento_junta_duas_e_separa_depois_do_teto() {
             let mut guarda = segunda.lock().unwrap_or_else(|v| v.into_inner());
             if guarda.is_none() {
                 let mensagem = store
-                    .mensagens()
+                    .messages()
                     .gravar(
                         org,
-                        NovaMensagem {
+                        NewMessage {
                             conversation_id: conversa,
-                            direcao: Direcao::Entrada,
-                            papel: Papel::Usuario,
+                            direction: Direction::Inbound,
+                            role: Role::User,
                             texto: segunda_texto.to_owned(),
-                            anexos_json: "[]".to_owned(),
+                            attachments_json: "[]".to_owned(),
                             id_externo: None,
                             turn_id: None,
-                            origem: poph_store::Origem::Agente,
-                            autor_nome: None,
+                            origin: poph_store::Origin::Agente,
+                            author_name: None,
                         },
                     )
                     .expect("grava a mensagem que chega na janela");
@@ -543,7 +543,7 @@ async fn janela_de_agrupamento_junta_duas_e_separa_depois_do_teto() {
         )
         .await
         .expect("turno roda");
-    assert_eq!(resumo.estado, EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, TurnState::Completed);
     let segunda_id: MessageId = segunda
         .lock()
         .unwrap_or_else(|v| v.into_inner())
@@ -572,7 +572,7 @@ async fn janela_de_agrupamento_junta_duas_e_separa_depois_do_teto() {
         )
         .await
         .expect("segundo turno roda");
-    assert_eq!(resumo.estado, EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, TurnState::Completed);
     assert_eq!(resumo.mensagens, vec![terceira], "turno novo, uma mensagem");
     assert_eq!(fake.recebidos().len(), 2);
 
@@ -633,21 +633,21 @@ async fn ferramenta_nao_habilitada_nao_e_oferecida_e_laco_para_no_limite() {
     // Agente com uma ferramenta habilitada e outra desabilitada, e limite de 1 rodada.
     cenario
         .store
-        .agentes()
+        .agents()
         .atualizar(
             cenario.org,
             cenario.agente,
             1,
-            poph_store::MudancaAgente {
-                max_rodadas_ferramenta: Some(1),
-                max_ferramentas_por_mensagem: Some(1),
-                ..poph_store::MudancaAgente::default()
+            poph_store::AgentChange {
+                max_tool_rounds: Some(1),
+                max_tools_per_message: Some(1),
+                ..poph_store::AgentChange::default()
             },
         )
         .expect("ajusta o agente");
     let instrucoes = cenario
         .store
-        .instrucoes()
+        .instructions()
         .obter(cenario.org, cenario.agente)
         .expect("lê as instruções");
     let estruturado = poph_types::StructuredInstructions {
@@ -667,11 +667,11 @@ async fn ferramenta_nao_habilitada_nao_e_oferecida_e_laco_para_no_limite() {
     };
     cenario
         .store
-        .instrucoes()
+        .instructions()
         .salvar(
             cenario.org,
             cenario.agente,
-            instrucoes.versao,
+            instrucoes.version,
             &estruturado.to_json(),
             &instrucoes.markdown,
             false,
@@ -703,7 +703,7 @@ async fn ferramenta_nao_habilitada_nao_e_oferecida_e_laco_para_no_limite() {
         )
         .await
         .expect("turno roda");
-    assert_eq!(resumo.estado, EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, TurnState::Completed);
     assert_eq!(resumo.texto, "pronto");
 
     let pedidos = fake.recebidos();
@@ -785,22 +785,22 @@ async fn cancelamento_encerra_o_turno_e_conclui_a_entrada() {
 
     let turnos = cenario.turnos();
     assert_eq!(turnos.len(), 1);
-    assert_eq!(turnos[0].estado, EstadoTurno::Falhou);
+    assert_eq!(turnos[0].estado, TurnState::Failed);
     assert!(
         turnos[0]
-            .erro
+            .error
             .as_deref()
             .unwrap_or_default()
             .contains("cancelada"),
         "{:?}",
-        turnos[0].erro
+        turnos[0].error
     );
-    assert!(turnos[0].finalizado_em.is_some(), "o turno foi fechado");
+    assert!(turnos[0].finished_at.is_some(), "o turno foi fechado");
 
     // A entrada foi concluída (com erro) — não fica pendente nem volta em laço.
     let pendentes = cenario
         .store
-        .caixa_entrada()
+        .inbox()
         .contar_pendentes(cenario.org)
         .expect("conta a entrada");
     assert_eq!(
@@ -811,13 +811,13 @@ async fn cancelamento_encerra_o_turno_e_conclui_a_entrada() {
     // Resposta parcial não vai para o cliente e não vira mensagem do agente.
     let saida = cenario
         .store
-        .caixa_saida()
+        .outbox()
         .listar_pendentes(cenario.org, 10)
         .expect("lista a saída");
     assert!(saida.is_empty(), "nada de resposta parcial na outbox");
     let mensagens = cenario.mensagens();
     assert_eq!(mensagens.len(), 1, "só a mensagem do cliente");
-    assert_eq!(mensagens[0].papel, Papel::Usuario);
+    assert_eq!(mensagens[0].role, Role::User);
 }
 
 // ───────────────────────────── 7. Erro do provedor ─────────────────────────────
@@ -846,7 +846,7 @@ async fn erro_do_provedor_grava_o_turno_e_nao_deixa_item_preso() {
             },
         )
         .expect("grava a entrada");
-    assert_eq!(recebido.situacao, poph_store::Recebido::Novo);
+    assert_eq!(recebido.situacao, poph_store::Received::New);
     fluxo.despachar(cenario.org).expect("despacha");
     esperar_tentativas(&cenario, recebido.item.id, 1).await;
 
@@ -859,34 +859,34 @@ async fn erro_do_provedor_grava_o_turno_e_nao_deixa_item_preso() {
     // Turno gravado como falho, com o motivo do provedor.
     let turnos = cenario.turnos();
     assert_eq!(turnos.len(), 1);
-    assert_eq!(turnos[0].estado, EstadoTurno::Falhou);
+    assert_eq!(turnos[0].estado, TurnState::Failed);
     assert!(
         turnos[0]
-            .erro
+            .error
             .as_deref()
             .unwrap_or_default()
             .contains("503"),
         "{:?}",
-        turnos[0].erro
+        turnos[0].error
     );
     // HR-26i: a falha do modelo adia a entrada (uma tentativa contada), não a conclui.
     let pendentes = cenario
         .store
-        .caixa_entrada()
+        .inbox()
         .contar_pendentes(cenario.org)
         .expect("conta a entrada");
     assert_eq!(pendentes, 1, "a entrada fica para nova tentativa");
     let tentativas = cenario
         .store
-        .caixa_entrada()
+        .inbox()
         .tentativas(cenario.org, &[recebido.item.id])
         .expect("tentativas");
     assert_eq!(tentativas, vec![1]);
     // Nenhum item preso em `sending` e nada enviado.
     let enviando = cenario
         .store
-        .caixa_saida()
-        .contar_por_estado(cenario.org, EstadoSaida::Enviando)
+        .outbox()
+        .contar_por_estado(cenario.org, OutboxState::Sending)
         .expect("conta a saída");
     assert_eq!(enviando, 0);
     assert!(
@@ -896,7 +896,7 @@ async fn erro_do_provedor_grava_o_turno_e_nao_deixa_item_preso() {
     // Nenhuma resposta gravada no histórico.
     let mensagens = cenario.mensagens();
     assert_eq!(mensagens.len(), 1);
-    assert_eq!(mensagens[0].papel, Papel::Usuario);
+    assert_eq!(mensagens[0].role, Role::User);
 }
 
 #[tokio::test]
@@ -958,19 +958,19 @@ async fn sem_vaga_deixa_a_entrada_pendente_para_nova_tentativa() {
     // O turno foi gravado como falho, mas a mensagem continua na fila para nova tentativa.
     let turnos = cenario.turnos();
     assert_eq!(turnos.len(), 1);
-    assert_eq!(turnos[0].estado, EstadoTurno::Falhou);
+    assert_eq!(turnos[0].estado, TurnState::Failed);
     assert!(
         turnos[0]
-            .erro
+            .error
             .as_deref()
             .unwrap_or_default()
             .contains("sem vaga"),
         "{:?}",
-        turnos[0].erro
+        turnos[0].error
     );
     let pendentes = cenario
         .store
-        .caixa_entrada()
+        .inbox()
         .contar_pendentes(cenario.org)
         .expect("conta a entrada");
     assert_eq!(
@@ -1057,7 +1057,7 @@ async fn falta_de_vaga_do_turno_entra_na_escada_e_esgota_em_tres_tentativas() {
     assert!(
         cenario
             .store
-            .caixa_saida()
+            .outbox()
             .listar_pendentes(cenario.org, 10)
             .expect("saída")
             .is_empty()
@@ -1075,16 +1075,16 @@ async fn falta_de_vaga_do_turno_entra_na_escada_e_esgota_em_tres_tentativas() {
         cenario
             .turnos()
             .iter()
-            .all(|t| t.estado == EstadoTurno::Falhou)
+            .all(|t| t.estado == TurnState::Failed)
     );
     assert_eq!(fake.recebidos().len(), 0);
     let concluido = cenario
         .store
-        .caixa_entrada()
+        .inbox()
         .obter(cenario.org, item)
         .expect("item");
     assert!(
-        concluido.processado_em.is_some(),
+        concluido.processed_at.is_some(),
         "concluída depois do limite"
     );
     assert!(
@@ -1148,13 +1148,13 @@ async fn falta_de_vaga_do_turno_na_primeira_tentativa_e_resposta_na_segunda() {
     let respostas = cenario
         .mensagens()
         .into_iter()
-        .filter(|m| m.papel == Papel::Assistente)
+        .filter(|m| m.role == Role::Assistant)
         .count();
     assert_eq!(respostas, 1);
     assert_eq!(
         cenario
             .store
-            .caixa_saida()
+            .outbox()
             .listar_pendentes(cenario.org, 10)
             .expect("saída")
             .len(),
@@ -1195,7 +1195,7 @@ async fn falta_de_vaga_do_provedor_entra_na_escada_e_nao_chama_o_modelo() {
     assert!(
         cenario
             .store
-            .caixa_saida()
+            .outbox()
             .listar_pendentes(cenario.org, 10)
             .expect("saída")
             .is_empty()
@@ -1237,14 +1237,14 @@ async fn provedor_que_recusa_a_chave_nao_gasta_a_escada() {
     assert_eq!(fake.recebidos().len(), 1);
     let turnos = cenario.turnos();
     assert_eq!(turnos.len(), 1);
-    assert_eq!(turnos[0].estado, EstadoTurno::Falhou);
+    assert_eq!(turnos[0].estado, TurnState::Failed);
     let concluido = cenario
         .store
-        .caixa_entrada()
+        .inbox()
         .obter(cenario.org, item)
         .expect("item");
     assert!(
-        concluido.processado_em.is_some(),
+        concluido.processed_at.is_some(),
         "concluída na primeira tentativa"
     );
     assert!(
@@ -1259,7 +1259,7 @@ async fn provedor_que_recusa_a_chave_nao_gasta_a_escada() {
     assert!(
         cenario
             .store
-            .caixa_saida()
+            .outbox()
             .listar_pendentes(cenario.org, 10)
             .expect("saída")
             .is_empty()
@@ -1282,11 +1282,11 @@ async fn provedor_que_recusa_a_chave_nao_gasta_a_escada() {
 /// Transporte de teste que guarda o que "enviou".
 #[derive(Default)]
 struct TransporteDeTeste {
-    enviados: Mutex<Vec<ItemSaida>>,
+    enviados: Mutex<Vec<OutboxItem>>,
 }
 
 impl TransporteDeTeste {
-    fn enviados(&self) -> Vec<ItemSaida> {
+    fn enviados(&self) -> Vec<OutboxItem> {
         self.enviados
             .lock()
             .unwrap_or_else(|veneno| veneno.into_inner())
@@ -1295,7 +1295,7 @@ impl TransporteDeTeste {
 }
 
 impl TransporteSaida for TransporteDeTeste {
-    fn enviar(&self, item: ItemSaida) -> FuturoEnvio {
+    fn enviar(&self, item: OutboxItem) -> FuturoEnvio {
         self.enviados
             .lock()
             .unwrap_or_else(|veneno| veneno.into_inner())
@@ -1323,14 +1323,14 @@ async fn fluxo_completo_da_inbox_ate_a_outbox_entrega_a_resposta() {
             .receber_mensagem(cenario.org, entrega())
             .expect("grava")
             .situacao,
-        poph_store::Recebido::Novo
+        poph_store::Received::New
     );
     let segunda = fluxo
         .receber_mensagem(cenario.org, entrega())
         .expect("reentrega da mesma mensagem");
     assert_eq!(
         segunda.situacao,
-        poph_store::Recebido::Duplicado,
+        poph_store::Received::Duplicate,
         "a segunda entrega é duplicata, não erro"
     );
 
@@ -1346,7 +1346,7 @@ async fn fluxo_completo_da_inbox_ate_a_outbox_entrega_a_resposta() {
     let enviados = transporte.enviados();
     assert_eq!(enviados.len(), 1);
     assert_eq!(
-        enviados[0].conteudo_json,
+        enviados[0].content_json,
         serde_json::json!({"texto": "claro, posso ajudar"}).to_string()
     );
     assert_eq!(
@@ -1358,7 +1358,7 @@ async fn fluxo_completo_da_inbox_ate_a_outbox_entrega_a_resposta() {
     assert_eq!(fake.recebidos().len(), 1, "a duplicata não abre turno");
     let turnos = cenario.turnos();
     assert_eq!(turnos.len(), 1);
-    assert_eq!(turnos[0].estado, EstadoTurno::Concluido);
+    assert_eq!(turnos[0].estado, TurnState::Completed);
     let mensagens = cenario.mensagens();
     assert_eq!(mensagens.len(), 2, "uma fala do cliente e uma do agente");
 }
@@ -1369,7 +1369,7 @@ async fn esperar_turno_fechado(cenario: &Cenario) {
         if cenario
             .turnos()
             .iter()
-            .any(|turno| turno.estado != EstadoTurno::Rodando)
+            .any(|turno| turno.estado != TurnState::Running)
         {
             return;
         }
@@ -1388,7 +1388,7 @@ async fn esperar_fila_vazia(fluxo: &Fluxo, cenario: &Cenario) {
         let turno_rodando = cenario
             .turnos()
             .iter()
-            .any(|turno| turno.estado == EstadoTurno::Rodando);
+            .any(|turno| turno.estado == TurnState::Running);
         if pendentes == 0 && !turno_rodando {
             return;
         }
@@ -1434,7 +1434,7 @@ async fn esperar_tentativas(cenario: &Cenario, id: poph_types::InboxId, minimo: 
     for _ in 0..500 {
         let atual = cenario
             .store
-            .caixa_entrada()
+            .inbox()
             .tentativas(cenario.org, &[id])
             .expect("tentativas")[0];
         if atual >= minimo {
@@ -1475,7 +1475,7 @@ async fn falha_do_modelo_repete_com_espera_crescente_e_responde_na_terceira() {
     assert_eq!(
         cenario
             .store
-            .caixa_entrada()
+            .inbox()
             .contar_pendentes(cenario.org)
             .expect("pendentes"),
         1,
@@ -1484,7 +1484,7 @@ async fn falha_do_modelo_repete_com_espera_crescente_e_responde_na_terceira() {
     assert!(
         cenario
             .store
-            .caixa_saida()
+            .outbox()
             .listar_pendentes(cenario.org, 10)
             .expect("saída")
             .is_empty(),
@@ -1522,18 +1522,15 @@ async fn falha_do_modelo_repete_com_espera_crescente_e_responde_na_terceira() {
 
     // Chamadas ao modelo: exatamente uma por tentativa, sem repetição extra.
     assert_eq!(fake.recebidos().len(), 3);
-    let estados: Vec<EstadoTurno> = cenario.turnos().iter().map(|t| t.estado).collect();
+    let estados: Vec<TurnState> = cenario.turnos().iter().map(|t| t.estado).collect();
     assert_eq!(
-        estados
-            .iter()
-            .filter(|e| **e == EstadoTurno::Falhou)
-            .count(),
+        estados.iter().filter(|e| **e == TurnState::Failed).count(),
         2
     );
     assert_eq!(
         estados
             .iter()
-            .filter(|e| **e == EstadoTurno::Concluido)
+            .filter(|e| **e == TurnState::Completed)
             .count(),
         1
     );
@@ -1542,19 +1539,19 @@ async fn falha_do_modelo_repete_com_espera_crescente_e_responde_na_terceira() {
     let mensagens = cenario.mensagens();
     let respostas: Vec<_> = mensagens
         .iter()
-        .filter(|m| m.papel == Papel::Assistente)
+        .filter(|m| m.role == Role::Assistant)
         .collect();
     assert_eq!(respostas.len(), 1, "uma resposta do agente");
     let saida = cenario
         .store
-        .caixa_saida()
+        .outbox()
         .listar_pendentes(cenario.org, 10)
         .expect("saída");
     assert_eq!(saida.len(), 1, "uma mensagem na outbox");
     assert_eq!(
         cenario
             .store
-            .caixa_entrada()
+            .inbox()
             .contar_pendentes(cenario.org)
             .expect("pendentes"),
         0
@@ -1596,15 +1593,15 @@ async fn falha_do_modelo_sempre_esgota_em_tres_tentativas_e_conclui_sem_resposta
     assert_eq!(fake.recebidos().len(), 3);
     let turnos = cenario.turnos();
     assert_eq!(turnos.len(), 3);
-    assert!(turnos.iter().all(|t| t.estado == EstadoTurno::Falhou));
+    assert!(turnos.iter().all(|t| t.estado == TurnState::Failed));
 
     // Concluída (não volta para a fila), com o motivo guardado, sem resposta nem saída.
     let concluido = cenario
         .store
-        .caixa_entrada()
+        .inbox()
         .obter(cenario.org, item)
         .expect("item");
-    assert!(concluido.processado_em.is_some(), "a entrada foi concluída");
+    assert!(concluido.processed_at.is_some(), "a entrada foi concluída");
     assert!(
         concluido
             .ultimo_erro
@@ -1617,7 +1614,7 @@ async fn falha_do_modelo_sempre_esgota_em_tres_tentativas_e_conclui_sem_resposta
     assert!(
         cenario
             .store
-            .caixa_saida()
+            .outbox()
             .listar_pendentes(cenario.org, 10)
             .expect("saída")
             .is_empty()
@@ -1680,15 +1677,15 @@ async fn tempo_maximo_do_turno_conta_como_falha_do_modelo_e_entra_na_escada() {
     fluxo.despachar(cenario.org).expect("despacha");
     esperar_tentativas(&cenario, item, 1).await;
     let turno = cenario.turnos().into_iter().next().expect("um turno");
-    assert_eq!(turno.estado, EstadoTurno::Falhou);
+    assert_eq!(turno.estado, TurnState::Failed);
     assert!(
         turno
-            .erro
+            .error
             .as_deref()
             .unwrap_or_default()
             .contains("tempo máximo"),
         "{:?}",
-        turno.erro
+        turno.error
     );
     assert_eq!(motor.metricas().falhas_modelo_adiadas.value(), 1);
 
@@ -1700,7 +1697,7 @@ async fn tempo_maximo_do_turno_conta_como_falha_do_modelo_e_entra_na_escada() {
         cenario
             .mensagens()
             .iter()
-            .filter(|m| m.papel == Papel::Assistente)
+            .filter(|m| m.role == Role::Assistant)
             .count(),
         1
     );
@@ -1727,19 +1724,19 @@ async fn repetir_depois_de_resposta_ja_gravada_nao_chama_o_modelo() {
     // exemplo). A repetição tem de reconhecer isso e não chamar o modelo de novo.
     cenario
         .store
-        .mensagens()
+        .messages()
         .gravar(
             cenario.org,
-            NovaMensagem {
+            NewMessage {
                 conversation_id: cenario.conversa,
-                direcao: Direcao::Saida,
-                papel: Papel::Assistente,
+                direction: Direction::Outbound,
+                role: Role::Assistant,
                 texto: "resposta que já saiu".to_owned(),
-                anexos_json: "[]".to_owned(),
+                attachments_json: "[]".to_owned(),
                 id_externo: None,
                 turn_id: None,
-                origem: poph_store::Origem::Agente,
-                autor_nome: None,
+                origin: poph_store::Origin::Agente,
+                author_name: None,
             },
         )
         .expect("grava a resposta anterior");
@@ -1756,7 +1753,7 @@ async fn repetir_depois_de_resposta_ja_gravada_nao_chama_o_modelo() {
     assert_eq!(
         cenario
             .store
-            .caixa_entrada()
+            .inbox()
             .contar_pendentes(cenario.org)
             .expect("pendentes"),
         0
@@ -1764,7 +1761,7 @@ async fn repetir_depois_de_resposta_ja_gravada_nao_chama_o_modelo() {
     assert!(
         cenario
             .store
-            .caixa_saida()
+            .outbox()
             .listar_pendentes(cenario.org, 10)
             .expect("saída")
             .is_empty(),
@@ -1805,13 +1802,13 @@ async fn item_adiado_so_volta_junto_com_a_mensagem_nova_e_nao_antes_do_instante(
     let respostas = cenario
         .mensagens()
         .iter()
-        .filter(|m| m.papel == Papel::Assistente)
+        .filter(|m| m.role == Role::Assistant)
         .count();
     assert_eq!(respostas, 1, "uma resposta para as duas mensagens");
     assert_eq!(
         cenario
             .store
-            .caixa_entrada()
+            .inbox()
             .contar_pendentes(cenario.org)
             .expect("pendentes"),
         0

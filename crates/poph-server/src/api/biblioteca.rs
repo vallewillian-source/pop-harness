@@ -5,7 +5,7 @@ use axum::{
     extract::{Path, Query, State, rejection::QueryRejection},
     http::StatusCode,
 };
-use poph_store::{ArquivoBiblioteca, NovoArquivoBiblioteca};
+use poph_store::{LibraryFile, NewLibraryFile};
 use poph_types::{AgentId, FileId, OrgId};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -42,18 +42,18 @@ pub struct ArquivoJson {
     pub sha256: String,
     pub created_at: i64,
 }
-impl From<&ArquivoBiblioteca> for ArquivoJson {
-    fn from(a: &ArquivoBiblioteca) -> Self {
+impl From<&LibraryFile> for ArquivoJson {
+    fn from(a: &LibraryFile) -> Self {
         Self {
             id: a.id.to_string(),
             org_id: a.org_id.to_string(),
             agent_id: a.agent_id.to_string(),
-            name: a.nome.clone(),
-            description: a.descricao.clone(),
+            name: a.name.clone(),
+            description: a.description.clone(),
             mime: a.mime.clone(),
-            size_bytes: a.tamanho_bytes,
+            size_bytes: a.size_bytes,
             sha256: a.sha256.clone(),
-            created_at: a.criado_em,
+            created_at: a.created_at,
         }
     }
 }
@@ -68,11 +68,11 @@ pub async fn listar(
     let org = id_da_url::<OrgId>(&c.org_id)?;
     identidade.exigir_org(org)?;
     let agente = id_da_url::<AgentId>(&c.agent_id)?;
-    estado.store.agentes().obter(org, agente)?;
+    estado.store.agents().get(org, agente)?;
     let pagina = consulta.pagina()?;
-    let arquivos = estado.store.biblioteca().listar(org, agente, pagina)?;
+    let arquivos = estado.store.library().listar(org, agente, pagina)?;
     let items: Vec<_> = arquivos.iter().map(ArquivoJson::from).collect();
-    let next_cursor = proximo_cursor(&items, pagina.limite, |item| item.id.clone());
+    let next_cursor = proximo_cursor(&items, pagina.limit, |item| item.id.clone());
     Ok(Json(ListaJson { items, next_cursor }))
 }
 
@@ -86,7 +86,7 @@ pub async fn mostrar(
     identidade.exigir_org(org)?;
     let agente = id_da_url::<AgentId>(&c.agent_id)?;
     let id = id_da_url::<FileId>(&c.file_id)?;
-    let arquivo = estado.store.biblioteca().obter(org, agente, id)?;
+    let arquivo = estado.store.library().obter(org, agente, id)?;
     Ok(Json(ArquivoJson::from(&arquivo)))
 }
 
@@ -106,7 +106,7 @@ pub async fn conteudo(
     identidade.exigir_org(org)?;
     let agente = id_da_url::<AgentId>(&c.agent_id)?;
     let id = id_da_url::<FileId>(&c.file_id)?;
-    let arquivo = estado.store.biblioteca().obter(org, agente, id)?;
+    let arquivo = estado.store.library().obter(org, agente, id)?;
     let pasta = estado.config.blobs();
     let sha256 = arquivo.sha256.clone();
     // A leitura do disco é síncrona e pode levar alguns milissegundos num arquivo de 16 MB.
@@ -117,7 +117,7 @@ pub async fn conteudo(
     Ok(super::conteudo::resposta(
         bytes,
         &arquivo.mime,
-        &arquivo.nome,
+        &arquivo.name,
         &arquivo.sha256,
     ))
 }
@@ -135,7 +135,7 @@ pub async fn excluir(
     let id = id_da_url::<FileId>(&c.file_id)?;
     estado
         .store
-        .biblioteca()
+        .library()
         .excluir_auditado(org, agente, id, identidade.ator_id())?;
     Ok(Json(serde_json::json!({"deleted": true})))
 }
@@ -168,7 +168,7 @@ pub async fn criar(
     let org = id_da_url::<OrgId>(&c.org_id)?;
     identidade.exigir_org(org)?;
     let agente = id_da_url::<AgentId>(&c.agent_id)?;
-    estado.store.agentes().obter(org, agente)?;
+    estado.store.agents().get(org, agente)?;
     let Query(params) = params.map_err(|_| {
         ApiError::validacao(
             "filename",
@@ -208,16 +208,16 @@ pub async fn criar(
             .map_err(|_| ApiError::interno())?
             .to_string_lossy()
             .replace('\\', "/");
-        Ok::<_, ApiError>(NovoArquivoBiblioteca {
+        Ok::<_, ApiError>(NewLibraryFile {
             agent_id: agente,
-            nome: if params.name.trim().is_empty() {
+            name: if params.name.trim().is_empty() {
                 metadados.nome_original
             } else {
                 params.name
             },
-            descricao: params.description,
+            description: params.description,
             mime: metadados.mime_real,
-            tamanho_bytes: metadados.tamanho_bytes,
+            size_bytes: metadados.tamanho_bytes,
             sha256: metadados.sha256,
             blob_path,
         })
@@ -225,7 +225,7 @@ pub async fn criar(
     .await
     .map_err(|_| ApiError::interno())??;
 
-    let arquivo = estado.store.biblioteca().criar(org, novo)?;
+    let arquivo = estado.store.library().criar(org, novo)?;
     super::auditoria::registrar(
         &estado,
         &identidade,

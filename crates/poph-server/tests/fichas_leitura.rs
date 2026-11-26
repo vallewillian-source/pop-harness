@@ -23,8 +23,8 @@ use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, SaltString};
 use poph_server::Estado;
 use poph_store::{
-    Conversa, EstadoDaExecucao, EventoDaTransicao, ExecucaoGravada, ExtrasDaTransicao,
-    InicioDeExecucao, NovaConversa, NovaFicha, Store, TransicaoDeFluxo,
+    Conversa, ExecutionStart, ExecutionState, FlowTransition, NewConversation, NewRecord, Store,
+    StoredExecution, TransitionEvent, TransitionExtras,
 };
 use poph_types::config::GlobalTokenConfig;
 use poph_types::{
@@ -78,7 +78,7 @@ impl Cenario {
         }];
         config.validar().expect("configuração válida");
 
-        let store = Arc::new(Store::abrir(&config).expect("abre o banco"));
+        let store = Arc::new(Store::open(&config).expect("abre o banco"));
         let estado = Estado::novo(Arc::clone(&store), config).expect("estado do servidor");
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -195,8 +195,8 @@ impl Cenario {
 
     /// Conexão direta ao arquivo do banco, só para gravar a revisão publicada (a publicação é a FX-09).
     fn conexao(&self) -> rusqlite::Connection {
-        let conn = rusqlite::Connection::open(self.store.caminho_harness())
-            .expect("abre o banco do teste");
+        let conn =
+            rusqlite::Connection::open(self.store.harness_path()).expect("abre o banco do teste");
         conn.busy_timeout(Duration::from_secs(10))
             .expect("tempo de espera do banco");
         conn
@@ -241,7 +241,7 @@ impl Cenario {
             .fichas()
             .criar(
                 parse_org(org),
-                NovaFicha {
+                NewRecord {
                     conversation_id: None,
                     agent_id: parse_agente(agente),
                     canal: canal.to_owned(),
@@ -259,12 +259,12 @@ impl Cenario {
             .conversas()
             .criar(
                 parse_org(org),
-                NovaConversa {
+                NewConversation {
                     agent_id: parse_agente(agente),
                     integration_id: None,
                     canal: canal.to_owned(),
                     peer_externo: Some(format!("cliente-ficticio-{}", uuid::Uuid::now_v7())),
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("cria a conversa");
@@ -284,7 +284,7 @@ impl Cenario {
             .fechar_auditado(
                 parse_org(org),
                 conversa.id,
-                conversa.versao,
+                conversa.version,
                 "teste-fx29".to_owned(),
             )
             .expect("fecha a conversa");
@@ -298,67 +298,67 @@ impl Cenario {
         ficha: RecordId,
         fluxo: FlowId,
         revisao: RevisionId,
-    ) -> ExecucaoGravada {
+    ) -> StoredExecution {
         self.liberar(org, agente, fluxo);
         self.store
-            .execucoes()
+            .executions()
             .iniciar_execucao(
                 parse_org(org),
-                InicioDeExecucao {
+                ExecutionStart {
                     chave_idempotencia: None,
                     ficha,
                     fluxo,
-                    revisao,
-                    ator: EventActor::Agent,
+                    revision: revisao,
+                    actor: EventActor::Agent,
                     ator_ref: Some("agente-de-teste"),
-                    decisao_jev: None,
-                    estado_inicial: EstadoDaExecucao {
+                    jev_decision: None,
+                    initial_state: ExecutionState {
                         status: ExecutionStatus::Active,
                         no_atual: "coleta".to_owned(),
                         dados_json: "{}".to_owned(),
-                        atores_que_agiram: Vec::new(),
-                        resultado: None,
-                        motivo: None,
+                        acting_actors: Vec::new(),
+                        result: None,
+                        reason: None,
                     },
-                    efeitos_de_entrada: Vec::new(),
+                    inbound_effects: Vec::new(),
                 },
             )
             .expect("abre a execução")
     }
 
     /// O agente registra o nome na etapa `coleta` (campo respondido, W6).
-    fn responder_nome(&self, org: &str, gravada: &ExecucaoGravada, nome: &str) {
-        let transicao = TransicaoDeFluxo {
-            novo_estado: EstadoDaExecucao {
+    fn responder_nome(&self, org: &str, gravada: &StoredExecution, nome: &str) {
+        let transicao = FlowTransition {
+            new_state: ExecutionState {
                 status: ExecutionStatus::Active,
                 no_atual: "coleta".to_owned(),
                 dados_json: json!({ "coleta": { "nome": nome } }).to_string(),
-                atores_que_agiram: vec![ActionActor::Agent],
-                resultado: None,
-                motivo: None,
+                acting_actors: vec![ActionActor::Agent],
+                result: None,
+                reason: None,
             },
-            eventos: vec![EventoDaTransicao {
+            events: vec![TransitionEvent {
                 tipo: RecordEventKind::FieldsFilled,
                 ator_tipo: EventActor::Agent,
                 payload_json: json!({ "etapa": "coleta", "campos": ["nome"] }).to_string(),
             }],
-            efeitos: Vec::new(),
-            encerra_atendimento: false,
-            repetida: false,
-            erro_de_regra: false,
+            effects: Vec::new(),
+            closes_service: false,
+            repeated: false,
+            rule_error: false,
         };
         self.store
-            .execucoes()
+            .executions()
             .aplicar_transicao(
                 parse_org(org),
-                gravada.execucao.id,
-                gravada.execucao.versao,
+                gravada.execution.id,
+                gravada.execution.version,
                 &transicao,
                 &format!("coleta-{}", uuid::Uuid::now_v7()),
-                ExtrasDaTransicao {
+                TransitionExtras {
                     ator_ref: None,
                     fechada_por: None,
-                    motivo_encerramento: None,
+                    close_reason: None,
                 },
             )
             .expect("registra o campo respondido");
@@ -789,7 +789,7 @@ async fn execucao_com_etapas_e_campos_aparece_dentro_da_ficha() {
     let execucoes = corpo["execucoes"].as_array().expect("execucoes na Ficha");
     assert_eq!(execucoes.len(), 1, "{corpo}");
     let execucao = &execucoes[0];
-    assert_eq!(execucao["id"], gravada.execucao.id.to_string());
+    assert_eq!(execucao["id"], gravada.execution.id.to_string());
     assert_eq!(execucao["fluxo_id"], fluxo.to_string());
     assert_eq!(execucao["revisao_id"], revisao.to_string());
     assert_eq!(execucao["status"], "ativa");

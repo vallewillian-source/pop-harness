@@ -13,7 +13,7 @@ use std::process::ExitCode;
 
 use clap::{Args, Subcommand};
 use poph_files::ConfigArquivos;
-use poph_store::{ArquivoBiblioteca, NovoArquivoBiblioteca, Pagina, Store};
+use poph_store::{LibraryFile, NewLibraryFile, Page, Store};
 use poph_types::{AgentId, FileId, HarnessConfig, OrgId};
 use serde_json::{Value, json};
 
@@ -138,8 +138,8 @@ fn abrir(
     let arquivo = config::resolver_arquivo(flag.as_deref(), ambiente, &pasta);
     let configuracao =
         config::carregar(arquivo.as_deref(), ambiente).map_err(|erro| erro.to_string())?;
-    let store = Store::abrir(&configuracao)
-        .map_err(|erro| format!("não consegui abrir o banco: {erro}"))?;
+    let store =
+        Store::open(&configuracao).map_err(|erro| format!("não consegui abrir o banco: {erro}"))?;
     let org = resolver_org(&store, texto)?;
     Ok((store, org, configuracao))
 }
@@ -177,16 +177,16 @@ fn enviar(
         args.name
     };
     let blob_relativo = relativo_ao_blobs(&config.pasta_blobs, &metadados.caminho_blob);
-    let novo = NovoArquivoBiblioteca {
+    let novo = NewLibraryFile {
         agent_id: agente,
-        nome,
-        descricao: args.description,
+        name: nome,
+        description: args.description,
         mime: metadados.mime_real.clone(),
-        tamanho_bytes: metadados.tamanho_bytes,
+        size_bytes: metadados.tamanho_bytes,
         sha256: metadados.sha256.clone(),
         blob_path: blob_relativo,
     };
-    match store.biblioteca().criar(org, novo) {
+    match store.library().criar(org, novo) {
         Ok(arquivo) => saida_arquivo(
             &arquivo,
             args.json,
@@ -205,15 +205,15 @@ fn listar(store: &Store, org: OrgId, args: ListarArquivos) -> ExitCode {
         Ok(agente) => agente,
         Err(erro) => return falha(erro),
     };
-    let pagina: Pagina = match validar_limite(args.limit) {
+    let pagina: Page = match validar_limite(args.limit) {
         Ok(pagina) => pagina,
         Err(erro) => return falha(erro),
     };
-    let total = match store.biblioteca().contar(org, agente) {
+    let total = match store.library().contar(org, agente) {
         Ok(total) => total,
         Err(erro) => return falha(descrever(&erro)),
     };
-    let arquivos = match store.biblioteca().listar(org, agente, pagina) {
+    let arquivos = match store.library().listar(org, agente, pagina) {
         Ok(arquivos) => arquivos,
         Err(erro) => return falha(descrever(&erro)),
     };
@@ -237,12 +237,12 @@ fn listar(store: &Store, org: OrgId, args: ListarArquivos) -> ExitCode {
         println!(
             "{}  {}  ({}, {})",
             arquivo.id,
-            arquivo.nome,
+            arquivo.name,
             arquivo.mime,
-            poph_agent::biblioteca::tamanho_legivel(arquivo.tamanho_bytes)
+            poph_agent::biblioteca::tamanho_legivel(arquivo.size_bytes)
         );
-        if !arquivo.descricao.trim().is_empty() {
-            println!("    descrição: {}", arquivo.descricao.trim());
+        if !arquivo.description.trim().is_empty() {
+            println!("    descrição: {}", arquivo.description.trim());
         }
     }
     if total > arquivos.len() as u64 {
@@ -260,7 +260,7 @@ fn mostrar(store: &Store, org: OrgId, args: ReferenciaArquivo) -> ExitCode {
         Ok(id) => id,
         Err(erro) => return falha(erro),
     };
-    match store.biblioteca().obter(org, agente, id) {
+    match store.library().obter(org, agente, id) {
         Ok(arquivo) => saida_arquivo(&arquivo, args.json, ""),
         Err(erro) => falha(descrever(&erro)),
     }
@@ -275,11 +275,11 @@ fn excluir(store: &Store, org: OrgId, args: ExcluirArquivo) -> ExitCode {
         Ok(id) => id,
         Err(erro) => return falha(erro),
     };
-    let arquivo = match store.biblioteca().obter(org, agente, id) {
+    let arquivo = match store.library().obter(org, agente, id) {
         Ok(arquivo) => arquivo,
         Err(erro) => return falha(descrever(&erro)),
     };
-    if let Err(erro) = store.biblioteca().excluir(org, agente, id) {
+    if let Err(erro) = store.library().excluir(org, agente, id) {
         return falha(descrever(&erro));
     }
     if args.json {
@@ -290,14 +290,14 @@ fn excluir(store: &Store, org: OrgId, args: ExcluirArquivo) -> ExitCode {
     } else {
         println!(
             "Arquivo removido da biblioteca: {} ({}).",
-            arquivo.nome, arquivo.id
+            arquivo.name, arquivo.id
         );
         println!("O conteúdo guardado fica no disco até a retenção apagar o que não tem dono.");
     }
     ExitCode::SUCCESS
 }
 
-fn saida_arquivo(arquivo: &ArquivoBiblioteca, json_saida: bool, aviso: &str) -> ExitCode {
+fn saida_arquivo(arquivo: &LibraryFile, json_saida: bool, aviso: &str) -> ExitCode {
     if json_saida {
         imprimir_json(&json!({
             "versao_relatorio": 1,
@@ -307,14 +307,14 @@ fn saida_arquivo(arquivo: &ArquivoBiblioteca, json_saida: bool, aviso: &str) -> 
     }
     println!("Arquivo na biblioteca do agente:\n");
     println!("  id:          {}", arquivo.id);
-    println!("  nome:        {}", arquivo.nome);
-    if !arquivo.descricao.trim().is_empty() {
-        println!("  descrição:   {}", arquivo.descricao.trim());
+    println!("  nome:        {}", arquivo.name);
+    if !arquivo.description.trim().is_empty() {
+        println!("  descrição:   {}", arquivo.description.trim());
     }
     println!("  tipo:        {}", arquivo.mime);
     println!(
         "  tamanho:     {}",
-        poph_agent::biblioteca::tamanho_legivel(arquivo.tamanho_bytes)
+        poph_agent::biblioteca::tamanho_legivel(arquivo.size_bytes)
     );
     println!("  sha256:      {}", arquivo.sha256);
     println!("  blob:        {}", arquivo.blob_path);
@@ -325,17 +325,17 @@ fn saida_arquivo(arquivo: &ArquivoBiblioteca, json_saida: bool, aviso: &str) -> 
     ExitCode::SUCCESS
 }
 
-fn json_arquivo(arquivo: &ArquivoBiblioteca) -> Value {
+fn json_arquivo(arquivo: &LibraryFile) -> Value {
     json!({
         "id": arquivo.id.to_string(),
         "agent_id": arquivo.agent_id.to_string(),
-        "nome": arquivo.nome,
-        "descricao": arquivo.descricao,
+        "nome": arquivo.name,
+        "descricao": arquivo.description,
         "mime": arquivo.mime,
-        "tamanho_bytes": arquivo.tamanho_bytes,
+        "tamanho_bytes": arquivo.size_bytes,
         "sha256": arquivo.sha256,
         "blob_path": arquivo.blob_path,
-        "criado_em": arquivo.criado_em,
+        "criado_em": arquivo.created_at,
     })
 }
 
@@ -368,13 +368,13 @@ fn resolver_agente(store: &Store, org: OrgId, texto: &str) -> Result<AgentId, St
     if uuid::Uuid::parse_str(texto).is_ok() {
         let id: AgentId = parse_id(texto)?;
         return store
-            .agentes()
-            .obter(org, id)
+            .agents()
+            .get(org, id)
             .map(|agente| agente.id)
             .map_err(|erro| descrever(&erro));
     }
     store
-        .agentes()
+        .agents()
         .por_slug(org, texto)
         .map(|agente| agente.id)
         .map_err(|erro| descrever(&erro))

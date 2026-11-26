@@ -7,10 +7,8 @@ use poph_types::{AgentId, AuditId, ConversationId, OrgId, TurnId};
 use rusqlite::{OptionalExtension, Row, params};
 
 use crate::Store;
-use crate::erro::{ErroStore, Resultado};
-use crate::modelo::{
-    EstadoTurno, FinalizacaoTurno, NovoRegistroAuditoria, Pagina, RegistroAuditoria, Turno,
-};
+use crate::error::{Resultado, StoreError};
+use crate::model::{AuditEntry, NewAuditEntry, Page, TurnFinalization, TurnState, Turno};
 use crate::repos::{id_da_coluna, id_opcional, pertence};
 
 const COLUNAS_TURNO: &str = "id, org_id, conversation_id, agent_id, state, jev_json,
@@ -32,9 +30,9 @@ impl Turnos<'_> {
         agente: Option<AgentId>,
     ) -> Resultado<Turno> {
         let id = TurnId::generate();
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_org = org.to_string();
-        self.0.escrita(move |conn| {
+        self.0.write(move |conn| {
             if let Some(agente) = agente {
                 pertence(conn, "agents", "agente", &texto_org, &agente.to_string())?;
             }
@@ -52,19 +50,19 @@ impl Turnos<'_> {
                     agora
                 ],
             )
-            .map_err(ErroStore::from)?;
+            .map_err(StoreError::from)?;
             Ok(())
         })?;
         self.obter(org, id)
     }
 
     /// Fecha o turno com o que foi medido (estado, JSONs, tokens, custo, erro).
-    pub fn finalizar(&self, org: OrgId, id: TurnId, fim: FinalizacaoTurno) -> Resultado<Turno> {
-        let agora = self.0.agora();
+    pub fn finalizar(&self, org: OrgId, id: TurnId, fim: TurnFinalization) -> Resultado<Turno> {
+        let agora = self.0.now();
         let texto_org = org.to_string();
         let texto_id = id.to_string();
-        let estado = fim.estado.map(EstadoTurno::como_texto);
-        let efeito = self.0.escrita(move |conn| {
+        let estado = fim.estado.map(TurnState::as_text);
+        let efeito = self.0.write(move |conn| {
             conn.execute(
                 "UPDATE turns
                     SET state = COALESCE(?3, state),
@@ -83,20 +81,20 @@ impl Turnos<'_> {
                     texto_id,
                     estado,
                     fim.jev_json,
-                    fim.trechos_json,
-                    fim.ferramentas_json,
-                    fim.tempos_json,
-                    fim.tokens_entrada.map(i64::from),
-                    fim.tokens_saida.map(i64::from),
-                    fim.custo_micros,
-                    fim.erro,
+                    fim.passages_json,
+                    fim.tools_json,
+                    fim.times_json,
+                    fim.input_tokens.map(i64::from),
+                    fim.output_tokens.map(i64::from),
+                    fim.cost_micros,
+                    fim.error,
                     agora
                 ],
             )
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })?;
         if efeito == 0 {
-            return Err(ErroStore::Dominio(poph_types::DomainError::NotFound {
+            return Err(StoreError::Domain(poph_types::DomainError::NotFound {
                 entity: "turno",
                 id: id.to_string(),
             }));
@@ -114,17 +112,17 @@ impl Turnos<'_> {
     ///
     /// Devolve quantos turnos foram fechados.
     pub fn falhar_orfaos(&self, org: OrgId, motivo: &str, antes_de: i64) -> Resultado<u64> {
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_org = org.to_string();
         let motivo = motivo.to_owned();
-        let efeito = self.0.escrita(move |conn| {
+        let efeito = self.0.write(move |conn| {
             conn.execute(
                 "UPDATE turns
                     SET state = 'failed', error = ?3, finished_at = ?4
                   WHERE org_id = ?1 AND state = 'running' AND started_at <= ?2",
                 params![texto_org, antes_de, motivo, agora],
             )
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })?;
         Ok(u64::try_from(efeito).unwrap_or(u64::MAX))
     }
@@ -133,16 +131,16 @@ impl Turnos<'_> {
     pub fn obter(&self, org: OrgId, id: TurnId) -> Resultado<Turno> {
         let texto_org = org.to_string();
         let texto_id = id.to_string();
-        let encontrado = self.0.leitura(move |conn| {
+        let encontrado = self.0.read(move |conn| {
             conn.query_row(
                 &format!("SELECT {COLUNAS_TURNO} FROM turns WHERE org_id = ?1 AND id = ?2"),
                 params![texto_org, texto_id],
                 linha_turno,
             )
             .optional()
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })?;
-        super::exigir(encontrado, "turno", &id.to_string())
+        super::require(encontrado, "turno", &id.to_string())
     }
 
     /// Há turno **em andamento** nesta conversa agora?
@@ -153,7 +151,7 @@ impl Turnos<'_> {
     pub fn em_andamento(&self, org: OrgId, conversa: ConversationId) -> Resultado<bool> {
         let texto_org = org.to_string();
         let texto_conversa = conversa.to_string();
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             conn.query_row(
                 "SELECT 1 FROM turns
                   WHERE org_id = ?1 AND conversation_id = ?2 AND state = 'running'
@@ -163,7 +161,7 @@ impl Turnos<'_> {
             )
             .optional()
             .map(|achado| achado.is_some())
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })
     }
 
@@ -172,13 +170,13 @@ impl Turnos<'_> {
         &self,
         org: OrgId,
         conversa: ConversationId,
-        pagina: Pagina,
+        pagina: Page,
     ) -> Resultado<Vec<Turno>> {
         let texto_org = org.to_string();
         let texto_conversa = conversa.to_string();
-        let apos = pagina.apos.map(|id| id.to_string());
-        let limite = i64::from(pagina.limite);
-        self.0.leitura(move |conn| {
+        let apos = pagina.after.map(|id| id.to_string());
+        let limite = i64::from(pagina.limit);
+        self.0.read(move |conn| {
             let mut consulta = conn.prepare(&format!(
                 "SELECT {COLUNAS_TURNO} FROM turns
                   WHERE org_id = ?1 AND conversation_id = ?2 AND (?3 IS NULL OR id > ?3)
@@ -202,10 +200,10 @@ pub struct Auditoria<'a>(pub(crate) &'a Store);
 
 impl Auditoria<'_> {
     /// Lista os eventos globais, inclusive exclusões de organizações.
-    pub fn listar_globais(&self, pagina: Pagina) -> Resultado<Vec<RegistroAuditoria>> {
-        let apos = pagina.apos.map(|id| id.to_string());
-        let limite = i64::from(pagina.limite);
-        self.0.leitura(move |conn| {
+    pub fn listar_globais(&self, pagina: Page) -> Resultado<Vec<AuditEntry>> {
+        let apos = pagina.after.map(|id| id.to_string());
+        let limite = i64::from(pagina.limit);
+        self.0.read(move |conn| {
             let mut consulta = conn.prepare(&format!(
                 "SELECT {COLUNAS_AUDITORIA} FROM audit_log WHERE org_id IS NULL AND (?1 IS NULL OR id < ?1) ORDER BY id DESC LIMIT ?2"
             ))?;
@@ -217,24 +215,20 @@ impl Auditoria<'_> {
     }
 
     /// Registra o evento. `org = None` é ação global (token global).
-    pub fn registrar(
-        &self,
-        org: Option<OrgId>,
-        novo: NovoRegistroAuditoria,
-    ) -> Resultado<RegistroAuditoria> {
-        let registro = RegistroAuditoria {
+    pub fn registrar(&self, org: Option<OrgId>, novo: NewAuditEntry) -> Resultado<AuditEntry> {
+        let registro = AuditEntry {
             id: AuditId::generate(),
             org_id: org,
             ator_tipo: novo.ator_tipo,
-            ator_id: novo.ator_id,
+            actor_id: novo.actor_id,
             acao: novo.acao,
-            entidade: novo.entidade,
-            entidade_id: novo.entidade_id,
-            detalhe_json: novo.detalhe_json,
-            criado_em: self.0.agora(),
+            entity: novo.entity,
+            entity_id: novo.entity_id,
+            detail_json: novo.detail_json,
+            created_at: self.0.now(),
         };
         let para_gravar = registro.clone();
-        self.0.escrita(move |conn| {
+        self.0.write(move |conn| {
             conn.execute(
                 "INSERT INTO audit_log
                     (id, org_id, actor_kind, actor_id, action, entity, entity_id, detail_json,
@@ -244,26 +238,26 @@ impl Auditoria<'_> {
                     para_gravar.id.to_string(),
                     para_gravar.org_id.map(|org| org.to_string()),
                     para_gravar.ator_tipo,
-                    para_gravar.ator_id,
+                    para_gravar.actor_id,
                     para_gravar.acao,
-                    para_gravar.entidade,
-                    para_gravar.entidade_id,
-                    para_gravar.detalhe_json,
-                    para_gravar.criado_em
+                    para_gravar.entity,
+                    para_gravar.entity_id,
+                    para_gravar.detail_json,
+                    para_gravar.created_at
                 ],
             )
-            .map_err(ErroStore::from)?;
+            .map_err(StoreError::from)?;
             Ok(())
         })?;
         Ok(registro)
     }
 
     /// Lista a auditoria da org, mais recente primeiro.
-    pub fn listar(&self, org: OrgId, pagina: Pagina) -> Resultado<Vec<RegistroAuditoria>> {
+    pub fn listar(&self, org: OrgId, pagina: Page) -> Resultado<Vec<AuditEntry>> {
         let texto_org = org.to_string();
-        let apos = pagina.apos.map(|id| id.to_string());
-        let limite = i64::from(pagina.limite);
-        self.0.leitura(move |conn| {
+        let apos = pagina.after.map(|id| id.to_string());
+        let limite = i64::from(pagina.limit);
+        self.0.read(move |conn| {
             let mut consulta = conn.prepare(&format!(
                 "SELECT {COLUNAS_AUDITORIA} FROM audit_log
                   WHERE org_id = ?1 AND (?2 IS NULL OR id < ?2)
@@ -285,7 +279,7 @@ fn linha_turno(linha: &Row<'_>) -> rusqlite::Result<Turno> {
         org_id: id_da_coluna(linha, 1)?,
         conversation_id: id_da_coluna(linha, 2)?,
         agent_id: id_opcional(linha, 3)?,
-        estado: EstadoTurno::de_texto(&linha.get::<_, String>(4)?).map_err(|erro| {
+        estado: TurnState::from_text(&linha.get::<_, String>(4)?).map_err(|erro| {
             rusqlite::Error::FromSqlConversionFailure(
                 4,
                 rusqlite::types::Type::Text,
@@ -293,28 +287,28 @@ fn linha_turno(linha: &Row<'_>) -> rusqlite::Result<Turno> {
             )
         })?,
         jev_json: linha.get(5)?,
-        trechos_json: linha.get(6)?,
-        ferramentas_json: linha.get(7)?,
-        tempos_json: linha.get(8)?,
-        tokens_entrada: linha.get(9)?,
-        tokens_saida: linha.get(10)?,
-        custo_micros: linha.get(11)?,
-        erro: linha.get(12)?,
-        iniciado_em: linha.get(13)?,
-        finalizado_em: linha.get(14)?,
+        passages_json: linha.get(6)?,
+        tools_json: linha.get(7)?,
+        times_json: linha.get(8)?,
+        input_tokens: linha.get(9)?,
+        output_tokens: linha.get(10)?,
+        cost_micros: linha.get(11)?,
+        error: linha.get(12)?,
+        started_at: linha.get(13)?,
+        finished_at: linha.get(14)?,
     })
 }
 
-fn linha_auditoria(linha: &Row<'_>) -> rusqlite::Result<RegistroAuditoria> {
-    Ok(RegistroAuditoria {
+fn linha_auditoria(linha: &Row<'_>) -> rusqlite::Result<AuditEntry> {
+    Ok(AuditEntry {
         id: id_da_coluna(linha, 0)?,
         org_id: id_opcional(linha, 1)?,
         ator_tipo: linha.get(2)?,
-        ator_id: linha.get(3)?,
+        actor_id: linha.get(3)?,
         acao: linha.get(4)?,
-        entidade: linha.get(5)?,
-        entidade_id: linha.get(6)?,
-        detalhe_json: linha.get(7)?,
-        criado_em: linha.get(8)?,
+        entity: linha.get(5)?,
+        entity_id: linha.get(6)?,
+        detail_json: linha.get(7)?,
+        created_at: linha.get(8)?,
     })
 }

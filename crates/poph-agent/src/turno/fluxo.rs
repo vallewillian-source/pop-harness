@@ -35,8 +35,8 @@ use poph_fluxos::prompt::renderizar_bloco;
 use poph_fluxos::regras::{Avaliador, Dados, LimitesRegra};
 use poph_jev::{FluxoJev, G9_NENHUM, IdGate, ResultadoJev};
 use poph_store::{
-    DecisaoDoJev, EfeitoDaTransicao, ErroStore, Execucao, Ficha, Fluxo, InicioDeExecucao,
-    RevisaoDeFluxo, Status, Store,
+    Execution, ExecutionStart, Ficha, FlowRevision, Fluxo, JevDecision, Status, Store, StoreError,
+    TransitionEffect,
 };
 use poph_types::{
     ActionActor, AgentId, ConversationId, DomainError, EventActor, FlowsConfig, OrgId,
@@ -121,7 +121,7 @@ pub(crate) struct Preparo {
     /// Ficha do atendimento (uma por conversa, invariante do `poph-store`).
     pub ficha: Ficha,
     /// Execução ativa no instante da leitura.
-    pub ativa: Option<Execucao>,
+    pub ativa: Option<Execution>,
     /// Fluxos liberados ao agente, ativos e com revisão publicada, com o gatilho lido da IR.
     pub liberados: Vec<FluxoJev>,
 }
@@ -187,7 +187,7 @@ pub(crate) fn preparar(
             return None;
         }
     };
-    let ativa = match store.execucoes().ativa_da_ficha(org, ficha.id) {
+    let ativa = match store.executions().ativa_da_ficha(org, ficha.id) {
         Ok(ativa) => ativa,
         Err(erro) => {
             tracing::warn!(erro = %erro, ficha = %ficha.id, "não consegui ler a execução ativa");
@@ -211,7 +211,7 @@ pub(crate) fn preparar(
     let mut liberados = Vec::new();
     for fluxo in fluxos {
         // Fluxo inativo não inicia execução nova (PRD §6.2) e fluxo sem publicação não tem etapas.
-        if fluxo.status != Status::Ativo || fluxo.revisao_atual.is_none() {
+        if fluxo.status != Status::Active || fluxo.revisao_atual.is_none() {
             continue;
         }
         let Some(ir) = ir_vigente(ajustes, store, org, &fluxo) else {
@@ -230,7 +230,7 @@ pub(crate) fn preparar(
 fn fluxo_do_jev(fluxo: &Fluxo, ir: &Ir) -> FluxoJev {
     FluxoJev {
         id: fluxo.slug.clone(),
-        nome: fluxo.nome.clone(),
+        nome: fluxo.name.clone(),
         quando: ir.gatilho.quando.clone(),
         nao_quando: ir.gatilho.nao_quando.clone().unwrap_or_default(),
         exemplos: ir.gatilho.exemplos.clone(),
@@ -247,7 +247,7 @@ fn ir_vigente(
     org: OrgId,
     fluxo: &Fluxo,
 ) -> Option<Arc<Ir>> {
-    let revisao = match store.revisoes().atual(org, fluxo.id) {
+    let revisao = match store.revisions().atual(org, fluxo.id) {
         Ok(Some(revisao)) => revisao,
         Ok(None) => return None,
         Err(erro) => {
@@ -259,11 +259,7 @@ fn ir_vigente(
 }
 
 /// Carrega a IR de uma revisão pelo cache, conferindo-a contra o texto publicado.
-fn carregar_ir(
-    ajustes: &AjustesDoFluxo,
-    fluxo: &Fluxo,
-    revisao: &RevisaoDeFluxo,
-) -> Option<Arc<Ir>> {
+fn carregar_ir(ajustes: &AjustesDoFluxo, fluxo: &Fluxo, revisao: &FlowRevision) -> Option<Arc<Ir>> {
     let gravada = match Ir::de_json(&revisao.definicao_json) {
         Ok(ir) => ir,
         Err(erro) => {
@@ -301,7 +297,7 @@ fn carregar_ir(
 /// O banco guarda o nó pelo id (FX-20); a IR diz se ele é etapa, decisão ou fim.
 fn estado_da_execucao(
     ir: &Ir,
-    execucao: &Execucao,
+    execucao: &Execution,
     atores_que_agiram: Vec<ActionActor>,
 ) -> Option<EstadoDoMotor> {
     let dados: Dados = match serde_json::from_str(&execucao.dados_json) {
@@ -343,7 +339,7 @@ fn estado_da_execucao(
         no_atual,
         dados,
         atores_que_agiram,
-        resultado: execucao.resultado.clone(),
+        resultado: execucao.result.clone(),
         motivo: execucao.motivo_fim.clone(),
         chaves: Default::default(),
     })
@@ -357,9 +353,9 @@ pub(crate) fn bloco_da_execucao(
     ajustes: &AjustesDoFluxo,
     store: &Store,
     org: OrgId,
-    execucao: &Execucao,
+    execucao: &Execution,
 ) -> Option<(String, Arc<Ir>)> {
-    let revisao = match store.revisoes().obter_por_id(org, execucao.revisao_id) {
+    let revisao = match store.revisions().obter_por_id(org, execucao.revisao_id) {
         Ok(revisao) => revisao,
         Err(erro) => {
             tracing::warn!(erro = %erro, revisao = %execucao.revisao_id, "revisão da execução não lê");
@@ -399,9 +395,9 @@ pub(crate) fn carga_para_agir(
     ajustes: &AjustesDoFluxo,
     store: &Store,
     org: OrgId,
-    execucao: &Execucao,
+    execucao: &Execution,
 ) -> Option<CargaDaAcao> {
-    let revisao = match store.revisoes().obter_por_id(org, execucao.revisao_id) {
+    let revisao = match store.revisions().obter_por_id(org, execucao.revisao_id) {
         Ok(revisao) => revisao,
         Err(erro) => {
             tracing::warn!(erro = %erro, revisao = %execucao.revisao_id, "revisão da execução não lê");
@@ -417,12 +413,12 @@ pub(crate) fn carga_para_agir(
     };
     let ir = carregar_ir(ajustes, &fluxo, &revisao)?;
     let avaliador = avaliador_da_revisao(&revisao, &ir, &ajustes.limites)?;
-    let atores = match store.execucoes().etapas(org, execucao.id) {
+    let atores = match store.executions().etapas(org, execucao.id) {
         Ok(etapas) => etapas
             .iter()
             .rev()
             .find(|etapa| etapa.no_id == execucao.no_atual)
-            .map(|etapa| etapa.atores_que_agiram.clone())
+            .map(|etapa| etapa.acting_actors.clone())
             .unwrap_or_default(),
         Err(erro) => {
             tracing::warn!(erro = %erro, execucao = %execucao.id, "etapas da execução não leem");
@@ -438,7 +434,7 @@ pub(crate) fn carga_para_agir(
 }
 
 /// Avaliador das regras de uma revisão: sem `def` no script, sem função nenhuma a oferecer.
-fn avaliador_da_revisao(revisao: &RevisaoDeFluxo, ir: &Ir, limites: &Limites) -> Option<Avaliador> {
+fn avaliador_da_revisao(revisao: &FlowRevision, ir: &Ir, limites: &Limites) -> Option<Avaliador> {
     if ir.defs.is_empty() {
         return Some(Avaliador::sem_funcoes());
     }
@@ -460,7 +456,7 @@ pub(crate) enum Inicio {
     /// Execução aberta (ou já aberta pela mesma chave), com quantos efeitos a entrada enfileirou.
     Aberta {
         /// Execução gravada.
-        execucao: Box<Execucao>,
+        execucao: Box<Execution>,
         /// Efeitos do `ao_entrar` da etapa de entrada (0 quando não há).
         efeitos: usize,
     },
@@ -476,7 +472,7 @@ pub(crate) enum Inicio {
 /// que é o que o bloco da FX-24 cobra ("valida como o G9").
 pub(crate) enum QuemInicia<'a> {
     /// Escolha confiável do gate G9, com a decisão dele no evento.
-    Jev(DecisaoDoJev<'a>),
+    Jev(JevDecision<'a>),
     /// O modelo, pela ferramenta de reserva (sem decisão de Jev).
     Agente,
 }
@@ -491,7 +487,7 @@ impl QuemInicia<'_> {
     }
 
     /// A decisão do Jev que vai no evento, quando houve.
-    fn decisao(&self) -> Option<DecisaoDoJev<'_>> {
+    fn decisao(&self) -> Option<JevDecision<'_>> {
         match self {
             Self::Jev(decisao) => Some(decisao.clone()),
             Self::Agente => None,
@@ -515,7 +511,7 @@ pub(crate) fn iniciar(
     slug: &str,
     quem: QuemInicia<'_>,
     chave_idempotencia: Option<&str>,
-) -> Result<Inicio, ErroStore> {
+) -> Result<Inicio, StoreError> {
     let fluxo = match store.fluxos().por_slug(org, slug) {
         Ok(Some(fluxo)) => fluxo,
         Ok(None) => {
@@ -525,7 +521,7 @@ pub(crate) fn iniciar(
         }
         Err(erro) => return Err(erro),
     };
-    if fluxo.status != Status::Ativo {
+    if fluxo.status != Status::Active {
         return Ok(Inicio::Recusado(format!(
             "o fluxo `{slug}` está inativo e não inicia execução nova"
         )));
@@ -536,7 +532,7 @@ pub(crate) fn iniciar(
             "o fluxo `{slug}` não está liberado para o agente deste atendimento"
         )));
     }
-    let revisao = match store.revisoes().atual(org, fluxo.id)? {
+    let revisao = match store.revisions().atual(org, fluxo.id)? {
         Some(revisao) => revisao,
         None => {
             return Ok(Inicio::Recusado(format!(
@@ -568,7 +564,7 @@ pub(crate) fn iniciar(
     }
     // O tipo é explícito: o braço de erro diverge (`return`) e a inferência sem âncora escolheria
     // `!` ao ver o `.len()` logo abaixo (rust-lang/rust#156047).
-    let efeitos: Vec<EfeitoDaTransicao> =
+    let efeitos: Vec<TransitionEffect> =
         match motor::efeitos_de_entrada(&ir, estado.no_atual.id(), &estado.dados, &contexto) {
             Ok(efeitos) => efeitos.iter().map(efeito_da_transicao).collect(),
             Err(erro) => {
@@ -581,27 +577,27 @@ pub(crate) fn iniciar(
     // modelo (ferramenta de reserva, FX-24). Quem executa é este código nos dois casos (FX-20).
     let (ator, ator_ref) = quem.ator();
     let inicio_efeitos = efeitos.len();
-    let inicio = InicioDeExecucao {
+    let inicio = ExecutionStart {
         ficha: ficha.id,
         fluxo: fluxo.id,
-        revisao: revisao.id,
-        ator,
+        revision: revisao.id,
+        actor: ator,
         ator_ref,
-        decisao_jev: quem.decisao(),
-        estado_inicial: estado_para_banco(&estado),
-        efeitos_de_entrada: efeitos,
+        jev_decision: quem.decisao(),
+        initial_state: estado_para_banco(&estado),
+        inbound_effects: efeitos,
         // Sem chave (G9), a garantia contra duplicar é a execução ativa única por Ficha (PRD L6),
         // que a escrita confere dentro da transação.
         chave_idempotencia,
     };
     let efeitos_na_entrada = inicio_efeitos;
-    match store.execucoes().iniciar_execucao(org, inicio) {
+    match store.executions().iniciar_execucao(org, inicio) {
         Ok(gravada) => Ok(Inicio::Aberta {
-            execucao: Box::new(gravada.execucao),
+            execucao: Box::new(gravada.execution),
             efeitos: efeitos_na_entrada,
         }),
-        Err(ErroStore::Dominio(DomainError::ExecutionAlreadyActive { .. })) => Ok(Inicio::JaAtiva),
-        Err(ErroStore::Dominio(outro)) => Ok(Inicio::Recusado(outro.to_string())),
+        Err(StoreError::Domain(DomainError::ExecutionAlreadyActive { .. })) => Ok(Inicio::JaAtiva),
+        Err(StoreError::Domain(outro)) => Ok(Inicio::Recusado(outro.to_string())),
         Err(erro) => Err(erro),
     }
 }
@@ -690,7 +686,7 @@ fn registro(resultado: &str) -> Value {
 }
 
 /// Registro de um fluxo iniciado neste turno.
-fn registro_iniciado(execucao: &Execucao, ir: &Ir) -> Value {
+fn registro_iniciado(execucao: &Execution, ir: &Ir) -> Value {
     json!({
         "resultado": "iniciou",
         "fluxo": ir.fluxo.id,
@@ -748,9 +744,9 @@ pub(crate) fn decidir(
         let confianca = jev
             .and_then(|resultado| resultado.decisao(IdGate::G9))
             .map(|decisao| decisao.confianca);
-        let decisao = DecisaoDoJev {
-            escolha: slug,
-            confianca,
+        let decisao = JevDecision {
+            choice: slug,
+            confidence: confianca,
         };
         return match iniciar(
             ajustes,
@@ -789,7 +785,7 @@ pub(crate) fn decidir(
                     fluxo = slug,
                     "o G9 escolheu um fluxo, mas a Ficha já tinha execução ativa"
                 );
-                match store.execucoes().ativa_da_ficha(org, preparo.ficha.id) {
+                match store.executions().ativa_da_ficha(org, preparo.ficha.id) {
                     Ok(Some(ativa)) => {
                         let bloco = bloco_da_execucao(ajustes, store, org, &ativa);
                         DesfechoDoFluxo {
@@ -880,7 +876,7 @@ mod testes {
     use std::sync::Arc;
 
     use poph_fluxos::{Limites, compilar};
-    use poph_store::{NovaConversa, NovaOrg, NovoAgente, NovoFluxo, PublicacaoDeRevisao, Store};
+    use poph_store::{NewAgent, NewConversation, NewFlow, NewOrg, RevisionPublication, Store};
     use poph_types::{AgentId, EventActor, FlowsConfig, OrgId};
 
     use super::{AjustesDoFluxo, Inicio, QuemInicia, iniciar};
@@ -919,44 +915,44 @@ etapa(
             let _ = std::fs::remove_dir_all(&pasta);
             std::fs::create_dir_all(&pasta).expect("pasta do teste");
             let store = Arc::new(
-                Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
+                Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db"))
                     .expect("abre o banco"),
             );
             let org = store
-                .orgaos()
-                .criar(NovaOrg {
-                    nome: format!("Org {rotulo}"),
+                .orgs()
+                .criar(NewOrg {
+                    name: format!("Org {rotulo}"),
                     slug: format!("org-{rotulo}-{}", AgentId::generate()),
                     config_json: "{}".to_owned(),
                 })
                 .expect("cria a org")
                 .id;
             let agente = store
-                .agentes()
+                .agents()
                 .criar(
                     org,
-                    NovoAgente {
-                        nome: "Bia".to_owned(),
+                    NewAgent {
+                        name: "Bia".to_owned(),
                         slug: format!("bia-{rotulo}"),
-                        ..NovoAgente::default()
+                        ..NewAgent::default()
                     },
                 )
                 .expect("cria o agente")
                 .id;
             store
-                .instrucoes()
+                .instructions()
                 .salvar(org, agente, 0, "{}", "# Bia", true)
                 .expect("grava as instruções");
             let conversa = store
                 .conversas()
                 .criar(
                     org,
-                    NovaConversa {
+                    NewConversation {
                         agent_id: agente,
                         integration_id: None,
                         canal: "cli".to_owned(),
                         peer_externo: Some("cliente-ficticio".to_owned()),
-                        departamento_alvo: None,
+                        target_department: None,
                     },
                 )
                 .expect("abre a conversa")
@@ -970,10 +966,10 @@ etapa(
                 .fluxos()
                 .criar(
                     org,
-                    NovoFluxo {
+                    NewFlow {
                         slug: "agendar_visita".to_owned(),
-                        nome: "Agendar visita".to_owned(),
-                        descricao: String::new(),
+                        name: "Agendar visita".to_owned(),
+                        description: String::new(),
                         rascunho_fonte: SCRIPT.to_owned(),
                     },
                 )
@@ -981,18 +977,18 @@ etapa(
             let compilado = compilar(SCRIPT, &Limites::default());
             let ir = compilado.ir().expect("o script do teste compila");
             store
-                .revisoes()
+                .revisions()
                 .publicar_revisao(
                     org,
                     fluxo.id,
-                    PublicacaoDeRevisao {
-                        esperada: fluxo.versao,
+                    RevisionPublication {
+                        expected: fluxo.version,
                         fonte: SCRIPT.to_owned(),
                         definicao_json: serde_json::to_string(ir).expect("IR em JSON"),
                         schema_versao: Some(ir.schema_versao),
                         resolucoes_json: "{}".to_owned(),
                         ator_tipo: "system".to_owned(),
-                        ator_id: None,
+                        actor_id: None,
                     },
                 )
                 .expect("publica a revisão");
@@ -1024,10 +1020,10 @@ etapa(
         }
     }
 
-    fn decisao<'a>(escolha: &'a str) -> poph_store::DecisaoDoJev<'a> {
-        poph_store::DecisaoDoJev {
-            escolha,
-            confianca: Some(0.95),
+    fn decisao<'a>(escolha: &'a str) -> poph_store::JevDecision<'a> {
+        poph_store::JevDecision {
+            choice: escolha,
+            confidence: Some(0.95),
         }
     }
 
@@ -1085,10 +1081,10 @@ etapa(
             .atualizar(
                 cenario.org,
                 cenario.fluxo,
-                atual.versao,
-                poph_store::MudancaFluxo {
-                    status: Some(poph_store::Status::Inativo),
-                    ..poph_store::MudancaFluxo::default()
+                atual.version,
+                poph_store::FlowChange {
+                    status: Some(poph_store::Status::Inactive),
+                    ..poph_store::FlowChange::default()
                 },
             )
             .expect("desativa");
@@ -1111,7 +1107,7 @@ etapa(
         assert!(
             cenario
                 .store
-                .execucoes()
+                .executions()
                 .da_ficha(cenario.org, cenario.ficha.id, 10)
                 .expect("lê as execuções")
                 .is_empty()
@@ -1173,10 +1169,10 @@ etapa(
             .fluxos()
             .criar(
                 cenario.org,
-                NovoFluxo {
+                NewFlow {
                     slug: "sem_revisao".to_owned(),
-                    nome: "Sem revisão".to_owned(),
-                    descricao: String::new(),
+                    name: "Sem revisão".to_owned(),
+                    description: String::new(),
                     rascunho_fonte: String::new(),
                 },
             )
@@ -1234,7 +1230,7 @@ etapa(
         assert_eq!(
             cenario
                 .store
-                .execucoes()
+                .executions()
                 .da_ficha(cenario.org, cenario.ficha.id, 10)
                 .expect("lê as execuções")
                 .len(),

@@ -22,7 +22,7 @@ use std::time::{Duration, Instant, SystemTime};
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, SaltString};
 use poph_server::Estado;
-use poph_store::{NovoFluxo, Pagina, Store};
+use poph_store::{NewFlow, Page, Store};
 use poph_types::config::GlobalTokenConfig;
 use poph_types::{AgentId, FlowId, HarnessConfig, OrgId};
 use rand_core::OsRng;
@@ -72,7 +72,7 @@ impl Cenario {
         }];
         config.validar().expect("configuração válida");
 
-        let store = Arc::new(Store::abrir(&config).expect("abre o banco"));
+        let store = Arc::new(Store::open(&config).expect("abre o banco"));
         let estado = Estado::novo(Arc::clone(&store), config).expect("estado do servidor");
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -201,10 +201,10 @@ impl Cenario {
             .fluxos()
             .criar(
                 org,
-                NovoFluxo {
+                NewFlow {
                     slug: slug.to_owned(),
-                    nome: format!("Fluxo {slug}"),
-                    descricao: String::new(),
+                    name: format!("Fluxo {slug}"),
+                    description: String::new(),
                     rascunho_fonte: String::new(),
                 },
             )
@@ -217,7 +217,7 @@ impl Cenario {
         let org: OrgId = org_id.parse().expect("org válida");
         let agente: AgentId = agente_id.parse().expect("agente válido");
         self.store()
-            .agentes()
+            .agents()
             .versao(org, agente)
             .expect("versão do agente")
     }
@@ -486,21 +486,21 @@ async fn agente_fluxos_lista_substitui_com_versao_teto_isolamento_e_auditoria() 
     // Auditoria: uma linha por PUT bem-sucedido (seis), com o autor do token e sem o segredo.
     let registros = c
         .store()
-        .auditoria()
-        .listar(oa.parse().unwrap(), Pagina::default())
+        .audit()
+        .listar(oa.parse().unwrap(), Page::default())
         .unwrap();
     let do_agente: Vec<_> = registros
         .iter()
         .filter(|r| {
             r.acao == "agent_flows_update"
-                && r.entidade == "agent"
-                && r.entidade_id.as_deref() == Some(ag.as_str())
+                && r.entity == "agent"
+                && r.entity_id.as_deref() == Some(ag.as_str())
         })
         .collect();
     assert_eq!(do_agente.len(), 6, "um registro por PUT bem-sucedido");
     for registro in do_agente {
         assert_eq!(registro.ator_tipo, "admin_token");
-        assert_eq!(registro.ator_id.as_deref(), Some(id_do_token(&ta)));
+        assert_eq!(registro.actor_id.as_deref(), Some(id_do_token(&ta)));
         assert!(!format!("{registro:?}").contains(&ta));
     }
 

@@ -4,8 +4,8 @@ use poph_types::{DepartmentId, OrgId};
 use rusqlite::{OptionalExtension, Row, params};
 
 use crate::Store;
-use crate::erro::{ErroStore, Resultado};
-use crate::modelo::{Departamento, MudancaDepartamento, NovoDepartamento, Pagina, Status};
+use crate::error::{Resultado, StoreError};
+use crate::model::{Departamento, DepartmentChange, NewDepartment, Page, Status};
 use crate::repos::{conflito_ou_ausente, id_da_coluna, status_da_coluna, u64_da_coluna};
 
 const COLUNAS: &str = "id, org_id, name, description, status, version, created_at, updated_at";
@@ -15,19 +15,19 @@ pub struct Departamentos<'a>(pub(crate) &'a Store);
 
 impl Departamentos<'_> {
     /// Cria o departamento na org.
-    pub fn criar(&self, org: OrgId, novo: NovoDepartamento) -> Resultado<Departamento> {
+    pub fn criar(&self, org: OrgId, novo: NewDepartment) -> Resultado<Departamento> {
         let id = DepartmentId::generate();
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_id = id.to_string();
         let texto_org = org.to_string();
-        self.0.escrita(move |conn| {
+        self.0.write(move |conn| {
             conn.execute(
                 "INSERT INTO departments
                     (id, org_id, name, description, status, version, created_at, updated_at)
                  VALUES (?1, ?2, ?3, ?4, 'active', 1, ?5, ?5)",
-                params![texto_id, texto_org, novo.nome, novo.descricao, agora],
+                params![texto_id, texto_org, novo.name, novo.description, agora],
             )
-            .map_err(|erro| ErroStore::da_escrita("nome", erro))?;
+            .map_err(|erro| StoreError::from_write("nome", erro))?;
             Ok(())
         })?;
         self.obter(org, id)
@@ -37,16 +37,16 @@ impl Departamentos<'_> {
     pub fn obter(&self, org: OrgId, id: DepartmentId) -> Resultado<Departamento> {
         let texto_org = org.to_string();
         let texto_id = id.to_string();
-        let encontrado = self.0.leitura(move |conn| {
+        let encontrado = self.0.read(move |conn| {
             conn.query_row(
                 &format!("SELECT {COLUNAS} FROM departments WHERE id = ?1 AND org_id = ?2"),
                 params![texto_id, texto_org],
                 linha,
             )
             .optional()
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })?;
-        super::exigir(encontrado, "departamento", &id.to_string())
+        super::require(encontrado, "departamento", &id.to_string())
     }
 
     /// Busca pelo **nome** dentro da org, sem diferenciar maiúsculas (o índice único é
@@ -58,7 +58,7 @@ impl Departamentos<'_> {
     pub fn por_nome(&self, org: OrgId, nome: &str) -> Resultado<Option<Departamento>> {
         let texto_org = org.to_string();
         let nome = nome.trim().to_lowercase();
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             conn.query_row(
                 &format!(
                     "SELECT {COLUNAS} FROM departments
@@ -68,16 +68,16 @@ impl Departamentos<'_> {
                 linha,
             )
             .optional()
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })
     }
 
     /// Lista os departamentos da org (todos; o filtro de ativo é do chamador).
-    pub fn listar(&self, org: OrgId, pagina: Pagina) -> Resultado<Vec<Departamento>> {
+    pub fn listar(&self, org: OrgId, pagina: Page) -> Resultado<Vec<Departamento>> {
         let texto_org = org.to_string();
-        let apos = pagina.apos.map(|id| id.to_string());
-        let limite = i64::from(pagina.limite);
-        self.0.leitura(move |conn| {
+        let apos = pagina.after.map(|id| id.to_string());
+        let limite = i64::from(pagina.limit);
+        self.0.read(move |conn| {
             let mut consulta = conn.prepare(&format!(
                 "SELECT {COLUNAS} FROM departments
                   WHERE org_id = ?1 AND (?2 IS NULL OR id > ?2)
@@ -98,14 +98,14 @@ impl Departamentos<'_> {
         org: OrgId,
         id: DepartmentId,
         esperada: u64,
-        mudanca: MudancaDepartamento,
+        mudanca: DepartmentChange,
     ) -> Resultado<Departamento> {
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_org = org.to_string();
         let texto_id = id.to_string();
-        let status = mudanca.status.map(Status::como_texto);
+        let status = mudanca.status.map(Status::as_text);
         let esperada_i64 = esperada as i64;
-        let efeito = self.0.escrita(move |conn| {
+        let efeito = self.0.write(move |conn| {
             conn.execute(
                 "UPDATE departments
                     SET name = COALESCE(?3, name),
@@ -117,14 +117,14 @@ impl Departamentos<'_> {
                 params![
                     texto_org,
                     texto_id,
-                    mudanca.nome,
-                    mudanca.descricao,
+                    mudanca.name,
+                    mudanca.description,
                     status,
                     agora,
                     esperada_i64
                 ],
             )
-            .map_err(|erro| ErroStore::da_escrita("nome", erro))
+            .map_err(|erro| StoreError::from_write("nome", erro))
         })?;
         if efeito == 0 {
             return Err(self.conflito(org, id, esperada));
@@ -136,15 +136,15 @@ impl Departamentos<'_> {
     pub fn excluir(&self, org: OrgId, id: DepartmentId) -> Resultado<()> {
         let texto_org = org.to_string();
         let texto_id = id.to_string();
-        let apagou = self.0.escrita(move |conn| {
+        let apagou = self.0.write(move |conn| {
             conn.execute(
                 "DELETE FROM departments WHERE org_id = ?1 AND id = ?2",
                 params![texto_org, texto_id],
             )
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })?;
         if apagou == 0 {
-            return Err(ErroStore::Dominio(poph_types::DomainError::NotFound {
+            return Err(StoreError::Domain(poph_types::DomainError::NotFound {
                 entity: "departamento",
                 id: id.to_string(),
             }));
@@ -152,11 +152,11 @@ impl Departamentos<'_> {
         Ok(())
     }
 
-    fn conflito(&self, org: OrgId, id: DepartmentId, esperada: u64) -> ErroStore {
+    fn conflito(&self, org: OrgId, id: DepartmentId, esperada: u64) -> StoreError {
         let texto_org = org.to_string();
         let texto_id = id.to_string();
         self.0
-            .leitura(move |conn| {
+            .read(move |conn| {
                 Ok(conflito_ou_ausente(
                     conn,
                     "departments",
@@ -174,11 +174,11 @@ fn linha(linha: &Row<'_>) -> rusqlite::Result<Departamento> {
     Ok(Departamento {
         id: id_da_coluna(linha, 0)?,
         org_id: id_da_coluna(linha, 1)?,
-        nome: linha.get(2)?,
-        descricao: linha.get(3)?,
+        name: linha.get(2)?,
+        description: linha.get(3)?,
         status: status_da_coluna(linha, 4)?,
-        versao: u64_da_coluna(linha, 5)?,
-        criado_em: linha.get(6)?,
-        atualizado_em: linha.get(7)?,
+        version: u64_da_coluna(linha, 5)?,
+        created_at: linha.get(6)?,
+        updated_at: linha.get(7)?,
     })
 }

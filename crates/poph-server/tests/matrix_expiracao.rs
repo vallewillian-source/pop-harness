@@ -36,7 +36,7 @@ use poph_server::matrix_expiracao::{ExpiracaoMidia, RelatoExpiracao};
 use poph_server::matrix_inicio::expiracao_do_modulo;
 use poph_server::matrix_metricas::MetricasMatrix;
 use poph_store::{
-    CategoriaMidia, Conversa, NovaConversa, NovaMidia, NovaOrg, NovoAgente, Org, Store,
+    CategoriaMidia, Conversa, NewAgent, NewConversation, NewOrg, NovaMidia, Org, Store,
 };
 use poph_types::{AttachmentId, MatrixConfig, Secret};
 use serde_json::{Value, json};
@@ -341,27 +341,27 @@ impl Cenario {
         fs::create_dir_all(&pasta).expect("pasta do teste");
         let relogio = Arc::new(AtomicI64::new(agora));
         let agora_do_store = Arc::clone(&relogio);
-        let store = Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
+        let store = Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db"))
             .expect("abre o banco")
-            .com_relogio(Arc::new(move || agora_do_store.load(Ordering::SeqCst)));
+            .with_clock(Arc::new(move || agora_do_store.load(Ordering::SeqCst)));
         let store = Arc::new(store);
 
         let org = store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: "Loja MX-46".to_owned(),
+            .orgs()
+            .criar(NewOrg {
+                name: "Loja MX-46".to_owned(),
                 slug: "loja-mx46".to_owned(),
                 config_json: String::new(),
             })
             .expect("cria a org");
         let agente = store
-            .agentes()
+            .agents()
             .criar(
                 org.id,
-                NovoAgente {
-                    nome: "Atendente".to_owned(),
+                NewAgent {
+                    name: "Atendente".to_owned(),
                     slug: "atendente".to_owned(),
-                    ..NovoAgente::default()
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente");
@@ -369,12 +369,12 @@ impl Cenario {
             .conversas()
             .criar(
                 org.id,
-                NovaConversa {
+                NewConversation {
                     agent_id: agente.id,
                     integration_id: None,
                     canal: "whatsapp".to_owned(),
                     peer_externo: Some("5511999990000".to_owned()),
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("cria a conversa");

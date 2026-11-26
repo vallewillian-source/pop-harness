@@ -26,8 +26,8 @@ use poph_core::llm::{EventoLlm, MotivoFim, ProvedorFake, Roteiro, Uso};
 use poph_fluxos::{Limites, compilar};
 use poph_jev::{ErroJev, G9_NENHUM, IdGate, JevFalso, MotorJev};
 use poph_store::{
-    Direcao, MudancaAgente, NovaConversa, NovaMensagem, NovaOrg, NovoAgente, NovoFluxo, Papel,
-    PublicacaoDeRevisao, Store,
+    AgentChange, Direction, NewAgent, NewConversation, NewFlow, NewMessage, NewOrg,
+    RevisionPublication, Role, Store,
 };
 use poph_types::{AgentId, ConversationId, FlowsConfig, JevGates, MessageId, OrgId};
 
@@ -84,33 +84,32 @@ impl Cenario {
         let _ = std::fs::remove_dir_all(&pasta);
         std::fs::create_dir_all(&pasta).expect("pasta do teste");
         let store = Arc::new(
-            Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
-                .expect("abre o banco"),
+            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco"),
         );
         let org = store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: format!("Org {rotulo}"),
+            .orgs()
+            .criar(NewOrg {
+                name: format!("Org {rotulo}"),
                 slug: format!("org-{rotulo}-{}", AgentId::generate()),
                 config_json: "{}".to_owned(),
             })
             .expect("cria a org")
             .id;
         let agente = store
-            .agentes()
+            .agents()
             .criar(
                 org,
-                NovoAgente {
-                    nome: format!("Bia {rotulo}"),
+                NewAgent {
+                    name: format!("Bia {rotulo}"),
                     slug: format!("bia-{rotulo}"),
-                    janela_agrupamento_ms: 0,
-                    ..NovoAgente::default()
+                    grouping_window_ms: 0,
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente")
             .id;
         store
-            .instrucoes()
+            .instructions()
             .salvar(
                 org,
                 agente,
@@ -135,10 +134,10 @@ impl Cenario {
             .fluxos()
             .criar(
                 self.org,
-                NovoFluxo {
+                NewFlow {
                     slug: "agendar_visita".to_owned(),
-                    nome: "Agendar visita".to_owned(),
-                    descricao: "Visita técnica".to_owned(),
+                    name: "Agendar visita".to_owned(),
+                    description: "Visita técnica".to_owned(),
                     rascunho_fonte: SCRIPT.to_owned(),
                 },
             )
@@ -164,18 +163,18 @@ impl Cenario {
             .obter(self.org, fluxo)
             .expect("lê o fluxo");
         self.store
-            .revisoes()
+            .revisions()
             .publicar_revisao(
                 self.org,
                 fluxo,
-                PublicacaoDeRevisao {
-                    esperada: atual.versao,
+                RevisionPublication {
+                    expected: atual.version,
                     fonte: SCRIPT.to_owned(),
                     definicao_json: serde_json::to_string(ir).expect("IR em JSON"),
                     schema_versao: Some(ir.schema_versao),
                     resolucoes_json: "{}".to_owned(),
                     ator_tipo: "system".to_owned(),
-                    ator_id: None,
+                    actor_id: None,
                 },
             )
             .expect("publica a revisão");
@@ -186,12 +185,12 @@ impl Cenario {
             .conversas()
             .criar(
                 self.org,
-                NovaConversa {
+                NewConversation {
                     agent_id: agente,
                     integration_id: None,
                     canal: "cli".to_owned(),
                     peer_externo: Some("cliente-ficticio".to_owned()),
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("abre a conversa")
@@ -200,19 +199,19 @@ impl Cenario {
 
     fn falar(&self, conversa: ConversationId, texto: &str) -> MessageId {
         self.store
-            .mensagens()
+            .messages()
             .gravar(
                 self.org,
-                NovaMensagem {
+                NewMessage {
                     conversation_id: conversa,
-                    direcao: Direcao::Entrada,
-                    papel: Papel::Usuario,
+                    direction: Direction::Inbound,
+                    role: Role::User,
                     texto: texto.to_owned(),
-                    anexos_json: "[]".to_owned(),
+                    attachments_json: "[]".to_owned(),
                     id_externo: None,
                     turn_id: None,
-                    origem: poph_store::Origem::Agente,
-                    autor_nome: None,
+                    origin: poph_store::Origin::Agente,
+                    author_name: None,
                 },
             )
             .expect("grava a mensagem")
@@ -222,18 +221,18 @@ impl Cenario {
     fn ajustar_jev_do_agente(&self, agente: AgentId, jev_json: &str) {
         let atual = self
             .store
-            .agentes()
-            .obter(self.org, agente)
+            .agents()
+            .get(self.org, agente)
             .expect("lê o agente");
         self.store
-            .agentes()
+            .agents()
             .atualizar(
                 self.org,
                 agente,
-                atual.versao,
-                MudancaAgente {
+                atual.version,
+                AgentChange {
                     jev_json: Some(jev_json.to_owned()),
-                    ..MudancaAgente::default()
+                    ..AgentChange::default()
                 },
             )
             .expect("ajusta o jev_json do agente");
@@ -307,14 +306,14 @@ impl Cenario {
             .expect("a conversa tem Ficha")
     }
 
-    fn ativa(&self, conversa: ConversationId) -> Option<poph_store::Execucao> {
+    fn ativa(&self, conversa: ConversationId) -> Option<poph_store::Execution> {
         self.store
-            .execucoes()
+            .executions()
             .ativa_da_ficha(self.org, self.ficha(conversa).id)
             .expect("lê a execução ativa")
     }
 
-    fn eventos(&self, conversa: ConversationId) -> Vec<poph_store::EventoFicha> {
+    fn eventos(&self, conversa: ConversationId) -> Vec<poph_store::RecordEvent> {
         self.store
             .fichas()
             .eventos(self.org, self.ficha(conversa).id, None, 50)
@@ -323,8 +322,8 @@ impl Cenario {
 
     fn ultimo_turno(&self, conversa: ConversationId) -> poph_store::Turno {
         self.store
-            .turnos()
-            .listar(self.org, conversa, poph_store::Pagina::com_limite(5))
+            .turns()
+            .listar(self.org, conversa, poph_store::Page::with_limit(5))
             .expect("lista os turnos")
             .into_iter()
             .next()
@@ -399,7 +398,7 @@ async fn inicio_acontece_antes_da_chamada_do_modelo() {
 
     let gatilho = cenario.falar(conversa, "queria marcar uma visita técnica");
     let resumo = cenario.turno(&motor, conversa, gatilho).await;
-    assert_eq!(resumo.estado, poph_store::EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, poph_store::TurnState::Completed);
 
     let ativa = cenario.ativa(conversa).expect("a execução foi aberta");
     assert_eq!(ativa.fluxo_id, fluxo.id);
@@ -569,7 +568,7 @@ async fn jev_fora_entrega_a_reserva() {
 
     let gatilho = cenario.falar(conversa, "quero marcar uma visita");
     let resumo = cenario.turno(&motor, conversa, gatilho).await;
-    assert_eq!(resumo.estado, poph_store::EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, poph_store::TurnState::Completed);
     assert!(
         cenario.ativa(conversa).is_none(),
         "Jev fora do ar não inicia nada: quem inicia é o código"
@@ -612,10 +611,10 @@ async fn fluxo_inativo_nao_entra_nas_opcoes_nem_inicia() {
         .atualizar(
             cenario.org,
             fluxo.id,
-            atual.versao,
-            poph_store::MudancaFluxo {
-                status: Some(poph_store::Status::Inativo),
-                ..poph_store::MudancaFluxo::default()
+            atual.version,
+            poph_store::FlowChange {
+                status: Some(poph_store::Status::Inactive),
+                ..poph_store::FlowChange::default()
             },
         )
         .expect("desativa o fluxo");
@@ -652,13 +651,13 @@ async fn fluxo_nao_liberado_nao_entra_nas_opcoes_nem_inicia() {
     // Outro agente é quem recebe a permissão: o agente da conversa não pode iniciar.
     let outro = cenario
         .store
-        .agentes()
+        .agents()
         .criar(
             cenario.org,
-            NovoAgente {
-                nome: "Outro".to_owned(),
+            NewAgent {
+                name: "Outro".to_owned(),
                 slug: "outro".to_owned(),
-                ..NovoAgente::default()
+                ..NewAgent::default()
             },
         )
         .expect("cria o outro agente")
@@ -693,9 +692,9 @@ async fn fluxo_de_outra_org_nunca_inicia() {
     // A org vizinha tem um fluxo com o **mesmo slug**; ele não pode ser iniciado aqui.
     let outra_org = cenario
         .store
-        .orgaos()
-        .criar(NovaOrg {
-            nome: "Org vizinha".to_owned(),
+        .orgs()
+        .criar(NewOrg {
+            name: "Org vizinha".to_owned(),
             slug: format!("vizinha-{}", AgentId::generate()),
             config_json: "{}".to_owned(),
         })
@@ -703,13 +702,13 @@ async fn fluxo_de_outra_org_nunca_inicia() {
         .id;
     let agente_vizinho = cenario
         .store
-        .agentes()
+        .agents()
         .criar(
             outra_org,
-            NovoAgente {
-                nome: "Vizinho".to_owned(),
+            NewAgent {
+                name: "Vizinho".to_owned(),
                 slug: "vizinho".to_owned(),
-                ..NovoAgente::default()
+                ..NewAgent::default()
             },
         )
         .expect("cria o agente vizinho")
@@ -719,10 +718,10 @@ async fn fluxo_de_outra_org_nunca_inicia() {
         .fluxos()
         .criar(
             outra_org,
-            NovoFluxo {
+            NewFlow {
                 slug: "agendar_visita".to_owned(),
-                nome: "Agendar visita (vizinha)".to_owned(),
-                descricao: String::new(),
+                name: "Agendar visita (vizinha)".to_owned(),
+                description: String::new(),
                 rascunho_fonte: SCRIPT.to_owned(),
             },
         )
@@ -736,18 +735,18 @@ async fn fluxo_de_outra_org_nunca_inicia() {
     let ir = compilado.ir().expect("compila");
     cenario
         .store
-        .revisoes()
+        .revisions()
         .publicar_revisao(
             outra_org,
             fluxo_vizinho.id,
-            PublicacaoDeRevisao {
-                esperada: atual.versao,
+            RevisionPublication {
+                expected: atual.version,
                 fonte: SCRIPT.to_owned(),
                 definicao_json: serde_json::to_string(ir).expect("IR em JSON"),
                 schema_versao: Some(ir.schema_versao),
                 resolucoes_json: "{}".to_owned(),
                 ator_tipo: "system".to_owned(),
-                ator_id: None,
+                actor_id: None,
             },
         )
         .expect("publica na vizinha");
@@ -781,7 +780,7 @@ async fn fluxo_de_outra_org_nunca_inicia() {
     assert!(
         cenario
             .store
-            .execucoes()
+            .executions()
             .da_ficha(cenario.org, cenario.ficha(conversa).id, 10)
             .expect("lê as execuções")
             .is_empty()
@@ -799,7 +798,7 @@ async fn execucao_ativa_nao_pergunta_o_jev() {
     let ficha = cenario.ficha(conversa);
     let revisao = cenario
         .store
-        .revisoes()
+        .revisions()
         .atual(cenario.org, fluxo.id)
         .expect("lê a revisão")
         .expect("há revisão publicada");
@@ -816,18 +815,18 @@ async fn execucao_ativa_nao_pergunta_o_jev() {
             .collect();
     cenario
         .store
-        .execucoes()
+        .executions()
         .iniciar_execucao(
             cenario.org,
-            poph_store::InicioDeExecucao {
+            poph_store::ExecutionStart {
                 ficha: ficha.id,
                 fluxo: fluxo.id,
-                revisao: revisao.id,
-                ator: poph_types::EventActor::Attendant,
+                revision: revisao.id,
+                actor: poph_types::EventActor::Attendant,
                 ator_ref: Some("token-de-teste"),
-                decisao_jev: None,
-                estado_inicial: poph_agent::fluxos_transicao::estado_para_banco(&estado),
-                efeitos_de_entrada: efeitos,
+                jev_decision: None,
+                initial_state: poph_agent::fluxos_transicao::estado_para_banco(&estado),
+                inbound_effects: efeitos,
                 chave_idempotencia: Some("abertura-do-atendente"),
             },
         )

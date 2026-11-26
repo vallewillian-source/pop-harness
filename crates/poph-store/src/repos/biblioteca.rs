@@ -17,9 +17,9 @@ use poph_types::{AgentId, FileId, OrgId};
 use rusqlite::{OptionalExtension, Row, params};
 
 use crate::Store;
-use crate::erro::{ErroStore, Resultado};
-use crate::modelo::{ArquivoBiblioteca, NovoArquivoBiblioteca, Pagina};
-use crate::repos::{exigir, id_da_coluna, pertence};
+use crate::error::{Resultado, StoreError};
+use crate::model::{LibraryFile, NewLibraryFile, Page};
+use crate::repos::{id_da_coluna, pertence, require};
 
 const COLUNAS: &str =
     "id, org_id, agent_id, name, description, mime, size_bytes, sha256, blob_path, created_at";
@@ -48,14 +48,14 @@ impl Biblioteca<'_> {
         let agente = agente.to_string();
         let id = id.to_string();
         let audit_id = poph_types::AuditId::generate().to_string();
-        let agora = self.0.agora();
-        self.0.escrita(move |conn| {
+        let agora = self.0.now();
+        self.0.write(move |conn| {
             let apagou = conn.execute(
                 "DELETE FROM file_library WHERE org_id = ?1 AND agent_id = ?2 AND id = ?3",
                 params![org, agente, id],
             )?;
             if apagou == 0 {
-                return Err(ErroStore::Dominio(poph_types::DomainError::NotFound {
+                return Err(StoreError::Domain(poph_types::DomainError::NotFound {
                     entity: ENTIDADE,
                     id,
                 }));
@@ -73,18 +73,18 @@ impl Biblioteca<'_> {
     ///
     /// O agente precisa existir na org (erro de "não encontrado" quando não existe), e o blob já
     /// deve ter sido gravado por quem chamou (`poph-files`).
-    pub fn criar(&self, org: OrgId, novo: NovoArquivoBiblioteca) -> Resultado<ArquivoBiblioteca> {
-        let nome = validar_texto("nome", &novo.nome, LIMITE_NOME_ARQUIVO)?;
-        let descricao = novo.descricao.trim().to_owned();
+    pub fn criar(&self, org: OrgId, novo: NewLibraryFile) -> Resultado<LibraryFile> {
+        let nome = validar_texto("nome", &novo.name, LIMITE_NOME_ARQUIVO)?;
+        let descricao = novo.description.trim().to_owned();
         if descricao.chars().count() > LIMITE_DESCRICAO_ARQUIVO {
-            return Err(ErroStore::Dominio(poph_types::DomainError::Validation {
+            return Err(StoreError::Domain(poph_types::DomainError::Validation {
                 field: "descrição",
                 reason: format!("use no máximo {LIMITE_DESCRICAO_ARQUIVO} caracteres"),
             }));
         }
         let mime = novo.mime.trim().to_owned();
         if mime.is_empty() {
-            return Err(ErroStore::Dominio(poph_types::DomainError::Validation {
+            return Err(StoreError::Domain(poph_types::DomainError::Validation {
                 field: "mime",
                 reason: "informe o tipo real do arquivo".to_owned(),
             }));
@@ -92,19 +92,19 @@ impl Biblioteca<'_> {
         let sha256 = validar_sha256(&novo.sha256)?;
         let blob_path = novo.blob_path.trim().to_owned();
         if blob_path.is_empty() {
-            return Err(ErroStore::Dominio(poph_types::DomainError::Validation {
+            return Err(StoreError::Domain(poph_types::DomainError::Validation {
                 field: "blob_path",
                 reason: "informe onde o conteúdo foi gravado".to_owned(),
             }));
         }
 
         let id = FileId::generate();
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_id = id.to_string();
         let texto_org = org.to_string();
         let texto_agente = novo.agent_id.to_string();
-        let tamanho = i64::try_from(novo.tamanho_bytes).unwrap_or(i64::MAX);
-        self.0.escrita(move |conn| {
+        let tamanho = i64::try_from(novo.size_bytes).unwrap_or(i64::MAX);
+        self.0.write(move |conn| {
             pertence(conn, "agents", "agente", &texto_org, &texto_agente)?;
             conn.execute(
                 "INSERT INTO file_library
@@ -124,7 +124,7 @@ impl Biblioteca<'_> {
                     agora
                 ],
             )
-            .map_err(|erro| ErroStore::da_escrita("nome", erro))?;
+            .map_err(|erro| StoreError::from_write("nome", erro))?;
             Ok(())
         })?;
         self.obter(org, novo.agent_id, id)
@@ -133,11 +133,11 @@ impl Biblioteca<'_> {
     /// Busca o arquivo pelo id, **dentro da org e do agente**.
     ///
     /// Id de outro agente ou de outra org devolve "não encontrado" — nunca o registro alheio.
-    pub fn obter(&self, org: OrgId, agente: AgentId, id: FileId) -> Resultado<ArquivoBiblioteca> {
+    pub fn obter(&self, org: OrgId, agente: AgentId, id: FileId) -> Resultado<LibraryFile> {
         let texto_org = org.to_string();
         let texto_agente = agente.to_string();
         let texto_id = id.to_string();
-        let encontrado = self.0.leitura(move |conn| {
+        let encontrado = self.0.read(move |conn| {
             conn.query_row(
                 &format!(
                     "SELECT {COLUNAS} FROM file_library
@@ -147,23 +147,18 @@ impl Biblioteca<'_> {
                 linha,
             )
             .optional()
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })?;
-        exigir(encontrado, ENTIDADE, &id.to_string())
+        require(encontrado, ENTIDADE, &id.to_string())
     }
 
     /// Lista a biblioteca do agente, em ordem de criação (id cresce com o tempo, UUID v7).
-    pub fn listar(
-        &self,
-        org: OrgId,
-        agente: AgentId,
-        pagina: Pagina,
-    ) -> Resultado<Vec<ArquivoBiblioteca>> {
+    pub fn listar(&self, org: OrgId, agente: AgentId, pagina: Page) -> Resultado<Vec<LibraryFile>> {
         let texto_org = org.to_string();
         let texto_agente = agente.to_string();
-        let apos = pagina.apos.map(|id| id.to_string());
-        let limite = i64::from(pagina.limite);
-        self.0.leitura(move |conn| {
+        let apos = pagina.after.map(|id| id.to_string());
+        let limite = i64::from(pagina.limit);
+        self.0.read(move |conn| {
             let mut consulta = conn.prepare(&format!(
                 "SELECT {COLUNAS} FROM file_library
                   WHERE org_id = ?1 AND agent_id = ?2 AND (?3 IS NULL OR id > ?3)
@@ -183,7 +178,7 @@ impl Biblioteca<'_> {
     pub fn contar(&self, org: OrgId, agente: AgentId) -> Resultado<u64> {
         let texto_org = org.to_string();
         let texto_agente = agente.to_string();
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             let total: i64 = conn.query_row(
                 "SELECT COUNT(*) FROM file_library WHERE org_id = ?1 AND agent_id = ?2",
                 params![texto_org, texto_agente],
@@ -198,15 +193,15 @@ impl Biblioteca<'_> {
         let texto_org = org.to_string();
         let texto_agente = agente.to_string();
         let texto_id = id.to_string();
-        let apagou = self.0.escrita(move |conn| {
+        let apagou = self.0.write(move |conn| {
             conn.execute(
                 "DELETE FROM file_library WHERE org_id = ?1 AND agent_id = ?2 AND id = ?3",
                 params![texto_org, texto_agente, texto_id],
             )
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })?;
         if apagou == 0 {
-            return Err(ErroStore::Dominio(poph_types::DomainError::NotFound {
+            return Err(StoreError::Domain(poph_types::DomainError::NotFound {
                 entity: ENTIDADE,
                 id: id.to_string(),
             }));
@@ -215,31 +210,31 @@ impl Biblioteca<'_> {
     }
 }
 
-fn linha(linha: &Row<'_>) -> rusqlite::Result<ArquivoBiblioteca> {
-    Ok(ArquivoBiblioteca {
+fn linha(linha: &Row<'_>) -> rusqlite::Result<LibraryFile> {
+    Ok(LibraryFile {
         id: id_da_coluna(linha, 0)?,
         org_id: id_da_coluna(linha, 1)?,
         agent_id: id_da_coluna(linha, 2)?,
-        nome: linha.get(3)?,
-        descricao: linha.get(4)?,
+        name: linha.get(3)?,
+        description: linha.get(4)?,
         mime: linha.get(5)?,
-        tamanho_bytes: crate::repos::u64_da_coluna(linha, 6)?,
+        size_bytes: crate::repos::u64_da_coluna(linha, 6)?,
         sha256: linha.get(7)?,
         blob_path: linha.get(8)?,
-        criado_em: linha.get(9)?,
+        created_at: linha.get(9)?,
     })
 }
 
 fn validar_texto(campo: &'static str, valor: &str, limite: usize) -> Resultado<String> {
     let limpo = valor.trim().to_owned();
     if limpo.is_empty() {
-        return Err(ErroStore::Dominio(poph_types::DomainError::Validation {
+        return Err(StoreError::Domain(poph_types::DomainError::Validation {
             field: campo,
             reason: "não pode ficar vazio".to_owned(),
         }));
     }
     if limpo.chars().count() > limite {
-        return Err(ErroStore::Dominio(poph_types::DomainError::Validation {
+        return Err(StoreError::Domain(poph_types::DomainError::Validation {
             field: campo,
             reason: format!("use no máximo {limite} caracteres"),
         }));
@@ -251,7 +246,7 @@ fn validar_sha256(valor: &str) -> Resultado<String> {
     let texto = valor.trim().to_lowercase();
     let valido = texto.len() == 64 && texto.chars().all(|c| c.is_ascii_hexdigit());
     if !valido {
-        return Err(ErroStore::Dominio(poph_types::DomainError::Validation {
+        return Err(StoreError::Domain(poph_types::DomainError::Validation {
             field: "sha256",
             reason: "precisa ser o hash em hexadecimal (64 caracteres)".to_owned(),
         }));

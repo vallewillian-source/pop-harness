@@ -10,7 +10,7 @@ use axum::Json;
 use axum::extract::State;
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use poph_store::{EstadoSaida, Pagina};
+use poph_store::{OutboxState, Page};
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -72,15 +72,15 @@ pub struct MetricasJson {
     )
 )]
 pub async fn healthz(State(estado): State<Estado>) -> Response {
-    let harness = poph_store::versao_do_arquivo(estado.store.caminho_harness())
+    let harness = poph_store::file_version(estado.store.harness_path())
         .ok()
         .flatten()
         .unwrap_or(0);
-    let rag = poph_store::versao_do_arquivo(estado.store.caminho_rag())
+    let rag = poph_store::file_version(estado.store.rag_path())
         .ok()
         .flatten()
         .unwrap_or(0);
-    let bancos_ok = estado.store.tabelas().is_ok();
+    let bancos_ok = estado.store.tables().is_ok();
     // HR-50b-2: no modo cluster, o `/healthz` diz quem é esta instância e qual mapa ela usa, para o
     // `poph cluster check --remoto` comparar as instâncias entre si. No modo instância única, os
     // dois campos ficam ausentes e o corpo é o de sempre.
@@ -161,23 +161,23 @@ fn atualizar_medidores(estado: &Estado) {
     estado
         .metricas
         .harness_db_bytes
-        .set(tamanho(estado.store.caminho_harness()) as i64);
+        .set(tamanho(estado.store.harness_path()) as i64);
     estado
         .metricas
         .rag_db_bytes
-        .set(tamanho(estado.store.caminho_rag()) as i64);
+        .set(tamanho(estado.store.rag_path()) as i64);
 
     let mut pendentes_entrada = 0i64;
     let mut pendentes_saida = 0i64;
     for org in todas_as_orgs(estado) {
-        match estado.store.caixa_entrada().contar_pendentes(org) {
+        match estado.store.inbox().contar_pendentes(org) {
             Ok(quantos) => pendentes_entrada += quantos as i64,
             Err(erro) => tracing::warn!(erro = %erro, "métrica: não contei a entrada"),
         }
         match estado
             .store
-            .caixa_saida()
-            .contar_por_estado(org, EstadoSaida::Pendente)
+            .outbox()
+            .contar_por_estado(org, OutboxState::Pending)
         {
             Ok(quantos) => pendentes_saida += quantos as i64,
             Err(erro) => tracing::warn!(erro = %erro, "métrica: não contei a saída"),
@@ -195,8 +195,11 @@ fn todas_as_orgs(estado: &Estado) -> Vec<poph_types::OrgId> {
     let mut ids = Vec::new();
     let mut apos = None;
     loop {
-        let pagina = Pagina { apos, limite: 200 };
-        match estado.store.orgaos().listar(pagina) {
+        let pagina = Page {
+            after: apos,
+            limit: 200,
+        };
+        match estado.store.orgs().listar(pagina) {
             Ok(orgs) => {
                 let quantidade = orgs.len();
                 if let Some(ultima) = orgs.last() {

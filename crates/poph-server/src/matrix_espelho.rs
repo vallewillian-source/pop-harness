@@ -94,8 +94,8 @@ use poph_matrix::salas::{
 };
 use poph_matrix::usuarios::{ErroFantasmas, Fantasma, IdsFantasmas};
 use poph_store::{
-    AnexoRegistro, CategoriaMidia, Direcao, ErroStore, EstadoSala, MensagemDesde, NovaMidia,
-    Origem, Papel, StatusConversa, Store,
+    AttachmentRecord, CategoriaMidia, ConversationStatus, Direction, EstadoSala, MensagemDesde,
+    NovaMidia, Origin, Role, Store, StoreError,
 };
 use poph_types::{AgentId, ConversationId, MatrixConfig, MessageId, OrgId};
 use serde_json::json;
@@ -352,21 +352,21 @@ impl DestinoReal {
         let conversa = self
             .store
             .conversas()
-            .obter(dados.org, dados.conversa)
+            .get(dados.org, dados.conversa)
             .map_err(|_| "conversa_indisponivel")?;
         let padrao = self
             .store
-            .agentes()
-            .obter(dados.org, conversa.agent_id)
+            .agents()
+            .get(dados.org, conversa.agent_id)
             .ok()
-            .and_then(|agente| agente.departamento_padrao);
-        let Some(escolhido) = resolver_departamento(conversa.departamento_alvo, padrao) else {
+            .and_then(|agente| agente.default_department);
+        let Some(escolhido) = resolver_departamento(conversa.target_department, padrao) else {
             return Ok(None);
         };
-        match self.store.departamentos().obter(dados.org, escolhido) {
+        match self.store.departments().obter(dados.org, escolhido) {
             Ok(departamento) => Ok(Some(DepartamentoEspaco {
                 id: departamento.id,
-                nome: departamento.nome,
+                nome: departamento.name,
             })),
             Err(_) => Err("departamento_indisponivel"),
         }
@@ -536,14 +536,14 @@ impl PortaSalas for PortaSalasStore {
         let store = Arc::clone(&self.0);
         async move {
             store
-                .mensagens()
+                .messages()
                 .teve_mensagens_antes(org, conversa, corte)
                 .map_err(erro_porta)
         }
     }
 }
 
-fn erro_porta(_: ErroStore) -> ErroPorta {
+fn erro_porta(_: StoreError) -> ErroPorta {
     // Sem o texto do erro do banco: ele pode carregar valor de cliente.
     ErroPorta::nova("armazenamento do módulo Matrix indisponível")
 }
@@ -562,7 +562,7 @@ fn estado_gravado(estado: EstadoSala) -> EstadoGravado {
 pub enum ErroEspelho {
     /// O armazenamento falhou antes ou no meio do ciclo.
     #[error("armazenamento do espelho do Matrix falhou: {0}")]
-    Armazenamento(#[from] ErroStore),
+    Armazenamento(#[from] StoreError),
 }
 
 impl ErroEspelho {
@@ -879,7 +879,7 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
 
         // R5: cursor à frente do maior rowid que existe (banco restaurado ou linhas apagadas).
         // Volta para o ponto seguro; o que vier depois é lido normalmente.
-        let (maior, maior_id) = match self.store.mensagens().ultima_rowid()? {
+        let (maior, maior_id) = match self.store.messages().ultima_rowid()? {
             Some((rowid, id)) => (rowid, id.to_string()),
             None => (0, String::new()),
         };
@@ -900,7 +900,7 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
 
         let mut paginas = 0u32;
         while paginas < MAX_PAGINAS_POR_CICLO && !*self.parar.borrow() {
-            let pagina = self.store.mensagens().desde(posicao, self.pagina)?;
+            let pagina = self.store.messages().desde(posicao, self.pagina)?;
             if pagina.is_empty() {
                 break;
             }
@@ -945,7 +945,7 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
             self.metricas.atraso_cursor_segundos.set(0);
             return Ok(());
         };
-        let atraso_ms = match self.store.mensagens().desde(menor, 1)?.first() {
+        let atraso_ms = match self.store.messages().desde(menor, 1)?.first() {
             Some(primeira) => ((self.agora_ms)() - primeira.criado_em).max(0),
             None => 0,
         };
@@ -1428,22 +1428,25 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
     /// (MX-44), mídia de origem humana veio do próprio Matrix e mídia do aparelho não existe nesta
     /// fase. `Err` quando a lista de anexos não lê ou o banco falha — a linha fica pendente, para
     /// não entregar o texto escondendo a mídia.
-    fn anexos_do_cliente(&self, mensagem: &MensagemDesde) -> Result<Vec<AnexoRegistro>, ErroStore> {
-        if mensagem.origem != Origem::Agente
-            || mensagem.papel != Papel::Usuario
-            || mensagem.direcao != Direcao::Entrada
+    fn anexos_do_cliente(
+        &self,
+        mensagem: &MensagemDesde,
+    ) -> Result<Vec<AttachmentRecord>, StoreError> {
+        if mensagem.origem != Origin::Agente
+            || mensagem.papel != Role::User
+            || mensagem.direcao != Direction::Inbound
         {
             return Ok(Vec::new());
         }
         let ids: Vec<String> = serde_json::from_str(&mensagem.anexos_json).map_err(|erro| {
-            ErroStore::Interno(format!(
+            StoreError::Internal(format!(
                 "lista de anexos da mensagem não lê como JSON: {erro}"
             ))
         })?;
         if ids.is_empty() {
             return Ok(Vec::new());
         }
-        self.store.mensagens().anexos(mensagem.org_id, mensagem.id)
+        self.store.messages().anexos(mensagem.org_id, mensagem.id)
     }
 
     /// Um passo de mídia de um anexo: o envio pronto, ou o aviso de por que ele não entra.
@@ -1454,15 +1457,15 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
         &self,
         org: OrgId,
         dados: &DadosConversa,
-        anexo: &AnexoRegistro,
+        anexo: &AttachmentRecord,
     ) -> Result<Passo, ()> {
         let id_anexo = anexo.id.to_string();
         let remetente = self.ids.cliente(&dados.identificador).map_err(|_| ())?;
         let decidida = midia::decidir(&AnexoParaMidia {
             id: &id_anexo,
-            nome: &anexo.nome,
+            nome: &anexo.name,
             mime: &anexo.mime,
-            tamanho_bytes: anexo.tamanho_bytes,
+            tamanho_bytes: anexo.size_bytes,
             fonte: &dados.sala.canal,
         });
         let decidida = match decidida {
@@ -1556,7 +1559,11 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
     /// O tamanho da linha já foi conferido em `midia::decidir`; aqui o teto é o mesmo, de rede de
     /// segurança contra uma linha que minta. Arquivo ausente ou ilegível vira [`MotivoDeRecusa`],
     /// nunca pânico e nunca pendência eterna.
-    async fn ler_blob(&self, org: OrgId, anexo: &AnexoRegistro) -> Result<Vec<u8>, MotivoDeRecusa> {
+    async fn ler_blob(
+        &self,
+        org: OrgId,
+        anexo: &AttachmentRecord,
+    ) -> Result<Vec<u8>, MotivoDeRecusa> {
         let Some(pasta) = self.pasta_blobs.clone() else {
             return Err(MotivoDeRecusa::Ilegivel);
         };
@@ -1577,16 +1584,16 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
         org: OrgId,
         conversa: ConversationId,
         corte: i64,
-    ) -> Result<DadosConversa, ErroStore> {
-        let conversa_lida = self.store.conversas().obter(org, conversa)?;
+    ) -> Result<DadosConversa, StoreError> {
+        let conversa_lida = self.store.conversas().get(org, conversa)?;
         // Mesma regra que a listagem usa para `external_peer` (RP-02): um só lugar, na store.
         let identificador = conversa_lida.identificador_cliente();
         let nome_agente = self
             .store
-            .agentes()
-            .obter(org, conversa_lida.agent_id)
+            .agents()
+            .get(org, conversa_lida.agent_id)
             .ok()
-            .map(|agente| agente.nome);
+            .map(|agente| agente.name);
         let agente: AgentId = conversa_lida.agent_id;
         let sala = ConversaParaSala {
             org,
@@ -1594,12 +1601,12 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
             cliente: identificador.clone(),
             // Nome que o WhatsApp mandou (`pushName`, MX-32), já normalizado no banco. Sem ele, a
             // sala e o fantasma do cliente caem no identificador.
-            nome_cliente: conversa_lida.nome_cliente.clone(),
+            nome_cliente: conversa_lida.customer_name.clone(),
             agente,
             nome_agente,
             canal: conversa_lida.canal.clone(),
-            departamento: conversa_lida.departamento_alvo,
-            fechada: conversa_lida.status == StatusConversa::Fechada,
+            departamento: conversa_lida.target_department,
+            fechada: conversa_lida.status == ConversationStatus::Closed,
             corte_backfill: Some(corte),
         };
         Ok(DadosConversa {
@@ -1613,26 +1620,26 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
 
 // ───────────────────────────── conversões e motivos ─────────────────────────────
 
-fn origem_de(origem: Origem) -> OrigemMensagem {
+fn origem_de(origem: Origin) -> OrigemMensagem {
     match origem {
-        Origem::Agente => OrigemMensagem::Agente,
-        Origem::Humano => OrigemMensagem::Humana,
-        Origem::Dispositivo => OrigemMensagem::Dispositivo,
+        Origin::Agente => OrigemMensagem::Agente,
+        Origin::Human => OrigemMensagem::Humana,
+        Origin::Device => OrigemMensagem::Dispositivo,
     }
 }
 
-fn sentido_de(direcao: Direcao) -> Sentido {
+fn sentido_de(direcao: Direction) -> Sentido {
     match direcao {
-        Direcao::Entrada => Sentido::Entrada,
-        Direcao::Saida => Sentido::Saida,
+        Direction::Inbound => Sentido::Entrada,
+        Direction::Outbound => Sentido::Saida,
     }
 }
 
-fn papel_de(papel: Papel) -> PapelMensagem {
+fn papel_de(papel: Role) -> PapelMensagem {
     match papel {
-        Papel::Usuario => PapelMensagem::Cliente,
-        Papel::Assistente => PapelMensagem::Agente,
-        Papel::Ferramenta | Papel::Sistema => PapelMensagem::Outro,
+        Role::User => PapelMensagem::Cliente,
+        Role::Assistant => PapelMensagem::Agente,
+        Role::Tool | Role::System => PapelMensagem::Outro,
     }
 }
 

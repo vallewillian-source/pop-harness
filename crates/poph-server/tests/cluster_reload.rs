@@ -132,7 +132,7 @@ impl Cenario {
         }];
         config.validar().expect("configuração válida");
 
-        let store = Arc::new(Store::abrir(&config).expect("abre o banco"));
+        let store = Arc::new(Store::open(&config).expect("abre o banco"));
         let segredo = Secret::new(SEGREDO.to_owned());
         let mapa = carregar(&caminho_cluster, Some(&segredo)).expect("mapa inicial válido");
         let estado = Estado::novo(Arc::clone(&store), config)

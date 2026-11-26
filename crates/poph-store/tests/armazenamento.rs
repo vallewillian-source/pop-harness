@@ -10,12 +10,12 @@ use std::sync::{Arc, Barrier};
 use std::thread;
 
 use poph_store::{
-    Agente, Conversa, Direcao, EfeitoDaTransicao, ErroStore, EstadoDaExecucao, EstadoSaida,
-    ExtrasDaTransicao, FiltroFluxos, InicioDeExecucao, MudancaAgente, MudancaCategoria,
-    MudancaDepartamento, MudancaFluxo, MudancaOrg, NovaCategoria, NovaConversa, NovaEntrada,
-    NovaFicha, NovaMensagem, NovaOrg, NovaSaida, NovoAgente, NovoDepartamento, NovoEventoFicha,
-    NovoFluxo, NovoRegistroAuditoria, Org, Pagina, Papel, PublicacaoDeRevisao, Recebido, Status,
-    StatusConversa, Store, TransicaoDeFluxo, versao_do_arquivo,
+    AgentChange, Agente, CategoryChange, Conversa, ConversationStatus, DepartmentChange, Direction,
+    ExecutionStart, ExecutionState, FlowChange, FlowFilter, FlowTransition, NewAgent,
+    NewAuditEntry, NewCategory, NewConversation, NewDepartment, NewFlow, NewInboxItem, NewMessage,
+    NewOrg, NewOutboxItem, NewRecord, NewRecordEvent, Org, OrgChange, OutboxState, Page, Received,
+    RevisionPublication, Role, Status, Store, StoreError, TransitionEffect, TransitionExtras,
+    file_version,
 };
 use poph_types::{
     DomainError, EventActor, ExecutionStatus, InboxId, IntegrationId, MessageId, OrgId,
@@ -36,8 +36,8 @@ impl Cenario {
             std::env::temp_dir().join(format!("poph-store-{rotulo}-{}-{n}", std::process::id()));
         let _ = fs::remove_dir_all(&pasta);
         fs::create_dir_all(&pasta).expect("cria a pasta do teste");
-        let store = Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
-            .expect("abre o banco");
+        let store =
+            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco");
         Self {
             pasta,
             store: Some(Arc::new(store)),
@@ -63,9 +63,9 @@ impl Drop for Cenario {
 
 fn criar_org(store: &Store, slug: &str) -> Org {
     store
-        .orgaos()
-        .criar(NovaOrg {
-            nome: format!("Org {slug}"),
+        .orgs()
+        .criar(NewOrg {
+            name: format!("Org {slug}"),
             slug: slug.to_owned(),
             config_json: String::new(),
         })
@@ -73,12 +73,12 @@ fn criar_org(store: &Store, slug: &str) -> Org {
 }
 
 fn criar_agente(store: &Store, org: &Org, slug: &str) -> Agente {
-    let novo = NovoAgente {
-        nome: format!("Agente {slug}"),
+    let novo = NewAgent {
+        name: format!("Agente {slug}"),
         slug: slug.to_owned(),
-        ..NovoAgente::default()
+        ..NewAgent::default()
     };
-    store.agentes().criar(org.id, novo).expect("cria o agente")
+    store.agents().criar(org.id, novo).expect("cria o agente")
 }
 
 fn criar_conversa(store: &Store, org: &Org, agente: &Agente) -> Conversa {
@@ -86,12 +86,12 @@ fn criar_conversa(store: &Store, org: &Org, agente: &Agente) -> Conversa {
         .conversas()
         .criar(
             org.id,
-            NovaConversa {
+            NewConversation {
                 agent_id: agente.id,
                 integration_id: None,
                 canal: "cli".to_owned(),
                 peer_externo: Some("teste".to_owned()),
-                departamento_alvo: None,
+                target_department: None,
             },
         )
         .expect("cria a conversa")
@@ -99,19 +99,19 @@ fn criar_conversa(store: &Store, org: &Org, agente: &Agente) -> Conversa {
 
 fn gravar_mensagem(store: &Store, org: &Org, conversa: &Conversa, texto: &str) -> MessageId {
     store
-        .mensagens()
+        .messages()
         .gravar(
             org.id,
-            NovaMensagem {
+            NewMessage {
                 conversation_id: conversa.id,
-                direcao: Direcao::Entrada,
-                papel: Papel::Usuario,
+                direction: Direction::Inbound,
+                role: Role::User,
                 texto: texto.to_owned(),
-                anexos_json: "[]".to_owned(),
+                attachments_json: "[]".to_owned(),
                 id_externo: None,
                 turn_id: None,
-                origem: poph_store::Origem::Agente,
-                autor_nome: None,
+                origin: poph_store::Origin::Agente,
+                author_name: None,
             },
         )
         .expect("grava a mensagem")
@@ -123,7 +123,7 @@ fn migracao_cria_o_esquema_do_prd_e_e_idempotente() {
     let cenario = Cenario::novo("migracao");
     let store = cenario.store();
 
-    let tabelas = store.tabelas().expect("lista tabelas");
+    let tabelas = store.tables().expect("lista tabelas");
     for esperada in [
         "orgs",
         "admin_tokens",
@@ -160,24 +160,24 @@ fn migracao_cria_o_esquema_do_prd_e_e_idempotente() {
         );
     }
 
-    let caminho = store.caminho_harness().to_path_buf();
+    let caminho = store.harness_path().to_path_buf();
     assert_eq!(
-        versao_do_arquivo(&caminho).expect("lê versão"),
-        Some(poph_store::versao_alvo_harness())
+        file_version(&caminho).expect("lê versão"),
+        Some(poph_store::harness_target_version())
     );
-    assert!(store.chaves_quebradas().expect("fk check").is_empty());
+    assert!(store.broken_foreign_keys().expect("fk check").is_empty());
 
     // Rodar de novo não aplica nada nem muda a versão.
-    let relatorios = store.migrar().expect("migra de novo");
-    assert!(relatorios.ja_estava_em_dia(), "{relatorios:?}");
+    let relatorios = store.migrate().expect("migra de novo");
+    assert!(relatorios.already_up_to_date(), "{relatorios:?}");
     assert_eq!(
-        versao_do_arquivo(&caminho).expect("lê versão"),
-        Some(poph_store::versao_alvo_harness())
+        file_version(&caminho).expect("lê versão"),
+        Some(poph_store::harness_target_version())
     );
 
     // `rag.db` existe e está na versão 0 (sem tabelas de trechos até a HR-16).
-    let caminho_rag = store.caminho_rag().to_path_buf();
-    assert_eq!(versao_do_arquivo(&caminho_rag).expect("lê versão"), Some(0));
+    let caminho_rag = store.rag_path().to_path_buf();
+    assert_eq!(file_version(&caminho_rag).expect("lê versão"), Some(0));
 }
 
 #[test]
@@ -187,11 +187,11 @@ fn toda_tabela_de_negocio_tem_org_id() {
     // `orgs` é a própria org; `schema_migrations` é infraestrutura.
     let sem_org = ["orgs", "schema_migrations"];
     let mut verificadas = 0;
-    for tabela in store.tabelas().expect("lista tabelas") {
+    for tabela in store.tables().expect("lista tabelas") {
         if sem_org.contains(&tabela.as_str()) {
             continue;
         }
-        let colunas = store.colunas(&tabela).expect("lê colunas");
+        let colunas = store.columns(&tabela).expect("lê colunas");
         assert!(
             colunas.iter().any(|coluna| coluna == "org_id"),
             "tabela {tabela} não tem org_id; colunas: {colunas:?}"
@@ -213,62 +213,62 @@ fn nenhum_repositorio_le_registro_de_outra_org() {
 
     // Dados todos da org A.
     let categoria = store
-        .categorias()
+        .categories()
         .criar(
             org_a.id,
-            NovaCategoria {
-                nome: "Dedetização".to_owned(),
-                descricao: String::new(),
+            NewCategory {
+                name: "Dedetização".to_owned(),
+                description: String::new(),
             },
         )
         .expect("categoria");
     let departamento = store
-        .departamentos()
+        .departments()
         .criar(
             org_a.id,
-            NovoDepartamento {
-                nome: "Comercial".to_owned(),
-                descricao: String::new(),
+            NewDepartment {
+                name: "Comercial".to_owned(),
+                description: String::new(),
             },
         )
         .expect("departamento");
     let agente = criar_agente(store, &org_a, "agente-a");
     store
-        .agentes()
-        .definir_categorias(org_a.id, agente.id, agente.versao, &[categoria.id])
+        .agents()
+        .definir_categorias(org_a.id, agente.id, agente.version, &[categoria.id])
         .expect("vincula categoria");
     store
-        .instrucoes()
+        .instructions()
         .salvar(org_a.id, agente.id, 0, "{}", "# A", true)
         .expect("instruções");
     let conversa = criar_conversa(store, &org_a, &agente);
     let mensagem = gravar_mensagem(store, &org_a, &conversa, "oi");
     let turno = store
-        .turnos()
+        .turns()
         .iniciar(org_a.id, conversa.id, Some(agente.id))
         .expect("turno");
     let entrada = store
-        .caixa_entrada()
+        .inbox()
         .receber(
             org_a.id,
-            NovaEntrada {
+            NewInboxItem {
                 integration_id: IntegrationId::generate(),
                 id_externo: "wamid-1".to_owned(),
-                evento_json: "{}".to_owned(),
+                event_json: "{}".to_owned(),
             },
         )
         .expect("entrada")
         .1;
     let saida = store
-        .caixa_saida()
+        .outbox()
         .enfileirar(
             org_a.id,
-            NovaSaida {
+            NewOutboxItem {
                 conversation_id: conversa.id,
                 turn_id: turno.id,
                 seq: 0,
                 tipo: "text".to_owned(),
-                conteudo_json: "{}".to_owned(),
+                content_json: "{}".to_owned(),
             },
         )
         .expect("saída")
@@ -278,117 +278,112 @@ fn nenhum_repositorio_le_registro_de_outra_org() {
         .criar(Some(org_a.id), "token A", "hash-a")
         .expect("token");
     store
-        .auditoria()
+        .audit()
         .registrar(
             Some(org_a.id),
-            NovoRegistroAuditoria {
+            NewAuditEntry {
                 ator_tipo: "system".to_owned(),
-                ator_id: None,
+                actor_id: None,
                 acao: "create".to_owned(),
-                entidade: "agent".to_owned(),
-                entidade_id: Some(agente.id.to_string()),
-                detalhe_json: "{}".to_owned(),
+                entity: "agent".to_owned(),
+                entity_id: Some(agente.id.to_string()),
+                detail_json: "{}".to_owned(),
             },
         )
         .expect("auditoria");
 
     // Tudo consultado com a org B dá "não encontrado" ou lista vazia.
-    let nao_encontrado = |resultado: Result<(), poph_store::ErroStore>| match resultado {
-        Err(poph_store::ErroStore::Dominio(DomainError::NotFound { .. })) => true,
+    let nao_encontrado = |resultado: Result<(), poph_store::StoreError>| match resultado {
+        Err(poph_store::StoreError::Domain(DomainError::NotFound { .. })) => true,
         outro => panic!("esperado não encontrado, veio {outro:?}"),
     };
 
-    nao_encontrado(store.categorias().obter(org_b.id, categoria.id).map(|_| ()));
+    nao_encontrado(store.categories().obter(org_b.id, categoria.id).map(|_| ()));
     assert!(
         store
-            .categorias()
-            .listar(org_b.id, Pagina::default())
+            .categories()
+            .listar(org_b.id, Page::default())
             .expect("lista")
             .is_empty()
     );
     nao_encontrado(
         store
-            .departamentos()
+            .departments()
             .obter(org_b.id, departamento.id)
             .map(|_| ()),
     );
     assert!(
         store
-            .departamentos()
-            .listar(org_b.id, Pagina::default())
+            .departments()
+            .listar(org_b.id, Page::default())
             .expect("lista")
             .is_empty()
     );
-    nao_encontrado(store.agentes().obter(org_b.id, agente.id).map(|_| ()));
+    nao_encontrado(store.agents().get(org_b.id, agente.id).map(|_| ()));
     assert!(
         store
-            .agentes()
-            .listar(org_b.id, Pagina::default())
+            .agents()
+            .listar(org_b.id, Page::default())
             .expect("lista")
             .is_empty()
     );
     assert!(
         store
-            .agentes()
+            .agents()
             .categorias(org_b.id, agente.id)
             .expect("categorias")
             .is_empty()
     );
-    nao_encontrado(store.instrucoes().obter(org_b.id, agente.id).map(|_| ()));
-    nao_encontrado(store.conversas().obter(org_b.id, conversa.id).map(|_| ()));
+    nao_encontrado(store.instructions().obter(org_b.id, agente.id).map(|_| ()));
+    nao_encontrado(store.conversas().get(org_b.id, conversa.id).map(|_| ()));
     assert!(
         store
             .conversas()
-            .listar(org_b.id, None, Pagina::default())
+            .listar(org_b.id, None, Page::default())
             .expect("lista")
             .is_empty()
     );
     nao_encontrado(store.conversas().agente(org_b.id, conversa.id).map(|_| ()));
     assert!(
         store
-            .mensagens()
-            .listar(org_b.id, conversa.id, Pagina::default())
+            .messages()
+            .listar(org_b.id, conversa.id, Page::default())
             .expect("lista")
             .is_empty()
     );
     nao_encontrado(
         store
-            .mensagens()
+            .messages()
             .obter(org_b.id, conversa.id, mensagem)
             .map(|_| ()),
     );
     assert_eq!(
         store
-            .mensagens()
+            .messages()
             .contar(org_b.id, conversa.id)
             .expect("conta"),
         0
     );
-    nao_encontrado(store.turnos().obter(org_b.id, turno.id).map(|_| ()));
+    nao_encontrado(store.turns().obter(org_b.id, turno.id).map(|_| ()));
     assert!(
         store
-            .turnos()
-            .listar(org_b.id, conversa.id, Pagina::default())
+            .turns()
+            .listar(org_b.id, conversa.id, Page::default())
             .expect("lista")
             .is_empty()
     );
-    nao_encontrado(
-        store
-            .caixa_entrada()
-            .obter(org_b.id, entrada.id)
-            .map(|_| ()),
-    );
+    nao_encontrado(store.inbox().obter(org_b.id, entrada.id).map(|_| ()));
     assert!(
         store
-            .caixa_entrada()
+            .inbox()
             .listar_pendentes(org_b.id, 100)
             .expect("lista")
             .is_empty()
     );
-    nao_encontrado(store.caixa_saida().obter(org_b.id, saida.id).map(|_| ()));
+    nao_encontrado(store.outbox().obter(org_b.id, saida.id).map(|_| ()));
     assert!(
         store
-            .caixa_saida()
+            .outbox()
             .listar_pendentes(org_b.id, 100)
             .expect("lista")
             .is_empty()
@@ -396,15 +391,15 @@ fn nenhum_repositorio_le_registro_de_outra_org() {
     assert!(
         store
             .tokens()
-            .listar(org_b.id, Pagina::default())
+            .listar(org_b.id, Page::default())
             .expect("lista")
             .is_empty()
     );
     nao_encontrado(store.tokens().obter(org_b.id, token.id).map(|_| ()));
     assert!(
         store
-            .auditoria()
-            .listar(org_b.id, Pagina::default())
+            .audit()
+            .listar(org_b.id, Page::default())
             .expect("lista")
             .is_empty()
     );
@@ -412,14 +407,14 @@ fn nenhum_repositorio_le_registro_de_outra_org() {
     // E a org A continua enxergando tudo.
     assert_eq!(
         store
-            .mensagens()
+            .messages()
             .contar(org_a.id, conversa.id)
             .expect("conta"),
         1
     );
     assert_eq!(
         store
-            .caixa_entrada()
+            .inbox()
             .listar_pendentes(org_a.id, 100)
             .expect("lista")
             .len(),
@@ -431,10 +426,10 @@ fn nenhum_repositorio_le_registro_de_outra_org() {
         .fluxos()
         .criar(
             org_a.id,
-            NovoFluxo {
+            NewFlow {
                 slug: "agendar_visita".to_owned(),
-                nome: "Agendar visita".to_owned(),
-                descricao: String::new(),
+                name: "Agendar visita".to_owned(),
+                description: String::new(),
                 rascunho_fonte: String::new(),
             },
         )
@@ -454,7 +449,7 @@ fn nenhum_repositorio_le_registro_de_outra_org() {
     assert!(
         store
             .fluxos()
-            .listar(org_b.id, &FiltroFluxos::default(), Pagina::default())
+            .listar(org_b.id, &FlowFilter::default(), Page::default())
             .expect("lista")
             .is_empty()
     );
@@ -475,7 +470,7 @@ fn nenhum_repositorio_le_registro_de_outra_org() {
     nao_encontrado(
         store
             .fluxos()
-            .atualizar(org_b.id, fluxo.id, 1, MudancaFluxo::default())
+            .atualizar(org_b.id, fluxo.id, 1, FlowChange::default())
             .map(|_| ()),
     );
     nao_encontrado(store.fluxos().excluir(org_b.id, fluxo.id, true).map(|_| ()));
@@ -490,43 +485,43 @@ fn nenhum_repositorio_le_registro_de_outra_org() {
         .fluxos()
         .obter(org_a.id, fluxo.id)
         .expect("fluxo da org A")
-        .versao;
-    let publicacao = |esperada: u64| PublicacaoDeRevisao {
-        esperada,
+        .version;
+    let publicacao = |esperada: u64| RevisionPublication {
+        expected: esperada,
         fonte: "fluxo(id = \"agendar_visita\")".to_owned(),
         definicao_json: "{}".to_owned(),
         schema_versao: Some(1),
         resolucoes_json: "{}".to_owned(),
         ator_tipo: "cli".to_owned(),
-        ator_id: None,
+        actor_id: None,
     };
     let revisao = store
-        .revisoes()
+        .revisions()
         .publicar_revisao(org_a.id, fluxo.id, publicacao(versao_do_fluxo))
         .expect("publica a revisão 1 na org A");
-    nao_encontrado(store.revisoes().obter(org_b.id, fluxo.id, 1).map(|_| ()));
+    nao_encontrado(store.revisions().obter(org_b.id, fluxo.id, 1).map(|_| ()));
     nao_encontrado(
         store
-            .revisoes()
+            .revisions()
             .obter_por_id(org_b.id, revisao.id)
             .map(|_| ()),
     );
-    nao_encontrado(store.revisoes().atual(org_b.id, fluxo.id).map(|_| ()));
+    nao_encontrado(store.revisions().atual(org_b.id, fluxo.id).map(|_| ()));
     nao_encontrado(
         store
-            .revisoes()
+            .revisions()
             .listar(org_b.id, fluxo.id, None, 10)
             .map(|_| ()),
     );
     nao_encontrado(
         store
-            .revisoes()
+            .revisions()
             .publicar_revisao(org_b.id, fluxo.id, publicacao(versao_do_fluxo + 1))
             .map(|_| ()),
     );
     assert_eq!(
         store
-            .revisoes()
+            .revisions()
             .listar(org_a.id, fluxo.id, None, 10)
             .expect("lista da org A")
             .len(),
@@ -539,7 +534,7 @@ fn nenhum_repositorio_le_registro_de_outra_org() {
         .fichas()
         .criar(
             org_a.id,
-            NovaFicha {
+            NewRecord {
                 conversation_id: None,
                 agent_id: agente.id,
                 canal: "cli".to_owned(),
@@ -558,7 +553,7 @@ fn nenhum_repositorio_le_registro_de_outra_org() {
     assert!(
         store
             .fichas()
-            .listar(org_b.id, &Default::default(), Pagina::default())
+            .listar(org_b.id, &Default::default(), Page::default())
             .expect("lista")
             .is_empty()
     );
@@ -574,7 +569,7 @@ fn nenhum_repositorio_le_registro_de_outra_org() {
             .registrar_evento(
                 org_b.id,
                 ficha.id,
-                NovoEventoFicha {
+                NewRecordEvent {
                     execucao_id: None,
                     tipo: RecordEventKind::RecordOpened,
                     ator_tipo: EventActor::System,
@@ -588,132 +583,132 @@ fn nenhum_repositorio_le_registro_de_outra_org() {
     nao_encontrado(
         store
             .fichas()
-            .fechar_sem_conversa(org_b.id, ficha.id, ficha.versao, "invasão")
+            .fechar_sem_conversa(org_b.id, ficha.id, ficha.version, "invasão")
             .map(|_| ()),
     );
 
     // ── FX-20: execução, etapas, eventos e efeitos ──
-    let estado_inicial = || EstadoDaExecucao {
+    let estado_inicial = || ExecutionState {
         status: ExecutionStatus::Active,
         no_atual: "coleta".to_owned(),
         dados_json: "{}".to_owned(),
-        atores_que_agiram: Vec::new(),
-        resultado: None,
-        motivo: None,
+        acting_actors: Vec::new(),
+        result: None,
+        reason: None,
     };
-    let abertura = || InicioDeExecucao {
+    let abertura = || ExecutionStart {
         ficha: ficha.id,
         fluxo: fluxo.id,
-        revisao: revisao.id,
-        ator: EventActor::Attendant,
+        revision: revisao.id,
+        actor: EventActor::Attendant,
         ator_ref: Some("token-ficticio"),
-        decisao_jev: None,
-        estado_inicial: estado_inicial(),
-        efeitos_de_entrada: vec![EfeitoDaTransicao {
-            chave: "entrada/0".to_owned(),
+        jev_decision: None,
+        initial_state: estado_inicial(),
+        inbound_effects: vec![TransitionEffect {
+            key: "entrada/0".to_owned(),
             tipo: "mensagem_ao_cliente".to_owned(),
             payload_json: "{\"texto\":\"olá\"}".to_owned(),
         }],
         chave_idempotencia: None,
     };
     let aberta = store
-        .execucoes()
+        .executions()
         .iniciar_execucao(org_a.id, abertura())
         .expect("abre a execução na org A");
-    let execucao = aberta.execucao.id;
-    let efeito = aberta.efeitos[0].id;
+    let execucao = aberta.execution.id;
+    let efeito = aberta.effects[0].id;
 
-    nao_encontrado(store.execucoes().obter(org_b.id, execucao).map(|_| ()));
+    nao_encontrado(store.executions().obter(org_b.id, execucao).map(|_| ()));
     assert!(
         store
-            .execucoes()
+            .executions()
             .ativa_da_ficha(org_b.id, ficha.id)
             .expect("ativa")
             .is_none()
     );
     assert!(
         store
-            .execucoes()
+            .executions()
             .da_ficha(org_b.id, ficha.id, 10)
             .expect("da ficha")
             .is_empty()
     );
-    nao_encontrado(store.execucoes().etapas(org_b.id, execucao).map(|_| ()));
-    nao_encontrado(store.execucoes().efeitos(org_b.id, execucao).map(|_| ()));
+    nao_encontrado(store.executions().etapas(org_b.id, execucao).map(|_| ()));
+    nao_encontrado(store.executions().efeitos(org_b.id, execucao).map(|_| ()));
     assert!(
         store
-            .execucoes()
+            .executions()
             .ativas_por_revisao(org_b.id, fluxo.id)
             .expect("ativas por revisão")
             .is_empty()
     );
     nao_encontrado(
         store
-            .execucoes()
+            .executions()
             .iniciar_execucao(org_b.id, abertura())
             .map(|_| ()),
     );
     nao_encontrado(
         store
-            .execucoes()
+            .executions()
             .aplicar_transicao(
                 org_b.id,
                 execucao,
-                aberta.execucao.versao,
-                &TransicaoDeFluxo {
-                    novo_estado: estado_inicial(),
-                    eventos: Vec::new(),
-                    efeitos: Vec::new(),
-                    encerra_atendimento: false,
-                    repetida: false,
-                    erro_de_regra: false,
+                aberta.execution.version,
+                &FlowTransition {
+                    new_state: estado_inicial(),
+                    events: Vec::new(),
+                    effects: Vec::new(),
+                    closes_service: false,
+                    repeated: false,
+                    rule_error: false,
                 },
                 "chave-invasora",
-                ExtrasDaTransicao::default(),
+                TransitionExtras::default(),
             )
             .map(|_| ()),
     );
     assert!(
         store
-            .execucoes()
+            .executions()
             .abertura_ja_feita(org_b.id, ficha.id, fluxo.id, "chave-invasora")
             .expect("abertura já feita")
             .is_none()
     );
     assert!(
         !store
-            .execucoes()
+            .executions()
             .transicao_ja_aplicada(org_b.id, execucao, "chave-invasora")
             .expect("transição já aplicada")
     );
 
     // Efeitos: a org B não lê a fila, não a move e não confirma entrega da org A.
-    nao_encontrado(store.efeitos().obter(org_b.id, efeito).map(|_| ()));
+    nao_encontrado(store.effects().obter(org_b.id, efeito).map(|_| ()));
     assert!(
         store
-            .efeitos()
+            .effects()
             .listar_pendentes(org_b.id, 100)
             .expect("pendentes")
             .is_empty()
     );
     assert!(
-        store.efeitos().iniciar_envio(org_b.id, efeito).is_err(),
+        store.effects().iniciar_envio(org_b.id, efeito).is_err(),
         "a org B não pode começar a entrega de um efeito da org A"
     );
     store
-        .efeitos()
+        .effects()
         .confirmar_envio(org_b.id, efeito)
         .expect("confirmar sem linha não é erro de banco");
     store
-        .efeitos()
+        .effects()
         .falhar_envio(org_b.id, efeito, "invasão", true, None)
         .expect("falhar sem linha não é erro de banco");
     store
-        .efeitos()
+        .effects()
         .adiar(org_b.id, efeito, 1_700_000_000_000)
         .expect("adiar sem linha não é erro de banco");
     let intacto = store
-        .efeitos()
+        .effects()
         .obter(org_a.id, efeito)
         .expect("o efeito da org A continua lá");
     assert_eq!(intacto.tentativas, 0);
@@ -724,7 +719,7 @@ fn nenhum_repositorio_le_registro_de_outra_org() {
     // A org A continua enxergando tudo o que é dela.
     assert_eq!(
         store
-            .execucoes()
+            .executions()
             .da_ficha(org_a.id, ficha.id, 10)
             .expect("da ficha na org A")
             .len(),
@@ -741,7 +736,7 @@ fn nenhum_repositorio_le_registro_de_outra_org() {
     );
     assert_eq!(
         store
-            .efeitos()
+            .effects()
             .listar_pendentes(org_a.id, 100)
             .expect("pendentes da org A")
             .len(),
@@ -756,87 +751,87 @@ fn conflito_de_versao_devolve_erro_tipado_em_todas_as_entidades_editaveis() {
     let org = criar_org(store, "org-conflito");
     let agente = criar_agente(store, &org, "agente-conflito");
     let categoria = store
-        .categorias()
+        .categories()
         .criar(
             org.id,
-            NovaCategoria {
-                nome: "Categoria".to_owned(),
-                descricao: String::new(),
+            NewCategory {
+                name: "Categoria".to_owned(),
+                description: String::new(),
             },
         )
         .expect("categoria");
     let departamento = store
-        .departamentos()
+        .departments()
         .criar(
             org.id,
-            NovoDepartamento {
-                nome: "Departamento".to_owned(),
-                descricao: String::new(),
+            NewDepartment {
+                name: "Departamento".to_owned(),
+                description: String::new(),
             },
         )
         .expect("departamento");
     let conversa = criar_conversa(store, &org, &agente);
     store
-        .instrucoes()
+        .instructions()
         .salvar(org.id, agente.id, 0, "{}", "# v1", true)
         .expect("instruções");
 
-    let confere_conflito = |resultado: Result<(), poph_store::ErroStore>| match resultado {
-        Err(erro) if erro.eh_conflito_de_versao() => {}
+    let confere_conflito = |resultado: Result<(), poph_store::StoreError>| match resultado {
+        Err(erro) if erro.is_version_conflict() => {}
         outro => panic!("esperado conflito de versão, veio {outro:?}"),
     };
 
     confere_conflito(
         store
-            .orgaos()
+            .orgs()
             .atualizar(
                 org.id,
-                org.versao + 5,
-                MudancaOrg {
-                    nome: Some("Outro nome".to_owned()),
-                    ..MudancaOrg::default()
+                org.version + 5,
+                OrgChange {
+                    name: Some("Outro nome".to_owned()),
+                    ..OrgChange::default()
                 },
             )
             .map(|_| ()),
     );
     confere_conflito(
         store
-            .agentes()
+            .agents()
             .atualizar(
                 org.id,
                 agente.id,
-                agente.versao + 5,
-                MudancaAgente {
+                agente.version + 5,
+                AgentChange {
                     modelo: Some("outro".to_owned()),
-                    ..MudancaAgente::default()
+                    ..AgentChange::default()
                 },
             )
             .map(|_| ()),
     );
     confere_conflito(
         store
-            .categorias()
+            .categories()
             .atualizar(
                 org.id,
                 categoria.id,
-                categoria.versao + 5,
-                MudancaCategoria {
-                    nome: Some("Outra".to_owned()),
-                    ..MudancaCategoria::default()
+                categoria.version + 5,
+                CategoryChange {
+                    name: Some("Outra".to_owned()),
+                    ..CategoryChange::default()
                 },
             )
             .map(|_| ()),
     );
     confere_conflito(
         store
-            .departamentos()
+            .departments()
             .atualizar(
                 org.id,
                 departamento.id,
-                departamento.versao + 5,
-                MudancaDepartamento {
-                    nome: Some("Outro".to_owned()),
-                    ..MudancaDepartamento::default()
+                departamento.version + 5,
+                DepartmentChange {
+                    name: Some("Outro".to_owned()),
+                    ..DepartmentChange::default()
                 },
             )
             .map(|_| ()),
@@ -847,35 +842,35 @@ fn conflito_de_versao_devolve_erro_tipado_em_todas_as_entidades_editaveis() {
             .mudar_status(
                 org.id,
                 conversa.id,
-                conversa.versao + 5,
-                StatusConversa::Fechada,
+                conversa.version + 5,
+                ConversationStatus::Closed,
                 None,
             )
             .map(|_| ()),
     );
     confere_conflito(
         store
-            .instrucoes()
+            .instructions()
             .salvar(org.id, agente.id, 9, "{}", "# v2", true)
             .map(|_| ()),
     );
 
     // Com a versão certa, a escrita anda e incrementa.
     let atualizado = store
-        .agentes()
+        .agents()
         .atualizar(
             org.id,
             agente.id,
-            agente.versao,
-            MudancaAgente {
+            agente.version,
+            AgentChange {
                 modelo: Some("gemini-3.8-flash-tiered".to_owned()),
-                status: Some(Status::Inativo),
-                ..MudancaAgente::default()
+                status: Some(Status::Inactive),
+                ..AgentChange::default()
             },
         )
         .expect("atualiza");
-    assert_eq!(atualizado.versao, agente.versao + 1);
-    assert_eq!(atualizado.status, Status::Inativo);
+    assert_eq!(atualizado.version, agente.version + 1);
+    assert_eq!(atualizado.status, Status::Inactive);
 }
 
 #[test]
@@ -886,28 +881,25 @@ fn mensagem_repetida_pelo_id_externo_nao_duplica() {
     let agente = criar_agente(store, &org, "agente-msg");
     let conversa = criar_conversa(store, &org, &agente);
 
-    let nova = || NovaMensagem {
+    let nova = || NewMessage {
         conversation_id: conversa.id,
-        direcao: Direcao::Entrada,
-        papel: Papel::Usuario,
-        origem: poph_store::Origem::Agente,
-        autor_nome: None,
+        direction: Direction::Inbound,
+        role: Role::User,
+        origin: poph_store::Origin::Agente,
+        author_name: None,
         texto: "bom dia".to_owned(),
-        anexos_json: "[]".to_owned(),
+        attachments_json: "[]".to_owned(),
         id_externo: Some("wamid-42".to_owned()),
         turn_id: None,
     };
-    let primeira = store.mensagens().gravar(org.id, nova()).expect("grava");
-    let segunda = store.mensagens().gravar(org.id, nova()).expect("regrava");
+    let primeira = store.messages().gravar(org.id, nova()).expect("grava");
+    let segunda = store.messages().gravar(org.id, nova()).expect("regrava");
     assert_eq!(
         primeira.id, segunda.id,
         "a segunda gravação devolve a mesma"
     );
     assert_eq!(
-        store
-            .mensagens()
-            .contar(org.id, conversa.id)
-            .expect("conta"),
+        store.messages().contar(org.id, conversa.id).expect("conta"),
         1
     );
 }
@@ -921,25 +913,19 @@ fn entrada_e_saida_sao_idempotentes_pela_chave_do_prd() {
     let conversa = criar_conversa(store, &org, &agente);
     let integracao = IntegrationId::generate();
 
-    let entrada = || NovaEntrada {
+    let entrada = || NewInboxItem {
         integration_id: integracao,
         id_externo: "wamid-7".to_owned(),
-        evento_json: "{\"texto\":\"oi\"}".to_owned(),
+        event_json: "{\"texto\":\"oi\"}".to_owned(),
     };
-    let (primeiro, item) = store
-        .caixa_entrada()
-        .receber(org.id, entrada())
-        .expect("entrada");
-    assert_eq!(primeiro, Recebido::Novo);
-    let (segundo, repetido) = store
-        .caixa_entrada()
-        .receber(org.id, entrada())
-        .expect("reentrega");
-    assert_eq!(segundo, Recebido::Duplicado);
+    let (primeiro, item) = store.inbox().receber(org.id, entrada()).expect("entrada");
+    assert_eq!(primeiro, Received::New);
+    let (segundo, repetido) = store.inbox().receber(org.id, entrada()).expect("reentrega");
+    assert_eq!(segundo, Received::Duplicate);
     assert_eq!(repetido.id, item.id);
     assert_eq!(
         store
-            .caixa_entrada()
+            .inbox()
             .listar_pendentes(org.id, 100)
             .expect("lista")
             .len(),
@@ -947,60 +933,57 @@ fn entrada_e_saida_sao_idempotentes_pela_chave_do_prd() {
     );
 
     store
-        .caixa_entrada()
+        .inbox()
         .marcar_processado(org.id, item.id, None)
         .expect("processa");
     assert!(
         store
-            .caixa_entrada()
+            .inbox()
             .listar_pendentes(org.id, 100)
             .expect("lista")
             .is_empty()
     );
 
     let turno = store
-        .turnos()
+        .turns()
         .iniciar(org.id, conversa.id, Some(agente.id))
         .expect("turno");
-    let saida = || NovaSaida {
+    let saida = || NewOutboxItem {
         conversation_id: conversa.id,
         turn_id: turno.id,
         seq: 0,
         tipo: "text".to_owned(),
-        conteudo_json: "{\"texto\":\"olá\"}".to_owned(),
+        content_json: "{\"texto\":\"olá\"}".to_owned(),
     };
-    let (novo, item_saida) = store
-        .caixa_saida()
-        .enfileirar(org.id, saida())
-        .expect("saída");
+    let (novo, item_saida) = store.outbox().enfileirar(org.id, saida()).expect("saída");
     assert!(novo);
     let (novo_de_novo, repetido) = store
-        .caixa_saida()
+        .outbox()
         .enfileirar(org.id, saida())
         .expect("saída repetida");
     assert!(!novo_de_novo);
     assert_eq!(repetido.id, item_saida.id);
 
     store
-        .caixa_saida()
-        .mudar_estado(org.id, item_saida.id, EstadoSaida::Enviando, None)
+        .outbox()
+        .mudar_estado(org.id, item_saida.id, OutboxState::Sending, None)
         .expect("enviando");
     // `sending` continua na fila: é o reenvio da retomada (D11).
     assert_eq!(
         store
-            .caixa_saida()
+            .outbox()
             .listar_pendentes(org.id, 100)
             .expect("lista")
             .len(),
         1
     );
     store
-        .caixa_saida()
-        .mudar_estado(org.id, item_saida.id, EstadoSaida::Enviado, None)
+        .outbox()
+        .mudar_estado(org.id, item_saida.id, OutboxState::Sent, None)
         .expect("enviado");
     assert!(
         store
-            .caixa_saida()
+            .outbox()
             .listar_pendentes(org.id, 100)
             .expect("lista")
             .is_empty()
@@ -1016,42 +999,42 @@ fn turno_guarda_o_porque_e_a_auditoria_guarda_quem() {
     let conversa = criar_conversa(store, &org, &agente);
 
     let turno = store
-        .turnos()
+        .turns()
         .iniciar(org.id, conversa.id, Some(agente.id))
         .expect("turno");
-    let fim = poph_store::FinalizacaoTurno {
-        estado: Some(poph_store::EstadoTurno::Concluido),
-        tempos_json: Some("{\"llm_ms\":6500}".to_owned()),
-        tokens_entrada: Some(1200),
-        tokens_saida: Some(80),
-        ..poph_store::FinalizacaoTurno::default()
+    let fim = poph_store::TurnFinalization {
+        estado: Some(poph_store::TurnState::Completed),
+        times_json: Some("{\"llm_ms\":6500}".to_owned()),
+        input_tokens: Some(1200),
+        output_tokens: Some(80),
+        ..poph_store::TurnFinalization::default()
     };
     let fechado = store
-        .turnos()
+        .turns()
         .finalizar(org.id, turno.id, fim)
         .expect("fecha");
-    assert_eq!(fechado.estado, poph_store::EstadoTurno::Concluido);
-    assert!(fechado.finalizado_em.is_some());
+    assert_eq!(fechado.estado, poph_store::TurnState::Completed);
+    assert!(fechado.finished_at.is_some());
 
     let registro = store
-        .auditoria()
+        .audit()
         .registrar(
             Some(org.id),
-            NovoRegistroAuditoria {
+            NewAuditEntry {
                 ator_tipo: "admin_token".to_owned(),
-                ator_id: Some("token-1".to_owned()),
+                actor_id: Some("token-1".to_owned()),
                 acao: "update".to_owned(),
-                entidade: "agent".to_owned(),
-                entidade_id: Some(agente.id.to_string()),
-                detalhe_json: "{\"campo\":\"modelo\"}".to_owned(),
+                entity: "agent".to_owned(),
+                entity_id: Some(agente.id.to_string()),
+                detail_json: "{\"campo\":\"modelo\"}".to_owned(),
             },
         )
         .expect("auditoria");
     assert_eq!(registro.acao, "update");
     assert_eq!(
         store
-            .auditoria()
-            .listar(org.id, Pagina::default())
+            .audit()
+            .listar(org.id, Page::default())
             .expect("lista")
             .len(),
         1
@@ -1079,19 +1062,19 @@ fn dez_mil_escritas_concorrentes_sem_busy_e_sem_perda() {
             barreira.wait();
             for indice in 0..POR_THREAD {
                 store
-                    .mensagens()
+                    .messages()
                     .gravar(
                         org_id,
-                        NovaMensagem {
+                        NewMessage {
                             conversation_id: conversa_id,
-                            direcao: Direcao::Entrada,
-                            papel: Papel::Usuario,
+                            direction: Direction::Inbound,
+                            role: Role::User,
                             texto: format!("mensagem {thread_id}-{indice}"),
-                            anexos_json: "[]".to_owned(),
+                            attachments_json: "[]".to_owned(),
                             id_externo: None,
                             turn_id: None,
-                            origem: poph_store::Origem::Agente,
-                            autor_nome: None,
+                            origin: poph_store::Origin::Agente,
+                            author_name: None,
                         },
                     )
                     .expect("gravação concorrente não pode falhar");
@@ -1103,14 +1086,11 @@ fn dez_mil_escritas_concorrentes_sem_busy_e_sem_perda() {
     }
 
     assert_eq!(
-        store
-            .mensagens()
-            .contar(org.id, conversa.id)
-            .expect("conta"),
+        store.messages().contar(org.id, conversa.id).expect("conta"),
         (THREADS * POR_THREAD) as u64,
         "nenhuma escrita pode ser perdida"
     );
-    assert!(store.chaves_quebradas().expect("fk check").is_empty());
+    assert!(store.broken_foreign_keys().expect("fk check").is_empty());
 }
 
 #[test]
@@ -1121,9 +1101,9 @@ fn entrada_invalida_nao_derruba_o_lote() {
 
     // Uma org com slug repetido falha; a escrita seguinte, válida, precisa passar.
     let erro = store
-        .orgaos()
-        .criar(NovaOrg {
-            nome: "Repetida".to_owned(),
+        .orgs()
+        .criar(NewOrg {
+            name: "Repetida".to_owned(),
             slug: "org-erro".to_owned(),
             config_json: String::new(),
         })
@@ -1131,28 +1111,24 @@ fn entrada_invalida_nao_derruba_o_lote() {
     assert!(
         matches!(
             erro,
-            poph_store::ErroStore::Dominio(DomainError::Validation { .. })
+            poph_store::StoreError::Domain(DomainError::Validation { .. })
         ),
         "veio {erro:?}"
     );
 
     let outra = criar_org(store, "org-erro-2");
-    assert_eq!(outra.status, Status::Ativo);
+    assert_eq!(outra.status, Status::Active);
     assert_eq!(
-        store
-            .orgaos()
-            .listar(Pagina::default())
-            .expect("lista")
-            .len(),
+        store.orgs().listar(Page::default()).expect("lista").len(),
         2
     );
 
     // Ids que não existem dão "não encontrado" com a entidade no texto.
     let inexistente = store
-        .agentes()
-        .obter(org.id, poph_types::AgentId::generate())
+        .agents()
+        .get(org.id, poph_types::AgentId::generate())
         .expect_err("agente inexistente");
-    assert!(inexistente.eh_nao_encontrado(), "veio {inexistente:?}");
+    assert!(inexistente.is_not_found(), "veio {inexistente:?}");
 }
 
 #[test]
@@ -1182,11 +1158,8 @@ fn tokens_so_aparecem_uma_vez_e_revogar_tira_da_autenticacao() {
     );
     assert!(
         matches!(
-            store
-                .caixa_entrada()
-                .obter(org.id, InboxId::generate())
-                .map(|_| ()),
-            Err(poph_store::ErroStore::Dominio(DomainError::NotFound { .. }))
+            store.inbox().obter(org.id, InboxId::generate()).map(|_| ()),
+            Err(poph_store::StoreError::Domain(DomainError::NotFound { .. }))
         ),
         "item de entrada inexistente precisa dar não encontrado"
     );
@@ -1201,59 +1174,59 @@ fn vinculo_entre_orgs_e_recusado_e_nao_grava_nada() {
     let agente_a = criar_agente(store, &org_a, "agente-a");
     let agente_b = criar_agente(store, &org_b, "agente-b");
     let departamento_b = store
-        .departamentos()
+        .departments()
         .criar(
             org_b.id,
-            NovoDepartamento {
-                nome: "Departamento B".to_owned(),
-                descricao: String::new(),
+            NewDepartment {
+                name: "Departamento B".to_owned(),
+                description: String::new(),
             },
         )
         .expect("departamento de B");
     let categoria_b = store
-        .categorias()
+        .categories()
         .criar(
             org_b.id,
-            NovaCategoria {
-                nome: "Categoria B".to_owned(),
-                descricao: String::new(),
+            NewCategory {
+                name: "Categoria B".to_owned(),
+                description: String::new(),
             },
         )
         .expect("categoria de B");
 
     // Departamento de outra org num agente: recusado pelo repositório, sem gravar.
     let recusado = store
-        .agentes()
+        .agents()
         .atualizar(
             org_a.id,
             agente_a.id,
-            agente_a.versao,
-            MudancaAgente {
-                departamento_padrao: Some(departamento_b.id),
-                ..MudancaAgente::default()
+            agente_a.version,
+            AgentChange {
+                default_department: Some(departamento_b.id),
+                ..AgentChange::default()
             },
         )
         .expect_err("departamento de outra org");
-    assert!(recusado.eh_nao_encontrado(), "veio {recusado:?}");
+    assert!(recusado.is_not_found(), "veio {recusado:?}");
     assert_eq!(
         store
-            .agentes()
-            .obter(org_a.id, agente_a.id)
+            .agents()
+            .get(org_a.id, agente_a.id)
             .expect("agente intacto")
-            .versao,
-        agente_a.versao,
+            .version,
+        agente_a.version,
         "a versão não pode andar numa escrita recusada"
     );
 
     // Categoria de outra org no agente: recusado, e nenhum vínculo gravado.
     let recusado = store
-        .agentes()
-        .definir_categorias(org_a.id, agente_a.id, agente_a.versao, &[categoria_b.id])
+        .agents()
+        .definir_categorias(org_a.id, agente_a.id, agente_a.version, &[categoria_b.id])
         .expect_err("categoria de outra org");
-    assert!(recusado.eh_nao_encontrado(), "veio {recusado:?}");
+    assert!(recusado.is_not_found(), "veio {recusado:?}");
     assert!(
         store
-            .agentes()
+            .agents()
             .categorias(org_a.id, agente_a.id)
             .expect("categorias")
             .is_empty()
@@ -1264,23 +1237,23 @@ fn vinculo_entre_orgs_e_recusado_e_nao_grava_nada() {
         .conversas()
         .criar(
             org_a.id,
-            NovaConversa {
+            NewConversation {
                 agent_id: agente_b.id,
                 integration_id: None,
                 canal: "cli".to_owned(),
                 peer_externo: None,
-                departamento_alvo: None,
+                target_department: None,
             },
         )
         .expect_err("agente de outra org");
     assert!(
-        matches!(recusado, poph_store::ErroStore::Sqlite(_)),
+        matches!(recusado, poph_store::StoreError::Sqlite(_)),
         "veio {recusado:?}"
     );
     assert!(
         store
             .conversas()
-            .listar(org_a.id, None, Pagina::default())
+            .listar(org_a.id, None, Page::default())
             .expect("lista")
             .is_empty(),
         "conversa recusada não pode aparecer"
@@ -1289,29 +1262,29 @@ fn vinculo_entre_orgs_e_recusado_e_nao_grava_nada() {
     // Mensagem na org A apontando para conversa da org B: recusada e nada gravado.
     let conversa_b = criar_conversa(store, &org_b, &agente_b);
     let recusado = store
-        .mensagens()
+        .messages()
         .gravar(
             org_a.id,
-            NovaMensagem {
+            NewMessage {
                 conversation_id: conversa_b.id,
-                direcao: Direcao::Entrada,
-                papel: Papel::Usuario,
+                direction: Direction::Inbound,
+                role: Role::User,
                 texto: "invasão".to_owned(),
-                anexos_json: "[]".to_owned(),
+                attachments_json: "[]".to_owned(),
                 id_externo: None,
                 turn_id: None,
-                origem: poph_store::Origem::Agente,
-                autor_nome: None,
+                origin: poph_store::Origin::Agente,
+                author_name: None,
             },
         )
         .expect_err("conversa de outra org");
     assert!(
-        matches!(recusado, poph_store::ErroStore::Sqlite(_)),
+        matches!(recusado, poph_store::StoreError::Sqlite(_)),
         "veio {recusado:?}"
     );
     assert_eq!(
         store
-            .mensagens()
+            .messages()
             .contar(org_b.id, conversa_b.id)
             .expect("conta"),
         0
@@ -1320,10 +1293,10 @@ fn vinculo_entre_orgs_e_recusado_e_nao_grava_nada() {
     // Turno na org A com agente da org B: recusado pelo repositório.
     let conversa_a = criar_conversa(store, &org_a, &agente_a);
     let recusado = store
-        .turnos()
+        .turns()
         .iniciar(org_a.id, conversa_a.id, Some(agente_b.id))
         .expect_err("agente de outra org");
-    assert!(recusado.eh_nao_encontrado(), "veio {recusado:?}");
+    assert!(recusado.is_not_found(), "veio {recusado:?}");
 }
 
 #[test]
@@ -1333,85 +1306,82 @@ fn excluir_org_leva_junto_os_dados_dela() {
     let org = criar_org(store, "org-cascata");
     let outro = criar_org(store, "org-fica");
     store
-        .departamentos()
+        .departments()
         .criar(
             org.id,
-            NovoDepartamento {
-                nome: "Dep".to_owned(),
-                descricao: String::new(),
+            NewDepartment {
+                name: "Dep".to_owned(),
+                description: String::new(),
             },
         )
         .expect("departamento");
     let categoria = store
-        .categorias()
+        .categories()
         .criar(
             org.id,
-            NovaCategoria {
-                nome: "Cat".to_owned(),
-                descricao: String::new(),
+            NewCategory {
+                name: "Cat".to_owned(),
+                description: String::new(),
             },
         )
         .expect("categoria");
     let agente = criar_agente(store, &org, "agente-cascata");
     store
-        .agentes()
-        .definir_categorias(org.id, agente.id, agente.versao, &[categoria.id])
+        .agents()
+        .definir_categorias(org.id, agente.id, agente.version, &[categoria.id])
         .expect("vínculo");
     store
-        .instrucoes()
+        .instructions()
         .salvar(org.id, agente.id, 0, "{}", "# A", true)
         .expect("instruções");
     let conversa = criar_conversa(store, &org, &agente);
     gravar_mensagem(store, &org, &conversa, "oi");
     let turno = store
-        .turnos()
+        .turns()
         .iniciar(org.id, conversa.id, Some(agente.id))
         .expect("turno");
 
     // Sem `--force` o repositório recusa (conflito tipado) e não apaga nada.
     let recusa = store
-        .orgaos()
+        .orgs()
         .excluir(org.id)
         .expect_err("recusa com agentes");
     assert!(matches!(
         recusa,
-        ErroStore::Dominio(DomainError::Conflict { .. })
+        StoreError::Domain(DomainError::Conflict { .. })
     ));
-    store.orgaos().obter(org.id).expect("a org continua");
+    store.orgs().get(org.id).expect("a org continua");
 
-    let agentes_apagados = store
-        .orgaos()
-        .excluir_forcado(org.id)
-        .expect("exclui a org");
+    let agentes_apagados = store.orgs().excluir_forcado(org.id).expect("exclui a org");
     assert_eq!(agentes_apagados, 1);
-    assert!(store.orgaos().obter(org.id).is_err());
+    assert!(store.orgs().get(org.id).is_err());
     assert!(
         store
-            .agentes()
-            .listar(org.id, Pagina::default())
+            .agents()
+            .listar(org.id, Page::default())
             .expect("lista")
             .is_empty()
     );
     assert_eq!(
         store
             .conversas()
-            .listar(org.id, None, Pagina::default())
+            .listar(org.id, None, Page::default())
             .expect("lista")
             .len(),
         0
     );
-    assert!(store.turnos().obter(org.id, turno.id).is_err());
+    assert!(store.turns().obter(org.id, turno.id).is_err());
     assert!(
         store
-            .departamentos()
-            .listar(org.id, Pagina::default())
+            .departments()
+            .listar(org.id, Page::default())
             .expect("lista")
             .is_empty()
     );
-    assert!(store.chaves_quebradas().expect("fk check").is_empty());
+    assert!(store.broken_foreign_keys().expect("fk check").is_empty());
 
     // A outra org continua inteira.
-    store.orgaos().obter(outro.id).expect("a outra org fica");
+    store.orgs().get(outro.id).expect("a outra org fica");
 }
 
 // ───────────────────────── D-05 e escopo de org nas instruções (HR-09) ─────────────────────────
@@ -1423,29 +1393,29 @@ fn agente_inativo_nao_abre_turno_mas_continua_listado_e_editavel() {
     let org = criar_org(store, "org-inativa");
     let agente = criar_agente(store, &org, "agente-inativo");
 
-    // Ativo abre turno.
-    assert!(agente.pode_abrir_turno());
+    // Active abre turno.
+    assert!(agente.can_open_turn());
     store
-        .agentes()
+        .agents()
         .obter_para_turno(org.id, agente.id)
         .expect("agente ativo abre turno");
 
     // Inativado, o mesmo id deixa de abrir turno com erro tipado.
     let inativo = store
-        .agentes()
+        .agents()
         .atualizar(
             org.id,
             agente.id,
-            agente.versao,
-            MudancaAgente {
-                status: Some(Status::Inativo),
-                ..MudancaAgente::default()
+            agente.version,
+            AgentChange {
+                status: Some(Status::Inactive),
+                ..AgentChange::default()
             },
         )
         .expect("inativa o agente");
-    assert!(!inativo.pode_abrir_turno(), "D-05: inativo não abre turno");
-    match store.agentes().obter_para_turno(org.id, agente.id) {
-        Err(ErroStore::Dominio(DomainError::AgentInactive { id, status })) => {
+    assert!(!inativo.can_open_turn(), "D-05: inativo não abre turno");
+    match store.agents().obter_para_turno(org.id, agente.id) {
+        Err(StoreError::Domain(DomainError::AgentInactive { id, status })) => {
             assert_eq!(id, agente.id.to_string());
             assert_eq!(status, "inactive");
         }
@@ -1455,15 +1425,15 @@ fn agente_inativo_nao_abre_turno_mas_continua_listado_e_editavel() {
     // Continua visível na listagem (o Console precisa mostrá-lo) e sai da lista de ativos.
     assert!(
         store
-            .agentes()
-            .listar(org.id, Pagina::default())
+            .agents()
+            .listar(org.id, Page::default())
             .expect("lista")
             .iter()
             .any(|item| item.id == agente.id)
     );
     assert!(
         store
-            .agentes()
+            .agents()
             .listar_ativos(org.id)
             .expect("lista ativos")
             .is_empty()
@@ -1480,45 +1450,45 @@ fn instrucoes_de_uma_org_nao_aparecem_nem_se_apagam_em_outra() {
     let agente_b = criar_agente(store, &org_b, "agente-b-instrucoes");
 
     store
-        .instrucoes()
+        .instructions()
         .salvar(org_a.id, agente_a.id, 0, "{}", "# A", true)
         .expect("instruções da org A");
     store
-        .instrucoes()
+        .instructions()
         .salvar(org_b.id, agente_b.id, 0, "{}", "# B", true)
         .expect("instruções da org B");
 
     // Ler com a org errada não devolve o conteúdo da outra.
-    assert!(store.instrucoes().obter(org_b.id, agente_a.id).is_err());
-    assert!(store.instrucoes().obter(org_a.id, agente_b.id).is_err());
+    assert!(store.instructions().obter(org_b.id, agente_a.id).is_err());
+    assert!(store.instructions().obter(org_a.id, agente_b.id).is_err());
 
     let apenas_b = store
-        .instrucoes()
-        .listar(org_b.id, Pagina::default())
+        .instructions()
+        .listar(org_b.id, Page::default())
         .expect("lista B");
     assert_eq!(apenas_b.len(), 1);
     assert_eq!(apenas_b[0].agent_id, agente_b.id);
     assert_eq!(apenas_b[0].markdown, "# B");
 
     // Apagar com a org errada não apaga.
-    assert!(store.instrucoes().apagar(org_b.id, agente_a.id).is_err());
-    assert!(store.instrucoes().obter(org_a.id, agente_a.id).is_ok());
+    assert!(store.instructions().apagar(org_b.id, agente_a.id).is_err());
+    assert!(store.instructions().obter(org_a.id, agente_a.id).is_ok());
 
     // A versão sobe a cada gravação, e o `If-Match` velho é recusado.
     let primeira = store
-        .instrucoes()
+        .instructions()
         .obter(org_a.id, agente_a.id)
         .expect("instruções da org A");
     let segunda = store
-        .instrucoes()
-        .salvar(org_a.id, agente_a.id, primeira.versao, "{}", "# A2", true)
+        .instructions()
+        .salvar(org_a.id, agente_a.id, primeira.version, "{}", "# A2", true)
         .expect("atualiza");
-    assert_eq!(segunda.versao, primeira.versao + 1);
+    assert_eq!(segunda.version, primeira.version + 1);
     let conflito = store
-        .instrucoes()
-        .salvar(org_a.id, agente_a.id, primeira.versao, "{}", "# A3", true)
+        .instructions()
+        .salvar(org_a.id, agente_a.id, primeira.version, "{}", "# A3", true)
         .expect_err("versão velha deve conflitar");
-    assert!(conflito.eh_conflito_de_versao(), "{conflito:?}");
+    assert!(conflito.is_version_conflict(), "{conflito:?}");
 }
 
 #[test]
@@ -1527,22 +1497,22 @@ fn instrucoes_versao_zero_cria_e_versao_antiga_nao_recria() {
     let store = cenario.store();
     let org = criar_org(store, "org-instrucoes-versao");
     let agente = criar_agente(store, &org, "agente-instrucoes-versao");
-    let repo = store.instrucoes();
+    let repo = store.instructions();
     let primeira = repo
         .salvar(org.id, agente.id, 0, "{}", "primeira", true)
         .unwrap();
     assert!(
         repo.salvar(org.id, agente.id, 0, "{}", "duplicada", true)
             .unwrap_err()
-            .eh_conflito_de_versao()
+            .is_version_conflict()
     );
     repo.apagar(org.id, agente.id).unwrap();
     let erro = repo
-        .salvar(org.id, agente.id, primeira.versao, "{}", "antiga", true)
+        .salvar(org.id, agente.id, primeira.version, "{}", "antiga", true)
         .unwrap_err();
     assert!(matches!(
         erro,
-        ErroStore::Dominio(DomainError::VersionConflict {
+        StoreError::Domain(DomainError::VersionConflict {
             expected: 1,
             current: 0,
             ..
@@ -1568,32 +1538,32 @@ fn turno_orfaos_fecha_so_os_comecados_antes_da_subida() {
     let conversa = criar_conversa(store, &org, &agente);
 
     let antes = store
-        .turnos()
+        .turns()
         .iniciar(org.id, conversa.id, Some(agente.id))
         .expect("turno do processo anterior");
     // Espera o milissegundo virar: o carimbo do turno seguinte é estritamente maior.
-    let corte = store.agora() + 1;
+    let corte = store.now() + 1;
     std::thread::sleep(std::time::Duration::from_millis(5));
     let depois = store
-        .turnos()
+        .turns()
         .iniciar(org.id, conversa.id, Some(agente.id))
         .expect("turno desta instância");
 
     let fechados = store
-        .turnos()
+        .turns()
         .falhar_orfaos(org.id, "interrompido", corte)
         .expect("fecha os órfãos");
     assert_eq!(fechados, 1, "só o turno anterior à subida foi fechado");
 
-    let orfao = store.turnos().obter(org.id, antes.id).expect("órfão");
-    assert_eq!(orfao.estado, poph_store::EstadoTurno::Falhou);
-    assert_eq!(orfao.erro.as_deref(), Some("interrompido"));
-    assert!(orfao.finalizado_em.is_some());
+    let orfao = store.turns().obter(org.id, antes.id).expect("órfão");
+    assert_eq!(orfao.estado, poph_store::TurnState::Failed);
+    assert_eq!(orfao.error.as_deref(), Some("interrompido"));
+    assert!(orfao.finished_at.is_some());
 
-    let vivo = store.turnos().obter(org.id, depois.id).expect("turno vivo");
+    let vivo = store.turns().obter(org.id, depois.id).expect("turno vivo");
     assert_eq!(
         vivo.estado,
-        poph_store::EstadoTurno::Rodando,
+        poph_store::TurnState::Running,
         "turno começado depois da subida não é tocado"
     );
 
@@ -1602,12 +1572,12 @@ fn turno_orfaos_fecha_so_os_comecados_antes_da_subida() {
     let agente_outra = criar_agente(store, &outra, "agente-vizinho");
     let conversa_outra = criar_conversa(store, &outra, &agente_outra);
     let da_outra = store
-        .turnos()
+        .turns()
         .iniciar(outra.id, conversa_outra.id, Some(agente_outra.id))
         .expect("turno da vizinha");
     assert_eq!(
         store
-            .turnos()
+            .turns()
             .falhar_orfaos(org.id, "interrompido", i64::MAX)
             .expect("fecha de novo"),
         1,
@@ -1615,11 +1585,11 @@ fn turno_orfaos_fecha_so_os_comecados_antes_da_subida() {
     );
     assert_eq!(
         store
-            .turnos()
+            .turns()
             .obter(outra.id, da_outra.id)
             .expect("turno da vizinha")
             .estado,
-        poph_store::EstadoTurno::Rodando
+        poph_store::TurnState::Running
     );
 }
 
@@ -1631,49 +1601,49 @@ fn resposta_e_item_de_saida_entram_na_mesma_escrita() {
     let agente = criar_agente(store, &org, "agente-saida-junta");
     let conversa = criar_conversa(store, &org, &agente);
     let turno = store
-        .turnos()
+        .turns()
         .iniciar(org.id, conversa.id, Some(agente.id))
         .expect("turno");
 
     let (mensagem, item) = store
-        .mensagens()
+        .messages()
         .gravar_com_saida(
             org.id,
-            NovaMensagem {
+            NewMessage {
                 conversation_id: conversa.id,
-                direcao: Direcao::Saida,
-                papel: Papel::Assistente,
+                direction: Direction::Outbound,
+                role: Role::Assistant,
                 texto: "resposta do agente".to_owned(),
-                anexos_json: "[]".to_owned(),
+                attachments_json: "[]".to_owned(),
                 id_externo: None,
                 turn_id: Some(turno.id),
-                origem: poph_store::Origem::Agente,
-                autor_nome: None,
+                origin: poph_store::Origin::Agente,
+                author_name: None,
             },
-            NovaSaida {
+            NewOutboxItem {
                 conversation_id: conversa.id,
                 turn_id: turno.id,
                 seq: 0,
                 tipo: "text".to_owned(),
-                conteudo_json: "{\"texto\":\"resposta do agente\"}".to_owned(),
+                content_json: "{\"texto\":\"resposta do agente\"}".to_owned(),
             },
         )
         .expect("grava mensagem e saída juntas");
 
     assert_eq!(mensagem.turn_id, Some(turno.id));
     assert_eq!(item.turn_id, turno.id);
-    assert_eq!(item.estado, EstadoSaida::Pendente);
+    assert_eq!(item.estado, OutboxState::Pending);
     assert_eq!(
         store
-            .mensagens()
-            .listar(org.id, conversa.id, Pagina::com_limite(10))
+            .messages()
+            .listar(org.id, conversa.id, Page::with_limit(10))
             .expect("mensagens")
             .len(),
         1
     );
     assert_eq!(
         store
-            .caixa_saida()
+            .outbox()
             .listar_pendentes(org.id, 10)
             .expect("fila")
             .len(),
@@ -1682,26 +1652,26 @@ fn resposta_e_item_de_saida_entram_na_mesma_escrita() {
 
     // Repetir o mesmo turno + seq não duplica o item, e a mensagem (sem id externo) é uma nova.
     let (_, repetido) = store
-        .mensagens()
+        .messages()
         .gravar_com_saida(
             org.id,
-            NovaMensagem {
+            NewMessage {
                 conversation_id: conversa.id,
-                direcao: Direcao::Saida,
-                papel: Papel::Assistente,
+                direction: Direction::Outbound,
+                role: Role::Assistant,
                 texto: "resposta do agente".to_owned(),
-                anexos_json: "[]".to_owned(),
+                attachments_json: "[]".to_owned(),
                 id_externo: None,
                 turn_id: Some(turno.id),
-                origem: poph_store::Origem::Agente,
-                autor_nome: None,
+                origin: poph_store::Origin::Agente,
+                author_name: None,
             },
-            NovaSaida {
+            NewOutboxItem {
                 conversation_id: conversa.id,
                 turn_id: turno.id,
                 seq: 0,
                 tipo: "text".to_owned(),
-                conteudo_json: "{\"texto\":\"resposta do agente\"}".to_owned(),
+                content_json: "{\"texto\":\"resposta do agente\"}".to_owned(),
             },
         )
         .expect("repete");
@@ -1711,7 +1681,7 @@ fn resposta_e_item_de_saida_entram_na_mesma_escrita() {
     );
     assert_eq!(
         store
-            .caixa_saida()
+            .outbox()
             .listar_pendentes(org.id, 10)
             .expect("fila")
             .len(),

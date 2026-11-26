@@ -13,10 +13,10 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use poph_store::migracoes::{MIGRACOES_HARNESS, migrar};
+use poph_store::migrations::{HARNESS_MIGRATIONS, migrate};
 use poph_store::{
-    Conversa, GravacaoHumana, NovaConversa, NovaOrg, NovoAgente, Org, Origem, RespostaHumana,
-    RespostaHumanaNova, StatusConversa, Store,
+    Conversa, ConversationStatus, HumanRecording, HumanResponse, NewAgent, NewConversation,
+    NewHumanResponse, NewOrg, Org, Origin, Store,
 };
 use poph_types::{ConversationId, OrgId};
 use rusqlite::{Connection, params};
@@ -35,8 +35,8 @@ impl Cenario {
             std::env::temp_dir().join(format!("poph-resposta-{rotulo}-{}-{n}", std::process::id()));
         let _ = fs::remove_dir_all(&pasta);
         fs::create_dir_all(&pasta).expect("cria a pasta do teste");
-        let store = Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
-            .expect("abre o banco");
+        let store =
+            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco");
         Self {
             pasta,
             store: Some(store),
@@ -58,9 +58,9 @@ impl Drop for Cenario {
 
 fn criar_org(store: &Store, slug: &str) -> Org {
     store
-        .orgaos()
-        .criar(NovaOrg {
-            nome: format!("Org {slug}"),
+        .orgs()
+        .criar(NewOrg {
+            name: format!("Org {slug}"),
             slug: slug.to_owned(),
             config_json: String::new(),
         })
@@ -71,13 +71,13 @@ fn criar_org(store: &Store, slug: &str) -> Org {
 fn org_e_conversa(store: &Store, slug: &str) -> (Org, Conversa) {
     let org = criar_org(store, slug);
     let agente = store
-        .agentes()
+        .agents()
         .criar(
             org.id,
-            NovoAgente {
-                nome: "Bia".to_owned(),
+            NewAgent {
+                name: "Bia".to_owned(),
                 slug: "bia".to_owned(),
-                ..NovoAgente::default()
+                ..NewAgent::default()
             },
         )
         .expect("cria o agente");
@@ -85,12 +85,12 @@ fn org_e_conversa(store: &Store, slug: &str) -> (Org, Conversa) {
         .conversas()
         .criar(
             org.id,
-            NovaConversa {
+            NewConversation {
                 agent_id: agente.id,
                 integration_id: None,
                 canal: "matrix".to_owned(),
                 peer_externo: Some("!sala:matrix-dev.local".to_owned()),
-                departamento_alvo: None,
+                target_department: None,
             },
         )
         .expect("cria a conversa");
@@ -98,7 +98,7 @@ fn org_e_conversa(store: &Store, slug: &str) -> (Org, Conversa) {
 }
 
 fn conexao(store: &Store) -> Connection {
-    Connection::open(store.caminho_harness()).expect("abre o banco para conferir")
+    Connection::open(store.harness_path()).expect("abre o banco para conferir")
 }
 
 /// Quantas linhas uma consulta de contagem devolve, lidas direto da tabela. Parâmetro vazio
@@ -120,17 +120,17 @@ fn gravar(
     conversa: ConversationId,
     evento: &str,
     texto: &str,
-) -> poph_store::erro::Resultado<RespostaHumana> {
+) -> poph_store::error::Resultado<HumanResponse> {
     let enviado = format!("*[Ana]*:\n{texto}");
-    store.mensagens().registrar_resposta_humana(
+    store.messages().registrar_resposta_humana(
         org,
         conversa,
-        RespostaHumanaNova {
-            evento_id: evento,
-            texto_bruto: texto,
-            texto_enviado: &enviado,
-            autor_id: "@ph_ana:matrix-dev.local",
-            autor_nome: "Ana",
+        NewHumanResponse {
+            event_id: evento,
+            raw_text: texto,
+            sent_text: &enviado,
+            author_id: "@ph_ana:matrix-dev.local",
+            author_name: "Ana",
         },
     )
 }
@@ -140,22 +140,22 @@ fn gravacao_feliz_grava_mensagem_saida_passagem_e_auditoria() {
     let cenario = Cenario::novo("feliz");
     let store = cenario.store();
     let (org, conversa) = org_e_conversa(store, "feliz");
-    assert_eq!(conversa.versao, 1);
+    assert_eq!(conversa.version, 1);
 
     let resposta = gravar(store, org.id, conversa.id, "$evento-1", "oi, sou a Ana")
         .expect("registra a resposta");
-    let RespostaHumana::Gravada(gravacao) = resposta else {
+    let HumanResponse::Stored(gravacao) = resposta else {
         panic!("esperava Gravada, veio {resposta:?}");
     };
-    let GravacaoHumana {
+    let HumanRecording {
         mensagem,
         saida,
-        transferiu_agora,
+        just_transferred: transferiu_agora,
     } = *gravacao;
 
     // Mensagem: origem humana, autor e id do evento, e o texto que o atendente escreveu.
-    assert_eq!(mensagem.origem, Origem::Humano);
-    assert_eq!(mensagem.autor_nome.as_deref(), Some("Ana"));
+    assert_eq!(mensagem.origin, Origin::Human);
+    assert_eq!(mensagem.author_name.as_deref(), Some("Ana"));
     assert_eq!(mensagem.id_externo.as_deref(), Some("$evento-1"));
     assert_eq!(mensagem.texto, "oi, sou a Ana");
     assert_eq!(
@@ -168,17 +168,17 @@ fn gravacao_feliz_grava_mensagem_saida_passagem_e_auditoria() {
     assert_eq!(saida.seq, 0);
     assert_eq!(saida.tipo, "text");
     let conteudo: serde_json::Value =
-        serde_json::from_str(&saida.conteudo_json).expect("payload é JSON");
+        serde_json::from_str(&saida.content_json).expect("payload é JSON");
     assert_eq!(conteudo["texto"], "*[Ana]*:\noi, sou a Ana");
 
     // Passagem: a conversa virou transferida e a versão subiu uma vez.
     assert!(transferiu_agora);
     let depois = store
         .conversas()
-        .obter(org.id, conversa.id)
+        .get(org.id, conversa.id)
         .expect("lê a conversa");
-    assert_eq!(depois.status, StatusConversa::Transferida);
-    assert_eq!(depois.versao, 2);
+    assert_eq!(depois.status, ConversationStatus::Transferred);
+    assert_eq!(depois.version, 2);
 
     // Banco: a linha da mensagem, o item da fila e a auditoria existem.
     let (origem, autor): (String, Option<String>) = conexao(store)
@@ -218,11 +218,11 @@ fn evento_repetido_devolve_duplicada_sem_segunda_saida() {
     let (org, conversa) = org_e_conversa(store, "duplicada");
 
     let primeira = gravar(store, org.id, conversa.id, "$evento-2", "primeira vez").expect("grava");
-    assert!(matches!(primeira, RespostaHumana::Gravada(_)));
+    assert!(matches!(primeira, HumanResponse::Stored(_)));
 
     // Reentrega do mesmo evento (texto diferente, só para provar que não é regravado).
     let repetida = gravar(store, org.id, conversa.id, "$evento-2", "outro texto").expect("repete");
-    assert_eq!(repetida, RespostaHumana::Duplicada);
+    assert_eq!(repetida, HumanResponse::Duplicate);
 
     let conversa_id = conversa.id.to_string();
     assert_eq!(
@@ -263,21 +263,18 @@ fn conversa_fechada_nao_grava_nada() {
         .mudar_status(
             org.id,
             conversa.id,
-            conversa.versao,
-            StatusConversa::Fechada,
+            conversa.version,
+            ConversationStatus::Closed,
             None,
         )
         .expect("fecha a conversa");
 
     let resposta = gravar(store, org.id, conversa.id, "$evento-3", "tarde demais").expect("chama");
-    assert_eq!(resposta, RespostaHumana::ConversaFechada);
+    assert_eq!(resposta, HumanResponse::ConversationClosed);
 
     let conversa_id = conversa.id.to_string();
     assert_eq!(
-        store
-            .mensagens()
-            .contar(org.id, conversa.id)
-            .expect("conta"),
+        store.messages().contar(org.id, conversa.id).expect("conta"),
         0
     );
     assert_eq!(
@@ -308,13 +305,13 @@ fn conversa_de_outra_org_devolve_inexistente() {
     // Id da conversa de A, chamado com a org B.
     let resposta =
         gravar(store, org_b.id, conversa_a.id, "$evento-4", "vazamento?").expect("chama");
-    assert_eq!(resposta, RespostaHumana::ConversaInexistente);
+    assert_eq!(resposta, HumanResponse::ConversationMissing);
 
     // Nada foi gravado na conversa da org A.
     let conversa_id = conversa_a.id.to_string();
     assert_eq!(
         store
-            .mensagens()
+            .messages()
             .contar(org_a.id, conversa_a.id)
             .expect("conta"),
         0
@@ -327,12 +324,9 @@ fn conversa_de_outra_org_devolve_inexistente() {
         ),
         0
     );
-    let depois = store
-        .conversas()
-        .obter(org_a.id, conversa_a.id)
-        .expect("lê");
-    assert_eq!(depois.status, StatusConversa::Aberta);
-    assert_eq!(depois.versao, 1);
+    let depois = store.conversas().get(org_a.id, conversa_a.id).expect("lê");
+    assert_eq!(depois.status, ConversationStatus::Open);
+    assert_eq!(depois.version, 1);
 }
 
 #[test]
@@ -375,16 +369,16 @@ fn falha_na_auditoria_desfaz_mensagem_saida_e_passagem() {
         0,
         "sem linha de saída"
     );
-    let depois = store.conversas().obter(org.id, conversa.id).expect("lê");
-    assert_eq!(depois.status, StatusConversa::Aberta, "status não trocou");
-    assert_eq!(depois.versao, 1, "versão não subiu");
+    let depois = store.conversas().get(org.id, conversa.id).expect("lê");
+    assert_eq!(depois.status, ConversationStatus::Open, "status não trocou");
+    assert_eq!(depois.version, 1, "versão não subiu");
 
     // Sem o gatilho, a mesma resposta passa: a falha era só a auditoria forçada.
     conexao(store)
         .execute_batch("DROP TRIGGER recusa_takeover")
         .expect("remove o gatilho");
     let depois_do_gatilho = gravar(store, org.id, conversa.id, "$evento-5", "agora vai");
-    assert!(matches!(depois_do_gatilho, Ok(RespostaHumana::Gravada(_))));
+    assert!(matches!(depois_do_gatilho, Ok(HumanResponse::Stored(_))));
 }
 
 #[test]
@@ -402,26 +396,26 @@ fn conversa_ja_transferida_continua_transferida_sem_subir_versao() {
             "{}".to_owned(),
         )
         .expect("transfere");
-    let antes = store.conversas().obter(org.id, conversa.id).expect("lê");
-    assert_eq!(antes.status, StatusConversa::Transferida);
-    assert_eq!(antes.versao, 2);
+    let antes = store.conversas().get(org.id, conversa.id).expect("lê");
+    assert_eq!(antes.status, ConversationStatus::Transferred);
+    assert_eq!(antes.version, 2);
 
     let primeira = gravar(store, org.id, conversa.id, "$evento-6", "primeira").expect("grava");
-    let RespostaHumana::Gravada(gravacao) = primeira else {
+    let HumanResponse::Stored(gravacao) = primeira else {
         panic!("esperava Gravada, veio {primeira:?}");
     };
-    let transferiu_agora = gravacao.transferiu_agora;
+    let transferiu_agora = gravacao.just_transferred;
     assert!(
         !transferiu_agora,
         "já estava transferida: esta resposta não transfere"
     );
 
     let segunda = gravar(store, org.id, conversa.id, "$evento-7", "segunda").expect("grava");
-    assert!(matches!(segunda, RespostaHumana::Gravada(_)));
+    assert!(matches!(segunda, HumanResponse::Stored(_)));
 
-    let depois = store.conversas().obter(org.id, conversa.id).expect("lê");
-    assert_eq!(depois.status, StatusConversa::Transferida);
-    assert_eq!(depois.versao, 2, "a versão não sobe a cada resposta");
+    let depois = store.conversas().get(org.id, conversa.id).expect("lê");
+    assert_eq!(depois.status, ConversationStatus::Transferred);
+    assert_eq!(depois.version, 2, "a versão não sobe a cada resposta");
     assert_eq!(
         contar(
             store,
@@ -448,7 +442,7 @@ fn migracao_da_auditoria_preserva_linhas_e_aceita_matrix_user() {
         let conn = Connection::open(&caminho).expect("abre");
         conn.pragma_update(None, "foreign_keys", "ON")
             .expect("pragma");
-        migrar(&conn, "harness.db", &caminho, &MIGRACOES_HARNESS[..3], 1).expect("migra até a 3");
+        migrate(&conn, "harness.db", &caminho, &HARNESS_MIGRATIONS[..3], 1).expect("migra até a 3");
         for indice in 0..3 {
             conn.execute(
                 "INSERT INTO audit_log (id, org_id, actor_kind, actor_id, action, entity, entity_id,
@@ -461,8 +455,11 @@ fn migracao_da_auditoria_preserva_linhas_e_aceita_matrix_user() {
     }
 
     let conn = Connection::open(&caminho).expect("reabre");
-    let relatorio = migrar(&conn, "harness.db", &caminho, MIGRACOES_HARNESS, 2).expect("migra");
-    assert_eq!(relatorio.versao_depois, poph_store::versao_alvo_harness());
+    let relatorio = migrate(&conn, "harness.db", &caminho, HARNESS_MIGRATIONS, 2).expect("migra");
+    assert_eq!(
+        relatorio.version_after,
+        poph_store::harness_target_version()
+    );
 
     let total: i64 = conn
         .query_row(
@@ -520,22 +517,22 @@ fn gravar_arquivo(
     org: OrgId,
     conversa: ConversationId,
     evento: &str,
-) -> poph_store::erro::Resultado<RespostaHumana> {
-    store.mensagens().registrar_resposta_humana_com_arquivo(
+) -> poph_store::error::Resultado<HumanResponse> {
+    store.messages().registrar_resposta_humana_com_arquivo(
         org,
         conversa,
-        poph_store::RespostaHumanaComArquivo {
-            evento_id: evento,
-            autor_id: "@ph_ana:matrix-dev.local",
-            autor_nome: "Ana",
-            arquivo: poph_store::ArquivoDaResposta {
-                nome: "laudo.pdf",
+        poph_store::HumanResponseWithFile {
+            event_id: evento,
+            author_id: "@ph_ana:matrix-dev.local",
+            author_name: "Ana",
+            file: poph_store::ResponseFile {
+                name: "laudo.pdf",
                 mime: "application/pdf",
-                tamanho_bytes: 1_024,
+                size_bytes: 1_024,
                 sha256: &"a".repeat(64),
                 blob_path: "org/sha",
-                legenda: "**[Ana]**",
-                status_extracao: "skipped",
+                caption: "**[Ana]**",
+                extraction_status: "skipped",
             },
         },
     )
@@ -554,40 +551,40 @@ fn resposta_com_arquivo_grava_mensagem_anexo_fila_passagem_e_auditoria() {
         "$evento-arquivo:matrix-dev.local",
     )
     .expect("grava");
-    let RespostaHumana::Gravada(gravacao) = resultado else {
+    let HumanResponse::Stored(gravacao) = resultado else {
         panic!("esperava gravada, veio {resultado:?}");
     };
 
     // A mensagem é de saída, humana, sem texto e com o id do evento.
-    assert_eq!(gravacao.mensagem.direcao, poph_store::Direcao::Saida);
-    assert_eq!(gravacao.mensagem.origem, Origem::Humano);
+    assert_eq!(gravacao.mensagem.direction, poph_store::Direction::Outbound);
+    assert_eq!(gravacao.mensagem.origin, Origin::Human);
     assert_eq!(gravacao.mensagem.texto, "");
     assert_eq!(
         gravacao.mensagem.id_externo.as_deref(),
         Some("$evento-arquivo:matrix-dev.local")
     );
-    assert_eq!(gravacao.mensagem.autor_nome.as_deref(), Some("Ana"));
+    assert_eq!(gravacao.mensagem.author_name.as_deref(), Some("Ana"));
 
     // O anexo existe, aponta para a mensagem e guarda o tipo real.
     let anexos = store
-        .mensagens()
+        .messages()
         .anexos(org.id, gravacao.mensagem.id)
         .expect("lista os anexos");
     assert_eq!(anexos.len(), 1);
-    assert_eq!(anexos[0].nome, "laudo.pdf");
+    assert_eq!(anexos[0].name, "laudo.pdf");
     assert_eq!(anexos[0].mime, "application/pdf");
-    assert_eq!(anexos[0].tamanho_bytes, 1_024);
+    assert_eq!(anexos[0].size_bytes, 1_024);
     assert_eq!(anexos[0].blob_path, "org/sha");
-    assert_eq!(anexos[0].status_extracao, "skipped");
+    assert_eq!(anexos[0].extraction_status, "skipped");
     assert_eq!(
-        gravacao.mensagem.anexos_json,
+        gravacao.mensagem.attachments_json,
         serde_json::json!([anexos[0].id.to_string()]).to_string()
     );
 
     // O item da fila é `file`, com o payload do HR-24 e a legenda.
     assert_eq!(gravacao.saida.tipo, "file");
     let payload: serde_json::Value =
-        serde_json::from_str(&gravacao.saida.conteudo_json).expect("payload em JSON");
+        serde_json::from_str(&gravacao.saida.content_json).expect("payload em JSON");
     assert_eq!(payload["blob_ref"], "org/sha");
     assert_eq!(payload["nome"], "laudo.pdf");
     assert_eq!(payload["mime"], "application/pdf");
@@ -597,9 +594,9 @@ fn resposta_com_arquivo_grava_mensagem_anexo_fila_passagem_e_auditoria() {
     assert_eq!(payload["arquivo_id"], anexos[0].id.to_string());
 
     // A conversa passou a `transferred` e a auditoria foi gravada uma vez.
-    assert!(gravacao.transferiu_agora);
-    let conversa_lida = store.conversas().obter(org.id, conversa.id).expect("lê");
-    assert_eq!(conversa_lida.status, StatusConversa::Transferida);
+    assert!(gravacao.just_transferred);
+    let conversa_lida = store.conversas().get(org.id, conversa.id).expect("lê");
+    assert_eq!(conversa_lida.status, ConversationStatus::Transferred);
     assert_eq!(
         contar(
             store,
@@ -619,7 +616,7 @@ fn reentrega_do_mesmo_arquivo_devolve_duplicada_sem_segundo_anexo_nem_saida() {
     gravar_arquivo(store, org.id, conversa.id, "$evento:matrix-dev.local").expect("primeira");
     let segunda = gravar_arquivo(store, org.id, conversa.id, "$evento:matrix-dev.local")
         .expect("segunda não falha");
-    assert_eq!(segunda, RespostaHumana::Duplicada);
+    assert_eq!(segunda, HumanResponse::Duplicate);
 
     assert_eq!(
         contar(store, "SELECT count(*) FROM messages", ""),
@@ -645,9 +642,9 @@ fn conversa_fechada_nao_grava_arquivo_nem_anexo() {
     let (org, conversa) = org_e_conversa(store, "arquivo-fechada");
     let versao = store
         .conversas()
-        .obter(org.id, conversa.id)
+        .get(org.id, conversa.id)
         .expect("lê")
-        .versao;
+        .version;
     store
         .conversas()
         .fechar_auditado(org.id, conversa.id, versao, "teste".to_owned())
@@ -655,7 +652,7 @@ fn conversa_fechada_nao_grava_arquivo_nem_anexo() {
 
     let resultado =
         gravar_arquivo(store, org.id, conversa.id, "$evento:matrix-dev.local").expect("responde");
-    assert_eq!(resultado, RespostaHumana::ConversaFechada);
+    assert_eq!(resultado, HumanResponse::ConversationClosed);
     assert_eq!(contar(store, "SELECT count(*) FROM messages", ""), 0);
     assert_eq!(contar(store, "SELECT count(*) FROM attachments", ""), 0);
     assert_eq!(

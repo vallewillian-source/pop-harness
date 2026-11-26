@@ -14,7 +14,7 @@ use std::process::ExitCode;
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, SaltString};
 use clap::{Args, Subcommand};
-use poph_store::{Pagina, Store, TokenAdmin};
+use poph_store::{Page, Store, TokenAdmin};
 use poph_types::{AdminTokenId, OrgId};
 use rand_core::{OsRng, RngCore};
 use serde_json::{Value, json};
@@ -195,7 +195,7 @@ fn gerar_global(args: GerarGlobal) -> ExitCode {
 }
 
 fn listar(store: &Store, org: OrgId, args: ListarTokens) -> ExitCode {
-    let pagina: Pagina = match validar_limite(args.limit) {
+    let pagina: Page = match validar_limite(args.limit) {
         Ok(pagina) => pagina,
         Err(erro) => return falha(erro),
     };
@@ -247,7 +247,7 @@ fn revogar(store: &Store, org: OrgId, args: ReferenciaToken) -> ExitCode {
         Ok(token) => token,
         Err(erro) => return falha(erro),
     };
-    let ja_estava_revogado = token.revogado_em.is_some();
+    let ja_estava_revogado = token.revoked_at.is_some();
     if let Err(erro) = store.tokens().revogar(org, token.id) {
         return falha(descrever(&erro));
     }
@@ -275,9 +275,7 @@ fn obter(store: &Store, org: OrgId, texto: &str) -> Result<TokenAdmin, String> {
     let id: AdminTokenId = parse_id(texto)?;
     match store.tokens().obter(org, id) {
         Ok(token) => Ok(token),
-        Err(erro) if erro.eh_nao_encontrado() => {
-            Err(format!("não existe token `{texto}` nesta org"))
-        }
+        Err(erro) if erro.is_not_found() => Err(format!("não existe token `{texto}` nesta org")),
         Err(erro) => Err(descrever(&erro)),
     }
 }
@@ -303,7 +301,7 @@ fn gerar_hash(valor: &str) -> Result<String, String> {
 }
 
 fn situacao(token: &TokenAdmin) -> &'static str {
-    if token.revogado_em.is_some() {
+    if token.revoked_at.is_some() {
         "revogado"
     } else {
         "ativo"
@@ -314,22 +312,22 @@ fn json_token(token: &TokenAdmin) -> Value {
     json!({
         "id": token.id.to_string(),
         "org_id": token.org_id.map(|org| org.to_string()),
-        "label": token.rotulo,
-        "status": if token.revogado_em.is_some() { "revoked" } else { "active" },
-        "created_at": token.criado_em,
-        "revoked_at": token.revogado_em,
+        "label": token.label,
+        "status": if token.revoked_at.is_some() { "revoked" } else { "active" },
+        "created_at": token.created_at,
+        "revoked_at": token.revoked_at,
     })
 }
 
 fn linha_resumo(token: &TokenAdmin) -> String {
-    format!("{}  {:<9} {}", token.id, situacao(token), token.rotulo)
+    format!("{}  {:<9} {}", token.id, situacao(token), token.label)
 }
 
 fn texto_token(token: &TokenAdmin) -> String {
     format!(
         "token {}\n  rótulo: {}\n  situação: {}\n",
         token.id,
-        token.rotulo,
+        token.label,
         situacao(token)
     )
 }

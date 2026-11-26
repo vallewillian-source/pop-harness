@@ -13,7 +13,7 @@ use axum::{
     },
     http::{HeaderMap, StatusCode},
 };
-use poph_store::{GrupoConhecimento, MudancaGrupoConhecimento, NovoGrupoConhecimento};
+use poph_store::{KnowledgeGroup, KnowledgeGroupChange, NewKnowledgeGroup};
 use poph_types::{KnowledgeGroupId, OrgId};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -45,8 +45,8 @@ fn ids(c: Caminho, ident: &Identidade) -> Result<(OrgId, Option<KnowledgeGroupId
             .transpose()?,
     ))
 }
-fn grupo(g: &GrupoConhecimento) -> Value {
-    json!({"id":g.id.to_string(),"org_id":g.org_id.to_string(),"name":g.nome,"description":g.descricao,"status":g.status.como_texto(),"version":g.versao,"created_at":g.criado_em,"updated_at":g.atualizado_em})
+fn grupo(g: &KnowledgeGroup) -> Value {
+    json!({"id":g.id.to_string(),"org_id":g.org_id.to_string(),"name":g.name,"description":g.description,"status":g.status.as_text(),"version":g.version,"created_at":g.created_at,"updated_at":g.updated_at})
 }
 #[utoipa::path(get,path="/admin/v1/orgs/{org_id}/knowledge",tag="knowledge",params(("org_id"=String,Path),("limit"=Option<u32>,Query),("cursor"=Option<String>,Query)),security(("bearer"=[])),responses((status=200,description="Grupos",body=ListaJson<Value>)))]
 pub async fn listar(
@@ -60,12 +60,12 @@ pub async fn listar(
     let p = q.pagina()?;
     let items: Vec<_> = e
         .store
-        .conhecimento()
+        .knowledge()
         .listar_grupos(org, p)?
         .iter()
         .map(grupo)
         .collect();
-    let next_cursor = proximo_cursor(&items, p.limite, |v| {
+    let next_cursor = proximo_cursor(&items, p.limit, |v| {
         v["id"].as_str().unwrap_or_default().to_owned()
     });
     Ok(Json(ListaJson { items, next_cursor }))
@@ -78,8 +78,8 @@ pub async fn mostrar(
 ) -> Result<Json<Value>, ApiError> {
     let (org, id) = ids(c, &ident)?;
     let id = id.ok_or_else(|| ApiError::invalido("grupo ausente"))?;
-    let mut valor = grupo(&e.store.conhecimento().obter_grupo(org, id)?);
-    let agentes = e.store.conhecimento().agentes_do_grupo(org, id)?;
+    let mut valor = grupo(&e.store.knowledge().obter_grupo(org, id)?);
+    let agentes = e.store.knowledge().agentes_do_grupo(org, id)?;
     valor["agents"] = json!(agentes.iter().map(ToString::to_string).collect::<Vec<_>>());
     Ok(Json(valor))
 }
@@ -95,13 +95,13 @@ pub async fn criar(
     if d.status.is_some() {
         return Err(ApiError::invalido("status não é aceito na criação"));
     }
-    let g = e.store.conhecimento().criar_grupo(
+    let g = e.store.knowledge().criar_grupo(
         org,
-        NovoGrupoConhecimento {
-            nome: d
+        NewKnowledgeGroup {
+            name: d
                 .name
                 .ok_or_else(|| ApiError::invalido("name é obrigatório"))?,
-            descricao: d.description.unwrap_or_default(),
+            description: d.description.unwrap_or_default(),
         },
     )?;
     super::auditoria::registrar(
@@ -126,13 +126,13 @@ pub async fn atualizar(
     let id = id.ok_or_else(|| ApiError::invalido("grupo ausente"))?;
     let versao = versao_do_if_match(&h, "grupo")?;
     let Json(d) = corpo.map_err(|_| ApiError::invalido("corpo JSON inválido"))?;
-    let g = e.store.conhecimento().atualizar_grupo(
+    let g = e.store.knowledge().atualizar_grupo(
         org,
         id,
         versao,
-        MudancaGrupoConhecimento {
-            nome: d.name,
-            descricao: d.description,
+        KnowledgeGroupChange {
+            name: d.name,
+            description: d.description,
             status: d.status.as_deref().map(status_pedido).transpose()?,
         },
     )?;
@@ -164,8 +164,8 @@ pub async fn excluir(
             "grupo pode conter itens e vínculos; confirme com force=true",
         ));
     }
-    let agentes = e.store.conhecimento().agentes_do_grupo(org, id)?;
-    e.store.conhecimento().excluir_grupo(org, id)?;
+    let agentes = e.store.knowledge().agentes_do_grupo(org, id)?;
+    e.store.knowledge().excluir_grupo(org, id)?;
     super::auditoria::registrar(
         &e,
         &ident,
@@ -220,17 +220,17 @@ fn ids_item(
         .transpose()?;
     Ok((org, group, item))
 }
-fn item_json(i: &poph_store::ItemConhecimento) -> Value {
-    json!({"id":i.id.to_string(),"org_id":i.org_id.to_string(),"group_id":i.grupo_id.to_string(),"title":i.titulo,"content":i.conteudo,"tags":i.tags,"position":i.posicao,"status":i.status.como_texto(),"version":i.versao,"created_at":i.criado_em,"updated_at":i.atualizado_em})
+fn item_json(i: &poph_store::KnowledgeItem) -> Value {
+    json!({"id":i.id.to_string(),"org_id":i.org_id.to_string(),"group_id":i.group_id.to_string(),"title":i.title,"content":i.content,"tags":i.tags,"position":i.position,"status":i.status.as_text(),"version":i.version,"created_at":i.created_at,"updated_at":i.updated_at})
 }
 fn conferir_item(
     e: &Estado,
     org: OrgId,
     group: KnowledgeGroupId,
     id: poph_types::KnowledgeItemId,
-) -> Result<poph_store::ItemConhecimento, ApiError> {
-    let i = e.store.conhecimento().obter_item(org, id)?;
-    if i.grupo_id != group {
+) -> Result<poph_store::KnowledgeItem, ApiError> {
+    let i = e.store.knowledge().obter_item(org, id)?;
+    if i.group_id != group {
         return Err(ApiError::novo(
             StatusCode::NOT_FOUND,
             "not_found",
@@ -247,17 +247,17 @@ pub async fn listar_itens(
     q: Result<Query<ConsultaPagina>, QueryRejection>,
 ) -> Result<Json<ListaJson<Value>>, ApiError> {
     let (org, g, _) = ids_item(c, &ident)?;
-    e.store.conhecimento().obter_grupo(org, g)?;
+    e.store.knowledge().obter_grupo(org, g)?;
     let Query(q) = q.map_err(|_| ApiError::invalido("parâmetros de paginação inválidos"))?;
     let p = q.pagina()?;
     let items: Vec<_> = e
         .store
-        .conhecimento()
+        .knowledge()
         .listar_itens_por_id(org, g, p)?
         .iter()
         .map(item_json)
         .collect();
-    let next_cursor = proximo_cursor(&items, p.limite, |v| {
+    let next_cursor = proximo_cursor(&items, p.limit, |v| {
         v["id"].as_str().unwrap_or_default().to_owned()
     });
     Ok(Json(ListaJson { items, next_cursor }))
@@ -290,18 +290,18 @@ pub async fn criar_item(
             "status e group_id não são aceitos na criação",
         ));
     }
-    let i = e.store.conhecimento().criar_item(
+    let i = e.store.knowledge().criar_item(
         org,
-        poph_store::NovoItemConhecimento {
-            grupo_id: g,
-            titulo: d
+        poph_store::NewKnowledgeItem {
+            group_id: g,
+            title: d
                 .title
                 .ok_or_else(|| ApiError::invalido("title é obrigatório"))?,
-            conteudo: d
+            content: d
                 .content
                 .ok_or_else(|| ApiError::invalido("content é obrigatório"))?,
             tags: d.tags.unwrap_or_default(),
-            posicao: d.position.unwrap_or_default(),
+            position: d.position.unwrap_or_default(),
         },
     )?;
     super::auditoria::registrar(
@@ -338,16 +338,16 @@ pub async fn atualizar_item(
                 .map_err(|_| ApiError::invalido("id de grupo inválido"))
         })
         .transpose()?;
-    let i = e.store.conhecimento().atualizar_item(
+    let i = e.store.knowledge().atualizar_item(
         org,
         id,
         versao,
-        poph_store::MudancaItemConhecimento {
-            grupo_id: novo_grupo,
-            titulo: d.title,
-            conteudo: d.content,
+        poph_store::KnowledgeItemChange {
+            group_id: novo_grupo,
+            title: d.title,
+            content: d.content,
             tags: d.tags,
-            posicao: d.position,
+            position: d.position,
             status: d.status.as_deref().map(status_pedido).transpose()?,
         },
     )?;
@@ -377,7 +377,7 @@ pub async fn excluir_item(
     let (org, g, id) = ids_item(c, &ident)?;
     let id = id.ok_or_else(|| ApiError::invalido("item ausente"))?;
     conferir_item(&e, org, g, id)?;
-    e.store.conhecimento().excluir_item(org, id)?;
+    e.store.knowledge().excluir_item(org, id)?;
     super::auditoria::registrar(
         &e,
         &ident,
@@ -424,7 +424,7 @@ pub async fn vincular(
 ) -> Result<Json<Value>, ApiError> {
     let (org, agente, grupo) = ids_agente(c, &ident)?;
     let grupo = grupo.ok_or_else(|| ApiError::invalido("grupo ausente"))?;
-    e.store.conhecimento().vincular_agente(org, agente, grupo)?;
+    e.store.knowledge().vincular_agente(org, agente, grupo)?;
     super::auditoria::registrar(
         &e,
         &ident,
@@ -446,12 +446,9 @@ pub async fn desvincular(
 ) -> Result<Json<Value>, ApiError> {
     let (org, agente, grupo) = ids_agente(c, &ident)?;
     let grupo = grupo.ok_or_else(|| ApiError::invalido("grupo ausente"))?;
-    e.store.agentes().obter(org, agente)?;
-    e.store.conhecimento().obter_grupo(org, grupo)?;
-    let mudou = e
-        .store
-        .conhecimento()
-        .desvincular_agente(org, agente, grupo)?;
+    e.store.agents().get(org, agente)?;
+    e.store.knowledge().obter_grupo(org, grupo)?;
+    let mudou = e.store.knowledge().desvincular_agente(org, agente, grupo)?;
     super::auditoria::registrar(
         &e,
         &ident,
@@ -472,7 +469,7 @@ pub async fn reindexar(
     Path(c): Path<CaminhoAgente>,
 ) -> Result<Json<Value>, ApiError> {
     let (org, agente, _) = ids_agente(c, &ident)?;
-    e.store.agentes().obter(org, agente)?;
+    e.store.agents().get(org, agente)?;
     let r = sincronizar(&e, org, agente).await?;
     super::auditoria::registrar(
         &e,
@@ -522,7 +519,7 @@ async fn sincronizar(
             .map_err(|_| ApiError::interno())?,
     );
     let adaptador = Arc::new(EmbedderDaFila::novo(fila, org, identidade));
-    let (indice, _) = Indice::abrir(e.store.caminho_rag(), adaptador, ConfigIndice::default())
+    let (indice, _) = Indice::abrir(e.store.rag_path(), adaptador, ConfigIndice::default())
         .map_err(|_| ApiError::interno())?;
     let base = poph_agent::BaseConhecimento::nova(Arc::clone(&e.store), Arc::new(indice));
     base.sincronizar_agente(org, agente)
@@ -544,7 +541,7 @@ async fn aviso_sincronizar(
     falhou.then_some("índice não atualizado; execute reindex para os agentes afetados")
 }
 async fn aviso_grupo(e: &Estado, org: OrgId, grupo: KnowledgeGroupId) -> Option<&'static str> {
-    match e.store.conhecimento().agentes_do_grupo(org, grupo) {
+    match e.store.knowledge().agentes_do_grupo(org, grupo) {
         Ok(agentes) => aviso_sincronizar(e, org, agentes).await,
         Err(_) => Some("índice não atualizado; execute reindex para o agente"),
     }

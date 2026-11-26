@@ -67,7 +67,7 @@ pub fn recuperar_turnos_interrompidos(estado: &Estado) -> u64 {
         orgs += 1;
         match estado
             .store
-            .turnos()
+            .turns()
             .falhar_orfaos(org, MOTIVO_INTERROMPIDO, antes_de)
         {
             Ok(quantos) => fechados += quantos,
@@ -136,11 +136,10 @@ fn orgs_conhecidas(estado: &Estado) -> Vec<poph_types::OrgId> {
     let mut orgs = Vec::new();
     let mut apos = None;
     loop {
-        match estado
-            .store
-            .orgaos()
-            .listar(poph_store::Pagina { apos, limite: 200 })
-        {
+        match estado.store.orgs().listar(poph_store::Page {
+            after: apos,
+            limit: 200,
+        }) {
             Ok(pagina) => {
                 let ultima = pagina.len() < 200;
                 apos = pagina.last().map(|org| org.id.as_uuid());

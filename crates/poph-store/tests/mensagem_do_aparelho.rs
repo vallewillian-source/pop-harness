@@ -15,9 +15,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use poph_store::{
-    NovaMensagemDoAparelho, NovaOrg, NovoAgente, Origem, Recebido, StatusConversa, Store,
-};
+use poph_store::{ConversationStatus, NewAgent, NewDeviceMessage, NewOrg, Origin, Received, Store};
 use poph_types::{AgentId, IntegrationId, OrgId, TurnId};
 use rusqlite::Connection;
 
@@ -35,8 +33,8 @@ impl Cenario {
             std::env::temp_dir().join(format!("poph-aparelho-{rotulo}-{}-{n}", std::process::id()));
         let _ = fs::remove_dir_all(&pasta);
         fs::create_dir_all(&pasta).expect("cria a pasta do teste");
-        let store = Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
-            .expect("abre o banco");
+        let store =
+            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco");
         Self {
             pasta,
             store: Some(store),
@@ -65,28 +63,28 @@ struct OrgPronta {
 
 fn org_pronta(store: &Store, slug: &str) -> OrgPronta {
     let org = store
-        .orgaos()
-        .criar(NovaOrg {
-            nome: format!("Org {slug}"),
+        .orgs()
+        .criar(NewOrg {
+            name: format!("Org {slug}"),
             slug: slug.to_owned(),
             config_json: String::new(),
         })
         .expect("cria a org")
         .id;
     let agente = store
-        .agentes()
+        .agents()
         .criar(
             org,
-            NovoAgente {
-                nome: "Bia".to_owned(),
+            NewAgent {
+                name: "Bia".to_owned(),
                 slug: "bia".to_owned(),
-                ..NovoAgente::default()
+                ..NewAgent::default()
             },
         )
         .expect("cria o agente")
         .id;
     let integracao: IntegrationId = store
-        .integracao_criar(org, agente, "whatsapp".to_owned(), "active".to_owned())
+        .create_integration(org, agente, "whatsapp".to_owned(), "active".to_owned())
         .expect("cria a integração")
         .id
         .parse()
@@ -98,8 +96,8 @@ fn org_pronta(store: &Store, slug: &str) -> OrgPronta {
     }
 }
 
-fn nova(pronta: &OrgPronta, id_externo: &str, texto: &str) -> NovaMensagemDoAparelho {
-    NovaMensagemDoAparelho {
+fn nova(pronta: &OrgPronta, id_externo: &str, texto: &str) -> NewDeviceMessage {
+    NewDeviceMessage {
         integration_id: pronta.integracao,
         agent_id: pronta.agente,
         canal: "whatsapp".to_owned(),
@@ -110,7 +108,7 @@ fn nova(pronta: &OrgPronta, id_externo: &str, texto: &str) -> NovaMensagemDoApar
 }
 
 fn conexao(store: &Store) -> Connection {
-    Connection::open(store.caminho_harness()).expect("abre o banco para conferir")
+    Connection::open(store.harness_path()).expect("abre o banco para conferir")
 }
 
 /// Quantas linhas uma consulta de contagem devolve, lidas direto da tabela.
@@ -157,14 +155,14 @@ fn grava_a_mensagem_do_aparelho_e_pausa_o_agente() {
     let pronta = org_pronta(store, "aparelho-feliz");
 
     let recebido = store
-        .caixa_entrada()
+        .inbox()
         .receber_do_aparelho(pronta.org, nova(&pronta, "MSG-AP-1", "já enviei, obrigado"))
         .expect("grava a mensagem do aparelho");
 
-    assert_eq!(recebido.situacao, Recebido::Novo);
-    assert!(recebido.transferiu_agora, "a conversa nasceu aqui e pausou");
-    assert_eq!(recebido.mensagem.direcao.como_texto(), "out");
-    assert_eq!(recebido.mensagem.origem, Origem::Dispositivo);
+    assert_eq!(recebido.situacao, Received::New);
+    assert!(recebido.just_transferred, "a conversa nasceu aqui e pausou");
+    assert_eq!(recebido.mensagem.direction.as_text(), "out");
+    assert_eq!(recebido.mensagem.origin, Origin::Device);
     assert!(recebido.mensagem.turn_id.is_none(), "sem turno");
     assert_eq!(recebido.mensagem.texto, "já enviei, obrigado");
 
@@ -214,18 +212,18 @@ fn reentrega_do_mesmo_id_externo_nao_duplica() {
     let pronta = org_pronta(store, "aparelho-reentrega");
 
     let primeira = store
-        .caixa_entrada()
+        .inbox()
         .receber_do_aparelho(pronta.org, nova(&pronta, "MSG-AP-2", "oi"))
         .expect("primeira entrega");
     let segunda = store
-        .caixa_entrada()
+        .inbox()
         .receber_do_aparelho(pronta.org, nova(&pronta, "MSG-AP-2", "oi"))
         .expect("reentrega");
 
-    assert_eq!(segunda.situacao, Recebido::Duplicado);
+    assert_eq!(segunda.situacao, Received::Duplicate);
     assert_eq!(segunda.mensagem.id, primeira.mensagem.id);
     assert_eq!(segunda.conversa, primeira.conversa);
-    assert!(!segunda.transferiu_agora, "a segunda não transfere de novo");
+    assert!(!segunda.just_transferred, "a segunda não transfere de novo");
     assert_eq!(contar(store, "SELECT COUNT(*) FROM messages"), 1);
     assert_eq!(
         contar(
@@ -253,16 +251,16 @@ fn conversa_ja_transferida_nao_sobe_a_versao() {
     let pronta = org_pronta(store, "aparelho-ja-transferida");
 
     let primeira = store
-        .caixa_entrada()
+        .inbox()
         .receber_do_aparelho(pronta.org, nova(&pronta, "MSG-AP-3", "primeira"))
         .expect("primeira");
     let segunda = store
-        .caixa_entrada()
+        .inbox()
         .receber_do_aparelho(pronta.org, nova(&pronta, "MSG-AP-4", "segunda"))
         .expect("segunda");
 
-    assert_eq!(segunda.situacao, Recebido::Novo);
-    assert!(!segunda.transferiu_agora);
+    assert_eq!(segunda.situacao, Received::New);
+    assert!(!segunda.just_transferred);
     assert_eq!(segunda.conversa, primeira.conversa, "mesma conversa");
     let linha = uma_linha(
         store,
@@ -289,31 +287,31 @@ fn conversa_fechada_abre_outra() {
     let pronta = org_pronta(store, "aparelho-fechada");
 
     let primeira = store
-        .caixa_entrada()
+        .inbox()
         .receber_do_aparelho(pronta.org, nova(&pronta, "MSG-AP-5", "antes de fechar"))
         .expect("primeira");
     let atual = store
         .conversas()
-        .obter(pronta.org, primeira.conversa)
+        .get(pronta.org, primeira.conversa)
         .expect("lê a conversa");
     store
         .conversas()
         .mudar_status(
             pronta.org,
             primeira.conversa,
-            atual.versao,
-            StatusConversa::Fechada,
+            atual.version,
+            ConversationStatus::Closed,
             None,
         )
         .expect("fecha a conversa");
 
     let depois = store
-        .caixa_entrada()
+        .inbox()
         .receber_do_aparelho(pronta.org, nova(&pronta, "MSG-AP-6", "depois de fechar"))
         .expect("mensagem depois do fechamento");
 
     assert_ne!(depois.conversa, primeira.conversa, "conversa nova");
-    assert!(depois.transferiu_agora);
+    assert!(depois.just_transferred);
     let linha = uma_linha(
         store,
         "SELECT status FROM conversations WHERE id = ?1",
@@ -338,7 +336,7 @@ fn falha_na_auditoria_nao_deixa_nada_gravado() {
         .expect("cria o gatilho");
 
     let erro = store
-        .caixa_entrada()
+        .inbox()
         .receber_do_aparelho(pronta.org, nova(&pronta, "MSG-AP-7", "vai falhar"))
         .expect_err("a gravação tem de falhar");
     assert!(!format!("{erro}").is_empty());
@@ -371,33 +369,33 @@ fn enviado_com_id_externo_reconhece_so_o_id_do_envio_confirmado() {
     let outra = org_pronta(store, "aparelho-eco-outra");
 
     let recebido = store
-        .caixa_entrada()
+        .inbox()
         .receber_do_aparelho(pronta.org, nova(&pronta, "MSG-AP-8", "abre a conversa"))
         .expect("mensagem do aparelho");
 
     // Envio nosso, na mesma conversa, ainda sem confirmação: nenhum id gravado.
     let turno = TurnId::generate();
     let saida = store
-        .mensagens()
+        .messages()
         .gravar_com_saida(
             pronta.org,
-            poph_store::NovaMensagem {
+            poph_store::NewMessage {
                 conversation_id: recebido.conversa,
-                direcao: poph_store::Direcao::Saida,
-                papel: poph_store::Papel::Assistente,
-                origem: Origem::Agente,
-                autor_nome: None,
+                direction: poph_store::Direction::Outbound,
+                role: poph_store::Role::Assistant,
+                origin: Origin::Agente,
+                author_name: None,
                 texto: "resposta do agente".to_owned(),
-                anexos_json: "[]".to_owned(),
+                attachments_json: "[]".to_owned(),
                 id_externo: None,
                 turn_id: Some(turno),
             },
-            poph_store::NovaSaida {
+            poph_store::NewOutboxItem {
                 conversation_id: recebido.conversa,
                 turn_id: turno,
                 seq: 0,
                 tipo: "text".to_owned(),
-                conteudo_json: "{\"texto\":\"oi\"}".to_owned(),
+                content_json: "{\"texto\":\"oi\"}".to_owned(),
             },
         )
         .expect("grava a saída")
@@ -405,34 +403,34 @@ fn enviado_com_id_externo_reconhece_so_o_id_do_envio_confirmado() {
 
     assert!(
         !store
-            .caixa_saida()
+            .outbox()
             .enviado_com_id_externo(pronta.org, "EVO-XYZ")
             .expect("consulta o eco"),
         "antes da confirmação o id não existe"
     );
 
     store
-        .caixa_saida()
+        .outbox()
         .confirmar_envio_com_id(pronta.org, saida.id, Some("EVO-XYZ"))
         .expect("confirma o envio com id");
 
     assert!(
         store
-            .caixa_saida()
+            .outbox()
             .enviado_com_id_externo(pronta.org, "EVO-XYZ")
             .expect("consulta o eco"),
         "o id devolvido pela Evolution é o eco"
     );
     assert!(
         !store
-            .caixa_saida()
+            .outbox()
             .enviado_com_id_externo(outra.org, "EVO-XYZ")
             .expect("consulta o eco da outra org"),
         "o eco não atravessa org"
     );
     assert!(
         !store
-            .caixa_saida()
+            .outbox()
             .enviado_com_id_externo(pronta.org, "EVO-OUTRO")
             .expect("consulta outro id"),
         "id desconhecido não é eco"

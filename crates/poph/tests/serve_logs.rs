@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use poph_store::{NovaOrg, NovoAgente, Store};
+use poph_store::{NewAgent, NewOrg, Store};
 use poph_types::{HarnessConfig, IntegrationId, OrgId};
 use serde_json::json;
 
@@ -49,30 +49,30 @@ fn preparar(rotulo: &str) -> Preparo {
 
     let mut config = HarnessConfig::default();
     config.data.directory = pasta.join("dados");
-    let store = Store::abrir(&config).expect("cria o banco");
+    let store = Store::open(&config).expect("cria o banco");
     let org = store
-        .orgaos()
-        .criar(NovaOrg {
-            nome: "Loja HR-26f".to_owned(),
+        .orgs()
+        .criar(NewOrg {
+            name: "Loja HR-26f".to_owned(),
             slug: format!("loja-hr26f-{rotulo}"),
             config_json: String::new(),
         })
         .expect("cria a org")
         .id;
     let agente = store
-        .agentes()
+        .agents()
         .criar(
             org,
-            NovoAgente {
-                nome: "Atendente HR-26f".to_owned(),
+            NewAgent {
+                name: "Atendente HR-26f".to_owned(),
                 slug: format!("atendente-hr26f-{rotulo}"),
-                ..NovoAgente::default()
+                ..NewAgent::default()
             },
         )
         .expect("cria o agente")
         .id;
     let integracao: IntegrationId = store
-        .integracao_criar(org, agente, "whatsapp".to_owned(), "active".to_owned())
+        .create_integration(org, agente, "whatsapp".to_owned(), "active".to_owned())
         .expect("cria a integração")
         .id
         .parse()

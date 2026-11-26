@@ -10,7 +10,7 @@ use axum::{
     Json,
     extract::{Path, Query, State, rejection::JsonRejection},
 };
-use poph_store::{FiltroConversas, OrdemConversas, StatusConversa};
+use poph_store::{ConversationStatus, FiltroConversas, OrdemConversas};
 use poph_types::{AgentId, ConversationId, DepartmentId, OrgId};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -44,7 +44,7 @@ fn complementos_de(
     let mut agentes_ids: Vec<AgentId> = conversas.iter().map(|c| c.agent_id).collect();
     agentes_ids.sort();
     agentes_ids.dedup();
-    let agentes = e.store.agentes().nomes(org, &agentes_ids)?;
+    let agentes = e.store.agents().nomes(org, &agentes_ids)?;
     let salas = if e.store.matrix().estado(org)?.ligado {
         let ids: Vec<ConversationId> = conversas.iter().map(|c| c.id).collect();
         e.store.matrix().salas_prontas(org, &ids)?
@@ -61,10 +61,10 @@ fn complementos_de(
 fn conversa_json(c: &poph_store::Conversa, complementos: &Complementos) -> Value {
     json!({"id":c.id.to_string(), "org_id":c.org_id.to_string(), "agent_id":c.agent_id.to_string(),
       "integration_id":c.integration_id.map(|x| x.to_string()), "channel":c.canal, "external_peer":c.peer_externo,
-      "status":c.status.como_texto(), "target_department_id":c.departamento_alvo.map(|x| x.to_string()),
-      "summary":c.resumo, "version":c.versao, "created_at":c.criado_em, "updated_at":c.atualizado_em,
-      "last_message_at":c.ultima_mensagem_em,
-      "client_name": c.nome_cliente.as_deref().filter(|nome| !nome.trim().is_empty()),
+      "status":c.status.as_text(), "target_department_id":c.target_department.map(|x| x.to_string()),
+      "summary":c.summary, "version":c.version, "created_at":c.created_at, "updated_at":c.updated_at,
+      "last_message_at":c.last_message_at,
+      "client_name": c.customer_name.as_deref().filter(|nome| !nome.trim().is_empty()),
       "agent_name": complementos.agentes.get(&c.agent_id),
       "matrix_room_id": complementos.salas.get(&c.id)})
 }
@@ -92,9 +92,9 @@ pub struct ConsultaConversas {
 fn filtro_da_consulta(q: &ConsultaConversas) -> Result<FiltroConversas, ApiError> {
     let status = match q.status.as_deref() {
         None => None,
-        Some("open") => Some(StatusConversa::Aberta),
-        Some("transferred") => Some(StatusConversa::Transferida),
-        Some("closed") => Some(StatusConversa::Fechada),
+        Some("open") => Some(ConversationStatus::Open),
+        Some("transferred") => Some(ConversationStatus::Transferred),
+        Some("closed") => Some(ConversationStatus::Closed),
         Some(_) => {
             return Err(ApiError::invalido(
                 "status inválido: use open, transferred ou closed",
@@ -180,7 +180,7 @@ pub async fn listar(
         .map(|c| conversa_json(c, &complementos))
         .collect();
     let next_cursor = match proximo {
-        Some(p) => proximo_cursor(&items, p.limite, |v| {
+        Some(p) => proximo_cursor(&items, p.limit, |v| {
             v["id"].as_str().unwrap_or_default().to_owned()
         }),
         None => None,
@@ -196,7 +196,7 @@ pub async fn mostrar(
     let org = id_da_url::<OrgId>(&c.org_id)?;
     ident.exigir_org(org)?;
     let id = id_da_url::<ConversationId>(&c.conversation_id)?;
-    let conversa = e.store.conversas().obter(org, id)?;
+    let conversa = e.store.conversas().get(org, id)?;
     let complementos = complementos_de(&e, org, std::slice::from_ref(&conversa))?;
     Ok(Json(conversa_json(&conversa, &complementos)))
 }
@@ -210,10 +210,10 @@ pub async fn mensagens(
     let org = id_da_url::<OrgId>(&c.org_id)?;
     ident.exigir_org(org)?;
     let id = id_da_url::<ConversationId>(&c.conversation_id)?;
-    e.store.conversas().obter(org, id)?;
+    e.store.conversas().get(org, id)?;
     let p = q.pagina()?;
-    let items:Vec<_>=e.store.mensagens().listar(org,id,p)?.iter().map(|m|json!({"id":m.id.to_string(),"org_id":m.org_id.to_string(),"conversation_id":m.conversation_id.to_string(),"direction":m.direcao.como_texto(),"role":m.papel.como_texto(),"text":m.texto,"attachments":serde_json::from_str::<Value>(&m.anexos_json).unwrap_or(Value::Null),"turn_id":m.turn_id.map(|v|v.to_string()),"created_at":m.criado_em})).collect();
-    let next_cursor = proximo_cursor(&items, p.limite, |v| {
+    let items:Vec<_>=e.store.messages().listar(org,id,p)?.iter().map(|m|json!({"id":m.id.to_string(),"org_id":m.org_id.to_string(),"conversation_id":m.conversation_id.to_string(),"direction":m.direction.as_text(),"role":m.role.as_text(),"text":m.texto,"attachments":serde_json::from_str::<Value>(&m.attachments_json).unwrap_or(Value::Null),"turn_id":m.turn_id.map(|v|v.to_string()),"created_at":m.created_at})).collect();
+    let next_cursor = proximo_cursor(&items, p.limit, |v| {
         v["id"].as_str().unwrap_or_default().to_owned()
     });
     Ok(Json(ListaJson { items, next_cursor }))
@@ -228,35 +228,35 @@ pub async fn turnos(
     let org = id_da_url::<OrgId>(&c.org_id)?;
     ident.exigir_org(org)?;
     let id = id_da_url::<ConversationId>(&c.conversation_id)?;
-    e.store.conversas().obter(org, id)?;
+    e.store.conversas().get(org, id)?;
     let p = q.pagina()?;
     let items: Vec<_> = e
         .store
-        .turnos()
+        .turns()
         .listar(org, id, p)?
         .iter()
         .map(|t| {
             // HR-47b: nomes em `tools`, detalhe por chamada em `tool_calls`.
-            let (nomes, chamadas) = super::partes_das_ferramentas(&t.ferramentas_json);
+            let (nomes, chamadas) = super::partes_das_ferramentas(&t.tools_json);
             json!({
                 "id": t.id.to_string(),
                 "org_id": t.org_id.to_string(),
                 "conversation_id": t.conversation_id.to_string(),
-                "state": t.estado.como_texto(),
-                "retrieved": serde_json::from_str::<Value>(&t.trechos_json).unwrap_or(Value::Null),
+                "state": t.estado.as_text(),
+                "retrieved": serde_json::from_str::<Value>(&t.passages_json).unwrap_or(Value::Null),
                 "tools": nomes,
                 "tool_calls": chamadas,
-                "timings": serde_json::from_str::<Value>(&t.tempos_json).unwrap_or(Value::Null),
-                "input_tokens": t.tokens_entrada,
-                "output_tokens": t.tokens_saida,
-                "cost_micros": t.custo_micros,
-                "error": t.erro,
-                "started_at": t.iniciado_em,
-                "finished_at": t.finalizado_em,
+                "timings": serde_json::from_str::<Value>(&t.times_json).unwrap_or(Value::Null),
+                "input_tokens": t.input_tokens,
+                "output_tokens": t.output_tokens,
+                "cost_micros": t.cost_micros,
+                "error": t.error,
+                "started_at": t.started_at,
+                "finished_at": t.finished_at,
             })
         })
         .collect();
-    let next_cursor = proximo_cursor(&items, p.limite, |v| {
+    let next_cursor = proximo_cursor(&items, p.limit, |v| {
         v["id"].as_str().unwrap_or_default().to_owned()
     });
     Ok(Json(ListaJson { items, next_cursor }))

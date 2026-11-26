@@ -142,7 +142,7 @@ impl Estado {
                 .map_err(|erro| format!("não consegui registrar as métricas de fluxos: {erro}"))?;
             // FX-40: quem escreve `fluxo_execucoes` é o store, então ele recebe os handles das
             // séries já declaradas aqui — o nome não é declarado duas vezes.
-            store.publicar_metricas_de_execucao(metricas.das_execucoes());
+            store.publish_execution_metrics(metricas.das_execucoes());
             Some(Arc::new(metricas))
         } else {
             None

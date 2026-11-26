@@ -10,11 +10,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 
-use poph_store::migracoes::migrar;
+use poph_store::migrations::migrate;
 use poph_store::{
-    Agente, Conversa, Departamento, Direcao, ErroStore, EstadoSala, MIGRACOES_HARNESS,
-    NovaConversa, NovaMensagem, NovaOrg, NovoAgente, NovoDepartamento, Org, Origem, OrigemEspaco,
-    Papel, Store, versao_do_arquivo,
+    Agente, Conversa, Departamento, Direction, EstadoSala, HARNESS_MIGRATIONS, NewAgent,
+    NewConversation, NewDepartment, NewMessage, NewOrg, Org, OrigemEspaco, Origin, Role, Store,
+    StoreError, file_version,
 };
 use poph_types::{ConversationId, DomainError, MessageId, OrgId};
 
@@ -56,14 +56,14 @@ impl Cenario {
         let rag = pasta.join("rag.db");
         if let Some(ate) = ate {
             let conn = rusqlite::Connection::open(&harness).expect("abre o banco antigo");
-            migrar(&conn, "harness.db", &harness, &MIGRACOES_HARNESS[..ate], 1)
+            migrate(&conn, "harness.db", &harness, &HARNESS_MIGRATIONS[..ate], 1)
                 .expect("migra até a versão antiga");
         }
         let relogio = Relogio::novo(1_000);
         let agora = Arc::clone(&relogio.0);
-        let store = Store::abrir_em(&harness, &rag)
+        let store = Store::open_at(&harness, &rag)
             .expect("abre o banco")
-            .com_relogio(Arc::new(move || agora.load(Ordering::SeqCst)));
+            .with_clock(Arc::new(move || agora.load(Ordering::SeqCst)));
         Self {
             pasta,
             relogio,
@@ -89,9 +89,9 @@ impl Drop for Cenario {
 
 fn criar_org(store: &Store, slug: &str) -> Org {
     store
-        .orgaos()
-        .criar(NovaOrg {
-            nome: format!("Org {slug}"),
+        .orgs()
+        .criar(NewOrg {
+            name: format!("Org {slug}"),
             slug: slug.to_owned(),
             config_json: String::new(),
         })
@@ -100,13 +100,13 @@ fn criar_org(store: &Store, slug: &str) -> Org {
 
 fn criar_agente(store: &Store, org: &Org, slug: &str) -> Agente {
     store
-        .agentes()
+        .agents()
         .criar(
             org.id,
-            NovoAgente {
-                nome: format!("Agente {slug}"),
+            NewAgent {
+                name: format!("Agente {slug}"),
                 slug: slug.to_owned(),
-                ..NovoAgente::default()
+                ..NewAgent::default()
             },
         )
         .expect("cria o agente")
@@ -117,12 +117,12 @@ fn criar_conversa(store: &Store, org: &Org, agente: &Agente) -> Conversa {
         .conversas()
         .criar(
             org.id,
-            NovaConversa {
+            NewConversation {
                 agent_id: agente.id,
                 integration_id: None,
                 canal: "cli".to_owned(),
                 peer_externo: Some("teste".to_owned()),
-                departamento_alvo: None,
+                target_department: None,
             },
         )
         .expect("cria a conversa")
@@ -130,12 +130,12 @@ fn criar_conversa(store: &Store, org: &Org, agente: &Agente) -> Conversa {
 
 fn criar_departamento(store: &Store, org: &Org, nome: &str) -> Departamento {
     store
-        .departamentos()
+        .departments()
         .criar(
             org.id,
-            NovoDepartamento {
-                nome: nome.to_owned(),
-                descricao: String::new(),
+            NewDepartment {
+                name: nome.to_owned(),
+                description: String::new(),
             },
         )
         .expect("cria o departamento")
@@ -143,19 +143,19 @@ fn criar_departamento(store: &Store, org: &Org, nome: &str) -> Departamento {
 
 fn gravar_mensagem(store: &Store, org: &Org, conversa: &Conversa, texto: &str) -> MessageId {
     store
-        .mensagens()
+        .messages()
         .gravar(
             org.id,
-            NovaMensagem {
+            NewMessage {
                 conversation_id: conversa.id,
-                direcao: Direcao::Entrada,
-                papel: Papel::Usuario,
+                direction: Direction::Inbound,
+                role: Role::User,
                 texto: texto.to_owned(),
-                anexos_json: "[]".to_owned(),
+                attachments_json: "[]".to_owned(),
                 id_externo: None,
                 turn_id: None,
-                origem: Origem::Agente,
-                autor_nome: None,
+                origin: Origin::Agente,
+                author_name: None,
             },
         )
         .expect("grava a mensagem")
@@ -177,7 +177,7 @@ fn migracao_cria_as_cinco_tabelas_do_modulo() {
     let cenario = Cenario::novo("esquema");
     let store = cenario.store();
 
-    let tabelas = store.tabelas().expect("lista tabelas");
+    let tabelas = store.tables().expect("lista tabelas");
     for esperada in [
         "matrix_orgs",
         "matrix_rooms",
@@ -191,10 +191,10 @@ fn migracao_cria_as_cinco_tabelas_do_modulo() {
         );
     }
     assert_eq!(
-        versao_do_arquivo(&cenario.caminho()).expect("lê versão"),
-        Some(poph_store::versao_alvo_harness())
+        file_version(&cenario.caminho()).expect("lê versão"),
+        Some(poph_store::harness_target_version())
     );
-    assert!(store.chaves_quebradas().expect("fk check").is_empty());
+    assert!(store.broken_foreign_keys().expect("fk check").is_empty());
 }
 
 #[test]
@@ -225,16 +225,16 @@ fn migracao_aplica_em_banco_que_ja_tinha_dados() {
     // A abertura do `Store` aplica a migração 5 sobre o banco com dados.
     let store = cenario.store();
     assert_eq!(
-        versao_do_arquivo(&cenario.caminho()).expect("lê versão"),
-        Some(poph_store::versao_alvo_harness())
+        file_version(&cenario.caminho()).expect("lê versão"),
+        Some(poph_store::harness_target_version())
     );
-    assert!(store.chaves_quebradas().expect("fk check").is_empty());
+    assert!(store.broken_foreign_keys().expect("fk check").is_empty());
 
     let org: OrgId = org_id.to_string().parse().expect("org válida");
     let conversa: ConversationId = conversa_id.to_string().parse().expect("conversa válida");
     store
         .conversas()
-        .obter(org, conversa)
+        .get(org, conversa)
         .expect("a conversa antiga continua no banco");
 
     // As tabelas novas funcionam sobre os dados que já existiam.
@@ -309,7 +309,7 @@ fn apagar_a_org_apaga_as_linhas_das_cinco_tabelas() {
     }
 
     store
-        .orgaos()
+        .orgs()
         .excluir_forcado(org_b.id)
         .expect("apaga a org B");
 
@@ -331,7 +331,7 @@ fn apagar_a_org_apaga_as_linhas_das_cinco_tabelas() {
             "{tabela} da outra org não podia ser apagada"
         );
     }
-    assert!(store.chaves_quebradas().expect("fk check").is_empty());
+    assert!(store.broken_foreign_keys().expect("fk check").is_empty());
 }
 
 #[test]
@@ -430,8 +430,8 @@ fn isolamento_por_org_em_todas_as_tabelas_do_modulo() {
     assert!(
         matches!(
             erro,
-            ErroStore::Dominio(DomainError::Validation { .. })
-                | ErroStore::Dominio(DomainError::NotFound { .. })
+            StoreError::Domain(DomainError::Validation { .. })
+                | StoreError::Domain(DomainError::NotFound { .. })
         ),
         "erro inesperado: {erro:?}"
     );
@@ -480,7 +480,7 @@ fn garantir_sala_duas_vezes_e_idempotente_e_recusa_sala_de_outra_conversa() {
         .garantir_sala(org.id, outra.id, "!sala:teste", None)
         .expect_err("sala de outra conversa tem que ser recusada");
     assert!(
-        matches!(erro, ErroStore::Dominio(DomainError::Conflict { .. })),
+        matches!(erro, StoreError::Domain(DomainError::Conflict { .. })),
         "erro inesperado: {erro:?}"
     );
     assert_eq!(
@@ -524,7 +524,7 @@ fn marcar_sala_pronta_e_idempotente() {
         .matrix()
         .marcar_sala_pronta(org.id, fantasma.id)
         .expect_err("conversa sem sala");
-    assert!(erro.eh_nao_encontrado(), "erro inesperado: {erro:?}");
+    assert!(erro.is_not_found(), "erro inesperado: {erro:?}");
 }
 
 #[test]
@@ -620,7 +620,7 @@ fn definir_nome_cliente_espelhado_e_idempotente_e_filtrado_por_org() {
         .matrix()
         .definir_nome_cliente_espelhado(outra_org.id, conversa.id, "Invasora")
         .expect_err("sala de outra org");
-    assert!(erro.eh_nao_encontrado(), "erro inesperado: {erro:?}");
+    assert!(erro.is_not_found(), "erro inesperado: {erro:?}");
     assert!(
         store
             .matrix()
@@ -635,7 +635,7 @@ fn definir_nome_cliente_espelhado_e_idempotente_e_filtrado_por_org() {
         .definir_nome_cliente_espelhado(org.id, conversa.id, "   ")
         .expect_err("nome vazio");
     assert!(
-        matches!(vazio, ErroStore::Dominio(DomainError::Validation { .. })),
+        matches!(vazio, StoreError::Domain(DomainError::Validation { .. })),
         "erro inesperado: {vazio:?}"
     );
 }
@@ -666,8 +666,8 @@ fn migracao_do_nome_espelhado_preserva_sala_existente_com_a_coluna_vazia() {
 
     let store = cenario.store();
     assert_eq!(
-        versao_do_arquivo(&cenario.caminho()).expect("lê versão"),
-        Some(poph_store::versao_alvo_harness())
+        file_version(&cenario.caminho()).expect("lê versão"),
+        Some(poph_store::harness_target_version())
     );
     let org: OrgId = org_id.to_string().parse().expect("org válida");
     let conversa: ConversationId = conversa_id.to_string().parse().expect("conversa válida");
@@ -733,7 +733,7 @@ fn definir_espaco_da_sala_e_idempotente_e_aceita_tirar_a_sala_do_espaco() {
         .matrix()
         .definir_espaco_da_sala(outra_org.id, conversa.id, Some("!espaco:teste"))
         .expect_err("sala de outra org");
-    assert!(erro.eh_nao_encontrado(), "erro inesperado: {erro:?}");
+    assert!(erro.is_not_found(), "erro inesperado: {erro:?}");
     assert_eq!(
         store
             .matrix()
@@ -894,7 +894,7 @@ fn falha_da_mesma_mensagem_atualiza_em_vez_de_duplicar() {
         .expect_err("motivo vazio");
     assert!(matches!(
         vazio,
-        ErroStore::Dominio(DomainError::Validation { .. })
+        StoreError::Domain(DomainError::Validation { .. })
     ));
     let longo = store
         .matrix()
@@ -902,7 +902,7 @@ fn falha_da_mesma_mensagem_atualiza_em_vez_de_duplicar() {
         .expect_err("motivo longo");
     assert!(matches!(
         longo,
-        ErroStore::Dominio(DomainError::Validation { .. })
+        StoreError::Domain(DomainError::Validation { .. })
     ));
 }
 
@@ -955,7 +955,7 @@ fn garantir_espaco_e_idempotente_por_departamento_e_recusa_espaco_de_outro() {
         )
         .expect_err("espaço de outro departamento");
     assert!(
-        matches!(erro, ErroStore::Dominio(DomainError::Conflict { .. })),
+        matches!(erro, StoreError::Domain(DomainError::Conflict { .. })),
         "erro inesperado: {erro:?}"
     );
 
@@ -1043,7 +1043,7 @@ fn nenhuma_coluna_das_tabelas_do_modulo_guarda_texto_de_cliente_telefone_ou_toke
     ];
 
     for (tabela, colunas_esperadas) in esperado {
-        let colunas = store.colunas(tabela).expect("lê colunas");
+        let colunas = store.columns(tabela).expect("lê colunas");
         let mut colunas_ordenadas = colunas.clone();
         colunas_ordenadas.sort();
         let mut esperadas_ordenadas = colunas_esperadas.to_vec();
@@ -1086,19 +1086,19 @@ fn atraso_das_mensagens_conta_so_o_que_falta_espelhar() {
     gravar_mensagem(store, &org, &conversa, "segunda");
     // Mensagem de ferramenta: o espelho nunca a envia, então ela não conta como atraso.
     store
-        .mensagens()
+        .messages()
         .gravar(
             org.id,
-            NovaMensagem {
+            NewMessage {
                 conversation_id: conversa.id,
-                direcao: Direcao::Saida,
-                papel: Papel::Ferramenta,
+                direction: Direction::Outbound,
+                role: Role::Tool,
                 texto: "chamada de ferramenta".to_owned(),
-                anexos_json: "[]".to_owned(),
+                attachments_json: "[]".to_owned(),
                 id_externo: None,
                 turn_id: None,
-                origem: Origem::Agente,
-                autor_nome: None,
+                origin: Origin::Agente,
+                author_name: None,
             },
         )
         .expect("mensagem de ferramenta");
@@ -1114,7 +1114,7 @@ fn atraso_das_mensagens_conta_so_o_que_falta_espelhar() {
 
     // Depois de espelhar a primeira, o atraso cai e a mais antiga passa a ser a segunda.
     let rowid = store
-        .mensagens()
+        .messages()
         .desde(0, 10)
         .expect("lê as mensagens")
         .into_iter()

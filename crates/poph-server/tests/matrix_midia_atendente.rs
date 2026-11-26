@@ -40,7 +40,7 @@ use poph_evolution::{ClienteEvolution, ConfigEvolution, TETO_MIDIA};
 use poph_matrix::{ClienteMatrix, ConfigCliente, IdsFantasmas};
 use poph_server::evolution::CanalEvolution;
 use poph_server::{Estado, PortaDoHarness, ReceptorAs, RespostaDoAtendente};
-use poph_store::{EstadoSaida, NovaConversa, NovaOrg, NovoAgente, Origem, Pagina, Store};
+use poph_store::{NewAgent, NewConversation, NewOrg, Origin, OutboxState, Page, Store};
 use poph_types::{ConversationId, HarnessConfig, IntegrationId, OrgId, Secret};
 use reqwest::{Client, StatusCode as StatusHttp};
 use serde_json::{Value, json};
@@ -368,33 +368,32 @@ impl Cenario {
         let _ = fs::remove_dir_all(&pasta);
         fs::create_dir_all(&pasta).expect("pasta do teste");
         let store = Arc::new(
-            Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
-                .expect("abre o banco"),
+            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco"),
         );
 
         let org = store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: "Org do cenário".to_owned(),
+            .orgs()
+            .criar(NewOrg {
+                name: "Org do cenário".to_owned(),
                 slug: "loja-a".to_owned(),
                 config_json: String::new(),
             })
             .expect("cria a org")
             .id;
         let agente = store
-            .agentes()
+            .agents()
             .criar(
                 org,
-                NovoAgente {
-                    nome: "Agente de Teste".to_owned(),
+                NewAgent {
+                    name: "Agente de Teste".to_owned(),
                     slug: "agente-teste".to_owned(),
-                    ..NovoAgente::default()
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente")
             .id;
         let integracao: IntegrationId = store
-            .integracao_criar(org, agente, "whatsapp".to_owned(), "active".to_owned())
+            .create_integration(org, agente, "whatsapp".to_owned(), "active".to_owned())
             .expect("cria a integração")
             .id
             .parse()
@@ -403,12 +402,12 @@ impl Cenario {
             .conversas()
             .criar(
                 org,
-                NovaConversa {
+                NewConversation {
                     agent_id: agente,
                     integration_id: Some(integracao),
                     canal: "whatsapp".to_owned(),
                     peer_externo: Some(TELEFONE.to_owned()),
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("cria a conversa")
@@ -474,7 +473,7 @@ impl Cenario {
         let integracao = self
             .store
             .conversas()
-            .obter(self.org, self.conversa)
+            .get(self.org, self.conversa)
             .expect("lê a conversa")
             .integration_id
             .expect("a conversa tem integração");
@@ -546,22 +545,22 @@ impl Cenario {
 
     fn messages(&self) -> Vec<poph_store::Mensagem> {
         self.store
-            .mensagens()
-            .listar(self.org, self.conversa, Pagina::com_limite(50))
+            .messages()
+            .listar(self.org, self.conversa, Page::with_limit(50))
             .expect("lista as mensagens")
     }
 
-    fn anexos(&self, indice: usize) -> Vec<poph_store::AnexoRegistro> {
+    fn anexos(&self, indice: usize) -> Vec<poph_store::AttachmentRecord> {
         let mensagens = self.messages();
         self.store
-            .mensagens()
+            .messages()
             .anexos(self.org, mensagens[indice].id)
             .expect("lista os anexos")
     }
 
-    fn arquivos_na_fila(&self) -> Vec<poph_store::ItemSaida> {
+    fn arquivos_na_fila(&self) -> Vec<poph_store::OutboxItem> {
         self.store
-            .caixa_saida()
+            .outbox()
             .listar_arquivos_da_conversa(self.org, self.conversa, 50)
             .expect("lista os itens de arquivo da fila")
     }
@@ -576,7 +575,7 @@ impl Cenario {
         let agente = self
             .store
             .conversas()
-            .obter(self.org, self.conversa)
+            .get(self.org, self.conversa)
             .expect("lê a conversa")
             .agent_id;
         IdsFantasmas::novo(PREFIXO, SERVER_NAME)
@@ -886,8 +885,8 @@ async fn imagem_e_pdf_do_element_chegam_ao_whatsapp_com_a_legenda_do_atendente()
     .enumerate()
     {
         let mensagem = &mensagens[indice];
-        assert_eq!(mensagem.origem, Origem::Humano);
-        assert_eq!(mensagem.autor_nome.as_deref(), Some(NOME_ATENDENTE));
+        assert_eq!(mensagem.origin, Origin::Human);
+        assert_eq!(mensagem.author_name.as_deref(), Some(NOME_ATENDENTE));
         assert_eq!(mensagem.texto, "", "o atendente não digitou texto");
         assert_eq!(
             mensagem.id_externo.as_deref(),
@@ -899,10 +898,10 @@ async fn imagem_e_pdf_do_element_chegam_ao_whatsapp_com_a_legenda_do_atendente()
         );
         let anexos = cenario.anexos(indice);
         assert_eq!(anexos.len(), 1, "cada mensagem leva o seu anexo");
-        assert_eq!(anexos[0].nome, nome);
+        assert_eq!(anexos[0].name, nome);
         assert_eq!(anexos[0].mime, mime);
-        assert_eq!(anexos[0].tamanho_bytes, tamanho as u64);
-        assert_eq!(anexos[0].status_extracao, "skipped");
+        assert_eq!(anexos[0].size_bytes, tamanho as u64);
+        assert_eq!(anexos[0].extraction_status, "skipped");
         let blob = cenario.pasta_blobs.join(&anexos[0].blob_path);
         assert!(blob.is_file(), "o blob ficou no disco: {}", blob.display());
     }
@@ -915,7 +914,7 @@ async fn imagem_e_pdf_do_element_chegam_ao_whatsapp_com_a_legenda_do_atendente()
         .zip([("foto.png", "image/png"), ("laudo.pdf", "application/pdf")])
     {
         assert_eq!(item.tipo, "file");
-        let payload: Value = serde_json::from_str(&item.conteudo_json).expect("payload em JSON");
+        let payload: Value = serde_json::from_str(&item.content_json).expect("payload em JSON");
         assert_eq!(payload["nome"], json!(nome));
         assert_eq!(payload["mime"], json!(mime));
         assert_eq!(payload["legenda"], json!("**[Ana Atendente]**"));
@@ -935,16 +934,16 @@ async fn imagem_e_pdf_do_element_chegam_ao_whatsapp_com_a_legenda_do_atendente()
         cenario
             .store
             .conversas()
-            .obter(cenario.org, cenario.conversa)
+            .get(cenario.org, cenario.conversa)
             .expect("lê a conversa")
             .status,
-        poph_store::StatusConversa::Transferida
+        poph_store::ConversationStatus::Transferred
     );
     assert_eq!(
         cenario
             .store
-            .caixa_saida()
-            .contar_por_estado(cenario.org, EstadoSaida::Enviado)
+            .outbox()
+            .contar_por_estado(cenario.org, OutboxState::Sent)
             .expect("conta a fila"),
         2
     );
@@ -1045,8 +1044,8 @@ async fn reentrega_do_mesmo_arquivo_nao_duplica_o_envio() {
     esperar("o arquivo sair uma vez", || {
         cenario
             .store
-            .caixa_saida()
-            .contar_por_estado(cenario.org, EstadoSaida::Enviado)
+            .outbox()
+            .contar_por_estado(cenario.org, OutboxState::Sent)
             .unwrap_or(0)
             == 1
     })
@@ -1181,9 +1180,9 @@ async fn conversa_encerrada_nao_envia_o_arquivo_e_avisa_na_sala() {
     let versao = cenario
         .store
         .conversas()
-        .obter(cenario.org, cenario.conversa)
+        .get(cenario.org, cenario.conversa)
         .expect("lê a conversa")
-        .versao;
+        .version;
     cenario
         .store
         .conversas()
@@ -1223,10 +1222,10 @@ async fn conversa_encerrada_nao_envia_o_arquivo_e_avisa_na_sala() {
         cenario
             .store
             .conversas()
-            .obter(cenario.org, cenario.conversa)
+            .get(cenario.org, cenario.conversa)
             .expect("lê a conversa")
             .status,
-        poph_store::StatusConversa::Fechada
+        poph_store::ConversationStatus::Closed
     );
 }
 
@@ -1398,14 +1397,14 @@ async fn audio_e_video_do_atendente_chegam_ao_whatsapp_sem_aviso() {
     .enumerate()
     {
         let mensagem = &mensagens[indice];
-        assert_eq!(mensagem.origem, Origem::Humano);
-        assert_eq!(mensagem.autor_nome.as_deref(), Some(NOME_ATENDENTE));
+        assert_eq!(mensagem.origin, Origin::Human);
+        assert_eq!(mensagem.author_name.as_deref(), Some(NOME_ATENDENTE));
         let anexos = cenario.anexos(indice);
         assert_eq!(anexos.len(), 1, "cada mensagem leva o seu anexo");
-        assert_eq!(anexos[0].nome, nome);
+        assert_eq!(anexos[0].name, nome);
         assert_eq!(anexos[0].mime, mime);
-        assert_eq!(anexos[0].tamanho_bytes, tamanho as u64);
-        assert_eq!(anexos[0].status_extracao, "skipped");
+        assert_eq!(anexos[0].size_bytes, tamanho as u64);
+        assert_eq!(anexos[0].extraction_status, "skipped");
         let blob = cenario.pasta_blobs.join(&anexos[0].blob_path);
         assert!(blob.is_file(), "o blob ficou no disco: {}", blob.display());
     }
@@ -1415,7 +1414,7 @@ async fn audio_e_video_do_atendente_chegam_ao_whatsapp_sem_aviso() {
     assert_eq!(arquivos.len(), 2);
     for (item, mime) in arquivos.iter().zip(["audio/ogg", "video/mp4"]) {
         assert_eq!(item.tipo, "file");
-        let payload: Value = serde_json::from_str(&item.conteudo_json).expect("payload em JSON");
+        let payload: Value = serde_json::from_str(&item.content_json).expect("payload em JSON");
         assert_eq!(payload["mime"], json!(mime));
         assert_eq!(payload["legenda"], json!("**[Ana Atendente]**"));
     }

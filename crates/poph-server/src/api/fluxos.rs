@@ -49,7 +49,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
 };
 use poph_fluxos::Diagnostico;
-use poph_store::{FiltroFluxos, MudancaFluxo};
+use poph_store::{FlowChange, FlowFilter};
 use poph_types::{FlowId, OrgId};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -293,11 +293,11 @@ pub async fn listar(
         cursor: q.cursor,
     }
     .pagina()?;
-    let limite = pagina.limite;
+    let limite = pagina.limit;
     let fluxos = e
         .store
         .fluxos()
-        .listar(org, &FiltroFluxos { status }, pagina)?;
+        .listar(org, &FlowFilter { status }, pagina)?;
     let items: Vec<Value> = fluxos.iter().map(json_fluxo).collect();
     let next_cursor = proximo_cursor(&fluxos, limite, |f| f.id.to_string());
     Ok(Json(ListaJson { items, next_cursor }))
@@ -381,7 +381,7 @@ pub async fn mostrar(
         .store
         .fluxos()
         .obter(org, id_da_url::<FlowId>(&c.flow_id)?)?;
-    let atual = e.store.revisoes().atual(org, fluxo.id)?;
+    let atual = e.store.revisions().atual(org, fluxo.id)?;
     let mut corpo = json_fluxo_com_rascunho(&fluxo);
     corpo["revision"] = atual.as_ref().map_or(Value::Null, json_revisao_resumo);
     Ok(Json(corpo))
@@ -432,9 +432,9 @@ pub async fn atualizar(
         org,
         id,
         versao,
-        MudancaFluxo {
-            nome: d.name,
-            descricao: d.description,
+        FlowChange {
+            name: d.name,
+            description: d.description,
             status,
             rascunho_fonte: d.source,
         },
@@ -485,7 +485,7 @@ pub async fn excluir(
     e.store.fluxos().obter(org, id)?;
     let ativas: u64 = e
         .store
-        .execucoes()
+        .executions()
         .ativas_por_revisao(org, id)?
         .iter()
         .map(|(_, quantas)| *quantas)
@@ -600,7 +600,7 @@ pub async fn listar_revisoes(
                 .com_detalhes(json!({ "field": "cursor", "value": texto }))
         })?),
     };
-    let revisoes = e.store.revisoes().listar(org, id, apos, limite)?;
+    let revisoes = e.store.revisions().listar(org, id, apos, limite)?;
     let next_cursor = if revisoes.len() < limite as usize {
         None
     } else {
@@ -640,7 +640,7 @@ pub async fn mostrar_revisao(
         ApiError::invalido(format!("`{}` não é um número de revisão", c.number))
             .com_detalhes(json!({ "field": "revision", "value": c.number }))
     })?;
-    let revisao = e.store.revisoes().obter(org, id, numero)?;
+    let revisao = e.store.revisions().obter(org, id, numero)?;
     Ok(Json(json_revisao_completa(&revisao)))
 }
 

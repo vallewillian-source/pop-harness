@@ -14,7 +14,7 @@ use std::sync::Arc;
 use clap::{Args, Subcommand};
 use poph_agent::CatalogoProdutos;
 use poph_agent::preco_texto;
-use poph_store::{MudancaProduto, NovoProduto, Pagina, Produto, Store};
+use poph_store::{NewProduct, Page, Product, ProductChange, Store};
 use poph_types::{AgentId, HarnessConfig, OrgId, ProductCategoryId, ProductId};
 use serde_json::{Value, json};
 
@@ -255,8 +255,7 @@ fn abrir(
     let configuracao =
         config::carregar(arquivo.as_deref(), ambiente).map_err(|erro| format!("{erro}"))?;
     let store = Arc::new(
-        Store::abrir(&configuracao)
-            .map_err(|erro| format!("não consegui abrir o banco: {erro}"))?,
+        Store::open(&configuracao).map_err(|erro| format!("não consegui abrir o banco: {erro}"))?,
     );
     let org = crate::apoio::resolver_org(&store, texto)?;
     Ok((store, org, configuracao))
@@ -276,21 +275,21 @@ fn criar(
         Ok(categoria) => categoria,
         Err(erro) => return falha(erro),
     };
-    let novo = NovoProduto {
-        categoria_id: Some(categoria),
-        nome,
+    let novo = NewProduct {
+        category_id: Some(categoria),
+        name: nome,
         slug: args.slug,
         aliases: args.alias,
-        descricao: args.description,
-        preco_texto: args.price_text,
-        preco_centavos: args.price,
-        unidade: args.unit,
-        inclui: args.includes,
+        description: args.description,
+        price_text: args.price_text,
+        price_cents: args.price,
+        unit: args.unit,
+        includes: args.includes,
         exclui: args.excludes,
-        condicoes: args.conditions,
+        conditions: args.conditions,
         tags: args.tag,
     };
-    match store.produtos().criar(org, novo) {
+    match store.products().criar(org, novo) {
         Ok(produto) => {
             aviso_de_indice(reindexar_org(configuracao, store, org));
             saida(&produto, args.json, "produto criado")
@@ -305,9 +304,9 @@ fn listar(store: &Arc<Store>, org: OrgId, args: ListarProdutos) -> ExitCode {
         Err(erro) => return falha(erro),
     };
     let resultado = if args.all {
-        store.produtos().listar(org, pagina)
+        store.products().listar(org, pagina)
     } else {
-        store.produtos().listar_ativos(org, pagina)
+        store.products().listar_ativos(org, pagina)
     };
     match resultado {
         Ok(produtos) => {
@@ -328,7 +327,7 @@ fn listar(store: &Arc<Store>, org: OrgId, args: ListarProdutos) -> ExitCode {
                         produto.id,
                         status_em_portugues(produto.status),
                         preco_texto(produto),
-                        produto.nome
+                        produto.name
                     );
                 }
                 println!("\n{} produto(s).", produtos.len());
@@ -371,23 +370,23 @@ fn atualizar(
         },
         None => None,
     };
-    let mudanca = MudancaProduto {
-        categoria_id: categoria,
-        nome: args.name,
+    let mudanca = ProductChange {
+        category_id: categoria,
+        name: args.name,
         slug: args.slug,
         aliases: (!args.alias.is_empty()).then_some(args.alias),
-        descricao: args.description,
-        preco_texto: args.price_text,
-        preco_centavos: args.price,
-        unidade: args.unit,
-        inclui: args.includes,
+        description: args.description,
+        price_text: args.price_text,
+        price_cents: args.price,
+        unit: args.unit,
+        includes: args.includes,
         exclui: args.excludes,
-        condicoes: args.conditions,
+        conditions: args.conditions,
         tags: (!args.tag.is_empty()).then_some(args.tag),
         status,
     };
     match store
-        .produtos()
+        .products()
         .atualizar(org, atual.id, args.if_match, mudanca)
     {
         Ok(produto) => {
@@ -410,7 +409,7 @@ fn excluir(
     };
     // Conta antes de apagar: a exclusão faz os itens de carrinho ficarem sem produto (com o preço
     // gravado), e a recusa e a saída precisam dizer quantos foram.
-    let refs = match store.produtos().referencias(org, produto.id) {
+    let refs = match store.products().referencias(org, produto.id) {
         Ok(refs) => refs,
         Err(erro) => return falha(descrever(&erro)),
     };
@@ -424,7 +423,7 @@ fn excluir(
             "a exclusão apaga o produto do catálogo; confirme com --force".to_owned()
         });
     }
-    match store.produtos().excluir(org, produto.id) {
+    match store.products().excluir(org, produto.id) {
         Ok(()) => {
             aviso_de_indice(reindexar_org(configuracao, store, org));
             if args.json {
@@ -432,10 +431,10 @@ fn excluir(
                     "versao_relatorio": 1,
                     "org_id": org.to_string(),
                     "deleted": produto.id.to_string(),
-                    "name": produto.nome,
+                    "name": produto.name,
                 }));
             } else {
-                println!("produto excluído: {} ({})", produto.nome, produto.id);
+                println!("produto excluído: {} ({})", produto.name, produto.id);
                 if refs.itens_de_carrinho > 0 {
                     println!(
                         "{} item(ns) de {} carrinho(s) ficaram como \"produto removido do catálogo\" (o preço gravado continua)",
@@ -560,16 +559,16 @@ fn abrir_catalogo(
 }
 
 /// Acha o produto por id (UUID v7) ou slug, dentro da org.
-fn obter(store: &Store, org: OrgId, texto: &str) -> Result<Produto, String> {
+fn obter(store: &Store, org: OrgId, texto: &str) -> Result<Product, String> {
     if uuid::Uuid::parse_str(texto).is_ok() {
         let id: ProductId = parse_id(texto)?;
         return store
-            .produtos()
+            .products()
             .obter(org, id)
             .map_err(|erro| descrever(&erro));
     }
     store
-        .produtos()
+        .products()
         .por_slug(org, texto)
         .map_err(|erro| descrever(&erro))
 }
@@ -583,15 +582,15 @@ fn resolver_categoria(store: &Store, org: OrgId, texto: &str) -> Result<ProductC
     if uuid::Uuid::parse_str(limpo).is_ok() {
         let id: ProductCategoryId = parse_id(limpo)?;
         return store
-            .categorias()
+            .categories()
             .obter(org, id)
             .map(|categoria| categoria.id)
             .map_err(|erro| descrever(&erro));
     }
-    let mut pagina = Pagina::com_limite(200);
+    let mut pagina = Page::with_limit(200);
     loop {
         let lote = store
-            .categorias()
+            .categories()
             .listar(org, pagina)
             .map_err(|erro| descrever(&erro))?;
         if lote.is_empty() {
@@ -599,11 +598,11 @@ fn resolver_categoria(store: &Store, org: OrgId, texto: &str) -> Result<ProductC
         }
         if let Some(categoria) = lote
             .iter()
-            .find(|categoria| categoria.nome.eq_ignore_ascii_case(limpo))
+            .find(|categoria| categoria.name.eq_ignore_ascii_case(limpo))
         {
             return Ok(categoria.id);
         }
-        pagina.apos = lote.last().map(|categoria| categoria.id.as_uuid());
+        pagina.after = lote.last().map(|categoria| categoria.id.as_uuid());
     }
 }
 
@@ -612,19 +611,19 @@ fn resolver_agente(store: &Store, org: OrgId, texto: &str) -> Result<AgentId, St
     if uuid::Uuid::parse_str(texto).is_ok() {
         let id: AgentId = parse_id(texto)?;
         return store
-            .agentes()
-            .obter(org, id)
+            .agents()
+            .get(org, id)
             .map(|agente| agente.id)
             .map_err(|erro| descrever(&erro));
     }
     store
-        .agentes()
+        .agents()
         .por_slug(org, texto)
         .map(|agente| agente.id)
         .map_err(|erro| descrever(&erro))
 }
 
-fn saida(produto: &Produto, json_saida: bool, aviso: &str) -> ExitCode {
+fn saida(produto: &Product, json_saida: bool, aviso: &str) -> ExitCode {
     if json_saida {
         imprimir_json(&json!({
             "versao_relatorio": 1,
@@ -632,47 +631,47 @@ fn saida(produto: &Produto, json_saida: bool, aviso: &str) -> ExitCode {
         }));
     } else {
         if !aviso.is_empty() {
-            println!("{aviso}: {}", produto.nome);
+            println!("{aviso}: {}", produto.name);
         }
-        println!("{}  {}", produto.id, produto.nome);
+        println!("{}  {}", produto.id, produto.name);
         println!("  slug: {}", produto.slug);
-        println!("  categoria: {}", produto.categoria_id);
+        println!("  categoria: {}", produto.category_id);
         println!(
             "  preço: {} ({} centavos)",
             preco_texto(produto),
-            produto.preco_centavos
+            produto.price_cents
         );
-        if !produto.unidade.is_empty() {
-            println!("  unidade: {}", produto.unidade);
+        if !produto.unit.is_empty() {
+            println!("  unidade: {}", produto.unit);
         }
-        if !produto.condicoes.is_empty() {
-            println!("  condições: {}", produto.condicoes);
+        if !produto.conditions.is_empty() {
+            println!("  condições: {}", produto.conditions);
         }
         println!(
             "  situação: {} · versão {}",
             status_em_portugues(produto.status),
-            produto.versao
+            produto.version
         );
     }
     ExitCode::SUCCESS
 }
 
-fn json_produto(produto: &Produto) -> Value {
+fn json_produto(produto: &Product) -> Value {
     json!({
         "id": produto.id.to_string(),
-        "category_id": produto.categoria_id.to_string(),
-        "name": produto.nome,
+        "category_id": produto.category_id.to_string(),
+        "name": produto.name,
         "slug": produto.slug,
         "aliases": produto.aliases,
-        "description": produto.descricao,
+        "description": produto.description,
         "price_text": preco_texto(produto),
-        "price_cents": produto.preco_centavos,
-        "unit": produto.unidade,
-        "includes": produto.inclui,
+        "price_cents": produto.price_cents,
+        "unit": produto.unit,
+        "includes": produto.includes,
         "excludes": produto.exclui,
-        "conditions": produto.condicoes,
+        "conditions": produto.conditions,
         "tags": produto.tags,
-        "status": produto.status.como_texto(),
-        "version": produto.versao,
+        "status": produto.status.as_text(),
+        "version": produto.version,
     })
 }

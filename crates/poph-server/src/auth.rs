@@ -117,7 +117,7 @@ pub async fn autenticar(valor: &str, estado: &Estado) -> Result<Identidade, ApiE
         .por_id(id)
         .map_err(ApiError::from)?
         .ok_or_else(ApiError::nao_autorizado)?;
-    if registro.revogado_em.is_some() {
+    if registro.revoked_at.is_some() {
         return Err(ApiError::nao_autorizado());
     }
     let hash = registro.hash.clone();
@@ -127,7 +127,7 @@ pub async fn autenticar(valor: &str, estado: &Estado) -> Result<Identidade, ApiE
     }
     Ok(Identidade {
         token_id: Some(id),
-        rotulo: registro.rotulo,
+        rotulo: registro.label,
         org: registro.org_id,
     })
 }

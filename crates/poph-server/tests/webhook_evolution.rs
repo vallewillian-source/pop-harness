@@ -25,7 +25,7 @@ use axum::routing::post;
 use poph_evolution::{ClienteEvolution, ConfigEvolution, TETO_MIDIA};
 use poph_server::Estado;
 use poph_server::evolution::{CanalEvolution, canais_da_configuracao};
-use poph_store::{NovaOrg, NovoAgente, Pagina, Store};
+use poph_store::{NewAgent, NewOrg, Page, Store};
 use poph_types::config::{EvolutionConfig, EvolutionInstanceConfig};
 use poph_types::{AgentId, HarnessConfig, IntegrationId, MessageId, OrgId, Secret};
 use reqwest::Client;
@@ -172,22 +172,22 @@ impl Cenario {
         config.server.port = 7480;
         config.validar().expect("configuração válida");
 
-        let store = Arc::new(Store::abrir(&config).expect("abre o banco"));
+        let store = Arc::new(Store::open(&config).expect("abre o banco"));
         let org = store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: "Loja Webhook".to_owned(),
+            .orgs()
+            .criar(NewOrg {
+                name: "Loja Webhook".to_owned(),
                 slug: "loja-webhook".to_owned(),
                 config_json: String::new(),
             })
             .expect("cria a org")
             .id;
         let agente = store
-            .agentes()
+            .agents()
             .criar(
                 org,
-                NovoAgente {
-                    nome: "Atendente Loja".to_owned(),
+                NewAgent {
+                    name: "Atendente Loja".to_owned(),
                     slug: "atendente-loja".to_owned(),
                     ..Default::default()
                 },
@@ -195,7 +195,7 @@ impl Cenario {
             .expect("cria o agente")
             .id;
         let integracao: IntegrationId = store
-            .integracao_criar(org, agente, "whatsapp".to_owned(), "active".to_owned())
+            .create_integration(org, agente, "whatsapp".to_owned(), "active".to_owned())
             .expect("cria a integração")
             .id
             .parse()
@@ -318,7 +318,7 @@ impl Cenario {
 
     fn pendentes(&self) -> u64 {
         self.store
-            .caixa_entrada()
+            .inbox()
             .contar_pendentes(self.org)
             .expect("contagem da inbox")
     }
@@ -329,9 +329,9 @@ impl Cenario {
             .listar(
                 self.org,
                 None,
-                Pagina {
-                    apos: None,
-                    limite: 50,
+                Page {
+                    after: None,
+                    limit: 50,
                 },
             )
             .expect("lista conversas")
@@ -347,7 +347,7 @@ impl Cenario {
 
     /// Conta linhas lidas direto do banco (`inbox`, `outbox`, `messages`, `audit_log`…).
     fn contar(&self, sql: &str) -> i64 {
-        rusqlite::Connection::open(self.store.caminho_harness())
+        rusqlite::Connection::open(self.store.harness_path())
             .expect("abre o banco para conferir")
             .query_row(sql, [], |linha| linha.get(0))
             .expect("conta")
@@ -355,7 +355,7 @@ impl Cenario {
 
     /// Valores de uma linha só (`SELECT a, b, ... WHERE id = ?`), com nulo como `None`.
     fn uma_linha(&self, sql: &str, parametro: &str) -> Vec<Option<String>> {
-        rusqlite::Connection::open(self.store.caminho_harness())
+        rusqlite::Connection::open(self.store.harness_path())
             .expect("abre o banco para conferir")
             .query_row(sql, [parametro], |linha| {
                 let mut valores = Vec::new();
@@ -468,7 +468,7 @@ async fn texto_grava_inbox_conversa_e_mensagem_e_reentrega_nao_duplica() {
     assert_eq!(conversas[0].peer_externo.as_deref(), Some(TELEFONE));
     assert_eq!(
         c.store
-            .mensagens()
+            .messages()
             .contar(c.org, conversas[0].id)
             .expect("conta mensagens"),
         1
@@ -488,7 +488,7 @@ async fn texto_grava_inbox_conversa_e_mensagem_e_reentrega_nao_duplica() {
     assert_eq!(c.pendentes(), 1, "reentrega não duplica a entrada");
     assert_eq!(
         c.store
-            .mensagens()
+            .messages()
             .contar(c.org, conversas[0].id)
             .expect("conta mensagens"),
         1,
@@ -584,12 +584,12 @@ async fn integracao_inexistente_da_404_para_mensagem_e_200_sem_criar_para_estado
 
     let integracoes = c
         .store
-        .integracoes_listar(
+        .list_integrations(
             c.org,
             c.agente,
-            Pagina {
-                apos: None,
-                limite: 50,
+            Page {
+                after: None,
+                limit: 50,
             },
         )
         .expect("lista integrações");
@@ -605,7 +605,7 @@ async fn estado_de_conexao_atualiza_a_integracao_sem_mexer_na_versao() {
     assert_eq!(aberto.corpo["efeito"], "estado");
     let depois_aberto = c
         .store
-        .integracao_obter(c.org, c.agente, c.integracao)
+        .get_integration(c.org, c.agente, c.integracao)
         .expect("lê a integração");
     assert_eq!(depois_aberto.connection_state, "connected");
     assert_eq!(
@@ -617,7 +617,7 @@ async fn estado_de_conexao_atualiza_a_integracao_sem_mexer_na_versao() {
     assert_eq!(fechado.status, StatusCode::OK);
     let depois_fechado = c
         .store
-        .integracao_obter(c.org, c.agente, c.integracao)
+        .get_integration(c.org, c.agente, c.integracao)
         .expect("lê a integração");
     assert_eq!(depois_fechado.connection_state, "disconnected");
 }
@@ -638,13 +638,13 @@ async fn imagem_vira_anexo_com_blob_no_disco_e_reentrega_nao_baixa_de_novo() {
     let mensagem = Cenario::mensagem_id(&primeira);
     let anexos = c
         .store
-        .mensagens()
+        .messages()
         .anexos(c.org, mensagem)
         .expect("lista anexos");
     assert_eq!(anexos.len(), 1, "a imagem virou um anexo");
     assert_eq!(anexos[0].mime, "image/png");
-    assert_eq!(anexos[0].status_extracao, "skipped");
-    assert!(anexos[0].tamanho_bytes > 0);
+    assert_eq!(anexos[0].extraction_status, "skipped");
+    assert!(anexos[0].size_bytes > 0);
 
     let blob = c
         .pasta
@@ -654,12 +654,12 @@ async fn imagem_vira_anexo_com_blob_no_disco_e_reentrega_nao_baixa_de_novo() {
     assert!(blob.is_file(), "blob gravado em {}", blob.display());
     assert_eq!(
         fs::metadata(&blob).expect("metadados do blob").len(),
-        anexos[0].tamanho_bytes
+        anexos[0].size_bytes
     );
 
     let texto = c
         .store
-        .mensagens()
+        .messages()
         .obter(c.org, c.conversas()[0].id, mensagem)
         .expect("lê a mensagem");
     assert_eq!(
@@ -680,7 +680,7 @@ async fn imagem_vira_anexo_com_blob_no_disco_e_reentrega_nao_baixa_de_novo() {
     );
     assert_eq!(
         c.store
-            .mensagens()
+            .messages()
             .anexos(c.org, mensagem)
             .expect("lista anexos")
             .len(),
@@ -709,13 +709,13 @@ async fn midia_expirada_preserva_o_texto_da_mensagem() {
     let mensagem = Cenario::mensagem_id(&resposta);
     let gravada = c
         .store
-        .mensagens()
+        .messages()
         .obter(c.org, c.conversas()[0].id, mensagem)
         .expect("lê a mensagem");
     assert_eq!(gravada.texto, "segue a legenda mesmo sem a imagem");
     assert!(
         c.store
-            .mensagens()
+            .messages()
             .anexos(c.org, mensagem)
             .expect("lista anexos")
             .is_empty(),
@@ -730,7 +730,7 @@ async fn falha_de_gravacao_da_503_e_a_reentrega_depois_entra_inteira() {
 
     // Simula falha do banco no meio da gravação: a mensagem não pode ser gravada.
     {
-        let conexao = rusqlite::Connection::open(c.store.caminho_harness()).expect("abre o banco");
+        let conexao = rusqlite::Connection::open(c.store.harness_path()).expect("abre o banco");
         conexao
             .execute_batch(
                 "CREATE TRIGGER falha_teste BEFORE INSERT ON messages
@@ -757,7 +757,7 @@ async fn falha_de_gravacao_da_503_e_a_reentrega_depois_entra_inteira() {
     sem_dado_do_cliente(&falha);
 
     {
-        let conexao = rusqlite::Connection::open(c.store.caminho_harness()).expect("abre o banco");
+        let conexao = rusqlite::Connection::open(c.store.harness_path()).expect("abre o banco");
         conexao
             .execute_batch("DROP TRIGGER falha_teste;")
             .expect("remove o gatilho");
@@ -980,7 +980,7 @@ async fn corpos_reais_da_evolution_223_mudam_o_estado_certo() {
     assert_eq!(qr.corpo["efeito"], "estado");
     let aguardando = c
         .store
-        .integracao_obter(c.org, c.agente, c.integracao)
+        .get_integration(c.org, c.agente, c.integracao)
         .expect("lê a integração");
     assert_eq!(aguardando.connection_state, "awaiting_scan");
 
@@ -998,7 +998,7 @@ async fn corpos_reais_da_evolution_223_mudam_o_estado_certo() {
     assert_eq!(conectando.status, StatusCode::OK, "{}", conectando.cru);
     let depois = c
         .store
-        .integracao_obter(c.org, c.agente, c.integracao)
+        .get_integration(c.org, c.agente, c.integracao)
         .expect("lê a integração");
     assert_eq!(depois.connection_state, "awaiting_scan");
 
@@ -1013,7 +1013,7 @@ async fn corpos_reais_da_evolution_223_mudam_o_estado_certo() {
     assert_eq!(fechado.status, StatusCode::OK, "{}", fechado.cru);
     let desconectada = c
         .store
-        .integracao_obter(c.org, c.agente, c.integracao)
+        .get_integration(c.org, c.agente, c.integracao)
         .expect("lê a integração");
     assert_eq!(desconectada.connection_state, "disconnected");
     sem_dado_do_cliente(&qr);
@@ -1043,8 +1043,8 @@ async fn push_name_cria_a_conversa_ja_com_o_nome_do_cliente() {
 
     let conversas = c.conversas();
     assert_eq!(conversas.len(), 1);
-    assert_eq!(conversas[0].nome_cliente.as_deref(), Some("Cliente Teste"));
-    assert_eq!(conversas[0].versao, 1, "o nome não sobe a versão");
+    assert_eq!(conversas[0].customer_name.as_deref(), Some("Cliente Teste"));
+    assert_eq!(conversas[0].version, 1, "o nome não sobe a versão");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1059,7 +1059,7 @@ async fn ultimo_push_name_vence_sem_apagar_quando_a_mensagem_nao_traz_nome() {
     ))
     .await;
     assert_eq!(
-        c.conversas()[0].nome_cliente.as_deref(),
+        c.conversas()[0].customer_name.as_deref(),
         Some("Cliente Novo")
     );
 
@@ -1072,8 +1072,8 @@ async fn ultimo_push_name_vence_sem_apagar_quando_a_mensagem_nao_traz_nome() {
         .remove("pushName");
     c.entregar(sem_nome).await;
     let conversa = &c.conversas()[0];
-    assert_eq!(conversa.nome_cliente.as_deref(), Some("Cliente Novo"));
-    assert_eq!(conversa.versao, 1);
+    assert_eq!(conversa.customer_name.as_deref(), Some("Cliente Novo"));
+    assert_eq!(conversa.version, 1);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1082,7 +1082,10 @@ async fn push_name_e_limpo_antes_de_gravar() {
     let bruto = format!("  Ana\u{200B} Maria \u{202E}\n{}", "x".repeat(150));
     c.entregar(evento_com_nome("MSG-LIMPO-1", "oi", json!(bruto)))
         .await;
-    let nome = c.conversas()[0].nome_cliente.clone().expect("nome gravado");
+    let nome = c.conversas()[0]
+        .customer_name
+        .clone()
+        .expect("nome gravado");
     assert!(nome.starts_with("Ana Maria x"), "{nome}");
     assert_eq!(nome.chars().count(), 100, "corta em 100 caracteres");
     assert!(!nome.contains('\u{200B}') && !nome.contains('\u{202E}'));
@@ -1099,7 +1102,7 @@ async fn grupo_e_eco_do_proprio_aparelho_nao_gravam_nome() {
     assert_eq!(resposta.status, StatusCode::OK, "{}", resposta.cru);
     let conversas = c.conversas();
     assert_eq!(conversas.len(), 1, "o grupo abre a própria conversa");
-    assert_eq!(conversas[0].nome_cliente, None);
+    assert_eq!(conversas[0].customer_name, None);
 
     // Eco da nossa própria mensagem: descartado antes de qualquer gravação.
     let mut eco = evento_com_nome("MSG-ECO-1", "eco", json!("Dono da Loja"));
@@ -1112,7 +1115,7 @@ async fn grupo_e_eco_do_proprio_aparelho_nao_gravam_nome() {
 async fn falha_ao_gravar_o_nome_nao_impede_a_mensagem_de_entrar() {
     let c = Cenario::novo("nome-falha-webhook").await;
     {
-        let conexao = rusqlite::Connection::open(c.store.caminho_harness()).expect("abre o banco");
+        let conexao = rusqlite::Connection::open(c.store.harness_path()).expect("abre o banco");
         conexao
             .execute_batch(
                 "CREATE TRIGGER falha_nome BEFORE UPDATE OF client_name ON conversations
@@ -1132,13 +1135,13 @@ async fn falha_ao_gravar_o_nome_nao_impede_a_mensagem_de_entrar() {
     assert_eq!(falha.corpo["situacao"], "nova");
     assert_eq!(c.pendentes(), 1, "a mensagem entrou na inbox");
     assert_eq!(
-        c.conversas()[0].nome_cliente,
+        c.conversas()[0].customer_name,
         None,
         "o nome ficou para depois"
     );
 
     {
-        let conexao = rusqlite::Connection::open(c.store.caminho_harness()).expect("abre o banco");
+        let conexao = rusqlite::Connection::open(c.store.harness_path()).expect("abre o banco");
         conexao
             .execute_batch("DROP TRIGGER falha_nome;")
             .expect("remove o gatilho");
@@ -1151,7 +1154,7 @@ async fn falha_ao_gravar_o_nome_nao_impede_a_mensagem_de_entrar() {
     ))
     .await;
     assert_eq!(
-        c.conversas()[0].nome_cliente.as_deref(),
+        c.conversas()[0].customer_name.as_deref(),
         Some("Cliente Teste")
     );
 }
@@ -1168,7 +1171,7 @@ async fn nome_do_cliente_nao_aparece_em_log_nem_em_resposta() {
 
     // Falha de gravação do nome também não pode ecoar o nome no log.
     {
-        let conexao = rusqlite::Connection::open(c.store.caminho_harness()).expect("abre o banco");
+        let conexao = rusqlite::Connection::open(c.store.harness_path()).expect("abre o banco");
         conexao
             .execute_batch(
                 "CREATE TRIGGER falha_canario BEFORE UPDATE OF client_name ON conversations
@@ -1293,7 +1296,7 @@ async fn eco_do_proprio_envio_e_descartado() {
 
     // O envio do agente saiu e a Evolution devolveu o id — o que a MX-40 grava.
     {
-        let conexao = rusqlite::Connection::open(c.store.caminho_harness()).expect("banco");
+        let conexao = rusqlite::Connection::open(c.store.harness_path()).expect("banco");
         conexao
             .execute(
                 "INSERT INTO outbox

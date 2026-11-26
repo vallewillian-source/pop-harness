@@ -1,36 +1,3 @@
-//! Exportação e importação de uma org em arquivo único (HR-53).
-//!
-//! O retrato (`RetratoOrg`) é a org inteira como linhas de banco: a configuração da org, o
-//! catálogo, os departamentos, os agentes com instruções e vínculos, a base de conhecimento, a
-//! biblioteca de arquivos e as integrações — e, com `com_conversas`, o histórico (conversas,
-//! mensagens, anexos, turnos e as duas filas) e os carrinhos.
-//!
-//! Regras que valem aqui:
-//! - **ids preservados**: o retrato leva as linhas como estão, então o material importado é o
-//!   mesmo (mesmos ids, mesmas versões, mesmos carimbos). É o que mantém a conversa ligada ao
-//!   agente e a mensagem ligada ao turno;
-//! - **escopo por org**: toda leitura e toda escrita passa por `org_id`; nada de outra org entra
-//!   ou sai;
-//! - **segredo nunca sai**: `integrations.secrets_enc` é lido só para o chamador decifrar os
-//!   *nomes* dos campos; a marca `tem_segredo` diz que havia segredo, e o blob vai em
-//!   `RetratoOrg::segredos_cifrados`, que nunca é serializado;
-//! - **sem caminho de blob**: `blob_path` sai do retrato e é recalculado na importação
-//!   (`<org de destino>/<sha256>`), porque o caminho depende da org dona;
-//! - **importação idempotente e atômica**: cada linha é localizada pela chave da tabela
-//!   (`id`, ou as colunas da chave primária composta) e atualizada; o que não está no arquivo
-//!   **não é apagado**. Tudo roda num savepoint do escritor: ou o retrato inteiro entra, ou nada;
-//! - **atualização de linha existente é decisão de quem chama**: [`Store::importar_retrato`] grava
-//!   o retrato como ele é; quem precisa proteger o que já existe no destino confere antes com
-//!   [`Store::conferir_atualizacoes_importacao`] (a CLI recusa sem `--sobrescrever`, a API sem
-//!   `?sobrescrever=true`);
-//! - **conflito de chave natural é recusado**: se o destino já tem um agente/produto/categoria/
-//!   departamento/grupo com o mesmo slug ou nome e id diferente, a importação para antes de
-//!   gravar, com a lista do que conflitou. Nada de "merge" silencioso.
-//!
-//! O que **não** entra: tokens de administração (credencial), `audit_log` (histórico de
-//! infraestrutura), `secrets_enc` (segredo) e o blob em si (o chamador lê e grava pelo
-//! `poph-files`).
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
@@ -40,403 +7,324 @@ use rusqlite::{Connection, OptionalExtension, params_from_iter};
 use serde_json::{Map, Value};
 
 use crate::Store;
-use crate::erro::{ErroStore, Resultado};
+use crate::error::{Resultado, StoreError};
 
-/// Nome do formato gravado no arquivo (confere na importação).
-pub const FORMATO_BACKUP: &str = "poph-backup-org";
-/// Versão do formato que esta versão do POP Harness escreve e entende.
+pub const BACKUP_FORMAT: &str = "poph-backup-org";
 pub const VERSAO_FORMATO: u32 = 2;
 
-/// Tabela do retrato: nome e colunas que identificam a linha dentro da org.
-struct Tabela {
-    nome: &'static str,
-    chave: &'static [&'static str],
+struct Table {
+    name: &'static str,
+    key: &'static [&'static str],
 }
 
-/// Tabelas que vão em todo backup, na ordem em que precisam ser gravadas (pai antes do filho).
-const TABELAS_SEMPRE: &[Tabela] = &[
-    Tabela {
-        nome: "product_categories",
-        chave: &["id"],
+const ALWAYS_TABLES: &[Table] = &[
+    Table {
+        name: "product_categories",
+        key: &["id"],
     },
-    Tabela {
-        nome: "departments",
-        chave: &["id"],
+    Table {
+        name: "departments",
+        key: &["id"],
     },
-    Tabela {
-        nome: "products",
-        chave: &["id"],
+    Table {
+        name: "products",
+        key: &["id"],
     },
-    Tabela {
-        nome: "agents",
-        chave: &["id"],
+    Table {
+        name: "agents",
+        key: &["id"],
     },
-    Tabela {
-        nome: "agent_product_categories",
-        chave: &["agent_id", "category_id"],
+    Table {
+        name: "agent_product_categories",
+        key: &["agent_id", "category_id"],
     },
-    Tabela {
-        nome: "agent_instructions",
-        chave: &["agent_id"],
+    Table {
+        name: "agent_instructions",
+        key: &["agent_id"],
     },
-    Tabela {
-        nome: "knowledge_groups",
-        chave: &["id"],
+    Table {
+        name: "knowledge_groups",
+        key: &["id"],
     },
-    Tabela {
-        nome: "knowledge_items",
-        chave: &["id"],
+    Table {
+        name: "knowledge_items",
+        key: &["id"],
     },
-    Tabela {
-        nome: "agent_knowledge_groups",
-        chave: &["agent_id", "group_id"],
+    Table {
+        name: "agent_knowledge_groups",
+        key: &["agent_id", "group_id"],
     },
-    Tabela {
-        nome: "file_library",
-        chave: &["id"],
+    Table {
+        name: "file_library",
+        key: &["id"],
     },
-    Tabela {
-        nome: "integrations",
-        chave: &["id"],
+    Table {
+        name: "integrations",
+        key: &["id"],
     },
-    Tabela {
-        nome: "fluxos",
-        chave: &["id"],
+    Table {
+        name: "fluxos",
+        key: &["id"],
     },
-    Tabela {
-        nome: "fluxo_revisoes",
-        chave: &["id"],
+    Table {
+        name: "fluxo_revisoes",
+        key: &["id"],
     },
-    Tabela {
-        nome: "agente_fluxos",
-        chave: &["agent_id", "fluxo_id"],
-    },
-];
-
-/// Tabelas do histórico, só com `--com-conversas`.
-const TABELAS_CONVERSAS: &[Tabela] = &[
-    Tabela {
-        nome: "conversations",
-        chave: &["id"],
-    },
-    Tabela {
-        nome: "messages",
-        chave: &["id"],
-    },
-    Tabela {
-        nome: "attachments",
-        chave: &["id"],
-    },
-    Tabela {
-        nome: "turns",
-        chave: &["id"],
-    },
-    Tabela {
-        nome: "outbox",
-        chave: &["id"],
-    },
-    Tabela {
-        nome: "inbox",
-        chave: &["id"],
-    },
-    Tabela {
-        nome: "carts",
-        chave: &["id"],
-    },
-    Tabela {
-        nome: "cart_items",
-        chave: &["id"],
-    },
-    Tabela {
-        nome: "fichas",
-        chave: &["id"],
-    },
-    Tabela {
-        nome: "ficha_eventos",
-        chave: &["id"],
-    },
-    Tabela {
-        nome: "fluxo_execucoes",
-        chave: &["id"],
-    },
-    Tabela {
-        nome: "fluxo_execucao_etapas",
-        chave: &["id"],
-    },
-    Tabela {
-        nome: "fluxo_efeitos",
-        chave: &["id"],
+    Table {
+        name: "agente_fluxos",
+        key: &["agent_id", "fluxo_id"],
     },
 ];
 
-/// Chaves naturais (única por org) que a importação confere **antes** de gravar.
-///
-/// Sem esta conferência, o `INSERT` falharia com "já existe um registro com esse valor nesta org"
-/// sem dizer qual recurso era, e só depois de tentar. Aqui o operador recebe o nome do recurso e
-/// do valor, e nada é gravado.
-struct ChaveNatural {
-    tabela: &'static str,
-    /// Coluna no banco, comparada sem diferenciar maiúsculas.
-    coluna: &'static str,
-    /// Nome do recurso para a mensagem.
-    recurso: &'static str,
+const CONVERSATION_TABLES: &[Table] = &[
+    Table {
+        name: "conversations",
+        key: &["id"],
+    },
+    Table {
+        name: "messages",
+        key: &["id"],
+    },
+    Table {
+        name: "attachments",
+        key: &["id"],
+    },
+    Table {
+        name: "turns",
+        key: &["id"],
+    },
+    Table {
+        name: "outbox",
+        key: &["id"],
+    },
+    Table {
+        name: "inbox",
+        key: &["id"],
+    },
+    Table {
+        name: "carts",
+        key: &["id"],
+    },
+    Table {
+        name: "cart_items",
+        key: &["id"],
+    },
+    Table {
+        name: "fichas",
+        key: &["id"],
+    },
+    Table {
+        name: "ficha_eventos",
+        key: &["id"],
+    },
+    Table {
+        name: "fluxo_execucoes",
+        key: &["id"],
+    },
+    Table {
+        name: "fluxo_execucao_etapas",
+        key: &["id"],
+    },
+    Table {
+        name: "fluxo_efeitos",
+        key: &["id"],
+    },
+];
+
+struct NaturalKey {
+    table: &'static str,
+    column: &'static str,
+    resource: &'static str,
 }
 
-const CHAVES_NATURAIS: &[ChaveNatural] = &[
-    ChaveNatural {
-        tabela: "fluxos",
-        coluna: "slug",
-        recurso: "fluxo",
+const NATURAL_KEYS: &[NaturalKey] = &[
+    NaturalKey {
+        table: "fluxos",
+        column: "slug",
+        resource: "fluxo",
     },
-    ChaveNatural {
-        tabela: "agents",
-        coluna: "slug",
-        recurso: "agente",
+    NaturalKey {
+        table: "agents",
+        column: "slug",
+        resource: "agente",
     },
-    ChaveNatural {
-        tabela: "products",
-        coluna: "slug",
-        recurso: "produto",
+    NaturalKey {
+        table: "products",
+        column: "slug",
+        resource: "produto",
     },
-    ChaveNatural {
-        tabela: "product_categories",
-        coluna: "name",
-        recurso: "categoria",
+    NaturalKey {
+        table: "product_categories",
+        column: "name",
+        resource: "categoria",
     },
-    ChaveNatural {
-        tabela: "departments",
-        coluna: "name",
-        recurso: "departamento",
+    NaturalKey {
+        table: "departments",
+        column: "name",
+        resource: "departamento",
     },
-    ChaveNatural {
-        tabela: "knowledge_groups",
-        coluna: "name",
-        recurso: "grupo de conhecimento",
+    NaturalKey {
+        table: "knowledge_groups",
+        column: "name",
+        resource: "grupo de conhecimento",
     },
 ];
 
-/// Uma org inteira, como linhas de banco.
 #[derive(Clone)]
-pub struct RetratoOrg {
-    /// A linha da tabela `orgs`.
+pub struct OrgSnapshot {
     pub org: Value,
-    /// Tabela → linhas, na ordem de gravação.
-    pub tabelas: BTreeMap<String, Vec<Value>>,
-    /// Blobs cifrados dos segredos de integração (id da integração → `secrets_enc`).
-    ///
-    /// Serve só para o chamador decifrar os **nomes** dos campos preenchidos. Nunca é
-    /// serializado nem gravado em arquivo.
-    pub segredos_cifrados: BTreeMap<String, Vec<u8>>,
+    pub tables: BTreeMap<String, Vec<Value>>,
+    pub encrypted_secrets: BTreeMap<String, Vec<u8>>,
 }
 
-impl fmt::Debug for RetratoOrg {
+impl fmt::Debug for OrgSnapshot {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Nunca imprime o conteúdo cifrado dos segredos.
-        f.debug_struct("RetratoOrg")
+        f.debug_struct("OrgSnapshot")
             .field("org", &self.org)
-            .field("tabelas", &self.tabelas)
+            .field("tabelas", &self.tables)
             .field(
                 "segredos_cifrados",
                 &format_args!(
                     "{} integração(ões) com segredo",
-                    self.segredos_cifrados.len()
+                    self.encrypted_secrets.len()
                 ),
             )
             .finish()
     }
 }
 
-/// Para onde a importação escreve.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DestinoImportacao {
-    /// A org do arquivo: usa o id de origem e cria a org se ela não existir.
-    DaOrigem,
-    /// Uma org já existente (a linha da org não é tocada).
-    Existente(OrgId),
+pub enum ImportTarget {
+    Origin,
+    Existing(OrgId),
 }
 
-/// Quantas linhas de uma tabela entraram (novas) e quantas foram atualizadas.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct TabelaGravada {
-    /// Linhas criadas agora.
-    pub inseridas: u64,
-    /// Linhas que já existiam e foram atualizadas com o valor do arquivo.
-    pub atualizadas: u64,
+pub struct StoredTable {
+    pub inserted: u64,
+    pub updated: u64,
 }
 
-/// O que a importação fez.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RelatorioImportacao {
-    /// Org que recebeu o material.
+pub struct ImportReport {
     pub org: OrgId,
-    /// `true` quando a org nasceu nesta importação.
-    pub org_criada: bool,
-    /// Tabela → linhas inseridas/atualizadas.
-    pub tabelas: BTreeMap<String, TabelaGravada>,
-    /// Integrações que vieram com segredo no arquivo e precisam ser digitadas de novo.
-    pub segredos_a_redigitar: u64,
+    pub created_org: bool,
+    pub tables: BTreeMap<String, StoredTable>,
+    pub secrets_to_reenter: u64,
 }
 
-impl RelatorioImportacao {
-    /// Total de linhas gravadas (novas + atualizadas), sem contar a org.
+impl ImportReport {
     pub fn total(&self) -> u64 {
-        self.tabelas
-            .values()
-            .map(|t| t.inseridas + t.atualizadas)
-            .sum()
+        self.tables.values().map(|t| t.inserted + t.updated).sum()
     }
 }
 
-/// Até quantos exemplos de linha a conferência de atualização devolve.
-pub const MAX_EXEMPLOS_ATUALIZACAO: usize = 5;
+pub const MAX_UPDATE_EXAMPLES: usize = 5;
 
-/// O que a importação **atualizaria** no destino: linhas do arquivo que já existem lá, localizadas
-/// pela chave da tabela.
-///
-/// É só leitura — a conferência não grava nada. Serve a quem precisa recusar a importação antes de
-/// sobrescrever o estado que já está no destino (CLI sem `--sobrescrever`, API sem
-/// `?sobrescrever=true`). Importar num destino limpo (ou numa org nova) devolve
-/// `AtualizacoesImportacao::default()`, ou seja, nada a sobrescrever.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct AtualizacoesImportacao {
-    /// Tabela → quantas linhas seriam atualizadas (só as tabelas com pelo menos uma).
-    pub tabelas: BTreeMap<String, u64>,
-    /// Total de linhas que seriam atualizadas (soma de `tabelas`).
+pub struct ImportUpdates {
+    pub tables: BTreeMap<String, u64>,
     pub total: u64,
-    /// Até [`MAX_EXEMPLOS_ATUALIZACAO`] exemplos legíveis: `tabela: slug`, `tabela: nome` ou
-    /// `tabela: id`.
-    pub exemplos: Vec<String>,
+    pub examples: Vec<String>,
 }
 
-impl AtualizacoesImportacao {
-    /// `true` quando nada seria atualizado (a importação só insere).
-    pub fn vazia(&self) -> bool {
+impl ImportUpdates {
+    pub fn empty(&self) -> bool {
         self.total == 0
     }
 
-    /// Resumo curto por tabela, para a mensagem de recusa: `agents 1, products 2`.
-    pub fn resumo(&self) -> String {
-        self.tabelas
+    pub fn summary(&self) -> String {
+        self.tables
             .iter()
-            .map(|(tabela, linhas)| format!("{tabela} {linhas}"))
+            .map(|(table, rows)| format!("{table} {rows}"))
             .collect::<Vec<_>>()
             .join(", ")
     }
 
-    fn registrar(&mut self, tabela: &str, linha: &Value) {
-        *self.tabelas.entry(tabela.to_owned()).or_insert(0) += 1;
+    fn register(&mut self, table: &str, row: &Value) {
+        *self.tables.entry(table.to_owned()).or_insert(0) += 1;
         self.total += 1;
-        if self.exemplos.len() < MAX_EXEMPLOS_ATUALIZACAO {
-            self.exemplos
-                .push(format!("{tabela}: {}", identificador_da_linha(linha)));
+        if self.examples.len() < MAX_UPDATE_EXAMPLES {
+            self.examples
+                .push(format!("{table}: {}", row_identifier(row)));
         }
     }
 }
 
 impl Store {
-    /// Lê a org inteira. `com_conversas` inclui o histórico e os carrinhos.
-    ///
-    /// A leitura inteira acontece numa só conexão do pool: todas as tabelas saem do mesmo
-    /// instante (o servidor deve estar parado, mas o retrato não fica rasgado se não estiver).
-    pub fn retrato_da_org(&self, org: OrgId, com_conversas: bool) -> Resultado<RetratoOrg> {
-        let tabelas: Vec<&'static Tabela> = TABELAS_SEMPRE
+    pub fn org_snapshot(&self, org: OrgId, com_conversas: bool) -> Resultado<OrgSnapshot> {
+        let tables: Vec<&'static Table> = ALWAYS_TABLES
             .iter()
-            .chain(TABELAS_CONVERSAS.iter().filter(|_| com_conversas))
+            .chain(CONVERSATION_TABLES.iter().filter(|_| com_conversas))
             .collect();
-        self.leitura(move |conn| {
-            let linha_org = ler_org(conn, org)?;
-            let mut retrato = BTreeMap::new();
-            for tabela in tabelas {
-                retrato.insert(tabela.nome.to_owned(), ler_tabela(conn, tabela.nome, org)?);
+        self.read(move |conn| {
+            let org_row = read_org(conn, org)?;
+            let mut snapshot = BTreeMap::new();
+            for table in tables {
+                snapshot.insert(table.name.to_owned(), read_table(conn, table.name, org)?);
             }
-            let segredos_cifrados = ler_segredos_cifrados(conn, org)?;
-            Ok(RetratoOrg {
-                org: linha_org,
-                tabelas: retrato,
-                segredos_cifrados,
+            let encrypted_secrets = read_encrypted_secrets(conn, org)?;
+            Ok(OrgSnapshot {
+                org: org_row,
+                tables: snapshot,
+                encrypted_secrets,
             })
         })
     }
 
-    /// Grava o retrato inteiro, numa só transação (savepoint do escritor).
-    ///
-    /// Idempotente: reimportar o mesmo retrato atualiza as mesmas linhas, sem duplicar. Não
-    /// apaga nada que não esteja no retrato. Uma linha por chave de tabela; conflito de chave
-    /// natural com id diferente é recusado antes de qualquer gravação.
-    ///
-    /// Atualizar linha que já existe é **permitido** aqui: a política de recusar sobrescrita por
-    /// padrão é do chamador, que confere antes com
-    /// [`Store::conferir_atualizacoes_importacao`].
-    pub fn importar_retrato(
+    pub fn import_snapshot(
         &self,
-        retrato: RetratoOrg,
-        destino: DestinoImportacao,
-    ) -> Resultado<RelatorioImportacao> {
-        self.escrita(move |conn| importar(conn, &retrato, destino))
+        snapshot: OrgSnapshot,
+        target: ImportTarget,
+    ) -> Resultado<ImportReport> {
+        self.write(move |conn| import(conn, &snapshot, target))
     }
 
-    /// Verifica sobrescritas e importa na mesma transação do escritor.
-    pub fn importar_retrato_protegido(
+    pub fn import_protected_snapshot(
         &self,
-        retrato: RetratoOrg,
-        destino: DestinoImportacao,
+        snapshot: OrgSnapshot,
+        target: ImportTarget,
         sobrescrever: bool,
-    ) -> Resultado<std::result::Result<RelatorioImportacao, AtualizacoesImportacao>> {
-        self.escrita(move |conn| {
-            let (org, criada) = destino_da_importacao(conn, &retrato, destino)?;
-            conferir_chaves_naturais(conn, &retrato, org, criada)?;
+    ) -> Resultado<std::result::Result<ImportReport, ImportUpdates>> {
+        self.write(move |conn| {
+            let (org, created) = import_destination(conn, &snapshot, target)?;
+            check_natural_keys(conn, &snapshot, org, created)?;
             if !sobrescrever {
-                let atualizacoes = atualizacoes_da_importacao(conn, &retrato, destino)?;
-                if !atualizacoes.vazia() {
-                    return Ok(Err(atualizacoes));
+                let updates = import_updates(conn, &snapshot, target)?;
+                if !updates.empty() {
+                    return Ok(Err(updates));
                 }
             }
-            importar(conn, &retrato, destino).map(Ok)
+            import(conn, &snapshot, target).map(Ok)
         })
     }
 
-    /// Lista, **sem gravar nada**, as chaves naturais do retrato que já existem no destino com
-    /// outro id (a importação recusaria por causa delas).
-    ///
-    /// É a mesma conferência que [`Store::importar_retrato`] faz antes de escrever; serve a quem
-    /// precisa mostrar os conflitos antes de decidir (a API responde `409` com a lista). Lista
-    /// vazia = nada conflita.
-    pub fn conferir_conflitos_importacao(
+    pub fn check_import_conflicts(
         &self,
-        retrato: &RetratoOrg,
-        destino: DestinoImportacao,
+        snapshot: &OrgSnapshot,
+        target: ImportTarget,
     ) -> Resultado<Vec<String>> {
-        self.leitura(|conn| {
-            let (org_id, org_criada) = destino_da_importacao(conn, retrato, destino)?;
-            conflitos_das_chaves_naturais(conn, retrato, org_id, org_criada)
+        self.read(|conn| {
+            let (org_id, created_org) = import_destination(conn, snapshot, target)?;
+            natural_key_conflicts(conn, snapshot, org_id, created_org)
         })
     }
 
-    /// Lista, **sem gravar nada**, as linhas do retrato que já existem no destino e que a
-    /// importação atualizaria com o valor do arquivo.
-    ///
-    /// É a conferência que sustenta "recusar sobrescrita por padrão": a CLI recusa sem
-    /// `--sobrescrever` e a API sem `?sobrescrever=true`. Lista vazia (`vazia()` verdadeiro) =
-    /// destino limpo, a importação só insere. Não confunde com
-    /// [`Store::conferir_conflitos_importacao`]: conflito é chave natural repetida **com outro
-    /// id** (recusa sempre); aqui é a **mesma linha**, que seria regravada.
-    pub fn conferir_atualizacoes_importacao(
+    pub fn check_import_updates(
         &self,
-        retrato: &RetratoOrg,
-        destino: DestinoImportacao,
-    ) -> Resultado<AtualizacoesImportacao> {
-        self.leitura(|conn| atualizacoes_da_importacao(conn, retrato, destino))
+        snapshot: &OrgSnapshot,
+        target: ImportTarget,
+    ) -> Resultado<ImportUpdates> {
+        self.read(|conn| import_updates(conn, snapshot, target))
     }
 }
 
-// ─────────────────────────────── Leitura do retrato ───────────────────────────────
-
-fn ler_org(conn: &Connection, org: OrgId) -> Resultado<Value> {
-    let mut consulta = conn.prepare("SELECT * FROM orgs WHERE id = ?1")?;
-    let colunas = nomes_das_colunas(&consulta);
-    let mut linhas = consulta.query([org.to_string()])?;
-    match linhas.next()? {
-        Some(linha) => linha_json("orgs", &colunas, linha),
+fn read_org(conn: &Connection, org: OrgId) -> Resultado<Value> {
+    let mut query = conn.prepare("SELECT * FROM orgs WHERE id = ?1")?;
+    let columns = column_names(&query);
+    let mut rows = query.query([org.to_string()])?;
+    match rows.next()? {
+        Some(row) => row_json("orgs", &columns, row),
         None => Err(DomainError::NotFound {
             entity: "org",
             id: org.to_string(),
@@ -445,71 +333,67 @@ fn ler_org(conn: &Connection, org: OrgId) -> Resultado<Value> {
     }
 }
 
-fn ler_tabela(conn: &Connection, tabela: &str, org: OrgId) -> Resultado<Vec<Value>> {
-    // `integrations` ganha a marca de que existe segredo; o blob cifrado fica de fora da linha.
-    let sql = if tabela == "integrations" {
+fn read_table(conn: &Connection, table: &str, org: OrgId) -> Resultado<Vec<Value>> {
+    let sql = if table == "integrations" {
         "SELECT *, secrets_enc IS NOT NULL AS tem_segredo FROM integrations \
          WHERE org_id = ?1 ORDER BY rowid"
             .to_owned()
     } else {
-        format!("SELECT * FROM {tabela} WHERE org_id = ?1 ORDER BY rowid")
+        format!("SELECT * FROM {table} WHERE org_id = ?1 ORDER BY rowid")
     };
-    let mut consulta = conn.prepare(&sql)?;
-    let colunas = nomes_das_colunas(&consulta);
-    let mut linhas = consulta.query([org.to_string()])?;
-    let mut valores = Vec::new();
-    while let Some(linha) = linhas.next()? {
-        valores.push(linha_json(tabela, &colunas, linha)?);
+    let mut query = conn.prepare(&sql)?;
+    let columns = column_names(&query);
+    let mut rows = query.query([org.to_string()])?;
+    let mut values = Vec::new();
+    while let Some(row) = rows.next()? {
+        values.push(row_json(table, &columns, row)?);
     }
-    Ok(valores)
+    Ok(values)
 }
 
-fn ler_segredos_cifrados(conn: &Connection, org: OrgId) -> Resultado<BTreeMap<String, Vec<u8>>> {
-    let mut consulta = conn.prepare(
+fn read_encrypted_secrets(conn: &Connection, org: OrgId) -> Resultado<BTreeMap<String, Vec<u8>>> {
+    let mut query = conn.prepare(
         "SELECT id, secrets_enc FROM integrations \
          WHERE org_id = ?1 AND secrets_enc IS NOT NULL",
     )?;
-    let mut linhas = consulta.query([org.to_string()])?;
-    let mut mapa = BTreeMap::new();
-    while let Some(linha) = linhas.next()? {
-        let id: String = linha.get(0)?;
-        let blob: Vec<u8> = linha.get(1)?;
-        mapa.insert(id, blob);
+    let mut rows = query.query([org.to_string()])?;
+    let mut map = BTreeMap::new();
+    while let Some(row) = rows.next()? {
+        let id: String = row.get(0)?;
+        let blob: Vec<u8> = row.get(1)?;
+        map.insert(id, blob);
     }
-    Ok(mapa)
+    Ok(map)
 }
 
-fn nomes_das_colunas(consulta: &rusqlite::Statement<'_>) -> Vec<String> {
-    consulta.column_names().map(str::to_owned).collect()
+fn column_names(query: &rusqlite::Statement<'_>) -> Vec<String> {
+    query.column_names().map(str::to_owned).collect()
 }
 
-fn linha_json(tabela: &str, colunas: &[String], linha: &rusqlite::Row<'_>) -> Resultado<Value> {
-    let mut objeto = Map::new();
-    for (indice, coluna) in colunas.iter().enumerate() {
-        // O segredo cifrado não entra no arquivo (nem para ser lido): só a marca `tem_segredo`.
-        if tabela == "integrations" && coluna == "secrets_enc" {
+fn row_json(table: &str, columns: &[String], row: &rusqlite::Row<'_>) -> Resultado<Value> {
+    let mut object = Map::new();
+    for (index, column) in columns.iter().enumerate() {
+        if table == "integrations" && column == "secrets_enc" {
             continue;
         }
-        objeto.insert(
-            coluna.clone(),
-            valor_json(tabela, coluna, linha.get_ref(indice)?)?,
+        object.insert(
+            column.clone(),
+            value_json(table, column, row.get_ref(index)?)?,
         );
     }
-    // O caminho do blob depende da org de destino: é recalculado na importação.
-    if tabela == "file_library" || tabela == "attachments" {
-        objeto.remove("blob_path");
+    if table == "file_library" || table == "attachments" {
+        object.remove("blob_path");
     }
-    // `tem_segredo` vem do SQLite como 0/1; no arquivo é booleano.
-    if tabela == "integrations"
-        && let Some(valor) = objeto.get_mut("tem_segredo")
+    if table == "integrations"
+        && let Some(value) = object.get_mut("tem_segredo")
     {
-        *valor = Value::Bool(valor.as_i64().is_some_and(|numero| numero != 0));
+        *value = Value::Bool(value.as_i64().is_some_and(|numero| numero != 0));
     }
-    Ok(Value::Object(objeto))
+    Ok(Value::Object(object))
 }
 
-fn valor_json(tabela: &str, coluna: &str, valor: ValueRef<'_>) -> Resultado<Value> {
-    Ok(match valor {
+fn value_json(table: &str, column: &str, value: ValueRef<'_>) -> Resultado<Value> {
+    Ok(match value {
         ValueRef::Null => Value::Null,
         ValueRef::Integer(numero) => Value::from(numero),
         ValueRef::Real(numero) => serde_json::Number::from_f64(numero)
@@ -517,71 +401,67 @@ fn valor_json(tabela: &str, coluna: &str, valor: ValueRef<'_>) -> Resultado<Valu
             .unwrap_or(Value::Null),
         ValueRef::Text(texto) => {
             let texto = std::str::from_utf8(texto).map_err(|_| {
-                ErroStore::Interno(format!(
-                    "a coluna `{coluna}` de `{tabela}` não é texto UTF-8"
+                StoreError::Internal(format!(
+                    "a coluna `{column}` de `{table}` não é texto UTF-8"
                 ))
             })?;
             Value::String(texto.to_owned())
         }
         ValueRef::Blob(_) => {
-            return Err(ErroStore::Interno(format!(
-                "a coluna `{coluna}` de `{tabela}` é binária e não deveria ir para o backup"
+            return Err(StoreError::Internal(format!(
+                "a coluna `{column}` de `{table}` é binária e não deveria ir para o backup"
             )));
         }
     })
 }
 
-// ─────────────────────────────── Importação ───────────────────────────────
-
-fn importar(
+fn import(
     conn: &Connection,
-    retrato: &RetratoOrg,
-    destino: DestinoImportacao,
-) -> Resultado<RelatorioImportacao> {
-    let (org_id, org_criada) = destino_da_importacao(conn, retrato, destino)?;
+    snapshot: &OrgSnapshot,
+    target: ImportTarget,
+) -> Resultado<ImportReport> {
+    let (org_id, created_org) = import_destination(conn, snapshot, target)?;
 
-    // Antes de gravar qualquer linha: chave natural repetida com id diferente é recusa.
-    conferir_chaves_naturais(conn, retrato, org_id, org_criada)?;
+    check_natural_keys(conn, snapshot, org_id, created_org)?;
 
-    if matches!(destino, DestinoImportacao::DaOrigem) {
-        gravar_org(conn, &retrato.org, org_id)?;
+    if matches!(target, ImportTarget::Origin) {
+        write_org(conn, &snapshot.org, org_id)?;
     }
 
-    let mut relatorio = RelatorioImportacao {
+    let mut report = ImportReport {
         org: org_id,
-        org_criada,
-        tabelas: BTreeMap::new(),
-        segredos_a_redigitar: 0,
+        created_org,
+        tables: BTreeMap::new(),
+        secrets_to_reenter: 0,
     };
-    // A ordem de gravação é a das listas (pai antes do filho), nunca a ordem alfabética do mapa.
-    let ordem: Vec<&'static Tabela> = TABELAS_SEMPRE
+    let ordem: Vec<&'static Table> = ALWAYS_TABLES
         .iter()
-        .chain(TABELAS_CONVERSAS.iter())
+        .chain(CONVERSATION_TABLES.iter())
         .collect();
-    for tabela in &ordem {
-        let Some(linhas) = retrato.tabelas.get(tabela.nome) else {
+    for table in &ordem {
+        let Some(rows) = snapshot.tables.get(table.name) else {
             continue;
         };
-        let colunas = colunas_da_tabela(conn, tabela.nome)?;
-        let mut gravado = TabelaGravada::default();
-        for linha in linhas {
-            let atualizada = gravar_linha(conn, tabela, org_id, linha, &colunas)?;
-            if atualizada {
-                gravado.atualizadas += 1;
+        let columns = table_columns(conn, table.name)?;
+        let mut stored = StoredTable::default();
+        for row in rows {
+            let updated = write_row(conn, table, org_id, row, &columns)?;
+            if updated {
+                stored.updated += 1;
             } else {
-                gravado.inseridas += 1;
+                stored.inserted += 1;
             }
         }
-        if tabela.nome == "integrations" {
-            let com_segredo = linhas
+        if table.name == "integrations" {
+            let with_secret = rows
                 .iter()
-                .filter(|linha| linha.get("tem_segredo") == Some(&Value::Bool(true)))
+                .filter(|row| row.get("tem_segredo") == Some(&Value::Bool(true)))
                 .count() as u64;
-            relatorio.segredos_a_redigitar += com_segredo;
+            report.secrets_to_reenter += with_secret;
         }
-        relatorio.tabelas.insert(tabela.nome.to_owned(), gravado);
+        report.tables.insert(table.name.to_owned(), stored);
     }
-    if !retrato.tabelas.contains_key("fichas") && retrato.tabelas.contains_key("conversations") {
+    if !snapshot.tables.contains_key("fichas") && snapshot.tables.contains_key("conversations") {
         conn.execute_batch(&format!(r#"INSERT INTO fichas
             (id, org_id, conversation_id, agent_id, canal, peer_externo, status, aberta_em, fechada_em, fechada_por, fechada_motivo, version)
             SELECT lower(substr(printf('%012x', max(c.created_at, 0)), 1, 8) || '-' ||
@@ -596,50 +476,49 @@ fn importar(
             FROM conversations c WHERE c.org_id = '{}' AND NOT EXISTS
                 (SELECT 1 FROM fichas f WHERE f.conversation_id = c.id);"#, org_id))?;
     }
-    if let Some(conversas) = retrato.tabelas.get("conversations") {
+    if let Some(conversas) = snapshot.tables.get("conversations") {
         for conversa in conversas {
             let id = conversa.get("id").and_then(Value::as_str).ok_or_else(|| {
-                ErroStore::Dominio(DomainError::Validation {
+                StoreError::Domain(DomainError::Validation {
                     field: "backup",
                     reason: "conversa sem id".to_owned(),
                 })
             })?;
-            let existe: bool = conn.query_row(
+            let exists: bool = conn.query_row(
                 "SELECT EXISTS(SELECT 1 FROM fichas WHERE org_id = ?1 AND conversation_id = ?2)",
                 rusqlite::params![org_id.to_string(), id],
                 |row| row.get(0),
             )?;
-            if !existe {
-                return Err(ErroStore::Dominio(DomainError::Validation {
+            if !exists {
+                return Err(StoreError::Domain(DomainError::Validation {
                     field: "backup",
                     reason: "conversa importada sem Ficha correspondente".to_owned(),
                 }));
             }
         }
     }
-    // Tabela que não faz parte do formato é recusada (arquivo de outra versão ou alterado).
-    for nome in retrato.tabelas.keys() {
-        if tabela_conhecida(nome).is_none() {
-            return Err(ErroStore::Dominio(DomainError::Validation {
+    for name in snapshot.tables.keys() {
+        if known_table(name).is_none() {
+            return Err(StoreError::Domain(DomainError::Validation {
                 field: "backup",
                 reason: format!(
-                    "o arquivo traz a tabela `{nome}`, que não faz parte do formato desta versão"
+                    "o arquivo traz a tabela `{name}`, que não faz parte do formato desta versão"
                 ),
             }));
         }
     }
-    Ok(relatorio)
+    Ok(report)
 }
 
-fn destino_da_importacao(
+fn import_destination(
     conn: &Connection,
-    retrato: &RetratoOrg,
-    destino: DestinoImportacao,
+    snapshot: &OrgSnapshot,
+    target: ImportTarget,
 ) -> Resultado<(OrgId, bool)> {
-    let da_origem = org_da_linha(&retrato.org)?;
-    match destino {
-        DestinoImportacao::Existente(org) => {
-            if !org_existe(conn, org)? {
+    let from_origin = row_org(&snapshot.org)?;
+    match target {
+        ImportTarget::Existing(org) => {
+            if !org_exists(conn, org)? {
                 return Err(DomainError::NotFound {
                     entity: "org",
                     id: org.to_string(),
@@ -648,374 +527,352 @@ fn destino_da_importacao(
             }
             Ok((org, false))
         }
-        DestinoImportacao::DaOrigem => {
-            let existe = org_existe(conn, da_origem)?;
-            Ok((da_origem, !existe))
+        ImportTarget::Origin => {
+            let exists = org_exists(conn, from_origin)?;
+            Ok((from_origin, !exists))
         }
     }
 }
 
-fn org_da_linha(linha: &Value) -> Resultado<OrgId> {
-    let id = linha.get("id").and_then(Value::as_str).ok_or_else(|| {
-        ErroStore::Dominio(DomainError::Validation {
+fn row_org(row: &Value) -> Resultado<OrgId> {
+    let id = row.get("id").and_then(Value::as_str).ok_or_else(|| {
+        StoreError::Domain(DomainError::Validation {
             field: "org",
             reason: "o arquivo não traz o id da org de origem".to_owned(),
         })
     })?;
     id.parse::<OrgId>().map_err(|_| {
-        ErroStore::Dominio(DomainError::Validation {
+        StoreError::Domain(DomainError::Validation {
             field: "org",
             reason: "o id da org no arquivo não é um UUID v7".to_owned(),
         })
     })
 }
 
-fn org_existe(conn: &Connection, org: OrgId) -> Resultado<bool> {
-    let existe: Option<i64> = conn
+fn org_exists(conn: &Connection, org: OrgId) -> Resultado<bool> {
+    let exists: Option<i64> = conn
         .query_row(
             "SELECT 1 FROM orgs WHERE id = ?1",
             [org.to_string()],
-            |linha| linha.get(0),
+            |row| row.get(0),
         )
         .optional()?;
-    Ok(existe.is_some())
+    Ok(exists.is_some())
 }
 
-/// Linhas do arquivo que já existem no destino, pela chave da tabela (só leitura).
-///
-/// A linha da org entra na conta apenas quando o destino é a própria org de origem: o caminho
-/// `Existente` não escreve em `orgs` (a org de destino mantém nome e configuração), então não há
-/// o que sobrescrever ali.
-fn atualizacoes_da_importacao(
+fn import_updates(
     conn: &Connection,
-    retrato: &RetratoOrg,
-    destino: DestinoImportacao,
-) -> Resultado<AtualizacoesImportacao> {
-    let (org_id, org_criada) = destino_da_importacao(conn, retrato, destino)?;
-    let mut atualizacoes = AtualizacoesImportacao::default();
-    if matches!(destino, DestinoImportacao::DaOrigem) && !org_criada {
-        atualizacoes.registrar("orgs", &retrato.org);
+    snapshot: &OrgSnapshot,
+    target: ImportTarget,
+) -> Resultado<ImportUpdates> {
+    let (org_id, created_org) = import_destination(conn, snapshot, target)?;
+    let mut updates = ImportUpdates::default();
+    if matches!(target, ImportTarget::Origin) && !created_org {
+        updates.register("orgs", &snapshot.org);
     }
-    for tabela in TABELAS_SEMPRE.iter().chain(TABELAS_CONVERSAS.iter()) {
-        let Some(linhas) = retrato.tabelas.get(tabela.nome) else {
+    for table in ALWAYS_TABLES.iter().chain(CONVERSATION_TABLES.iter()) {
+        let Some(rows) = snapshot.tables.get(table.name) else {
             continue;
         };
-        for linha in linhas {
-            if linha_do_arquivo_ja_existe(conn, tabela, org_id, linha)? {
-                atualizacoes.registrar(tabela.nome, linha);
+        for row in rows {
+            if row_exists_in_file(conn, table, org_id, row)? {
+                updates.register(table.name, row);
             }
         }
     }
-    Ok(atualizacoes)
+    Ok(updates)
 }
 
-/// Confere se a linha do arquivo já existe no destino, pela chave da tabela.
-///
-/// Mesma localização que a gravação usa (`filtro_da_chave` + escopo de org), sem escrever. Linha
-/// sem alguma coluna da chave não conta: a gravação recusaria com mensagem própria.
-fn linha_do_arquivo_ja_existe(
+fn row_exists_in_file(
     conn: &Connection,
-    tabela: &Tabela,
+    table: &Table,
     org_id: OrgId,
-    linha: &Value,
+    row: &Value,
 ) -> Resultado<bool> {
-    let objeto = objeto_da_linha(tabela.nome, linha)?;
-    let mut valores = BTreeMap::new();
-    for chave in tabela.chave {
-        let Some(valor) = objeto.get(*chave) else {
+    let object = row_object(table.name, row)?;
+    let mut values = BTreeMap::new();
+    for key in table.key {
+        let Some(value) = object.get(*key) else {
             return Ok(false);
         };
-        valores.insert((*chave).to_owned(), valor_sql(tabela.nome, chave, valor)?);
+        values.insert((*key).to_owned(), sql_value(table.name, key, value)?);
     }
-    linha_existe(conn, tabela, &valores, Some(org_id))
+    row_exists(conn, table, &values, Some(org_id))
 }
 
-/// Identificador legível de uma linha para os exemplos: slug, nome (quando houver) ou id.
-fn identificador_da_linha(linha: &Value) -> String {
-    for campo in ["slug", "name", "id"] {
-        if let Some(valor) = linha.get(campo).and_then(Value::as_str) {
-            return valor.to_owned();
+fn row_identifier(row: &Value) -> String {
+    for field in ["slug", "name", "id"] {
+        if let Some(value) = row.get(field).and_then(Value::as_str) {
+            return value.to_owned();
         }
     }
     "(sem identificador)".to_owned()
 }
 
-fn tabela_conhecida(nome: &str) -> Option<&'static Tabela> {
-    TABELAS_SEMPRE
+fn known_table(name: &str) -> Option<&'static Table> {
+    ALWAYS_TABLES
         .iter()
-        .chain(TABELAS_CONVERSAS.iter())
-        .find(|tabela| tabela.nome == nome)
+        .chain(CONVERSATION_TABLES.iter())
+        .find(|table| table.name == name)
 }
 
-/// Conflitos de chave natural que a importação encontraria no destino (sem gravar nada).
-///
-/// Cada item é legível para o operador: ex. `agente bia (já existe nesta org com outro id)`.
-/// Lista vazia = o retrato pode entrar.
-fn conflitos_das_chaves_naturais(
+fn natural_key_conflicts(
     conn: &Connection,
-    retrato: &RetratoOrg,
+    snapshot: &OrgSnapshot,
     org_id: OrgId,
-    org_criada: bool,
+    created_org: bool,
 ) -> Resultado<Vec<String>> {
-    let mut conflitos: Vec<String> = Vec::new();
-    // Ids são preservados na importação (é o que mantém conversa↔agente e mensagem↔turno). Se o
-    // mesmo id já existe em OUTRA org desta instância, a gravação bateria na chave primária: diz
-    // isso uma vez, em vez de deixar o SQLite reclamar do nome de uma tabela qualquer.
-    //
-    // Também é o caso de "importar o mesmo backup em duas orgs da mesma instância" — que não é
-    // suportado de propósito (o formato preserva os ids); importar na MESMA org é idempotente.
-    'fora: for tabela in TABELAS_SEMPRE.iter().chain(TABELAS_CONVERSAS.iter()) {
-        if tabela.chave != ["id"] {
+    let mut conflicts: Vec<String> = Vec::new();
+    'fora: for table in ALWAYS_TABLES.iter().chain(CONVERSATION_TABLES.iter()) {
+        if table.key != ["id"] {
             continue;
         }
-        for linha in retrato.tabelas.get(tabela.nome).into_iter().flatten() {
-            let Some(id) = linha.get("id").and_then(Value::as_str) else {
+        for row in snapshot.tables.get(table.name).into_iter().flatten() {
+            let Some(id) = row.get("id").and_then(Value::as_str) else {
                 continue;
             };
-            let existe_em_outra: Option<String> = conn
+            let exists_in_other: Option<String> = conn
                 .query_row(
                     &format!(
                         "SELECT org_id FROM {} WHERE id = ?1 AND org_id <> ?2",
-                        tabela.nome
+                        table.name
                     ),
                     rusqlite::params![id, org_id.to_string()],
-                    |linha| linha.get(0),
+                    |row| row.get(0),
                 )
                 .optional()?;
-            if existe_em_outra.is_some() {
-                conflitos.push(format!(
+            if exists_in_other.is_some() {
+                conflicts.push(format!(
                     "`{}` {id} (o id do arquivo já existe nesta instância em outra org)",
-                    tabela.nome
+                    table.name
                 ));
                 break 'fora;
             }
         }
     }
-    for chave in CHAVES_NATURAIS {
-        let Some(linhas) = retrato.tabelas.get(chave.tabela) else {
+    for key in NATURAL_KEYS {
+        let Some(rows) = snapshot.tables.get(key.table) else {
             continue;
         };
-        for linha in linhas {
-            let (Some(valor), Some(id)) = (
-                linha.get(chave.coluna).and_then(Value::as_str),
-                linha.get("id").and_then(Value::as_str),
+        for row in rows {
+            let (Some(value), Some(id)) = (
+                row.get(key.column).and_then(Value::as_str),
+                row.get("id").and_then(Value::as_str),
             ) else {
                 continue;
             };
-            let existente: Option<String> = conn
+            let existing: Option<String> = conn
                 .query_row(
                     &format!(
                         "SELECT id FROM {} WHERE org_id = ?1 AND lower({}) = lower(?2)",
-                        chave.tabela, chave.coluna
+                        key.table, key.column
                     ),
-                    rusqlite::params![org_id.to_string(), valor],
-                    |linha| linha.get(0),
+                    rusqlite::params![org_id.to_string(), value],
+                    |row| row.get(0),
                 )
                 .optional()?;
-            if let Some(existente) = existente
-                && existente != id
+            if let Some(existing) = existing
+                && existing != id
             {
-                conflitos.push(format!(
-                    "{} `{valor}` (já existe nesta org com outro id)",
-                    chave.recurso
+                conflicts.push(format!(
+                    "{} `{value}` (já existe nesta org com outro id)",
+                    key.resource
                 ));
             }
         }
     }
-    if org_criada && let Some(slug) = retrato.org.get("slug").and_then(Value::as_str) {
-        let existente: Option<String> = conn
-            .query_row("SELECT id FROM orgs WHERE slug = ?1", [slug], |linha| {
-                linha.get(0)
+    if created_org && let Some(slug) = snapshot.org.get("slug").and_then(Value::as_str) {
+        let existing: Option<String> = conn
+            .query_row("SELECT id FROM orgs WHERE slug = ?1", [slug], |row| {
+                row.get(0)
             })
             .optional()?;
-        if existente.is_some() {
-            conflitos.push(format!("org `{slug}` (o slug já existe nesta instância)"));
+        if existing.is_some() {
+            conflicts.push(format!("org `{slug}` (o slug já existe nesta instância)"));
         }
     }
-    Ok(conflitos)
+    Ok(conflicts)
 }
 
-fn conferir_chaves_naturais(
+fn check_natural_keys(
     conn: &Connection,
-    retrato: &RetratoOrg,
+    snapshot: &OrgSnapshot,
     org_id: OrgId,
-    org_criada: bool,
+    created_org: bool,
 ) -> Resultado<()> {
-    let conflitos = conflitos_das_chaves_naturais(conn, retrato, org_id, org_criada)?;
-    if conflitos.is_empty() {
+    let conflicts = natural_key_conflicts(conn, snapshot, org_id, created_org)?;
+    if conflicts.is_empty() {
         return Ok(());
     }
-    let mostrados = conflitos.iter().take(5).cloned().collect::<Vec<_>>();
-    let resto = conflitos.len().saturating_sub(mostrados.len());
-    let mut motivo = format!(
+    let shown = conflicts.iter().take(5).cloned().collect::<Vec<_>>();
+    let rest = conflicts.len().saturating_sub(shown.len());
+    let mut reason = format!(
         "a importação foi recusada antes de gravar: {}",
-        mostrados.join("; ")
+        shown.join("; ")
     );
-    if resto > 0 {
-        motivo.push_str(&format!("; e mais {resto}"));
+    if rest > 0 {
+        reason.push_str(&format!("; e mais {rest}"));
     }
-    motivo.push_str(
+    reason.push_str(
         ". Nada foi gravado: renomeie um dos dois lados ou importe numa instância sem esses recursos",
     );
-    Err(ErroStore::Dominio(DomainError::Validation {
+    Err(StoreError::Domain(DomainError::Validation {
         field: "backup",
-        reason: motivo,
+        reason,
     }))
 }
 
-fn gravar_org(conn: &Connection, linha: &Value, org_id: OrgId) -> Resultado<()> {
-    let tabela = Tabela {
-        nome: "orgs",
-        chave: &["id"],
+fn write_org(conn: &Connection, row: &Value, org_id: OrgId) -> Resultado<()> {
+    let table = Table {
+        name: "orgs",
+        key: &["id"],
     };
-    let objeto = objeto_da_linha(tabela.nome, linha)?;
-    let colunas = colunas_da_tabela(conn, tabela.nome)?;
-    gravar_objeto(conn, &tabela, &objeto, Some(org_id), &colunas)?;
+    let object = row_object(table.name, row)?;
+    let columns = table_columns(conn, table.name)?;
+    write_object(conn, &table, &object, Some(org_id), &columns)?;
     Ok(())
 }
 
-fn gravar_linha(
+fn write_row(
     conn: &Connection,
-    tabela: &Tabela,
+    table: &Table,
     org_id: OrgId,
-    linha: &Value,
-    colunas: &BTreeSet<String>,
+    row: &Value,
+    columns: &BTreeSet<String>,
 ) -> Resultado<bool> {
-    let mut objeto = objeto_da_linha(tabela.nome, linha)?;
-    // Campos informativos do arquivo (não são colunas): a marca de segredo e os nomes dos campos.
-    if tabela.nome == "integrations" {
-        objeto.remove("tem_segredo");
-        objeto.remove("segredos_campos");
+    let mut object = row_object(table.name, row)?;
+    if table.name == "integrations" {
+        object.remove("tem_segredo");
+        object.remove("segredos_campos");
     }
-    objeto.insert("org_id".to_owned(), Value::String(org_id.to_string()));
-    if tabela.nome == "file_library" || tabela.nome == "attachments" {
-        let sha = objeto
+    object.insert("org_id".to_owned(), Value::String(org_id.to_string()));
+    if table.name == "file_library" || table.name == "attachments" {
+        let sha = object
             .get("sha256")
             .and_then(Value::as_str)
             .ok_or_else(|| {
-                ErroStore::Dominio(DomainError::Validation {
+                StoreError::Domain(DomainError::Validation {
                     field: "backup",
-                    reason: format!("linha de `{}` sem sha256", tabela.nome),
+                    reason: format!("linha de `{}` sem sha256", table.name),
                 })
             })?;
-        objeto.insert(
+        object.insert(
             "blob_path".to_owned(),
             Value::String(format!("{org_id}/{sha}")),
         );
     }
-    if tabela.nome == "fichas"
-        && let Some(conversa) = objeto.get("conversation_id").and_then(Value::as_str)
+    if table.name == "fichas"
+        && let Some(conversa) = object.get("conversation_id").and_then(Value::as_str)
     {
-        let existe: bool = conn.query_row(
+        let exists: bool = conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM conversations WHERE org_id = ?1 AND id = ?2)",
             rusqlite::params![org_id.to_string(), conversa],
             |row| row.get(0),
         )?;
-        if !existe {
-            return Err(ErroStore::Dominio(DomainError::Validation {
+        if !exists {
+            return Err(StoreError::Domain(DomainError::Validation {
                 field: "backup",
                 reason: "a conversa da Ficha não pertence à organização de destino".to_owned(),
             }));
         }
     }
-    if tabela.nome == "fluxo_revisoes" {
-        let id = objeto.get("id").and_then(Value::as_str).unwrap_or("");
-        let mut consulta =
+    if table.name == "fluxo_revisoes" {
+        let id = object.get("id").and_then(Value::as_str).unwrap_or("");
+        let mut query =
             conn.prepare("SELECT * FROM fluxo_revisoes WHERE org_id = ?1 AND id = ?2")?;
-        let nomes = nomes_das_colunas(&consulta);
-        let mut linhas = consulta.query(rusqlite::params![org_id.to_string(), id])?;
-        if let Some(linha) = linhas.next()? {
-            let existente = linha_json(tabela.nome, &nomes, linha)?;
-            if existente == Value::Object(objeto.clone()) {
+        let names = column_names(&query);
+        let mut rows = query.query(rusqlite::params![org_id.to_string(), id])?;
+        if let Some(row) = rows.next()? {
+            let existing = row_json(table.name, &names, row)?;
+            if existing == Value::Object(object.clone()) {
                 return Ok(true);
             }
-            return Err(ErroStore::Dominio(DomainError::Validation {
+            return Err(StoreError::Domain(DomainError::Validation {
                 field: "backup",
                 reason: "uma revisão publicada existente é imutável e difere do arquivo".to_owned(),
             }));
         }
     }
-    gravar_objeto(conn, tabela, &objeto, Some(org_id), colunas)
+    write_object(conn, table, &object, Some(org_id), columns)
 }
 
-fn objeto_da_linha(tabela: &str, linha: &Value) -> Resultado<Map<String, Value>> {
-    linha.as_object().cloned().ok_or_else(|| {
-        ErroStore::Dominio(DomainError::Validation {
+fn row_object(table: &str, row: &Value) -> Resultado<Map<String, Value>> {
+    row.as_object().cloned().ok_or_else(|| {
+        StoreError::Domain(DomainError::Validation {
             field: "backup",
-            reason: format!("uma linha de `{tabela}` no arquivo não é um objeto JSON"),
+            reason: format!("uma linha de `{table}` no arquivo não é um objeto JSON"),
         })
     })
 }
 
-fn gravar_objeto(
+fn write_object(
     conn: &Connection,
-    tabela: &Tabela,
-    objeto: &Map<String, Value>,
-    escopo: Option<OrgId>,
-    colunas: &BTreeSet<String>,
+    table: &Table,
+    object: &Map<String, Value>,
+    scope: Option<OrgId>,
+    columns: &BTreeSet<String>,
 ) -> Resultado<bool> {
-    // A org entra no filtro de todas as tabelas de negócio (a própria `orgs` usa o id como chave).
-    let escopo = match tabela.nome {
+    let scope = match table.name {
         "orgs" => None,
-        _ => Some(escopo.ok_or_else(|| {
-            ErroStore::Interno(format!("tabela `{}` sem escopo de org", tabela.nome))
+        _ => Some(scope.ok_or_else(|| {
+            StoreError::Internal(format!("tabela `{}` sem escopo de org", table.name))
         })?),
     };
-    let mut valores: BTreeMap<String, SqlValue> = BTreeMap::new();
-    for (nome, valor) in objeto {
-        if !colunas.contains(nome.as_str()) {
-            return Err(ErroStore::Dominio(DomainError::Validation {
+    let mut values: BTreeMap<String, SqlValue> = BTreeMap::new();
+    for (name, value) in object {
+        if !columns.contains(name.as_str()) {
+            return Err(StoreError::Domain(DomainError::Validation {
                 field: "backup",
                 reason: format!(
-                    "o arquivo traz a coluna `{nome}` em `{}`, que não existe nesta versão do \
+                    "o arquivo traz a coluna `{name}` em `{}`, que não existe nesta versão do \
                      esquema (arquivo de versão mais nova?)",
-                    tabela.nome
+                    table.name
                 ),
             }));
         }
-        valores.insert(nome.clone(), valor_sql(tabela.nome, nome, valor)?);
+        values.insert(name.clone(), sql_value(table.name, name, value)?);
     }
-    for chave in tabela.chave {
-        if !valores.contains_key(*chave) {
-            return Err(ErroStore::Dominio(DomainError::Validation {
+    for key in table.key {
+        if !values.contains_key(*key) {
+            return Err(StoreError::Domain(DomainError::Validation {
                 field: "backup",
-                reason: format!("linha de `{}` sem a chave `{chave}`", tabela.nome),
+                reason: format!("linha de `{}` sem a chave `{key}`", table.name),
             }));
         }
     }
 
-    let chaves: BTreeSet<&str> = tabela.chave.iter().copied().collect();
-    if linha_existe(conn, tabela, &valores, escopo)? {
-        atualizar_linha(conn, tabela, &valores, &chaves, escopo)?;
+    let keys: BTreeSet<&str> = table.key.iter().copied().collect();
+    if row_exists(conn, table, &values, scope)? {
+        update_row(conn, table, &values, &keys, scope)?;
         Ok(true)
     } else {
-        inserir_linha(conn, tabela, &valores)?;
+        insert_row(conn, table, &values)?;
         Ok(false)
     }
 }
 
-fn valor_sql(tabela: &str, coluna: &str, valor: &Value) -> Resultado<SqlValue> {
-    Ok(match valor {
+fn sql_value(table: &str, column: &str, value: &Value) -> Resultado<SqlValue> {
+    Ok(match value {
         Value::Null => SqlValue::Null,
-        Value::Bool(booleano) => SqlValue::Integer(i64::from(*booleano)),
+        Value::Bool(boolean) => SqlValue::Integer(i64::from(*boolean)),
         Value::Number(numero) => {
-            if let Some(inteiro) = numero.as_i64() {
-                SqlValue::Integer(inteiro)
+            if let Some(integer) = numero.as_i64() {
+                SqlValue::Integer(integer)
             } else if let Some(real) = numero.as_f64() {
                 SqlValue::Real(real)
             } else {
-                return Err(ErroStore::Dominio(DomainError::Validation {
+                return Err(StoreError::Domain(DomainError::Validation {
                     field: "backup",
-                    reason: format!("o valor de `{tabela}.{coluna}` não é um número válido"),
+                    reason: format!("o valor de `{table}.{column}` não é um número válido"),
                 }));
             }
         }
         Value::String(texto) => SqlValue::Text(texto.clone()),
         Value::Array(_) | Value::Object(_) => {
-            return Err(ErroStore::Dominio(DomainError::Validation {
+            return Err(StoreError::Domain(DomainError::Validation {
                 field: "backup",
                 reason: format!(
-                    "o valor de `{tabela}.{coluna}` é um objeto ou lista; o banco espera um valor \
+                    "o valor de `{table}.{column}` é um objeto ou lista; o banco espera um valor \
                      simples"
                 ),
             }));
@@ -1023,151 +880,149 @@ fn valor_sql(tabela: &str, coluna: &str, valor: &Value) -> Resultado<SqlValue> {
     })
 }
 
-fn colunas_da_tabela(conn: &Connection, tabela: &str) -> Resultado<BTreeSet<String>> {
-    let mut consulta = conn.prepare(&format!("PRAGMA table_info({tabela})"))?;
-    let mut linhas = consulta.query([])?;
-    let mut nomes = BTreeSet::new();
-    while let Some(linha) = linhas.next()? {
-        let nome: String = linha.get(1)?;
-        nomes.insert(nome);
+fn table_columns(conn: &Connection, table: &str) -> Resultado<BTreeSet<String>> {
+    let mut query = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let mut rows = query.query([])?;
+    let mut names = BTreeSet::new();
+    while let Some(row) = rows.next()? {
+        let name: String = row.get(1)?;
+        names.insert(name);
     }
-    Ok(nomes)
+    Ok(names)
 }
 
-fn linha_existe(
+fn row_exists(
     conn: &Connection,
-    tabela: &Tabela,
-    valores: &BTreeMap<String, SqlValue>,
-    escopo: Option<OrgId>,
+    table: &Table,
+    values: &BTreeMap<String, SqlValue>,
+    scope: Option<OrgId>,
 ) -> Resultado<bool> {
-    let (filtro, parametros) = filtro_da_chave(tabela, valores, escopo, 0);
-    let existe: Option<i64> = conn
+    let (filter, parameters) = key_filter(table, values, scope, 0);
+    let exists: Option<i64> = conn
         .query_row(
-            &format!("SELECT 1 FROM {} WHERE {filtro}", tabela.nome),
-            params_from_iter(parametros),
-            |linha| linha.get(0),
+            &format!("SELECT 1 FROM {} WHERE {filter}", table.name),
+            params_from_iter(parameters),
+            |row| row.get(0),
         )
         .optional()?;
-    Ok(existe.is_some())
+    Ok(exists.is_some())
 }
 
-/// Monta `WHERE ...` com os parâmetros posicionais a partir de `inicio` (0 = `?1`).
-fn filtro_da_chave(
-    tabela: &Tabela,
-    valores: &BTreeMap<String, SqlValue>,
-    escopo: Option<OrgId>,
-    inicio: usize,
+fn key_filter(
+    table: &Table,
+    values: &BTreeMap<String, SqlValue>,
+    scope: Option<OrgId>,
+    start_of: usize,
 ) -> (String, Vec<SqlValue>) {
-    let mut filtro = Vec::new();
-    let mut parametros = Vec::new();
-    let mut posicao = inicio;
-    if let Some(org) = escopo {
-        posicao += 1;
-        filtro.push(format!("org_id = ?{posicao}"));
-        parametros.push(SqlValue::Text(org.to_string()));
+    let mut filter = Vec::new();
+    let mut parameters = Vec::new();
+    let mut position = start_of;
+    if let Some(org) = scope {
+        position += 1;
+        filter.push(format!("org_id = ?{position}"));
+        parameters.push(SqlValue::Text(org.to_string()));
     }
-    for chave in tabela.chave {
-        posicao += 1;
-        filtro.push(format!("{chave} = ?{posicao}"));
-        parametros.push(valores.get(*chave).cloned().unwrap_or(SqlValue::Null));
+    for key in table.key {
+        position += 1;
+        filter.push(format!("{key} = ?{position}"));
+        parameters.push(values.get(*key).cloned().unwrap_or(SqlValue::Null));
     }
-    (filtro.join(" AND "), parametros)
+    (filter.join(" AND "), parameters)
 }
 
-fn inserir_linha(
+fn insert_row(
     conn: &Connection,
-    tabela: &Tabela,
-    valores: &BTreeMap<String, SqlValue>,
+    table: &Table,
+    values: &BTreeMap<String, SqlValue>,
 ) -> Resultado<()> {
-    let colunas: Vec<&str> = valores.keys().map(String::as_str).collect();
-    let marcadores: Vec<String> = (1..=colunas.len()).map(|i| format!("?{i}")).collect();
+    let columns: Vec<&str> = values.keys().map(String::as_str).collect();
+    let markers: Vec<String> = (1..=columns.len()).map(|i| format!("?{i}")).collect();
     let sql = format!(
         "INSERT INTO {} ({}) VALUES ({})",
-        tabela.nome,
-        colunas.join(", "),
-        marcadores.join(", ")
+        table.name,
+        columns.join(", "),
+        markers.join(", ")
     );
-    let parametros: Vec<SqlValue> = valores.values().cloned().collect();
-    conn.execute(&sql, params_from_iter(parametros))
-        .map_err(|erro| ErroStore::da_escrita(tabela.nome, erro))?;
+    let parameters: Vec<SqlValue> = values.values().cloned().collect();
+    conn.execute(&sql, params_from_iter(parameters))
+        .map_err(|error| StoreError::from_write(table.name, error))?;
     Ok(())
 }
 
-fn atualizar_linha(
+fn update_row(
     conn: &Connection,
-    tabela: &Tabela,
-    valores: &BTreeMap<String, SqlValue>,
-    chaves: &BTreeSet<&str>,
-    escopo: Option<OrgId>,
+    table: &Table,
+    values: &BTreeMap<String, SqlValue>,
+    keys: &BTreeSet<&str>,
+    scope: Option<OrgId>,
 ) -> Resultado<()> {
-    let mut definicoes = Vec::new();
-    let mut parametros: Vec<SqlValue> = Vec::new();
-    let mut posicao = 0;
-    for (nome, valor) in valores {
-        if chaves.contains(nome.as_str()) || nome == "org_id" {
+    let mut definitions = Vec::new();
+    let mut parameters: Vec<SqlValue> = Vec::new();
+    let mut position = 0;
+    for (name, value) in values {
+        if keys.contains(name.as_str()) || name == "org_id" {
             continue;
         }
-        posicao += 1;
-        definicoes.push(format!("{nome} = ?{posicao}"));
-        parametros.push(valor.clone());
+        position += 1;
+        definitions.push(format!("{name} = ?{position}"));
+        parameters.push(value.clone());
     }
-    if definicoes.is_empty() {
-        // Linha que só tem as colunas da chave: já está no estado do arquivo.
+    if definitions.is_empty() {
         return Ok(());
     }
-    let (filtro, parametros_filtro) = filtro_da_chave(tabela, valores, escopo, posicao);
-    parametros.extend(parametros_filtro);
+    let (filter, filter_parameters) = key_filter(table, values, scope, position);
+    parameters.extend(filter_parameters);
     let sql = format!(
-        "UPDATE {} SET {} WHERE {filtro}",
-        tabela.nome,
-        definicoes.join(", ")
+        "UPDATE {} SET {} WHERE {filter}",
+        table.name,
+        definitions.join(", ")
     );
-    conn.execute(&sql, params_from_iter(parametros))
-        .map_err(|erro| ErroStore::da_escrita(tabela.nome, erro))?;
+    conn.execute(&sql, params_from_iter(parameters))
+        .map_err(|error| StoreError::from_write(table.name, error))?;
     Ok(())
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use super::*;
-    use crate::{NovaCategoria, NovaOrg, NovoAgente, Pagina};
+    use crate::{NewAgent, NewCategory, NewOrg, Page};
 
-    fn banco() -> Store {
-        let pasta = std::env::temp_dir().join(format!(
+    fn database() -> Store {
+        let folder = std::env::temp_dir().join(format!(
             "poph-backup-store-{}",
             uuid::Uuid::now_v7().simple()
         ));
-        Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco")
+        Store::open_at(&folder.join("harness.db"), &folder.join("rag.db")).expect("abre o banco")
     }
 
-    fn org_com_dados(store: &Store, slug: &str) -> OrgId {
+    fn org_with_data(store: &Store, slug: &str) -> OrgId {
         let org = store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: format!("Org {slug}"),
+            .orgs()
+            .criar(NewOrg {
+                name: format!("Org {slug}"),
                 slug: slug.to_owned(),
                 config_json: "{\"retencao\":{\"dias\":7}}".to_owned(),
             })
             .expect("cria a org")
             .id;
         store
-            .agentes()
+            .agents()
             .criar(
                 org,
-                NovoAgente {
-                    nome: "Bia".to_owned(),
+                NewAgent {
+                    name: "Bia".to_owned(),
                     slug: "bia".to_owned(),
-                    ..NovoAgente::default()
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente");
         store
-            .categorias()
+            .categories()
             .criar(
                 org,
-                NovaCategoria {
-                    nome: "Pragas".to_owned(),
-                    descricao: "urbanas".to_owned(),
+                NewCategory {
+                    name: "Pragas".to_owned(),
+                    description: "urbanas".to_owned(),
                 },
             )
             .expect("cria a categoria");
@@ -1175,129 +1030,126 @@ mod testes {
     }
 
     #[test]
-    fn retrato_traz_a_org_e_nao_traz_outra_org() {
-        let store = banco();
-        let org_a = org_com_dados(&store, "org-a");
-        let org_b = org_com_dados(&store, "org-b");
-        let retrato = store.retrato_da_org(org_a, true).expect("retrato");
-        assert_eq!(retrato.org["id"], Value::String(org_a.to_string()));
-        assert_eq!(retrato.tabelas["agents"].len(), 1);
-        assert_eq!(retrato.tabelas["product_categories"].len(), 1);
-        // A org B tem os mesmos recursos, mas nada dela pode aparecer no retrato de A.
-        for linhas in retrato.tabelas.values() {
-            for linha in linhas {
-                assert_eq!(linha["org_id"], Value::String(org_a.to_string()));
+    fn snapshot_carries_org_and_no_other_org() {
+        let store = database();
+        let org_a = org_with_data(&store, "org-a");
+        let org_b = org_with_data(&store, "org-b");
+        let snapshot = store.org_snapshot(org_a, true).expect("retrato");
+        assert_eq!(snapshot.org["id"], Value::String(org_a.to_string()));
+        assert_eq!(snapshot.tables["agents"].len(), 1);
+        assert_eq!(snapshot.tables["product_categories"].len(), 1);
+        for rows in snapshot.tables.values() {
+            for row in rows {
+                assert_eq!(row["org_id"], Value::String(org_a.to_string()));
             }
         }
-        // Sem conversas, as tabelas do histórico não entram.
-        let sem_conversas = store.retrato_da_org(org_a, false).expect("retrato");
-        assert!(!sem_conversas.tabelas.contains_key("conversations"));
-        assert!(retrato.tabelas.contains_key("conversations"));
+        let without_conversations = store.org_snapshot(org_a, false).expect("retrato");
+        assert!(!without_conversations.tables.contains_key("conversations"));
+        assert!(snapshot.tables.contains_key("conversations"));
         let _ = org_b;
     }
 
     #[test]
-    fn importar_duas_vezes_nao_duplica() {
-        let store = banco();
-        let origem = org_com_dados(&store, "origem");
-        let retrato = store.retrato_da_org(origem, true).expect("retrato");
-        let primeiro = store
-            .importar_retrato(retrato.clone(), DestinoImportacao::DaOrigem)
+    fn importing_twice_does_not_duplicate() {
+        let store = database();
+        let origin = org_with_data(&store, "origem");
+        let snapshot = store.org_snapshot(origin, true).expect("retrato");
+        let first = store
+            .import_snapshot(snapshot.clone(), ImportTarget::Origin)
             .expect("primeira importação");
-        assert_eq!(primeiro.segredos_a_redigitar, 0);
-        assert!(!primeiro.org_criada);
-        let segundo = store
-            .importar_retrato(retrato, DestinoImportacao::DaOrigem)
+        assert_eq!(first.secrets_to_reenter, 0);
+        assert!(!first.created_org);
+        let second = store
+            .import_snapshot(snapshot, ImportTarget::Origin)
             .expect("segunda importação");
-        assert!(segundo.tabelas.values().all(|t| t.inseridas == 0));
-        assert_eq!(segundo.total(), primeiro.total());
-        let agentes = store.agentes().listar(origem, Pagina::default()).unwrap();
-        assert_eq!(agentes.len(), 1);
+        assert!(second.tables.values().all(|t| t.inserted == 0));
+        assert_eq!(second.total(), first.total());
+        let agents = store.agents().listar(origin, Page::default()).unwrap();
+        assert_eq!(agents.len(), 1);
     }
 
     #[test]
-    fn importar_numa_instancia_limpa_cria_a_org_e_preserva_os_ids() {
-        let origem = banco();
-        let org = org_com_dados(&origem, "origem");
-        let agente = origem.agentes().listar(org, Pagina::default()).unwrap()[0].id;
-        let retrato = origem.retrato_da_org(org, true).expect("retrato");
+    fn import_into_clean_instance_creates_org_and_preserves_ids() {
+        let origin = database();
+        let org = org_with_data(&origin, "origem");
+        let agente = origin.agents().listar(org, Page::default()).unwrap()[0].id;
+        let snapshot = origin.org_snapshot(org, true).expect("retrato");
 
-        let destino = banco();
-        let relatorio = destino
-            .importar_retrato(retrato, DestinoImportacao::DaOrigem)
+        let target = database();
+        let report = target
+            .import_snapshot(snapshot, ImportTarget::Origin)
             .expect("importa");
-        assert!(relatorio.org_criada);
-        assert_eq!(relatorio.org, org);
-        let agente_importado = destino.agentes().obter(org, agente).expect("agente");
-        assert_eq!(agente_importado.slug, "bia");
-        let org_importada = destino.orgaos().obter(org).expect("org");
-        assert_eq!(org_importada.config_json, "{\"retencao\":{\"dias\":7}}");
+        assert!(report.created_org);
+        assert_eq!(report.org, org);
+        let imported_agent = target.agents().get(org, agente).expect("agente");
+        assert_eq!(imported_agent.slug, "bia");
+        let imported_org = target.orgs().get(org).expect("org");
+        assert_eq!(imported_org.config_json, "{\"retencao\":{\"dias\":7}}");
     }
 
     #[test]
-    fn importar_numa_org_existente_nao_toca_a_linha_da_org() {
-        let origem = banco();
-        let org_origem = org_com_dados(&origem, "origem");
-        let retrato = origem.retrato_da_org(org_origem, true).expect("retrato");
+    fn import_into_existing_org_does_not_touch_the_org_row() {
+        let origin = database();
+        let org_origem = org_with_data(&origin, "origem");
+        let snapshot = origin.org_snapshot(org_origem, true).expect("retrato");
 
-        let destino = banco();
-        let alvo = destino
-            .orgaos()
-            .criar(NovaOrg {
-                nome: "Alvo".to_owned(),
+        let destination = database();
+        let target = destination
+            .orgs()
+            .criar(NewOrg {
+                name: "Alvo".to_owned(),
                 slug: "alvo".to_owned(),
                 config_json: "{}".to_owned(),
             })
             .expect("cria a org alvo")
             .id;
-        let relatorio = destino
-            .importar_retrato(retrato, DestinoImportacao::Existente(alvo))
+        let report = destination
+            .import_snapshot(snapshot, ImportTarget::Existing(target))
             .expect("importa");
-        assert!(!relatorio.org_criada);
-        assert_eq!(relatorio.org, alvo);
-        let org_alvo = destino.orgaos().obter(alvo).expect("org alvo");
-        assert_eq!(org_alvo.nome, "Alvo");
-        assert_eq!(org_alvo.slug, "alvo");
+        assert!(!report.created_org);
+        assert_eq!(report.org, target);
+        let target_org = destination.orgs().get(target).expect("org alvo");
+        assert_eq!(target_org.name, "Alvo");
+        assert_eq!(target_org.slug, "alvo");
     }
 
-    /// Cria uma conversa com o nome do cliente já gravado (MX-32).
-    fn conversa_com_nome(store: &Store, org: OrgId, nome: &str) -> crate::Conversa {
-        let agente = store.agentes().listar(org, Pagina::default()).unwrap()[0].id;
+    fn conversation_with_name(store: &Store, org: OrgId, name: &str) -> crate::Conversa {
+        let agente = store.agents().listar(org, Page::default()).unwrap()[0].id;
         let conversa = store
             .conversas()
             .criar(
                 org,
-                crate::NovaConversa {
+                crate::NewConversation {
                     agent_id: agente,
                     integration_id: None,
                     canal: "whatsapp".to_owned(),
                     peer_externo: Some("5511999990000".to_owned()),
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("cria a conversa");
         store
             .conversas()
-            .definir_nome_cliente(org, conversa.id, nome)
+            .set_customer_name(org, conversa.id, name)
             .expect("grava o nome do cliente");
         conversa
     }
 
     #[test]
-    fn backup_fluxos_fichas_e_revisoes_preserva_estado() {
-        let origem = banco();
-        let org = org_com_dados(&origem, "origem");
-        let conversa = conversa_com_nome(&origem, org, "Cliente fictício");
-        let agente = origem.agentes().listar(org, Pagina::default()).unwrap()[0].id;
-        let ficha = origem.retrato_da_org(org, true).unwrap().tabelas["fichas"][0]["id"]
+    fn backup_of_flows_records_and_revisions_preserves_state() {
+        let origin = database();
+        let org = org_with_data(&origin, "origem");
+        let conversa = conversation_with_name(&origin, org, "Cliente fictício");
+        let agente = origin.agents().listar(org, Page::default()).unwrap()[0].id;
+        let ficha = origin.org_snapshot(org, true).unwrap().tables["fichas"][0]["id"]
             .as_str()
             .unwrap()
             .to_owned();
-        origem.escrita(move |conn| {
+        origin.write(move |conn| {
             let org = org.to_string();
             let agente = agente.to_string();
-            for (id, slug, atual) in [("flow-a", "first", 2), ("flow-b", "second", 1)] {
-                conn.execute("INSERT INTO fluxos (id, org_id, slug, nome, revisao_atual) VALUES (?1, ?2, ?3, ?3, ?4)", rusqlite::params![id, org, slug, atual])?;
+            for (id, slug, current) in [("flow-a", "first", 2), ("flow-b", "second", 1)] {
+                conn.execute("INSERT INTO fluxos (id, org_id, slug, nome, revisao_atual) VALUES (?1, ?2, ?3, ?3, ?4)", rusqlite::params![id, org, slug, current])?;
                 conn.execute("INSERT INTO agente_fluxos (org_id, agent_id, fluxo_id, liberado_em) VALUES (?1, ?2, ?3, 1)", rusqlite::params![org, agente, id])?;
             }
             for (id, fluxo, numero) in [("rev-a1", "flow-a", 1), ("rev-a2", "flow-a", 2), ("rev-b1", "flow-b", 1)] {
@@ -1308,71 +1160,71 @@ mod testes {
             conn.execute("INSERT INTO fluxo_efeitos (id, org_id, ficha_id, execucao_id, chave, tipo, created_at) VALUES ('efeito', ?1, ?2, 'exec', 'um', 'mensagem_ao_cliente', 1)", rusqlite::params![org, ficha])?;
             Ok(())
         }).unwrap();
-        let retrato = origem.retrato_da_org(org, true).unwrap();
-        assert_eq!(retrato.tabelas["fluxos"].len(), 2);
-        assert_eq!(retrato.tabelas["fluxo_revisoes"].len(), 3);
-        assert_eq!(retrato.tabelas["agente_fluxos"].len(), 2);
-        for nome in [
+        let snapshot = origin.org_snapshot(org, true).unwrap();
+        assert_eq!(snapshot.tables["fluxos"].len(), 2);
+        assert_eq!(snapshot.tables["fluxo_revisoes"].len(), 3);
+        assert_eq!(snapshot.tables["agente_fluxos"].len(), 2);
+        for name in [
             "fichas",
             "ficha_eventos",
             "fluxo_execucoes",
             "fluxo_execucao_etapas",
             "fluxo_efeitos",
         ] {
-            assert!(!retrato.tabelas[nome].is_empty(), "{nome}");
+            assert!(!snapshot.tables[name].is_empty(), "{name}");
         }
         assert_eq!(
-            retrato.tabelas["fichas"][0]["conversation_id"],
+            snapshot.tables["fichas"][0]["conversation_id"],
             conversa.id.to_string()
         );
-        let destino = banco();
-        destino
-            .importar_retrato_protegido(retrato.clone(), DestinoImportacao::DaOrigem, false)
+        let target = database();
+        target
+            .import_protected_snapshot(snapshot.clone(), ImportTarget::Origin, false)
             .unwrap()
             .unwrap();
         assert_eq!(
-            destino.retrato_da_org(org, true).unwrap().tabelas,
-            retrato.tabelas
+            target.org_snapshot(org, true).unwrap().tables,
+            snapshot.tables
         );
         assert!(
-            destino
-                .importar_retrato_protegido(retrato.clone(), DestinoImportacao::DaOrigem, false)
+            target
+                .import_protected_snapshot(snapshot.clone(), ImportTarget::Origin, false)
                 .unwrap()
                 .is_err()
         );
-        destino
-            .importar_retrato_protegido(retrato.clone(), DestinoImportacao::DaOrigem, true)
+        target
+            .import_protected_snapshot(snapshot.clone(), ImportTarget::Origin, true)
             .unwrap()
             .unwrap();
-        let mut adulterado = retrato.clone();
-        adulterado.tabelas.get_mut("fluxo_revisoes").unwrap()[0]["fonte"] = Value::from("alterada");
+        let mut adulterado = snapshot.clone();
+        adulterado.tables.get_mut("fluxo_revisoes").unwrap()[0]["fonte"] = Value::from("alterada");
         assert!(
-            destino
-                .importar_retrato_protegido(adulterado, DestinoImportacao::DaOrigem, true)
+            target
+                .import_protected_snapshot(adulterado, ImportTarget::Origin, true)
                 .is_err()
         );
         assert_eq!(
-            destino.retrato_da_org(org, true).unwrap().tabelas,
-            retrato.tabelas
+            target.org_snapshot(org, true).unwrap().tables,
+            snapshot.tables
         );
-        let mut incompleto = retrato.clone();
-        incompleto.tabelas.get_mut("fichas").unwrap().clear();
-        let banco_incompleto = banco();
+        let mut incompleto = snapshot.clone();
+        incompleto.tables.get_mut("fichas").unwrap().clear();
+        let incomplete_database = database();
         assert!(
-            banco_incompleto
-                .importar_retrato(incompleto, DestinoImportacao::DaOrigem)
+            incomplete_database
+                .import_snapshot(incompleto, ImportTarget::Origin)
                 .is_err()
         );
-        assert!(banco_incompleto.orgaos().obter(org).is_err());
-        let sem = origem.retrato_da_org(org, false).unwrap();
-        assert!(!sem.tabelas.contains_key("fichas"));
-        let vazio = banco();
+        assert!(incomplete_database.orgs().get(org).is_err());
+        let without = origin.org_snapshot(org, false).unwrap();
+        assert!(!without.tables.contains_key("fichas"));
+        let vazio = database();
         vazio
-            .importar_retrato(sem, DestinoImportacao::DaOrigem)
+            .import_snapshot(without, ImportTarget::Origin)
             .unwrap();
-        assert!(vazio.retrato_da_org(org, true).unwrap().tabelas["fichas"].is_empty());
-        let mut antigo = retrato.clone();
-        for nome in [
+        assert!(vazio.org_snapshot(org, true).unwrap().tables["fichas"].is_empty());
+        let mut old = snapshot.clone();
+        for name in [
             "fluxos",
             "fluxo_revisoes",
             "agente_fluxos",
@@ -1382,21 +1234,20 @@ mod testes {
             "fluxo_execucao_etapas",
             "fluxo_efeitos",
         ] {
-            antigo.tabelas.remove(nome);
+            old.tables.remove(name);
         }
-        let documento =
-            crate::backup_documento::documento(&antigo, true, 0, &BTreeMap::new(), &|_| None);
-        let mut documento = documento;
-        documento["versao_formato"] = Value::from(1);
-        let antigo = crate::backup_documento::retrato_do_documento(&documento).unwrap();
-        let destino_antigo = banco();
-        destino_antigo
-            .importar_retrato(antigo, DestinoImportacao::DaOrigem)
+        let document = crate::backup_document::document(&old, true, 0, &BTreeMap::new(), &|_| None);
+        let mut document = document;
+        document["versao_formato"] = Value::from(1);
+        let old = crate::backup_document::document_snapshot(&document).unwrap();
+        let old_target = database();
+        old_target
+            .import_snapshot(old, ImportTarget::Origin)
             .unwrap();
-        let fichas = destino_antigo
-            .retrato_da_org(org, true)
+        let fichas = old_target
+            .org_snapshot(org, true)
             .unwrap()
-            .tabelas
+            .tables
             .remove("fichas")
             .unwrap();
         assert_eq!(fichas.len(), 1);
@@ -1404,118 +1255,113 @@ mod testes {
     }
 
     #[test]
-    fn backup_com_conversas_leva_o_nome_do_cliente() {
-        let origem = banco();
-        let org = org_com_dados(&origem, "origem");
-        let conversa = conversa_com_nome(&origem, org, "Ana Cliente");
-        let retrato = origem.retrato_da_org(org, true).expect("retrato");
+    fn backup_with_conversations_carries_the_customer_name() {
+        let origin = database();
+        let org = org_with_data(&origin, "origem");
+        let conversa = conversation_with_name(&origin, org, "Ana Cliente");
+        let snapshot = origin.org_snapshot(org, true).expect("retrato");
         assert_eq!(
-            retrato.tabelas["conversations"][0]["client_name"],
+            snapshot.tables["conversations"][0]["client_name"],
             Value::String("Ana Cliente".to_owned())
         );
 
-        let destino = banco();
-        destino
-            .importar_retrato(retrato, DestinoImportacao::DaOrigem)
+        let target = database();
+        target
+            .import_snapshot(snapshot, ImportTarget::Origin)
             .expect("importa");
-        let importada = destino
+        let imported = target
             .conversas()
-            .obter(org, conversa.id)
+            .get(org, conversa.id)
             .expect("conversa importada");
-        assert_eq!(importada.nome_cliente.as_deref(), Some("Ana Cliente"));
+        assert_eq!(imported.customer_name.as_deref(), Some("Ana Cliente"));
     }
 
     #[test]
-    fn backup_antigo_sem_a_coluna_importa_e_deixa_o_nome_nulo() {
-        let origem = banco();
-        let org = org_com_dados(&origem, "origem");
-        let conversa = conversa_com_nome(&origem, org, "Ana Cliente");
-        let mut retrato = origem.retrato_da_org(org, true).expect("retrato");
-        // Arquivo gerado antes de a coluna existir: a linha não traz `client_name`.
-        for linha in retrato.tabelas.get_mut("conversations").expect("conversas") {
-            linha.as_object_mut().expect("objeto").remove("client_name");
+    fn old_backup_without_the_column_imports_and_leaves_the_name_null() {
+        let origin = database();
+        let org = org_with_data(&origin, "origem");
+        let conversa = conversation_with_name(&origin, org, "Ana Cliente");
+        let mut snapshot = origin.org_snapshot(org, true).expect("retrato");
+        for row in snapshot.tables.get_mut("conversations").expect("conversas") {
+            row.as_object_mut().expect("objeto").remove("client_name");
         }
 
-        let destino = banco();
-        destino
-            .importar_retrato(retrato, DestinoImportacao::DaOrigem)
+        let target = database();
+        target
+            .import_snapshot(snapshot, ImportTarget::Origin)
             .expect("importa o backup antigo");
-        let importada = destino
+        let imported = target
             .conversas()
-            .obter(org, conversa.id)
+            .get(org, conversa.id)
             .expect("conversa importada");
-        assert_eq!(importada.nome_cliente, None);
+        assert_eq!(imported.customer_name, None);
     }
 
     #[test]
-    fn backup_antigo_nao_apaga_o_nome_ja_gravado_no_destino() {
-        let origem = banco();
-        let org = org_com_dados(&origem, "origem");
-        let conversa = conversa_com_nome(&origem, org, "Ana Cliente");
-        let retrato_novo = origem.retrato_da_org(org, true).expect("retrato");
-        let mut retrato_antigo = retrato_novo.clone();
-        for linha in retrato_antigo
-            .tabelas
+    fn old_backup_does_not_erase_the_name_already_stored_at_the_target() {
+        let origin = database();
+        let org = org_with_data(&origin, "origem");
+        let conversa = conversation_with_name(&origin, org, "Ana Cliente");
+        let new_snapshot = origin.org_snapshot(org, true).expect("retrato");
+        let mut old_snapshot = new_snapshot.clone();
+        for row in old_snapshot
+            .tables
             .get_mut("conversations")
             .expect("conversas")
         {
-            linha.as_object_mut().expect("objeto").remove("client_name");
+            row.as_object_mut().expect("objeto").remove("client_name");
         }
 
-        let destino = banco();
-        destino
-            .importar_retrato(retrato_novo, DestinoImportacao::DaOrigem)
+        let target = database();
+        target
+            .import_snapshot(new_snapshot, ImportTarget::Origin)
             .expect("primeira importação, com o nome");
-        destino
-            .importar_retrato(retrato_antigo, DestinoImportacao::DaOrigem)
+        target
+            .import_snapshot(old_snapshot, ImportTarget::Origin)
             .expect("reimporta o backup antigo");
-        let depois = destino
-            .conversas()
-            .obter(org, conversa.id)
-            .expect("conversa");
+        let after = target.conversas().get(org, conversa.id).expect("conversa");
         assert_eq!(
-            depois.nome_cliente.as_deref(),
+            after.customer_name.as_deref(),
             Some("Ana Cliente"),
             "coluna que o arquivo não traz fica como estava"
         );
     }
 
     #[test]
-    fn conflito_de_slug_com_id_diferente_e_recusado_sem_gravar() {
-        let origem = banco();
-        let org_origem = org_com_dados(&origem, "origem");
-        let retrato = origem.retrato_da_org(org_origem, true).expect("retrato");
+    fn slug_conflict_with_different_id_is_rejected_without_writing() {
+        let origin = database();
+        let org_origem = org_with_data(&origin, "origem");
+        let snapshot = origin.org_snapshot(org_origem, true).expect("retrato");
 
-        let destino = banco();
-        let alvo = destino
-            .orgaos()
-            .criar(NovaOrg {
-                nome: "Alvo".to_owned(),
+        let destination = database();
+        let target = destination
+            .orgs()
+            .criar(NewOrg {
+                name: "Alvo".to_owned(),
                 slug: "alvo".to_owned(),
                 config_json: "{}".to_owned(),
             })
             .expect("cria a org alvo")
             .id;
-        destino
-            .agentes()
+        destination
+            .agents()
             .criar(
-                alvo,
-                NovoAgente {
-                    nome: "Outra Bia".to_owned(),
+                target,
+                NewAgent {
+                    name: "Outra Bia".to_owned(),
                     slug: "bia".to_owned(),
-                    ..NovoAgente::default()
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente que conflita");
-        let erro = destino
-            .importar_retrato(retrato, DestinoImportacao::Existente(alvo))
+        let error = destination
+            .import_snapshot(snapshot, ImportTarget::Existing(target))
             .expect_err("devia recusar");
-        assert!(erro.to_string().contains("agente `bia`"), "{erro}");
-        // Nada foi gravado: a org alvo continua sem categoria.
+        assert!(error.to_string().contains("agente `bia`"), "{error}");
         assert_eq!(
-            destino
-                .categorias()
-                .listar(alvo, Pagina::default())
+            destination
+                .categories()
+                .listar(target, Page::default())
                 .unwrap()
                 .len(),
             0
@@ -1523,52 +1369,49 @@ mod testes {
     }
 
     #[test]
-    fn conflitos_da_importacao_saem_sem_gravar() {
-        let origem = banco();
-        let org_origem = org_com_dados(&origem, "origem");
-        let retrato = origem.retrato_da_org(org_origem, false).expect("retrato");
+    fn import_conflicts_are_reported_without_writing() {
+        let origin = database();
+        let org_origem = org_with_data(&origin, "origem");
+        let snapshot = origin.org_snapshot(org_origem, false).expect("retrato");
 
-        // Instância limpa: nada conflita.
-        let limpa = banco();
+        let clean = database();
         assert!(
-            limpa
-                .conferir_conflitos_importacao(&retrato, DestinoImportacao::DaOrigem)
+            clean
+                .check_import_conflicts(&snapshot, ImportTarget::Origin)
                 .expect("confere")
                 .is_empty()
         );
 
-        // Destino com o mesmo slug de agente e outro id: um conflito, e nada gravado.
-        let destino = banco();
-        let alvo = destino
-            .orgaos()
-            .criar(NovaOrg {
-                nome: "Alvo".to_owned(),
+        let destination = database();
+        let target = destination
+            .orgs()
+            .criar(NewOrg {
+                name: "Alvo".to_owned(),
                 slug: "alvo".to_owned(),
                 config_json: "{}".to_owned(),
             })
             .expect("cria a org alvo")
             .id;
-        destino
-            .agentes()
+        destination
+            .agents()
             .criar(
-                alvo,
-                NovoAgente {
-                    nome: "Outra Bia".to_owned(),
+                target,
+                NewAgent {
+                    name: "Outra Bia".to_owned(),
                     slug: "bia".to_owned(),
-                    ..NovoAgente::default()
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente que conflita");
-        let conflitos = destino
-            .conferir_conflitos_importacao(&retrato, DestinoImportacao::Existente(alvo))
+        let conflicts = destination
+            .check_import_conflicts(&snapshot, ImportTarget::Existing(target))
             .expect("confere");
-        assert_eq!(conflitos.len(), 1, "{conflitos:?}");
-        assert!(conflitos[0].contains("agente `bia`"), "{conflitos:?}");
-        // A conferência é leitura: a org alvo continua sem categoria.
+        assert_eq!(conflicts.len(), 1, "{conflicts:?}");
+        assert!(conflicts[0].contains("agente `bia`"), "{conflicts:?}");
         assert_eq!(
-            destino
-                .categorias()
-                .listar(alvo, Pagina::default())
+            destination
+                .categories()
+                .listar(target, Page::default())
                 .unwrap()
                 .len(),
             0
@@ -1576,103 +1419,93 @@ mod testes {
     }
 
     #[test]
-    fn conferencia_de_atualizacao_aponta_o_que_seria_sobrescrito_sem_gravar() {
-        let origem = banco();
-        let org_origem = org_com_dados(&origem, "origem");
-        let retrato = origem.retrato_da_org(org_origem, true).expect("retrato");
-        let linhas_do_arquivo: u64 = retrato.tabelas.values().map(|l| l.len() as u64).sum();
+    fn update_check_reports_what_would_be_overwritten_without_writing() {
+        let origin = database();
+        let org_origem = org_with_data(&origin, "origem");
+        let snapshot = origin.org_snapshot(org_origem, true).expect("retrato");
+        let file_rows: u64 = snapshot.tables.values().map(|l| l.len() as u64).sum();
 
-        // Instância limpa: nada seria atualizado, e a conferência não cria a org.
-        let limpa = banco();
-        let vazio = limpa
-            .conferir_atualizacoes_importacao(&retrato, DestinoImportacao::DaOrigem)
+        let clean = database();
+        let vazio = clean
+            .check_import_updates(&snapshot, ImportTarget::Origin)
             .expect("confere");
-        assert!(vazio.vazia(), "{vazio:?}");
+        assert!(vazio.empty(), "{vazio:?}");
         assert_eq!(vazio.total, 0);
-        assert!(vazio.exemplos.is_empty());
+        assert!(vazio.examples.is_empty());
         assert!(
-            limpa.orgaos().obter(org_origem).is_err(),
+            clean.orgs().get(org_origem).is_err(),
             "a conferência é leitura: não pode criar a org"
         );
 
-        // Na própria org de origem, tudo o que o arquivo traria conta como atualização — inclusive
-        // a linha da org, que a importação regravaria.
-        let mesmo = banco();
-        mesmo
-            .importar_retrato(retrato.clone(), DestinoImportacao::DaOrigem)
+        let same = database();
+        same.import_snapshot(snapshot.clone(), ImportTarget::Origin)
             .expect("primeira importação");
-        let atualizacoes = mesmo
-            .conferir_atualizacoes_importacao(&retrato, DestinoImportacao::DaOrigem)
+        let updates = same
+            .check_import_updates(&snapshot, ImportTarget::Origin)
             .expect("confere");
-        assert!(!atualizacoes.vazia());
-        assert_eq!(
-            atualizacoes.total,
-            linhas_do_arquivo + 1,
-            "{atualizacoes:?}"
-        );
-        assert_eq!(atualizacoes.tabelas.get("agents"), Some(&1));
-        assert_eq!(atualizacoes.tabelas.get("orgs"), Some(&1));
+        assert!(!updates.empty());
+        assert_eq!(updates.total, file_rows + 1, "{updates:?}");
+        assert_eq!(updates.tables.get("agents"), Some(&1));
+        assert_eq!(updates.tables.get("orgs"), Some(&1));
         assert!(
-            atualizacoes
-                .exemplos
+            updates
+                .examples
                 .iter()
-                .any(|exemplo| exemplo == "agents: bia"),
+                .any(|example| example == "agents: bia"),
             "exemplo legível com slug: {:?}",
-            atualizacoes.exemplos
+            updates.examples
         );
-        assert!(atualizacoes.exemplos.len() <= MAX_EXEMPLOS_ATUALIZACAO);
+        assert!(updates.examples.len() <= MAX_UPDATE_EXAMPLES);
         assert!(
-            atualizacoes.resumo().contains("agents 1"),
+            updates.summary().contains("agents 1"),
             "{}",
-            atualizacoes.resumo()
+            updates.summary()
         );
-        // E a conferência não gravou nada: o retrato continua igual ao que entrou.
-        let depois = mesmo.retrato_da_org(org_origem, true).expect("retrato");
-        assert_eq!(depois.tabelas["agents"], retrato.tabelas["agents"]);
+        let after = same.org_snapshot(org_origem, true).expect("retrato");
+        assert_eq!(after.tables["agents"], snapshot.tables["agents"]);
 
-        // Numa org de destino, a linha da org não é tocada; só as do arquivo contam.
-        let destino = banco();
-        let alvo = destino
-            .orgaos()
-            .criar(NovaOrg {
-                nome: "Alvo".to_owned(),
+        let destination = database();
+        let target = destination
+            .orgs()
+            .criar(NewOrg {
+                name: "Alvo".to_owned(),
                 slug: "alvo".to_owned(),
                 config_json: "{}".to_owned(),
             })
             .expect("cria a org alvo")
             .id;
         assert!(
-            destino
-                .conferir_atualizacoes_importacao(&retrato, DestinoImportacao::Existente(alvo))
+            destination
+                .check_import_updates(&snapshot, ImportTarget::Existing(target))
                 .expect("confere")
-                .vazia(),
+                .empty(),
             "org alvo vazia: a importação só insere"
         );
-        destino
-            .importar_retrato(retrato.clone(), DestinoImportacao::Existente(alvo))
+        destination
+            .import_snapshot(snapshot.clone(), ImportTarget::Existing(target))
             .expect("importa");
-        let na_org_alvo = destino
-            .conferir_atualizacoes_importacao(&retrato, DestinoImportacao::Existente(alvo))
+        let in_target_org = destination
+            .check_import_updates(&snapshot, ImportTarget::Existing(target))
             .expect("confere");
-        assert_eq!(na_org_alvo.total, linhas_do_arquivo);
+        assert_eq!(in_target_org.total, file_rows);
         assert!(
-            !na_org_alvo.tabelas.contains_key("orgs"),
+            !in_target_org.tables.contains_key("orgs"),
             "o caminho Existente não escreve em orgs"
         );
     }
 
     #[test]
-    fn coluna_desconhecida_e_recusada() {
-        let store = banco();
-        let org = org_com_dados(&store, "origem");
-        let mut retrato = store.retrato_da_org(org, false).expect("retrato");
-        retrato.tabelas.get_mut("agents").unwrap()[0]
+    fn unknown_column_is_rejected() {
+        let store = database();
+        let org = org_with_data(&store, "origem");
+        let mut snapshot = store.org_snapshot(org, false).expect("retrato");
+        snapshot.tables.get_mut("agents").unwrap()[0]
             .as_object_mut()
             .unwrap()
             .insert("coluna_do_futuro".to_owned(), Value::from(1));
-        let erro = store
-            .importar_retrato(retrato, DestinoImportacao::DaOrigem)
+        let error = store
+            .import_snapshot(snapshot, ImportTarget::Origin)
             .expect_err("devia recusar");
-        assert!(erro.to_string().contains("coluna_do_futuro"), "{erro}");
+        assert!(error.to_string().contains("coluna_do_futuro"), "{error}");
     }
 }

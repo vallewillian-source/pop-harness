@@ -195,7 +195,7 @@ fn migrate_cria_os_bancos_e_e_idempotente() {
     let primeira = poph(&pasta, &["migrate"], &como_refs(&ambiente));
     let saida = texto(&primeira.stdout);
     assert_eq!(primeira.status.code(), Some(0), "saída: {saida}");
-    let alvo = poph_store::versao_alvo_harness();
+    let alvo = poph_store::harness_target_version();
     assert!(
         saida.contains(&format!("versão 0 → {alvo}")),
         "saída: {saida}"
@@ -222,7 +222,7 @@ fn migrate_cria_os_bancos_e_e_idempotente() {
     assert_eq!(segunda.status.code(), Some(0));
     assert_eq!(json["ja_estava_em_dia"], true);
     // A versão vem da fonte única do `poph-store` (versão alvo do esquema do Harness).
-    let versao_do_esquema = poph_store::versao_alvo_harness();
+    let versao_do_esquema = poph_store::harness_target_version();
     assert_eq!(
         json["harness"]["versao_depois"].as_u64(),
         Some(u64::from(versao_do_esquema))

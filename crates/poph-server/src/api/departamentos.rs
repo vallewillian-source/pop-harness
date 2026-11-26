@@ -3,7 +3,7 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
-use poph_store::{Departamento, MudancaDepartamento, NovoDepartamento};
+use poph_store::{Departamento, DepartmentChange, NewDepartment};
 use poph_types::{DepartmentId, OrgId};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -41,12 +41,12 @@ impl DepartamentoJson {
         Self {
             id: departamento.id.to_string(),
             org_id: departamento.org_id.to_string(),
-            name: departamento.nome.clone(),
-            description: departamento.descricao.clone(),
+            name: departamento.name.clone(),
+            description: departamento.description.clone(),
             status: status_texto(departamento.status).to_owned(),
-            version: departamento.versao,
-            created_at: departamento.criado_em,
-            updated_at: departamento.atualizado_em,
+            version: departamento.version,
+            created_at: departamento.created_at,
+            updated_at: departamento.updated_at,
         }
     }
 }
@@ -106,9 +106,9 @@ pub async fn listar(
     let org = id_da_url::<OrgId>(&caminho.org_id)?;
     identidade.exigir_org(org)?;
     let pagina = consulta.pagina()?;
-    let departamentos = estado.store.departamentos().listar(org, pagina)?;
+    let departamentos = estado.store.departments().listar(org, pagina)?;
     let items: Vec<DepartamentoJson> = departamentos.iter().map(DepartamentoJson::de).collect();
-    let next_cursor = proximo_cursor(&items, pagina.limite, |item| item.id.clone());
+    let next_cursor = proximo_cursor(&items, pagina.limit, |item| item.id.clone());
     Ok(Json(ListaJson { items, next_cursor }))
 }
 
@@ -135,11 +135,11 @@ pub async fn criar(
     let org = id_da_url::<OrgId>(&caminho.org_id)?;
     identidade.exigir_org(org)?;
     let nome = validar_nome(&corpo.name)?;
-    let departamento = estado.store.departamentos().criar(
+    let departamento = estado.store.departments().criar(
         org,
-        NovoDepartamento {
-            nome,
-            descricao: corpo.description.unwrap_or_default(),
+        NewDepartment {
+            name: nome,
+            description: corpo.description.unwrap_or_default(),
         },
     )?;
     super::auditoria::registrar(
@@ -180,7 +180,7 @@ pub async fn mostrar(
     let org = id_da_url::<OrgId>(&caminho.org_id)?;
     let id = id_da_url::<DepartmentId>(&caminho.department_id)?;
     identidade.exigir_org(org)?;
-    let departamento = estado.store.departamentos().obter(org, id)?;
+    let departamento = estado.store.departments().obter(org, id)?;
     Ok(Json(DepartamentoJson::de(&departamento)))
 }
 
@@ -217,14 +217,14 @@ pub async fn atualizar(
         Some(texto) => Some(status_pedido(texto)?),
         None => None,
     };
-    let mudanca = MudancaDepartamento {
-        nome: corpo.name.as_deref().map(validar_nome).transpose()?,
-        descricao: corpo.description,
+    let mudanca = DepartmentChange {
+        name: corpo.name.as_deref().map(validar_nome).transpose()?,
+        description: corpo.description,
         status,
     };
     let departamento = estado
         .store
-        .departamentos()
+        .departments()
         .atualizar(org, id, esperada, mudanca)?;
     super::auditoria::registrar(
         &estado,
@@ -261,7 +261,7 @@ pub async fn excluir(
     let org = id_da_url::<OrgId>(&caminho.org_id)?;
     let id = id_da_url::<DepartmentId>(&caminho.department_id)?;
     identidade.exigir_org(org)?;
-    estado.store.departamentos().excluir(org, id)?;
+    estado.store.departments().excluir(org, id)?;
     super::auditoria::registrar(
         &estado,
         &identidade,

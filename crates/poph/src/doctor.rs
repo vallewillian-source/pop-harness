@@ -361,7 +361,7 @@ fn banco(nome: &str, caminho: &Path) -> Verificacao {
         )
     } else {
         // A versão vem da tabela `schema_migrations` (a mesma que o `poph migrate` mantém).
-        match poph_store::versao_do_arquivo(caminho) {
+        match poph_store::file_version(caminho) {
             Ok(Some(versao)) => (
                 Nivel::Ok,
                 format!("formato SQLite, esquema versão {versao}"),
@@ -738,12 +738,12 @@ mod testes {
         let pasta = pasta_temporaria("banco");
         let harness = pasta.join("harness.db");
         let rag = pasta.join("rag.db");
-        let store = poph_store::Store::abrir_em(&harness, &rag).expect("cria os bancos");
+        let store = poph_store::Store::open_at(&harness, &rag).expect("cria os bancos");
         drop(store);
 
         let v = banco("harness.db", &harness);
         assert_eq!(v.nivel, Nivel::Ok, "{}", v.detalhe);
-        let esperado = format!("versão {}", poph_store::versao_alvo_harness());
+        let esperado = format!("versão {}", poph_store::harness_target_version());
         assert!(v.detalhe.contains(&esperado), "{}", v.detalhe);
 
         let r = banco("rag.db", &rag);

@@ -20,9 +20,7 @@ use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
 use poph_agent::contexto::{estimar_tokens, montar};
 use poph_agent::limites::{Limitador, OpcoesLimites};
 use poph_agent::metricas::MetricasMemoria;
-use poph_store::{
-    Direcao, Mensagem, NovaConversa, NovaMensagem, NovaOrg, NovoAgente, Papel, Store,
-};
+use poph_store::{Direction, Mensagem, NewAgent, NewConversation, NewMessage, NewOrg, Role, Store};
 use poph_types::{AgentId, ConversationId, MessageId, OrgId};
 
 /// Banco de verdade em pasta temporária, com uma org, um agente e uma conversa prontos.
@@ -40,13 +38,12 @@ impl Cenario {
         let _ = std::fs::remove_dir_all(&pasta);
         std::fs::create_dir_all(&pasta).expect("cria a pasta do teste");
         let store = Arc::new(
-            Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
-                .expect("abre o banco"),
+            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco"),
         );
         let org = store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: "Org HR-11".to_owned(),
+            .orgs()
+            .criar(NewOrg {
+                name: "Org HR-11".to_owned(),
                 slug: format!("org-hr11-{rotulo}"),
                 config_json: String::new(),
             })
@@ -65,13 +62,13 @@ impl Cenario {
     fn criar_agente(&mut self, slug: &str) -> AgentId {
         let agente = self
             .store
-            .agentes()
+            .agents()
             .criar(
                 self.org,
-                NovoAgente {
-                    nome: format!("Agente {slug}"),
+                NewAgent {
+                    name: format!("Agente {slug}"),
                     slug: slug.to_owned(),
-                    ..NovoAgente::default()
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente");
@@ -86,12 +83,12 @@ impl Cenario {
             .conversas()
             .criar(
                 self.org,
-                NovaConversa {
+                NewConversation {
                     agent_id: self.agente,
                     integration_id: None,
                     canal: "cli".to_owned(),
                     peer_externo: None,
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("abre a conversa");
@@ -100,8 +97,8 @@ impl Cenario {
 
     fn textos(&self) -> Vec<String> {
         self.store
-            .mensagens()
-            .listar(self.org, self.conversa, poph_store::Pagina::com_limite(200))
+            .messages()
+            .listar(self.org, self.conversa, poph_store::Page::with_limit(200))
             .expect("lista as mensagens")
             .into_iter()
             .map(|mensagem| mensagem.texto)
@@ -208,19 +205,19 @@ impl Processador for ContadorDeEco {
         Box::pin(async move {
             let numero = recebidas.fetch_add(1, Ordering::SeqCst) + 1;
             store
-                .mensagens()
+                .messages()
                 .gravar(
                     org,
-                    NovaMensagem {
+                    NewMessage {
                         conversation_id: conversa,
-                        direcao: Direcao::Saida,
-                        papel: Papel::Assistente,
+                        direction: Direction::Outbound,
+                        role: Role::Assistant,
                         texto: format!("eco {numero}"),
-                        anexos_json: String::new(),
+                        attachments_json: String::new(),
                         id_externo: None,
                         turn_id: None,
-                        origem: poph_store::Origem::Agente,
-                        autor_nome: None,
+                        origin: poph_store::Origin::Agente,
+                        author_name: None,
                     },
                 )
                 .expect("grava a resposta");
@@ -236,7 +233,7 @@ impl Processador for ContadorDeEco {
         let conversa = self.conversa;
         Box::pin(async move {
             store
-                .mensagens()
+                .messages()
                 .ultimas(org, conversa, 10)
                 .expect("lê o histórico ao acordar");
             acordadas.fetch_add(1, Ordering::SeqCst);
@@ -316,7 +313,7 @@ async fn mudanca_de_versao_invalida_o_cache() {
     let agente = cenario.criar_agente("cache");
     cenario
         .store
-        .instrucoes()
+        .instructions()
         .salvar(
             cenario.org,
             agente,
@@ -350,16 +347,16 @@ async fn mudanca_de_versao_invalida_o_cache() {
     // Edita só o texto do prompt: a versão do agente não muda, a das instruções muda.
     let instrucoes = cenario
         .store
-        .instrucoes()
+        .instructions()
         .obter(cenario.org, agente)
         .expect("lê as instruções");
     cenario
         .store
-        .instrucoes()
+        .instructions()
         .salvar(
             cenario.org,
             agente,
-            instrucoes.versao,
+            instrucoes.version,
             r#"{"identity":{"name":"Bia v2"}}"#,
             "v2 do prompt",
             true,
@@ -375,34 +372,34 @@ async fn mudanca_de_versao_invalida_o_cache() {
     // Muda a versão do próprio agente (nome): também invalida.
     let atual = cenario
         .store
-        .agentes()
-        .obter(cenario.org, agente)
+        .agents()
+        .get(cenario.org, agente)
         .expect("lê o agente");
     cenario
         .store
-        .agentes()
+        .agents()
         .atualizar(
             cenario.org,
             agente,
-            atual.versao,
-            poph_store::MudancaAgente {
-                nome: Some("Bia Editada".to_owned()),
-                ..poph_store::MudancaAgente::default()
+            atual.version,
+            poph_store::AgentChange {
+                name: Some("Bia Editada".to_owned()),
+                ..poph_store::AgentChange::default()
             },
         )
         .expect("edita o agente");
     let quarta = cache
         .carregar_verificando(cenario.org, agente)
         .expect("recarrega de novo");
-    assert_eq!(quarta.agente.nome, "Bia Editada");
+    assert_eq!(quarta.agente.name, "Bia Editada");
     assert_eq!(quarta.markdown, "v2 do prompt");
 
     // Agente de outra org não é servido pelo cache do agente desta org.
     let outra_org = cenario
         .store
-        .orgaos()
-        .criar(NovaOrg {
-            nome: "Outra".to_owned(),
+        .orgs()
+        .criar(NewOrg {
+            name: "Outra".to_owned(),
             slug: "outra-org".to_owned(),
             config_json: String::new(),
         })
@@ -511,14 +508,14 @@ async fn cache_respeita_o_teto_de_memoria_com_dez_mil_agentes() {
     for indice in 0..10_000u32 {
         let agente = cenario
             .store
-            .agentes()
+            .agents()
             .criar(
                 cenario.org,
-                NovoAgente {
-                    nome: format!("Agente de carga {indice}"),
+                NewAgent {
+                    name: format!("Agente de carga {indice}"),
                     slug: format!("carga-{indice}"),
-                    descricao: "config sintética para medir o teto do cache".repeat(4),
-                    ..NovoAgente::default()
+                    description: "config sintética para medir o teto do cache".repeat(4),
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente da carga");
@@ -549,15 +546,15 @@ fn mensagem_de(texto: &str) -> Mensagem {
         id: MessageId::generate(),
         org_id: OrgId::generate(),
         conversation_id: ConversationId::generate(),
-        direcao: Direcao::Entrada,
-        papel: Papel::Usuario,
-        origem: poph_store::Origem::Agente,
-        autor_nome: None,
+        direction: Direction::Inbound,
+        role: Role::User,
+        origin: poph_store::Origin::Agente,
+        author_name: None,
         texto: texto.to_owned(),
-        anexos_json: String::new(),
+        attachments_json: String::new(),
         id_externo: None,
         turn_id: None,
-        criado_em: 0,
+        created_at: 0,
     }
 }
 

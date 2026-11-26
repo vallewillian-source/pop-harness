@@ -4,7 +4,7 @@
 //! Só sai o que é da Ficha: nenhum texto de mensagem da conversa entra no JSON. O payload dos eventos
 //! é metadado do motor, e a chave de idempotência fica de fora.
 
-use poph_store::{ErroStore, EtapaDaExecucao, EventoFicha, Execucao, Ficha, Fluxo, Store};
+use poph_store::{Execution, ExecutionStep, Ficha, Fluxo, RecordEvent, Store, StoreError};
 use poph_types::{OrgId, RecordId};
 use serde_json::{Value, json};
 
@@ -14,14 +14,14 @@ pub const LIMITE_EXECUCOES_NA_FICHA: u32 = 500;
 /// O detalhe de uma Ficha: a Ficha, as execuções com as etapas e os campos respondidos (W6), e os
 /// fluxos liberados ao agente da Ficha. Ficha de outra org ou inexistente vira o erro do repositório
 /// (`NaoEncontrado`), que a API traduz para `404`.
-pub fn detalhe(store: &Store, org: OrgId, ficha_id: RecordId) -> Result<Value, ErroStore> {
+pub fn detalhe(store: &Store, org: OrgId, ficha_id: RecordId) -> Result<Value, StoreError> {
     let ficha = store.fichas().obter(org, ficha_id)?;
     let execucoes = store
-        .execucoes()
+        .executions()
         .da_ficha(org, ficha_id, LIMITE_EXECUCOES_NA_FICHA)?;
     let mut lista_execucoes = Vec::with_capacity(execucoes.len());
     for execucao in &execucoes {
-        let etapas = store.execucoes().etapas(org, execucao.id)?;
+        let etapas = store.executions().etapas(org, execucao.id)?;
         lista_execucoes.push(execucao_json(execucao, &etapas));
     }
     let liberados: Vec<Value> = store
@@ -49,34 +49,34 @@ pub fn ficha_json(ficha: &Ficha) -> Value {
         "fechada_em": ficha.fechada_em,
         "fechada_por": ficha.fechada_por,
         "fechada_motivo": ficha.fechada_motivo,
-        "version": ficha.versao,
+        "version": ficha.version,
     })
 }
 
 /// Execução com as etapas percorridas. Cada etapa traz os campos respondidos nela (W6).
-pub fn execucao_json(execucao: &Execucao, etapas: &[EtapaDaExecucao]) -> Value {
+pub fn execucao_json(execucao: &Execution, etapas: &[ExecutionStep]) -> Value {
     json!({
         "id": execucao.id.to_string(),
         "fluxo_id": execucao.fluxo_id.to_string(),
         "revisao_id": execucao.revisao_id.to_string(),
         "status": execucao.status,
         "no_atual": execucao.no_atual,
-        "resultado": execucao.resultado,
+        "resultado": execucao.result,
         "motivo_fim": execucao.motivo_fim,
         "iniciada_em": execucao.iniciada_em,
         "finalizada_em": execucao.finalizada_em,
-        "version": execucao.versao,
+        "version": execucao.version,
         "etapas": etapas.iter().map(etapa_json).collect::<Vec<Value>>(),
     })
 }
 
-pub fn etapa_json(etapa: &EtapaDaExecucao) -> Value {
+pub fn etapa_json(etapa: &ExecutionStep) -> Value {
     json!({
         "no_id": etapa.no_id,
         "ordem": etapa.ordem,
         "status": etapa.status,
         "dados": dados_em_json(&etapa.dados_json),
-        "atores_que_agiram": etapa.atores_que_agiram,
+        "atores_que_agiram": etapa.acting_actors,
         "entrou_em": etapa.entrou_em,
         "concluiu_em": etapa.concluiu_em,
     })
@@ -87,13 +87,13 @@ pub fn fluxo_liberado_json(fluxo: &Fluxo) -> Value {
     json!({
         "id": fluxo.id.to_string(),
         "slug": fluxo.slug,
-        "name": fluxo.nome,
-        "status": fluxo.status.como_texto(),
+        "name": fluxo.name,
+        "status": fluxo.status.as_text(),
     })
 }
 
 /// Evento da linha do tempo. A chave de idempotência fica de fora: é detalhe interno de gravação.
-pub fn evento_json(evento: &EventoFicha) -> Value {
+pub fn evento_json(evento: &RecordEvent) -> Value {
     json!({
         "id": evento.id.to_string(),
         "seq": evento.seq,
@@ -102,7 +102,7 @@ pub fn evento_json(evento: &EventoFicha) -> Value {
         "ator_ref": evento.ator_ref,
         "execucao_id": evento.execucao_id.as_ref().map(ToString::to_string),
         "payload": dados_em_json(&evento.payload_json),
-        "criado_em": evento.criado_em,
+        "criado_em": evento.created_at,
     })
 }
 

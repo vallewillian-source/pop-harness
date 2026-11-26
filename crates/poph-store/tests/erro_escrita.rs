@@ -7,7 +7,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use poph_store::{ErroStore, MudancaAgente, NovaOrg, NovoAgente, Org, Store};
+use poph_store::{AgentChange, NewAgent, NewOrg, Org, Store, StoreError};
 use poph_types::DomainError;
 
 struct Cenario {
@@ -23,8 +23,8 @@ impl Cenario {
             std::env::temp_dir().join(format!("poph-erro-{rotulo}-{}-{n}", std::process::id()));
         let _ = fs::remove_dir_all(&pasta);
         fs::create_dir_all(&pasta).expect("cria a pasta do teste");
-        let store = Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
-            .expect("abre o banco");
+        let store =
+            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco");
         Self {
             pasta,
             store: Some(store),
@@ -45,27 +45,27 @@ impl Drop for Cenario {
 
 fn criar_org(store: &Store) -> Org {
     store
-        .orgaos()
-        .criar(NovaOrg {
-            nome: "Org de erro".to_owned(),
+        .orgs()
+        .criar(NewOrg {
+            name: "Org de erro".to_owned(),
             slug: "org-erro".to_owned(),
             config_json: String::new(),
         })
         .expect("cria a org")
 }
 
-fn novo_agente(slug: &str) -> NovoAgente {
-    NovoAgente {
-        nome: format!("Agente {slug}"),
+fn novo_agente(slug: &str) -> NewAgent {
+    NewAgent {
+        name: format!("Agente {slug}"),
         slug: slug.to_owned(),
-        ..NovoAgente::default()
+        ..NewAgent::default()
     }
 }
 
 /// Espera erro de validação de um campo e devolve (campo, motivo).
-fn validacao(erro: ErroStore) -> (&'static str, String) {
+fn validacao(erro: StoreError) -> (&'static str, String) {
     match erro {
-        ErroStore::Dominio(DomainError::Validation { field, reason }) => (field, reason),
+        StoreError::Domain(DomainError::Validation { field, reason }) => (field, reason),
         outro => panic!("esperava validação de campo, veio {outro:?}"),
     }
 }
@@ -76,13 +76,13 @@ fn slug_repetido_no_agente_continua_duplicidade() {
     let store = cenario.store();
     let org = criar_org(store);
     store
-        .agentes()
+        .agents()
         .criar(org.id, novo_agente("beatriz"))
         .expect("cria o primeiro agente");
 
     let (campo, motivo) = validacao(
         store
-            .agentes()
+            .agents()
             .criar(org.id, novo_agente("beatriz"))
             .expect_err("slug repetido devia ser recusado"),
     );
@@ -96,21 +96,21 @@ fn contexto_fora_da_faixa_no_patch_do_agente_nomeia_o_campo_certo() {
     let store = cenario.store();
     let org = criar_org(store);
     let agente = store
-        .agentes()
+        .agents()
         .criar(org.id, novo_agente("beatriz"))
         .expect("cria o agente");
 
     // O banco exige max_context_tokens >= 1000. Valor 1 não é duplicidade de slug.
     let (campo, motivo) = validacao(
         store
-            .agentes()
+            .agents()
             .atualizar(
                 org.id,
                 agente.id,
-                agente.versao,
-                MudancaAgente {
+                agente.version,
+                AgentChange {
                     max_context_tokens: Some(1),
-                    ..MudancaAgente::default()
+                    ..AgentChange::default()
                 },
             )
             .expect_err("contexto abaixo da faixa devia ser recusado"),
@@ -128,21 +128,21 @@ fn limite_de_ferramentas_fora_da_faixa_nomeia_o_campo_da_api() {
     let store = cenario.store();
     let org = criar_org(store);
     let agente = store
-        .agentes()
+        .agents()
         .criar(org.id, novo_agente("beatriz"))
         .expect("cria o agente");
 
     // O banco aceita 0 a 100 chamadas de ferramenta por mensagem.
     let (campo, _) = validacao(
         store
-            .agentes()
+            .agents()
             .atualizar(
                 org.id,
                 agente.id,
-                agente.versao,
-                MudancaAgente {
-                    max_ferramentas_por_mensagem: Some(101),
-                    ..MudancaAgente::default()
+                agente.version,
+                AgentChange {
+                    max_tools_per_message: Some(101),
+                    ..AgentChange::default()
                 },
             )
             .expect_err("101 chamadas devia ser recusado"),
@@ -156,23 +156,20 @@ fn faixa_recusada_nao_grava_nada() {
     let store = cenario.store();
     let org = criar_org(store);
     let agente = store
-        .agentes()
+        .agents()
         .criar(org.id, novo_agente("beatriz"))
         .expect("cria o agente");
 
-    let _ = store.agentes().atualizar(
+    let _ = store.agents().atualizar(
         org.id,
         agente.id,
-        agente.versao,
-        MudancaAgente {
+        agente.version,
+        AgentChange {
             max_context_tokens: Some(1),
-            ..MudancaAgente::default()
+            ..AgentChange::default()
         },
     );
-    let depois = store
-        .agentes()
-        .obter(org.id, agente.id)
-        .expect("lê o agente");
+    let depois = store.agents().get(org.id, agente.id).expect("lê o agente");
     assert_eq!(depois.max_context_tokens, agente.max_context_tokens);
-    assert_eq!(depois.versao, agente.versao);
+    assert_eq!(depois.version, agente.version);
 }

@@ -31,7 +31,7 @@ use poph_core::llm::{
     Roteiro, Uso,
 };
 use poph_store::{
-    Direcao, EstadoTurno, NovaConversa, NovaMensagem, NovaOrg, NovoAgente, Pagina, Papel, Store,
+    Direction, NewAgent, NewConversation, NewMessage, NewOrg, Page, Role, Store, TurnState,
 };
 use poph_types::{AgentId, ConversationId, MessageId, OrgId};
 
@@ -159,40 +159,40 @@ impl Cenario {
         let _ = std::fs::remove_dir_all(&pasta);
         std::fs::create_dir_all(&pasta).expect("cria a pasta do teste");
         let relogio = Arc::new(AtomicI64::new(1_795_130_160_000));
-        let store = Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
+        let store = Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db"))
             .expect("abre o banco")
-            .com_relogio({
+            .with_clock({
                 let relogio = Arc::clone(&relogio);
                 Arc::new(move || relogio.load(Ordering::SeqCst))
             });
         let store = Arc::new(store);
         let org = store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: format!("Org {rotulo}"),
+            .orgs()
+            .criar(NewOrg {
+                name: format!("Org {rotulo}"),
                 slug: format!("org-{rotulo}-{}", AgentId::generate()),
                 config_json: "{}".to_owned(),
             })
             .expect("cria a org")
             .id;
         let agente = store
-            .agentes()
+            .agents()
             .criar(
                 org,
-                NovoAgente {
-                    nome: format!("Bia {rotulo}"),
+                NewAgent {
+                    name: format!("Bia {rotulo}"),
                     slug: format!("bia-{rotulo}"),
                     modelo: "gemini-3.8-flash-tiered".to_owned(),
-                    janela_agrupamento_ms: 2_000,
+                    grouping_window_ms: 2_000,
                     // Orçamento mínimo aceito pelo banco: é ele que corta a janela nos testes.
                     max_context_tokens: 1_000,
-                    ..NovoAgente::default()
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente")
             .id;
         store
-            .instrucoes()
+            .instructions()
             .salvar(
                 org,
                 agente,
@@ -216,37 +216,37 @@ impl Cenario {
             .conversas()
             .criar(
                 self.org,
-                NovaConversa {
+                NewConversation {
                     agent_id: self.agente,
                     integration_id: None,
                     canal: "cli".to_owned(),
                     peer_externo: None,
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("abre a conversa")
             .id
     }
 
-    fn gravar(&self, conversa: ConversationId, papel: Papel, texto: String) -> MessageId {
+    fn gravar(&self, conversa: ConversationId, papel: Role, texto: String) -> MessageId {
         let direcao = match papel {
-            Papel::Usuario => Direcao::Entrada,
-            _ => Direcao::Saida,
+            Role::User => Direction::Inbound,
+            _ => Direction::Outbound,
         };
         self.store
-            .mensagens()
+            .messages()
             .gravar(
                 self.org,
-                NovaMensagem {
+                NewMessage {
                     conversation_id: conversa,
-                    direcao,
-                    papel,
+                    direction: direcao,
+                    role: papel,
                     texto,
-                    anexos_json: "[]".to_owned(),
+                    attachments_json: "[]".to_owned(),
                     id_externo: None,
                     turn_id: None,
-                    origem: poph_store::Origem::Agente,
-                    autor_nome: None,
+                    origin: poph_store::Origin::Agente,
+                    author_name: None,
                 },
             )
             .expect("grava a mensagem")
@@ -255,16 +255,16 @@ impl Cenario {
 
     /// Grava a fala do cliente, como o `chat` faz antes do turno.
     fn falar(&self, conversa: ConversationId, texto: String) -> MessageId {
-        self.gravar(conversa, Papel::Usuario, texto)
+        self.gravar(conversa, Role::User, texto)
     }
 
     /// Grava `n` mensagens alternando cliente e agente, começando em `inicio`.
     fn historico_inicial(&self, conversa: ConversationId, inicio: usize, n: usize) {
         for i in inicio..inicio + n {
             let papel = if i % 2 == 0 {
-                Papel::Usuario
+                Role::User
             } else {
-                Papel::Assistente
+                Role::Assistant
             };
             self.gravar(conversa, papel, texto(i));
         }
@@ -279,9 +279,9 @@ impl Cenario {
         let registro = self
             .store
             .conversas()
-            .obter(self.org, conversa)
+            .get(self.org, conversa)
             .expect("lê a conversa");
-        Resumo::decodificar(registro.resumo.as_deref())
+        Resumo::decodificar(registro.summary.as_deref())
     }
 
     fn motor(&self, provedor: Arc<dyn LlmProvider>, resumo: OpcoesResumo) -> Motor {
@@ -348,7 +348,7 @@ async fn janela_cabe_no_orcamento_e_o_resumo_e_usado_no_turno_seguinte() {
     let motor = cenario.motor(fake.clone(), OpcoesResumo::default());
 
     let primeiro = cenario.turno(&motor, conversa, gatilho).await;
-    assert_eq!(primeiro.estado, EstadoTurno::Concluido);
+    assert_eq!(primeiro.estado, TurnState::Completed);
     assert!(
         motor.aguardar_resumos(Duration::from_secs(10)).await,
         "o resumo não terminou a tempo"
@@ -370,7 +370,7 @@ async fn janela_cabe_no_orcamento_e_o_resumo_e_usado_no_turno_seguinte() {
     let ate = resumo.ate.expect("o resumo tem ponto de corte");
     let ate_texto = cenario
         .store
-        .mensagens()
+        .messages()
         .obter(cenario.org, conversa, ate)
         .expect("lê a última mensagem coberta")
         .texto;
@@ -397,7 +397,7 @@ async fn janela_cabe_no_orcamento_e_o_resumo_e_usado_no_turno_seguinte() {
     // Turno seguinte: o resumo entra no bloco volátil e a janela continua dentro do orçamento.
     let gatilho2 = cenario.falar(conversa, texto(61));
     let segundo = cenario.turno(&motor, conversa, gatilho2).await;
-    assert_eq!(segundo.estado, EstadoTurno::Concluido);
+    assert_eq!(segundo.estado, TurnState::Completed);
     assert!(motor.aguardar_resumos(Duration::from_secs(10)).await);
 
     let pedidos = fake.recebidos();
@@ -439,7 +439,7 @@ async fn falha_do_resumo_nao_derruba_o_turno() {
     let motor = cenario.motor(fake.clone(), OpcoesResumo::default());
 
     let primeiro = cenario.turno(&motor, conversa, gatilho).await;
-    assert_eq!(primeiro.estado, EstadoTurno::Concluido);
+    assert_eq!(primeiro.estado, TurnState::Completed);
     assert!(
         !primeiro.texto.is_empty(),
         "a resposta saiu mesmo com o resumo falhando"
@@ -452,14 +452,14 @@ async fn falha_do_resumo_nao_derruba_o_turno() {
 
     let gatilho2 = cenario.falar(conversa, texto(42));
     let segundo = cenario.turno(&motor, conversa, gatilho2).await;
-    assert_eq!(segundo.estado, EstadoTurno::Concluido);
+    assert_eq!(segundo.estado, TurnState::Completed);
     assert_eq!(segundo.texto, texto(43));
     assert!(motor.aguardar_resumos(Duration::from_secs(10)).await);
 
     let registros = cenario
         .store
-        .auditoria()
-        .listar(cenario.org, Pagina::com_limite(50))
+        .audit()
+        .listar(cenario.org, Page::with_limit(50))
         .expect("lê a auditoria");
     let falhas = registros
         .iter()
@@ -497,7 +497,7 @@ async fn conversa_nova_nao_herda_o_resumo() {
     )]));
     let motor2 = cenario.motor(fake2.clone(), OpcoesResumo::default());
     let resultado = cenario.turno(&motor2, nova, gatilho_nova).await;
-    assert_eq!(resultado.estado, EstadoTurno::Concluido);
+    assert_eq!(resultado.estado, TurnState::Completed);
 
     let pedido = &fake2.recebidos()[0];
     let bloco = bloco_volatil(pedido).expect("o turno leva o bloco volátil");
@@ -536,7 +536,7 @@ async fn resumo_nao_aumenta_o_tempo_do_turno() {
             for turno in 0..TURNOS {
                 let gatilho = cenario.falar(conversa, texto(40 + turno + rodada * 10));
                 let resultado = cenario.turno(&motor, conversa, gatilho).await;
-                assert_eq!(resultado.estado, EstadoTurno::Concluido);
+                assert_eq!(resultado.estado, TurnState::Completed);
                 tempos.push(resultado.tempos.total_ms as f64);
                 cenario.avancar(5_000);
             }
@@ -584,14 +584,14 @@ async fn conversa_longa_sem_resumo_alcanca_a_janela() {
     let motor = cenario.motor(Arc::clone(&provedor), OpcoesResumo::default());
 
     let resultado = cenario.turno(&motor, conversa, gatilho).await;
-    assert_eq!(resultado.estado, EstadoTurno::Concluido);
+    assert_eq!(resultado.estado, TurnState::Completed);
     assert!(motor.aguardar_resumos(Duration::from_secs(20)).await);
 
     // A janela do turno seguinte começa logo depois do resumo: sem buraco e sem o resumo ter
     // andado além do corte.
     let todas = cenario
         .store
-        .mensagens()
+        .messages()
         .ultimas(cenario.org, conversa, 200)
         .expect("lê as últimas mensagens");
     let resumo = cenario.resumo_da_conversa(conversa);

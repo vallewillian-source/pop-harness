@@ -20,7 +20,7 @@ use poph_types::{AttachmentId, ConversationId, DomainError, OrgId};
 use rusqlite::{OptionalExtension, params};
 
 use crate::Store;
-use crate::erro::{ErroStore, Resultado};
+use crate::error::{Resultado, StoreError};
 use crate::repos::{id_da_coluna, u32_da_coluna, u64_da_coluna};
 
 /// Limite de caracteres do código de erro gravado (o mesmo `CHECK` da tabela).
@@ -157,7 +157,7 @@ impl MatrixMidia<'_> {
         exigir_texto("mídia da sala", "evento", &midia.evento, 255)?;
         exigir_texto("mídia da sala", "agente", &midia.agente, 64)?;
         exigir_texto("mídia da sala", "mxc", &midia.mxc, 512)?;
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_org = org.to_string();
         let id = midia.id.to_string();
         let conversa = midia.conversa.to_string();
@@ -170,7 +170,7 @@ impl MatrixMidia<'_> {
         let categoria = midia.categoria.como_texto();
         let tamanho = i64::try_from(midia.tamanho_bytes).unwrap_or(i64::MAX);
         let enviada_em = midia.enviada_em;
-        self.0.escrita(move |conn| {
+        self.0.write(move |conn| {
             let inseridas = conn
                 .execute(
                     "INSERT INTO matrix_midia (
@@ -183,7 +183,7 @@ impl MatrixMidia<'_> {
                         tamanho, enviada_em, agora,
                     ],
                 )
-                .map_err(|erro| ErroStore::da_escrita("mídia da sala", erro))?;
+                .map_err(|erro| StoreError::from_write("mídia da sala", erro))?;
             Ok(inseridas == 1)
         })
     }
@@ -202,7 +202,7 @@ impl MatrixMidia<'_> {
     ) -> Resultado<Vec<MidiaDaSala>> {
         let limite = limite.clamp(1, LIMITE_PENDENTES) as i64;
         let texto_org = org.to_string();
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             let mut consulta = conn.prepare(
                 "SELECT id, org_id, conversation_id, agent_id, room_id, event_id, mxc, name, mime,
                         kind, size_bytes, sent_at, redacted_at, deleted_at, attempts,
@@ -229,7 +229,7 @@ impl MatrixMidia<'_> {
     pub fn marcar_redigida(&self, org: OrgId, id: AttachmentId, agora: i64) -> Resultado<()> {
         let texto_org = org.to_string();
         let texto_id = id.to_string();
-        self.0.escrita(move |conn| {
+        self.0.write(move |conn| {
             conn.execute(
                 "UPDATE matrix_midia
                     SET redacted_at = COALESCE(redacted_at, ?3),
@@ -241,7 +241,7 @@ impl MatrixMidia<'_> {
                 params![texto_org, texto_id, agora],
             )
             .map(|_| ())
-            .map_err(|erro| ErroStore::da_escrita("mídia da sala", erro))
+            .map_err(|erro| StoreError::from_write("mídia da sala", erro))
         })
     }
 
@@ -249,7 +249,7 @@ impl MatrixMidia<'_> {
     pub fn marcar_apagada(&self, org: OrgId, id: AttachmentId, agora: i64) -> Resultado<()> {
         let texto_org = org.to_string();
         let texto_id = id.to_string();
-        self.0.escrita(move |conn| {
+        self.0.write(move |conn| {
             conn.execute(
                 "UPDATE matrix_midia
                     SET deleted_at = COALESCE(deleted_at, ?3),
@@ -261,7 +261,7 @@ impl MatrixMidia<'_> {
                 params![texto_org, texto_id, agora],
             )
             .map(|_| ())
-            .map_err(|erro| ErroStore::da_escrita("mídia da sala", erro))
+            .map_err(|erro| StoreError::from_write("mídia da sala", erro))
         })
     }
 
@@ -281,7 +281,7 @@ impl MatrixMidia<'_> {
         let codigo: String = codigo.chars().take(LIMITE_ERRO_MIDIA).collect();
         let texto_org = org.to_string();
         let texto_id = id.to_string();
-        self.0.escrita(move |conn| {
+        self.0.write(move |conn| {
             conn.execute(
                 "UPDATE matrix_midia
                     SET attempts = attempts + 1,
@@ -291,7 +291,7 @@ impl MatrixMidia<'_> {
                   WHERE org_id = ?1 AND id = ?2",
                 params![texto_org, texto_id, proxima_tentativa_em, codigo, agora],
             )
-            .map_err(|erro| ErroStore::da_escrita("mídia da sala", erro))?;
+            .map_err(|erro| StoreError::from_write("mídia da sala", erro))?;
             let tentativas: i64 = conn
                 .query_row(
                     "SELECT attempts FROM matrix_midia WHERE org_id = ?1 AND id = ?2",
@@ -299,7 +299,7 @@ impl MatrixMidia<'_> {
                     |linha| linha.get(0),
                 )
                 .optional()
-                .map_err(ErroStore::from)?
+                .map_err(StoreError::from)?
                 .unwrap_or(0);
             Ok(u32::try_from(tentativas).unwrap_or(u32::MAX))
         })
@@ -308,7 +308,7 @@ impl MatrixMidia<'_> {
     /// Quantas mídias da org ainda têm etapa pendente (o número que a métrica publica).
     pub fn pendentes_da_org(&self, org: OrgId) -> Resultado<u32> {
         let texto_org = org.to_string();
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             let total: i64 = conn
                 .query_row(
                     "SELECT COUNT(*) FROM matrix_midia
@@ -316,7 +316,7 @@ impl MatrixMidia<'_> {
                     params![texto_org],
                     |linha| linha.get(0),
                 )
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
             Ok(u32::try_from(total).unwrap_or(u32::MAX))
         })
     }
@@ -353,14 +353,14 @@ fn exigir_texto(
     teto: usize,
 ) -> Resultado<()> {
     if valor.trim().is_empty() {
-        return Err(ErroStore::Dominio(DomainError::Validation {
+        return Err(StoreError::Domain(DomainError::Validation {
             field: campo,
             reason: format!("{entidade} não pode ficar vazia"),
         }));
     }
     let tamanho = valor.chars().count();
     if tamanho > teto {
-        return Err(ErroStore::Dominio(DomainError::Validation {
+        return Err(StoreError::Domain(DomainError::Validation {
             field: campo,
             reason: format!("{entidade} passa de {teto} caracteres ({tamanho})"),
         }));

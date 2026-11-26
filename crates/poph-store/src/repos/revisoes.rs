@@ -49,11 +49,11 @@
 use poph_types::{AuditId, DomainError, FlowId, OrgId, RevisionId};
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
-use super::{conflito_ou_ausente, exigir, id_da_coluna, pertence, u32_da_coluna, u64_da_coluna};
+use super::{conflito_ou_ausente, id_da_coluna, pertence, require, u32_da_coluna, u64_da_coluna};
 use crate::Store;
-use crate::backup_documento::sha256_hex;
-use crate::erro::{ErroStore, Resultado};
-use crate::modelo::{PublicacaoDeRevisao, RevisaoDeFluxo};
+use crate::backup_document::sha256_hex;
+use crate::error::{Resultado, StoreError};
+use crate::model::{FlowRevision, RevisionPublication};
 
 const COLUNAS: &str = "id, org_id, fluxo_id, numero, fonte, fonte_sha256, definicao_json,
     schema_versao, publicada_em, publicada_por, resolucoes_json";
@@ -81,18 +81,18 @@ impl Revisoes<'_> {
         &self,
         org: OrgId,
         fluxo: FlowId,
-        publicacao: PublicacaoDeRevisao,
-    ) -> Resultado<RevisaoDeFluxo> {
+        publicacao: RevisionPublication,
+    ) -> Resultado<FlowRevision> {
         // 1. O que dá para recusar sem tocar no banco. A revisão é imutável: aqui é a última chance.
         if publicacao.fonte.trim().is_empty() {
-            return Err(ErroStore::Dominio(DomainError::Validation {
+            return Err(StoreError::Domain(DomainError::Validation {
                 field: "fonte",
                 reason: "o texto publicado não pode ficar vazio: é a origem que a revisão guarda"
                     .to_owned(),
             }));
         }
         let Some(schema_versao) = publicacao.schema_versao else {
-            return Err(ErroStore::Dominio(DomainError::Validation {
+            return Err(StoreError::Domain(DomainError::Validation {
                 field: "schema_versao",
                 reason:
                     "informe a versão do esquema da IR (`docs/FLUXOS_LINGUAGEM.md` §8): revisão \
@@ -101,7 +101,7 @@ impl Revisoes<'_> {
             }));
         };
         if schema_versao == 0 {
-            return Err(ErroStore::Dominio(DomainError::Validation {
+            return Err(StoreError::Domain(DomainError::Validation {
                 field: "schema_versao",
                 reason: "a versão do esquema começa em 1".to_owned(),
             }));
@@ -110,19 +110,19 @@ impl Revisoes<'_> {
         let resolucoes_json = conferir_resolucoes(&publicacao.resolucoes_json)?;
         let ator_tipo = conferir_ator(&publicacao.ator_tipo)?;
         let ator_id = publicacao
-            .ator_id
+            .actor_id
             .map(|id| id.trim().to_owned())
             .filter(|id| !id.is_empty());
 
         let fonte = publicacao.fonte;
         let fonte_sha256 = sha256_hex(fonte.as_bytes());
-        let esperada = publicacao.esperada;
+        let esperada = publicacao.expected;
         let esperada_i64 = i64::try_from(esperada).unwrap_or(i64::MAX);
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_org = org.to_string();
         let texto_fluxo = fluxo.to_string();
 
-        self.0.escrita(move |conn| {
+        self.0.write(move |conn| {
             // 2. O fluxo: versão esperada, número novo da revisão, rascunho publicado. A escrita
             //    condicional é a corrida resolvida: quem chega depois não casa o `WHERE` e leva 412
             //    sem ter gravado nada.
@@ -135,7 +135,7 @@ impl Revisoes<'_> {
                       WHERE org_id = ?1 AND id = ?2 AND version = ?3",
                     params![texto_org, texto_fluxo, esperada_i64, fonte],
                 )
-                .map_err(|erro| ErroStore::da_escrita("rascunho_fonte", erro))?;
+                .map_err(|erro| StoreError::from_write("rascunho_fonte", erro))?;
             if avancou == 0 {
                 return Err(conflito_ou_ausente(
                     conn,
@@ -152,7 +152,7 @@ impl Revisoes<'_> {
                     params![texto_org, texto_fluxo],
                     |linha| linha.get(0),
                 )
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
 
             // 3. A auditoria da publicação, na mesma transação.
             let revisao_id = RevisionId::generate();
@@ -179,7 +179,7 @@ impl Revisoes<'_> {
                 ],
             )
             .map_err(|erro| {
-                ErroStore::da_escrita_em("ator_tipo", &[("actor_kind", "ator_tipo")], erro)
+                StoreError::from_write_with("ator_tipo", &[("actor_kind", "ator_tipo")], erro)
             })?;
 
             // 4. A revisão nova. Último passo de propósito: se ele falhar, o `SAVEPOINT` do escritor
@@ -203,53 +203,53 @@ impl Revisoes<'_> {
                     resolucoes_json
                 ],
             )
-            .map_err(|erro| ErroStore::da_escrita("numero", erro))?;
+            .map_err(|erro| StoreError::from_write("numero", erro))?;
 
             // 5. De volta como ficou no banco (é o que a API devolve).
             ler_por_numero(conn, &texto_org, &texto_fluxo, numero)?.ok_or_else(|| {
-                ErroStore::Interno("a revisão foi gravada e não voltou na leitura".to_owned())
+                StoreError::Internal("a revisão foi gravada e não voltou na leitura".to_owned())
             })
         })
     }
 
     /// Revisão pelo número (1, 2, 3…), dentro da org. Fluxo de outra org → `NaoEncontrado`.
-    pub fn obter(&self, org: OrgId, fluxo: FlowId, numero: u64) -> Resultado<RevisaoDeFluxo> {
+    pub fn obter(&self, org: OrgId, fluxo: FlowId, numero: u64) -> Resultado<FlowRevision> {
         let texto_org = org.to_string();
         let texto_fluxo = fluxo.to_string();
         let numero_i64 = i64::try_from(numero).unwrap_or(i64::MAX);
-        let encontrada = self.0.leitura(move |conn| {
+        let encontrada = self.0.read(move |conn| {
             pertence(conn, "fluxos", "fluxo", &texto_org, &texto_fluxo)?;
             ler_por_numero(conn, &texto_org, &texto_fluxo, numero_i64)
         })?;
-        exigir(encontrada, "revisão de fluxo", &numero.to_string())
+        require(encontrada, "revisão de fluxo", &numero.to_string())
     }
 
     /// Revisão pelo id: é a que uma execução segue (`fluxo_execucoes.revisao_id`), e a ação do
     /// atendente precisa da IR dela para conduzir o motor (FX-30). Revisão de outra org ou
     /// inexistente: `NaoEncontrado`.
-    pub fn obter_por_id(&self, org: OrgId, revisao: RevisionId) -> Resultado<RevisaoDeFluxo> {
+    pub fn obter_por_id(&self, org: OrgId, revisao: RevisionId) -> Resultado<FlowRevision> {
         let texto_org = org.to_string();
         let texto_revisao = revisao.to_string();
-        let encontrada = self.0.leitura(move |conn| {
+        let encontrada = self.0.read(move |conn| {
             conn.query_row(
                 &format!("SELECT {COLUNAS} FROM fluxo_revisoes WHERE org_id = ?1 AND id = ?2"),
                 params![texto_org, texto_revisao],
                 linha_revisao,
             )
             .optional()
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })?;
-        exigir(encontrada, "revisão de fluxo", &revisao.to_string())
+        require(encontrada, "revisão de fluxo", &revisao.to_string())
     }
 
     /// A revisão que vale hoje (`fluxos.revisao_atual`), se o fluxo já foi publicado alguma vez.
     ///
     /// Fluxo sem publicação devolve `None` (é o estado de quem só tem rascunho); fluxo de outra org,
     /// `NaoEncontrado`.
-    pub fn atual(&self, org: OrgId, fluxo: FlowId) -> Resultado<Option<RevisaoDeFluxo>> {
+    pub fn atual(&self, org: OrgId, fluxo: FlowId) -> Resultado<Option<FlowRevision>> {
         let texto_org = org.to_string();
         let texto_fluxo = fluxo.to_string();
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             let numero: Option<Option<i64>> = conn
                 .query_row(
                     "SELECT revisao_atual FROM fluxos WHERE org_id = ?1 AND id = ?2",
@@ -257,9 +257,9 @@ impl Revisoes<'_> {
                     |linha| linha.get(0),
                 )
                 .optional()
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
             match numero {
-                None => Err(ErroStore::Dominio(DomainError::NotFound {
+                None => Err(StoreError::Domain(DomainError::NotFound {
                     entity: "fluxo",
                     id: texto_fluxo.clone(),
                 })),
@@ -267,7 +267,7 @@ impl Revisoes<'_> {
                 Some(Some(numero)) => ler_por_numero(conn, &texto_org, &texto_fluxo, numero)?
                     .map_or_else(
                         || {
-                            Err(ErroStore::Interno(format!(
+                            Err(StoreError::Internal(format!(
                                 "o fluxo {texto_fluxo} aponta para a revisão {numero}, que não \
                                  existe"
                             )))
@@ -288,12 +288,12 @@ impl Revisoes<'_> {
         fluxo: FlowId,
         apos: Option<u64>,
         limite: u32,
-    ) -> Resultado<Vec<RevisaoDeFluxo>> {
+    ) -> Resultado<Vec<FlowRevision>> {
         let texto_org = org.to_string();
         let texto_fluxo = fluxo.to_string();
         let apos = apos.map(|numero| i64::try_from(numero).unwrap_or(i64::MAX));
         let limite = i64::from(limite.clamp(1, 500));
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             pertence(conn, "fluxos", "fluxo", &texto_org, &texto_fluxo)?;
             let mut consulta = conn
                 .prepare(&format!(
@@ -301,13 +301,13 @@ impl Revisoes<'_> {
                       WHERE org_id = ?1 AND fluxo_id = ?2 AND (?3 IS NULL OR numero > ?3)
                       ORDER BY numero LIMIT ?4"
                 ))
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
             let linhas = consulta
                 .query_map(params![texto_org, texto_fluxo, apos, limite], linha_revisao)
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
             let mut revisoes = Vec::new();
             for linha in linhas {
-                revisoes.push(linha.map_err(ErroStore::from)?);
+                revisoes.push(linha.map_err(StoreError::from)?);
             }
             Ok(revisoes)
         })
@@ -320,7 +320,7 @@ fn ler_por_numero(
     org: &str,
     fluxo: &str,
     numero: i64,
-) -> Resultado<Option<RevisaoDeFluxo>> {
+) -> Resultado<Option<FlowRevision>> {
     conn.query_row(
         &format!(
             "SELECT {COLUNAS} FROM fluxo_revisoes
@@ -330,7 +330,7 @@ fn ler_por_numero(
         linha_revisao,
     )
     .optional()
-    .map_err(ErroStore::from)
+    .map_err(StoreError::from)
 }
 
 /// Confere que a IR é um objeto JSON e que, quando ela declara a versão do esquema, é a informada.
@@ -339,7 +339,7 @@ fn ler_por_numero(
 /// com a mesma versão que a coluna `schema_versao` diz, para o motor não encontrar duas verdades.
 fn conferir_ir(definicao_json: &str, schema_versao: u32) -> Resultado<String> {
     let Ok(serde_json::Value::Object(mapa)) = serde_json::from_str(definicao_json) else {
-        return Err(ErroStore::Dominio(DomainError::Validation {
+        return Err(StoreError::Domain(DomainError::Validation {
             field: "definicao_json",
             reason: "a IR entra como objeto JSON já validado por quem chama".to_owned(),
         }));
@@ -347,7 +347,7 @@ fn conferir_ir(definicao_json: &str, schema_versao: u32) -> Resultado<String> {
     if let Some(declarada) = mapa.get("schema_versao") {
         let declarada = declarada.as_u64();
         if declarada != Some(u64::from(schema_versao)) {
-            return Err(ErroStore::Dominio(DomainError::Validation {
+            return Err(StoreError::Domain(DomainError::Validation {
                 field: "schema_versao",
                 reason: format!(
                     "a IR declara {declarada:?} e a publicação informa {schema_versao}: os dois têm \
@@ -369,7 +369,7 @@ fn conferir_resolucoes(resolucoes_json: &str) -> Resultado<String> {
         serde_json::from_str::<serde_json::Value>(texto),
         Ok(serde_json::Value::Object(_))
     ) {
-        return Err(ErroStore::Dominio(DomainError::Validation {
+        return Err(StoreError::Domain(DomainError::Validation {
             field: "resolucoes_json",
             reason: "as resoluções entram como objeto JSON (ex.: nome de departamento → id)"
                 .to_owned(),
@@ -384,7 +384,7 @@ fn conferir_ator(ator_tipo: &str) -> Resultado<String> {
     if ATORES_DE_AUDITORIA.contains(&ator) {
         return Ok(ator.to_owned());
     }
-    Err(ErroStore::Dominio(DomainError::Validation {
+    Err(StoreError::Domain(DomainError::Validation {
         field: "ator_tipo",
         reason: format!(
             "use um destes tipos de ator: {}",
@@ -394,8 +394,8 @@ fn conferir_ator(ator_tipo: &str) -> Resultado<String> {
 }
 
 /// Lê uma revisão da linha do resultado.
-fn linha_revisao(linha: &Row<'_>) -> rusqlite::Result<RevisaoDeFluxo> {
-    Ok(RevisaoDeFluxo {
+fn linha_revisao(linha: &Row<'_>) -> rusqlite::Result<FlowRevision> {
+    Ok(FlowRevision {
         id: id_da_coluna(linha, 0)?,
         org_id: id_da_coluna(linha, 1)?,
         fluxo_id: id_da_coluna(linha, 2)?,

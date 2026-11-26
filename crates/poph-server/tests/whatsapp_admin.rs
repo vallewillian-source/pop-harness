@@ -27,7 +27,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{delete, get, post};
 use poph_server::Estado;
 use poph_server::evolution::{CanalEvolution, canais_da_configuracao};
-use poph_store::{NovaOrg, NovoAgente, Pagina, Store};
+use poph_store::{NewAgent, NewOrg, Page, Store};
 use poph_types::config::{EvolutionConfig, EvolutionInstanceConfig, GlobalTokenConfig};
 use poph_types::{AgentId, HarnessConfig, IntegrationId, OrgId, Secret};
 use rand_core::OsRng;
@@ -310,22 +310,22 @@ impl Cenario {
         }];
         config.validar().expect("configuração válida");
 
-        let store = Arc::new(Store::abrir(&config).expect("abre o banco"));
+        let store = Arc::new(Store::open(&config).expect("abre o banco"));
         let org = store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: "Loja WhatsApp".to_owned(),
+            .orgs()
+            .criar(NewOrg {
+                name: "Loja WhatsApp".to_owned(),
                 slug: "loja-whatsapp".to_owned(),
                 config_json: String::new(),
             })
             .expect("cria a org")
             .id;
         let agente = store
-            .agentes()
+            .agents()
             .criar(
                 org,
-                NovoAgente {
-                    nome: "Atendente".to_owned(),
+                NewAgent {
+                    name: "Atendente".to_owned(),
                     slug: "atendente".to_owned(),
                     ..Default::default()
                 },
@@ -333,19 +333,19 @@ impl Cenario {
             .expect("cria o agente")
             .id;
         let integracao: IntegrationId = store
-            .integracao_criar(org, agente, "whatsapp".to_owned(), "active".to_owned())
+            .create_integration(org, agente, "whatsapp".to_owned(), "active".to_owned())
             .expect("cria a integração")
             .id
             .parse()
             .expect("id da integração");
         let integracao_solta: IntegrationId = store
-            .integracao_criar(org, agente, "whatsapp".to_owned(), "active".to_owned())
+            .create_integration(org, agente, "whatsapp".to_owned(), "active".to_owned())
             .expect("cria a integração solta")
             .id
             .parse()
             .expect("id da integração solta");
         let integracao_sms: IntegrationId = store
-            .integracao_criar(org, agente, "sms".to_owned(), "active".to_owned())
+            .create_integration(org, agente, "sms".to_owned(), "active".to_owned())
             .expect("cria a integração sms")
             .id
             .parse()
@@ -461,14 +461,14 @@ impl Cenario {
 
     fn estado_gravado(&self, integracao: IntegrationId) -> String {
         self.store
-            .integracao_obter(self.org, self.agente, integracao)
+            .get_integration(self.org, self.agente, integracao)
             .expect("integração")
             .connection_state
     }
 
     fn versao(&self, integracao: IntegrationId) -> u64 {
         self.store
-            .integracao_obter(self.org, self.agente, integracao)
+            .get_integration(self.org, self.agente, integracao)
             .expect("integração")
             .version
     }
@@ -550,16 +550,16 @@ async fn pareamento_devolve_qr_e_grava_estado() {
     // A geração do QR fica na auditoria, sem o conteúdo do QR.
     let registros = c
         .store
-        .auditoria()
-        .listar(c.org, Pagina::default())
+        .audit()
+        .listar(c.org, Page::default())
         .expect("auditoria da org");
     let linha = registros
         .iter()
         .find(|registro| registro.acao == "whatsapp_qrcode")
         .expect("registro de auditoria do pareamento");
-    assert_eq!(linha.entidade, "integration");
+    assert_eq!(linha.entity, "integration");
     assert_eq!(
-        linha.entidade_id.as_deref(),
+        linha.entity_id.as_deref(),
         Some(c.integracao.to_string().as_str())
     );
     assert!(
@@ -642,12 +642,12 @@ async fn desconectar_exige_if_match_e_chama_o_logout() {
 
     // Outra pessoa edita a integração: a versão sobe para 2.
     c.store
-        .integracao_atualizar(
+        .update_integration(
             c.org,
             c.agente,
             c.integracao,
-            poph_store::AlteracaoIntegracao {
-                versao: 1,
+            poph_store::IntegrationChange {
+                version: 1,
                 status: Some("inactive"),
                 ..Default::default()
             },
@@ -676,14 +676,14 @@ async fn desconectar_exige_if_match_e_chama_o_logout() {
     assert_eq!(c.versao(c.integracao), 2, "desconectar não sobe a versão");
     let registros = c
         .store
-        .auditoria()
-        .listar(c.org, Pagina::default())
+        .audit()
+        .listar(c.org, Page::default())
         .expect("auditoria da org");
     assert!(
         registros
             .iter()
             .any(|registro| registro.acao == "whatsapp_disconnect"
-                && registro.entidade == "integration"),
+                && registro.entity == "integration"),
         "a desconexão precisa ficar na auditoria"
     );
 }
@@ -798,9 +798,9 @@ async fn token_de_outra_org_da_403() {
     let c = Cenario::novo("outra-org").await;
     let outra = c
         .store
-        .orgaos()
-        .criar(NovaOrg {
-            nome: "Outra Loja".to_owned(),
+        .orgs()
+        .criar(NewOrg {
+            name: "Outra Loja".to_owned(),
             slug: "outra-loja".to_owned(),
             config_json: String::new(),
         })

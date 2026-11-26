@@ -1,12 +1,6 @@
--- MX-04 (PRD do módulo Matrix, §7 N2): a resposta do atendente pelo Element grava a auditoria
--- `human_takeover` com `actor_kind = 'matrix_user'`. O CHECK de `audit_log` da 0001 não aceitava
--- esse valor, então a tabela é reconstruída no padrão de 12 passos do SQLite, com o CHECK
--- estendido. Aditiva para os dados: todas as linhas existentes são copiadas sem mudança.
--- A 0001 não é editada (já publicada).
 
 CREATE TABLE audit_log_nova (
     id          TEXT    PRIMARY KEY NOT NULL,
-    -- Nulo para ação de token global.
     org_id      TEXT    REFERENCES orgs (id) ON DELETE SET NULL,
     actor_kind  TEXT    NOT NULL
                 CHECK (actor_kind IN ('admin_token', 'system', 'plugin', 'cli', 'matrix_user')),

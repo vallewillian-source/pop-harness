@@ -12,7 +12,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use poph_store::{MudancaAgente, NovaOrg, NovoAgente, Org, Status, Store};
+use poph_store::{AgentChange, NewAgent, NewOrg, Org, Status, Store};
 use poph_types::OrgId;
 
 /// Banco de verdade numa pasta temporária, apagada no fim.
@@ -29,8 +29,8 @@ impl Cenario {
             std::env::temp_dir().join(format!("poph-orgaos-{rotulo}-{}-{n}", std::process::id()));
         let _ = fs::remove_dir_all(&pasta);
         fs::create_dir_all(&pasta).expect("cria a pasta do teste");
-        let store = Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
-            .expect("abre o banco");
+        let store =
+            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco");
         Self {
             pasta,
             store: Some(store),
@@ -43,9 +43,9 @@ impl Cenario {
 
     fn org(&self, slug: &str) -> Org {
         self.store()
-            .orgaos()
-            .criar(NovaOrg {
-                nome: format!("Org {slug}"),
+            .orgs()
+            .criar(NewOrg {
+                name: format!("Org {slug}"),
                 slug: slug.to_owned(),
                 config_json: String::new(),
             })
@@ -54,13 +54,13 @@ impl Cenario {
 
     fn agente(&self, org: &Org, slug: &str) -> poph_store::Agente {
         self.store()
-            .agentes()
+            .agents()
             .criar(
                 org.id,
-                NovoAgente {
-                    nome: format!("Agente {slug}"),
+                NewAgent {
+                    name: format!("Agente {slug}"),
                     slug: slug.to_owned(),
-                    ..NovoAgente::default()
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente")
@@ -70,18 +70,18 @@ impl Cenario {
     fn situacao(&self, org: &Org, agente: &poph_store::Agente, status: Status) {
         let atual = self
             .store()
-            .agentes()
-            .obter(org.id, agente.id)
+            .agents()
+            .get(org.id, agente.id)
             .expect("lê o agente");
         self.store()
-            .agentes()
+            .agents()
             .atualizar(
                 org.id,
                 agente.id,
-                atual.versao,
-                MudancaAgente {
+                atual.version,
+                AgentChange {
                     status: Some(status),
-                    ..MudancaAgente::default()
+                    ..AgentChange::default()
                 },
             )
             .expect("muda a situação");
@@ -106,13 +106,13 @@ fn conta_so_agente_ativo_e_omite_org_sem_agente() {
         cenario.agente(&com_agentes, slug);
     }
     let inativo = cenario.agente(&com_agentes, "quatro");
-    cenario.situacao(&com_agentes, &inativo, Status::Inativo);
+    cenario.situacao(&com_agentes, &inativo, Status::Inactive);
     let arquivado = cenario.agente(&com_agentes, "cinco");
-    cenario.situacao(&com_agentes, &arquivado, Status::Arquivado);
+    cenario.situacao(&com_agentes, &arquivado, Status::Archived);
 
     let contagem = cenario
         .store()
-        .agentes()
+        .agents()
         .contar_ativos_por_org(&[com_agentes.id, sem_agentes.id])
         .expect("conta os ativos");
 
@@ -142,13 +142,13 @@ fn contagem_da_pagina_e_uma_consulta_so() {
         ids.push(org.id);
     }
 
-    let antes = cenario.store().leituras_feitas();
+    let antes = cenario.store().reads_done();
     let contagem = cenario
         .store()
-        .agentes()
+        .agents()
         .contar_ativos_por_org(&ids)
         .expect("conta os ativos");
-    let depois = cenario.store().leituras_feitas();
+    let depois = cenario.store().reads_done();
 
     assert_eq!(contagem.len(), 3, "três orgs com um agente ativo cada");
     assert_eq!(
@@ -158,14 +158,14 @@ fn contagem_da_pagina_e_uma_consulta_so() {
     );
 
     // Lista vazia não vai ao banco.
-    let antes = cenario.store().leituras_feitas();
+    let antes = cenario.store().reads_done();
     let vazia = cenario
         .store()
-        .agentes()
+        .agents()
         .contar_ativos_por_org(&[])
         .expect("lista vazia");
     assert!(vazia.is_empty());
-    assert_eq!(cenario.store().leituras_feitas(), antes);
+    assert_eq!(cenario.store().reads_done(), antes);
 }
 
 /// Org fora da lista pedida não entra no resultado: a consulta é fechada na página.
@@ -180,7 +180,7 @@ fn so_conta_as_orgs_pedidas() {
 
     let contagem = cenario
         .store()
-        .agentes()
+        .agents()
         .contar_ativos_por_org(&[pedida.id])
         .expect("conta os ativos");
 

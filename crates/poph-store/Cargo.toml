@@ -10,9 +10,7 @@ publish.workspace = true
 [dependencies]
 poph-types = { path = "../poph-types" }
 rusqlite.workspace = true
-# `tags_json` dos itens da base é uma lista JSON (HR-17).
 serde_json.workspace = true
-# sha256 do conteúdo dos blobs do arquivo de backup (HR-48e-1).
 sha2 = "0.11"
 uuid.workspace = true
 thiserror.workspace = true

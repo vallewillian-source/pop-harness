@@ -36,7 +36,7 @@ impl Candidato {
     pub fn de(departamento: &Departamento) -> Self {
         Self {
             id: departamento.id,
-            nome: departamento.nome.clone(),
+            nome: departamento.name.clone(),
         }
     }
 }

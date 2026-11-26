@@ -12,15 +12,15 @@ use poph_types::{AgentId, OrgId, ProductCategoryId};
 use rusqlite::{OptionalExtension, Row, named_params, params};
 
 use crate::Store;
-use crate::erro::{ErroStore, Resultado};
-use crate::modelo::{Agente, MudancaAgente, NovoAgente, Pagina, Status};
+use crate::error::{Resultado, StoreError};
+use crate::model::{AgentChange, Agente, NewAgent, Page, Status};
 use crate::repos::{
     conflito_ou_ausente, id_da_coluna, id_opcional, pertence, status_da_coluna, u32_da_coluna,
     u64_da_coluna,
 };
 
 pub fn agentes_por_provedor_em(caminho: &Path) -> Resultado<Vec<(String, u64)>> {
-    let conn = crate::conexao::abrir_leitura(caminho)?;
+    let conn = crate::connection::open_for_read(caminho)?;
     let mut consulta =
         conn.prepare("SELECT provider, COUNT(*) FROM agents GROUP BY provider ORDER BY provider")?;
     let linhas = consulta.query_map([], |linha| {
@@ -67,13 +67,13 @@ pub struct Agentes<'a>(pub(crate) &'a Store);
 
 impl Agentes<'_> {
     /// Cria o agente na org (status inicial `active`).
-    pub fn criar(&self, org: OrgId, novo: NovoAgente) -> Resultado<Agente> {
+    pub fn criar(&self, org: OrgId, novo: NewAgent) -> Resultado<Agente> {
         let id = AgentId::generate();
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_id = id.to_string();
         let texto_org = org.to_string();
-        self.0.escrita(move |conn| {
-            if let Some(departamento) = novo.departamento_padrao {
+        self.0.write(move |conn| {
+            if let Some(departamento) = novo.default_department {
                 pertence(
                     conn,
                     "departments",
@@ -101,45 +101,45 @@ impl Agentes<'_> {
                 params![
                     texto_id,
                     texto_org,
-                    novo.nome,
+                    novo.name,
                     novo.slug,
-                    novo.descricao,
+                    novo.description,
                     novo.agent_type,
-                    novo.categoria,
-                    novo.departamento_padrao.map(|dep| dep.to_string()),
+                    novo.category,
+                    novo.default_department.map(|dep| dep.to_string()),
                     novo.provedor,
                     novo.modelo,
                     novo.temperatura,
                     novo.max_tokens_saida,
                     novo.max_context_tokens,
-                    novo.janela_agrupamento_ms,
-                    novo.max_rodadas_ferramenta,
-                    novo.max_ferramentas_por_mensagem,
+                    novo.grouping_window_ms,
+                    novo.max_tool_rounds,
+                    novo.max_tools_per_message,
                     novo.rag_top_k,
-                    novo.rag_corte,
+                    novo.rag_cutoff,
                     agora
                 ],
             )
-            .map_err(|erro| ErroStore::da_escrita_em("slug", CAMPOS_AGENTE, erro))?;
+            .map_err(|erro| StoreError::from_write_with("slug", CAMPOS_AGENTE, erro))?;
             Ok(())
         })?;
-        self.obter(org, id)
+        self.get(org, id)
     }
 
     /// Busca pelo id dentro da org.
-    pub fn obter(&self, org: OrgId, id: AgentId) -> Resultado<Agente> {
+    pub fn get(&self, org: OrgId, id: AgentId) -> Resultado<Agente> {
         let texto_org = org.to_string();
         let texto_id = id.to_string();
-        let encontrado = self.0.leitura(move |conn| {
+        let encontrado = self.0.read(move |conn| {
             conn.query_row(
                 &format!("SELECT {COLUNAS} FROM agents WHERE id = ?1 AND org_id = ?2"),
                 params![texto_id, texto_org],
                 linha,
             )
             .optional()
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })?;
-        super::exigir(encontrado, "agente", &id.to_string())
+        super::require(encontrado, "agente", &id.to_string())
     }
 
     /// Busca pelo slug dentro da org.
@@ -147,16 +147,16 @@ impl Agentes<'_> {
         let texto_org = org.to_string();
         let procurado = slug.to_owned();
         let rotulo = slug.to_owned();
-        let encontrado = self.0.leitura(move |conn| {
+        let encontrado = self.0.read(move |conn| {
             conn.query_row(
                 &format!("SELECT {COLUNAS} FROM agents WHERE org_id = ?1 AND slug = ?2"),
                 params![texto_org, procurado],
                 linha,
             )
             .optional()
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })?;
-        super::exigir(encontrado, "agente", &format!("slug `{rotulo}`"))
+        super::require(encontrado, "agente", &format!("slug `{rotulo}`"))
     }
 
     /// Versão atual do agente, sem carregar o registro inteiro.
@@ -165,24 +165,24 @@ impl Agentes<'_> {
     pub fn versao(&self, org: OrgId, id: AgentId) -> Resultado<u64> {
         let texto_org = org.to_string();
         let texto_id = id.to_string();
-        let encontrada = self.0.leitura(move |conn| {
+        let encontrada = self.0.read(move |conn| {
             conn.query_row(
                 "SELECT version FROM agents WHERE id = ?1 AND org_id = ?2",
                 params![texto_id, texto_org],
                 |linha| u64_da_coluna(linha, 0),
             )
             .optional()
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })?;
-        super::exigir(encontrada, "agente", &id.to_string())
+        super::require(encontrada, "agente", &id.to_string())
     }
 
     /// Lista os agentes da org (cursor pelo id).
-    pub fn listar(&self, org: OrgId, pagina: Pagina) -> Resultado<Vec<Agente>> {
+    pub fn listar(&self, org: OrgId, pagina: Page) -> Resultado<Vec<Agente>> {
         let texto_org = org.to_string();
-        let apos = pagina.apos.map(|id| id.to_string());
-        let limite = i64::from(pagina.limite);
-        self.0.leitura(move |conn| {
+        let apos = pagina.after.map(|id| id.to_string());
+        let limite = i64::from(pagina.limit);
+        self.0.read(move |conn| {
             let mut consulta = conn.prepare(&format!(
                 "SELECT {COLUNAS} FROM agents
                   WHERE org_id = ?1 AND (?2 IS NULL OR id > ?2)
@@ -211,7 +211,7 @@ impl Agentes<'_> {
         let texto_org = org.to_string();
         let lista = serde_json::to_string(&ids.iter().map(ToString::to_string).collect::<Vec<_>>())
             .unwrap_or_else(|_| "[]".to_owned());
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             let mut consulta = conn.prepare(
                 "SELECT id, name FROM agents
                   WHERE org_id = ?1 AND id IN (SELECT value FROM json_each(?2))",
@@ -243,7 +243,7 @@ impl Agentes<'_> {
         let lista =
             serde_json::to_string(&orgs.iter().map(ToString::to_string).collect::<Vec<_>>())
                 .unwrap_or_else(|_| "[]".to_owned());
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             let mut consulta = conn.prepare(
                 "SELECT org_id, count(*) FROM agents
                   WHERE status = 'active' AND org_id IN (SELECT value FROM json_each(?1))
@@ -268,11 +268,11 @@ impl Agentes<'_> {
     /// agente pronto para responder. A mensagem recebida fica registrada e é descartada sem
     /// resposta (o registro fica em `audit_log`/`turns`, na HR-13).
     pub fn obter_para_turno(&self, org: OrgId, id: AgentId) -> Resultado<Agente> {
-        let agente = self.obter(org, id)?;
-        if !agente.pode_abrir_turno() {
-            return Err(ErroStore::Dominio(poph_types::DomainError::AgentInactive {
+        let agente = self.get(org, id)?;
+        if !agente.can_open_turn() {
+            return Err(StoreError::Domain(poph_types::DomainError::AgentInactive {
                 id: agente.id.to_string(),
-                status: agente.status.como_texto().to_owned(),
+                status: agente.status.as_text().to_owned(),
             }));
         }
         Ok(agente)
@@ -281,7 +281,7 @@ impl Agentes<'_> {
     /// Lista só os agentes que podem abrir turno (decisão D-05: `active`).
     pub fn listar_ativos(&self, org: OrgId) -> Resultado<Vec<Agente>> {
         let texto_org = org.to_string();
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             let mut consulta = conn.prepare(&format!(
                 "SELECT {COLUNAS} FROM agents WHERE org_id = ?1 AND status = 'active' ORDER BY id"
             ))?;
@@ -300,16 +300,16 @@ impl Agentes<'_> {
         org: OrgId,
         id: AgentId,
         esperada: u64,
-        mudanca: MudancaAgente,
+        mudanca: AgentChange,
     ) -> Resultado<Agente> {
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_org = org.to_string();
         let texto_id = id.to_string();
-        let status = mudanca.status.map(Status::como_texto);
-        let handoff_ativo = mudanca.handoff_ativo.map(i64::from);
+        let status = mudanca.status.map(Status::as_text);
+        let handoff_ativo = mudanca.handoff_active.map(i64::from);
         let esperada_i64 = esperada as i64;
-        let efeito = self.0.escrita(move |conn| {
-            for departamento in [mudanca.departamento_padrao, mudanca.handoff_departamento]
+        let efeito = self.0.write(move |conn| {
+            for departamento in [mudanca.default_department, mudanca.handoff_department]
                 .into_iter()
                 .flatten()
             {
@@ -344,22 +344,22 @@ impl Agentes<'_> {
                     updated_at = :agora
                   WHERE id = :id AND org_id = :org AND version = :esperada",
                 named_params! {
-                    ":nome": mudanca.nome,
-                    ":descricao": mudanca.descricao,
+                    ":nome": mudanca.name,
+                    ":descricao": mudanca.description,
                     ":status": status,
-                    ":departamento_padrao": mudanca.departamento_padrao.map(|dep| dep.to_string()),
+                    ":departamento_padrao": mudanca.default_department.map(|dep| dep.to_string()),
                     ":handoff_ativo": handoff_ativo,
-                    ":handoff_departamento": mudanca.handoff_departamento.map(|dep| dep.to_string()),
+                    ":handoff_departamento": mudanca.handoff_department.map(|dep| dep.to_string()),
                     ":provedor": mudanca.provedor,
                     ":modelo": mudanca.modelo,
                     ":temperatura": mudanca.temperatura,
                     ":max_tokens_saida": mudanca.max_tokens_saida,
                     ":max_context_tokens": mudanca.max_context_tokens.map(i64::from),
-                    ":janela": mudanca.janela_agrupamento_ms.map(i64::from),
-                    ":rodadas": mudanca.max_rodadas_ferramenta.map(i64::from),
-                    ":calls": mudanca.max_ferramentas_por_mensagem.map(i64::from),
+                    ":janela": mudanca.grouping_window_ms.map(i64::from),
+                    ":rodadas": mudanca.max_tool_rounds.map(i64::from),
+                    ":calls": mudanca.max_tools_per_message.map(i64::from),
                     ":top_k": mudanca.rag_top_k.map(i64::from),
-                    ":corte": mudanca.rag_corte,
+                    ":corte": mudanca.rag_cutoff,
                     ":jev": mudanca.jev_json,
                     ":agora": agora,
                     ":id": texto_id,
@@ -367,24 +367,24 @@ impl Agentes<'_> {
                     ":esperada": esperada_i64,
                 },
             )
-            .map_err(|erro| ErroStore::da_escrita_em("slug", CAMPOS_AGENTE, erro))
+            .map_err(|erro| StoreError::from_write_with("slug", CAMPOS_AGENTE, erro))
         })?;
         if efeito == 0 {
             return Err(self.conflito(org, id, esperada));
         }
-        self.obter(org, id)
+        self.get(org, id)
     }
 
     /// Exclui o agente (instruções, vínculos, conversas e arquivos dele saem junto).
     pub fn excluir(&self, org: OrgId, id: AgentId) -> Resultado<()> {
         let texto_org = org.to_string();
         let texto_id = id.to_string();
-        let apagou = self.0.escrita(move |conn| {
+        let apagou = self.0.write(move |conn| {
             conn.execute(
                 "DELETE FROM agents WHERE org_id = ?1 AND id = ?2",
                 params![texto_org, texto_id],
             )
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })?;
         if apagou == 0 {
             return Err(nao_encontrado(id));
@@ -400,12 +400,12 @@ impl Agentes<'_> {
         esperada: u64,
         categorias: &[ProductCategoryId],
     ) -> Resultado<Agente> {
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_org = org.to_string();
         let texto_id = id.to_string();
         let categorias: Vec<String> = categorias.iter().map(ToString::to_string).collect();
         let esperada_i64 = esperada as i64;
-        self.0.escrita(move |conn| {
+        self.0.write(move |conn| {
             for categoria in &categorias {
                 pertence(
                     conn,
@@ -421,7 +421,7 @@ impl Agentes<'_> {
                       WHERE id = ?1 AND org_id = ?2 AND version = ?4",
                     params![texto_id, texto_org, agora, esperada_i64],
                 )
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
             if efeito == 0 {
                 return Err(conflito_ou_ausente(
                     conn, "agents", "agente", &texto_id, &texto_org, esperada,
@@ -431,25 +431,25 @@ impl Agentes<'_> {
                 "DELETE FROM agent_product_categories WHERE org_id = ?1 AND agent_id = ?2",
                 params![texto_org, texto_id],
             )
-            .map_err(ErroStore::from)?;
+            .map_err(StoreError::from)?;
             for categoria in &categorias {
                 conn.execute(
                     "INSERT INTO agent_product_categories (org_id, agent_id, category_id)
                      VALUES (?1, ?2, ?3)",
                     params![texto_org, texto_id, categoria],
                 )
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
             }
             Ok(())
         })?;
-        self.obter(org, id)
+        self.get(org, id)
     }
 
     /// Categorias de produto vinculadas ao agente.
     pub fn categorias(&self, org: OrgId, id: AgentId) -> Resultado<Vec<ProductCategoryId>> {
         let texto_org = org.to_string();
         let texto_id = id.to_string();
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             let mut consulta = conn.prepare(
                 "SELECT category_id FROM agent_product_categories
                   WHERE org_id = ?1 AND agent_id = ?2 ORDER BY category_id",
@@ -465,11 +465,11 @@ impl Agentes<'_> {
         })
     }
 
-    fn conflito(&self, org: OrgId, id: AgentId, esperada: u64) -> ErroStore {
+    fn conflito(&self, org: OrgId, id: AgentId, esperada: u64) -> StoreError {
         let texto_org = org.to_string();
         let texto_id = id.to_string();
         self.0
-            .leitura(move |conn| {
+            .read(move |conn| {
                 Ok(conflito_ou_ausente(
                     conn, "agents", "agente", &texto_id, &texto_org, esperada,
                 ))
@@ -478,8 +478,8 @@ impl Agentes<'_> {
     }
 }
 
-fn nao_encontrado(id: AgentId) -> ErroStore {
-    ErroStore::Dominio(poph_types::DomainError::NotFound {
+fn nao_encontrado(id: AgentId) -> StoreError {
+    StoreError::Domain(poph_types::DomainError::NotFound {
         entity: "agente",
         id: id.to_string(),
     })
@@ -489,29 +489,29 @@ fn linha(linha: &Row<'_>) -> rusqlite::Result<Agente> {
     Ok(Agente {
         id: id_da_coluna(linha, 0)?,
         org_id: id_da_coluna(linha, 1)?,
-        nome: linha.get(2)?,
+        name: linha.get(2)?,
         slug: linha.get(3)?,
-        descricao: linha.get(4)?,
+        description: linha.get(4)?,
         status: status_da_coluna(linha, 5)?,
         agent_type: linha.get(6)?,
-        categoria: linha.get(7)?,
-        departamento_padrao: id_opcional(linha, 8)?,
-        handoff_ativo: linha.get::<_, i64>(9)? != 0,
-        handoff_departamento: id_opcional(linha, 10)?,
+        category: linha.get(7)?,
+        default_department: id_opcional(linha, 8)?,
+        handoff_active: linha.get::<_, i64>(9)? != 0,
+        handoff_department: id_opcional(linha, 10)?,
         provedor: linha.get(11)?,
         modelo: linha.get(12)?,
         temperatura: linha.get(13)?,
         max_tokens_saida: linha.get(14)?,
         max_context_messages: u32_da_coluna(linha, 15)?,
         max_context_tokens: u32_da_coluna(linha, 16)?,
-        janela_agrupamento_ms: u32_da_coluna(linha, 17)?,
-        max_rodadas_ferramenta: u32_da_coluna(linha, 18)?,
-        max_ferramentas_por_mensagem: u32_da_coluna(linha, 19)?,
+        grouping_window_ms: u32_da_coluna(linha, 17)?,
+        max_tool_rounds: u32_da_coluna(linha, 18)?,
+        max_tools_per_message: u32_da_coluna(linha, 19)?,
         rag_top_k: u32_da_coluna(linha, 20)?,
-        rag_corte: linha.get(21)?,
+        rag_cutoff: linha.get(21)?,
         jev_json: linha.get(22)?,
-        versao: u64_da_coluna(linha, 23)?,
-        criado_em: linha.get(24)?,
-        atualizado_em: linha.get(25)?,
+        version: u64_da_coluna(linha, 23)?,
+        created_at: linha.get(24)?,
+        updated_at: linha.get(25)?,
     })
 }

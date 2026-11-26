@@ -138,7 +138,7 @@ impl Cenario {
         });
         config.validar().expect("configuração válida");
 
-        let store = Arc::new(Store::abrir(&config).expect("abre o banco"));
+        let store = Arc::new(Store::open(&config).expect("abre o banco"));
         let mut estado = Estado::novo(store, config).expect("estado do servidor");
         if let Some(receptor) = receptor {
             estado = estado.com_matrix_as(Arc::new(receptor));

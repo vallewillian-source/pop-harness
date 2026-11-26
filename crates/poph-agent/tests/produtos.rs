@@ -20,7 +20,7 @@ use poph_agent::turno::{ContextoFerramenta, RegistroFerramentas, UsoFerramentas,
 use poph_agent::{BuscadorProdutos, BuscarProduto, CatalogoProdutos};
 use poph_rag::{ConfigIndice, Embedder, EmbedderFake, Indice};
 use poph_store::{
-    MudancaProduto, NovaCategoria, NovaOrg, NovoAgente, NovoProduto, Produto, Status, Store,
+    NewAgent, NewCategory, NewOrg, NewProduct, Product, ProductChange, Status, Store,
 };
 use poph_types::{AgentId, ConversationId, OrgId, ProductCategoryId, TurnId};
 
@@ -43,43 +43,42 @@ impl Cenario {
         let _ = std::fs::remove_dir_all(&pasta);
         std::fs::create_dir_all(&pasta).expect("cria a pasta");
         let store = Arc::new(
-            Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
-                .expect("abre o banco"),
+            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco"),
         );
         let org = store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: format!("Org {rotulo}"),
+            .orgs()
+            .criar(NewOrg {
+                name: format!("Org {rotulo}"),
                 slug: format!("org-{rotulo}-{}", AgentId::generate()),
                 config_json: "{}".to_owned(),
             })
             .expect("cria a org")
             .id;
         let agente = store
-            .agentes()
+            .agents()
             .criar(
                 org,
-                NovoAgente {
-                    nome: format!("Atendente {rotulo}"),
+                NewAgent {
+                    name: format!("Atendente {rotulo}"),
                     slug: format!("atendente-{rotulo}"),
-                    ..NovoAgente::default()
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente")
             .id;
         let categoria = store
-            .categorias()
+            .categories()
             .criar(
                 org,
-                NovaCategoria {
-                    nome: "Pragas urbanas".to_owned(),
-                    descricao: String::new(),
+                NewCategory {
+                    name: "Pragas urbanas".to_owned(),
+                    description: String::new(),
                 },
             )
             .expect("cria a categoria")
             .id;
         let embedder: Arc<dyn Embedder> = Arc::new(EmbedderFake::new());
-        let (indice, _) = Indice::abrir(store.caminho_rag(), embedder, ConfigIndice::default())
+        let (indice, _) = Indice::abrir(store.rag_path(), embedder, ConfigIndice::default())
             .expect("abre o índice");
         let catalogo = CatalogoProdutos::novo(Arc::clone(&store), Arc::new(indice));
         Self {
@@ -94,12 +93,12 @@ impl Cenario {
 
     fn nova_categoria(&self, nome: &str) -> ProductCategoryId {
         self.store
-            .categorias()
+            .categories()
             .criar(
                 self.org,
-                NovaCategoria {
-                    nome: nome.to_owned(),
-                    descricao: String::new(),
+                NewCategory {
+                    name: nome.to_owned(),
+                    description: String::new(),
                 },
             )
             .expect("cria a categoria")
@@ -113,21 +112,21 @@ impl Cenario {
         aliases: &[&str],
         preco_texto: &str,
         centavos: i64,
-    ) -> Produto {
+    ) -> Product {
         self.store
-            .produtos()
+            .products()
             .criar(
                 self.org,
-                NovoProduto {
-                    categoria_id: Some(categoria),
-                    nome: nome.to_owned(),
+                NewProduct {
+                    category_id: Some(categoria),
+                    name: nome.to_owned(),
                     aliases: aliases.iter().map(|alias| (*alias).to_owned()).collect(),
-                    descricao: format!("Serviço de {nome} com garantia."),
-                    preco_texto: preco_texto.to_owned(),
-                    preco_centavos: centavos,
-                    unidade: "por visita".to_owned(),
-                    condicoes: "Pagamento em até 3x".to_owned(),
-                    ..NovoProduto::default()
+                    description: format!("Serviço de {nome} com garantia."),
+                    price_text: preco_texto.to_owned(),
+                    price_cents: centavos,
+                    unit: "por visita".to_owned(),
+                    conditions: "Pagamento em até 3x".to_owned(),
+                    ..NewProduct::default()
                 },
             )
             .expect("cria o produto")
@@ -246,19 +245,19 @@ async fn produto_inativo_ou_arquivado_sai_da_busca_e_da_ferramenta() {
     // Inativo: sai do índice na sincronização.
     let atual = cenario
         .store
-        .produtos()
+        .products()
         .obter(cenario.org, produto.id)
         .expect("lê o produto");
     cenario
         .store
-        .produtos()
+        .products()
         .atualizar(
             cenario.org,
             produto.id,
-            atual.versao,
-            MudancaProduto {
-                status: Some(Status::Inativo),
-                ..MudancaProduto::default()
+            atual.version,
+            ProductChange {
+                status: Some(Status::Inactive),
+                ..ProductChange::default()
             },
         )
         .expect("inativa o produto");
@@ -271,19 +270,19 @@ async fn produto_inativo_ou_arquivado_sai_da_busca_e_da_ferramenta() {
     // Arquivado: mesma coisa.
     let atual = cenario
         .store
-        .produtos()
+        .products()
         .obter(cenario.org, produto.id)
         .expect("lê o produto");
     cenario
         .store
-        .produtos()
+        .products()
         .atualizar(
             cenario.org,
             produto.id,
-            atual.versao,
-            MudancaProduto {
-                status: Some(Status::Arquivado),
-                ..MudancaProduto::default()
+            atual.version,
+            ProductChange {
+                status: Some(Status::Archived),
+                ..ProductChange::default()
             },
         )
         .expect("arquiva o produto");
@@ -312,20 +311,20 @@ async fn mudar_preco_aparece_na_resposta_seguinte_sem_reindexar() {
 
     let atual = cenario
         .store
-        .produtos()
+        .products()
         .obter(cenario.org, produto.id)
         .expect("lê o produto");
     cenario
         .store
-        .produtos()
+        .products()
         .atualizar(
             cenario.org,
             produto.id,
-            atual.versao,
-            MudancaProduto {
-                preco_texto: Some("R$ 279,90".to_owned()),
-                preco_centavos: Some(27_990),
-                ..MudancaProduto::default()
+            atual.version,
+            ProductChange {
+                price_text: Some("R$ 279,90".to_owned()),
+                price_cents: Some(27_990),
+                ..ProductChange::default()
             },
         )
         .expect("muda o preço");
@@ -388,9 +387,9 @@ async fn busca_e_leitura_nao_cruzam_org() {
 
     let outra = cenario
         .store
-        .orgaos()
-        .criar(NovaOrg {
-            nome: "Outra org".to_owned(),
+        .orgs()
+        .criar(NewOrg {
+            name: "Outra org".to_owned(),
             slug: format!("outra-{}", AgentId::generate()),
             config_json: "{}".to_owned(),
         })
@@ -398,13 +397,13 @@ async fn busca_e_leitura_nao_cruzam_org() {
         .id;
     let outro_agente = cenario
         .store
-        .agentes()
+        .agents()
         .criar(
             outra,
-            NovoAgente {
-                nome: "Atendente da outra".to_owned(),
+            NewAgent {
+                name: "Atendente da outra".to_owned(),
                 slug: format!("outro-{}", AgentId::generate()),
-                ..NovoAgente::default()
+                ..NewAgent::default()
             },
         )
         .expect("cria o outro agente")
@@ -434,13 +433,13 @@ async fn busca_e_leitura_nao_cruzam_org() {
 
     // Leitura direta por id também não cruza.
     assert!(
-        cenario.store.produtos().obter(outra, produto.id).is_err(),
+        cenario.store.products().obter(outra, produto.id).is_err(),
         "obter com a org errada não devolve o produto"
     );
     assert!(
         cenario
             .store
-            .produtos()
+            .products()
             .ativos_por_ids(outra, &[produto.id])
             .expect("lê por ids")
             .is_empty(),
@@ -476,13 +475,13 @@ async fn filtro_por_categoria_vinculada() {
     // Com vínculo só em pragas: hidráulica sai do índice do agente.
     let agente = cenario
         .store
-        .agentes()
-        .obter(cenario.org, cenario.agente)
+        .agents()
+        .get(cenario.org, cenario.agente)
         .expect("lê o agente");
     cenario
         .store
-        .agentes()
-        .definir_categorias(cenario.org, cenario.agente, agente.versao, &[pragas])
+        .agents()
+        .definir_categorias(cenario.org, cenario.agente, agente.version, &[pragas])
         .expect("vincula a categoria");
     cenario.sincronizar().await;
 
@@ -533,5 +532,5 @@ async fn filtro_por_categoria_vinculada() {
     assert!(negado.is_err(), "categoria fora do vínculo é recusada");
 
     // O produto da outra categoria continua no banco (só saiu do índice do agente).
-    assert!(cenario.store.produtos().obter(cenario.org, pia.id).is_ok());
+    assert!(cenario.store.products().obter(cenario.org, pia.id).is_ok());
 }

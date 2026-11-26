@@ -110,14 +110,14 @@ impl BaseConhecimento {
         org: OrgId,
         agente: AgentId,
     ) -> Resultado<RelatorioIndexacao> {
-        let itens = self.store.conhecimento().itens_do_agente(org, agente)?;
+        let itens = self.store.knowledge().itens_do_agente(org, agente)?;
         let para_indice: Vec<poph_rag::ItemRag> = itens
             .into_iter()
             .map(|item| poph_rag::ItemRag {
                 id: item.id,
-                titulo: item.titulo,
-                texto: item.conteudo,
-                versao: item.versao,
+                titulo: item.title,
+                texto: item.content,
+                versao: item.version,
             })
             .collect();
         Ok(self
@@ -132,7 +132,7 @@ impl BaseConhecimento {
         org: OrgId,
         grupo: KnowledgeGroupId,
     ) -> Resultado<Vec<(AgentId, RelatorioIndexacao)>> {
-        let agentes = self.store.conhecimento().agentes_do_grupo(org, grupo)?;
+        let agentes = self.store.knowledge().agentes_do_grupo(org, grupo)?;
         let mut relatorios = Vec::with_capacity(agentes.len());
         for agente in agentes {
             relatorios.push((agente, self.sincronizar_agente(org, agente).await?));
@@ -146,13 +146,13 @@ impl BaseConhecimento {
         org: OrgId,
     ) -> Resultado<Vec<(AgentId, RelatorioIndexacao)>> {
         let mut relatorios = Vec::new();
-        let mut pagina = poph_store::Pagina::com_limite(200);
+        let mut pagina = poph_store::Page::with_limit(200);
         loop {
-            let lote = self.store.agentes().listar(org, pagina)?;
+            let lote = self.store.agents().listar(org, pagina)?;
             if lote.is_empty() {
                 return Ok(relatorios);
             }
-            pagina.apos = lote.last().map(|agente| agente.id.as_uuid());
+            pagina.after = lote.last().map(|agente| agente.id.as_uuid());
             for agente in lote {
                 relatorios.push((agente.id, self.sincronizar_agente(org, agente.id).await?));
             }
@@ -169,10 +169,10 @@ impl BuscadorBase for BaseConhecimento {
         parametros: ParametrosBusca,
     ) -> FuturoBusca<'_> {
         Box::pin(async move {
-            match self.store.agentes().obter(org, agente) {
-                Ok(a) if a.status == poph_store::Status::Ativo => {}
+            match self.store.agents().get(org, agente) {
+                Ok(a) if a.status == poph_store::Status::Active => {}
                 Ok(_) => return Ok(Vec::new()),
-                Err(e) if e.eh_nao_encontrado() => return Ok(Vec::new()),
+                Err(e) if e.is_not_found() => return Ok(Vec::new()),
                 Err(e) => return Err(e.into()),
             }
             let top_k = parametros.top_k.max(1);
@@ -191,27 +191,27 @@ impl BuscadorBase for BaseConhecimento {
                 .await?;
             // O índice pode estar desatualizado após falha de sincronização. Confira a
             // elegibilidade no banco principal antes de entregar qualquer trecho.
-            match self.store.agentes().obter(org, agente) {
-                Ok(a) if a.status == poph_store::Status::Ativo => {}
+            match self.store.agents().get(org, agente) {
+                Ok(a) if a.status == poph_store::Status::Active => {}
                 Ok(_) => return Ok(Vec::new()),
-                Err(e) if e.eh_nao_encontrado() => return Ok(Vec::new()),
+                Err(e) if e.is_not_found() => return Ok(Vec::new()),
                 Err(e) => return Err(e.into()),
             }
             let indexados = self.indice.itens_indexados(org, agente)?;
             let elegiveis: std::collections::HashMap<_, _> = self
                 .store
-                .conhecimento()
+                .knowledge()
                 .itens_do_agente(org, agente)?
                 .into_iter()
                 .filter(|item| {
                     let atual = poph_rag::trechos::hash_origem(
                         self.indice.identidade(),
-                        &item.titulo,
-                        &item.conteudo,
+                        &item.title,
+                        &item.content,
                     );
                     indexados.get(&item.id) == Some(&atual)
                 })
-                .map(|item| (item.id, item.grupo))
+                .map(|item| (item.id, item.group))
                 .collect();
             let mut saida = Vec::with_capacity(achados.len());
             for achado in achados {

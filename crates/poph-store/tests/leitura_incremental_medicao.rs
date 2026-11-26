@@ -14,7 +14,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use poph_store::{Direcao, NovaMensagem, NovaOrg, NovoAgente, Origem, Papel, Store};
+use poph_store::{Direction, NewAgent, NewMessage, NewOrg, Origin, Role, Store};
 use poph_types::{ConversationId, MessageId, OrgId};
 use rusqlite::{Connection, params};
 
@@ -57,30 +57,30 @@ fn preparar(
 ) -> (Store, OrgId, Vec<ConversationId>) {
     let _ = fs::remove_dir_all(pasta);
     fs::create_dir_all(pasta).expect("pasta");
-    let store = Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre");
+    let store = Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre");
     let org = store
-        .orgaos()
-        .criar(NovaOrg {
-            nome: "Medição".to_owned(),
+        .orgs()
+        .criar(NewOrg {
+            name: "Medição".to_owned(),
             slug: "medicao-mx05".to_owned(),
             config_json: String::new(),
         })
         .expect("org")
         .id;
     let agente = store
-        .agentes()
+        .agents()
         .criar(
             org,
-            NovoAgente {
-                nome: "Agente".to_owned(),
+            NewAgent {
+                name: "Agente".to_owned(),
                 slug: "agente-medicao".to_owned(),
-                ..NovoAgente::default()
+                ..NewAgent::default()
             },
         )
         .expect("agente")
         .id;
 
-    let caminho = store.caminho_harness().to_path_buf();
+    let caminho = store.harness_path().to_path_buf();
     let mut con = Connection::open(&caminho).expect("conexão de carga");
     let agora: i64 = 1_800_000_000_000;
     let org_txt = org.to_string();
@@ -169,7 +169,7 @@ fn medicao_leitura_incremental_e_custo_do_indice() {
         inicio.elapsed().as_secs_f64()
     );
 
-    let caminho = store.caminho_harness().to_path_buf();
+    let caminho = store.harness_path().to_path_buf();
     let con = Connection::open(&caminho).expect("conexão de leitura");
     let meio = (mensagens_n as i64) / 2;
     imprime_plano(
@@ -191,7 +191,7 @@ fn medicao_leitura_incremental_e_custo_do_indice() {
         let mut tempos = Vec::with_capacity(repeticoes);
         for _ in 0..repeticoes {
             let t = Instant::now();
-            let pagina = store.mensagens().desde(apos, 200).expect("desde");
+            let pagina = store.messages().desde(apos, 200).expect("desde");
             tempos.push(t.elapsed());
             assert!(pagina.len() <= 200);
         }
@@ -229,17 +229,17 @@ fn medicao_leitura_incremental_e_custo_do_indice() {
             let conversa = conversas[(i * 7919) % conversas_n];
             let t = Instant::now();
             store
-                .mensagens()
+                .messages()
                 .gravar(
                     org,
-                    NovaMensagem {
+                    NewMessage {
                         conversation_id: conversa,
-                        direcao: Direcao::Entrada,
-                        papel: Papel::Usuario,
-                        origem: Origem::Agente,
-                        autor_nome: None,
+                        direction: Direction::Inbound,
+                        role: Role::User,
+                        origin: Origin::Agente,
+                        author_name: None,
                         texto: "turno de medição".to_owned(),
-                        anexos_json: "[]".to_owned(),
+                        attachments_json: "[]".to_owned(),
                         id_externo: None,
                         turn_id: None,
                     },

@@ -9,7 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use poph_store::{NovaOrg, NovoAgente, Store};
+use poph_store::{NewAgent, NewOrg, Store};
 use serde_json::Value;
 
 /// PNG mínimo: a assinatura é o que a detecção por conteúdo usa.
@@ -29,28 +29,28 @@ impl Cenario {
         fs::create_dir_all(pasta.join("dados")).expect("cria a pasta de dados");
         let slug = format!("org-{rotulo}");
         {
-            let store = Store::abrir_em(
+            let store = Store::open_at(
                 &pasta.join("dados").join("harness.db"),
                 &pasta.join("dados").join("rag.db"),
             )
             .expect("abre o banco");
             let org = store
-                .orgaos()
-                .criar(NovaOrg {
-                    nome: format!("Org {rotulo}"),
+                .orgs()
+                .criar(NewOrg {
+                    name: format!("Org {rotulo}"),
                     slug: slug.clone(),
                     config_json: "{}".to_owned(),
                 })
                 .expect("cria a org")
                 .id;
             store
-                .agentes()
+                .agents()
                 .criar(
                     org,
-                    NovoAgente {
-                        nome: "Bia".to_owned(),
+                    NewAgent {
+                        name: "Bia".to_owned(),
                         slug: "bia".to_owned(),
-                        ..NovoAgente::default()
+                        ..NewAgent::default()
                     },
                 )
                 .expect("cria o agente");
@@ -301,24 +301,20 @@ fn biblioteca_e_por_agente() {
     let cenario = Cenario::novo("isolamento");
     // Segundo agente na mesma org.
     {
-        let store = Store::abrir_em(
+        let store = Store::open_at(
             &cenario.pasta.join("dados").join("harness.db"),
             &cenario.pasta.join("dados").join("rag.db"),
         )
         .expect("abre o banco");
-        let org = store
-            .orgaos()
-            .por_slug(&cenario.slug)
-            .expect("org criada")
-            .id;
+        let org = store.orgs().por_slug(&cenario.slug).expect("org criada").id;
         store
-            .agentes()
+            .agents()
             .criar(
                 org,
-                NovoAgente {
-                    nome: "Caio".to_owned(),
+                NewAgent {
+                    name: "Caio".to_owned(),
                     slug: "caio".to_owned(),
-                    ..NovoAgente::default()
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o segundo agente");

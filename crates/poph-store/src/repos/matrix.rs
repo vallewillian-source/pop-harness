@@ -21,8 +21,8 @@ use poph_types::{ConversationId, DepartmentId, DomainError, MessageId, OrgId, Ou
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::Store;
-use crate::erro::{ErroStore, Resultado};
-use crate::modelo::StatusConversa;
+use crate::error::{Resultado, StoreError};
+use crate::model::ConversationStatus;
 use crate::repos::{LIMITE_NOME_CLIENTE, id_da_coluna, u32_da_coluna, u64_da_coluna};
 
 /// Situação da criação da sala de uma conversa.
@@ -129,7 +129,7 @@ pub struct SalaMatrix {
     /// Espaço do departamento em que a sala foi posta, quando houver.
     pub espaco: Option<String>,
     /// Última situação da conversa espelhada.
-    pub ultimo_status: Option<StatusConversa>,
+    pub ultimo_status: Option<ConversationStatus>,
     /// Último nome do cliente já enviado ao Matrix (nome da sala, `client_name` do metadata e
     /// nome de exibição do fantasma). `None` = a sala ainda não recebeu nome (MX-33).
     pub nome_cliente_espelhado: Option<String>,
@@ -243,9 +243,9 @@ impl Matrix<'_> {
 
     /// Liga o módulo na org. Repetir não falha nem muda o corte do backfill.
     pub fn ligar(&self, org: OrgId) -> Resultado<EstadoMatrixOrg> {
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_org = org.to_string();
-        self.0.escrita(move |conn| {
+        self.0.write(move |conn| {
             conn.execute(
                 "INSERT INTO matrix_orgs (org_id, enabled, enabled_at, updated_at)
                  VALUES (?1, 1, ?2, ?2)
@@ -257,16 +257,16 @@ impl Matrix<'_> {
                 params![texto_org, agora],
             )
             .map(|_| ())
-            .map_err(|erro| ErroStore::da_escrita("org", erro))
+            .map_err(|erro| StoreError::from_write("org", erro))
         })?;
         self.estado(org)
     }
 
     /// Desliga o módulo na org. `enabled_at` (o corte do backfill) fica como estava.
     pub fn desligar(&self, org: OrgId) -> Resultado<EstadoMatrixOrg> {
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_org = org.to_string();
-        self.0.escrita(move |conn| {
+        self.0.write(move |conn| {
             conn.execute(
                 "INSERT INTO matrix_orgs (org_id, enabled, enabled_at, updated_at)
                  VALUES (?1, 0, NULL, ?2)
@@ -277,7 +277,7 @@ impl Matrix<'_> {
                 params![texto_org, agora],
             )
             .map(|_| ())
-            .map_err(|erro| ErroStore::da_escrita("org", erro))
+            .map_err(|erro| StoreError::from_write("org", erro))
         })?;
         self.estado(org)
     }
@@ -285,14 +285,14 @@ impl Matrix<'_> {
     /// Estado do módulo na org (desligado quando nunca foi ligado).
     pub fn estado(&self, org: OrgId) -> Resultado<EstadoMatrixOrg> {
         let texto_org = org.to_string();
-        let encontrado = self.0.leitura(move |conn| {
+        let encontrado = self.0.read(move |conn| {
             conn.query_row(
                 "SELECT org_id, enabled, enabled_at, updated_at FROM matrix_orgs WHERE org_id = ?1",
                 params![texto_org],
                 linha_estado_org,
             )
             .optional()
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })?;
         Ok(encontrado.unwrap_or_else(|| EstadoMatrixOrg::desligado(org)))
     }
@@ -303,7 +303,7 @@ impl Matrix<'_> {
     /// de espelhamento, que ainda não sabe qual org olhar. Ela devolve só o que o laço precisa
     /// (org, corte do backfill), nada de conteúdo de conversa.
     pub fn orgs_ligadas(&self) -> Resultado<Vec<EstadoMatrixOrg>> {
-        self.0.leitura(|conn| {
+        self.0.read(|conn| {
             let mut consulta = conn.prepare(
                 "SELECT org_id, enabled, enabled_at, updated_at FROM matrix_orgs
                   WHERE enabled = 1 ORDER BY org_id",
@@ -335,12 +335,12 @@ impl Matrix<'_> {
         if let Some(espaco) = espaco {
             exigir_texto("espaço", "space_room_id", espaco, 255)?;
         }
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_org = org.to_string();
         let texto_conversa = conversa.to_string();
         let sala = room_id.to_owned();
         let espaco = espaco.map(str::to_owned);
-        let gravada = self.0.escrita(move |conn| {
+        let gravada = self.0.write(move |conn| {
             // A sala é de uma conversa só: recusa antes de gravar quando já está em outra.
             let dona: Option<String> = conn
                 .query_row(
@@ -349,9 +349,9 @@ impl Matrix<'_> {
                     |linha| linha.get(0),
                 )
                 .optional()
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
             if let Some(dona) = dona.filter(|dona| *dona != texto_conversa) {
-                return Err(ErroStore::Dominio(DomainError::Conflict {
+                return Err(StoreError::Domain(DomainError::Conflict {
                     entity: "sala do Matrix",
                     id: sala.clone(),
                     reason: format!("esta sala já está ligada à conversa {dona}"),
@@ -364,7 +364,7 @@ impl Matrix<'_> {
                  ON CONFLICT (conversation_id) DO NOTHING",
                 params![texto_conversa, texto_org, sala, espaco, agora],
             )
-            .map_err(|erro| ErroStore::da_escrita("sala", erro))?;
+            .map_err(|erro| StoreError::from_write("sala", erro))?;
             sala_em(conn, &texto_org, &texto_conversa)
         })?;
         gravada.ok_or_else(|| sala_ausente(&conversa.to_string()))
@@ -399,17 +399,17 @@ impl Matrix<'_> {
                 LIMITE_NOME_CLIENTE,
             )?;
         }
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_org = org.to_string();
         let texto_conversa = conversa.to_string();
         let nome = nome_espelhado.map(str::to_owned);
-        let gravada = self.0.escrita(move |conn| {
+        let gravada = self.0.write(move |conn| {
             conn.execute(
                 "UPDATE matrix_rooms SET state = 'ready', client_name_espelhado = ?3, updated_at = ?4
                   WHERE org_id = ?1 AND conversation_id = ?2 AND state = 'creating'",
                 params![texto_org, texto_conversa, nome, agora],
             )
-            .map_err(|erro| ErroStore::da_escrita("sala", erro))?;
+            .map_err(|erro| StoreError::from_write("sala", erro))?;
             sala_em(conn, &texto_org, &texto_conversa)
         })?;
         gravada.ok_or_else(|| sala_ausente(&conversa.to_string()))
@@ -432,17 +432,17 @@ impl Matrix<'_> {
             nome,
             LIMITE_NOME_CLIENTE,
         )?;
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_org = org.to_string();
         let texto_conversa = conversa.to_string();
         let nome = nome.to_owned();
-        let gravada = self.0.escrita(move |conn| {
+        let gravada = self.0.write(move |conn| {
             conn.execute(
                 "UPDATE matrix_rooms SET client_name_espelhado = ?3, updated_at = ?4
                   WHERE org_id = ?1 AND conversation_id = ?2 AND client_name_espelhado IS NOT ?3",
                 params![texto_org, texto_conversa, nome, agora],
             )
-            .map_err(|erro| ErroStore::da_escrita("nome da sala", erro))?;
+            .map_err(|erro| StoreError::from_write("nome da sala", erro))?;
             sala_em(conn, &texto_org, &texto_conversa)
         })?;
         gravada.ok_or_else(|| sala_ausente(&conversa.to_string()))
@@ -453,7 +453,7 @@ impl Matrix<'_> {
         let texto_org = org.to_string();
         let texto_conversa = conversa.to_string();
         self.0
-            .leitura(move |conn| sala_em(conn, &texto_org, &texto_conversa))
+            .read(move |conn| sala_em(conn, &texto_org, &texto_conversa))
     }
 
     /// Sala `ready` de cada conversa pedida, numa consulta só (RP-01): a lista de conversas traz o
@@ -475,7 +475,7 @@ impl Matrix<'_> {
                 .collect::<Vec<_>>(),
         )
         .unwrap_or_else(|_| "[]".to_owned());
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             let mut consulta = conn.prepare(
                 "SELECT conversation_id, room_id FROM matrix_rooms
                   WHERE org_id = ?1 AND state = 'ready'
@@ -500,7 +500,7 @@ impl Matrix<'_> {
     pub fn sala_por_room_id(&self, org: OrgId, room_id: &str) -> Resultado<Option<SalaMatrix>> {
         let texto_org = org.to_string();
         let sala = room_id.to_owned();
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             conn.query_row(
                 &format!(
                     "SELECT {COLUNAS_SALA} FROM matrix_rooms WHERE org_id = ?1 AND room_id = ?2"
@@ -509,7 +509,7 @@ impl Matrix<'_> {
                 linha_sala,
             )
             .optional()
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })
     }
 
@@ -519,18 +519,18 @@ impl Matrix<'_> {
         &self,
         org: OrgId,
         conversa: ConversationId,
-        status: StatusConversa,
+        status: ConversationStatus,
     ) -> Resultado<SalaMatrix> {
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_org = org.to_string();
         let texto_conversa = conversa.to_string();
-        let gravada = self.0.escrita(move |conn| {
+        let gravada = self.0.write(move |conn| {
             conn.execute(
                 "UPDATE matrix_rooms SET last_status = ?3, updated_at = ?4
                   WHERE org_id = ?1 AND conversation_id = ?2",
-                params![texto_org, texto_conversa, status.como_texto(), agora],
+                params![texto_org, texto_conversa, status.as_text(), agora],
             )
-            .map_err(|erro| ErroStore::da_escrita("sala", erro))?;
+            .map_err(|erro| StoreError::from_write("sala", erro))?;
             sala_em(conn, &texto_org, &texto_conversa)
         })?;
         gravada.ok_or_else(|| sala_ausente(&conversa.to_string()))
@@ -550,17 +550,17 @@ impl Matrix<'_> {
         if let Some(espaco) = espaco {
             exigir_texto("espaço", "space_room_id", espaco, 255)?;
         }
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_org = org.to_string();
         let texto_conversa = conversa.to_string();
         let espaco = espaco.map(str::to_owned);
-        let gravada = self.0.escrita(move |conn| {
+        let gravada = self.0.write(move |conn| {
             conn.execute(
                 "UPDATE matrix_rooms SET space_room_id = ?3, updated_at = ?4
                   WHERE org_id = ?1 AND conversation_id = ?2 AND space_room_id IS NOT ?3",
                 params![texto_org, texto_conversa, espaco, agora],
             )
-            .map_err(|erro| ErroStore::da_escrita("espaço da sala", erro))?;
+            .map_err(|erro| StoreError::from_write("espaço da sala", erro))?;
             sala_em(conn, &texto_org, &texto_conversa)
         })?;
         gravada.ok_or_else(|| sala_ausente(&conversa.to_string()))
@@ -582,12 +582,12 @@ impl Matrix<'_> {
     ) -> Resultado<EspacoMatrix> {
         exigir_texto("espaço", "space_room_id", room_id, 255)?;
         exigir_texto("espaço", "alias", alias, 255)?;
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_org = org.to_string();
         let texto_departamento = departamento.to_string();
         let sala = room_id.to_owned();
         let alias = alias.to_owned();
-        let gravado = self.0.escrita(move |conn| {
+        let gravado = self.0.write(move |conn| {
             // Espaço e alias são de um departamento só dentro da org.
             let dono: Option<String> = conn
                 .query_row(
@@ -597,9 +597,9 @@ impl Matrix<'_> {
                     |linha| linha.get(0),
                 )
                 .optional()
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
             if let Some(dono) = dono.filter(|dono| *dono != texto_departamento) {
-                return Err(ErroStore::Dominio(DomainError::Conflict {
+                return Err(StoreError::Domain(DomainError::Conflict {
                     entity: "espaço do Matrix",
                     id: sala.clone(),
                     reason: format!("este espaço já está ligado ao departamento {dono}"),
@@ -620,11 +620,11 @@ impl Matrix<'_> {
                     agora
                 ],
             )
-            .map_err(|erro| ErroStore::da_escrita("espaço", erro))?;
+            .map_err(|erro| StoreError::from_write("espaço", erro))?;
             espaco_em(conn, &texto_org, &texto_departamento)
         })?;
         gravado.ok_or_else(|| {
-            ErroStore::Dominio(DomainError::NotFound {
+            StoreError::Domain(DomainError::NotFound {
                 entity: "espaço do Matrix",
                 id: departamento.to_string(),
             })
@@ -640,13 +640,13 @@ impl Matrix<'_> {
         let texto_org = org.to_string();
         let texto_departamento = departamento.to_string();
         self.0
-            .leitura(move |conn| espaco_em(conn, &texto_org, &texto_departamento))
+            .read(move |conn| espaco_em(conn, &texto_org, &texto_departamento))
     }
 
     /// Espaços da org, na ordem de criação.
     pub fn listar_espacos(&self, org: OrgId) -> Resultado<Vec<EspacoMatrix>> {
         let texto_org = org.to_string();
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             let mut consulta = conn.prepare(&format!(
                 "SELECT {COLUNAS_ESPACO} FROM matrix_spaces WHERE org_id = ?1 ORDER BY id"
             ))?;
@@ -672,10 +672,10 @@ impl Matrix<'_> {
         org: OrgId,
         departamento: DepartmentId,
     ) -> Resultado<EspacoDesligado> {
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_org = org.to_string();
         let texto_departamento = departamento.to_string();
-        self.0.escrita(move |conn| {
+        self.0.write(move |conn| {
             let gravado: Option<String> = conn
                 .query_row(
                     "SELECT space_room_id FROM matrix_spaces
@@ -684,7 +684,7 @@ impl Matrix<'_> {
                     |linha| linha.get(0),
                 )
                 .optional()
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
             let Some(espaco) = gravado else {
                 return Ok(EspacoDesligado::default());
             };
@@ -692,14 +692,14 @@ impl Matrix<'_> {
                 "DELETE FROM matrix_spaces WHERE org_id = ?1 AND department_id = ?2",
                 params![texto_org, texto_departamento],
             )
-            .map_err(|erro| ErroStore::da_escrita("espaço", erro))?;
+            .map_err(|erro| StoreError::from_write("espaço", erro))?;
             let esquecidas = conn
                 .execute(
                     "UPDATE matrix_rooms SET space_room_id = NULL, updated_at = ?3
                       WHERE org_id = ?1 AND space_room_id = ?2",
                     params![texto_org, espaco, agora],
                 )
-                .map_err(|erro| ErroStore::da_escrita("espaço da sala", erro))?;
+                .map_err(|erro| StoreError::from_write("espaço da sala", erro))?;
             Ok(EspacoDesligado {
                 removido: true,
                 salas_esquecidas: u64::try_from(esquecidas).unwrap_or(u64::MAX),
@@ -712,7 +712,7 @@ impl Matrix<'_> {
     /// Cursores da org (zerados quando ela nunca espelhou nada).
     pub fn ler_cursores(&self, org: OrgId) -> Resultado<CursoresMatrix> {
         let texto_org = org.to_string();
-        let encontrado = self.0.leitura(move |conn| cursores_em(conn, &texto_org))?;
+        let encontrado = self.0.read(move |conn| cursores_em(conn, &texto_org))?;
         Ok(encontrado.unwrap_or_else(|| CursoresMatrix {
             org_id: org,
             mensagens: 0,
@@ -731,7 +731,7 @@ impl Matrix<'_> {
     pub fn atraso_das_mensagens(&self, org: OrgId, cursor: u64) -> Resultado<AtrasoMatrix> {
         let texto_org = org.to_string();
         let cursor = i64::try_from(cursor).unwrap_or(i64::MAX);
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             conn.query_row(
                 "SELECT count(*), min(created_at) FROM messages
                   WHERE org_id = ?1 AND rowid > ?2 AND role IN ('user', 'assistant')",
@@ -743,7 +743,7 @@ impl Matrix<'_> {
                     })
                 },
             )
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })
     }
 
@@ -753,15 +753,15 @@ impl Matrix<'_> {
     /// ele repete um lote.
     pub fn avancar_mensagens(&self, org: OrgId, rowid: u64) -> Resultado<CursoresMatrix> {
         if rowid > i64::MAX as u64 {
-            return Err(ErroStore::Dominio(DomainError::Validation {
+            return Err(StoreError::Domain(DomainError::Validation {
                 field: "messages_cursor",
                 reason: "cursor de mensagens fora da faixa".to_owned(),
             }));
         }
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_org = org.to_string();
         let cursor = rowid as i64;
-        self.0.escrita(move |conn| {
+        self.0.write(move |conn| {
             conn.execute(
                 "INSERT INTO matrix_estado (org_id, messages_cursor, updated_at)
                  VALUES (?1, ?2, ?3)
@@ -773,7 +773,7 @@ impl Matrix<'_> {
                 params![texto_org, cursor, agora],
             )
             .map(|_| ())
-            .map_err(|erro| ErroStore::da_escrita("messages_cursor", erro))
+            .map_err(|erro| StoreError::from_write("messages_cursor", erro))
         })?;
         self.ler_cursores(org)
     }
@@ -788,16 +788,16 @@ impl Matrix<'_> {
         mensagem: &str,
     ) -> Resultado<CursoresMatrix> {
         if rowid > i64::MAX as u64 {
-            return Err(ErroStore::Dominio(DomainError::Validation {
+            return Err(StoreError::Domain(DomainError::Validation {
                 field: "messages_cursor",
                 reason: "cursor de mensagens fora da faixa".to_owned(),
             }));
         }
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_org = org.to_string();
         let cursor = rowid as i64;
         let id = mensagem.to_owned();
-        self.0.escrita(move |conn| {
+        self.0.write(move |conn| {
             conn.execute(
                 "INSERT INTO matrix_estado (org_id, messages_cursor, messages_cursor_id, updated_at)
                  VALUES (?1, ?2, ?3, ?4)
@@ -810,7 +810,7 @@ impl Matrix<'_> {
                 params![texto_org, cursor, id, agora],
             )
             .map(|_| ())
-            .map_err(|erro| ErroStore::da_escrita("messages_cursor", erro))
+            .map_err(|erro| StoreError::from_write("messages_cursor", erro))
         })?;
         self.ler_cursores(org)
     }
@@ -825,16 +825,16 @@ impl Matrix<'_> {
         mensagem: &str,
     ) -> Resultado<CursoresMatrix> {
         if rowid > i64::MAX as u64 {
-            return Err(ErroStore::Dominio(DomainError::Validation {
+            return Err(StoreError::Domain(DomainError::Validation {
                 field: "messages_cursor",
                 reason: "cursor de mensagens fora da faixa".to_owned(),
             }));
         }
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_org = org.to_string();
         let cursor = rowid as i64;
         let id = mensagem.to_owned();
-        self.0.escrita(move |conn| {
+        self.0.write(move |conn| {
             conn.execute(
                 "INSERT INTO matrix_estado (org_id, messages_cursor, messages_cursor_id, updated_at)
                  VALUES (?1, ?2, ?3, ?4)
@@ -846,7 +846,7 @@ impl Matrix<'_> {
                 params![texto_org, cursor, id, agora],
             )
             .map(|_| ())
-            .map_err(|erro| ErroStore::da_escrita("messages_cursor", erro))
+            .map_err(|erro| StoreError::from_write("messages_cursor", erro))
         })?;
         self.ler_cursores(org)
     }
@@ -859,15 +859,15 @@ impl Matrix<'_> {
         id: &str,
     ) -> Resultado<CursoresMatrix> {
         if atualizado_em < 0 {
-            return Err(ErroStore::Dominio(DomainError::Validation {
+            return Err(StoreError::Domain(DomainError::Validation {
                 field: "conversations_cursor_at",
                 reason: "instante do cursor de conversas não pode ser negativo".to_owned(),
             }));
         }
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_org = org.to_string();
         let conversa = id.to_owned();
-        self.0.escrita(move |conn| {
+        self.0.write(move |conn| {
             conn.execute(
                 "INSERT INTO matrix_estado
                     (org_id, conversations_cursor_at, conversations_cursor_id, updated_at)
@@ -883,7 +883,7 @@ impl Matrix<'_> {
                 params![texto_org, atualizado_em, conversa, agora],
             )
             .map(|_| ())
-            .map_err(|erro| ErroStore::da_escrita("conversations_cursor_at", erro))
+            .map_err(|erro| StoreError::from_write("conversations_cursor_at", erro))
         })?;
         self.ler_cursores(org)
     }
@@ -903,12 +903,12 @@ impl Matrix<'_> {
         tentativas: u32,
     ) -> Resultado<FalhaMatrix> {
         exigir_texto("motivo", "motivo", motivo, LIMITE_MOTIVO_FALHA)?;
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_org = org.to_string();
         let texto_mensagem = mensagem.to_string();
         let codigo = motivo.to_owned();
         let tentativas = i64::from(tentativas.max(1));
-        let gravada = self.0.escrita(move |conn| {
+        let gravada = self.0.write(move |conn| {
             conn.execute(
                 "INSERT INTO matrix_falhas
                     (id, org_id, message_id, motivo, tentativas, created_at, updated_at)
@@ -926,11 +926,11 @@ impl Matrix<'_> {
                     agora
                 ],
             )
-            .map_err(|erro| ErroStore::da_escrita("motivo", erro))?;
+            .map_err(|erro| StoreError::from_write("motivo", erro))?;
             falha_em(conn, &texto_org, &texto_mensagem)
         })?;
         gravada.ok_or_else(|| {
-            ErroStore::Dominio(DomainError::NotFound {
+            StoreError::Domain(DomainError::NotFound {
                 entity: "falha do Matrix",
                 id: mensagem.to_string(),
             })
@@ -940,13 +940,13 @@ impl Matrix<'_> {
     /// Quantas mensagens estão isoladas por falha definitiva na org.
     pub fn contar_falhas(&self, org: OrgId) -> Resultado<u64> {
         let texto_org = org.to_string();
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             conn.query_row(
                 "SELECT count(*) FROM matrix_falhas WHERE org_id = ?1",
                 params![texto_org],
                 |linha| u64_da_coluna(linha, 0),
             )
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })
     }
 
@@ -954,7 +954,7 @@ impl Matrix<'_> {
     pub fn listar_falhas(&self, org: OrgId, limite: u32) -> Resultado<Vec<FalhaMatrix>> {
         let texto_org = org.to_string();
         let limite = i64::from(limite.clamp(1, LIMITE_FALHAS));
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             let mut consulta = conn.prepare(&format!(
                 "SELECT {COLUNAS_FALHA} FROM matrix_falhas WHERE org_id = ?1
                   ORDER BY updated_at DESC, message_id LIMIT ?2"
@@ -974,12 +974,12 @@ impl Matrix<'_> {
     pub fn remover_falha(&self, org: OrgId, mensagem: MessageId) -> Resultado<bool> {
         let texto_org = org.to_string();
         let texto_mensagem = mensagem.to_string();
-        let apagou = self.0.escrita(move |conn| {
+        let apagou = self.0.write(move |conn| {
             conn.execute(
                 "DELETE FROM matrix_falhas WHERE org_id = ?1 AND message_id = ?2",
                 params![texto_org, texto_mensagem],
             )
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })?;
         Ok(apagou > 0)
     }
@@ -1014,7 +1014,7 @@ fn linha_estado_org(linha: &rusqlite::Row<'_>) -> rusqlite::Result<EstadoMatrixO
 fn linha_sala(linha: &rusqlite::Row<'_>) -> rusqlite::Result<SalaMatrix> {
     let ultimo_status: Option<String> = linha.get(4)?;
     let ultimo_status = match ultimo_status {
-        Some(texto) => Some(StatusConversa::de_texto(&texto).map_err(|erro| {
+        Some(texto) => Some(ConversationStatus::from_text(&texto).map_err(|erro| {
             rusqlite::Error::FromSqlConversionFailure(
                 4,
                 rusqlite::types::Type::Text,
@@ -1075,7 +1075,7 @@ fn sala_em(
         linha_sala,
     )
     .optional()
-    .map_err(ErroStore::from)
+    .map_err(StoreError::from)
 }
 
 fn espaco_em(
@@ -1092,7 +1092,7 @@ fn espaco_em(
         linha_espaco,
     )
     .optional()
-    .map_err(ErroStore::from)
+    .map_err(StoreError::from)
 }
 
 fn falha_em(
@@ -1109,7 +1109,7 @@ fn falha_em(
         linha_falha,
     )
     .optional()
-    .map_err(ErroStore::from)
+    .map_err(StoreError::from)
 }
 
 fn cursores_em(conn: &Connection, texto_org: &str) -> Resultado<Option<CursoresMatrix>> {
@@ -1133,11 +1133,11 @@ fn cursores_em(conn: &Connection, texto_org: &str) -> Resultado<Option<CursoresM
         },
     )
     .optional()
-    .map_err(ErroStore::from)
+    .map_err(StoreError::from)
 }
 
-fn sala_ausente(texto_conversa: &str) -> ErroStore {
-    ErroStore::Dominio(DomainError::NotFound {
+fn sala_ausente(texto_conversa: &str) -> StoreError {
+    StoreError::Domain(DomainError::NotFound {
         entity: "sala do Matrix",
         id: texto_conversa.to_owned(),
     })
@@ -1152,13 +1152,13 @@ fn exigir_texto(
 ) -> Resultado<()> {
     let tamanho = valor.chars().count();
     if valor.trim().is_empty() {
-        return Err(ErroStore::Dominio(DomainError::Validation {
+        return Err(StoreError::Domain(DomainError::Validation {
             field: campo,
             reason: format!("{entidade} não pode ficar vazia"),
         }));
     }
     if tamanho > teto {
-        return Err(ErroStore::Dominio(DomainError::Validation {
+        return Err(StoreError::Domain(DomainError::Validation {
             field: campo,
             reason: format!("{entidade} passa de {teto} caracteres ({tamanho})"),
         }));
@@ -1217,7 +1217,7 @@ impl Matrix<'_> {
     ) -> Resultado<Vec<FalhaDeRespostaHumana>> {
         let texto_org = org.to_string();
         let limite = i64::from(limite.clamp(1, 500));
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             let mut consulta = conn.prepare(
                 "SELECT o.id, o.conversation_id, o.last_error FROM outbox o
                   WHERE o.org_id = ?1 AND o.state = 'failed'
@@ -1255,12 +1255,12 @@ impl Matrix<'_> {
         motivo: &str,
     ) -> Resultado<bool> {
         exigir_texto("motivo do aviso", "motivo", motivo, 64)?;
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_org = org.to_string();
         let texto_falha = falha.to_string();
         let texto_desfecho = desfecho.como_texto();
         let motivo = motivo.to_owned();
-        self.0.escrita(move |conn| {
+        self.0.write(move |conn| {
             // Só grava quando o item de saída é mesmo da org: o id é global, então a org vem
             // conferida aqui, e não só pela chamada.
             conn.execute(
@@ -1271,7 +1271,7 @@ impl Matrix<'_> {
                 params![texto_org, texto_falha, texto_desfecho, motivo, agora],
             )
             .map(|linhas| linhas > 0)
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })
     }
 }

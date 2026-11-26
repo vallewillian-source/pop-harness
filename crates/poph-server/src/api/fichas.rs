@@ -34,8 +34,8 @@ use poph_fluxos::motor::{
 };
 use poph_fluxos::{Avaliador, Dados, Ir, Limites, LimitesRegra};
 use poph_store::{
-    ErroStore, EtapaDaExecucao, EventoFicha, Execucao, ExtrasDaTransicao, FiltroFichas,
-    InicioDeExecucao, RevisaoDeFluxo,
+    Execution, ExecutionStart, ExecutionStep, FlowRevision, RecordEvent, RecordFilter, StoreError,
+    TransitionExtras,
 };
 use poph_types::{
     ActionActor, AgentId, ClosedBy, DomainError, EventActor, ExecutionId, FlowId, OrgId, RecordId,
@@ -130,7 +130,7 @@ pub async fn listar(
     }
     .pagina()?;
     let fichas = e.store.fichas().listar(org, &filtro, pagina)?;
-    let next_cursor = proximo_cursor(&fichas, pagina.limite, |ficha| ficha.id.to_string());
+    let next_cursor = proximo_cursor(&fichas, pagina.limit, |ficha| ficha.id.to_string());
     let items: Vec<Value> = fichas.iter().map(ficha_json).collect();
     Ok(Json(ListaJson { items, next_cursor }))
 }
@@ -205,7 +205,7 @@ pub async fn eventos(
 
 /// Lê os filtros da lista. Valor presente mas vazio, ou fora do vocabulário, devolve 400 com o
 /// campo; nenhum filtro é ignorado em silêncio.
-fn filtro_da_consulta(q: &ConsultaFichas) -> Result<FiltroFichas, ApiError> {
+fn filtro_da_consulta(q: &ConsultaFichas) -> Result<RecordFilter, ApiError> {
     let status = match q.status.as_deref() {
         None => None,
         Some(texto) => Some(
@@ -233,7 +233,7 @@ fn filtro_da_consulta(q: &ConsultaFichas) -> Result<FiltroFichas, ApiError> {
             ApiError::validacao("desde", "use milissegundos desde 1970, como número inteiro")
         })?),
     };
-    Ok(FiltroFichas {
+    Ok(RecordFilter {
         status,
         agente,
         canal,
@@ -345,7 +345,7 @@ pub async fn iniciar_fluxo(
     // Repetição vem antes da Ficha fechada e da versão: o reenvio devolve a execução da primeira vez.
     if let Some(ja_aberta) = e
         .store
-        .execucoes()
+        .executions()
         .abertura_ja_feita(org, ficha_id, fluxo, &chave)?
     {
         return Ok((
@@ -359,17 +359,17 @@ pub async fn iniciar_fluxo(
             id: ficha_id.to_string(),
         }));
     }
-    if ficha.versao != versao {
+    if ficha.version != versao {
         return Err(ApiError::conflito_de_versao(
             "ficha",
             &ficha_id.to_string(),
             versao,
-            ficha.versao,
+            ficha.version,
         ));
     }
     let revisao = e
         .store
-        .revisoes()
+        .revisions()
         .atual(org, fluxo)?
         .ok_or_else(|| ApiError::conflito("o fluxo ainda não tem revisão publicada"))?;
     let ir = ir_da_revisao(&e, &revisao)?;
@@ -383,21 +383,21 @@ pub async fn iniciar_fluxo(
     let efeitos =
         efeitos_de_entrada(&ir, estado.no_atual.id(), &estado.dados, &contexto).map_err(dominio)?;
     let token = ident.ator_id();
-    let gravada = e.store.execucoes().iniciar_execucao(
+    let gravada = e.store.executions().iniciar_execucao(
         org,
-        InicioDeExecucao {
+        ExecutionStart {
             ficha: ficha_id,
             fluxo,
-            revisao: revisao.id,
-            ator: EventActor::Attendant,
+            revision: revisao.id,
+            actor: EventActor::Attendant,
             ator_ref: Some(&token),
-            decisao_jev: None,
-            estado_inicial: estado_para_banco(&estado),
-            efeitos_de_entrada: efeitos.iter().map(efeito_da_transicao).collect(),
+            jev_decision: None,
+            initial_state: estado_para_banco(&estado),
+            inbound_effects: efeitos.iter().map(efeito_da_transicao).collect(),
             chave_idempotencia: Some(&chave),
         },
     )?;
-    if !gravada.repetida {
+    if !gravada.repeated {
         super::auditoria::registrar(
             &e,
             &ident,
@@ -407,7 +407,7 @@ pub async fn iniciar_fluxo(
             ficha_texto,
         )?;
     }
-    let status = if gravada.repetida {
+    let status = if gravada.repeated {
         StatusCode::OK
     } else {
         StatusCode::CREATED
@@ -417,9 +417,9 @@ pub async fn iniciar_fluxo(
         Json(resposta_execucao(
             &e,
             org,
-            &gravada.execucao,
-            gravada.repetida,
-            &gravada.eventos,
+            &gravada.execution,
+            gravada.repeated,
+            &gravada.events,
         )?),
     ))
 }
@@ -472,7 +472,7 @@ pub async fn acao(
     let campos = campos_do_corpo(dados.campos)?;
     let atual = execucao_da_ficha(&e, org, ficha_id, run)?;
     if e.store
-        .execucoes()
+        .executions()
         .transicao_ja_aplicada(org, run, &chave)?
     {
         return Ok(Json(resposta_execucao(&e, org, &atual, true, &[])?));
@@ -483,12 +483,12 @@ pub async fn acao(
             id: ficha_id.to_string(),
         }));
     }
-    if atual.versao != versao {
+    if atual.version != versao {
         return Err(ApiError::conflito_de_versao(
             "execução de fluxo",
             &run.to_string(),
             versao,
-            atual.versao,
+            atual.version,
         ));
     }
     let (ir, avaliador, estado) = estado_para_agir(&e, org, &atual)?;
@@ -508,19 +508,19 @@ pub async fn acao(
     )
     .map_err(dominio)?;
     let token = ident.ator_id();
-    let gravada = e.store.execucoes().aplicar_transicao(
+    let gravada = e.store.executions().aplicar_transicao(
         org,
         run,
         versao,
         &transicao_do_motor(&resultado),
         &chave,
-        ExtrasDaTransicao {
+        TransitionExtras {
             ator_ref: Some(&token),
             fechada_por: Some(ClosedBy::Attendant),
-            motivo_encerramento: None,
+            close_reason: None,
         },
     )?;
-    if !gravada.repetida {
+    if !gravada.repeated {
         super::auditoria::registrar(
             &e,
             &ident,
@@ -533,9 +533,9 @@ pub async fn acao(
     Ok(Json(resposta_execucao(
         &e,
         org,
-        &gravada.execucao,
-        gravada.repetida,
-        &gravada.eventos,
+        &gravada.execution,
+        gravada.repeated,
+        &gravada.events,
     )?))
 }
 
@@ -584,7 +584,7 @@ pub async fn abandonar(
     let chave = chave_obrigatoria(&dados.chave_idempotencia)?;
     let atual = execucao_da_ficha(&e, org, ficha_id, run)?;
     if e.store
-        .execucoes()
+        .executions()
         .transicao_ja_aplicada(org, run, &chave)?
     {
         return Ok(Json(resposta_execucao(&e, org, &atual, true, &[])?));
@@ -595,31 +595,31 @@ pub async fn abandonar(
             id: ficha_id.to_string(),
         }));
     }
-    if atual.versao != versao {
+    if atual.version != versao {
         return Err(ApiError::conflito_de_versao(
             "execução de fluxo",
             &run.to_string(),
             versao,
-            atual.versao,
+            atual.version,
         ));
     }
     let (_ir, _avaliador, estado) = estado_para_agir(&e, org, &atual)?;
     let resultado = abandonar_motor(&estado, &dados.motivo, ActionActor::Attendant, Some(&chave))
         .map_err(dominio)?;
     let token = ident.ator_id();
-    let gravada = e.store.execucoes().aplicar_transicao(
+    let gravada = e.store.executions().aplicar_transicao(
         org,
         run,
         versao,
         &transicao_do_motor(&resultado),
         &chave,
-        ExtrasDaTransicao {
+        TransitionExtras {
             ator_ref: Some(&token),
             fechada_por: None,
-            motivo_encerramento: None,
+            close_reason: None,
         },
     )?;
-    if !gravada.repetida {
+    if !gravada.repeated {
         super::auditoria::registrar(
             &e,
             &ident,
@@ -632,9 +632,9 @@ pub async fn abandonar(
     Ok(Json(resposta_execucao(
         &e,
         org,
-        &gravada.execucao,
-        gravada.repetida,
-        &gravada.eventos,
+        &gravada.execution,
+        gravada.repeated,
+        &gravada.events,
     )?))
 }
 
@@ -679,21 +679,24 @@ pub async fn fechar(
             id: ficha_id.to_string(),
         }));
     }
-    if ficha.versao != esperada {
+    if ficha.version != esperada {
         return Err(ApiError::conflito_de_versao(
             "ficha",
             &ficha_id.to_string(),
             esperada,
-            ficha.versao,
+            ficha.version,
         ));
     }
     match ficha.conversation_id {
         Some(conversa) => {
             // A conversa confere a própria versão na escrita: se mudou entre as duas leituras, `412`.
-            let registro = e.store.conversas().obter(org, conversa)?;
-            e.store
-                .conversas()
-                .fechar_auditado(org, conversa, registro.versao, ident.ator_id())?;
+            let registro = e.store.conversas().get(org, conversa)?;
+            e.store.conversas().fechar_auditado(
+                org,
+                conversa,
+                registro.version,
+                ident.ator_id(),
+            )?;
         }
         None => {
             e.store.fichas().fechar_sem_conversa(
@@ -710,7 +713,7 @@ pub async fn fechar(
 
 /// Erro de domínio do motor ou do store, no formato da API.
 fn dominio(erro: DomainError) -> ApiError {
-    ApiError::from(ErroStore::Dominio(erro))
+    ApiError::from(StoreError::Domain(erro))
 }
 
 /// A chave de idempotência, sem espaços. Vazia é `400`: sem chave, duas operações diferentes
@@ -745,8 +748,8 @@ fn execucao_da_ficha(
     org: OrgId,
     ficha: RecordId,
     run: ExecutionId,
-) -> Result<Execucao, ApiError> {
-    let execucao = e.store.execucoes().obter(org, run)?;
+) -> Result<Execution, ApiError> {
+    let execucao = e.store.executions().obter(org, run)?;
     if execucao.ficha_id != ficha {
         return Err(ApiError::nao_encontrado(
             "execução de fluxo",
@@ -758,7 +761,7 @@ fn execucao_da_ficha(
 
 /// A IR publicada da revisão, pelo cache de revisões (FX-19). A carga recompila o texto e confere
 /// que dá a IR gravada; se não der, a revisão não entra e a resposta é `500` (a revisão está ruim).
-fn ir_da_revisao(e: &Estado, revisao: &RevisaoDeFluxo) -> Result<Arc<Ir>, ApiError> {
+fn ir_da_revisao(e: &Estado, revisao: &FlowRevision) -> Result<Arc<Ir>, ApiError> {
     let gravada = Ir::de_json(&revisao.definicao_json).map_err(|erro| {
         tracing::error!(erro = ?erro, "IR gravada de revisão de fluxo não lê");
         ApiError::interno()
@@ -785,7 +788,7 @@ fn ir_da_revisao(e: &Estado, revisao: &RevisaoDeFluxo) -> Result<Arc<Ir>, ApiErr
 /// script nenhum); com `def`, carrega o módulo do texto da revisão.
 fn avaliador_da_revisao(
     e: &Estado,
-    revisao: &RevisaoDeFluxo,
+    revisao: &FlowRevision,
     ir: &Ir,
 ) -> Result<Avaliador, ApiError> {
     if ir.defs.is_empty() {
@@ -807,17 +810,17 @@ fn avaliador_da_revisao(
 fn estado_para_agir(
     e: &Estado,
     org: OrgId,
-    execucao: &Execucao,
+    execucao: &Execution,
 ) -> Result<(Arc<Ir>, Avaliador, EstadoMotor), ApiError> {
-    let revisao = e.store.revisoes().obter_por_id(org, execucao.revisao_id)?;
+    let revisao = e.store.revisions().obter_por_id(org, execucao.revisao_id)?;
     let ir = ir_da_revisao(e, &revisao)?;
     let avaliador = avaliador_da_revisao(e, &revisao, &ir)?;
-    let etapas = e.store.execucoes().etapas(org, execucao.id)?;
+    let etapas = e.store.executions().etapas(org, execucao.id)?;
     let atores_que_agiram = etapas
         .iter()
         .rev()
         .find(|etapa| etapa.no_id == execucao.no_atual)
-        .map(|etapa| etapa.atores_que_agiram.clone())
+        .map(|etapa| etapa.acting_actors.clone())
         .unwrap_or_default();
     let dados = serde_json::from_str::<Dados>(&execucao.dados_json).map_err(|erro| {
         tracing::error!(erro = ?erro, "dados de execução de fluxo não leem");
@@ -829,7 +832,7 @@ fn estado_para_agir(
         no_atual: destino_do_id(&ir, &execucao.no_atual)?,
         dados,
         atores_que_agiram,
-        resultado: execucao.resultado.clone(),
+        resultado: execucao.result.clone(),
         motivo: execucao.motivo_fim.clone(),
         chaves: BTreeMap::new(),
     };
@@ -861,11 +864,11 @@ fn destino_do_id(ir: &Ir, id: &str) -> Result<Destino, ApiError> {
 fn resposta_execucao(
     e: &Estado,
     org: OrgId,
-    execucao: &Execucao,
+    execucao: &Execution,
     repetida: bool,
-    eventos: &[EventoFicha],
+    eventos: &[RecordEvent],
 ) -> Result<Value, ApiError> {
-    let etapas: Vec<EtapaDaExecucao> = e.store.execucoes().etapas(org, execucao.id)?;
+    let etapas: Vec<ExecutionStep> = e.store.executions().etapas(org, execucao.id)?;
     let mut corpo = execucao_json(execucao, &etapas);
     corpo["repetida"] = json!(repetida);
     corpo["eventos"] = Value::Array(eventos.iter().map(evento_json).collect());

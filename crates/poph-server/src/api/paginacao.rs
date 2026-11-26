@@ -3,7 +3,7 @@
 //! O cursor é o último id da página (UUID v7, ordenável por tempo) e é exclusivo. A resposta traz
 //! `next_cursor` `null` quando acabou.
 
-use poph_store::Pagina;
+use poph_store::Page;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -20,7 +20,7 @@ pub struct ConsultaPagina {
 
 impl ConsultaPagina {
     /// Converte para a página do armazenamento (cursor inválido vira 400).
-    pub fn pagina(&self) -> Result<Pagina, ApiError> {
+    pub fn pagina(&self) -> Result<Page, ApiError> {
         let limite = self.limit.unwrap_or(50).clamp(1, 200);
         let apos = match &self.cursor {
             Some(texto) if !texto.is_empty() => {
@@ -31,7 +31,10 @@ impl ConsultaPagina {
             }
             _ => None,
         };
-        Ok(Pagina { apos, limite })
+        Ok(Page {
+            after: apos,
+            limit: limite,
+        })
     }
 }
 

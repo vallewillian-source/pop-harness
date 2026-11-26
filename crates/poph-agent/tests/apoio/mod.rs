@@ -15,7 +15,9 @@ use poph_agent::turno::{
     Entrada, FuturoPausa, Motor, ObservadorNulo, OpcoesTurno, Pausa, ResumoTurno,
 };
 use poph_core::llm::{EventoLlm, MotivoFim, ProvedorFake, Roteiro, Uso};
-use poph_store::{Direcao, NovaConversa, NovaMensagem, NovoAgente, NovoAnexoCanal, Papel, Store};
+use poph_store::{
+    Direction, NewAgent, NewChannelAttachment, NewConversation, NewMessage, Role, Store,
+};
 use poph_types::{ConversationId, MessageId, OrgId, StructuredInstructions};
 
 /// Pausa que não dorme: a janela de agrupamento do turno não atrasa o teste.
@@ -83,33 +85,32 @@ impl Cenario {
         let _ = std::fs::remove_dir_all(&pasta);
         std::fs::create_dir_all(&pasta).expect("pasta do teste");
         let store = Arc::new(
-            Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
-                .expect("abre o banco"),
+            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco"),
         );
         let org = store
-            .orgaos()
-            .criar(poph_store::NovaOrg {
-                nome: format!("Org {rotulo}"),
+            .orgs()
+            .criar(poph_store::NewOrg {
+                name: format!("Org {rotulo}"),
                 slug: format!("org-{rotulo}-{}-{}", std::process::id(), fastrand()),
                 config_json: "{}".to_owned(),
             })
             .expect("cria a org")
             .id;
         let agente = store
-            .agentes()
+            .agents()
             .criar(
                 org,
-                NovoAgente {
-                    nome: format!("Bia {rotulo}"),
+                NewAgent {
+                    name: format!("Bia {rotulo}"),
                     slug: format!("bia-{rotulo}-{}", fastrand()),
-                    janela_agrupamento_ms: 0,
-                    ..NovoAgente::default()
+                    grouping_window_ms: 0,
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente");
         let estruturado = StructuredInstructions::default();
         store
-            .instrucoes()
+            .instructions()
             .salvar(
                 org,
                 agente.id,
@@ -123,12 +124,12 @@ impl Cenario {
             .conversas()
             .criar(
                 org,
-                NovaConversa {
+                NewConversation {
                     agent_id: agente.id,
                     integration_id: None,
                     canal: "cli".to_owned(),
                     peer_externo: None,
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("abre a conversa")
@@ -146,7 +147,7 @@ impl Cenario {
 
     /// Grava a mensagem do cliente com os anexos dados, pondo o blob no disco quando for o caso.
     pub fn falar_com_arquivos(&self, texto: &str, anexos: Vec<Anexo>) -> MessageId {
-        let mut linhas: Vec<NovoAnexoCanal> = Vec::with_capacity(anexos.len());
+        let mut linhas: Vec<NewChannelAttachment> = Vec::with_capacity(anexos.len());
         for anexo in anexos {
             let sha256 = if anexo.sem_blob {
                 poph_files::blob::sha256_hex(&anexo.bytes)
@@ -160,30 +161,30 @@ impl Cenario {
             } else {
                 "ok"
             };
-            linhas.push(NovoAnexoCanal {
-                nome: anexo.nome,
+            linhas.push(NewChannelAttachment {
+                name: anexo.nome,
                 mime: anexo.mime,
-                tamanho_bytes: anexo.tamanho_declarado.unwrap_or(anexo.bytes.len() as u64),
+                size_bytes: anexo.tamanho_declarado.unwrap_or(anexo.bytes.len() as u64),
                 sha256,
                 blob_path: format!("orgs/{}/{}", self.org, "sha-de-teste"),
-                texto_extraido: anexo.texto_extraido,
-                status_extracao,
+                extracted_text: anexo.texto_extraido,
+                extraction_status: status_extracao,
             });
         }
         self.store
-            .mensagens()
+            .messages()
             .gravar_com_anexos(
                 self.org,
-                NovaMensagem {
+                NewMessage {
                     conversation_id: self.conversa,
-                    direcao: Direcao::Entrada,
-                    papel: Papel::Usuario,
+                    direction: Direction::Inbound,
+                    role: Role::User,
                     texto: texto.to_owned(),
-                    anexos_json: "[]".to_owned(),
+                    attachments_json: "[]".to_owned(),
                     id_externo: None,
                     turn_id: None,
-                    origem: poph_store::Origem::Agente,
-                    autor_nome: None,
+                    origin: poph_store::Origin::Agente,
+                    author_name: None,
                 },
                 &linhas,
             )

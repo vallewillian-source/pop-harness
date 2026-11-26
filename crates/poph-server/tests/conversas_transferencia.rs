@@ -8,9 +8,7 @@ use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, SaltString};
 use axum::http::StatusCode;
 use poph_server::Estado;
-use poph_store::{
-    Agente, Conversa, NovaConversa, NovaOrg, NovoAgente, NovoDepartamento, Org, Store,
-};
+use poph_store::{Agente, Conversa, NewAgent, NewConversation, NewDepartment, NewOrg, Org, Store};
 use poph_types::{AgentId, HarnessConfig, OrgId};
 use rand_core::OsRng;
 use reqwest::{Client, Method};
@@ -37,9 +35,9 @@ impl Cenario {
         config.data.directory = pasta.join("dados");
         config.validar().expect("configuração válida");
         let relogio = Arc::new(AtomicI64::new(1_000_000));
-        let store = Store::abrir(&config)
+        let store = Store::open(&config)
             .expect("abre o banco")
-            .com_relogio(Arc::new(move || relogio.fetch_add(10, Ordering::SeqCst)));
+            .with_clock(Arc::new(move || relogio.fetch_add(10, Ordering::SeqCst)));
         Self {
             pasta,
             store: Arc::new(store),
@@ -53,9 +51,9 @@ impl Cenario {
 
     fn org(&self, slug: &str) -> Org {
         self.store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: format!("Org {slug}"),
+            .orgs()
+            .criar(NewOrg {
+                name: format!("Org {slug}"),
                 slug: slug.to_owned(),
                 config_json: String::new(),
             })
@@ -79,13 +77,13 @@ impl Cenario {
 
     fn agente(&self, org: &Org, slug: &str) -> Agente {
         self.store
-            .agentes()
+            .agents()
             .criar(
                 org.id,
-                NovoAgente {
-                    nome: format!("Agente {slug}"),
+                NewAgent {
+                    name: format!("Agente {slug}"),
                     slug: slug.to_owned(),
-                    ..NovoAgente::default()
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente")
@@ -93,12 +91,12 @@ impl Cenario {
 
     fn departamento(&self, org: &Org, nome: &str) -> poph_types::DepartmentId {
         self.store
-            .departamentos()
+            .departments()
             .criar(
                 org.id,
-                NovoDepartamento {
-                    nome: nome.to_owned(),
-                    descricao: String::new(),
+                NewDepartment {
+                    name: nome.to_owned(),
+                    description: String::new(),
                 },
             )
             .expect("cria o departamento")
@@ -168,12 +166,12 @@ fn conversa(c: &Cenario, org: &Org, agente: AgentId, peer: &str) -> Conversa {
         .conversas()
         .criar(
             org.id,
-            NovaConversa {
+            NewConversation {
                 agent_id: agente,
                 integration_id: None,
                 canal: "whatsapp".to_owned(),
                 peer_externo: Some(peer.to_owned()),
-                departamento_alvo: None,
+                target_department: None,
             },
         )
         .expect("cria a conversa")
@@ -209,28 +207,28 @@ async fn transferir_marca_a_conversa_e_audita_o_motivo() {
     let gravada = c
         .store
         .conversas()
-        .obter(org.id, alvo.id)
+        .get(org.id, alvo.id)
         .expect("lê a conversa");
-    assert_eq!(gravada.status, poph_store::StatusConversa::Transferida);
-    assert_eq!(gravada.departamento_alvo, Some(destino));
-    assert_eq!(gravada.versao, alvo.versao + 1);
+    assert_eq!(gravada.status, poph_store::ConversationStatus::Transferred);
+    assert_eq!(gravada.target_department, Some(destino));
+    assert_eq!(gravada.version, alvo.version + 1);
 
     let auditoria = c
         .store
-        .auditoria()
-        .listar(org.id, poph_store::Pagina::com_limite(10))
+        .audit()
+        .listar(org.id, poph_store::Page::with_limit(10))
         .expect("lê a auditoria");
     let registro = auditoria
         .iter()
         .find(|registro| registro.acao == "transfer")
         .expect("a transferência é auditada");
-    assert_eq!(registro.entidade, "conversation");
+    assert_eq!(registro.entity, "conversation");
     assert_eq!(
-        registro.entidade_id.as_deref(),
+        registro.entity_id.as_deref(),
         Some(alvo.id.to_string().as_str())
     );
     assert_eq!(
-        registro.detalhe_json,
+        registro.detail_json,
         json!({
             "motivo": "rotina",
             "ator": "administrador",
@@ -345,10 +343,10 @@ async fn transferir_recusa_conversa_encerrada_da_outra_org_e_corpo_invalido() {
     let gravada = c
         .store
         .conversas()
-        .obter(org.id, alvo.id)
+        .get(org.id, alvo.id)
         .expect("lê a conversa");
-    assert_eq!(gravada.status, poph_store::StatusConversa::Aberta);
-    assert_eq!(gravada.versao, alvo.versao);
+    assert_eq!(gravada.status, poph_store::ConversationStatus::Open);
+    assert_eq!(gravada.version, alvo.version);
 
     let _ = desligar.send(());
 }
@@ -367,7 +365,7 @@ async fn a_lista_corta_pela_ultima_atividade_e_recusa_valor_invalido() {
     let alheia = conversa(&c, &outra, agente_b.id, "5511");
     let (base, desligar) = servir(c.estado()).await;
 
-    let corte = segunda.criado_em + 1;
+    let corte = segunda.created_at + 1;
     let lista = format!(
         "/admin/v1/orgs/{}/conversations?sort=recent&limit=50&last_activity_before={corte}",
         org.id

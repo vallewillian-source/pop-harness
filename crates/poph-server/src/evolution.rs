@@ -28,8 +28,8 @@ use poph_evolution::webhook::{
 use poph_evolution::{ClienteEvolution, ConfigEvolution, ErroEvolution, TETO_MIDIA};
 use poph_files::{ConfigArquivos, Conteudo, ErroArquivo};
 use poph_store::{
-    NovaEntradaCanal, NovaMensagemDoAparelho, NovoAnexoCanal, Recebido, RecebidoComMensagem,
-    RecebidoDoAparelho,
+    NewChannelAttachment, NewChannelInboxItem, NewDeviceMessage, Received, ReceivedFromDevice,
+    ReceivedWithMessage,
 };
 use poph_types::{HarnessConfig, InboundEvent, IntegrationId, OrgId, Secret, StateEvent};
 use serde_json::{Value, json};
@@ -216,7 +216,7 @@ fn receber_estado(
     };
     let atualizada = estado
         .store
-        .integracao_definir_estado_conexao(canal.org, canal.integracao, texto)
+        .set_integration_connection_state(canal.org, canal.integracao, texto)
         .map_err(|erro| falha_de_gravacao("estado da integração", &erro))?;
     if !atualizada {
         tracing::warn!(
@@ -264,7 +264,7 @@ async fn receber_entrada(
     // 1. Reentrega: devolve o que já está gravado, sem baixar mídia de novo.
     let ja_recebida = estado
         .store
-        .caixa_entrada()
+        .inbox()
         .entrega_recebida(canal.integracao, &entrada.evento.id_externo)
         .map_err(|erro| falha_de_gravacao("consulta da entrada", &erro))?;
     if let Some(recebido) = ja_recebida {
@@ -285,27 +285,27 @@ async fn receber_entrada(
         .get("push_name")
         .and_then(serde_json::Value::as_str)
         .map(str::to_owned);
-    let nova = NovaEntradaCanal {
+    let nova = NewChannelInboxItem {
         integration_id: canal.integracao,
         agent_id: integracao.agent_id,
         canal: "whatsapp".to_owned(),
         id_externo: evento.id_externo,
         peer: evento.peer,
-        evento_json,
+        event_json: evento_json,
         texto: evento.text,
         anexos,
-        nome_cliente,
+        customer_name: nome_cliente,
     };
     let recebido = estado
         .store
-        .caixa_entrada()
+        .inbox()
         .receber_do_canal(canal.org, nova)
         .map_err(|erro| falha_de_gravacao("mensagem", &erro))?;
 
     tracing::info!(
         target: "poph_server::evolution",
         instancia = %canal.instancia,
-        situacao = if matches!(recebido.situacao, Recebido::Novo) { "nova" } else { "duplicada" },
+        situacao = if matches!(recebido.situacao, Received::New) { "nova" } else { "duplicada" },
         anexos = recebido_anexos(&recebido),
         "mensagem do WhatsApp registrada"
     );
@@ -337,10 +337,10 @@ fn digitada_no_aparelho(evento: &InboundEvent) -> bool {
 fn integracao_do_webhook(
     estado: &Estado,
     canal: &CanalEvolution,
-) -> Result<poph_store::IntegracaoDoCanal, ApiError> {
+) -> Result<poph_store::ChannelIntegration, ApiError> {
     estado
         .store
-        .integracao_do_canal(canal.org, canal.integracao)
+        .channel_integration(canal.org, canal.integracao)
         .map_err(|erro| falha_de_gravacao("integração", &erro))?
         .filter(|integracao| integracao.kind == "whatsapp" && integracao.status != "archived")
         .ok_or_else(|| {
@@ -376,7 +376,7 @@ fn receber_do_aparelho(
     // 1. Eco: o id externo é de um envio nosso já confirmado.
     let eco = estado
         .store
-        .caixa_saida()
+        .outbox()
         .enviado_com_id_externo(canal.org, &evento.id_externo)
         .map_err(|erro| falha_de_gravacao("consulta da fila de saída", &erro))?;
     if eco {
@@ -401,10 +401,10 @@ fn receber_do_aparelho(
 
     let recebido = estado
         .store
-        .caixa_entrada()
+        .inbox()
         .receber_do_aparelho(
             canal.org,
-            NovaMensagemDoAparelho {
+            NewDeviceMessage {
                 integration_id: canal.integracao,
                 agent_id: integracao.agent_id,
                 canal: "whatsapp".to_owned(),
@@ -418,33 +418,33 @@ fn receber_do_aparelho(
     tracing::info!(
         target: "poph_server::evolution",
         instancia = %canal.instancia,
-        situacao = if matches!(recebido.situacao, Recebido::Novo) { "nova" } else { "duplicada" },
-        pausou = recebido.transferiu_agora,
+        situacao = if matches!(recebido.situacao, Received::New) { "nova" } else { "duplicada" },
+        pausou = recebido.just_transferred,
         "mensagem digitada no aparelho registrada"
     );
     Ok(Json(resposta_do_aparelho(&recebido)))
 }
 
-fn resposta_do_aparelho(recebido: &RecebidoDoAparelho) -> Value {
+fn resposta_do_aparelho(recebido: &ReceivedFromDevice) -> Value {
     json!({
         "recebido": true,
         "efeito": "aparelho",
-        "situacao": if matches!(recebido.situacao, Recebido::Novo) { "nova" } else { "duplicada" },
+        "situacao": if matches!(recebido.situacao, Received::New) { "nova" } else { "duplicada" },
         "conversa_id": recebido.conversa.to_string(),
         "mensagem_id": recebido.mensagem.id.to_string(),
     })
 }
 
-fn recebido_anexos(recebido: &RecebidoComMensagem) -> usize {
-    serde_json::from_str::<Vec<String>>(&recebido.mensagem.anexos_json)
+fn recebido_anexos(recebido: &ReceivedWithMessage) -> usize {
+    serde_json::from_str::<Vec<String>>(&recebido.mensagem.attachments_json)
         .map(|ids| ids.len())
         .unwrap_or(0)
 }
 
-fn resposta_da_entrada(recebido: &RecebidoComMensagem) -> Value {
+fn resposta_da_entrada(recebido: &ReceivedWithMessage) -> Value {
     json!({
         "recebido": true,
-        "situacao": if matches!(recebido.situacao, Recebido::Novo) { "nova" } else { "duplicada" },
+        "situacao": if matches!(recebido.situacao, Received::New) { "nova" } else { "duplicada" },
         "entrada_id": recebido.item.id.to_string(),
         "mensagem_id": recebido.mensagem.id.to_string(),
     })
@@ -456,7 +456,7 @@ async fn baixar_anexos(
     estado: &Estado,
     canal: &CanalEvolution,
     midias: &[MidiaParaBaixar],
-) -> Result<Vec<NovoAnexoCanal>, ApiError> {
+) -> Result<Vec<NewChannelAttachment>, ApiError> {
     let config = ConfigArquivos::padrao(estado.config.blobs());
     let mut anexos = Vec::new();
     for midia in midias {
@@ -522,14 +522,14 @@ async fn baixar_anexos(
             Conteudo::Texto { envelopado, .. } => (Some(envelopado), "ok"),
             Conteudo::SemTexto => (None, "failed"),
         };
-        anexos.push(NovoAnexoCanal {
-            nome: metadados.nome_original,
+        anexos.push(NewChannelAttachment {
+            name: metadados.nome_original,
             mime: metadados.mime_real,
-            tamanho_bytes: metadados.tamanho_bytes,
+            size_bytes: metadados.tamanho_bytes,
             sha256: metadados.sha256,
             blob_path,
-            texto_extraido,
-            status_extracao,
+            extracted_text: texto_extraido,
+            extraction_status: status_extracao,
         });
     }
     Ok(anexos)
@@ -554,7 +554,7 @@ fn categoria_de_arquivo(erro: &ErroArquivo) -> &'static str {
 }
 
 /// Falha nossa ao gravar: registra a categoria (sem o conteúdo) e responde 503.
-fn falha_de_gravacao(onde: &'static str, erro: &poph_store::ErroStore) -> ApiError {
+fn falha_de_gravacao(onde: &'static str, erro: &poph_store::StoreError) -> ApiError {
     tracing::error!(
         target: "poph_server::evolution",
         etapa = onde,

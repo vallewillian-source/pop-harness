@@ -24,7 +24,7 @@ use poph_types::OrgId;
 use rusqlite::{Connection, params};
 
 use crate::Store;
-use crate::erro::{ErroStore, Resultado};
+use crate::error::{Resultado, StoreError};
 
 const SAVEPOINT: &str = "poph_retencao";
 
@@ -58,7 +58,7 @@ impl Retencao<'_> {
     /// Erro de banco não deixa nada pela metade: a varredura inteira está num savepoint.
     pub fn varrer(&self, org: OrgId, corte_ms: i64, simular: bool) -> Resultado<VarreduraRetencao> {
         let texto = org.to_string();
-        self.0.escrita(move |conn| {
+        self.0.write(move |conn| {
             conn.execute_batch(&format!("SAVEPOINT {SAVEPOINT}"))?;
             let resultado = varrer_na_transacao(conn, &texto, corte_ms);
             let fechamento = if resultado.is_ok() && !simular {
@@ -66,7 +66,7 @@ impl Retencao<'_> {
             } else {
                 format!("ROLLBACK TO {SAVEPOINT}; RELEASE {SAVEPOINT}")
             };
-            conn.execute_batch(&fechamento).map_err(ErroStore::from)?;
+            conn.execute_batch(&fechamento).map_err(StoreError::from)?;
             resultado
         })
     }

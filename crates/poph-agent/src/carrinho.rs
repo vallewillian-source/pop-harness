@@ -14,7 +14,7 @@
 
 use std::sync::Arc;
 
-use poph_store::{ErroStore, LIMITE_QUANTIDADE, ResumoCarrinho, Store};
+use poph_store::{LIMITE_QUANTIDADE, ResumoCarrinho, Store, StoreError};
 use poph_types::{DomainError, ProductId};
 use serde_json::{Value, json};
 
@@ -141,7 +141,7 @@ fn executar_acao(
     contexto: &ContextoFerramenta,
     argumentos: &Value,
 ) -> Result<String, String> {
-    let carrinhos = store.carrinhos();
+    let carrinhos = store.carts();
     match acao {
         Acao::Adicionar => {
             recusar_campos(argumentos, &["produto_id", "quantidade"])?;
@@ -275,22 +275,22 @@ fn linha_do_produto(
 
 /// Texto de erro para o modelo: diz o que aconteceu e o que ele pode fazer, sem vazar detalhe de
 /// banco.
-fn texto_erro(erro: ErroStore) -> String {
+fn texto_erro(erro: StoreError) -> String {
     match erro {
-        ErroStore::Dominio(DomainError::NotFound {
+        StoreError::Domain(DomainError::NotFound {
             entity: "produto disponível para este agente",
             ..
         }) => "erro: este produto não está disponível para este atendimento (inativo ou fora das \
                categorias do agente). Confira o id com buscar_produto."
             .to_owned(),
-        ErroStore::Dominio(DomainError::NotFound {
+        StoreError::Domain(DomainError::NotFound {
             entity: "item do carrinho",
             ..
         }) => "erro: este produto não está no carrinho desta conversa.".to_owned(),
-        ErroStore::Dominio(DomainError::NotFound { .. }) => {
+        StoreError::Domain(DomainError::NotFound { .. }) => {
             "erro: a conversa não foi encontrada para este carrinho.".to_owned()
         }
-        ErroStore::Dominio(DomainError::Validation {
+        StoreError::Domain(DomainError::Validation {
             field: campo,
             reason: motivo,
         }) => {

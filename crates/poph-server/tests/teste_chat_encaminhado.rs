@@ -30,7 +30,7 @@ use poph_agent::turno::{Motor, OpcoesTurno, ProcessadorTurno};
 use poph_core::llm::{ErroLlm, EventoLlm, LlmProvider, ProvedorFake, Roteiro};
 use poph_server::Estado;
 use poph_server::cluster::ClusterVivo;
-use poph_store::{Direcao, EstadoTurno, NovaOrg, NovoAgente, Pagina, Store};
+use poph_store::{Direction, NewAgent, NewOrg, Page, Store, TurnState};
 use poph_types::config::{ClusterConfig, ClusterInstance, GlobalTokenConfig};
 use poph_types::{AgentId, ConversationId, HarnessConfig, OrgId, Secret};
 use rand_core::OsRng;
@@ -104,7 +104,7 @@ async fn iniciar(
     pasta: PathBuf,
 ) -> (Instancia, Arc<Store>) {
     let config = configuracao(&pasta);
-    let store = Arc::new(Store::abrir(&config).expect("abre o banco"));
+    let store = Arc::new(Store::open(&config).expect("abre o banco"));
     let mapa = ClusterConfig {
         instance_id: instance_id.to_owned(),
         default_instance: Some("b".to_owned()),
@@ -222,24 +222,24 @@ async fn sse_de_org_remota_flui_pelo_encaminhamento_e_desconexao_cancela_na_dona
     // A org e o agente vivem em `b`, que também tem o turno.
     let pasta_b = pasta("preparo-b");
     let config_b = configuracao(&pasta_b);
-    let store_b = Arc::new(Store::abrir(&config_b).expect("banco de b"));
+    let store_b = Arc::new(Store::open(&config_b).expect("banco de b"));
     let org: OrgId = store_b
-        .orgaos()
-        .criar(NovaOrg {
-            nome: "Org da dona".to_owned(),
+        .orgs()
+        .criar(NewOrg {
+            name: "Org da dona".to_owned(),
             slug: "org-da-dona-hr50b2".to_owned(),
             config_json: "{}".to_owned(),
         })
         .expect("org")
         .id;
     let agente: AgentId = store_b
-        .agentes()
+        .agents()
         .criar(
             org,
-            NovoAgente {
-                nome: "Bia".to_owned(),
+            NewAgent {
+                name: "Bia".to_owned(),
                 slug: "bia".to_owned(),
-                janela_agrupamento_ms: 1,
+                grouping_window_ms: 1,
                 ..Default::default()
             },
         )
@@ -269,7 +269,7 @@ async fn sse_de_org_remota_flui_pelo_encaminhamento_e_desconexao_cancela_na_dona
     let corpo: Value = criada.json().await.expect("json da conversa");
     let conversa = corpo["id"].as_str().expect("id da conversa").to_owned();
     assert!(
-        store_a.orgaos().obter(org).is_err(),
+        store_a.orgs().get(org).is_err(),
         "a org não pode existir no banco de `a`"
     );
 
@@ -344,13 +344,13 @@ async fn sse_de_org_remota_flui_pelo_encaminhamento_e_desconexao_cancela_na_dona
     let inicio_da_espera = Instant::now();
     let estado = loop {
         let turnos = store_b
-            .turnos()
-            .listar(org, id, Pagina::com_limite(50))
+            .turns()
+            .listar(org, id, Page::with_limit(50))
             .expect("turnos de b");
         if let Some(turno) = turnos.last()
-            && turno.estado != EstadoTurno::Rodando
+            && turno.estado != TurnState::Running
         {
-            break (turno.estado.como_texto().to_owned(), turno.erro.clone());
+            break (turno.estado.as_text().to_owned(), turno.error.clone());
         }
         assert!(
             inicio_da_espera.elapsed() < Duration::from_secs(15),
@@ -369,16 +369,16 @@ async fn sse_de_org_remota_flui_pelo_encaminhamento_e_desconexao_cancela_na_dona
         "o turno precisa registrar o cancelamento: {estado:?}"
     );
     let saidas = store_b
-        .mensagens()
-        .listar(org, id, Pagina::com_limite(200))
+        .messages()
+        .listar(org, id, Page::with_limit(200))
         .expect("mensagens de b")
         .iter()
-        .filter(|mensagem| mensagem.direcao == Direcao::Saida)
+        .filter(|mensagem| mensagem.direction == Direction::Outbound)
         .count();
     assert_eq!(saidas, 0, "nada de resposta parcial na conversa");
     assert_eq!(
         store_b
-            .caixa_saida()
+            .outbox()
             .listar_pendentes(org, POPH_LOTE)
             .expect("fila de b")
             .len(),

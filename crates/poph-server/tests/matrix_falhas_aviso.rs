@@ -35,8 +35,8 @@ use poph_server::evolution::CanalEvolution;
 use poph_server::matrix_falhas_aviso::{AvisoDeFalhas, AvisoNoSynapse, PortaFalhasDoHarness};
 use poph_server::saida_whatsapp::{OpcoesSaidaWhatsApp, SaidaWhatsApp};
 use poph_store::{
-    DesfechoAviso, EstadoSaida, ItemSaida, NovaConversa, NovaOrg, NovaSaida, NovoAgente,
-    RespostaHumana, RespostaHumanaNova, Store,
+    DesfechoAviso, HumanResponse, NewAgent, NewConversation, NewHumanResponse, NewOrg,
+    NewOutboxItem, OutboxItem, OutboxState, Store,
 };
 use poph_types::{AgentId, ConversationId, IntegrationId, OrgId, Secret, TurnId};
 use serde_json::{Value, json};
@@ -251,26 +251,25 @@ impl Cenario {
         let _ = fs::remove_dir_all(&pasta);
         fs::create_dir_all(&pasta).expect("pasta do teste");
         let store = Arc::new(
-            Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
-                .expect("abre o banco"),
+            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco"),
         );
 
         let org = criar_org(&store, "loja-falhas", "Loja Falhas");
         let agente = store
-            .agentes()
+            .agents()
             .criar(
                 org,
-                NovoAgente {
-                    nome: "Atendente Falhas".to_owned(),
+                NewAgent {
+                    name: "Atendente Falhas".to_owned(),
                     slug: "atendente-falhas".to_owned(),
-                    ..NovoAgente::default()
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente")
             .id;
         let agente_id: AgentId = agente;
         let integracao: IntegrationId = store
-            .integracao_criar(org, agente_id, "whatsapp".to_owned(), "active".to_owned())
+            .create_integration(org, agente_id, "whatsapp".to_owned(), "active".to_owned())
             .expect("cria a integração")
             .id
             .parse()
@@ -351,37 +350,37 @@ impl Cenario {
 
     /// O atendente escreve na sala: a resposta entra na fila de saída.
     fn resposta_humana(&self, conversa: ConversationId) {
-        let nova = RespostaHumanaNova {
-            evento_id: &format!("{EVENTO}-{conversa}"),
-            texto_bruto: TEXTO_ATENDENTE,
-            texto_enviado: &format!("**[{NOME_ATENDENTE}]**:\n{TEXTO_ATENDENTE}"),
-            autor_id: ATENDENTE,
-            autor_nome: NOME_ATENDENTE,
+        let nova = NewHumanResponse {
+            event_id: &format!("{EVENTO}-{conversa}"),
+            raw_text: TEXTO_ATENDENTE,
+            sent_text: &format!("**[{NOME_ATENDENTE}]**:\n{TEXTO_ATENDENTE}"),
+            author_id: ATENDENTE,
+            author_name: NOME_ATENDENTE,
         };
         match self
             .store
-            .mensagens()
+            .messages()
             .registrar_resposta_humana(self.org, conversa, nova)
             .expect("grava a resposta humana")
         {
-            RespostaHumana::Gravada(_) => {}
+            HumanResponse::Stored(_) => {}
             outro => panic!("a resposta humana devia ser gravada, veio {outro:?}"),
         }
     }
 
     /// Item de saída de agente (não humano) para o teste de "não é resposta humana".
-    fn saida_do_agente(&self, conversa: ConversationId) -> ItemSaida {
+    fn saida_do_agente(&self, conversa: ConversationId) -> OutboxItem {
         let (_, item) = self
             .store
-            .caixa_saida()
+            .outbox()
             .enfileirar(
                 self.org,
-                NovaSaida {
+                NewOutboxItem {
                     conversation_id: conversa,
                     turn_id: TurnId::generate(),
                     seq: 0,
                     tipo: "text".to_owned(),
-                    conteudo_json: json!({ "texto": "resposta do agente" }).to_string(),
+                    content_json: json!({ "texto": "resposta do agente" }).to_string(),
                 },
             )
             .expect("enfileira a saída do agente");
@@ -419,9 +418,9 @@ impl Cenario {
         self.synapse.escritas.lock().unwrap().clone()
     }
 
-    fn estado(&self, estado: EstadoSaida) -> u64 {
+    fn estado(&self, estado: OutboxState) -> u64 {
         self.store
-            .caixa_saida()
+            .outbox()
             .contar_por_estado(self.org, estado)
             .expect("conta a fila")
     }
@@ -444,9 +443,9 @@ impl Drop for Cenario {
 
 fn criar_org(store: &Store, slug: &str, nome: &str) -> OrgId {
     store
-        .orgaos()
-        .criar(NovaOrg {
-            nome: nome.to_owned(),
+        .orgs()
+        .criar(NewOrg {
+            name: nome.to_owned(),
             slug: slug.to_owned(),
             config_json: String::new(),
         })
@@ -465,12 +464,12 @@ fn conversa_whatsapp(
         .conversas()
         .criar(
             org,
-            NovaConversa {
+            NewConversation {
                 agent_id: agente,
                 integration_id: Some(integracao),
                 canal: "whatsapp".to_owned(),
                 peer_externo: Some(telefone.to_owned()),
-                departamento_alvo: None,
+                target_department: None,
             },
         )
         .expect("cria a conversa")
@@ -498,7 +497,7 @@ async fn falha_definitiva_da_resposta_humana_avisa_a_sala_uma_vez() {
         .ciclo(vec![(400, json!({ "message": "número inválido" }))])
         .await;
     assert_eq!(
-        cenario.estado(EstadoSaida::Falhou),
+        cenario.estado(OutboxState::Failed),
         1,
         "a fila marcou a falha"
     );
@@ -554,7 +553,7 @@ async fn reinicio_do_processo_nao_repete_o_aviso() {
 
     // Processo novo: outro `Store` sobre o mesmo arquivo, sem nada na memória do serviço antigo.
     let reaberto = Arc::new(
-        Store::abrir_em(
+        Store::open_at(
             &cenario.pasta.join("harness.db"),
             &cenario.pasta.join("rag.db"),
         )
@@ -614,11 +613,11 @@ async fn falha_transitoria_seguida_de_sucesso_nao_gera_aviso() {
         .ciclo(vec![(500, json!({ "message": "erro interno" }))])
         .await;
     assert_eq!(
-        cenario.estado(EstadoSaida::Enviando),
+        cenario.estado(OutboxState::Sending),
         1,
         "a falha ainda não é definitiva"
     );
-    assert_eq!(cenario.estado(EstadoSaida::Falhou), 0);
+    assert_eq!(cenario.estado(OutboxState::Failed), 0);
 
     let no_meio = cenario.aviso(Arc::clone(&cenario.store)).passar().await;
     assert_eq!(no_meio, Default::default(), "falha transitória não avisa");
@@ -629,7 +628,7 @@ async fn falha_transitoria_seguida_de_sucesso_nao_gera_aviso() {
     cenario
         .ciclo(vec![(200, json!({ "key": { "id": "MSG-OK" } }))])
         .await;
-    assert_eq!(cenario.estado(EstadoSaida::Enviado), 1, "o cliente recebeu");
+    assert_eq!(cenario.estado(OutboxState::Sent), 1, "o cliente recebeu");
 
     let depois = cenario.aviso(Arc::clone(&cenario.store)).passar().await;
     assert_eq!(depois, Default::default());
@@ -650,7 +649,7 @@ async fn tentativas_esgotadas_avisam_com_o_motivo_proprio() {
     tokio::time::sleep(Duration::from_millis(20)).await;
     cenario.ciclo(vec![]).await;
     assert_eq!(
-        cenario.estado(EstadoSaida::Falhou),
+        cenario.estado(OutboxState::Failed),
         1,
         "esgotou as tentativas"
     );
@@ -718,7 +717,7 @@ async fn saida_que_nao_e_resposta_humana_nao_gera_aviso() {
     cenario
         .ciclo(vec![(400, json!({ "message": "recusado" }))])
         .await;
-    assert_eq!(cenario.estado(EstadoSaida::Falhou), 1);
+    assert_eq!(cenario.estado(OutboxState::Failed), 1);
 
     let relato = cenario.aviso(Arc::clone(&cenario.store)).passar().await;
     assert_eq!(relato, Default::default(), "só resposta humana é avisada");
@@ -793,37 +792,37 @@ fn desfecho_do_aviso_e_idempotente_e_isolado_por_org() {
     ));
     let _ = fs::remove_dir_all(&pasta);
     fs::create_dir_all(&pasta).expect("pasta");
-    let store = Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("banco");
+    let store = Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("banco");
     let org = criar_org(&store, "loja-desfecho", "Loja Desfecho");
     let agente = store
-        .agentes()
+        .agents()
         .criar(
             org,
-            NovoAgente {
-                nome: "A".to_owned(),
+            NewAgent {
+                name: "A".to_owned(),
                 slug: "a".to_owned(),
-                ..NovoAgente::default()
+                ..NewAgent::default()
             },
         )
         .expect("agente")
         .id;
     let integracao: IntegrationId = store
-        .integracao_criar(org, agente, "whatsapp".to_owned(), "active".to_owned())
+        .create_integration(org, agente, "whatsapp".to_owned(), "active".to_owned())
         .expect("integração")
         .id
         .parse()
         .expect("id da integração");
     let conversa = conversa_whatsapp(&store, org, agente, integracao, TELEFONE);
     let (_, item) = store
-        .caixa_saida()
+        .outbox()
         .enfileirar(
             org,
-            NovaSaida {
+            NewOutboxItem {
                 conversation_id: conversa,
                 turn_id: TurnId::generate(),
                 seq: 0,
                 tipo: "text".to_owned(),
-                conteudo_json: "{}".to_owned(),
+                content_json: "{}".to_owned(),
             },
         )
         .expect("enfileira");

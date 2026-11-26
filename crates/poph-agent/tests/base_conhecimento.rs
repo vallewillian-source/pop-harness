@@ -19,8 +19,8 @@ use poph_agent::turno::{ContextoFerramenta, RegistroFerramentas, UsoFerramentas,
 use poph_agent::{BaseConhecimento, BuscadorBase, ConsultarBase};
 use poph_rag::{ConfigIndice, Embedder, EmbedderFake, Indice};
 use poph_store::{
-    MudancaGrupoConhecimento, MudancaItemConhecimento, NovaOrg, NovoAgente, NovoGrupoConhecimento,
-    NovoItemConhecimento, Status, Store,
+    KnowledgeGroupChange, KnowledgeItemChange, NewAgent, NewKnowledgeGroup, NewKnowledgeItem,
+    NewOrg, Status, Store,
 };
 use poph_types::{AgentId, ConversationId, KnowledgeGroupId, KnowledgeItemId, OrgId, TurnId};
 
@@ -43,47 +43,46 @@ impl Cenario {
         let _ = std::fs::remove_dir_all(&pasta);
         std::fs::create_dir_all(&pasta).expect("cria a pasta");
         let store = Arc::new(
-            Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
-                .expect("abre o banco"),
+            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco"),
         );
         let org = store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: format!("Org {rotulo}"),
+            .orgs()
+            .criar(NewOrg {
+                name: format!("Org {rotulo}"),
                 slug: format!("org-{rotulo}-{}", AgentId::generate()),
                 config_json: "{}".to_owned(),
             })
             .expect("cria a org")
             .id;
         let agente = store
-            .agentes()
+            .agents()
             .criar(
                 org,
-                NovoAgente {
-                    nome: format!("Atendente {rotulo}"),
+                NewAgent {
+                    name: format!("Atendente {rotulo}"),
                     slug: format!("atendente-{rotulo}"),
-                    ..NovoAgente::default()
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente")
             .id;
         let grupo = store
-            .conhecimento()
+            .knowledge()
             .criar_grupo(
                 org,
-                NovoGrupoConhecimento {
-                    nome: "Políticas".to_owned(),
-                    descricao: String::new(),
+                NewKnowledgeGroup {
+                    name: "Políticas".to_owned(),
+                    description: String::new(),
                 },
             )
             .expect("cria o grupo")
             .id;
         store
-            .conhecimento()
+            .knowledge()
             .vincular_agente(org, agente, grupo)
             .expect("liga o grupo ao agente");
         let embedder: Arc<dyn Embedder> = Arc::new(EmbedderFake::new());
-        let (indice, _) = Indice::abrir(store.caminho_rag(), embedder, ConfigIndice::default())
+        let (indice, _) = Indice::abrir(store.rag_path(), embedder, ConfigIndice::default())
             .expect("abre o índice");
         let base = BaseConhecimento::nova(Arc::clone(&store), Arc::new(indice));
         Self {
@@ -98,15 +97,15 @@ impl Cenario {
 
     fn criar_item(&self, titulo: &str, conteudo: &str) -> KnowledgeItemId {
         self.store
-            .conhecimento()
+            .knowledge()
             .criar_item(
                 self.org,
-                NovoItemConhecimento {
-                    grupo_id: self.grupo,
-                    titulo: titulo.to_owned(),
-                    conteudo: conteudo.to_owned(),
+                NewKnowledgeItem {
+                    group_id: self.grupo,
+                    title: titulo.to_owned(),
+                    content: conteudo.to_owned(),
                     tags: Vec::new(),
-                    posicao: 0,
+                    position: 0,
                 },
             )
             .expect("cria o item")
@@ -157,20 +156,20 @@ async fn indice_acompanha_criar_editar_e_apagar() {
     // Editar: o termo novo passa a ser achado e o velho sai (o trecho foi regerado).
     let versao = cenario
         .store
-        .conhecimento()
+        .knowledge()
         .obter_item(cenario.org, item)
         .expect("lê o item")
-        .versao;
+        .version;
     cenario
         .store
-        .conhecimento()
+        .knowledge()
         .atualizar_item(
             cenario.org,
             item,
             versao,
-            MudancaItemConhecimento {
-                conteudo: Some("O agendamento agora é imediato pelo aplicativo.".to_owned()),
-                ..MudancaItemConhecimento::default()
+            KnowledgeItemChange {
+                content: Some("O agendamento agora é imediato pelo aplicativo.".to_owned()),
+                ..KnowledgeItemChange::default()
             },
         )
         .expect("edita o item");
@@ -184,7 +183,7 @@ async fn indice_acompanha_criar_editar_e_apagar() {
     // Apagar: o item sai do índice.
     cenario
         .store
-        .conhecimento()
+        .knowledge()
         .excluir_item(cenario.org, item)
         .expect("apaga o item");
     cenario.sincronizar().await;
@@ -274,9 +273,9 @@ async fn busca_nao_cruza_org() {
     cenario.sincronizar().await;
     let outra_org = cenario
         .store
-        .orgaos()
-        .criar(NovaOrg {
-            nome: "Outra".to_owned(),
+        .orgs()
+        .criar(NewOrg {
+            name: "Outra".to_owned(),
             slug: format!("outra-{}", AgentId::generate()),
             config_json: "{}".to_owned(),
         })
@@ -303,10 +302,10 @@ async fn limite_de_mil_caracteres_e_validado_com_erro_claro() {
     assert_eq!(
         cenario
             .store
-            .conhecimento()
+            .knowledge()
             .obter_item(cenario.org, item)
             .expect("lê")
-            .conteudo
+            .content
             .chars()
             .count(),
         1000
@@ -314,15 +313,15 @@ async fn limite_de_mil_caracteres_e_validado_com_erro_claro() {
 
     let erro = cenario
         .store
-        .conhecimento()
+        .knowledge()
         .criar_item(
             cenario.org,
-            NovoItemConhecimento {
-                grupo_id: cenario.grupo,
-                titulo: "Item acima do limite".to_owned(),
-                conteudo: "a".repeat(1001),
+            NewKnowledgeItem {
+                group_id: cenario.grupo,
+                title: "Item acima do limite".to_owned(),
+                content: "a".repeat(1001),
                 tags: Vec::new(),
-                posicao: 0,
+                position: 0,
             },
         )
         .expect_err("1001 caracteres são recusados");
@@ -346,20 +345,20 @@ async fn item_e_grupo_inativos_saem_do_indice() {
     // Item inativo (D-05).
     let versao = cenario
         .store
-        .conhecimento()
+        .knowledge()
         .obter_item(cenario.org, item)
         .expect("lê")
-        .versao;
+        .version;
     cenario
         .store
-        .conhecimento()
+        .knowledge()
         .atualizar_item(
             cenario.org,
             item,
             versao,
-            MudancaItemConhecimento {
-                status: Some(Status::Inativo),
-                ..MudancaItemConhecimento::default()
+            KnowledgeItemChange {
+                status: Some(Status::Inactive),
+                ..KnowledgeItemChange::default()
             },
         )
         .expect("inativa o item");
@@ -372,39 +371,39 @@ async fn item_e_grupo_inativos_saem_do_indice() {
     // Volta ativo e o grupo inteiro fica inativo.
     let versao = cenario
         .store
-        .conhecimento()
+        .knowledge()
         .obter_item(cenario.org, item)
         .expect("lê")
-        .versao;
+        .version;
     cenario
         .store
-        .conhecimento()
+        .knowledge()
         .atualizar_item(
             cenario.org,
             item,
             versao,
-            MudancaItemConhecimento {
-                status: Some(Status::Ativo),
-                ..MudancaItemConhecimento::default()
+            KnowledgeItemChange {
+                status: Some(Status::Active),
+                ..KnowledgeItemChange::default()
             },
         )
         .expect("reativa o item");
     let versao = cenario
         .store
-        .conhecimento()
+        .knowledge()
         .obter_grupo(cenario.org, cenario.grupo)
         .expect("lê o grupo")
-        .versao;
+        .version;
     cenario
         .store
-        .conhecimento()
+        .knowledge()
         .atualizar_grupo(
             cenario.org,
             cenario.grupo,
             versao,
-            MudancaGrupoConhecimento {
-                status: Some(Status::Inativo),
-                ..MudancaGrupoConhecimento::default()
+            KnowledgeGroupChange {
+                status: Some(Status::Inactive),
+                ..KnowledgeGroupChange::default()
             },
         )
         .expect("inativa o grupo");
@@ -417,7 +416,7 @@ async fn item_e_grupo_inativos_saem_do_indice() {
     // E a lista do agente (fonte do índice) não traz nada.
     let itens = cenario
         .store
-        .conhecimento()
+        .knowledge()
         .itens_do_agente(cenario.org, cenario.agente)
         .expect("lista");
     assert!(itens.is_empty());
@@ -450,15 +449,15 @@ async fn busca_filtra_elegibilidade_mesmo_com_indice_desatualizado() {
         c.buscar("prazo entrega", 0.0).await,
         "top-3 permanece igual"
     );
-    let grupo = c.store.conhecimento().obter_grupo(c.org, c.grupo).unwrap();
+    let grupo = c.store.knowledge().obter_grupo(c.org, c.grupo).unwrap();
     c.store
-        .conhecimento()
+        .knowledge()
         .atualizar_grupo(
             c.org,
             c.grupo,
-            grupo.versao,
-            MudancaGrupoConhecimento {
-                status: Some(Status::Inativo),
+            grupo.version,
+            KnowledgeGroupChange {
+                status: Some(Status::Inactive),
                 ..Default::default()
             },
         )
@@ -467,30 +466,30 @@ async fn busca_filtra_elegibilidade_mesmo_com_indice_desatualizado() {
         c.buscar("prazo entrega", 0.0).await.is_empty(),
         "grupo inativo"
     );
-    let grupo = c.store.conhecimento().obter_grupo(c.org, c.grupo).unwrap();
+    let grupo = c.store.knowledge().obter_grupo(c.org, c.grupo).unwrap();
     c.store
-        .conhecimento()
+        .knowledge()
         .atualizar_grupo(
             c.org,
             c.grupo,
-            grupo.versao,
-            MudancaGrupoConhecimento {
-                status: Some(Status::Ativo),
+            grupo.version,
+            KnowledgeGroupChange {
+                status: Some(Status::Active),
                 ..Default::default()
             },
         )
         .unwrap();
     assert_eq!(antes, c.buscar("prazo entrega", 0.0).await);
-    let agente = c.store.agentes().obter(c.org, c.agente).unwrap();
+    let agente = c.store.agents().get(c.org, c.agente).unwrap();
     let agente = c
         .store
-        .agentes()
+        .agents()
         .atualizar(
             c.org,
             c.agente,
-            agente.versao,
-            poph_store::MudancaAgente {
-                status: Some(Status::Inativo),
+            agente.version,
+            poph_store::AgentChange {
+                status: Some(Status::Inactive),
                 ..Default::default()
             },
         )
@@ -500,19 +499,19 @@ async fn busca_filtra_elegibilidade_mesmo_com_indice_desatualizado() {
         "agente inativo"
     );
     c.store
-        .agentes()
+        .agents()
         .atualizar(
             c.org,
             c.agente,
-            agente.versao,
-            poph_store::MudancaAgente {
-                status: Some(Status::Ativo),
+            agente.version,
+            poph_store::AgentChange {
+                status: Some(Status::Active),
                 ..Default::default()
             },
         )
         .unwrap();
     c.store
-        .conhecimento()
+        .knowledge()
         .desvincular_agente(c.org, c.agente, c.grupo)
         .unwrap();
     assert!(
@@ -521,34 +520,34 @@ async fn busca_filtra_elegibilidade_mesmo_com_indice_desatualizado() {
     );
     let novo = c
         .store
-        .conhecimento()
+        .knowledge()
         .criar_grupo(
             c.org,
-            NovoGrupoConhecimento {
-                nome: "Novo".into(),
-                descricao: String::new(),
+            NewKnowledgeGroup {
+                name: "Novo".into(),
+                description: String::new(),
             },
         )
         .unwrap();
     c.store
-        .conhecimento()
+        .knowledge()
         .vincular_agente(c.org, c.agente, novo.id)
         .unwrap();
     c.store
-        .conhecimento()
+        .knowledge()
         .criar_item(
             c.org,
-            NovoItemConhecimento {
-                grupo_id: novo.id,
-                titulo: "prazo novo".into(),
-                conteudo: "prazo entrega novo".into(),
+            NewKnowledgeItem {
+                group_id: novo.id,
+                title: "prazo novo".into(),
+                content: "prazo entrega novo".into(),
                 tags: vec![],
-                posicao: 0,
+                position: 0,
             },
         )
         .unwrap();
     let (indice, _) = Indice::abrir(
-        c.store.caminho_rag(),
+        c.store.rag_path(),
         Arc::new(Falha(EmbedderFake::new())),
         ConfigIndice::default(),
     )

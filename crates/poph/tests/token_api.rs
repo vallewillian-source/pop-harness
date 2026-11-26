@@ -84,7 +84,7 @@ impl Cenario {
         let mut config = HarnessConfig::default();
         config.data.directory = self.dados.clone();
         config.validar().expect("configuração válida");
-        let store = Arc::new(Store::abrir(&config).expect("abre o banco"));
+        let store = Arc::new(Store::open(&config).expect("abre o banco"));
         let estado = Estado::novo(store, config).expect("estado do servidor");
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await

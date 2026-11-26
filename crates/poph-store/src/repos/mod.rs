@@ -11,8 +11,8 @@ use poph_types::DomainError;
 use rusqlite::types::Type;
 use rusqlite::{Connection, OptionalExtension, Row};
 
-use crate::erro::ErroStore;
-use crate::modelo::Status;
+use crate::error::StoreError;
+use crate::model::Status;
 
 mod agentes;
 mod analytics;
@@ -72,7 +72,7 @@ pub use revisoes::{ACAO_PUBLICAR, ATORES_DE_AUDITORIA, LIMITE_REVISOES, Revisoes
 pub use tokens::Tokens;
 pub use turnos::{Auditoria, Turnos};
 
-pub(crate) use crate::leitores::exigir;
+pub(crate) use crate::readers::require;
 
 /// Lê um id tipado de uma coluna de texto.
 pub(crate) fn id_da_coluna<T>(linha: &Row<'_>, indice: usize) -> rusqlite::Result<T>
@@ -102,7 +102,7 @@ where
 /// Lê o campo `status`.
 pub(crate) fn status_da_coluna(linha: &Row<'_>, indice: usize) -> rusqlite::Result<Status> {
     let texto: String = linha.get(indice)?;
-    Status::de_texto(&texto).map_err(|erro| {
+    Status::from_text(&texto).map_err(|erro| {
         rusqlite::Error::FromSqlConversionFailure(indice, Type::Text, Box::new(erro))
     })
 }
@@ -121,7 +121,7 @@ pub(crate) fn pertence(
     entidade: &'static str,
     org_id: &str,
     id: &str,
-) -> crate::erro::Resultado<()> {
+) -> crate::error::Resultado<()> {
     let existe: Option<i64> = conn
         .query_row(
             &format!("SELECT 1 FROM {tabela} WHERE org_id = ?1 AND id = ?2"),
@@ -129,10 +129,10 @@ pub(crate) fn pertence(
             |linha| linha.get(0),
         )
         .optional()
-        .map_err(ErroStore::from)?;
+        .map_err(StoreError::from)?;
     match existe {
         Some(_) => Ok(()),
-        None => Err(ErroStore::Dominio(DomainError::NotFound {
+        None => Err(StoreError::Domain(DomainError::NotFound {
             entity: entidade,
             id: id.to_owned(),
         })),
@@ -154,23 +154,23 @@ pub(crate) fn conflito_ou_ausente(
     id: &str,
     org_id: &str,
     esperada: u64,
-) -> ErroStore {
-    let atual: Result<Option<i64>, ErroStore> = conn
+) -> StoreError {
+    let atual: Result<Option<i64>, StoreError> = conn
         .query_row(
             &format!("SELECT version FROM {tabela} WHERE id = ?1 AND org_id = ?2"),
             rusqlite::params![id, org_id],
             |linha| linha.get(0),
         )
         .optional()
-        .map_err(ErroStore::from);
+        .map_err(StoreError::from);
     match atual {
-        Ok(Some(atual)) => ErroStore::Dominio(DomainError::VersionConflict {
+        Ok(Some(atual)) => StoreError::Domain(DomainError::VersionConflict {
             entity: entidade,
             id: id.to_owned(),
             expected: esperada,
             current: atual.max(0) as u64,
         }),
-        Ok(None) | Err(_) => ErroStore::Dominio(DomainError::NotFound {
+        Ok(None) | Err(_) => StoreError::Domain(DomainError::NotFound {
             entity: entidade,
             id: id.to_owned(),
         }),

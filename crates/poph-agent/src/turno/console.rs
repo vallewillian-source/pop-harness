@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 
-use poph_store::ItemSaida;
+use poph_store::OutboxItem;
 
 use crate::entrada_saida::{FalhaEnvio, FuturoEnvio, TransporteSaida};
 
@@ -51,12 +51,12 @@ impl TransporteConsole {
 }
 
 impl TransporteSaida for TransporteConsole {
-    fn enviar(&self, item: ItemSaida) -> FuturoEnvio {
+    fn enviar(&self, item: OutboxItem) -> FuturoEnvio {
         // Item de saída que não é texto (arquivo, presença) não é trabalho deste transporte nesta
         // fase: confirmar sem imprimir evita repetir o envio para sempre.
         if self.imprimir
             && item.tipo == "text"
-            && let Some(texto) = texto_do_item(&item.conteudo_json)
+            && let Some(texto) = texto_do_item(&item.content_json)
         {
             let mut saida = self
                 .saida

@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, SaltString};
-use poph_store::{NovaOrg, NovoAgente, Store};
+use poph_store::{NewAgent, NewOrg, Store};
 use poph_types::config::GlobalTokenConfig;
 use poph_types::{HarnessConfig, StructuredInstructions, ToolConfig};
 use rand_core::OsRng;
@@ -203,26 +203,26 @@ impl Cenario {
         let bytes = fixture("tabela.pdf");
 
         let (org, agente, arquivo_id) = {
-            let store = Store::abrir_em(&dados.join("harness.db"), &dados.join("rag.db"))
+            let store = Store::open_at(&dados.join("harness.db"), &dados.join("rag.db"))
                 .expect("abre o banco de teste");
             let org = store
-                .orgaos()
-                .criar(NovaOrg {
-                    nome: "Org HR-46f".to_owned(),
+                .orgs()
+                .criar(NewOrg {
+                    name: "Org HR-46f".to_owned(),
                     slug: "org-hr46f".to_owned(),
                     config_json: "{}".to_owned(),
                 })
                 .expect("org")
                 .id;
             let agente = store
-                .agentes()
+                .agents()
                 .criar(
                     org,
-                    NovoAgente {
-                        nome: "Bia".to_owned(),
+                    NewAgent {
+                        name: "Bia".to_owned(),
                         slug: "bia".to_owned(),
                         // Sem janela de agrupamento: o teste não espera 2 s por turno.
-                        janela_agrupamento_ms: 1,
+                        grouping_window_ms: 1,
                         ..Default::default()
                     },
                 )
@@ -239,7 +239,7 @@ impl Cenario {
                 ..StructuredInstructions::default()
             };
             store
-                .instrucoes()
+                .instructions()
                 .salvar(
                     org,
                     agente,
@@ -252,15 +252,15 @@ impl Cenario {
             let gravado =
                 poph_files::blob::gravar(&dados.join("blobs"), org, &bytes).expect("blob");
             let arquivo = store
-                .biblioteca()
+                .library()
                 .criar(
                     org,
-                    poph_store::NovoArquivoBiblioteca {
+                    poph_store::NewLibraryFile {
                         agent_id: agente,
-                        nome: "Tabela de precos".to_owned(),
-                        descricao: "tabela de preços".to_owned(),
+                        name: "Tabela de precos".to_owned(),
+                        description: "tabela de preços".to_owned(),
                         mime: "application/pdf".to_owned(),
-                        tamanho_bytes: bytes.len() as u64,
+                        size_bytes: bytes.len() as u64,
                         sha256: gravado.sha256.clone(),
                         blob_path: format!("{org}/{}", gravado.sha256),
                     },
@@ -487,25 +487,25 @@ async fn sem_modelo_de_embedding_a_ferramenta_nao_habilitada_continua_fora() {
     let pasta = pasta_de_teste("filtro");
     let dados = pasta.join("dados");
     let (org, agente) = {
-        let store = Store::abrir_em(&dados.join("harness.db"), &dados.join("rag.db"))
+        let store = Store::open_at(&dados.join("harness.db"), &dados.join("rag.db"))
             .expect("abre o banco de teste");
         let org = store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: "Org HR-46f filtro".to_owned(),
+            .orgs()
+            .criar(NewOrg {
+                name: "Org HR-46f filtro".to_owned(),
                 slug: "org-hr46f-filtro".to_owned(),
                 config_json: "{}".to_owned(),
             })
             .expect("org")
             .id;
         let agente = store
-            .agentes()
+            .agents()
             .criar(
                 org,
-                NovoAgente {
-                    nome: "Bia".to_owned(),
+                NewAgent {
+                    name: "Bia".to_owned(),
                     slug: "bia".to_owned(),
-                    janela_agrupamento_ms: 1,
+                    grouping_window_ms: 1,
                     ..Default::default()
                 },
             )
@@ -520,7 +520,7 @@ async fn sem_modelo_de_embedding_a_ferramenta_nao_habilitada_continua_fora() {
             ..StructuredInstructions::default()
         };
         store
-            .instrucoes()
+            .instructions()
             .salvar(
                 org,
                 agente,

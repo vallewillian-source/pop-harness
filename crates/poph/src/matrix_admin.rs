@@ -29,7 +29,7 @@ use poph_matrix::{
     Classificacao, ClienteMatrix, DepartamentoEspaco, ErroEspaco, Espacos, ModuloMatrix,
 };
 use poph_server::matrix_inicio::PortaEspacosStore;
-use poph_store::{EstadoMatrixOrg, NovoRegistroAuditoria, Store};
+use poph_store::{EstadoMatrixOrg, NewAuditEntry, Store};
 use poph_types::{DepartmentId, HarnessConfig, OrgId};
 use serde_json::{Value, json};
 
@@ -112,7 +112,7 @@ fn abrir(
     let config = config::carregar(arquivo.as_deref(), ambiente)
         .map_err(|erro| format!("configuração inválida: {erro}"))?;
     let store =
-        Store::abrir(&config).map_err(|erro| format!("não consegui abrir o banco: {erro}"))?;
+        Store::open(&config).map_err(|erro| format!("não consegui abrir o banco: {erro}"))?;
     let org = resolver_org(&store, texto)?;
     Ok(Contexto {
         store: Arc::new(store),
@@ -207,13 +207,13 @@ fn mostrar_estado(ctx: &Contexto, json: bool) -> Resultado {
         .atraso_das_mensagens(ctx.org, cursores.mensagens))?;
     let idade_s = atraso
         .mais_antiga_em
-        .map(|criada_em| ((ctx.store.agora() - criada_em).max(0) / 1000) as u64)
+        .map(|criada_em| ((ctx.store.now() - criada_em).max(0) / 1000) as u64)
         .unwrap_or(0);
     let falhas = ler(ctx.store.matrix().contar_falhas(ctx.org))?;
     let ultima_falha = ler(ctx.store.matrix().listar_falhas(ctx.org, 1))?
         .first()
         .map(|falha| falha.motivo.clone());
-    let slug = ler(ctx.store.orgaos().obter(ctx.org))?.slug;
+    let slug = ler(ctx.store.orgs().get(ctx.org))?.slug;
 
     if json {
         imprimir_json(&json!({
@@ -273,7 +273,7 @@ fn alterar_ligacao(ctx: &Contexto, ligar: bool, json: bool) -> Resultado {
     let esperada = antes.atualizado_em;
     match aplicar_ligacao(ctx, ligar, esperada) {
         Ok(depois) => {
-            let slug = ler(ctx.store.orgaos().obter(ctx.org))?.slug;
+            let slug = ler(ctx.store.orgs().get(ctx.org))?.slug;
             if json {
                 imprimir_json(&json!({
                     "versao_relatorio": 1,
@@ -336,16 +336,16 @@ fn aplicar_ligacao(
 
 /// `poph matrix espaco` (sem `--departamento`): lista os espaços da org.
 fn listar_espacos(ctx: &Contexto, json: bool) -> Resultado {
-    let slug = ler(ctx.store.orgaos().obter(ctx.org))?.slug;
+    let slug = ler(ctx.store.orgs().get(ctx.org))?.slug;
     let espacos = ler(ctx.store.matrix().listar_espacos(ctx.org))?;
     let mut itens = Vec::new();
     for espaco in &espacos {
         let nome = ctx
             .store
-            .departamentos()
+            .departments()
             .obter(ctx.org, espaco.departamento)
             .ok()
-            .map(|departamento| departamento.nome);
+            .map(|departamento| departamento.name);
         itens.push((espaco, nome));
     }
     if json {
@@ -386,7 +386,7 @@ fn garantir_espaco(
     json: bool,
 ) -> Resultado {
     let departamento_id: DepartmentId = parse_id(departamento_texto)?;
-    let departamento = ler(ctx.store.departamentos().obter(ctx.org, departamento_id))?;
+    let departamento = ler(ctx.store.departments().obter(ctx.org, departamento_id))?;
     let existente = existente.map(str::trim).filter(|texto| !texto.is_empty());
 
     let modulo = match ModuloMatrix::preparar(ctx.config.matrix.clone()) {
@@ -413,7 +413,7 @@ fn garantir_espaco(
 
     let alvo = DepartamentoEspaco {
         id: departamento.id,
-        nome: departamento.nome.clone(),
+        nome: departamento.name.clone(),
     };
     let gravado = executar_assincrono(espacos.garantir_espaco(ctx.org, &alvo, existente))?
         .map_err(mensagem_do_espaco)?;
@@ -427,7 +427,7 @@ fn garantir_espaco(
         imprimir_json(&json!({
             "versao_relatorio": 1,
             "departamento": departamento.id.to_string(),
-            "departamento_nome": departamento.nome,
+            "departamento_nome": departamento.name,
             "espaco": gravado.room_id,
             "alias": gravado.alias,
             "origem": origem,
@@ -435,7 +435,7 @@ fn garantir_espaco(
     } else {
         println!(
             "espaço do departamento `{}`: {} ({})",
-            departamento.nome,
+            departamento.name,
             gravado.room_id,
             descricao_origem(origem)
         );
@@ -448,7 +448,7 @@ fn garantir_espaco(
 fn desligar_espaco(ctx: &Contexto, departamento_texto: &str, json: bool) -> Resultado {
     let departamento_id: DepartmentId = parse_id(departamento_texto)?;
     // Departamento de outra org (ou inexistente) não passa daqui: nada muda.
-    let departamento = ler(ctx.store.departamentos().obter(ctx.org, departamento_id))?;
+    let departamento = ler(ctx.store.departments().obter(ctx.org, departamento_id))?;
     let desligado = ler(ctx.store.matrix().desligar_espaco(ctx.org, departamento.id))?;
     auditar(ctx, "delete", "matrix_space", departamento.id.to_string())?;
     if json {
@@ -461,7 +461,7 @@ fn desligar_espaco(ctx: &Contexto, departamento_texto: &str, json: bool) -> Resu
     } else if desligado.removido {
         println!(
             "espaço do departamento `{}` desligado: {} sala(s) deixaram de estar registradas nele.",
-            departamento.nome, desligado.salas_esquecidas
+            departamento.name, desligado.salas_esquecidas
         );
         println!(
             "  nada foi apagado no Element. Na próxima alteração de conversa desse departamento, a sala volta a ser posicionada no mesmo espaço."
@@ -469,7 +469,7 @@ fn desligar_espaco(ctx: &Contexto, departamento_texto: &str, json: bool) -> Resu
     } else {
         println!(
             "o departamento `{}` não tinha espaço ligado: nada a fazer.",
-            departamento.nome
+            departamento.name
         );
     }
     Ok(ExitCode::SUCCESS)
@@ -519,21 +519,21 @@ fn descricao_origem(origem: &str) -> &'static str {
 // ───────────────────────────── apoio ─────────────────────────────
 
 /// Converte o erro do banco na frase do operador.
-fn ler<T>(resultado: Result<T, poph_store::ErroStore>) -> Result<T, String> {
+fn ler<T>(resultado: Result<T, poph_store::StoreError>) -> Result<T, String> {
     resultado.map_err(|erro| descrever(&erro))
 }
 
 /// Auditoria da alteração, com ator `cli` (a API grava `admin_token`).
 fn auditar(ctx: &Contexto, acao: &str, entidade: &str, id: String) -> Result<(), String> {
-    ler(ctx.store.auditoria().registrar(
+    ler(ctx.store.audit().registrar(
         Some(ctx.org),
-        NovoRegistroAuditoria {
+        NewAuditEntry {
             ator_tipo: "cli".into(),
-            ator_id: None,
+            actor_id: None,
             acao: acao.into(),
-            entidade: entidade.into(),
-            entidade_id: Some(id),
-            detalhe_json: "{}".into(),
+            entity: entidade.into(),
+            entity_id: Some(id),
+            detail_json: "{}".into(),
         },
     ))?;
     Ok(())
@@ -569,7 +569,7 @@ pub fn data_utc(ms: i64) -> String {
 #[cfg(test)]
 mod testes {
     use super::*;
-    use poph_store::NovaOrg;
+    use poph_store::NewOrg;
     use std::fs;
 
     #[test]
@@ -589,12 +589,12 @@ mod testes {
             std::env::temp_dir().join(format!("poph-matrix-admin-412-{}", std::process::id()));
         let _ = fs::remove_dir_all(&pasta);
         fs::create_dir_all(&pasta).expect("pasta de teste");
-        let store = Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
+        let store = Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db"))
             .expect("abre o banco de teste");
         let org = store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: "Loja".into(),
+            .orgs()
+            .criar(NewOrg {
+                name: "Loja".into(),
                 slug: "loja-412".into(),
                 config_json: "{}".into(),
             })

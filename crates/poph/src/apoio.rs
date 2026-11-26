@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::str::FromStr;
 
-use poph_store::{ErroStore, Fluxo, Pagina, Status, Store};
+use poph_store::{Fluxo, Page, Status, Store, StoreError};
 use poph_types::{AgentId, DomainError, FlowId, HarnessConfig, OrgId};
 use serde_json::Value;
 
@@ -37,7 +37,7 @@ pub fn abrir_banco(flag: Option<PathBuf>, ambiente: &config::Ambiente) -> Result
     let arquivo = config::resolver_arquivo(flag.as_deref(), ambiente, &pasta);
     let configuracao = config::carregar(arquivo.as_deref(), ambiente)
         .map_err(|erro| format!("configuração inválida: {erro}"))?;
-    Store::abrir(&configuracao).map_err(|erro| format!("não consegui abrir o banco: {erro}"))
+    Store::open(&configuracao).map_err(|erro| format!("não consegui abrir o banco: {erro}"))
 }
 
 /// Abre a configuração e o banco e devolve as duas coisas. Os comandos de fluxo precisam da
@@ -50,8 +50,8 @@ pub fn abrir_com_configuracao(
     let arquivo = config::resolver_arquivo(flag.as_deref(), ambiente, &pasta);
     let configuracao = config::carregar(arquivo.as_deref(), ambiente)
         .map_err(|erro| format!("configuração inválida: {erro}"))?;
-    let store = Store::abrir(&configuracao)
-        .map_err(|erro| format!("não consegui abrir o banco: {erro}"))?;
+    let store =
+        Store::open(&configuracao).map_err(|erro| format!("não consegui abrir o banco: {erro}"))?;
     Ok((store, configuracao))
 }
 
@@ -63,12 +63,12 @@ pub fn resolver_agente(
 ) -> Result<poph_store::Agente, String> {
     let encontrado = if uuid::Uuid::parse_str(texto).is_ok() {
         let id: AgentId = parse_id(texto)?;
-        store.agentes().obter(org, id)
+        store.agents().get(org, id)
     } else {
-        store.agentes().por_slug(org, texto)
+        store.agents().por_slug(org, texto)
     };
     encontrado.map_err(|erro| {
-        if erro.eh_nao_encontrado() {
+        if erro.is_not_found() {
             format!("não existe agente `{texto}` nesta org")
         } else {
             descrever(&erro)
@@ -87,17 +87,15 @@ pub fn resolver_fluxo(store: &Store, org: OrgId, texto: &str) -> Result<Fluxo, S
     match achado {
         Ok(Some(fluxo)) => Ok(fluxo),
         Ok(None) => Err(format!("não existe fluxo `{texto}` nesta org")),
-        Err(erro) if erro.eh_nao_encontrado() => {
-            Err(format!("não existe fluxo `{texto}` nesta org"))
-        }
+        Err(erro) if erro.is_not_found() => Err(format!("não existe fluxo `{texto}` nesta org")),
         Err(erro) => Err(descrever(&erro)),
     }
 }
 
 /// Página pedida na linha de comando: `--limit` de 1 a 200 e o cursor (id da página anterior).
-pub fn pagina_de(limite: u32, cursor: Option<&str>) -> Result<Pagina, String> {
+pub fn pagina_de(limite: u32, cursor: Option<&str>) -> Result<Page, String> {
     let mut pagina = validar_limite(limite)?;
-    pagina.apos =
+    pagina.after =
         match cursor {
             None | Some("") => None,
             Some(texto) => Some(uuid::Uuid::parse_str(texto).map_err(|_| {
@@ -127,19 +125,15 @@ pub fn abrir_com_org(
 pub fn resolver_org(store: &Store, texto: &str) -> Result<OrgId, String> {
     if uuid::Uuid::parse_str(texto).is_ok() {
         let id: OrgId = parse_id(texto)?;
-        return match store.orgaos().obter(id) {
+        return match store.orgs().get(id) {
             Ok(org) => Ok(org.id),
-            Err(erro) if erro.eh_nao_encontrado() => {
-                Err(format!("não existe org com o id `{texto}`"))
-            }
+            Err(erro) if erro.is_not_found() => Err(format!("não existe org com o id `{texto}`")),
             Err(erro) => Err(descrever(&erro)),
         };
     }
-    match store.orgaos().por_slug(texto) {
+    match store.orgs().por_slug(texto) {
         Ok(org) => Ok(org.id),
-        Err(erro) if erro.eh_nao_encontrado() => {
-            Err(format!("não existe org com o slug `{texto}`"))
-        }
+        Err(erro) if erro.is_not_found() => Err(format!("não existe org com o slug `{texto}`")),
         Err(erro) => Err(descrever(&erro)),
     }
 }
@@ -153,9 +147,9 @@ where
 }
 
 /// Traduz erro do banco para uma frase que o operador entende.
-pub fn descrever(erro: &ErroStore) -> String {
+pub fn descrever(erro: &StoreError) -> String {
     match erro {
-        ErroStore::Dominio(DomainError::VersionConflict {
+        StoreError::Domain(DomainError::VersionConflict {
             expected: esperada,
             current: atual,
             ..
@@ -163,17 +157,17 @@ pub fn descrever(erro: &ErroStore) -> String {
             "a versão não confere: você informou a versão {esperada}, mas o registro está na \
              versão {atual}. Leia de novo com `show` e repita com a versão atual"
         ),
-        ErroStore::Dominio(DomainError::NotFound {
+        StoreError::Domain(DomainError::NotFound {
             entity: entidade,
             id,
         }) => {
             format!("{entidade} `{id}` não existe nesta org")
         }
-        ErroStore::Dominio(DomainError::Validation { field, reason }) => {
+        StoreError::Domain(DomainError::Validation { field, reason }) => {
             format!("{field}: {reason}")
         }
-        ErroStore::Dominio(DomainError::Conflict { reason, .. }) => reason.clone(),
-        ErroStore::Dominio(outro) => outro.to_string(),
+        StoreError::Domain(DomainError::Conflict { reason, .. }) => reason.clone(),
+        StoreError::Domain(outro) => outro.to_string(),
         outro => format!("não consegui gravar no banco: {outro}"),
     }
 }
@@ -181,9 +175,9 @@ pub fn descrever(erro: &ErroStore) -> String {
 /// Lê a situação digitada (`active`, `inactive` ou `archived`, como no banco).
 pub fn status_de_texto(texto: &str) -> Result<Status, String> {
     match texto {
-        "active" => Ok(Status::Ativo),
-        "inactive" => Ok(Status::Inativo),
-        "archived" => Ok(Status::Arquivado),
+        "active" => Ok(Status::Active),
+        "inactive" => Ok(Status::Inactive),
+        "archived" => Ok(Status::Archived),
         outro => Err(format!(
             "--status `{outro}` inválido: use active, inactive ou archived"
         )),
@@ -193,9 +187,9 @@ pub fn status_de_texto(texto: &str) -> Result<Status, String> {
 /// Situação em português para a saída de texto.
 pub fn status_em_portugues(status: Status) -> &'static str {
     match status {
-        Status::Ativo => "ativo",
-        Status::Inativo => "inativo",
-        Status::Arquivado => "arquivado",
+        Status::Active => "ativo",
+        Status::Inactive => "inativo",
+        Status::Archived => "arquivado",
     }
 }
 
@@ -212,9 +206,9 @@ pub fn validar_texto(campo: &str, valor: &str, maximo: usize) -> Result<String, 
 }
 
 /// `--limit` de listagem: 1 a 200.
-pub fn validar_limite(limite: u32) -> Result<Pagina, String> {
+pub fn validar_limite(limite: u32) -> Result<Page, String> {
     if (1..=200).contains(&limite) {
-        Ok(Pagina::com_limite(limite))
+        Ok(Page::with_limit(limite))
     } else {
         Err("--limit precisa estar entre 1 e 200".to_owned())
     }
@@ -222,13 +216,17 @@ pub fn validar_limite(limite: u32) -> Result<Pagina, String> {
 
 /// Conta todos os registros de uma listagem paginada (de 200 em 200, pelo cursor de id).
 pub fn contar_todos<T>(
-    mut listar: impl FnMut(Pagina) -> Result<Vec<T>, ErroStore>,
+    mut listar: impl FnMut(Page) -> Result<Vec<T>, StoreError>,
     id_de: impl Fn(&T) -> uuid::Uuid,
 ) -> Result<usize, String> {
     let mut total = 0;
     let mut apos = None;
     loop {
-        let lote = listar(Pagina { apos, limite: 200 }).map_err(|erro| descrever(&erro))?;
+        let lote = listar(Page {
+            after: apos,
+            limit: 200,
+        })
+        .map_err(|erro| descrever(&erro))?;
         total += lote.len();
         if lote.len() < 200 {
             return Ok(total);
@@ -270,9 +268,9 @@ mod testes {
 
     #[test]
     fn status_aceita_so_os_textos_do_banco() {
-        assert_eq!(status_de_texto("active").unwrap(), Status::Ativo);
-        assert_eq!(status_de_texto("inactive").unwrap(), Status::Inativo);
-        assert_eq!(status_de_texto("archived").unwrap(), Status::Arquivado);
+        assert_eq!(status_de_texto("active").unwrap(), Status::Active);
+        assert_eq!(status_de_texto("inactive").unwrap(), Status::Inactive);
+        assert_eq!(status_de_texto("archived").unwrap(), Status::Archived);
         let erro = status_de_texto("ativo").unwrap_err();
         assert!(erro.contains("active, inactive ou archived"), "{erro}");
     }
@@ -297,7 +295,7 @@ mod testes {
     fn limite_fica_entre_1_e_200() {
         assert!(validar_limite(0).is_err());
         assert!(validar_limite(201).is_err());
-        assert_eq!(validar_limite(200).unwrap().limite, 200);
+        assert_eq!(validar_limite(200).unwrap().limit, 200);
     }
 
     #[test]
@@ -315,7 +313,7 @@ mod testes {
 
     #[test]
     fn conflito_de_versao_diz_as_duas_versoes() {
-        let erro = ErroStore::Dominio(DomainError::VersionConflict {
+        let erro = StoreError::Domain(DomainError::VersionConflict {
             entity: "categoria de produto",
             id: "x".to_owned(),
             expected: 2,

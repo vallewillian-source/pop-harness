@@ -26,7 +26,7 @@ use poph_matrix::usuarios::Fantasma;
 use poph_server::matrix_espelho::{
     AvisoNaSala, DestinoMatrix, EnvioMidia, EspelhoMatrix, MidiaPublicada,
 };
-use poph_store::{Direcao, NovaConversa, NovaMensagem, NovaOrg, NovoAgente, Origem, Papel, Store};
+use poph_store::{Direction, NewAgent, NewConversation, NewMessage, NewOrg, Origin, Role, Store};
 use poph_types::{AgentId, ConversationId, MatrixConfig, OrgId, UnsupportedContent};
 
 // ───────────────────────────── cenário ─────────────────────────────
@@ -48,9 +48,9 @@ impl Cenario {
         let _ = fs::remove_dir_all(&pasta);
         fs::create_dir_all(&pasta).expect("cria a pasta do teste");
         let relogio = Arc::new(AtomicI64::new(1_000));
-        let store = Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
+        let store = Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db"))
             .expect("abre o banco")
-            .com_relogio(Arc::new(move || relogio.fetch_add(1, Ordering::SeqCst)));
+            .with_clock(Arc::new(move || relogio.fetch_add(1, Ordering::SeqCst)));
         Self {
             pasta,
             store: Some(Arc::new(store)),
@@ -83,9 +83,9 @@ fn config() -> MatrixConfig {
 
 fn criar_org(store: &Store, slug: &str) -> OrgId {
     store
-        .orgaos()
-        .criar(NovaOrg {
-            nome: format!("Org {slug}"),
+        .orgs()
+        .criar(NewOrg {
+            name: format!("Org {slug}"),
             slug: slug.to_owned(),
             config_json: String::new(),
         })
@@ -95,13 +95,13 @@ fn criar_org(store: &Store, slug: &str) -> OrgId {
 
 fn criar_agente(store: &Store, org: OrgId) -> AgentId {
     store
-        .agentes()
+        .agents()
         .criar(
             org,
-            NovoAgente {
-                nome: "Bia".to_owned(),
+            NewAgent {
+                name: "Bia".to_owned(),
                 slug: "bia".to_owned(),
-                ..NovoAgente::default()
+                ..NewAgent::default()
             },
         )
         .expect("cria o agente")
@@ -113,12 +113,12 @@ fn criar_conversa(store: &Store, org: OrgId, agente: AgentId, peer: &str) -> Con
         .conversas()
         .criar(
             org,
-            NovaConversa {
+            NewConversation {
                 agent_id: agente,
                 integration_id: None,
                 canal: "whatsapp".to_owned(),
                 peer_externo: Some(peer.to_owned()),
-                departamento_alvo: None,
+                target_department: None,
             },
         )
         .expect("cria a conversa")
@@ -128,17 +128,17 @@ fn criar_conversa(store: &Store, org: OrgId, agente: AgentId, peer: &str) -> Con
 /// Mensagem do cliente (entrada, papel `user`), como o recebimento grava o texto de histórico.
 fn msg_cliente(store: &Store, org: OrgId, conversa: ConversationId, texto: &str) {
     store
-        .mensagens()
+        .messages()
         .gravar_com_anexos(
             org,
-            NovaMensagem {
+            NewMessage {
                 conversation_id: conversa,
-                direcao: Direcao::Entrada,
-                papel: Papel::Usuario,
-                origem: Origem::Agente,
-                autor_nome: None,
+                direction: Direction::Inbound,
+                role: Role::User,
+                origin: Origin::Agente,
+                author_name: None,
                 texto: texto.to_owned(),
-                anexos_json: "[]".to_owned(),
+                attachments_json: "[]".to_owned(),
                 id_externo: None,
                 turn_id: None,
             },
@@ -150,17 +150,17 @@ fn msg_cliente(store: &Store, org: OrgId, conversa: ConversationId, texto: &str)
 /// Mensagem do atendente do agente (saída, papel `assistant`).
 fn msg_agente(store: &Store, org: OrgId, conversa: ConversationId, texto: &str) {
     store
-        .mensagens()
+        .messages()
         .gravar_com_anexos(
             org,
-            NovaMensagem {
+            NewMessage {
                 conversation_id: conversa,
-                direcao: Direcao::Saida,
-                papel: Papel::Assistente,
-                origem: Origem::Agente,
-                autor_nome: None,
+                direction: Direction::Outbound,
+                role: Role::Assistant,
+                origin: Origin::Agente,
+                author_name: None,
                 texto: texto.to_owned(),
-                anexos_json: "[]".to_owned(),
+                attachments_json: "[]".to_owned(),
                 id_externo: None,
                 turn_id: None,
             },
@@ -177,7 +177,7 @@ fn cursor(store: &Store, org: OrgId) -> (u64, String) {
 /// Id da última mensagem: o cursor tem de chegar nela quando não há pendência.
 fn maior_rowid_e_id(store: &Store) -> (u64, String) {
     let (rowid, id) = store
-        .mensagens()
+        .messages()
         .ultima_rowid()
         .expect("lê a última rowid")
         .expect("tem mensagem");

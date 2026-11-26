@@ -38,8 +38,8 @@ fn json_fluxo(f: &Fluxo) -> Value {
     json!({
         "id": f.id.to_string(),
         "slug": f.slug,
-        "name": f.nome,
-        "status": f.status.como_texto(),
+        "name": f.name,
+        "status": f.status.as_text(),
     })
 }
 
@@ -52,7 +52,7 @@ pub async fn listar(
     let org = id_da_url::<OrgId>(&c.org_id)?;
     ident.exigir_org(org)?;
     let agente = id_da_url::<AgentId>(&c.agent_id)?;
-    e.store.agentes().obter(org, agente)?;
+    e.store.agents().get(org, agente)?;
     let items: Vec<Value> = e
         .store
         .fluxos()
@@ -87,7 +87,7 @@ pub async fn substituir(
         .map(|texto| id_da_url::<FlowId>(texto))
         .collect::<Result<Vec<FlowId>, _>>()?;
     // Agente de outra org ou inexistente: 404 antes de mexer em qualquer permissão.
-    e.store.agentes().obter(org, agente)?;
+    e.store.agents().get(org, agente)?;
     let antes = e.store.fluxos().listar_do_agente(org, agente)?;
     e.store
         .fluxos()
@@ -105,7 +105,7 @@ pub async fn substituir(
         .filter(|f| !do_depois.contains(&f.id.to_string()))
         .map(json_fluxo)
         .collect();
-    let nova_versao = e.store.agentes().obter(org, agente)?.versao;
+    let nova_versao = e.store.agents().get(org, agente)?.version;
     super::auditoria::registrar(
         &e,
         &ident,

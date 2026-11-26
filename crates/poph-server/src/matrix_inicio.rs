@@ -40,7 +40,7 @@ use poph_matrix::config::{ErroMatrix, ModuloMatrix};
 use poph_matrix::espacos::{EspacoGravado, OrigemEspaco, PortaEspacos};
 use poph_matrix::salas::ErroPorta;
 use poph_matrix::{ClienteMatrix, Espacos, IdsFantasmas, UsuariosVirtuais};
-use poph_store::{ErroStore, OrigemEspaco as OrigemGravada, Store};
+use poph_store::{OrigemEspaco as OrigemGravada, Store, StoreError};
 use poph_types::{ConversationId, DepartmentId, OrgId};
 use tokio::sync::watch;
 
@@ -633,7 +633,7 @@ impl PortaEspacos for PortaEspacosStore {
     }
 }
 
-fn erro_porta(_: ErroStore) -> ErroPorta {
+fn erro_porta(_: StoreError) -> ErroPorta {
     // Sem o texto do erro do banco: ele pode carregar valor de cliente.
     ErroPorta::nova("armazenamento do módulo Matrix indisponível")
 }

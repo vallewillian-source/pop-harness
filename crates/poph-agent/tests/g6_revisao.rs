@@ -27,8 +27,7 @@ use poph_agent::turno::{
 use poph_core::llm::{ErroLlm, EventoLlm, MotivoFim, ProvedorFake, Roteiro, Uso};
 use poph_jev::{ErroJev, JevFalso, LoteResposta, MotorJev, Resposta as RespostaJev};
 use poph_store::{
-    Direcao, EstadoTurno, MudancaAgente, NovaConversa, NovaMensagem, NovoAgente, Pagina, Papel,
-    Store,
+    AgentChange, Direction, NewAgent, NewConversation, NewMessage, Page, Role, Store, TurnState,
 };
 use poph_types::{ConversationId, JevGates, MessageId, OrgId, StructuredInstructions};
 
@@ -65,33 +64,32 @@ impl Cenario {
         let _ = std::fs::remove_dir_all(&pasta);
         std::fs::create_dir_all(&pasta).expect("pasta do teste");
         let store = Arc::new(
-            Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
-                .expect("abre o banco"),
+            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco"),
         );
         let org = store
-            .orgaos()
-            .criar(poph_store::NovaOrg {
-                nome: format!("Org {rotulo}"),
+            .orgs()
+            .criar(poph_store::NewOrg {
+                name: format!("Org {rotulo}"),
                 slug: format!("org-{rotulo}-{}-{}", std::process::id(), fastrand()),
                 config_json: "{}".to_owned(),
             })
             .expect("cria a org")
             .id;
         let agente = store
-            .agentes()
+            .agents()
             .criar(
                 org,
-                NovoAgente {
-                    nome: format!("Bia {rotulo}"),
+                NewAgent {
+                    name: format!("Bia {rotulo}"),
                     slug: format!("bia-{rotulo}-{}", fastrand()),
-                    janela_agrupamento_ms: 0,
-                    ..NovoAgente::default()
+                    grouping_window_ms: 0,
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente");
         let estruturado = StructuredInstructions::default();
         store
-            .instrucoes()
+            .instructions()
             .salvar(
                 org,
                 agente.id,
@@ -103,14 +101,14 @@ impl Cenario {
             .expect("grava as instruções");
         if !jev_json.is_empty() {
             store
-                .agentes()
+                .agents()
                 .atualizar(
                     org,
                     agente.id,
-                    agente.versao,
-                    MudancaAgente {
+                    agente.version,
+                    AgentChange {
                         jev_json: Some(jev_json.to_owned()),
-                        ..MudancaAgente::default()
+                        ..AgentChange::default()
                     },
                 )
                 .expect("grava o jev_json do agente");
@@ -119,12 +117,12 @@ impl Cenario {
             .conversas()
             .criar(
                 org,
-                NovaConversa {
+                NewConversation {
                     agent_id: agente.id,
                     integration_id: None,
                     canal: "cli".to_owned(),
                     peer_externo: None,
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("abre a conversa")
@@ -140,19 +138,19 @@ impl Cenario {
 
     fn falar(&self, texto: &str) -> MessageId {
         self.store
-            .mensagens()
+            .messages()
             .gravar(
                 self.org,
-                NovaMensagem {
+                NewMessage {
                     conversation_id: self.conversa,
-                    direcao: Direcao::Entrada,
-                    papel: Papel::Usuario,
+                    direction: Direction::Inbound,
+                    role: Role::User,
                     texto: texto.to_owned(),
-                    anexos_json: "[]".to_owned(),
+                    attachments_json: "[]".to_owned(),
                     id_externo: None,
                     turn_id: None,
-                    origem: poph_store::Origem::Agente,
-                    autor_nome: None,
+                    origin: poph_store::Origin::Agente,
+                    author_name: None,
                 },
             )
             .expect("grava a mensagem")
@@ -206,28 +204,28 @@ impl Cenario {
 
     fn saidas(&self) -> Vec<String> {
         self.store
-            .mensagens()
-            .listar(self.org, self.conversa, Pagina::com_limite(200))
+            .messages()
+            .listar(self.org, self.conversa, Page::with_limit(200))
             .expect("lista as mensagens")
             .into_iter()
-            .filter(|mensagem| mensagem.direcao == Direcao::Saida)
+            .filter(|mensagem| mensagem.direction == Direction::Outbound)
             .map(|mensagem| mensagem.texto)
             .collect()
     }
 
     fn fila(&self) -> Vec<String> {
         self.store
-            .caixa_saida()
+            .outbox()
             .listar_pendentes(self.org, 50)
             .expect("lista a fila de saída")
             .into_iter()
-            .map(|item| item.conteudo_json)
+            .map(|item| item.content_json)
             .collect()
     }
 
     fn turno_gravado(&self, turno: &ResumoTurno) -> String {
         self.store
-            .turnos()
+            .turns()
             .obter(self.org, turno.turno)
             .expect("lê o turno")
             .jev_json
@@ -360,7 +358,7 @@ async fn g6_aprovada_mantem_a_resposta_e_faz_uma_chamada_ao_modelo() {
     let gatilho = cenario.falar(PERGUNTA);
     let resumo = cenario.turno(&motor, gatilho).await;
 
-    assert_eq!(resumo.estado, EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, TurnState::Completed);
     assert_eq!(resumo.texto, RASCUNHO);
     assert_eq!(provedor.recebidos().len(), 1, "uma chamada ao modelo");
     assert_eq!(cenario.saidas(), vec![RASCUNHO]);
@@ -388,7 +386,7 @@ async fn g6_reprovada_regenera_uma_vez_e_envia_o_texto_novo() {
     let gatilho = cenario.falar(PERGUNTA);
     let resumo = cenario.turno(&motor, gatilho).await;
 
-    assert_eq!(resumo.estado, EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, TurnState::Completed);
     assert_eq!(resumo.texto, REESCRITA, "sai o texto regenerado");
     let pedidos = provedor.recebidos();
     assert_eq!(pedidos.len(), 2, "exatamente uma regeneração");
@@ -435,7 +433,7 @@ async fn g6_duas_reprovacoes_usam_a_resposta_segura() {
     let gatilho = cenario.falar(PERGUNTA);
     let resumo = cenario.turno(&motor, gatilho).await;
 
-    assert_eq!(resumo.estado, EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, TurnState::Completed);
     assert_eq!(resumo.texto, SEGURA, "a resposta segura é a que sai");
     assert_eq!(provedor.recebidos().len(), 2, "sem terceira tentativa");
     assert_eq!(cenario.saidas(), vec![SEGURA]);
@@ -499,7 +497,7 @@ async fn g6_jev_fora_nao_revisa_e_mantem_a_resposta() {
     let gatilho = cenario.falar(PERGUNTA);
     let resumo = cenario.turno(&motor, gatilho).await;
 
-    assert_eq!(resumo.estado, EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, TurnState::Completed);
     assert_eq!(resumo.texto, RASCUNHO, "Jev fora = comportamento de hoje");
     assert_eq!(provedor.recebidos().len(), 1, "sem regeneração");
     assert_eq!(cenario.metricas.reprovadas_g6.value(), 0);
@@ -565,7 +563,7 @@ async fn g6_falha_do_modelo_na_regeneracao_mantem_a_resposta_original() {
     let gatilho = cenario.falar(PERGUNTA);
     let resumo = cenario.turno(&motor, gatilho).await;
 
-    assert_eq!(resumo.estado, EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, TurnState::Completed);
     assert_eq!(
         resumo.texto, RASCUNHO,
         "a falha da reescrita não derruba o turno"
@@ -661,7 +659,7 @@ async fn medicao_do_g6() {
         for mensagem in &mensagens {
             let gatilho = cenario.falar(mensagem);
             let resumo = cenario.turno(&motor, gatilho).await;
-            assert_eq!(resumo.estado, EstadoTurno::Concluido);
+            assert_eq!(resumo.estado, TurnState::Completed);
         }
         resultados.push((
             rotulo,

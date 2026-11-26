@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Args, Subcommand};
-use poph_store::{MudancaOrg, NovaOrg, Org, Store};
+use poph_store::{NewOrg, Org, OrgChange, Store};
 use serde_json::{Value, json};
 
 use crate::agente::{derivar_slug, slug_valido};
@@ -150,17 +150,17 @@ fn criar(store: &Store, args: CriarOrg) -> ExitCode {
             "slug `{slug}` inválido: use de 3 a 64 caracteres, só a-z, 0-9 e `-`"
         ));
     }
-    match store.orgaos().por_slug(&slug) {
+    match store.orgs().por_slug(&slug) {
         Ok(_) => return falha(format!("já existe uma org com o slug `{slug}`")),
-        Err(erro) if erro.eh_nao_encontrado() => {}
+        Err(erro) if erro.is_not_found() => {}
         Err(erro) => return falha(descrever(&erro)),
     }
-    let nova = NovaOrg {
-        nome,
+    let nova = NewOrg {
+        name: nome,
         slug,
         config_json: String::new(),
     };
-    match store.orgaos().criar(nova) {
+    match store.orgs().criar(nova) {
         Ok(org) => saida(&org, args.json, "org criada", None),
         Err(erro) => falha(descrever(&erro)),
     }
@@ -171,7 +171,7 @@ fn listar(store: &Store, args: ListarOrgs) -> ExitCode {
         Ok(pagina) => pagina,
         Err(erro) => return falha(erro),
     };
-    match store.orgaos().listar(pagina) {
+    match store.orgs().listar(pagina) {
         Ok(orgs) => {
             if args.json {
                 let itens: Vec<Value> = orgs.iter().map(json_org).collect();
@@ -189,7 +189,7 @@ fn listar(store: &Store, args: ListarOrgs) -> ExitCode {
                         org.id,
                         org.slug,
                         status_em_portugues(org.status),
-                        org.nome
+                        org.name
                     );
                 }
                 println!("\n{} org(s).", orgs.len());
@@ -205,7 +205,7 @@ fn mostrar(store: &Store, args: ReferenciaOrg) -> ExitCode {
         Ok(id) => id,
         Err(erro) => return falha(erro),
     };
-    let org = match store.orgaos().obter(id) {
+    let org = match store.orgs().get(id) {
         Ok(org) => org,
         Err(erro) => return falha(descrever(&erro)),
     };
@@ -246,12 +246,12 @@ fn atualizar(store: &Store, args: AtualizarOrg) -> ExitCode {
     if nome.is_none() && status.is_none() && config_json.is_none() {
         return falha("nada a alterar: informe --name, --status ou --config-json");
     }
-    let mudanca = MudancaOrg {
-        nome,
+    let mudanca = OrgChange {
+        name: nome,
         status,
         config_json,
     };
-    match store.orgaos().atualizar(id, args.if_match, mudanca) {
+    match store.orgs().atualizar(id, args.if_match, mudanca) {
         Ok(org) => saida(&org, args.json, "org alterada", None),
         Err(erro) => falha(descrever(&erro)),
     }
@@ -275,14 +275,14 @@ fn excluir(store: &Store, args: ExcluirOrg) -> ExitCode {
     }
     let resultado = if args.force {
         store
-            .orgaos()
+            .orgs()
             .excluir_forcado(id)
             .map_err(|erro| descrever(&erro))
     } else {
-        store.orgaos().excluir(id).map(|()| 0u64).map_err(|erro| {
+        store.orgs().excluir(id).map(|()| 0u64).map_err(|erro| {
             if matches!(
                 erro,
-                poph_store::ErroStore::Dominio(poph_types::DomainError::Conflict { .. })
+                poph_store::StoreError::Domain(poph_types::DomainError::Conflict { .. })
             ) {
                 "a org tem agentes: exclua os agentes antes, ou repita com --force".to_owned()
             } else {
@@ -336,11 +336,11 @@ fn conteudo_da_org(store: &Store, org: poph_types::OrgId) -> Result<Conteudo, St
     Ok(Conteudo {
         agentes: contar_agentes(store, org)?,
         categorias: contar_todos(
-            |pagina| store.categorias().listar(org, pagina),
+            |pagina| store.categories().listar(org, pagina),
             |item| item.id.as_uuid(),
         )?,
         departamentos: contar_todos(
-            |pagina| store.departamentos().listar(org, pagina),
+            |pagina| store.departments().listar(org, pagina),
             |item| item.id.as_uuid(),
         )?,
         tokens: contar_todos(
@@ -352,7 +352,7 @@ fn conteudo_da_org(store: &Store, org: poph_types::OrgId) -> Result<Conteudo, St
 
 fn contar_agentes(store: &Store, org: poph_types::OrgId) -> Result<usize, String> {
     contar_todos(
-        |pagina| store.agentes().listar(org, pagina),
+        |pagina| store.agents().listar(org, pagina),
         |item| item.id.as_uuid(),
     )
 }
@@ -380,13 +380,13 @@ fn saida(org: &Org, json: bool, mensagem: &str, agentes: Option<usize>) -> ExitC
 fn json_org(org: &Org) -> Value {
     json!({
         "id": org.id.to_string(),
-        "name": org.nome,
+        "name": org.name,
         "slug": org.slug,
-        "status": org.status.como_texto(),
+        "status": org.status.as_text(),
         "config": json_de_texto(&org.config_json),
-        "version": org.versao,
-        "created_at": org.criado_em,
-        "updated_at": org.atualizado_em,
+        "version": org.version,
+        "created_at": org.created_at,
+        "updated_at": org.updated_at,
     })
 }
 
@@ -394,14 +394,14 @@ fn texto_org(org: &Org, agentes: Option<usize>) -> String {
     let mut texto = format!(
         "org {}\n  nome: {}\n  slug: {}\n  situação: {}\n",
         org.id,
-        org.nome,
+        org.name,
         org.slug,
         status_em_portugues(org.status)
     );
     if let Some(total) = agentes {
         texto.push_str(&format!("  agentes: {total}\n"));
     }
-    texto.push_str(&format!("  versão: {}\n", org.versao));
+    texto.push_str(&format!("  versão: {}\n", org.version));
     texto
 }
 

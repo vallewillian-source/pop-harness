@@ -10,7 +10,7 @@ use axum::{
     extract::{Path, State, rejection::JsonRejection},
     http::{HeaderMap, StatusCode},
 };
-use poph_store::Instrucoes;
+use poph_store::Instructions;
 use poph_types::{AgentId, OrgId, StructuredInstructions};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -33,16 +33,16 @@ fn ids(c: Caminho, ident: &Identidade) -> Result<(OrgId, AgentId), ApiError> {
     ident.exigir_org(org)?;
     Ok((org, id_da_url::<AgentId>(&c.agent_id)?))
 }
-fn representar(i: &Instrucoes) -> Value {
+fn representar(i: &Instructions) -> Value {
     json!({"agent_id":i.agent_id.to_string(),"org_id":i.org_id.to_string(),
-        "structured":serde_json::from_str::<Value>(&i.estruturado_json).unwrap_or(json!(i.estruturado_json)),
-        "markdown":i.markdown,"derived_from_json":i.derivado_do_json,"version":i.versao,
-        "created_at":i.criado_em,"updated_at":i.atualizado_em})
+        "structured":serde_json::from_str::<Value>(&i.structured_json).unwrap_or(json!(i.structured_json)),
+        "markdown":i.markdown,"derived_from_json":i.derived_from_json,"version":i.version,
+        "created_at":i.created_at,"updated_at":i.updated_at})
 }
-fn existente(e: &Estado, org: OrgId, id: AgentId) -> Result<Option<Instrucoes>, ApiError> {
-    match e.store.instrucoes().obter(org, id) {
+fn existente(e: &Estado, org: OrgId, id: AgentId) -> Result<Option<Instructions>, ApiError> {
+    match e.store.instructions().obter(org, id) {
         Ok(i) => Ok(Some(i)),
-        Err(poph_store::ErroStore::Dominio(poph_types::DomainError::NotFound { .. })) => Ok(None),
+        Err(poph_store::StoreError::Domain(poph_types::DomainError::NotFound { .. })) => Ok(None),
         Err(erro) => Err(erro.into()),
     }
 }
@@ -53,7 +53,7 @@ pub async fn listar(
     Path(c): Path<Caminho>,
 ) -> Result<Json<ListaJson<Value>>, ApiError> {
     let (org, id) = ids(c, &ident)?;
-    e.store.agentes().obter(org, id)?;
+    e.store.agents().get(org, id)?;
     let items = existente(&e, org, id)?.iter().map(representar).collect();
     Ok(Json(ListaJson {
         items,
@@ -67,7 +67,7 @@ pub async fn mostrar(
     Path(c): Path<Caminho>,
 ) -> Result<Json<Value>, ApiError> {
     let (org, id) = ids(c, &ident)?;
-    Ok(Json(representar(&e.store.instrucoes().obter(org, id)?)))
+    Ok(Json(representar(&e.store.instructions().obter(org, id)?)))
 }
 fn preparar(
     e: &Estado,
@@ -86,7 +86,7 @@ fn preparar(
         }
         (None, Some(markdown)) => {
             let estruturado =
-                existente(e, org, id)?.map_or_else(|| "{}".to_owned(), |i| i.estruturado_json);
+                existente(e, org, id)?.map_or_else(|| "{}".to_owned(), |i| i.structured_json);
             Ok((estruturado, markdown, false))
         }
         _ => Err(ApiError::invalido(
@@ -103,11 +103,11 @@ async fn gravar(
     acao: &str,
 ) -> Result<Json<Value>, ApiError> {
     let (org, id) = ids(c, &ident)?;
-    e.store.agentes().obter(org, id)?;
+    e.store.agents().get(org, id)?;
     let (estruturado, markdown, derivado) = preparar(&e, org, id, d)?;
     let i = e
         .store
-        .instrucoes()
+        .instructions()
         .salvar(org, id, versao, &estruturado, &markdown, derivado)?;
     super::auditoria::registrar(
         &e,
@@ -154,7 +154,7 @@ pub async fn excluir(
     Path(c): Path<Caminho>,
 ) -> Result<Json<Value>, ApiError> {
     let (org, id) = ids(c, &ident)?;
-    e.store.instrucoes().apagar(org, id)?;
+    e.store.instructions().apagar(org, id)?;
     super::auditoria::registrar(
         &e,
         &ident,

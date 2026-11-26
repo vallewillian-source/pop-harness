@@ -81,8 +81,8 @@ fn abrir(
     let arquivo = config::resolver_arquivo(flag.as_deref(), ambiente, &pasta);
     let configuracao = config::carregar(arquivo.as_deref(), ambiente)
         .map_err(|erro| format!("configuração inválida: {erro}"))?;
-    let store = Store::abrir(&configuracao)
-        .map_err(|erro| format!("não consegui abrir o banco: {erro}"))?;
+    let store =
+        Store::open(&configuracao).map_err(|erro| format!("não consegui abrir o banco: {erro}"))?;
     Ok((store, configuracao))
 }
 
@@ -93,7 +93,7 @@ fn executar_run(
     args: RunArgs,
 ) -> ExitCode {
     let armazem = BancoHarness::novo(store, configuracao.blobs());
-    let agora = poph_store::agora_do_sistema();
+    let agora = poph_store::system_now();
     let opcoes = Opcoes::novas(agora, configuracao.retention.days, args.dry_run, "cli");
 
     let resultado = match org {

@@ -15,7 +15,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use poph_store::{MIGRACOES_HARNESS, Store, versao_alvo_harness, versao_do_arquivo};
+use poph_store::{HARNESS_MIGRATIONS, Store, file_version, harness_target_version};
 use poph_types::{EffectState, ExecutionStatus, StepStatus};
 use rusqlite::Connection;
 
@@ -62,7 +62,7 @@ impl Cenario {
     fn novo(rotulo: &str) -> Self {
         let pasta = pasta_nova(rotulo);
         let harness = pasta.join("harness.db");
-        let store = Store::abrir_em(&harness, &pasta.join("rag.db")).expect("abre e migra");
+        let store = Store::open_at(&harness, &pasta.join("rag.db")).expect("abre e migra");
         let conn = conexao(&harness);
         Self {
             pasta,
@@ -164,15 +164,15 @@ fn migracao_cria_as_seis_tabelas_com_colunas_e_indices() {
     let cenario = Cenario::novo("esquema");
     let harness = cenario.pasta.join("harness.db");
     assert_eq!(
-        versao_do_arquivo(&harness).expect("versão"),
-        Some(versao_alvo_harness())
+        file_version(&harness).expect("versão"),
+        Some(harness_target_version())
     );
     assert!(
-        versao_alvo_harness() >= 13,
+        harness_target_version() >= 13,
         "a migração 0013 tem que estar registrada"
     );
     assert!(
-        MIGRACOES_HARNESS.iter().any(|m| m.nome == MIGRACAO),
+        HARNESS_MIGRATIONS.iter().any(|m| m.name == MIGRACAO),
         "migração {MIGRACAO} não está em MIGRACOES_HARNESS"
     );
 
@@ -265,7 +265,7 @@ fn migracao_cria_as_seis_tabelas_com_colunas_e_indices() {
         ),
     ];
     for (tabela, colunas) in esperado {
-        let do_banco = cenario._store.colunas(tabela).expect("colunas da tabela");
+        let do_banco = cenario._store.columns(tabela).expect("colunas da tabela");
         for coluna in *colunas {
             assert!(
                 do_banco.iter().any(|c| c == coluna),
@@ -665,14 +665,14 @@ fn rodar_a_migracao_de_novo_nao_faz_nada() {
     cenario.fluxo(&org, "agendar");
     let antes = contar(&cenario.conn, "SELECT count(*) FROM fluxos");
 
-    let relatorios = cenario._store.migrar().expect("migra de novo");
-    assert!(relatorios.ja_estava_em_dia(), "{relatorios:?}");
+    let relatorios = cenario._store.migrate().expect("migra de novo");
+    assert!(relatorios.already_up_to_date(), "{relatorios:?}");
 
     cenario.conn = conexao(&cenario.pasta.join("harness.db"));
     assert_eq!(contar(&cenario.conn, "SELECT count(*) FROM fluxos"), antes);
     assert_eq!(
-        versao_do_arquivo(&cenario.pasta.join("harness.db")).expect("versão"),
-        Some(versao_alvo_harness())
+        file_version(&cenario.pasta.join("harness.db")).expect("versão"),
+        Some(harness_target_version())
     );
 }
 

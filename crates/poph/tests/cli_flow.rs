@@ -9,7 +9,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
-use poph_store::{NovaFicha, Store};
+use poph_store::{NewRecord, Store};
 use poph_types::{AgentId, FlowId, OrgId};
 use serde_json::Value;
 
@@ -128,7 +128,7 @@ impl Cenario {
 
     /// Abre o banco do teste direto pelo repositório (a CLI já o migrou).
     fn store(&self) -> Store {
-        Store::abrir_em(
+        Store::open_at(
             &self.dados().join("harness.db"),
             &self.dados().join("rag.db"),
         )
@@ -315,12 +315,12 @@ fn publicar_revisao_nova_exige_versao_e_deixa_a_revisao_1_intacta() {
     let store = cenario.store();
     let fluxo = fluxo_id(&cenario, &org);
     let revisao_1 = store
-        .revisoes()
+        .revisions()
         .obter(org_id(&org), fluxo, 1)
         .expect("revisão 1");
     assert_eq!(revisao_1.fonte, SCRIPT_V1);
     let revisao_2 = store
-        .revisoes()
+        .revisions()
         .obter(org_id(&org), fluxo, 2)
         .expect("revisão 2");
     assert_eq!(revisao_2.fonte, SCRIPT_V2);
@@ -557,7 +557,7 @@ fn ficha_com_filtro_e_detalhe_aparecem_na_cli() {
         .fichas()
         .criar(
             org_id(&org),
-            NovaFicha {
+            NewRecord {
                 conversation_id: None,
                 agent_id: agente.parse::<AgentId>().expect("id do agente"),
                 canal: "whatsapp".to_owned(),

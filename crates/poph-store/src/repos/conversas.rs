@@ -7,8 +7,8 @@ use poph_types::{AgentId, ConversationId, DepartmentId, OrgId};
 use rusqlite::{OptionalExtension, Row, params};
 
 use crate::Store;
-use crate::erro::{ErroStore, Resultado};
-use crate::modelo::{Conversa, NovaConversa, Pagina, StatusConversa};
+use crate::error::{Resultado, StoreError};
+use crate::model::{Conversa, ConversationStatus, NewConversation, Page};
 use crate::repos::{conflito_ou_ausente, id_da_coluna, id_opcional, pertence, u64_da_coluna};
 
 const COLUNAS: &str = "id, org_id, agent_id, integration_id, channel, external_peer, status,
@@ -86,7 +86,7 @@ pub(crate) fn gravar_nome_cliente(
               WHERE org_id = ?1 AND id = ?2 AND client_name IS NOT ?3",
             params![texto_org, texto_id, nome, agora],
         )
-        .map_err(ErroStore::from)?;
+        .map_err(StoreError::from)?;
     Ok(alteradas > 0)
 }
 
@@ -94,7 +94,7 @@ pub(crate) fn gravar_nome_cliente(
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FiltroConversas {
     /// Situação exata: `open`, `transferred` ou `closed`.
-    pub status: Option<StatusConversa>,
+    pub status: Option<ConversationStatus>,
     /// Identificador do cliente no canal (`external_peer`), exato.
     pub external_peer: Option<String>,
     pub last_activity_before: Option<i64>,
@@ -143,7 +143,7 @@ fn montar_listagem(
     let mut condicoes = vec!["org_id = ?1".to_owned()];
     let mut valores = vec![ValorSql::Text(org)];
     if let Some(status) = filtro.status {
-        valores.push(ValorSql::Text(status.como_texto().to_owned()));
+        valores.push(ValorSql::Text(status.as_text().to_owned()));
         condicoes.push(format!("status = ?{}", valores.len()));
     }
     if let Some(peer) = &filtro.external_peer {
@@ -207,11 +207,11 @@ impl Conversas<'_> {
     ) -> Resultado<Conversa> {
         let texto_org = org.to_string();
         let texto_id = id.to_string();
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let audit_id = poph_types::AuditId::generate().to_string();
         let esperada_i64 = i64::try_from(esperada).unwrap_or(i64::MAX);
-        let fechada = StatusConversa::Fechada.como_texto();
-        self.0.escrita(move |conn| {
+        let fechada = ConversationStatus::Closed.as_text();
+        self.0.write(move |conn| {
             let atual: Option<(i64, String)> = conn
                 .query_row(
                     "SELECT version, status FROM conversations WHERE org_id = ?1 AND id = ?2",
@@ -219,12 +219,12 @@ impl Conversas<'_> {
                     |linha| Ok((linha.get(0)?, linha.get(1)?)),
                 )
                 .optional()
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
             let Some((versao_atual, situacao)) = atual else {
-                return super::exigir::<()>(None, "conversa", &texto_id);
+                return super::require::<()>(None, "conversa", &texto_id);
             };
             if versao_atual != esperada_i64 {
-                return Err(ErroStore::Dominio(
+                return Err(StoreError::Domain(
                     poph_types::DomainError::VersionConflict {
                         entity: "conversa",
                         id: texto_id.clone(),
@@ -234,7 +234,7 @@ impl Conversas<'_> {
                 ));
             }
             if situacao == fechada {
-                return Err(ErroStore::Dominio(poph_types::DomainError::ConversationClosed {
+                return Err(StoreError::Domain(poph_types::DomainError::ConversationClosed {
                     id: texto_id.clone(),
                 }));
             }
@@ -245,7 +245,7 @@ impl Conversas<'_> {
             conn.execute("INSERT INTO audit_log (id, org_id, actor_kind, actor_id, action, entity, entity_id, detail_json, created_at) VALUES (?1, ?2, 'admin_token', ?3, 'reopen', 'conversation', ?4, '{}', ?5)", params![audit_id, texto_org, ator, texto_id, agora])?;
             Ok(())
         })?;
-        self.obter(org, id)
+        self.get(org, id)
     }
 
     /// Fecha uma conversa e grava a auditoria (`close`) na mesma transação de escrita (MX-06).
@@ -268,13 +268,13 @@ impl Conversas<'_> {
     ) -> Resultado<Conversa> {
         let texto_org = org.to_string();
         let texto_id = id.to_string();
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let audit_id = poph_types::AuditId::generate().to_string();
         let esperada_i64 = i64::try_from(esperada).unwrap_or(i64::MAX);
-        let fechada = StatusConversa::Fechada.como_texto();
+        let fechada = ConversationStatus::Closed.as_text();
         // FX-40: os contadores das execuções atravessam o comando de escrita (os handles clonam).
-        let metricas = self.0.metricas_de_execucao();
-        self.0.escrita(move |conn| {
+        let metricas = self.0.execution_metrics();
+        self.0.write(move |conn| {
             let atual: Option<(i64, String)> = conn
                 .query_row(
                     "SELECT version, status FROM conversations WHERE org_id = ?1 AND id = ?2",
@@ -282,12 +282,12 @@ impl Conversas<'_> {
                     |linha| Ok((linha.get(0)?, linha.get(1)?)),
                 )
                 .optional()
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
             let Some((versao_atual, situacao)) = atual else {
-                return super::exigir::<()>(None, "conversa", &texto_id);
+                return super::require::<()>(None, "conversa", &texto_id);
             };
             if versao_atual != esperada_i64 {
-                return Err(ErroStore::Dominio(
+                return Err(StoreError::Domain(
                     poph_types::DomainError::VersionConflict {
                         entity: "conversa",
                         id: texto_id.clone(),
@@ -297,7 +297,7 @@ impl Conversas<'_> {
                 ));
             }
             if situacao == fechada {
-                return Err(ErroStore::Dominio(poph_types::DomainError::Conflict {
+                return Err(StoreError::Domain(poph_types::DomainError::Conflict {
                     entity: "conversa",
                     id: texto_id.clone(),
                     reason: "a conversa já está fechada".to_owned(),
@@ -310,7 +310,7 @@ impl Conversas<'_> {
                       WHERE org_id = ?1 AND id = ?2 AND version = ?4",
                     params![texto_org, texto_id, agora, esperada_i64],
                 )
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
             if alteradas == 0 {
                 return Err(conflito_ou_ausente(
                     conn,
@@ -328,7 +328,7 @@ impl Conversas<'_> {
                  VALUES (?1, ?2, 'admin_token', ?3, 'close', 'conversation', ?4, '{}', ?5)",
                 params![audit_id, texto_org, ator, texto_id, agora],
             )
-            .map_err(ErroStore::from)?;
+            .map_err(StoreError::from)?;
             // A Ficha do atendimento fecha junto, no mesmo savepoint (PRD L5).
             super::fichas::fechar_ficha_da_conversa(
                 conn,
@@ -341,7 +341,7 @@ impl Conversas<'_> {
             )?;
             Ok(())
         })?;
-        self.obter(org, id)
+        self.get(org, id)
     }
 
     /// Encerra pelo agente e audita junto com a Ficha e o abandono da execução.
@@ -354,7 +354,7 @@ impl Conversas<'_> {
         motivo: String,
     ) -> Resultado<bool> {
         if motivo.trim().is_empty() {
-            return Err(ErroStore::Dominio(poph_types::DomainError::Validation {
+            return Err(StoreError::Domain(poph_types::DomainError::Validation {
                 field: "motivo",
                 reason: "informe o motivo do encerramento".to_owned(),
             }));
@@ -362,16 +362,16 @@ impl Conversas<'_> {
         let texto_org = org.to_string();
         let texto_id = id.to_string();
         let texto_agente = agente.to_string();
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let audit_id = poph_types::AuditId::generate().to_string();
-        let metricas = self.0.metricas_de_execucao();
-        self.0.escrita(move |conn| {
+        let metricas = self.0.execution_metrics();
+        self.0.write(move |conn| {
             let situacao: Option<String> = conn.query_row(
                 "SELECT status FROM conversations WHERE org_id=?1 AND id=?2 AND agent_id=?3",
                 params![texto_org, texto_id, texto_agente], |linha| linha.get(0),
             ).optional()?;
             let Some(situacao) = situacao else {
-                return super::exigir::<bool>(None, "conversa", &texto_id);
+                return super::require::<bool>(None, "conversa", &texto_id);
             };
             if situacao == "closed" { return Ok(false); }
             conn.execute(
@@ -429,12 +429,12 @@ impl Conversas<'_> {
         detalhe_json: String,
         recusar_encerrada: bool,
     ) -> Resultado<Conversa> {
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_org = org.to_string();
         let texto_id = id.to_string();
         let audit_id = poph_types::AuditId::generate().to_string();
-        let fechada = StatusConversa::Fechada.como_texto();
-        self.0.escrita(move |conn| {
+        let fechada = ConversationStatus::Closed.as_text();
+        self.0.write(move |conn| {
             if let Some(departamento) = departamento_alvo {
                 pertence(
                     conn,
@@ -451,12 +451,12 @@ impl Conversas<'_> {
                     |linha| linha.get(0),
                 )
                 .optional()
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
             let Some(situacao) = situacao else {
-                return super::exigir::<()>(None, "conversa", &texto_id);
+                return super::require::<()>(None, "conversa", &texto_id);
             };
             if recusar_encerrada && situacao == fechada {
-                return Err(ErroStore::Dominio(
+                return Err(StoreError::Domain(
                     poph_types::DomainError::ConversationClosed {
                         id: texto_id.clone(),
                     },
@@ -477,7 +477,7 @@ impl Conversas<'_> {
                 ],
             )?;
             if alteradas == 0 {
-                return super::exigir::<()>(None, "conversa", &texto_id);
+                return super::require::<()>(None, "conversa", &texto_id);
             }
             conn.execute(
                 "INSERT INTO audit_log
@@ -486,10 +486,10 @@ impl Conversas<'_> {
                  VALUES (?1, ?2, 'system', ?3, 'transfer', 'conversation', ?4, ?5, ?6)",
                 params![audit_id, texto_org, ator_id, texto_id, detalhe_json, agora],
             )
-            .map_err(ErroStore::from)?;
+            .map_err(StoreError::from)?;
             Ok(())
         })?;
-        self.obter(org, id)
+        self.get(org, id)
     }
 
     /// Abre uma conversa.
@@ -499,16 +499,16 @@ impl Conversas<'_> {
     /// repositório (o outro é a recepção do canal, em [`super::CaixaEntrada::receber_do_canal`], que
     /// também cria a Ficha na escrita dela). Conversa sem Ficha deixaria de cumprir "todo atendimento
     /// tem registro" e a linha do tempo do atendimento começaria sem o evento de abertura.
-    pub fn criar(&self, org: OrgId, nova: NovaConversa) -> Resultado<Conversa> {
+    pub fn criar(&self, org: OrgId, nova: NewConversation) -> Resultado<Conversa> {
         let id = ConversationId::generate();
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_id = id.to_string();
         let texto_org = org.to_string();
         let texto_agente = nova.agent_id.to_string();
         let canal = nova.canal;
         let peer = nova.peer_externo;
-        self.0.escrita(move |conn| {
-            if let Some(departamento) = nova.departamento_alvo {
+        self.0.write(move |conn| {
+            if let Some(departamento) = nova.target_department {
                 pertence(
                     conn,
                     "departments",
@@ -529,11 +529,11 @@ impl Conversas<'_> {
                     nova.integration_id.map(|id| id.to_string()),
                     &canal,
                     peer.as_deref(),
-                    nova.departamento_alvo.map(|dep| dep.to_string()),
+                    nova.target_department.map(|dep| dep.to_string()),
                     agora
                 ],
             )
-            .map_err(ErroStore::from)?;
+            .map_err(StoreError::from)?;
             super::fichas::criar_ficha_da_conversa(
                 conn,
                 &texto_org,
@@ -545,7 +545,7 @@ impl Conversas<'_> {
             )?;
             Ok(())
         })?;
-        self.obter(org, id)
+        self.get(org, id)
     }
 
     /// Leitura incremental do espelhamento (PRD §7 N3): conversas em ordem crescente de
@@ -564,7 +564,7 @@ impl Conversas<'_> {
             None => (i64::MIN, String::new()),
         };
         let limite = i64::from(limite.clamp(1, 1000));
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             let mut consulta = conn.prepare(&format!(
                 "SELECT {COLUNAS} FROM conversations
                   WHERE (updated_at, id) > (?1, ?2)
@@ -581,33 +581,33 @@ impl Conversas<'_> {
     }
 
     /// Busca pelo id dentro da org.
-    pub fn obter(&self, org: OrgId, id: ConversationId) -> Resultado<Conversa> {
+    pub fn get(&self, org: OrgId, id: ConversationId) -> Resultado<Conversa> {
         let texto_org = org.to_string();
         let texto_id = id.to_string();
-        let encontrada = self.0.leitura(move |conn| {
+        let encontrada = self.0.read(move |conn| {
             conn.query_row(
                 &format!("SELECT {COLUNAS} FROM conversations WHERE id = ?1 AND org_id = ?2"),
                 params![texto_id, texto_org],
                 linha,
             )
             .optional()
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })?;
-        super::exigir(encontrada, "conversa", &id.to_string())
+        super::require(encontrada, "conversa", &id.to_string())
     }
 
     /// Lista as conversas da org, opcionalmente filtrando por situação.
     pub fn listar(
         &self,
         org: OrgId,
-        status: Option<StatusConversa>,
-        pagina: Pagina,
+        status: Option<ConversationStatus>,
+        pagina: Page,
     ) -> Resultado<Vec<Conversa>> {
         let texto_org = org.to_string();
-        let status = status.map(StatusConversa::como_texto);
-        let apos = pagina.apos.map(|id| id.to_string());
-        let limite = i64::from(pagina.limite);
-        self.0.leitura(move |conn| {
+        let status = status.map(ConversationStatus::as_text);
+        let apos = pagina.after.map(|id| id.to_string());
+        let limite = i64::from(pagina.limit);
+        self.0.read(move |conn| {
             let mut consulta = conn.prepare(&format!(
                 "SELECT {COLUNAS} FROM conversations
                   WHERE org_id = ?1
@@ -630,15 +630,15 @@ impl Conversas<'_> {
         &self,
         org: OrgId,
         filtro: &FiltroConversas,
-        pagina: Pagina,
+        pagina: Page,
     ) -> Resultado<Vec<Conversa>> {
-        let apos = pagina.apos.map(|id| id.to_string());
+        let apos = pagina.after.map(|id| id.to_string());
         let (sql, valores) = montar_listagem(
             org.to_string(),
             filtro,
             OrdemConversas::Id,
             apos,
-            i64::from(pagina.limite),
+            i64::from(pagina.limit),
         );
         self.consultar(sql, valores)
     }
@@ -671,7 +671,7 @@ impl Conversas<'_> {
         ordem: OrdemConversas,
     ) -> Resultado<Vec<String>> {
         let (sql, valores) = montar_listagem(org.to_string(), filtro, ordem, None, 50);
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             let mut consulta = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}"))?;
             let linhas = consulta
                 .query_map(rusqlite::params_from_iter(valores.iter()), |linha| {
@@ -686,7 +686,7 @@ impl Conversas<'_> {
     }
 
     fn consultar(&self, sql: String, valores: Vec<ValorSql>) -> Resultado<Vec<Conversa>> {
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             let mut consulta = conn.prepare(&sql)?;
             let linhas = consulta.query_map(rusqlite::params_from_iter(valores.iter()), linha)?;
             let mut conversas = Vec::new();
@@ -713,7 +713,7 @@ impl Conversas<'_> {
         let canal = canal.to_owned();
         let apos = apos.map(|id| id.to_string());
         let limite = i64::from(limite.clamp(1, 200));
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             let mut consulta = conn.prepare(&format!(
                 "SELECT {COLUNAS} FROM conversations
                   WHERE org_id = ?1 AND agent_id = ?2 AND channel = ?3
@@ -745,17 +745,17 @@ impl Conversas<'_> {
         org: OrgId,
         id: ConversationId,
         esperada: u64,
-        status: StatusConversa,
+        status: ConversationStatus,
         departamento_alvo: Option<DepartmentId>,
     ) -> Resultado<Conversa> {
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_org = org.to_string();
         let texto_id = id.to_string();
         let esperada_i64 = esperada as i64;
-        let fechada = StatusConversa::Fechada.como_texto();
+        let fechada = ConversationStatus::Closed.as_text();
         // FX-40: fechar por aqui também abandona a execução ativa da Ficha (conta no store).
-        let metricas = self.0.metricas_de_execucao();
-        self.0.escrita(move |conn| {
+        let metricas = self.0.execution_metrics();
+        self.0.write(move |conn| {
             if let Some(departamento) = departamento_alvo {
                 pertence(
                     conn,
@@ -772,9 +772,9 @@ impl Conversas<'_> {
                     |linha| linha.get(0),
                 )
                 .optional()
-                .map_err(ErroStore::from)?;
-            if status == StatusConversa::Aberta && situacao_atual.as_deref() == Some(fechada) {
-                return Err(ErroStore::Dominio(
+                .map_err(StoreError::from)?;
+            if status == ConversationStatus::Open && situacao_atual.as_deref() == Some(fechada) {
+                return Err(StoreError::Domain(
                     poph_types::DomainError::ConversationClosed {
                         id: texto_id.clone(),
                     },
@@ -791,13 +791,13 @@ impl Conversas<'_> {
                     params![
                         texto_org,
                         texto_id,
-                        status.como_texto(),
+                        status.as_text(),
                         departamento_alvo.map(|dep| dep.to_string()),
                         agora,
                         esperada_i64
                     ],
                 )
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
             if alteradas == 0 {
                 return Err(conflito_ou_ausente(
                     conn,
@@ -808,7 +808,7 @@ impl Conversas<'_> {
                     esperada,
                 ));
             }
-            if status == StatusConversa::Fechada {
+            if status == ConversationStatus::Closed {
                 super::fichas::fechar_ficha_da_conversa(
                     conn,
                     &texto_org,
@@ -821,7 +821,7 @@ impl Conversas<'_> {
             }
             Ok(())
         })?;
-        self.obter(org, id)
+        self.get(org, id)
     }
 
     /// Marca movimento na conversa **sem** mudar a versão: é escrituração do turno, não edição
@@ -829,7 +829,7 @@ impl Conversas<'_> {
     pub fn tocar(&self, org: OrgId, id: ConversationId, quando: i64) -> Resultado<()> {
         let texto_org = org.to_string();
         let texto_id = id.to_string();
-        self.0.escrita(move |conn| {
+        self.0.write(move |conn| {
             conn.execute(
                 "UPDATE conversations
                     SET last_message_at = ?3, updated_at = ?3
@@ -837,7 +837,7 @@ impl Conversas<'_> {
                 params![texto_org, texto_id, quando],
             )
             .map(|_| ())
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })
     }
 
@@ -846,13 +846,13 @@ impl Conversas<'_> {
         let texto_org = org.to_string();
         let texto_id = id.to_string();
         let resumo = resumo.to_owned();
-        self.0.escrita(move |conn| {
+        self.0.write(move |conn| {
             conn.execute(
                 "UPDATE conversations SET summary = ?3 WHERE org_id = ?1 AND id = ?2",
                 params![texto_org, texto_id, resumo],
             )
             .map(|_| ())
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })
     }
 
@@ -862,34 +862,29 @@ impl Conversas<'_> {
     /// O `UPDATE` só age quando o valor é diferente do gravado: sobe `updated_at` (é o que faz o
     /// cursor de conversas do espelho enxergar a mudança), mas **não** sobe `version` (não gera
     /// conflito de `If-Match` no Console) e não mexe em `last_message_at`. Sempre filtrado por org.
-    pub fn definir_nome_cliente(
-        &self,
-        org: OrgId,
-        id: ConversationId,
-        nome: &str,
-    ) -> Resultado<bool> {
+    pub fn set_customer_name(&self, org: OrgId, id: ConversationId, nome: &str) -> Resultado<bool> {
         let nome = nome.to_owned();
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let texto_org = org.to_string();
         let texto_id = id.to_string();
         self.0
-            .escrita(move |conn| gravar_nome_cliente(conn, &texto_org, &texto_id, &nome, agora))
+            .write(move |conn| gravar_nome_cliente(conn, &texto_org, &texto_id, &nome, agora))
     }
 
     /// Agente dono da conversa (usado no turno para saber qual config carregar).
     pub fn agente(&self, org: OrgId, id: ConversationId) -> Resultado<AgentId> {
         let texto_org = org.to_string();
         let texto_id = id.to_string();
-        let agente = self.0.leitura(move |conn| {
+        let agente = self.0.read(move |conn| {
             conn.query_row(
                 "SELECT agent_id FROM conversations WHERE org_id = ?1 AND id = ?2",
                 params![texto_org, texto_id],
                 |linha| id_da_coluna::<AgentId>(linha, 0),
             )
             .optional()
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })?;
-        super::exigir(agente, "conversa", &id.to_string())
+        super::require(agente, "conversa", &id.to_string())
     }
 }
 
@@ -902,19 +897,19 @@ fn linha(linha: &Row<'_>) -> rusqlite::Result<Conversa> {
         integration_id: id_opcional(linha, 3)?,
         canal: linha.get(4)?,
         peer_externo: linha.get(5)?,
-        status: StatusConversa::de_texto(&linha.get::<_, String>(6)?).map_err(|erro| {
+        status: ConversationStatus::from_text(&linha.get::<_, String>(6)?).map_err(|erro| {
             rusqlite::Error::FromSqlConversionFailure(
                 6,
                 rusqlite::types::Type::Text,
                 Box::new(erro),
             )
         })?,
-        departamento_alvo: id_opcional(linha, 7)?,
-        resumo: linha.get(8)?,
-        versao: u64_da_coluna(linha, 9)?,
-        criado_em: linha.get(10)?,
-        atualizado_em: linha.get(11)?,
-        ultima_mensagem_em: linha.get(12)?,
-        nome_cliente: linha.get(13)?,
+        target_department: id_opcional(linha, 7)?,
+        summary: linha.get(8)?,
+        version: u64_da_coluna(linha, 9)?,
+        created_at: linha.get(10)?,
+        updated_at: linha.get(11)?,
+        last_message_at: linha.get(12)?,
+        customer_name: linha.get(13)?,
     })
 }

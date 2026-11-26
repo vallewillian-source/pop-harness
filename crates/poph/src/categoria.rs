@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Args, Subcommand};
-use poph_store::{CategoriaProduto, MudancaCategoria, NovaCategoria, Store};
+use poph_store::{CategoryChange, NewCategory, ProductCategory, Store};
 use poph_types::{OrgId, ProductCategoryId};
 use serde_json::{Value, json};
 
@@ -139,11 +139,11 @@ fn criar(store: &Store, org: OrgId, args: CriarCategoria) -> ExitCode {
         Ok(nome) => nome,
         Err(erro) => return falha(erro),
     };
-    let nova = NovaCategoria {
-        nome,
-        descricao: args.description.trim().to_owned(),
+    let nova = NewCategory {
+        name: nome,
+        description: args.description.trim().to_owned(),
     };
-    match store.categorias().criar(org, nova) {
+    match store.categories().criar(org, nova) {
         Ok(categoria) => saida(&categoria, args.json, "categoria criada"),
         Err(erro) => falha(descrever(&erro)),
     }
@@ -154,7 +154,7 @@ fn listar(store: &Store, org: OrgId, args: ListarCategorias) -> ExitCode {
         Ok(pagina) => pagina,
         Err(erro) => return falha(erro),
     };
-    match store.categorias().listar(org, pagina) {
+    match store.categories().listar(org, pagina) {
         Ok(categorias) => {
             if args.json {
                 let itens: Vec<Value> = categorias.iter().map(json_categoria).collect();
@@ -172,7 +172,7 @@ fn listar(store: &Store, org: OrgId, args: ListarCategorias) -> ExitCode {
                         "{}  {:<9} {}",
                         categoria.id,
                         status_em_portugues(categoria.status),
-                        categoria.nome
+                        categoria.name
                     );
                 }
                 println!("\n{} categoria(s).", categorias.len());
@@ -213,13 +213,13 @@ fn atualizar(store: &Store, org: OrgId, args: AtualizarCategoria) -> ExitCode {
     if nome.is_none() && descricao.is_none() && status.is_none() {
         return falha("nada a alterar: informe --name, --description ou --status");
     }
-    let mudanca = MudancaCategoria {
-        nome,
-        descricao,
+    let mudanca = CategoryChange {
+        name: nome,
+        description: descricao,
         status,
     };
     match store
-        .categorias()
+        .categories()
         .atualizar(org, id, args.if_match, mudanca)
     {
         Ok(categoria) => saida(&categoria, args.json, "categoria alterada"),
@@ -239,10 +239,10 @@ fn excluir(store: &Store, org: OrgId, args: ExcluirCategoria) -> ExitCode {
         );
     }
     // Confere que existe nesta org antes de apagar, para a mensagem sair certa.
-    if let Err(erro) = store.categorias().obter(org, id) {
+    if let Err(erro) = store.categories().obter(org, id) {
         return falha(mensagem_de_ausencia(erro, &args.categoria));
     }
-    match store.categorias().excluir(org, id) {
+    match store.categories().excluir(org, id) {
         Ok(()) => {
             if args.json {
                 imprimir_json(&json!({
@@ -260,16 +260,16 @@ fn excluir(store: &Store, org: OrgId, args: ExcluirCategoria) -> ExitCode {
     }
 }
 
-fn obter(store: &Store, org: OrgId, texto: &str) -> Result<CategoriaProduto, String> {
+fn obter(store: &Store, org: OrgId, texto: &str) -> Result<ProductCategory, String> {
     let id: ProductCategoryId = parse_id(texto)?;
     store
-        .categorias()
+        .categories()
         .obter(org, id)
         .map_err(|erro| mensagem_de_ausencia(erro, texto))
 }
 
-fn mensagem_de_ausencia(erro: poph_store::ErroStore, texto: &str) -> String {
-    if erro.eh_nao_encontrado() {
+fn mensagem_de_ausencia(erro: poph_store::StoreError, texto: &str) -> String {
+    if erro.is_not_found() {
         format!("não existe categoria `{texto}` nesta org")
     } else {
         descrever(&erro)
@@ -277,7 +277,7 @@ fn mensagem_de_ausencia(erro: poph_store::ErroStore, texto: &str) -> String {
 }
 
 /// Saída de uma categoria: JSON ou texto.
-fn saida(categoria: &CategoriaProduto, json: bool, mensagem: &str) -> ExitCode {
+fn saida(categoria: &ProductCategory, json: bool, mensagem: &str) -> ExitCode {
     if json {
         imprimir_json(&json!({
             "versao_relatorio": 1,
@@ -293,30 +293,30 @@ fn saida(categoria: &CategoriaProduto, json: bool, mensagem: &str) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn json_categoria(categoria: &CategoriaProduto) -> Value {
+fn json_categoria(categoria: &ProductCategory) -> Value {
     json!({
         "id": categoria.id.to_string(),
         "org_id": categoria.org_id.to_string(),
-        "name": categoria.nome,
-        "description": categoria.descricao,
-        "status": categoria.status.como_texto(),
-        "version": categoria.versao,
-        "created_at": categoria.criado_em,
-        "updated_at": categoria.atualizado_em,
+        "name": categoria.name,
+        "description": categoria.description,
+        "status": categoria.status.as_text(),
+        "version": categoria.version,
+        "created_at": categoria.created_at,
+        "updated_at": categoria.updated_at,
     })
 }
 
-fn texto_categoria(categoria: &CategoriaProduto) -> String {
+fn texto_categoria(categoria: &ProductCategory) -> String {
     format!(
         "categoria {}\n  nome: {}\n  descrição: {}\n  situação: {}\n  versão: {}\n",
         categoria.id,
-        categoria.nome,
-        if categoria.descricao.is_empty() {
+        categoria.name,
+        if categoria.description.is_empty() {
             "-"
         } else {
-            &categoria.descricao
+            &categoria.description
         },
         status_em_portugues(categoria.status),
-        categoria.versao
+        categoria.version
     )
 }

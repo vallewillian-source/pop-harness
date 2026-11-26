@@ -23,9 +23,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use poph_store::{
-    Agente, Conversa, ErroStore, FiltroFluxos, Fluxo, MOTIVO_EXCLUSAO_FLUXO, MudancaFluxo,
-    NovaConversa, NovaOrg, NovoAgente, NovoFluxo, Org, Pagina, Status, Store,
-    TETO_FLUXOS_POR_AGENTE,
+    Agente, Conversa, FlowChange, FlowFilter, Fluxo, MOTIVO_EXCLUSAO_FLUXO, NewAgent,
+    NewConversation, NewFlow, NewOrg, Org, Page, Status, Store, StoreError, TETO_FLUXOS_POR_AGENTE,
 };
 use poph_types::{AgentId, DomainError, EventActor, FlowId, OrgId, RecordEventKind, RecordId};
 use rusqlite::Connection;
@@ -44,8 +43,8 @@ impl Cenario {
             std::env::temp_dir().join(format!("poph-fluxos-{rotulo}-{}-{n}", std::process::id()));
         let _ = fs::remove_dir_all(&pasta);
         fs::create_dir_all(&pasta).expect("cria a pasta do teste");
-        let store = Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
-            .expect("abre o banco");
+        let store =
+            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco");
         Self {
             pasta,
             store: Some(store),
@@ -67,9 +66,9 @@ impl Cenario {
 
     fn org(&self, slug: &str) -> Org {
         self.store()
-            .orgaos()
-            .criar(NovaOrg {
-                nome: format!("Org {slug}"),
+            .orgs()
+            .criar(NewOrg {
+                name: format!("Org {slug}"),
                 slug: slug.to_owned(),
                 config_json: String::new(),
             })
@@ -78,13 +77,13 @@ impl Cenario {
 
     fn agente(&self, org: &Org, slug: &str) -> Agente {
         self.store()
-            .agentes()
+            .agents()
             .criar(
                 org.id,
-                NovoAgente {
-                    nome: format!("Agente {slug}"),
+                NewAgent {
+                    name: format!("Agente {slug}"),
                     slug: slug.to_owned(),
-                    ..NovoAgente::default()
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente")
@@ -95,10 +94,10 @@ impl Cenario {
             .fluxos()
             .criar(
                 org.id,
-                NovoFluxo {
+                NewFlow {
                     slug: slug.to_owned(),
-                    nome: format!("Fluxo {slug}"),
-                    descricao: String::new(),
+                    name: format!("Fluxo {slug}"),
+                    description: String::new(),
                     rascunho_fonte: String::new(),
                 },
             )
@@ -107,10 +106,10 @@ impl Cenario {
 
     fn versao_agente(&self, org: &Org, agente: &Agente) -> u64 {
         self.store()
-            .agentes()
-            .obter(org.id, agente.id)
+            .agents()
+            .get(org.id, agente.id)
             .expect("lê o agente")
-            .versao
+            .version
     }
 
     fn conversa(&self, org: &Org, agente: &Agente) -> Conversa {
@@ -118,12 +117,12 @@ impl Cenario {
             .conversas()
             .criar(
                 org.id,
-                NovaConversa {
+                NewConversation {
                     agent_id: agente.id,
                     integration_id: None,
                     canal: "console".to_owned(),
                     peer_externo: Some("cliente-1".to_owned()),
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("abre a conversa")
@@ -160,9 +159,9 @@ impl Drop for Cenario {
 }
 
 /// Erro de domínio de um resultado que deve ter falhado; qualquer outra coisa quebra o teste.
-fn dominio<T: std::fmt::Debug>(resultado: Result<T, ErroStore>) -> DomainError {
+fn dominio<T: std::fmt::Debug>(resultado: Result<T, StoreError>) -> DomainError {
     match resultado {
-        Err(ErroStore::Dominio(erro)) => erro,
+        Err(StoreError::Domain(erro)) => erro,
         outro => panic!("esperado erro de domínio, veio {outro:?}"),
     }
 }
@@ -176,9 +175,9 @@ fn crud_de_fluxo_com_listagem_filtro_e_cursor() {
     let store = cenario.store();
 
     let primeiro = cenario.fluxo(&org, "agendar_visita");
-    assert_eq!(primeiro.status, Status::Ativo);
+    assert_eq!(primeiro.status, Status::Active);
     assert_eq!(primeiro.revisao_atual, None);
-    assert_eq!(primeiro.versao, 1);
+    assert_eq!(primeiro.version, 1);
 
     let obtido = store.fluxos().obter(org.id, primeiro.id).expect("obtém");
     assert_eq!(obtido, primeiro);
@@ -203,9 +202,9 @@ fn crud_de_fluxo_com_listagem_filtro_e_cursor() {
             org.id,
             segundo.id,
             1,
-            MudancaFluxo {
-                status: Some(Status::Inativo),
-                ..MudancaFluxo::default()
+            FlowChange {
+                status: Some(Status::Inactive),
+                ..FlowChange::default()
             },
         )
         .expect("desativa");
@@ -214,25 +213,25 @@ fn crud_de_fluxo_com_listagem_filtro_e_cursor() {
         .fluxos()
         .listar(
             org.id,
-            &FiltroFluxos {
-                status: Some(Status::Ativo),
+            &FlowFilter {
+                status: Some(Status::Active),
             },
-            Pagina::default(),
+            Page::default(),
         )
         .expect("lista ativos");
     assert_eq!(ativos.len(), 2);
-    assert!(ativos.iter().all(|fluxo| fluxo.status == Status::Ativo));
+    assert!(ativos.iter().all(|fluxo| fluxo.status == Status::Active));
 
     let todos = store
         .fluxos()
-        .listar(org.id, &FiltroFluxos::default(), Pagina::default())
+        .listar(org.id, &FlowFilter::default(), Page::default())
         .expect("lista todos");
     assert_eq!(todos.len(), 3);
 
     // Cursor: duas páginas de dois, sem repetir nem pular.
     let pagina_1 = store
         .fluxos()
-        .listar(org.id, &FiltroFluxos::default(), Pagina::com_limite(2))
+        .listar(org.id, &FlowFilter::default(), Page::with_limit(2))
         .expect("página 1");
     assert_eq!(pagina_1.len(), 2);
     let apos: uuid::Uuid = pagina_1[1].id.to_string().parse().expect("uuid");
@@ -240,10 +239,10 @@ fn crud_de_fluxo_com_listagem_filtro_e_cursor() {
         .fluxos()
         .listar(
             org.id,
-            &FiltroFluxos::default(),
-            Pagina {
-                apos: Some(apos),
-                limite: 2,
+            &FlowFilter::default(),
+            Page {
+                after: Some(apos),
+                limit: 2,
             },
         )
         .expect("página 2");
@@ -264,15 +263,15 @@ fn atualizar_usa_if_match_e_recusa_versao_velha() {
             org.id,
             fluxo.id,
             1,
-            MudancaFluxo {
-                nome: Some("Agendar visita técnica".to_owned()),
+            FlowChange {
+                name: Some("Agendar visita técnica".to_owned()),
                 rascunho_fonte: Some("fluxo(id = \"agendar_visita\")".to_owned()),
-                ..MudancaFluxo::default()
+                ..FlowChange::default()
             },
         )
         .expect("com a versão certa atualiza");
-    assert_eq!(atualizado.versao, 2);
-    assert_eq!(atualizado.nome, "Agendar visita técnica");
+    assert_eq!(atualizado.version, 2);
+    assert_eq!(atualizado.name, "Agendar visita técnica");
     assert_eq!(atualizado.rascunho_fonte, "fluxo(id = \"agendar_visita\")");
 
     // Versão 1 já foi substituída: a segunda escrita com ela não grava nada.
@@ -280,9 +279,9 @@ fn atualizar_usa_if_match_e_recusa_versao_velha() {
         org.id,
         fluxo.id,
         1,
-        MudancaFluxo {
-            nome: Some("Outro nome".to_owned()),
-            ..MudancaFluxo::default()
+        FlowChange {
+            name: Some("Outro nome".to_owned()),
+            ..FlowChange::default()
         },
     ));
     assert!(
@@ -298,10 +297,10 @@ fn atualizar_usa_if_match_e_recusa_versao_velha() {
     );
     let depois = store.fluxos().obter(org.id, fluxo.id).expect("obtém");
     assert_eq!(
-        depois.nome, "Agendar visita técnica",
+        depois.name, "Agendar visita técnica",
         "a escrita recusada não gravou"
     );
-    assert_eq!(depois.versao, 2);
+    assert_eq!(depois.version, 2);
 }
 
 #[test]
@@ -314,9 +313,9 @@ fn situacao_arquivada_e_recusada_no_fluxo() {
         org.id,
         fluxo.id,
         1,
-        MudancaFluxo {
-            status: Some(Status::Arquivado),
-            ..MudancaFluxo::default()
+        FlowChange {
+            status: Some(Status::Archived),
+            ..FlowChange::default()
         },
     ));
     assert!(
@@ -340,10 +339,10 @@ fn slug_repetido_na_org_e_recusado_e_em_outra_org_e_aceito() {
 
     let erro = dominio(cenario.store().fluxos().criar(
         org_a.id,
-        NovoFluxo {
+        NewFlow {
             slug: "agendar_visita".to_owned(),
-            nome: "Repetido".to_owned(),
-            ..NovoFluxo::default()
+            name: "Repetido".to_owned(),
+            ..NewFlow::default()
         },
     ));
     assert!(
@@ -370,10 +369,10 @@ fn slug_fora_do_formato_da_linguagem_e_recusado() {
     ] {
         let erro = dominio(cenario.store().fluxos().criar(
             org.id,
-            NovoFluxo {
+            NewFlow {
                 slug: slug.to_owned(),
-                nome: "Nome".to_owned(),
-                ..NovoFluxo::default()
+                name: "Nome".to_owned(),
+                ..NewFlow::default()
             },
         ));
         assert!(
@@ -418,7 +417,7 @@ fn excluir_sem_execucao_ativa_devolve_zero_e_leva_a_permissao() {
         "a permissão do fluxo excluído tem que sair junto"
     );
     assert!(
-        store.agentes().obter(org.id, agente.id).is_ok(),
+        store.agents().get(org.id, agente.id).is_ok(),
         "excluir fluxo não apaga agente"
     );
 }

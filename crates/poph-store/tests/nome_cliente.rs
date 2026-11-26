@@ -10,11 +10,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 
-use poph_store::migracoes::migrar;
+use poph_store::migrations::migrate;
 use poph_store::{
-    Agente, Conversa, LIMITE_NOME_CLIENTE, MIGRACOES_HARNESS, NovaConversa, NovaEntradaCanal,
-    NovaOrg, NovoAgente, Org, Recebido, Store, normalizar_nome_cliente, versao_alvo_harness,
-    versao_do_arquivo,
+    Agente, Conversa, HARNESS_MIGRATIONS, LIMITE_NOME_CLIENTE, NewAgent, NewChannelInboxItem,
+    NewConversation, NewOrg, Org, Received, Store, file_version, harness_target_version,
+    normalizar_nome_cliente,
 };
 use poph_types::{ConversationId, IntegrationId, OrgId};
 
@@ -30,9 +30,9 @@ impl Banco {
         let pasta = pasta_nova(rotulo);
         let relogio = Arc::new(AtomicI64::new(1_000));
         let agora = Arc::clone(&relogio);
-        let store = Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
+        let store = Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db"))
             .expect("abre o banco")
-            .com_relogio(Arc::new(move || agora.load(Ordering::SeqCst)));
+            .with_clock(Arc::new(move || agora.load(Ordering::SeqCst)));
         Self {
             pasta,
             relogio,
@@ -65,9 +65,9 @@ fn pasta_nova(rotulo: &str) -> PathBuf {
 
 fn criar_org(store: &Store, slug: &str) -> Org {
     store
-        .orgaos()
-        .criar(NovaOrg {
-            nome: format!("Org {slug}"),
+        .orgs()
+        .criar(NewOrg {
+            name: format!("Org {slug}"),
             slug: slug.to_owned(),
             config_json: String::new(),
         })
@@ -76,13 +76,13 @@ fn criar_org(store: &Store, slug: &str) -> Org {
 
 fn criar_agente(store: &Store, org: OrgId) -> Agente {
     store
-        .agentes()
+        .agents()
         .criar(
             org,
-            NovoAgente {
-                nome: "Atendente".to_owned(),
+            NewAgent {
+                name: "Atendente".to_owned(),
                 slug: "atendente".to_owned(),
-                ..NovoAgente::default()
+                ..NewAgent::default()
             },
         )
         .expect("cria o agente")
@@ -93,12 +93,12 @@ fn criar_conversa(store: &Store, org: OrgId, agente: &Agente) -> Conversa {
         .conversas()
         .criar(
             org,
-            NovaConversa {
+            NewConversation {
                 agent_id: agente.id,
                 integration_id: None,
                 canal: "whatsapp".to_owned(),
                 peer_externo: Some("5511999990000".to_owned()),
-                departamento_alvo: None,
+                target_department: None,
             },
         )
         .expect("cria a conversa")
@@ -164,33 +164,33 @@ fn definir_cria_o_nome_e_o_ultimo_que_chegou_vence() {
     let org = criar_org(store, "a");
     let agente = criar_agente(store, org.id);
     let conversa = criar_conversa(store, org.id, &agente);
-    assert_eq!(conversa.nome_cliente, None);
+    assert_eq!(conversa.customer_name, None);
 
     assert!(
         store
             .conversas()
-            .definir_nome_cliente(org.id, conversa.id, "Ana")
+            .set_customer_name(org.id, conversa.id, "Ana")
             .expect("grava")
     );
-    let lida = store.conversas().obter(org.id, conversa.id).expect("lê");
-    assert_eq!(lida.nome_cliente.as_deref(), Some("Ana"));
+    let lida = store.conversas().get(org.id, conversa.id).expect("lê");
+    assert_eq!(lida.customer_name.as_deref(), Some("Ana"));
 
     // Mesmo nome de novo: nada a mudar.
     assert!(
         !store
             .conversas()
-            .definir_nome_cliente(org.id, conversa.id, "Ana")
+            .set_customer_name(org.id, conversa.id, "Ana")
             .expect("repete")
     );
     // Nome novo: o último que chegou vence.
     assert!(
         store
             .conversas()
-            .definir_nome_cliente(org.id, conversa.id, "Ana Maria")
+            .set_customer_name(org.id, conversa.id, "Ana Maria")
             .expect("atualiza")
     );
-    let lida = store.conversas().obter(org.id, conversa.id).expect("lê");
-    assert_eq!(lida.nome_cliente.as_deref(), Some("Ana Maria"));
+    let lida = store.conversas().get(org.id, conversa.id).expect("lê");
+    assert_eq!(lida.customer_name.as_deref(), Some("Ana Maria"));
 }
 
 #[test]
@@ -204,24 +204,27 @@ fn gravar_o_nome_sobe_updated_at_e_nao_sobe_version_nem_ultima_mensagem() {
         .conversas()
         .tocar(org.id, conversa.id, 2_000)
         .expect("marca a última mensagem");
-    let antes = store.conversas().obter(org.id, conversa.id).expect("lê");
-    assert_eq!(antes.versao, 1);
-    assert_eq!(antes.ultima_mensagem_em, Some(2_000));
+    let antes = store.conversas().get(org.id, conversa.id).expect("lê");
+    assert_eq!(antes.version, 1);
+    assert_eq!(antes.last_message_at, Some(2_000));
 
     banco.definir_relogio(5_000);
     store
         .conversas()
-        .definir_nome_cliente(org.id, conversa.id, "Ana")
+        .set_customer_name(org.id, conversa.id, "Ana")
         .expect("grava");
 
-    let depois = store.conversas().obter(org.id, conversa.id).expect("lê");
+    let depois = store.conversas().get(org.id, conversa.id).expect("lê");
     assert_eq!(
-        depois.atualizado_em, 5_000,
+        depois.updated_at, 5_000,
         "o cursor do espelho enxerga a mudança"
     );
-    assert_eq!(depois.versao, 1, "não gera conflito de If-Match no Console");
     assert_eq!(
-        depois.ultima_mensagem_em,
+        depois.version, 1,
+        "não gera conflito de If-Match no Console"
+    );
+    assert_eq!(
+        depois.last_message_at,
         Some(2_000),
         "não mexe na última mensagem"
     );
@@ -238,33 +241,30 @@ fn nome_vazio_nao_escreve_e_o_mesmo_nome_nao_escreve_de_novo() {
     assert!(
         !store
             .conversas()
-            .definir_nome_cliente(org.id, conversa.id, "  \u{200B} ")
+            .set_customer_name(org.id, conversa.id, "  \u{200B} ")
             .expect("nome vazio")
     );
-    let depois_do_vazio = store.conversas().obter(org.id, conversa.id).expect("lê");
-    assert_eq!(depois_do_vazio.nome_cliente, None);
-    assert_eq!(
-        depois_do_vazio.atualizado_em, 1_000,
-        "vazio não escreve nada"
-    );
+    let depois_do_vazio = store.conversas().get(org.id, conversa.id).expect("lê");
+    assert_eq!(depois_do_vazio.customer_name, None);
+    assert_eq!(depois_do_vazio.updated_at, 1_000, "vazio não escreve nada");
 
     banco.definir_relogio(3_000);
     assert!(
         store
             .conversas()
-            .definir_nome_cliente(org.id, conversa.id, "Ana")
+            .set_customer_name(org.id, conversa.id, "Ana")
             .expect("primeira vez")
     );
     banco.definir_relogio(7_000);
     assert!(
         !store
             .conversas()
-            .definir_nome_cliente(org.id, conversa.id, "Ana")
+            .set_customer_name(org.id, conversa.id, "Ana")
             .expect("repetição")
     );
-    let depois = store.conversas().obter(org.id, conversa.id).expect("lê");
+    let depois = store.conversas().get(org.id, conversa.id).expect("lê");
     assert_eq!(
-        depois.atualizado_em, 3_000,
+        depois.updated_at, 3_000,
         "repetir o mesmo nome não toca na linha"
     );
 }
@@ -279,23 +279,20 @@ fn outra_org_nao_le_nem_altera_o_nome() {
     let conversa_a = criar_conversa(store, org_a.id, &agente_a);
     store
         .conversas()
-        .definir_nome_cliente(org_a.id, conversa_a.id, "Ana")
+        .set_customer_name(org_a.id, conversa_a.id, "Ana")
         .expect("grava na org A");
 
     let alterou = store
         .conversas()
-        .definir_nome_cliente(org_b.id, conversa_a.id, "Intruso")
+        .set_customer_name(org_b.id, conversa_a.id, "Intruso")
         .expect("tentativa da org B");
     assert!(!alterou, "a org B não atinge a conversa da org A");
     assert!(
-        store.conversas().obter(org_b.id, conversa_a.id).is_err(),
+        store.conversas().get(org_b.id, conversa_a.id).is_err(),
         "a org B não lê a conversa da org A"
     );
-    let da_a = store
-        .conversas()
-        .obter(org_a.id, conversa_a.id)
-        .expect("lê");
-    assert_eq!(da_a.nome_cliente.as_deref(), Some("Ana"));
+    let da_a = store.conversas().get(org_a.id, conversa_a.id).expect("lê");
+    assert_eq!(da_a.customer_name.as_deref(), Some("Ana"));
 }
 
 #[test]
@@ -304,17 +301,17 @@ fn migracao_aplica_em_banco_com_conversas_e_deixa_nulo() {
     let pasta = pasta_nova("migracao");
     let harness = pasta.join("harness.db");
     let rag = pasta.join("rag.db");
-    let antes = MIGRACOES_HARNESS.len() - 1;
+    let antes = HARNESS_MIGRATIONS.len() - 1;
     let org_id = uuid::Uuid::now_v7();
     let agente_id = uuid::Uuid::now_v7();
     let conversa_id = uuid::Uuid::now_v7();
     {
         let conn = rusqlite::Connection::open(&harness).expect("abre o banco antigo");
-        migrar(
+        migrate(
             &conn,
             "harness.db",
             &harness,
-            &MIGRACOES_HARNESS[..antes],
+            &HARNESS_MIGRATIONS[..antes],
             1,
         )
         .expect("migra até a versão anterior");
@@ -330,27 +327,27 @@ fn migracao_aplica_em_banco_com_conversas_e_deixa_nulo() {
         .expect("grava dados na versão anterior");
     }
 
-    let store = Store::abrir_em(&harness, &rag).expect("abre e migra");
+    let store = Store::open_at(&harness, &rag).expect("abre e migra");
     assert_eq!(
-        versao_do_arquivo(&harness).expect("lê versão"),
-        Some(versao_alvo_harness())
+        file_version(&harness).expect("lê versão"),
+        Some(harness_target_version())
     );
     let org: OrgId = org_id.to_string().parse().expect("org válida");
     let conversa: ConversationId = conversa_id.to_string().parse().expect("conversa válida");
     let antiga = store
         .conversas()
-        .obter(org, conversa)
+        .get(org, conversa)
         .expect("a conversa antiga continua no banco");
-    assert_eq!(antiga.nome_cliente, None, "conversa antiga fica sem nome");
+    assert_eq!(antiga.customer_name, None, "conversa antiga fica sem nome");
 
     assert!(
         store
             .conversas()
-            .definir_nome_cliente(org, conversa, "Ana")
+            .set_customer_name(org, conversa, "Ana")
             .expect("grava sobre a conversa antiga")
     );
-    let depois = store.conversas().obter(org, conversa).expect("lê");
-    assert_eq!(depois.nome_cliente.as_deref(), Some("Ana"));
+    let depois = store.conversas().get(org, conversa).expect("lê");
+    assert_eq!(depois.customer_name.as_deref(), Some("Ana"));
     let _ = fs::remove_dir_all(&pasta);
 }
 
@@ -359,7 +356,7 @@ fn migracao_aplica_em_banco_com_conversas_e_deixa_nulo() {
 /// Integração de WhatsApp de verdade (a conversa tem chave estrangeira para ela).
 fn criar_integracao(store: &Store, org: OrgId, agente: poph_types::AgentId) -> IntegrationId {
     store
-        .integracao_criar(org, agente, "whatsapp".to_owned(), "active".to_owned())
+        .create_integration(org, agente, "whatsapp".to_owned(), "active".to_owned())
         .expect("cria a integração")
         .id
         .parse()
@@ -371,17 +368,17 @@ fn entrada_do_canal(
     agente: &Agente,
     id_externo: &str,
     nome: Option<&str>,
-) -> NovaEntradaCanal {
-    NovaEntradaCanal {
+) -> NewChannelInboxItem {
+    NewChannelInboxItem {
         integration_id: integracao,
         agent_id: agente.id,
         canal: "whatsapp".to_owned(),
         id_externo: id_externo.to_owned(),
         peer: "5511999990000".to_owned(),
-        evento_json: "{}".to_owned(),
+        event_json: "{}".to_owned(),
         texto: "oi".to_owned(),
         anexos: Vec::new(),
-        nome_cliente: nome.map(str::to_owned),
+        customer_name: nome.map(str::to_owned),
     }
 }
 
@@ -394,21 +391,21 @@ fn entrega_do_canal_grava_o_nome_junto_com_a_mensagem() {
 
     let recebido = banco
         .store
-        .caixa_entrada()
+        .inbox()
         .receber_do_canal(
             org.id,
             entrada_do_canal(integracao, &agente, "M-NOME-1", Some("  Ana   Maria ")),
         )
         .expect("entrega");
-    assert!(matches!(recebido.situacao, Recebido::Novo));
+    assert!(matches!(recebido.situacao, Received::New));
 
     let conversa = banco
         .store
         .conversas()
-        .obter(org.id, recebido.mensagem.conversation_id)
+        .get(org.id, recebido.mensagem.conversation_id)
         .expect("conversa");
-    assert_eq!(conversa.nome_cliente.as_deref(), Some("Ana Maria"));
-    assert_eq!(conversa.versao, 1, "o nome não sobe a versão");
+    assert_eq!(conversa.customer_name.as_deref(), Some("Ana Maria"));
+    assert_eq!(conversa.version, 1, "o nome não sobe a versão");
 }
 
 #[test]
@@ -418,7 +415,7 @@ fn falha_ao_gravar_o_nome_na_entrega_nao_derruba_a_mensagem() {
     let agente = criar_agente(&banco.store, org.id);
     let integracao = criar_integracao(&banco.store, org.id, agente.id);
     {
-        let conn = rusqlite::Connection::open(banco.store.caminho_harness()).expect("abre");
+        let conn = rusqlite::Connection::open(banco.store.harness_path()).expect("abre");
         conn.execute_batch(
             "CREATE TRIGGER falha_nome BEFORE UPDATE OF client_name ON conversations
              BEGIN SELECT RAISE(ABORT, 'falha simulada'); END;",
@@ -428,29 +425,25 @@ fn falha_ao_gravar_o_nome_na_entrega_nao_derruba_a_mensagem() {
 
     let recebido = banco
         .store
-        .caixa_entrada()
+        .inbox()
         .receber_do_canal(
             org.id,
             entrada_do_canal(integracao, &agente, "M-FALHA-1", Some("Ana")),
         )
         .expect("a entrega não pode falhar por causa do nome");
-    assert!(matches!(recebido.situacao, Recebido::Novo));
+    assert!(matches!(recebido.situacao, Received::New));
     assert_eq!(
-        banco
-            .store
-            .caixa_entrada()
-            .contar_pendentes(org.id)
-            .expect("conta"),
+        banco.store.inbox().contar_pendentes(org.id).expect("conta"),
         1
     );
 
     let conversa = banco
         .store
         .conversas()
-        .obter(org.id, recebido.mensagem.conversation_id)
+        .get(org.id, recebido.mensagem.conversation_id)
         .expect("a conversa existe mesmo sem o nome");
     assert_eq!(
-        conversa.nome_cliente, None,
+        conversa.customer_name, None,
         "o nome ficou para a próxima mensagem"
     );
 }
@@ -465,7 +458,7 @@ fn reentrega_do_mesmo_evento_nao_reescreve_o_nome() {
     let integracao = criar_integracao(&banco.store, org.id, agente.id);
     let primeira = banco
         .store
-        .caixa_entrada()
+        .inbox()
         .receber_do_canal(
             org.id,
             entrada_do_canal(integracao, &agente, "M-RE-1", Some("Ana")),
@@ -473,19 +466,19 @@ fn reentrega_do_mesmo_evento_nao_reescreve_o_nome() {
         .expect("primeira");
     let repetida = banco
         .store
-        .caixa_entrada()
+        .inbox()
         .receber_do_canal(
             org.id,
             entrada_do_canal(integracao, &agente, "M-RE-1", Some("Outra")),
         )
         .expect("repetida");
-    assert!(matches!(repetida.situacao, Recebido::Duplicado));
+    assert!(matches!(repetida.situacao, Received::Duplicate));
     assert_eq!(repetida.mensagem.id, primeira.mensagem.id);
 
     let conversa = banco
         .store
         .conversas()
-        .obter(org.id, primeira.mensagem.conversation_id)
+        .get(org.id, primeira.mensagem.conversation_id)
         .expect("conversa");
-    assert_eq!(conversa.nome_cliente.as_deref(), Some("Ana"));
+    assert_eq!(conversa.customer_name.as_deref(), Some("Ana"));
 }

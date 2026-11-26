@@ -91,7 +91,7 @@ impl Cenario {
         }];
         config.validar().expect("configuração válida");
 
-        let store = Arc::new(Store::abrir(&config).expect("abre o banco"));
+        let store = Arc::new(Store::open(&config).expect("abre o banco"));
         let chave = ChaveDeCifra::derivar(CHAVE_CIFRA).expect("chave de cifra");
         let estado = Estado::novo(Arc::clone(&store), config)
             .expect("estado do servidor")
@@ -376,7 +376,7 @@ async fn montar_org(c: &Cenario, slug: &str) -> (String, String, Value) {
         )]))
         .expect("cifra");
     c.store()
-        .integracao_criar_com_configuracao(
+        .create_integration_with_config(
             id.parse().expect("org id"),
             agente_id.parse().expect("agent id"),
             "eco".to_owned(),
@@ -484,7 +484,7 @@ async fn exportar_devolve_o_arquivo_da_org_sem_segredo_nem_caminho() {
         .conversas()
         .criar(
             org.parse().expect("org id"),
-            poph_store::NovaConversa {
+            poph_store::NewConversation {
                 agent_id: documento["tabelas"]["agents"][0]["id"]
                     .as_str()
                     .unwrap()
@@ -493,24 +493,24 @@ async fn exportar_devolve_o_arquivo_da_org_sem_segredo_nem_caminho() {
                 integration_id: None,
                 canal: "cli".into(),
                 peer_externo: None,
-                departamento_alvo: None,
+                target_department: None,
             },
         )
         .expect("conversa");
     c.store()
-        .mensagens()
+        .messages()
         .gravar(
             org.parse().expect("org id"),
-            poph_store::NovaMensagem {
+            poph_store::NewMessage {
                 conversation_id: conversa.id,
-                direcao: poph_store::Direcao::Entrada,
-                papel: poph_store::Papel::Usuario,
+                direction: poph_store::Direction::Inbound,
+                role: poph_store::Role::User,
                 texto: "tudo bem?".to_owned(),
-                anexos_json: "[]".to_owned(),
+                attachments_json: "[]".to_owned(),
                 id_externo: None,
                 turn_id: None,
-                origem: poph_store::Origem::Agente,
-                autor_nome: None,
+                origin: poph_store::Origin::Agente,
+                author_name: None,
             },
         )
         .expect("mensagem");

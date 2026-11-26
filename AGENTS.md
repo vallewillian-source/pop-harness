@@ -67,10 +67,10 @@ no customer data, machine path or internal document entered the diff.
   or API response. The `Sensitive` type (in `crates/poph-types/src/secret.rs`) prints `[oculto]` in
   `Debug` and `Display`. Use it for any sensitive value that passes through a log or error.
 - **Migrations.** A new migration is a file `crates/poph-store/migrations/harness/NNNN_name.sql`,
-  registered in `crates/poph-store/src/migracoes.rs` with the next number. Never edit a published
+  registered in `crates/poph-store/src/migrations.rs` with the next number. Never edit a published
   migration — with one exception: a published migration may lose its comments and nothing else. The file name, the
   tables, columns and indexes and the SQL itself stay exactly as they are. The runner stores the version and the
-  file name, with no checksum of the content (`crates/poph-store/src/migracoes.rs`), so a database already migrated
+  file name, with no checksum of the content (`crates/poph-store/src/migrations.rs`), so a database already migrated
   sees no difference; the proof is the schema of a database migrated from scratch and of an old one, identical
   before and after. It is applied by `poph migrate` **and also by the server** when it opens the database
   (verified: a new database, with the server starting, already came out at version 2 without
@@ -145,7 +145,7 @@ check it against the table. Two rules the table makes clear:
 | Matrix module wiring in the server (starts, degrades, per-org on/off, ordered stop) | `poph-server/src/matrix_inicio.rs` (composition root; `PortaEspacosStore` over `store.matrix()`) | `docs/ENTRADA_E_SAIDA.md` §8, `docs/API.md` |
 | Overview, base decisions, status | (no code) | `docs/VISAO_GERAL.md`, `docs/DECISOES.md`, `ROADMAP.md` |
 | Flows and Cases (language, compiler, engine, effects, API and CLI) | `crates/poph-fluxos/`; `poph-store` (`fichas`, `fluxos`, `fluxo_*`); `poph-agent` (`turno/fluxo*.rs`); `poph-server` (`api/fichas.rs`, `api/fluxos.rs`) | `docs/FLUXOS.md` (overview, operation, limits); `docs/FLUXOS_LINGUAGEM.md` (language, IR and diagnostics) |
-| Databases, schema and migrations | `poph-store/` (`migracoes.rs`, `migrations/harness/`, `escritor.rs`) | `docs/DADOS.md` |
+| Databases, schema and migrations | `poph-store/` (`migrations.rs`, `migrations/harness/`, `writer.rs`) | `docs/DADOS.md` |
 | Agents and instructions | `poph-agent/src/compositor.rs`, `poph-server/src/api/instrucoes.rs` | `docs/AGENTES.md` |
 
 When changing the Jev: it chooses, ranks or abstains. The backend validates and executes. A Jev failure

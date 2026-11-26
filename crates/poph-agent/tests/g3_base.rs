@@ -35,7 +35,7 @@ use poph_core::llm::{ChamadaFerramenta, EventoLlm, MotivoFim, ProvedorFake, Rote
 use poph_jev::{
     ErroJev, G3_BASE, G3_NADA, IdGate, JevFalso, LoteResposta, MotorJev, Resposta as RespostaJev,
 };
-use poph_store::{Direcao, NovaConversa, NovaMensagem, NovaOrg, NovoAgente, Papel, Store};
+use poph_store::{Direction, NewAgent, NewConversation, NewMessage, NewOrg, Role, Store};
 use poph_types::{
     AgentId, ConversationId, JevGates, MessageId, OrgId, StructuredInstructions, ToolConfig,
 };
@@ -149,27 +149,26 @@ impl Cenario {
         let _ = std::fs::remove_dir_all(&pasta);
         std::fs::create_dir_all(&pasta).expect("pasta do teste");
         let store = Arc::new(
-            Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
-                .expect("abre o banco"),
+            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco"),
         );
         let org = store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: format!("Org {rotulo}"),
+            .orgs()
+            .criar(NewOrg {
+                name: format!("Org {rotulo}"),
                 slug: format!("org-{rotulo}-{}", AgentId::generate()),
                 config_json: "{}".to_owned(),
             })
             .expect("cria a org")
             .id;
         let agente = store
-            .agentes()
+            .agents()
             .criar(
                 org,
-                NovoAgente {
-                    nome: format!("Bia {rotulo}"),
+                NewAgent {
+                    name: format!("Bia {rotulo}"),
                     slug: format!("bia-{rotulo}"),
-                    janela_agrupamento_ms: 0,
-                    ..NovoAgente::default()
+                    grouping_window_ms: 0,
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente")
@@ -190,7 +189,7 @@ impl Cenario {
             ..StructuredInstructions::default()
         };
         store
-            .instrucoes()
+            .instructions()
             .salvar(
                 org,
                 agente,
@@ -204,12 +203,12 @@ impl Cenario {
             .conversas()
             .criar(
                 org,
-                NovaConversa {
+                NewConversation {
                     agent_id: agente,
                     integration_id: None,
                     canal: "cli".to_owned(),
                     peer_externo: None,
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("abre a conversa")
@@ -236,12 +235,12 @@ impl Cenario {
             .conversas()
             .criar(
                 self.org,
-                NovaConversa {
+                NewConversation {
                     agent_id: self.agente,
                     integration_id: None,
                     canal: "cli".to_owned(),
                     peer_externo: None,
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("abre a conversa")
@@ -254,19 +253,19 @@ impl Cenario {
 
     fn falar_em(&self, conversa: ConversationId, texto: &str) -> MessageId {
         self.store
-            .mensagens()
+            .messages()
             .gravar(
                 self.org,
-                NovaMensagem {
+                NewMessage {
                     conversation_id: conversa,
-                    direcao: Direcao::Entrada,
-                    papel: Papel::Usuario,
+                    direction: Direction::Inbound,
+                    role: Role::User,
                     texto: texto.to_owned(),
-                    anexos_json: "[]".to_owned(),
+                    attachments_json: "[]".to_owned(),
                     id_externo: None,
                     turn_id: None,
-                    origem: poph_store::Origem::Agente,
-                    autor_nome: None,
+                    origin: poph_store::Origin::Agente,
+                    author_name: None,
                 },
             )
             .expect("grava a mensagem")
@@ -411,7 +410,7 @@ async fn g3_nada_descarta_a_busca_e_nao_oferece_base_nem_catalogo() {
     let gatilho = cenario.falar("oi, bom dia");
     let resumo = cenario.turno(&motor, gatilho).await;
 
-    assert_eq!(resumo.estado, poph_store::EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, poph_store::TurnState::Completed);
     assert_eq!(resumo.texto, "Oi! Tudo bem? Como posso ajudar?");
     assert_eq!(
         resumo.jev.as_ref().and_then(|jev| jev.escolha(IdGate::G3)),
@@ -437,15 +436,15 @@ async fn g3_nada_descarta_a_busca_e_nao_oferece_base_nem_catalogo() {
     );
     let turnos = cenario
         .store
-        .turnos()
+        .turns()
         .listar(
             cenario.org,
             cenario.conversa,
-            poph_store::Pagina::com_limite(5),
+            poph_store::Page::with_limit(5),
         )
         .expect("lista os turnos");
     assert_eq!(
-        turnos[0].trechos_json, "[]",
+        turnos[0].passages_json, "[]",
         "o registro não guarda trecho quando o G3 diz nada"
     );
     assert_eq!(
@@ -478,7 +477,7 @@ async fn g3_nada_nao_executa_ferramenta_inventada_pelo_modelo() {
     let gatilho = cenario.falar("ok, obrigado");
     let resumo = cenario.turno(&motor, gatilho).await;
 
-    assert_eq!(resumo.estado, poph_store::EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, poph_store::TurnState::Completed);
     assert_eq!(
         cenario.buscas(),
         1,
@@ -499,7 +498,7 @@ async fn g3_base_mantem_a_busca_e_as_ferramentas() {
     let gatilho = cenario.falar("qual é o prazo de entrega para o interior?");
     let resumo = cenario.turno(&motor, gatilho).await;
 
-    assert_eq!(resumo.estado, poph_store::EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, poph_store::TurnState::Completed);
     let pedidos = provedor.recebidos();
     assert_eq!(pedidos.len(), 1);
     assert!(
@@ -526,7 +525,7 @@ async fn g3_desligado_nao_muda_o_comportamento() {
     let gatilho = cenario.falar("oi");
     let resumo = cenario.turno(&motor, gatilho).await;
 
-    assert_eq!(resumo.estado, poph_store::EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, poph_store::TurnState::Completed);
     assert!(
         resumo.jev.is_none(),
         "sem gate ligado o turno não consulta o Jev"
@@ -558,7 +557,7 @@ async fn g3_sem_resposta_cai_no_comportamento_de_hoje() {
     let gatilho = cenario.falar("oi");
     let resumo = cenario.turno(&motor, gatilho).await;
 
-    assert_eq!(resumo.estado, poph_store::EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, poph_store::TurnState::Completed);
     let pedidos = provedor.recebidos();
     assert!(texto_do_prompt(&pedidos[0]).contains(TEXTO_DO_TRECHO));
     let ferramentas = nomes_das_ferramentas(&pedidos[0]);
@@ -598,7 +597,7 @@ async fn g3_confianca_baixa_cai_no_comportamento_de_hoje() {
     let gatilho = cenario.falar("oi");
     let resumo = cenario.turno(&motor, gatilho).await;
 
-    assert_eq!(resumo.estado, poph_store::EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, poph_store::TurnState::Completed);
     let pedidos = provedor.recebidos();
     assert!(
         texto_do_prompt(&pedidos[0]).contains(TEXTO_DO_TRECHO),
@@ -622,7 +621,7 @@ async fn g3_jev_fora_do_ar_cai_no_comportamento_de_hoje() {
     let gatilho = cenario.falar("oi");
     let resumo = cenario.turno(&motor, gatilho).await;
 
-    assert_eq!(resumo.estado, poph_store::EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, poph_store::TurnState::Completed);
     let pedidos = provedor.recebidos();
     assert!(texto_do_prompt(&pedidos[0]).contains(TEXTO_DO_TRECHO));
     let ferramentas = nomes_das_ferramentas(&pedidos[0]);
@@ -653,7 +652,7 @@ async fn g3_nada_abandona_a_busca_em_andamento() {
     let inicio = Instant::now();
     let resumo = cenario.turno(&motor, gatilho).await;
     let com_nada = inicio.elapsed();
-    assert_eq!(resumo.estado, poph_store::EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, poph_store::TurnState::Completed);
     assert!(
         com_nada < Duration::from_millis(250),
         "com o G3 em nada o turno não pode esperar a busca: levou {com_nada:?}"
@@ -673,7 +672,7 @@ async fn g3_nada_abandona_a_busca_em_andamento() {
     let inicio = Instant::now();
     let resumo = cenario_base.turno(&motor, gatilho).await;
     let com_base = inicio.elapsed();
-    assert_eq!(resumo.estado, poph_store::EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, poph_store::TurnState::Completed);
     assert!(
         com_base >= Duration::from_millis(300),
         "com o G3 em base a busca é aguardada: levou {com_base:?}"
@@ -692,19 +691,19 @@ async fn g3_nada_com_transferencia_nao_quebra_o_turno() {
     // Handoff ligado: sem isso o G1 nem se aplica.
     let atual = cenario
         .store
-        .agentes()
-        .obter(cenario.org, cenario.agente)
+        .agents()
+        .get(cenario.org, cenario.agente)
         .expect("lê o agente");
     cenario
         .store
-        .agentes()
+        .agents()
         .atualizar(
             cenario.org,
             cenario.agente,
-            atual.versao,
-            poph_store::MudancaAgente {
-                handoff_ativo: Some(true),
-                ..poph_store::MudancaAgente::default()
+            atual.version,
+            poph_store::AgentChange {
+                handoff_active: Some(true),
+                ..poph_store::AgentChange::default()
             },
         )
         .expect("liga o handoff");
@@ -841,7 +840,7 @@ async fn medicao_de_tokens_e_latencia_do_g3() {
         let inicio = Instant::now();
         let resumo = cenario.turno_em(&motor, conversa, gatilho).await;
         duracao_sem += inicio.elapsed().as_micros();
-        assert_eq!(resumo.estado, poph_store::EstadoTurno::Concluido);
+        assert_eq!(resumo.estado, poph_store::TurnState::Completed);
         let pedido = provedor.recebidos().remove(0);
         total_sem += texto_do_prompt(&pedido).chars().count();
         ferramentas_sem += pedido.ferramentas.len();
@@ -864,7 +863,7 @@ async fn medicao_de_tokens_e_latencia_do_g3() {
         let inicio = Instant::now();
         let resumo = cenario.turno_em(&motor, conversa, gatilho).await;
         duracao_com += inicio.elapsed().as_micros();
-        assert_eq!(resumo.estado, poph_store::EstadoTurno::Concluido);
+        assert_eq!(resumo.estado, poph_store::TurnState::Completed);
         let pedido = provedor.recebidos().remove(0);
         total_com += texto_do_prompt(&pedido).chars().count();
         ferramentas_com += pedido.ferramentas.len();
@@ -916,7 +915,7 @@ async fn padrao_de_instalacao_liga_o_g3_sem_configurar_o_agente() {
     let gatilho = cenario.falar("oi, bom dia");
     let resumo = cenario.turno(&motor, gatilho).await;
 
-    assert_eq!(resumo.estado, poph_store::EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, poph_store::TurnState::Completed);
     assert_eq!(
         resumo.jev.as_ref().and_then(|jev| jev.escolha(IdGate::G3)),
         Some(G3_NADA),
@@ -940,19 +939,19 @@ async fn agente_que_desliga_o_g3_volta_ao_comportamento_de_hoje() {
     let cenario = Cenario::novo("agente-g3-off");
     let atual = cenario
         .store
-        .agentes()
-        .obter(cenario.org, cenario.agente)
+        .agents()
+        .get(cenario.org, cenario.agente)
         .expect("lê o agente");
     cenario
         .store
-        .agentes()
+        .agents()
         .atualizar(
             cenario.org,
             cenario.agente,
-            atual.versao,
-            poph_store::MudancaAgente {
+            atual.version,
+            poph_store::AgentChange {
                 jev_json: Some(r#"{"g3": false}"#.to_owned()),
-                ..poph_store::MudancaAgente::default()
+                ..poph_store::AgentChange::default()
             },
         )
         .expect("desliga o G3 no agente");
@@ -968,7 +967,7 @@ async fn agente_que_desliga_o_g3_volta_ao_comportamento_de_hoje() {
     let gatilho = cenario.falar("oi");
     let resumo = cenario.turno(&motor, gatilho).await;
 
-    assert_eq!(resumo.estado, poph_store::EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, poph_store::TurnState::Completed);
     assert!(
         resumo
             .jev
@@ -988,19 +987,19 @@ async fn agente_com_ativo_false_nao_consulta_o_jev_nem_o_g3() {
     let cenario = Cenario::novo("agente-inativo-g3");
     let atual = cenario
         .store
-        .agentes()
-        .obter(cenario.org, cenario.agente)
+        .agents()
+        .get(cenario.org, cenario.agente)
         .expect("lê o agente");
     cenario
         .store
-        .agentes()
+        .agents()
         .atualizar(
             cenario.org,
             cenario.agente,
-            atual.versao,
-            poph_store::MudancaAgente {
+            atual.version,
+            poph_store::AgentChange {
                 jev_json: Some(r#"{"ativo": false}"#.to_owned()),
-                ..poph_store::MudancaAgente::default()
+                ..poph_store::AgentChange::default()
             },
         )
         .expect("desliga o Jev do agente");

@@ -33,7 +33,7 @@ fn estado(rotulo: &str, cfg: impl FnOnce(&mut HarnessConfig)) -> (Estado, PathBu
     let mut config = HarnessConfig::default();
     config.data.directory = pasta.join("dados");
     cfg(&mut config);
-    let store = Arc::new(Store::abrir(&config).expect("abre o banco"));
+    let store = Arc::new(Store::open(&config).expect("abre o banco"));
     let estado = Estado::novo(store, config).expect("estado do servidor");
     (estado, pasta)
 }

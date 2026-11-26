@@ -30,12 +30,12 @@ pub struct CaminhoProduto {
     product_id: String,
 }
 
-fn produto_json(p: &poph_store::Produto) -> Value {
-    json!({"id":p.id.to_string(), "org_id":p.org_id.to_string(), "category_id":p.categoria_id.to_string(),
-        "name":p.nome, "slug":p.slug, "aliases":p.aliases, "description":p.descricao,
-        "price_text":poph_agent::preco_texto(p), "price_cents":p.preco_centavos, "unit":p.unidade,
-        "includes":p.inclui, "excludes":p.exclui, "conditions":p.condicoes, "tags":p.tags,
-        "status":p.status.como_texto(), "version":p.versao, "created_at":p.criado_em, "updated_at":p.atualizado_em})
+fn produto_json(p: &poph_store::Product) -> Value {
+    json!({"id":p.id.to_string(), "org_id":p.org_id.to_string(), "category_id":p.category_id.to_string(),
+        "name":p.name, "slug":p.slug, "aliases":p.aliases, "description":p.description,
+        "price_text":poph_agent::preco_texto(p), "price_cents":p.price_cents, "unit":p.unit,
+        "includes":p.includes, "excludes":p.exclui, "conditions":p.conditions, "tags":p.tags,
+        "status":p.status.as_text(), "version":p.version, "created_at":p.created_at, "updated_at":p.updated_at})
 }
 
 #[utoipa::path(get, path="/admin/v1/orgs/{org_id}/products", tag="products", operation_id="produtos_listar", security(("bearer"=[])), params(("org_id"=String, Path), ("limit"=Option<u32>, Query), ("cursor"=Option<String>, Query), ("all"=Option<bool>, Query)), responses((status=200, description="Produtos", body=ListaJson<Value>)))]
@@ -50,12 +50,12 @@ pub async fn listar(
     let Query(q) = query.map_err(|_| ApiError::invalido("parâmetros de paginação inválidos"))?;
     let pagina = q.pagina.pagina()?;
     let produtos = if q.all.unwrap_or(false) {
-        e.store.produtos().listar(org, pagina)?
+        e.store.products().listar(org, pagina)?
     } else {
-        e.store.produtos().listar_ativos(org, pagina)?
+        e.store.products().listar_ativos(org, pagina)?
     };
     let items: Vec<_> = produtos.iter().map(produto_json).collect();
-    let next_cursor = proximo_cursor(&items, pagina.limite, |v| {
+    let next_cursor = proximo_cursor(&items, pagina.limit, |v| {
         v["id"].as_str().unwrap_or_default().to_owned()
     });
     Ok(Json(ListaJson { items, next_cursor }))
@@ -70,7 +70,7 @@ pub async fn mostrar(
     let org = id_da_url::<OrgId>(&c.org_id)?;
     ident.exigir_org(org)?;
     let id = id_da_url::<ProductId>(&c.product_id)?;
-    Ok(Json(produto_json(&e.store.produtos().obter(org, id)?)))
+    Ok(Json(produto_json(&e.store.products().obter(org, id)?)))
 }
 
 #[derive(Debug, Default, Deserialize, utoipa::ToSchema)]
@@ -101,30 +101,30 @@ pub async fn criar(
     let org = id_da_url::<OrgId>(&c.org_id)?;
     ident.exigir_org(org)?;
     let Json(d) = corpo.map_err(|_| ApiError::invalido("corpo JSON de produto inválido"))?;
-    let novo = poph_store::NovoProduto {
-        categoria_id: d
+    let novo = poph_store::NewProduct {
+        category_id: d
             .category_id
             .as_deref()
             .map(id_da_url::<poph_types::ProductCategoryId>)
             .transpose()?,
-        nome: d
+        name: d
             .name
             .ok_or_else(|| ApiError::validacao("name", "campo obrigatório"))?,
         slug: d.slug,
         aliases: d.aliases.unwrap_or_default(),
-        descricao: d.description.unwrap_or_default(),
-        preco_texto: d.price_text.unwrap_or_default(),
-        preco_centavos: d.price_cents.unwrap_or_default(),
-        unidade: d.unit.unwrap_or_default(),
-        inclui: d.includes.unwrap_or_default(),
+        description: d.description.unwrap_or_default(),
+        price_text: d.price_text.unwrap_or_default(),
+        price_cents: d.price_cents.unwrap_or_default(),
+        unit: d.unit.unwrap_or_default(),
+        includes: d.includes.unwrap_or_default(),
         exclui: d.excludes.unwrap_or_default(),
-        condicoes: d.conditions.unwrap_or_default(),
+        conditions: d.conditions.unwrap_or_default(),
         tags: d.tags.unwrap_or_default(),
     };
     if d.status.is_some() {
         return Err(ApiError::validacao("status", "não permitido na criação"));
     }
-    let p = e.store.produtos().criar(org, novo)?;
+    let p = e.store.products().criar(org, novo)?;
     super::auditoria::registrar(&e, &ident, Some(org), "create", "product", p.id.to_string())?;
     let mut resposta = produto_json(&p);
     resposta["index_warning"] = json!(sincronizar_catalogo(&e, org).await);
@@ -144,26 +144,26 @@ pub async fn atualizar(
     let id = id_da_url::<ProductId>(&c.product_id)?;
     let versao = super::versao_do_if_match(&headers, "produto")?;
     let Json(d) = corpo.map_err(|_| ApiError::invalido("corpo JSON de produto inválido"))?;
-    let mudanca = poph_store::MudancaProduto {
-        categoria_id: d
+    let mudanca = poph_store::ProductChange {
+        category_id: d
             .category_id
             .as_deref()
             .map(id_da_url::<poph_types::ProductCategoryId>)
             .transpose()?,
-        nome: d.name,
+        name: d.name,
         slug: d.slug,
         aliases: d.aliases,
-        descricao: d.description,
-        preco_texto: d.price_text,
-        preco_centavos: d.price_cents,
-        unidade: d.unit,
-        inclui: d.includes,
+        description: d.description,
+        price_text: d.price_text,
+        price_cents: d.price_cents,
+        unit: d.unit,
+        includes: d.includes,
         exclui: d.excludes,
-        condicoes: d.conditions,
+        conditions: d.conditions,
         tags: d.tags,
         status: d.status.as_deref().map(super::status_pedido).transpose()?,
     };
-    let p = e.store.produtos().atualizar(org, id, versao, mudanca)?;
+    let p = e.store.products().atualizar(org, id, versao, mudanca)?;
     super::auditoria::registrar(&e, &ident, Some(org), "update", "product", id.to_string())?;
     let mut resposta = produto_json(&p);
     resposta["index_warning"] = json!(sincronizar_catalogo(&e, org).await);
@@ -211,7 +211,7 @@ pub async fn excluir(
     let id = id_da_url::<ProductId>(&c.product_id)?;
     let forcado = exclusao.force.unwrap_or(false);
     if !forcado {
-        let refs = e.store.produtos().referencias(org, id)?;
+        let refs = e.store.products().referencias(org, id)?;
         if refs.itens_de_carrinho > 0 {
             return Err(ApiError::conflito(format!(
                 "o produto está em {} item(ns) de {} carrinho(s); excluir faz esses itens ficarem \
@@ -225,7 +225,7 @@ pub async fn excluir(
             })));
         }
     }
-    e.store.produtos().excluir(org, id)?;
+    e.store.products().excluir(org, id)?;
     super::auditoria::registrar(
         &e,
         &ident,
@@ -254,8 +254,7 @@ async fn sincronizar_catalogo(e: &Estado, org: OrgId) -> Option<&'static str> {
         _ => return Some("índice de produtos não atualizado; execute product reindex"),
     };
     let embedder: Arc<dyn Embedder> = Arc::new(modelo);
-    let (indice, _) = match Indice::abrir(e.store.caminho_rag(), embedder, ConfigIndice::default())
-    {
+    let (indice, _) = match Indice::abrir(e.store.rag_path(), embedder, ConfigIndice::default()) {
         Ok(indice) => indice,
         Err(_) => return Some("índice de produtos não atualizado; execute product reindex"),
     };

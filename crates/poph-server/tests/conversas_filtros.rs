@@ -21,7 +21,9 @@ use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, SaltString};
 use axum::http::StatusCode;
 use poph_server::Estado;
-use poph_store::{Agente, Conversa, NovaConversa, NovaOrg, NovoAgente, Org, StatusConversa, Store};
+use poph_store::{
+    Agente, Conversa, ConversationStatus, NewAgent, NewConversation, NewOrg, Org, Store,
+};
 use poph_types::{AgentId, HarnessConfig, OrgId};
 use rand_core::OsRng;
 use reqwest::{Client, Method};
@@ -49,9 +51,9 @@ impl Cenario {
         config.data.directory = pasta.join("dados");
         config.validar().expect("configuração válida");
         let relogio = Arc::new(AtomicI64::new(1_000_000));
-        let store = Store::abrir(&config)
+        let store = Store::open(&config)
             .expect("abre o banco")
-            .com_relogio(Arc::new(move || relogio.fetch_add(10, Ordering::SeqCst)));
+            .with_clock(Arc::new(move || relogio.fetch_add(10, Ordering::SeqCst)));
         Self {
             pasta,
             store: Arc::new(store),
@@ -65,9 +67,9 @@ impl Cenario {
 
     fn org(&self, slug: &str) -> Org {
         self.store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: format!("Org {slug}"),
+            .orgs()
+            .criar(NewOrg {
+                name: format!("Org {slug}"),
                 slug: slug.to_owned(),
                 config_json: String::new(),
             })
@@ -92,13 +94,13 @@ impl Cenario {
 
     fn agente(&self, org: &Org, slug: &str, nome: &str) -> Agente {
         self.store
-            .agentes()
+            .agents()
             .criar(
                 org.id,
-                NovoAgente {
-                    nome: nome.to_owned(),
+                NewAgent {
+                    name: nome.to_owned(),
                     slug: slug.to_owned(),
-                    ..NovoAgente::default()
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente")
@@ -169,12 +171,12 @@ fn conversa_do_cliente(c: &Cenario, org: &Org, agente: AgentId, peer: &str) -> C
         .conversas()
         .criar(
             org.id,
-            NovaConversa {
+            NewConversation {
                 agent_id: agente,
                 integration_id: None,
                 canal: "whatsapp".to_owned(),
                 peer_externo: Some(peer.to_owned()),
-                departamento_alvo: None,
+                target_department: None,
             },
         )
         .expect("cria a conversa")
@@ -218,7 +220,7 @@ async fn filtro_por_cliente_e_situacao_ficam_dentro_da_org() {
         .expect("transfere c2");
     c.store
         .conversas()
-        .mudar_status(a.id, c3.id, 1, StatusConversa::Fechada, None)
+        .mudar_status(a.id, c3.id, 1, ConversationStatus::Closed, None)
         .expect("fecha c3");
     let (base, desligar) = servir(c.estado()).await;
     let lista = caminho_lista(a.id);

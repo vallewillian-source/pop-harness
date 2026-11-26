@@ -16,7 +16,7 @@ use poph_types::{AgentId, CartId, ConversationId, OrgId, ProductId};
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::Store;
-use crate::erro::{ErroStore, Resultado};
+use crate::error::{Resultado, StoreError};
 use crate::repos::{id_opcional, pertence};
 
 /// Quantidade máxima por linha do carrinho.
@@ -68,7 +68,7 @@ impl Carrinhos<'_> {
         let texto_org = org.to_string();
         let texto_conversa = conversa.to_string();
         self.0
-            .leitura(move |conn| resumo_em(conn, &texto_org, &texto_conversa))
+            .read(move |conn| resumo_em(conn, &texto_org, &texto_conversa))
     }
 
     /// Adiciona uma unidade ou mais de um produto ao carrinho da conversa e devolve o estado novo.
@@ -88,10 +88,10 @@ impl Carrinhos<'_> {
         let texto_conversa = conversa.to_string();
         let texto_agente = agente.to_string();
         let texto_produto = produto.to_string();
-        let agora = self.0.agora();
+        let agora = self.0.now();
         let novo_id = CartId::generate().to_string();
         let novo_item = uuid::Uuid::now_v7().to_string();
-        self.0.escrita(move |conn| {
+        self.0.write(move |conn| {
             pertence(
                 conn,
                 "conversations",
@@ -111,9 +111,9 @@ impl Carrinhos<'_> {
                     |linha| linha.get(0),
                 )
                 .optional()
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
             let Some(preco) = preco else {
-                return Err(ErroStore::Dominio(poph_types::DomainError::NotFound {
+                return Err(StoreError::Domain(poph_types::DomainError::NotFound {
                     entity: "produto disponível para este agente",
                     id: texto_produto,
                 }));
@@ -128,7 +128,7 @@ impl Carrinhos<'_> {
                          VALUES (?1, ?2, ?3, 'open', 1, ?4, ?4)",
                         params![novo_id, texto_org, texto_conversa, agora],
                     )
-                    .map_err(ErroStore::from)?;
+                    .map_err(StoreError::from)?;
                     novo_id.clone()
                 }
             };
@@ -141,7 +141,7 @@ impl Carrinhos<'_> {
                     |linha| Ok((linha.get(0)?, linha.get(1)?)),
                 )
                 .optional()
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
             match existente {
                 Some((linha, atual)) => {
                     let total = atual + i64::from(quantidade);
@@ -153,7 +153,7 @@ impl Carrinhos<'_> {
                           WHERE org_id = ?4 AND id = ?5",
                         params![total, preco, agora, texto_org, linha],
                     )
-                    .map_err(ErroStore::from)?;
+                    .map_err(StoreError::from)?;
                 }
                 None => {
                     conn.execute(
@@ -171,7 +171,7 @@ impl Carrinhos<'_> {
                             agora
                         ],
                     )
-                    .map_err(ErroStore::from)?;
+                    .map_err(StoreError::from)?;
                 }
             }
             tocar_carrinho(conn, &texto_org, &carrinho, agora)?;
@@ -194,8 +194,8 @@ impl Carrinhos<'_> {
         let texto_org = org.to_string();
         let texto_conversa = conversa.to_string();
         let texto_produto = produto.to_string();
-        let agora = self.0.agora();
-        self.0.escrita(move |conn| {
+        let agora = self.0.now();
+        self.0.write(move |conn| {
             pertence(
                 conn,
                 "conversations",
@@ -205,7 +205,7 @@ impl Carrinhos<'_> {
             )?;
             let carrinho =
                 carrinho_aberto(conn, &texto_org, &texto_conversa)?.ok_or_else(|| {
-                    ErroStore::Dominio(poph_types::DomainError::NotFound {
+                    StoreError::Domain(poph_types::DomainError::NotFound {
                         entity: "item do carrinho",
                         id: texto_produto.clone(),
                     })
@@ -218,9 +218,9 @@ impl Carrinhos<'_> {
                     |linha| Ok((linha.get(0)?, linha.get(1)?)),
                 )
                 .optional()
-                .map_err(ErroStore::from)?
+                .map_err(StoreError::from)?
                 .ok_or_else(|| {
-                    ErroStore::Dominio(poph_types::DomainError::NotFound {
+                    StoreError::Domain(poph_types::DomainError::NotFound {
                         entity: "item do carrinho",
                         id: texto_produto.clone(),
                     })
@@ -232,14 +232,14 @@ impl Carrinhos<'_> {
                           WHERE org_id = ?3 AND id = ?4",
                         params![atual - i64::from(tirar), agora, texto_org, linha],
                     )
-                    .map_err(ErroStore::from)?;
+                    .map_err(StoreError::from)?;
                 }
                 _ => {
                     conn.execute(
                         "DELETE FROM cart_items WHERE org_id = ?1 AND id = ?2",
                         params![texto_org, linha],
                     )
-                    .map_err(ErroStore::from)?;
+                    .map_err(StoreError::from)?;
                 }
             }
             tocar_carrinho(conn, &texto_org, &carrinho, agora)?;
@@ -252,8 +252,8 @@ impl Carrinhos<'_> {
     pub fn limpar(&self, org: OrgId, conversa: ConversationId) -> Resultado<(u64, ResumoCarrinho)> {
         let texto_org = org.to_string();
         let texto_conversa = conversa.to_string();
-        let agora = self.0.agora();
-        self.0.escrita(move |conn| {
+        let agora = self.0.now();
+        self.0.write(move |conn| {
             pertence(
                 conn,
                 "conversations",
@@ -269,7 +269,7 @@ impl Carrinhos<'_> {
                     "DELETE FROM cart_items WHERE org_id = ?1 AND cart_id = ?2",
                     params![texto_org, carrinho],
                 )
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
             tocar_carrinho(conn, &texto_org, &carrinho, agora)?;
             Ok((saiu as u64, resumo_em(conn, &texto_org, &texto_conversa)?))
         })
@@ -280,14 +280,14 @@ fn validar_quantidade(quantidade: u32) -> Resultado<()> {
     if (1..=LIMITE_QUANTIDADE).contains(&quantidade) {
         return Ok(());
     }
-    Err(ErroStore::Dominio(poph_types::DomainError::Validation {
+    Err(StoreError::Domain(poph_types::DomainError::Validation {
         field: "quantidade",
         reason: format!("informe de 1 a {LIMITE_QUANTIDADE} unidades"),
     }))
 }
 
-fn limite_excedido() -> ErroStore {
-    ErroStore::Dominio(poph_types::DomainError::Validation {
+fn limite_excedido() -> StoreError {
+    StoreError::Domain(poph_types::DomainError::Validation {
         field: "quantidade",
         reason: format!("o carrinho passaria de {LIMITE_QUANTIDADE} unidades deste produto"),
     })
@@ -302,7 +302,7 @@ fn carrinho_aberto(conn: &Connection, org: &str, conversa: &str) -> Resultado<Op
         |linha| linha.get(0),
     )
     .optional()
-    .map_err(ErroStore::from)
+    .map_err(StoreError::from)
 }
 
 fn tocar_carrinho(conn: &Connection, org: &str, carrinho: &str, agora: i64) -> Resultado<()> {
@@ -311,7 +311,7 @@ fn tocar_carrinho(conn: &Connection, org: &str, carrinho: &str, agora: i64) -> R
           WHERE org_id = ?2 AND id = ?3",
         params![agora, org, carrinho],
     )
-    .map_err(ErroStore::from)?;
+    .map_err(StoreError::from)?;
     Ok(())
 }
 
@@ -344,10 +344,10 @@ fn resumo_em(conn: &Connection, org: &str, conversa: &str) -> Resultado<ResumoCa
         let (produto, nome, quantidade, preco) = linha?;
         let subtotal = quantidade
             .checked_mul(preco)
-            .ok_or_else(|| ErroStore::Interno("subtotal do carrinho estourou".to_owned()))?;
+            .ok_or_else(|| StoreError::Internal("subtotal do carrinho estourou".to_owned()))?;
         total = total
             .checked_add(subtotal)
-            .ok_or_else(|| ErroStore::Interno("total do carrinho estourou".to_owned()))?;
+            .ok_or_else(|| StoreError::Internal("total do carrinho estourou".to_owned()))?;
         itens.push(ItemCarrinho {
             produto,
             nome: nome.unwrap_or_else(|| "produto removido do catálogo".to_owned()),
@@ -357,7 +357,7 @@ fn resumo_em(conn: &Connection, org: &str, conversa: &str) -> Resultado<ResumoCa
         });
     }
     Ok(ResumoCarrinho {
-        carrinho: Some(carrinho.parse::<CartId>().map_err(ErroStore::from)?),
+        carrinho: Some(carrinho.parse::<CartId>().map_err(StoreError::from)?),
         itens,
         total_centavos: total,
     })

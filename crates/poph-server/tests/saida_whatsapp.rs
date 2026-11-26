@@ -26,7 +26,9 @@ use poph_agent::Backoff;
 use poph_evolution::{ClienteEvolution, ConfigEvolution, TETO_MIDIA};
 use poph_server::evolution::CanalEvolution;
 use poph_server::saida_whatsapp::{OpcoesSaidaWhatsApp, SaidaWhatsApp};
-use poph_store::{EstadoSaida, ItemSaida, NovaConversa, NovaOrg, NovaSaida, NovoAgente, Store};
+use poph_store::{
+    NewAgent, NewConversation, NewOrg, NewOutboxItem, OutboxItem, OutboxState, Store,
+};
 use poph_types::{ConversationId, HarnessConfig, IntegrationId, OrgId, Secret, TurnId};
 use serde_json::{Value, json};
 use tracing_subscriber::fmt::MakeWriter;
@@ -192,22 +194,22 @@ impl Cenario {
         config.validar().expect("configuração válida");
         let blobs = config.blobs();
 
-        let store = Arc::new(Store::abrir(&config).expect("abre o banco"));
+        let store = Arc::new(Store::open(&config).expect("abre o banco"));
         let org = store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: "Loja Saída".to_owned(),
+            .orgs()
+            .criar(NewOrg {
+                name: "Loja Saída".to_owned(),
                 slug: "loja-saida".to_owned(),
                 config_json: String::new(),
             })
             .expect("cria a org")
             .id;
         let agente = store
-            .agentes()
+            .agents()
             .criar(
                 org,
-                NovoAgente {
-                    nome: "Atendente Saída".to_owned(),
+                NewAgent {
+                    name: "Atendente Saída".to_owned(),
                     slug: "atendente-saida".to_owned(),
                     ..Default::default()
                 },
@@ -215,13 +217,13 @@ impl Cenario {
             .expect("cria o agente")
             .id;
         let integracao: IntegrationId = store
-            .integracao_criar(org, agente, "whatsapp".to_owned(), "active".to_owned())
+            .create_integration(org, agente, "whatsapp".to_owned(), "active".to_owned())
             .expect("cria a integração")
             .id
             .parse()
             .expect("id da integração");
         let fora_da_config: IntegrationId = store
-            .integracao_criar(org, agente, "whatsapp".to_owned(), "active".to_owned())
+            .create_integration(org, agente, "whatsapp".to_owned(), "active".to_owned())
             .expect("cria a integração fora da configuração")
             .id
             .parse()
@@ -231,12 +233,12 @@ impl Cenario {
             .conversas()
             .criar(
                 org,
-                NovaConversa {
+                NewConversation {
                     agent_id: agente,
                     integration_id: Some(integracao),
                     canal: "whatsapp".to_owned(),
                     peer_externo: Some(TELEFONE.to_owned()),
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("cria a conversa de WhatsApp")
@@ -245,12 +247,12 @@ impl Cenario {
             .conversas()
             .criar(
                 org,
-                NovaConversa {
+                NewConversation {
                     agent_id: agente,
                     integration_id: None,
                     canal: "console".to_owned(),
                     peer_externo: None,
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("cria a conversa do console")
@@ -259,12 +261,12 @@ impl Cenario {
             .conversas()
             .criar(
                 org,
-                NovaConversa {
+                NewConversation {
                     agent_id: agente,
                     integration_id: Some(fora_da_config),
                     canal: "whatsapp".to_owned(),
                     peer_externo: Some("5511888880000".to_owned()),
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("cria a conversa fora da configuração")
@@ -325,31 +327,31 @@ impl Cenario {
         seq: u32,
         tipo: &str,
         conteudo: Value,
-    ) -> ItemSaida {
+    ) -> OutboxItem {
         let (_, item) = self
             .store
-            .caixa_saida()
+            .outbox()
             .enfileirar(
                 self.org,
-                NovaSaida {
+                NewOutboxItem {
                     conversation_id: conversa,
                     turn_id: TurnId::generate(),
                     seq,
                     tipo: tipo.to_owned(),
-                    conteudo_json: conteudo.to_string(),
+                    content_json: conteudo.to_string(),
                 },
             )
             .expect("enfileira a saída");
         item
     }
 
-    fn texto(&self, texto: &str) -> ItemSaida {
+    fn texto(&self, texto: &str) -> OutboxItem {
         self.enfileirar(self.conversa_wa, 0, "text", json!({ "texto": texto }))
     }
 
-    fn estado(&self, item: &ItemSaida) -> ItemSaida {
+    fn estado(&self, item: &OutboxItem) -> OutboxItem {
         self.store
-            .caixa_saida()
+            .outbox()
             .obter(self.org, item.id)
             .expect("lê o item de saída")
     }
@@ -391,7 +393,7 @@ async fn texto_sai_uma_vez_no_formato_do_canal_com_a_chave_so_no_cabecalho() {
     let relato = cenario.saida.ciclo().await.expect("ciclo");
 
     assert_eq!(relato.enviados, 1, "{relato:?}");
-    assert_eq!(cenario.estado(&item).estado, EstadoSaida::Enviado);
+    assert_eq!(cenario.estado(&item).estado, OutboxState::Sent);
     let registros = cenario.registros();
     assert_eq!(registros.len(), 1, "uma requisição, sem repetição");
     assert_eq!(registros[0].caminho, "instancia=loja");
@@ -413,7 +415,7 @@ async fn texto_acima_de_4000_sai_cortado_em_uma_mensagem_so() {
     let relato = cenario.saida.ciclo().await.expect("ciclo");
 
     assert_eq!(relato.enviados, 1, "{relato:?}");
-    assert_eq!(cenario.estado(&item).estado, EstadoSaida::Enviado);
+    assert_eq!(cenario.estado(&item).estado, OutboxState::Sent);
     let registros = cenario.registros();
     assert_eq!(registros.len(), 1, "uma mensagem só, nunca dividida");
     let enviado = registros[0].corpo["text"].as_str().expect("texto");
@@ -445,7 +447,7 @@ async fn arquivo_da_biblioteca_sai_como_midia_com_o_blob() {
     let relato = cenario.saida.ciclo().await.expect("ciclo");
 
     assert_eq!(relato.enviados, 1, "{relato:?}");
-    assert_eq!(cenario.estado(&item).estado, EstadoSaida::Enviado);
+    assert_eq!(cenario.estado(&item).estado, OutboxState::Sent);
     let registros = cenario.registros();
     assert_eq!(registros.len(), 1);
     assert_eq!(registros[0].corpo["mediatype"], "document");
@@ -488,9 +490,9 @@ async fn arquivo_acima_de_16_mb_nao_sai_e_o_texto_do_turno_segue() {
 
     assert_eq!(relato.enviados, 1, "o texto sai: {relato:?}");
     assert_eq!(relato.definitivos, 1, "o arquivo não sai: {relato:?}");
-    assert_eq!(cenario.estado(&texto).estado, EstadoSaida::Enviado);
+    assert_eq!(cenario.estado(&texto).estado, OutboxState::Sent);
     let arquivo = cenario.estado(&grande);
-    assert_eq!(arquivo.estado, EstadoSaida::Falhou);
+    assert_eq!(arquivo.estado, OutboxState::Failed);
     assert!(arquivo.ultimo_erro.is_some(), "o motivo fica registrado");
     assert_eq!(
         cenario.chamadas(),
@@ -520,7 +522,7 @@ async fn erro_5xx_volta_para_a_fila_e_so_repete_na_tentativa_seguinte() {
         "um 5xx não dispara uma segunda requisição dentro da mesma tentativa"
     );
     let depois = cenario.estado(&item);
-    assert_eq!(depois.estado, EstadoSaida::Enviando, "volta para a fila");
+    assert_eq!(depois.estado, OutboxState::Sending, "volta para a fila");
     assert_eq!(depois.tentativas, 1);
     assert!(depois.ultimo_erro.is_some());
 
@@ -528,7 +530,7 @@ async fn erro_5xx_volta_para_a_fila_e_so_repete_na_tentativa_seguinte() {
     let segundo = cenario.saida.ciclo().await.expect("segundo ciclo");
 
     assert_eq!(segundo.enviados, 1, "{segundo:?}");
-    assert_eq!(cenario.estado(&item).estado, EstadoSaida::Enviado);
+    assert_eq!(cenario.estado(&item).estado, OutboxState::Sent);
     assert_eq!(
         cenario.chamadas(),
         2,
@@ -557,7 +559,7 @@ async fn falha_transitoria_que_nunca_passa_esgota_as_tentativas_e_vira_failed() 
     assert_eq!(relato.esgotados, 1, "{relato:?}");
     assert_eq!(cenario.chamadas(), 8, "depois de esgotar, nada mais sai");
     let depois = cenario.estado(&item);
-    assert_eq!(depois.estado, EstadoSaida::Falhou);
+    assert_eq!(depois.estado, OutboxState::Failed);
     assert_eq!(
         depois.ultimo_erro.as_deref(),
         Some("tentativas de envio esgotadas")
@@ -581,7 +583,7 @@ async fn erro_4xx_e_definitivo_nao_repete_e_nao_vaza_o_telefone() {
 
     assert_eq!(primeiro.definitivos, 1, "{primeiro:?}");
     let depois = cenario.estado(&item);
-    assert_eq!(depois.estado, EstadoSaida::Falhou);
+    assert_eq!(depois.estado, OutboxState::Failed);
     let erro = depois.ultimo_erro.clone().unwrap_or_default();
     assert!(
         !erro.contains(TELEFONE),
@@ -596,7 +598,7 @@ async fn erro_4xx_e_definitivo_nao_repete_e_nao_vaza_o_telefone() {
     cenario.saida.ciclo().await.expect("segundo ciclo");
 
     assert_eq!(cenario.chamadas(), 1, "4xx nunca é repetido");
-    assert_eq!(cenario.estado(&item).estado, EstadoSaida::Falhou);
+    assert_eq!(cenario.estado(&item).estado, OutboxState::Failed);
 }
 
 #[tokio::test]
@@ -607,7 +609,7 @@ async fn rede_fora_do_ar_e_transitoria() {
     let relato = cenario.saida.ciclo().await.expect("ciclo");
 
     assert_eq!(relato.transitorios, 1, "{relato:?}");
-    assert_eq!(cenario.estado(&item).estado, EstadoSaida::Enviando);
+    assert_eq!(cenario.estado(&item).estado, OutboxState::Sending);
 }
 
 // ───────────────────────── o que não é deste consumidor fica como está ─────────────────────────
@@ -636,9 +638,9 @@ async fn conversa_do_console_e_de_integracao_nao_configurada_nao_sao_tocadas() {
         "nada foi contado como deste consumidor"
     );
     assert_eq!(cenario.chamadas(), 0);
-    assert_eq!(cenario.estado(&console).estado, EstadoSaida::Pendente);
+    assert_eq!(cenario.estado(&console).estado, OutboxState::Pending);
     assert_eq!(cenario.estado(&console).tentativas, 0);
-    assert_eq!(cenario.estado(&fora).estado, EstadoSaida::Pendente);
+    assert_eq!(cenario.estado(&fora).estado, OutboxState::Pending);
     assert_eq!(cenario.estado(&fora).tentativas, 0);
 }
 
@@ -651,7 +653,7 @@ async fn sem_chave_da_evolution_a_mensagem_fica_pendente_e_nao_falha() {
 
     assert_eq!(relato.adiados, 1, "{relato:?}");
     let depois = cenario.estado(&item);
-    assert_eq!(depois.estado, EstadoSaida::Pendente, "não vira falha");
+    assert_eq!(depois.estado, OutboxState::Pending, "não vira falha");
     assert_eq!(depois.tentativas, 0, "nenhuma tentativa gasta");
     assert_eq!(cenario.chamadas(), 0);
 }
@@ -714,7 +716,7 @@ async fn envio_enviado_e_adiado_deixam_uma_linha_cada_sem_dado_sensivel() {
     let enviado = Cenario::novo("log-enviado", Instancia::Normal, vec![]).await;
     let item_ok = enviado.texto(TEXTO_ENVIADO);
     enviado.saida.ciclo().await.expect("ciclo");
-    assert_eq!(enviado.estado(&item_ok).estado, EstadoSaida::Enviado);
+    assert_eq!(enviado.estado(&item_ok).estado, OutboxState::Sent);
 
     let adiado = Cenario::novo(
         "log-adiado",
@@ -724,7 +726,7 @@ async fn envio_enviado_e_adiado_deixam_uma_linha_cada_sem_dado_sensivel() {
     .await;
     let item_adiado = adiado.texto(TEXTO_ADIADO);
     adiado.saida.ciclo().await.expect("ciclo");
-    assert_eq!(adiado.estado(&item_adiado).estado, EstadoSaida::Enviando);
+    assert_eq!(adiado.estado(&item_adiado).estado, OutboxState::Sending);
 
     let registro = String::from_utf8_lossy(&logs_capturados().lock().unwrap()).into_owned();
     // Captura viva: as duas linhas precisam aparecer, senão a ausência de dado não prova nada.
@@ -780,7 +782,7 @@ async fn texto_enviado_grava_o_id_que_a_evolution_devolveu() {
     assert_eq!(relato.enviados, 1, "{relato:?}");
     let gravado = cenario
         .store
-        .caixa_saida()
+        .outbox()
         .id_externo(cenario.org, item.id)
         .expect("lê o id externo");
     assert_eq!(
@@ -789,7 +791,7 @@ async fn texto_enviado_grava_o_id_que_a_evolution_devolveu() {
         "o id da resposta do envio tem de ficar na outbox"
     );
     // O id vem da resposta (`key.id`), não do pedido: a Evolution é quem nomeia a mensagem.
-    assert_eq!(cenario.estado(&item).estado, EstadoSaida::Enviado);
+    assert_eq!(cenario.estado(&item).estado, OutboxState::Sent);
 }
 
 #[tokio::test]
@@ -822,7 +824,7 @@ async fn arquivo_enviado_grava_o_id_que_a_evolution_devolveu() {
     assert_eq!(
         cenario
             .store
-            .caixa_saida()
+            .outbox()
             .id_externo(cenario.org, item.id)
             .expect("lê o id externo")
             .as_deref(),
@@ -846,7 +848,7 @@ async fn envio_que_falha_nao_grava_id() {
     assert_eq!(
         recusado
             .store
-            .caixa_saida()
+            .outbox()
             .id_externo(recusado.org, item_recusado.id)
             .expect("lê o id externo"),
         None,
@@ -866,7 +868,7 @@ async fn envio_que_falha_nao_grava_id() {
     assert_eq!(
         adiado
             .store
-            .caixa_saida()
+            .outbox()
             .id_externo(adiado.org, item_adiado.id)
             .expect("lê o id externo"),
         None,
@@ -888,11 +890,11 @@ async fn canal_sem_id_na_resposta_envia_e_fica_sem_id() {
     let relato = cenario.saida.ciclo().await.expect("ciclo");
 
     assert_eq!(relato.enviados, 1, "{relato:?}");
-    assert_eq!(cenario.estado(&item).estado, EstadoSaida::Enviado);
+    assert_eq!(cenario.estado(&item).estado, OutboxState::Sent);
     assert_eq!(
         cenario
             .store
-            .caixa_saida()
+            .outbox()
             .id_externo(cenario.org, item.id)
             .expect("lê o id externo"),
         None

@@ -236,7 +236,7 @@ fn executar_migrate(
         }
     };
 
-    let relatorios = match poph_store::migrar_bancos(&config.harness_db(), &config.rag_db()) {
+    let relatorios = match poph_store::migrate_databases(&config.harness_db(), &config.rag_db()) {
         Ok(relatorios) => relatorios,
         Err(erro) => {
             eprintln!("não consegui migrar os bancos: {erro}");
@@ -248,9 +248,9 @@ fn executar_migrate(
         println!("{}", json_migracao(&relatorios));
     } else {
         println!("POP Harness: migração dos bancos\n");
-        println!("{}", relatorios.harness.resumo());
-        println!("{}", relatorios.rag.resumo());
-        if relatorios.ja_estava_em_dia() {
+        println!("{}", relatorios.harness.summary());
+        println!("{}", relatorios.rag.summary());
+        if relatorios.already_up_to_date() {
             println!("\nNada a fazer: os dois bancos já estavam em dia.");
         } else {
             println!("\nBancos prontos para uso.");
@@ -260,16 +260,16 @@ fn executar_migrate(
 }
 
 /// JSON estável da migração (sem segredo nenhum: só versões, nomes e caminhos).
-fn json_migracao(relatorios: &poph_store::RelatoriosMigracao) -> String {
-    fn banco(relatorio: &poph_store::RelatorioMigracao) -> serde_json::Value {
+fn json_migracao(relatorios: &poph_store::MigrationReports) -> String {
+    fn banco(relatorio: &poph_store::MigrationReport) -> serde_json::Value {
         serde_json::json!({
-            "banco": relatorio.banco,
-            "caminho": relatorio.caminho.display().to_string(),
-            "versao_antes": relatorio.versao_antes,
-            "versao_depois": relatorio.versao_depois,
-            "aplicadas": relatorio.aplicadas.iter().map(|m| serde_json::json!({
-                "versao": m.versao,
-                "nome": m.nome,
+            "banco": relatorio.database,
+            "caminho": relatorio.path.display().to_string(),
+            "versao_antes": relatorio.version_before,
+            "versao_depois": relatorio.version_after,
+            "aplicadas": relatorio.applied.iter().map(|m| serde_json::json!({
+                "versao": m.version,
+                "nome": m.name,
             })).collect::<Vec<_>>(),
         })
     }
@@ -277,7 +277,7 @@ fn json_migracao(relatorios: &poph_store::RelatoriosMigracao) -> String {
         "versao_relatorio": 1,
         "harness": banco(&relatorios.harness),
         "rag": banco(&relatorios.rag),
-        "ja_estava_em_dia": relatorios.ja_estava_em_dia(),
+        "ja_estava_em_dia": relatorios.already_up_to_date(),
     });
     serde_json::to_string_pretty(&valor).unwrap_or_else(|_| valor.to_string())
 }

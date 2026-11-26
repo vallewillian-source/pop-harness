@@ -16,7 +16,7 @@ use std::sync::Arc;
 use clap::Args;
 use poph_agent::turno::{Entrada, EventoTurno, Observador, TransporteConsole};
 use poph_core::llm::Cancelamento;
-use poph_store::{Conversa, Direcao, NovaConversa, NovaMensagem, Papel, Store};
+use poph_store::{Conversa, Direction, NewConversation, NewMessage, Role, Store};
 use poph_types::{AgentId, BaseMetrics, ConversationId, OrgId, Registry};
 use serde_json::json;
 
@@ -67,8 +67,7 @@ fn rodar(
     let configuracao =
         config::carregar(arquivo.as_deref(), ambiente).map_err(|erro| format!("{erro}"))?;
     let store = Arc::new(
-        Store::abrir(&configuracao)
-            .map_err(|erro| format!("não consegui abrir o banco: {erro}"))?,
+        Store::open(&configuracao).map_err(|erro| format!("não consegui abrir o banco: {erro}"))?,
     );
     let org = apoio::resolver_org(&store, texto_org)?;
     let agente = resolver_agente(&store, org, &args.agente)?;
@@ -121,7 +120,7 @@ fn rodar(
             })
         );
     } else {
-        println!("POP Harness · {} · conversa {}", agente.nome, conversa.id);
+        println!("POP Harness · {} · conversa {}", agente.name, conversa.id);
         println!("Digite /sair para encerrar.\n");
     }
 
@@ -156,19 +155,19 @@ fn rodar(
             }
 
             let mensagem = store
-                .mensagens()
+                .messages()
                 .gravar(
                     org,
-                    NovaMensagem {
+                    NewMessage {
                         conversation_id: conversa.id,
-                        direcao: Direcao::Entrada,
-                        papel: Papel::Usuario,
+                        direction: Direction::Inbound,
+                        role: Role::User,
                         texto: texto.to_owned(),
-                        anexos_json: "[]".to_owned(),
+                        attachments_json: "[]".to_owned(),
                         id_externo: None,
                         turn_id: None,
-                        origem: poph_store::Origem::Agente,
-                        autor_nome: None,
+                        origin: poph_store::Origin::Agente,
+                        author_name: None,
                     },
                 )
                 .map_err(|erro| format!("não consegui gravar a mensagem: {erro}"))?;
@@ -209,7 +208,7 @@ fn rodar(
                             json!({
                                 "tipo": "fim",
                                 "turno": resumo.turno.to_string(),
-                                "estado": resumo.estado.como_texto(),
+                                "estado": resumo.estado.as_text(),
                                 "motivo": resumo.motivo_fim,
                                 "erro": resumo.erro,
                                 "tokens_entrada": resumo.tokens_entrada,
@@ -279,12 +278,12 @@ fn resolver_agente(store: &Store, org: OrgId, texto: &str) -> Result<poph_store:
     if uuid::Uuid::parse_str(texto).is_ok() {
         let id: AgentId = apoio::parse_id(texto)?;
         return store
-            .agentes()
-            .obter(org, id)
+            .agents()
+            .get(org, id)
             .map_err(|erro| apoio::descrever(&erro));
     }
     store
-        .agentes()
+        .agents()
         .por_slug(org, texto)
         .map_err(|erro| apoio::descrever(&erro))
 }
@@ -301,7 +300,7 @@ fn resolver_conversa(
             let id: ConversationId = apoio::parse_id(texto)?;
             let conversa = store
                 .conversas()
-                .obter(org, id)
+                .get(org, id)
                 .map_err(|erro| apoio::descrever(&erro))?;
             if conversa.agent_id != *agente {
                 return Err(format!(
@@ -315,12 +314,12 @@ fn resolver_conversa(
             .conversas()
             .criar(
                 org,
-                NovaConversa {
+                NewConversation {
                     agent_id: *agente,
                     integration_id: None,
                     canal: "cli".to_owned(),
                     peer_externo: Some("cli".to_owned()),
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .map_err(|erro| format!("não consegui abrir a conversa: {erro}")),

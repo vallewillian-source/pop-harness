@@ -24,8 +24,8 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use poph_store::{
-    EfeitoDaTransicao, EstadoDaExecucao, EventoDaTransicao, ExecucaoGravada, ExtrasDaTransicao,
-    InicioDeExecucao, NovaConversa, NovaOrg, NovoAgente, Org, Store, TransicaoDeFluxo,
+    ExecutionStart, ExecutionState, FlowTransition, NewAgent, NewConversation, NewOrg, Org, Store,
+    StoredExecution, TransitionEffect, TransitionEvent, TransitionExtras,
 };
 use poph_types::{
     ActionActor, EventActor, ExecutionStatus, FlowId, RecordEventKind, RecordId, RevisionId,
@@ -44,8 +44,8 @@ impl Cenario {
             std::env::temp_dir().join(format!("poph-transicao-{rotulo}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&pasta);
         fs::create_dir_all(&pasta).expect("cria a pasta do teste");
-        let store = Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
-            .expect("abre o banco");
+        let store =
+            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco");
         Self { pasta, store }
     }
 
@@ -58,9 +58,9 @@ impl Cenario {
 
     fn org(&self, slug: &str) -> Org {
         self.store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: format!("Org {slug}"),
+            .orgs()
+            .criar(NewOrg {
+                name: format!("Org {slug}"),
                 slug: slug.to_owned(),
                 config_json: String::new(),
             })
@@ -69,13 +69,13 @@ impl Cenario {
 
     fn agente(&self, org: &Org) -> poph_store::Agente {
         self.store
-            .agentes()
+            .agents()
             .criar(
                 org.id,
-                NovoAgente {
-                    nome: "Agente de medição".to_owned(),
+                NewAgent {
+                    name: "Agente de medição".to_owned(),
                     slug: "medicao".to_owned(),
-                    ..NovoAgente::default()
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente")
@@ -93,12 +93,12 @@ impl Cenario {
             .conversas()
             .criar(
                 org.id,
-                NovaConversa {
+                NewConversation {
                     agent_id: agente.id,
                     integration_id: None,
                     canal: "console".to_owned(),
                     peer_externo: Some(peer.to_owned()),
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("abre a conversa");
@@ -146,25 +146,25 @@ impl Cenario {
         agente: &poph_store::Agente,
         ficha: RecordId,
         (fluxo, revisao): (FlowId, RevisionId),
-    ) -> ExecucaoGravada {
+    ) -> StoredExecution {
         self.store
             .fluxos()
             .liberar(org.id, agente.id, fluxo)
             .expect("libera o fluxo");
         self.store
-            .execucoes()
+            .executions()
             .iniciar_execucao(
                 org.id,
-                InicioDeExecucao {
+                ExecutionStart {
                     chave_idempotencia: None,
                     ficha,
                     fluxo,
-                    revisao,
-                    ator: EventActor::Agent,
+                    revision: revisao,
+                    actor: EventActor::Agent,
                     ator_ref: Some("agente-de-teste"),
-                    decisao_jev: None,
-                    estado_inicial: estado_inicial("coleta"),
-                    efeitos_de_entrada: Vec::new(),
+                    jev_decision: None,
+                    initial_state: estado_inicial("coleta"),
+                    inbound_effects: Vec::new(),
                 },
             )
             .expect("abre a execução")
@@ -177,37 +177,37 @@ impl Drop for Cenario {
     }
 }
 
-fn estado_inicial(etapa: &str) -> EstadoDaExecucao {
-    EstadoDaExecucao {
+fn estado_inicial(etapa: &str) -> ExecutionState {
+    ExecutionState {
         status: ExecutionStatus::Active,
         no_atual: etapa.to_owned(),
         dados_json: "{}".to_owned(),
-        atores_que_agiram: Vec::new(),
-        resultado: None,
-        motivo: None,
+        acting_actors: Vec::new(),
+        result: None,
+        reason: None,
     }
 }
 
 /// Transição que fica na etapa: dois eventos e um efeito (o caso do agente que ainda espera).
-fn transicao_parcial(etapa: &str) -> TransicaoDeFluxo {
-    TransicaoDeFluxo {
-        novo_estado: EstadoDaExecucao {
+fn transicao_parcial(etapa: &str) -> FlowTransition {
+    FlowTransition {
+        new_state: ExecutionState {
             status: ExecutionStatus::Active,
             no_atual: etapa.to_owned(),
             dados_json: format!("{{\"{etapa}\":{{\"endereco\":\"Rua das Flores, 10\"}}}}"),
-            atores_que_agiram: vec![ActionActor::Agent],
-            resultado: None,
-            motivo: None,
+            acting_actors: vec![ActionActor::Agent],
+            result: None,
+            reason: None,
         },
-        eventos: vec![
-            EventoDaTransicao {
+        events: vec![
+            TransitionEvent {
                 tipo: RecordEventKind::FieldsFilled,
                 ator_tipo: EventActor::Agent,
                 payload_json: format!(
                     "{{\"etapa\":\"{etapa}\",\"campos\":{{\"endereco\":\"x\"}}}}"
                 ),
             },
-            EventoDaTransicao {
+            TransitionEvent {
                 tipo: RecordEventKind::ActionExecuted,
                 ator_tipo: EventActor::Agent,
                 payload_json: format!(
@@ -215,81 +215,81 @@ fn transicao_parcial(etapa: &str) -> TransicaoDeFluxo {
                 ),
             },
         ],
-        efeitos: vec![EfeitoDaTransicao {
-            chave: format!("acao:{etapa}.registrar/0"),
+        effects: vec![TransitionEffect {
+            key: format!("acao:{etapa}.registrar/0"),
             tipo: "mensagem_ao_cliente".to_owned(),
             payload_json: "{\"texto\":\"Recebi seu endereço\"}".to_owned(),
         }],
-        encerra_atendimento: false,
-        repetida: false,
-        erro_de_regra: false,
+        closes_service: false,
+        repeated: false,
+        rule_error: false,
     }
 }
 
 /// Transição que conclui a etapa e entra na seguinte: três eventos e a linha da etapa nova.
-fn transicao_avanca(de: &str, para: &str) -> TransicaoDeFluxo {
-    TransicaoDeFluxo {
-        novo_estado: EstadoDaExecucao {
+fn transicao_avanca(de: &str, para: &str) -> FlowTransition {
+    FlowTransition {
+        new_state: ExecutionState {
             status: ExecutionStatus::Active,
             no_atual: para.to_owned(),
             dados_json: format!(
                 "{{\"{de}\":{{\"endereco\":\"Rua das Flores, 10\"}},\"{para}\":{{}}}}"
             ),
-            atores_que_agiram: Vec::new(),
-            resultado: None,
-            motivo: None,
+            acting_actors: Vec::new(),
+            result: None,
+            reason: None,
         },
-        eventos: vec![
-            EventoDaTransicao {
+        events: vec![
+            TransitionEvent {
                 tipo: RecordEventKind::ActionExecuted,
                 ator_tipo: EventActor::Attendant,
                 payload_json: format!("{{\"etapa\":\"{de}\",\"acao\":\"confirmar\"}}"),
             },
-            EventoDaTransicao {
+            TransitionEvent {
                 tipo: RecordEventKind::StepCompleted,
                 ator_tipo: EventActor::System,
                 payload_json: format!("{{\"etapa\":\"{de}\",\"acao\":\"confirmar\"}}"),
             },
-            EventoDaTransicao {
+            TransitionEvent {
                 tipo: RecordEventKind::StepEntered,
                 ator_tipo: EventActor::System,
                 payload_json: format!("{{\"etapa\":\"{para}\"}}"),
             },
         ],
-        efeitos: Vec::new(),
-        encerra_atendimento: false,
-        repetida: false,
-        erro_de_regra: false,
+        effects: Vec::new(),
+        closes_service: false,
+        repeated: false,
+        rule_error: false,
     }
 }
 
 /// Transição do `fim` que pede o encerramento do atendimento.
-fn transicao_encerra(de: &str) -> TransicaoDeFluxo {
-    TransicaoDeFluxo {
-        novo_estado: EstadoDaExecucao {
+fn transicao_encerra(de: &str) -> FlowTransition {
+    FlowTransition {
+        new_state: ExecutionState {
             status: ExecutionStatus::Completed,
             no_atual: "concluida".to_owned(),
             dados_json: format!("{{\"{de}\":{{\"endereco\":\"Rua das Flores, 10\"}}}}"),
-            atores_que_agiram: Vec::new(),
-            resultado: Some("Visita agendada".to_owned()),
-            motivo: None,
+            acting_actors: Vec::new(),
+            result: Some("Visita agendada".to_owned()),
+            reason: None,
         },
-        eventos: vec![
-            EventoDaTransicao {
+        events: vec![
+            TransitionEvent {
                 tipo: RecordEventKind::StepCompleted,
                 ator_tipo: EventActor::System,
                 payload_json: format!("{{\"etapa\":\"{de}\"}}"),
             },
-            EventoDaTransicao {
+            TransitionEvent {
                 tipo: RecordEventKind::ExecutionCompleted,
                 ator_tipo: EventActor::System,
                 payload_json: "{\"resultado\":\"Visita agendada\"}".to_owned(),
             },
         ],
-        efeitos: Vec::new(),
-        encerra_atendimento: true,
-        repetida: false,
-        erro_de_regra: false,
+        effects: Vec::new(),
+        closes_service: true,
+        repeated: false,
+        rule_error: false,
     }
 }
 
@@ -332,24 +332,24 @@ fn latencia_da_transicao_e_da_conversa_com_ficha() {
     {
         let (ficha, _) = cenario.ficha(&org, &agente, "cliente-parcial");
         let aberta = cenario.abrir(&org, &agente, ficha, fluxo);
-        let mut versao = aberta.execucao.versao;
+        let mut versao = aberta.execution.version;
         let mut amostras = Vec::with_capacity(500);
         for indice in 0..500u32 {
             let inicio = Instant::now();
             let gravada = cenario
                 .store
-                .execucoes()
+                .executions()
                 .aplicar_transicao(
                     org.id,
-                    aberta.execucao.id,
+                    aberta.execution.id,
                     versao,
                     &transicao_parcial("coleta"),
                     &format!("medicao-parcial-{indice}"),
-                    ExtrasDaTransicao::default(),
+                    TransitionExtras::default(),
                 )
                 .expect("aplica a parcial");
             amostras.push(inicio.elapsed().as_micros());
-            versao = gravada.execucao.versao;
+            versao = gravada.execution.version;
         }
         relatar(
             "transição na etapa (estado + 2 eventos + 1 efeito)",
@@ -361,7 +361,7 @@ fn latencia_da_transicao_e_da_conversa_com_ficha() {
     {
         let (ficha, _) = cenario.ficha(&org, &agente, "cliente-avanca");
         let aberta = cenario.abrir(&org, &agente, ficha, fluxo);
-        let mut versao = aberta.execucao.versao;
+        let mut versao = aberta.execution.version;
         let mut amostras = Vec::with_capacity(300);
         for indice in 0..300u32 {
             let (de, para) = if indice % 2 == 0 {
@@ -372,18 +372,18 @@ fn latencia_da_transicao_e_da_conversa_com_ficha() {
             let inicio = Instant::now();
             let gravada = cenario
                 .store
-                .execucoes()
+                .executions()
                 .aplicar_transicao(
                     org.id,
-                    aberta.execucao.id,
+                    aberta.execution.id,
                     versao,
                     &transicao_avanca(de, para),
                     &format!("medicao-avanca-{indice}"),
-                    ExtrasDaTransicao::default(),
+                    TransitionExtras::default(),
                 )
                 .expect("aplica o avanço");
             amostras.push(inicio.elapsed().as_micros());
-            versao = gravada.execucao.versao;
+            versao = gravada.execution.version;
         }
         relatar(
             "transição avançando de etapa (estado + 3 eventos + etapa nova)",
@@ -400,19 +400,19 @@ fn latencia_da_transicao_e_da_conversa_com_ficha() {
             let inicio = Instant::now();
             let gravada = cenario
                 .store
-                .execucoes()
+                .executions()
                 .aplicar_transicao(
                     org.id,
-                    aberta.execucao.id,
-                    aberta.execucao.versao,
+                    aberta.execution.id,
+                    aberta.execution.version,
                     &transicao_encerra("coleta"),
                     &format!("medicao-fim-{indice}"),
-                    ExtrasDaTransicao::default(),
+                    TransitionExtras::default(),
                 )
                 .expect("aplica o fim");
             amostras.push(inicio.elapsed().as_micros());
             assert!(
-                gravada.fechou_atendimento,
+                gravada.closed_service,
                 "o fim de teste encerra o atendimento"
             );
         }
@@ -432,12 +432,12 @@ fn latencia_da_transicao_e_da_conversa_com_ficha() {
                 .conversas()
                 .criar(
                     org.id,
-                    NovaConversa {
+                    NewConversation {
                         agent_id: agente.id,
                         integration_id: None,
                         canal: "console".to_owned(),
                         peer_externo: Some(format!("cliente-criacao-{indice}")),
-                        departamento_alvo: None,
+                        target_department: None,
                     },
                 )
                 .expect("cria a conversa");

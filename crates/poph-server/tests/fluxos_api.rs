@@ -26,7 +26,7 @@ use std::time::{Duration, Instant, SystemTime};
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, SaltString};
 use poph_server::Estado;
-use poph_store::{NovoFluxo, Pagina, Store};
+use poph_store::{NewFlow, Page, Store};
 use poph_types::config::GlobalTokenConfig;
 use poph_types::{
     AgentId, EventActor, ExecutionStatus, FlowId, HarnessConfig, OrgId, RecordId, RevisionId,
@@ -194,7 +194,7 @@ impl Cenario {
         ajuste(&mut config);
         config.validar().expect("configuração válida");
 
-        let store = Arc::new(Store::abrir(&config).expect("abre o banco"));
+        let store = Arc::new(Store::open(&config).expect("abre o banco"));
         let estado = Estado::novo(Arc::clone(&store), config).expect("estado do servidor");
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -324,7 +324,7 @@ impl Cenario {
             .fichas()
             .criar(
                 org,
-                poph_store::NovaFicha {
+                poph_store::NewRecord {
                     conversation_id: None,
                     agent_id: agente,
                     canal: "console".to_owned(),
@@ -354,26 +354,26 @@ impl Cenario {
             .liberar(org, agente, fluxo)
             .expect("libera o fluxo ao agente");
         self.store()
-            .execucoes()
+            .executions()
             .iniciar_execucao(
                 org,
-                poph_store::InicioDeExecucao {
+                poph_store::ExecutionStart {
                     chave_idempotencia: None,
                     ficha,
                     fluxo,
-                    revisao,
-                    ator: EventActor::Agent,
+                    revision: revisao,
+                    actor: EventActor::Agent,
                     ator_ref: Some("atendente-de-teste"),
-                    decisao_jev: None,
-                    estado_inicial: poph_store::EstadoDaExecucao {
+                    jev_decision: None,
+                    initial_state: poph_store::ExecutionState {
                         status: ExecutionStatus::Active,
                         no_atual: "coleta".to_owned(),
                         dados_json: "{}".to_owned(),
-                        atores_que_agiram: Vec::new(),
-                        resultado: None,
-                        motivo: None,
+                        acting_actors: Vec::new(),
+                        result: None,
+                        reason: None,
                     },
-                    efeitos_de_entrada: Vec::new(),
+                    inbound_effects: Vec::new(),
                 },
             )
             .expect("abre a execução");
@@ -386,10 +386,10 @@ impl Cenario {
             .fluxos()
             .criar(
                 org,
-                NovoFluxo {
+                NewFlow {
                     slug: slug.to_owned(),
-                    nome: format!("Fluxo {slug}"),
-                    descricao: String::new(),
+                    name: format!("Fluxo {slug}"),
+                    description: String::new(),
                     rascunho_fonte: String::new(),
                 },
             )
@@ -397,11 +397,11 @@ impl Cenario {
             .id
     }
 
-    fn auditoria(&self, org_id: &str) -> Vec<poph_store::RegistroAuditoria> {
+    fn auditoria(&self, org_id: &str) -> Vec<poph_store::AuditEntry> {
         let org: OrgId = org_id.parse().expect("org válida");
         self.store()
-            .auditoria()
-            .listar(org, Pagina::default())
+            .audit()
+            .listar(org, Page::default())
             .expect("lê a auditoria")
     }
 }
@@ -994,8 +994,8 @@ async fn excluir_com_execucao_ativa_exige_force_e_audita() {
         .filter(|registro| registro.acao == "flow_delete")
         .collect();
     assert_eq!(exclusoes.len(), 1, "a exclusão tem de ser auditada");
-    assert_eq!(exclusoes[0].entidade, "flow");
-    assert_eq!(exclusoes[0].entidade_id.as_deref(), Some(fluxo.as_str()));
+    assert_eq!(exclusoes[0].entity, "flow");
+    assert_eq!(exclusoes[0].entity_id.as_deref(), Some(fluxo.as_str()));
 
     // A auditoria da publicação também ficou.
     let publicacoes: Vec<_> = c

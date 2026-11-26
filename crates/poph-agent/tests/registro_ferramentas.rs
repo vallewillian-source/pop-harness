@@ -26,7 +26,7 @@ use poph_agent::turno::{
 use poph_core::llm::{
     ChamadaFerramenta, EventoLlm, LlmProvider, Mensagem, MotivoFim, ProvedorFake, Roteiro,
 };
-use poph_store::{NovaConversa, NovaMensagem, NovaOrg, NovoAgente, Pagina, Store, Turno};
+use poph_store::{NewAgent, NewConversation, NewMessage, NewOrg, Page, Store, Turno};
 use poph_types::{AgentId, ConversationId, OrgId, StructuredInstructions, ToolConfig};
 
 /// Pausa que não dorme: a janela de agrupamento é irrelevante aqui.
@@ -109,26 +109,25 @@ impl Cenario {
         let _ = std::fs::remove_dir_all(&pasta);
         std::fs::create_dir_all(&pasta).expect("cria a pasta");
         let store = Arc::new(
-            Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
-                .expect("abre o banco"),
+            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco"),
         );
         let org = store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: format!("Org {rotulo}"),
+            .orgs()
+            .criar(NewOrg {
+                name: format!("Org {rotulo}"),
                 slug: format!("org-{rotulo}-{}", AgentId::generate()),
                 config_json: "{}".to_owned(),
             })
             .expect("cria a org")
             .id;
         let agente = store
-            .agentes()
+            .agents()
             .criar(
                 org,
-                NovoAgente {
-                    nome: format!("Atendente {rotulo}"),
+                NewAgent {
+                    name: format!("Atendente {rotulo}"),
                     slug: format!("atendente-{rotulo}"),
-                    ..NovoAgente::default()
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente")
@@ -145,7 +144,7 @@ impl Cenario {
             ..StructuredInstructions::default()
         };
         store
-            .instrucoes()
+            .instructions()
             .salvar(
                 org,
                 agente,
@@ -159,12 +158,12 @@ impl Cenario {
             .conversas()
             .criar(
                 org,
-                NovaConversa {
+                NewConversation {
                     agent_id: agente,
                     integration_id: None,
                     canal: "cli".to_owned(),
                     peer_externo: None,
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("abre a conversa")
@@ -208,19 +207,19 @@ impl Cenario {
 
     fn falar(&self, texto: &str) -> poph_types::MessageId {
         self.store
-            .mensagens()
+            .messages()
             .gravar(
                 self.org,
-                NovaMensagem {
+                NewMessage {
                     conversation_id: self.conversa,
-                    direcao: poph_store::Direcao::Entrada,
-                    papel: poph_store::Papel::Usuario,
+                    direction: poph_store::Direction::Inbound,
+                    role: poph_store::Role::User,
                     texto: texto.to_owned(),
-                    anexos_json: "[]".to_owned(),
+                    attachments_json: "[]".to_owned(),
                     id_externo: None,
                     turn_id: None,
-                    origem: poph_store::Origem::Agente,
-                    autor_nome: None,
+                    origin: poph_store::Origin::Agente,
+                    author_name: None,
                 },
             )
             .expect("grava a mensagem")
@@ -230,8 +229,8 @@ impl Cenario {
     fn turno(&self) -> Turno {
         let turnos = self
             .store
-            .turnos()
-            .listar(self.org, self.conversa, Pagina::default())
+            .turns()
+            .listar(self.org, self.conversa, Page::default())
             .expect("lista os turnos");
         assert_eq!(turnos.len(), 1, "um turno por mensagem");
         turnos.into_iter().next().expect("o turno")
@@ -247,7 +246,7 @@ impl Cenario {
             .await
             .expect("o turno roda");
         let turno = self.turno();
-        serde_json::from_str(&turno.ferramentas_json).expect("JSON do registro de ferramentas")
+        serde_json::from_str(&turno.tools_json).expect("JSON do registro de ferramentas")
     }
 }
 

@@ -21,7 +21,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use moka::sync::Cache;
-use poph_store::{Agente, Instrucoes, Store};
+use poph_store::{Agente, Instructions, Store};
 use poph_types::{AgentId, OrgId, StructuredInstructions};
 
 use crate::erro::{ErroAgente, Resultado};
@@ -60,7 +60,7 @@ pub struct AgenteQuente {
     /// Agente como está no banco (só `active` chega aqui).
     pub agente: Agente,
     /// Instruções gravadas (`None` quando o agente ainda não tem).
-    pub instrucoes: Option<Instrucoes>,
+    pub instrucoes: Option<Instructions>,
     /// JSON estruturado já interpretado (`None` quando ausente ou ilegível).
     pub estruturado: Option<StructuredInstructions>,
     /// Texto do prefixo estável do prompt (o markdown gravado, inclusive editado à mão).
@@ -80,17 +80,17 @@ pub struct AgenteQuente {
 impl AgenteQuente {
     /// Versão do agente que originou esta cópia.
     pub fn versao(&self) -> u64 {
-        self.agente.versao
+        self.agente.version
     }
 
     /// Par (versão do agente, versão das instruções) usado na invalidação.
     pub fn versao_composta(&self) -> (u64, u64) {
-        (self.agente.versao, self.versao_instrucoes)
+        (self.agente.version, self.versao_instrucoes)
     }
 
     /// `true` quando o agente pode abrir turno (D-05).
     pub fn pode_abrir_turno(&self) -> bool {
-        self.agente.pode_abrir_turno()
+        self.agente.can_open_turn()
     }
 
     /// Ferramenta habilitada? É o filtro que a HR-13 aplica no laço de ferramentas.
@@ -144,8 +144,8 @@ impl ConfigQuente {
         agente: AgentId,
     ) -> Resultado<Arc<AgenteQuente>> {
         let chave = Chave { org, agente };
-        let versao = self.store.agentes().versao(org, agente)?;
-        let versao_instrucoes = self.store.instrucoes().versao(org, agente)?.unwrap_or(0);
+        let versao = self.store.agents().versao(org, agente)?;
+        let versao_instrucoes = self.store.instructions().versao(org, agente)?.unwrap_or(0);
         if let Some(quente) = self.cache.get(&chave)
             && quente.versao_composta() == (versao, versao_instrucoes)
         {
@@ -198,11 +198,11 @@ impl ConfigQuente {
         self.metricas.config_erros.increment(1);
         let agente = self
             .store
-            .agentes()
+            .agents()
             .obter_para_turno(chave.org, chave.agente)?;
-        let instrucoes = match self.store.instrucoes().obter(chave.org, chave.agente) {
+        let instrucoes = match self.store.instructions().obter(chave.org, chave.agente) {
             Ok(instrucoes) => Some(instrucoes),
-            Err(erro) if erro.eh_nao_encontrado() => None,
+            Err(erro) if erro.is_not_found() => None,
             Err(erro) => return Err(ErroAgente::Store(erro)),
         };
         let quente = Arc::new(montar(agente, instrucoes));
@@ -222,10 +222,10 @@ impl ConfigQuente {
     }
 }
 
-fn montar(agente: Agente, instrucoes: Option<Instrucoes>) -> AgenteQuente {
+fn montar(agente: Agente, instrucoes: Option<Instructions>) -> AgenteQuente {
     // O JSON pode vir de importação antiga (duplo encoding): `de_json_tolerante` aceita os dois.
     let estruturado = instrucoes.as_ref().and_then(|instrucoes| {
-        StructuredInstructions::from_tolerant_json(&instrucoes.estruturado_json).ok()
+        StructuredInstructions::from_tolerant_json(&instrucoes.structured_json).ok()
     });
     let ferramentas: Vec<String> = estruturado
         .as_ref()
@@ -243,10 +243,10 @@ fn montar(agente: Agente, instrucoes: Option<Instrucoes>) -> AgenteQuente {
         .map(|instrucoes| instrucoes.markdown.clone())
         .unwrap_or_default();
     let top_k = agente.rag_top_k;
-    let corte = agente.rag_corte;
+    let corte = agente.rag_cutoff;
     let versao_instrucoes = instrucoes
         .as_ref()
-        .map(|instrucoes| instrucoes.versao)
+        .map(|instrucoes| instrucoes.version)
         .unwrap_or(0);
     let bytes = estimar_bytes(
         &agente,
@@ -272,22 +272,22 @@ fn montar(agente: Agente, instrucoes: Option<Instrucoes>) -> AgenteQuente {
 /// custo fixo. Serve de peso no cache — precisão de byte não muda o comportamento.
 fn estimar_bytes(
     agente: &Agente,
-    instrucoes: Option<&Instrucoes>,
+    instrucoes: Option<&Instructions>,
     estruturado: &Option<StructuredInstructions>,
     markdown: &str,
     ferramentas: &[String],
 ) -> u64 {
     const FIXO: u64 = 512;
     let mut bytes = FIXO;
-    bytes += agente.nome.len() as u64
+    bytes += agente.name.len() as u64
         + agente.slug.len() as u64
-        + agente.descricao.len() as u64
+        + agente.description.len() as u64
         + agente.provedor.len() as u64
         + agente.modelo.len() as u64
         + agente.jev_json.len() as u64;
     bytes += markdown.len() as u64;
     if let Some(instrucoes) = instrucoes {
-        bytes += instrucoes.estruturado_json.len() as u64;
+        bytes += instrucoes.structured_json.len() as u64;
     }
     if let Some(estruturado) = estruturado {
         // O JSON já foi contado; as strings do tipo são as mesmas, então não soma de novo.

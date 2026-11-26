@@ -8,9 +8,9 @@ use argon2::password_hash::{PasswordHasher, SaltString};
 use poph_fluxos::{Ir, Limites, compilar};
 use poph_server::Estado;
 use poph_store::{
-    Direcao, NovaCategoria, NovaConversa, NovaFicha, NovaMensagem, NovaOrg, NovoAgente,
-    NovoArquivoBiblioteca, NovoDepartamento, NovoFluxo, NovoGrupoConhecimento,
-    NovoItemConhecimento, NovoProduto, Origem, OrigemEspaco, Papel, PublicacaoDeRevisao, Store,
+    Direction, NewAgent, NewCategory, NewConversation, NewDepartment, NewFlow, NewKnowledgeGroup,
+    NewKnowledgeItem, NewLibraryFile, NewMessage, NewOrg, NewProduct, NewRecord, OrigemEspaco,
+    Origin, RevisionPublication, Role, Store,
 };
 use poph_types::HarnessConfig;
 use poph_types::config::GlobalTokenConfig;
@@ -204,9 +204,9 @@ impl Scenario {
         let blobs = config.blobs();
 
         let store = Arc::new(
-            Store::abrir(&config)
+            Store::open(&config)
                 .expect("open store")
-                .com_relogio(Arc::new(|| FIXED_NOW_MS)),
+                .with_clock(Arc::new(|| FIXED_NOW_MS)),
         );
         let state = Estado::novo(Arc::clone(&store), config).expect("server state");
 
@@ -282,39 +282,39 @@ impl Scenario {
     fn seed(&self) -> Seeds {
         let store = &self.store;
         let org = store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: "Contratos Ltda".to_owned(),
+            .orgs()
+            .criar(NewOrg {
+                name: "Contratos Ltda".to_owned(),
                 slug: "contratos".to_owned(),
                 config_json: String::new(),
             })
             .expect("org");
         let department = store
-            .departamentos()
+            .departments()
             .criar(
                 org.id,
-                NovoDepartamento {
-                    nome: "Suporte".to_owned(),
-                    descricao: "Atendimento de primeiro nivel".to_owned(),
+                NewDepartment {
+                    name: "Suporte".to_owned(),
+                    description: "Atendimento de primeiro nivel".to_owned(),
                 },
             )
             .expect("department");
         let agent = store
-            .agentes()
+            .agents()
             .criar(
                 org.id,
-                NovoAgente {
-                    nome: "Ana".to_owned(),
+                NewAgent {
+                    name: "Ana".to_owned(),
                     slug: "ana".to_owned(),
-                    descricao: "Agente de suporte".to_owned(),
-                    departamento_padrao: Some(department.id),
+                    description: "Agente de suporte".to_owned(),
+                    default_department: Some(department.id),
                     rag_top_k: 4,
-                    ..NovoAgente::default()
+                    ..NewAgent::default()
                 },
             )
             .expect("agent");
         store
-            .instrucoes()
+            .instructions()
             .salvar(
                 org.id,
                 agent.id,
@@ -325,74 +325,74 @@ impl Scenario {
             )
             .expect("instructions");
         let category = store
-            .categorias()
+            .categories()
             .criar(
                 org.id,
-                NovaCategoria {
-                    nome: "Planos".to_owned(),
-                    descricao: "Planos comerciais".to_owned(),
+                NewCategory {
+                    name: "Planos".to_owned(),
+                    description: "Planos comerciais".to_owned(),
                 },
             )
             .expect("category");
         let product = store
-            .produtos()
+            .products()
             .criar(
                 org.id,
-                NovoProduto {
-                    categoria_id: Some(category.id),
-                    nome: "Plano Basico".to_owned(),
+                NewProduct {
+                    category_id: Some(category.id),
+                    name: "Plano Basico".to_owned(),
                     slug: Some("plano-basico".to_owned()),
                     aliases: vec!["basico".to_owned()],
-                    descricao: "Plano de entrada".to_owned(),
-                    preco_texto: "R$ 99,00".to_owned(),
-                    preco_centavos: 9900,
-                    unidade: "mes".to_owned(),
-                    inclui: "Suporte por WhatsApp".to_owned(),
+                    description: "Plano de entrada".to_owned(),
+                    price_text: "R$ 99,00".to_owned(),
+                    price_cents: 9900,
+                    unit: "mes".to_owned(),
+                    includes: "Suporte por WhatsApp".to_owned(),
                     exclui: "Visitas".to_owned(),
-                    condicoes: "Contrato de 12 meses".to_owned(),
+                    conditions: "Contrato de 12 meses".to_owned(),
                     tags: vec!["plano".to_owned()],
                 },
             )
             .expect("product");
         let group = store
-            .conhecimento()
+            .knowledge()
             .criar_grupo(
                 org.id,
-                NovoGrupoConhecimento {
-                    nome: "Perguntas frequentes".to_owned(),
-                    descricao: "Duvidas recorrentes".to_owned(),
+                NewKnowledgeGroup {
+                    name: "Perguntas frequentes".to_owned(),
+                    description: "Duvidas recorrentes".to_owned(),
                 },
             )
             .expect("knowledge group");
         let item = store
-            .conhecimento()
+            .knowledge()
             .criar_item(
                 org.id,
-                NovoItemConhecimento {
-                    grupo_id: group.id,
-                    titulo: "Horario de atendimento".to_owned(),
-                    conteudo: "De segunda a sexta, das 8h as 18h.".to_owned(),
+                NewKnowledgeItem {
+                    group_id: group.id,
+                    title: "Horario de atendimento".to_owned(),
+                    content: "De segunda a sexta, das 8h as 18h.".to_owned(),
                     tags: vec!["horario".to_owned()],
-                    posicao: 0,
+                    position: 0,
                 },
             )
             .expect("knowledge item");
         store
-            .conhecimento()
+            .knowledge()
             .vincular_agente(org.id, agent.id, group.id)
             .expect("link group");
         let content = b"conteudo de exemplo";
         let blob = poph_files::blob::gravar(&self.blobs, org.id, content).expect("blob");
         let file = store
-            .biblioteca()
+            .library()
             .criar(
                 org.id,
-                NovoArquivoBiblioteca {
+                NewLibraryFile {
                     agent_id: agent.id,
-                    nome: "exemplo.txt".to_owned(),
-                    descricao: "Arquivo de exemplo".to_owned(),
+                    name: "exemplo.txt".to_owned(),
+                    description: "Arquivo de exemplo".to_owned(),
                     mime: "text/plain".to_owned(),
-                    tamanho_bytes: content.len() as u64,
+                    size_bytes: content.len() as u64,
                     sha256: blob.sha256,
                     blob_path: format!("{}/{}", org.id, poph_files::blob::sha256_hex(content)),
                 },
@@ -405,10 +405,10 @@ impl Scenario {
             .fluxos()
             .criar(
                 org.id,
-                NovoFluxo {
+                NewFlow {
                     slug: "agendar_visita".to_owned(),
-                    nome: "Agendar visita".to_owned(),
-                    descricao: "Marca a visita tecnica".to_owned(),
+                    name: "Agendar visita".to_owned(),
+                    description: "Marca a visita tecnica".to_owned(),
                     rascunho_fonte: String::new(),
                 },
             )
@@ -419,12 +419,12 @@ impl Scenario {
         );
         for (expected, script) in [(1u64, FLOW_SCRIPT.to_owned()), (2, second_script)] {
             store
-                .revisoes()
+                .revisions()
                 .publicar_revisao(
                     org.id,
                     flow.id,
-                    PublicacaoDeRevisao {
-                        esperada: expected,
+                    RevisionPublication {
+                        expected,
                         fonte: script.clone(),
                         definicao_json: compilar(&script, &Limites::default())
                             .ir()
@@ -433,7 +433,7 @@ impl Scenario {
                         schema_versao: Some(ir.schema_versao),
                         resolucoes_json: String::new(),
                         ator_tipo: "cli".to_owned(),
-                        ator_id: Some("contracts".to_owned()),
+                        actor_id: Some("contracts".to_owned()),
                     },
                 )
                 .expect("publish revision");
@@ -447,40 +447,40 @@ impl Scenario {
             .conversas()
             .criar(
                 org.id,
-                NovaConversa {
+                NewConversation {
                     agent_id: agent.id,
                     integration_id: None,
                     canal: "whatsapp".to_owned(),
                     peer_externo: Some("5521000000000".to_owned()),
-                    departamento_alvo: Some(department.id),
+                    target_department: Some(department.id),
                 },
             )
             .expect("conversation");
         let turn = store
-            .turnos()
+            .turns()
             .iniciar(org.id, conversation.id, Some(agent.id))
             .expect("turn");
         for (direction, role, origin, text) in [
-            (Direcao::Entrada, Papel::Usuario, Origem::Dispositivo, "Ola"),
+            (Direction::Inbound, Role::User, Origin::Device, "Ola"),
             (
-                Direcao::Saida,
-                Papel::Assistente,
-                Origem::Agente,
+                Direction::Outbound,
+                Role::Assistant,
+                Origin::Agente,
                 "Ola, como posso ajudar?",
             ),
         ] {
             store
-                .mensagens()
+                .messages()
                 .gravar(
                     org.id,
-                    NovaMensagem {
+                    NewMessage {
                         conversation_id: conversation.id,
-                        direcao: direction,
-                        papel: role,
-                        origem: origin,
-                        autor_nome: None,
+                        direction,
+                        role,
+                        origin,
+                        author_name: None,
                         texto: text.to_owned(),
-                        anexos_json: "[]".to_owned(),
+                        attachments_json: "[]".to_owned(),
                         id_externo: None,
                         turn_id: Some(turn.id),
                     },
@@ -491,27 +491,27 @@ impl Scenario {
             .conversas()
             .criar(
                 org.id,
-                NovaConversa {
+                NewConversation {
                     agent_id: agent.id,
                     integration_id: None,
                     canal: "test".to_owned(),
                     peer_externo: None,
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("test chat conversation");
         store
-            .mensagens()
+            .messages()
             .gravar(
                 org.id,
-                NovaMensagem {
+                NewMessage {
                     conversation_id: test_chat.id,
-                    direcao: Direcao::Entrada,
-                    papel: Papel::Usuario,
-                    origem: Origem::Agente,
-                    autor_nome: None,
+                    direction: Direction::Inbound,
+                    role: Role::User,
+                    origin: Origin::Agente,
+                    author_name: None,
                     texto: "Mensagem do chat de teste".to_owned(),
-                    anexos_json: "[]".to_owned(),
+                    attachments_json: "[]".to_owned(),
                     id_externo: None,
                     turn_id: None,
                 },
@@ -526,7 +526,7 @@ impl Scenario {
                     .fichas()
                     .criar(
                         org.id,
-                        NovaFicha {
+                        NewRecord {
                             conversation_id: Some(conversation.id),
                             agent_id: agent.id,
                             canal: "whatsapp".to_owned(),
@@ -540,7 +540,7 @@ impl Scenario {
             .criar(Some(org.id), "leitura", &hash_argon2("poph_contracts"))
             .expect("token");
         let integration = store
-            .integracao_criar(org.id, agent.id, "whatsapp".to_owned(), "active".to_owned())
+            .create_integration(org.id, agent.id, "whatsapp".to_owned(), "active".to_owned())
             .expect("integration");
         store.matrix().ligar(org.id).expect("matrix on");
         store
@@ -671,16 +671,16 @@ fn upgraded_schema(folder: &Path) -> PathBuf {
     fs::create_dir_all(harness.parent().expect("folder")).expect("old folder");
     let connection = rusqlite::Connection::open(&harness).expect("open old database");
     connection.execute_batch(BOOTSTRAP).expect("bootstrap");
-    let first = &poph_store::MIGRACOES_HARNESS[0];
+    let first = &poph_store::HARNESS_MIGRATIONS[0];
     connection.execute_batch(first.sql).expect("migration 1");
     connection
         .execute(
             "INSERT INTO schema_migrations (version, name, applied_at) VALUES (?1, ?2, ?3)",
-            rusqlite::params![first.versao, first.nome, FIXED_NOW_MS],
+            rusqlite::params![first.version, first.name, FIXED_NOW_MS],
         )
         .expect("migration row");
     drop(connection);
-    Store::abrir_em(&harness, &rag).expect("upgrade through the runner");
+    Store::open_at(&harness, &rag).expect("upgrade through the runner");
     harness
 }
 
@@ -804,8 +804,8 @@ async fn capture_contracts() {
     }
 
     let output = output_dir();
-    let harness = scenario.store.caminho_harness().to_path_buf();
-    let rag = scenario.store.caminho_rag().to_path_buf();
+    let harness = scenario.store.harness_path().to_path_buf();
+    let rag = scenario.store.rag_path().to_path_buf();
     write_text(
         &output.join("db/harness-schema.txt"),
         &dump_schema(&harness),

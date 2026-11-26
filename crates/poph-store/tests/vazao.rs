@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use poph_store::{Direcao, NovaConversa, NovaMensagem, NovaOrg, NovoAgente, Org, Papel, Store};
+use poph_store::{Direction, NewAgent, NewConversation, NewMessage, NewOrg, Org, Role, Store};
 
 struct Carga {
     pasta: std::path::PathBuf,
@@ -32,32 +32,32 @@ impl Carga {
         let _ = fs::remove_dir_all(&pasta);
         fs::create_dir_all(&pasta).expect("cria pasta");
         let store =
-            Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre banco");
+            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre banco");
         let store = Arc::new(store);
         let org = store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: "Org de vazão".to_owned(),
+            .orgs()
+            .criar(NewOrg {
+                name: "Org de vazão".to_owned(),
                 slug: "vazao".to_owned(),
                 config_json: String::new(),
             })
             .expect("org");
-        let novo = NovoAgente {
-            nome: "Agente de vazão".to_owned(),
+        let novo = NewAgent {
+            name: "Agente de vazão".to_owned(),
             slug: "vazao".to_owned(),
-            ..NovoAgente::default()
+            ..NewAgent::default()
         };
-        let agente = store.agentes().criar(org.id, novo).expect("agente");
+        let agente = store.agents().criar(org.id, novo).expect("agente");
         let conversa = store
             .conversas()
             .criar(
                 org.id,
-                NovaConversa {
+                NewConversation {
                     agent_id: agente.id,
                     integration_id: None,
                     canal: "cli".to_owned(),
                     peer_externo: Some("vazao".to_owned()),
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("conversa")
@@ -72,19 +72,19 @@ impl Carga {
 
     fn escrever(&self) {
         self.store
-            .mensagens()
+            .messages()
             .gravar(
                 self.org.id,
-                NovaMensagem {
+                NewMessage {
                     conversation_id: self.conversa,
-                    direcao: Direcao::Entrada,
-                    papel: Papel::Usuario,
+                    direction: Direction::Inbound,
+                    role: Role::User,
                     texto: "mensagem de carga".to_owned(),
-                    anexos_json: "[]".to_owned(),
+                    attachments_json: "[]".to_owned(),
                     id_externo: None,
                     turn_id: None,
-                    origem: poph_store::Origem::Agente,
-                    autor_nome: None,
+                    origin: poph_store::Origin::Agente,
+                    author_name: None,
                 },
             )
             .expect("gravação");
@@ -145,19 +145,19 @@ fn vazao_e_latencia_contra_as_metas_da_hr01() {
                 let mut locais = 0_u64;
                 while !parar.load(Ordering::Relaxed) {
                     store
-                        .mensagens()
+                        .messages()
                         .gravar(
                             org,
-                            NovaMensagem {
+                            NewMessage {
                                 conversation_id: conversa,
-                                direcao: Direcao::Entrada,
-                                papel: Papel::Usuario,
+                                direction: Direction::Inbound,
+                                role: Role::User,
                                 texto: "lote".to_owned(),
-                                anexos_json: "[]".to_owned(),
+                                attachments_json: "[]".to_owned(),
                                 id_externo: None,
                                 turn_id: None,
-                                origem: poph_store::Origem::Agente,
-                                autor_nome: None,
+                                origin: poph_store::Origin::Agente,
+                                author_name: None,
                             },
                         )
                         .expect("gravação concorrente");
@@ -180,7 +180,7 @@ fn vazao_e_latencia_contra_as_metas_da_hr01() {
         assert_eq!(
             carga
                 .store
-                .mensagens()
+                .messages()
                 .contar(carga.org.id, carga.conversa)
                 .expect("conta"),
             total,

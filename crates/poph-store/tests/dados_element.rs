@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 
-use poph_store::{Agente, Conversa, NovaConversa, NovaOrg, NovoAgente, Org, Store};
+use poph_store::{Agente, Conversa, NewAgent, NewConversation, NewOrg, Org, Store};
 use poph_types::ConversationId;
 
 /// Banco de verdade numa pasta temporária, apagada no fim.
@@ -31,9 +31,9 @@ impl Cenario {
         fs::create_dir_all(&pasta).expect("cria a pasta do teste");
         let relogio = Arc::new(AtomicI64::new(1_000));
         let agora = Arc::clone(&relogio);
-        let store = Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
+        let store = Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db"))
             .expect("abre o banco")
-            .com_relogio(Arc::new(move || agora.fetch_add(10, Ordering::SeqCst)));
+            .with_clock(Arc::new(move || agora.fetch_add(10, Ordering::SeqCst)));
         Self {
             pasta,
             store: Arc::new(store),
@@ -49,9 +49,9 @@ impl Drop for Cenario {
 
 fn criar_org(store: &Store, slug: &str) -> Org {
     store
-        .orgaos()
-        .criar(NovaOrg {
-            nome: format!("Org {slug}"),
+        .orgs()
+        .criar(NewOrg {
+            name: format!("Org {slug}"),
             slug: slug.to_owned(),
             config_json: String::new(),
         })
@@ -60,13 +60,13 @@ fn criar_org(store: &Store, slug: &str) -> Org {
 
 fn criar_agente(store: &Store, org: &Org, slug: &str) -> Agente {
     store
-        .agentes()
+        .agents()
         .criar(
             org.id,
-            NovoAgente {
-                nome: format!("Agente {slug}"),
+            NewAgent {
+                name: format!("Agente {slug}"),
                 slug: slug.to_owned(),
-                ..NovoAgente::default()
+                ..NewAgent::default()
             },
         )
         .expect("cria o agente")
@@ -77,12 +77,12 @@ fn criar_conversa(store: &Store, org: &Org, agente: &Agente) -> Conversa {
         .conversas()
         .criar(
             org.id,
-            NovaConversa {
+            NewConversation {
                 agent_id: agente.id,
                 integration_id: None,
                 canal: "cli".to_owned(),
                 peer_externo: Some("teste".to_owned()),
-                departamento_alvo: None,
+                target_department: None,
             },
         )
         .expect("cria a conversa")
@@ -98,13 +98,13 @@ fn nomes_de_agentes_saem_numa_consulta_so_e_filtrados_por_org() {
     let a2 = criar_agente(store, &a, "a2");
     let b1 = criar_agente(store, &b, "b1");
 
-    let antes = store.leituras_feitas();
+    let antes = store.reads_done();
     let nomes = store
-        .agentes()
+        .agents()
         .nomes(a.id, &[a1.id, a2.id, b1.id])
         .expect("nomes");
     assert_eq!(
-        store.leituras_feitas() - antes,
+        store.reads_done() - antes,
         1,
         "os nomes de vários agentes saem numa leitura só"
     );
@@ -115,7 +115,7 @@ fn nomes_de_agentes_saem_numa_consulta_so_e_filtrados_por_org() {
         "agente de outra org não entra no resultado"
     );
 
-    let vazio = store.agentes().nomes(a.id, &[]).expect("lista vazia");
+    let vazio = store.agents().nomes(a.id, &[]).expect("lista vazia");
     assert!(vazio.is_empty());
 }
 
@@ -155,10 +155,10 @@ fn salas_prontas_saem_numa_consulta_so_so_com_state_ready_e_por_org() {
         .expect("pronta da outra org");
 
     let pedidas: Vec<ConversationId> = vec![pronta.id, criando.id, sem_sala.id, de_outra_org.id];
-    let antes = store.leituras_feitas();
+    let antes = store.reads_done();
     let salas = store.matrix().salas_prontas(a.id, &pedidas).expect("salas");
     assert_eq!(
-        store.leituras_feitas() - antes,
+        store.reads_done() - antes,
         1,
         "as salas de várias conversas saem numa leitura só"
     );

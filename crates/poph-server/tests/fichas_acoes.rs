@@ -33,7 +33,7 @@ use poph_fluxos::{Avaliador, Ir, Limites, compilar};
 use poph_server::Estado;
 use poph_server::fluxos_transicao::transicao_do_motor;
 use poph_store::{
-    Execucao, ExtrasDaTransicao, NovaConversa, NovaFicha, NovoFluxo, PublicacaoDeRevisao, Store,
+    Execution, NewConversation, NewFlow, NewRecord, RevisionPublication, Store, TransitionExtras,
 };
 use poph_types::config::GlobalTokenConfig;
 use poph_types::{
@@ -128,7 +128,7 @@ impl Cenario {
         }];
         config.validar().expect("configuração válida");
 
-        let store = Arc::new(Store::abrir(&config).expect("abre o banco"));
+        let store = Arc::new(Store::open(&config).expect("abre o banco"));
         let estado = Estado::novo(Arc::clone(&store), config).expect("estado do servidor");
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -265,10 +265,10 @@ impl Cenario {
             .fluxos()
             .criar(
                 org_id,
-                NovoFluxo {
+                NewFlow {
                     slug: slug.to_owned(),
-                    nome: format!("Fluxo {slug}"),
-                    descricao: String::new(),
+                    name: format!("Fluxo {slug}"),
+                    description: String::new(),
                     rascunho_fonte: SCRIPT.to_owned(),
                 },
             )
@@ -280,18 +280,18 @@ impl Cenario {
         };
         let revisao = self
             .store
-            .revisoes()
+            .revisions()
             .publicar_revisao(
                 org_id,
                 fluxo.id,
-                PublicacaoDeRevisao {
-                    esperada: fluxo.versao,
+                RevisionPublication {
+                    expected: fluxo.version,
                     fonte: SCRIPT.to_owned(),
                     definicao_json: ir.para_json(),
                     schema_versao: Some(ir.schema_versao),
                     resolucoes_json: "{}".to_owned(),
                     ator_tipo: "admin_token".to_owned(),
-                    ator_id: None,
+                    actor_id: None,
                 },
             )
             .expect("publica a revisão");
@@ -304,7 +304,7 @@ impl Cenario {
             .fichas()
             .criar(
                 parse_org(org),
-                NovaFicha {
+                NewRecord {
                     conversation_id: None,
                     agent_id: parse_agente(agente),
                     canal: "whatsapp".to_owned(),
@@ -322,12 +322,12 @@ impl Cenario {
             .conversas()
             .criar(
                 parse_org(org),
-                NovaConversa {
+                NewConversation {
                     agent_id: parse_agente(agente),
                     integration_id: None,
                     canal: "whatsapp".to_owned(),
                     peer_externo: Some(format!("cliente-ficticio-{}", uuid::Uuid::now_v7())),
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("cria a conversa");
@@ -346,19 +346,19 @@ impl Cenario {
             .fichas()
             .obter(parse_org(org), ficha)
             .expect("lê a Ficha")
-            .versao
+            .version
     }
 
-    fn execucao(&self, org: &str, run: &str) -> Execucao {
+    fn execucao(&self, org: &str, run: &str) -> Execution {
         self.store
-            .execucoes()
+            .executions()
             .obter(parse_org(org), run.parse().expect("id da execução"))
             .expect("lê a execução")
     }
 
     fn quantas_execucoes(&self, org: &str, ficha: RecordId) -> usize {
         self.store
-            .execucoes()
+            .executions()
             .da_ficha(parse_org(org), ficha, 100)
             .expect("lista as execuções")
             .len()
@@ -380,19 +380,19 @@ impl Cenario {
         let execucao = self.execucao(org, run);
         let revisao = self
             .store
-            .revisoes()
+            .revisions()
             .obter_por_id(org_id, execucao.revisao_id)
             .expect("lê a revisão");
         let ir = Ir::de_json(&revisao.definicao_json).expect("IR da revisão");
         let atores_que_agiram = self
             .store
-            .execucoes()
+            .executions()
             .etapas(org_id, run_id)
             .expect("lê as etapas")
             .iter()
             .rev()
             .find(|etapa| etapa.no_id == execucao.no_atual)
-            .map(|etapa| etapa.atores_que_agiram.clone())
+            .map(|etapa| etapa.acting_actors.clone())
             .unwrap_or_default();
         let estado = EstadoMotor {
             fluxo_id: ir.fluxo.id.clone(),
@@ -423,17 +423,17 @@ impl Cenario {
         )
         .expect("o agente age na etapa");
         self.store
-            .execucoes()
+            .executions()
             .aplicar_transicao(
                 org_id,
                 run_id,
-                execucao.versao,
+                execucao.version,
                 &transicao_do_motor(&resultado),
                 chave,
-                ExtrasDaTransicao {
+                TransitionExtras {
                     ator_ref: Some("agente-de-teste"),
                     fechada_por: None,
-                    motivo_encerramento: None,
+                    close_reason: None,
                 },
             )
             .expect("grava a ação do agente");
@@ -680,7 +680,7 @@ async fn repetir_a_chave_do_inicio_nao_duplica_nem_depois_de_terminar() {
             &b.token,
             ficha,
             &run,
-            Some(c.execucao(&b.org, &run).versao),
+            Some(c.execucao(&b.org, &run).version),
             "cliente desistiu",
             "parar-visita",
         )
@@ -723,7 +723,7 @@ async fn atendente_confirma_o_agente_completa_e_o_atendente_conclui() {
             &b.token,
             ficha,
             &run,
-            Some(c.execucao(&b.org, &run).versao),
+            Some(c.execucao(&b.org, &run).version),
             "confirmar",
             json!({}),
             "atendente-confirma",
@@ -754,7 +754,7 @@ async fn atendente_confirma_o_agente_completa_e_o_atendente_conclui() {
             &b.token,
             ficha,
             &run,
-            Some(c.execucao(&b.org, &run).versao),
+            Some(c.execucao(&b.org, &run).version),
             "concluir",
             json!({}),
             "atendente-conclui",
@@ -775,7 +775,7 @@ async fn corrida_atendente_com_agente_da_412_e_nao_grava_nada() {
         .iniciar(&b.org, &b.token, ficha, Some(versao), b.fluxo, "abrir")
         .await;
     let run = aberta["id"].as_str().expect("id").to_owned();
-    let versao_lida = c.execucao(&b.org, &run).versao;
+    let versao_lida = c.execucao(&b.org, &run).version;
 
     // O agente grava primeiro: a versão que o atendente leu ficou velha.
     c.agente_age(
@@ -820,7 +820,7 @@ async fn repetir_a_chave_da_acao_devolve_o_mesmo_sem_evento_novo() {
         .iniciar(&b.org, &b.token, ficha, Some(versao), b.fluxo, "abrir")
         .await;
     let run = aberta["id"].as_str().expect("id").to_owned();
-    let versao_lida = c.execucao(&b.org, &run).versao;
+    let versao_lida = c.execucao(&b.org, &run).version;
 
     let (status, primeira) = c
         .acao(
@@ -836,7 +836,7 @@ async fn repetir_a_chave_da_acao_devolve_o_mesmo_sem_evento_novo() {
         .await;
     assert_eq!(status, StatusCode::OK, "{primeira}");
     let eventos = c.quantos_eventos(&b.org, ficha);
-    let versao_depois = c.execucao(&b.org, &run).versao;
+    let versao_depois = c.execucao(&b.org, &run).version;
 
     // Reenvio da mesma chave com a versão antiga (queda de rede no meio): mesmo desfecho.
     let (status, repetida) = c
@@ -855,7 +855,7 @@ async fn repetir_a_chave_da_acao_devolve_o_mesmo_sem_evento_novo() {
     assert_eq!(repetida["repetida"], json!(true));
     assert_eq!(c.quantos_eventos(&b.org, ficha), eventos, "sem evento novo");
     assert_eq!(
-        c.execucao(&b.org, &run).versao,
+        c.execucao(&b.org, &run).version,
         versao_depois,
         "versão não andou"
     );
@@ -926,7 +926,7 @@ async fn acao_restrita_ao_agente_chamada_pelo_atendente_da_409() {
         .iniciar(&b.org, &b.token, ficha, Some(versao), b.fluxo, "abrir")
         .await;
     let run = aberta["id"].as_str().expect("id").to_owned();
-    let versao_lida = c.execucao(&b.org, &run).versao;
+    let versao_lida = c.execucao(&b.org, &run).version;
 
     let (status, corpo) = c
         .acao(
@@ -942,7 +942,7 @@ async fn acao_restrita_ao_agente_chamada_pelo_atendente_da_409() {
         .await;
     assert_eq!(status, StatusCode::CONFLICT, "{corpo}");
     assert_eq!(codigo(&corpo), "acao_invalida");
-    assert_eq!(c.execucao(&b.org, &run).versao, versao_lida, "nada mudou");
+    assert_eq!(c.execucao(&b.org, &run).version, versao_lida, "nada mudou");
 }
 
 #[tokio::test]
@@ -955,7 +955,7 @@ async fn abandonar_grava_motivo_e_repetir_a_chave_nao_repete_o_evento() {
         .iniciar(&b.org, &b.token, ficha, Some(versao), b.fluxo, "abrir")
         .await;
     let run = aberta["id"].as_str().expect("id").to_owned();
-    let versao_lida = c.execucao(&b.org, &run).versao;
+    let versao_lida = c.execucao(&b.org, &run).version;
 
     let (status, corpo) = c
         .abandonar(
@@ -1029,9 +1029,9 @@ async fn close_fecha_conversa_ficha_e_abandona_a_execucao() {
     let conversa_depois = c
         .store
         .conversas()
-        .obter(parse_org(&org), conversa.id)
+        .get(parse_org(&org), conversa.id)
         .expect("lê a conversa");
-    assert_eq!(conversa_depois.status.como_texto(), "closed");
+    assert_eq!(conversa_depois.status.as_text(), "closed");
     let execucao = c.execucao(&org, &run);
     assert_eq!(execucao.status.as_text(), "abandonada");
     assert_eq!(
@@ -1080,7 +1080,7 @@ async fn isolamento_das_rotas_de_acao_por_org_e_por_ficha() {
         .iniciar(&a.org, &a.token, ficha_a, Some(versao_a), a.fluxo, "abrir")
         .await;
     let run_a = aberta["id"].as_str().expect("id").to_owned();
-    let versao_exec = c.execucao(&a.org, &run_a).versao;
+    let versao_exec = c.execucao(&a.org, &run_a).version;
 
     // Token da org B lendo a Ficha da org A: `404`, sem dizer que a Ficha existe.
     let (status, corpo) = c
@@ -1150,6 +1150,6 @@ async fn isolamento_das_rotas_de_acao_por_org_e_por_ficha() {
         )
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{corpo}");
-    assert_eq!(c.execucao(&a.org, &run_a).versao, versao_exec);
+    assert_eq!(c.execucao(&a.org, &run_a).version, versao_exec);
     let _ = versao_a2;
 }

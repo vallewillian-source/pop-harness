@@ -55,7 +55,7 @@ use poph_files::ConfigArquivos;
 use poph_rag::{ConfigIndice, EmbedderFake, Indice};
 use poph_server::Estado;
 use poph_store::{
-    Direcao, EstadoSaida, NovaMensagem, NovoAnexoCanal, Pagina, Papel, RegistroAuditoria, Store,
+    AuditEntry, Direction, NewChannelAttachment, NewMessage, OutboxState, Page, Role, Store,
 };
 use poph_types::HarnessConfig;
 use poph_types::config::GlobalTokenConfig;
@@ -130,7 +130,7 @@ impl Servidor {
         }];
         config.validar().expect("configuração válida");
 
-        let store = Arc::new(Store::abrir(&config).expect("abre o banco"));
+        let store = Arc::new(Store::open(&config).expect("abre o banco"));
         let estado = estado(&store, &config, &pasta);
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -295,11 +295,11 @@ impl Servidor {
         fotos
     }
 
-    fn auditoria(&self, org: &Org) -> Vec<RegistroAuditoria> {
+    fn auditoria(&self, org: &Org) -> Vec<AuditEntry> {
         let id = org.id.parse::<OrgId>().expect("id da org");
         self.store
-            .auditoria()
-            .listar(id, Pagina::com_limite(200))
+            .audit()
+            .listar(id, Page::with_limit(200))
             .expect("auditoria da org")
     }
 }
@@ -568,34 +568,34 @@ async fn montar_org(s: &Servidor, slug: &str, marcador: &'static str) -> Org {
     let org_id: OrgId = id.parse().unwrap();
     let mensagem = s
         .store
-        .mensagens()
+        .messages()
         .gravar_com_anexos(
             org_id,
-            NovaMensagem {
+            NewMessage {
                 conversation_id: conversa_id,
-                direcao: Direcao::Entrada,
-                papel: Papel::Usuario,
+                direction: Direction::Inbound,
+                role: Role::User,
                 texto: format!("anexo {marcador}"),
-                anexos_json: "[]".to_owned(),
+                attachments_json: "[]".to_owned(),
                 id_externo: None,
                 turn_id: None,
-                origem: poph_store::Origem::Agente,
-                autor_nome: None,
+                origin: poph_store::Origin::Agente,
+                author_name: None,
             },
-            &[NovoAnexoCanal {
-                nome: format!("arquivo-{marcador}.png"),
+            &[NewChannelAttachment {
+                name: format!("arquivo-{marcador}.png"),
                 mime: "image/png".to_owned(),
-                tamanho_bytes: png().len() as u64,
+                size_bytes: png().len() as u64,
                 sha256: poph_files::blob::sha256_hex(png()),
                 blob_path: format!("{id}/{}", poph_files::blob::sha256_hex(png())),
-                texto_extraido: None,
-                status_extracao: "skipped",
+                extracted_text: None,
+                extraction_status: "skipped",
             }],
         )
         .expect("mensagem com anexo");
     let anexo = s
         .store
-        .mensagens()
+        .messages()
         .anexos(org_id, mensagem.id)
         .expect("anexos da mensagem")
         .remove(0)
@@ -1746,7 +1746,7 @@ async fn subir_com_turno(
         .com_modelo_padrao("modelo-teste")
         .com_arquivos(ConfigArquivos::padrao(blobs));
         let indice = Indice::abrir(
-            store.caminho_rag(),
+            store.rag_path(),
             Arc::new(EmbedderFake::new()),
             ConfigIndice::default(),
         )
@@ -1812,15 +1812,15 @@ fn resultados(pedidos: &[Pedido], prefixo: &str) -> Vec<(String, String)> {
 /// logo depois do envio, então olhar só os pendentes não mostra nada).
 fn itens_de_saida(s: &Servidor, org: poph_types::OrgId) -> u64 {
     [
-        EstadoSaida::Pendente,
-        EstadoSaida::Enviando,
-        EstadoSaida::Enviado,
-        EstadoSaida::Falhou,
+        OutboxState::Pending,
+        OutboxState::Sending,
+        OutboxState::Sent,
+        OutboxState::Failed,
     ]
     .into_iter()
     .map(|estado| {
         s.store
-            .caixa_saida()
+            .outbox()
             .contar_por_estado(org, estado)
             .expect("contagem da caixa de saída")
     })
@@ -1957,7 +1957,7 @@ async fn ferramentas_do_llm_nao_alcancam_outra_org() {
     }
     let carrinho_a = s
         .store
-        .carrinhos()
+        .carts()
         .resumo(oa, id(&a.conversa))
         .expect("carrinho de A");
     if !carrinho_a.itens.is_empty() {

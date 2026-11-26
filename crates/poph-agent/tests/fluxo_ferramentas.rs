@@ -33,8 +33,8 @@ use poph_core::llm::{
 use poph_fluxos::{Limites, compilar};
 use poph_jev::{G9_NENHUM, JevFalso, MotorJev};
 use poph_store::{
-    Direcao, EstadoTurno, MudancaAgente, NovaConversa, NovaMensagem, NovaOrg, NovoAgente,
-    NovoFluxo, Papel, PublicacaoDeRevisao, StatusConversa, Store,
+    AgentChange, ConversationStatus, Direction, NewAgent, NewConversation, NewFlow, NewMessage,
+    NewOrg, RevisionPublication, Role, Store, TurnState,
 };
 use poph_types::{
     AgentId, ClosedBy, ConversationId, ExecutionStatus, FlowsConfig, JevGates, MessageId, OrgId,
@@ -129,27 +129,26 @@ impl Cenario {
         let _ = std::fs::remove_dir_all(&pasta);
         std::fs::create_dir_all(&pasta).expect("pasta do teste");
         let store = Arc::new(
-            Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
-                .expect("abre o banco"),
+            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco"),
         );
         let org = store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: format!("Org {rotulo}"),
+            .orgs()
+            .criar(NewOrg {
+                name: format!("Org {rotulo}"),
                 slug: format!("org-{rotulo}-{}", AgentId::generate()),
                 config_json: "{}".to_owned(),
             })
             .expect("cria a org")
             .id;
         let agente = store
-            .agentes()
+            .agents()
             .criar(
                 org,
-                NovoAgente {
-                    nome: format!("Bia {rotulo}"),
+                NewAgent {
+                    name: format!("Bia {rotulo}"),
                     slug: format!("bia-{rotulo}"),
-                    janela_agrupamento_ms: 0,
-                    ..NovoAgente::default()
+                    grouping_window_ms: 0,
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente")
@@ -173,13 +172,13 @@ impl Cenario {
                 .collect::<Vec<_>>()
         })
         .to_string();
-        let atual = self.store.instrucoes().versao(self.org, self.agente);
+        let atual = self.store.instructions().versao(self.org, self.agente);
         let esperada = match atual {
             Ok(Some(versao)) => versao,
             _ => 0,
         };
         self.store
-            .instrucoes()
+            .instructions()
             .salvar(
                 self.org,
                 self.agente,
@@ -209,10 +208,10 @@ impl Cenario {
             .fluxos()
             .criar(
                 self.org,
-                NovoFluxo {
+                NewFlow {
                     slug: slug.to_owned(),
-                    nome: nome.to_owned(),
-                    descricao: String::new(),
+                    name: nome.to_owned(),
+                    description: String::new(),
                     rascunho_fonte: script.to_owned(),
                 },
             )
@@ -220,18 +219,18 @@ impl Cenario {
         let compilado = compilar(script, &Limites::default());
         let ir = compilado.ir().expect("o script do teste compila");
         self.store
-            .revisoes()
+            .revisions()
             .publicar_revisao(
                 self.org,
                 fluxo.id,
-                PublicacaoDeRevisao {
-                    esperada: fluxo.versao,
+                RevisionPublication {
+                    expected: fluxo.version,
                     fonte: script.to_owned(),
                     definicao_json: serde_json::to_string(ir).expect("IR em JSON"),
                     schema_versao: Some(ir.schema_versao),
                     resolucoes_json: "{}".to_owned(),
                     ator_tipo: "system".to_owned(),
-                    ator_id: None,
+                    actor_id: None,
                 },
             )
             .expect("publica a revisão");
@@ -256,10 +255,10 @@ impl Cenario {
             .atualizar(
                 self.org,
                 fluxo,
-                atual.versao,
-                poph_store::MudancaFluxo {
-                    status: Some(poph_store::Status::Inativo),
-                    ..poph_store::MudancaFluxo::default()
+                atual.version,
+                poph_store::FlowChange {
+                    status: Some(poph_store::Status::Inactive),
+                    ..poph_store::FlowChange::default()
                 },
             )
             .expect("desativa o fluxo");
@@ -270,12 +269,12 @@ impl Cenario {
             .conversas()
             .criar(
                 self.org,
-                NovaConversa {
+                NewConversation {
                     agent_id: self.agente,
                     integration_id: None,
                     canal: "cli".to_owned(),
                     peer_externo: Some("cliente-ficticio".to_owned()),
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("abre a conversa")
@@ -284,19 +283,19 @@ impl Cenario {
 
     fn falar(&self, conversa: ConversationId, texto: &str) -> MessageId {
         self.store
-            .mensagens()
+            .messages()
             .gravar(
                 self.org,
-                NovaMensagem {
+                NewMessage {
                     conversation_id: conversa,
-                    direcao: Direcao::Entrada,
-                    papel: Papel::Usuario,
+                    direction: Direction::Inbound,
+                    role: Role::User,
                     texto: texto.to_owned(),
-                    anexos_json: "[]".to_owned(),
+                    attachments_json: "[]".to_owned(),
                     id_externo: None,
                     turn_id: None,
-                    origem: poph_store::Origem::Agente,
-                    autor_nome: None,
+                    origin: poph_store::Origin::Agente,
+                    author_name: None,
                 },
             )
             .expect("grava a mensagem")
@@ -374,16 +373,16 @@ impl Cenario {
             .expect("a conversa tem Ficha")
     }
 
-    fn ativa(&self, conversa: ConversationId) -> Option<poph_store::Execucao> {
+    fn ativa(&self, conversa: ConversationId) -> Option<poph_store::Execution> {
         self.store
-            .execucoes()
+            .executions()
             .ativa_da_ficha(self.org, self.ficha(conversa).id)
             .expect("lê a execução ativa")
     }
 
-    fn execucao(&self, conversa: ConversationId) -> poph_store::Execucao {
+    fn execucao(&self, conversa: ConversationId) -> poph_store::Execution {
         self.store
-            .execucoes()
+            .executions()
             .da_ficha(self.org, self.ficha(conversa).id, 20)
             .expect("lê as execuções")
             .into_iter()
@@ -391,16 +390,16 @@ impl Cenario {
             .expect("a Ficha tem execução")
     }
 
-    fn eventos(&self, conversa: ConversationId) -> Vec<poph_store::EventoFicha> {
+    fn eventos(&self, conversa: ConversationId) -> Vec<poph_store::RecordEvent> {
         self.store
             .fichas()
             .eventos(self.org, self.ficha(conversa).id, None, 50)
             .expect("lê os eventos")
     }
 
-    fn pendentes(&self) -> Vec<poph_store::EfeitoDoFluxo> {
+    fn pendentes(&self) -> Vec<poph_store::FlowEffect> {
         self.store
-            .efeitos()
+            .effects()
             .listar_pendentes(self.org, 20)
             .expect("lê a fila de efeitos")
     }
@@ -408,15 +407,15 @@ impl Cenario {
     /// Mensagens gravadas na conversa (a `outbox` do canal não é tocada por este turno).
     fn mensagens(&self, conversa: ConversationId) -> Vec<poph_store::Mensagem> {
         self.store
-            .mensagens()
-            .listar(self.org, conversa, poph_store::Pagina::com_limite(50))
+            .messages()
+            .listar(self.org, conversa, poph_store::Page::with_limit(50))
             .expect("lista as mensagens")
     }
 
     fn turno_gravado(&self, conversa: ConversationId) -> poph_store::Turno {
         self.store
-            .turnos()
-            .listar(self.org, conversa, poph_store::Pagina::com_limite(5))
+            .turns()
+            .listar(self.org, conversa, poph_store::Page::with_limit(5))
             .expect("lista os turnos")
             .into_iter()
             .next()
@@ -425,21 +424,20 @@ impl Cenario {
 
     fn chamadas(&self, conversa: ConversationId) -> Vec<Value> {
         let turno = self.turno_gravado(conversa);
-        let registro: Value =
-            serde_json::from_str(&turno.ferramentas_json).expect("tools_json é JSON");
+        let registro: Value = serde_json::from_str(&turno.tools_json).expect("tools_json é JSON");
         registro["chamadas"].as_array().cloned().unwrap_or_default()
     }
 
     /// Liga/desliga um ajuste do agente (o teto de chamadas por mensagem, por exemplo).
-    fn ajustar(&self, mudanca: MudancaAgente) {
+    fn ajustar(&self, mudanca: AgentChange) {
         let atual = self
             .store
-            .agentes()
-            .obter(self.org, self.agente)
+            .agents()
+            .get(self.org, self.agente)
             .expect("lê o agente");
         self.store
-            .agentes()
-            .atualizar(self.org, self.agente, atual.versao, mudanca)
+            .agents()
+            .atualizar(self.org, self.agente, atual.version, mudanca)
             .expect("ajusta o agente");
     }
 }
@@ -569,7 +567,7 @@ async fn acao_valida_avanca_e_a_resposta_diz_a_etapa_nova() {
         conversa,
     )
     .await;
-    assert_eq!(resumo.estado, EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, TurnState::Completed);
 
     // O banco avançou de etapa.
     let execucao = cenario.execucao(conversa);
@@ -616,7 +614,7 @@ async fn acao_valida_avanca_e_a_resposta_diz_a_etapa_nova() {
     let saida: Vec<_> = cenario
         .mensagens(conversa)
         .into_iter()
-        .filter(|mensagem| mensagem.direcao == Direcao::Saida)
+        .filter(|mensagem| mensagem.direction == Direction::Outbound)
         .collect();
     assert_eq!(
         saida.len(),
@@ -664,7 +662,7 @@ async fn campo_faltando_devolve_a_lista_e_nada_muda() {
     // Nada mudou: mesma etapa, mesma versão, sem evento de ação.
     let execucao = cenario.execucao(conversa);
     assert_eq!(execucao.no_atual, "coleta");
-    assert_eq!(execucao.versao, 1, "a versão não anda na recusa");
+    assert_eq!(execucao.version, 1, "a versão não anda na recusa");
     assert!(
         cenario
             .eventos(conversa)
@@ -701,7 +699,7 @@ async fn acao_inexistente_devolve_as_validas_e_nada_muda() {
         "a recusa traz as ações válidas: {resultado}"
     );
     let execucao = cenario.execucao(conversa);
-    assert_eq!(execucao.versao, 1);
+    assert_eq!(execucao.version, 1);
     assert_eq!(execucao.no_atual, "coleta");
 }
 
@@ -745,7 +743,7 @@ async fn ferramenta_desabilitada_no_agente_e_recusada_sem_executar() {
 
     let execucao = cenario.execucao(conversa);
     assert_eq!(execucao.no_atual, "coleta", "nada mudou");
-    assert_eq!(execucao.versao, 1);
+    assert_eq!(execucao.version, 1);
 }
 
 /// 5. `fluxo_iniciar` só existe na reserva e valida como o G9.
@@ -923,7 +921,7 @@ async fn chave_repetida_nao_duplica_evento_nem_efeito() {
 
     let execucao = cenario.execucao(conversa);
     assert_eq!(execucao.no_atual, "confirmacao", "não andou de novo");
-    assert_eq!(execucao.versao, 2, "a versão ficou como estava");
+    assert_eq!(execucao.version, 2, "a versão ficou como estava");
     assert_eq!(cenario.pendentes().len(), efeitos_antes, "sem efeito novo");
     assert_eq!(
         cenario.eventos(conversa).len(),
@@ -936,9 +934,9 @@ async fn chave_repetida_nao_duplica_evento_nem_efeito() {
 #[tokio::test]
 async fn limite_de_chamadas_por_mensagem_continua_valendo() {
     let cenario = Cenario::novo("limite");
-    cenario.ajustar(MudancaAgente {
-        max_ferramentas_por_mensagem: Some(1),
-        ..MudancaAgente::default()
+    cenario.ajustar(AgentChange {
+        max_tools_per_message: Some(1),
+        ..AgentChange::default()
     });
     cenario.fluxo();
     let conversa = cenario.conversa();
@@ -1051,12 +1049,12 @@ async fn acao_que_encerra_o_atendimento_fecha_a_ficha() {
     let conversa_gravada = cenario
         .store
         .conversas()
-        .obter(cenario.org, conversa)
+        .get(cenario.org, conversa)
         .expect("lê a conversa");
-    assert_eq!(conversa_gravada.status, StatusConversa::Fechada);
+    assert_eq!(conversa_gravada.status, ConversationStatus::Closed);
     let execucao = cenario.execucao(conversa);
     assert_eq!(execucao.status, ExecutionStatus::Completed);
-    assert_eq!(execucao.resultado.as_deref(), Some("Visita agendada"));
+    assert_eq!(execucao.result.as_deref(), Some("Visita agendada"));
 }
 
 /// 10. Motor desligado: as três ferramentas não são registradas nem oferecidas.
@@ -1126,7 +1124,7 @@ async fn encerrar_pelo_agente_fecha_e_repeticao_e_idempotente() {
         conversa,
     )
     .await;
-    assert_eq!(resumo.estado, EstadoTurno::Concluido);
+    assert_eq!(resumo.estado, TurnState::Completed);
     assert!(oferecidas(&provedor.recebidos()[0]).contains(&"atendimento_encerrar".to_owned()));
     let respostas = resultados(&provedor.recebidos()[1]);
     assert!(
@@ -1134,8 +1132,8 @@ async fn encerrar_pelo_agente_fecha_e_repeticao_e_idempotente() {
         "{respostas:?}"
     );
     assert_eq!(
-        c.store.conversas().obter(c.org, conversa).unwrap().status,
-        StatusConversa::Fechada
+        c.store.conversas().get(c.org, conversa).unwrap().status,
+        ConversationStatus::Closed
     );
     let ficha = c.ficha(conversa);
     assert_eq!(ficha.status, RecordStatus::Closed);
@@ -1152,7 +1150,7 @@ async fn encerrar_pelo_agente_fecha_e_repeticao_e_idempotente() {
     assert_eq!(
         c.mensagens(conversa)
             .iter()
-            .filter(|m| m.direcao == Direcao::Saida)
+            .filter(|m| m.direction == Direction::Outbound)
             .count(),
         1
     );

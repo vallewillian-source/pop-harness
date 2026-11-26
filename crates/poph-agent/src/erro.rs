@@ -21,7 +21,7 @@ pub enum ErroAgente {
 
     /// Falha do banco ao recarregar do disco.
     #[error(transparent)]
-    Store(#[from] poph_store::ErroStore),
+    Store(#[from] poph_store::StoreError),
 
     /// A fila da conversa está cheia: há mais eventos esperando do que o teto por conversa.
     #[error(

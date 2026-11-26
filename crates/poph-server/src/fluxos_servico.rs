@@ -21,8 +21,7 @@ use poph_fluxos::{
 // `poph-fluxos` diretamente.
 pub use poph_fluxos::{CacheRevisoes, Diagnostico, Mudanca, Resolucao};
 use poph_store::{
-    ErroStore, Fluxo, NovoFluxo, NovoRegistroAuditoria, Pagina, PublicacaoDeRevisao,
-    RevisaoDeFluxo, Store,
+    FlowRevision, Fluxo, NewAuditEntry, NewFlow, Page, RevisionPublication, Store, StoreError,
 };
 use poph_types::{DomainError, FlowId, HarnessConfig, OrgId};
 use serde_json::{Value, json};
@@ -80,11 +79,11 @@ pub enum FalhaFluxo {
     /// A org já tem o máximo de fluxos da configuração.
     TetoDeFluxos { atual: u64, teto: u64 },
     /// Erro do banco ou de domínio, sem tradução própria.
-    Banco(ErroStore),
+    Banco(StoreError),
 }
 
-impl From<ErroStore> for FalhaFluxo {
-    fn from(erro: ErroStore) -> Self {
+impl From<StoreError> for FalhaFluxo {
+    fn from(erro: StoreError) -> Self {
         Self::Banco(erro)
     }
 }
@@ -147,7 +146,7 @@ impl Validacao {
 /// O que uma publicação produziu: a revisão gravada, os avisos do script e a versão nova do fluxo.
 #[derive(Debug)]
 pub struct PublicacaoFeita {
-    pub revisao: RevisaoDeFluxo,
+    pub revisao: FlowRevision,
     pub avisos: Vec<Diagnostico>,
     pub versao_do_fluxo: u64,
 }
@@ -162,8 +161,8 @@ pub struct CriacaoFeita {
 /// Duas revisões lado a lado, com o que mudou e quantos atendimentos estão em cada uma.
 #[derive(Debug)]
 pub struct Comparacao {
-    pub de: RevisaoDeFluxo,
-    pub para: RevisaoDeFluxo,
+    pub de: FlowRevision,
+    pub para: FlowRevision,
     pub mudancas: Vec<Mudanca>,
     pub ativas_de: u64,
     pub ativas_para: u64,
@@ -203,15 +202,15 @@ impl<'a> Operacoes<'a> {
     }
 
     /// Lê todos os departamentos da org, para resolver `encaminhar("...")`.
-    pub fn departamentos(&self, org: OrgId) -> Result<Vec<Departamento>, ErroStore> {
+    pub fn departamentos(&self, org: OrgId) -> Result<Vec<Departamento>, StoreError> {
         let mut todos: Vec<Departamento> = Vec::new();
         let mut apos: Option<uuid::Uuid> = None;
         loop {
-            let lote = self.store.departamentos().listar(
+            let lote = self.store.departments().listar(
                 org,
-                Pagina {
-                    apos,
-                    limite: LIMITE_DEPARTAMENTOS,
+                Page {
+                    after: apos,
+                    limit: LIMITE_DEPARTAMENTOS,
                 },
             )?;
             if lote.is_empty() {
@@ -221,7 +220,7 @@ impl<'a> Operacoes<'a> {
             apos = lote.last().map(|departamento| departamento.id.as_uuid());
             todos.extend(lote.into_iter().map(|departamento| Departamento {
                 id: departamento.id.to_string(),
-                nome: departamento.nome,
+                nome: departamento.name,
             }));
             if !cheio {
                 return Ok(todos);
@@ -230,7 +229,7 @@ impl<'a> Operacoes<'a> {
     }
 
     /// Compila e valida um script sem gravar nada. Com `org`, também resolve os departamentos citados.
-    pub fn validar(&self, org: Option<OrgId>, fonte: &str) -> Result<Validacao, ErroStore> {
+    pub fn validar(&self, org: Option<OrgId>, fonte: &str) -> Result<Validacao, StoreError> {
         let compilado = self.compilar(fonte);
         let mut diagnosticos = compilado.diagnosticos;
         let mut resolucoes = Vec::new();
@@ -279,10 +278,10 @@ impl<'a> Operacoes<'a> {
         }
         let fluxo = self.store.fluxos().criar(
             org,
-            NovoFluxo {
+            NewFlow {
                 slug: ir.fluxo.id.clone(),
-                nome: ir.fluxo.nome.clone(),
-                descricao: ir.fluxo.descricao.clone().unwrap_or_default(),
+                name: ir.fluxo.nome.clone(),
+                description: ir.fluxo.descricao.clone().unwrap_or_default(),
                 rascunho_fonte: fonte.to_owned(),
             },
         )?;
@@ -295,7 +294,7 @@ impl<'a> Operacoes<'a> {
             fluxo.id.to_string(),
         )?;
         let publicacao = if publicar {
-            Some(self.publicar(org, &fluxo, fluxo.versao, fonte, ator)?)
+            Some(self.publicar(org, &fluxo, fluxo.version, fonte, ator)?)
         } else {
             None
         };
@@ -316,11 +315,11 @@ impl<'a> Operacoes<'a> {
         fonte: &str,
         ator: &Ator,
     ) -> Result<PublicacaoFeita, FalhaFluxo> {
-        if esperada != fluxo.versao {
+        if esperada != fluxo.version {
             return Err(FalhaFluxo::VersaoVelha {
                 id: fluxo.id.to_string(),
                 esperada,
-                atual: fluxo.versao,
+                atual: fluxo.version,
             });
         }
         if fonte.trim().is_empty() {
@@ -350,20 +349,20 @@ impl<'a> Operacoes<'a> {
         })?;
         let resolucoes_json = serde_json::to_string(&json!({ "departamentos": resolucoes }))
             .map_err(|_| FalhaFluxo::Interno)?;
-        let revisao = self.store.revisoes().publicar_revisao(
+        let revisao = self.store.revisions().publicar_revisao(
             org,
             fluxo.id,
-            PublicacaoDeRevisao {
-                esperada,
+            RevisionPublication {
+                expected: esperada,
                 fonte: fonte.to_owned(),
                 definicao_json,
                 schema_versao: Some(ir.schema_versao),
                 resolucoes_json,
                 ator_tipo: ator.tipo.clone(),
-                ator_id: ator.id.clone(),
+                actor_id: ator.id.clone(),
             },
         )?;
-        let versao_do_fluxo = self.store.fluxos().obter(org, fluxo.id)?.versao;
+        let versao_do_fluxo = self.store.fluxos().obter(org, fluxo.id)?.version;
         let mut avisos: Vec<Diagnostico> = compilado
             .diagnosticos
             .into_iter()
@@ -383,7 +382,7 @@ impl<'a> Operacoes<'a> {
     pub fn ir_da_revisao(
         &self,
         fluxo: &Fluxo,
-        revisao: &RevisaoDeFluxo,
+        revisao: &FlowRevision,
     ) -> Result<Arc<Ir>, FalhaFluxo> {
         let gravada: Ir = serde_json::from_str(&revisao.definicao_json).map_err(|erro| {
             tracing::error!(
@@ -423,13 +422,13 @@ impl<'a> Operacoes<'a> {
             None => fluxo.revisao_atual.ok_or(FalhaFluxo::SemRevisao)?,
         };
         let de = de.unwrap_or_else(|| para.saturating_sub(1).max(1));
-        let revisao_de = self.store.revisoes().obter(org, fluxo.id, de)?;
-        let revisao_para = self.store.revisoes().obter(org, fluxo.id, para)?;
+        let revisao_de = self.store.revisions().obter(org, fluxo.id, de)?;
+        let revisao_para = self.store.revisions().obter(org, fluxo.id, para)?;
         let ir_de = self.ir_da_revisao(fluxo, &revisao_de)?;
         let ir_para = self.ir_da_revisao(fluxo, &revisao_para)?;
         let mudancas = diferenca(&ir_de, &ir_para);
-        let contagens = self.store.execucoes().ativas_por_revisao(org, fluxo.id)?;
-        let ativas = |revisao: &RevisaoDeFluxo| -> u64 {
+        let contagens = self.store.executions().ativas_por_revisao(org, fluxo.id)?;
+        let ativas = |revisao: &FlowRevision| -> u64 {
             contagens
                 .iter()
                 .find(|(id_da_contagem, _)| *id_da_contagem == revisao.id)
@@ -453,7 +452,7 @@ impl<'a> Operacoes<'a> {
     ) -> Result<Previa, FalhaFluxo> {
         let revisao = self
             .store
-            .revisoes()
+            .revisions()
             .atual(org, fluxo.id)?
             .ok_or(FalhaFluxo::SemRevisao)?;
         let ir = self.ir_da_revisao(fluxo, &revisao)?;
@@ -461,7 +460,7 @@ impl<'a> Operacoes<'a> {
             .filter(|texto| !texto.is_empty())
             .map_or_else(|| ir.inicio.clone(), str::to_owned);
         let bloco = bloco_da_etapa(&ir, &etapa)
-            .map_err(|erro: DomainError| FalhaFluxo::Banco(ErroStore::Dominio(erro)))?;
+            .map_err(|erro: DomainError| FalhaFluxo::Banco(StoreError::Domain(erro)))?;
         Ok(Previa {
             etapa,
             revisao: revisao.numero,
@@ -478,16 +477,16 @@ pub fn auditar(
     acao: &str,
     entidade: &str,
     id: String,
-) -> Result<(), ErroStore> {
-    store.auditoria().registrar(
+) -> Result<(), StoreError> {
+    store.audit().registrar(
         Some(org),
-        NovoRegistroAuditoria {
+        NewAuditEntry {
             ator_tipo: ator.tipo.clone(),
-            ator_id: ator.id.clone(),
+            actor_id: ator.id.clone(),
             acao: acao.into(),
-            entidade: entidade.into(),
-            entidade_id: Some(id),
-            detalhe_json: "{}".into(),
+            entity: entidade.into(),
+            entity_id: Some(id),
+            detail_json: "{}".into(),
         },
     )?;
     Ok(())
@@ -500,11 +499,11 @@ pub fn json_fluxo(f: &Fluxo) -> Value {
     json!({
         "id": f.id.to_string(),
         "slug": f.slug,
-        "name": f.nome,
-        "description": f.descricao,
-        "status": f.status.como_texto(),
+        "name": f.name,
+        "description": f.description,
+        "status": f.status.as_text(),
         "current_revision": f.revisao_atual,
-        "version": f.versao,
+        "version": f.version,
     })
 }
 
@@ -516,7 +515,7 @@ pub fn json_fluxo_com_rascunho(f: &Fluxo) -> Value {
 }
 
 /// Cabeçalho de uma revisão, sem o texto nem a estrutura (é o que a lista mostra).
-pub fn json_revisao_resumo(r: &RevisaoDeFluxo) -> Value {
+pub fn json_revisao_resumo(r: &FlowRevision) -> Value {
     json!({
         "id": r.id.to_string(),
         "flow_id": r.fluxo_id.to_string(),
@@ -530,7 +529,7 @@ pub fn json_revisao_resumo(r: &RevisaoDeFluxo) -> Value {
 }
 
 /// A revisão inteira: o texto publicado e a estrutura compilada que o motor executa.
-pub fn json_revisao_completa(r: &RevisaoDeFluxo) -> Value {
+pub fn json_revisao_completa(r: &FlowRevision) -> Value {
     let mut corpo = json_revisao_resumo(r);
     corpo["source"] = json!(r.fonte);
     corpo["definition"] = serde_json::from_str::<Value>(&r.definicao_json).unwrap_or(Value::Null);

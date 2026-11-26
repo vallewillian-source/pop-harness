@@ -2,7 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use poph_store::{MudancaAgente, NovaOrg, NovoAgente, Store, agentes_por_provedor_em};
+use poph_store::{AgentChange, NewAgent, NewOrg, Store, agentes_por_provedor_em};
 use poph_types::OrgId;
 
 struct Cenario {
@@ -20,8 +20,8 @@ impl Cenario {
         ));
         let _ = fs::remove_dir_all(&pasta);
         fs::create_dir_all(&pasta).expect("cria a pasta do teste");
-        let store = Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
-            .expect("abre o banco");
+        let store =
+            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco");
         Self {
             pasta,
             store: Some(store),
@@ -34,9 +34,9 @@ impl Cenario {
 
     fn org(&self) -> OrgId {
         self.store()
-            .orgaos()
-            .criar(NovaOrg {
-                nome: "Org provedores".to_owned(),
+            .orgs()
+            .criar(NewOrg {
+                name: "Org provedores".to_owned(),
                 slug: format!("org-provedores-{}", std::process::id()),
                 config_json: "{}".to_owned(),
             })
@@ -46,13 +46,13 @@ impl Cenario {
 
     fn agente(&self, org: OrgId, nome: &str) -> poph_types::AgentId {
         self.store()
-            .agentes()
+            .agents()
             .criar(
                 org,
-                NovoAgente {
-                    nome: nome.to_owned(),
+                NewAgent {
+                    name: nome.to_owned(),
                     slug: nome.to_lowercase().replace(' ', "-"),
-                    ..NovoAgente::default()
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente")
@@ -60,16 +60,16 @@ impl Cenario {
     }
 
     fn trocar_provedor(&self, org: OrgId, id: poph_types::AgentId, provedor: &str) {
-        let agente = self.store().agentes().obter(org, id).expect("lê o agente");
+        let agente = self.store().agents().get(org, id).expect("lê o agente");
         self.store()
-            .agentes()
+            .agents()
             .atualizar(
                 org,
                 id,
-                agente.versao,
-                MudancaAgente {
+                agente.version,
+                AgentChange {
                     provedor: Some(provedor.to_owned()),
-                    ..MudancaAgente::default()
+                    ..AgentChange::default()
                 },
             )
             .expect("troca o provedor");
@@ -105,8 +105,8 @@ fn conta_agentes_por_provedor_sem_criar_nada() {
     assert_eq!(
         cenario
             .store()
-            .agentes()
-            .obter(org, primeiro)
+            .agents()
+            .get(org, primeiro)
             .expect("o agente continua lá")
             .provedor,
         "antigravity2api"

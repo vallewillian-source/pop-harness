@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use poph_agent::fila_integracao::{ConversaDoCanal, ResolvedorConversa};
-use poph_store::{NovaConversa, NovaOrg, NovoAgente, StatusConversa, Store};
+use poph_store::{ConversationStatus, NewAgent, NewConversation, NewOrg, Store};
 use poph_types::{AgentId, InboundEvent, IntegrationId, OrgId};
 
 struct Cenario {
@@ -23,26 +23,25 @@ impl Cenario {
         let _ = std::fs::remove_dir_all(&pasta);
         std::fs::create_dir_all(&pasta).expect("cria a pasta");
         let store = Arc::new(
-            Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
-                .expect("abre o banco"),
+            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco"),
         );
         let org = store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: format!("Org {rotulo}"),
+            .orgs()
+            .criar(NewOrg {
+                name: format!("Org {rotulo}"),
                 slug: format!("org-{rotulo}"),
                 config_json: String::new(),
             })
             .expect("cria a org")
             .id;
         let agente = store
-            .agentes()
+            .agents()
             .criar(
                 org,
-                NovoAgente {
-                    nome: format!("Agente {rotulo}"),
+                NewAgent {
+                    name: format!("Agente {rotulo}"),
                     slug: format!("agente-{rotulo}"),
-                    ..NovoAgente::default()
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente")
@@ -100,7 +99,7 @@ fn um_contato_uma_conversa_com_cache_por_contato() {
     let conversas = cenario
         .store
         .conversas()
-        .listar(cenario.org, None, poph_store::Pagina::com_limite(10))
+        .listar(cenario.org, None, poph_store::Page::with_limit(10))
         .expect("lista as conversas");
     assert_eq!(conversas.len(), 2);
     assert!(
@@ -123,7 +122,13 @@ fn conversa_transferida_nao_e_servida_do_cache() {
     cenario
         .store
         .conversas()
-        .mudar_status(cenario.org, conversa, 1, StatusConversa::Transferida, None)
+        .mudar_status(
+            cenario.org,
+            conversa,
+            1,
+            ConversationStatus::Transferred,
+            None,
+        )
         .expect("transfere a conversa");
 
     // Uma conversa nova e aberta do mesmo contato passa a ser a escolhida (o cache não insiste na
@@ -133,12 +138,12 @@ fn conversa_transferida_nao_e_servida_do_cache() {
         .conversas()
         .criar(
             cenario.org,
-            NovaConversa {
+            NewConversation {
                 agent_id: cenario.agente,
                 integration_id: None,
                 canal: "eco".to_owned(),
                 peer_externo: Some(peer.to_owned()),
-                departamento_alvo: None,
+                target_department: None,
             },
         )
         .expect("abre a conversa nova");

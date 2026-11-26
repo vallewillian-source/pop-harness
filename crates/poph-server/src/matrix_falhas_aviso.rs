@@ -46,7 +46,7 @@ use std::time::Duration;
 use tokio::sync::watch;
 
 use poph_matrix::{ClienteMatrix, ErroChamada, IdsFantasmas, erro::Classificacao};
-use poph_store::{DesfechoAviso, ErroStore, FalhaDeRespostaHumana, Store};
+use poph_store::{DesfechoAviso, FalhaDeRespostaHumana, Store, StoreError};
 use poph_types::{ConversationId, OrgId, OutboxId};
 use serde_json::json;
 
@@ -134,14 +134,14 @@ pub struct ContextoDaFalha {
 pub trait PortaFalhasDeResposta: Send + Sync {
     /// Falhas definitivas de resposta humana sem desfecho, das orgs com o módulo ligado, até
     /// `limite` no total.
-    fn pendentes(&self, limite: u32) -> Result<Vec<FalhaDeRespostaHumana>, ErroStore>;
+    fn pendentes(&self, limite: u32) -> Result<Vec<FalhaDeRespostaHumana>, StoreError>;
 
     /// Sala e agente da conversa, ou `None` quando a conversa não tem sala.
     fn contexto(
         &self,
         org: OrgId,
         conversa: ConversationId,
-    ) -> Result<Option<ContextoDaFalha>, ErroStore>;
+    ) -> Result<Option<ContextoDaFalha>, StoreError>;
 
     /// Grava o desfecho do aviso. Repetir a mesma gravação não muda nada.
     fn registrar(
@@ -150,7 +150,7 @@ pub trait PortaFalhasDeResposta: Send + Sync {
         falha: OutboxId,
         desfecho: DesfechoAviso,
         motivo: MotivoFalha,
-    ) -> Result<(), ErroStore>;
+    ) -> Result<(), StoreError>;
 }
 
 /// A porta de verdade, sobre o banco do Harness.
@@ -167,7 +167,7 @@ impl PortaFalhasDoHarness {
 }
 
 impl PortaFalhasDeResposta for PortaFalhasDoHarness {
-    fn pendentes(&self, limite: u32) -> Result<Vec<FalhaDeRespostaHumana>, ErroStore> {
+    fn pendentes(&self, limite: u32) -> Result<Vec<FalhaDeRespostaHumana>, StoreError> {
         let mut falhas = Vec::new();
         for estado in self.store.matrix().orgs_ligadas()? {
             let faltam = limite.saturating_sub(falhas.len() as u32);
@@ -187,11 +187,11 @@ impl PortaFalhasDeResposta for PortaFalhasDoHarness {
         &self,
         org: OrgId,
         conversa: ConversationId,
-    ) -> Result<Option<ContextoDaFalha>, ErroStore> {
+    ) -> Result<Option<ContextoDaFalha>, StoreError> {
         let Some(sala) = self.store.matrix().sala(org, conversa)? else {
             return Ok(None);
         };
-        let agente = self.store.conversas().obter(org, conversa)?.agent_id;
+        let agente = self.store.conversas().get(org, conversa)?.agent_id;
         Ok(Some(ContextoDaFalha {
             sala: sala.room_id,
             agente: agente.to_string(),
@@ -204,7 +204,7 @@ impl PortaFalhasDeResposta for PortaFalhasDoHarness {
         falha: OutboxId,
         desfecho: DesfechoAviso,
         motivo: MotivoFalha,
-    ) -> Result<(), ErroStore> {
+    ) -> Result<(), StoreError> {
         self.store
             .matrix()
             .registrar_desfecho_de_aviso(org, falha, desfecho, motivo.codigo())
@@ -350,7 +350,7 @@ impl AvisoDeFalhas {
         &self,
         falha: &FalhaDeRespostaHumana,
         relato: &mut RelatoAviso,
-    ) -> Result<(), ErroStore> {
+    ) -> Result<(), StoreError> {
         let motivo = MotivoFalha::classificar(falha.ultimo_erro.as_deref());
         let Some(contexto) = self.porta.contexto(falha.org_id, falha.conversa)? else {
             self.porta.registrar(

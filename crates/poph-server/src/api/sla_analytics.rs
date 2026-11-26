@@ -90,7 +90,7 @@ pub async fn report(
             "must be a strictly increasing list of at most 16 positive integers",
         ));
     }
-    state.store.orgaos().obter(org)?;
+    state.store.orgs().get(org)?;
     let result = state
         .store
         .sla_analytics()

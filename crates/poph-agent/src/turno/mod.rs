@@ -73,8 +73,8 @@ use poph_jev::{
     Orientacao, ResultadoJev, ResultadoOrientacao,
 };
 use poph_store::{
-    Direcao, EstadoTurno, FinalizacaoTurno, Mensagem as MensagemGravada, NovaMensagem, NovaSaida,
-    NovoRegistroAuditoria, Pagina, Papel, Store,
+    Direction, Mensagem as MensagemGravada, NewAuditEntry, NewMessage, NewOutboxItem, Page, Role,
+    Store, TurnFinalization, TurnState,
 };
 use poph_types::{
     AgentId, ConversationId, DomainError, JevGates, LlmConfig, MessageId, OrgId, TurnId,
@@ -324,7 +324,7 @@ pub struct ResumoTurno {
     /// Turno gravado em `turns`.
     pub turno: TurnId,
     /// Como terminou.
-    pub estado: EstadoTurno,
+    pub estado: TurnState,
     /// Texto final da resposta (vazio quando não houve).
     pub texto: String,
     /// Mensagens do cliente que este turno atendeu (para concluir os itens da `inbox`).
@@ -352,7 +352,7 @@ pub struct ResumoTurno {
 impl ResumoTurno {
     /// `true` quando o turno respondeu alguma coisa.
     pub fn respondeu(&self) -> bool {
-        self.estado == EstadoTurno::Concluido && !self.texto.trim().is_empty()
+        self.estado == TurnState::Completed && !self.texto.trim().is_empty()
     }
 }
 
@@ -682,7 +682,7 @@ impl Motor {
         let conversa_id = entrada.conversa;
         let cancelamento = entrada.cancelamento.clone();
 
-        let conversa = self.store.conversas().obter(org, conversa_id)?;
+        let conversa = self.store.conversas().get(org, conversa_id)?;
         let agente_id = conversa.agent_id;
         if self
             .cancelamento
@@ -704,11 +704,11 @@ impl Motor {
         };
 
         // D12: conversa transferida ou fechada não é respondida até ser reaberta.
-        if conversa.status != poph_store::StatusConversa::Aberta {
+        if conversa.status != poph_store::ConversationStatus::Open {
             let motivo = format!(
                 "conversa {} ({}): o agente não responde até a conversa ser reaberta",
                 conversa_id,
-                conversa.status.como_texto()
+                conversa.status.as_text()
             );
             return self.encerrar_ignorado(org, conversa_id, Some(agente_id), motivo, inicio);
         }
@@ -716,7 +716,7 @@ impl Motor {
         // HR-26h: conversa de canal (WhatsApp) só é respondida com a integração ativa. Inativa ou
         // arquivada, a mensagem fica gravada e o turno termina sem resposta, com o motivo.
         if let Some(integracao) = conversa.integration_id {
-            let situacao = self.store.integracao_do_canal(org, integracao)?;
+            let situacao = self.store.channel_integration(org, integracao)?;
             let ativa = situacao
                 .as_ref()
                 .is_some_and(|canal| canal.status == "active");
@@ -737,11 +737,11 @@ impl Motor {
 
         let gatilho = match self
             .store
-            .mensagens()
+            .messages()
             .obter(org, conversa_id, entrada.mensagem)
         {
             Ok(mensagem) => mensagem,
-            Err(erro) if erro.eh_nao_encontrado() => {
+            Err(erro) if erro.is_not_found() => {
                 let motivo = format!(
                     "mensagem {} não existe na conversa {}",
                     entrada.mensagem, conversa_id
@@ -755,7 +755,7 @@ impl Motor {
         let janela = self.janela_do_agente(&quente.agente);
         let decorrido = || {
             Duration::from_millis(
-                u64::try_from(self.store.agora().saturating_sub(gatilho.criado_em)).unwrap_or(0),
+                u64::try_from(self.store.now().saturating_sub(gatilho.created_at)).unwrap_or(0),
             )
         };
 
@@ -827,7 +827,7 @@ impl Motor {
         // e um "obrigado, era só isso" na mesma janela), o Jev julga a última e a dúvida ficaria sem
         // resposta: nesse caso a conversa segue.
         let encerramento_possivel = grupo.len() == 1;
-        let fila_ms = gatilho_fila(self.store.agora(), gatilho.criado_em);
+        let fila_ms = gatilho_fila(self.store.now(), gatilho.created_at);
         match situacao {
             Situacao::SemNovidade => {
                 let motivo = "nenhuma mensagem nova para responder".to_owned();
@@ -846,7 +846,7 @@ impl Motor {
 
         let turno = self
             .store
-            .turnos()
+            .turns()
             .iniciar(org, conversa_id, Some(agente_id))?;
         self.metricas.turnos_iniciados.increment(1);
         observador.evento(EventoTurno::Inicio {
@@ -901,7 +901,7 @@ impl Motor {
             .max_context_messages
             .clamp(1, self.opcoes.teto_leitura_mensagens.max(1));
         // Janela de contexto com o resumo rolante (HR-14): o resumo ocupa parte do orçamento.
-        let resumo_da_conversa = resumo::Resumo::decodificar(conversa.resumo.as_deref());
+        let resumo_da_conversa = resumo::Resumo::decodificar(conversa.summary.as_deref());
         let montagem_historico = resumo::montar(
             &ultimas,
             &resumo_da_conversa,
@@ -919,14 +919,14 @@ impl Motor {
         let mut historico: Vec<Mensagem> = Vec::new();
         let mut imagens = OrcamentoImagens::default();
         for mensagem in &montagem_historico.mensagens {
-            let partes = if mensagem.papel == Papel::Usuario {
+            let partes = if mensagem.role == Role::User {
                 self.partes_de_arquivos(org, mensagem, &mut imagens)
             } else {
                 Vec::new()
             };
             // Mensagem do cliente só com arquivo (texto vazio): com a parte do arquivo, a mensagem
             // de texto vazio não entra — o pedido teria conteúdo e um texto em branco ao lado.
-            let texto_vazio = mensagem.papel == Papel::Usuario && mensagem.texto.trim().is_empty();
+            let texto_vazio = mensagem.role == Role::User && mensagem.texto.trim().is_empty();
             if let Some(item) = prompt::da_mensagem_gravada(mensagem)
                 && !(texto_vazio && !partes.is_empty())
             {
@@ -1196,7 +1196,7 @@ impl Motor {
             });
         }
         let bloco = prompt::BlocoVolatil {
-            agora_ms: self.store.agora(),
+            agora_ms: self.store.now(),
             canal: &conversa.canal,
             status: status_do_atendimento(conversa.status),
             conversa: &conversa.id.to_string(),
@@ -1331,32 +1331,32 @@ impl Motor {
         // envio.
         let texto = resposta.texto.trim().to_owned();
         if !texto.is_empty() {
-            self.store.mensagens().gravar_com_saida(
+            self.store.messages().gravar_com_saida(
                 org,
-                NovaMensagem {
+                NewMessage {
                     conversation_id: conversa_id,
-                    direcao: Direcao::Saida,
-                    papel: Papel::Assistente,
+                    direction: Direction::Outbound,
+                    role: Role::Assistant,
                     texto: texto.clone(),
-                    anexos_json: "[]".to_owned(),
+                    attachments_json: "[]".to_owned(),
                     id_externo: None,
                     turn_id: Some(turno.id),
-                    origem: poph_store::Origem::Agente,
-                    autor_nome: None,
+                    origin: poph_store::Origin::Agente,
+                    author_name: None,
                 },
-                NovaSaida {
+                NewOutboxItem {
                     conversation_id: conversa_id,
                     turn_id: turno.id,
                     seq: 0,
                     tipo: "text".to_owned(),
-                    conteudo_json: json!({ "texto": texto }).to_string(),
+                    content_json: json!({ "texto": texto }).to_string(),
                 },
             )?;
             self.metricas.respostas_gravadas.increment(1);
         }
         self.store
             .conversas()
-            .tocar(org, conversa_id, self.store.agora())?;
+            .tocar(org, conversa_id, self.store.now())?;
 
         let modelo = self.modelo_usado(&quente);
         // `turns.jev_json` é o painel "por quê" do turno: as decisões do Jev **e** o que o código
@@ -1375,18 +1375,18 @@ impl Motor {
             (_, Some(fluxo)) => Some(json!({ "fluxo": fluxo }).to_string()),
             _ => None,
         };
-        let fim = FinalizacaoTurno {
-            estado: Some(EstadoTurno::Concluido),
+        let fim = TurnFinalization {
+            estado: Some(TurnState::Completed),
             jev_json,
-            tempos_json: Some(tempos_json(&tempos, &modelo, resposta.motivo.as_ref())),
-            trechos_json: Some(utilizados_json(&trechos, &uso.produtos())),
+            times_json: Some(tempos_json(&tempos, &modelo, resposta.motivo.as_ref())),
+            passages_json: Some(utilizados_json(&trechos, &uso.produtos())),
             // HR-47b: `tools_json` guarda os nomes (contrato antigo) **e** o detalhe por chamada.
-            ferramentas_json: Some(registro_do_turno(&resposta.ferramentas, &chamadas)),
-            tokens_entrada: Some(u32::try_from(resposta.uso.entrada).unwrap_or(u32::MAX)),
-            tokens_saida: Some(u32::try_from(resposta.uso.saida).unwrap_or(u32::MAX)),
-            ..FinalizacaoTurno::default()
+            tools_json: Some(registro_do_turno(&resposta.ferramentas, &chamadas)),
+            input_tokens: Some(u32::try_from(resposta.uso.entrada).unwrap_or(u32::MAX)),
+            output_tokens: Some(u32::try_from(resposta.uso.saida).unwrap_or(u32::MAX)),
+            ..TurnFinalization::default()
         };
-        self.store.turnos().finalizar(org, turno.id, fim)?;
+        self.store.turns().finalizar(org, turno.id, fim)?;
         self.metricas.turnos_concluidos.increment(1);
         self.metricas.tokens_entrada.increment(resposta.uso.entrada);
         self.metricas.tokens_saida.increment(resposta.uso.saida);
@@ -1397,7 +1397,7 @@ impl Motor {
             self.metricas.primeiro_texto_ms.observe(primeiro as f64);
         }
         observador.evento(EventoTurno::Fim {
-            estado: EstadoTurno::Concluido.como_texto().to_owned(),
+            estado: TurnState::Completed.as_text().to_owned(),
             motivo: resposta.motivo.as_ref().map(motivo_texto),
         });
 
@@ -1406,7 +1406,7 @@ impl Motor {
 
         Ok(ResumoTurno {
             turno: turno.id,
-            estado: EstadoTurno::Concluido,
+            estado: TurnState::Completed,
             texto,
             mensagens: grupo_ids,
             tokens_entrada: u32::try_from(resposta.uso.entrada).unwrap_or(u32::MAX),
@@ -1430,8 +1430,8 @@ impl Motor {
         observador: &mut dyn Observador,
         inicio: Instant,
     ) -> Result<(Resposta, Vec<Mensagem>), ErroLlm> {
-        let max_rodadas = quente.agente.max_rodadas_ferramenta.max(1);
-        let max_por_mensagem = quente.agente.max_ferramentas_por_mensagem.max(1);
+        let max_rodadas = quente.agente.max_tool_rounds.max(1);
+        let max_por_mensagem = quente.agente.max_tools_per_message.max(1);
         let mut oferecidas =
             ferramentas::oferecidas(self.ferramentas.as_ref(), &quente.ferramentas);
         // HR-31: o G3 em `nada` tira do turno as ferramentas que consultam base e catálogo. O
@@ -1975,7 +1975,7 @@ impl Motor {
             .com_mensagens(mensagens)
             .com_handoff(
                 poph_jev::situacoes_do_agente(&quente.agente.jev_json),
-                quente.agente.handoff_ativo,
+                quente.agente.handoff_active,
             )
             .com_capacidades(
                 self.busca.is_some(),
@@ -2011,11 +2011,11 @@ impl Motor {
         mensagem: &MensagemGravada,
         imagens: &mut OrcamentoImagens,
     ) -> Vec<Parte> {
-        let anexos_json = mensagem.anexos_json.trim();
+        let anexos_json = mensagem.attachments_json.trim();
         if anexos_json.is_empty() || anexos_json == "[]" {
             return Vec::new();
         }
-        let anexos = match self.store.mensagens().anexos(org, mensagem.id) {
+        let anexos = match self.store.messages().anexos(org, mensagem.id) {
             Ok(anexos) => anexos,
             Err(erro) => {
                 tracing::warn!(erro = %erro, "não consegui ler os anexos da mensagem");
@@ -2032,7 +2032,7 @@ impl Motor {
                 }
                 continue;
             }
-            if let Some(texto) = &anexo.texto_extraido {
+            if let Some(texto) = &anexo.extracted_text {
                 let texto = texto.trim();
                 if !texto.is_empty() {
                     textos.push(texto.to_owned());
@@ -2058,7 +2058,7 @@ impl Motor {
     fn imagem_do_anexo(
         &self,
         org: OrgId,
-        anexo: &poph_store::AnexoRegistro,
+        anexo: &poph_store::AttachmentRecord,
         imagens: &mut OrcamentoImagens,
     ) -> Option<Parte> {
         let Some(arquivos) = self.arquivos.as_ref() else {
@@ -2068,10 +2068,10 @@ impl Motor {
             );
             return None;
         };
-        if !imagens.cabe(anexo.tamanho_bytes) {
+        if !imagens.cabe(anexo.size_bytes) {
             tracing::warn!(
                 anexo = %anexo.id,
-                tamanho_bytes = anexo.tamanho_bytes,
+                tamanho_bytes = anexo.size_bytes,
                 "imagem omitida do turno: passa do teto de imagens por turno"
             );
             return None;
@@ -2112,18 +2112,18 @@ impl Motor {
     fn texto_de_arquivos(&self, org: OrgId, mensagens: &[MensagemGravada]) -> Option<String> {
         let mut textos: Vec<String> = Vec::new();
         for mensagem in mensagens {
-            if mensagem.papel != Papel::Usuario {
+            if mensagem.role != Role::User {
                 continue;
             }
             // Sem anexo não há o que ler: a imensa maioria das mensagens cai fora aqui, sem query.
-            let anexos = mensagem.anexos_json.trim();
+            let anexos = mensagem.attachments_json.trim();
             if anexos.is_empty() || anexos == "[]" {
                 continue;
             }
-            match self.store.mensagens().anexos(org, mensagem.id) {
+            match self.store.messages().anexos(org, mensagem.id) {
                 Ok(anexos) => {
                     for anexo in anexos {
-                        if let Some(texto) = anexo.texto_extraido {
+                        if let Some(texto) = anexo.extracted_text {
                             let texto = texto.trim();
                             if !texto.is_empty() {
                                 textos.push(texto.to_owned());
@@ -2157,14 +2157,10 @@ impl Motor {
     /// validada contra esta mesma lista lida no momento da transferência (HR-32) — departamento
     /// apagado ou desativado no meio do caminho é recusado, e a conversa vai para o padrão.
     fn departamentos_ativos_com_id(&self, org: OrgId) -> Vec<departamento::Candidato> {
-        match self
-            .store
-            .departamentos()
-            .listar(org, Pagina::com_limite(200))
-        {
+        match self.store.departments().listar(org, Page::with_limit(200)) {
             Ok(departamentos) => departamentos
                 .iter()
-                .filter(|departamento| departamento.status == poph_store::Status::Ativo)
+                .filter(|departamento| departamento.status == poph_store::Status::Active)
                 .map(departamento::Candidato::de)
                 .collect(),
             Err(erro) => {
@@ -2242,7 +2238,7 @@ impl Motor {
 
     /// Janela de agrupamento do agente: a dele, limitada ao teto global e ao padrão quando zero.
     pub fn janela_do_agente(&self, agente: &poph_store::Agente) -> Duration {
-        let do_agente = Duration::from_millis(u64::from(agente.janela_agrupamento_ms));
+        let do_agente = Duration::from_millis(u64::from(agente.grouping_window_ms));
         let janela = if do_agente.is_zero() {
             self.opcoes.janela_padrao
         } else {
@@ -2257,7 +2253,7 @@ impl Motor {
         org: OrgId,
         conversa: ConversationId,
     ) -> Resultado<Vec<MensagemGravada>> {
-        Ok(self.store.mensagens().ultimas(
+        Ok(self.store.messages().ultimas(
             org,
             conversa,
             self.opcoes.teto_leitura_mensagens.max(1),
@@ -2370,25 +2366,25 @@ impl Motor {
                 "transferência sem mensagem automática configurada: cliente não recebe texto"
             );
         } else {
-            self.store.mensagens().gravar_com_saida(
+            self.store.messages().gravar_com_saida(
                 org,
-                NovaMensagem {
+                NewMessage {
                     conversation_id: conversa_id,
-                    direcao: Direcao::Saida,
-                    papel: Papel::Assistente,
+                    direction: Direction::Outbound,
+                    role: Role::Assistant,
                     texto: texto.clone(),
-                    anexos_json: "[]".to_owned(),
+                    attachments_json: "[]".to_owned(),
                     id_externo: None,
                     turn_id: Some(turno),
-                    origem: poph_store::Origem::Agente,
-                    autor_nome: None,
+                    origin: poph_store::Origin::Agente,
+                    author_name: None,
                 },
-                NovaSaida {
+                NewOutboxItem {
                     conversation_id: conversa_id,
                     turn_id: turno,
                     seq: 0,
                     tipo: "text".to_owned(),
-                    conteudo_json: json!({ "texto": texto }).to_string(),
+                    content_json: json!({ "texto": texto }).to_string(),
                 },
             )?;
             self.metricas.respostas_gravadas.increment(1);
@@ -2409,7 +2405,7 @@ impl Motor {
         let destino = departamento::resolver(
             escolha_do_g4,
             &candidatos,
-            quente.agente.handoff_departamento,
+            quente.agente.handoff_department,
             motivo_da_abstencao.as_deref(),
         );
         if let Some(motivo) = &destino.motivo {
@@ -2424,7 +2420,7 @@ impl Motor {
         // 4. Conversa transferida, com auditoria na mesma transação.
         self.store
             .conversas()
-            .tocar(org, conversa_id, self.store.agora())?;
+            .tocar(org, conversa_id, self.store.now())?;
         let departamento = destino.departamento;
         let detalhe = json!({
             "gate": origem.como_texto(),
@@ -2469,14 +2465,14 @@ impl Motor {
             "escolha_do_jev": escolha_do_g4,
             "motivo": destino.motivo,
         });
-        self.store.turnos().finalizar(
+        self.store.turns().finalizar(
             org,
             turno,
-            FinalizacaoTurno {
-                estado: Some(EstadoTurno::Concluido),
+            TurnFinalization {
+                estado: Some(TurnState::Completed),
                 jev_json: Some(registro.to_string()),
-                tempos_json: Some(tempos_json(&tempos, &modelo, None)),
-                ..FinalizacaoTurno::default()
+                times_json: Some(tempos_json(&tempos, &modelo, None)),
+                ..TurnFinalization::default()
             },
         )?;
         self.metricas.turnos_concluidos.increment(1);
@@ -2497,13 +2493,13 @@ impl Motor {
         });
         observador.evento(EventoTurno::Texto(texto.clone()));
         observador.evento(EventoTurno::Fim {
-            estado: EstadoTurno::Concluido.como_texto().to_owned(),
+            estado: TurnState::Completed.as_text().to_owned(),
             motivo: Some("transferida para humano".to_owned()),
         });
 
         Ok(ResumoTurno {
             turno,
-            estado: EstadoTurno::Concluido,
+            estado: TurnState::Completed,
             texto,
             mensagens: grupo_ids,
             tokens_entrada: 0,
@@ -2540,31 +2536,31 @@ impl Motor {
 
         let texto = poph_jev::resposta_g7_do_agente(&quente.agente.jev_json)
             .unwrap_or_else(|| G7_RESPOSTA_PADRAO.to_owned());
-        self.store.mensagens().gravar_com_saida(
+        self.store.messages().gravar_com_saida(
             org,
-            NovaMensagem {
+            NewMessage {
                 conversation_id: conversa_id,
-                direcao: Direcao::Saida,
-                papel: Papel::Assistente,
+                direction: Direction::Outbound,
+                role: Role::Assistant,
                 texto: texto.clone(),
-                anexos_json: "[]".to_owned(),
+                attachments_json: "[]".to_owned(),
                 id_externo: None,
                 turn_id: Some(turno),
-                origem: poph_store::Origem::Agente,
-                autor_nome: None,
+                origin: poph_store::Origin::Agente,
+                author_name: None,
             },
-            NovaSaida {
+            NewOutboxItem {
                 conversation_id: conversa_id,
                 turn_id: turno,
                 seq: 0,
                 tipo: "text".to_owned(),
-                conteudo_json: json!({ "texto": texto }).to_string(),
+                content_json: json!({ "texto": texto }).to_string(),
             },
         )?;
         self.metricas.respostas_gravadas.increment(1);
         self.store
             .conversas()
-            .tocar(org, conversa_id, self.store.agora())?;
+            .tocar(org, conversa_id, self.store.now())?;
 
         let tempos = Tempos {
             fila_ms,
@@ -2582,14 +2578,14 @@ impl Motor {
             "confianca": jev.decisao(IdGate::G7).map(|decisao| decisao.confianca),
             "acao": AcaoG7::ResponderPadrao.como_texto(),
         });
-        self.store.turnos().finalizar(
+        self.store.turns().finalizar(
             org,
             turno,
-            FinalizacaoTurno {
-                estado: Some(EstadoTurno::Concluido),
+            TurnFinalization {
+                estado: Some(TurnState::Completed),
                 jev_json: Some(registro.to_string()),
-                tempos_json: Some(tempos_json(&tempos, &modelo, None)),
-                ..FinalizacaoTurno::default()
+                times_json: Some(tempos_json(&tempos, &modelo, None)),
+                ..TurnFinalization::default()
             },
         )?;
         self.metricas.turnos_concluidos.increment(1);
@@ -2603,13 +2599,13 @@ impl Motor {
         );
         observador.evento(EventoTurno::Texto(texto.clone()));
         observador.evento(EventoTurno::Fim {
-            estado: EstadoTurno::Concluido.como_texto().to_owned(),
+            estado: TurnState::Completed.as_text().to_owned(),
             motivo: Some(motivo.clone()),
         });
 
         Ok(ResumoTurno {
             turno,
-            estado: EstadoTurno::Concluido,
+            estado: TurnState::Completed,
             texto,
             mensagens: grupo_ids,
             tokens_entrada: 0,
@@ -2648,32 +2644,32 @@ impl Motor {
             .trim()
             .to_owned();
         if !texto.is_empty() {
-            self.store.mensagens().gravar_com_saida(
+            self.store.messages().gravar_com_saida(
                 org,
-                NovaMensagem {
+                NewMessage {
                     conversation_id: conversa_id,
-                    direcao: Direcao::Saida,
-                    papel: Papel::Assistente,
+                    direction: Direction::Outbound,
+                    role: Role::Assistant,
                     texto: texto.clone(),
-                    anexos_json: "[]".to_owned(),
+                    attachments_json: "[]".to_owned(),
                     id_externo: None,
                     turn_id: Some(turno),
-                    origem: poph_store::Origem::Agente,
-                    autor_nome: None,
+                    origin: poph_store::Origin::Agente,
+                    author_name: None,
                 },
-                NovaSaida {
+                NewOutboxItem {
                     conversation_id: conversa_id,
                     turn_id: turno,
                     seq: 0,
                     tipo: "text".to_owned(),
-                    conteudo_json: json!({ "texto": texto }).to_string(),
+                    content_json: json!({ "texto": texto }).to_string(),
                 },
             )?;
             self.metricas.respostas_gravadas.increment(1);
         }
         self.store
             .conversas()
-            .tocar(org, conversa_id, self.store.agora())?;
+            .tocar(org, conversa_id, self.store.now())?;
 
         let tempos = Tempos {
             fila_ms,
@@ -2690,14 +2686,14 @@ impl Motor {
             "confianca": jev.decisao(IdGate::G8).map(|decisao| decisao.confianca),
             "despedida": !texto.is_empty(),
         });
-        self.store.turnos().finalizar(
+        self.store.turns().finalizar(
             org,
             turno,
-            FinalizacaoTurno {
-                estado: Some(EstadoTurno::Concluido),
+            TurnFinalization {
+                estado: Some(TurnState::Completed),
                 jev_json: Some(registro.to_string()),
-                tempos_json: Some(tempos_json(&tempos, &modelo, None)),
-                ..FinalizacaoTurno::default()
+                times_json: Some(tempos_json(&tempos, &modelo, None)),
+                ..TurnFinalization::default()
             },
         )?;
         self.metricas.turnos_concluidos.increment(1);
@@ -2714,13 +2710,13 @@ impl Motor {
             observador.evento(EventoTurno::Texto(texto.clone()));
         }
         observador.evento(EventoTurno::Fim {
-            estado: EstadoTurno::Concluido.como_texto().to_owned(),
+            estado: TurnState::Completed.as_text().to_owned(),
             motivo: Some(motivo.clone()),
         });
 
         Ok(ResumoTurno {
             turno,
-            estado: EstadoTurno::Concluido,
+            estado: TurnState::Completed,
             texto,
             mensagens: grupo_ids,
             tokens_entrada: 0,
@@ -2775,32 +2771,32 @@ impl Motor {
         motivo: String,
         inicio: Instant,
     ) -> Resultado<ResumoTurno> {
-        let turno = self.store.turnos().iniciar(org, conversa, agente)?;
+        let turno = self.store.turns().iniciar(org, conversa, agente)?;
         let tempos = Tempos {
             total_ms: u64::try_from(inicio.elapsed().as_millis()).unwrap_or(u64::MAX),
             ..Tempos::default()
         };
-        self.store.turnos().finalizar(
+        self.store.turns().finalizar(
             org,
             turno.id,
-            FinalizacaoTurno {
-                estado: Some(EstadoTurno::Ignorado),
-                tempos_json: Some(tempos_json(&tempos, "", None)),
-                erro: Some(motivo.clone()),
-                ..FinalizacaoTurno::default()
+            TurnFinalization {
+                estado: Some(TurnState::Skipped),
+                times_json: Some(tempos_json(&tempos, "", None)),
+                error: Some(motivo.clone()),
+                ..TurnFinalization::default()
             },
         )?;
         self.metricas.turnos_ignorados.increment(1);
         if let Some(agente) = agente {
-            let _ = self.store.auditoria().registrar(
+            let _ = self.store.audit().registrar(
                 Some(org),
-                NovoRegistroAuditoria {
+                NewAuditEntry {
                     ator_tipo: "system".to_owned(),
-                    ator_id: Some("turno".to_owned()),
+                    actor_id: Some("turno".to_owned()),
                     acao: "skip".to_owned(),
-                    entidade: "turn".to_owned(),
-                    entidade_id: Some(turno.id.to_string()),
-                    detalhe_json: json!({
+                    entity: "turn".to_owned(),
+                    entity_id: Some(turno.id.to_string()),
+                    detail_json: json!({
                         "motivo": motivo,
                         "conversa": conversa.to_string(),
                         "agente": agente.to_string(),
@@ -2811,7 +2807,7 @@ impl Motor {
         }
         Ok(ResumoTurno {
             turno: turno.id,
-            estado: EstadoTurno::Ignorado,
+            estado: TurnState::Skipped,
             texto: String::new(),
             mensagens: Vec::new(),
             tokens_entrada: 0,
@@ -2849,17 +2845,17 @@ impl Motor {
             total_ms: u64::try_from(inicio.elapsed().as_millis()).unwrap_or(u64::MAX),
             rodadas_ferramenta: 0,
         };
-        self.store.turnos().finalizar(
+        self.store.turns().finalizar(
             org,
             turno,
-            FinalizacaoTurno {
-                estado: Some(EstadoTurno::Falhou),
-                tempos_json: Some(tempos_json(&tempos, modelo, None)),
+            TurnFinalization {
+                estado: Some(TurnState::Failed),
+                times_json: Some(tempos_json(&tempos, modelo, None)),
                 // HR-47b: o que já tinha rodado antes da falha não se perde. Nomes ficam vazios
                 // porque o contrato `tools` só lista chamadas de turno concluído.
-                ferramentas_json: chamadas.map(|registro| registro_do_turno(&[], registro)),
-                erro: Some(erro.clone()),
-                ..FinalizacaoTurno::default()
+                tools_json: chamadas.map(|registro| registro_do_turno(&[], registro)),
+                error: Some(erro.clone()),
+                ..TurnFinalization::default()
             },
         )?;
         self.metricas.turnos_falhos.increment(1);
@@ -2878,12 +2874,12 @@ impl Motor {
             );
         }
         observador.evento(EventoTurno::Fim {
-            estado: EstadoTurno::Falhou.como_texto().to_owned(),
+            estado: TurnState::Failed.as_text().to_owned(),
             motivo: Some(erro.clone()),
         });
         Ok(ResumoTurno {
             turno,
-            estado: EstadoTurno::Falhou,
+            estado: TurnState::Failed,
             texto: String::new(),
             mensagens,
             tokens_entrada: 0,
@@ -2904,11 +2900,11 @@ impl Motor {
 /// Mensagem de ferramenta e de sistema ficam fora: o Jev decide sobre a conversa, não sobre o
 /// resultado de ferramenta.
 fn mensagem_do_jev(mensagem: &MensagemGravada) -> Option<MensagemJev> {
-    match mensagem.direcao {
-        poph_store::Direcao::Entrada => Some(MensagemJev::cliente(mensagem.texto.clone())),
-        poph_store::Direcao::Saida => Some(MensagemJev::agente(mensagem.texto.clone())),
+    match mensagem.direction {
+        poph_store::Direction::Inbound => Some(MensagemJev::cliente(mensagem.texto.clone())),
+        poph_store::Direction::Outbound => Some(MensagemJev::agente(mensagem.texto.clone())),
     }
-    .filter(|_| mensagem.papel != Papel::Ferramenta && mensagem.papel != Papel::Sistema)
+    .filter(|_| mensagem.role != Role::Tool && mensagem.role != Role::System)
 }
 
 // ───────────────────────────── Processador de ator ─────────────────────────────
@@ -2998,9 +2994,9 @@ impl Processador for ProcessadorTurno {
 fn registrar_fim_do_turno(tarefa: &Tarefa, resumo: &Resultado<ResumoTurno>) {
     match resumo {
         Ok(resumo) => {
-            let estado = resumo.estado.como_texto();
+            let estado = resumo.estado.as_text();
             match resumo.estado {
-                EstadoTurno::Concluido => tracing::info!(
+                TurnState::Completed => tracing::info!(
                     target: "poph_agent::turno",
                     org = %tarefa.org,
                     conversa = %tarefa.conversa,
@@ -3011,7 +3007,7 @@ fn registrar_fim_do_turno(tarefa: &Tarefa, resumo: &Resultado<ResumoTurno>) {
                     tokens_saida = resumo.tokens_saida,
                     "turno concluído"
                 ),
-                EstadoTurno::Ignorado => tracing::info!(
+                TurnState::Skipped => tracing::info!(
                     target: "poph_agent::turno",
                     org = %tarefa.org,
                     conversa = %tarefa.conversa,
@@ -3069,15 +3065,12 @@ fn concluir_entradas(
     mensagens: &[MessageId],
     erro: Option<&str>,
 ) -> Resultado<()> {
-    let pendentes = fluxo
-        .store()
-        .caixa_entrada()
-        .listar_abertos(org, LOTE_CONCLUSAO)?;
+    let pendentes = fluxo.store().inbox().listar_abertos(org, LOTE_CONCLUSAO)?;
     let mut concluidos = Vec::new();
     for item in pendentes {
         let da_propria = Some(item.id) == propria;
         let do_grupo = mensagens.iter().any(|mensagem| {
-            EventoEntrada::de_json(&item.evento_json)
+            EventoEntrada::de_json(&item.event_json)
                 .map(|evento| evento.conversa == conversa && evento.mensagem == *mensagem)
                 .unwrap_or(false)
         });
@@ -3143,16 +3136,13 @@ fn itens_do_turno(
     propria: Option<poph_types::InboxId>,
     mensagens: &[MessageId],
 ) -> Resultado<Vec<poph_types::InboxId>> {
-    let abertos = fluxo
-        .store()
-        .caixa_entrada()
-        .listar_abertos(org, LOTE_CONCLUSAO)?;
+    let abertos = fluxo.store().inbox().listar_abertos(org, LOTE_CONCLUSAO)?;
     Ok(abertos
         .into_iter()
         .filter(|item| {
             Some(item.id) == propria
                 || mensagens.iter().any(|mensagem| {
-                    EventoEntrada::de_json(&item.evento_json)
+                    EventoEntrada::de_json(&item.event_json)
                         .map(|evento| evento.conversa == conversa && evento.mensagem == *mensagem)
                         .unwrap_or(false)
                 })
@@ -3181,7 +3171,7 @@ fn tratar_falha_modelo(
     let org = tarefa.org;
     let motivo = motivo_para_log(erro);
     let ids = itens_do_turno(fluxo, org, tarefa.conversa, tarefa.entrada, mensagens)?;
-    let ja_enfileirou = fluxo.store().caixa_saida().contar_do_turno(org, turno)? > 0;
+    let ja_enfileirou = fluxo.store().outbox().contar_do_turno(org, turno)? > 0;
     let politica = fluxo.opcoes();
     let maximo = politica.tentativas_falha_modelo.max(1);
 
@@ -3214,7 +3204,7 @@ fn tratar_falha_modelo(
 
     let tentativas = fluxo
         .store()
-        .caixa_entrada()
+        .inbox()
         .tentativas(org, &ids)?
         .into_iter()
         .max()
@@ -3240,7 +3230,7 @@ fn tratar_falha_modelo(
     let espera = politica.atraso_falha_modelo.espera(tentativas);
     let proxima_em = fluxo
         .store()
-        .agora()
+        .now()
         .saturating_add(i64::try_from(espera.as_millis()).unwrap_or(i64::MAX));
     fluxo.adiar_entradas(org, &ids, proxima_em, &motivo)?;
     metricas.falhas_modelo_adiadas.increment(1);
@@ -3282,7 +3272,7 @@ fn analisar(ultimas: &[MensagemGravada], gatilho: MessageId) -> (Situacao, Vec<M
     }
     let mut grupo = Vec::new();
     for mensagem in ultimas.iter().rev() {
-        if mensagem.papel == Papel::Usuario && mensagem.direcao == Direcao::Entrada {
+        if mensagem.role == Role::User && mensagem.direction == Direction::Inbound {
             grupo.push(mensagem.clone());
         } else {
             break;
@@ -3429,15 +3419,15 @@ fn ultima_entrada_do_cliente(ultimas: &[MensagemGravada]) -> Option<MessageId> {
     ultimas
         .iter()
         .rev()
-        .find(|mensagem| mensagem.papel == Papel::Usuario && mensagem.direcao == Direcao::Entrada)
+        .find(|mensagem| mensagem.role == Role::User && mensagem.direction == Direction::Inbound)
         .map(|mensagem| mensagem.id)
 }
 
-fn status_do_atendimento(status: poph_store::StatusConversa) -> &'static str {
+fn status_do_atendimento(status: poph_store::ConversationStatus) -> &'static str {
     match status {
-        poph_store::StatusConversa::Aberta => "aberta",
-        poph_store::StatusConversa::Transferida => "transferida para humano",
-        poph_store::StatusConversa::Fechada => "fechada",
+        poph_store::ConversationStatus::Open => "aberta",
+        poph_store::ConversationStatus::Transferred => "transferida para humano",
+        poph_store::ConversationStatus::Closed => "fechada",
     }
 }
 
@@ -3481,7 +3471,7 @@ fn candidato_do_g5(produto: &ProdutoEncontrado) -> poph_jev::CandidatoProduto {
 fn consulta_do_grupo(grupo: &[MensagemGravada]) -> String {
     let mut texto = String::new();
     for mensagem in grupo {
-        if mensagem.papel != Papel::Usuario {
+        if mensagem.role != Role::User {
             continue;
         }
         let fala = mensagem.texto.trim();
@@ -3546,20 +3536,20 @@ fn tempos_json(tempos: &Tempos, modelo: &str, motivo: Option<&MotivoFim>) -> Str
 mod testes {
     use super::*;
 
-    fn mensagem(papel: Papel, direcao: Direcao, id: MessageId) -> MensagemGravada {
+    fn mensagem(papel: Role, direcao: Direction, id: MessageId) -> MensagemGravada {
         MensagemGravada {
             id,
             org_id: OrgId::generate(),
             conversation_id: ConversationId::generate(),
-            direcao,
-            papel,
-            origem: poph_store::Origem::Agente,
-            autor_nome: None,
+            direction: direcao,
+            role: papel,
+            origin: poph_store::Origin::Agente,
+            author_name: None,
             texto: String::new(),
-            anexos_json: "[]".to_owned(),
+            attachments_json: "[]".to_owned(),
             id_externo: None,
             turn_id: None,
-            criado_em: 0,
+            created_at: 0,
         }
     }
 
@@ -3571,9 +3561,9 @@ mod testes {
             MessageId::generate(),
         );
         let ultimas = vec![
-            mensagem(Papel::Usuario, Direcao::Entrada, a),
-            mensagem(Papel::Assistente, Direcao::Saida, b),
-            mensagem(Papel::Usuario, Direcao::Entrada, c),
+            mensagem(Role::User, Direction::Inbound, a),
+            mensagem(Role::Assistant, Direction::Outbound, b),
+            mensagem(Role::User, Direction::Inbound, c),
         ];
         let (situacao, grupo) = analisar(&ultimas, c);
         assert_eq!(situacao, Situacao::Processar);
@@ -3585,8 +3575,8 @@ mod testes {
     fn mensagem_ja_respondida_nao_abre_turno() {
         let (a, b) = (MessageId::generate(), MessageId::generate());
         let ultimas = vec![
-            mensagem(Papel::Usuario, Direcao::Entrada, a),
-            mensagem(Papel::Assistente, Direcao::Saida, b),
+            mensagem(Role::User, Direction::Inbound, a),
+            mensagem(Role::Assistant, Direction::Outbound, b),
         ];
         let (situacao, grupo) = analisar(&ultimas, a);
         assert_eq!(situacao, Situacao::JaRespondida);

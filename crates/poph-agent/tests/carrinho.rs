@@ -20,7 +20,7 @@ use poph_agent::turno::{
     RegistroFerramentas, RegistroPadrao, UsoFerramentas,
 };
 use poph_core::llm::{ChamadaFerramenta, EventoLlm, LlmProvider, MotivoFim, ProvedorFake, Roteiro};
-use poph_store::{NovaCategoria, NovaConversa, NovaOrg, NovoAgente, NovoProduto, Pagina, Store};
+use poph_store::{NewAgent, NewCategory, NewConversation, NewOrg, NewProduct, Page, Store};
 use poph_types::{
     AgentId, ConversationId, OrgId, ProductId, StructuredInstructions, ToolConfig, TurnId,
 };
@@ -59,27 +59,26 @@ impl Cenario {
         let _ = std::fs::remove_dir_all(&pasta);
         std::fs::create_dir_all(&pasta).expect("cria a pasta");
         let store = Arc::new(
-            Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
-                .expect("abre o banco"),
+            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco"),
         );
         let org = store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: format!("Org {rotulo}"),
+            .orgs()
+            .criar(NewOrg {
+                name: format!("Org {rotulo}"),
                 slug: format!("org-{rotulo}-{}", AgentId::generate()),
                 config_json: "{}".to_owned(),
             })
             .expect("cria a org")
             .id;
         let agente = store
-            .agentes()
+            .agents()
             .criar(
                 org,
-                NovoAgente {
-                    nome: format!("Bia {rotulo}"),
+                NewAgent {
+                    name: format!("Bia {rotulo}"),
                     slug: format!("bia-{rotulo}"),
-                    janela_agrupamento_ms: 0,
-                    ..NovoAgente::default()
+                    grouping_window_ms: 0,
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente")
@@ -96,7 +95,7 @@ impl Cenario {
             ..StructuredInstructions::default()
         };
         store
-            .instrucoes()
+            .instructions()
             .salvar(
                 org,
                 agente,
@@ -107,23 +106,23 @@ impl Cenario {
             )
             .expect("grava as instruções");
         let pragas = store
-            .categorias()
+            .categories()
             .criar(
                 org,
-                NovaCategoria {
-                    nome: "Pragas".to_owned(),
-                    descricao: String::new(),
+                NewCategory {
+                    name: "Pragas".to_owned(),
+                    description: String::new(),
                 },
             )
             .expect("cria a categoria")
             .id;
         let jardim_categoria = store
-            .categorias()
+            .categories()
             .criar(
                 org,
-                NovaCategoria {
-                    nome: "Jardim".to_owned(),
-                    descricao: String::new(),
+                NewCategory {
+                    name: "Jardim".to_owned(),
+                    description: String::new(),
                 },
             )
             .expect("cria a categoria")
@@ -136,30 +135,30 @@ impl Cenario {
             ("Projeto completo", 123_456),
         ] {
             let produto = store
-                .produtos()
+                .products()
                 .criar(
                     org,
-                    NovoProduto {
-                        categoria_id: Some(pragas),
-                        nome: nome.to_owned(),
-                        preco_texto: String::new(),
-                        preco_centavos: centavos,
-                        unidade: "por serviço".to_owned(),
-                        ..NovoProduto::default()
+                    NewProduct {
+                        category_id: Some(pragas),
+                        name: nome.to_owned(),
+                        price_text: String::new(),
+                        price_cents: centavos,
+                        unit: "por serviço".to_owned(),
+                        ..NewProduct::default()
                     },
                 )
                 .expect("cria o produto");
             produtos.push(produto.id);
         }
         let jardim = store
-            .produtos()
+            .products()
             .criar(
                 org,
-                NovoProduto {
-                    categoria_id: Some(jardim_categoria),
-                    nome: "Poda de árvores".to_owned(),
-                    preco_centavos: 15_000,
-                    ..NovoProduto::default()
+                NewProduct {
+                    category_id: Some(jardim_categoria),
+                    name: "Poda de árvores".to_owned(),
+                    price_cents: 15_000,
+                    ..NewProduct::default()
                 },
             )
             .expect("cria o produto de jardim")
@@ -181,12 +180,12 @@ impl Cenario {
             .conversas()
             .criar(
                 org,
-                NovaConversa {
+                NewConversation {
                     agent_id: agente,
                     integration_id: None,
                     canal: "cli".to_owned(),
                     peer_externo: None,
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("abre a conversa")
@@ -220,7 +219,7 @@ impl Cenario {
     fn total(&self, conversa: ConversationId) -> (i64, usize) {
         let resumo = self
             .store
-            .carrinhos()
+            .carts()
             .resumo(self.org, conversa)
             .expect("lê o carrinho");
         (resumo.total_centavos, resumo.itens.len())
@@ -254,19 +253,19 @@ impl Cenario {
 
     fn falar(&self, conversa: ConversationId, texto: &str) -> poph_types::MessageId {
         self.store
-            .mensagens()
+            .messages()
             .gravar(
                 self.org,
-                poph_store::NovaMensagem {
+                poph_store::NewMessage {
                     conversation_id: conversa,
-                    direcao: poph_store::Direcao::Entrada,
-                    papel: poph_store::Papel::Usuario,
+                    direction: poph_store::Direction::Inbound,
+                    role: poph_store::Role::User,
                     texto: texto.to_owned(),
-                    anexos_json: "[]".to_owned(),
+                    attachments_json: "[]".to_owned(),
                     id_externo: None,
                     turn_id: None,
-                    origem: poph_store::Origem::Agente,
-                    autor_nome: None,
+                    origin: poph_store::Origin::Agente,
+                    author_name: None,
                 },
             )
             .expect("grava a mensagem")
@@ -448,7 +447,7 @@ fn armazem_vazio() -> Store {
     let pasta = std::env::temp_dir().join(format!("poph-carrinho-esquema-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&pasta);
     std::fs::create_dir_all(&pasta).expect("pasta");
-    Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("banco")
+    Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("banco")
 }
 
 #[tokio::test]
@@ -478,7 +477,7 @@ async fn llm_manda_preco_no_turno_e_o_total_continua_do_catalogo() {
         )
         .await
         .expect("o turno roda");
-    assert_eq!(resumo.estado.como_texto(), "done");
+    assert_eq!(resumo.estado.as_text(), "done");
 
     // O erro da primeira tentativa volta ao modelo como resultado de ferramenta.
     let pedidos = fake.recebidos();
@@ -592,28 +591,24 @@ async fn org_de_outro_token_nao_mexe_no_carrinho() {
 
     let outra = cenario
         .store
-        .orgaos()
-        .criar(NovaOrg {
-            nome: "Outra".to_owned(),
+        .orgs()
+        .criar(NewOrg {
+            name: "Outra".to_owned(),
             slug: format!("outra-{}", AgentId::generate()),
             config_json: "{}".to_owned(),
         })
         .expect("cria a outra org")
         .id;
     // Conversa da primeira org não é lida nem alterada por quem tem a segunda.
-    let resumo = cenario
-        .store
-        .carrinhos()
-        .resumo(outra, conversa)
-        .expect("lê");
+    let resumo = cenario.store.carts().resumo(outra, conversa).expect("lê");
     assert!(resumo.itens.is_empty());
     assert!(resumo.carrinho.is_none());
     let erro = cenario
         .store
-        .carrinhos()
+        .carts()
         .adicionar(outra, conversa, cenario.agente, cenario.produtos[1], 1)
         .expect_err("org alheia não adiciona");
-    assert!(erro.eh_nao_encontrado(), "{erro}");
+    assert!(erro.is_not_found(), "{erro}");
     assert_eq!(
         cenario.total(conversa),
         (32_000, 1),
@@ -626,22 +621,22 @@ async fn produto_fora_das_categorias_do_agente_nao_entra() {
     let cenario = Cenario::novo("visibilidade", &[NOME_ADICIONAR]);
     let categorias = cenario
         .store
-        .categorias()
-        .listar(cenario.org, Pagina::default())
+        .categories()
+        .listar(cenario.org, Page::default())
         .expect("lista")
         .into_iter()
-        .filter(|categoria| categoria.nome == "Pragas")
+        .filter(|categoria| categoria.name == "Pragas")
         .map(|categoria| categoria.id)
         .collect::<Vec<_>>();
     let agente = cenario
         .store
-        .agentes()
-        .obter(cenario.org, cenario.agente)
+        .agents()
+        .get(cenario.org, cenario.agente)
         .expect("agente");
     cenario
         .store
-        .agentes()
-        .definir_categorias(cenario.org, cenario.agente, agente.versao, &categorias)
+        .agents()
+        .definir_categorias(cenario.org, cenario.agente, agente.version, &categorias)
         .expect("vincula o agente a Pragas");
 
     let erro = cenario
@@ -728,7 +723,7 @@ async fn limpar_esvazia_e_conta_as_linhas() {
     for indice in [0, 1, 3] {
         cenario
             .store
-            .carrinhos()
+            .carts()
             .adicionar(
                 cenario.org,
                 cenario.conversa,
@@ -747,7 +742,7 @@ async fn limpar_esvazia_e_conta_as_linhas() {
     // O carrinho continua aberto: a próxima adição não precisa criar outro.
     cenario
         .store
-        .carrinhos()
+        .carts()
         .adicionar(
             cenario.org,
             cenario.conversa,
@@ -758,7 +753,7 @@ async fn limpar_esvazia_e_conta_as_linhas() {
         .expect("volta a adicionar");
     let resumo = cenario
         .store
-        .carrinhos()
+        .carts()
         .resumo(cenario.org, cenario.conversa)
         .expect("lê");
     assert!(

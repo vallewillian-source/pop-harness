@@ -261,8 +261,8 @@ fn conexao(dados: &std::path::Path) -> rusqlite::Connection {
 #[test]
 fn run_nao_apaga_ficha_execucao_evento_nem_efeito() {
     use poph_store::{
-        EfeitoDaTransicao, EstadoDaExecucao, InicioDeExecucao, NovaConversa, NovoFluxo,
-        PublicacaoDeRevisao, Store,
+        ExecutionStart, ExecutionState, NewConversation, NewFlow, RevisionPublication, Store,
+        TransitionEffect,
     };
     use poph_types::{EventActor, ExecutionStatus};
 
@@ -273,21 +273,17 @@ fn run_nao_apaga_ficha_execucao_evento_nem_efeito() {
 
     // Semeia o atendimento pelo repositório, no mesmo banco que a CLI vai varrer.
     {
-        let store = Store::abrir_em(&dados.join("harness.db"), &dados.join("rag.db"))
+        let store = Store::open_at(&dados.join("harness.db"), &dados.join("rag.db"))
             .expect("abre o banco do teste");
-        let org = store
-            .orgaos()
-            .por_slug(slug)
-            .expect("org criada pela CLI")
-            .id;
+        let org = store.orgs().por_slug(slug).expect("org criada pela CLI").id;
         let agente = store
-            .agentes()
+            .agents()
             .criar(
                 org,
-                poph_store::NovoAgente {
-                    nome: "Agente fictício".to_owned(),
+                poph_store::NewAgent {
+                    name: "Agente fictício".to_owned(),
                     slug: "agente-ficticio".to_owned(),
-                    ..poph_store::NovoAgente::default()
+                    ..poph_store::NewAgent::default()
                 },
             )
             .expect("agente");
@@ -295,27 +291,27 @@ fn run_nao_apaga_ficha_execucao_evento_nem_efeito() {
             .fluxos()
             .criar(
                 org,
-                NovoFluxo {
+                NewFlow {
                     slug: "agendar_visita".to_owned(),
-                    nome: "Agendar visita".to_owned(),
-                    descricao: String::new(),
+                    name: "Agendar visita".to_owned(),
+                    description: String::new(),
                     rascunho_fonte: "fluxo()".to_owned(),
                 },
             )
             .expect("fluxo");
         let revisao = store
-            .revisoes()
+            .revisions()
             .publicar_revisao(
                 org,
                 fluxo.id,
-                PublicacaoDeRevisao {
-                    esperada: fluxo.versao,
+                RevisionPublication {
+                    expected: fluxo.version,
                     fonte: "fluxo()".to_owned(),
                     definicao_json: "{}".to_owned(),
                     schema_versao: Some(1),
                     resolucoes_json: "{}".to_owned(),
                     ator_tipo: "cli".to_owned(),
-                    ator_id: None,
+                    actor_id: None,
                 },
             )
             .expect("revisão");
@@ -327,12 +323,12 @@ fn run_nao_apaga_ficha_execucao_evento_nem_efeito() {
             .conversas()
             .criar(
                 org,
-                NovaConversa {
+                NewConversation {
                     agent_id: agente.id,
                     integration_id: None,
                     canal: "cli".to_owned(),
                     peer_externo: Some("cliente-ficticio".to_owned()),
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("conversa com Ficha");
@@ -342,26 +338,26 @@ fn run_nao_apaga_ficha_execucao_evento_nem_efeito() {
             .expect("consulta")
             .expect("a conversa tem Ficha");
         store
-            .execucoes()
+            .executions()
             .iniciar_execucao(
                 org,
-                InicioDeExecucao {
+                ExecutionStart {
                     ficha: ficha.id,
                     fluxo: fluxo.id,
-                    revisao: revisao.id,
-                    ator: EventActor::Agent,
+                    revision: revisao.id,
+                    actor: EventActor::Agent,
                     ator_ref: Some("agente-ficticio"),
-                    decisao_jev: None,
-                    estado_inicial: EstadoDaExecucao {
+                    jev_decision: None,
+                    initial_state: ExecutionState {
                         status: ExecutionStatus::Active,
                         no_atual: "coleta".to_owned(),
                         dados_json: "{}".to_owned(),
-                        atores_que_agiram: Vec::new(),
-                        resultado: None,
-                        motivo: None,
+                        acting_actors: Vec::new(),
+                        result: None,
+                        reason: None,
                     },
-                    efeitos_de_entrada: vec![EfeitoDaTransicao {
-                        chave: "entrada/0".to_owned(),
+                    inbound_effects: vec![TransitionEffect {
+                        key: "entrada/0".to_owned(),
                         tipo: "mensagem_ao_cliente".to_owned(),
                         payload_json: "{\"texto\":\"olá\"}".to_owned(),
                     }],

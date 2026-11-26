@@ -21,8 +21,7 @@ use poph_server::matrix_espelho::{
     PAGINA, TENTATIVAS_DEFINITIVAS, TETO_ATRASO,
 };
 use poph_store::{
-    Direcao, NovaConversa, NovaMensagem, NovaMensagemDoAparelho, NovaOrg, NovoAgente, Origem,
-    Papel, Store,
+    Direction, NewAgent, NewConversation, NewDeviceMessage, NewMessage, NewOrg, Origin, Role, Store,
 };
 use poph_types::{AgentId, ConversationId, IntegrationId, MatrixConfig, MessageId, OrgId};
 use rusqlite::Connection;
@@ -44,9 +43,9 @@ impl Cenario {
         let _ = fs::remove_dir_all(&pasta);
         fs::create_dir_all(&pasta).expect("cria a pasta do teste");
         let relogio = Arc::new(AtomicI64::new(1_000));
-        let store = Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
+        let store = Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db"))
             .expect("abre o banco")
-            .com_relogio(Arc::new(move || relogio.fetch_add(1, Ordering::SeqCst)));
+            .with_clock(Arc::new(move || relogio.fetch_add(1, Ordering::SeqCst)));
         Self {
             pasta,
             store: Some(Arc::new(store)),
@@ -58,7 +57,7 @@ impl Cenario {
     }
 
     fn conexao(&self) -> Connection {
-        Connection::open(self.store().caminho_harness()).expect("abre o banco para conferir")
+        Connection::open(self.store().harness_path()).expect("abre o banco para conferir")
     }
 }
 
@@ -83,9 +82,9 @@ fn config() -> MatrixConfig {
 
 fn criar_org(store: &Store, slug: &str) -> OrgId {
     store
-        .orgaos()
-        .criar(NovaOrg {
-            nome: format!("Org {slug}"),
+        .orgs()
+        .criar(NewOrg {
+            name: format!("Org {slug}"),
             slug: slug.to_owned(),
             config_json: String::new(),
         })
@@ -95,13 +94,13 @@ fn criar_org(store: &Store, slug: &str) -> OrgId {
 
 fn criar_agente(store: &Store, org: OrgId) -> AgentId {
     store
-        .agentes()
+        .agents()
         .criar(
             org,
-            NovoAgente {
-                nome: "Bia".to_owned(),
+            NewAgent {
+                name: "Bia".to_owned(),
                 slug: "bia".to_owned(),
-                ..NovoAgente::default()
+                ..NewAgent::default()
             },
         )
         .expect("cria o agente")
@@ -113,12 +112,12 @@ fn criar_conversa(store: &Store, org: OrgId, agente: AgentId, peer: &str) -> Con
         .conversas()
         .criar(
             org,
-            NovaConversa {
+            NewConversation {
                 agent_id: agente,
                 integration_id: None,
                 canal: "whatsapp".to_owned(),
                 peer_externo: Some(peer.to_owned()),
-                departamento_alvo: None,
+                target_department: None,
             },
         )
         .expect("cria a conversa")
@@ -131,9 +130,9 @@ fn msg_cliente(store: &Store, org: OrgId, conversa: ConversationId, texto: &str)
         store,
         org,
         conversa,
-        Direcao::Entrada,
-        Papel::Usuario,
-        Origem::Agente,
+        Direction::Inbound,
+        Role::User,
+        Origin::Agente,
         texto,
     )
 }
@@ -144,9 +143,9 @@ fn msg_agente(store: &Store, org: OrgId, conversa: ConversationId, texto: &str) 
         store,
         org,
         conversa,
-        Direcao::Saida,
-        Papel::Assistente,
-        Origem::Agente,
+        Direction::Outbound,
+        Role::Assistant,
+        Origin::Agente,
         texto,
     )
 }
@@ -155,23 +154,23 @@ fn gravar(
     store: &Store,
     org: OrgId,
     conversa: ConversationId,
-    direcao: Direcao,
-    papel: Papel,
-    origem: Origem,
+    direcao: Direction,
+    papel: Role,
+    origem: Origin,
     texto: &str,
 ) -> String {
     store
-        .mensagens()
+        .messages()
         .gravar(
             org,
-            NovaMensagem {
+            NewMessage {
                 conversation_id: conversa,
-                direcao,
-                papel,
-                origem,
-                autor_nome: None,
+                direction: direcao,
+                role: papel,
+                origin: origem,
+                author_name: None,
                 texto: texto.to_owned(),
-                anexos_json: "[]".to_owned(),
+                attachments_json: "[]".to_owned(),
                 id_externo: None,
                 turn_id: None,
             },
@@ -688,18 +687,18 @@ async fn resposta_humana_e_ferramenta_nao_viram_evento() {
         &store,
         org,
         conversa,
-        Direcao::Saida,
-        Papel::Assistente,
-        Origem::Humano,
+        Direction::Outbound,
+        Role::Assistant,
+        Origin::Human,
         "vindo do Element",
     );
     gravar(
         &store,
         org,
         conversa,
-        Direcao::Saida,
-        Papel::Sistema,
-        Origem::Agente,
+        Direction::Outbound,
+        Role::System,
+        Origin::Agente,
         "instrução",
     );
     msg_cliente(&store, org, conversa, "   ");
@@ -892,7 +891,7 @@ fn org_com_aparelho(store: &Store) -> (OrgId, AgentId, IntegrationId) {
     let org = criar_org(store, "ap");
     let agente = criar_agente(store, org);
     let integracao: IntegrationId = store
-        .integracao_criar(org, agente, "whatsapp".to_owned(), "active".to_owned())
+        .create_integration(org, agente, "whatsapp".to_owned(), "active".to_owned())
         .expect("cria a integração")
         .id
         .parse()
@@ -911,10 +910,10 @@ fn receber_aparelho(
     texto: &str,
 ) -> (ConversationId, MessageId) {
     let recebido = store
-        .caixa_entrada()
+        .inbox()
         .receber_do_aparelho(
             org,
-            NovaMensagemDoAparelho {
+            NewDeviceMessage {
                 integration_id: integracao,
                 agent_id: agente,
                 canal: "whatsapp".to_owned(),
@@ -960,7 +959,7 @@ async fn mensagem_do_aparelho_entra_na_sala_pelo_usuario_do_aparelho() {
     // O nome que o WhatsApp deu ao cliente: a mensagem do aparelho não pode trocá-lo.
     store
         .conversas()
-        .definir_nome_cliente(org, conversa, "Maria")
+        .set_customer_name(org, conversa, "Maria")
         .expect("grava o nome do cliente");
     // Uma resposta do cliente na mesma conversa, para provar que cada um fala com o próprio usuário.
     msg_cliente(&store, org, conversa, "oi, tudo bem?");
@@ -997,9 +996,9 @@ async fn mensagem_do_aparelho_entra_na_sala_pelo_usuario_do_aparelho() {
     );
     let nome = store
         .conversas()
-        .obter(org, conversa)
+        .get(org, conversa)
         .expect("lê a conversa")
-        .nome_cliente;
+        .customer_name;
     assert_eq!(nome.as_deref(), Some("Maria"), "o nome do cliente não muda");
 }
 
@@ -1012,7 +1011,7 @@ async fn aparelho_entra_uma_vez_por_passagem_e_repeticao_nao_duplica() {
         receber_aparelho(&store, org, agente, integracao, "AP-1", "primeira");
     let (_, segunda) = receber_aparelho(&store, org, agente, integracao, "AP-2", "segunda");
     assert_eq!(
-        store.conversas().obter(org, conversa).expect("conversa").id,
+        store.conversas().get(org, conversa).expect("conversa").id,
         conversa,
         "as duas mensagens caem na mesma conversa"
     );

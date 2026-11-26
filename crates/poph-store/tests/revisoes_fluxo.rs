@@ -26,8 +26,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use poph_store::{
-    ACAO_PUBLICAR, ErroStore, Fluxo, NovaOrg, NovoFluxo, Org, PublicacaoDeRevisao, RevisaoDeFluxo,
-    Store,
+    ACAO_PUBLICAR, FlowRevision, Fluxo, NewFlow, NewOrg, Org, RevisionPublication, Store,
+    StoreError,
 };
 use poph_types::{DomainError, FlowId, OrgId};
 use rusqlite::Connection;
@@ -57,8 +57,8 @@ impl Cenario {
             std::env::temp_dir().join(format!("poph-revisoes-{rotulo}-{}-{n}", std::process::id()));
         let _ = fs::remove_dir_all(&pasta);
         fs::create_dir_all(&pasta).expect("cria a pasta do teste");
-        let store = Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
-            .expect("abre o banco");
+        let store =
+            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco");
         Self {
             pasta,
             store: Some(store),
@@ -79,9 +79,9 @@ impl Cenario {
 
     fn org(&self, slug: &str) -> Org {
         self.store()
-            .orgaos()
-            .criar(NovaOrg {
-                nome: format!("Org {slug}"),
+            .orgs()
+            .criar(NewOrg {
+                name: format!("Org {slug}"),
                 slug: slug.to_owned(),
                 config_json: String::new(),
             })
@@ -93,10 +93,10 @@ impl Cenario {
             .fluxos()
             .criar(
                 org.id,
-                NovoFluxo {
+                NewFlow {
                     slug: slug.to_owned(),
-                    nome: format!("Fluxo {slug}"),
-                    descricao: String::new(),
+                    name: format!("Fluxo {slug}"),
+                    description: String::new(),
                     rascunho_fonte: "rascunho ainda inválido".to_owned(),
                 },
             )
@@ -104,15 +104,15 @@ impl Cenario {
     }
 
     /// Publicação com os valores de sempre; o teste troca o que interessa.
-    fn publicacao(esperada: u64, fonte: &str, ir: &str) -> PublicacaoDeRevisao {
-        PublicacaoDeRevisao {
-            esperada,
+    fn publicacao(esperada: u64, fonte: &str, ir: &str) -> RevisionPublication {
+        RevisionPublication {
+            expected: esperada,
             fonte: fonte.to_owned(),
             definicao_json: ir.to_owned(),
             schema_versao: Some(1),
             resolucoes_json: "{\"departamento_comercial\":\"dep-1\"}".to_owned(),
             ator_tipo: "admin_token".to_owned(),
-            ator_id: Some("tok_1".to_owned()),
+            actor_id: Some("tok_1".to_owned()),
         }
     }
 
@@ -123,8 +123,8 @@ impl Cenario {
         esperada: u64,
         fonte: &str,
         ir: &str,
-    ) -> Result<RevisaoDeFluxo, ErroStore> {
-        self.store().revisoes().publicar_revisao(
+    ) -> Result<FlowRevision, StoreError> {
+        self.store().revisions().publicar_revisao(
             org.id,
             fluxo.id,
             Self::publicacao(esperada, fonte, ir),
@@ -207,7 +207,7 @@ fn publicar_grava_revisao_um_e_atualiza_o_fluxo() {
         depois.rascunho_fonte, FONTE_1,
         "o rascunho vira o publicado"
     );
-    assert_eq!(depois.versao, 2, "publicar avança a versão do fluxo");
+    assert_eq!(depois.version, 2, "publicar avança a versão do fluxo");
 
     // A revisão está no banco com os mesmos bytes que voltaram.
     let conn = cenario.conexao();
@@ -298,7 +298,7 @@ fn duas_publicacoes_com_a_mesma_versao_esperada_so_uma_vence() {
     assert!(
         matches!(
             erro,
-            ErroStore::Dominio(DomainError::VersionConflict {
+            StoreError::Domain(DomainError::VersionConflict {
                 entity: "fluxo",
                 expected: 1,
                 current: 2,
@@ -317,7 +317,7 @@ fn duas_publicacoes_com_a_mesma_versao_esperada_so_uma_vence() {
     );
     let depois = cenario.fluxo_atual(&org, &fluxo);
     assert_eq!(depois.revisao_atual, Some(1));
-    assert_eq!(depois.versao, 2, "a versão avançou uma vez só");
+    assert_eq!(depois.version, 2, "a versão avançou uma vez só");
     assert_eq!(
         depois.rascunho_fonte, FONTE_1,
         "o rascunho é o da vencedora"
@@ -330,7 +330,7 @@ fn duas_threads_publicando_com_a_mesma_versao_so_uma_vence() {
     let org = cenario.org("a");
     let fluxo = cenario.fluxo(&org, "agendar_visita");
     let store = Arc::new(
-        Store::abrir_em(
+        Store::open_at(
             &cenario.pasta.join("harness.db"),
             &cenario.pasta.join("rag.db"),
         )
@@ -346,7 +346,7 @@ fn duas_threads_publicando_com_a_mesma_versao_so_uma_vence() {
         let fluxo_id = fluxo.id;
         handles.push(std::thread::spawn(move || {
             store
-                .revisoes()
+                .revisions()
                 .publicar_revisao(
                     org_id,
                     fluxo_id,
@@ -355,7 +355,7 @@ fn duas_threads_publicando_com_a_mesma_versao_so_uma_vence() {
                 .map(|revisao| revisao.numero)
         }));
     }
-    let resultados: Vec<Result<u64, ErroStore>> = handles
+    let resultados: Vec<Result<u64, StoreError>> = handles
         .into_iter()
         .map(|handle| handle.join().expect("a thread termina"))
         .collect();
@@ -369,7 +369,7 @@ fn duas_threads_publicando_com_a_mesma_versao_so_uma_vence() {
         .filter(|resultado| {
             matches!(
                 resultado,
-                Err(ErroStore::Dominio(DomainError::VersionConflict { .. }))
+                Err(StoreError::Domain(DomainError::VersionConflict { .. }))
             )
         })
         .count();
@@ -402,7 +402,7 @@ fn revisao_um_continua_identica_depois_da_dois() {
     // A 1 é lida de novo: texto, hash e IR byte a byte iguais aos da publicação.
     let relida = cenario
         .store()
-        .revisoes()
+        .revisions()
         .obter(org.id, fluxo.id, 1)
         .expect("lê a revisão 1");
     assert_eq!(relida, primeira);
@@ -426,7 +426,7 @@ fn revisao_um_continua_identica_depois_da_dois() {
 
     let depois = cenario.fluxo_atual(&org, &fluxo);
     assert_eq!(depois.revisao_atual, Some(2), "a atual passa a ser a 2");
-    assert_eq!(depois.versao, 3);
+    assert_eq!(depois.version, 3);
 }
 
 #[test]
@@ -469,7 +469,7 @@ fn alterar_ou_apagar_revisao_publicada_e_recusado_pelo_banco() {
     // A revisão continua como foi publicada.
     let relida = cenario
         .store()
-        .revisoes()
+        .revisions()
         .obter(org.id, fluxo.id, 1)
         .expect("a revisão continua lá");
     assert_eq!(relida, revisao);
@@ -524,7 +524,7 @@ fn falha_depois_da_auditoria_nao_deixa_revisao_nem_auditoria() {
     assert_eq!(cenario.auditorias(&conn, &org, &fluxo), 0, "sem auditoria");
     let depois = cenario.fluxo_atual(&org, &fluxo);
     assert_eq!(depois.revisao_atual, None, "revisão atual continua nula");
-    assert_eq!(depois.versao, 1, "a versão não avançou");
+    assert_eq!(depois.version, 1, "a versão não avançou");
     assert_eq!(
         depois.rascunho_fonte, "rascunho ainda inválido",
         "o rascunho não foi trocado"
@@ -547,13 +547,13 @@ fn ir_sem_schema_versao_e_recusada_sem_gravar_nada() {
     sem_versao.schema_versao = None;
     let erro = cenario
         .store()
-        .revisoes()
+        .revisions()
         .publicar_revisao(org.id, fluxo.id, sem_versao)
         .expect_err("sem schema_versao não publica");
     assert!(
         matches!(
             erro,
-            ErroStore::Dominio(DomainError::Validation {
+            StoreError::Domain(DomainError::Validation {
                 field: "schema_versao",
                 ..
             })
@@ -565,13 +565,13 @@ fn ir_sem_schema_versao_e_recusada_sem_gravar_nada() {
     versao_zero.schema_versao = Some(0);
     let erro = cenario
         .store()
-        .revisoes()
+        .revisions()
         .publicar_revisao(org.id, fluxo.id, versao_zero)
         .expect_err("schema_versao zero não publica");
     assert!(
         matches!(
             erro,
-            ErroStore::Dominio(DomainError::Validation {
+            StoreError::Domain(DomainError::Validation {
                 field: "schema_versao",
                 ..
             })
@@ -582,7 +582,7 @@ fn ir_sem_schema_versao_e_recusada_sem_gravar_nada() {
     let conn = cenario.conexao();
     assert_eq!(cenario.revisoes(&conn, &org, &fluxo), 0);
     assert_eq!(cenario.auditorias(&conn, &org, &fluxo), 0);
-    assert_eq!(cenario.fluxo_atual(&org, &fluxo).versao, 1);
+    assert_eq!(cenario.fluxo_atual(&org, &fluxo).version, 1);
 }
 
 #[test]
@@ -592,7 +592,7 @@ fn ir_incoerente_fonte_vazia_e_ator_desconhecido_sao_recusados() {
     let fluxo = cenario.fluxo(&org, "agendar_visita");
 
     /// Uma publicação boa e o que cada caso troca nela.
-    fn casos() -> Vec<(&'static str, &'static str, PublicacaoDeRevisao)> {
+    fn casos() -> Vec<(&'static str, &'static str, RevisionPublication)> {
         let mut ir_torta = Cenario::publicacao(1, FONTE_1, IR_1);
         ir_torta.definicao_json = "ir torta".to_owned();
         let mut ir_de_outra_versao = Cenario::publicacao(1, FONTE_1, IR_1);
@@ -623,11 +623,11 @@ fn ir_incoerente_fonte_vazia_e_ator_desconhecido_sao_recusados() {
     for (rotulo, campo, publicacao) in casos() {
         let erro = cenario
             .store()
-            .revisoes()
+            .revisions()
             .publicar_revisao(org.id, fluxo.id, publicacao)
             .expect_err("a publicação devia ser recusada");
         match erro {
-            ErroStore::Dominio(DomainError::Validation {
+            StoreError::Domain(DomainError::Validation {
                 field: nomeado,
                 reason: motivo,
             }) => {
@@ -649,7 +649,7 @@ fn ir_incoerente_fonte_vazia_e_ator_desconhecido_sao_recusados() {
     let conn = cenario.conexao();
     assert_eq!(cenario.revisoes(&conn, &org, &fluxo), 0);
     assert_eq!(cenario.auditorias(&conn, &org, &fluxo), 0);
-    assert_eq!(cenario.fluxo_atual(&org, &fluxo).versao, 1);
+    assert_eq!(cenario.fluxo_atual(&org, &fluxo).version, 1);
 }
 
 #[test]
@@ -662,7 +662,7 @@ fn resolucoes_vazias_viram_objeto_vazio() {
     publicacao.resolucoes_json = "  ".to_owned();
     let revisao = cenario
         .store()
-        .revisoes()
+        .revisions()
         .publicar_revisao(org.id, fluxo.id, publicacao)
         .expect("publica");
     assert_eq!(revisao.resolucoes_json, "{}");
@@ -678,7 +678,7 @@ fn le_revisao_por_numero_a_atual_e_a_lista() {
     assert_eq!(
         cenario
             .store()
-            .revisoes()
+            .revisions()
             .atual(org.id, fluxo.id)
             .expect("consulta"),
         None
@@ -686,7 +686,7 @@ fn le_revisao_por_numero_a_atual_e_a_lista() {
     assert!(
         cenario
             .store()
-            .revisoes()
+            .revisions()
             .listar(org.id, fluxo.id, None, 10)
             .expect("lista")
             .is_empty()
@@ -698,7 +698,7 @@ fn le_revisao_por_numero_a_atual_e_a_lista() {
     assert_eq!(
         cenario
             .store()
-            .revisoes()
+            .revisions()
             .obter(org.id, fluxo.id, 1)
             .expect("por número"),
         primeira
@@ -706,7 +706,7 @@ fn le_revisao_por_numero_a_atual_e_a_lista() {
     assert_eq!(
         cenario
             .store()
-            .revisoes()
+            .revisions()
             .atual(org.id, fluxo.id)
             .expect("atual")
             .expect("tem atual"),
@@ -714,13 +714,13 @@ fn le_revisao_por_numero_a_atual_e_a_lista() {
     );
     let erro = cenario
         .store()
-        .revisoes()
+        .revisions()
         .obter(org.id, fluxo.id, 9)
         .expect_err("a 9 não existe");
     assert!(
         matches!(
             erro,
-            ErroStore::Dominio(DomainError::NotFound {
+            StoreError::Domain(DomainError::NotFound {
                 entity: "revisão de fluxo",
                 ..
             })
@@ -730,13 +730,13 @@ fn le_revisao_por_numero_a_atual_e_a_lista() {
 
     let todas = cenario
         .store()
-        .revisoes()
+        .revisions()
         .listar(org.id, fluxo.id, None, 10)
         .expect("lista");
     assert_eq!(todas, vec![primeira.clone(), segunda.clone()]);
     let depois_da_um = cenario
         .store()
-        .revisoes()
+        .revisions()
         .listar(org.id, fluxo.id, Some(1), 10)
         .expect("lista com cursor");
     assert_eq!(depois_da_um, vec![segunda]);
@@ -755,31 +755,28 @@ fn fluxo_de_outra_org_nao_e_lido_nem_publicado() {
     let erro = cenario
         .publicar(&org_b, &fluxo, 2, FONTE_2, IR_2)
         .expect_err("publicar em outra org é recusado");
-    assert!(
-        erro.eh_nao_encontrado(),
-        "esperava não encontrado: {erro:?}"
-    );
+    assert!(erro.is_not_found(), "esperava não encontrado: {erro:?}");
 
     for erro in [
         cenario
             .store()
-            .revisoes()
+            .revisions()
             .obter(org_b.id, fluxo.id, 1)
             .expect_err("obter em outra org"),
         cenario
             .store()
-            .revisoes()
+            .revisions()
             .atual(org_b.id, fluxo.id)
             .expect_err("atual em outra org"),
         cenario
             .store()
-            .revisoes()
+            .revisions()
             .listar(org_b.id, fluxo.id, None, 10)
             .expect_err("listar em outra org"),
     ] {
         // A recusa é do **fluxo** (não da revisão): quem chamou pediu um fluxo de outra org.
         match erro {
-            ErroStore::Dominio(DomainError::NotFound {
+            StoreError::Domain(DomainError::NotFound {
                 entity: entidade, ..
             }) => {
                 assert_eq!(entidade, "fluxo", "a recusa é do fluxo");

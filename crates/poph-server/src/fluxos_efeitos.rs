@@ -51,7 +51,7 @@ use std::time::Duration;
 
 use poph_agent::Backoff;
 use poph_evolution::{BlobsEmDisco, FonteDeMidia, WhatsAppEvolution};
-use poph_store::{EfeitoDoFluxo, ErroStore, NovaSaida, Store};
+use poph_store::{FlowEffect, NewOutboxItem, Store, StoreError};
 use poph_types::{EventActor, IntegrationId, OrgId, RecordEventKind, TurnId};
 use serde_json::Value;
 
@@ -194,8 +194,8 @@ impl EfeitosFluxo {
     }
 
     /// Um ciclo: percorre as orgs com efeito na fila e tenta entregar o que venceu a espera.
-    pub async fn ciclo(&self) -> Result<Vec<RelatoEfeitos>, ErroStore> {
-        let orgs = self.store.efeitos().orgs_com_pendentes()?;
+    pub async fn ciclo(&self) -> Result<Vec<RelatoEfeitos>, StoreError> {
+        let orgs = self.store.effects().orgs_com_pendentes()?;
         let mut relatos = Vec::with_capacity(orgs.len());
         for org in orgs {
             relatos.push(self.ciclo_da_org(org).await?);
@@ -204,11 +204,11 @@ impl EfeitosFluxo {
     }
 
     /// Um ciclo numa org.
-    pub async fn ciclo_da_org(&self, org: OrgId) -> Result<RelatoEfeitos, ErroStore> {
+    pub async fn ciclo_da_org(&self, org: OrgId) -> Result<RelatoEfeitos, StoreError> {
         let mut relato = RelatoEfeitos::default();
         let efeitos = self
             .store
-            .efeitos()
+            .effects()
             .listar_pendentes(org, self.opcoes.lote)?;
         for efeito in efeitos {
             let id = efeito.id;
@@ -228,9 +228,9 @@ impl EfeitosFluxo {
     async fn tratar(
         &self,
         org: OrgId,
-        efeito: EfeitoDoFluxo,
+        efeito: FlowEffect,
         relato: &mut RelatoEfeitos,
-    ) -> Result<(), ErroStore> {
+    ) -> Result<(), StoreError> {
         let id = efeito.id;
         // "Entrou na fila": a primeira vez que o laço vê o efeito, ele ainda está `pendente`, sem
         // tentativa e sem espera marcada. Depois disso a espera é sempre gravada, então não conta
@@ -252,8 +252,8 @@ impl EfeitosFluxo {
             Plano::Esperar(motivo) => {
                 let espera = self.espera_sem_integracao();
                 self.store
-                    .efeitos()
-                    .adiar(org, id, self.store.agora() + espera)?;
+                    .effects()
+                    .adiar(org, id, self.store.now() + espera)?;
                 relato.adiados += 1;
                 tracing::debug!(
                     target: "poph_server::fluxos_efeitos",
@@ -269,10 +269,10 @@ impl EfeitosFluxo {
             }
             Plano::Entregar(entrega) => {
                 // A tentativa precisa estar gravada antes da chamada externa (D11).
-                let tentativa = self.store.efeitos().iniciar_envio(org, id)?;
+                let tentativa = self.store.effects().iniciar_envio(org, id)?;
                 match self.entregar(org, &efeito, entrega).await {
                     Ok(departamento) => {
-                        self.store.efeitos().confirmar_envio(org, id)?;
+                        self.store.effects().confirmar_envio(org, id)?;
                         self.contar(&|metricas| &metricas.efeitos_enviados);
                         self.registrar_evento(
                             org,
@@ -303,12 +303,12 @@ impl EfeitosFluxo {
                     }
                     Err(EntregaFalhou::Transitoria(motivo)) => {
                         let espera = self.opcoes.backoff.espera(tentativa);
-                        self.store.efeitos().falhar_envio(
+                        self.store.effects().falhar_envio(
                             org,
                             id,
                             &motivo,
                             false,
-                            Some(self.store.agora() + espera_ms(espera)),
+                            Some(self.store.now() + espera_ms(espera)),
                         )?;
                         relato.transitorios += 1;
                         tracing::warn!(
@@ -330,7 +330,7 @@ impl EfeitosFluxo {
     }
 
     /// Decide o que fazer com o efeito **sem** mexer em estado.
-    fn plano(&self, org: OrgId, efeito: &EfeitoDoFluxo) -> Result<Plano, ErroStore> {
+    fn plano(&self, org: OrgId, efeito: &FlowEffect) -> Result<Plano, StoreError> {
         let payload = match serde_json::from_str::<Value>(&efeito.payload_json) {
             Ok(payload) => payload,
             Err(erro) => {
@@ -360,15 +360,15 @@ impl EfeitosFluxo {
                         "a Ficha do efeito não tem conversa (apagada pela retenção)".to_owned(),
                     ));
                 };
-                let atual = self.store.conversas().obter(org, conversa)?;
-                if atual.status != poph_store::StatusConversa::Aberta {
+                let atual = self.store.conversas().get(org, conversa)?;
+                if atual.status != poph_store::ConversationStatus::Open {
                     return Ok(Plano::Falhar(format!(
                         "a conversa está {} e não recebe mensagem do fluxo",
                         situacao_em_portugues(atual.status)
                     )));
                 }
                 // PRD §6.8: depois da resposta do turno. Enquanto o turno roda, a mensagem espera.
-                if self.store.turnos().em_andamento(org, conversa)? {
+                if self.store.turns().em_andamento(org, conversa)? {
                     return Ok(Plano::Esperar(
                         "o turno da conversa ainda está em andamento",
                     ));
@@ -388,7 +388,7 @@ impl EfeitosFluxo {
                             .to_owned(),
                     ));
                 };
-                let atual = self.store.conversas().obter(org, conversa)?;
+                let atual = self.store.conversas().get(org, conversa)?;
                 let Some(integracao) = atual.integration_id else {
                     return Ok(Plano::Esperar(
                         "a conversa não tem integração de WhatsApp (console ou CLI)",
@@ -420,7 +420,7 @@ impl EfeitosFluxo {
                         "a Ficha do efeito não tem conversa: não há o que encaminhar".to_owned(),
                     ));
                 };
-                let Some(departamento) = self.store.departamentos().por_nome(org, &nome)? else {
+                let Some(departamento) = self.store.departments().por_nome(org, &nome)? else {
                     return Ok(Plano::Falhar(format!(
                         "o departamento `{nome}` não existe na organização"
                     )));
@@ -428,7 +428,7 @@ impl EfeitosFluxo {
                 Ok(Plano::Entregar(Entrega::Encaminhar {
                     conversa,
                     departamento: departamento.id,
-                    nome: departamento.nome,
+                    nome: departamento.name,
                 }))
             }
             outro => Ok(Plano::Falhar(format!(
@@ -441,7 +441,7 @@ impl EfeitosFluxo {
     async fn entregar(
         &self,
         org: OrgId,
-        efeito: &EfeitoDoFluxo,
+        efeito: &FlowEffect,
         entrega: Entrega,
     ) -> Result<Option<String>, EntregaFalhou> {
         match entrega {
@@ -449,21 +449,18 @@ impl EfeitosFluxo {
                 // `turn_id` novo por tentativa, como a resposta humana (MX-04): o efeito não nasce
                 // dentro de um turno. O preço é que uma queda entre enfileirar e confirmar deixa
                 // duas mensagens iguais na `outbox` — a duplicata rara e aceita do PRD.
-                let nova = NovaSaida {
+                let nova = NewOutboxItem {
                     conversation_id: conversa,
                     turn_id: TurnId::generate(),
                     seq: 0,
                     tipo: "text".to_owned(),
-                    conteudo_json: serde_json::json!({ "texto": texto }).to_string(),
+                    content_json: serde_json::json!({ "texto": texto }).to_string(),
                 };
-                self.store
-                    .caixa_saida()
-                    .enfileirar(org, nova)
-                    .map_err(|erro| {
-                        EntregaFalhou::Transitoria(format!(
-                            "não consegui enfileirar a mensagem ao cliente: {erro}"
-                        ))
-                    })?;
+                self.store.outbox().enfileirar(org, nova).map_err(|erro| {
+                    EntregaFalhou::Transitoria(format!(
+                        "não consegui enfileirar a mensagem ao cliente: {erro}"
+                    ))
+                })?;
                 Ok(None)
             }
             Entrega::Whatsapp {
@@ -519,13 +516,13 @@ impl EfeitosFluxo {
     async fn falhar(
         &self,
         org: OrgId,
-        efeito: &EfeitoDoFluxo,
+        efeito: &FlowEffect,
         motivo: &str,
         esgotado: bool,
         relato: &mut RelatoEfeitos,
-    ) -> Result<(), ErroStore> {
+    ) -> Result<(), StoreError> {
         self.store
-            .efeitos()
+            .effects()
             .falhar_envio(org, efeito.id, motivo, true, None)?;
         self.contar(&|metricas| &metricas.efeitos_falhas);
         if esgotado {
@@ -559,7 +556,7 @@ impl EfeitosFluxo {
     fn registrar_evento(
         &self,
         org: OrgId,
-        efeito: &EfeitoDoFluxo,
+        efeito: &FlowEffect,
         tipo: RecordEventKind,
         detalhe: &str,
         tentativa: u32,
@@ -567,13 +564,13 @@ impl EfeitosFluxo {
         let chave = format!("efeito:{}:{}", efeito.id, tipo.as_text());
         let payload = serde_json::json!({
             "efeito": efeito.id.to_string(),
-            "chave": efeito.chave,
+            "chave": efeito.key,
             "tipo": efeito.tipo,
             "tentativa": tentativa,
             "detalhe": detalhe,
         })
         .to_string();
-        let novo = poph_store::NovoEventoFicha {
+        let novo = poph_store::NewRecordEvent {
             execucao_id: Some(efeito.execucao_id),
             tipo,
             ator_tipo: EventActor::System,
@@ -613,11 +610,11 @@ enum EntregaFalhou {
 pub const MOTIVO_TENTATIVAS_ESGOTADAS: &str = "tentativas de entrega do efeito esgotadas";
 
 /// Situação da conversa em português, para o motivo que fica gravado e vai ao log.
-fn situacao_em_portugues(status: poph_store::StatusConversa) -> &'static str {
+fn situacao_em_portugues(status: poph_store::ConversationStatus) -> &'static str {
     match status {
-        poph_store::StatusConversa::Aberta => "aberta",
-        poph_store::StatusConversa::Transferida => "transferida para um atendente",
-        poph_store::StatusConversa::Fechada => "encerrada",
+        poph_store::ConversationStatus::Open => "aberta",
+        poph_store::ConversationStatus::Transferred => "transferida para um atendente",
+        poph_store::ConversationStatus::Closed => "encerrada",
     }
 }
 

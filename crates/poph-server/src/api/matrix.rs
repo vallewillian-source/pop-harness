@@ -190,7 +190,7 @@ pub async fn atualizar(
 ) -> Result<Response, ApiError> {
     let org = id_da_url::<OrgId>(&caminho.org_id)?;
     identidade.exigir_org(org)?;
-    estado.store.orgaos().obter(org)?;
+    estado.store.orgs().get(org)?;
     let esperada = versao_do_if_match(&headers, "módulo Matrix da org")?;
     let atual = estado.store.matrix().estado(org)?;
     let atual_etag = u64::try_from(atual.atualizado_em).unwrap_or(0);
@@ -223,14 +223,14 @@ pub async fn atualizar(
 
 /// Monta o estado da org e devolve com o `ETag` da linha.
 fn estado_da_org(estado: &Estado, org: OrgId) -> Result<Response, ApiError> {
-    estado.store.orgaos().obter(org)?;
+    estado.store.orgs().get(org)?;
     let linha = estado.store.matrix().estado(org)?;
     let cursores = estado.store.matrix().ler_cursores(org)?;
     let atraso = estado
         .store
         .matrix()
         .atraso_das_mensagens(org, cursores.mensagens)?;
-    let agora = estado.store.agora();
+    let agora = estado.store.now();
     let idade_segundos = atraso
         .mais_antiga_em
         .map(|criada_em| u64::try_from((agora - criada_em).max(0) / 1000).unwrap_or(0))
@@ -290,7 +290,7 @@ pub async fn listar_espacos(
 ) -> Result<Json<EspacosJson>, ApiError> {
     let org = id_da_url::<OrgId>(&caminho.org_id)?;
     identidade.exigir_org(org)?;
-    estado.store.orgaos().obter(org)?;
+    estado.store.orgs().get(org)?;
     let items = estado
         .store
         .matrix()
@@ -300,10 +300,10 @@ pub async fn listar_espacos(
             department_id: espaco.departamento.to_string(),
             department_name: estado
                 .store
-                .departamentos()
+                .departments()
                 .obter(org, espaco.departamento)
                 .ok()
-                .map(|departamento| departamento.nome),
+                .map(|departamento| departamento.name),
             space_room_id: espaco.room_id.clone(),
             alias: espaco.alias.clone(),
             origin: espaco.origem.como_texto().to_owned(),
@@ -341,13 +341,13 @@ pub async fn ligar_espaco(
 ) -> Result<Json<EspacoJson>, ApiError> {
     let org = id_da_url::<OrgId>(&caminho.org_id)?;
     identidade.exigir_org(org)?;
-    estado.store.orgaos().obter(org)?;
+    estado.store.orgs().get(org)?;
     let departamento_id = id_da_url::<DepartmentId>(&corpo.department_id)?;
-    let departamento = estado.store.departamentos().obter(org, departamento_id)?;
+    let departamento = estado.store.departments().obter(org, departamento_id)?;
     let espacos = estado.matrix_espacos().ok_or_else(modulo_desligado)?;
     let alvo = DepartamentoEspaco {
         id: departamento.id,
-        nome: departamento.nome.clone(),
+        nome: departamento.name.clone(),
     };
     let existente = corpo
         .space
@@ -368,15 +368,15 @@ pub async fn ligar_espaco(
     )?;
     Ok(Json(EspacoJson {
         department_id: departamento.id.to_string(),
-        department_name: Some(departamento.nome),
+        department_name: Some(departamento.name),
         space_room_id: gravado.room_id,
         alias: gravado.alias,
         origin: match gravado.origem {
             poph_matrix::espacos::OrigemEspaco::Automatico => "auto".to_owned(),
             poph_matrix::espacos::OrigemEspaco::Ligado => "linked".to_owned(),
         },
-        created_at: estado.store.agora(),
-        updated_at: estado.store.agora(),
+        created_at: estado.store.now(),
+        updated_at: estado.store.now(),
     }))
 }
 
@@ -405,10 +405,10 @@ pub async fn desligar_espaco(
 ) -> Result<Json<EspacoDesligadoJson>, ApiError> {
     let org = id_da_url::<OrgId>(&caminho.org_id)?;
     identidade.exigir_org(org)?;
-    estado.store.orgaos().obter(org)?;
+    estado.store.orgs().get(org)?;
     let departamento = id_da_url::<DepartmentId>(&caminho.department_id)?;
     // Departamento de outra org (ou inexistente) é 404 e nada muda.
-    estado.store.departamentos().obter(org, departamento)?;
+    estado.store.departments().obter(org, departamento)?;
     let desligado = estado.store.matrix().desligar_espaco(org, departamento)?;
     super::auditoria::registrar(
         &estado,

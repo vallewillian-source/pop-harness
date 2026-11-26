@@ -15,7 +15,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use poph_store::{Direcao, NovaConversa, NovaMensagem, NovaOrg, NovoAgente, Origem, Papel, Store};
+use poph_store::{Direction, NewAgent, NewConversation, NewMessage, NewOrg, Origin, Role, Store};
 use poph_types::{HarnessConfig, OrgId};
 
 fn variavel(nome: &str) -> Option<String> {
@@ -36,9 +36,9 @@ fn numero(nome: &str, padrao: u64) -> u64 {
 
 fn criar_org(store: &Store) -> OrgId {
     store
-        .orgaos()
-        .criar(NovaOrg {
-            nome: "Loja da medição".to_owned(),
+        .orgs()
+        .criar(NewOrg {
+            name: "Loja da medição".to_owned(),
             slug: "loja".to_owned(),
             config_json: String::new(),
         })
@@ -59,7 +59,7 @@ fn semeia_conversas_para_a_medicao_de_memoria() {
 
     let mut config = HarnessConfig::default();
     config.data.directory = dados;
-    let store = Store::abrir(&config).expect("abre o banco da medição");
+    let store = Store::open(&config).expect("abre o banco da medição");
 
     let org = criar_org(&store);
     if ligado {
@@ -68,13 +68,13 @@ fn semeia_conversas_para_a_medicao_de_memoria() {
         store.matrix().ligar(org).expect("liga a org no módulo");
     }
     let agente = store
-        .agentes()
+        .agents()
         .criar(
             org,
-            NovoAgente {
-                nome: "Bia".to_owned(),
+            NewAgent {
+                name: "Bia".to_owned(),
                 slug: "bia".to_owned(),
-                ..NovoAgente::default()
+                ..NewAgent::default()
             },
         )
         .expect("cria o agente")
@@ -85,29 +85,29 @@ fn semeia_conversas_para_a_medicao_de_memoria() {
             .conversas()
             .criar(
                 org,
-                NovaConversa {
+                NewConversation {
                     agent_id: agente,
                     integration_id: None,
                     canal: "whatsapp".to_owned(),
                     peer_externo: Some(format!("5511{:09}", indice)),
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("cria a conversa")
             .id;
         for n in 0..mensagens_por_sala {
             store
-                .mensagens()
+                .messages()
                 .gravar(
                     org,
-                    NovaMensagem {
+                    NewMessage {
                         conversation_id: conversa,
-                        direcao: Direcao::Entrada,
-                        papel: Papel::Usuario,
-                        origem: Origem::Agente,
-                        autor_nome: None,
+                        direction: Direction::Inbound,
+                        role: Role::User,
+                        origin: Origin::Agente,
+                        author_name: None,
                         texto: format!("mensagem {n} do cliente {indice}"),
-                        anexos_json: "[]".to_owned(),
+                        attachments_json: "[]".to_owned(),
                         id_externo: None,
                         turn_id: None,
                     },

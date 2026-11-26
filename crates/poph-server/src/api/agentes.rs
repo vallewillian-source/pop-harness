@@ -11,7 +11,7 @@ use axum::{
     extract::{Path, Query, State, rejection::JsonRejection},
     http::{HeaderMap, StatusCode},
 };
-use poph_store::{Agente, MudancaAgente, NovoAgente};
+use poph_store::{AgentChange, Agente, NewAgent};
 use poph_types::{AgentId, DepartmentId, OrgId, ProductCategoryId};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -51,16 +51,16 @@ pub struct DadosAgente {
 }
 
 fn json_agente(a: &Agente) -> Value {
-    json!({"id":a.id.to_string(),"org_id":a.org_id.to_string(),"name":a.nome,"slug":a.slug,
-        "description":a.descricao,"status":a.status.como_texto(),"abre_turno":a.pode_abrir_turno(),
-        "agent_type":a.agent_type,"category":a.categoria,"default_department_id":a.departamento_padrao.map(|v|v.to_string()),
-        "human_handoff_enabled":a.handoff_ativo,"human_handoff_department_id":a.handoff_departamento.map(|v|v.to_string()),
+    json!({"id":a.id.to_string(),"org_id":a.org_id.to_string(),"name":a.name,"slug":a.slug,
+        "description":a.description,"status":a.status.as_text(),"abre_turno":a.can_open_turn(),
+        "agent_type":a.agent_type,"category":a.category,"default_department_id":a.default_department.map(|v|v.to_string()),
+        "human_handoff_enabled":a.handoff_active,"human_handoff_department_id":a.handoff_department.map(|v|v.to_string()),
         "provider":a.provedor,"model":a.modelo,"temperature":a.temperatura,"max_output_tokens":a.max_tokens_saida,
         "max_context_messages":a.max_context_messages,"max_context_tokens":a.max_context_tokens,
-        "grouping_window_ms":a.janela_agrupamento_ms,"max_tool_rounds":a.max_rodadas_ferramenta,
-        "max_tool_calls_per_message":a.max_ferramentas_por_mensagem,"rag_top_k":a.rag_top_k,
-        "rag_min_score":a.rag_corte,"jev":serde_json::from_str::<Value>(&a.jev_json).unwrap_or(json!({})),
-        "version":a.versao,"created_at":a.criado_em,"updated_at":a.atualizado_em})
+        "grouping_window_ms":a.grouping_window_ms,"max_tool_rounds":a.max_tool_rounds,
+        "max_tool_calls_per_message":a.max_tools_per_message,"rag_top_k":a.rag_top_k,
+        "rag_min_score":a.rag_cutoff,"jev":serde_json::from_str::<Value>(&a.jev_json).unwrap_or(json!({})),
+        "version":a.version,"created_at":a.created_at,"updated_at":a.updated_at})
 }
 fn slug(nome: &str) -> String {
     let mut s = String::new();
@@ -108,12 +108,12 @@ pub async fn listar(
     let pagina = q.pagina()?;
     let items: Vec<_> = e
         .store
-        .agentes()
+        .agents()
         .listar(org, pagina)?
         .iter()
         .map(json_agente)
         .collect();
-    let next_cursor = proximo_cursor(&items, pagina.limite, |v| {
+    let next_cursor = proximo_cursor(&items, pagina.limit, |v| {
         v["id"].as_str().unwrap_or_default().to_owned()
     });
     Ok(Json(ListaJson { items, next_cursor }))
@@ -127,20 +127,20 @@ pub async fn mostrar(
     let org = id_da_url::<OrgId>(&c.org_id)?;
     ident.exigir_org(org)?;
     let id = id_da_url::<AgentId>(&c.agent_id)?;
-    let mut valor = json_agente(&e.store.agentes().obter(org, id)?);
+    let mut valor = json_agente(&e.store.agents().get(org, id)?);
     valor["product_category_ids"] = json!(
         e.store
-            .agentes()
+            .agents()
             .categorias(org, id)?
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>()
     );
-    valor["instructions"] = match e.store.instrucoes().obter(org, id) {
+    valor["instructions"] = match e.store.instructions().obter(org, id) {
         Ok(i) => {
-            json!({"agent_id":i.agent_id.to_string(),"org_id":i.org_id.to_string(),"structured":serde_json::from_str::<Value>(&i.estruturado_json).unwrap_or(json!(i.estruturado_json)),"markdown":i.markdown,"derived_from_json":i.derivado_do_json,"version":i.versao,"created_at":i.criado_em,"updated_at":i.atualizado_em})
+            json!({"agent_id":i.agent_id.to_string(),"org_id":i.org_id.to_string(),"structured":serde_json::from_str::<Value>(&i.structured_json).unwrap_or(json!(i.structured_json)),"markdown":i.markdown,"derived_from_json":i.derived_from_json,"version":i.version,"created_at":i.created_at,"updated_at":i.updated_at})
         }
-        Err(poph_store::ErroStore::Dominio(poph_types::DomainError::NotFound { .. })) => {
+        Err(poph_store::StoreError::Domain(poph_types::DomainError::NotFound { .. })) => {
             Value::Null
         }
         Err(e) => return Err(e.into()),
@@ -187,22 +187,22 @@ pub async fn criar(
     if tipo != "custom" && tipo != "standard" {
         return Err(ApiError::validacao("type", "use custom ou standard"));
     }
-    let mut n = NovoAgente {
-        nome,
+    let mut n = NewAgent {
+        name: nome,
         slug: s,
         agent_type: tipo,
         ..Default::default()
     };
     if let Some(x) = d.description {
-        n.descricao = x;
+        n.description = x;
     }
     if let Some(x) = d.category {
-        n.categoria = x;
+        n.category = x;
     }
-    n.departamento_padrao = dep(d.department)?;
+    n.default_department = dep(d.department)?;
     let handoff = dep(d.handoff_department)?;
     if let Some(id) = handoff {
-        e.store.departamentos().obter(org, id)?;
+        e.store.departments().obter(org, id)?;
     }
     if let Some(x) = d.provider {
         if let Err(erro) = e.config.validate_provider_choice(&x) {
@@ -219,30 +219,30 @@ pub async fn criar(
         n.max_context_tokens = x;
     }
     if let Some(x) = d.grouping_window_ms {
-        n.janela_agrupamento_ms = x;
+        n.grouping_window_ms = x;
     }
     if let Some(x) = d.max_tool_rounds {
-        n.max_rodadas_ferramenta = x;
+        n.max_tool_rounds = x;
     }
     if let Some(x) = d.max_tool_calls {
-        n.max_ferramentas_por_mensagem = x;
+        n.max_tools_per_message = x;
     }
     if let Some(x) = d.rag_top_k {
         n.rag_top_k = x;
     }
     if let Some(x) = d.rag_min_score {
-        n.rag_corte = x;
+        n.rag_cutoff = x;
     }
-    let mut a = e.store.agentes().criar(org, n)?;
+    let mut a = e.store.agents().criar(org, n)?;
     super::auditoria::registrar(&e, &ident, Some(org), "create", "agent", a.id.to_string())?;
     if let Some(h) = handoff {
-        a = e.store.agentes().atualizar(
+        a = e.store.agents().atualizar(
             org,
             a.id,
-            a.versao,
-            MudancaAgente {
-                handoff_ativo: Some(true),
-                handoff_departamento: Some(h),
+            a.version,
+            AgentChange {
+                handoff_active: Some(true),
+                handoff_department: Some(h),
                 ..Default::default()
             },
         )?;
@@ -284,55 +284,55 @@ pub async fn atualizar(
                 .collect::<Result<Vec<_>, _>>()
         })
         .transpose()?;
-    let m = MudancaAgente {
-        nome: d.name,
-        descricao: d.description,
+    let m = AgentChange {
+        name: d.name,
+        description: d.description,
         status: d.status.as_deref().map(status_pedido).transpose()?,
-        departamento_padrao: dep(d.department)?,
-        handoff_ativo: d.handoff,
-        handoff_departamento: dep(d.handoff_department)?,
+        default_department: dep(d.department)?,
+        handoff_active: d.handoff,
+        handoff_department: dep(d.handoff_department)?,
         provedor: d.provider,
         modelo: d.model,
         temperatura: d.temperature,
         max_tokens_saida: d.max_output_tokens,
         max_context_tokens: d.max_context_tokens,
-        janela_agrupamento_ms: d.grouping_window_ms,
-        max_rodadas_ferramenta: d.max_tool_rounds,
-        max_ferramentas_por_mensagem: d.max_tool_calls,
+        grouping_window_ms: d.grouping_window_ms,
+        max_tool_rounds: d.max_tool_rounds,
+        max_tools_per_message: d.max_tool_calls,
         rag_top_k: d.rag_top_k,
-        rag_corte: d.rag_min_score,
+        rag_cutoff: d.rag_min_score,
         jev_json: d.jev_json,
     };
-    let tem = m.nome.is_some()
-        || m.descricao.is_some()
+    let tem = m.name.is_some()
+        || m.description.is_some()
         || m.status.is_some()
-        || m.departamento_padrao.is_some()
-        || m.handoff_ativo.is_some()
-        || m.handoff_departamento.is_some()
+        || m.default_department.is_some()
+        || m.handoff_active.is_some()
+        || m.handoff_department.is_some()
         || m.provedor.is_some()
         || m.modelo.is_some()
         || m.temperatura.is_some()
         || m.max_tokens_saida.is_some()
         || m.max_context_tokens.is_some()
-        || m.janela_agrupamento_ms.is_some()
-        || m.max_rodadas_ferramenta.is_some()
-        || m.max_ferramentas_por_mensagem.is_some()
+        || m.grouping_window_ms.is_some()
+        || m.max_tool_rounds.is_some()
+        || m.max_tools_per_message.is_some()
         || m.rag_top_k.is_some()
-        || m.rag_corte.is_some()
+        || m.rag_cutoff.is_some()
         || m.jev_json.is_some();
     if !tem && categorias.is_none() {
         return Err(ApiError::invalido("nada a alterar"));
     }
     let mut a = if tem {
-        e.store.agentes().atualizar(org, id, versao, m)?
+        e.store.agents().atualizar(org, id, versao, m)?
     } else {
-        let a = e.store.agentes().obter(org, id)?;
-        if a.versao != versao {
+        let a = e.store.agents().get(org, id)?;
+        if a.version != versao {
             return Err(ApiError::conflito_de_versao(
                 "agente",
                 &id.to_string(),
                 versao,
-                a.versao,
+                a.version,
             ));
         }
         a
@@ -343,8 +343,8 @@ pub async fn atualizar(
     if let Some(cats) = categorias {
         a = e
             .store
-            .agentes()
-            .definir_categorias(org, id, a.versao, &cats)?;
+            .agents()
+            .definir_categorias(org, id, a.version, &cats)?;
         super::auditoria::registrar(&e, &ident, Some(org), "update", "agent", id.to_string())?;
     }
     Ok(Json(json_agente(&a)))
@@ -358,7 +358,7 @@ pub async fn excluir(
     let org = id_da_url::<OrgId>(&c.org_id)?;
     ident.exigir_org(org)?;
     let id = id_da_url::<AgentId>(&c.agent_id)?;
-    e.store.agentes().excluir(org, id)?;
+    e.store.agents().excluir(org, id)?;
     super::auditoria::registrar(&e, &ident, Some(org), "delete", "agent", id.to_string())?;
     Ok(Json(json!({"removido":true,"agent_id":id.to_string()})))
 }

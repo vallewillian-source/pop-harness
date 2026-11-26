@@ -23,8 +23,8 @@ use clap::{Args, Subcommand};
 use poph_files::ConfigArquivos;
 use poph_server::ChaveDeCifra;
 use poph_store::Store;
-use poph_store::backup::{DestinoImportacao, RetratoOrg};
-use poph_store::backup_documento;
+use poph_store::backup::{ImportTarget, OrgSnapshot};
+use poph_store::backup_document;
 use poph_types::{HarnessConfig, OrgId};
 use serde_json::{Map, Value, json};
 
@@ -115,7 +115,7 @@ fn exportar(flag: Option<PathBuf>, ambiente: &config::Ambiente, args: ExportarOr
         Ok(org) => org,
         Err(erro) => return falha(erro),
     };
-    let retrato = match store.retrato_da_org(org, args.com_conversas) {
+    let retrato = match store.org_snapshot(org, args.com_conversas) {
         Ok(retrato) => retrato,
         Err(erro) => return falha(crate::apoio::descrever(&erro)),
     };
@@ -136,10 +136,10 @@ fn exportar(flag: Option<PathBuf>, ambiente: &config::Ambiente, args: ExportarOr
         let mapa = chave.as_ref()?.decifrar(blob).ok()?;
         Some(mapa.keys().cloned().collect())
     };
-    let documento = backup_documento::documento(
+    let documento = backup_document::document(
         &retrato,
         args.com_conversas,
-        store.agora(),
+        store.now(),
         &blobs,
         &nomes_do_segredo,
     );
@@ -153,7 +153,7 @@ fn exportar(flag: Option<PathBuf>, ambiente: &config::Ambiente, args: ExportarOr
 
     let tamanho = bytes.len() as u64;
     let contagens: Map<String, Value> = retrato
-        .tabelas
+        .tables
         .iter()
         .map(|(nome, linhas)| (nome.clone(), Value::from(linhas.len())))
         .collect();
@@ -178,7 +178,7 @@ fn exportar(flag: Option<PathBuf>, ambiente: &config::Ambiente, args: ExportarOr
         tamanho.div_ceil(1024)
     );
     println!();
-    for (nome, linhas) in &retrato.tabelas {
+    for (nome, linhas) in &retrato.tables {
         if !linhas.is_empty() {
             println!("  {nome}: {}", linhas.len());
         }
@@ -196,14 +196,14 @@ fn exportar(flag: Option<PathBuf>, ambiente: &config::Ambiente, args: ExportarOr
 
 /// Lê do disco o conteúdo de cada blob citado no retrato (biblioteca e anexos).
 fn ler_blobs(
-    retrato: &RetratoOrg,
+    retrato: &OrgSnapshot,
     org: OrgId,
     pasta_blobs: &Path,
     limite: u64,
 ) -> Result<BTreeMap<String, Vec<u8>>, String> {
     let mut nomes = BTreeMap::new();
     for tabela in ["file_library", "attachments"] {
-        for linha in retrato.tabelas.get(tabela).into_iter().flatten() {
+        for linha in retrato.tables.get(tabela).into_iter().flatten() {
             let (Some(sha), Some(nome)) = (
                 linha.get("sha256").and_then(Value::as_str),
                 linha.get("name").and_then(Value::as_str),
@@ -241,9 +241,9 @@ fn importar(flag: Option<PathBuf>, ambiente: &config::Ambiente, args: ImportarOr
             ));
         }
     };
-    let (retrato, blobs) = match backup_documento::ler_documento(&bytes) {
-        Ok(documento) => (documento.retrato, documento.blobs),
-        Err(poph_store::backup_documento::ErroDocumento::Json(motivo)) => {
+    let (retrato, blobs) = match backup_document::read_document(&bytes) {
+        Ok(documento) => (documento.snapshot, documento.blobs),
+        Err(poph_store::backup_document::DocumentError::Json(motivo)) => {
             return falha(format!(
                 "o arquivo {} não é um backup do POP Harness (JSON inválido: {motivo})",
                 args.arquivo.display()
@@ -254,14 +254,14 @@ fn importar(flag: Option<PathBuf>, ambiente: &config::Ambiente, args: ImportarOr
 
     let destino = match &args.org {
         Some(texto) => match resolver_org(&store, texto) {
-            Ok(org) => DestinoImportacao::Existente(org),
+            Ok(org) => ImportTarget::Existing(org),
             Err(erro) => return falha(erro),
         },
-        None => DestinoImportacao::DaOrigem,
+        None => ImportTarget::Origin,
     };
     let org_destino = match destino {
-        DestinoImportacao::Existente(org) => org,
-        DestinoImportacao::DaOrigem => match org_do_retrato(&retrato) {
+        ImportTarget::Existing(org) => org,
+        ImportTarget::Origin => match org_do_retrato(&retrato) {
             Ok(org) => org,
             Err(erro) => return falha(erro),
         },
@@ -296,7 +296,7 @@ fn importar(flag: Option<PathBuf>, ambiente: &config::Ambiente, args: ImportarOr
     }
 
     let store = Arc::new(store);
-    let relatorio = match store.importar_retrato(retrato, destino) {
+    let relatorio = match store.import_snapshot(retrato, destino) {
         Ok(relatorio) => relatorio,
         Err(erro) => return falha(crate::apoio::descrever(&erro)),
     };
@@ -309,13 +309,13 @@ fn importar(flag: Option<PathBuf>, ambiente: &config::Ambiente, args: ImportarOr
             "arquivo": args.arquivo.display().to_string(),
             "org": {
                 "id": relatorio.org.to_string(),
-                "criada": relatorio.org_criada,
+                "criada": relatorio.created_org,
             },
-            "tabelas": relatorio.tabelas.iter().map(|(nome, gravado)| {
-                (nome.clone(), json!({"inseridas": gravado.inseridas, "atualizadas": gravado.atualizadas}))
+            "tabelas": relatorio.tables.iter().map(|(nome, gravado)| {
+                (nome.clone(), json!({"inseridas": gravado.inserted, "atualizadas": gravado.updated}))
             }).collect::<Map<String, Value>>(),
             "total": relatorio.total(),
-            "segredos_a_redigitar": relatorio.segredos_a_redigitar,
+            "segredos_a_redigitar": relatorio.secrets_to_reenter,
             "indice": indice,
             "aviso": aviso,
         }));
@@ -325,27 +325,27 @@ fn importar(flag: Option<PathBuf>, ambiente: &config::Ambiente, args: ImportarOr
     println!(
         "Org {} {}.",
         relatorio.org,
-        if relatorio.org_criada {
+        if relatorio.created_org {
             "criada"
         } else {
             "atualizada"
         }
     );
     println!();
-    for (nome, gravado) in &relatorio.tabelas {
-        if gravado.inseridas + gravado.atualizadas > 0 {
+    for (nome, gravado) in &relatorio.tables {
+        if gravado.inserted + gravado.updated > 0 {
             println!(
                 "  {nome}: {} nova(s), {} atualizada(s)",
-                gravado.inseridas, gravado.atualizadas
+                gravado.inserted, gravado.updated
             );
         }
     }
-    if relatorio.segredos_a_redigitar > 0 {
+    if relatorio.secrets_to_reenter > 0 {
         println!();
         println!(
             "{} integração(ões) vieram sem o segredo: o valor não entra no arquivo. \
              Digite o segredo de novo na aba Integrações do Console.",
-            relatorio.segredos_a_redigitar
+            relatorio.secrets_to_reenter
         );
     }
     println!();
@@ -363,14 +363,14 @@ fn importar(flag: Option<PathBuf>, ambiente: &config::Ambiente, args: ImportarOr
 
 /// Valida o documento (formato, versão, org, tabelas) — só para os testes locais da CLI.
 #[cfg(test)]
-fn retrato_do_documento(documento: &Value) -> Result<poph_store::backup::RetratoOrg, String> {
-    backup_documento::retrato_do_documento(documento).map_err(|erro| erro.to_string())
+fn retrato_do_documento(documento: &Value) -> Result<poph_store::backup::OrgSnapshot, String> {
+    backup_document::document_snapshot(documento).map_err(|erro| erro.to_string())
 }
 
 /// Decodifica e confere os blobs — só para os testes locais da CLI.
 #[cfg(test)]
 fn blobs_do_documento(documento: &Value) -> Result<BTreeMap<String, Vec<u8>>, String> {
-    backup_documento::blobs_do_documento(documento).map_err(|erro| erro.to_string())
+    backup_document::document_blobs(documento).map_err(|erro| erro.to_string())
 }
 
 /// Marca os segredos — só para os testes locais da CLI.
@@ -384,7 +384,7 @@ fn marcar_segredos(
         let mapa = chave?.decifrar(blob).ok()?;
         Some(mapa.keys().cloned().collect())
     };
-    backup_documento::marcar_segredos(tabelas, cifrados, &nomes);
+    backup_document::mark_secrets(tabelas, cifrados, &nomes);
 }
 
 /// Recusa a importação quando ela atualizaria linha que já existe no destino.
@@ -394,24 +394,24 @@ fn marcar_segredos(
 /// quantas linhas, em quais tabelas e até cinco exemplos, e como autorizar.
 fn recusar_sobrescrita(
     store: &Store,
-    retrato: &RetratoOrg,
-    destino: DestinoImportacao,
+    retrato: &OrgSnapshot,
+    destino: ImportTarget,
 ) -> Result<(), String> {
     let atualizacoes = store
-        .conferir_atualizacoes_importacao(retrato, destino)
+        .check_import_updates(retrato, destino)
         .map_err(|erro| crate::apoio::descrever(&erro))?;
-    if atualizacoes.vazia() {
+    if atualizacoes.empty() {
         return Ok(());
     }
     let conflitos = store
-        .conferir_conflitos_importacao(retrato, destino)
+        .check_import_conflicts(retrato, destino)
         .map_err(|erro| crate::apoio::descrever(&erro))?;
     if !conflitos.is_empty() {
         // A gravação recusa com a mensagem de conflito, que é mais específica.
         return Ok(());
     }
-    let mut exemplos = atualizacoes.exemplos.join("; ");
-    let resto = atualizacoes.total - atualizacoes.exemplos.len() as u64;
+    let mut exemplos = atualizacoes.examples.join("; ");
+    let resto = atualizacoes.total - atualizacoes.examples.len() as u64;
     if resto > 0 {
         exemplos.push_str(&format!("; e mais {resto}"));
     }
@@ -419,11 +419,11 @@ fn recusar_sobrescrita(
         "a importação atualizaria {} linha(s) que já existem no destino ({}): {exemplos}. \
          Nada foi gravado. Se é isso que você quer, repita com --sobrescrever",
         atualizacoes.total,
-        atualizacoes.resumo(),
+        atualizacoes.summary(),
     ))
 }
 
-fn org_do_retrato(retrato: &RetratoOrg) -> Result<OrgId, String> {
+fn org_do_retrato(retrato: &OrgSnapshot) -> Result<OrgId, String> {
     let id = retrato
         .org
         .get("id")
@@ -529,8 +529,8 @@ fn abrir(
     let arquivo = config::resolver_arquivo(flag.as_deref(), ambiente, &pasta);
     let configuracao =
         config::carregar(arquivo.as_deref(), ambiente).map_err(|erro| erro.to_string())?;
-    let store = Store::abrir(&configuracao)
-        .map_err(|erro| format!("não consegui abrir o banco: {erro}"))?;
+    let store =
+        Store::open(&configuracao).map_err(|erro| format!("não consegui abrir o banco: {erro}"))?;
     Ok((store, configuracao))
 }
 
@@ -559,8 +559,8 @@ fn escrever_atomico(destino: &Path, bytes: &[u8]) -> Result<(), String> {
 #[cfg(test)]
 mod testes {
     use super::*;
-    use poph_store::backup::FORMATO_BACKUP;
-    use poph_store::backup_documento::{codificar, descodificar};
+    use poph_store::backup::BACKUP_FORMAT;
+    use poph_store::backup_document::{descodificar, encode};
 
     #[test]
     fn base64_vai_e_volta() {
@@ -572,7 +572,7 @@ mod testes {
             "conteudo de um arquivo maior, com acentos: ação".as_bytes(),
         ];
         for caso in casos {
-            let texto = codificar(caso);
+            let texto = encode(caso);
             let voltou = descodificar(&texto).expect("decodifica");
             assert_eq!(&voltou, caso, "base64 de {:?}", caso);
         }
@@ -593,7 +593,7 @@ mod testes {
 
     #[test]
     fn versao_de_formato_desconhecida_e_recusada() {
-        let documento = json!({"formato": FORMATO_BACKUP, "versao_formato": 99, "org": {}});
+        let documento = json!({"formato": BACKUP_FORMAT, "versao_formato": 99, "org": {}});
         let erro = retrato_do_documento(&documento).expect_err("devia recusar");
         assert!(erro.contains("versão de formato"), "{erro}");
     }
@@ -603,7 +603,7 @@ mod testes {
         let documento = json!({
             "blobs": [{
                 "sha256": "0".repeat(64),
-                "conteudo_base64": codificar(b"conteudo"),
+                "conteudo_base64": encode(b"conteudo"),
             }],
         });
         let erro = blobs_do_documento(&documento).expect_err("devia recusar");

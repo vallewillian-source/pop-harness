@@ -8,8 +8,8 @@ use poph_types::{AgentId, OrgId};
 use rusqlite::{OptionalExtension, Row, params};
 
 use crate::Store;
-use crate::erro::{ErroStore, Resultado};
-use crate::modelo::{Instrucoes, Pagina};
+use crate::error::{Resultado, StoreError};
+use crate::model::{Instructions, Page};
 use crate::repos::{conflito_ou_ausente, id_da_coluna, u64_da_coluna};
 
 const COLUNAS: &str = "agent_id, org_id, structured_json, markdown, derived_from_json, version, created_at, updated_at";
@@ -19,10 +19,10 @@ pub struct InstrucoesRepo<'a>(pub(crate) &'a Store);
 
 impl InstrucoesRepo<'_> {
     /// Lê as instruções do agente.
-    pub fn obter(&self, org: OrgId, agent: AgentId) -> Resultado<Instrucoes> {
+    pub fn obter(&self, org: OrgId, agent: AgentId) -> Resultado<Instructions> {
         let texto_org = org.to_string();
         let texto_agente = agent.to_string();
-        let encontradas = self.0.leitura(move |conn| {
+        let encontradas = self.0.read(move |conn| {
             conn.query_row(
                 &format!(
                     "SELECT {COLUNAS} FROM agent_instructions WHERE org_id = ?1 AND agent_id = ?2"
@@ -31,9 +31,9 @@ impl InstrucoesRepo<'_> {
                 linha,
             )
             .optional()
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })?;
-        super::exigir(encontradas, "instruções do agente", &agent.to_string())
+        super::require(encontradas, "instruções do agente", &agent.to_string())
     }
 
     /// Versão das instruções do agente, ou `None` quando ele ainda não tem instruções.
@@ -43,14 +43,14 @@ impl InstrucoesRepo<'_> {
     pub fn versao(&self, org: OrgId, agent: AgentId) -> Resultado<Option<u64>> {
         let texto_org = org.to_string();
         let texto_agente = agent.to_string();
-        self.0.leitura(move |conn| {
+        self.0.read(move |conn| {
             conn.query_row(
                 "SELECT version FROM agent_instructions WHERE org_id = ?1 AND agent_id = ?2",
                 params![texto_org, texto_agente],
                 |linha| u64_da_coluna(linha, 0),
             )
             .optional()
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })
     }
 
@@ -64,14 +64,14 @@ impl InstrucoesRepo<'_> {
         estruturado_json: &str,
         markdown: &str,
         derivado_do_json: bool,
-    ) -> Resultado<Instrucoes> {
-        let agora = self.0.agora();
+    ) -> Resultado<Instructions> {
+        let agora = self.0.now();
         let texto_org = org.to_string();
         let texto_agente = agent.to_string();
         let estruturado_json = estruturado_json.to_owned();
         let markdown = markdown.to_owned();
         let derivado = i64::from(derivado_do_json);
-        self.0.escrita(move |conn| {
+        self.0.write(move |conn| {
             let atual: Option<i64> = conn
                 .query_row(
                     "SELECT version FROM agent_instructions WHERE org_id = ?1 AND agent_id = ?2",
@@ -79,11 +79,11 @@ impl InstrucoesRepo<'_> {
                     |linha| linha.get(0),
                 )
                 .optional()
-                .map_err(ErroStore::from)?;
+                .map_err(StoreError::from)?;
             match atual {
                 Some(atual) => {
                     if atual.max(0) as u64 != esperada {
-                        return Err(ErroStore::Dominio(
+                        return Err(StoreError::Domain(
                             poph_types::DomainError::VersionConflict {
                                 entity: "instruções do agente",
                                 id: texto_agente,
@@ -106,11 +106,11 @@ impl InstrucoesRepo<'_> {
                             agora
                         ],
                     )
-                    .map_err(ErroStore::from)?;
+                    .map_err(StoreError::from)?;
                 }
                 None => {
                     if esperada != 0 {
-                        return Err(ErroStore::Dominio(
+                        return Err(StoreError::Domain(
                             poph_types::DomainError::VersionConflict {
                                 entity: "instruções do agente",
                                 id: texto_agente,
@@ -126,7 +126,7 @@ impl InstrucoesRepo<'_> {
                             |linha| linha.get(0),
                         )
                         .optional()
-                        .map_err(ErroStore::from)?;
+                        .map_err(StoreError::from)?;
                     if existe_agente.is_none() {
                         return Err(conflito_ou_ausente(
                             conn,
@@ -151,7 +151,7 @@ impl InstrucoesRepo<'_> {
                             agora
                         ],
                     )
-                    .map_err(ErroStore::from)?;
+                    .map_err(StoreError::from)?;
                 }
             }
             Ok(())
@@ -160,11 +160,11 @@ impl InstrucoesRepo<'_> {
     }
 
     /// Página de instruções da org, em ordem de agente.
-    pub fn listar(&self, org: OrgId, pagina: Pagina) -> Resultado<Vec<Instrucoes>> {
+    pub fn listar(&self, org: OrgId, pagina: Page) -> Resultado<Vec<Instructions>> {
         let texto_org = org.to_string();
-        let apos = pagina.apos.map(|id| id.to_string());
-        let limite = i64::from(pagina.limite);
-        self.0.leitura(move |conn| {
+        let apos = pagina.after.map(|id| id.to_string());
+        let limite = i64::from(pagina.limit);
+        self.0.read(move |conn| {
             let mut consulta = conn.prepare(&format!(
                 "SELECT {COLUNAS} FROM agent_instructions
                   WHERE org_id = ?1 AND (?2 IS NULL OR agent_id > ?2)
@@ -183,15 +183,15 @@ impl InstrucoesRepo<'_> {
     pub fn apagar(&self, org: OrgId, agent: AgentId) -> Resultado<()> {
         let texto_org = org.to_string();
         let texto_agente = agent.to_string();
-        let apagou = self.0.escrita(move |conn| {
+        let apagou = self.0.write(move |conn| {
             conn.execute(
                 "DELETE FROM agent_instructions WHERE org_id = ?1 AND agent_id = ?2",
                 params![texto_org, texto_agente],
             )
-            .map_err(ErroStore::from)
+            .map_err(StoreError::from)
         })?;
         if apagou == 0 {
-            return Err(ErroStore::Dominio(poph_types::DomainError::NotFound {
+            return Err(StoreError::Domain(poph_types::DomainError::NotFound {
                 entity: "instruções do agente",
                 id: agent.to_string(),
             }));
@@ -200,15 +200,15 @@ impl InstrucoesRepo<'_> {
     }
 }
 
-fn linha(linha: &Row<'_>) -> rusqlite::Result<Instrucoes> {
-    Ok(Instrucoes {
+fn linha(linha: &Row<'_>) -> rusqlite::Result<Instructions> {
+    Ok(Instructions {
         agent_id: id_da_coluna(linha, 0)?,
         org_id: id_da_coluna(linha, 1)?,
-        estruturado_json: linha.get(2)?,
+        structured_json: linha.get(2)?,
         markdown: linha.get(3)?,
-        derivado_do_json: linha.get::<_, i64>(4)? != 0,
-        versao: u64_da_coluna(linha, 5)?,
-        criado_em: linha.get(6)?,
-        atualizado_em: linha.get(7)?,
+        derived_from_json: linha.get::<_, i64>(4)? != 0,
+        version: u64_da_coluna(linha, 5)?,
+        created_at: linha.get(6)?,
+        updated_at: linha.get(7)?,
     })
 }

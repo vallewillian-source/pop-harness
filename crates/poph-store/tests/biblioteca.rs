@@ -3,9 +3,7 @@
 //! Cobre o que o repositório promete: `org_id` e `agent_id` obrigatórios, isolamento entre orgs e
 //! entre agentes da mesma org, validação dos campos, contagem e exclusão.
 
-use poph_store::{
-    Biblioteca, ErroStore, NovaOrg, NovoAgente, NovoArquivoBiblioteca, Pagina, Store,
-};
+use poph_store::{Biblioteca, NewAgent, NewLibraryFile, NewOrg, Page, Store, StoreError};
 use poph_types::{AgentId, FileId, OrgId};
 
 struct Cenario {
@@ -26,8 +24,8 @@ impl Cenario {
         ));
         let _ = std::fs::remove_dir_all(&pasta);
         std::fs::create_dir_all(&pasta).expect("cria a pasta");
-        let store = Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
-            .expect("abre o banco");
+        let store =
+            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco");
         let org = criar_org(&store, "org-a");
         let outra_org = criar_org(&store, "org-b");
         let agente = criar_agente(&store, org, "bia");
@@ -43,16 +41,16 @@ impl Cenario {
     }
 
     fn biblioteca(&self) -> Biblioteca<'_> {
-        self.store.biblioteca()
+        self.store.library()
     }
 
-    fn novo_arquivo(&self, agente: AgentId, nome: &str) -> NovoArquivoBiblioteca {
-        NovoArquivoBiblioteca {
+    fn novo_arquivo(&self, agente: AgentId, nome: &str) -> NewLibraryFile {
+        NewLibraryFile {
             agent_id: agente,
-            nome: nome.to_owned(),
-            descricao: "descrição".to_owned(),
+            name: nome.to_owned(),
+            description: "descrição".to_owned(),
             mime: "application/pdf".to_owned(),
-            tamanho_bytes: 1_024,
+            size_bytes: 1_024,
             sha256: "a".repeat(64),
             blob_path: format!("{}/{nome}", self.org),
         }
@@ -67,9 +65,9 @@ impl Drop for Cenario {
 
 fn criar_org(store: &Store, slug: &str) -> OrgId {
     store
-        .orgaos()
-        .criar(NovaOrg {
-            nome: format!("Org {slug}"),
+        .orgs()
+        .criar(NewOrg {
+            name: format!("Org {slug}"),
             slug: format!("{slug}-{}", AgentId::generate()),
             config_json: "{}".to_owned(),
         })
@@ -79,13 +77,13 @@ fn criar_org(store: &Store, slug: &str) -> OrgId {
 
 fn criar_agente(store: &Store, org: OrgId, slug: &str) -> AgentId {
     store
-        .agentes()
+        .agents()
         .criar(
             org,
-            NovoAgente {
-                nome: format!("Agente {slug}"),
+            NewAgent {
+                name: format!("Agente {slug}"),
                 slug: format!("{slug}-{}", &AgentId::generate().to_string()[..8]),
-                ..NovoAgente::default()
+                ..NewAgent::default()
             },
         )
         .expect("cria o agente")
@@ -99,8 +97,8 @@ fn cria_lista_conta_e_exclui() {
         .biblioteca()
         .criar(cenario.org, cenario.novo_arquivo(cenario.agente, "a.pdf"))
         .expect("cria o arquivo");
-    assert_eq!(arquivo.nome, "a.pdf");
-    assert_eq!(arquivo.tamanho_bytes, 1_024);
+    assert_eq!(arquivo.name, "a.pdf");
+    assert_eq!(arquivo.size_bytes, 1_024);
     assert_eq!(
         cenario
             .biblioteca()
@@ -110,7 +108,7 @@ fn cria_lista_conta_e_exclui() {
     );
     let lista = cenario
         .biblioteca()
-        .listar(cenario.org, cenario.agente, Pagina::default())
+        .listar(cenario.org, cenario.agente, Page::default())
         .expect("lista");
     assert_eq!(lista.len(), 1);
     assert_eq!(lista[0].id, arquivo.id);
@@ -132,7 +130,7 @@ fn cria_lista_conta_e_exclui() {
         .expect_err("não existe mais");
     assert!(matches!(
         erro,
-        ErroStore::Dominio(poph_types::DomainError::NotFound { .. })
+        StoreError::Domain(poph_types::DomainError::NotFound { .. })
     ));
 }
 
@@ -149,7 +147,7 @@ fn outro_agente_da_mesma_org_nao_alcanca_o_arquivo() {
         .expect_err("outro agente não vê");
     assert!(matches!(
         erro,
-        ErroStore::Dominio(poph_types::DomainError::NotFound { .. })
+        StoreError::Domain(poph_types::DomainError::NotFound { .. })
     ));
     let erro = cenario
         .biblioteca()
@@ -157,7 +155,7 @@ fn outro_agente_da_mesma_org_nao_alcanca_o_arquivo() {
         .expect_err("outro agente não apaga");
     assert!(matches!(
         erro,
-        ErroStore::Dominio(poph_types::DomainError::NotFound { .. })
+        StoreError::Domain(poph_types::DomainError::NotFound { .. })
     ));
     // E o dono continua com o arquivo.
     assert_eq!(
@@ -182,7 +180,7 @@ fn org_errada_nao_alcanca_o_arquivo() {
         .expect_err("org errada não vê");
     assert!(matches!(
         erro,
-        ErroStore::Dominio(poph_types::DomainError::NotFound { .. })
+        StoreError::Domain(poph_types::DomainError::NotFound { .. })
     ));
     assert_eq!(
         cenario
@@ -207,7 +205,7 @@ fn agente_de_outra_org_nao_recebe_arquivo() {
     assert!(
         matches!(
             erro,
-            ErroStore::Dominio(poph_types::DomainError::NotFound { .. })
+            StoreError::Domain(poph_types::DomainError::NotFound { .. })
         ),
         "{erro:?}"
     );
@@ -223,7 +221,7 @@ fn campos_invalidos_dao_erro_de_validacao() {
         .expect_err("nome vazio");
     assert!(matches!(
         erro,
-        ErroStore::Dominio(poph_types::DomainError::Validation { field: "nome", .. })
+        StoreError::Domain(poph_types::DomainError::Validation { field: "nome", .. })
     ));
 
     novo = cenario.novo_arquivo(cenario.agente, "a.pdf");
@@ -234,21 +232,21 @@ fn campos_invalidos_dao_erro_de_validacao() {
         .expect_err("sha inválido");
     assert!(matches!(
         erro,
-        ErroStore::Dominio(poph_types::DomainError::Validation {
+        StoreError::Domain(poph_types::DomainError::Validation {
             field: "sha256",
             ..
         })
     ));
 
     let mut novo = cenario.novo_arquivo(cenario.agente, "a.pdf");
-    novo.descricao = "d".repeat(poph_store::LIMITE_DESCRICAO_ARQUIVO + 1);
+    novo.description = "d".repeat(poph_store::LIMITE_DESCRICAO_ARQUIVO + 1);
     let erro = cenario
         .biblioteca()
         .criar(cenario.org, novo)
         .expect_err("descrição longa");
     assert!(matches!(
         erro,
-        ErroStore::Dominio(poph_types::DomainError::Validation {
+        StoreError::Domain(poph_types::DomainError::Validation {
             field: "descrição",
             ..
         })

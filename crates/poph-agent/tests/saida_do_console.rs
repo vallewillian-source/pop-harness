@@ -14,7 +14,9 @@ use std::time::Duration;
 use poph_agent::atores::{Atores, Futuro, OpcoesAtores, Processador, Tarefa};
 use poph_agent::entrada_saida::{Fluxo, FuturoEnvio, OpcoesFluxo, TransporteSaida};
 use poph_agent::metricas::MetricasMemoria;
-use poph_store::{EstadoSaida, ItemSaida, NovaConversa, NovaOrg, NovaSaida, NovoAgente, Store};
+use poph_store::{
+    NewAgent, NewConversation, NewOrg, NewOutboxItem, OutboxItem, OutboxState, Store,
+};
 use poph_types::{ConversationId, OrgId, TurnId};
 
 /// Processador que não faz nada: este teste só mexe na saída.
@@ -44,7 +46,7 @@ impl TransporteDeTeste {
 }
 
 impl TransporteSaida for TransporteDeTeste {
-    fn enviar(&self, item: ItemSaida) -> FuturoEnvio {
+    fn enviar(&self, item: OutboxItem) -> FuturoEnvio {
         self.envios.fetch_add(1, Ordering::SeqCst);
         self.recebidos
             .lock()
@@ -69,32 +71,31 @@ impl Cenario {
         let _ = std::fs::remove_dir_all(&pasta);
         std::fs::create_dir_all(&pasta).expect("cria a pasta do teste");
         let store = Arc::new(
-            Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db"))
-                .expect("abre o banco"),
+            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco"),
         );
         let org = store
-            .orgaos()
-            .criar(NovaOrg {
-                nome: "Org HR-26f".to_owned(),
+            .orgs()
+            .criar(NewOrg {
+                name: "Org HR-26f".to_owned(),
                 slug: format!("org-hr26f-{rotulo}"),
                 config_json: String::new(),
             })
             .expect("cria a org")
             .id;
         let agente = store
-            .agentes()
+            .agents()
             .criar(
                 org,
-                NovoAgente {
-                    nome: "Agente HR-26f".to_owned(),
+                NewAgent {
+                    name: "Agente HR-26f".to_owned(),
                     slug: format!("agente-hr26f-{rotulo}"),
-                    ..NovoAgente::default()
+                    ..NewAgent::default()
                 },
             )
             .expect("cria o agente")
             .id;
         let integracao = store
-            .integracao_criar(org, agente, "whatsapp".to_owned(), "active".to_owned())
+            .create_integration(org, agente, "whatsapp".to_owned(), "active".to_owned())
             .expect("cria a integração")
             .id
             .parse()
@@ -103,12 +104,12 @@ impl Cenario {
             .conversas()
             .criar(
                 org,
-                NovaConversa {
+                NewConversation {
                     agent_id: agente,
                     integration_id: None,
                     canal: "cli".to_owned(),
                     peer_externo: None,
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("abre a conversa do console")
@@ -117,12 +118,12 @@ impl Cenario {
             .conversas()
             .criar(
                 org,
-                NovaConversa {
+                NewConversation {
                     agent_id: agente,
                     integration_id: Some(integracao),
                     canal: "whatsapp".to_owned(),
                     peer_externo: Some("cliente-de-teste".to_owned()),
-                    departamento_alvo: None,
+                    target_department: None,
                 },
             )
             .expect("abre a conversa do WhatsApp")
@@ -150,27 +151,27 @@ impl Cenario {
     }
 
     /// Põe um texto na caixa de saída da conversa e devolve o item.
-    fn enfileirar(&self, conversa: ConversationId, seq: u32) -> ItemSaida {
+    fn enfileirar(&self, conversa: ConversationId, seq: u32) -> OutboxItem {
         let (_novo, item) = self
             .store
-            .caixa_saida()
+            .outbox()
             .enfileirar(
                 self.org,
-                NovaSaida {
+                NewOutboxItem {
                     conversation_id: conversa,
                     turn_id: TurnId::generate(),
                     seq,
                     tipo: "text".to_owned(),
-                    conteudo_json: format!("{{\"texto\":\"resposta {seq}\"}}"),
+                    content_json: format!("{{\"texto\":\"resposta {seq}\"}}"),
                 },
             )
             .expect("enfileira a saída");
         item
     }
 
-    fn estado(&self, item: &ItemSaida) -> EstadoSaida {
+    fn estado(&self, item: &OutboxItem) -> OutboxState {
         self.store
-            .caixa_saida()
+            .outbox()
             .obter(self.org, item.id)
             .expect("lê o item")
             .estado
@@ -203,15 +204,15 @@ async fn chat_confirma_o_do_console_e_nao_toca_no_whatsapp() {
         vec![cenario.console],
         "a única chamada é da conversa do console"
     );
-    assert_eq!(cenario.estado(&do_console), EstadoSaida::Enviado);
+    assert_eq!(cenario.estado(&do_console), OutboxState::Sent);
     assert_eq!(
         cenario.estado(&do_whatsapp),
-        EstadoSaida::Pendente,
+        OutboxState::Pending,
         "o item de WhatsApp continua pendente"
     );
     let gravado = cenario
         .store
-        .caixa_saida()
+        .outbox()
         .obter(cenario.org, do_whatsapp.id)
         .expect("lê o item de WhatsApp");
     assert_eq!(gravado.tentativas, 0, "nenhuma tentativa foi gasta nele");
@@ -235,7 +236,7 @@ async fn o_envio_geral_pegaria_o_whatsapp_e_por_isso_o_chat_nao_usa_ele() {
         .expect("envio geral");
 
     assert_eq!(transporte.envios(), 1, "o geral tocou no item de WhatsApp");
-    assert_eq!(cenario.estado(&do_whatsapp), EstadoSaida::Enviado);
+    assert_eq!(cenario.estado(&do_whatsapp), OutboxState::Sent);
 }
 
 #[tokio::test]
