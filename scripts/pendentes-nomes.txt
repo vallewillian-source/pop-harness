@@ -5,17 +5,6 @@ M02	41	crates/poph-plugin-eco/src/demo.rs
 M02	33	crates/poph-plugin-eco/tests/common/mod.rs
 M02	26	crates/poph-plugin-eco/tests/conversation.rs
 M02	12	crates/poph-plugin-eco/tests/crash.rs
-M04	26	crates/poph-rag/tests/apoio/mod.rs
-M04	87	crates/poph-rag/tests/fila.rs
-M04	117	crates/poph-rag/tests/hibrida.rs
-M04	293	crates/poph-rag/tests/indice.rs
-M04	132	crates/poph-rag/tests/instalacao.rs
-M04	60	crates/poph-rag/tests/modelo.rs
-M04	154	crates/poph-rag/tests/produtos.rs
-M04	79	crates/poph-rag/tests/quantizacao_modelo.rs
-M04	72	crates/poph-rag/tests/ram.rs
-M04	82	crates/poph-rag/tests/vazao_busca.rs
-M04	52	crates/poph-rag/tests/vetores.rs
 M05	188	crates/poph-jev/src/cliente.rs
 M05	216	crates/poph-jev/src/eval.rs
 M05	80	crates/poph-jev/src/handoff.rs

@@ -1,16 +1,5 @@
 # Arquivos com comentário fora da allowlist, um por linha: módulo, quantidade de comentários e caminho,
 # separados por TAB. Gerado por `bash scripts/check-comments.sh --atualizar-pendentes`; não editar à mão.
-M04	5	crates/poph-rag/tests/apoio/mod.rs
-M04	3	crates/poph-rag/tests/fila.rs
-M04	12	crates/poph-rag/tests/hibrida.rs
-M04	15	crates/poph-rag/tests/indice.rs
-M04	5	crates/poph-rag/tests/instalacao.rs
-M04	3	crates/poph-rag/tests/modelo.rs
-M04	13	crates/poph-rag/tests/produtos.rs
-M04	11	crates/poph-rag/tests/quantizacao_modelo.rs
-M04	7	crates/poph-rag/tests/ram.rs
-M04	11	crates/poph-rag/tests/vazao_busca.rs
-M04	5	crates/poph-rag/tests/vetores.rs
 M05	4	crates/poph-jev/Cargo.toml
 M05	59	crates/poph-jev/src/cliente.rs
 M05	75	crates/poph-jev/src/eval.rs

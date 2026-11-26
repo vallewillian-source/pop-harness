@@ -50,83 +50,83 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | termo_pt | termo_en | decisão | onde | ocorrências |
 | --- | --- | --- | --- | --- |
 | cenario | scenario | traduz | poph-agent, poph-server | 5077 |
-| texto | text | traduz | poph-agent, poph-server | 3838 |
-| erro | error | traduz | poph-server, poph | 3457 |
+| texto | text | traduz | poph-agent, poph-server | 3823 |
+| erro | error | traduz | poph-server, poph | 3439 |
 | estado | state | traduz | poph-server, poph-fluxos | 3107 |
-| agente | agent | traduz | poph-server, poph-agent | 2853 |
+| agente | agent | traduz | poph-server, poph-agent | 2834 |
 | conversa | conversation | traduz | poph-server, poph-agent | 2762 |
-| nome | name | traduz | poph-server, poph-fluxos | 2141 |
-| novo | new | traduz | poph-server, poph-agent | 1735 |
-| de | of | traduz | poph-server, poph-fluxos | 1696 |
-| corpo | body | traduz | poph-server, poph-matrix | 1627 |
+| nome | name | traduz | poph-server, poph-fluxos | 2140 |
+| novo | new | traduz | poph-server, poph-agent | 1719 |
+| de | of | traduz | poph-server, poph-fluxos | 1684 |
+| corpo | body | traduz | poph-server, poph-matrix | 1612 |
 | fluxo | flow | traduz | poph-agent, poph-server | 1602 |
-| com | with | traduz | poph-server, poph-agent | 1571 |
+| com | with | traduz | poph-server, poph-agent | 1554 |
 | sala | room | traduz | poph-server, poph-matrix | 1538 |
-| resposta | response | traduz | poph-server, poph-agent | 1429 |
-| pasta | folder | traduz | poph, poph-server | 1422 |
-| da | of | traduz | poph-server, poph-matrix | 1279 |
+| resposta | response | traduz | poph-server, poph-agent | 1428 |
+| pasta | folder | traduz | poph, poph-server | 1286 |
+| da | of | traduz | poph-server, poph-matrix | 1270 |
 | motor | engine | traduz | poph-agent, poph-server | 1253 |
-| mensagem | message | traduz | poph-agent, poph-server | 1248 |
+| mensagem | message | traduz | poph-agent, poph-server | 1247 |
 | saida | output | traduz | poph, poph-server | 1228 |
-| resultado | result | traduz | poph-store, poph-fluxos | 1226 |
+| resultado | result | traduz | poph-store, poph-fluxos | 1225 |
 | cliente | client | traduz | poph-server, poph-matrix | 1189 |
 | turno | turn | traduz | poph-agent, poph-server | 1189 |
-| valor | value | traduz | poph-server, poph-fluxos | 1182 |
+| valor | value | traduz | poph-server, poph-fluxos | 1180 |
 | tipo | kind | traduz | poph-fluxos, poph-server | 1163 |
-| caminho | path | traduz | poph-server, poph | 1121 |
 | motivo | reason | traduz | poph-server, poph-matrix | 1118 |
 | evento | event | traduz | console, poph-server | 1098 |
+| caminho | path | traduz | poph-server, poph | 1069 |
 | dados | data | traduz | poph-matrix, poph-server | 1057 |
 | chave | key | traduz | poph-server, poph-fluxos | 1055 |
-| metricas | metrics | traduz | poph-server, poph-agent | 1034 |
 | acao | action | traduz | poph-fluxos, poph | 1031 |
+| metricas | metrics | traduz | poph-server, poph-agent | 1031 |
 | campo | field | traduz | poph-fluxos, console | 1027 |
-| sem | without | traduz | poph-server, poph-agent | 955 |
+| sem | without | traduz | poph-server, poph-agent | 945 |
 | registro | record | traduz | poph-agent, poph-server | 888 |
 | codigo | code | traduz | poph-fluxos, poph | 879 |
 | etapa | step | traduz | poph-fluxos, poph-server | 818 |
 | departamento | department | traduz | poph-server, poph | 788 |
-| falha | failure | traduz | poph-server, poph | 772 |
-| arquivo | file | traduz | poph, poph-server | 768 |
+| falha | failure | traduz | poph-server, poph | 768 |
+| arquivo | file | traduz | poph, poph-server | 749 |
 | resumo | summary | traduz | poph-agent, poph-server | 739 |
-| servidor | server | traduz | console, poph-server | 724 |
+| servidor | server | traduz | console, poph-server | 723 |
 | destino | target | traduz | poph-server, poph-fluxos | 717 |
 | criar | create | traduz | poph-server, poph | 698 |
-| nao | not | traduz | poph-server, poph-fluxos | 682 |
+| nao | not | traduz | poph-server, poph-fluxos | 675 |
 | opcoes | options | traduz | poph-agent, poph-server | 670 |
-| em | in | traduz | poph-server, poph-fluxos | 653 |
-| para | for | traduz | poph-fluxos, poph-server | 629 |
+| em | in | traduz | poph-server, poph-fluxos | 649 |
+| para | for | traduz | poph-fluxos, poph-server | 623 |
 | espaco | space | traduz | poph-matrix, poph-server | 587 |
 | ficha | case | traduz | poph-server, poph-agent | 577 |
-| alvo | target | traduz | poph-server, poph-fluxos | 563 |
+| alvo | target | traduz | poph-server, poph-fluxos | 558 |
 | decisao | decision | traduz | poph-fluxos, poph-jev | 553 |
-| pedido | request | traduz | poph-agent, poph-server | 546 |
 | regra | rule | traduz | poph-fluxos, poph-server | 545 |
+| pedido | request | traduz | poph-agent, poph-server | 544 |
 | falso | false | traduz | poph-server, poph-agent | 531 |
 | pedir | ask | traduz | poph-server, poph | 527 |
 | midia | media | traduz | poph-matrix, poph-server | 525 |
 | gatilho | trigger | traduz | poph-agent, poph-fluxos | 509 |
 | fonte | source | traduz | poph-fluxos, poph-server | 496 |
 | versao | version | traduz | poph-server, console | 493 |
-| itens | items | traduz | poph-server, poph-fluxos | 486 |
 | canal | channel | traduz | poph-server, poph-agent | 483 |
-| nova | new | traduz | poph-fluxos, poph-agent | 466 |
 | porta | port | traduz | poph-server, poph-matrix | 463 |
 | chamada | call | traduz | poph-server, poph-matrix | 462 |
-| produto | product | traduz | poph-agent, poph | 453 |
-| lista | list | traduz | poph-fluxos, poph-server | 451 |
+| itens | items | traduz | poph-server, poph-fluxos | 454 |
 | linha | line | traduz | poph-server, poph-fluxos | 450 |
+| lista | list | traduz | poph-fluxos, poph-server | 444 |
 | provedor | provider | traduz | poph-agent, poph-server | 443 |
-| inicio | beginning | traduz | poph-server, poph-agent | 440 |
 | fim | end | traduz | poph-fluxos, poph-agent | 439 |
-| relatorio | report | traduz | poph-server, poph | 421 |
+| nova | new | traduz | poph-fluxos, poph-agent | 439 |
+| produto | product | traduz | poph-agent, poph | 427 |
 | atual | current | traduz | poph-server, poph-agent | 420 |
+| inicio | beginning | traduz | poph-server, poph-agent | 420 |
 | ambiente | environment | traduz | poph, poph-matrix | 414 |
-| modelo | model | traduz | poph-agent, poph-server | 413 |
 | entrada | entry | traduz | poph-agent, poph-server | 411 |
-| limites | limits | traduz | poph-fluxos, poph-agent | 403 |
+| relatorio | report | traduz | poph-server, poph | 407 |
+| limites | limits | traduz | poph-fluxos, poph-agent | 402 |
 | contexto | context | traduz | poph-fluxos, poph-agent | 400 |
 | integracao | integration | traduz | poph-server, console | 396 |
+| modelo | model | traduz | poph-agent, poph-server | 393 |
 | caso | case | traduz | poph-server, poph-fluxos | 391 |
 | ao | to | traduz | poph-fluxos, poph-server | 388 |
 | aviso | notice | traduz | poph-server, poph | 388 |
@@ -135,122 +135,117 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | fluxos | flows | traduz | poph-server, poph-agent | 372 |
 | quente | hot | traduz | poph-agent, poph-server | 368 |
 | execucao | execution | traduz | poph-server, poph-agent | 360 |
-| indice | index | traduz | poph-rag, poph-server | 347 |
 | efeito | effect | traduz | poph-fluxos, poph-server | 341 |
 | instancia | instance | traduz | poph-server, poph-evolution | 339 |
-| rotulo | label | traduz | poph-server, poph-fluxos | 339 |
 | campos | fields | traduz | poph-fluxos, poph-agent | 336 |
 | revisao | revision | traduz | poph-server, poph-agent | 336 |
+| rotulo | label | traduz | poph-server, poph-fluxos | 335 |
 | atores | actors | traduz | poph-agent, poph-fluxos | 333 |
-| configuracao | configuration | traduz | poph, console | 327 |
 | desligar | disable | traduz | poph-server, poph | 327 |
-| origem | origin | traduz | poph, poph-matrix | 320 |
+| configuracao | configuration | traduz | poph, console | 326 |
 | situacao | situation | traduz | console, poph-retention | 316 |
 | mensagens | messages | traduz | poph-agent, poph-server | 311 |
+| origem | origin | traduz | poph, poph-matrix | 309 |
 | envio | send | traduz | poph-server, poph-agent | 307 |
 | ferramenta | tool | traduz | poph-agent, poph | 299 |
 | por | by | traduz | poph-agent, poph | 298 |
 | categoria | category | traduz | poph, poph-server | 294 |
 | salas | rooms | traduz | poph-server, poph-matrix | 292 |
-| teto | cap | traduz | poph-server, poph-fluxos | 292 |
+| teto | cap | traduz | poph-server, poph-fluxos | 291 |
 | efeitos | effects | traduz | poph-fluxos, poph-server | 284 |
-| guarda | guard | traduz | poph-matrix, poph-server | 280 |
 | padrao | default | traduz | poph-agent, poph-server | 280 |
 | avaliador | evaluator | traduz | poph-fluxos, poph-agent | 279 |
+| guarda | guard | traduz | poph-matrix, poph-server | 279 |
 | whatsapp | whatsapp | traduz | console, poph-server | 278 |
 | executar | run | traduz | poph-fluxos, poph-agent | 276 |
 | vazio | empty | traduz | poph-server, poph-fluxos | 275 |
 | numero | number | traduz | console, poph-store | 274 |
-| conteudo | content | traduz | poph-matrix, poph-server | 271 |
+| conteudo | content | traduz | poph-matrix, poph-server | 270 |
 | metodo | method | traduz | poph-server, poph-matrix | 270 |
-| produtos | products | traduz | poph-agent, poph-server | 266 |
 | chamadas | calls | traduz | poph-agent, poph-server | 260 |
 | pausa | pause | traduz | poph-agent, poph-server | 260 |
+| produtos | products | traduz | poph-agent, poph-server | 260 |
 | relato | report | traduz | poph-server, poph-agent | 259 |
-| outro | other | traduz | poph-server, poph | 258 |
 | rota | route | traduz | poph-server, poph-fluxos | 258 |
-| identidade | identity | traduz | poph-server, poph-rag | 249 |
-| mudanca | change | traduz | poph-fluxos, poph | 244 |
+| outro | other | traduz | poph-server, poph | 251 |
+| indice | index | traduz | poph-server, poph-agent | 250 |
+| identidade | identity | traduz | poph-server, poph | 241 |
 | pagina | page | traduz | poph-server, poph | 241 |
+| mudanca | change | traduz | poph-fluxos, poph | 240 |
 | eventos | events | traduz | poph-server, poph-fluxos | 239 |
 | segredo | secret | traduz | poph-server, poph | 236 |
-| falhas | failures | traduz | poph-server, poph-agent | 235 |
 | mapa | map | traduz | poph-server, poph-agent | 231 |
 | espacos | spaces | traduz | poph-server, poph-matrix | 229 |
-| na | towards | traduz | poph-server, poph-matrix | 229 |
 | fantasma | ghost | traduz | poph-matrix, poph-server | 228 |
 | gravada | stored | traduz | poph-server, poph-agent | 227 |
 | responder | reply | traduz | poph-server, poph-matrix | 227 |
 | segredos | secrets | traduz | poph, console | 227 |
-| consulta | query | traduz | poph-server, poph-matrix | 225 |
+| na | towards | traduz | poph-server, poph-matrix | 224 |
+| falhas | failures | traduz | poph-server, poph-agent | 223 |
 | gravado | stored | traduz | poph-server, poph-agent | 223 |
 | validar | validate | traduz | poph-server, poph-types | 223 |
-| primeira | first | traduz | poph-server, poph-agent | 222 |
-| pedidos | requests | traduz | poph-agent, poph-jev | 216 |
-| antes | before | traduz | poph-server, poph-matrix | 215 |
+| pedidos | requests | traduz | poph-agent, poph-jev | 215 |
 | ciclo | cycle | traduz | poph-server, poph-fluxos | 214 |
 | modulo | module | traduz | poph-server, poph-fluxos | 214 |
 | enviar | send | traduz | poph-server, poph-matrix | 213 |
 | escolha | choice | traduz | poph-agent, poph-jev | 213 |
+| primeira | first | traduz | poph-server, poph-agent | 213 |
 | nomes | names | traduz | poph-fluxos, poph-agent | 212 |
 | interno | internal | traduz | poph-agent, poph-server | 211 |
 | invalido | invalid | traduz | poph-server, poph-fluxos | 211 |
+| consulta | query | traduz | poph-server, poph-matrix | 202 |
 | bloco | block | traduz | poph-agent, poph-fluxos | 201 |
 | esperar | wait | traduz | poph-server, poph-agent | 200 |
 | espera | wait | traduz | poph-agent, poph-server | 199 |
+| antes | before | traduz | poph-server, poph-matrix | 198 |
 | iniciar | start | traduz | poph-fluxos, poph-server | 198 |
 | falar | speak | traduz | poph-agent, poph-server | 197 |
-| depois | after | traduz | poph-server, console | 196 |
-| agentes | agents | traduz | poph, poph-server | 193 |
 | catalogo | catalog | traduz | poph-agent, poph | 191 |
-| que | that | traduz | poph-fluxos, poph-server | 190 |
+| agentes | agents | traduz | poph, poph-server | 189 |
+| depois | after | traduz | poph-server, console | 189 |
 | descricao | description | traduz | console, poph-agent | 188 |
 | registrar | register | traduz | poph-server, poph-agent | 188 |
 | detalhe | detail | traduz | poph, poph-server | 187 |
 | ferramentas | tools | traduz | poph-agent, poph-server | 186 |
 | memoria | memory | traduz | poph-agent, poph-server | 186 |
+| que | that | traduz | poph-fluxos, poph-server | 185 |
 | anexo | attachment | traduz | poph-agent, poph-server | 184 |
 | cru | raw | traduz | poph-server, poph-agent | 184 |
 | limite | limit | traduz | poph-server, poph-fluxos | 184 |
 | externo | external | traduz | poph-server, poph-agent | 183 |
-| respostas | responses | traduz | poph-agent, poph-server | 182 |
 | primeiro | first | traduz | poph-server, poph-agent | 181 |
 | modo | mode | traduz | poph-server, console | 180 |
+| respostas | responses | traduz | poph-agent, poph-server | 180 |
 | cabecalhos | headers | traduz | poph-server, poph-matrix | 179 |
-| esperado | expected | traduz | poph, poph-server | 177 |
 | remetente | sender | traduz | poph-matrix, poph-server | 176 |
 | subir | raise | traduz | poph-server, poph-matrix | 176 |
 | conversas | conversations | traduz | poph-server, poph-store | 174 |
 | limitador | limiter | traduz | poph-agent, poph-server | 174 |
 | registros | records | traduz | poph-server, poph-matrix | 172 |
 | falsa | false | traduz | poph-server, poph-agent | 169 |
-| fila | queue | traduz | poph-server, poph-agent | 169 |
 | pendentes | pending | traduz | poph-agent, poph-server | 169 |
 | partes | parts | traduz | poph-server, poph-agent | 168 |
 | impacto | impact | traduz | poph-fluxos | 164 |
-| outra | other | traduz | poph-server, poph-agent | 164 |
 | turnos | turns | traduz | poph-agent, poph-server | 164 |
 | desfecho | outcome | traduz | poph-agent, poph-server | 161 |
 | proprio | own | traduz | poph-agent, poph-server | 161 |
 | fantasmas | ghosts | traduz | poph-matrix, poph-server | 160 |
-| lote | batch | traduz | poph-jev, poph-server | 160 |
-| erros | errors | traduz | poph-fluxos, poph-server | 157 |
+| esperado | expected | traduz | poph, poph-server | 157 |
+| erros | errors | traduz | poph-fluxos, poph-server | 156 |
 | transacao | transaction | traduz | poph-server, poph-matrix | 156 |
-| segunda | second | traduz | poph-server, poph-agent | 155 |
+| outra | other | traduz | poph-server, poph-agent | 155 |
 | endereco | address | traduz | poph-server, poph-matrix | 153 |
-| ordem | order | traduz | poph-server, console | 153 |
-| textos | texts | traduz | poph-server, poph-rag | 153 |
 | roteiro | script | traduz | poph-agent, poph-server | 152 |
-| teste | test | traduz | poph, poph-server | 150 |
+| ordem | order | traduz | poph-server, console | 150 |
+| segunda | second | traduz | poph-server, poph-agent | 150 |
+| teste | test | traduz | poph, poph-server | 149 |
 | instrucoes | instructions | traduz | poph, poph-agent | 148 |
 | transporte | transport | traduz | poph-agent, poph-jev | 148 |
-| abrir | open | traduz | poph, poph-server | 147 |
-| busca | search | traduz | poph-agent, poph | 147 |
-| recusa | refusal | traduz | poph-server, poph | 147 |
 | usuarios | users | traduz | poph-matrix, poph-server | 147 |
 | arquivos | files | traduz | poph-server, poph-agent | 146 |
 | mudou | changed | traduz | poph-fluxos, poph-server | 146 |
-| agora | now | traduz | poph-server, poph-agent | 144 |
+| recusa | refusal | traduz | poph-server, poph | 146 |
+| busca | search | traduz | poph-agent, poph | 144 |
 | ultimo | last | traduz | poph-server, poph-agent | 144 |
 | vai | goes | traduz | poph-fluxos, raiz | 144 |
 | carregar | load | traduz | poph, poph-fluxos | 143 |
@@ -260,34 +255,39 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | listar | list | traduz | poph, poph-server | 143 |
 | avisos | notices | traduz | poph-server, poph-fluxos | 141 |
 | espelho | mirror | traduz | poph-server, poph-matrix | 141 |
+| lote | batch | traduz | poph-jev, poph-server | 141 |
+| fila | queue | traduz | poph-server, poph-agent | 140 |
+| agora | now | traduz | poph-server, poph-agent | 139 |
 | escolhas | choices | traduz | poph-agent, poph-jev | 137 |
-| posicao | position | traduz | poph-matrix, poph-server | 135 |
+| abrir | open | traduz | poph, poph-server | 133 |
+| posicao | position | traduz | poph-matrix, poph-server | 133 |
 | diagnosticos | diagnostics | traduz | poph-fluxos, poph-server | 130 |
-| tamanho | size | traduz | poph-agent, poph-matrix | 129 |
 | compilado | compiled | traduz | poph-fluxos, poph-server | 128 |
 | ler | read | traduz | poph, poph-matrix | 128 |
 | manifesto | manifest | traduz | poph-server, console | 128 |
+| tamanho | size | traduz | poph-agent, poph-matrix | 128 |
 | observador | observer | traduz | poph-agent, poph-server | 127 |
 | tentativas | attempts | traduz | poph-server, poph-agent | 127 |
-| confere | checks | traduz | poph-fluxos, poph-server | 126 |
-| tarefa | task | traduz | poph-agent, poph-server | 126 |
+| confere | checks | traduz | poph-fluxos, poph-server | 125 |
 | atendimento | service | traduz | poph-fluxos, poph-server | 124 |
 | diagnostico | diagnostic | traduz | poph-fluxos, poph-server | 124 |
 | sinal | signal | traduz | poph-server, poph-agent | 124 |
 | casos | cases | traduz | poph-jev, poph-fluxos | 123 |
 | leitor | reader | traduz | poph-fluxos, poph | 123 |
 | relogio | clock | traduz | poph-server, poph-agent | 123 |
-| uma | a | traduz | poph-server, poph-fluxos | 122 |
+| tarefa | task | traduz | poph-agent, poph-server | 122 |
 | ajustes | adjustments | traduz | poph-agent, poph-server | 121 |
+| uma | a | traduz | poph-server, poph-fluxos | 121 |
 | usuario | user | traduz | poph-matrix, poph-server | 121 |
 | envios | sends | traduz | poph-server, poph-agent | 120 |
 | classificacao | classification | traduz | poph-matrix, poph-server | 119 |
-| corte | cutoff | traduz | poph-agent, poph-matrix | 117 |
 | prefixo | prefix | traduz | poph-server, poph-matrix | 117 |
 | fora | outside | traduz | poph-server, poph-fluxos | 116 |
+| textos | texts | traduz | poph-server, poph-agent | 116 |
 | uso | use | traduz | poph-agent, poph-fluxos | 116 |
 | variavel | variable | traduz | poph-fluxos, poph | 115 |
 | acoes | actions | traduz | poph-fluxos, raiz | 114 |
+| corte | cutoff | traduz | poph-agent, poph-matrix | 112 |
 | exigir | require | traduz | poph-server, poph | 111 |
 | janela | window | traduz | poph-agent, poph-server | 111 |
 | confianca | confidence | traduz | poph-jev, poph-agent | 110 |
@@ -306,34 +306,31 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | auditoria | audit | traduz | poph-server, poph-agent | 105 |
 | lido | read | traduz | poph, poph-server | 105 |
 | fechada | closed | traduz | poph-store, poph-server | 103 |
-| quando | when | traduz | poph-fluxos, poph-server | 103 |
-| captura | capture | traduz | poph-server, poph | 102 |
 | par | pair | traduz | poph-server, poph | 102 |
+| quando | when | traduz | poph-fluxos, poph-server | 101 |
 | segundo | second | traduz | poph-agent, poph-server | 101 |
-| trechos | passages | traduz | poph-agent, console | 101 |
 | atendente | attendant | traduz | poph-server, poph-matrix | 100 |
-| trecho | passage | traduz | poph-agent, poph-fluxos | 100 |
 | contadores | counters | traduz | poph-server, poph-fluxos | 99 |
 | descrever | describe | traduz | poph, poph-agent | 99 |
 | escritas | writings | traduz | poph-server, poph-matrix | 99 |
 | invalida | invalid | traduz | poph-fluxos, poph-server | 99 |
 | recusado | refused | traduz | poph-server, poph-agent | 99 |
-| como | as | traduz | poph-fluxos, poph | 98 |
-| conexao | connection | traduz | poph-server, poph | 98 |
 | criado | created | traduz | poph-server, poph | 98 |
 | definir | define | traduz | poph-server, poph-agent | 98 |
+| trecho | passage | traduz | poph-agent, poph-fluxos | 98 |
 | atraso | delay | traduz | poph-server, poph-agent | 97 |
 | encerra | closes | traduz | poph-fluxos, poph-agent | 97 |
 | aparelho | device | traduz | poph-server, poph-matrix | 96 |
+| como | as | traduz | poph-fluxos, poph | 96 |
 | decisoes | decisions | traduz | poph-fluxos, console | 96 |
 | mostrar | show | traduz | poph-server, poph | 96 |
 | receptor | receiver | traduz | poph-server, poph-agent | 96 |
+| captura | capture | traduz | poph-server, poph | 95 |
 | parametros | parameters | traduz | poph-agent, poph-server | 95 |
-| pergunta | question | traduz | poph-jev, poph-agent | 95 |
-| bruto | raw | traduz | poph-fluxos, poph-server | 94 |
 | buscar | search | traduz | poph-agent, poph-server | 94 |
+| conexao | connection | traduz | poph-server, poph | 94 |
+| trechos | passages | traduz | poph-agent, console | 93 |
 | prazo | deadline | traduz | poph-fluxos, poph-server | 92 |
-| tempos | times | traduz | poph-agent, poph-fluxos | 92 |
 | comando | command | traduz | poph, poph-agent | 91 |
 | ligado | linked | traduz | poph-server, poph-agent | 91 |
 | sincronizar | synchronise | traduz | poph-agent, poph-server | 91 |
@@ -341,8 +338,10 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | ja | already | traduz | poph-server, poph-matrix | 90 |
 | formatar | format | traduz | poph-agent, poph-fluxos | 89 |
 | formato | format | traduz | poph-matrix, poph-store | 88 |
+| tempos | times | traduz | poph-agent, poph-fluxos | 88 |
 | desligado | disabled | traduz | poph-server, poph | 87 |
 | nenhum | none | traduz | poph-fluxos, poph-server | 87 |
+| pergunta | question | traduz | poph-jev, poph-agent | 87 |
 | buscador | searcher | traduz | poph-agent, poph | 86 |
 | resto | rest | traduz | poph-server, poph | 86 |
 | exige | requires | traduz | poph-fluxos, raiz | 85 |
@@ -354,20 +353,21 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | obrigatorio | required | traduz | poph-fluxos, poph-matrix | 83 |
 | tem | has | traduz | poph, poph-server | 83 |
 | aberta | open | traduz | poph-server, poph-fluxos | 82 |
-| servir | serve | traduz | poph-server, poph | 82 |
 | validacao | validation | traduz | poph-server, poph | 82 |
 | vivo | live | traduz | poph, poph-server | 82 |
+| bruto | raw | traduz | poph-fluxos, poph-server | 81 |
 | conhecimento | knowledge | traduz | poph-server, poph-agent | 81 |
 | funcao | function | traduz | poph-fluxos, raiz | 80 |
 | saidas | outputs | traduz | poph-agent, poph-server | 80 |
 | sessao | session | traduz | poph, console | 80 |
 | documento | document | traduz | poph-server, poph | 79 |
 | enviados | sent | traduz | poph-server, poph-agent | 79 |
-| muda | changes | traduz | poph-fluxos, poph-agent | 78 |
 | preparo | preparation | traduz | poph-agent, poph | 78 |
 | avaliar | evaluate | traduz | poph-fluxos, poph-jev | 77 |
+| muda | changes | traduz | poph-fluxos, poph-agent | 77 |
 | papel | role | traduz | poph-matrix, poph-server | 77 |
 | parar | stop | traduz | poph-server, poph-agent | 77 |
+| servir | serve | traduz | poph-server, poph | 77 |
 | canais | channels | traduz | poph-server, poph | 76 |
 | falhar | fail | traduz | poph-server, poph-matrix | 76 |
 | idempotencia | idempotency | traduz | poph-store, poph-server | 76 |
@@ -381,21 +381,19 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | autorizacao | authorization | traduz | poph-matrix, poph-server | 75 |
 | instancias | instances | traduz | poph-server, console | 75 |
 | onde | where | traduz | poph-fluxos, poph | 75 |
-| preco | price | traduz | poph-agent, console | 75 |
 | argumento | argument | traduz | poph-fluxos, poph-agent | 74 |
-| ausente | missing | traduz | poph-fluxos, poph-server | 74 |
 | expiracao | expiry | traduz | poph-server, poph-matrix | 74 |
 | igual | equal | traduz | poph-fluxos, poph-server | 74 |
 | operacao | operation | traduz | poph-matrix, poph-server | 74 |
-| maior | bigger | traduz | poph-fluxos, poph-server | 73 |
+| preco | price | traduz | poph-agent, console | 74 |
+| ausente | missing | traduz | poph-fluxos, poph-server | 73 |
 | nulo | null | traduz | poph-agent, poph-server | 73 |
-| carga | load | traduz | poph-fluxos, poph-agent | 72 |
 | dias | days | traduz | console, poph-retention | 72 |
 | enfileirar | enqueue | traduz | poph-matrix, poph-agent | 72 |
-| entradas | entries | traduz | poph-agent, poph-fluxos | 72 |
 | entrar | enter | traduz | poph-fluxos, poph-matrix | 72 |
 | montagem | assembly | traduz | poph-agent, poph | 72 |
 | chamar | call | traduz | poph-agent, poph-server | 71 |
+| entradas | entries | traduz | poph-agent, poph-fluxos | 71 |
 | enviado | sent | traduz | poph-server, poph-store | 71 |
 | revisoes | revisions | traduz | poph-server, poph-fluxos | 71 |
 | bruta | raw | traduz | poph-fluxos, poph-server | 70 |
@@ -408,13 +406,11 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | banco | database | traduz | poph, poph-server | 68 |
 | conjunto | set | traduz | poph-jev, poph | 68 |
 | excluir | delete | traduz | poph, poph-server | 68 |
-| quem | who | traduz | poph-server, poph-agent | 68 |
 | compilar | compile | traduz | poph-server, poph-fluxos | 67 |
 | quantidade | quantity | traduz | poph-agent, poph-server | 67 |
+| quem | who | traduz | poph-server, poph-agent | 67 |
 | escopo | scope | traduz | poph-fluxos, console | 66 |
-| perguntas | questions | traduz | poph-jev, poph-agent | 66 |
 | transitoria | transient | traduz | poph-server, poph-matrix | 66 |
-| cabecalho | header | traduz | poph-server, poph-agent | 65 |
 | entregar | deliver | traduz | poph-server, poph-agent | 65 |
 | provisionador | provisioner | traduz | poph-matrix, poph-server | 65 |
 | recebido | received | traduz | poph-server, poph | 65 |
@@ -422,10 +418,12 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | rodada | round | traduz | poph-agent, poph-server | 64 |
 | ativo | active | traduz | poph-agent, console | 63 |
 | baixar | download | traduz | poph-server, poph-matrix | 63 |
+| cabecalho | header | traduz | poph-server, poph-agent | 63 |
+| carga | load | traduz | poph-fluxos, poph-agent | 63 |
 | diferenca | difference | traduz | poph-fluxos, poph-server | 63 |
+| maior | bigger | traduz | poph-fluxos, poph-server | 63 |
 | pendente | pending | traduz | poph-server, poph-agent | 63 |
 | tabela | table | traduz | poph, poph-agent | 63 |
-| titulo | title | traduz | console, poph-agent | 63 |
 | antigo | old | traduz | poph-matrix, poph-fluxos | 62 |
 | canonico | canonical | traduz | poph-fluxos, poph-agent | 62 |
 | carimbo | stamp | traduz | poph-server, poph-fluxos | 62 |
@@ -434,54 +432,51 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | garantir | ensure | traduz | poph-matrix, poph-server | 61 |
 | imagem | image | traduz | poph-matrix, poph-agent | 61 |
 | metadados | metadata | traduz | poph-server, poph-files | 61 |
-| pelo | by | traduz | poph-server, poph-matrix | 61 |
 | vira | becomes | traduz | poph-server, poph-matrix | 61 |
 | atender | attend | traduz | poph-server, poph-matrix | 60 |
 | candidatos | candidates | traduz | poph-agent, poph-jev | 60 |
 | evolucao | evolution | traduz | poph-server | 60 |
 | marcador | marker | traduz | poph-server, poph-agent | 60 |
 | nada | nothing | traduz | poph-agent, poph-server | 60 |
-| referencia | reference | traduz | poph, poph-rag | 60 |
+| perguntas | questions | traduz | poph-jev, poph-agent | 60 |
 | resolve | resolves | traduz | scripts, poph-fluxos | 60 |
 | testes | tests | traduz | poph-server, poph | 60 |
+| pelo | by | traduz | poph-server, poph-matrix | 59 |
 | resolucoes | resolutions | traduz | poph-fluxos, poph-server | 59 |
+| titulo | title | traduz | console, poph-agent | 58 |
 | vaga | slot | traduz | poph-agent | 58 |
 | proximo | next | traduz | poph-server, poph-agent | 57 |
 | publicada | published | traduz | poph-server, poph-matrix | 57 |
-| ouvinte | listener | traduz | poph-matrix, poph-server | 56 |
 | passo | step | traduz | poph-server, poph-fluxos | 56 |
 | perfil | profile | traduz | poph-matrix, poph-server | 56 |
 | proxima | next | traduz | poph-server, poph-matrix | 56 |
 | roteiros | scripts | traduz | poph-agent, poph-server | 56 |
-| achados | findings | traduz | poph-agent, poph-rag | 55 |
 | contem | contains | traduz | poph-fluxos, poph-server | 55 |
-| acertos | hits | traduz | poph-rag, poph-jev | 54 |
 | definitiva | definitive | traduz | poph-matrix, poph-server | 54 |
 | escrever | write | traduz | poph, poph-server | 54 |
 | pedaco | piece | traduz | poph-matrix, poph-server | 54 |
 | risco | risk | traduz | poph-jev, poph-agent | 54 |
-| achado | finding | traduz | poph-agent, poph-fluxos | 53 |
 | coluna | column | traduz | poph-fluxos, poph | 53 |
 | comparar | compare | traduz | poph-server, poph | 53 |
 | diretorio | directory | traduz | poph-server, poph-rag | 53 |
 | escrita | writing | traduz | poph-server, poph-matrix | 53 |
 | execucoes | executions | traduz | poph-server, poph-store | 53 |
+| ouvinte | listener | traduz | poph-matrix, poph-server | 53 |
 | posicionar | position | traduz | poph-matrix, poph-server | 53 |
 | publicar | publish | traduz | poph-server, poph | 53 |
 | retrato | snapshot | traduz | poph, poph-server | 53 |
 | ultimas | last | traduz | poph-agent | 53 |
 | ativa | active | traduz | poph-agent, poph-server | 52 |
 | convidados | guests | traduz | poph-matrix, poph-server | 52 |
-| dois | two | traduz | poph-fluxos, poph-server | 52 |
 | estruturado | structured | traduz | poph-agent, poph-server | 52 |
 | assinatura | signature | traduz | poph-server | 51 |
-| contador | counter | traduz | poph-rag, poph-server | 51 |
 | detalhes | details | traduz | poph-server, poph-jev | 51 |
 | esperada | expected | traduz | poph-server, poph | 51 |
 | exemplos | examples | traduz | poph-fluxos, poph-server | 51 |
-| existente | existing | traduz | poph-matrix, poph | 51 |
 | antiga | old | traduz | poph-fluxos, poph-server | 50 |
 | cortado | cut | traduz | poph-fluxos, poph-matrix | 50 |
+| dois | two | traduz | poph-fluxos, poph-server | 50 |
+| existente | existing | traduz | poph-matrix, poph | 50 |
 | laco | loop | traduz | poph-server, poph-agent | 50 |
 | tentativa | attempt | traduz | poph-agent, poph-server | 50 |
 | classificar | classify | traduz | poph-matrix, poph-server | 49 |
@@ -490,16 +485,15 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | despachar | dispatch | traduz | poph-agent, poph-server | 49 |
 | existe | exists | traduz | poph-server, poph-matrix | 49 |
 | gravar | write | traduz | poph-server, poph | 49 |
+| referencia | reference | traduz | poph, poph-matrix | 49 |
 | transicao | transition | traduz | poph-server, poph-agent | 49 |
 | avancar | advance | traduz | poph-agent, poph-server | 48 |
 | candidato | candidate | traduz | poph-agent, poph-jev | 48 |
 | cena | scene | traduz | poph-server | 48 |
-| errado | wrong | traduz | poph-server, poph-fluxos | 48 |
 | poder | power | traduz | poph-matrix | 48 |
 | raiz | root | traduz | poph-server, poph-jev | 48 |
 | decidir | decide | traduz | poph-matrix, poph-server | 47 |
 | rascunho | draft | traduz | poph-server, poph-store | 47 |
-| recusada | refused | traduz | poph-agent, poph | 47 |
 | vistos | seen | traduz | poph-fluxos, poph-server | 47 |
 | anterior | previous | traduz | poph-server, poph-fluxos | 46 |
 | entre | between | traduz | poph-fluxos, poph-server | 46 |
@@ -508,7 +502,6 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | remoto | remote | traduz | poph, poph-server | 46 |
 | ultima | last | traduz | poph-server, poph-agent | 46 |
 | aguardando | waiting | traduz | poph-fluxos, poph-agent | 45 |
-| conferir | check | traduz | poph-server, poph | 45 |
 | contar | count | traduz | poph-server, poph | 45 |
 | filho | child | traduz | poph-matrix, poph-fluxos | 45 |
 | lida | read | traduz | poph-server, poph-fluxos | 45 |
@@ -516,18 +509,19 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | parte | part | traduz | poph-agent, poph-server | 45 |
 | rodando | running | traduz | poph-server, poph-agent | 45 |
 | tipos | kinds | traduz | poph-fluxos, poph-server | 45 |
+| conferir | check | traduz | poph-server, poph | 44 |
 | decodificar | decode | traduz | poph-server, poph-matrix | 44 |
+| recusada | refused | traduz | poph-agent, poph | 44 |
 | redacao | writing | traduz | poph-matrix, poph-server | 44 |
 | removida | removed | traduz | poph-fluxos, poph-matrix | 44 |
 | sentido | meaning | traduz | poph-matrix, poph-server | 44 |
 | usado | used | traduz | poph-fluxos, poph-agent | 44 |
 | carrinho | cart | traduz | poph-agent, poph-server | 43 |
+| errado | wrong | traduz | poph-server, poph-fluxos | 43 |
 | espelhado | mirrored | traduz | poph-server, poph-matrix | 43 |
 | liberar | release | traduz | poph-agent, poph | 43 |
 | locais | local | traduz | poph-fluxos | 43 |
-| longo | long | traduz | poph-rag, poph-fluxos | 43 |
 | segundos | seconds | traduz | poph-server, poph | 43 |
-| vez | time | traduz | poph-server, poph-fluxos | 43 |
 | biblioteca | library | traduz | poph-server, poph-agent | 42 |
 | coleta | collection | traduz | poph-fluxos | 42 |
 | criados | created | traduz | poph-server, poph-agent | 42 |
@@ -535,24 +529,22 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | intervalo | interval | traduz | poph-server, poph-agent | 42 |
 | leitura | read | traduz | poph-agent, poph-server | 42 |
 | passar | pass | traduz | poph-server, poph-agent | 42 |
-| repetido | repeated | traduz | poph-fluxos, poph | 42 |
 | tabelas | tables | traduz | console, poph | 42 |
 | valores | values | traduz | poph-server, poph-fluxos | 42 |
-| vazia | empty | traduz | poph-agent, poph-matrix | 42 |
+| achado | finding | traduz | poph-agent, poph-fluxos | 41 |
+| achados | findings | traduz | poph-agent, poph-server | 41 |
 | identificador | identifier | traduz | poph-matrix, poph-server | 41 |
 | interna | internal | traduz | poph-agent | 41 |
-| mesma | same | traduz | poph-fluxos, poph-server | 41 |
-| modelos | models | traduz | poph, poph-rag | 41 |
 | obter | get | traduz | poph-server, poph | 41 |
 | problemas | problems | traduz | poph, poph-server | 41 |
+| vez | time | traduz | poph-server, poph-fluxos | 41 |
 | adiadas | deferred | traduz | poph-server, poph-agent | 40 |
-| apoio | support | traduz | poph, poph-rag | 40 |
 | atualizado | updated | traduz | poph-server | 40 |
 | encontrado | found | traduz | poph-agent, poph | 40 |
-| mesmo | same | traduz | poph-fluxos, poph-server | 40 |
 | nomeado | named | traduz | poph-fluxos, poph-agent | 40 |
 | pela | by | traduz | poph-server, poph | 40 |
 | posicionada | positioned | traduz | poph-matrix, poph-server | 40 |
+| vazia | empty | traduz | poph-agent, poph-matrix | 40 |
 | agenda | schedule | traduz | poph-agent, poph-server | 39 |
 | ano | year | traduz | poph-matrix, poph-server | 39 |
 | dado | given | traduz | poph-fluxos, poph-server | 39 |
@@ -565,11 +557,13 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | nem | nor | traduz | poph-server, poph-agent | 39 |
 | objeto | object | traduz | poph-server, poph-agent | 39 |
 | processo | process | traduz | poph-server, poph | 39 |
+| repetido | repeated | traduz | poph-fluxos, poph | 39 |
 | senao | else | traduz | poph-fluxos, raiz | 39 |
 | volatil | volatile | traduz | poph-agent | 39 |
 | compila | compiles | traduz | poph-fluxos, poph | 38 |
 | falhou | failed | traduz | poph-server, poph-agent | 38 |
 | integracoes | integrations | traduz | poph-server, poph | 38 |
+| mesma | same | traduz | poph-fluxos, poph-server | 38 |
 | parada | stop | traduz | poph-server, poph-fluxos | 38 |
 | poderes | powers | traduz | poph-matrix | 38 |
 | relatorios | reports | traduz | poph, poph-agent | 38 |
@@ -578,33 +572,32 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | anotadora | annotator | traduz | poph-server | 37 |
 | cancelamento | cancellation | traduz | poph-agent, poph | 37 |
 | maximo | maximum | traduz | poph-agent, poph-server | 37 |
-| orcamento | budget | traduz | poph-agent, poph-matrix | 37 |
 | servico | service | traduz | poph-server, poph | 37 |
 | centavos | cents | traduz | poph-agent, console | 36 |
 | chaves | keys | traduz | poph-fluxos, poph | 36 |
 | conflito | conflict | traduz | poph-server, poph | 36 |
 | dos | of | traduz | poph-fluxos, poph-agent | 36 |
-| duas | two | traduz | poph-server, poph-agent | 36 |
 | encaminhar | forward | traduz | poph-fluxos, poph-server | 36 |
 | funcoes | functions | traduz | poph-fluxos, poph-agent | 36 |
 | impresso | printed | traduz | poph-fluxos, poph | 36 |
 | proibido | forbidden | traduz | poph-server, poph | 36 |
-| volta | return | traduz | poph-server, poph-fluxos | 36 |
+| acertos | hits | traduz | poph-jev, poph-server | 35 |
 | ajuste | adjustment | traduz | poph-jev, poph-agent | 35 |
 | avisar | notify | traduz | poph-server, console | 35 |
 | buscas | searches | traduz | poph-agent | 35 |
 | caractere | character | traduz | poph-matrix, poph-server | 35 |
 | criada | created | traduz | poph-server, poph | 35 |
+| duas | two | traduz | poph-server, poph-agent | 35 |
 | fontes | sources | traduz | poph, poph-agent | 35 |
-| removido | removed | traduz | poph-fluxos, poph-rag | 35 |
+| mesmo | same | traduz | poph-fluxos, poph-server | 35 |
+| orcamento | budget | traduz | poph-agent, poph-matrix | 35 |
 | valido | valid | traduz | poph-server, poph-fluxos | 35 |
+| apoio | support | traduz | poph, poph-agent | 34 |
 | comportamento | behaviour | traduz | poph-agent | 34 |
 | desligada | disabled | traduz | poph-server, poph-jev | 34 |
 | filtro | filter | traduz | poph, poph-server | 34 |
-| fixa | fixed | traduz | poph-rag, poph-matrix | 34 |
 | receber | receive | traduz | poph-agent, poph-server | 34 |
-| resultados | results | traduz | poph-agent, poph-server | 34 |
-| baratas | cheap | traduz | poph-agent, poph-rag | 33 |
+| volta | return | traduz | poph-server, poph-fluxos | 34 |
 | codificar | encode | traduz | poph-matrix, poph-agent | 33 |
 | comparacao | comparison | traduz | poph, poph-fluxos | 33 |
 | enviadas | sent | traduz | poph-server, poph-agent | 33 |
@@ -613,6 +606,8 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | notificar | notify | traduz | poph-fluxos, poph-server | 33 |
 | oferecidas | offered | traduz | poph-agent | 33 |
 | recebida | received | traduz | poph-agent, poph-server | 33 |
+| removido | removed | traduz | poph-fluxos, console | 33 |
+| resultados | results | traduz | poph-agent, poph-server | 33 |
 | simples | simple | traduz | poph-fluxos, poph-server | 33 |
 | todas | all | traduz | poph-server, poph-agent | 33 |
 | verificacao | verification | traduz | poph | 33 |
@@ -627,11 +622,12 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | divergente | divergent | traduz | poph-fluxos, poph-server | 31 |
 | forcar | force | traduz | console, poph | 31 |
 | importar | import | traduz | poph-server, poph | 31 |
-| tempo | time | traduz | poph-agent, poph-rag | 31 |
+| modelos | models | traduz | poph, poph-server | 31 |
 | transferencia | transfer | traduz | poph-agent, poph-server | 31 |
 | transitorio | transient | traduz | poph-matrix, poph-server | 31 |
 | acima | above | traduz | poph-server, poph-fluxos | 30 |
 | ativos | active | traduz | poph-server, poph-agent | 30 |
+| baratas | cheap | traduz | poph-agent | 30 |
 | capturados | captured | traduz | poph-server | 30 |
 | credencial | credential | traduz | poph-matrix | 30 |
 | divergencias | divergences | traduz | poph, poph-server | 30 |
@@ -660,6 +656,7 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | rodadas | rounds | traduz | poph-agent, console | 29 |
 | saltos | jumps | traduz | poph-fluxos, poph-agent | 29 |
 | severidade | severity | traduz | poph-fluxos, poph-server | 29 |
+| tempo | time | traduz | poph-agent, poph-server | 29 |
 | adiados | deferred | traduz | poph-agent, poph-server | 28 |
 | agiram | acted | traduz | poph-fluxos, poph-server | 28 |
 | ajuda | help | traduz | poph-fluxos, poph | 28 |
@@ -667,7 +664,6 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | cai | falls | traduz | poph-agent, poph-matrix | 28 |
 | codigos | codes | traduz | poph-fluxos, poph-server | 28 |
 | dentro | inside | traduz | poph-fluxos, poph | 28 |
-| esperados | expected | traduz | poph-server, poph-rag | 28 |
 | falhos | faulty | traduz | poph-matrix, poph-server | 28 |
 | preparar | prepare | traduz | poph-server, poph-matrix | 28 |
 | provisionar | provision | traduz | poph-matrix, poph-server | 28 |
@@ -691,12 +687,11 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | compor | compose | traduz | poph-agent, poph | 26 |
 | demora | delay | traduz | poph-agent | 26 |
 | grafo | graph | traduz | poph-fluxos | 26 |
-| mantem | keeps | traduz | poph-agent, poph-matrix | 26 |
+| longo | long | traduz | poph-fluxos, poph-jev | 26 |
 | plano | plan | traduz | poph-server | 26 |
 | publicadas | published | traduz | poph-server | 26 |
 | roteador | router | traduz | poph-server, poph-matrix | 26 |
 | somar | sum | traduz | poph-agent, poph-server | 26 |
-| vetor | vector | traduz | poph-rag | 26 |
 | cada | each | traduz | poph-server, poph-fluxos | 25 |
 | carregamento | loading | traduz | poph-fluxos, poph-server | 25 |
 | desconhecido | unknown | traduz | poph-fluxos, poph-agent | 25 |
@@ -704,6 +699,7 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | exemplo | example | traduz | poph-fluxos, poph-server | 25 |
 | exigidos | required | traduz | poph-fluxos, poph-agent | 25 |
 | inteiro | integer | traduz | poph, poph-agent | 25 |
+| mantem | keeps | traduz | poph-agent, poph-matrix | 25 |
 | permissao | permission | traduz | poph-matrix, poph | 25 |
 | peso | weight | traduz | poph-fluxos | 25 |
 | recuperado | recovered | traduz | poph-agent | 25 |
@@ -712,33 +708,29 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | classe | class | traduz | poph-agent, poph-server | 24 |
 | condicao | condition | traduz | poph-fluxos, poph-server | 24 |
 | conta | counts | traduz | poph-server, poph-fluxos | 24 |
+| contador | counter | traduz | poph-server, poph-agent | 24 |
 | curso | course | traduz | poph-fluxos, poph-agent | 24 |
 | enviada | sent | traduz | poph-matrix, poph-server | 24 |
+| esperados | expected | traduz | poph-server | 24 |
 | liberado | released | traduz | poph-server, poph-agent | 24 |
 | livre | free | traduz | poph-server, poph-fluxos | 24 |
 | manifestos | manifests | traduz | poph-server | 24 |
 | opcao | option | traduz | poph-fluxos, poph-jev | 24 |
 | retentativas | retries | traduz | poph-jev, poph-core | 24 |
-| rodar | run | traduz | poph-agent, poph | 24 |
-| sao | are | traduz | poph-matrix, poph-server | 24 |
 | sobrescrever | overwrite | traduz | poph-server, console | 24 |
 | sonda | probe | traduz | poph-server | 24 |
 | aguardar | wait | traduz | poph-agent | 23 |
 | autorizado | authorized | traduz | poph-server, console | 23 |
-| baixa | low | traduz | poph-jev, poph-agent | 23 |
 | complementos | complements | traduz | poph-server | 23 |
-| consultas | queries | traduz | poph-rag, poph-server | 23 |
 | despedida | farewell | traduz | console, poph-agent | 23 |
 | dourada | golden | traduz | poph-fluxos | 23 |
 | final | final | traduz | poph-matrix, poph-fluxos | 23 |
-| hibrida | hybrid | traduz | poph-rag | 23 |
 | indisponivel | unavailable | traduz | poph-server, poph-matrix | 23 |
-| latencia | latency | traduz | poph-server, poph-jev | 23 |
-| nunca | never | traduz | poph-server, poph-matrix | 23 |
 | parcial | partial | traduz | poph-fluxos, poph-server | 23 |
 | pede | asks | traduz | poph-fluxos, poph | 23 |
 | recuo | backoff | traduz | poph-fluxos, poph | 23 |
-| reindexar | reindex | traduz | poph, poph-server | 23 |
+| rodar | run | traduz | poph-agent, poph | 23 |
+| sao | are | traduz | poph-matrix, poph-server | 23 |
 | secao | section | traduz | poph-fluxos, poph | 23 |
 | validador | validator | traduz | poph-fluxos | 23 |
 | visita | visit | traduz | poph-fluxos, poph-server | 23 |
@@ -755,10 +747,13 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | exclusao | exclusion | traduz | poph-server, poph | 22 |
 | exibicao | display | traduz | poph-matrix, poph-fluxos | 22 |
 | faltando | missing | traduz | poph-fluxos, poph-agent | 22 |
+| latencia | latency | traduz | poph-server, poph-jev | 22 |
 | movida | moved | traduz | poph-matrix, poph-server | 22 |
+| nunca | never | traduz | poph-server, poph-matrix | 22 |
 | operacoes | operations | traduz | poph-server, poph | 22 |
 | reais | actual | traduz | poph-agent, poph-server | 22 |
-| apagar | delete | traduz | poph-matrix, poph | 21 |
+| reindexar | reindex | traduz | poph, poph-server | 22 |
+| baixa | low | traduz | poph-jev, poph-agent | 21 |
 | cargas | loads | traduz | poph-fluxos, poph-server | 21 |
 | configurar | configure | traduz | poph-server, poph | 21 |
 | declarada | declared | traduz | poph-server, poph-matrix | 21 |
@@ -792,18 +787,15 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | leva | takes | traduz | poph-matrix, poph-jev | 20 |
 | lugar | place | traduz | poph-fluxos, poph-server | 20 |
 | mostrado | shown | traduz | poph, poph-server | 20 |
-| obtido | obtained | traduz | poph-rag, poph-jev | 20 |
 | portugues | portuguese | traduz | poph, poph-server | 20 |
 | regras | rules | traduz | poph-fluxos, poph-matrix | 20 |
 | requisicao | request | traduz | poph-matrix, poph-jev | 20 |
 | secoes | sections | traduz | poph-agent | 20 |
 | segue | follows | traduz | poph-server, poph-agent | 20 |
 | segura | safe | traduz | poph-agent, poph-server | 20 |
-| unico | single | traduz | poph-server, poph-fluxos | 20 |
 | virtuais | virtual | traduz | poph-matrix, poph-server | 20 |
 | vitima | victim | traduz | poph-server, poph-fluxos | 20 |
 | abaixo | below | traduz | poph-agent, poph-jev | 19 |
-| aceita | accepts | traduz | poph-fluxos, poph-server | 19 |
 | adquirir | acquire | traduz | poph-agent | 19 |
 | aspas | quotes | traduz | poph-fluxos, poph | 19 |
 | atualizacoes | updates | traduz | poph-server, poph | 19 |
@@ -812,28 +804,30 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | entregue | delivered | traduz | poph-server, poph-agent | 19 |
 | feito | done | traduz | poph-server | 19 |
 | ignorado | ignored | traduz | poph-agent, poph-matrix | 19 |
-| invalidas | invalid | traduz | poph-fluxos, poph-agent | 19 |
 | juntos | together | traduz | poph-server, poph-matrix | 19 |
 | repetir | repeat | traduz | poph-server, poph-matrix | 19 |
 | resolvedor | resolver | traduz | poph-agent | 19 |
-| tarefas | tasks | traduz | poph-server, poph-rag | 19 |
 | transitorios | transient | traduz | poph-server, poph-matrix | 19 |
+| unico | single | traduz | poph-server, poph-fluxos | 19 |
 | usa | uses | traduz | poph-agent, poph-matrix | 19 |
 | velha | old | traduz | poph-server, poph | 19 |
 | abstencao | abstention | traduz | poph-jev, poph-agent | 18 |
+| aceita | accepts | traduz | poph-fluxos, poph-server | 18 |
 | aceito | accepted | traduz | poph-fluxos, poph-server | 18 |
 | achadas | found | traduz | poph-agent, poph-fluxos | 18 |
 | alterada | changed | traduz | poph-server | 18 |
+| apagar | delete | traduz | poph-matrix, poph | 18 |
 | avisadas | notified | traduz | poph-server | 18 |
 | comercial | commercial | traduz | poph-server, poph-matrix | 18 |
-| configurado | configured | traduz | console, poph-server | 18 |
 | convidado | guest | traduz | poph-server, poph | 18 |
 | cortar | cut | traduz | poph-agent, poph-matrix | 18 |
 | criterios | criteria | traduz | poph-jev, poph-agent | 18 |
 | declarados | declared | traduz | poph-server, poph-fluxos | 18 |
 | expulsoes | evictions | traduz | poph-fluxos, poph-server | 18 |
+| fixa | fixed | traduz | poph-matrix, poph-agent | 18 |
 | imagens | images | traduz | poph-agent | 18 |
 | inicia | starts | traduz | poph-agent, poph-server | 18 |
+| invalidas | invalid | traduz | poph-fluxos, poph-agent | 18 |
 | lidos | read | traduz | poph-fluxos, poph-jev | 18 |
 | limiar | threshold | traduz | poph-agent, poph-jev | 18 |
 | ordenadas | sorted | traduz | poph-jev, poph-server | 18 |
@@ -848,11 +842,10 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | usados | used | traduz | poph-fluxos, poph-agent | 18 |
 | vivos | live | traduz | poph-agent | 18 |
 | agendar | schedule | traduz | poph-fluxos, poph-agent | 17 |
-| amostras | samples | traduz | poph-server, poph-rag | 17 |
 | ativas | active | traduz | poph-server, console | 17 |
 | baixado | downloaded | traduz | poph-server, poph-matrix | 17 |
 | coletada | collected | traduz | poph-fluxos | 17 |
-| concluidos | finished | traduz | poph-agent, poph-rag | 17 |
+| configurado | configured | traduz | console, poph-server | 17 |
 | consultado | queried | traduz | poph-jev, poph-agent | 17 |
 | continua | continues | traduz | poph-agent, poph-server | 17 |
 | deixou | left | traduz | poph-fluxos | 17 |
@@ -873,8 +866,6 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | reenvios | resends | traduz | poph-agent, poph-server | 17 |
 | renomeacoes | renames | traduz | poph-server | 17 |
 | retomada | resumption | traduz | poph-agent, poph-matrix | 17 |
-| tres | three | traduz | poph-fluxos, poph-jev | 17 |
-| vetores | vectors | traduz | poph-rag | 17 |
 | andamento | progress | traduz | poph-agent | 16 |
 | atualizadas | updated | traduz | console, poph-server | 16 |
 | conferido | checked | traduz | poph, poph-server | 16 |
@@ -894,23 +885,20 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | recarregar | reload | traduz | poph-server, poph-agent | 16 |
 | regenerada | regenerated | traduz | poph-agent | 16 |
 | remetentes | senders | traduz | poph-server | 16 |
-| rotulado | labelled | traduz | poph-jev, poph-rag | 16 |
 | seguidas | consecutive | traduz | poph-server | 16 |
 | sintaxe | syntax | traduz | poph-fluxos, poph | 16 |
 | soma | sum | traduz | poph-agent, poph-jev | 16 |
-| sufixo | suffix | traduz | poph-matrix, poph | 16 |
 | tratar | handle | traduz | poph-server, poph-agent | 16 |
 | travar | lock | traduz | poph-agent, poph-matrix | 16 |
+| tres | three | traduz | poph-fluxos, poph-jev | 16 |
 | unidade | unit | traduz | poph-agent, console | 16 |
 | ver | see | traduz | poph-server | 16 |
-| vezes | times | traduz | poph-server, poph-fluxos | 16 |
 | alheio | foreign | traduz | poph-server, poph-agent | 15 |
 | alteradas | changed | traduz | poph-server | 15 |
 | alterado | changed | traduz | poph-server, poph | 15 |
 | capturado | captured | traduz | poph-matrix, poph-server | 15 |
 | caracteres | characters | traduz | poph-agent, poph | 15 |
 | desconhecida | unknown | traduz | poph-server, console | 15 |
-| disponivel | available | traduz | poph-rag, poph-agent | 15 |
 | dispositivo | device | traduz | poph-matrix, poph-server | 15 |
 | encerradas | closed | traduz | poph-agent, poph-server | 15 |
 | escalares | scalars | traduz | poph | 15 |
@@ -928,9 +916,11 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | registrada | recorded | traduz | poph-server, poph-agent | 15 |
 | resolucao | resolution | traduz | poph-fluxos, poph | 15 |
 | situacoes | situations | traduz | console, poph-agent | 15 |
+| sufixo | suffix | traduz | poph-matrix, poph | 15 |
 | suporte | support | traduz | poph-matrix, poph-server | 15 |
 | terceiro | third | traduz | poph-server, poph-agent | 15 |
 | topo | top | traduz | poph-fluxos | 15 |
+| vezes | times | traduz | poph-server, poph-fluxos | 15 |
 | agir | act | traduz | poph-server, poph-agent | 14 |
 | apertado | tight | traduz | poph-server, poph-fluxos | 14 |
 | assinados | signed | traduz | poph-server | 14 |
@@ -943,7 +933,6 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | demais | others | traduz | poph-fluxos, poph-jev | 14 |
 | desconhecidas | unknown | traduz | poph-server | 14 |
 | digitos | digits | traduz | poph-fluxos, poph-matrix | 14 |
-| escritor | writer | traduz | poph-matrix, poph | 14 |
 | esgotadas | exhausted | traduz | poph-server, poph-agent | 14 |
 | guardado | stored | traduz | poph-server, poph-agent | 14 |
 | legenda | caption | traduz | poph-server | 14 |
@@ -955,14 +944,13 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | preparado | prepared | traduz | poph-server | 14 |
 | processadas | processed | traduz | poph-server | 14 |
 | rapidas | fast | traduz | poph-agent | 14 |
-| relevancia | relevance | traduz | poph-agent, console | 14 |
 | remover | remove | traduz | poph-agent, poph-matrix | 14 |
 | saude | health | traduz | poph-server, raiz | 14 |
 | segmentos | segments | traduz | poph-server | 14 |
 | similaridade | similarity | traduz | poph-agent, console | 14 |
 | telefone | phone | traduz | poph-matrix, poph-server | 14 |
-| trocado | swapped | traduz | poph-server, poph-matrix | 14 |
 | vazamento | leak | traduz | poph-server | 14 |
+| amostras | samples | traduz | poph-server, poph-jev | 13 |
 | apaga | deletes | traduz | poph-server, poph | 13 |
 | armazem | store | traduz | poph-agent, poph | 13 |
 | condicoes | conditions | traduz | poph-agent, console | 13 |
@@ -973,16 +961,14 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | gerado | generated | traduz | poph, poph-server | 13 |
 | informado | informed | traduz | poph-server, console | 13 |
 | isolamento | isolation | traduz | poph-server | 13 |
-| limpa | clean | traduz | poph-server, poph-fluxos | 13 |
 | marcar | mark | traduz | poph-matrix, poph-server | 13 |
 | meio | middle | traduz | poph-server, poph-agent | 13 |
-| nas | in_the | traduz | poph-server, poph-agent | 13 |
 | pareamento | pairing | traduz | poph-server | 13 |
-| passa | passes | traduz | poph-fluxos, poph-server | 13 |
 | passagem | passage | traduz | poph-server, poph-matrix | 13 |
-| percentil | percentile | traduz | poph-jev, poph-rag | 13 |
 | pode | can | traduz | poph-agent, poph | 13 |
+| relevancia | relevance | traduz | poph-agent, console | 13 |
 | renomear | rename | traduz | poph-server, poph-fluxos | 13 |
+| tarefas | tasks | traduz | poph-server | 13 |
 | versoes | versions | traduz | poph-server, poph | 13 |
 | vinculo | link | traduz | poph-server, poph | 13 |
 | vistas | views | traduz | poph-server, poph-fluxos | 13 |
@@ -992,12 +978,16 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | degradada | degraded | traduz | console | 12 |
 | direcao | direction | traduz | poph-agent, poph-server | 12 |
 | disposicao | layout | traduz | poph-server | 12 |
+| escritor | writer | traduz | poph-matrix, poph | 12 |
 | executada | executed | traduz | poph-agent | 12 |
 | extraido | extracted | traduz | poph-agent, poph-server | 12 |
+| nas | in_the | traduz | poph-server, poph-agent | 12 |
 | palavra | word | traduz | poph-agent, raiz | 12 |
+| passa | passes | traduz | poph-fluxos, poph-server | 12 |
 | recusados | refused | traduz | poph-agent, poph-server | 12 |
 | traco | trace | traduz | poph-server, poph | 12 |
 | transferida | transferred | traduz | poph-server, poph-agent | 12 |
+| trocado | swapped | traduz | poph-server, poph-matrix | 12 |
 | abertura | opening | traduz | poph-server, poph | 11 |
 | adicionadas | added | traduz | console, poph-server | 11 |
 | carrinhos | carts | traduz | console, poph-agent | 11 |
@@ -1008,19 +998,21 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | filas | queues | traduz | poph-agent | 11 |
 | foto | photo | traduz | poph-server, poph | 11 |
 | instante | instant | traduz | poph-matrix, poph-agent | 11 |
+| limpa | clean | traduz | poph-server, poph-fluxos | 11 |
 | limpar | clean | traduz | poph-agent, poph-fluxos | 11 |
 | mediana | median | traduz | poph-agent, poph-server | 11 |
 | metrica | metric | traduz | poph-server | 11 |
 | minuscula | lowercase | traduz | poph-server, poph-agent | 11 |
 | mudancas | changes | traduz | poph-server, poph | 11 |
+| obtido | obtained | traduz | poph-jev, poph-agent | 11 |
 | orfaos | orphans | traduz | poph | 11 |
 | parado | stopped | traduz | poph-fluxos, poph | 11 |
 | preenchidos | filled | traduz | console, poph-server | 11 |
 | removidas | removed | traduz | console, poph-server | 11 |
 | trocaram | swapped | traduz | console, poph-server | 11 |
 | aplicar | apply | traduz | poph, poph-agent | 10 |
-| compartilhado | shared | traduz | poph-agent, poph | 10 |
 | concluida | finished | traduz | poph-fluxos, poph-server | 10 |
+| concluidos | finished | traduz | poph-agent | 10 |
 | concorrencia | concurrency | traduz | poph-matrix, poph-server | 10 |
 | criando | creating | traduz | poph-matrix, poph-server | 10 |
 | declara | declares | traduz | poph-server, poph | 10 |
@@ -1059,11 +1051,12 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | profundidade | depth | traduz | poph-fluxos | 9 |
 | prontos | ready | traduz | poph-matrix | 9 |
 | recibo | receipt | traduz | poph-fluxos | 9 |
+| rotulado | labelled | traduz | poph-jev | 9 |
 | alcancados | reached | traduz | poph-fluxos | 8 |
 | antigas | old | traduz | poph-matrix | 8 |
 | automatico | automatic | traduz | poph-matrix, poph-server | 8 |
 | candidata | candidate | traduz | poph-agent, poph-fluxos | 8 |
-| cosseno | cosine | traduz | poph-rag | 8 |
+| compartilhado | shared | traduz | poph-agent, poph | 8 |
 | desde | since | traduz | poph, poph-server | 8 |
 | destinos | targets | traduz | poph-fluxos | 8 |
 | entrou | entered | traduz | poph-matrix, poph-store | 8 |
@@ -1071,13 +1064,12 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | instalacao | installation | traduz | poph, poph-agent | 8 |
 | instalado | installed | traduz | poph-server, poph | 8 |
 | nota | note | traduz | poph-agent, poph-jev | 8 |
+| percentil | percentile | traduz | poph-jev | 8 |
 | politica | policy | traduz | poph-agent, poph-server | 8 |
 | recurso | resource | traduz | poph-server | 8 |
 | simulacao | simulation | traduz | poph | 8 |
 | tentar | try | traduz | poph-matrix, poph-jev | 8 |
 | terminar | finish | traduz | poph-server | 8 |
-| tocar | touch | traduz | poph-server, poph-fluxos | 8 |
-| acento | accent | traduz | poph-fluxos, poph | 7 |
 | adicionar | add | traduz | poph-agent | 7 |
 | avancou | advanced | traduz | poph-fluxos, poph-agent | 7 |
 | certificado | certificate | traduz | poph-jev | 7 |
@@ -1092,24 +1084,26 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | precisa | needs | traduz | poph-fluxos, poph | 7 |
 | seguro | safe | traduz | poph-matrix, poph-server | 7 |
 | sensivel | sensitive | traduz | poph, poph-agent | 7 |
-| subida | rise | traduz | poph-server, poph-rag | 7 |
+| tocar | touch | traduz | poph-server, poph-fluxos | 7 |
 | vinculado | linked | traduz | poph, poph-server | 7 |
 | voltou | returned | traduz | poph-fluxos, poph | 7 |
+| acento | accent | traduz | poph-fluxos, poph | 6 |
 | antigos | old | traduz | poph-matrix, poph-agent | 6 |
 | cifrados | encrypted | traduz | poph | 6 |
 | nenhuma | none | traduz | poph-fluxos, poph-server | 6 |
 | opcional | optional | traduz | poph-agent, poph-server | 6 |
-| palavras | words | traduz | poph-fluxos, poph-rag | 6 |
 | propriedades | properties | traduz | poph-agent, poph-server | 6 |
 | recarga | reload | traduz | poph-server | 6 |
 | repeticao | repetition | traduz | poph-agent, poph-server | 6 |
 | retirar | withdraw | traduz | poph | 6 |
+| subida | rise | traduz | poph-server | 6 |
 | tudo | everything | traduz | poph-server, poph-agent | 6 |
 | velho | old | traduz | poph-agent, poph-server | 6 |
 | vincular | link | traduz | poph, poph-server | 6 |
 | aninhado | nested | traduz | poph-jev, poph-server | 5 |
 | apagada | deleted | traduz | poph-matrix, poph-server | 5 |
 | confirmar | confirm | traduz | poph-server | 5 |
+| consultas | queries | traduz | poph-server | 5 |
 | disco | disk | traduz | poph-server, poph | 5 |
 | duplicado | duplicate | traduz | poph, poph-server | 5 |
 | encerrado | closed | traduz | poph-fluxos, poph-agent | 5 |
@@ -1162,18 +1156,16 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | finalizar | finalise | traduz | poph-matrix | 3 |
 | habilitado | enabled | traduz | poph-agent, poph | 3 |
 | inalterados | unchanged | traduz | console | 3 |
-| indexacao | indexing | traduz | poph, poph-rag | 3 |
 | livres | free | traduz | poph-fluxos | 3 |
-| mudar | change | traduz | poph-agent, poph-rag | 3 |
 | normalizar | normalise | traduz | poph | 3 |
 | organizacao | organisation | traduz | poph-fluxos | 3 |
+| palavras | words | traduz | poph-fluxos | 3 |
 | pedacos | pieces | traduz | poph-server, poph-matrix | 3 |
 | ponto | point | traduz | poph-agent, poph-server | 3 |
 | principio | principle | traduz | poph-agent | 3 |
 | probabilidades | probabilities | traduz | poph-jev | 3 |
 | prontas | ready | traduz | poph-server | 3 |
 | pronto | ready | traduz | poph-agent | 3 |
-| quantizar | quantise | traduz | poph-rag | 3 |
 | recuperados | recovered | traduz | poph-agent | 3 |
 | substituir | replace | traduz | poph-server | 3 |
 | validas | valid | traduz | poph-fluxos, poph-agent | 3 |
@@ -1184,11 +1176,13 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | celula | cell | traduz | poph-server | 2 |
 | combina | combines | traduz | poph-matrix | 2 |
 | consertar | repair | traduz | poph-server | 2 |
-| editar | edit | traduz | poph-agent, poph-rag | 2 |
+| disponivel | available | traduz | poph-agent | 2 |
 | equipe | team | traduz | poph-fluxos, poph-server | 2 |
 | exportacao | export | traduz | poph-server | 2 |
 | familia | family | traduz | poph-matrix | 2 |
+| indexacao | indexing | traduz | poph | 2 |
 | largura | width | traduz | poph-fluxos | 2 |
+| mudar | change | traduz | poph-agent | 2 |
 | sair | exit | traduz | poph-agent | 2 |
 | truncar | truncate | traduz | poph | 2 |
 | vagas | slots | traduz | poph-agent | 2 |
@@ -1198,12 +1192,12 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | desabilitado | disabled | traduz | poph-agent | 1 |
 | dica | hint | traduz | poph-fluxos | 1 |
 | digitado | typed | traduz | poph-agent | 1 |
+| editar | edit | traduz | poph-agent | 1 |
 | enganosa | misleading | traduz | poph | 1 |
 | explicacao | explanation | traduz | poph-agent | 1 |
 | expor | expose | traduz | poph-server | 1 |
 | frente | front | traduz | poph-server | 1 |
 | geral | general | traduz | poph-agent | 1 |
-| lotes | batches | traduz | poph-rag | 1 |
 | migracoes | migrations | traduz | poph | 1 |
 | minutos | minutes | traduz | scripts | 1 |
 | organizacoes | organisations | traduz | poph-server | 1 |
