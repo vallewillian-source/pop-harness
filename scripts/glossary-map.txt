@@ -167,7 +167,6 @@ candidata	candidate
 candidato	candidate
 candidatos	candidates
 canonico	canonical
-capacidades	capabilities
 captura	capture
 capturado	captured
 capturados	captured

@@ -1258,7 +1258,6 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | campo | — | congelado | linguagem de fluxos | - |
 | campos | — | congelado | campo_json campos | - |
 | canal | — | congelado | coluna canal; flag_cli --canal | - |
-| capacidades | — | congelado | protocolo_plugin capacidades | - |
 | cargas | — | congelado | metrica poph_fluxos_cache_cargas_total | - |
 | categorias | — | congelado | operation_id categorias_atualizar; operation_id categorias_criar; operation_id categorias_excluir; e mais 2 | - |
 | chamadas | — | congelado | metrica poph_chamadas_evolution_total; metrica poph_chamadas_jev_total; metrica poph_chamadas_llm_total | - |
