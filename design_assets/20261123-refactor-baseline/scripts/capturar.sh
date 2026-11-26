@@ -39,9 +39,9 @@ if [ ! -x "$BINARY" ]; then
     exit 1
 fi
 
-GRAVAR=0
+RECORD=0
 if [ "${1:-}" = "--gravar" ] || [ "${1:-}" = "--update" ] || [ "${1:-}" = "--recapturar" ]; then
-    GRAVAR=1
+    RECORD=1
 fi
 
 TMP_DEMO="$(mktemp -d /tmp/poph-baseline-demo.XXXXXX)"
@@ -89,7 +89,7 @@ done
 echo "3. Aquecendo servidor..."
 node "$HERE/capture.mjs" "$TMP_DEMO/warmup" >/dev/null 2>&1 || true
 
-if [ "$GRAVAR" -eq 1 ]; then
+if [ "$RECORD" -eq 1 ]; then
     echo "4. Capturando telas da linha de base definitiva..."
     node "$HERE/capture.mjs" "$BASE_DIR"
 

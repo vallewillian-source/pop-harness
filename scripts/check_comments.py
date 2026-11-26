@@ -1,6 +1,7 @@
 import argparse
 import importlib.util
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -9,6 +10,7 @@ PENDING_DEFAULT = "scripts/pendentes-comentario.txt"
 ALLOW_LIST_DEFAULT = "scripts/allow-comments.txt"
 SCANNER_DEFAULT = "scripts/strip-comments.py"
 UNKNOWN_MODULE = "-"
+DESIGN_ASSETS_SCRIPTS = re.compile(r"^design_assets/[^/]+/scripts/")
 PENDING_HEADER = (
     "# Arquivos com comentário fora da allowlist, um por linha: módulo, quantidade de comentários e caminho,",
     "# separados por TAB. Gerado por `bash scripts/check-comments.sh --atualizar-pendentes`; não editar à mão.",
@@ -57,6 +59,8 @@ MODULE_RULES = (
 def module_of(relative):
     if "/" not in relative:
         return "M00"
+    if DESIGN_ASSETS_SCRIPTS.match(relative):
+        return "M14"
     for pattern, module in MODULE_RULES:
         if pattern.endswith("/"):
             if relative.startswith(pattern):
