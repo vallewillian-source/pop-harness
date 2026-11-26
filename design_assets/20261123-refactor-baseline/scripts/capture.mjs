@@ -126,6 +126,9 @@ async function captureScreens(targetDir) {
 
     await page.fill("input#poph-token", DEMO_TOKEN);
     await page.click("button:has-text(\"Entrar\")");
+    await page.waitForURL(/\/orgs(\/[^/]+)?$/);
+    await page.evaluate(() => window.localStorage.removeItem("poph-console.lastOrgId"));
+    await page.goto(`${BASE_URL}/orgs`);
     await page.waitForURL("**/orgs");
     await page.waitForSelector("tr:has-text(\"Acme Demonstração\")", { state: "visible" });
     await page.waitForSelector(".poph-orgs__telemetry", { state: "visible" });

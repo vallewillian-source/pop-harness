@@ -30,11 +30,11 @@ export type Session = {
 
 type Context = {
     "sessao": Session | null;
-    "expirada": boolean;
-    "entrar": (token: string) => Promise<Session>;
+    "expired": boolean;
+    "signIn": (token: string) => Promise<Session>;
     "signOut": () => void;
-    "recarregarOrgs": () => Promise<void>;
-    "limparAvisoExpiracao": () => void;
+    "reloadOrgs": () => Promise<void>;
+    "clearExpiryNotice": () => void;
 };
 
 const SessionContext = createContext<Context | null>(null);
@@ -155,7 +155,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const clearExpiryNotice = useCallback(() => setExpired(false), []);
 
     const value = useMemo<Context>(
-        () => ({ "sessao": session, "expirada": expired, "entrar": signIn, "signOut": signOut, "recarregarOrgs": reloadOrgs, "limparAvisoExpiracao": clearExpiryNotice }),
+        () => ({ "sessao": session, "expired": expired, "signIn": signIn, "signOut": signOut, "reloadOrgs": reloadOrgs, "clearExpiryNotice": clearExpiryNotice }),
         [session, expired, signIn, signOut, reloadOrgs, clearExpiryNotice],
     );
 

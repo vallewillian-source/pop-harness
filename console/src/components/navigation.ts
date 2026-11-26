@@ -47,7 +47,7 @@ export function navigationGroupLabel(group: NavigationGroup): string {
 export interface ItemNavigation {
     id: string;
     grupo: NavigationGroup | "";
-    readonly rotulo: string;
+    readonly caption: string;
     icon: ComponentType<SofaIconProps>;
     route: (context: ContextNavigation) => string | null;
     estado: StateItem;
@@ -64,7 +64,7 @@ export const ITEMS_NAVIGATION: ItemNavigation[] = [
     {
         id: "organizations",
         grupo: "tenants",
-        get rotulo() {
+        get caption() {
             return translate("navigation.organizations");
         },
         icon: IconBuilding,
@@ -78,7 +78,7 @@ export const ITEMS_NAVIGATION: ItemNavigation[] = [
     {
         id: "structure",
         grupo: "tenants",
-        get rotulo() {
+        get caption() {
             return translate("navigation.structure");
         },
         icon: IconGrid,
@@ -90,7 +90,7 @@ export const ITEMS_NAVIGATION: ItemNavigation[] = [
     {
         id: "products",
         grupo: "tenants",
-        get rotulo() {
+        get caption() {
             return translate("navigation.products");
         },
         icon: IconTag,
@@ -102,7 +102,7 @@ export const ITEMS_NAVIGATION: ItemNavigation[] = [
     {
         id: "agents",
         grupo: "tenants",
-        get rotulo() {
+        get caption() {
             return translate("navigation.agents");
         },
         icon: IconUsers,
@@ -115,7 +115,7 @@ export const ITEMS_NAVIGATION: ItemNavigation[] = [
     {
         id: "model-jev",
         grupo: "runtime",
-        get rotulo() {
+        get caption() {
             return translate("navigation.modelJev");
         },
         icon: IconBot,
@@ -128,7 +128,7 @@ export const ITEMS_NAVIGATION: ItemNavigation[] = [
     {
         id: "turn-inspection",
         grupo: "runtime",
-        get rotulo() {
+        get caption() {
             return translate("navigation.turnInspection");
         },
         icon: IconList,
@@ -140,7 +140,7 @@ export const ITEMS_NAVIGATION: ItemNavigation[] = [
     {
         id: "test-chat",
         grupo: "runtime",
-        get rotulo() {
+        get caption() {
             return translate("navigation.testChat");
         },
         icon: IconMessage,
@@ -153,7 +153,7 @@ export const ITEMS_NAVIGATION: ItemNavigation[] = [
     {
         id: "whatsapp",
         grupo: "system",
-        get rotulo() {
+        get caption() {
             return translate("navigation.whatsapp");
         },
         icon: IconPhone,
@@ -165,7 +165,7 @@ export const ITEMS_NAVIGATION: ItemNavigation[] = [
     {
         id: "matrix",
         grupo: "system",
-        get rotulo() {
+        get caption() {
             return translate("navigation.matrix");
         },
         icon: IconLink,
@@ -177,7 +177,7 @@ export const ITEMS_NAVIGATION: ItemNavigation[] = [
     {
         id: "plugins",
         grupo: "system",
-        get rotulo() {
+        get caption() {
             return translate("navigation.plugins");
         },
         icon: IconGear,
@@ -189,7 +189,7 @@ export const ITEMS_NAVIGATION: ItemNavigation[] = [
     {
         id: "instance-health",
         grupo: "system",
-        get rotulo() {
+        get caption() {
             return translate("navigation.instanceHealth");
         },
         icon: IconBarChart,
@@ -206,7 +206,7 @@ export const ITEMS_COCKPIT_AGENT: ItemNavigation[] = [
     {
         id: "cockpit-instructions",
         grupo: "",
-        get rotulo() {
+        get caption() {
             return translate("navigation.cockpitInstructions");
         },
         icon: IconFile,
@@ -221,7 +221,7 @@ export const ITEMS_COCKPIT_AGENT: ItemNavigation[] = [
     {
         id: "cockpit-knowledge",
         grupo: "",
-        get rotulo() {
+        get caption() {
             return translate("navigation.cockpitKnowledge");
         },
         icon: IconDatabase,
@@ -234,7 +234,7 @@ export const ITEMS_COCKPIT_AGENT: ItemNavigation[] = [
     {
         id: "cockpit-files",
         grupo: "",
-        get rotulo() {
+        get caption() {
             return translate("navigation.cockpitFiles");
         },
         icon: IconFolder,
@@ -247,7 +247,7 @@ export const ITEMS_COCKPIT_AGENT: ItemNavigation[] = [
     {
         id: "cockpit-routing",
         grupo: "",
-        get rotulo() {
+        get caption() {
             return translate("navigation.cockpitRouting");
         },
         icon: IconWorkflow,
@@ -260,7 +260,7 @@ export const ITEMS_COCKPIT_AGENT: ItemNavigation[] = [
     {
         id: "cockpit-model-jev",
         grupo: "",
-        get rotulo() {
+        get caption() {
             return translate("navigation.cockpitModelJev");
         },
         icon: IconSliders,
@@ -273,7 +273,7 @@ export const ITEMS_COCKPIT_AGENT: ItemNavigation[] = [
     {
         id: "cockpit-test-chat",
         grupo: GROUP_DIAGNOSTIC_AGENT,
-        get rotulo() {
+        get caption() {
             return translate("navigation.cockpitTestChat");
         },
         icon: IconMessage,
@@ -286,7 +286,7 @@ export const ITEMS_COCKPIT_AGENT: ItemNavigation[] = [
     {
         id: "cockpit-turn-inspection",
         grupo: GROUP_DIAGNOSTIC_AGENT,
-        get rotulo() {
+        get caption() {
             return translate("navigation.cockpitTurnInspection");
         },
         icon: IconList,

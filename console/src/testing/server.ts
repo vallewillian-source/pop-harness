@@ -2,44 +2,44 @@
 import { vi } from "vitest";
 
 export type Call = {
-    "metodo": string;
+    "method": string;
     url: string;
-    "cabecalhos": Record<string, string>;
+    "headers": Record<string, string>;
     "corpo": unknown;
-    "bruto"?: unknown;
+    "raw"?: unknown;
 };
 
 type ApiResponse = {
     status: number;
     "corpo"?: unknown;
     texto?: string;
-    "cabecalhos"?: Record<string, string>;
+    "headers"?: Record<string, string>;
 };
 
 type Route = {
-    "metodo": string;
+    "method": string;
     "excerpt": string;
-    "responder": (call: Call) => ApiResponse;
+    "respond": (call: Call) => ApiResponse;
 };
 
 export class FakeServer {
     readonly "calls": Call[] = [];
     private "routes": Route[] = [];
 
-    "responder"(
+    "respond"(
         method: string,
         excerpt: string,
         response: ApiResponse | ((call: Call) => ApiResponse),
     ): this {
         this["routes"].push({
-            "metodo": method.toUpperCase(),
+            "method": method.toUpperCase(),
             "excerpt": excerpt,
-            "responder": typeof response === "function" ? response : () => response,
+            "respond": typeof response === "function" ? response : () => response,
         });
         return this;
     }
 
-    "instalar"(): this {
+    "install"(): this {
         vi.stubGlobal(
             "fetch",
             vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -62,17 +62,17 @@ export class FakeServer {
                         body = init.body;
                     }
                 }
-                const call: Call = { "metodo": method, url, "cabecalhos": headers, "corpo": body, "bruto": init?.body };
+                const call: Call = { "method": method, url, "headers": headers, "corpo": body, "raw": init?.body };
                 this["calls"].push(call);
 
                 const route = this["routes"].find(
                     (candidate) =>
-                        candidate["metodo"] === method && url.includes(candidate["excerpt"]),
+                        candidate["method"] === method && url.includes(candidate["excerpt"]),
                 );
                 if (!route) {
                     throw new Error(`sem rota falsa para ${method} ${url}`);
                 }
-                const { status, "corpo": dados, texto, "cabecalhos": responseHeaders } = route["responder"](call);
+                const { status, "corpo": dados, texto, "headers": responseHeaders } = route["respond"](call);
                 const content =
                     texto !== undefined
                         ? texto
@@ -92,9 +92,9 @@ export class FakeServer {
         return this;
     }
 
-    "chamadasPara"(method: string, excerpt: string): Call[] {
+    "callsFor"(method: string, excerpt: string): Call[] {
         return this["calls"].filter(
-            (call) => call["metodo"] === method.toUpperCase() && call.url.includes(excerpt),
+            (call) => call["method"] === method.toUpperCase() && call.url.includes(excerpt),
         );
     }
 }

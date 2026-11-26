@@ -6,7 +6,7 @@ import { fetchMetrics } from "../api/operation";
 const INTERVAL_HEALTH_MS = 15_000;
 
 export type SituationHealth = {
-    saude: Health | null;
+    health: Health | null;
     disconnected: boolean;
     degradada: boolean;
 };
@@ -41,7 +41,7 @@ export function useHealth(): SituationHealth {
         };
     }, []);
 
-    return { saude: dados, disconnected: withoutConnection, degradada: degraded };
+    return { health: dados, disconnected: withoutConnection, degradada: degraded };
 }
 
 export function useMemoryProcess(): number | null {

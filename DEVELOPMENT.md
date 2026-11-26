@@ -93,7 +93,7 @@ bash scripts/ci.sh                        # everything, in CI order
 cargo test --locked -p poph-retention     # one crate
 cargo test --workspace                    # all Rust tests
 (cd console && pnpm run testar)           # Console tests
-(cd console && npx vitest run src/telas/Operacao.test.tsx)   # one component test
+(cd console && npx vitest run src/screens/Operation.test.tsx)   # one component test
 ```
 
 `scripts/ci.sh` runs: cache pruning, the Console bundle, the API client check, Console tests, the comment

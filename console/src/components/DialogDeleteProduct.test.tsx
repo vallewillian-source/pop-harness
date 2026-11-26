@@ -33,12 +33,12 @@ const PRODUCT: Product = {
 function build(agentsSee: number | null, onDelete = vi.fn(), onClose = vi.fn()) {
     render(
         <DialogDeleteProduct
-            aberto
+            opened
             onClose={onClose}
             org={ORG}
-            produto={PRODUCT}
+            product={PRODUCT}
             agentsSee={agentsSee}
-            aoExcluir={onDelete}
+            onDelete={onDelete}
         />,
     );
     return { onDelete, onClose };
@@ -84,14 +84,14 @@ describe("DialogoExcluirProduto", () => {
     it("manda o DELETE sem force, chama aoExcluir com o aviso do índice e fecha", async () => {
         const user = userEvent.setup();
         const servidor = new FakeServer()
-            .responder("DELETE", `/admin/v1/orgs/${ORG}/products/prod_1`, {
+            .respond("DELETE", `/admin/v1/orgs/${ORG}/products/prod_1`, {
                 status: 200,
                 corpo: {
                     deleted: true,
                     index_warning: "índice de produtos não atualizado; execute product reindex",
                 },
             })
-            .instalar();
+            .install();
         const { onDelete } = build(1);
         await waitForModalFocus();
 
@@ -103,19 +103,19 @@ describe("DialogoExcluirProduto", () => {
                 "índice de produtos não atualizado; execute product reindex",
             ),
         );
-        const [request] = servidor.chamadasPara("DELETE", "/products/prod_1");
+        const [request] = servidor.callsFor("DELETE", "/products/prod_1");
         expect(request?.url).not.toContain("force");
     });
 
     it("quando a API recusa, mostra o motivo real e não fecha", async () => {
         const user = userEvent.setup();
         new FakeServer()
-            .responder(
+            .respond(
                 "DELETE",
                 `/admin/v1/orgs/${ORG}/products/prod_1`,
                 apiError(404, "not_found", "produto `prod_1` não encontrado"),
             )
-            .instalar();
+            .install();
         const { onDelete } = build(0);
         await waitForModalFocus();
 
@@ -130,12 +130,12 @@ describe("DialogoExcluirProduto", () => {
     it("com itens de carrinho, a 1ª tentativa sai sem force; o 409 mostra a contagem, não apaga e libera a confirmação extra", async () => {
         const user = userEvent.setup();
         const servidor = new FakeServer()
-            .responder("DELETE", `/admin/v1/orgs/${ORG}/products/prod_1`, (call) =>
+            .respond("DELETE", `/admin/v1/orgs/${ORG}/products/prod_1`, (call) =>
                 call.url.includes("force=true")
                     ? { status: 200, corpo: { deleted: true, index_warning: null } }
                     : refusalCart(3, 2),
             )
-            .instalar();
+            .install();
         const { onDelete, onClose } = build(1);
         const dialog = await screen.findByRole("dialog", { name: "Excluir produto?" });
         await waitForModalFocus();
@@ -152,7 +152,7 @@ describe("DialogoExcluirProduto", () => {
         expect(onDelete).not.toHaveBeenCalled();
         expect(onClose).not.toHaveBeenCalled();
         expect(dialog).toBeInTheDocument();
-        expect(servidor.chamadasPara("DELETE", "/products/prod_1")[0]?.url).not.toContain("force");
+        expect(servidor.callsFor("DELETE", "/products/prod_1")[0]?.url).not.toContain("force");
 
         const extra = within(dialog).getByRole("checkbox", {
             name: /Excluir mesmo assim: 3 itens de carrinho/,
@@ -162,7 +162,7 @@ describe("DialogoExcluirProduto", () => {
 
         await waitFor(() => expect(onDelete).toHaveBeenCalledWith(null));
         expect(onClose).toHaveBeenCalled();
-        const requests = servidor.chamadasPara("DELETE", "/products/prod_1");
+        const requests = servidor.callsFor("DELETE", "/products/prod_1");
         expect(requests).toHaveLength(2);
         expect(requests.at(-1)?.url).toContain("force=true");
     });
@@ -170,8 +170,8 @@ describe("DialogoExcluirProduto", () => {
     it("no segundo passo, Esc fecha sem excluir", async () => {
         const user = userEvent.setup();
         const servidor = new FakeServer()
-            .responder("DELETE", `/admin/v1/orgs/${ORG}/products/prod_1`, refusalCart(1, 1))
-            .instalar();
+            .respond("DELETE", `/admin/v1/orgs/${ORG}/products/prod_1`, refusalCart(1, 1))
+            .install();
         const { onDelete, onClose } = build(0);
         await waitForModalFocus();
 
@@ -183,15 +183,15 @@ describe("DialogoExcluirProduto", () => {
         await user.keyboard("{Escape}");
         await waitFor(() => expect(onClose).toHaveBeenCalled());
         expect(onDelete).not.toHaveBeenCalled();
-        expect(servidor.chamadasPara("DELETE", "/products/prod_1")).toHaveLength(1);
+        expect(servidor.callsFor("DELETE", "/products/prod_1")).toHaveLength(1);
     });
 
     it("renders consequences and 409 cart count in en-US", async () => {
         const user = userEvent.setup();
         setLocale("en-US");
         new FakeServer()
-            .responder("DELETE", `/admin/v1/orgs/${ORG}/products/prod_1`, refusalCart(3, 2))
-            .instalar();
+            .respond("DELETE", `/admin/v1/orgs/${ORG}/products/prod_1`, refusalCart(3, 2))
+            .install();
         build(2);
         await waitForModalFocus();
 

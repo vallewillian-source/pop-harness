@@ -26,7 +26,7 @@ const TIPOS_ACEITOS =
 export type ModalFileProps = {
     org: string;
     agente: string;
-    aberto: boolean;
+    opened: boolean;
     onClose: () => void;
     onSend: (file: LibraryFile) => void;
 };
@@ -54,7 +54,7 @@ export function errorSize(bytes: number): string | null {
     return null;
 }
 
-export function ModalFile({ org, agente, aberto: isOpen, onClose, onSend }: ModalFileProps) {
+export function ModalFile({ org, agente, opened: isOpen, onClose, onSend }: ModalFileProps) {
     const { translate: t } = useI18n();
     const [chosen, setChosen] = useState<File | null>(null);
     const [nome, setName] = useState("");

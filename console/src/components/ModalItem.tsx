@@ -24,16 +24,16 @@ import {
 import { useI18n } from "../i18n";
 import type { TranslationKey } from "../i18n/catalog";
 
-const SITUATIONS: { valor: string; labelKey: TranslationKey }[] = [
-    { valor: "active", labelKey: "knowledge.statusActive" },
-    { valor: "inactive", labelKey: "knowledge.statusInactive" },
-    { valor: "archived", labelKey: "knowledge.statusArchived" },
+const SITUATIONS: { value: string; labelKey: TranslationKey }[] = [
+    { value: "active", labelKey: "knowledge.statusActive" },
+    { value: "inactive", labelKey: "knowledge.statusInactive" },
+    { value: "archived", labelKey: "knowledge.statusArchived" },
 ];
 
 export type ModalItemProps = {
     org: string;
-    grupo: string;
-    aberto: boolean;
+    group: string;
+    opened: boolean;
     onClose: () => void;
     item: KnowledgeItem | null;
     onSave: (item: KnowledgeItem) => void;
@@ -62,7 +62,7 @@ async function relerItem(
     return items.find((candidate) => candidate.id === id) ?? null;
 }
 
-export function ModalItem({ org, grupo: group, aberto: isOpen, onClose, item, onSave }: ModalItemProps) {
+export function ModalItem({ org, group, opened: isOpen, onClose, item, onSave }: ModalItemProps) {
     const { translate: t } = useI18n();
     const editing = item !== null;
     const [title, setTitle] = useState("");
@@ -143,7 +143,7 @@ export function ModalItem({ org, grupo: group, aberto: isOpen, onClose, item, on
             if (!item) {
                 const created = await createItem(org, group, {
                     title: title.trim(),
-                    content: content,
+                    content,
                     tags: readTags(tags),
                     position: ordem,
                 });
@@ -154,7 +154,7 @@ export function ModalItem({ org, grupo: group, aberto: isOpen, onClose, item, on
 
             const changed = await updateItem(org, group, item.id, versao, {
                 title: title.trim(),
-                content: content,
+                content,
                 tags: readTags(tags),
                 position: ordem,
                 status: situacao,
@@ -334,7 +334,7 @@ export function ModalItem({ org, grupo: group, aberto: isOpen, onClose, item, on
                                 onChange={(evento) => setSituation(evento.target.value)}
                             >
                                 {SITUATIONS.map((option) => (
-                                    <option key={option.valor} value={option.valor}>
+                                    <option key={option.value} value={option.value}>
                                         {t(option.labelKey)}
                                     </option>
                                 ))}

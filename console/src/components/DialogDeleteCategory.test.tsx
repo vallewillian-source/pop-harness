@@ -23,11 +23,11 @@ const category = {
 function build(onDelete = vi.fn(), onClose = vi.fn()) {
     return render(
         <DialogDeleteCategory
-            aberto
+            opened
             onClose={onClose}
             org={ORG}
-            categoria={category}
-            aoExcluir={onDelete}
+            category={category}
+            onDelete={onDelete}
         />,
     );
 }
@@ -53,16 +53,16 @@ function serverLinks(usedBy: Array<"ag_1" | "ag_2">, withProducts: boolean) {
         { id: "ag_2", name: "Triagem" },
     ];
     return new FakeServer()
-        .responder("GET", "/products?all=true", listProducts(products))
-        .responder("GET", "/agents?limit", {
+        .respond("GET", "/products?all=true", listProducts(products))
+        .respond("GET", "/agents?limit", {
             status: 200,
             corpo: { items: agents, next_cursor: null },
         })
-        .responder("GET", "/agents/ag_1", {
+        .respond("GET", "/agents/ag_1", {
             status: 200,
             corpo: { ...agents[0], product_category_ids: usedBy.includes("ag_1") ? ["cat_1"] : [] },
         })
-        .responder("GET", "/agents/ag_2", {
+        .respond("GET", "/agents/ag_2", {
             status: 200,
             corpo: { ...agents[1], product_category_ids: usedBy.includes("ag_2") ? ["cat_1"] : [] },
         });
@@ -74,8 +74,8 @@ describe("DialogoExcluirCategoria", () => {
         const onDelete = vi.fn();
         const onClose = vi.fn();
         const servidor = serverLinks([], false)
-            .responder("DELETE", `/categories/cat_1`, { status: 204 })
-            .instalar();
+            .respond("DELETE", `/categories/cat_1`, { status: 204 })
+            .install();
 
         build(onDelete, onClose);
         const dialog = await screen.findByRole("dialog", { name: "Excluir categoria?" });
@@ -89,7 +89,7 @@ describe("DialogoExcluirCategoria", () => {
 
         await waitFor(() => expect(onDelete).toHaveBeenCalledTimes(1));
         expect(onClose).toHaveBeenCalled();
-        const [request] = servidor.chamadasPara("DELETE", "/categories/cat_1");
+        const [request] = servidor.callsFor("DELETE", "/categories/cat_1");
         expect(request?.url).not.toContain("force");
     });
 
@@ -97,7 +97,7 @@ describe("DialogoExcluirCategoria", () => {
         const user = userEvent.setup();
         const onDelete = vi.fn();
         const servidor = serverLinks(["ag_1"], true)
-            .responder("DELETE", `/categories/cat_1`, (call) => {
+            .respond("DELETE", `/categories/cat_1`, (call) => {
                 if (call.url.includes("force=true")) return { status: 204 };
                 return apiError(
                     409,
@@ -106,7 +106,7 @@ describe("DialogoExcluirCategoria", () => {
                     { produtos: 2, agentes: 1 },
                 );
             })
-            .instalar();
+            .install();
 
         build(onDelete);
         const dialog = await screen.findByRole("dialog", { name: "Excluir categoria?" });
@@ -126,7 +126,7 @@ describe("DialogoExcluirCategoria", () => {
         ).toBeInTheDocument();
         expect(within(dialog).getByText(/código: conflict/)).toBeInTheDocument();
         expect(onDelete).not.toHaveBeenCalled();
-        expect(servidor.chamadasPara("DELETE", "/categories/cat_1")[0]?.url).not.toContain("force");
+        expect(servidor.callsFor("DELETE", "/categories/cat_1")[0]?.url).not.toContain("force");
         expect(dialog).toBeInTheDocument();
 
         const extra = within(dialog).getByRole("checkbox", {
@@ -136,7 +136,7 @@ describe("DialogoExcluirCategoria", () => {
         await user.click(confirm);
 
         await waitFor(() => expect(onDelete).toHaveBeenCalledTimes(1));
-        const requests = servidor.chamadasPara("DELETE", "/categories/cat_1");
+        const requests = servidor.callsFor("DELETE", "/categories/cat_1");
         expect(requests.at(-1)?.url).toContain("force=true");
         expect(requests).toHaveLength(2);
     });
@@ -145,7 +145,7 @@ describe("DialogoExcluirCategoria", () => {
 describe("DialogoExcluirCategoria · contagem dos produtos", () => {
     it("lê todas as páginas de produtos só com cursor, sem mandar limit, e conta as duas", async () => {
         const servidor = new FakeServer()
-            .responder("GET", "/products?all=true", (call) => {
+            .respond("GET", "/products?all=true", (call) => {
                 if (call.url.includes("limit=")) {
                     return apiError(400, "invalid_request", "parâmetros de paginação inválidos");
                 }
@@ -166,20 +166,20 @@ describe("DialogoExcluirCategoria · contagem dos produtos", () => {
                     },
                 };
             })
-            .responder("GET", "/agents?limit", {
+            .respond("GET", "/agents?limit", {
                 status: 200,
                 corpo: { items: [], next_cursor: null },
             })
-            .responder("DELETE", "/categories/cat_1", { status: 204 })
-            .instalar();
+            .respond("DELETE", "/categories/cat_1", { status: 204 })
+            .install();
 
         render(
             <DialogDeleteCategory
-                aberto
+                opened
                 onClose={vi.fn()}
                 org={ORG}
-                categoria={category}
-                aoExcluir={vi.fn()}
+                category={category}
+                onDelete={vi.fn()}
             />,
         );
         const dialog = await screen.findByRole("dialog", { name: "Excluir categoria?" });
@@ -190,7 +190,7 @@ describe("DialogoExcluirCategoria · contagem dos produtos", () => {
         expect(within(dialog).getByText(/Clareamento a laser, Clareamento caseiro/)).toBeInTheDocument();
         expect(within(dialog).queryByText(/Não consegui contar/)).toBeNull();
 
-        const listings = servidor.chamadasPara("GET", "/products?all=true");
+        const listings = servidor.callsFor("GET", "/products?all=true");
         expect(listings).toHaveLength(2);
         expect(listings.every((call) => !call.url.includes("limit="))).toBe(true);
         expect(listings[1]?.url).toContain("cursor=cur_1");
@@ -199,7 +199,7 @@ describe("DialogoExcluirCategoria · contagem dos produtos", () => {
     it("renders consequences and force label in en-US", async () => {
         setLocale("en-US");
         new FakeServer()
-            .responder("GET", "/products?all=true", {
+            .respond("GET", "/products?all=true", {
                 status: 200,
                 corpo: {
                     items: [
@@ -209,19 +209,19 @@ describe("DialogoExcluirCategoria · contagem dos produtos", () => {
                     next_cursor: null,
                 },
             })
-            .responder("GET", "/agents?limit", {
+            .respond("GET", "/agents?limit", {
                 status: 200,
                 corpo: { items: [], next_cursor: null },
             })
-            .instalar();
+            .install();
 
         render(
             <DialogDeleteCategory
-                aberto
+                opened
                 onClose={vi.fn()}
                 org={ORG}
-                categoria={category}
-                aoExcluir={vi.fn()}
+                category={category}
+                onDelete={vi.fn()}
             />,
         );
         const dialog = await screen.findByRole("dialog", { name: "Delete category?" });

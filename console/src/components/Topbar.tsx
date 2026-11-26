@@ -76,7 +76,7 @@ function screensAvailable(context: ContextNavigation): ScreenSearchable[] {
     return items.flatMap((item) => {
         if (item.estado !== "ativo") return [];
         const path = item.route(context);
-        return path ? [{ rotulo: item.rotulo, caminho: path }] : [];
+        return path ? [{ rotulo: item.caption, caminho: path }] : [];
     });
 }
 
@@ -123,7 +123,7 @@ function SearchGlobal({ screens, placeholder }: { screens: ScreenSearchable[]; p
     }, [notice]);
 
     function goTo(path: string) {
-        const foi = guard.tentarNavegar(path);
+        const foi = guard.tryNavigate(path);
         setOpen(false);
         if (foi) setTerm("");
     }
@@ -329,10 +329,10 @@ function stateAgent(
     dados: { status: string } | null,
     withoutConnection: boolean,
     degraded: boolean,
-): { modelo: string; saude: string; alert: boolean } {
+): { modelo: string; health: string; alert: boolean } {
     return {
         modelo: translate("shell.agentModel", { model: model ?? "—" }),
-        saude: healthChip(dados, withoutConnection, degraded),
+        health: healthChip(dados, withoutConnection, degraded),
         alert: withoutConnection || degraded || (dados !== null && dados.status !== "ok"),
     };
 }
@@ -348,7 +348,7 @@ export function Topbar({
     const { sessao: session, signOut: exit } = useSession();
     const navigate = useNavigate();
     const { pathname } = useLocation();
-    const { saude: dados, disconnected: withoutConnection, degradada: degraded } = useHealth();
+    const { health: dados, disconnected: withoutConnection, degradada: degraded } = useHealth();
     const memory = useMemoryProcess();
     const tokenScope =
         session?.escopo === "org"
@@ -410,7 +410,7 @@ export function Topbar({
                     >
                         <span className="poph-topbar__point" aria-hidden="true" />
                         <span className="poph-topbar__state-text">{chipAgent.modelo}</span>
-                        <span className="poph-topbar__health">{chipAgent.saude}</span>
+                        <span className="poph-topbar__health">{chipAgent.health}</span>
                     </span>
                 ) : (
                     <span

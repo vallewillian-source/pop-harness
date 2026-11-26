@@ -30,14 +30,14 @@ describe("ModalEstrutura", () => {
         const onClose = vi.fn();
         const created: Registro = { ...CATEGORY, id: "cat_9", name: "Implantes", description: "" };
         const servidor = new FakeServer()
-            .responder("POST", "/admin/v1/orgs/org_1/categories", { status: 201, corpo: created })
-            .instalar();
+            .respond("POST", "/admin/v1/orgs/org_1/categories", { status: 201, corpo: created })
+            .install();
 
         render(
             <ModalStructure
                 tipo="categoria"
                 org="org_1"
-                aberto
+                opened
                 registro={null}
                 onClose={onClose}
                 onSave={onSave}
@@ -50,17 +50,17 @@ describe("ModalEstrutura", () => {
 
         await waitFor(() => expect(onSave).toHaveBeenCalledWith(created));
         expect(onClose).toHaveBeenCalled();
-        const [request] = servidor.chamadasPara("POST", "/categories");
+        const [request] = servidor.callsFor("POST", "/categories");
         expect(request?.corpo).toEqual({ name: "Implantes" });
     });
 
     it("o título de criar categoria é 'Nova categoria' (o feminino não vaza)", async () => {
-        new FakeServer().instalar();
+        new FakeServer().install();
         render(
             <ModalStructure
                 tipo="categoria"
                 org="org_1"
-                aberto
+                opened
                 registro={null}
                 onClose={vi.fn()}
                 onSave={vi.fn()}
@@ -71,13 +71,13 @@ describe("ModalEstrutura", () => {
 
     it("nome vazio não chama a API e mostra o erro no campo Nome", async () => {
         const user = userEvent.setup();
-        const servidor = new FakeServer().instalar();
+        const servidor = new FakeServer().install();
 
         render(
             <ModalStructure
                 tipo="departamento"
                 org="org_1"
-                aberto
+                opened
                 registro={null}
                 onClose={vi.fn()}
                 onSave={vi.fn()}
@@ -94,7 +94,7 @@ describe("ModalEstrutura", () => {
     it("nome repetido volta da API e aparece no campo Nome, com o motivo real", async () => {
         const user = userEvent.setup();
         new FakeServer()
-            .responder(
+            .respond(
                 "POST",
                 "/departments",
                 apiError(400, "validation_error", "campo `nome` inválido", {
@@ -102,13 +102,13 @@ describe("ModalEstrutura", () => {
                     reason: "já existe um registro com esse valor nesta org",
                 }),
             )
-            .instalar();
+            .install();
 
         render(
             <ModalStructure
                 tipo="departamento"
                 org="org_1"
-                aberto
+                opened
                 registro={null}
                 onClose={vi.fn()}
                 onSave={vi.fn()}
@@ -131,7 +131,7 @@ describe("ModalEstrutura", () => {
         const onClose = vi.fn();
         let attempt = 0;
         const servidor = new FakeServer()
-            .responder("PATCH", "/categories/cat_1", () => {
+            .respond("PATCH", "/categories/cat_1", () => {
                 attempt += 1;
                 if (attempt === 1) {
                     return apiError(412, "version_conflict", "mudou desde a leitura", {
@@ -144,17 +144,17 @@ describe("ModalEstrutura", () => {
                     corpo: { ...CATEGORY, name: "Ortodontia digitada", version: 5 },
                 };
             })
-            .responder("GET", "/categories/cat_1", {
+            .respond("GET", "/categories/cat_1", {
                 status: 200,
                 corpo: { ...CATEGORY, name: "Ortodontia (outra pessoa)", version: 4 },
             })
-            .instalar();
+            .install();
 
         render(
             <ModalStructure
                 tipo="categoria"
                 org="org_1"
-                aberto
+                opened
                 registro={CATEGORY}
                 onClose={onClose}
                 onSave={onSave}
@@ -174,9 +174,9 @@ describe("ModalEstrutura", () => {
         await user.click(screen.getByRole("button", { name: "Salvar alterações" }));
         await waitFor(() => expect(onClose).toHaveBeenCalled());
 
-        const patches = servidor.chamadasPara("PATCH", "/categories/cat_1");
-        expect(patches[0]?.cabecalhos["if-match"]).toBe("2");
-        expect(patches[1]?.cabecalhos["if-match"]).toBe("4");
+        const patches = servidor.callsFor("PATCH", "/categories/cat_1");
+        expect(patches[0]?.headers["if-match"]).toBe("2");
+        expect(patches[1]?.headers["if-match"]).toBe("4");
         expect(patches[1]?.corpo).toMatchObject({
             name: "Ortodontia digitada",
             status: "active",
@@ -191,7 +191,7 @@ describe("ModalEstrutura", () => {
             <ModalStructure
                 tipo="categoria"
                 org="org_1"
-                aberto
+                opened
                 registro={CATEGORY}
                 onClose={vi.fn()}
                 onSave={vi.fn()}

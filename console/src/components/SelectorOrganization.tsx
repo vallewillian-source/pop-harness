@@ -170,10 +170,10 @@ export function SelectorOrganization({
     function choose(option: Option) {
         if (option.org === null) {
             close(true);
-            if (!listOrgs) guard.tentarNavegar("/orgs");
+            if (!listOrgs) guard.tryNavigate("/orgs");
             return;
         }
-        if (option.org.id !== selected) guard.tentarNavegar(`/orgs/${option.org.id}`);
+        if (option.org.id !== selected) guard.tryNavigate(`/orgs/${option.org.id}`);
         close(true);
     }
 

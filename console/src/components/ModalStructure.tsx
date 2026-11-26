@@ -21,15 +21,15 @@ import {
 } from "../api/structure";
 
 const SITUATIONS = [
-    { valor: "active", chave: "structure.statusActive" as const },
-    { valor: "inactive", chave: "structure.statusInactive" as const },
-    { valor: "archived", chave: "structure.statusArchived" as const },
+    { value: "active", chave: "structure.statusActive" as const },
+    { value: "inactive", chave: "structure.statusInactive" as const },
+    { value: "archived", chave: "structure.statusArchived" as const },
 ];
 
 export type ModalStructureProps = {
     tipo: StructureType;
     org: string;
-    aberto: boolean;
+    opened: boolean;
     onClose: () => void;
     registro: Registro | null;
     onSave: (registro: Registro) => void;
@@ -58,7 +58,7 @@ function withoutDescribedBy(control: SofaFieldControlProps) {
 export function ModalStructure({
     tipo,
     org,
-    aberto: isOpen,
+    opened: isOpen,
     onClose,
     registro,
     onSave,
@@ -287,7 +287,7 @@ export function ModalStructure({
                                 onChange={(evento) => setSituation(evento.target.value)}
                             >
                                 {SITUATIONS.map((option) => (
-                                    <option key={option.valor} value={option.valor}>
+                                    <option key={option.value} value={option.value}>
                                         {translate(option.chave)}
                                     </option>
                                 ))}

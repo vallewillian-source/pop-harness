@@ -48,8 +48,8 @@ function build(props: Partial<React.ComponentProps<typeof ModalProduct>> = {}) {
     render(
         <ModalProduct
             org={ORG}
-            aberto
-            produto={null}
+            opened
+            product={null}
             categories={CATEGORIES}
             onClose={onClose}
             onSave={onSave}
@@ -90,8 +90,8 @@ describe("ModalProduto", () => {
         const user = userEvent.setup();
         const created = productBase({ id: "prod_9", name: "Implante unitário", price_cents: 320000 });
         const servidor = new FakeServer()
-            .responder("POST", `/admin/v1/orgs/${ORG}/products`, { status: 201, corpo: created })
-            .instalar();
+            .respond("POST", `/admin/v1/orgs/${ORG}/products`, { status: 201, corpo: created })
+            .install();
         const { onSave, onClose } = build();
         await waitForModalFocus();
 
@@ -104,7 +104,7 @@ describe("ModalProduto", () => {
 
         await waitFor(() => expect(onSave).toHaveBeenCalledWith(created));
         expect(onClose).toHaveBeenCalled();
-        const [request] = servidor.chamadasPara("POST", "/products");
+        const [request] = servidor.callsFor("POST", "/products");
         expect(request?.corpo).toEqual({
             category_id: "cat_2",
             name: "Implante unitário",
@@ -123,7 +123,7 @@ describe("ModalProduto", () => {
     });
 
     it("na criação não existe o campo Situação, que a API recusa", async () => {
-        new FakeServer().instalar();
+        new FakeServer().install();
         build();
         expect(await screen.findByRole("dialog", { name: "Novo produto" })).toBeInTheDocument();
         expect(screen.queryByRole("combobox", { name: "Situação" })).not.toBeInTheDocument();
@@ -131,7 +131,7 @@ describe("ModalProduto", () => {
 
     it("sem categoria, nome vazio e preço inválido não chamam a API e marcam os campos", async () => {
         const user = userEvent.setup();
-        const servidor = new FakeServer().instalar();
+        const servidor = new FakeServer().install();
         build();
         await waitForModalFocus();
 
@@ -147,7 +147,7 @@ describe("ModalProduto", () => {
     it("erro de campo vindo da API (slug repetido) aparece no campo Identificador", async () => {
         const user = userEvent.setup();
         new FakeServer()
-            .responder(
+            .respond(
                 "POST",
                 `/admin/v1/orgs/${ORG}/products`,
                 apiError(400, "validation_error", "campo `slug` inválido", {
@@ -155,7 +155,7 @@ describe("ModalProduto", () => {
                     reason: "já existe um produto com esse identificador nesta org",
                 }),
             )
-            .instalar();
+            .install();
         build();
         await waitForModalFocus();
 
@@ -174,7 +174,7 @@ describe("ModalProduto", () => {
         const onSave = vi.fn();
         let attempt = 0;
         const servidor = new FakeServer()
-            .responder("PATCH", `/admin/v1/orgs/${ORG}/products/prod_1`, () => {
+            .respond("PATCH", `/admin/v1/orgs/${ORG}/products/prod_1`, () => {
                 attempt += 1;
                 if (attempt === 1) {
                     return apiError(412, "version_conflict", "produto mudou desde a leitura", {
@@ -184,12 +184,12 @@ describe("ModalProduto", () => {
                 }
                 return { status: 200, corpo: productBase({ version: 4, name: "Clareamento caseiro" }) };
             })
-            .responder("GET", `/admin/v1/orgs/${ORG}/products/prod_1`, {
+            .respond("GET", `/admin/v1/orgs/${ORG}/products/prod_1`, {
                 status: 200,
                 corpo: productBase({ version: 3, price_cents: 50000, price_text: "R$ 500,00" }),
             })
-            .instalar();
-        build({ produto: productBase(), onSave });
+            .install();
+        build({ product: productBase(), onSave });
         await waitForModalFocus();
 
         expect(screen.queryByRole("combobox", { name: "Situação" })).toBeInTheDocument();
@@ -204,10 +204,10 @@ describe("ModalProduto", () => {
         await user.click(screen.getByRole("button", { name: "Salvar alterações" }));
         await waitFor(() => expect(onSave).toHaveBeenCalled());
 
-        const patches = servidor.chamadasPara("PATCH", "/products/prod_1");
+        const patches = servidor.callsFor("PATCH", "/products/prod_1");
         expect(patches).toHaveLength(2);
-        expect(patches[0]?.cabecalhos["if-match"]).toBe("2");
-        expect(patches[1]?.cabecalhos["if-match"]).toBe("3");
+        expect(patches[0]?.headers["if-match"]).toBe("2");
+        expect(patches[1]?.headers["if-match"]).toBe("3");
         expect(patches[1]?.corpo).toMatchObject({
             name: "Clareamento caseiro",
             price_cents: 45000,
@@ -224,18 +224,18 @@ describe("preço como o cliente vê", () => {
     it("editar sem mexer no preço não envia o texto e mostra o que o cliente vê", async () => {
         const user = userEvent.setup();
         const servidor = new FakeServer()
-            .responder("PATCH", URL_PRODUCT, { status: 200, corpo: productBase({ version: 3 }) })
-            .instalar();
-        build({ produto: productBase() });
+            .respond("PATCH", URL_PRODUCT, { status: 200, corpo: productBase({ version: 3 }) })
+            .install();
+        build({ product: productBase() });
         await waitForModalFocus();
 
         expect(campo("Preço como o cliente vê")).toHaveValue("");
         expect(screen.getByText(/Como o cliente vê: R\$ 450,00\./)).toBeInTheDocument();
 
         await user.click(screen.getByRole("button", { name: "Salvar alterações" }));
-        await waitFor(() => expect(servidor.chamadasPara("PATCH", "/products/prod_1")).toHaveLength(1));
+        await waitFor(() => expect(servidor.callsFor("PATCH", "/products/prod_1")).toHaveLength(1));
 
-        const [patch] = servidor.chamadasPara("PATCH", "/products/prod_1");
+        const [patch] = servidor.callsFor("PATCH", "/products/prod_1");
         expect(patch?.corpo).not.toHaveProperty("price_text");
         expect(patch?.corpo).toMatchObject({ price_cents: 45000 });
     });
@@ -244,12 +244,12 @@ describe("preço como o cliente vê", () => {
         const user = userEvent.setup();
         const onSave = vi.fn();
         const servidor = new FakeServer()
-            .responder("PATCH", URL_PRODUCT, {
+            .respond("PATCH", URL_PRODUCT, {
                 status: 200,
                 corpo: productBase({ version: 3, price_cents: 50000, price_text: "R$ 500,00" }),
             })
-            .instalar();
-        build({ produto: productBase(), onSave });
+            .install();
+        build({ product: productBase(), onSave });
         await waitForModalFocus();
 
         await user.clear(campo("Preço (R$)"));
@@ -260,7 +260,7 @@ describe("preço como o cliente vê", () => {
         await user.click(screen.getByRole("button", { name: "Salvar alterações" }));
         await waitFor(() => expect(onSave).toHaveBeenCalled());
 
-        const [patch] = servidor.chamadasPara("PATCH", "/products/prod_1");
+        const [patch] = servidor.callsFor("PATCH", "/products/prod_1");
         expect(patch?.corpo).toMatchObject({ price_cents: 50000, price_text: "" });
         expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ price_text: "R$ 500,00" }));
     });
@@ -268,27 +268,27 @@ describe("preço como o cliente vê", () => {
     it("texto digitado pelo operador vai no corpo como foi digitado", async () => {
         const user = userEvent.setup();
         const servidor = new FakeServer()
-            .responder("PATCH", URL_PRODUCT, { status: 200, corpo: productBase({ version: 3 }) })
-            .instalar();
-        build({ produto: productBase({ price_cents: 32000, price_text: "R$ 320,00" }) });
+            .respond("PATCH", URL_PRODUCT, { status: 200, corpo: productBase({ version: 3 }) })
+            .install();
+        build({ product: productBase({ price_cents: 32000, price_text: "R$ 320,00" }) });
         await waitForModalFocus();
 
         await user.type(campo("Preço como o cliente vê"), "R$ 320,00 por visita");
         expect(screen.getByText(/Como o cliente vê: R\$ 320,00 por visita\./)).toBeInTheDocument();
 
         await user.click(screen.getByRole("button", { name: "Salvar alterações" }));
-        await waitFor(() => expect(servidor.chamadasPara("PATCH", "/products/prod_1")).toHaveLength(1));
+        await waitFor(() => expect(servidor.callsFor("PATCH", "/products/prod_1")).toHaveLength(1));
 
-        const [patch] = servidor.chamadasPara("PATCH", "/products/prod_1");
+        const [patch] = servidor.callsFor("PATCH", "/products/prod_1");
         expect(patch?.corpo).toMatchObject({ price_cents: 32000, price_text: "R$ 320,00 por visita" });
     });
 
     it("apagar o texto digitado envia vazio e a prévia volta ao valor calculado", async () => {
         const user = userEvent.setup();
         const servidor = new FakeServer()
-            .responder("PATCH", URL_PRODUCT, { status: 200, corpo: productBase({ version: 3 }) })
-            .instalar();
-        build({ produto: productBase({ price_cents: 32000, price_text: "R$ 320,00" }) });
+            .respond("PATCH", URL_PRODUCT, { status: 200, corpo: productBase({ version: 3 }) })
+            .install();
+        build({ product: productBase({ price_cents: 32000, price_text: "R$ 320,00" }) });
         await waitForModalFocus();
 
         await user.type(campo("Preço como o cliente vê"), "x");
@@ -296,18 +296,18 @@ describe("preço como o cliente vê", () => {
         expect(screen.getByText(/Como o cliente vê: R\$ 320,00\./)).toBeInTheDocument();
 
         await user.click(screen.getByRole("button", { name: "Salvar alterações" }));
-        await waitFor(() => expect(servidor.chamadasPara("PATCH", "/products/prod_1")).toHaveLength(1));
+        await waitFor(() => expect(servidor.callsFor("PATCH", "/products/prod_1")).toHaveLength(1));
 
-        const [patch] = servidor.chamadasPara("PATCH", "/products/prod_1");
+        const [patch] = servidor.callsFor("PATCH", "/products/prod_1");
         expect(patch?.corpo).toMatchObject({ price_text: "" });
     });
 
     it("com texto próprio gravado, o botão volta o texto a ser calculado pelo valor", async () => {
         const user = userEvent.setup();
         const servidor = new FakeServer()
-            .responder("PATCH", URL_PRODUCT, { status: 200, corpo: productBase({ version: 3 }) })
-            .instalar();
-        build({ produto: productBase({ price_cents: 32000, price_text: "R$ 320,00 por visita" }) });
+            .respond("PATCH", URL_PRODUCT, { status: 200, corpo: productBase({ version: 3 }) })
+            .install();
+        build({ product: productBase({ price_cents: 32000, price_text: "R$ 320,00 por visita" }) });
         await waitForModalFocus();
 
         expect(screen.getByText(/Como o cliente vê: R\$ 320,00 por visita\./)).toBeInTheDocument();
@@ -318,8 +318,8 @@ describe("preço como o cliente vê", () => {
         ).not.toBeInTheDocument();
 
         await user.click(screen.getByRole("button", { name: "Salvar alterações" }));
-        await waitFor(() => expect(servidor.chamadasPara("PATCH", "/products/prod_1")).toHaveLength(1));
-        expect(servidor.chamadasPara("PATCH", "/products/prod_1")[0]?.corpo).toMatchObject({
+        await waitFor(() => expect(servidor.callsFor("PATCH", "/products/prod_1")).toHaveLength(1));
+        expect(servidor.callsFor("PATCH", "/products/prod_1")[0]?.corpo).toMatchObject({
             price_text: "",
         });
     });

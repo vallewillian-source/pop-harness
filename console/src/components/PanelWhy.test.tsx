@@ -87,7 +87,7 @@ function Vitrine({ turno, error = null, updating = false, onTryNew = () => {} }:
                 Ver por quê (turno 1)
             </button>
             <PanelWhy
-                aberto={isOpen}
+                opened={isOpen}
                 numero={1}
                 turno={turno === undefined ? TURN_COMPLETE : turno}
                 updating={updating}

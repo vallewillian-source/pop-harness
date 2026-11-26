@@ -14,14 +14,14 @@
 # Requisitos: cargo (só quando usa `poph openapi`), node >= 22 e npx.
 set -euo pipefail
 
-raiz="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-saida="$raiz/console/src/api/schema.d.ts"
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+output="$root/console/src/api/schema.d.ts"
 url=""
 openapi=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --out) saida="$2"; shift 2 ;;
+        --out) output="$2"; shift 2 ;;
         --url) url="$2"; shift 2 ;;
         --openapi) openapi="$2"; shift 2 ;;
         -h|--help)
@@ -33,11 +33,11 @@ while [ $# -gt 0 ]; do
 done
 
 export PATH="$HOME/.cargo/bin:$PATH"
-temporaria="$(mktemp -d)"
-trap 'rm -rf "$temporaria"' EXIT
+temporary="$(mktemp -d)"
+trap 'rm -rf "$temporary"' EXIT
 
 if [ -z "$openapi" ]; then
-    openapi="$temporaria/openapi.json"
+    openapi="$temporary/openapi.json"
     if [ -n "$url" ]; then
         echo "== OpenAPI de $url"
         if command -v curl >/dev/null; then
@@ -53,29 +53,27 @@ if [ -z "$openapi" ]; then
         fi
     else
         echo "== OpenAPI de \`poph openapi\`"
-        cargo run --quiet --manifest-path "$raiz/Cargo.toml" -p poph -- openapi --out "$openapi"
+        cargo run --quiet --manifest-path "$root/Cargo.toml" -p poph -- openapi --out "$openapi"
     fi
 fi
 
-echo "== Cliente TypeScript ($saida)"
-mkdir -p "$(dirname "$saida")"
-# Prefere o gerador já instalado no console (roda sem rede). Sem ele, busca pelo npx — a primeira
-# execução precisa de rede para baixar a ferramenta; depois ela fica no cache do npm.
-if [ -x "$raiz/console/node_modules/.bin/openapi-typescript" ]; then
-    "$raiz/console/node_modules/.bin/openapi-typescript" "$openapi" -o "$saida"
+echo "== Cliente TypeScript ($output)"
+mkdir -p "$(dirname "$output")"
+if [ -x "$root/console/node_modules/.bin/openapi-typescript" ]; then
+    "$root/console/node_modules/.bin/openapi-typescript" "$openapi" -o "$output"
 else
-    npx --yes openapi-typescript@7 "$openapi" -o "$saida"
+    npx --yes openapi-typescript@7 "$openapi" -o "$output"
 fi
 
-if [ ! -s "$saida" ]; then
-    echo "o gerador não produziu nada em $saida" >&2
+if [ ! -s "$output" ]; then
+    echo "o gerador não produziu nada em $output" >&2
     exit 1
 fi
-if ! grep -q "^export interface paths" "$saida"; then
-    echo "$saida não parece um cliente gerado do OpenAPI (sem \`export interface paths\`)" >&2
+if ! grep -q "^export interface paths" "$output"; then
+    echo "$output não parece um cliente gerado do OpenAPI (sem \`export interface paths\`)" >&2
     exit 1
 fi
 
-linhas="$(wc -l < "$saida")"
-rotas="$(grep -c '^    "/' "$saida" || true)"
-echo "OK: $saida ($linhas linhas, $rotas rotas)"
+lines="$(wc -l < "$output")"
+routes="$(grep -c '^    "/' "$output" || true)"
+echo "OK: $output ($lines lines, $routes routes)"

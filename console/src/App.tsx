@@ -4,21 +4,21 @@ import { Navigate, Outlet, Route, Routes, useLocation, useParams } from "react-r
 import { GuardChangesProvider } from "./components/GuardChanges";
 import { Shell } from "./components/Shell";
 import { resolveDefaultOrgPath, useSession, writeLastOrgId } from "./session/Session";
-import { AgentKnowledge } from "./telas/AgenteConhecimento";
-import { AgentFiles } from "./telas/AgenteArquivos";
-import { AgentChatTest } from "./telas/AgenteChatTeste";
-import { AgentInstructions } from "./telas/AgenteInstrucoes";
-import { AgentModelJev } from "./telas/AgenteModeloJev";
-import { AgentIntegrations } from "./telas/AgenteIntegracoes";
-import { AgentRouting } from "./telas/AgenteRoteamento";
-import { Agents } from "./telas/Agentes";
-import { Login } from "./telas/Login";
-import { Structure } from "./telas/Estrutura";
-import { OrgPanel } from "./telas/OrgPainel";
-import { Orgs } from "./telas/Orgs";
-import { Products } from "./telas/Produtos";
-import { Operation } from "./telas/Operacao";
-import { Matrix } from "./telas/Matrix";
+import { AgentKnowledge } from "./screens/AgentKnowledge";
+import { AgentFiles } from "./screens/AgentFiles";
+import { AgentChatTest } from "./screens/AgentChatTest";
+import { AgentInstructions } from "./screens/AgentInstructions";
+import { AgentModelJev } from "./screens/AgentModelJev";
+import { AgentIntegrations } from "./screens/AgentIntegrations";
+import { AgentRouting } from "./screens/AgentRouting";
+import { Agents } from "./screens/Agents";
+import { Login } from "./screens/Login";
+import { Structure } from "./screens/Structure";
+import { OrgPanel } from "./screens/OrgPanel";
+import { Orgs } from "./screens/Orgs";
+import { Products } from "./screens/Products";
+import { Operation } from "./screens/Operation";
+import { Matrix } from "./screens/Matrix";
 
 function RememberLastOrg() {
     const { "sessao": session } = useSession();

@@ -32,7 +32,7 @@ import { useI18n } from "../i18n";
 import "../styles/why-panel.css";
 
 type Props = {
-    aberto: boolean;
+    opened: boolean;
     numero: number | null;
     turno: TestTurn | null;
     updating: boolean;
@@ -42,7 +42,7 @@ type Props = {
 };
 
 export function PanelWhy({
-    aberto: isOpen,
+    opened: isOpen,
     numero,
     turno,
     updating,
@@ -382,7 +382,7 @@ function SectionRecovered({ recovered }: { recovered: TurnRetrieved }) {
                                         <li key={`${product.produto ?? "produto"}-${index}`} className="poph-why__item">
                                             <strong>{product.nome}</strong>
                                             <span className="poph-why__meta">
-                                                {t("testChat.productPriceSeen", { price: price })}
+                                                {t("testChat.productPriceSeen", { price })}
                                                 {product.unidade ? ` · ${product.unidade}` : ""}
                                             </span>
                                             {product.condicoes && (
@@ -420,7 +420,7 @@ function SectionTools({
             {calls.length > 0 && (
                 <ol className="poph-why__list" aria-label={t("testChat.toolCallsLabel")}>
                     {calls.map((call, index) => (
-                        <CallTool key={`${call.rodada ?? "r"}-${call.ordem ?? index}`} chamada={call} />
+                        <CallTool key={`${call.rodada ?? "r"}-${call.ordem ?? index}`} call={call} />
                     ))}
                 </ol>
             )}
@@ -449,7 +449,7 @@ function SectionTools({
     );
 }
 
-function CallTool({ chamada: call }: { chamada: ToolCall }) {
+function CallTool({ call }: { call: ToolCall }) {
     const { translate: t, formatNumber } = useI18n();
     const refused = call.estado === "recusada";
     const stateLabel =

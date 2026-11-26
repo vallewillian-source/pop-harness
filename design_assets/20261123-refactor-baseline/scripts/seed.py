@@ -6,14 +6,36 @@ import sqlite3
 import subprocess
 import json
 
+def find_binary(root):
+    override = os.environ.get("POPH_BIN")
+    if override:
+        if not os.path.isfile(override) or not os.access(override, os.X_OK):
+            sys.stderr.write(f"POPH_BIN não é um executável: {override}\n")
+            sys.exit(1)
+        return override
+    try:
+        meta = subprocess.run(
+            ["cargo", "metadata", "--format-version", "1", "--no-deps"],
+            cwd=root, capture_output=True, text=True, check=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        sys.stderr.write("cargo metadata falhou; não sei onde o Cargo guardou o poph\n")
+        sys.exit(1)
+    target = json.loads(meta.stdout)["target_directory"]
+    for profile in ("debug", "release"):
+        candidate = os.path.join(target, profile, "poph")
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    sys.stderr.write(
+        f"binário poph não encontrado em {target}/(debug|release); "
+        "rode `cargo build --locked -p poph` ou defina POPH_BIN\n"
+    )
+    sys.exit(1)
+
+
 def setup_demo_data(target_dir, port=17480):
     root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
-    binary = os.path.join(root, "target/debug/poph")
-    if not os.path.exists(binary):
-        binary = os.path.join(root, "target/release/poph")
-    if not os.path.exists(binary):
-        sys.stderr.write(f"poph binary not found in {root}/target/(debug|release)\n")
-        sys.exit(1)
+    binary = find_binary(root)
 
     data_dir = os.path.join(target_dir, "data")
     if os.path.exists(target_dir):

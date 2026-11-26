@@ -21,17 +21,17 @@ import {
 import { useI18n } from "../i18n";
 import type { TranslationKey } from "../i18n/catalog";
 
-const SITUATIONS: { valor: string; labelKey: TranslationKey }[] = [
-    { valor: "active", labelKey: "knowledge.statusActive" },
-    { valor: "inactive", labelKey: "knowledge.statusInactive" },
-    { valor: "archived", labelKey: "knowledge.statusArchived" },
+const SITUATIONS: { value: string; labelKey: TranslationKey }[] = [
+    { value: "active", labelKey: "knowledge.statusActive" },
+    { value: "inactive", labelKey: "knowledge.statusInactive" },
+    { value: "archived", labelKey: "knowledge.statusArchived" },
 ];
 
 export type ModalGroupProps = {
     org: string;
-    aberto: boolean;
+    opened: boolean;
     onClose: () => void;
-    grupo: KnowledgeGroup | null;
+    group: KnowledgeGroup | null;
     onSave: (group: KnowledgeGroup) => void;
 };
 
@@ -49,7 +49,7 @@ function withoutDescribedBy(control: SofaFieldControlProps) {
     return { ...rest, "aria-describedby": describedBy };
 }
 
-export function ModalGroup({ org, aberto: isOpen, onClose, grupo: group, onSave }: ModalGroupProps) {
+export function ModalGroup({ org, opened: isOpen, onClose, group, onSave }: ModalGroupProps) {
     const { translate: t } = useI18n();
     const editing = group !== null;
     const [nome, setName] = useState("");
@@ -249,7 +249,7 @@ export function ModalGroup({ org, aberto: isOpen, onClose, grupo: group, onSave 
                                 onChange={(evento) => setSituation(evento.target.value)}
                             >
                                 {SITUATIONS.map((option) => (
-                                    <option key={option.valor} value={option.valor}>
+                                    <option key={option.value} value={option.value}>
                                         {t(option.labelKey)}
                                     </option>
                                 ))}

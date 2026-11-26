@@ -36,16 +36,16 @@ export type ErrorsForm = {
 };
 
 export type FormInstructionsProps = {
-    valor: Structured;
+    value: Structured;
     onChange: (fresh: Structured) => void;
-    erros: ErrorsForm;
+    errors: ErrorsForm;
     disabled?: boolean;
 };
 
 export function FormInstructions({
-    valor: value,
+    value,
     onChange,
-    erros: errors,
+    errors,
     disabled = false,
 }: FormInstructionsProps) {
     const { translate: t } = useI18n();
@@ -116,7 +116,7 @@ export function FormInstructions({
     return (
         <div className="poph-instructions__form">
             <SectionAgent
-                titulo={t("instructions.sectionIdentity")}
+                title={t("instructions.sectionIdentity")}
                 descricao={t("instructions.sectionIdentityDescription")}
             >
                 <div className="poph-stack">
@@ -181,7 +181,7 @@ export function FormInstructions({
             </SectionAgent>
 
             <SectionAgent
-                titulo={t("instructions.sectionPrinciples")}
+                title={t("instructions.sectionPrinciples")}
                 descricao={t("instructions.sectionPrinciplesDescription")}
             >
                 {errors.principles && (
@@ -262,7 +262,7 @@ export function FormInstructions({
             </SectionAgent>
 
             <SectionAgent
-                titulo={t("instructions.sectionScope")}
+                title={t("instructions.sectionScope")}
                 descricao={t("instructions.sectionScopeDescription")}
             >
                 <SofaField label={t("instructions.doesLabel")}>
@@ -290,7 +290,7 @@ export function FormInstructions({
             </SectionAgent>
 
             <SectionAgent
-                titulo={t("instructions.sectionTone")}
+                title={t("instructions.sectionTone")}
                 descricao={t("instructions.sectionToneDescription")}
             >
                 <div className="poph-grid">
@@ -378,7 +378,7 @@ export function FormInstructions({
             </SectionAgent>
 
             <SectionAgent
-                titulo={t("instructions.sectionTools")}
+                title={t("instructions.sectionTools")}
                 descricao={t("instructions.sectionToolsDescription")}
             >
                 {errors.ferramentas && (
@@ -457,7 +457,7 @@ export function FormInstructions({
             </SectionAgent>
 
             <SectionAgent
-                titulo={t("instructions.sectionExtra")}
+                title={t("instructions.sectionExtra")}
                 descricao={t("instructions.sectionExtraDescription")}
             >
                 <SofaField label={t("instructions.extraLabel")}>

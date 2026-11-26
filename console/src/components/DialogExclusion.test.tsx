@@ -11,17 +11,17 @@ import { setLocale } from "../i18n";
 function build(onConfirm: (forcar: boolean) => Promise<void>, onDelete = vi.fn(), onClose = vi.fn()) {
     return render(
         <DialogExclusion
-            aberto
+            opened
             onClose={onClose}
-            titulo="Excluir organização?"
+            title="Excluir organização?"
             descricao="A organização e tudo que está dentro dela saem do sistema."
             resource="loja-antiga"
             labelResource="slug da organização"
             labelConfirm="Excluir organização"
-            permiteForcar
+            allowForce
             labelForce="Apagar também o conteúdo"
-            aoConfirmar={onConfirm}
-            aoExcluir={onDelete}
+            onConfirm={onConfirm}
+            onDelete={onDelete}
         />,
     );
 }
@@ -68,12 +68,12 @@ describe("DialogoExclusao", () => {
         const onDelete = vi.fn();
         const onClose = vi.fn();
         const servidor = new FakeServer()
-            .responder("DELETE", "/admin/v1/orgs/org_1", (call) =>
+            .respond("DELETE", "/admin/v1/orgs/org_1", (call) =>
                 call.url.includes("force=true")
                     ? { status: 204 }
                     : apiError(409, "conflict", "a organização tem agentes; confirme com force"),
             )
-            .instalar();
+            .install();
 
         build((forcar) => deleteOrg("org_1", forcar), onDelete, onClose);
         await waitForModalFocus();
@@ -89,7 +89,7 @@ describe("DialogoExclusao", () => {
 
         await waitFor(() => expect(onDelete).toHaveBeenCalled());
         expect(onClose).toHaveBeenCalled();
-        const requests = servidor.chamadasPara("DELETE", "/admin/v1/orgs/org_1");
+        const requests = servidor.callsFor("DELETE", "/admin/v1/orgs/org_1");
         expect(requests).toHaveLength(2);
         expect(requests[0]?.url).not.toContain("force=true");
         expect(requests[1]?.url).toContain("force=true");
@@ -106,15 +106,15 @@ describe("DialogoExclusao em en-US", () => {
 
         render(
             <DialogExclusion
-                aberto
+                opened
                 onClose={vi.fn()}
-                titulo="Delete organization?"
+                title="Delete organization?"
                 descricao="The organization leaves the system."
                 resource="loja-antiga"
                 labelResource="organization slug"
                 labelConfirm="Delete organization"
-                permiteForcar
-                aoConfirmar={onConfirm}
+                allowForce
+                onConfirm={onConfirm}
             />,
         );
         await waitForModalFocus();

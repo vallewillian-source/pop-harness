@@ -50,10 +50,10 @@ function numero(value: number): string {
 }
 
 function NoticeFailure({
-    falha: failure,
+    failure,
     onTryNew,
 }: {
-    falha: BackupFailure;
+    failure: BackupFailure;
     onTryNew?: () => void;
 }) {
     const { translate: t } = useI18n();
@@ -365,7 +365,7 @@ export function ExportImportOrganization({ org }: SectionBackupProps) {
                     ) : null}
                     {failureExport ? (
                         <NoticeFailure
-                            falha={failureExport}
+                            failure={failureExport}
                             onTryNew={() => void runExport()}
                         />
                     ) : null}
@@ -431,7 +431,7 @@ export function ExportImportOrganization({ org }: SectionBackupProps) {
                     ) : null}
                     {failureImport ? (
                         <NoticeFailure
-                            falha={failureImport}
+                            failure={failureImport}
                             onTryNew={failureImport.podeTentarDeNovo && file ? () => setConfirming(true) : undefined}
                         />
                     ) : null}

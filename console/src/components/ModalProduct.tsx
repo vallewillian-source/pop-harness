@@ -24,10 +24,10 @@ import {
 
 export const LIMIT_NAME_PRODUCT = 160;
 
-const SITUATIONS: { valor: ProductStatus; chave: "products.statusActive" | "products.statusInactive" | "products.statusArchived" }[] = [
-    { valor: "active", chave: "products.statusActive" },
-    { valor: "inactive", chave: "products.statusInactive" },
-    { valor: "archived", chave: "products.statusArchived" },
+const SITUATIONS: { value: ProductStatus; chave: "products.statusActive" | "products.statusInactive" | "products.statusArchived" }[] = [
+    { value: "active", chave: "products.statusActive" },
+    { value: "inactive", chave: "products.statusInactive" },
+    { value: "archived", chave: "products.statusArchived" },
 ];
 
 export function centsOf(texto: string): number | null {
@@ -104,18 +104,18 @@ function withoutDescribedBy(control: SofaFieldControlProps) {
 
 export type ModalProductProps = {
     org: string;
-    aberto: boolean;
+    opened: boolean;
     onClose: () => void;
-    produto: Product | null;
+    product: Product | null;
     categories: Category[];
     onSave: (product: Product) => void;
 };
 
 export function ModalProduct({
     org,
-    aberto: isOpen,
+    opened: isOpen,
     onClose,
-    produto: product,
+    product,
     categories,
     onSave,
 }: ModalProductProps) {
@@ -231,10 +231,10 @@ export function ModalProduct({
             aliases: listOf(aliases),
             description: descricao,
             price_cents: cents,
-            unit: unit,
-            includes: includes,
+            unit,
+            includes,
             excludes: exclui,
-            conditions: conditions,
+            conditions,
             tags: listOf(etiquetas),
         };
         const sendText = textToSend();
@@ -296,7 +296,7 @@ export function ModalProduct({
     const preview = textClientNow();
     const hasTextOwn = calculado !== null && preview !== calculado;
     const helpPriceClient =
-        `${translate("products.pricePreviewPrefix", { preview: preview })} ` +
+        `${translate("products.pricePreviewPrefix", { preview })} ` +
         (!textChanged && priceChanged
             ? translate("products.pricePreviewChangedHint")
             : translate("products.pricePreviewDefaultHint"));
@@ -584,7 +584,7 @@ export function ModalProduct({
                                 }
                             >
                                 {SITUATIONS.map((option) => (
-                                    <option key={option.valor} value={option.valor}>
+                                    <option key={option.value} value={option.value}>
                                         {translate(option.chave)}
                                     </option>
                                 ))}

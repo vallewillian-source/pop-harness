@@ -53,20 +53,20 @@ describe("interpretarMetricas", () => {
 
 describe("consultarSaude", () => {
     it("200 vira situação ok com o corpo", async () => {
-        const servidor = new FakeServer()["responder"]("GET", "/healthz", { status: 200, "corpo": HEALTH_OK })["instalar"]();
+        const servidor = new FakeServer()["respond"]("GET", "/healthz", { status: 200, "corpo": HEALTH_OK })["install"]();
 
         const response = await fetchHealth();
 
         expect(response.situacao).toBe("ok");
         expect(response["saude"].version).toBe("0.9.1");
-        expect(servidor["chamadasPara"]("GET", "/healthz")).toHaveLength(1);
+        expect(servidor["callsFor"]("GET", "/healthz")).toHaveLength(1);
     });
 
     it("503 com corpo vira situação degradada, sem jogar fora o resumo", async () => {
-        new FakeServer()["responder"]("GET", "/healthz", {
+        new FakeServer()["respond"]("GET", "/healthz", {
                 status: 503,
                 "corpo": { ...HEALTH_OK, status: "degraded" },
-            })["instalar"]();
+            })["install"]();
 
         const response = await fetchHealth();
 
@@ -75,7 +75,7 @@ describe("consultarSaude", () => {
     });
 
     it("500 sem resumo vira erro com o status", async () => {
-        new FakeServer()["responder"]("GET", "/healthz", apiError(500, "interno", "falha"))["instalar"]();
+        new FakeServer()["respond"]("GET", "/healthz", apiError(500, "interno", "falha"))["install"]();
 
         await expect(fetchHealth()).rejects.toMatchObject({ status: 500 });
     });
@@ -92,16 +92,16 @@ describe("consultarSaude", () => {
 
 describe("consultarMetricas", () => {
     it("lê o texto do /metrics sem tentar interpretar como JSON", async () => {
-        new FakeServer()["responder"]("GET", "/metrics", {
+        new FakeServer()["respond"]("GET", "/metrics", {
                 status: 200,
                 texto: "poph_fila_turnos 2\npoph_agentes_carregados 1\n",
-            })["instalar"]();
+            })["install"]();
 
         expect(await fetchMetrics()).toEqual({ "filaTurnos": 2, "agentesCarregados": 1 });
     });
 
     it("status diferente de 200 vira erro", async () => {
-        new FakeServer()["responder"]("GET", "/metrics", { status: 500, "corpo": { code: "x", message: "y" } })["instalar"]();
+        new FakeServer()["respond"]("GET", "/metrics", { status: 500, "corpo": { code: "x", message: "y" } })["install"]();
 
         await expect(fetchMetrics()).rejects.toMatchObject({ status: 500 });
     });
@@ -109,7 +109,7 @@ describe("consultarMetricas", () => {
 
 describe("listarPlugins (HR-48c)", () => {
     it("chama a lista da org com o token da sessão e mantém a ordem recebida", async () => {
-        const servidor = new FakeServer()["responder"]("GET", "/admin/v1/orgs/org_1/manifests", {
+        const servidor = new FakeServer()["respond"]("GET", "/admin/v1/orgs/org_1/manifests", {
                 status: 200,
                 "corpo": {
                     items: [
@@ -117,7 +117,7 @@ describe("listarPlugins (HR-48c)", () => {
                         { kind: "whatsapp", situacao: "indisponivel", mensagem: "sem resposta" },
                     ],
                 },
-            })["instalar"]();
+            })["install"]();
 
         const items = await listPlugins("org_1");
 
@@ -129,10 +129,10 @@ describe("listarPlugins (HR-48c)", () => {
     });
 
     it("plugin indisponível sem mensagem ganha a frase de operação, sem nome nem versão", async () => {
-        new FakeServer()["responder"]("GET", "/manifests", {
+        new FakeServer()["respond"]("GET", "/manifests", {
                 status: 200,
                 "corpo": { items: [{ kind: "quebrado", situacao: "indisponivel" }] },
-            })["instalar"]();
+            })["install"]();
 
         const [item] = await listPlugins("org_1");
 
@@ -143,7 +143,7 @@ describe("listarPlugins (HR-48c)", () => {
     });
 
     it("item sem tipo de texto é descartado, e situação que não é ok vira indisponível", async () => {
-        new FakeServer()["responder"]("GET", "/manifests", {
+        new FakeServer()["respond"]("GET", "/manifests", {
                 status: 200,
                 "corpo": {
                     items: [
@@ -153,7 +153,7 @@ describe("listarPlugins (HR-48c)", () => {
                         { kind: "estranho", situacao: "talvez", mensagem: "algo" },
                     ],
                 },
-            })["instalar"]();
+            })["install"]();
 
         const items = await listPlugins("org_1");
 
@@ -161,13 +161,13 @@ describe("listarPlugins (HR-48c)", () => {
     });
 
     it("resposta sem items vira lista vazia, não erro", async () => {
-        new FakeServer()["responder"]("GET", "/manifests", { status: 200, "corpo": {} })["instalar"]();
+        new FakeServer()["respond"]("GET", "/manifests", { status: 200, "corpo": {} })["install"]();
 
         expect(await listPlugins("org_1")).toEqual([]);
     });
 
     it("403 de outra org chega como erro da API, para a tela explicar", async () => {
-        new FakeServer()["responder"]("GET", "/manifests", apiError(403, "forbidden", "outra org"))["instalar"]();
+        new FakeServer()["respond"]("GET", "/manifests", apiError(403, "forbidden", "outra org"))["install"]();
 
         await expect(listPlugins("org_2")).rejects.toMatchObject({ status: 403 });
     });
@@ -195,7 +195,7 @@ describe("recarregarCluster (HR-48f)", () => {
     };
 
     it("faz POST na rota global, sem corpo, e devolve o relatório tipado", async () => {
-        const servidor = new FakeServer()["responder"]("POST", "/admin/v1/cluster/reload", {
+        const servidor = new FakeServer()["respond"]("POST", "/admin/v1/cluster/reload", {
                 status: 200,
                 "corpo": {
                     "mudou": true,
@@ -207,13 +207,13 @@ describe("recarregarCluster (HR-48f)", () => {
                     "instancias_adicionadas": ["b"],
                     "instancias_removidas": [],
                 },
-            })["instalar"]();
+            })["install"]();
 
         const report = await reloadCluster();
 
-        const call = servidor["chamadasPara"]("POST", "/admin/v1/cluster/reload")[0];
-        expect(call?.["metodo"]).toBe("POST");
-        expect(call?.["bruto"]).toBeUndefined();
+        const call = servidor["callsFor"]("POST", "/admin/v1/cluster/reload")[0];
+        expect(call?.["method"]).toBe("POST");
+        expect(call?.["raw"]).toBeUndefined();
         expect(report["mudou"]).toBe(true);
         expect(report["impressaoAntes"]).toBe("aaaa1111bbbb2222");
         expect(report["impressaoDepois"]).toBe("cccc3333dddd4444");
@@ -235,10 +235,10 @@ describe("recarregarCluster (HR-48f)", () => {
     });
 
     it("não leva o endereço das instâncias para o resultado", async () => {
-        new FakeServer()["responder"]("POST", "/admin/v1/cluster/reload", {
+        new FakeServer()["respond"]("POST", "/admin/v1/cluster/reload", {
                 status: 200,
                 "corpo": { "mudou": false, "fingerprint_antes": "x", "fingerprint_depois": "x", "antes": CLUSTER_MAP, "depois": CLUSTER_MAP, "orgs_que_trocaram": [], "instancias_adicionadas": [], "instancias_removidas": [] },
-            })["instalar"]();
+            })["install"]();
 
         const report = await reloadCluster();
 
@@ -246,14 +246,14 @@ describe("recarregarCluster (HR-48f)", () => {
     });
 
     it("400 cluster_invalido sai como ErroApi com a lista de problemas em detalhes", async () => {
-        new FakeServer()["responder"](
+        new FakeServer()["respond"](
                 "POST",
                 "/admin/v1/cluster/reload",
                 apiError(400, "cluster_invalido", "cluster.toml inválido: instância sem endereço", {
                     "arquivo": "/etc/poph/cluster.toml",
                     "problemas": ["instância 'b' sem endereço", "org 'org_9' aponta para instância inexistente"],
                 }),
-            )["instalar"]();
+            )["install"]();
 
         const error = await reloadCluster().catch((e: unknown) => e);
 
@@ -266,7 +266,7 @@ describe("recarregarCluster (HR-48f)", () => {
     });
 
     it("403 sai como ErroApi com status 403 (token de org)", async () => {
-        new FakeServer()["responder"]("POST", "/admin/v1/cluster/reload", apiError(403, "forbidden", "token de org"))["instalar"]();
+        new FakeServer()["respond"]("POST", "/admin/v1/cluster/reload", apiError(403, "forbidden", "token de org"))["install"]();
 
         const error = await reloadCluster().catch((e: unknown) => e);
 
@@ -274,7 +274,7 @@ describe("recarregarCluster (HR-48f)", () => {
     });
 
     it("corpo de sucesso sem o resumo esperado vira erro de formato, não resultado inventado", async () => {
-        new FakeServer()["responder"]("POST", "/admin/v1/cluster/reload", { status: 200, "corpo": { ok: true } })["instalar"]();
+        new FakeServer()["respond"]("POST", "/admin/v1/cluster/reload", { status: 200, "corpo": { ok: true } })["install"]();
 
         const error = await reloadCluster().catch((e: unknown) => e);
 
@@ -337,22 +337,22 @@ describe("mensagens em en-US", () => {
 
     it("saúde com erro fala inglês nos dois casos", async () => {
         setLocale("en-US");
-        new FakeServer()["responder"]("GET", "/healthz", apiError(500, "interno", "falha"))["instalar"]();
+        new FakeServer()["respond"]("GET", "/healthz", apiError(500, "interno", "falha"))["install"]();
         await expect(fetchHealth()).rejects.toThrow(/answered 500 to the health request/);
 
-        new FakeServer()["responder"]("GET", "/healthz", { status: 200, "corpo": { status: "ok" } })["instalar"]();
+        new FakeServer()["respond"]("GET", "/healthz", { status: 200, "corpo": { status: "ok" } })["install"]();
         await expect(fetchHealth()).rejects.toThrow(/answered 200 without the health summary/);
     });
 
     it("métricas com erro e queda de rede falam inglês", async () => {
         setLocale("en-US");
-        new FakeServer()["responder"]("GET", "/metrics", apiError(503, "indisponivel", "falha"))["instalar"]();
+        new FakeServer()["respond"]("GET", "/metrics", apiError(503, "indisponivel", "falha"))["install"]();
         await expect(fetchMetrics()).rejects.toThrow(/answered 503 to the metrics request/);
     });
 
     it("plugin sem resposta usa a frase de reserva em inglês", async () => {
         setLocale("en-US");
-        new FakeServer()["responder"]("GET", "/manifests", { status: 200, "corpo": { items: [{ kind: "eco", situacao: "indisponivel" }] } })["instalar"]();
+        new FakeServer()["respond"]("GET", "/manifests", { status: 200, "corpo": { items: [{ kind: "eco", situacao: "indisponivel" }] } })["install"]();
 
         const [item] = await listPlugins("org_1");
         expect(item?.mensagem).toMatch(/check the program declared in the instance configuration/);

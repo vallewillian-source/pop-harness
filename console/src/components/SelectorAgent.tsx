@@ -250,7 +250,7 @@ export function SelectorAgent({
     function choose(agente: Agente) {
         close(true);
         if (agente.id === agentId) return;
-        guard.tentarNavegar(`/orgs/${orgId}/agents/${agente.id}/instructions`);
+        guard.tryNavigate(`/orgs/${orgId}/agents/${agente.id}/instructions`);
     }
 
     function onExitFocus(evento: FocusEvent<HTMLDivElement>) {

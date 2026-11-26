@@ -7,7 +7,7 @@
     "scripts": {
         "dev": "vite",
         "build": "tsc --noEmit -p tsconfig.json && vite build",
-        "tipos": "bash scripts/verificar-api.sh",
+        "tipos": "bash scripts/verify-api.sh",
         "api": "bash gen-api.sh",
         "preview": "vite preview",
         "testar": "vitest run",

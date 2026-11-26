@@ -1,4 +1,2 @@
-# O `pnpm` moderno só roda script de build de dependência com autorização explícita.
-# O único que precisa disso aqui é o `esbuild` (binário nativo do Vite).
 allowBuilds:
     esbuild: true

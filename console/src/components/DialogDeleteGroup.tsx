@@ -6,21 +6,21 @@ import { useI18n } from "../i18n";
 import { DialogExclusion } from "../components/DialogExclusion";
 
 export type DialogDeleteGroupProps = {
-    aberto: boolean;
+    opened: boolean;
     onClose: () => void;
     org: string;
-    grupo: KnowledgeGroup | null;
+    group: KnowledgeGroup | null;
     namesAgents: Record<string, string>;
-    aoExcluir: () => void;
+    onDelete: () => void;
 };
 
 export function DialogDeleteGroup({
-    aberto: isOpen,
+    opened: isOpen,
     onClose,
     org,
-    grupo: group,
+    group,
     namesAgents,
-    aoExcluir: onDelete,
+    onDelete,
 }: DialogDeleteGroupProps) {
     const { translate: t } = useI18n();
     const [loading, setLoading] = useState(false);
@@ -104,19 +104,19 @@ export function DialogDeleteGroup({
 
     return (
         <DialogExclusion
-            aberto={isOpen}
+            opened={isOpen}
             onClose={onClose}
-            titulo={t("knowledge.deleteGroupTitle")}
+            title={t("knowledge.deleteGroupTitle")}
             descricao={t("knowledge.deleteGroupDescription", { name: group.name })}
             resource={group.name}
             labelResource={t("knowledge.deleteGroupResourceLabel")}
             labelConfirm={t("knowledge.deleteGroupConfirm")}
             consequencia={consequencia()}
-            permiteForcar={false}
-            aoConfirmar={async () => {
+            allowForce={false}
+            onConfirm={async () => {
                 await deleteGroup(org, group.id);
             }}
-            aoExcluir={onDelete}
+            onDelete={onDelete}
         />
     );
 }

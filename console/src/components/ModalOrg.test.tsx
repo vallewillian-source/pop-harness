@@ -37,10 +37,10 @@ describe("ModalOrg", () => {
         const onClose = vi.fn();
         const created = orgFalse({ id: "org_9", name: "Loja Nova", slug: "loja-nova" });
         const servidor = new FakeServer()
-            .responder("POST", "/admin/v1/orgs", { status: 201, corpo: created })
-            .instalar();
+            .respond("POST", "/admin/v1/orgs", { status: 201, corpo: created })
+            .install();
 
-        render(<ModalOrg aberto org={null} onClose={onClose} onSave={onSave} />);
+        render(<ModalOrg opened org={null} onClose={onClose} onSave={onSave} />);
         await waitForModalFocus();
 
         await user.type(fieldName(), "Loja Nova");
@@ -50,7 +50,7 @@ describe("ModalOrg", () => {
 
         await waitFor(() => expect(onSave).toHaveBeenCalledWith(created));
         expect(onClose).toHaveBeenCalled();
-        const [request] = servidor.chamadasPara("POST", "/admin/v1/orgs");
+        const [request] = servidor.callsFor("POST", "/admin/v1/orgs");
         expect(request?.corpo).toEqual({
             name: "Loja Nova",
             slug: "loja-nova",
@@ -60,17 +60,17 @@ describe("ModalOrg", () => {
 
     it("recusa nome vazio sem chamar a API", async () => {
         const user = userEvent.setup();
-        const servidor = new FakeServer().instalar();
+        const servidor = new FakeServer().install();
 
         render(
-            <ModalOrg aberto org={null} onClose={vi.fn()} onSave={vi.fn()} />,
+            <ModalOrg opened org={null} onClose={vi.fn()} onSave={vi.fn()} />,
         );
         await waitForModalFocus();
 
         await user.click(screen.getByRole("button", { name: "Criar organização" }));
 
         expect(await screen.findByText("informe o nome da organização")).toBeInTheDocument();
-        expect(servidor.chamadasPara("POST", "/admin/v1/orgs")).toHaveLength(0);
+        expect(servidor.callsFor("POST", "/admin/v1/orgs")).toHaveLength(0);
     });
 
     it("mostra o conflito de versão, relê a organização e mantém o formulário preenchido", async () => {
@@ -78,7 +78,7 @@ describe("ModalOrg", () => {
         const onSave = vi.fn();
         let patches = 0;
         const servidor = new FakeServer()
-            .responder("PATCH", "/admin/v1/orgs/org_1", () => {
+            .respond("PATCH", "/admin/v1/orgs/org_1", () => {
                 patches += 1;
                 return patches === 1
                     ? apiError(412, "version_conflict", "a versão informada não é a atual", {
@@ -87,14 +87,14 @@ describe("ModalOrg", () => {
                       })
                     : { status: 200, corpo: orgFalse({ name: "Loja Editada", version: 5 }) };
             })
-            .responder("GET", "/admin/v1/orgs/org_1", {
+            .respond("GET", "/admin/v1/orgs/org_1", {
                 status: 200,
                 corpo: orgFalse({ name: "Loja do Outro", version: 4 }),
             })
-            .instalar();
+            .install();
 
         render(
-            <ModalOrg aberto org={orgFalse()} onClose={vi.fn()} onSave={onSave} />,
+            <ModalOrg opened org={orgFalse()} onClose={vi.fn()} onSave={onSave} />,
         );
         await waitForModalFocus();
 
@@ -106,22 +106,22 @@ describe("ModalOrg", () => {
         expect(await screen.findByText("Versão desatualizada")).toBeInTheDocument();
         expect(screen.getByText(/agora na versão 4/)).toBeInTheDocument();
         expect(nome).toHaveValue("Loja Editada");
-        expect(servidor.chamadasPara("GET", "/admin/v1/orgs/org_1")).toHaveLength(1);
+        expect(servidor.callsFor("GET", "/admin/v1/orgs/org_1")).toHaveLength(1);
         expect(onSave).not.toHaveBeenCalled();
 
         await user.click(screen.getByRole("button", { name: "Salvar alterações" }));
         await waitFor(() => expect(onSave).toHaveBeenCalled());
 
-        const [first, second] = servidor.chamadasPara("PATCH", "/admin/v1/orgs/org_1");
-        expect(first?.cabecalhos["if-match"]).toBe("3");
-        expect(second?.cabecalhos["if-match"]).toBe("4");
+        const [first, second] = servidor.callsFor("PATCH", "/admin/v1/orgs/org_1");
+        expect(first?.headers["if-match"]).toBe("3");
+        expect(second?.headers["if-match"]).toBe("4");
         expect(second?.corpo).toMatchObject({ name: "Loja Editada", status: "active" });
     });
 
     it("mostra o erro de validação da API no campo que ela aponta", async () => {
         const user = userEvent.setup();
         new FakeServer()
-            .responder(
+            .respond(
                 "POST",
                 "/admin/v1/orgs",
                 apiError(400, "validation_error", "campo `name` inválido", {
@@ -129,10 +129,10 @@ describe("ModalOrg", () => {
                     reason: "curto demais",
                 }),
             )
-            .instalar();
+            .install();
 
         render(
-            <ModalOrg aberto org={null} onClose={vi.fn()} onSave={vi.fn()} />,
+            <ModalOrg opened org={null} onClose={vi.fn()} onSave={vi.fn()} />,
         );
         await waitForModalFocus();
 
@@ -150,9 +150,9 @@ describe("ModalOrg em en-US", () => {
     it("mostra o formulário e a validação em inglês", async () => {
         const user = userEvent.setup();
         setLocale("en-US");
-        new FakeServer().instalar();
+        new FakeServer().install();
 
-        render(<ModalOrg aberto org={null} onClose={vi.fn()} onSave={vi.fn()} />);
+        render(<ModalOrg opened org={null} onClose={vi.fn()} onSave={vi.fn()} />);
         await waitForModalFocus();
 
         expect(screen.getByRole("dialog")).toHaveAccessibleName("New organization");
@@ -167,9 +167,9 @@ describe("ModalOrg em en-US", () => {
 
     it("troca o idioma do formulário aberto sem recarregar", async () => {
         setLocale("pt-BR");
-        new FakeServer().instalar();
+        new FakeServer().install();
 
-        render(<ModalOrg aberto org={orgFalse()} onClose={vi.fn()} onSave={vi.fn()} />);
+        render(<ModalOrg opened org={orgFalse()} onClose={vi.fn()} onSave={vi.fn()} />);
         await waitForModalFocus();
 
         expect(screen.getByRole("dialog")).toHaveAccessibleName("Editar organização");

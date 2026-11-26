@@ -122,14 +122,14 @@ Infraestrutura nova nesta entrega: **Vitest + Testing Library + jsdom**, em `con
 
 ```bash
 cd apps/pop-harness/console
-pnpm run testar              # ou `bash scripts/testar.sh`, que é o que o CI chama
+pnpm run testar              # ou `bash scripts/test.sh`, que é o que o CI chama
 ```
 
 Cobrem os formulários de criar e editar (incluindo o caminho do `412` com formulário preservado), a
 confirmação de exclusão (recusa por vínculo com motivo real e caminho do `force`) e a lista de
 organizações com carga, vazio e erro. O teste roda contra um `fetch` falso — sem rede, sem servidor.
 
-`scripts/ci.sh` executa `console/scripts/testar.sh`, que **se declara pulado** quando
+`scripts/ci.sh` executa `console/scripts/test.sh`, que **se declara pulado** quando
 `console/node_modules` não existe, igual ao build do bundle e à checagem do cliente OpenAPI: o CI
 offline de um clone limpo continua verde.
 
@@ -720,7 +720,7 @@ Capturas: `/tmp/hr44d/shots/{qr,conectado,desconectar,desconectado,409}.png`.
 
 **Testes de componente (8 novos; 101 antes, 109 depois)**
 
-`telas/AgenteIntegracoes.test.tsx` passou a cobrir, além dos 6 da HR-44: QR desenhado do `base64`
+`screens/AgentIntegrations.test.tsx` passou a cobrir, além dos 6 da HR-44: QR desenhado do `base64`
 com `If-Match` e sem corpo; pareamento por número com recusa de formato inválido; "aparelho
 conectado" sem QR; `409 whatsapp_nao_configurado` e `503 evolution_indisponivel` explicados sem
 quebrar a aba; "Verificar estado" atualizando a tela; desconexão com confirmação, `If-Match` e foco
@@ -987,13 +987,13 @@ arquivo no rótulo (por exemplo "Ver laudo.png" e "Baixar laudo.png"):
   antiga aparecer na conversa nova.
 
 **Arquivos.** `console/src/api/testFile.ts` (caminho, nome do cabeçalho e prévia),
-`console/src/components/PreviewFileTest.tsx` (a prévia) e `console/src/telas/AgenteChatTeste.tsx`
+`console/src/components/PreviewFileTest.tsx` (a prévia) e `console/src/screens/AgentChatTest.tsx`
 (botões e liberação). Em `console/src/api/client.ts`, `requestBytes` faz o `fetch` com o token e devolve
 os bytes.
 
 **Provas da HR-46c.**
 
-- Testes do Console: `api/testFile.test.ts` (9) e 8 casos novos em `telas/AgenteChatTeste.test.tsx`
+- Testes do Console: `api/testFile.test.ts` (9) e 8 casos novos em `screens/AgentChatTest.test.tsx`
   (ver, baixar com nome do cabeçalho, 403 e 404 com "Tentar de novo", `Esc` e foco, resposta que chega
   depois de fechar a prévia, troca de conversa soltando a URL, sair da tela soltando a URL).
 - Navegador (Chrome do sistema, Playwright, servidor `poph serve` real, banco de teste): 19 de 19
@@ -1039,13 +1039,13 @@ cliente, com o nome, o tamanho e o estado do envio:
   nada do conteúdo ou do caminho aparece em console ou mensagem.
 
 **Arquivos.** `console/src/api/testFile.ts` (origem do arquivo do cliente e do agente, rótulo do
-estado e download), `console/src/telas/AgenteChatTeste.tsx` (lista do agente no turno e no turno sem
+estado e download), `console/src/screens/AgentChatTest.tsx` (lista do agente no turno e no turno sem
 resposta). Os tipos de `files_out` estão em `console/src/api/testChat.ts`.
 
 **Provas da HR-46e.**
 
 - Testes do Console: `api/testFile.test.ts` ganhou casos de caminho, origem e rótulo do estado; e
-  `telas/AgenteChatTeste.test.tsx` ganhou 6 casos do arquivo do agente (baixar com o token e o nome do
+  `screens/AgentChatTest.test.tsx` ganhou 6 casos do arquivo do agente (baixar com o token e o nome do
   cabeçalho; imagem em prévia com "enviada pelo agente"; envio que falhou rotulado num turno sem texto;
   turno sem arquivos sem lista; 404 com "Tentar de novo" sem derrubar a conversa; troca de conversa
   soltando a URL do download).
@@ -1080,10 +1080,10 @@ resposta). Os tipos de `files_out` estão em `console/src/api/testChat.ts`.
 - A lista carrega a primeira página de 50 conversas; as demais entram com "Carregar mais".
 
 **Arquivos.** `console/src/api/testChat.ts` (contrato da aba, leitor do fluxo e `requestFlow`),
-`console/src/telas/AgenteChatTeste.tsx` (tela), `console/src/styles/chat-test.css`. Ajustes pontuais:
+`console/src/screens/AgentChatTest.tsx` (tela), `console/src/styles/chat-test.css`. Ajustes pontuais:
 `console/src/api/client.ts` (`requestFlow` e a tradução de erro compartilhada com `request`),
 `console/src/App.tsx` (rota), `console/src/components/TabsAgent.tsx` (aba), `navigation.ts` (item do
-menu), `Trail.tsx` (migalha). Testes: `api/testChat.test.ts` (6) e `telas/AgenteChatTeste.test.tsx`
+menu), `Trail.tsx` (migalha). Testes: `api/testChat.test.ts` (6) e `screens/AgentChatTest.test.tsx`
 (14); os de navegação e de abas (`navigation.test.tsx`, `Agentes.test.tsx`) foram ajustados para a aba e o
 item novos.
 
@@ -1175,8 +1175,8 @@ de corte por trecho; o link para a fonte oficial; e o custo (o turno não calcul
 **Provas.**
 
 - Testes de camada de leitura (`api/turnWhy.test.ts`, 21), de componente do painel
-  (`components/PanelWhy.test.tsx`, 17) e da página com o "por quê" (`telas/AgenteChatTestePorQue.test.tsx`,
-  5). Suíte do Console: 322 testes em 28 arquivos, todos verdes (`console/scripts/testar.sh`).
+  (`components/PanelWhy.test.tsx`, 17) e da página com o "por quê" (`screens/AgentChatTestWhy.test.tsx`,
+  5). Suíte do Console: 322 testes em 28 arquivos, todos verdes (`console/scripts/test.sh`).
 - Mutações, com o arquivo restaurado e conferido com `cmp`: fazer aparecer "0 ms" quando o tempo não foi
   gravado reprova 1 teste; deixar de mostrar o turno sem resposta reprova 1 teste. Na HR-47c, mostrar uma
   recusada como "Executada" reprova 1 teste de componente; trocar a tradução de `nao_habilitada` reprova 2 testes
@@ -1275,7 +1275,7 @@ bem-sucedida.
 
 **Testes de componente.** `console/src/api/operation.test.ts` (leitura do `/metrics` em texto, `200` e `503` do
 `/healthz`, erro de conexão, `500`; e a lista de plugins: ordem, plugin indisponível com e sem mensagem, item sem
-tipo descartado, lista vazia, `403`) e `console/src/telas/Operacao.test.tsx` (saúde OK e degradada, erro de uma
+tipo descartado, lista vazia, `403`) e `console/src/screens/Operation.test.tsx` (saúde OK e degradada, erro de uma
 seção sem derrubar a outra, "Tentar de novo" refazendo a consulta, métricas vazias sem zero inventado, botão
 Atualizar, atualização automática a cada 15 s só com a aba visível, lista com um no ar e um indisponível sem botão
 de detalhe, lista vazia, carregando, `403` na lista com "Tentar de novo" que recupera, detalhe aberto pela linha,
@@ -1456,7 +1456,7 @@ o foco. Carga e resultado são anunciados (região de status); erro é anunciado
   recusado antes do envio; `Esc` e "Cancelar" sem envio; a confirmação explica que não apaga.
 - Testes de funções puras (`console/src/api/backup.test.ts`, 17 testes): caminhos (query só com conversas),
   teto de 64 MB, nomes de tabela, textos de conflito e a tradução de cada código de erro.
-- `console/src/telas/Operacao.test.tsx`: a seção aparece na tela de operação e a atualização automática não
+- `console/src/screens/Operation.test.tsx`: a seção aparece na tela de operação e a atualização automática não
   baixa nem envia nada.
 - Servidor real (`poph serve`, portas 18860 e 18861/18862, bancos em `/tmp/hr48e2-run`, com o token do par
   reaproveitado de `/tmp/hr48c-run`; `poph token global` não foi rodado). Roteiro de navegador
@@ -1551,6 +1551,16 @@ Regras que antes estavam nos comentários de `console/src/api`, `console/src/ses
 - `scrollIntoView` não existe no jsdom; o setup o troca por um no-op.
 - O helper `testing/modal.ts` espera o estado do diálogo (aberto e com o foco dentro dele), não um tempo fixo.
 
+## Regras da configuração do build e dos testes
+
+Regras que antes estavam nos comentários de `console/vite.config.ts`, `console/vitest.config.ts` e `console/pnpm-workspace.yaml`.
+
+- O Console é servido pelo próprio binário `poph serve`, em `/` (HR-38). Em desenvolvimento, o Vite faz o proxy da API para o servidor local, para a origem ser a mesma do build embutido.
+- O binário embute os arquivos e serve a raiz `/`. O caminho do bundle é absoluto, para não quebrar em rota profunda (`/orgs/<id>`).
+- A SofaUI declara `react` e `react-dom` como peer: a configuração deduplica os dois, para existir uma cópia só em runtime.
+- Os testes de componente rodam em jsdom. O CSS da SofaUI é importado pelos componentes; o Vitest o trata como módulo vazio, e o teste olha só comportamento e acessibilidade (papel, rótulo, teclado).
+- O pnpm moderno só roda script de build de dependência com autorização explícita. Hoje o único que precisa disso é o `esbuild` (binário nativo do Vite), liberado em `allowBuilds`.
+
 ## Cliente do OpenAPI
 
 `console/src/api/schema.d.ts` é **gerado**, nunca editado à mão:
@@ -1560,7 +1570,7 @@ cd apps/pop-harness && bash console/gen-api.sh     # do `poph openapi`
 bash console/gen-api.sh --url http://127.0.0.1:7480
 ```
 
-`console/scripts/verificar-api.sh` regenera em pasta temporária e compara com o arquivo versionado
+`console/scripts/verify-api.sh` regenera em pasta temporária e compara com o arquivo versionado
 — é a checagem "cliente em dia" do `scripts/ci.sh`. Com `console/node_modules` instalado ela roda
 **offline**; sem ele, se declara pulada para o CI de clone limpo não depender de rede.
 

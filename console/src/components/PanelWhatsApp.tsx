@@ -371,7 +371,7 @@ export function PanelWhatsApp({
                         </span>
                         {round !== null && (
                             <span className="poph-mono-muted">
-                                {t("integrations.whatsappQrRound", { round: round })}
+                                {t("integrations.whatsappQrRound", { round })}
                             </span>
                         )}
                         {qr?.pairing_code && (

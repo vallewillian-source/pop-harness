@@ -79,7 +79,7 @@ no customer data, machine path or internal document entered the diff.
   reloading the cluster require a global token. With an org token the API answers `403 forbidden`. With
   no token, `401`.
 - **API contract.** Do not edit `console/src/api/schema.d.ts` by hand: it is generated from `poph openapi`
-  by `bash console/gen-api.sh`. CI (`verificar-api.sh`) fails if the file diverges from the server.
+  by `bash console/gen-api.sh`. CI (`verify-api.sh`) fails if the file diverges from the server.
 - **Git.** Local commits follow the repository's policy. Push and deploy only with the maintainer's
   authorization.
 
@@ -161,7 +161,7 @@ repository (see `ROADMAP.md`).
   `{ code, message, details }`. Each area has its own file (`agentes.ts`, `operacao.ts`...). Types come
   from the generated `schema.d.ts`. When the contract leaves a response body as `unknown` (as in
   `operacao.ts`), the types are written by hand in that layer. Do not touch the generated schema.
-- `src/telas/`: one screen per file ("telas" = screens). Each has its component test next to it
+- `src/screens/`: one screen per file. Each has its component test next to it
   (`Tela.test.tsx`).
 - `src/components/`: dialogs, modals, side menu, top bar. `navigation.ts` has the menu list.
 - `src/styles/`: CSS per screen.
@@ -182,7 +182,7 @@ bash scripts/ci.sh
 ```
 
 Order: cache pruning (`limpar-cache.sh`), Console bundle build, API client check, Console tests
-(`console/scripts/testar.sh`), formatting (`cargo fmt --check`), clippy with `-D warnings`, build, Rust tests
+(`console/scripts/test.sh`), formatting (`cargo fmt --check`), clippy with `-D warnings`, build, Rust tests
 (`cargo test --workspace`), model RAM test, aarch64 check of the crates without C, `cargo deny` and
 `cargo audit`.
 
@@ -192,7 +192,7 @@ themselves skipped when `console/node_modules` does not exist, and exit with 0. 
 Smaller commands:
 
 - One crate: `cargo test --locked -p poph-retention`.
-- One component test: `cd console && npx vitest run src/telas/Operacao.test.tsx`.
+- One component test: `cd console && npx vitest run src/screens/Operation.test.tsx`.
 - All Console tests: `cd console && pnpm run testar`.
 - Model RAM measurement, which is `#[ignore]`: `cargo test --locked -p poph-rag --test ram -- --ignored --nocapture`.
 

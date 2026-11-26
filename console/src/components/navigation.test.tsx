@@ -19,19 +19,19 @@ import { FakeServer, apiError } from "../testing/server";
 import AppSource from "../App.tsx?raw";
 
 const stateHealth = vi.hoisted(() => ({
-    atual: {
-        saude: { version: "0.9.1" } as { version: string } | null,
+    current: {
+        health: { version: "0.9.1" } as { version: string } | null,
         disconnected: false,
         degradada: false,
     },
 }));
-vi.mock("./health", () => ({ useHealth: () => stateHealth.atual }));
+vi.mock("./health", () => ({ useHealth: () => stateHealth.current }));
 
 const KEY_SESSION = "poph-console.sessao";
 const CONTEXT_EMPTY: ContextNavigation = { orgId: null, agentId: null, totalOrgs: null };
 
 function item(label: string): ItemNavigation {
-    const finding = ITEMS_NAVIGATION.find((candidate) => candidate.rotulo === label);
+    const finding = ITEMS_NAVIGATION.find((candidate) => candidate.caption === label);
     if (!finding) throw new Error(`item de navegação ausente: ${label}`);
     return finding;
 }
@@ -42,9 +42,9 @@ function Probe() {
 }
 
 function Dirty() {
-    const { registrar: register } = useGuardChanges();
+    const { register } = useGuardChanges();
     useEffect(() => {
-        register({ dirty: true, salvar: async () => true });
+        register({ dirty: true, save: async () => true });
         return () => register(null);
     }, [register]);
     return null;
@@ -106,7 +106,7 @@ afterEach(() => {
 
 describe("lista de navegação", () => {
     it("tem os grupos e itens do PRD, na ordem do desenho", () => {
-        expect(ITEMS_NAVIGATION.map((entry) => entry.rotulo)).toEqual([
+        expect(ITEMS_NAVIGATION.map((entry) => entry.caption)).toEqual([
             "Organizações",
             "Estrutura",
             "Produtos e catálogo",
@@ -122,7 +122,7 @@ describe("lista de navegação", () => {
     });
 
     it("não tem mais Cluster nem Importar / exportar", () => {
-        const labels = ITEMS_NAVIGATION.map((entry) => entry.rotulo);
+        const labels = ITEMS_NAVIGATION.map((entry) => entry.caption);
         expect(labels).not.toContain("Cluster");
         expect(labels).not.toContain("Importar / exportar");
     });
@@ -583,25 +583,25 @@ describe("menu montado com a sessão", () => {
             return { cssClass, titulo: finding?.closest(".poph-rail__cluster")?.getAttribute("title") };
         };
 
-        stateHealth.atual = { saude: { version: "0.9.1" }, disconnected: false, degradada: false };
+        stateHealth.current = { health: { version: "0.9.1" }, disconnected: false, degradada: false };
         expect(point()).toEqual({
             cssClass: "poph-rail__cluster-point",
             titulo: "POP Harness Cluster · instância respondendo",
         });
 
-        stateHealth.atual = { saude: null, disconnected: false, degradada: true };
+        stateHealth.current = { health: null, disconnected: false, degradada: true };
         expect(point().titulo).toBe("POP Harness Cluster · instância degradada");
         expect(point().cssClass).toContain("poph-rail__cluster-point--alert");
 
-        stateHealth.atual = { saude: null, disconnected: true, degradada: false };
+        stateHealth.current = { health: null, disconnected: true, degradada: false };
         expect(point().titulo).toBe("POP Harness Cluster · sem conexão com a instância");
         expect(point().cssClass).toContain("poph-rail__cluster-point--alert");
 
-        stateHealth.atual = { saude: null, disconnected: false, degradada: false };
+        stateHealth.current = { health: null, disconnected: false, degradada: false };
         expect(point().titulo).toBe("POP Harness Cluster · verificando a instância");
         expect(point().cssClass).toContain("poph-rail__cluster-point--neutral");
 
-        stateHealth.atual = { saude: { version: "0.9.1" }, disconnected: false, degradada: false };
+        stateHealth.current = { health: { version: "0.9.1" }, disconnected: false, degradada: false };
     });
 
     it("fora das telas de organização, sem organização aberta, diz Selecionar organização", () => {
@@ -951,7 +951,7 @@ describe("CF-07: seletor de agente no topo do rail", () => {
 
     function prepareServer(
         options: {
-            agentes?: Agente[];
+            agents?: Agente[];
             standalone?: { agente: Agente } | { falha: true };
             failureList?: boolean;
         } = {},
@@ -959,24 +959,24 @@ describe("CF-07: seletor de agente no topo do rail", () => {
         const servidor = new FakeServer();
         const standalone = options.standalone;
         if (standalone && "agente" in standalone) {
-            servidor.responder("GET", `/agents/${standalone.agente.id}`, {
+            servidor.respond("GET", `/agents/${standalone.agente.id}`, {
                 status: 200,
                 corpo: standalone.agente,
             });
         } else if (standalone) {
-            servidor.responder("GET", "/agents/", () =>
+            servidor.respond("GET", "/agents/", () =>
                 apiError(404, "not_found", "agente não encontrado"),
             );
         }
-        servidor.responder("GET", "/agents", () =>
+        servidor.respond("GET", "/agents", () =>
             options.failureList
                 ? apiError(500, "interno", "falha ao ler os agentes")
                 : {
                       status: 200,
-                      corpo: { items: options.agentes ?? [MATRIX, PATINHAS, TRIAGEM], next_cursor: null },
+                      corpo: { items: options.agents ?? [MATRIX, PATINHAS, TRIAGEM], next_cursor: null },
                   },
         );
-        servidor.instalar();
+        servidor.install();
         return servidor;
     }
 
@@ -1139,7 +1139,7 @@ describe("CF-07: seletor de agente no topo do rail", () => {
 
     it("organização sem agentes mostra o estado vazio no popover", async () => {
         const user = userEvent.setup();
-        prepareServer({ agentes: [] });
+        prepareServer({ agents: [] });
         build("/orgs/org_1/agents/agt_1/instructions");
 
         await user.click(await screen.findByRole("combobox"));
@@ -1189,7 +1189,7 @@ describe("CF-07: seletor de agente no topo do rail", () => {
         await user.keyboard("{Escape}");
         await user.click(gatilho);
 
-        expect(servidor.chamadasPara("GET", "/agents")).toHaveLength(1);
+        expect(servidor.callsFor("GET", "/agents")).toHaveLength(1);
     });
 
     it("em modo foco, o link e o gatilho viram tiles e o popover abre ao lado", async () => {
@@ -1254,11 +1254,11 @@ describe("CF-09: cockpit do agente no rail", () => {
 
     function prepareServer() {
         const servidor = new FakeServer();
-        servidor.responder("GET", "/agents", {
+        servidor.respond("GET", "/agents", {
             status: 200,
             corpo: { items: [AGENTE], next_cursor: null },
         });
-        servidor.instalar();
+        servidor.install();
         return servidor;
     }
 
@@ -1434,11 +1434,11 @@ describe("I18N-04: rail e seletores em en-US", () => {
 
     function serveAgents(agents: Agente[] = [AGENT_EN]) {
         return new FakeServer()
-            .responder("GET", "/agents", {
+            .respond("GET", "/agents", {
                 status: 200,
                 corpo: { items: agents, next_cursor: null },
             })
-            .instalar();
+            .install();
     }
 
     afterEach(() => {
@@ -1448,7 +1448,7 @@ describe("I18N-04: rail e seletores em en-US", () => {
     it("a lista de navegação tem os mesmos itens em inglês", () => {
         setLocale("en-US");
 
-        expect(ITEMS_NAVIGATION.map((entry) => entry.rotulo)).toEqual([
+        expect(ITEMS_NAVIGATION.map((entry) => entry.caption)).toEqual([
             "Organizations",
             "Structure",
             "Products and catalog",
@@ -1461,7 +1461,7 @@ describe("I18N-04: rail e seletores em en-US", () => {
             "Plugins and extensions",
             "Instance health",
         ]);
-        expect(ITEMS_COCKPIT_AGENT.map((entry) => entry.rotulo)).toContain(
+        expect(ITEMS_COCKPIT_AGENT.map((entry) => entry.caption)).toContain(
             "Instructions & Prompts",
         );
     });

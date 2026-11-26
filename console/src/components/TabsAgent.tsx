@@ -54,7 +54,7 @@ export function TabsAgent({ org, agente, active, nome, model }: TabsAgentProps) 
     function trocar(id: IdTabAgent) {
         const tab = TABS_AGENT.find((candidate) => candidate.id === id);
         if (!tab || id === active) return;
-        guard.tentarNavegar(
+        guard.tryNavigate(
             `/orgs/${encodeURIComponent(org)}/agents/${encodeURIComponent(agente)}/${tab.route}`,
         );
     }
@@ -139,9 +139,9 @@ export type HeaderAgentProps = {
     nome: string;
     slug?: string;
     situacao?: string;
-    organizacao?: string | null;
+    organization?: string | null;
     descricao?: ReactNode;
-    acoes?: ReactNode;
+    actions?: ReactNode;
 };
 
 export function HeaderAgent({
@@ -149,9 +149,9 @@ export function HeaderAgent({
     nome,
     slug,
     situacao,
-    organizacao: organization,
+    organization,
     descricao,
-    acoes: actions,
+    actions,
 }: HeaderAgentProps) {
     const { translate: t } = useI18n();
     const guard = useGuardChanges();
@@ -162,7 +162,7 @@ export function HeaderAgent({
                 <SofaIconButton
                     label={t("agents.backToAgentsLabel")}
                     onClick={() =>
-                        guard.tentarNavegar(
+                        guard.tryNavigate(
                             `/orgs/${encodeURIComponent(org)}/agents`,
                         )
                     }
@@ -194,13 +194,13 @@ export function HeaderAgent({
 }
 
 export type SectionAgentProps = {
-    titulo: string;
+    title: string;
     descricao?: ReactNode;
-    acoes?: ReactNode;
+    actions?: ReactNode;
     children: ReactNode;
 };
 
-export function SectionAgent({ titulo: title, descricao, acoes: actions, children }: SectionAgentProps) {
+export function SectionAgent({ title, descricao, actions, children }: SectionAgentProps) {
     const idTitle = useId();
     return (
         <section className="poph-section poph-agent__section" aria-labelledby={idTitle}>

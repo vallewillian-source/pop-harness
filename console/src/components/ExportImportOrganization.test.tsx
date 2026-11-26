@@ -82,13 +82,13 @@ describe("backup em en-US", () => {
     it("mostra a seção, o relatório e os conflitos em inglês", async () => {
         setLocale("en-US");
         new FakeServer()
-            .responder("GET", "/backup", {
+            .respond("GET", "/backup", {
                 status: 200,
                 texto: CONTENT_FILE,
-                cabecalhos: headerAttachment,
+                headers: headerAttachment,
             })
-            .responder("POST", "/backup/import", { status: 200, corpo: REPORT })
-            .instalar();
+            .respond("POST", "/backup/import", { status: 200, corpo: REPORT })
+            .install();
         build();
 
         expect(screen.getByRole("heading", { name: "Export and import the organization" })).toBeInTheDocument();
@@ -115,7 +115,7 @@ describe("backup em en-US", () => {
     it("traduz a recusa de sobrescrita e os nomes das tabelas", async () => {
         setLocale("en-US");
         new FakeServer()
-            .responder("POST", "/backup/import", {
+            .respond("POST", "/backup/import", {
                 status: 409,
                 corpo: {
                     code: "importacao_sobrescreve",
@@ -127,7 +127,7 @@ describe("backup em en-US", () => {
                     },
                 },
             })
-            .instalar();
+            .install();
         build();
 
         await choose(fileJson());
@@ -151,14 +151,14 @@ describe("backup em en-US", () => {
 describe("exportar", () => {
     it("sem conversas: chama a rota sem query e baixa com o nome que o servidor mandou", async () => {
         const servidor = new FakeServer()
-            .responder("GET", "/backup", { status: 200, texto: CONTENT_FILE, cabecalhos: headerAttachment })
-            .instalar();
+            .respond("GET", "/backup", { status: 200, texto: CONTENT_FILE, headers: headerAttachment })
+            .install();
         build();
 
         await userEvent.click(screen.getByRole("button", { name: "Baixar arquivo da organização" }));
 
         await waitFor(() => expect(clicks).toEqual([NAME_FILE]));
-        const calls = servidor.chamadasPara("GET", "/backup");
+        const calls = servidor.callsFor("GET", "/backup");
         expect(calls).toHaveLength(1);
         expect(calls[0]?.url).toBe("/admin/v1/orgs/org_1/backup");
         expect(createUrl).toHaveBeenCalledTimes(1);
@@ -167,8 +167,8 @@ describe("exportar", () => {
 
     it("com 'Incluir conversas' marcado: manda com_conversas=true", async () => {
         const servidor = new FakeServer()
-            .responder("GET", "/backup", { status: 200, texto: CONTENT_FILE, cabecalhos: headerAttachment })
-            .instalar();
+            .respond("GET", "/backup", { status: 200, texto: CONTENT_FILE, headers: headerAttachment })
+            .install();
         build();
 
         const box = screen.getByRole("checkbox", { name: /Incluir conversas/ });
@@ -178,15 +178,15 @@ describe("exportar", () => {
         await userEvent.click(screen.getByRole("button", { name: "Baixar arquivo da organização" }));
 
         await waitFor(() => expect(clicks).toHaveLength(1));
-        expect(servidor.chamadasPara("GET", "/backup")[0]?.url).toBe(
+        expect(servidor.callsFor("GET", "/backup")[0]?.url).toBe(
             "/admin/v1/orgs/org_1/backup?com_conversas=true",
         );
     });
 
     it("409 backup_incompleto explica o que fazer e não oferece tentar de novo", async () => {
         new FakeServer()
-            .responder("GET", "/backup", apiError(409, "backup_incompleto", "arquivo sem conteúdo", { name: "catalogo.png" }))
-            .instalar();
+            .respond("GET", "/backup", apiError(409, "backup_incompleto", "arquivo sem conteúdo", { name: "catalogo.png" }))
+            .install();
         build();
 
         await userEvent.click(screen.getByRole("button", { name: "Baixar arquivo da organização" }));
@@ -201,13 +201,13 @@ describe("exportar", () => {
     it("erro de servidor no download mostra 'Tentar de novo' e o botão refaz a exportação", async () => {
         let attempt = 0;
         const servidor = new FakeServer()
-            .responder("GET", "/backup", () => {
+            .respond("GET", "/backup", () => {
                 attempt += 1;
                 return attempt === 1
                     ? apiError(500, "interno", "falha")
-                    : { status: 200, texto: CONTENT_FILE, cabecalhos: headerAttachment };
+                    : { status: 200, texto: CONTENT_FILE, headers: headerAttachment };
             })
-            .instalar();
+            .install();
         build();
 
         await userEvent.click(screen.getByRole("button", { name: "Baixar arquivo da organização" }));
@@ -215,14 +215,14 @@ describe("exportar", () => {
         await userEvent.click(within(alert).getByRole("button", { name: "Tentar de novo" }));
 
         await waitFor(() => expect(clicks).toEqual([NAME_FILE]));
-        expect(servidor.chamadasPara("GET", "/backup")).toHaveLength(2);
+        expect(servidor.callsFor("GET", "/backup")).toHaveLength(2);
     });
 
     it("não dispara exportação nem importação ao montar a seção", () => {
         const servidor = new FakeServer()
-            .responder("GET", "/backup", { status: 200, texto: CONTENT_FILE, cabecalhos: headerAttachment })
-            .responder("POST", "/backup/import", { status: 200, corpo: REPORT })
-            .instalar();
+            .respond("GET", "/backup", { status: 200, texto: CONTENT_FILE, headers: headerAttachment })
+            .respond("POST", "/backup/import", { status: 200, corpo: REPORT })
+            .install();
         build();
 
         expect(servidor.calls).toHaveLength(0);
@@ -231,7 +231,7 @@ describe("exportar", () => {
 
 describe("importar", () => {
     it("sucesso: envia o texto do arquivo como JSON cru e mostra o relatório com segredos e índice", async () => {
-        const servidor = new FakeServer().responder("POST", "/backup/import", { status: 200, corpo: REPORT }).instalar();
+        const servidor = new FakeServer().respond("POST", "/backup/import", { status: 200, corpo: REPORT }).install();
         build();
 
         await choose(fileJson());
@@ -239,10 +239,10 @@ describe("importar", () => {
         await confirmImport();
         expect(await screen.findByText(/linhas gravadas: 2 novas e 3 atualizadas/)).toBeInTheDocument();
 
-        const dispatch = servidor.chamadasPara("POST", "/backup/import")[0];
+        const dispatch = servidor.callsFor("POST", "/backup/import")[0];
         expect(dispatch?.url).toBe("/admin/v1/orgs/org_1/backup/import");
-        expect(dispatch?.cabecalhos["content-type"]).toBe("application/json");
-        expect(dispatch?.bruto).toBe(CONTENT_FILE);
+        expect(dispatch?.headers["content-type"]).toBe("application/json");
+        expect(dispatch?.raw).toBe(CONTENT_FILE);
 
         const table = screen.getByRole("table", { name: "Linhas gravadas por tabela" });
         expect(within(table).getByText("Agentes")).toBeInTheDocument();
@@ -258,7 +258,7 @@ describe("importar", () => {
 
     it("índice sem o modelo: aparece como importado com índice pendente, não como erro", async () => {
         new FakeServer()
-            .responder("POST", "/backup/import", {
+            .respond("POST", "/backup/import", {
                 status: 200,
                 corpo: {
                     ...REPORT,
@@ -267,7 +267,7 @@ describe("importar", () => {
                     aviso: "modelo de embedding indisponível (model_int8.onnx)",
                 },
             })
-            .instalar();
+            .install();
         build();
 
         await choose(fileJson());
@@ -282,7 +282,7 @@ describe("importar", () => {
 
     it("409 conflito: lista até 5 conflitos, diz 'e mais N' e que nada foi gravado", async () => {
         new FakeServer()
-            .responder(
+            .respond(
                 "POST",
                 "/backup/import",
                 apiError(409, "conflict", "conflito", {
@@ -296,7 +296,7 @@ describe("importar", () => {
                     conflicts_more: 3,
                 }),
             )
-            .instalar();
+            .install();
         build();
 
         await choose(fileJson());
@@ -315,12 +315,12 @@ describe("importar", () => {
 
     it("400 arquivo de outra versão: mostra as duas versões", async () => {
         new FakeServer()
-            .responder(
+            .respond(
                 "POST",
                 "/backup/import",
                 apiError(400, "invalid_backup", "versão de formato desconhecida: 99", { version: 99, supported_version: 1 }),
             )
-            .instalar();
+            .install();
         build();
 
         await choose(fileJson());
@@ -334,8 +334,8 @@ describe("importar", () => {
 
     it("400 arquivo corrompido: mensagem clara, sem o texto cru da API", async () => {
         new FakeServer()
-            .responder("POST", "/backup/import", apiError(400, "invalid_backup", "JSON inválido: EOF at line 1 column 1200"))
-            .instalar();
+            .respond("POST", "/backup/import", apiError(400, "invalid_backup", "JSON inválido: EOF at line 1 column 1200"))
+            .install();
         build();
 
         await choose(fileJson("{\"formato\":"));
@@ -347,7 +347,7 @@ describe("importar", () => {
     });
 
     it("413 pelo servidor: diz o limite de 64 MB e que nada foi gravado", async () => {
-        new FakeServer().responder("POST", "/backup/import", apiError(413, "payload_too_large", "grande")).instalar();
+        new FakeServer().respond("POST", "/backup/import", apiError(413, "payload_too_large", "grande")).install();
         build();
 
         await choose(fileJson());
@@ -361,11 +361,11 @@ describe("importar", () => {
     it("403 com 'Tentar de novo': o botão pede a confirmação de novo e o segundo envio funciona", async () => {
         let attempt = 0;
         const servidor = new FakeServer()
-            .responder("POST", "/backup/import", () => {
+            .respond("POST", "/backup/import", () => {
                 attempt += 1;
                 return attempt === 1 ? apiError(403, "forbidden", "sem permissão") : { status: 200, corpo: REPORT };
             })
-            .instalar();
+            .install();
         build();
 
         await choose(fileJson());
@@ -379,18 +379,18 @@ describe("importar", () => {
         await userEvent.click(within(dialog).getByRole("button", { name: "Importar agora" }));
 
         expect(await screen.findByText(/linhas gravadas/)).toBeInTheDocument();
-        expect(servidor.chamadasPara("POST", "/backup/import")).toHaveLength(2);
+        expect(servidor.callsFor("POST", "/backup/import")).toHaveLength(2);
     });
 
     it("arquivo acima de 64 MB é recusado na tela e nada é enviado", async () => {
-        const servidor = new FakeServer().responder("POST", "/backup/import", { status: 200, corpo: REPORT }).instalar();
+        const servidor = new FakeServer().respond("POST", "/backup/import", { status: 200, corpo: REPORT }).install();
         build();
 
         await choose(fileJson(CONTENT_FILE, "grande.json", LIMIT_IMPORT_BYTES + 1));
 
         expect(await screen.findByText(/acima do limite de 64 MB/)).toBeInTheDocument();
         expect(screen.getByRole("button", { name: /Importar arquivo nesta organização/ })).toBeDisabled();
-        expect(servidor.chamadasPara("POST", "/backup/import")).toHaveLength(0);
+        expect(servidor.callsFor("POST", "/backup/import")).toHaveLength(0);
     });
 
     it("sem arquivo escolhido, o botão de importar fica desligado", () => {
@@ -400,7 +400,7 @@ describe("importar", () => {
     });
 
     it("Esc e 'Cancelar' fecham a confirmação sem enviar nada", async () => {
-        const servidor = new FakeServer().responder("POST", "/backup/import", { status: 200, corpo: REPORT }).instalar();
+        const servidor = new FakeServer().respond("POST", "/backup/import", { status: 200, corpo: REPORT }).install();
         build();
 
         await choose(fileJson());
@@ -414,7 +414,7 @@ describe("importar", () => {
         await userEvent.click(within(dialog).getByRole("button", { name: "Cancelar" }));
         await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
-        expect(servidor.chamadasPara("POST", "/backup/import")).toHaveLength(0);
+        expect(servidor.callsFor("POST", "/backup/import")).toHaveLength(0);
     });
 
     it("a confirmação explica que importar não apaga o que já existe", async () => {
@@ -437,12 +437,12 @@ const DETAIL_OVERWRITES = {
 describe("recusa de sobrescrita (HR-48e-4)", () => {
     it("(a) recusa mostra o que seria sobrescrito, o total, os exemplos e o botão de autorizar, sem enviar de novo", async () => {
         const servidor = new FakeServer()
-            .responder(
+            .respond(
                 "POST",
                 "/backup/import",
                 apiError(409, "importacao_sobrescreve", "a importação atualizaria 4 linha(s)", DETAIL_OVERWRITES),
             )
-            .instalar();
+            .install();
         build();
 
         await choose(fileJson());
@@ -464,7 +464,7 @@ describe("recusa de sobrescrita (HR-48e-4)", () => {
         expect(items[2]).toHaveTextContent("Categorias de produto: Pragas");
 
         expect(within(alert).getByRole("button", { name: "Sobrescrever e importar" })).toBeEnabled();
-        const sends = servidor.chamadasPara("POST", "/backup/import");
+        const sends = servidor.callsFor("POST", "/backup/import");
         expect(sends).toHaveLength(1);
         expect(sends[0]?.url).toBe("/admin/v1/orgs/org_1/backup/import");
     });
@@ -472,13 +472,13 @@ describe("recusa de sobrescrita (HR-48e-4)", () => {
     it("(b) 'Sobrescrever e importar' reenvia com ?sobrescrever=true e mostra o relatório do 200", async () => {
         let attempt = 0;
         const servidor = new FakeServer()
-            .responder("POST", "/backup/import", () => {
+            .respond("POST", "/backup/import", () => {
                 attempt += 1;
                 return attempt === 1
                     ? apiError(409, "importacao_sobrescreve", "a importação atualizaria 4 linha(s)", DETAIL_OVERWRITES)
                     : { status: 200, corpo: REPORT };
             })
-            .instalar();
+            .install();
         build();
 
         await choose(fileJson());
@@ -487,17 +487,17 @@ describe("recusa de sobrescrita (HR-48e-4)", () => {
         await userEvent.click(within(alert).getByRole("button", { name: "Sobrescrever e importar" }));
 
         expect(await screen.findByText(/linhas gravadas: 2 novas e 3 atualizadas/)).toBeInTheDocument();
-        const sends = servidor.chamadasPara("POST", "/backup/import");
+        const sends = servidor.callsFor("POST", "/backup/import");
         expect(sends).toHaveLength(2);
         expect(sends[1]?.url).toBe("/admin/v1/orgs/org_1/backup/import?sobrescrever=true");
-        expect(sends[1]?.bruto).toBe(CONTENT_FILE);
+        expect(sends[1]?.raw).toBe(CONTENT_FILE);
         expect(screen.queryByText("Esta importação vai sobrescrever o que já existe")).toBeNull();
     });
 
     it("(c) conflito de nome (409 conflict) não oferece sobrescrever", async () => {
         new FakeServer()
-            .responder("POST", "/backup/import", apiError(409, "conflict", "conflito", { conflicts: ["agente bia (slug)"], conflicts_more: 0 }))
-            .instalar();
+            .respond("POST", "/backup/import", apiError(409, "conflict", "conflito", { conflicts: ["agente bia (slug)"], conflicts_more: 0 }))
+            .install();
         build();
 
         await choose(fileJson());
@@ -510,8 +510,8 @@ describe("recusa de sobrescrita (HR-48e-4)", () => {
 
     it("'Cancelar' tira a recusa da tela sem enviar nada de novo", async () => {
         const servidor = new FakeServer()
-            .responder("POST", "/backup/import", apiError(409, "importacao_sobrescreve", "x", DETAIL_OVERWRITES))
-            .instalar();
+            .respond("POST", "/backup/import", apiError(409, "importacao_sobrescreve", "x", DETAIL_OVERWRITES))
+            .install();
         build();
 
         await choose(fileJson());
@@ -520,13 +520,13 @@ describe("recusa de sobrescrita (HR-48e-4)", () => {
         await userEvent.click(within(alert).getByRole("button", { name: "Cancelar" }));
 
         await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
-        expect(servidor.chamadasPara("POST", "/backup/import")).toHaveLength(1);
+        expect(servidor.callsFor("POST", "/backup/import")).toHaveLength(1);
     });
 
     it("a recusa sem detalhes ainda aparece com o aviso e o botão, sem tabela", async () => {
         new FakeServer()
-            .responder("POST", "/backup/import", apiError(409, "importacao_sobrescreve", "x", null))
-            .instalar();
+            .respond("POST", "/backup/import", apiError(409, "importacao_sobrescreve", "x", null))
+            .install();
         build();
 
         await choose(fileJson());

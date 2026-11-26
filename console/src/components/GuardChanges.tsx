@@ -15,12 +15,12 @@ import { useI18n } from "../i18n";
 
 export type RecordGuard = {
     dirty: boolean;
-    salvar: () => Promise<boolean>;
+    save: () => Promise<boolean>;
 };
 
 type Context = {
-    registrar: (registro: RecordGuard | null) => void;
-    tentarNavegar: (para: string) => boolean;
+    register: (registro: RecordGuard | null) => void;
+    tryNavigate: (para: string) => boolean;
 };
 
 const GuardContext = createContext<Context | null>(null);
@@ -103,14 +103,14 @@ export function GuardChangesProvider({ children }: { children: ReactNode }) {
         [navigate],
     );
 
-    const value = useMemo(() => ({ registrar: register, tentarNavegar: tryNavigate }), [register, tryNavigate]);
+    const value = useMemo(() => ({ register, tryNavigate }), [register, tryNavigate]);
 
     async function saveExit() {
         const target = destination;
         if (!target || !registro.current) return;
         setSaving(true);
         try {
-            const canExit = await registro.current.salvar();
+            const canExit = await registro.current.save();
             if (!canExit) {
                 setTarget(null);
                 return;

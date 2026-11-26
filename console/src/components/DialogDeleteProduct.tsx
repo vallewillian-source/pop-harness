@@ -11,21 +11,21 @@ import { useI18n } from "../i18n";
 import { DialogExclusion } from "../components/DialogExclusion";
 
 export type DialogDeleteProductProps = {
-    aberto: boolean;
+    opened: boolean;
     onClose: () => void;
     org: string;
-    produto: Product | null;
+    product: Product | null;
     agentsSee: number | null;
-    aoExcluir: (noticeIndex: string | null) => void;
+    onDelete: (noticeIndex: string | null) => void;
 };
 
 export function DialogDeleteProduct({
-    aberto: isOpen,
+    opened: isOpen,
     onClose,
     org,
-    produto: product,
+    product,
     agentsSee,
-    aoExcluir: onDelete,
+    onDelete,
 }: DialogDeleteProductProps) {
     const { translate } = useI18n();
     const noticeRef = useRef<string | null>(null);
@@ -94,19 +94,19 @@ export function DialogDeleteProduct({
 
     return (
         <DialogExclusion
-            aberto={isOpen}
+            opened={isOpen}
             onClose={onClose}
-            titulo={translate("products.deleteTitle")}
+            title={translate("products.deleteTitle")}
             descricao={translate("products.deleteDescription", { name: product.name })}
             resource={product.name}
             labelResource={translate("products.deleteResourceLabel")}
             labelConfirm={translate("products.deleteConfirm")}
             consequencia={consequencia()}
-            permiteForcar
+            allowForce
             forceOnlyAfterRefusal
             labelForce={labelForce}
             descriptionForce={translate("products.deleteForceDescription")}
-            aoConfirmar={async (forcar) => {
+            onConfirm={async (forcar) => {
                 try {
                     const resultado = await deleteProduct(org, product.id, forcar);
                     noticeRef.current = resultado.index_warning ?? null;
@@ -117,7 +117,7 @@ export function DialogDeleteProduct({
                     throw failure;
                 }
             }}
-            aoExcluir={() => onDelete(noticeRef.current)}
+            onDelete={() => onDelete(noticeRef.current)}
         />
     );
 }

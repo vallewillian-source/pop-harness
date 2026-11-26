@@ -1,8 +1,4 @@
 #!/usr/bin/env bash
-# Gera o bundle do Console (`console/dist`) que o `build.rs` do `poph-server` embute no binário.
-#
-# Rede: só a primeira instalação (`pnpm install`) precisa dela. Sem `node_modules` esta etapa se
-# declara pulada — o `cargo build` segue funcionando e serve a página de aviso em `/`.
 set -euo pipefail
 
 console="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

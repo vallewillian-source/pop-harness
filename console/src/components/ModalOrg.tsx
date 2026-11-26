@@ -23,14 +23,14 @@ import type { TranslationKey } from "../i18n/catalog";
 
 const SLUG = /^[a-z0-9-]{3,64}$/;
 
-const SITUATIONS: { valor: string; rotulo: TranslationKey }[] = [
-    { valor: "active", rotulo: "orgs.statusActive" },
-    { valor: "inactive", rotulo: "orgs.statusInactive" },
-    { valor: "archived", rotulo: "orgs.statusArchived" },
+const SITUATIONS: { value: string; rotulo: TranslationKey }[] = [
+    { value: "active", rotulo: "orgs.statusActive" },
+    { value: "inactive", rotulo: "orgs.statusInactive" },
+    { value: "archived", rotulo: "orgs.statusArchived" },
 ];
 
 export type ModalOrgProps = {
-    aberto: boolean;
+    opened: boolean;
     onClose: () => void;
     org: Org | null;
     onSave: (org: Org) => void;
@@ -54,7 +54,7 @@ type Errors = {
     retencao?: string;
 };
 
-export function ModalOrg({ aberto: isOpen, onClose, org, onSave }: ModalOrgProps) {
+export function ModalOrg({ opened: isOpen, onClose, org, onSave }: ModalOrgProps) {
     const { translate: t } = useI18n();
     const editing = org !== null;
     const [nome, setName] = useState("");
@@ -275,7 +275,7 @@ export function ModalOrg({ aberto: isOpen, onClose, org, onSave }: ModalOrgProps
                                 onChange={(evento) => setSituation(evento.target.value)}
                             >
                                 {SITUATIONS.map((option) => (
-                                    <option key={option.valor} value={option.valor}>
+                                    <option key={option.value} value={option.value}>
                                         {t(option.rotulo)}
                                     </option>
                                 ))}

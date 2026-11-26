@@ -127,7 +127,7 @@ export function configurationSend(
 export type ModalIntegrationProps = {
     org: string;
     agente: string;
-    aberto: boolean;
+    opened: boolean;
     onClose: () => void;
     integracao: Integracao | null;
     onSave: (integracao: Integracao) => void;
@@ -136,7 +136,7 @@ export type ModalIntegrationProps = {
 export function ModalIntegration({
     org,
     agente,
-    aberto: isOpen,
+    opened: isOpen,
     onClose,
     integracao,
     onSave,

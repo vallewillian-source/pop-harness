@@ -12,19 +12,19 @@ import { useI18n } from "../i18n";
 import { DialogExclusion } from "../components/DialogExclusion";
 
 export type DialogDeleteDepartmentProps = {
-    aberto: boolean;
+    opened: boolean;
     onClose: () => void;
     org: string;
     departamento: Departamento | null;
-    aoExcluir: () => void;
+    onDelete: () => void;
 };
 
 export function DialogDeleteDepartment({
-    aberto: isOpen,
+    opened: isOpen,
     onClose,
     org,
     departamento,
-    aoExcluir: onDelete,
+    onDelete,
 }: DialogDeleteDepartmentProps) {
     const { translate } = useI18n();
     const [loading, setLoading] = useState(false);
@@ -86,18 +86,18 @@ export function DialogDeleteDepartment({
 
     return (
         <DialogExclusion
-            aberto={isOpen}
+            opened={isOpen}
             onClose={onClose}
-            titulo={translate("structure.deleteDeptTitle")}
+            title={translate("structure.deleteDeptTitle")}
             descricao={translate("structure.deleteDeptDescription", { name: departamento.name })}
             resource={departamento.name}
             labelResource={translate("structure.deleteDeptResourceLabel")}
             labelConfirm={translate("structure.deleteDeptConfirm")}
             consequencia={consequencia()}
-            aoConfirmar={async () => {
+            onConfirm={async () => {
                 await deleteDepartment(org, departamento.id);
             }}
-            aoExcluir={onDelete}
+            onDelete={onDelete}
         />
     );
 }

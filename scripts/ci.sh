@@ -23,8 +23,8 @@ executa() {
 
 executa "cache de compilação (poda do que não é usado há 3 dias)" bash scripts/limpar-cache.sh --dias 3
 executa "console (bundle do Console embutido no binário)" bash console/scripts/build.sh
-executa "console (cliente do OpenAPI em dia)" bash console/scripts/verificar-api.sh
-executa "console (testes de componente)" bash console/scripts/testar.sh
+executa "console (cliente do OpenAPI em dia)" bash console/scripts/verify-api.sh
+executa "console (testes de componente)" bash console/scripts/test.sh
 
 executa "comentários (teste do removedor)" python3 scripts/tests/test-strip-comments.py
 executa "comentários (trava: allowlist e pendentes por módulo)" bash scripts/check-comments.sh

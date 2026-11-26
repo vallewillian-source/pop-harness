@@ -20,16 +20,23 @@ BASE_DIR="$(cd "$HERE/.." && pwd)"
 ROOT="$(cd "$BASE_DIR/../.." && pwd)"
 cd "$ROOT"
 
-BINARY="$ROOT/target/debug/poph"
-if [ ! -x "$BINARY" ]; then
-    echo "poph debug binary não encontrado, tentando release..."
-    BINARY="$ROOT/target/release/poph"
+if [ -n "${POPH_BIN:-}" ]; then
+    BINARY="$POPH_BIN"
+else
+    BUILD_DIR="$(cargo metadata --format-version 1 --no-deps 2>/dev/null | jq -er '.target_directory')" || {
+        echo "Erro: cargo metadata falhou; não sei onde o Cargo guardou o poph." >&2
+        exit 1
+    }
+    BINARY="$BUILD_DIR/debug/poph"
+    if [ ! -x "$BINARY" ]; then
+        echo "Compilando poph em modo debug..."
+        cargo build --locked -q -p poph
+    fi
 fi
 
 if [ ! -x "$BINARY" ]; then
-    echo "Compilando poph em modo debug..."
-    cargo build --locked -p poph
-    BINARY="$ROOT/target/debug/poph"
+    echo "Erro: binário poph não encontrado em $BINARY" >&2
+    exit 1
 fi
 
 GRAVAR=0

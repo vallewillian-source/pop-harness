@@ -110,7 +110,7 @@ export function NavItemEntry({
         const button = (
             <SofaRailItem
                 className={cssClass}
-                label={item.rotulo}
+                label={item.caption}
                 media={icon}
                 aside={aside}
                 description={emBreve ? t("navigation.comingSoon") : undefined}
@@ -120,12 +120,12 @@ export function NavItemEntry({
         );
         const motivo = emBreve
             ? compact
-                ? item.rotulo
+                ? item.caption
                 : undefined
             : reasonBlock(item, context, t);
         if (!motivo) return button;
         return (
-            <div className="poph-rail__blocked" title={compact ? item.rotulo : motivo}>
+            <div className="poph-rail__blocked" title={compact ? item.caption : motivo}>
                 {button}
             </div>
         );
@@ -134,13 +134,13 @@ export function NavItemEntry({
         <NavLink
             to={route}
             end={item.exato === true}
-            title={compact ? item.rotulo : undefined}
+            title={compact ? item.caption : undefined}
             style={{ color: "inherit", textDecoration: "none" }}
         >
             {({ isActive }) => (
                 <SofaRailItem
                     className={cssClass}
-                    label={item.rotulo}
+                    label={item.caption}
                     media={icon}
                     aside={aside}
                     compact={compact}
@@ -166,7 +166,7 @@ export function Rail({
 }) {
     const { translate: t } = useI18n();
     const { sessao: session } = useSession();
-    const { saude: dados, disconnected: withoutConnection, degradada: degraded } = useHealth();
+    const { health: dados, disconnected: withoutConnection, degradada: degraded } = useHealth();
     const { pathname } = useLocation();
     const buttonTop = useRef<HTMLButtonElement>(null);
     const buttonFooter = useRef<HTMLButtonElement>(null);

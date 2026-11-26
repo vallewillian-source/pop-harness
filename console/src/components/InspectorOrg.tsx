@@ -30,7 +30,7 @@ export type InspectorOrgProps = {
     onAccess: (org: Org) => void;
     onEdit?: (org: Org) => void;
     onExport?: (org: Org) => void;
-    aoExcluir?: (org: Org) => void;
+    onDelete?: (org: Org) => void;
 };
 
 const DEADLINE_READ_MS = 12_000;
@@ -129,33 +129,33 @@ function messageError(failure: unknown): string {
     return translate("orgs.inspectorQueryFailed");
 }
 
-function nodeText(no: OrgNode | null | undefined): { chip: string; valor: string } | null {
+function nodeText(no: OrgNode | null | undefined): { chip: string; value: string } | null {
     if (!no) return null;
     if (no.id === "") {
-        return { chip: translate("orgs.nodeLocal"), valor: translate("orgs.nodeLocal") };
+        return { chip: translate("orgs.nodeLocal"), value: translate("orgs.nodeLocal") };
     }
     switch (no.situacao) {
         case "local":
             return {
                 chip: translate("orgs.nodePrimary"),
-                valor: translate("orgs.nodePrimaryValue", { id: no.id }),
+                value: translate("orgs.nodePrimaryValue", { id: no.id }),
             };
         case "ok":
             return {
                 chip: translate("orgs.nodeChip", { id: no.id }),
-                valor: translate("orgs.nodeRemoteOnline", { id: no.id }),
+                value: translate("orgs.nodeRemoteOnline", { id: no.id }),
             };
         case "inacessivel":
             return {
                 chip: translate("orgs.nodeChip", { id: no.id }),
-                valor: translate("orgs.nodeRemoteUnreachable", { id: no.id }),
+                value: translate("orgs.nodeRemoteUnreachable", { id: no.id }),
             };
         default:
-            return { chip: translate("orgs.nodeChip", { id: no.id }), valor: no.id };
+            return { chip: translate("orgs.nodeChip", { id: no.id }), value: no.id };
     }
 }
 
-function mirrorMatrix(estado: MatrixState): { valor: string; detail: string } {
+function mirrorMatrix(estado: MatrixState): { value: string; detail: string } {
     const pending = estado.backlog?.messages ?? 0;
     const age = estado.backlog?.oldest_seconds ?? 0;
     const parts: string[] = [];
@@ -183,22 +183,22 @@ function mirrorMatrix(estado: MatrixState): { valor: string; detail: string } {
 
     if (estado.connected === null || estado.connected === undefined) {
         return {
-            valor: translate("orgs.matrixNotConfigured"),
+            value: translate("orgs.matrixNotConfigured"),
             detail: translate("orgs.matrixNotConfiguredDetail"),
         };
     }
     if (!estado.enabled) {
         return {
-            valor: translate("orgs.matrixDisabled"),
-            detail: translate("orgs.matrixDisabledDetail", { detail: detail }),
+            value: translate("orgs.matrixDisabled"),
+            detail: translate("orgs.matrixDisabledDetail", { detail }),
         };
     }
     if (estado.connected) {
-        return { valor: translate("orgs.matrixConnected"), detail };
+        return { value: translate("orgs.matrixConnected"), detail };
     }
     return {
-        valor: translate("orgs.matrixDisconnected"),
-        detail: translate("orgs.matrixDisconnectedDetail", { detail: detail }),
+        value: translate("orgs.matrixDisconnected"),
+        detail: translate("orgs.matrixDisconnectedDetail", { detail }),
     };
 }
 
@@ -218,7 +218,7 @@ export function InspectorOrg({
     onAccess,
     onEdit,
     onExport,
-    aoExcluir: onDelete,
+    onDelete,
 }: InspectorOrgProps) {
     const { translate: t } = useI18n();
     const drawer = useRef<HTMLElement | null>(null);
@@ -315,7 +315,7 @@ export function InspectorOrg({
                     {describeNode && (
                         <span
                             className="poph-inspector__chip"
-                            title={describeNode.chip === describeNode.valor ? undefined : describeNode.valor}
+                            title={describeNode.chip === describeNode.value ? undefined : describeNode.value}
                         >
                             {describeNode.chip}
                         </span>
@@ -388,7 +388,7 @@ export function InspectorOrg({
                                         const mirror = mirrorMatrix(matrix.dados);
                                         return (
                                             <span className="poph-inspector__with-hint" title={mirror.detail}>
-                                                {mirror.valor}
+                                                {mirror.value}
                                             </span>
                                         );
                                     })()}
@@ -398,7 +398,7 @@ export function InspectorOrg({
                             <dt className="poph-property__key">{t("orgs.inspectorInstance")}</dt>
                             <dd className="poph-property__value">
                                 {describeNode ? (
-                                    <span className="poph-property__value--mono">{describeNode.valor}</span>
+                                    <span className="poph-property__value--mono">{describeNode.value}</span>
                                 ) : (
                                     <span
                                         className="poph-inspector__resource"

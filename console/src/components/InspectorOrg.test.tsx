@@ -58,17 +58,17 @@ type Scenario = {
 
 function servidor({ agentes: agents = [AGENT_MATRIX], matrix = stateMatrix() }: Scenario = {}) {
     const fake = new FakeServer();
-    fake.responder("GET", "/agents", () =>
+    fake.respond("GET", "/agents", () =>
         agents === "erro"
             ? { status: 500, corpo: { code: "internal", message: "falha ao listar agentes", details: null } }
             : { status: 200, corpo: { items: agents, next_cursor: null } },
     );
-    fake.responder("GET", "/matrix", () =>
+    fake.respond("GET", "/matrix", () =>
         matrix === "erro"
             ? { status: 500, corpo: { code: "internal", message: "falha ao ler o matrix", details: null } }
             : { status: 200, corpo: matrix },
     );
-    return fake.instalar();
+    return fake.install();
 }
 
 function build(props: Partial<InspectorOrgProps> = {}) {
@@ -86,7 +86,7 @@ function build(props: Partial<InspectorOrgProps> = {}) {
                 onAccess={onAccess}
                 onEdit={onEdit}
                 onExport={onExport}
-                aoExcluir={onDelete}
+                onDelete={onDelete}
                 {...props}
             />
         </MemoryRouter>,

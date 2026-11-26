@@ -151,7 +151,7 @@ describe("mounted shell", () => {
             }),
         );
         const { FakeServer } = await import("../testing/server");
-        new FakeServer()["responder"]("GET", "/healthz", {
+        new FakeServer()["respond"]("GET", "/healthz", {
                 status: 200,
                 "corpo": {
                     status: "ok",
@@ -159,7 +159,7 @@ describe("mounted shell", () => {
                     uptime_seconds: 10,
                     databases: { harness: 1, rag: 1 },
                 },
-            })["instalar"]();
+            })["install"]();
 
         const { createElement } = await import("react");
         const { act, render, screen } = await import("@testing-library/react");

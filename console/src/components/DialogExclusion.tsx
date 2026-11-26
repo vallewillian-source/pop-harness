@@ -18,20 +18,20 @@ function withoutDescribedBy(control: SofaFieldControlProps) {
 }
 
 export type DialogExclusionProps = {
-    aberto: boolean;
+    opened: boolean;
     onClose: () => void;
-    titulo: string;
+    title: string;
     descricao: string;
     resource: string;
     labelResource: string;
     labelConfirm: string;
     consequencia?: ReactNode;
-    permiteForcar?: boolean;
+    allowForce?: boolean;
     forceOnlyAfterRefusal?: boolean;
     labelForce?: string;
     descriptionForce?: string;
-    aoConfirmar: (forcar: boolean) => Promise<void>;
-    aoExcluir?: () => void;
+    onConfirm: (forcar: boolean) => Promise<void>;
+    onDelete?: () => void;
 };
 
 function messageError(error: unknown): { texto: string; codigo?: string } {
@@ -45,20 +45,20 @@ function messageError(error: unknown): { texto: string; codigo?: string } {
 }
 
 export function DialogExclusion({
-    aberto: isOpen,
+    opened: isOpen,
     onClose,
-    titulo: title,
+    title,
     descricao,
     resource,
     labelResource,
     labelConfirm,
     consequencia,
-    permiteForcar: allowForce = false,
+    allowForce = false,
     forceOnlyAfterRefusal = false,
     labelForce,
     descriptionForce,
-    aoConfirmar: onConfirm,
-    aoExcluir: onDelete,
+    onConfirm,
+    onDelete,
 }: DialogExclusionProps) {
     const { translate: t } = useI18n();
     const [typed, setTyped] = useState("");

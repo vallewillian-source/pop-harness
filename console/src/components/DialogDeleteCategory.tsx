@@ -13,11 +13,11 @@ import { useI18n } from "../i18n";
 import { DialogExclusion } from "../components/DialogExclusion";
 
 export type DialogDeleteCategoryProps = {
-    aberto: boolean;
+    opened: boolean;
     onClose: () => void;
     org: string;
-    categoria: Category | null;
-    aoExcluir: () => void;
+    category: Category | null;
+    onDelete: () => void;
 };
 
 type Links = {
@@ -26,11 +26,11 @@ type Links = {
 };
 
 export function DialogDeleteCategory({
-    aberto: isOpen,
+    opened: isOpen,
     onClose,
     org,
-    categoria: category,
-    aoExcluir: onDelete,
+    category,
+    onDelete,
 }: DialogDeleteCategoryProps) {
     const { translate } = useI18n();
     const [loading, setLoading] = useState(false);
@@ -130,21 +130,21 @@ export function DialogDeleteCategory({
 
     return (
         <DialogExclusion
-            aberto={isOpen}
+            opened={isOpen}
             onClose={onClose}
-            titulo={translate("structure.deleteCatTitle")}
+            title={translate("structure.deleteCatTitle")}
             descricao={translate("structure.deleteCatDescription", { name: category.name })}
             resource={category.name}
             labelResource={translate("structure.deleteCatResourceLabel")}
             labelConfirm={translate("structure.deleteCatConfirm")}
             consequencia={consequencia()}
-            permiteForcar={!withoutLink}
+            allowForce={!withoutLink}
             labelForce={labelForce}
             descriptionForce={translate("structure.deleteCatForceDescription")}
-            aoConfirmar={async (forcar) => {
+            onConfirm={async (forcar) => {
                 await deleteCategory(org, category.id, forcar);
             }}
-            aoExcluir={onDelete}
+            onDelete={onDelete}
         />
     );
 }

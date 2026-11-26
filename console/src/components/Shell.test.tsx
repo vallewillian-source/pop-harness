@@ -72,7 +72,7 @@ describe("Casca do Console (HR-61)", () => {
     it("botão de ajuda no header abre o modal de atalhos", async () => {
         const user = userEvent.setup();
         prepareSession();
-        new FakeServer().responder("GET", "/healthz", { status: 200, corpo: HEALTH }).instalar();
+        new FakeServer().respond("GET", "/healthz", { status: 200, corpo: HEALTH }).install();
         build("/orgs");
 
         await user.click(screen.getByRole("button", { name: "Atalhos do teclado" }));
@@ -84,9 +84,9 @@ describe("Casca do Console (HR-61)", () => {
         const user = userEvent.setup();
         prepareSession();
         const servidor = new FakeServer()
-            .responder("GET", "/healthz", { status: 200, corpo: HEALTH })
-            .responder("GET", "/admin/v1/orgs/org_1/agents", { status: 200, corpo: THREE_AGENTS })
-            .instalar();
+            .respond("GET", "/healthz", { status: 200, corpo: HEALTH })
+            .respond("GET", "/admin/v1/orgs/org_1/agents", { status: 200, corpo: THREE_AGENTS })
+            .install();
         build("/orgs/org_1/structure");
 
         const agents = screen.getByRole("link", { name: /Agentes/ });
@@ -95,19 +95,19 @@ describe("Casca do Console (HR-61)", () => {
         await user.click(screen.getByRole("link", { name: /Produtos e catálogo/ }));
         await user.click(screen.getByRole("link", { name: /Agentes/ }));
         expect(screen.getByRole("link", { name: /Agentes/ })).toHaveTextContent("3");
-        expect(servidor.chamadasPara("GET", "/admin/v1/orgs/org_1/agents")).toHaveLength(1);
+        expect(servidor.callsFor("GET", "/admin/v1/orgs/org_1/agents")).toHaveLength(1);
     });
 
     it("lista os agentes da organização no menu, sem segunda consulta", async () => {
         const user = userEvent.setup();
         prepareSession();
         const servidor = new FakeServer()
-            .responder("GET", "/healthz", { status: 200, corpo: HEALTH })
-            .responder("GET", "/admin/v1/orgs/org_1/agents", {
+            .respond("GET", "/healthz", { status: 200, corpo: HEALTH })
+            .respond("GET", "/admin/v1/orgs/org_1/agents", {
                 status: 200,
                 corpo: AGENTS_WITH_STATUS,
             })
-            .instalar();
+            .install();
         build("/orgs/org_1/structure");
 
         expect(await screen.findByRole("link", { name: /Atendente/ })).toHaveAttribute(
@@ -120,31 +120,31 @@ describe("Casca do Console (HR-61)", () => {
         await user.click(screen.getByRole("link", { name: /Produtos e catálogo/ }));
         await user.click(screen.getByRole("link", { name: /Agentes/ }));
         expect(screen.getByRole("link", { name: /Vendas/ })).toBeInTheDocument();
-        expect(servidor.chamadasPara("GET", "/admin/v1/orgs/org_1/agents")).toHaveLength(1);
+        expect(servidor.callsFor("GET", "/admin/v1/orgs/org_1/agents")).toHaveLength(1);
     });
 
     it("sem organização aberta, o item Agentes não tem contador nem faz consulta", () => {
         prepareSession();
         const servidor = new FakeServer()
-            .responder("GET", "/healthz", { status: 200, corpo: HEALTH })
-            .instalar();
+            .respond("GET", "/healthz", { status: 200, corpo: HEALTH })
+            .install();
         build("/orgs");
 
         const agents = screen.getByRole("button", { name: /Agentes/ });
         expect(agents).not.toHaveTextContent(/\d/);
-        expect(servidor.chamadasPara("GET", "/agents")).toHaveLength(0);
+        expect(servidor.callsFor("GET", "/agents")).toHaveLength(0);
     });
 
     it("se a consulta de agentes falha, o item fica sem contador e a tela segue", async () => {
         prepareSession();
         const servidor = new FakeServer()
-            .responder("GET", "/healthz", { status: 200, corpo: HEALTH })
-            .responder("GET", "/admin/v1/orgs/org_1/agents", apiError(500, "interno", "falha de teste"))
-            .instalar();
+            .respond("GET", "/healthz", { status: 200, corpo: HEALTH })
+            .respond("GET", "/admin/v1/orgs/org_1/agents", apiError(500, "interno", "falha de teste"))
+            .install();
         build("/orgs/org_1/structure");
 
         await waitFor(() =>
-            expect(servidor.chamadasPara("GET", "/admin/v1/orgs/org_1/agents")).toHaveLength(1),
+            expect(servidor.callsFor("GET", "/admin/v1/orgs/org_1/agents")).toHaveLength(1),
         );
         await new Promise((resolver) => setTimeout(resolver, 20));
 
@@ -156,7 +156,7 @@ describe("Casca do Console (HR-61)", () => {
     it("switches the shortcuts modal to en-US when clicking EN", async () => {
         const user = userEvent.setup();
         prepareSession();
-        new FakeServer().responder("GET", "/healthz", { status: 200, corpo: HEALTH }).instalar();
+        new FakeServer().respond("GET", "/healthz", { status: 200, corpo: HEALTH }).install();
         build("/orgs");
 
         await user.click(screen.getByRole("button", { name: "Inglês (Estados Unidos)" }));
