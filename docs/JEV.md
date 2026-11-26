@@ -1371,6 +1371,12 @@ número quando o provedor informa; sem `usage`, `informado` é `false` e os trê
 O mesmo conteúdo volta no `ResumoTurno.jev`. Quando nenhum gate se aplica, o campo fica `{}` (o
 padrão da coluna).
 
+Três regras do motor que valem para o registro e para a medição (não mudam o que o turno faz):
+
+- **Resposta crua guardada por gate**: a resposta do Jev fica no resultado mesmo quando a decisão cai no fallback (abaixo do limiar ou sem resposta válida). É isso que permite calibrar o limiar depois.
+- **Probabilidades fora do registro do turno**: `turns.jev_json` leva só a escolha do modelo (`escolha_do_jev`), para não dobrar o tamanho do registro.
+- **Gate ligado que não se aplica**: quando um gate ligado não cabe neste turno (ex.: o G9 com mais fluxos liberados do que a pergunta comporta), o aviso vai para o log do servidor, não para o turno.
+
 ## 7. Medir um gate: `poph jev eval`
 
 ```bash

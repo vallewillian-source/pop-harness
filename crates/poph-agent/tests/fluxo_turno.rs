@@ -24,7 +24,7 @@ use poph_agent::turno::{
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, Usage};
 use poph_fluxos::{Limites, compilar};
-use poph_jev::{G9_NONE, IdGate, JevError, JevFalso, MotorJev};
+use poph_jev::{G9_NONE, IdGate, JevEngine, JevError, JevFalso};
 use poph_store::{
     AgentChange, Direction, NewAgent, NewConversation, NewFlow, NewMessage, NewOrg,
     RevisionPublication, Role, Store,
@@ -237,7 +237,7 @@ impl Cenario {
     fn motor(
         &self,
         agente: AgentId,
-        jev: Option<Arc<MotorJev>>,
+        jev: Option<Arc<JevEngine>>,
         fluxos: Option<FlowsConfig>,
         g9: MetricasG9,
     ) -> (Motor, Arc<FakeProvider>) {
@@ -352,8 +352,8 @@ fn so_g9() -> JevGates {
     }
 }
 
-fn motor_jev(jev: Arc<JevFalso>) -> Arc<MotorJev> {
-    Arc::new(MotorJev::novo(jev, so_g9(), "jev-latest"))
+fn motor_jev(jev: Arc<JevFalso>) -> Arc<JevEngine> {
+    Arc::new(JevEngine::new(jev, so_g9(), "jev-latest"))
 }
 
 /// Sistema de mensagens do pedido ao modelo, na ordem em que foram enviadas.
@@ -910,7 +910,7 @@ async fn painel_por_que_mostra_a_decisao() {
     let resumo = cenario.turno(&motor, conversa, gatilho).await;
 
     let registrado = resumo.jev.expect("o turno devolve o Jev");
-    assert_eq!(registrado.escolha(IdGate::G9), Some(fluxo.slug.as_str()));
+    assert_eq!(registrado.choice(IdGate::G9), Some(fluxo.slug.as_str()));
     let turno = cenario.ultimo_turno(conversa);
     let gravado: serde_json::Value = serde_json::from_str(&turno.jev_json).expect("JSON");
     assert_eq!(gravado["decisoes"][0]["gate"], "g9");

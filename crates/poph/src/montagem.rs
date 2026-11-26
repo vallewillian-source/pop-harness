@@ -268,7 +268,7 @@ pub fn montar(
                 .and_then(|cliente| poph_jev::ClienteJev::novo(cliente, metricas_jev))
             {
                 Ok(transporte) => {
-                    let avaliador = poph_jev::MotorJev::novo(
+                    let avaliador = poph_jev::JevEngine::new(
                         Arc::new(transporte),
                         configuracao.jev.gates,
                         configuracao.jev.model.clone(),

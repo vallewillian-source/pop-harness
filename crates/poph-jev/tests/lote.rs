@@ -9,8 +9,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use poph_jev::{
-    AvaliadorGates, DecisionOrigin, G1_CONTINUE, G1_TRANSFER, G2_PROCESS, G3_BASE, G3_NOTHING,
-    GateOverrides, IdGate, JevError, JevFalso, JevMessage, JevState, MotorJev, OpcoesJev,
+    DecisionOrigin, G1_CONTINUE, G1_TRANSFER, G2_PROCESS, G3_BASE, G3_NOTHING, GateEvaluator,
+    GateOverrides, IdGate, JevEngine, JevError, JevFalso, JevMessage, JevOptions, JevState,
 };
 use poph_types::JevGates;
 
@@ -44,8 +44,8 @@ fn escolhas(itens: &[(&str, &str)]) -> BTreeMap<String, String> {
         .collect()
 }
 
-fn motor(jev: Arc<JevFalso>, globais: JevGates) -> Arc<MotorJev> {
-    Arc::new(MotorJev::novo(jev, globais, "jev-latest"))
+fn motor(jev: Arc<JevFalso>, globais: JevGates) -> Arc<JevEngine> {
+    Arc::new(JevEngine::new(jev, globais, "jev-latest"))
 }
 
 /// Aceite 1: três gates ligados geram **uma** requisição, e a resposta é distribuída certo.
@@ -58,26 +58,26 @@ async fn tres_gates_ligados_geram_uma_requisicao_e_distribuem_as_respostas() {
     ])));
     let avaliador = motor(Arc::clone(&jev), gates(true, true, true, false));
 
-    let resultado = avaliador.avaliar(estado(), None).await;
+    let resultado = avaliador.evaluate(estado(), None).await;
 
     assert_eq!(jev.chamadas(), 1, "o lote é um pedido só");
     let pedido = &jev.pedidos()[0];
     assert_eq!(pedido.perguntas.len(), 3, "três perguntas no mesmo pedido");
     assert_eq!(pedido.modelo, "jev-latest");
-    assert_eq!(resultado.chamada.perguntas, 3);
-    assert_eq!(resultado.chamada.tokens, 12);
-    assert!(!resultado.falhou());
+    assert_eq!(resultado.call.questions, 3);
+    assert_eq!(resultado.call.tokens, 12);
+    assert!(!resultado.failed());
 
-    assert_eq!(resultado.escolha(IdGate::G1), Some(G1_CONTINUE));
-    assert_eq!(resultado.escolha(IdGate::G2), Some(G2_PROCESS));
-    assert_eq!(resultado.escolha(IdGate::G3), Some(G3_BASE));
+    assert_eq!(resultado.choice(IdGate::G1), Some(G1_CONTINUE));
+    assert_eq!(resultado.choice(IdGate::G2), Some(G2_PROCESS));
+    assert_eq!(resultado.choice(IdGate::G3), Some(G3_BASE));
     assert!(
-        resultado.decisao(IdGate::G4).is_none(),
+        resultado.decision(IdGate::G4).is_none(),
         "G4 desligado não pergunta"
     );
     assert!(
         resultado
-            .decisoes
+            .decisions
             .iter()
             .all(|decisao| decisao.origin == DecisionOrigin::Jev)
     );
@@ -91,7 +91,7 @@ async fn o_pedido_leva_o_estado_da_conversa() {
         G1_CONTINUE,
     )])));
     let avaliador = motor(Arc::clone(&jev), gates(true, false, false, false));
-    avaliador.avaliar(estado(), None).await;
+    avaliador.evaluate(estado(), None).await;
 
     let enviado = &jev.pedidos()[0].estado;
     assert_eq!(enviado["canal"], "cli");
@@ -109,11 +109,11 @@ async fn sem_gate_ligado_nenhuma_pergunta_e_enviada() {
     let jev = Arc::new(JevFalso::com_escolhas(BTreeMap::new()));
     let avaliador = motor(Arc::clone(&jev), JevGates::default());
 
-    let resultado = avaliador.avaliar(estado(), None).await;
+    let resultado = avaliador.evaluate(estado(), None).await;
 
     assert_eq!(jev.chamadas(), 0);
-    assert!(resultado.decisoes.is_empty());
-    assert!(!resultado.falhou());
+    assert!(resultado.decisions.is_empty());
+    assert!(!resultado.failed());
 }
 
 /// Aceite: cache evita a mesma pergunta no mesmo estado.
@@ -125,17 +125,17 @@ async fn cache_evita_pergunta_repetida_no_mesmo_estado() {
     )])));
     let avaliador = motor(Arc::clone(&jev), gates(true, false, false, false));
 
-    let primeiro = avaliador.avaliar(estado(), None).await;
-    let segundo = avaliador.avaliar(estado(), None).await;
+    let primeiro = avaliador.evaluate(estado(), None).await;
+    let segundo = avaliador.evaluate(estado(), None).await;
 
     assert_eq!(jev.chamadas(), 1, "a segunda vez veio do cache");
-    assert_eq!(primeiro.escolha(IdGate::G1), Some(G1_TRANSFER));
-    assert_eq!(segundo.escolha(IdGate::G1), Some(G1_TRANSFER));
+    assert_eq!(primeiro.choice(IdGate::G1), Some(G1_TRANSFER));
+    assert_eq!(segundo.choice(IdGate::G1), Some(G1_TRANSFER));
     assert_eq!(
-        segundo.decisao(IdGate::G1).unwrap().origin,
+        segundo.decision(IdGate::G1).unwrap().origin,
         DecisionOrigin::Cache
     );
-    assert_eq!(segundo.chamada.decididas_por_cache, 1);
+    assert_eq!(segundo.call.decided_by_cache, 1);
 }
 
 /// Estado diferente não reaproveita a decisão.
@@ -147,9 +147,9 @@ async fn estado_diferente_nao_reaproveita_a_decisao() {
     )])));
     let avaliador = motor(Arc::clone(&jev), gates(true, false, false, false));
 
-    avaliador.avaliar(estado(), None).await;
+    avaliador.evaluate(estado(), None).await;
     let outro = estado().with_messages([JevMessage::from_customer("quero falar com um atendente")]);
-    avaliador.avaliar(outro, None).await;
+    avaliador.evaluate(outro, None).await;
 
     assert_eq!(jev.chamadas(), 2);
 }
@@ -163,23 +163,23 @@ async fn falha_do_jev_leva_todos_os_gates_ao_fallback() {
     }));
     let avaliador = motor(Arc::clone(&jev), gates(true, true, false, false));
 
-    let resultado = avaliador.avaliar(estado(), None).await;
+    let resultado = avaliador.evaluate(estado(), None).await;
 
-    assert!(resultado.falhou());
+    assert!(resultado.failed());
     assert_eq!(
-        resultado.chamada.falha.as_deref(),
+        resultado.call.failure.as_deref(),
         Some("o Jev respondeu 503 (Service Unavailable)")
     );
-    assert_eq!(resultado.decisoes.len(), 2);
+    assert_eq!(resultado.decisions.len(), 2);
     assert!(
         resultado
-            .decisoes
+            .decisions
             .iter()
             .all(|decisao| decisao.origin == DecisionOrigin::Fallback)
     );
     // Fallback é o comportamento sem o Jev, não uma escolha inventada.
-    assert_eq!(resultado.escolha(IdGate::G1), Some(G1_CONTINUE));
-    assert!(resultado.escolha_confiavel(IdGate::G1).is_none());
+    assert_eq!(resultado.choice(IdGate::G1), Some(G1_CONTINUE));
+    assert!(resultado.reliable_choice(IdGate::G1).is_none());
 }
 
 /// Prazo do lote estourado também cai no fallback, sem travar o chamador.
@@ -190,30 +190,30 @@ async fn prazo_do_lote_estourado_cai_no_fallback() {
             .com_atraso(Duration::from_secs(5)),
     );
     let avaliador = Arc::new(
-        MotorJev::novo(
+        JevEngine::new(
             Arc::clone(&jev) as Arc<dyn poph_jev::TransporteJev>,
             gates(true, false, false, false),
             "jev-latest",
         )
-        .com_opcoes(OpcoesJev {
-            tempo_maximo: Duration::from_millis(200),
-            ..OpcoesJev::default()
+        .with_options(JevOptions {
+            batch_timeout: Duration::from_millis(200),
+            ..JevOptions::default()
         }),
     );
 
-    let resultado = avaliador.avaliar(estado(), None).await;
+    let resultado = avaliador.evaluate(estado(), None).await;
 
-    assert!(resultado.falhou());
+    assert!(resultado.failed());
     assert!(
         resultado
-            .chamada
-            .falha
+            .call
+            .failure
             .as_deref()
             .unwrap_or_default()
             .contains("não respondeu")
     );
     assert_eq!(
-        resultado.decisao(IdGate::G1).unwrap().origin,
+        resultado.decision(IdGate::G1).unwrap().origin,
         DecisionOrigin::Fallback
     );
 }
@@ -241,8 +241,8 @@ async fn resposta_ambigua_cai_no_fallback_com_o_motivo() {
     }));
     let avaliador = motor(Arc::clone(&jev), gates(true, false, false, false));
 
-    let resultado = avaliador.avaliar(estado(), None).await;
-    let decisao = resultado.decisao(IdGate::G1).expect("decisão do G1");
+    let resultado = avaliador.evaluate(estado(), None).await;
+    let decisao = resultado.decision(IdGate::G1).expect("decisão do G1");
 
     assert_eq!(decisao.origin, DecisionOrigin::Fallback);
     assert!(
@@ -283,8 +283,8 @@ async fn confianca_abaixo_do_limiar_e_abstencao() {
     }));
     let avaliador = motor(Arc::clone(&jev), gates(true, false, false, false));
 
-    let resultado = avaliador.avaliar(estado(), None).await;
-    let decisao = resultado.decisao(IdGate::G1).unwrap();
+    let resultado = avaliador.evaluate(estado(), None).await;
+    let decisao = resultado.decision(IdGate::G1).unwrap();
 
     assert_eq!(decisao.origin, DecisionOrigin::Fallback);
     assert!(
@@ -294,7 +294,7 @@ async fn confianca_abaixo_do_limiar_e_abstencao() {
             .unwrap_or_default()
             .contains("confiança 0.55")
     );
-    assert_eq!(resultado.escolha(IdGate::G1), Some(G1_CONTINUE));
+    assert_eq!(resultado.choice(IdGate::G1), Some(G1_CONTINUE));
 }
 
 /// Gate que não se aplica ao estado fica de fora do pedido (agente sem transferência, G1 não pergunta).
@@ -307,10 +307,10 @@ async fn gate_que_nao_se_aplica_nao_e_perguntado() {
     let avaliador = motor(Arc::clone(&jev), gates(true, false, false, false));
     let sem_handoff = estado().with_handoff(Vec::new(), false);
 
-    let resultado = avaliador.avaliar(sem_handoff, None).await;
+    let resultado = avaliador.evaluate(sem_handoff, None).await;
 
     assert_eq!(jev.chamadas(), 0);
-    assert!(resultado.decisoes.is_empty());
+    assert!(resultado.decisions.is_empty());
 }
 
 /// Ajuste do agente sobre a configuração global: só o que ele declara muda.
@@ -320,7 +320,7 @@ async fn ajuste_do_agente_sobrepoe_so_o_que_declara() {
     let avaliador = motor(Arc::clone(&jev), gates(true, true, false, false));
 
     let ajuste = GateOverrides::from_json(r#"{"gates": {"g1": false}}"#).expect("ajuste do agente");
-    let efetivos = avaliador.gates_efetivos(Some(ajuste));
+    let efetivos = avaliador.effective_gates(Some(ajuste));
 
     assert!(!efetivos.g1, "o agente desligou o G1");
     assert!(efetivos.g2, "o que ele não declarou herda a global");
@@ -329,7 +329,7 @@ async fn ajuste_do_agente_sobrepoe_so_o_que_declara() {
     // `{"ativo": false}` desliga tudo no agente.
     let desligado = GateOverrides::from_json(r#"{"ativo": false}"#).unwrap();
     assert_eq!(
-        avaliador.gates_efetivos(Some(desligado)),
+        avaliador.effective_gates(Some(desligado)),
         JevGates::default()
     );
 }
@@ -343,9 +343,9 @@ async fn dois_gates_no_mesmo_pedido_e_uma_chamada() {
     ])));
     let avaliador = motor(Arc::clone(&jev), gates(true, false, true, false));
 
-    let resultado = avaliador.avaliar(estado(), None).await;
+    let resultado = avaliador.evaluate(estado(), None).await;
 
     assert_eq!(jev.chamadas(), 1);
     assert_eq!(jev.pedidos()[0].perguntas.len(), 2);
-    assert_eq!(resultado.escolha(IdGate::G3), Some(G3_NOTHING));
+    assert_eq!(resultado.choice(IdGate::G3), Some(G3_NOTHING));
 }

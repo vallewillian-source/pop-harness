@@ -10,8 +10,8 @@
 use std::collections::BTreeMap;
 
 use poph_jev::{
-    AvaliadorGates, BatchResponse, DecisionOrigin, G4, Gate, IdGate, JevFalso, JevMessage,
-    JevResponse, JevState, MotorJev, Pedido, eval::ajuste_de_gate, match_candidate,
+    BatchResponse, DecisionOrigin, G4, Gate, GateEvaluator, IdGate, JevEngine, JevFalso,
+    JevMessage, JevResponse, JevState, Pedido, eval::ajuste_de_gate, match_candidate,
 };
 
 fn estado(departamentos: &[&str], texto: &str) -> JevState {
@@ -192,9 +192,9 @@ async fn lote_do_g4_e_o_fallback_preserva_a_escolha_crua() {
             ..BatchResponse::default()
         })
     }));
-    let motor = MotorJev::novo(jev, poph_types::JevGates::default(), "jev-latest");
+    let motor = JevEngine::new(jev, poph_types::JevGates::default(), "jev-latest");
     let resultado = motor
-        .avaliar(
+        .evaluate(
             estado(
                 &["Comercial", "Suporte", "Financeiro"],
                 "quero o preço do produto",
@@ -203,13 +203,13 @@ async fn lote_do_g4_e_o_fallback_preserva_a_escolha_crua() {
         )
         .await;
 
-    let decisao = resultado.decisao(IdGate::G4).expect("o G4 rodou");
+    let decisao = resultado.decision(IdGate::G4).expect("o G4 rodou");
     assert_eq!(decisao.choice, None);
     assert_eq!(decisao.origin, DecisionOrigin::Fallback);
     // O que o modelo respondeu fica registrado, mesmo recusado.
     assert_eq!(
         resultado
-            .resposta(IdGate::G4)
+            .response(IdGate::G4)
             .and_then(|bruta| bruta.choice.as_deref()),
         Some("Marketing")
     );
@@ -222,12 +222,12 @@ async fn gate_desligado_nao_decide_nada() {
         IdGate::G4.question_id().to_owned(),
         "Suporte".to_owned(),
     )])));
-    let motor = MotorJev::novo(jev, poph_types::JevGates::default(), "jev-latest");
+    let motor = JevEngine::new(jev, poph_types::JevGates::default(), "jev-latest");
     let resultado = motor
-        .avaliar(
+        .evaluate(
             estado(&["Comercial", "Suporte"], "chegou quebrado"),
             Some(poph_jev::GateOverrides::default()),
         )
         .await;
-    assert!(resultado.decisao(IdGate::G4).is_none());
+    assert!(resultado.decision(IdGate::G4).is_none());
 }

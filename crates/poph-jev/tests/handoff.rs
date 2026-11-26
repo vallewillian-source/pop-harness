@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use poph_jev::{
-    AvaliadorGates, BatchResponse, JevError, JevFalso, JevMessage, JevResponse, JevState, MotorJev,
+    BatchResponse, GateEvaluator, JevEngine, JevError, JevFalso, JevMessage, JevResponse, JevState,
     Orientacao, RISCO_ANIMAL, RISCO_INGESTAO, RISCO_NENHUM, RISCO_OUTRO, RISCO_PERGUNTA_ID,
     ResultadoOrientacao, TIPOS_DE_RISCO,
 };
@@ -38,8 +38,8 @@ fn estado() -> JevState {
         .with_handoff(Vec::new(), true)
 }
 
-fn motor(jev: Arc<JevFalso>) -> MotorJev {
-    MotorJev::novo(
+fn motor(jev: Arc<JevFalso>) -> JevEngine {
+    JevEngine::new(
         jev,
         JevGates {
             g1: true,
@@ -118,7 +118,7 @@ async fn pergunta_de_risco_nao_entra_no_lote() {
     let jev = jev_do_risco(RISCO_INGESTAO, 0.92);
     let avaliador = motor(Arc::clone(&jev));
 
-    let lote = avaliador.avaliar(estado(), None).await;
+    let lote = avaliador.evaluate(estado(), None).await;
     let pedidos = jev.pedidos();
     assert_eq!(pedidos.len(), 1, "o lote é uma chamada só");
     assert!(pedidos[0].perguntas.contains_key("g1_transferir"));
@@ -127,7 +127,7 @@ async fn pergunta_de_risco_nao_entra_no_lote() {
         "a pergunta de risco não pode ir no lote do turno"
     );
     // Só G1 ligado e sem resposta roteirizada para ele: o gate absteve.
-    assert!(lote.falhou() || lote.decisao(poph_jev::IdGate::G1).is_some());
+    assert!(lote.failed() || lote.decision(poph_jev::IdGate::G1).is_some());
 
     let risco = avaliador.orientar(estado(), Duration::from_secs(1)).await;
     assert!(risco.consultado);

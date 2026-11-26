@@ -5,8 +5,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use poph_jev::{
-    CasoRotulado, ErroConjunto, G1_CONTINUE, G1_TRANSFER, IdGate, JevFalso, JevMessage, JevState,
-    MotorJev, avaliar_conjunto, ler_conjunto,
+    CasoRotulado, ErroConjunto, G1_CONTINUE, G1_TRANSFER, IdGate, JevEngine, JevFalso, JevMessage,
+    JevState, avaliar_conjunto, ler_conjunto,
 };
 use poph_types::JevGates;
 
@@ -65,7 +65,7 @@ fn jev_de_teste() -> Arc<JevFalso> {
 #[tokio::test]
 async fn mede_acerto_abstencao_e_latencia() {
     let jev = jev_de_teste();
-    let motor = Arc::new(MotorJev::novo(jev, globais(true), "jev-latest"));
+    let motor = Arc::new(JevEngine::new(jev, globais(true), "jev-latest"));
     let casos = vec![
         caso("quero falar com um atendente", G1_TRANSFER),
         caso("qual o prazo de entrega?", G1_CONTINUE),
@@ -91,7 +91,7 @@ async fn mede_acerto_abstencao_e_latencia() {
 #[tokio::test]
 async fn gate_que_nao_se_aplica_conta_como_nao_aplicavel() {
     let jev = jev_de_teste();
-    let motor = Arc::new(MotorJev::novo(
+    let motor = Arc::new(JevEngine::new(
         Arc::clone(&jev) as Arc<dyn poph_jev::TransporteJev>,
         globais(false),
         "jev-latest",
@@ -114,7 +114,7 @@ async fn falha_da_chamada_conta_como_abstencao() {
         code: 500,
         motivo: "Internal Server Error".to_owned(),
     }));
-    let motor = Arc::new(MotorJev::novo(jev, globais(true), "jev-latest"));
+    let motor = Arc::new(JevEngine::new(jev, globais(true), "jev-latest"));
     let casos = vec![caso("quero falar com um atendente", G1_TRANSFER)];
 
     let relatorio = avaliar_conjunto(motor.as_ref(), IdGate::G1, &casos).await;
@@ -128,14 +128,14 @@ async fn falha_da_chamada_conta_como_abstencao() {
 async fn cache_do_motor_aparece_como_zero_de_latencia() {
     let jev = jev_de_teste();
     let motor = Arc::new(
-        MotorJev::novo(
+        JevEngine::new(
             Arc::clone(&jev) as Arc<dyn poph_jev::TransporteJev>,
             globais(true),
             "jev-latest",
         )
-        .com_opcoes(poph_jev::OpcoesJev {
-            tempo_maximo: Duration::from_secs(2),
-            ..poph_jev::OpcoesJev::default()
+        .with_options(poph_jev::JevOptions {
+            batch_timeout: Duration::from_secs(2),
+            ..poph_jev::JevOptions::default()
         }),
     );
     let casos = vec![
@@ -175,7 +175,7 @@ async fn abstencao_mostra_a_escolha_do_jev_e_o_motivo() {
             ..poph_jev::BatchResponse::default()
         })
     }));
-    let motor = Arc::new(MotorJev::novo(jev, globais(true), "jev-latest"));
+    let motor = Arc::new(JevEngine::new(jev, globais(true), "jev-latest"));
     let casos = vec![caso("quero falar com um atendente", G1_TRANSFER)];
 
     let relatorio = avaliar_conjunto(motor.as_ref(), IdGate::G1, &casos).await;
@@ -245,7 +245,7 @@ async fn usage_da_chamada_aparece_no_relatorio() {
             },
         })
     }));
-    let motor = Arc::new(MotorJev::novo(jev, globais(true), "jev-latest"));
+    let motor = Arc::new(JevEngine::new(jev, globais(true), "jev-latest"));
     let casos = vec![
         caso("qual o prazo?", G1_CONTINUE),
         caso("e o frete?", G1_CONTINUE),
@@ -272,7 +272,7 @@ async fn usage_da_chamada_aparece_no_relatorio() {
 #[tokio::test]
 async fn sem_usage_o_relatorio_diz_nao_informado() {
     let jev = jev_de_teste();
-    let motor = Arc::new(MotorJev::novo(jev, globais(true), "jev-latest"));
+    let motor = Arc::new(JevEngine::new(jev, globais(true), "jev-latest"));
     let casos = vec![caso("qual o prazo?", G1_CONTINUE)];
 
     let relatorio = avaliar_conjunto(motor.as_ref(), IdGate::G1, &casos).await;
@@ -359,7 +359,7 @@ async fn categoria_e_justificativa_do_conjunto_aparecem_no_relatorio() {
     // Conjunto antigo, sem categoria, continua valendo.
     assert_eq!(casos[1].categoria, None);
 
-    let motor = Arc::new(MotorJev::novo(jev_de_teste(), globais(true), "jev-latest"));
+    let motor = Arc::new(JevEngine::new(jev_de_teste(), globais(true), "jev-latest"));
     let relatorio = avaliar_conjunto(motor.as_ref(), IdGate::G1, &casos).await;
     assert_eq!(relatorio.acertos, 2);
     assert_eq!(

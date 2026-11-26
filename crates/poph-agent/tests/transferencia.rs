@@ -22,7 +22,7 @@ use poph_agent::turno::{
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, Usage};
 use poph_jev::{
-    BatchResponse, G1_CONTINUE, G1_TRANSFER, IdGate, JevFalso, JevResponse, MotorJev, Orientacao,
+    BatchResponse, G1_CONTINUE, G1_TRANSFER, IdGate, JevEngine, JevFalso, JevResponse, Orientacao,
     Pedido, RISCO_ANIMAL, RISCO_INGESTAO, RISCO_NENHUM, RISCO_OUTRO, RISCO_PERGUNTA_ID,
 };
 use poph_store::{
@@ -205,7 +205,7 @@ impl Cenario {
             .expect("ajusta o jev_json do agente");
     }
 
-    fn motor(&self, jev: Option<Arc<MotorJev>>, orientacao: Orientacao) -> Motor {
+    fn motor(&self, jev: Option<Arc<JevEngine>>, orientacao: Orientacao) -> Motor {
         let config = ConfigQuente::nova(
             Arc::clone(&self.store),
             OpcoesConfigQuente::default(),
@@ -365,8 +365,8 @@ fn jev(decisao: &'static str, confianca: f64, risco: Option<(&'static str, f64)>
     }))
 }
 
-fn motor_jev(jev: Arc<JevFalso>) -> Arc<MotorJev> {
-    Arc::new(MotorJev::novo(jev, so_g1(), "jev-latest"))
+fn motor_jev(jev: Arc<JevFalso>) -> Arc<JevEngine> {
+    Arc::new(JevEngine::new(jev, so_g1(), "jev-latest"))
 }
 
 // ───────────────────────────── aceite: transfere de verdade ─────────────────────────────
@@ -703,7 +703,7 @@ async fn g1_desligado_nao_transfere() {
     let cenario = Cenario::novo("g1-desligado", true);
     let conversa = cenario.conversa();
     let jev = jev(G1_TRANSFER, 0.99, Some((RISCO_INGESTAO, 0.99)));
-    let avaliador = Arc::new(MotorJev::novo(jev, JevGates::default(), "jev-latest"));
+    let avaliador = Arc::new(JevEngine::new(jev, JevGates::default(), "jev-latest"));
     let motor = cenario.motor(Some(avaliador), Orientacao::default());
 
     let gatilho = cenario.falar(conversa, "quero falar com um atendente humano");
@@ -716,7 +716,7 @@ async fn g1_desligado_nao_transfere() {
         poph_store::ConversationStatus::Open
     );
     assert_eq!(cenario.provedor.received().len(), 1);
-    assert!(resumo.jev.is_none() || resumo.jev.as_ref().unwrap().decisoes.is_empty());
+    assert!(resumo.jev.is_none() || resumo.jev.as_ref().unwrap().decisions.is_empty());
 }
 
 /// Agente com handoff desligado: o G1 nem se aplica (regra do POP Atende).
@@ -755,10 +755,7 @@ async fn g1_continuar_responde_normalmente() {
         poph_store::ConversationStatus::Open
     );
     assert_eq!(
-        resumo
-            .jev
-            .as_ref()
-            .and_then(|item| item.escolha(IdGate::G1)),
+        resumo.jev.as_ref().and_then(|item| item.choice(IdGate::G1)),
         Some(G1_CONTINUE)
     );
     assert_eq!(cenario.provedor.received().len(), 1);

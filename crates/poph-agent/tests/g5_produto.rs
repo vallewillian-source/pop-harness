@@ -32,9 +32,9 @@ use poph_agent::turno::{
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, ToolCall, Usage};
 use poph_jev::{
-    AvaliadorGates, BatchResponse, Decisao, DecisionOrigin, G3_NOTHING, G5_NONE, GateOverrides,
-    IdGate, JevError, JevFalso, JevResponse as RespostaJev, JevState, MotorJev, OpcoesJev,
-    ResultadoJev,
+    BatchResponse, Decisao, DecisionOrigin, G3_NOTHING, G5_NONE, GateEvaluator, GateOverrides,
+    IdGate, JevEngine, JevError, JevFalso, JevOptions, JevResponse as RespostaJev, JevResult,
+    JevState,
 };
 use poph_store::{Direction, NewAgent, NewConversation, NewMessage, NewOrg, Role, Store};
 use poph_types::{
@@ -276,7 +276,7 @@ impl Cenario {
     fn motor(
         &self,
         roteiros: Vec<Script>,
-        jev: Option<Arc<dyn AvaliadorGates>>,
+        jev: Option<Arc<dyn GateEvaluator>>,
     ) -> (Motor, Arc<FakeProvider>) {
         let fake = Arc::new(FakeProvider::with_scripts(roteiros));
         let config = ConfigQuente::nova(
@@ -347,8 +347,8 @@ fn so_g5() -> JevGates {
     }
 }
 
-fn motor_jev(jev: Arc<JevFalso>, gates: JevGates) -> Arc<dyn AvaliadorGates> {
-    Arc::new(MotorJev::novo(jev, gates, "jev-latest"))
+fn motor_jev(jev: Arc<JevFalso>, gates: JevGates) -> Arc<dyn GateEvaluator> {
+    Arc::new(JevEngine::new(jev, gates, "jev-latest"))
 }
 
 fn escolhas(itens: &[(&str, &str)]) -> BTreeMap<String, String> {
@@ -475,23 +475,23 @@ struct JevInventor {
     produto: String,
 }
 
-impl AvaliadorGates for JevInventor {
-    fn gates_efetivos(&self, _ajuste: Option<GateOverrides>) -> JevGates {
+impl GateEvaluator for JevInventor {
+    fn effective_gates(&self, _ajuste: Option<GateOverrides>) -> JevGates {
         JevGates {
             g5: true,
             ..JevGates::default()
         }
     }
 
-    fn avaliar<'a>(
+    fn evaluate<'a>(
         &'a self,
         _estado: JevState,
         _ajuste: Option<GateOverrides>,
-    ) -> futures::future::BoxFuture<'a, ResultadoJev> {
+    ) -> futures::future::BoxFuture<'a, JevResult> {
         let produto = self.produto.clone();
         Box::pin(async move {
-            ResultadoJev {
-                decisoes: vec![Decisao {
+            JevResult {
+                decisions: vec![Decisao {
                     gate: IdGate::G5,
                     choice: Some(produto),
                     origin: DecisionOrigin::Jev,
@@ -501,7 +501,7 @@ impl AvaliadorGates for JevInventor {
                     ms: 1,
                     tokens: 1,
                 }],
-                ..ResultadoJev::default()
+                ..JevResult::default()
             }
         })
     }
@@ -511,7 +511,7 @@ impl AvaliadorGates for JevInventor {
 #[tokio::test]
 async fn g5_id_fora_dos_candidatos_nunca_e_injetado_pelo_codigo() {
     let cenario = Cenario::novo("fora-candidatos", false);
-    let jev: Arc<dyn AvaliadorGates> = Arc::new(JevInventor {
+    let jev: Arc<dyn GateEvaluator> = Arc::new(JevInventor {
         produto: "p-de-outra-org".to_owned(),
     });
     let (motor, provedor) = cenario.motor(
@@ -656,10 +656,10 @@ async fn g5_jev_que_nao_responde_em_prazo_mantem_o_comportamento_de_hoje() {
     // Atraso maior que o prazo do lote: `avaliar_agora` desiste e cai no fallback de cada gate.
     let jev =
         Arc::new(JevFalso::com_escolhas(escolhas(&[])).com_atraso(Duration::from_millis(200)));
-    let avaliador: Arc<dyn AvaliadorGates> = Arc::new(
-        MotorJev::novo(jev, so_g5(), "jev-latest").com_opcoes(OpcoesJev {
-            tempo_maximo: Duration::from_millis(30),
-            ..OpcoesJev::default()
+    let avaliador: Arc<dyn GateEvaluator> = Arc::new(
+        JevEngine::new(jev, so_g5(), "jev-latest").with_options(JevOptions {
+            batch_timeout: Duration::from_millis(30),
+            ..JevOptions::default()
         }),
     );
     let (motor, provedor) = cenario.motor(
@@ -678,10 +678,10 @@ async fn g5_jev_que_nao_responde_em_prazo_mantem_o_comportamento_de_hoje() {
         .jev
         .expect("o resultado do G5 fica registrado mesmo no fallback");
     assert!(
-        jev.falhou(),
+        jev.failed(),
         "o prazo estourado aparece no relato da chamada"
     );
-    assert_eq!(jev.escolha_confiavel(IdGate::G5), None);
+    assert_eq!(jev.reliable_choice(IdGate::G5), None);
 }
 
 /// Busca sem candidatos não pergunta o G5 (nem gasta chamada).
@@ -726,7 +726,7 @@ async fn g5_desligado_nao_faz_busca_de_produto_nem_pergunta() {
             || resumo
                 .jev
                 .as_ref()
-                .is_some_and(|jev| jev.decisoes.is_empty())
+                .is_some_and(|jev| jev.decisions.is_empty())
     );
     assert_eq!(
         cenario.catalogo_buscas(),

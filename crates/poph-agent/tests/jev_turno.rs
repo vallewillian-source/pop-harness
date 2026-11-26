@@ -19,8 +19,8 @@ use poph_agent::turno::{
 };
 use poph_core::llm::{FakeProvider, Script};
 use poph_jev::{
-    AvaliadorGates, G1_CONTINUE, G1_TRANSFER, G4, IdGate, JevError, JevFalso, JevMessage, JevState,
-    MotorJev,
+    G1_CONTINUE, G1_TRANSFER, G4, GateEvaluator, IdGate, JevEngine, JevError, JevFalso, JevMessage,
+    JevState,
 };
 use poph_store::{
     AgentChange, Direction, NewAgent, NewConversation, NewDepartment, NewMessage, NewOrg, Role,
@@ -180,7 +180,7 @@ impl Cenario {
             .expect("ajusta o jev_json do agente");
     }
 
-    fn motor(&self, globais: JevGates, jev: Option<Arc<MotorJev>>) -> Motor {
+    fn motor(&self, globais: JevGates, jev: Option<Arc<JevEngine>>) -> Motor {
         let config = ConfigQuente::nova(
             Arc::clone(&self.store),
             OpcoesConfigQuente::default(),
@@ -267,8 +267,8 @@ fn escolhas(itens: &[(&str, &str)]) -> BTreeMap<String, String> {
         .collect()
 }
 
-fn motor_jev(jev: Arc<JevFalso>, globais: JevGates) -> Arc<MotorJev> {
-    Arc::new(MotorJev::novo(jev, globais, "jev-latest"))
+fn motor_jev(jev: Arc<JevFalso>, globais: JevGates) -> Arc<JevEngine> {
+    Arc::new(JevEngine::new(jev, globais, "jev-latest"))
 }
 
 /// Aceite: a decisão do gate é consultada uma vez e gravada em `turns.jev_json`.
@@ -288,9 +288,9 @@ async fn turno_grava_a_decisao_do_jev_no_registro() {
     assert_eq!(resumo.estado, TurnState::Completed);
     assert_eq!(resumo.texto, "Olá! Como posso ajudar?");
     let jev = resumo.jev.expect("o turno registra o Jev");
-    assert_eq!(jev.escolha(IdGate::G1), Some(G1_CONTINUE));
-    assert_eq!(jev.chamada.perguntas, 1);
-    assert_eq!(jev.chamada.decididas_por_cache, 0);
+    assert_eq!(jev.choice(IdGate::G1), Some(G1_CONTINUE));
+    assert_eq!(jev.call.questions, 1);
+    assert_eq!(jev.call.decided_by_cache, 0);
 
     let turno = cenario.ultimo_turno(conversa);
     let gravado: serde_json::Value =
@@ -314,7 +314,7 @@ async fn estado_do_turno_leva_conversa_e_politica() {
     let gatilho = cenario.falar(conversa, "quero falar com um atendente agora");
     let resumo = cenario.turno(&motor, conversa, gatilho).await;
     assert_eq!(
-        resumo.jev.as_ref().and_then(|jev| jev.escolha(IdGate::G1)),
+        resumo.jev.as_ref().and_then(|jev| jev.choice(IdGate::G1)),
         Some(G1_TRANSFER)
     );
 
@@ -385,8 +385,8 @@ async fn falha_do_jev_nao_derruba_o_turno() {
     assert_eq!(resumo.estado, TurnState::Completed);
     assert_eq!(resumo.texto, "Olá! Como posso ajudar?");
     let jev = resumo.jev.expect("o turno registra a tentativa");
-    assert!(jev.falhou());
-    assert_eq!(jev.escolha(IdGate::G1), Some(G1_CONTINUE), "fallback do G1");
+    assert!(jev.failed());
+    assert_eq!(jev.choice(IdGate::G1), Some(G1_CONTINUE), "fallback do G1");
 
     let turno = cenario.ultimo_turno(conversa);
     let gravado: serde_json::Value = serde_json::from_str(&turno.jev_json).expect("JSON");
@@ -420,7 +420,7 @@ async fn g4_leva_os_departamentos_ativos_da_org() {
     let resumo = cenario.turno(&motor, conversa, gatilho).await;
 
     assert_eq!(
-        resumo.jev.as_ref().and_then(|jev| jev.escolha(IdGate::G4)),
+        resumo.jev.as_ref().and_then(|jev| jev.choice(IdGate::G4)),
         Some("Suporte")
     );
     let pedido = &jev.pedidos()[0];
@@ -478,11 +478,11 @@ async fn g4_sem_departamentos_nao_pergunta() {
     );
 
     let resultado = motor
-        .avaliar(estado, Some(poph_jev::eval::ajuste_de_gate(IdGate::G4)))
+        .evaluate(estado, Some(poph_jev::eval::ajuste_de_gate(IdGate::G4)))
         .await;
 
     assert_eq!(jev.chamadas(), 0);
-    assert!(resultado.decisoes.is_empty());
+    assert!(resultado.decisions.is_empty());
     let _ = G4;
 }
 

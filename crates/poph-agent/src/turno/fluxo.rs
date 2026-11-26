@@ -33,7 +33,7 @@ use poph_fluxos::ir::Ir;
 use poph_fluxos::motor::{self, Contexto as ContextoDoMotor, Estado as EstadoDoMotor};
 use poph_fluxos::prompt::renderizar_bloco;
 use poph_fluxos::regras::{Avaliador, Dados, LimitesRegra};
-use poph_jev::{G9_NONE, IdGate, JevFlow, ResultadoJev};
+use poph_jev::{G9_NONE, IdGate, JevFlow, JevResult};
 use poph_store::{
     Execution, ExecutionStart, Ficha, FlowRevision, Fluxo, JevDecision, Status, Store, StoreError,
     TransitionEffect,
@@ -668,14 +668,14 @@ pub(crate) enum MotivoSemInicio {
 /// `g9_ligado` separa as duas causas de "sem resposta": o gate estava fora (desligado, acima do teto
 /// de 20 fluxos) ou o lote falhou. Sem essa distinção, uma falha do Jev na pergunta do G5 contaria
 /// como falha do G9.
-pub(crate) fn motivo_sem_inicio(jev: Option<&ResultadoJev>, g9_ligado: bool) -> MotivoSemInicio {
+pub(crate) fn motivo_sem_inicio(jev: Option<&JevResult>, g9_ligado: bool) -> MotivoSemInicio {
     let Some(jev) = jev else {
         return MotivoSemInicio::NaoPerguntado;
     };
-    match jev.resposta(IdGate::G9) {
+    match jev.response(IdGate::G9) {
         Some(bruta) if bruta.choice.as_deref() == Some(G9_NONE) => MotivoSemInicio::Nenhum,
         Some(_) => MotivoSemInicio::AbaixoDoLimiar,
-        None if g9_ligado && jev.falhou() => MotivoSemInicio::Falhou,
+        None if g9_ligado && jev.failed() => MotivoSemInicio::Falhou,
         None => MotivoSemInicio::NaoPerguntado,
     }
 }
@@ -704,7 +704,7 @@ pub(crate) fn decidir(
     store: &Store,
     org: OrgId,
     preparo: Option<&Preparo>,
-    jev: Option<&ResultadoJev>,
+    jev: Option<&JevResult>,
     g9_ligado: bool,
     ferramenta_de_inicio: bool,
 ) -> DesfechoDoFluxo {
@@ -740,9 +740,9 @@ pub(crate) fn decidir(
     }
 
     // 2. Escolha confiável do G9: o código valida e inicia.
-    if let Some(slug) = jev.and_then(|resultado| resultado.escolha_confiavel(IdGate::G9)) {
+    if let Some(slug) = jev.and_then(|resultado| resultado.reliable_choice(IdGate::G9)) {
         let confianca = jev
-            .and_then(|resultado| resultado.decisao(IdGate::G9))
+            .and_then(|resultado| resultado.decision(IdGate::G9))
             .map(|decisao| decisao.confidence);
         let decisao = JevDecision {
             choice: slug,

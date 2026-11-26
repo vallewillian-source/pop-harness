@@ -16,9 +16,9 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use poph_jev::{
-    AvaliadorGates, DecisionOrigin, G1_CONTINUE, G3_BASE, G9, G9_NONE, Gate, GateOverrides, IdGate,
-    JevFalso, JevFlow, JevMessage, JevResponse, JevState, MAX_RELEASED_FLOWS, MAX_TRIGGER_CHARS,
-    MotorJev, Thresholds, flow_policy, ler_conjunto,
+    DecisionOrigin, G1_CONTINUE, G3_BASE, G9, G9_NONE, Gate, GateEvaluator, GateOverrides, IdGate,
+    JevEngine, JevFalso, JevFlow, JevMessage, JevResponse, JevState, MAX_RELEASED_FLOWS,
+    MAX_TRIGGER_CHARS, Thresholds, flow_policy, ler_conjunto,
 };
 use poph_types::JevGates;
 
@@ -216,10 +216,10 @@ async fn mais_de_vinte_fluxos_deixa_o_gate_inaplicavel_com_aviso() {
 
     // E o motor não manda pergunta nenhuma com só o G9 ligado.
     let jev = Arc::new(JevFalso::com_escolhas(BTreeMap::new()));
-    let motor = MotorJev::novo(jev.clone(), gates(false, false, true), "jev-latest");
-    let resultado = motor.avaliar(estado, None).await;
+    let motor = JevEngine::new(jev.clone(), gates(false, false, true), "jev-latest");
+    let resultado = motor.evaluate(estado, None).await;
     assert_eq!(jev.chamadas(), 0, "acima do teto: nenhuma chamada");
-    assert!(resultado.decisao(IdGate::G9).is_none());
+    assert!(resultado.decision(IdGate::G9).is_none());
 }
 
 #[test]
@@ -316,7 +316,7 @@ async fn tres_gates_ligados_com_fluxo_geram_uma_requisicao_so() {
         ("g3_precisa".to_owned(), G3_BASE.to_owned()),
         ("g9_iniciar_fluxo".to_owned(), "agendar_visita".to_owned()),
     ])));
-    let motor = MotorJev::novo(jev.clone(), gates(true, true, true), "jev-latest");
+    let motor = JevEngine::new(jev.clone(), gates(true, true, true), "jev-latest");
 
     let estado = JevState::new("whatsapp")
         .with_messages([
@@ -328,7 +328,7 @@ async fn tres_gates_ligados_com_fluxo_geram_uma_requisicao_so() {
         .with_capabilities(true, true)
         .with_released_flows(fluxos());
 
-    let resultado = motor.avaliar(estado, None).await;
+    let resultado = motor.evaluate(estado, None).await;
 
     assert_eq!(jev.chamadas(), 1, "o lote é um pedido só");
     let pedido = &jev.pedidos()[0];
@@ -343,7 +343,7 @@ async fn tres_gates_ligados_com_fluxo_geram_uma_requisicao_so() {
         pedido.perguntas["g9_iniciar_fluxo"].rubric["segunda_via_fatura"].contains("Quando usar:")
     );
     assert_eq!(
-        resultado.escolha_confiavel(IdGate::G9),
+        resultado.reliable_choice(IdGate::G9),
         Some("agendar_visita")
     );
 }
@@ -354,14 +354,14 @@ async fn sem_fluxo_liberado_o_gate_nao_e_perguntado() {
         "g9_iniciar_fluxo".to_owned(),
         "agendar_visita".to_owned(),
     )])));
-    let motor = MotorJev::novo(jev.clone(), gates(false, false, true), "jev-latest");
+    let motor = JevEngine::new(jev.clone(), gates(false, false, true), "jev-latest");
 
     let estado = JevState::new("whatsapp")
         .with_messages([JevMessage::from_customer("queria marcar uma visita")]);
-    let resultado = motor.avaliar(estado, None).await;
+    let resultado = motor.evaluate(estado, None).await;
 
     assert_eq!(jev.chamadas(), 0, "sem fluxo liberado não custa chamada");
-    assert!(resultado.decisao(IdGate::G9).is_none());
+    assert!(resultado.decision(IdGate::G9).is_none());
 }
 
 #[tokio::test]
@@ -372,21 +372,21 @@ async fn flag_do_agente_e_a_global_governam_a_pergunta() {
     )])));
 
     // Global ligada, agente desliga: não pergunta.
-    let motor = MotorJev::novo(jev.clone(), gates(false, false, true), "jev-latest");
+    let motor = JevEngine::new(jev.clone(), gates(false, false, true), "jev-latest");
     let desligado = GateOverrides::from_json(r#"{"gates": {"g9": false}}"#).expect("ajuste válido");
-    assert!(!motor.gates_efetivos(Some(desligado)).g9);
-    let resultado = motor.avaliar(estado(), Some(desligado)).await;
+    assert!(!motor.effective_gates(Some(desligado)).g9);
+    let resultado = motor.evaluate(estado(), Some(desligado)).await;
     assert_eq!(jev.chamadas(), 0, "flag do agente desliga o G9");
-    assert!(resultado.decisao(IdGate::G9).is_none());
+    assert!(resultado.decision(IdGate::G9).is_none());
 
     // Global desligada, agente liga: pergunta (o agente só ajusta o que declarar).
-    let motor = MotorJev::novo(jev.clone(), gates(false, false, false), "jev-latest");
+    let motor = JevEngine::new(jev.clone(), gates(false, false, false), "jev-latest");
     let ligado = GateOverrides::from_json(r#"{"g9": true}"#).expect("ajuste válido");
-    assert!(motor.gates_efetivos(Some(ligado)).g9);
-    let resultado = motor.avaliar(estado(), Some(ligado)).await;
+    assert!(motor.effective_gates(Some(ligado)).g9);
+    let resultado = motor.evaluate(estado(), Some(ligado)).await;
     assert_eq!(jev.chamadas(), 1);
     assert_eq!(
-        resultado.escolha_confiavel(IdGate::G9),
+        resultado.reliable_choice(IdGate::G9),
         Some("agendar_visita")
     );
 

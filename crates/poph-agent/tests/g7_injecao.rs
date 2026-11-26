@@ -22,8 +22,8 @@ use poph_agent::turno::{
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, Usage};
 use poph_jev::{
-    BatchResponse, G7_ABUSE, G7_DEFAULT_REPLY, G7_INJECTION, JevError, JevFalso,
-    JevResponse as RespostaJev, MotorJev,
+    BatchResponse, G7_ABUSE, G7_DEFAULT_REPLY, G7_INJECTION, JevEngine, JevError, JevFalso,
+    JevResponse as RespostaJev,
 };
 use poph_store::{
     AgentChange, Direction, NewAgent, NewConversation, NewMessage, Page, Role, Store, TurnState,
@@ -190,7 +190,7 @@ impl Cenario {
     fn motor(
         &self,
         roteiros: Vec<Script>,
-        jev: Option<Arc<MotorJev>>,
+        jev: Option<Arc<JevEngine>>,
     ) -> (Motor, Arc<FakeProvider>) {
         let fake = Arc::new(FakeProvider::with_scripts(roteiros));
         let config = ConfigQuente::nova(
@@ -299,8 +299,8 @@ fn so_g7() -> JevGates {
     }
 }
 
-fn motor_jev(jev: Arc<JevFalso>, gates: JevGates) -> Arc<MotorJev> {
-    Arc::new(MotorJev::novo(jev, gates, "jev-latest"))
+fn motor_jev(jev: Arc<JevFalso>, gates: JevGates) -> Arc<JevEngine> {
+    Arc::new(JevEngine::new(jev, gates, "jev-latest"))
 }
 
 fn resposta(escolha: &str, confianca: f64) -> RespostaJev {

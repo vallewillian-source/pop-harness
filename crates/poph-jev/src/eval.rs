@@ -19,7 +19,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::gate::DecisionOrigin;
-use crate::motor::{AvaliadorGates, ResultadoJev};
+use crate::motor::{GateEvaluator, JevResult};
 use crate::state::JevState;
 use crate::types::{IdGate, JevError, UsageTokens};
 
@@ -285,7 +285,7 @@ impl RelatorioEval {
 
 /// Roda o conjunto por um avaliador, com **só** o gate medido ligado.
 pub async fn avaliar_conjunto(
-    avaliador: &dyn AvaliadorGates,
+    avaliador: &dyn GateEvaluator,
     gate: IdGate,
     casos: &[CasoRotulado],
 ) -> RelatorioEval {
@@ -307,21 +307,21 @@ pub async fn avaliar_conjunto(
     for caso in casos {
         // O conjunto pede um gate só: o avaliador é chamado com esse ajuste explícito.
         let ajuste = ajuste_de_gate(gate);
-        let resultado: ResultadoJev = avaliador.avaliar(caso.estado.clone(), Some(ajuste)).await;
-        if resultado.falhou() {
+        let resultado: JevResult = avaliador.evaluate(caso.estado.clone(), Some(ajuste)).await;
+        if resultado.failed() {
             relatorio.falhas_de_chamada += 1;
         }
         // O consumo é somado por execução: chamada que veio do cache não custa nada.
-        relatorio.usage = relatorio.usage.plus(resultado.chamada.usage);
+        relatorio.usage = relatorio.usage.plus(resultado.call.usage);
         // O que o modelo respondeu, independentemente de a decisão ter passado no limiar.
         let escolha_do_jev = resultado
-            .resposta(gate)
+            .response(gate)
             .and_then(|resposta| resposta.choice.clone());
         let motivo = resultado
-            .decisao(gate)
+            .decision(gate)
             .and_then(|decisao| decisao.motivo.clone());
-        let falha = resultado.chamada.falha.clone();
-        let decisao = resultado.decisao(gate);
+        let falha = resultado.call.failure.clone();
+        let decisao = resultado.decision(gate);
         let (obtido, confianca, resultado_texto) = match decisao {
             Some(decisao) if decisao.origin != DecisionOrigin::Fallback => {
                 soma_confianca += decisao.confidence;
@@ -355,7 +355,7 @@ pub async fn avaliar_conjunto(
         };
         relatorio
             .latencias_ms
-            .push(resultado.chamada.ms.max(decisao.map(|d| d.ms).unwrap_or(0)));
+            .push(resultado.call.ms.max(decisao.map(|d| d.ms).unwrap_or(0)));
         relatorio.detalhes.push(DetalheCaso {
             esperado: caso.esperado.clone(),
             obtido,

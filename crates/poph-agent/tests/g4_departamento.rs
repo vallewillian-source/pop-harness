@@ -22,7 +22,7 @@ use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
 use poph_agent::turno::{Entrada, FuturoPausa, Motor, ObservadorNulo, OpcoesTurno, Pausa};
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, Usage};
 use poph_jev::{
-    BatchResponse, G1_TRANSFER, IdGate, JevFalso, JevResponse, MotorJev, Orientacao, Pedido,
+    BatchResponse, G1_TRANSFER, IdGate, JevEngine, JevFalso, JevResponse, Orientacao, Pedido,
 };
 use poph_store::{
     AgentChange, DepartmentChange, Direction, NewAgent, NewConversation, NewDepartment, NewMessage,
@@ -243,7 +243,7 @@ impl Cenario {
             .id
     }
 
-    fn motor(&self, jev: Option<Arc<MotorJev>>) -> Motor {
+    fn motor(&self, jev: Option<Arc<JevEngine>>) -> Motor {
         let config = ConfigQuente::nova(
             Arc::clone(&self.store),
             OpcoesConfigQuente::default(),
@@ -372,13 +372,13 @@ fn jev(departamento: Option<(&'static str, f64)>, veio_o_g4: bool) -> Arc<JevFal
     }))
 }
 
-fn motor_jev(jev: Arc<JevFalso>, com_g4: bool) -> Arc<MotorJev> {
+fn motor_jev(jev: Arc<JevFalso>, com_g4: bool) -> Arc<JevEngine> {
     let gates = JevGates {
         g1: true,
         g4: com_g4,
         ..JevGates::default()
     };
-    Arc::new(MotorJev::novo(jev, gates, "jev-latest"))
+    Arc::new(JevEngine::new(jev, gates, "jev-latest"))
 }
 
 // ───────────────────────────── escolha válida ─────────────────────────────
@@ -600,7 +600,7 @@ async fn jev_fora_do_ar_nao_trava_o_turno() {
         .com_atraso(Duration::from_millis(400)),
     );
     let avaliador = Arc::new(
-        MotorJev::novo(
+        JevEngine::new(
             jev,
             JevGates {
                 g1: true,
@@ -609,9 +609,9 @@ async fn jev_fora_do_ar_nao_trava_o_turno() {
             },
             "jev-latest",
         )
-        .com_opcoes(poph_jev::OpcoesJev {
-            tempo_maximo: Duration::from_millis(50),
-            ..poph_jev::OpcoesJev::default()
+        .with_options(poph_jev::JevOptions {
+            batch_timeout: Duration::from_millis(50),
+            ..poph_jev::JevOptions::default()
         }),
     );
     let motor = cenario.motor(Some(avaliador));

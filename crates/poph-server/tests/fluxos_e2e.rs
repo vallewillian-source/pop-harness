@@ -10,7 +10,7 @@ use poph_agent::turno::{
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, ToolCall, Usage};
 use poph_fluxos::{Limites, compilar};
-use poph_jev::{JevFalso, MotorJev};
+use poph_jev::{JevEngine, JevFalso};
 use poph_store::{
     ConversationStatus, Direction, NewAgent, NewConversation, NewFlow, NewMessage, NewOrg,
     RevisionPublication, Role, Store, TurnState,
@@ -200,7 +200,7 @@ impl Cenario {
     fn motor(
         &self,
         roteiros: Vec<Script>,
-        jev: Option<Arc<MotorJev>>,
+        jev: Option<Arc<JevEngine>>,
         fluxos: Option<FlowsConfig>,
     ) -> (Motor, Arc<FakeProvider>) {
         let config = ConfigQuente::nova(
@@ -317,8 +317,8 @@ fn gates_com_g9() -> JevGates {
     }
 }
 
-fn motor_jev(jev: Arc<JevFalso>) -> Arc<MotorJev> {
-    Arc::new(MotorJev::novo(jev, gates_com_g9(), "jev-latest"))
+fn motor_jev(jev: Arc<JevFalso>) -> Arc<JevEngine> {
+    Arc::new(JevEngine::new(jev, gates_com_g9(), "jev-latest"))
 }
 
 fn escolhas(itens: &[(&str, &str)]) -> std::collections::BTreeMap<String, String> {

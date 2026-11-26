@@ -26,7 +26,9 @@ use poph_agent::turno::{
     ResumoTurno, janela_com_g2,
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Message, Script, Usage};
-use poph_jev::{G1_CONTINUE, G2_PROCESS, G2_WAIT, IdGate, JevFalso, JevState, MotorJev, OpcoesJev};
+use poph_jev::{
+    G1_CONTINUE, G2_PROCESS, G2_WAIT, IdGate, JevEngine, JevFalso, JevOptions, JevState,
+};
 use poph_store::{
     AgentChange, Direction, NewAgent, NewConversation, NewMessage, NewOrg, Role, Store, TurnState,
 };
@@ -240,7 +242,7 @@ impl Cenario {
 
     fn motor(
         &self,
-        jev: Option<Arc<MotorJev>>,
+        jev: Option<Arc<JevEngine>>,
         pausa: Arc<PausaVirtual>,
         provedor: Arc<FakeProvider>,
     ) -> Motor {
@@ -310,13 +312,13 @@ fn so_g2() -> JevGates {
     }
 }
 
-fn motor_jev(jev: Arc<JevFalso>, gates: JevGates) -> Arc<MotorJev> {
-    Arc::new(MotorJev::novo(jev, gates, "jev-latest"))
+fn motor_jev(jev: Arc<JevFalso>, gates: JevGates) -> Arc<JevEngine> {
+    Arc::new(JevEngine::new(jev, gates, "jev-latest"))
 }
 
 /// Motor do Jev com opções trocadas (prazo do lote, testes de timeout).
-fn motor_jev_com(jev: Arc<JevFalso>, gates: JevGates, opcoes: OpcoesJev) -> Arc<MotorJev> {
-    Arc::new(MotorJev::novo(jev, gates, "jev-latest").com_opcoes(opcoes))
+fn motor_jev_com(jev: Arc<JevFalso>, gates: JevGates, opcoes: JevOptions) -> Arc<JevEngine> {
+    Arc::new(JevEngine::new(jev, gates, "jev-latest").with_options(opcoes))
 }
 
 fn escolha(pergunta: &str, escolha: &str) -> BTreeMap<String, String> {
@@ -382,7 +384,7 @@ async fn esperar_mais_estica_a_janela_e_agrupa_a_mensagem_seguinte() {
         "o prompt leva as duas mensagens do cliente no mesmo turno"
     );
     assert_eq!(
-        resumo.jev.as_ref().and_then(|jev| jev.escolha(IdGate::G2)),
+        resumo.jev.as_ref().and_then(|jev| jev.choice(IdGate::G2)),
         Some(G2_WAIT)
     );
 }
@@ -558,9 +560,9 @@ async fn falha_do_jev_mantem_a_janela_fixa() {
         pausa.espera_total()
     );
     let registro = resumo.jev.expect("o turno registra a tentativa");
-    assert!(registro.falhou());
+    assert!(registro.failed());
     assert_eq!(
-        registro.escolha(IdGate::G2),
+        registro.choice(IdGate::G2),
         Some(G2_PROCESS),
         "fallback do G2"
     );
@@ -651,9 +653,9 @@ async fn prazo_do_jev_mantem_a_janela_fixa() {
         JevFalso::com_escolhas(escolha("g2_esperar", G2_WAIT))
             .com_atraso(Duration::from_millis(250)),
     );
-    let opcoes = OpcoesJev {
-        tempo_maximo: Duration::from_millis(50),
-        ..OpcoesJev::default()
+    let opcoes = JevOptions {
+        batch_timeout: Duration::from_millis(50),
+        ..JevOptions::default()
     };
     let motor = cenario.motor(
         Some(motor_jev_com(Arc::clone(&jev), so_g2(), opcoes)),
@@ -671,7 +673,7 @@ async fn prazo_do_jev_mantem_a_janela_fixa() {
         pausa.espera_total()
     );
     let registro = resumo.jev.expect("registra a tentativa");
-    assert!(registro.falhou());
+    assert!(registro.failed());
 }
 
 // ───────────────────────────── 4. conversa transferida ─────────────────────────────

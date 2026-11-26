@@ -1,14 +1,3 @@
-//! O motor do Jev: um lote só de perguntas, cache, limiares e fallback.
-//!
-//! Desenho (PRD §8.5 e §10):
-//! - **Um pedido por turno**, com as perguntas de todos os gates ligados. N chamadas viram 1.
-//! - **Cache por hash do estado**: pergunta repetida sobre o mesmo estado não custa chamada.
-//! - **Nunca derruba o turno**: timeout, erro, resposta ambígua ou flag desligada caem no fallback
-//!   do gate, que é o comportamento sem o Jev.
-//! - **Entrega decisões, não efeitos**: quem age é o turno, nas tarefas HR-29 a HR-36.
-//!
-//! O motor também é o que o `poph jev eval` usa para medir um conjunto rotulado.
-
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -26,188 +15,145 @@ use crate::handoff::ResultadoOrientacao;
 use crate::state::JevState;
 use crate::types::{IdGate, JevResponse, UsageTokens};
 
-/// Prazo do lote inteiro, contando as retentativas do cliente (8 s + folga da retentativa).
-pub const TEMPO_MAXIMO_PADRAO: Duration = Duration::from_secs(12);
+pub const DEFAULT_BATCH_TIMEOUT: Duration = Duration::from_secs(12);
 
-/// Ajustes do motor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct OpcoesJev {
-    /// Cache de decisão.
+pub struct JevOptions {
     pub cache: CacheOptions,
-    /// Prazo do lote inteiro (a chamada do cliente tem prazo próprio por tentativa).
-    pub tempo_maximo: Duration,
+    pub batch_timeout: Duration,
 }
 
-impl Default for OpcoesJev {
+impl Default for JevOptions {
     fn default() -> Self {
         Self {
             cache: CacheOptions::default(),
-            tempo_maximo: TEMPO_MAXIMO_PADRAO,
+            batch_timeout: DEFAULT_BATCH_TIMEOUT,
         }
     }
 }
 
-/// O que aconteceu na chamada do lote (vai para o registro do turno).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct RelatoChamada {
-    /// Quantas perguntas foram enviadas nesta chamada.
-    pub perguntas: usize,
-    /// Quantas decisões vieram do cache (não custaram chamada).
-    pub decididas_por_cache: usize,
-    /// Duração do lote, em ms.
+pub struct CallReport {
+    pub questions: usize,
+    pub decided_by_cache: usize,
     pub ms: u64,
-    /// Tokens consumidos no lote.
     pub tokens: u64,
-    /// Consumo detalhado informado pelo Jev (entrada, saída, total); vazio quando ele não informa.
     pub usage: UsageTokens,
-    /// Motivo da falha do lote, quando houve.
-    pub falha: Option<String>,
+    pub failure: Option<String>,
 }
 
-/// Resultado de uma avaliação: as decisões por gate e o relato da chamada.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct ResultadoJev {
-    /// Decisões, na ordem dos gates.
-    pub decisoes: Vec<Decisao>,
-    /// Resposta crua do Jev por gate — inclusive quando ela **não** passou no limiar.
-    ///
-    /// É o que permite medir calibração: a decisão já é o que vale para o turno (com o padrão do
-    /// gate no fallback), e a escolha do modelo fica aqui, sem alterar comportamento nenhum.
-    pub brutas: BTreeMap<IdGate, JevResponse>,
-    /// O que a chamada custou.
-    pub chamada: RelatoChamada,
+pub struct JevResult {
+    pub decisions: Vec<Decisao>,
+    pub raw: BTreeMap<IdGate, JevResponse>,
+    pub call: CallReport,
 }
 
-impl ResultadoJev {
-    /// Decisão de um gate, se ele rodou neste turno.
-    pub fn decisao(&self, gate: IdGate) -> Option<&Decisao> {
-        self.decisoes.iter().find(|decisao| decisao.gate == gate)
+impl JevResult {
+    pub fn decision(&self, gate: IdGate) -> Option<&Decisao> {
+        self.decisions.iter().find(|decision| decision.gate == gate)
     }
 
-    /// Resposta crua do Jev para um gate (existe mesmo quando a decisão caiu no fallback).
-    pub fn resposta(&self, gate: IdGate) -> Option<&JevResponse> {
-        self.brutas.get(&gate)
+    pub fn response(&self, gate: IdGate) -> Option<&JevResponse> {
+        self.raw.get(&gate)
     }
 
-    /// Escolha de um gate, quando houve.
-    pub fn escolha(&self, gate: IdGate) -> Option<&str> {
-        self.decisao(gate)?.choice.as_deref()
+    pub fn choice(&self, gate: IdGate) -> Option<&str> {
+        self.decision(gate)?.choice.as_deref()
     }
 
-    /// Escolha confiável de um gate (não é fallback).
-    pub fn escolha_confiavel(&self, gate: IdGate) -> Option<&str> {
-        let decisao = self.decisao(gate)?;
-        if decisao.is_reliable() {
-            decisao.choice.as_deref()
+    pub fn reliable_choice(&self, gate: IdGate) -> Option<&str> {
+        let decision = self.decision(gate)?;
+        if decision.is_reliable() {
+            decision.choice.as_deref()
         } else {
             None
         }
     }
 
-    /// `true` quando o lote falhou (timeout, erro do provedor).
-    pub fn falhou(&self) -> bool {
-        self.chamada.falha.is_some()
+    pub fn failed(&self) -> bool {
+        self.call.failure.is_some()
     }
 
-    /// JSON gravado em `turns.jev_json`.
-    pub fn para_json(&self) -> Value {
+    pub fn to_json(&self) -> Value {
         json!({
             "chamada": {
-                "perguntas": self.chamada.perguntas,
-                "decididas_por_cache": self.chamada.decididas_por_cache,
-                "ms": self.chamada.ms,
-                "tokens": self.chamada.tokens,
-                "usage": self.chamada.usage.to_json(),
-                "falha": self.chamada.falha,
+                "perguntas": self.call.questions,
+                "decididas_por_cache": self.call.decided_by_cache,
+                "ms": self.call.ms,
+                "tokens": self.call.tokens,
+                "usage": self.call.usage.to_json(),
+                "falha": self.call.failure,
             },
             "decisoes": self
-                .decisoes
+                .decisions
                 .iter()
-                .map(|decisao| {
-                    // A escolha crua do Jev vai junto: `escolha` é o que vale para o turno
-                    // (inclui o padrão do gate no fallback) e `escolha_do_jev` é o que o modelo
-                    // respondeu, mesmo quando a confiança não passou no limiar.
-                    let mut valor = decisao.to_json();
-                    if let Some(bruta) = self.brutas.get(&decisao.gate) {
-                        // Só a escolha: as probabilidades dobrariam o tamanho do registro do turno
-                        // e não são necessárias para decidir nada.
-                        valor["escolha_do_jev"] = json!(bruta.choice);
+                .map(|decision| {
+                    let mut value = decision.to_json();
+                    if let Some(raw_response) = self.raw.get(&decision.gate) {
+                        value["escolha_do_jev"] = json!(raw_response.choice);
                     }
-                    valor
+                    value
                 })
                 .collect::<Vec<_>>(),
         })
     }
 
-    /// Texto JSON do registro do turno.
-    pub fn para_json_texto(&self) -> String {
-        self.para_json().to_string()
+    pub fn to_json_text(&self) -> String {
+        self.to_json().to_string()
     }
 
-    /// Resumo curto para o observador (`EventoTurno::Jev`).
-    pub fn resumo(&self) -> Vec<String> {
-        self.decisoes
+    pub fn summary(&self) -> Vec<String> {
+        self.decisions
             .iter()
-            .map(|decisao| {
+            .map(|decision| {
                 format!(
                     "{}={} ({}, confiança {:.2})",
-                    decisao.gate.as_text(),
-                    decisao.choice.as_deref().unwrap_or("—"),
-                    decisao.origin.as_text(),
-                    decisao.confidence
+                    decision.gate.as_text(),
+                    decision.choice.as_deref().unwrap_or("—"),
+                    decision.origin.as_text(),
+                    decision.confidence
                 )
             })
             .collect()
     }
 }
 
-/// Quem o turno consulta para decidir os portões.
-///
-/// Existe como trait para o turno não depender do cliente HTTP: o teste injeta um Jev falso e o
-/// turno de produção recebe o [`MotorJev`].
-pub trait AvaliadorGates: Send + Sync {
-    /// Gates ligados para este agente (global ajustado pelo agente).
-    fn gates_efetivos(&self, ajuste: Option<GateOverrides>) -> JevGates;
+pub trait GateEvaluator: Send + Sync {
+    fn effective_gates(&self, adjustment: Option<GateOverrides>) -> JevGates;
 
-    /// Avalia os gates ligados num lote só. Nunca falha: erro vira fallback.
-    fn avaliar<'a>(
+    fn evaluate<'a>(
         &'a self,
         estado: JevState,
-        ajuste: Option<GateOverrides>,
-    ) -> BoxFuture<'a, ResultadoJev>;
+        adjustment: Option<GateOverrides>,
+    ) -> BoxFuture<'a, JevResult>;
 
-    /// Segunda pergunta do G1 (HR-29): classifica o risco imediato à saúde **depois** de a
-    /// transferência ser decidida, para escolher o texto de orientação ao cliente.
-    ///
-    /// Nunca falha para o turno: erro, prazo e resposta fora do contrato voltam em
-    /// [`ResultadoOrientacao::falha`], e quem chama segue com a mensagem automática só.
     fn orientar<'a>(
         &'a self,
         estado: JevState,
-        prazo: Duration,
+        deadline: Duration,
     ) -> BoxFuture<'a, ResultadoOrientacao> {
-        let _ = (estado, prazo);
+        let _ = (estado, deadline);
         Box::pin(async {
             ResultadoOrientacao::nao_consultado("este avaliador não faz a pergunta de risco")
         })
     }
 }
 
-/// Motor do Jev: cliente do lote, gates, limiares e cache.
-pub struct MotorJev {
-    transporte: Arc<dyn TransporteJev>,
+pub struct JevEngine {
+    transport: Arc<dyn TransporteJev>,
     gates: Vec<Box<dyn Gate>>,
-    globais: JevGates,
+    globals: JevGates,
     modelo: String,
-    limiares: BTreeMap<IdGate, Thresholds>,
+    thresholds: BTreeMap<IdGate, Thresholds>,
     cache: DecisionCache,
-    tempo_maximo: Duration,
+    batch_timeout: Duration,
 }
 
-impl std::fmt::Debug for MotorJev {
+impl std::fmt::Debug for JevEngine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MotorJev")
-            .field("globais", &self.globais)
+            .field("globais", &self.globals)
             .field("modelo", &self.modelo)
             .field(
                 "gates",
@@ -217,51 +163,45 @@ impl std::fmt::Debug for MotorJev {
     }
 }
 
-impl MotorJev {
-    /// Motor com os quatro gates da V1 e os ajustes padrão.
-    pub fn novo(
-        transporte: Arc<dyn TransporteJev>,
-        globais: JevGates,
+impl JevEngine {
+    pub fn new(
+        transport: Arc<dyn TransporteJev>,
+        globals: JevGates,
         modelo: impl Into<String>,
     ) -> Self {
         Self {
-            transporte,
+            transport,
             gates: gates::default_gates(),
-            globais,
+            globals,
             modelo: modelo.into(),
-            limiares: BTreeMap::new(),
+            thresholds: BTreeMap::new(),
             cache: DecisionCache::new(CacheOptions::default()),
-            tempo_maximo: TEMPO_MAXIMO_PADRAO,
+            batch_timeout: DEFAULT_BATCH_TIMEOUT,
         }
     }
 
-    /// Troca os ajustes (cache e prazo do lote).
-    pub fn com_opcoes(mut self, opcoes: OpcoesJev) -> Self {
-        self.cache = DecisionCache::new(opcoes.cache);
-        self.tempo_maximo = opcoes.tempo_maximo;
+    pub fn with_options(mut self, options: JevOptions) -> Self {
+        self.cache = DecisionCache::new(options.cache);
+        self.batch_timeout = options.batch_timeout;
         self
     }
 
-    /// Fixa os limiares de um gate (calibração por medição; ver `poph jev eval`).
-    pub fn com_limiares(mut self, gate: IdGate, limiares: Thresholds) -> Self {
-        self.limiares.insert(gate, limiares);
+    pub fn with_thresholds(mut self, gate: IdGate, thresholds: Thresholds) -> Self {
+        self.thresholds.insert(gate, thresholds);
         self
     }
 
-    /// Troca o catálogo de gates (teste; G5–G8 entram pelas tarefas deles).
-    pub fn com_gates(mut self, gates: Vec<Box<dyn Gate>>) -> Self {
+    pub fn with_gates(mut self, gates: Vec<Box<dyn Gate>>) -> Self {
         self.gates = gates;
         self
     }
 
-    /// Cache em uso (teste e observação).
     pub fn cache(&self) -> &DecisionCache {
         &self.cache
     }
 
-    /// Limiares em uso para um gate.
-    pub fn limiares_de(&self, gate: IdGate) -> Thresholds {
-        self.limiares
+    pub fn thresholds_of(&self, gate: IdGate) -> Thresholds {
+        self.thresholds
             .get(&gate)
             .copied()
             .or_else(|| {
@@ -273,8 +213,7 @@ impl MotorJev {
             .unwrap_or_default()
     }
 
-    /// `true` quando o gate está ligado nos gates efetivos.
-    pub fn ligado(gates: JevGates, gate: IdGate) -> bool {
+    pub fn is_enabled(gates: JevGates, gate: IdGate) -> bool {
         match gate {
             IdGate::G1 => gates.g1,
             IdGate::G2 => gates.g2,
@@ -288,82 +227,80 @@ impl MotorJev {
         }
     }
 
-    async fn avaliar_agora(&self, estado: JevState, gates: JevGates) -> ResultadoJev {
+    async fn evaluate_now(&self, estado: JevState, gates: JevGates) -> JevResult {
         let hash = estado.hash();
-        let ligados: Vec<&Box<dyn Gate>> = self
+        let enabled: Vec<&Box<dyn Gate>> = self
             .gates
             .iter()
-            .filter(|gate| Self::ligado(gates, gate.id()))
+            .filter(|gate| Self::is_enabled(gates, gate.id()))
             .collect();
-        // Gate ligado que não se aplica pode ter o que dizer ao operador (o G9, quando o agente tem
-        // mais fluxos liberados do que opções na pergunta). Vai para o log, não para o turno.
-        for gate in &ligados {
+        for gate in &enabled {
             if !gate.applies(&estado)
-                && let Some(aviso) = gate.warning(&estado)
+                && let Some(notice) = gate.warning(&estado)
             {
-                tracing::warn!(gate = %gate.id(), aviso, "gate não perguntado neste turno");
+                tracing::warn!(gate = %gate.id(), notice, "gate não perguntado neste turno");
             }
         }
-        let aplicaveis: Vec<&Box<dyn Gate>> = ligados
+        let applicable: Vec<&Box<dyn Gate>> = enabled
             .into_iter()
             .filter(|gate| gate.applies(&estado))
             .collect();
 
-        let mut do_cache: BTreeMap<IdGate, JevResponse> = BTreeMap::new();
-        let mut pendentes: Vec<IdGate> = Vec::new();
-        for gate in &aplicaveis {
+        let mut from_cache: BTreeMap<IdGate, JevResponse> = BTreeMap::new();
+        let mut pending: Vec<IdGate> = Vec::new();
+        for gate in &applicable {
             match self.cache.get(crate::cache::chave(gate.id(), hash)) {
-                Some(resposta) => {
-                    do_cache.insert(gate.id(), resposta);
+                Some(response) => {
+                    from_cache.insert(gate.id(), response);
                 }
-                None => pendentes.push(gate.id()),
+                None => pending.push(gate.id()),
             }
         }
 
-        let mut do_jev: BTreeMap<IdGate, JevResponse> = BTreeMap::new();
-        let mut relato = RelatoChamada {
-            decididas_por_cache: do_cache.len(),
-            ..RelatoChamada::default()
+        let mut from_jev: BTreeMap<IdGate, JevResponse> = BTreeMap::new();
+        let mut report = CallReport {
+            decided_by_cache: from_cache.len(),
+            ..CallReport::default()
         };
 
-        if !pendentes.is_empty() {
-            let perguntas: BTreeMap<String, crate::types::Question> = aplicaveis
+        if !pending.is_empty() {
+            let questions: BTreeMap<String, crate::types::Question> = applicable
                 .iter()
-                .filter(|gate| pendentes.contains(&gate.id()))
+                .filter(|gate| pending.contains(&gate.id()))
                 .map(|gate| (gate.id().question_id().to_owned(), gate.question(&estado)))
                 .collect();
-            relato.perguntas = perguntas.len();
-            let pedido = Pedido {
+            report.questions = questions.len();
+            let request = Pedido {
                 estado: estado.to_json(),
                 modelo: self.modelo.clone(),
-                perguntas,
+                perguntas: questions,
             };
-            let inicio = Instant::now();
-            match tokio::time::timeout(self.tempo_maximo, self.transporte.julgar(pedido)).await {
-                Ok(Ok(lote)) => {
-                    relato.ms = u64::try_from(inicio.elapsed().as_millis()).unwrap_or(u64::MAX);
-                    relato.tokens = lote.tokens;
-                    relato.usage = lote.usage;
-                    for gate in &aplicaveis {
-                        if !pendentes.contains(&gate.id()) {
+            let started = Instant::now();
+            match tokio::time::timeout(self.batch_timeout, self.transport.julgar(request)).await {
+                Ok(Ok(batch)) => {
+                    report.ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+                    report.tokens = batch.tokens;
+                    report.usage = batch.usage;
+                    for gate in &applicable {
+                        if !pending.contains(&gate.id()) {
                             continue;
                         }
-                        if let Some(resposta) = lote.answers.get(gate.id().question_id()) {
+                        if let Some(response) = batch.answers.get(gate.id().question_id()) {
                             self.cache
-                                .insert(crate::cache::chave(gate.id(), hash), resposta.clone());
-                            do_jev.insert(gate.id(), resposta.clone());
+                                .insert(crate::cache::chave(gate.id(), hash), response.clone());
+                            from_jev.insert(gate.id(), response.clone());
                         }
                     }
                 }
-                Ok(Err(erro)) => {
-                    relato.ms = u64::try_from(inicio.elapsed().as_millis()).unwrap_or(u64::MAX);
-                    relato.falha = Some(erro.to_string());
-                    tracing::warn!(erro = %erro, "Jev falhou; todos os gates caem no fallback");
+                Ok(Err(error)) => {
+                    report.ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+                    report.failure = Some(error.to_string());
+                    tracing::warn!(error = %error, "Jev falhou; todos os gates caem no fallback");
                 }
                 Err(_) => {
-                    relato.ms = u64::try_from(inicio.elapsed().as_millis()).unwrap_or(u64::MAX);
-                    let ms = u64::try_from(self.tempo_maximo.as_millis()).unwrap_or(u64::MAX);
-                    relato.falha = Some(format!("o Jev não respondeu em {ms} ms"));
+                    report.ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+                    let ms = u64::try_from(self.batch_timeout.as_millis()).unwrap_or(u64::MAX);
+                    report.failure = Some(format!("o Jev não respondeu em {ms} ms"));
                     tracing::warn!(
                         ms,
                         "lote do Jev estourou o prazo; fallback em todos os gates"
@@ -372,118 +309,109 @@ impl MotorJev {
             }
         }
 
-        let mut brutas: BTreeMap<IdGate, crate::types::JevResponse> = BTreeMap::new();
-        let mut decisoes = Vec::with_capacity(aplicaveis.len());
-        for gate in &aplicaveis {
+        let mut raw: BTreeMap<IdGate, crate::types::JevResponse> = BTreeMap::new();
+        let mut decisions = Vec::with_capacity(applicable.len());
+        for gate in &applicable {
             let id = gate.id();
-            let limiares = self.limiares_de(id);
-            let (resposta, origem) = match (do_jev.get(&id), do_cache.get(&id)) {
-                (Some(resposta), _) => (Some(resposta), DecisionOrigin::Jev),
-                (None, Some(resposta)) => (Some(resposta), DecisionOrigin::Cache),
+            let thresholds = self.thresholds_of(id);
+            let (response, origin) = match (from_jev.get(&id), from_cache.get(&id)) {
+                (Some(response), _) => (Some(response), DecisionOrigin::Jev),
+                (None, Some(response)) => (Some(response), DecisionOrigin::Cache),
                 (None, None) => (None, DecisionOrigin::Fallback),
             };
-            let mut decisao = gate.interpret(&estado, resposta, limiares);
-            // Decisão aceita veio desta chamada ou do cache; o gate não tem como saber a diferença.
-            if decisao.is_reliable() {
-                decisao.origin = origem;
+            let mut decision = gate.interpret(&estado, response, thresholds);
+            if decision.is_reliable() {
+                decision.origin = origin;
             }
-            // O gate devolve `Fallback` quando a resposta existe mas não passa no limiar: guarda a
-            // confiança e a margem mesmo assim, para o relatório dizer o quanto faltou.
-            if let Some(resposta) = resposta {
-                brutas.insert(id, resposta.clone());
-                decisao.confidence = resposta.confidence;
-                decisao.margin = resposta.margin();
-                decisao.ms = if origem == DecisionOrigin::Jev {
-                    relato.ms
+            if let Some(response) = response {
+                raw.insert(id, response.clone());
+                decision.confidence = response.confidence;
+                decision.margin = response.margin();
+                decision.ms = if origin == DecisionOrigin::Jev {
+                    report.ms
                 } else {
                     0
                 };
-                decisao.tokens = if origem == DecisionOrigin::Jev {
-                    relato.tokens
+                decision.tokens = if origin == DecisionOrigin::Jev {
+                    report.tokens
                 } else {
                     0
                 };
             }
-            decisoes.push(decisao);
+            decisions.push(decision);
         }
 
-        ResultadoJev {
-            decisoes,
-            brutas,
-            chamada: relato,
+        JevResult {
+            decisions,
+            raw,
+            call: report,
         }
     }
 }
 
-impl AvaliadorGates for MotorJev {
-    fn gates_efetivos(&self, ajuste: Option<GateOverrides>) -> JevGates {
-        match ajuste {
-            Some(ajuste) => ajuste.with_base(self.globais),
-            None => self.globais,
+impl GateEvaluator for JevEngine {
+    fn effective_gates(&self, adjustment: Option<GateOverrides>) -> JevGates {
+        match adjustment {
+            Some(adjustment) => adjustment.with_base(self.globals),
+            None => self.globals,
         }
     }
 
-    fn avaliar<'a>(
+    fn evaluate<'a>(
         &'a self,
         estado: JevState,
-        ajuste: Option<GateOverrides>,
-    ) -> BoxFuture<'a, ResultadoJev> {
-        let gates = self.gates_efetivos(ajuste);
+        adjustment: Option<GateOverrides>,
+    ) -> BoxFuture<'a, JevResult> {
+        let gates = self.effective_gates(adjustment);
         Box::pin(async move {
-            if Self::nenhum(gates) {
-                return ResultadoJev::default();
+            if Self::none_enabled(gates) {
+                return JevResult::default();
             }
-            self.avaliar_agora(estado, gates).await
+            self.evaluate_now(estado, gates).await
         })
     }
 
-    /// Segunda pergunta do G1 (HR-29): o tipo de risco imediato, para a orientação ao cliente.
-    ///
-    /// Chamada **fora** do lote: só acontece quando a transferência já foi decidida, então não
-    /// custa nada nos turnos normais. Sem cache de propósito (é uma pergunta só, uma vez por
-    /// transferência) e sem retentativa própria — o prazo aqui é o da transferência, e o cliente
-    /// não pode esperar por ela.
     fn orientar<'a>(
         &'a self,
         estado: JevState,
-        prazo: Duration,
+        deadline: Duration,
     ) -> BoxFuture<'a, ResultadoOrientacao> {
         Box::pin(async move {
-            let mut perguntas = BTreeMap::new();
-            perguntas.insert(
+            let mut questions = BTreeMap::new();
+            questions.insert(
                 crate::handoff::RISCO_PERGUNTA_ID.to_owned(),
                 crate::handoff::pergunta_risco(),
             );
-            let pedido = Pedido {
+            let request = Pedido {
                 estado: estado.to_json(),
                 modelo: self.modelo.clone(),
-                perguntas,
+                perguntas: questions,
             };
-            let inicio = Instant::now();
-            match tokio::time::timeout(prazo, self.transporte.julgar(pedido)).await {
-                Ok(Ok(lote)) => {
-                    let resposta = lote.answers.get(crate::handoff::RISCO_PERGUNTA_ID);
+            let started = Instant::now();
+            match tokio::time::timeout(deadline, self.transport.julgar(request)).await {
+                Ok(Ok(batch)) => {
+                    let response = batch.answers.get(crate::handoff::RISCO_PERGUNTA_ID);
                     ResultadoOrientacao {
                         consultado: true,
-                        tipo: resposta.and_then(|item| item.choice.clone()),
-                        confianca: resposta.map(|item| item.confidence).unwrap_or(0.0),
-                        ms: u64::try_from(inicio.elapsed().as_millis()).unwrap_or(u64::MAX),
-                        tokens: lote.tokens,
+                        tipo: response.and_then(|item| item.choice.clone()),
+                        confianca: response.map(|item| item.confidence).unwrap_or(0.0),
+                        ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                        tokens: batch.tokens,
                         falha: None,
                     }
                 }
-                Ok(Err(erro)) => ResultadoOrientacao {
+                Ok(Err(error)) => ResultadoOrientacao {
                     consultado: true,
-                    ms: u64::try_from(inicio.elapsed().as_millis()).unwrap_or(u64::MAX),
-                    falha: Some(erro.to_string()),
+                    ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                    falha: Some(error.to_string()),
                     ..ResultadoOrientacao::default()
                 },
                 Err(_) => ResultadoOrientacao {
                     consultado: true,
-                    ms: u64::try_from(inicio.elapsed().as_millis()).unwrap_or(u64::MAX),
+                    ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
                     falha: Some(format!(
                         "a pergunta de risco não respondeu em {} ms",
-                        prazo.as_millis()
+                        deadline.as_millis()
                     )),
                     ..ResultadoOrientacao::default()
                 },
@@ -492,11 +420,10 @@ impl AvaliadorGates for MotorJev {
     }
 }
 
-impl MotorJev {
-    /// `true` quando nenhum gate está ligado.
-    pub fn nenhum(gates: JevGates) -> bool {
+impl JevEngine {
+    pub fn none_enabled(gates: JevGates) -> bool {
         IdGate::ALL
             .into_iter()
-            .all(|gate| !Self::ligado(gates, gate))
+            .all(|gate| !Self::is_enabled(gates, gate))
     }
 }

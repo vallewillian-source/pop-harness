@@ -10,8 +10,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use poph_jev::{
-    AvaliadorGates, DecisionOrigin, G5, G5_NONE, Gate, IdGate, JevFalso, JevMessage, JevResponse,
-    JevState, MotorJev, ProductCandidate, eval::ajuste_de_gate,
+    DecisionOrigin, G5, G5_NONE, Gate, GateEvaluator, IdGate, JevEngine, JevFalso, JevMessage,
+    JevResponse, JevState, ProductCandidate, eval::ajuste_de_gate,
 };
 use poph_types::JevGates;
 
@@ -155,20 +155,20 @@ async fn g5_e_perguntado_fora_do_lote_so_com_candidatos() {
         ..JevGates::default()
     };
     let transporte: Arc<dyn poph_jev::TransporteJev> = jev.clone();
-    let avaliador = MotorJev::novo(transporte, globais, "jev-latest");
+    let avaliador = JevEngine::new(transporte, globais, "jev-latest");
 
     // 1. Lote normal (sem candidatos): o G5 não se aplica, então nenhuma pergunta é enviada.
     let sem_candidatos = JevState::new("whatsapp")
         .with_messages(vec![JevMessage::from_customer("oi")])
         .with_capabilities(true, true);
-    let lote = avaliador.avaliar(sem_candidatos, None).await;
-    assert!(lote.decisoes.is_empty(), "{:?}", lote.decisoes);
+    let lote = avaliador.evaluate(sem_candidatos, None).await;
+    assert!(lote.decisions.is_empty(), "{:?}", lote.decisions);
     assert!(jev.pedidos().is_empty(), "nenhum pedido ao Jev");
 
     // 2. Chamada só do G5, com candidatos: uma pergunta, uma decisão.
     let com_candidatos = estado("quero dedetizar contra baratas", candidatos());
     let resultado = avaliador
-        .avaliar(com_candidatos, Some(ajuste_de_gate(IdGate::G5)))
+        .evaluate(com_candidatos, Some(ajuste_de_gate(IdGate::G5)))
         .await;
     let pedidos = jev.pedidos();
     assert_eq!(pedidos.len(), 1);
@@ -180,7 +180,7 @@ async fn g5_e_perguntado_fora_do_lote_so_com_candidatos() {
             .collect::<Vec<String>>(),
         vec!["g5_produto".to_owned()]
     );
-    assert_eq!(resultado.escolha_confiavel(IdGate::G5), Some("p-baratas"));
+    assert_eq!(resultado.reliable_choice(IdGate::G5), Some("p-baratas"));
 }
 
 /// O Jev falso pode devolver o id mesmo quando ele não é candidato: o gate recusa e o motor marca

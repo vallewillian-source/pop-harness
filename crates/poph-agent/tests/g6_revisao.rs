@@ -25,7 +25,7 @@ use poph_agent::turno::{
     Entrada, FuturoPausa, Motor, ObservadorNulo, OpcoesTurno, Pausa, ResumoTurno,
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmError, LlmEvent, Script, Usage};
-use poph_jev::{BatchResponse, JevError, JevFalso, JevResponse as RespostaJev, MotorJev};
+use poph_jev::{BatchResponse, JevEngine, JevError, JevFalso, JevResponse as RespostaJev};
 use poph_store::{
     AgentChange, Direction, NewAgent, NewConversation, NewMessage, Page, Role, Store, TurnState,
 };
@@ -160,7 +160,7 @@ impl Cenario {
     fn motor(
         &self,
         roteiros: Vec<Script>,
-        jev: Option<Arc<MotorJev>>,
+        jev: Option<Arc<JevEngine>>,
     ) -> (Motor, Arc<FakeProvider>) {
         let fake = Arc::new(FakeProvider::with_scripts(roteiros));
         let config = ConfigQuente::nova(
@@ -339,8 +339,8 @@ fn jev_que_falha_na_segunda(primeira: RespostaRoteirizada) -> Arc<JevFalso> {
     }))
 }
 
-fn motor_jev(jev: Arc<JevFalso>, gates: JevGates) -> Arc<MotorJev> {
-    Arc::new(MotorJev::novo(jev, gates, "jev-latest"))
+fn motor_jev(jev: Arc<JevFalso>, gates: JevGates) -> Arc<JevEngine> {
+    Arc::new(JevEngine::new(jev, gates, "jev-latest"))
 }
 
 const PERGUNTA: &str = "quanto custa para dedetizar baratas no apê?";
@@ -647,7 +647,7 @@ async fn medicao_do_g6() {
             })
         }));
         let gates = if ligado { so_g6() } else { JevGates::default() };
-        let motor_jev = Arc::new(MotorJev::novo(
+        let motor_jev = Arc::new(JevEngine::new(
             Arc::clone(&jev) as Arc<dyn poph_jev::TransporteJev>,
             gates,
             "jev-latest",

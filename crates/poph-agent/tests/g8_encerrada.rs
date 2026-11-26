@@ -36,7 +36,7 @@ use poph_agent::turno::{
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, Usage};
 use poph_jev::{
-    BatchResponse, G8_DEFAULT_FAREWELL, JevError, JevFalso, JevResponse as RespostaJev, MotorJev,
+    BatchResponse, G8_DEFAULT_FAREWELL, JevEngine, JevError, JevFalso, JevResponse as RespostaJev,
 };
 use poph_store::{
     AgentChange, ConversationStatus, Direction, NewAgent, NewConversation, NewMessage, Page, Role,
@@ -255,7 +255,7 @@ impl Cenario {
     fn motor(
         &self,
         roteiros: Vec<Script>,
-        jev: Option<Arc<MotorJev>>,
+        jev: Option<Arc<JevEngine>>,
     ) -> (Motor, Arc<FakeProvider>) {
         let fake = Arc::new(FakeProvider::with_scripts(roteiros));
         let config = ConfigQuente::nova(
@@ -416,8 +416,8 @@ fn ultima_fala_do_cliente(estado: &serde_json::Value) -> String {
         .to_owned()
 }
 
-fn motor_jev(jev: Arc<JevFalso>, gates: JevGates) -> Arc<MotorJev> {
-    Arc::new(MotorJev::novo(jev, gates, "jev-latest"))
+fn motor_jev(jev: Arc<JevFalso>, gates: JevGates) -> Arc<JevEngine> {
+    Arc::new(JevEngine::new(jev, gates, "jev-latest"))
 }
 
 const ENCERRA: &str = "era só isso, obrigado";
@@ -836,7 +836,7 @@ async fn agente_que_desliga_o_g8_volta_ao_comportamento_de_hoje() {
         resumo
             .jev
             .as_ref()
-            .and_then(|jev| jev.escolha(poph_jev::IdGate::G8))
+            .and_then(|jev| jev.choice(poph_jev::IdGate::G8))
             .is_none(),
         "com o G8 desligado no agente, o Jev não é perguntado sobre ele"
     );

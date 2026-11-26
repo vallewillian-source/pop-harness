@@ -11,9 +11,9 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use poph_jev::{
-    AvaliadorGates, DecisionOrigin, G6, G6_APPROVED, G6_REVIEW, G6_REVIEW_LONG, G6_REVIEW_PRICE,
-    G6_REVIEW_SCOPE, G6_REVIEW_TONE, G6_REVIEW_TRANSFER, Gate, IdGate, JevFalso, JevMessage,
-    JevResponse, JevState, MotorJev, QuestionType, eval::ajuste_de_gate, g6_guidance,
+    DecisionOrigin, G6, G6_APPROVED, G6_REVIEW, G6_REVIEW_LONG, G6_REVIEW_PRICE, G6_REVIEW_SCOPE,
+    G6_REVIEW_TONE, G6_REVIEW_TRANSFER, Gate, GateEvaluator, IdGate, JevEngine, JevFalso,
+    JevMessage, JevResponse, JevState, QuestionType, eval::ajuste_de_gate, g6_guidance,
     g6_needs_review,
 };
 use poph_types::JevGates;
@@ -170,19 +170,19 @@ async fn g6_e_perguntado_fora_do_lote_so_com_resposta_em_revisao() {
         ..JevGates::default()
     };
     let transporte: Arc<dyn poph_jev::TransporteJev> = jev.clone();
-    let avaliador = MotorJev::novo(transporte, globais, "jev-latest");
+    let avaliador = JevEngine::new(transporte, globais, "jev-latest");
 
     // 1. Lote normal, sem resposta em revisão: o G6 não se aplica e nenhuma pergunta sai.
     let sem_resposta = JevState::new("whatsapp")
         .with_messages(vec![JevMessage::from_customer("quanto custa?")])
         .with_capabilities(true, true);
-    let lote = avaliador.avaliar(sem_resposta, None).await;
-    assert!(lote.decisoes.is_empty(), "{:?}", lote.decisoes);
+    let lote = avaliador.evaluate(sem_resposta, None).await;
+    assert!(lote.decisions.is_empty(), "{:?}", lote.decisions);
     assert!(jev.pedidos().is_empty(), "nenhum pedido ao Jev");
 
     // 2. Chamada só do G6: uma pergunta, uma decisão.
     let resultado = avaliador
-        .avaliar(estado("Sai R$ 180,00."), Some(ajuste_de_gate(IdGate::G6)))
+        .evaluate(estado("Sai R$ 180,00."), Some(ajuste_de_gate(IdGate::G6)))
         .await;
     let pedidos = jev.pedidos();
     assert_eq!(pedidos.len(), 1);
@@ -194,10 +194,7 @@ async fn g6_e_perguntado_fora_do_lote_so_com_resposta_em_revisao() {
             .collect::<Vec<String>>(),
         vec!["g6_revisao".to_owned()]
     );
-    assert_eq!(
-        resultado.escolha_confiavel(IdGate::G6),
-        Some(G6_REVIEW_PRICE)
-    );
+    assert_eq!(resultado.reliable_choice(IdGate::G6), Some(G6_REVIEW_PRICE));
     // A resposta em revisão vai no estado que o Jev lê.
     assert_eq!(
         pedidos[0].estado["resposta_candidata"].as_str(),

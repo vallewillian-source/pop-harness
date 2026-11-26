@@ -54,7 +54,7 @@ pub use handoff::{
     RISCO_PERGUNTA_ID, ResultadoOrientacao, TIPOS_DE_RISCO, pergunta_risco,
 };
 pub use motor::{
-    AvaliadorGates, MotorJev, OpcoesJev, RelatoChamada, ResultadoJev, TEMPO_MAXIMO_PADRAO,
+    CallReport, DEFAULT_BATCH_TIMEOUT, GateEvaluator, JevEngine, JevOptions, JevResult,
 };
 pub use state::{
     JevFlow, JevMessage, JevRole, JevState, MAX_CANDIDATE_RESPONSE_CHARS, MAX_FILE_TEXT_CHARS,

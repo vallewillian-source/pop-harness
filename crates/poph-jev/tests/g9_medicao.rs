@@ -24,8 +24,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use poph_jev::{
-    AvaliadorGates, BatchResponse, GateOverrides, JevFalso, JevFlow, JevMessage, JevResponse,
-    JevState, MotorJev, Pedido, TransporteJev,
+    BatchResponse, GateEvaluator, GateOverrides, JevEngine, JevFalso, JevFlow, JevMessage,
+    JevResponse, JevState, Pedido, TransporteJev,
 };
 use poph_types::JevGates;
 
@@ -66,7 +66,7 @@ fn estado(rodada: usize, fluxos: usize) -> JevState {
 }
 
 /// Motor com Jev falso: responde a primeira opção de cada pergunta, confiança 1,0.
-fn motor() -> (Arc<JevFalso>, MotorJev) {
+fn motor() -> (Arc<JevFalso>, JevEngine) {
     let falso = Arc::new(JevFalso::novo(|pedido: &Pedido| {
         let mut respostas = BTreeMap::new();
         for (id, pergunta) in &pedido.perguntas {
@@ -89,7 +89,7 @@ fn motor() -> (Arc<JevFalso>, MotorJev) {
             ..BatchResponse::default()
         })
     }));
-    let motor = MotorJev::novo(
+    let motor = JevEngine::new(
         Arc::clone(&falso) as Arc<dyn TransporteJev>,
         JevGates::default_value(),
         "jev-de-medicao",
@@ -119,9 +119,9 @@ async fn medir(
         // O texto muda a cada rodada para o cache de decisão não atender o lote.
         let estado = estado(rodada, fluxos);
         let inicio = Instant::now();
-        let resultado = motor.avaliar(estado, ajuste).await;
+        let resultado = motor.evaluate(estado, ajuste).await;
         amostras.push(inicio.elapsed().as_micros());
-        assert!(!resultado.falhou(), "o lote de {rotulo} falhou");
+        assert!(!resultado.failed(), "o lote de {rotulo} falhou");
     }
     let pedidos = falso.pedidos();
     let ultimo = pedidos.last().expect("o lote chamou o Jev");
