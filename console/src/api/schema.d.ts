@@ -552,6 +552,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/v1/orgs/{org_id}/conversations/{conversation_id}/transfer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["conversas_transferir"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/v1/orgs/{org_id}/conversations/{conversation_id}/turns": {
         parameters: {
             query?: never;
@@ -1250,6 +1266,10 @@ export interface components {
              * @description Versão para `If-Match`.
              */
             version: number;
+        };
+        CorpoTransferencia: {
+            department_id?: string | null;
+            reason?: string | null;
         };
         /** @description Corpo de criação de categoria. */
         CriarCategoria: {
@@ -3568,6 +3588,7 @@ export interface operations {
                 external_peer?: string;
                 status?: string;
                 sort?: string;
+                last_activity_before?: number;
             };
             header?: never;
             path: {
@@ -3741,6 +3762,60 @@ export interface operations {
             };
             /** @description Versão desatualizada */
             412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+        };
+    };
+    conversas_transferir: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_id: string;
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CorpoTransferencia"];
+            };
+        };
+        responses: {
+            /** @description Conversa transferida para o departamento */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Corpo inválido, motivo vazio ou departamento malformado */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+            /** @description Conversa ou departamento fora da org */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+            /** @description Conversa encerrada (`conversa_encerrada`): não transfere; nada muda */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
