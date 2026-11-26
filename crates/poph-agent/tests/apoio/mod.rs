@@ -12,7 +12,7 @@ use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
 use poph_agent::limites::{Limitador, OpcoesLimites};
 use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
 use poph_agent::turno::{
-    Entrada, FuturoPausa, Motor, ObservadorNulo, OpcoesTurno, Pausa, ResumoTurno,
+    FuturoPausa, NoopObserver, Pausa, TurnEngine, TurnInput, TurnOptions, TurnSummary,
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, Usage};
 use poph_store::{
@@ -192,7 +192,7 @@ impl Cenario {
             .id
     }
 
-    pub fn motor(&self, com_arquivos: bool) -> (Motor, Arc<FakeProvider>) {
+    pub fn motor(&self, com_arquivos: bool) -> (TurnEngine, Arc<FakeProvider>) {
         let fake = Arc::new(FakeProvider::with_scripts(vec![roteiro_texto(
             "recebi o arquivo",
         )]));
@@ -205,30 +205,30 @@ impl Cenario {
             OpcoesLimites::default(),
             MetricasMemoria::proprio(),
         ));
-        let mut motor = Motor::novo(
+        let mut motor = TurnEngine::new(
             Arc::clone(&self.store),
             config,
             limitador,
             fake.clone(),
-            OpcoesTurno::default(),
+            TurnOptions::default(),
             self.metricas.clone(),
         )
-        .com_pausa(Arc::new(SemEspera))
-        .com_resumo(poph_agent::resumo::OpcoesResumo {
+        .with_pause(Arc::new(SemEspera))
+        .with_summary(poph_agent::resumo::OpcoesResumo {
             ativo: false,
             ..poph_agent::resumo::OpcoesResumo::default()
         });
         if com_arquivos {
-            motor = motor.com_arquivos(self.arquivos.clone());
+            motor = motor.with_files(self.arquivos.clone());
         }
         (motor, fake)
     }
 
-    pub async fn turno(&self, motor: &Motor, gatilho: MessageId) -> ResumoTurno {
+    pub async fn turno(&self, motor: &TurnEngine, gatilho: MessageId) -> TurnSummary {
         motor
-            .executar(
-                Entrada::nova(self.org, self.conversa, gatilho),
-                &mut ObservadorNulo,
+            .run(
+                TurnInput::new(self.org, self.conversa, gatilho),
+                &mut NoopObserver,
             )
             .await
             .expect("o turno roda")

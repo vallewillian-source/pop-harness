@@ -136,3 +136,49 @@ cargo run -p poph --example semear_org -- demo "Org Demonstração"
 - Rule for a conversation in progress with an agent that became inactive in the middle (D-05).
 - Record the discarded message from an inactive agent in `audit_log`/`turns`.
 - Connect `ferramentas_habilitadas()` to the tool loop, rejecting a name invented by the model.
+
+## 7. Turn engine
+
+The [turn lifecycle](TURNO.md) documents grouping, prompts, tools, streaming, and recovery.
+The engine first checks the agent, conversation, and channel integration. An inactive agent,
+a non-open conversation, or an unavailable channel integration leaves the incoming message
+recorded and skips the reply. Website conversations use their own execution path. A
+missing stored trigger is also skipped. An error that prevents the engine from reaching
+the turn record is returned to the caller. A recorded result carries the turn state,
+handled message IDs, text, timing, token usage, and the Jev result when available.
+Observers receive events inline and must return promptly.
+
+- **Grouping.** The engine reads up to 200 recent messages by default. It walks backward
+  through consecutive inbound customer messages and opens a turn only if that group
+  contains the triggering message. The actor completes both the original inbox item and
+  the items for the grouped messages, scanning up to 500 pending items for the org.
+- **Jev and search.** With G2 enabled, the first batch starts during the grouping window.
+  It is reused if the ID of the latest customer message stays the same. The search and
+  any fresh Jev batch can run in parallel. A reliable G3 `nada` or an applicable G8
+  farewell may allow the turn to stop waiting for search. G3 `nada` also disables the
+  knowledge and catalog tools for that turn. G5 validates the selected product against
+  the current candidates and suppresses a duplicate catalog lookup. G6 gets its own
+  review call and at most one regeneration, which receives the rejected draft and fixed
+  guidance without tools. A regeneration failure keeps the original draft.
+- **Attachments.** Messages without attachment references skip the attachment lookup.
+  The extracted document text, with its untrusted-content marks, comes before images
+  from the same message. Attachments that fail to load are omitted. Image limits apply
+  to the whole turn, and logs record the omission without exposing binary content.
+- **Handoff and farewell.** The handoff risk question can suppress optional guidance
+  without blocking the transfer. The G4 choice is checked against a fresh list of active
+  departments in the org, with the agent's configured destination as the fallback.
+  G7 uses the default neutral text when its configured reply is blank. G8 sends a
+  farewell only for a group with one customer message. An empty configured farewell
+  is valid, and the engine leaves the conversation state as it was.
+- **Flows.** An active execution supplies its current step without a G9 question.
+  Without an active execution, permitted flows are sent to the Jev only when G9 is
+  enabled for the agent. The fallback catalog is available only on eligible outcomes.
+  Every evaluated turn-flow outcome goes into a single G9 metric series. A disabled
+  gate or a catalog above the candidate ceiling uses the fallback series.
+- **Output and recovery.** The reply and its outbox item are written together. The
+  actor retries transient model failures and unavailable slots within the configured
+  limit, provided the turn has not already queued output. It completes permanent
+  failures and provider refusals without retrying. Rolling summaries run in the
+  background after the reply. The turn-end log excludes customer and reply text.
+  It omits words containing `@` or at least seven digits and limits the reason to
+  160 characters.

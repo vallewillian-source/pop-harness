@@ -15,7 +15,7 @@ use poph_agent::entrada_saida::{Fluxo, OpcoesFluxo};
 use poph_agent::limites::{Limitador, OpcoesLimites};
 use poph_agent::metricas::{MetricasFluxo, MetricasMemoria, MetricasTurno};
 use poph_agent::provedores::{ProvedorResolvido, Provedores};
-use poph_agent::turno::{AjustesDoFluxo, Motor, OpcoesTurno, ProcessadorTurno, RegistroPadrao};
+use poph_agent::turno::{AjustesDoFluxo, RegistroPadrao, TurnEngine, TurnOptions, TurnProcessor};
 use poph_agent::{BuscadorBase, BuscadorProdutos, CatalogoProdutos, ConsultarBase, registro_com};
 use poph_core::llm::{LlmLimiter, LlmProvider, OpenAiCompatibleClient, OpenAiCompatibleConfig};
 use poph_fluxos::cache::CacheRevisoes;
@@ -98,7 +98,7 @@ impl FluxosDoProcesso {
 /// O que a montagem entrega a quem chama.
 pub struct Montagem {
     /// Motor do turno (usado direto pelo chat).
-    pub motor: Arc<Motor>,
+    pub motor: Arc<TurnEngine>,
     /// Fluxo de entrada e saída, com o processador de turno ligado.
     pub fluxo: Fluxo,
     /// Base de conhecimento (RAG). `None` quando o índice não abre: o turno roda sem RAG.
@@ -226,7 +226,7 @@ pub fn montar(
         poph_agent::turno::HttpToolRegistry::from_config(&configuracao.http_tools, |name| {
             config::chave_llm(ambiente, name)
         })?;
-    let mut motor = Motor::novo(
+    let mut motor = TurnEngine::new(
         Arc::clone(&store),
         ConfigQuente::nova(
             Arc::clone(&store),
@@ -239,30 +239,30 @@ pub fn montar(
             metricas.memoria.clone(),
         )),
         provedor,
-        OpcoesTurno::default(),
+        TurnOptions::default(),
         metricas.turno,
     )
     .with_http_tools(http_tools)
-    .com_modelo_padrao(configuracao.llm.model.clone())
-    .com_provedores(Arc::new(provedores))
+    .with_default_model(configuracao.llm.model.clone())
+    .with_providers(Arc::new(provedores))
     // Arquivos do cliente (HR-23b): pasta dos blobs e limites, para a imagem do anexo chegar ao
     // modelo como parte multimodal. Sem isto, só o texto extraído entra no prompt.
-    .com_arquivos(poph_files::FileConfig::default(configuracao.blobs()))
+    .with_files(poph_files::FileConfig::default(configuracao.blobs()))
     // Transferência para humano (HR-29): textos da orientação e mensagem automática vêm do
     // `[handoff]` do `poph.toml` — trocar o texto não exige recompilar.
-    .com_handoff(poph_jev::HandoffGuidance::from_config(
+    .with_handoff(poph_jev::HandoffGuidance::from_config(
         &configuracao.handoff,
     ))
     // Fluxos e Fichas (FX-23): o turno escolhe (G9), valida e inicia a execução na Ficha. Desligado
     // em `[fluxos] ativo`, nada disso acontece e a Ficha continua.
-    .com_fluxos(&configuracao.flows);
+    .with_flows(&configuracao.flows);
     // O que o processo já tem do módulo é reaproveitado: mesmo cache de revisões da API e os
     // mesmos contadores `poph_fluxos_g9_*` do `/metrics`.
     if let Some(cache) = fluxos.cache.clone() {
-        motor = motor.com_cache_de_fluxos(cache);
+        motor = motor.with_flow_cache(cache);
     }
     if let Some(g9) = fluxos.g9 {
-        motor = motor.com_metricas_g9(g9);
+        motor = motor.with_g9_metrics(g9);
     }
     // Jev (HR-28): só entra quando está ligado na configuração e a chave está no ambiente. Sem ele,
     // o turno roda exatamente como antes da HR-28 (nenhum gate é perguntado).
@@ -280,7 +280,7 @@ pub fn montar(
                         configuracao.jev.gates,
                         configuracao.jev.model.clone(),
                     );
-                    motor = motor.com_jev(Arc::new(avaliador));
+                    motor = motor.with_jev(Arc::new(avaliador));
                 }
                 Err(erro) => eprintln!("[aviso] Jev desligado: {erro}"),
             },
@@ -297,7 +297,7 @@ pub fn montar(
     // `enviar_arquivo` não existia e o sintoma era silencioso (tudo terminava `done`).
     let registro = registro_do_turno(
         Arc::clone(&store),
-        Arc::clone(motor.config_quente()),
+        Arc::clone(motor.hot_config()),
         base.as_ref().zip(catalogo.as_ref()),
     );
     // FX-24: as três ferramentas do fluxo (ação, abandono e o início da reserva). Registradas só
@@ -320,7 +320,7 @@ pub fn montar(
                 Arc::clone(catalogo) as Arc<dyn BuscadorProdutos>;
             // HR-33: a mesma busca de produtos alimenta o G5 (candidatos do turno), além da
             // ferramenta `buscar_produto`.
-            motor = motor.com_produtos(produtos).com_busca(busca);
+            motor = motor.with_products(produtos).with_search(busca);
         }
         _ => {
             // Aviso uma vez, na subida: sem base, estas ferramentas que dependem do índice não
@@ -332,9 +332,9 @@ pub fn montar(
             );
         }
     }
-    motor = motor.com_ferramentas(Arc::new(registro));
+    motor = motor.with_tools(Arc::new(registro));
     let motor = Arc::new(motor);
-    let processador = Arc::new(ProcessadorTurno::novo(Arc::clone(&motor)));
+    let processador = Arc::new(TurnProcessor::new(Arc::clone(&motor)));
     let atores = Atores::novo(
         processador.clone(),
         OpcoesAtores::default(),
@@ -346,7 +346,7 @@ pub fn montar(
         std::time::Duration::from_millis(configuracao.turn.model_failure_delay_ms),
     );
     let fluxo = Fluxo::com_metricas(Arc::clone(&store), atores, opcoes_fluxo, metricas.fluxo);
-    processador.ligar_fluxo(fluxo.clone());
+    processador.attach_io(fluxo.clone());
 
     Ok(Montagem {
         motor,

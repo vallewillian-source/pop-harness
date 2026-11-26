@@ -11,7 +11,7 @@ use poph_agent::limites::{Limitador, OpcoesLimites};
 use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
 use poph_agent::provedores::{ProvedorResolvido, Provedores};
 use poph_agent::resumo::OpcoesResumo;
-use poph_agent::turno::{Motor, OpcoesTurno};
+use poph_agent::turno::{TurnEngine, TurnOptions};
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, Usage};
 use poph_store::{AgentChange, Page};
 use poph_types::AgentId;
@@ -77,7 +77,7 @@ impl Palco {
         }
     }
 
-    fn motor(&self) -> Motor {
+    fn motor(&self) -> TurnEngine {
         let mut nomeados = BTreeMap::new();
         nomeados.insert(
             "openai-forte".to_owned(),
@@ -102,20 +102,20 @@ impl Palco {
             OpcoesLimites::default(),
             MetricasMemoria::proprio(),
         ));
-        Motor::novo(
+        TurnEngine::new(
             Arc::clone(&self.cenario.store),
             config,
             limitador,
             Arc::clone(&self.padrao) as Arc<dyn poph_core::llm::LlmProvider>,
-            OpcoesTurno::default(),
+            TurnOptions::default(),
             MetricasTurno::proprio(),
         )
-        .com_pausa(Arc::new(SemEspera))
-        .com_resumo(OpcoesResumo {
+        .with_pause(Arc::new(SemEspera))
+        .with_summary(OpcoesResumo {
             ativo: false,
             ..OpcoesResumo::default()
         })
-        .com_provedores(provedores)
+        .with_providers(provedores)
     }
 }
 
@@ -180,7 +180,7 @@ async fn provedor_desconhecido_falha_o_turno_sem_chamar_ninguem() {
     let resumo = palco.cenario.turno(&motor, gatilho).await;
 
     assert_eq!(resumo.estado, poph_store::TurnState::Failed);
-    let erro = resumo.erro.unwrap_or_default();
+    let erro = resumo.error.unwrap_or_default();
     assert!(erro.contains("sumiu-do-toml"), "{erro}");
     assert!(erro.contains("openai-forte"), "{erro}");
     assert!(palco.padrao.received().is_empty());

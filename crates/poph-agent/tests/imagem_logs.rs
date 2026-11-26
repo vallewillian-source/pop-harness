@@ -13,7 +13,7 @@ use std::io;
 use std::sync::{Arc, Mutex};
 
 use apoio::{Anexo, Cenario};
-use poph_agent::turno::MAX_BYTES_POR_IMAGEM;
+use poph_agent::turno::MAX_BYTES_PER_IMAGE;
 use poph_core::llm::{Message, Part};
 use poph_store::TurnState;
 
@@ -64,7 +64,7 @@ async fn imagem_do_cliente_nao_vai_para_o_log() {
     let mut ausente = Anexo::imagem("foto-sumida.png", b"bytes-da-foto-sumida");
     ausente.sem_blob = true;
     let mut grande = Anexo::imagem("foto-grande.png", b"x");
-    grande.tamanho_declarado = Some(MAX_BYTES_POR_IMAGEM + 1);
+    grande.tamanho_declarado = Some(MAX_BYTES_PER_IMAGE + 1);
     let gatilho = cenario.falar_com_arquivos(
         "olha as fotos e o contrato",
         vec![
@@ -78,7 +78,7 @@ async fn imagem_do_cliente_nao_vai_para_o_log() {
 
     let resumo = cenario.turno(&motor, gatilho).await;
 
-    assert_eq!(resumo.estado, TurnState::Completed, "{:?}", resumo.erro);
+    assert_eq!(resumo.estado, TurnState::Completed, "{:?}", resumo.error);
 
     // A imagem boa chegou ao modelo: o log é o do caminho real, não de um turno vazio.
     let pedido = &fake.received()[0];

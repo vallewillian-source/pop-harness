@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use poph_agent::turno::{Entrada, EventoTurno, Observador, SiteRun, SiteTurnError};
+use poph_agent::turno::{SiteRun, SiteTurnError, TurnEvent, TurnInput, TurnObserver};
 use poph_store::{SiteOutcome, SiteTurnKey, Store};
 use poph_types::{ConversationId, OrgId, TurnId};
 use tokio::sync::broadcast;
@@ -9,7 +9,7 @@ use tokio::sync::broadcast;
 use crate::Estado;
 
 pub(crate) struct SiteWorkers {
-    active: Mutex<HashMap<TurnId, Entrada>>,
+    active: Mutex<HashMap<TurnId, TurnInput>>,
     pub changes: broadcast::Sender<(OrgId, ConversationId)>,
 }
 
@@ -34,7 +34,7 @@ impl SiteWorkers {
             .unwrap_or_else(|error| error.into_inner())
             .get(&key.turn)
         {
-            entry.cancelamento.cancel();
+            entry.cancellation.cancel();
         }
         self.signal(key);
     }
@@ -58,7 +58,7 @@ pub(crate) fn launch(state: Estado, key: SiteTurnKey) {
                 .unwrap_or_else(|error| error.into_inner());
             match state.store.site_chat().claim(key) {
                 Ok(Some((agent, message))) => {
-                    let entry = Entrada::nova(key.org, key.conversation, message);
+                    let entry = TurnInput::new(key.org, key.conversation, message);
                     active.insert(key.turn, entry.clone());
                     (
                         SiteRun {
@@ -91,7 +91,7 @@ pub(crate) fn launch(state: Estado, key: SiteTurnKey) {
                     .run_site(
                         job,
                         &state.config.site_chat,
-                        &entry.cancelamento,
+                        &entry.cancellation,
                         &mut output,
                     )
                     .await
@@ -127,18 +127,18 @@ struct SiteObserver<'a> {
     key: SiteTurnKey,
     store: &'a Arc<Store>,
     workers: &'a SiteWorkers,
-    entry: &'a Entrada,
+    entry: &'a TurnInput,
     failed: bool,
 }
 
-impl Observador for SiteObserver<'_> {
-    fn evento(&mut self, event: EventoTurno) {
-        if let EventoTurno::Texto(text) = event {
+impl TurnObserver for SiteObserver<'_> {
+    fn evento(&mut self, event: TurnEvent) {
+        if let TurnEvent::Texto(text) = event {
             match self.store.site_chat().delta(self.key, text) {
                 Ok(()) => self.workers.signal(self.key),
                 Err(error) => {
                     self.failed = true;
-                    self.entry.cancelamento.cancel();
+                    self.entry.cancellation.cancel();
                     tracing::error!(%error, turn_id = %self.key.turn, "falha ao gravar trecho do site");
                 }
             }

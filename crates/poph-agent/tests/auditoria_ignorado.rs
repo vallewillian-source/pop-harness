@@ -9,7 +9,7 @@ use std::sync::Arc;
 use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
 use poph_agent::limites::{Limitador, OpcoesLimites};
 use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
-use poph_agent::turno::{Entrada, Motor, ObservadorNulo, OpcoesTurno};
+use poph_agent::turno::{NoopObserver, TurnEngine, TurnInput, TurnOptions};
 use poph_core::llm::{FakeProvider, LlmProvider};
 use poph_store::{ConversationStatus, NewAgent, NewConversation, NewOrg, Page, Store};
 use poph_types::{AgentId, ConversationId, OrgId};
@@ -83,12 +83,12 @@ async fn turno_ignorado_grava_auditoria_com_ator_system() {
         OpcoesLimites::default(),
         MetricasMemoria::proprio(),
     ));
-    let motor = Motor::novo(
+    let motor = TurnEngine::new(
         Arc::clone(&store),
         config,
         limitador,
         provedor,
-        OpcoesTurno::default(),
+        TurnOptions::default(),
         MetricasTurno::proprio(),
     );
     let mensagem = store
@@ -111,7 +111,7 @@ async fn turno_ignorado_grava_auditoria_com_ator_system() {
         .id;
 
     let resumo = motor
-        .executar(Entrada::nova(org, conversa, mensagem), &mut ObservadorNulo)
+        .run(TurnInput::new(org, conversa, mensagem), &mut NoopObserver)
         .await
         .expect("o turno roda");
     assert_eq!(resumo.estado.as_text(), "skipped");

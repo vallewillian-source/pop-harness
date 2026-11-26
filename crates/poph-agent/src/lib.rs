@@ -64,7 +64,7 @@ pub use produtos::{
 pub use provedores::{ProvedorResolvido, Provedores};
 pub use resumo::{OpcoesResumo, Resumo};
 pub use turno::{
-    ContextoFerramenta, Entrada, EventoTurno, FerramentaInterna, Motor, Observador, ObservadorNulo,
-    OpcoesTurno, Pausa, PausaReal, ProcessadorTurno, RegistroFerramentas, ResumoTurno,
-    SemFerramentas, Tempos, TransporteConsole,
+    ContextoFerramenta, FerramentaInterna, NoopObserver, Pausa, PausaReal, RegistroFerramentas,
+    SemFerramentas, TransporteConsole, TurnEngine, TurnEvent, TurnInput, TurnObserver, TurnOptions,
+    TurnProcessor, TurnSummary, TurnTimings,
 };

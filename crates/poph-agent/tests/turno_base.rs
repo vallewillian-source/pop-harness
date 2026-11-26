@@ -16,7 +16,7 @@ use std::time::Duration;
 use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
 use poph_agent::limites::{Limitador, OpcoesLimites};
 use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
-use poph_agent::turno::{FuturoPausa, Motor, Observador, ObservadorNulo, OpcoesTurno, Pausa};
+use poph_agent::turno::{FuturoPausa, NoopObserver, Pausa, TurnEngine, TurnObserver, TurnOptions};
 use poph_agent::{BaseConhecimento, BuscadorBase, ConsultarBase};
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, LlmProvider, Script, Usage};
 use poph_rag::{Embedder, FakeEmbedder, Index, IndexConfig};
@@ -188,7 +188,7 @@ impl Cenario {
             .expect("sincroniza");
     }
 
-    fn motor(&self) -> (Motor, Arc<FakeProvider>) {
+    fn motor(&self) -> (TurnEngine, Arc<FakeProvider>) {
         let roteiro = Script::Events(vec![
             LlmEvent::Texto("resposta".to_owned()),
             LlmEvent::Usage(Usage {
@@ -214,7 +214,7 @@ impl Cenario {
         ));
         let busca: Arc<dyn BuscadorBase> = Arc::clone(&self.base) as Arc<dyn BuscadorBase>;
         let registro = ConsultarBase::registro(Arc::clone(&config), Arc::clone(&busca));
-        let motor = Motor::novo(
+        let motor = TurnEngine::new(
             Arc::clone(&self.store),
             ConfigQuente::nova(
                 Arc::clone(&self.store),
@@ -223,12 +223,12 @@ impl Cenario {
             ),
             limitador,
             provedor,
-            OpcoesTurno::default(),
+            TurnOptions::default(),
             MetricasTurno::proprio(),
         )
-        .com_pausa(Arc::new(PausaFalsa))
-        .com_ferramentas(Arc::new(registro))
-        .com_busca(busca);
+        .with_pause(Arc::new(PausaFalsa))
+        .with_tools(Arc::new(registro))
+        .with_search(busca);
         (motor, fake)
     }
 
@@ -273,9 +273,9 @@ async fn trecho_da_base_entra_no_bloco_volatil_e_o_registro_guarda_a_fonte() {
 
     let gatilho = cenario.falar("Qual é o prazo para agendar a dedetização?");
     let resumo = motor
-        .executar(
-            poph_agent::turno::Entrada::nova(cenario.org, cenario.conversa, gatilho),
-            &mut ObservadorNulo,
+        .run(
+            poph_agent::turno::TurnInput::new(cenario.org, cenario.conversa, gatilho),
+            &mut NoopObserver,
         )
         .await
         .expect("o turno roda");
@@ -322,18 +322,18 @@ async fn injecao_em_item_da_base_nao_muda_o_prefixo_do_agente() {
 
     let gatilho = cenario.falar("Qual é o prazo para agendar a dedetização?");
     motor
-        .executar(
-            poph_agent::turno::Entrada::nova(cenario.org, cenario.conversa, gatilho),
-            &mut ObservadorNulo,
+        .run(
+            poph_agent::turno::TurnInput::new(cenario.org, cenario.conversa, gatilho),
+            &mut NoopObserver,
         )
         .await
         .expect("o turno roda");
     cenario.avancar(60_000);
     let segundo = cenario.falar("E o prazo?");
     motor
-        .executar(
-            poph_agent::turno::Entrada::nova(cenario.org, cenario.conversa, segundo),
-            &mut ObservadorNulo,
+        .run(
+            poph_agent::turno::TurnInput::new(cenario.org, cenario.conversa, segundo),
+            &mut NoopObserver,
         )
         .await
         .expect("o segundo turno roda");
@@ -399,9 +399,9 @@ async fn pergunta_sem_resposta_na_base_nao_injeta_bloco() {
     let (motor, fake) = cenario.motor();
     let gatilho = cenario.falar("Xilofone quartzo vulcanico");
     motor
-        .executar(
-            poph_agent::turno::Entrada::nova(cenario.org, cenario.conversa, gatilho),
-            &mut ObservadorNulo,
+        .run(
+            poph_agent::turno::TurnInput::new(cenario.org, cenario.conversa, gatilho),
+            &mut NoopObserver,
         )
         .await
         .expect("o turno roda");
@@ -420,9 +420,9 @@ async fn pergunta_sem_resposta_na_base_nao_injeta_bloco() {
 /// Teste de fumaça do observador: o evento `Base` leva as fontes para o `chat`/Console.
 #[tokio::test]
 async fn evento_base_avisa_as_fontes() {
-    struct Coletor(Vec<poph_agent::turno::EventoTurno>);
-    impl Observador for Coletor {
-        fn evento(&mut self, evento: poph_agent::turno::EventoTurno) {
+    struct Coletor(Vec<poph_agent::turno::TurnEvent>);
+    impl TurnObserver for Coletor {
+        fn evento(&mut self, evento: poph_agent::turno::TurnEvent) {
             self.0.push(evento);
         }
     }
@@ -437,8 +437,8 @@ async fn evento_base_avisa_as_fontes() {
     let gatilho = cenario.falar("Qual é o prazo para agendar?");
     let mut coletor = Coletor(Vec::new());
     motor
-        .executar(
-            poph_agent::turno::Entrada::nova(cenario.org, cenario.conversa, gatilho),
+        .run(
+            poph_agent::turno::TurnInput::new(cenario.org, cenario.conversa, gatilho),
             &mut coletor,
         )
         .await
@@ -447,7 +447,7 @@ async fn evento_base_avisa_as_fontes() {
         .0
         .iter()
         .filter_map(|evento| match evento {
-            poph_agent::turno::EventoTurno::Base { fontes } => Some(fontes),
+            poph_agent::turno::TurnEvent::Base { sources: fontes } => Some(fontes),
             _ => None,
         })
         .flatten()

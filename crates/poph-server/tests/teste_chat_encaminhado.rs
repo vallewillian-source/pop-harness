@@ -26,7 +26,7 @@ use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
 use poph_agent::entrada_saida::{Fluxo, OpcoesFluxo};
 use poph_agent::limites::{Limitador, OpcoesLimites};
 use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
-use poph_agent::turno::{Motor, OpcoesTurno, ProcessadorTurno};
+use poph_agent::turno::{TurnEngine, TurnOptions, TurnProcessor};
 use poph_core::llm::{FakeProvider, LlmError, LlmEvent, LlmProvider, Script};
 use poph_server::Estado;
 use poph_server::cluster::ClusterVivo;
@@ -137,7 +137,7 @@ async fn iniciar(
             error: LlmError::TimedOut { seconds: 30 },
         }]));
         let provedor: Arc<dyn LlmProvider> = fake.clone();
-        let motor = Arc::new(Motor::novo(
+        let motor = Arc::new(TurnEngine::new(
             Arc::clone(&store),
             ConfigQuente::nova(
                 Arc::clone(&store),
@@ -149,17 +149,17 @@ async fn iniciar(
                 MetricasMemoria::proprio(),
             )),
             provedor,
-            OpcoesTurno::default(),
+            TurnOptions::default(),
             MetricasTurno::proprio(),
         ));
-        let processador = Arc::new(ProcessadorTurno::novo(Arc::clone(&motor)));
+        let processador = Arc::new(TurnProcessor::new(Arc::clone(&motor)));
         let atores = Atores::novo(
             processador.clone(),
             OpcoesAtores::default(),
             MetricasMemoria::proprio(),
         );
         let fluxo = Fluxo::nova(Arc::clone(&store), atores, OpcoesFluxo::default());
-        processador.ligar_fluxo(fluxo.clone());
+        processador.attach_io(fluxo.clone());
         estado = estado
             .com_motor(motor)
             .com_turno(fluxo, Duration::from_millis(20));

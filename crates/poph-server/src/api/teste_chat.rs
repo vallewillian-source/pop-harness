@@ -31,7 +31,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use futures::stream;
-use poph_agent::turno::{Entrada, EventoTurno, Observador, ResumoTurno, TransporteConsole};
+use poph_agent::turno::{TransporteConsole, TurnEvent, TurnInput, TurnObserver, TurnSummary};
 use poph_files::{Content, FileError};
 use poph_store::{
     AttachmentRecord, Conversa, Direction, Mensagem, NewChannelAttachment, NewConversation,
@@ -81,8 +81,8 @@ pub struct CaminhoConversa {
 
 /// O que o turno entrega ao canal do SSE.
 enum Saida {
-    Evento(EventoTurno),
-    Resumo(Box<ResumoTurno>),
+    Evento(TurnEvent),
+    Resumo(Box<TurnSummary>),
     Falha(String),
 }
 
@@ -91,11 +91,11 @@ struct ObservadorSse {
     tx: mpsc::UnboundedSender<Saida>,
 }
 
-impl Observador for ObservadorSse {
-    fn evento(&mut self, evento: EventoTurno) {
+impl TurnObserver for ObservadorSse {
+    fn evento(&mut self, evento: TurnEvent) {
         // O `Fim` do motor traz só estado e motivo; o `fim` do SSE é mais rico (turno, tokens,
         // tempos) e sai do resumo, logo depois. Mandar os dois duplicaria o evento na tela.
-        if matches!(evento, EventoTurno::Fim { .. }) {
+        if matches!(evento, TurnEvent::Fim { .. }) {
             return;
         }
         let _ = self.tx.send(Saida::Evento(evento));
@@ -109,7 +109,7 @@ impl Observador for ObservadorSse {
 struct GuardaSse {
     estado: Estado,
     conversa: ConversationId,
-    entrada: Option<Entrada>,
+    entrada: Option<TurnInput>,
 }
 
 impl GuardaSse {
@@ -125,7 +125,7 @@ impl GuardaSse {
 impl Drop for GuardaSse {
     fn drop(&mut self) {
         if let Some(entrada) = &self.entrada {
-            entrada.cancelamento.cancel();
+            entrada.cancellation.cancel();
         }
         self.estado.liberar_turno_de_teste(self.conversa);
     }
@@ -533,14 +533,14 @@ pub async fn mensagem(
         conversa_id.to_string(),
     )?;
 
-    let entrada = Entrada::nova(org, conversa_id, mensagem.id);
+    let entrada = TurnInput::new(org, conversa_id, mensagem.id);
     guarda.entrada = Some(entrada.clone());
 
     let (tx, rx) = mpsc::unbounded_channel::<Saida>();
     let fluxo = estado.turno.clone();
     tokio::spawn(async move {
         let mut observador = ObservadorSse { tx: tx.clone() };
-        let resultado = motor.executar(entrada, &mut observador).await;
+        let resultado = motor.run(entrada, &mut observador).await;
         // O texto já saiu pelo SSE: confirma a saída sem imprimir de novo, **antes** do `fim`, para
         // quem receber o `fim` poder contar com a fila confirmada. Sem o fluxo (montagem de teste
         // que só passou o motor), o item fica pendente na fila e nada se perde.
@@ -788,9 +788,9 @@ fn evento_de_mensagem(
         .unwrap_or_else(|_| Event::default().event("mensagem").data("{}"))
 }
 
-fn evento_sse(evento: EventoTurno) -> Event {
+fn evento_sse(evento: TurnEvent) -> Event {
     match evento {
-        EventoTurno::Inicio {
+        TurnEvent::Started {
             turno,
             agente,
             conversa,
@@ -802,22 +802,25 @@ fn evento_sse(evento: EventoTurno) -> Event {
                 "conversation_id": conversa.to_string(),
             }))
             .unwrap_or_else(|_| Event::default().event("inicio").data("{}")),
-        EventoTurno::Texto(delta) => Event::default()
+        TurnEvent::Texto(delta) => Event::default()
             .event("texto")
             .json_data(json!({ "delta": delta }))
             .unwrap_or_else(|_| Event::default().event("texto").data("{}")),
-        EventoTurno::Base { fontes } => Event::default()
+        TurnEvent::Base { sources: fontes } => Event::default()
             .event("base")
             .json_data(json!({ "sources": fontes }))
             .unwrap_or_else(|_| Event::default().event("base").data("{}")),
-        EventoTurno::Ferramenta { nome, rodada } => Event::default()
+        TurnEvent::Tool {
+            nome,
+            round: rodada,
+        } => Event::default()
             .event("ferramenta")
             .json_data(json!({ "name": nome, "round": rodada }))
             .unwrap_or_else(|_| Event::default().event("ferramenta").data("{}")),
-        EventoTurno::Transferencia {
+        TurnEvent::Handoff {
             departamento,
-            tipo_risco,
-            orientacao,
+            risk_kind: tipo_risco,
+            guidance: orientacao,
         } => Event::default()
             .event("transferencia")
             .json_data(json!({
@@ -827,14 +830,14 @@ fn evento_sse(evento: EventoTurno) -> Event {
             }))
             .unwrap_or_else(|_| Event::default().event("transferencia").data("{}")),
         // O `Fim` do motor não é repassado: o `fim` rico sai do resumo (ver `evento_fim`).
-        EventoTurno::Fim { estado, motivo } => Event::default()
+        TurnEvent::Fim { estado, motivo } => Event::default()
             .event("fim")
             .json_data(json!({ "state": estado, "reason": motivo }))
             .unwrap_or_else(|_| Event::default().event("fim").data("{}")),
     }
 }
 
-fn evento_fim(resumo: &ResumoTurno) -> Event {
+fn evento_fim(resumo: &TurnSummary) -> Event {
     Event::default()
         .event("fim")
         .json_data(json!({
@@ -842,18 +845,18 @@ fn evento_fim(resumo: &ResumoTurno) -> Event {
             "state": resumo.estado.as_text(),
             "reason": resumo.motivo_fim,
             "text": resumo.texto,
-            "error": resumo.erro,
-            "model_call_failed": resumo.falha_modelo,
-            "messages": resumo.mensagens.iter().map(|m| m.to_string()).collect::<Vec<_>>(),
-            "input_tokens": resumo.tokens_entrada,
-            "output_tokens": resumo.tokens_saida,
+            "error": resumo.error,
+            "model_call_failed": resumo.model_failure,
+            "messages": resumo.messages.iter().map(|m| m.to_string()).collect::<Vec<_>>(),
+            "input_tokens": resumo.input_tokens,
+            "output_tokens": resumo.output_tokens,
             "model": resumo.modelo,
             "timings": {
-                "queue_ms": resumo.tempos.fila_ms,
-                "assembly_ms": resumo.tempos.montagem_ms,
-                "first_text_ms": resumo.tempos.primeiro_texto_ms,
-                "total_ms": resumo.tempos.total_ms,
-                "tool_rounds": resumo.tempos.rodadas_ferramenta,
+                "queue_ms": resumo.timings.queue_ms,
+                "assembly_ms": resumo.timings.assembly_ms,
+                "first_text_ms": resumo.timings.first_text_ms,
+                "total_ms": resumo.timings.total_ms,
+                "tool_rounds": resumo.timings.tool_rounds,
             },
         }))
         .unwrap_or_else(|_| Event::default().event("fim").data("{}"))

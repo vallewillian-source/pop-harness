@@ -20,7 +20,7 @@ use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
 use poph_agent::limites::{Limitador, OpcoesLimites};
 use poph_agent::metricas::{MetricasG9, MetricasMemoria, MetricasTurno};
 use poph_agent::turno::{
-    Entrada, FuturoPausa, Motor, ObservadorNulo, OpcoesTurno, Pausa, ResumoTurno,
+    FuturoPausa, NoopObserver, Pausa, TurnEngine, TurnInput, TurnOptions, TurnSummary,
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, Usage};
 use poph_fluxos::{Limites, compilar};
@@ -240,7 +240,7 @@ impl Cenario {
         jev: Option<Arc<JevEngine>>,
         fluxos: Option<FlowsConfig>,
         g9: MetricasG9,
-    ) -> (Motor, Arc<FakeProvider>) {
+    ) -> (TurnEngine, Arc<FakeProvider>) {
         let _ = agente;
         let config = ConfigQuente::nova(
             Arc::clone(&self.store),
@@ -256,39 +256,39 @@ impl Cenario {
             roteiro("Certo! Vou anotar."),
             roteiro("Certo! Vou anotar."),
         ]));
-        let mut motor = Motor::novo(
+        let mut motor = TurnEngine::new(
             Arc::clone(&self.store),
             config,
             limitador,
             provedor.clone(),
-            OpcoesTurno::default(),
+            TurnOptions::default(),
             MetricasTurno::proprio(),
         )
-        .com_pausa(Arc::new(SemEspera))
-        .com_resumo(poph_agent::resumo::OpcoesResumo {
+        .with_pause(Arc::new(SemEspera))
+        .with_summary(poph_agent::resumo::OpcoesResumo {
             ativo: false,
             ..poph_agent::resumo::OpcoesResumo::default()
         })
-        .com_metricas_g9(g9);
+        .with_g9_metrics(g9);
         if let Some(ajustes) = fluxos {
-            motor = motor.com_fluxos(&ajustes);
+            motor = motor.with_flows(&ajustes);
         }
         if let Some(jev) = jev {
-            motor = motor.com_jev(jev);
+            motor = motor.with_jev(jev);
         }
         (motor, provedor)
     }
 
     async fn turno(
         &self,
-        motor: &Motor,
+        motor: &TurnEngine,
         conversa: ConversationId,
         gatilho: MessageId,
-    ) -> ResumoTurno {
+    ) -> TurnSummary {
         motor
-            .executar(
-                Entrada::nova(self.org, conversa, gatilho),
-                &mut ObservadorNulo,
+            .run(
+                TurnInput::new(self.org, conversa, gatilho),
+                &mut NoopObserver,
             )
             .await
             .expect("o turno roda")

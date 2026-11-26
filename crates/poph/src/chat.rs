@@ -14,7 +14,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use clap::Args;
-use poph_agent::turno::{Entrada, EventoTurno, Observador, TransporteConsole};
+use poph_agent::turno::{TransporteConsole, TurnEvent, TurnInput, TurnObserver};
 use poph_core::llm::Cancellation;
 use poph_store::{Conversa, Direction, NewConversation, NewMessage, Role, Store};
 use poph_types::{AgentId, BaseMetrics, ConversationId, OrgId, Registry};
@@ -182,11 +182,11 @@ fn rodar(
                 );
             }
 
-            let mut entrada = Entrada::nova(org, conversa.id, mensagem.id);
+            let mut entrada = TurnInput::new(org, conversa.id, mensagem.id);
             let cancelamento = Cancellation::new();
-            entrada.cancelamento = cancelamento.clone();
+            entrada.cancellation = cancelamento.clone();
             let mut observador = ObservadorChat::novo(args.json);
-            let turno = motor.executar(entrada, &mut observador);
+            let turno = motor.run(entrada, &mut observador);
             tokio::pin!(turno);
             let resumo = loop {
                 tokio::select! {
@@ -210,13 +210,13 @@ fn rodar(
                                 "turno": resumo.turno.to_string(),
                                 "estado": resumo.estado.as_text(),
                                 "motivo": resumo.motivo_fim,
-                                "erro": resumo.erro,
-                                "tokens_entrada": resumo.tokens_entrada,
-                                "tokens_saida": resumo.tokens_saida,
-                                "total_ms": resumo.tempos.total_ms,
-                                "primeiro_texto_ms": resumo.tempos.primeiro_texto_ms,
-                                "fila_ms": resumo.tempos.fila_ms,
-                                "montagem_ms": resumo.tempos.montagem_ms,
+                                "erro": resumo.error,
+                                "tokens_entrada": resumo.input_tokens,
+                                "tokens_saida": resumo.output_tokens,
+                                "total_ms": resumo.timings.total_ms,
+                                "primeiro_texto_ms": resumo.timings.first_text_ms,
+                                "fila_ms": resumo.timings.queue_ms,
+                                "montagem_ms": resumo.timings.assembly_ms,
                             })
                         );
                     } else {
@@ -341,15 +341,15 @@ impl ObservadorChat {
     }
 }
 
-impl Observador for ObservadorChat {
-    fn evento(&mut self, evento: EventoTurno) {
+impl TurnObserver for ObservadorChat {
+    fn evento(&mut self, evento: TurnEvent) {
         match evento {
-            EventoTurno::Inicio { turno, .. } => {
+            TurnEvent::Started { turno, .. } => {
                 if self.json {
                     println!("{}", json!({"tipo": "inicio", "turno": turno.to_string()}));
                 }
             }
-            EventoTurno::Texto(pedaco) => {
+            TurnEvent::Texto(pedaco) => {
                 if self.json {
                     println!("{}", json!({"tipo": "texto", "delta": pedaco}));
                 } else {
@@ -361,7 +361,7 @@ impl Observador for ObservadorChat {
                     let _ = std::io::stdout().flush();
                 }
             }
-            EventoTurno::Base { fontes } => {
+            TurnEvent::Base { sources: fontes } => {
                 if self.json {
                     println!(
                         "{}",
@@ -371,7 +371,10 @@ impl Observador for ObservadorChat {
                     eprintln!("\n[base: {}]", fontes.join("; "));
                 }
             }
-            EventoTurno::Ferramenta { nome, rodada } => {
+            TurnEvent::Tool {
+                nome,
+                round: rodada,
+            } => {
                 if self.json {
                     println!(
                         "{}",
@@ -381,10 +384,10 @@ impl Observador for ObservadorChat {
                     eprintln!("\n[ferramenta: {nome}]");
                 }
             }
-            EventoTurno::Transferencia {
+            TurnEvent::Handoff {
                 departamento,
-                tipo_risco,
-                orientacao,
+                risk_kind: tipo_risco,
+                guidance: orientacao,
             } => {
                 if self.json {
                     println!(
@@ -411,7 +414,7 @@ impl Observador for ObservadorChat {
                 }
             }
             // O `fim` sai no laço principal, com tokens e tempos; aqui não há nada a imprimir.
-            EventoTurno::Fim { .. } => {}
+            TurnEvent::Fim { .. } => {}
         }
     }
 }

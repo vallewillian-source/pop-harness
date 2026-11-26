@@ -19,8 +19,8 @@ use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
 use poph_agent::limites::{Limitador, OpcoesLimites};
 use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
 use poph_agent::turno::{
-    Entrada, FuturoPausa, MAX_IMAGENS_POR_TURNO, Motor, ObservadorNulo, OpcoesTurno, Pausa,
-    ResumoTurno,
+    FuturoPausa, MAX_IMAGES_PER_TURN, NoopObserver, Pausa, TurnEngine, TurnInput, TurnOptions,
+    TurnSummary,
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Message, Part, Script, Usage};
 use poph_store::{
@@ -201,7 +201,7 @@ impl Cenario {
             .id
     }
 
-    fn motor(&self, com_arquivos: bool) -> (Motor, Arc<FakeProvider>) {
+    fn motor(&self, com_arquivos: bool) -> (TurnEngine, Arc<FakeProvider>) {
         let fake = Arc::new(FakeProvider::with_scripts(vec![roteiro_texto(
             "recebi o arquivo",
         )]));
@@ -214,30 +214,30 @@ impl Cenario {
             OpcoesLimites::default(),
             MetricasMemoria::proprio(),
         ));
-        let mut motor = Motor::novo(
+        let mut motor = TurnEngine::new(
             Arc::clone(&self.store),
             config,
             limitador,
             fake.clone(),
-            OpcoesTurno::default(),
+            TurnOptions::default(),
             self.metricas.clone(),
         )
-        .com_pausa(Arc::new(SemEspera))
-        .com_resumo(poph_agent::resumo::OpcoesResumo {
+        .with_pause(Arc::new(SemEspera))
+        .with_summary(poph_agent::resumo::OpcoesResumo {
             ativo: false,
             ..poph_agent::resumo::OpcoesResumo::default()
         });
         if com_arquivos {
-            motor = motor.com_arquivos(self.arquivos.clone());
+            motor = motor.with_files(self.arquivos.clone());
         }
         (motor, fake)
     }
 
-    async fn turno(&self, motor: &Motor, gatilho: MessageId) -> ResumoTurno {
+    async fn turno(&self, motor: &TurnEngine, gatilho: MessageId) -> TurnSummary {
         motor
-            .executar(
-                Entrada::nova(self.org, self.conversa, gatilho),
-                &mut ObservadorNulo,
+            .run(
+                TurnInput::new(self.org, self.conversa, gatilho),
+                &mut NoopObserver,
             )
             .await
             .expect("o turno roda")
@@ -320,7 +320,7 @@ async fn imagem_chega_ao_provedor() {
 
     let resumo = cenario.turno(&motor, gatilho).await;
 
-    assert_eq!(resumo.estado, TurnState::Completed, "{:?}", resumo.erro);
+    assert_eq!(resumo.estado, TurnState::Completed, "{:?}", resumo.error);
     let pedido = &fake.received()[0];
     let achadas = imagens(pedido);
     assert_eq!(achadas.len(), 1, "a imagem tem de ir ao modelo");
@@ -365,7 +365,7 @@ async fn imagem_e_documento_vao_juntos_com_o_aviso_de_conteudo_nao_confiavel() {
 
     let resumo = cenario.turno(&motor, gatilho).await;
 
-    assert_eq!(resumo.estado, TurnState::Completed, "{:?}", resumo.erro);
+    assert_eq!(resumo.estado, TurnState::Completed, "{:?}", resumo.error);
     let pedido = &fake.received()[0];
     // A imagem do segundo anexo vem com o mime dela (o anexo é o mesmo tipo gravado pelo canal).
     let achadas = imagens(pedido);
@@ -390,7 +390,7 @@ async fn blob_ausente_nao_derruba_o_turno() {
 
     let resumo = cenario.turno(&motor, gatilho).await;
 
-    assert_eq!(resumo.estado, TurnState::Completed, "{:?}", resumo.erro);
+    assert_eq!(resumo.estado, TurnState::Completed, "{:?}", resumo.error);
     assert_eq!(resumo.texto, "recebi o arquivo");
     assert!(
         imagens(&fake.received()[0]).is_empty(),
@@ -402,7 +402,7 @@ async fn blob_ausente_nao_derruba_o_turno() {
 async fn imagem_acima_do_teto_e_omitida_e_o_turno_segue() {
     let cenario = Cenario::novo("teto");
     let mut anexos = Vec::new();
-    for indice in 0..(MAX_IMAGENS_POR_TURNO + 1) {
+    for indice in 0..(MAX_IMAGES_PER_TURN + 1) {
         anexos.push(Anexo::imagem(
             &format!("foto-{indice}.png"),
             format!("conteudo-{indice}").as_bytes(),
@@ -410,18 +410,18 @@ async fn imagem_acima_do_teto_e_omitida_e_o_turno_segue() {
     }
     // A última passa do teto de bytes por imagem: omitida sem nem ler o disco.
     let mut grande = Anexo::imagem("foto-grande.png", b"x");
-    grande.tamanho_declarado = Some(poph_agent::turno::MAX_BYTES_POR_IMAGEM + 1);
+    grande.tamanho_declarado = Some(poph_agent::turno::MAX_BYTES_PER_IMAGE + 1);
     anexos.push(grande);
     let gatilho = cenario.falar_com_arquivos("varias fotos", anexos);
     let (motor, fake) = cenario.motor(true);
 
     let resumo = cenario.turno(&motor, gatilho).await;
 
-    assert_eq!(resumo.estado, TurnState::Completed, "{:?}", resumo.erro);
+    assert_eq!(resumo.estado, TurnState::Completed, "{:?}", resumo.error);
     let achadas = imagens(&fake.received()[0]);
     assert_eq!(
         achadas.len(),
-        MAX_IMAGENS_POR_TURNO,
+        MAX_IMAGES_PER_TURN,
         "só o teto de imagens do turno vai ao modelo"
     );
     assert!(
@@ -441,7 +441,7 @@ async fn sem_configuracao_de_arquivos_o_turno_continua_como_hoje() {
 
     let resumo = cenario.turno(&motor, gatilho).await;
 
-    assert_eq!(resumo.estado, TurnState::Completed, "{:?}", resumo.erro);
+    assert_eq!(resumo.estado, TurnState::Completed, "{:?}", resumo.error);
     assert!(
         imagens(&fake.received()[0]).is_empty(),
         "sem pasta de blobs configurada, nenhuma imagem é lida do disco"

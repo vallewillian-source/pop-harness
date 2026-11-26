@@ -19,7 +19,7 @@ use std::time::Duration;
 use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
 use poph_agent::limites::{Limitador, OpcoesLimites};
 use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
-use poph_agent::turno::{Entrada, FuturoPausa, Motor, ObservadorNulo, OpcoesTurno, Pausa};
+use poph_agent::turno::{FuturoPausa, NoopObserver, Pausa, TurnEngine, TurnInput, TurnOptions};
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, Usage};
 use poph_jev::{
     BatchResponse, FakeJev, G1_TRANSFER, HandoffGuidance, IdGate, JevEngine, JevRequest,
@@ -244,7 +244,7 @@ impl Cenario {
             .id
     }
 
-    fn motor(&self, jev: Option<Arc<JevEngine>>) -> Motor {
+    fn motor(&self, jev: Option<Arc<JevEngine>>) -> TurnEngine {
         let config = ConfigQuente::nova(
             Arc::clone(&self.store),
             OpcoesConfigQuente::default(),
@@ -254,32 +254,32 @@ impl Cenario {
             OpcoesLimites::default(),
             MetricasMemoria::proprio(),
         ));
-        let mut motor = Motor::novo(
+        let mut motor = TurnEngine::new(
             Arc::clone(&self.store),
             config,
             limitador,
             Arc::clone(&self.provedor) as Arc<dyn poph_core::llm::LlmProvider>,
-            OpcoesTurno::default(),
+            TurnOptions::default(),
             MetricasTurno::proprio(),
         )
-        .com_pausa(Arc::new(SemEspera))
-        .com_handoff(HandoffGuidance::default());
+        .with_pause(Arc::new(SemEspera))
+        .with_handoff(HandoffGuidance::default());
         if let Some(jev) = jev {
-            motor = motor.com_jev(jev);
+            motor = motor.with_jev(jev);
         }
         motor
     }
 
     async fn turno(
         &self,
-        motor: &Motor,
+        motor: &TurnEngine,
         conversa: ConversationId,
         gatilho: MessageId,
-    ) -> poph_agent::turno::ResumoTurno {
+    ) -> poph_agent::turno::TurnSummary {
         motor
-            .executar(
-                Entrada::nova(self.org, conversa, gatilho),
-                &mut ObservadorNulo,
+            .run(
+                TurnInput::new(self.org, conversa, gatilho),
+                &mut NoopObserver,
             )
             .await
             .expect("o turno roda")

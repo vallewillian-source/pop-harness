@@ -22,8 +22,8 @@ use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
 use poph_agent::limites::{Limitador, OpcoesLimites};
 use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
 use poph_agent::turno::{
-    Entrada, FuturoPausa, JANELA_CONFIRMACAO, Motor, ObservadorNulo, OpcoesTurno, Pausa,
-    ResumoTurno, janela_com_g2,
+    CONFIRMATION_WINDOW, FuturoPausa, NoopObserver, Pausa, TurnEngine, TurnInput, TurnOptions,
+    TurnSummary, window_with_g2,
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Message, Script, Usage};
 use poph_jev::{
@@ -245,7 +245,7 @@ impl Cenario {
         jev: Option<Arc<JevEngine>>,
         pausa: Arc<PausaVirtual>,
         provedor: Arc<FakeProvider>,
-    ) -> Motor {
+    ) -> TurnEngine {
         let config = ConfigQuente::nova(
             Arc::clone(&self.store),
             OpcoesConfigQuente::default(),
@@ -255,31 +255,31 @@ impl Cenario {
             OpcoesLimites::default(),
             MetricasMemoria::proprio(),
         ));
-        let mut motor = Motor::novo(
+        let mut motor = TurnEngine::new(
             Arc::clone(&self.store),
             config,
             limitador,
             provedor,
-            OpcoesTurno::default(),
+            TurnOptions::default(),
             MetricasTurno::proprio(),
         )
-        .com_pausa(pausa);
+        .with_pause(pausa);
         if let Some(jev) = jev {
-            motor = motor.com_jev(jev);
+            motor = motor.with_jev(jev);
         }
         motor
     }
 
     async fn turno(
         &self,
-        motor: &Motor,
+        motor: &TurnEngine,
         conversa: ConversationId,
         gatilho: MessageId,
-    ) -> ResumoTurno {
+    ) -> TurnSummary {
         motor
-            .executar(
-                Entrada::nova(self.org, conversa, gatilho),
-                &mut ObservadorNulo,
+            .run(
+                TurnInput::new(self.org, conversa, gatilho),
+                &mut NoopObserver,
             )
             .await
             .expect("o turno roda")
@@ -368,7 +368,7 @@ async fn esperar_mais_estica_a_janela_e_agrupa_a_mensagem_seguinte() {
         pausa.espera_total()
     );
     assert_eq!(
-        resumo.mensagens.len(),
+        resumo.messages.len(),
         2,
         "a mensagem seguinte entra na mesma janela"
     );
@@ -413,7 +413,7 @@ async fn mensagem_nova_durante_a_espera_refaz_o_lote() {
     let resumo = cenario.turno(&motor, conversa, gatilho).await;
 
     assert_eq!(resumo.estado, TurnState::Completed);
-    assert_eq!(resumo.mensagens.len(), 2);
+    assert_eq!(resumo.messages.len(), 2);
     assert_eq!(
         jev.calls(),
         2,
@@ -456,13 +456,13 @@ async fn processar_agora_encurta_a_espera() {
         pausa.espera_total()
     );
     assert!(
-        pausa.espera_total() <= JANELA_CONFIRMACAO
-            && pausa.espera_total() + TOLERANCIA >= JANELA_CONFIRMACAO,
+        pausa.espera_total() <= CONFIRMATION_WINDOW
+            && pausa.espera_total() + TOLERANCIA >= CONFIRMATION_WINDOW,
         "a espera devia ser a confirmação curta, foi {:?}",
         pausa.espera_total()
     );
     assert_eq!(jev.calls(), 1, "sem mensagem nova, um lote só");
-    assert_eq!(resumo.mensagens.len(), 1);
+    assert_eq!(resumo.messages.len(), 1);
 }
 
 // ───────────────────────────── 3. janela fixa (fallback) ─────────────────────────────
@@ -730,24 +730,24 @@ async fn conversa_transferida_nao_responde_nem_consulta_o_jev() {
 fn janela_com_g2_respeita_o_teto_e_o_fallback() {
     let base = Duration::from_secs(2);
     let teto = Duration::from_secs(8);
-    let confirmacao = JANELA_CONFIRMACAO;
+    let confirmacao = CONFIRMATION_WINDOW;
 
     assert_eq!(
-        janela_com_g2(base, teto, confirmacao, Some(G2_WAIT)),
+        window_with_g2(base, teto, confirmacao, Some(G2_WAIT)),
         Duration::from_secs(4)
     );
     assert_eq!(
-        janela_com_g2(Duration::from_secs(6), teto, confirmacao, Some(G2_WAIT)),
+        window_with_g2(Duration::from_secs(6), teto, confirmacao, Some(G2_WAIT)),
         teto,
         "esticar nunca passa do teto do PRD §6.3"
     );
     assert_eq!(
-        janela_com_g2(base, teto, confirmacao, Some(G2_PROCESS)),
+        window_with_g2(base, teto, confirmacao, Some(G2_PROCESS)),
         confirmacao
     );
-    assert_eq!(janela_com_g2(base, teto, confirmacao, None), base);
+    assert_eq!(window_with_g2(base, teto, confirmacao, None), base);
     assert_eq!(
-        janela_com_g2(base, teto, confirmacao, Some("opcao_desconhecida")),
+        window_with_g2(base, teto, confirmacao, Some("opcao_desconhecida")),
         base
     );
 }
@@ -798,7 +798,7 @@ async fn rodar_caso(
     conversa: ConversationId,
     caso: &CasoDoConjunto,
     decisao: Option<&str>,
-) -> (Arc<PausaVirtual>, ResumoTurno) {
+) -> (Arc<PausaVirtual>, TurnSummary) {
     let pausa = Arc::new(PausaVirtual::nova(
         Arc::clone(&cenario.store),
         cenario.org,
@@ -891,13 +891,13 @@ async fn latencia_menor_nas_completas_sem_partir_mais_frases() {
     for caso in &com_continuacao {
         let conversa = cenario.conversa();
         let (_, resumo) = rodar_caso(&cenario, conversa, caso, Some(&caso.esperado)).await;
-        if resumo.mensagens.len() < 2 {
+        if resumo.messages.len() < 2 {
             partidas_com += 1;
         }
 
         let conversa = cenario.conversa();
         let (_, resumo) = rodar_caso(&cenario, conversa, caso, None).await;
-        if resumo.mensagens.len() < 2 {
+        if resumo.messages.len() < 2 {
             partidas_sem += 1;
         }
     }

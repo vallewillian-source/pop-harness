@@ -15,7 +15,7 @@ use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
 use poph_agent::limites::{Limitador, OpcoesLimites};
 use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
 use poph_agent::turno::{
-    Entrada, FuturoPausa, Motor, ObservadorNulo, OpcoesTurno, Pausa, ResumoTurno,
+    FuturoPausa, NoopObserver, Pausa, TurnEngine, TurnInput, TurnOptions, TurnSummary,
 };
 use poph_core::llm::{FakeProvider, Script};
 use poph_jev::{
@@ -180,7 +180,7 @@ impl Cenario {
             .expect("ajusta o jev_json do agente");
     }
 
-    fn motor(&self, globais: JevGates, jev: Option<Arc<JevEngine>>) -> Motor {
+    fn motor(&self, globais: JevGates, jev: Option<Arc<JevEngine>>) -> TurnEngine {
         let config = ConfigQuente::nova(
             Arc::clone(&self.store),
             OpcoesConfigQuente::default(),
@@ -194,31 +194,31 @@ impl Cenario {
             "Olá! Como posso ajudar?",
         )]));
         let _ = globais;
-        let mut motor = Motor::novo(
+        let mut motor = TurnEngine::new(
             Arc::clone(&self.store),
             config,
             limitador,
             provedor,
-            OpcoesTurno::default(),
+            TurnOptions::default(),
             MetricasTurno::proprio(),
         )
-        .com_pausa(Arc::new(SemEspera));
+        .with_pause(Arc::new(SemEspera));
         if let Some(jev) = jev {
-            motor = motor.com_jev(jev);
+            motor = motor.with_jev(jev);
         }
         motor
     }
 
     async fn turno(
         &self,
-        motor: &Motor,
+        motor: &TurnEngine,
         conversa: ConversationId,
         gatilho: MessageId,
-    ) -> ResumoTurno {
+    ) -> TurnSummary {
         motor
-            .executar(
-                Entrada::nova(self.org, conversa, gatilho),
-                &mut ObservadorNulo,
+            .run(
+                TurnInput::new(self.org, conversa, gatilho),
+                &mut NoopObserver,
             )
             .await
             .expect("o turno roda")
@@ -516,7 +516,7 @@ async fn jev_e_busca_correm_juntos() {
     );
     let motor = cenario
         .motor(so_g1(), Some(motor_jev(Arc::clone(&jev), so_g1())))
-        .com_busca(Arc::new(BuscaLenta(Duration::from_millis(300))));
+        .with_search(Arc::new(BuscaLenta(Duration::from_millis(300))));
 
     let gatilho = cenario.falar(conversa, "queria saber o prazo de entrega");
     let inicio = Instant::now();

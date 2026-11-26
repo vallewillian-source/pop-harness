@@ -20,8 +20,8 @@ use poph_agent::entrada_saida::{Fluxo, MensagemRecebida, OpcoesFluxo};
 use poph_agent::limites::{Limitador, OpcoesLimites};
 use poph_agent::metricas::{MetricasFluxo, MetricasMemoria, MetricasTurno};
 use poph_agent::turno::{
-    ContextoFerramenta, FerramentaInterna, FuturoPausa, Motor, ObservadorNulo, OpcoesTurno, Pausa,
-    ProcessadorTurno, RegistroFerramentas, RegistroPadrao, UsoFerramentas,
+    ContextoFerramenta, FerramentaInterna, FuturoPausa, NoopObserver, Pausa, RegistroFerramentas,
+    RegistroPadrao, TurnEngine, TurnOptions, TurnProcessor, UsoFerramentas,
 };
 use poph_core::llm::{
     FakeProvider, FinishReason, LlmError, LlmEvent, LlmProvider, Script, ToolCall,
@@ -207,7 +207,7 @@ impl Cenario {
             .collect()
     }
 
-    fn motor(&self, roteiros: Vec<Script>) -> (Motor, Arc<FakeProvider>) {
+    fn motor(&self, roteiros: Vec<Script>) -> (TurnEngine, Arc<FakeProvider>) {
         let fake = Arc::new(FakeProvider::with_scripts(roteiros));
         let provedor: Arc<dyn LlmProvider> = fake.clone();
         let config = ConfigQuente::nova(
@@ -219,17 +219,16 @@ impl Cenario {
             OpcoesLimites::default(),
             MetricasMemoria::proprio(),
         ));
-        let motor = Motor::novo(
+        let motor = TurnEngine::new(
             Arc::clone(&self.store),
             config,
             limitador,
             provedor,
-            OpcoesTurno::default(),
+            TurnOptions::default(),
             MetricasTurno::proprio(),
         )
-        .com_pausa(Arc::new(PausaFalsa));
-        let motor =
-            motor.com_ferramentas(Arc::new(self.registro()) as Arc<dyn RegistroFerramentas>);
+        .with_pause(Arc::new(PausaFalsa));
+        let motor = motor.with_tools(Arc::new(self.registro()) as Arc<dyn RegistroFerramentas>);
         (motor, fake)
     }
 
@@ -254,12 +253,12 @@ impl Cenario {
             .id
     }
 
-    async fn rodar_turno(&self, motor: &Motor) -> poph_agent::turno::ResumoTurno {
+    async fn rodar_turno(&self, motor: &TurnEngine) -> poph_agent::turno::TurnSummary {
         let mensagem = self.falar("manda o catálogo por favor");
         motor
-            .executar(
-                poph_agent::turno::Entrada::nova(self.org, self.conversa, mensagem),
-                &mut ObservadorNulo,
+            .run(
+                poph_agent::turno::TurnInput::new(self.org, self.conversa, mensagem),
+                &mut NoopObserver,
             )
             .await
             .expect("o turno roda")
@@ -566,7 +565,7 @@ async fn falha_do_modelo_depois_de_arquivo_enfileirado_nao_repete_o_envio() {
         resposta("não deveria sair"),
     ]);
     let motor = Arc::new(motor);
-    let processador = Arc::new(ProcessadorTurno::novo(Arc::clone(&motor)));
+    let processador = Arc::new(TurnProcessor::new(Arc::clone(&motor)));
     let atores = Atores::novo(
         processador.clone(),
         OpcoesAtores::default(),
@@ -580,7 +579,7 @@ async fn falha_do_modelo_depois_de_arquivo_enfileirado_nao_repete_o_envio() {
         OpcoesFluxo::default().com_falha_modelo(3, Duration::from_millis(50)),
         MetricasFluxo::proprio(),
     );
-    processador.ligar_fluxo(fluxo.clone());
+    processador.attach_io(fluxo.clone());
 
     fluxo
         .receber_mensagem(

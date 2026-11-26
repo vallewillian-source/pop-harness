@@ -11,7 +11,7 @@ use futures::StreamExt;
 use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
 use poph_agent::limites::{Limitador, OpcoesLimites};
 use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
-use poph_agent::turno::{HttpToolRegistry, Motor, OpcoesTurno};
+use poph_agent::turno::{HttpToolRegistry, TurnEngine, TurnOptions};
 use poph_core::llm::{
     FakeProvider, FinishReason, LlmError, LlmEvent, LlmLimiter, LlmProvider, Message,
     OpenAiCompatibleClient, OpenAiCompatibleConfig, Part, Request, Script, ToolCall,
@@ -80,7 +80,7 @@ impl Fixture {
 
     async fn start(&self, provider: Arc<dyn LlmProvider>) -> Server {
         let memory = MetricasMemoria::proprio();
-        let motor = Motor::novo(
+        let motor = TurnEngine::new(
             self.store.clone(),
             ConfigQuente::nova(
                 self.store.clone(),
@@ -89,7 +89,7 @@ impl Fixture {
             ),
             Arc::new(Limitador::novo(OpcoesLimites::default(), memory)),
             provider,
-            OpcoesTurno::default(),
+            TurnOptions::default(),
             MetricasTurno::proprio(),
         );
         let http_tools = HttpToolRegistry::from_config(&self.config.http_tools, |name| {

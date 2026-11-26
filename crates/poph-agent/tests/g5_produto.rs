@@ -28,7 +28,7 @@ use poph_agent::produtos::{
     BuscadorProdutos, BuscarProduto, FuturoProdutos, ParametrosProdutos, ProdutoEncontrado,
 };
 use poph_agent::turno::{
-    Entrada, FuturoPausa, Motor, ObservadorNulo, OpcoesTurno, Pausa, ResumoTurno,
+    FuturoPausa, NoopObserver, Pausa, TurnEngine, TurnInput, TurnOptions, TurnSummary,
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, ToolCall, Usage};
 use poph_jev::{
@@ -277,7 +277,7 @@ impl Cenario {
         &self,
         roteiros: Vec<Script>,
         jev: Option<Arc<dyn GateEvaluator>>,
-    ) -> (Motor, Arc<FakeProvider>) {
+    ) -> (TurnEngine, Arc<FakeProvider>) {
         let fake = Arc::new(FakeProvider::with_scripts(roteiros));
         let config = ConfigQuente::nova(
             Arc::clone(&self.store),
@@ -288,35 +288,33 @@ impl Cenario {
             OpcoesLimites::default(),
             MetricasMemoria::proprio(),
         ));
-        let mut motor = Motor::novo(
+        let mut motor = TurnEngine::new(
             Arc::clone(&self.store),
             config,
             limitador,
             fake.clone(),
-            OpcoesTurno::default(),
+            TurnOptions::default(),
             self.metricas.clone(),
         )
-        .com_pausa(Arc::new(SemEspera))
-        .com_busca(Arc::clone(&self.busca))
-        .com_produtos(Arc::clone(&self.catalogo));
+        .with_pause(Arc::new(SemEspera))
+        .with_search(Arc::clone(&self.busca))
+        .with_products(Arc::clone(&self.catalogo));
         let registro =
-            ConsultarBase::registro(Arc::clone(motor.config_quente()), Arc::clone(&self.busca))
-                .com(BuscarProduto::nova(
-                    Arc::clone(motor.config_quente()),
-                    Arc::clone(&self.catalogo),
-                ));
-        motor = motor.com_ferramentas(Arc::new(registro));
+            ConsultarBase::registro(Arc::clone(motor.hot_config()), Arc::clone(&self.busca)).com(
+                BuscarProduto::nova(Arc::clone(motor.hot_config()), Arc::clone(&self.catalogo)),
+            );
+        motor = motor.with_tools(Arc::new(registro));
         if let Some(jev) = jev {
-            motor = motor.com_jev(jev);
+            motor = motor.with_jev(jev);
         }
         (motor, fake)
     }
 
-    async fn turno(&self, motor: &Motor, gatilho: MessageId) -> ResumoTurno {
+    async fn turno(&self, motor: &TurnEngine, gatilho: MessageId) -> TurnSummary {
         motor
-            .executar(
-                Entrada::nova(self.org, self.conversa, gatilho),
-                &mut ObservadorNulo,
+            .run(
+                TurnInput::new(self.org, self.conversa, gatilho),
+                &mut NoopObserver,
             )
             .await
             .expect("o turno roda")
@@ -425,7 +423,7 @@ async fn g5_escolhe_o_produto_e_dispensa_a_ferramenta() {
     let resumo = cenario.turno(&motor, gatilho).await;
 
     assert_eq!(resumo.estado, poph_store::TurnState::Completed);
-    assert_eq!(resumo.tempos.rodadas_ferramenta, 0);
+    assert_eq!(resumo.timings.tool_rounds, 0);
     assert_eq!(
         provedor.received().len(),
         1,
@@ -853,10 +851,7 @@ async fn medicao_rodadas_de_ferramenta_por_turno() {
     let gatilho = sem.falar("quanto custa para matar baratas?");
     let sem_g5 = sem.turno(&motor_sem, gatilho).await;
     assert_eq!(sem_g5.estado, poph_store::TurnState::Completed);
-    assert_eq!(
-        sem_g5.tempos.rodadas_ferramenta, 1,
-        "sem o G5 há uma rodada"
-    );
+    assert_eq!(sem_g5.timings.tool_rounds, 1, "sem o G5 há uma rodada");
 
     // 2. Com o G5: o produto escolhido já está no prompt, sem rodada.
     let com = Cenario::novo("medicao-com", false);
@@ -872,14 +867,11 @@ async fn medicao_rodadas_de_ferramenta_por_turno() {
     let gatilho = com.falar("quanto custa para matar baratas?");
     let com_g5 = com.turno(&motor_com, gatilho).await;
     assert_eq!(com_g5.estado, poph_store::TurnState::Completed);
-    assert_eq!(
-        com_g5.tempos.rodadas_ferramenta, 0,
-        "com o G5 não há rodada"
-    );
+    assert_eq!(com_g5.timings.tool_rounds, 0, "com o G5 não há rodada");
 
     println!(
         "rodadas de ferramenta por turno: sem o G5 = {} · com o G5 = {}",
-        sem_g5.tempos.rodadas_ferramenta, com_g5.tempos.rodadas_ferramenta
+        sem_g5.timings.tool_rounds, com_g5.timings.tool_rounds
     );
 }
 
@@ -905,10 +897,7 @@ async fn padrao_de_instalacao_liga_o_g5_sem_configurar_o_agente() {
     let resumo = cenario.turno(&motor, gatilho).await;
 
     assert_eq!(resumo.estado, poph_store::TurnState::Completed);
-    assert_eq!(
-        resumo.tempos.rodadas_ferramenta, 0,
-        "sem rodada de ferramenta"
-    );
+    assert_eq!(resumo.timings.tool_rounds, 0, "sem rodada de ferramenta");
     let pedido = &provedor.received()[0];
     assert!(
         texto_do_prompt(pedido).contains(NOME_BARATAS),

@@ -26,8 +26,8 @@ use poph_agent::entrada_saida::{
 use poph_agent::limites::{Limitador, OpcoesLimites};
 use poph_agent::metricas::{MetricasFluxo, MetricasMemoria, MetricasTurno};
 use poph_agent::turno::{
-    Entrada, EventoTurno, FuturoPausa, Motor, Observador, ObservadorNulo, OpcoesTurno, Pausa,
-    ProcessadorTurno, RegistroFerramentas,
+    FuturoPausa, NoopObserver, Pausa, RegistroFerramentas, TurnEngine, TurnEvent, TurnInput,
+    TurnObserver, TurnOptions, TurnProcessor,
 };
 use poph_core::llm::{
     Cancellation, FakeProvider, FinishReason, LlmError, LlmEvent, LlmProvider, Script, ToolCall,
@@ -86,14 +86,14 @@ impl Pausa for PausaFalsa {
 /// Observador que guarda os eventos do turno.
 #[derive(Default)]
 struct Coletor {
-    eventos: Vec<EventoTurno>,
+    eventos: Vec<TurnEvent>,
 }
 
 impl Coletor {
     fn texto(&self) -> String {
         let mut texto = String::new();
         for evento in &self.eventos {
-            if let EventoTurno::Texto(pedaco) = evento {
+            if let TurnEvent::Texto(pedaco) = evento {
                 texto.push_str(pedaco);
             }
         }
@@ -101,8 +101,8 @@ impl Coletor {
     }
 }
 
-impl Observador for Coletor {
-    fn evento(&mut self, evento: EventoTurno) {
+impl TurnObserver for Coletor {
+    fn evento(&mut self, evento: TurnEvent) {
         self.eventos.push(evento);
     }
 }
@@ -227,16 +227,20 @@ impl Cenario {
         Arc::new(PausaFalsa::default())
     }
 
-    fn motor(&self, roteiros: Vec<Script>, pausa: Arc<PausaFalsa>) -> (Motor, Arc<FakeProvider>) {
-        self.motor_com(roteiros, pausa, OpcoesTurno::default())
+    fn motor(
+        &self,
+        roteiros: Vec<Script>,
+        pausa: Arc<PausaFalsa>,
+    ) -> (TurnEngine, Arc<FakeProvider>) {
+        self.motor_com(roteiros, pausa, TurnOptions::default())
     }
 
     fn motor_com(
         &self,
         roteiros: Vec<Script>,
         pausa: Arc<PausaFalsa>,
-        opcoes: OpcoesTurno,
-    ) -> (Motor, Arc<FakeProvider>) {
+        opcoes: TurnOptions,
+    ) -> (TurnEngine, Arc<FakeProvider>) {
         let fake = Arc::new(FakeProvider::with_scripts(roteiros));
         let provedor: Arc<dyn LlmProvider> = fake.clone();
         let config = ConfigQuente::nova(
@@ -248,7 +252,7 @@ impl Cenario {
             OpcoesLimites::default(),
             MetricasMemoria::proprio(),
         ));
-        let motor = Motor::novo(
+        let motor = TurnEngine::new(
             Arc::clone(&self.store),
             config,
             limitador,
@@ -256,17 +260,17 @@ impl Cenario {
             opcoes,
             MetricasTurno::proprio(),
         )
-        .com_pausa(pausa);
+        .with_pause(pausa);
         (motor, fake)
     }
 
     /// Fluxo de entrada e saída ligado a um motor, com o processador de turno de verdade.
-    fn fluxo(&self, motor: Arc<Motor>) -> Fluxo {
+    fn fluxo(&self, motor: Arc<TurnEngine>) -> Fluxo {
         self.fluxo_com(motor, OpcoesFluxo::default())
     }
 
-    fn fluxo_com(&self, motor: Arc<Motor>, opcoes: OpcoesFluxo) -> Fluxo {
-        let processador = Arc::new(ProcessadorTurno::novo(motor));
+    fn fluxo_com(&self, motor: Arc<TurnEngine>, opcoes: OpcoesFluxo) -> Fluxo {
+        let processador = Arc::new(TurnProcessor::new(motor));
         let atores = Atores::novo(
             processador.clone(),
             OpcoesAtores::default(),
@@ -278,7 +282,7 @@ impl Cenario {
             opcoes,
             MetricasFluxo::proprio(),
         );
-        processador.ligar_fluxo(fluxo.clone());
+        processador.attach_io(fluxo.clone());
         fluxo
     }
 
@@ -330,20 +334,20 @@ async fn cinco_mensagens_gravam_stream_mensagens_e_turno() {
         let gatilho = cenario.falar(&format!("pergunta {n}"));
         let mut coletor = Coletor::default();
         let resumo = motor
-            .executar(
-                Entrada::nova(cenario.org, cenario.conversa, gatilho),
+            .run(
+                TurnInput::new(cenario.org, cenario.conversa, gatilho),
                 &mut coletor,
             )
             .await
             .expect("turno roda");
-        assert_eq!(resumo.estado, TurnState::Completed, "{:?}", resumo.erro);
+        assert_eq!(resumo.estado, TurnState::Completed, "{:?}", resumo.error);
         assert_eq!(resumo.texto, format!("resposta {n}"));
         assert_eq!(coletor.texto(), resumo.texto, "o stream é a resposta final");
         assert!(
             coletor
                 .eventos
                 .iter()
-                .any(|evento| matches!(evento, EventoTurno::Inicio { .. })),
+                .any(|evento| matches!(evento, TurnEvent::Started { .. })),
             "o turno avisa o início"
         );
         textos.push(resumo);
@@ -415,9 +419,9 @@ async fn prefixo_identico_em_tres_turnos() {
         // O relógio avança entre os turnos: o bloco volátil muda, o prefixo não.
         cenario.avancar(60_000);
         motor
-            .executar(
-                Entrada::nova(cenario.org, cenario.conversa, gatilho),
-                &mut ObservadorNulo,
+            .run(
+                TurnInput::new(cenario.org, cenario.conversa, gatilho),
+                &mut NoopObserver,
             )
             .await
             .expect("turno roda");
@@ -455,14 +459,14 @@ async fn duas_orgs_nao_se_misturam() {
 
     let gatilho_alfa = alfa.falar("quem é você?");
     let gatilho_beta = beta.falar("e você?");
-    let (mut obs_alfa, mut obs_beta) = (ObservadorNulo, ObservadorNulo);
+    let (mut obs_alfa, mut obs_beta) = (NoopObserver, NoopObserver);
     let (resumo_alfa, resumo_beta) = tokio::join!(
-        motor_alfa.executar(
-            Entrada::nova(alfa.org, alfa.conversa, gatilho_alfa),
+        motor_alfa.run(
+            TurnInput::new(alfa.org, alfa.conversa, gatilho_alfa),
             &mut obs_alfa
         ),
-        motor_beta.executar(
-            Entrada::nova(beta.org, beta.conversa, gatilho_beta),
+        motor_beta.run(
+            TurnInput::new(beta.org, beta.conversa, gatilho_beta),
             &mut obs_beta
         ),
     );
@@ -537,9 +541,9 @@ async fn janela_de_agrupamento_junta_duas_e_separa_depois_do_teto() {
 
     let primeira = cenario.falar("oi");
     let resumo = motor
-        .executar(
-            Entrada::nova(cenario.org, cenario.conversa, primeira),
-            &mut ObservadorNulo,
+        .run(
+            TurnInput::new(cenario.org, cenario.conversa, primeira),
+            &mut NoopObserver,
         )
         .await
         .expect("turno roda");
@@ -552,7 +556,7 @@ async fn janela_de_agrupamento_junta_duas_e_separa_depois_do_teto() {
         .parse()
         .expect("id da segunda mensagem");
     assert_eq!(
-        resumo.mensagens,
+        resumo.messages,
         vec![primeira, segunda_id],
         "as duas mensagens da janela entraram no mesmo turno"
     );
@@ -566,14 +570,14 @@ async fn janela_de_agrupamento_junta_duas_e_separa_depois_do_teto() {
     cenario.avancar(9_000);
     let terceira = cenario.falar("e o prazo?");
     let resumo = motor
-        .executar(
-            Entrada::nova(cenario.org, cenario.conversa, terceira),
-            &mut ObservadorNulo,
+        .run(
+            TurnInput::new(cenario.org, cenario.conversa, terceira),
+            &mut NoopObserver,
         )
         .await
         .expect("segundo turno roda");
     assert_eq!(resumo.estado, TurnState::Completed);
-    assert_eq!(resumo.mensagens, vec![terceira], "turno novo, uma mensagem");
+    assert_eq!(resumo.messages, vec![terceira], "turno novo, uma mensagem");
     assert_eq!(fake.received().len(), 2);
 
     // Nada se perdeu: 3 mensagens do cliente, 2 respostas, 2 turnos.
@@ -693,13 +697,13 @@ async fn ferramenta_nao_habilitada_nao_e_oferecida_e_laco_para_no_limite() {
         LlmEvent::Fim(FinishReason::ToolCalls),
     ]);
     let (motor, fake) = cenario.motor(vec![duas_chamadas, resposta("pronto")], cenario.pausa());
-    let motor = motor.com_ferramentas(Arc::new(DoisRegistros));
+    let motor = motor.with_tools(Arc::new(DoisRegistros));
 
     let gatilho = cenario.falar("quanto custa a dedetização?");
     let resumo = motor
-        .executar(
-            Entrada::nova(cenario.org, cenario.conversa, gatilho),
-            &mut ObservadorNulo,
+        .run(
+            TurnInput::new(cenario.org, cenario.conversa, gatilho),
+            &mut NoopObserver,
         )
         .await
         .expect("turno roda");
@@ -764,7 +768,7 @@ async fn cancelamento_encerra_o_turno_e_conclui_a_entrada() {
     );
     // Cancelamento do processo, como o Ctrl-C do `chat`.
     let compartilhado = Cancellation::new();
-    let fluxo = cenario.fluxo(Arc::new(motor.com_cancelamento(compartilhado.clone())));
+    let fluxo = cenario.fluxo(Arc::new(motor.with_cancellation(compartilhado.clone())));
 
     fluxo
         .receber_mensagem(
@@ -928,18 +932,18 @@ async fn sem_vaga_deixa_a_entrada_pendente_para_nova_tentativa() {
         OpcoesConfigQuente::default(),
         MetricasMemoria::proprio(),
     );
-    let motor = Motor::novo(
+    let motor = TurnEngine::new(
         Arc::clone(&cenario.store),
         config,
         Arc::clone(&limitador),
         provedor,
-        OpcoesTurno {
-            espera_vaga: Duration::from_millis(20),
-            ..OpcoesTurno::default()
+        TurnOptions {
+            slot_wait: Duration::from_millis(20),
+            ..TurnOptions::default()
         },
         MetricasTurno::proprio(),
     )
-    .com_pausa(cenario.pausa());
+    .with_pause(cenario.pausa());
     let fluxo = cenario.fluxo(Arc::new(motor));
 
     fluxo
@@ -1006,7 +1010,7 @@ fn motor_com_limitador(
     cenario: &Cenario,
     roteiros: Vec<Script>,
     limitador: Arc<Limitador>,
-) -> (Motor, Arc<FakeProvider>) {
+) -> (TurnEngine, Arc<FakeProvider>) {
     let fake = Arc::new(FakeProvider::with_scripts(roteiros));
     let provedor: Arc<dyn LlmProvider> = fake.clone();
     let config = ConfigQuente::nova(
@@ -1014,18 +1018,18 @@ fn motor_com_limitador(
         OpcoesConfigQuente::default(),
         MetricasMemoria::proprio(),
     );
-    let motor = Motor::novo(
+    let motor = TurnEngine::new(
         Arc::clone(&cenario.store),
         config,
         limitador,
         provedor,
-        OpcoesTurno {
-            espera_vaga: Duration::from_millis(20),
-            ..OpcoesTurno::default()
+        TurnOptions {
+            slot_wait: Duration::from_millis(20),
+            ..TurnOptions::default()
         },
         MetricasTurno::proprio(),
     )
-    .com_pausa(cenario.pausa());
+    .with_pause(cenario.pausa());
     (motor, fake)
 }
 
@@ -1107,7 +1111,7 @@ async fn falta_de_vaga_do_turno_entra_na_escada_e_esgota_em_tres_tentativas() {
     );
     assert_eq!(fake.received().len(), 0);
 
-    let metricas = motor.metricas();
+    let metricas = motor.metrics();
     assert_eq!(metricas.falhas_modelo_adiadas.value(), 2);
     assert_eq!(metricas.falhas_modelo_definitivas.value(), 1);
     assert_eq!(metricas.falhas_modelo_recusadas.value(), 0);
@@ -1158,7 +1162,7 @@ async fn falta_de_vaga_do_turno_na_primeira_tentativa_e_resposta_na_segunda() {
             .len(),
         1
     );
-    let metricas = motor.metricas();
+    let metricas = motor.metrics();
     assert_eq!(metricas.falhas_modelo_adiadas.value(), 1);
     assert_eq!(metricas.falhas_modelo_definitivas.value(), 0);
 }
@@ -1206,7 +1210,7 @@ async fn falta_de_vaga_do_provedor_entra_na_escada_e_nao_chama_o_modelo() {
 
     assert_eq!(fake.received().len(), 1, "uma única chamada ao provedor");
     assert_eq!(cenario.turnos().len(), 2);
-    let metricas = motor.metricas();
+    let metricas = motor.metrics();
     assert_eq!(metricas.falhas_modelo_adiadas.value(), 1);
     assert_eq!(metricas.falhas_modelo_definitivas.value(), 0);
 }
@@ -1265,7 +1269,7 @@ async fn provedor_que_recusa_a_chave_nao_gasta_a_escada() {
     deixar_passar(60).await;
     assert_eq!(fake.received().len(), 1);
 
-    let metricas = motor.metricas();
+    let metricas = motor.metrics();
     assert_eq!(metricas.falhas_modelo_recusadas.value(), 1);
     assert_eq!(metricas.falhas_modelo_definitivas.value(), 1);
     assert_eq!(metricas.falhas_modelo_adiadas.value(), 0);
@@ -1551,7 +1555,7 @@ async fn falha_do_modelo_repete_com_espera_crescente_e_responde_na_terceira() {
         0
     );
 
-    let metricas = motor.metricas();
+    let metricas = motor.metrics();
     assert_eq!(metricas.falhas_modelo_adiadas.value(), 2);
     assert_eq!(metricas.falhas_modelo_definitivas.value(), 0);
 }
@@ -1618,7 +1622,7 @@ async fn falha_do_modelo_sempre_esgota_em_tres_tentativas_e_conclui_sem_resposta
     assert_eq!(cenario.turnos().len(), 3);
     assert_eq!(fake.received().len(), 3);
 
-    let metricas = motor.metricas();
+    let metricas = motor.metrics();
     assert_eq!(metricas.falhas_modelo_adiadas.value(), 2);
     assert_eq!(metricas.falhas_modelo_definitivas.value(), 1);
 }
@@ -1636,8 +1640,8 @@ async fn com_limite_de_uma_tentativa_a_primeira_falha_ja_e_definitiva() {
     fluxo.despachar(cenario.org).expect("despacha");
     esperar_fila_vazia(&fluxo, &cenario).await;
     assert_eq!(fake.received().len(), 1);
-    assert_eq!(motor.metricas().falhas_modelo_definitivas.value(), 1);
-    assert_eq!(motor.metricas().falhas_modelo_adiadas.value(), 0);
+    assert_eq!(motor.metrics().falhas_modelo_definitivas.value(), 1);
+    assert_eq!(motor.metrics().falhas_modelo_adiadas.value(), 0);
 }
 
 #[tokio::test]
@@ -1648,9 +1652,9 @@ async fn tempo_maximo_do_turno_conta_como_falha_do_modelo_e_entra_na_escada() {
         after: Duration::from_secs(10),
         error: LlmError::TimedOut { seconds: 10 },
     };
-    let opcoes_turno = OpcoesTurno {
-        tempo_maximo_turno: Duration::from_millis(50),
-        ..OpcoesTurno::default()
+    let opcoes_turno = TurnOptions {
+        turn_timeout: Duration::from_millis(50),
+        ..TurnOptions::default()
     };
     let (motor, fake) = cenario.motor_com(
         vec![pendurado, resposta("consegui responder")],
@@ -1677,7 +1681,7 @@ async fn tempo_maximo_do_turno_conta_como_falha_do_modelo_e_entra_na_escada() {
         "{:?}",
         turno.error
     );
-    assert_eq!(motor.metricas().falhas_modelo_adiadas.value(), 1);
+    assert_eq!(motor.metrics().falhas_modelo_adiadas.value(), 1);
 
     cenario.avancar(1_000);
     fluxo.despachar(cenario.org).expect("despacha 2");

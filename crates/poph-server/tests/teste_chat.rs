@@ -23,7 +23,7 @@ use poph_agent::entrada_saida::{Fluxo, OpcoesFluxo};
 use poph_agent::limites::{Limitador, OpcoesLimites};
 use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
 use poph_agent::turno::{
-    Motor, OpcoesTurno, ProcessadorTurno, RegistroFerramentas, RegistroPadrao,
+    RegistroFerramentas, RegistroPadrao, TurnEngine, TurnOptions, TurnProcessor,
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, LlmProvider, Request, Script};
 use poph_files::FileConfig;
@@ -279,7 +279,7 @@ impl Cenario {
 
         if ligar_turno {
             let provedor: Arc<dyn LlmProvider> = fake.clone();
-            let mut motor = Motor::novo(
+            let mut motor = TurnEngine::new(
                 Arc::clone(&store),
                 ConfigQuente::nova(
                     Arc::clone(&store),
@@ -291,23 +291,23 @@ impl Cenario {
                     MetricasMemoria::proprio(),
                 )),
                 provedor,
-                OpcoesTurno::default(),
+                TurnOptions::default(),
                 MetricasTurno::proprio(),
             );
             if arquivo.is_some() {
                 let registro =
                     poph_agent::biblioteca::registrar(RegistroPadrao::novo(), Arc::clone(&store));
-                motor = motor.com_ferramentas(Arc::new(registro) as Arc<dyn RegistroFerramentas>);
+                motor = motor.with_tools(Arc::new(registro) as Arc<dyn RegistroFerramentas>);
             }
             let motor = Arc::new(motor);
-            let processador = Arc::new(ProcessadorTurno::novo(Arc::clone(&motor)));
+            let processador = Arc::new(TurnProcessor::new(Arc::clone(&motor)));
             let atores = Atores::novo(
                 processador.clone(),
                 OpcoesAtores::default(),
                 MetricasMemoria::proprio(),
             );
             let fluxo = Fluxo::nova(Arc::clone(&store), atores, OpcoesFluxo::default());
-            processador.ligar_fluxo(fluxo.clone());
+            processador.attach_io(fluxo.clone());
             estado = estado
                 .com_motor(motor)
                 .com_turno(fluxo, Duration::from_millis(20));

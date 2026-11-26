@@ -29,19 +29,19 @@ impl SiteTurnError {
     }
 }
 
-impl Motor {
+impl TurnEngine {
     pub async fn run_site(
         &self,
         job: SiteRun,
         policy: &SiteChatConfig,
         cancel: &Cancellation,
-        observer: &mut dyn Observador,
+        observer: &mut dyn TurnObserver,
     ) -> Result<SiteReply, SiteTurnError> {
         let work = self.generate_site(job, policy, cancel, observer);
         tokio::select! {
             biased;
             () = cancel.wait() => Err(SiteTurnError::Cancelled),
-            result = tokio::time::timeout(self.opcoes.tempo_maximo_turno, work) => {
+            result = tokio::time::timeout(self.options.turn_timeout, work) => {
                 result.unwrap_or(Err(SiteTurnError::Failed))
             }
         }
@@ -52,7 +52,7 @@ impl Motor {
         job: SiteRun,
         policy: &SiteChatConfig,
         cancel: &Cancellation,
-        observer: &mut dyn Observador,
+        observer: &mut dyn TurnObserver,
     ) -> Result<SiteReply, SiteTurnError> {
         let org = job.key.org;
         let id = job.key.conversation;
@@ -85,12 +85,12 @@ impl Motor {
         }
 
         let _permit = self
-            .limitador
-            .adquirir_turno(org, job.agent, self.opcoes.espera_vaga)
+            .limiter
+            .adquirir_turno(org, job.agent, self.options.slot_wait)
             .await
             .map_err(|_| SiteTurnError::Failed)?;
         let mut recent = self
-            .ultimas_mensagens(org, id)
+            .read_recent_messages(org, id)
             .map_err(|_| SiteTurnError::Failed)?;
         recent.retain(|message| {
             matches!(message.role, Role::User | Role::Assistant)
@@ -101,7 +101,7 @@ impl Motor {
             .find(|message| message.id == job.message)
             .ok_or(SiteTurnError::Failed)?;
         let passages = if hot.ferramenta_habilitada("consultar_base") {
-            match self.iniciar_busca(org, job.agent, std::slice::from_ref(trigger), &hot) {
+            match self.start_search(org, job.agent, std::slice::from_ref(trigger), &hot) {
                 Some(search) => search.await.unwrap_or_default(),
                 None => Vec::new(),
             }
@@ -115,12 +115,12 @@ impl Motor {
             u64::from(hot.agente.max_context_tokens),
             hot.agente
                 .max_context_messages
-                .clamp(1, self.opcoes.teto_leitura_mensagens.max(1)),
+                .clamp(1, self.options.message_read_limit.max(1)),
         );
         let block = prompt::BlocoVolatil {
             agora_ms: self.store.now(),
             canal: &conversation.canal,
-            status: status_do_atendimento(conversation.status),
+            status: conversation_status(conversation.status),
             conversa: &id.to_string(),
             resumo: context.resumo.as_deref(),
             trechos: &passages,
@@ -138,25 +138,25 @@ impl Motor {
                     .filter_map(prompt::da_mensagem_gravada)
                     .collect(),
             );
-        self.provedor_do_turno(&hot)
+        self.turn_provider(&hot)
             .map_err(|_| SiteTurnError::ModelUnavailable)?;
         let (reply, _) = self
-            .conversar(
-                Alvo {
+            .run_model_loop(
+                TurnTarget {
                     org,
                     conversa: id,
                     turno: job.key.turn,
                 },
                 &hot,
-                Preparo {
+                PreparedTurn {
                     trigger_message_id: job.message,
-                    mensagens: messages,
-                    uso: UsoFerramentas::nova(),
-                    chamadas: RegistroChamadas::nova(),
-                    sem_base_produto: false,
-                    sem_buscar_produto: false,
-                    fluxo_em_andamento: false,
-                    fluxo_reserva: false,
+                    messages,
+                    usage: UsoFerramentas::nova(),
+                    calls: RegistroChamadas::nova(),
+                    skip_knowledge_and_products: false,
+                    skip_product_search: false,
+                    active_flow: false,
+                    flow_fallback: false,
                 },
                 cancel,
                 observer,
@@ -170,8 +170,8 @@ impl Motor {
         }
         Ok(SiteReply {
             text,
-            input_tokens: u32::try_from(reply.uso.input).unwrap_or(u32::MAX),
-            output_tokens: u32::try_from(reply.uso.saida).unwrap_or(u32::MAX),
+            input_tokens: u32::try_from(reply.usage.input).unwrap_or(u32::MAX),
+            output_tokens: u32::try_from(reply.usage.saida).unwrap_or(u32::MAX),
         })
     }
 }

@@ -22,7 +22,7 @@ use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
 use poph_agent::limites::{Limitador, OpcoesLimites};
 use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
 use poph_agent::turno::{
-    Entrada, FuturoPausa, Motor, ObservadorNulo, OpcoesTurno, Pausa, ResumoTurno,
+    FuturoPausa, NoopObserver, Pausa, TurnEngine, TurnInput, TurnOptions, TurnSummary,
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmError, LlmEvent, Script, Usage};
 use poph_jev::{BatchResponse, FakeJev, JevEngine, JevError, JevResponse as RespostaJev};
@@ -161,7 +161,7 @@ impl Cenario {
         &self,
         roteiros: Vec<Script>,
         jev: Option<Arc<JevEngine>>,
-    ) -> (Motor, Arc<FakeProvider>) {
+    ) -> (TurnEngine, Arc<FakeProvider>) {
         let fake = Arc::new(FakeProvider::with_scripts(roteiros));
         let config = ConfigQuente::nova(
             Arc::clone(&self.store),
@@ -172,31 +172,31 @@ impl Cenario {
             OpcoesLimites::default(),
             MetricasMemoria::proprio(),
         ));
-        let mut motor = Motor::novo(
+        let mut motor = TurnEngine::new(
             Arc::clone(&self.store),
             config,
             limitador,
             fake.clone(),
-            OpcoesTurno::default(),
+            TurnOptions::default(),
             self.metricas.clone(),
         )
-        .com_pausa(Arc::new(SemEspera))
+        .with_pause(Arc::new(SemEspera))
         // O resumo rolante chama o modelo em segundo plano e bagunçaria a contagem de chamadas.
-        .com_resumo(poph_agent::resumo::OpcoesResumo {
+        .with_summary(poph_agent::resumo::OpcoesResumo {
             ativo: false,
             ..poph_agent::resumo::OpcoesResumo::default()
         });
         if let Some(jev) = jev {
-            motor = motor.com_jev(jev);
+            motor = motor.with_jev(jev);
         }
         (motor, fake)
     }
 
-    async fn turno(&self, motor: &Motor, gatilho: MessageId) -> ResumoTurno {
+    async fn turno(&self, motor: &TurnEngine, gatilho: MessageId) -> TurnSummary {
         motor
-            .executar(
-                Entrada::nova(self.org, self.conversa, gatilho),
-                &mut ObservadorNulo,
+            .run(
+                TurnInput::new(self.org, self.conversa, gatilho),
+                &mut NoopObserver,
             )
             .await
             .expect("o turno roda")
@@ -223,7 +223,7 @@ impl Cenario {
             .collect()
     }
 
-    fn turno_gravado(&self, turno: &ResumoTurno) -> String {
+    fn turno_gravado(&self, turno: &TurnSummary) -> String {
         self.store
             .turns()
             .get(self.org, turno.turno)
@@ -406,7 +406,7 @@ async fn g6_reprovada_regenera_uma_vez_e_envia_o_texto_novo() {
     assert_eq!(cenario.metricas.reprovadas_g6.value(), 1);
     assert_eq!(cenario.metricas.respostas_seguras_g6.value(), 0);
     // O custo da regeneração entra nos tokens do turno (100 + 100 de entrada).
-    assert_eq!(resumo.tokens_entrada, 200);
+    assert_eq!(resumo.input_tokens, 200);
     let registro = cenario.turno_gravado(&resumo);
     assert!(registro.contains("\"regenerou\":true"), "{registro}");
     assert!(

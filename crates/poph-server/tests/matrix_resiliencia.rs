@@ -37,7 +37,7 @@ use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
 use poph_agent::entrada_saida::{Fluxo, OpcoesFluxo};
 use poph_agent::limites::{Limitador, OpcoesLimites};
 use poph_agent::metricas::{MetricasFluxo, MetricasMemoria, MetricasTurno};
-use poph_agent::turno::{Motor, OpcoesTurno, ProcessadorTurno};
+use poph_agent::turno::{TurnEngine, TurnOptions, TurnProcessor};
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, LlmProvider, Script, Usage};
 use poph_evolution::webhook::SECRET_HEADER;
 use poph_evolution::{ATTACHMENT_CAP, ConfigEvolution, EvolutionClient};
@@ -1130,20 +1130,20 @@ async fn subir_servidor(
         OpcoesLimites::default(),
         MetricasMemoria::proprio(),
     ));
-    let motor = Motor::novo(
+    let motor = TurnEngine::new(
         Arc::clone(&store),
         config_quente,
         limitador,
         provedor,
         // Janela de agrupamento de 1 ms em vez dos 2 s padrão: o piso de 2 s não é o que se mede
         // aqui. Vale igual para os quatro cenários da medição.
-        OpcoesTurno {
-            janela_padrao: Duration::from_millis(1),
-            ..OpcoesTurno::default()
+        TurnOptions {
+            default_window: Duration::from_millis(1),
+            ..TurnOptions::default()
         },
         MetricasTurno::registrar(registro).expect("métricas do turno"),
     );
-    let processador = Arc::new(ProcessadorTurno::novo(Arc::new(motor)));
+    let processador = Arc::new(TurnProcessor::new(Arc::new(motor)));
     let atores = Atores::novo(
         processador.clone(),
         OpcoesAtores::default(),
@@ -1155,7 +1155,7 @@ async fn subir_servidor(
         OpcoesFluxo::default(),
         MetricasFluxo::registrar(registro).expect("métricas da fila"),
     );
-    processador.ligar_fluxo(fluxo.clone());
+    processador.attach_io(fluxo.clone());
     let mut estado = estado.com_turno(fluxo, Duration::from_millis(20));
 
     let modulo = match config {

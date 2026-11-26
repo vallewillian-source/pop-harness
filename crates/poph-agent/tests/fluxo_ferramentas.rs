@@ -25,7 +25,7 @@ use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
 use poph_agent::limites::{Limitador, OpcoesLimites};
 use poph_agent::metricas::{MetricasG9, MetricasMemoria, MetricasTurno};
 use poph_agent::turno::{
-    Entrada, FuturoPausa, Motor, ObservadorNulo, OpcoesTurno, Pausa, ResumoTurno,
+    FuturoPausa, NoopObserver, Pausa, TurnEngine, TurnInput, TurnOptions, TurnSummary,
 };
 use poph_core::llm::{
     FakeProvider, FinishReason, LlmEvent, Message, Request, Script, ToolCall, Usage,
@@ -303,7 +303,7 @@ impl Cenario {
         roteiros: Vec<Script>,
         jev: Option<Arc<JevEngine>>,
         fluxos: Option<FlowsConfig>,
-    ) -> (Motor, Arc<FakeProvider>) {
+    ) -> (TurnEngine, Arc<FakeProvider>) {
         let config = ConfigQuente::nova(
             Arc::clone(&self.store),
             OpcoesConfigQuente::default(),
@@ -314,20 +314,20 @@ impl Cenario {
             MetricasMemoria::proprio(),
         ));
         let provedor = Arc::new(FakeProvider::with_scripts(roteiros));
-        let mut motor = Motor::novo(
+        let mut motor = TurnEngine::new(
             Arc::clone(&self.store),
             config,
             limitador,
             provedor.clone(),
-            OpcoesTurno::default(),
+            TurnOptions::default(),
             MetricasTurno::proprio(),
         )
-        .com_pausa(Arc::new(SemEspera))
-        .com_resumo(poph_agent::resumo::OpcoesResumo {
+        .with_pause(Arc::new(SemEspera))
+        .with_summary(poph_agent::resumo::OpcoesResumo {
             ativo: false,
             ..poph_agent::resumo::OpcoesResumo::default()
         })
-        .com_metricas_g9(MetricasG9::proprias());
+        .with_g9_metrics(MetricasG9::proprias());
         // FX-24: as ferramentas do fluxo entram no registro do turno, como na montagem real.
         let registro = poph_agent::turno::registrar_ferramentas_do_fluxo(
             poph_agent::turno::RegistroPadrao::novo(),
@@ -336,26 +336,26 @@ impl Cenario {
         );
         let registro =
             poph_agent::turno::registrar_ferramenta_encerramento(registro, Arc::clone(&self.store));
-        motor = motor.com_ferramentas(Arc::new(registro));
+        motor = motor.with_tools(Arc::new(registro));
         if let Some(ajustes) = fluxos {
-            motor = motor.com_fluxos(&ajustes);
+            motor = motor.with_flows(&ajustes);
         }
         if let Some(jev) = jev {
-            motor = motor.com_jev(jev);
+            motor = motor.with_jev(jev);
         }
         (motor, provedor)
     }
 
     async fn turno(
         &self,
-        motor: &Motor,
+        motor: &TurnEngine,
         conversa: ConversationId,
         gatilho: MessageId,
-    ) -> ResumoTurno {
+    ) -> TurnSummary {
         motor
-            .executar(
-                Entrada::nova(self.org, conversa, gatilho),
-                &mut ObservadorNulo,
+            .run(
+                TurnInput::new(self.org, conversa, gatilho),
+                &mut NoopObserver,
             )
             .await
             .expect("o turno roda")
@@ -532,7 +532,7 @@ async fn turno_com_fluxo(
     cenario: &Cenario,
     roteiros: Vec<Script>,
     conversa: ConversationId,
-) -> (Arc<FakeProvider>, ResumoTurno) {
+) -> (Arc<FakeProvider>, TurnSummary) {
     let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
         "g9_iniciar_fluxo",
         "agendar_visita",

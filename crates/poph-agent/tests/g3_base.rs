@@ -29,7 +29,7 @@ use poph_agent::produtos::{
     BuscadorProdutos, BuscarProduto, FuturoProdutos, ParametrosProdutos, ProdutoEncontrado,
 };
 use poph_agent::turno::{
-    Entrada, FuturoPausa, Motor, ObservadorNulo, OpcoesTurno, Pausa, ResumoTurno,
+    FuturoPausa, NoopObserver, Pausa, TurnEngine, TurnInput, TurnOptions, TurnSummary,
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, ToolCall, Usage};
 use poph_jev::{
@@ -277,7 +277,7 @@ impl Cenario {
         &self,
         roteiros: Vec<Script>,
         jev: Option<Arc<JevEngine>>,
-    ) -> (Motor, Arc<FakeProvider>) {
+    ) -> (TurnEngine, Arc<FakeProvider>) {
         let fake = Arc::new(FakeProvider::with_scripts(roteiros));
         let config = ConfigQuente::nova(
             Arc::clone(&self.store),
@@ -289,43 +289,41 @@ impl Cenario {
             MetricasMemoria::proprio(),
         ));
         let catalogo: Arc<dyn BuscadorProdutos> = Arc::new(CatalogoVazio);
-        let mut motor = Motor::novo(
+        let mut motor = TurnEngine::new(
             Arc::clone(&self.store),
             config,
             limitador,
             fake.clone(),
-            OpcoesTurno::default(),
+            TurnOptions::default(),
             self.metricas.clone(),
         )
-        .com_pausa(Arc::new(SemEspera))
-        .com_busca(Arc::clone(&self.busca));
+        .with_pause(Arc::new(SemEspera))
+        .with_search(Arc::clone(&self.busca));
         let registro =
-            ConsultarBase::registro(Arc::clone(motor.config_quente()), Arc::clone(&self.busca))
-                .com(BuscarProduto::nova(
-                    Arc::clone(motor.config_quente()),
-                    catalogo,
-                ));
-        motor = motor.com_ferramentas(Arc::new(registro));
+            ConsultarBase::registro(Arc::clone(motor.hot_config()), Arc::clone(&self.busca)).com(
+                BuscarProduto::nova(Arc::clone(motor.hot_config()), catalogo),
+            );
+        motor = motor.with_tools(Arc::new(registro));
         if let Some(jev) = jev {
-            motor = motor.com_jev(jev);
+            motor = motor.with_jev(jev);
         }
         (motor, fake)
     }
 
-    async fn turno(&self, motor: &Motor, gatilho: MessageId) -> ResumoTurno {
+    async fn turno(&self, motor: &TurnEngine, gatilho: MessageId) -> TurnSummary {
         self.turno_em(motor, self.conversa, gatilho).await
     }
 
     async fn turno_em(
         &self,
-        motor: &Motor,
+        motor: &TurnEngine,
         conversa: ConversationId,
         gatilho: MessageId,
-    ) -> ResumoTurno {
+    ) -> TurnSummary {
         motor
-            .executar(
-                Entrada::nova(self.org, conversa, gatilho),
-                &mut ObservadorNulo,
+            .run(
+                TurnInput::new(self.org, conversa, gatilho),
+                &mut NoopObserver,
             )
             .await
             .expect("o turno roda")

@@ -13,7 +13,7 @@ use std::time::Duration;
 use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
 use poph_agent::limites::{Limitador, OpcoesLimites};
 use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
-use poph_agent::turno::{FuturoPausa, Motor, ObservadorNulo, OpcoesTurno, Pausa};
+use poph_agent::turno::{FuturoPausa, NoopObserver, Pausa, TurnEngine, TurnOptions};
 use poph_agent::{BuscadorProdutos, BuscarProduto, CatalogoProdutos};
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, LlmProvider, Script, ToolCall};
 use poph_rag::{Embedder, FakeEmbedder, Index, IndexConfig};
@@ -151,7 +151,7 @@ impl Cenario {
         }
     }
 
-    fn motor(&self, roteiros: Vec<Script>) -> (Motor, Arc<FakeProvider>) {
+    fn motor(&self, roteiros: Vec<Script>) -> (TurnEngine, Arc<FakeProvider>) {
         let fake = Arc::new(FakeProvider::with_scripts(roteiros));
         let provedor: Arc<dyn LlmProvider> = fake.clone();
         let config = ConfigQuente::nova(
@@ -165,17 +165,17 @@ impl Cenario {
         ));
         let catalogo: Arc<dyn BuscadorProdutos> =
             Arc::clone(&self.catalogo) as Arc<dyn BuscadorProdutos>;
-        let motor = Motor::novo(
+        let motor = TurnEngine::new(
             Arc::clone(&self.store),
             config,
             limitador,
             provedor,
-            OpcoesTurno::default(),
+            TurnOptions::default(),
             MetricasTurno::proprio(),
         )
-        .com_pausa(Arc::new(PausaFalsa));
-        let registro = BuscarProduto::registro(Arc::clone(motor.config_quente()), catalogo);
-        let motor = motor.com_ferramentas(Arc::new(registro));
+        .with_pause(Arc::new(PausaFalsa));
+        let registro = BuscarProduto::registro(Arc::clone(motor.hot_config()), catalogo);
+        let motor = motor.with_tools(Arc::new(registro));
         (motor, fake)
     }
 
@@ -242,9 +242,9 @@ async fn turno_grava_o_produto_usado_com_o_preco_do_registro() {
 
     let mensagem = cenario.falar("quanto custa a dedetização de baratas?");
     let resumo = motor
-        .executar(
-            poph_agent::turno::Entrada::nova(cenario.org, cenario.conversa, mensagem),
-            &mut ObservadorNulo,
+        .run(
+            poph_agent::turno::TurnInput::new(cenario.org, cenario.conversa, mensagem),
+            &mut NoopObserver,
         )
         .await
         .expect("o turno roda");
@@ -286,9 +286,9 @@ async fn turno_sem_produto_mantem_o_registro_vazio() {
     let (motor, _) = cenario.motor(vec![resposta("Olá! Como posso ajudar?")]);
     let mensagem = cenario.falar("oi");
     motor
-        .executar(
-            poph_agent::turno::Entrada::nova(cenario.org, cenario.conversa, mensagem),
-            &mut ObservadorNulo,
+        .run(
+            poph_agent::turno::TurnInput::new(cenario.org, cenario.conversa, mensagem),
+            &mut NoopObserver,
         )
         .await
         .expect("o turno roda");

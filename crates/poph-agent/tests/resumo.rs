@@ -24,7 +24,7 @@ use poph_agent::limites::{Limitador, OpcoesLimites};
 use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
 use poph_agent::resumo::{self, OpcoesResumo, Resumo};
 use poph_agent::turno::{
-    Entrada, FuturoPausa, Motor, ObservadorNulo, OpcoesTurno, Pausa, ResumoTurno,
+    FuturoPausa, NoopObserver, Pausa, TurnEngine, TurnInput, TurnOptions, TurnSummary,
 };
 use poph_core::llm::{
     FakeProvider, FinishReason, LlmError, LlmEvent, LlmProvider, LlmStream, Message, Part, Request,
@@ -281,7 +281,7 @@ impl Cenario {
         Resumo::decodificar(registro.summary.as_deref())
     }
 
-    fn motor(&self, provedor: Arc<dyn LlmProvider>, resumo: OpcoesResumo) -> Motor {
+    fn motor(&self, provedor: Arc<dyn LlmProvider>, resumo: OpcoesResumo) -> TurnEngine {
         let config = ConfigQuente::nova(
             Arc::clone(&self.store),
             OpcoesConfigQuente::default(),
@@ -291,28 +291,28 @@ impl Cenario {
             OpcoesLimites::default(),
             MetricasMemoria::proprio(),
         ));
-        Motor::novo(
+        TurnEngine::new(
             Arc::clone(&self.store),
             config,
             limitador,
             provedor,
-            OpcoesTurno::default(),
+            TurnOptions::default(),
             MetricasTurno::proprio(),
         )
-        .com_pausa(Arc::new(SemEspera))
-        .com_resumo(resumo)
+        .with_pause(Arc::new(SemEspera))
+        .with_summary(resumo)
     }
 
     async fn turno(
         &self,
-        motor: &Motor,
+        motor: &TurnEngine,
         conversa: ConversationId,
         gatilho: MessageId,
-    ) -> ResumoTurno {
+    ) -> TurnSummary {
         motor
-            .executar(
-                Entrada::nova(self.org, conversa, gatilho),
-                &mut ObservadorNulo,
+            .run(
+                TurnInput::new(self.org, conversa, gatilho),
+                &mut NoopObserver,
             )
             .await
             .expect("o turno roda")
@@ -347,7 +347,7 @@ async fn janela_cabe_no_orcamento_e_o_resumo_e_usado_no_turno_seguinte() {
     let primeiro = cenario.turno(&motor, conversa, gatilho).await;
     assert_eq!(primeiro.estado, TurnState::Completed);
     assert!(
-        motor.aguardar_resumos(Duration::from_secs(10)).await,
+        motor.wait_for_summaries(Duration::from_secs(10)).await,
         "o resumo não terminou a tempo"
     );
 
@@ -395,7 +395,7 @@ async fn janela_cabe_no_orcamento_e_o_resumo_e_usado_no_turno_seguinte() {
     let gatilho2 = cenario.falar(conversa, texto(61));
     let segundo = cenario.turno(&motor, conversa, gatilho2).await;
     assert_eq!(segundo.estado, TurnState::Completed);
-    assert!(motor.aguardar_resumos(Duration::from_secs(10)).await);
+    assert!(motor.wait_for_summaries(Duration::from_secs(10)).await);
 
     let pedidos = fake.received();
     let pedido_turno2 = &pedidos[2];
@@ -441,7 +441,7 @@ async fn falha_do_resumo_nao_derruba_o_turno() {
         !primeiro.texto.is_empty(),
         "a resposta saiu mesmo com o resumo falhando"
     );
-    assert!(motor.aguardar_resumos(Duration::from_secs(10)).await);
+    assert!(motor.wait_for_summaries(Duration::from_secs(10)).await);
     assert!(
         cenario.resumo_da_conversa(conversa).vazio(),
         "falha não grava resumo"
@@ -451,7 +451,7 @@ async fn falha_do_resumo_nao_derruba_o_turno() {
     let segundo = cenario.turno(&motor, conversa, gatilho2).await;
     assert_eq!(segundo.estado, TurnState::Completed);
     assert_eq!(segundo.texto, texto(43));
-    assert!(motor.aguardar_resumos(Duration::from_secs(10)).await);
+    assert!(motor.wait_for_summaries(Duration::from_secs(10)).await);
 
     let registros = cenario
         .store
@@ -481,7 +481,7 @@ async fn conversa_nova_nao_herda_o_resumo() {
     ]));
     let motor = cenario.motor(fake.clone(), OpcoesResumo::default());
     cenario.turno(&motor, antiga, gatilho).await;
-    assert!(motor.aguardar_resumos(Duration::from_secs(10)).await);
+    assert!(motor.wait_for_summaries(Duration::from_secs(10)).await);
     assert!(
         !cenario.resumo_da_conversa(antiga).vazio(),
         "a conversa antiga tem resumo"
@@ -534,10 +534,10 @@ async fn resumo_nao_aumenta_o_tempo_do_turno() {
                 let gatilho = cenario.falar(conversa, texto(40 + turno + rodada * 10));
                 let resultado = cenario.turno(&motor, conversa, gatilho).await;
                 assert_eq!(resultado.estado, TurnState::Completed);
-                tempos.push(resultado.tempos.total_ms as f64);
+                tempos.push(resultado.timings.total_ms as f64);
                 cenario.avancar(5_000);
             }
-            motor.aguardar_resumos(Duration::from_secs(10)).await;
+            motor.wait_for_summaries(Duration::from_secs(10)).await;
             if ligado {
                 assert!(
                     !cenario.resumo_da_conversa(conversa).vazio(),
@@ -582,7 +582,7 @@ async fn conversa_longa_sem_resumo_alcanca_a_janela() {
 
     let resultado = cenario.turno(&motor, conversa, gatilho).await;
     assert_eq!(resultado.estado, TurnState::Completed);
-    assert!(motor.aguardar_resumos(Duration::from_secs(20)).await);
+    assert!(motor.wait_for_summaries(Duration::from_secs(20)).await);
 
     // A janela do turno seguinte começa logo depois do resumo: sem buraco e sem o resumo ter
     // andado além do corte.

@@ -17,8 +17,8 @@ use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
 use poph_agent::limites::{Limitador, OpcoesLimites};
 use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
 use poph_agent::turno::{
-    Entrada, EventoTurno, FuturoPausa, Motor, Observador, ObservadorNulo, OpcoesTurno, Pausa,
-    ResumoTurno,
+    FuturoPausa, NoopObserver, Pausa, TurnEngine, TurnEvent, TurnInput, TurnObserver, TurnOptions,
+    TurnSummary,
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, Usage};
 use poph_jev::{
@@ -57,11 +57,11 @@ impl Pausa for SemEspera {
 /// Observador que guarda os eventos (para conferir o aviso de transferência).
 #[derive(Default)]
 struct Gravador {
-    eventos: Vec<EventoTurno>,
+    eventos: Vec<TurnEvent>,
 }
 
-impl Observador for Gravador {
-    fn evento(&mut self, evento: EventoTurno) {
+impl TurnObserver for Gravador {
+    fn evento(&mut self, evento: TurnEvent) {
         self.eventos.push(evento);
     }
 }
@@ -205,7 +205,7 @@ impl Cenario {
             .expect("ajusta o jev_json do agente");
     }
 
-    fn motor(&self, jev: Option<Arc<JevEngine>>, orientacao: HandoffGuidance) -> Motor {
+    fn motor(&self, jev: Option<Arc<JevEngine>>, orientacao: HandoffGuidance) -> TurnEngine {
         let config = ConfigQuente::nova(
             Arc::clone(&self.store),
             OpcoesConfigQuente::default(),
@@ -215,41 +215,41 @@ impl Cenario {
             OpcoesLimites::default(),
             MetricasMemoria::proprio(),
         ));
-        let mut motor = Motor::novo(
+        let mut motor = TurnEngine::new(
             Arc::clone(&self.store),
             config,
             limitador,
             Arc::clone(&self.provedor) as Arc<dyn poph_core::llm::LlmProvider>,
-            OpcoesTurno::default(),
+            TurnOptions::default(),
             MetricasTurno::proprio(),
         )
-        .com_pausa(Arc::new(SemEspera))
-        .com_handoff(orientacao);
+        .with_pause(Arc::new(SemEspera))
+        .with_handoff(orientacao);
         if let Some(jev) = jev {
-            motor = motor.com_jev(jev);
+            motor = motor.with_jev(jev);
         }
         motor
     }
 
     async fn turno(
         &self,
-        motor: &Motor,
+        motor: &TurnEngine,
         conversa: ConversationId,
         gatilho: MessageId,
-    ) -> ResumoTurno {
-        self.turno_observado(motor, conversa, gatilho, &mut ObservadorNulo)
+    ) -> TurnSummary {
+        self.turno_observado(motor, conversa, gatilho, &mut NoopObserver)
             .await
     }
 
     async fn turno_observado(
         &self,
-        motor: &Motor,
+        motor: &TurnEngine,
         conversa: ConversationId,
         gatilho: MessageId,
-        observador: &mut dyn Observador,
-    ) -> ResumoTurno {
+        observador: &mut dyn TurnObserver,
+    ) -> TurnSummary {
         motor
-            .executar(Entrada::nova(self.org, conversa, gatilho), observador)
+            .run(TurnInput::new(self.org, conversa, gatilho), observador)
             .await
             .expect("o turno roda")
     }
@@ -459,9 +459,9 @@ async fn transfere_com_orientacao_e_nao_chama_o_modelo() {
     assert!(
         observador.eventos.iter().any(|evento| matches!(
             evento,
-            EventoTurno::Transferencia {
-                orientacao: true,
-                tipo_risco: Some(tipo),
+            TurnEvent::Handoff {
+                guidance: true,
+                risk_kind: Some(tipo),
                 ..
             } if tipo == INGESTION_RISK
         )),
@@ -541,7 +541,7 @@ async fn transferida_nao_responde_ate_reabrir() {
     let segundo = cenario.turno(&motor, conversa, segundo_gatilho).await;
     assert_eq!(segundo.estado, TurnState::Skipped);
     assert!(
-        segundo.erro.unwrap_or_default().contains("transferred"),
+        segundo.error.unwrap_or_default().contains("transferred"),
         "o motivo do turno ignorado diz que a conversa está transferida"
     );
     assert_eq!(cenario.provedor.received().len(), 0);

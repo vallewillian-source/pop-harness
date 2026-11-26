@@ -20,8 +20,8 @@ use poph_agent::limites::{Limitador, OpcoesLimites};
 use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
 use poph_agent::turno::{
     ContextoFerramenta, FerramentaInterna, FuturoFerramenta, FuturoPausa, MARCA_DE_CORTE,
-    MOTIVO_DESCONHECIDA, MOTIVO_NAO_HABILITADA, Motor, ObservadorNulo, OpcoesTurno, Pausa,
-    RegistroPadrao, TETO_RESUMO_FERRAMENTA,
+    MOTIVO_DESCONHECIDA, MOTIVO_NAO_HABILITADA, NoopObserver, Pausa, RegistroPadrao,
+    TETO_RESUMO_FERRAMENTA, TurnEngine, TurnOptions,
 };
 use poph_core::llm::{
     FakeProvider, FinishReason, LlmEvent, LlmProvider, Message, Script, ToolCall,
@@ -176,7 +176,11 @@ impl Cenario {
         }
     }
 
-    fn motor(&self, roteiros: Vec<Script>, registro: RegistroPadrao) -> (Motor, Arc<FakeProvider>) {
+    fn motor(
+        &self,
+        roteiros: Vec<Script>,
+        registro: RegistroPadrao,
+    ) -> (TurnEngine, Arc<FakeProvider>) {
         let fake = Arc::new(FakeProvider::with_scripts(roteiros));
         let provedor: Arc<dyn LlmProvider> = fake.clone();
         let config = ConfigQuente::nova(
@@ -188,16 +192,16 @@ impl Cenario {
             OpcoesLimites::default(),
             MetricasMemoria::proprio(),
         ));
-        let motor = Motor::novo(
+        let motor = TurnEngine::new(
             Arc::clone(&self.store),
             config,
             limitador,
             provedor,
-            OpcoesTurno::default(),
+            TurnOptions::default(),
             MetricasTurno::proprio(),
         )
-        .com_pausa(Arc::new(PausaFalsa))
-        .com_ferramentas(Arc::new(registro));
+        .with_pause(Arc::new(PausaFalsa))
+        .with_tools(Arc::new(registro));
         (motor, fake)
     }
 
@@ -232,12 +236,12 @@ impl Cenario {
         turnos.into_iter().next().expect("o turno")
     }
 
-    async fn rodar(&self, motor: &Motor, fala: &str) -> serde_json::Value {
+    async fn rodar(&self, motor: &TurnEngine, fala: &str) -> serde_json::Value {
         let mensagem = self.falar(fala);
         motor
-            .executar(
-                poph_agent::turno::Entrada::nova(self.org, self.conversa, mensagem),
-                &mut ObservadorNulo,
+            .run(
+                poph_agent::turno::TurnInput::new(self.org, self.conversa, mensagem),
+                &mut NoopObserver,
             )
             .await
             .expect("o turno roda");

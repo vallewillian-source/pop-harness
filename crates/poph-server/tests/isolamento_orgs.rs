@@ -46,7 +46,7 @@ use poph_agent::entrada_saida::{Fluxo, OpcoesFluxo};
 use poph_agent::limites::{Limitador, OpcoesLimites};
 use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
 use poph_agent::produtos::{BuscadorProdutos, BuscarProduto, CatalogoProdutos, ParametrosProdutos};
-use poph_agent::turno::{Motor, OpcoesTurno, ProcessadorTurno};
+use poph_agent::turno::{TurnEngine, TurnOptions, TurnProcessor};
 use poph_core::llm::{
     FakeProvider, FinishReason, LlmError, LlmEvent, LlmProvider, LlmStream, Message, Request,
     Script, ToolCall,
@@ -1811,16 +1811,16 @@ async fn subir_com_turno(
             OpcoesLimites::default(),
             MetricasMemoria::proprio(),
         ));
-        let motor = Motor::novo(
+        let motor = TurnEngine::new(
             Arc::clone(store),
             config_quente,
             limitador,
             provedor,
-            OpcoesTurno::default(),
+            TurnOptions::default(),
             MetricasTurno::proprio(),
         )
-        .com_modelo_padrao("modelo-teste")
-        .com_arquivos(FileConfig::default(blobs));
+        .with_default_model("modelo-teste")
+        .with_files(FileConfig::default(blobs));
         let indice = Index::open(
             store.rag_path(),
             Arc::new(FakeEmbedder::new()),
@@ -1832,23 +1832,22 @@ async fn subir_com_turno(
         let base = BaseConhecimento::nova(Arc::clone(store), Arc::clone(&indice));
         let catalogo = CatalogoProdutos::novo(Arc::clone(store), indice);
         let busca: Arc<dyn BuscadorBase> = Arc::clone(&base) as Arc<dyn BuscadorBase>;
-        let registro =
-            ConsultarBase::registro(Arc::clone(motor.config_quente()), Arc::clone(&busca));
+        let registro = ConsultarBase::registro(Arc::clone(motor.hot_config()), Arc::clone(&busca));
         let registro = registro.com(BuscarProduto::nova(
-            Arc::clone(motor.config_quente()),
+            Arc::clone(motor.hot_config()),
             Arc::clone(&catalogo) as Arc<dyn BuscadorProdutos>,
         ));
         let registro = poph_agent::carrinho::registrar(registro, Arc::clone(store));
         let registro = poph_agent::biblioteca::registrar(registro, Arc::clone(store));
-        let motor = Arc::new(motor.com_ferramentas(Arc::new(registro)).com_busca(busca));
-        let processador = Arc::new(ProcessadorTurno::novo(Arc::clone(&motor)));
+        let motor = Arc::new(motor.with_tools(Arc::new(registro)).with_search(busca));
+        let processador = Arc::new(TurnProcessor::new(Arc::clone(&motor)));
         let atores = Atores::novo(
             processador.clone(),
             OpcoesAtores::default(),
             MetricasMemoria::proprio(),
         );
         let fluxo = Fluxo::nova(Arc::clone(store), atores, OpcoesFluxo::default());
-        processador.ligar_fluxo(fluxo.clone());
+        processador.attach_io(fluxo.clone());
         saida = Some((base, catalogo));
         estado
             .com_motor(motor)

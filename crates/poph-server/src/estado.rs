@@ -7,7 +7,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use argon2::password_hash::PasswordHash;
 use poph_agent::entrada_saida::Fluxo;
-use poph_agent::turno::Motor;
+use poph_agent::turno::TurnEngine;
 use poph_files::FileConfig;
 use poph_fluxos::{
     CacheRevisoes, ChaveRevisao, Compilado, FalhaCarregamento, Ir, Limites, compilar,
@@ -61,7 +61,7 @@ pub struct Estado {
     /// Motor do turno (HR-22): o chat de teste do Console roda o mesmo motor da conversa, com o
     /// mesmo provedor, memória e ferramentas. `None` = sem chave do modelo: o chat de teste
     /// responde `503 turno_indisponivel` em vez de abrir um turno que não pode responder.
-    pub motor: Option<Arc<Motor>>,
+    pub motor: Option<Arc<TurnEngine>>,
     pub(crate) site_workers: Arc<crate::site_chat::SiteWorkers>,
     /// Configuração dos arquivos recebidos (HR-22/HR-23): limite de 16 MB, extração isolada.
     pub arquivos: Arc<FileConfig>,
@@ -236,7 +236,7 @@ impl Estado {
 
     /// Liga o motor do turno ao servidor (HR-22). É o mesmo motor que o fluxo usa; o chat de teste
     /// roda um turno direto nele, com observador próprio.
-    pub fn com_motor(mut self, motor: Arc<Motor>) -> Self {
+    pub fn com_motor(mut self, motor: Arc<TurnEngine>) -> Self {
         self.motor = Some(motor);
         self
     }
