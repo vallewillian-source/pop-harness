@@ -331,6 +331,10 @@ impl Store {
         Fichas(self)
     }
 
+    pub fn analytics(&self) -> Analytics<'_> {
+        Analytics(self)
+    }
+
     /// Fluxos da organização e a permissão de cada agente (FX-08).
     pub fn fluxos(&self) -> Fluxos<'_> {
         Fluxos(self)

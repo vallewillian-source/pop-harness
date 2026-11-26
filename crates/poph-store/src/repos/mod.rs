@@ -15,6 +15,7 @@ use crate::erro::ErroStore;
 use crate::modelo::Status;
 
 mod agentes;
+mod analytics;
 mod biblioteca;
 mod caixas;
 mod carrinho;
@@ -38,6 +39,7 @@ mod tokens;
 mod turnos;
 
 pub use agentes::{Agentes, agentes_por_provedor_em};
+pub use analytics::{Analytics, NodeCount, OperationalSummary};
 pub use biblioteca::{Biblioteca, LIMITE_DESCRICAO_ARQUIVO, LIMITE_NOME_ARQUIVO};
 pub use caixas::{CaixaEntrada, CaixaSaida};
 pub use carrinho::{Carrinhos, ItemCarrinho, LIMITE_QUANTIDADE, ResumoCarrinho};

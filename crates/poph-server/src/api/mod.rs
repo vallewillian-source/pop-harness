@@ -3,6 +3,7 @@
 /// Permissão de fluxos por agente (FX-28, PRD §6.2).
 mod agente_fluxos;
 mod agentes;
+mod analytics;
 mod auditoria;
 mod backup;
 mod biblioteca;
@@ -153,6 +154,10 @@ pub fn router(estado: Estado) -> Router {
         .route(
             "/admin/v1/orgs/{org_id}/fichas/{ficha_id}/close",
             axum::routing::post(fichas::fechar),
+        )
+        .route(
+            "/admin/v1/orgs/{org_id}/analytics/operational-summary",
+            get(analytics::operational_summary),
         )
         .route(
             "/admin/v1/orgs/{org_id}/agents/{agent_id}/instructions",
@@ -541,6 +546,7 @@ pub fn documento() -> utoipa::openapi::OpenApi {
         fluxos::diff, fluxos::preview, fluxos::formatar,
         fichas::listar, fichas::mostrar, fichas::eventos, fichas::iniciar_fluxo, fichas::acao,
         fichas::abandonar, fichas::fechar,
+        analytics::operational_summary,
         saude::healthz,
         saude::metrics,
     ),
@@ -582,6 +588,8 @@ pub fn documento() -> utoipa::openapi::OpenApi {
         matrix::EspacoDesligadoJson,
         saude::HealthJson,
         saude::MetricasJson,
+        analytics::OperationalSummaryJson,
+        analytics::NodeCountJson,
     )),
     tags(
         (name = "orgs", description = "Orgs (tenants)"),
@@ -595,6 +603,7 @@ pub fn documento() -> utoipa::openapi::OpenApi {
         (name = "matrix", description = "Módulo Matrix: estado por org e espaços por departamento"),
         (name = "flows", description = "Fluxos: script, validação, publicação, revisões, diff e preview"),
         (name = "fichas", description = "Fichas do atendimento, execuções de fluxo e ações humanas"),
+        (name = "analytics", description = "Leitura agregada do atendimento: contadores e execuções ativas por nó"),
     ),
     modifiers(&EsquemaDeSeguranca)
 )]

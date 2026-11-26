@@ -329,6 +329,7 @@ Colunas:
 | Execuções de fluxo | POST | `/admin/v1/orgs/{org_id}/fichas/{ficha_id}/flow-runs` | exceção: CLI vem na FX-31 | sim | sim | sim |
 | Execuções de fluxo | POST | `/admin/v1/orgs/{org_id}/fichas/{ficha_id}/flow-runs/{run_id}/actions` | exceção: CLI vem na FX-31 | sim | sim | sim |
 | Execuções de fluxo | POST | `/admin/v1/orgs/{org_id}/fichas/{ficha_id}/flow-runs/{run_id}/abandon` | exceção: CLI vem na FX-31 | sim | sim | sim |
+| Atendimento (resumo) | GET | `/admin/v1/orgs/{org_id}/analytics/operational-summary` | exceção: sem equivalente na CLI | n/a | n/a | sim |
 
 ## Fechar conversa (MX-06)
 
@@ -1304,6 +1305,48 @@ Provas: `crates/poph-server/tests/fichas_leitura.rs` (filtros, cursor, Ficha de 
 campos respondidos dentro da Ficha, Ficha fechada legível) e `crates/poph-server/tests/fichas_acoes.rs`
 (Ficha fechada, fluxo não liberado, corrida atendente × agente, ação restrita, repetição de chave,
 `close` com e sem conversa, isolamento).
+
+## Operational summary of the service desk
+
+`GET /admin/v1/orgs/{org_id}/analytics/operational-summary?from=<ms>&to=<ms>` answers with the
+counters the Console home reads, in one round trip and without walking Fichas one by one:
+
+```json
+{
+  "open_fichas": 2,
+  "closed_fichas": 1,
+  "open_conversations": 2,
+  "avg_resolution_ms": 5400000.0,
+  "active_flow_nodes": [{ "node_id": "aprovacao_orcamento", "count": 1 }]
+}
+```
+
+| Field | Rule |
+| --- | --- |
+| `from`, `to` | Window in milliseconds since 1970. Both required. `to` is exclusive. |
+| `open_fichas` | Fichas with `status = 'open'` and `aberta_em < to`. The start of the window does not cut them: an open Ficha is open now, whatever window is asked. |
+| `closed_fichas` | Fichas with `status = 'closed'` and `fechada_em` inside `[from, to)`. |
+| `open_conversations` | Conversations with `status` `open` or `transferred`. A transferred conversation is still being handled. |
+| `avg_resolution_ms` | Mean of `fechada_em - aberta_em` over the Fichas counted by `closed_fichas`, as a float in milliseconds. `null` when the window has no closed Ficha. |
+| `active_flow_nodes` | Flow runs with `status = 'ativa'` on Fichas that are `open` and were created before `to`, grouped by `no_atual`. Always a list, empty when nothing is running, ordered by `count` descending and then by node id. |
+
+An empty org answers zeros, `avg_resolution_ms` `null` and an empty list — never an error and never a
+partial number. A Harness failure answers an upstream error, not zeros.
+
+Errors: `from` or `to` missing or not an integer, and `from >= to`, answer
+`422 validation_error` with `details.field`; `from >= to` carries
+`reason = "from must be before to."`. Org that does not exist answers `404`, a token from another
+org answers `403`, and no token answers `401`.
+
+Two indexes carry the read (migration `0017_analytics_operational_summary`): `fichas (org_id, status,
+fechada_em)`, for the closed window and its average, and `fluxo_execucoes (org_id, status, no_atual)`,
+for the active runs grouped by node. The open count reuses `fichas (org_id, status, aberta_em)` and
+the conversation count reuses `conversations (org_id, status, updated_at)`.
+
+Proofs: `crates/poph-server/tests/analytics_summary.rs` (empty org, window with Ficha open before and
+after `to`, closed inside and outside the window, mean of two closed, active runs per node with a
+finished run left out, two orgs isolated, the six invalid windows with field and reason, `401`, `403`
+and `404`) and the isolation case of `crates/poph-server/tests/isolamento_orgs.rs`.
 
 Paridade de CLI: ainda não existe; entra na FX-31.
 

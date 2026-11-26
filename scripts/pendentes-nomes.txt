@@ -170,9 +170,10 @@ M08a	98	crates/poph-store/src/integracoes_admin.rs
 M08a	48	crates/poph-store/src/leitores.rs
 M08a	273	crates/poph-store/src/lib.rs
 M08a	46	crates/poph-store/src/metricas.rs
-M08a	106	crates/poph-store/src/migracoes.rs
+M08a	107	crates/poph-store/src/migracoes.rs
 M08a	531	crates/poph-store/src/modelo.rs
 M08b	379	crates/poph-store/src/repos/agentes.rs
+M08b	11	crates/poph-store/src/repos/analytics.rs
 M08b	180	crates/poph-store/src/repos/biblioteca.rs
 M08b	703	crates/poph-store/src/repos/caixas.rs
 M08b	258	crates/poph-store/src/repos/carrinho.rs
@@ -289,6 +290,7 @@ M10b	237	crates/poph-agent/tests/turno_produto.rs
 M11a-c	49	crates/poph-server/build.rs
 M11a-c	73	crates/poph-server/src/api/agente_fluxos.rs
 M11a-c	171	crates/poph-server/src/api/agentes.rs
+M11a-c	24	crates/poph-server/src/api/analytics.rs
 M11a-c	17	crates/poph-server/src/api/auditoria.rs
 M11a-c	422	crates/poph-server/src/api/backup.rs
 M11a-c	162	crates/poph-server/src/api/biblioteca.rs
@@ -338,6 +340,7 @@ M11a-c	95	crates/poph-server/src/matrix_metricas.rs
 M11a-c	955	crates/poph-server/src/matrix_resposta.rs
 M11a-c	184	crates/poph-server/src/saida_whatsapp.rs
 M11d	214	crates/poph-server/tests/agente_fluxos.rs
+M11d	4	crates/poph-server/tests/analytics_summary.rs
 M11d	1647	crates/poph-server/tests/api.rs
 M11d	527	crates/poph-server/tests/backup_http.rs
 M11d	199	crates/poph-server/tests/cluster_reload.rs
@@ -357,7 +360,7 @@ M11d	911	crates/poph-server/tests/fluxos_efeitos.rs
 M11d	120	crates/poph-server/tests/fluxos_limites.rs
 M11d	68	crates/poph-server/tests/fluxos_metricas.rs
 M11d	982	crates/poph-server/tests/isolamento_matrix.rs
-M11d	1104	crates/poph-server/tests/isolamento_orgs.rs
+M11d	1105	crates/poph-server/tests/isolamento_orgs.rs
 M11d	362	crates/poph-server/tests/manifestos_plugins.rs
 M11d	682	crates/poph-server/tests/matrix_api.rs
 M11d	331	crates/poph-server/tests/matrix_as.rs

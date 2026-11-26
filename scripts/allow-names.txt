@@ -326,10 +326,12 @@ name	ix_conversations_peer	published indice: ix_conversations_peer
 name	ix_conversations_status	published indice: ix_conversations_status
 name	ix_fichas_org_agente	published indice: ix_fichas_org_agente
 name	ix_fichas_org_status	published indice: ix_fichas_org_status
+name	ix_fichas_org_status_fechada_em	published indice: ix_fichas_org_status_fechada_em
 name	ix_file_library_agent	published indice: ix_file_library_agent
 name	ix_fluxo_efeitos_fila	published indice: ix_fluxo_efeitos_fila
 name	ix_fluxo_efeitos_org	published indice: ix_fluxo_efeitos_org
 name	ix_fluxo_execucoes_ficha	published indice: ix_fluxo_execucoes_ficha
+name	ix_fluxo_execucoes_org_status_no_atual	published indice: ix_fluxo_execucoes_org_status_no_atual
 name	ix_fluxo_execucoes_revisao	published indice: ix_fluxo_execucoes_revisao
 name	ix_fluxos_org_status	published indice: ix_fluxos_org_status
 name	ix_inbox_pending	published indice: ix_inbox_pending

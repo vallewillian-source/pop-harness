@@ -396,6 +396,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/v1/orgs/{org_id}/analytics/operational-summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["analytics_resumo_operacional"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/v1/orgs/{org_id}/backup": {
         parameters: {
             query?: never;
@@ -1775,6 +1791,22 @@ export interface components {
              * @description Segundos desde a subida.
              */
             uptime_seconds: number;
+        };
+        NodeCountJson: {
+            /** Format: int64 */
+            count: number;
+            node_id: string;
+        };
+        OperationalSummaryJson: {
+            active_flow_nodes: components["schemas"]["NodeCountJson"][];
+            /** Format: double */
+            avg_resolution_ms?: number | null;
+            /** Format: int64 */
+            closed_fichas: number;
+            /** Format: int64 */
+            open_conversations: number;
+            /** Format: int64 */
+            open_fichas: number;
         };
         /** @description Org na resposta da API. */
         OrgJson: {
@@ -3207,6 +3239,51 @@ export interface operations {
             };
             /** @description Versão desatualizada */
             412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+        };
+    };
+    analytics_resumo_operacional: {
+        parameters: {
+            query: {
+                /** @description Começo da janela, em milissegundos desde 1970 */
+                from: number;
+                /** @description Fim da janela (exclusivo), em milissegundos desde 1970 */
+                to: number;
+            };
+            header?: never;
+            path: {
+                org_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Contadores e execuções ativas por nó */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationalSummaryJson"];
+                };
+            };
+            /** @description Org inexistente */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+            /** @description `from` ou `to` ausente ou inválido, ou `from` não anterior a `to` */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
