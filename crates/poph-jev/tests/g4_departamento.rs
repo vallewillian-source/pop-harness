@@ -1,12 +1,3 @@
-//! G4 — departamento que recebe a transferência (HR-32): o que o gate decide e o que o código
-//! recusa.
-//!
-//! O gate decide **um nome** entre os departamentos candidatos; a validação contra o banco (org,
-//! situação ativa) e o fallback para o padrão do agente são do turno (`poph-agent`, testes
-//! `g4_departamento.rs`). Aqui se prova o contrato do gate: nome válido vira decisão confiável,
-//! nome fora das opções e confiança baixa viram fallback **com motivo**, e sem candidatos o gate nem
-//! pergunta.
-
 use std::collections::BTreeMap;
 
 use poph_jev::{
@@ -14,94 +5,80 @@ use poph_jev::{
     JevRequest, JevResponse, JevState, eval::gate_override, match_candidate,
 };
 
-fn estado(departamentos: &[&str], texto: &str) -> JevState {
+fn estado(departments: &[&str], texto: &str) -> JevState {
     JevState::new("whatsapp")
         .with_messages(vec![JevMessage::from_customer(texto)])
-        .with_departments(
-            departamentos
-                .iter()
-                .map(|nome| (*nome).to_owned())
-                .collect(),
-        )
+        .with_departments(departments.iter().map(|nome| (*nome).to_owned()).collect())
 }
 
-fn resposta(escolha: &str, confianca: f64) -> JevResponse {
+fn response(choice: &str, confidence_value: f64) -> JevResponse {
     let mut item = JevResponse {
-        choice: Some(escolha.to_owned()),
-        confidence: confianca,
+        choice: Some(choice.to_owned()),
+        confidence: confidence_value,
         ..JevResponse::default()
     };
-    item.probabilities.insert(escolha.to_owned(), confianca);
+    item.probabilities
+        .insert(choice.to_owned(), confidence_value);
     item
 }
 
-fn candidatos() -> Vec<String> {
+fn candidates() -> Vec<String> {
     ["Comercial", "Suporte", "Financeiro"]
         .iter()
         .map(|nome| (*nome).to_owned())
         .collect()
 }
 
-// ───────────────────────────── pergunta ─────────────────────────────
-
-/// Uma opção por departamento candidato, no id estável do gate.
 #[test]
-fn pergunta_tem_uma_opcao_por_departamento() {
-    let pergunta = G4.question(&estado(
+fn question_has_one_option_per_department() {
+    let question = G4.question(&estado(
         &["Comercial", "Suporte", "Financeiro"],
         "chegou quebrado",
     ));
-    assert_eq!(pergunta.tipo, poph_jev::QuestionType::Choice);
-    assert!(!pergunta.instructions.is_empty());
-    let opcoes: Vec<&String> = pergunta.rubric.keys().collect();
-    assert_eq!(opcoes, vec!["Comercial", "Financeiro", "Suporte"]);
+    assert_eq!(question.tipo, poph_jev::QuestionType::Choice);
+    assert!(!question.instructions.is_empty());
+    let options: Vec<&String> = question.rubric.keys().collect();
+    assert_eq!(options, vec!["Comercial", "Financeiro", "Suporte"]);
 }
 
-/// Com menos de dois candidatos não há escolha a fazer: o gate não se aplica.
 #[test]
-fn sem_escolha_possivel_o_gate_nao_se_aplica() {
+fn gate_does_not_apply_without_possible_choice() {
     assert!(!G4.applies(&estado(&["Suporte"], "chegou quebrado")));
     assert!(!G4.applies(&estado(&[], "chegou quebrado")));
     assert!(G4.applies(&estado(&["Suporte", "Comercial"], "chegou quebrado")));
 }
 
-// ───────────────────────────── decisão ─────────────────────────────
-
-/// Escolha válida e confiável vira decisão do Jev, com o nome canônico.
 #[test]
-fn escolha_valida_vira_decisao_confiavel() {
+fn valid_choice_becomes_reliable_decision() {
     let estado = estado(
         &["Comercial", "Suporte", "Financeiro"],
         "o produto chegou quebrado",
     );
-    let decisao = G4.interpret(&estado, Some(&resposta("Suporte", 0.94)), G4.thresholds());
+    let decisao = G4.interpret(&estado, Some(&response("Suporte", 0.94)), G4.thresholds());
     assert_eq!(decisao.choice.as_deref(), Some("Suporte"));
     assert_eq!(decisao.origin, DecisionOrigin::Jev);
     assert_eq!(decisao.motivo, None);
     assert!(decisao.is_reliable());
 }
 
-/// O modelo respondendo em caixa diferente casa com o nome cadastrado (e o registro mostra o
-/// canônico).
 #[test]
-fn escolha_com_caixa_diferente_vira_o_nome_canonico() {
+fn choice_with_other_case_becomes_canonical_name() {
     let estado = estado(
         &["Comercial", "Suporte", "Financeiro"],
         "quero a segunda via do boleto",
     );
-    let decisao = G4.interpret(&estado, Some(&resposta("financeiro", 0.9)), G4.thresholds());
+    let decisao = G4.interpret(&estado, Some(&response("financeiro", 0.9)), G4.thresholds());
     assert_eq!(decisao.choice.as_deref(), Some("Financeiro"));
     assert!(decisao.is_reliable());
 }
 
-/// Nome que não é candidato **nunca** vira decisão, por mais confiança que o modelo declare.
 #[test]
-fn escolha_fora_das_opcoes_cai_no_fallback_com_motivo() {
+fn choice_outside_options_falls_back_with_reason() {
     let estado = estado(
         &["Comercial", "Suporte", "Financeiro"],
         "quero falar do contrato",
     );
-    let decisao = G4.interpret(&estado, Some(&resposta("Jurídico", 0.99)), G4.thresholds());
+    let decisao = G4.interpret(&estado, Some(&response("Jurídico", 0.99)), G4.thresholds());
     assert_eq!(decisao.choice, None);
     assert_eq!(decisao.origin, DecisionOrigin::Fallback);
     let motivo = decisao.motivo.unwrap_or_default();
@@ -111,89 +88,79 @@ fn escolha_fora_das_opcoes_cai_no_fallback_com_motivo() {
     );
 }
 
-/// Departamento de outra empresa pode ter o mesmo nome; se o nome existe aqui, vale o daqui — o que
-/// não pode existir é id de fora, e isso o turno barra na leitura do banco.
 #[test]
-fn confianca_abaixo_do_limiar_cai_no_fallback() {
+fn confidence_below_threshold_falls_back() {
     let estado = estado(
         &["Comercial", "Suporte", "Financeiro"],
         "quero negociar um desconto",
     );
-    let decisao = G4.interpret(&estado, Some(&resposta("Comercial", 0.61)), G4.thresholds());
+    let decisao = G4.interpret(&estado, Some(&response("Comercial", 0.61)), G4.thresholds());
     assert_eq!(decisao.choice, None);
     assert_eq!(decisao.origin, DecisionOrigin::Fallback);
     let motivo = decisao.motivo.unwrap_or_default();
     assert!(motivo.contains("confiança 0.61"), "motivo: {motivo}");
 }
 
-/// Sem resposta (chamada falhou, resposta sem escolha) também é fallback, sem pânico.
 #[test]
-fn sem_resposta_cai_no_fallback() {
+fn no_response_falls_back() {
     let estado = estado(&["Comercial", "Suporte"], "oi");
     let decisao = G4.interpret(&estado, None, G4.thresholds());
     assert_eq!(decisao.choice, None);
     assert_eq!(decisao.origin, DecisionOrigin::Fallback);
     assert!(decisao.motivo.unwrap_or_default().contains("sem resposta"));
 
-    let sem_escolha = JevResponse {
+    let no_choice = JevResponse {
         choice: None,
         confidence: 0.9,
         ..JevResponse::default()
     };
-    let decisao = G4.interpret(&estado, Some(&sem_escolha), G4.thresholds());
+    let decisao = G4.interpret(&estado, Some(&no_choice), G4.thresholds());
     assert_eq!(decisao.choice, None);
     assert!(!decisao.is_reliable());
 }
 
-// ───────────────────────────── casamento de nomes ─────────────────────────────
-
 #[test]
-fn casamento_de_nomes_e_estrito_sem_ser_burro() {
-    let candidatos = candidatos();
+fn name_matching_is_strict_but_not_dumb() {
+    let candidates_list = candidates();
     assert_eq!(
-        match_candidate("Suporte", &candidatos).as_deref(),
+        match_candidate("Suporte", &candidates_list).as_deref(),
         Ok("Suporte")
     );
     assert_eq!(
-        match_candidate("  Suporte  ", &candidatos).as_deref(),
+        match_candidate("  Suporte  ", &candidates_list).as_deref(),
         Ok("Suporte")
     );
     assert_eq!(
-        match_candidate("SUPORTE", &candidatos).as_deref(),
+        match_candidate("SUPORTE", &candidates_list).as_deref(),
         Ok("Suporte")
     );
-    assert!(match_candidate("Jurídico", &candidatos).is_err());
-    assert!(match_candidate("", &candidatos).is_err());
-    // Ambíguo: dois cadastros que só diferem por caixa (nenhum com a grafia que o modelo usou).
-    let ambiguos = vec!["Financeiro".to_owned(), "FINANCEIRO".to_owned()];
-    let erro = match_candidate("financeiro", &ambiguos).unwrap_err();
-    assert!(erro.contains("ambíguo"), "{erro}");
+    assert!(match_candidate("Jurídico", &candidates_list).is_err());
+    assert!(match_candidate("", &candidates_list).is_err());
+    let ambiguous = vec!["Financeiro".to_owned(), "FINANCEIRO".to_owned()];
+    let error = match_candidate("financeiro", &ambiguous).unwrap_err();
+    assert!(error.contains("ambíguo"), "{error}");
 }
 
-// ───────────────────────────── lote e fallback do motor ─────────────────────────────
-
-/// Com só o G4 ligado, o lote leva só a pergunta do G4; nome inválido no lote vira fallback com a
-/// escolha crua preservada (é o que o `poph jev eval` mostra).
 #[tokio::test]
-async fn lote_do_g4_e_o_fallback_preserva_a_escolha_crua() {
-    let jev = std::sync::Arc::new(FakeJev::new(|pedido: &JevRequest| {
+async fn batch_g4_and_fallback_keep_raw_choice() {
+    let jev = std::sync::Arc::new(FakeJev::new(|request: &JevRequest| {
         assert_eq!(
-            pedido.questions.keys().collect::<Vec<_>>(),
+            request.questions.keys().collect::<Vec<_>>(),
             vec![IdGate::G4.question_id()]
         );
-        let mut respostas = BTreeMap::new();
-        respostas.insert(
+        let mut replies = BTreeMap::new();
+        replies.insert(
             IdGate::G4.question_id().to_owned(),
-            resposta("Marketing", 0.95),
+            response("Marketing", 0.95),
         );
         Ok(BatchResponse {
-            answers: respostas,
+            answers: replies,
             tokens: 7,
             ..BatchResponse::default()
         })
     }));
-    let motor = JevEngine::new(jev, poph_types::JevGates::default(), "jev-latest");
-    let resultado = motor
+    let engine = JevEngine::new(jev, poph_types::JevGates::default(), "jev-latest");
+    let resultado = engine
         .evaluate(
             estado(
                 &["Comercial", "Suporte", "Financeiro"],
@@ -206,24 +173,22 @@ async fn lote_do_g4_e_o_fallback_preserva_a_escolha_crua() {
     let decisao = resultado.decision(IdGate::G4).expect("o G4 rodou");
     assert_eq!(decisao.choice, None);
     assert_eq!(decisao.origin, DecisionOrigin::Fallback);
-    // O que o modelo respondeu fica registrado, mesmo recusado.
     assert_eq!(
         resultado
             .response(IdGate::G4)
-            .and_then(|bruta| bruta.choice.as_deref()),
+            .and_then(|raw| raw.choice.as_deref()),
         Some("Marketing")
     );
 }
 
-/// Gate desligado não gera decisão nenhuma (o turno cai no padrão do agente).
 #[tokio::test]
-async fn gate_desligado_nao_decide_nada() {
+async fn disabled_gate_decides_nothing() {
     let jev = std::sync::Arc::new(FakeJev::with_choices(BTreeMap::from([(
         IdGate::G4.question_id().to_owned(),
         "Suporte".to_owned(),
     )])));
-    let motor = JevEngine::new(jev, poph_types::JevGates::default(), "jev-latest");
-    let resultado = motor
+    let engine = JevEngine::new(jev, poph_types::JevGates::default(), "jev-latest");
+    let resultado = engine
         .evaluate(
             estado(&["Comercial", "Suporte"], "chegou quebrado"),
             Some(poph_jev::GateOverrides::default()),

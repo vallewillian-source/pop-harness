@@ -1,15 +1,3 @@
-//! Contrato do G8 (HR-36): conversa encerrada pelo cliente.
-//!
-//! O que se prova aqui, sem rede:
-//! 1. a pergunta tem as duas opções (`encerrada`, `continua`) e só existe com fala do agente antes
-//!    da última do cliente: a primeira mensagem de uma conversa nunca fecha;
-//! 2. só `encerrada` com confiança no limiar (0,8) vira decisão; qualquer outra coisa — confiança
-//!    baixa, opção fora do contrato, resposta ausente — cai em `continua`, que é o comportamento de
-//!    hoje;
-//! 3. o motor manda a pergunta no lote só com o G8 ligado;
-//! 4. a despedida configurada no agente é lida com as regras do JSON de operador (ausente, vazia,
-//!    inválida, longa).
-
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -19,40 +7,40 @@ use poph_jev::{
 };
 use poph_types::JevGates;
 
-fn estado(mensagens: Vec<JevMessage>) -> JevState {
-    JevState::new("whatsapp").with_messages(mensagens)
+fn estado(messages: Vec<JevMessage>) -> JevState {
+    JevState::new("whatsapp").with_messages(messages)
 }
 
-fn com_agente() -> JevState {
+fn with_agent() -> JevState {
     estado(vec![
         JevMessage::from_agent("Mais alguma dúvida?"),
         JevMessage::from_customer("era só isso, obrigado"),
     ])
 }
 
-fn resposta(escolha: &str, confianca: f64) -> JevResponse {
+fn response(choice: &str, confidence_value: f64) -> JevResponse {
     JevResponse {
-        choice: Some(escolha.to_owned()),
-        confidence: confianca,
+        choice: Some(choice.to_owned()),
+        confidence: confidence_value,
         ..JevResponse::default()
     }
 }
 
 #[test]
-fn pergunta_tem_as_duas_opcoes_e_so_se_aplica_com_fala_do_agente() {
+fn question_has_two_options_and_applies_only_with_agent_speech() {
     let gate = G8;
     assert_eq!(gate.id(), IdGate::G8);
 
-    let pergunta = gate.question(&com_agente());
-    let opcoes: Vec<&str> = pergunta.rubric.keys().map(String::as_str).collect();
+    let question = gate.question(&with_agent());
+    let options: Vec<&str> = question.rubric.keys().map(String::as_str).collect();
     assert_eq!(
-        opcoes,
+        options,
         vec![G8_CONTINUES, G8_ENDED],
         "as duas opções, em ordem"
     );
 
     assert!(
-        gate.applies(&com_agente()),
+        gate.applies(&with_agent()),
         "há fala do agente antes do cliente"
     );
     assert!(
@@ -66,35 +54,35 @@ fn pergunta_tem_as_duas_opcoes_e_so_se_aplica_com_fala_do_agente() {
 }
 
 #[test]
-fn so_encerrada_com_confianca_no_limiar_vira_decisao() {
+fn only_ended_with_confidence_at_threshold_is_decision() {
     let gate = G8;
-    let limiares = gate.thresholds();
+    let thresholds = gate.thresholds();
     assert_eq!(
-        limiares,
+        thresholds,
         Thresholds::new(0.8, 0.0),
         "limiar mais alto: fechar por engano é o caro"
     );
 
-    let acima = gate.interpret(&com_agente(), Some(&resposta(G8_ENDED, 0.9)), limiares);
-    assert_eq!(acima.origin, DecisionOrigin::Jev);
-    assert_eq!(acima.choice.as_deref(), Some(G8_ENDED));
+    let above = gate.interpret(&with_agent(), Some(&response(G8_ENDED, 0.9)), thresholds);
+    assert_eq!(above.origin, DecisionOrigin::Jev);
+    assert_eq!(above.choice.as_deref(), Some(G8_ENDED));
 
-    let no_limiar = gate.interpret(&com_agente(), Some(&resposta(G8_ENDED, 0.8)), limiares);
+    let at_threshold = gate.interpret(&with_agent(), Some(&response(G8_ENDED, 0.8)), thresholds);
     assert_eq!(
-        no_limiar.choice.as_deref(),
+        at_threshold.choice.as_deref(),
         Some(G8_ENDED),
         "0,8 exato passa"
     );
 
-    let abaixo = gate.interpret(&com_agente(), Some(&resposta(G8_ENDED, 0.79)), limiares);
-    assert_eq!(abaixo.origin, DecisionOrigin::Fallback);
+    let below = gate.interpret(&with_agent(), Some(&response(G8_ENDED, 0.79)), thresholds);
+    assert_eq!(below.origin, DecisionOrigin::Fallback);
     assert_eq!(
-        abaixo.choice.as_deref(),
+        below.choice.as_deref(),
         Some(G8_CONTINUES),
         "abaixo do limiar: conversa segue"
     );
     assert!(
-        abaixo
+        below
             .motivo
             .unwrap_or_default()
             .contains("abaixo do limiar")
@@ -102,10 +90,10 @@ fn so_encerrada_com_confianca_no_limiar_vira_decisao() {
 }
 
 #[test]
-fn continua_confiante_e_decisao_sem_efeito_de_encerramento() {
+fn continues_confident_decision_has_no_ending_effect() {
     let decisao = G8.interpret(
-        &com_agente(),
-        Some(&resposta(G8_CONTINUES, 0.95)),
+        &with_agent(),
+        Some(&response(G8_CONTINUES, 0.95)),
         G8.thresholds(),
     );
     assert_eq!(decisao.origin, DecisionOrigin::Jev);
@@ -113,30 +101,30 @@ fn continua_confiante_e_decisao_sem_efeito_de_encerramento() {
 }
 
 #[test]
-fn resposta_fora_do_contrato_e_ausente_viram_continua() {
-    let limiares = G8.thresholds();
-    let fora = G8.interpret(&com_agente(), Some(&resposta("talvez", 1.0)), limiares);
-    assert_eq!(fora.origin, DecisionOrigin::Fallback);
-    assert_eq!(fora.choice.as_deref(), Some(G8_CONTINUES));
+fn outside_contract_and_missing_become_continues() {
+    let thresholds = G8.thresholds();
+    let outside = G8.interpret(&with_agent(), Some(&response("talvez", 1.0)), thresholds);
+    assert_eq!(outside.origin, DecisionOrigin::Fallback);
+    assert_eq!(outside.choice.as_deref(), Some(G8_CONTINUES));
 
-    let ausente = G8.interpret(&com_agente(), None, limiares);
-    assert_eq!(ausente.origin, DecisionOrigin::Fallback);
-    assert_eq!(ausente.choice.as_deref(), Some(G8_CONTINUES));
-    assert_eq!(ausente.motivo.as_deref(), Some("sem resposta do Jev"));
+    let missing = G8.interpret(&with_agent(), None, thresholds);
+    assert_eq!(missing.origin, DecisionOrigin::Fallback);
+    assert_eq!(missing.choice.as_deref(), Some(G8_CONTINUES));
+    assert_eq!(missing.motivo.as_deref(), Some("sem resposta do Jev"));
 }
 
 #[test]
-fn o_motor_so_pergunta_o_g8_com_a_flag_ligada() {
+fn engine_asks_g8_only_with_flag_on() {
     let jev = Arc::new(FakeJev::with_choices(BTreeMap::from([(
         "g8_encerrada".to_owned(),
         G8_ENDED.to_owned(),
     )])));
 
-    let desligado = JevEngine::new(jev.clone(), JevGates::default(), "jev-latest");
-    let _ = futures_block(desligado.evaluate(com_agente(), None));
+    let disabled = JevEngine::new(jev.clone(), JevGates::default(), "jev-latest");
+    let _ = futures_block(disabled.evaluate(with_agent(), None));
     assert_eq!(jev.calls(), 0, "com o G8 desligado, nenhuma pergunta");
 
-    let ligado = JevEngine::new(
+    let enabled = JevEngine::new(
         jev.clone(),
         JevGates {
             g8: true,
@@ -144,15 +132,15 @@ fn o_motor_so_pergunta_o_g8_com_a_flag_ligada() {
         },
         "jev-latest",
     );
-    let resultado = futures_block(ligado.evaluate(com_agente(), None));
+    let resultado = futures_block(enabled.evaluate(with_agent(), None));
     assert_eq!(jev.calls(), 1);
-    let pedido = jev.requests().pop().expect("um pedido");
-    assert!(pedido.questions.contains_key("g8_encerrada"));
+    let request = jev.requests().pop().expect("um pedido");
+    assert!(request.questions.contains_key("g8_encerrada"));
     assert_eq!(resultado.choice(IdGate::G8), Some(G8_ENDED));
 }
 
 #[test]
-fn despedida_do_agente_respeita_ausente_vazia_invalida_e_longa() {
+fn agent_farewell_respects_missing_empty_invalid_and_long() {
     assert_eq!(farewell_from_agent("{}"), None, "sem campo: padrão do gate");
     assert_eq!(farewell_from_agent(""), None);
     assert_eq!(
@@ -174,17 +162,17 @@ fn despedida_do_agente_respeita_ausente_vazia_invalida_e_longa() {
         farewell_from_agent(r#"{"despedida": "  Até mais!  "}"#),
         Some("Até mais!".to_owned())
     );
-    let longa = "x".repeat(900);
-    let lida = farewell_from_agent(&format!(r#"{{"despedida": "{longa}"}}"#)).unwrap_or_default();
-    assert_eq!(lida.chars().count(), poph_jev::flags::MAX_FAREWELL_CHARS);
+    let long_text = "x".repeat(900);
+    let parsed =
+        farewell_from_agent(&format!(r#"{{"despedida": "{long_text}"}}"#)).unwrap_or_default();
+    assert_eq!(parsed.chars().count(), poph_jev::flags::MAX_FAREWELL_CHARS);
     assert!(!G8_DEFAULT_FAREWELL.is_empty());
 }
 
-/// Executa um futuro sem runtime do motor: o Jev falso responde na hora.
-fn futures_block<T>(futuro: futures::future::BoxFuture<'_, T>) -> T {
+fn futures_block<T>(future: futures::future::BoxFuture<'_, T>) -> T {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .expect("runtime de teste")
-        .block_on(futuro)
+        .block_on(future)
 }

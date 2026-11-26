@@ -1,11 +1,3 @@
-//! G5 — qual produto o cliente quer (HR-33): o que o gate decide e o que o código recusa.
-//!
-//! A pergunta é **fora do lote** (os candidatos são o resultado da busca de produtos do turno) e
-//! as opções são os **ids** dos candidatos, mais `nenhum`. Aqui se prova o contrato do gate: id de
-//! candidato vira decisão confiável; id inventado, `nenhum`, confiança baixa e falta de resposta
-//! viram fallback **com motivo**; sem candidatos o gate nem pergunta. Quem injeta o produto no
-//! turno e valida o id de novo é o `poph-agent` (teste `g5_produto.rs` de lá).
-
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -15,27 +7,27 @@ use poph_jev::{
 };
 use poph_types::JevGates;
 
-fn candidato(id: &str, nome: &str, detalhe: &str) -> ProductCandidate {
+fn candidate(id: &str, nome: &str, detail: &str) -> ProductCandidate {
     ProductCandidate {
         id: id.to_owned(),
         nome: nome.to_owned(),
-        detail: detalhe.to_owned(),
+        detail: detail.to_owned(),
     }
 }
 
-fn candidatos() -> Vec<ProductCandidate> {
+fn candidates() -> Vec<ProductCandidate> {
     vec![
-        candidato(
+        candidate(
             "p-baratas",
             "Dedetização de baratas",
             "categoria: Pragas; preço: R$ 180,00",
         ),
-        candidato(
+        candidate(
             "p-cupins",
             "Descupinização de cupins",
             "categoria: Pragas; preço: R$ 350,00",
         ),
-        candidato(
+        candidate(
             "p-ratos",
             "Controle de ratos",
             "categoria: Pragas; preço: R$ 220,00",
@@ -43,65 +35,57 @@ fn candidatos() -> Vec<ProductCandidate> {
     ]
 }
 
-fn estado(texto: &str, candidatos: Vec<ProductCandidate>) -> JevState {
+fn estado(texto: &str, candidate_list: Vec<ProductCandidate>) -> JevState {
     JevState::new("whatsapp")
         .with_messages(vec![JevMessage::from_customer(texto)])
         .with_capabilities(true, true)
-        .with_product_candidates(candidatos)
+        .with_product_candidates(candidate_list)
 }
 
-fn resposta(escolha: &str, confianca: f64) -> JevResponse {
+fn response(choice: &str, confidence_value: f64) -> JevResponse {
     let mut item = JevResponse {
-        choice: Some(escolha.to_owned()),
-        confidence: confianca,
+        choice: Some(choice.to_owned()),
+        confidence: confidence_value,
         ..JevResponse::default()
     };
-    item.probabilities.insert(escolha.to_owned(), confianca);
+    item.probabilities
+        .insert(choice.to_owned(), confidence_value);
     item
 }
 
-// ───────────────────────────── pergunta ─────────────────────────────
-
-/// Uma opção por candidato (pelo id) mais `nenhum`.
 #[test]
-fn pergunta_tem_uma_opcao_por_candidato_e_nenhum() {
-    let pergunta = G5.question(&estado("quanto custa para matar barata?", candidatos()));
-    assert_eq!(pergunta.tipo, poph_jev::QuestionType::Choice);
-    assert!(!pergunta.instructions.is_empty());
-    let opcoes: Vec<&String> = pergunta.rubric.keys().collect();
-    assert_eq!(opcoes, vec!["nenhum", "p-baratas", "p-cupins", "p-ratos"]);
-    // O critério do candidato diz o nome e o detalhe, para o Jev reconhecer o produto.
-    let criterio = &pergunta.rubric["p-baratas"];
-    assert!(criterio.contains("Dedetização de baratas"), "{criterio}");
-    assert!(criterio.contains("R$ 180,00"), "{criterio}");
+fn question_has_one_option_per_candidate_and_none() {
+    let question = G5.question(&estado("quanto custa para matar barata?", candidates()));
+    assert_eq!(question.tipo, poph_jev::QuestionType::Choice);
+    assert!(!question.instructions.is_empty());
+    let options: Vec<&String> = question.rubric.keys().collect();
+    assert_eq!(options, vec!["nenhum", "p-baratas", "p-cupins", "p-ratos"]);
+    let criterion = &question.rubric["p-baratas"];
+    assert!(criterion.contains("Dedetização de baratas"), "{criterion}");
+    assert!(criterion.contains("R$ 180,00"), "{criterion}");
 }
 
-/// Sem candidatos o gate não se aplica (a busca devolveu vazio ou o turno não consultou o catálogo).
 #[test]
-fn sem_candidato_o_gate_nao_se_aplica() {
+fn gate_does_not_apply_without_candidate() {
     assert!(!G5.applies(&estado("quanto custa?", Vec::new())));
-    assert!(G5.applies(&estado("quanto custa?", candidatos())));
+    assert!(G5.applies(&estado("quanto custa?", candidates())));
 }
 
-// ───────────────────────────── decisão ─────────────────────────────
-
-/// Id de um candidato, com confiança acima do limiar, vira decisão confiável.
 #[test]
-fn id_de_candidato_vira_decisao_confiavel() {
-    let estado = estado("quanto custa para matar barata?", candidatos());
-    let decisao = G5.interpret(&estado, Some(&resposta("p-baratas", 0.92)), G5.thresholds());
+fn candidate_id_becomes_reliable_decision() {
+    let estado = estado("quanto custa para matar barata?", candidates());
+    let decisao = G5.interpret(&estado, Some(&response("p-baratas", 0.92)), G5.thresholds());
     assert_eq!(decisao.choice.as_deref(), Some("p-baratas"));
     assert_eq!(decisao.origin, DecisionOrigin::Jev);
     assert_eq!(decisao.motivo, None);
 }
 
-/// Id inventado nunca é aceito, nem com confiança 1,0: a lista de candidatos é o limite.
 #[test]
-fn id_fora_dos_candidatos_e_recusado() {
-    let estado = estado("quanto custa para matar barata?", candidatos());
+fn id_outside_candidates_is_refused() {
+    let estado = estado("quanto custa para matar barata?", candidates());
     let decisao = G5.interpret(
         &estado,
-        Some(&resposta("p-produto-que-nao-existe", 1.0)),
+        Some(&response("p-produto-que-nao-existe", 1.0)),
         G5.thresholds(),
     );
     assert_eq!(decisao.origin, DecisionOrigin::Fallback);
@@ -110,70 +94,61 @@ fn id_fora_dos_candidatos_e_recusado() {
     assert!(motivo.contains("fora das opções"), "{motivo}");
 }
 
-/// `nenhum` é abstenção explícita: os candidatos vão ao LLM, como sem o gate.
 #[test]
-fn nenhum_e_abstencao_com_motivo() {
-    let estado = estado("qual o prazo de entrega?", candidatos());
-    let decisao = G5.interpret(&estado, Some(&resposta(G5_NONE, 0.95)), G5.thresholds());
+fn none_is_abstention_with_reason() {
+    let estado = estado("qual o prazo de entrega?", candidates());
+    let decisao = G5.interpret(&estado, Some(&response(G5_NONE, 0.95)), G5.thresholds());
     assert_eq!(decisao.origin, DecisionOrigin::Fallback);
     assert_eq!(decisao.choice, None);
     let motivo = decisao.motivo.unwrap_or_default();
     assert!(motivo.contains("não reconheceu o produto"), "{motivo}");
 }
 
-/// Confiança abaixo do limiar (0,7) vira fallback com o motivo.
 #[test]
-fn confianca_baixa_vira_fallback() {
-    let estado = estado("quanto custa para matar barata?", candidatos());
-    let decisao = G5.interpret(&estado, Some(&resposta("p-baratas", 0.55)), G5.thresholds());
+fn low_confidence_falls_back() {
+    let estado = estado("quanto custa para matar barata?", candidates());
+    let decisao = G5.interpret(&estado, Some(&response("p-baratas", 0.55)), G5.thresholds());
     assert_eq!(decisao.origin, DecisionOrigin::Fallback);
     assert_eq!(decisao.choice, None);
     let motivo = decisao.motivo.unwrap_or_default();
     assert!(motivo.contains("abaixo do limiar"), "{motivo}");
 }
 
-/// Sem resposta do Jev, fallback com o motivo.
 #[test]
-fn sem_resposta_vira_fallback() {
-    let estado = estado("quanto custa?", candidatos());
+fn no_response_falls_back() {
+    let estado = estado("quanto custa?", candidates());
     let decisao = G5.interpret(&estado, None, G5.thresholds());
     assert_eq!(decisao.origin, DecisionOrigin::Fallback);
     assert_eq!(decisao.motivo.as_deref(), Some("sem resposta do Jev"));
 }
 
-// ───────────────────────────── fora do lote ─────────────────────────────
-
-/// O lote normal não pergunta o G5 (o estado não tem candidatos); a chamada só do G5 pergunta **uma**
-/// coisa e devolve a decisão.
 #[tokio::test]
-async fn g5_e_perguntado_fora_do_lote_so_com_candidatos() {
-    let mut escolhas: BTreeMap<String, String> = BTreeMap::new();
-    escolhas.insert("g5_produto".to_owned(), "p-baratas".to_owned());
-    let jev = Arc::new(FakeJev::with_choices(escolhas));
-    let globais = JevGates {
+async fn g5_is_asked_outside_batch_only_with_candidates() {
+    let mut choices: BTreeMap<String, String> = BTreeMap::new();
+    choices.insert("g5_produto".to_owned(), "p-baratas".to_owned());
+    let jev = Arc::new(FakeJev::with_choices(choices));
+    let globals = JevGates {
         g5: true,
         ..JevGates::default()
     };
-    let transporte: Arc<dyn poph_jev::JevTransport> = jev.clone();
-    let avaliador = JevEngine::new(transporte, globais, "jev-latest");
+    let transport: Arc<dyn poph_jev::JevTransport> = jev.clone();
+    let evaluator = JevEngine::new(transport, globals, "jev-latest");
 
-    // 1. Lote normal (sem candidatos): o G5 não se aplica, então nenhuma pergunta é enviada.
-    let sem_candidatos = JevState::new("whatsapp")
+    let no_candidates = JevState::new("whatsapp")
         .with_messages(vec![JevMessage::from_customer("oi")])
         .with_capabilities(true, true);
-    let lote = avaliador.evaluate(sem_candidatos, None).await;
-    assert!(lote.decisions.is_empty(), "{:?}", lote.decisions);
+    let batch = evaluator.evaluate(no_candidates, None).await;
+    assert!(batch.decisions.is_empty(), "{:?}", batch.decisions);
     assert!(jev.requests().is_empty(), "nenhum pedido ao Jev");
 
-    // 2. Chamada só do G5, com candidatos: uma pergunta, uma decisão.
-    let com_candidatos = estado("quero dedetizar contra baratas", candidatos());
-    let resultado = avaliador
-        .evaluate(com_candidatos, Some(gate_override(IdGate::G5)))
+    let candidate_state = estado("quero dedetizar contra baratas", candidates());
+    let resultado = evaluator
+        .evaluate(candidate_state, Some(gate_override(IdGate::G5)))
         .await;
-    let pedidos = jev.requests();
-    assert_eq!(pedidos.len(), 1);
+    let requests = jev.requests();
+    assert_eq!(requests.len(), 1);
     assert_eq!(
-        pedidos[0]
+        requests[0]
             .questions
             .keys()
             .cloned()
@@ -183,14 +158,12 @@ async fn g5_e_perguntado_fora_do_lote_so_com_candidatos() {
     assert_eq!(resultado.reliable_choice(IdGate::G5), Some("p-baratas"));
 }
 
-/// O Jev falso pode devolver o id mesmo quando ele não é candidato: o gate recusa e o motor marca
-/// fallback (defesa em profundidade com o que o modelo devolveu).
 #[test]
-fn resposta_com_id_inventado_pelo_transporte_vira_fallback() {
-    let estado = estado("quero dedetizar", candidatos());
+fn invented_id_from_transport_falls_back() {
+    let estado = estado("quero dedetizar", candidates());
     let decisao = G5.interpret(
         &estado,
-        Some(&resposta("p-de-outra-org", 0.99)),
+        Some(&response("p-de-outra-org", 0.99)),
         G5.thresholds(),
     );
     assert_eq!(decisao.origin, DecisionOrigin::Fallback);

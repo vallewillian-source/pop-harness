@@ -1,24 +1,3 @@
-//! Custo do G9 no lote do Jev (FX-36): tempo de montagem e tamanho do pedido com 20 fluxos.
-//!
-//! O que se mede aqui é o que o Harness gasta **antes** da chamada: montar o estado, montar as
-//! perguntas e serializar o pedido. O transporte é o [`JevFalso`], então o tempo da resposta do
-//! provedor não entra — essa parte é a medição com o Jev real (FX-37).
-//!
-//! Rodar assim (medição, não regressão):
-//!
-//! ```text
-//! cargo test --release -p poph-jev --test g9_medicao -- --ignored --nocapture
-//! ```
-//!
-//! Três colunas, para o custo ser atribuível:
-//!
-//! - **sem fluxo liberado**: o G9 não se aplica; é o lote de antes do módulo;
-//! - **20 fluxos, G9 ligado**: o caso de topo (o teto de fluxos por agente é 20, FX-08);
-//! - **20 fluxos, G9 desligado pela flag**: o estado cresce, mas a pergunta não existe.
-//!
-//! O texto de cada gatilho vai no tamanho máximo que a pergunta aceita (400 caracteres, PRD §6.3),
-//! porque é o pior caso: um agente com 20 fluxos e textos longos.
-
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Instant;
@@ -29,34 +8,31 @@ use poph_jev::{
 };
 use poph_types::JevGates;
 
-/// Teto de caracteres do texto de gatilho na pergunta (PRD §6.3).
-const MAX_GATILHO: usize = 400;
+const MAX_TRIGGER_CHARS: usize = 400;
 
-fn fluxo(indice: usize) -> JevFlow {
-    let recheio = "a".repeat(MAX_GATILHO);
+fn fluxo(index: usize) -> JevFlow {
+    let filler = "a".repeat(MAX_TRIGGER_CHARS);
     JevFlow {
-        id: format!("fluxo_{indice}"),
-        nome: format!("Fluxo {indice}"),
-        when: format!("O cliente quer o fluxo {indice}. {recheio}"),
-        not_when: format!("Só está falando de outra coisa. {recheio}"),
+        id: format!("fluxo_{index}"),
+        nome: format!("Fluxo {index}"),
+        when: format!("O cliente quer o fluxo {index}. {filler}"),
+        not_when: format!("Só está falando de outra coisa. {filler}"),
         examples: vec![
-            format!("quero o fluxo {indice}"),
-            format!("dá para o fluxo {indice}?"),
-            format!("preciso do fluxo {indice}"),
+            format!("quero o fluxo {index}"),
+            format!("dá para o fluxo {index}?"),
+            format!("preciso do fluxo {index}"),
         ],
     }
 }
 
-/// Estado de um turno com conversa em andamento: base disponível e uma resposta do agente (assim o
-/// G3 e o G8 também perguntam, e o lote não é só o G9), sem fluxo liberado.
-fn estado(rodada: usize, fluxos: usize) -> JevState {
-    let mensagens = [
+fn estado(round: usize, fluxos: usize) -> JevState {
+    let messages = [
         JevMessage::from_customer("Oi, preciso de ajuda com a minha internet."),
         JevMessage::from_agent("Claro, posso ajudar. O que aconteceu?"),
-        JevMessage::from_customer(format!("A conexão caiu de novo, é a {rodada}ª vez hoje.")),
+        JevMessage::from_customer(format!("A conexão caiu de novo, é a {round}ª vez hoje.")),
     ];
     let base = JevState::new("whatsapp")
-        .with_messages(mensagens)
+        .with_messages(messages)
         .with_capabilities(true, false);
     if fluxos == 0 {
         base
@@ -65,97 +41,94 @@ fn estado(rodada: usize, fluxos: usize) -> JevState {
     }
 }
 
-/// Motor com Jev falso: responde a primeira opção de cada pergunta, confiança 1,0.
-fn motor() -> (Arc<FakeJev>, JevEngine) {
-    let falso = Arc::new(FakeJev::new(|pedido: &JevRequest| {
-        let mut respostas = BTreeMap::new();
-        for (id, pergunta) in &pedido.questions {
-            let escolha = pergunta
+fn fake_engine() -> (Arc<FakeJev>, JevEngine) {
+    let fake = Arc::new(FakeJev::new(|request: &JevRequest| {
+        let mut replies = BTreeMap::new();
+        for (id, question) in &request.questions {
+            let choice = question
                 .rubric
                 .keys()
                 .next()
                 .cloned()
                 .unwrap_or_else(|| "nenhum".to_owned());
-            let mut resposta = JevResponse {
-                choice: Some(escolha.clone()),
+            let mut response = JevResponse {
+                choice: Some(choice.clone()),
                 confidence: 1.0,
                 ..JevResponse::default()
             };
-            resposta.probabilities.insert(escolha, 1.0);
-            respostas.insert(id.clone(), resposta);
+            response.probabilities.insert(choice, 1.0);
+            replies.insert(id.clone(), response);
         }
         Ok(BatchResponse {
-            answers: respostas,
+            answers: replies,
             ..BatchResponse::default()
         })
     }));
-    let motor = JevEngine::new(
-        Arc::clone(&falso) as Arc<dyn JevTransport>,
+    let engine = JevEngine::new(
+        Arc::clone(&fake) as Arc<dyn JevTransport>,
         JevGates::default_value(),
         "jev-de-medicao",
     );
-    (falso, motor)
+    (fake, engine)
 }
 
-fn percentil(ordenadas: &[u128], p: f64) -> u128 {
-    if ordenadas.is_empty() {
+fn percentile(sorted: &[u128], p: f64) -> u128 {
+    if sorted.is_empty() {
         return 0;
     }
-    let indice = ((ordenadas.len() as f64 - 1.0) * p).round() as usize;
-    ordenadas[indice]
+    let index = ((sorted.len() as f64 - 1.0) * p).round() as usize;
+    sorted[index]
 }
 
-/// Uma coluna: `rodadas` lotes, opcionalmente com o G9 desligado pela flag.
 #[allow(clippy::type_complexity)]
-async fn medir(
-    rodadas: usize,
+async fn measure(
+    rounds: usize,
     fluxos: usize,
-    ajuste: Option<GateOverrides>,
-    rotulo: &str,
+    overrides: Option<GateOverrides>,
+    label: &str,
 ) -> (u128, u128, usize, usize, usize) {
-    let (falso, motor) = motor();
-    let mut amostras = Vec::with_capacity(rodadas);
-    for rodada in 0..rodadas {
-        // O texto muda a cada rodada para o cache de decisão não atender o lote.
-        let estado = estado(rodada, fluxos);
-        let inicio = Instant::now();
-        let resultado = motor.evaluate(estado, ajuste).await;
-        amostras.push(inicio.elapsed().as_micros());
-        assert!(!resultado.failed(), "o lote de {rotulo} falhou");
+    let (fake, engine) = fake_engine();
+    let mut samples = Vec::with_capacity(rounds);
+    for round in 0..rounds {
+        let estado = estado(round, fluxos);
+        let started = Instant::now();
+        let resultado = engine.evaluate(estado, overrides).await;
+        samples.push(started.elapsed().as_micros());
+        assert!(!resultado.failed(), "o lote de {label} falhou");
     }
-    let pedidos = falso.requests();
-    let ultimo = pedidos.last().expect("o lote chamou o Jev");
-    let bytes = serde_json::to_vec(&ultimo.to_json())
+    let requests = fake.requests();
+    let last_request = requests.last().expect("o lote chamou o Jev");
+    let bytes = serde_json::to_vec(&last_request.to_json())
         .expect("serializa o pedido")
         .len();
-    let bytes_estado = serde_json::to_vec(&ultimo.estado)
+    let state_bytes = serde_json::to_vec(&last_request.estado)
         .expect("serializa o estado")
         .len();
-    let perguntas = ultimo.questions.len();
+    let questions = last_request.questions.len();
 
-    let mut ordenadas = amostras.clone();
-    ordenadas.sort_unstable();
-    let p50 = percentil(&ordenadas, 0.50);
-    let p95 = percentil(&ordenadas, 0.95);
+    let mut sorted_samples = samples.clone();
+    sorted_samples.sort_unstable();
+    let p50 = percentile(&sorted_samples, 0.50);
+    let p95 = percentile(&sorted_samples, 0.95);
     println!(
-        "{rotulo}: {perguntas} perguntas no lote, p50 {p50} µs, p95 {p95} µs, pedido {bytes} B \
-         (estado {bytes_estado} B, perguntas {} B)",
-        bytes.saturating_sub(bytes_estado)
+        "{label}: {questions} perguntas no lote, p50 {p50} µs, p95 {p95} µs, pedido {bytes} B \
+         (estado {state_bytes} B, perguntas {} B)",
+        bytes.saturating_sub(state_bytes)
     );
-    (p50, p95, bytes, bytes_estado, perguntas)
+    (p50, p95, bytes, state_bytes, questions)
 }
 
 #[tokio::test]
 #[ignore = "medição de tempo e tamanho: rodar à mão com --ignored --nocapture"]
-async fn custo_do_g9_no_lote_com_20_fluxos() {
-    const RODADAS: usize = 200;
+async fn g9_cost_in_batch_with_20_flows() {
+    const ROUNDS: usize = 200;
 
-    let (_, _, bytes_sem, estado_sem, perguntas_sem) =
-        medir(RODADAS, 0, None, "sem fluxo liberado (G9 inaplicável)").await;
-    let (_, _, bytes_vinte, estado_vinte, perguntas_vinte) =
-        medir(RODADAS, 20, None, "20 fluxos, G9 ligado").await;
-    let (_, _, bytes_flag, estado_flag, perguntas_flag) = medir(
-        RODADAS,
+    let (_, _, bytes_no_flows, state_no_flows, questions_no_flows) =
+        measure(ROUNDS, 0, None, "sem fluxo liberado (G9 inaplicável)").await;
+    let (_, _, bytes_twenty, state_twenty, questions_twenty) =
+        measure(ROUNDS, 20, None, "20 fluxos, G9 ligado").await;
+    let (_, _, bytes_flag_off, state_flag_off, questions_flag_off) = measure(
+        ROUNDS,
         20,
         Some(GateOverrides {
             g9: Some(false),
@@ -166,17 +139,17 @@ async fn custo_do_g9_no_lote_com_20_fluxos() {
     .await;
 
     println!(
-        "estado com 20 fluxos: {estado_vinte} B contra {estado_sem} B sem fluxo liberado (+{} B)",
-        estado_vinte.saturating_sub(estado_sem)
+        "estado com 20 fluxos: {state_twenty} B contra {state_no_flows} B sem fluxo liberado (+{} B)",
+        state_twenty.saturating_sub(state_no_flows)
     );
     println!(
-        "custo do G9 no lote: +{} B de pedido e {} pergunta a mais ({perguntas_sem} → \
-         {perguntas_vinte})",
-        bytes_vinte.saturating_sub(bytes_sem),
-        perguntas_vinte.saturating_sub(perguntas_sem)
+        "custo do G9 no lote: +{} B de pedido e {} pergunta a mais ({questions_no_flows} → \
+         {questions_twenty})",
+        bytes_twenty.saturating_sub(bytes_no_flows),
+        questions_twenty.saturating_sub(questions_no_flows)
     );
     println!(
-        "com a flag desligada: pedido {bytes_flag} B (estado {estado_flag} B, os 20 fluxos vão \
-         junto) e {perguntas_flag} perguntas"
+        "com a flag desligada: pedido {bytes_flag_off} B (estado {state_flag_off} B, os 20 fluxos vão \
+         junto) e {questions_flag_off} perguntas"
     );
 }
