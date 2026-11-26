@@ -826,6 +826,54 @@ Check in this order. Each step is a command or a field in the turn record; none 
 
 ---
 
+## 9. Build the ARM64 binary (HR-56)
+
+Use this on the native ARM64 test machine (HR-56). There is no cross-compilation: the workstation has no cross C
+compiler (D-02), so the build has to run on the same architecture as the host.
+
+### What has to be ready
+
+- Docker on the ARM64 machine, used without sudo.
+- The Rust toolchain on the host, mounted into the container at `/w/rustup` and `/w/cargo`.
+- The current directory mounted as `/w`, with the repository at `src/apps/pop-harness` inside it (the path the
+  `docker run` below expects).
+
+### Commands
+
+```
+docker build -t poph-build-arm:24.04 -f scripts/Dockerfile.build-arm scripts/
+docker run --rm -u $(id -u):$(id -g) -v "$PWD:/w" -w /w/src/apps/pop-harness \
+  -e RUSTUP_HOME=/w/rustup -e CARGO_HOME=/w/cargo -e PATH=/w/cargo/bin:/usr/local/bin:/usr/bin:/bin \
+  poph-build-arm:24.04 bash scripts/build-dist.sh /w/dist/poph-arm
+```
+
+### Why the base image is Ubuntu 24.04
+
+- **glibc:** the test host is Ubuntu 24.04 with glibc 2.39. The image must not have a newer glibc than the
+  host, or the binary will not run there. Ubuntu 24.04 gives 2.39, the same as the host.
+- **libstdc++:** the ONNX Runtime binary (crate `ort`, downloaded, linked statically) was built with the
+  libstdc++ of GCC 13 or newer. Debian 12 (GCC 12) fails at link time with the undefined symbols
+  `_M_replace_cold` and `__cxa_call_terminate`.
+
+### What to check afterwards
+
+- The build log shows `gcc` 13 or 14 and `ldd` with glibc 2.39. The `RUN` line of the image prints both versions.
+- `scripts/build-dist.sh` finishes and writes the binary to `/w/dist/poph-arm`.
+
+### If it fails
+
+- Link error with `_M_replace_cold` or `__cxa_call_terminate`: the base image is older than GCC 13 (Debian 12).
+  Go back to `ubuntu:24.04`.
+
+### What not to do
+
+- Do not cross-compile from x86_64: the workstation has no cross C compiler (D-02).
+- Do not change the base image without repeating both checks above.
+
+**Not verified in this run:** no ARM64 machine was available in the session that wrote this section, so the
+image was not built and the commands above were not run. The rules come from the image's own comments, which
+were moved here when they were removed from the Dockerfile.
+
 ## Verification log
 
 | Runbook | Run in this verification | Not verified (reason) |
@@ -836,6 +884,8 @@ Check in this order. Each step is a command or a field in the turn record; none 
 | 4. Plugin | declare, start, list and detail (`ok`, `indisponivel`, 503), `401` without a token | Operation screen in the browser; swapping a plugin (only from the code text); removal |
 | 5. Jev gates | `agent show`, `agent update` with `--if-match` (success and conflict), `jev eval g1` and `g5` with the fake Jev | real Jev; effect inside a turn; going back to `{}`; quality measurement |
 | 6. Cluster and forwarding | `cluster show`, `cluster check` (valid and with an error), `cluster check --remoto` (healthy, instance stopped, divergent map), reload with a valid, invalid and deleted file, `?cluster=true` with and without the parameter, forwarding of an org from another instance (200), `421 mapa_divergente`, `421 rota_em_laco`, `401` for timestamp, signature and unknown instance, `503 instancia_fora` | reload with an org token (403); divergent identity; different secret; HTTPS and separate machines; real SSE and WhatsApp; moving an org with data |
+
+| 9. ARM64 build | nothing (no ARM64 machine in the session) | everything: image build, `build-dist.sh`, the glibc and GCC checks |
 
 Count: about 65 calls between CLI, HTTP and build across runbooks 1 to 5; about 60 commands and HTTP calls in runbook 6.
 I did not run `poph token global`.

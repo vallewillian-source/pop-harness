@@ -1,18 +1,3 @@
-# Imagem de build do POP Harness para ARM64 na máquina ARM64 de testes (HR-56).
-#
-# Por que existe: a máquina ARM64 de testes (produção) é Ubuntu 24.04 / glibc 2.39, e o build precisa acontecer na
-# própria arquitetura (D-02: não há compilador cruzado na estação). Duas amarras:
-#   1) o binário tem de rodar no host, então a glibc da imagem não pode ser mais nova que a do host;
-#   2) o ONNX Runtime pré-compilado (crate `ort`, download-binaries) é estático e foi gerado com
-#      libstdc++ do GCC 13+, então o link exige libstdc++ novo — a Debian 12 (GCC 12) falha em
-#      `_M_replace_cold`/`__cxa_call_terminate`.
-# Ubuntu 24.04 resolve as duas: glibc 2.39 (igual ao host) e GCC 13/14.
-#
-# Uso (na máquina ARM64 de testes, sem sudo; o Rust vem montado do host em /w/rustup e /w/cargo):
-#   docker build -t poph-build-arm:24.04 -f scripts/Dockerfile.build-arm scripts/
-#   docker run --rm -u $(id -u):$(id -g) -v "$PWD:/w" -w /w/src/apps/pop-harness \
-#     -e RUSTUP_HOME=/w/rustup -e CARGO_HOME=/w/cargo -e PATH=/w/cargo/bin:/usr/local/bin:/usr/bin:/bin \
-#     poph-build-arm:24.04 bash scripts/build-dist.sh /w/dist/poph-arm
 FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -21,5 +6,4 @@ RUN apt-get update \
         build-essential pkg-config file ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# gcc 13/14 + glibc 2.39: confere na construção da imagem que o alvo é o esperado.
 RUN gcc --version | head -1 && ldd --version | head -1

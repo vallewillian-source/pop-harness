@@ -38,14 +38,14 @@ AUX="$APP/scripts/acceptance-matrix-aux.py"
 ELEMENT_JS="$APP/scripts/acceptance-matrix-element.mjs"
 
 DIR="${POPH_ACEITE_DIR:-$HOME/.cache/poph-aceite-matrix}"
-MANTER=0
+KEEP_DATA=0
 NO_ELEMENT=0
-FASE2=0
+PHASE2=0
 for arg in "$@"; do
     case "$arg" in
-        --manter) MANTER=1 ;;
+        --manter) KEEP_DATA=1 ;;
         --sem-element) NO_ELEMENT=1 ;;
-        --fase2) FASE2=1 ;;
+        --fase2) PHASE2=1 ;;
         -h|--help) usage; exit 0 ;;
         *) echo "argumento desconhecido: $arg" >&2; exit 2 ;;
     esac
@@ -63,7 +63,7 @@ ELEMENT_PORT=18403
 fail() { echo "erro: $*" >&2; exit 2; }
 warn() { echo "aviso: $*" >&2; }
 need() { command -v "$1" >/dev/null 2>&1 || fail "$1 não está no PATH"; }
-ocultar() { sed -E 's/(token|senha|secret|apikey)([^ ]*)[:=" ]+[^ "]+/\1\2 [oculto]/gi'; }
+hide() { sed -E 's/(token|senha|secret|apikey)([^ ]*)[:=" ]+[^ "]+/\1\2 [oculto]/gi'; }
 
 echo "== 0. pré-requisitos =="
 need curl
@@ -83,7 +83,7 @@ if ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]$ELEMENT_PORT$"; then
 fi
 
 echo "== 1. pasta de trabalho =="
-if [ "$MANTER" = 0 ]; then
+if [ "$KEEP_DATA" = 0 ]; then
     rm -rf "$DIR"
 fi
 mkdir -p "$DIR/falsos" "$DIR/data" "$DIR/capturas"
@@ -141,7 +141,7 @@ chmod 600 "$DIR/ambiente.sh"
 . "$DIR/ambiente.sh"
 
 RETENTION_TOML=""
-[ "$FASE2" = 1 ] && RETENTION_TOML="midia_retencao_dias = 1"
+[ "$PHASE2" = 1 ] && RETENTION_TOML="midia_retencao_dias = 1"
 cat > "$DIR/poph.toml" <<TOML
 servidor.endereco = "0.0.0.0"
 servidor.porta = $SERVE_PORT
@@ -197,11 +197,11 @@ echo "== 4. banco, org, departamentos, agente e token =="
 "$POPH" --offline --org aceite-matrix department create --name Comercial --json > "$DIR/dep-comercial.json"
 "$POPH" --offline --org aceite-matrix department create --name Suporte --json > "$DIR/dep-suporte.json"
 ORG="$(python3 -c "import json;print(json.load(open('$DIR/org.json'))['org']['id'])")"
-COM="$(python3 -c "import json;print(json.load(open('$DIR/dep-comercial.json'))['department']['id'])")"
-SUP="$(python3 -c "import json;print(json.load(open('$DIR/dep-suporte.json'))['department']['id'])")"
+SALES_DEPT="$(python3 -c "import json;print(json.load(open('$DIR/dep-comercial.json'))['department']['id'])")"
+SUPPORT_DEPT="$(python3 -c "import json;print(json.load(open('$DIR/dep-suporte.json'))['department']['id'])")"
 "$POPH" --offline --org aceite-matrix agent create --name "Ana Comercial" --slug ana \
-    --department "$COM" --grouping-window-ms 0 --json > "$DIR/agent.json"
-AG="$(python3 -c "import json;print(json.load(open('$DIR/agent.json'))['agent']['id'])")"
+    --department "$SALES_DEPT" --grouping-window-ms 0 --json > "$DIR/agent.json"
+AGENT_ID="$(python3 -c "import json;print(json.load(open('$DIR/agent.json'))['agent']['id'])")"
 "$POPH" --offline --org aceite-matrix token create --label aceite --json > "$DIR/token.json"
 TOKEN_ADMIN="$(python3 -c "import json;print(json.load(open('$DIR/token.json'))['valor_do_token'])")"
 
@@ -215,11 +215,11 @@ for _ in $(seq 1 100); do
 done
 curl -fsS -m 2 -o /dev/null "http://127.0.0.1:$SERVE_PORT/healthz" || fail "o servidor não subiu (veja $DIR/serve-1.log)"
 curl -sS -o "$DIR/integracao.json" -w '%{http_code}' -X POST \
-    "http://127.0.0.1:$SERVE_PORT/admin/v1/orgs/$ORG/agents/$AG/integrations" \
+    "http://127.0.0.1:$SERVE_PORT/admin/v1/orgs/$ORG/agents/$AGENT_ID/integrations" \
     -H "Authorization: Bearer $TOKEN_ADMIN" -H 'Content-Type: application/json' \
     -d '{"kind":"whatsapp"}' > "$DIR/integracao.status"
 [ "$(cat "$DIR/integracao.status")" = "201" ] || fail "não criou a integração WhatsApp"
-INTEG="$(python3 -c "import json;print(json.load(open('$DIR/integracao.json'))['id'])")"
+INTEGRATION_ID="$(python3 -c "import json;print(json.load(open('$DIR/integracao.json'))['id'])")"
 kill "$SERVE_PID" 2>/dev/null || true
 wait "$SERVE_PID" 2>/dev/null || true
 PIDS=("${PIDS[@]/$SERVE_PID}")
@@ -229,7 +229,7 @@ cat >> "$DIR/poph.toml" <<TOML
 [[evolution.instancias]]
 org_id = "$ORG"
 instancia = "aceite"
-integracao_id = "$INTEG"
+integracao_id = "$INTEGRATION_ID"
 segredo_env = "POPH_EVO_SEGREDO_ACEITE"
 TOML
 
@@ -254,8 +254,8 @@ ROOM_SUPPORT="$(python3 -c "import json;print(json.load(open('$DIR/espacos.json'
 
 echo "== 7. módulo ligado e espaços vinculados =="
 "$POPH" --offline --org aceite-matrix matrix ligar --json > "$DIR/ligado.json"
-"$POPH" --offline --org aceite-matrix matrix espaco --departamento "$COM" --espaco "$SPACE_SALES" --json > "$DIR/espaco-comercial.json"
-"$POPH" --offline --org aceite-matrix matrix espaco --departamento "$SUP" --espaco "$SPACE_SUPPORT" --json > "$DIR/espaco-suporte.json"
+"$POPH" --offline --org aceite-matrix matrix espaco --departamento "$SALES_DEPT" --espaco "$SPACE_SALES" --json > "$DIR/espaco-comercial.json"
+"$POPH" --offline --org aceite-matrix matrix espaco --departamento "$SUPPORT_DEPT" --espaco "$SPACE_SUPPORT" --json > "$DIR/espaco-suporte.json"
 
 echo "== 8. subida do servidor (2/2: módulo no ar) =="
 "$POPH" serve > "$DIR/serve.log" 2>&1 &
@@ -267,31 +267,31 @@ for _ in $(seq 1 100); do
 done
 curl -fsS -m 2 -o /dev/null "http://127.0.0.1:$SERVE_PORT/healthz" || fail "o servidor não subiu (veja $DIR/serve.log)"
 
-RESULTADO="$DIR/resultado.txt"
-: > "$RESULTADO"
-anotar() { printf '%s\t%s\n' "$1" "$2" >> "$RESULTADO"; echo "[$1] $2"; }
+RESULT="$DIR/resultado.txt"
+: > "$RESULT"
+note() { printf '%s\t%s\n' "$1" "$2" >> "$RESULT"; echo "[$1] $2"; }
 
 ELEMENT_OK=0
-iniciar_element() {
+start_element() {
     if [ "$NO_ELEMENT" = 1 ]; then
-        anotar A12 "NÃO CONFERIDO: rodada com --sem-element"
+        note A12 "NÃO CONFERIDO: rodada com --sem-element"
         return 1
     fi
     if ! command -v node >/dev/null 2>&1 || ! command -v "${CHROME_BIN:-google-chrome}" >/dev/null 2>&1; then
-        anotar A12 "NÃO CONFERIDO: node ou Chrome ausente"
+        note A12 "NÃO CONFERIDO: node ou Chrome ausente"
         return 1
     fi
     if [ ! -f "$DIR/element/index.html" ]; then
         echo "  baixando o Element v1.12.35..."
         if ! curl -fsSL -o "$DIR/element.tar.gz" \
             https://github.com/element-hq/element-web/releases/download/v1.12.35/element-v1.12.35.tar.gz; then
-            anotar A12 "NÃO CONFERIDO: sem internet para baixar o Element"
+            note A12 "NÃO CONFERIDO: sem internet para baixar o Element"
             return 1
         fi
         mkdir -p "$DIR/element"
         tar -xzf "$DIR/element.tar.gz" -C "$DIR/element" --strip-components=1
     fi
-    [ -f "$DIR/element/index.html" ] || { anotar A12 "NÃO CONFERIDO: Element não extraído"; return 1; }
+    [ -f "$DIR/element/index.html" ] || { note A12 "NÃO CONFERIDO: Element não extraído"; return 1; }
     python3 - > "$DIR/element/config.json" <<JSON
 import json
 c = json.load(open("$DIR/element/config.sample.json"))
@@ -313,56 +313,56 @@ JSON
     return 0
 }
 
-capturar_elemento() {
+capture_element() {
     [ "$ELEMENT_OK" = 1 ] || return 1
-    local modo="$1" sala="$2" espaco="$3" sala2="${4:-}"
+    local mode="$1" room_arg="$2" space_arg="$3" room2_arg="${4:-}"
     CHROME_BIN="${CHROME_BIN:-google-chrome}" \
     ACEITE_ELEMENT="http://127.0.0.1:$ELEMENT_PORT" \
     ACEITE_SENHA="$(cat "$DIR/atendente.senha")" \
     ACEITE_USUARIO="$AGENT_USER" \
-        node "$ELEMENT_JS" "$modo" "$DIR/capturas" "$sala" "$espaco" "$DIR" "$sala2" \
-        > "$DIR/element-captura-$modo.log" 2>&1
+        node "$ELEMENT_JS" "$mode" "$DIR/capturas" "$room_arg" "$space_arg" "$DIR" "$room2_arg" \
+        > "$DIR/element-captura-$mode.log" 2>&1
 }
 
-esta_no_espaco() {
-    local saida
-    saida="$(python3 "$AUX" pai-do-espaco "$1" "$2")"
-    printf '%s' "$saida" | grep -q '"_status"' && return 1
-    [ "$saida" != "{}" ]
+in_space() {
+    local output
+    output="$(python3 "$AUX" pai-do-espaco "$1" "$2")"
+    printf '%s' "$output" | grep -q '"_status"' && return 1
+    [ "$output" != "{}" ]
 }
 
-fora_do_espaco() {
-    local saida
-    saida="$(python3 "$AUX" pai-do-espaco "$1" "$2" 2>/dev/null || true)"
-    [ -n "$saida" ] || return 2
-    [ "$saida" = "{}" ] && return 0
-    printf '%s' "$saida" | grep -qE '"_status"[[:space:]]*:[[:space:]]*404' && return 0
-    printf '%s' "$saida" | grep -q '"_status"' && return 2
+outside_space() {
+    local output
+    output="$(python3 "$AUX" pai-do-espaco "$1" "$2" 2>/dev/null || true)"
+    [ -n "$output" ] || return 2
+    [ "$output" = "{}" ] && return 0
+    printf '%s' "$output" | grep -qE '"_status"[[:space:]]*:[[:space:]]*404' && return 0
+    printf '%s' "$output" | grep -q '"_status"' && return 2
     return 1
 }
 
 echo "== 8b. Element servido localmente (sem alterar o app) =="
-iniciar_element || true
+start_element || true
 
 echo "== 9. A1: mensagem do cliente, sala nomeada e já no espaço =="
 python3 "$AUX" webhook "$ORG" aceite ACEITE-MSG-1 \
     "Bom dia! Queria saber o preço do plano anual." "Ana Souza" > "$DIR/webhook1.json" 2>&1
-CONV=""
+CONVERSATION=""
 for _ in $(seq 1 60); do
-    CONV="$(python3 - "$DIR/data/harness.db" <<'FIMSQL'
+    CONVERSATION="$(python3 - "$DIR/data/harness.db" <<'FIMSQL'
 import sqlite3, sys
 c = sqlite3.connect(sys.argv[1])
 r = c.execute("select conversation_id from matrix_rooms order by created_at limit 1").fetchone()
 print(r[0] if r else "")
 FIMSQL
 )"
-    [ -n "$CONV" ] && break
+    [ -n "$CONVERSATION" ] && break
     sleep 1
 done
-[ -n "$CONV" ] || fail "nenhuma sala foi criada em 60 s (veja $DIR/serve.log)"
+[ -n "$CONVERSATION" ] || fail "nenhuma sala foi criada em 60 s (veja $DIR/serve.log)"
 ROOM=""
 for _ in $(seq 1 60); do
-    ROOM="$(python3 - "$DIR/data/harness.db" "$CONV" <<'FIMSQL'
+    ROOM="$(python3 - "$DIR/data/harness.db" "$CONVERSATION" <<'FIMSQL'
 import sqlite3, sys
 c = sqlite3.connect(sys.argv[1])
 r = c.execute("select room_id from matrix_rooms where conversation_id=? and state='ready'", (sys.argv[2],)).fetchone()
@@ -373,10 +373,10 @@ FIMSQL
     sleep 1
 done
 [ -n "$ROOM" ] || fail "a sala da conversa não ficou pronta em 60 s (veja $DIR/serve.log)"
-echo "conversa=$CONV sala=$ROOM" | tee "$DIR/ids.txt"
+echo "conversa=$CONVERSATION sala=$ROOM" | tee "$DIR/ids.txt"
 
 IN_SPACE=0
-for _ in $(seq 1 60); do esta_no_espaco "$ROOM" "$ROOM_SALES" && { IN_SPACE=1; break; }; sleep 1; done
+for _ in $(seq 1 60); do in_space "$ROOM" "$ROOM_SALES" && { IN_SPACE=1; break; }; sleep 1; done
 
 for _ in $(seq 1 20); do
     python3 "$AUX" entrar "$ROOM" > "$DIR/entrar-a1.json" 2>&1 || true
@@ -385,7 +385,7 @@ for _ in $(seq 1 20); do
 done
 
 for _ in $(seq 1 40); do
-    N="$(python3 - "$DIR/data/harness.db" "$CONV" <<'FIMSQL'
+    N="$(python3 - "$DIR/data/harness.db" "$CONVERSATION" <<'FIMSQL'
 import sqlite3, sys
 c = sqlite3.connect(sys.argv[1])
 print(c.execute("select count(*) from messages where conversation_id=? and origin='agent'", (sys.argv[2],)).fetchone()[0])
@@ -410,63 +410,63 @@ for k,v in d.items():
         break
 ")"
 if [ "$NAME" = "Ana Souza" ] && [ "$NAME_META" = "Ana Souza" ] && [ "$IN_SPACE" = 1 ]; then
-    anotar A1 "OK: sala 'Ana Souza' (metadata idem) já no espaço Comercial na criação, sem transferência"
+    note A1 "OK: sala 'Ana Souza' (metadata idem) já no espaço Comercial na criação, sem transferência"
 else
-    anotar A1 "FALHOU: nome da sala='$NAME' (metadata='$NAME_META'), no espaço Comercial=$IN_SPACE"
+    note A1 "FALHOU: nome da sala='$NAME' (metadata='$NAME_META'), no espaço Comercial=$IN_SPACE"
 fi
 if [ "$ELEMENT_OK" = 1 ]; then
-    if capturar_elemento a1 "$ROOM" "$ROOM_SALES"; then
-        anotar A12 "OK (A1): capturas a1-sala.png e a1-espaco.png (sala nomeada e sob o espaço Comercial)"
+    if capture_element a1 "$ROOM" "$ROOM_SALES"; then
+        note A12 "OK (A1): capturas a1-sala.png e a1-espaco.png (sala nomeada e sob o espaço Comercial)"
     else
-        anotar A12 "NÃO CONFERIDO: a captura do A1 falhou (veja $DIR/element-captura-a1.log)"
+        note A12 "NÃO CONFERIDO: a captura do A1 falhou (veja $DIR/element-captura-a1.log)"
     fi
 fi
 
 echo "== 10. A6: transferência pelo departamento move a sala de espaço =="
-ESPERA_ESPACO="${ACEITE_ESPERA_ESPACO:-60}"
-ESPACO_DA_CRIACAO=0
-for _ in $(seq 1 "$ESPERA_ESPACO"); do
-    ESPACO_DA_CRIACAO="$(python3 - "$DIR/data/harness.db" "$CONV" "$ROOM_SALES" <<'FIMSQL'
+SPACE_WAIT_S="${ACEITE_ESPERA_ESPACO:-60}"
+SPACE_CREATED=0
+for _ in $(seq 1 "$SPACE_WAIT_S"); do
+    SPACE_CREATED="$(python3 - "$DIR/data/harness.db" "$CONVERSATION" "$ROOM_SALES" <<'FIMSQL'
 import sqlite3, sys
 c = sqlite3.connect(sys.argv[1])
 r = c.execute("select space_room_id from matrix_rooms where conversation_id=?", (sys.argv[2],)).fetchone()
 print(1 if r and r[0] == sys.argv[3] else 0)
 FIMSQL
 )"
-    [ "$ESPACO_DA_CRIACAO" = 1 ] && break
+    [ "$SPACE_CREATED" = 1 ] && break
     sleep 1
 done
-[ "$ESPACO_DA_CRIACAO" = 1 ] \
-    || echo "aviso: o espaço da criação não foi gravado em ${ESPERA_ESPACO}s; a transferência segue (o A6 vai reprovar se o produto não souber de onde sair)"
-python3 "$AUX" transferir "$DIR/data/harness.db" "$CONV" "$SUP" > "$DIR/transferencia.txt"
+[ "$SPACE_CREATED" = 1 ] \
+    || echo "aviso: o espaço da criação não foi gravado em ${SPACE_WAIT_S}s; a transferência segue (o A6 vai reprovar se o produto não souber de onde sair)"
+python3 "$AUX" transferir "$DIR/data/harness.db" "$CONVERSATION" "$SUPPORT_DEPT" > "$DIR/transferencia.txt"
 MOVED=0
-FORA=0
-LEITURA_FALHOU=0
-for _ in $(seq 1 "$ESPERA_ESPACO"); do
-    if esta_no_espaco "$ROOM" "$ROOM_SUPPORT"; then MOVED=1; else MOVED=0; fi
-    RC_FORA=0
-    fora_do_espaco "$ROOM" "$ROOM_SALES" || RC_FORA=$?
-    case "$RC_FORA" in
-        0) FORA=1; LEITURA_FALHOU=0 ;;
-        2) LEITURA_FALHOU=1 ;;
-        *) FORA=0; LEITURA_FALHOU=0 ;;
+OUTSIDE=0
+READ_FAILED=0
+for _ in $(seq 1 "$SPACE_WAIT_S"); do
+    if in_space "$ROOM" "$ROOM_SUPPORT"; then MOVED=1; else MOVED=0; fi
+    RC_OUTSIDE=0
+    outside_space "$ROOM" "$ROOM_SALES" || RC_OUTSIDE=$?
+    case "$RC_OUTSIDE" in
+        0) OUTSIDE=1; READ_FAILED=0 ;;
+        2) READ_FAILED=1 ;;
+        *) OUTSIDE=0; READ_FAILED=0 ;;
     esac
-    [ "$MOVED" = 1 ] && [ "$FORA" = 1 ] && break
+    [ "$MOVED" = 1 ] && [ "$OUTSIDE" = 1 ] && break
     sleep 1
 done
 if [ "$MOVED" = 1 ]; then
-    anotar A6 "OK: sala no espaço Suporte"
+    note A6 "OK: sala no espaço Suporte"
 else
-    anotar A6 "FALHOU: a sala não entrou no espaço Suporte em ${ESPERA_ESPACO}s"
+    note A6 "FALHOU: a sala não entrou no espaço Suporte em ${SPACE_WAIT_S}s"
 fi
-if [ "$FORA" = 1 ]; then
-    anotar A6 "OK: sala fora do espaço Comercial"
+if [ "$OUTSIDE" = 1 ]; then
+    note A6 "OK: sala fora do espaço Comercial"
 else
-    FORA_COM="$(python3 "$AUX" pai-do-espaco "$ROOM" "$ROOM_SALES")"
-    if [ "$LEITURA_FALHOU" = 1 ]; then
-        anotar A6 "FALHOU: não consegui ler o vínculo da sala com o espaço Comercial em ${ESPERA_ESPACO}s ($FORA_COM)"
+    OUTSIDE_WITH="$(python3 "$AUX" pai-do-espaco "$ROOM" "$ROOM_SALES")"
+    if [ "$READ_FAILED" = 1 ]; then
+        note A6 "FALHOU: não consegui ler o vínculo da sala com o espaço Comercial em ${SPACE_WAIT_S}s ($OUTSIDE_WITH)"
     else
-        anotar A6 "FALHOU: a sala continua no espaço antigo depois de ${ESPERA_ESPACO}s ($FORA_COM)"
+        note A6 "FALHOU: a sala continua no espaço antigo depois de ${SPACE_WAIT_S}s ($OUTSIDE_WITH)"
     fi
 fi
 
@@ -479,74 +479,74 @@ for _ in $(seq 1 40); do
     sleep 0.5
 done
 if grep -qF '*[atendente' "$DIR/falsos/evo.jsonl" 2>/dev/null; then
-    anotar A2 "OK: resposta do atendente chegou ao Evolution falso com o prefixo do nome"
+    note A2 "OK: resposta do atendente chegou ao Evolution falso com o prefixo do nome"
 else
-    anotar A2 "FALHOU: a resposta do atendente não chegou ao Evolution falso"
+    note A2 "FALHOU: a resposta do atendente não chegou ao Evolution falso"
 fi
-STATUS="$(python3 - "$DIR/data/harness.db" "$CONV" <<'FIMSQL'
+STATUS="$(python3 - "$DIR/data/harness.db" "$CONVERSATION" <<'FIMSQL'
 import sqlite3, sys
 c = sqlite3.connect(sys.argv[1])
 print(c.execute("select status from conversations where id=?", (sys.argv[2],)).fetchone()[0])
 FIMSQL
 )"
-[ "$STATUS" = "transferred" ] && anotar A2 "OK: conversa transferred (o agente parou)" || anotar A2 "FALHOU: conversa ficou '$STATUS'"
+[ "$STATUS" = "transferred" ] && note A2 "OK: conversa transferred (o agente parou)" || note A2 "FALHOU: conversa ficou '$STATUS'"
 
-ANTES="$(wc -l < "$DIR/falsos/evo.jsonl" 2>/dev/null || echo 0)"
+BEFORE="$(wc -l < "$DIR/falsos/evo.jsonl" 2>/dev/null || echo 0)"
 python3 "$AUX" webhook "$ORG" aceite ACEITE-MSG-2 "Perfeito, vou fechar! Pode mandar o link?" "Ana Souza" >/dev/null 2>&1
 sleep 5
-DEPOIS="$(wc -l < "$DIR/falsos/evo.jsonl" 2>/dev/null || echo 0)"
-[ "$ANTES" = "$DEPOIS" ] && anotar A2 "OK: mensagem seguinte do cliente não gerou resposta" || anotar A2 "FALHOU: o agente respondeu depois da transferência"
+AFTER="$(wc -l < "$DIR/falsos/evo.jsonl" 2>/dev/null || echo 0)"
+[ "$BEFORE" = "$AFTER" ] && note A2 "OK: mensagem seguinte do cliente não gerou resposta" || note A2 "FALHOU: o agente respondeu depois da transferência"
 
 echo "== 12. A7: reabertura, fechamento e conversa nova =="
-VERSAO="$(curl -sS "http://127.0.0.1:$SERVE_PORT/admin/v1/orgs/$ORG/conversations/$CONV" \
+VERSION="$(curl -sS "http://127.0.0.1:$SERVE_PORT/admin/v1/orgs/$ORG/conversations/$CONVERSATION" \
     -H "Authorization: Bearer $TOKEN_ADMIN" | python3 -c "import json,sys;print(json.load(sys.stdin)['version'])")"
 curl -sS -o "$DIR/reopen.json" -w '%{http_code}' -X POST \
-    "http://127.0.0.1:$SERVE_PORT/admin/v1/orgs/$ORG/conversations/$CONV/reopen" \
-    -H "Authorization: Bearer $TOKEN_ADMIN" -H "If-Match: $VERSAO" > "$DIR/reopen.status"
-[ "$(cat "$DIR/reopen.status")" = "200" ] && anotar A7 "OK: reabertura pela API" || anotar A7 "FALHOU: reabertura devolveu $(cat "$DIR/reopen.status")"
+    "http://127.0.0.1:$SERVE_PORT/admin/v1/orgs/$ORG/conversations/$CONVERSATION/reopen" \
+    -H "Authorization: Bearer $TOKEN_ADMIN" -H "If-Match: $VERSION" > "$DIR/reopen.status"
+[ "$(cat "$DIR/reopen.status")" = "200" ] && note A7 "OK: reabertura pela API" || note A7 "FALHOU: reabertura devolveu $(cat "$DIR/reopen.status")"
 sleep 4
 python3 "$AUX" estado-sala "$ROOM" > "$DIR/estado-reaberta.json"
-VERSAO="$(python3 -c "import json;print(json.load(open('$DIR/reopen.json'))['version'])")"
+VERSION="$(python3 -c "import json;print(json.load(open('$DIR/reopen.json'))['version'])")"
 curl -sS -o "$DIR/close.json" -w '%{http_code}' -X POST \
-    "http://127.0.0.1:$SERVE_PORT/admin/v1/orgs/$ORG/conversations/$CONV/close" \
-    -H "Authorization: Bearer $TOKEN_ADMIN" -H "If-Match: $VERSAO" > "$DIR/close.status"
-[ "$(cat "$DIR/close.status")" = "200" ] && anotar A7 "OK: fechamento pela API" || anotar A7 "FALHOU: fechamento devolveu $(cat "$DIR/close.status")"
+    "http://127.0.0.1:$SERVE_PORT/admin/v1/orgs/$ORG/conversations/$CONVERSATION/close" \
+    -H "Authorization: Bearer $TOKEN_ADMIN" -H "If-Match: $VERSION" > "$DIR/close.status"
+[ "$(cat "$DIR/close.status")" = "200" ] && note A7 "OK: fechamento pela API" || note A7 "FALHOU: fechamento devolveu $(cat "$DIR/close.status")"
 sleep 4
 STATUS_META="$(python3 "$AUX" estado-sala "$ROOM" | python3 -c "import json,sys;print(json.load(sys.stdin)['com.sofacoding.atendimento.metadata'].get('status'))")"
-[ "$STATUS_META" = "closed" ] && anotar A7 "OK: metadata closed" || anotar A7 "FALHOU: metadata '$STATUS_META'"
+[ "$STATUS_META" = "closed" ] && note A7 "OK: metadata closed" || note A7 "FALHOU: metadata '$STATUS_META'"
 python3 "$AUX" webhook "$ORG" aceite ACEITE-MSG-4 "Oi de novo, nova conversa." "Ana Souza" >/dev/null 2>&1
-NOVA=0
+NEW_COUNT=0
 for _ in $(seq 1 40); do
-    NOVA="$(python3 - "$DIR/data/harness.db" <<'PY'
+    NEW_COUNT="$(python3 - "$DIR/data/harness.db" <<'PY'
 import sqlite3, sys
 c = sqlite3.connect(sys.argv[1])
 print(c.execute("select count(*) from conversations").fetchone()[0])
 PY
 )"
-    [ "$NOVA" -ge 2 ] && break
+    [ "$NEW_COUNT" -ge 2 ] && break
     sleep 1
 done
-[ "$NOVA" -ge 2 ] && anotar A7 "OK: mensagem depois do fechamento abriu conversa nova" || anotar A7 "FALHOU: não abriu conversa nova"
+[ "$NEW_COUNT" -ge 2 ] && note A7 "OK: mensagem depois do fechamento abriu conversa nova" || note A7 "FALHOU: não abriu conversa nova"
 
-echo "== 12b. nome do cliente chegando DEPOIS da sala criada (MX-32/MX-33) =="
-TEL_TARDIO="5521977776666"
+echo "== 12b. nome do cliente chegando AFTER da sala criada (MX-32/MX-33) =="
+PHONE_LATE="5521977776666"
 ROOM2=""
-CONV2=""
-ACEITE_TELEFONE="$TEL_TARDIO" python3 "$AUX" webhook "$ORG" aceite ACEITE-MSG-N1 \
+CONVERSATION2=""
+ACEITE_TELEFONE="$PHONE_LATE" python3 "$AUX" webhook "$ORG" aceite ACEITE-MSG-N1 \
     "Oi, tudo bem?" "" > "$DIR/webhook-nome1.json" 2>&1
 for _ in $(seq 1 60); do
-    CONV2="$(python3 - "$DIR/data/harness.db" "$TEL_TARDIO" <<'FIMSQL'
+    CONVERSATION2="$(python3 - "$DIR/data/harness.db" "$PHONE_LATE" <<'FIMSQL'
 import sqlite3, sys
 c = sqlite3.connect(sys.argv[1])
 r = c.execute("select id from conversations where external_peer=? order by created_at desc limit 1", (sys.argv[2],)).fetchone()
 print(r[0] if r else "")
 FIMSQL
 )"
-    [ -n "$CONV2" ] && break
+    [ -n "$CONVERSATION2" ] && break
     sleep 1
 done
 for _ in $(seq 1 60); do
-    ROOM2="$(python3 - "$DIR/data/harness.db" "$CONV2" <<'FIMSQL'
+    ROOM2="$(python3 - "$DIR/data/harness.db" "$CONVERSATION2" <<'FIMSQL'
 import sqlite3, sys
 c = sqlite3.connect(sys.argv[1])
 r = c.execute("select room_id from matrix_rooms where conversation_id=? and state='ready'", (sys.argv[2],)).fetchone()
@@ -556,8 +556,8 @@ FIMSQL
     [ -n "$ROOM2" ] && break
     sleep 1
 done
-if [ -z "$CONV2" ] || [ -z "$ROOM2" ]; then
-    anotar MX33 "FALHOU: a conversa/sala sem nome não foi criada (conversa='$CONV2' sala='$ROOM2')"
+if [ -z "$CONVERSATION2" ] || [ -z "$ROOM2" ]; then
+    note MX33 "FALHOU: a conversa/sala sem nome não foi criada (conversa='$CONVERSATION2' sala='$ROOM2')"
 else
     for _ in $(seq 1 20); do
         python3 "$AUX" entrar "$ROOM2" > "$DIR/entrar-nome.json" 2>&1 || true
@@ -570,10 +570,10 @@ import json
 d=json.load(open('$DIR/estado-nome-antes.json'))
 print(d['m.room.name'].get('name',''))
 ")"
-    GHOST_BEFORE="$(python3 "$AUX" perfil "@ph_wa_${TEL_TARDIO}:matrix-dev.local" | python3 -c "import json,sys;print(json.load(sys.stdin).get('displayname',''))")"
-    AVISOS_ANTES="$(python3 "$AUX" avisos "$ROOM2" | python3 -c "import json,sys;print(json.load(sys.stdin).get('total','error'))")"
+    GHOST_BEFORE="$(python3 "$AUX" perfil "@ph_wa_${PHONE_LATE}:matrix-dev.local" | python3 -c "import json,sys;print(json.load(sys.stdin).get('displayname',''))")"
+    NOTICES_BEFORE="$(python3 "$AUX" avisos "$ROOM2" | python3 -c "import json,sys;print(json.load(sys.stdin).get('total','error'))")"
 
-    ACEITE_TELEFONE="$TEL_TARDIO" python3 "$AUX" webhook "$ORG" aceite ACEITE-MSG-N2 \
+    ACEITE_TELEFONE="$PHONE_LATE" python3 "$AUX" webhook "$ORG" aceite ACEITE-MSG-N2 \
         "Sou o Carlos Pereira." "Carlos Pereira" > "$DIR/webhook-nome2.json" 2>&1
     NAME_AFTER=""
     for _ in $(seq 1 60); do
@@ -594,20 +594,20 @@ for k,v in d.items():
         print(v.get('client_name',''))
         break
 ")"
-    GHOST_AFTER="$(python3 "$AUX" perfil "@ph_wa_${TEL_TARDIO}:matrix-dev.local" | python3 -c "import json,sys;print(json.load(sys.stdin).get('displayname',''))")"
-    AVISOS_DEPOIS="$(python3 "$AUX" avisos "$ROOM2" | python3 -c "import json,sys;print(json.load(sys.stdin).get('total','error'))")"
+    GHOST_AFTER="$(python3 "$AUX" perfil "@ph_wa_${PHONE_LATE}:matrix-dev.local" | python3 -c "import json,sys;print(json.load(sys.stdin).get('displayname',''))")"
+    NOTICES_AFTER="$(python3 "$AUX" avisos "$ROOM2" | python3 -c "import json,sys;print(json.load(sys.stdin).get('total','error'))")"
     if [ "$NAME_BEFORE" != "Carlos Pereira" ] && [ "$NAME_AFTER" = "Carlos Pereira" ] \
         && [ "$NAME_META2" = "Carlos Pereira" ] \
         && [ "$GHOST_AFTER" = "Carlos Pereira (WhatsApp)" ] \
-        && [ "$AVISOS_ANTES" = "$AVISOS_DEPOIS" ]; then
-        anotar MX33 "OK: sala nasceu '$NAME_BEFORE'/fantasma '$GHOST_BEFORE' e passou a 'Carlos Pereira' (metadata e fantasma idem) sem novo aviso (notices $AVISOS_ANTES -> $AVISOS_DEPOIS)"
+        && [ "$NOTICES_BEFORE" = "$NOTICES_AFTER" ]; then
+        note MX33 "OK: sala nasceu '$NAME_BEFORE'/fantasma '$GHOST_BEFORE' e passou a 'Carlos Pereira' (metadata e fantasma idem) sem novo aviso (notices $NOTICES_BEFORE -> $NOTICES_AFTER)"
     else
-        anotar MX33 "FALHOU: antes='$NAME_BEFORE'/fantasma '$GHOST_BEFORE', depois='$NAME_AFTER'/metadata '$NAME_META2'/fantasma '$GHOST_AFTER', notices $AVISOS_ANTES -> $AVISOS_DEPOIS"
+        note MX33 "FALHOU: antes='$NAME_BEFORE'/fantasma '$GHOST_BEFORE', depois='$NAME_AFTER'/metadata '$NAME_META2'/fantasma '$GHOST_AFTER', notices $NOTICES_BEFORE -> $NOTICES_AFTER"
     fi
 fi
 
 echo "== 13. A11: dois registros, sem evento cruzado =="
-ANTES_TX="$(grep -c 'transação do Application Service processada' "$DIR/serve.log" 2>/dev/null || echo 0)"
+BEFORE_TX="$(grep -c 'transação do Application Service processada' "$DIR/serve.log" 2>/dev/null || echo 0)"
 ROOM_PY="$(SYNAPSE="$SYNAPSE" python3 - "$PY_AS_TOKEN" <<'PY'
 import json, os, sys, urllib.request
 base = os.environ["SYNAPSE"]; token = sys.argv[1]
@@ -629,45 +629,45 @@ print(sala)
 PY
 )"
 sleep 5
-DEPOIS_TX="$(grep -c 'transação do Application Service processada' "$DIR/serve.log" 2>/dev/null || echo 0)"
-if [ -n "$ROOM_PY" ] && [ "$ANTES_TX" = "$DEPOIS_TX" ]; then
-    anotar A11 "OK: registro antigo ativo (criou $ROOM_PY) e o Harness não recebeu a transação dele"
+AFTER_TX="$(grep -c 'transação do Application Service processada' "$DIR/serve.log" 2>/dev/null || echo 0)"
+if [ -n "$ROOM_PY" ] && [ "$BEFORE_TX" = "$AFTER_TX" ]; then
+    note A11 "OK: registro antigo ativo (criou $ROOM_PY) e o Harness não recebeu a transação dele"
 else
-    anotar A11 "FALHOU: transações do Harness $ANTES_TX -> $DEPOIS_TX (sala do Python '$ROOM_PY')"
+    note A11 "FALHOU: transações do Harness $BEFORE_TX -> $AFTER_TX (sala do Python '$ROOM_PY')"
 fi
 grep -q "Loaded application service" "$DIR/synapse-subida.log" \
-    && anotar A11 "OK: o log do Synapse mostra os dois registros carregados"
+    && note A11 "OK: o log do Synapse mostra os dois registros carregados"
 
 echo "== 14. A12: Element (capturas finais) =="
 if [ "$ELEMENT_OK" = 1 ]; then
-    if capturar_elemento final "$ROOM" "$ROOM_SUPPORT" "$ROOM2"; then
-        anotar A12 "OK: capturas finais em $DIR/capturas (sala no Suporte, espaço, home e sala com o nome tardio)"
+    if capture_element final "$ROOM" "$ROOM_SUPPORT" "$ROOM2"; then
+        note A12 "OK: capturas finais em $DIR/capturas (sala no Suporte, espaço, home e sala com o nome tardio)"
     else
-        anotar A12 "NÃO CONFERIDO: a captura final falhou (veja $DIR/element-captura-final.log)"
+        note A12 "NÃO CONFERIDO: a captura final falhou (veja $DIR/element-captura-final.log)"
     fi
 fi
 
 echo "== 15. A3, A4, A5, A8, A9, A10, A13 =="
-anotar A3 "coberto por cargo test -p poph-server --test matrix_resiliencia (MX-29)"
-anotar A4 "coberto pela MX-29 (docs/MATRIZ_RESILIENCIA.md)"
-anotar A5 "coberto pela MX-29 (docs/MATRIZ_RESILIENCIA.md)"
-anotar A8 "coberto por cargo test -p poph-server --test matrix_inicio (MX-20)"
-anotar A9 "coberto por cargo test -p poph-server --test isolamento_matrix (MX-28)"
-anotar A10 "coberto pela MX-28 (valor-canário) e MX-26"
+note A3 "coberto por cargo test -p poph-server --test matrix_resiliencia (MX-29)"
+note A4 "coberto pela MX-29 (docs/MATRIZ_RESILIENCIA.md)"
+note A5 "coberto pela MX-29 (docs/MATRIZ_RESILIENCIA.md)"
+note A8 "coberto por cargo test -p poph-server --test matrix_inicio (MX-20)"
+note A9 "coberto por cargo test -p poph-server --test isolamento_matrix (MX-28)"
+note A10 "coberto pela MX-28 (valor-canário) e MX-26"
 if [ -f "$APP/docs/MATRIZ_MEMORIA.md" ]; then
-    anotar A13 "medido em docs/MATRIZ_MEMORIA.md (MX-30)"
+    note A13 "medido em docs/MATRIZ_MEMORIA.md (MX-30)"
 else
-    anotar A13 "NÃO MEDIDO: docs/MATRIZ_MEMORIA.md ainda não existe (MX-30 em execução)"
+    note A13 "NÃO MEDIDO: docs/MATRIZ_MEMORIA.md ainda não existe (MX-30 em execução)"
 fi
 
-if [ "$FASE2" = 1 ]; then
+if [ "$PHASE2" = 1 ]; then
     FIXTURES="$DIR/fixtures"
     python3 "$AUX" fixtures "$FIXTURES" > "$DIR/fixtures.json"
-    IMG_DO_ATENDENTE="$(python3 -c "import json;print(json.load(open('$DIR/fixtures.json'))['image/png'])")"
-    PDF_DO_ATENDENTE="$(python3 -c "import json;print(json.load(open('$DIR/fixtures.json'))['application/pdf'])")"
-    AUDIO_DO_ATENDENTE="$(python3 -c "import json;print(json.load(open('$DIR/fixtures.json'))['audio/ogg'])")"
-    VIDEO_DO_ATENDENTE="$(python3 -c "import json;print(json.load(open('$DIR/fixtures.json'))['video/mp4'])")"
-    TEL_F2="5521988887777"
+    AGENT_IMAGE="$(python3 -c "import json;print(json.load(open('$DIR/fixtures.json'))['image/png'])")"
+    AGENT_PDF="$(python3 -c "import json;print(json.load(open('$DIR/fixtures.json'))['application/pdf'])")"
+    AGENT_AUDIO="$(python3 -c "import json;print(json.load(open('$DIR/fixtures.json'))['audio/ogg'])")"
+    AGENT_VIDEO="$(python3 -c "import json;print(json.load(open('$DIR/fixtures.json'))['video/mp4'])")"
+    PHONE_F2="5521988887777"
 
     reiniciar_serve() {
         kill "$SERVE_PID" 2>/dev/null || true
@@ -684,7 +684,7 @@ if [ "$FASE2" = 1 ]; then
     }
 
     echo "== 16. A14/MX-43: imagem e PDF do cliente aparecem na sala =="
-    CONV3="$(python3 - "$DIR/data/harness.db" "$TEL_F2" <<'FIMSQL'
+    CONVERSATION3="$(python3 - "$DIR/data/harness.db" "$PHONE_F2" <<'FIMSQL'
 import sqlite3, sys
 c = sqlite3.connect(sys.argv[1])
 r = c.execute(
@@ -696,7 +696,7 @@ FIMSQL
 )"
     ROOM3=""
     for _ in $(seq 1 60); do
-        ROOM3="$(python3 - "$DIR/data/harness.db" "$CONV3" <<'FIMSQL'
+        ROOM3="$(python3 - "$DIR/data/harness.db" "$CONVERSATION3" <<'FIMSQL'
 import sqlite3, sys
 c = sqlite3.connect(sys.argv[1])
 r = c.execute("select room_id from matrix_rooms where conversation_id=? and state='ready'", (sys.argv[2],)).fetchone()
@@ -706,8 +706,8 @@ FIMSQL
         [ -n "$ROOM3" ] && break
         sleep 1
     done
-    if [ -z "$CONV3" ] || [ -z "$ROOM3" ]; then
-        fail "a conversa mais recente não tem sala pronta (conversa='$CONV3' sala='$ROOM3')"
+    if [ -z "$CONVERSATION3" ] || [ -z "$ROOM3" ]; then
+        fail "a conversa mais recente não tem sala pronta (conversa='$CONVERSATION3' sala='$ROOM3')"
     fi
     for _ in $(seq 1 20); do
         python3 "$AUX" entrar "$ROOM3" > "$DIR/entrar-f2.json" 2>&1 || true
@@ -730,7 +730,7 @@ PY
         then break; fi
         sleep 1
     done
-    RESULTADO_MX43="$(python3 - "$DIR/eventos-f2.json" "$TEL_F2" <<'PY'
+    RESULT_MX43="$(python3 - "$DIR/eventos-f2.json" "$PHONE_F2" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
 cliente = "@ph_wa_%s:matrix-dev.local" % sys.argv[2]
@@ -766,12 +766,12 @@ else:
     print("FALHOU: imagem=%d arquivo=%d legendas=%s" % (len(imagem), len(arquivo), sorted(legendas)))
 PY
 )"
-    anotar MX43 "$RESULTADO_MX43"
+    note MX43 "$RESULT_MX43"
 
     echo "== 17. A14/MX-45: audio, video, sticker, contact, location and poll =="
-    for tipo in audio video figurinha contato localizacao enquete; do
-        python3 "$AUX" webhook-tipo "$ORG" aceite "ACEITE-F2-${tipo^^}" "$tipo" "Ana Souza" \
-            > "$DIR/f2-$tipo.json" 2>&1 || true
+    for media_kind in audio video figurinha contato localizacao enquete; do
+        python3 "$AUX" webhook-tipo "$ORG" aceite "ACEITE-F2-${media_kind^^}" "$media_kind" "Ana Souza" \
+            > "$DIR/f2-$media_kind.json" 2>&1 || true
     done
     for _ in $(seq 1 60); do
         python3 "$AUX" eventos "$ROOM3" 100 > "$DIR/eventos-f2b.json"
@@ -784,7 +784,7 @@ PY
         [ "$N_AVISOS" -ge 6 ] && break
         sleep 1
     done
-    RESULTADO_MX45="$(python3 - "$DIR/eventos-f2b.json" "$DIR/data/harness.db" <<'PY'
+    RESULT_MX45="$(python3 - "$DIR/eventos-f2b.json" "$DIR/data/harness.db" <<'PY'
 import json, sqlite3, sys
 d = json.load(open(sys.argv[1]))
 avisos = {e["corpo"] for e in d if e["msgtype"] == "m.notice"}
@@ -807,27 +807,27 @@ else:
     print("FALHOU: faltando %s; históricos=%d" % (faltando, historico))
 PY
 )"
-    anotar MX45 "$RESULTADO_MX45"
+    note MX45 "$RESULT_MX45"
 
     echo "== 18. A14/MX-41/42: mensagem do aparelho, sem eco duplicado =="
     python3 "$AUX" webhook-aparelho "$ORG" aceite ACEITE-F2-APARELHO \
         "Mensagem digitada no celular da loja." > "$DIR/f2-aparelho.json" 2>&1 || true
     for _ in $(seq 1 60); do
         python3 "$AUX" eventos "$ROOM3" 120 > "$DIR/eventos-f2c.json"
-        N_AP="$(python3 - "$DIR/eventos-f2c.json" <<'PY'
+        N_DEVICE="$(python3 - "$DIR/eventos-f2c.json" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
 print(len([e for e in d if (e["corpo"] or "") == "Mensagem digitada no celular da loja."]))
 PY
 )"
-        [ "$N_AP" -ge 1 ] && break
+        [ "$N_DEVICE" -ge 1 ] && break
         sleep 1
     done
     python3 "$AUX" webhook-aparelho "$ORG" aceite ACEITE-F2-APARELHO \
         "Mensagem digitada no celular da loja." > "$DIR/f2-aparelho-2.json" 2>&1 || true
     sleep 4
     python3 "$AUX" eventos "$ROOM3" 120 > "$DIR/eventos-f2c2.json"
-    RESULTADO_MX41="$(python3 - "$DIR/eventos-f2c2.json" "$DIR/data/harness.db" "$DIR/f2-aparelho-2.json" "$CONV3" <<'PY'
+    RESULT_MX41="$(python3 - "$DIR/eventos-f2c2.json" "$DIR/data/harness.db" "$DIR/f2-aparelho-2.json" "$CONVERSATION3" <<'PY'
 import json, sqlite3, sys
 d = json.load(open(sys.argv[1]))
 alvo = "Mensagem digitada no celular da loja."
@@ -849,21 +849,21 @@ else:
     )
 PY
 )"
-    anotar MX41 "$RESULTADO_MX41"
+    note MX41 "$RESULT_MX41"
 
     echo "== 19. A14/MX-44: imagem e PDF do atendente chegam ao Evolution =="
-    ANTES_MIDIA="$(wc -l < "$DIR/falsos/evo_midia.jsonl" 2>/dev/null || echo 0)"
-    python3 "$AUX" atendente-envia-midia "$ROOM3" "$IMG_DO_ATENDENTE" image/png \
+    BEFORE_MEDIA="$(wc -l < "$DIR/falsos/evo_midia.jsonl" 2>/dev/null || echo 0)"
+    python3 "$AUX" atendente-envia-midia "$ROOM3" "$AGENT_IMAGE" image/png \
         "foto-da-loja.png" > "$DIR/f2-atendente-img.json" 2>&1 || true
     sleep 2
-    python3 "$AUX" atendente-envia-midia "$ROOM3" "$PDF_DO_ATENDENTE" application/pdf \
+    python3 "$AUX" atendente-envia-midia "$ROOM3" "$AGENT_PDF" application/pdf \
         "laudo-assinado.pdf" > "$DIR/f2-atendente-pdf.json" 2>&1 || true
     for _ in $(seq 1 40); do
-        DEPOIS_MIDIA="$(wc -l < "$DIR/falsos/evo_midia.jsonl" 2>/dev/null || echo 0)"
-        [ "$DEPOIS_MIDIA" -ge $((ANTES_MIDIA + 2)) ] && break
+        AFTER_MEDIA="$(wc -l < "$DIR/falsos/evo_midia.jsonl" 2>/dev/null || echo 0)"
+        [ "$AFTER_MEDIA" -ge $((BEFORE_MEDIA + 2)) ] && break
         sleep 1
     done
-    RESULTADO_MX44="$(python3 - "$DIR/falsos/evo_midia.jsonl" "$ANTES_MIDIA" "$DIR/serve-fase2.log" <<'PY'
+    RESULT_MX44="$(python3 - "$DIR/falsos/evo_midia.jsonl" "$BEFORE_MEDIA" "$DIR/serve-fase2.log" <<'PY'
 import json, os, sys
 caminho, antes = sys.argv[1], int(sys.argv[2])
 linhas = []
@@ -889,9 +889,9 @@ else:
     print("FALHOU: o arquivo do atendente não chegou ao Evolution (motivo no log: %s; entradas novas: %d)" % (motivo, len(novas)))
 PY
 )"
-    if printf '%s' "$RESULTADO_MX44" | grep -q FALHOU; then
+    if printf '%s' "$RESULT_MX44" | grep -q FALHOU; then
         python3 "$AUX" eventos "$ROOM3" 120 > "$DIR/eventos-f2d.json"
-        MXC_E_REMETENTE="$(python3 - "$DIR/eventos-f2d.json" <<'PY'
+        MXC_AND_SENDER="$(python3 - "$DIR/eventos-f2d.json" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
 for e in d:
@@ -900,40 +900,40 @@ for e in d:
         break
 PY
 )"
-        MXC_ATENDENTE="$(printf '%s' "$MXC_E_REMETENTE" | cut -f1)"
-        REMETENTE_ATENDENTE="$(printf '%s' "$MXC_E_REMETENTE" | cut -f2)"
-        if [ -n "$MXC_ATENDENTE" ]; then
-            SERV_ID="${MXC_ATENDENTE#mxc://}"
-            CODIGO="$(curl -sS -o "$DIR/diag-midia.json" -w '%{http_code}' \
+        MXC_AGENT="$(printf '%s' "$MXC_AND_SENDER" | cut -f1)"
+        SENDER_AGENT="$(printf '%s' "$MXC_AND_SENDER" | cut -f2)"
+        if [ -n "$MXC_AGENT" ]; then
+            SERV_ID="${MXC_AGENT#mxc://}"
+            HTTP_CODE="$(curl -sS -o "$DIR/diag-midia.json" -w '%{http_code}' \
                 -H "Authorization: Bearer $AS_TOKEN" \
-                "http://127.0.0.1:18008/_matrix/client/v1/media/download/${SERV_ID%%/*}/${SERV_ID#*/}?user_id=$(python3 -c "import sys,urllib.parse;print(urllib.parse.quote(sys.argv[1],safe=''))" "$REMETENTE_ATENDENTE")")"
+                "http://127.0.0.1:18008/_matrix/client/v1/media/download/${SERV_ID%%/*}/${SERV_ID#*/}?user_id=$(python3 -c "import sys,urllib.parse;print(urllib.parse.quote(sys.argv[1],safe=''))" "$SENDER_AGENT")")"
             ERROR="$(python3 -c "import json;print(json.load(open('$DIR/diag-midia.json')).get('errcode',''))" 2>/dev/null || true)"
-            RESULTADO_MX44="$RESULTADO_MX44 — diagnóstico: baixar o arquivo com o token do Application Service e o usuário do atendente devolve HTTP $CODIGO $ERROR"
+            RESULT_MX44="$RESULT_MX44 — diagnóstico: baixar o arquivo com o token do Application Service e o usuário do atendente devolve HTTP $HTTP_CODE $ERROR"
         fi
     fi
-    anotar MX44 "$RESULTADO_MX44"
+    note MX44 "$RESULT_MX44"
 
     echo "== 20. MX-49: áudio e vídeo do atendente chegam ao Evolution =="
-    ANTES_MIDIA49="$(wc -l < "$DIR/falsos/evo_midia.jsonl" 2>/dev/null || echo 0)"
+    BEFORE_MEDIA49="$(wc -l < "$DIR/falsos/evo_midia.jsonl" 2>/dev/null || echo 0)"
     python3 "$AUX" eventos "$ROOM3" 200 > "$DIR/eventos-mx49-antes.json"
     TXN_AUDIO="aceite-mx49-audio-$(python3 -c 'import time;print(int(time.time()*1000))')"
     TXN_VIDEO="aceite-mx49-video-$(python3 -c 'import time;print(int(time.time()*1000))')"
-    python3 "$AUX" atendente-envia-midia "$ROOM3" "$AUDIO_DO_ATENDENTE" audio/ogg \
+    python3 "$AUX" atendente-envia-midia "$ROOM3" "$AGENT_AUDIO" audio/ogg \
         "audio-da-loja.ogg" "$TXN_AUDIO" > "$DIR/mx49-audio.json" 2>&1 || true
     sleep 2
-    python3 "$AUX" atendente-envia-midia "$ROOM3" "$VIDEO_DO_ATENDENTE" video/mp4 \
+    python3 "$AUX" atendente-envia-midia "$ROOM3" "$AGENT_VIDEO" video/mp4 \
         "video-da-loja.mp4" "$TXN_VIDEO" > "$DIR/mx49-video.json" 2>&1 || true
     for _ in $(seq 1 60); do
-        DEPOIS_MIDIA49="$(wc -l < "$DIR/falsos/evo_midia.jsonl" 2>/dev/null || echo 0)"
-        [ "$DEPOIS_MIDIA49" -ge $((ANTES_MIDIA49 + 2)) ] && break
+        AFTER_MEDIA49="$(wc -l < "$DIR/falsos/evo_midia.jsonl" 2>/dev/null || echo 0)"
+        [ "$AFTER_MEDIA49" -ge $((BEFORE_MEDIA49 + 2)) ] && break
         sleep 1
     done
-    python3 "$AUX" atendente-envia-midia "$ROOM3" "$AUDIO_DO_ATENDENTE" audio/ogg \
+    python3 "$AUX" atendente-envia-midia "$ROOM3" "$AGENT_AUDIO" audio/ogg \
         "audio-da-loja.ogg" "$TXN_AUDIO" > "$DIR/mx49-audio-reentrega.json" 2>&1 || true
     sleep 5
     python3 "$AUX" eventos "$ROOM3" 200 > "$DIR/eventos-mx49-depois.json"
-    RESULTADO_MX49="$(python3 - "$DIR/falsos/evo_midia.jsonl" "$ANTES_MIDIA49" \
-        "$AUDIO_DO_ATENDENTE" "$VIDEO_DO_ATENDENTE" "$DIR/eventos-mx49-antes.json" \
+    RESULT_MX49="$(python3 - "$DIR/falsos/evo_midia.jsonl" "$BEFORE_MEDIA49" \
+        "$AGENT_AUDIO" "$AGENT_VIDEO" "$DIR/eventos-mx49-antes.json" \
         "$DIR/eventos-mx49-depois.json" <<'PY'
 import hashlib, json, os, sys
 
@@ -998,27 +998,27 @@ else:
     )
 PY
 )"
-    anotar MX49 "$RESULTADO_MX49"
+    note MX49 "$RESULT_MX49"
 
     echo "== 21. A14/MX-46: mídia redigida e apagada depois do prazo =="
     if [ -z "$ADMIN_TOKEN" ]; then
-        anotar MX46 "NÃO CONFERIDO: credenciais do MX-01 sem POPH_MATRIX_DEV_ADMIN_TOKEN"
+        note MX46 "NÃO CONFERIDO: credenciais do MX-01 sem POPH_MATRIX_DEV_ADMIN_TOKEN"
     else
         python3 "$AUX" preparar-expiracao "$DIR/data/harness.db" 1 > "$DIR/f2-expiracao.json"
         reiniciar_serve
         for _ in $(seq 1 40); do
-            PENDENTES="$(python3 - "$DIR/data/harness.db" <<'PY'
+            PENDING="$(python3 - "$DIR/data/harness.db" <<'PY'
 import sqlite3, sys
 c = sqlite3.connect(sys.argv[1])
 print(c.execute("select count(*) from matrix_midia where redacted_at is null or deleted_at is null").fetchone()[0])
 PY
 )"
-            [ "$PENDENTES" = "0" ] && break
+            [ "$PENDING" = "0" ] && break
             sleep 1
         done
         python3 "$AUX" eventos "$ROOM3" 120 > "$DIR/eventos-f2e.json"
-        SUMIRAM=0
-        TOTAL_MIDIA=0
+        VANISHED=0
+        TOTAL_MEDIA=0
         for MXC in $(python3 - "$DIR/data/harness.db" <<'PY'
 import sqlite3, sys
 c = sqlite3.connect(sys.argv[1])
@@ -1026,12 +1026,12 @@ for (mxc,) in c.execute("select mxc from matrix_midia"):
     print(mxc)
 PY
 ); do
-            TOTAL_MIDIA=$((TOTAL_MIDIA + 1))
-            ESTADO_MIDIA="$(python3 "$AUX" midia-existe "$MXC")"
-            printf 'apagada\t%s\t%s\n' "$MXC" "$ESTADO_MIDIA" >> "$DIR/f2-expiracao-arquivos.txt"
-            printf '%s' "$ESTADO_MIDIA" | grep -q '"status": 404' && SUMIRAM=$((SUMIRAM + 1))
+            TOTAL_MEDIA=$((TOTAL_MEDIA + 1))
+            MEDIA_STATE="$(python3 "$AUX" midia-existe "$MXC")"
+            printf 'apagada\t%s\t%s\n' "$MXC" "$MEDIA_STATE" >> "$DIR/f2-expiracao-arquivos.txt"
+            printf '%s' "$MEDIA_STATE" | grep -q '"status": 404' && VANISHED=$((VANISHED + 1))
         done
-        RESULTADO_MX46="$(python3 - "$DIR/eventos-f2e.json" "$DIR/data/harness.db" "$SUMIRAM" "$TOTAL_MIDIA" "$DIR/serve-fase2.log" <<'PY'
+        RESULT_MX46="$(python3 - "$DIR/eventos-f2e.json" "$DIR/data/harness.db" "$VANISHED" "$TOTAL_MEDIA" "$DIR/serve-fase2.log" <<'PY'
 import json, sqlite3, sys
 d = json.load(open(sys.argv[1]))
 con = sqlite3.connect(sys.argv[2])
@@ -1072,24 +1072,24 @@ else:
     )
 PY
 )"
-        anotar MX46 "$RESULTADO_MX46"
+        note MX46 "$RESULT_MX46"
     fi
 
-    if grep -qE '^(MX43|MX44|MX45|MX41|MX46)[[:space:]]+FALHOU' "$RESULTADO"; then
-        anotar A14 "FALHOU: há critério da fase 2 com falha (ver MX43/MX44/MX45/MX41/MX46)"
-    elif grep -qE '^(MX43|MX44|MX45|MX41|MX46)[[:space:]]+NÃO CONFERIDO' "$RESULTADO"; then
-        anotar A14 "PARCIAL: há critério da fase 2 não conferido"
+    if grep -qE '^(MX43|MX44|MX45|MX41|MX46)[[:space:]]+FALHOU' "$RESULT"; then
+        note A14 "FALHOU: há critério da fase 2 com falha (ver MX43/MX44/MX45/MX41/MX46)"
+    elif grep -qE '^(MX43|MX44|MX45|MX41|MX46)[[:space:]]+NÃO CONFERIDO' "$RESULT"; then
+        note A14 "PARCIAL: há critério da fase 2 não conferido"
     else
-        anotar A14 "OK: imagem e PDF do cliente na sala (MX-43), áudio etc. viram aviso (MX-45), mensagem do aparelho sem eco (MX-41/42), imagem e PDF do atendente ao cliente (MX-44) e expiração da mídia (MX-46)"
+        note A14 "OK: imagem e PDF do cliente na sala (MX-43), áudio etc. viram aviso (MX-45), mensagem do aparelho sem eco (MX-41/42), imagem e PDF do atendente ao cliente (MX-44) e expiração da mídia (MX-46)"
     fi
 fi
 
 echo
 echo "== resumo =="
-cat "$RESULTADO"
+cat "$RESULT"
 echo
 echo "Artefatos: $DIR"
-if grep -qE '^(A1|A2|A6|A7|A11|A12|MX33|A14|MX41|MX43|MX44|MX45|MX46|MX49)[[:space:]]+FALHOU' "$RESULTADO"; then
+if grep -qE '^(A1|A2|A6|A7|A11|A12|MX33|A14|MX41|MX43|MX44|MX45|MX46|MX49)[[:space:]]+FALHOU' "$RESULT"; then
     echo "Aceite NÃO passou: há critério com falha (ver docs/MATRIZ_ACEITE.md)." >&2
     exit 1
 fi
