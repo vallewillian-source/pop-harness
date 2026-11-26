@@ -17,7 +17,7 @@ use poph_agent::config_quente::{ConfigQuente, OpcoesConfigQuente};
 use poph_agent::metricas::MetricasMemoria;
 use poph_agent::turno::{ContextoFerramenta, RegistroFerramentas, UsoFerramentas, oferecidas};
 use poph_agent::{BaseConhecimento, BuscadorBase, ConsultarBase};
-use poph_rag::{ConfigIndice, Embedder, EmbedderFake, Indice};
+use poph_rag::{ConfigIndice, Embedder, FakeEmbedder, Indice};
 use poph_store::{
     KnowledgeGroupChange, KnowledgeItemChange, NewAgent, NewKnowledgeGroup, NewKnowledgeItem,
     NewOrg, Status, Store,
@@ -81,7 +81,7 @@ impl Cenario {
             .knowledge()
             .link_agent(org, agente, grupo)
             .expect("liga o grupo ao agente");
-        let embedder: Arc<dyn Embedder> = Arc::new(EmbedderFake::new());
+        let embedder: Arc<dyn Embedder> = Arc::new(FakeEmbedder::new());
         let (indice, _) = Indice::abrir(store.rag_path(), embedder, ConfigIndice::default())
             .expect("abre o índice");
         let base = BaseConhecimento::nova(Arc::clone(&store), Arc::new(indice));
@@ -424,13 +424,13 @@ async fn item_e_grupo_inativos_saem_do_indice() {
 
 #[tokio::test]
 async fn busca_filtra_elegibilidade_mesmo_com_indice_desatualizado() {
-    struct Falha(poph_rag::EmbedderFake);
+    struct Falha(poph_rag::FakeEmbedder);
     impl Embedder for Falha {
-        fn identidade(&self) -> &poph_rag::IdentidadeModelo {
-            self.0.identidade()
+        fn identity(&self) -> &poph_rag::ModelIdentity {
+            self.0.identity()
         }
-        fn embedir_lote<'a>(&'a self, _: &'a [String]) -> poph_rag::FuturoLote<'a> {
-            Box::pin(async { Err(poph_rag::ErroRag::Inferencia("falha simulada".into())) })
+        fn embed_batch<'a>(&'a self, _: &'a [String]) -> poph_rag::BatchFuture<'a> {
+            Box::pin(async { Err(poph_rag::RagError::Inference("falha simulada".into())) })
         }
     }
     let c = Cenario::novo("elegibilidade");
@@ -548,7 +548,7 @@ async fn busca_filtra_elegibilidade_mesmo_com_indice_desatualizado() {
         .unwrap();
     let (indice, _) = Indice::abrir(
         c.store.rag_path(),
-        Arc::new(Falha(EmbedderFake::new())),
+        Arc::new(Falha(FakeEmbedder::new())),
         ConfigIndice::default(),
     )
     .unwrap();

@@ -1,25 +1,15 @@
-//! Esquema e conexão do `rag.db` (HR-16). Derivado e reconstruível: a base de origem fica no
-//! `harness.db`. Ver também `docs/DADOS.md`.
-//!
-//! Tabelas:
-//! - `rag_meta`: identidade do modelo e do divisor que geraram os vetores.
-//! - `rag_itens`: um item por (org, agente), com o hash de origem usado na indexação incremental.
-//! - `rag_trechos`: trechos com vetor int8, norma e texto.
-//! - `rag_trechos_fts`: índice FTS5 do título e do texto de cada trecho (mesmo `rowid`).
-
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::Duration;
 
 use rusqlite::{Connection, Transaction, params};
 
-use crate::embedder::IdentidadeModelo;
-use crate::erro::ErroRag;
+use crate::embedder::ModelIdentity;
+use crate::erro::RagError;
 
-/// Versão do esquema deste arquivo. Mudar o esquema pede migração nova.
-pub const VERSAO_ESQUEMA: &str = "1";
+pub const SCHEMA_VERSION: &str = "1";
 
-const ESQUEMA: &str = "
+const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS rag_meta (
     chave TEXT PRIMARY KEY,
     valor TEXT NOT NULL
@@ -97,60 +87,52 @@ CREATE VIRTUAL TABLE IF NOT EXISTS rag_produtos_fts USING fts5(
 );
 ";
 
-pub fn erro_banco(erro: rusqlite::Error) -> ErroRag {
-    ErroRag::Banco(erro.to_string())
+pub fn database_error(error: rusqlite::Error) -> RagError {
+    RagError::Database(error.to_string())
 }
 
-/// Abre (ou cria) o `rag.db` com os pragmas do projeto.
-pub fn abrir(caminho: &Path) -> Result<Connection, ErroRag> {
-    if let Some(pasta) = caminho.parent() {
-        std::fs::create_dir_all(pasta).map_err(|erro| {
-            ErroRag::Arquivo(format!("não consegui criar a pasta do rag.db: {erro}"))
+pub fn open_database(path: &Path) -> Result<Connection, RagError> {
+    if let Some(directory) = path.parent() {
+        std::fs::create_dir_all(directory).map_err(|error| {
+            RagError::File(format!("não consegui criar a pasta do rag.db: {error}"))
         })?;
     }
-    let conn = Connection::open(caminho).map_err(erro_banco)?;
+    let conn = Connection::open(path).map_err(database_error)?;
     conn.pragma_update(None, "journal_mode", "WAL")
-        .map_err(erro_banco)?;
+        .map_err(database_error)?;
     conn.pragma_update(None, "synchronous", "NORMAL")
-        .map_err(erro_banco)?;
+        .map_err(database_error)?;
     conn.pragma_update(None, "foreign_keys", "ON")
-        .map_err(erro_banco)?;
+        .map_err(database_error)?;
     conn.busy_timeout(Duration::from_secs(2))
-        .map_err(erro_banco)?;
-    conn.execute_batch(ESQUEMA).map_err(erro_banco)?;
+        .map_err(database_error)?;
+    conn.execute_batch(SCHEMA).map_err(database_error)?;
     Ok(conn)
 }
 
-/// Identidade gravada em `rag_meta`. Se não bater com o modelo em uso, os vetores são de outro
-/// modelo ou de outro divisor e não podem ser misturados.
-pub fn meta_da_identidade(identidade: &IdentidadeModelo) -> BTreeMap<String, String> {
+pub fn identity_metadata(identity: &ModelIdentity) -> BTreeMap<String, String> {
     [
-        ("esquema", VERSAO_ESQUEMA.to_owned()),
-        ("nome_modelo", identidade.nome.to_owned()),
-        ("quantizacao", identidade.quantizacao.to_owned()),
-        ("dimensao", identidade.dimensao.to_string()),
-        ("janela_tokens", identidade.janela_tokens.to_string()),
-        ("sha256_modelo", identidade.sha256_modelo.clone()),
-        ("sha256_tokenizador", identidade.sha256_tokenizador.clone()),
-        ("versao_chunker", identidade.versao_chunker.to_owned()),
+        ("esquema", SCHEMA_VERSION.to_owned()),
+        ("nome_modelo", identity.name.to_owned()),
+        ("quantizacao", identity.quantization.to_owned()),
+        ("dimensao", identity.dimension.to_string()),
+        ("janela_tokens", identity.token_window.to_string()),
+        ("sha256_modelo", identity.model_sha256.clone()),
+        ("sha256_tokenizador", identity.tokenizer_sha256.clone()),
+        ("versao_chunker", identity.chunker_version.to_owned()),
     ]
     .into_iter()
-    .map(|(chave, valor)| (chave.to_owned(), valor))
+    .map(|(key, value)| (key.to_owned(), value))
     .collect()
 }
 
-/// Confere a identidade do `rag.db` com a do modelo em uso. Se divergir, apaga os vetores (são
-/// reconstruíveis) e grava a identidade nova. Devolve `true` quando apagou dados por divergência.
-pub fn conferir_identidade(
-    tx: &Transaction<'_>,
-    identidade: &IdentidadeModelo,
-) -> Result<bool, ErroRag> {
-    let gravado = ler_meta(tx)?;
-    let esperado = meta_da_identidade(identidade);
-    if gravado == esperado {
+pub fn check_identity(tx: &Transaction<'_>, identity: &ModelIdentity) -> Result<bool, RagError> {
+    let stored = read_metadata(tx)?;
+    let expected = identity_metadata(identity);
+    if stored == expected {
         return Ok(false);
     }
-    let havia_dados = !gravado.is_empty();
+    let had_data = !stored.is_empty();
     tx.execute_batch(
         "DELETE FROM rag_trechos_fts;
          DELETE FROM rag_trechos;
@@ -160,30 +142,30 @@ pub fn conferir_identidade(
          DELETE FROM rag_produtos;
          DELETE FROM rag_meta;",
     )
-    .map_err(erro_banco)?;
-    for (chave, valor) in &esperado {
+    .map_err(database_error)?;
+    for (key, value) in &expected {
         tx.execute(
             "INSERT INTO rag_meta (chave, valor) VALUES (?1, ?2)",
-            params![chave, valor],
+            params![key, value],
         )
-        .map_err(erro_banco)?;
+        .map_err(database_error)?;
     }
-    Ok(havia_dados)
+    Ok(had_data)
 }
 
-pub fn ler_meta(conn: &Connection) -> Result<BTreeMap<String, String>, ErroRag> {
+pub fn read_metadata(conn: &Connection) -> Result<BTreeMap<String, String>, RagError> {
     let mut stmt = conn
         .prepare("SELECT chave, valor FROM rag_meta")
-        .map_err(erro_banco)?;
-    let linhas = stmt
-        .query_map([], |linha| {
-            Ok((linha.get::<_, String>(0)?, linha.get::<_, String>(1)?))
+        .map_err(database_error)?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })
-        .map_err(erro_banco)?;
+        .map_err(database_error)?;
     let mut meta = BTreeMap::new();
-    for linha in linhas {
-        let (chave, valor) = linha.map_err(erro_banco)?;
-        meta.insert(chave, valor);
+    for row in rows {
+        let (key, value) = row.map_err(database_error)?;
+        meta.insert(key, value);
     }
     Ok(meta)
 }

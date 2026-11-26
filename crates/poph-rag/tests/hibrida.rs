@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use poph_rag::{
-    ConfigBusca, ConfigIndice, ConfigModelo, Embedder, EmbedderFake, EmbedderOrt, Indice, ItemRag,
+    ConfigBusca, ConfigIndice, ConfigModelo, Embedder, EmbedderOrt, FakeEmbedder, Indice, ItemRag,
 };
 use poph_types::{AgentId, KnowledgeItemId, OrgId};
 use serde_json::Value;
@@ -217,7 +217,7 @@ async fn hibrida_acerta_top3_pelo_menos_tanto_quanto_so_vetor() {
 #[tokio::test]
 async fn corte_de_relevancia_barra_trecho_sem_relacao() {
     let pasta = Pasta::nova("corte");
-    let embedder: Arc<dyn Embedder> = Arc::new(EmbedderFake::new());
+    let embedder: Arc<dyn Embedder> = Arc::new(FakeEmbedder::new());
     let (indice, _) =
         Indice::abrir(&pasta.rag_db(), embedder, ConfigIndice::default()).expect("abre o índice");
     let org = OrgId::generate();
@@ -274,7 +274,7 @@ async fn corte_de_relevancia_barra_trecho_sem_relacao() {
 #[tokio::test]
 async fn hibrida_nao_cruza_org() {
     let pasta = Pasta::nova("orgs");
-    let embedder: Arc<dyn Embedder> = Arc::new(EmbedderFake::new());
+    let embedder: Arc<dyn Embedder> = Arc::new(FakeEmbedder::new());
     let (indice, _) =
         Indice::abrir(&pasta.rag_db(), embedder, ConfigIndice::default()).expect("abre o índice");
     let org_a = OrgId::generate();

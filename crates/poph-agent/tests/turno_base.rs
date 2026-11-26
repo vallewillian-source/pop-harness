@@ -19,7 +19,7 @@ use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
 use poph_agent::turno::{FuturoPausa, Motor, Observador, ObservadorNulo, OpcoesTurno, Pausa};
 use poph_agent::{BaseConhecimento, BuscadorBase, ConsultarBase};
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, LlmProvider, Script, Usage};
-use poph_rag::{ConfigIndice, Embedder, EmbedderFake, Indice};
+use poph_rag::{ConfigIndice, Embedder, FakeEmbedder, Indice};
 use poph_store::{
     Direction, NewAgent, NewConversation, NewKnowledgeGroup, NewKnowledgeItem, NewMessage, NewOrg,
     Page, Role, Store,
@@ -114,7 +114,7 @@ impl Cenario {
             .knowledge()
             .link_agent(org, agente, grupo)
             .expect("liga o grupo");
-        let embedder: Arc<dyn Embedder> = Arc::new(EmbedderFake::new());
+        let embedder: Arc<dyn Embedder> = Arc::new(FakeEmbedder::new());
         let (indice, _) = Indice::abrir(store.rag_path(), embedder, ConfigIndice::default())
             .expect("abre o índice");
         let base = BaseConhecimento::nova(Arc::clone(&store), Arc::new(indice));

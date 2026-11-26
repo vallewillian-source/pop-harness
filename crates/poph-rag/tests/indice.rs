@@ -8,21 +8,21 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use poph_rag::{
-    ConfigIndice, Embedder, EmbedderFake, ErroRag, FuturoLote, IdentidadeModelo, Indice, ItemRag,
+    BatchFuture, ConfigIndice, Embedder, FakeEmbedder, Indice, ItemRag, ModelIdentity, RagError,
 };
 use poph_types::{AgentId, KnowledgeItemId, OrgId};
 
 /// Embedder falso que conta quantos textos recebeu e deixa trocar a identidade do modelo.
 struct Contador {
-    fake: EmbedderFake,
-    identidade: IdentidadeModelo,
+    fake: FakeEmbedder,
+    identidade: ModelIdentity,
     textos: AtomicUsize,
 }
 
 impl Contador {
     fn novo() -> Arc<Self> {
-        let fake = EmbedderFake::new();
-        let identidade = fake.identidade().clone();
+        let fake = FakeEmbedder::new();
+        let identidade = fake.identity().clone();
         Arc::new(Self {
             fake,
             identidade,
@@ -32,7 +32,7 @@ impl Contador {
 
     fn com_outro_modelo() -> Arc<Self> {
         let mut contador = Arc::try_unwrap(Self::novo()).ok().expect("único dono");
-        contador.identidade.sha256_modelo = "outro-modelo".to_owned();
+        contador.identidade.model_sha256 = "outro-modelo".to_owned();
         Arc::new(contador)
     }
 
@@ -42,13 +42,13 @@ impl Contador {
 }
 
 impl Embedder for Contador {
-    fn identidade(&self) -> &IdentidadeModelo {
+    fn identity(&self) -> &ModelIdentity {
         &self.identidade
     }
 
-    fn embedir_lote<'a>(&'a self, textos: &'a [String]) -> FuturoLote<'a> {
+    fn embed_batch<'a>(&'a self, textos: &'a [String]) -> BatchFuture<'a> {
         self.textos.fetch_add(textos.len(), Ordering::SeqCst);
-        self.fake.embedir_lote(textos)
+        self.fake.embed_batch(textos)
     }
 }
 
@@ -498,17 +498,17 @@ async fn entradas_invalidas_sao_recusadas_com_erro_claro() {
         },
     ];
     match indice.indexar_agente(org, agente, &dois).await {
-        Err(ErroRag::Item(mensagem)) => assert!(mensagem.contains("repetido")),
+        Err(RagError::Item(mensagem)) => assert!(mensagem.contains("repetido")),
         outro => panic!("esperava erro de item repetido, veio {outro:?}"),
     }
 
     assert!(matches!(
         indice.buscar_vetor(org, agente, "algo", 0).await,
-        Err(ErroRag::Configuracao(_))
+        Err(RagError::Configuration(_))
     ));
     assert!(matches!(
         indice.buscar_palavras(org, agente, "algo", 0),
-        Err(ErroRag::Configuracao(_))
+        Err(RagError::Configuration(_))
     ));
     assert!(
         indice

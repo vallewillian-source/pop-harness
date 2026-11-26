@@ -1,19 +1,11 @@
 # Arquivos com comentário fora da allowlist, um por linha: módulo, quantidade de comentários e caminho,
 # separados por TAB. Gerado por `bash scripts/check-comments.sh --atualizar-pendentes`; não editar à mão.
 M04	6	crates/poph-rag/Cargo.toml
-M04	14	crates/poph-rag/src/banco.rs
-M04	27	crates/poph-rag/src/embedder.rs
-M04	13	crates/poph-rag/src/erro.rs
-M04	11	crates/poph-rag/src/fake.rs
 M04	55	crates/poph-rag/src/fila.rs
 M04	134	crates/poph-rag/src/indice.rs
 M04	37	crates/poph-rag/src/instalacao.rs
-M04	18	crates/poph-rag/src/lib.rs
-M04	3	crates/poph-rag/src/memoria.rs
-M04	11	crates/poph-rag/src/metricas.rs
 M04	33	crates/poph-rag/src/onnx.rs
 M04	19	crates/poph-rag/src/trechos.rs
-M04	14	crates/poph-rag/src/vetor.rs
 M04	5	crates/poph-rag/tests/apoio/mod.rs
 M04	3	crates/poph-rag/tests/fila.rs
 M04	12	crates/poph-rag/tests/hibrida.rs

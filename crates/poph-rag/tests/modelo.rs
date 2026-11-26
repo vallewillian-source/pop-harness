@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use poph_rag::instalacao::{conferir_arquivo, sha256_de_arquivo};
-use poph_rag::{ConfigModelo, EmbedderOrt, ErroRag};
+use poph_rag::{ConfigModelo, EmbedderOrt, RagError};
 
 /// Pasta temporária única para o teste; apagada ao sair.
 struct Pasta(PathBuf);
@@ -51,10 +51,10 @@ fn checksum_errado_impede_a_subida_com_erro_claro() {
     .expect("não pode subir com checksum errado");
 
     match &erro {
-        ErroRag::ChecksumNaoConfere {
-            arquivo,
-            esperado,
-            obtido,
+        RagError::ChecksumMismatch {
+            file: arquivo,
+            expected: esperado,
+            actual: obtido,
         } => {
             assert_eq!(arquivo, "model_int8.onnx");
             assert_eq!(
@@ -92,8 +92,8 @@ fn modelo_ausente_manda_rodar_o_install() {
 
     assert_eq!(
         erro,
-        ErroRag::ModeloAusente {
-            arquivo: "model_int8.onnx".to_owned()
+        RagError::ModelMissing {
+            file: "model_int8.onnx".to_owned()
         }
     );
     assert!(erro.to_string().contains("poph model install"));
@@ -115,7 +115,5 @@ fn conferir_arquivo_aceita_o_sha_certo_e_recusa_o_errado() {
 
     let erro = conferir_arquivo(pasta.caminho(), "abc.txt", &"0".repeat(64))
         .expect_err("sha errado é recusado");
-    assert!(
-        matches!(erro, ErroRag::ChecksumNaoConfere { ref arquivo, .. } if arquivo == "abc.txt")
-    );
+    assert!(matches!(erro, RagError::ChecksumMismatch { ref file, .. } if file == "abc.txt"));
 }

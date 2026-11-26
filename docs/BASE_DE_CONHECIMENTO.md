@@ -5,6 +5,21 @@
 > `crates/poph-agent/src/base_conhecimento.rs` (service and tool), `crates/poph/src/kb.rs` (CLI)
 > and `crates/poph-agent/src/turno/` (connection to the turn).
 
+Embedding and model installation errors report only the model file name, never its absolute path.
+The vector index records the chunker version and model and tokenizer SHA-256 hashes to detect changes.
+The model uses 384-dimensional vectors, int8 quantization, a 128-token window and 350-character chunks
+with an 80-character overlap. Changing the quantization requires reindexing. Batch embedding returns
+one vector per input in the same order, and an empty input returns an empty list.
+Quantization scales each vector by its largest absolute component to use the signed int8 range;
+zero or non-finite maxima produce a zero vector. Search uses an exact dot product and cosine,
+with zero cosine for a zero-length vector.
+The deterministic fake embedder uses no model or network: lowercased words contribute a fixed sign
+to a 384-dimensional vector, normalized to unit length; empty text uses the first unit vector.
+Embedding metrics use the shared registry; registering the catalog twice in one registry is invalid.
+The derived `rag.db` is rebuilt from `harness.db`. When stored model or chunker identity changes,
+the derived vectors and related FTS data are cleared before recording the new identity. Schema changes
+require a migration.
+
 ## 1. Hybrid search design
 
 ```

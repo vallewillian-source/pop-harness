@@ -7,7 +7,7 @@
 
 mod apoio;
 
-use poph_rag::vetor::{cosseno, norma, produto_interno, quantizar};
+use poph_rag::vector::{cosine, dot_product, norm, quantize};
 use poph_rag::{ConfigModelo, Embedder, EmbedderOrt};
 use serde_json::Value;
 
@@ -43,11 +43,11 @@ fn ordenar(scores: &[f32], k: usize) -> Vec<usize> {
 
 /// Ranking de consultas contra o corpus usando vetores int8 (já quantizados).
 fn ranking_int8(consulta: &[i8], corpus: &[Vec<i8>], normas: &[f32], k: usize) -> Vec<usize> {
-    let nq = norma(consulta);
+    let nq = norm(consulta);
     let scores: Vec<f32> = corpus
         .iter()
         .zip(normas)
-        .map(|(c, nc)| cosseno(produto_interno(consulta, c), nq, *nc))
+        .map(|(c, nc)| cosine(dot_product(consulta, c), nq, *nc))
         .collect();
     ordenar(&scores, k)
 }
@@ -96,12 +96,12 @@ async fn quantizacao_int8_mantem_a_busca_do_corpus_do_spike() {
     )
     .expect("abre o modelo instalado");
     let vetores_corpus = modelo
-        .embedir_lote(&corpus)
+        .embed_batch(&corpus)
         .await
         .expect("vetores do corpus");
     let textos_consulta: Vec<String> = consultas.iter().map(|(q, _)| q.clone()).collect();
     let vetores_consulta = modelo
-        .embedir_lote(&textos_consulta)
+        .embed_batch(&textos_consulta)
         .await
         .expect("vetores das consultas");
 
@@ -110,9 +110,9 @@ async fn quantizacao_int8_mantem_a_busca_do_corpus_do_spike() {
         .iter()
         .map(|v| quantizar_escala_fixa(v))
         .collect();
-    let fixa_normas: Vec<f32> = fixa.iter().map(|q| norma(q)).collect();
-    let maior: Vec<Vec<i8>> = vetores_corpus.iter().map(|v| quantizar(v)).collect();
-    let maior_normas: Vec<f32> = maior.iter().map(|q| norma(q)).collect();
+    let fixa_normas: Vec<f32> = fixa.iter().map(|q| norm(q)).collect();
+    let maior: Vec<Vec<i8>> = vetores_corpus.iter().map(|v| quantize(v)).collect();
+    let maior_normas: Vec<f32> = maior.iter().map(|q| norm(q)).collect();
 
     // Erro de cada vetor: cosseno entre o float e o int8 (o cosseno não depende da escala).
     let cos_medio = |quantizados: &[Vec<i8>]| -> f32 {
@@ -139,7 +139,7 @@ async fn quantizacao_int8_mantem_a_busca_do_corpus_do_spike() {
         let r_f32 = ordenar(&scores_f32, 3);
 
         let r_fixa = ranking_int8(&quantizar_escala_fixa(consulta), &fixa, &fixa_normas, 3);
-        let r_maior = ranking_int8(&quantizar(consulta), &maior, &maior_normas, 3);
+        let r_maior = ranking_int8(&quantize(consulta), &maior, &maior_normas, 3);
 
         acerto_f32 += usize::from(r_f32[0] == *gold);
         acerto_fixa += usize::from(r_fixa[0] == *gold);

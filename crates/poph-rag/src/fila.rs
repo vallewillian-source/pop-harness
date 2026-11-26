@@ -18,9 +18,9 @@ use std::time::{Duration, Instant};
 use poph_types::OrgId;
 use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore, mpsc};
 
-use crate::embedder::{Embedder, IdentidadeModelo};
-use crate::erro::ErroRag;
-use crate::metricas::MetricasRag;
+use crate::embedder::{Embedder, ModelIdentity};
+use crate::erro::RagError;
+use crate::metrics::RagMetrics;
 
 /// Limites da fila. Os padrões são propostas da HR-15 (D-09 não fixa estes números).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,14 +48,14 @@ impl Default for ConfigFila {
 
 impl ConfigFila {
     /// Recusa valores que travariam a fila (zero em tamanho de lote ou em vagas).
-    pub fn validar(&self) -> Result<(), ErroRag> {
+    pub fn validar(&self) -> Result<(), RagError> {
         if self.tamanho_lote == 0 {
-            return Err(ErroRag::Configuracao(
+            return Err(RagError::Configuration(
                 "tamanho do lote deve ser maior que zero".to_owned(),
             ));
         }
         if self.simultaneos_por_org == 0 || self.simultaneos_total == 0 {
-            return Err(ErroRag::Configuracao(
+            return Err(RagError::Configuration(
                 "os limites de simultaneidade devem ser maiores que zero".to_owned(),
             ));
         }
@@ -63,7 +63,7 @@ impl ConfigFila {
     }
 }
 
-type Resposta = mpsc::UnboundedSender<(usize, Result<Vec<f32>, ErroRag>)>;
+type Resposta = mpsc::UnboundedSender<(usize, Result<Vec<f32>, RagError>)>;
 
 /// Vagas de cada org: o semáforo de pedidos e a contagem de pedidos em andamento.
 type VagasPorOrg = HashMap<OrgId, (Arc<Semaphore>, Arc<Contagem>)>;
@@ -148,7 +148,7 @@ struct Compartilhado {
     pendentes: Mutex<Pendentes>,
     aviso: Notify,
     encerrada: AtomicBool,
-    metricas: Option<MetricasRag>,
+    metricas: Option<RagMetrics>,
 }
 
 /// Fila de embedding. Guarde em `Arc` e compartilhe entre as orgs.
@@ -182,8 +182,8 @@ impl FilaEmbedding {
     pub fn iniciar(
         embedder: Arc<dyn Embedder>,
         config: ConfigFila,
-        metricas: Option<MetricasRag>,
-    ) -> Result<Self, ErroRag> {
+        metricas: Option<RagMetrics>,
+    ) -> Result<Self, RagError> {
         config.validar()?;
         let compartilhado = Arc::new(Compartilhado {
             pendentes: Mutex::new(Pendentes::default()),
@@ -205,7 +205,11 @@ impl FilaEmbedding {
     ///
     /// Espera a vaga da org e a global; depois, os trechos entram na fila e o pedido só volta
     /// quando todos os lotes que contêm os seus trechos terminarem.
-    pub async fn embedir(&self, org: OrgId, textos: Vec<String>) -> Result<Vec<Vec<f32>>, ErroRag> {
+    pub async fn embedir(
+        &self,
+        org: OrgId,
+        textos: Vec<String>,
+    ) -> Result<Vec<Vec<f32>>, RagError> {
         if textos.is_empty() {
             return Ok(Vec::new());
         }
@@ -226,15 +230,13 @@ impl FilaEmbedding {
         {
             let mut pendentes = trancar(&self.compartilhado.pendentes);
             if self.compartilhado.encerrada.load(Ordering::SeqCst) {
-                return Err(ErroRag::FilaEncerrada);
+                return Err(RagError::QueueClosed);
             }
             pendentes.adicionar(org, itens);
         }
         self.compartilhado.aviso.notify_one();
         if let Some(metricas) = &self.compartilhado.metricas {
-            metricas
-                .trechos_pendentes
-                .set(self.trechos_pendentes() as i64);
+            metricas.pending_chunks.set(self.trechos_pendentes() as i64);
         }
 
         let mut saida: Vec<Option<Vec<f32>>> = vec![None; total];
@@ -242,13 +244,13 @@ impl FilaEmbedding {
             match rx.recv().await {
                 Some((posicao, Ok(vetor))) => saida[posicao] = Some(vetor),
                 Some((_, Err(erro))) => return Err(erro),
-                None => return Err(ErroRag::FilaEncerrada),
+                None => return Err(RagError::QueueClosed),
             }
         }
         saida
             .into_iter()
             .collect::<Option<Vec<_>>>()
-            .ok_or(ErroRag::FilaEncerrada)
+            .ok_or(RagError::QueueClosed)
     }
 
     /// Trechos esperando na fila agora.
@@ -274,16 +276,16 @@ impl FilaEmbedding {
         }
     }
 
-    async fn admitir(&self, org: OrgId) -> Result<Admissao, ErroRag> {
+    async fn admitir(&self, org: OrgId) -> Result<Admissao, RagError> {
         let (semaforo_org, contagem_org) = self.vaga_da_org(org);
         let da_org = semaforo_org
             .acquire_owned()
             .await
-            .map_err(|_| ErroRag::FilaEncerrada)?;
+            .map_err(|_| RagError::QueueClosed)?;
         let total = Arc::clone(&self.vagas_total)
             .acquire_owned()
             .await
-            .map_err(|_| ErroRag::FilaEncerrada)?;
+            .map_err(|_| RagError::QueueClosed)?;
         contagem_org.entrar();
         self.contagem_total.entrar();
         Ok(Admissao {
@@ -366,7 +368,7 @@ async fn laco(embedder: Arc<dyn Embedder>, compartilhado: Arc<Compartilhado>, co
             (lote, pendentes.total)
         };
         if let Some(metricas) = &compartilhado.metricas {
-            metricas.trechos_pendentes.set(restantes as i64);
+            metricas.pending_chunks.set(restantes as i64);
         }
         if lote.is_empty() {
             continue;
@@ -384,21 +386,21 @@ async fn processar(embedder: &dyn Embedder, compartilhado: &Compartilhado, lote:
         destinos.push((item.posicao, item.resposta));
     }
     let quantidade = textos.len();
-    let resultado = embedder.embedir_lote(&textos).await;
+    let resultado = embedder.embed_batch(&textos).await;
     let segundos = inicio.elapsed().as_secs_f64();
 
     match resultado {
         Ok(vetores) if vetores.len() == quantidade => {
             // Métricas antes de responder: quem recebe a resposta já vê o lote contado.
             if let Some(metricas) = &compartilhado.metricas {
-                metricas.registrar_lote(quantidade, segundos);
+                metricas.record_batch(quantidade, segundos);
             }
             for ((posicao, resposta), vetor) in destinos.into_iter().zip(vetores) {
                 let _ = resposta.send((posicao, Ok(vetor)));
             }
         }
         Ok(vetores) => {
-            let erro = ErroRag::Inferencia(format!(
+            let erro = RagError::Inference(format!(
                 "esperava {quantidade} vetores e recebi {}",
                 vetores.len()
             ));
@@ -408,9 +410,9 @@ async fn processar(embedder: &dyn Embedder, compartilhado: &Compartilhado, lote:
     }
 }
 
-fn responder_erro(destinos: Vec<(usize, Resposta)>, erro: ErroRag, compartilhado: &Compartilhado) {
+fn responder_erro(destinos: Vec<(usize, Resposta)>, erro: RagError, compartilhado: &Compartilhado) {
     if let Some(metricas) = &compartilhado.metricas {
-        metricas.registrar_erro();
+        metricas.record_error();
     }
     for (posicao, resposta) in destinos {
         let _ = resposta.send((posicao, Err(erro.clone())));
@@ -444,7 +446,7 @@ fn trancar_vagas(vagas: &Mutex<VagasPorOrg>) -> MutexGuard<'_, VagasPorOrg> {
 pub struct EmbedderDaFila {
     fila: Arc<FilaEmbedding>,
     org: OrgId,
-    identidade: IdentidadeModelo,
+    identidade: ModelIdentity,
     /// Runtime em que o laço da fila foi criado. Fica vivo enquanto o adaptador existir: se ele
     /// fosse derrubado, a fila pararia de responder no meio da reindexação.
     _runtime: Option<Arc<tokio::runtime::Runtime>>,
@@ -452,7 +454,7 @@ pub struct EmbedderDaFila {
 
 impl EmbedderDaFila {
     /// Embrulha a fila para uma org. `identidade` é a do modelo por trás da fila.
-    pub fn novo(fila: Arc<FilaEmbedding>, org: OrgId, identidade: IdentidadeModelo) -> Self {
+    pub fn novo(fila: Arc<FilaEmbedding>, org: OrgId, identidade: ModelIdentity) -> Self {
         Self {
             fila,
             org,
@@ -468,7 +470,7 @@ impl EmbedderDaFila {
     pub fn com_runtime(
         fila: Arc<FilaEmbedding>,
         org: OrgId,
-        identidade: IdentidadeModelo,
+        identidade: ModelIdentity,
         runtime: Arc<tokio::runtime::Runtime>,
     ) -> Self {
         Self {
@@ -481,11 +483,11 @@ impl EmbedderDaFila {
 }
 
 impl Embedder for EmbedderDaFila {
-    fn identidade(&self) -> &IdentidadeModelo {
+    fn identity(&self) -> &ModelIdentity {
         &self.identidade
     }
 
-    fn embedir_lote<'a>(&'a self, textos: &'a [String]) -> crate::embedder::FuturoLote<'a> {
+    fn embed_batch<'a>(&'a self, textos: &'a [String]) -> crate::embedder::BatchFuture<'a> {
         let fila = Arc::clone(&self.fila);
         let org = self.org;
         let textos = textos.to_vec();
@@ -507,10 +509,10 @@ mod testes {
 
     #[tokio::test]
     async fn adaptador_embeda_pela_fila_e_respeita_a_vaga_da_org() {
-        use crate::fake::EmbedderFake;
+        use crate::fake::FakeEmbedder;
 
-        let fake = Arc::new(EmbedderFake::new().com_atraso(Duration::from_millis(20)));
-        let identidade = fake.identidade().clone();
+        let fake = Arc::new(FakeEmbedder::new().with_delay(Duration::from_millis(20)));
+        let identidade = fake.identity().clone();
         let embedder: Arc<dyn Embedder> = Arc::clone(&fake) as Arc<dyn Embedder>;
         let fila = Arc::new(
             FilaEmbedding::iniciar(
@@ -531,7 +533,7 @@ mod testes {
             identidade.clone(),
         ));
         assert_eq!(
-            adaptador.identidade(),
+            adaptador.identity(),
             &identidade,
             "identidade é a do modelo"
         );
@@ -540,16 +542,16 @@ mod testes {
         let b = vec!["segundo".to_owned()];
         let c = vec!["terceiro".to_owned()];
         let (ra, rb, rc) = tokio::join!(
-            adaptador.embedir_lote(&a),
-            adaptador.embedir_lote(&b),
-            adaptador.embedir_lote(&c)
+            adaptador.embed_batch(&a),
+            adaptador.embed_batch(&b),
+            adaptador.embed_batch(&c)
         );
         let ra = ra.expect("vetores");
         let rb = rb.expect("vetores");
         let rc = rc.expect("vetores");
-        assert_eq!(ra[0], crate::fake::vetor_fake("primeiro"));
-        assert_eq!(rb[0], crate::fake::vetor_fake("segundo"));
-        assert_eq!(rc[0], crate::fake::vetor_fake("terceiro"));
+        assert_eq!(ra[0], crate::fake::fake_vector("primeiro"));
+        assert_eq!(rb[0], crate::fake::fake_vector("segundo"));
+        assert_eq!(rc[0], crate::fake::fake_vector("terceiro"));
         assert_eq!(
             fila.pico_pedidos_da_org(org),
             1,

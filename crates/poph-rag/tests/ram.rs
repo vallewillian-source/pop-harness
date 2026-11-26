@@ -45,7 +45,7 @@ async fn ram_latencia_e_log_sem_caminho_do_modelo() {
     for _ in 0..20 {
         let inicio = Instant::now();
         modelo
-            .embedir_lote(std::slice::from_ref(&textos[0]))
+            .embed_batch(std::slice::from_ref(&textos[0]))
             .await
             .expect("texto");
         um_texto.push(inicio.elapsed().as_secs_f64() * 1000.0);
@@ -53,7 +53,7 @@ async fn ram_latencia_e_log_sem_caminho_do_modelo() {
     let mut lote = Vec::new();
     for _ in 0..5 {
         let inicio = Instant::now();
-        modelo.embedir_lote(&textos).await.expect("lote");
+        modelo.embed_batch(&textos).await.expect("lote");
         lote.push(inicio.elapsed().as_secs_f64() * 1000.0);
     }
     // Carga parecida com a do spike (trechos de ~1000 caracteres, que usam a janela de 128 tokens inteira).
@@ -65,7 +65,7 @@ async fn ram_latencia_e_log_sem_caminho_do_modelo() {
     for _ in 0..10 {
         let inicio = Instant::now();
         modelo
-            .embedir_lote(std::slice::from_ref(&longos[0]))
+            .embed_batch(std::slice::from_ref(&longos[0]))
             .await
             .expect("texto longo");
         longo_um.push(inicio.elapsed().as_secs_f64() * 1000.0);
@@ -73,7 +73,7 @@ async fn ram_latencia_e_log_sem_caminho_do_modelo() {
     let mut longo_lote = Vec::new();
     for _ in 0..3 {
         let inicio = Instant::now();
-        modelo.embedir_lote(&longos).await.expect("lote longo");
+        modelo.embed_batch(&longos).await.expect("lote longo");
         longo_lote.push(inicio.elapsed().as_secs_f64() * 1000.0);
     }
 

@@ -19,15 +19,15 @@ use ort::value::Tensor;
 use tokenizers::{PaddingParams, PaddingStrategy, Tokenizer, TruncationParams};
 
 use crate::embedder::{
-    DIMENSAO, Embedder, FuturoLote, IdentidadeModelo, JANELA_TOKENS, NOME_MODELO, QUANTIZACAO,
-    VERSAO_CHUNKER,
+    BatchFuture, CHUNKER_VERSION, DIMENSION, Embedder, MODEL_NAME, ModelIdentity, QUANTIZATION,
+    TOKEN_WINDOW,
 };
-use crate::erro::ErroRag;
+use crate::erro::RagError;
 use crate::instalacao::{
     self, ARQUIVO_MODELO, ARQUIVO_TOKENIZADOR, SHA256_MODELO, SHA256_TOKENIZADOR,
 };
-use crate::memoria;
-use crate::metricas::MetricasRag;
+use crate::memory;
+use crate::metrics::RagMetrics;
 
 /// Configuração de abertura do modelo.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,13 +70,13 @@ impl CargaModelo {
 
 /// Embedder ONNX. Guarde em `Arc` e compartilhe entre todas as orgs.
 pub struct EmbedderOrt {
-    identidade: IdentidadeModelo,
+    identidade: ModelIdentity,
     caminho_modelo: PathBuf,
     caminho_tokenizador: PathBuf,
     threads: usize,
     sessao: tokio::sync::Mutex<Option<Arc<Sessao>>>,
     carga: Mutex<Option<CargaModelo>>,
-    metricas: Option<MetricasRag>,
+    metricas: Option<RagMetrics>,
 }
 
 /// Sessão carregada: runtime, tokenizador e o ambiente que precisa ficar vivo junto.
@@ -89,9 +89,9 @@ impl EmbedderOrt {
     /// Abre o modelo da pasta dada: confere os sha256 e prepara a abertura da sessão.
     ///
     /// Bloqueante (lê cerca de 128 MB para o hash). Chame antes de servir, não dentro de um turno.
-    pub fn abrir(config: &ConfigModelo, metricas: Option<MetricasRag>) -> Result<Self, ErroRag> {
+    pub fn abrir(config: &ConfigModelo, metricas: Option<RagMetrics>) -> Result<Self, RagError> {
         if config.threads == 0 {
-            return Err(ErroRag::Configuracao(
+            return Err(RagError::Configuration(
                 "o número de threads do modelo deve ser maior que zero".to_owned(),
             ));
         }
@@ -103,14 +103,14 @@ impl EmbedderOrt {
             SHA256_TOKENIZADOR,
         )?;
         Ok(Self {
-            identidade: IdentidadeModelo {
-                nome: NOME_MODELO,
-                quantizacao: QUANTIZACAO,
-                dimensao: DIMENSAO,
-                janela_tokens: JANELA_TOKENS,
-                sha256_modelo: sha_modelo,
-                sha256_tokenizador: sha_tokenizador,
-                versao_chunker: VERSAO_CHUNKER,
+            identidade: ModelIdentity {
+                name: MODEL_NAME,
+                quantization: QUANTIZATION,
+                dimension: DIMENSION,
+                token_window: TOKEN_WINDOW,
+                model_sha256: sha_modelo,
+                tokenizer_sha256: sha_tokenizador,
+                chunker_version: CHUNKER_VERSION,
             },
             caminho_modelo: config.diretorio.join(ARQUIVO_MODELO),
             caminho_tokenizador: config.diretorio.join(ARQUIVO_TOKENIZADOR),
@@ -122,10 +122,10 @@ impl EmbedderOrt {
     }
 
     /// Carrega a sessão agora (em vez de no primeiro pedido) e devolve a medida da carga.
-    pub async fn aquecer(&self) -> Result<CargaModelo, ErroRag> {
+    pub async fn aquecer(&self) -> Result<CargaModelo, RagError> {
         self.sessao().await?;
         self.carga()
-            .ok_or_else(|| ErroRag::Carregamento("carga não registrada".to_owned()))
+            .ok_or_else(|| RagError::Loading("carga não registrada".to_owned()))
     }
 
     /// Medida da última carga da sessão, se ela já aconteceu.
@@ -136,7 +136,7 @@ impl EmbedderOrt {
         }
     }
 
-    async fn sessao(&self) -> Result<Arc<Sessao>, ErroRag> {
+    async fn sessao(&self) -> Result<Arc<Sessao>, RagError> {
         let mut guarda = self.sessao.lock().await;
         if let Some(sessao) = guarda.as_ref() {
             return Ok(Arc::clone(sessao));
@@ -144,18 +144,18 @@ impl EmbedderOrt {
         let modelo = self.caminho_modelo.clone();
         let tokenizador = self.caminho_tokenizador.clone();
         let threads = self.threads;
-        let rss_antes = memoria::rss_bytes();
+        let rss_antes = memory::rss_bytes();
         let inicio = Instant::now();
         let sessao =
             tokio::task::spawn_blocking(move || abrir_sessao(&modelo, &tokenizador, threads))
                 .await
                 .map_err(|erro| {
-                    ErroRag::Carregamento(format!("tarefa de carga interrompida: {erro}"))
+                    RagError::Loading(format!("tarefa de carga interrompida: {erro}"))
                 })??;
         let carga = CargaModelo {
             segundos: inicio.elapsed().as_secs_f64(),
             rss_antes_bytes: rss_antes,
-            rss_depois_bytes: memoria::rss_bytes(),
+            rss_depois_bytes: memory::rss_bytes(),
         };
         // Log sem caminho do modelo: só tempo e memória.
         tracing::info!(
@@ -164,7 +164,7 @@ impl EmbedderOrt {
             "modelo de embedding carregado"
         );
         if let Some(metricas) = &self.metricas {
-            metricas.registrar_carga(&carga);
+            metricas.record_load(&carga);
         }
         match self.carga.lock() {
             Ok(mut g) => *g = Some(carga),
@@ -177,11 +177,11 @@ impl EmbedderOrt {
 }
 
 impl Embedder for EmbedderOrt {
-    fn identidade(&self) -> &IdentidadeModelo {
+    fn identity(&self) -> &ModelIdentity {
         &self.identidade
     }
 
-    fn embedir_lote<'a>(&'a self, textos: &'a [String]) -> FuturoLote<'a> {
+    fn embed_batch<'a>(&'a self, textos: &'a [String]) -> BatchFuture<'a> {
         Box::pin(async move {
             if textos.is_empty() {
                 return Ok(Vec::new());
@@ -190,7 +190,7 @@ impl Embedder for EmbedderOrt {
             let textos = textos.to_vec();
             tokio::task::spawn_blocking(move || sessao.inferir(&textos))
                 .await
-                .map_err(|erro| ErroRag::Inferencia(format!("tarefa interrompida: {erro}")))?
+                .map_err(|erro| RagError::Inference(format!("tarefa interrompida: {erro}")))?
         })
     }
 }
@@ -199,14 +199,14 @@ impl Embedder for EmbedderOrt {
 /// depois de soltar a primeira; por isso ele fica guardado para sempre aqui.
 static AMBIENTE: OnceLock<Result<Environment, String>> = OnceLock::new();
 
-fn ambiente_do_processo() -> Result<&'static Environment, ErroRag> {
+fn ambiente_do_processo() -> Result<&'static Environment, RagError> {
     AMBIENTE
         .get_or_init(|| ort::init().build().map_err(|erro| erro.to_string()))
         .as_ref()
-        .map_err(|erro| ErroRag::Carregamento(format!("ambiente do ONNX Runtime: {erro}")))
+        .map_err(|erro| RagError::Loading(format!("ambiente do ONNX Runtime: {erro}")))
 }
 
-fn abrir_sessao(modelo: &Path, tokenizador: &Path, threads: usize) -> Result<Sessao, ErroRag> {
+fn abrir_sessao(modelo: &Path, tokenizador: &Path, threads: usize) -> Result<Sessao, RagError> {
     let tokenizador = carregar_tokenizador(tokenizador)?;
     let ambiente = ambiente_do_processo()?;
     let mut construtor = Session::builder(ambiente).map_err(erro_sessao)?;
@@ -221,19 +221,19 @@ fn abrir_sessao(modelo: &Path, tokenizador: &Path, threads: usize) -> Result<Ses
     })
 }
 
-fn erro_sessao<R>(erro: ort::Error<R>) -> ErroRag {
-    ErroRag::Carregamento(format!("sessão do modelo: {erro}"))
+fn erro_sessao<R>(erro: ort::Error<R>) -> RagError {
+    RagError::Loading(format!("sessão do modelo: {erro}"))
 }
 
-fn carregar_tokenizador(caminho: &Path) -> Result<Tokenizer, ErroRag> {
+fn carregar_tokenizador(caminho: &Path) -> Result<Tokenizer, RagError> {
     let mut tokenizador = Tokenizer::from_file(caminho)
-        .map_err(|erro| ErroRag::Carregamento(format!("tokenizador: {erro}")))?;
+        .map_err(|erro| RagError::Loading(format!("tokenizador: {erro}")))?;
     tokenizador
         .with_truncation(Some(TruncationParams {
-            max_length: JANELA_TOKENS,
+            max_length: TOKEN_WINDOW,
             ..Default::default()
         }))
-        .map_err(|erro| ErroRag::Carregamento(format!("truncamento: {erro}")))?;
+        .map_err(|erro| RagError::Loading(format!("truncamento: {erro}")))?;
     tokenizador.with_padding(Some(PaddingParams {
         strategy: PaddingStrategy::BatchLongest,
         ..Default::default()
@@ -249,10 +249,10 @@ struct Codificado {
     tokens: usize,
 }
 
-fn codificar(tokenizador: &Tokenizer, textos: &[&str]) -> Result<Codificado, ErroRag> {
+fn codificar(tokenizador: &Tokenizer, textos: &[&str]) -> Result<Codificado, RagError> {
     let codificados = tokenizador
         .encode_batch(textos.to_vec(), true)
-        .map_err(|erro| ErroRag::Inferencia(format!("tokenização: {erro}")))?;
+        .map_err(|erro| RagError::Inference(format!("tokenização: {erro}")))?;
     let lotes = codificados.len();
     let tokens = codificados
         .iter()
@@ -281,19 +281,19 @@ impl Sessao {
     /// Um vetor por texto. Cada trecho roda sozinho: na int8 (quantização dinâmica) a escala dos
     /// valores é calculada sobre o lote inteiro, então um trecho mudaria de vetor conforme os
     /// vizinhos (cosseno de 0,991 medido com lote de 9). Rodar um por vez custa o mesmo no spike.
-    fn inferir(&self, textos: &[String]) -> Result<Vec<Vec<f32>>, ErroRag> {
+    fn inferir(&self, textos: &[String]) -> Result<Vec<Vec<f32>>, RagError> {
         textos.iter().map(|texto| self.inferir_um(texto)).collect()
     }
 
-    fn inferir_um(&self, texto: &str) -> Result<Vec<f32>, ErroRag> {
+    fn inferir_um(&self, texto: &str) -> Result<Vec<f32>, RagError> {
         let entrada = codificar(&self.tokenizador, &[texto])?;
         let (lotes, tokens) = (entrada.lotes, entrada.tokens);
         let ids = Tensor::from_array(([lotes, tokens], entrada.ids))
-            .map_err(|erro| ErroRag::Inferencia(format!("tensor de ids: {erro}")))?;
+            .map_err(|erro| RagError::Inference(format!("tensor de ids: {erro}")))?;
         let mascara = Tensor::from_array(([lotes, tokens], entrada.mascara.clone()))
-            .map_err(|erro| ErroRag::Inferencia(format!("tensor de máscara: {erro}")))?;
+            .map_err(|erro| RagError::Inference(format!("tensor de máscara: {erro}")))?;
         let tipos = Tensor::from_array(([lotes, tokens], vec![0i64; lotes * tokens]))
-            .map_err(|erro| ErroRag::Inferencia(format!("tensor de tipos: {erro}")))?;
+            .map_err(|erro| RagError::Inference(format!("tensor de tipos: {erro}")))?;
 
         let mut sessao = match self.sessao.lock() {
             Ok(guarda) => guarda,
@@ -305,31 +305,31 @@ impl Sessao {
                 "attention_mask" => mascara,
                 "token_type_ids" => tipos,
             ])
-            .map_err(|erro| ErroRag::Inferencia(format!("execução do modelo: {erro}")))?;
+            .map_err(|erro| RagError::Inference(format!("execução do modelo: {erro}")))?;
 
         // Prefere o vetor já agrupado (sentence_embedding); senão, faz a média dos tokens.
         let nome = ["sentence_embedding", "last_hidden_state"]
             .into_iter()
             .find(|n| saidas.contains_key(*n))
-            .ok_or_else(|| ErroRag::Inferencia("saída do modelo não reconhecida".to_owned()))?;
+            .ok_or_else(|| RagError::Inference("saída do modelo não reconhecida".to_owned()))?;
         let valor = saidas
             .get(nome)
-            .ok_or_else(|| ErroRag::Inferencia("saída do modelo ausente".to_owned()))?;
+            .ok_or_else(|| RagError::Inference("saída do modelo ausente".to_owned()))?;
         let (forma, dados) = valor
             .try_extract_tensor::<f32>()
-            .map_err(|erro| ErroRag::Inferencia(format!("leitura da saída: {erro}")))?;
+            .map_err(|erro| RagError::Inference(format!("leitura da saída: {erro}")))?;
         let dimensoes: Vec<usize> = forma.iter().map(|d| *d as usize).collect();
 
         let vetor = match dimensoes.as_slice() {
-            [_, dim] if *dim == DIMENSAO => normalizar(dados[..*dim].to_vec()),
-            [_, n, dim] if *dim == DIMENSAO && *n == tokens => {
+            [_, dim] if *dim == DIMENSION => normalizar(dados[..*dim].to_vec()),
+            [_, n, dim] if *dim == DIMENSION && *n == tokens => {
                 media_com_mascara(dados, (lotes, tokens, *dim), &entrada.mascara)
                     .into_iter()
                     .next()
-                    .ok_or_else(|| ErroRag::Inferencia("média sem vetor".to_owned()))?
+                    .ok_or_else(|| RagError::Inference("média sem vetor".to_owned()))?
             }
             outra => {
-                return Err(ErroRag::Inferencia(format!(
+                return Err(RagError::Inference(format!(
                     "dimensão de saída inesperada: {outra:?}"
                 )));
             }

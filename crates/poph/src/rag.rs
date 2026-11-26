@@ -103,7 +103,7 @@ pub fn abrir_base_com_fila(
             modelo.diretorio.display()
         )
     })?;
-    let identidade = base.identidade().clone();
+    let identidade = base.identity().clone();
     let embedder: Arc<dyn Embedder> = Arc::new(base);
 
     let runtime = Arc::new(

@@ -7,9 +7,7 @@
 
 use sha2::{Digest, Sha256};
 
-use crate::embedder::{
-    IdentidadeModelo, SOBREPOSICAO_CARACTERES as SOBREPOSICAO, TAMANHO_TRECHO_CARACTERES as TAMANHO,
-};
+use crate::embedder::{CHUNK_SIZE_CHARS as TAMANHO, ModelIdentity, OVERLAP_CHARS as SOBREPOSICAO};
 
 /// Texto que vai para o modelo e para o índice de texto: o título na primeira linha, depois o trecho.
 pub fn texto_embutido(titulo: &str, trecho: &str) -> String {
@@ -49,14 +47,14 @@ pub fn dividir(texto: &str) -> Vec<String> {
 
 /// Identidade do conteúdo de um item: muda com o texto, o título, a versão do divisor e o modelo.
 /// Igual entrada, igual hash. Usada para pular item sem mudança na reindexação.
-pub fn hash_origem(identidade: &IdentidadeModelo, titulo: &str, texto: &str) -> String {
+pub fn hash_origem(identidade: &ModelIdentity, titulo: &str, texto: &str) -> String {
     let mut hash = Sha256::new();
     let partes = [
-        identidade.versao_chunker,
-        identidade.nome,
-        identidade.quantizacao,
-        identidade.sha256_modelo.as_str(),
-        identidade.sha256_tokenizador.as_str(),
+        identidade.chunker_version,
+        identidade.name,
+        identidade.quantization,
+        identidade.model_sha256.as_str(),
+        identidade.tokenizer_sha256.as_str(),
         titulo,
         texto,
     ];
@@ -294,22 +292,22 @@ mod testes {
 
     #[test]
     fn hash_muda_com_titulo_texto_ou_modelo_e_fica_igual_sem_mudanca() {
-        use crate::embedder::{NOME_MODELO, VERSAO_CHUNKER};
-        let base = IdentidadeModelo {
-            nome: NOME_MODELO,
-            quantizacao: "int8",
-            dimensao: 384,
-            janela_tokens: 128,
-            sha256_modelo: "aa".to_owned(),
-            sha256_tokenizador: "bb".to_owned(),
-            versao_chunker: VERSAO_CHUNKER,
+        use crate::embedder::{CHUNKER_VERSION, MODEL_NAME};
+        let base = ModelIdentity {
+            name: MODEL_NAME,
+            quantization: "int8",
+            dimension: 384,
+            token_window: 128,
+            model_sha256: "aa".to_owned(),
+            tokenizer_sha256: "bb".to_owned(),
+            chunker_version: CHUNKER_VERSION,
         };
         let h = hash_origem(&base, "Titulo", "Texto");
         assert_eq!(h, hash_origem(&base, "Titulo", "Texto"));
         assert_ne!(h, hash_origem(&base, "Outro", "Texto"));
         assert_ne!(h, hash_origem(&base, "Titulo", "Outro"));
-        let outro_modelo = IdentidadeModelo {
-            sha256_modelo: "cc".to_owned(),
+        let outro_modelo = ModelIdentity {
+            model_sha256: "cc".to_owned(),
             ..base.clone()
         };
         assert_ne!(h, hash_origem(&outro_modelo, "Titulo", "Texto"));

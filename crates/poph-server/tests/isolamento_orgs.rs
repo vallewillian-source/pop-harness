@@ -52,7 +52,7 @@ use poph_core::llm::{
     Script, ToolCall,
 };
 use poph_files::FileConfig;
-use poph_rag::{ConfigIndice, EmbedderFake, Indice};
+use poph_rag::{ConfigIndice, FakeEmbedder, Indice};
 use poph_server::Estado;
 use poph_store::{
     AuditEntry, Direction, NewChannelAttachment, NewMessage, OutboxState, Page, Role, Store,
@@ -1747,7 +1747,7 @@ async fn subir_com_turno(
         .com_arquivos(FileConfig::default(blobs));
         let indice = Indice::abrir(
             store.rag_path(),
-            Arc::new(EmbedderFake::new()),
+            Arc::new(FakeEmbedder::new()),
             ConfigIndice::default(),
         )
         .expect("índice de teste")

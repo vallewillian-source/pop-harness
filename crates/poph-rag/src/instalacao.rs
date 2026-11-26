@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 
-use crate::erro::ErroRag;
+use crate::erro::RagError;
 
 /// Nome do arquivo do modelo int8 na pasta de modelos.
 pub const ARQUIVO_MODELO: &str = "model_int8.onnx";
@@ -97,7 +97,7 @@ pub struct RelatorioInstalacao {
 }
 
 /// Instala os arquivos padrão do modelo em `diretorio` (cria a pasta se preciso).
-pub fn instalar(diretorio: &Path) -> Result<RelatorioInstalacao, ErroRag> {
+pub fn instalar(diretorio: &Path) -> Result<RelatorioInstalacao, RagError> {
     instalar_arquivos(diretorio, &arquivos_padrao())
 }
 
@@ -105,18 +105,17 @@ pub fn instalar(diretorio: &Path) -> Result<RelatorioInstalacao, ErroRag> {
 pub fn instalar_arquivos(
     diretorio: &Path,
     arquivos: &[ArquivoModelo],
-) -> Result<RelatorioInstalacao, ErroRag> {
-    fs::create_dir_all(diretorio).map_err(|erro| {
-        ErroRag::Arquivo(format!("não consegui criar a pasta de modelos: {erro}"))
-    })?;
+) -> Result<RelatorioInstalacao, RagError> {
+    fs::create_dir_all(diretorio)
+        .map_err(|erro| RagError::File(format!("não consegui criar a pasta de modelos: {erro}")))?;
     let cliente = reqwest::blocking::Client::builder()
         .connect_timeout(Duration::from_secs(20))
         .timeout(Duration::from_secs(1800))
         .user_agent("poph-model-install")
         .build()
-        .map_err(|erro| ErroRag::Download {
-            arquivo: "cliente HTTP".to_owned(),
-            motivo: erro.to_string(),
+        .map_err(|erro| RagError::Download {
+            file: "cliente HTTP".to_owned(),
+            reason: erro.to_string(),
         })?;
     let mut itens = Vec::with_capacity(arquivos.len());
     for arquivo in arquivos {
@@ -132,12 +131,11 @@ fn garantir(
     diretorio: &Path,
     arquivo: &ArquivoModelo,
     cliente: &reqwest::blocking::Client,
-) -> Result<ArquivoInstalado, ErroRag> {
+) -> Result<ArquivoInstalado, RagError> {
     let destino = diretorio.join(&arquivo.nome);
     if destino.is_file() {
-        let obtido = sha256_de_arquivo(&destino).map_err(|erro| {
-            ErroRag::Arquivo(format!("não consegui ler {}: {erro}", arquivo.nome))
-        })?;
+        let obtido = sha256_de_arquivo(&destino)
+            .map_err(|erro| RagError::File(format!("não consegui ler {}: {erro}", arquivo.nome)))?;
         if obtido == arquivo.sha256 {
             let bytes = fs::metadata(&destino).map(|m| m.len()).unwrap_or(0);
             return Ok(ArquivoInstalado {
@@ -160,15 +158,15 @@ fn garantir(
     };
     if obtido != arquivo.sha256 {
         let _ = fs::remove_file(&parcial);
-        return Err(ErroRag::ChecksumNaoConfere {
-            arquivo: arquivo.nome.clone(),
-            esperado: arquivo.sha256.clone(),
-            obtido,
+        return Err(RagError::ChecksumMismatch {
+            file: arquivo.nome.clone(),
+            expected: arquivo.sha256.clone(),
+            actual: obtido,
         });
     }
     fs::rename(&parcial, &destino).map_err(|erro| {
         let _ = fs::remove_file(&parcial);
-        ErroRag::Arquivo(format!("não consegui publicar {}: {erro}", arquivo.nome))
+        RagError::File(format!("não consegui publicar {}: {erro}", arquivo.nome))
     })?;
     Ok(ArquivoInstalado {
         nome: arquivo.nome.clone(),
@@ -184,10 +182,10 @@ fn baixar(
     url: &str,
     destino: &Path,
     nome: &str,
-) -> Result<(String, u64), ErroRag> {
-    let falha = |motivo: String| ErroRag::Download {
-        arquivo: nome.to_owned(),
-        motivo,
+) -> Result<(String, u64), RagError> {
+    let falha = |motivo: String| RagError::Download {
+        file: nome.to_owned(),
+        reason: motivo,
     };
     let mut resposta = cliente
         .get(url)
@@ -200,7 +198,7 @@ fn baixar(
         )));
     }
     let mut arquivo = File::create(destino)
-        .map_err(|erro| ErroRag::Arquivo(format!("não consegui gravar {nome}: {erro}")))?;
+        .map_err(|erro| RagError::File(format!("não consegui gravar {nome}: {erro}")))?;
     let mut hash = Sha256::new();
     let mut bytes = 0u64;
     let mut bloco = vec![0u8; 64 * 1024];
@@ -214,12 +212,12 @@ fn baixar(
         hash.update(&bloco[..lidos]);
         arquivo
             .write_all(&bloco[..lidos])
-            .map_err(|erro| ErroRag::Arquivo(format!("não consegui gravar {nome}: {erro}")))?;
+            .map_err(|erro| RagError::File(format!("não consegui gravar {nome}: {erro}")))?;
         bytes += lidos as u64;
     }
     arquivo
         .sync_all()
-        .map_err(|erro| ErroRag::Arquivo(format!("não consegui gravar {nome}: {erro}")))?;
+        .map_err(|erro| RagError::File(format!("não consegui gravar {nome}: {erro}")))?;
     Ok((hex(&hash.finalize()), bytes))
 }
 
@@ -227,20 +225,20 @@ fn baixar(
 ///
 /// Devolve o sha256 obtido quando confere. Erros: [`ErroRag::ModeloAusente`] se o arquivo não
 /// existe, [`ErroRag::ChecksumNaoConfere`] se o conteúdo é outro.
-pub fn conferir_arquivo(diretorio: &Path, nome: &str, esperado: &str) -> Result<String, ErroRag> {
+pub fn conferir_arquivo(diretorio: &Path, nome: &str, esperado: &str) -> Result<String, RagError> {
     let caminho = diretorio.join(nome);
     if !caminho.is_file() {
-        return Err(ErroRag::ModeloAusente {
-            arquivo: nome.to_owned(),
+        return Err(RagError::ModelMissing {
+            file: nome.to_owned(),
         });
     }
     let obtido = sha256_de_arquivo(&caminho)
-        .map_err(|erro| ErroRag::Arquivo(format!("não consegui ler {nome}: {erro}")))?;
+        .map_err(|erro| RagError::File(format!("não consegui ler {nome}: {erro}")))?;
     if obtido != esperado {
-        return Err(ErroRag::ChecksumNaoConfere {
-            arquivo: nome.to_owned(),
-            esperado: esperado.to_owned(),
-            obtido,
+        return Err(RagError::ChecksumMismatch {
+            file: nome.to_owned(),
+            expected: esperado.to_owned(),
+            actual: obtido,
         });
     }
     Ok(obtido)

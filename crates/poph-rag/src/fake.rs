@@ -1,109 +1,97 @@
-//! Embedder determinístico para o resto do sistema e para os testes (HR-16 e HR-17 usam).
-//!
-//! Não carrega modelo nem usa rede. Cada palavra vira uma contribuição fixa num vetor de 384
-//! posições, então textos com palavras em comum ficam próximos. Mesmo texto, mesmo vetor, sempre.
-
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use crate::embedder::{
-    DIMENSAO, Embedder, FuturoLote, IdentidadeModelo, JANELA_TOKENS, NOME_MODELO, VERSAO_CHUNKER,
+    BatchFuture, CHUNKER_VERSION, DIMENSION, Embedder, MODEL_NAME, ModelIdentity, TOKEN_WINDOW,
 };
 
-/// Embedder falso. `atraso` simula o tempo de um lote (para testes de concorrência).
 #[derive(Debug)]
-pub struct EmbedderFake {
-    identidade: IdentidadeModelo,
-    atraso: Duration,
-    lotes: AtomicUsize,
-    maior_lote: AtomicUsize,
+pub struct FakeEmbedder {
+    identity: ModelIdentity,
+    delay: Duration,
+    batches: AtomicUsize,
+    largest_batch: AtomicUsize,
 }
 
-impl Default for EmbedderFake {
+impl Default for FakeEmbedder {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl EmbedderFake {
-    /// Embedder sem atraso.
+impl FakeEmbedder {
     pub fn new() -> Self {
         Self {
-            identidade: IdentidadeModelo {
-                nome: NOME_MODELO,
-                quantizacao: "fake",
-                dimensao: DIMENSAO,
-                janela_tokens: JANELA_TOKENS,
-                sha256_modelo: "fake".to_owned(),
-                sha256_tokenizador: "fake".to_owned(),
-                versao_chunker: VERSAO_CHUNKER,
+            identity: ModelIdentity {
+                name: MODEL_NAME,
+                quantization: "fake",
+                dimension: DIMENSION,
+                token_window: TOKEN_WINDOW,
+                model_sha256: "fake".to_owned(),
+                tokenizer_sha256: "fake".to_owned(),
+                chunker_version: CHUNKER_VERSION,
             },
-            atraso: Duration::ZERO,
-            lotes: AtomicUsize::new(0),
-            maior_lote: AtomicUsize::new(0),
+            delay: Duration::ZERO,
+            batches: AtomicUsize::new(0),
+            largest_batch: AtomicUsize::new(0),
         }
     }
 
-    /// Define o tempo que cada lote leva.
-    pub fn com_atraso(mut self, atraso: Duration) -> Self {
-        self.atraso = atraso;
+    pub fn with_delay(mut self, delay: Duration) -> Self {
+        self.delay = delay;
         self
     }
 
-    /// Quantos lotes o embedder recebeu.
-    pub fn lotes_processados(&self) -> usize {
-        self.lotes.load(Ordering::SeqCst)
+    pub fn processed_batches(&self) -> usize {
+        self.batches.load(Ordering::SeqCst)
     }
 
-    /// Tamanho do maior lote recebido.
-    pub fn maior_lote(&self) -> usize {
-        self.maior_lote.load(Ordering::SeqCst)
+    pub fn largest_batch(&self) -> usize {
+        self.largest_batch.load(Ordering::SeqCst)
     }
 }
 
-impl Embedder for EmbedderFake {
-    fn identidade(&self) -> &IdentidadeModelo {
-        &self.identidade
+impl Embedder for FakeEmbedder {
+    fn identity(&self) -> &ModelIdentity {
+        &self.identity
     }
 
-    fn embedir_lote<'a>(&'a self, textos: &'a [String]) -> FuturoLote<'a> {
+    fn embed_batch<'a>(&'a self, texts: &'a [String]) -> BatchFuture<'a> {
         Box::pin(async move {
-            if textos.is_empty() {
+            if texts.is_empty() {
                 return Ok(Vec::new());
             }
-            self.lotes.fetch_add(1, Ordering::SeqCst);
-            self.maior_lote.fetch_max(textos.len(), Ordering::SeqCst);
-            if !self.atraso.is_zero() {
-                tokio::time::sleep(self.atraso).await;
+            self.batches.fetch_add(1, Ordering::SeqCst);
+            self.largest_batch.fetch_max(texts.len(), Ordering::SeqCst);
+            if !self.delay.is_zero() {
+                tokio::time::sleep(self.delay).await;
             }
-            Ok(textos.iter().map(|texto| vetor_fake(texto)).collect())
+            Ok(texts.iter().map(|text| fake_vector(text)).collect())
         })
     }
 }
 
-/// Vetor determinístico de um texto: cada palavra (minúscula) soma +1 ou -1 numa posição fixa.
-/// Normalizado para comprimento 1; texto sem palavras vira o vetor unitário da primeira posição.
-pub fn vetor_fake(texto: &str) -> Vec<f32> {
-    let mut vetor = vec![0f32; DIMENSAO];
-    for palavra in texto.split_whitespace() {
-        let minuscula = palavra.to_lowercase();
-        let hash = fnv1a(minuscula.as_bytes());
-        let posicao = (hash % DIMENSAO as u64) as usize;
-        let sinal = if (hash >> 40) & 1 == 0 { 1.0 } else { -1.0 };
-        vetor[posicao] += sinal;
+pub fn fake_vector(text: &str) -> Vec<f32> {
+    let mut vector = vec![0f32; DIMENSION];
+    for word in text.split_whitespace() {
+        let lowercase = word.to_lowercase();
+        let hash = fnv1a(lowercase.as_bytes());
+        let position = (hash % DIMENSION as u64) as usize;
+        let sign = if (hash >> 40) & 1 == 0 { 1.0 } else { -1.0 };
+        vector[position] += sign;
     }
-    let norma = vetor
+    let norm = vector
         .iter()
         .map(|x| f64::from(*x) * f64::from(*x))
         .sum::<f64>()
         .sqrt();
-    if norma == 0.0 {
-        vetor[0] = 1.0;
-        return vetor;
+    if norm == 0.0 {
+        vector[0] = 1.0;
+        return vector;
     }
-    vetor
+    vector
         .into_iter()
-        .map(|x| (f64::from(x) / norma) as f32)
+        .map(|x| (f64::from(x) / norm) as f32)
         .collect()
 }
 

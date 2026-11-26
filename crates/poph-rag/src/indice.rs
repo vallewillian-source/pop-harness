@@ -20,17 +20,17 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use poph_types::{AgentId, KnowledgeItemId, OrgId, ProductId};
 use rusqlite::{Connection, OptionalExtension, params};
 
-use crate::banco::{self, erro_banco};
-use crate::embedder::{DIMENSAO, Embedder, IdentidadeModelo};
-use crate::erro::ErroRag;
+use crate::database::{self, database_error};
+use crate::embedder::{DIMENSION, Embedder, ModelIdentity};
+use crate::erro::RagError;
 use crate::trechos::{dividir, hash_origem, texto_embutido};
-use crate::vetor::{cosseno, norma, produto_interno, quantizar};
+use crate::vector::{cosine, dot_product, norm, quantize};
 
 /// Quantos trechos vão de uma vez ao modelo na indexação. Só limita a memória transitória.
 const LOTE_INDEXACAO: usize = 64;
 
 /// Bytes por trecho no cache: vetor int8, norma (f32) e `rowid` (i64).
-const BYTES_POR_TRECHO: usize = DIMENSAO + 4 + 8;
+const BYTES_POR_TRECHO: usize = DIMENSION + 4 + 8;
 
 /// Configuração do índice em memória.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -243,12 +243,12 @@ impl Indice {
         caminho: &Path,
         embedder: Arc<dyn Embedder>,
         config: ConfigIndice,
-    ) -> Result<(Self, RelatorioAbertura), ErroRag> {
-        let mut conn = banco::abrir(caminho)?;
+    ) -> Result<(Self, RelatorioAbertura), RagError> {
+        let mut conn = database::open_database(caminho)?;
         let limpo = {
-            let tx = conn.transaction().map_err(erro_banco)?;
-            let limpo = banco::conferir_identidade(&tx, embedder.identidade())?;
-            tx.commit().map_err(erro_banco)?;
+            let tx = conn.transaction().map_err(database_error)?;
+            let limpo = database::check_identity(&tx, embedder.identity())?;
+            tx.commit().map_err(database_error)?;
             limpo
         };
         let indice = Self {
@@ -273,20 +273,20 @@ impl Indice {
         org: OrgId,
         agente: AgentId,
         itens: &[ItemRag],
-    ) -> Result<RelatorioIndexacao, ErroRag> {
+    ) -> Result<RelatorioIndexacao, RagError> {
         let _vez = self.escrita.lock().await;
 
         let mut vistos = HashSet::new();
         for item in itens {
             if !vistos.insert(item.id) {
-                return Err(ErroRag::Item(format!(
+                return Err(RagError::Item(format!(
                     "item repetido na lista: {}",
                     item.id
                 )));
             }
         }
 
-        let identidade = self.embedder.identidade().clone();
+        let identidade = self.embedder.identity().clone();
         let atuais = {
             let conn = trava(&self.conn);
             ler_hashes(&conn, org, agente)?
@@ -341,9 +341,9 @@ impl Indice {
 
         let mut vetores: Vec<Vec<f32>> = Vec::with_capacity(textos.len());
         for bloco in textos.chunks(LOTE_INDEXACAO) {
-            let gerados = self.embedder.embedir_lote(bloco).await?;
+            let gerados = self.embedder.embed_batch(bloco).await?;
             if gerados.len() != bloco.len() {
-                return Err(ErroRag::Inferencia(format!(
+                return Err(RagError::Inference(format!(
                     "o modelo devolveu {} vetores para {} textos",
                     gerados.len(),
                     bloco.len()
@@ -357,23 +357,23 @@ impl Indice {
         for preparado in para_gravar.iter_mut() {
             for _ in 0..preparado.trechos.len() {
                 let vetor = restantes.next().ok_or_else(|| {
-                    ErroRag::Inferencia("faltam vetores para os trechos do item".to_owned())
+                    RagError::Inference("faltam vetores para os trechos do item".to_owned())
                 })?;
-                if vetor.len() != DIMENSAO {
-                    return Err(ErroRag::Inferencia(format!(
-                        "vetor com {} posições; o esperado é {DIMENSAO}",
+                if vetor.len() != DIMENSION {
+                    return Err(RagError::Inference(format!(
+                        "vetor com {} posições; o esperado é {DIMENSION}",
                         vetor.len()
                     )));
                 }
-                let q = quantizar(&vetor);
-                let n = norma(&q);
+                let q = quantize(&vetor);
+                let n = norm(&q);
                 preparado.vetores.push((q, n));
             }
         }
 
         {
             let mut conn = trava(&self.conn);
-            let tx = conn.transaction().map_err(erro_banco)?;
+            let tx = conn.transaction().map_err(database_error)?;
             for id in &para_apagar {
                 apagar_item(&tx, org, agente, id)?;
             }
@@ -392,7 +392,7 @@ impl Indice {
                         preparado.trechos.len() as i64,
                     ],
                 )
-                .map_err(erro_banco)?;
+                .map_err(database_error)?;
                 for (ordem, (texto, (vetor, n))) in
                     preparado.trechos.iter().zip(&preparado.vetores).enumerate()
                 {
@@ -410,7 +410,7 @@ impl Indice {
                             f64::from(*n),
                         ],
                     )
-                    .map_err(erro_banco)?;
+                    .map_err(database_error)?;
                     let rowid = tx.last_insert_rowid();
                     tx.execute(
                         "INSERT INTO rag_trechos_fts (rowid, texto_busca, org_id, agente_id)
@@ -422,11 +422,11 @@ impl Indice {
                             agente.to_string(),
                         ],
                     )
-                    .map_err(erro_banco)?;
+                    .map_err(database_error)?;
                     relatorio.trechos_gravados += 1;
                 }
             }
-            tx.commit().map_err(erro_banco)?;
+            tx.commit().map_err(database_error)?;
         }
 
         trava(&self.cache).invalidar((org, agente));
@@ -449,9 +449,9 @@ impl Indice {
         agente: AgentId,
         consulta: &str,
         limite: usize,
-    ) -> Result<Vec<Encontrado>, ErroRag> {
+    ) -> Result<Vec<Encontrado>, RagError> {
         if limite == 0 {
-            return Err(ErroRag::Configuracao(
+            return Err(RagError::Configuration(
                 "o limite de resultados deve ser maior que zero".to_owned(),
             ));
         }
@@ -459,18 +459,18 @@ impl Indice {
             return Ok(Vec::new());
         }
         let textos = vec![consulta.to_owned()];
-        let geradas = self.embedder.embedir_lote(&textos).await?;
+        let geradas = self.embedder.embed_batch(&textos).await?;
         let vetor = geradas.into_iter().next().ok_or_else(|| {
-            ErroRag::Inferencia("o modelo não devolveu vetor da consulta".to_owned())
+            RagError::Inference("o modelo não devolveu vetor da consulta".to_owned())
         })?;
-        if vetor.len() != DIMENSAO {
-            return Err(ErroRag::Inferencia(format!(
-                "vetor da consulta com {} posições; o esperado é {DIMENSAO}",
+        if vetor.len() != DIMENSION {
+            return Err(RagError::Inference(format!(
+                "vetor da consulta com {} posições; o esperado é {DIMENSION}",
                 vetor.len()
             )));
         }
-        let q = quantizar(&vetor);
-        let nq = norma(&q);
+        let q = quantize(&vetor);
+        let nq = norm(&q);
 
         let indice = self.carregar(org, agente)?;
         let melhores = varrer(&indice, &q, nq, limite);
@@ -493,9 +493,9 @@ impl Indice {
         agente: AgentId,
         consulta: &str,
         limite: usize,
-    ) -> Result<Vec<Encontrado>, ErroRag> {
+    ) -> Result<Vec<Encontrado>, RagError> {
         if limite == 0 {
-            return Err(ErroRag::Configuracao(
+            return Err(RagError::Configuration(
                 "o limite de resultados deve ser maior que zero".to_owned(),
             ));
         }
@@ -515,7 +515,7 @@ impl Indice {
 
     /// Todos os trechos gravados do agente, em ordem de item e de posição. Serve para conferir o
     /// que foi indexado.
-    pub fn listar_trechos(&self, org: OrgId, agente: AgentId) -> Result<Vec<Trecho>, ErroRag> {
+    pub fn listar_trechos(&self, org: OrgId, agente: AgentId) -> Result<Vec<Trecho>, RagError> {
         let conn = trava(&self.conn);
         let mut stmt = conn
             .prepare(
@@ -526,7 +526,7 @@ impl Indice {
                  WHERE t.org_id = ?1 AND t.agente_id = ?2
                  ORDER BY t.item_id, t.ordem",
             )
-            .map_err(erro_banco)?;
+            .map_err(database_error)?;
         let linhas = stmt
             .query_map(params![org.to_string(), agente.to_string()], |linha| {
                 Ok((
@@ -536,10 +536,10 @@ impl Indice {
                     linha.get::<_, String>(3)?,
                 ))
             })
-            .map_err(erro_banco)?;
+            .map_err(database_error)?;
         let mut saida = Vec::new();
         for linha in linhas {
-            let (item, ordem, titulo, texto) = linha.map_err(erro_banco)?;
+            let (item, ordem, titulo, texto) = linha.map_err(database_error)?;
             saida.push(Trecho {
                 item: item_id(&item)?,
                 ordem: ordem as usize,
@@ -564,9 +564,9 @@ impl Indice {
         agente: AgentId,
         consulta: &str,
         config: &ConfigBusca,
-    ) -> Result<Vec<Achado>, ErroRag> {
+    ) -> Result<Vec<Achado>, RagError> {
         if config.top_k == 0 {
-            return Err(ErroRag::Configuracao(
+            return Err(RagError::Configuration(
                 "o top-k da busca deve ser maior que zero".to_owned(),
             ));
         }
@@ -575,18 +575,18 @@ impl Indice {
         }
         let profundidade = config.profundidade.max(config.top_k);
         let textos = vec![consulta.to_owned()];
-        let geradas = self.embedder.embedir_lote(&textos).await?;
+        let geradas = self.embedder.embed_batch(&textos).await?;
         let vetor = geradas.into_iter().next().ok_or_else(|| {
-            ErroRag::Inferencia("o modelo não devolveu vetor da consulta".to_owned())
+            RagError::Inference("o modelo não devolveu vetor da consulta".to_owned())
         })?;
-        if vetor.len() != DIMENSAO {
-            return Err(ErroRag::Inferencia(format!(
-                "vetor da consulta com {} posições; o esperado é {DIMENSAO}",
+        if vetor.len() != DIMENSION {
+            return Err(RagError::Inference(format!(
+                "vetor da consulta com {} posições; o esperado é {DIMENSION}",
                 vetor.len()
             )));
         }
-        let q = quantizar(&vetor);
-        let nq = norma(&q);
+        let q = quantize(&vetor);
+        let nq = norm(&q);
 
         // As duas listas de candidatos: vetor (ordem do cosseno) e palavras (ordem do BM25).
         let indice = self.carregar(org, agente)?;
@@ -650,21 +650,21 @@ impl Indice {
         &self,
         org: OrgId,
         agente: AgentId,
-    ) -> Result<HashMap<KnowledgeItemId, String>, ErroRag> {
+    ) -> Result<HashMap<KnowledgeItemId, String>, RagError> {
         let conn = trava(&self.conn);
         let mut stmt = conn
             .prepare(
                 "SELECT item_id, hash_origem FROM rag_itens WHERE org_id = ?1 AND agente_id = ?2",
             )
-            .map_err(erro_banco)?;
+            .map_err(database_error)?;
         let linhas = stmt
             .query_map(params![org.to_string(), agente.to_string()], |linha| {
                 Ok((linha.get::<_, String>(0)?, linha.get::<_, String>(1)?))
             })
-            .map_err(erro_banco)?;
+            .map_err(database_error)?;
         let mut mapa = HashMap::new();
         for linha in linhas {
-            let (id, hash) = linha.map_err(erro_banco)?;
+            let (id, hash) = linha.map_err(database_error)?;
             mapa.insert(item_id(&id)?, hash);
         }
         Ok(mapa)
@@ -677,7 +677,7 @@ impl Indice {
         agente: AgentId,
         consulta: &str,
         limite: usize,
-    ) -> Result<Vec<(i64, f64)>, ErroRag> {
+    ) -> Result<Vec<(i64, f64)>, RagError> {
         let Some(expressao) = expressao_fts(consulta) else {
             return Ok(Vec::new());
         };
@@ -689,7 +689,7 @@ impl Indice {
                  ORDER BY bm25(rag_trechos_fts), rowid
                  LIMIT ?4",
             )
-            .map_err(erro_banco)?;
+            .map_err(database_error)?;
         let achados: Vec<(i64, f64)> = stmt
             .query_map(
                 params![
@@ -700,9 +700,9 @@ impl Indice {
                 ],
                 |linha| Ok((linha.get(0)?, linha.get(1)?)),
             )
-            .map_err(erro_banco)?
+            .map_err(database_error)?
             .collect::<Result<_, _>>()
-            .map_err(erro_banco)?;
+            .map_err(database_error)?;
         Ok(achados)
     }
 
@@ -718,20 +718,20 @@ impl Indice {
         org: OrgId,
         agente: AgentId,
         produtos: &[ProdutoRag],
-    ) -> Result<RelatorioIndexacao, ErroRag> {
+    ) -> Result<RelatorioIndexacao, RagError> {
         let _vez = self.escrita.lock().await;
 
         let mut vistos = HashSet::new();
         for produto in produtos {
             if !vistos.insert(produto.id) {
-                return Err(ErroRag::Item(format!(
+                return Err(RagError::Item(format!(
                     "produto repetido na lista: {}",
                     produto.id
                 )));
             }
         }
 
-        let identidade = self.embedder.identidade().clone();
+        let identidade = self.embedder.identity().clone();
         let atuais = {
             let conn = trava(&self.conn);
             ler_hashes_produtos(&conn, org, agente)?
@@ -781,7 +781,7 @@ impl Indice {
             alvo.clear();
             for _ in 0..trechos.len() {
                 let vetor = vetores.next().ok_or_else(|| {
-                    ErroRag::Inferencia("faltam vetores para os trechos do produto".to_owned())
+                    RagError::Inference("faltam vetores para os trechos do produto".to_owned())
                 })?;
                 alvo.push(vetor);
             }
@@ -789,7 +789,7 @@ impl Indice {
 
         {
             let mut conn = trava(&self.conn);
-            let tx = conn.transaction().map_err(erro_banco)?;
+            let tx = conn.transaction().map_err(database_error)?;
             for id in &para_apagar {
                 apagar_produto(&tx, org, agente, id)?;
             }
@@ -809,7 +809,7 @@ impl Indice {
                         trechos.len() as i64,
                     ],
                 )
-                .map_err(erro_banco)?;
+                .map_err(database_error)?;
                 for (ordem, (texto, (vetor, n))) in trechos.iter().zip(vetores).enumerate() {
                     let bytes: Vec<u8> = vetor.iter().map(|x| *x as u8).collect();
                     tx.execute(
@@ -826,7 +826,7 @@ impl Indice {
                             f64::from(*n),
                         ],
                     )
-                    .map_err(erro_banco)?;
+                    .map_err(database_error)?;
                     let rowid = tx.last_insert_rowid();
                     tx.execute(
                         "INSERT INTO rag_produtos_fts (rowid, texto_busca, org_id, agente_id)
@@ -838,11 +838,11 @@ impl Indice {
                             agente.to_string(),
                         ],
                     )
-                    .map_err(erro_banco)?;
+                    .map_err(database_error)?;
                     relatorio.trechos_gravados += 1;
                 }
             }
-            tx.commit().map_err(erro_banco)?;
+            tx.commit().map_err(database_error)?;
         }
 
         tracing::info!(
@@ -865,9 +865,9 @@ impl Indice {
         agente: AgentId,
         consulta: &str,
         config: &ConfigBusca,
-    ) -> Result<Vec<AchadoProduto>, ErroRag> {
+    ) -> Result<Vec<AchadoProduto>, RagError> {
         if config.top_k == 0 {
-            return Err(ErroRag::Configuracao(
+            return Err(RagError::Configuration(
                 "o top-k da busca deve ser maior que zero".to_owned(),
             ));
         }
@@ -955,9 +955,9 @@ impl Indice {
         agente: AgentId,
         consulta: &str,
         limite: usize,
-    ) -> Result<Vec<AchadoProduto>, ErroRag> {
+    ) -> Result<Vec<AchadoProduto>, RagError> {
         if limite == 0 {
-            return Err(ErroRag::Configuracao(
+            return Err(RagError::Configuration(
                 "o limite de resultados deve ser maior que zero".to_owned(),
             ));
         }
@@ -999,25 +999,26 @@ impl Indice {
         &self,
         org: OrgId,
         agente: AgentId,
-    ) -> Result<HashMap<ProductId, String>, ErroRag> {
+    ) -> Result<HashMap<ProductId, String>, RagError> {
         let conn = trava(&self.conn);
         let mut stmt = conn
             .prepare(
                 "SELECT produto_id, hash_origem FROM rag_produtos
                   WHERE org_id = ?1 AND agente_id = ?2",
             )
-            .map_err(erro_banco)?;
+            .map_err(database_error)?;
         let linhas = stmt
             .query_map(params![org.to_string(), agente.to_string()], |linha| {
                 Ok((linha.get::<_, String>(0)?, linha.get::<_, String>(1)?))
             })
-            .map_err(erro_banco)?;
+            .map_err(database_error)?;
         let mut mapa = HashMap::new();
         for linha in linhas {
-            let (id, hash) = linha.map_err(erro_banco)?;
+            let (id, hash) = linha.map_err(database_error)?;
             mapa.insert(
-                ProductId::from_str(&id)
-                    .map_err(|_| ErroRag::Banco("id de produto inválido no rag.db".to_owned()))?,
+                ProductId::from_str(&id).map_err(|_| {
+                    RagError::Database("id de produto inválido no rag.db".to_owned())
+                })?,
                 hash,
             );
         }
@@ -1025,30 +1026,30 @@ impl Indice {
     }
 
     /// Vetor (int8) e norma da consulta.
-    async fn vetor_da_consulta(&self, consulta: &str) -> Result<(Vec<i8>, f32), ErroRag> {
+    async fn vetor_da_consulta(&self, consulta: &str) -> Result<(Vec<i8>, f32), RagError> {
         let textos = vec![consulta.to_owned()];
-        let geradas = self.embedder.embedir_lote(&textos).await?;
+        let geradas = self.embedder.embed_batch(&textos).await?;
         let vetor = geradas.into_iter().next().ok_or_else(|| {
-            ErroRag::Inferencia("o modelo não devolveu vetor da consulta".to_owned())
+            RagError::Inference("o modelo não devolveu vetor da consulta".to_owned())
         })?;
-        if vetor.len() != DIMENSAO {
-            return Err(ErroRag::Inferencia(format!(
-                "vetor da consulta com {} posições; o esperado é {DIMENSAO}",
+        if vetor.len() != DIMENSION {
+            return Err(RagError::Inference(format!(
+                "vetor da consulta com {} posições; o esperado é {DIMENSION}",
                 vetor.len()
             )));
         }
-        let q = quantizar(&vetor);
-        let nq = norma(&q);
+        let q = quantize(&vetor);
+        let nq = norm(&q);
         Ok((q, nq))
     }
 
     /// Embeda os textos em lotes e devolve (vetor int8, norma) na ordem pedida.
-    async fn embedar_textos(&self, textos: &[String]) -> Result<Vec<(Vec<i8>, f32)>, ErroRag> {
+    async fn embedar_textos(&self, textos: &[String]) -> Result<Vec<(Vec<i8>, f32)>, RagError> {
         let mut vetores: Vec<Vec<f32>> = Vec::with_capacity(textos.len());
         for bloco in textos.chunks(LOTE_INDEXACAO) {
-            let gerados = self.embedder.embedir_lote(bloco).await?;
+            let gerados = self.embedder.embed_batch(bloco).await?;
             if gerados.len() != bloco.len() {
-                return Err(ErroRag::Inferencia(format!(
+                return Err(RagError::Inference(format!(
                     "o modelo devolveu {} vetores para {} textos",
                     gerados.len(),
                     bloco.len()
@@ -1058,14 +1059,14 @@ impl Indice {
         }
         let mut saida = Vec::with_capacity(vetores.len());
         for vetor in vetores {
-            if vetor.len() != DIMENSAO {
-                return Err(ErroRag::Inferencia(format!(
-                    "vetor com {} posições; o esperado é {DIMENSAO}",
+            if vetor.len() != DIMENSION {
+                return Err(RagError::Inference(format!(
+                    "vetor com {} posições; o esperado é {DIMENSION}",
                     vetor.len()
                 )));
             }
-            let q = quantizar(&vetor);
-            let n = norma(&q);
+            let q = quantize(&vetor);
+            let n = norm(&q);
             saida.push((q, n));
         }
         Ok(saida)
@@ -1073,8 +1074,8 @@ impl Indice {
 
     /// Identidade do modelo que gerou os vetores. A CLI usa para calcular o hash que o conteúdo
     /// atual de um item produziria e dizer se ele está indexado ou pendente.
-    pub fn identidade(&self) -> &IdentidadeModelo {
-        self.embedder.identidade()
+    pub fn identidade(&self) -> &ModelIdentity {
+        self.embedder.identity()
     }
 
     /// Quantos agentes estão carregados na memória agora.
@@ -1094,7 +1095,7 @@ impl Indice {
 
     /// Carrega o índice do agente, do cache ou do `rag.db`. Quando o orçamento estoura, tira o
     /// agente ocioso há mais tempo.
-    fn carregar(&self, org: OrgId, agente: AgentId) -> Result<Arc<IndiceAgente>, ErroRag> {
+    fn carregar(&self, org: OrgId, agente: AgentId) -> Result<Arc<IndiceAgente>, RagError> {
         let chave = (org, agente);
         let geracao = {
             let mut cache = trava(&self.cache);
@@ -1145,7 +1146,7 @@ impl Indice {
         Ok(lido)
     }
 
-    fn ler_indice(&self, org: OrgId, agente: AgentId) -> Result<IndiceAgente, ErroRag> {
+    fn ler_indice(&self, org: OrgId, agente: AgentId) -> Result<IndiceAgente, RagError> {
         let conn = trava(&self.conn);
         let mut stmt = conn
             .prepare(
@@ -1153,7 +1154,7 @@ impl Indice {
                  WHERE org_id = ?1 AND agente_id = ?2
                  ORDER BY id",
             )
-            .map_err(erro_banco)?;
+            .map_err(database_error)?;
         let linhas = stmt
             .query_map(params![org.to_string(), agente.to_string()], |linha| {
                 Ok((
@@ -1162,13 +1163,13 @@ impl Indice {
                     linha.get::<_, f64>(2)?,
                 ))
             })
-            .map_err(erro_banco)?;
+            .map_err(database_error)?;
         let mut indice = IndiceAgente::default();
         for linha in linhas {
-            let (id, bytes, n) = linha.map_err(erro_banco)?;
-            if bytes.len() != DIMENSAO {
-                return Err(ErroRag::Banco(format!(
-                    "vetor gravado com {} posições; o esperado é {DIMENSAO}. Reindexe o agente",
+            let (id, bytes, n) = linha.map_err(database_error)?;
+            if bytes.len() != DIMENSION {
+                return Err(RagError::Database(format!(
+                    "vetor gravado com {} posições; o esperado é {DIMENSION}. Reindexe o agente",
                     bytes.len()
                 )));
             }
@@ -1184,8 +1185,8 @@ impl Indice {
 /// (pontuação, rowid), do maior para o menor. Em empate, fica o trecho que veio antes.
 fn varrer(indice: &IndiceAgente, q: &[i8], nq: f32, limite: usize) -> Vec<(f32, i64)> {
     let mut melhores: Vec<(f32, i64)> = Vec::with_capacity(limite + 1);
-    for (posicao, vetor) in indice.vetores.as_chunks::<DIMENSAO>().0.iter().enumerate() {
-        let pontuacao = cosseno(produto_interno(q, vetor), nq, indice.normas[posicao]);
+    for (posicao, vetor) in indice.vetores.as_chunks::<DIMENSION>().0.iter().enumerate() {
+        let pontuacao = cosine(dot_product(q, vetor), nq, indice.normas[posicao]);
         if melhores.len() == limite && pontuacao <= melhores[limite - 1].0 {
             continue;
         }
@@ -1212,8 +1213,8 @@ fn varrer_com_alvos(
 ) -> (Vec<(f32, i64)>, HashMap<i64, f32>) {
     let mut melhores: Vec<(f32, i64)> = Vec::with_capacity(limite + 1);
     let mut cos_alvos: HashMap<i64, f32> = HashMap::with_capacity(alvos.len());
-    for (posicao, vetor) in indice.vetores.as_chunks::<DIMENSAO>().0.iter().enumerate() {
-        let pontuacao = cosseno(produto_interno(q, vetor), nq, indice.normas[posicao]);
+    for (posicao, vetor) in indice.vetores.as_chunks::<DIMENSION>().0.iter().enumerate() {
+        let pontuacao = cosine(dot_product(q, vetor), nq, indice.normas[posicao]);
         let rowid = indice.ids[posicao];
         if alvos.contains(&rowid) {
             cos_alvos.insert(rowid, pontuacao);
@@ -1289,9 +1290,9 @@ fn expressao_fts(consulta: &str) -> Option<String> {
     }
 }
 
-fn item_id(texto: &str) -> Result<KnowledgeItemId, ErroRag> {
+fn item_id(texto: &str) -> Result<KnowledgeItemId, RagError> {
     KnowledgeItemId::from_str(texto)
-        .map_err(|_| ErroRag::Banco("id de item inválido no rag.db".to_owned()))
+        .map_err(|_| RagError::Database("id de item inválido no rag.db".to_owned()))
 }
 
 /// Hashes de origem dos itens já indexados do agente, por id do item.
@@ -1299,18 +1300,18 @@ fn ler_hashes(
     conn: &Connection,
     org: OrgId,
     agente: AgentId,
-) -> Result<HashMap<String, String>, ErroRag> {
+) -> Result<HashMap<String, String>, RagError> {
     let mut stmt = conn
         .prepare("SELECT item_id, hash_origem FROM rag_itens WHERE org_id = ?1 AND agente_id = ?2")
-        .map_err(erro_banco)?;
+        .map_err(database_error)?;
     let linhas = stmt
         .query_map(params![org.to_string(), agente.to_string()], |linha| {
             Ok((linha.get::<_, String>(0)?, linha.get::<_, String>(1)?))
         })
-        .map_err(erro_banco)?;
+        .map_err(database_error)?;
     let mut mapa = HashMap::new();
     for linha in linhas {
-        let (id, hash) = linha.map_err(erro_banco)?;
+        let (id, hash) = linha.map_err(database_error)?;
         mapa.insert(id, hash);
     }
     Ok(mapa)
@@ -1322,36 +1323,36 @@ fn apagar_item(
     org: OrgId,
     agente: AgentId,
     id: &str,
-) -> Result<(), ErroRag> {
+) -> Result<(), RagError> {
     let (org, agente) = (org.to_string(), agente.to_string());
     let rowids: Vec<i64> = {
         let mut stmt = tx
             .prepare(
                 "SELECT id FROM rag_trechos WHERE org_id = ?1 AND agente_id = ?2 AND item_id = ?3",
             )
-            .map_err(erro_banco)?;
+            .map_err(database_error)?;
         let linhas = stmt
             .query_map(params![org, agente, id], |linha| linha.get(0))
-            .map_err(erro_banco)?;
-        linhas.collect::<Result<_, _>>().map_err(erro_banco)?
+            .map_err(database_error)?;
+        linhas.collect::<Result<_, _>>().map_err(database_error)?
     };
     for rowid in rowids {
         tx.execute(
             "DELETE FROM rag_trechos_fts WHERE rowid = ?1",
             params![rowid],
         )
-        .map_err(erro_banco)?;
+        .map_err(database_error)?;
     }
     tx.execute(
         "DELETE FROM rag_trechos WHERE org_id = ?1 AND agente_id = ?2 AND item_id = ?3",
         params![org, agente, id],
     )
-    .map_err(erro_banco)?;
+    .map_err(database_error)?;
     tx.execute(
         "DELETE FROM rag_itens WHERE org_id = ?1 AND agente_id = ?2 AND item_id = ?3",
         params![org, agente, id],
     )
-    .map_err(erro_banco)?;
+    .map_err(database_error)?;
     Ok(())
 }
 
@@ -1361,7 +1362,7 @@ fn detalhe(
     org: OrgId,
     agente: AgentId,
     rowid: i64,
-) -> Result<Option<Trecho>, ErroRag> {
+) -> Result<Option<Trecho>, RagError> {
     let linha = conn
         .query_row(
             "SELECT t.item_id, t.ordem, i.titulo, t.texto
@@ -1380,7 +1381,7 @@ fn detalhe(
             },
         )
         .optional()
-        .map_err(erro_banco)?;
+        .map_err(database_error)?;
     match linha {
         Some((item, ordem, titulo, texto)) => Ok(Some(Trecho {
             item: item_id(&item)?,
@@ -1399,21 +1400,21 @@ fn ler_hashes_produtos(
     conn: &Connection,
     org: OrgId,
     agente: AgentId,
-) -> Result<HashMap<String, String>, ErroRag> {
+) -> Result<HashMap<String, String>, RagError> {
     let mut stmt = conn
         .prepare(
             "SELECT produto_id, hash_origem FROM rag_produtos
               WHERE org_id = ?1 AND agente_id = ?2",
         )
-        .map_err(erro_banco)?;
+        .map_err(database_error)?;
     let linhas = stmt
         .query_map(params![org.to_string(), agente.to_string()], |linha| {
             Ok((linha.get::<_, String>(0)?, linha.get::<_, String>(1)?))
         })
-        .map_err(erro_banco)?;
+        .map_err(database_error)?;
     let mut mapa = HashMap::new();
     for linha in linhas {
-        let (id, hash) = linha.map_err(erro_banco)?;
+        let (id, hash) = linha.map_err(database_error)?;
         mapa.insert(id, hash);
     }
     Ok(mapa)
@@ -1425,7 +1426,7 @@ fn apagar_produto(
     org: OrgId,
     agente: AgentId,
     id: &str,
-) -> Result<(), ErroRag> {
+) -> Result<(), RagError> {
     let (org, agente) = (org.to_string(), agente.to_string());
     let rowids: Vec<i64> = {
         let mut stmt = tx
@@ -1433,29 +1434,29 @@ fn apagar_produto(
                 "SELECT id FROM rag_produtos_trechos
                   WHERE org_id = ?1 AND agente_id = ?2 AND produto_id = ?3",
             )
-            .map_err(erro_banco)?;
+            .map_err(database_error)?;
         let linhas = stmt
             .query_map(params![org, agente, id], |linha| linha.get(0))
-            .map_err(erro_banco)?;
-        linhas.collect::<Result<_, _>>().map_err(erro_banco)?
+            .map_err(database_error)?;
+        linhas.collect::<Result<_, _>>().map_err(database_error)?
     };
     for rowid in rowids {
         tx.execute(
             "DELETE FROM rag_produtos_fts WHERE rowid = ?1",
             params![rowid],
         )
-        .map_err(erro_banco)?;
+        .map_err(database_error)?;
     }
     tx.execute(
         "DELETE FROM rag_produtos_trechos WHERE org_id = ?1 AND agente_id = ?2 AND produto_id = ?3",
         params![org, agente, id],
     )
-    .map_err(erro_banco)?;
+    .map_err(database_error)?;
     tx.execute(
         "DELETE FROM rag_produtos WHERE org_id = ?1 AND agente_id = ?2 AND produto_id = ?3",
         params![org, agente, id],
     )
-    .map_err(erro_banco)?;
+    .map_err(database_error)?;
     Ok(())
 }
 
@@ -1465,14 +1466,14 @@ fn ler_indice_produtos(
     conn: &Connection,
     org: OrgId,
     agente: AgentId,
-) -> Result<IndiceAgente, ErroRag> {
+) -> Result<IndiceAgente, RagError> {
     let mut stmt = conn
         .prepare(
             "SELECT id, vetor, norma FROM rag_produtos_trechos
               WHERE org_id = ?1 AND agente_id = ?2
               ORDER BY id",
         )
-        .map_err(erro_banco)?;
+        .map_err(database_error)?;
     let linhas = stmt
         .query_map(params![org.to_string(), agente.to_string()], |linha| {
             Ok((
@@ -1481,13 +1482,13 @@ fn ler_indice_produtos(
                 linha.get::<_, f64>(2)?,
             ))
         })
-        .map_err(erro_banco)?;
+        .map_err(database_error)?;
     let mut indice = IndiceAgente::default();
     for linha in linhas {
-        let (id, bytes, n) = linha.map_err(erro_banco)?;
-        if bytes.len() != DIMENSAO {
-            return Err(ErroRag::Banco(format!(
-                "vetor de produto gravado com {} posições; o esperado é {DIMENSAO}. Reindexe o agente",
+        let (id, bytes, n) = linha.map_err(database_error)?;
+        if bytes.len() != DIMENSION {
+            return Err(RagError::Database(format!(
+                "vetor de produto gravado com {} posições; o esperado é {DIMENSION}. Reindexe o agente",
                 bytes.len()
             )));
         }
@@ -1505,7 +1506,7 @@ fn palavras_produtos_com_rowid(
     agente: AgentId,
     consulta: &str,
     limite: usize,
-) -> Result<Vec<(i64, f64)>, ErroRag> {
+) -> Result<Vec<(i64, f64)>, RagError> {
     let Some(expressao) = expressao_fts(consulta) else {
         return Ok(Vec::new());
     };
@@ -1516,7 +1517,7 @@ fn palavras_produtos_com_rowid(
               ORDER BY bm25(rag_produtos_fts), rowid
               LIMIT ?4",
         )
-        .map_err(erro_banco)?;
+        .map_err(database_error)?;
     let achados: Vec<(i64, f64)> = stmt
         .query_map(
             params![
@@ -1527,9 +1528,9 @@ fn palavras_produtos_com_rowid(
             ],
             |linha| Ok((linha.get(0)?, linha.get(1)?)),
         )
-        .map_err(erro_banco)?
+        .map_err(database_error)?
         .collect::<Result<_, _>>()
-        .map_err(erro_banco)?;
+        .map_err(database_error)?;
     Ok(achados)
 }
 
@@ -1539,7 +1540,7 @@ fn detalhe_produto(
     org: OrgId,
     agente: AgentId,
     rowid: i64,
-) -> Result<Option<(ProductId, String, String)>, ErroRag> {
+) -> Result<Option<(ProductId, String, String)>, RagError> {
     let linha = conn
         .query_row(
             "SELECT t.produto_id, p.nome, t.texto
@@ -1557,11 +1558,11 @@ fn detalhe_produto(
             },
         )
         .optional()
-        .map_err(erro_banco)?;
+        .map_err(database_error)?;
     match linha {
         Some((produto, nome, texto)) => {
             let id = ProductId::from_str(&produto)
-                .map_err(|_| ErroRag::Banco("id de produto inválido no rag.db".to_owned()))?;
+                .map_err(|_| RagError::Database("id de produto inválido no rag.db".to_owned()))?;
             Ok(Some((id, nome, texto)))
         }
         None => Ok(None),

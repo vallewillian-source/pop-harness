@@ -392,7 +392,7 @@ mod testes {
         pasta: &std::path::Path,
     ) -> (Arc<BaseConhecimento>, Arc<CatalogoProdutos>) {
         let abrir = || {
-            let embedder: Arc<dyn Embedder> = Arc::new(poph_rag::EmbedderFake::new());
+            let embedder: Arc<dyn Embedder> = Arc::new(poph_rag::FakeEmbedder::new());
             Indice::abrir(
                 &pasta.join("dados").join("rag.db"),
                 embedder,

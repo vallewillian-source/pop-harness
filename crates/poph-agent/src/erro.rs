@@ -54,7 +54,7 @@ pub enum ErroAgente {
 
     /// Falha da busca semântica ou do índice de trechos (HR-17).
     #[error("busca na base de conhecimento: {0}")]
-    Rag(#[from] poph_rag::ErroRag),
+    Rag(#[from] poph_rag::RagError),
 
     /// Falha que não deveria acontecer (estado inconsistente, tarefa sem runtime).
     #[error("erro interno do estado quente: {0}")]

@@ -7,7 +7,7 @@ use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::thread;
 
-use poph_rag::ErroRag;
+use poph_rag::RagError;
 use poph_rag::instalacao::{ArquivoModelo, Situacao, instalar_arquivos};
 use sha2::{Digest, Sha256};
 
@@ -112,10 +112,10 @@ fn sha_errado_nao_publica_o_arquivo() {
         instalar_arquivos(pasta.caminho(), &itens).expect_err("hash errado não pode ser aceito");
 
     match &erro {
-        ErroRag::ChecksumNaoConfere {
-            arquivo,
-            esperado: e,
-            obtido,
+        RagError::ChecksumMismatch {
+            file: arquivo,
+            expected: e,
+            actual: obtido,
         } => {
             assert_eq!(arquivo, "modelo.bin");
             assert_eq!(e, &esperado);
@@ -161,7 +161,10 @@ fn resposta_de_erro_do_servidor_da_mensagem_clara() {
     let erro = instalar_arquivos(pasta.caminho(), &itens).expect_err("404 é erro");
 
     match &erro {
-        ErroRag::Download { arquivo, motivo } => {
+        RagError::Download {
+            file: arquivo,
+            reason: motivo,
+        } => {
             assert_eq!(arquivo, "modelo.bin");
             assert!(motivo.contains("404"), "{motivo}");
         }

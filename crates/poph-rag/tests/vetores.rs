@@ -25,7 +25,7 @@ async fn vetores_batem_com_a_referencia_do_spike() {
     .expect("abre o modelo instalado");
     let (textos, referencia) = referencia();
 
-    let obtidos = modelo.embedir_lote(&textos).await.expect("gera os vetores");
+    let obtidos = modelo.embed_batch(&textos).await.expect("gera os vetores");
 
     assert_eq!(obtidos.len(), referencia.len());
     let mut pior = 1.0f32;
@@ -55,11 +55,11 @@ async fn lote_e_texto_unico_dao_o_mesmo_vetor() {
     .expect("abre o modelo");
     let (textos, _) = referencia();
 
-    let em_lote = modelo.embedir_lote(&textos).await.expect("lote");
+    let em_lote = modelo.embed_batch(&textos).await.expect("lote");
     let mut pior = 1.0f32;
     for (indice, texto) in textos.iter().enumerate() {
         let sozinho = modelo
-            .embedir_lote(std::slice::from_ref(texto))
+            .embed_batch(std::slice::from_ref(texto))
             .await
             .expect("texto único");
         pior = pior.min(cosseno(&em_lote[indice], &sozinho[0]));
@@ -86,8 +86,8 @@ async fn mesmo_texto_mesmo_vetor_nas_duas_vezes() {
     .expect("abre o modelo");
     let (textos, _) = referencia();
 
-    let primeira = modelo.embedir_lote(&textos).await.expect("primeira");
-    let segunda = modelo.embedir_lote(&textos).await.expect("segunda");
+    let primeira = modelo.embed_batch(&textos).await.expect("primeira");
+    let segunda = modelo.embed_batch(&textos).await.expect("segunda");
     assert_eq!(
         primeira, segunda,
         "a mesma entrada deve dar o mesmo vetor, bit a bit"

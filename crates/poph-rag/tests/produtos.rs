@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use poph_rag::{
-    ConfigBusca, ConfigIndice, ConfigModelo, Embedder, EmbedderFake, EmbedderOrt, Indice,
+    ConfigBusca, ConfigIndice, ConfigModelo, Embedder, EmbedderOrt, FakeEmbedder, Indice,
     ProdutoRag,
 };
 use poph_types::{AgentId, OrgId, ProductId};
@@ -235,7 +235,7 @@ async fn hibrida_de_produtos_acerta_top3_pelo_menos_tanto_quanto_so_vetor() {
 #[tokio::test]
 async fn mudar_preco_nao_muda_o_hash_do_indice() {
     let pasta = Pasta::nova("preco");
-    let embedder: Arc<dyn Embedder> = Arc::new(EmbedderFake::new());
+    let embedder: Arc<dyn Embedder> = Arc::new(FakeEmbedder::new());
     let (indice, _) =
         Indice::abrir(&pasta.rag_db(), embedder, ConfigIndice::default()).expect("abre o índice");
     let org = OrgId::generate();
@@ -270,7 +270,7 @@ async fn mudar_preco_nao_muda_o_hash_do_indice() {
 #[tokio::test]
 async fn produto_que_sai_da_lista_sai_do_indice() {
     let pasta = Pasta::nova("sai");
-    let embedder: Arc<dyn Embedder> = Arc::new(EmbedderFake::new());
+    let embedder: Arc<dyn Embedder> = Arc::new(FakeEmbedder::new());
     let (indice, _) =
         Indice::abrir(&pasta.rag_db(), embedder, ConfigIndice::default()).expect("abre o índice");
     let org = OrgId::generate();

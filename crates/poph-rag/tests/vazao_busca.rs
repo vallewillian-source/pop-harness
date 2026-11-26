@@ -10,8 +10,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
-use poph_rag::memoria::rss_bytes;
-use poph_rag::{ConfigIndice, EmbedderFake, Indice, ItemRag};
+use poph_rag::memory::rss_bytes;
+use poph_rag::{ConfigIndice, FakeEmbedder, Indice, ItemRag};
 use poph_types::{AgentId, KnowledgeItemId, OrgId};
 
 const TRECHOS: usize = 100_000;
@@ -34,7 +34,7 @@ async fn busca_exata_em_100_mil_trechos_int8() {
     let rss_antes = rss_bytes();
     let (indice, _) = Indice::abrir(
         &caminho,
-        Arc::new(EmbedderFake::new()),
+        Arc::new(FakeEmbedder::new()),
         ConfigIndice {
             orcamento_memoria_bytes: 1 << 30,
         },

@@ -16,7 +16,7 @@ use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
 use poph_agent::turno::{FuturoPausa, Motor, ObservadorNulo, OpcoesTurno, Pausa};
 use poph_agent::{BuscadorProdutos, BuscarProduto, CatalogoProdutos};
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, LlmProvider, Script, ToolCall};
-use poph_rag::{ConfigIndice, Embedder, EmbedderFake, Indice};
+use poph_rag::{ConfigIndice, Embedder, FakeEmbedder, Indice};
 use poph_store::{
     NewAgent, NewCategory, NewConversation, NewMessage, NewOrg, NewProduct, Page, Store,
 };
@@ -123,7 +123,7 @@ impl Cenario {
                 },
             )
             .expect("cria o produto");
-        let embedder: Arc<dyn Embedder> = Arc::new(EmbedderFake::new());
+        let embedder: Arc<dyn Embedder> = Arc::new(FakeEmbedder::new());
         let (indice, _) = Indice::abrir(store.rag_path(), embedder, ConfigIndice::default())
             .expect("abre o índice");
         let catalogo = CatalogoProdutos::novo(Arc::clone(&store), Arc::new(indice));

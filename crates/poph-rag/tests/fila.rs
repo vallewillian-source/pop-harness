@@ -3,20 +3,20 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use poph_rag::fake::vetor_fake;
+use poph_rag::fake::fake_vector;
 use poph_rag::{
-    ConfigFila, Embedder, EmbedderFake, ErroRag, FilaEmbedding, FuturoLote, IdentidadeModelo,
+    BatchFuture, ConfigFila, Embedder, FakeEmbedder, FilaEmbedding, ModelIdentity, RagError,
 };
 use poph_types::{OrgId, Registry};
 
-fn fila_com(embedder: Arc<EmbedderFake>, config: ConfigFila) -> Arc<FilaEmbedding> {
+fn fila_com(embedder: Arc<FakeEmbedder>, config: ConfigFila) -> Arc<FilaEmbedding> {
     let dyn_embedder: Arc<dyn Embedder> = embedder;
     Arc::new(FilaEmbedding::iniciar(dyn_embedder, config, None).expect("fila sobe"))
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn cem_pedidos_de_tres_orgs_respeitam_os_limites_e_voltam_certos() {
-    let embedder = Arc::new(EmbedderFake::new());
+    let embedder = Arc::new(FakeEmbedder::new());
     let fila = fila_com(
         Arc::clone(&embedder),
         ConfigFila {
@@ -37,7 +37,7 @@ async fn cem_pedidos_de_tres_orgs_respeitam_os_limites_e_voltam_certos() {
                 format!("pedido {i} primeiro trecho"),
                 format!("pedido {i} segundo"),
             ];
-            let esperado: Vec<Vec<f32>> = textos.iter().map(|t| vetor_fake(t)).collect();
+            let esperado: Vec<Vec<f32>> = textos.iter().map(|t| fake_vector(t)).collect();
             let obtido = fila.embedir(org, textos).await.expect("embedding");
             obtido == esperado
         }));
@@ -71,7 +71,7 @@ async fn cem_pedidos_de_tres_orgs_respeitam_os_limites_e_voltam_certos() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn org_saturada_nao_atrasa_outra_org() {
-    let embedder = Arc::new(EmbedderFake::new().com_atraso(Duration::from_millis(15)));
+    let embedder = Arc::new(FakeEmbedder::new().with_delay(Duration::from_millis(15)));
     let fila = fila_com(
         Arc::clone(&embedder),
         ConfigFila {
@@ -107,7 +107,7 @@ async fn org_saturada_nao_atrasa_outra_org() {
     let tempo_outra = inicio.elapsed();
     let concluidos_quando_outra_terminou = *concluidos_da_saturada.lock().expect("trava");
 
-    assert_eq!(vetores, vec![vetor_fake("org livre")]);
+    assert_eq!(vetores, vec![fake_vector("org livre")]);
     assert!(
         tempo_outra < Duration::from_millis(150),
         "a outra org esperou {tempo_outra:?}, como se a saturada travasse a fila"
@@ -124,7 +124,7 @@ async fn org_saturada_nao_atrasa_outra_org() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn lote_nunca_passa_do_tamanho_configurado() {
-    let embedder = Arc::new(EmbedderFake::new());
+    let embedder = Arc::new(FakeEmbedder::new());
     let fila = fila_com(
         Arc::clone(&embedder),
         ConfigFila {
@@ -143,19 +143,19 @@ async fn lote_nunca_passa_do_tamanho_configurado() {
 
     assert_eq!(vetores.len(), 10);
     assert!(
-        embedder.maior_lote() <= 4,
+        embedder.largest_batch() <= 4,
         "lote de {} trechos",
-        embedder.maior_lote()
+        embedder.largest_batch()
     );
     assert!(
-        embedder.lotes_processados() >= 3,
+        embedder.processed_batches() >= 3,
         "10 trechos em lotes de 4 pedem ao menos 3 lotes"
     );
 }
 
 #[tokio::test]
 async fn lista_vazia_volta_vazia_sem_tocar_o_embedder() {
-    let embedder = Arc::new(EmbedderFake::new());
+    let embedder = Arc::new(FakeEmbedder::new());
     let fila = fila_com(Arc::clone(&embedder), ConfigFila::default());
 
     let vetores = fila
@@ -164,29 +164,29 @@ async fn lista_vazia_volta_vazia_sem_tocar_o_embedder() {
         .expect("vazio");
 
     assert!(vetores.is_empty());
-    assert_eq!(embedder.lotes_processados(), 0);
+    assert_eq!(embedder.processed_batches(), 0);
 }
 
 /// Embedder que sempre falha, para ver o erro chegar a quem pediu.
 #[derive(Debug)]
 struct EmbedderQueFalha {
-    identidade: IdentidadeModelo,
+    identidade: ModelIdentity,
 }
 
 impl Embedder for EmbedderQueFalha {
-    fn identidade(&self) -> &IdentidadeModelo {
+    fn identity(&self) -> &ModelIdentity {
         &self.identidade
     }
 
-    fn embedir_lote<'a>(&'a self, _textos: &'a [String]) -> FuturoLote<'a> {
-        Box::pin(async { Err(ErroRag::Inferencia("falha simulada".to_owned())) })
+    fn embed_batch<'a>(&'a self, _textos: &'a [String]) -> BatchFuture<'a> {
+        Box::pin(async { Err(RagError::Inference("falha simulada".to_owned())) })
     }
 }
 
 #[tokio::test]
 async fn falha_do_modelo_chega_a_quem_pediu() {
     let embedder: Arc<dyn Embedder> = Arc::new(EmbedderQueFalha {
-        identidade: EmbedderFake::new().identidade().clone(),
+        identidade: FakeEmbedder::new().identity().clone(),
     });
     let fila = FilaEmbedding::iniciar(embedder, ConfigFila::default(), None).expect("fila sobe");
 
@@ -195,14 +195,14 @@ async fn falha_do_modelo_chega_a_quem_pediu() {
         .await
         .expect_err("a falha precisa aparecer");
 
-    assert_eq!(erro, ErroRag::Inferencia("falha simulada".to_owned()));
+    assert_eq!(erro, RagError::Inference("falha simulada".to_owned()));
 }
 
 #[tokio::test]
 async fn metricas_contam_trechos_lotes_e_erros() {
     let registro = Registry::new();
-    let metricas = poph_rag::MetricasRag::registrar(&registro).expect("registra");
-    let embedder: Arc<dyn Embedder> = Arc::new(EmbedderFake::new());
+    let metricas = poph_rag::RagMetrics::register(&registro).expect("registra");
+    let embedder: Arc<dyn Embedder> = Arc::new(FakeEmbedder::new());
     let fila =
         FilaEmbedding::iniciar(embedder, ConfigFila::default(), Some(metricas)).expect("fila sobe");
 
@@ -228,7 +228,7 @@ async fn metricas_contam_trechos_lotes_e_erros() {
 
 #[tokio::test]
 async fn configuracao_com_zero_e_recusada() {
-    let embedder: Arc<dyn Embedder> = Arc::new(EmbedderFake::new());
+    let embedder: Arc<dyn Embedder> = Arc::new(FakeEmbedder::new());
     let recusada = FilaEmbedding::iniciar(
         embedder,
         ConfigFila {
@@ -237,5 +237,5 @@ async fn configuracao_com_zero_e_recusada() {
         },
         None,
     );
-    assert!(matches!(recusada, Err(ErroRag::Configuracao(_))));
+    assert!(matches!(recusada, Err(RagError::Configuration(_))));
 }

@@ -512,7 +512,7 @@ async fn sincronizar(
                 "modelo de embedding indisponível; instale o modelo",
             )
         })?;
-    let identidade = modelo.identidade().clone();
+    let identidade = modelo.identity().clone();
     let modelo: Arc<dyn Embedder> = Arc::new(modelo);
     let fila = Arc::new(
         FilaEmbedding::iniciar(modelo, ConfigFila::default(), None)

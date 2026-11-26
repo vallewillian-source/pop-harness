@@ -18,7 +18,7 @@ use poph_agent::metricas::MetricasMemoria;
 use poph_agent::produtos::{NOME_FERRAMENTA, ParametrosProdutos};
 use poph_agent::turno::{ContextoFerramenta, RegistroFerramentas, UsoFerramentas, oferecidas};
 use poph_agent::{BuscadorProdutos, BuscarProduto, CatalogoProdutos};
-use poph_rag::{ConfigIndice, Embedder, EmbedderFake, Indice};
+use poph_rag::{ConfigIndice, Embedder, FakeEmbedder, Indice};
 use poph_store::{
     NewAgent, NewCategory, NewOrg, NewProduct, Product, ProductChange, Status, Store,
 };
@@ -77,7 +77,7 @@ impl Cenario {
             )
             .expect("cria a categoria")
             .id;
-        let embedder: Arc<dyn Embedder> = Arc::new(EmbedderFake::new());
+        let embedder: Arc<dyn Embedder> = Arc::new(FakeEmbedder::new());
         let (indice, _) = Indice::abrir(store.rag_path(), embedder, ConfigIndice::default())
             .expect("abre o índice");
         let catalogo = CatalogoProdutos::novo(Arc::clone(&store), Arc::new(indice));
