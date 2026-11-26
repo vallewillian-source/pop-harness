@@ -1787,7 +1787,7 @@ fn chamada(id: &str, nome: &str, argumentos: Value) -> LlmEvent {
     LlmEvent::Tool(ToolCall {
         id: id.to_owned(),
         nome: nome.to_owned(),
-        argumentos,
+        arguments: argumentos,
     })
 }
 
@@ -1878,11 +1878,11 @@ async fn ferramentas_do_llm_nao_alcancam_outra_org() {
     // Turno de A (atacante): tudo com ids/termos de B. Turno de B (controle): os mesmos pedidos
     // com os próprios ids de B.
     let roteiros = vec![
-        Script::Eventos(vec![
+        Script::Events(vec![
             chamada("a1", "enviar_arquivo", json!({"id": b.arquivo})),
             LlmEvent::Fim(FinishReason::ChamadasFerramenta),
         ]),
-        Script::Eventos(vec![
+        Script::Events(vec![
             chamada(
                 "a2",
                 "cart_add_item",
@@ -1890,31 +1890,31 @@ async fn ferramentas_do_llm_nao_alcancam_outra_org() {
             ),
             LlmEvent::Fim(FinishReason::ChamadasFerramenta),
         ]),
-        Script::Eventos(vec![
+        Script::Events(vec![
             chamada("a3", "consultar_base", json!({"consulta": MARCADOR_B})),
             LlmEvent::Fim(FinishReason::ChamadasFerramenta),
         ]),
-        Script::Eventos(vec![
+        Script::Events(vec![
             chamada("a4", "buscar_produto", json!({"termo": MARCADOR_B})),
             LlmEvent::Fim(FinishReason::ChamadasFerramenta),
         ]),
-        Script::Eventos(vec![
+        Script::Events(vec![
             LlmEvent::Texto("Não tenho nada para enviar.".to_owned()),
             LlmEvent::Fim(FinishReason::Concluido),
         ]),
-        Script::Eventos(vec![
+        Script::Events(vec![
             chamada("b1", "enviar_arquivo", json!({"id": b.arquivo})),
             LlmEvent::Fim(FinishReason::ChamadasFerramenta),
         ]),
-        Script::Eventos(vec![
+        Script::Events(vec![
             chamada("b2", "consultar_base", json!({"consulta": MARCADOR_B})),
             LlmEvent::Fim(FinishReason::ChamadasFerramenta),
         ]),
-        Script::Eventos(vec![
+        Script::Events(vec![
             chamada("b3", "buscar_produto", json!({"termo": MARCADOR_B})),
             LlmEvent::Fim(FinishReason::ChamadasFerramenta),
         ]),
-        Script::Eventos(vec![
+        Script::Events(vec![
             LlmEvent::Texto("Pronto.".to_owned()),
             LlmEvent::Fim(FinishReason::Concluido),
         ]),

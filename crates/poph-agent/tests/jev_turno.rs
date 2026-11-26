@@ -243,7 +243,7 @@ impl Drop for Cenario {
 }
 
 fn roteiro(texto: &str) -> Script {
-    Script::Eventos(vec![
+    Script::Events(vec![
         poph_core::llm::LlmEvent::Texto(texto.to_owned()),
         poph_core::llm::LlmEvent::Usage(poph_core::llm::Usage {
             entrada: 10,

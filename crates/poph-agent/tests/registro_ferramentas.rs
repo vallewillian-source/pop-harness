@@ -253,18 +253,18 @@ impl Drop for Cenario {
 }
 
 fn resposta(texto: &str) -> Script {
-    Script::Eventos(vec![
+    Script::Events(vec![
         LlmEvent::Texto(texto.to_owned()),
         LlmEvent::Fim(FinishReason::Concluido),
     ])
 }
 
 fn chamada(nome: &str, argumentos: serde_json::Value) -> Script {
-    Script::Eventos(vec![
+    Script::Events(vec![
         LlmEvent::Tool(ToolCall {
             id: "c1".to_owned(),
             nome: nome.to_owned(),
-            argumentos,
+            arguments: argumentos,
         }),
         LlmEvent::Fim(FinishReason::ChamadasFerramenta),
     ])

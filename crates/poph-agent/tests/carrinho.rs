@@ -280,18 +280,18 @@ impl Drop for Cenario {
 }
 
 fn resposta(texto: &str) -> Script {
-    Script::Eventos(vec![
+    Script::Events(vec![
         LlmEvent::Texto(texto.to_owned()),
         LlmEvent::Fim(FinishReason::Concluido),
     ])
 }
 
 fn chamada(nome: &str, id: &str, argumentos: Value) -> Script {
-    Script::Eventos(vec![
+    Script::Events(vec![
         LlmEvent::Tool(ToolCall {
             id: id.to_owned(),
             nome: nome.to_owned(),
-            argumentos,
+            arguments: argumentos,
         }),
         LlmEvent::Fim(FinishReason::ChamadasFerramenta),
     ])
@@ -511,7 +511,7 @@ async fn agente_sem_a_ferramenta_nao_a_recebe() {
         .await
         .expect("o turno roda");
     let nomes: Vec<String> = fake.received()[0]
-        .ferramentas
+        .tools
         .iter()
         .map(|ferramenta| ferramenta.nome.clone())
         .collect();
@@ -534,7 +534,7 @@ async fn agente_com_as_quatro_recebe_as_quatro() {
         .await
         .expect("o turno roda");
     let mut nomes: Vec<String> = fake.received()[0]
-        .ferramentas
+        .tools
         .iter()
         .map(|ferramenta| ferramenta.nome.clone())
         .collect();

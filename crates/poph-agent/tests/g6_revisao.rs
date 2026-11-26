@@ -246,7 +246,7 @@ fn fastrand() -> u64 {
 }
 
 fn roteiro_texto(texto: &str) -> Script {
-    Script::Eventos(vec![
+    Script::Events(vec![
         LlmEvent::Texto(texto.to_owned()),
         LlmEvent::Usage(Usage {
             entrada: 100,
@@ -399,10 +399,7 @@ async fn g6_reprovada_regenera_uma_vez_e_envia_o_texto_novo() {
         ),
         "o pedido da regeneração termina com a orientação do usuário"
     );
-    assert!(
-        ultimo.ferramentas.is_empty(),
-        "regeneração não reabre ferramenta"
-    );
+    assert!(ultimo.tools.is_empty(), "regeneração não reabre ferramenta");
     assert_eq!(cenario.saidas(), vec![REESCRITA], "uma única saída");
     assert_eq!(cenario.fila().len(), 1, "um único item na fila");
     assert_eq!(cenario.metricas.revisoes_g6.value(), 2);
@@ -555,7 +552,7 @@ async fn g6_falha_do_modelo_na_regeneracao_mantem_a_resposta_original() {
     let (motor, provedor) = cenario.motor(
         vec![
             roteiro_texto(RASCUNHO),
-            Script::Falha(LlmError::ConnectionInterrupted("conexão caiu".to_owned())),
+            Script::Failure(LlmError::ConnectionInterrupted("conexão caiu".to_owned())),
         ],
         Some(motor_jev(jev, so_g6())),
     );

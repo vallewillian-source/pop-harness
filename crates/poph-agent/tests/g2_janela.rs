@@ -295,7 +295,7 @@ impl Drop for Cenario {
 // ───────────────────────────── Apoio ─────────────────────────────
 
 fn provedor() -> Arc<FakeProvider> {
-    Arc::new(FakeProvider::with_scripts(vec![Script::Eventos(vec![
+    Arc::new(FakeProvider::with_scripts(vec![Script::Events(vec![
         LlmEvent::Texto("Claro, como posso ajudar?".to_owned()),
         LlmEvent::Usage(Usage {
             entrada: 10,

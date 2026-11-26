@@ -340,7 +340,7 @@ impl Drop for Cenario {
 }
 
 fn roteiro_texto(texto: &str) -> Script {
-    Script::Eventos(vec![
+    Script::Events(vec![
         LlmEvent::Texto(texto.to_owned()),
         LlmEvent::Usage(Usage {
             entrada: 100,

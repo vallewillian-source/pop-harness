@@ -355,7 +355,7 @@ impl Servidor {
 }
 
 fn roteiro_ok() -> Script {
-    Script::Eventos(vec![
+    Script::Events(vec![
         LlmEvent::Texto(RESPOSTA.into()),
         LlmEvent::Fim(FinishReason::Concluido),
     ])
@@ -443,7 +443,7 @@ async fn modelo_indisponivel_deixa_turno_falho_sem_perder_a_mensagem() {
         "indisponivel",
         semear_org_e_agente,
         vec![
-            Script::Falha(LlmError::Unavailable {
+            Script::Failure(LlmError::Unavailable {
                 tentativas: 2,
                 ultimo: "HTTP 503".to_owned(),
             }),
@@ -503,9 +503,9 @@ async fn stream_cortado_no_meio_deixa_turno_falho_sem_resposta_parcial() {
         "stream-cortado",
         semear_org_e_agente,
         vec![
-            Script::Pendurado {
+            Script::Pending {
                 eventos: vec![LlmEvent::Texto("o prazo é de ".into())],
-                depois: Duration::from_millis(50),
+                after: Duration::from_millis(50),
                 erro: LlmError::ConnectionInterrupted("conexão caiu".to_owned()),
             },
             roteiro_ok(),

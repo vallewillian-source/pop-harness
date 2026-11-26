@@ -687,9 +687,9 @@ impl Motor {
         if self
             .cancelamento
             .as_ref()
-            .is_some_and(Cancellation::cancelado)
+            .is_some_and(Cancellation::cancelled)
         {
-            cancelamento.cancelar();
+            cancelamento.cancel();
         }
 
         // D-05: agente inativo não abre turno. A mensagem continua gravada, o turno fica `skipped`.
@@ -1473,7 +1473,7 @@ impl Motor {
                 oferecidas.clone()
             };
             let mut pedido = Request::new(alvo.org, conversa.clone());
-            pedido.ferramentas = lista;
+            pedido.tools = lista;
             pedido.modelo = Some(modelo.clone());
             pedido.cancelamento = cancelamento.clone();
             pedido.temperatura = quente.agente.temperatura.map(|valor| valor as f32);
@@ -1531,7 +1531,7 @@ impl Motor {
                         rodada,
                         Desfecho::Recusada(MOTIVO_LIMITE_DE_CHAMADAS),
                         Duration::ZERO,
-                        &chamada.argumentos,
+                        &chamada.arguments,
                         &conteudo,
                     );
                     conversa.push(Message::Resultado {
@@ -1586,7 +1586,7 @@ impl Motor {
                     rodada,
                     desfecho.para_registro(),
                     duracao,
-                    &chamada.argumentos,
+                    &chamada.arguments,
                     desfecho.texto(),
                 );
                 conversa.push(Message::Resultado {
@@ -2179,8 +2179,8 @@ impl Motor {
         match &self.cancelamento {
             Some(compartilhado) => tokio::select! {
                 evento = fluxo.next() => Ok(evento),
-                _ = compartilhado.aguardar() => {
-                    cancelamento.cancelar();
+                _ = compartilhado.wait() => {
+                    cancelamento.cancel();
                     Err(LlmError::Cancelled)
                 }
             },
@@ -2223,7 +2223,7 @@ impl Motor {
             uso: Arc::clone(uso),
         };
         match ferramenta
-            .executar(contexto, chamada.argumentos.clone())
+            .executar(contexto, chamada.arguments.clone())
             .await
         {
             Ok(texto) => DesfechoFerramenta::Executada(texto),

@@ -195,7 +195,7 @@ fn rodar(
                         if !args.json {
                             eprintln!("\n[cancelando o turno…]");
                         }
-                        cancelamento.cancelar();
+                        cancelamento.cancel();
                     }
                 }
             };

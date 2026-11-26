@@ -124,7 +124,7 @@ impl LlmProvider for ProvedorLento {
 }
 
 fn resposta(texto: &str) -> Script {
-    Script::Eventos(vec![
+    Script::Events(vec![
         LlmEvent::Texto(texto.to_owned()),
         LlmEvent::Usage(Usage {
             entrada: 1,
@@ -135,7 +135,7 @@ fn resposta(texto: &str) -> Script {
 }
 
 fn falha() -> Script {
-    Script::Falha(LlmError::Configuracao(
+    Script::Failure(LlmError::Configuracao(
         "modelo indisponível neste teste".to_owned(),
     ))
 }

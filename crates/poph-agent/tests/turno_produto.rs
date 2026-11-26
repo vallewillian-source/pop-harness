@@ -215,7 +215,7 @@ impl Drop for Cenario {
 }
 
 fn resposta(texto: &str) -> Script {
-    Script::Eventos(vec![
+    Script::Events(vec![
         LlmEvent::Texto(texto.to_owned()),
         LlmEvent::Fim(FinishReason::Concluido),
     ])
@@ -230,11 +230,11 @@ async fn turno_grava_o_produto_usado_com_o_preco_do_registro() {
         .await
         .expect("sincroniza o índice");
 
-    let chamada = Script::Eventos(vec![
+    let chamada = Script::Events(vec![
         LlmEvent::Tool(ToolCall {
             id: "c1".to_owned(),
             nome: "buscar_produto".to_owned(),
-            argumentos: serde_json::json!({"termo": "baratas"}),
+            arguments: serde_json::json!({"termo": "baratas"}),
         }),
         LlmEvent::Fim(FinishReason::ChamadasFerramenta),
     ]);
@@ -259,7 +259,7 @@ async fn turno_grava_o_produto_usado_com_o_preco_do_registro() {
         "uma rodada de ferramenta e o fecho em texto"
     );
     let nomes: Vec<String> = pedidos[0]
-        .ferramentas
+        .tools
         .iter()
         .map(|ferramenta| ferramenta.nome.clone())
         .collect();

@@ -189,7 +189,7 @@ impl Cenario {
     }
 
     fn motor(&self) -> (Motor, Arc<FakeProvider>) {
-        let roteiro = Script::Eventos(vec![
+        let roteiro = Script::Events(vec![
             LlmEvent::Texto("resposta".to_owned()),
             LlmEvent::Usage(Usage {
                 entrada: 100,

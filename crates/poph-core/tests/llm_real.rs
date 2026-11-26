@@ -54,7 +54,7 @@ async fn uma_chamada_real_com_stream_e_ferramenta() {
             )]),
         ],
     );
-    pedido.ferramentas = vec![Tool {
+    pedido.tools = vec![Tool {
         nome: "buscar_produto".to_owned(),
         descricao: "Busca um produto no catálogo e devolve preço e condições".to_owned(),
         parametros: json!({
@@ -105,7 +105,7 @@ async fn uma_chamada_real_com_stream_e_ferramenta() {
     for chamada in &ferramentas {
         println!(
             "argumentos da ferramenta {}: {}",
-            chamada.nome, chamada.argumentos
+            chamada.nome, chamada.arguments
         );
     }
     println!("uso: {uso:?}");

@@ -17,7 +17,7 @@ use poph_store::{AgentChange, Page};
 use poph_types::AgentId;
 
 fn roteiro(texto: &str) -> Script {
-    Script::Eventos(vec![
+    Script::Events(vec![
         LlmEvent::Texto(texto.to_owned()),
         LlmEvent::Usage(Usage {
             entrada: 10,

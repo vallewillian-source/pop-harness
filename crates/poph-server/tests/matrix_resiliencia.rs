@@ -986,7 +986,7 @@ async fn subir_evolucao(evo: EvolucaoFalsa) -> String {
 }
 
 fn resposta_do_agente(i: usize) -> Script {
-    Script::Eventos(vec![
+    Script::Events(vec![
         LlmEvent::Texto(format!("resposta do agente {}", marcador(i))),
         LlmEvent::Usage(Usage {
             entrada: 120,

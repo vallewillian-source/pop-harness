@@ -538,7 +538,7 @@ fn evento_do_aparelho(id: &str, texto: &str) -> Value {
 }
 
 fn resposta(texto: &str) -> Script {
-    Script::Eventos(vec![
+    Script::Events(vec![
         LlmEvent::Texto(texto.to_owned()),
         LlmEvent::Usage(Usage {
             entrada: 120,
@@ -1038,7 +1038,7 @@ async fn metricas_do_turno_aparecem_no_metrics() {
 // ───────────────────────── falha do modelo (HR-26i) ─────────────────────────
 
 fn falha_do_provedor() -> Script {
-    Script::Falha(poph_core::llm::LlmError::Unavailable {
+    Script::Failure(poph_core::llm::LlmError::Unavailable {
         tentativas: 3,
         ultimo: "503 indisponível".to_owned(),
     })
@@ -1159,7 +1159,7 @@ async fn recusa_do_provedor_401_nao_repete_avisa_a_operacao_e_nao_manda_nada() {
     let opcoes = OpcoesFluxo::default().com_falha_modelo(3, Duration::from_millis(50));
     let servidor = cenario
         .subir_com(
-            vec![Script::Falha(poph_core::llm::LlmError::Rejected {
+            vec![Script::Failure(poph_core::llm::LlmError::Rejected {
                 status: 401,
                 mensagem: "chave recusada".to_owned(),
             })],

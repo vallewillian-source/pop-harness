@@ -304,7 +304,7 @@ impl Drop for Cenario {
 }
 
 fn resposta(texto: &str) -> Script {
-    Script::Eventos(vec![
+    Script::Events(vec![
         LlmEvent::Texto(texto.to_owned()),
         LlmEvent::Usage(Usage {
             entrada: 120,
@@ -679,16 +679,16 @@ async fn ferramenta_nao_habilitada_nao_e_oferecida_e_laco_para_no_limite() {
         .expect("grava as ferramentas");
 
     // Primeira resposta do modelo: pede a ferramenta desabilitada e a habilitada na mesma mensagem.
-    let duas_chamadas = Script::Eventos(vec![
+    let duas_chamadas = Script::Events(vec![
         LlmEvent::Tool(ToolCall {
             id: "c1".to_owned(),
             nome: "buscar_produto".to_owned(),
-            argumentos: serde_json::json!({}),
+            arguments: serde_json::json!({}),
         }),
         LlmEvent::Tool(ToolCall {
             id: "c2".to_owned(),
             nome: "consultar_base".to_owned(),
-            argumentos: serde_json::json!({}),
+            arguments: serde_json::json!({}),
         }),
         LlmEvent::Fim(FinishReason::ChamadasFerramenta),
     ]);
@@ -715,7 +715,7 @@ async fn ferramenta_nao_habilitada_nao_e_oferecida_e_laco_para_no_limite() {
 
     // Rodada 0: só a ferramenta habilitada é oferecida.
     let nomes: Vec<String> = pedidos[0]
-        .ferramentas
+        .tools
         .iter()
         .map(|ferramenta| ferramenta.nome.clone())
         .collect();
@@ -744,7 +744,7 @@ async fn ferramenta_nao_habilitada_nao_e_oferecida_e_laco_para_no_limite() {
     );
 
     // Rodada final (limite atingido): o modelo recebe o pedido sem ferramenta nenhuma.
-    assert!(pedidos[1].ferramentas.is_empty());
+    assert!(pedidos[1].tools.is_empty());
 }
 
 // ───────────────────────────── 6. Cancelamento ─────────────────────────────
@@ -753,9 +753,9 @@ async fn ferramenta_nao_habilitada_nao_e_oferecida_e_laco_para_no_limite() {
 async fn cancelamento_encerra_o_turno_e_conclui_a_entrada() {
     let cenario = Cenario::novo("cancelamento");
     let (motor, _fake) = cenario.motor(
-        vec![Script::Pendurado {
+        vec![Script::Pending {
             eventos: vec![LlmEvent::Texto("parcial ".to_owned())],
-            depois: Duration::from_secs(30),
+            after: Duration::from_secs(30),
             erro: LlmError::TimedOut { segundos: 30 },
         }],
         cenario.pausa(),
@@ -780,7 +780,7 @@ async fn cancelamento_encerra_o_turno_e_conclui_a_entrada() {
 
     // Dá tempo de o turno começar e ficar pendurado no provedor, e então cancela.
     tokio::time::sleep(Duration::from_millis(150)).await;
-    compartilhado.cancelar();
+    compartilhado.cancel();
     esperar_fila_vazia(&fluxo, &cenario).await;
 
     let turnos = cenario.turnos();
@@ -826,7 +826,7 @@ async fn cancelamento_encerra_o_turno_e_conclui_a_entrada() {
 async fn erro_do_provedor_grava_o_turno_e_nao_deixa_item_preso() {
     let cenario = Cenario::novo("erro-provedor");
     let (motor, _fake) = cenario.motor(
-        vec![Script::Falha(LlmError::Unavailable {
+        vec![Script::Failure(LlmError::Unavailable {
             tentativas: 3,
             ultimo: "503".to_owned(),
         })],
@@ -1213,7 +1213,7 @@ async fn falta_de_vaga_do_provedor_entra_na_escada_e_nao_chama_o_modelo() {
 async fn provedor_que_recusa_a_chave_nao_gasta_a_escada() {
     let cenario = Cenario::novo("recusa-401");
     let (motor, fake) = cenario.motor(
-        vec![Script::Falha(LlmError::Rejected {
+        vec![Script::Failure(LlmError::Rejected {
             status: 401,
             mensagem: "chave recusada".to_owned(),
         })],
@@ -1392,7 +1392,7 @@ async fn esperar_fila_vazia(fluxo: &Fluxo, cenario: &Cenario) {
 // ───────────────────────────── 8. Falha do modelo (HR-26i) ─────────────────────────────
 
 fn falha_do_provedor() -> Script {
-    Script::Falha(LlmError::Unavailable {
+    Script::Failure(LlmError::Unavailable {
         tentativas: 3,
         ultimo: "503 indisponível".to_owned(),
     })
@@ -1641,9 +1641,9 @@ async fn com_limite_de_uma_tentativa_a_primeira_falha_ja_e_definitiva() {
 #[tokio::test]
 async fn tempo_maximo_do_turno_conta_como_falha_do_modelo_e_entra_na_escada() {
     let cenario = Cenario::novo("tempo-maximo");
-    let pendurado = Script::Pendurado {
+    let pendurado = Script::Pending {
         eventos: Vec::new(),
-        depois: Duration::from_secs(10),
+        after: Duration::from_secs(10),
         erro: LlmError::TimedOut { segundos: 10 },
     };
     let opcoes_turno = OpcoesTurno {

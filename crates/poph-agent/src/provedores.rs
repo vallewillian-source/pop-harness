@@ -90,7 +90,7 @@ mod testes {
     use super::*;
 
     fn fake(nome: &str) -> Arc<dyn LlmProvider> {
-        Arc::new(FakeProvider::with_scripts(vec![Script::Eventos(vec![
+        Arc::new(FakeProvider::with_scripts(vec![Script::Events(vec![
             poph_core::llm::LlmEvent::Texto(nome.to_owned()),
             poph_core::llm::LlmEvent::Fim(FinishReason::Concluido),
         ])]))

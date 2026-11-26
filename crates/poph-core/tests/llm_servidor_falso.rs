@@ -77,7 +77,7 @@ async fn chamada_de_ferramenta_sai_com_argumentos_inteiros_e_volta_com_resultado
         org,
         vec![Message::Usuario(vec![Part::Texto("quanto custa?".into())])],
     );
-    primeiro.ferramentas = vec![Tool {
+    primeiro.tools = vec![Tool {
         nome: "buscar_produto".into(),
         descricao: "Busca um produto e devolve o preço".into(),
         parametros: json!({"type": "object", "properties": {"termo": {"type": "string"}}}),
@@ -90,7 +90,7 @@ async fn chamada_de_ferramenta_sai_com_argumentos_inteiros_e_volta_com_resultado
             LlmEvent::Tool(ToolCall {
                 id: "call_1".into(),
                 nome: "buscar_produto".into(),
-                argumentos: json!({"termo": "dedetização"}),
+                arguments: json!({"termo": "dedetização"}),
             }),
             LlmEvent::Fim(FinishReason::ChamadasFerramenta),
         ]
@@ -106,7 +106,7 @@ async fn chamada_de_ferramenta_sai_com_argumentos_inteiros_e_volta_com_resultado
             chamadas: vec![ToolCall {
                 id: "call_1".into(),
                 nome: "buscar_produto".into(),
-                argumentos: json!({"termo": "dedetização"}),
+                arguments: json!({"termo": "dedetização"}),
             }],
         },
         Message::Resultado {
@@ -281,7 +281,7 @@ async fn cancelamento_no_meio_do_stream_fecha_e_libera_as_vagas() {
         "a chamada segura uma vaga global"
     );
 
-    cancelamento.cancelar();
+    cancelamento.cancel();
     let proximo = tokio::time::timeout(Duration::from_secs(2), fluxo.next())
         .await
         .expect("cancelamento não pode ficar pendurado");

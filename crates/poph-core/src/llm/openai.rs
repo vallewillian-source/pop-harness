@@ -1,19 +1,3 @@
-//! Cliente OpenAI-compatível (o `antigravity2api` local é um deles).
-//!
-//! Regras deste cliente:
-//! - Retentativa só em 429, 5xx ou falha de conexão **antes** de a resposta começar. Depois do
-//!   primeiro byte da resposta, falha vira erro definitivo: não repete chamada de ferramenta nem
-//!   texto que já saiu para quem chamou.
-//! - Timeout (`timeout_segundos`) vale por tentativa, do envio até o fim do corpo. Timeout não é
-//!   retentado.
-//! - O stream entrega a chamada de ferramenta só quando os argumentos chegaram inteiros.
-//! - Vagas por org e globais (`LimitadorLlm`) são seguradas até o stream terminar ou ser solto.
-//! - A chave vem de `Segredo` e só é exposta no cabeçalho `Authorization`. Mensagens de erro
-//!   trocam a chave por `[oculto]` se o provedor ecoar o valor.
-//! - `http://` e `https://` são aceitos (HR-10b). O TLS é `rustls` com as raízes do sistema; falha
-//!   de TLS (certificado não confiável, nome errado, handshake) é erro definitivo e não é retentada —
-//!   queda de rede e prazo continuam transitórios.
-
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -37,34 +21,22 @@ use super::tls;
 pub const OPENAI_COMPATIBLE_PROVIDER: &str = "openai_compativel";
 pub const ANTIGRAVITY_PROVIDER: &str = "antigravity2api";
 
-/// Teto de espera entre retentativas.
 const MAXIMUM_WAIT: Duration = Duration::from_secs(30);
 
-/// Parâmetros do cliente, já validados.
 #[derive(Clone, Debug)]
 pub struct OpenAiCompatibleConfig {
-    /// Endereço base, terminado em `/v1` (ex.: `http://127.0.0.1:8045/v1`).
     pub url_base: String,
-    /// Chave de API. Nunca aparece em log, erro ou `Debug`.
     pub chave: Secret,
-    /// Modelo padrão (o pedido pode trocar).
     pub modelo: String,
-    /// Tempo máximo de cada tentativa.
     pub timeout: Duration,
-    /// Novas tentativas, só em erro transitório.
     pub retentativas: u32,
-    /// Espera antes da primeira retentativa; dobra a cada tentativa.
     pub espera_base: Duration,
-    /// Temperatura padrão.
     pub temperatura: f32,
-    /// Teto de tokens de saída.
     pub max_tokens_saida: u32,
-    /// Recusa pedido que termina em turno do modelo (o `antigravity2api` devolve HTTP 400 nesse caso).
     pub recusa_turno_modelo: bool,
 }
 
 impl OpenAiCompatibleConfig {
-    /// Monta a configuração a partir do bloco `[llm]` e da chave lida do ambiente.
     pub fn from_config(llm: &LlmConfig, chave: Secret) -> Result<Self, LlmError> {
         if !poph_types::llm_provider_accepted(&llm.provider) {
             return Err(LlmError::Configuracao(format!(
@@ -78,8 +50,6 @@ impl OpenAiCompatibleConfig {
             ));
         }
         let url_base = llm.url_base.trim_end_matches('/').to_owned();
-        // http (gateway local) e https (provedor com TLS) são aceitos; o TLS usa rustls com as raízes
-        // do sistema (HR-10b).
         if !(url_base.starts_with("http://") || url_base.starts_with("https://")) {
             return Err(LlmError::Configuracao(
                 "o endereço do provedor deve começar com http:// ou https://".to_owned(),
@@ -99,7 +69,7 @@ impl OpenAiCompatibleConfig {
     }
 }
 
-struct Interno {
+struct Inner {
     http: reqwest::Client,
     endpoint: String,
     config: OpenAiCompatibleConfig,
@@ -107,12 +77,10 @@ struct Interno {
     metricas: BaseMetrics,
 }
 
-/// Cliente OpenAI-compatível. Clonar é barato e todos os clones compartilham limites e métricas.
 #[derive(Clone)]
-pub struct OpenAiCompatibleClient(Arc<Interno>);
+pub struct OpenAiCompatibleClient(Arc<Inner>);
 
 impl OpenAiCompatibleClient {
-    /// Cria o cliente. `limites` e `metricas` são compartilhados com o resto da instância.
     pub fn new(
         config: OpenAiCompatibleConfig,
         limites: LlmLimiter,
@@ -120,7 +88,7 @@ impl OpenAiCompatibleClient {
     ) -> Result<Self, LlmError> {
         let http = build_http(None)?;
         let endpoint = format!("{}/chat/completions", config.url_base);
-        Ok(Self(Arc::new(Interno {
+        Ok(Self(Arc::new(Inner {
             http,
             endpoint,
             config,
@@ -129,15 +97,10 @@ impl OpenAiCompatibleClient {
         })))
     }
 
-    /// **Só para teste:** devolve um cliente igual a este que também confia numa raiz extra (DER).
-    ///
-    /// Serve para o servidor TLS local dos testes usar um certificado próprio. Não desliga a
-    /// validação nem existe para produção: é uma raiz a mais, e o certificado continua sendo
-    /// conferido (nome, validade, cadeia).
     #[doc(hidden)]
-    pub fn with_test_root(self, raiz_der: &[u8]) -> Result<Self, LlmError> {
-        let http = build_http(Some(raiz_der))?;
-        Ok(Self(Arc::new(Interno {
+    pub fn with_test_root(self, root_der: &[u8]) -> Result<Self, LlmError> {
+        let http = build_http(Some(root_der))?;
+        Ok(Self(Arc::new(Inner {
             http,
             endpoint: self.0.endpoint.clone(),
             config: self.0.config.clone(),
@@ -147,17 +110,16 @@ impl OpenAiCompatibleClient {
     }
 }
 
-/// Monta o cliente HTTP. Com `raiz_extra`, acrescenta uma raiz de confiança (só teste).
-fn build_http(raiz_extra: Option<&[u8]>) -> Result<reqwest::Client, LlmError> {
+fn build_http(extra_root: Option<&[u8]>) -> Result<reqwest::Client, LlmError> {
     let mut construtor = reqwest::Client::builder();
-    if let Some(der) = raiz_extra {
-        let certificado = reqwest::Certificate::from_der(der).map_err(|erro| {
+    if let Some(der) = extra_root {
+        let certificate = reqwest::Certificate::from_der(der).map_err(|erro| {
             LlmError::Configuracao(format!(
                 "raiz de confiança inválida: {}",
                 erro.without_url()
             ))
         })?;
-        construtor = construtor.add_root_certificate(certificado);
+        construtor = construtor.add_root_certificate(certificate);
     }
     construtor
         .build()
@@ -170,51 +132,50 @@ impl LlmProvider for OpenAiCompatibleClient {
     }
 }
 
-async fn abrir(interno: Arc<Interno>, pedido: Request) -> Result<LlmStream, LlmError> {
-    validate_request(&pedido, interno.config.recusa_turno_modelo)
-        .map_err(|erro| interno.record_failure(erro))?;
-    interno.metricas.llm_calls.increment(1);
+async fn abrir(inner: Arc<Inner>, pedido: Request) -> Result<LlmStream, LlmError> {
+    validate_request(&pedido, inner.config.recusa_turno_modelo)
+        .map_err(|erro| inner.record_failure(erro))?;
+    inner.metricas.llm_calls.increment(1);
 
     let cancelamento = pedido.cancelamento.clone();
-    let permissao: LlmPermit = tokio::select! {
+    let permit: LlmPermit = tokio::select! {
         biased;
-        _ = cancelamento.aguardar() => return Err(LlmError::Cancelled),
-        resultado = interno.limites.acquire(pedido.org) => {
-            resultado.map_err(|erro| interno.record_failure(erro))?
+        _ = cancelamento.wait() => return Err(LlmError::Cancelled),
+        resultado = inner.limites.acquire(pedido.org) => {
+            resultado.map_err(|erro| inner.record_failure(erro))?
         }
     };
 
-    let corpo = build_body(&pedido, &interno.config);
+    let corpo = build_body(&pedido, &inner.config);
     let modelo = pedido
         .modelo
         .clone()
-        .unwrap_or_else(|| interno.config.modelo.clone());
+        .unwrap_or_else(|| inner.config.modelo.clone());
     let inicio = Instant::now();
-    let resposta = enviar(&interno, &corpo, &cancelamento)
+    let response = send(&inner, &corpo, &cancelamento)
         .await
-        .map_err(|erro| interno.record_failure(erro))?;
+        .map_err(|erro| inner.record_failure(erro))?;
 
     tracing::debug!(modelo = %modelo, "resposta do LLM começou a chegar");
     let estado = Estado {
-        interno: Arc::clone(&interno),
-        resposta,
-        leitor: SseReader::new(),
+        inner: Arc::clone(&inner),
+        resposta: response,
+        reader: SseReader::new(),
         parciais: BTreeMap::new(),
-        pendentes: VecDeque::new(),
+        pending: VecDeque::new(),
         motivo: None,
-        uso: None,
-        encerrado: false,
-        permissao: Some(permissao),
+        usage: None,
+        closed: false,
+        permit: Some(permit),
         cancelamento,
         inicio,
         modelo,
         org: pedido.org,
     };
-    Ok(Box::pin(stream::unfold(estado, avancar)))
+    Ok(Box::pin(stream::unfold(estado, advance)))
 }
 
-impl Interno {
-    /// Conta a falha nas métricas e devolve o mesmo erro. Cancelamento não conta como falha.
+impl Inner {
     fn record_failure(&self, erro: LlmError) -> LlmError {
         if erro != LlmError::Cancelled {
             self.metricas.llm_errors.increment(1);
@@ -224,33 +185,32 @@ impl Interno {
     }
 }
 
-/// Envia o pedido, com retentativas só em falha transitória antes da resposta começar.
-async fn enviar(
-    interno: &Interno,
+async fn send(
+    inner: &Inner,
     corpo: &Value,
     cancelamento: &Cancellation,
 ) -> Result<reqwest::Response, LlmError> {
-    let total = interno.config.retentativas + 1;
-    let corpo_texto = corpo.to_string();
+    let total = inner.config.retentativas + 1;
+    let body_text = corpo.to_string();
     let mut ultimo = String::from("sem resposta");
 
     for tentativa in 1..=total {
-        let envio = interno
+        let sending = inner
             .http
-            .post(&interno.endpoint)
-            .timeout(interno.config.timeout)
+            .post(&inner.endpoint)
+            .timeout(inner.config.timeout)
             .header(
                 AUTHORIZATION,
-                format!("Bearer {}", interno.config.chave.expose()),
+                format!("Bearer {}", inner.config.chave.expose()),
             )
             .header(CONTENT_TYPE, "application/json")
-            .body(corpo_texto.clone())
+            .body(body_text.clone())
             .send();
 
         let resultado = tokio::select! {
             biased;
-            _ = cancelamento.aguardar() => return Err(LlmError::Cancelled),
-            resultado = envio => resultado,
+            _ = cancelamento.wait() => return Err(LlmError::Cancelled),
+            resultado = sending => resultado,
         };
 
         match resultado {
@@ -263,19 +223,18 @@ async fn enviar(
                 } else {
                     return Err(LlmError::Rejected {
                         status,
-                        mensagem: summarize_error(&texto, interno.config.chave.expose()),
+                        mensagem: summarize_error(&texto, inner.config.chave.expose()),
                     });
                 }
             }
             Err(erro) if erro.is_timeout() => {
                 return Err(LlmError::TimedOut {
-                    segundos: interno.config.timeout.as_secs(),
+                    segundos: inner.config.timeout.as_secs(),
                 });
             }
             Err(erro) => {
-                // Falha de TLS é definitiva: repetir não conserta certificado nem nome errado.
-                if let Some(detalhe) = tls::tls_failure_detail(&erro) {
-                    return Err(LlmError::Tls(detalhe));
+                if let Some(detail) = tls::tls_failure_detail(&erro) {
+                    return Err(LlmError::Tls(detail));
                 }
                 ultimo = if erro.is_connect() {
                     "conexão recusada".to_owned()
@@ -286,11 +245,11 @@ async fn enviar(
         }
 
         if tentativa < total {
-            let espera = retry_wait(interno.config.espera_base, tentativa);
+            let espera = retry_wait(inner.config.espera_base, tentativa);
             tracing::info!(tentativa, motivo = %ultimo, "nova tentativa no LLM");
             let seguir = tokio::select! {
                 biased;
-                _ = cancelamento.aguardar() => false,
+                _ = cancelamento.wait() => false,
                 _ = tokio::time::sleep(espera) => true,
             };
             if !seguir {
@@ -305,11 +264,10 @@ async fn enviar(
 }
 
 fn retry_wait(base: Duration, tentativa: u32) -> Duration {
-    let fator = 1u32 << (tentativa - 1).min(10);
-    base.saturating_mul(fator).min(MAXIMUM_WAIT)
+    let factor = 1u32 << (tentativa - 1).min(10);
+    base.saturating_mul(factor).min(MAXIMUM_WAIT)
 }
 
-/// Tira do texto de erro do provedor a mensagem útil, sem a chave, e limita o tamanho.
 fn summarize_error(texto: &str, chave: &str) -> String {
     let mensagem = serde_json::from_str::<Value>(texto)
         .ok()
@@ -322,12 +280,9 @@ fn summarize_error(texto: &str, chave: &str) -> String {
     limpo
 }
 
-/// Monta o corpo do pedido no formato OpenAI (que o gateway aceita).
 pub fn build_body(pedido: &Request, config: &OpenAiCompatibleConfig) -> Value {
     let modelo = pedido.modelo.as_deref().unwrap_or(&config.modelo);
-    let mensagens: Vec<Value> = pedido.mensagens.iter().map(message_json).collect();
-    // Temperatura e teto de tokens podem vir do agente (configuração por agente); o bloco `[llm]`
-    // é o padrão quando o pedido não traz nada.
+    let messages: Vec<Value> = pedido.mensagens.iter().map(message_json).collect();
     let temperatura = pedido.temperatura.unwrap_or(config.temperatura);
     let max_tokens = pedido.max_tokens.unwrap_or(config.max_tokens_saida);
     let mut corpo = json!({
@@ -335,10 +290,10 @@ pub fn build_body(pedido: &Request, config: &OpenAiCompatibleConfig) -> Value {
         "stream": true,
         "temperature": temperatura,
         "max_tokens": max_tokens,
-        "messages": mensagens,
+        "messages": messages,
     });
-    if !pedido.ferramentas.is_empty() {
-        corpo["tools"] = Value::Array(pedido.ferramentas.iter().map(tool_json).collect());
+    if !pedido.tools.is_empty() {
+        corpo["tools"] = Value::Array(pedido.tools.iter().map(tool_json).collect());
     }
     corpo
 }
@@ -346,29 +301,32 @@ pub fn build_body(pedido: &Request, config: &OpenAiCompatibleConfig) -> Value {
 fn message_json(mensagem: &Message) -> Value {
     match mensagem {
         Message::Sistema(texto) => json!({"role": "system", "content": texto}),
-        Message::Usuario(partes) => {
-            if let [Part::Texto(texto)] = partes.as_slice() {
+        Message::Usuario(parts) => {
+            if let [Part::Texto(texto)] = parts.as_slice() {
                 return json!({"role": "user", "content": texto});
             }
-            let conteudo: Vec<Value> = partes.iter().map(part_json).collect();
+            let conteudo: Vec<Value> = parts.iter().map(part_json).collect();
             json!({"role": "user", "content": conteudo})
         }
-        Message::Assistente { texto, chamadas } => {
+        Message::Assistente {
+            texto,
+            chamadas: calls,
+        } => {
             let mut obj = json!({"role": "assistant"});
-            obj["content"] = if texto.is_empty() && !chamadas.is_empty() {
+            obj["content"] = if texto.is_empty() && !calls.is_empty() {
                 Value::Null
             } else {
                 Value::String(texto.clone())
             };
-            if !chamadas.is_empty() {
+            if !calls.is_empty() {
                 obj["tool_calls"] = Value::Array(
-                    chamadas
+                    calls
                         .iter()
                         .map(|c| {
                             json!({
                                 "id": c.id,
                                 "type": "function",
-                                "function": {"name": c.nome, "arguments": c.argumentos.to_string()},
+                                "function": {"name": c.nome, "arguments": c.arguments.to_string()},
                             })
                         })
                         .collect(),
@@ -392,100 +350,98 @@ fn part_json(parte: &Part) -> Value {
     }
 }
 
-fn tool_json(ferramenta: &Tool) -> Value {
+fn tool_json(tool: &Tool) -> Value {
     json!({
         "type": "function",
         "function": {
-            "name": ferramenta.nome,
-            "description": ferramenta.descricao,
-            "parameters": ferramenta.parametros,
+            "name": tool.nome,
+            "description": tool.descricao,
+            "parameters": tool.parametros,
         },
     })
 }
 
-/// Chamada de ferramenta em montagem: os pedaços chegam em deltas, indexados.
 #[derive(Default)]
-struct Parcial {
+struct Partial {
     id: Option<String>,
     nome: Option<String>,
     argumentos: String,
 }
 
-/// Estado de leitura de um stream. Guarda as vagas até o fim.
 struct Estado {
-    interno: Arc<Interno>,
+    inner: Arc<Inner>,
     resposta: reqwest::Response,
-    leitor: SseReader,
-    parciais: BTreeMap<u64, Parcial>,
-    pendentes: VecDeque<Result<LlmEvent, LlmError>>,
+    reader: SseReader,
+    parciais: BTreeMap<u64, Partial>,
+    pending: VecDeque<Result<LlmEvent, LlmError>>,
     motivo: Option<FinishReason>,
-    uso: Option<Usage>,
-    encerrado: bool,
-    permissao: Option<LlmPermit>,
+    usage: Option<Usage>,
+    closed: bool,
+    permit: Option<LlmPermit>,
     cancelamento: Cancellation,
     inicio: Instant,
     modelo: String,
     org: poph_types::OrgId,
 }
 
-async fn avancar(mut e: Estado) -> Option<(Result<LlmEvent, LlmError>, Estado)> {
+async fn advance(mut e: Estado) -> Option<(Result<LlmEvent, LlmError>, Estado)> {
     loop {
-        if let Some(item) = e.pendentes.pop_front() {
+        if let Some(item) = e.pending.pop_front() {
             if item.is_err() {
-                e.encerrado = true;
-                e.permissao = None;
+                e.closed = true;
+                e.permit = None;
             }
             return Some((item, e));
         }
-        if e.encerrado {
+        if e.closed {
             return None;
         }
 
-        let pedaco = tokio::select! {
+        let chunk = tokio::select! {
             biased;
-            _ = e.cancelamento.aguardar() => Err(LlmError::Cancelled),
+            _ = e.cancelamento.wait() => Err(LlmError::Cancelled),
             pedaco = e.resposta.chunk() => pedaco.map_err(|erro| {
                 if erro.is_timeout() {
-                    LlmError::TimedOut { segundos: e.interno.config.timeout.as_secs() }
+                    LlmError::TimedOut { segundos: e.inner.config.timeout.as_secs() }
                 } else {
                     LlmError::ConnectionInterrupted("a conexão caiu no meio da resposta".to_owned())
                 }
             }),
         };
 
-        match pedaco {
+        match chunk {
             Err(erro) => {
-                e.encerrado = true;
-                e.permissao = None;
-                let erro = e.interno.record_failure(erro);
-                e.pendentes.push_back(Err(erro));
+                e.closed = true;
+                e.permit = None;
+                let erro = e.inner.record_failure(erro);
+                e.pending.push_back(Err(erro));
             }
             Ok(Some(bytes)) => {
-                for payload in e.leitor.push(&bytes) {
-                    if e.encerrado {
+                for payload in e.reader.push(&bytes) {
+                    if e.closed {
                         break;
                     }
                     process_payload(&mut e, &payload);
                 }
             }
             Ok(None) => {
-                for payload in e.leitor.encerrar() {
-                    if e.encerrado {
+                for payload in e.reader.finish() {
+                    if e.closed {
                         break;
                     }
                     process_payload(&mut e, &payload);
                 }
-                if !e.encerrado {
+                if !e.closed {
                     if e.motivo.is_none() {
-                        let erro = e.interno.record_failure(LlmError::InvalidResponse(
+                        let erro = e.inner.record_failure(LlmError::InvalidResponse(
                             "a resposta terminou antes do fim (conexão fechada sem motivo de fim)"
                                 .to_owned(),
                         ));
-                        e.pendentes.push_back(Err(erro));
-                        e.encerrado = true;
-                        e.permissao = None;
+                        e.pending.push_back(Err(erro));
+                        e.closed = true;
+                        e.permit = None;
                     } else {
-                        finalizar(&mut e);
+                        finish_response(&mut e);
                     }
                 }
             }
@@ -493,10 +449,9 @@ async fn avancar(mut e: Estado) -> Option<(Result<LlmEvent, LlmError>, Estado)> 
     }
 }
 
-/// Trata um payload `data:` do stream: texto, ferramenta, uso, motivo de fim ou erro.
 fn process_payload(e: &mut Estado, payload: &str) {
     if payload == "[DONE]" {
-        finalizar(e);
+        finish_response(e);
         return;
     }
     let Ok(valor) = serde_json::from_str::<Value>(payload) else {
@@ -506,16 +461,16 @@ fn process_payload(e: &mut Estado, payload: &str) {
     if !valor["error"].is_null() {
         let mensagem = valor["error"]["message"]
             .as_str()
-            .map(|m| summarize_error(m, e.interno.config.chave.expose()))
+            .map(|m| summarize_error(m, e.inner.config.chave.expose()))
             .unwrap_or_else(|| "erro sem detalhe".to_owned());
-        let erro = e.interno.record_failure(LlmError::StreamError(mensagem));
-        e.pendentes.push_back(Err(erro));
-        e.encerrado = true;
-        e.permissao = None;
+        let erro = e.inner.record_failure(LlmError::StreamError(mensagem));
+        e.pending.push_back(Err(erro));
+        e.closed = true;
+        e.permit = None;
         return;
     }
     if let Some(uso) = valor.get("usage").filter(|u| !u.is_null()) {
-        e.uso = Some(Usage {
+        e.usage = Some(Usage {
             entrada: uso["prompt_tokens"].as_u64().unwrap_or(0),
             saida: uso["completion_tokens"].as_u64().unwrap_or(0),
         });
@@ -523,23 +478,20 @@ fn process_payload(e: &mut Estado, payload: &str) {
     let escolha = &valor["choices"][0];
     let delta = &escolha["delta"];
     if let Some(texto) = delta["content"].as_str().filter(|t| !t.is_empty()) {
-        e.pendentes.push_back(Ok(LlmEvent::Texto(texto.to_owned())));
+        e.pending.push_back(Ok(LlmEvent::Texto(texto.to_owned())));
     }
     if let Some(chamadas) = delta["tool_calls"].as_array() {
-        for chamada in chamadas {
-            let indice = chamada["index"].as_u64().unwrap_or(0);
-            let parcial = e.parciais.entry(indice).or_default();
-            if let Some(id) = chamada["id"].as_str().filter(|s| !s.is_empty()) {
-                parcial.id = Some(id.to_owned());
+        for call in chamadas {
+            let index = call["index"].as_u64().unwrap_or(0);
+            let partial = e.parciais.entry(index).or_default();
+            if let Some(id) = call["id"].as_str().filter(|s| !s.is_empty()) {
+                partial.id = Some(id.to_owned());
             }
-            if let Some(nome) = chamada["function"]["name"]
-                .as_str()
-                .filter(|s| !s.is_empty())
-            {
-                parcial.nome = Some(nome.to_owned());
+            if let Some(nome) = call["function"]["name"].as_str().filter(|s| !s.is_empty()) {
+                partial.nome = Some(nome.to_owned());
             }
-            if let Some(pedaco) = chamada["function"]["arguments"].as_str() {
-                parcial.argumentos.push_str(pedaco);
+            if let Some(pedaco) = call["function"]["arguments"].as_str() {
+                partial.argumentos.push_str(pedaco);
             }
         }
     }
@@ -553,57 +505,56 @@ fn process_payload(e: &mut Estado, payload: &str) {
     }
 }
 
-/// Fecha a resposta: emite as ferramentas completas, o uso e o fim, e solta as vagas.
-fn finalizar(e: &mut Estado) {
-    if e.encerrado {
+fn finish_response(e: &mut Estado) {
+    if e.closed {
         return;
     }
-    e.encerrado = true;
-    e.permissao = None;
+    e.closed = true;
+    e.permit = None;
 
     let parciais = std::mem::take(&mut e.parciais);
     let mut total_ferramentas = 0usize;
-    for (indice, parcial) in parciais {
-        let Some(nome) = parcial.nome else {
-            let erro = e.interno.record_failure(LlmError::InvalidResponse(
+    for (indice, partial) in parciais {
+        let Some(nome) = partial.nome else {
+            let erro = e.inner.record_failure(LlmError::InvalidResponse(
                 "chamada de ferramenta sem nome".to_owned(),
             ));
-            e.pendentes.push_back(Err(erro));
+            e.pending.push_back(Err(erro));
             return;
         };
-        let argumentos = if parcial.argumentos.trim().is_empty() {
+        let argumentos = if partial.argumentos.trim().is_empty() {
             json!({})
         } else {
-            match serde_json::from_str::<Value>(&parcial.argumentos) {
+            match serde_json::from_str::<Value>(&partial.argumentos) {
                 Ok(valor) => valor,
                 Err(_) => {
-                    let erro = e.interno.record_failure(LlmError::InvalidResponse(format!(
+                    let erro = e.inner.record_failure(LlmError::InvalidResponse(format!(
                         "argumentos da ferramenta {nome} não são JSON válido"
                     )));
-                    e.pendentes.push_back(Err(erro));
+                    e.pending.push_back(Err(erro));
                     return;
                 }
             }
         };
-        let id = parcial.id.unwrap_or_else(|| format!("chamada_{indice}"));
+        let id = partial.id.unwrap_or_else(|| format!("chamada_{indice}"));
         total_ferramentas += 1;
-        e.pendentes.push_back(Ok(LlmEvent::Tool(ToolCall {
+        e.pending.push_back(Ok(LlmEvent::Tool(ToolCall {
             id,
             nome,
-            argumentos,
+            arguments: argumentos,
         })));
     }
 
-    if let Some(uso) = e.uso {
-        e.interno.metricas.tokens_total.increment(uso.total());
-        e.pendentes.push_back(Ok(LlmEvent::Usage(uso)));
+    if let Some(uso) = e.usage {
+        e.inner.metricas.tokens_total.increment(uso.total());
+        e.pending.push_back(Ok(LlmEvent::Usage(uso)));
     }
     let motivo = match e.motivo.take() {
         Some(motivo) => motivo,
         None if total_ferramentas > 0 => FinishReason::ChamadasFerramenta,
         None => FinishReason::Concluido,
     };
-    e.pendentes.push_back(Ok(LlmEvent::Fim(motivo)));
+    e.pending.push_back(Ok(LlmEvent::Fim(motivo)));
 
     tracing::info!(
         org = %e.org,
@@ -638,7 +589,6 @@ mod testes {
 
     #[test]
     fn accepts_https_rejects_invalid_address_and_empty_key() {
-        // HR-10b: https é aceito (TLS via rustls); só o que não é http(s) é recusado.
         let https = config("https://exemplo.test/v1", "k").expect("https aceito");
         assert_eq!(https.url_base, "https://exemplo.test/v1");
         let sem_esquema = config("exemplo.test/v1", "k").unwrap_err();
@@ -678,7 +628,7 @@ mod testes {
             ],
         );
         pedido.modelo = Some("outro-modelo".into());
-        pedido.ferramentas = vec![Tool {
+        pedido.tools = vec![Tool {
             nome: "buscar".into(),
             descricao: "busca".into(),
             parametros: json!({"type": "object"}),

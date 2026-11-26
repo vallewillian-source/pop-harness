@@ -1,5 +1,3 @@
-//! Trait do provedor de LLM e as regras de pedido que valem para qualquer provedor.
-
 use std::collections::HashSet;
 
 use futures::future::BoxFuture;
@@ -8,39 +6,30 @@ use futures::stream::BoxStream;
 use super::erro::LlmError;
 use super::tipos::{LlmEvent, Message, Part, Request};
 
-/// Stream de eventos de uma resposta. Quem consome pode parar a qualquer momento: soltar o stream cancela a chamada.
 pub type LlmStream = BoxStream<'static, Result<LlmEvent, LlmError>>;
 
-/// Provedor de LLM. Hoje só existe o cliente OpenAI-compatível e o provedor falso para testes.
 pub trait LlmProvider: Send + Sync {
-    /// Abre a resposta. Quando devolve `Ok`, o stream já está no ar; os eventos chegam por ele.
     fn stream<'a>(&'a self, pedido: Request) -> BoxFuture<'a, Result<LlmStream, LlmError>>;
 }
 
-/// Tipos de imagem que o cliente aceita.
 pub const IMAGE_MIMES: [&str; 4] = ["image/jpeg", "image/png", "image/gif", "image/webp"];
 
-/// Confere o pedido antes de qualquer envio.
-///
-/// Com `recusa_turno_modelo` (padrão), evita o HTTP 400 "Requests ending with a model turn are
-/// not supported" do gateway: a última mensagem tem de ser do usuário ou um resultado de
-/// ferramenta. Esta função não corrige o pedido, só recusa, para o erro aparecer aqui com a causa.
 pub fn validate_request(pedido: &Request, recusa_turno_modelo: bool) -> Result<(), LlmError> {
-    let Some(ultima) = pedido.mensagens.last() else {
+    let Some(last) = pedido.mensagens.last() else {
         return Err(LlmError::InvalidRequest("nenhuma mensagem".to_owned()));
     };
-    if recusa_turno_modelo && let Message::Assistente { .. } = ultima {
+    if recusa_turno_modelo && let Message::Assistente { .. } = last {
         return Err(LlmError::InvalidRequest(
             "a última mensagem é do modelo e o provedor recusa esse formato (llm.recusa_turno_modelo = true). Termine com a instrução do usuário ou com o resultado de uma ferramenta".to_owned(),
         ));
     }
 
-    let mut nomes = HashSet::new();
-    for ferramenta in &pedido.ferramentas {
+    let mut names = HashSet::new();
+    for ferramenta in &pedido.tools {
         if ferramenta.nome.trim().is_empty() {
             return Err(LlmError::InvalidRequest("ferramenta sem nome".to_owned()));
         }
-        if !nomes.insert(ferramenta.nome.as_str()) {
+        if !names.insert(ferramenta.nome.as_str()) {
             return Err(LlmError::InvalidRequest(format!(
                 "ferramenta repetida: {}",
                 ferramenta.nome
@@ -74,12 +63,12 @@ mod testes {
     use super::*;
     use crate::llm::tipos::Tool;
 
-    fn pedido(mensagens: Vec<Message>) -> Request {
+    fn request(mensagens: Vec<Message>) -> Request {
         Request::new(OrgId::generate(), mensagens)
     }
 
     fn request_ending_with_model() -> Request {
-        pedido(vec![
+        request(vec![
             Message::Usuario(vec![Part::Texto("oi".into())]),
             Message::Assistente {
                 texto: "olá".into(),
@@ -104,14 +93,14 @@ mod testes {
 
     #[test]
     fn accepts_request_ending_with_tool_result() {
-        let p = pedido(vec![
+        let p = request(vec![
             Message::Usuario(vec![Part::Texto("preço?".into())]),
             Message::Assistente {
                 texto: String::new(),
                 chamadas: vec![crate::llm::tipos::ToolCall {
                     id: "c1".into(),
                     nome: "buscar".into(),
-                    argumentos: serde_json::json!({}),
+                    arguments: serde_json::json!({}),
                 }],
             },
             Message::Resultado {
@@ -124,7 +113,7 @@ mod testes {
 
     #[test]
     fn rejects_image_type_and_duplicate_tool() {
-        let mut p = pedido(vec![Message::Usuario(vec![Part::Imagem {
+        let mut p = request(vec![Message::Usuario(vec![Part::Imagem {
             mime: "image/bmp".into(),
             bytes: vec![1],
         }])]);
@@ -136,7 +125,7 @@ mod testes {
             descricao: String::new(),
             parametros: serde_json::json!({"type": "object"}),
         };
-        p.ferramentas = vec![f.clone(), f];
+        p.tools = vec![f.clone(), f];
         assert!(validate_request(&p, true).is_err());
     }
 }

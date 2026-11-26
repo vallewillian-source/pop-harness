@@ -447,7 +447,7 @@ impl Drop for Cenario {
 // ───────────────────────────────────────────────────────────────────────── utilidades
 
 fn texto(conteudo: &str) -> Script {
-    Script::Eventos(vec![
+    Script::Events(vec![
         LlmEvent::Texto(conteudo.to_owned()),
         LlmEvent::Usage(Usage {
             entrada: 10,
@@ -459,11 +459,11 @@ fn texto(conteudo: &str) -> Script {
 
 /// Roteiro do modelo que pede uma única ferramenta.
 fn chamada(nome: &str, argumentos: Value) -> Script {
-    Script::Eventos(vec![
+    Script::Events(vec![
         LlmEvent::Tool(ToolCall {
             id: "chamada-1".to_owned(),
             nome: nome.to_owned(),
-            argumentos,
+            arguments: argumentos,
         }),
         LlmEvent::Fim(FinishReason::Concluido),
     ])
@@ -471,16 +471,16 @@ fn chamada(nome: &str, argumentos: Value) -> Script {
 
 /// Roteiro do modelo que pede duas ferramentas na mesma mensagem.
 fn duas_chamadas(primeira: (&str, Value), segunda: (&str, Value)) -> Script {
-    Script::Eventos(vec![
+    Script::Events(vec![
         LlmEvent::Tool(ToolCall {
             id: "chamada-1".to_owned(),
             nome: primeira.0.to_owned(),
-            argumentos: primeira.1,
+            arguments: primeira.1,
         }),
         LlmEvent::Tool(ToolCall {
             id: "chamada-2".to_owned(),
             nome: segunda.0.to_owned(),
-            argumentos: segunda.1,
+            arguments: segunda.1,
         }),
         LlmEvent::Fim(FinishReason::Concluido),
     ])
@@ -519,7 +519,7 @@ fn resultados(pedido: &Request) -> Vec<String> {
 /// Nomes das ferramentas oferecidas no pedido.
 fn oferecidas(pedido: &Request) -> Vec<String> {
     pedido
-        .ferramentas
+        .tools
         .iter()
         .map(|ferramenta| ferramenta.nome.clone())
         .collect()

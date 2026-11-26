@@ -329,7 +329,7 @@ impl Drop for Cenario {
 }
 
 fn roteiro_texto(texto: &str) -> Script {
-    Script::Eventos(vec![
+    Script::Events(vec![
         LlmEvent::Texto(texto.to_owned()),
         LlmEvent::Usage(Usage {
             entrada: 100,
@@ -359,7 +359,7 @@ fn escolhas(itens: &[(&str, &str)]) -> BTreeMap<String, String> {
 
 fn nomes_das_ferramentas(pedido: &poph_core::llm::Request) -> Vec<String> {
     pedido
-        .ferramentas
+        .tools
         .iter()
         .map(|ferramenta| ferramenta.nome.clone())
         .collect()
@@ -748,11 +748,11 @@ async fn g5_ferramenta_inventada_pelo_modelo_nao_e_executada() {
     )])));
     let (motor, provedor) = cenario.motor(
         vec![
-            Script::Eventos(vec![
+            Script::Events(vec![
                 LlmEvent::Tool(ToolCall {
                     id: "c1".to_owned(),
                     nome: "buscar_produto".to_owned(),
-                    argumentos: serde_json::json!({"termo": "baratas"}),
+                    arguments: serde_json::json!({"termo": "baratas"}),
                 }),
                 LlmEvent::Fim(FinishReason::ChamadasFerramenta),
             ]),
@@ -839,11 +839,11 @@ async fn medicao_rodadas_de_ferramenta_por_turno() {
     let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[])));
     let (motor_sem, _) = sem.motor(
         vec![
-            Script::Eventos(vec![
+            Script::Events(vec![
                 LlmEvent::Tool(ToolCall {
                     id: "c1".to_owned(),
                     nome: "buscar_produto".to_owned(),
-                    argumentos: serde_json::json!({"termo": "baratas"}),
+                    arguments: serde_json::json!({"termo": "baratas"}),
                 }),
                 LlmEvent::Fim(FinishReason::ChamadasFerramenta),
             ]),

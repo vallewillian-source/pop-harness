@@ -125,7 +125,7 @@ impl GuardaSse {
 impl Drop for GuardaSse {
     fn drop(&mut self) {
         if let Some(entrada) = &self.entrada {
-            entrada.cancelamento.cancelar();
+            entrada.cancelamento.cancel();
         }
         self.estado.liberar_turno_de_teste(self.conversa);
     }

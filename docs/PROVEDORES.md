@@ -158,3 +158,9 @@ Conferido em 24/11/2026: **11 passed; 0 failed**.
 - **`poph doctor`** mostra uma linha `provedor <nome>` por provedor configurado (endereço,
   simultâneos e situação da variável de chave) e um aviso `provedor dos agentes` quando há agentes
   apontando para nome que não existe. É o primeiro lugar a olhar quando um agente não atende.
+
+## 7. Detalhes do contrato e dos limites
+
+As vagas por organização são adquiridas antes da vaga global; uma organização que esgota seu limite não reserva vagas globais enquanto espera. As vagas são liberadas quando o stream termina, é cancelado ou descartado. Cancelamento não conta como falha nas métricas.
+
+O leitor SSE acumula bytes até completar cada linha, inclusive quando um caractere UTF-8 é dividido entre partes. Ao terminar o corpo, entrega uma última linha `data:` mesmo sem quebra de linha. O `Debug` das partes de mensagem não imprime texto de cliente nem bytes de imagem. A raiz adicional de certificado disponível nos testes não desliga a verificação de nome, validade ou cadeia.

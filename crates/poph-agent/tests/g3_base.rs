@@ -338,7 +338,7 @@ impl Drop for Cenario {
 }
 
 fn roteiro_texto(texto: &str) -> Script {
-    Script::Eventos(vec![
+    Script::Events(vec![
         LlmEvent::Texto(texto.to_owned()),
         LlmEvent::Usage(Usage {
             entrada: 100,
@@ -369,7 +369,7 @@ fn escolhas(itens: &[(&str, &str)]) -> BTreeMap<String, String> {
 /// Nomes das ferramentas enviadas no pedido ao modelo.
 fn nomes_das_ferramentas(pedido: &poph_core::llm::Request) -> Vec<String> {
     pedido
-        .ferramentas
+        .tools
         .iter()
         .map(|ferramenta| ferramenta.nome.clone())
         .collect()
@@ -461,11 +461,11 @@ async fn g3_nada_nao_executa_ferramenta_inventada_pelo_modelo() {
     let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[("g3_precisa", G3_NADA)])));
     let (motor, _) = cenario.motor(
         vec![
-            Script::Eventos(vec![
+            Script::Events(vec![
                 LlmEvent::Tool(ToolCall {
                     id: "c1".to_owned(),
                     nome: "consultar_base".to_owned(),
-                    argumentos: serde_json::json!({"consulta": "prazo"}),
+                    arguments: serde_json::json!({"consulta": "prazo"}),
                 }),
                 LlmEvent::Fim(FinishReason::ChamadasFerramenta),
             ]),
@@ -843,7 +843,7 @@ async fn medicao_de_tokens_e_latencia_do_g3() {
         assert_eq!(resumo.estado, poph_store::TurnState::Completed);
         let pedido = provedor.received().remove(0);
         total_sem += texto_do_prompt(&pedido).chars().count();
-        ferramentas_sem += pedido.ferramentas.len();
+        ferramentas_sem += pedido.tools.len();
 
         // Condição B: com o G3 ligado e a decisão `nada` (a que o Jev real deu para estas mensagens).
         let cenario = Cenario::com_busca(
@@ -866,7 +866,7 @@ async fn medicao_de_tokens_e_latencia_do_g3() {
         assert_eq!(resumo.estado, poph_store::TurnState::Completed);
         let pedido = provedor.received().remove(0);
         total_com += texto_do_prompt(&pedido).chars().count();
-        ferramentas_com += pedido.ferramentas.len();
+        ferramentas_com += pedido.tools.len();
     }
 
     let casos = mensagens.len();

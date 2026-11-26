@@ -288,7 +288,7 @@ impl Drop for Cenario {
 // ───────────────────────────────────────────────────────────────────────── utilidades
 
 fn texto(conteudo: &str) -> Script {
-    Script::Eventos(vec![
+    Script::Events(vec![
         LlmEvent::Texto(conteudo.to_owned()),
         LlmEvent::Usage(Usage {
             entrada: 10,
@@ -300,11 +300,11 @@ fn texto(conteudo: &str) -> Script {
 
 /// Roteiro do modelo que pede uma única ferramenta.
 fn chamada(nome: &str, argumentos: Value) -> Script {
-    Script::Eventos(vec![
+    Script::Events(vec![
         LlmEvent::Tool(ToolCall {
             id: "chamada-1".to_owned(),
             nome: nome.to_owned(),
-            argumentos,
+            arguments: argumentos,
         }),
         LlmEvent::Fim(FinishReason::Concluido),
     ])
@@ -754,12 +754,7 @@ async fn jev_falha_reserva_inicia_permitido_e_recusa_nao_liberado() {
     let mensagem = c.falar(conversa, "Quero agendar");
     c.turno(&motor, conversa, mensagem).await;
     let pedidos = provedor.received();
-    assert!(
-        pedidos[0]
-            .ferramentas
-            .iter()
-            .any(|f| f.nome == "fluxo_iniciar")
-    );
+    assert!(pedidos[0].tools.iter().any(|f| f.nome == "fluxo_iniciar"));
     assert!(!format!("{:?}", pedidos[0].mensagens).contains("triagem_suporte"));
     assert!(format!("{:?}", pedidos[1].mensagens).contains("não está entre os liberados"));
     assert_eq!(c.execucao(conversa).no_atual, "coleta");

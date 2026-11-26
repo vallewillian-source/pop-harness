@@ -273,18 +273,18 @@ impl Drop for Cenario {
 }
 
 fn resposta(texto: &str) -> Script {
-    Script::Eventos(vec![
+    Script::Events(vec![
         LlmEvent::Texto(texto.to_owned()),
         LlmEvent::Fim(FinishReason::Concluido),
     ])
 }
 
 fn chamada(id: &str, argumentos: Value) -> Script {
-    Script::Eventos(vec![
+    Script::Events(vec![
         LlmEvent::Tool(ToolCall {
             id: id.to_owned(),
             nome: NOME_FERRAMENTA.to_owned(),
-            argumentos,
+            arguments: argumentos,
         }),
         LlmEvent::Fim(FinishReason::ChamadasFerramenta),
     ])
@@ -445,7 +445,7 @@ async fn agente_sem_a_ferramenta_nao_a_recebe() {
     let (motor, fake) = cenario.motor(vec![resposta("ok")]);
     cenario.rodar_turno(&motor).await;
     let nomes: Vec<String> = fake.received()[0]
-        .ferramentas
+        .tools
         .iter()
         .map(|ferramenta| ferramenta.nome.clone())
         .collect();
@@ -459,7 +459,7 @@ async fn agente_com_a_ferramenta_ve_a_descricao_dos_arquivos() {
     cenario.rodar_turno(&motor).await;
     let pedido = &fake.received()[0];
     let ferramenta = pedido
-        .ferramentas
+        .tools
         .iter()
         .find(|ferramenta| ferramenta.nome == NOME_FERRAMENTA)
         .expect("a ferramenta vai no pedido");
@@ -501,7 +501,7 @@ async fn biblioteca_vazia_aparece_como_tal_e_nao_quebra_o_turno() {
     cenario.rodar_turno(&motor).await;
     let recebidos = fake.received();
     let ferramenta = recebidos[0]
-        .ferramentas
+        .tools
         .iter()
         .find(|ferramenta| ferramenta.nome == NOME_FERRAMENTA)
         .expect("a ferramenta continua no pedido");
@@ -556,7 +556,7 @@ fn arquivo_da_biblioteca_traz_o_caminho_relativo_do_blob() {
 #[tokio::test]
 async fn falha_do_modelo_depois_de_arquivo_enfileirado_nao_repete_o_envio() {
     let cenario = Cenario::novo("falha-arquivo", &[NOME_FERRAMENTA]);
-    let falha = Script::Falha(LlmError::Unavailable {
+    let falha = Script::Failure(LlmError::Unavailable {
         tentativas: 3,
         ultimo: "503".to_owned(),
     });

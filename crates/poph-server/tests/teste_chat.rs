@@ -455,7 +455,7 @@ impl Cenario {
 }
 
 fn roteiro_padrao() -> Vec<Script> {
-    vec![Script::Eventos(vec![
+    vec![Script::Events(vec![
         LlmEvent::Texto("O prazo é ".into()),
         LlmEvent::Texto("de 5 dias úteis.".into()),
         LlmEvent::Fim(FinishReason::Concluido),
@@ -574,12 +574,12 @@ async fn duas_conexoes_na_mesma_conversa_nao_geram_dois_turnos() {
     let c = Cenario::novo(
         "duas-abas",
         vec![
-            Script::Pendurado {
+            Script::Pending {
                 eventos: vec![LlmEvent::Texto("parcial ".into())],
-                depois: Duration::from_secs(30),
+                after: Duration::from_secs(30),
                 erro: poph_core::llm::LlmError::TimedOut { segundos: 30 },
             },
-            Script::Eventos(vec![
+            Script::Events(vec![
                 LlmEvent::Texto("resposta da segunda".into()),
                 LlmEvent::Fim(FinishReason::Concluido),
             ]),
@@ -623,9 +623,9 @@ async fn duas_conexoes_na_mesma_conversa_nao_geram_dois_turnos() {
 async fn desconexao_cancela_o_turno_sem_fila_presa() {
     let c = Cenario::novo(
         "cancelamento",
-        vec![Script::Pendurado {
+        vec![Script::Pending {
             eventos: vec![LlmEvent::Texto("começou ".into())],
-            depois: Duration::from_secs(30),
+            after: Duration::from_secs(30),
             erro: poph_core::llm::LlmError::TimedOut { segundos: 30 },
         }],
         true,
@@ -864,15 +864,15 @@ async fn arquivo_recusado_volta_no_campo_file_e_nao_grava_mensagem() {
 /// Roteiro de um turno que pede `enviar_arquivo` ao modelo e depois responde em texto (HR-46d).
 fn roteiro_envia_arquivo(arquivo: FileId) -> Vec<Script> {
     vec![
-        Script::Eventos(vec![
+        Script::Events(vec![
             LlmEvent::Tool(poph_core::llm::ToolCall {
                 id: "call-catalogo".to_owned(),
                 nome: poph_agent::NOME_ENVIAR_ARQUIVO.to_owned(),
-                argumentos: json!({ "id": arquivo.to_string() }),
+                arguments: json!({ "id": arquivo.to_string() }),
             }),
             LlmEvent::Fim(FinishReason::ChamadasFerramenta),
         ]),
-        Script::Eventos(vec![
+        Script::Events(vec![
             LlmEvent::Texto("Estou enviando o catálogo.".into()),
             LlmEvent::Fim(FinishReason::Concluido),
         ]),
