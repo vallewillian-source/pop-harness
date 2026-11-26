@@ -57,15 +57,15 @@ async fn real_call_with_stream_and_tool() {
     }];
 
     let started = Instant::now();
-    let mut fluxo = client.stream(request).await.expect("abre o stream");
-    let first_item = fluxo.next().await;
+    let mut event_stream = client.stream(request).await.expect("abre o stream");
+    let first_item = event_stream.next().await;
     let first_event_ms = started.elapsed().as_millis();
 
     let mut events = Vec::new();
     if let Some(item) = first_item {
         events.push(item);
     }
-    while let Some(item) = fluxo.next().await {
+    while let Some(item) = event_stream.next().await {
         events.push(item);
     }
     let total_ms = started.elapsed().as_millis();

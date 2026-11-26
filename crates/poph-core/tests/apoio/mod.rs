@@ -1,5 +1,4 @@
 #![allow(dead_code, unused_imports)]
-//! Auxiliares dos testes do cliente LLM: servidor HTTP falso e montagem do cliente.
 
 use std::collections::VecDeque;
 use std::io;
@@ -22,343 +21,327 @@ use tokio_rustls::TlsAcceptor;
 use tokio_rustls::rustls;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
-/// Chave de teste. Nenhum teste pode deixá-la aparecer em log, erro ou corpo de pedido de retorno.
-pub const CHAVE: &str = "chave-de-teste-XYZ-987";
+pub const TEST_KEY: &str = "chave-de-teste-XYZ-987";
 
 #[derive(Clone)]
-pub struct Resposta {
+pub struct Reply {
     pub status: u16,
-    pub corpo: String,
-    pub atraso: Duration,
-    pub deixar_aberta: bool,
+    pub body: String,
+    pub delay: Duration,
+    pub keep_open: bool,
 }
 
-impl Resposta {
-    pub fn ok(corpo: String) -> Self {
+impl Reply {
+    pub fn ok(body: String) -> Self {
         Self {
             status: 200,
-            corpo,
-            atraso: Duration::ZERO,
-            deixar_aberta: false,
+            body,
+            delay: Duration::ZERO,
+            keep_open: false,
         }
     }
 
-    pub fn erro(status: u16, corpo: &str) -> Self {
+    pub fn error(status: u16, body: &str) -> Self {
         Self {
             status,
-            corpo: corpo.to_owned(),
-            atraso: Duration::ZERO,
-            deixar_aberta: false,
+            body: body.to_owned(),
+            delay: Duration::ZERO,
+            keep_open: false,
         }
     }
 
-    pub fn com_atraso(mut self, atraso: Duration) -> Self {
-        self.atraso = atraso;
+    pub fn with_delay(mut self, delay: Duration) -> Self {
+        self.delay = delay;
         self
     }
 
-    pub fn deixar_aberta(mut self) -> Self {
-        self.deixar_aberta = true;
+    pub fn keep_open(mut self) -> Self {
+        self.keep_open = true;
         self
     }
 }
 
-/// Monta um corpo SSE com uma linha `data:` por item.
-pub fn sse(linhas: &[&str]) -> String {
-    linhas.iter().map(|l| format!("data: {l}\n\n")).collect()
+pub fn sse(lines: &[&str]) -> String {
+    lines.iter().map(|l| format!("data: {l}\n\n")).collect()
 }
 
-/// Servidor HTTP falso: responde na ordem do roteiro (repete o último quando acaba) e guarda os corpos recebidos.
-pub struct Servidor {
+pub struct Server {
     pub url_base: String,
-    pedidos: Arc<Mutex<Vec<Value>>>,
+    requests: Arc<Mutex<Vec<Value>>>,
 }
 
-impl Servidor {
-    pub async fn iniciar(roteiro: Vec<Resposta>) -> Self {
-        let ouvinte = TcpListener::bind("127.0.0.1:0").await.expect("porta livre");
-        let porta = ouvinte.local_addr().expect("endereço").port();
-        let pedidos = Arc::new(Mutex::new(Vec::new()));
-        let fila = Arc::new(Mutex::new(VecDeque::from(roteiro)));
-        let pedidos_do_servidor = Arc::clone(&pedidos);
+impl Server {
+    pub async fn start(script: Vec<Reply>) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("porta livre");
+        let port = listener.local_addr().expect("endereço").port();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let queue = Arc::new(Mutex::new(VecDeque::from(script)));
+        let server_requests = Arc::clone(&requests);
         tokio::spawn(async move {
-            while let Ok((conexao, _)) = ouvinte.accept().await {
-                let pedidos = Arc::clone(&pedidos_do_servidor);
-                let fila = Arc::clone(&fila);
-                tokio::spawn(atender(conexao, pedidos, fila));
+            while let Ok((connection, _)) = listener.accept().await {
+                let requests = Arc::clone(&server_requests);
+                let queue = Arc::clone(&queue);
+                tokio::spawn(serve(connection, requests, queue));
             }
         });
         Self {
-            url_base: format!("http://127.0.0.1:{porta}/v1"),
-            pedidos,
+            url_base: format!("http://127.0.0.1:{port}/v1"),
+            requests,
         }
     }
 
-    pub fn pedidos(&self) -> Vec<Value> {
-        self.pedidos.lock().expect("trava").clone()
+    pub fn requests(&self) -> Vec<Value> {
+        self.requests.lock().expect("trava").clone()
     }
 }
 
-pub async fn atender(
-    mut conexao: TcpStream,
-    pedidos: Arc<Mutex<Vec<Value>>>,
-    fila: Arc<Mutex<VecDeque<Resposta>>>,
+pub async fn serve(
+    mut connection: TcpStream,
+    requests: Arc<Mutex<Vec<Value>>>,
+    queue: Arc<Mutex<VecDeque<Reply>>>,
 ) {
-    let corpo = ler_requisicao(&mut conexao).await;
-    pedidos
+    let body = read_request(&mut connection).await;
+    requests
         .lock()
         .expect("trava")
-        .push(serde_json::from_slice(&corpo).unwrap_or(Value::Null));
+        .push(serde_json::from_slice(&body).unwrap_or(Value::Null));
 
-    let resposta = {
-        let mut fila = fila.lock().expect("trava");
-        if fila.len() > 1 {
-            fila.pop_front().expect("há itens")
+    let reply = {
+        let mut queue = queue.lock().expect("trava");
+        if queue.len() > 1 {
+            queue.pop_front().expect("há itens")
         } else {
-            fila.front().cloned().expect("roteiro não vazio")
+            queue.front().cloned().expect("roteiro não vazio")
         }
     };
-    if !resposta.atraso.is_zero() {
-        tokio::time::sleep(resposta.atraso).await;
+    if !reply.delay.is_zero() {
+        tokio::time::sleep(reply.delay).await;
     }
-    let cabecalho = format!(
+    let header = format!(
         "HTTP/1.1 {} {}\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n",
-        resposta.status,
-        if resposta.status == 200 { "OK" } else { "ERRO" }
+        reply.status,
+        if reply.status == 200 { "OK" } else { "ERRO" }
     );
-    let _ = conexao.write_all(cabecalho.as_bytes()).await;
-    let _ = conexao.write_all(resposta.corpo.as_bytes()).await;
-    let _ = conexao.flush().await;
-    if resposta.deixar_aberta {
+    let _ = connection.write_all(header.as_bytes()).await;
+    let _ = connection.write_all(reply.body.as_bytes()).await;
+    let _ = connection.flush().await;
+    if reply.keep_open {
         tokio::time::sleep(Duration::from_secs(60)).await;
     }
 }
 
-/// Lê cabeçalhos e corpo (até `Content-Length`) de uma requisição HTTP simples.
-pub async fn ler_requisicao(conexao: &mut TcpStream) -> Vec<u8> {
+pub async fn read_request(connection: &mut TcpStream) -> Vec<u8> {
     let mut buf = Vec::new();
     let mut tmp = [0u8; 4096];
-    let inicio_do_corpo = loop {
-        if let Some(posicao) = buf.windows(4).position(|janela| janela == b"\r\n\r\n") {
-            break posicao + 4;
+    let body_start = loop {
+        if let Some(index) = buf.windows(4).position(|window| window == b"\r\n\r\n") {
+            break index + 4;
         }
-        match conexao.read(&mut tmp).await {
+        match connection.read(&mut tmp).await {
             Ok(n) if n > 0 => buf.extend_from_slice(&tmp[..n]),
             _ => return Vec::new(),
         }
     };
-    let cabecalho = String::from_utf8_lossy(&buf[..inicio_do_corpo]).to_ascii_lowercase();
-    let tamanho = cabecalho
+    let header = String::from_utf8_lossy(&buf[..body_start]).to_ascii_lowercase();
+    let size = header
         .lines()
-        .find_map(|linha| linha.strip_prefix("content-length:"))
-        .and_then(|valor| valor.trim().parse::<usize>().ok())
+        .find_map(|line| line.strip_prefix("content-length:"))
+        .and_then(|value| value.trim().parse::<usize>().ok())
         .unwrap_or(0);
-    while buf.len() < inicio_do_corpo + tamanho {
-        match conexao.read(&mut tmp).await {
+    while buf.len() < body_start + size {
+        match connection.read(&mut tmp).await {
             Ok(n) if n > 0 => buf.extend_from_slice(&tmp[..n]),
             _ => break,
         }
     }
-    let fim = (inicio_do_corpo + tamanho).min(buf.len());
-    buf[inicio_do_corpo..fim].to_vec()
+    let fim = (body_start + size).min(buf.len());
+    buf[body_start..fim].to_vec()
 }
 
-pub struct Montagem {
-    pub cliente: OpenAiCompatibleClient,
-    pub limites: LlmLimiter,
-    pub metricas: BaseMetrics,
+pub struct Assembly {
+    pub client: OpenAiCompatibleClient,
+    pub limiter: LlmLimiter,
+    pub metrics: BaseMetrics,
 }
 
-pub fn montar(url_base: &str, retentativas: u32, timeout: Duration) -> Montagem {
-    montar_com_regra(url_base, retentativas, timeout, true)
+pub fn assemble(url_base: &str, retries: u32, timeout: Duration) -> Assembly {
+    assemble_with_rule(url_base, retries, timeout, true)
 }
 
-pub fn montar_com_regra(
+pub fn assemble_with_rule(
     url_base: &str,
-    retentativas: u32,
+    retries: u32,
     timeout: Duration,
-    recusa_turno_modelo: bool,
-) -> Montagem {
+    refuses_model_turn: bool,
+) -> Assembly {
     let config = OpenAiCompatibleConfig {
         url_base: url_base.to_owned(),
-        chave: Secret::new(CHAVE.to_owned()),
+        chave: Secret::new(TEST_KEY.to_owned()),
         modelo: "gemini-3.8-flash-tiered".to_owned(),
         timeout,
-        retentativas,
+        retentativas: retries,
         base_wait: Duration::from_millis(10),
         temperatura: 0.0,
         max_tokens_saida: 512,
-        recusa_turno_modelo,
+        recusa_turno_modelo: refuses_model_turn,
     };
-    let limites = LlmLimiter::new(4, 2).expect("limites válidos");
-    let metricas = BaseMetrics::register(&Registry::new()).expect("catálogo");
-    let cliente =
-        OpenAiCompatibleClient::new(config, limites.clone(), metricas.clone()).expect("cliente");
-    Montagem {
-        cliente,
-        limites,
-        metricas,
+    let limiter = LlmLimiter::new(4, 2).expect("limites válidos");
+    let metrics = BaseMetrics::register(&Registry::new()).expect("catálogo");
+    let client =
+        OpenAiCompatibleClient::new(config, limiter.clone(), metrics.clone()).expect("cliente");
+    Assembly {
+        client,
+        limiter,
+        metrics,
     }
 }
 
-pub fn pedido_com(mensagens: Vec<Message>) -> Request {
-    Request::new(OrgId::generate(), mensagens)
+pub fn request_with(messages: Vec<Message>) -> Request {
+    Request::new(OrgId::generate(), messages)
 }
 
-pub fn pergunta(texto: &str) -> Request {
-    pedido_com(vec![
+pub fn question(text: &str) -> Request {
+    request_with(vec![
         Message::System("Você é um assistente de atendimento.".to_owned()),
-        Message::User(vec![Part::Texto(texto.to_owned())]),
+        Message::User(vec![Part::Texto(text.to_owned())]),
     ])
 }
 
-pub async fn colher(mut fluxo: LlmStream) -> Vec<Result<LlmEvent, LlmError>> {
-    let mut itens = Vec::new();
-    while let Some(item) = fluxo.next().await {
-        itens.push(item);
+pub async fn collect_stream(mut event_stream: LlmStream) -> Vec<Result<LlmEvent, LlmError>> {
+    let mut items = Vec::new();
+    while let Some(item) = event_stream.next().await {
+        items.push(item);
     }
-    itens
+    items
 }
 
-pub fn so_eventos(itens: Vec<Result<LlmEvent, LlmError>>) -> Vec<LlmEvent> {
-    itens
+pub fn only_events(items: Vec<Result<LlmEvent, LlmError>>) -> Vec<LlmEvent> {
+    items
         .into_iter()
         .map(|item| item.expect("evento sem erro"))
         .collect()
 }
 
-// ───────────────────────────── https: certificados e servidor TLS de teste (HR-10b) ─────────────────────────────
-
-/// Certificados de teste do TLS (ver `tests/fixtures/tls/LEIAME.md`).
-pub mod certificados {
-    /// CA de teste: é a raiz extra que o cliente recebe no teste de https que deve funcionar.
+pub mod certificates {
     pub const CA: &[u8] = include_bytes!("../fixtures/tls/ca.der");
-    /// Certificado de servidor para `IP:127.0.0.1`.
-    pub const SERVIDOR_IP: &[u8] = include_bytes!("../fixtures/tls/servidor-ip.der");
-    /// Certificado de servidor para `DNS:localhost` (usado no teste de nome errado).
-    pub const SERVIDOR_NOME: &[u8] = include_bytes!("../fixtures/tls/servidor-nome.der");
-    /// Chave privada (PKCS#8 DER) dos dois certificados de servidor.
-    pub const SERVIDOR_CHAVE: &[u8] = include_bytes!("../fixtures/tls/servidor-chave.der");
+    pub const SERVER_IP: &[u8] = include_bytes!("../fixtures/tls/servidor-ip.der");
+    pub const SERVER_NAME: &[u8] = include_bytes!("../fixtures/tls/servidor-nome.der");
+    pub const SERVER_KEY: &[u8] = include_bytes!("../fixtures/tls/servidor-chave.der");
 }
 
-/// Servidor HTTPS falso: mesma ideia do [`Servidor`], com handshake TLS de verdade.
-pub struct ServidorTls {
+pub struct ServerTls {
     pub url_base: String,
-    pedidos: Arc<Mutex<Vec<Value>>>,
-    conexoes: Arc<AtomicUsize>,
+    requests: Arc<Mutex<Vec<Value>>>,
+    connections: Arc<AtomicUsize>,
 }
 
-impl ServidorTls {
-    /// Sobe o servidor com o certificado dado (`certificado` em DER) e responde o roteiro.
-    pub async fn iniciar(roteiro: Vec<Resposta>, certificado: &'static [u8]) -> Self {
+impl ServerTls {
+    pub async fn start(script: Vec<Reply>, certificate: &'static [u8]) -> Self {
         let config = rustls::ServerConfig::builder()
             .with_no_client_auth()
             .with_single_cert(
-                vec![CertificateDer::from(certificado)],
-                PrivateKeyDer::Pkcs8(certificados::SERVIDOR_CHAVE.into()),
+                vec![CertificateDer::from(certificate)],
+                PrivateKeyDer::Pkcs8(certificates::SERVER_KEY.into()),
             )
             .expect("configuração TLS de teste");
-        let aceitador = TlsAcceptor::from(Arc::new(config));
-        let ouvinte = TcpListener::bind("127.0.0.1:0").await.expect("porta livre");
-        let porta = ouvinte.local_addr().expect("endereço").port();
-        let pedidos = Arc::new(Mutex::new(Vec::new()));
-        let conexoes = Arc::new(AtomicUsize::new(0));
-        let fila = Arc::new(Mutex::new(VecDeque::from(roteiro)));
-        let pedidos_do_servidor = Arc::clone(&pedidos);
-        let conexoes_do_servidor = Arc::clone(&conexoes);
+        let acceptor = TlsAcceptor::from(Arc::new(config));
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("porta livre");
+        let port = listener.local_addr().expect("endereço").port();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let connections = Arc::new(AtomicUsize::new(0));
+        let queue = Arc::new(Mutex::new(VecDeque::from(script)));
+        let server_requests = Arc::clone(&requests);
+        let server_connections = Arc::clone(&connections);
         tokio::spawn(async move {
-            while let Ok((conexao, _)) = ouvinte.accept().await {
-                conexoes_do_servidor.fetch_add(1, Ordering::SeqCst);
-                let aceitador = aceitador.clone();
-                let pedidos = Arc::clone(&pedidos_do_servidor);
-                let fila = Arc::clone(&fila);
+            while let Ok((connection, _)) = listener.accept().await {
+                server_connections.fetch_add(1, Ordering::SeqCst);
+                let acceptor = acceptor.clone();
+                let requests = Arc::clone(&server_requests);
+                let queue = Arc::clone(&queue);
                 tokio::spawn(async move {
-                    // Handshake recusado pelo cliente é esperado em um dos testes: não é erro aqui.
-                    let Ok(mut tls) = aceitador.accept(conexao).await else {
+                    let Ok(mut tls) = acceptor.accept(connection).await else {
                         return;
                     };
-                    atender_tls(&mut tls, pedidos, fila).await;
+                    serve_tls(&mut tls, requests, queue).await;
                 });
             }
         });
         Self {
-            url_base: format!("https://127.0.0.1:{porta}/v1"),
-            pedidos,
-            conexoes,
+            url_base: format!("https://127.0.0.1:{port}/v1"),
+            requests,
+            connections,
         }
     }
 
-    pub fn pedidos(&self) -> Vec<Value> {
-        self.pedidos.lock().expect("trava").clone()
+    pub fn requests(&self) -> Vec<Value> {
+        self.requests.lock().expect("trava").clone()
     }
 
-    /// Quantas conexões TCP o servidor aceitou (prova que não houve retentativa).
-    pub fn conexoes(&self) -> usize {
-        self.conexoes.load(Ordering::SeqCst)
+    pub fn connections(&self) -> usize {
+        self.connections.load(Ordering::SeqCst)
     }
 }
 
-async fn atender_tls<S>(
-    conexao: &mut S,
-    pedidos: Arc<Mutex<Vec<Value>>>,
-    fila: Arc<Mutex<VecDeque<Resposta>>>,
+async fn serve_tls<S>(
+    connection: &mut S,
+    requests: Arc<Mutex<Vec<Value>>>,
+    queue: Arc<Mutex<VecDeque<Reply>>>,
 ) where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
-    let corpo = ler_requisicao_generica(conexao).await;
-    pedidos
+    let body = read_request_generic(connection).await;
+    requests
         .lock()
         .expect("trava")
-        .push(serde_json::from_slice(&corpo).unwrap_or(Value::Null));
-    let resposta = {
-        let mut fila = fila.lock().expect("trava");
-        if fila.len() > 1 {
-            fila.pop_front().expect("há itens")
+        .push(serde_json::from_slice(&body).unwrap_or(Value::Null));
+    let reply = {
+        let mut queue = queue.lock().expect("trava");
+        if queue.len() > 1 {
+            queue.pop_front().expect("há itens")
         } else {
-            fila.front().cloned().expect("roteiro não vazio")
+            queue.front().cloned().expect("roteiro não vazio")
         }
     };
-    if !resposta.atraso.is_zero() {
-        tokio::time::sleep(resposta.atraso).await;
+    if !reply.delay.is_zero() {
+        tokio::time::sleep(reply.delay).await;
     }
-    let cabecalho = format!(
+    let header = format!(
         "HTTP/1.1 {} {}\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n",
-        resposta.status,
-        if resposta.status == 200 { "OK" } else { "ERRO" }
+        reply.status,
+        if reply.status == 200 { "OK" } else { "ERRO" }
     );
-    let _ = conexao.write_all(cabecalho.as_bytes()).await;
-    let _ = conexao.write_all(resposta.corpo.as_bytes()).await;
-    let _ = conexao.flush().await;
+    let _ = connection.write_all(header.as_bytes()).await;
+    let _ = connection.write_all(reply.body.as_bytes()).await;
+    let _ = connection.flush().await;
 }
 
-/// Igual a [`ler_requisicao`], mas para qualquer fluxo (TLS inclusive).
-pub async fn ler_requisicao_generica<S>(conexao: &mut S) -> Vec<u8>
+pub async fn read_request_generic<S>(connection: &mut S) -> Vec<u8>
 where
     S: tokio::io::AsyncRead + Unpin,
 {
     let mut buf = Vec::new();
     let mut tmp = [0u8; 4096];
-    let inicio_do_corpo = loop {
-        if let Some(posicao) = buf.windows(4).position(|janela| janela == b"\r\n\r\n") {
-            break posicao + 4;
+    let body_start = loop {
+        if let Some(index) = buf.windows(4).position(|window| window == b"\r\n\r\n") {
+            break index + 4;
         }
-        match conexao.read(&mut tmp).await {
+        match connection.read(&mut tmp).await {
             Ok(n) if n > 0 => buf.extend_from_slice(&tmp[..n]),
             _ => return Vec::new(),
         }
     };
-    let cabecalho = String::from_utf8_lossy(&buf[..inicio_do_corpo]).to_ascii_lowercase();
-    let tamanho = cabecalho
+    let header = String::from_utf8_lossy(&buf[..body_start]).to_ascii_lowercase();
+    let size = header
         .lines()
-        .find_map(|linha| linha.strip_prefix("content-length:"))
-        .and_then(|valor| valor.trim().parse::<usize>().ok())
+        .find_map(|line| line.strip_prefix("content-length:"))
+        .and_then(|value| value.trim().parse::<usize>().ok())
         .unwrap_or(0);
-    while buf.len() < inicio_do_corpo + tamanho {
-        match conexao.read(&mut tmp).await {
+    while buf.len() < body_start + size {
+        match connection.read(&mut tmp).await {
             Ok(n) if n > 0 => buf.extend_from_slice(&tmp[..n]),
             _ => break,
         }
     }
-    let fim = (inicio_do_corpo + tamanho).min(buf.len());
-    buf[inicio_do_corpo..fim].to_vec()
+    let fim = (body_start + size).min(buf.len());
+    buf[body_start..fim].to_vec()
 }

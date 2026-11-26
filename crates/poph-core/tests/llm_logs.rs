@@ -37,22 +37,22 @@ async fn key_stays_out_of_log_and_error() {
     let _guard = tracing::subscriber::set_default(assinante);
     tracing::callsite::rebuild_interest_cache();
 
-    let body = format!(r#"{{"error":{{"message":"chave inválida {CHAVE}"}}}}"#);
-    let servidor = Servidor::iniciar(vec![
-        Resposta::ok(sse(&[
+    let body = format!(r#"{{"error":{{"message":"chave inválida {TEST_KEY}"}}}}"#);
+    let servidor = Server::start(vec![
+        Reply::ok(sse(&[
             r#"{"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}"#,
             "[DONE]",
         ])),
-        Resposta::erro(401, &body),
+        Reply::error(401, &body),
     ])
     .await;
-    let m = montar(&servidor.url_base, 0, Duration::from_secs(5));
+    let m = assemble(&servidor.url_base, 0, Duration::from_secs(5));
 
-    let fluxo = m.cliente.stream(pergunta("oi")).await.expect("abre");
-    let _ = colher(fluxo).await;
+    let event_stream = m.client.stream(question("oi")).await.expect("abre");
+    let _ = collect_stream(event_stream).await;
     let error = m
-        .cliente
-        .stream(pergunta("oi"))
+        .client
+        .stream(question("oi"))
         .await
         .err()
         .expect("recusado");
@@ -66,9 +66,12 @@ async fn key_stays_out_of_log_and_error() {
         registro.contains("chamada ao LLM falhou"),
         "o log de falha foi escrito"
     );
-    assert!(!registro.contains(CHAVE), "a chave não pode ir para o log");
     assert!(
-        !format!("{error} {error:?}").contains(CHAVE),
+        !registro.contains(TEST_KEY),
+        "a chave não pode ir para o log"
+    );
+    assert!(
+        !format!("{error} {error:?}").contains(TEST_KEY),
         "nem para o erro"
     );
 
@@ -85,8 +88,8 @@ async fn key_stays_out_of_log_and_error() {
     tracing::callsite::rebuild_interest_cache();
 
     let readable_error = m
-        .cliente
-        .stream(pergunta("oi"))
+        .client
+        .stream(question("oi"))
         .await
         .err()
         .expect("recusado");
@@ -97,8 +100,8 @@ async fn key_stays_out_of_log_and_error() {
         "o log legível de falha foi escrito"
     );
     assert!(
-        !readable_record.contains(CHAVE),
+        !readable_record.contains(TEST_KEY),
         "a chave não pode ir para o log legível"
     );
-    assert!(!format!("{readable_error} {readable_error:?}").contains(CHAVE));
+    assert!(!format!("{readable_error} {readable_error:?}").contains(TEST_KEY));
 }
