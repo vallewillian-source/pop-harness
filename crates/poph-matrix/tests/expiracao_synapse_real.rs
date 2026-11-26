@@ -36,7 +36,7 @@ use poph_matrix::salas::{
     ConversaParaSala, ErroPorta, EstadoGravado, PortaSalas, Provisionador, SalaGravada,
 };
 use poph_matrix::usuarios::IdsFantasmas;
-use poph_types::{AgentId, ConversationId, MatrixConfig, OrgId, Segredo};
+use poph_types::{AgentId, ConversationId, MatrixConfig, OrgId, Secret};
 use serde_json::json;
 
 /// Porta em memória: o teste quer provar o Synapse, não o banco.
@@ -134,17 +134,17 @@ async fn a_midia_expirada_e_redigida_na_sala_e_apagada_do_synapse() {
     let admin_token = credencial("POPH_MATRIX_DEV_ADMIN_TOKEN");
 
     let config = MatrixConfig {
-        habilitado: true,
+        enabled: true,
         homeserver_url: base,
         server_name: server_name.clone(),
-        prefixo: "ph".to_owned(),
+        prefix: "ph".to_owned(),
         ..MatrixConfig::default()
     };
     let cliente = ClienteMatrix::novo(
         ConfigCliente::novo(
             config.homeserver_url.clone(),
             server_name.clone(),
-            Segredo::new(as_token),
+            Secret::new(as_token),
         )
         .expect("configuração do cliente"),
     )
@@ -274,7 +274,7 @@ async fn a_midia_expirada_e_redigida_na_sala_e_apagada_do_synapse() {
     );
 
     // Apagar pela API administrativa: com o token de administrador, o arquivo sai.
-    let apagou = expiracao::apagar(&cliente, &Segredo::new(admin_token), &publicada.mxc)
+    let apagou = expiracao::apagar(&cliente, &Secret::new(admin_token), &publicada.mxc)
         .await
         .expect("o Synapse de dev aceita o apagamento pela API admin");
     assert!(apagou, "o arquivo existia e foi apagado");

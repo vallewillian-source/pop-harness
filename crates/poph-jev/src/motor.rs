@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures::future::BoxFuture;
-use poph_types::GatesJev;
+use poph_types::JevGates;
 use serde_json::{Value, json};
 
 use crate::cache::{CacheDecisoes, OpcoesCache};
@@ -167,7 +167,7 @@ impl ResultadoJev {
 /// turno de produção recebe o [`MotorJev`].
 pub trait AvaliadorGates: Send + Sync {
     /// Gates ligados para este agente (global ajustado pelo agente).
-    fn gates_efetivos(&self, ajuste: Option<AjusteGates>) -> GatesJev;
+    fn gates_efetivos(&self, ajuste: Option<AjusteGates>) -> JevGates;
 
     /// Avalia os gates ligados num lote só. Nunca falha: erro vira fallback.
     fn avaliar<'a>(
@@ -197,7 +197,7 @@ pub trait AvaliadorGates: Send + Sync {
 pub struct MotorJev {
     transporte: Arc<dyn TransporteJev>,
     gates: Vec<Box<dyn Gate>>,
-    globais: GatesJev,
+    globais: JevGates,
     modelo: String,
     limiares: BTreeMap<IdGate, Limiares>,
     cache: CacheDecisoes,
@@ -221,7 +221,7 @@ impl MotorJev {
     /// Motor com os quatro gates da V1 e os ajustes padrão.
     pub fn novo(
         transporte: Arc<dyn TransporteJev>,
-        globais: GatesJev,
+        globais: JevGates,
         modelo: impl Into<String>,
     ) -> Self {
         Self {
@@ -274,7 +274,7 @@ impl MotorJev {
     }
 
     /// `true` quando o gate está ligado nos gates efetivos.
-    pub fn ligado(gates: GatesJev, gate: IdGate) -> bool {
+    pub fn ligado(gates: JevGates, gate: IdGate) -> bool {
         match gate {
             IdGate::G1 => gates.g1,
             IdGate::G2 => gates.g2,
@@ -288,7 +288,7 @@ impl MotorJev {
         }
     }
 
-    async fn avaliar_agora(&self, estado: EstadoJev, gates: GatesJev) -> ResultadoJev {
+    async fn avaliar_agora(&self, estado: EstadoJev, gates: JevGates) -> ResultadoJev {
         let hash = estado.hash();
         let ligados: Vec<&Box<dyn Gate>> = self
             .gates
@@ -416,7 +416,7 @@ impl MotorJev {
 }
 
 impl AvaliadorGates for MotorJev {
-    fn gates_efetivos(&self, ajuste: Option<AjusteGates>) -> GatesJev {
+    fn gates_efetivos(&self, ajuste: Option<AjusteGates>) -> JevGates {
         match ajuste {
             Some(ajuste) => ajuste.sobre(self.globais),
             None => self.globais,
@@ -494,7 +494,7 @@ impl AvaliadorGates for MotorJev {
 
 impl MotorJev {
     /// `true` quando nenhum gate está ligado.
-    pub fn nenhum(gates: GatesJev) -> bool {
+    pub fn nenhum(gates: JevGates) -> bool {
         IdGate::TODOS
             .into_iter()
             .all(|gate| !Self::ligado(gates, gate))

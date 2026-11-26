@@ -22,7 +22,7 @@ use poph_agent::turno::{
 use poph_core::llm::{ChamadaFerramenta, EventoLlm, LlmProvider, MotivoFim, ProvedorFake, Roteiro};
 use poph_store::{NovaCategoria, NovaConversa, NovaOrg, NovoAgente, NovoProduto, Pagina, Store};
 use poph_types::{
-    AgentId, ConversationId, FerramentaConfig, OrgId, ProductId, StructuredInstructions, TurnId,
+    AgentId, ConversationId, OrgId, ProductId, StructuredInstructions, ToolConfig, TurnId,
 };
 use serde_json::{Value, json};
 
@@ -87,7 +87,7 @@ impl Cenario {
         let estruturado = StructuredInstructions {
             tools: ferramentas
                 .iter()
-                .map(|nome| FerramentaConfig {
+                .map(|nome| ToolConfig {
                     name: (*nome).to_owned(),
                     enabled: true,
                     when_to_use: String::new(),
@@ -101,7 +101,7 @@ impl Cenario {
                 org,
                 agente,
                 0,
-                &estruturado.para_json(),
+                &estruturado.to_json(),
                 "# Bia\n\nVocê é a atendente da FixProLar.",
                 true,
             )

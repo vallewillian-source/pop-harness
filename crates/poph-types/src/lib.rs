@@ -1,44 +1,36 @@
-//! Tipos de domínio do POP Harness, compartilhados por todos os crates.
-//!
-//! Aqui ficam identificadores tipados ([`ids`]), o erro raiz do domínio ([`error`]), a
-//! configuração (tipos, padrões e validação, sem leitura de arquivo, [`config`]), o valor
-//! que não pode vazar em log ([`segredo`]), o registro de métricas em memória ([`metricas`]), as
-//! instruções estruturadas do agente ([`instrucoes`]), o contrato de integração com os canais
-//! ([`integracao`], PRD §8.3) e os tipos do módulo de Fluxos e Fichas ([`fluxos`]).
-//! Nenhuma regra de negócio: ela entra nos crates `poph-core` e `poph-server`.
-
 pub mod config;
 pub mod error;
-pub mod fluxos;
+pub mod flows;
 pub mod ids;
-pub mod instrucoes;
-pub mod integracao;
-pub mod metricas;
-pub mod midia_fora_do_escopo;
-pub mod segredo;
+pub mod instructions;
+pub mod integration;
+pub mod metrics;
+pub mod secret;
+pub mod unsupported_content;
 
 pub use config::{
-    ClusterConfig, ClusterInstance, DadosConfig, EvolutionConfig, FluxosConfig, Formato, GatesJev,
-    HandoffConfig, HarnessConfig, JevConfig, LimitesConfig, LlmConfig, LogConfig, MatrixConfig,
-    PROVEDORES_LLM_ACEITOS, ProvedorConfig, RetencaoConfig, ServidorConfig, provedor_llm_aceito,
+    ACCEPTED_LLM_PROVIDERS, ClusterConfig, ClusterInstance, DataConfig, EvolutionConfig,
+    FlowsConfig, Format, HandoffConfig, HarnessConfig, JevConfig, JevGates, LimitsConfig,
+    LlmConfig, LogConfig, MatrixConfig, ProviderConfig, RetentionConfig, ServerConfig,
+    llm_provider_accepted,
 };
 pub use error::{DomainError, DomainResult};
-pub use fluxos::{
-    AtorAcao, AtorEvento, EstadoEfeito, FechadaPor, GatilhoFluxo, StatusEtapa, StatusExecucao,
-    StatusFicha, TipoCampo, TipoEventoFicha,
+pub use flows::{
+    ActionActor, ClosedBy, EffectState, EventActor, ExecutionStatus, FieldKind, FlowTrigger,
+    RecordEventKind, RecordStatus, StepStatus,
 };
 pub use ids::*;
-pub use instrucoes::{
-    Escopo, FERRAMENTAS_V1, FerramentaConfig, HandoffEscopo, Identidade, PassoFluxo, Principio,
-    StructuredInstructions, Tom,
+pub use instructions::{
+    FlowStep, HandoffScope, Identity, Principle, Scope, StructuredInstructions, TOOLS_V1, Tone,
+    ToolConfig,
 };
-pub use integracao::{
-    AnexoEntrada, Capacidades, ComandoSaida, ErroComando, ErroIntegracao, EsquemaJson,
-    EstadoIntegracao, EventoEstado, EventoIntegracao, FuturoComando, FuturoSaude, Handshake,
-    InboundEvent, Integration, LimitesCanal, Manifesto, MensagemHost, MensagemPlugin,
-    PROTOCOLO_VERSAO, PluginDeclarado, PluginsConfig, Presenca, Receptor, Saude, SendFile,
-    SendText, SetPresence,
+pub use integration::{
+    Capabilities, ChannelLimits, CommandError, CommandFuture, DeclaredPlugin, EventSink, Handshake,
+    Health, HealthFuture, HostMessage, InboundAttachment, InboundEvent, Integration,
+    IntegrationError, IntegrationEvent, IntegrationState, JsonSchema, Manifest, OutboundCommand,
+    PROTOCOL_VERSION, PluginMessage, PluginsConfig, Presence, SendFile, SendText, SetPresence,
+    StateEvent,
 };
-pub use metricas::{Contador, Histograma, Medidor, MetricasBase, Registro};
-pub use midia_fora_do_escopo::MidiaForaDoEscopo;
-pub use segredo::{Segredo, Sensivel};
+pub use metrics::{BaseMetrics, Counter, Gauge, Histogram, Registry};
+pub use secret::{Secret, Sensitive};
+pub use unsupported_content::UnsupportedContent;

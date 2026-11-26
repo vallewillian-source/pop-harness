@@ -29,7 +29,7 @@ use poph_store::{
     EstadoDaExecucao, ExtrasDaTransicao, InicioDeExecucao, NovaConversa, NovaOrg, NovoAgente,
     NovoFluxo, PublicacaoDeRevisao, Store,
 };
-use poph_types::{AtorAcao, AtorEvento, FluxoId, HarnessConfig, RevisaoId, StatusExecucao};
+use poph_types::{ActionActor, EventActor, ExecutionStatus, FlowId, HarnessConfig, RevisionId};
 
 /// Fluxo simples: uma etapa do agente e um fim que conclui sem encerrar o atendimento.
 const CONCLUSIVO: &str = r#"fluxo(
@@ -137,7 +137,7 @@ impl Cenario {
         let _ = fs::remove_dir_all(&pasta);
         fs::create_dir_all(pasta.join("dados")).expect("pasta de dados");
         let mut config = HarnessConfig::default();
-        config.dados.diretorio = pasta.join("dados");
+        config.data.directory = pasta.join("dados");
         let store = Arc::new(Store::abrir(&config).expect("abre o banco"));
         let estado = Estado::novo(store, config).expect("estado do servidor");
         assert!(
@@ -189,7 +189,7 @@ impl Cenario {
     }
 
     /// Cria o fluxo, publica a revisão compilada e libera ao agente.
-    fn fluxo(&self, script: &str, slug: &str) -> (FluxoId, RevisaoId) {
+    fn fluxo(&self, script: &str, slug: &str) -> (FlowId, RevisionId) {
         let fluxo = self
             .store()
             .fluxos()
@@ -232,7 +232,7 @@ impl Cenario {
     }
 
     /// Ficha de um atendimento novo (o caminho normal: a conversa nasce e a Ficha vem com ela).
-    fn ficha(&self) -> (poph_types::ConversationId, poph_types::FichaId) {
+    fn ficha(&self) -> (poph_types::ConversationId, poph_types::RecordId) {
         let conversa = self
             .store()
             .conversas()
@@ -262,9 +262,9 @@ impl Cenario {
     /// Abre a execução, como o turno e a API de ações fazem.
     fn abrir(
         &self,
-        ficha: poph_types::FichaId,
-        fluxo: FluxoId,
-        revisao: RevisaoId,
+        ficha: poph_types::RecordId,
+        fluxo: FlowId,
+        revisao: RevisionId,
         chave: &str,
     ) -> poph_store::Execucao {
         self.store()
@@ -275,11 +275,11 @@ impl Cenario {
                     ficha,
                     fluxo,
                     revisao,
-                    ator: AtorEvento::Agente,
+                    ator: EventActor::Agent,
                     ator_ref: Some("atendente-de-teste"),
                     decisao_jev: None,
                     estado_inicial: EstadoDaExecucao {
-                        status: StatusExecucao::Ativa,
+                        status: ExecutionStatus::Active,
                         no_atual: "coleta".to_owned(),
                         dados_json: "{}".to_owned(),
                         atores_que_agiram: Vec::new(),
@@ -318,7 +318,7 @@ impl Cenario {
             &estado,
             acao,
             &Campos::new(),
-            AtorAcao::Agente,
+            ActionActor::Agent,
             Some(chave),
             &contexto,
         )
@@ -350,11 +350,11 @@ impl Cenario {
     fn valores(&self) -> (u64, u64, u64, u64, u64) {
         let c = self.contadores();
         (
-            c.iniciadas.valor(),
-            c.concluidas.valor(),
-            c.abandonadas.valor(),
-            c.falhas.valor(),
-            c.erros_regra.valor(),
+            c.iniciadas.value(),
+            c.concluidas.value(),
+            c.abandonadas.value(),
+            c.falhas.value(),
+            c.erros_regra.value(),
         )
     }
 }
@@ -406,11 +406,11 @@ fn abertura_conta_uma_vez_e_repetir_a_chave_nao_conta_de_novo() {
                 ficha,
                 fluxo,
                 revisao,
-                ator: AtorEvento::Agente,
+                ator: EventActor::Agent,
                 ator_ref: Some("atendente-de-teste"),
                 decisao_jev: None,
                 estado_inicial: EstadoDaExecucao {
-                    status: StatusExecucao::Ativa,
+                    status: ExecutionStatus::Active,
                     no_atual: "coleta".to_owned(),
                     dados_json: "{}".to_owned(),
                     atores_que_agiram: Vec::new(),
@@ -435,7 +435,7 @@ fn conclusao_conta_concluida_e_repetir_a_chave_nao_soma() {
     let execucao = cenario.abrir(ficha, fluxo, revisao, "conclusao-1");
 
     let gravada = cenario.agir(CONCLUSIVO, &execucao, "concluir", None, "acao-1");
-    assert_eq!(gravada.execucao.status, StatusExecucao::Concluida);
+    assert_eq!(gravada.execucao.status, ExecutionStatus::Completed);
     assert_eq!(
         cenario.valores(),
         (1, 1, 0, 0, 0),
@@ -475,8 +475,13 @@ fn abandono_pelo_agente_conta_abandonada() {
     let execucao = cenario.abrir(ficha, fluxo, revisao, "abandono-1");
 
     let estado = estado_do_banco(&execucao);
-    let resultado = motor::abandonar(&estado, "cliente desistiu", AtorAcao::Agente, Some("ab-1"))
-        .expect("o abandono volta com o desfecho");
+    let resultado = motor::abandonar(
+        &estado,
+        "cliente desistiu",
+        ActionActor::Agent,
+        Some("ab-1"),
+    )
+    .expect("o abandono volta com o desfecho");
     cenario
         .store()
         .execucoes()
@@ -539,7 +544,7 @@ fn falha_de_regra_conta_falha_e_erro_de_regra() {
     let execucao = cenario.abrir(ficha, fluxo, revisao, "regra-1");
 
     let gravada = cenario.agir(REGRA_QUEBRADA, &execucao, "ir", None, "acao-regra");
-    assert_eq!(gravada.execucao.status, StatusExecucao::Falha);
+    assert_eq!(gravada.execucao.status, ExecutionStatus::Failed);
     assert_eq!(
         cenario.valores(),
         (1, 0, 0, 1, 1),
@@ -556,7 +561,7 @@ fn falha_que_nao_e_de_regra_nao_conta_erro_de_regra() {
 
     // Teto de uma decisão encadeada: a segunda estoura e a execução para em `falha`.
     let gravada = cenario.agir(DUAS_DECISOES, &execucao, "ir", Some(1), "acao-saltos");
-    assert_eq!(gravada.execucao.status, StatusExecucao::Falha);
+    assert_eq!(gravada.execucao.status, ExecutionStatus::Failed);
     assert_eq!(
         cenario.valores(),
         (1, 0, 0, 1, 0),

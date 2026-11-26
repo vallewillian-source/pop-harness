@@ -30,7 +30,7 @@ use poph_server::entrada_turno::MOTIVO_INTERROMPIDO;
 use poph_store::{
     Direcao, EstadoTurno, NovaConversa, NovaMensagem, NovaOrg, NovoAgente, Pagina, Papel, Store,
 };
-use poph_types::config::TokenGlobalConfig;
+use poph_types::config::GlobalTokenConfig;
 use poph_types::{ConversationId, HarnessConfig, OrgId};
 use rand_core::OsRng;
 use reqwest::{Client, StatusCode};
@@ -75,9 +75,9 @@ fn pasta_de_teste(rotulo: &str) -> PathBuf {
 
 fn configuracao(pasta: &Path) -> HarnessConfig {
     let mut config = HarnessConfig::default();
-    config.dados.diretorio = pasta.join("dados");
-    config.servidor.porta = 7484;
-    config.admin.tokens_globais = vec![TokenGlobalConfig {
+    config.data.directory = pasta.join("dados");
+    config.server.port = 7484;
+    config.admin.tokens_globais = vec![GlobalTokenConfig {
         label: "teste".to_owned(),
         hash: hash_argon2(TOKEN_GLOBAL),
     }];

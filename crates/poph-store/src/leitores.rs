@@ -62,8 +62,8 @@ impl std::fmt::Debug for PoolLeitores {
 /// Converte um `Option` vazio de consulta em "não encontrado" com entidade e id.
 pub(crate) fn exigir<T>(valor: Option<T>, entidade: &'static str, id: &str) -> Resultado<T> {
     valor.ok_or_else(|| {
-        ErroStore::Dominio(poph_types::DomainError::NaoEncontrado {
-            entidade,
+        ErroStore::Dominio(poph_types::DomainError::NotFound {
+            entity: entidade,
             id: id.to_owned(),
         })
     })

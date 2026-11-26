@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use poph_store::{MIGRACOES_HARNESS, Store, versao_alvo_harness, versao_do_arquivo};
-use poph_types::{EstadoEfeito, StatusEtapa, StatusExecucao};
+use poph_types::{EffectState, ExecutionStatus, StepStatus};
 use rusqlite::Connection;
 
 /// Nome da migração desta tarefa em `MIGRACOES_HARNESS`.
@@ -686,9 +686,9 @@ fn vocabulario_aceita_exatamente_os_textos_do_poph_types() {
 
     // Todo texto de `StatusExecucao` passa pelo CHECK. Cada execução numa Ficha própria, porque só
     // uma ativa por Ficha.
-    for status in StatusExecucao::TODOS {
+    for status in ExecutionStatus::ALL {
         let ficha = cenario.ficha(&org, &agente);
-        let finalizada_em = if *status == StatusExecucao::Ativa {
+        let finalizada_em = if *status == ExecutionStatus::Active {
             None
         } else {
             Some(9_i64)
@@ -706,7 +706,7 @@ fn vocabulario_aceita_exatamente_os_textos_do_poph_types() {
                     ficha,
                     fluxo,
                     revisao,
-                    status.como_texto(),
+                    status.as_text(),
                     finalizada_em
                 ],
             )
@@ -717,8 +717,8 @@ fn vocabulario_aceita_exatamente_os_textos_do_poph_types() {
     let execucao = cenario.execucao(&org, &ficha, &fluxo, &revisao);
 
     // `StatusEtapa` na tabela de etapas (a primeira linha de cada execução tem que ter ordem única).
-    for (indice, status) in StatusEtapa::TODOS.iter().enumerate() {
-        let concluiu_em = if *status == StatusEtapa::Concluida {
+    for (indice, status) in StepStatus::ALL.iter().enumerate() {
+        let concluiu_em = if *status == StepStatus::Completed {
             Some(7_i64)
         } else {
             None
@@ -734,7 +734,7 @@ fn vocabulario_aceita_exatamente_os_textos_do_poph_types() {
                     org,
                     execucao,
                     indice as i64 + 1,
-                    status.como_texto(),
+                    status.as_text(),
                     concluiu_em
                 ],
             )
@@ -742,13 +742,13 @@ fn vocabulario_aceita_exatamente_os_textos_do_poph_types() {
     }
 
     // `EstadoEfeito` e os três tipos de efeito da linguagem.
-    for (indice, estado) in EstadoEfeito::TODOS.iter().enumerate() {
+    for (indice, estado) in EffectState::ALL.iter().enumerate() {
         for (posicao, tipo) in ["mensagem_ao_cliente", "notificar_whatsapp", "encaminhar"]
             .iter()
             .enumerate()
         {
             let chave = indice * 3 + posicao + 1;
-            let enviado_em = if *estado == EstadoEfeito::Enviado {
+            let enviado_em = if *estado == EffectState::Sent {
                 Some(3_i64)
             } else {
                 None
@@ -767,7 +767,7 @@ fn vocabulario_aceita_exatamente_os_textos_do_poph_types() {
                         execucao,
                         format!("efeito-{chave}"),
                         tipo,
-                        estado.como_texto(),
+                        estado.as_text(),
                         enviado_em
                     ],
                 )

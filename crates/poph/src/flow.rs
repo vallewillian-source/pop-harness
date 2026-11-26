@@ -172,7 +172,7 @@ impl Sessao {
     fn abrir(flag: Option<PathBuf>, ambiente: &config::Ambiente) -> Result<Self, String> {
         let (store, config) = abrir_com_configuracao(flag, ambiente)?;
         let cache = CacheRevisoes::novo(
-            usize::try_from(config.fluxos.cache_revisoes_mb).unwrap_or(usize::MAX),
+            usize::try_from(config.flows.revision_cache_mb).unwrap_or(usize::MAX),
         );
         Ok(Self {
             store,

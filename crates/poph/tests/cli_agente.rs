@@ -207,7 +207,7 @@ fn cli_cria_agente_com_instrucoes_e_lista_mostrando_o_texto_composto() {
         .expect("markdown no JSON")
         .to_owned();
     let esperado = compor_instrucoes(
-        &StructuredInstructions::de_json_tolerante(INSTRUCOES).expect("JSON de instruções"),
+        &StructuredInstructions::from_tolerant_json(INSTRUCOES).expect("JSON de instruções"),
     );
     assert_eq!(
         markdown, esperado,

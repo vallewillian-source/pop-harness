@@ -431,11 +431,11 @@ impl AvisoDeFalhas {
     /// Conta a falha por classe (e o `429`), como o restante do módulo.
     fn contar_erro(&self, erro: &ErroChamada) {
         match erro.classificacao() {
-            Classificacao::Transitoria => self.metricas.erros_transitorios.incrementar(1),
-            Classificacao::Definitiva => self.metricas.erros_definitivos.incrementar(1),
+            Classificacao::Transitoria => self.metricas.erros_transitorios.increment(1),
+            Classificacao::Definitiva => self.metricas.erros_definitivos.increment(1),
         }
         if matches!(erro, ErroChamada::Resposta { status: 429, .. }) {
-            self.metricas.respostas_429.incrementar(1);
+            self.metricas.respostas_429.increment(1);
         }
     }
 }

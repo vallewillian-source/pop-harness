@@ -3,21 +3,21 @@
 //! quando o agente não tem fluxo liberado. O agente sobrepõe esse padrão pelo `jev_json`, campo a campo.
 
 use poph_jev::AjusteGates;
-use poph_types::GatesJev;
+use poph_types::JevGates;
 
-fn efetivos(texto: &str) -> GatesJev {
+fn efetivos(texto: &str) -> JevGates {
     AjusteGates::de_json(texto)
         .expect("o ajuste é lido")
-        .sobre(GatesJev::padrao())
+        .sobre(JevGates::default_value())
 }
 
 #[test]
 fn agente_sem_ajuste_herda_o_padrao() {
     // Sem nada declarado, o agente não tem ajuste: vale a configuração global (padrão).
     assert!(AjusteGates::de_json("{}").is_none());
-    assert!(GatesJev::padrao().g3);
-    assert!(GatesJev::padrao().g5);
-    assert!(GatesJev::padrao().g8);
+    assert!(JevGates::default_value().g3);
+    assert!(JevGates::default_value().g5);
+    assert!(JevGates::default_value().g8);
 }
 
 #[test]
@@ -45,7 +45,7 @@ fn agente_pode_desligar_g8_sem_mexer_em_g3_e_g5() {
 
 #[test]
 fn ativo_false_desliga_todos_os_gates_do_agente() {
-    assert_eq!(efetivos(r#"{"ativo": false}"#), GatesJev::default());
+    assert_eq!(efetivos(r#"{"ativo": false}"#), JevGates::default());
 }
 
 #[test]

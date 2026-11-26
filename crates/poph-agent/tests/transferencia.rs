@@ -29,7 +29,7 @@ use poph_store::{
     Direcao, EstadoTurno, MudancaAgente, NovaConversa, NovaMensagem, NovaOrg, NovoAgente, Pagina,
     Papel, Store,
 };
-use poph_types::{AgentId, ConversationId, GatesJev, MessageId, OrgId};
+use poph_types::{AgentId, ConversationId, JevGates, MessageId, OrgId};
 
 /// Textos aprovados em 19/11/2026 (`HUMAN_HANDOFF_GUIDANCE_PRD.md` §5.3), literais do documento.
 const APROVADO_INGESTAO: &str = "⚠️ Se alguém engoliu ou teve contato com o produto, procure \
@@ -329,10 +329,10 @@ fn roteiro(texto: &str) -> Roteiro {
     ])
 }
 
-fn so_g1() -> GatesJev {
-    GatesJev {
+fn so_g1() -> JevGates {
+    JevGates {
         g1: true,
-        ..GatesJev::default()
+        ..JevGates::default()
     }
 }
 
@@ -701,7 +701,7 @@ async fn g1_desligado_nao_transfere() {
     let cenario = Cenario::novo("g1-desligado", true);
     let conversa = cenario.conversa();
     let jev = jev(G1_TRANSFERIR, 0.99, Some((RISCO_INGESTAO, 0.99)));
-    let avaliador = Arc::new(MotorJev::novo(jev, GatesJev::default(), "jev-latest"));
+    let avaliador = Arc::new(MotorJev::novo(jev, JevGates::default(), "jev-latest"));
     let motor = cenario.motor(Some(avaliador), Orientacao::default());
 
     let gatilho = cenario.falar(conversa, "quero falar com um atendente humano");

@@ -52,7 +52,7 @@ fn estado(rotulo: &str, cfg: impl FnOnce(&mut HarnessConfig)) -> (Estado, PathBu
     let _ = fs::remove_dir_all(&pasta);
     fs::create_dir_all(pasta.join("dados")).expect("pasta de dados");
     let mut config = HarnessConfig::default();
-    config.dados.diretorio = pasta.join("dados");
+    config.data.directory = pasta.join("dados");
     cfg(&mut config);
     let store = Arc::new(Store::abrir(&config).expect("abre o banco"));
     let estado = Estado::novo(store, config).expect("estado do servidor");
@@ -161,7 +161,7 @@ async fn teto_do_cache_vem_da_configuracao() {
     assert_eq!(padrao.cache_fluxos.teto_bytes(), 16 * 1024 * 1024);
     let _ = fs::remove_dir_all(&pasta_padrao);
 
-    let (trocado, pasta_trocado) = estado("teto-3", |cfg| cfg.fluxos.cache_revisoes_mb = 3);
+    let (trocado, pasta_trocado) = estado("teto-3", |cfg| cfg.flows.revision_cache_mb = 3);
     assert_eq!(trocado.cache_fluxos.teto_bytes(), 3 * 1024 * 1024);
     let _ = fs::remove_dir_all(&pasta_trocado);
 }
@@ -169,7 +169,7 @@ async fn teto_do_cache_vem_da_configuracao() {
 /// Com `cache_revisoes_mb = 0` nada fica guardado: a carga conta como "não cacheada" e a execução segue.
 #[tokio::test]
 async fn cache_zero_nao_guarda_e_conta_nao_cacheada() {
-    let (estado, pasta) = estado("teto-zero", |cfg| cfg.fluxos.cache_revisoes_mb = 0);
+    let (estado, pasta) = estado("teto-zero", |cfg| cfg.flows.revision_cache_mb = 0);
     carregar(&estado, "agendar_visita", 1);
     let texto = metricas_http(estado).await;
     let _ = fs::remove_dir_all(&pasta);
@@ -185,7 +185,7 @@ async fn cache_zero_nao_guarda_e_conta_nao_cacheada() {
 
 #[tokio::test]
 async fn motor_desligado_nao_declara_nenhuma_serie_de_fluxos() {
-    let (estado, pasta) = estado("desligado", |cfg| cfg.fluxos.ativo = false);
+    let (estado, pasta) = estado("desligado", |cfg| cfg.flows.enabled = false);
     assert!(
         estado.metricas_fluxos().is_none(),
         "motor desligado não declara as métricas"

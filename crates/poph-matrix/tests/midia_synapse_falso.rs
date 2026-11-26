@@ -20,7 +20,7 @@ use axum::http::{HeaderMap, Method, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use poph_matrix::cliente::{ClienteMatrix, ConfigCliente};
 use poph_matrix::midia::{self, AnexoParaMidia, BLOCO_ANEXO, MSGTYPE_ARQUIVO, MSGTYPE_IMAGEM};
-use poph_types::Segredo;
+use poph_types::Secret;
 use serde_json::{Value, json};
 
 /// Valor-canário do token: não pode aparecer em evento, em log nem em erro.
@@ -194,8 +194,7 @@ async fn subir(estado: Arc<Estado>) -> (String, tokio::task::JoinHandle<()>) {
 
 fn cliente(base: &str) -> ClienteMatrix {
     ClienteMatrix::novo(
-        ConfigCliente::novo(base, SERVIDOR, Segredo::new(CANARIO.to_owned()))
-            .expect("configuração"),
+        ConfigCliente::novo(base, SERVIDOR, Secret::new(CANARIO.to_owned())).expect("configuração"),
     )
     .expect("cliente")
 }
@@ -386,7 +385,7 @@ async fn token_errado_nao_sobe_arquivo() {
     let estado = Arc::new(Estado::default());
     let (base, tarefa) = subir(Arc::clone(&estado)).await;
     let cliente = ClienteMatrix::novo(
-        ConfigCliente::novo(&base, SERVIDOR, Segredo::new("outro-token".to_owned()))
+        ConfigCliente::novo(&base, SERVIDOR, Secret::new("outro-token".to_owned()))
             .expect("configuração"),
     )
     .expect("cliente");

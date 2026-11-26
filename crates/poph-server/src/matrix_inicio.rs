@@ -440,7 +440,7 @@ pub fn iniciar_com_ajustes(
             .config
             .matrix
             .as_ref()
-            .map(|matrix| matrix.intervalo_ms)
+            .map(|matrix| matrix.interval_ms)
             .unwrap_or_default(),
         expiracao_de_midia = expiracao.is_some(),
         "módulo Matrix ligado: espelho, estado e receptor do Application Service no ar"
@@ -467,7 +467,7 @@ pub fn expiracao_do_modulo(
     cliente: ClienteMatrix,
     config: &poph_types::MatrixConfig,
     metricas: Option<Arc<crate::matrix_metricas::MetricasMatrix>>,
-    token: Option<poph_types::Segredo>,
+    token: Option<poph_types::Secret>,
 ) -> Option<ExpiracaoMidia> {
     let Some(token) = token else {
         tracing::warn!(
@@ -482,7 +482,7 @@ pub fn expiracao_do_modulo(
         Ok(expiracao) => {
             tracing::info!(
                 target: "poph_server::matrix_inicio",
-                retencao_dias = config.midia_retencao_dias,
+                retencao_dias = config.attachment_retention_days,
                 "expiração da mídia ligada: o que passar do prazo é redigido na sala e apagado do Synapse"
             );
             Some(match metricas {

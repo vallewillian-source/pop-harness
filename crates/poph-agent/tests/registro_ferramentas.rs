@@ -27,7 +27,7 @@ use poph_core::llm::{
     ChamadaFerramenta, EventoLlm, LlmProvider, Mensagem, MotivoFim, ProvedorFake, Roteiro,
 };
 use poph_store::{NovaConversa, NovaMensagem, NovaOrg, NovoAgente, Pagina, Store, Turno};
-use poph_types::{AgentId, ConversationId, FerramentaConfig, OrgId, StructuredInstructions};
+use poph_types::{AgentId, ConversationId, OrgId, StructuredInstructions, ToolConfig};
 
 /// Pausa que não dorme: a janela de agrupamento é irrelevante aqui.
 #[derive(Default, Clone)]
@@ -136,7 +136,7 @@ impl Cenario {
         let estruturado = StructuredInstructions {
             tools: habilitadas
                 .iter()
-                .map(|nome| FerramentaConfig {
+                .map(|nome| ToolConfig {
                     name: (*nome).to_owned(),
                     enabled: true,
                     when_to_use: String::new(),
@@ -150,7 +150,7 @@ impl Cenario {
                 org,
                 agente,
                 0,
-                &estruturado.para_json(),
+                &estruturado.to_json(),
                 "# Bia\n\nVocê é a atendente da FixProLar.",
                 true,
             )

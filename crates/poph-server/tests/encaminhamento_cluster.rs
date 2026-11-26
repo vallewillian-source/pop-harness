@@ -34,8 +34,8 @@ use poph_server::encaminhamento::{
 };
 use poph_server::evolution::CanalEvolution;
 use poph_store::{NovaOrg, Pagina, Store};
-use poph_types::config::{ClusterConfig, ClusterInstance, TokenGlobalConfig};
-use poph_types::{HarnessConfig, IntegrationId, OrgId, Segredo, StatusFicha};
+use poph_types::config::{ClusterConfig, ClusterInstance, GlobalTokenConfig};
+use poph_types::{HarnessConfig, IntegrationId, OrgId, RecordStatus, Secret};
 use rand_core::OsRng;
 use reqwest::{Client, Method, StatusCode};
 use serde_json::{Value, json};
@@ -134,8 +134,8 @@ fn pasta(rotulo: &str) -> PathBuf {
 fn preparar(rotulo: &str) -> Preparo {
     let pasta = pasta(rotulo);
     let mut config = HarnessConfig::default();
-    config.dados.diretorio = pasta.join("dados");
-    config.admin.tokens_globais = vec![TokenGlobalConfig {
+    config.data.directory = pasta.join("dados");
+    config.admin.tokens_globais = vec![GlobalTokenConfig {
         label: "teste".to_owned(),
         hash: hash_argon2(TOKEN_GLOBAL),
     }];
@@ -171,7 +171,7 @@ async fn iniciar(
     preparo: Preparo,
     listener: tokio::net::TcpListener,
     mapa: ClusterConfig,
-    segredo: Option<Segredo>,
+    segredo: Option<Secret>,
     canais: Vec<CanalEvolution>,
 ) -> Instancia {
     let estado = Estado::novo(Arc::clone(&preparo.store), preparo.config)
@@ -285,7 +285,7 @@ async fn pedir(
 /// Cabeçalhos de par assinados para um pedido a partir de `instancia`, com um nonce novo.
 #[allow(clippy::too_many_arguments)]
 fn cabecalhos_assinados(
-    segredo: &Segredo,
+    segredo: &Secret,
     metodo: &Method,
     alvo: &str,
     corpo: &[u8],
@@ -310,7 +310,7 @@ fn cabecalhos_assinados(
 /// Idem, com o nonce escolhido pelo teste (para provar repetição e nonce malformado).
 #[allow(clippy::too_many_arguments)]
 fn cabecalhos_assinados_com_nonce(
-    segredo: &Segredo,
+    segredo: &Secret,
     metodo: &Method,
     alvo: &str,
     corpo: &[u8],
@@ -354,7 +354,7 @@ async fn duas_instancias(
 
     let mapa_a = mapa("a", &url_a, &url_b, &org_texto, "b");
     let mapa_b = mapa("b", &url_a, &url_b, &org_texto, "b");
-    let segredo = Segredo::new(SEGREDO.to_owned());
+    let segredo = Secret::new(SEGREDO.to_owned());
 
     let mut canais = Vec::new();
     if com_canal_em_b {
@@ -362,7 +362,7 @@ async fn duas_instancias(
             org,
             instancia: "loja".to_owned(),
             integracao: IntegrationId::generate(),
-            segredo: Some(Segredo::new(SEGREDO_WEBHOOK.to_owned())),
+            segredo: Some(Secret::new(SEGREDO_WEBHOOK.to_owned())),
             cliente: None,
             teto_midia: 1_048_576,
         });
@@ -545,10 +545,10 @@ async fn admin_e_webhook_de_org_remota_chegam_na_dona() {
 #[tokio::test(flavor = "multi_thread")]
 async fn assinatura_do_encaminhamento_e_conferida() {
     let (_a, b, org, mapa) = duas_instancias("assinatura", false).await;
-    let segredo = Segredo::new(SEGREDO.to_owned());
+    let segredo = Secret::new(SEGREDO.to_owned());
     let alvo = format!("/admin/v1/orgs/{org}/agents");
     let url = format!("{}{alvo}", b.base);
-    let fingerprint = mapa.fingerprint_do_mapa();
+    let fingerprint = mapa.map_fingerprint();
 
     // Válida, sem corpo.
     let bons = cabecalhos_assinados(
@@ -648,7 +648,7 @@ async fn assinatura_do_encaminhamento_e_conferida() {
 #[tokio::test(flavor = "multi_thread")]
 async fn laco_e_mapa_divergente_dao_421() {
     let (a, b, org, mapa) = duas_instancias("laco", false).await;
-    let segredo = Segredo::new(SEGREDO.to_owned());
+    let segredo = Secret::new(SEGREDO.to_owned());
     let alvo = format!("/admin/v1/orgs/{org}/agents");
     let url = format!("{}{alvo}", b.base);
 
@@ -661,7 +661,7 @@ async fn laco_e_mapa_divergente_dao_421() {
         "a",
         2,
         agora(),
-        &mapa.fingerprint_do_mapa(),
+        &mapa.map_fingerprint(),
     );
     let laco = pedir(Method::GET, &url, Some(TOKEN_GLOBAL), None, &dois_saltos).await;
     assert_eq!(laco.status, StatusCode::MISDIRECTED_REQUEST, "{}", laco.cru);
@@ -671,8 +671,8 @@ async fn laco_e_mapa_divergente_dao_421() {
     let mut outro = mapa.clone();
     outro.instance_id = "a".to_owned();
     outro.orgs.insert(org.to_string(), "a".to_owned());
-    let fingerprint_alheio = outro.fingerprint_do_mapa();
-    assert_ne!(fingerprint_alheio, mapa.fingerprint_do_mapa());
+    let fingerprint_alheio = outro.map_fingerprint();
+    assert_ne!(fingerprint_alheio, mapa.map_fingerprint());
     // Cada pedido leva um nonce novo, então o mesmo segundo não colide (o mapa não entra no
     // texto assinado).
     let divergente = cabecalhos_assinados(
@@ -699,7 +699,7 @@ async fn laco_e_mapa_divergente_dao_421() {
     );
     assert_eq!(
         recusado.corpo["details"]["fingerprint_local"],
-        json!(mapa.fingerprint_do_mapa())
+        json!(mapa.map_fingerprint())
     );
 
     // Assinatura válida de um pedido que pertence a `b`, entregue em `a`: `a` não pode encaminhar
@@ -712,7 +712,7 @@ async fn laco_e_mapa_divergente_dao_421() {
         "a",
         1,
         agora() - 10,
-        &mapa.fingerprint_do_mapa(),
+        &mapa.map_fingerprint(),
     );
     let na_instancia_errada = pedir(
         Method::GET,
@@ -763,7 +763,7 @@ async fn dona_fora_do_ar_da_503() {
         preparo,
         listener_a,
         mapa_a,
-        Some(Segredo::new(SEGREDO.to_owned())),
+        Some(Secret::new(SEGREDO.to_owned())),
         Vec::new(),
     )
     .await;
@@ -847,10 +847,10 @@ async fn modo_instancia_unica_fica_igual() {
 #[tokio::test(flavor = "multi_thread")]
 async fn nonce_torna_cada_pedido_unico_e_recusa_repeticao() {
     let (_a, b, org, mapa) = duas_instancias("nonce", false).await;
-    let segredo = Segredo::new(SEGREDO.to_owned());
+    let segredo = Secret::new(SEGREDO.to_owned());
     let alvo = format!("/admin/v1/orgs/{org}/agents");
     let url = format!("{}{alvo}", b.base);
-    let fingerprint = mapa.fingerprint_do_mapa();
+    let fingerprint = mapa.map_fingerprint();
     let carimbo = agora();
 
     // Dois pedidos idênticos, no mesmo segundo, com nonces diferentes: os dois passam.
@@ -1353,7 +1353,7 @@ async fn rotas_de_fluxos_e_fichas_sao_encaminhadas_para_a_dona() {
         .fichas()
         .obter(org, ficha.parse().expect("id da Ficha"))
         .expect("Ficha em b");
-    assert_eq!(na_dona.status, StatusFicha::Fechada);
+    assert_eq!(na_dona.status, RecordStatus::Closed);
     assert_eq!(
         b.store
             .fichas()

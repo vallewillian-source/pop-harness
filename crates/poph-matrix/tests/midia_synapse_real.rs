@@ -33,7 +33,7 @@ use poph_matrix::salas::{
     ConversaParaSala, ErroPorta, EstadoGravado, PortaSalas, Provisionador, SalaGravada,
 };
 use poph_matrix::{ErroChamada, ErroMidia};
-use poph_types::{AgentId, ConversationId, MatrixConfig, OrgId, Segredo};
+use poph_types::{AgentId, ConversationId, MatrixConfig, OrgId, Secret};
 
 /// Lê uma chave do `credenciais.env` sem imprimir valor nenhum.
 fn credencial(nome: &str) -> String {
@@ -123,17 +123,17 @@ async fn imagem_e_pdf_do_cliente_aparecem_na_sala_do_synapse_real() {
     let server_name = credencial("POPH_MATRIX_DEV_SERVER_NAME");
     let token = credencial("POPH_MATRIX_DEV_HARNESS_AS_TOKEN");
     let config = MatrixConfig {
-        habilitado: true,
+        enabled: true,
         homeserver_url: base,
         server_name: server_name.clone(),
-        prefixo: "ph".to_owned(),
+        prefix: "ph".to_owned(),
         ..MatrixConfig::default()
     };
     let cliente = ClienteMatrix::novo(
         ConfigCliente::novo(
             config.homeserver_url.clone(),
             server_name.clone(),
-            Segredo::new(token),
+            Secret::new(token),
         )
         .expect("configuração do cliente"),
     )
@@ -253,17 +253,17 @@ async fn a_midia_da_sala_desce_inteira_pelo_cliente_do_matrix() {
     let server_name = credencial("POPH_MATRIX_DEV_SERVER_NAME");
     let token = credencial("POPH_MATRIX_DEV_HARNESS_AS_TOKEN");
     let config = MatrixConfig {
-        habilitado: true,
+        enabled: true,
         homeserver_url: base,
         server_name: server_name.clone(),
-        prefixo: "ph".to_owned(),
+        prefix: "ph".to_owned(),
         ..MatrixConfig::default()
     };
     let cliente = ClienteMatrix::novo(
         ConfigCliente::novo(
             config.homeserver_url.clone(),
             server_name.clone(),
-            Segredo::new(token),
+            Secret::new(token),
         )
         .expect("configuração do cliente"),
     )
@@ -395,17 +395,17 @@ async fn audio_e_video_do_atendente_sobem_e_descem_inteiros() {
     let server_name = credencial("POPH_MATRIX_DEV_SERVER_NAME");
     let token = credencial("POPH_MATRIX_DEV_HARNESS_AS_TOKEN");
     let config = MatrixConfig {
-        habilitado: true,
+        enabled: true,
         homeserver_url: base,
         server_name: server_name.clone(),
-        prefixo: "ph".to_owned(),
+        prefix: "ph".to_owned(),
         ..MatrixConfig::default()
     };
     let cliente = ClienteMatrix::novo(
         ConfigCliente::novo(
             config.homeserver_url.clone(),
             server_name.clone(),
-            Segredo::new(token),
+            Secret::new(token),
         )
         .expect("configuração do cliente"),
     )

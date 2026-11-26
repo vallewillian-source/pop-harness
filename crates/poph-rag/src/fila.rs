@@ -234,7 +234,7 @@ impl FilaEmbedding {
         if let Some(metricas) = &self.compartilhado.metricas {
             metricas
                 .trechos_pendentes
-                .definir(self.trechos_pendentes() as i64);
+                .set(self.trechos_pendentes() as i64);
         }
 
         let mut saida: Vec<Option<Vec<f32>>> = vec![None; total];
@@ -366,7 +366,7 @@ async fn laco(embedder: Arc<dyn Embedder>, compartilhado: Arc<Compartilhado>, co
             (lote, pendentes.total)
         };
         if let Some(metricas) = &compartilhado.metricas {
-            metricas.trechos_pendentes.definir(restantes as i64);
+            metricas.trechos_pendentes.set(restantes as i64);
         }
         if lote.is_empty() {
             continue;

@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use futures::future::BoxFuture;
-use poph_types::{JevConfig, MetricasBase, Segredo};
+use poph_types::{BaseMetrics, JevConfig, Secret};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde_json::{Value, json};
 
@@ -38,13 +38,13 @@ pub struct ConfigJev {
     /// Novas tentativas (0 ou 1; a configuração aceita até 3).
     pub retentativas: u32,
     /// Chave da API. Nunca aparece em log, erro ou `Debug`.
-    chave: Segredo,
+    chave: Secret,
 }
 
 impl ConfigJev {
     /// Monta a configuração a partir do bloco `[jev]` e da chave lida do ambiente.
-    pub fn da_config(jev: &JevConfig, chave: Segredo) -> Result<Self, ErroJev> {
-        if chave.expor().trim().is_empty() {
+    pub fn da_config(jev: &JevConfig, chave: Secret) -> Result<Self, ErroJev> {
+        if chave.expose().trim().is_empty() {
             return Err(ErroJev::SemChave);
         }
         let url_base = jev.url_base.trim_end_matches('/').to_owned();
@@ -55,14 +55,14 @@ impl ConfigJev {
                 "o endereço do Jev deve começar com http:// ou https://".to_owned(),
             ));
         }
-        if jev.modelo.trim().is_empty() {
+        if jev.model.trim().is_empty() {
             return Err(ErroJev::Configuracao("modelo do Jev vazio".to_owned()));
         }
         Ok(Self {
             url_base,
-            modelo: jev.modelo.clone(),
-            timeout: Duration::from_secs(u64::from(jev.timeout_segundos.max(1))),
-            retentativas: jev.retentativas,
+            modelo: jev.model.clone(),
+            timeout: Duration::from_secs(u64::from(jev.timeout_seconds.max(1))),
+            retentativas: jev.retries,
             chave,
         })
     }
@@ -111,7 +111,7 @@ struct Interno {
     http: reqwest::Client,
     endpoint: String,
     config: ConfigJev,
-    metricas: MetricasBase,
+    metricas: BaseMetrics,
 }
 
 /// Cliente HTTP do Jev. Clonar é barato (compartilha o `reqwest::Client`).
@@ -120,7 +120,7 @@ pub struct ClienteJev(Arc<Interno>);
 
 impl ClienteJev {
     /// Cria o cliente HTTP.
-    pub fn novo(config: ConfigJev, metricas: MetricasBase) -> Result<Self, ErroJev> {
+    pub fn novo(config: ConfigJev, metricas: BaseMetrics) -> Result<Self, ErroJev> {
         let http = construir_http(&config, None)?;
         let endpoint = config.endpoint();
         Ok(Self(Arc::new(Interno {
@@ -182,11 +182,11 @@ impl TransporteJev for ClienteJev {
                 if tentativa > 0 {
                     tokio::time::sleep(ESPERA_RETENTATIVA).await;
                 }
-                interno.metricas.chamadas_jev.incrementar(1);
+                interno.metricas.jev_calls.increment(1);
                 match tentar(&interno, &corpo).await {
                     Ok(lote) => return Ok(lote),
                     Err(erro) => {
-                        interno.metricas.erros_jev.incrementar(1);
+                        interno.metricas.jev_errors.increment(1);
                         if !erro.eh_transitorio() || tentativa == interno.config.retentativas {
                             return Err(erro);
                         }
@@ -207,7 +207,7 @@ async fn tentar(interno: &Interno, corpo: &[u8]) -> Result<LoteResposta, ErroJev
         .header(CONTENT_TYPE, "application/json")
         .header(
             AUTHORIZATION,
-            format!("Bearer {}", interno.config.chave.expor()),
+            format!("Bearer {}", interno.config.chave.expose()),
         )
         .body(corpo.to_vec())
         .send()

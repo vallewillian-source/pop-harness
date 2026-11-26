@@ -79,21 +79,21 @@ impl Orientacao {
         let mut textos = BTreeMap::new();
         textos.insert(
             RISCO_INGESTAO.to_owned(),
-            config.orientacao_ingestao_contato_produto.clone(),
+            config.guidance_product_ingestion.clone(),
         );
         textos.insert(
             RISCO_ANIMAL.to_owned(),
-            config.orientacao_animal_peconhento.clone(),
+            config.guidance_venomous_animal.clone(),
         );
         textos.insert(
             RISCO_OUTRO.to_owned(),
-            config.orientacao_outro_risco_saude.clone(),
+            config.guidance_other_health_risk.clone(),
         );
         Self {
-            ativo: config.orientacao_ativa,
-            confianca: config.orientacao_confianca.clamp(0.0, 1.0),
-            prazo: Duration::from_secs(u64::from(config.orientacao_timeout_segundos.max(1))),
-            mensagem_automatica: config.mensagem_automatica.clone(),
+            ativo: config.guidance_enabled,
+            confianca: config.guidance_confidence.clamp(0.0, 1.0),
+            prazo: Duration::from_secs(u64::from(config.guidance_timeout_seconds.max(1))),
+            mensagem_automatica: config.automatic_message.clone(),
             textos,
         }
     }

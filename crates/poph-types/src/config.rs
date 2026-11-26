@@ -1,10 +1,3 @@
-//! Configuração do POP Harness: formato, padrões e validação.
-//!
-//! Aqui só há tipos, padrões e regras. Ler o arquivo TOML e o ambiente, e aplicar a
-//! precedência (padrão < arquivo < ambiente), fica no crate `poph`, que é a raiz de composição.
-//!
-//! Segredos (chaves de API, chave de cifra) NÃO entram aqui: vêm só do ambiente.
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
@@ -12,415 +5,347 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{DomainError, DomainResult};
-use crate::integracao::PluginsConfig;
+use crate::integration::PluginsConfig;
 
-/// Configuração completa do processo. Campos ausentes no arquivo usam o padrão de cada seção.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct HarnessConfig {
-    /// Endereço e porta em que o servidor vai escutar (HR-20).
-    pub servidor: ServidorConfig,
-    /// Onde ficam os dados locais (bancos e blobs).
-    pub dados: DadosConfig,
-    /// Nível e formato dos logs.
+    #[serde(rename = "servidor")]
+    pub server: ServerConfig,
+    #[serde(rename = "dados")]
+    pub data: DataConfig,
     pub log: LogConfig,
-    /// Retenção de conversas por org.
-    pub retencao: RetencaoConfig,
-    /// Limites de simultaneidade e de taxa.
-    pub limites: LimitesConfig,
-    /// Provedor de LLM padrão (o agente pode trocar de modelo).
+    #[serde(rename = "retencao")]
+    pub retention: RetentionConfig,
+    #[serde(rename = "limites")]
+    pub limits: LimitsConfig,
     pub llm: LlmConfig,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub provedores: BTreeMap<String, ProvedorConfig>,
-    /// Jev (decisões rápidas). Desligado até cada gate passar na medição (PRD §10).
+    #[serde(rename = "provedores")]
+    pub providers: BTreeMap<String, ProviderConfig>,
     pub jev: JevConfig,
-    /// Transferência para humano e orientação ao cliente antes dela (HR-29).
     pub handoff: HandoffConfig,
-    /// Turno no `poph serve` (HR-26h): de quanto em quanto tempo a fila de entrada é lida.
-    pub turno: TurnoConfig,
-    /// Integração WhatsApp (Evolution). Ausente = integração não configurada.
+    #[serde(rename = "turno")]
+    pub turn: TurnConfig,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub evolution: Option<EvolutionConfig>,
-    /// Módulo Matrix (MX-07). Ausente ou `habilitado = false` = módulo morto: nada dele carrega.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub matrix: Option<MatrixConfig>,
-    /// Fluxos e Fichas (FX-26): motor, tetos de script, de dados e de regra, e cache das revisões.
-    pub fluxos: FluxosConfig,
-    /// Plugins de integração declarados (HR-44c): quem responde ao handshake de cada `kind`.
-    /// Vazio = nenhum manifesto disponível, e a API recusa configuração de integração.
-    #[serde(default, skip_serializing_if = "PluginsConfig::vazio")]
+    #[serde(rename = "fluxos")]
+    pub flows: FlowsConfig,
+    #[serde(default, skip_serializing_if = "PluginsConfig::empty")]
     pub plugins: PluginsConfig,
-    /// Tokens globais da API administrativa (só o hash; o valor em claro nunca fica aqui).
     pub admin: AdminConfig,
 }
 
-/// Tokens globais da API administrativa (PRD §7.2: os globais vêm da configuração).
-///
-/// O token de org vive no banco (`admin_tokens`); o global é fixo, igual em todas as instâncias,
-/// e por isso fica na configuração — **apenas o hash argon2**, como os demais segredos não
-/// reversíveis. O valor em claro existe só na saída de `poph token global`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields, default)]
 pub struct AdminConfig {
-    /// Um token global por entrada. Sem entrada, só tokens de org autenticam.
-    pub tokens_globais: Vec<TokenGlobalConfig>,
+    pub tokens_globais: Vec<GlobalTokenConfig>,
 }
 
-/// Um token global: rótulo para auditoria e hash argon2 do valor.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct TokenGlobalConfig {
-    /// Rótulo que aparece na auditoria e no relatório de autenticação.
+pub struct GlobalTokenConfig {
     pub label: String,
-    /// Hash argon2id no formato PHC (`$argon2id$...`).
     pub hash: String,
 }
 
-/// Turno no `poph serve` (HR-26h).
-///
-/// A cada intervalo, o servidor lê as mensagens recebidas que ainda não foram atendidas e roda o
-/// turno de cada uma. Intervalo menor responde mais rápido e consulta o banco com mais frequência.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
-pub struct TurnoConfig {
-    /// Milissegundos entre duas leituras da fila de entrada. Entre 100 e 60000.
-    pub intervalo_despacho_ms: u64,
-    /// Tentativas de um turno quando o modelo falha, contando a primeira. Entre 1 e 10; o padrão é 3.
-    /// Esgotadas, a mensagem é concluída sem resposta e o turno fica como falha definitiva.
-    pub tentativas_falha_modelo: u32,
-    /// Espera antes da segunda tentativa, em milissegundos. Cada espera seguinte é quatro vezes a
-    /// anterior, até o teto de 10 minutos. Entre 1000 e 600000; o padrão é 30000 (30 s).
-    pub atraso_falha_modelo_ms: u64,
+pub struct TurnConfig {
+    #[serde(rename = "intervalo_despacho_ms")]
+    pub dispatch_interval_ms: u64,
+    #[serde(rename = "tentativas_falha_modelo")]
+    pub model_failure_attempts: u32,
+    #[serde(rename = "atraso_falha_modelo_ms")]
+    pub model_failure_delay_ms: u64,
 }
 
-impl Default for TurnoConfig {
+impl Default for TurnConfig {
     fn default() -> Self {
         Self {
-            intervalo_despacho_ms: 1000,
-            tentativas_falha_modelo: 3,
-            atraso_falha_modelo_ms: 30_000,
+            dispatch_interval_ms: 1000,
+            model_failure_attempts: 3,
+            model_failure_delay_ms: 30_000,
         }
     }
 }
 
-/// Endereço e porta do servidor.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
-pub struct ServidorConfig {
-    /// Endereço de escuta. Padrão: só a própria máquina.
-    pub endereco: IpAddr,
-    /// Porta de escuta, entre 1024 e 65535.
-    pub porta: u16,
+pub struct ServerConfig {
+    #[serde(rename = "endereco")]
+    pub address: IpAddr,
+    #[serde(rename = "porta")]
+    pub port: u16,
 }
 
-/// Pastas e bancos locais. Os caminhos não definidos ficam dentro de `diretorio`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
-pub struct DadosConfig {
-    /// Pasta de dados. Padrão: `data`, relativa a onde o processo roda.
-    pub diretorio: PathBuf,
-    /// Banco durável. Padrão: `harness.db` dentro de `diretorio`.
+pub struct DataConfig {
+    #[serde(rename = "diretorio")]
+    pub directory: PathBuf,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub harness_db: Option<PathBuf>,
-    /// Banco reconstruível do RAG. Padrão: `rag.db` dentro de `diretorio`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rag_db: Option<PathBuf>,
-    /// Pasta dos arquivos (blobs). Padrão: `blobs` dentro de `diretorio`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub blobs: Option<PathBuf>,
-    /// Pasta dos modelos de embedding (`poph model install`). Padrão: `modelos` dentro de `diretorio`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub modelos: Option<PathBuf>,
+    #[serde(rename = "modelos")]
+    pub models: Option<PathBuf>,
 }
 
-/// Nível e formato dos logs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct LogConfig {
-    /// `trace`, `debug`, `info`, `warn` ou `error`. A variável `RUST_LOG`, se definida, tem prioridade.
-    pub nivel: String,
-    /// `legivel` (texto para pessoas) ou `json` (uma linha por evento).
-    pub formato: Formato,
+    #[serde(rename = "nivel")]
+    pub level: String,
+    #[serde(rename = "formato")]
+    pub format: Format,
 }
 
-/// Formato de saída dos logs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
-pub enum Formato {
-    /// Texto para ler no terminal.
+pub enum Format {
     #[default]
-    Legivel,
-    /// Uma linha JSON por evento.
+    #[serde(rename = "legivel")]
+    Legible,
     Json,
 }
 
-/// Retenção de conversas, mensagens e anexos.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
-pub struct RetencaoConfig {
-    /// Dias antes de apagar. `0` = não apagar nunca. Padrão: 30 (PRD §7.4).
-    pub dias: u32,
+pub struct RetentionConfig {
+    #[serde(rename = "dias")]
+    pub days: u32,
 }
 
-/// Limites de simultaneidade e de taxa. Por org, para uma org não atrasar a outra.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
-pub struct LimitesConfig {
-    /// Turnos rodando ao mesmo tempo na instância inteira. Padrão: 200 (decisão D-07).
-    pub turnos_simultaneos: u32,
-    /// Turnos rodando ao mesmo tempo por org. Não pode passar de `turnos_simultaneos`.
-    pub turnos_simultaneos_por_org: u32,
-    /// Mensagens aceitas por minuto em cada org.
-    pub taxa_por_org_por_minuto: u32,
+pub struct LimitsConfig {
+    #[serde(rename = "turnos_simultaneos")]
+    pub concurrent_turns: u32,
+    #[serde(rename = "turnos_simultaneos_por_org")]
+    pub concurrent_turns_per_org: u32,
+    #[serde(rename = "taxa_por_org_por_minuto")]
+    pub rate_per_org_per_minute: u32,
 }
 
-pub const PROVEDORES_LLM_ACEITOS: [&str; 2] = ["openai_compativel", "antigravity2api"];
+pub const ACCEPTED_LLM_PROVIDERS: [&str; 2] = ["openai_compativel", "antigravity2api"];
 
-pub fn provedor_llm_aceito(nome: &str) -> bool {
-    PROVEDORES_LLM_ACEITOS.contains(&nome)
+pub fn llm_provider_accepted(name: &str) -> bool {
+    ACCEPTED_LLM_PROVIDERS.contains(&name)
 }
 
-/// Provedor de LLM padrão.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct LlmConfig {
-    /// Nome do provedor: `openai_compativel` ou `antigravity2api` (sinônimo do mesmo cliente).
-    pub provedor: String,
-    /// Endereço base do serviço (formato compatível com OpenAI, termina em `/v1`).
+    #[serde(rename = "provedor")]
+    pub provider: String,
     pub url_base: String,
-    pub chave_env: String,
-    pub recusa_turno_modelo: bool,
-    /// Modelo padrão. Cada agente pode trocar.
-    pub modelo: String,
-    /// Tempo máximo de uma chamada, em segundos.
-    pub timeout_segundos: u32,
-    /// Novas tentativas só em erro transitório (429, 5xx, queda de conexão).
-    pub retentativas: u32,
-    /// Chamadas simultâneas a este provedor, na instância inteira.
-    pub simultaneos: u32,
-    /// Temperatura padrão, entre 0 e 2.
-    pub temperatura: f32,
-    /// Teto de tokens de saída por resposta.
-    pub max_tokens_saida: u32,
+    #[serde(rename = "chave_env")]
+    pub api_key_env: String,
+    #[serde(rename = "recusa_turno_modelo")]
+    pub refuse_model_turn: bool,
+    #[serde(rename = "modelo")]
+    pub model: String,
+    #[serde(rename = "timeout_segundos")]
+    pub timeout_seconds: u32,
+    #[serde(rename = "retentativas")]
+    pub retries: u32,
+    #[serde(rename = "simultaneos")]
+    pub concurrent_calls: u32,
+    #[serde(rename = "temperatura")]
+    pub temperature: f32,
+    #[serde(rename = "max_tokens_saida")]
+    pub max_output_tokens: u32,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
-pub struct ProvedorConfig {
-    pub provedor: Option<String>,
+pub struct ProviderConfig {
+    #[serde(rename = "provedor")]
+    pub provider: Option<String>,
     pub url_base: Option<String>,
-    pub chave_env: Option<String>,
-    pub recusa_turno_modelo: Option<bool>,
-    pub modelo: Option<String>,
-    pub timeout_segundos: Option<u32>,
-    pub retentativas: Option<u32>,
-    pub simultaneos: Option<u32>,
-    pub temperatura: Option<f32>,
-    pub max_tokens_saida: Option<u32>,
+    #[serde(rename = "chave_env")]
+    pub api_key_env: Option<String>,
+    #[serde(rename = "recusa_turno_modelo")]
+    pub refuse_model_turn: Option<bool>,
+    #[serde(rename = "modelo")]
+    pub model: Option<String>,
+    #[serde(rename = "timeout_segundos")]
+    pub timeout_seconds: Option<u32>,
+    #[serde(rename = "retentativas")]
+    pub retries: Option<u32>,
+    #[serde(rename = "simultaneos")]
+    pub concurrent_calls: Option<u32>,
+    #[serde(rename = "temperatura")]
+    pub temperature: Option<f32>,
+    #[serde(rename = "max_tokens_saida")]
+    pub max_output_tokens: Option<u32>,
 }
 
-impl ProvedorConfig {
-    pub fn efetivo(&self, llm: &LlmConfig) -> LlmConfig {
+impl ProviderConfig {
+    pub fn effective(&self, llm: &LlmConfig) -> LlmConfig {
         LlmConfig {
-            provedor: self
-                .provedor
+            provider: self
+                .provider
                 .clone()
-                .unwrap_or_else(|| llm.provedor.clone()),
+                .unwrap_or_else(|| llm.provider.clone()),
             url_base: self
                 .url_base
                 .clone()
                 .unwrap_or_else(|| llm.url_base.clone()),
-            chave_env: self
-                .chave_env
+            api_key_env: self
+                .api_key_env
                 .clone()
-                .unwrap_or_else(|| llm.chave_env.clone()),
-            recusa_turno_modelo: self.recusa_turno_modelo.unwrap_or(llm.recusa_turno_modelo),
-            modelo: self.modelo.clone().unwrap_or_else(|| llm.modelo.clone()),
-            timeout_segundos: self.timeout_segundos.unwrap_or(llm.timeout_segundos),
-            retentativas: self.retentativas.unwrap_or(llm.retentativas),
-            simultaneos: self.simultaneos.unwrap_or(llm.simultaneos),
-            temperatura: self.temperatura.unwrap_or(llm.temperatura),
-            max_tokens_saida: self.max_tokens_saida.unwrap_or(llm.max_tokens_saida),
+                .unwrap_or_else(|| llm.api_key_env.clone()),
+            refuse_model_turn: self.refuse_model_turn.unwrap_or(llm.refuse_model_turn),
+            model: self.model.clone().unwrap_or_else(|| llm.model.clone()),
+            timeout_seconds: self.timeout_seconds.unwrap_or(llm.timeout_seconds),
+            retries: self.retries.unwrap_or(llm.retries),
+            concurrent_calls: self.concurrent_calls.unwrap_or(llm.concurrent_calls),
+            temperature: self.temperature.unwrap_or(llm.temperature),
+            max_output_tokens: self.max_output_tokens.unwrap_or(llm.max_output_tokens),
         }
     }
 }
 
-/// Jev: decisões rápidas. Tudo desligado por padrão até a medição de cada gate.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct JevConfig {
-    /// Liga o Jev na instância. Com `true`, a chave `TYPESAFE_API_KEY` vira obrigatória.
-    pub ativo: bool,
-    /// Endereço base da API do Jev.
+    #[serde(rename = "ativo")]
+    pub enabled: bool,
     pub url_base: String,
-    /// Modelo usado nas perguntas.
-    pub modelo: String,
-    /// Tempo máximo de uma pergunta, em segundos.
-    pub timeout_segundos: u32,
-    /// Novas tentativas só em 429 ou 5xx.
-    pub retentativas: u32,
-    /// Quais gates estão ligados (cada um só liga depois de medido).
-    pub gates: GatesJev,
+    #[serde(rename = "modelo")]
+    pub model: String,
+    #[serde(rename = "timeout_segundos")]
+    pub timeout_seconds: u32,
+    #[serde(rename = "retentativas")]
+    pub retries: u32,
+    pub gates: JevGates,
 }
 
-/// Transferência para humano: a mensagem automática e a orientação mínima ao cliente (HR-29).
-///
-/// Os textos são **dado de configuração**, não texto de modelo: nenhum modelo escreve o que o
-/// cliente lê antes de ser transferido (`HUMAN_HANDOFF_GUIDANCE_PRD.md` §5.3, aprovado pelo mantenedor
-/// em 19/11/2026). Os padrões aqui são exatamente os aprovados; trocar o valor no `poph.toml`
-/// troca o que o cliente recebe, sem recompilar.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct HandoffConfig {
-    /// Mensagem automática enviada ao cliente no momento da transferência.
-    pub mensagem_automatica: String,
-    /// Faz a segunda pergunta do G1 (tipo de risco). Desligada: sai só a mensagem automática.
-    pub orientacao_ativa: bool,
-    /// Confiança mínima para aceitar o tipo de risco. `0.5` de propósito: aviso a mais custa
-    /// pouco, aviso faltando custa muito (PRD §5.4).
-    pub orientacao_confianca: f64,
-    /// Prazo só da segunda pergunta, em segundos (a transferência nunca é segurada por ela).
-    pub orientacao_timeout_segundos: u32,
-    /// Texto fixo do tipo `ingestao_contato_produto`. Vazio = o tipo não orienta.
-    pub orientacao_ingestao_contato_produto: String,
-    /// Texto fixo do tipo `animal_peconhento`. Vazio = o tipo não orienta.
-    pub orientacao_animal_peconhento: String,
-    /// Texto fixo do tipo `outro_risco_saude`. Vazio = o tipo não orienta.
-    pub orientacao_outro_risco_saude: String,
+    #[serde(rename = "mensagem_automatica")]
+    pub automatic_message: String,
+    #[serde(rename = "orientacao_ativa")]
+    pub guidance_enabled: bool,
+    #[serde(rename = "orientacao_confianca")]
+    pub guidance_confidence: f64,
+    #[serde(rename = "orientacao_timeout_segundos")]
+    pub guidance_timeout_seconds: u32,
+    #[serde(rename = "orientacao_ingestao_contato_produto")]
+    pub guidance_product_ingestion: String,
+    #[serde(rename = "orientacao_animal_peconhento")]
+    pub guidance_venomous_animal: String,
+    #[serde(rename = "orientacao_outro_risco_saude")]
+    pub guidance_other_health_risk: String,
 }
 
 impl Default for HandoffConfig {
     fn default() -> Self {
         Self {
-            // Texto de hoje do POP Atende (`HUMAN_HANDOFF_AUTO_MESSAGE`).
-            mensagem_automatica: "Sua conversa foi transferida para um atendente humano da nossa \
+            automatic_message: "Sua conversa foi transferida para um atendente humano da nossa \
 equipe, que já irá respondê-la por aqui. 🙋"
                 .to_owned(),
-            orientacao_ativa: true,
-            orientacao_confianca: 0.5,
-            orientacao_timeout_segundos: 4,
-            // Textos aprovados em 19/11/2026 (HUMAN_HANDOFF_GUIDANCE_PRD.md §5.3): número do SAMU
-            // e do Disque-Intoxicação conferidos em fonte pública (Anvisa/CFM).
-            orientacao_ingestao_contato_produto: "⚠️ Se alguém engoliu ou teve contato com o \
+            guidance_enabled: true,
+            guidance_confidence: 0.5,
+            guidance_timeout_seconds: 4,
+            guidance_product_ingestion: "⚠️ Se alguém engoliu ou teve contato com o \
 produto, procure atendimento médico agora ou ligue para o SAMU (192) ou para o \
 Disque-Intoxicação (0800 722 6001). Leve a embalagem do produto. Não provoque vômito e não dê \
 nada para beber ou comer sem orientação médica."
                 .to_owned(),
-            orientacao_animal_peconhento:
-                "⚠️ Não toque nem tente pegar o animal. Mantenha crianças \
+            guidance_venomous_animal: "⚠️ Não toque nem tente pegar o animal. Mantenha crianças \
 e outras pessoas longe dele e, se puder, feche a porta do cômodo. Se alguém foi picado, vá agora \
 a um pronto-socorro ou ligue para o SAMU (192)."
-                    .to_owned(),
-            orientacao_outro_risco_saude: "⚠️ Se alguém corre risco de saúde agora, ligue para o \
+                .to_owned(),
+            guidance_other_health_risk: "⚠️ Se alguém corre risco de saúde agora, ligue para o \
 SAMU (192) ou vá a um pronto-socorro sem esperar a nossa resposta."
                 .to_owned(),
         }
     }
 }
 
-/// Fluxos e Fichas (FX-26, PRD §9): o que o arquivo e o ambiente podem ajustar no módulo.
-///
-/// Os números são os **propostos** pelo PRD; cada um tem uma faixa, e valor fora dela é recusado
-/// com o nome da chave. O motor (FX-13/FX-14) e o cache (FX-19) já recebem seus tetos por parâmetro;
-/// cada consumidor lê o campo que lhe cabe.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
-pub struct FluxosConfig {
-    /// Liga o motor de fluxos nesta instância. Desligado, o G9, o prompt, as ferramentas e os efeitos
-    /// param; a Ficha continua sendo criada e fechada. Padrão: ligado.
-    pub ativo: bool,
-    /// Fluxos publicados por org (teto). Entre 1 e 10000; padrão 100.
-    pub max_fluxos_por_org: u32,
-    /// Tamanho máximo do script de um fluxo, em bytes. Entre 1024 e 1048576; padrão 32768 (decisão
-    /// D1 de `docs/FLUXOS_LINGUAGEM.md`; o PRD §9 traz 65536 e está pendente de atualização).
-    pub max_fonte_bytes: u64,
-    /// Etapas, decisões e fins por fluxo. Entre 1 e 60 (o compilador não aceita mais que 60 nós).
-    pub max_nos: u32,
-    /// Tamanho máximo do `dados_json` de uma execução, em bytes. Entre 1024 e 10485760; padrão 65536.
-    pub max_dados_bytes: u64,
-    /// Passos de uma avaliação de regra antes de cortar (laço infinito). Entre 100 e 1000000; padrão 10000.
-    pub max_ticks_regra: u64,
-    /// Memória de uma avaliação de regra, em bytes. Entre 65536 e 67108864; padrão 1048576 (1 MiB).
-    pub max_heap_regra: u64,
-    /// Decisões encadeadas que uma mesma passagem atravessa antes de falhar. Entre 1 e 100; padrão 10.
-    pub max_saltos_decisao: u32,
-    /// Teto de RAM das revisões compiladas, em MB. Entre 0 e 4096; `0` não guarda nenhuma revisão
-    /// (cada uso recompila). Padrão 16.
-    pub cache_revisoes_mb: u32,
+pub struct FlowsConfig {
+    #[serde(rename = "ativo")]
+    pub enabled: bool,
+    #[serde(rename = "max_fluxos_por_org")]
+    pub max_flows_per_org: u32,
+    #[serde(rename = "max_fonte_bytes")]
+    pub max_source_bytes: u64,
+    #[serde(rename = "max_nos")]
+    pub max_nodes: u32,
+    #[serde(rename = "max_dados_bytes")]
+    pub max_data_bytes: u64,
+    #[serde(rename = "max_ticks_regra")]
+    pub max_rule_ticks: u64,
+    #[serde(rename = "max_heap_regra")]
+    pub max_rule_heap: u64,
+    #[serde(rename = "max_saltos_decisao")]
+    pub max_decision_hops: u32,
+    #[serde(rename = "cache_revisoes_mb")]
+    pub revision_cache_mb: u32,
 }
 
-impl Default for FluxosConfig {
+impl Default for FlowsConfig {
     fn default() -> Self {
         Self {
-            ativo: true,
-            max_fluxos_por_org: 100,
-            max_fonte_bytes: 32_768,
-            max_nos: 60,
-            max_dados_bytes: 65_536,
-            max_ticks_regra: 10_000,
-            max_heap_regra: 1_048_576,
-            max_saltos_decisao: 10,
-            cache_revisoes_mb: 16,
+            enabled: true,
+            max_flows_per_org: 100,
+            max_source_bytes: 32_768,
+            max_nodes: 60,
+            max_data_bytes: 65_536,
+            max_rule_ticks: 10_000,
+            max_rule_heap: 1_048_576,
+            max_decision_hops: 10,
+            revision_cache_mb: 16,
         }
     }
 }
 
-impl FluxosConfig {
-    /// Confere todas as faixas. Devolve o primeiro problema com o nome da chave.
-    ///
-    /// Vale também com o motor desligado: um teto inválido é erro de configuração, não de uso.
+impl FlowsConfig {
     pub fn validar(&self) -> DomainResult<()> {
-        validar_fluxos(self)
+        validate_flows(self)
     }
 }
 
-/// Liga e desliga cada gate do Jev (PRD §10).
-///
-/// `Default` (derivado) é **tudo desligado**: é o que vale para "sem gates" (agente com
-/// `ativo: false`, testes que montam o motor à mão). O padrão de **instalação** é outro e vive em
-/// [`GatesJev::padrao`]: G3, G5, G8 e G9 ligados (G3, G5 e G8 por decisão do mantenedor, 20/11/2026;
-/// G9 pelo PRD de fluxos, §9), os demais desligados.
-/// Campo ausente no arquivo de configuração cai no padrão de instalação, campo a campo.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
-pub struct GatesJev {
-    /// G1: transferir para humano e orientação de risco.
+pub struct JevGates {
     #[serde(default)]
     pub g1: bool,
-    /// G2: esperar mais ou processar agora.
     #[serde(default)]
     pub g2: bool,
-    /// G3: precisa de base, produto ou nada. Ligado por padrão desde 20/11/2026.
-    #[serde(default = "ligado_por_padrao")]
+    #[serde(default = "enabled_by_default")]
     pub g3: bool,
-    /// G4: qual departamento recebe a transferência.
     #[serde(default)]
     pub g4: bool,
-    /// G5: qual produto o cliente quer. Ligado por padrão desde 20/11/2026.
-    #[serde(default = "ligado_por_padrao")]
+    #[serde(default = "enabled_by_default")]
     pub g5: bool,
-    /// G6: revisão da resposta antes do envio.
     #[serde(default)]
     pub g6: bool,
-    /// G7: injeção de prompt ou abuso.
     #[serde(default)]
     pub g7: bool,
-    /// G8: conversa encerrada. Ligado por padrão desde 20/11/2026 (decisão do mantenedor).
-    #[serde(default = "ligado_por_padrao")]
+    #[serde(default = "enabled_by_default")]
     pub g8: bool,
-    /// G9: quem inicia um fluxo (Jev escolhe, código inicia). Ligado por padrão pelo PRD de fluxos
-    /// (§9); só tem efeito quando o motor de fluxos (`[fluxos] ativo`) estiver ligado.
-    #[serde(default = "ligado_por_padrao")]
+    #[serde(default = "enabled_by_default")]
     pub g9: bool,
 }
 
-fn ligado_por_padrao() -> bool {
+fn enabled_by_default() -> bool {
     true
 }
 
-impl GatesJev {
-    /// Padrão de instalação: G3, G5, G8 e G9 ligados; G1, G2, G4, G6 e G7, desligados.
-    pub const fn padrao() -> Self {
+impl JevGates {
+    pub const fn default_value() -> Self {
         Self {
             g1: false,
             g2: false,
@@ -435,104 +360,84 @@ impl GatesJev {
     }
 }
 
-/// Integração WhatsApp via Evolution API.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EvolutionConfig {
-    /// Endereço base da Evolution API. A chave `EVOLUTION_API_KEY` fica no ambiente.
     pub url_base: String,
-    /// Instâncias que entregam mensagens ao Harness (HR-26b). Vazio = nenhum webhook aceito.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub instancias: Vec<InstanciaEvolutionConfig>,
+    #[serde(rename = "instancias")]
+    pub instances: Vec<EvolutionInstanceConfig>,
 }
 
-/// Uma instância da Evolution ligada a uma integração WhatsApp do Harness.
-///
-/// O segredo do webhook **não** entra aqui: o arquivo guarda só o nome da variável de ambiente
-/// (`segredo_env`), e o valor vem do ambiente na subida.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct InstanciaEvolutionConfig {
-    /// Org dona da instância (id no formato do Harness).
+pub struct EvolutionInstanceConfig {
     pub org_id: String,
-    /// Nome da instância na Evolution (é o que aparece no caminho do webhook).
-    pub instancia: String,
-    /// Integração WhatsApp do agente que recebe as mensagens desta instância.
-    pub integracao_id: String,
-    /// Nome da variável de ambiente que guarda o segredo do webhook (ex.: `POPH_EVO_SEGREDO_LOJA`).
-    pub segredo_env: String,
+    #[serde(rename = "instancia")]
+    pub instance: String,
+    #[serde(rename = "integracao_id")]
+    pub integration_id: String,
+    #[serde(rename = "segredo_env")]
+    pub secret_env: String,
 }
 
-/// Módulo Matrix do Harness (MX-07, PRD §9): a ponte entre a conversa e o Synapse/Element.
-///
-/// Ausente do arquivo ou com `habilitado = false`, o módulo inteiro fica morto: nenhuma tarefa, nenhuma
-/// rota e nenhum token lido do ambiente. Só com `habilitado = true` os demais campos são conferidos.
-///
-/// Os tokens (`POPH_MATRIX_AS_TOKEN` e `POPH_MATRIX_HS_TOKEN`) **não** entram aqui: vêm só do ambiente
-/// e são lidos pelo crate `poph-matrix` no tipo `Sensivel`. `POPH_MATRIX_ADMIN_TOKEN` é da fase 2.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct MatrixConfig {
-    /// Liga o módulo nesta instância. Padrão: desligado.
-    pub habilitado: bool,
-    /// Endereço base da API cliente do Synapse (`http://` ou `https://`).
+    #[serde(rename = "habilitado")]
+    pub enabled: bool,
     pub homeserver_url: String,
-    /// Domínio dos ids Matrix (ex.: `matrix-dev.local`), como no `server_name` do Synapse.
     pub server_name: String,
-    /// Prefixo de usuários virtuais, aliases e `sender_localpart`. Só `[a-z0-9]`, de 1 a 12.
-    pub prefixo: String,
-    /// Salas espelhadas em paralelo. Entre 1 e 64.
-    pub concorrencia: u32,
-    /// Espera entre duas leituras do cursor quando não há trabalho. Entre 50 e 60000 ms.
-    pub intervalo_ms: u64,
-    /// Power level do fantasma do agente na sala. Entre 0 e 100; o padrão (50) escreve sem administrar.
-    pub poder_agente: u8,
-    /// Dias que a mídia fica no Synapse antes de ser apagada (fase 2). Entre 1 e 365.
-    pub midia_retencao_dias: u32,
+    #[serde(rename = "prefixo")]
+    pub prefix: String,
+    #[serde(rename = "concorrencia")]
+    pub concurrency: u32,
+    #[serde(rename = "intervalo_ms")]
+    pub interval_ms: u64,
+    #[serde(rename = "poder_agente")]
+    pub agent_power: u8,
+    #[serde(rename = "midia_retencao_dias")]
+    pub attachment_retention_days: u32,
 }
 
 impl Default for MatrixConfig {
     fn default() -> Self {
         Self {
-            habilitado: false,
+            enabled: false,
             homeserver_url: String::new(),
             server_name: String::new(),
-            prefixo: "ph".to_owned(),
-            concorrencia: 8,
-            intervalo_ms: 500,
-            poder_agente: 50,
-            midia_retencao_dias: 4,
+            prefix: "ph".to_owned(),
+            concurrency: 8,
+            interval_ms: 500,
+            agent_power: 50,
+            attachment_retention_days: 4,
         }
     }
 }
 
 impl MatrixConfig {
-    /// Confere a seção quando ela está ligada; desligada, qualquer valor é aceito.
-    ///
-    /// É a mesma regra que [`HarnessConfig::validar`] aplica; fica pública para o módulo
-    /// (`poph-matrix`) validar a seção sozinho antes de carregar os segredos.
     pub fn validar(&self) -> DomainResult<()> {
-        validar_matrix(self)
+        validate_matrix(self)
     }
 }
 
-impl Default for ServidorConfig {
+impl Default for ServerConfig {
     fn default() -> Self {
         Self {
-            endereco: IpAddr::from([127, 0, 0, 1]),
-            porta: 7480,
+            address: IpAddr::from([127, 0, 0, 1]),
+            port: 7480,
         }
     }
 }
 
-impl Default for DadosConfig {
+impl Default for DataConfig {
     fn default() -> Self {
         Self {
-            diretorio: PathBuf::from("data"),
+            directory: PathBuf::from("data"),
             harness_db: None,
             rag_db: None,
             blobs: None,
-            modelos: None,
+            models: None,
         }
     }
 }
@@ -540,24 +445,24 @@ impl Default for DadosConfig {
 impl Default for LogConfig {
     fn default() -> Self {
         Self {
-            nivel: "info".to_owned(),
-            formato: Formato::Legivel,
+            level: "info".to_owned(),
+            format: Format::Legible,
         }
     }
 }
 
-impl Default for RetencaoConfig {
+impl Default for RetentionConfig {
     fn default() -> Self {
-        Self { dias: 30 }
+        Self { days: 30 }
     }
 }
 
-impl Default for LimitesConfig {
+impl Default for LimitsConfig {
     fn default() -> Self {
         Self {
-            turnos_simultaneos: 200,
-            turnos_simultaneos_por_org: 50,
-            taxa_por_org_por_minuto: 600,
+            concurrent_turns: 200,
+            concurrent_turns_per_org: 50,
+            rate_per_org_per_minute: 600,
         }
     }
 }
@@ -565,16 +470,16 @@ impl Default for LimitesConfig {
 impl Default for LlmConfig {
     fn default() -> Self {
         Self {
-            provedor: "antigravity2api".to_owned(),
+            provider: "antigravity2api".to_owned(),
             url_base: "http://127.0.0.1:8045/v1".to_owned(),
-            chave_env: "ANTIGRAVITY_API_KEY".to_owned(),
-            recusa_turno_modelo: true,
-            modelo: "gemini-3.8-flash-tiered".to_owned(),
-            timeout_segundos: 150,
-            retentativas: 2,
-            simultaneos: 32,
-            temperatura: 0.0,
-            max_tokens_saida: 4096,
+            api_key_env: "ANTIGRAVITY_API_KEY".to_owned(),
+            refuse_model_turn: true,
+            model: "gemini-3.8-flash-tiered".to_owned(),
+            timeout_seconds: 150,
+            retries: 2,
+            concurrent_calls: 32,
+            temperature: 0.0,
+            max_output_tokens: 4096,
         }
     }
 }
@@ -582,231 +487,231 @@ impl Default for LlmConfig {
 impl Default for JevConfig {
     fn default() -> Self {
         Self {
-            ativo: false,
+            enabled: false,
             url_base: "https://api.typesafe.ai".to_owned(),
-            modelo: "jev-latest".to_owned(),
-            timeout_segundos: 8,
-            retentativas: 1,
-            gates: GatesJev::padrao(),
+            model: "jev-latest".to_owned(),
+            timeout_seconds: 8,
+            retries: 1,
+            gates: JevGates::default_value(),
         }
     }
 }
 
 impl HarnessConfig {
-    /// Confere todas as regras. Devolve o primeiro problema com o nome do campo.
     pub fn validar(&self) -> DomainResult<()> {
-        validar_servidor(&self.servidor)?;
-        validar_dados(&self.dados)?;
-        validar_log(&self.log)?;
-        validar_limites(&self.limites)?;
-        validar_llm(&self.llm)?;
-        self.validar_provedores()?;
-        validar_jev(&self.jev)?;
-        validar_handoff(&self.handoff)?;
-        validar_turno(&self.turno)?;
-        validar_admin(&self.admin)?;
-        validar_plugins(&self.plugins)?;
+        validate_server(&self.server)?;
+        validate_data(&self.data)?;
+        validate_log(&self.log)?;
+        validate_limits(&self.limits)?;
+        validate_llm(&self.llm)?;
+        self.validate_providers()?;
+        validate_jev(&self.jev)?;
+        validate_handoff(&self.handoff)?;
+        validate_turn(&self.turn)?;
+        validate_admin(&self.admin)?;
+        validate_plugins(&self.plugins)?;
         if let Some(evolution) = &self.evolution {
-            validar_url("evolution.url_base", &evolution.url_base)?;
-            validar_instancias_evolution(&evolution.instancias)?;
+            validate_url("evolution.url_base", &evolution.url_base)?;
+            validate_evolution_instances(&evolution.instances)?;
         }
         if let Some(matrix) = &self.matrix {
             matrix.validar()?;
         }
-        validar_fluxos(&self.fluxos)?;
+        validate_flows(&self.flows)?;
         Ok(())
     }
 
-    pub fn nomes_de_provedores(&self) -> Vec<String> {
-        self.provedores.keys().cloned().collect()
+    pub fn provider_names(&self) -> Vec<String> {
+        self.providers.keys().cloned().collect()
     }
 
-    pub fn provedor_efetivo(&self, nome: &str) -> Option<LlmConfig> {
-        self.provedores
-            .get(nome.trim())
-            .map(|provedor| provedor.efetivo(&self.llm))
+    pub fn effective_provider(&self, name: &str) -> Option<LlmConfig> {
+        self.providers
+            .get(name.trim())
+            .map(|provider| provider.effective(&self.llm))
     }
 
-    pub fn provedor_e_padrao(escolha: &str) -> bool {
-        let escolha = escolha.trim();
-        escolha.is_empty() || provedor_llm_aceito(escolha)
+    pub fn provider_is_default(choice: &str) -> bool {
+        let choice = choice.trim();
+        choice.is_empty() || llm_provider_accepted(choice)
     }
 
-    pub fn validar_escolha_de_provedor(&self, escolha: &str) -> DomainResult<()> {
-        if Self::provedor_e_padrao(escolha) || self.provedores.contains_key(escolha.trim()) {
+    pub fn validate_provider_choice(&self, choice: &str) -> DomainResult<()> {
+        if Self::provider_is_default(choice) || self.providers.contains_key(choice.trim()) {
             return Ok(());
         }
-        let declarados = self.nomes_de_provedores();
-        let lista = if declarados.is_empty() {
+        let declared = self.provider_names();
+        let list = if declared.is_empty() {
             "nenhum declarado em [provedores]".to_owned()
         } else {
-            declarados.join(", ")
+            declared.join(", ")
         };
-        Err(invalido(
+        Err(invalid(
             "provedor",
             format!(
                 "`{}` não é um provedor desta instância; use vazio (o padrão do [llm]), {} ou um de [provedores]: {}",
-                escolha.trim(),
-                PROVEDORES_LLM_ACEITOS.join(" ou "),
-                lista
+                choice.trim(),
+                ACCEPTED_LLM_PROVIDERS.join(" ou "),
+                list
             ),
         ))
     }
 
-    fn validar_provedores(&self) -> DomainResult<()> {
-        for (nome, provedor) in &self.provedores {
-            if !nome_de_provedor_valido(nome) {
-                return Err(invalido(
+    fn validate_providers(&self) -> DomainResult<()> {
+        for (name, provider) in &self.providers {
+            if !valid_provider_name(name) {
+                return Err(invalid(
                     "provedores",
-                    format!("nome `{nome}` inválido: use letras minúsculas, números, `-` e `_`"),
+                    format!("nome `{name}` inválido: use letras minúsculas, números, `-` e `_`"),
                 ));
             }
-            if provedor_llm_aceito(nome) {
-                return Err(invalido(
+            if llm_provider_accepted(name) {
+                return Err(invalid(
                     "provedores",
                     format!(
-                        "`{nome}` é nome de protocolo e não pode ser usado como nome de provedor; escolha outro"
+                        "`{name}` é nome de protocolo e não pode ser usado como nome de provedor; escolha outro"
                     ),
                 ));
             }
-            let url_base = provedor.url_base.as_deref().unwrap_or(&self.llm.url_base);
+            let url_base = provider.url_base.as_deref().unwrap_or(&self.llm.url_base);
             if url_base.trim().is_empty() {
-                return Err(invalido(
+                return Err(invalid(
                     "provedores",
-                    format!("`{nome}`: url_base vazia; informe em [provedores.{nome}] ou em [llm]"),
+                    format!("`{name}`: url_base vazia; informe em [provedores.{name}] ou em [llm]"),
                 ));
             }
-            let chave_env = provedor.chave_env.as_deref().unwrap_or(&self.llm.chave_env);
-            if chave_env.trim().is_empty() {
-                return Err(invalido(
+            let api_key_env = provider
+                .api_key_env
+                .as_deref()
+                .unwrap_or(&self.llm.api_key_env);
+            if api_key_env.trim().is_empty() {
+                return Err(invalid(
                     "provedores",
                     format!(
-                        "`{nome}`: chave_env vazia; informe em [provedores.{nome}] ou em [llm]"
+                        "`{name}`: chave_env vazia; informe em [provedores.{name}] ou em [llm]"
                     ),
                 ));
             }
-            let efetivo = provedor.efetivo(&self.llm);
-            validar_llm(&efetivo)
-                .map_err(|erro| invalido("provedores", format!("`{nome}`: {erro}")))?;
+            let effective = provider.effective(&self.llm);
+            validate_llm(&effective)
+                .map_err(|error| invalid("provedores", format!("`{name}`: {error}")))?;
         }
         Ok(())
     }
 
-    /// Caminho do banco durável (`harness.db`).
     pub fn harness_db(&self) -> PathBuf {
-        caminho_ou_padrao(&self.dados.harness_db, &self.dados.diretorio, "harness.db")
+        path_or_default(&self.data.harness_db, &self.data.directory, "harness.db")
     }
 
-    /// Caminho do banco do RAG (`rag.db`).
     pub fn rag_db(&self) -> PathBuf {
-        caminho_ou_padrao(&self.dados.rag_db, &self.dados.diretorio, "rag.db")
+        path_or_default(&self.data.rag_db, &self.data.directory, "rag.db")
     }
 
-    /// Pasta dos arquivos (blobs).
     pub fn blobs(&self) -> PathBuf {
-        caminho_ou_padrao(&self.dados.blobs, &self.dados.diretorio, "blobs")
+        path_or_default(&self.data.blobs, &self.data.directory, "blobs")
     }
 
-    /// Pasta dos modelos de embedding (`poph model install` grava aqui).
-    pub fn modelos(&self) -> PathBuf {
-        caminho_ou_padrao(&self.dados.modelos, &self.dados.diretorio, "modelos")
-    }
-}
-
-fn caminho_ou_padrao(definido: &Option<PathBuf>, diretorio: &Path, padrao: &str) -> PathBuf {
-    definido.clone().unwrap_or_else(|| diretorio.join(padrao))
-}
-
-fn invalido(campo: &'static str, motivo: impl Into<String>) -> DomainError {
-    DomainError::Validacao {
-        campo,
-        motivo: motivo.into(),
+    pub fn models(&self) -> PathBuf {
+        path_or_default(&self.data.models, &self.data.directory, "modelos")
     }
 }
 
-fn validar_plugins(plugins: &PluginsConfig) -> DomainResult<()> {
-    let mut vistos: Vec<String> = Vec::with_capacity(plugins.integracoes.len());
-    for (indice, plugin) in plugins.integracoes.iter().enumerate() {
+fn path_or_default(given: &Option<PathBuf>, directory: &Path, default_value: &str) -> PathBuf {
+    given
+        .clone()
+        .unwrap_or_else(|| directory.join(default_value))
+}
+
+fn invalid(field: &'static str, reason: impl Into<String>) -> DomainError {
+    DomainError::Validation {
+        field,
+        reason: reason.into(),
+    }
+}
+
+fn validate_plugins(plugins: &PluginsConfig) -> DomainResult<()> {
+    let mut seen: Vec<String> = Vec::with_capacity(plugins.integrations.len());
+    for (index, plugin) in plugins.integrations.iter().enumerate() {
         let kind = plugin.kind.trim();
         if kind.is_empty() {
-            return Err(invalido(
+            return Err(invalid(
                 "plugins.integracoes.kind",
-                format!("item {} sem `kind`", indice + 1),
+                format!("item {} sem `kind`", index + 1),
             ));
         }
-        if plugin.programa.as_os_str().is_empty() {
-            return Err(invalido(
+        if plugin.program.as_os_str().is_empty() {
+            return Err(invalid(
                 "plugins.integracoes.programa",
                 format!("o plugin `{kind}` não declara o programa"),
             ));
         }
-        if vistos.iter().any(|visto| visto == kind) {
-            return Err(invalido(
+        if seen.iter().any(|visto| visto == kind) {
+            return Err(invalid(
                 "plugins.integracoes.kind",
                 format!("o tipo `{kind}` está declarado duas vezes"),
             ));
         }
-        vistos.push(kind.to_owned());
+        seen.push(kind.to_owned());
     }
     Ok(())
 }
 
-fn validar_servidor(servidor: &ServidorConfig) -> DomainResult<()> {
-    if !(1024..=65535).contains(&servidor.porta) {
-        return Err(invalido(
+fn validate_server(server: &ServerConfig) -> DomainResult<()> {
+    if !(1024..=65535).contains(&server.port) {
+        return Err(invalid(
             "servidor.porta",
-            format!("{} fora da faixa 1024 a 65535", servidor.porta),
+            format!("{} fora da faixa 1024 a 65535", server.port),
         ));
     }
     Ok(())
 }
 
-fn validar_dados(dados: &DadosConfig) -> DomainResult<()> {
-    if dados.diretorio.as_os_str().is_empty() {
-        return Err(invalido("dados.diretorio", "caminho vazio"));
+fn validate_data(data: &DataConfig) -> DomainResult<()> {
+    if data.directory.as_os_str().is_empty() {
+        return Err(invalid("dados.diretorio", "caminho vazio"));
     }
-    for (campo, caminho) in [
-        ("dados.harness_db", &dados.harness_db),
-        ("dados.rag_db", &dados.rag_db),
-        ("dados.blobs", &dados.blobs),
-        ("dados.modelos", &dados.modelos),
+    for (field, path) in [
+        ("dados.harness_db", &data.harness_db),
+        ("dados.rag_db", &data.rag_db),
+        ("dados.blobs", &data.blobs),
+        ("dados.modelos", &data.models),
     ] {
-        if caminho.as_ref().is_some_and(|c| c.as_os_str().is_empty()) {
-            return Err(invalido(campo, "caminho vazio"));
+        if path.as_ref().is_some_and(|c| c.as_os_str().is_empty()) {
+            return Err(invalid(field, "caminho vazio"));
         }
     }
     Ok(())
 }
 
-fn validar_log(log: &LogConfig) -> DomainResult<()> {
+fn validate_log(log: &LogConfig) -> DomainResult<()> {
     const NIVEIS: [&str; 5] = ["trace", "debug", "info", "warn", "error"];
-    if !NIVEIS.contains(&log.nivel.as_str()) {
-        return Err(invalido(
+    if !NIVEIS.contains(&log.level.as_str()) {
+        return Err(invalid(
             "log.nivel",
             format!(
                 "`{}` não é um nível; use trace, debug, info, warn ou error",
-                log.nivel
+                log.level
             ),
         ));
     }
     Ok(())
 }
 
-fn validar_limites(limites: &LimitesConfig) -> DomainResult<()> {
-    if !(1..=10_000).contains(&limites.turnos_simultaneos) {
-        return Err(invalido(
+fn validate_limits(limits: &LimitsConfig) -> DomainResult<()> {
+    if !(1..=10_000).contains(&limits.concurrent_turns) {
+        return Err(invalid(
             "limites.turnos_simultaneos",
             "deve estar entre 1 e 10000",
         ));
     }
-    if !(1..=limites.turnos_simultaneos).contains(&limites.turnos_simultaneos_por_org) {
-        return Err(invalido(
+    if !(1..=limits.concurrent_turns).contains(&limits.concurrent_turns_per_org) {
+        return Err(invalid(
             "limites.turnos_simultaneos_por_org",
             "deve ser de 1 até o total de turnos simultâneos",
         ));
     }
-    if !(1..=100_000).contains(&limites.taxa_por_org_por_minuto) {
-        return Err(invalido(
+    if !(1..=100_000).contains(&limits.rate_per_org_per_minute) {
+        return Err(invalid(
             "limites.taxa_por_org_por_minuto",
             "deve estar entre 1 e 100000",
         ));
@@ -814,46 +719,46 @@ fn validar_limites(limites: &LimitesConfig) -> DomainResult<()> {
     Ok(())
 }
 
-fn validar_llm(llm: &LlmConfig) -> DomainResult<()> {
-    if llm.provedor.trim().is_empty() {
-        return Err(invalido(
+fn validate_llm(llm: &LlmConfig) -> DomainResult<()> {
+    if llm.provider.trim().is_empty() {
+        return Err(invalid(
             "llm.provedor",
             "nome do provedor vazio; use openai_compativel",
         ));
     }
-    if !provedor_llm_aceito(&llm.provedor) {
-        return Err(invalido(
+    if !llm_provider_accepted(&llm.provider) {
+        return Err(invalid(
             "llm.provedor",
             format!(
                 "`{}` não é um provedor aceito; use {} ou {}",
-                llm.provedor, PROVEDORES_LLM_ACEITOS[0], PROVEDORES_LLM_ACEITOS[1]
+                llm.provider, ACCEPTED_LLM_PROVIDERS[0], ACCEPTED_LLM_PROVIDERS[1]
             ),
         ));
     }
-    validar_url("llm.url_base", &llm.url_base)?;
-    if !nome_de_variavel_valido(&llm.chave_env) {
-        return Err(invalido(
+    validate_url("llm.url_base", &llm.url_base)?;
+    if !valid_env_name(&llm.api_key_env) {
+        return Err(invalid(
             "llm.chave_env",
             "deve ser o nome de uma variável de ambiente (letras, números e `_`, começando por letra ou `_`)",
         ));
     }
-    if llm.modelo.trim().is_empty() {
-        return Err(invalido("llm.modelo", "nome do modelo vazio"));
+    if llm.model.trim().is_empty() {
+        return Err(invalid("llm.modelo", "nome do modelo vazio"));
     }
-    if !(1..=600).contains(&llm.timeout_segundos) {
-        return Err(invalido("llm.timeout_segundos", "deve estar entre 1 e 600"));
+    if !(1..=600).contains(&llm.timeout_seconds) {
+        return Err(invalid("llm.timeout_segundos", "deve estar entre 1 e 600"));
     }
-    if llm.retentativas > 5 {
-        return Err(invalido("llm.retentativas", "no máximo 5"));
+    if llm.retries > 5 {
+        return Err(invalid("llm.retentativas", "no máximo 5"));
     }
-    if !(1..=1000).contains(&llm.simultaneos) {
-        return Err(invalido("llm.simultaneos", "deve estar entre 1 e 1000"));
+    if !(1..=1000).contains(&llm.concurrent_calls) {
+        return Err(invalid("llm.simultaneos", "deve estar entre 1 e 1000"));
     }
-    if !(0.0..=2.0).contains(&llm.temperatura) {
-        return Err(invalido("llm.temperatura", "deve estar entre 0 e 2"));
+    if !(0.0..=2.0).contains(&llm.temperature) {
+        return Err(invalid("llm.temperatura", "deve estar entre 0 e 2"));
     }
-    if !(1..=131_072).contains(&llm.max_tokens_saida) {
-        return Err(invalido(
+    if !(1..=131_072).contains(&llm.max_output_tokens) {
+        return Err(invalid(
             "llm.max_tokens_saida",
             "deve estar entre 1 e 131072",
         ));
@@ -861,53 +766,53 @@ fn validar_llm(llm: &LlmConfig) -> DomainResult<()> {
     Ok(())
 }
 
-fn nome_de_provedor_valido(nome: &str) -> bool {
-    !nome.is_empty()
-        && nome
+fn valid_provider_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
 }
 
-fn nome_de_variavel_valido(nome: &str) -> bool {
-    let mut caracteres = nome.chars();
-    let Some(primeiro) = caracteres.next() else {
+fn valid_env_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
         return false;
     };
-    if !(primeiro.is_ascii_alphabetic() || primeiro == '_') {
+    if !(first.is_ascii_alphabetic() || first == '_') {
         return false;
     }
-    caracteres.all(|c| c.is_ascii_alphanumeric() || c == '_')
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-fn validar_jev(jev: &JevConfig) -> DomainResult<()> {
-    validar_url("jev.url_base", &jev.url_base)?;
-    if jev.modelo.trim().is_empty() {
-        return Err(invalido("jev.modelo", "nome do modelo vazio"));
+fn validate_jev(jev: &JevConfig) -> DomainResult<()> {
+    validate_url("jev.url_base", &jev.url_base)?;
+    if jev.model.trim().is_empty() {
+        return Err(invalid("jev.modelo", "nome do modelo vazio"));
     }
-    if !(1..=60).contains(&jev.timeout_segundos) {
-        return Err(invalido("jev.timeout_segundos", "deve estar entre 1 e 60"));
+    if !(1..=60).contains(&jev.timeout_seconds) {
+        return Err(invalid("jev.timeout_segundos", "deve estar entre 1 e 60"));
     }
-    if jev.retentativas > 3 {
-        return Err(invalido("jev.retentativas", "no máximo 3"));
+    if jev.retries > 3 {
+        return Err(invalid("jev.retentativas", "no máximo 3"));
     }
     Ok(())
 }
 
-fn validar_turno(turno: &TurnoConfig) -> DomainResult<()> {
-    if !(100..=60_000).contains(&turno.intervalo_despacho_ms) {
-        return Err(invalido(
+fn validate_turn(turn: &TurnConfig) -> DomainResult<()> {
+    if !(100..=60_000).contains(&turn.dispatch_interval_ms) {
+        return Err(invalid(
             "turno.intervalo_despacho_ms",
             "deve estar entre 100 e 60000 milissegundos",
         ));
     }
-    if !(1..=10).contains(&turno.tentativas_falha_modelo) {
-        return Err(invalido(
+    if !(1..=10).contains(&turn.model_failure_attempts) {
+        return Err(invalid(
             "turno.tentativas_falha_modelo",
             "deve estar entre 1 e 10",
         ));
     }
-    if !(1_000..=600_000).contains(&turno.atraso_falha_modelo_ms) {
-        return Err(invalido(
+    if !(1_000..=600_000).contains(&turn.model_failure_delay_ms) {
+        return Err(invalid(
             "turno.atraso_falha_modelo_ms",
             "deve estar entre 1000 e 600000 milissegundos",
         ));
@@ -915,21 +820,21 @@ fn validar_turno(turno: &TurnoConfig) -> DomainResult<()> {
     Ok(())
 }
 
-fn validar_handoff(handoff: &HandoffConfig) -> DomainResult<()> {
-    if !(0.0..=1.0).contains(&handoff.orientacao_confianca) {
-        return Err(invalido(
+fn validate_handoff(handoff: &HandoffConfig) -> DomainResult<()> {
+    if !(0.0..=1.0).contains(&handoff.guidance_confidence) {
+        return Err(invalid(
             "handoff.orientacao_confianca",
             "deve estar entre 0 e 1",
         ));
     }
-    if !(1..=60).contains(&handoff.orientacao_timeout_segundos) {
-        return Err(invalido(
+    if !(1..=60).contains(&handoff.guidance_timeout_seconds) {
+        return Err(invalid(
             "handoff.orientacao_timeout_segundos",
             "deve estar entre 1 e 60",
         ));
     }
-    if handoff.mensagem_automatica.trim().is_empty() {
-        return Err(invalido(
+    if handoff.automatic_message.trim().is_empty() {
+        return Err(invalid(
             "handoff.mensagem_automatica",
             "a mensagem automática da transferência não pode ficar vazia",
         ));
@@ -937,25 +842,25 @@ fn validar_handoff(handoff: &HandoffConfig) -> DomainResult<()> {
     Ok(())
 }
 
-fn validar_admin(admin: &AdminConfig) -> DomainResult<()> {
-    for (posicao, token) in admin.tokens_globais.iter().enumerate() {
-        let rotulo = token.label.trim();
-        if rotulo.is_empty() || rotulo.chars().count() > 80 {
-            return Err(invalido(
+fn validate_admin(admin: &AdminConfig) -> DomainResult<()> {
+    for (position, token) in admin.tokens_globais.iter().enumerate() {
+        let label = token.label.trim();
+        if label.is_empty() || label.chars().count() > 80 {
+            return Err(invalid(
                 "admin.tokens_globais[].label",
                 format!(
                     "entrada {}: o rótulo deve ter de 1 a 80 caracteres",
-                    posicao + 1
+                    position + 1
                 ),
             ));
         }
         if !token.hash.trim().starts_with("$argon2") {
-            return Err(invalido(
+            return Err(invalid(
                 "admin.tokens_globais[].hash",
                 format!(
                     "entrada {}: o hash deve ser argon2 no formato PHC (`$argon2id$...`); \
                      gere com `poph token global`",
-                    posicao + 1
+                    position + 1
                 ),
             ));
         }
@@ -963,53 +868,51 @@ fn validar_admin(admin: &AdminConfig) -> DomainResult<()> {
     Ok(())
 }
 
-/// Confere as instâncias da Evolution: ids válidos, nome de instância seguro para caminho de URL,
-/// nome de variável de segredo válido e sem repetir (org, instância).
-fn validar_instancias_evolution(instancias: &[InstanciaEvolutionConfig]) -> DomainResult<()> {
+fn validate_evolution_instances(instances: &[EvolutionInstanceConfig]) -> DomainResult<()> {
     use crate::ids::{IntegrationId, OrgId};
     use std::collections::BTreeSet;
     use std::str::FromStr;
 
-    let mut vistas = BTreeSet::new();
-    for instancia in instancias {
-        if OrgId::from_str(instancia.org_id.trim()).is_err() {
-            return Err(invalido(
+    let mut seen = BTreeSet::new();
+    for instance in instances {
+        if OrgId::from_str(instance.org_id.trim()).is_err() {
+            return Err(invalid(
                 "evolution.instancias.org_id",
                 "não é um id de org válido",
             ));
         }
-        if IntegrationId::from_str(instancia.integracao_id.trim()).is_err() {
-            return Err(invalido(
+        if IntegrationId::from_str(instance.integration_id.trim()).is_err() {
+            return Err(invalid(
                 "evolution.instancias.integracao_id",
                 "não é um id de integração válido",
             ));
         }
-        let nome = instancia.instancia.trim();
-        let nome_seguro = !nome.is_empty()
-            && nome.len() <= 64
-            && nome
+        let name = instance.instance.trim();
+        let safe_name = !name.is_empty()
+            && name.len() <= 64
+            && name
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
-        if !nome_seguro {
-            return Err(invalido(
+        if !safe_name {
+            return Err(invalid(
                 "evolution.instancias.instancia",
                 "use letras, números, `-` ou `_` (até 64 caracteres), como o nome da instância na Evolution",
             ));
         }
-        let variavel = instancia.segredo_env.trim();
-        let variavel_valida = !variavel.is_empty()
-            && variavel
+        let variable = instance.secret_env.trim();
+        let valid_variable = !variable.is_empty()
+            && variable
                 .chars()
                 .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
-            && !variavel.starts_with(|c: char| c.is_ascii_digit());
-        if !variavel_valida {
-            return Err(invalido(
+            && !variable.starts_with(|c: char| c.is_ascii_digit());
+        if !valid_variable {
+            return Err(invalid(
                 "evolution.instancias.segredo_env",
                 "nome de variável de ambiente em maiúsculas (ex.: POPH_EVO_SEGREDO_LOJA)",
             ));
         }
-        if !vistas.insert((instancia.org_id.trim().to_owned(), nome.to_owned())) {
-            return Err(invalido(
+        if !seen.insert((instance.org_id.trim().to_owned(), name.to_owned())) {
+            return Err(invalid(
                 "evolution.instancias",
                 "a mesma instância aparece duas vezes para a mesma org",
             ));
@@ -1018,54 +921,48 @@ fn validar_instancias_evolution(instancias: &[InstanciaEvolutionConfig]) -> Doma
     Ok(())
 }
 
-fn validar_url(campo: &'static str, url: &str) -> DomainResult<()> {
-    let sem_espacos = url.trim();
-    if !(sem_espacos.starts_with("http://") || sem_espacos.starts_with("https://")) {
-        return Err(invalido(
-            campo,
+fn validate_url(field: &'static str, url: &str) -> DomainResult<()> {
+    let trimmed = url.trim();
+    if !(trimmed.starts_with("http://") || trimmed.starts_with("https://")) {
+        return Err(invalid(
+            field,
             "o endereço deve começar com http:// ou https://",
         ));
     }
     Ok(())
 }
 
-// ───────────────────────────── matrix (MX-07) ─────────────────────────────
-
-/// Confere a seção `[matrix]` — só quando `habilitado = true`.
-///
-/// Desligado, nada é conferido: a seção pode existir vazia (é o que uma instalação grava ao desligar o
-/// módulo) sem impedir a subida. Os motivos **não** repetem o valor recebido: o erro nomeia a chave.
-fn validar_matrix(matrix: &MatrixConfig) -> DomainResult<()> {
-    if !matrix.habilitado {
+fn validate_matrix(matrix: &MatrixConfig) -> DomainResult<()> {
+    if !matrix.enabled {
         return Ok(());
     }
-    validar_url("matrix.homeserver_url", &matrix.homeserver_url)?;
-    if !server_name_valido(&matrix.server_name) {
-        return Err(invalido(
+    validate_url("matrix.homeserver_url", &matrix.homeserver_url)?;
+    if !valid_server_name(&matrix.server_name) {
+        return Err(invalid(
             "matrix.server_name",
             "use o domínio do Synapse (letras, números, `.`, `-` ou `:porta`), sem barra nem espaço",
         ));
     }
-    if !prefixo_valido(&matrix.prefixo) {
-        return Err(invalido(
+    if !prefix_valid(&matrix.prefix) {
+        return Err(invalid(
             "matrix.prefixo",
             "use de 1 a 12 caracteres entre `a` e `z` ou `0` e `9`",
         ));
     }
-    if !(1..=64).contains(&matrix.concorrencia) {
-        return Err(invalido("matrix.concorrencia", "fora da faixa 1 a 64"));
+    if !(1..=64).contains(&matrix.concurrency) {
+        return Err(invalid("matrix.concorrencia", "fora da faixa 1 a 64"));
     }
-    if !(50..=60_000).contains(&matrix.intervalo_ms) {
-        return Err(invalido("matrix.intervalo_ms", "fora da faixa 50 a 60000"));
+    if !(50..=60_000).contains(&matrix.interval_ms) {
+        return Err(invalid("matrix.intervalo_ms", "fora da faixa 50 a 60000"));
     }
-    if matrix.poder_agente > 100 {
-        return Err(invalido(
+    if matrix.agent_power > 100 {
+        return Err(invalid(
             "matrix.poder_agente",
             "power level do Matrix vai de 0 a 100",
         ));
     }
-    if !(1..=365).contains(&matrix.midia_retencao_dias) {
-        return Err(invalido(
+    if !(1..=365).contains(&matrix.attachment_retention_days) {
+        return Err(invalid(
             "matrix.midia_retencao_dias",
             "fora da faixa 1 a 365 dias",
         ));
@@ -1073,301 +970,243 @@ fn validar_matrix(matrix: &MatrixConfig) -> DomainResult<()> {
     Ok(())
 }
 
-/// Confere a seção `[fluxos]` (FX-26). Vale sempre, ligado ou não: são tetos, não uso.
-///
-/// Cada faixa vem do PRD §9 e do que o código aceita hoje. O erro nomeia a chave e a faixa, nunca o
-/// valor recebido (o valor pode ser de um script ou de um ambiente de produção).
-fn validar_fluxos(fluxos: &FluxosConfig) -> DomainResult<()> {
-    fn faixa_u64(campo: &'static str, valor: u64, minimo: u64, maximo: u64) -> DomainResult<()> {
-        if (minimo..=maximo).contains(&valor) {
+fn validate_flows(flows: &FlowsConfig) -> DomainResult<()> {
+    fn range_u64(field: &'static str, value: u64, min: u64, max: u64) -> DomainResult<()> {
+        if (min..=max).contains(&value) {
             Ok(())
         } else {
-            Err(invalido(
-                campo,
-                format!("fora da faixa {minimo} a {maximo}"),
-            ))
+            Err(invalid(field, format!("fora da faixa {min} a {max}")))
         }
     }
-    faixa_u64(
+    range_u64(
         "fluxos.max_fluxos_por_org",
-        u64::from(fluxos.max_fluxos_por_org),
+        u64::from(flows.max_flows_per_org),
         1,
         10_000,
     )?;
-    faixa_u64(
+    range_u64(
         "fluxos.max_fonte_bytes",
-        fluxos.max_fonte_bytes,
+        flows.max_source_bytes,
         1_024,
         1_048_576,
     )?;
-    faixa_u64("fluxos.max_nos", u64::from(fluxos.max_nos), 1, 60)?;
-    faixa_u64(
+    range_u64("fluxos.max_nos", u64::from(flows.max_nodes), 1, 60)?;
+    range_u64(
         "fluxos.max_dados_bytes",
-        fluxos.max_dados_bytes,
+        flows.max_data_bytes,
         1_024,
         10_485_760,
     )?;
-    faixa_u64(
+    range_u64(
         "fluxos.max_ticks_regra",
-        fluxos.max_ticks_regra,
+        flows.max_rule_ticks,
         100,
         1_000_000,
     )?;
-    faixa_u64(
+    range_u64(
         "fluxos.max_heap_regra",
-        fluxos.max_heap_regra,
+        flows.max_rule_heap,
         65_536,
         67_108_864,
     )?;
-    faixa_u64(
+    range_u64(
         "fluxos.max_saltos_decisao",
-        u64::from(fluxos.max_saltos_decisao),
+        u64::from(flows.max_decision_hops),
         1,
         100,
     )?;
-    faixa_u64(
+    range_u64(
         "fluxos.cache_revisoes_mb",
-        u64::from(fluxos.cache_revisoes_mb),
+        u64::from(flows.revision_cache_mb),
         0,
         4096,
     )?;
     Ok(())
 }
 
-/// `true` para `[a-z0-9]{1,12}`.
-fn prefixo_valido(prefixo: &str) -> bool {
-    (1..=12).contains(&prefixo.len())
-        && prefixo
+fn prefix_valid(prefix: &str) -> bool {
+    (1..=12).contains(&prefix.len())
+        && prefix
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
 }
 
-/// `true` para um domínio de Matrix: rótulos com letras, números, `.` ou `-`, com `:porta` opcional.
-///
-/// O primeiro rótulo pode ser `localhost` ou um IP; o Synapse de desenvolvimento usa algo como
-/// `matrix-dev.local:18008`.
-fn server_name_valido(server_name: &str) -> bool {
-    let nome = server_name.trim();
-    if nome.is_empty() || nome.len() > 255 || nome != server_name {
+fn valid_server_name(server_name: &str) -> bool {
+    let name = server_name.trim();
+    if name.is_empty() || name.len() > 255 || name != server_name {
         return false;
     }
-    let (dominio, porta) = match nome.rsplit_once(':') {
-        Some((dominio, porta)) => (dominio, Some(porta)),
-        None => (nome, None),
+    let (domain, port) = match name.rsplit_once(':') {
+        Some((domain, port)) => (domain, Some(port)),
+        None => (name, None),
     };
-    if let Some(porta) = porta {
-        if porta.is_empty() || porta.len() > 5 || !porta.chars().all(|c| c.is_ascii_digit()) {
+    if let Some(port) = port {
+        if port.is_empty() || port.len() > 5 || !port.chars().all(|c| c.is_ascii_digit()) {
             return false;
         }
-        if porta.parse::<u16>().map(|valor| valor == 0).unwrap_or(true) {
+        if port.parse::<u16>().map(|value| value == 0).unwrap_or(true) {
             return false;
         }
     }
-    !dominio.is_empty()
-        && !dominio.starts_with('.')
-        && !dominio.ends_with('.')
-        && !dominio.starts_with('-')
-        && !dominio.ends_with('-')
-        && dominio
+    !domain.is_empty()
+        && !domain.starts_with('.')
+        && !domain.ends_with('.')
+        && !domain.starts_with('-')
+        && !domain.ends_with('-')
+        && domain
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-'))
 }
 
-// ───────────────────────────── cluster (HR-50a) ─────────────────────────────
-
-/// Roteamento estático entre instâncias (`cluster.toml`, PRD §12).
-///
-/// Sem arquivo, a instância roda em **modo instância única**: todas as orgs vivem nela e este
-/// tipo fica vazio. Com o arquivo, o mapa é explícito: cada org vive em exatamente uma instância,
-/// e as orgs fora do mapa vão para `default_instance`.
-///
-/// O segredo compartilhado **não** entra aqui: é lido só de `POPH_CLUSTER_SECRET` (ambiente) e
-/// nunca é gravado no arquivo, em resposta, em log ou em erro.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields, default)]
 pub struct ClusterConfig {
-    /// Identificador desta instância no mapa. Obrigatório quando há `cluster.toml`.
     pub instance_id: String,
-    /// Instância que recebe as orgs fora do mapa. Obrigatória quando o cluster tem mais de uma
-    /// instância.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_instance: Option<String>,
-    /// Instâncias do cluster: id e endereço base (`http://` ou `https://`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub instances: Vec<ClusterInstance>,
-    /// Mapa explícito org → instância, no formato `[orgs]` do TOML (chave: id da org `org_…`).
-    ///
-    /// Chave repetida é recusada pelo próprio TOML: o arquivo nem é lido como configuração.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub orgs: BTreeMap<String, String>,
 }
 
-/// Uma instância do cluster: identificador e endereço base.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ClusterInstance {
-    /// Identificador curto (letras, números, `-`, `_`, `.`; até 64 caracteres).
     pub id: String,
-    /// Endereço base do servidor da instância (`http://host:porta` ou `https://host`).
     pub url: String,
 }
 
 impl ClusterConfig {
-    /// `true` quando a configuração descreve um cluster (declara instâncias ou mapa de orgs).
-    pub fn declara_cluster(&self) -> bool {
+    pub fn declares_cluster(&self) -> bool {
         !self.instances.is_empty() || !self.orgs.is_empty()
     }
 
-    /// `true` quando é o modo instância única (nada declarado).
-    pub fn vazio(&self) -> bool {
+    pub fn empty(&self) -> bool {
         self.instance_id.trim().is_empty()
             && self.default_instance.is_none()
-            && !self.declara_cluster()
+            && !self.declares_cluster()
     }
 
-    /// Instância que recebe uma org: a do mapa, senão a padrão, senão a local.
-    ///
-    /// `None` só no modo instância única sem `instance_id` (não há nome de instância a devolver).
-    pub fn instancia_da_org(&self, org: &str) -> Option<&str> {
+    pub fn org_instance(&self, org: &str) -> Option<&str> {
         let org = org.trim();
-        if let Some(destino) = self.orgs.get(org) {
-            return Some(destino.trim());
+        if let Some(target) = self.orgs.get(org) {
+            return Some(target.trim());
         }
-        if let Some(padrao) = self
+        if let Some(default_value) = self
             .default_instance
             .as_deref()
             .map(str::trim)
-            .filter(|valor| !valor.is_empty())
+            .filter(|value| !value.is_empty())
         {
-            return Some(padrao);
+            return Some(default_value);
         }
-        // Cluster de uma instância só: ela é a padrão implícita.
-        if let Some(unica) = self.instances.first() {
-            return Some(unica.id.trim());
+        if let Some(only_instance) = self.instances.first() {
+            return Some(only_instance.id.trim());
         }
         None
     }
 
-    /// Todos os problemas do mapa, um por linha (`campo: motivo`). Vazio = válido.
-    ///
-    /// Reúne tudo em vez de parar no primeiro: é o que `poph cluster check` lista.
-    pub fn problemas(&self) -> Vec<String> {
-        let mut problemas = Vec::new();
-        if self.vazio() {
-            return problemas;
+    pub fn problems(&self) -> Vec<String> {
+        let mut problems = Vec::new();
+        if self.empty() {
+            return problems;
         }
         let local = self.instance_id.trim();
         if local.is_empty() {
-            problemas.push(
+            problems.push(
                 "instance_id: obrigatório quando existe cluster.toml (é o nome desta instância no \
                  mapa)"
                     .to_owned(),
             );
-        } else if !id_de_instancia_valido(local) {
-            problemas.push(
+        } else if !valid_instance_id(local) {
+            problems.push(
                 "instance_id: use letras, números, `-`, `_` ou `.` (até 64 caracteres)".to_owned(),
             );
         }
-        let mut vistos: BTreeSet<String> = BTreeSet::new();
-        for (posicao, instancia) in self.instances.iter().enumerate() {
-            let id = instancia.id.trim();
-            let campo = format!("instances[{}].id", posicao + 1);
-            if !id_de_instancia_valido(id) {
-                problemas.push(format!(
-                    "{campo}: use letras, números, `-`, `_` ou `.` (até 64 caracteres)"
+        let mut seen: BTreeSet<String> = BTreeSet::new();
+        for (position, instance) in self.instances.iter().enumerate() {
+            let id = instance.id.trim();
+            let field = format!("instances[{}].id", position + 1);
+            if !valid_instance_id(id) {
+                problems.push(format!(
+                    "{field}: use letras, números, `-`, `_` ou `.` (até 64 caracteres)"
                 ));
-            } else if !vistos.insert(id.to_owned()) {
-                problemas.push(format!("{campo}: a instância `{id}` aparece duas vezes"));
+            } else if !seen.insert(id.to_owned()) {
+                problems.push(format!("{field}: a instância `{id}` aparece duas vezes"));
             }
-            if !url_de_instancia_valida(&instancia.url) {
-                problemas.push(format!(
+            if !valid_instance_url(&instance.url) {
+                problems.push(format!(
                     "instances[{}].url: o endereço deve começar com http:// ou https:// e ter um \
                      destino (ex.: https://harness-2.exemplo)",
-                    posicao + 1
+                    position + 1
                 ));
             }
         }
-        if !self.instances.is_empty() && !local.is_empty() && !vistos.contains(local) {
-            problemas.push(format!(
+        if !self.instances.is_empty() && !local.is_empty() && !seen.contains(local) {
+            problems.push(format!(
                 "instance_id: `{local}` não está declarada em `instances`"
             ));
         }
-        let padrao = self
+        let default_value = self
             .default_instance
             .as_deref()
             .map(str::trim)
-            .filter(|valor| !valor.is_empty());
-        match padrao {
-            Some(padrao) if !vistos.contains(padrao) => problemas.push(format!(
-                "default_instance: `{padrao}` não está declarada em `instances`"
+            .filter(|value| !value.is_empty());
+        match default_value {
+            Some(default_value) if !seen.contains(default_value) => problems.push(format!(
+                "default_instance: `{default_value}` não está declarada em `instances`"
             )),
-            None if self.instances.len() > 1 => problemas.push(
+            None if self.instances.len() > 1 => problems.push(
                 "default_instance: obrigatória quando o cluster tem mais de uma instância (é para \
                  onde vão as orgs fora do mapa)"
                     .to_owned(),
             ),
             _ => {}
         }
-        for (org, instancia) in &self.orgs {
-            let chave = org.trim();
-            if chave.is_empty() {
-                problemas.push("orgs: chave de org vazia".to_owned());
+        for (org, instance) in &self.orgs {
+            let key = org.trim();
+            if key.is_empty() {
+                problems.push("orgs: chave de org vazia".to_owned());
                 continue;
             }
-            if chave.chars().any(char::is_whitespace) {
-                problemas.push(format!("orgs.{org}: a chave da org não pode ter espaços"));
+            if key.chars().any(char::is_whitespace) {
+                problems.push(format!("orgs.{org}: a chave da org não pode ter espaços"));
             }
-            let destino = instancia.trim();
-            if !vistos.contains(destino) {
-                problemas.push(format!(
-                    "orgs.{org}: a instância `{destino}` não existe em `instances`"
+            let target = instance.trim();
+            if !seen.contains(target) {
+                problems.push(format!(
+                    "orgs.{org}: a instância `{target}` não existe em `instances`"
                 ));
             }
         }
-        problemas
+        problems
     }
 
-    /// Confere o mapa inteiro; devolve o primeiro problema com a chave no motivo.
     pub fn validar(&self) -> DomainResult<()> {
-        let problemas = self.problemas();
-        if problemas.is_empty() {
+        let problems = self.problems();
+        if problems.is_empty() {
             Ok(())
         } else {
-            Err(DomainError::Validacao {
-                campo: "cluster",
-                motivo: problemas.join("; "),
+            Err(DomainError::Validation {
+                field: "cluster",
+                reason: problems.join("; "),
             })
         }
     }
 
-    /// Impressão digital estável do mapa, para comparar instâncias (HR-50b).
-    ///
-    /// Não é criptográfica: é um par de hashes de 64 bits (FNV-1a e uma mistura estável) sobre o
-    /// conteúdo **normalizado** — instância local, padrão resolvida, instâncias ordenadas por id,
-    /// orgs ordenadas por chave. O segredo não entra. Mesmo mapa = mesma impressão; org trocada de
-    /// instância = impressão diferente.
-    ///
-    /// Como a instância local entra no texto canônico, **duas instâncias do mesmo cluster têm
-    /// impressões diferentes** (cada uma tem o seu `instance_id`). Para comparar o mapa entre elas,
-    /// use [`ClusterConfig::fingerprint_do_mapa`] — é o valor que o cabeçalho `x-poph-mapa` do
-    /// encaminhamento carrega (HR-50b).
     pub fn fingerprint(&self) -> String {
-        Self::hash_estavel(&self.normalizado())
+        Self::stable_hash(&self.normalized())
     }
 
-    /// Impressão digital do **conteúdo compartilhado** do mapa, sem a instância local (HR-50b).
-    ///
-    /// Duas instâncias com o mesmo `cluster.toml` — a não ser pelo `instance_id`, que é o nome
-    /// local — produzem a mesma impressão. É o que permite recusar encaminhamento com mapa
-    /// divergente (`421 mapa_divergente`) sem confundir o nome da instância com o mapa.
-    pub fn fingerprint_do_mapa(&self) -> String {
-        Self::hash_estavel(&self.normalizado_do_mapa())
+    pub fn map_fingerprint(&self) -> String {
+        Self::stable_hash(&self.normalized_map())
     }
 
-    fn hash_estavel(texto: &str) -> String {
+    fn stable_hash(text: &str) -> String {
         let mut a: u64 = 0xcbf2_9ce4_8422_2325;
         let mut b: u64 = 0x8422_2325_cbf2_9ce4;
-        for byte in texto.bytes() {
+        for byte in text.bytes() {
             a ^= u64::from(byte);
             a = a.wrapping_mul(0x0000_0100_0000_01b3);
             b = b.rotate_left(5) ^ u64::from(byte);
@@ -1376,46 +1215,44 @@ impl ClusterConfig {
         format!("{a:016x}{b:016x}")
     }
 
-    /// Texto canônico que alimenta o `fingerprint` (nunca contém segredo).
-    pub fn normalizado(&self) -> String {
-        let mut texto = String::from("poph-cluster-1\n");
-        texto.push_str(&format!("local={}\n", self.instance_id.trim()));
-        texto.push_str(&self.normalizado_do_mapa());
-        texto
+    pub fn normalized(&self) -> String {
+        let mut text = String::from("poph-cluster-1\n");
+        text.push_str(&format!("local={}\n", self.instance_id.trim()));
+        text.push_str(&self.normalized_map());
+        text
     }
 
-    /// Texto canônico do conteúdo compartilhado do mapa (sem a instância local, sem segredo).
-    pub fn normalizado_do_mapa(&self) -> String {
-        let mut instancias: Vec<(&str, &str)> = self
+    pub fn normalized_map(&self) -> String {
+        let mut instances: Vec<(&str, &str)> = self
             .instances
             .iter()
-            .map(|instancia| (instancia.id.trim(), instancia.url.trim()))
+            .map(|instance| (instance.id.trim(), instance.url.trim()))
             .collect();
-        instancias.sort_unstable();
-        let padrao = self
+        instances.sort_unstable();
+        let default_value = self
             .default_instance
             .as_deref()
             .map(str::trim)
-            .filter(|valor| !valor.is_empty())
+            .filter(|value| !value.is_empty())
             .or_else(|| {
                 (self.instances.len() == 1)
                     .then(|| self.instances[0].id.trim())
                     .filter(|id| !id.is_empty())
             })
             .unwrap_or("");
-        let mut texto = String::from("poph-cluster-mapa-1\n");
-        texto.push_str(&format!("default={padrao}\n"));
-        for (id, url) in instancias {
-            texto.push_str(&format!("instance={id}\t{url}\n"));
+        let mut text = String::from("poph-cluster-mapa-1\n");
+        text.push_str(&format!("default={default_value}\n"));
+        for (id, url) in instances {
+            text.push_str(&format!("instance={id}\t{url}\n"));
         }
-        for (org, destino) in &self.orgs {
-            texto.push_str(&format!("org={}\t{}\n", org.trim(), destino.trim()));
+        for (org, target) in &self.orgs {
+            text.push_str(&format!("org={}\t{}\n", org.trim(), target.trim()));
         }
-        texto
+        text
     }
 }
 
-fn id_de_instancia_valido(id: &str) -> bool {
+fn valid_instance_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 64
         && id
@@ -1423,142 +1260,142 @@ fn id_de_instancia_valido(id: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
 }
 
-fn url_de_instancia_valida(url: &str) -> bool {
+fn valid_instance_url(url: &str) -> bool {
     let url = url.trim();
     if url.chars().any(char::is_whitespace) {
         return false;
     }
-    let resto = url
+    let rest = url
         .strip_prefix("http://")
         .or_else(|| url.strip_prefix("https://"));
-    matches!(resto, Some(destino) if !destino.is_empty() && !destino.starts_with('/'))
+    matches!(rest, Some(target) if !target.is_empty() && !target.starts_with('/'))
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use super::*;
 
     #[test]
-    fn padroes_sao_validos() {
+    fn defaults_are_valid() {
         assert_eq!(HarnessConfig::default().validar(), Ok(()));
     }
 
     #[test]
-    fn falha_do_modelo_fora_da_faixa_nomeia_o_campo() {
+    fn model_failure_out_of_range_names_the_field() {
         let mut cfg = HarnessConfig::default();
-        cfg.turno.tentativas_falha_modelo = 0;
+        cfg.turn.model_failure_attempts = 0;
         match cfg.validar() {
-            Err(DomainError::Validacao { campo, .. }) => {
-                assert_eq!(campo, "turno.tentativas_falha_modelo")
+            Err(DomainError::Validation { field, .. }) => {
+                assert_eq!(field, "turno.tentativas_falha_modelo")
             }
-            outro => panic!("esperado erro de validação, veio {outro:?}"),
+            other => panic!("esperado erro de validação, veio {other:?}"),
         }
         let mut cfg = HarnessConfig::default();
-        cfg.turno.atraso_falha_modelo_ms = 999;
+        cfg.turn.model_failure_delay_ms = 999;
         match cfg.validar() {
-            Err(DomainError::Validacao { campo, .. }) => {
-                assert_eq!(campo, "turno.atraso_falha_modelo_ms")
+            Err(DomainError::Validation { field, .. }) => {
+                assert_eq!(field, "turno.atraso_falha_modelo_ms")
             }
-            outro => panic!("esperado erro de validação, veio {outro:?}"),
+            other => panic!("esperado erro de validação, veio {other:?}"),
         }
     }
 
     #[test]
-    fn porta_fora_da_faixa_nomeia_o_campo() {
+    fn out_of_range_port_names_the_field() {
         let mut cfg = HarnessConfig::default();
-        cfg.servidor.porta = 80;
+        cfg.server.port = 80;
         match cfg.validar() {
-            Err(DomainError::Validacao { campo, .. }) => assert_eq!(campo, "servidor.porta"),
-            outro => panic!("esperado erro de validação, veio {outro:?}"),
+            Err(DomainError::Validation { field, .. }) => assert_eq!(field, "servidor.porta"),
+            other => panic!("esperado erro de validação, veio {other:?}"),
         }
     }
 
     #[test]
-    fn turnos_por_org_nao_pode_passar_do_total() {
+    fn per_org_turns_cannot_exceed_total() {
         let mut cfg = HarnessConfig::default();
-        cfg.limites.turnos_simultaneos = 10;
-        cfg.limites.turnos_simultaneos_por_org = 11;
+        cfg.limits.concurrent_turns = 10;
+        cfg.limits.concurrent_turns_per_org = 11;
         match cfg.validar() {
-            Err(DomainError::Validacao { campo, .. }) => {
-                assert_eq!(campo, "limites.turnos_simultaneos_por_org")
+            Err(DomainError::Validation { field, .. }) => {
+                assert_eq!(field, "limites.turnos_simultaneos_por_org")
             }
-            outro => panic!("esperado erro de validação, veio {outro:?}"),
+            other => panic!("esperado erro de validação, veio {other:?}"),
         }
     }
 
     #[test]
-    fn url_sem_esquema_http_e_recusada() {
+    fn url_without_http_scheme_is_rejected() {
         let mut cfg = HarnessConfig::default();
         cfg.llm.url_base = "127.0.0.1:8045/v1".to_owned();
         match cfg.validar() {
-            Err(DomainError::Validacao { campo, .. }) => assert_eq!(campo, "llm.url_base"),
-            outro => panic!("esperado erro de validação, veio {outro:?}"),
+            Err(DomainError::Validation { field, .. }) => assert_eq!(field, "llm.url_base"),
+            other => panic!("esperado erro de validação, veio {other:?}"),
         }
     }
 
     #[test]
-    fn provedor_openai_compativel_com_chave_propria_e_sem_recusa_valida() {
+    fn compatible_provider_with_own_key_and_no_refusal_validates() {
         let mut cfg = HarnessConfig::default();
-        cfg.llm.provedor = "openai_compativel".to_owned();
-        cfg.llm.chave_env = "MINHA_CHAVE_LLM".to_owned();
-        cfg.llm.recusa_turno_modelo = false;
+        cfg.llm.provider = "openai_compativel".to_owned();
+        cfg.llm.api_key_env = "MINHA_CHAVE_LLM".to_owned();
+        cfg.llm.refuse_model_turn = false;
         cfg.validar().expect("configuração válida");
-        assert_eq!(cfg.llm.chave_env, "MINHA_CHAVE_LLM");
-        assert!(!cfg.llm.recusa_turno_modelo);
+        assert_eq!(cfg.llm.api_key_env, "MINHA_CHAVE_LLM");
+        assert!(!cfg.llm.refuse_model_turn);
     }
 
     #[test]
-    fn provedor_vazio_ou_desconhecido_e_recusado_com_mensagem_clara() {
+    fn empty_or_unknown_provider_rejected_with_clear_message() {
         let mut cfg = HarnessConfig::default();
-        cfg.llm.provedor = String::new();
+        cfg.llm.provider = String::new();
         match cfg.validar() {
-            Err(DomainError::Validacao { campo, motivo }) => {
-                assert_eq!(campo, "llm.provedor");
-                assert!(motivo.contains("vazio"), "{motivo}");
+            Err(DomainError::Validation { field, reason }) => {
+                assert_eq!(field, "llm.provedor");
+                assert!(reason.contains("vazio"), "{reason}");
             }
-            outro => panic!("esperado erro de validação, veio {outro:?}"),
+            other => panic!("esperado erro de validação, veio {other:?}"),
         }
 
-        cfg.llm.provedor = "openai".to_owned();
+        cfg.llm.provider = "openai".to_owned();
         match cfg.validar() {
-            Err(DomainError::Validacao { campo, motivo }) => {
-                assert_eq!(campo, "llm.provedor");
-                assert!(motivo.contains("openai_compativel"), "{motivo}");
-                assert!(motivo.contains("antigravity2api"), "{motivo}");
+            Err(DomainError::Validation { field, reason }) => {
+                assert_eq!(field, "llm.provedor");
+                assert!(reason.contains("openai_compativel"), "{reason}");
+                assert!(reason.contains("antigravity2api"), "{reason}");
             }
-            outro => panic!("esperado erro de validação, veio {outro:?}"),
+            other => panic!("esperado erro de validação, veio {other:?}"),
         }
     }
 
     #[test]
-    fn provedor_nomeado_herda_o_que_nao_define_do_bloco_llm() {
+    fn named_provider_inherits_from_llm_block() {
         let mut cfg = HarnessConfig::default();
-        cfg.llm.modelo = "modelo-do-padrao".to_owned();
-        cfg.llm.simultaneos = 32;
-        cfg.provedores.insert(
+        cfg.llm.model = "modelo-do-padrao".to_owned();
+        cfg.llm.concurrent_calls = 32;
+        cfg.providers.insert(
             "openai-forte".to_owned(),
-            ProvedorConfig {
+            ProviderConfig {
                 url_base: Some("https://api.exemplo.com/v1".to_owned()),
-                chave_env: Some("CHAVE_DO_FORTE".to_owned()),
-                simultaneos: Some(4),
-                ..ProvedorConfig::default()
+                api_key_env: Some("CHAVE_DO_FORTE".to_owned()),
+                concurrent_calls: Some(4),
+                ..ProviderConfig::default()
             },
         );
         cfg.validar().expect("configuração válida");
-        let efetivo = cfg
-            .provedor_efetivo("openai-forte")
+        let effective = cfg
+            .effective_provider("openai-forte")
             .expect("provedor existe");
-        assert_eq!(efetivo.url_base, "https://api.exemplo.com/v1");
-        assert_eq!(efetivo.chave_env, "CHAVE_DO_FORTE");
-        assert_eq!(efetivo.modelo, "modelo-do-padrao");
-        assert_eq!(efetivo.simultaneos, 4);
-        assert_eq!(efetivo.provedor, cfg.llm.provedor);
-        assert_eq!(efetivo.timeout_segundos, cfg.llm.timeout_segundos);
+        assert_eq!(effective.url_base, "https://api.exemplo.com/v1");
+        assert_eq!(effective.api_key_env, "CHAVE_DO_FORTE");
+        assert_eq!(effective.model, "modelo-do-padrao");
+        assert_eq!(effective.concurrent_calls, 4);
+        assert_eq!(effective.provider, cfg.llm.provider);
+        assert_eq!(effective.timeout_seconds, cfg.llm.timeout_seconds);
     }
 
     #[test]
-    fn nome_de_provedor_reservado_vazio_ou_fora_do_padrao_e_recusado() {
-        for nome in [
+    fn reserved_empty_or_odd_provider_name_is_rejected() {
+        for name in [
             "openai_compativel",
             "antigravity2api",
             "",
@@ -1566,130 +1403,130 @@ mod testes {
             "Maiúsculo",
         ] {
             let mut cfg = HarnessConfig::default();
-            cfg.provedores
-                .insert(nome.to_owned(), ProvedorConfig::default());
+            cfg.providers
+                .insert(name.to_owned(), ProviderConfig::default());
             match cfg.validar() {
-                Err(DomainError::Validacao { campo, motivo }) => {
-                    assert_eq!(campo, "provedores", "nome `{nome}`");
+                Err(DomainError::Validation { field, reason }) => {
+                    assert_eq!(field, "provedores", "nome `{name}`");
                     assert!(
-                        motivo.contains(nome)
-                            || motivo.contains("vazio")
-                            || motivo.contains("inválido"),
-                        "{motivo}"
+                        reason.contains(name)
+                            || reason.contains("vazio")
+                            || reason.contains("inválido"),
+                        "{reason}"
                     );
                 }
-                outro => panic!("esperado erro de validação para `{nome}`, veio {outro:?}"),
+                other => panic!("esperado erro de validação para `{name}`, veio {other:?}"),
             }
         }
     }
 
     #[test]
-    fn provedor_sem_url_base_nem_chave_e_erro_claro() {
+    fn provider_without_url_or_key_is_clear_error() {
         let mut cfg = HarnessConfig::default();
-        cfg.provedores.insert(
+        cfg.providers.insert(
             "sem-endereco".to_owned(),
-            ProvedorConfig {
+            ProviderConfig {
                 url_base: Some(String::new()),
-                ..ProvedorConfig::default()
+                ..ProviderConfig::default()
             },
         );
         match cfg.validar() {
-            Err(DomainError::Validacao { campo, motivo }) => {
-                assert_eq!(campo, "provedores");
-                assert!(motivo.contains("url_base"), "{motivo}");
-                assert!(motivo.contains("sem-endereco"), "{motivo}");
+            Err(DomainError::Validation { field, reason }) => {
+                assert_eq!(field, "provedores");
+                assert!(reason.contains("url_base"), "{reason}");
+                assert!(reason.contains("sem-endereco"), "{reason}");
             }
-            outro => panic!("esperado erro de validação, veio {outro:?}"),
+            other => panic!("esperado erro de validação, veio {other:?}"),
         }
 
         let mut cfg = HarnessConfig::default();
-        cfg.provedores.insert(
+        cfg.providers.insert(
             "sem-chave".to_owned(),
-            ProvedorConfig {
+            ProviderConfig {
                 url_base: Some("https://api.exemplo.com/v1".to_owned()),
-                chave_env: Some(String::new()),
-                ..ProvedorConfig::default()
+                api_key_env: Some(String::new()),
+                ..ProviderConfig::default()
             },
         );
         match cfg.validar() {
-            Err(DomainError::Validacao { campo, motivo }) => {
-                assert_eq!(campo, "provedores");
-                assert!(motivo.contains("chave_env"), "{motivo}");
+            Err(DomainError::Validation { field, reason }) => {
+                assert_eq!(field, "provedores");
+                assert!(reason.contains("chave_env"), "{reason}");
             }
-            outro => panic!("esperado erro de validação, veio {outro:?}"),
+            other => panic!("esperado erro de validação, veio {other:?}"),
         }
     }
 
     #[test]
-    fn escolha_de_provedor_do_agente_aceita_vazio_protocolo_e_nome_declarado() {
+    fn agent_provider_choice_accepts_empty_protocol_and_declared() {
         let mut cfg = HarnessConfig::default();
-        cfg.provedores.insert(
+        cfg.providers.insert(
             "openai-forte".to_owned(),
-            ProvedorConfig {
+            ProviderConfig {
                 url_base: Some("https://api.exemplo.com/v1".to_owned()),
-                ..ProvedorConfig::default()
+                ..ProviderConfig::default()
             },
         );
-        for escolha in ["", "openai_compativel", "antigravity2api", "openai-forte"] {
-            cfg.validar_escolha_de_provedor(escolha)
-                .unwrap_or_else(|erro| panic!("`{escolha}` deveria valer: {erro}"));
+        for choice in ["", "openai_compativel", "antigravity2api", "openai-forte"] {
+            cfg.validate_provider_choice(choice)
+                .unwrap_or_else(|error| panic!("`{choice}` deveria valer: {error}"));
         }
-        let erro = cfg
-            .validar_escolha_de_provedor("inexistente")
+        let error = cfg
+            .validate_provider_choice("inexistente")
             .expect_err("recusa nome desconhecido")
             .to_string();
-        assert!(erro.contains("inexistente"), "{erro}");
-        assert!(erro.contains("openai-forte"), "{erro}");
+        assert!(error.contains("inexistente"), "{error}");
+        assert!(error.contains("openai-forte"), "{error}");
     }
 
     #[test]
-    fn chave_env_vazia_ou_com_espaco_e_recusada() {
-        for nome in ["", "MINHA CHAVE", "1_CHAVE"] {
+    fn empty_or_spaced_api_key_env_is_rejected() {
+        for name in ["", "MINHA CHAVE", "1_CHAVE"] {
             let mut cfg = HarnessConfig::default();
-            cfg.llm.chave_env = nome.to_owned();
+            cfg.llm.api_key_env = name.to_owned();
             match cfg.validar() {
-                Err(DomainError::Validacao { campo, .. }) => assert_eq!(campo, "llm.chave_env"),
-                outro => panic!("esperado erro de validação para `{nome}`, veio {outro:?}"),
+                Err(DomainError::Validation { field, .. }) => assert_eq!(field, "llm.chave_env"),
+                other => panic!("esperado erro de validação para `{name}`, veio {other:?}"),
             }
         }
     }
 
     #[test]
-    fn caminhos_derivados_ficam_na_pasta_de_dados() {
+    fn derived_paths_stay_in_data_dir() {
         let cfg = HarnessConfig::default();
         assert_eq!(cfg.harness_db(), PathBuf::from("data/harness.db"));
         assert_eq!(cfg.rag_db(), PathBuf::from("data/rag.db"));
         assert_eq!(cfg.blobs(), PathBuf::from("data/blobs"));
-        assert_eq!(cfg.modelos(), PathBuf::from("data/modelos"));
+        assert_eq!(cfg.models(), PathBuf::from("data/modelos"));
     }
 
     #[test]
-    fn caminho_definido_vence_o_derivado() {
+    fn given_path_wins_over_derived() {
         let mut cfg = HarnessConfig::default();
-        cfg.dados.rag_db = Some(PathBuf::from("/var/poph/rag.sqlite"));
+        cfg.data.rag_db = Some(PathBuf::from("/var/poph/rag.sqlite"));
         assert_eq!(cfg.rag_db(), PathBuf::from("/var/poph/rag.sqlite"));
     }
 
     #[test]
-    fn token_global_sem_hash_argon2_e_recusado() {
+    fn global_token_without_argon2_hash_is_rejected() {
         let mut cfg = HarnessConfig::default();
-        cfg.admin.tokens_globais.push(TokenGlobalConfig {
+        cfg.admin.tokens_globais.push(GlobalTokenConfig {
             label: "console".to_owned(),
             hash: "texto-em-claro".to_owned(),
         });
         match cfg.validar() {
-            Err(DomainError::Validacao { campo, motivo }) => {
-                assert_eq!(campo, "admin.tokens_globais[].hash");
-                assert!(motivo.contains("argon2"), "motivo: {motivo}");
+            Err(DomainError::Validation { field, reason }) => {
+                assert_eq!(field, "admin.tokens_globais[].hash");
+                assert!(reason.contains("argon2"), "motivo: {reason}");
             }
-            outro => panic!("esperado erro de validação, veio {outro:?}"),
+            other => panic!("esperado erro de validação, veio {other:?}"),
         }
     }
 
     #[test]
-    fn token_global_com_hash_e_rotulo_passa() {
+    fn global_token_with_hash_and_label_passes() {
         let mut cfg = HarnessConfig::default();
-        cfg.admin.tokens_globais.push(TokenGlobalConfig {
+        cfg.admin.tokens_globais.push(GlobalTokenConfig {
             label: "console".to_owned(),
             hash: "$argon2id$v=19$m=19456,t=2,p=1$c2Fs$aGFzaA".to_owned(),
         });
@@ -1698,26 +1535,23 @@ mod testes {
 }
 
 #[cfg(test)]
-mod testes_gates {
+mod gates_tests {
     use super::*;
 
-    /// Campo ausente na desserialização cai no padrão de instalação (G3 e G5 ligados), não em
-    /// `false`. Vale para qualquer origem que deserialize `GatesJev` sem a tabela padrão na frente.
     #[test]
-    fn campo_ausente_na_desserializacao_cai_no_padrao_de_instalacao() {
-        let vazio: GatesJev = serde_json::from_str("{}").expect("desserializa");
-        assert_eq!(vazio, GatesJev::padrao());
-        let so_g1: GatesJev = serde_json::from_str(r#"{"g1": true}"#).expect("desserializa");
+    fn missing_field_falls_back_to_install_default() {
+        let empty: JevGates = serde_json::from_str("{}").expect("desserializa");
+        assert_eq!(empty, JevGates::default_value());
+        let so_g1: JevGates = serde_json::from_str(r#"{"g1": true}"#).expect("desserializa");
         assert!(so_g1.g1 && so_g1.g3 && so_g1.g5);
         assert!(!so_g1.g2 && so_g1.g8);
     }
 
-    /// `Default` continua sendo "tudo desligado": é o que vale para `ativo: false` no agente.
     #[test]
-    fn default_derivado_continua_tudo_desligado() {
+    fn derived_default_stays_all_off() {
         assert_eq!(
-            GatesJev::default(),
-            GatesJev {
+            JevGates::default(),
+            JevGates {
                 g1: false,
                 g2: false,
                 g3: false,
@@ -1733,10 +1567,10 @@ mod testes_gates {
 }
 
 #[cfg(test)]
-mod testes_cluster {
+mod cluster_tests {
     use super::*;
 
-    fn exemplo() -> ClusterConfig {
+    fn example() -> ClusterConfig {
         ClusterConfig {
             instance_id: "a".to_owned(),
             default_instance: Some("b".to_owned()),
@@ -1758,110 +1592,110 @@ mod testes_cluster {
     }
 
     #[test]
-    fn mapa_bom_e_valido() {
-        assert_eq!(exemplo().validar(), Ok(()));
+    fn good_map_is_valid() {
+        assert_eq!(example().validar(), Ok(()));
     }
 
     #[test]
-    fn instancia_unica_vazia_e_valida() {
-        let vazio = ClusterConfig::default();
-        assert!(vazio.vazio());
-        assert!(!vazio.declara_cluster());
-        assert_eq!(vazio.validar(), Ok(()));
-        // Sem mapa, a org não tem destino nomeado.
-        assert_eq!(vazio.instancia_da_org("org_01"), None);
+    fn empty_single_instance_is_valid() {
+        let empty = ClusterConfig::default();
+        assert!(empty.empty());
+        assert!(!empty.declares_cluster());
+        assert_eq!(empty.validar(), Ok(()));
+        assert_eq!(empty.org_instance("org_01"), None);
     }
 
     #[test]
-    fn cada_regra_violada_aparece_nos_problemas() {
-        let mut sem_local = exemplo();
-        sem_local.instance_id = "  ".to_owned();
+    fn each_broken_rule_shows_in_problems() {
+        let mut without_local = example();
+        without_local.instance_id = "  ".to_owned();
         assert!(
-            sem_local
-                .problemas()
+            without_local
+                .problems()
                 .iter()
                 .any(|p| p.starts_with("instance_id: obrigatório"))
         );
 
-        let mut id_ruim = exemplo();
-        id_ruim.instance_id = "a com espaço".to_owned();
+        let mut bad_id = example();
+        bad_id.instance_id = "a com espaço".to_owned();
         assert!(
-            id_ruim
-                .problemas()
+            bad_id
+                .problems()
                 .iter()
                 .any(|p| p.starts_with("instance_id: use letras"))
         );
 
-        let mut repetida = exemplo();
-        repetida.instances[1].id = "b".to_owned();
+        let mut duplicated = example();
+        duplicated.instances[1].id = "b".to_owned();
         assert!(
-            repetida
-                .problemas()
+            duplicated
+                .problems()
                 .iter()
                 .any(|p| p.contains("aparece duas vezes"))
         );
 
-        let mut url_ruim = exemplo();
-        url_ruim.instances[0].url = "harness-b.exemplo".to_owned();
+        let mut bad_url = example();
+        bad_url.instances[0].url = "harness-b.exemplo".to_owned();
         assert!(
-            url_ruim
-                .problemas()
+            bad_url
+                .problems()
                 .iter()
                 .any(|p| p.contains("instances[1].url"))
         );
 
-        let mut local_fora = exemplo();
-        local_fora.instance_id = "c".to_owned();
+        let mut local_undeclared = example();
+        local_undeclared.instance_id = "c".to_owned();
         assert!(
-            local_fora
-                .problemas()
+            local_undeclared
+                .problems()
                 .iter()
                 .any(|p| p.contains("não está declarada"))
         );
 
-        let mut padrao_fora = exemplo();
-        padrao_fora.default_instance = Some("c".to_owned());
+        let mut default_undeclared = example();
+        default_undeclared.default_instance = Some("c".to_owned());
         assert!(
-            padrao_fora
-                .problemas()
+            default_undeclared
+                .problems()
                 .iter()
                 .any(|p| p.starts_with("default_instance"))
         );
 
-        let mut org_fora = exemplo();
-        org_fora.orgs.insert("org_03".to_owned(), "c".to_owned());
+        let mut org_undeclared = example();
+        org_undeclared
+            .orgs
+            .insert("org_03".to_owned(), "c".to_owned());
         assert!(
-            org_fora
-                .problemas()
+            org_undeclared
+                .problems()
                 .iter()
                 .any(|p| p.starts_with("orgs.org_03"))
         );
 
-        let mut org_com_espaco = exemplo();
-        org_com_espaco
+        let mut org_with_space = example();
+        org_with_space
             .orgs
             .insert("org 04".to_owned(), "a".to_owned());
         assert!(
-            org_com_espaco
-                .problemas()
+            org_with_space
+                .problems()
                 .iter()
                 .any(|p| p.contains("não pode ter espaços"))
         );
 
-        // Cluster com duas instâncias e sem `default_instance`: org fora do mapa não teria dono.
-        let mut sem_padrao = exemplo();
-        sem_padrao.default_instance = None;
+        let mut without_default = example();
+        without_default.default_instance = None;
         assert!(
-            sem_padrao
-                .problemas()
+            without_default
+                .problems()
                 .iter()
                 .any(|p| p.starts_with("default_instance: obrigatória"))
         );
     }
 
     #[test]
-    fn uma_instancia_so_dispensa_default() {
-        let mut uma = ClusterConfig {
+    fn single_instance_needs_no_default() {
+        let mut single = ClusterConfig {
             instance_id: "a".to_owned(),
             instances: vec![ClusterInstance {
                 id: "a".to_owned(),
@@ -1869,161 +1703,152 @@ mod testes_cluster {
             }],
             ..Default::default()
         };
-        assert_eq!(uma.validar(), Ok(()));
-        assert_eq!(uma.instancia_da_org("org_nova"), Some("a"));
-        uma.default_instance = Some("a".to_owned());
-        assert_eq!(uma.validar(), Ok(()));
+        assert_eq!(single.validar(), Ok(()));
+        assert_eq!(single.org_instance("org_nova"), Some("a"));
+        single.default_instance = Some("a".to_owned());
+        assert_eq!(single.validar(), Ok(()));
     }
 
     #[test]
-    fn mapa_define_o_destino_da_org() {
-        let mapa = exemplo();
-        assert_eq!(mapa.instancia_da_org("org_01"), Some("a"));
-        assert_eq!(mapa.instancia_da_org("org_02"), Some("b"));
-        assert_eq!(mapa.instancia_da_org("org_nova"), Some("b"));
+    fn map_defines_the_org_target() {
+        let map = example();
+        assert_eq!(map.org_instance("org_01"), Some("a"));
+        assert_eq!(map.org_instance("org_02"), Some("b"));
+        assert_eq!(map.org_instance("org_nova"), Some("b"));
     }
 
     #[test]
-    fn fingerprint_e_estavel_e_sensivel_ao_mapa() {
-        let mapa = exemplo();
-        assert_eq!(mapa.fingerprint(), exemplo().fingerprint());
-        // Ordem dos itens no arquivo não importa.
-        let mut invertido = exemplo();
+    fn fingerprint_is_stable_and_map_sensitive() {
+        let map = example();
+        assert_eq!(map.fingerprint(), example().fingerprint());
+        let mut invertido = example();
         invertido.instances.reverse();
-        assert_eq!(mapa.fingerprint(), invertido.fingerprint());
-        // Trocar uma org de instância muda.
-        let mut trocado = exemplo();
-        trocado.orgs.insert("org_01".to_owned(), "b".to_owned());
-        assert_ne!(mapa.fingerprint(), trocado.fingerprint());
-        // Instância local faz parte da impressão.
-        let mut outra_local = exemplo();
-        outra_local.instance_id = "b".to_owned();
-        assert_ne!(mapa.fingerprint(), outra_local.fingerprint());
-        // O texto normalizado nunca traz segredo (não há segredo no tipo).
-        assert!(!mapa.normalizado().to_lowercase().contains("secret"));
-        assert_eq!(mapa.fingerprint().len(), 32);
+        assert_eq!(map.fingerprint(), invertido.fingerprint());
+        let mut swapped = example();
+        swapped.orgs.insert("org_01".to_owned(), "b".to_owned());
+        assert_ne!(map.fingerprint(), swapped.fingerprint());
+        let mut other_local = example();
+        other_local.instance_id = "b".to_owned();
+        assert_ne!(map.fingerprint(), other_local.fingerprint());
+        assert!(!map.normalized().to_lowercase().contains("secret"));
+        assert_eq!(map.fingerprint().len(), 32);
     }
 }
 
 #[cfg(test)]
-mod testes_matrix {
+mod matrix_tests {
     use super::*;
 
-    /// Seção completa e ligada, com o que a MX-07 considera válido.
-    fn ligada() -> MatrixConfig {
+    fn enabled_matrix() -> MatrixConfig {
         MatrixConfig {
-            habilitado: true,
+            enabled: true,
             homeserver_url: "http://127.0.0.1:18008".to_owned(),
             server_name: "matrix-dev.local".to_owned(),
-            prefixo: "ph".to_owned(),
+            prefix: "ph".to_owned(),
             ..Default::default()
         }
     }
 
-    fn config_com(matrix: MatrixConfig) -> HarnessConfig {
+    fn config_with(matrix: MatrixConfig) -> HarnessConfig {
         HarnessConfig {
             matrix: Some(matrix),
             ..Default::default()
         }
     }
 
-    fn campo_do_erro(cfg: &HarnessConfig) -> &'static str {
+    fn error_field(cfg: &HarnessConfig) -> &'static str {
         match cfg.validar() {
-            Err(DomainError::Validacao { campo, .. }) => campo,
-            outro => panic!("esperado erro de validação, veio {outro:?}"),
+            Err(DomainError::Validation { field, .. }) => field,
+            other => panic!("esperado erro de validação, veio {other:?}"),
         }
     }
 
     #[test]
-    fn secao_ligada_valida_passa() {
-        assert_eq!(config_com(ligada()).validar(), Ok(()));
-        // `localhost` com porta também vale: é o que o Synapse de desenvolvimento usa.
-        let mut com_porta = ligada();
-        com_porta.server_name = "localhost:18008".to_owned();
-        assert_eq!(config_com(com_porta).validar(), Ok(()));
+    fn enabled_section_validates() {
+        assert_eq!(config_with(enabled_matrix()).validar(), Ok(()));
+        let mut with_port = enabled_matrix();
+        with_port.server_name = "localhost:18008".to_owned();
+        assert_eq!(config_with(with_port).validar(), Ok(()));
     }
 
     #[test]
-    fn secao_ausente_mantem_o_modulo_desligado() {
+    fn absent_section_keeps_module_off() {
         let cfg = HarnessConfig::default();
         assert!(cfg.matrix.is_none());
         assert_eq!(cfg.validar(), Ok(()));
     }
 
     #[test]
-    fn desligada_nao_confere_nada() {
-        // Uma instalação que desliga o módulo pode deixar a seção vazia: `habilitado = false` é o
-        // suficiente para nada do módulo carregar, e valores ruins não impedem a subida.
-        let cfg = config_com(MatrixConfig::default());
+    fn disabled_section_checks_nothing() {
+        let cfg = config_with(MatrixConfig::default());
         assert_eq!(cfg.validar(), Ok(()));
 
-        let desligada_com_lixo = MatrixConfig {
-            habilitado: false,
+        let disabled_with_garbage = MatrixConfig {
+            enabled: false,
             homeserver_url: "sem-esquema".to_owned(),
             server_name: "com espaço e barra/".to_owned(),
-            prefixo: "PH_MAIÚSCULO".to_owned(),
-            concorrencia: 0,
-            intervalo_ms: 0,
-            poder_agente: 200,
-            midia_retencao_dias: 0,
+            prefix: "PH_MAIÚSCULO".to_owned(),
+            concurrency: 0,
+            interval_ms: 0,
+            agent_power: 200,
+            attachment_retention_days: 0,
         };
-        assert_eq!(config_com(desligada_com_lixo).validar(), Ok(()));
+        assert_eq!(config_with(disabled_with_garbage).validar(), Ok(()));
     }
 
     #[test]
-    fn padroes_da_secao_sao_os_do_prd() {
-        let padrao = MatrixConfig::default();
-        assert!(!padrao.habilitado);
-        assert_eq!(padrao.prefixo, "ph");
-        assert_eq!(padrao.concorrencia, 8);
-        assert_eq!(padrao.intervalo_ms, 500);
-        assert_eq!(padrao.poder_agente, 50);
-        assert_eq!(padrao.midia_retencao_dias, 4);
+    fn section_defaults_match_the_prd() {
+        let default_value = MatrixConfig::default();
+        assert!(!default_value.enabled);
+        assert_eq!(default_value.prefix, "ph");
+        assert_eq!(default_value.concurrency, 8);
+        assert_eq!(default_value.interval_ms, 500);
+        assert_eq!(default_value.agent_power, 50);
+        assert_eq!(default_value.attachment_retention_days, 4);
     }
 
     #[test]
-    fn url_invalida_nomeia_a_chave_sem_o_valor() {
-        for endereco in ["", "127.0.0.1:18008", "ftp://synapse.local"] {
-            let mut matrix = ligada();
-            matrix.homeserver_url = endereco.to_owned();
-            let cfg = config_com(matrix);
-            assert_eq!(campo_do_erro(&cfg), "matrix.homeserver_url");
-            let mensagem = cfg.validar().unwrap_err().to_string();
-            if !endereco.is_empty() {
+    fn invalid_url_names_key_without_value() {
+        for address in ["", "127.0.0.1:18008", "ftp://synapse.local"] {
+            let mut matrix = enabled_matrix();
+            matrix.homeserver_url = address.to_owned();
+            let cfg = config_with(matrix);
+            assert_eq!(error_field(&cfg), "matrix.homeserver_url");
+            let message = cfg.validar().unwrap_err().to_string();
+            if !address.is_empty() {
                 assert!(
-                    !mensagem.contains(endereco),
-                    "o erro não deve repetir o valor: {mensagem}"
+                    !message.contains(address),
+                    "o erro não deve repetir o valor: {message}"
                 );
             }
         }
     }
 
     #[test]
-    fn prefixo_invalido_nomeia_a_chave_sem_o_valor() {
-        for prefixo in ["", "PH", "ph-matrix", "ph_matrix", "0123456789abc"] {
-            let mut matrix = ligada();
-            matrix.prefixo = prefixo.to_owned();
-            let cfg = config_com(matrix);
-            assert_eq!(campo_do_erro(&cfg), "matrix.prefixo");
-            let mensagem = cfg.validar().unwrap_err().to_string();
-            if !prefixo.is_empty() {
+    fn invalid_prefix_names_key_without_value() {
+        for prefix in ["", "PH", "ph-matrix", "ph_matrix", "0123456789abc"] {
+            let mut matrix = enabled_matrix();
+            matrix.prefix = prefix.to_owned();
+            let cfg = config_with(matrix);
+            assert_eq!(error_field(&cfg), "matrix.prefixo");
+            let message = cfg.validar().unwrap_err().to_string();
+            if !prefix.is_empty() {
                 assert!(
-                    !mensagem.contains(prefixo),
-                    "o erro não deve repetir o valor: {mensagem}"
+                    !message.contains(prefix),
+                    "o erro não deve repetir o valor: {message}"
                 );
             }
         }
-        // Os limites da faixa passam.
-        for prefixo in ["ph", "a", "0123456789ab"] {
-            let mut matrix = ligada();
-            matrix.prefixo = prefixo.to_owned();
-            assert_eq!(config_com(matrix).validar(), Ok(()), "prefixo {prefixo}");
+        for prefix in ["ph", "a", "0123456789ab"] {
+            let mut matrix = enabled_matrix();
+            matrix.prefix = prefix.to_owned();
+            assert_eq!(config_with(matrix).validar(), Ok(()), "prefixo {prefix}");
         }
     }
 
     #[test]
-    fn server_name_invalido_nomeia_a_chave() {
-        for nome in [
+    fn invalid_server_name_names_the_key() {
+        for name in [
             "",
             " matrix-dev.local",
             "matrix dev local",
@@ -2032,56 +1857,56 @@ mod testes_matrix {
             "x.local:",
             "x.local:70000",
         ] {
-            let mut matrix = ligada();
-            matrix.server_name = nome.to_owned();
-            let cfg = config_com(matrix);
-            assert_eq!(campo_do_erro(&cfg), "matrix.server_name", "nome {nome:?}");
+            let mut matrix = enabled_matrix();
+            matrix.server_name = name.to_owned();
+            let cfg = config_with(matrix);
+            assert_eq!(error_field(&cfg), "matrix.server_name", "nome {name:?}");
         }
     }
 
     #[test]
-    fn limites_fora_da_faixa_nomeiam_a_chave() {
-        let mut casos: Vec<(MatrixConfig, &'static str)> = Vec::new();
-        let mut matrix = ligada();
-        matrix.concorrencia = 0;
-        casos.push((matrix, "matrix.concorrencia"));
-        let mut matrix = ligada();
-        matrix.concorrencia = 65;
-        casos.push((matrix, "matrix.concorrencia"));
-        let mut matrix = ligada();
-        matrix.intervalo_ms = 49;
-        casos.push((matrix, "matrix.intervalo_ms"));
-        let mut matrix = ligada();
-        matrix.intervalo_ms = 60_001;
-        casos.push((matrix, "matrix.intervalo_ms"));
-        let mut matrix = ligada();
-        matrix.poder_agente = 101;
-        casos.push((matrix, "matrix.poder_agente"));
-        let mut matrix = ligada();
-        matrix.midia_retencao_dias = 0;
-        casos.push((matrix, "matrix.midia_retencao_dias"));
-        let mut matrix = ligada();
-        matrix.midia_retencao_dias = 366;
-        casos.push((matrix, "matrix.midia_retencao_dias"));
-        for (matrix, esperado) in casos {
-            assert_eq!(campo_do_erro(&config_com(matrix)), esperado);
+    fn limits_out_of_range_name_the_key() {
+        let mut cases: Vec<(MatrixConfig, &'static str)> = Vec::new();
+        let mut matrix = enabled_matrix();
+        matrix.concurrency = 0;
+        cases.push((matrix, "matrix.concorrencia"));
+        let mut matrix = enabled_matrix();
+        matrix.concurrency = 65;
+        cases.push((matrix, "matrix.concorrencia"));
+        let mut matrix = enabled_matrix();
+        matrix.interval_ms = 49;
+        cases.push((matrix, "matrix.intervalo_ms"));
+        let mut matrix = enabled_matrix();
+        matrix.interval_ms = 60_001;
+        cases.push((matrix, "matrix.intervalo_ms"));
+        let mut matrix = enabled_matrix();
+        matrix.agent_power = 101;
+        cases.push((matrix, "matrix.poder_agente"));
+        let mut matrix = enabled_matrix();
+        matrix.attachment_retention_days = 0;
+        cases.push((matrix, "matrix.midia_retencao_dias"));
+        let mut matrix = enabled_matrix();
+        matrix.attachment_retention_days = 366;
+        cases.push((matrix, "matrix.midia_retencao_dias"));
+        for (matrix, expected) in cases {
+            assert_eq!(error_field(&config_with(matrix)), expected);
         }
     }
 
     #[test]
-    fn chave_desconhecida_na_secao_e_recusada() {
-        let erro = serde_json::from_str::<HarnessConfig>(
+    fn unknown_key_in_section_is_rejected() {
+        let error = serde_json::from_str::<HarnessConfig>(
             r#"{"matrix": {"habilitado": true, "naoexiste": 1}}"#,
         )
         .expect_err("chave desconhecida deve ser recusada");
         assert!(
-            erro.to_string().contains("naoexiste"),
-            "o erro deve citar a chave: {erro}"
+            error.to_string().contains("naoexiste"),
+            "o erro deve citar a chave: {error}"
         );
     }
 
     #[test]
-    fn serializacao_nao_grava_secao_ausente() {
+    fn serialization_does_not_write_absent_section() {
         let cfg = HarnessConfig::default();
         let json = serde_json::to_string(&cfg).expect("serializa");
         assert!(!json.contains("matrix"), "json: {json}");
@@ -2089,11 +1914,10 @@ mod testes_matrix {
 }
 
 #[cfg(test)]
-mod testes_fluxos {
+mod flows_tests {
     use super::*;
 
-    /// Cada chave numérica de `[fluxos]` com a faixa da validação: (nome, mínimo, máximo).
-    const FAIXAS: &[(&str, u64, u64)] = &[
+    const RANGES: &[(&str, u64, u64)] = &[
         ("max_fluxos_por_org", 1, 10_000),
         ("max_fonte_bytes", 1_024, 1_048_576),
         ("max_nos", 1, 60),
@@ -2104,149 +1928,146 @@ mod testes_fluxos {
         ("cache_revisoes_mb", 0, 4096),
     ];
 
-    /// Põe `valor` na chave `nome` (usada só com as chaves de `FAIXAS`).
-    fn definir(fluxos: &mut FluxosConfig, nome: &str, valor: u64) {
-        match nome {
-            "max_fluxos_por_org" => fluxos.max_fluxos_por_org = u32::try_from(valor).unwrap(),
-            "max_fonte_bytes" => fluxos.max_fonte_bytes = valor,
-            "max_nos" => fluxos.max_nos = u32::try_from(valor).unwrap(),
-            "max_dados_bytes" => fluxos.max_dados_bytes = valor,
-            "max_ticks_regra" => fluxos.max_ticks_regra = valor,
-            "max_heap_regra" => fluxos.max_heap_regra = valor,
-            "max_saltos_decisao" => fluxos.max_saltos_decisao = u32::try_from(valor).unwrap(),
-            "cache_revisoes_mb" => fluxos.cache_revisoes_mb = u32::try_from(valor).unwrap(),
-            outro => panic!("chave sem faixa no teste: {outro}"),
+    fn set(flows: &mut FlowsConfig, name: &str, value: u64) {
+        match name {
+            "max_fluxos_por_org" => flows.max_flows_per_org = u32::try_from(value).unwrap(),
+            "max_fonte_bytes" => flows.max_source_bytes = value,
+            "max_nos" => flows.max_nodes = u32::try_from(value).unwrap(),
+            "max_dados_bytes" => flows.max_data_bytes = value,
+            "max_ticks_regra" => flows.max_rule_ticks = value,
+            "max_heap_regra" => flows.max_rule_heap = value,
+            "max_saltos_decisao" => flows.max_decision_hops = u32::try_from(value).unwrap(),
+            "cache_revisoes_mb" => flows.revision_cache_mb = u32::try_from(value).unwrap(),
+            other => panic!("chave sem faixa no teste: {other}"),
         }
     }
 
-    fn com(fluxos: FluxosConfig) -> HarnessConfig {
+    fn com(flows: FlowsConfig) -> HarnessConfig {
         HarnessConfig {
-            fluxos,
+            flows,
             ..Default::default()
         }
     }
 
-    /// Campo que a validação aponta quando a seção está fora da regra.
-    fn campo_do_erro(fluxos: FluxosConfig) -> &'static str {
-        match com(fluxos).validar() {
-            Err(DomainError::Validacao { campo, .. }) => campo,
-            outro => panic!("esperado erro de validação, veio {outro:?}"),
+    fn error_field(flows: FlowsConfig) -> &'static str {
+        match com(flows).validar() {
+            Err(DomainError::Validation { field, .. }) => field,
+            other => panic!("esperado erro de validação, veio {other:?}"),
         }
     }
 
     #[test]
-    fn padroes_da_secao_sao_os_do_prd() {
-        let padrao = FluxosConfig::default();
-        assert!(padrao.ativo);
-        assert_eq!(padrao.max_fluxos_por_org, 100);
-        assert_eq!(padrao.max_fonte_bytes, 32_768);
-        assert_eq!(padrao.max_nos, 60);
-        assert_eq!(padrao.max_dados_bytes, 65_536);
-        assert_eq!(padrao.max_ticks_regra, 10_000);
-        assert_eq!(padrao.max_heap_regra, 1_048_576);
-        assert_eq!(padrao.max_saltos_decisao, 10);
-        assert_eq!(padrao.cache_revisoes_mb, 16);
+    fn section_defaults_match_the_prd() {
+        let default_value = FlowsConfig::default();
+        assert!(default_value.enabled);
+        assert_eq!(default_value.max_flows_per_org, 100);
+        assert_eq!(default_value.max_source_bytes, 32_768);
+        assert_eq!(default_value.max_nodes, 60);
+        assert_eq!(default_value.max_data_bytes, 65_536);
+        assert_eq!(default_value.max_rule_ticks, 10_000);
+        assert_eq!(default_value.max_rule_heap, 1_048_576);
+        assert_eq!(default_value.max_decision_hops, 10);
+        assert_eq!(default_value.revision_cache_mb, 16);
     }
 
     #[test]
-    fn secao_ausente_vale_o_padrao_e_passa() {
+    fn absent_section_uses_default_and_passes() {
         let cfg = HarnessConfig::default();
-        assert_eq!(cfg.fluxos, FluxosConfig::default());
+        assert_eq!(cfg.flows, FlowsConfig::default());
         assert_eq!(cfg.validar(), Ok(()));
     }
 
     #[test]
-    fn cada_faixa_aceita_as_bordas() {
-        for (nome, minimo, maximo) in FAIXAS {
-            let mut fluxos = FluxosConfig::default();
-            definir(&mut fluxos, nome, *minimo);
-            assert_eq!(com(fluxos.clone()).validar(), Ok(()), "{nome} no mínimo");
-            definir(&mut fluxos, nome, *maximo);
-            assert_eq!(com(fluxos).validar(), Ok(()), "{nome} no máximo");
+    fn each_range_accepts_edges() {
+        for (name, min, max) in RANGES {
+            let mut flows = FlowsConfig::default();
+            set(&mut flows, name, *min);
+            assert_eq!(com(flows.clone()).validar(), Ok(()), "{name} no mínimo");
+            set(&mut flows, name, *max);
+            assert_eq!(com(flows).validar(), Ok(()), "{name} no máximo");
         }
     }
 
     #[test]
-    fn cada_faixa_recusa_fora_dos_limites_e_nomeia_a_chave() {
-        for (nome, minimo, maximo) in FAIXAS {
-            let esperado = format!("fluxos.{nome}");
-            let mut acima = FluxosConfig::default();
-            definir(&mut acima, nome, maximo + 1);
-            assert_eq!(campo_do_erro(acima), esperado, "{nome} acima do máximo");
-            if let Some(abaixo) = minimo.checked_sub(1) {
-                let mut abaixo_do_minimo = FluxosConfig::default();
-                definir(&mut abaixo_do_minimo, nome, abaixo);
+    fn each_range_rejects_outside_and_names_key() {
+        for (name, min, max) in RANGES {
+            let expected = format!("fluxos.{name}");
+            let mut above = FlowsConfig::default();
+            set(&mut above, name, max + 1);
+            assert_eq!(error_field(above), expected, "{name} acima do máximo");
+            if let Some(below) = min.checked_sub(1) {
+                let mut below_minimum = FlowsConfig::default();
+                set(&mut below_minimum, name, below);
                 assert_eq!(
-                    campo_do_erro(abaixo_do_minimo),
-                    esperado,
-                    "{nome} abaixo do mínimo"
+                    error_field(below_minimum),
+                    expected,
+                    "{name} abaixo do mínimo"
                 );
             }
         }
     }
 
     #[test]
-    fn a_mensagem_do_erro_traz_a_chave_e_a_faixa_mas_nao_o_valor() {
-        let fluxos = FluxosConfig {
-            max_nos: 61,
-            ..FluxosConfig::default()
+    fn error_message_has_key_and_range_but_not_value() {
+        let flows = FlowsConfig {
+            max_nodes: 61,
+            ..FlowsConfig::default()
         };
-        let erro = com(fluxos).validar().expect_err("61 nós passa do limite");
-        let texto = erro.to_string();
-        assert!(texto.contains("fluxos.max_nos"), "{texto}");
-        assert!(texto.contains("1 a 60"), "{texto}");
+        let error = com(flows).validar().expect_err("61 nós passa do limite");
+        let text = error.to_string();
+        assert!(text.contains("fluxos.max_nos"), "{text}");
+        assert!(text.contains("1 a 60"), "{text}");
         assert!(
-            !texto.contains("61"),
-            "o valor recebido não entra na mensagem: {texto}"
+            !text.contains("61"),
+            "o valor recebido não entra na mensagem: {text}"
         );
     }
 
     #[test]
-    fn cache_zero_e_valido_e_quer_dizer_nao_guardar() {
-        let fluxos = FluxosConfig {
-            cache_revisoes_mb: 0,
-            ..FluxosConfig::default()
+    fn zero_cache_is_valid_and_means_no_storage() {
+        let flows = FlowsConfig {
+            revision_cache_mb: 0,
+            ..FlowsConfig::default()
         };
-        assert_eq!(com(fluxos).validar(), Ok(()));
+        assert_eq!(com(flows).validar(), Ok(()));
     }
 
     #[test]
-    fn motor_desligado_ainda_confere_os_tetos() {
-        let fluxos = FluxosConfig {
-            ativo: false,
-            max_saltos_decisao: 0,
-            ..FluxosConfig::default()
+    fn engine_off_still_checks_caps() {
+        let flows = FlowsConfig {
+            enabled: false,
+            max_decision_hops: 0,
+            ..FlowsConfig::default()
         };
-        assert_eq!(campo_do_erro(fluxos), "fluxos.max_saltos_decisao");
+        assert_eq!(error_field(flows), "fluxos.max_saltos_decisao");
     }
 
     #[test]
-    fn numero_negativo_na_secao_e_recusado_pelo_tipo() {
-        // O erro do serde diz o tipo; quem nomeia a chave é a camada que lê o arquivo (crate `poph`).
-        let erro = serde_json::from_str::<HarnessConfig>(r#"{"fluxos": {"max_nos": -1}}"#)
+    fn negative_number_in_section_is_rejected_by_type() {
+        let error = serde_json::from_str::<HarnessConfig>(r#"{"fluxos": {"max_nos": -1}}"#)
             .expect_err("negativo não cabe em u32");
-        assert!(erro.to_string().contains("u32"), "{erro}");
+        assert!(error.to_string().contains("u32"), "{error}");
     }
 
     #[test]
-    fn chave_desconhecida_na_secao_fluxos_e_recusada() {
-        let erro = serde_json::from_str::<HarnessConfig>(r#"{"fluxos": {"naoexiste": 1}}"#)
+    fn unknown_key_in_flows_section_is_rejected() {
+        let error = serde_json::from_str::<HarnessConfig>(r#"{"fluxos": {"naoexiste": 1}}"#)
             .expect_err("chave desconhecida deve ser recusada");
-        assert!(erro.to_string().contains("naoexiste"), "{erro}");
+        assert!(error.to_string().contains("naoexiste"), "{error}");
     }
 
     #[test]
-    fn g9_vem_ligado_no_padrao_de_instalacao_e_desligado_no_derivado() {
-        assert!(GatesJev::padrao().g9);
-        assert!(!GatesJev::default().g9);
-        let sem_gates: HarnessConfig =
+    fn g9_on_in_install_default_off_in_derived() {
+        assert!(JevGates::default_value().g9);
+        assert!(!JevGates::default().g9);
+        let without_gates: HarnessConfig =
             serde_json::from_str(r#"{"jev": {"gates": {"g1": true}}}"#).expect("lê");
         assert!(
-            sem_gates.jev.gates.g9,
+            without_gates.jev.gates.g9,
             "g9 ausente no arquivo cai no padrão"
         );
-        let desligado: HarnessConfig =
+        let disabled: HarnessConfig =
             serde_json::from_str(r#"{"jev": {"gates": {"g9": false}}}"#).expect("lê");
-        assert!(!desligado.jev.gates.g9);
+        assert!(!disabled.jev.gates.g9);
     }
 }

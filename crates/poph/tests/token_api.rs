@@ -82,7 +82,7 @@ impl Cenario {
     /// Sobe o servidor em processo na pasta de dados do teste e devolve o endereço.
     async fn subir_servidor(&self) -> (String, oneshot::Sender<()>) {
         let mut config = HarnessConfig::default();
-        config.dados.diretorio = self.dados.clone();
+        config.data.directory = self.dados.clone();
         config.validar().expect("configuração válida");
         let store = Arc::new(Store::abrir(&config).expect("abre o banco"));
         let estado = Estado::novo(store, config).expect("estado do servidor");

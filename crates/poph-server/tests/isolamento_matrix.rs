@@ -49,10 +49,10 @@ use poph_store::{
     NovaConversa, NovaOrg, NovoAgente, NovoDepartamento, Origem, Pagina, RespostaHumana,
     RespostaHumanaNova, StatusConversa, Store,
 };
-use poph_types::config::TokenGlobalConfig;
+use poph_types::config::GlobalTokenConfig;
 use poph_types::{
     AgentId, ConversationId, DepartmentId, HarnessConfig, IntegrationId, MatrixConfig, OrgId,
-    Segredo,
+    Secret,
 };
 use rand_core::OsRng;
 use reqwest::{Client, Method as MetodoHttp};
@@ -544,18 +544,18 @@ impl Cenario {
         let synapse = Synapse::subir(NOME_ATENDENTE).await;
 
         let mut config = HarnessConfig::default();
-        config.dados.diretorio = pasta.join("dados");
-        config.admin.tokens_globais = vec![TokenGlobalConfig {
+        config.data.directory = pasta.join("dados");
+        config.admin.tokens_globais = vec![GlobalTokenConfig {
             label: "teste".to_owned(),
             hash: hash_argon2(TOKEN_GLOBAL),
         }];
         config.matrix = Some(MatrixConfig {
-            habilitado: true,
+            enabled: true,
             homeserver_url: synapse.endereco.clone(),
             server_name: SERVIDOR.to_owned(),
-            prefixo: PREFIXO.to_owned(),
-            concorrencia: 4,
-            intervalo_ms: 50,
+            prefix: PREFIXO.to_owned(),
+            concurrency: 4,
+            interval_ms: 50,
             ..MatrixConfig::default()
         });
         config.validar().expect("configuração válida");
@@ -685,7 +685,7 @@ impl Cenario {
             ConfigCliente::novo(
                 config.homeserver_url.clone(),
                 config.server_name.clone(),
-                Segredo::new(AS_TOKEN.to_owned()),
+                Secret::new(AS_TOKEN.to_owned()),
             )
             .expect("config do cliente"),
         )
@@ -719,7 +719,7 @@ impl Cenario {
             org,
             instancia: INSTANCIA.to_owned(),
             integracao,
-            segredo: Some(Segredo::new(SEGREDO_WEBHOOK.to_owned())),
+            segredo: Some(Secret::new(SEGREDO_WEBHOOK.to_owned())),
             cliente: None,
             teto_midia: 0,
         }
@@ -939,7 +939,7 @@ async fn evento_da_sala_a_com_ids_da_org_b_nao_toca_a_conversa_da_b() {
         .com_matrix_as(Arc::new(ReceptorAs::novo(
             PREFIXO,
             SERVIDOR,
-            Segredo::new(HS_TOKEN.to_owned()),
+            Secret::new(HS_TOKEN.to_owned()),
             cenario.entrega(),
         )));
     let (base, desligar) = servir(estado).await;
@@ -1034,7 +1034,7 @@ async fn sala_desconhecida_com_id_da_org_b_nao_grava_nada_e_conta_o_caso() {
     let estado = cenario.estado().com_matrix_as(Arc::new(ReceptorAs::novo(
         PREFIXO,
         SERVIDOR,
-        Segredo::new(HS_TOKEN.to_owned()),
+        Secret::new(HS_TOKEN.to_owned()),
         entrega.clone(),
     )));
     let (base, desligar) = servir(estado).await;
@@ -1465,7 +1465,7 @@ async fn tokens_canario_nao_aparecem_em_resposta_log_arquivo_nem_fila() {
     let estado = estado.com_matrix_as(Arc::new(ReceptorAs::novo(
         PREFIXO,
         SERVIDOR,
-        Segredo::new(HS_TOKEN.to_owned()),
+        Secret::new(HS_TOKEN.to_owned()),
         cenario.entrega(),
     )));
     let (base, desligar) = servir(estado).await;

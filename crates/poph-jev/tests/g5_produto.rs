@@ -13,7 +13,7 @@ use poph_jev::{
     AvaliadorGates, CandidatoProduto, EstadoJev, G5, G5_NENHUM, Gate, IdGate, JevFalso,
     MensagemJev, MotorJev, OrigemDecisao, Resposta, eval::ajuste_de_gate,
 };
-use poph_types::GatesJev;
+use poph_types::JevGates;
 
 fn candidato(id: &str, nome: &str, detalhe: &str) -> CandidatoProduto {
     CandidatoProduto {
@@ -150,9 +150,9 @@ async fn g5_e_perguntado_fora_do_lote_so_com_candidatos() {
     let mut escolhas: BTreeMap<String, String> = BTreeMap::new();
     escolhas.insert("g5_produto".to_owned(), "p-baratas".to_owned());
     let jev = Arc::new(JevFalso::com_escolhas(escolhas));
-    let globais = GatesJev {
+    let globais = JevGates {
         g5: true,
-        ..GatesJev::default()
+        ..JevGates::default()
     };
     let transporte: Arc<dyn poph_jev::TransporteJev> = jev.clone();
     let avaliador = MotorJev::novo(transporte, globais, "jev-latest");

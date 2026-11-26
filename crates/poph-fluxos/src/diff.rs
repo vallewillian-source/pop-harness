@@ -38,7 +38,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::ir::{Acao, Campo, Decisao, Destino, Efeito, Etapa, Fim, Ir, Regra};
-use poph_types::{AtorAcao, TipoCampo};
+use poph_types::{ActionActor, FieldKind};
 
 /// O que uma mudança faz com o atendimento.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -568,7 +568,7 @@ fn comparar_acao(a: &Ir, b: &Ir, et_b: &Etapa, aa: &Acao, ab: &Acao, out: &mut V
         let texto = match ab.ator {
             Some(ator) => format!(
                 "a ação `{ac}` da etapa `{et}` passa a ser feita só pelo {}.",
-                ator.como_texto()
+                ator.as_text()
             ),
             None => format!(
                 "a ação `{ac}` da etapa `{et}` passa a poder ser feita por qualquer ator da etapa."
@@ -1165,13 +1165,13 @@ fn texto_ou_vazio(texto: Option<&str>) -> String {
     }
 }
 
-fn atores_em_texto(atores: &[AtorAcao]) -> String {
+fn atores_em_texto(atores: &[ActionActor]) -> String {
     if atores.is_empty() {
         return "ninguém (a etapa não define ator)".to_owned();
     }
     atores
         .iter()
-        .map(|ator| ator.como_texto())
+        .map(|ator| ator.as_text())
         .collect::<Vec<_>>()
         .join(" ou ")
 }
@@ -1184,13 +1184,13 @@ fn opcoes_em_texto(opcoes: &[String]) -> String {
     }
 }
 
-fn tipo_em_texto(tipo: TipoCampo) -> &'static str {
+fn tipo_em_texto(tipo: FieldKind) -> &'static str {
     match tipo {
-        TipoCampo::Texto => "texto",
-        TipoCampo::Numero => "número",
-        TipoCampo::Data => "data",
-        TipoCampo::Booleano => "sim ou não",
-        TipoCampo::Anexo => "anexo",
-        TipoCampo::Opcao => "opção",
+        FieldKind::Texto => "texto",
+        FieldKind::Number => "número",
+        FieldKind::Data => "data",
+        FieldKind::Boolean => "sim ou não",
+        FieldKind::Attachment => "anexo",
+        FieldKind::Option => "opção",
     }
 }

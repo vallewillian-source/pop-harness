@@ -58,7 +58,7 @@ fn semeia_conversas_para_a_medicao_de_memoria() {
     fs::create_dir_all(&dados).expect("pasta de dados");
 
     let mut config = HarnessConfig::default();
-    config.dados.diretorio = dados;
+    config.data.directory = dados;
     let store = Store::abrir(&config).expect("abre o banco da medição");
 
     let org = criar_org(&store);

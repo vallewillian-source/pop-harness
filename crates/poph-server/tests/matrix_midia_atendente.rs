@@ -41,7 +41,7 @@ use poph_matrix::{ClienteMatrix, ConfigCliente, IdsFantasmas};
 use poph_server::evolution::CanalEvolution;
 use poph_server::{Estado, PortaDoHarness, ReceptorAs, RespostaDoAtendente};
 use poph_store::{EstadoSaida, NovaConversa, NovaOrg, NovoAgente, Origem, Pagina, Store};
-use poph_types::{ConversationId, HarnessConfig, IntegrationId, OrgId, Segredo};
+use poph_types::{ConversationId, HarnessConfig, IntegrationId, OrgId, Secret};
 use reqwest::{Client, StatusCode as StatusHttp};
 use serde_json::{Value, json};
 use tokio::sync::oneshot;
@@ -466,7 +466,7 @@ impl Cenario {
             ConfigEvolution::novo(
                 self.url_evo.clone(),
                 INSTANCIA,
-                Segredo::new(CHAVE_EVO.to_owned()),
+                Secret::new(CHAVE_EVO.to_owned()),
             )
             .expect("config da Evolution falsa"),
         )
@@ -482,7 +482,7 @@ impl Cenario {
             org: self.org,
             instancia: INSTANCIA.to_owned(),
             integracao,
-            segredo: Some(Segredo::new(SEGREDO_WEBHOOK.to_owned())),
+            segredo: Some(Secret::new(SEGREDO_WEBHOOK.to_owned())),
             cliente: Some(cliente),
             teto_midia: TETO_MIDIA,
         }
@@ -493,7 +493,7 @@ impl Cenario {
             ConfigCliente::novo(
                 self.url_synapse.clone(),
                 SERVER_NAME.to_owned(),
-                Segredo::new(AS_TOKEN.to_owned()),
+                Secret::new(AS_TOKEN.to_owned()),
             )
             .expect("config do cliente do Matrix"),
         )
@@ -509,14 +509,14 @@ impl Cenario {
         );
 
         let mut config = HarnessConfig::default();
-        config.dados.diretorio = self.diretorio.clone();
+        config.data.directory = self.diretorio.clone();
         let estado = Estado::novo(Arc::clone(&self.store), config)
             .expect("estado do servidor")
             .com_canais_evolution(vec![self.canal()])
             .com_matrix_as(Arc::new(ReceptorAs::novo(
                 PREFIXO,
                 SERVER_NAME,
-                Segredo::new(HS_TOKEN.to_owned()),
+                Secret::new(HS_TOKEN.to_owned()),
                 entrega.clone(),
             )));
 
@@ -972,7 +972,7 @@ async fn synapse_falso_recusa_disfarce_de_humano_e_entrega_para_o_fantasma_do_ag
         ConfigCliente::novo(
             cenario.url_synapse.clone(),
             SERVER_NAME.to_owned(),
-            Segredo::new(AS_TOKEN.to_owned()),
+            Secret::new(AS_TOKEN.to_owned()),
         )
         .expect("config do cliente do Matrix"),
     )

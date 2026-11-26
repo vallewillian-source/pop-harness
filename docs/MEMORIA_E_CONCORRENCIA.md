@@ -86,7 +86,7 @@ Everything here is disposable: restarting the process only costs re-reading from
 `poph_eventos_entregues_total`, `poph_eventos_recusados_total`, `poph_config_quente_acertos_total`,
 `poph_config_quente_erros_total`, `poph_config_quente_invalidadas_total`, `poph_config_quente_bytes`,
 `poph_config_agentes_total`, `poph_espera_vaga_segundos`. They do not repeat the name of the base catalog
-(`poph-types::MetricasBase`), so both can be registered in the same registry.
+(`poph_types::BaseMetrics`), so both can be registered in the same registry.
 
 ## 7. How HR-12 and HR-13 use it
 

@@ -527,9 +527,10 @@ fn gravar_no_destino(
 /// Erro do banco ao conferir os conflitos (é leitura: só falha de banco).
 fn erro_da_conferencia(erro: ErroStore) -> ApiError {
     match erro {
-        ErroStore::Dominio(DomainError::NaoEncontrado { entidade, id }) => {
-            ApiError::nao_encontrado(entidade, &id)
-        }
+        ErroStore::Dominio(DomainError::NotFound {
+            entity: entidade,
+            id,
+        }) => ApiError::nao_encontrado(entidade, &id),
         outro => ApiError::from(outro),
     }
 }
@@ -537,10 +538,10 @@ fn erro_da_conferencia(erro: ErroStore) -> ApiError {
 /// Erro do banco na importação: o que é do arquivo sai como `400`; o resto, como nas outras rotas.
 fn erro_da_importacao(erro: ErroStore) -> ApiError {
     match erro {
-        ErroStore::Dominio(DomainError::Validacao {
-            campo: "backup",
-            motivo,
-        }) => ApiError::novo(StatusCode::BAD_REQUEST, "invalid_backup", motivo)
+        ErroStore::Dominio(DomainError::Validation {
+            field: "backup",
+            reason,
+        }) => ApiError::novo(StatusCode::BAD_REQUEST, "invalid_backup", reason)
             .com_detalhes(json!({ "field": "backup" })),
         outro => ApiError::from(outro),
     }
@@ -578,7 +579,7 @@ async fn reindexar(e: &Estado, org: OrgId) -> (Value, Option<String>) {
         })
     };
     let config = ConfigModelo {
-        diretorio: e.config.modelos(),
+        diretorio: e.config.models(),
         ..ConfigModelo::default()
     };
     let modelo = match tokio::task::spawn_blocking(move || EmbedderOrt::abrir(&config, None)).await

@@ -53,7 +53,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use futures::StreamExt;
 use poph_matrix::ModuloMatrix;
-use poph_types::Segredo;
+use poph_types::Secret;
 use serde_json::{Value, json};
 
 use crate::erro::ApiError;
@@ -139,7 +139,7 @@ impl ErroEntrega {
 /// O `hs_token` vive em [`Segredo`]: não sai em `Debug`, `Display`, log, erro nem resposta. A
 /// comparação com o que chega no cabeçalho é feita em tempo constante.
 pub struct ReceptorAs {
-    hs_token: Segredo,
+    hs_token: Secret,
     prefixo: String,
     server_name: String,
     entrega: Arc<dyn EntregaDeEventos>,
@@ -151,7 +151,7 @@ impl ReceptorAs {
     pub fn novo(
         prefixo: impl Into<String>,
         server_name: impl Into<String>,
-        hs_token: Segredo,
+        hs_token: Secret,
         entrega: Arc<dyn EntregaDeEventos>,
     ) -> Self {
         Self::com_teto(
@@ -167,7 +167,7 @@ impl ReceptorAs {
     pub fn com_teto(
         prefixo: impl Into<String>,
         server_name: impl Into<String>,
-        hs_token: Segredo,
+        hs_token: Secret,
         entrega: Arc<dyn EntregaDeEventos>,
         teto_transacoes: usize,
     ) -> Self {
@@ -184,7 +184,7 @@ impl ReceptorAs {
     /// configuração validada e os dois tokens lidos do ambiente.
     pub fn do_modulo(modulo: ModuloMatrix, entrega: Arc<dyn EntregaDeEventos>) -> Self {
         Self::novo(
-            modulo.config.prefixo.clone(),
+            modulo.config.prefix.clone(),
             modulo.config.server_name.clone(),
             modulo.segredos.hs_token.clone(),
             entrega,
@@ -216,7 +216,7 @@ impl ReceptorAs {
         if !esquema.eq_ignore_ascii_case("bearer") || apresentado.trim().is_empty() {
             return Err(ApiError::nao_autorizado());
         }
-        let esperado = self.hs_token.expor().as_bytes();
+        let esperado = self.hs_token.expose().as_bytes();
         if !igual_em_tempo_constante(esperado, apresentado.trim().as_bytes()) {
             return Err(ApiError::proibido("token do Application Service inválido"));
         }
@@ -564,7 +564,7 @@ mod testes {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
 
-    use poph_types::Sensivel;
+    use poph_types::Sensitive;
 
     use super::*;
 
@@ -601,7 +601,7 @@ mod testes {
         ReceptorAs::com_teto(
             "ph",
             "matrix-dev.local",
-            Sensivel::new(CANARIO.to_owned()),
+            Sensitive::new(CANARIO.to_owned()),
             entrega,
             teto,
         )

@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use comum::{Cenario, pasta_temporaria};
 use poph_agent::fila_integracao::EnvioPeloCanal;
-use poph_types::EstadoIntegracao;
+use poph_types::IntegrationState;
 use poph_types::TurnId;
 
 fn eco() -> PathBuf {
@@ -101,7 +101,7 @@ async fn kill_9_no_plugin_nao_derruba_o_supervisor_e_a_mensagem_volta() {
             break;
         }
         assert!(
-            !cenario.supervisor.estado().esta_encerrada(),
+            !cenario.supervisor.estado().is_closed(),
             "o supervisor não pode desistir do plugin: {:?}",
             cenario.supervisor.estado()
         );
@@ -116,7 +116,7 @@ async fn kill_9_no_plugin_nao_derruba_o_supervisor_e_a_mensagem_volta() {
     // 4. Voltou sozinho: estado pronto de novo e pelo menos um reinício contado.
     cenario
         .esperar("o plugin voltar a ficar pronto", || {
-            cenario.supervisor.estado() == EstadoIntegracao::Pronto
+            cenario.supervisor.estado() == IntegrationState::Ready
         })
         .await;
     let contadores = cenario.supervisor.contadores();
@@ -138,7 +138,7 @@ async fn kill_9_no_plugin_nao_derruba_o_supervisor_e_a_mensagem_volta() {
     assert_eq!(cenario.entrada.contadores().duplicados, 0);
 
     // 6. E o canal continua respondendo depois da queda.
-    let saude = cenario.canal.saude().await.expect("consulta a saúde");
+    let saude = cenario.canal.health().await.expect("consulta a saúde");
     assert!(saude.ok, "{saude:?}");
 
     cenario.encerrar().await;

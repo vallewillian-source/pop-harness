@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use poph_jev::{ClienteJev, ConfigJev, ErroJev, Pedido, Resposta, TipoPergunta, TransporteJev};
-use poph_types::{JevConfig, MetricasBase, Registro, Segredo};
+use poph_types::{BaseMetrics, JevConfig, Registry, Secret};
 
 const CHAVE: &str = "chave-do-jev-nao-pode-vazar";
 
@@ -99,20 +99,20 @@ fn responder(mut fluxo: &TcpStream, codigo: u16, corpo: &str) -> std::io::Result
 
 fn config(url_base: &str, timeout_ms: u64, retentativas: u32) -> ConfigJev {
     let jev = JevConfig {
-        ativo: true,
+        enabled: true,
         url_base: url_base.to_owned(),
-        modelo: "jev-latest".to_owned(),
-        timeout_segundos: 8,
-        retentativas,
+        model: "jev-latest".to_owned(),
+        timeout_seconds: 8,
+        retries: retentativas,
         ..JevConfig::default()
     };
-    ConfigJev::da_config(&jev, Segredo::new(CHAVE.to_owned()))
+    ConfigJev::da_config(&jev, Secret::new(CHAVE.to_owned()))
         .expect("configuração do cliente")
         .com_timeout(Duration::from_millis(timeout_ms))
 }
 
-fn metricas() -> MetricasBase {
-    MetricasBase::registrar(&Registro::new()).expect("métricas base")
+fn metricas() -> BaseMetrics {
+    BaseMetrics::register(&Registry::new()).expect("métricas base")
 }
 
 fn pedido() -> Pedido {
@@ -216,30 +216,30 @@ async fn prazo_por_tentativa_devolve_erro_de_tempo() {
 fn configuracao_aceita_https_recusa_endereco_invalido_e_chave_vazia() {
     // HR-10b: o endereço real da TypeSafe é https e passa a ser aceito.
     let https = JevConfig {
-        ativo: true,
+        enabled: true,
         url_base: "https://api.typesafe.ai/".to_owned(),
         ..JevConfig::default()
     };
-    let config = ConfigJev::da_config(&https, Segredo::new("x".to_owned())).expect("https aceito");
+    let config = ConfigJev::da_config(&https, Secret::new("x".to_owned())).expect("https aceito");
     assert_eq!(config.url_base, "https://api.typesafe.ai");
     assert_eq!(config.endpoint(), "https://api.typesafe.ai/v1/systemone");
 
     let sem_esquema = JevConfig {
-        ativo: true,
+        enabled: true,
         url_base: "api.typesafe.ai".to_owned(),
         ..JevConfig::default()
     };
-    let erro = ConfigJev::da_config(&sem_esquema, Segredo::new("x".to_owned()))
+    let erro = ConfigJev::da_config(&sem_esquema, Secret::new("x".to_owned()))
         .expect_err("endereço sem esquema");
     assert!(erro.to_string().contains("http:// ou https://"));
 
     let http = JevConfig {
-        ativo: true,
+        enabled: true,
         url_base: "http://127.0.0.1:9".to_owned(),
         ..JevConfig::default()
     };
-    let sem_chave = ConfigJev::da_config(&http, Segredo::new("   ".to_owned()))
-        .expect_err("recusa chave vazia");
+    let sem_chave =
+        ConfigJev::da_config(&http, Secret::new("   ".to_owned())).expect_err("recusa chave vazia");
     assert!(matches!(sem_chave, ErroJev::SemChave));
     assert!(!format!("{http:?}").contains(CHAVE));
 }

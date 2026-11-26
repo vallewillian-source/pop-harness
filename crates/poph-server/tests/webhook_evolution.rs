@@ -26,8 +26,8 @@ use poph_evolution::{ClienteEvolution, ConfigEvolution, TETO_MIDIA};
 use poph_server::Estado;
 use poph_server::evolution::{CanalEvolution, canais_da_configuracao};
 use poph_store::{NovaOrg, NovoAgente, Pagina, Store};
-use poph_types::config::{EvolutionConfig, InstanciaEvolutionConfig};
-use poph_types::{AgentId, HarnessConfig, IntegrationId, MessageId, OrgId, Segredo};
+use poph_types::config::{EvolutionConfig, EvolutionInstanceConfig};
+use poph_types::{AgentId, HarnessConfig, IntegrationId, MessageId, OrgId, Secret};
 use reqwest::Client;
 use serde_json::{Value, json};
 use tokio::sync::oneshot;
@@ -168,8 +168,8 @@ impl Cenario {
         fs::create_dir_all(pasta.join("dados")).expect("pasta de dados");
 
         let mut config = HarnessConfig::default();
-        config.dados.diretorio = pasta.join("dados");
-        config.servidor.porta = 7480;
+        config.data.directory = pasta.join("dados");
+        config.server.port = 7480;
         config.validar().expect("configuração válida");
 
         let store = Arc::new(Store::abrir(&config).expect("abre o banco"));
@@ -203,7 +203,7 @@ impl Cenario {
 
         let (url_evo, downloads) = subir_evolucao_falsa().await;
         let cliente_evo = ClienteEvolution::novo(
-            ConfigEvolution::novo(url_evo, "loja", Segredo::new(CHAVE_EVO.to_owned()))
+            ConfigEvolution::novo(url_evo, "loja", Secret::new(CHAVE_EVO.to_owned()))
                 .expect("config da Evolution falsa"),
         )
         .expect("cliente da Evolution falsa");
@@ -213,7 +213,7 @@ impl Cenario {
                 org,
                 instancia: "loja".to_owned(),
                 integracao,
-                segredo: Some(Segredo::new(SEGREDO.to_owned())),
+                segredo: Some(Secret::new(SEGREDO.to_owned())),
                 cliente: Some(cliente_evo),
                 teto_midia: TETO_MIDIA,
             },
@@ -222,7 +222,7 @@ impl Cenario {
                 org,
                 instancia: "orfa".to_owned(),
                 integracao: IntegrationId::generate(),
-                segredo: Some(Segredo::new(SEGREDO.to_owned())),
+                segredo: Some(Secret::new(SEGREDO.to_owned())),
                 cliente: None,
                 teto_midia: TETO_MIDIA,
             },
@@ -880,22 +880,22 @@ async fn estado_de_conexao_deixa_uma_linha_de_log_com_o_estado_novo() {
 
 // ───────────────────────── configuração (sem servidor) ─────────────────────────
 
-fn config_com_instancias(instancias: Vec<InstanciaEvolutionConfig>) -> HarnessConfig {
+fn config_com_instancias(instancias: Vec<EvolutionInstanceConfig>) -> HarnessConfig {
     HarnessConfig {
         evolution: Some(EvolutionConfig {
             url_base: "http://127.0.0.1:18081".to_owned(),
-            instancias,
+            instances: instancias,
         }),
         ..Default::default()
     }
 }
 
-fn instancia(segredo_env: &str) -> InstanciaEvolutionConfig {
-    InstanciaEvolutionConfig {
+fn instancia(segredo_env: &str) -> EvolutionInstanceConfig {
+    EvolutionInstanceConfig {
         org_id: OrgId::generate().to_string(),
-        instancia: "loja".to_owned(),
-        integracao_id: IntegrationId::generate().to_string(),
-        segredo_env: segredo_env.to_owned(),
+        instance: "loja".to_owned(),
+        integration_id: IntegrationId::generate().to_string(),
+        secret_env: segredo_env.to_owned(),
     }
 }
 
@@ -905,7 +905,7 @@ fn configuracao_resolve_segredo_pelo_nome_da_variavel_e_nao_aceita_nome_inseguro
     config.validar().expect("configuração válida");
 
     let com_valor =
-        canais_da_configuracao(&config, Some(Segredo::new(CHAVE_EVO.to_owned())), &|nome| {
+        canais_da_configuracao(&config, Some(Secret::new(CHAVE_EVO.to_owned())), &|nome| {
             (nome == "POPH_EVO_SEGREDO_LOJA").then(|| "  valor-do-segredo  ".to_owned())
         })
         .expect("canais");
@@ -928,8 +928,8 @@ fn configuracao_resolve_segredo_pelo_nome_da_variavel_e_nao_aceita_nome_inseguro
         minuscula.validar().is_err(),
         "nome de variável em minúsculas é recusado"
     );
-    minuscula.evolution.as_mut().unwrap().instancias[0].segredo_env = "POPH_EVO_OK".to_owned();
-    minuscula.evolution.as_mut().unwrap().instancias[0].instancia = "loja/../x".to_owned();
+    minuscula.evolution.as_mut().unwrap().instances[0].secret_env = "POPH_EVO_OK".to_owned();
+    minuscula.evolution.as_mut().unwrap().instances[0].instance = "loja/../x".to_owned();
     assert!(
         minuscula.validar().is_err(),
         "nome de instância com barra é recusado"
@@ -940,7 +940,7 @@ fn configuracao_resolve_segredo_pelo_nome_da_variavel_e_nao_aceita_nome_inseguro
 fn configuracao_recusa_mesma_instancia_repetida_na_mesma_org() {
     let uma = instancia("POPH_EVO_A");
     let mut repetida = uma.clone();
-    repetida.integracao_id = IntegrationId::generate().to_string();
+    repetida.integration_id = IntegrationId::generate().to_string();
     let config = config_com_instancias(vec![uma, repetida]);
     assert!(config.validar().is_err());
 }
@@ -949,7 +949,7 @@ fn configuracao_recusa_mesma_instancia_repetida_na_mesma_org() {
 fn mensagem_de_id_invalido_nao_passa_pela_configuracao() {
     // Protege o caminho da URL: o id de org precisa ser o formato do Harness.
     let mut config = config_com_instancias(vec![instancia("POPH_EVO_A")]);
-    config.evolution.as_mut().unwrap().instancias[0].org_id = "nao-e-um-id".to_owned();
+    config.evolution.as_mut().unwrap().instances[0].org_id = "nao-e-um-id".to_owned();
     assert!(config.validar().is_err());
 }
 

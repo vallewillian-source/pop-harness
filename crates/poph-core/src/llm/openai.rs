@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 
 use futures::future::BoxFuture;
 use futures::stream;
-use poph_types::{LlmConfig, MetricasBase, Segredo};
+use poph_types::{BaseMetrics, LlmConfig, Secret};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde_json::{Value, json};
 
@@ -46,7 +46,7 @@ pub struct OpenAiCompatibleConfig {
     /// Endereço base, terminado em `/v1` (ex.: `http://127.0.0.1:8045/v1`).
     pub url_base: String,
     /// Chave de API. Nunca aparece em log, erro ou `Debug`.
-    pub chave: Segredo,
+    pub chave: Secret,
     /// Modelo padrão (o pedido pode trocar).
     pub modelo: String,
     /// Tempo máximo de cada tentativa.
@@ -65,14 +65,14 @@ pub struct OpenAiCompatibleConfig {
 
 impl OpenAiCompatibleConfig {
     /// Monta a configuração a partir do bloco `[llm]` e da chave lida do ambiente.
-    pub fn da_config(llm: &LlmConfig, chave: Segredo) -> Result<Self, ErroLlm> {
-        if !poph_types::provedor_llm_aceito(&llm.provedor) {
+    pub fn da_config(llm: &LlmConfig, chave: Secret) -> Result<Self, ErroLlm> {
+        if !poph_types::llm_provider_accepted(&llm.provider) {
             return Err(ErroLlm::Configuracao(format!(
                 "provedor {} não suportado; use {PROVEDOR_OPENAI_COMPATIVEL} ou {PROVEDOR_ANTIGRAVITY}",
-                llm.provedor
+                llm.provider
             )));
         }
-        if chave.expor().trim().is_empty() {
+        if chave.expose().trim().is_empty() {
             return Err(ErroLlm::Configuracao(
                 "chave de API do provedor ausente".to_owned(),
             ));
@@ -88,13 +88,13 @@ impl OpenAiCompatibleConfig {
         Ok(Self {
             url_base,
             chave,
-            modelo: llm.modelo.clone(),
-            timeout: Duration::from_secs(u64::from(llm.timeout_segundos)),
-            retentativas: llm.retentativas,
+            modelo: llm.model.clone(),
+            timeout: Duration::from_secs(u64::from(llm.timeout_seconds)),
+            retentativas: llm.retries,
             espera_base: Duration::from_secs(1),
-            temperatura: llm.temperatura,
-            max_tokens_saida: llm.max_tokens_saida,
-            recusa_turno_modelo: llm.recusa_turno_modelo,
+            temperatura: llm.temperature,
+            max_tokens_saida: llm.max_output_tokens,
+            recusa_turno_modelo: llm.refuse_model_turn,
         })
     }
 }
@@ -104,7 +104,7 @@ struct Interno {
     endpoint: String,
     config: OpenAiCompatibleConfig,
     limites: LimitadorLlm,
-    metricas: MetricasBase,
+    metricas: BaseMetrics,
 }
 
 /// Cliente OpenAI-compatível. Clonar é barato e todos os clones compartilham limites e métricas.
@@ -116,7 +116,7 @@ impl OpenAiCompatibleClient {
     pub fn new(
         config: OpenAiCompatibleConfig,
         limites: LimitadorLlm,
-        metricas: MetricasBase,
+        metricas: BaseMetrics,
     ) -> Result<Self, ErroLlm> {
         let http = construir_http(None)?;
         let endpoint = format!("{}/chat/completions", config.url_base);
@@ -173,7 +173,7 @@ impl LlmProvider for OpenAiCompatibleClient {
 async fn abrir(interno: Arc<Interno>, pedido: Pedido) -> Result<FluxoLlm, ErroLlm> {
     validar_pedido(&pedido, interno.config.recusa_turno_modelo)
         .map_err(|erro| interno.registrar_falha(erro))?;
-    interno.metricas.chamadas_llm.incrementar(1);
+    interno.metricas.llm_calls.increment(1);
 
     let cancelamento = pedido.cancelamento.clone();
     let permissao: PermissaoLlm = tokio::select! {
@@ -217,7 +217,7 @@ impl Interno {
     /// Conta a falha nas métricas e devolve o mesmo erro. Cancelamento não conta como falha.
     fn registrar_falha(&self, erro: ErroLlm) -> ErroLlm {
         if erro != ErroLlm::Cancelada {
-            self.metricas.erros_llm.incrementar(1);
+            self.metricas.llm_errors.increment(1);
             tracing::warn!(erro = %erro, "chamada ao LLM falhou");
         }
         erro
@@ -241,7 +241,7 @@ async fn enviar(
             .timeout(interno.config.timeout)
             .header(
                 AUTHORIZATION,
-                format!("Bearer {}", interno.config.chave.expor()),
+                format!("Bearer {}", interno.config.chave.expose()),
             )
             .header(CONTENT_TYPE, "application/json")
             .body(corpo_texto.clone())
@@ -263,7 +263,7 @@ async fn enviar(
                 } else {
                     return Err(ErroLlm::Recusado {
                         status,
-                        mensagem: resumir_erro(&texto, interno.config.chave.expor()),
+                        mensagem: resumir_erro(&texto, interno.config.chave.expose()),
                     });
                 }
             }
@@ -506,7 +506,7 @@ fn processar_payload(e: &mut Estado, payload: &str) {
     if !valor["error"].is_null() {
         let mensagem = valor["error"]["message"]
             .as_str()
-            .map(|m| resumir_erro(m, e.interno.config.chave.expor()))
+            .map(|m| resumir_erro(m, e.interno.config.chave.expose()))
             .unwrap_or_else(|| "erro sem detalhe".to_owned());
         let erro = e.interno.registrar_falha(ErroLlm::ErroNoStream(mensagem));
         e.pendentes.push_back(Err(erro));
@@ -597,7 +597,7 @@ fn finalizar(e: &mut Estado) {
     }
 
     if let Some(uso) = e.uso {
-        e.interno.metricas.tokens_total.incrementar(uso.total());
+        e.interno.metricas.tokens_total.increment(uso.total());
         e.pendentes.push_back(Ok(EventoLlm::Uso(uso)));
     }
     let motivo = match e.motivo.take() {
@@ -624,18 +624,18 @@ mod testes {
 
     fn config(url: &str, chave: &str) -> Result<OpenAiCompatibleConfig, ErroLlm> {
         let llm = LlmConfig {
-            provedor: PROVEDOR_OPENAI_COMPATIVEL.to_owned(),
+            provider: PROVEDOR_OPENAI_COMPATIVEL.to_owned(),
             url_base: url.to_owned(),
-            chave_env: "ANTIGRAVITY_API_KEY".to_owned(),
-            recusa_turno_modelo: true,
-            modelo: "gemini-3.8-flash-tiered".to_owned(),
-            timeout_segundos: 10,
-            retentativas: 2,
-            simultaneos: 4,
-            temperatura: 0.0,
-            max_tokens_saida: 512,
+            api_key_env: "ANTIGRAVITY_API_KEY".to_owned(),
+            refuse_model_turn: true,
+            model: "gemini-3.8-flash-tiered".to_owned(),
+            timeout_seconds: 10,
+            retries: 2,
+            concurrent_calls: 4,
+            temperature: 0.0,
+            max_output_tokens: 512,
         };
-        OpenAiCompatibleConfig::da_config(&llm, Segredo::new(chave.to_owned()))
+        OpenAiCompatibleConfig::da_config(&llm, Secret::new(chave.to_owned()))
     }
 
     #[test]
@@ -649,18 +649,18 @@ mod testes {
         );
         assert!(config("http://127.0.0.1:8045/v1/", "").is_err());
         let llm = LlmConfig {
-            provedor: "outro".to_owned(),
+            provider: "outro".to_owned(),
             url_base: "http://127.0.0.1:8045/v1".to_owned(),
-            chave_env: "ANTIGRAVITY_API_KEY".to_owned(),
-            recusa_turno_modelo: true,
-            modelo: "m".to_owned(),
-            timeout_segundos: 10,
-            retentativas: 0,
-            simultaneos: 1,
-            temperatura: 0.0,
-            max_tokens_saida: 1,
+            api_key_env: "ANTIGRAVITY_API_KEY".to_owned(),
+            refuse_model_turn: true,
+            model: "m".to_owned(),
+            timeout_seconds: 10,
+            retries: 0,
+            concurrent_calls: 1,
+            temperature: 0.0,
+            max_output_tokens: 1,
         };
-        assert!(OpenAiCompatibleConfig::da_config(&llm, Segredo::new("k".into())).is_err());
+        assert!(OpenAiCompatibleConfig::da_config(&llm, Secret::new("k".into())).is_err());
     }
 
     #[test]

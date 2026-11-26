@@ -21,16 +21,16 @@
 //! # async fn exemplo() -> Result<(), Box<dyn std::error::Error>> {
 //! use std::sync::Arc;
 //! use poph_evolution::{ConfigCanal, ClienteEvolution, ConfigEvolution, WhatsAppEvolution, BlobsEmDisco};
-//! use poph_types::{IntegrationId, Segredo};
+//! use poph_types::{IntegrationId, Secret};
 //!
 //! let cliente = ClienteEvolution::novo(ConfigEvolution::novo(
 //!     "http://127.0.0.1:8080",
 //!     "pop-atende",
-//!     Segredo::new("chave-da-evolution".to_owned()),
+//!     Secret::new("chave-da-evolution".to_owned()),
 //! )?)?;
 //! let config = ConfigCanal::novo(
 //!     IntegrationId::generate(),
-//!     Segredo::new("segredo-do-webhook".to_owned()),
+//!     Secret::new("segredo-do-webhook".to_owned()),
 //! )?
 //! .com_webhook("https://harness.exemplo/v1/webhooks/whatsapp");
 //! let canal = WhatsAppEvolution::novo(cliente, config, Arc::new(BlobsEmDisco::nova("data/blobs")));

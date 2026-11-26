@@ -46,7 +46,7 @@ impl Cenario {
         let _ = fs::remove_dir_all(&pasta);
         fs::create_dir_all(pasta.join("dados")).expect("pasta de dados");
         let mut config = HarnessConfig::default();
-        config.dados.diretorio = pasta.join("dados");
+        config.data.directory = pasta.join("dados");
         config.validar().expect("configuração válida");
         let relogio = Arc::new(AtomicI64::new(1_000_000));
         let store = Store::abrir(&config)

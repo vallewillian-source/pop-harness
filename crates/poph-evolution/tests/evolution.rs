@@ -16,8 +16,8 @@ use poph_evolution::{
     TETO_MIDIA, WhatsAppEvolution, conferir_segredo, interpretar,
 };
 use poph_types::{
-    ComandoSaida, ErroIntegracao, EstadoIntegracao, EventoIntegracao, Integration, IntegrationId,
-    Presenca, Receptor, Segredo, SendFile, SendText, SetPresence,
+    EventSink, Integration, IntegrationError, IntegrationEvent, IntegrationId, IntegrationState,
+    OutboundCommand, Presence, Secret, SendFile, SendText, SetPresence,
 };
 use serde_json::{Value, json};
 
@@ -130,7 +130,7 @@ fn responder(fluxo: &TcpStream, codigo: u16, corpo: &str) -> std::io::Result<()>
 
 fn cliente(url: &str) -> ClienteEvolution {
     ClienteEvolution::novo(
-        ConfigEvolution::novo(url, "pop-atende", Segredo::new(CHAVE.to_owned()))
+        ConfigEvolution::novo(url, "pop-atende", Secret::new(CHAVE.to_owned()))
             .expect("configuração válida")
             .com_timeout(Duration::from_secs(5)),
     )
@@ -142,7 +142,7 @@ fn canal(url: &str) -> WhatsAppEvolution {
         cliente(url),
         ConfigCanal::novo(
             IntegrationId::generate(),
-            Segredo::new("segredo-do-webhook".to_owned()),
+            Secret::new("segredo-do-webhook".to_owned()),
         )
         .expect("configuração do canal"),
         Arc::new(BlobsEmDisco::nova("/tmp/poph-evolution-testes-sem-blobs")),
@@ -263,14 +263,14 @@ async fn leitura_repete_uma_vez_em_500() {
 
 #[tokio::test]
 async fn contadores_contam_chamadas_e_falhas() {
-    let registro = poph_types::Registro::new();
-    let metricas = poph_types::MetricasBase::registrar(&registro).expect("catálogo");
+    let registro = poph_types::Registry::new();
+    let metricas = poph_types::BaseMetrics::register(&registro).expect("catálogo");
     let (url, _) = servidor(vec![
         ok(json!({"key": {"id": "ID-5"}})),
         erro(400, "número inválido"),
     ]);
     let cliente = ClienteEvolution::novo(
-        ConfigEvolution::novo(&url, "pop-atende", Segredo::new(CHAVE.to_owned()))
+        ConfigEvolution::novo(&url, "pop-atende", Secret::new(CHAVE.to_owned()))
             .expect("configuração")
             .com_metricas(metricas.clone()),
     )
@@ -279,15 +279,15 @@ async fn contadores_contam_chamadas_e_falhas() {
         .enviar_texto("5511999999999", "oi")
         .await
         .expect("feliz");
-    assert_eq!(metricas.chamadas_evolution.valor(), 1);
-    assert_eq!(metricas.erros_evolution.valor(), 0);
+    assert_eq!(metricas.evolution_calls.value(), 1);
+    assert_eq!(metricas.evolution_errors.value(), 0);
 
     cliente
         .enviar_texto("5511999999999", "oi")
         .await
         .expect_err("400");
-    assert_eq!(metricas.chamadas_evolution.valor(), 2);
-    assert_eq!(metricas.erros_evolution.valor(), 1);
+    assert_eq!(metricas.evolution_calls.value(), 2);
+    assert_eq!(metricas.evolution_errors.value(), 1);
 }
 
 #[tokio::test]
@@ -335,7 +335,7 @@ async fn erro_de_rede_nao_mostra_o_endereco() {
         ConfigEvolution::novo(
             format!("http://127.0.0.1:{porta}"),
             "pop-atende",
-            Segredo::new(CHAVE.to_owned()),
+            Secret::new(CHAVE.to_owned()),
         )
         .expect("configuração")
         .com_timeout(Duration::from_millis(300)),
@@ -382,7 +382,7 @@ async fn resposta_de_sucesso_acima_do_teto_para_de_ler() {
         ConfigEvolution::novo(
             format!("http://127.0.0.1:{porta}"),
             "pop-atende",
-            Segredo::new(CHAVE.to_owned()),
+            Secret::new(CHAVE.to_owned()),
         )
         .expect("configuração")
         .com_timeout(Duration::from_secs(10)),
@@ -457,8 +457,8 @@ async fn erro_400_nao_e_retentado_e_nao_vaza_a_chave() {
     assert!(!erro.transitorio());
     assert!(matches!(
         erro.para_integracao("enviar_texto"),
-        ErroIntegracao::Recusado {
-            transitoria: false,
+        IntegrationError::Refused {
+            transient: false,
             ..
         }
     ));
@@ -475,7 +475,7 @@ async fn queda_de_rede_nao_trava_e_e_transitoria() {
         ConfigEvolution::novo(
             format!("http://127.0.0.1:{porta}"),
             "pop-atende",
-            Segredo::new(CHAVE.to_owned()),
+            Secret::new(CHAVE.to_owned()),
         )
         .expect("configuração")
         .com_retentativas(0)
@@ -490,7 +490,7 @@ async fn queda_de_rede_nao_trava_e_e_transitoria() {
     assert!(erro.transitorio());
     assert!(matches!(
         erro.para_integracao("enviar_texto"),
-        ErroIntegracao::Indisponivel { .. }
+        IntegrationError::Unavailable { .. }
     ));
 }
 
@@ -597,11 +597,11 @@ async fn midia_expirada_na_evolution_vira_erro_definitivo() {
     assert!(!erro.transitorio(), "repetir não traz a mídia de volta");
     assert!(matches!(
         erro.para_integracao("baixar_midia"),
-        ErroIntegracao::Recusado {
-            ref codigo,
-            transitoria: false,
+        IntegrationError::Refused {
+            ref code,
+            transient: false,
             ..
-        } if codigo == "midia_expirada"
+        } if code == "midia_expirada"
     ));
 }
 
@@ -623,10 +623,10 @@ async fn canal_pronto_entrega_texto_ao_servidor() {
     let (url, recebidos) = servidor(vec![ok(json!({"key": {"id": "ID-4"}}))]);
     let canal = canal(&url);
     canal
-        .enviar_texto(SendText {
-            idempotencia: "turno-1:1".to_owned(),
+        .send_text(SendText {
+            idempotency: "turno-1:1".to_owned(),
             peer: "5511999999999".to_owned(),
-            texto: "**olá**".to_owned(),
+            text: "**olá**".to_owned(),
         })
         .await
         .expect("envio pelo contrato");
@@ -647,21 +647,21 @@ async fn arquivo_do_agente_sai_da_biblioteca_e_recusa_blob_ausente() {
         cliente(&url),
         ConfigCanal::novo(
             IntegrationId::generate(),
-            Segredo::new("segredo-do-webhook".to_owned()),
+            Secret::new("segredo-do-webhook".to_owned()),
         )
         .expect("configuração"),
         Arc::new(BlobsEmDisco::nova(&raiz)),
     );
     canal
-        .enviar_arquivo(SendFile {
-            idempotencia: "turno-2:1".to_owned(),
+        .send_file(SendFile {
+            idempotency: "turno-2:1".to_owned(),
             peer: "5511999999999".to_owned(),
-            nome: "contrato.pdf".to_owned(),
+            name: "contrato.pdf".to_owned(),
             mime: "application/pdf".to_owned(),
-            tamanho_bytes: 18,
+            size_bytes: 18,
             sha256: sha.clone(),
             blob_ref: format!("org_teste/{sha}"),
-            legenda: None,
+            caption: None,
         })
         .await
         .expect("envio de arquivo");
@@ -671,19 +671,19 @@ async fn arquivo_do_agente_sai_da_biblioteca_e_recusa_blob_ausente() {
     }
 
     let erro = canal
-        .enviar_arquivo(SendFile {
-            idempotencia: "turno-2:2".to_owned(),
+        .send_file(SendFile {
+            idempotency: "turno-2:2".to_owned(),
             peer: "5511999999999".to_owned(),
-            nome: "sumiu.pdf".to_owned(),
+            name: "sumiu.pdf".to_owned(),
             mime: "application/pdf".to_owned(),
-            tamanho_bytes: 1,
+            size_bytes: 1,
             sha256: "b".repeat(64),
             blob_ref: format!("org_teste/{}", "b".repeat(64)),
-            legenda: None,
+            caption: None,
         })
         .await
         .expect_err("blob ausente");
-    assert!(matches!(erro, ErroIntegracao::Recusado { .. }));
+    assert!(matches!(erro, IntegrationError::Refused { .. }));
     let _ = std::fs::remove_dir_all(&raiz);
 }
 
@@ -692,9 +692,9 @@ async fn presenca_recusada_nao_derruba_a_mensagem() {
     let (url, _) = servidor(vec![erro(400, "presence not supported")]);
     let canal = canal(&url);
     canal
-        .definir_presenca(SetPresence {
+        .set_presence(SetPresence {
             peer: "5511999999999".to_owned(),
-            estado: Presenca::Digitando,
+            state: Presence::Typing,
         })
         .await
         .expect("presença é opcional");
@@ -712,10 +712,10 @@ async fn recibo_devolve_o_id_do_texto_e_da_midia_e_presenca_sem_id() {
     let canal = canal(&url);
 
     let texto = canal
-        .enviar_com_recibo(ComandoSaida::EnviarTexto(SendText {
-            idempotencia: "turno-3:1".to_owned(),
+        .enviar_com_recibo(OutboundCommand::Text(SendText {
+            idempotency: "turno-3:1".to_owned(),
             peer: "5511999999999".to_owned(),
-            texto: "com id".to_owned(),
+            text: "com id".to_owned(),
         }))
         .await
         .expect("envio de texto");
@@ -731,21 +731,21 @@ async fn recibo_devolve_o_id_do_texto_e_da_midia_e_presenca_sem_id() {
         cliente(&url),
         ConfigCanal::novo(
             IntegrationId::generate(),
-            Segredo::new("segredo-do-webhook".to_owned()),
+            Secret::new("segredo-do-webhook".to_owned()),
         )
         .expect("configuração"),
         Arc::new(BlobsEmDisco::nova(&raiz)),
     );
     let midia = canal_midia
-        .enviar_com_recibo(ComandoSaida::EnviarArquivo(SendFile {
-            idempotencia: "turno-3:2".to_owned(),
+        .enviar_com_recibo(OutboundCommand::File(SendFile {
+            idempotency: "turno-3:2".to_owned(),
             peer: "5511999999999".to_owned(),
-            nome: "recibo.pdf".to_owned(),
+            name: "recibo.pdf".to_owned(),
             mime: "application/pdf".to_owned(),
-            tamanho_bytes: 8,
+            size_bytes: 8,
             sha256: sha.clone(),
             blob_ref: format!("org_recibo/{sha}"),
-            legenda: None,
+            caption: None,
         }))
         .await
         .expect("envio de arquivo");
@@ -754,9 +754,9 @@ async fn recibo_devolve_o_id_do_texto_e_da_midia_e_presenca_sem_id() {
 
     // Presença não tem id: devolve `None`, sem erro.
     let presenca = canal
-        .enviar_com_recibo(ComandoSaida::DefinirPresenca(SetPresence {
+        .enviar_com_recibo(OutboundCommand::Presence(SetPresence {
             peer: "5511999999999".to_owned(),
-            estado: Presenca::Pausado,
+            state: Presence::Paused,
         }))
         .await
         .expect("presença é opcional");
@@ -773,16 +773,16 @@ async fn iniciar_marca_pronto_e_aponta_o_webhook() {
         cliente(&url),
         ConfigCanal::novo(
             IntegrationId::generate(),
-            Segredo::new("segredo-do-webhook".to_owned()),
+            Secret::new("segredo-do-webhook".to_owned()),
         )
         .expect("configuração")
         .com_webhook("https://harness.exemplo/v1/webhooks/whatsapp"),
         Arc::new(BlobsEmDisco::nova("/tmp/poph-evolution-sem-blobs")),
     );
-    assert_eq!(canal.estado(), EstadoIntegracao::Iniciando);
+    assert_eq!(canal.state(), IntegrationState::Starting);
     let estado = canal.iniciar().await.expect("iniciar");
     assert_eq!(estado, "open");
-    assert_eq!(canal.estado(), EstadoIntegracao::Pronto);
+    assert_eq!(canal.state(), IntegrationState::Ready);
 
     let pedidos = recebidos.lock().unwrap();
     assert_eq!(pedidos[0].trajeto(), "/instance/connectionState/pop-atende");
@@ -803,26 +803,26 @@ async fn instancia_fechada_deixa_o_canal_em_iniciando() {
     let (url, _) = servidor(vec![ok(json!({"instance": {"state": "connecting"}}))]);
     let canal = canal(&url);
     assert_eq!(canal.iniciar().await.expect("iniciar"), "connecting");
-    assert_eq!(canal.estado(), EstadoIntegracao::Iniciando);
+    assert_eq!(canal.state(), IntegrationState::Starting);
 }
 
 #[tokio::test]
 async fn saude_segue_o_estado_da_instancia() {
     let (url, _) = servidor(vec![ok(json!({"instance": {"state": "open"}}))]);
-    let saude = canal(&url).saude().await.expect("saúde");
+    let saude = canal(&url).health().await.expect("saúde");
     assert!(saude.ok);
 
     let (url, _) = servidor(vec![ok(json!({"instance": {"state": "close"}}))]);
-    let saude = canal(&url).saude().await.expect("saúde");
+    let saude = canal(&url).health().await.expect("saúde");
     assert!(!saude.ok);
 
     // Duas respostas 500: a retentativa também falha e o erro final é do provedor (transitório).
     let (url, _) = servidor(vec![erro(500, "fora do ar"), erro(500, "fora do ar")]);
-    let erro = canal(&url).saude().await.expect_err("erro do provedor");
+    let erro = canal(&url).health().await.expect_err("erro do provedor");
     assert!(matches!(
         erro,
-        ErroIntegracao::Recusado {
-            transitoria: true,
+        IntegrationError::Refused {
+            transient: true,
             ..
         }
     ));
@@ -843,7 +843,7 @@ fn webhook_com_segredo_errado_e_recusado_antes_de_ler() {
     // A conferência do segredo é a mesma função exportada (comparação em tempo constante).
     assert!(
         conferir_segredo(
-            &Segredo::new("segredo-do-webhook".to_owned()),
+            &Secret::new("segredo-do-webhook".to_owned()),
             Some("segredo-do-webhook")
         )
         .is_ok()
@@ -857,23 +857,23 @@ fn webhook_valido_atualiza_o_estado_do_canal() {
     canal
         .receber_webhook(Some("segredo-do-webhook"), &conectado)
         .expect("webhook autenticado");
-    assert_eq!(canal.estado(), EstadoIntegracao::Pronto);
+    assert_eq!(canal.state(), IntegrationState::Ready);
 
     let desconectado = json!({"event": "connection.update", "data": {"state": "close"}});
     canal
         .receber_webhook(Some("segredo-do-webhook"), &desconectado)
         .expect("webhook autenticado");
-    assert_eq!(canal.estado(), EstadoIntegracao::Iniciando);
+    assert_eq!(canal.state(), IntegrationState::Starting);
 }
 
 /// Receptor que guarda o que chegou (é o que a `inbox` faria na HR-12).
 #[derive(Default)]
 struct Coletor {
-    eventos: Mutex<Vec<EventoIntegracao>>,
+    eventos: Mutex<Vec<IntegrationEvent>>,
 }
 
-impl Receptor for Coletor {
-    fn receber(&self, evento: EventoIntegracao) {
+impl EventSink for Coletor {
+    fn receive(&self, evento: IntegrationEvent) {
         self.eventos.lock().unwrap().push(evento);
     }
 }
@@ -907,11 +907,11 @@ async fn mensagem_com_imagem_e_entregue_com_o_anexo_baixado() {
 
     let eventos = coletor.eventos.lock().unwrap();
     assert_eq!(eventos.len(), 1);
-    let EventoIntegracao::Entrada(evento) = &eventos[0] else {
+    let IntegrationEvent::Inbound(evento) = &eventos[0] else {
         panic!("esperava entrada");
     };
-    assert_eq!(evento.texto, "olha o produto");
-    assert_eq!(evento.anexos.len(), 1);
+    assert_eq!(evento.text, "olha o produto");
+    assert_eq!(evento.attachments.len(), 1);
     assert_eq!(evento.validar(), Ok(()));
 }
 
@@ -935,11 +935,11 @@ async fn midia_que_falha_nao_impede_a_mensagem_de_chegar() {
     let coletor = Coletor::default();
     canal.receber_e_entregar(decisao, &coletor).await;
     let eventos = coletor.eventos.lock().unwrap();
-    let EventoIntegracao::Entrada(evento) = &eventos[0] else {
+    let IntegrationEvent::Inbound(evento) = &eventos[0] else {
         panic!("esperava entrada");
     };
-    assert_eq!(evento.texto, "a nota que eu recebi");
-    assert!(evento.anexos.is_empty(), "sem anexo, mas com o texto");
+    assert_eq!(evento.text, "a nota que eu recebi");
+    assert!(evento.attachments.is_empty(), "sem anexo, mas com o texto");
 }
 
 #[tokio::test]
@@ -952,7 +952,7 @@ async fn evento_de_estado_do_webhook_e_repassado_ao_receptor() {
     let coletor = Coletor::default();
     canal.receber_e_entregar(decisao, &coletor).await;
     let eventos = coletor.eventos.lock().unwrap();
-    assert!(matches!(eventos[0], EventoIntegracao::Estado(_)));
+    assert!(matches!(eventos[0], IntegrationEvent::Estado(_)));
 }
 
 #[test]

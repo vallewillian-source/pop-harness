@@ -38,7 +38,7 @@ use poph_server::matrix_metricas::MetricasMatrix;
 use poph_store::{
     CategoriaMidia, Conversa, NovaConversa, NovaMidia, NovaOrg, NovoAgente, Org, Store,
 };
-use poph_types::{AttachmentId, MatrixConfig, Segredo};
+use poph_types::{AttachmentId, MatrixConfig, Secret};
 use serde_json::{Value, json};
 use tracing_subscriber::fmt::MakeWriter;
 
@@ -278,7 +278,7 @@ impl Synapse {
             ConfigCliente::novo(
                 self.url.clone(),
                 SERVIDOR.to_owned(),
-                Segredo::new(AS_TOKEN.to_owned()),
+                Secret::new(AS_TOKEN.to_owned()),
             )
             .expect("config do cliente"),
         )
@@ -449,11 +449,11 @@ impl Cenario {
 
     fn config(&self) -> MatrixConfig {
         MatrixConfig {
-            habilitado: true,
+            enabled: true,
             homeserver_url: self.synapse.url.clone(),
             server_name: SERVIDOR.to_owned(),
-            prefixo: PREFIXO.to_owned(),
-            midia_retencao_dias: 4,
+            prefix: PREFIXO.to_owned(),
+            attachment_retention_days: 4,
             ..MatrixConfig::default()
         }
     }
@@ -464,7 +464,7 @@ impl Cenario {
         ExpiracaoMidia::novo(
             Arc::clone(self.store()),
             self.synapse.cliente(),
-            Segredo::new(ADMIN_TOKEN.to_owned()),
+            Secret::new(ADMIN_TOKEN.to_owned()),
             &self.config(),
         )
         .expect("monta a expiração")
@@ -719,7 +719,7 @@ async fn sem_token_a_rotina_fica_desligada_com_aviso_e_sem_chamada() {
         cenario.synapse.cliente(),
         &cenario.config(),
         None,
-        Some(Segredo::new(ADMIN_TOKEN.to_owned())),
+        Some(Secret::new(ADMIN_TOKEN.to_owned())),
     )
     .expect("com token a rotina é montada");
     let relogio = Arc::clone(&cenario.relogio);
@@ -731,14 +731,14 @@ async fn sem_token_a_rotina_fica_desligada_com_aviso_e_sem_chamada() {
 
 #[tokio::test]
 async fn as_metricas_do_modulo_contam_por_entrada() {
-    use poph_types::Registro;
+    use poph_types::Registry;
 
     let cenario = Cenario::novo("metricas", 1_000 * DIA).await;
     cenario.publicar("laudo.pdf", cenario.agora() - 5 * DIA);
     cenario.publicar("foto.jpg", cenario.agora() - 6 * DIA);
     cenario.publicar("novo.pdf", cenario.agora() - DIA);
 
-    let registro = Registro::new();
+    let registro = Registry::new();
     let metricas = Arc::new(MetricasMatrix::registrar(&registro).expect("registra"));
     let relogio = Arc::clone(&cenario.relogio);
     let servico = cenario
@@ -750,7 +750,7 @@ async fn as_metricas_do_modulo_contam_por_entrada() {
     assert_eq!(relato.redigidas, 2, "{relato:?}");
     assert_eq!(relato.apagadas, 2);
 
-    let texto = registro.renderizar();
+    let texto = registro.render();
     assert!(
         texto.contains("poph_matrix_midias_redigidas_total 2\n"),
         "{texto}"
@@ -778,11 +778,11 @@ async fn o_prazo_configurado_manda_no_corte() {
 
     // Um dia de retenção: a mídia de dois dias já venceu.
     let mut config = cenario.config();
-    config.midia_retencao_dias = 1;
+    config.attachment_retention_days = 1;
     let servico = ExpiracaoMidia::novo(
         Arc::clone(cenario.store()),
         cenario.synapse.cliente(),
-        Segredo::new(ADMIN_TOKEN.to_owned()),
+        Secret::new(ADMIN_TOKEN.to_owned()),
         &config,
     )
     .expect("monta")
@@ -798,7 +798,7 @@ async fn o_prazo_configurado_manda_no_corte() {
     let padrao = ExpiracaoMidia::novo(
         Arc::clone(outro.store()),
         outro.synapse.cliente(),
-        Segredo::new(ADMIN_TOKEN.to_owned()),
+        Secret::new(ADMIN_TOKEN.to_owned()),
         &outro.config(),
     )
     .expect("monta")

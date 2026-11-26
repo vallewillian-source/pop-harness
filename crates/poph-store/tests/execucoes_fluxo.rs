@@ -28,8 +28,8 @@ use poph_store::{
     TransicaoDeFluxo,
 };
 use poph_types::{
-    AtorAcao, AtorEvento, DomainError, EstadoEfeito, FechadaPor, FichaId, FluxoId, RevisaoId,
-    StatusEtapa, StatusExecucao, StatusFicha, TipoEventoFicha,
+    ActionActor, ClosedBy, DomainError, EffectState, EventActor, ExecutionStatus, FlowId,
+    RecordEventKind, RecordId, RecordStatus, RevisionId, StepStatus,
 };
 use rusqlite::Connection;
 
@@ -99,7 +99,7 @@ impl Cenario {
     }
 
     /// Conversa (que já nasce com a Ficha) e o id da Ficha.
-    fn ficha(&self, org: &Org, agente: &Agente) -> (poph_store::Conversa, FichaId) {
+    fn ficha(&self, org: &Org, agente: &Agente) -> (poph_store::Conversa, RecordId) {
         let conversa = self
             .store()
             .conversas()
@@ -125,10 +125,10 @@ impl Cenario {
     }
 
     /// Fluxo publicado (revisão 1) na org, gravado direto: a publicação é a FX-09.
-    fn fluxo(&self, org: &Org, slug: &str) -> (FluxoId, RevisaoId) {
+    fn fluxo(&self, org: &Org, slug: &str) -> (FlowId, RevisionId) {
         let conn = self.conexao();
-        let fluxo: FluxoId = uuid::Uuid::now_v7().to_string().parse().expect("fluxo");
-        let revisao: RevisaoId = uuid::Uuid::now_v7().to_string().parse().expect("revisão");
+        let fluxo: FlowId = uuid::Uuid::now_v7().to_string().parse().expect("fluxo");
+        let revisao: RevisionId = uuid::Uuid::now_v7().to_string().parse().expect("revisão");
         conn.execute(
             "INSERT INTO fluxos (id, org_id, slug, nome, descricao, status, rascunho_fonte,
                                  revisao_atual, version)
@@ -157,9 +157,9 @@ impl Cenario {
         &self,
         org: &Org,
         agente: &Agente,
-        ficha: FichaId,
-        fluxo: FluxoId,
-        revisao: RevisaoId,
+        ficha: RecordId,
+        fluxo: FlowId,
+        revisao: RevisionId,
     ) -> ExecucaoGravada {
         self.store()
             .fluxos()
@@ -174,7 +174,7 @@ impl Cenario {
                     ficha,
                     fluxo,
                     revisao,
-                    ator: AtorEvento::Agente,
+                    ator: EventActor::Agent,
                     ator_ref: Some("agente-de-teste"),
                     decisao_jev: None,
                     estado_inicial: estado_inicial("coleta"),
@@ -195,7 +195,7 @@ impl Drop for Cenario {
 /// Estado de abertura que o motor devolve (`iniciar`): ativa, na etapa de início, sem dado.
 fn estado_inicial(etapa: &str) -> EstadoDaExecucao {
     EstadoDaExecucao {
-        status: StatusExecucao::Ativa,
+        status: ExecutionStatus::Active,
         no_atual: etapa.to_owned(),
         dados_json: "{}".to_owned(),
         atores_que_agiram: Vec::new(),
@@ -208,24 +208,24 @@ fn estado_inicial(etapa: &str) -> EstadoDaExecucao {
 fn transicao_parcial(etapa: &str) -> TransicaoDeFluxo {
     TransicaoDeFluxo {
         novo_estado: EstadoDaExecucao {
-            status: StatusExecucao::Ativa,
+            status: ExecutionStatus::Active,
             no_atual: etapa.to_owned(),
             dados_json: format!("{{\"{etapa}\":{{\"endereco\":\"Rua das Flores, 10\"}}}}"),
-            atores_que_agiram: vec![AtorAcao::Agente],
+            atores_que_agiram: vec![ActionActor::Agent],
             resultado: None,
             motivo: None,
         },
         eventos: vec![
             EventoDaTransicao {
-                tipo: TipoEventoFicha::CamposPreenchidos,
-                ator_tipo: AtorEvento::Agente,
+                tipo: RecordEventKind::FieldsFilled,
+                ator_tipo: EventActor::Agent,
                 payload_json: format!(
                     "{{\"etapa\":\"{etapa}\",\"campos\":{{\"endereco\":\"x\"}}}}"
                 ),
             },
             EventoDaTransicao {
-                tipo: TipoEventoFicha::AcaoExecutada,
-                ator_tipo: AtorEvento::Agente,
+                tipo: RecordEventKind::ActionExecuted,
+                ator_tipo: EventActor::Agent,
                 payload_json: format!(
                     "{{\"etapa\":\"{etapa}\",\"acao\":\"registrar\",\"parcial\":true}}"
                 ),
@@ -246,7 +246,7 @@ fn transicao_parcial(etapa: &str) -> TransicaoDeFluxo {
 fn transicao_avanca(de: &str, para: &str) -> TransicaoDeFluxo {
     TransicaoDeFluxo {
         novo_estado: EstadoDaExecucao {
-            status: StatusExecucao::Ativa,
+            status: ExecutionStatus::Active,
             no_atual: para.to_owned(),
             dados_json: format!(
                 "{{\"{de}\":{{\"endereco\":\"Rua das Flores, 10\"}},\"{para}\":{{}}}}"
@@ -257,18 +257,18 @@ fn transicao_avanca(de: &str, para: &str) -> TransicaoDeFluxo {
         },
         eventos: vec![
             EventoDaTransicao {
-                tipo: TipoEventoFicha::AcaoExecutada,
-                ator_tipo: AtorEvento::Atendente,
+                tipo: RecordEventKind::ActionExecuted,
+                ator_tipo: EventActor::Attendant,
                 payload_json: format!("{{\"etapa\":\"{de}\",\"acao\":\"confirmar\"}}"),
             },
             EventoDaTransicao {
-                tipo: TipoEventoFicha::EtapaConcluida,
-                ator_tipo: AtorEvento::Sistema,
+                tipo: RecordEventKind::StepCompleted,
+                ator_tipo: EventActor::System,
                 payload_json: format!("{{\"etapa\":\"{de}\",\"acao\":\"confirmar\"}}"),
             },
             EventoDaTransicao {
-                tipo: TipoEventoFicha::EtapaEntrou,
-                ator_tipo: AtorEvento::Sistema,
+                tipo: RecordEventKind::StepEntered,
+                ator_tipo: EventActor::System,
                 payload_json: format!("{{\"etapa\":\"{para}\"}}"),
             },
         ],
@@ -283,7 +283,7 @@ fn transicao_avanca(de: &str, para: &str) -> TransicaoDeFluxo {
 fn transicao_conclui(de: &str) -> TransicaoDeFluxo {
     TransicaoDeFluxo {
         novo_estado: EstadoDaExecucao {
-            status: StatusExecucao::Concluida,
+            status: ExecutionStatus::Completed,
             no_atual: "concluida".to_owned(),
             dados_json: format!("{{\"{de}\":{{\"endereco\":\"Rua das Flores, 10\"}}}}"),
             atores_que_agiram: Vec::new(),
@@ -292,13 +292,13 @@ fn transicao_conclui(de: &str) -> TransicaoDeFluxo {
         },
         eventos: vec![
             EventoDaTransicao {
-                tipo: TipoEventoFicha::EtapaConcluida,
-                ator_tipo: AtorEvento::Sistema,
+                tipo: RecordEventKind::StepCompleted,
+                ator_tipo: EventActor::System,
                 payload_json: format!("{{\"etapa\":\"{de}\"}}"),
             },
             EventoDaTransicao {
-                tipo: TipoEventoFicha::ExecucaoConcluida,
-                ator_tipo: AtorEvento::Sistema,
+                tipo: RecordEventKind::ExecutionCompleted,
+                ator_tipo: EventActor::System,
                 payload_json: "{\"resultado\":\"Visita agendada\"}".to_owned(),
             },
         ],
@@ -314,7 +314,7 @@ fn sem_extras() -> ExtrasDaTransicao<'static> {
 }
 
 /// Situação de um registro da tabela de Fichas/execuções, lida por SQL.
-fn status_da_ficha(cenario: &Cenario, org: &Org, ficha: FichaId) -> StatusFicha {
+fn status_da_ficha(cenario: &Cenario, org: &Org, ficha: RecordId) -> RecordStatus {
     let conn = cenario.conexao();
     let texto: String = conn
         .query_row(
@@ -323,7 +323,7 @@ fn status_da_ficha(cenario: &Cenario, org: &Org, ficha: FichaId) -> StatusFicha 
             |linha| linha.get(0),
         )
         .expect("status da ficha");
-    StatusFicha::de_texto(&texto).expect("situação conhecida")
+    RecordStatus::from_text(&texto).expect("situação conhecida")
 }
 
 fn total(cenario: &Cenario, tabela: &str, org: &Org) -> i64 {
@@ -361,7 +361,7 @@ fn iniciar_grava_execucao_primeira_etapa_evento_e_efeitos_de_entrada() {
                 ficha,
                 fluxo,
                 revisao,
-                ator: AtorEvento::Jev,
+                ator: EventActor::Jev,
                 ator_ref: Some("jev"),
                 decisao_jev: Some(poph_store::DecisaoDoJev {
                     escolha: "agendar_visita",
@@ -377,7 +377,7 @@ fn iniciar_grava_execucao_primeira_etapa_evento_e_efeitos_de_entrada() {
         )
         .expect("inicia");
 
-    assert_eq!(gravada.execucao.status, StatusExecucao::Ativa);
+    assert_eq!(gravada.execucao.status, ExecutionStatus::Active);
     assert_eq!(gravada.execucao.no_atual, "coleta");
     assert_eq!(gravada.execucao.ficha_id, ficha);
     assert_eq!(gravada.execucao.revisao_id, revisao);
@@ -388,8 +388,8 @@ fn iniciar_grava_execucao_primeira_etapa_evento_e_efeitos_de_entrada() {
 
     // Um evento só, o de abertura, com a decisão do Jev no detalhe.
     assert_eq!(gravada.eventos.len(), 1);
-    assert_eq!(gravada.eventos[0].tipo, TipoEventoFicha::FluxoIniciado);
-    assert_eq!(gravada.eventos[0].ator_tipo, AtorEvento::Jev);
+    assert_eq!(gravada.eventos[0].tipo, RecordEventKind::FlowStarted);
+    assert_eq!(gravada.eventos[0].ator_tipo, EventActor::Jev);
     assert_eq!(gravada.eventos[0].ator_ref.as_deref(), Some("jev"));
     assert!(
         gravada.eventos[0].payload_json.contains("agendar_visita"),
@@ -411,7 +411,7 @@ fn iniciar_grava_execucao_primeira_etapa_evento_e_efeitos_de_entrada() {
     assert_eq!(etapas.len(), 1);
     assert_eq!(etapas[0].no_id, "coleta");
     assert_eq!(etapas[0].ordem, 1);
-    assert_eq!(etapas[0].status, StatusEtapa::Pendente);
+    assert_eq!(etapas[0].status, StepStatus::Pending);
     assert_eq!(etapas[0].concluiu_em, None);
 
     // Efeito de entrada na fila, pendente.
@@ -423,7 +423,7 @@ fn iniciar_grava_execucao_primeira_etapa_evento_e_efeitos_de_entrada() {
         .expect("efeitos");
     assert_eq!(efeitos.len(), 1);
     assert_eq!(efeitos[0].chave, "etapa:coleta/0");
-    assert_eq!(efeitos[0].estado, EstadoEfeito::Pendente);
+    assert_eq!(efeitos[0].estado, EffectState::Pending);
     assert_eq!(efeitos[0].tentativas, 0);
 }
 
@@ -453,7 +453,7 @@ fn transicao_grava_estado_etapa_evento_e_efeito_numa_escrita() {
         .expect("aplica a parcial");
     assert_eq!(parcial.execucao.no_atual, "coleta");
     assert_eq!(parcial.execucao.versao, 2);
-    assert_eq!(parcial.execucao.status, StatusExecucao::Ativa);
+    assert_eq!(parcial.execucao.status, ExecutionStatus::Active);
     assert_eq!(parcial.eventos.len(), 2);
     assert!(!parcial.repetida);
 
@@ -463,8 +463,8 @@ fn transicao_grava_estado_etapa_evento_e_efeito_numa_escrita() {
         .etapas(org.id, aberta.execucao.id)
         .expect("etapas");
     assert_eq!(etapas.len(), 1, "não entrou em etapa nova");
-    assert_eq!(etapas[0].status, StatusEtapa::Parcial);
-    assert_eq!(etapas[0].atores_que_agiram, vec![AtorAcao::Agente]);
+    assert_eq!(etapas[0].status, StepStatus::Partial);
+    assert_eq!(etapas[0].atores_que_agiram, vec![ActionActor::Agent]);
     assert!(
         etapas[0].dados_json.contains("Rua das Flores"),
         "campos da etapa"
@@ -478,7 +478,7 @@ fn transicao_grava_estado_etapa_evento_e_efeito_numa_escrita() {
     assert_eq!(efeitos.len(), 1);
     assert_eq!(efeitos[0].chave, "acao:coleta.registrar/0");
     assert_eq!(efeitos[0].tipo, "mensagem_ao_cliente");
-    assert_eq!(efeitos[0].estado, EstadoEfeito::Pendente);
+    assert_eq!(efeitos[0].estado, EffectState::Pending);
 
     // 2. Avanço: conclui "coleta" e entra em "confirmacao".
     let avancou = cenario
@@ -503,14 +503,14 @@ fn transicao_grava_estado_etapa_evento_e_efeito_numa_escrita() {
         .expect("etapas");
     assert_eq!(etapas.len(), 2, "a etapa nova abre uma entrada");
     assert_eq!(etapas[0].no_id, "coleta");
-    assert_eq!(etapas[0].status, StatusEtapa::Concluida);
+    assert_eq!(etapas[0].status, StepStatus::Completed);
     assert!(
         etapas[0].concluiu_em.is_some(),
         "etapa concluída tem carimbo"
     );
     assert_eq!(etapas[1].no_id, "confirmacao");
     assert_eq!(etapas[1].ordem, 2);
-    assert_eq!(etapas[1].status, StatusEtapa::Pendente);
+    assert_eq!(etapas[1].status, StepStatus::Pending);
 
     // A linha do tempo cresce em ordem e sem buraco de `seq`.
     let eventos = cenario
@@ -524,14 +524,14 @@ fn transicao_grava_estado_etapa_evento_e_efeito_numa_escrita() {
     assert_eq!(
         eventos
             .iter()
-            .filter(|evento| evento.tipo == TipoEventoFicha::EtapaConcluida)
+            .filter(|evento| evento.tipo == RecordEventKind::StepCompleted)
             .count(),
         1
     );
     assert_eq!(
         eventos
             .iter()
-            .filter(|evento| evento.tipo == TipoEventoFicha::EtapaEntrou)
+            .filter(|evento| evento.tipo == RecordEventKind::StepEntered)
             .count(),
         1
     );
@@ -575,8 +575,8 @@ fn falha_no_meio_nao_deixa_evento_sem_estado() {
     assert!(
         matches!(
             erro,
-            poph_store::ErroStore::Dominio(DomainError::Validacao { campo, .. })
-                if campo == "fluxo_efeitos"
+            poph_store::ErroStore::Dominio(DomainError::Validation { field, .. })
+                if field == "fluxo_efeitos"
         ),
         "erro do CHECK do tipo do efeito: {erro:?}"
     );
@@ -589,7 +589,7 @@ fn falha_no_meio_nao_deixa_evento_sem_estado() {
         .expect("lê a execução");
     assert_eq!(depois.versao, aberta.execucao.versao);
     assert_eq!(depois.no_atual, "coleta");
-    assert_eq!(depois.status, StatusExecucao::Ativa);
+    assert_eq!(depois.status, ExecutionStatus::Active);
     assert_eq!(total(&cenario, "ficha_eventos", &org), eventos_antes);
     assert_eq!(total(&cenario, "fluxo_execucao_etapas", &org), etapas_antes);
     assert_eq!(total(&cenario, "fluxo_efeitos", &org), efeitos_antes);
@@ -647,8 +647,10 @@ fn versao_velha_recebe_412_e_nao_muda_nada() {
         )
         .expect_err("versão velha é recusada");
     match erro {
-        poph_store::ErroStore::Dominio(DomainError::ConflitoDeVersao {
-            esperada, atual, ..
+        poph_store::ErroStore::Dominio(DomainError::VersionConflict {
+            expected: esperada,
+            current: atual,
+            ..
         }) => {
             assert_eq!(esperada, 1);
             assert_eq!(atual, 2);
@@ -656,13 +658,13 @@ fn versao_velha_recebe_412_e_nao_muda_nada() {
         outro => panic!("esperado conflito de versão, veio {outro:?}"),
     }
     assert_eq!(
-        DomainError::ConflitoDeVersao {
-            entidade: "execução de fluxo",
+        DomainError::VersionConflict {
+            entity: "execução de fluxo",
             id: aberta.execucao.id.to_string(),
-            esperada: 1,
-            atual: 2,
+            expected: 1,
+            current: 2,
         }
-        .status_http(),
+        .http_status(),
         412
     );
 
@@ -681,7 +683,7 @@ fn versao_velha_recebe_412_e_nao_muda_nada() {
     assert_eq!(
         eventos
             .iter()
-            .filter(|evento| evento.tipo == TipoEventoFicha::AcaoExecutada)
+            .filter(|evento| evento.tipo == RecordEventKind::ActionExecuted)
             .count(),
         1,
         "a recusa não grava evento"
@@ -778,7 +780,7 @@ fn inicio_recusado_com_ficha_fechada() {
         .conversas()
         .fechar_auditado(org.id, conversa.id, conversa.versao, "token".to_owned())
         .expect("fecha");
-    assert_eq!(status_da_ficha(&cenario, &org, ficha), StatusFicha::Fechada);
+    assert_eq!(status_da_ficha(&cenario, &org, ficha), RecordStatus::Closed);
 
     let erro = cenario
         .store()
@@ -790,7 +792,7 @@ fn inicio_recusado_com_ficha_fechada() {
                 ficha,
                 fluxo,
                 revisao,
-                ator: AtorEvento::Agente,
+                ator: EventActor::Agent,
                 ator_ref: None,
                 decisao_jev: None,
                 estado_inicial: estado_inicial("coleta"),
@@ -801,7 +803,7 @@ fn inicio_recusado_com_ficha_fechada() {
     assert!(
         matches!(
             erro,
-            poph_store::ErroStore::Dominio(DomainError::FichaFechada { .. })
+            poph_store::ErroStore::Dominio(DomainError::RecordClosed { .. })
         ),
         "veio {erro:?}"
     );
@@ -825,7 +827,7 @@ fn inicio_recusado_com_fluxo_nao_liberado() {
                 ficha,
                 fluxo,
                 revisao,
-                ator: AtorEvento::Agente,
+                ator: EventActor::Agent,
                 ator_ref: None,
                 decisao_jev: None,
                 estado_inicial: estado_inicial("coleta"),
@@ -834,7 +836,7 @@ fn inicio_recusado_com_fluxo_nao_liberado() {
         )
         .expect_err("sem permissão não abre");
     match erro {
-        poph_store::ErroStore::Dominio(DomainError::FluxoNaoLiberado { fluxo_id, agent_id }) => {
+        poph_store::ErroStore::Dominio(DomainError::FlowNotAllowed { fluxo_id, agent_id }) => {
             assert_eq!(fluxo_id, fluxo.to_string());
             assert_eq!(agent_id, agente.id.to_string());
         }
@@ -871,7 +873,7 @@ fn inicio_recusado_com_fluxo_inativo() {
                 ficha,
                 fluxo,
                 revisao,
-                ator: AtorEvento::Agente,
+                ator: EventActor::Agent,
                 ator_ref: None,
                 decisao_jev: None,
                 estado_inicial: estado_inicial("coleta"),
@@ -880,11 +882,13 @@ fn inicio_recusado_com_fluxo_inativo() {
         )
         .expect_err("fluxo inativo não abre");
     match erro {
-        poph_store::ErroStore::Dominio(DomainError::Conflito {
-            entidade, motivo, ..
+        poph_store::ErroStore::Dominio(DomainError::Conflict {
+            entity: entidade,
+            reason,
+            ..
         }) => {
             assert_eq!(entidade, "fluxo");
-            assert!(motivo.contains("inativo"), "motivo: {motivo}");
+            assert!(reason.contains("inativo"), "motivo: {reason}");
         }
         outro => panic!("esperado conflito de fluxo inativo, veio {outro:?}"),
     }
@@ -909,7 +913,7 @@ fn inicio_recusado_com_segunda_execucao_ativa() {
                 ficha,
                 fluxo,
                 revisao,
-                ator: AtorEvento::Agente,
+                ator: EventActor::Agent,
                 ator_ref: None,
                 decisao_jev: None,
                 estado_inicial: estado_inicial("coleta"),
@@ -918,7 +922,7 @@ fn inicio_recusado_com_segunda_execucao_ativa() {
         )
         .expect_err("uma execução ativa por Ficha (PRD L6)");
     match erro {
-        poph_store::ErroStore::Dominio(DomainError::ExecucaoJaAtiva {
+        poph_store::ErroStore::Dominio(DomainError::ExecutionAlreadyActive {
             ficha_id,
             execucao_id,
         }) => {
@@ -965,7 +969,7 @@ fn fim_com_encerra_atendimento_fecha_conversa_e_ficha_na_mesma_escrita() {
         )
         .expect("aplica o fim");
 
-    assert_eq!(gravada.execucao.status, StatusExecucao::Concluida);
+    assert_eq!(gravada.execucao.status, ExecutionStatus::Completed);
     assert_eq!(gravada.execucao.no_atual, "concluida");
     assert_eq!(
         gravada.execucao.resultado.as_deref(),
@@ -980,8 +984,8 @@ fn fim_com_encerra_atendimento_fecha_conversa_e_ficha_na_mesma_escrita() {
         .fichas()
         .obter(org.id, ficha)
         .expect("lê a Ficha");
-    assert_eq!(ficha_gravada.status, StatusFicha::Fechada);
-    assert_eq!(ficha_gravada.fechada_por, Some(FechadaPor::Fluxo));
+    assert_eq!(ficha_gravada.status, RecordStatus::Closed);
+    assert_eq!(ficha_gravada.fechada_por, Some(ClosedBy::Flow));
     assert_eq!(
         ficha_gravada.fechada_motivo.as_deref(),
         Some("Visita agendada")
@@ -1005,15 +1009,15 @@ fn fim_com_encerra_atendimento_fecha_conversa_e_ficha_na_mesma_escrita() {
         .fichas()
         .eventos(org.id, ficha, None, 100)
         .expect("eventos");
-    let tipos: Vec<TipoEventoFicha> = eventos.iter().map(|evento| evento.tipo).collect();
-    assert!(tipos.contains(&TipoEventoFicha::ExecucaoConcluida));
+    let tipos: Vec<RecordEventKind> = eventos.iter().map(|evento| evento.tipo).collect();
+    assert!(tipos.contains(&RecordEventKind::ExecutionCompleted));
     assert_eq!(
         tipos.last().copied(),
-        Some(TipoEventoFicha::FichaFechada),
+        Some(RecordEventKind::RecordClosed),
         "o fechamento é o último evento"
     );
     let fechamento = eventos.last().expect("último evento");
-    assert_eq!(fechamento.tipo, TipoEventoFicha::FichaFechada);
+    assert_eq!(fechamento.tipo, RecordEventKind::RecordClosed);
     assert!(fechamento.payload_json.contains("Visita agendada"));
 }
 
@@ -1044,8 +1048,8 @@ fn chave_de_idempotencia_vazia_e_recusada() {
         assert!(
             matches!(
                 erro,
-                poph_store::ErroStore::Dominio(DomainError::Validacao {
-                    campo: "chave_idempotencia",
+                poph_store::ErroStore::Dominio(DomainError::Validation {
+                    field: "chave_idempotencia",
                     ..
                 })
             ),
@@ -1093,14 +1097,14 @@ fn transicao_incoerente_que_encerra_sem_concluir_e_recusada() {
     assert!(
         matches!(
             erro,
-            poph_store::ErroStore::Dominio(DomainError::Validacao {
-                campo: "encerra_atendimento",
+            poph_store::ErroStore::Dominio(DomainError::Validation {
+                field: "encerra_atendimento",
                 ..
             })
         ),
         "veio {erro:?}"
     );
-    assert_eq!(status_da_ficha(&cenario, &org, ficha), StatusFicha::Aberta);
+    assert_eq!(status_da_ficha(&cenario, &org, ficha), RecordStatus::Open);
     assert_eq!(
         cenario
             .store()
@@ -1137,9 +1141,9 @@ fn execucao_encerrada_nao_aceita_transicao() {
             sem_extras(),
         )
         .expect("conclui sem encerrar");
-    assert_eq!(conclui.execucao.status, StatusExecucao::Concluida);
+    assert_eq!(conclui.execucao.status, ExecutionStatus::Completed);
     assert!(!conclui.fechou_atendimento);
-    assert_eq!(status_da_ficha(&cenario, &org, ficha), StatusFicha::Aberta);
+    assert_eq!(status_da_ficha(&cenario, &org, ficha), RecordStatus::Open);
 
     let erro = cenario
         .store()
@@ -1154,11 +1158,13 @@ fn execucao_encerrada_nao_aceita_transicao() {
         )
         .expect_err("execução concluída não aceita transição");
     match erro {
-        poph_store::ErroStore::Dominio(DomainError::Conflito {
-            entidade, motivo, ..
+        poph_store::ErroStore::Dominio(DomainError::Conflict {
+            entity: entidade,
+            reason,
+            ..
         }) => {
             assert_eq!(entidade, "execução de fluxo");
-            assert!(motivo.contains("concluida"), "motivo: {motivo}");
+            assert!(reason.contains("concluida"), "motivo: {reason}");
         }
         outro => panic!("esperado conflito, veio {outro:?}"),
     }
@@ -1180,7 +1186,7 @@ fn execucao_encerrada_nao_aceita_transicao() {
                 ficha,
                 fluxo: outro_fluxo,
                 revisao: outra_revisao,
-                ator: AtorEvento::Agente,
+                ator: EventActor::Agent,
                 ator_ref: None,
                 decisao_jev: None,
                 estado_inicial: estado_inicial("entrega"),
@@ -1216,16 +1222,16 @@ fn duas_threads_agente_e_atendente_so_uma_vence() {
 
     let mut resultados = Vec::new();
     for (rotulo, ator) in [
-        ("agente", AtorEvento::Agente),
-        ("atendente", AtorEvento::Atendente),
+        ("agente", EventActor::Agent),
+        ("atendente", EventActor::Attendant),
     ] {
         let store = Arc::clone(&store);
         let barreira = Arc::clone(&barreira);
         let mut transicao = transicao_parcial("coleta");
         transicao.eventos[0].ator_tipo = ator;
         transicao.novo_estado.atores_que_agiram = vec![match ator {
-            AtorEvento::Agente => AtorAcao::Agente,
-            _ => AtorAcao::Atendente,
+            EventActor::Agent => ActionActor::Agent,
+            _ => ActionActor::Attendant,
         }];
         let chave = format!("chave-{rotulo}");
         resultados.push(std::thread::spawn(move || {
@@ -1252,7 +1258,7 @@ fn duas_threads_agente_e_atendente_so_uma_vence() {
             matches!(
                 saida,
                 Err(poph_store::ErroStore::Dominio(
-                    DomainError::ConflitoDeVersao { .. }
+                    DomainError::VersionConflict { .. }
                 ))
             )
         })
@@ -1270,7 +1276,7 @@ fn duas_threads_agente_e_atendente_so_uma_vence() {
     assert_eq!(
         eventos
             .iter()
-            .filter(|evento| evento.tipo == TipoEventoFicha::AcaoExecutada)
+            .filter(|evento| evento.tipo == RecordEventKind::ActionExecuted)
             .count(),
         1
     );
@@ -1299,7 +1305,7 @@ fn execucao_de_outra_org_nao_e_vista_nem_escrita() {
     assert!(
         matches!(
             erro,
-            poph_store::ErroStore::Dominio(DomainError::NaoEncontrado { .. })
+            poph_store::ErroStore::Dominio(DomainError::NotFound { .. })
         ),
         "veio {erro:?}"
     );
@@ -1334,7 +1340,7 @@ fn execucao_de_outra_org_nao_e_vista_nem_escrita() {
     assert!(
         matches!(
             erro,
-            poph_store::ErroStore::Dominio(DomainError::NaoEncontrado { .. })
+            poph_store::ErroStore::Dominio(DomainError::NotFound { .. })
         ),
         "veio {erro:?}"
     );

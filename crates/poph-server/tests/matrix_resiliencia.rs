@@ -55,7 +55,7 @@ use poph_store::{
 };
 use poph_types::{
     AgentId, ConversationId, DepartmentId, HarnessConfig, IntegrationId, MatrixConfig, OrgId,
-    Segredo,
+    Secret,
 };
 use serde_json::{Value, json};
 use tokio::sync::oneshot;
@@ -866,12 +866,12 @@ impl Drop for Base {
 
 fn config_matrix(url: &str, intervalo_ms: u64) -> MatrixConfig {
     MatrixConfig {
-        habilitado: true,
+        enabled: true,
         homeserver_url: url.to_owned(),
         server_name: SERVIDOR.to_owned(),
-        prefixo: PREFIXO.to_owned(),
-        concorrencia: 4,
-        intervalo_ms,
+        prefix: PREFIXO.to_owned(),
+        concurrency: 4,
+        interval_ms: intervalo_ms,
         ..MatrixConfig::default()
     }
 }
@@ -880,8 +880,8 @@ fn modulo_de(config: &MatrixConfig) -> ModuloMatrix {
     ModuloMatrix {
         config: config.clone(),
         segredos: SegredosMatrix {
-            as_token: Segredo::new(AS_TOKEN.to_owned()),
-            hs_token: Segredo::new(HS_TOKEN.to_owned()),
+            as_token: Secret::new(AS_TOKEN.to_owned()),
+            hs_token: Secret::new(HS_TOKEN.to_owned()),
         },
     }
 }
@@ -897,7 +897,7 @@ fn ajustes_de_teste() -> AjustesDeInicio {
 
 fn cliente_matrix(url: &str) -> ClienteMatrix {
     ClienteMatrix::novo(
-        ConfigCliente::novo(url, SERVIDOR, Segredo::new(AS_TOKEN.to_owned()))
+        ConfigCliente::novo(url, SERVIDOR, Secret::new(AS_TOKEN.to_owned()))
             .expect("config do cliente"),
     )
     .expect("cliente Matrix")
@@ -1084,7 +1084,7 @@ async fn subir_servidor(
         .parse()
         .expect("id da integração");
     let cliente_evo = ClienteEvolution::novo(
-        ConfigEvolution::novo(url_evo, INSTANCIA, Segredo::new(CHAVE_EVO.to_owned()))
+        ConfigEvolution::novo(url_evo, INSTANCIA, Secret::new(CHAVE_EVO.to_owned()))
             .expect("config da Evolution falsa"),
     )
     .expect("cliente da Evolution falsa");
@@ -1092,7 +1092,7 @@ async fn subir_servidor(
         org: base.org,
         instancia: INSTANCIA.to_owned(),
         integracao,
-        segredo: Some(Segredo::new(SEGREDO_WEBHOOK.to_owned())),
+        segredo: Some(Secret::new(SEGREDO_WEBHOOK.to_owned())),
         cliente: Some(cliente_evo),
         teto_midia: TETO_MIDIA,
     };

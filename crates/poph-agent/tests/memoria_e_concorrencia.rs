@@ -339,13 +339,13 @@ async fn mudanca_de_versao_invalida_o_cache() {
         .expect("carrega");
     assert_eq!(primeira.markdown, "v1 do prompt");
     assert_eq!(primeira.versao(), 1);
-    assert_eq!(metricas.config_erros.valor(), 1);
+    assert_eq!(metricas.config_erros.value(), 1);
 
     let segunda = cache
         .carregar_verificando(cenario.org, agente)
         .expect("carrega do cache");
     assert_eq!(segunda.markdown, "v1 do prompt");
-    assert_eq!(metricas.config_acertos.valor(), 1);
+    assert_eq!(metricas.config_acertos.value(), 1);
 
     // Edita só o texto do prompt: a versão do agente não muda, a das instruções muda.
     let instrucoes = cenario
@@ -370,7 +370,7 @@ async fn mudanca_de_versao_invalida_o_cache() {
         .carregar_verificando(cenario.org, agente)
         .expect("recarrega");
     assert_eq!(terceira.markdown, "v2 do prompt");
-    assert_eq!(metricas.config_invalidadas.valor(), 1);
+    assert_eq!(metricas.config_invalidadas.value(), 1);
 
     // Muda a versão do próprio agente (nome): também invalida.
     let atual = cenario

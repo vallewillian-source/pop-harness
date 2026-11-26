@@ -37,8 +37,8 @@ use poph_jev::{
 };
 use poph_store::{Direcao, NovaConversa, NovaMensagem, NovaOrg, NovoAgente, Papel, Store};
 use poph_types::{
-    AgentId, ConversationId, FerramentaConfig, GatesJev, MessageId, OrgId, ProductId,
-    StructuredInstructions,
+    AgentId, ConversationId, JevGates, MessageId, OrgId, ProductId, StructuredInstructions,
+    ToolConfig,
 };
 
 /// Produto que a busca falsa devolve. Nome e preço servem de prova no prompt.
@@ -179,12 +179,12 @@ impl Cenario {
             .id;
         let estruturado = StructuredInstructions {
             tools: vec![
-                FerramentaConfig {
+                ToolConfig {
                     name: "consultar_base".to_owned(),
                     enabled: true,
                     when_to_use: String::new(),
                 },
-                FerramentaConfig {
+                ToolConfig {
                     name: "buscar_produto".to_owned(),
                     enabled: true,
                     when_to_use: String::new(),
@@ -198,7 +198,7 @@ impl Cenario {
                 org,
                 agente,
                 0,
-                &estruturado.para_json(),
+                &estruturado.to_json(),
                 "# Bia\n\nVocê é a atendente da FixProLar.",
                 true,
             )
@@ -340,14 +340,14 @@ fn roteiro_texto(texto: &str) -> Roteiro {
     ])
 }
 
-fn so_g5() -> GatesJev {
-    GatesJev {
+fn so_g5() -> JevGates {
+    JevGates {
         g5: true,
-        ..GatesJev::default()
+        ..JevGates::default()
     }
 }
 
-fn motor_jev(jev: Arc<JevFalso>, gates: GatesJev) -> Arc<dyn AvaliadorGates> {
+fn motor_jev(jev: Arc<JevFalso>, gates: JevGates) -> Arc<dyn AvaliadorGates> {
     Arc::new(MotorJev::novo(jev, gates, "jev-latest"))
 }
 
@@ -459,7 +459,7 @@ async fn g5_escolhe_o_produto_e_dispensa_a_ferramenta() {
     );
     assert!(jev_json.contains("\"gate\":\"g5\""), "{jev_json}");
     assert!(jev_json.contains(&baratas), "{jev_json}");
-    assert_eq!(cenario.metricas.produtos_escolhidos_g5.valor(), 1);
+    assert_eq!(cenario.metricas.produtos_escolhidos_g5.value(), 1);
     assert_eq!(
         cenario.catalogo_buscas(),
         1,
@@ -474,10 +474,10 @@ struct JevInventor {
 }
 
 impl AvaliadorGates for JevInventor {
-    fn gates_efetivos(&self, _ajuste: Option<AjusteGates>) -> GatesJev {
-        GatesJev {
+    fn gates_efetivos(&self, _ajuste: Option<AjusteGates>) -> JevGates {
+        JevGates {
             g5: true,
-            ..GatesJev::default()
+            ..JevGates::default()
         }
     }
 
@@ -529,7 +529,7 @@ async fn g5_id_fora_dos_candidatos_nunca_e_injetado_pelo_codigo() {
     );
     assert!(!prompt.contains(NOME_CUPINS));
     assert!(nomes_das_ferramentas(pedido).contains(&"buscar_produto".to_owned()));
-    assert_eq!(cenario.metricas.produtos_escolhidos_g5.valor(), 0);
+    assert_eq!(cenario.metricas.produtos_escolhidos_g5.value(), 0);
 }
 
 /// Id inventado (fora dos candidatos) não injeta nada: o turno é o de hoje, com a ferramenta.
@@ -561,7 +561,7 @@ async fn g5_id_inventado_mantem_o_comportamento_de_hoje() {
         ferramentas.contains(&"buscar_produto".to_owned()),
         "sem escolha válida, o LLM continua com a ferramenta: {ferramentas:?}"
     );
-    assert_eq!(cenario.metricas.produtos_escolhidos_g5.valor(), 0);
+    assert_eq!(cenario.metricas.produtos_escolhidos_g5.value(), 0);
 }
 
 /// `nenhum` é abstenção: comportamento de hoje.
@@ -715,7 +715,7 @@ async fn g5_desligado_nao_faz_busca_de_produto_nem_pergunta() {
     let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[])));
     let (motor, provedor) = cenario.motor(
         vec![roteiro_texto("Olá! Como posso ajudar?")],
-        Some(motor_jev(Arc::clone(&jev), GatesJev::default())),
+        Some(motor_jev(Arc::clone(&jev), JevGates::default())),
     );
 
     let gatilho = cenario.falar("quanto custa a dedetização?");
@@ -789,10 +789,10 @@ async fn g3_nada_dispensa_o_g5() {
         ("g3_precisa", G3_NADA),
         ("g5_produto", baratas.as_str()),
     ])));
-    let gates = GatesJev {
+    let gates = JevGates {
         g3: true,
         g5: true,
-        ..GatesJev::default()
+        ..JevGates::default()
     };
     let (motor, provedor) = cenario.motor(
         vec![roteiro_texto("Oi! Tudo bem? Como posso ajudar?")],
@@ -815,10 +815,10 @@ async fn g3_nada_dispensa_o_g5() {
 #[test]
 fn ajuste_apenas_liga_so_o_gate_pedido() {
     let ajuste = AjusteGates::apenas(IdGate::G5);
-    let efetivos = ajuste.sobre(GatesJev {
+    let efetivos = ajuste.sobre(JevGates {
         g1: true,
         g3: true,
-        ..GatesJev::default()
+        ..JevGates::default()
     });
     assert!(efetivos.g5);
     assert!(!efetivos.g1 && !efetivos.g2 && !efetivos.g3 && !efetivos.g4);
@@ -850,7 +850,7 @@ async fn medicao_rodadas_de_ferramenta_por_turno() {
             ]),
             roteiro_texto("A dedetização de baratas custa R$ 180,00."),
         ],
-        Some(motor_jev(Arc::clone(&jev), GatesJev::default())),
+        Some(motor_jev(Arc::clone(&jev), JevGates::default())),
     );
     let gatilho = sem.falar("quanto custa para matar baratas?");
     let sem_g5 = sem.turno(&motor_sem, gatilho).await;

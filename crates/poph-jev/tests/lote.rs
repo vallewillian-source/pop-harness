@@ -12,7 +12,7 @@ use poph_jev::{
     AjusteGates, AvaliadorGates, ErroJev, EstadoJev, G1_CONTINUAR, G1_TRANSFERIR, G2_PROCESSAR,
     G3_BASE, G3_NADA, IdGate, JevFalso, MensagemJev, MotorJev, OpcoesJev, OrigemDecisao,
 };
-use poph_types::GatesJev;
+use poph_types::JevGates;
 
 /// Estado que faz G1, G2 e G3 se aplicarem (e G4, com dois departamentos).
 fn estado() -> EstadoJev {
@@ -27,13 +27,13 @@ fn estado() -> EstadoJev {
         .com_departamentos(vec!["Comercial".to_owned(), "Suporte".to_owned()])
 }
 
-fn gates(g1: bool, g2: bool, g3: bool, g4: bool) -> GatesJev {
-    GatesJev {
+fn gates(g1: bool, g2: bool, g3: bool, g4: bool) -> JevGates {
+    JevGates {
         g1,
         g2,
         g3,
         g4,
-        ..GatesJev::default()
+        ..JevGates::default()
     }
 }
 
@@ -44,7 +44,7 @@ fn escolhas(itens: &[(&str, &str)]) -> BTreeMap<String, String> {
         .collect()
 }
 
-fn motor(jev: Arc<JevFalso>, globais: GatesJev) -> Arc<MotorJev> {
+fn motor(jev: Arc<JevFalso>, globais: JevGates) -> Arc<MotorJev> {
     Arc::new(MotorJev::novo(jev, globais, "jev-latest"))
 }
 
@@ -107,7 +107,7 @@ async fn o_pedido_leva_o_estado_da_conversa() {
 #[tokio::test]
 async fn sem_gate_ligado_nenhuma_pergunta_e_enviada() {
     let jev = Arc::new(JevFalso::com_escolhas(BTreeMap::new()));
-    let avaliador = motor(Arc::clone(&jev), GatesJev::default());
+    let avaliador = motor(Arc::clone(&jev), JevGates::default());
 
     let resultado = avaliador.avaliar(estado(), None).await;
 
@@ -330,7 +330,7 @@ async fn ajuste_do_agente_sobrepoe_so_o_que_declara() {
     let desligado = AjusteGates::de_json(r#"{"ativo": false}"#).unwrap();
     assert_eq!(
         avaliador.gates_efetivos(Some(desligado)),
-        GatesJev::default()
+        JevGates::default()
     );
 }
 

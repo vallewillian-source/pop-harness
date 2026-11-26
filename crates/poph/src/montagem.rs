@@ -20,21 +20,21 @@ use poph_agent::{BuscadorBase, BuscadorProdutos, CatalogoProdutos, ConsultarBase
 use poph_core::llm::{LimitadorLlm, LlmProvider, OpenAiCompatibleClient, OpenAiCompatibleConfig};
 use poph_fluxos::cache::CacheRevisoes;
 use poph_store::Store;
-use poph_types::{HarnessConfig, LlmConfig, MetricasBase, Registro, Segredo};
+use poph_types::{BaseMetrics, HarnessConfig, LlmConfig, Registry, Secret};
 
 use crate::config;
 
 /// Chaves que a montagem usa. A do modelo é obrigatória; a do Jev só liga o Jev quando existe.
 pub struct Chaves {
     /// Chave do provedor de LLM (`ANTIGRAVITY_API_KEY`).
-    pub llm: Segredo,
+    pub llm: Secret,
     /// Chave do Jev (`TYPESAFE_API_KEY`), quando há.
-    pub jev: Option<Segredo>,
+    pub jev: Option<Secret>,
 }
 
 /// Métricas que a montagem publica. O servidor passa as dele; o chat usa as próprias.
 pub struct Metricas {
-    base: MetricasBase,
+    base: BaseMetrics,
     turno: MetricasTurno,
     fluxo: MetricasFluxo,
     memoria: MetricasMemoria,
@@ -42,7 +42,7 @@ pub struct Metricas {
 
 impl Metricas {
     /// Métricas próprias do processo, que não aparecem em `/metrics` (o `poph chat`).
-    pub fn proprias(base: MetricasBase) -> Self {
+    pub fn proprias(base: BaseMetrics) -> Self {
         Self {
             base,
             turno: MetricasTurno::proprio(),
@@ -52,7 +52,7 @@ impl Metricas {
     }
 
     /// Métricas publicadas no registro dado (o `poph serve` usa o registro do `/metrics`).
-    pub fn registradas(base: MetricasBase, registro: &Registro) -> Result<Self, String> {
+    pub fn registradas(base: BaseMetrics, registro: &Registry) -> Result<Self, String> {
         Ok(Self {
             base,
             turno: MetricasTurno::registrar(registro)
@@ -145,14 +145,15 @@ fn registro_do_turno(
 
 fn cliente_llm(
     llm: &LlmConfig,
-    chave: Segredo,
-    metricas: MetricasBase,
+    chave: Secret,
+    metricas: BaseMetrics,
     rotulo: &str,
 ) -> Result<Arc<dyn LlmProvider>, String> {
     let cliente = OpenAiCompatibleConfig::da_config(llm, chave)
         .map_err(|erro| format!("configuração do provedor {rotulo}: {erro}"))?;
-    let limites_llm = LimitadorLlm::new(llm.simultaneos as usize, llm.simultaneos as usize)
-        .map_err(|erro| format!("limites do provedor {rotulo}: {erro}"))?;
+    let limites_llm =
+        LimitadorLlm::new(llm.concurrent_calls as usize, llm.concurrent_calls as usize)
+            .map_err(|erro| format!("limites do provedor {rotulo}: {erro}"))?;
     let cliente = OpenAiCompatibleClient::new(cliente, limites_llm, metricas)
         .map_err(|erro| format!("cliente do provedor {rotulo}: {erro}"))?;
     Ok(Arc::new(cliente))
@@ -161,30 +162,30 @@ fn cliente_llm(
 fn registro_de_provedores(
     configuracao: &HarnessConfig,
     ambiente: &config::Ambiente,
-    metricas: MetricasBase,
+    metricas: BaseMetrics,
     padrao: &Arc<dyn LlmProvider>,
 ) -> Result<(Provedores, BTreeMap<String, u32>), String> {
     let padrao = ProvedorResolvido::novo(
-        configuracao.llm.provedor.as_str(),
+        configuracao.llm.provider.as_str(),
         Arc::clone(padrao),
-        configuracao.llm.modelo.clone(),
+        configuracao.llm.model.clone(),
     );
     let mut nomeados = BTreeMap::new();
     let mut tetos = BTreeMap::new();
-    for (nome, sobreposicao) in &configuracao.provedores {
-        let efetivo = sobreposicao.efetivo(&configuracao.llm);
-        let Some(chave) = config::chave_llm(ambiente, &efetivo.chave_env) else {
+    for (nome, sobreposicao) in &configuracao.providers {
+        let efetivo = sobreposicao.effective(&configuracao.llm);
+        let Some(chave) = config::chave_llm(ambiente, &efetivo.api_key_env) else {
             eprintln!(
                 "[aviso] provedor `{nome}` sem a variável {} no ambiente: agentes que apontam para ele não atendem",
-                efetivo.chave_env
+                efetivo.api_key_env
             );
             continue;
         };
         let cliente = cliente_llm(&efetivo, chave, metricas.clone(), &format!("`{nome}`"))?;
-        tetos.insert(nome.clone(), efetivo.simultaneos);
+        tetos.insert(nome.clone(), efetivo.concurrent_calls);
         nomeados.insert(
             nome.clone(),
-            ProvedorResolvido::novo(nome.as_str(), cliente, efetivo.modelo.clone()),
+            ProvedorResolvido::novo(nome.as_str(), cliente, efetivo.model.clone()),
         );
     }
     Ok((Provedores::novo(padrao, nomeados), tetos))
@@ -230,7 +231,7 @@ pub fn montar(
             metricas.memoria.clone(),
         ),
         Arc::new(Limitador::novo(
-            OpcoesLimites::da_config(&configuracao.limites, &configuracao.llm)
+            OpcoesLimites::da_config(&configuracao.limits, &configuracao.llm)
                 .com_tetos_por_provedor(tetos),
             metricas.memoria.clone(),
         )),
@@ -238,7 +239,7 @@ pub fn montar(
         OpcoesTurno::default(),
         metricas.turno,
     )
-    .com_modelo_padrao(configuracao.llm.modelo.clone())
+    .com_modelo_padrao(configuracao.llm.model.clone())
     .com_provedores(Arc::new(provedores))
     // Arquivos do cliente (HR-23b): pasta dos blobs e limites, para a imagem do anexo chegar ao
     // modelo como parte multimodal. Sem isto, só o texto extraído entra no prompt.
@@ -248,7 +249,7 @@ pub fn montar(
     .com_handoff(poph_jev::Orientacao::da_config(&configuracao.handoff))
     // Fluxos e Fichas (FX-23): o turno escolhe (G9), valida e inicia a execução na Ficha. Desligado
     // em `[fluxos] ativo`, nada disso acontece e a Ficha continua.
-    .com_fluxos(&configuracao.fluxos);
+    .com_fluxos(&configuracao.flows);
     // O que o processo já tem do módulo é reaproveitado: mesmo cache de revisões da API e os
     // mesmos contadores `poph_fluxos_g9_*` do `/metrics`.
     if let Some(cache) = fluxos.cache.clone() {
@@ -259,7 +260,7 @@ pub fn montar(
     }
     // Jev (HR-28): só entra quando está ligado na configuração e a chave está no ambiente. Sem ele,
     // o turno roda exatamente como antes da HR-28 (nenhum gate é perguntado).
-    if configuracao.jev.ativo {
+    if configuracao.jev.enabled {
         match chaves.jev {
             None => eprintln!(
                 "[aviso] Jev ligado na configuração, mas sem TYPESAFE_API_KEY: seguindo sem Jev"
@@ -271,7 +272,7 @@ pub fn montar(
                     let avaliador = poph_jev::MotorJev::novo(
                         Arc::new(transporte),
                         configuracao.jev.gates,
-                        configuracao.jev.modelo.clone(),
+                        configuracao.jev.model.clone(),
                     );
                     motor = motor.com_jev(Arc::new(avaliador));
                 }
@@ -296,8 +297,8 @@ pub fn montar(
     // FX-24: as três ferramentas do fluxo (ação, abandono e o início da reserva). Registradas só
     // com `[fluxos] ativo = true`, com o mesmo cache de revisões da API quando o processo tem um.
     let ajustes_do_fluxo = match fluxos.cache.clone() {
-        Some(cache) => AjustesDoFluxo::da_config(&configuracao.fluxos).com_cache(cache),
-        None => AjustesDoFluxo::da_config(&configuracao.fluxos),
+        Some(cache) => AjustesDoFluxo::da_config(&configuracao.flows).com_cache(cache),
+        None => AjustesDoFluxo::da_config(&configuracao.flows),
     };
     let registro = poph_agent::turno::registrar_ferramentas_do_fluxo_com(
         registro,
@@ -335,8 +336,8 @@ pub fn montar(
     );
     // Falha do modelo (HR-26i): a política vem do `[turno]` do `poph.toml`.
     let opcoes_fluxo = OpcoesFluxo::default().com_falha_modelo(
-        configuracao.turno.tentativas_falha_modelo,
-        std::time::Duration::from_millis(configuracao.turno.atraso_falha_modelo_ms),
+        configuracao.turn.model_failure_attempts,
+        std::time::Duration::from_millis(configuracao.turn.model_failure_delay_ms),
     );
     let fluxo = Fluxo::com_metricas(Arc::clone(&store), atores, opcoes_fluxo, metricas.fluxo);
     processador.ligar_fluxo(fluxo.clone());

@@ -32,7 +32,7 @@ use poph_store::{
     NovoDepartamento, Origem, Pagina, Papel, StatusConversa, Store,
 };
 use poph_types::{
-    AgentId, ConversationId, DepartmentId, HarnessConfig, MatrixConfig, OrgId, Segredo,
+    AgentId, ConversationId, DepartmentId, HarnessConfig, MatrixConfig, OrgId, Secret,
 };
 use serde_json::{Value, json};
 
@@ -487,14 +487,14 @@ impl Cenario {
         fs::create_dir_all(pasta.join("dados")).expect("pasta de dados");
 
         let mut config = HarnessConfig::default();
-        config.dados.diretorio = pasta.join("dados");
+        config.data.directory = pasta.join("dados");
         config.matrix = Some(MatrixConfig {
-            habilitado: true,
+            enabled: true,
             homeserver_url,
             server_name: SERVIDOR.to_owned(),
-            prefixo: PREFIXO.to_owned(),
-            concorrencia: 4,
-            intervalo_ms: 50,
+            prefix: PREFIXO.to_owned(),
+            concurrency: 4,
+            interval_ms: 50,
             ..MatrixConfig::default()
         });
         config.validar().expect("configuração válida");
@@ -523,8 +523,8 @@ impl Cenario {
         ModuloMatrix {
             config: self.config.matrix.clone().expect("seção [matrix]"),
             segredos: SegredosMatrix {
-                as_token: Segredo::new(AS_TOKEN.to_owned()),
-                hs_token: Segredo::new(HS_TOKEN.to_owned()),
+                as_token: Secret::new(AS_TOKEN.to_owned()),
+                hs_token: Secret::new(HS_TOKEN.to_owned()),
             },
         }
     }

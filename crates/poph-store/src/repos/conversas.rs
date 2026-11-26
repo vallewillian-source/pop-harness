@@ -225,16 +225,16 @@ impl Conversas<'_> {
             };
             if versao_atual != esperada_i64 {
                 return Err(ErroStore::Dominio(
-                    poph_types::DomainError::ConflitoDeVersao {
-                        entidade: "conversa",
+                    poph_types::DomainError::VersionConflict {
+                        entity: "conversa",
                         id: texto_id.clone(),
-                        esperada,
-                        atual: u64::try_from(versao_atual).unwrap_or(0),
+                        expected: esperada,
+                        current: u64::try_from(versao_atual).unwrap_or(0),
                     },
                 ));
             }
             if situacao == fechada {
-                return Err(ErroStore::Dominio(poph_types::DomainError::ConversaEncerrada {
+                return Err(ErroStore::Dominio(poph_types::DomainError::ConversationClosed {
                     id: texto_id.clone(),
                 }));
             }
@@ -288,19 +288,19 @@ impl Conversas<'_> {
             };
             if versao_atual != esperada_i64 {
                 return Err(ErroStore::Dominio(
-                    poph_types::DomainError::ConflitoDeVersao {
-                        entidade: "conversa",
+                    poph_types::DomainError::VersionConflict {
+                        entity: "conversa",
                         id: texto_id.clone(),
-                        esperada,
-                        atual: u64::try_from(versao_atual).unwrap_or(0),
+                        expected: esperada,
+                        current: u64::try_from(versao_atual).unwrap_or(0),
                     },
                 ));
             }
             if situacao == fechada {
-                return Err(ErroStore::Dominio(poph_types::DomainError::Conflito {
-                    entidade: "conversa",
+                return Err(ErroStore::Dominio(poph_types::DomainError::Conflict {
+                    entity: "conversa",
                     id: texto_id.clone(),
-                    motivo: "a conversa já está fechada".to_owned(),
+                    reason: "a conversa já está fechada".to_owned(),
                 }));
             }
             let alteradas = conn
@@ -334,7 +334,7 @@ impl Conversas<'_> {
                 conn,
                 &texto_org,
                 &texto_id,
-                poph_types::FechadaPor::Admin,
+                poph_types::ClosedBy::Admin,
                 MOTIVO_FECHAMENTO_ADMIN,
                 agora,
                 metricas.as_ref(),
@@ -354,9 +354,9 @@ impl Conversas<'_> {
         motivo: String,
     ) -> Resultado<bool> {
         if motivo.trim().is_empty() {
-            return Err(ErroStore::Dominio(poph_types::DomainError::Validacao {
-                campo: "motivo",
-                motivo: "informe o motivo do encerramento".to_owned(),
+            return Err(ErroStore::Dominio(poph_types::DomainError::Validation {
+                field: "motivo",
+                reason: "informe o motivo do encerramento".to_owned(),
             }));
         }
         let texto_org = org.to_string();
@@ -379,7 +379,7 @@ impl Conversas<'_> {
                 params![texto_org, texto_id, agora],
             )?;
             super::fichas::fechar_ficha_da_conversa(
-                conn, &texto_org, &texto_id, poph_types::FechadaPor::Agente, &motivo, agora,
+                conn, &texto_org, &texto_id, poph_types::ClosedBy::Agent, &motivo, agora,
                 metricas.as_ref(),
             )?;
             let detalhe = serde_json::json!({"motivo": motivo, "ator": "agente"}).to_string();
@@ -457,7 +457,7 @@ impl Conversas<'_> {
             };
             if recusar_encerrada && situacao == fechada {
                 return Err(ErroStore::Dominio(
-                    poph_types::DomainError::ConversaEncerrada {
+                    poph_types::DomainError::ConversationClosed {
                         id: texto_id.clone(),
                     },
                 ));
@@ -775,7 +775,7 @@ impl Conversas<'_> {
                 .map_err(ErroStore::from)?;
             if status == StatusConversa::Aberta && situacao_atual.as_deref() == Some(fechada) {
                 return Err(ErroStore::Dominio(
-                    poph_types::DomainError::ConversaEncerrada {
+                    poph_types::DomainError::ConversationClosed {
                         id: texto_id.clone(),
                     },
                 ));
@@ -813,7 +813,7 @@ impl Conversas<'_> {
                     conn,
                     &texto_org,
                     &texto_id,
-                    poph_types::FechadaPor::Sistema,
+                    poph_types::ClosedBy::System,
                     MOTIVO_FECHAMENTO_SITUACAO,
                     agora,
                     metricas.as_ref(),

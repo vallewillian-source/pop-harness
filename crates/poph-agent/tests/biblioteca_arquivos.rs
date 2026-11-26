@@ -30,7 +30,7 @@ use poph_store::{
     ArquivoBiblioteca, ItemSaida, NovaConversa, NovaOrg, NovoAgente, NovoArquivoBiblioteca, Store,
 };
 use poph_types::{
-    AgentId, ConversationId, FerramentaConfig, FileId, OrgId, StructuredInstructions, TurnId,
+    AgentId, ConversationId, FileId, OrgId, StructuredInstructions, ToolConfig, TurnId,
 };
 use serde_json::{Value, json};
 
@@ -112,7 +112,7 @@ impl Cenario {
         let estruturado = StructuredInstructions {
             tools: ferramentas
                 .iter()
-                .map(|nome| FerramentaConfig {
+                .map(|nome| ToolConfig {
                     name: (*nome).to_owned(),
                     enabled: true,
                     when_to_use: String::new(),
@@ -126,7 +126,7 @@ impl Cenario {
                 org,
                 agente,
                 0,
-                &estruturado.para_json(),
+                &estruturado.to_json(),
                 "# Bia\n\nVocê é a atendente da FixProLar.",
                 true,
             )

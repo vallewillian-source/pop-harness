@@ -44,7 +44,7 @@ use poph_store::{
     EstadoSaida, NovaConversa, NovaOrg, NovoAgente, Origem, Pagina, RespostaHumana,
     RespostaHumanaNova, Store,
 };
-use poph_types::{ConversationId, HarnessConfig, IntegrationId, OrgId, Segredo};
+use poph_types::{ConversationId, HarnessConfig, IntegrationId, OrgId, Secret};
 use reqwest::{Client, StatusCode as StatusHttp};
 use serde_json::{Value, json};
 use tokio::sync::oneshot;
@@ -458,7 +458,7 @@ impl Cenario {
             ConfigEvolution::novo(
                 url_evo.to_owned(),
                 INSTANCIA,
-                Segredo::new(CHAVE_EVO.to_owned()),
+                Secret::new(CHAVE_EVO.to_owned()),
             )
             .expect("config da Evolution falsa"),
         )
@@ -474,7 +474,7 @@ impl Cenario {
             org,
             instancia: INSTANCIA.to_owned(),
             integracao,
-            segredo: Some(Segredo::new(SEGREDO_WEBHOOK.to_owned())),
+            segredo: Some(Secret::new(SEGREDO_WEBHOOK.to_owned())),
             cliente: Some(cliente),
             teto_midia: TETO_MIDIA,
         }
@@ -491,7 +491,7 @@ impl Cenario {
             ConfigCliente::novo(
                 self.url_synapse.clone(),
                 SERVER_NAME.to_owned(),
-                Segredo::new(AS_TOKEN.to_owned()),
+                Secret::new(AS_TOKEN.to_owned()),
             )
             .expect("config do cliente do Matrix"),
         )
@@ -509,7 +509,7 @@ impl Cenario {
             .com_matrix_as(Arc::new(ReceptorAs::novo(
                 PREFIXO,
                 SERVER_NAME,
-                Segredo::new(HS_TOKEN.to_owned()),
+                Secret::new(HS_TOKEN.to_owned()),
                 entrega.clone(),
             )));
 

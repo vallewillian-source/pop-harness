@@ -32,7 +32,7 @@
 
 use base64::Engine as _;
 use poph_types::{
-    AnexoEntrada, EventoEstado, InboundEvent, IntegrationId, MidiaForaDoEscopo, Segredo,
+    InboundAttachment, InboundEvent, IntegrationId, Secret, StateEvent, UnsupportedContent,
 };
 use serde_json::Value;
 use thiserror::Error;
@@ -102,8 +102,8 @@ pub struct EntradaRecebida {
 
 impl EntradaRecebida {
     /// Evento final, com os anexos já guardados (blob) ou embutidos (bytes).
-    pub fn com_anexos(mut self, anexos: Vec<AnexoEntrada>) -> InboundEvent {
-        self.evento.anexos = anexos;
+    pub fn com_anexos(mut self, anexos: Vec<InboundAttachment>) -> InboundEvent {
+        self.evento.attachments = anexos;
         self.evento
     }
 }
@@ -114,7 +114,7 @@ pub enum Decisao {
     /// Mensagem do cliente (texto e/ou anexo).
     Entrada(EntradaRecebida),
     /// Mudança de estado do canal (conectado, desconectado, QR).
-    Estado(EventoEstado),
+    Estado(StateEvent),
     /// Entrega reconhecida e descartada, com o motivo (vai para log e métrica).
     Ignorado(MotivoIgnorado),
 }
@@ -144,14 +144,14 @@ pub enum MotivoIgnorado {
 /// Confere o segredo do webhook em tempo constante.
 ///
 /// Comparação em tempo constante evita que o tamanho do prefixo correto vaze pelo tempo de resposta.
-pub fn conferir_segredo(esperado: &Segredo, recebido: Option<&str>) -> Result<(), ErroWebhook> {
-    if esperado.expor().trim().is_empty() {
+pub fn conferir_segredo(esperado: &Secret, recebido: Option<&str>) -> Result<(), ErroWebhook> {
+    if esperado.expose().trim().is_empty() {
         return Err(ErroWebhook::SemSegredoConfigurado);
     }
     let Some(recebido) = recebido else {
         return Err(ErroWebhook::SegredoAusente);
     };
-    if igual_em_tempo_constante(esperado.expor().as_bytes(), recebido.trim().as_bytes()) {
+    if igual_em_tempo_constante(esperado.expose().as_bytes(), recebido.trim().as_bytes()) {
         Ok(())
     } else {
         Err(ErroWebhook::SegredoInvalido)
@@ -256,9 +256,9 @@ pub fn interpretar(integracao: IntegrationId, corpo: &Value, politica: &Politica
     } else if let Some(tipo) = midia_fora_do_escopo(&conteudo) {
         // MX-45: sem download. O texto de histórico é o que o agente lê; a legenda não entra.
         if de_mim {
-            return Decisao::Ignorado(MotivoIgnorado::MidiaNaoSuportada(tipo.rotulo().to_owned()));
+            return Decisao::Ignorado(MotivoIgnorado::MidiaNaoSuportada(tipo.label().to_owned()));
         }
-        texto = Some(tipo.texto_de_historico().to_owned());
+        texto = Some(tipo.history_text().to_owned());
     }
 
     if texto.is_none() && midias.is_empty() {
@@ -283,25 +283,25 @@ pub fn interpretar(integracao: IntegrationId, corpo: &Value, politica: &Politica
     }
 
     let evento = InboundEvent {
-        integracao,
+        integration: integracao,
         id_externo: id,
         peer: peer.clone(),
         remetente,
-        texto: texto.unwrap_or_default(),
-        anexos: Vec::new(),
-        ocorrido_em,
-        metadados,
+        text: texto.unwrap_or_default(),
+        attachments: Vec::new(),
+        occurred_at: ocorrido_em,
+        metadata: metadados,
     };
 
     Decisao::Entrada(EntradaRecebida { evento, midias })
 }
 
 /// Guarda o conteúdo de uma mídia como anexo embutido (o fluxo da HR-12 decide se grava blob).
-pub fn anexo_embutido(nome: &str, mime: &str, bytes: &[u8]) -> AnexoEntrada {
-    AnexoEntrada::Bytes {
-        nome: nome.to_owned(),
+pub fn anexo_embutido(nome: &str, mime: &str, bytes: &[u8]) -> InboundAttachment {
+    InboundAttachment::Bytes {
+        name: nome.to_owned(),
         mime: mime.to_owned(),
-        dados_base64: base64::engine::general_purpose::STANDARD.encode(bytes),
+        data_base64: base64::engine::general_purpose::STANDARD.encode(bytes),
     }
 }
 
@@ -312,7 +312,7 @@ fn eh_evento_de_estado(evento: &str) -> bool {
     )
 }
 
-fn estado_do_canal(corpo: &Value, evento: &str) -> EventoEstado {
+fn estado_do_canal(corpo: &Value, evento: &str) -> StateEvent {
     let dados = corpo.get("data").cloned().unwrap_or(Value::Null);
     if evento.to_ascii_lowercase().starts_with("qrcode") {
         let codigo = dados
@@ -320,9 +320,9 @@ fn estado_do_canal(corpo: &Value, evento: &str) -> EventoEstado {
             .and_then(|qrcode| texto_em(qrcode, "base64"))
             .or_else(|| texto_em(&dados, "base64"))
             .unwrap_or_default();
-        return EventoEstado::Qr {
-            codigo,
-            expira_em: None,
+        return StateEvent::Qr {
+            code: codigo,
+            expires_at: None,
         };
     }
     let situacao = texto_em(&dados, "state")
@@ -330,14 +330,14 @@ fn estado_do_canal(corpo: &Value, evento: &str) -> EventoEstado {
         .unwrap_or_default()
         .to_ascii_lowercase();
     match situacao.as_str() {
-        "open" | "connected" | "conectado" => EventoEstado::Conectado { desde: agora_ms() },
-        "close" | "closed" | "disconnected" | "desconectado" => EventoEstado::Desconectado {
-            motivo: Some("a Evolution reportou a instância desconectada".to_owned()),
+        "open" | "connected" | "conectado" => StateEvent::Connected { since: agora_ms() },
+        "close" | "closed" | "disconnected" | "desconectado" => StateEvent::Disconnected {
+            reason: Some("a Evolution reportou a instância desconectada".to_owned()),
         },
-        outro => EventoEstado::Erro {
-            codigo: "connection_state".to_owned(),
-            mensagem: format!("estado de conexão `{outro}`"),
-            transitorio: true,
+        outro => StateEvent::Error {
+            code: "connection_state".to_owned(),
+            message: format!("estado de conexão `{outro}`"),
+            transient: true,
         },
     }
 }
@@ -401,19 +401,19 @@ fn extrair_texto(conteudo: &Value) -> Option<String> {
 /// Tipo fora do escopo de download (MX-45), pelo nome da chave do protobuf. Enquete: a criação da
 /// enquete (`pollCreationMessage` e as versões 2 e 3). O voto (`pollUpdateMessage`) não é enquete
 /// nova e segue como evento sem conteúdo.
-fn midia_fora_do_escopo(conteudo: &Value) -> Option<MidiaForaDoEscopo> {
-    const CHAVES: [(&str, MidiaForaDoEscopo); 11] = [
-        ("audioMessage", MidiaForaDoEscopo::Audio),
-        ("videoMessage", MidiaForaDoEscopo::Video),
-        ("ptvMessage", MidiaForaDoEscopo::Video),
-        ("stickerMessage", MidiaForaDoEscopo::Figurinha),
-        ("contactMessage", MidiaForaDoEscopo::Contato),
-        ("contactsArrayMessage", MidiaForaDoEscopo::Contato),
-        ("locationMessage", MidiaForaDoEscopo::Localizacao),
-        ("liveLocationMessage", MidiaForaDoEscopo::Localizacao),
-        ("pollCreationMessage", MidiaForaDoEscopo::Enquete),
-        ("pollCreationMessageV2", MidiaForaDoEscopo::Enquete),
-        ("pollCreationMessageV3", MidiaForaDoEscopo::Enquete),
+fn midia_fora_do_escopo(conteudo: &Value) -> Option<UnsupportedContent> {
+    const CHAVES: [(&str, UnsupportedContent); 11] = [
+        ("audioMessage", UnsupportedContent::Audio),
+        ("videoMessage", UnsupportedContent::Video),
+        ("ptvMessage", UnsupportedContent::Video),
+        ("stickerMessage", UnsupportedContent::Sticker),
+        ("contactMessage", UnsupportedContent::Contact),
+        ("contactsArrayMessage", UnsupportedContent::Contact),
+        ("locationMessage", UnsupportedContent::Location),
+        ("liveLocationMessage", UnsupportedContent::Location),
+        ("pollCreationMessage", UnsupportedContent::Poll),
+        ("pollCreationMessageV2", UnsupportedContent::Poll),
+        ("pollCreationMessageV3", UnsupportedContent::Poll),
     ];
     CHAVES
         .iter()

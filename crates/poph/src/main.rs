@@ -304,7 +304,7 @@ fn executar_doctor(
     let segredos = config::segredos(ambiente);
     let nome_da_chave = carregada
         .as_ref()
-        .map(|config| config.llm.chave_env.clone())
+        .map(|config| config.llm.api_key_env.clone())
         .unwrap_or_else(|_| config::VAR_ANTIGRAVITY.to_owned());
     let chave_llm = config::chave_llm(ambiente, &nome_da_chave);
     let agentes_por_provedor = carregada

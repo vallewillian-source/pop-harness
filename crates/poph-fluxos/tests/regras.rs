@@ -76,7 +76,7 @@ fn avaliador() -> Avaliador {
 }
 
 fn codigo(erro: &ErroRegra) -> &'static str {
-    erro.codigo_api()
+    erro.api_code()
 }
 
 // -------------------------------------------------------------------------------------------
@@ -984,12 +984,12 @@ fn cada_erro_de_regra_tem_codigo_de_api() {
         &base,
     )
     .unwrap_err();
-    assert_eq!(invalida.codigo_api(), "regra_invalida");
-    assert_eq!(invalida.status_http(), 400);
+    assert_eq!(invalida.api_code(), "regra_invalida");
+    assert_eq!(invalida.http_status(), 400);
 
-    let limite_erro = DomainError::RegraLimite {
-        motivo: "a função passou do prazo".to_owned(),
+    let limite_erro = DomainError::RuleLimit {
+        reason: "a função passou do prazo".to_owned(),
     };
-    assert_eq!(limite_erro.codigo_api(), "regra_limite");
-    assert_eq!(limite_erro.status_http(), 400);
+    assert_eq!(limite_erro.api_code(), "regra_limite");
+    assert_eq!(limite_erro.http_status(), 400);
 }

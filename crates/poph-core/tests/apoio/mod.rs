@@ -13,7 +13,7 @@ use poph_core::llm::{
     ChamadaFerramenta, ErroLlm, EventoLlm, Ferramenta, FluxoLlm, LimitadorLlm, LlmProvider,
     Mensagem, MotivoFim, OpenAiCompatibleClient, OpenAiCompatibleConfig, Parte, Pedido, Uso,
 };
-use poph_types::{MetricasBase, OrgId, Registro, Segredo};
+use poph_types::{BaseMetrics, OrgId, Registry, Secret};
 use serde_json::{Value, json};
 use std::sync::atomic::AtomicUsize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -166,7 +166,7 @@ pub async fn ler_requisicao(conexao: &mut TcpStream) -> Vec<u8> {
 pub struct Montagem {
     pub cliente: OpenAiCompatibleClient,
     pub limites: LimitadorLlm,
-    pub metricas: MetricasBase,
+    pub metricas: BaseMetrics,
 }
 
 pub fn montar(url_base: &str, retentativas: u32, timeout: Duration) -> Montagem {
@@ -181,7 +181,7 @@ pub fn montar_com_regra(
 ) -> Montagem {
     let config = OpenAiCompatibleConfig {
         url_base: url_base.to_owned(),
-        chave: Segredo::new(CHAVE.to_owned()),
+        chave: Secret::new(CHAVE.to_owned()),
         modelo: "gemini-3.8-flash-tiered".to_owned(),
         timeout,
         retentativas,
@@ -191,7 +191,7 @@ pub fn montar_com_regra(
         recusa_turno_modelo,
     };
     let limites = LimitadorLlm::new(4, 2).expect("limites válidos");
-    let metricas = MetricasBase::registrar(&Registro::new()).expect("catálogo");
+    let metricas = BaseMetrics::register(&Registry::new()).expect("catálogo");
     let cliente =
         OpenAiCompatibleClient::new(config, limites.clone(), metricas.clone()).expect("cliente");
     Montagem {

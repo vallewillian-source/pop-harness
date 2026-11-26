@@ -37,7 +37,7 @@ use poph_store::{
     Direcao, EstadoSaida, EstadoTurno, ItemSaida, NovaConversa, NovaMensagem, NovaOrg, NovoAgente,
     Pagina, Papel, Store,
 };
-use poph_types::{AgentId, ConversationId, FerramentaConfig, IntegrationId, MessageId, OrgId};
+use poph_types::{AgentId, ConversationId, IntegrationId, MessageId, OrgId, ToolConfig};
 
 // ───────────────────────────── Infraestrutura ─────────────────────────────
 
@@ -652,12 +652,12 @@ async fn ferramenta_nao_habilitada_nao_e_oferecida_e_laco_para_no_limite() {
         .expect("lê as instruções");
     let estruturado = poph_types::StructuredInstructions {
         tools: vec![
-            FerramentaConfig {
+            ToolConfig {
                 name: "consultar_base".to_owned(),
                 enabled: true,
                 when_to_use: String::new(),
             },
-            FerramentaConfig {
+            ToolConfig {
                 name: "buscar_produto".to_owned(),
                 enabled: false,
                 when_to_use: String::new(),
@@ -672,7 +672,7 @@ async fn ferramenta_nao_habilitada_nao_e_oferecida_e_laco_para_no_limite() {
             cenario.org,
             cenario.agente,
             instrucoes.versao,
-            &estruturado.para_json(),
+            &estruturado.to_json(),
             &instrucoes.markdown,
             false,
         )
@@ -1110,9 +1110,9 @@ async fn falta_de_vaga_do_turno_entra_na_escada_e_esgota_em_tres_tentativas() {
     assert_eq!(fake.recebidos().len(), 0);
 
     let metricas = motor.metricas();
-    assert_eq!(metricas.falhas_modelo_adiadas.valor(), 2);
-    assert_eq!(metricas.falhas_modelo_definitivas.valor(), 1);
-    assert_eq!(metricas.falhas_modelo_recusadas.valor(), 0);
+    assert_eq!(metricas.falhas_modelo_adiadas.value(), 2);
+    assert_eq!(metricas.falhas_modelo_definitivas.value(), 1);
+    assert_eq!(metricas.falhas_modelo_recusadas.value(), 0);
 }
 
 #[tokio::test]
@@ -1161,8 +1161,8 @@ async fn falta_de_vaga_do_turno_na_primeira_tentativa_e_resposta_na_segunda() {
         1
     );
     let metricas = motor.metricas();
-    assert_eq!(metricas.falhas_modelo_adiadas.valor(), 1);
-    assert_eq!(metricas.falhas_modelo_definitivas.valor(), 0);
+    assert_eq!(metricas.falhas_modelo_adiadas.value(), 1);
+    assert_eq!(metricas.falhas_modelo_definitivas.value(), 0);
 }
 
 #[tokio::test]
@@ -1209,8 +1209,8 @@ async fn falta_de_vaga_do_provedor_entra_na_escada_e_nao_chama_o_modelo() {
     assert_eq!(fake.recebidos().len(), 1, "uma única chamada ao provedor");
     assert_eq!(cenario.turnos().len(), 2);
     let metricas = motor.metricas();
-    assert_eq!(metricas.falhas_modelo_adiadas.valor(), 1);
-    assert_eq!(metricas.falhas_modelo_definitivas.valor(), 0);
+    assert_eq!(metricas.falhas_modelo_adiadas.value(), 1);
+    assert_eq!(metricas.falhas_modelo_definitivas.value(), 0);
 }
 
 #[tokio::test]
@@ -1272,9 +1272,9 @@ async fn provedor_que_recusa_a_chave_nao_gasta_a_escada() {
     assert_eq!(fake.recebidos().len(), 1);
 
     let metricas = motor.metricas();
-    assert_eq!(metricas.falhas_modelo_recusadas.valor(), 1);
-    assert_eq!(metricas.falhas_modelo_definitivas.valor(), 1);
-    assert_eq!(metricas.falhas_modelo_adiadas.valor(), 0);
+    assert_eq!(metricas.falhas_modelo_recusadas.value(), 1);
+    assert_eq!(metricas.falhas_modelo_definitivas.value(), 1);
+    assert_eq!(metricas.falhas_modelo_adiadas.value(), 0);
 }
 
 // ───────────────────────────── 8. Caminho completo ─────────────────────────────
@@ -1561,8 +1561,8 @@ async fn falha_do_modelo_repete_com_espera_crescente_e_responde_na_terceira() {
     );
 
     let metricas = motor.metricas();
-    assert_eq!(metricas.falhas_modelo_adiadas.valor(), 2);
-    assert_eq!(metricas.falhas_modelo_definitivas.valor(), 0);
+    assert_eq!(metricas.falhas_modelo_adiadas.value(), 2);
+    assert_eq!(metricas.falhas_modelo_definitivas.value(), 0);
 }
 
 #[tokio::test]
@@ -1632,8 +1632,8 @@ async fn falha_do_modelo_sempre_esgota_em_tres_tentativas_e_conclui_sem_resposta
     assert_eq!(fake.recebidos().len(), 3);
 
     let metricas = motor.metricas();
-    assert_eq!(metricas.falhas_modelo_adiadas.valor(), 2);
-    assert_eq!(metricas.falhas_modelo_definitivas.valor(), 1);
+    assert_eq!(metricas.falhas_modelo_adiadas.value(), 2);
+    assert_eq!(metricas.falhas_modelo_definitivas.value(), 1);
 }
 
 #[tokio::test]
@@ -1649,8 +1649,8 @@ async fn com_limite_de_uma_tentativa_a_primeira_falha_ja_e_definitiva() {
     fluxo.despachar(cenario.org).expect("despacha");
     esperar_fila_vazia(&fluxo, &cenario).await;
     assert_eq!(fake.recebidos().len(), 1);
-    assert_eq!(motor.metricas().falhas_modelo_definitivas.valor(), 1);
-    assert_eq!(motor.metricas().falhas_modelo_adiadas.valor(), 0);
+    assert_eq!(motor.metricas().falhas_modelo_definitivas.value(), 1);
+    assert_eq!(motor.metricas().falhas_modelo_adiadas.value(), 0);
 }
 
 #[tokio::test]
@@ -1690,7 +1690,7 @@ async fn tempo_maximo_do_turno_conta_como_falha_do_modelo_e_entra_na_escada() {
         "{:?}",
         turno.erro
     );
-    assert_eq!(motor.metricas().falhas_modelo_adiadas.valor(), 1);
+    assert_eq!(motor.metricas().falhas_modelo_adiadas.value(), 1);
 
     cenario.avancar(1_000);
     fluxo.despachar(cenario.org).expect("despacha 2");

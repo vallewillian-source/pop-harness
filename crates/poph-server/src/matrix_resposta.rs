@@ -354,14 +354,14 @@ impl RespostaDoAtendente {
     fn contar_erro(&self, erro: &poph_matrix::ErroChamada) {
         match erro.classificacao() {
             poph_matrix::erro::Classificacao::Transitoria => {
-                self.metricas.erros_transitorios.incrementar(1);
+                self.metricas.erros_transitorios.increment(1);
             }
             poph_matrix::erro::Classificacao::Definitiva => {
-                self.metricas.erros_definitivos.incrementar(1);
+                self.metricas.erros_definitivos.increment(1);
             }
         }
         if matches!(erro, poph_matrix::ErroChamada::Resposta { status: 429, .. }) {
-            self.metricas.respostas_429.incrementar(1);
+            self.metricas.respostas_429.increment(1);
         }
     }
 
@@ -590,7 +590,7 @@ impl RespostaDoAtendente {
             Ok(Some(alvo)) => alvo,
             Ok(None) => {
                 Contadores::somar(&self.contadores.salas_desconhecidas);
-                self.metricas.salas_desconhecidas.incrementar(1);
+                self.metricas.salas_desconhecidas.increment(1);
                 tracing::info!(
                     target: "poph_server::matrix_resposta",
                     transacao,
@@ -623,7 +623,7 @@ impl RespostaDoAtendente {
         match self.porta.registrar_resposta(alvo, nova) {
             Ok(RespostaHumana::Gravada(_)) => {
                 Contadores::somar(&self.contadores.gravadas);
-                self.metricas.respostas_enfileiradas.incrementar(1);
+                self.metricas.respostas_enfileiradas.increment(1);
                 tracing::info!(
                     target: "poph_server::matrix_resposta",
                     org = %alvo.org,
@@ -637,7 +637,7 @@ impl RespostaDoAtendente {
             }
             Ok(RespostaHumana::Duplicada) => {
                 Contadores::somar(&self.contadores.duplicadas);
-                self.metricas.respostas_duplicadas.incrementar(1);
+                self.metricas.respostas_duplicadas.increment(1);
                 tracing::debug!(
                     target: "poph_server::matrix_resposta",
                     transacao,
@@ -648,7 +648,7 @@ impl RespostaDoAtendente {
             }
             Ok(RespostaHumana::ConversaFechada) => {
                 Contadores::somar(&self.contadores.encerradas);
-                self.metricas.respostas_conversa_encerrada.incrementar(1);
+                self.metricas.respostas_conversa_encerrada.increment(1);
                 tracing::info!(
                     target: "poph_server::matrix_resposta",
                     org = %alvo.org,
@@ -677,7 +677,7 @@ impl RespostaDoAtendente {
                 // evita insistir na linha errada, e a próxima mensagem procura de novo.
                 self.esquecer_sala(sala);
                 Contadores::somar(&self.contadores.salas_desconhecidas);
-                self.metricas.salas_desconhecidas.incrementar(1);
+                self.metricas.salas_desconhecidas.increment(1);
                 tracing::info!(
                     target: "poph_server::matrix_resposta",
                     transacao,
@@ -736,7 +736,7 @@ impl RespostaDoAtendente {
             Ok(Some(alvo)) => alvo,
             Ok(None) => {
                 Contadores::somar(&self.contadores.salas_desconhecidas);
-                self.metricas.salas_desconhecidas.incrementar(1);
+                self.metricas.salas_desconhecidas.increment(1);
                 tracing::info!(
                     target: "poph_server::matrix_resposta",
                     transacao,
@@ -890,7 +890,7 @@ impl RespostaDoAtendente {
         match self.porta.registrar_resposta_com_arquivo(alvo, nova) {
             Ok(RespostaHumana::Gravada(_)) => {
                 Contadores::somar(&self.contadores.arquivos_gravados);
-                self.metricas.respostas_enfileiradas.incrementar(1);
+                self.metricas.respostas_enfileiradas.increment(1);
                 tracing::info!(
                     target: "poph_server::matrix_resposta",
                     org = %alvo.org,
@@ -907,7 +907,7 @@ impl RespostaDoAtendente {
             }
             Ok(RespostaHumana::Duplicada) => {
                 Contadores::somar(&self.contadores.duplicadas);
-                self.metricas.respostas_duplicadas.incrementar(1);
+                self.metricas.respostas_duplicadas.increment(1);
                 tracing::debug!(
                     target: "poph_server::matrix_resposta",
                     transacao,
@@ -918,7 +918,7 @@ impl RespostaDoAtendente {
             }
             Ok(RespostaHumana::ConversaFechada) => {
                 Contadores::somar(&self.contadores.encerradas);
-                self.metricas.respostas_conversa_encerrada.incrementar(1);
+                self.metricas.respostas_conversa_encerrada.increment(1);
                 tracing::info!(
                     target: "poph_server::matrix_resposta",
                     org = %alvo.org,
@@ -941,7 +941,7 @@ impl RespostaDoAtendente {
             Ok(RespostaHumana::ConversaInexistente) => {
                 self.esquecer_sala(sala);
                 Contadores::somar(&self.contadores.salas_desconhecidas);
-                self.metricas.salas_desconhecidas.incrementar(1);
+                self.metricas.salas_desconhecidas.increment(1);
                 tracing::info!(
                     target: "poph_server::matrix_resposta",
                     transacao,
@@ -981,7 +981,7 @@ impl RespostaDoAtendente {
         motivo: MotivoNaoEnviar,
     ) {
         Contadores::somar(&self.contadores.avisos_de_midia);
-        self.metricas.avisos_de_midia.incrementar(1);
+        self.metricas.avisos_de_midia.increment(1);
         tracing::info!(
             target: "poph_server::matrix_resposta",
             transacao,

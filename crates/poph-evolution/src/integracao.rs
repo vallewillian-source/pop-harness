@@ -22,9 +22,9 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use poph_types::{
-    Capacidades, ComandoSaida, ErroIntegracao, EsquemaJson, EstadoIntegracao, FuturoComando,
-    FuturoSaude, InboundEvent, Integration, IntegrationId, LimitesCanal, Manifesto,
-    PROTOCOLO_VERSAO, Presenca, Saude, Segredo, SendFile, SendText, SetPresence,
+    Capabilities, ChannelLimits, CommandFuture, Health, HealthFuture, InboundEvent, Integration,
+    IntegrationError, IntegrationId, IntegrationState, JsonSchema, Manifest, OutboundCommand,
+    PROTOCOL_VERSION, Presence, Secret, SendFile, SendText, SetPresence,
 };
 
 use crate::cliente::{ClienteEvolution, TETO_MIDIA};
@@ -43,7 +43,7 @@ pub struct ConfigCanal {
     /// Vazio = não mexe no webhook (a instância já foi configurada à mão).
     pub webhook_url: Option<String>,
     /// Segredo que a Evolution devolve no cabeçalho [`CABECALHO_SEGREDO`]. Obrigatório.
-    pub webhook_segredo: Segredo,
+    pub webhook_segredo: Secret,
     /// Aceitar mensagem com `fromMe = true` (só teste local).
     pub aceitar_de_mim: bool,
     /// Teto de mídia em bytes (padrão [`TETO_MIDIA`]).
@@ -52,11 +52,8 @@ pub struct ConfigCanal {
 
 impl ConfigCanal {
     /// Configuração com o segredo obrigatório e o teto padrão.
-    pub fn novo(
-        integracao: IntegrationId,
-        webhook_segredo: Segredo,
-    ) -> Result<Self, ErroEvolution> {
-        if webhook_segredo.expor().trim().is_empty() {
+    pub fn novo(integracao: IntegrationId, webhook_segredo: Secret) -> Result<Self, ErroEvolution> {
+        if webhook_segredo.expose().trim().is_empty() {
             return Err(ErroEvolution::Configuracao(
                 "a integração do WhatsApp precisa do segredo do webhook".to_owned(),
             ));
@@ -83,7 +80,7 @@ impl ConfigCanal {
 /// Mesmo molde de `poph_types::FuturoComando`, sem `async_trait`, e separado dele de propósito: o
 /// contrato do canal não muda (plugin em processo externo pode não devolver id).
 pub type FuturoRecibo =
-    Pin<Box<dyn Future<Output = Result<Option<String>, ErroIntegracao>> + Send + 'static>>;
+    Pin<Box<dyn Future<Output = Result<Option<String>, IntegrationError>> + Send + 'static>>;
 
 /// De onde sai o conteúdo de um arquivo da biblioteca do agente.
 ///
@@ -133,8 +130,8 @@ pub struct WhatsAppEvolution {
     cliente: ClienteEvolution,
     config: ConfigCanal,
     fonte: Arc<dyn FonteDeMidia>,
-    manifesto: Arc<Manifesto>,
-    estado: Arc<Mutex<EstadoIntegracao>>,
+    manifesto: Arc<Manifest>,
+    estado: Arc<Mutex<IntegrationState>>,
 }
 
 impl WhatsAppEvolution {
@@ -149,7 +146,7 @@ impl WhatsAppEvolution {
             config,
             fonte,
             manifesto: Arc::new(manifesto()),
-            estado: Arc::new(Mutex::new(EstadoIntegracao::Iniciando)),
+            estado: Arc::new(Mutex::new(IntegrationState::Starting)),
         }
     }
 
@@ -165,7 +162,7 @@ impl WhatsAppEvolution {
         let config = ConfigCanal {
             integracao,
             webhook_url: None,
-            webhook_segredo: Segredo::new(String::new()),
+            webhook_segredo: Secret::new(String::new()),
             aceitar_de_mim: false,
             teto_midia: TETO_MIDIA,
         };
@@ -181,9 +178,9 @@ impl WhatsAppEvolution {
         {
             let mut guarda = self.estado.lock().expect("estado do canal");
             *guarda = if estado == "open" {
-                EstadoIntegracao::Pronto
+                IntegrationState::Ready
             } else {
-                EstadoIntegracao::Iniciando
+                IntegrationState::Starting
             };
         }
         if let Some(url) = self.config.webhook_url.as_deref() {
@@ -193,7 +190,7 @@ impl WhatsAppEvolution {
                     &["MESSAGES_UPSERT", "CONNECTION_UPDATE", "QRCODE_UPDATED"],
                     &[(
                         CABECALHO_SEGREDO.to_owned(),
-                        self.config.webhook_segredo.expor().clone(),
+                        self.config.webhook_segredo.expose().clone(),
                     )],
                 )
                 .await?;
@@ -202,13 +199,13 @@ impl WhatsAppEvolution {
     }
 
     /// Marca o canal como pronto/parado a partir do que o webhook contou.
-    pub fn aplicar_estado(&self, estado: &poph_types::EventoEstado) {
+    pub fn aplicar_estado(&self, estado: &poph_types::StateEvent) {
         let mut guarda = self.estado.lock().expect("estado do canal");
         *guarda = match estado {
-            poph_types::EventoEstado::Conectado { .. } => EstadoIntegracao::Pronto,
-            poph_types::EventoEstado::Desconectado { .. } => EstadoIntegracao::Iniciando,
-            poph_types::EventoEstado::Qr { .. } => EstadoIntegracao::Iniciando,
-            poph_types::EventoEstado::Erro { .. } => EstadoIntegracao::Iniciando,
+            poph_types::StateEvent::Connected { .. } => IntegrationState::Ready,
+            poph_types::StateEvent::Disconnected { .. } => IntegrationState::Starting,
+            poph_types::StateEvent::Qr { .. } => IntegrationState::Starting,
+            poph_types::StateEvent::Error { .. } => IntegrationState::Starting,
         };
     }
 
@@ -227,7 +224,7 @@ impl WhatsAppEvolution {
             Decisao::Estado(estado) => self.aplicar_estado(estado),
             Decisao::Entrada(_) => {
                 let mut guarda = self.estado.lock().expect("estado do canal");
-                *guarda = EstadoIntegracao::Pronto;
+                *guarda = IntegrationState::Ready;
             }
             Decisao::Ignorado(_) => {}
         }
@@ -256,10 +253,10 @@ impl WhatsAppEvolution {
     ///
     /// Mídia que falha é registrada e o evento segue **sem** ela: perder a legenda porque o arquivo
     /// de 8 MB não veio seria pior do que o cliente receber resposta sem o anexo.
-    pub async fn receber_e_entregar(&self, decisao: Decisao, receptor: &dyn poph_types::Receptor) {
+    pub async fn receber_e_entregar(&self, decisao: Decisao, receptor: &dyn poph_types::EventSink) {
         match decisao {
             Decisao::Estado(estado) => {
-                receptor.receber(poph_types::EventoIntegracao::Estado(estado))
+                receptor.receive(poph_types::IntegrationEvent::Estado(estado))
             }
             Decisao::Entrada(entrada) => {
                 let mut anexos = Vec::new();
@@ -279,7 +276,7 @@ impl WhatsAppEvolution {
                     }
                 }
                 let evento: InboundEvent = entrada.com_anexos(anexos);
-                receptor.receber(poph_types::EventoIntegracao::Entrada(evento))
+                receptor.receive(poph_types::IntegrationEvent::Inbound(evento))
             }
             Decisao::Ignorado(motivo) => tracing::debug!(
                 target: "poph_evolution",
@@ -298,13 +295,13 @@ impl WhatsAppEvolution {
     ///
     /// Presença devolve `None`: a Evolution não devolve id para "digitando", e a chamada segue a
     /// mesma regra de antes (falha de presença não derruba a mensagem).
-    pub fn enviar_com_recibo(&self, comando: ComandoSaida) -> FuturoRecibo {
+    pub fn enviar_com_recibo(&self, comando: OutboundCommand) -> FuturoRecibo {
         let this = self.clone();
         Box::pin(async move {
             match comando {
-                ComandoSaida::EnviarTexto(c) => this.enviar_texto_recibo(c).await,
-                ComandoSaida::EnviarArquivo(c) => this.enviar_arquivo_recibo(c).await,
-                ComandoSaida::DefinirPresenca(c) => {
+                OutboundCommand::Text(c) => this.enviar_texto_recibo(c).await,
+                OutboundCommand::File(c) => this.enviar_arquivo_recibo(c).await,
+                OutboundCommand::Presence(c) => {
                     this.enviar_presenca_sem_erro(c).await.map(|()| None)
                 }
             }
@@ -315,9 +312,9 @@ impl WhatsAppEvolution {
     pub async fn enviar_texto_recibo(
         &self,
         comando: SendText,
-    ) -> Result<Option<String>, ErroIntegracao> {
+    ) -> Result<Option<String>, IntegrationError> {
         self.cliente
-            .enviar_texto(&comando.peer, &comando.texto)
+            .enviar_texto(&comando.peer, &comando.text)
             .await
             .map_err(|erro| erro.para_integracao("enviar_texto"))
     }
@@ -326,12 +323,12 @@ impl WhatsAppEvolution {
     pub async fn enviar_arquivo_recibo(
         &self,
         comando: SendFile,
-    ) -> Result<Option<String>, ErroIntegracao> {
+    ) -> Result<Option<String>, IntegrationError> {
         // Recusa antes de ler o blob: arquivo acima do teto não sai, e nem chega à memória.
-        if comando.tamanho_bytes > self.config.teto_midia {
-            return Err(ErroIntegracao::MensagemGrandeDemais {
-                bytes: usize::try_from(comando.tamanho_bytes).unwrap_or(usize::MAX),
-                teto: usize::try_from(self.config.teto_midia).unwrap_or(usize::MAX),
+        if comando.size_bytes > self.config.teto_midia {
+            return Err(IntegrationError::MessageTooLarge {
+                bytes: usize::try_from(comando.size_bytes).unwrap_or(usize::MAX),
+                cap: usize::try_from(self.config.teto_midia).unwrap_or(usize::MAX),
             });
         }
         let bytes = self
@@ -343,16 +340,16 @@ impl WhatsAppEvolution {
                 &comando.peer,
                 &bytes,
                 &comando.mime,
-                &comando.nome,
-                comando.legenda.as_deref(),
+                &comando.name,
+                comando.caption.as_deref(),
             )
             .await
             .map_err(|erro| erro.para_integracao("enviar_arquivo"))
     }
 
     /// "Digitando"/"pausado" sem derrubar nada: falha de presença não é falha de conteúdo.
-    async fn enviar_presenca_sem_erro(&self, comando: SetPresence) -> Result<(), ErroIntegracao> {
-        let digitando = matches!(comando.estado, Presenca::Digitando);
+    async fn enviar_presenca_sem_erro(&self, comando: SetPresence) -> Result<(), IntegrationError> {
+        let digitando = matches!(comando.state, Presence::Typing);
         match self.cliente.enviar_presenca(&comando.peer, digitando).await {
             Ok(()) => Ok(()),
             // Presença não é conteúdo: se a Evolution não aceitar, a mensagem ainda sai.
@@ -369,40 +366,40 @@ impl WhatsAppEvolution {
 }
 
 impl Integration for WhatsAppEvolution {
-    fn manifesto(&self) -> Option<Manifesto> {
+    fn manifest(&self) -> Option<Manifest> {
         Some((*self.manifesto).clone())
     }
 
-    fn estado(&self) -> EstadoIntegracao {
+    fn state(&self) -> IntegrationState {
         self.estado.lock().expect("estado do canal").clone()
     }
 
-    fn enviar_texto(&self, comando: SendText) -> FuturoComando {
+    fn send_text(&self, comando: SendText) -> CommandFuture {
         let this = self.clone();
         Box::pin(async move { this.enviar_texto_recibo(comando).await.map(|_| ()) })
     }
 
-    fn enviar_arquivo(&self, comando: SendFile) -> FuturoComando {
+    fn send_file(&self, comando: SendFile) -> CommandFuture {
         let this = self.clone();
         Box::pin(async move { this.enviar_arquivo_recibo(comando).await.map(|_| ()) })
     }
 
-    fn definir_presenca(&self, comando: SetPresence) -> FuturoComando {
+    fn set_presence(&self, comando: SetPresence) -> CommandFuture {
         let this = self.clone();
         Box::pin(async move { this.enviar_presenca_sem_erro(comando).await })
     }
 
-    fn saude(&self) -> FuturoSaude {
+    fn health(&self) -> HealthFuture {
         let this = self.clone();
         Box::pin(async move {
             match this.cliente.estado_conexao().await {
-                Ok(estado) if estado == "open" => Ok(Saude::ok(format!(
+                Ok(estado) if estado == "open" => Ok(Health::ok(format!(
                     "Evolution: {estado} (instância {})",
                     this.cliente.instancia()
                 ))),
-                Ok(estado) => Ok(Saude {
+                Ok(estado) => Ok(Health {
                     ok: false,
-                    detalhe: Some(format!("Evolution: {estado}")),
+                    detail: Some(format!("Evolution: {estado}")),
                 }),
                 Err(erro) => Err(erro.para_integracao("saude")),
             }
@@ -411,13 +408,13 @@ impl Integration for WhatsAppEvolution {
 }
 
 /// O que a integração é e como se configura (é o mesmo manifesto que o Console desenha).
-fn manifesto() -> Manifesto {
-    Manifesto {
-        nome: "WhatsApp (Evolution)".to_owned(),
+fn manifesto() -> Manifest {
+    Manifest {
+        name: "WhatsApp (Evolution)".to_owned(),
         kind: "whatsapp".to_owned(),
-        versao: env!("CARGO_PKG_VERSION").to_owned(),
-        protocolo: PROTOCOLO_VERSAO,
-        capacidades: Capacidades {
+        version: env!("CARGO_PKG_VERSION").to_owned(),
+        protocol: PROTOCOL_VERSION,
+        capabilities: Capabilities {
             text: true,
             image_in: true,
             file_in: true,
@@ -425,10 +422,10 @@ fn manifesto() -> Manifesto {
             typing: true,
             read_receipt: false,
         },
-        limites: LimitesCanal {
-            max_anexo_bytes: TETO_MIDIA,
-            max_texto_bytes: LIMITE_TEXTO as u64,
-            tipos_aceitos: vec![
+        limits: ChannelLimits {
+            max_attachment_bytes: TETO_MIDIA,
+            max_text_bytes: LIMITE_TEXTO as u64,
+            accepted_types: vec![
                 "image/*".to_owned(),
                 "application/pdf".to_owned(),
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -438,7 +435,7 @@ fn manifesto() -> Manifesto {
                     .to_owned(),
             ],
         },
-        configuracao: EsquemaJson(serde_json::json!({
+        configuration: JsonSchema(serde_json::json!({
             "type": "object",
             "required": ["instancia"],
             "properties": {
@@ -458,7 +455,7 @@ fn manifesto() -> Manifesto {
                 }
             }
         })),
-        segredos: EsquemaJson(serde_json::json!({
+        secrets: JsonSchema(serde_json::json!({
             "type": "object",
             "required": ["apikey", "webhook_secret"],
             "properties": {
@@ -487,16 +484,16 @@ mod testes {
     fn manifesto_declara_o_que_o_canal_faz() {
         let manifesto = manifesto();
         assert_eq!(manifesto.kind, "whatsapp");
-        assert_eq!(manifesto.protocolo, PROTOCOLO_VERSAO);
-        assert!(manifesto.capacidades.text);
-        assert!(manifesto.capacidades.file_in);
-        assert!(manifesto.capacidades.file_out);
+        assert_eq!(manifesto.protocol, PROTOCOL_VERSION);
+        assert!(manifesto.capabilities.text);
+        assert!(manifesto.capabilities.file_in);
+        assert!(manifesto.capabilities.file_out);
         assert_eq!(manifesto.validar(), Ok(()));
     }
 
     #[test]
     fn segredo_do_webhook_e_obrigatorio() {
-        let erro = ConfigCanal::novo(IntegrationId::generate(), Segredo::new(String::new()))
+        let erro = ConfigCanal::novo(IntegrationId::generate(), Secret::new(String::new()))
             .expect_err("sem segredo deve falhar");
         assert!(matches!(erro, ErroEvolution::Configuracao(_)));
     }

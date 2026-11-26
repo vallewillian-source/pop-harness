@@ -29,7 +29,7 @@ use poph_store::{
     Direcao, MudancaAgente, NovaConversa, NovaMensagem, NovaOrg, NovoAgente, NovoFluxo, Papel,
     PublicacaoDeRevisao, Store,
 };
-use poph_types::{AgentId, ConversationId, FluxosConfig, GatesJev, MessageId, OrgId};
+use poph_types::{AgentId, ConversationId, FlowsConfig, JevGates, MessageId, OrgId};
 
 struct SemEspera;
 
@@ -62,7 +62,7 @@ etapa(
 
 /// Um fluxo publicado, liberado ao agente, pronto para ser escolhido pelo G9.
 struct FluxoDoTeste {
-    id: poph_types::FluxoId,
+    id: poph_types::FlowId,
     slug: String,
 }
 
@@ -155,7 +155,7 @@ impl Cenario {
     }
 
     /// Publica a revisão do fluxo com a IR compilada do script do teste.
-    fn publicar(&self, fluxo: poph_types::FluxoId) {
+    fn publicar(&self, fluxo: poph_types::FlowId) {
         let compilado = compilar(SCRIPT, &Limites::default());
         let ir = compilado.ir().expect("o script do teste compila");
         let atual = self
@@ -243,7 +243,7 @@ impl Cenario {
         &self,
         agente: AgentId,
         jev: Option<Arc<MotorJev>>,
-        fluxos: Option<FluxosConfig>,
+        fluxos: Option<FlowsConfig>,
         g9: MetricasG9,
     ) -> (Motor, Arc<ProvedorFake>) {
         let _ = agente;
@@ -350,10 +350,10 @@ fn roteiro(texto: &str) -> Roteiro {
 }
 
 /// Gates com o G9 ligado, como no padrão de instalação (os outros ficam fora para o teste isolar).
-fn so_g9() -> GatesJev {
-    GatesJev {
+fn so_g9() -> JevGates {
+    JevGates {
         g9: true,
-        ..GatesJev::default()
+        ..JevGates::default()
     }
 }
 
@@ -393,7 +393,7 @@ async fn inicio_acontece_antes_da_chamada_do_modelo() {
     let (motor, provedor) = cenario.motor(
         cenario.agente,
         Some(motor_jev(Arc::clone(&jev))),
-        Some(FluxosConfig::default()),
+        Some(FlowsConfig::default()),
         MetricasG9::proprias(),
     );
 
@@ -417,7 +417,7 @@ async fn inicio_acontece_antes_da_chamada_do_modelo() {
     let eventos = cenario.eventos(conversa);
     let iniciado = eventos
         .iter()
-        .find(|evento| evento.tipo == poph_types::TipoEventoFicha::FluxoIniciado)
+        .find(|evento| evento.tipo == poph_types::RecordEventKind::FlowStarted)
         .expect("há o evento fluxo_iniciado");
     let detalhe: serde_json::Value =
         serde_json::from_str(&iniciado.payload_json).expect("payload é JSON");
@@ -441,7 +441,7 @@ async fn prefixo_estavel_identico_com_e_sem_fluxo() {
     let (motor_com, provedor_com) = cenario.motor(
         cenario.agente,
         Some(motor_jev(Arc::clone(&jev_com))),
-        Some(FluxosConfig::default()),
+        Some(FlowsConfig::default()),
         MetricasG9::proprias(),
     );
     let gatilho = cenario.falar(com_fluxo, "quero marcar visita");
@@ -456,7 +456,7 @@ async fn prefixo_estavel_identico_com_e_sem_fluxo() {
     let (motor_sem, provedor_sem) = cenario.motor(
         cenario.agente,
         Some(motor_jev(Arc::clone(&jev_sem))),
-        Some(FluxosConfig::default()),
+        Some(FlowsConfig::default()),
         MetricasG9::proprias(),
     );
     let gatilho = cenario.falar(sem_fluxo, "só queria saber o horário");
@@ -496,7 +496,7 @@ async fn nenhum_e_limiar_baixo_nao_iniciam_e_nao_oferecem_catalogo() {
     let (motor, provedor) = cenario.motor(
         cenario.agente,
         Some(motor_jev(Arc::clone(&jev))),
-        Some(FluxosConfig::default()),
+        Some(FlowsConfig::default()),
         g9.clone(),
     );
     let gatilho = cenario.falar(conversa, "bom dia, tudo bem?");
@@ -509,7 +509,7 @@ async fn nenhum_e_limiar_baixo_nao_iniciam_e_nao_oferecem_catalogo() {
         !pedido(&provedor.recebidos()[0], "<fluxos_de_atendimento>"),
         "o catálogo não vai ao prompt com `nenhum`"
     );
-    assert_eq!(g9.nenhum.valor(), 1);
+    assert_eq!(g9.nenhum.value(), 1);
     let turno = cenario.ultimo_turno(conversa);
     let gravado: serde_json::Value = serde_json::from_str(&turno.jev_json).expect("JSON");
     assert_eq!(gravado["fluxo"]["resultado"], "nenhum");
@@ -536,7 +536,7 @@ async fn nenhum_e_limiar_baixo_nao_iniciam_e_nao_oferecem_catalogo() {
     let (motor, provedor) = cenario.motor(
         cenario.agente,
         Some(motor_jev(Arc::clone(&baixa))),
-        Some(FluxosConfig::default()),
+        Some(FlowsConfig::default()),
         g9.clone(),
     );
     let gatilho = cenario.falar(conversa, "acho que queria algo de visita");
@@ -546,7 +546,7 @@ async fn nenhum_e_limiar_baixo_nao_iniciam_e_nao_oferecem_catalogo() {
         "confiança baixa não inicia nada, mesmo escolhendo o fluxo certo"
     );
     assert!(!pedido(&provedor.recebidos()[0], "<fluxos_de_atendimento>"));
-    assert_eq!(g9.abaixo_do_limiar.valor(), 1);
+    assert_eq!(g9.abaixo_do_limiar.value(), 1);
     let _ = fluxo;
 }
 
@@ -563,7 +563,7 @@ async fn jev_fora_entrega_a_reserva() {
     let (motor, provedor) = cenario.motor(
         cenario.agente,
         Some(motor_jev(Arc::clone(&jev))),
-        Some(FluxosConfig::default()),
+        Some(FlowsConfig::default()),
         g9.clone(),
     );
 
@@ -593,7 +593,7 @@ async fn jev_fora_entrega_a_reserva() {
     let turno = cenario.ultimo_turno(conversa);
     let gravado: serde_json::Value = serde_json::from_str(&turno.jev_json).expect("JSON");
     assert_eq!(gravado["fluxo"]["resultado"], "fallback");
-    assert_eq!(g9.fallback.valor(), 1);
+    assert_eq!(g9.fallback.value(), 1);
 }
 
 /// 5a. Fluxo inativo não entra nas opções do G9 e nunca inicia, mesmo escolhido pelo Jev.
@@ -628,7 +628,7 @@ async fn fluxo_inativo_nao_entra_nas_opcoes_nem_inicia() {
     let (motor, provedor) = cenario.motor(
         cenario.agente,
         Some(motor_jev(Arc::clone(&jev))),
-        Some(FluxosConfig::default()),
+        Some(FlowsConfig::default()),
         MetricasG9::proprias(),
     );
     let gatilho = cenario.falar(conversa, "quero marcar visita");
@@ -673,7 +673,7 @@ async fn fluxo_nao_liberado_nao_entra_nas_opcoes_nem_inicia() {
     let (motor, provedor) = cenario.motor(
         cenario.agente,
         Some(motor_jev(Arc::clone(&jev))),
-        Some(FluxosConfig::default()),
+        Some(FlowsConfig::default()),
         MetricasG9::proprias(),
     );
     let gatilho = cenario.falar(conversa, "quero marcar visita");
@@ -765,7 +765,7 @@ async fn fluxo_de_outra_org_nunca_inicia() {
     let (motor, provedor) = cenario.motor(
         cenario.agente,
         Some(motor_jev(Arc::clone(&jev))),
-        Some(FluxosConfig::default()),
+        Some(FlowsConfig::default()),
         MetricasG9::proprias(),
     );
     let gatilho = cenario.falar(conversa, "quero marcar visita");
@@ -823,7 +823,7 @@ async fn execucao_ativa_nao_pergunta_o_jev() {
                 ficha: ficha.id,
                 fluxo: fluxo.id,
                 revisao: revisao.id,
-                ator: poph_types::AtorEvento::Atendente,
+                ator: poph_types::EventActor::Attendant,
                 ator_ref: Some("token-de-teste"),
                 decisao_jev: None,
                 estado_inicial: poph_agent::fluxos_transicao::estado_para_banco(&estado),
@@ -837,7 +837,7 @@ async fn execucao_ativa_nao_pergunta_o_jev() {
     let (motor, provedor) = cenario.motor(
         cenario.agente,
         Some(motor_jev(Arc::clone(&jev))),
-        Some(FluxosConfig::default()),
+        Some(FlowsConfig::default()),
         MetricasG9::proprias(),
     );
     let gatilho = cenario.falar(conversa, "meu nome é Ana Teste");
@@ -868,9 +868,9 @@ async fn fluxos_desligados_ignoram_tudo_e_a_ficha_segue() {
     let (motor, provedor) = cenario.motor(
         cenario.agente,
         Some(motor_jev(Arc::clone(&jev))),
-        Some(FluxosConfig {
-            ativo: false,
-            ..FluxosConfig::default()
+        Some(FlowsConfig {
+            enabled: false,
+            ..FlowsConfig::default()
         }),
         MetricasG9::proprias(),
     );
@@ -908,7 +908,7 @@ async fn painel_por_que_mostra_a_decisao() {
     let (motor, _provedor) = cenario.motor(
         cenario.agente,
         Some(motor_jev(Arc::clone(&jev))),
-        Some(FluxosConfig::default()),
+        Some(FlowsConfig::default()),
         g9.clone(),
     );
     let gatilho = cenario.falar(conversa, "quero marcar uma visita");
@@ -924,7 +924,7 @@ async fn painel_por_que_mostra_a_decisao() {
     assert_eq!(gravado["fluxo"]["fluxo"], "agendar_visita");
     assert_eq!(gravado["fluxo"]["etapa"], "coleta");
     assert!(gravado["fluxo"]["execucao"].as_str().is_some());
-    assert_eq!(g9.iniciou.valor(), 1);
+    assert_eq!(g9.iniciou.value(), 1);
 }
 
 /// 4b. Gate desligado no agente: o Jev não é perguntado e o catálogo vai ao prompt (reserva).
@@ -941,7 +941,7 @@ async fn gate_desligado_no_agente_entrega_a_reserva_sem_perguntar() {
     let (motor, provedor) = cenario.motor(
         cenario.agente,
         Some(motor_jev(Arc::clone(&jev))),
-        Some(FluxosConfig::default()),
+        Some(FlowsConfig::default()),
         MetricasG9::proprias(),
     );
     let gatilho = cenario.falar(conversa, "quero marcar uma visita");
@@ -972,7 +972,7 @@ async fn estado_do_g9_leva_os_fluxos_liberados() {
     let (motor, _provedor) = cenario.motor(
         cenario.agente,
         Some(motor_jev(Arc::clone(&jev))),
-        Some(FluxosConfig::default()),
+        Some(FlowsConfig::default()),
         MetricasG9::proprias(),
     );
     let gatilho = cenario.falar(conversa, "quero marcar uma visita");

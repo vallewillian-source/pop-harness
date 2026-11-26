@@ -25,7 +25,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-use poph_types::TipoCampo;
+use poph_types::FieldKind;
 
 use crate::diagnostico::{Codigo, Diagnostico};
 use crate::ir::{Destino, Efeito, Etapa, Ir, Regra};
@@ -302,7 +302,7 @@ impl<'a> Validador<'a> {
                         format!(
                             "A etapa `{}` permite o `{}`, mas nenhuma ação é dele: na prática ele não tem o que fazer aqui.",
                             etapa.id,
-                            ator.como_texto()
+                            ator.as_text()
                         ),
                         sub(&base, "atores_acao"),
                     );
@@ -326,7 +326,7 @@ impl<'a> Validador<'a> {
                 );
             }
             match campo.tipo {
-                TipoCampo::Opcao => {
+                FieldKind::Option => {
                     if campo.opcoes.len() < 2 {
                         self.erro_no(
                             Codigo::OpcoesInvalidas,
@@ -356,7 +356,7 @@ impl<'a> Validador<'a> {
                             "O campo `{}.{}` é do tipo `{}` e não aceita `opcoes`: isso só vale no tipo `opcao`.",
                             etapa.id,
                             campo.id,
-                            campo.tipo.como_texto()
+                            campo.tipo.as_text()
                         ),
                         caminho,
                     );
@@ -403,13 +403,12 @@ impl<'a> Validador<'a> {
             if let Some(ator) = acao.ator
                 && !etapa.atores_acao.contains(&ator)
             {
-                let permitidos: Vec<&str> =
-                    etapa.atores_acao.iter().map(|a| a.como_texto()).collect();
+                let permitidos: Vec<&str> = etapa.atores_acao.iter().map(|a| a.as_text()).collect();
                 self.erro_no(
                     Codigo::RegraOuAtorInvalido,
                     format!(
                         "{onde} é do ator `{}`, que não está em `atores` da etapa `{}` (lá estão: {}).",
-                        ator.como_texto(),
+                        ator.as_text(),
                         etapa.id,
                         if permitidos.is_empty() {
                             "nenhum".to_owned()
@@ -723,12 +722,12 @@ impl<'a> Validador<'a> {
                     );
                 }
             }
-            "maior" | "menor" if tipo_campo != TipoCampo::Numero => {
+            "maior" | "menor" if tipo_campo != FieldKind::Number => {
                 self.aviso_no(
                     Codigo::ComparacaoDeTexto,
                     format!(
                         "{onde} usa `{tipo}` com `{campo}`, mas o campo é `{}`: mude o tipo para `numero` ou use `igual`.",
-                        tipo_campo.como_texto()
+                        tipo_campo.as_text()
                     ),
                     caminho,
                 );

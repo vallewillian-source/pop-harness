@@ -31,8 +31,8 @@ use poph_core::llm::{ErroLlm, EventoLlm, LlmProvider, ProvedorFake, Roteiro};
 use poph_server::Estado;
 use poph_server::cluster::ClusterVivo;
 use poph_store::{Direcao, EstadoTurno, NovaOrg, NovoAgente, Pagina, Store};
-use poph_types::config::{ClusterConfig, ClusterInstance, TokenGlobalConfig};
-use poph_types::{AgentId, ConversationId, HarnessConfig, OrgId, Segredo};
+use poph_types::config::{ClusterConfig, ClusterInstance, GlobalTokenConfig};
+use poph_types::{AgentId, ConversationId, HarnessConfig, OrgId, Secret};
 use rand_core::OsRng;
 use reqwest::{Client, StatusCode};
 use serde_json::Value;
@@ -84,8 +84,8 @@ impl Drop for Instancia {
 
 fn configuracao(pasta: &std::path::Path) -> HarnessConfig {
     let mut config = HarnessConfig::default();
-    config.dados.diretorio = pasta.join("dados");
-    config.admin.tokens_globais = vec![TokenGlobalConfig {
+    config.data.directory = pasta.join("dados");
+    config.admin.tokens_globais = vec![GlobalTokenConfig {
         label: "teste".to_owned(),
         hash: hash_argon2(TOKEN_GLOBAL),
     }];
@@ -125,7 +125,7 @@ async fn iniciar(
         .com_cluster(ClusterVivo {
             caminho: pasta.join("cluster.toml"),
             config: mapa,
-            segredo: Some(Segredo::new(SEGREDO.to_owned())),
+            segredo: Some(Secret::new(SEGREDO.to_owned())),
         });
 
     if com_turno {

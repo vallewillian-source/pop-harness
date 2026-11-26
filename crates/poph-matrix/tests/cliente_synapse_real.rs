@@ -13,7 +13,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use poph_matrix::cliente::{ClienteMatrix, ConfigCliente, CriarSala};
-use poph_types::Segredo;
+use poph_types::Secret;
 use serde_json::json;
 
 /// Lê uma chave do `credenciais.env` sem imprimir valor nenhum.
@@ -37,7 +37,7 @@ fn cliente() -> (ClienteMatrix, String) {
     let base = credencial("POPH_MATRIX_DEV_BASE_URL");
     let server_name = credencial("POPH_MATRIX_DEV_SERVER_NAME");
     let token = credencial("POPH_MATRIX_DEV_HARNESS_AS_TOKEN");
-    let config = ConfigCliente::novo(base, server_name.clone(), Segredo::new(token))
+    let config = ConfigCliente::novo(base, server_name.clone(), Secret::new(token))
         .expect("configuração do cliente");
     let cliente = ClienteMatrix::novo(config).expect("cliente");
     (cliente, server_name)

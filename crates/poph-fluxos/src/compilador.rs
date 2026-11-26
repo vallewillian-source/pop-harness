@@ -18,7 +18,7 @@ use std::time::Duration;
 
 pub(crate) mod forma;
 
-use poph_types::config::FluxosConfig;
+use poph_types::config::FlowsConfig;
 
 use crate::diagnostico::{Codigo, Diagnostico};
 use crate::ir::Ir;
@@ -76,10 +76,10 @@ impl Limites {
     /// carrega revisão no servidor passa por aqui. Campos sem chave em `[fluxos]` (ticks e heap da
     /// carga do módulo, callstack, prazo) ficam nos valores de [`Limites::default`]. Os limites de
     /// avaliação de regra vêm de [`crate::regras::LimitesRegra::da_config`].
-    pub fn da_config(fluxos: &FluxosConfig) -> Self {
+    pub fn da_config(fluxos: &FlowsConfig) -> Self {
         Self {
-            max_fonte_bytes: usize::try_from(fluxos.max_fonte_bytes).unwrap_or(usize::MAX),
-            max_nos: usize::try_from(fluxos.max_nos).unwrap_or(usize::MAX),
+            max_fonte_bytes: usize::try_from(fluxos.max_source_bytes).unwrap_or(usize::MAX),
+            max_nos: usize::try_from(fluxos.max_nodes).unwrap_or(usize::MAX),
             ..Self::default()
         }
     }

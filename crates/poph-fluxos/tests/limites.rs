@@ -4,7 +4,7 @@
 //! o limite de fato muda (`Limites::da_config`, `LimitesRegra::da_config`, `compilar`).
 
 use poph_fluxos::{Codigo, Limites, LimitesRegra, Severidade, compilar, formatar_com};
-use poph_types::config::FluxosConfig;
+use poph_types::config::FlowsConfig;
 
 /// Um dos exemplos do repositório: script válido que o compilador aceita com o padrão.
 const EXEMPLO: &str = include_str!("../../../tests/fluxos/exemplos/agendar_visita.star");
@@ -33,28 +33,28 @@ fn erros_com_codigo(fonte: &str, limites: &Limites, codigo: Codigo) -> bool {
 
 #[test]
 fn padroes_do_compilador_seguem_a_configuracao_padrao() {
-    let padrao = FluxosConfig::default();
+    let padrao = FlowsConfig::default();
     let limites = Limites::default();
     assert_eq!(
-        limites.max_fonte_bytes as u64, padrao.max_fonte_bytes,
+        limites.max_fonte_bytes as u64, padrao.max_source_bytes,
         "tamanho do script: padrão do compilador e da configuração"
     );
     assert_eq!(
-        limites.max_nos as u32, padrao.max_nos,
+        limites.max_nos as u32, padrao.max_nodes,
         "nós por fluxo: padrão do compilador e da configuração"
     );
     let regra = LimitesRegra::default();
-    assert_eq!(regra.max_ticks, padrao.max_ticks_regra);
-    assert_eq!(regra.max_heap_bytes as u64, padrao.max_heap_regra);
+    assert_eq!(regra.max_ticks, padrao.max_rule_ticks);
+    assert_eq!(regra.max_heap_bytes as u64, padrao.max_rule_heap);
 }
 
 #[test]
 fn da_config_mapeia_cada_campo_do_compilador() {
     // Cada campo com chave em `[fluxos]` muda o valor que o compilador recebe.
-    let cfg = FluxosConfig {
-        max_fonte_bytes: 40_960,
-        max_nos: 17,
-        ..FluxosConfig::default()
+    let cfg = FlowsConfig {
+        max_source_bytes: 40_960,
+        max_nodes: 17,
+        ..FlowsConfig::default()
     };
     let limites = Limites::da_config(&cfg);
     assert_eq!(limites.max_fonte_bytes, 40_960);
@@ -69,10 +69,10 @@ fn da_config_mapeia_cada_campo_do_compilador() {
 
 #[test]
 fn da_config_mapeia_os_limites_de_regra() {
-    let cfg = FluxosConfig {
-        max_ticks_regra: 2_500,
-        max_heap_regra: 262_144,
-        ..FluxosConfig::default()
+    let cfg = FlowsConfig {
+        max_rule_ticks: 2_500,
+        max_rule_heap: 262_144,
+        ..FlowsConfig::default()
     };
     let regra = LimitesRegra::da_config(&cfg);
     assert_eq!(regra.max_ticks, 2_500);
@@ -86,9 +86,9 @@ fn da_config_mapeia_os_limites_de_regra() {
 fn script_de_40_kib_passa_quando_a_configuracao_sobe_o_teto_para_64_kib() {
     let fonte = script_de_tamanho(40 * 1024);
     assert!(fonte.len() > 32 * 1024 && fonte.len() < 64 * 1024);
-    let cfg = FluxosConfig {
-        max_fonte_bytes: 65_536,
-        ..FluxosConfig::default()
+    let cfg = FlowsConfig {
+        max_source_bytes: 65_536,
+        ..FlowsConfig::default()
     };
     let limites = Limites::da_config(&cfg);
     assert!(
@@ -101,16 +101,16 @@ fn script_de_40_kib_passa_quando_a_configuracao_sobe_o_teto_para_64_kib() {
 fn script_de_40_kib_e_recusado_com_o_padrao() {
     // Padrão de `fluxos.max_fonte_bytes` = 32 KiB (decisão D1): quem quer mais sobe a configuração.
     let fonte = script_de_tamanho(40 * 1024);
-    let limites = Limites::da_config(&FluxosConfig::default());
+    let limites = Limites::da_config(&FlowsConfig::default());
     assert!(erros_com_codigo(&fonte, &limites, Codigo::FonteGrande));
 }
 
 #[test]
 fn script_de_40_kib_e_recusado_com_teto_de_32_kib() {
     let fonte = script_de_tamanho(40 * 1024);
-    let cfg = FluxosConfig {
-        max_fonte_bytes: 32_768,
-        ..FluxosConfig::default()
+    let cfg = FlowsConfig {
+        max_source_bytes: 32_768,
+        ..FlowsConfig::default()
     };
     let limites = Limites::da_config(&cfg);
     assert!(
@@ -123,17 +123,17 @@ fn script_de_40_kib_e_recusado_com_teto_de_32_kib() {
 #[test]
 fn teto_de_nos_da_configuracao_recusa_o_que_passa_dele() {
     let nos = nos_do_exemplo();
-    let aperto = Limites::da_config(&FluxosConfig {
-        max_nos: u32::try_from(nos - 1).unwrap(),
-        ..FluxosConfig::default()
+    let aperto = Limites::da_config(&FlowsConfig {
+        max_nodes: u32::try_from(nos - 1).unwrap(),
+        ..FlowsConfig::default()
     });
     assert!(
         erros_com_codigo(EXEMPLO, &aperto, Codigo::NosDemais),
         "um nó a mais que o teto tem de cair em FLX27"
     );
-    let no_limite = Limites::da_config(&FluxosConfig {
-        max_nos: u32::try_from(nos).unwrap(),
-        ..FluxosConfig::default()
+    let no_limite = Limites::da_config(&FlowsConfig {
+        max_nodes: u32::try_from(nos).unwrap(),
+        ..FlowsConfig::default()
     });
     assert!(
         compilar(EXEMPLO, &no_limite).ir.is_some(),
@@ -144,14 +144,14 @@ fn teto_de_nos_da_configuracao_recusa_o_que_passa_dele() {
 #[test]
 fn formatar_com_usa_o_mesmo_teto_do_compilador() {
     let fonte = script_de_tamanho(40 * 1024);
-    let cfg = FluxosConfig {
-        max_fonte_bytes: 32_768,
-        ..FluxosConfig::default()
+    let cfg = FlowsConfig {
+        max_source_bytes: 32_768,
+        ..FlowsConfig::default()
     };
     assert!(formatar_com(&fonte, &Limites::da_config(&cfg)).is_err());
-    let subido = FluxosConfig {
-        max_fonte_bytes: 65_536,
-        ..FluxosConfig::default()
+    let subido = FlowsConfig {
+        max_source_bytes: 65_536,
+        ..FlowsConfig::default()
     };
     assert!(formatar_com(&fonte, &Limites::da_config(&subido)).is_ok());
 }

@@ -305,7 +305,7 @@ impl DestinoReal {
         let resultado = espacos.posicionar(&pedido).await;
         self.metricas
             .latencia_synapse_segundos
-            .observar(inicio.elapsed().as_secs_f64());
+            .observe(inicio.elapsed().as_secs_f64());
         match resultado {
             Ok(Posicao::Posicionada {
                 convites_falhos, ..
@@ -329,8 +329,8 @@ impl DestinoReal {
             }
             Err(erro) => {
                 match erro.classificacao() {
-                    Classificacao::Transitoria => self.metricas.erros_transitorios.incrementar(1),
-                    Classificacao::Definitiva => self.metricas.erros_definitivos.incrementar(1),
+                    Classificacao::Transitoria => self.metricas.erros_transitorios.increment(1),
+                    Classificacao::Definitiva => self.metricas.erros_definitivos.increment(1),
                 }
                 tracing::warn!(
                     target: "poph_server::matrix_espelho",
@@ -379,10 +379,10 @@ impl DestinoMatrix for DestinoReal {
         let resultado = self.provisionador.provisionar(dados).await;
         self.metricas
             .latencia_synapse_segundos
-            .observar(inicio.elapsed().as_secs_f64());
+            .observe(inicio.elapsed().as_secs_f64());
         let pronta = resultado?;
         if !pronta.ja_estava_pronta {
-            self.metricas.salas_prontas.incrementar(1);
+            self.metricas.salas_prontas.increment(1);
             // Sala recém-criada: entra no espaço do departamento agora. Falha aqui não derruba a
             // criação (a sala existe e as mensagens podem ser espelhadas); o laço de estado tenta
             // de novo na próxima alteração da conversa.
@@ -418,7 +418,7 @@ impl DestinoMatrix for DestinoReal {
             .map(|_| ());
         self.metricas
             .latencia_synapse_segundos
-            .observar(inicio.elapsed().as_secs_f64());
+            .observe(inicio.elapsed().as_secs_f64());
         resultado
     }
 
@@ -442,7 +442,7 @@ impl DestinoMatrix for DestinoReal {
         });
         self.metricas
             .latencia_synapse_segundos
-            .observar(inicio.elapsed().as_secs_f64());
+            .observe(inicio.elapsed().as_secs_f64());
         resultado
     }
 
@@ -463,7 +463,7 @@ impl DestinoMatrix for DestinoReal {
             .map(|_| ());
         self.metricas
             .latencia_synapse_segundos
-            .observar(inicio.elapsed().as_secs_f64());
+            .observe(inicio.elapsed().as_secs_f64());
         resultado
     }
 }
@@ -762,8 +762,8 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
             store,
             destino,
             ids,
-            concorrencia: (config.concorrencia as usize).max(1),
-            intervalo: Duration::from_millis(config.intervalo_ms.max(1)),
+            concorrencia: (config.concurrency as usize).max(1),
+            intervalo: Duration::from_millis(config.interval_ms.max(1)),
             pagina: PAGINA,
             definitivas: Mutex::new(HashMap::new()),
             falhas_seguidas: AtomicU32::new(0),
@@ -857,7 +857,7 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
         let mut relatorio = RelatorioCiclo::default();
         let ligadas = self.store.matrix().orgs_ligadas()?;
         if ligadas.is_empty() {
-            self.metricas.atraso_cursor_segundos.definir(0);
+            self.metricas.atraso_cursor_segundos.set(0);
             return Ok(relatorio);
         }
 
@@ -873,7 +873,7 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
             );
         }
         if orgs.is_empty() {
-            self.metricas.atraso_cursor_segundos.definir(0);
+            self.metricas.atraso_cursor_segundos.set(0);
             return Ok(relatorio);
         }
 
@@ -942,16 +942,14 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
     /// a zero quando o laço alcança o fim.
     fn medir_atraso(&self, orgs: &HashMap<OrgId, OrgLigada>) -> Result<(), ErroEspelho> {
         let Some(menor) = orgs.values().map(|info| info.cursor.0).min() else {
-            self.metricas.atraso_cursor_segundos.definir(0);
+            self.metricas.atraso_cursor_segundos.set(0);
             return Ok(());
         };
         let atraso_ms = match self.store.mensagens().desde(menor, 1)?.first() {
             Some(primeira) => ((self.agora_ms)() - primeira.criado_em).max(0),
             None => 0,
         };
-        self.metricas
-            .atraso_cursor_segundos
-            .definir(atraso_ms / 1000);
+        self.metricas.atraso_cursor_segundos.set(atraso_ms / 1000);
         Ok(())
     }
 
@@ -1065,7 +1063,7 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
                 {
                     Ok(_) => {
                         relatorio.isoladas += 1;
-                        self.metricas.mensagens_isoladas.incrementar(1);
+                        self.metricas.mensagens_isoladas.increment(1);
                         tracing::warn!(
                             target: "poph_server::matrix_espelho",
                             org = %mensagem.org_id,
@@ -1121,11 +1119,11 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
                     match tipo {
                         PassoFeito::Texto => {
                             relatorio.enviadas += 1;
-                            self.metricas.mensagens_espelhadas.incrementar(1);
+                            self.metricas.mensagens_espelhadas.increment(1);
                         }
                         PassoFeito::Midia => {
                             relatorio.midias_enviadas += 1;
-                            self.metricas.midias_espelhadas.incrementar(1);
+                            self.metricas.midias_espelhadas.increment(1);
                         }
                         PassoFeito::Aviso => relatorio.avisos_de_midia += 1,
                     }
@@ -1141,7 +1139,7 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
                     Ok(_) => {
                         estados[indice] = Estado::Resolvida;
                         relatorio.isoladas += 1;
-                        self.metricas.mensagens_isoladas.incrementar(1);
+                        self.metricas.mensagens_isoladas.increment(1);
                     }
                     Err(_) => estados[indice] = Estado::Pendente,
                 },
@@ -1170,12 +1168,12 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
 
         let conversa = grupo.dados.conversa;
         let agente_da_conversa = grupo.dados.agente.to_string();
-        self.metricas.tentativas.incrementar(1);
+        self.metricas.tentativas.increment(1);
         let sala = match self.destino.garantir_sala(&grupo.dados).await {
             Ok(sala) => sala,
             Err(erro) => {
                 if chamada_da_sala(&erro).is_some_and(eh_429) {
-                    self.metricas.respostas_429.incrementar(1);
+                    self.metricas.respostas_429.increment(1);
                 }
                 // A falha da sala é cobrada no primeiro passo da primeira mensagem do grupo.
                 let motivo = MOTIVO_SALA.to_owned();
@@ -1218,7 +1216,7 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
         let mut aparelho_na_sala = false;
         while let Some(item) = itens.next() {
             for passo in item.passos {
-                self.metricas.tentativas.incrementar(1);
+                self.metricas.tentativas.increment(1);
                 let tipo = passo.tipo();
                 // Texto do aparelho precisa do fantasma do aparelho dentro da sala antes de falar
                 // nela (MX-42). Mídia não vem do aparelho nesta fase.
@@ -1289,7 +1287,7 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
                     }
                     Err(erro) => {
                         if eh_429(&erro) {
-                            self.metricas.respostas_429.incrementar(1);
+                            self.metricas.respostas_429.increment(1);
                         }
                         let motivo = motivo_de_envio(&erro);
                         let desfecho = self.desfecho_de(
@@ -1364,7 +1362,7 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
     ) -> Desfecho {
         match classificacao {
             Classificacao::Transitoria => {
-                self.metricas.erros_transitorios.incrementar(1);
+                self.metricas.erros_transitorios.increment(1);
                 tracing::debug!(
                     target: "poph_server::matrix_espelho",
                     org = %org,
@@ -1376,7 +1374,7 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
                 Desfecho::Pendente
             }
             Classificacao::Definitiva => {
-                self.metricas.erros_definitivos.incrementar(1);
+                self.metricas.erros_definitivos.increment(1);
                 let tentativas = {
                     let mut mapa = self
                         .definitivas

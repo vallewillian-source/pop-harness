@@ -27,7 +27,7 @@ use poph_jev::{
     AjusteGates, AvaliadorGates, EstadoJev, FluxoJev, JevFalso, LoteResposta, MensagemJev,
     MotorJev, Pedido, Resposta, TransporteJev,
 };
-use poph_types::GatesJev;
+use poph_types::JevGates;
 
 /// Teto de caracteres do texto de gatilho na pergunta (PRD §6.3).
 const MAX_GATILHO: usize = 400;
@@ -91,7 +91,7 @@ fn motor() -> (Arc<JevFalso>, MotorJev) {
     }));
     let motor = MotorJev::novo(
         Arc::clone(&falso) as Arc<dyn TransporteJev>,
-        GatesJev::padrao(),
+        JevGates::default_value(),
         "jev-de-medicao",
     );
     (falso, motor)

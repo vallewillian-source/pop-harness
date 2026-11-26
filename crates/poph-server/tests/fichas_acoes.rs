@@ -35,9 +35,9 @@ use poph_server::fluxos_transicao::transicao_do_motor;
 use poph_store::{
     Execucao, ExtrasDaTransicao, NovaConversa, NovaFicha, NovoFluxo, PublicacaoDeRevisao, Store,
 };
-use poph_types::config::TokenGlobalConfig;
+use poph_types::config::GlobalTokenConfig;
 use poph_types::{
-    AgentId, AtorAcao, ExecucaoId, FichaId, FluxoId, HarnessConfig, OrgId, RevisaoId,
+    ActionActor, AgentId, ExecutionId, FlowId, HarnessConfig, OrgId, RecordId, RevisionId,
 };
 use rand_core::OsRng;
 use reqwest::{Client, Method, StatusCode};
@@ -120,9 +120,9 @@ impl Cenario {
         fs::create_dir_all(pasta.join("dados")).expect("pasta de dados");
 
         let mut config = HarnessConfig::default();
-        config.dados.diretorio = pasta.join("dados");
-        config.servidor.porta = 7483;
-        config.admin.tokens_globais = vec![TokenGlobalConfig {
+        config.data.directory = pasta.join("dados");
+        config.server.port = 7483;
+        config.admin.tokens_globais = vec![GlobalTokenConfig {
             label: "teste".to_owned(),
             hash: hash_argon2(TOKEN_GLOBAL),
         }];
@@ -248,7 +248,7 @@ impl Cenario {
     }
 
     /// Fluxo publicado (criado, compilado e publicado pelo repositório) e liberado ao agente.
-    fn fluxo_liberado(&self, org: &str, agente: &str, slug: &str) -> (FluxoId, RevisaoId) {
+    fn fluxo_liberado(&self, org: &str, agente: &str, slug: &str) -> (FlowId, RevisionId) {
         let (fluxo, revisao) = self.fluxo_publicado(org, slug);
         self.store
             .fluxos()
@@ -258,7 +258,7 @@ impl Cenario {
     }
 
     /// Fluxo publicado, sem liberar a agente nenhum.
-    fn fluxo_publicado(&self, org: &str, slug: &str) -> (FluxoId, RevisaoId) {
+    fn fluxo_publicado(&self, org: &str, slug: &str) -> (FlowId, RevisionId) {
         let org_id = parse_org(org);
         let fluxo = self
             .store
@@ -299,7 +299,7 @@ impl Cenario {
     }
 
     /// Ficha sem conversa, do agente.
-    fn ficha_avulsa(&self, org: &str, agente: &str) -> FichaId {
+    fn ficha_avulsa(&self, org: &str, agente: &str) -> RecordId {
         self.store
             .fichas()
             .criar(
@@ -316,7 +316,7 @@ impl Cenario {
     }
 
     /// Ficha ligada a uma conversa nova (a Ficha nasce com ela).
-    fn ficha_com_conversa(&self, org: &str, agente: &str) -> (poph_store::Conversa, FichaId) {
+    fn ficha_com_conversa(&self, org: &str, agente: &str) -> (poph_store::Conversa, RecordId) {
         let conversa = self
             .store
             .conversas()
@@ -341,7 +341,7 @@ impl Cenario {
         (conversa, ficha)
     }
 
-    fn versao_da_ficha(&self, org: &str, ficha: FichaId) -> u64 {
+    fn versao_da_ficha(&self, org: &str, ficha: RecordId) -> u64 {
         self.store
             .fichas()
             .obter(parse_org(org), ficha)
@@ -356,7 +356,7 @@ impl Cenario {
             .expect("lê a execução")
     }
 
-    fn quantas_execucoes(&self, org: &str, ficha: FichaId) -> usize {
+    fn quantas_execucoes(&self, org: &str, ficha: RecordId) -> usize {
         self.store
             .execucoes()
             .da_ficha(parse_org(org), ficha, 100)
@@ -364,7 +364,7 @@ impl Cenario {
             .len()
     }
 
-    fn quantos_eventos(&self, org: &str, ficha: FichaId) -> usize {
+    fn quantos_eventos(&self, org: &str, ficha: RecordId) -> usize {
         self.store
             .fichas()
             .eventos(parse_org(org), ficha, None, 500)
@@ -376,7 +376,7 @@ impl Cenario {
     /// ainda não existe). Usa a mesma ponte de tradução da API.
     fn agente_age(&self, org: &str, run: &str, acao: &str, campos: Value, chave: &str) {
         let org_id = parse_org(org);
-        let run_id: ExecucaoId = run.parse().expect("id da execução");
+        let run_id: ExecutionId = run.parse().expect("id da execução");
         let execucao = self.execucao(org, run);
         let revisao = self
             .store
@@ -417,7 +417,7 @@ impl Cenario {
             &estado,
             acao,
             &campos,
-            AtorAcao::Agente,
+            ActionActor::Agent,
             Some(chave),
             &contexto,
         )
@@ -445,9 +445,9 @@ impl Cenario {
         &self,
         org: &str,
         token: &str,
-        ficha: FichaId,
+        ficha: RecordId,
         versao: Option<u64>,
-        fluxo: FluxoId,
+        fluxo: FlowId,
         chave: &str,
     ) -> (StatusCode, Value) {
         self.pedir(
@@ -466,7 +466,7 @@ impl Cenario {
         &self,
         org: &str,
         token: &str,
-        ficha: FichaId,
+        ficha: RecordId,
         run: &str,
         versao: Option<u64>,
         acao: &str,
@@ -489,7 +489,7 @@ impl Cenario {
         &self,
         org: &str,
         token: &str,
-        ficha: FichaId,
+        ficha: RecordId,
         run: &str,
         versao: Option<u64>,
         motivo: &str,
@@ -509,7 +509,7 @@ impl Cenario {
         &self,
         org: &str,
         token: &str,
-        ficha: FichaId,
+        ficha: RecordId,
         versao: Option<u64>,
     ) -> (StatusCode, Value) {
         self.pedir(
@@ -541,7 +541,7 @@ struct Base {
     org: String,
     token: String,
     agente: String,
-    fluxo: FluxoId,
+    fluxo: FlowId,
 }
 
 async fn base(c: &Cenario, slug: &str) -> Base {
@@ -1020,7 +1020,7 @@ async fn close_fecha_conversa_ficha_e_abandona_a_execucao() {
     // Versão velha da Ficha: `412`, nada fecha.
     let (status, corpo) = c.fechar(&org, &token, ficha, Some(versao + 3)).await;
     assert_eq!(status, StatusCode::PRECONDITION_FAILED, "{corpo}");
-    assert_eq!(c.execucao(&org, &run).status.como_texto(), "ativa");
+    assert_eq!(c.execucao(&org, &run).status.as_text(), "ativa");
 
     let (status, corpo) = c.fechar(&org, &token, ficha, Some(versao)).await;
     assert_eq!(status, StatusCode::OK, "{corpo}");
@@ -1033,7 +1033,7 @@ async fn close_fecha_conversa_ficha_e_abandona_a_execucao() {
         .expect("lê a conversa");
     assert_eq!(conversa_depois.status.como_texto(), "closed");
     let execucao = c.execucao(&org, &run);
-    assert_eq!(execucao.status.como_texto(), "abandonada");
+    assert_eq!(execucao.status.as_text(), "abandonada");
     assert_eq!(
         execucao.motivo_fim.as_deref(),
         Some("atendimento_encerrado")

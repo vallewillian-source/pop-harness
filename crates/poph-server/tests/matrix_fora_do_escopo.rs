@@ -27,7 +27,7 @@ use poph_server::matrix_espelho::{
     AvisoNaSala, DestinoMatrix, EnvioMidia, EspelhoMatrix, MidiaPublicada,
 };
 use poph_store::{Direcao, NovaConversa, NovaMensagem, NovaOrg, NovoAgente, Origem, Papel, Store};
-use poph_types::{AgentId, ConversationId, MatrixConfig, MidiaForaDoEscopo, OrgId};
+use poph_types::{AgentId, ConversationId, MatrixConfig, OrgId, UnsupportedContent};
 
 // ───────────────────────────── cenário ─────────────────────────────
 
@@ -71,12 +71,12 @@ impl Drop for Cenario {
 
 fn config() -> MatrixConfig {
     MatrixConfig {
-        habilitado: true,
+        enabled: true,
         homeserver_url: "http://127.0.0.1:1".to_owned(),
         server_name: "matrix-dev.local".to_owned(),
-        prefixo: "ph".to_owned(),
-        concorrencia: 4,
-        intervalo_ms: 500,
+        prefix: "ph".to_owned(),
+        concurrency: 4,
+        interval_ms: 500,
         ..MatrixConfig::default()
     }
 }
@@ -316,8 +316,8 @@ async fn os_seis_tipos_viram_aviso_na_sala_e_a_legenda_seguinte_passa() {
     let conversa = criar_conversa(&store, org, agente, "5511977770001");
     store.matrix().ligar(org).expect("liga o módulo");
 
-    for tipo in MidiaForaDoEscopo::TODAS {
-        msg_cliente(&store, org, conversa, tipo.texto_de_historico());
+    for tipo in UnsupportedContent::ALL_VALUES {
+        msg_cliente(&store, org, conversa, tipo.history_text());
     }
     msg_cliente(
         &store,
@@ -338,9 +338,9 @@ async fn os_seis_tipos_viram_aviso_na_sala_e_a_legenda_seguinte_passa() {
         7,
         "seis avisos e a legenda de texto: {textos:?}"
     );
-    for (entregue, tipo) in textos.iter().zip(MidiaForaDoEscopo::TODAS) {
+    for (entregue, tipo) in textos.iter().zip(UnsupportedContent::ALL_VALUES) {
         assert_eq!(entregue.msgtype, "m.notice", "{tipo:?}");
-        assert_eq!(entregue.corpo, tipo.aviso_na_sala(), "{tipo:?}");
+        assert_eq!(entregue.corpo, tipo.room_notice(), "{tipo:?}");
         assert_eq!(
             entregue.remetente,
             format!("@ph_ag_{agente}:matrix-dev.local"),
@@ -373,7 +373,7 @@ async fn reprocessar_o_aviso_nao_duplica_na_sala() {
         &store,
         org,
         conversa,
-        MidiaForaDoEscopo::Audio.texto_de_historico(),
+        UnsupportedContent::Audio.history_text(),
     );
 
     // A primeira tentativa cai de forma transitória: a mensagem fica pendente e volta no ciclo
@@ -405,7 +405,7 @@ async fn historico_escrito_pelo_atendente_segue_como_texto() {
         &store,
         org,
         conversa,
-        MidiaForaDoEscopo::Audio.texto_de_historico(),
+        UnsupportedContent::Audio.history_text(),
     );
 
     let falso = Falso::novo();

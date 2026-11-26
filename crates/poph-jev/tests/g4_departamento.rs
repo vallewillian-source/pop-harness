@@ -192,7 +192,7 @@ async fn lote_do_g4_e_o_fallback_preserva_a_escolha_crua() {
             ..LoteResposta::default()
         })
     }));
-    let motor = MotorJev::novo(jev, poph_types::GatesJev::default(), "jev-latest");
+    let motor = MotorJev::novo(jev, poph_types::JevGates::default(), "jev-latest");
     let resultado = motor
         .avaliar(
             estado(
@@ -222,7 +222,7 @@ async fn gate_desligado_nao_decide_nada() {
         IdGate::G4.pergunta_id().to_owned(),
         "Suporte".to_owned(),
     )])));
-    let motor = MotorJev::novo(jev, poph_types::GatesJev::default(), "jev-latest");
+    let motor = MotorJev::novo(jev, poph_types::JevGates::default(), "jev-latest");
     let resultado = motor
         .avaliar(
             estado(&["Comercial", "Suporte"], "chegou quebrado"),

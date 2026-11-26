@@ -64,7 +64,7 @@ no customer data, machine path or internal document entered the diff.
 - **Flows are pure in the engine.** `poph-fluxos` decides and `poph-store` writes. A flow transition is written once, in one transaction, through `Store::execucoes()` (`aplicar_transicao`). Effects are queued and delivered by the server loop, never by the engine.
 - **Secrets never leak.** Keys come only from the environment (`POPH_CHAVE_CIFRA`, `ANTIGRAVITY_API_KEY`,
   `TYPESAFE_API_KEY`, `EVOLUTION_API_KEY`, `POPH_CLUSTER_SECRET`). They never go into a file, log, report
-  or API response. The `Sensivel` type (in `crates/poph-types/src/segredo.rs`) prints `[oculto]` in
+  or API response. The `Sensitive` type (in `crates/poph-types/src/secret.rs`) prints `[oculto]` in
   `Debug` and `Display`. Use it for any sensitive value that passes through a log or error.
 - **Migrations.** A new migration is a file `crates/poph-store/migrations/harness/NNNN_name.sql`,
   registered in `crates/poph-store/src/migracoes.rs` with the next number. Never edit a published
@@ -89,7 +89,7 @@ Names and dependencies come from `cargo metadata` for this workspace, not from m
 
 | Crate | What it does | Imports (internal, normal dependencies) |
 |---|---|---|
-| `poph-types` | Domain types, IDs, errors, contracts, configuration (`config.rs`), `Sensivel` (`segredo.rs`) | none (it is the base) |
+| `poph-types` | Domain types, IDs, errors, contracts, configuration (`config.rs`), `Sensitive` (`secret.rs`) | none (it is the base) |
 | `poph-core` | LLM provider client (`llm/` module, with the antigravity provider) | `poph-types` |
 | `poph-store` | SQLite storage (`harness.db` and `rag.db`): one writer, WAL readers, migrations, per-org repositories, backup | `poph-types` |
 | `poph-rag` | Local embedding (ONNX Runtime, int8), batch queue with a per-org limit, model installation | `poph-types` |
@@ -137,7 +137,7 @@ check it against the table. Two rules the table makes clear:
 | Org backup | `poph-store/src/backup.rs`, `poph-server/src/api/backup.rs` | `docs/BACKUP.md` |
 | Integration plugins | `poph-plugins/`, `poph-plugin-eco/` | `docs/PLUGIN_PROTOCOLO.md`, `docs/PLUGIN_EXEMPLO.md` |
 | WhatsApp (EvolutionAPI) | `poph-evolution/`, `poph-server/src/evolution.rs` | `docs/EVOLUTION.md` |
-| Channel contract and turn events | `poph-types/src/integracao.rs`, `poph-agent/src/turno/mod.rs` | `docs/CONTRATO_CANAL.md` |
+| Channel contract and turn events | `poph-types/src/integration.rs`, `poph-agent/src/turno/mod.rs` | `docs/CONTRATO_CANAL.md` |
 | Matrix Application Service receiver (routes Synapse calls) | `poph-server/src/api/matrix_as.rs` | `docs/API.md` (Application Service section) |
 | Agent reply in Element → customer on WhatsApp | `poph-server/src/matrix_resposta.rs` (on top of `poph-matrix/src/eventos.rs` and the atomic operation in `poph-store`) | `docs/ENTRADA_E_SAIDA.md` §5 |
 | Room notice when the agent's reply fails for good on WhatsApp | `poph-server/src/matrix_falhas_aviso.rs` (`AvisoDeFalhas`, wired by `matrix_inicio`; table `matrix_avisos_falha`, migration `0009`) | `docs/ENTRADA_E_SAIDA.md` §8, `docs/DADOS.md` §11.6 |

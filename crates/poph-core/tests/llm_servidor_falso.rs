@@ -54,8 +54,8 @@ async fn texto_chega_em_stream_com_uso_e_fim() {
     assert_eq!(corpo["model"], "gemini-3.8-flash-tiered");
     let mensagens = corpo["messages"].as_array().expect("lista");
     assert_eq!(mensagens.last().expect("última")["role"], "user");
-    assert_eq!(m.metricas.tokens_total.valor(), 117);
-    assert_eq!(m.metricas.chamadas_llm.valor(), 1);
+    assert_eq!(m.metricas.tokens_total.value(), 117);
+    assert_eq!(m.metricas.llm_calls.value(), 1);
 }
 
 #[tokio::test]
@@ -218,7 +218,7 @@ async fn erro_definitivo_nao_e_retentado_e_nao_ecoa_a_chave() {
     }
     assert!(!format!("{erro} {erro:?}").contains(CHAVE));
     assert_eq!(servidor.pedidos().len(), 1, "401 não pode ser retentado");
-    assert_eq!(m.metricas.erros_llm.valor(), 1);
+    assert_eq!(m.metricas.llm_errors.value(), 1);
 }
 
 #[tokio::test]
@@ -299,7 +299,7 @@ async fn cancelamento_no_meio_do_stream_fecha_e_libera_as_vagas() {
         "as vagas voltam depois do cancelamento"
     );
     assert_eq!(
-        m.metricas.erros_llm.valor(),
+        m.metricas.llm_errors.value(),
         0,
         "cancelamento não conta como erro"
     );

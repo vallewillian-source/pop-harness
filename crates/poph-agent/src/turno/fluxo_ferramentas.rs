@@ -36,7 +36,7 @@ use poph_fluxos::motor::{
     self, Contexto as ContextoDoMotor, Estado as EstadoDoMotor, executar_acao,
 };
 use poph_store::{ErroStore, Execucao, ExtrasDaTransicao, Ficha, Store};
-use poph_types::{AtorAcao, FluxosConfig, StatusFicha};
+use poph_types::{ActionActor, FlowsConfig, RecordStatus};
 use serde_json::{Map, Value};
 
 use super::ferramentas::{ContextoFerramenta, FerramentaInterna, FuturoFerramenta, RegistroPadrao};
@@ -69,7 +69,7 @@ struct FluxoDoTurno {
 pub fn registrar(
     registro: RegistroPadrao,
     store: Arc<Store>,
-    config: &FluxosConfig,
+    config: &FlowsConfig,
 ) -> RegistroPadrao {
     registrar_com(registro, store, AjustesDoFluxo::da_config(config))
 }
@@ -218,7 +218,7 @@ impl FluxoDoTurno {
             &carga.estado,
             &acao,
             &campos,
-            AtorAcao::Agente,
+            ActionActor::Agent,
             Some(&chave),
             &motor_contexto,
         )
@@ -286,7 +286,7 @@ impl FluxoDoTurno {
             .ok_or_else(|| {
                 "erro: este atendimento ainda não tem Ficha; não há fluxo para agir".to_owned()
             })?;
-        if ficha.status == StatusFicha::Fechada {
+        if ficha.status == RecordStatus::Closed {
             return Err(
                 "erro: o atendimento já foi encerrado; a próxima mensagem do cliente abre outro"
                     .to_owned(),
@@ -371,7 +371,7 @@ impl FluxoDoTurno {
                 Some(carga) => carga,
                 None => return Err(nao_consegui_ler_o_fluxo()),
             };
-        let resultado = motor::abandonar(&carga.estado, &motivo, AtorAcao::Agente, Some(&chave))
+        let resultado = motor::abandonar(&carga.estado, &motivo, ActionActor::Agent, Some(&chave))
             .map_err(|erro| format!("erro: {erro}"))?;
         self.store
             .execucoes()
@@ -447,7 +447,7 @@ impl FluxoDoTurno {
             .ok_or_else(|| {
                 "erro: este atendimento ainda não tem Ficha; não há fluxo para iniciar".to_owned()
             })?;
-        if ficha.status == StatusFicha::Fechada {
+        if ficha.status == RecordStatus::Closed {
             return Err(
                 "erro: o atendimento já foi encerrado; a próxima mensagem do cliente abre outro"
                     .to_owned(),
@@ -620,7 +620,7 @@ fn descrever(ir: &Ir, estado: &EstadoDoMotor) -> String {
                 None => String::new(),
             };
             saida.push_str(&format!("A execução chegou ao fim{desfecho}."));
-            if estado.status != poph_types::StatusExecucao::Ativa {
+            if estado.status != poph_types::ExecutionStatus::Active {
                 saida.push_str(" Não há mais ação a executar neste fluxo.");
             }
         }
@@ -641,10 +641,10 @@ fn lista(itens: &[String]) -> String {
 }
 
 /// Atores como o atendente lê.
-fn lista_dos_atores(atores: &[AtorAcao]) -> String {
+fn lista_dos_atores(atores: &[ActionActor]) -> String {
     atores
         .iter()
-        .map(|ator| ator.como_texto().to_owned())
+        .map(|ator| ator.as_text().to_owned())
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -724,7 +724,7 @@ fn falha_de_leitura(erro: ErroStore, o_que: &str) -> String {
 /// A gravação recusou a transição: versão velha é corrida com o atendente, o resto é defeito.
 fn erro_da_transicao(erro: ErroStore, acao: &str) -> String {
     match erro {
-        ErroStore::Dominio(poph_types::DomainError::ConflitoDeVersao { .. }) => format!(
+        ErroStore::Dominio(poph_types::DomainError::VersionConflict { .. }) => format!(
             "erro: outra pessoa agiu neste fluxo ao mesmo tempo e a etapa mudou; a ação `{acao}` \
              não foi gravada"
         ),
@@ -741,7 +741,7 @@ fn nao_consegui_ler_o_fluxo() -> String {
 
 #[cfg(test)]
 mod testes {
-    use poph_types::{DomainError, ExecucaoId};
+    use poph_types::{DomainError, ExecutionId};
 
     use poph_store::ErroStore;
 
@@ -750,12 +750,12 @@ mod testes {
     /// Execução fictícia só para derivar a chave (o resto dos campos não entra nela).
     fn execucao() -> poph_store::Execucao {
         poph_store::Execucao {
-            id: ExecucaoId::generate(),
+            id: ExecutionId::generate(),
             org_id: poph_types::OrgId::generate(),
-            ficha_id: poph_types::FichaId::generate(),
-            fluxo_id: poph_types::FluxoId::generate(),
-            revisao_id: poph_types::RevisaoId::generate(),
-            status: poph_types::StatusExecucao::Ativa,
+            ficha_id: poph_types::RecordId::generate(),
+            fluxo_id: poph_types::FlowId::generate(),
+            revisao_id: poph_types::RevisionId::generate(),
+            status: poph_types::ExecutionStatus::Active,
             no_atual: "coleta".to_owned(),
             dados_json: "{}".to_owned(),
             resultado: None,
@@ -801,11 +801,11 @@ mod testes {
     /// não "erro de armazenamento".
     #[test]
     fn conflito_de_versao_vira_aviso_de_corrida() {
-        let erro = ErroStore::Dominio(DomainError::ConflitoDeVersao {
-            entidade: "execução de fluxo",
+        let erro = ErroStore::Dominio(DomainError::VersionConflict {
+            entity: "execução de fluxo",
             id: "execucao-ficticia".to_owned(),
-            esperada: 1,
-            atual: 2,
+            expected: 1,
+            current: 2,
         });
         let texto = erro_da_transicao(erro, "seguir");
         assert!(texto.contains("outra pessoa agiu"), "{texto}");

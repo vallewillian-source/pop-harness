@@ -13,7 +13,7 @@ use poph_fluxos::{
     CacheRevisoes, ChaveRevisao, Compilado, FalhaCarregamento, Ir, Limites, compilar,
 };
 use poph_store::Store;
-use poph_types::{ConversationId, HarnessConfig, MetricasBase, OrgId, Registro};
+use poph_types::{BaseMetrics, ConversationId, HarnessConfig, OrgId, Registry};
 
 use crate::cifra::ChaveDeCifra;
 use crate::cluster::ClusterVivo;
@@ -38,9 +38,9 @@ pub struct Estado {
     /// Configuração carregada (já validada).
     pub config: Arc<HarnessConfig>,
     /// Registro de métricas do processo.
-    pub registro: Arc<Registro>,
+    pub registro: Arc<Registry>,
     /// Handles das métricas base (o `/metrics` atualiza os medidores).
-    pub metricas: MetricasBase,
+    pub metricas: BaseMetrics,
     /// Tokens globais (só o hash).
     pub tokens_globais: Vec<TokenGlobal>,
     /// Quando o processo subiu (para `uptime` no `/healthz`).
@@ -131,13 +131,13 @@ impl Estado {
         }
         let manifestos = Arc::new(CatalogoManifestos::novo(&config.plugins));
         let arquivos = Arc::new(ConfigArquivos::padrao(config.blobs()));
-        let registro = Arc::new(Registro::new());
-        let metricas = MetricasBase::registrar(&registro)
+        let registro = Arc::new(Registry::new());
+        let metricas = BaseMetrics::register(&registro)
             .map_err(|erro| format!("não consegui registrar as métricas: {erro}"))?;
         let cache_fluxos = Arc::new(CacheRevisoes::novo(
-            usize::try_from(config.fluxos.cache_revisoes_mb).unwrap_or(usize::MAX),
+            usize::try_from(config.flows.revision_cache_mb).unwrap_or(usize::MAX),
         ));
-        let metricas_fluxos = if config.fluxos.ativo {
+        let metricas_fluxos = if config.flows.enabled {
             let metricas = MetricasFluxos::registrar(&registro)
                 .map_err(|erro| format!("não consegui registrar as métricas de fluxos: {erro}"))?;
             // FX-40: quem escreve `fluxo_execucoes` é o store, então ele recebe os handles das
@@ -186,7 +186,7 @@ impl Estado {
     /// Compila o script de um fluxo com os tetos da configuração `[fluxos]` (FX-26b): tamanho do
     /// script e nós por fluxo. É a porta de compilação do servidor; não usa o padrão do compilador.
     pub fn compilar_fluxo(&self, fonte: &str) -> Compilado {
-        compilar(fonte, &Limites::da_config(&self.config.fluxos))
+        compilar(fonte, &Limites::da_config(&self.config.flows))
     }
 
     /// Carrega uma revisão de fluxo pelo cache do processo (FX-19), com os tetos da configuração
@@ -201,7 +201,7 @@ impl Estado {
             chave,
             ir_gravada,
             fonte,
-            &Limites::da_config(&self.config.fluxos),
+            &Limites::da_config(&self.config.flows),
         )
     }
 
@@ -383,7 +383,7 @@ impl Estado {
         self.config
             .matrix
             .as_ref()
-            .is_some_and(|matrix| matrix.habilitado)
+            .is_some_and(|matrix| matrix.enabled)
     }
 
     /// Define a chave de cifra dos segredos de integração (a raiz de composição passa a do

@@ -13,7 +13,7 @@ use poph_core::llm::{
     EventoLlm, Ferramenta, LimitadorLlm, LlmProvider, Mensagem, OpenAiCompatibleClient,
     OpenAiCompatibleConfig, Parte, Pedido,
 };
-use poph_types::{MetricasBase, OrgId, Registro, Segredo};
+use poph_types::{BaseMetrics, OrgId, Registry, Secret};
 use serde_json::json;
 
 #[tokio::test]
@@ -28,7 +28,7 @@ async fn uma_chamada_real_com_stream_e_ferramenta() {
 
     let config = OpenAiCompatibleConfig {
         url_base,
-        chave: Segredo::new(chave),
+        chave: Secret::new(chave),
         modelo: modelo.clone(),
         timeout: Duration::from_secs(120),
         retentativas: 0,
@@ -37,7 +37,7 @@ async fn uma_chamada_real_com_stream_e_ferramenta() {
         max_tokens_saida: 512,
         recusa_turno_modelo: true,
     };
-    let metricas = MetricasBase::registrar(&Registro::new()).expect("catálogo");
+    let metricas = BaseMetrics::register(&Registry::new()).expect("catálogo");
     let cliente = OpenAiCompatibleClient::new(
         config,
         LimitadorLlm::new(1, 1).expect("limites"),

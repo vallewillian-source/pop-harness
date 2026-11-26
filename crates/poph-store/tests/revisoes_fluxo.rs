@@ -29,7 +29,7 @@ use poph_store::{
     ACAO_PUBLICAR, ErroStore, Fluxo, NovaOrg, NovoFluxo, Org, PublicacaoDeRevisao, RevisaoDeFluxo,
     Store,
 };
-use poph_types::{DomainError, FluxoId, OrgId};
+use poph_types::{DomainError, FlowId, OrgId};
 use rusqlite::Connection;
 
 /// Texto da revisão 1 e o sha256 dele (hexadecimal minúsculo), para conferir o hash gravado.
@@ -139,7 +139,7 @@ impl Cenario {
             .expect("lê o fluxo")
     }
 
-    fn contar(&self, conn: &Connection, sql: &str, org: OrgId, fluxo: FluxoId) -> i64 {
+    fn contar(&self, conn: &Connection, sql: &str, org: OrgId, fluxo: FlowId) -> i64 {
         conn.query_row(
             sql,
             rusqlite::params![org.to_string(), fluxo.to_string()],
@@ -298,10 +298,10 @@ fn duas_publicacoes_com_a_mesma_versao_esperada_so_uma_vence() {
     assert!(
         matches!(
             erro,
-            ErroStore::Dominio(DomainError::ConflitoDeVersao {
-                entidade: "fluxo",
-                esperada: 1,
-                atual: 2,
+            ErroStore::Dominio(DomainError::VersionConflict {
+                entity: "fluxo",
+                expected: 1,
+                current: 2,
                 ..
             })
         ),
@@ -369,7 +369,7 @@ fn duas_threads_publicando_com_a_mesma_versao_so_uma_vence() {
         .filter(|resultado| {
             matches!(
                 resultado,
-                Err(ErroStore::Dominio(DomainError::ConflitoDeVersao { .. }))
+                Err(ErroStore::Dominio(DomainError::VersionConflict { .. }))
             )
         })
         .count();
@@ -553,8 +553,8 @@ fn ir_sem_schema_versao_e_recusada_sem_gravar_nada() {
     assert!(
         matches!(
             erro,
-            ErroStore::Dominio(DomainError::Validacao {
-                campo: "schema_versao",
+            ErroStore::Dominio(DomainError::Validation {
+                field: "schema_versao",
                 ..
             })
         ),
@@ -571,8 +571,8 @@ fn ir_sem_schema_versao_e_recusada_sem_gravar_nada() {
     assert!(
         matches!(
             erro,
-            ErroStore::Dominio(DomainError::Validacao {
-                campo: "schema_versao",
+            ErroStore::Dominio(DomainError::Validation {
+                field: "schema_versao",
                 ..
             })
         ),
@@ -627,9 +627,9 @@ fn ir_incoerente_fonte_vazia_e_ator_desconhecido_sao_recusados() {
             .publicar_revisao(org.id, fluxo.id, publicacao)
             .expect_err("a publicação devia ser recusada");
         match erro {
-            ErroStore::Dominio(DomainError::Validacao {
-                campo: nomeado,
-                motivo,
+            ErroStore::Dominio(DomainError::Validation {
+                field: nomeado,
+                reason: motivo,
             }) => {
                 assert_eq!(nomeado, campo, "campo recusado em `{rotulo}`");
                 assert!(!motivo.is_empty(), "`{rotulo}` diz o motivo");
@@ -720,8 +720,8 @@ fn le_revisao_por_numero_a_atual_e_a_lista() {
     assert!(
         matches!(
             erro,
-            ErroStore::Dominio(DomainError::NaoEncontrado {
-                entidade: "revisão de fluxo",
+            ErroStore::Dominio(DomainError::NotFound {
+                entity: "revisão de fluxo",
                 ..
             })
         ),
@@ -779,7 +779,9 @@ fn fluxo_de_outra_org_nao_e_lido_nem_publicado() {
     ] {
         // A recusa é do **fluxo** (não da revisão): quem chamou pediu um fluxo de outra org.
         match erro {
-            ErroStore::Dominio(DomainError::NaoEncontrado { entidade, .. }) => {
+            ErroStore::Dominio(DomainError::NotFound {
+                entity: entidade, ..
+            }) => {
                 assert_eq!(entidade, "fluxo", "a recusa é do fluxo");
             }
             outro => panic!("esperava não encontrado do fluxo, veio {outro:?}"),

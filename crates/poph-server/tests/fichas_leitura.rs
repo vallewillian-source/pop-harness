@@ -26,10 +26,10 @@ use poph_store::{
     Conversa, EstadoDaExecucao, EventoDaTransicao, ExecucaoGravada, ExtrasDaTransicao,
     InicioDeExecucao, NovaConversa, NovaFicha, Store, TransicaoDeFluxo,
 };
-use poph_types::config::TokenGlobalConfig;
+use poph_types::config::GlobalTokenConfig;
 use poph_types::{
-    AgentId, AtorAcao, AtorEvento, FichaId, FluxoId, HarnessConfig, OrgId, RevisaoId,
-    StatusExecucao, TipoEventoFicha,
+    ActionActor, AgentId, EventActor, ExecutionStatus, FlowId, HarnessConfig, OrgId,
+    RecordEventKind, RecordId, RevisionId,
 };
 use rand_core::OsRng;
 use reqwest::{Client, Method, StatusCode};
@@ -70,9 +70,9 @@ impl Cenario {
         fs::create_dir_all(pasta.join("dados")).expect("pasta de dados");
 
         let mut config = HarnessConfig::default();
-        config.dados.diretorio = pasta.join("dados");
-        config.servidor.porta = 7482;
-        config.admin.tokens_globais = vec![TokenGlobalConfig {
+        config.data.directory = pasta.join("dados");
+        config.server.port = 7482;
+        config.admin.tokens_globais = vec![GlobalTokenConfig {
             label: "teste".to_owned(),
             hash: hash_argon2(TOKEN_GLOBAL),
         }];
@@ -203,7 +203,7 @@ impl Cenario {
     }
 
     /// Fluxo com uma revisão publicada, gravado direto (a publicação é a FX-09).
-    fn fluxo_publicado(&self, org: &str, slug: &str) -> (FluxoId, RevisaoId) {
+    fn fluxo_publicado(&self, org: &str, slug: &str) -> (FlowId, RevisionId) {
         let conn = self.conexao();
         let fluxo = uuid::Uuid::now_v7().to_string();
         let revisao = uuid::Uuid::now_v7().to_string();
@@ -228,7 +228,7 @@ impl Cenario {
         )
     }
 
-    fn liberar(&self, org: &str, agente: &str, fluxo: FluxoId) {
+    fn liberar(&self, org: &str, agente: &str, fluxo: FlowId) {
         self.store
             .fluxos()
             .liberar(parse_org(org), parse_agente(agente), fluxo)
@@ -236,7 +236,7 @@ impl Cenario {
     }
 
     /// Ficha sem conversa, do agente, no canal dado.
-    fn ficha_avulsa(&self, org: &str, agente: &str, canal: &str) -> FichaId {
+    fn ficha_avulsa(&self, org: &str, agente: &str, canal: &str) -> RecordId {
         self.store
             .fichas()
             .criar(
@@ -253,7 +253,7 @@ impl Cenario {
     }
 
     /// Conversa nova, com a Ficha que o repositório cria junto. Devolve a conversa e a Ficha.
-    fn conversa(&self, org: &str, agente: &str, canal: &str) -> (Conversa, FichaId) {
+    fn conversa(&self, org: &str, agente: &str, canal: &str) -> (Conversa, RecordId) {
         let conversa = self
             .store
             .conversas()
@@ -295,9 +295,9 @@ impl Cenario {
         &self,
         org: &str,
         agente: &str,
-        ficha: FichaId,
-        fluxo: FluxoId,
-        revisao: RevisaoId,
+        ficha: RecordId,
+        fluxo: FlowId,
+        revisao: RevisionId,
     ) -> ExecucaoGravada {
         self.liberar(org, agente, fluxo);
         self.store
@@ -309,11 +309,11 @@ impl Cenario {
                     ficha,
                     fluxo,
                     revisao,
-                    ator: AtorEvento::Agente,
+                    ator: EventActor::Agent,
                     ator_ref: Some("agente-de-teste"),
                     decisao_jev: None,
                     estado_inicial: EstadoDaExecucao {
-                        status: StatusExecucao::Ativa,
+                        status: ExecutionStatus::Active,
                         no_atual: "coleta".to_owned(),
                         dados_json: "{}".to_owned(),
                         atores_que_agiram: Vec::new(),
@@ -330,16 +330,16 @@ impl Cenario {
     fn responder_nome(&self, org: &str, gravada: &ExecucaoGravada, nome: &str) {
         let transicao = TransicaoDeFluxo {
             novo_estado: EstadoDaExecucao {
-                status: StatusExecucao::Ativa,
+                status: ExecutionStatus::Active,
                 no_atual: "coleta".to_owned(),
                 dados_json: json!({ "coleta": { "nome": nome } }).to_string(),
-                atores_que_agiram: vec![AtorAcao::Agente],
+                atores_que_agiram: vec![ActionActor::Agent],
                 resultado: None,
                 motivo: None,
             },
             eventos: vec![EventoDaTransicao {
-                tipo: TipoEventoFicha::CamposPreenchidos,
-                ator_tipo: AtorEvento::Agente,
+                tipo: RecordEventKind::FieldsFilled,
+                ator_tipo: EventActor::Agent,
                 payload_json: json!({ "etapa": "coleta", "campos": ["nome"] }).to_string(),
             }],
             efeitos: Vec::new(),

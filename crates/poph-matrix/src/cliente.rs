@@ -23,7 +23,7 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
 
-use poph_types::{MatrixConfig, Segredo};
+use poph_types::{MatrixConfig, Secret};
 use reqwest::Method;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderValue};
 use serde::{Deserialize, Serialize};
@@ -83,7 +83,7 @@ pub struct ConfigCliente {
     /// Prazo de cada chamada.
     pub timeout: Duration,
     /// `as_token` do registro do Application Service. `Debug` mostra `[oculto]`.
-    as_token: Segredo,
+    as_token: Secret,
 }
 
 impl ConfigCliente {
@@ -93,7 +93,7 @@ impl ConfigCliente {
     pub fn novo(
         url_base: impl Into<String>,
         server_name: impl Into<String>,
-        as_token: Segredo,
+        as_token: Secret,
     ) -> Result<Self, ErroChamada> {
         let url_base = url_base.into().trim().trim_end_matches('/').to_owned();
         if url_base.is_empty() {
@@ -112,7 +112,7 @@ impl ConfigCliente {
                 "`matrix.server_name` está vazio".to_owned(),
             ));
         }
-        if as_token.expor().trim().is_empty() {
+        if as_token.expose().trim().is_empty() {
             return Err(ErroChamada::Configuracao(
                 "o token do Application Service (`POPH_MATRIX_AS_TOKEN`) está vazio".to_owned(),
             ));
@@ -874,7 +874,7 @@ impl ClienteMatrix {
     ///
     /// Não repete sozinho: um `429` volta como erro e quem decide esperar é a rotina de expiração,
     /// que adia o item com espera crescente.
-    pub async fn apagar_midia(&self, token_admin: &Segredo, mxc: &str) -> Result<bool, ErroMidia> {
+    pub async fn apagar_midia(&self, token_admin: &Secret, mxc: &str) -> Result<bool, ErroMidia> {
         let (servidor, id) = partes_do_mxc(mxc)?;
         let caminho = format!("{ADMIN_MEDIA}/{}/{}", codificar(&servidor), codificar(&id));
         let autorizacao = autorizacao_de(token_admin, "de administrador do Synapse")
@@ -1072,8 +1072,8 @@ fn autorizacao_do_token(config: &ConfigCliente) -> Result<HeaderValue, ErroChama
 /// Cabeçalho `Authorization` de um token qualquer (`as_token` ou o de administrador da MX-46).
 ///
 /// `rotulo` nomeia o token no erro — o valor nunca aparece.
-fn autorizacao_de(token: &Segredo, rotulo: &'static str) -> Result<HeaderValue, ErroChamada> {
-    HeaderValue::from_str(&format!("Bearer {}", token.expor().trim())).map_err(|_| {
+fn autorizacao_de(token: &Secret, rotulo: &'static str) -> Result<HeaderValue, ErroChamada> {
+    HeaderValue::from_str(&format!("Bearer {}", token.expose().trim())).map_err(|_| {
         ErroChamada::Configuracao(format!(
             "o token {rotulo} tem caractere que não cabe em cabeçalho HTTP"
         ))

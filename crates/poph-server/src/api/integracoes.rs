@@ -31,7 +31,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
 };
 use poph_store::{AlteracaoIntegracao, IntegracaoAdmin};
-use poph_types::{AgentId, IntegrationId, Manifesto, OrgId};
+use poph_types::{AgentId, IntegrationId, Manifest, OrgId};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -117,7 +117,7 @@ fn segredos_enviados(valor: &Option<BTreeMap<String, String>>) -> bool {
 fn conferir(
     campo: &'static str,
     valores: Option<&Value>,
-    esquema: &poph_types::EsquemaJson,
+    esquema: &poph_types::JsonSchema,
 ) -> Result<(), ApiError> {
     let Some(valores) = valores else {
         return Ok(());
@@ -128,7 +128,7 @@ fn conferir(
 
 /// Manifesto do `kind`. `None` = tipo sem plugin declarado (integração sem configuração, como o
 /// `whatsapp` da Evolution). Plugin declarado que não responde vira `503` e não é silenciado.
-async fn manifesto_do_kind(e: &Estado, kind: &str) -> Result<Option<Manifesto>, ApiError> {
+async fn manifesto_do_kind(e: &Estado, kind: &str) -> Result<Option<Manifest>, ApiError> {
     match e.manifestos.manifesto(kind).await {
         Ok(manifesto) => Ok(Some(manifesto)),
         Err(FalhaManifesto::NaoDeclarado) => Ok(None),
@@ -162,7 +162,7 @@ struct Preparado {
 /// Valida configuração e segredos contra o manifesto e devolve o que gravar.
 fn preparar(
     e: &Estado,
-    manifesto: &Manifesto,
+    manifesto: &Manifest,
     configuracao: Option<&Value>,
     segredos: Option<BTreeMap<String, String>>,
 ) -> Result<Preparado, ApiError> {
@@ -170,7 +170,7 @@ fn preparar(
         None => None,
         Some(Value::Null) => Some(objeto_vazio()),
         Some(valor) => {
-            conferir("config_json", Some(valor), &manifesto.configuracao)?;
+            conferir("config_json", Some(valor), &manifesto.configuration)?;
             Some(valor.clone())
         }
     };
@@ -192,7 +192,7 @@ fn preparar(
             .map(|(nome, valor)| (nome.clone(), Value::String(valor.clone())))
             .collect(),
     );
-    conferir("secrets", Some(&como_valor), &manifesto.segredos)?;
+    conferir("secrets", Some(&como_valor), &manifesto.secrets)?;
     if segredos.is_empty() {
         return Ok(Preparado {
             configuracao,

@@ -43,7 +43,7 @@ use poph_store::{
     StatusConversa, Store,
 };
 use poph_types::{
-    AgentId, ConversationId, FerramentaConfig, GatesJev, MessageId, OrgId, StructuredInstructions,
+    AgentId, ConversationId, JevGates, MessageId, OrgId, StructuredInstructions, ToolConfig,
 };
 
 struct SemEspera;
@@ -152,7 +152,7 @@ impl Cenario {
             )
             .expect("cria o agente");
         let estruturado = StructuredInstructions {
-            tools: vec![FerramentaConfig {
+            tools: vec![ToolConfig {
                 name: "consultar_base".to_owned(),
                 enabled: true,
                 when_to_use: String::new(),
@@ -165,7 +165,7 @@ impl Cenario {
                 org,
                 agente.id,
                 0,
-                &estruturado.para_json(),
+                &estruturado.to_json(),
                 "# Bia\n\nVocê é a atendente da loja.",
                 true,
             )
@@ -351,10 +351,10 @@ fn roteiro_texto(texto: &str) -> Roteiro {
     ])
 }
 
-fn so_g8() -> GatesJev {
-    GatesJev {
+fn so_g8() -> JevGates {
+    JevGates {
         g8: true,
-        ..GatesJev::default()
+        ..JevGates::default()
     }
 }
 
@@ -417,7 +417,7 @@ fn ultima_fala_do_cliente(estado: &serde_json::Value) -> String {
         .to_owned()
 }
 
-fn motor_jev(jev: Arc<JevFalso>, gates: GatesJev) -> Arc<MotorJev> {
+fn motor_jev(jev: Arc<JevFalso>, gates: JevGates) -> Arc<MotorJev> {
     Arc::new(MotorJev::novo(jev, gates, "jev-latest"))
 }
 
@@ -454,8 +454,8 @@ async fn g8_encerra_sem_chamar_o_modelo_e_grava_a_despedida_padrao() {
         1,
         "a despedida vai para a fila de saída"
     );
-    assert_eq!(cenario.metricas.encerradas_g8.valor(), 1);
-    assert_eq!(cenario.metricas.turnos_concluidos.valor(), 1);
+    assert_eq!(cenario.metricas.encerradas_g8.value(), 1);
+    assert_eq!(cenario.metricas.turnos_concluidos.value(), 1);
     assert_eq!(
         cenario.status(),
         StatusConversa::Aberta,
@@ -510,7 +510,7 @@ async fn g8_despedida_vazia_encerra_sem_mandar_mensagem() {
         "só a resposta anterior"
     );
     assert!(cenario.fila().is_empty());
-    assert_eq!(cenario.metricas.encerradas_g8.valor(), 1);
+    assert_eq!(cenario.metricas.encerradas_g8.value(), 1);
 }
 
 #[tokio::test]
@@ -591,7 +591,7 @@ async fn g8_agradecimento_com_duvida_nao_fecha() {
         "Se a praga voltar, a garantia cobre a visita."
     );
     assert_eq!(provedor.recebidos().len(), 1, "a dúvida segue ao modelo");
-    assert_eq!(cenario.metricas.encerradas_g8.valor(), 0);
+    assert_eq!(cenario.metricas.encerradas_g8.value(), 0);
 }
 
 #[tokio::test]
@@ -616,7 +616,7 @@ async fn g8_mensagens_agrupadas_nao_fecham() {
         "a dúvida é respondida"
     );
     assert_eq!(provedor.recebidos().len(), 1);
-    assert_eq!(cenario.metricas.encerradas_g8.valor(), 0);
+    assert_eq!(cenario.metricas.encerradas_g8.value(), 0);
 }
 
 #[tokio::test]
@@ -639,7 +639,7 @@ async fn g8_primeira_mensagem_nao_pergunta_nem_fecha() {
     );
     assert_eq!(resumo.texto, "De nada! Como posso ajudar?");
     assert_eq!(provedor.recebidos().len(), 1);
-    assert_eq!(cenario.metricas.encerradas_g8.valor(), 0);
+    assert_eq!(cenario.metricas.encerradas_g8.value(), 0);
 }
 
 #[tokio::test]
@@ -649,7 +649,7 @@ async fn g8_desligado_nao_pergunta_nem_fecha() {
     let jev = jev_por_texto(&[(ENCERRA, &[("g8_encerrada", "encerrada", 1.0)])]);
     let (motor, provedor) = cenario.motor(
         vec![roteiro_texto("Até mais, qualquer coisa estou aqui.")],
-        Some(motor_jev(Arc::clone(&jev), GatesJev::default())),
+        Some(motor_jev(Arc::clone(&jev), JevGates::default())),
     );
 
     let gatilho = cenario.falar(ENCERRA);
@@ -698,7 +698,7 @@ async fn g8_falha_ou_duvida_do_jev_segue_como_hoje() {
         );
         assert_eq!(provedor.recebidos().len(), 1, "{rotulo}: o modelo responde");
         assert_eq!(
-            cenario.metricas.encerradas_g8.valor(),
+            cenario.metricas.encerradas_g8.value(),
             0,
             "{rotulo}: não fecha"
         );
@@ -722,10 +722,10 @@ async fn g8_com_transferencia_do_g1_a_transferencia_vence() {
             ("g8_encerrada", "encerrada", 1.0),
         ],
     )]);
-    let gates = GatesJev {
+    let gates = JevGates {
         g1: true,
         g8: true,
-        ..GatesJev::default()
+        ..JevGates::default()
     };
     let (motor, provedor) =
         cenario.motor(vec![roteiro_texto("não sai")], Some(motor_jev(jev, gates)));
@@ -741,7 +741,7 @@ async fn g8_com_transferencia_do_g1_a_transferencia_vence() {
     );
     assert_eq!(provedor.recebidos().len(), 0);
     assert_eq!(
-        cenario.metricas.encerradas_g8.valor(),
+        cenario.metricas.encerradas_g8.value(),
         0,
         "não conta como encerramento"
     );
@@ -796,7 +796,7 @@ async fn padrao_de_instalacao_liga_o_g8_sem_configurar_o_agente() {
         0,
         "sem configuração no agente, o encerramento não chama o modelo de texto"
     );
-    assert_eq!(cenario.metricas.encerradas_g8.valor(), 1);
+    assert_eq!(cenario.metricas.encerradas_g8.value(), 1);
 
     let segundo = cenario.falar(VOLTOU);
     let resumo = cenario.turno(&motor, segundo).await;
@@ -832,7 +832,7 @@ async fn agente_que_desliga_o_g8_volta_ao_comportamento_de_hoje() {
         1,
         "o modelo responde, como antes"
     );
-    assert_eq!(cenario.metricas.encerradas_g8.valor(), 0);
+    assert_eq!(cenario.metricas.encerradas_g8.value(), 0);
     assert!(
         resumo
             .jev
@@ -886,7 +886,7 @@ async fn medicao_do_encerramento() {
             let cenario = Cenario::novo(&format!("medicao-{ligado}-{indice}"));
             cenario.resposta_do_agente("Mais alguma dúvida sobre a dedetização?");
             let jev = jev_por_texto(&[(*texto, &[("g8_encerrada", "encerrada", 1.0)])]);
-            let gates = if ligado { so_g8() } else { GatesJev::default() };
+            let gates = if ligado { so_g8() } else { JevGates::default() };
             let (motor, provedor) = cenario.motor(
                 vec![roteiro_texto("Certo, qualquer coisa estou aqui.")],
                 Some(motor_jev(jev, gates)),

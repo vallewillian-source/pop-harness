@@ -381,7 +381,7 @@ async fn mesma_mensagem_entregue_duas_vezes_e_processada_uma_vez() {
         "o item saiu da fila depois de concluído"
     );
     assert_eq!(
-        fluxo.metricas().entradas_duplicadas.valor(),
+        fluxo.metricas().entradas_duplicadas.value(),
         2,
         "as duas reentregas contam como duplicadas"
     );
@@ -642,7 +642,7 @@ fn sigkill_entre_sending_e_sent_reenvia_uma_vez() {
     assert_eq!(retomada.reenvios, 1, "um item estava em sending");
     assert_eq!(transporte.envios(), 1, "reenviou exatamente uma vez");
     assert_eq!(
-        fluxo.metricas().reenvios_retomada.valor(),
+        fluxo.metricas().reenvios_retomada.value(),
         1,
         "a métrica de reenvio conta a retomada"
     );
@@ -708,8 +708,8 @@ async fn falha_repetida_vai_para_failed_com_motivo_e_contador() {
         "o motivo fica legível no banco"
     );
     assert_eq!(transporte.envios(), 3, "não tentou depois de esgotar");
-    assert_eq!(fluxo.metricas().saidas_transitorias.valor(), 3);
-    assert_eq!(fluxo.metricas().saidas_esgotadas.valor(), 1);
+    assert_eq!(fluxo.metricas().saidas_transitorias.value(), 3);
+    assert_eq!(fluxo.metricas().saidas_esgotadas.value(), 1);
 }
 
 #[tokio::test]
@@ -741,7 +741,7 @@ async fn falha_definitiva_nao_retenta() {
     );
     assert_eq!(gravado.tentativas, 1, "erro definitivo não repete");
     assert_eq!(transporte.envios(), 1);
-    assert_eq!(fluxo.metricas().saidas_definitivas.valor(), 1);
+    assert_eq!(fluxo.metricas().saidas_definitivas.value(), 1);
 }
 
 #[tokio::test]
@@ -1025,7 +1025,7 @@ async fn fila_cheia_adia_e_nao_perde_o_evento() {
     );
     if primeiro.adiados > 0 {
         assert!(
-            fluxo.metricas().entradas_adiadas.valor() >= 1,
+            fluxo.metricas().entradas_adiadas.value() >= 1,
             "evento adiado conta na métrica"
         );
     }

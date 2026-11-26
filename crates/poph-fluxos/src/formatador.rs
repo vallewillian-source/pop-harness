@@ -58,7 +58,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use poph_types::AtorAcao;
+use poph_types::ActionActor;
 use starlark::syntax::ast::{Argument, AstLiteral, AstNoPayload, AstStmt, CallArgsP, Expr, Stmt};
 
 use crate::compilador::{Limites, compilar};
@@ -434,14 +434,14 @@ fn valor_da_etapa(etapa: &Etapa) -> Valor {
     if let Some(instrucao) = &etapa.instrucao {
         args.push(nomeado("instrucao", literal(instrucao)));
     }
-    if etapa.atores_acao != [AtorAcao::Agente] {
+    if etapa.atores_acao != [ActionActor::Agent] {
         args.push(nomeado(
             "atores",
             lista(
                 etapa
                     .atores_acao
                     .iter()
-                    .map(|ator| literal(ator.como_texto()))
+                    .map(|ator| literal(ator.as_text()))
                     .collect(),
             ),
         ));
@@ -471,7 +471,7 @@ fn valor_do_campo(campo: &Campo) -> Valor {
     let mut args = vec![
         posicional(literal(&campo.id)),
         posicional(literal(&campo.rotulo)),
-        nomeado("tipo", literal(campo.tipo.como_texto())),
+        nomeado("tipo", literal(campo.tipo.as_text())),
     ];
     if !campo.opcoes.is_empty() {
         args.push(nomeado("opcoes", lista_de_textos(&campo.opcoes)));
@@ -495,7 +495,7 @@ fn valor_da_acao(acao: &Acao) -> Valor {
     }
     args.push(nomeado("vai_para", valor_do_destino(&acao.vai_para)));
     if let Some(ator) = acao.ator {
-        args.push(nomeado("ator", literal(ator.como_texto())));
+        args.push(nomeado("ator", literal(ator.as_text())));
     }
     if !acao.efeitos.is_empty() {
         args.push(nomeado(
@@ -713,7 +713,7 @@ fn cabe(texto: &str, coluna: usize) -> bool {
 mod testes {
     use super::*;
     use crate::ir::Fim;
-    use poph_types::TipoCampo;
+    use poph_types::FieldKind;
 
     #[test]
     fn o_texto_entre_aspas_escapa_o_que_o_dialeto_interpreta() {
@@ -780,7 +780,7 @@ mod testes {
         let campo = Campo {
             id: "idade".to_owned(),
             rotulo: "Idade".to_owned(),
-            tipo: TipoCampo::Numero,
+            tipo: FieldKind::Number,
             obrigatorio: false,
             opcoes: Vec::new(),
             ajuda: None,
@@ -810,7 +810,7 @@ mod testes {
                 id: "unica".to_owned(),
                 nome: "Única".to_owned(),
                 instrucao: None,
-                atores_acao: vec![AtorAcao::Agente],
+                atores_acao: vec![ActionActor::Agent],
                 campos: Vec::new(),
                 acoes: vec![Acao {
                     id: "seguir".to_owned(),

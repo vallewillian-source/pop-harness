@@ -14,7 +14,7 @@ use axum::{
     http::HeaderMap,
 };
 use poph_store::Fluxo;
-use poph_types::{AgentId, FluxoId, OrgId};
+use poph_types::{AgentId, FlowId, OrgId};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use utoipa::ToSchema;
@@ -84,8 +84,8 @@ pub async fn substituir(
     let ids = d
         .flow_ids
         .iter()
-        .map(|texto| id_da_url::<FluxoId>(texto))
-        .collect::<Result<Vec<FluxoId>, _>>()?;
+        .map(|texto| id_da_url::<FlowId>(texto))
+        .collect::<Result<Vec<FlowId>, _>>()?;
     // Agente de outra org ou inexistente: 404 antes de mexer em qualquer permissão.
     e.store.agentes().obter(org, agente)?;
     let antes = e.store.fluxos().listar_do_agente(org, agente)?;

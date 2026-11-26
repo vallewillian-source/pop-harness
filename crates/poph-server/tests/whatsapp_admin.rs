@@ -28,8 +28,8 @@ use axum::routing::{delete, get, post};
 use poph_server::Estado;
 use poph_server::evolution::{CanalEvolution, canais_da_configuracao};
 use poph_store::{NovaOrg, NovoAgente, Pagina, Store};
-use poph_types::config::{EvolutionConfig, InstanciaEvolutionConfig, TokenGlobalConfig};
-use poph_types::{AgentId, HarnessConfig, IntegrationId, OrgId, Segredo};
+use poph_types::config::{EvolutionConfig, EvolutionInstanceConfig, GlobalTokenConfig};
+use poph_types::{AgentId, HarnessConfig, IntegrationId, OrgId, Secret};
 use rand_core::OsRng;
 use reqwest::{Client, Method};
 use serde_json::{Value, json};
@@ -302,9 +302,9 @@ impl Cenario {
         fs::create_dir_all(pasta.join("dados")).expect("pasta de dados");
 
         let mut config = HarnessConfig::default();
-        config.dados.diretorio = pasta.join("dados");
-        config.servidor.porta = 7480;
-        config.admin.tokens_globais = vec![TokenGlobalConfig {
+        config.data.directory = pasta.join("dados");
+        config.server.port = 7480;
+        config.admin.tokens_globais = vec![GlobalTokenConfig {
             label: "teste".to_owned(),
             hash: hash_argon2(TOKEN_GLOBAL),
         }];
@@ -354,11 +354,11 @@ impl Cenario {
         let (url_evo, evo) = subir_evolucao_falsa().await;
         config.evolution = Some(EvolutionConfig {
             url_base: url_evo,
-            instancias: vec![InstanciaEvolutionConfig {
+            instances: vec![EvolutionInstanceConfig {
                 org_id: org.to_string(),
-                instancia: "loja".to_owned(),
-                integracao_id: integracao.to_string(),
-                segredo_env: VARIAVEL_SEGREDO.to_owned(),
+                instance: "loja".to_owned(),
+                integration_id: integracao.to_string(),
+                secret_env: VARIAVEL_SEGREDO.to_owned(),
             }],
         });
         config.validar().expect("configuração com Evolution válida");
@@ -366,7 +366,7 @@ impl Cenario {
         // O caminho de verdade da subida: configuração + `EVOLUTION_API_KEY` do ambiente.
         let canais: Vec<CanalEvolution> = canais_da_configuracao(
             &config,
-            Some(Segredo::new(CHAVE_EVO.to_owned())),
+            Some(Secret::new(CHAVE_EVO.to_owned())),
             &|variavel| (variavel == VARIAVEL_SEGREDO).then(|| SEGREDO_WEBHOOK.to_owned()),
         )
         .expect("canais da configuração");

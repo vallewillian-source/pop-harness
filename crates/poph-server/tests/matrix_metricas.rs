@@ -19,7 +19,7 @@ use poph_server::matrix_espelho::{DestinoMatrix, EspelhoMatrix, MidiaPublicada};
 use poph_server::matrix_metricas::MetricasMatrix;
 use poph_server::{EntregaDeEventos, Estado, PortaDoHarness, RespostaDoAtendente};
 use poph_store::{Direcao, NovaConversa, NovaMensagem, NovaOrg, NovoAgente, Origem, Papel, Store};
-use poph_types::{AgentId, ConversationId, HarnessConfig, MatrixConfig, OrgId, Registro};
+use poph_types::{AgentId, ConversationId, HarnessConfig, MatrixConfig, OrgId, Registry};
 use serde_json::{Value, json};
 
 const SERVIDOR: &str = "matrix-dev.local";
@@ -64,12 +64,12 @@ impl Drop for Cenario {
 
 fn config() -> MatrixConfig {
     MatrixConfig {
-        habilitado: true,
+        enabled: true,
         homeserver_url: "http://127.0.0.1:1".to_owned(),
         server_name: SERVIDOR.to_owned(),
-        prefixo: "ph".to_owned(),
-        concorrencia: 8,
-        intervalo_ms: 500,
+        prefix: "ph".to_owned(),
+        concurrency: 8,
+        interval_ms: 500,
         ..MatrixConfig::default()
     }
 }
@@ -141,7 +141,7 @@ fn msg_cliente(store: &Store, org: OrgId, conversa: ConversationId, texto: &str)
 }
 
 fn metricas_novas() -> Arc<MetricasMatrix> {
-    Arc::new(MetricasMatrix::registrar(&Registro::new()).expect("registra as métricas"))
+    Arc::new(MetricasMatrix::registrar(&Registry::new()).expect("registra as métricas"))
 }
 
 // ───────────────────────────── Synapse falso ─────────────────────────────
@@ -312,7 +312,7 @@ async fn atraso_do_cursor_sobe_com_synapse_fora_e_volta_a_zero() {
         .com_relogio(Arc::new(move || relogio.load(Ordering::SeqCst)));
 
     espelho.ciclo().await.expect("ciclo com o Synapse fora");
-    let inicial = metricas.atraso_cursor_segundos.valor();
+    let inicial = metricas.atraso_cursor_segundos.value();
     assert!(
         (29..=31).contains(&inicial),
         "com o Synapse fora, a primeira mensagem tem ~30 s de atraso; veio {inicial}"
@@ -323,7 +323,7 @@ async fn atraso_do_cursor_sobe_com_synapse_fora_e_volta_a_zero() {
         .ciclo()
         .await
         .expect("ciclo com o Synapse ainda fora");
-    let depois = metricas.atraso_cursor_segundos.valor();
+    let depois = metricas.atraso_cursor_segundos.value();
     assert!(
         depois > inicial && (89..=91).contains(&depois),
         "o atraso tem de subir enquanto o Synapse está fora; veio {depois} (antes {inicial})"
@@ -332,11 +332,11 @@ async fn atraso_do_cursor_sobe_com_synapse_fora_e_volta_a_zero() {
     falso.definir_modo(Modo::Normal);
     espelho.ciclo().await.expect("ciclo com o Synapse de volta");
     assert_eq!(
-        metricas.atraso_cursor_segundos.valor(),
+        metricas.atraso_cursor_segundos.value(),
         0,
         "com o Synapse de volta e tudo espelhado, o atraso volta a zero"
     );
-    assert_eq!(metricas.mensagens_espelhadas.valor(), 2);
+    assert_eq!(metricas.mensagens_espelhadas.value(), 2);
 }
 
 #[tokio::test]
@@ -358,23 +358,23 @@ async fn contadores_do_espelho_contam_tentativas_erros_e_429() {
 
     // Primeiro ciclo: a sala é garantida (1 tentativa) e o primeiro envio leva 429 (1 tentativa).
     espelho.ciclo().await.expect("ciclo com limite de taxa");
-    assert_eq!(metricas.tentativas.valor(), 2);
-    assert_eq!(metricas.respostas_429.valor(), 1, "o 429 conta uma vez");
+    assert_eq!(metricas.tentativas.value(), 2);
+    assert_eq!(metricas.respostas_429.value(), 1, "o 429 conta uma vez");
     assert_eq!(
-        metricas.erros_transitorios.valor(),
+        metricas.erros_transitorios.value(),
         1,
         "o 429 é transitório: conta como erro transitório"
     );
-    assert_eq!(metricas.erros_definitivos.valor(), 0);
-    assert_eq!(metricas.mensagens_espelhadas.valor(), 0);
+    assert_eq!(metricas.erros_definitivos.value(), 0);
+    assert_eq!(metricas.mensagens_espelhadas.value(), 0);
 
     // Segundo ciclo, sem limite: sala (1) + duas mensagens (2) = 3 tentativas a mais.
     falso.definir_modo(Modo::Normal);
     espelho.ciclo().await.expect("ciclo sem limite");
-    assert_eq!(metricas.tentativas.valor(), 5);
-    assert_eq!(metricas.mensagens_espelhadas.valor(), 2);
+    assert_eq!(metricas.tentativas.value(), 5);
+    assert_eq!(metricas.mensagens_espelhadas.value(), 2);
     assert_eq!(
-        metricas.respostas_429.valor(),
+        metricas.respostas_429.value(),
         1,
         "sem novo 429, o contador fica"
     );
@@ -403,10 +403,10 @@ async fn mensagem_venenosa_isolada_conta_e_loga_org_e_conversa() {
         espelho.ciclo().await.expect("ciclo");
     }
 
-    assert_eq!(metricas.erros_definitivos.valor(), 3);
-    assert_eq!(metricas.mensagens_isoladas.valor(), 1);
+    assert_eq!(metricas.erros_definitivos.value(), 3);
+    assert_eq!(metricas.mensagens_isoladas.value(), 1);
     assert_eq!(
-        metricas.mensagens_espelhadas.valor(),
+        metricas.mensagens_espelhadas.value(),
         1,
         "a mensagem seguinte sai"
     );
@@ -552,7 +552,7 @@ async fn contadores_da_resposta_do_atendente_viram_metrica() {
         )
         .await
         .expect("entrega");
-    assert_eq!(metricas.respostas_enfileiradas.valor(), 1);
+    assert_eq!(metricas.respostas_enfileiradas.value(), 1);
 
     // 2) Mesmo evento de novo (reenvio do Synapse): duplicada, nada novo enfileirado.
     entrega
@@ -562,8 +562,8 @@ async fn contadores_da_resposta_do_atendente_viram_metrica() {
         )
         .await
         .expect("entrega");
-    assert_eq!(metricas.respostas_enfileiradas.valor(), 1);
-    assert_eq!(metricas.respostas_duplicadas.valor(), 1);
+    assert_eq!(metricas.respostas_enfileiradas.value(), 1);
+    assert_eq!(metricas.respostas_duplicadas.value(), 1);
 
     // 3) Sala que ninguém conhece.
     entrega
@@ -577,7 +577,7 @@ async fn contadores_da_resposta_do_atendente_viram_metrica() {
         )
         .await
         .expect("entrega");
-    assert_eq!(metricas.salas_desconhecidas.valor(), 1);
+    assert_eq!(metricas.salas_desconhecidas.value(), 1);
 
     // 4) Mídia do atendente: só o aviso na sala.
     entrega
@@ -591,9 +591,9 @@ async fn contadores_da_resposta_do_atendente_viram_metrica() {
         )
         .await
         .expect("entrega");
-    assert_eq!(metricas.avisos_de_midia.valor(), 1);
+    assert_eq!(metricas.avisos_de_midia.value(), 1);
     assert_eq!(
-        metricas.respostas_enfileiradas.valor(),
+        metricas.respostas_enfileiradas.value(),
         1,
         "mídia não vira resposta ao cliente"
     );
@@ -615,9 +615,9 @@ async fn contadores_da_resposta_do_atendente_viram_metrica() {
         )
         .await
         .expect("entrega");
-    assert_eq!(metricas.respostas_conversa_encerrada.valor(), 1);
+    assert_eq!(metricas.respostas_conversa_encerrada.value(), 1);
     assert_eq!(
-        metricas.respostas_enfileiradas.valor(),
+        metricas.respostas_enfileiradas.value(),
         1,
         "conversa encerrada não enfileira para o cliente"
     );
@@ -667,9 +667,9 @@ fn estado_com_modulo(rotulo: &str, ligado: bool) -> (Estado, PathBuf) {
     let _ = fs::remove_dir_all(&pasta);
     fs::create_dir_all(pasta.join("dados")).expect("pasta de dados");
     let mut cfg = HarnessConfig::default();
-    cfg.dados.diretorio = pasta.join("dados");
+    cfg.data.directory = pasta.join("dados");
     cfg.matrix = Some(MatrixConfig {
-        habilitado: ligado,
+        enabled: ligado,
         ..config()
     });
     let store = Arc::new(Store::abrir(&cfg).expect("abre o banco"));
@@ -731,7 +731,7 @@ async fn metricas_do_modulo_aparecem_uma_vez_quando_preparado() {
         Arc::ptr_eq(&primeira, &segunda),
         "mesmo handle nas duas chamadas"
     );
-    primeira.mensagens_espelhadas.incrementar(3);
+    primeira.mensagens_espelhadas.increment(3);
     let texto = metricas_http(estado).await;
     let _ = fs::remove_dir_all(&pasta);
     for nome in NOMES_MATRIX {
@@ -753,13 +753,13 @@ async fn metricas_do_modulo_aparecem_uma_vez_quando_preparado() {
 fn metricas_descartaveis_nao_aparecem_no_registro_do_processo() {
     // Handles descartáveis (usados quando ninguém injeta os números do processo) ficam fora do
     // `/metrics` do processo.
-    let processo = Registro::new();
+    let processo = Registry::new();
     let _ = MetricasMatrix::registrar(&processo).expect("registra no processo");
     let descartavel = MetricasMatrix::descartaveis();
-    descartavel.erros_definitivos.incrementar(1);
+    descartavel.erros_definitivos.increment(1);
     assert!(
         !processo
-            .renderizar()
+            .render()
             .contains("poph_matrix_erros_definitivos_total 1")
     );
 }

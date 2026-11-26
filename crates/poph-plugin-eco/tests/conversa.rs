@@ -58,10 +58,10 @@ async fn texto_sai_pelo_plugin_e_volta_invertido_pela_inbox() {
     // 4. A mesma entrega de novo (o `id_externo` sai da chave de idempotência) não duplica.
     cenario
         .canal
-        .enviar_texto(SendText {
-            idempotencia: format!("{turno}:0"),
+        .send_text(SendText {
+            idempotency: format!("{turno}:0"),
             peer: "5511999999999".to_owned(),
-            texto: "olá, mundo".to_owned(),
+            text: "olá, mundo".to_owned(),
         })
         .await
         .expect("o plugin aceita a repetição");
@@ -82,7 +82,7 @@ async fn texto_sai_pelo_plugin_e_volta_invertido_pela_inbox() {
     );
 
     // 5. O canal continua saudável e a fila de saída está vazia.
-    let saude = cenario.canal.saude().await.expect("consulta a saúde");
+    let saude = cenario.canal.health().await.expect("consulta a saúde");
     assert!(saude.ok, "{saude:?}");
     assert_eq!(
         cenario
@@ -179,10 +179,10 @@ async fn agente_sem_contato_usa_o_do_evento() {
 
     cenario
         .canal
-        .enviar_texto(SendText {
-            idempotencia: "turno-a:0".to_owned(),
+        .send_text(SendText {
+            idempotency: "turno-a:0".to_owned(),
             peer: "5511911111111".to_owned(),
-            texto: "abc".to_owned(),
+            text: "abc".to_owned(),
         })
         .await
         .expect("envia para o contato da conversa");
@@ -195,10 +195,10 @@ async fn agente_sem_contato_usa_o_do_evento() {
     // O segundo contato abre conversa nova pelo resolvedor, sem tocar na primeira.
     cenario
         .canal
-        .enviar_texto(SendText {
-            idempotencia: "turno-b:0".to_owned(),
+        .send_text(SendText {
+            idempotency: "turno-b:0".to_owned(),
             peer: "5511922222222".to_owned(),
-            texto: "xyz".to_owned(),
+            text: "xyz".to_owned(),
         })
         .await
         .expect("envia para outro contato");

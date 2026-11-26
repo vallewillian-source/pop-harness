@@ -10,12 +10,12 @@ use poph_fluxos::ir::{
 };
 use poph_fluxos::motor::{Campos, Contexto, abandonar, efeitos_de_entrada, executar_acao, iniciar};
 use poph_fluxos::regras::{Avaliador, Dados};
-use poph_types::{AtorAcao, DomainError, StatusExecucao, TipoCampo, TipoEventoFicha};
+use poph_types::{ActionActor, DomainError, ExecutionStatus, FieldKind, RecordEventKind};
 use serde_json::{Value as Json, json};
 
 // ------------------------------------------------------------------ auxiliares
 
-fn campo(id: &str, tipo: TipoCampo, obrigatorio: bool) -> Campo {
+fn campo(id: &str, tipo: FieldKind, obrigatorio: bool) -> Campo {
     Campo {
         id: id.to_owned(),
         rotulo: id.to_uppercase(),
@@ -26,7 +26,7 @@ fn campo(id: &str, tipo: TipoCampo, obrigatorio: bool) -> Campo {
     }
 }
 
-fn acao_para(id: &str, ator: Option<AtorAcao>, destino: Destino, efeitos: Vec<Efeito>) -> Acao {
+fn acao_para(id: &str, ator: Option<ActionActor>, destino: Destino, efeitos: Vec<Efeito>) -> Acao {
     Acao {
         id: id.to_owned(),
         rotulo: id.to_uppercase(),
@@ -42,7 +42,7 @@ fn etapa(id: &str, campos: Vec<Campo>, acoes: Vec<Acao>, ao_entrar: Vec<Efeito>)
         id: id.to_owned(),
         nome: id.to_uppercase(),
         instrucao: None,
-        atores_acao: vec![AtorAcao::Agente],
+        atores_acao: vec![ActionActor::Agent],
         campos,
         acoes,
         ao_entrar,
@@ -126,7 +126,7 @@ fn sem_campos() -> Campos {
     Campos::new()
 }
 
-fn tipos(resultado: &poph_fluxos::motor::Resultado) -> Vec<TipoEventoFicha> {
+fn tipos(resultado: &poph_fluxos::motor::Resultado) -> Vec<RecordEventKind> {
     resultado.eventos.iter().map(|evento| evento.tipo).collect()
 }
 
@@ -140,7 +140,7 @@ fn fluxo_com_decisao(entao: Destino, senao: Destino) -> Ir {
         vec![
             etapa(
                 "coleta",
-                vec![campo("marca", TipoCampo::Texto, false)],
+                vec![campo("marca", FieldKind::Texto, false)],
                 vec![acao_para(
                     "ir",
                     None,
@@ -177,7 +177,7 @@ fn decisao_vai_para_o_ramo_verdadeiro() {
         &estado,
         "ir",
         &campos(json!({ "marca": "urgente" })),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         Some("chave-1"),
         &Contexto::novo(&avaliador),
     )
@@ -187,11 +187,11 @@ fn decisao_vai_para_o_ramo_verdadeiro() {
     assert_eq!(
         tipos(&resultado),
         vec![
-            TipoEventoFicha::CamposPreenchidos,
-            TipoEventoFicha::AcaoExecutada,
-            TipoEventoFicha::EtapaConcluida,
-            TipoEventoFicha::DecisaoResolvida,
-            TipoEventoFicha::EtapaEntrou,
+            RecordEventKind::FieldsFilled,
+            RecordEventKind::ActionExecuted,
+            RecordEventKind::StepCompleted,
+            RecordEventKind::DecisionResolved,
+            RecordEventKind::StepEntered,
         ],
         "a decisão é resolvida na mesma passagem e a etapa de destino é a que entra"
     );
@@ -217,7 +217,7 @@ fn decisao_vai_para_o_ramo_falso() {
         &estado,
         "ir",
         &campos(json!({ "marca": "calmo" })),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &Contexto::novo(&avaliador),
     )
@@ -260,7 +260,7 @@ fn duas_decisoes_encadeadas_chegam_a_etapa_em_uma_passagem() {
         &estado,
         "ir",
         &sem_campos(),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &Contexto::novo(&avaliador),
     )
@@ -270,7 +270,7 @@ fn duas_decisoes_encadeadas_chegam_a_etapa_em_uma_passagem() {
     let resolvidas: Vec<&Json> = resultado
         .eventos
         .iter()
-        .filter(|evento| evento.tipo == TipoEventoFicha::DecisaoResolvida)
+        .filter(|evento| evento.tipo == RecordEventKind::DecisionResolved)
         .map(|evento| &evento.payload)
         .collect();
     assert_eq!(
@@ -304,7 +304,7 @@ fn ciclo_de_decisoes_para_a_execucao_em_falha() {
         &estado,
         "ir",
         &sem_campos(),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &Contexto::novo(&avaliador),
     )
@@ -312,7 +312,7 @@ fn ciclo_de_decisoes_para_a_execucao_em_falha() {
 
     assert_eq!(
         resultado.novo_estado.status,
-        StatusExecucao::Falha,
+        ExecutionStatus::Failed,
         "ciclo de decisões põe a execução em falha"
     );
     let gravado = resultado
@@ -327,7 +327,7 @@ fn ciclo_de_decisoes_para_a_execucao_em_falha() {
     );
     assert_eq!(
         tipos(&resultado).last(),
-        Some(&TipoEventoFicha::ExecucaoFalhou),
+        Some(&RecordEventKind::ExecutionFailed),
         "o último evento é a falha"
     );
     assert_eq!(
@@ -379,17 +379,17 @@ fn dez_saltos_passam_e_onze_derrubam_a_execucao() {
         &estado,
         "ir",
         &sem_campos(),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &Contexto::novo(&avaliador),
     )
     .expect("dez saltos cabem no teto");
-    assert_eq!(dez.novo_estado.status, StatusExecucao::Ativa);
+    assert_eq!(dez.novo_estado.status, ExecutionStatus::Active);
     assert_eq!(dez.novo_estado.no_atual, vai_para("chegada"));
     assert_eq!(
         dez.eventos
             .iter()
-            .filter(|evento| evento.tipo == TipoEventoFicha::DecisaoResolvida)
+            .filter(|evento| evento.tipo == RecordEventKind::DecisionResolved)
             .count(),
         10
     );
@@ -402,12 +402,12 @@ fn dez_saltos_passam_e_onze_derrubam_a_execucao() {
         &estado,
         "ir",
         &sem_campos(),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &Contexto::novo(&avaliador),
     )
     .expect("a passagem volta com o desfecho");
-    assert_eq!(onze.novo_estado.status, StatusExecucao::Falha);
+    assert_eq!(onze.novo_estado.status, ExecutionStatus::Failed);
     let gravado = onze.novo_estado.motivo.clone().expect("motivo");
     assert!(gravado.contains("10 decisões encadeadas"), "{gravado}");
     assert!(
@@ -444,24 +444,27 @@ fn o_teto_de_saltos_vem_do_contexto() {
         &estado,
         "ir",
         &sem_campos(),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &Contexto::novo(&avaliador).com_limite_de_saltos(3),
     )
     .expect("a passagem volta com o desfecho");
-    assert_eq!(com_teto_de_tres.novo_estado.status, StatusExecucao::Falha);
+    assert_eq!(com_teto_de_tres.novo_estado.status, ExecutionStatus::Failed);
 
     let com_teto_de_quatro = executar_acao(
         &ir,
         &estado,
         "ir",
         &sem_campos(),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &Contexto::novo(&avaliador).com_limite_de_saltos(4),
     )
     .expect("a passagem volta com o desfecho");
-    assert_eq!(com_teto_de_quatro.novo_estado.status, StatusExecucao::Ativa);
+    assert_eq!(
+        com_teto_de_quatro.novo_estado.status,
+        ExecutionStatus::Active
+    );
     assert_eq!(com_teto_de_quatro.novo_estado.no_atual, vai_para("chegada"));
 }
 
@@ -476,12 +479,12 @@ fn decisao_que_aponta_para_etapa_inexistente_e_ir_divergente() {
         &estado,
         "ir",
         &campos(json!({ "marca": "urgente" })),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &Contexto::novo(&avaliador),
     )
     .expect_err("o destino do ramo não existe na estrutura");
-    assert!(matches!(erro, DomainError::IrDivergente { .. }), "{erro:?}");
+    assert!(matches!(erro, DomainError::IrDivergent { .. }), "{erro:?}");
     assert!(motivo(&erro).contains("fantasma"), "{}", motivo(&erro));
 }
 
@@ -521,13 +524,13 @@ fn regra_que_nao_avalia_para_a_execucao_em_falha() {
         &estado,
         "ir",
         &sem_campos(),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &Contexto::novo(&avaliador),
     )
     .expect("a passagem volta com o desfecho");
 
-    assert_eq!(resultado.novo_estado.status, StatusExecucao::Falha);
+    assert_eq!(resultado.novo_estado.status, ExecutionStatus::Failed);
     let gravado = resultado.novo_estado.motivo.clone().expect("motivo");
     assert!(gravado.contains("regra inválida"), "{gravado}");
     assert_eq!(
@@ -537,7 +540,7 @@ fn regra_que_nao_avalia_para_a_execucao_em_falha() {
     );
     assert_eq!(
         tipos(&resultado).last(),
-        Some(&TipoEventoFicha::ExecucaoFalhou)
+        Some(&RecordEventKind::ExecutionFailed)
     );
 }
 
@@ -567,13 +570,13 @@ fn fim_sem_encerrar_atendimento_conclui_a_execucao() {
         &estado,
         "concluir",
         &sem_campos(),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &Contexto::novo(&avaliador),
     )
     .expect("a ação é válida");
 
-    assert_eq!(resultado.novo_estado.status, StatusExecucao::Concluida);
+    assert_eq!(resultado.novo_estado.status, ExecutionStatus::Completed);
     assert_eq!(
         resultado.novo_estado.resultado,
         Some("Resultado de concluido".to_owned())
@@ -585,9 +588,9 @@ fn fim_sem_encerrar_atendimento_conclui_a_execucao() {
     assert_eq!(
         tipos(&resultado),
         vec![
-            TipoEventoFicha::AcaoExecutada,
-            TipoEventoFicha::EtapaConcluida,
-            TipoEventoFicha::ExecucaoConcluida,
+            RecordEventKind::ActionExecuted,
+            RecordEventKind::StepCompleted,
+            RecordEventKind::ExecutionCompleted,
         ]
     );
     assert_eq!(
@@ -624,13 +627,13 @@ fn fim_com_encerra_atendimento_pede_o_encerramento() {
         &estado,
         "concluir",
         &sem_campos(),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &Contexto::novo(&avaliador),
     )
     .expect("a ação é válida");
 
-    assert_eq!(resultado.novo_estado.status, StatusExecucao::Concluida);
+    assert_eq!(resultado.novo_estado.status, ExecutionStatus::Completed);
     assert!(
         resultado.encerra_atendimento,
         "o fim pede o encerramento; quem fecha é o chamador"
@@ -652,22 +655,22 @@ fn decisao_que_desemboca_num_fim_tambem_conclui() {
         &estado,
         "ir",
         &campos(json!({ "marca": "urgente" })),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &Contexto::novo(&avaliador),
     )
     .expect("a ação é válida");
 
-    assert_eq!(resultado.novo_estado.status, StatusExecucao::Concluida);
+    assert_eq!(resultado.novo_estado.status, ExecutionStatus::Completed);
     assert!(resultado.encerra_atendimento);
     assert_eq!(
         tipos(&resultado),
         vec![
-            TipoEventoFicha::CamposPreenchidos,
-            TipoEventoFicha::AcaoExecutada,
-            TipoEventoFicha::EtapaConcluida,
-            TipoEventoFicha::DecisaoResolvida,
-            TipoEventoFicha::ExecucaoConcluida,
+            RecordEventKind::FieldsFilled,
+            RecordEventKind::ActionExecuted,
+            RecordEventKind::StepCompleted,
+            RecordEventKind::DecisionResolved,
+            RecordEventKind::ExecutionCompleted,
         ]
     );
 }
@@ -680,7 +683,7 @@ fn fluxo_com_efeitos() -> Ir {
         vec![
             etapa(
                 "coleta",
-                vec![campo("endereco", TipoCampo::Texto, true)],
+                vec![campo("endereco", FieldKind::Texto, true)],
                 vec![acao_para(
                     "confirmar",
                     None,
@@ -728,7 +731,7 @@ fn efeitos_saem_na_ordem_da_ia_com_o_texto_resolvido() {
         &estado,
         "confirmar",
         &campos(json!({ "endereco": "Rua das Flores, 10" })),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &contexto,
     )
@@ -773,7 +776,7 @@ fn efeitos_saem_na_ordem_da_ia_com_o_texto_resolvido() {
         resultado
             .eventos
             .iter()
-            .filter(|evento| evento.tipo == TipoEventoFicha::EfeitoCriado)
+            .filter(|evento| evento.tipo == RecordEventKind::EffectCreated)
             .count(),
         4,
         "cada efeito entra na fila com o seu evento"
@@ -793,7 +796,7 @@ fn a_chave_do_efeito_e_estavel_para_a_mesma_entrada() {
         &estado,
         "confirmar",
         &entrada,
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &contexto,
     )
@@ -803,7 +806,7 @@ fn a_chave_do_efeito_e_estavel_para_a_mesma_entrada() {
         &estado,
         "confirmar",
         &entrada,
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &contexto,
     )
@@ -841,7 +844,7 @@ fn variavel_de_efeito_que_nao_existe_vira_texto_vazio() {
         &estado,
         "confirmar",
         &sem_campos(),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &Contexto::novo(&avaliador),
     )
@@ -861,7 +864,7 @@ fn o_dado_do_cliente_entra_como_valor_no_texto_do_efeito() {
     let ir = fluxo(
         vec![etapa(
             "coleta",
-            vec![campo("endereco", TipoCampo::Texto, true)],
+            vec![campo("endereco", FieldKind::Texto, true)],
             vec![acao_para(
                 "confirmar",
                 None,
@@ -882,7 +885,7 @@ fn o_dado_do_cliente_entra_como_valor_no_texto_do_efeito() {
         &estado,
         "confirmar",
         &campos(json!({ "endereco": "  Rua A  " })),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &Contexto::novo(&avaliador),
     )
@@ -929,7 +932,7 @@ fn efeitos_da_entrada_da_primeira_etapa_saem_pela_funcao_publica() {
 
     let erro =
         efeitos_de_entrada(&ir, "fantasma", &dados, &contexto).expect_err("etapa não existe");
-    assert!(matches!(erro, DomainError::IrDivergente { .. }), "{erro:?}");
+    assert!(matches!(erro, DomainError::IrDivergent { .. }), "{erro:?}");
 }
 
 #[test]
@@ -943,7 +946,7 @@ fn etapa_com_efeito_de_entrada_vira_efeito_ao_avancar() {
         &estado,
         "confirmar",
         &campos(json!({ "endereco": "Rua B" })),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &Contexto::novo(&avaliador),
     )
@@ -956,7 +959,7 @@ fn etapa_com_efeito_de_entrada_vira_efeito_ao_avancar() {
     );
     assert_eq!(
         resultado.eventos.last().expect("evento").tipo,
-        TipoEventoFicha::EfeitoCriado,
+        RecordEventKind::EffectCreated,
         "o efeito da etapa nova é o último evento da passagem"
     );
 }
@@ -971,12 +974,12 @@ fn abandono_marca_a_execucao_e_nao_produz_efeito() {
     let resultado = abandonar(
         &estado,
         "  o cliente pediu para parar  ",
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
     )
     .expect("a execução está ativa");
 
-    assert_eq!(resultado.novo_estado.status, StatusExecucao::Abandonada);
+    assert_eq!(resultado.novo_estado.status, ExecutionStatus::Abandoned);
     assert_eq!(
         resultado.novo_estado.motivo,
         Some("o cliente pediu para parar".to_owned()),
@@ -985,7 +988,7 @@ fn abandono_marca_a_execucao_e_nao_produz_efeito() {
     assert!(resultado.efeitos.is_empty(), "abandono não dispara efeito");
     assert!(resultado.aguardando.is_empty());
     assert!(!resultado.encerra_atendimento);
-    assert_eq!(tipos(&resultado), vec![TipoEventoFicha::ExecucaoAbandonada]);
+    assert_eq!(tipos(&resultado), vec![RecordEventKind::ExecutionAbandoned]);
     assert_eq!(
         resultado.eventos[0].payload,
         json!({ "motivo": "o cliente pediu para parar", "no": "coleta" })
@@ -997,15 +1000,15 @@ fn abandono_sem_motivo_e_recusado_e_execucao_encerrada_nao_e_abandonada_de_novo(
     let ir = fluxo_com_efeitos();
     let estado = iniciar(&ir).expect("início");
 
-    let erro = abandonar(&estado, "   ", AtorAcao::Agente, None).expect_err("motivo vazio");
-    assert!(matches!(erro, DomainError::Validacao { .. }), "{erro:?}");
+    let erro = abandonar(&estado, "   ", ActionActor::Agent, None).expect_err("motivo vazio");
+    assert!(matches!(erro, DomainError::Validation { .. }), "{erro:?}");
 
-    let abandonada = abandonar(&estado, "desistiu", AtorAcao::Atendente, None)
+    let abandonada = abandonar(&estado, "desistiu", ActionActor::Attendant, None)
         .expect("abandona")
         .novo_estado;
-    let erro =
-        abandonar(&abandonada, "de novo", AtorAcao::Agente, None).expect_err("já está abandonada");
-    assert!(matches!(erro, DomainError::Conflito { .. }), "{erro:?}");
+    let erro = abandonar(&abandonada, "de novo", ActionActor::Agent, None)
+        .expect_err("já está abandonada");
+    assert!(matches!(erro, DomainError::Conflict { .. }), "{erro:?}");
 }
 
 #[test]
@@ -1021,7 +1024,7 @@ fn repetir_a_chave_nao_duplica_evento_nem_efeito() {
         &estado,
         "confirmar",
         &entrada,
-        AtorAcao::Agente,
+        ActionActor::Agent,
         Some("chave-1"),
         &contexto,
     )
@@ -1032,7 +1035,7 @@ fn repetir_a_chave_nao_duplica_evento_nem_efeito() {
         &primeiro.novo_estado,
         "confirmar",
         &entrada,
-        AtorAcao::Agente,
+        ActionActor::Agent,
         Some("chave-1"),
         &contexto,
     )
@@ -1067,7 +1070,7 @@ fn a_mesma_entrada_com_decisao_e_efeito_da_o_mesmo_resultado() {
         &estado,
         "confirmar",
         &entrada,
-        AtorAcao::Agente,
+        ActionActor::Agent,
         Some("chave"),
         &contexto,
     )
@@ -1077,7 +1080,7 @@ fn a_mesma_entrada_com_decisao_e_efeito_da_o_mesmo_resultado() {
         &estado,
         "confirmar",
         &entrada,
-        AtorAcao::Agente,
+        ActionActor::Agent,
         Some("chave"),
         &contexto,
     )

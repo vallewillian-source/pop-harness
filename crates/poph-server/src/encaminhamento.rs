@@ -73,7 +73,7 @@ use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use futures::TryStreamExt;
-use poph_types::Segredo;
+use poph_types::Secret;
 use ring::hmac;
 use serde_json::json;
 
@@ -274,7 +274,7 @@ pub fn nonce_valido(nonce: &str) -> bool {
 /// Assina o pedido com o segredo compartilhado. Devolve o HMAC em hexadecimal.
 #[allow(clippy::too_many_arguments)]
 pub fn assinar(
-    segredo: &Segredo,
+    segredo: &Secret,
     metodo: &Method,
     alvo: &str,
     corpo: &[u8],
@@ -283,7 +283,7 @@ pub fn assinar(
     hop: u32,
     nonce: &str,
 ) -> String {
-    let chave = hmac::Key::new(hmac::HMAC_SHA256, segredo.expor().as_bytes());
+    let chave = hmac::Key::new(hmac::HMAC_SHA256, segredo.expose().as_bytes());
     let texto = texto_assinado(
         metodo,
         alvo,
@@ -300,7 +300,7 @@ pub fn assinar(
 /// Confere a assinatura do pedido em tempo constante.
 #[allow(clippy::too_many_arguments)]
 pub fn conferir(
-    segredo: &Segredo,
+    segredo: &Secret,
     metodo: &Method,
     alvo: &str,
     corpo: &[u8],
@@ -313,7 +313,7 @@ pub fn conferir(
     let Some(bytes) = de_hex(assinatura) else {
         return false;
     };
-    let chave = hmac::Key::new(hmac::HMAC_SHA256, segredo.expor().as_bytes());
+    let chave = hmac::Key::new(hmac::HMAC_SHA256, segredo.expose().as_bytes());
     let texto = texto_assinado(
         metodo,
         alvo,
@@ -395,7 +395,7 @@ pub async fn middleware(State(estado): State<Estado>, pedido: Request, proximo: 
     let local = cluster.config.instance_id.trim().to_owned();
     let destino = cluster
         .config
-        .instancia_da_org(org)
+        .org_instance(org)
         .map(str::trim)
         .unwrap_or(local.as_str())
         .to_owned();
@@ -527,7 +527,7 @@ async fn atender_de_par(
         .into_response();
     }
 
-    let fingerprint_local = cluster.config.fingerprint_do_mapa();
+    let fingerprint_local = cluster.config.map_fingerprint();
     if mapa != fingerprint_local {
         return mapa_divergente(&mapa, &fingerprint_local).into_response();
     }
@@ -536,7 +536,7 @@ async fn atender_de_par(
         let local = cluster.config.instance_id.trim();
         let destino = cluster
             .config
-            .instancia_da_org(org)
+            .org_instance(org)
             .map(str::trim)
             .unwrap_or(local);
         if destino != local {
@@ -656,7 +656,7 @@ async fn encaminhar(cluster: &ClusterVivo, org: &str, destino: &str, pedido: Req
     com_par(CABECALHO_TIMESTAMP, carimbo.to_string());
     com_par(CABECALHO_ASSINATURA, assinatura);
     com_par(CABECALHO_HOP, hop.to_string());
-    com_par(CABECALHO_MAPA, cluster.config.fingerprint_do_mapa());
+    com_par(CABECALHO_MAPA, cluster.config.map_fingerprint());
     com_par(CABECALHO_NONCE, nonce);
 
     let pedido_destino = cliente()
@@ -739,8 +739,8 @@ mod testes {
     use super::*;
     use poph_types::config::{ClusterConfig, ClusterInstance};
 
-    fn segredo() -> Segredo {
-        Segredo::new("segredo-compartilhado-da-hr50b".to_owned())
+    fn segredo() -> Secret {
+        Secret::new("segredo-compartilhado-da-hr50b".to_owned())
     }
 
     fn mapa(local: &str) -> ClusterConfig {
@@ -895,7 +895,7 @@ mod testes {
         ));
         // Segredo diferente recusa.
         assert!(!conferir(
-            &Segredo::new("outro".to_owned()),
+            &Secret::new("outro".to_owned()),
             &Method::POST,
             alvo,
             &corpo,
@@ -961,18 +961,15 @@ mod testes {
     fn fingerprint_do_mapa_ignora_a_instancia_local_e_sensibiliza_o_resto() {
         let a = mapa("a");
         let b = mapa("b");
-        assert_eq!(a.fingerprint_do_mapa(), b.fingerprint_do_mapa());
+        assert_eq!(a.map_fingerprint(), b.map_fingerprint());
         assert_ne!(a.fingerprint(), b.fingerprint());
 
         let mut com_org_trocada = mapa("a");
         com_org_trocada
             .orgs
             .insert("org_01".to_owned(), "b".to_owned());
-        assert_ne!(
-            a.fingerprint_do_mapa(),
-            com_org_trocada.fingerprint_do_mapa()
-        );
+        assert_ne!(a.map_fingerprint(), com_org_trocada.map_fingerprint());
         // Sem segredo no texto canônico.
-        assert!(!a.normalizado_do_mapa().to_lowercase().contains("secret"));
+        assert!(!a.normalized_map().to_lowercase().contains("secret"));
     }
 }

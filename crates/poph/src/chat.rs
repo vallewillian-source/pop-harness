@@ -17,7 +17,7 @@ use clap::Args;
 use poph_agent::turno::{Entrada, EventoTurno, Observador, TransporteConsole};
 use poph_core::llm::Cancelamento;
 use poph_store::{Conversa, Direcao, NovaConversa, NovaMensagem, Papel, Store};
-use poph_types::{AgentId, ConversationId, MetricasBase, OrgId, Registro};
+use poph_types::{AgentId, BaseMetrics, ConversationId, OrgId, Registry};
 use serde_json::json;
 
 use crate::apoio;
@@ -74,13 +74,13 @@ fn rodar(
     let agente = resolver_agente(&store, org, &args.agente)?;
     let conversa = resolver_conversa(&store, org, &agente.id, &args)?;
 
-    let nome_da_chave = configuracao.llm.chave_env.clone();
+    let nome_da_chave = configuracao.llm.api_key_env.clone();
     let chave = config::chave_llm(ambiente, &nome_da_chave).ok_or_else(|| {
         format!("defina {nome_da_chave} no ambiente desta sessão para conversar com o modelo")
     })?;
-    let registro = Registro::new();
+    let registro = Registry::new();
     let metricas_base =
-        MetricasBase::registrar(&registro).map_err(|erro| format!("métricas base: {erro}"))?;
+        BaseMetrics::register(&registro).map_err(|erro| format!("métricas base: {erro}"))?;
     // Mesma montagem do `poph serve` (HR-26h); o chat mantém as métricas dele, fora do `/metrics`.
     let montagem = montagem::montar(
         &configuracao,
@@ -117,7 +117,7 @@ fn rodar(
                 "agente": agente.id.to_string(),
                 "slug": agente.slug,
                 "canal": conversa.canal,
-                "modelo": modelo_do_agente(&agente, &configuracao.llm.modelo),
+                "modelo": modelo_do_agente(&agente, &configuracao.llm.model),
             })
         );
     } else {

@@ -282,7 +282,7 @@ fn excluir(store: &Store, args: ExcluirOrg) -> ExitCode {
         store.orgaos().excluir(id).map(|()| 0u64).map_err(|erro| {
             if matches!(
                 erro,
-                poph_store::ErroStore::Dominio(poph_types::DomainError::Conflito { .. })
+                poph_store::ErroStore::Dominio(poph_types::DomainError::Conflict { .. })
             ) {
                 "a org tem agentes: exclua os agentes antes, ou repita com --force".to_owned()
             } else {

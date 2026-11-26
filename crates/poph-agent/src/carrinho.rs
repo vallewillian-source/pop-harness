@@ -277,20 +277,23 @@ fn linha_do_produto(
 /// banco.
 fn texto_erro(erro: ErroStore) -> String {
     match erro {
-        ErroStore::Dominio(DomainError::NaoEncontrado {
-            entidade: "produto disponível para este agente",
+        ErroStore::Dominio(DomainError::NotFound {
+            entity: "produto disponível para este agente",
             ..
         }) => "erro: este produto não está disponível para este atendimento (inativo ou fora das \
                categorias do agente). Confira o id com buscar_produto."
             .to_owned(),
-        ErroStore::Dominio(DomainError::NaoEncontrado {
-            entidade: "item do carrinho",
+        ErroStore::Dominio(DomainError::NotFound {
+            entity: "item do carrinho",
             ..
         }) => "erro: este produto não está no carrinho desta conversa.".to_owned(),
-        ErroStore::Dominio(DomainError::NaoEncontrado { .. }) => {
+        ErroStore::Dominio(DomainError::NotFound { .. }) => {
             "erro: a conversa não foi encontrada para este carrinho.".to_owned()
         }
-        ErroStore::Dominio(DomainError::Validacao { campo, motivo }) => {
+        ErroStore::Dominio(DomainError::Validation {
+            field: campo,
+            reason: motivo,
+        }) => {
             format!("erro: {campo}: {motivo}.")
         }
         _ => {

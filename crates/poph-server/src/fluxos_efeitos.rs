@@ -52,7 +52,7 @@ use std::time::Duration;
 use poph_agent::Backoff;
 use poph_evolution::{BlobsEmDisco, FonteDeMidia, WhatsAppEvolution};
 use poph_store::{EfeitoDoFluxo, ErroStore, NovaSaida, Store};
-use poph_types::{AtorEvento, IntegrationId, OrgId, TipoEventoFicha, TurnId};
+use poph_types::{EventActor, IntegrationId, OrgId, RecordEventKind, TurnId};
 use serde_json::Value;
 
 use crate::estado::Estado;
@@ -187,9 +187,9 @@ impl EfeitosFluxo {
             .find(|canal| canal.org == org && canal.integracao == integracao)
     }
 
-    fn contar(&self, contador: &dyn Fn(&MetricasFluxos) -> &poph_types::Contador) {
+    fn contar(&self, contador: &dyn Fn(&MetricasFluxos) -> &poph_types::Counter) {
         if let Some(metricas) = self.metricas.as_ref() {
-            contador(metricas).incrementar(1);
+            contador(metricas).increment(1);
         }
     }
 
@@ -235,7 +235,7 @@ impl EfeitosFluxo {
         // "Entrou na fila": a primeira vez que o laço vê o efeito, ele ainda está `pendente`, sem
         // tentativa e sem espera marcada. Depois disso a espera é sempre gravada, então não conta
         // duas vezes.
-        if efeito.estado == poph_types::EstadoEfeito::Pendente
+        if efeito.estado == poph_types::EffectState::Pending
             && efeito.tentativas == 0
             && efeito.proxima_tentativa.is_none()
         {
@@ -277,7 +277,7 @@ impl EfeitosFluxo {
                         self.registrar_evento(
                             org,
                             &efeito,
-                            TipoEventoFicha::EfeitoEnviado,
+                            RecordEventKind::EffectSent,
                             "enviado",
                             tentativa,
                         );
@@ -287,7 +287,7 @@ impl EfeitosFluxo {
                             self.registrar_evento(
                                 org,
                                 &efeito,
-                                TipoEventoFicha::AtendimentoTransferido,
+                                RecordEventKind::ServiceTransferred,
                                 &departamento,
                                 tentativa,
                             );
@@ -472,14 +472,14 @@ impl EfeitosFluxo {
                 mensagem,
             } => {
                 let comando = poph_types::SendText {
-                    idempotencia: format!("fluxo-efeito-{}", efeito.id),
+                    idempotency: format!("fluxo-efeito-{}", efeito.id),
                     peer: para,
-                    texto: mensagem,
+                    text: mensagem,
                 };
                 match canal.enviar_texto_recibo(comando).await {
                     Ok(_) => Ok(None),
                     // O motivo do cliente já vem limpo (sem telefone, JID ou chave).
-                    Err(erro) if erro.eh_transitorio() => {
+                    Err(erro) if erro.is_transient() => {
                         Err(EntregaFalhou::Transitoria(erro.to_string()))
                     }
                     Err(erro) => Err(EntregaFalhou::Definitiva(erro.to_string())),
@@ -536,7 +536,7 @@ impl EfeitosFluxo {
         self.registrar_evento(
             org,
             efeito,
-            TipoEventoFicha::EfeitoFalhou,
+            RecordEventKind::EffectFailed,
             motivo,
             efeito.tentativas,
         );
@@ -560,11 +560,11 @@ impl EfeitosFluxo {
         &self,
         org: OrgId,
         efeito: &EfeitoDoFluxo,
-        tipo: TipoEventoFicha,
+        tipo: RecordEventKind,
         detalhe: &str,
         tentativa: u32,
     ) {
-        let chave = format!("efeito:{}:{}", efeito.id, tipo.como_texto());
+        let chave = format!("efeito:{}:{}", efeito.id, tipo.as_text());
         let payload = serde_json::json!({
             "efeito": efeito.id.to_string(),
             "chave": efeito.chave,
@@ -576,7 +576,7 @@ impl EfeitosFluxo {
         let novo = poph_store::NovoEventoFicha {
             execucao_id: Some(efeito.execucao_id),
             tipo,
-            ator_tipo: AtorEvento::Sistema,
+            ator_tipo: EventActor::System,
             ator_ref: Some("fluxo"),
             payload_json: payload,
             chave_idempotencia: Some(&chave),
@@ -589,7 +589,7 @@ impl EfeitosFluxo {
             tracing::warn!(
                 target: "poph_server::fluxos_efeitos",
                 efeito = %efeito.id,
-                tipo = tipo.como_texto(),
+                tipo = tipo.as_text(),
                 motivo = %erro,
                 "não consegui registrar o desfecho do efeito na Ficha"
             );
@@ -634,7 +634,7 @@ pub use poph_agent::fluxos_transicao::efeito_da_transicao;
 
 /// Sobe o laço da fila de efeitos. Sem o motor de fluxos ligado, não sobe nada.
 pub fn iniciar(estado: &Estado) -> Option<tokio::task::JoinHandle<()>> {
-    if !estado.config.fluxos.ativo {
+    if !estado.config.flows.enabled {
         return None;
     }
     let efeitos = Arc::new(EfeitosFluxo::novo(

@@ -353,16 +353,16 @@ fn exigir_texto(
     teto: usize,
 ) -> Resultado<()> {
     if valor.trim().is_empty() {
-        return Err(ErroStore::Dominio(DomainError::Validacao {
-            campo,
-            motivo: format!("{entidade} não pode ficar vazia"),
+        return Err(ErroStore::Dominio(DomainError::Validation {
+            field: campo,
+            reason: format!("{entidade} não pode ficar vazia"),
         }));
     }
     let tamanho = valor.chars().count();
     if tamanho > teto {
-        return Err(ErroStore::Dominio(DomainError::Validacao {
-            campo,
-            motivo: format!("{entidade} passa de {teto} caracteres ({tamanho})"),
+        return Err(ErroStore::Dominio(DomainError::Validation {
+            field: campo,
+            reason: format!("{entidade} passa de {teto} caracteres ({tamanho})"),
         }));
     }
     Ok(())

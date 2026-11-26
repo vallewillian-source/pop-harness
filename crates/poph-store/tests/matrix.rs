@@ -430,8 +430,8 @@ fn isolamento_por_org_em_todas_as_tabelas_do_modulo() {
     assert!(
         matches!(
             erro,
-            ErroStore::Dominio(DomainError::Validacao { .. })
-                | ErroStore::Dominio(DomainError::NaoEncontrado { .. })
+            ErroStore::Dominio(DomainError::Validation { .. })
+                | ErroStore::Dominio(DomainError::NotFound { .. })
         ),
         "erro inesperado: {erro:?}"
     );
@@ -480,7 +480,7 @@ fn garantir_sala_duas_vezes_e_idempotente_e_recusa_sala_de_outra_conversa() {
         .garantir_sala(org.id, outra.id, "!sala:teste", None)
         .expect_err("sala de outra conversa tem que ser recusada");
     assert!(
-        matches!(erro, ErroStore::Dominio(DomainError::Conflito { .. })),
+        matches!(erro, ErroStore::Dominio(DomainError::Conflict { .. })),
         "erro inesperado: {erro:?}"
     );
     assert_eq!(
@@ -635,7 +635,7 @@ fn definir_nome_cliente_espelhado_e_idempotente_e_filtrado_por_org() {
         .definir_nome_cliente_espelhado(org.id, conversa.id, "   ")
         .expect_err("nome vazio");
     assert!(
-        matches!(vazio, ErroStore::Dominio(DomainError::Validacao { .. })),
+        matches!(vazio, ErroStore::Dominio(DomainError::Validation { .. })),
         "erro inesperado: {vazio:?}"
     );
 }
@@ -894,7 +894,7 @@ fn falha_da_mesma_mensagem_atualiza_em_vez_de_duplicar() {
         .expect_err("motivo vazio");
     assert!(matches!(
         vazio,
-        ErroStore::Dominio(DomainError::Validacao { .. })
+        ErroStore::Dominio(DomainError::Validation { .. })
     ));
     let longo = store
         .matrix()
@@ -902,7 +902,7 @@ fn falha_da_mesma_mensagem_atualiza_em_vez_de_duplicar() {
         .expect_err("motivo longo");
     assert!(matches!(
         longo,
-        ErroStore::Dominio(DomainError::Validacao { .. })
+        ErroStore::Dominio(DomainError::Validation { .. })
     ));
 }
 
@@ -955,7 +955,7 @@ fn garantir_espaco_e_idempotente_por_departamento_e_recusa_espaco_de_outro() {
         )
         .expect_err("espaço de outro departamento");
     assert!(
-        matches!(erro, ErroStore::Dominio(DomainError::Conflito { .. })),
+        matches!(erro, ErroStore::Dominio(DomainError::Conflict { .. })),
         "erro inesperado: {erro:?}"
     );
 

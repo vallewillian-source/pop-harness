@@ -21,8 +21,8 @@ use poph_server::Estado;
 use poph_server::cluster::{ClusterVivo, carregar};
 use poph_store::Store;
 use poph_types::HarnessConfig;
-use poph_types::Segredo;
-use poph_types::config::TokenGlobalConfig;
+use poph_types::Secret;
+use poph_types::config::GlobalTokenConfig;
 use rand_core::OsRng;
 use reqwest::{Client, Method, StatusCode};
 use serde_json::{Value, json};
@@ -125,15 +125,15 @@ impl Cenario {
         fs::write(&caminho_cluster, MAPA_ORIGINAL).expect("cluster.toml");
 
         let mut config = HarnessConfig::default();
-        config.dados.diretorio = pasta.join("dados");
-        config.admin.tokens_globais = vec![TokenGlobalConfig {
+        config.data.directory = pasta.join("dados");
+        config.admin.tokens_globais = vec![GlobalTokenConfig {
             label: "teste".to_owned(),
             hash: hash_argon2(TOKEN_GLOBAL),
         }];
         config.validar().expect("configuração válida");
 
         let store = Arc::new(Store::abrir(&config).expect("abre o banco"));
-        let segredo = Segredo::new(SEGREDO.to_owned());
+        let segredo = Secret::new(SEGREDO.to_owned());
         let mapa = carregar(&caminho_cluster, Some(&segredo)).expect("mapa inicial válido");
         let estado = Estado::novo(Arc::clone(&store), config)
             .expect("estado do servidor")

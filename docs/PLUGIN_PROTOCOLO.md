@@ -1,6 +1,6 @@
 # Integration plugin protocol (HR-25)
 
-> Contract: PRD §8.3. Code: `crates/poph-types/src/integracao.rs` (types) and
+> Contract: PRD §8.3. Code: `crates/poph-types/src/integration.rs` (types) and
 > `crates/poph-plugins/` (supervisor). Fixture plugin: `crates/poph-plugins/tests/fixtures/plugin_fixtura.rs`.
 > Tests: `crates/poph-plugins/tests/protocolo.rs`.
 
@@ -30,7 +30,7 @@ The Unix socket is left for the day two Harness instances need to share the same
 
 ## 2. Protocol version
 
-`PROTOCOLO_VERSAO` (today **1**) goes in the handshake on both sides. The supervisor refuses a different version with
+`PROTOCOL_VERSION` (today **1**) goes in the handshake on both sides. The supervisor refuses a different version with
 `protocolo incompatível: o host fala 1 e o plugin falou N` ("incompatible protocol: the host speaks 1 and the plugin
 spoke N"). There is no negotiation and no "try best effort".
 
@@ -240,7 +240,7 @@ canal.encerrar().await;
 
 The `receptor` (receiver) implements `poph_types::Receptor`: it receives `EventoIntegracao::Entrada(InboundEvent)` and
 `EventoIntegracao::Estado(EventoEstado)`. The ready-made link between the contract and the queues is in
-`poph-agent/src/fila_integracao.rs` (HR-27): `EnvioPeloCanal` (outbox item → `ComandoSaida`) and `InboxDoCanal`
+`poph-agent/src/fila_integracao.rs` (HR-27): `EnvioPeloCanal` (outbox item → `OutboundCommand`) and `InboxDoCanal`
 (`InboundEvent` → `inbox`). The full example is `docs/PLUGIN_EXEMPLO.md`.
 
 ## 8.1 The manifest on the server (HR-44c)

@@ -385,8 +385,8 @@ impl Fluxo {
     pub fn receber(&self, org: OrgId, nova: NovaEntrada) -> Resultado<Recebido> {
         let (situacao, _item) = self.interno.store.caixa_entrada().receber(org, nova)?;
         match situacao {
-            Recebido::Novo => self.interno.metricas.entradas_novas.incrementar(1),
-            Recebido::Duplicado => self.interno.metricas.entradas_duplicadas.incrementar(1),
+            Recebido::Novo => self.interno.metricas.entradas_novas.increment(1),
+            Recebido::Duplicado => self.interno.metricas.entradas_duplicadas.increment(1),
         }
         Ok(situacao)
     }
@@ -420,8 +420,8 @@ impl Fluxo {
             },
         )?;
         match gravado.situacao {
-            Recebido::Novo => self.interno.metricas.entradas_novas.incrementar(1),
-            Recebido::Duplicado => self.interno.metricas.entradas_duplicadas.incrementar(1),
+            Recebido::Novo => self.interno.metricas.entradas_novas.increment(1),
+            Recebido::Duplicado => self.interno.metricas.entradas_duplicadas.increment(1),
         }
         Ok(gravado)
     }
@@ -437,7 +437,7 @@ impl Fluxo {
             .marcar_processado(org, id, erro)?;
         self.interno.em_voo().remove(&id);
         self.interno.agenda_entrada().remove(&id);
-        self.interno.metricas.entradas_concluidas.incrementar(1);
+        self.interno.metricas.entradas_concluidas.increment(1);
         Ok(())
     }
 
@@ -538,7 +538,7 @@ impl Fluxo {
                     self.interno.agenda_entrada().remove(&id);
                     self.interno.liberar_entrada(id);
                     marcado?;
-                    self.interno.metricas.entradas_invalidas.incrementar(1);
+                    self.interno.metricas.entradas_invalidas.increment(1);
                     relato.invalidos += 1;
                     continue;
                 }
@@ -567,7 +567,7 @@ impl Fluxo {
                         );
                         self.interno.agenda_entrada().remove(&id);
                         marcado?;
-                        self.interno.metricas.entradas_desistentes.incrementar(1);
+                        self.interno.metricas.entradas_desistentes.increment(1);
                         relato.desistentes += 1;
                     } else {
                         let proximo_em = agora + self.interno.opcoes.backoff.espera(tentativa);
@@ -578,7 +578,7 @@ impl Fluxo {
                                 tentativa,
                             },
                         );
-                        self.interno.metricas.entradas_adiadas.incrementar(1);
+                        self.interno.metricas.entradas_adiadas.increment(1);
                         relato.adiados += 1;
                     }
                 }
@@ -700,7 +700,7 @@ impl Fluxo {
                 true,
             )?;
             self.interno.agenda_saida().remove(&id);
-            self.interno.metricas.saidas_esgotadas.incrementar(1);
+            self.interno.metricas.saidas_esgotadas.increment(1);
             return Ok(DesfechoEnvio::Esgotado);
         }
 
@@ -722,7 +722,7 @@ impl Fluxo {
             Ok(()) => {
                 self.interno.store.caixa_saida().confirmar_envio(org, id)?;
                 self.interno.agenda_saida().remove(&id);
-                self.interno.metricas.saidas_enviadas.incrementar(1);
+                self.interno.metricas.saidas_enviadas.increment(1);
                 Ok(DesfechoEnvio::Enviado)
             }
             Err(falha) if falha.transitoria => {
@@ -738,7 +738,7 @@ impl Fluxo {
                         tentativa,
                     },
                 );
-                self.interno.metricas.saidas_transitorias.incrementar(1);
+                self.interno.metricas.saidas_transitorias.increment(1);
                 Ok(DesfechoEnvio::Falhou)
             }
             Err(falha) => {
@@ -747,7 +747,7 @@ impl Fluxo {
                     .caixa_saida()
                     .falhar_envio(org, id, &falha.motivo, true)?;
                 self.interno.agenda_saida().remove(&id);
-                self.interno.metricas.saidas_definitivas.incrementar(1);
+                self.interno.metricas.saidas_definitivas.increment(1);
                 Ok(DesfechoEnvio::Falhou)
             }
         }
@@ -773,7 +773,7 @@ impl Fluxo {
             self.interno
                 .metricas
                 .reenvios_retomada
-                .incrementar(u64::from(reenvios));
+                .increment(u64::from(reenvios));
         }
 
         let mut entrada = RelatoDespacho::default();
@@ -898,11 +898,11 @@ impl Fluxo {
         self.interno
             .metricas
             .inbox_pendentes
-            .definir(i64::try_from(entrada).unwrap_or(i64::MAX));
+            .set(i64::try_from(entrada).unwrap_or(i64::MAX));
         self.interno
             .metricas
             .outbox_enviando
-            .definir(i64::try_from(enviando).unwrap_or(i64::MAX));
+            .set(i64::try_from(enviando).unwrap_or(i64::MAX));
         Ok(())
     }
 }

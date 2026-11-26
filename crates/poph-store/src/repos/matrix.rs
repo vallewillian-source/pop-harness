@@ -351,10 +351,10 @@ impl Matrix<'_> {
                 .optional()
                 .map_err(ErroStore::from)?;
             if let Some(dona) = dona.filter(|dona| *dona != texto_conversa) {
-                return Err(ErroStore::Dominio(DomainError::Conflito {
-                    entidade: "sala do Matrix",
+                return Err(ErroStore::Dominio(DomainError::Conflict {
+                    entity: "sala do Matrix",
                     id: sala.clone(),
-                    motivo: format!("esta sala já está ligada à conversa {dona}"),
+                    reason: format!("esta sala já está ligada à conversa {dona}"),
                 }));
             }
             conn.execute(
@@ -599,10 +599,10 @@ impl Matrix<'_> {
                 .optional()
                 .map_err(ErroStore::from)?;
             if let Some(dono) = dono.filter(|dono| *dono != texto_departamento) {
-                return Err(ErroStore::Dominio(DomainError::Conflito {
-                    entidade: "espaço do Matrix",
+                return Err(ErroStore::Dominio(DomainError::Conflict {
+                    entity: "espaço do Matrix",
                     id: sala.clone(),
-                    motivo: format!("este espaço já está ligado ao departamento {dono}"),
+                    reason: format!("este espaço já está ligado ao departamento {dono}"),
                 }));
             }
             conn.execute(
@@ -624,8 +624,8 @@ impl Matrix<'_> {
             espaco_em(conn, &texto_org, &texto_departamento)
         })?;
         gravado.ok_or_else(|| {
-            ErroStore::Dominio(DomainError::NaoEncontrado {
-                entidade: "espaço do Matrix",
+            ErroStore::Dominio(DomainError::NotFound {
+                entity: "espaço do Matrix",
                 id: departamento.to_string(),
             })
         })
@@ -753,9 +753,9 @@ impl Matrix<'_> {
     /// ele repete um lote.
     pub fn avancar_mensagens(&self, org: OrgId, rowid: u64) -> Resultado<CursoresMatrix> {
         if rowid > i64::MAX as u64 {
-            return Err(ErroStore::Dominio(DomainError::Validacao {
-                campo: "messages_cursor",
-                motivo: "cursor de mensagens fora da faixa".to_owned(),
+            return Err(ErroStore::Dominio(DomainError::Validation {
+                field: "messages_cursor",
+                reason: "cursor de mensagens fora da faixa".to_owned(),
             }));
         }
         let agora = self.0.agora();
@@ -788,9 +788,9 @@ impl Matrix<'_> {
         mensagem: &str,
     ) -> Resultado<CursoresMatrix> {
         if rowid > i64::MAX as u64 {
-            return Err(ErroStore::Dominio(DomainError::Validacao {
-                campo: "messages_cursor",
-                motivo: "cursor de mensagens fora da faixa".to_owned(),
+            return Err(ErroStore::Dominio(DomainError::Validation {
+                field: "messages_cursor",
+                reason: "cursor de mensagens fora da faixa".to_owned(),
             }));
         }
         let agora = self.0.agora();
@@ -825,9 +825,9 @@ impl Matrix<'_> {
         mensagem: &str,
     ) -> Resultado<CursoresMatrix> {
         if rowid > i64::MAX as u64 {
-            return Err(ErroStore::Dominio(DomainError::Validacao {
-                campo: "messages_cursor",
-                motivo: "cursor de mensagens fora da faixa".to_owned(),
+            return Err(ErroStore::Dominio(DomainError::Validation {
+                field: "messages_cursor",
+                reason: "cursor de mensagens fora da faixa".to_owned(),
             }));
         }
         let agora = self.0.agora();
@@ -859,9 +859,9 @@ impl Matrix<'_> {
         id: &str,
     ) -> Resultado<CursoresMatrix> {
         if atualizado_em < 0 {
-            return Err(ErroStore::Dominio(DomainError::Validacao {
-                campo: "conversations_cursor_at",
-                motivo: "instante do cursor de conversas não pode ser negativo".to_owned(),
+            return Err(ErroStore::Dominio(DomainError::Validation {
+                field: "conversations_cursor_at",
+                reason: "instante do cursor de conversas não pode ser negativo".to_owned(),
             }));
         }
         let agora = self.0.agora();
@@ -930,8 +930,8 @@ impl Matrix<'_> {
             falha_em(conn, &texto_org, &texto_mensagem)
         })?;
         gravada.ok_or_else(|| {
-            ErroStore::Dominio(DomainError::NaoEncontrado {
-                entidade: "falha do Matrix",
+            ErroStore::Dominio(DomainError::NotFound {
+                entity: "falha do Matrix",
                 id: mensagem.to_string(),
             })
         })
@@ -1137,8 +1137,8 @@ fn cursores_em(conn: &Connection, texto_org: &str) -> Resultado<Option<CursoresM
 }
 
 fn sala_ausente(texto_conversa: &str) -> ErroStore {
-    ErroStore::Dominio(DomainError::NaoEncontrado {
-        entidade: "sala do Matrix",
+    ErroStore::Dominio(DomainError::NotFound {
+        entity: "sala do Matrix",
         id: texto_conversa.to_owned(),
     })
 }
@@ -1152,15 +1152,15 @@ fn exigir_texto(
 ) -> Resultado<()> {
     let tamanho = valor.chars().count();
     if valor.trim().is_empty() {
-        return Err(ErroStore::Dominio(DomainError::Validacao {
-            campo,
-            motivo: format!("{entidade} não pode ficar vazia"),
+        return Err(ErroStore::Dominio(DomainError::Validation {
+            field: campo,
+            reason: format!("{entidade} não pode ficar vazia"),
         }));
     }
     if tamanho > teto {
-        return Err(ErroStore::Dominio(DomainError::Validacao {
-            campo,
-            motivo: format!("{entidade} passa de {teto} caracteres ({tamanho})"),
+        return Err(ErroStore::Dominio(DomainError::Validation {
+            field: campo,
+            reason: format!("{entidade} passa de {teto} caracteres ({tamanho})"),
         }));
     }
     Ok(())

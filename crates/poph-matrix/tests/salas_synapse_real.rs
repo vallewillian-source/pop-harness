@@ -25,7 +25,7 @@ use poph_matrix::salas::{
     ConversaParaSala, ErroPorta, EstadoGravado, PODER_MINIMO_AGENTE, PortaSalas, Provisionador,
     SalaGravada, TIPO_METADATA,
 };
-use poph_types::{AgentId, ConversationId, MatrixConfig, OrgId, Segredo};
+use poph_types::{AgentId, ConversationId, MatrixConfig, OrgId, Secret};
 
 /// Lê uma chave do `credenciais.env` sem imprimir valor nenhum.
 fn credencial(nome: &str) -> String {
@@ -106,19 +106,19 @@ async fn sala_nasce_com_nome_topico_metadata_e_poder_final_do_agente() {
     let server_name = credencial("POPH_MATRIX_DEV_SERVER_NAME");
     let token = credencial("POPH_MATRIX_DEV_HARNESS_AS_TOKEN");
     let config = MatrixConfig {
-        habilitado: true,
+        enabled: true,
         homeserver_url: base,
         server_name: server_name.clone(),
-        prefixo: "ph".to_owned(),
+        prefix: "ph".to_owned(),
         // O poder final configurado: a criação usa 100 e desce para este valor.
-        poder_agente: PODER_MINIMO_AGENTE,
+        agent_power: PODER_MINIMO_AGENTE,
         ..MatrixConfig::default()
     };
     let cliente = ClienteMatrix::novo(
         ConfigCliente::novo(
             config.homeserver_url.clone(),
             server_name.clone(),
-            Segredo::new(token),
+            Secret::new(token),
         )
         .expect("configuração do cliente"),
     )

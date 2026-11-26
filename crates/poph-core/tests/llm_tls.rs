@@ -56,7 +56,7 @@ async fn https_funciona_quando_o_certificado_e_confiavel() {
     let corpo = &servidor.pedidos()[0];
     assert_eq!(corpo["model"], "gemini-3.8-flash-tiered");
     assert_eq!(corpo["messages"][1]["content"], "oi");
-    assert_eq!(m.metricas.chamadas_llm.valor(), 1);
+    assert_eq!(m.metricas.llm_calls.value(), 1);
     assert_eq!(servidor.conexoes(), 1);
 }
 
@@ -98,7 +98,7 @@ async fn certificado_de_ca_desconhecida_e_recusado_e_nao_retenta() {
         "chave vazou no erro: {texto}"
     );
     assert!(!format!("{erro:?}").contains(apoio::CHAVE));
-    assert_eq!(m.metricas.erros_llm.valor(), 1);
+    assert_eq!(m.metricas.llm_errors.value(), 1);
 }
 
 #[tokio::test]

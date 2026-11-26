@@ -130,7 +130,7 @@ fn exportar(flag: Option<PathBuf>, ambiente: &config::Ambiente, args: ExportarOr
     let chave = config::segredos(ambiente)
         .cifra
         .as_ref()
-        .and_then(|valor| ChaveDeCifra::derivar(valor.expor()).ok());
+        .and_then(|valor| ChaveDeCifra::derivar(valor.expose()).ok());
     // A chave só serve para ler os **nomes** dos campos de segredo preenchidos; o valor nunca sai.
     let nomes_do_segredo = |blob: &[u8]| -> Option<Vec<String>> {
         let mapa = chave.as_ref()?.decifrar(blob).ok()?;

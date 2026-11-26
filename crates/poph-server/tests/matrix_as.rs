@@ -21,8 +21,8 @@ use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, SaltString};
 use poph_server::{EntregaDeEventos, ErroEntrega, Estado, FuturoDaEntrega, ReceptorAs, TETO_CORPO};
 use poph_store::Store;
-use poph_types::config::TokenGlobalConfig;
-use poph_types::{HarnessConfig, MatrixConfig, Sensivel};
+use poph_types::config::GlobalTokenConfig;
+use poph_types::{HarnessConfig, MatrixConfig, Sensitive};
 use rand_core::OsRng;
 use reqwest::{Client, Method, StatusCode};
 use serde_json::{Value, json};
@@ -95,7 +95,7 @@ impl Cenario {
         let receptor = ReceptorAs::novo(
             PREFIXO,
             SERVER_NAME,
-            Sensivel::new(HS_TOKEN.to_owned()),
+            Sensitive::new(HS_TOKEN.to_owned()),
             Arc::clone(&entrega) as Arc<dyn EntregaDeEventos>,
         );
         Self::montar(rotulo, true, Some(receptor), entrega).await
@@ -124,16 +124,16 @@ impl Cenario {
         fs::create_dir_all(pasta.join("dados")).expect("pasta de dados");
 
         let mut config = HarnessConfig::default();
-        config.dados.diretorio = pasta.join("dados");
-        config.admin.tokens_globais = vec![TokenGlobalConfig {
+        config.data.directory = pasta.join("dados");
+        config.admin.tokens_globais = vec![GlobalTokenConfig {
             label: "teste".to_owned(),
             hash: hash_argon2(TOKEN_GLOBAL),
         }];
         config.matrix = Some(MatrixConfig {
-            habilitado: matrix_ligado,
+            enabled: matrix_ligado,
             homeserver_url: "http://127.0.0.1:18008".to_owned(),
             server_name: SERVER_NAME.to_owned(),
-            prefixo: PREFIXO.to_owned(),
+            prefix: PREFIXO.to_owned(),
             ..Default::default()
         });
         config.validar().expect("configuração válida");

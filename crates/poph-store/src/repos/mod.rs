@@ -130,8 +130,8 @@ pub(crate) fn pertence(
         .map_err(ErroStore::from)?;
     match existe {
         Some(_) => Ok(()),
-        None => Err(ErroStore::Dominio(DomainError::NaoEncontrado {
-            entidade,
+        None => Err(ErroStore::Dominio(DomainError::NotFound {
+            entity: entidade,
             id: id.to_owned(),
         })),
     }
@@ -162,14 +162,14 @@ pub(crate) fn conflito_ou_ausente(
         .optional()
         .map_err(ErroStore::from);
     match atual {
-        Ok(Some(atual)) => ErroStore::Dominio(DomainError::ConflitoDeVersao {
-            entidade,
+        Ok(Some(atual)) => ErroStore::Dominio(DomainError::VersionConflict {
+            entity: entidade,
             id: id.to_owned(),
-            esperada,
-            atual: atual.max(0) as u64,
+            expected: esperada,
+            current: atual.max(0) as u64,
         }),
-        Ok(None) | Err(_) => ErroStore::Dominio(DomainError::NaoEncontrado {
-            entidade,
+        Ok(None) | Err(_) => ErroStore::Dominio(DomainError::NotFound {
+            entity: entidade,
             id: id.to_owned(),
         }),
     }

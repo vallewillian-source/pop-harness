@@ -12,8 +12,8 @@ use serde_json::{Value, json};
 
 use poph_plugins::{ColetorEventos, Espera, LimitesSupervisor, OpcoesPlugin, Supervisor};
 use poph_types::{
-    ErroIntegracao, EstadoIntegracao, EventoEstado, EventoIntegracao, Integration, IntegrationId,
-    OrgId, PROTOCOLO_VERSAO, Presenca, Receptor, SendFile, SendText, SetPresence,
+    EventSink, Integration, IntegrationError, IntegrationEvent, IntegrationId, IntegrationState,
+    OrgId, PROTOCOL_VERSION, Presence, SendFile, SendText, SetPresence, StateEvent,
 };
 
 // ───────────────────────────── Apoio ─────────────────────────────
@@ -85,11 +85,11 @@ impl Drop for Cenario {
     }
 }
 
-fn enviar_texto(supervisor: &Supervisor, texto: &str) -> poph_types::FuturoComando {
-    supervisor.enviar_texto(SendText {
-        idempotencia: "turno-1:0".to_owned(),
+fn enviar_texto(supervisor: &Supervisor, texto: &str) -> poph_types::CommandFuture {
+    supervisor.send_text(SendText {
+        idempotency: "turno-1:0".to_owned(),
         peer: "5511900000000".to_owned(),
-        texto: texto.to_owned(),
+        text: texto.to_owned(),
     })
 }
 
@@ -145,7 +145,7 @@ fn log_atual() -> String {
 async fn handshake_manifesto_saude_texto_arquivo_e_presenca() {
     let cenario = Cenario::novo("contrato");
     let coletor = Arc::new(ColetorEventos::novo());
-    let receptor: Arc<dyn Receptor> = coletor.clone();
+    let receptor: Arc<dyn EventSink> = coletor.clone();
     let integracao = IntegrationId::generate();
     let org = OrgId::generate();
     let opcoes = OpcoesPlugin::novo(fixtura(), integracao, org)
@@ -165,37 +165,37 @@ async fn handshake_manifesto_saude_texto_arquivo_e_presenca() {
 
     let manifesto = supervisor.manifesto().expect("manifesto no handshake");
     assert_eq!(manifesto.kind, "fixtura");
-    assert_eq!(manifesto.protocolo, PROTOCOLO_VERSAO);
-    assert!(manifesto.capacidades.text);
-    assert!(manifesto.capacidades.file_out);
-    assert!(!manifesto.capacidades.read_receipt);
-    assert_eq!(manifesto.limites.max_anexo_bytes, 16_777_216);
-    assert_eq!(supervisor.estado(), EstadoIntegracao::Pronto);
+    assert_eq!(manifesto.protocol, PROTOCOL_VERSION);
+    assert!(manifesto.capabilities.text);
+    assert!(manifesto.capabilities.file_out);
+    assert!(!manifesto.capabilities.read_receipt);
+    assert_eq!(manifesto.limits.max_attachment_bytes, 16_777_216);
+    assert_eq!(supervisor.estado(), IntegrationState::Ready);
 
-    let saude = supervisor.saude().await.expect("saúde");
+    let saude = supervisor.health().await.expect("saúde");
     assert!(saude.ok);
-    assert_eq!(saude.detalhe.as_deref(), Some("fixtura"));
+    assert_eq!(saude.detail.as_deref(), Some("fixtura"));
 
     enviar_texto(&supervisor, "olá")
         .await
         .expect("texto entregue");
     supervisor
-        .enviar_arquivo(SendFile {
-            idempotencia: "turno-1:1".to_owned(),
+        .send_file(SendFile {
+            idempotency: "turno-1:1".to_owned(),
             peer: "5511900000000".to_owned(),
-            nome: "manual.pdf".to_owned(),
+            name: "manual.pdf".to_owned(),
             mime: "application/pdf".to_owned(),
-            tamanho_bytes: 1_234,
+            size_bytes: 1_234,
             sha256: "a".repeat(64),
             blob_ref: "01a1f6bd-0000-7000-8000-000000000000/aaaaaaaa".to_owned(),
-            legenda: Some("segue o manual".to_owned()),
+            caption: Some("segue o manual".to_owned()),
         })
         .await
         .expect("arquivo entregue");
     supervisor
-        .definir_presenca(SetPresence {
+        .set_presence(SetPresence {
             peer: "5511900000000".to_owned(),
-            estado: Presenca::Digitando,
+            state: Presence::Typing,
         })
         .await
         .expect("presença");
@@ -223,7 +223,7 @@ async fn handshake_manifesto_saude_texto_arquivo_e_presenca() {
     assert_eq!(contadores.lixo, 0, "{contadores:?}");
 
     supervisor.encerrar().await;
-    assert_eq!(supervisor.estado(), EstadoIntegracao::Encerrada);
+    assert_eq!(supervisor.estado(), IntegrationState::Closed);
     // O `encerrar` chega ao plugin, que sai sozinho e deixa o registro.
     assert_eq!(cenario.ler("saiu.txt").trim(), "sim");
 }
@@ -232,7 +232,7 @@ async fn handshake_manifesto_saude_texto_arquivo_e_presenca() {
 async fn evento_de_entrada_e_estado_chegam_normalizados() {
     let cenario = Cenario::novo("evento");
     let coletor = Arc::new(ColetorEventos::novo());
-    let receptor: Arc<dyn Receptor> = coletor.clone();
+    let receptor: Arc<dyn EventSink> = coletor.clone();
     let opcoes = cenario.opcoes("normal").com_config(json!({
         "modo": "normal",
         "dump_dir": cenario.dump().display().to_string(),
@@ -253,22 +253,22 @@ async fn evento_de_entrada_e_estado_chegam_normalizados() {
     let entrada = eventos
         .iter()
         .find_map(|evento| match evento {
-            EventoIntegracao::Entrada(entrada) => Some(entrada.clone()),
-            EventoIntegracao::Estado(_) => None,
+            IntegrationEvent::Inbound(entrada) => Some(entrada.clone()),
+            IntegrationEvent::Estado(_) => None,
         })
         .expect("evento de entrada");
-    assert_eq!(entrada.integracao, integracao);
+    assert_eq!(entrada.integration, integracao);
     assert_eq!(entrada.id_externo, "msg-fixtura-7");
     assert_eq!(entrada.peer, "5511988887777");
-    assert_eq!(entrada.texto, "quero um orçamento");
-    assert_eq!(entrada.ocorrido_em, 1_795_140_000_000);
-    assert!(entrada.anexos.is_empty());
+    assert_eq!(entrada.text, "quero um orçamento");
+    assert_eq!(entrada.occurred_at, 1_795_140_000_000);
+    assert!(entrada.attachments.is_empty());
     // O evento entregue passa pela validação do contrato.
     assert_eq!(entrada.validar(), Ok(()));
 
     let estados = coletor.estados();
     assert_eq!(estados.len(), 1, "{estados:?}");
-    assert!(matches!(estados[0], EventoEstado::Conectado { .. }));
+    assert!(matches!(estados[0], StateEvent::Connected { .. }));
 
     let contadores = supervisor.contadores();
     assert_eq!(contadores.eventos, 1);
@@ -280,14 +280,14 @@ async fn evento_de_entrada_e_estado_chegam_normalizados() {
 async fn plugin_que_trava_no_handshake_e_abortado_pelo_prazo() {
     let cenario = Cenario::novo("trava-handshake");
     let coletor = Arc::new(ColetorEventos::novo());
-    let receptor: Arc<dyn Receptor> = coletor.clone();
+    let receptor: Arc<dyn EventSink> = coletor.clone();
     let inicio = Instant::now();
     let erro = Supervisor::iniciar(cenario.opcoes("trava_no_handshake"), receptor.clone())
         .await
         .expect_err("o handshake tinha de estourar");
     let decorrido = inicio.elapsed();
     assert!(
-        matches!(erro, ErroIntegracao::TempoEsgotado { .. }),
+        matches!(erro, IntegrationError::Timeout { .. }),
         "erro: {erro}"
     );
     assert!(
@@ -300,7 +300,7 @@ async fn plugin_que_trava_no_handshake_e_abortado_pelo_prazo() {
 async fn plugin_que_trava_no_comando_estoura_o_prazo_e_volta_depois_do_reinicio() {
     let cenario = Cenario::novo("trava-comando");
     let coletor = Arc::new(ColetorEventos::novo());
-    let receptor: Arc<dyn Receptor> = coletor.clone();
+    let receptor: Arc<dyn EventSink> = coletor.clone();
     let supervisor = Supervisor::iniciar(
         cenario.opcoes("trava_no_primeiro_comando"),
         receptor.clone(),
@@ -313,11 +313,11 @@ async fn plugin_que_trava_no_comando_estoura_o_prazo_e_volta_depois_do_reinicio(
         .await
         .expect_err("o comando tinha de estourar");
     assert!(
-        matches!(erro, ErroIntegracao::TempoEsgotado { .. }),
+        matches!(erro, IntegrationError::Timeout { .. }),
         "erro: {erro}"
     );
     assert!(inicio.elapsed() < Duration::from_secs(2));
-    assert!(erro.eh_transitorio());
+    assert!(erro.is_transient());
     assert!(supervisor.contadores().tempo_esgotado >= 1);
 
     // O supervisor não fica preso: o processo travado é morto e o plugin volta, respondendo.
@@ -344,7 +344,7 @@ async fn plugin_que_trava_no_comando_estoura_o_prazo_e_volta_depois_do_reinicio(
 async fn plugin_que_cai_e_reiniciado_com_backoff_e_volta_a_responder() {
     let cenario = Cenario::novo("cai");
     let coletor = Arc::new(ColetorEventos::novo());
-    let receptor: Arc<dyn Receptor> = coletor.clone();
+    let receptor: Arc<dyn EventSink> = coletor.clone();
     let supervisor =
         Supervisor::iniciar(cenario.opcoes("cai_no_primeiro_comando"), receptor.clone())
             .await
@@ -353,7 +353,7 @@ async fn plugin_que_cai_e_reiniciado_com_backoff_e_volta_a_responder() {
     let erro = enviar_texto(&supervisor, "derruba")
         .await
         .expect_err("o plugin sai antes de responder");
-    assert!(erro.eh_transitorio(), "erro: {erro}");
+    assert!(erro.is_transient(), "erro: {erro}");
 
     assert!(
         esperar(
@@ -381,7 +381,7 @@ async fn lixo_e_ignorado_e_contado_sem_afetar_outra_integracao() {
     let cenario_a = Cenario::novo("lixo");
     let cenario_b = Cenario::novo("limpo");
     let coletor = Arc::new(ColetorEventos::novo());
-    let receptor: Arc<dyn Receptor> = coletor.clone();
+    let receptor: Arc<dyn EventSink> = coletor.clone();
     let com_lixo = Supervisor::iniciar(cenario_a.opcoes("lixo"), receptor.clone())
         .await
         .expect("handshake do plugin com lixo");
@@ -404,8 +404,8 @@ async fn lixo_e_ignorado_e_contado_sem_afetar_outra_integracao() {
     enviar_texto(&limpo, "também funciona")
         .await
         .expect("a outra integração não foi afetada");
-    assert_eq!(com_lixo.estado(), EstadoIntegracao::Pronto);
-    assert_eq!(limpo.estado(), EstadoIntegracao::Pronto);
+    assert_eq!(com_lixo.estado(), IntegrationState::Ready);
+    assert_eq!(limpo.estado(), IntegrationState::Ready);
 
     com_lixo.encerrar().await;
     limpo.encerrar().await;
@@ -416,7 +416,7 @@ async fn segredo_vai_so_no_handshake_e_nao_vaza() {
     const SEGREDO: &str = "sk-fixtura-nao-vaza-42";
     let cenario = Cenario::novo("segredo");
     let coletor = Arc::new(ColetorEventos::novo());
-    let receptor: Arc<dyn Receptor> = coletor.clone();
+    let receptor: Arc<dyn EventSink> = coletor.clone();
     let opcoes = cenario
         .opcoes("normal")
         .com_config(json!({
@@ -471,8 +471,8 @@ async fn segredo_vai_so_no_handshake_e_nao_vaza() {
     assert!(!eventos.is_empty(), "nenhum evento chegou");
     for evento in &eventos {
         let json = match evento {
-            EventoIntegracao::Entrada(entrada) => serde_json::to_string(entrada),
-            EventoIntegracao::Estado(estado) => serde_json::to_string(estado),
+            IntegrationEvent::Inbound(entrada) => serde_json::to_string(entrada),
+            IntegrationEvent::Estado(estado) => serde_json::to_string(estado),
         }
         .expect("evento serializável");
         assert!(!json.contains(SEGREDO), "evento vazou: {json}");
@@ -485,11 +485,11 @@ async fn segredo_vai_so_no_handshake_e_nao_vaza() {
         .await
         .expect_err("mensagem acima do teto");
     assert!(!erro.to_string().contains(SEGREDO));
-    let erro_do_protocolo = ErroIntegracao::Recusado {
-        operacao: "enviar_texto".to_owned(),
-        codigo: "401".to_owned(),
-        mensagem: "sessão caiu".to_owned(),
-        transitoria: false,
+    let erro_do_protocolo = IntegrationError::Refused {
+        operation: "enviar_texto".to_owned(),
+        code: "401".to_owned(),
+        message: "sessão caiu".to_owned(),
+        transient: false,
     };
     assert!(!format!("{erro_do_protocolo:?}").contains(SEGREDO));
     assert!(
@@ -505,7 +505,7 @@ async fn segredo_vai_so_no_handshake_e_nao_vaza() {
 async fn mensagem_acima_do_teto_e_recusada_sem_derrubar_o_plugin() {
     let cenario = Cenario::novo("teto");
     let coletor = Arc::new(ColetorEventos::novo());
-    let receptor: Arc<dyn Receptor> = coletor.clone();
+    let receptor: Arc<dyn EventSink> = coletor.clone();
     let limites = LimitesSupervisor {
         max_mensagem_bytes: 1024,
         ..limites_rapidos()
@@ -519,14 +519,11 @@ async fn mensagem_acima_do_teto_e_recusada_sem_derrubar_o_plugin() {
         .await
         .expect_err("mensagem acima do teto");
     assert!(
-        matches!(
-            erro,
-            ErroIntegracao::MensagemGrandeDemais { teto: 1024, .. }
-        ),
+        matches!(erro, IntegrationError::MessageTooLarge { cap: 1024, .. }),
         "erro: {erro}"
     );
     // A recusa é do pedido, não do plugin: ele continua pronto e atende o próximo.
-    assert_eq!(supervisor.estado(), EstadoIntegracao::Pronto);
+    assert_eq!(supervisor.estado(), IntegrationState::Ready);
     assert_eq!(supervisor.contadores().falhas, 0);
     enviar_texto(&supervisor, "curto")
         .await
@@ -538,14 +535,14 @@ async fn mensagem_acima_do_teto_e_recusada_sem_derrubar_o_plugin() {
 async fn versao_de_protocolo_diferente_e_recusada() {
     let cenario = Cenario::novo("protocolo");
     let coletor = Arc::new(ColetorEventos::novo());
-    let receptor: Arc<dyn Receptor> = coletor.clone();
+    let receptor: Arc<dyn EventSink> = coletor.clone();
     let erro = Supervisor::iniciar(cenario.opcoes("protocolo_errado"), receptor.clone())
         .await
         .expect_err("versão diferente tinha de falhar");
     match erro {
-        ErroIntegracao::ProtocoloIncompativel { esperado, recebido } => {
-            assert_eq!(esperado, PROTOCOLO_VERSAO);
-            assert_eq!(recebido, 999);
+        IntegrationError::IncompatibleProtocol { expected, received } => {
+            assert_eq!(expected, PROTOCOL_VERSION);
+            assert_eq!(received, 999);
         }
         outro => panic!("erro inesperado: {outro}"),
     }
@@ -555,12 +552,12 @@ async fn versao_de_protocolo_diferente_e_recusada() {
 async fn manifesto_invalido_e_recusado_no_handshake() {
     let cenario = Cenario::novo("manifesto");
     let coletor = Arc::new(ColetorEventos::novo());
-    let receptor: Arc<dyn Receptor> = coletor.clone();
+    let receptor: Arc<dyn EventSink> = coletor.clone();
     let erro = Supervisor::iniciar(cenario.opcoes("manifesto_invalido"), receptor.clone())
         .await
         .expect_err("manifesto inválido tinha de falhar");
     assert!(
-        matches!(erro, ErroIntegracao::HandshakeRecusado { .. }),
+        matches!(erro, IntegrationError::HandshakeRefused { .. }),
         "erro: {erro}"
     );
 }
@@ -569,59 +566,52 @@ async fn manifesto_invalido_e_recusado_no_handshake() {
 async fn depois_de_encerrar_nao_ha_mais_processo_nem_comando() {
     let cenario = Cenario::novo("encerrar");
     let coletor = Arc::new(ColetorEventos::novo());
-    let receptor: Arc<dyn Receptor> = coletor.clone();
+    let receptor: Arc<dyn EventSink> = coletor.clone();
     let supervisor = Supervisor::iniciar(cenario.opcoes("normal"), receptor.clone())
         .await
         .expect("handshake");
     supervisor.encerrar().await;
-    assert_eq!(supervisor.estado(), EstadoIntegracao::Encerrada);
+    assert_eq!(supervisor.estado(), IntegrationState::Closed);
     let erro = enviar_texto(&supervisor, "depois de encerrar")
         .await
         .expect_err("não há mais processo");
-    assert!(matches!(erro, ErroIntegracao::Encerrada), "{erro}");
+    assert!(matches!(erro, IntegrationError::Closed), "{erro}");
 }
 
 #[tokio::test]
 async fn integracao_marcada_como_caida_para_de_reiniciar() {
     let cenario = Cenario::novo("caida");
     let coletor = Arc::new(ColetorEventos::novo());
-    let receptor: Arc<dyn Receptor> = coletor.clone();
+    let receptor: Arc<dyn EventSink> = coletor.clone();
     let supervisor = Supervisor::iniciar(cenario.opcoes("cai_em_todo_comando"), receptor.clone())
         .await
         .expect("handshake");
 
     // Cada comando derruba o plugin; com teto de 3 falhas seguidas ele para de voltar.
     for _ in 0..8 {
-        if supervisor.estado().esta_encerrada() {
+        if supervisor.estado().is_closed() {
             break;
         }
         // Espera o processo estar de pé: mandar durante o reinício só devolveria "indisponível".
         let _ = supervisor.aguardar_pronto(Duration::from_secs(2)).await;
-        if supervisor.estado().esta_encerrada() {
+        if supervisor.estado().is_closed() {
             break;
         }
         let _ = enviar_texto(&supervisor, "derruba de novo").await;
         let _ = esperar(
-            || !supervisor.estado().esta_pronta(),
+            || !supervisor.estado().is_ready(),
             Duration::from_millis(500),
         )
         .await;
     }
     assert!(
-        esperar(
-            || supervisor.estado().esta_encerrada(),
-            Duration::from_secs(3)
-        )
-        .await,
+        esperar(|| supervisor.estado().is_closed(), Duration::from_secs(3)).await,
         "não foi marcada como caída: {:?}",
         supervisor.estado()
     );
-    assert!(matches!(
-        supervisor.estado(),
-        EstadoIntegracao::Caida { .. }
-    ));
+    assert!(matches!(supervisor.estado(), IntegrationState::Down { .. }));
     let erro = enviar_texto(&supervisor, "não volta mais")
         .await
         .expect_err("caída não envia");
-    assert!(matches!(erro, ErroIntegracao::Caida { .. }), "{erro}");
+    assert!(matches!(erro, IntegrationError::Down { .. }), "{erro}");
 }

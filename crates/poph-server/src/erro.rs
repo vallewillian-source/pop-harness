@@ -179,21 +179,24 @@ impl From<ErroStore> for ApiError {
 impl ApiError {
     fn do_dominio(erro: &DomainError) -> Self {
         match erro {
-            DomainError::IdInvalido {
-                entidade,
-                valor,
-                motivo,
-            } => Self::id_invalido(entidade, valor, motivo.clone()),
-            DomainError::NaoEncontrado { entidade, id } => Self::nao_encontrado(entidade, id),
-            DomainError::ConflitoDeVersao {
-                entidade,
+            DomainError::InvalidId {
+                entity: entidade,
+                value,
+                reason,
+            } => Self::id_invalido(entidade, value, reason.clone()),
+            DomainError::NotFound {
+                entity: entidade,
                 id,
-                esperada,
-                atual,
+            } => Self::nao_encontrado(entidade, id),
+            DomainError::VersionConflict {
+                entity: entidade,
+                id,
+                expected: esperada,
+                current: atual,
             } => Self::conflito_de_versao(entidade, id, *esperada, *atual),
-            DomainError::Validacao { campo, motivo } => Self::validacao(*campo, motivo.clone()),
-            DomainError::Conflito { motivo, .. } => Self::conflito(motivo.clone()),
-            DomainError::AgenteInativo { id, status } => {
+            DomainError::Validation { field, reason } => Self::validacao(*field, reason.clone()),
+            DomainError::Conflict { reason, .. } => Self::conflito(reason.clone()),
+            DomainError::AgentInactive { id, status } => {
                 Self::conflito(format!("agente `{id}` está {status}: não abre turno novo"))
             }
             // Erro de domínio sem braço próprio: o código e o status vêm do próprio erro, que é
@@ -206,8 +209,8 @@ impl ApiError {
 
     /// Monta o erro a partir de [`DomainError::codigo_api`] e [`DomainError::status_http`].
     fn do_codigo_do_dominio(erro: &DomainError) -> Self {
-        let status = StatusCode::from_u16(erro.status_http()).unwrap_or(StatusCode::BAD_REQUEST);
-        Self::novo(status, erro.codigo_api(), erro.to_string())
+        let status = StatusCode::from_u16(erro.http_status()).unwrap_or(StatusCode::BAD_REQUEST);
+        Self::novo(status, erro.api_code(), erro.to_string())
     }
 }
 
@@ -241,11 +244,11 @@ nomeavel!(poph_types::AdminTokenId, "token");
 nomeavel!(poph_types::ProductCategoryId, "categoria de produto");
 nomeavel!(poph_types::DepartmentId, "departamento");
 nomeavel!(poph_types::AgentId, "agente");
-nomeavel!(poph_types::FluxoId, "fluxo");
+nomeavel!(poph_types::FlowId, "fluxo");
 nomeavel!(poph_types::FileId, "arquivo");
 
 nomeavel!(poph_types::ConversationId, "conversa");
-nomeavel!(poph_types::FichaId, "ficha");
+nomeavel!(poph_types::RecordId, "ficha");
 nomeavel!(poph_types::MessageId, "mensagem");
 nomeavel!(poph_types::AttachmentId, "anexo");
 nomeavel!(poph_types::ProductId, "produto");

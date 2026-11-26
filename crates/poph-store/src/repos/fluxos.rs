@@ -16,7 +16,7 @@
 //!   sobrescreva a mudança de outra pessoa.
 
 use poph_types::{
-    AgentId, AtorEvento, DomainError, ExecucaoId, FluxoId, OrgId, StatusExecucao, TipoEventoFicha,
+    AgentId, DomainError, EventActor, ExecutionId, ExecutionStatus, FlowId, OrgId, RecordEventKind,
 };
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
@@ -46,7 +46,7 @@ impl Fluxos<'_> {
     pub fn criar(&self, org: OrgId, novo: NovoFluxo) -> Resultado<Fluxo> {
         validar_slug(&novo.slug)?;
         validar_nome(&novo.nome)?;
-        let id = FluxoId::generate();
+        let id = FlowId::generate();
         let texto_id = id.to_string();
         let texto_org = org.to_string();
         self.0.escrita(move |conn| {
@@ -76,7 +76,7 @@ impl Fluxos<'_> {
     }
 
     /// Busca pelo id dentro da org.
-    pub fn obter(&self, org: OrgId, id: FluxoId) -> Resultado<Fluxo> {
+    pub fn obter(&self, org: OrgId, id: FlowId) -> Resultado<Fluxo> {
         let texto_org = org.to_string();
         let texto_id = id.to_string();
         let encontrado = self.0.leitura(move |conn| {
@@ -164,14 +164,14 @@ impl Fluxos<'_> {
     pub fn atualizar(
         &self,
         org: OrgId,
-        id: FluxoId,
+        id: FlowId,
         esperada: u64,
         mudanca: MudancaFluxo,
     ) -> Resultado<Fluxo> {
         if mudanca.status == Some(Status::Arquivado) {
-            return Err(ErroStore::Dominio(DomainError::Validacao {
-                campo: "status",
-                motivo: "o fluxo fica `active` ou `inactive`".to_owned(),
+            return Err(ErroStore::Dominio(DomainError::Validation {
+                field: "status",
+                reason: "o fluxo fica `active` ou `inactive`".to_owned(),
             }));
         }
         if let Some(nome) = &mudanca.nome {
@@ -219,7 +219,7 @@ impl Fluxos<'_> {
     ///   atendimento e não têm chave estrangeira para o fluxo.
     ///
     /// Tudo numa escrita só: ou o fluxo sai com as execuções abandonadas, ou nada muda.
-    pub fn excluir(&self, org: OrgId, id: FluxoId, force: bool) -> Resultado<u64> {
+    pub fn excluir(&self, org: OrgId, id: FlowId, force: bool) -> Resultado<u64> {
         let agora = self.0.agora();
         let texto_org = org.to_string();
         let texto_id = id.to_string();
@@ -235,17 +235,17 @@ impl Fluxos<'_> {
                 .optional()
                 .map_err(ErroStore::from)?;
             if existe.is_none() {
-                return Err(ErroStore::Dominio(DomainError::NaoEncontrado {
-                    entidade: "fluxo",
+                return Err(ErroStore::Dominio(DomainError::NotFound {
+                    entity: "fluxo",
                     id: texto_id.clone(),
                 }));
             }
             let ativas = execucoes_ativas_do_fluxo(conn, &texto_org, &texto_id)?;
             if !ativas.is_empty() && !force {
-                return Err(ErroStore::Dominio(DomainError::Conflito {
-                    entidade: "fluxo",
+                return Err(ErroStore::Dominio(DomainError::Conflict {
+                    entity: "fluxo",
                     id: texto_id.clone(),
-                    motivo: format!(
+                    reason: format!(
                         "tem {} execução(ões) ativa(s) de atendimento; envie force=true para \
                          abandoná-las e excluir",
                         ativas.len()
@@ -266,9 +266,9 @@ impl Fluxos<'_> {
                     &texto_org,
                     ficha,
                     &NovoEventoFicha {
-                        execucao_id: execucao.parse::<ExecucaoId>().ok(),
-                        tipo: TipoEventoFicha::ExecucaoAbandonada,
-                        ator_tipo: AtorEvento::Sistema,
+                        execucao_id: execucao.parse::<ExecutionId>().ok(),
+                        tipo: RecordEventKind::ExecutionAbandoned,
+                        ator_tipo: EventActor::System,
                         ator_ref: None,
                         payload_json: format!("{{\"motivo\":\"{MOTIVO_EXCLUSAO_FLUXO}\"}}"),
                         chave_idempotencia: None,
@@ -277,7 +277,7 @@ impl Fluxos<'_> {
                 )?;
             }
             if let Some(metricas) = metricas.as_ref() {
-                metricas.desfecho(StatusExecucao::Abandonada, ativas.len() as u64);
+                metricas.desfecho(ExecutionStatus::Abandoned, ativas.len() as u64);
             }
 
             conn.execute(
@@ -293,7 +293,7 @@ impl Fluxos<'_> {
     ///
     /// Recusa com `NaoEncontrado` se o fluxo ou o agente não é desta org, e com
     /// [`DomainError::TetoDeFluxosPorAgente`] se a liberação passaria de 20.
-    pub fn liberar(&self, org: OrgId, agente: AgentId, fluxo: FluxoId) -> Resultado<()> {
+    pub fn liberar(&self, org: OrgId, agente: AgentId, fluxo: FlowId) -> Resultado<()> {
         let agora = self.0.agora();
         let texto_org = org.to_string();
         let texto_agente = agente.to_string();
@@ -319,7 +319,7 @@ impl Fluxos<'_> {
     }
 
     /// Tira a permissão do agente. Revogar o que não estava liberado não faz nada.
-    pub fn revogar(&self, org: OrgId, agente: AgentId, fluxo: FluxoId) -> Resultado<()> {
+    pub fn revogar(&self, org: OrgId, agente: AgentId, fluxo: FlowId) -> Resultado<()> {
         let agora = self.0.agora();
         let texto_org = org.to_string();
         let texto_agente = agente.to_string();
@@ -361,7 +361,7 @@ impl Fluxos<'_> {
     }
 
     /// Agentes que têm o fluxo liberado, em ordem de id. Fluxo de outra org → `NaoEncontrado`.
-    pub fn listar_agentes_do_fluxo(&self, org: OrgId, fluxo: FluxoId) -> Resultado<Vec<AgentId>> {
+    pub fn listar_agentes_do_fluxo(&self, org: OrgId, fluxo: FlowId) -> Resultado<Vec<AgentId>> {
         self.obter(org, fluxo)?;
         let texto_org = org.to_string();
         let texto_fluxo = fluxo.to_string();
@@ -393,9 +393,9 @@ impl Fluxos<'_> {
         org: OrgId,
         agente: AgentId,
         esperada: u64,
-        fluxos: &[FluxoId],
+        fluxos: &[FlowId],
     ) -> Resultado<()> {
-        let mut unicos: Vec<FluxoId> = Vec::new();
+        let mut unicos: Vec<FlowId> = Vec::new();
         for fluxo in fluxos {
             if !unicos.contains(fluxo) {
                 unicos.push(*fluxo);
@@ -451,7 +451,7 @@ impl Fluxos<'_> {
     }
 
     /// Monta o erro certo quando o `UPDATE ... WHERE version = ?` não pegou nenhuma linha.
-    fn conflito(&self, org: OrgId, id: FluxoId, esperada: u64) -> ErroStore {
+    fn conflito(&self, org: OrgId, id: FlowId, esperada: u64) -> ErroStore {
         let texto_org = org.to_string();
         let texto_id = id.to_string();
         self.0
@@ -478,9 +478,9 @@ fn validar_slug(slug: &str) -> Resultado<()> {
     if valido {
         Ok(())
     } else {
-        Err(ErroStore::Dominio(DomainError::Validacao {
-            campo: "slug",
-            motivo: "use minúsculas, números e `_`, começando por letra, com 2 a 64 caracteres"
+        Err(ErroStore::Dominio(DomainError::Validation {
+            field: "slug",
+            reason: "use minúsculas, números e `_`, começando por letra, com 2 a 64 caracteres"
                 .to_owned(),
         }))
     }
@@ -488,19 +488,19 @@ fn validar_slug(slug: &str) -> Resultado<()> {
 
 fn validar_nome(nome: &str) -> Resultado<()> {
     if nome.trim().is_empty() {
-        return Err(ErroStore::Dominio(DomainError::Validacao {
-            campo: "nome",
-            motivo: "não pode ficar vazio".to_owned(),
+        return Err(ErroStore::Dominio(DomainError::Validation {
+            field: "nome",
+            reason: "não pode ficar vazio".to_owned(),
         }));
     }
     Ok(())
 }
 
 fn erro_teto(agente: AgentId, pedidos: u32) -> ErroStore {
-    ErroStore::Dominio(DomainError::TetoDeFluxosPorAgente {
+    ErroStore::Dominio(DomainError::FlowLimitPerAgent {
         agent_id: agente.to_string(),
-        limite: TETO_FLUXOS_POR_AGENTE,
-        pedidos,
+        limit: TETO_FLUXOS_POR_AGENTE,
+        requested: pedidos,
     })
 }
 

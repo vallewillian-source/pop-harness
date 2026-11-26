@@ -23,7 +23,7 @@ fn main() {
     let config = HarnessConfig::default();
     let pasta: PathBuf = std::env::var_os("POPH_DADOS_DIRETORIO")
         .map(PathBuf::from)
-        .unwrap_or(config.dados.diretorio);
+        .unwrap_or(config.data.directory);
     let store = match Store::abrir_em(&pasta.join("harness.db"), &pasta.join("rag.db")) {
         Ok(store) => store,
         Err(erro) => {

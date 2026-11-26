@@ -84,11 +84,11 @@ impl InstrucoesRepo<'_> {
                 Some(atual) => {
                     if atual.max(0) as u64 != esperada {
                         return Err(ErroStore::Dominio(
-                            poph_types::DomainError::ConflitoDeVersao {
-                                entidade: "instruções do agente",
+                            poph_types::DomainError::VersionConflict {
+                                entity: "instruções do agente",
                                 id: texto_agente,
-                                esperada,
-                                atual: atual.max(0) as u64,
+                                expected: esperada,
+                                current: atual.max(0) as u64,
                             },
                         ));
                     }
@@ -111,11 +111,11 @@ impl InstrucoesRepo<'_> {
                 None => {
                     if esperada != 0 {
                         return Err(ErroStore::Dominio(
-                            poph_types::DomainError::ConflitoDeVersao {
-                                entidade: "instruções do agente",
+                            poph_types::DomainError::VersionConflict {
+                                entity: "instruções do agente",
                                 id: texto_agente,
-                                esperada,
-                                atual: 0,
+                                expected: esperada,
+                                current: 0,
                             },
                         ));
                     }
@@ -191,8 +191,8 @@ impl InstrucoesRepo<'_> {
             .map_err(ErroStore::from)
         })?;
         if apagou == 0 {
-            return Err(ErroStore::Dominio(poph_types::DomainError::NaoEncontrado {
-                entidade: "instruções do agente",
+            return Err(ErroStore::Dominio(poph_types::DomainError::NotFound {
+                entity: "instruções do agente",
                 id: agent.to_string(),
             }));
         }

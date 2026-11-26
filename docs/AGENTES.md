@@ -9,7 +9,7 @@
 
 | Piece | Where | What it does |
 |---|---|---|
-| Instruction types | `crates/poph-types/src/instrucoes.rs` | `StructuredInstructions` with the same names, defaults and tolerances as POP Atende (HR-03 §9.1); closed list of V1 tools; validation on write. |
+| Instruction types | `crates/poph-types/src/instructions.rs` | `StructuredInstructions` with the same names, defaults and tolerances as POP Atende (HR-03 §9.1); closed list of V1 tools; validation on write. |
 | Composer | `crates/poph-core/src/compositor.rs` | Faithful port of `core/agent/instructions_composer.py`: same output, byte for byte. |
 | Repositories | `crates/poph-store/src/repos/agentes.rs` and `instrucoes.rs` | Agent (`V1` fields), agent↔category link, instructions with `If-Match`. |
 | CLI | `crates/poph/src/agente.rs` | `poph agent ...` and `poph instructions ...` (text and `--json`). |

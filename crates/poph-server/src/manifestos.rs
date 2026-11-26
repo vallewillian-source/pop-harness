@@ -26,7 +26,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use poph_plugins::{ColetorEventos, OpcoesPlugin, Supervisor};
-use poph_types::{IntegrationId, Manifesto, OrgId, PluginDeclarado, PluginsConfig};
+use poph_types::{DeclaredPlugin, IntegrationId, Manifest, OrgId, PluginsConfig};
 use serde::Serialize;
 use serde_json::Value;
 use tokio::sync::Mutex;
@@ -94,13 +94,13 @@ pub struct ResumoManifesto {
 
 /// Resultado guardado em cache (sucesso ou falha, com o instante em que foi obtido).
 struct Entrada {
-    resultado: Result<Manifesto, String>,
+    resultado: Result<Manifest, String>,
     quando: Instant,
 }
 
 /// Manifestos dos plugins declarados, resolvidos sob demanda e guardados em memória.
 pub struct CatalogoManifestos {
-    declarados: BTreeMap<String, PluginDeclarado>,
+    declarados: BTreeMap<String, DeclaredPlugin>,
     cache: Mutex<HashMap<String, Entrada>>,
 }
 
@@ -116,7 +116,7 @@ impl CatalogoManifestos {
     /// Catálogo a partir da configuração (nada é executado aqui).
     pub fn novo(plugins: &PluginsConfig) -> Self {
         let declarados = plugins
-            .integracoes
+            .integrations
             .iter()
             .map(|plugin| (plugin.kind.trim().to_owned(), plugin.clone()))
             .collect();
@@ -147,8 +147,8 @@ impl CatalogoManifestos {
                 Ok(manifesto) => ResumoManifesto {
                     kind: kind.clone(),
                     situacao: SituacaoManifesto::Ok,
-                    nome: Some(manifesto.nome),
-                    versao: Some(manifesto.versao),
+                    nome: Some(manifesto.name),
+                    versao: Some(manifesto.version),
                     mensagem: None,
                 },
                 Err(falha) => ResumoManifesto {
@@ -166,7 +166,7 @@ impl CatalogoManifestos {
 
     /// Manifesto do `kind`, do cache ou do handshake. Nunca sobe dois processos do mesmo `kind`
     /// ao mesmo tempo: o `Mutex` serializa as resoluções.
-    pub async fn manifesto(&self, kind: &str) -> Result<Manifesto, FalhaManifesto> {
+    pub async fn manifesto(&self, kind: &str) -> Result<Manifest, FalhaManifesto> {
         let declarado = self
             .declarados
             .get(kind)
@@ -200,14 +200,14 @@ impl CatalogoManifestos {
 }
 
 /// Sobe o plugin, lê o manifesto e encerra o processo.
-async fn resolver(declarado: &PluginDeclarado) -> Result<Manifesto, FalhaManifesto> {
+async fn resolver(declarado: &DeclaredPlugin) -> Result<Manifest, FalhaManifesto> {
     let mut opcoes = OpcoesPlugin::novo(
-        declarado.programa.clone(),
+        declarado.program.clone(),
         IntegrationId::generate(),
         OrgId::generate(),
     )
     .com_kind(declarado.kind.trim());
-    opcoes.argumentos = declarado.argumentos.clone();
+    opcoes.argumentos = declarado.arguments.clone();
     // O manifesto não depende de configuração nem de segredo: nada do operador é enviado aqui.
     match Supervisor::iniciar(opcoes, Arc::new(ColetorEventos::novo())).await {
         Ok(supervisor) => {
@@ -230,7 +230,7 @@ async fn resolver(declarado: &PluginDeclarado) -> Result<Manifesto, FalhaManifes
             // Caminho do programa e detalhe do sistema ficam só no log.
             tracing::warn!(
                 kind = %declarado.kind,
-                programa = %declarado.programa.display(),
+                programa = %declarado.program.display(),
                 erro = %erro,
                 "não consegui ler o manifesto do plugin"
             );

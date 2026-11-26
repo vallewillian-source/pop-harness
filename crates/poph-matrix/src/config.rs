@@ -8,7 +8,7 @@
 //! `Debug`, `Display`, log, erro ou resposta. Para usá-los (montar o cabeçalho `Authorization` na
 //! MX-09) é preciso pedir o valor com `expor()`; não existe outro caminho.
 
-use poph_types::{DomainError, MatrixConfig, Segredo, Sensivel};
+use poph_types::{DomainError, MatrixConfig, Secret, Sensitive};
 
 /// Token que o Harness usa para falar com o Synapse como Application Service.
 pub const VAR_AS_TOKEN: &str = "POPH_MATRIX_AS_TOKEN";
@@ -43,9 +43,9 @@ pub enum ErroMatrix {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SegredosMatrix {
     /// `POPH_MATRIX_AS_TOKEN`: o Harness apresenta ao Synapse.
-    pub as_token: Segredo,
+    pub as_token: Secret,
     /// `POPH_MATRIX_HS_TOKEN`: o Synapse apresenta ao Harness.
-    pub hs_token: Segredo,
+    pub hs_token: Secret,
 }
 
 impl SegredosMatrix {
@@ -69,20 +69,20 @@ impl SegredosMatrix {
 ///
 /// Variável ausente, vazia ou só com espaços devolve `None` — que **não é erro**: é a rotina de
 /// expiração desligada. Quem chama avisa no log e segue.
-pub fn token_admin_do_ambiente() -> Option<Segredo> {
+pub fn token_admin_do_ambiente() -> Option<Secret> {
     token_admin_de(|nome| std::env::var(nome).ok())
 }
 
 /// Igual a [`token_admin_do_ambiente`], com a fonte injetada (testes).
-pub fn token_admin_de(buscar: impl Fn(&str) -> Option<String>) -> Option<Segredo> {
+pub fn token_admin_de(buscar: impl Fn(&str) -> Option<String>) -> Option<Secret> {
     buscar(VAR_ADMIN_TOKEN)
         .filter(|valor| !valor.trim().is_empty())
-        .map(Sensivel::new)
+        .map(Sensitive::new)
 }
 
-fn token(valor: Option<String>, variavel: &'static str) -> ResultadoMatrix<Segredo> {
+fn token(valor: Option<String>, variavel: &'static str) -> ResultadoMatrix<Secret> {
     match valor {
-        Some(valor) if !valor.trim().is_empty() => Ok(Sensivel::new(valor)),
+        Some(valor) if !valor.trim().is_empty() => Ok(Sensitive::new(valor)),
         _ => Err(ErroMatrix::TokenAusente { variavel }),
     }
 }
@@ -117,7 +117,7 @@ impl ModuloMatrix {
         let Some(config) = secao else {
             return Ok(None);
         };
-        if !config.habilitado {
+        if !config.enabled {
             return Ok(None);
         }
         config.validar()?;
@@ -139,7 +139,7 @@ mod testes {
 
     fn ligada() -> MatrixConfig {
         MatrixConfig {
-            habilitado: true,
+            enabled: true,
             homeserver_url: "http://127.0.0.1:18008".to_owned(),
             server_name: "matrix-dev.local".to_owned(),
             ..Default::default()
@@ -169,7 +169,7 @@ mod testes {
     #[test]
     fn desligada_deixa_o_modulo_morto_sem_ler_token() {
         let mut desligada = ligada();
-        desligada.habilitado = false;
+        desligada.enabled = false;
         let modulo = ModuloMatrix::preparar_com(Some(desligada), |nome| {
             panic!("não deveria ler {nome} com o módulo desligado")
         })
@@ -182,9 +182,9 @@ mod testes {
         let modulo = ModuloMatrix::preparar_com(Some(ligada()), fonte(ambiente()))
             .expect("configuração válida")
             .expect("módulo ligado");
-        assert_eq!(modulo.config.prefixo, "ph");
-        assert_eq!(modulo.segredos.as_token.expor(), CANARIO);
-        assert_eq!(modulo.segredos.hs_token.expor(), &format!("hs-{CANARIO}"));
+        assert_eq!(modulo.config.prefix, "ph");
+        assert_eq!(modulo.segredos.as_token.expose(), CANARIO);
+        assert_eq!(modulo.segredos.hs_token.expose(), &format!("hs-{CANARIO}"));
     }
 
     #[test]
@@ -225,11 +225,11 @@ mod testes {
     #[test]
     fn configuracao_invalida_recusa_o_modulo_citando_a_chave() {
         let mut invalida = ligada();
-        invalida.prefixo = "PH!".to_owned();
+        invalida.prefix = "PH!".to_owned();
         let erro = ModuloMatrix::preparar_com(Some(invalida), |_| None)
             .expect_err("prefixo inválido deve recusar o módulo");
         match &erro {
-            ErroMatrix::Configuracao(DomainError::Validacao { campo, .. }) => {
+            ErroMatrix::Configuracao(DomainError::Validation { field: campo, .. }) => {
                 assert_eq!(*campo, "matrix.prefixo")
             }
             outro => panic!("esperado erro de validação, veio {outro:?}"),

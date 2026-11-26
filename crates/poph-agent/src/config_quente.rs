@@ -128,7 +128,7 @@ impl ConfigQuente {
     pub fn carregar(&self, org: OrgId, agente: AgentId) -> Resultado<Arc<AgenteQuente>> {
         let chave = Chave { org, agente };
         if let Some(quente) = self.cache.get(&chave) {
-            self.metricas.config_acertos.incrementar(1);
+            self.metricas.config_acertos.increment(1);
             self.atualizar_tamanho();
             return Ok(quente);
         }
@@ -149,12 +149,12 @@ impl ConfigQuente {
         if let Some(quente) = self.cache.get(&chave)
             && quente.versao_composta() == (versao, versao_instrucoes)
         {
-            self.metricas.config_acertos.incrementar(1);
+            self.metricas.config_acertos.increment(1);
             self.atualizar_tamanho();
             return Ok(quente);
         }
         if self.cache.contains_key(&chave) {
-            self.metricas.config_invalidadas.incrementar(1);
+            self.metricas.config_invalidadas.increment(1);
         }
         self.recarregar(chave)
     }
@@ -195,7 +195,7 @@ impl ConfigQuente {
     }
 
     fn recarregar(&self, chave: Chave) -> Resultado<Arc<AgenteQuente>> {
-        self.metricas.config_erros.incrementar(1);
+        self.metricas.config_erros.increment(1);
         let agente = self
             .store
             .agentes()
@@ -215,23 +215,23 @@ impl ConfigQuente {
         let agentes = self.cache.entry_count();
         self.metricas
             .agentes_carregados
-            .definir(i64::try_from(agentes).unwrap_or(i64::MAX));
+            .set(i64::try_from(agentes).unwrap_or(i64::MAX));
         self.metricas
             .config_bytes
-            .definir(i64::try_from(self.cache.weighted_size()).unwrap_or(i64::MAX));
+            .set(i64::try_from(self.cache.weighted_size()).unwrap_or(i64::MAX));
     }
 }
 
 fn montar(agente: Agente, instrucoes: Option<Instrucoes>) -> AgenteQuente {
     // O JSON pode vir de importação antiga (duplo encoding): `de_json_tolerante` aceita os dois.
     let estruturado = instrucoes.as_ref().and_then(|instrucoes| {
-        StructuredInstructions::de_json_tolerante(&instrucoes.estruturado_json).ok()
+        StructuredInstructions::from_tolerant_json(&instrucoes.estruturado_json).ok()
     });
     let ferramentas: Vec<String> = estruturado
         .as_ref()
         .map(|dados| {
             dados
-                .ferramentas_habilitadas()
+                .enabled_tools()
                 .into_iter()
                 .map(|ferramenta| ferramenta.name.clone())
                 .collect()

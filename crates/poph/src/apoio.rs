@@ -13,7 +13,7 @@ use std::process::ExitCode;
 use std::str::FromStr;
 
 use poph_store::{ErroStore, Fluxo, Pagina, Status, Store};
-use poph_types::{AgentId, DomainError, FluxoId, HarnessConfig, OrgId};
+use poph_types::{AgentId, DomainError, FlowId, HarnessConfig, OrgId};
 use serde_json::Value;
 
 use crate::config;
@@ -79,7 +79,7 @@ pub fn resolver_agente(
 /// Acha o fluxo pelo id (UUID v7) ou pelo slug, dentro da org.
 pub fn resolver_fluxo(store: &Store, org: OrgId, texto: &str) -> Result<Fluxo, String> {
     let achado = if uuid::Uuid::parse_str(texto).is_ok() {
-        let id: FluxoId = parse_id(texto)?;
+        let id: FlowId = parse_id(texto)?;
         store.fluxos().obter(org, id).map(Some)
     } else {
         store.fluxos().por_slug(org, texto)
@@ -155,19 +155,24 @@ where
 /// Traduz erro do banco para uma frase que o operador entende.
 pub fn descrever(erro: &ErroStore) -> String {
     match erro {
-        ErroStore::Dominio(DomainError::ConflitoDeVersao {
-            esperada, atual, ..
+        ErroStore::Dominio(DomainError::VersionConflict {
+            expected: esperada,
+            current: atual,
+            ..
         }) => format!(
             "a versão não confere: você informou a versão {esperada}, mas o registro está na \
              versão {atual}. Leia de novo com `show` e repita com a versão atual"
         ),
-        ErroStore::Dominio(DomainError::NaoEncontrado { entidade, id }) => {
+        ErroStore::Dominio(DomainError::NotFound {
+            entity: entidade,
+            id,
+        }) => {
             format!("{entidade} `{id}` não existe nesta org")
         }
-        ErroStore::Dominio(DomainError::Validacao { campo, motivo }) => {
-            format!("{campo}: {motivo}")
+        ErroStore::Dominio(DomainError::Validation { field, reason }) => {
+            format!("{field}: {reason}")
         }
-        ErroStore::Dominio(DomainError::Conflito { motivo, .. }) => motivo.clone(),
+        ErroStore::Dominio(DomainError::Conflict { reason, .. }) => reason.clone(),
         ErroStore::Dominio(outro) => outro.to_string(),
         outro => format!("não consegui gravar no banco: {outro}"),
     }
@@ -310,11 +315,11 @@ mod testes {
 
     #[test]
     fn conflito_de_versao_diz_as_duas_versoes() {
-        let erro = ErroStore::Dominio(DomainError::ConflitoDeVersao {
-            entidade: "categoria de produto",
+        let erro = ErroStore::Dominio(DomainError::VersionConflict {
+            entity: "categoria de produto",
             id: "x".to_owned(),
-            esperada: 2,
-            atual: 5,
+            expected: 2,
+            current: 5,
         });
         let texto = descrever(&erro);
         assert!(texto.contains("informou a versão 2"), "{texto}");

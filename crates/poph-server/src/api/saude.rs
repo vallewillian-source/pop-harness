@@ -88,7 +88,7 @@ pub async fn healthz(State(estado): State<Estado>) -> Response {
     let (instance_id, cluster_map_fingerprint) = if cluster.declara_cluster() {
         (
             Some(cluster.config.instance_id.trim().to_owned()),
-            Some(cluster.config.fingerprint_do_mapa()),
+            Some(cluster.config.map_fingerprint()),
         )
     } else {
         (None, None)
@@ -119,7 +119,7 @@ pub async fn healthz(State(estado): State<Estado>) -> Response {
 )]
 pub async fn metrics(State(estado): State<Estado>) -> Response {
     atualizar_medidores(&estado);
-    let texto = estado.registro.renderizar();
+    let texto = estado.registro.render();
     (
         StatusCode::OK,
         [(
@@ -156,16 +156,16 @@ fn atualizar_medidores(estado: &Estado) {
     }
     estado
         .metricas
-        .memoria_processo_bytes
-        .definir(memoria_residente_bytes() as i64);
+        .process_memory_bytes
+        .set(memoria_residente_bytes() as i64);
     estado
         .metricas
-        .tamanho_harness_db_bytes
-        .definir(tamanho(estado.store.caminho_harness()) as i64);
+        .harness_db_bytes
+        .set(tamanho(estado.store.caminho_harness()) as i64);
     estado
         .metricas
-        .tamanho_rag_db_bytes
-        .definir(tamanho(estado.store.caminho_rag()) as i64);
+        .rag_db_bytes
+        .set(tamanho(estado.store.caminho_rag()) as i64);
 
     let mut pendentes_entrada = 0i64;
     let mut pendentes_saida = 0i64;
@@ -183,12 +183,12 @@ fn atualizar_medidores(estado: &Estado) {
             Err(erro) => tracing::warn!(erro = %erro, "métrica: não contei a saída"),
         }
     }
-    estado.metricas.fila_turnos.definir(pendentes_entrada);
-    estado.metricas.fila_saida.definir(pendentes_saida);
+    estado.metricas.turn_queue.set(pendentes_entrada);
+    estado.metricas.outbox_queue.set(pendentes_saida);
 
     // A memória quente dos agentes ainda não é ligada no servidor (HR-13/HR-20): o medidor existe
     // e aparece zerado até a integração do motor com a API.
-    estado.metricas.agentes_carregados.definir(0);
+    estado.metricas.loaded_agents.set(0);
 }
 
 fn todas_as_orgs(estado: &Estado) -> Vec<poph_types::OrgId> {
@@ -253,9 +253,9 @@ fn memoria_residente_bytes() -> u64 {
 pub(crate) fn resumo(estado: &Estado) -> MetricasJson {
     MetricasJson {
         memory_bytes: memoria_residente_bytes() as i64,
-        queued_turns: estado.metricas.fila_turnos.valor(),
-        queued_outbox: estado.metricas.fila_saida.valor(),
-        loaded_agents: estado.metricas.agentes_carregados.valor(),
+        queued_turns: estado.metricas.turn_queue.value(),
+        queued_outbox: estado.metricas.outbox_queue.value(),
+        loaded_agents: estado.metricas.loaded_agents.value(),
         uptime_seconds: segundos_no_ar(estado),
     }
 }

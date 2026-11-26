@@ -94,7 +94,7 @@ fn executar_run(
 ) -> ExitCode {
     let armazem = BancoHarness::novo(store, configuracao.blobs());
     let agora = poph_store::agora_do_sistema();
-    let opcoes = Opcoes::novas(agora, configuracao.retencao.dias, args.dry_run, "cli");
+    let opcoes = Opcoes::novas(agora, configuracao.retention.days, args.dry_run, "cli");
 
     let resultado = match org {
         Some(texto) => resolver_org(store, texto)
@@ -150,7 +150,7 @@ fn executar_show(
         },
     };
 
-    let padrao = configuracao.retencao.dias;
+    let padrao = configuracao.retention.days;
     let linhas: Vec<Value> = orgs
         .iter()
         .map(|org| {

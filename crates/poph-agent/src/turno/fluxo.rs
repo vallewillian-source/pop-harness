@@ -38,7 +38,9 @@ use poph_store::{
     DecisaoDoJev, EfeitoDaTransicao, ErroStore, Execucao, Ficha, Fluxo, InicioDeExecucao,
     RevisaoDeFluxo, Status, Store,
 };
-use poph_types::{AgentId, AtorAcao, AtorEvento, ConversationId, DomainError, FluxosConfig, OrgId};
+use poph_types::{
+    ActionActor, AgentId, ConversationId, DomainError, EventActor, FlowsConfig, OrgId,
+};
 use serde_json::{Value, json};
 
 use crate::fluxos_transicao::{efeito_da_transicao, estado_para_banco};
@@ -81,15 +83,15 @@ pub struct AjustesDoFluxo {
 
 impl AjustesDoFluxo {
     /// Ajustes a partir da configuração `[fluxos]`: os tetos de compilação e o cache de revisões.
-    pub fn da_config(config: &FluxosConfig) -> Self {
+    pub fn da_config(config: &FlowsConfig) -> Self {
         Self {
-            ativo: config.ativo,
+            ativo: config.enabled,
             limites: Limites::da_config(config),
-            saltos: usize::try_from(config.max_saltos_decisao)
+            saltos: usize::try_from(config.max_decision_hops)
                 .unwrap_or(1)
                 .max(1),
             cache: Arc::new(CacheRevisoes::novo(
-                usize::try_from(config.cache_revisoes_mb).unwrap_or(usize::MAX),
+                usize::try_from(config.revision_cache_mb).unwrap_or(usize::MAX),
             )),
         }
     }
@@ -300,7 +302,7 @@ fn carregar_ir(
 fn estado_da_execucao(
     ir: &Ir,
     execucao: &Execucao,
-    atores_que_agiram: Vec<AtorAcao>,
+    atores_que_agiram: Vec<ActionActor>,
 ) -> Option<EstadoDoMotor> {
     let dados: Dados = match serde_json::from_str(&execucao.dados_json) {
         Ok(dados) => dados,
@@ -481,10 +483,10 @@ pub(crate) enum QuemInicia<'a> {
 
 impl QuemInicia<'_> {
     /// Ator do evento `fluxo_iniciado` e a referência dele (o gate, quando foi o Jev).
-    fn ator(&self) -> (AtorEvento, Option<&'static str>) {
+    fn ator(&self) -> (EventActor, Option<&'static str>) {
         match self {
-            Self::Jev(_) => (AtorEvento::Jev, Some("g9")),
-            Self::Agente => (AtorEvento::Agente, None),
+            Self::Jev(_) => (EventActor::Jev, Some("g9")),
+            Self::Agente => (EventActor::Agent, None),
         }
     }
 
@@ -598,7 +600,7 @@ pub(crate) fn iniciar(
             execucao: Box::new(gravada.execucao),
             efeitos: efeitos_na_entrada,
         }),
-        Err(ErroStore::Dominio(DomainError::ExecucaoJaAtiva { .. })) => Ok(Inicio::JaAtiva),
+        Err(ErroStore::Dominio(DomainError::ExecutionAlreadyActive { .. })) => Ok(Inicio::JaAtiva),
         Err(ErroStore::Dominio(outro)) => Ok(Inicio::Recusado(outro.to_string())),
         Err(erro) => Err(erro),
     }
@@ -879,7 +881,7 @@ mod testes {
 
     use poph_fluxos::{Limites, compilar};
     use poph_store::{NovaConversa, NovaOrg, NovoAgente, NovoFluxo, PublicacaoDeRevisao, Store};
-    use poph_types::{AgentId, AtorEvento, FluxosConfig, OrgId};
+    use poph_types::{AgentId, EventActor, FlowsConfig, OrgId};
 
     use super::{AjustesDoFluxo, Inicio, QuemInicia, iniciar};
 
@@ -904,7 +906,7 @@ etapa(
         org: OrgId,
         agente: AgentId,
         ficha: poph_store::Ficha,
-        fluxo: poph_types::FluxoId,
+        fluxo: poph_types::FlowId,
     }
 
     impl Cenario {
@@ -1012,7 +1014,7 @@ etapa(
         }
 
         fn ajustes(&self) -> AjustesDoFluxo {
-            AjustesDoFluxo::da_config(&FluxosConfig::default())
+            AjustesDoFluxo::da_config(&FlowsConfig::default())
         }
     }
 
@@ -1056,9 +1058,9 @@ etapa(
             .expect("lê os eventos");
         let iniciado = eventos
             .iter()
-            .find(|evento| evento.tipo == poph_types::TipoEventoFicha::FluxoIniciado)
+            .find(|evento| evento.tipo == poph_types::RecordEventKind::FlowStarted)
             .expect("evento fluxo_iniciado");
-        assert_eq!(iniciado.ator_tipo, AtorEvento::Jev);
+        assert_eq!(iniciado.ator_tipo, EventActor::Jev);
         assert!(
             iniciado
                 .payload_json

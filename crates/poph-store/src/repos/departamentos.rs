@@ -144,8 +144,8 @@ impl Departamentos<'_> {
             .map_err(ErroStore::from)
         })?;
         if apagou == 0 {
-            return Err(ErroStore::Dominio(poph_types::DomainError::NaoEncontrado {
-                entidade: "departamento",
+            return Err(ErroStore::Dominio(poph_types::DomainError::NotFound {
+                entity: "departamento",
                 id: id.to_string(),
             }));
         }

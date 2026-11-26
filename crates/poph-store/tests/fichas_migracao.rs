@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use poph_store::migracoes::migrar;
 use poph_store::{MIGRACOES_HARNESS, Store, versao_alvo_harness, versao_do_arquivo};
-use poph_types::{AtorEvento, FechadaPor, FichaId, StatusFicha, TipoEventoFicha};
+use poph_types::{ClosedBy, EventActor, RecordEventKind, RecordId, RecordStatus};
 use rusqlite::Connection;
 
 /// Nome da migração desta tarefa em `MIGRACOES_HARNESS`.
@@ -390,8 +390,8 @@ fn backfill_cria_exatamente_uma_ficha_por_conversa() {
     ] {
         let ficha = ficha_da_conversa(&conn, banco.id(cenario));
         assert_eq!(
-            ficha.status.parse::<StatusFicha>().expect("status válido"),
-            StatusFicha::Aberta,
+            ficha.status.parse::<RecordStatus>().expect("status válido"),
+            RecordStatus::Open,
             "{cenario} deveria ficar aberta"
         );
         assert_eq!(
@@ -412,13 +412,13 @@ fn backfill_cria_exatamente_uma_ficha_por_conversa() {
     for cenario in ["fechada", "fechada-sem-mensagem"] {
         let ficha = ficha_da_conversa(&conn, banco.id(cenario));
         assert_eq!(
-            ficha.status.parse::<StatusFicha>().expect("status válido"),
-            StatusFicha::Fechada,
+            ficha.status.parse::<RecordStatus>().expect("status válido"),
+            RecordStatus::Closed,
             "{cenario} deveria ficar fechada"
         );
         assert_eq!(
             ficha.fechada_por.as_deref(),
-            Some(FechadaPor::Migracao.como_texto())
+            Some(ClosedBy::Migration.as_text())
         );
         assert_eq!(
             ficha.fechada_em,
@@ -451,7 +451,7 @@ fn backfill_cria_exatamente_uma_ficha_por_conversa() {
         let ficha = ficha_da_conversa(&conn, conversa);
         ficha
             .id
-            .parse::<FichaId>()
+            .parse::<RecordId>()
             .unwrap_or_else(|erro| panic!("id de Ficha inválido no backfill: {erro}"));
     }
 
@@ -621,9 +621,9 @@ fn banco_recusa_evento_com_texto_fora_da_lista_e_cruzando_orgs() {
 
     // Todos os tipos e atores do vocabulário passam pelo CHECK do banco.
     let mut seq = 1;
-    for tipo in TipoEventoFicha::TODOS {
-        for ator in AtorEvento::TODOS {
-            evento(&ficha, seq, tipo.como_texto(), ator.como_texto(), None)
+    for tipo in RecordEventKind::ALL {
+        for ator in EventActor::ALL {
+            evento(&ficha, seq, tipo.as_text(), ator.as_text(), None)
                 .unwrap_or_else(|erro| panic!("{tipo}/{ator} recusado pelo banco: {erro}"));
             seq += 1;
         }

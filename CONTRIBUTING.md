@@ -78,7 +78,7 @@ These rules come from decisions already made and are explained in [`AGENTS.md`](
 [`docs/DECISOES.md`](docs/DECISOES.md).
 
 - **Secrets never leak.** Keys come only from the environment and never go into a file, log, error
-  message, API response or test with a real value. Use the `Sensivel` type for any sensitive value that
+  message, API response or test with a real value. Use the `Sensitive` type for any sensitive value that
   passes through a log or error, and test with a canary value.
 - **Isolation between orgs.** Every business table has `org_id` and every access filters by it. New code
   that reads or writes org data needs a test proving that org A cannot reach org B.

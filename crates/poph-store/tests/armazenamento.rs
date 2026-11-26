@@ -18,8 +18,8 @@ use poph_store::{
     StatusConversa, Store, TransicaoDeFluxo, versao_do_arquivo,
 };
 use poph_types::{
-    AtorEvento, DomainError, InboxId, IntegrationId, MessageId, OrgId, StatusExecucao,
-    TipoEventoFicha,
+    DomainError, EventActor, ExecutionStatus, InboxId, IntegrationId, MessageId, OrgId,
+    RecordEventKind,
 };
 
 /// Banco de verdade numa pasta temporária, apagada no fim.
@@ -294,7 +294,7 @@ fn nenhum_repositorio_le_registro_de_outra_org() {
 
     // Tudo consultado com a org B dá "não encontrado" ou lista vazia.
     let nao_encontrado = |resultado: Result<(), poph_store::ErroStore>| match resultado {
-        Err(poph_store::ErroStore::Dominio(DomainError::NaoEncontrado { .. })) => true,
+        Err(poph_store::ErroStore::Dominio(DomainError::NotFound { .. })) => true,
         outro => panic!("esperado não encontrado, veio {outro:?}"),
     };
 
@@ -576,8 +576,8 @@ fn nenhum_repositorio_le_registro_de_outra_org() {
                 ficha.id,
                 NovoEventoFicha {
                     execucao_id: None,
-                    tipo: TipoEventoFicha::FichaAberta,
-                    ator_tipo: AtorEvento::Sistema,
+                    tipo: RecordEventKind::RecordOpened,
+                    ator_tipo: EventActor::System,
                     ator_ref: None,
                     payload_json: "{}".to_owned(),
                     chave_idempotencia: None,
@@ -594,7 +594,7 @@ fn nenhum_repositorio_le_registro_de_outra_org() {
 
     // ── FX-20: execução, etapas, eventos e efeitos ──
     let estado_inicial = || EstadoDaExecucao {
-        status: StatusExecucao::Ativa,
+        status: ExecutionStatus::Active,
         no_atual: "coleta".to_owned(),
         dados_json: "{}".to_owned(),
         atores_que_agiram: Vec::new(),
@@ -605,7 +605,7 @@ fn nenhum_repositorio_le_registro_de_outra_org() {
         ficha: ficha.id,
         fluxo: fluxo.id,
         revisao: revisao.id,
-        ator: AtorEvento::Atendente,
+        ator: EventActor::Attendant,
         ator_ref: Some("token-ficticio"),
         decisao_jev: None,
         estado_inicial: estado_inicial(),
@@ -1131,7 +1131,7 @@ fn entrada_invalida_nao_derruba_o_lote() {
     assert!(
         matches!(
             erro,
-            poph_store::ErroStore::Dominio(DomainError::Validacao { .. })
+            poph_store::ErroStore::Dominio(DomainError::Validation { .. })
         ),
         "veio {erro:?}"
     );
@@ -1186,9 +1186,7 @@ fn tokens_so_aparecem_uma_vez_e_revogar_tira_da_autenticacao() {
                 .caixa_entrada()
                 .obter(org.id, InboxId::generate())
                 .map(|_| ()),
-            Err(poph_store::ErroStore::Dominio(
-                DomainError::NaoEncontrado { .. }
-            ))
+            Err(poph_store::ErroStore::Dominio(DomainError::NotFound { .. }))
         ),
         "item de entrada inexistente precisa dar não encontrado"
     );
@@ -1377,7 +1375,7 @@ fn excluir_org_leva_junto_os_dados_dela() {
         .expect_err("recusa com agentes");
     assert!(matches!(
         recusa,
-        ErroStore::Dominio(DomainError::Conflito { .. })
+        ErroStore::Dominio(DomainError::Conflict { .. })
     ));
     store.orgaos().obter(org.id).expect("a org continua");
 
@@ -1447,7 +1445,7 @@ fn agente_inativo_nao_abre_turno_mas_continua_listado_e_editavel() {
         .expect("inativa o agente");
     assert!(!inativo.pode_abrir_turno(), "D-05: inativo não abre turno");
     match store.agentes().obter_para_turno(org.id, agente.id) {
-        Err(ErroStore::Dominio(DomainError::AgenteInativo { id, status })) => {
+        Err(ErroStore::Dominio(DomainError::AgentInactive { id, status })) => {
             assert_eq!(id, agente.id.to_string());
             assert_eq!(status, "inactive");
         }
@@ -1544,9 +1542,9 @@ fn instrucoes_versao_zero_cria_e_versao_antiga_nao_recria() {
         .unwrap_err();
     assert!(matches!(
         erro,
-        ErroStore::Dominio(DomainError::ConflitoDeVersao {
-            esperada: 1,
-            atual: 0,
+        ErroStore::Dominio(DomainError::VersionConflict {
+            expected: 1,
+            current: 0,
             ..
         })
     ));

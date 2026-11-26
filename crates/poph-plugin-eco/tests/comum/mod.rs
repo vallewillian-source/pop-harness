@@ -16,7 +16,7 @@ use poph_plugins::{Espera, LimitesSupervisor, OpcoesPlugin, Supervisor};
 use poph_store::{
     Conversa, EstadoSaida, ItemSaida, NovaConversa, NovaOrg, NovaSaida, NovoAgente, Pagina, Store,
 };
-use poph_types::{ConversationId, Integration, IntegrationId, OrgId, Receptor};
+use poph_types::{ConversationId, EventSink, Integration, IntegrationId, OrgId};
 
 /// Prazos curtos: o comportamento é o mesmo do padrão, só a espera do teste é menor.
 pub fn limites_rapidos() -> LimitesSupervisor {
@@ -131,7 +131,7 @@ impl Cenario {
         let opcoes = OpcoesPlugin::novo(programa, integracao, org)
             .com_kind("eco")
             .com_limites(limites_rapidos());
-        let supervisor = Supervisor::iniciar(opcoes, Arc::clone(&entrada) as Arc<dyn Receptor>)
+        let supervisor = Supervisor::iniciar(opcoes, Arc::clone(&entrada) as Arc<dyn EventSink>)
             .await
             .expect("sobe o plugin eco");
         let canal: Arc<dyn Integration> = Arc::new(supervisor.clone());

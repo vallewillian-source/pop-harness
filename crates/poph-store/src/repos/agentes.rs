@@ -270,7 +270,7 @@ impl Agentes<'_> {
     pub fn obter_para_turno(&self, org: OrgId, id: AgentId) -> Resultado<Agente> {
         let agente = self.obter(org, id)?;
         if !agente.pode_abrir_turno() {
-            return Err(ErroStore::Dominio(poph_types::DomainError::AgenteInativo {
+            return Err(ErroStore::Dominio(poph_types::DomainError::AgentInactive {
                 id: agente.id.to_string(),
                 status: agente.status.como_texto().to_owned(),
             }));
@@ -479,8 +479,8 @@ impl Agentes<'_> {
 }
 
 fn nao_encontrado(id: AgentId) -> ErroStore {
-    ErroStore::Dominio(poph_types::DomainError::NaoEncontrado {
-        entidade: "agente",
+    ErroStore::Dominio(poph_types::DomainError::NotFound {
+        entity: "agente",
         id: id.to_string(),
     })
 }

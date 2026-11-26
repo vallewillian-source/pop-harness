@@ -168,7 +168,7 @@ impl Store {
             )?;
             if n==0 {
                 let atual: Option<i64>=conn.query_row("SELECT version FROM integrations WHERE org_id=?1 AND agent_id=?2 AND id=?3",params![org.to_string(),agente.to_string(),id.to_string()],|r|r.get(0)).optional()?;
-                return Err(ErroStore::Dominio(match atual {Some(atual)=>DomainError::ConflitoDeVersao{entidade:"integração",id:id.to_string(),esperada:versao,atual:atual as u64},None=>DomainError::NaoEncontrado{entidade:"integração",id:id.to_string()}}));
+                return Err(ErroStore::Dominio(match atual {Some(atual)=>DomainError::VersionConflict{entity:"integração",id:id.to_string(),expected:versao,current:atual as u64},None=>DomainError::NotFound{entity:"integração",id:id.to_string()}}));
             }
             Ok(())
         })?;
@@ -187,8 +187,8 @@ impl Store {
                 params![org.to_string(), agente.to_string(), id.to_string()],
             )?;
             if n == 0 {
-                return Err(ErroStore::Dominio(DomainError::NaoEncontrado {
-                    entidade: "integração",
+                return Err(ErroStore::Dominio(DomainError::NotFound {
+                    entity: "integração",
                     id: id.to_string(),
                 }));
             }

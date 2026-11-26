@@ -23,7 +23,7 @@ use poph_matrix::salas::{
     Provisionador, SalaGravada, TIPO_METADATA, TIPO_SALA,
 };
 use poph_matrix::{ClienteMatrix, ConfigCliente};
-use poph_types::{AgentId, ConversationId, DepartmentId, MatrixConfig, OrgId, Segredo};
+use poph_types::{AgentId, ConversationId, DepartmentId, MatrixConfig, OrgId, Secret};
 use serde_json::{Value, json};
 
 /// Valor-canário do token do Application Service.
@@ -527,7 +527,7 @@ impl Cenario {
             ConfigCliente::novo(
                 self.endereco.clone(),
                 SERVIDOR,
-                Segredo::new(CANARIO.to_owned()),
+                Secret::new(CANARIO.to_owned()),
             )
             .expect("configuração do cliente"),
         )
@@ -571,19 +571,19 @@ async fn cenario() -> Cenario {
     });
 
     let config = MatrixConfig {
-        habilitado: true,
+        enabled: true,
         homeserver_url: format!("http://{endereco}"),
         server_name: SERVIDOR.to_owned(),
-        prefixo: "ph".to_owned(),
-        poder_agente: 50,
+        prefix: "ph".to_owned(),
+        agent_power: 50,
         ..MatrixConfig::default()
     };
     let cliente = ClienteMatrix::novo(
         ConfigCliente::das_partes(
             &config,
             &poph_matrix::SegredosMatrix {
-                as_token: Segredo::new(CANARIO.to_owned()),
-                hs_token: Segredo::new(CANARIO.to_owned()),
+                as_token: Secret::new(CANARIO.to_owned()),
+                hs_token: Secret::new(CANARIO.to_owned()),
             },
         )
         .expect("configuração do cliente"),

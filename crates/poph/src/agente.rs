@@ -357,7 +357,7 @@ fn criar(store: &Store, org: OrgId, configuracao: &HarnessConfig, args: CriarAge
     if args.tipo != "custom" && args.tipo != "standard" {
         return falha("--type aceita `custom` ou `standard`");
     }
-    if let Err(erro) = configuracao.validar_escolha_de_provedor(&args.provider) {
+    if let Err(erro) = configuracao.validate_provider_choice(&args.provider) {
         return falha(format!("--provider: {erro}"));
     }
     let slug = match args.slug.clone() {
@@ -524,7 +524,7 @@ fn atualizar(
         }
     }
     if let Some(escolha) = args.provider.as_deref()
-        && let Err(erro) = configuracao.validar_escolha_de_provedor(escolha)
+        && let Err(erro) = configuracao.validate_provider_choice(escolha)
     {
         return falha(format!("--provider: {erro}"));
     }
@@ -625,7 +625,7 @@ fn gravar_instrucoes(store: &Store, org: OrgId, args: GravarInstrucoes, esperada
                     return falha(format!("não consegui ler {}: {erro}", arquivo.display()));
                 }
             };
-            let dados = match StructuredInstructions::de_json_tolerante(&texto) {
+            let dados = match StructuredInstructions::from_tolerant_json(&texto) {
                 Ok(dados) => dados,
                 Err(erro) => return falha(format!("JSON de instruções inválido: {erro}")),
             };
@@ -633,7 +633,7 @@ fn gravar_instrucoes(store: &Store, org: OrgId, args: GravarInstrucoes, esperada
                 return falha(erro.to_string());
             }
             let markdown = compor_instrucoes(&dados);
-            (dados.para_json(), markdown, true)
+            (dados.to_json(), markdown, true)
         }
         (None, Some(arquivo)) => {
             let markdown = match std::fs::read_to_string(arquivo) {

@@ -30,7 +30,7 @@ use poph_store::{
     Direcao, EstadoTurno, MudancaAgente, NovaConversa, NovaMensagem, NovoAgente, Pagina, Papel,
     Store,
 };
-use poph_types::{ConversationId, GatesJev, MessageId, OrgId, StructuredInstructions};
+use poph_types::{ConversationId, JevGates, MessageId, OrgId, StructuredInstructions};
 
 struct SemEspera;
 
@@ -96,7 +96,7 @@ impl Cenario {
                 org,
                 agente.id,
                 0,
-                &estruturado.para_json(),
+                &estruturado.to_json(),
                 "# Bia\n\nVocê é a atendente da loja.",
                 true,
             )
@@ -258,10 +258,10 @@ fn roteiro_texto(texto: &str) -> Roteiro {
     ])
 }
 
-fn so_g6() -> GatesJev {
-    GatesJev {
+fn so_g6() -> JevGates {
+    JevGates {
         g6: true,
-        ..GatesJev::default()
+        ..JevGates::default()
     }
 }
 
@@ -341,7 +341,7 @@ fn jev_que_falha_na_segunda(primeira: RespostaRoteirizada) -> Arc<JevFalso> {
     }))
 }
 
-fn motor_jev(jev: Arc<JevFalso>, gates: GatesJev) -> Arc<MotorJev> {
+fn motor_jev(jev: Arc<JevFalso>, gates: JevGates) -> Arc<MotorJev> {
     Arc::new(MotorJev::novo(jev, gates, "jev-latest"))
 }
 
@@ -365,9 +365,9 @@ async fn g6_aprovada_mantem_a_resposta_e_faz_uma_chamada_ao_modelo() {
     assert_eq!(provedor.recebidos().len(), 1, "uma chamada ao modelo");
     assert_eq!(cenario.saidas(), vec![RASCUNHO]);
     assert_eq!(cenario.fila().len(), 1, "um item na fila de saída");
-    assert_eq!(cenario.metricas.revisoes_g6.valor(), 1);
-    assert_eq!(cenario.metricas.reprovadas_g6.valor(), 0);
-    assert_eq!(cenario.metricas.respostas_seguras_g6.valor(), 0);
+    assert_eq!(cenario.metricas.revisoes_g6.value(), 1);
+    assert_eq!(cenario.metricas.reprovadas_g6.value(), 0);
+    assert_eq!(cenario.metricas.respostas_seguras_g6.value(), 0);
     let registro = cenario.turno_gravado(&resumo);
     assert!(registro.contains("\"revisao\""), "{registro}");
     assert!(registro.contains("\"aprovada\""), "{registro}");
@@ -407,9 +407,9 @@ async fn g6_reprovada_regenera_uma_vez_e_envia_o_texto_novo() {
     );
     assert_eq!(cenario.saidas(), vec![REESCRITA], "uma única saída");
     assert_eq!(cenario.fila().len(), 1, "um único item na fila");
-    assert_eq!(cenario.metricas.revisoes_g6.valor(), 2);
-    assert_eq!(cenario.metricas.reprovadas_g6.valor(), 1);
-    assert_eq!(cenario.metricas.respostas_seguras_g6.valor(), 0);
+    assert_eq!(cenario.metricas.revisoes_g6.value(), 2);
+    assert_eq!(cenario.metricas.reprovadas_g6.value(), 1);
+    assert_eq!(cenario.metricas.respostas_seguras_g6.value(), 0);
     // O custo da regeneração entra nos tokens do turno (100 + 100 de entrada).
     assert_eq!(resumo.tokens_entrada, 200);
     let registro = cenario.turno_gravado(&resumo);
@@ -440,7 +440,7 @@ async fn g6_duas_reprovacoes_usam_a_resposta_segura() {
     assert_eq!(provedor.recebidos().len(), 2, "sem terceira tentativa");
     assert_eq!(cenario.saidas(), vec![SEGURA]);
     assert_eq!(cenario.fila().len(), 1);
-    assert_eq!(cenario.metricas.respostas_seguras_g6.valor(), 1);
+    assert_eq!(cenario.metricas.respostas_seguras_g6.value(), 1);
     let registro = cenario.turno_gravado(&resumo);
     assert!(registro.contains("\"resposta_segura\":true"), "{registro}");
 }
@@ -465,7 +465,7 @@ async fn g6_sem_resposta_segura_na_segunda_reprovacao_envia_o_texto_regenerado()
         "sem resposta segura, sai a regenerada"
     );
     assert_eq!(cenario.saidas(), vec![REESCRITA]);
-    assert_eq!(cenario.metricas.respostas_seguras_g6.valor(), 0);
+    assert_eq!(cenario.metricas.respostas_seguras_g6.value(), 0);
 }
 
 #[tokio::test]
@@ -485,7 +485,7 @@ async fn g6_segunda_revisao_sem_resposta_usa_a_segura() {
 
     assert_eq!(resumo.texto, SEGURA);
     assert_eq!(provedor.recebidos().len(), 2);
-    assert_eq!(cenario.metricas.respostas_seguras_g6.valor(), 1);
+    assert_eq!(cenario.metricas.respostas_seguras_g6.value(), 1);
 }
 
 #[tokio::test]
@@ -502,7 +502,7 @@ async fn g6_jev_fora_nao_revisa_e_mantem_a_resposta() {
     assert_eq!(resumo.estado, EstadoTurno::Concluido);
     assert_eq!(resumo.texto, RASCUNHO, "Jev fora = comportamento de hoje");
     assert_eq!(provedor.recebidos().len(), 1, "sem regeneração");
-    assert_eq!(cenario.metricas.reprovadas_g6.valor(), 0);
+    assert_eq!(cenario.metricas.reprovadas_g6.value(), 0);
 }
 
 #[tokio::test]
@@ -523,7 +523,7 @@ async fn g6_abstencao_e_confianca_baixa_mantem_a_resposta() {
         let resumo = cenario.turno(&motor, gatilho).await;
         assert_eq!(resumo.texto, RASCUNHO, "{rotulo}");
         assert_eq!(provedor.recebidos().len(), 1, "{rotulo}: sem regeneração");
-        assert_eq!(cenario.metricas.reprovadas_g6.valor(), 0, "{rotulo}");
+        assert_eq!(cenario.metricas.reprovadas_g6.value(), 0, "{rotulo}");
     }
 }
 
@@ -534,7 +534,7 @@ async fn g6_desligado_nao_pergunta_e_mantem_a_resposta() {
     // Gates sem G6 (padrão de instalação: G3, G5 e G8 ligados; G6 desligado).
     let (motor, provedor) = cenario.motor(
         vec![roteiro_texto(RASCUNHO)],
-        Some(motor_jev(Arc::clone(&jev), GatesJev::padrao())),
+        Some(motor_jev(Arc::clone(&jev), JevGates::default_value())),
     );
 
     let gatilho = cenario.falar(PERGUNTA);
@@ -543,9 +543,9 @@ async fn g6_desligado_nao_pergunta_e_mantem_a_resposta() {
     assert_eq!(resumo.texto, RASCUNHO);
     assert_eq!(provedor.recebidos().len(), 1);
     assert!(jev.pedidos().is_empty(), "o G6 desligado não pergunta nada");
-    assert_eq!(cenario.metricas.revisoes_g6.valor(), 0);
+    assert_eq!(cenario.metricas.revisoes_g6.value(), 0);
     assert!(
-        !GatesJev::padrao().g6,
+        !JevGates::default_value().g6,
         "o G6 não entra no padrão de instalação"
     );
 }
@@ -572,7 +572,7 @@ async fn g6_falha_do_modelo_na_regeneracao_mantem_a_resposta_original() {
     );
     assert_eq!(provedor.recebidos().len(), 2);
     assert_eq!(cenario.saidas(), vec![RASCUNHO]);
-    assert_eq!(cenario.metricas.respostas_seguras_g6.valor(), 0);
+    assert_eq!(cenario.metricas.respostas_seguras_g6.value(), 0);
 }
 
 // ───────────────────────────── medição (HR-34) ─────────────────────────────
@@ -651,7 +651,7 @@ async fn medicao_do_g6() {
                 ..LoteResposta::default()
             })
         }));
-        let gates = if ligado { so_g6() } else { GatesJev::default() };
+        let gates = if ligado { so_g6() } else { JevGates::default() };
         let motor_jev = Arc::new(MotorJev::novo(
             Arc::clone(&jev) as Arc<dyn poph_jev::TransporteJev>,
             gates,
@@ -667,8 +667,8 @@ async fn medicao_do_g6() {
             rotulo,
             provedor.recebidos().len(),
             jev.pedidos().len(),
-            cenario.metricas.reprovadas_g6.valor(),
-            cenario.metricas.respostas_seguras_g6.valor(),
+            cenario.metricas.reprovadas_g6.value(),
+            cenario.metricas.respostas_seguras_g6.value(),
         ));
     }
 

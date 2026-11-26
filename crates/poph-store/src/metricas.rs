@@ -17,7 +17,7 @@
 //! falhar depois, o contador conta uma operação que o banco desfez. É métrica de operação, não dado
 //! do atendimento — o erro fica no log de quem chamou, e a contagem segue.
 
-use poph_types::{Contador, StatusExecucao};
+use poph_types::{Counter, ExecutionStatus};
 
 /// Os contadores do ciclo de vida da execução de fluxo (FX-40).
 ///
@@ -26,45 +26,45 @@ use poph_types::{Contador, StatusExecucao};
 #[derive(Debug, Clone)]
 pub struct MetricasExecucao {
     /// Execuções abertas (`poph_fluxos_execucoes_iniciadas_total`).
-    pub iniciadas: Contador,
+    pub iniciadas: Counter,
     /// Execuções que chegaram a um `fim` (`poph_fluxos_execucoes_concluidas_total`).
-    pub concluidas: Contador,
+    pub concluidas: Counter,
     /// Execuções abandonadas: pelo agente, pelo atendente, pelo fechamento da Ficha ou pela exclusão
     /// do fluxo (`poph_fluxos_execucoes_abandonadas_total`).
-    pub abandonadas: Contador,
+    pub abandonadas: Counter,
     /// Execuções que pararam em `falha` (`poph_fluxos_execucoes_falhas_total`).
-    pub falhas: Contador,
+    pub falhas: Counter,
     /// Avaliações de regra que falharam (`poph_fluxos_erros_regra_total`).
-    pub erros_regra: Contador,
+    pub erros_regra: Counter,
 }
 
 impl MetricasExecucao {
     /// Uma execução nasceu.
     pub(crate) fn abriu(&self, quantas: u64) {
         if quantas > 0 {
-            self.iniciadas.incrementar(quantas);
+            self.iniciadas.increment(quantas);
         }
     }
 
     /// Uma execução mudou de situação: conta no contador da situação nova. `ativa` não conta (a
     /// execução continua em andamento) e nada é contado duas vezes, porque a situação só muda uma
     /// vez por desfecho.
-    pub(crate) fn desfecho(&self, status: StatusExecucao, quantas: u64) {
+    pub(crate) fn desfecho(&self, status: ExecutionStatus, quantas: u64) {
         if quantas == 0 {
             return;
         }
         match status {
-            StatusExecucao::Ativa => {}
-            StatusExecucao::Concluida => self.concluidas.incrementar(quantas),
-            StatusExecucao::Abandonada => self.abandonadas.incrementar(quantas),
-            StatusExecucao::Falha => self.falhas.incrementar(quantas),
+            ExecutionStatus::Active => {}
+            ExecutionStatus::Completed => self.concluidas.increment(quantas),
+            ExecutionStatus::Abandoned => self.abandonadas.increment(quantas),
+            ExecutionStatus::Failed => self.falhas.increment(quantas),
         }
     }
 
     /// Uma avaliação de regra falhou (a execução que a chamava vai para `falha`).
     pub(crate) fn regra_falhou(&self, quantas: u64) {
         if quantas > 0 {
-            self.erros_regra.incrementar(quantas);
+            self.erros_regra.increment(quantas);
         }
     }
 }

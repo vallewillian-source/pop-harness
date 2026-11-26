@@ -37,7 +37,7 @@ use poph_jev::{
 };
 use poph_store::{Direcao, NovaConversa, NovaMensagem, NovaOrg, NovoAgente, Papel, Store};
 use poph_types::{
-    AgentId, ConversationId, FerramentaConfig, GatesJev, MessageId, OrgId, StructuredInstructions,
+    AgentId, ConversationId, JevGates, MessageId, OrgId, StructuredInstructions, ToolConfig,
 };
 
 /// Texto do trecho que a busca falsa devolve. Se ele aparecer no prompt, a base foi usada.
@@ -176,12 +176,12 @@ impl Cenario {
             .id;
         let estruturado = StructuredInstructions {
             tools: vec![
-                FerramentaConfig {
+                ToolConfig {
                     name: "consultar_base".to_owned(),
                     enabled: true,
                     when_to_use: String::new(),
                 },
-                FerramentaConfig {
+                ToolConfig {
                     name: "buscar_produto".to_owned(),
                     enabled: true,
                     when_to_use: String::new(),
@@ -195,7 +195,7 @@ impl Cenario {
                 org,
                 agente,
                 0,
-                &estruturado.para_json(),
+                &estruturado.to_json(),
                 "# Bia\n\nVocê é a atendente da FixProLar.",
                 true,
             )
@@ -349,10 +349,10 @@ fn roteiro_texto(texto: &str) -> Roteiro {
     ])
 }
 
-fn so_g3() -> GatesJev {
-    GatesJev {
+fn so_g3() -> JevGates {
+    JevGates {
         g3: true,
-        ..GatesJev::default()
+        ..JevGates::default()
     }
 }
 
@@ -449,7 +449,7 @@ async fn g3_nada_descarta_a_busca_e_nao_oferece_base_nem_catalogo() {
         "o registro não guarda trecho quando o G3 diz nada"
     );
     assert_eq!(
-        cenario.metricas.buscas_puladas_g3.valor(),
+        cenario.metricas.buscas_puladas_g3.value(),
         1,
         "a métrica de buscas dispensadas pelo G3 conta o turno"
     );
@@ -713,10 +713,10 @@ async fn g3_nada_com_transferencia_nao_quebra_o_turno() {
         ("g1_transferir", poph_jev::G1_TRANSFERIR),
         ("g3_precisa", G3_NADA),
     ])));
-    let gates = GatesJev {
+    let gates = JevGates {
         g1: true,
         g3: true,
-        ..GatesJev::default()
+        ..JevGates::default()
     };
     let motor_jev = Arc::new(MotorJev::novo(jev, gates, "jev-latest"));
     let (motor, _) = cenario.motor(
@@ -739,7 +739,7 @@ async fn g3_nada_com_transferencia_nao_quebra_o_turno() {
         Some(poph_jev::G1_TRANSFERIR)
     );
     assert_eq!(
-        cenario.metricas.buscas_puladas_g3.valor(),
+        cenario.metricas.buscas_puladas_g3.value(),
         1,
         "o G3 contou a busca dispensada"
     );

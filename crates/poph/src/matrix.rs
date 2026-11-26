@@ -133,7 +133,7 @@ fn gerar(
         Err(mensagem) => return erro(&mensagem),
     };
 
-    let texto = yaml(&args.id, &url, &config.prefixo, &segredos);
+    let texto = yaml(&args.id, &url, &config.prefix, &segredos);
 
     if let Err(mensagem) = gravar(destino, &texto, args.forcar) {
         return erro(&mensagem);
@@ -145,10 +145,10 @@ fn gerar(
     );
     println!("  id:               {}", args.id);
     println!("  url:              {url}");
-    println!("  sender_localpart: {}", sender_localpart(&config.prefixo));
+    println!("  sender_localpart: {}", sender_localpart(&config.prefix));
     println!(
         "  namespaces:       @{}_.* e #{}_.* (exclusivos), {ALIAS_COMPARTILHADO} (compartilhado)",
-        config.prefixo, config.prefixo
+        config.prefix, config.prefix
     );
     println!("  rate_limited:     false");
     println!("  as_token:         [oculto]");
@@ -194,7 +194,7 @@ fn conferir(
 
     let esperado = Esperado {
         url: &url,
-        prefixo: &config.prefixo,
+        prefixo: &config.prefix,
         segredos: &segredos,
     };
     let divergencias = comparar(&lido, &esperado);
@@ -214,7 +214,7 @@ fn conferir(
 
     println!("registro em dia: {}", arquivo.display());
     println!("  url:              {url}");
-    println!("  sender_localpart: {}", sender_localpart(&config.prefixo));
+    println!("  sender_localpart: {}", sender_localpart(&config.prefix));
     println!("  rate_limited:     false");
     println!("  tokens:           conferem com o ambiente ([oculto])");
     ExitCode::SUCCESS
@@ -238,7 +238,7 @@ fn ler_ambiente(
     // O registro descreve a instância mesmo quando o módulo ainda está desligado: validamos a seção
     // como se estivesse ligada, para não gerar registro com prefixo ou url inválidos.
     let mut efetiva = secao.clone();
-    efetiva.habilitado = true;
+    efetiva.enabled = true;
     efetiva.validar().map_err(|erro| erro.to_string())?;
     let segredos =
         SegredosMatrix::de(|nome| ambiente.get(nome).cloned()).map_err(|erro| erro.to_string())?;
@@ -294,11 +294,11 @@ pub fn yaml(id: &str, url: &str, prefixo: &str, segredos: &SegredosMatrix) -> St
     texto.push_str(&format!("url: {}\n", escalar(url)));
     texto.push_str(&format!(
         "as_token: {}\n",
-        escalar(segredos.as_token.expor())
+        escalar(segredos.as_token.expose())
     ));
     texto.push_str(&format!(
         "hs_token: {}\n",
-        escalar(segredos.hs_token.expor())
+        escalar(segredos.hs_token.expose())
     ));
     // MX-02 (item 7): sem `rate_limited: false` o Synapse limita o bot em rajada.
     texto.push_str("rate_limited: false\n");
@@ -647,12 +647,12 @@ fn comparar(lido: &RegistroLido, esperado: &Esperado<'_>) -> Vec<String> {
         (
             "as_token",
             lido.escalares.get("as_token"),
-            Some(esperado.segredos.as_token.expor().as_str()),
+            Some(esperado.segredos.as_token.expose().as_str()),
         ),
         (
             "hs_token",
             lido.escalares.get("hs_token"),
-            Some(esperado.segredos.hs_token.expor().as_str()),
+            Some(esperado.segredos.hs_token.expose().as_str()),
         ),
     ] {
         if let (Some(no_arquivo), Some(no_ambiente)) = (no_arquivo, no_ambiente)
@@ -719,15 +719,15 @@ fn erro(mensagem: &str) -> ExitCode {
 #[cfg(test)]
 mod testes {
     use super::*;
-    use poph_types::Sensivel;
+    use poph_types::Sensitive;
 
     const CANARIO_AS: &str = "CANARIO-MX21-AS-nao-pode-vazar";
     const CANARIO_HS: &str = "CANARIO-MX21-HS-nao-pode-vazar";
 
     fn segredos() -> SegredosMatrix {
         SegredosMatrix {
-            as_token: Sensivel::new(CANARIO_AS.to_owned()),
-            hs_token: Sensivel::new(CANARIO_HS.to_owned()),
+            as_token: Sensitive::new(CANARIO_AS.to_owned()),
+            hs_token: Sensitive::new(CANARIO_HS.to_owned()),
         }
     }
 
@@ -795,8 +795,8 @@ mod testes {
         let texto = yaml("poph-matrix", "http://outro:2", "ph", &segredos());
         let lido = ler(&texto).expect("legível");
         let outros = SegredosMatrix {
-            as_token: Sensivel::new("as-token-diferente".to_owned()),
-            hs_token: Sensivel::new("hs-token-diferente".to_owned()),
+            as_token: Sensitive::new("as-token-diferente".to_owned()),
+            hs_token: Sensitive::new("hs-token-diferente".to_owned()),
         };
         let esperado = Esperado {
             url: "http://esperado:1",

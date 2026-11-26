@@ -22,7 +22,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use poph_types::{AtorAcao, TipoCampo};
+use poph_types::{ActionActor, FieldKind};
 use starlark::codemap::Span;
 use starlark::syntax::AstModule;
 use starlark::syntax::ast::{
@@ -515,11 +515,11 @@ impl<'a> Forma<'a> {
             }
         }
 
-        let mut atores_acao: Vec<AtorAcao> = Vec::new();
+        let mut atores_acao: Vec<ActionActor> = Vec::new();
         if let Some(expr) = atores_expr {
             let pos_atores = self.pos(expr.span);
             for ator in self.lista_texto(expr, &format!("`atores` da etapa `{id}`")) {
-                match AtorAcao::de_texto(&ator) {
+                match ActionActor::from_text(&ator) {
                     Ok(ator) => atores_acao.push(ator),
                     Err(_) => self.erro(
                         Codigo::RegraOuAtorInvalido,
@@ -530,9 +530,9 @@ impl<'a> Forma<'a> {
             }
         }
         if atores_acao.is_empty() {
-            atores_acao.push(AtorAcao::Agente);
+            atores_acao.push(ActionActor::Agent);
         }
-        let mut unicos: Vec<AtorAcao> = Vec::new();
+        let mut unicos: Vec<ActionActor> = Vec::new();
         for ator in atores_acao {
             if !unicos.contains(&ator) {
                 unicos.push(ator);
@@ -576,7 +576,7 @@ impl<'a> Forma<'a> {
                     Codigo::AtorSemAcao,
                     format!(
                         "A etapa `{id}` permite o `{}`, mas nenhuma ação é dele: na prática ele não tem o que fazer aqui.",
-                        ator.como_texto()
+                        ator.as_text()
                     ),
                     pos_atores,
                 );
@@ -676,7 +676,7 @@ impl<'a> Forma<'a> {
                     let bruto = self
                         .texto(expr, &format!("`tipo` do campo `{etapa}.{id}`"))
                         .unwrap_or_default();
-                    match TipoCampo::de_texto(&bruto) {
+                    match FieldKind::from_text(&bruto) {
                         Ok(tipo) => tipo,
                         Err(_) => {
                             self.erro(
@@ -686,11 +686,11 @@ impl<'a> Forma<'a> {
                                 ),
                                 pos_tipo,
                             );
-                            TipoCampo::Texto
+                            FieldKind::Texto
                         }
                     }
                 }
-                None => TipoCampo::Texto,
+                None => FieldKind::Texto,
             };
             let obrigatorio = match obrigatorio_expr {
                 Some(expr) => self
@@ -712,7 +712,7 @@ impl<'a> Forma<'a> {
                     }
                 }
             }
-            if tipo == TipoCampo::Opcao && opcoes.len() < 2 {
+            if tipo == FieldKind::Option && opcoes.len() < 2 {
                 self.erro(
                     Codigo::OpcoesInvalidas,
                     format!(
@@ -725,12 +725,12 @@ impl<'a> Forma<'a> {
                     },
                 );
             }
-            if tipo != TipoCampo::Opcao && !opcoes.is_empty() {
+            if tipo != FieldKind::Option && !opcoes.is_empty() {
                 self.erro(
                     Codigo::OpcoesInvalidas,
                     format!(
                         "O campo `{etapa}.{id}` tem `opcoes`, mas o tipo é `{}`: `opcoes` só vale com `tipo = \"opcao\"`.",
-                        tipo.como_texto()
+                        tipo.as_text()
                     ),
                     pos_opcoes,
                 );
@@ -756,7 +756,7 @@ impl<'a> Forma<'a> {
         expr: &'a AstExpr,
         etapa: &str,
         campos: &[Campo],
-        atores: &[AtorAcao],
+        atores: &[ActionActor],
     ) -> Vec<AcaoBruta> {
         let mut acoes = Vec::new();
         let mut vistos: BTreeSet<String> = BTreeSet::new();
@@ -829,7 +829,7 @@ impl<'a> Forma<'a> {
                     let bruto = self
                         .texto(expr, &format!("`ator` da ação `{etapa}.{id}`"))
                         .unwrap_or_default();
-                    match AtorAcao::de_texto(&bruto) {
+                    match ActionActor::from_text(&bruto) {
                         Ok(ator) => {
                             if !atores.contains(&ator) {
                                 self.erro(
@@ -1702,12 +1702,12 @@ impl<'a> Forma<'a> {
                     );
                 }
             }
-            Regra::Maior { .. } | Regra::Menor { .. } if campo_info.tipo != TipoCampo::Numero => {
+            Regra::Maior { .. } | Regra::Menor { .. } if campo_info.tipo != FieldKind::Number => {
                 self.aviso(
                     Codigo::ComparacaoDeTexto,
                     format!(
                         "{onde} usa `maior`/`menor` com `{campo}`, mas o campo é `{}`: mude o tipo para `numero` ou use `igual`.",
-                        campo_info.tipo.como_texto()
+                        campo_info.tipo.as_text()
                     ),
                     pos,
                 );

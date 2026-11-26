@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use poph_types::{DomainError, HarnessConfig, Segredo};
+use poph_types::{DomainError, HarnessConfig, Secret};
 use serde::Deserialize;
 use thiserror::Error;
 use toml::{Table, Value};
@@ -78,11 +78,11 @@ pub enum ErroConfig {
 #[derive(Debug, Clone, Default)]
 pub struct Segredos {
     /// Chave de cifra (`POPH_CHAVE_CIFRA`).
-    pub cifra: Option<Segredo>,
+    pub cifra: Option<Secret>,
     /// Chave do Jev (`TYPESAFE_API_KEY`).
-    pub typesafe: Option<Segredo>,
+    pub typesafe: Option<Secret>,
     /// Chave da Evolution (`EVOLUTION_API_KEY`).
-    pub evolution: Option<Segredo>,
+    pub evolution: Option<Secret>,
 }
 
 /// Tipo de valor aceito numa variável de configuração.
@@ -221,7 +221,7 @@ pub fn caminho_cluster(
 }
 
 /// Segredo compartilhado do cluster (`POPH_CLUSTER_SECRET`). Vazio conta como ausente.
-pub fn segredo_cluster(ambiente: &Ambiente) -> Option<Segredo> {
+pub fn segredo_cluster(ambiente: &Ambiente) -> Option<Secret> {
     lido(ambiente, VAR_CLUSTER_SECRET)
 }
 
@@ -234,16 +234,16 @@ pub fn segredos(ambiente: &Ambiente) -> Segredos {
     }
 }
 
-pub fn chave_llm(ambiente: &Ambiente, chave_env: &str) -> Option<Segredo> {
+pub fn chave_llm(ambiente: &Ambiente, chave_env: &str) -> Option<Secret> {
     lido(ambiente, chave_env)
 }
 
-fn lido(ambiente: &Ambiente, variavel: &str) -> Option<Segredo> {
+fn lido(ambiente: &Ambiente, variavel: &str) -> Option<Secret> {
     ambiente
         .get(variavel)
         .map(|v| v.trim())
         .filter(|v| !v.is_empty())
-        .map(|v| Segredo::new(v.to_owned()))
+        .map(|v| Secret::new(v.to_owned()))
 }
 
 fn padrao_como_tabela() -> Result<Table, ErroConfig> {
@@ -376,7 +376,7 @@ fn achar_culpado(base: &Table, fontes: &[Fonte]) -> ErroConfig {
 mod testes {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use poph_types::GatesJev;
+    use poph_types::JevGates;
 
     use super::*;
 
@@ -416,13 +416,13 @@ mod testes {
         let ambiente = amb(&[("POPH_SERVIDOR_PORTA", "3000")]);
         let cfg = carregar(Some(&caminho), &ambiente).expect("carrega");
         // Ambiente vence o arquivo.
-        assert_eq!(cfg.servidor.porta, 3000);
+        assert_eq!(cfg.server.port, 3000);
         // Arquivo vence o padrão.
-        assert_eq!(cfg.log.nivel, "debug");
-        assert_eq!(cfg.llm.modelo, "modelo-do-arquivo");
+        assert_eq!(cfg.log.level, "debug");
+        assert_eq!(cfg.llm.model, "modelo-do-arquivo");
         // Quem não foi definido em lugar nenhum fica com o padrão.
-        assert_eq!(cfg.retencao.dias, 30);
-        assert_eq!(cfg.limites.turnos_simultaneos, 200);
+        assert_eq!(cfg.retention.days, 30);
+        assert_eq!(cfg.limits.concurrent_turns, 200);
     }
 
     #[test]
@@ -430,7 +430,7 @@ mod testes {
         let caminho = arquivo("[servidor]\nporta = 2001\n");
         let cfg =
             carregar(Some(&caminho), &amb(&[("POPH_SERVIDOR_PORTA", "  ")])).expect("carrega");
-        assert_eq!(cfg.servidor.porta, 2001);
+        assert_eq!(cfg.server.port, 2001);
     }
 
     #[test]
@@ -479,8 +479,8 @@ mod testes {
     #[test]
     fn variavel_com_porta_fora_de_faixa_cai_na_validacao() {
         match carregar(None, &amb(&[("POPH_SERVIDOR_PORTA", "80")])) {
-            Err(ErroConfig::Validacao(DomainError::Validacao { campo, .. })) => {
-                assert_eq!(campo, "servidor.porta")
+            Err(ErroConfig::Validacao(DomainError::Validation { field, .. })) => {
+                assert_eq!(field, "servidor.porta")
             }
             outro => panic!("esperado erro de validação, veio {outro:?}"),
         }
@@ -513,12 +513,12 @@ mod testes {
             "[llm]\nprovedor = \"openai_compativel\"\nurl_base = \"https://api.exemplo.test/v1\"\n",
         );
         let cfg = carregar(Some(&caminho), &Ambiente::new()).expect("carrega");
-        assert_eq!(cfg.llm.provedor, "openai_compativel");
-        assert_eq!(cfg.llm.chave_env, VAR_ANTIGRAVITY);
-        assert!(cfg.llm.recusa_turno_modelo);
+        assert_eq!(cfg.llm.provider, "openai_compativel");
+        assert_eq!(cfg.llm.api_key_env, VAR_ANTIGRAVITY);
+        assert!(cfg.llm.refuse_model_turn);
         let chave = chave_llm(
             &amb(&[("OUTRA_CHAVE", "valor-de-teste")]),
-            &cfg.llm.chave_env,
+            &cfg.llm.api_key_env,
         );
         assert!(chave.is_none(), "a chave vem do nome configurado");
     }
@@ -526,9 +526,9 @@ mod testes {
     #[test]
     fn jev_vem_desligado_e_pode_ligar_por_ambiente() {
         let cfg = carregar(None, &Ambiente::new()).expect("carrega");
-        assert!(!cfg.jev.ativo);
+        assert!(!cfg.jev.enabled);
         let ligado = carregar(None, &amb(&[("POPH_JEV_ATIVO", "true")])).expect("carrega");
-        assert!(ligado.jev.ativo);
+        assert!(ligado.jev.enabled);
     }
 
     /// Padrão de instalação: G3, G5, G8 e G9 ligados; G1, G2, G4, G6 e G7 desligados. Se alguém
@@ -536,7 +536,7 @@ mod testes {
     #[test]
     fn gates_padrao_de_instalacao_ligam_g3_g5_g8_e_g9() {
         let cfg = carregar(None, &Ambiente::new()).expect("carrega");
-        assert_eq!(cfg.jev.gates, GatesJev::padrao());
+        assert_eq!(cfg.jev.gates, JevGates::default_value());
         assert!(cfg.jev.gates.g3, "G3 deve vir ligado por padrão");
         assert!(cfg.jev.gates.g5, "G5 deve vir ligado por padrão");
         assert!(cfg.jev.gates.g8, "G8 deve vir ligado por padrão");
@@ -557,7 +557,7 @@ mod testes {
     fn arquivo_sem_a_secao_de_gates_mantem_g3_g5_e_g8_ligados() {
         let caminho = arquivo("[jev]\nativo = true\n");
         let cfg = carregar(Some(&caminho), &Ambiente::new()).expect("carrega");
-        assert!(cfg.jev.ativo);
+        assert!(cfg.jev.enabled);
         assert!(cfg.jev.gates.g3 && cfg.jev.gates.g5 && cfg.jev.gates.g8);
         assert!(!cfg.jev.gates.g1 && !cfg.jev.gates.g2);
     }
@@ -587,9 +587,9 @@ mod testes {
         // O G9 não foi mencionado no arquivo: continua no padrão de instalação.
         assert_eq!(
             cfg.jev.gates,
-            GatesJev {
+            JevGates {
                 g9: true,
-                ..GatesJev::default()
+                ..JevGates::default()
             }
         );
     }
@@ -632,31 +632,31 @@ mod testes {
             ("MINHA_CHAVE_LLM", "chave-propria"),
         ]);
         let padrao = chave_llm(&ambiente, VAR_ANTIGRAVITY).expect("chave padrão");
-        assert_eq!(padrao.expor(), "chave-padrao");
+        assert_eq!(padrao.expose(), "chave-padrao");
         let propria = chave_llm(&ambiente, "MINHA_CHAVE_LLM").expect("chave própria");
-        assert_eq!(propria.expor(), "chave-propria");
+        assert_eq!(propria.expose(), "chave-propria");
         assert!(chave_llm(&ambiente, "OUTRA_CHAVE").is_none());
-        assert!(chave_llm(&ambiente, VAR_ANTIGRAVITY).is_some_and(|c| !c.expor().is_empty()));
+        assert!(chave_llm(&ambiente, VAR_ANTIGRAVITY).is_some_and(|c| !c.expose().is_empty()));
     }
 
     /// Sem arquivo e sem ambiente, a seção `[fluxos]` vale o padrão do PRD §9.
     #[test]
     fn fluxos_sem_arquivo_e_sem_ambiente_vale_o_padrao() {
         let cfg = carregar(None, &Ambiente::new()).expect("carrega");
-        assert_eq!(cfg.fluxos, poph_types::FluxosConfig::default());
+        assert_eq!(cfg.flows, poph_types::FlowsConfig::default());
     }
 
     /// Valor lido de cada chave de `[fluxos]` que tem variável de ambiente, pelo nome da chave.
-    fn valor_de(fluxos: &poph_types::FluxosConfig, chave: &str) -> u64 {
+    fn valor_de(fluxos: &poph_types::FlowsConfig, chave: &str) -> u64 {
         match chave {
-            "max_fluxos_por_org" => u64::from(fluxos.max_fluxos_por_org),
-            "max_fonte_bytes" => fluxos.max_fonte_bytes,
-            "max_nos" => u64::from(fluxos.max_nos),
-            "max_dados_bytes" => fluxos.max_dados_bytes,
-            "max_ticks_regra" => fluxos.max_ticks_regra,
-            "max_heap_regra" => fluxos.max_heap_regra,
-            "max_saltos_decisao" => u64::from(fluxos.max_saltos_decisao),
-            "cache_revisoes_mb" => u64::from(fluxos.cache_revisoes_mb),
+            "max_fluxos_por_org" => u64::from(fluxos.max_flows_per_org),
+            "max_fonte_bytes" => fluxos.max_source_bytes,
+            "max_nos" => u64::from(fluxos.max_nodes),
+            "max_dados_bytes" => fluxos.max_data_bytes,
+            "max_ticks_regra" => fluxos.max_rule_ticks,
+            "max_heap_regra" => fluxos.max_rule_heap,
+            "max_saltos_decisao" => u64::from(fluxos.max_decision_hops),
+            "cache_revisoes_mb" => u64::from(fluxos.revision_cache_mb),
             outro => panic!("chave sem leitura no teste: {outro}"),
         }
     }
@@ -714,14 +714,14 @@ mod testes {
             let caminho = arquivo(&format!("[fluxos]\n{chave} = {do_arquivo}\n"));
             let so_arquivo = carregar(Some(&caminho), &Ambiente::new()).expect("carrega");
             assert_eq!(
-                valor_de(&so_arquivo.fluxos, chave),
+                valor_de(&so_arquivo.flows, chave),
                 do_arquivo.parse::<u64>().unwrap(),
                 "{chave} vem do arquivo"
             );
             let vence =
                 carregar(Some(&caminho), &amb(&[(variavel, do_ambiente)])).expect("carrega");
             assert_eq!(
-                valor_de(&vence.fluxos, chave),
+                valor_de(&vence.flows, chave),
                 do_ambiente.parse::<u64>().unwrap(),
                 "{variavel} vence o arquivo"
             );
@@ -733,7 +733,7 @@ mod testes {
         let caminho = arquivo("[fluxos]\nativo = true\n");
         let desligado =
             carregar(Some(&caminho), &amb(&[("POPH_FLUXOS_ATIVO", "false")])).expect("carrega");
-        assert!(!desligado.fluxos.ativo);
+        assert!(!desligado.flows.enabled);
         match carregar(None, &amb(&[("POPH_FLUXOS_ATIVO", "sim")])) {
             Err(ErroConfig::Ambiente { variavel, .. }) => assert_eq!(variavel, "POPH_FLUXOS_ATIVO"),
             outro => panic!("esperado erro de variável, veio {outro:?}"),
@@ -765,8 +765,8 @@ mod testes {
     #[test]
     fn variavel_de_fluxos_fora_da_faixa_cai_na_validacao_com_a_chave() {
         match carregar(None, &amb(&[("POPH_FLUXOS_MAX_NOS", "61")])) {
-            Err(ErroConfig::Validacao(DomainError::Validacao { campo, .. })) => {
-                assert_eq!(campo, "fluxos.max_nos")
+            Err(ErroConfig::Validacao(DomainError::Validation { field, .. })) => {
+                assert_eq!(field, "fluxos.max_nos")
             }
             outro => panic!("esperado erro de validação, veio {outro:?}"),
         }
@@ -776,8 +776,8 @@ mod testes {
     fn arquivo_com_fluxos_fora_da_faixa_cai_na_validacao_com_a_chave() {
         let caminho = arquivo("[fluxos]\nmax_saltos_decisao = 0\n");
         match carregar(Some(&caminho), &Ambiente::new()) {
-            Err(ErroConfig::Validacao(DomainError::Validacao { campo, .. })) => {
-                assert_eq!(campo, "fluxos.max_saltos_decisao")
+            Err(ErroConfig::Validacao(DomainError::Validation { field, .. })) => {
+                assert_eq!(field, "fluxos.max_saltos_decisao")
             }
             outro => panic!("esperado erro de validação, veio {outro:?}"),
         }
@@ -797,7 +797,7 @@ mod testes {
     fn arquivo_pode_desligar_o_motor_e_o_g9() {
         let caminho = arquivo("[fluxos]\nativo = false\n\n[jev.gates]\ng9 = false\n");
         let cfg = carregar(Some(&caminho), &Ambiente::new()).expect("carrega");
-        assert!(!cfg.fluxos.ativo);
+        assert!(!cfg.flows.enabled);
         assert!(!cfg.jev.gates.g9);
     }
 }

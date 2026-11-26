@@ -27,7 +27,7 @@ use poph_store::{
     NovaConversa, NovaOrg, NovoAgente, NovoFluxo, Org, Pagina, Status, Store,
     TETO_FLUXOS_POR_AGENTE,
 };
-use poph_types::{AgentId, AtorEvento, DomainError, FichaId, FluxoId, OrgId, TipoEventoFicha};
+use poph_types::{AgentId, DomainError, EventActor, FlowId, OrgId, RecordEventKind, RecordId};
 use rusqlite::Connection;
 
 /// Banco de verdade numa pasta temporária, apagada no fim.
@@ -130,7 +130,7 @@ impl Cenario {
     }
 
     /// Execução de fluxo ativa numa Ficha, gravada direto (quem escreve execução é a FX-13).
-    fn execucao_ativa(&self, org: OrgId, ficha: FichaId, fluxo: FluxoId) -> String {
+    fn execucao_ativa(&self, org: OrgId, ficha: RecordId, fluxo: FlowId) -> String {
         let execucao = uuid::Uuid::now_v7().to_string();
         let revisao = uuid::Uuid::now_v7().to_string();
         self.conexao()
@@ -288,9 +288,9 @@ fn atualizar_usa_if_match_e_recusa_versao_velha() {
     assert!(
         matches!(
             erro,
-            DomainError::ConflitoDeVersao {
-                esperada: 1,
-                atual: 2,
+            DomainError::VersionConflict {
+                expected: 1,
+                current: 2,
                 ..
             }
         ),
@@ -322,8 +322,8 @@ fn situacao_arquivada_e_recusada_no_fluxo() {
     assert!(
         matches!(
             &erro,
-            DomainError::Validacao {
-                campo: "status",
+            DomainError::Validation {
+                field: "status",
                 ..
             }
         ),
@@ -347,7 +347,7 @@ fn slug_repetido_na_org_e_recusado_e_em_outra_org_e_aceito() {
         },
     ));
     assert!(
-        matches!(&erro, DomainError::Validacao { campo: "slug", .. }),
+        matches!(&erro, DomainError::Validation { field: "slug", .. }),
         "erro inesperado: {erro:?}"
     );
 
@@ -377,7 +377,7 @@ fn slug_fora_do_formato_da_linguagem_e_recusado() {
             },
         ));
         assert!(
-            matches!(&erro, DomainError::Validacao { campo: "slug", .. }),
+            matches!(&erro, DomainError::Validation { field: "slug", .. }),
             "slug `{slug}` devia ser recusado, veio {erro:?}"
         );
     }
@@ -404,8 +404,8 @@ fn excluir_sem_execucao_ativa_devolve_zero_e_leva_a_permissao() {
     assert_eq!(ativas, 0);
     assert!(matches!(
         dominio(store.fluxos().obter(org.id, fluxo.id)),
-        DomainError::NaoEncontrado {
-            entidade: "fluxo",
+        DomainError::NotFound {
+            entity: "fluxo",
             ..
         }
     ));
@@ -446,7 +446,7 @@ fn excluir_com_execucao_ativa_exige_force_e_abandona_mantendo_o_historico() {
     // Sem force: recusa com a contagem, e nada muda.
     let erro = dominio(store.fluxos().excluir(org.id, fluxo.id, false));
     assert!(
-        matches!(&erro, DomainError::Conflito { entidade: "fluxo", motivo, .. } if motivo.contains("1 execução")),
+        matches!(&erro, DomainError::Conflict { entity: "fluxo", reason, .. } if reason.contains("1 execução")),
         "erro inesperado: {erro:?}"
     );
     store
@@ -471,7 +471,7 @@ fn excluir_com_execucao_ativa_exige_force_e_abandona_mantendo_o_historico() {
     assert_eq!(ativas, 1, "devolve quantas execuções ativas havia");
     assert!(matches!(
         dominio(store.fluxos().obter(org.id, fluxo.id)),
-        DomainError::NaoEncontrado { .. }
+        DomainError::NotFound { .. }
     ));
 
     let conn = cenario.conexao();
@@ -500,9 +500,9 @@ fn excluir_com_execucao_ativa_exige_force_e_abandona_mantendo_o_historico() {
         .expect("eventos");
     let abandono = eventos
         .iter()
-        .find(|evento| evento.tipo == TipoEventoFicha::ExecucaoAbandonada)
+        .find(|evento| evento.tipo == RecordEventKind::ExecutionAbandoned)
         .expect("o abandono entra na linha do tempo da Ficha");
-    assert_eq!(abandono.ator_tipo, AtorEvento::Sistema);
+    assert_eq!(abandono.ator_tipo, EventActor::System);
     assert_eq!(
         abandono.execucao_id.map(|id| id.to_string()),
         Some(execucao.clone())
@@ -528,8 +528,8 @@ fn excluir_fluxo_inexistente_ou_de_outra_org_e_nao_encontrado() {
     let erro = dominio(cenario.store().fluxos().excluir(org_a.id, fluxo_b.id, true));
     assert!(matches!(
         erro,
-        DomainError::NaoEncontrado {
-            entidade: "fluxo",
+        DomainError::NotFound {
+            entity: "fluxo",
             ..
         }
     ));
@@ -576,14 +576,14 @@ fn teto_de_fluxos_por_agente_recusa_o_21o_e_repetir_nao_conta() {
     let erro = dominio(store.fluxos().liberar(org.id, agente.id, fluxos[20].id));
     assert_eq!(
         erro,
-        DomainError::TetoDeFluxosPorAgente {
+        DomainError::FlowLimitPerAgent {
             agent_id: agente.id.to_string(),
-            limite: TETO_FLUXOS_POR_AGENTE,
-            pedidos: 21,
+            limit: TETO_FLUXOS_POR_AGENTE,
+            requested: 21,
         }
     );
-    assert_eq!(erro.codigo_api(), "teto_de_fluxos_por_agente");
-    assert_eq!(erro.status_http(), 409);
+    assert_eq!(erro.api_code(), "teto_de_fluxos_por_agente");
+    assert_eq!(erro.http_status(), 409);
     assert_eq!(
         store
             .fluxos()
@@ -606,7 +606,7 @@ fn substituir_lista_com_21_recusa_e_mantem_a_lista_antiga() {
         .fluxos()
         .liberar(org.id, agente.id, antigo.id)
         .expect("libera o antigo");
-    let novos: Vec<FluxoId> = (0..21)
+    let novos: Vec<FlowId> = (0..21)
         .map(|n| cenario.fluxo(&org, &format!("fluxo_{n:02}")).id)
         .collect();
     let versao = cenario.versao_agente(&org, &agente);
@@ -619,9 +619,9 @@ fn substituir_lista_com_21_recusa_e_mantem_a_lista_antiga() {
     assert!(
         matches!(
             erro,
-            DomainError::TetoDeFluxosPorAgente {
-                limite: 20,
-                pedidos: 21,
+            DomainError::FlowLimitPerAgent {
+                limit: 20,
+                requested: 21,
                 ..
             }
         ),
@@ -658,7 +658,7 @@ fn substituir_lista_e_atomica_e_respeita_if_match_do_agente() {
         .expect("troca a lista");
     let v2 = cenario.versao_agente(&org, &agente);
     assert_eq!(v2, v1 + 1, "troca de permissão avança a versão do agente");
-    let lista: Vec<FluxoId> = store
+    let lista: Vec<FlowId> = store
         .fluxos()
         .listar_do_agente(org.id, agente.id)
         .expect("lista")
@@ -682,7 +682,7 @@ fn substituir_lista_e_atomica_e_respeita_if_match_do_agente() {
             .substituir_lista(org.id, agente.id, v1, &[c.id]),
     );
     assert!(
-        matches!(erro, DomainError::ConflitoDeVersao { .. }),
+        matches!(erro, DomainError::VersionConflict { .. }),
         "erro inesperado: {erro:?}"
     );
     assert_eq!(cenario.versao_agente(&org, &agente), v3);
@@ -770,8 +770,8 @@ fn permissao_com_fluxo_ou_agente_de_outra_org_e_recusada() {
     assert!(
         matches!(
             &erro,
-            DomainError::NaoEncontrado {
-                entidade: "fluxo",
+            DomainError::NotFound {
+                entity: "fluxo",
                 ..
             }
         ),
@@ -782,8 +782,8 @@ fn permissao_com_fluxo_ou_agente_de_outra_org_e_recusada() {
     assert!(
         matches!(
             &erro,
-            DomainError::NaoEncontrado {
-                entidade: "agente",
+            DomainError::NotFound {
+                entity: "agente",
                 ..
             }
         ),
@@ -793,12 +793,12 @@ fn permissao_com_fluxo_ou_agente_de_outra_org_e_recusada() {
     let erro = dominio(
         store
             .fluxos()
-            .liberar(org_a.id, agente_a.id, FluxoId::generate()),
+            .liberar(org_a.id, agente_a.id, FlowId::generate()),
     );
     assert!(matches!(
         erro,
-        DomainError::NaoEncontrado {
-            entidade: "fluxo",
+        DomainError::NotFound {
+            entity: "fluxo",
             ..
         }
     ));
@@ -817,8 +817,8 @@ fn permissao_com_fluxo_ou_agente_de_outra_org_e_recusada() {
     ));
     assert!(matches!(
         &erro,
-        DomainError::NaoEncontrado {
-            entidade: "fluxo",
+        DomainError::NotFound {
+            entity: "fluxo",
             ..
         }
     ));
@@ -836,7 +836,7 @@ fn permissao_com_fluxo_ou_agente_de_outra_org_e_recusada() {
 
     // Listar quem tem um fluxo de outra org não devolve nada: é como se não existisse.
     let erro = dominio(store.fluxos().listar_agentes_do_fluxo(org_a.id, fluxo_b.id));
-    assert!(matches!(erro, DomainError::NaoEncontrado { .. }));
+    assert!(matches!(erro, DomainError::NotFound { .. }));
 }
 
 #[test]

@@ -15,7 +15,7 @@ use poph_store::{
     Direcao, EstadoTurno, NovaConversa, NovaMensagem, NovaOrg, NovoAgente, NovoFluxo, Papel,
     PublicacaoDeRevisao, StatusConversa, Store,
 };
-use poph_types::{AgentId, ConversationId, FluxosConfig, GatesJev, MessageId, OrgId, StatusFicha};
+use poph_types::{AgentId, ConversationId, FlowsConfig, JevGates, MessageId, OrgId, RecordStatus};
 use serde_json::{Value, json};
 
 struct SemEspera;
@@ -119,7 +119,7 @@ impl Cenario {
         nome: &str,
         script: &str,
         liberar: bool,
-    ) -> poph_types::FluxoId {
+    ) -> poph_types::FlowId {
         let fluxo = self
             .store
             .fluxos()
@@ -202,7 +202,7 @@ impl Cenario {
         &self,
         roteiros: Vec<Roteiro>,
         jev: Option<Arc<MotorJev>>,
-        fluxos: Option<FluxosConfig>,
+        fluxos: Option<FlowsConfig>,
     ) -> (Motor, Arc<ProvedorFake>) {
         let config = ConfigQuente::nova(
             Arc::clone(&self.store),
@@ -311,10 +311,10 @@ fn chamada(nome: &str, argumentos: Value) -> Roteiro {
     ])
 }
 
-fn gates_com_g9() -> GatesJev {
-    GatesJev {
+fn gates_com_g9() -> JevGates {
+    JevGates {
         g9: true,
-        ..GatesJev::default()
+        ..JevGates::default()
     }
 }
 
@@ -342,7 +342,7 @@ async fn api(c: &Cenario) -> String {
         .unwrap()
         .to_string();
     let mut config = poph_types::HarnessConfig::default();
-    config.admin.tokens_globais = vec![poph_types::config::TokenGlobalConfig {
+    config.admin.tokens_globais = vec![poph_types::config::GlobalTokenConfig {
         label: "teste".into(),
         hash,
     }];
@@ -377,11 +377,7 @@ async fn executar(
         "g9_iniciar_fluxo",
         slug,
     )])));
-    let (motor, provedor) = c.motor(
-        roteiros,
-        Some(motor_jev(jev)),
-        Some(FluxosConfig::default()),
-    );
+    let (motor, provedor) = c.motor(roteiros, Some(motor_jev(jev)), Some(FlowsConfig::default()));
     let mensagem = c.falar(conversa, "Pedido fictício para teste");
     assert_eq!(
         c.turno(&motor, conversa, mensagem).await.estado,
@@ -490,7 +486,7 @@ async fn exemplo_entrega_notificacao_unica_e_transferencia_com_ficha_aberta() {
         fluxos_efeitos::{EfeitosFluxo, OpcoesEfeitosFluxo},
         saida_whatsapp::{OpcoesSaidaWhatsApp, SaidaWhatsApp},
     };
-    use poph_types::{IntegrationId, Segredo};
+    use poph_types::{IntegrationId, Secret};
     let c = Cenario::novo("efeitos-fx35");
     c.criar_fluxo("confirmar_entrega", "Confirmar entrega", ENTREGA, true);
     c.store
@@ -518,7 +514,7 @@ async fn exemplo_entrega_notificacao_unica_e_transferencia_com_ficha_aberta() {
         segredo: None,
         cliente: Some(
             ClienteEvolution::novo(
-                ConfigEvolution::novo(url, "teste", Segredo::new("ficticia".into())).unwrap(),
+                ConfigEvolution::novo(url, "teste", Secret::new("ficticia".into())).unwrap(),
             )
             .unwrap(),
         ),
@@ -630,7 +626,7 @@ async fn exemplo_entrega_notificacao_unica_e_transferencia_com_ficha_aberta() {
         c.store.conversas().obter(c.org, segunda).unwrap().status,
         StatusConversa::Transferida
     );
-    assert_eq!(c.ficha(segunda).status, StatusFicha::Aberta);
+    assert_eq!(c.ficha(segunda).status, RecordStatus::Open);
     let base = api(&c).await;
     let eventos = get_api(&base, &c, &format!("{}/events", c.ficha(segunda).id)).await;
     assert!(
@@ -754,7 +750,7 @@ async fn jev_falha_reserva_inicia_permitido_e_recusa_nao_liberado() {
             texto("Certo."),
         ],
         Some(motor_jev(jev)),
-        Some(FluxosConfig::default()),
+        Some(FlowsConfig::default()),
     );
     let mensagem = c.falar(conversa, "Quero agendar");
     c.turno(&motor, conversa, mensagem).await;
@@ -813,10 +809,10 @@ async fn encerramento_do_agente_e_proxima_mensagem_abrem_nova_ficha() {
             texto("Até logo."),
         ],
         None,
-        Some(FluxosConfig::default()),
+        Some(FlowsConfig::default()),
     );
     c.turno(&motor, conversa, mensagem.id).await;
-    assert_eq!(c.ficha(conversa).status, StatusFicha::Fechada);
+    assert_eq!(c.ficha(conversa).status, RecordStatus::Closed);
     let proxima = c
         .store
         .caixa_entrada()
@@ -842,7 +838,7 @@ async fn encerramento_do_agente_e_proxima_mensagem_abrem_nova_ficha() {
 #[tokio::test]
 async fn contadores_do_turno_contam_uma_abertura_e_uma_conclusao() {
     let c = Cenario::novo("fx40-turno");
-    let registro = poph_types::Registro::new();
+    let registro = poph_types::Registry::new();
     let metricas = poph_server::fluxos_metricas::MetricasFluxos::registrar(&registro)
         .expect("o catálogo de fluxos registra");
     c.store
@@ -866,16 +862,16 @@ async fn contadores_do_turno_contam_uma_abertura_e_uma_conclusao() {
     .await;
 
     assert_eq!(
-        metricas.execucoes_iniciadas.valor(),
+        metricas.execucoes_iniciadas.value(),
         1,
         "o turno abriu uma execução (G9 antes do modelo)"
     );
     assert_eq!(
-        metricas.execucoes_concluidas.valor(),
+        metricas.execucoes_concluidas.value(),
         1,
         "as ações do agente concluíram a mesma execução"
     );
-    assert_eq!(metricas.execucoes_abandonadas.valor(), 0);
-    assert_eq!(metricas.execucoes_falhas.valor(), 0);
-    assert_eq!(metricas.erros_regra.valor(), 0);
+    assert_eq!(metricas.execucoes_abandonadas.value(), 0);
+    assert_eq!(metricas.execucoes_falhas.value(), 0);
+    assert_eq!(metricas.erros_regra.value(), 0);
 }

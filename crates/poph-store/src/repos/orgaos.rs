@@ -135,10 +135,10 @@ impl Orgaos<'_> {
                 )
                 .map_err(ErroStore::from)?;
             if agentes > 0 {
-                return Err(ErroStore::Dominio(poph_types::DomainError::Conflito {
-                    entidade: "org",
+                return Err(ErroStore::Dominio(poph_types::DomainError::Conflict {
+                    entity: "org",
                     id: conferido.clone(),
-                    motivo: format!(
+                    reason: format!(
                         "{agentes} agente(s) na org; exclua os agentes antes, ou confirme com --force"
                     ),
                 }));
@@ -147,8 +147,8 @@ impl Orgaos<'_> {
                 .map_err(ErroStore::from)
         })?;
         if apagou == 0 {
-            return Err(ErroStore::Dominio(poph_types::DomainError::NaoEncontrado {
-                entidade: "org",
+            return Err(ErroStore::Dominio(poph_types::DomainError::NotFound {
+                entity: "org",
                 id: id.to_string(),
             }));
         }
@@ -175,8 +175,8 @@ impl Orgaos<'_> {
             Ok((apagou, agentes))
         })?;
         if apagou == 0 {
-            return Err(ErroStore::Dominio(poph_types::DomainError::NaoEncontrado {
-                entidade: "org",
+            return Err(ErroStore::Dominio(poph_types::DomainError::NotFound {
+                entity: "org",
                 id: texto,
             }));
         }
@@ -199,14 +199,14 @@ fn conflito_de_org(store: &Store, id: OrgId, esperada: u64) -> ErroStore {
         }
     });
     match atual {
-        Ok(Some(atual)) => ErroStore::Dominio(poph_types::DomainError::ConflitoDeVersao {
-            entidade: "org",
+        Ok(Some(atual)) => ErroStore::Dominio(poph_types::DomainError::VersionConflict {
+            entity: "org",
             id: texto,
-            esperada,
-            atual: atual.max(0) as u64,
+            expected: esperada,
+            current: atual.max(0) as u64,
         }),
-        _ => ErroStore::Dominio(poph_types::DomainError::NaoEncontrado {
-            entidade: "org",
+        _ => ErroStore::Dominio(poph_types::DomainError::NotFound {
+            entity: "org",
             id: texto,
         }),
     }

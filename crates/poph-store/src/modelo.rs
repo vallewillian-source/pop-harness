@@ -5,10 +5,10 @@
 //! Nenhuma regra de negócio aqui: só a forma do dado.
 
 use poph_types::{
-    AgentId, AtorAcao, AtorEvento, ConversationId, DepartmentId, EfeitoId, EstadoEfeito,
-    EventoFichaId, ExecucaoId, FechadaPor, FichaId, FileId, FluxoId, IntegrationId,
-    KnowledgeGroupId, KnowledgeItemId, MessageId, OrgId, ProductCategoryId, ProductId, RevisaoId,
-    StatusEtapa, StatusExecucao, StatusFicha, TipoEventoFicha, TurnId,
+    ActionActor, AgentId, ClosedBy, ConversationId, DepartmentId, EffectId, EffectState,
+    EventActor, ExecutionId, ExecutionStatus, FileId, FlowId, IntegrationId, KnowledgeGroupId,
+    KnowledgeItemId, MessageId, OrgId, ProductCategoryId, ProductId, RecordEventId,
+    RecordEventKind, RecordId, RecordStatus, RevisionId, StepStatus, TurnId,
 };
 
 use crate::erro::{ErroStore, Resultado};
@@ -891,7 +891,7 @@ pub struct NovaMensagem {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ficha {
     /// Id.
-    pub id: FichaId,
+    pub id: RecordId,
     /// Org dona.
     pub org_id: OrgId,
     /// Conversa que a Ficha registra. `None` quando a conversa foi apagada pela retenção (PRD L12).
@@ -903,13 +903,13 @@ pub struct Ficha {
     /// Identificador do cliente no canal.
     pub peer_externo: Option<String>,
     /// Situação.
-    pub status: StatusFicha,
+    pub status: RecordStatus,
     /// Abertura (ms).
     pub aberta_em: i64,
     /// Fechamento (ms). Só com `status = closed`.
     pub fechada_em: Option<i64>,
     /// Quem encerrou. Só com `status = closed`.
-    pub fechada_por: Option<FechadaPor>,
+    pub fechada_por: Option<ClosedBy>,
     /// Por que encerrou, em texto legível.
     pub fechada_motivo: Option<String>,
     /// Versão para `If-Match`.
@@ -934,19 +934,19 @@ pub struct NovaFicha {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EventoFicha {
     /// Id.
-    pub id: EventoFichaId,
+    pub id: RecordEventId,
     /// Org dona.
     pub org_id: OrgId,
     /// Ficha dona.
-    pub ficha_id: FichaId,
+    pub ficha_id: RecordId,
     /// Execução de fluxo a que o evento pertence, quando é evento de fluxo.
-    pub execucao_id: Option<ExecucaoId>,
+    pub execucao_id: Option<ExecutionId>,
     /// Posição na linha do tempo da Ficha (1, 2, 3…). É o cursor da paginação.
     pub seq: i64,
     /// O que aconteceu.
-    pub tipo: TipoEventoFicha,
+    pub tipo: RecordEventKind,
     /// Quem assinou.
-    pub ator_tipo: AtorEvento,
+    pub ator_tipo: EventActor,
     /// Identificador de quem assinou (id Matrix do atendente, id do token), quando houver.
     pub ator_ref: Option<String>,
     /// Detalhe em JSON (campos gravados, ramo escolhido, erro do efeito).
@@ -961,11 +961,11 @@ pub struct EventoFicha {
 #[derive(Debug, Clone)]
 pub struct NovoEventoFicha<'a> {
     /// Execução de fluxo a que o evento pertence, quando é evento de fluxo.
-    pub execucao_id: Option<ExecucaoId>,
+    pub execucao_id: Option<ExecutionId>,
     /// O que aconteceu.
-    pub tipo: TipoEventoFicha,
+    pub tipo: RecordEventKind,
     /// Quem assinou.
-    pub ator_tipo: AtorEvento,
+    pub ator_tipo: EventActor,
     /// Identificador de quem assinou, quando houver.
     pub ator_ref: Option<&'a str>,
     /// Detalhe em JSON (`{}` quando não há).
@@ -978,7 +978,7 @@ pub struct NovoEventoFicha<'a> {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FiltroFichas {
     /// Situação exata.
-    pub status: Option<StatusFicha>,
+    pub status: Option<RecordStatus>,
     /// Agente que atendeu.
     pub agente: Option<AgentId>,
     /// Canal exato (`whatsapp`, `console`, `cli`).
@@ -994,7 +994,7 @@ pub struct FiltroFichas {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Fluxo {
     /// Id.
-    pub id: FluxoId,
+    pub id: FlowId,
     /// Org dona.
     pub org_id: OrgId,
     /// Identificador estável, vindo do `id` do script (único por org).
@@ -1057,11 +1057,11 @@ pub struct FiltroFluxos {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RevisaoDeFluxo {
     /// Id.
-    pub id: RevisaoId,
+    pub id: RevisionId,
     /// Org dona.
     pub org_id: OrgId,
     /// Fluxo a que a revisão pertence.
-    pub fluxo_id: FluxoId,
+    pub fluxo_id: FlowId,
     /// Número da revisão dentro do fluxo (1, 2, 3…), único por fluxo.
     pub numero: u64,
     /// Texto do script exatamente como foi publicado.
@@ -1115,17 +1115,17 @@ pub struct PublicacaoDeRevisao {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Execucao {
     /// Id.
-    pub id: ExecucaoId,
+    pub id: ExecutionId,
     /// Org dona.
     pub org_id: OrgId,
     /// Ficha (atendimento) a que a execução pertence.
-    pub ficha_id: FichaId,
+    pub ficha_id: RecordId,
     /// Fluxo executado.
-    pub fluxo_id: FluxoId,
+    pub fluxo_id: FlowId,
     /// Revisão publicada que a execução segue (a que valia quando ela começou).
-    pub revisao_id: RevisaoId,
+    pub revisao_id: RevisionId,
     /// Situação; só `ativa` aceita transição.
-    pub status: StatusExecucao,
+    pub status: ExecutionStatus,
     /// Nó em que a execução está: id de etapa, de decisão ou de fim.
     pub no_atual: String,
     /// `dados[etapa][campo]` de todo o fluxo.
@@ -1151,17 +1151,17 @@ pub struct EtapaDaExecucao {
     /// Org dona.
     pub org_id: OrgId,
     /// Execução dona.
-    pub execucao_id: ExecucaoId,
+    pub execucao_id: ExecutionId,
     /// Id da etapa na IR (`etapas[].id`).
     pub no_id: String,
     /// Ordem de entrada na execução (1, 2, 3…).
     pub ordem: i64,
     /// Situação: `pendente`, `parcial` ou `concluida`.
-    pub status: StatusEtapa,
+    pub status: StepStatus,
     /// Campos colhidos nesta etapa (recorte de `dados_json`).
     pub dados_json: String,
     /// Atores que já executaram ação nesta etapa.
-    pub atores_que_agiram: Vec<AtorAcao>,
+    pub atores_que_agiram: Vec<ActionActor>,
     /// Entrada (ms).
     pub entrou_em: i64,
     /// Conclusão (ms). Só em etapa `concluida`.
@@ -1172,13 +1172,13 @@ pub struct EtapaDaExecucao {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EfeitoDoFluxo {
     /// Id.
-    pub id: EfeitoId,
+    pub id: EffectId,
     /// Org dona.
     pub org_id: OrgId,
     /// Ficha do atendimento.
-    pub ficha_id: FichaId,
+    pub ficha_id: RecordId,
     /// Execução que pediu o efeito.
-    pub execucao_id: ExecucaoId,
+    pub execucao_id: ExecutionId,
     /// Chave de idempotência (`nó + índice`): repetir a transição não cria o segundo.
     pub chave: String,
     /// `mensagem_ao_cliente`, `notificar_whatsapp` ou `encaminhar`.
@@ -1186,7 +1186,7 @@ pub struct EfeitoDoFluxo {
     /// O que fazer, em JSON (o efeito já com o texto resolvido).
     pub payload_json: String,
     /// Situação na fila.
-    pub estado: EstadoEfeito,
+    pub estado: EffectState,
     /// Tentativas de entrega já feitas.
     pub tentativas: u32,
     /// Último erro, quando falhou.
@@ -1207,13 +1207,13 @@ pub struct EfeitoDoFluxo {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EstadoDaExecucao {
     /// Situação depois da operação.
-    pub status: StatusExecucao,
+    pub status: ExecutionStatus,
     /// Nó em que a execução ficou.
     pub no_atual: String,
     /// `dados[etapa][campo]` de todo o fluxo, em JSON.
     pub dados_json: String,
     /// Atores que já agiram **na etapa atual** (zera ao entrar em etapa nova).
-    pub atores_que_agiram: Vec<AtorAcao>,
+    pub atores_que_agiram: Vec<ActionActor>,
     /// Resultado do `fim(...)`, quando chegou a um.
     pub resultado: Option<String>,
     /// Motivo do abandono ou da falha.
@@ -1224,9 +1224,9 @@ pub struct EstadoDaExecucao {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EventoDaTransicao {
     /// Tipo (`ficha_eventos.tipo`).
-    pub tipo: TipoEventoFicha,
+    pub tipo: RecordEventKind,
     /// Quem assinou (`ficha_eventos.ator_tipo`).
-    pub ator_tipo: AtorEvento,
+    pub ator_tipo: EventActor,
     /// Detalhe em JSON.
     pub payload_json: String,
 }
@@ -1277,13 +1277,13 @@ pub struct DecisaoDoJev<'a> {
 #[derive(Debug, Clone)]
 pub struct InicioDeExecucao<'a> {
     /// Ficha (atendimento) que vai receber a execução.
-    pub ficha: FichaId,
+    pub ficha: RecordId,
     /// Fluxo a executar.
-    pub fluxo: FluxoId,
+    pub fluxo: FlowId,
     /// Revisão publicada que a execução segue.
-    pub revisao: RevisaoId,
+    pub revisao: RevisionId,
     /// Quem abriu (agente, Jev, atendente, admin).
-    pub ator: AtorEvento,
+    pub ator: EventActor,
     /// Identificador de quem abriu (id do token, id Matrix), quando houver.
     pub ator_ref: Option<&'a str>,
     /// Decisão do Jev, quando o G9 foi quem escolheu.
@@ -1303,7 +1303,7 @@ pub struct ExtrasDaTransicao<'a> {
     /// Identificador de quem assinou os eventos (`ficha_eventos.ator_ref`).
     pub ator_ref: Option<&'a str>,
     /// Quem fecha o atendimento quando o fluxo pede; padrão [`FechadaPor::Fluxo`].
-    pub fechada_por: Option<FechadaPor>,
+    pub fechada_por: Option<ClosedBy>,
     /// Motivo do encerramento; padrão: o resultado do `fim`, ou "fim do fluxo".
     pub motivo_encerramento: Option<&'a str>,
 }

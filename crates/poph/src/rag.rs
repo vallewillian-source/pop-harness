@@ -13,7 +13,7 @@ use poph_types::HarnessConfig;
 /// Abre o índice de trechos sobre o `rag.db` do store.
 pub fn abrir_indice(config: &HarnessConfig, store: &Arc<Store>) -> Result<Indice, String> {
     let modelo = ConfigModelo {
-        diretorio: config.modelos(),
+        diretorio: config.models(),
         ..ConfigModelo::default()
     };
     let embedder = EmbedderOrt::abrir(&modelo, None).map_err(|erro| {
@@ -94,7 +94,7 @@ pub fn abrir_base_com_fila(
     org: poph_types::OrgId,
 ) -> Result<Arc<BaseConhecimento>, String> {
     let modelo = ConfigModelo {
-        diretorio: config.modelos(),
+        diretorio: config.models(),
         ..ConfigModelo::default()
     };
     let base = EmbedderOrt::abrir(&modelo, None).map_err(|erro| {

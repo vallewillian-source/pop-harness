@@ -23,8 +23,8 @@ use std::io::{BufRead, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use poph_types::{
-    Capacidades, ComandoSaida, EsquemaJson, InboundEvent, IntegrationId, Manifesto, MensagemHost,
-    MensagemPlugin, PROTOCOLO_VERSAO, Presenca, Saude, SendText,
+    Capabilities, Health, HostMessage, InboundEvent, IntegrationId, JsonSchema, Manifest,
+    OutboundCommand, PROTOCOL_VERSION, PluginMessage, Presence, SendText,
 };
 
 fn main() {
@@ -52,7 +52,7 @@ fn atender() -> i32 {
         if linha.trim().is_empty() {
             continue;
         }
-        let mensagem: MensagemHost = match serde_json::from_str(&linha) {
+        let mensagem: HostMessage = match serde_json::from_str(&linha) {
             Ok(mensagem) => mensagem,
             Err(erro) => {
                 // Regra do protocolo: linha fora do contrato é lixo, e lixo se ignora.
@@ -61,79 +61,79 @@ fn atender() -> i32 {
             }
         };
         match mensagem {
-            MensagemHost::Handshake(handshake) => {
-                if handshake.protocolo != PROTOCOLO_VERSAO {
-                    responder(&MensagemPlugin::Erro {
-                        codigo: "protocolo_incompativel".to_owned(),
-                        mensagem: format!(
-                            "o eco fala a versão {PROTOCOLO_VERSAO} e o host falou {}",
-                            handshake.protocolo
+            HostMessage::Handshake(handshake) => {
+                if handshake.protocol != PROTOCOL_VERSION {
+                    responder(&PluginMessage::Error {
+                        code: "protocolo_incompativel".to_owned(),
+                        message: format!(
+                            "o eco fala a versão {PROTOCOL_VERSION} e o host falou {}",
+                            handshake.protocol
                         ),
-                        transitorio: false,
+                        transient: false,
                     });
                     return 2;
                 }
-                eco.integracao = Some(handshake.integracao);
+                eco.integracao = Some(handshake.integration);
                 // Os segredos do handshake não são usados aqui (o eco não tem canal de verdade).
                 // Um plugin real usa este ponto para autenticar no canal.
-                let _ = &handshake.segredos;
-                responder(&MensagemPlugin::HandshakeOk {
-                    protocolo: PROTOCOLO_VERSAO,
-                    manifesto: manifesto(),
+                let _ = &handshake.secrets;
+                responder(&PluginMessage::HandshakeOk {
+                    protocolo: PROTOCOL_VERSION,
+                    manifest: manifesto(),
                 });
             }
-            MensagemHost::Comando { id, comando } => {
+            HostMessage::Command { id, command } => {
                 let Some(integracao) = eco.integracao else {
-                    responder(&MensagemPlugin::Resultado {
+                    responder(&PluginMessage::Result {
                         id,
                         ok: false,
-                        erro: Some(poph_types::ErroComando {
-                            codigo: "sem_handshake".to_owned(),
-                            mensagem: "recebi comando antes do handshake".to_owned(),
-                            transitorio: false,
+                        error: Some(poph_types::CommandError {
+                            code: "sem_handshake".to_owned(),
+                            message: "recebi comando antes do handshake".to_owned(),
+                            transient: false,
                         }),
                     });
                     continue;
                 };
                 let mut evento = None;
-                match comando {
-                    ComandoSaida::EnviarTexto(texto) => {
+                match command {
+                    OutboundCommand::Text(texto) => {
                         eco.mensagens += 1;
                         evento = Some(eco.evento_do_texto(integracao, &texto));
                     }
-                    ComandoSaida::EnviarArquivo(arquivo) => {
+                    OutboundCommand::File(arquivo) => {
                         // Um plugin real subiria o arquivo para o canal. O eco só confirma.
                         eprintln!(
                             "eco: arquivo confirmado ({} bytes): {}",
-                            arquivo.tamanho_bytes, arquivo.nome
+                            arquivo.size_bytes, arquivo.name
                         );
                     }
-                    ComandoSaida::DefinirPresenca(presenca) => {
-                        if presenca.estado == Presenca::Digitando {
+                    OutboundCommand::Presence(presenca) => {
+                        if presenca.state == Presence::Typing {
                             eprintln!("eco: digitando para {}", presenca.peer);
                         }
                     }
                 }
-                responder(&MensagemPlugin::Resultado {
+                responder(&PluginMessage::Result {
                     id,
                     ok: true,
-                    erro: None,
+                    error: None,
                 });
                 if let Some(evento) = evento {
-                    responder(&MensagemPlugin::Evento { evento });
+                    responder(&PluginMessage::Evento { evento });
                 }
             }
-            MensagemHost::Saude { id } => {
-                responder(&MensagemPlugin::Saude {
+            HostMessage::Health { id } => {
+                responder(&PluginMessage::Health {
                     id,
-                    saude: Saude::ok(format!(
+                    health: Health::ok(format!(
                         "eco {} — {} mensagem(ns) tratada(s)",
                         env!("CARGO_PKG_VERSION"),
                         eco.mensagens
                     )),
                 });
             }
-            MensagemHost::Encerrar => return 0,
+            HostMessage::Shutdown => return 0,
         }
     }
 }
@@ -149,16 +149,16 @@ impl Eco {
     /// Evento de volta com o texto invertido. O `id_externo` sai da chave de idempotência do
     /// comando, então reenviar o mesmo comando não duplica a mensagem na `inbox`.
     fn evento_do_texto(&self, integracao: IntegrationId, texto: &SendText) -> InboundEvent {
-        let invertido: String = texto.texto.chars().rev().collect();
+        let invertido: String = texto.text.chars().rev().collect();
         InboundEvent {
-            integracao,
-            id_externo: format!("eco-{}", texto.idempotencia),
+            integration: integracao,
+            id_externo: format!("eco-{}", texto.idempotency),
             peer: texto.peer.clone(),
             remetente: None,
-            texto: invertido,
-            anexos: Vec::new(),
-            ocorrido_em: agora_ms(),
-            metadados: serde_json::Value::Null,
+            text: invertido,
+            attachments: Vec::new(),
+            occurred_at: agora_ms(),
+            metadata: serde_json::Value::Null,
         }
     }
 }
@@ -171,20 +171,20 @@ fn agora_ms() -> i64 {
 }
 
 /// O que o Harness precisa saber deste plugin (PRD §8.3).
-fn manifesto() -> Manifesto {
-    Manifesto {
-        nome: "Eco (exemplo)".to_owned(),
+fn manifesto() -> Manifest {
+    Manifest {
+        name: "Eco (exemplo)".to_owned(),
         kind: "eco".to_owned(),
-        versao: env!("CARGO_PKG_VERSION").to_owned(),
-        protocolo: PROTOCOLO_VERSAO,
-        capacidades: Capacidades {
+        version: env!("CARGO_PKG_VERSION").to_owned(),
+        protocol: PROTOCOL_VERSION,
+        capabilities: Capabilities {
             text: true,
             file_out: true,
             typing: true,
-            ..Capacidades::default()
+            ..Capabilities::default()
         },
-        limites: poph_types::LimitesCanal::default(),
-        configuracao: EsquemaJson(serde_json::json!({
+        limits: poph_types::ChannelLimits::default(),
+        configuration: JsonSchema(serde_json::json!({
             "type": "object",
             "properties": {
                 "modo": {
@@ -205,7 +205,7 @@ fn manifesto() -> Manifesto {
         // O eco não usa segredo de verdade, mas declara um para o exemplo mostrar o formulário de
         // segredo do Console e o caminho de cifra em repouso (HR-44c). O campo é obrigatório para
         // que a API tenha o que cobrar.
-        segredos: EsquemaJson(serde_json::json!({
+        secrets: JsonSchema(serde_json::json!({
             "type": "object",
             "properties": {
                 "token": {
@@ -220,7 +220,7 @@ fn manifesto() -> Manifesto {
 }
 
 /// Escreve uma mensagem do protocolo (uma por linha) e descarrega no cano.
-fn responder(mensagem: &MensagemPlugin) {
+fn responder(mensagem: &PluginMessage) {
     let Ok(linha) = serde_json::to_string(mensagem) else {
         return;
     };

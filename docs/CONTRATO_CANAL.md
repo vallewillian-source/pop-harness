@@ -1,7 +1,7 @@
 # Channel contract (integration) and turn events
 
 > Describes what exists in the code today. The source of the types is
-> `crates/poph-types/src/integracao.rs`; the external-process plugin protocol is in
+> `crates/poph-types/src/integration.rs`; the external-process plugin protocol is in
 > [`PLUGIN_PROTOCOLO.md`](PLUGIN_PROTOCOLO.md); the full example is in [`PLUGIN_EXEMPLO.md`](PLUGIN_EXEMPLO.md).
 > If the code changes, this document changes in the same commit. Section 7 lists what **does not exist** and
 > would be needed for a channel that observes the conversation (the Matrix case); it is a survey, not a decision.
@@ -17,11 +17,11 @@ kinds today, with the same contract:
   `poph-plugins`. The `poph-plugin-eco` plugin is the model.
 
 Each integration belongs to **one agent** (`integrations.agent_id`) and to an org. The protocol version is
-`PROTOCOLO_VERSAO = 1`; a difference in the handshake is refused.
+`PROTOCOL_VERSION = 1`; a difference in the handshake is refused.
 
 ## 2. Manifest
 
-The channel describes itself in the handshake (`Manifesto`):
+The channel describes itself in the handshake (`Manifest`). The wire names below are the serialized keys and do not change:
 
 | Field | What it is for |
 |---|---|
@@ -46,11 +46,11 @@ What the channel delivers to the Harness:
 | `peer` | the other party: phone, jid, room (required) |
 | `remetente` | who wrote it, when different from `peer` (group) |
 | `texto` | text received; empty when it is only an attachment |
-| `anexos` | list of `AnexoEntrada`: `blob` (already stored: name, mime, sha256, size) or `bytes` (base64 in the event) |
+| `anexos` | list of `InboundAttachment`: `blob` (already stored: name, mime, sha256, size) or `bytes` (base64 in the event) |
 | `ocorrido_em` | ms since the epoch (required, positive) |
 | `metadados` | channel data without a field of its own (reply id, mentions) |
 
-`InboundEvent::validar` refuses an event without `id_externo`, without `peer`, without a time, or with an invalid
+`InboundEvent::validate` refuses an event without `id_externo`, without `peer`, without a time, or with an invalid
 attachment (sha256 that is not 64 hex characters, zero size, no name or mime).
 
 **Customer name (`push_name`, MX-32).** The WhatsApp plugin puts the contact's name in
@@ -67,16 +67,40 @@ second turn; the OK to the channel only goes out after the commit. The `inbox` i
 `{conversa, mensagem}` (`EventoEntrada`); the content is in `messages` and `attachments`. The item is only
 completed when the turn ends, so a failure in the middle makes the dispatch repeat (at least once).
 
-## 4. Output: `ComandoSaida`
+### Unsupported WhatsApp content (MX-45)
+
+Audio, video, sticker, contact, location and poll are **not downloaded**. The webhook
+(`poph-evolution`) writes the message with a fixed history text, so the agent knows the customer sent
+something and can ask for text; `UnsupportedContent` (`poph-types`) owns those texts, because the Matrix
+mirror (`poph-matrix`) recognises them too. Product decision A, 22/11/2026, copies POP Atende
+(`core/conversations/whatsapp_media.py`): the same texts, with one exception — the poll is labelled
+"uma enquete" instead of "uma mensagem de tipo não suportado".
+
+| Type | History text |
+|---|---|
+| audio | `[O cliente enviou um áudio, que o sistema não consegue abrir]` |
+| video | `[O cliente enviou um vídeo, que o sistema não consegue abrir]` |
+| sticker | `[O cliente enviou uma figurinha, que o sistema não consegue abrir]` |
+| contact | `[O cliente enviou um contato, que o sistema não consegue abrir]` |
+| location | `[O cliente enviou uma localização, que o sistema não consegue abrir]` |
+| poll | `[O cliente enviou uma enquete, que o sistema não consegue abrir]` |
+
+In the Matrix room the mirror replaces that text with an `m.notice` — "O cliente enviou um áudio. Esse tipo
+de mensagem ainda não é suportado." — only when the text matches **exactly**: any difference (space,
+punctuation, case) makes it ordinary text. Known limit: a customer who types exactly one of these bracketed
+sentences sees the `m.notice` in place of the text, because there is no message-type column to tell the two
+apart.
+
+## 4. Output: `OutboundCommand`
 
 What the Harness tells the channel to deliver. Every command carries an idempotency key `turn_id:seq` (except
 presence).
 
 | Command | Fields | Note |
 |---|---|---|
-| `EnviarTexto` (`SendText`) | `idempotencia`, `peer`, `texto` | on WhatsApp, text longer than 4000 characters is cut with `…`, in a single message |
-| `EnviarArquivo` (`SendFile`) | `idempotencia`, `peer`, `nome`, `mime`, `tamanho_bytes`, `sha256`, `blob_ref`, `legenda?` | only files from the agent's library (D13); `blob_ref` is `<org>/<sha256>` |
-| `DefinirPresenca` (`SetPresence`) | `peer`, `estado` (`digitando` = typing, or `pausado` = paused) | |
+| `enviar_texto` (`SendText`) | `idempotencia`, `peer`, `texto` | on WhatsApp, text longer than 4000 characters is cut with `…`, in a single message |
+| `enviar_arquivo` (`SendFile`) | `idempotencia`, `peer`, `nome`, `mime`, `tamanho_bytes`, `sha256`, `blob_ref`, `legenda?` | only files from the agent's library (D13); `blob_ref` is `<org>/<sha256>` |
+| `definir_presenca` (`SetPresence`) | `peer`, `estado` (`digitando` = typing, or `pausado` = paused) | |
 
 States of an `outbox` row: `pending`, `sending` (saved **before** calling the channel), `sent`, `failed`. On
 resume, what was left in `sending` is sent again: this is the only situation in which the customer can receive a
@@ -84,25 +108,25 @@ duplicate (D11). Default backoff 500 ms × 2 up to 60 s.
 
 ## 5. State, health and the trait
 
-The channel reports changes with `EventoEstado`: `conectado` (connected), `desconectado` (disconnected), `qr`
+The channel reports changes with `StateEvent`: `conectado` (connected), `desconectado` (disconnected), `qr`
 (code and expiry) and `erro` (error: code, message, whether to retry). The health question returns
-`Saude { ok, detalhe }`.
+`Health { ok, detail }`.
 
 The trait that both kinds of channel implement:
 
 ```rust
 pub trait Integration: Send + Sync + 'static {
-    fn manifesto(&self) -> Option<Manifesto>;        // empty before the handshake
-    fn estado(&self) -> EstadoIntegracao;            // Iniciando, Pronto, Reiniciando, Caida, Encerrada
-    fn enviar_texto(&self, comando: SendText) -> FuturoComando;
-    fn enviar_arquivo(&self, comando: SendFile) -> FuturoComando;
-    fn definir_presenca(&self, comando: SetPresence) -> FuturoComando;
-    fn saude(&self) -> FuturoSaude;
+    fn manifest(&self) -> Option<Manifest>;          // empty before the handshake
+    fn state(&self) -> IntegrationState;             // Starting, Ready, Restarting, Down, Closed
+    fn send_text(&self, command: SendText) -> CommandFuture;
+    fn send_file(&self, command: SendFile) -> CommandFuture;
+    fn set_presence(&self, command: SetPresence) -> CommandFuture;
+    fn health(&self) -> HealthFuture;
 }
 ```
 
-Whoever receives what the channel produces implements `Receptor::receber(EventoIntegracao)`, with
-`EventoIntegracao::Entrada(InboundEvent)` or `EventoIntegracao::Estado(EventoEstado)`. The call is synchronous on
+Whoever receives what the channel produces implements `EventSink::receive(IntegrationEvent)`, with
+`IntegrationEvent::Inbound(InboundEvent)` or `IntegrationEvent::State(StateEvent)`. The call is synchronous on
 purpose: the receiver enqueues and returns. The ready connection between the contract and the queues is in
 `poph-agent/src/fila_integracao.rs` (`InboxDoCanal`, `EnvioPeloCanal`).
 

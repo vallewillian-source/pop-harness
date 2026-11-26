@@ -42,9 +42,7 @@ fn representar(i: &Instrucoes) -> Value {
 fn existente(e: &Estado, org: OrgId, id: AgentId) -> Result<Option<Instrucoes>, ApiError> {
     match e.store.instrucoes().obter(org, id) {
         Ok(i) => Ok(Some(i)),
-        Err(poph_store::ErroStore::Dominio(poph_types::DomainError::NaoEncontrado { .. })) => {
-            Ok(None)
-        }
+        Err(poph_store::ErroStore::Dominio(poph_types::DomainError::NotFound { .. })) => Ok(None),
         Err(erro) => Err(erro.into()),
     }
 }
@@ -79,16 +77,12 @@ fn preparar(
 ) -> Result<(String, String, bool), ApiError> {
     match (d.structured, d.markdown) {
         (Some(valor), None) => {
-            let dados = StructuredInstructions::de_json_tolerante(&valor.to_string())
+            let dados = StructuredInstructions::from_tolerant_json(&valor.to_string())
                 .map_err(|err| ApiError::validacao("structured", err.to_string()))?;
             dados
                 .validar()
                 .map_err(|err| ApiError::validacao("structured", err.to_string()))?;
-            Ok((
-                dados.para_json(),
-                poph_agent::compor_instrucoes(&dados),
-                true,
-            ))
+            Ok((dados.to_json(), poph_agent::compor_instrucoes(&dados), true))
         }
         (None, Some(markdown)) => {
             let estruturado =

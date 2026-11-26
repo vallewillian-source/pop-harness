@@ -63,7 +63,7 @@ const FIXTURAS: &[(&str, &str, &str)] = &[
 #[test]
 fn paridade_byte_a_byte_com_o_pop_atende() {
     for (nome, entrada, esperado) in FIXTURAS {
-        let dados = StructuredInstructions::de_json_tolerante(entrada)
+        let dados = StructuredInstructions::from_tolerant_json(entrada)
             .unwrap_or_else(|erro| panic!("fixtura `{nome}` não é JSON válido: {erro}"));
         let obtido = compor_instrucoes(&dados);
         assert_eq!(
@@ -80,7 +80,7 @@ fn exemplo_do_documento_de_paridade_tem_658_caracteres_e_677_bytes() {
         .iter()
         .find(|(nome, _, _)| *nome == "exemplo_bia")
         .expect("fixtura exemplo_bia");
-    let texto = compor_instrucoes(&StructuredInstructions::de_json_tolerante(entrada).unwrap());
+    let texto = compor_instrucoes(&StructuredInstructions::from_tolerant_json(entrada).unwrap());
     assert_eq!(texto, *esperado);
     assert_eq!(texto.chars().count(), 658, "contagem de caracteres do §9.3");
     assert_eq!(texto.len(), 677, "contagem de bytes UTF-8 do §9.3");
@@ -93,7 +93,7 @@ fn exemplo_do_documento_de_paridade_tem_658_caracteres_e_677_bytes() {
 #[test]
 fn composicao_e_deterministica() {
     for (nome, entrada, _esperado) in FIXTURAS {
-        let dados = StructuredInstructions::de_json_tolerante(entrada).unwrap();
+        let dados = StructuredInstructions::from_tolerant_json(entrada).unwrap();
         let primeira = compor_instrucoes(&dados);
         let segunda = compor_instrucoes(&dados);
         assert_eq!(
@@ -107,7 +107,7 @@ fn composicao_e_deterministica() {
 #[test]
 fn caso_de_borda_identity_sem_nome_nem_empresa_nao_emite_cabecalho() {
     // §9.3: o gate é `name or company`; só papel + descrição não emitem identidade.
-    let dados = StructuredInstructions::de_json_tolerante(
+    let dados = StructuredInstructions::from_tolerant_json(
         r#"{"identity":{"role":"atendente","company_description":"perdida"}}"#,
     )
     .unwrap();
@@ -123,7 +123,7 @@ fn caso_de_borda_identity_sem_nome_nem_empresa_nao_emite_cabecalho() {
 #[test]
 fn caso_de_borda_empresa_sem_nome_tem_dois_espacos_no_cabecalho() {
     let dados =
-        StructuredInstructions::de_json_tolerante(r#"{"identity":{"company":"FixProLar"}}"#)
+        StructuredInstructions::from_tolerant_json(r#"{"identity":{"company":"FixProLar"}}"#)
             .unwrap();
     let texto = compor_instrucoes(&dados);
     assert!(texto.starts_with("#  da FixProLar\n"), "{texto}");
@@ -131,7 +131,7 @@ fn caso_de_borda_empresa_sem_nome_tem_dois_espacos_no_cabecalho() {
 
 #[test]
 fn caso_de_borda_ferramenta_desabilitada_nao_entra_no_markdown() {
-    let dados = StructuredInstructions::de_json_tolerante(
+    let dados = StructuredInstructions::from_tolerant_json(
         r#"{"tools":[{"name":"enviar_arquivo","enabled":false,"when_to_use":"catálogo"}]}"#,
     )
     .unwrap();
@@ -143,8 +143,8 @@ fn caso_de_borda_ferramenta_desabilitada_nao_entra_no_markdown() {
 #[test]
 fn caso_de_borda_flow_steps_nao_alteram_a_saida() {
     let sem_passos: StructuredInstructions =
-        StructuredInstructions::de_json_tolerante(r#"{"scope":{"does":"x"}}"#).unwrap();
-    let com_passos: StructuredInstructions = StructuredInstructions::de_json_tolerante(
+        StructuredInstructions::from_tolerant_json(r#"{"scope":{"does":"x"}}"#).unwrap();
+    let com_passos: StructuredInstructions = StructuredInstructions::from_tolerant_json(
         r#"{"scope":{"does":"x"},"flow_steps":[{"name":"A","description":"B"}]}"#,
     )
     .unwrap();
@@ -158,14 +158,14 @@ fn caso_de_borda_flow_steps_nao_alteram_a_saida() {
 fn le_o_duplo_encoding_legado_do_jsonb() {
     let objeto = r#"{"identity":{"name":"Bia"}}"#;
     let duplo = serde_json::to_string(&serde_json::Value::String(objeto.to_owned())).unwrap();
-    let dados = StructuredInstructions::de_json_tolerante(&duplo).expect("lê o duplo encoding");
+    let dados = StructuredInstructions::from_tolerant_json(&duplo).expect("lê o duplo encoding");
     assert_eq!(dados.identity.name, "Bia");
 }
 
 #[test]
 fn campo_desconhecido_e_ignorado_na_leitura() {
     // `linked_template_id` (Fichas) é fora da V1 e não pode fazer a leitura falhar.
-    let dados = StructuredInstructions::de_json_tolerante(r#"{"linked_template_id":"tpl_1"}"#)
+    let dados = StructuredInstructions::from_tolerant_json(r#"{"linked_template_id":"tpl_1"}"#)
         .expect("ignora campo fora da V1");
     assert_eq!(dados, StructuredInstructions::default());
 }
@@ -173,7 +173,7 @@ fn campo_desconhecido_e_ignorado_na_leitura() {
 #[test]
 fn nomes_antigos_de_ferramenta_sao_recusados_na_escrita() {
     // D-04: lista fechada. Quem importa do POP Atende (HR-52) precisa mapear os nomes antigos.
-    let dados = StructuredInstructions::de_json_tolerante(
+    let dados = StructuredInstructions::from_tolerant_json(
         r#"{"tools":[{"name":"search_knowledge_base","enabled":true}]}"#,
     )
     .unwrap();
@@ -187,7 +187,7 @@ fn nomes_antigos_de_ferramenta_sao_recusados_na_escrita() {
 
 #[test]
 fn ferramentas_da_v1_sao_aceitas() {
-    let dados = StructuredInstructions::de_json_tolerante(
+    let dados = StructuredInstructions::from_tolerant_json(
         r#"{"tools":[
             {"name":"consultar_base","enabled":true},
             {"name":"buscar_produto","enabled":true},
@@ -201,13 +201,13 @@ fn ferramentas_da_v1_sao_aceitas() {
     )
     .unwrap();
     dados.validar().expect("toda ferramenta da V1 é aceita");
-    assert_eq!(dados.ferramentas_habilitadas().len(), 8);
+    assert_eq!(dados.enabled_tools().len(), 8);
 }
 
 #[test]
 fn ferramenta_sem_enabled_vem_habilitada_como_no_contrato() {
     let dados =
-        StructuredInstructions::de_json_tolerante(r#"{"tools":[{"name":"consultar_base"}]}"#)
+        StructuredInstructions::from_tolerant_json(r#"{"tools":[{"name":"consultar_base"}]}"#)
             .unwrap();
     assert!(dados.tools[0].enabled);
 }

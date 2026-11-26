@@ -55,8 +55,8 @@ impl Biblioteca<'_> {
                 params![org, agente, id],
             )?;
             if apagou == 0 {
-                return Err(ErroStore::Dominio(poph_types::DomainError::NaoEncontrado {
-                    entidade: ENTIDADE,
+                return Err(ErroStore::Dominio(poph_types::DomainError::NotFound {
+                    entity: ENTIDADE,
                     id,
                 }));
             }
@@ -77,24 +77,24 @@ impl Biblioteca<'_> {
         let nome = validar_texto("nome", &novo.nome, LIMITE_NOME_ARQUIVO)?;
         let descricao = novo.descricao.trim().to_owned();
         if descricao.chars().count() > LIMITE_DESCRICAO_ARQUIVO {
-            return Err(ErroStore::Dominio(poph_types::DomainError::Validacao {
-                campo: "descrição",
-                motivo: format!("use no máximo {LIMITE_DESCRICAO_ARQUIVO} caracteres"),
+            return Err(ErroStore::Dominio(poph_types::DomainError::Validation {
+                field: "descrição",
+                reason: format!("use no máximo {LIMITE_DESCRICAO_ARQUIVO} caracteres"),
             }));
         }
         let mime = novo.mime.trim().to_owned();
         if mime.is_empty() {
-            return Err(ErroStore::Dominio(poph_types::DomainError::Validacao {
-                campo: "mime",
-                motivo: "informe o tipo real do arquivo".to_owned(),
+            return Err(ErroStore::Dominio(poph_types::DomainError::Validation {
+                field: "mime",
+                reason: "informe o tipo real do arquivo".to_owned(),
             }));
         }
         let sha256 = validar_sha256(&novo.sha256)?;
         let blob_path = novo.blob_path.trim().to_owned();
         if blob_path.is_empty() {
-            return Err(ErroStore::Dominio(poph_types::DomainError::Validacao {
-                campo: "blob_path",
-                motivo: "informe onde o conteúdo foi gravado".to_owned(),
+            return Err(ErroStore::Dominio(poph_types::DomainError::Validation {
+                field: "blob_path",
+                reason: "informe onde o conteúdo foi gravado".to_owned(),
             }));
         }
 
@@ -206,8 +206,8 @@ impl Biblioteca<'_> {
             .map_err(ErroStore::from)
         })?;
         if apagou == 0 {
-            return Err(ErroStore::Dominio(poph_types::DomainError::NaoEncontrado {
-                entidade: ENTIDADE,
+            return Err(ErroStore::Dominio(poph_types::DomainError::NotFound {
+                entity: ENTIDADE,
                 id: id.to_string(),
             }));
         }
@@ -233,15 +233,15 @@ fn linha(linha: &Row<'_>) -> rusqlite::Result<ArquivoBiblioteca> {
 fn validar_texto(campo: &'static str, valor: &str, limite: usize) -> Resultado<String> {
     let limpo = valor.trim().to_owned();
     if limpo.is_empty() {
-        return Err(ErroStore::Dominio(poph_types::DomainError::Validacao {
-            campo,
-            motivo: "não pode ficar vazio".to_owned(),
+        return Err(ErroStore::Dominio(poph_types::DomainError::Validation {
+            field: campo,
+            reason: "não pode ficar vazio".to_owned(),
         }));
     }
     if limpo.chars().count() > limite {
-        return Err(ErroStore::Dominio(poph_types::DomainError::Validacao {
-            campo,
-            motivo: format!("use no máximo {limite} caracteres"),
+        return Err(ErroStore::Dominio(poph_types::DomainError::Validation {
+            field: campo,
+            reason: format!("use no máximo {limite} caracteres"),
         }));
     }
     Ok(limpo)
@@ -251,9 +251,9 @@ fn validar_sha256(valor: &str) -> Resultado<String> {
     let texto = valor.trim().to_lowercase();
     let valido = texto.len() == 64 && texto.chars().all(|c| c.is_ascii_hexdigit());
     if !valido {
-        return Err(ErroStore::Dominio(poph_types::DomainError::Validacao {
-            campo: "sha256",
-            motivo: "precisa ser o hash em hexadecimal (64 caracteres)".to_owned(),
+        return Err(ErroStore::Dominio(poph_types::DomainError::Validation {
+            field: "sha256",
+            reason: "precisa ser o hash em hexadecimal (64 caracteres)".to_owned(),
         }));
     }
     Ok(texto)

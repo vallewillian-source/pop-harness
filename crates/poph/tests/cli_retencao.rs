@@ -264,7 +264,7 @@ fn run_nao_apaga_ficha_execucao_evento_nem_efeito() {
         EfeitoDaTransicao, EstadoDaExecucao, InicioDeExecucao, NovaConversa, NovoFluxo,
         PublicacaoDeRevisao, Store,
     };
-    use poph_types::{AtorEvento, StatusExecucao};
+    use poph_types::{EventActor, ExecutionStatus};
 
     let cenario = Cenario::novo("fichas");
     let slug = "clinica-fichas";
@@ -349,11 +349,11 @@ fn run_nao_apaga_ficha_execucao_evento_nem_efeito() {
                     ficha: ficha.id,
                     fluxo: fluxo.id,
                     revisao: revisao.id,
-                    ator: AtorEvento::Agente,
+                    ator: EventActor::Agent,
                     ator_ref: Some("agente-ficticio"),
                     decisao_jev: None,
                     estado_inicial: EstadoDaExecucao {
-                        status: StatusExecucao::Ativa,
+                        status: ExecutionStatus::Active,
                         no_atual: "coleta".to_owned(),
                         dados_json: "{}".to_owned(),
                         atores_que_agiram: Vec::new(),

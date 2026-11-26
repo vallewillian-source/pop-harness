@@ -39,8 +39,8 @@ use poph_store::{
     Direcao, NovaConversa, NovaMensagem, NovaOrg, NovoAgente, NovoDepartamento, Origem, Papel,
     Store,
 };
-use poph_types::config::TokenGlobalConfig;
-use poph_types::{AgentId, DepartmentId, HarnessConfig, MatrixConfig, OrgId, Segredo};
+use poph_types::config::GlobalTokenConfig;
+use poph_types::{AgentId, DepartmentId, HarnessConfig, MatrixConfig, OrgId, Secret};
 use rand_core::OsRng;
 use reqwest::{Client, Method as MetodoHttp};
 use serde_json::{Value, json};
@@ -447,18 +447,18 @@ impl Cenario {
         fs::create_dir_all(pasta.join("dados")).expect("pasta de dados");
 
         let mut config = HarnessConfig::default();
-        config.dados.diretorio = pasta.join("dados");
-        config.admin.tokens_globais = vec![TokenGlobalConfig {
+        config.data.directory = pasta.join("dados");
+        config.admin.tokens_globais = vec![GlobalTokenConfig {
             label: "teste".to_owned(),
             hash: hash_argon2(TOKEN_GLOBAL),
         }];
         config.matrix = Some(MatrixConfig {
-            habilitado: true,
+            enabled: true,
             homeserver_url,
             server_name: SERVIDOR.to_owned(),
-            prefixo: PREFIXO.to_owned(),
-            concorrencia: 4,
-            intervalo_ms: 50,
+            prefix: PREFIXO.to_owned(),
+            concurrency: 4,
+            interval_ms: 50,
             ..MatrixConfig::default()
         });
         config.validar().expect("configuração válida");
@@ -486,8 +486,8 @@ impl Cenario {
         ModuloMatrix {
             config: self.config.matrix.clone().expect("seção [matrix]"),
             segredos: SegredosMatrix {
-                as_token: Segredo::new(AS_TOKEN.to_owned()),
-                hs_token: Segredo::new(HS_TOKEN.to_owned()),
+                as_token: Secret::new(AS_TOKEN.to_owned()),
+                hs_token: Secret::new(HS_TOKEN.to_owned()),
             },
         }
     }

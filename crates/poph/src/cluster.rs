@@ -16,7 +16,7 @@ use std::process::ExitCode;
 
 use clap::{Args, Subcommand};
 use poph_server::cluster::{ClusterVivo, ErroCluster, ResumoCluster};
-use poph_types::Segredo;
+use poph_types::Secret;
 use serde_json::json;
 
 use crate::config;
@@ -63,7 +63,7 @@ pub fn executar(flag: Option<PathBuf>, ambiente: &config::Ambiente, acao: AcaoCl
 }
 
 /// Lê o mapa e devolve o estado vivo; erro continua sendo erro para os dois comandos.
-fn carregar_vivo(caminho: &Path, segredo: Option<&Segredo>) -> Result<ClusterVivo, ErroCluster> {
+fn carregar_vivo(caminho: &Path, segredo: Option<&Secret>) -> Result<ClusterVivo, ErroCluster> {
     let config = poph_server::cluster::carregar(caminho, segredo)?;
     Ok(ClusterVivo {
         caminho: caminho.to_path_buf(),
@@ -73,7 +73,7 @@ fn carregar_vivo(caminho: &Path, segredo: Option<&Segredo>) -> Result<ClusterViv
 }
 
 /// `poph cluster show`.
-fn mostrar(caminho: &Path, segredo: Option<&Segredo>, args: MostrarCluster) -> ExitCode {
+fn mostrar(caminho: &Path, segredo: Option<&Secret>, args: MostrarCluster) -> ExitCode {
     match carregar_vivo(caminho, segredo) {
         Ok(vivo) => {
             if args.json {
@@ -94,7 +94,7 @@ fn mostrar(caminho: &Path, segredo: Option<&Segredo>, args: MostrarCluster) -> E
 }
 
 /// `poph cluster check`.
-fn conferir(caminho: &Path, segredo: Option<&Segredo>, args: ConferirCluster) -> ExitCode {
+fn conferir(caminho: &Path, segredo: Option<&Secret>, args: ConferirCluster) -> ExitCode {
     match carregar_vivo(caminho, segredo) {
         Ok(vivo) => {
             let remoto = if args.remoto {

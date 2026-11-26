@@ -13,7 +13,7 @@ use poph_store::{
     NovoItemConhecimento, NovoProduto, Origem, OrigemEspaco, Papel, PublicacaoDeRevisao, Store,
 };
 use poph_types::HarnessConfig;
-use poph_types::config::TokenGlobalConfig;
+use poph_types::config::GlobalTokenConfig;
 use rand_core::OsRng;
 use reqwest::Client;
 use serde_json::{Value, json};
@@ -182,10 +182,10 @@ struct Seeds {
     group: poph_types::KnowledgeGroupId,
     item: poph_types::KnowledgeItemId,
     file: poph_types::FileId,
-    flow: poph_types::FluxoId,
+    flow: poph_types::FlowId,
     conversation: poph_types::ConversationId,
     test_chat: poph_types::ConversationId,
-    ficha: poph_types::FichaId,
+    ficha: poph_types::RecordId,
     token: poph_types::AdminTokenId,
     integration: String,
 }
@@ -194,13 +194,13 @@ impl Scenario {
     async fn new() -> Self {
         let folder = work_dir();
         let mut config = HarnessConfig::default();
-        config.dados.diretorio = folder.join("dados");
-        config.admin.tokens_globais = vec![TokenGlobalConfig {
+        config.data.directory = folder.join("dados");
+        config.admin.tokens_globais = vec![GlobalTokenConfig {
             label: "contracts".to_owned(),
             hash: hash_argon2(GLOBAL_TOKEN),
         }];
         config.validar().expect("valid config");
-        let data_dir = config.dados.diretorio.clone();
+        let data_dir = config.data.directory.clone();
         let blobs = config.blobs();
 
         let store = Arc::new(

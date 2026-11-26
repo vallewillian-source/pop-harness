@@ -240,7 +240,7 @@ fn recusa_midia_sem_sala_ou_sem_agente() {
             .registrar(org.id, &defeituosa)
             .expect_err("mídia incompleta deve ser recusada");
         match erro {
-            ErroStore::Dominio(DomainError::Validacao { campo, .. }) => {
+            ErroStore::Dominio(DomainError::Validation { field: campo, .. }) => {
                 assert_eq!(campo, rotulo)
             }
             outro => panic!("esperado erro de validação em {rotulo}, veio {outro:?}"),

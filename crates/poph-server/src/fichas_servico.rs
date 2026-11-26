@@ -5,7 +5,7 @@
 //! é metadado do motor, e a chave de idempotência fica de fora.
 
 use poph_store::{ErroStore, EtapaDaExecucao, EventoFicha, Execucao, Ficha, Fluxo, Store};
-use poph_types::{FichaId, OrgId};
+use poph_types::{OrgId, RecordId};
 use serde_json::{Value, json};
 
 /// Teto de execuções que o detalhe devolve (sem paginação própria; a Ficha tem poucas).
@@ -14,7 +14,7 @@ pub const LIMITE_EXECUCOES_NA_FICHA: u32 = 500;
 /// O detalhe de uma Ficha: a Ficha, as execuções com as etapas e os campos respondidos (W6), e os
 /// fluxos liberados ao agente da Ficha. Ficha de outra org ou inexistente vira o erro do repositório
 /// (`NaoEncontrado`), que a API traduz para `404`.
-pub fn detalhe(store: &Store, org: OrgId, ficha_id: FichaId) -> Result<Value, ErroStore> {
+pub fn detalhe(store: &Store, org: OrgId, ficha_id: RecordId) -> Result<Value, ErroStore> {
     let ficha = store.fichas().obter(org, ficha_id)?;
     let execucoes = store
         .execucoes()

@@ -120,7 +120,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value as Json, json};
 
 use poph_types::{
-    AtorAcao, AtorEvento, DomainError, DomainResult, StatusExecucao, TipoCampo, TipoEventoFicha,
+    ActionActor, DomainError, DomainResult, EventActor, ExecutionStatus, FieldKind, RecordEventKind,
 };
 
 use crate::ir::{Campo, Decisao, Destino, Efeito, Etapa, Ir};
@@ -194,14 +194,14 @@ pub struct Estado {
     /// Slug do fluxo (`fluxo.id` da IR). O id de banco do fluxo é do store.
     pub fluxo_id: String,
     /// Situação da execução; o motor só aceita ação em [`StatusExecucao::Ativa`].
-    pub status: StatusExecucao,
+    pub status: ExecutionStatus,
     /// Nó em que a execução está: etapa, decisão aguardando resolução (FX-14) ou fim (FX-14).
     pub no_atual: Destino,
     /// `dados[etapa][campo]` — o mesmo formato de `fluxo_execucoes.dados_json`.
     pub dados: Dados,
     /// Atores que já agiram **na etapa atual**, em ordem alfabética do texto (`agente`,
     /// `atendente`); zera ao entrar numa etapa nova.
-    pub atores_que_agiram: Vec<AtorAcao>,
+    pub atores_que_agiram: Vec<ActionActor>,
     /// Resumo do desfecho (`fins[].resultado`), preenchido quando a execução chega ao fim.
     pub resultado: Option<String>,
     /// Motivo do abandono ou da falha (`fluxo_execucoes.motivo_fim`); `None` no caminho feliz.
@@ -216,7 +216,7 @@ pub struct Recibo {
     /// Nó em que a execução ficou naquela passagem.
     pub no_atual: Destino,
     /// Quem ainda faltava agir quando a etapa ficou `parcial`; vazio quando a etapa avançou.
-    pub aguardando: Vec<AtorAcao>,
+    pub aguardando: Vec<ActionActor>,
 }
 
 /// Um evento que a operação atômica do store grava em `ficha_eventos`.
@@ -226,9 +226,9 @@ pub struct Recibo {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Evento {
     /// Tipo do evento (`ficha_eventos.tipo`).
-    pub tipo: TipoEventoFicha,
+    pub tipo: RecordEventKind,
     /// Quem assinou (`ficha_eventos.ator_tipo`): o ator que agiu ou o sistema.
-    pub ator: AtorEvento,
+    pub ator: EventActor,
     /// Conteúdo do evento.
     pub payload: Json,
 }
@@ -244,7 +244,7 @@ pub struct Resultado {
     /// Efeitos a enfileirar, na ordem declarada e com o texto já resolvido.
     pub efeitos: Vec<EfeitoProduzido>,
     /// Atores que ainda precisam agir porque a etapa ficou `parcial`; vazio quando avançou.
-    pub aguardando: Vec<AtorAcao>,
+    pub aguardando: Vec<ActionActor>,
     /// `true` quando a `chave_idempotencia` já tinha sido aplicada: nada mudou e nada é gravado.
     pub repetida: bool,
     /// `true` quando a execução chegou a um `fim(encerra_atendimento=True)`: o chamador **pede** o
@@ -301,7 +301,7 @@ pub fn iniciar(ir: &Ir) -> DomainResult<Estado> {
     let etapa = etapa_por_id(ir, &ir.inicio)?;
     Ok(Estado {
         fluxo_id: ir.fluxo.id.clone(),
-        status: StatusExecucao::Ativa,
+        status: ExecutionStatus::Active,
         no_atual: Destino::Etapa {
             id: etapa.id.clone(),
         },
@@ -339,12 +339,12 @@ pub fn executar_acao(
     estado: &Estado,
     acao: &str,
     campos: &Campos,
-    ator: AtorAcao,
+    ator: ActionActor,
     chave_idempotencia: Option<&str>,
     contexto: &Contexto<'_>,
 ) -> DomainResult<Resultado> {
     // 1. Execução que não está ativa não aceita ação (concluída, abandonada ou em falha).
-    if estado.status != StatusExecucao::Ativa {
+    if estado.status != ExecutionStatus::Active {
         return Err(recusa(
             acao,
             format!(
@@ -386,7 +386,7 @@ pub fn executar_acao(
             &mut eventos,
             &mut efeitos,
         )?;
-        if trabalho.status != StatusExecucao::Ativa {
+        if trabalho.status != ExecutionStatus::Active {
             return Ok(resultado_parado(
                 trabalho,
                 eventos,
@@ -489,7 +489,7 @@ pub fn executar_acao(
     }
     ordena(&mut progresso);
 
-    let mut aguardando: Vec<AtorAcao> = atores_exigidos(etapa)
+    let mut aguardando: Vec<ActionActor> = atores_exigidos(etapa)
         .into_iter()
         .filter(|exigido| !progresso.contains(exigido))
         .collect();
@@ -504,13 +504,13 @@ pub fn executar_acao(
     let autor = ator_de_evento(ator);
     if !validados.is_empty() {
         eventos.push(Evento {
-            tipo: TipoEventoFicha::CamposPreenchidos,
+            tipo: RecordEventKind::FieldsFilled,
             ator: autor,
             payload: json!({ "etapa": etapa.id, "campos": validados }),
         });
     }
     eventos.push(Evento {
-        tipo: TipoEventoFicha::AcaoExecutada,
+        tipo: RecordEventKind::ActionExecuted,
         ator: autor,
         payload: json!({
             "etapa": etapa.id,
@@ -537,8 +537,8 @@ pub fn executar_acao(
             efeitos.push(efeito);
         }
         eventos.push(Evento {
-            tipo: TipoEventoFicha::EtapaConcluida,
-            ator: AtorEvento::Sistema,
+            tipo: RecordEventKind::StepCompleted,
+            ator: EventActor::System,
             payload: json!({ "etapa": etapa.id, "acao": acao }),
         });
         novo_estado.atores_que_agiram = Vec::new();
@@ -590,22 +590,22 @@ pub fn executar_acao(
 pub fn abandonar(
     estado: &Estado,
     motivo: &str,
-    ator: AtorAcao,
+    ator: ActionActor,
     chave_idempotencia: Option<&str>,
 ) -> DomainResult<Resultado> {
     let motivo = motivo.trim();
     if motivo.is_empty() {
-        return Err(DomainError::Validacao {
-            campo: "motivo",
-            motivo: "o abandono precisa de um motivo: é ele que fica no histórico da Ficha"
+        return Err(DomainError::Validation {
+            field: "motivo",
+            reason: "o abandono precisa de um motivo: é ele que fica no histórico da Ficha"
                 .to_owned(),
         });
     }
-    if estado.status != StatusExecucao::Ativa {
-        return Err(DomainError::Conflito {
-            entidade: "execução",
+    if estado.status != ExecutionStatus::Active {
+        return Err(DomainError::Conflict {
+            entity: "execução",
             id: estado.no_atual.id().to_owned(),
-            motivo: format!(
+            reason: format!(
                 "a execução já está {} e não pode ser abandonada",
                 estado.status
             ),
@@ -627,12 +627,12 @@ pub fn abandonar(
 
     let no = estado.no_atual.id().to_owned();
     let mut novo_estado = estado.clone();
-    novo_estado.status = StatusExecucao::Abandonada;
+    novo_estado.status = ExecutionStatus::Abandoned;
     novo_estado.motivo = Some(motivo.to_owned());
     novo_estado.atores_que_agiram = Vec::new();
 
     let eventos = vec![Evento {
-        tipo: TipoEventoFicha::ExecucaoAbandonada,
+        tipo: RecordEventKind::ExecutionAbandoned,
         ator: ator_de_evento(ator),
         payload: json!({ "motivo": motivo, "no": no }),
     }];
@@ -717,8 +717,8 @@ fn seguir(
                 estado.no_atual = Destino::Etapa { id: id.clone() };
                 estado.atores_que_agiram = Vec::new();
                 eventos.push(Evento {
-                    tipo: TipoEventoFicha::EtapaEntrou,
-                    ator: AtorEvento::Sistema,
+                    tipo: RecordEventKind::StepEntered,
+                    ator: EventActor::System,
                     payload: json!({ "etapa": id }),
                 });
                 let da_entrada = efeitos_da_etapa(etapa, &estado.dados, contexto);
@@ -780,8 +780,8 @@ fn seguir(
                     decisao.senao.clone()
                 };
                 eventos.push(Evento {
-                    tipo: TipoEventoFicha::DecisaoResolvida,
-                    ator: AtorEvento::Sistema,
+                    tipo: RecordEventKind::DecisionResolved,
+                    ator: EventActor::System,
                     payload: json!({ "decisao": id, "resultado": escolha, "destino": ramo }),
                 });
                 destino = ramo;
@@ -791,7 +791,7 @@ fn seguir(
                 resultado,
                 encerra_atendimento,
             } => {
-                estado.status = StatusExecucao::Concluida;
+                estado.status = ExecutionStatus::Completed;
                 estado.resultado = resultado.clone();
                 estado.no_atual = Destino::Fim {
                     id: id.clone(),
@@ -799,8 +799,8 @@ fn seguir(
                     encerra_atendimento,
                 };
                 eventos.push(Evento {
-                    tipo: TipoEventoFicha::ExecucaoConcluida,
-                    ator: AtorEvento::Sistema,
+                    tipo: RecordEventKind::ExecutionCompleted,
+                    ator: EventActor::System,
                     payload: json!({
                         "fim": id,
                         "resultado": resultado,
@@ -827,13 +827,13 @@ fn parar_em_falha(
     eventos: &mut Vec<Evento>,
     erro_de_regra: bool,
 ) -> Desfecho {
-    estado.status = StatusExecucao::Falha;
+    estado.status = ExecutionStatus::Failed;
     estado.motivo = Some(motivo.clone());
     estado.atores_que_agiram = Vec::new();
     estado.no_atual = no;
     eventos.push(Evento {
-        tipo: TipoEventoFicha::ExecucaoFalhou,
-        ator: AtorEvento::Sistema,
+        tipo: RecordEventKind::ExecutionFailed,
+        ator: EventActor::System,
         payload: json!({ "no": estado.no_atual.id(), "motivo": motivo }),
     });
     Desfecho {
@@ -910,8 +910,8 @@ fn efeitos_declarados(
 /// O evento que registra na Ficha que um efeito entrou na fila.
 fn evento_do_efeito(efeito: &EfeitoProduzido) -> Evento {
     Evento {
-        tipo: TipoEventoFicha::EfeitoCriado,
-        ator: AtorEvento::Sistema,
+        tipo: RecordEventKind::EffectCreated,
+        ator: EventActor::System,
         payload: json!({ "chave": efeito.chave, "tipo": efeito.tipo(), "no": efeito.no }),
     }
 }
@@ -964,9 +964,9 @@ fn decisao_por_id<'a>(ir: &'a Ir, id: &str) -> DomainResult<&'a Decisao> {
     ir.decisoes
         .iter()
         .find(|decisao| decisao.id == id)
-        .ok_or_else(|| DomainError::IrDivergente {
+        .ok_or_else(|| DomainError::IrDivergent {
             fluxo: ir.fluxo.id.clone(),
-            motivo: format!("a decisão `{id}` não existe na estrutura do fluxo"),
+            reason: format!("a decisão `{id}` não existe na estrutura do fluxo"),
         })
 }
 
@@ -975,8 +975,8 @@ fn decisao_por_id<'a>(ir: &'a Ir, id: &str) -> DomainResult<&'a Decisao> {
 /// Deriva das **ações** (nunca de `atores_acao`): só a ação que leva para frente (etapa ou decisão)
 /// e tem ator restrito cria exigência. Ação irrestrita, ou que vai para `fim(...)`, não exige
 /// ninguém — é o mesmo cálculo de `state_engine.required_actor_types`.
-pub fn atores_exigidos(etapa: &Etapa) -> Vec<AtorAcao> {
-    let mut exigidos: Vec<AtorAcao> = Vec::new();
+pub fn atores_exigidos(etapa: &Etapa) -> Vec<ActionActor> {
+    let mut exigidos: Vec<ActionActor> = Vec::new();
     for acao in &etapa.acoes {
         if matches!(acao.vai_para, Destino::Fim { .. }) {
             continue;
@@ -1020,37 +1020,37 @@ fn etapa_por_id<'a>(ir: &'a Ir, id: &str) -> DomainResult<&'a Etapa> {
     ir.etapas
         .iter()
         .find(|etapa| etapa.id == id)
-        .ok_or_else(|| DomainError::IrDivergente {
+        .ok_or_else(|| DomainError::IrDivergent {
             fluxo: ir.fluxo.id.clone(),
-            motivo: format!("a etapa `{id}` não existe na estrutura do fluxo"),
+            reason: format!("a etapa `{id}` não existe na estrutura do fluxo"),
         })
 }
 
 /// Recusa de ação (`acao_invalida`): sempre com o nome da ação e o motivo que o agente lê.
 fn recusa(acao: &str, motivo: String) -> DomainError {
-    DomainError::AcaoInvalida {
-        acao: acao.to_owned(),
-        motivo,
+    DomainError::InvalidAction {
+        action: acao.to_owned(),
+        reason: motivo,
     }
 }
 
 /// Recusa de campos (`campos_invalidos`), com a etapa e a lista de problemas.
 fn campos_invalidos(etapa: &Etapa, erros: Vec<String>) -> DomainError {
-    DomainError::CamposDaEtapaInvalidos {
-        etapa: etapa.id.clone(),
-        erros,
+    DomainError::InvalidStepFields {
+        step: etapa.id.clone(),
+        errors: erros,
     }
 }
 
 /// Ordem estável dos atores: o texto (`agente` antes de `atendente`), igual ao `sorted()` do Python.
-fn ordena(atores: &mut [AtorAcao]) {
-    atores.sort_by_key(|ator| ator.como_texto());
+fn ordena(atores: &mut [ActionActor]) {
+    atores.sort_by_key(|ator| ator.as_text());
 }
 
-fn ator_de_evento(ator: AtorAcao) -> AtorEvento {
+fn ator_de_evento(ator: ActionActor) -> EventActor {
     match ator {
-        AtorAcao::Agente => AtorEvento::Agente,
-        AtorAcao::Atendente => AtorEvento::Atendente,
+        ActionActor::Agent => EventActor::Agent,
+        ActionActor::Attendant => EventActor::Attendant,
     }
 }
 
@@ -1095,7 +1095,7 @@ fn validar_valor(campo: &Campo, valor: &Json) -> Result<Json, String> {
         };
     }
     match campo.tipo {
-        TipoCampo::Texto => match valor {
+        FieldKind::Texto => match valor {
             Json::String(texto) => {
                 let limpo = texto.trim();
                 if campo.obrigatorio && limpo.is_empty() {
@@ -1105,11 +1105,11 @@ fn validar_valor(campo: &Campo, valor: &Json) -> Result<Json, String> {
             }
             outro => Err(esperava("texto", outro)),
         },
-        TipoCampo::Numero => match valor {
+        FieldKind::Number => match valor {
             Json::Number(_) => Ok(valor.clone()),
             outro => Err(esperava("número", outro)),
         },
-        TipoCampo::Data => match valor {
+        FieldKind::Data => match valor {
             Json::String(texto) if data_iso_valida(texto.trim()) => {
                 Ok(Json::String(texto.trim().to_owned()))
             }
@@ -1118,11 +1118,11 @@ fn validar_valor(campo: &Campo, valor: &Json) -> Result<Json, String> {
             )),
             outro => Err(esperava("data em texto ISO 8601", outro)),
         },
-        TipoCampo::Booleano => match valor {
+        FieldKind::Boolean => match valor {
             Json::Bool(_) => Ok(valor.clone()),
             outro => Err(esperava("booleano (`true`/`false`)", outro)),
         },
-        TipoCampo::Opcao => match valor {
+        FieldKind::Option => match valor {
             Json::String(texto) => {
                 let limpo = texto.trim();
                 if campo.opcoes.iter().any(|opcao| opcao == limpo) {
@@ -1136,7 +1136,7 @@ fn validar_valor(campo: &Campo, valor: &Json) -> Result<Json, String> {
             }
             outro => Err(esperava("uma das opções em texto", outro)),
         },
-        TipoCampo::Anexo => match valor {
+        FieldKind::Attachment => match valor {
             Json::Object(mapa) if matches!(mapa.get("nome"), Some(Json::String(nome)) if !nome.trim().is_empty()) => {
                 Ok(valor.clone())
             }
@@ -1206,7 +1206,7 @@ fn lista_de_opcoes(campo: &Campo) -> String {
         .join(", ")
 }
 
-fn lista_de_atores(atores: &[AtorAcao]) -> String {
+fn lista_de_atores(atores: &[ActionActor]) -> String {
     if atores.is_empty() {
         return "nenhum".to_owned();
     }
@@ -1359,7 +1359,7 @@ mod tests {
             id: "cadastro".to_owned(),
             nome: "Cadastro".to_owned(),
             instrucao: None,
-            atores_acao: vec![AtorAcao::Agente],
+            atores_acao: vec![ActionActor::Agent],
             campos: Vec::new(),
             acoes: Vec::new(),
             ao_entrar: Vec::new(),

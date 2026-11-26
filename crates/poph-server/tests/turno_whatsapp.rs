@@ -41,7 +41,7 @@ use poph_store::{
     Direcao, EstadoSaida, EstadoTurno, NovaConversa, NovaOrg, NovaSaida, NovoAgente, Origem,
     Pagina, StatusConversa, Store,
 };
-use poph_types::{AgentId, ConversationId, HarnessConfig, IntegrationId, OrgId, Registro, Segredo};
+use poph_types::{AgentId, ConversationId, HarnessConfig, IntegrationId, OrgId, Registry, Secret};
 use reqwest::Client;
 use serde_json::{Value, json};
 use tokio::sync::oneshot;
@@ -264,7 +264,7 @@ impl Cenario {
             ConfigEvolution::novo(
                 self.url_evo.clone(),
                 INSTANCIA,
-                Segredo::new(CHAVE_EVO.to_owned()),
+                Secret::new(CHAVE_EVO.to_owned()),
             )
             .expect("config da Evolution falsa"),
         )
@@ -273,7 +273,7 @@ impl Cenario {
             org: self.org,
             instancia: INSTANCIA.to_owned(),
             integracao: self.integracao,
-            segredo: Some(Segredo::new(SEGREDO.to_owned())),
+            segredo: Some(Secret::new(SEGREDO.to_owned())),
             cliente: Some(cliente),
             teto_midia: TETO_MIDIA,
         }
@@ -283,7 +283,7 @@ impl Cenario {
     /// registro do servidor, como na subida real.
     fn fluxo(
         &self,
-        registro: &Registro,
+        registro: &Registry,
         roteiros: Vec<Roteiro>,
         opcoes: OpcoesFluxo,
     ) -> (Fluxo, Arc<ProvedorFake>) {

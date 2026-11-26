@@ -21,8 +21,8 @@ use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, SaltString};
 use poph_server::{ChaveDeCifra, Estado};
 use poph_store::{NovaOrg, NovoAgente, Store};
-use poph_types::config::TokenGlobalConfig;
-use poph_types::{AgentId, HarnessConfig, OrgId, PluginDeclarado};
+use poph_types::config::GlobalTokenConfig;
+use poph_types::{AgentId, DeclaredPlugin, HarnessConfig, OrgId};
 use rand_core::OsRng;
 use reqwest::{Client, Method};
 use serde_json::{Value, json};
@@ -175,22 +175,22 @@ impl Cenario {
         let script = escrever_plugin(&pasta);
 
         let mut config = HarnessConfig::default();
-        config.dados.diretorio = pasta.join("dados");
-        config.admin.tokens_globais = vec![TokenGlobalConfig {
+        config.data.directory = pasta.join("dados");
+        config.admin.tokens_globais = vec![GlobalTokenConfig {
             label: "teste".to_owned(),
             hash: hash_argon2(TOKEN_GLOBAL),
         }];
-        config.plugins.integracoes = vec![
-            PluginDeclarado {
+        config.plugins.integrations = vec![
+            DeclaredPlugin {
                 kind: "fake".to_owned(),
-                programa: PathBuf::from("python3"),
-                argumentos: vec![script.display().to_string()],
+                program: PathBuf::from("python3"),
+                arguments: vec![script.display().to_string()],
             },
             // Plugin declarado que não fala o protocolo: prova o 503 explicado.
-            PluginDeclarado {
+            DeclaredPlugin {
                 kind: "quebrado".to_owned(),
-                programa: PathBuf::from("/bin/false"),
-                argumentos: Vec::new(),
+                program: PathBuf::from("/bin/false"),
+                arguments: Vec::new(),
             },
         ];
         config.validar().expect("configuração válida");

@@ -96,8 +96,8 @@ impl Turnos<'_> {
             .map_err(ErroStore::from)
         })?;
         if efeito == 0 {
-            return Err(ErroStore::Dominio(poph_types::DomainError::NaoEncontrado {
-                entidade: "turno",
+            return Err(ErroStore::Dominio(poph_types::DomainError::NotFound {
+                entity: "turno",
                 id: id.to_string(),
             }));
         }

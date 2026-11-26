@@ -20,7 +20,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use poph_types::Segredo;
+use poph_types::Secret;
 use poph_types::config::{ClusterConfig, ClusterInstance};
 use serde::Serialize;
 use thiserror::Error;
@@ -86,7 +86,7 @@ pub struct ClusterVivo {
     /// Mapa em uso (vazio = modo instância única).
     pub config: ClusterConfig,
     /// Segredo compartilhado lido de `POPH_CLUSTER_SECRET` na subida (nunca serializado).
-    pub segredo: Option<Segredo>,
+    pub segredo: Option<Secret>,
 }
 
 impl ClusterVivo {
@@ -101,7 +101,7 @@ impl ClusterVivo {
 
     /// `true` quando o mapa declara um cluster.
     pub fn declara_cluster(&self) -> bool {
-        self.config.declara_cluster()
+        self.config.declares_cluster()
     }
 
     /// `"cluster"` ou `"instancia_unica"`.
@@ -121,7 +121,7 @@ impl ClusterVivo {
     /// Impressão digital do conteúdo compartilhado do mapa (sem a instância local): é a que vai no
     /// cabeçalho `x-poph-mapa` do encaminhamento e a que duas instâncias comparam entre si.
     pub fn fingerprint_do_mapa(&self) -> String {
-        self.config.fingerprint_do_mapa()
+        self.config.map_fingerprint()
     }
 
     /// Resumo sem segredo, para `poph cluster show` e para a resposta da recarga.
@@ -131,7 +131,7 @@ impl ClusterVivo {
 }
 
 /// Leitura do `cluster.toml`. Arquivo ausente **não é erro**: é o modo instância única.
-pub fn carregar(caminho: &Path, segredo: Option<&Segredo>) -> Result<ClusterConfig, ErroCluster> {
+pub fn carregar(caminho: &Path, segredo: Option<&Secret>) -> Result<ClusterConfig, ErroCluster> {
     if !caminho.exists() {
         return Ok(ClusterConfig::default());
     }
@@ -160,13 +160,13 @@ pub fn carregar(caminho: &Path, segredo: Option<&Segredo>) -> Result<ClusterConf
             })?;
     let problemas = if arquivo_vazio {
         Vec::new()
-    } else if config.vazio() {
+    } else if config.empty() {
         vec![
             "instance_id: obrigatório quando existe cluster.toml (é o nome desta instância no              mapa)"
                 .to_owned(),
         ]
     } else {
-        config.problemas()
+        config.problems()
     };
     if !problemas.is_empty() {
         return Err(ErroCluster::Validacao {
@@ -174,7 +174,7 @@ pub fn carregar(caminho: &Path, segredo: Option<&Segredo>) -> Result<ClusterConf
             problemas,
         });
     }
-    if config.declara_cluster() && segredo.is_none() {
+    if config.declares_cluster() && segredo.is_none() {
         return Err(ErroCluster::SegredoAusente {
             arquivo: caminho.to_path_buf(),
         });
@@ -333,8 +333,8 @@ impl RelatoRecarga {
         let orgs_que_trocaram = orgs
             .into_iter()
             .filter_map(|org| {
-                let de = antes.config.instancia_da_org(&org).map(str::to_owned);
-                let para = depois.config.instancia_da_org(&org).map(str::to_owned);
+                let de = antes.config.org_instance(&org).map(str::to_owned);
+                let para = depois.config.org_instance(&org).map(str::to_owned);
                 (de != para).then_some(TrocaDeOrg { org, de, para })
             })
             .collect();
@@ -430,7 +430,7 @@ impl DiagnosticoRemoto {
 /// compartilhado não é usado nem enviado: `/healthz` é público na rede interna.
 pub async fn conferir_remoto(config: &ClusterConfig) -> Vec<DiagnosticoRemoto> {
     let local = config.instance_id.trim().to_owned();
-    let local_fingerprint = config.fingerprint_do_mapa();
+    let local_fingerprint = config.map_fingerprint();
     let cliente = match reqwest::Client::builder()
         .connect_timeout(PRAZO_DA_CONSULTA_REMOTA)
         .timeout(PRAZO_DA_CONSULTA_REMOTA)
@@ -576,8 +576,8 @@ mod testes {
         caminho
     }
 
-    fn segredo() -> Segredo {
-        Segredo::new("segredo-compartilhado-de-teste".to_owned())
+    fn segredo() -> Secret {
+        Secret::new("segredo-compartilhado-de-teste".to_owned())
     }
 
     const BOM: &str = r#"
@@ -601,8 +601,8 @@ org_02 = "b"
     fn arquivo_ausente_e_modo_instancia_unica() {
         let caminho = pasta().join("nao-existe.toml");
         let config = carregar(&caminho, None).expect("sem arquivo não é erro");
-        assert!(config.vazio());
-        assert!(!config.declara_cluster());
+        assert!(config.empty());
+        assert!(!config.declares_cluster());
     }
 
     #[test]
@@ -612,9 +612,9 @@ org_02 = "b"
         assert_eq!(config.instance_id, "a");
         assert_eq!(config.default_instance.as_deref(), Some("b"));
         assert_eq!(config.instances.len(), 2);
-        assert_eq!(config.instancia_da_org("org_01"), Some("a"));
-        assert_eq!(config.instancia_da_org("org_02"), Some("b"));
-        assert_eq!(config.instancia_da_org("org_nova"), Some("b"));
+        assert_eq!(config.org_instance("org_01"), Some("a"));
+        assert_eq!(config.org_instance("org_02"), Some("b"));
+        assert_eq!(config.org_instance("org_nova"), Some("b"));
     }
 
     #[test]

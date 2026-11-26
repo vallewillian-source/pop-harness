@@ -38,7 +38,7 @@ use poph_store::{
     DesfechoAviso, EstadoSaida, ItemSaida, NovaConversa, NovaOrg, NovaSaida, NovoAgente,
     RespostaHumana, RespostaHumanaNova, Store,
 };
-use poph_types::{AgentId, ConversationId, IntegrationId, OrgId, Segredo, TurnId};
+use poph_types::{AgentId, ConversationId, IntegrationId, OrgId, Secret, TurnId};
 use serde_json::{Value, json};
 use tracing_subscriber::fmt::MakeWriter;
 
@@ -289,7 +289,7 @@ impl Cenario {
         let (url_synapse, synapse) = subir_synapse_falso().await;
         let (url_evo, evo) = subir_evolution_falsa().await;
         let cliente = ClienteEvolution::novo(
-            ConfigEvolution::novo(url_evo, INSTANCIA, Segredo::new(CHAVE_EVO.to_owned()))
+            ConfigEvolution::novo(url_evo, INSTANCIA, Secret::new(CHAVE_EVO.to_owned()))
                 .expect("config da Evolution falsa"),
         )
         .expect("cliente da Evolution falsa");
@@ -403,7 +403,7 @@ impl Cenario {
             ConfigCliente::novo(
                 self.url_synapse.clone(),
                 SERVER_NAME.to_owned(),
-                Segredo::new(AS_TOKEN.to_owned()),
+                Secret::new(AS_TOKEN.to_owned()),
             )
             .expect("config do cliente do Matrix"),
         )

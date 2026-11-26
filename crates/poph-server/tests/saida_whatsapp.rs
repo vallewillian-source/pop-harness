@@ -27,7 +27,7 @@ use poph_evolution::{ClienteEvolution, ConfigEvolution, TETO_MIDIA};
 use poph_server::evolution::CanalEvolution;
 use poph_server::saida_whatsapp::{OpcoesSaidaWhatsApp, SaidaWhatsApp};
 use poph_store::{EstadoSaida, ItemSaida, NovaConversa, NovaOrg, NovaSaida, NovoAgente, Store};
-use poph_types::{ConversationId, HarnessConfig, IntegrationId, OrgId, Segredo, TurnId};
+use poph_types::{ConversationId, HarnessConfig, IntegrationId, OrgId, Secret, TurnId};
 use serde_json::{Value, json};
 use tracing_subscriber::fmt::MakeWriter;
 
@@ -187,8 +187,8 @@ impl Cenario {
         fs::create_dir_all(pasta.join("dados")).expect("pasta de dados");
 
         let mut config = HarnessConfig::default();
-        config.dados.diretorio = pasta.join("dados");
-        config.servidor.porta = 7481;
+        config.data.directory = pasta.join("dados");
+        config.server.port = 7481;
         config.validar().expect("configuração válida");
         let blobs = config.blobs();
 
@@ -278,7 +278,7 @@ impl Cenario {
         let chave = if modo == Instancia::SemChave {
             None
         } else {
-            Some(Segredo::new(CHAVE.to_owned()))
+            Some(Secret::new(CHAVE.to_owned()))
         };
         let cliente = chave.map(|chave| {
             ClienteEvolution::novo(

@@ -26,7 +26,7 @@ use poph_matrix::expiracao::{
     self, BLOCO_EXPIRADO, CAMPO_CATEGORIA, CAMPO_ENVIADA_EM, CAMPO_NOME, MidiaParaExpirar,
 };
 use poph_matrix::usuarios::{Fantasma, IdsFantasmas};
-use poph_types::Segredo;
+use poph_types::Secret;
 use serde_json::{Value, json};
 
 /// Token do Application Service (o Harness apresenta ao Synapse).
@@ -210,7 +210,7 @@ impl Synapse {
         .expect("cliente do Matrix")
     }
 
-    fn token_admin(&self) -> Segredo {
+    fn token_admin(&self) -> Secret {
         segredo(ADMIN_TOKEN)
     }
 
@@ -263,8 +263,8 @@ fn decodificar(valor: &str) -> String {
     String::from_utf8_lossy(&saida).into_owned()
 }
 
-fn segredo(valor: &str) -> Segredo {
-    Segredo::new(valor.to_owned())
+fn segredo(valor: &str) -> Secret {
+    Secret::new(valor.to_owned())
 }
 
 fn midia() -> MidiaParaExpirar<'static> {

@@ -28,7 +28,7 @@ use poph_store::{
     Direcao, EstadoTurno, MudancaAgente, MudancaDepartamento, NovaConversa, NovaMensagem, NovaOrg,
     NovoAgente, NovoDepartamento, Pagina, Papel, Status, Store,
 };
-use poph_types::{AgentId, ConversationId, DepartmentId, GatesJev, MessageId, OrgId};
+use poph_types::{AgentId, ConversationId, DepartmentId, JevGates, MessageId, OrgId};
 
 const RESPOSTA_DO_MODELO: &str = "Olá! Como posso ajudar?";
 
@@ -374,10 +374,10 @@ fn jev(departamento: Option<(&'static str, f64)>, veio_o_g4: bool) -> Arc<JevFal
 }
 
 fn motor_jev(jev: Arc<JevFalso>, com_g4: bool) -> Arc<MotorJev> {
-    let gates = GatesJev {
+    let gates = JevGates {
         g1: true,
         g4: com_g4,
-        ..GatesJev::default()
+        ..JevGates::default()
     };
     Arc::new(MotorJev::novo(jev, gates, "jev-latest"))
 }
@@ -603,10 +603,10 @@ async fn jev_fora_do_ar_nao_trava_o_turno() {
     let avaliador = Arc::new(
         MotorJev::novo(
             jev,
-            GatesJev {
+            JevGates {
                 g1: true,
                 g4: true,
-                ..GatesJev::default()
+                ..JevGates::default()
             },
             "jev-latest",
         )

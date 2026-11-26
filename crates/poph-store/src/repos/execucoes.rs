@@ -63,8 +63,8 @@
 //!   fechada, e o valor vem de `EfeitoProduzido::tipo()`.
 
 use poph_types::{
-    AtorAcao, DomainError, EfeitoId, EstadoEfeito, ExecucaoId, FechadaPor, FichaId, FluxoId, OrgId,
-    RevisaoId, StatusEtapa, StatusExecucao, StatusFicha, TipoEventoFicha,
+    ActionActor, ClosedBy, DomainError, EffectId, EffectState, ExecutionId, ExecutionStatus,
+    FlowId, OrgId, RecordEventKind, RecordId, RecordStatus, RevisionId, StepStatus,
 };
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde_json::{Map, Value as Json};
@@ -137,9 +137,9 @@ impl Execucoes<'_> {
         let chave_inicio = match inicio.chave_idempotencia.map(str::trim) {
             None => None,
             Some("") => {
-                return Err(ErroStore::Dominio(DomainError::Validacao {
-                    campo: "chave_idempotencia",
-                    motivo: "a abertura precisa de uma chave: repetir a mesma tem de devolver a \
+                return Err(ErroStore::Dominio(DomainError::Validation {
+                    field: "chave_idempotencia",
+                    reason: "a abertura precisa de uma chave: repetir a mesma tem de devolver a \
                              mesma execução"
                         .to_owned(),
                 }));
@@ -163,10 +163,10 @@ impl Execucoes<'_> {
                         ErroStore::Interno("a execução da abertura marcada sumiu".to_owned())
                     })?;
                 if execucao.fluxo_id.to_string() != texto_fluxo {
-                    return Err(ErroStore::Dominio(DomainError::Conflito {
-                        entidade: "execução de fluxo",
+                    return Err(ErroStore::Dominio(DomainError::Conflict {
+                        entity: "execução de fluxo",
                         id: execucao.id.to_string(),
-                        motivo: "esta chave de idempotência já abriu outro fluxo nesta Ficha"
+                        reason: "esta chave de idempotência já abriu outro fluxo nesta Ficha"
                             .to_owned(),
                     }));
                 }
@@ -190,10 +190,10 @@ impl Execucoes<'_> {
             let Some((situacao_ficha, agent_id)) = linha_ficha else {
                 return Err(nao_encontrado("ficha", &texto_ficha));
             };
-            if StatusFicha::de_texto(&situacao_ficha).map_err(ErroStore::from)?
-                == StatusFicha::Fechada
+            if RecordStatus::from_text(&situacao_ficha).map_err(ErroStore::from)?
+                == RecordStatus::Closed
             {
-                return Err(ErroStore::Dominio(DomainError::FichaFechada {
+                return Err(ErroStore::Dominio(DomainError::RecordClosed {
                     id: texto_ficha.clone(),
                 }));
             }
@@ -210,10 +210,10 @@ impl Execucoes<'_> {
                 return Err(nao_encontrado("fluxo", &texto_fluxo));
             };
             if situacao_fluxo != "active" {
-                return Err(ErroStore::Dominio(DomainError::Conflito {
-                    entidade: "fluxo",
+                return Err(ErroStore::Dominio(DomainError::Conflict {
+                    entity: "fluxo",
                     id: texto_fluxo.clone(),
-                    motivo: "o fluxo está inativo: não inicia execução nova".to_owned(),
+                    reason: "o fluxo está inativo: não inicia execução nova".to_owned(),
                 }));
             }
 
@@ -227,7 +227,7 @@ impl Execucoes<'_> {
                 .optional()
                 .map_err(ErroStore::from)?;
             if liberado.is_none() {
-                return Err(ErroStore::Dominio(DomainError::FluxoNaoLiberado {
+                return Err(ErroStore::Dominio(DomainError::FlowNotAllowed {
                     fluxo_id: texto_fluxo.clone(),
                     agent_id,
                 }));
@@ -243,7 +243,7 @@ impl Execucoes<'_> {
                 .optional()
                 .map_err(ErroStore::from)?;
             if let Some(ativa) = ativa {
-                return Err(ErroStore::Dominio(DomainError::ExecucaoJaAtiva {
+                return Err(ErroStore::Dominio(DomainError::ExecutionAlreadyActive {
                     ficha_id: texto_ficha.clone(),
                     execucao_id: ativa,
                 }));
@@ -261,14 +261,14 @@ impl Execucoes<'_> {
                 return Err(nao_encontrado("revisão de fluxo", &texto_revisao));
             }
 
-            if estado_inicial.status != StatusExecucao::Ativa {
-                return Err(ErroStore::Dominio(DomainError::Validacao {
-                    campo: "estado_inicial",
-                    motivo: "a execução nasce `ativa`; estado de abertura recusado".to_owned(),
+            if estado_inicial.status != ExecutionStatus::Active {
+                return Err(ErroStore::Dominio(DomainError::Validation {
+                    field: "estado_inicial",
+                    reason: "a execução nasce `ativa`; estado de abertura recusado".to_owned(),
                 }));
             }
 
-            let execucao = ExecucaoId::generate().to_string();
+            let execucao = ExecutionId::generate().to_string();
             conn.execute(
                 "INSERT INTO fluxo_execucoes
                     (id, org_id, ficha_id, fluxo_id, revisao_id, status, no_atual, dados_json,
@@ -310,10 +310,7 @@ impl Execucoes<'_> {
                 "etapa".to_owned(),
                 Json::String(estado_inicial.no_atual.clone()),
             );
-            detalhe.insert(
-                "ator".to_owned(),
-                Json::String(ator.como_texto().to_owned()),
-            );
+            detalhe.insert("ator".to_owned(), Json::String(ator.as_text().to_owned()));
             if let Some((escolha, confianca)) = decisao {
                 let mut jev = Map::new();
                 jev.insert("escolha".to_owned(), Json::String(escolha));
@@ -339,7 +336,7 @@ impl Execucoes<'_> {
                             .parse()
                             .map_err(|erro: DomainError| ErroStore::Dominio(erro))?,
                     ),
-                    tipo: TipoEventoFicha::FluxoIniciado,
+                    tipo: RecordEventKind::FlowStarted,
                     ator_tipo: ator,
                     ator_ref: ator_ref.as_deref(),
                     payload_json: Json::Object(detalhe).to_string(),
@@ -385,14 +382,14 @@ impl Execucoes<'_> {
     pub fn transicao_ja_aplicada(
         &self,
         org: OrgId,
-        execucao: ExecucaoId,
+        execucao: ExecutionId,
         chave_idempotencia: &str,
     ) -> Resultado<bool> {
         let chave = chave_idempotencia.trim();
         if chave.is_empty() {
-            return Err(ErroStore::Dominio(DomainError::Validacao {
-                campo: "chave_idempotencia",
-                motivo: "informe a chave de idempotência da operação".to_owned(),
+            return Err(ErroStore::Dominio(DomainError::Validation {
+                field: "chave_idempotencia",
+                reason: "informe a chave de idempotência da operação".to_owned(),
             }));
         }
         let marcador = chave_do_evento(&execucao.to_string(), chave, 0);
@@ -418,15 +415,15 @@ impl Execucoes<'_> {
     pub fn abertura_ja_feita(
         &self,
         org: OrgId,
-        ficha: FichaId,
-        fluxo: FluxoId,
+        ficha: RecordId,
+        fluxo: FlowId,
         chave_idempotencia: &str,
     ) -> Resultado<Option<Execucao>> {
         let chave = chave_idempotencia.trim();
         if chave.is_empty() {
-            return Err(ErroStore::Dominio(DomainError::Validacao {
-                campo: "chave_idempotencia",
-                motivo: "a abertura precisa de uma chave".to_owned(),
+            return Err(ErroStore::Dominio(DomainError::Validation {
+                field: "chave_idempotencia",
+                reason: "a abertura precisa de uma chave".to_owned(),
             }));
         }
         let marcador = format!("inicio:{chave}");
@@ -447,10 +444,10 @@ impl Execucoes<'_> {
                     ErroStore::Interno("a execução da abertura marcada sumiu".to_owned())
                 })?;
             if execucao.fluxo_id.to_string() != texto_fluxo {
-                return Err(ErroStore::Dominio(DomainError::Conflito {
-                    entidade: "execução de fluxo",
+                return Err(ErroStore::Dominio(DomainError::Conflict {
+                    entity: "execução de fluxo",
                     id: execucao.id.to_string(),
-                    motivo: "esta chave de idempotência já abriu outro fluxo nesta Ficha"
+                    reason: "esta chave de idempotência já abriu outro fluxo nesta Ficha"
                         .to_owned(),
                 }));
             }
@@ -466,7 +463,7 @@ impl Execucoes<'_> {
     pub fn aplicar_transicao(
         &self,
         org: OrgId,
-        execucao: ExecucaoId,
+        execucao: ExecutionId,
         esperada: u64,
         transicao: &TransicaoDeFluxo,
         chave_idempotencia: &str,
@@ -477,9 +474,9 @@ impl Execucoes<'_> {
         // agente não manda nenhuma; aqui ela é obrigatória.
         let chave = chave_idempotencia.trim();
         if chave.is_empty() {
-            return Err(ErroStore::Dominio(DomainError::Validacao {
-                campo: "chave_idempotencia",
-                motivo:
+            return Err(ErroStore::Dominio(DomainError::Validation {
+                field: "chave_idempotencia",
+                reason:
                     "a transição precisa de uma chave: repetir a mesma tem de devolver o mesmo \
                          desfecho, não gravar outra coisa"
                         .to_owned(),
@@ -493,7 +490,7 @@ impl Execucoes<'_> {
         let metricas = self.0.metricas_de_execucao();
         let chave = chave.to_owned();
         let ator_ref = extras.ator_ref.map(str::to_owned);
-        let fechada_por = extras.fechada_por.unwrap_or(FechadaPor::Fluxo);
+        let fechada_por = extras.fechada_por.unwrap_or(ClosedBy::Flow);
         let motivo_pedido = extras.motivo_encerramento.map(str::to_owned);
         let esperada_i64 = i64::try_from(esperada).unwrap_or(i64::MAX);
 
@@ -536,20 +533,20 @@ impl Execucoes<'_> {
 
             // 2. Versão (`If-Match` da execução).
             if atual.versao != esperada {
-                return Err(ErroStore::Dominio(DomainError::ConflitoDeVersao {
-                    entidade: "execução de fluxo",
+                return Err(ErroStore::Dominio(DomainError::VersionConflict {
+                    entity: "execução de fluxo",
                     id: texto_execucao.clone(),
-                    esperada,
-                    atual: atual.versao,
+                    expected: esperada,
+                    current: atual.versao,
                 }));
             }
 
             // 3. Só execução ativa aceita transição.
-            if atual.status != StatusExecucao::Ativa {
-                return Err(ErroStore::Dominio(DomainError::Conflito {
-                    entidade: "execução de fluxo",
+            if atual.status != ExecutionStatus::Active {
+                return Err(ErroStore::Dominio(DomainError::Conflict {
+                    entity: "execução de fluxo",
                     id: texto_execucao.clone(),
-                    motivo: format!("a execução está {} e não aceita transição", atual.status),
+                    reason: format!("a execução está {} e não aceita transição", atual.status),
                 }));
             }
 
@@ -565,25 +562,25 @@ impl Execucoes<'_> {
             let Some((situacao_ficha, conversa)) = linha_ficha else {
                 return Err(nao_encontrado("ficha", &texto_ficha));
             };
-            if StatusFicha::de_texto(&situacao_ficha).map_err(ErroStore::from)?
-                == StatusFicha::Fechada
+            if RecordStatus::from_text(&situacao_ficha).map_err(ErroStore::from)?
+                == RecordStatus::Closed
             {
-                return Err(ErroStore::Dominio(DomainError::FichaFechada {
+                return Err(ErroStore::Dominio(DomainError::RecordClosed {
                     id: texto_ficha.clone(),
                 }));
             }
 
             // 5. Coerência do desfecho: encerrar o atendimento exige execução concluída.
-            if transicao.encerra_atendimento && novo.status != StatusExecucao::Concluida {
-                return Err(ErroStore::Dominio(DomainError::Validacao {
-                    campo: "encerra_atendimento",
-                    motivo: "só execução concluída num fim pode encerrar o atendimento".to_owned(),
+            if transicao.encerra_atendimento && novo.status != ExecutionStatus::Completed {
+                return Err(ErroStore::Dominio(DomainError::Validation {
+                    field: "encerra_atendimento",
+                    reason: "só execução concluída num fim pode encerrar o atendimento".to_owned(),
                 }));
             }
 
             // 6. A linha da execução.
             let finalizada = match novo.status {
-                StatusExecucao::Ativa => None,
+                ExecutionStatus::Active => None,
                 _ => Some(agora),
             };
             let alteradas = conn
@@ -595,7 +592,7 @@ impl Execucoes<'_> {
                     params![
                         texto_org,
                         texto_execucao,
-                        novo.status.como_texto(),
+                        novo.status.as_text(),
                         novo.no_atual,
                         novo.dados_json,
                         novo.resultado,
@@ -697,7 +694,7 @@ impl Execucoes<'_> {
         // transição que deixa a execução `ativa` (etapa parcial) também não conta.
         if !gravada.repetida {
             self.0.contar_desfecho_da_execucao(gravada.execucao.status);
-            if erro_de_regra && gravada.execucao.status == StatusExecucao::Falha {
+            if erro_de_regra && gravada.execucao.status == ExecutionStatus::Failed {
                 self.0.contar_erro_de_regra();
             }
         }
@@ -705,7 +702,7 @@ impl Execucoes<'_> {
     }
 
     /// Execução pelo id, dentro da org.
-    pub fn obter(&self, org: OrgId, id: ExecucaoId) -> Resultado<Execucao> {
+    pub fn obter(&self, org: OrgId, id: ExecutionId) -> Resultado<Execucao> {
         let texto_org = org.to_string();
         let texto_id = id.to_string();
         let encontrada = self
@@ -718,7 +715,7 @@ impl Execucoes<'_> {
     }
 
     /// Execução ativa da Ficha, se houver (no máximo uma, pelo índice único parcial).
-    pub fn ativa_da_ficha(&self, org: OrgId, ficha: FichaId) -> Resultado<Option<Execucao>> {
+    pub fn ativa_da_ficha(&self, org: OrgId, ficha: RecordId) -> Resultado<Option<Execucao>> {
         let texto_org = org.to_string();
         let texto_ficha = ficha.to_string();
         self.0.leitura(move |conn| {
@@ -736,7 +733,7 @@ impl Execucoes<'_> {
     }
 
     /// Execuções da Ficha, da mais antiga para a mais nova (o histórico de fluxos do atendimento).
-    pub fn da_ficha(&self, org: OrgId, ficha: FichaId, limite: u32) -> Resultado<Vec<Execucao>> {
+    pub fn da_ficha(&self, org: OrgId, ficha: RecordId, limite: u32) -> Resultado<Vec<Execucao>> {
         let texto_org = org.to_string();
         let texto_ficha = ficha.to_string();
         let limite = i64::from(limite.clamp(1, 500));
@@ -768,8 +765,8 @@ impl Execucoes<'_> {
     pub fn ativas_por_revisao(
         &self,
         org: OrgId,
-        fluxo: FluxoId,
-    ) -> Resultado<Vec<(RevisaoId, u64)>> {
+        fluxo: FlowId,
+    ) -> Resultado<Vec<(RevisionId, u64)>> {
         let texto_org = org.to_string();
         let texto_fluxo = fluxo.to_string();
         self.0.leitura(move |conn| {
@@ -783,7 +780,7 @@ impl Execucoes<'_> {
             let linhas = consulta
                 .query_map(params![texto_org, texto_fluxo], |linha| {
                     Ok((
-                        id_da_coluna::<RevisaoId>(linha, 0)?,
+                        id_da_coluna::<RevisionId>(linha, 0)?,
                         u64_da_coluna(linha, 1)?,
                     ))
                 })
@@ -797,7 +794,7 @@ impl Execucoes<'_> {
     }
 
     /// Etapas percorridas pela execução, em ordem de entrada.
-    pub fn etapas(&self, org: OrgId, execucao: ExecucaoId) -> Resultado<Vec<EtapaDaExecucao>> {
+    pub fn etapas(&self, org: OrgId, execucao: ExecutionId) -> Resultado<Vec<EtapaDaExecucao>> {
         self.obter(org, execucao)?;
         let texto_org = org.to_string();
         let texto_execucao = execucao.to_string();
@@ -820,7 +817,7 @@ impl Execucoes<'_> {
     }
 
     /// Efeitos enfileirados pela execução, em ordem de criação.
-    pub fn efeitos(&self, org: OrgId, execucao: ExecucaoId) -> Resultado<Vec<EfeitoDoFluxo>> {
+    pub fn efeitos(&self, org: OrgId, execucao: ExecutionId) -> Resultado<Vec<EfeitoDoFluxo>> {
         self.obter(org, execucao)?;
         let texto_org = org.to_string();
         let texto_execucao = execucao.to_string();
@@ -853,8 +850,8 @@ fn chave_do_evento(execucao: &str, chave: &str, indice: usize) -> String {
 }
 
 fn nao_encontrado(entidade: &'static str, id: &str) -> ErroStore {
-    ErroStore::Dominio(DomainError::NaoEncontrado {
-        entidade,
+    ErroStore::Dominio(DomainError::NotFound {
+        entity: entidade,
         id: id.to_owned(),
     })
 }
@@ -878,7 +875,7 @@ fn gravar_etapas(
 ) -> Resultado<()> {
     for evento in eventos {
         match evento.tipo {
-            TipoEventoFicha::EtapaConcluida => {
+            RecordEventKind::StepCompleted => {
                 let Some(etapa) = etapa_do_payload(&evento.payload_json) else {
                     continue;
                 };
@@ -897,10 +894,10 @@ fn gravar_etapas(
                     .and_then(|json| serde_json::from_str(json).ok())
                     .unwrap_or_default();
                 if let Some(acao) = eventos.iter().find(|acao| {
-                    acao.tipo == TipoEventoFicha::AcaoExecutada
+                    acao.tipo == RecordEventKind::ActionExecuted
                         && etapa_do_payload(&acao.payload_json).as_deref() == Some(&etapa)
                 }) {
-                    let ator = acao.ator_tipo.como_texto();
+                    let ator = acao.ator_tipo.as_text();
                     if (ator == "agente" || ator == "atendente")
                         && !atores.iter().any(|a| a == ator)
                     {
@@ -920,7 +917,7 @@ fn gravar_etapas(
                 )
                 .map_err(ErroStore::from)?;
             }
-            TipoEventoFicha::EtapaEntrou => {
+            RecordEventKind::StepEntered => {
                 let Some(etapa) = etapa_do_payload(&evento.payload_json) else {
                     continue;
                 };
@@ -953,15 +950,15 @@ fn gravar_etapas(
         }
     }
 
-    if novo.status != StatusExecucao::Ativa {
+    if novo.status != ExecutionStatus::Active {
         return Ok(());
     }
     let dados = dados_da_etapa(&novo.dados_json, &novo.no_atual);
     let atores = serde_json::to_string(&novo.atores_que_agiram).unwrap_or_else(|_| "[]".to_owned());
     let status = if dados == "{}" && novo.atores_que_agiram.is_empty() {
-        StatusEtapa::Pendente
+        StepStatus::Pending
     } else {
-        StatusEtapa::Parcial
+        StepStatus::Partial
     };
     conn.execute(
         "UPDATE fluxo_execucao_etapas
@@ -974,7 +971,7 @@ fn gravar_etapas(
             execucao,
             dados,
             atores,
-            status.como_texto(),
+            status.as_text(),
             novo.no_atual
         ],
     )
@@ -993,12 +990,12 @@ fn gravar_efeitos(
     efeitos: &[EfeitoDaTransicao],
     agora: i64,
 ) -> Resultado<Vec<EfeitoDoFluxo>> {
-    let ficha_id: FichaId = ficha.parse().map_err(ErroStore::Dominio)?;
-    let execucao_id: ExecucaoId = execucao.parse().map_err(ErroStore::Dominio)?;
+    let ficha_id: RecordId = ficha.parse().map_err(ErroStore::Dominio)?;
+    let execucao_id: ExecutionId = execucao.parse().map_err(ErroStore::Dominio)?;
     let org_id: OrgId = org.parse().map_err(ErroStore::Dominio)?;
     let mut gravados = Vec::new();
     for efeito in efeitos {
-        let id = EfeitoId::generate();
+        let id = EffectId::generate();
         let inseridas = conn
             .execute(
                 "INSERT INTO fluxo_efeitos
@@ -1027,7 +1024,7 @@ fn gravar_efeitos(
                 chave: efeito.chave.clone(),
                 tipo: efeito.tipo.clone(),
                 payload_json: efeito.payload_json.clone(),
-                estado: EstadoEfeito::Pendente,
+                estado: EffectState::Pending,
                 tentativas: 0,
                 ultimo_erro: None,
                 proxima_tentativa: None,
@@ -1076,7 +1073,7 @@ fn linha_execucao(linha: &Row<'_>) -> rusqlite::Result<Execucao> {
         ficha_id: id_da_coluna(linha, 2)?,
         fluxo_id: id_da_coluna(linha, 3)?,
         revisao_id: id_da_coluna(linha, 4)?,
-        status: StatusExecucao::de_texto(&linha.get::<_, String>(5)?)
+        status: ExecutionStatus::from_text(&linha.get::<_, String>(5)?)
             .map_err(|erro| conversao(5, erro))?,
         no_atual: linha.get(6)?,
         dados_json: linha.get(7)?,
@@ -1090,7 +1087,7 @@ fn linha_execucao(linha: &Row<'_>) -> rusqlite::Result<Execucao> {
 
 fn linha_etapa(linha: &Row<'_>) -> rusqlite::Result<EtapaDaExecucao> {
     let atores_json: String = linha.get(7)?;
-    let atores: Vec<AtorAcao> = serde_json::from_str(&atores_json).map_err(|erro| {
+    let atores: Vec<ActionActor> = serde_json::from_str(&atores_json).map_err(|erro| {
         rusqlite::Error::FromSqlConversionFailure(7, rusqlite::types::Type::Text, Box::new(erro))
     })?;
     Ok(EtapaDaExecucao {
@@ -1099,7 +1096,7 @@ fn linha_etapa(linha: &Row<'_>) -> rusqlite::Result<EtapaDaExecucao> {
         execucao_id: id_da_coluna(linha, 2)?,
         no_id: linha.get(3)?,
         ordem: linha.get(4)?,
-        status: StatusEtapa::de_texto(&linha.get::<_, String>(5)?)
+        status: StepStatus::from_text(&linha.get::<_, String>(5)?)
             .map_err(|erro| conversao(5, erro))?,
         dados_json: linha.get(6)?,
         atores_que_agiram: atores,
@@ -1117,7 +1114,7 @@ pub(crate) fn linha_efeito(linha: &Row<'_>) -> rusqlite::Result<EfeitoDoFluxo> {
         chave: linha.get(4)?,
         tipo: linha.get(5)?,
         payload_json: linha.get(6)?,
-        estado: EstadoEfeito::de_texto(&linha.get::<_, String>(7)?)
+        estado: EffectState::from_text(&linha.get::<_, String>(7)?)
             .map_err(|erro| conversao(7, erro))?,
         tentativas: u32_da_coluna(linha, 8)?,
         ultimo_erro: linha.get(9)?,

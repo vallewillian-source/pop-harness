@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use poph_types::{AgentId, LimitesConfig, LlmConfig, OrgId};
+use poph_types::{AgentId, LimitsConfig, LlmConfig, OrgId};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::erro::{ErroAgente, Resultado};
@@ -36,29 +36,29 @@ pub struct OpcoesLimites {
 
 impl Default for OpcoesLimites {
     fn default() -> Self {
-        let limites = LimitesConfig::default();
+        let limites = LimitsConfig::default();
         Self::dos_limites(&limites)
     }
 }
 
 impl OpcoesLimites {
     /// Deriva do bloco `limites` da configuração; o teto por agente é opcional.
-    pub fn dos_limites(limites: &LimitesConfig) -> Self {
+    pub fn dos_limites(limites: &LimitsConfig) -> Self {
         Self {
-            turnos_global: limites.turnos_simultaneos.max(1),
+            turnos_global: limites.concurrent_turns.max(1),
             turnos_por_org: limites
-                .turnos_simultaneos_por_org
-                .clamp(1, limites.turnos_simultaneos.max(1)),
+                .concurrent_turns_per_org
+                .clamp(1, limites.concurrent_turns.max(1)),
             turnos_por_agente: 0,
             chamadas_por_provedor: 32,
             tetos_por_provedor: BTreeMap::new(),
-            taxa_por_org_por_minuto: limites.taxa_por_org_por_minuto,
+            taxa_por_org_por_minuto: limites.rate_per_org_per_minute,
         }
     }
 
     /// Lê os dois blocos da configuração: `limites` (turnos) e `llm` (chamadas ao provedor).
-    pub fn da_config(limites: &LimitesConfig, llm: &LlmConfig) -> Self {
-        Self::dos_limites(limites).com_provedor(llm.simultaneos)
+    pub fn da_config(limites: &LimitsConfig, llm: &LlmConfig) -> Self {
+        Self::dos_limites(limites).com_provedor(llm.concurrent_calls)
     }
 
     /// Define o teto de chamadas simultâneas de um provedor (vem de `llm.simultaneos`).
@@ -149,7 +149,7 @@ impl Limitador {
         };
         self.metricas
             .espera_vaga_segundos
-            .observar(inicio.elapsed().as_secs_f64());
+            .observe(inicio.elapsed().as_secs_f64());
         Ok(Vaga {
             _global: global,
             _org: por_org,

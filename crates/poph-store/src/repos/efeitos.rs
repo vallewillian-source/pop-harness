@@ -30,7 +30,7 @@
 //!
 //! [`Backoff`]: https://docs.rs/tokio/latest/tokio/time
 
-use poph_types::{EfeitoId, EstadoEfeito, OrgId};
+use poph_types::{EffectId, EffectState, OrgId};
 use rusqlite::{OptionalExtension, params};
 
 use super::execucoes::{COLUNAS_EFEITO, linha_efeito};
@@ -99,7 +99,7 @@ impl Efeitos<'_> {
     }
 
     /// Um efeito pelo id (para o relatório e para o teste).
-    pub fn obter(&self, org: OrgId, id: EfeitoId) -> Resultado<EfeitoDoFluxo> {
+    pub fn obter(&self, org: OrgId, id: EffectId) -> Resultado<EfeitoDoFluxo> {
         let texto_org = org.to_string();
         let texto_id = id.to_string();
         let encontrado = self.0.leitura(move |conn| {
@@ -119,7 +119,7 @@ impl Efeitos<'_> {
     /// Marca o começo de **uma** tentativa de entrega e devolve o número de tentativas já gastas.
     ///
     /// Precisa estar gravada **antes** da chamada externa: é o que faz a queda no meio reenviar.
-    pub fn iniciar_envio(&self, org: OrgId, id: EfeitoId) -> Resultado<u32> {
+    pub fn iniciar_envio(&self, org: OrgId, id: EffectId) -> Resultado<u32> {
         let texto_org = org.to_string();
         let texto_id = id.to_string();
         self.0.escrita(move |conn| {
@@ -142,7 +142,7 @@ impl Efeitos<'_> {
     }
 
     /// Confirma a entrega: → `enviado`, com o carimbo. A espera pendente é limpa.
-    pub fn confirmar_envio(&self, org: OrgId, id: EfeitoId) -> Resultado<()> {
+    pub fn confirmar_envio(&self, org: OrgId, id: EffectId) -> Resultado<()> {
         let agora = self.0.agora();
         let texto_org = org.to_string();
         let texto_id = id.to_string();
@@ -166,15 +166,15 @@ impl Efeitos<'_> {
     pub fn falhar_envio(
         &self,
         org: OrgId,
-        id: EfeitoId,
+        id: EffectId,
         motivo: &str,
         definitivo: bool,
         proxima_tentativa: Option<i64>,
     ) -> Resultado<()> {
         let estado = if definitivo {
-            EstadoEfeito::Falhou
+            EffectState::Failed
         } else {
-            EstadoEfeito::Pendente
+            EffectState::Pending
         };
         let proxima = if definitivo { None } else { proxima_tentativa };
         let texto_org = org.to_string();
@@ -185,7 +185,7 @@ impl Efeitos<'_> {
                 "UPDATE fluxo_efeitos
                     SET estado = ?3, ultimo_erro = ?4, proxima_tentativa = ?5, enviado_em = NULL
                   WHERE org_id = ?1 AND id = ?2",
-                params![texto_org, texto_id, estado.como_texto(), motivo, proxima],
+                params![texto_org, texto_id, estado.as_text(), motivo, proxima],
             )
             .map(|_| ())
             .map_err(ErroStore::from)
@@ -195,7 +195,7 @@ impl Efeitos<'_> {
     /// Empurra a tentativa **sem** contar tentativa: é o caso do efeito que está esperando algo que
     /// não é falha (a integração do WhatsApp não está configurada, o turno da conversa ainda está
     /// em andamento). O efeito continua `pendente` e o limite de tentativas não é consumido.
-    pub fn adiar(&self, org: OrgId, id: EfeitoId, proxima_tentativa: i64) -> Resultado<()> {
+    pub fn adiar(&self, org: OrgId, id: EffectId, proxima_tentativa: i64) -> Resultado<()> {
         let texto_org = org.to_string();
         let texto_id = id.to_string();
         self.0.escrita(move |conn| {

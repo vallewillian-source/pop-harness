@@ -23,7 +23,7 @@ use poph_matrix::espacos::{
 };
 use poph_matrix::salas::ErroPorta;
 use poph_matrix::usuarios::IdsFantasmas;
-use poph_types::{ConversationId, DepartmentId, OrgId, Segredo};
+use poph_types::{ConversationId, DepartmentId, OrgId, Secret};
 use serde_json::json;
 
 /// Lê uma chave do `credenciais.env` sem imprimir valor nenhum.
@@ -122,17 +122,17 @@ async fn a_sala_entra_no_espaco_do_departamento_e_muda_de_espaco() {
     let server_name = credencial("POPH_MATRIX_DEV_SERVER_NAME");
     let token = credencial("POPH_MATRIX_DEV_HARNESS_AS_TOKEN");
     let config = poph_types::MatrixConfig {
-        habilitado: true,
+        enabled: true,
         homeserver_url: base,
         server_name: server_name.clone(),
-        prefixo: "ph".to_owned(),
+        prefix: "ph".to_owned(),
         ..poph_types::MatrixConfig::default()
     };
     let cliente = ClienteMatrix::novo(
         ConfigCliente::novo(
             config.homeserver_url.clone(),
             server_name.clone(),
-            Segredo::new(token),
+            Secret::new(token),
         )
         .expect("configuração do cliente"),
     )
@@ -255,7 +255,7 @@ async fn a_sala_sem_registro_sai_do_espaco_antigo_no_synapse_real() {
     let server_name = credencial("POPH_MATRIX_DEV_SERVER_NAME");
     let token = credencial("POPH_MATRIX_DEV_HARNESS_AS_TOKEN");
     let cliente = ClienteMatrix::novo(
-        ConfigCliente::novo(base, server_name.clone(), Segredo::new(token))
+        ConfigCliente::novo(base, server_name.clone(), Secret::new(token))
             .expect("configuração do cliente"),
     )
     .expect("cliente");

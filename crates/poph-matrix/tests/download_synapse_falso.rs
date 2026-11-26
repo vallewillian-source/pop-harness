@@ -26,7 +26,7 @@ use axum::routing::get;
 use poph_matrix::ErroMidia;
 use poph_matrix::cliente::{ClienteMatrix, ConfigCliente};
 use poph_matrix::erro::Classificacao;
-use poph_types::Segredo;
+use poph_types::Secret;
 
 /// Valor-canário: se aparecer em erro, log ou URL, o teste acusa.
 const CANARIO: &str = "CANARIO-MATRIX-MX44-nao-pode-vazar";
@@ -228,7 +228,7 @@ async fn cenario(novas: Vec<Resposta>, antigas: Vec<Resposta>) -> (ClienteMatrix
         ConfigCliente::novo(
             format!("http://{endereco}"),
             "matrix-dev.local".to_owned(),
-            Segredo::new(CANARIO.to_owned()),
+            Secret::new(CANARIO.to_owned()),
         )
         .expect("configuração do cliente")
         .com_timeout_de_teste(),

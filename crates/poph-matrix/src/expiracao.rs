@@ -39,7 +39,7 @@ use serde_json::{Value, json};
 use crate::cliente::ClienteMatrix;
 use crate::erro::{ErroChamada, ErroMidia};
 use crate::usuarios::Fantasma;
-use poph_types::Segredo;
+use poph_types::Secret;
 
 /// Chave do bloco que o frontend lê na redação (`ATTACHMENT_EXPIRED_KEY` do Element).
 ///
@@ -169,7 +169,7 @@ pub async fn redigir(
 /// `true` quando existia e foi apagado; `false` quando já não existia (404 conta como apagado).
 pub async fn apagar(
     cliente: &ClienteMatrix,
-    token_admin: &Segredo,
+    token_admin: &Secret,
     mxc: &str,
 ) -> Result<bool, ErroMidia> {
     cliente.apagar_midia(token_admin, mxc).await

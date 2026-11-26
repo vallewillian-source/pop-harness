@@ -9,7 +9,7 @@
 
 use std::io;
 
-use poph_types::{AgentId, ConversationId, Formato, LogConfig, OrgId, TurnId};
+use poph_types::{AgentId, ConversationId, Format, LogConfig, OrgId, TurnId};
 use thiserror::Error;
 use tracing::{Dispatch, Span};
 use tracing_subscriber::EnvFilter;
@@ -34,7 +34,7 @@ pub fn iniciar(config: &LogConfig, rust_log: Option<&str>) -> Result<(), ErroLog
     let fonte = rust_log
         .map(str::trim)
         .filter(|valor| !valor.is_empty())
-        .unwrap_or(config.nivel.as_str());
+        .unwrap_or(config.level.as_str());
     // O runtime do modelo de embedding escreve centenas de linhas `INFO` a cada carga (HR-26h).
     // Por padrão ele fica em `warn`; quem quiser vê-lo define o alvo `ort` no `RUST_LOG`.
     let fonte = if fonte.contains("ort=") {
@@ -43,25 +43,25 @@ pub fn iniciar(config: &LogConfig, rust_log: Option<&str>) -> Result<(), ErroLog
         format!("{fonte},ort=warn")
     };
     let filtro = filtro(&fonte)?;
-    let assinante = construir(config.formato, filtro, io::stderr);
+    let assinante = construir(config.format, filtro, io::stderr);
     tracing::dispatcher::set_global_default(assinante)
         .map_err(|erro| ErroLog::Inicio(erro.to_string()))
 }
 
 /// Monta o assinante com formato, filtro e destino dados. Usado no início e nos testes.
-pub fn construir<W>(formato: Formato, filtro: EnvFilter, escritor: W) -> Dispatch
+pub fn construir<W>(formato: Format, filtro: EnvFilter, escritor: W) -> Dispatch
 where
     W: for<'a> MakeWriter<'a> + Send + Sync + 'static,
 {
     match formato {
-        Formato::Legivel => Dispatch::new(
+        Format::Legible => Dispatch::new(
             tracing_subscriber::fmt()
                 .with_env_filter(filtro)
                 .with_writer(escritor)
                 .with_ansi(false)
                 .finish(),
         ),
-        Formato::Json => Dispatch::new(
+        Format::Json => Dispatch::new(
             tracing_subscriber::fmt()
                 .json()
                 .with_env_filter(filtro)
@@ -101,7 +101,7 @@ mod testes {
     use std::io::Write;
     use std::sync::{Arc, Mutex};
 
-    use poph_types::Sensivel;
+    use poph_types::Sensitive;
 
     use super::*;
 
@@ -126,7 +126,7 @@ mod testes {
         }
     }
 
-    fn captura_com(formato: Formato, nivel: &str) -> (Dispatch, Captura) {
+    fn captura_com(formato: Format, nivel: &str) -> (Dispatch, Captura) {
         let captura = Captura::default();
         let escrita = captura.clone();
         let dispatch = construir(formato, filtro(nivel).expect("filtro"), move || {
@@ -137,7 +137,7 @@ mod testes {
 
     #[test]
     fn span_de_turno_leva_org_agente_conversa_e_turno_no_json() {
-        let (dispatch, captura) = captura_com(Formato::Json, "info");
+        let (dispatch, captura) = captura_com(Format::Json, "info");
         let org = OrgId::generate();
         let agente = AgentId::generate();
         let conversa = ConversationId::generate();
@@ -166,7 +166,7 @@ mod testes {
 
     #[test]
     fn formato_legivel_tambem_mostra_o_contexto() {
-        let (dispatch, captura) = captura_com(Formato::Legivel, "info");
+        let (dispatch, captura) = captura_com(Format::Legible, "info");
         let org = OrgId::generate();
         tracing::dispatcher::with_default(&dispatch, || {
             let span = contexto_turno(
@@ -183,9 +183,9 @@ mod testes {
 
     #[test]
     fn valor_sensivel_nunca_aparece_no_log() {
-        let (dispatch, captura) = captura_com(Formato::Json, "trace");
+        let (dispatch, captura) = captura_com(Format::Json, "trace");
         tracing::dispatcher::with_default(&dispatch, || {
-            let conteudo = Sensivel::new("texto-privado-do-cliente-42".to_owned());
+            let conteudo = Sensitive::new("texto-privado-do-cliente-42".to_owned());
             tracing::info!(conteudo = %conteudo, "mensagem recebida");
             tracing::debug!(conteudo = ?conteudo, "depuração");
         });
@@ -199,7 +199,7 @@ mod testes {
 
     #[test]
     fn nivel_filtra_eventos_abaixo_dele() {
-        let (dispatch, captura) = captura_com(Formato::Legivel, "warn");
+        let (dispatch, captura) = captura_com(Format::Legible, "warn");
         tracing::dispatcher::with_default(&dispatch, || {
             tracing::info!("nao deve sair");
             tracing::warn!("deve sair");

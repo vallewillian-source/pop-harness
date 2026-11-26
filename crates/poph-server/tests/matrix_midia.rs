@@ -97,12 +97,12 @@ impl Drop for Cenario {
 
 fn config() -> MatrixConfig {
     MatrixConfig {
-        habilitado: true,
+        enabled: true,
         homeserver_url: "http://127.0.0.1:1".to_owned(),
         server_name: "matrix-dev.local".to_owned(),
-        prefixo: "ph".to_owned(),
-        concorrencia: 4,
-        intervalo_ms: 500,
+        prefix: "ph".to_owned(),
+        concurrency: 4,
+        interval_ms: 500,
         ..MatrixConfig::default()
     }
 }

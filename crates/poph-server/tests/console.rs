@@ -46,7 +46,7 @@ impl Cenario {
         fs::create_dir_all(pasta.join("dados")).expect("pasta de dados");
 
         let mut config = HarnessConfig::default();
-        config.dados.diretorio = pasta.join("dados");
+        config.data.directory = pasta.join("dados");
         config.validar().expect("configuração válida");
 
         let store = std::sync::Arc::new(Store::abrir(&config).expect("abre o banco"));

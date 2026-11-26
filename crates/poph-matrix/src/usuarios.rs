@@ -192,7 +192,7 @@ impl IdsFantasmas {
 
     /// Monta a partir da seção `[matrix]` já validada.
     pub fn da_config(config: &MatrixConfig) -> Result<Self, ErroFantasmas> {
-        Self::novo(config.prefixo.clone(), config.server_name.clone())
+        Self::novo(config.prefix.clone(), config.server_name.clone())
     }
 
     /// Prefixo em uso.

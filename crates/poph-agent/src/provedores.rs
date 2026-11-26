@@ -65,7 +65,7 @@ impl Provedores {
 
     pub fn resolver(&self, escolha: &str) -> Result<ProvedorResolvido, ErroLlm> {
         let escolha = escolha.trim();
-        if escolha.is_empty() || poph_types::provedor_llm_aceito(escolha) {
+        if escolha.is_empty() || poph_types::llm_provider_accepted(escolha) {
             return Ok(self.padrao.clone());
         }
         if let Some(provedor) = self.nomeados.get(escolha) {

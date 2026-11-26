@@ -565,15 +565,15 @@ fn prefixar(apelido: &str, colunas: &str) -> String {
 fn validar_nome(campo: &'static str, texto: &str, limite: usize) -> Resultado<String> {
     let limpo = texto.trim();
     if limpo.is_empty() {
-        return Err(ErroStore::Dominio(poph_types::DomainError::Validacao {
-            campo,
-            motivo: "não pode ficar em branco".to_owned(),
+        return Err(ErroStore::Dominio(poph_types::DomainError::Validation {
+            field: campo,
+            reason: "não pode ficar em branco".to_owned(),
         }));
     }
     if limpo.chars().count() > limite {
-        return Err(ErroStore::Dominio(poph_types::DomainError::Validacao {
-            campo,
-            motivo: format!("até {limite} caracteres; vieram {}", limpo.chars().count()),
+        return Err(ErroStore::Dominio(poph_types::DomainError::Validation {
+            field: campo,
+            reason: format!("até {limite} caracteres; vieram {}", limpo.chars().count()),
         }));
     }
     Ok(limpo.to_owned())
@@ -583,23 +583,23 @@ fn validar_conteudo(texto: &str) -> Resultado<String> {
     let limpo = texto.trim();
     let caracteres = limpo.chars().count();
     if caracteres == 0 {
-        return Err(ErroStore::Dominio(poph_types::DomainError::Validacao {
-            campo: "conteúdo do item",
-            motivo: "não pode ficar em branco".to_owned(),
+        return Err(ErroStore::Dominio(poph_types::DomainError::Validation {
+            field: "conteúdo do item",
+            reason: "não pode ficar em branco".to_owned(),
         }));
     }
     if caracteres > LIMITE_CONTEUDO_ITEM {
-        return Err(ErroStore::Dominio(poph_types::DomainError::Validacao {
-            campo: "conteúdo do item",
-            motivo: format!("até {LIMITE_CONTEUDO_ITEM} caracteres; vieram {caracteres}"),
+        return Err(ErroStore::Dominio(poph_types::DomainError::Validation {
+            field: "conteúdo do item",
+            reason: format!("até {LIMITE_CONTEUDO_ITEM} caracteres; vieram {caracteres}"),
         }));
     }
     Ok(limpo.to_owned())
 }
 
 fn nao_encontrado(entidade: &'static str, id: &str) -> ErroStore {
-    ErroStore::Dominio(poph_types::DomainError::NaoEncontrado {
-        entidade,
+    ErroStore::Dominio(poph_types::DomainError::NotFound {
+        entity: entidade,
         id: id.to_owned(),
     })
 }

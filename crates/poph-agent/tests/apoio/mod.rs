@@ -114,7 +114,7 @@ impl Cenario {
                 org,
                 agente.id,
                 0,
-                &estruturado.para_json(),
+                &estruturado.to_json(),
                 "# Bia\n\nVocê é a atendente da loja.",
                 true,
             )

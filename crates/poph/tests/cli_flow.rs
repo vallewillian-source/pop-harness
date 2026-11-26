@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::process::{Command, Output};
 
 use poph_store::{NovaFicha, Store};
-use poph_types::{AgentId, FluxoId, OrgId};
+use poph_types::{AgentId, FlowId, OrgId};
 use serde_json::Value;
 
 /// Script válido: o mesmo da API, com a etapa `confirmacao` como ponto de partida da revisão 2.
@@ -603,7 +603,7 @@ fn ficha_com_filtro_e_detalhe_aparecem_na_cli() {
 }
 
 /// Id do fluxo `agendar_visita` da org, lido pelo repositório.
-fn fluxo_id(cenario: &Cenario, org: &str) -> FluxoId {
+fn fluxo_id(cenario: &Cenario, org: &str) -> FlowId {
     let fluxo = cenario
         .store()
         .fluxos()

@@ -15,8 +15,8 @@
 //! escritor), que volta inteiro no primeiro erro.
 
 use poph_types::{
-    AtorEvento, ConversationId, EventoFichaId, ExecucaoId, FechadaPor, FichaId, OrgId,
-    StatusExecucao, StatusFicha, TipoEventoFicha,
+    ClosedBy, ConversationId, EventActor, ExecutionId, ExecutionStatus, OrgId, RecordEventId,
+    RecordEventKind, RecordId, RecordStatus,
 };
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
@@ -45,7 +45,7 @@ impl Fichas<'_> {
     /// [`super::Conversas::criar`] e da recepção do canal. Este método existe para quem precisa criar
     /// sem conversa (importação, cenário de teste) e para a superfície do repositório ficar completa.
     pub fn criar(&self, org: OrgId, nova: NovaFicha) -> Resultado<Ficha> {
-        let id = FichaId::generate();
+        let id = RecordId::generate();
         let agora = self.0.agora();
         let texto_org = org.to_string();
         let texto_id = id.to_string();
@@ -68,8 +68,8 @@ impl Fichas<'_> {
                 &texto_id,
                 &NovoEventoFicha {
                     execucao_id: None,
-                    tipo: TipoEventoFicha::FichaAberta,
-                    ator_tipo: AtorEvento::Sistema,
+                    tipo: RecordEventKind::RecordOpened,
+                    ator_tipo: EventActor::System,
                     ator_ref: None,
                     payload_json: "{}".to_owned(),
                     chave_idempotencia: None,
@@ -82,7 +82,7 @@ impl Fichas<'_> {
     }
 
     /// Busca pelo id dentro da org.
-    pub fn obter(&self, org: OrgId, id: FichaId) -> Resultado<Ficha> {
+    pub fn obter(&self, org: OrgId, id: RecordId) -> Resultado<Ficha> {
         let texto_org = org.to_string();
         let texto_id = id.to_string();
         let encontrada = self.0.leitura(move |conn| {
@@ -130,7 +130,7 @@ impl Fichas<'_> {
         let mut valores: Vec<rusqlite::types::Value> =
             vec![rusqlite::types::Value::Text(org.to_string())];
         if let Some(status) = filtro.status {
-            valores.push(rusqlite::types::Value::Text(status.como_texto().to_owned()));
+            valores.push(rusqlite::types::Value::Text(status.as_text().to_owned()));
             condicoes.push(format!("status = ?{}", valores.len()));
         }
         if let Some(agente) = filtro.agente {
@@ -173,7 +173,7 @@ impl Fichas<'_> {
     pub fn eventos(
         &self,
         org: OrgId,
-        ficha: FichaId,
+        ficha: RecordId,
         apos: Option<i64>,
         limite: u32,
     ) -> Resultado<Vec<EventoFicha>> {
@@ -209,7 +209,7 @@ impl Fichas<'_> {
     pub fn fechar_sem_conversa(
         &self,
         org: OrgId,
-        ficha: FichaId,
+        ficha: RecordId,
         esperada: u64,
         motivo: &str,
     ) -> Resultado<()> {
@@ -230,32 +230,32 @@ impl Fichas<'_> {
                 .optional()
                 .map_err(ErroStore::from)?;
             let Some((status, conversa, versao)) = linha else {
-                return Err(ErroStore::Dominio(poph_types::DomainError::NaoEncontrado {
-                    entidade: "ficha",
+                return Err(ErroStore::Dominio(poph_types::DomainError::NotFound {
+                    entity: "ficha",
                     id: texto_ficha.clone(),
                 }));
             };
-            if StatusFicha::de_texto(&status).map_err(ErroStore::from)? == StatusFicha::Fechada {
-                return Err(ErroStore::Dominio(poph_types::DomainError::FichaFechada {
+            if RecordStatus::from_text(&status).map_err(ErroStore::from)? == RecordStatus::Closed {
+                return Err(ErroStore::Dominio(poph_types::DomainError::RecordClosed {
                     id: texto_ficha.clone(),
                 }));
             }
             if conversa.is_some() {
-                return Err(ErroStore::Dominio(poph_types::DomainError::Conflito {
-                    entidade: "ficha",
+                return Err(ErroStore::Dominio(poph_types::DomainError::Conflict {
+                    entity: "ficha",
                     id: texto_ficha.clone(),
-                    motivo: "a Ficha tem conversa ligada: feche o atendimento pela conversa"
+                    reason: "a Ficha tem conversa ligada: feche o atendimento pela conversa"
                         .to_owned(),
                 }));
             }
             let atual = u64::try_from(versao).unwrap_or(0);
             if atual != esperada {
                 return Err(ErroStore::Dominio(
-                    poph_types::DomainError::ConflitoDeVersao {
-                        entidade: "ficha",
+                    poph_types::DomainError::VersionConflict {
+                        entity: "ficha",
                         id: texto_ficha.clone(),
-                        esperada,
-                        atual,
+                        expected: esperada,
+                        current: atual,
                     },
                 ));
             }
@@ -263,7 +263,7 @@ impl Fichas<'_> {
                 conn,
                 &texto_org,
                 &texto_ficha,
-                FechadaPor::Admin,
+                ClosedBy::Admin,
                 &motivo,
                 agora,
                 metricas.as_ref(),
@@ -282,7 +282,7 @@ impl Fichas<'_> {
     pub fn registrar_evento(
         &self,
         org: OrgId,
-        ficha: FichaId,
+        ficha: RecordId,
         novo: NovoEventoFicha<'_>,
     ) -> Resultado<EventoFicha> {
         let agora = self.0.agora();
@@ -297,8 +297,8 @@ impl Fichas<'_> {
         let id = self.0.escrita(move |conn| {
             let situacao = situacao_da_ficha(conn, &texto_org, &texto_ficha)?;
             if situacao.is_none() {
-                return Err(ErroStore::Dominio(poph_types::DomainError::NaoEncontrado {
-                    entidade: "ficha",
+                return Err(ErroStore::Dominio(poph_types::DomainError::NotFound {
+                    entity: "ficha",
                     id: texto_ficha.clone(),
                 }));
             }
@@ -307,8 +307,8 @@ impl Fichas<'_> {
             {
                 return Ok(evento.id.to_string());
             }
-            if situacao == Some(StatusFicha::Fechada) {
-                return Err(ErroStore::Dominio(poph_types::DomainError::FichaFechada {
+            if situacao == Some(RecordStatus::Closed) {
+                return Err(ErroStore::Dominio(poph_types::DomainError::RecordClosed {
                     id: texto_ficha.clone(),
                 }));
             }
@@ -328,7 +328,7 @@ impl Fichas<'_> {
             )
         })?;
         let texto_org = org.to_string();
-        let evento_id: EventoFichaId = id
+        let evento_id: RecordEventId = id
             .parse()
             .map_err(|erro: poph_types::DomainError| ErroStore::Dominio(erro))?;
         self.0.leitura(move |conn| {
@@ -349,7 +349,7 @@ impl Fichas<'_> {
 }
 
 /// Situação da Ficha na org, ou `None` quando ela não existe.
-fn situacao_da_ficha(conn: &Connection, org: &str, ficha: &str) -> Resultado<Option<StatusFicha>> {
+fn situacao_da_ficha(conn: &Connection, org: &str, ficha: &str) -> Resultado<Option<RecordStatus>> {
     let texto: Option<String> = conn
         .query_row(
             "SELECT status FROM fichas WHERE org_id = ?1 AND id = ?2",
@@ -359,7 +359,7 @@ fn situacao_da_ficha(conn: &Connection, org: &str, ficha: &str) -> Resultado<Opt
         .optional()
         .map_err(ErroStore::from)?;
     texto
-        .map(|texto| StatusFicha::de_texto(&texto).map_err(ErroStore::from))
+        .map(|texto| RecordStatus::from_text(&texto).map_err(ErroStore::from))
         .transpose()
 }
 
@@ -432,7 +432,7 @@ pub(crate) fn criar_ficha_da_conversa(
     peer: Option<&str>,
     agora: i64,
 ) -> Resultado<String> {
-    let ficha = FichaId::generate().to_string();
+    let ficha = RecordId::generate().to_string();
     conn.execute(
         "INSERT INTO fichas
             (id, org_id, conversation_id, agent_id, canal, peer_externo, status, aberta_em,
@@ -447,8 +447,8 @@ pub(crate) fn criar_ficha_da_conversa(
         &ficha,
         &NovoEventoFicha {
             execucao_id: None,
-            tipo: TipoEventoFicha::FichaAberta,
-            ator_tipo: AtorEvento::Sistema,
+            tipo: RecordEventKind::RecordOpened,
+            ator_tipo: EventActor::System,
             ator_ref: None,
             payload_json: "{}".to_owned(),
             chave_idempotencia: None,
@@ -471,7 +471,7 @@ pub(crate) fn fechar_ficha_da_conversa(
     conn: &Connection,
     org: &str,
     conversa: &str,
-    por: FechadaPor,
+    por: ClosedBy,
     motivo: &str,
     agora: i64,
     metricas: Option<&MetricasExecucao>,
@@ -486,13 +486,13 @@ pub(crate) fn fechar_ficha_da_conversa(
         .map_err(ErroStore::from)?;
     let ficha = match situacao {
         Some((id, status)) => {
-            if StatusFicha::de_texto(&status).map_err(ErroStore::from)? == StatusFicha::Fechada {
+            if RecordStatus::from_text(&status).map_err(ErroStore::from)? == RecordStatus::Closed {
                 return Ok(false);
             }
             id
         }
         None => {
-            let ficha = FichaId::generate().to_string();
+            let ficha = RecordId::generate().to_string();
             let inseridas = conn
                 .execute(
                     "INSERT INTO fichas
@@ -501,7 +501,7 @@ pub(crate) fn fechar_ficha_da_conversa(
                      SELECT ?1, org_id, id, agent_id, channel, external_peer, 'closed', created_at,
                             ?3, ?4, ?5, 1
                        FROM conversations WHERE org_id = ?2 AND id = ?6",
-                    params![ficha, org, agora, por.como_texto(), motivo, conversa],
+                    params![ficha, org, agora, por.as_text(), motivo, conversa],
                 )
                 .map_err(|erro| ErroStore::da_escrita("conversa", erro))?;
             if inseridas == 0 {
@@ -526,7 +526,7 @@ pub(crate) fn fechar_ficha_por_id(
     conn: &Connection,
     org: &str,
     ficha: &str,
-    por: FechadaPor,
+    por: ClosedBy,
     motivo: &str,
     agora: i64,
     metricas: Option<&MetricasExecucao>,
@@ -540,18 +540,18 @@ pub(crate) fn fechar_ficha_por_id(
         .optional()
         .map_err(ErroStore::from)?;
     let Some(situacao) = situacao else {
-        return Err(ErroStore::Dominio(poph_types::DomainError::NaoEncontrado {
-            entidade: "ficha",
+        return Err(ErroStore::Dominio(poph_types::DomainError::NotFound {
+            entity: "ficha",
             id: ficha.to_owned(),
         }));
     };
-    if StatusFicha::de_texto(&situacao).map_err(ErroStore::from)? == StatusFicha::Fechada {
+    if RecordStatus::from_text(&situacao).map_err(ErroStore::from)? == RecordStatus::Closed {
         return Ok(false);
     }
 
     // Execuções ativas da Ficha: abandonadas na mesma transação (PRD L5 e L6).
     let ativas = execucoes_ativas(conn, org, ficha)?;
-    let abandonada = StatusExecucao::Abandonada.como_texto();
+    let abandonada = ExecutionStatus::Abandoned.as_text();
     for execucao in &ativas {
         conn.execute(
             "UPDATE fluxo_execucoes
@@ -571,9 +571,9 @@ pub(crate) fn fechar_ficha_por_id(
             org,
             ficha,
             &NovoEventoFicha {
-                execucao_id: execucao.parse::<ExecucaoId>().ok(),
-                tipo: TipoEventoFicha::ExecucaoAbandonada,
-                ator_tipo: AtorEvento::Sistema,
+                execucao_id: execucao.parse::<ExecutionId>().ok(),
+                tipo: RecordEventKind::ExecutionAbandoned,
+                ator_tipo: EventActor::System,
                 ator_ref: None,
                 payload_json: format!(
                     "{{\"motivo\":{}}}",
@@ -587,7 +587,7 @@ pub(crate) fn fechar_ficha_por_id(
     // FX-40: cada execução que o fechamento do atendimento abandonou conta uma vez em
     // `poph_fluxos_execucoes_abandonadas_total`.
     if let Some(metricas) = metricas {
-        metricas.desfecho(StatusExecucao::Abandonada, ativas.len() as u64);
+        metricas.desfecho(ExecutionStatus::Abandoned, ativas.len() as u64);
     }
 
     registrar_evento_conn(conn, org, ficha, &evento_de_fechamento(por, motivo), agora)?;
@@ -598,25 +598,24 @@ pub(crate) fn fechar_ficha_por_id(
                 SET status = 'closed', fechada_em = ?3, fechada_por = ?4, fechada_motivo = ?5,
                     version = version + 1
               WHERE org_id = ?1 AND id = ?2 AND status = 'open'",
-            params![org, ficha, agora, por.como_texto(), motivo],
+            params![org, ficha, agora, por.as_text(), motivo],
         )
         .map_err(|erro| ErroStore::da_escrita("fechada_por", erro))?;
     Ok(alteradas > 0)
 }
 
 /// Evento `ficha_fechada`, com o autor do fechamento traduzido para o ator do evento.
-fn evento_de_fechamento(por: FechadaPor, motivo: &str) -> NovoEventoFicha<'static> {
+fn evento_de_fechamento(por: ClosedBy, motivo: &str) -> NovoEventoFicha<'static> {
     NovoEventoFicha {
         execucao_id: None,
-        tipo: TipoEventoFicha::FichaFechada,
+        tipo: RecordEventKind::RecordClosed,
         ator_tipo: match por {
-            FechadaPor::Admin => AtorEvento::Admin,
-            FechadaPor::Agente => AtorEvento::Agente,
-            FechadaPor::Atendente => AtorEvento::Atendente,
-            FechadaPor::Cliente
-            | FechadaPor::Fluxo
-            | FechadaPor::Sistema
-            | FechadaPor::Migracao => AtorEvento::Sistema,
+            ClosedBy::Admin => EventActor::Admin,
+            ClosedBy::Agent => EventActor::Agent,
+            ClosedBy::Attendant => EventActor::Attendant,
+            ClosedBy::Customer | ClosedBy::Flow | ClosedBy::System | ClosedBy::Migration => {
+                EventActor::System
+            }
         },
         ator_ref: None,
         payload_json: format!("{{\"motivo\":{}}}", json_string(motivo)),
@@ -681,7 +680,7 @@ pub(crate) fn registrar_evento_conn(
         // mesma org.
         pertence_a_ficha(conn, org, ficha, &execucao.to_string())?;
     }
-    let id = EventoFichaId::generate().to_string();
+    let id = RecordEventId::generate().to_string();
     conn.execute(
         "INSERT INTO ficha_eventos
             (id, org_id, ficha_id, execucao_id, seq, tipo, ator_tipo, ator_ref, payload_json,
@@ -695,8 +694,8 @@ pub(crate) fn registrar_evento_conn(
             org,
             ficha,
             novo.execucao_id.map(|execucao| execucao.to_string()),
-            novo.tipo.como_texto(),
-            novo.ator_tipo.como_texto(),
+            novo.tipo.as_text(),
+            novo.ator_tipo.as_text(),
             novo.ator_ref,
             novo.payload_json,
             novo.chave_idempotencia,
@@ -719,8 +718,8 @@ fn pertence_a_ficha(conn: &Connection, org: &str, ficha: &str, execucao: &str) -
         .map_err(ErroStore::from)?;
     match existe {
         Some(_) => Ok(()),
-        None => Err(ErroStore::Dominio(poph_types::DomainError::NaoEncontrado {
-            entidade: "execução de fluxo",
+        None => Err(ErroStore::Dominio(poph_types::DomainError::NotFound {
+            entity: "execução de fluxo",
             id: execucao.to_owned(),
         })),
     }
@@ -735,12 +734,12 @@ fn linha(linha: &Row<'_>) -> rusqlite::Result<Ficha> {
         agent_id: id_da_coluna(linha, 3)?,
         canal: linha.get(4)?,
         peer_externo: linha.get(5)?,
-        status: StatusFicha::de_texto(&linha.get::<_, String>(6)?)
+        status: RecordStatus::from_text(&linha.get::<_, String>(6)?)
             .map_err(|erro| conversao(6, erro))?,
         aberta_em: linha.get(7)?,
         fechada_em: linha.get(8)?,
         fechada_por: match linha.get::<_, Option<String>>(9)? {
-            Some(texto) => Some(FechadaPor::de_texto(&texto).map_err(|erro| conversao(9, erro))?),
+            Some(texto) => Some(ClosedBy::from_text(&texto).map_err(|erro| conversao(9, erro))?),
             None => None,
         },
         fechada_motivo: linha.get(10)?,
@@ -756,9 +755,9 @@ fn linha_evento(linha: &Row<'_>) -> rusqlite::Result<EventoFicha> {
         ficha_id: id_da_coluna(linha, 2)?,
         execucao_id: id_opcional(linha, 3)?,
         seq: linha.get(4)?,
-        tipo: TipoEventoFicha::de_texto(&linha.get::<_, String>(5)?)
+        tipo: RecordEventKind::from_text(&linha.get::<_, String>(5)?)
             .map_err(|erro| conversao(5, erro))?,
-        ator_tipo: AtorEvento::de_texto(&linha.get::<_, String>(6)?)
+        ator_tipo: EventActor::from_text(&linha.get::<_, String>(6)?)
             .map_err(|erro| conversao(6, erro))?,
         ator_ref: linha.get(7)?,
         payload_json: linha.get(8)?,

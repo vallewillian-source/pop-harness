@@ -199,7 +199,7 @@ fn nao_transfere_conversa_de_outra_org() {
         .expect_err("não pode transferir conversa de outra org");
     assert!(matches!(
         erro,
-        ErroStore::Dominio(DomainError::NaoEncontrado { .. })
+        ErroStore::Dominio(DomainError::NotFound { .. })
     ));
 
     // A conversa continua aberta e a org B não ganhou auditoria.
@@ -244,7 +244,7 @@ fn departamento_de_outra_org_e_recusado() {
         .expect_err("departamento de outra org é recusado");
     assert!(matches!(
         erro,
-        ErroStore::Dominio(DomainError::NaoEncontrado { .. })
+        ErroStore::Dominio(DomainError::NotFound { .. })
     ));
     let gravada = cenario
         .store
@@ -277,7 +277,7 @@ fn transferencia_administrativa_recusa_conversa_encerrada() {
         .expect_err("conversa encerrada não transfere");
     assert!(matches!(
         erro,
-        ErroStore::Dominio(DomainError::ConversaEncerrada { .. })
+        ErroStore::Dominio(DomainError::ConversationClosed { .. })
     ));
 
     let gravada = cenario

@@ -38,8 +38,8 @@ use poph_store::{
     InicioDeExecucao, RevisaoDeFluxo,
 };
 use poph_types::{
-    AgentId, AtorAcao, AtorEvento, DomainError, ExecucaoId, FechadaPor, FichaId, FluxoId, OrgId,
-    StatusFicha,
+    ActionActor, AgentId, ClosedBy, DomainError, EventActor, ExecutionId, FlowId, OrgId, RecordId,
+    RecordStatus,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -159,7 +159,7 @@ pub async fn mostrar(
 ) -> Result<Json<Value>, ApiError> {
     let org = id_da_url::<OrgId>(&c.org_id)?;
     ident.exigir_org(org)?;
-    let ficha_id = id_da_url::<FichaId>(&c.ficha_id)?;
+    let ficha_id = id_da_url::<RecordId>(&c.ficha_id)?;
     // `detalhe` lê a Ficha antes de qualquer outra coisa: Ficha de outra org ou inexistente vira 404,
     // e não uma lista de execuções vazia com 200. A CLI (`poph ficha mostrar`) usa a mesma função.
     let corpo = detalhe(&e.store, org, ficha_id)?;
@@ -193,7 +193,7 @@ pub async fn eventos(
 ) -> Result<Json<ListaJson<Value>>, ApiError> {
     let org = id_da_url::<OrgId>(&c.org_id)?;
     ident.exigir_org(org)?;
-    let ficha_id = id_da_url::<FichaId>(&c.ficha_id)?;
+    let ficha_id = id_da_url::<RecordId>(&c.ficha_id)?;
     let limite = q.limit.unwrap_or(LIMITE_PADRAO_EVENTOS).clamp(1, 200);
     let apos = cursor_de_seq(q.cursor.as_deref())?;
     // O repositório confere a Ficha antes de ler: Ficha de outra org sai como 404.
@@ -209,7 +209,7 @@ fn filtro_da_consulta(q: &ConsultaFichas) -> Result<FiltroFichas, ApiError> {
     let status = match q.status.as_deref() {
         None => None,
         Some(texto) => Some(
-            StatusFicha::de_texto(texto)
+            RecordStatus::from_text(texto)
                 .map_err(|_| ApiError::validacao("status", "use open ou closed"))?,
         ),
     };
@@ -333,14 +333,14 @@ pub async fn iniciar_fluxo(
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     let org = id_da_url::<OrgId>(&c.org_id)?;
     ident.exigir_org(org)?;
-    let ficha_id = id_da_url::<FichaId>(&c.ficha_id)?;
+    let ficha_id = id_da_url::<RecordId>(&c.ficha_id)?;
     let versao = versao_do_if_match(&h, "ficha")?;
     let Json(dados) = corpo.map_err(|_| {
         ApiError::invalido(
             "corpo JSON inválido: use {\"fluxo_id\": ..., \"chave_idempotencia\": ...}",
         )
     })?;
-    let fluxo = id_da_url::<FluxoId>(&dados.fluxo_id)?;
+    let fluxo = id_da_url::<FlowId>(&dados.fluxo_id)?;
     let chave = chave_obrigatoria(&dados.chave_idempotencia)?;
     // Repetição vem antes da Ficha fechada e da versão: o reenvio devolve a execução da primeira vez.
     if let Some(ja_aberta) = e
@@ -354,8 +354,8 @@ pub async fn iniciar_fluxo(
         ));
     }
     let ficha = e.store.fichas().obter(org, ficha_id)?;
-    if ficha.status == StatusFicha::Fechada {
-        return Err(dominio(DomainError::FichaFechada {
+    if ficha.status == RecordStatus::Closed {
+        return Err(dominio(DomainError::RecordClosed {
             id: ficha_id.to_string(),
         }));
     }
@@ -389,7 +389,7 @@ pub async fn iniciar_fluxo(
             ficha: ficha_id,
             fluxo,
             revisao: revisao.id,
-            ator: AtorEvento::Atendente,
+            ator: EventActor::Attendant,
             ator_ref: Some(&token),
             decisao_jev: None,
             estado_inicial: estado_para_banco(&estado),
@@ -460,7 +460,7 @@ pub async fn acao(
 ) -> Result<Json<Value>, ApiError> {
     let org = id_da_url::<OrgId>(&c.org_id)?;
     ident.exigir_org(org)?;
-    let ficha_id = id_da_url::<FichaId>(&c.ficha_id)?;
+    let ficha_id = id_da_url::<RecordId>(&c.ficha_id)?;
     let run = id_da_execucao(&c.run_id)?;
     let versao = versao_do_if_match(&h, "execução de fluxo")?;
     let Json(dados) = corpo.map_err(|_| {
@@ -478,8 +478,8 @@ pub async fn acao(
         return Ok(Json(resposta_execucao(&e, org, &atual, true, &[])?));
     }
     let ficha = e.store.fichas().obter(org, ficha_id)?;
-    if ficha.status == StatusFicha::Fechada {
-        return Err(dominio(DomainError::FichaFechada {
+    if ficha.status == RecordStatus::Closed {
+        return Err(dominio(DomainError::RecordClosed {
             id: ficha_id.to_string(),
         }));
     }
@@ -502,7 +502,7 @@ pub async fn acao(
         &estado,
         &dados.acao,
         &campos,
-        AtorAcao::Atendente,
+        ActionActor::Attendant,
         Some(&chave),
         &contexto,
     )
@@ -516,7 +516,7 @@ pub async fn acao(
         &chave,
         ExtrasDaTransicao {
             ator_ref: Some(&token),
-            fechada_por: Some(FechadaPor::Atendente),
+            fechada_por: Some(ClosedBy::Attendant),
             motivo_encerramento: None,
         },
     )?;
@@ -573,7 +573,7 @@ pub async fn abandonar(
 ) -> Result<Json<Value>, ApiError> {
     let org = id_da_url::<OrgId>(&c.org_id)?;
     ident.exigir_org(org)?;
-    let ficha_id = id_da_url::<FichaId>(&c.ficha_id)?;
+    let ficha_id = id_da_url::<RecordId>(&c.ficha_id)?;
     let run = id_da_execucao(&c.run_id)?;
     let versao = versao_do_if_match(&h, "execução de fluxo")?;
     let Json(dados) = corpo.map_err(|_| {
@@ -590,8 +590,8 @@ pub async fn abandonar(
         return Ok(Json(resposta_execucao(&e, org, &atual, true, &[])?));
     }
     let ficha = e.store.fichas().obter(org, ficha_id)?;
-    if ficha.status == StatusFicha::Fechada {
-        return Err(dominio(DomainError::FichaFechada {
+    if ficha.status == RecordStatus::Closed {
+        return Err(dominio(DomainError::RecordClosed {
             id: ficha_id.to_string(),
         }));
     }
@@ -604,7 +604,7 @@ pub async fn abandonar(
         ));
     }
     let (_ir, _avaliador, estado) = estado_para_agir(&e, org, &atual)?;
-    let resultado = abandonar_motor(&estado, &dados.motivo, AtorAcao::Atendente, Some(&chave))
+    let resultado = abandonar_motor(&estado, &dados.motivo, ActionActor::Attendant, Some(&chave))
         .map_err(dominio)?;
     let token = ident.ator_id();
     let gravada = e.store.execucoes().aplicar_transicao(
@@ -671,11 +671,11 @@ pub async fn fechar(
 ) -> Result<Json<Value>, ApiError> {
     let org = id_da_url::<OrgId>(&c.org_id)?;
     ident.exigir_org(org)?;
-    let ficha_id = id_da_url::<FichaId>(&c.ficha_id)?;
+    let ficha_id = id_da_url::<RecordId>(&c.ficha_id)?;
     let esperada = versao_do_if_match(&h, "ficha")?;
     let ficha = e.store.fichas().obter(org, ficha_id)?;
-    if ficha.status == StatusFicha::Fechada {
-        return Err(dominio(DomainError::FichaFechada {
+    if ficha.status == RecordStatus::Closed {
+        return Err(dominio(DomainError::RecordClosed {
             id: ficha_id.to_string(),
         }));
     }
@@ -743,8 +743,8 @@ fn campos_do_corpo(campos: Option<Value>) -> Result<Campos, ApiError> {
 fn execucao_da_ficha(
     e: &Estado,
     org: OrgId,
-    ficha: FichaId,
-    run: ExecucaoId,
+    ficha: RecordId,
+    run: ExecutionId,
 ) -> Result<Execucao, ApiError> {
     let execucao = e.store.execucoes().obter(org, run)?;
     if execucao.ficha_id != ficha {
@@ -773,7 +773,7 @@ fn ir_da_revisao(e: &Estado, revisao: &RevisaoDeFluxo) -> Result<Arc<Ir>, ApiErr
             &chave,
             &gravada,
             &revisao.fonte,
-            &Limites::da_config(&e.config.fluxos),
+            &Limites::da_config(&e.config.flows),
         )
         .map_err(|erro| {
             tracing::error!(erro = ?erro, "revisão de fluxo publicada não carrega");
@@ -793,7 +793,7 @@ fn avaliador_da_revisao(
     }
     Avaliador::novo_com(
         &revisao.fonte,
-        &Limites::da_config(&e.config.fluxos),
+        &Limites::da_config(&e.config.flows),
         LimitesRegra::default(),
     )
     .map_err(|erro| {
@@ -874,8 +874,8 @@ fn resposta_execucao(
 
 /// Id de execução da URL. Não usa `id_da_url`: o id de execução não tem o nome de entidade que ele
 /// exige, e a mensagem de erro é a mesma.
-fn id_da_execucao(texto: &str) -> Result<ExecucaoId, ApiError> {
-    texto.parse::<ExecucaoId>().map_err(|_| {
+fn id_da_execucao(texto: &str) -> Result<ExecutionId, ApiError> {
+    texto.parse::<ExecutionId>().map_err(|_| {
         ApiError::id_invalido(
             "execução de fluxo",
             texto,

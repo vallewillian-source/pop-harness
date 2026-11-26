@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use poph_jev::{ClienteJev, ConfigJev, ErroJev, LoteResposta, Pedido, Pergunta, TransporteJev};
-use poph_types::{JevConfig, MetricasBase, Registro, Segredo};
+use poph_types::{BaseMetrics, JevConfig, Registry, Secret};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::{ServerConfig, ServerConnection, StreamOwned};
 
@@ -26,20 +26,20 @@ const SERVIDOR_CHAVE: &[u8] = include_bytes!("fixtures/tls/servidor-chave.der");
 
 const CORPO: &str = r#"{"answers":{"g1_transferir":{"type":"choice","choice":"continuar_agente","probabilities":{"continuar_agente":0.95},"confidence":0.95}},"usage":{"input_tokens":20,"output_tokens":4}}"#;
 
-fn metricas() -> MetricasBase {
-    MetricasBase::registrar(&Registro::new()).expect("métricas base")
+fn metricas() -> BaseMetrics {
+    BaseMetrics::register(&Registry::new()).expect("métricas base")
 }
 
 fn config(url_base: &str, retentativas: u32) -> ConfigJev {
     let jev = JevConfig {
-        ativo: true,
+        enabled: true,
         url_base: url_base.to_owned(),
-        modelo: "jev-latest".to_owned(),
-        timeout_segundos: 8,
-        retentativas,
+        model: "jev-latest".to_owned(),
+        timeout_seconds: 8,
+        retries: retentativas,
         ..JevConfig::default()
     };
-    ConfigJev::da_config(&jev, Segredo::new(CHAVE.to_owned())).expect("configuração do cliente")
+    ConfigJev::da_config(&jev, Secret::new(CHAVE.to_owned())).expect("configuração do cliente")
 }
 
 fn pedido() -> Pedido {

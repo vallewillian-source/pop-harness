@@ -12,11 +12,11 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use poph_evolution::{ClienteEvolution, ConfigEvolution, ErroEvolution};
-use poph_types::Segredo;
+use poph_types::Secret;
 
 fn configurar(url: &str, chave: &str, instancia: &str) -> ClienteEvolution {
     ClienteEvolution::novo(
-        ConfigEvolution::novo(url, instancia, Segredo::new(chave.to_owned()))
+        ConfigEvolution::novo(url, instancia, Secret::new(chave.to_owned()))
             .expect("configuração")
             .com_timeout(Duration::from_secs(20)),
     )

@@ -29,7 +29,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use poph_types::{HarnessConfig, StatusExecucao};
+use poph_types::{ExecutionStatus, HarnessConfig};
 use rusqlite::Connection;
 
 pub use erro::ErroStore;
@@ -102,7 +102,7 @@ pub struct Store {
 impl Store {
     /// Abre (e migra) os bancos nos caminhos da configuração, criando a pasta de dados.
     pub fn abrir(config: &HarnessConfig) -> Resultado<Self> {
-        let diretorio = &config.dados.diretorio;
+        let diretorio = &config.data.directory;
         std::fs::create_dir_all(diretorio).map_err(|erro| ErroStore::Abertura {
             caminho: diretorio.display().to_string(),
             motivo: erro.to_string(),
@@ -171,7 +171,7 @@ impl Store {
     }
 
     /// Uma execução de fluxo mudou de situação (nada é contado quando ela continua `ativa`).
-    pub(crate) fn contar_desfecho_da_execucao(&self, status: StatusExecucao) {
+    pub(crate) fn contar_desfecho_da_execucao(&self, status: ExecutionStatus) {
         if let Some(metricas) = self.metricas_de_execucao() {
             metricas.desfecho(status, 1);
         }

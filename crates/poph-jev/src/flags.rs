@@ -11,7 +11,7 @@
 //! ```
 //! Campo desconhecido é ignorado: o JSON é de operador e não pode derrubar o turno.
 
-use poph_types::GatesJev;
+use poph_types::JevGates;
 
 use crate::tipos::IdGate;
 use serde_json::Value;
@@ -100,11 +100,11 @@ impl AjusteGates {
     }
 
     /// Aplica o ajuste sobre a configuração global, devolvendo os gates efetivos.
-    pub fn sobre(&self, base: GatesJev) -> GatesJev {
+    pub fn sobre(&self, base: JevGates) -> JevGates {
         if self.ativo == Some(false) {
-            return GatesJev::default();
+            return JevGates::default();
         }
-        GatesJev {
+        JevGates {
             g1: self.g1.unwrap_or(base.g1),
             g2: self.g2.unwrap_or(base.g2),
             g3: self.g3.unwrap_or(base.g3),

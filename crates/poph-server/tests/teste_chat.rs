@@ -30,9 +30,9 @@ use poph_files::ConfigArquivos;
 use poph_server::Estado;
 use poph_server::api::teste_chat::CANAL_DE_TESTE;
 use poph_store::{Direcao, EstadoTurno, NovaOrg, NovoAgente, Pagina, StatusConversa, Store};
-use poph_types::config::TokenGlobalConfig;
+use poph_types::config::GlobalTokenConfig;
 use poph_types::{
-    ConversationId, FerramentaConfig, FileId, HarnessConfig, OrgId, StructuredInstructions,
+    ConversationId, FileId, HarnessConfig, OrgId, StructuredInstructions, ToolConfig,
 };
 use rand_core::OsRng;
 use reqwest::{Client, StatusCode};
@@ -196,9 +196,9 @@ impl Cenario {
         fs::create_dir_all(pasta.join("dados")).expect("pasta de dados");
 
         let mut config = HarnessConfig::default();
-        config.dados.diretorio = pasta.join("dados");
-        config.servidor.porta = 7483;
-        config.admin.tokens_globais = vec![TokenGlobalConfig {
+        config.data.directory = pasta.join("dados");
+        config.server.port = 7483;
+        config.admin.tokens_globais = vec![GlobalTokenConfig {
             label: "teste".to_owned(),
             hash: hash_argon2(TOKEN_GLOBAL),
         }];
@@ -250,7 +250,7 @@ impl Cenario {
                 )
                 .expect("arquivo na biblioteca");
             let instrucoes = StructuredInstructions {
-                tools: vec![FerramentaConfig {
+                tools: vec![ToolConfig {
                     name: poph_agent::NOME_ENVIAR_ARQUIVO.to_owned(),
                     enabled: true,
                     when_to_use: String::new(),
@@ -263,7 +263,7 @@ impl Cenario {
                     org,
                     agente,
                     0,
-                    &instrucoes.para_json(),
+                    &instrucoes.to_json(),
                     "# Bia\n\nVocê é a atendente da FixProLar.",
                     true,
                 )

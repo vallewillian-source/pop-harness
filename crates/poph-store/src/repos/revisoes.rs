@@ -46,7 +46,7 @@
 //! `schema_versao` diferente do informado, `resolucoes_json` que não é objeto JSON e `ator_tipo` fora
 //! do vocabulário de `audit_log.actor_kind`.
 
-use poph_types::{AuditId, DomainError, FluxoId, OrgId, RevisaoId};
+use poph_types::{AuditId, DomainError, FlowId, OrgId, RevisionId};
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
 use super::{conflito_ou_ausente, exigir, id_da_coluna, pertence, u32_da_coluna, u64_da_coluna};
@@ -80,30 +80,30 @@ impl Revisoes<'_> {
     pub fn publicar_revisao(
         &self,
         org: OrgId,
-        fluxo: FluxoId,
+        fluxo: FlowId,
         publicacao: PublicacaoDeRevisao,
     ) -> Resultado<RevisaoDeFluxo> {
         // 1. O que dá para recusar sem tocar no banco. A revisão é imutável: aqui é a última chance.
         if publicacao.fonte.trim().is_empty() {
-            return Err(ErroStore::Dominio(DomainError::Validacao {
-                campo: "fonte",
-                motivo: "o texto publicado não pode ficar vazio: é a origem que a revisão guarda"
+            return Err(ErroStore::Dominio(DomainError::Validation {
+                field: "fonte",
+                reason: "o texto publicado não pode ficar vazio: é a origem que a revisão guarda"
                     .to_owned(),
             }));
         }
         let Some(schema_versao) = publicacao.schema_versao else {
-            return Err(ErroStore::Dominio(DomainError::Validacao {
-                campo: "schema_versao",
-                motivo:
+            return Err(ErroStore::Dominio(DomainError::Validation {
+                field: "schema_versao",
+                reason:
                     "informe a versão do esquema da IR (`docs/FLUXOS_LINGUAGEM.md` §8): revisão \
                          sem ela não entra"
                         .to_owned(),
             }));
         };
         if schema_versao == 0 {
-            return Err(ErroStore::Dominio(DomainError::Validacao {
-                campo: "schema_versao",
-                motivo: "a versão do esquema começa em 1".to_owned(),
+            return Err(ErroStore::Dominio(DomainError::Validation {
+                field: "schema_versao",
+                reason: "a versão do esquema começa em 1".to_owned(),
             }));
         }
         let definicao_json = conferir_ir(&publicacao.definicao_json, schema_versao)?;
@@ -155,7 +155,7 @@ impl Revisoes<'_> {
                 .map_err(ErroStore::from)?;
 
             // 3. A auditoria da publicação, na mesma transação.
-            let revisao_id = RevisaoId::generate();
+            let revisao_id = RevisionId::generate();
             let detalhe = serde_json::json!({
                 "revisao": numero,
                 "revisao_id": revisao_id.to_string(),
@@ -213,7 +213,7 @@ impl Revisoes<'_> {
     }
 
     /// Revisão pelo número (1, 2, 3…), dentro da org. Fluxo de outra org → `NaoEncontrado`.
-    pub fn obter(&self, org: OrgId, fluxo: FluxoId, numero: u64) -> Resultado<RevisaoDeFluxo> {
+    pub fn obter(&self, org: OrgId, fluxo: FlowId, numero: u64) -> Resultado<RevisaoDeFluxo> {
         let texto_org = org.to_string();
         let texto_fluxo = fluxo.to_string();
         let numero_i64 = i64::try_from(numero).unwrap_or(i64::MAX);
@@ -227,7 +227,7 @@ impl Revisoes<'_> {
     /// Revisão pelo id: é a que uma execução segue (`fluxo_execucoes.revisao_id`), e a ação do
     /// atendente precisa da IR dela para conduzir o motor (FX-30). Revisão de outra org ou
     /// inexistente: `NaoEncontrado`.
-    pub fn obter_por_id(&self, org: OrgId, revisao: RevisaoId) -> Resultado<RevisaoDeFluxo> {
+    pub fn obter_por_id(&self, org: OrgId, revisao: RevisionId) -> Resultado<RevisaoDeFluxo> {
         let texto_org = org.to_string();
         let texto_revisao = revisao.to_string();
         let encontrada = self.0.leitura(move |conn| {
@@ -246,7 +246,7 @@ impl Revisoes<'_> {
     ///
     /// Fluxo sem publicação devolve `None` (é o estado de quem só tem rascunho); fluxo de outra org,
     /// `NaoEncontrado`.
-    pub fn atual(&self, org: OrgId, fluxo: FluxoId) -> Resultado<Option<RevisaoDeFluxo>> {
+    pub fn atual(&self, org: OrgId, fluxo: FlowId) -> Resultado<Option<RevisaoDeFluxo>> {
         let texto_org = org.to_string();
         let texto_fluxo = fluxo.to_string();
         self.0.leitura(move |conn| {
@@ -259,8 +259,8 @@ impl Revisoes<'_> {
                 .optional()
                 .map_err(ErroStore::from)?;
             match numero {
-                None => Err(ErroStore::Dominio(DomainError::NaoEncontrado {
-                    entidade: "fluxo",
+                None => Err(ErroStore::Dominio(DomainError::NotFound {
+                    entity: "fluxo",
                     id: texto_fluxo.clone(),
                 })),
                 Some(None) => Ok(None),
@@ -285,7 +285,7 @@ impl Revisoes<'_> {
     pub fn listar(
         &self,
         org: OrgId,
-        fluxo: FluxoId,
+        fluxo: FlowId,
         apos: Option<u64>,
         limite: u32,
     ) -> Resultado<Vec<RevisaoDeFluxo>> {
@@ -339,17 +339,17 @@ fn ler_por_numero(
 /// com a mesma versão que a coluna `schema_versao` diz, para o motor não encontrar duas verdades.
 fn conferir_ir(definicao_json: &str, schema_versao: u32) -> Resultado<String> {
     let Ok(serde_json::Value::Object(mapa)) = serde_json::from_str(definicao_json) else {
-        return Err(ErroStore::Dominio(DomainError::Validacao {
-            campo: "definicao_json",
-            motivo: "a IR entra como objeto JSON já validado por quem chama".to_owned(),
+        return Err(ErroStore::Dominio(DomainError::Validation {
+            field: "definicao_json",
+            reason: "a IR entra como objeto JSON já validado por quem chama".to_owned(),
         }));
     };
     if let Some(declarada) = mapa.get("schema_versao") {
         let declarada = declarada.as_u64();
         if declarada != Some(u64::from(schema_versao)) {
-            return Err(ErroStore::Dominio(DomainError::Validacao {
-                campo: "schema_versao",
-                motivo: format!(
+            return Err(ErroStore::Dominio(DomainError::Validation {
+                field: "schema_versao",
+                reason: format!(
                     "a IR declara {declarada:?} e a publicação informa {schema_versao}: os dois têm \
                      de ser a mesma versão"
                 ),
@@ -369,9 +369,9 @@ fn conferir_resolucoes(resolucoes_json: &str) -> Resultado<String> {
         serde_json::from_str::<serde_json::Value>(texto),
         Ok(serde_json::Value::Object(_))
     ) {
-        return Err(ErroStore::Dominio(DomainError::Validacao {
-            campo: "resolucoes_json",
-            motivo: "as resoluções entram como objeto JSON (ex.: nome de departamento → id)"
+        return Err(ErroStore::Dominio(DomainError::Validation {
+            field: "resolucoes_json",
+            reason: "as resoluções entram como objeto JSON (ex.: nome de departamento → id)"
                 .to_owned(),
         }));
     }
@@ -384,9 +384,9 @@ fn conferir_ator(ator_tipo: &str) -> Resultado<String> {
     if ATORES_DE_AUDITORIA.contains(&ator) {
         return Ok(ator.to_owned());
     }
-    Err(ErroStore::Dominio(DomainError::Validacao {
-        campo: "ator_tipo",
-        motivo: format!(
+    Err(ErroStore::Dominio(DomainError::Validation {
+        field: "ator_tipo",
+        reason: format!(
             "use um destes tipos de ator: {}",
             ATORES_DE_AUDITORIA.join(", ")
         ),

@@ -900,7 +900,7 @@ impl<D: DestinoEstado, P: PortaEstado> EstadoDasConversas<D, P> {
             porta,
             destino,
             ids,
-            intervalo: Duration::from_millis(config.intervalo_ms.max(1)),
+            intervalo: Duration::from_millis(config.interval_ms.max(1)),
             pagina: PAGINA,
             falhas_seguidas: AtomicU32::new(0),
             parar,
@@ -1265,9 +1265,9 @@ impl<D: DestinoEstado, P: PortaEstado> EstadoDasConversas<D, P> {
         let motivo = motivo_da_chamada(&erro);
         match erro.classificacao() {
             Classificacao::Transitoria => {
-                self.metricas.erros_transitorios.incrementar(1);
+                self.metricas.erros_transitorios.increment(1);
                 if erro.retry_after_ms().is_some() {
-                    self.metricas.respostas_429.incrementar(1);
+                    self.metricas.respostas_429.increment(1);
                 }
                 relatorio.adiadas += 1;
                 tracing::warn!(
@@ -1281,7 +1281,7 @@ impl<D: DestinoEstado, P: PortaEstado> EstadoDasConversas<D, P> {
                 Some(Desfecho::Adiado)
             }
             Classificacao::Definitiva => {
-                self.metricas.erros_definitivos.incrementar(1);
+                self.metricas.erros_definitivos.increment(1);
                 relatorio.puladas += 1;
                 tracing::warn!(
                     target: "poph_server::matrix_estado",
@@ -1359,8 +1359,8 @@ impl<D: DestinoEstado, P: PortaEstado> EstadoDasConversas<D, P> {
             Ok(_) => {}
             Err(erro) => {
                 match erro.classificacao() {
-                    Classificacao::Transitoria => self.metricas.erros_transitorios.incrementar(1),
-                    Classificacao::Definitiva => self.metricas.erros_definitivos.incrementar(1),
+                    Classificacao::Transitoria => self.metricas.erros_transitorios.increment(1),
+                    Classificacao::Definitiva => self.metricas.erros_definitivos.increment(1),
                 }
                 tracing::warn!(
                     target: "poph_server::matrix_estado",
@@ -1375,8 +1375,8 @@ impl<D: DestinoEstado, P: PortaEstado> EstadoDasConversas<D, P> {
 
     /// Conta a chamada e mede a duração (as métricas são as da MX-26, sem série nova).
     fn medir_synapse(&self, segundos: f64) {
-        self.metricas.tentativas.incrementar(1);
-        self.metricas.latencia_synapse_segundos.observar(segundos);
+        self.metricas.tentativas.increment(1);
+        self.metricas.latencia_synapse_segundos.observe(segundos);
     }
 }
 
@@ -1527,12 +1527,12 @@ mod testes {
     #[test]
     fn atraso_dobra_com_falhas_e_tem_teto() {
         let config = MatrixConfig {
-            habilitado: true,
+            enabled: true,
             homeserver_url: "http://127.0.0.1:1".to_owned(),
             server_name: "matrix-dev.local".to_owned(),
-            prefixo: "ph".to_owned(),
-            concorrencia: 4,
-            intervalo_ms: 1_000,
+            prefix: "ph".to_owned(),
+            concurrency: 4,
+            interval_ms: 1_000,
             ..MatrixConfig::default()
         };
         let laco = EstadoDasConversas::novo(PortaNula, DestinoNulo, &config).expect("monta o laço");

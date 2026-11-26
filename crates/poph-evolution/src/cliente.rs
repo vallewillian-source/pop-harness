@@ -40,7 +40,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use base64::Engine as _;
-use poph_types::{MetricasBase, Segredo};
+use poph_types::{BaseMetrics, Secret};
 use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
 use serde_json::{Value, json};
 
@@ -88,8 +88,8 @@ pub struct ConfigEvolution {
     /// Cabeçalho `Origin` opcional (a Evolution atrás de proxy exige em alguns deploys).
     pub origem: Option<String>,
     /// Contadores do canal, quando o servidor os quer expostos em `/metrics`.
-    pub metricas: Option<MetricasBase>,
-    chave: Segredo,
+    pub metricas: Option<BaseMetrics>,
+    chave: Secret,
 }
 
 impl ConfigEvolution {
@@ -97,7 +97,7 @@ impl ConfigEvolution {
     pub fn novo(
         url_base: impl Into<String>,
         instancia: impl Into<String>,
-        chave: Segredo,
+        chave: Secret,
     ) -> Result<Self, ErroEvolution> {
         let url_base = url_base.into().trim().trim_end_matches('/').to_owned();
         if !(url_base.starts_with("http://") || url_base.starts_with("https://")) {
@@ -111,7 +111,7 @@ impl ConfigEvolution {
                 "a integração do WhatsApp precisa do nome da instância".to_owned(),
             ));
         }
-        if chave.expor().trim().is_empty() {
+        if chave.expose().trim().is_empty() {
             return Err(ErroEvolution::Configuracao(
                 "a integração do WhatsApp precisa da chave da Evolution (`apikey`)".to_owned(),
             ));
@@ -140,7 +140,7 @@ impl ConfigEvolution {
     }
 
     /// Liga os contadores `poph_chamadas_evolution_total` e `poph_erros_evolution_total`.
-    pub fn com_metricas(mut self, metricas: MetricasBase) -> Self {
+    pub fn com_metricas(mut self, metricas: BaseMetrics) -> Self {
         self.metricas = Some(metricas);
         self
     }
@@ -591,11 +591,11 @@ impl ClienteEvolution {
     ) -> Result<Value, ErroEvolution> {
         let metricas = self.0.config.metricas.clone();
         if let Some(m) = &metricas {
-            m.chamadas_evolution.incrementar(1);
+            m.evolution_calls.increment(1);
         }
         let resultado = self.tentar_sem_contar(metodo, url, corpo, teto_corpo).await;
         if let (Err(_), Some(m)) = (&resultado, &metricas) {
-            m.erros_evolution.incrementar(1);
+            m.evolution_errors.increment(1);
         }
         resultado
     }
@@ -610,7 +610,7 @@ impl ClienteEvolution {
         let mut cabecalhos = HeaderMap::new();
         cabecalhos.insert(
             "apikey",
-            HeaderValue::from_str(self.0.config.chave.expor().trim()).map_err(|_| {
+            HeaderValue::from_str(self.0.config.chave.expose().trim()).map_err(|_| {
                 ErroEvolution::Configuracao(
                     "a chave da Evolution tem caractere que não cabe em cabeçalho HTTP".to_owned(),
                 )
@@ -664,7 +664,7 @@ impl ClienteEvolution {
         if !status.is_success() {
             return Err(ErroEvolution::Resposta {
                 status: status.as_u16(),
-                mensagem: mensagem_do_provedor(&corpo, self.0.config.chave.expor()),
+                mensagem: mensagem_do_provedor(&corpo, self.0.config.chave.expose()),
             });
         }
         if corpo.is_null() {

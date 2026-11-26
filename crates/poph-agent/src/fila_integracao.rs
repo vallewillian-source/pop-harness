@@ -44,9 +44,9 @@ use std::sync::{Arc, Mutex};
 
 use poph_store::{Conversa, ItemSaida, NovaConversa, Pagina, Recebido, StatusConversa, Store};
 use poph_types::{
-    AgentId, ComandoSaida, ConversationId, ErroIntegracao, EventoEstado, EventoIntegracao,
-    InboundEvent, Integration, IntegrationId, OrgId, Presenca, Receptor, SendFile, SendText,
-    SetPresence,
+    AgentId, ConversationId, EventSink, InboundEvent, Integration, IntegrationError,
+    IntegrationEvent, IntegrationId, OrgId, OutboundCommand, Presence, SendFile, SendText,
+    SetPresence, StateEvent,
 };
 use serde_json::Value;
 use tokio::sync::mpsc;
@@ -100,9 +100,9 @@ impl TransporteSaida for EnvioPeloCanal {
             let idempotencia = chave_idempotencia(&item);
             let comando = comando_do_item(&item, &peer, &idempotencia)?;
             let resultado = match &comando {
-                ComandoSaida::EnviarTexto(c) => canal.enviar_texto(c.clone()).await,
-                ComandoSaida::EnviarArquivo(c) => canal.enviar_arquivo(c.clone()).await,
-                ComandoSaida::DefinirPresenca(c) => canal.definir_presenca(c.clone()).await,
+                OutboundCommand::Text(c) => canal.send_text(c.clone()).await,
+                OutboundCommand::File(c) => canal.send_file(c.clone()).await,
+                OutboundCommand::Presence(c) => canal.set_presence(c.clone()).await,
             };
             resultado.map_err(|erro| falha(&erro))
         })
@@ -137,7 +137,7 @@ pub fn comando_do_item(
     item: &ItemSaida,
     peer: &str,
     idempotencia: &str,
-) -> std::result::Result<ComandoSaida, FalhaEnvio> {
+) -> std::result::Result<OutboundCommand, FalhaEnvio> {
     let valor: Value = serde_json::from_str(&item.conteudo_json).map_err(|erro| {
         FalhaEnvio::definitiva(format!("payload do item de saída inválido: {erro}"))
     })?;
@@ -147,10 +147,10 @@ pub fn comando_do_item(
                 .get("texto")
                 .and_then(Value::as_str)
                 .ok_or_else(|| FalhaEnvio::definitiva("item de saída `text` sem `texto`"))?;
-            Ok(ComandoSaida::EnviarTexto(SendText {
-                idempotencia: idempotencia.to_owned(),
+            Ok(OutboundCommand::Text(SendText {
+                idempotency: idempotencia.to_owned(),
                 peer: peer.to_owned(),
-                texto: texto.to_owned(),
+                text: texto.to_owned(),
             }))
         }
         "file" => {
@@ -169,15 +169,15 @@ pub fn comando_do_item(
                 .ok_or_else(|| {
                     FalhaEnvio::definitiva("item de saída `file` sem `tamanho_bytes`")
                 })?;
-            Ok(ComandoSaida::EnviarArquivo(SendFile {
-                idempotencia: idempotencia.to_owned(),
+            Ok(OutboundCommand::File(SendFile {
+                idempotency: idempotencia.to_owned(),
                 peer: peer.to_owned(),
-                nome: campo("nome")?,
+                name: campo("nome")?,
                 mime: campo("mime")?,
-                tamanho_bytes,
+                size_bytes: tamanho_bytes,
                 sha256: campo("sha256")?,
                 blob_ref: campo("blob_ref")?,
-                legenda: valor
+                caption: valor
                     .get("legenda")
                     .and_then(Value::as_str)
                     .map(str::to_owned),
@@ -185,17 +185,17 @@ pub fn comando_do_item(
         }
         "presence" => {
             let estado = match valor.get("estado").and_then(Value::as_str) {
-                Some("pausado") => Presenca::Pausado,
-                Some("digitando") => Presenca::Digitando,
+                Some("pausado") => Presence::Paused,
+                Some("digitando") => Presence::Typing,
                 outro => {
                     return Err(FalhaEnvio::definitiva(format!(
                         "item de saída `presence` com estado desconhecido: {outro:?}"
                     )));
                 }
             };
-            Ok(ComandoSaida::DefinirPresenca(SetPresence {
+            Ok(OutboundCommand::Presence(SetPresence {
                 peer: peer.to_owned(),
-                estado,
+                state: estado,
             }))
         }
         outro => Err(FalhaEnvio::definitiva(format!(
@@ -205,8 +205,8 @@ pub fn comando_do_item(
 }
 
 /// Classifica o erro do canal: transitório volta para a fila, o resto é definitivo.
-fn falha(erro: &ErroIntegracao) -> FalhaEnvio {
-    if erro.eh_transitorio() {
+fn falha(erro: &IntegrationError) -> FalhaEnvio {
+    if erro.is_transient() {
         FalhaEnvio::transitoria(erro.to_string())
     } else {
         FalhaEnvio::definitiva(erro.to_string())
@@ -415,7 +415,7 @@ pub struct InboxDoCanal {
     resolvedor: Arc<dyn ResolvedorConversa>,
     sender: mpsc::Sender<InboundEvent>,
     contadores: Arc<Contadores>,
-    ultimo_estado: Mutex<Option<EventoEstado>>,
+    ultimo_estado: Mutex<Option<StateEvent>>,
 }
 
 impl InboxDoCanal {
@@ -449,7 +449,7 @@ impl InboxDoCanal {
     }
 
     /// Último estado que o canal reportou (conectado, QR, erro).
-    pub fn ultimo_estado(&self) -> Option<EventoEstado> {
+    pub fn ultimo_estado(&self) -> Option<StateEvent> {
         self.ultimo_estado
             .lock()
             .unwrap_or_else(|veneno| veneno.into_inner())
@@ -466,7 +466,7 @@ impl InboxDoCanal {
                 self.contadores.falhas.fetch_add(1, Ordering::Relaxed);
                 tracing::warn!(
                     org = %self.org,
-                    integracao = %evento.integracao,
+                    integracao = %evento.integration,
                     id_externo = %evento.id_externo,
                     %erro,
                     "não consegui resolver a conversa do evento de entrada"
@@ -474,14 +474,14 @@ impl InboxDoCanal {
                 return None;
             }
         };
-        if !evento.anexos.is_empty() {
+        if !evento.attachments.is_empty() {
             self.contadores.com_anexo.fetch_add(1, Ordering::Relaxed);
         }
         let recebida = MensagemRecebida {
-            integration_id: evento.integracao,
+            integration_id: evento.integration,
             id_externo: evento.id_externo.clone(),
             conversa,
-            texto: evento.texto.clone(),
+            texto: evento.text.clone(),
             anexos_json: anexos_json(&evento),
         };
         match self.fluxo.receber_mensagem(self.org, recebida) {
@@ -499,7 +499,7 @@ impl InboxDoCanal {
                 self.contadores.falhas.fetch_add(1, Ordering::Relaxed);
                 tracing::warn!(
                     org = %self.org,
-                    integracao = %evento.integracao,
+                    integracao = %evento.integration,
                     id_externo = %evento.id_externo,
                     %erro,
                     "não consegui gravar o evento de entrada na inbox"
@@ -510,10 +510,10 @@ impl InboxDoCanal {
     }
 }
 
-impl Receptor for InboxDoCanal {
-    fn receber(&self, evento: EventoIntegracao) {
+impl EventSink for InboxDoCanal {
+    fn receive(&self, evento: IntegrationEvent) {
         match evento {
-            EventoIntegracao::Entrada(entrada) => match self.sender.try_send(entrada) {
+            IntegrationEvent::Inbound(entrada) => match self.sender.try_send(entrada) {
                 Ok(()) => {
                     self.contadores.recebidos.fetch_add(1, Ordering::Relaxed);
                 }
@@ -522,7 +522,7 @@ impl Receptor for InboxDoCanal {
                     tracing::warn!(%erro, "fila de entrada cheia: evento do canal recusado");
                 }
             },
-            EventoIntegracao::Estado(estado) => {
+            IntegrationEvent::Estado(estado) => {
                 self.contadores.estados.fetch_add(1, Ordering::Relaxed);
                 *self
                     .ultimo_estado
@@ -539,10 +539,10 @@ impl Receptor for InboxDoCanal {
 /// fica descrito no próprio item da mensagem — nada se perde, e o campo passa a receber ids quando
 /// o registro existir.
 fn anexos_json(evento: &InboundEvent) -> String {
-    if evento.anexos.is_empty() {
+    if evento.attachments.is_empty() {
         return "[]".to_owned();
     }
-    serde_json::to_string(&evento.anexos).unwrap_or_else(|_| "[]".to_owned())
+    serde_json::to_string(&evento.attachments).unwrap_or_else(|_| "[]".to_owned())
 }
 
 #[cfg(test)]
@@ -572,12 +572,12 @@ mod testes {
     fn texto_vira_enviar_texto_com_a_chave_da_outbox() {
         let item = item("text", serde_json::json!({"texto": "olá"}));
         let comando = comando_do_item(&item, "5511", &chave_idempotencia(&item)).unwrap();
-        let ComandoSaida::EnviarTexto(texto) = comando else {
+        let OutboundCommand::Text(texto) = comando else {
             panic!("esperava enviar_texto");
         };
         assert_eq!(texto.peer, "5511");
-        assert_eq!(texto.texto, "olá");
-        assert_eq!(texto.idempotencia, format!("{}:3", item.turn_id));
+        assert_eq!(texto.text, "olá");
+        assert_eq!(texto.idempotency, format!("{}:3", item.turn_id));
     }
 
     #[test]
@@ -595,13 +595,13 @@ mod testes {
             }),
         );
         let comando = comando_do_item(&item, "5511", "t:1").unwrap();
-        let ComandoSaida::EnviarArquivo(arquivo) = comando else {
+        let OutboundCommand::File(arquivo) = comando else {
             panic!("esperava enviar_arquivo");
         };
-        assert_eq!(arquivo.nome, "manual.pdf");
+        assert_eq!(arquivo.name, "manual.pdf");
         assert_eq!(arquivo.blob_ref, "org/sha");
-        assert_eq!(arquivo.tamanho_bytes, 1234);
-        assert_eq!(arquivo.legenda.as_deref(), Some("segue"));
+        assert_eq!(arquivo.size_bytes, 1234);
+        assert_eq!(arquivo.caption.as_deref(), Some("segue"));
     }
 
     #[test]
@@ -612,7 +612,7 @@ mod testes {
             "t:2",
         )
         .unwrap();
-        assert!(matches!(comando, ComandoSaida::DefinirPresenca(_)));
+        assert!(matches!(comando, OutboundCommand::Presence(_)));
 
         let erro =
             comando_do_item(&item("texto", serde_json::json!({})), "5511", "t:2").unwrap_err();
@@ -637,25 +637,25 @@ mod testes {
     #[test]
     fn anexo_do_evento_fica_descrito_na_mensagem() {
         let evento = InboundEvent {
-            integracao: IntegrationId::generate(),
+            integration: IntegrationId::generate(),
             id_externo: "abc".to_owned(),
             peer: "5511".to_owned(),
             remetente: None,
-            texto: "segue".to_owned(),
-            anexos: vec![poph_types::AnexoEntrada::Blob {
-                nome: "manual.pdf".to_owned(),
+            text: "segue".to_owned(),
+            attachments: vec![poph_types::InboundAttachment::Blob {
+                name: "manual.pdf".to_owned(),
                 mime: "application/pdf".to_owned(),
                 sha256: "a".repeat(64),
-                tamanho_bytes: 10,
+                size_bytes: 10,
             }],
-            ocorrido_em: 1,
-            metadados: Value::Null,
+            occurred_at: 1,
+            metadata: Value::Null,
         };
         let json = anexos_json(&evento);
         assert!(json.contains("manual.pdf"), "{json}");
 
         let sem = InboundEvent {
-            anexos: Vec::new(),
+            attachments: Vec::new(),
             ..evento
         };
         assert_eq!(anexos_json(&sem), "[]");

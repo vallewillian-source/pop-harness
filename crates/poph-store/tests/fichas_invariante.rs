@@ -23,8 +23,8 @@ use poph_store::{
     NovaOrg, NovoAgente, NovoEventoFicha, Org, Pagina, Recebido, StatusConversa, Store,
 };
 use poph_types::{
-    AgentId, AtorEvento, ConversationId, DomainError, FechadaPor, FichaId, OrgId, StatusFicha,
-    TipoEventoFicha,
+    AgentId, ClosedBy, ConversationId, DomainError, EventActor, OrgId, RecordEventKind, RecordId,
+    RecordStatus,
 };
 use rusqlite::Connection;
 
@@ -119,7 +119,7 @@ impl Cenario {
 
     /// Execução de fluxo ativa na Ficha, gravada direto (as tabelas de fluxo não têm repositório
     /// ainda; quem escreve nelas é a FX-08).
-    fn execucao_ativa(&self, org: &Org, ficha: FichaId, agora: i64) -> String {
+    fn execucao_ativa(&self, org: &Org, ficha: RecordId, agora: i64) -> String {
         let conn = self.conexao();
         let fluxo = uuid::Uuid::now_v7().to_string();
         let revisao = uuid::Uuid::now_v7().to_string();
@@ -209,7 +209,7 @@ fn criar_conversa_cria_a_ficha_na_mesma_escrita() {
         .expect("consulta")
         .expect("a conversa nova tem Ficha");
 
-    assert_eq!(ficha.status, StatusFicha::Aberta);
+    assert_eq!(ficha.status, RecordStatus::Open);
     assert_eq!(ficha.agent_id, agente.id);
     assert_eq!(ficha.canal, "console");
     assert_eq!(ficha.peer_externo.as_deref(), Some("cliente-1"));
@@ -225,8 +225,8 @@ fn criar_conversa_cria_a_ficha_na_mesma_escrita() {
         .eventos(org.id, ficha.id, None, 50)
         .expect("eventos");
     assert_eq!(eventos.len(), 1);
-    assert_eq!(eventos[0].tipo, TipoEventoFicha::FichaAberta);
-    assert_eq!(eventos[0].ator_tipo, AtorEvento::Sistema);
+    assert_eq!(eventos[0].tipo, RecordEventKind::RecordOpened);
+    assert_eq!(eventos[0].ator_tipo, EventActor::System);
     assert_eq!(eventos[0].seq, 1);
 }
 
@@ -273,7 +273,7 @@ fn recepcao_do_canal_cria_uma_ficha_por_conversa_e_nao_por_mensagem() {
     assert_eq!(
         eventos
             .iter()
-            .filter(|evento| evento.tipo == TipoEventoFicha::FichaAberta)
+            .filter(|evento| evento.tipo == RecordEventKind::RecordOpened)
             .count(),
         1,
         "uma Ficha tem exatamente um evento de abertura"
@@ -349,8 +349,8 @@ fn fechar_conversa_fecha_a_ficha_e_registra_o_evento() {
         .fichas()
         .obter(org.id, ficha.id)
         .expect("Ficha fechada continua legível");
-    assert_eq!(depois.status, StatusFicha::Fechada);
-    assert_eq!(depois.fechada_por, Some(FechadaPor::Admin));
+    assert_eq!(depois.status, RecordStatus::Closed);
+    assert_eq!(depois.fechada_por, Some(ClosedBy::Admin));
     assert_eq!(depois.fechada_em, Some(fechada.atualizado_em));
     assert!(depois.fechada_motivo.is_some());
     assert_eq!(depois.versao, 2, "fechar a Ficha sobe a versão dela");
@@ -361,8 +361,8 @@ fn fechar_conversa_fecha_a_ficha_e_registra_o_evento() {
         .eventos(org.id, ficha.id, None, 50)
         .expect("eventos");
     let ultimo = eventos.last().expect("tem evento de fechamento");
-    assert_eq!(ultimo.tipo, TipoEventoFicha::FichaFechada);
-    assert_eq!(ultimo.ator_tipo, AtorEvento::Admin);
+    assert_eq!(ultimo.tipo, RecordEventKind::RecordClosed);
+    assert_eq!(ultimo.ator_tipo, EventActor::Admin);
     assert_eq!(
         ultimo.seq, 2,
         "o fechamento é o segundo evento da linha do tempo"
@@ -394,8 +394,8 @@ fn mudar_status_para_fechada_tambem_fecha_a_ficha() {
         .por_conversa(org.id, conversa.id)
         .expect("consulta")
         .expect("Ficha");
-    assert_eq!(ficha.status, StatusFicha::Fechada);
-    assert_eq!(ficha.fechada_por, Some(FechadaPor::Sistema));
+    assert_eq!(ficha.status, RecordStatus::Closed);
+    assert_eq!(ficha.fechada_por, Some(ClosedBy::System));
 }
 
 #[test]
@@ -436,7 +436,7 @@ fn fechar_com_execucao_ativa_abandona_a_execucao_na_mesma_escrita() {
         .expect("eventos");
     let abandonos: Vec<_> = eventos
         .iter()
-        .filter(|evento| evento.tipo == TipoEventoFicha::ExecucaoAbandonada)
+        .filter(|evento| evento.tipo == RecordEventKind::ExecutionAbandoned)
         .collect();
     assert_eq!(abandonos.len(), 1);
     assert_eq!(
@@ -445,7 +445,7 @@ fn fechar_com_execucao_ativa_abandona_a_execucao_na_mesma_escrita() {
     );
     assert_eq!(
         eventos.last().map(|evento| evento.tipo),
-        Some(TipoEventoFicha::FichaFechada),
+        Some(RecordEventKind::RecordClosed),
         "o abandono vem antes do fechamento na linha do tempo"
     );
 }
@@ -510,7 +510,7 @@ fn falha_no_meio_do_fechamento_nao_deixa_conversa_fechada_com_ficha_aberta() {
         .fichas()
         .obter(org.id, ficha.id)
         .expect("lê a Ficha");
-    assert_eq!(ficha_depois.status, StatusFicha::Aberta);
+    assert_eq!(ficha_depois.status, RecordStatus::Open);
     let eventos = cenario
         .store()
         .fichas()
@@ -519,7 +519,7 @@ fn falha_no_meio_do_fechamento_nao_deixa_conversa_fechada_com_ficha_aberta() {
     assert!(
         eventos
             .iter()
-            .all(|evento| evento.tipo != TipoEventoFicha::FichaFechada),
+            .all(|evento| evento.tipo != RecordEventKind::RecordClosed),
         "nenhum evento parcial do fechamento sobrou"
     );
 }
@@ -573,14 +573,14 @@ fn mensagem_depois_do_fechamento_abre_conversa_e_ficha_novas() {
         .expect("consulta")
         .expect("a conversa nova tem Ficha");
     assert_ne!(ficha_2.id, ficha_1.id);
-    assert_eq!(ficha_2.status, StatusFicha::Aberta);
+    assert_eq!(ficha_2.status, RecordStatus::Open);
 
     let ficha_1_depois = cenario
         .store()
         .fichas()
         .obter(org.id, ficha_1.id)
         .expect("lê a primeira");
-    assert_eq!(ficha_1_depois.status, StatusFicha::Fechada);
+    assert_eq!(ficha_1_depois.status, RecordStatus::Closed);
 
     // A Ficha fechada recusa evento novo (PRD L5): a ação nova vive na Ficha nova.
     let erro = cenario
@@ -591,8 +591,8 @@ fn mensagem_depois_do_fechamento_abre_conversa_e_ficha_novas() {
             ficha_1.id,
             NovoEventoFicha {
                 execucao_id: None,
-                tipo: TipoEventoFicha::EtapaEntrou,
-                ator_tipo: AtorEvento::Agente,
+                tipo: RecordEventKind::StepEntered,
+                ator_tipo: EventActor::Agent,
                 ator_ref: None,
                 payload_json: "{}".to_owned(),
                 chave_idempotencia: None,
@@ -601,7 +601,7 @@ fn mensagem_depois_do_fechamento_abre_conversa_e_ficha_novas() {
         .expect_err("Ficha fechada não recebe evento");
     assert!(matches!(
         erro,
-        poph_store::ErroStore::Dominio(DomainError::FichaFechada { .. })
+        poph_store::ErroStore::Dominio(DomainError::RecordClosed { .. })
     ));
 }
 
@@ -655,7 +655,7 @@ fn reabrir_conversa_fechada_e_recusado_e_transferida_continua_reabrindo() {
     assert!(
         matches!(
             erro,
-            poph_store::ErroStore::Dominio(DomainError::ConversaEncerrada { .. })
+            poph_store::ErroStore::Dominio(DomainError::ConversationClosed { .. })
         ),
         "veio {erro:?}"
     );
@@ -674,7 +674,7 @@ fn reabrir_conversa_fechada_e_recusado_e_transferida_continua_reabrindo() {
         .expect_err("mudar_status não reabre conversa encerrada");
     assert!(matches!(
         erro,
-        poph_store::ErroStore::Dominio(DomainError::ConversaEncerrada { .. })
+        poph_store::ErroStore::Dominio(DomainError::ConversationClosed { .. })
     ));
 
     // A conversa e a Ficha continuam como estavam.
@@ -691,7 +691,7 @@ fn reabrir_conversa_fechada_e_recusado_e_transferida_continua_reabrindo() {
         .por_conversa(org.id, fechada.id)
         .expect("consulta")
         .expect("Ficha");
-    assert_eq!(ficha.status, StatusFicha::Fechada);
+    assert_eq!(ficha.status, RecordStatus::Closed);
 }
 
 #[test]
@@ -708,7 +708,7 @@ fn reabrir_conversa_com_versao_velha_devolve_conflito_de_versao() {
         .expect_err("versão velha não reabre");
     assert!(matches!(
         erro,
-        poph_store::ErroStore::Dominio(DomainError::ConflitoDeVersao { .. })
+        poph_store::ErroStore::Dominio(DomainError::VersionConflict { .. })
     ));
 }
 
@@ -744,7 +744,7 @@ fn lista_filtra_por_situacao_agente_canal_e_instante() {
         .listar(
             org.id,
             &poph_store::FiltroFichas {
-                status: Some(StatusFicha::Aberta),
+                status: Some(RecordStatus::Open),
                 ..Default::default()
             },
             Pagina::default(),
@@ -848,7 +848,7 @@ fn ficha_de_outra_org_nao_aparece_nem_aceita_evento() {
     assert!(
         matches!(
             erro,
-            poph_store::ErroStore::Dominio(DomainError::NaoEncontrado { .. })
+            poph_store::ErroStore::Dominio(DomainError::NotFound { .. })
         ),
         "veio {erro:?}"
     );
@@ -861,8 +861,8 @@ fn ficha_de_outra_org_nao_aparece_nem_aceita_evento() {
             ficha_a.id,
             NovoEventoFicha {
                 execucao_id: None,
-                tipo: TipoEventoFicha::EtapaEntrou,
-                ator_tipo: AtorEvento::Agente,
+                tipo: RecordEventKind::StepEntered,
+                ator_tipo: EventActor::Agent,
                 ator_ref: None,
                 payload_json: "{}".to_owned(),
                 chave_idempotencia: None,
@@ -871,7 +871,7 @@ fn ficha_de_outra_org_nao_aparece_nem_aceita_evento() {
         .expect_err("evento em Ficha de outra org é recusado");
     assert!(matches!(
         erro,
-        poph_store::ErroStore::Dominio(DomainError::NaoEncontrado { .. })
+        poph_store::ErroStore::Dominio(DomainError::NotFound { .. })
     ));
 
     let da_org_b: Vec<_> = cenario
@@ -892,7 +892,7 @@ fn ficha_de_outra_org_nao_aparece_nem_aceita_evento() {
         .expect_err("linha do tempo de outra org não é legível");
     assert!(matches!(
         erro,
-        poph_store::ErroStore::Dominio(DomainError::NaoEncontrado { .. })
+        poph_store::ErroStore::Dominio(DomainError::NotFound { .. })
     ));
 }
 
@@ -910,9 +910,9 @@ fn eventos_saem_em_ordem_e_paginam_pelo_seq() {
         .expect("Ficha");
 
     for tipo in [
-        TipoEventoFicha::FluxoIniciado,
-        TipoEventoFicha::EtapaEntrou,
-        TipoEventoFicha::CamposPreenchidos,
+        RecordEventKind::FlowStarted,
+        RecordEventKind::StepEntered,
+        RecordEventKind::FieldsFilled,
     ] {
         cenario
             .store()
@@ -923,7 +923,7 @@ fn eventos_saem_em_ordem_e_paginam_pelo_seq() {
                 NovoEventoFicha {
                     execucao_id: None,
                     tipo,
-                    ator_tipo: AtorEvento::Agente,
+                    ator_tipo: EventActor::Agent,
                     ator_ref: Some("agente-1"),
                     payload_json: "{}".to_owned(),
                     chave_idempotencia: None,
@@ -950,13 +950,10 @@ fn eventos_saem_em_ordem_e_paginam_pelo_seq() {
             .iter()
             .map(|evento| evento.tipo)
             .collect::<Vec<_>>(),
-        vec![
-            TipoEventoFicha::CamposPreenchidos,
-            TipoEventoFicha::EtapaEntrou,
-        ]
-        .into_iter()
-        .rev()
-        .collect::<Vec<_>>()
+        vec![RecordEventKind::FieldsFilled, RecordEventKind::StepEntered,]
+            .into_iter()
+            .rev()
+            .collect::<Vec<_>>()
     );
 
     let com_limite = cenario
@@ -982,8 +979,8 @@ fn evento_com_a_mesma_chave_nao_duplica() {
 
     let novo = || NovoEventoFicha {
         execucao_id: None,
-        tipo: TipoEventoFicha::AcaoExecutada,
-        ator_tipo: AtorEvento::Atendente,
+        tipo: RecordEventKind::ActionExecuted,
+        ator_tipo: EventActor::Attendant,
         ator_ref: Some("@atendente:matrix"),
         payload_json: "{\"acao\":\"informar_endereco\"}".to_owned(),
         chave_idempotencia: Some("acao-1"),
@@ -1026,7 +1023,7 @@ fn evento_de_execucao_de_outra_org_e_recusado() {
         .expect("consulta")
         .expect("Ficha B");
     let execucao_de_b = cenario.execucao_ativa(&org_b, ficha_b.id, cenario.store().agora());
-    let execucao_de_b: poph_types::ExecucaoId = execucao_de_b.parse().expect("id");
+    let execucao_de_b: poph_types::ExecutionId = execucao_de_b.parse().expect("id");
 
     let conversa_a = cenario.conversa(&org_a, &agente_a);
     let ficha_a = cenario
@@ -1044,8 +1041,8 @@ fn evento_de_execucao_de_outra_org_e_recusado() {
             ficha_a.id,
             NovoEventoFicha {
                 execucao_id: Some(execucao_de_b),
-                tipo: TipoEventoFicha::EtapaEntrou,
-                ator_tipo: AtorEvento::Agente,
+                tipo: RecordEventKind::StepEntered,
+                ator_tipo: EventActor::Agent,
                 ator_ref: None,
                 payload_json: "{}".to_owned(),
                 chave_idempotencia: None,
@@ -1055,7 +1052,7 @@ fn evento_de_execucao_de_outra_org_e_recusado() {
     assert!(
         matches!(
             erro,
-            poph_store::ErroStore::Dominio(DomainError::NaoEncontrado { .. })
+            poph_store::ErroStore::Dominio(DomainError::NotFound { .. })
         ),
         "veio {erro:?}"
     );
@@ -1080,7 +1077,7 @@ fn ficha_criada_pelo_repositorio_nasce_aberta_e_sem_conversa() {
             },
         )
         .expect("cria a Ficha sem conversa");
-    assert_eq!(ficha.status, StatusFicha::Aberta);
+    assert_eq!(ficha.status, RecordStatus::Open);
     assert_eq!(ficha.conversation_id, None);
     assert!(
         cenario
@@ -1166,7 +1163,7 @@ fn evento_de_execucao_de_outra_ficha_da_mesma_org_e_recusado() {
         .expect("consulta")
         .expect("Ficha 1");
     let execucao = cenario.execucao_ativa(&org, ficha_1.id, cenario.store().agora());
-    let execucao: poph_types::ExecucaoId = execucao.parse().expect("id");
+    let execucao: poph_types::ExecutionId = execucao.parse().expect("id");
 
     // Outra Ficha da mesma org.
     let conversa_2 = cenario.conversa(&org, &agente);
@@ -1185,8 +1182,8 @@ fn evento_de_execucao_de_outra_ficha_da_mesma_org_e_recusado() {
             ficha_1.id,
             NovoEventoFicha {
                 execucao_id: Some(execucao),
-                tipo: TipoEventoFicha::EtapaEntrou,
-                ator_tipo: AtorEvento::Agente,
+                tipo: RecordEventKind::StepEntered,
+                ator_tipo: EventActor::Agent,
                 ator_ref: None,
                 payload_json: "{}".to_owned(),
                 chave_idempotencia: None,
@@ -1206,8 +1203,8 @@ fn evento_de_execucao_de_outra_ficha_da_mesma_org_e_recusado() {
             ficha_2.id,
             NovoEventoFicha {
                 execucao_id: Some(execucao),
-                tipo: TipoEventoFicha::EtapaEntrou,
-                ator_tipo: AtorEvento::Agente,
+                tipo: RecordEventKind::StepEntered,
+                ator_tipo: EventActor::Agent,
                 ator_ref: None,
                 payload_json: "{}".to_owned(),
                 chave_idempotencia: None,
@@ -1217,7 +1214,7 @@ fn evento_de_execucao_de_outra_ficha_da_mesma_org_e_recusado() {
     assert!(
         matches!(
             erro,
-            poph_store::ErroStore::Dominio(DomainError::NaoEncontrado { .. })
+            poph_store::ErroStore::Dominio(DomainError::NotFound { .. })
         ),
         "veio {erro:?}"
     );
@@ -1257,8 +1254,8 @@ fn conversa_sem_ficha_que_e_fechada_ganha_ficha_fechada() {
         .por_conversa(org.id, conversa.id)
         .expect("consulta")
         .expect("a conversa fechada ganhou Ficha");
-    assert_eq!(ficha.status, StatusFicha::Fechada);
-    assert_eq!(ficha.fechada_por, Some(FechadaPor::Admin));
+    assert_eq!(ficha.status, RecordStatus::Closed);
+    assert_eq!(ficha.fechada_por, Some(ClosedBy::Admin));
     assert_eq!(ficha.aberta_em, conversa.criado_em);
 
     let eventos = cenario
@@ -1268,7 +1265,7 @@ fn conversa_sem_ficha_que_e_fechada_ganha_ficha_fechada() {
         .expect("eventos");
     assert_eq!(
         eventos.last().map(|evento| evento.tipo),
-        Some(TipoEventoFicha::FichaFechada)
+        Some(RecordEventKind::RecordClosed)
     );
 }
 
@@ -1303,7 +1300,7 @@ fn fechamento_pelo_agente_e_atomico_com_auditoria() {
     );
     assert_eq!(
         c.store().fichas().obter(org.id, ficha.id).unwrap().status,
-        StatusFicha::Aberta
+        RecordStatus::Open
     );
     let status: String = conn
         .query_row(
@@ -1319,7 +1316,7 @@ fn fechamento_pelo_agente_e_atomico_com_auditoria() {
             .eventos(org.id, ficha.id, None, 50)
             .unwrap()
             .iter()
-            .all(|e| e.tipo != TipoEventoFicha::FichaFechada)
+            .all(|e| e.tipo != RecordEventKind::RecordClosed)
     );
     let n: i64 = conn
         .query_row(

@@ -50,7 +50,7 @@ use axum::{
 };
 use poph_fluxos::Diagnostico;
 use poph_store::{FiltroFluxos, MudancaFluxo};
-use poph_types::{FluxoId, OrgId};
+use poph_types::{FlowId, OrgId};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use utoipa::ToSchema;
@@ -380,7 +380,7 @@ pub async fn mostrar(
     let fluxo = e
         .store
         .fluxos()
-        .obter(org, id_da_url::<FluxoId>(&c.flow_id)?)?;
+        .obter(org, id_da_url::<FlowId>(&c.flow_id)?)?;
     let atual = e.store.revisoes().atual(org, fluxo.id)?;
     let mut corpo = json_fluxo_com_rascunho(&fluxo);
     corpo["revision"] = atual.as_ref().map_or(Value::Null, json_revisao_resumo);
@@ -417,7 +417,7 @@ pub async fn atualizar(
 ) -> Result<Json<Value>, ApiError> {
     let org = id_da_url::<OrgId>(&c.org_id)?;
     ident.exigir_org(org)?;
-    let id = id_da_url::<FluxoId>(&c.flow_id)?;
+    let id = id_da_url::<FlowId>(&c.flow_id)?;
     let versao = versao_do_if_match(&h, "fluxo")?;
     let Json(d) = corpo.map_err(|_| {
         ApiError::invalido(
@@ -470,7 +470,7 @@ pub async fn excluir(
 ) -> Result<Json<Value>, ApiError> {
     let org = id_da_url::<OrgId>(&c.org_id)?;
     ident.exigir_org(org)?;
-    let id = id_da_url::<FluxoId>(&c.flow_id)?;
+    let id = id_da_url::<FlowId>(&c.flow_id)?;
     let force = match q.force.as_deref() {
         None | Some("") | Some("false") => false,
         Some("true") => true,
@@ -541,7 +541,7 @@ pub async fn publicar(
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     let org = id_da_url::<OrgId>(&c.org_id)?;
     ident.exigir_org(org)?;
-    let id = id_da_url::<FluxoId>(&c.flow_id)?;
+    let id = id_da_url::<FlowId>(&c.flow_id)?;
     let versao = versao_do_if_match(&h, "fluxo")?;
     let dados = match corpo {
         Ok(Json(d)) => d,
@@ -588,7 +588,7 @@ pub async fn listar_revisoes(
 ) -> Result<Json<ListaJson<Value>>, ApiError> {
     let org = id_da_url::<OrgId>(&c.org_id)?;
     ident.exigir_org(org)?;
-    let id = id_da_url::<FluxoId>(&c.flow_id)?;
+    let id = id_da_url::<FlowId>(&c.flow_id)?;
     let limite = q
         .limit
         .unwrap_or(LIMITE_PADRAO_REVISOES)
@@ -635,7 +635,7 @@ pub async fn mostrar_revisao(
 ) -> Result<Json<Value>, ApiError> {
     let org = id_da_url::<OrgId>(&c.org_id)?;
     ident.exigir_org(org)?;
-    let id = id_da_url::<FluxoId>(&c.flow_id)?;
+    let id = id_da_url::<FlowId>(&c.flow_id)?;
     let numero = c.number.parse::<u64>().map_err(|_| {
         ApiError::invalido(format!("`{}` não é um número de revisão", c.number))
             .com_detalhes(json!({ "field": "revision", "value": c.number }))
@@ -676,7 +676,7 @@ pub async fn diff(
 ) -> Result<Json<Value>, ApiError> {
     let org = id_da_url::<OrgId>(&c.org_id)?;
     ident.exigir_org(org)?;
-    let id = id_da_url::<FluxoId>(&c.flow_id)?;
+    let id = id_da_url::<FlowId>(&c.flow_id)?;
     let fluxo = e.store.fluxos().obter(org, id)?;
     let numero = |texto: &str, campo: &'static str| -> Result<u64, ApiError> {
         texto.parse::<u64>().map_err(|_| {
@@ -723,7 +723,7 @@ pub async fn preview(
 ) -> Result<Json<Value>, ApiError> {
     let org = id_da_url::<OrgId>(&c.org_id)?;
     ident.exigir_org(org)?;
-    let id = id_da_url::<FluxoId>(&c.flow_id)?;
+    let id = id_da_url::<FlowId>(&c.flow_id)?;
     let fluxo = e.store.fluxos().obter(org, id)?;
     let ops = Operacoes::novo(&e.store, &e.cache_fluxos, &e.config);
     let previa = ops.preview(org, &fluxo, q.etapa.as_deref())?;

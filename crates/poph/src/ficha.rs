@@ -13,7 +13,7 @@ use std::process::ExitCode;
 use clap::{Args, Subcommand};
 use poph_server::fichas_servico::{detalhe, ficha_json};
 use poph_store::{FiltroFichas, Store};
-use poph_types::{FichaId, OrgId, StatusFicha};
+use poph_types::{OrgId, RecordId, RecordStatus};
 use serde_json::{Value, json};
 
 use crate::apoio::{
@@ -105,7 +105,7 @@ fn listar(store: &Store, org: OrgId, args: ListarArgs) -> Result<ExitCode, Strin
         status: args
             .status
             .as_deref()
-            .map(StatusFicha::de_texto)
+            .map(RecordStatus::from_text)
             .transpose()
             .map_err(|erro| erro.to_string())?,
         agente: match args.agente.as_deref() {
@@ -159,7 +159,7 @@ fn listar(store: &Store, org: OrgId, args: ListarArgs) -> Result<ExitCode, Strin
 }
 
 fn mostrar(store: &Store, org: OrgId, args: MostrarArgs) -> Result<ExitCode, String> {
-    let ficha_id: FichaId = parse_id(&args.ficha)?;
+    let ficha_id: RecordId = parse_id(&args.ficha)?;
     let corpo = detalhe(store, org, ficha_id).map_err(|erro| {
         if erro.eh_nao_encontrado() {
             format!("não existe Ficha `{}` nesta org", args.ficha)

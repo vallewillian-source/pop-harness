@@ -9,7 +9,7 @@ use poph_fluxos::ir::{
     Acao, Campo, Decisao, Def, Destino, Efeito, Etapa, Fim, Fluxo, Gatilho, Ir, Regra,
 };
 use poph_fluxos::{Impacto, Mudanca, TipoMudanca, diferenca};
-use poph_types::{AtorAcao, TipoCampo};
+use poph_types::{ActionActor, FieldKind};
 
 // ------------------------------------------------------------------ auxiliares
 
@@ -45,7 +45,7 @@ fn em_acao<'a>(ir: &'a mut Ir, etapa: &str, acao: &str) -> &'a mut Acao {
         .expect("a ação existe na base")
 }
 
-fn campo(id: &str, rotulo: &str, tipo: TipoCampo, obrigatorio: bool, opcoes: &[&str]) -> Campo {
+fn campo(id: &str, rotulo: &str, tipo: FieldKind, obrigatorio: bool, opcoes: &[&str]) -> Campo {
     Campo {
         id: id.to_owned(),
         rotulo: rotulo.to_owned(),
@@ -56,7 +56,13 @@ fn campo(id: &str, rotulo: &str, tipo: TipoCampo, obrigatorio: bool, opcoes: &[&
     }
 }
 
-fn acao(id: &str, rotulo: &str, exige: &[&str], ator: Option<AtorAcao>, vai_para: Destino) -> Acao {
+fn acao(
+    id: &str,
+    rotulo: &str,
+    exige: &[&str],
+    ator: Option<ActionActor>,
+    vai_para: Destino,
+) -> Acao {
     Acao {
         id: id.to_owned(),
         rotulo: rotulo.to_owned(),
@@ -72,7 +78,7 @@ fn etapa(id: &str, nome: &str, instrucao: Option<&str>, acoes: Vec<Acao>) -> Eta
         id: id.to_owned(),
         nome: nome.to_owned(),
         instrucao: instrucao.map(str::to_owned),
-        atores_acao: vec![AtorAcao::Agente],
+        atores_acao: vec![ActionActor::Agent],
         campos: Vec::new(),
         acoes,
         ao_entrar: Vec::new(),
@@ -326,7 +332,7 @@ fn instrucao_mudou_vale_so_para_atendimentos_novos() {
 fn atores_da_etapa_mudou_muda_a_rota() {
     let a = base();
     let b = com(&a, |ir| {
-        em_etapa(ir, "coleta").atores_acao = vec![AtorAcao::Agente, AtorAcao::Atendente];
+        em_etapa(ir, "coleta").atores_acao = vec![ActionActor::Agent, ActionActor::Attendant];
     });
     let lista = diferenca(&a, &b);
     let mudou = unica(&lista, TipoMudanca::AtoresDaEtapaMudou);
@@ -380,7 +386,7 @@ fn campo_novo_pede_dado_novo() {
     let b = com(&a, |ir| {
         em_etapa(ir, "coleta")
             .campos
-            .push(campo("cep", "CEP", TipoCampo::Texto, false, &[]));
+            .push(campo("cep", "CEP", FieldKind::Texto, false, &[]));
     });
     let lista = diferenca(&a, &b);
     let novo = unica(&lista, TipoMudanca::CampoNovo);
@@ -450,7 +456,7 @@ fn campo_que_deixa_de_ser_obrigatorio_vale_para_atendimentos_novos() {
 fn campo_com_outro_tipo_pede_dado_do_novo_jeito() {
     let a = base();
     let b = com(&a, |ir| {
-        em_etapa(ir, "coleta").campos[1].tipo = TipoCampo::Texto;
+        em_etapa(ir, "coleta").campos[1].tipo = FieldKind::Texto;
     });
     let lista = diferenca(&a, &b);
     let mudou = unica(&lista, TipoMudanca::CampoMudouTipo);
@@ -552,7 +558,7 @@ fn acao_que_passa_a_exigir_campo_pede_o_dado() {
     let b = com(&a, |ir| {
         em_etapa(ir, "coleta")
             .campos
-            .push(campo("cep", "CEP", TipoCampo::Texto, false, &[]));
+            .push(campo("cep", "CEP", FieldKind::Texto, false, &[]));
         em_acao(ir, "coleta", "confirmar")
             .exige
             .push("cep".to_owned());
@@ -594,7 +600,7 @@ fn acao_que_deixa_de_exigir_campo_vale_para_atendimentos_novos() {
 fn ator_da_acao_mudou_muda_a_rota() {
     let a = base();
     let b = com(&a, |ir| {
-        em_acao(ir, "coleta", "confirmar").ator = Some(AtorAcao::Atendente);
+        em_acao(ir, "coleta", "confirmar").ator = Some(ActionActor::Attendant);
     });
     let lista = diferenca(&a, &b);
     let ator = unica(&lista, TipoMudanca::AtorDaAcaoMudou);
@@ -1054,7 +1060,7 @@ fn ordem_da_lista_numa_mudanca_grande_e_sempre_a_mesma() {
         em_etapa(ir, "coleta").campos[0].obrigatorio = false;
         em_etapa(ir, "coleta")
             .campos
-            .push(campo("cep", "CEP", TipoCampo::Texto, false, &[]));
+            .push(campo("cep", "CEP", FieldKind::Texto, false, &[]));
         em_acao(ir, "coleta", "confirmar")
             .exige
             .push("cep".to_owned());

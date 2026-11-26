@@ -21,7 +21,7 @@ use poph_matrix::usuarios::{
     ErroFantasmas, Fantasma, IdsFantasmas, TETO_PADRAO_CACHE, UsuariosVirtuais,
 };
 use poph_matrix::{ClienteMatrix, ConfigCliente};
-use poph_types::Segredo;
+use poph_types::Secret;
 use serde_json::{Value, json};
 
 /// Valor-canário: o token do teste. Se aparecer numa resposta, o teste acusa.
@@ -146,7 +146,7 @@ async fn cenario_com(teto: usize) -> Cenario {
     let config = ConfigCliente::novo(
         format!("http://{endereco}"),
         "matrix-dev.local",
-        Segredo::new(CANARIO.to_owned()),
+        Secret::new(CANARIO.to_owned()),
     )
     .expect("configuração do cliente");
     let cliente = ClienteMatrix::novo(config).expect("cliente");

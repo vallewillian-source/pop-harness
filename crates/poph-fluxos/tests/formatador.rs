@@ -9,7 +9,7 @@ use poph_fluxos::ir::{
     Acao, Campo, Decisao, Def, Destino, Efeito, Etapa, Fim, Fluxo, Gatilho, Regra, SCHEMA_VERSAO,
 };
 use poph_fluxos::{Codigo, Ir, Limites, Severidade, compilar};
-use poph_types::AtorAcao;
+use poph_types::ActionActor;
 
 /// Os três exemplos do repositório.
 const EXEMPLOS: [&str; 3] = [
@@ -449,12 +449,12 @@ impl Gerador {
             for c in 0..quantos_campos {
                 let tipo_sorteado = self.sorteia() % 5;
                 let (tipo, opcoes) = match tipo_sorteado {
-                    0 => (poph_types::TipoCampo::Texto, Vec::new()),
-                    1 => (poph_types::TipoCampo::Numero, Vec::new()),
-                    2 => (poph_types::TipoCampo::Data, Vec::new()),
-                    3 => (poph_types::TipoCampo::Booleano, Vec::new()),
+                    0 => (poph_types::FieldKind::Texto, Vec::new()),
+                    1 => (poph_types::FieldKind::Number, Vec::new()),
+                    2 => (poph_types::FieldKind::Data, Vec::new()),
+                    3 => (poph_types::FieldKind::Boolean, Vec::new()),
                     _ => (
-                        poph_types::TipoCampo::Opcao,
+                        poph_types::FieldKind::Option,
                         vec!["sim".to_owned(), "nao".to_owned()],
                     ),
                 };
@@ -472,9 +472,9 @@ impl Gerador {
                 });
             }
             let atores_acao = if self.sim() {
-                vec![AtorAcao::Agente]
+                vec![ActionActor::Agent]
             } else {
-                vec![AtorAcao::Agente, AtorAcao::Atendente]
+                vec![ActionActor::Agent, ActionActor::Attendant]
             };
 
             let mut acoes = Vec::new();
@@ -678,11 +678,11 @@ fn com_textos_complicados(texto: &str) -> Ir {
             id: "unica".to_owned(),
             nome: texto.to_owned(),
             instrucao: Some(texto.to_owned()),
-            atores_acao: vec![AtorAcao::Agente],
+            atores_acao: vec![ActionActor::Agent],
             campos: vec![Campo {
                 id: "dado".to_owned(),
                 rotulo: texto.to_owned(),
-                tipo: poph_types::TipoCampo::Texto,
+                tipo: poph_types::FieldKind::Texto,
                 obrigatorio: true,
                 opcoes: Vec::new(),
                 ajuda: Some(texto.to_owned()),
@@ -732,7 +732,7 @@ fn ir_minima_com_instrucao(instrucao: &str) -> Ir {
             id: "unica".to_owned(),
             nome: "Única".to_owned(),
             instrucao: Some(instrucao.to_owned()),
-            atores_acao: vec![AtorAcao::Agente],
+            atores_acao: vec![ActionActor::Agent],
             campos: Vec::new(),
             acoes: vec![Acao {
                 id: "seguir".to_owned(),

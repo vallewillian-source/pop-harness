@@ -437,8 +437,8 @@ fn ler_org(conn: &Connection, org: OrgId) -> Resultado<Value> {
     let mut linhas = consulta.query([org.to_string()])?;
     match linhas.next()? {
         Some(linha) => linha_json("orgs", &colunas, linha),
-        None => Err(DomainError::NaoEncontrado {
-            entidade: "org",
+        None => Err(DomainError::NotFound {
+            entity: "org",
             id: org.to_string(),
         }
         .into()),
@@ -599,9 +599,9 @@ fn importar(
     if let Some(conversas) = retrato.tabelas.get("conversations") {
         for conversa in conversas {
             let id = conversa.get("id").and_then(Value::as_str).ok_or_else(|| {
-                ErroStore::Dominio(DomainError::Validacao {
-                    campo: "backup",
-                    motivo: "conversa sem id".to_owned(),
+                ErroStore::Dominio(DomainError::Validation {
+                    field: "backup",
+                    reason: "conversa sem id".to_owned(),
                 })
             })?;
             let existe: bool = conn.query_row(
@@ -610,9 +610,9 @@ fn importar(
                 |row| row.get(0),
             )?;
             if !existe {
-                return Err(ErroStore::Dominio(DomainError::Validacao {
-                    campo: "backup",
-                    motivo: "conversa importada sem Ficha correspondente".to_owned(),
+                return Err(ErroStore::Dominio(DomainError::Validation {
+                    field: "backup",
+                    reason: "conversa importada sem Ficha correspondente".to_owned(),
                 }));
             }
         }
@@ -620,9 +620,9 @@ fn importar(
     // Tabela que não faz parte do formato é recusada (arquivo de outra versão ou alterado).
     for nome in retrato.tabelas.keys() {
         if tabela_conhecida(nome).is_none() {
-            return Err(ErroStore::Dominio(DomainError::Validacao {
-                campo: "backup",
-                motivo: format!(
+            return Err(ErroStore::Dominio(DomainError::Validation {
+                field: "backup",
+                reason: format!(
                     "o arquivo traz a tabela `{nome}`, que não faz parte do formato desta versão"
                 ),
             }));
@@ -640,8 +640,8 @@ fn destino_da_importacao(
     match destino {
         DestinoImportacao::Existente(org) => {
             if !org_existe(conn, org)? {
-                return Err(DomainError::NaoEncontrado {
-                    entidade: "org",
+                return Err(DomainError::NotFound {
+                    entity: "org",
                     id: org.to_string(),
                 }
                 .into());
@@ -657,15 +657,15 @@ fn destino_da_importacao(
 
 fn org_da_linha(linha: &Value) -> Resultado<OrgId> {
     let id = linha.get("id").and_then(Value::as_str).ok_or_else(|| {
-        ErroStore::Dominio(DomainError::Validacao {
-            campo: "org",
-            motivo: "o arquivo não traz o id da org de origem".to_owned(),
+        ErroStore::Dominio(DomainError::Validation {
+            field: "org",
+            reason: "o arquivo não traz o id da org de origem".to_owned(),
         })
     })?;
     id.parse::<OrgId>().map_err(|_| {
-        ErroStore::Dominio(DomainError::Validacao {
-            campo: "org",
-            motivo: "o id da org no arquivo não é um UUID v7".to_owned(),
+        ErroStore::Dominio(DomainError::Validation {
+            field: "org",
+            reason: "o id da org no arquivo não é um UUID v7".to_owned(),
         })
     })
 }
@@ -857,9 +857,9 @@ fn conferir_chaves_naturais(
     motivo.push_str(
         ". Nada foi gravado: renomeie um dos dois lados ou importe numa instância sem esses recursos",
     );
-    Err(ErroStore::Dominio(DomainError::Validacao {
-        campo: "backup",
-        motivo,
+    Err(ErroStore::Dominio(DomainError::Validation {
+        field: "backup",
+        reason: motivo,
     }))
 }
 
@@ -893,9 +893,9 @@ fn gravar_linha(
             .get("sha256")
             .and_then(Value::as_str)
             .ok_or_else(|| {
-                ErroStore::Dominio(DomainError::Validacao {
-                    campo: "backup",
-                    motivo: format!("linha de `{}` sem sha256", tabela.nome),
+                ErroStore::Dominio(DomainError::Validation {
+                    field: "backup",
+                    reason: format!("linha de `{}` sem sha256", tabela.nome),
                 })
             })?;
         objeto.insert(
@@ -912,9 +912,9 @@ fn gravar_linha(
             |row| row.get(0),
         )?;
         if !existe {
-            return Err(ErroStore::Dominio(DomainError::Validacao {
-                campo: "backup",
-                motivo: "a conversa da Ficha não pertence à organização de destino".to_owned(),
+            return Err(ErroStore::Dominio(DomainError::Validation {
+                field: "backup",
+                reason: "a conversa da Ficha não pertence à organização de destino".to_owned(),
             }));
         }
     }
@@ -929,9 +929,9 @@ fn gravar_linha(
             if existente == Value::Object(objeto.clone()) {
                 return Ok(true);
             }
-            return Err(ErroStore::Dominio(DomainError::Validacao {
-                campo: "backup",
-                motivo: "uma revisão publicada existente é imutável e difere do arquivo".to_owned(),
+            return Err(ErroStore::Dominio(DomainError::Validation {
+                field: "backup",
+                reason: "uma revisão publicada existente é imutável e difere do arquivo".to_owned(),
             }));
         }
     }
@@ -940,9 +940,9 @@ fn gravar_linha(
 
 fn objeto_da_linha(tabela: &str, linha: &Value) -> Resultado<Map<String, Value>> {
     linha.as_object().cloned().ok_or_else(|| {
-        ErroStore::Dominio(DomainError::Validacao {
-            campo: "backup",
-            motivo: format!("uma linha de `{tabela}` no arquivo não é um objeto JSON"),
+        ErroStore::Dominio(DomainError::Validation {
+            field: "backup",
+            reason: format!("uma linha de `{tabela}` no arquivo não é um objeto JSON"),
         })
     })
 }
@@ -964,9 +964,9 @@ fn gravar_objeto(
     let mut valores: BTreeMap<String, SqlValue> = BTreeMap::new();
     for (nome, valor) in objeto {
         if !colunas.contains(nome.as_str()) {
-            return Err(ErroStore::Dominio(DomainError::Validacao {
-                campo: "backup",
-                motivo: format!(
+            return Err(ErroStore::Dominio(DomainError::Validation {
+                field: "backup",
+                reason: format!(
                     "o arquivo traz a coluna `{nome}` em `{}`, que não existe nesta versão do \
                      esquema (arquivo de versão mais nova?)",
                     tabela.nome
@@ -977,9 +977,9 @@ fn gravar_objeto(
     }
     for chave in tabela.chave {
         if !valores.contains_key(*chave) {
-            return Err(ErroStore::Dominio(DomainError::Validacao {
-                campo: "backup",
-                motivo: format!("linha de `{}` sem a chave `{chave}`", tabela.nome),
+            return Err(ErroStore::Dominio(DomainError::Validation {
+                field: "backup",
+                reason: format!("linha de `{}` sem a chave `{chave}`", tabela.nome),
             }));
         }
     }
@@ -1004,17 +1004,17 @@ fn valor_sql(tabela: &str, coluna: &str, valor: &Value) -> Resultado<SqlValue> {
             } else if let Some(real) = numero.as_f64() {
                 SqlValue::Real(real)
             } else {
-                return Err(ErroStore::Dominio(DomainError::Validacao {
-                    campo: "backup",
-                    motivo: format!("o valor de `{tabela}.{coluna}` não é um número válido"),
+                return Err(ErroStore::Dominio(DomainError::Validation {
+                    field: "backup",
+                    reason: format!("o valor de `{tabela}.{coluna}` não é um número válido"),
                 }));
             }
         }
         Value::String(texto) => SqlValue::Text(texto.clone()),
         Value::Array(_) | Value::Object(_) => {
-            return Err(ErroStore::Dominio(DomainError::Validacao {
-                campo: "backup",
-                motivo: format!(
+            return Err(ErroStore::Dominio(DomainError::Validation {
+                field: "backup",
+                reason: format!(
                     "o valor de `{tabela}.{coluna}` é um objeto ou lista; o banco espera um valor \
                      simples"
                 ),

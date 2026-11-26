@@ -131,7 +131,7 @@ pub fn executar(flag: Option<PathBuf>, ambiente: &config::Ambiente, args: ServeA
             }
         };
         let endereco =
-            std::net::SocketAddr::new(configuracao.servidor.endereco, configuracao.servidor.porta);
+            std::net::SocketAddr::new(configuracao.server.address, configuracao.server.port);
         let listener = match tokio::net::TcpListener::bind(endereco).await {
             Ok(listener) => listener,
             Err(erro) => {
@@ -177,7 +177,7 @@ async fn ligar_turno(
     store: &Arc<Store>,
 ) -> Result<Estado, String> {
     let segredos = config::segredos(ambiente);
-    let nome_da_chave = &configuracao.llm.chave_env;
+    let nome_da_chave = &configuracao.llm.api_key_env;
     let Some(chave) = config::chave_llm(ambiente, nome_da_chave) else {
         if !estado.canais_evolution.is_empty() {
             tracing::warn!(
@@ -227,7 +227,7 @@ async fn ligar_turno(
         }
     }
 
-    let intervalo = std::time::Duration::from_millis(configuracao.turno.intervalo_despacho_ms);
+    let intervalo = std::time::Duration::from_millis(configuracao.turn.dispatch_interval_ms);
     // HR-22: o chat de teste do Console roda o mesmo motor do turno, com observador próprio.
     Ok(estado
         .com_motor(Arc::clone(&montagem.motor))

@@ -12,7 +12,7 @@
 use std::fs::{self, File};
 use std::path::Path;
 
-use poph_types::{HarnessConfig, Segredo};
+use poph_types::{HarnessConfig, Secret};
 use serde::Serialize;
 use tracing::debug;
 
@@ -79,7 +79,7 @@ pub struct Entrada<'a> {
     pub arquivo: Option<&'a Path>,
     /// Segredos lidos do ambiente (só a presença é conferida).
     pub segredos: &'a Segredos,
-    pub chave_llm: Option<&'a Segredo>,
+    pub chave_llm: Option<&'a Secret>,
     pub ambiente: Option<&'a crate::config::Ambiente>,
     pub agentes_por_provedor: Option<&'a [(String, u64)]>,
 }
@@ -100,15 +100,15 @@ pub fn gerar(entrada: Entrada<'_>) -> Relatorio {
                 nivel: Nivel::Ok,
                 detalhe: "valores válidos".to_owned(),
             });
-            verificacoes.push(pasta_de_dados(&config.dados.diretorio));
+            verificacoes.push(pasta_de_dados(&config.data.directory));
             verificacoes.push(banco("harness.db", &config.harness_db()));
             verificacoes.push(banco("rag.db", &config.rag_db()));
-            verificacoes.extend(fluxos_verificacoes(&config.fluxos));
+            verificacoes.extend(fluxos_verificacoes(&config.flows));
             verificacoes.extend(provedores_verificacoes(config, entrada));
         }
     }
 
-    let jev_ativo = matches!(entrada.config, Ok(config) if config.jev.ativo);
+    let jev_ativo = matches!(entrada.config, Ok(config) if config.jev.enabled);
     let evolution_configurada = matches!(entrada.config, Ok(config) if config.evolution.is_some());
 
     verificacoes.push(variavel_obrigatoria(
@@ -116,7 +116,7 @@ pub fn gerar(entrada: Entrada<'_>) -> Relatorio {
         entrada.segredos.cifra.is_some(),
     ));
     let nome_da_chave_llm = match entrada.config {
-        Ok(config) => config.llm.chave_env.as_str(),
+        Ok(config) => config.llm.api_key_env.as_str(),
         Err(_) => VAR_ANTIGRAVITY,
     };
     verificacoes.push(variavel_obrigatoria(
@@ -232,18 +232,18 @@ fn arquivo_verificacao(arquivo: Option<&Path>) -> Verificacao {
 
 fn provedores_verificacoes(config: &HarnessConfig, entrada: Entrada<'_>) -> Vec<Verificacao> {
     let mut verificacoes = Vec::new();
-    for (nome, sobreposicao) in &config.provedores {
-        let efetivo = sobreposicao.efetivo(&config.llm);
+    for (nome, sobreposicao) in &config.providers {
+        let efetivo = sobreposicao.effective(&config.llm);
         let chave = match entrada.ambiente {
-            Some(ambiente) => config::chave_llm(ambiente, &efetivo.chave_env),
+            Some(ambiente) => config::chave_llm(ambiente, &efetivo.api_key_env),
             None => None,
         };
         let (nivel, chave_texto) = match (entrada.ambiente, chave.is_some()) {
             (None, _) => (Nivel::Ok, String::new()),
-            (Some(_), true) => (Nivel::Ok, format!("chave {} definida", efetivo.chave_env)),
+            (Some(_), true) => (Nivel::Ok, format!("chave {} definida", efetivo.api_key_env)),
             (Some(_), false) => (
                 Nivel::Aviso,
-                format!("chave {} ausente no ambiente", efetivo.chave_env),
+                format!("chave {} ausente no ambiente", efetivo.api_key_env),
             ),
         };
         let sufixo = if chave_texto.is_empty() {
@@ -256,7 +256,7 @@ fn provedores_verificacoes(config: &HarnessConfig, entrada: Entrada<'_>) -> Vec<
             nivel,
             detalhe: format!(
                 "{} · {} chamadas simultâneas{sufixo}",
-                efetivo.url_base, efetivo.simultaneos
+                efetivo.url_base, efetivo.concurrent_calls
             ),
         });
     }
@@ -266,8 +266,8 @@ fn provedores_verificacoes(config: &HarnessConfig, entrada: Entrada<'_>) -> Vec<
     let mut orfaos = Vec::new();
     for (escolha, total) in contagem {
         if *total == 0
-            || HarnessConfig::provedor_e_padrao(escolha)
-            || config.provedores.contains_key(escolha.trim())
+            || HarnessConfig::provider_is_default(escolha)
+            || config.providers.contains_key(escolha.trim())
         {
             continue;
         }
@@ -393,8 +393,8 @@ fn banco(nome: &str, caminho: &Path) -> Verificacao {
 ///
 /// Desligado é aviso, não erro: a Ficha continua funcionando, só o motor fica parado. Os tetos
 /// aparecem sempre, porque valem mesmo com o motor desligado (a validação roda antes).
-fn fluxos_verificacoes(fluxos: &poph_types::FluxosConfig) -> Vec<Verificacao> {
-    let (nivel, detalhe) = if fluxos.ativo {
+fn fluxos_verificacoes(fluxos: &poph_types::FlowsConfig) -> Vec<Verificacao> {
+    let (nivel, detalhe) = if fluxos.enabled {
         (Nivel::Ok, "sim: o motor de fluxos roda".to_owned())
     } else {
         (
@@ -414,14 +414,14 @@ fn fluxos_verificacoes(fluxos: &poph_types::FluxosConfig) -> Vec<Verificacao> {
             detalhe: format!(
                 "fluxos por org {}; script {} bytes; nós {}; dados {} bytes; passos de regra {}; \
                  memória de regra {} bytes; saltos de decisão {}; cache de revisões {} MB",
-                fluxos.max_fluxos_por_org,
-                fluxos.max_fonte_bytes,
-                fluxos.max_nos,
-                fluxos.max_dados_bytes,
-                fluxos.max_ticks_regra,
-                fluxos.max_heap_regra,
-                fluxos.max_saltos_decisao,
-                fluxos.cache_revisoes_mb,
+                fluxos.max_flows_per_org,
+                fluxos.max_source_bytes,
+                fluxos.max_nodes,
+                fluxos.max_data_bytes,
+                fluxos.max_rule_ticks,
+                fluxos.max_rule_heap,
+                fluxos.max_decision_hops,
+                fluxos.revision_cache_mb,
             ),
         },
     ]
@@ -464,7 +464,7 @@ mod testes {
     /// Configuração de teste apontando para uma pasta própria.
     fn config_em(pasta: &Path) -> HarnessConfig {
         let mut config = HarnessConfig::default();
-        config.dados.diretorio = pasta.join("dados");
+        config.data.directory = pasta.join("dados");
         config
     }
 
@@ -475,8 +475,8 @@ mod testes {
         ]))
     }
 
-    fn chave_llm_de_teste() -> Segredo {
-        Segredo::new("SEGREDO-LLM-XYZ-2".to_owned())
+    fn chave_llm_de_teste() -> Secret {
+        Secret::new("SEGREDO-LLM-XYZ-2".to_owned())
     }
 
     fn achar<'a>(relatorio: &'a Relatorio, nome: &str) -> &'a Verificacao {
@@ -508,12 +508,12 @@ mod testes {
     fn doctor_lista_provedores_e_avisa_agente_com_provedor_inexistente() {
         let pasta = pasta_temporaria("provedores");
         let mut config = config_em(&pasta);
-        config.provedores.insert(
+        config.providers.insert(
             "openai-forte".to_owned(),
-            poph_types::ProvedorConfig {
+            poph_types::ProviderConfig {
                 url_base: Some("https://api.exemplo.com/v1".to_owned()),
-                simultaneos: Some(4),
-                ..poph_types::ProvedorConfig::default()
+                concurrent_calls: Some(4),
+                ..poph_types::ProviderConfig::default()
             },
         );
         let ambiente = Ambiente::from([
@@ -599,7 +599,7 @@ mod testes {
     fn doctor_avisa_motor_de_fluxos_desligado_sem_erro() {
         let pasta = pasta_temporaria("fluxos-off");
         let mut config = config_em(&pasta);
-        config.fluxos.ativo = false;
+        config.flows.enabled = false;
         let relatorio = gerar(Entrada {
             config: Ok(&config),
             arquivo: None,
@@ -640,7 +640,7 @@ mod testes {
     fn nome_da_chave_do_llm_vem_da_configuracao() {
         let pasta = pasta_temporaria("chave-llm");
         let mut config = config_em(&pasta);
-        config.llm.chave_env = "MINHA_CHAVE_LLM".to_owned();
+        config.llm.api_key_env = "MINHA_CHAVE_LLM".to_owned();
         let relatorio = gerar(Entrada {
             config: Ok(&config),
             arquivo: None,
@@ -674,7 +674,7 @@ mod testes {
                 .iter()
                 .all(|v| v.nome != "variável TYPESAFE_API_KEY")
         );
-        config.jev.ativo = true;
+        config.jev.enabled = true;
         let ligado = gerar(Entrada {
             config: Ok(&config),
             arquivo: None,

@@ -31,9 +31,9 @@ use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 use poph_types::{
-    ComandoSaida, ErroIntegracao, EstadoIntegracao, EventoIntegracao, FuturoComando, FuturoSaude,
-    Integration, IntegrationId, Manifesto, MensagemHost, MensagemPlugin, OrgId, PROTOCOLO_VERSAO,
-    Receptor, Saude, Segredo, SendFile, SendText, SetPresence,
+    CommandFuture, EventSink, Health, HealthFuture, HostMessage, Integration, IntegrationError,
+    IntegrationEvent, IntegrationId, IntegrationState, Manifest, OrgId, OutboundCommand,
+    PROTOCOL_VERSION, PluginMessage, Secret, SendFile, SendText, SetPresence,
 };
 use tokio::io::AsyncWriteExt;
 use tokio::process::{Child, ChildStdin, Command};
@@ -146,7 +146,7 @@ pub struct OpcoesPlugin {
     /// Configuração do operador (validada contra o JSON Schema do manifesto pela API/Console).
     pub config: serde_json::Value,
     /// Segredos do canal, entregues **só** no handshake.
-    pub segredos: BTreeMap<String, Segredo>,
+    pub segredos: BTreeMap<String, Secret>,
     /// Limites e prazos.
     pub limites: LimitesSupervisor,
 }
@@ -182,8 +182,7 @@ impl OpcoesPlugin {
 
     /// Acrescenta um segredo (vai só no handshake).
     pub fn com_segredo(mut self, nome: impl Into<String>, valor: impl Into<String>) -> Self {
-        self.segredos
-            .insert(nome.into(), Segredo::new(valor.into()));
+        self.segredos.insert(nome.into(), Secret::new(valor.into()));
         self
     }
 
@@ -298,8 +297,8 @@ impl Contadores {
 
 struct Comum {
     opcoes: OpcoesPlugin,
-    estado: RwLock<EstadoIntegracao>,
-    manifesto: RwLock<Option<Manifesto>>,
+    estado: RwLock<IntegrationState>,
+    manifesto: RwLock<Option<Manifest>>,
     contadores: Contadores,
     proximo_id: AtomicU64,
 }
@@ -308,14 +307,14 @@ impl Comum {
     fn novo(opcoes: OpcoesPlugin) -> Self {
         Self {
             opcoes,
-            estado: RwLock::new(EstadoIntegracao::Iniciando),
+            estado: RwLock::new(IntegrationState::Starting),
             manifesto: RwLock::new(None),
             contadores: Contadores::default(),
             proximo_id: AtomicU64::new(1),
         }
     }
 
-    fn definir_estado(&self, novo: EstadoIntegracao) {
+    fn definir_estado(&self, novo: IntegrationState) {
         let mut estado = self
             .estado
             .write()
@@ -326,21 +325,21 @@ impl Comum {
         *estado = novo;
     }
 
-    fn estado(&self) -> EstadoIntegracao {
+    fn estado(&self) -> IntegrationState {
         self.estado
             .read()
             .unwrap_or_else(|veneno| veneno.into_inner())
             .clone()
     }
 
-    fn manifesto(&self) -> Option<Manifesto> {
+    fn manifesto(&self) -> Option<Manifest> {
         self.manifesto
             .read()
             .unwrap_or_else(|veneno| veneno.into_inner())
             .clone()
     }
 
-    fn definir_manifesto(&self, manifesto: Manifesto) {
+    fn definir_manifesto(&self, manifesto: Manifest) {
         let mut guarda = self
             .manifesto
             .write()
@@ -382,8 +381,8 @@ impl Supervisor {
     /// rodando: quem chamou decide se tenta de novo.
     pub async fn iniciar(
         opcoes: OpcoesPlugin,
-        receptor: Arc<dyn Receptor>,
-    ) -> Result<Self, ErroIntegracao> {
+        receptor: Arc<dyn EventSink>,
+    ) -> Result<Self, IntegrationError> {
         let comum = Arc::new(Comum::novo(opcoes));
         let (tx_controle, rx_controle) = mpsc::unbounded_channel();
         let (tx_linhas, rx_linhas) = mpsc::channel(FILA_LINHAS);
@@ -404,7 +403,7 @@ impl Supervisor {
 
         let (responder, resposta) = oneshot::channel();
         if tx_controle.send(Controle::Iniciar { responder }).is_err() {
-            return Err(ErroIntegracao::Encerrada);
+            return Err(IntegrationError::Closed);
         }
         let prazo = comum.opcoes.limites.timeout_handshake + FOLGA_CONSTRUTOR;
         match timeout(prazo, resposta).await {
@@ -412,23 +411,23 @@ impl Supervisor {
                 controle: tx_controle,
                 comum,
             }),
-            Ok(Err(_)) => Err(ErroIntegracao::Indisponivel {
-                motivo: "o supervisor do plugin encerrou durante o handshake".to_owned(),
+            Ok(Err(_)) => Err(IntegrationError::Unavailable {
+                reason: "o supervisor do plugin encerrou durante o handshake".to_owned(),
             }),
-            Err(_) => Err(ErroIntegracao::TempoEsgotado {
-                operacao: "handshake".to_owned(),
-                limite_ms: prazo.as_millis() as u64,
+            Err(_) => Err(IntegrationError::Timeout {
+                operation: "handshake".to_owned(),
+                limit_ms: prazo.as_millis() as u64,
             }),
         }
     }
 
     /// Manifesto recebido no handshake (`None` antes dele).
-    pub fn manifesto(&self) -> Option<Manifesto> {
+    pub fn manifesto(&self) -> Option<Manifest> {
         self.comum.manifesto()
     }
 
     /// Estado atual do vínculo.
-    pub fn estado(&self) -> EstadoIntegracao {
+    pub fn estado(&self) -> IntegrationState {
         self.comum.estado()
     }
 
@@ -447,25 +446,29 @@ impl Supervisor {
     }
 
     /// Espera o estado ficar pronto (ou caído/encerrado), sem dormir mais que o prazo.
-    pub async fn aguardar_pronto(&self, prazo: Duration) -> Result<(), ErroIntegracao> {
+    pub async fn aguardar_pronto(&self, prazo: Duration) -> Result<(), IntegrationError> {
         let limite = Instant::now() + prazo;
         loop {
             let estado = self.comum.estado();
-            if estado.esta_pronta() {
+            if estado.is_ready() {
                 return Ok(());
             }
-            if let EstadoIntegracao::Caida { falhas, motivo } = &estado {
-                return Err(ErroIntegracao::Caida {
-                    falhas: *falhas,
-                    motivo: motivo.clone(),
+            if let IntegrationState::Down {
+                failures: falhas,
+                reason: motivo,
+            } = &estado
+            {
+                return Err(IntegrationError::Down {
+                    failures: *falhas,
+                    reason: motivo.clone(),
                 });
             }
-            if estado == EstadoIntegracao::Encerrada {
-                return Err(ErroIntegracao::Encerrada);
+            if estado == IntegrationState::Closed {
+                return Err(IntegrationError::Closed);
             }
             if Instant::now() >= limite {
-                return Err(ErroIntegracao::Indisponivel {
-                    motivo: format!("o plugin não ficou pronto em {} ms", prazo.as_millis()),
+                return Err(IntegrationError::Unavailable {
+                    reason: format!("o plugin não ficou pronto em {} ms", prazo.as_millis()),
                 });
             }
             sleep(Duration::from_millis(10)).await;
@@ -489,9 +492,9 @@ impl Supervisor {
 
     async fn executar(
         &self,
-        comando: ComandoSaida,
+        comando: OutboundCommand,
         operacao: &'static str,
-    ) -> Result<(), ErroIntegracao> {
+    ) -> Result<(), IntegrationError> {
         let id = self.comum.proximo_id();
         let (responder, resposta) = oneshot::channel();
         if self
@@ -503,13 +506,13 @@ impl Supervisor {
             })
             .is_err()
         {
-            return Err(ErroIntegracao::Encerrada);
+            return Err(IntegrationError::Closed);
         }
         let prazo = self.comum.opcoes.limites.timeout_comando;
         match timeout(prazo, resposta).await {
             Ok(Ok(resultado)) => resultado,
-            Ok(Err(_)) => Err(ErroIntegracao::Indisponivel {
-                motivo: "o supervisor do plugin encerrou".to_owned(),
+            Ok(Err(_)) => Err(IntegrationError::Unavailable {
+                reason: "o supervisor do plugin encerrou".to_owned(),
             }),
             Err(_) => {
                 self.comum
@@ -522,9 +525,9 @@ impl Supervisor {
                         prazo.as_millis()
                     ),
                 });
-                Err(ErroIntegracao::TempoEsgotado {
-                    operacao: operacao.to_owned(),
-                    limite_ms: prazo.as_millis() as u64,
+                Err(IntegrationError::Timeout {
+                    operation: operacao.to_owned(),
+                    limit_ms: prazo.as_millis() as u64,
                 })
             }
         }
@@ -532,39 +535,39 @@ impl Supervisor {
 }
 
 impl Integration for Supervisor {
-    fn manifesto(&self) -> Option<Manifesto> {
+    fn manifest(&self) -> Option<Manifest> {
         self.comum.manifesto()
     }
 
-    fn estado(&self) -> EstadoIntegracao {
+    fn state(&self) -> IntegrationState {
         self.comum.estado()
     }
 
-    fn enviar_texto(&self, comando: SendText) -> FuturoComando {
+    fn send_text(&self, comando: SendText) -> CommandFuture {
         let this = self.clone();
         Box::pin(async move {
-            this.executar(ComandoSaida::EnviarTexto(comando), "enviar_texto")
+            this.executar(OutboundCommand::Text(comando), "enviar_texto")
                 .await
         })
     }
 
-    fn enviar_arquivo(&self, comando: SendFile) -> FuturoComando {
+    fn send_file(&self, comando: SendFile) -> CommandFuture {
         let this = self.clone();
         Box::pin(async move {
-            this.executar(ComandoSaida::EnviarArquivo(comando), "enviar_arquivo")
+            this.executar(OutboundCommand::File(comando), "enviar_arquivo")
                 .await
         })
     }
 
-    fn definir_presenca(&self, comando: SetPresence) -> FuturoComando {
+    fn set_presence(&self, comando: SetPresence) -> CommandFuture {
         let this = self.clone();
         Box::pin(async move {
-            this.executar(ComandoSaida::DefinirPresenca(comando), "definir_presenca")
+            this.executar(OutboundCommand::Presence(comando), "definir_presenca")
                 .await
         })
     }
 
-    fn saude(&self) -> FuturoSaude {
+    fn health(&self) -> HealthFuture {
         let this = self.clone();
         Box::pin(async move {
             let id = this.comum.proximo_id();
@@ -574,14 +577,14 @@ impl Integration for Supervisor {
                 .send(Controle::Saude { id, responder })
                 .is_err()
             {
-                return Err(ErroIntegracao::Encerrada);
+                return Err(IntegrationError::Closed);
             }
             this.comum.contadores.somar(&this.comum.contadores.saudes);
             let prazo = this.comum.opcoes.limites.timeout_saude;
             match timeout(prazo, resposta).await {
                 Ok(Ok(resultado)) => resultado,
-                Ok(Err(_)) => Err(ErroIntegracao::Indisponivel {
-                    motivo: "o supervisor do plugin encerrou".to_owned(),
+                Ok(Err(_)) => Err(IntegrationError::Unavailable {
+                    reason: "o supervisor do plugin encerrou".to_owned(),
                 }),
                 Err(_) => {
                     this.comum
@@ -593,9 +596,9 @@ impl Integration for Supervisor {
                             prazo.as_millis()
                         ),
                     });
-                    Err(ErroIntegracao::TempoEsgotado {
-                        operacao: "saude".to_owned(),
-                        limite_ms: prazo.as_millis() as u64,
+                    Err(IntegrationError::Timeout {
+                        operation: "saude".to_owned(),
+                        limit_ms: prazo.as_millis() as u64,
                     })
                 }
             }
@@ -608,16 +611,16 @@ impl Integration for Supervisor {
 /// Pedido que chega ao ator.
 enum Controle {
     Iniciar {
-        responder: oneshot::Sender<Result<(), ErroIntegracao>>,
+        responder: oneshot::Sender<Result<(), IntegrationError>>,
     },
     Comando {
         id: u64,
-        comando: ComandoSaida,
-        responder: oneshot::Sender<Result<(), ErroIntegracao>>,
+        comando: OutboundCommand,
+        responder: oneshot::Sender<Result<(), IntegrationError>>,
     },
     Saude {
         id: u64,
-        responder: oneshot::Sender<Result<Saude, ErroIntegracao>>,
+        responder: oneshot::Sender<Result<Health, IntegrationError>>,
     },
     Abortar {
         motivo: String,
@@ -628,7 +631,7 @@ enum Controle {
 }
 
 /// Resposta de um comando que o plugin ainda vai confirmar (operação, para a mensagem de recusa).
-type ComandoPendente = (&'static str, oneshot::Sender<Result<(), ErroIntegracao>>);
+type ComandoPendente = (&'static str, oneshot::Sender<Result<(), IntegrationError>>);
 
 /// O que chega da tarefa de leitura.
 enum Entrada {
@@ -645,13 +648,13 @@ struct Processo {
 
 struct Ator {
     comum: Arc<Comum>,
-    receptor: Arc<dyn Receptor>,
+    receptor: Arc<dyn EventSink>,
     controle: mpsc::UnboundedReceiver<Controle>,
     linhas: mpsc::Receiver<Entrada>,
     tx_linhas: mpsc::Sender<Entrada>,
     processo: Option<Processo>,
     comandos: HashMap<u64, ComandoPendente>,
-    saudes: HashMap<u64, oneshot::Sender<Result<Saude, ErroIntegracao>>>,
+    saudes: HashMap<u64, oneshot::Sender<Result<Health, IntegrationError>>>,
     falhas: u32,
     geracao: u64,
     reiniciar_em: Option<Instant>,
@@ -705,18 +708,21 @@ impl Ator {
                 comando,
                 responder,
             } => {
-                let operacao = comando.nome();
+                let operacao = comando.protocol_name();
                 let Some(processo) = self.processo.as_mut() else {
                     let _ = responder.send(Err(self.erro_sem_processo()));
                     return true;
                 };
                 self.comandos.insert(id, (operacao, responder));
                 self.comum.contadores.somar(&self.comum.contadores.comandos);
-                let mensagem = MensagemHost::Comando { id, comando };
+                let mensagem = HostMessage::Command {
+                    id,
+                    command: comando,
+                };
                 let teto = self.comum.opcoes.limites.max_mensagem_bytes;
                 match escrever(&mut processo.entrada, &mensagem, teto).await {
                     // Mensagem grande demais é erro de quem chamou, não do plugin: responde só este.
-                    Err(erro @ ErroIntegracao::MensagemGrandeDemais { .. }) => {
+                    Err(erro @ IntegrationError::MessageTooLarge { .. }) => {
                         if let Some((_, responder)) = self.comandos.remove(&id) {
                             let _ = responder.send(Err(erro));
                         }
@@ -735,7 +741,7 @@ impl Ator {
                     return true;
                 };
                 self.saudes.insert(id, responder);
-                let mensagem = MensagemHost::Saude { id };
+                let mensagem = HostMessage::Health { id };
                 let teto = self.comum.opcoes.limites.max_mensagem_bytes;
                 if let Err(erro) = escrever(&mut processo.entrada, &mensagem, teto).await {
                     tracing::debug!(target: "poph_plugins", %erro, "falha ao escrever pedido de saúde");
@@ -765,7 +771,7 @@ impl Ator {
                     return;
                 }
                 self.comum.contadores.somar(&self.comum.contadores.linhas);
-                let mensagem: MensagemPlugin = match serde_json::from_str(&linha) {
+                let mensagem: PluginMessage = match serde_json::from_str(&linha) {
                     Ok(mensagem) => mensagem,
                     Err(erro) => {
                         self.comum.contadores.somar(&self.comum.contadores.lixo);
@@ -794,13 +800,17 @@ impl Ator {
         }
     }
 
-    fn tratar_mensagem(&mut self, mensagem: MensagemPlugin) {
+    fn tratar_mensagem(&mut self, mensagem: PluginMessage) {
         match mensagem {
-            MensagemPlugin::HandshakeOk { .. } => {
+            PluginMessage::HandshakeOk { .. } => {
                 // Handshake só vale dentro do `subir`; repetido, é lixo.
                 self.comum.contadores.somar(&self.comum.contadores.lixo);
             }
-            MensagemPlugin::Resultado { id, ok, erro } => {
+            PluginMessage::Result {
+                id,
+                ok,
+                error: erro,
+            } => {
                 let Some((operacao, responder)) = self.comandos.remove(&id) else {
                     self.comum.contadores.somar(&self.comum.contadores.lixo);
                     return;
@@ -809,21 +819,21 @@ impl Ator {
                     self.falhas = 0;
                     Ok(())
                 } else {
-                    let erro = erro.unwrap_or_else(|| poph_types::ErroComando {
-                        codigo: "sem_motivo".to_owned(),
-                        mensagem: "o plugin recusou sem dizer o motivo".to_owned(),
-                        transitorio: false,
+                    let erro = erro.unwrap_or_else(|| poph_types::CommandError {
+                        code: "sem_motivo".to_owned(),
+                        message: "o plugin recusou sem dizer o motivo".to_owned(),
+                        transient: false,
                     });
-                    Err(ErroIntegracao::Recusado {
-                        operacao: operacao.to_owned(),
-                        codigo: erro.codigo,
-                        mensagem: erro.mensagem,
-                        transitoria: erro.transitorio,
+                    Err(IntegrationError::Refused {
+                        operation: operacao.to_owned(),
+                        code: erro.code,
+                        message: erro.message,
+                        transient: erro.transient,
                     })
                 };
                 let _ = responder.send(resultado);
             }
-            MensagemPlugin::Saude { id, saude } => {
+            PluginMessage::Health { id, health: saude } => {
                 let Some(responder) = self.saudes.remove(&id) else {
                     self.comum.contadores.somar(&self.comum.contadores.lixo);
                     return;
@@ -831,10 +841,10 @@ impl Ator {
                 self.falhas = 0;
                 let _ = responder.send(Ok(saude));
             }
-            MensagemPlugin::Evento { evento } => match evento.validar() {
+            PluginMessage::Evento { evento } => match evento.validar() {
                 Ok(()) => {
                     self.comum.contadores.somar(&self.comum.contadores.eventos);
-                    self.receptor.receber(EventoIntegracao::Entrada(evento));
+                    self.receptor.receive(IntegrationEvent::Inbound(evento));
                 }
                 Err(erro) => {
                     self.comum
@@ -843,50 +853,56 @@ impl Ator {
                     tracing::debug!(target: "poph_plugins", %erro, "evento de entrada inválido ignorado");
                 }
             },
-            MensagemPlugin::Estado { estado } => {
+            PluginMessage::State { estado } => {
                 self.comum.contadores.somar(&self.comum.contadores.estados);
-                self.receptor.receber(EventoIntegracao::Estado(estado));
+                self.receptor.receive(IntegrationEvent::Estado(estado));
             }
-            MensagemPlugin::Erro {
-                codigo,
-                mensagem,
-                transitorio,
+            PluginMessage::Error {
+                code: codigo,
+                message: mensagem,
+                transient: transitorio,
             } => {
                 self.comum.contadores.somar(&self.comum.contadores.lixo);
                 tracing::debug!(target: "poph_plugins", %codigo, %mensagem, transitorio, "erro reportado pelo plugin");
                 self.receptor
-                    .receber(EventoIntegracao::Estado(poph_types::EventoEstado::Erro {
-                        codigo,
-                        mensagem,
-                        transitorio,
+                    .receive(IntegrationEvent::Estado(poph_types::StateEvent::Error {
+                        code: codigo,
+                        message: mensagem,
+                        transient: transitorio,
                     }));
             }
         }
     }
 
     /// Erro para quando não há processo (subindo, caído ou encerrado).
-    fn erro_sem_processo(&self) -> ErroIntegracao {
+    fn erro_sem_processo(&self) -> IntegrationError {
         match self.comum.estado() {
-            EstadoIntegracao::Caida { falhas, motivo } => ErroIntegracao::Caida { falhas, motivo },
-            EstadoIntegracao::Encerrada => ErroIntegracao::Encerrada,
-            EstadoIntegracao::Reiniciando { espera_ms, .. } => ErroIntegracao::Indisponivel {
-                motivo: format!("o plugin está reiniciando (faltam ~{espera_ms} ms)"),
+            IntegrationState::Down {
+                failures: falhas,
+                reason: motivo,
+            } => IntegrationError::Down {
+                failures: falhas,
+                reason: motivo,
             },
-            EstadoIntegracao::Iniciando | EstadoIntegracao::Pronto => {
-                ErroIntegracao::Indisponivel {
-                    motivo: "o plugin ainda não está pronto".to_owned(),
-                }
-            }
+            IntegrationState::Closed => IntegrationError::Closed,
+            IntegrationState::Restarting {
+                wait_ms: espera_ms, ..
+            } => IntegrationError::Unavailable {
+                reason: format!("o plugin está reiniciando (faltam ~{espera_ms} ms)"),
+            },
+            IntegrationState::Starting | IntegrationState::Ready => IntegrationError::Unavailable {
+                reason: "o plugin ainda não está pronto".to_owned(),
+            },
         }
     }
 
     /// Sobe o processo e faz o handshake, esperando o manifesto dentro do prazo.
-    async fn subir(&mut self) -> Result<(), ErroIntegracao> {
+    async fn subir(&mut self) -> Result<(), IntegrationError> {
         if self.processo.is_some() {
             return Ok(());
         }
         self.reiniciar_em = None;
-        self.comum.definir_estado(EstadoIntegracao::Iniciando);
+        self.comum.definir_estado(IntegrationState::Starting);
         self.geracao = self.geracao.saturating_add(1);
         let geracao = self.geracao;
 
@@ -914,23 +930,23 @@ impl Ator {
         }
         let mut filho = comando
             .spawn()
-            .map_err(|erro| ErroIntegracao::FalhaAoIniciar {
-                programa: opcoes.programa.display().to_string(),
-                motivo: erro.to_string(),
+            .map_err(|erro| IntegrationError::StartFailed {
+                program: opcoes.programa.display().to_string(),
+                reason: erro.to_string(),
             })?;
         let entrada = filho
             .stdin
             .take()
-            .ok_or_else(|| ErroIntegracao::FalhaAoIniciar {
-                programa: opcoes.programa.display().to_string(),
-                motivo: "sem entrada padrão".to_owned(),
+            .ok_or_else(|| IntegrationError::StartFailed {
+                program: opcoes.programa.display().to_string(),
+                reason: "sem entrada padrão".to_owned(),
             })?;
         let saida = filho
             .stdout
             .take()
-            .ok_or_else(|| ErroIntegracao::FalhaAoIniciar {
-                programa: opcoes.programa.display().to_string(),
-                motivo: "sem saída padrão".to_owned(),
+            .ok_or_else(|| IntegrationError::StartFailed {
+                program: opcoes.programa.display().to_string(),
+                reason: "sem saída padrão".to_owned(),
             })?;
         if let Some(erro_padrao) = filho.stderr.take() {
             tokio::spawn(drenar_erro_padrao(erro_padrao));
@@ -947,16 +963,16 @@ impl Ator {
             filho,
             entrada,
         };
-        let handshake = MensagemHost::Handshake(poph_types::Handshake {
-            protocolo: PROTOCOLO_VERSAO,
-            integracao: opcoes.integracao,
+        let handshake = HostMessage::Handshake(poph_types::Handshake {
+            protocol: PROTOCOL_VERSION,
+            integration: opcoes.integracao,
             org: opcoes.org,
             kind: opcoes.kind.clone(),
             config: opcoes.config.clone(),
-            segredos: opcoes
+            secrets: opcoes
                 .segredos
                 .iter()
-                .map(|(nome, valor)| (nome.clone(), valor.expor().clone()))
+                .map(|(nome, valor)| (nome.clone(), valor.expose().clone()))
                 .collect(),
         });
         escrever(
@@ -970,43 +986,43 @@ impl Ator {
         loop {
             let restante = prazo.saturating_duration_since(Instant::now());
             if restante.is_zero() {
-                return Err(ErroIntegracao::TempoEsgotado {
-                    operacao: "handshake".to_owned(),
-                    limite_ms: opcoes.limites.timeout_handshake.as_millis() as u64,
+                return Err(IntegrationError::Timeout {
+                    operation: "handshake".to_owned(),
+                    limit_ms: opcoes.limites.timeout_handshake.as_millis() as u64,
                 });
             }
             match timeout(restante, self.linhas.recv()).await {
                 Err(_) => {
-                    return Err(ErroIntegracao::TempoEsgotado {
-                        operacao: "handshake".to_owned(),
-                        limite_ms: opcoes.limites.timeout_handshake.as_millis() as u64,
+                    return Err(IntegrationError::Timeout {
+                        operation: "handshake".to_owned(),
+                        limit_ms: opcoes.limites.timeout_handshake.as_millis() as u64,
                     });
                 }
                 Ok(None) => {
-                    return Err(ErroIntegracao::Indisponivel {
-                        motivo: "o leitor do plugin encerrou durante o handshake".to_owned(),
+                    return Err(IntegrationError::Unavailable {
+                        reason: "o leitor do plugin encerrou durante o handshake".to_owned(),
                     });
                 }
                 Ok(Some(Entrada::Fim {
                     geracao: origem,
                     motivo,
                 })) if origem == geracao => {
-                    return Err(ErroIntegracao::HandshakeRecusado {
-                        motivo: format!("o plugin terminou antes do handshake: {motivo}"),
+                    return Err(IntegrationError::HandshakeRefused {
+                        reason: format!("o plugin terminou antes do handshake: {motivo}"),
                     });
                 }
                 Ok(Some(Entrada::Linha {
                     geracao: origem,
                     linha,
-                })) if origem == geracao => match serde_json::from_str::<MensagemPlugin>(&linha) {
-                    Ok(MensagemPlugin::HandshakeOk {
+                })) if origem == geracao => match serde_json::from_str::<PluginMessage>(&linha) {
+                    Ok(PluginMessage::HandshakeOk {
                         protocolo,
-                        manifesto,
+                        manifest: manifesto,
                     }) => {
-                        if protocolo != PROTOCOLO_VERSAO {
-                            return Err(ErroIntegracao::ProtocoloIncompativel {
-                                esperado: PROTOCOLO_VERSAO,
-                                recebido: protocolo,
+                        if protocolo != PROTOCOL_VERSION {
+                            return Err(IntegrationError::IncompatibleProtocol {
+                                expected: PROTOCOL_VERSION,
+                                received: protocolo,
                             });
                         }
                         manifesto.validar()?;
@@ -1018,7 +1034,7 @@ impl Ator {
                         // As falhas seguidas **não** zeram aqui: subir não é sinal de que o plugin
                         // está saudável (um plugin que cai a cada comando sobe toda vez). O placar
                         // zera quando ele responde um comando ou uma saúde.
-                        self.comum.definir_estado(EstadoIntegracao::Pronto);
+                        self.comum.definir_estado(IntegrationState::Ready);
                         return Ok(());
                     }
                     _ => {
@@ -1036,7 +1052,7 @@ impl Ator {
     /// Timer do reinício.
     async fn reiniciar(&mut self) {
         self.reiniciar_em = None;
-        if self.comum.estado().esta_encerrada() {
+        if self.comum.estado().is_closed() {
             return;
         }
         match self.subir().await {
@@ -1061,8 +1077,8 @@ impl Ator {
         if let Some(processo) = self.processo.take() {
             encerrar_processo(processo).await;
         }
-        let indisponivel = ErroIntegracao::Indisponivel {
-            motivo: "o plugin caiu; a mensagem pode ser retentada".to_owned(),
+        let indisponivel = IntegrationError::Unavailable {
+            reason: "o plugin caiu; a mensagem pode ser retentada".to_owned(),
         };
         for (_, (_, responder)) in self.comandos.drain() {
             let _ = responder.send(Err(indisponivel.clone()));
@@ -1077,16 +1093,16 @@ impl Ator {
                 self.falhas, limite.max_falhas
             );
             tracing::error!(target: "poph_plugins", %motivo, "integração marcada como caída");
-            self.comum.definir_estado(EstadoIntegracao::Caida {
-                falhas: self.falhas,
-                motivo,
+            self.comum.definir_estado(IntegrationState::Down {
+                failures: self.falhas,
+                reason: motivo,
             });
             self.reiniciar_em = None;
         } else {
             let espera = limite.espera.espera(self.falhas);
-            self.comum.definir_estado(EstadoIntegracao::Reiniciando {
-                falhas: self.falhas,
-                espera_ms: espera.as_millis() as u64,
+            self.comum.definir_estado(IntegrationState::Restarting {
+                failures: self.falhas,
+                wait_ms: espera.as_millis() as u64,
             });
             self.reiniciar_em = Some(Instant::now() + espera);
         }
@@ -1102,7 +1118,7 @@ impl Ator {
             } = processo;
             let mut entrada = entrada;
             let teto = self.comum.opcoes.limites.max_mensagem_bytes;
-            let _ = escrever(&mut entrada, &MensagemHost::Encerrar, teto).await;
+            let _ = escrever(&mut entrada, &HostMessage::Shutdown, teto).await;
             // Fecha a entrada: o plugin que ignorar `encerrar` vê EOF e sai.
             drop(entrada);
             let mut filho = filho;
@@ -1114,14 +1130,14 @@ impl Ator {
                 let _ = timeout(PRAZO_MORTE, filho.wait()).await;
             }
         }
-        let encerrada = ErroIntegracao::Encerrada;
+        let encerrada = IntegrationError::Closed;
         for (_, (_, responder)) in self.comandos.drain() {
             let _ = responder.send(Err(encerrada.clone()));
         }
         for (_, responder) in self.saudes.drain() {
             let _ = responder.send(Err(encerrada.clone()));
         }
-        self.comum.definir_estado(EstadoIntegracao::Encerrada);
+        self.comum.definir_estado(IntegrationState::Closed);
     }
 }
 
@@ -1129,30 +1145,30 @@ impl Ator {
 
 async fn escrever(
     entrada: &mut ChildStdin,
-    mensagem: &MensagemHost,
+    mensagem: &HostMessage,
     teto: usize,
-) -> Result<(), ErroIntegracao> {
-    let mut linha = serde_json::to_string(mensagem).map_err(|erro| ErroIntegracao::Protocolo {
-        motivo: format!("não consegui serializar a mensagem: {erro}"),
+) -> Result<(), IntegrationError> {
+    let mut linha = serde_json::to_string(mensagem).map_err(|erro| IntegrationError::Protocol {
+        reason: format!("não consegui serializar a mensagem: {erro}"),
     })?;
     if linha.len() + 1 > teto {
-        return Err(ErroIntegracao::MensagemGrandeDemais {
+        return Err(IntegrationError::MessageTooLarge {
             bytes: linha.len() + 1,
-            teto,
+            cap: teto,
         });
     }
     linha.push('\n');
     entrada
         .write_all(linha.as_bytes())
         .await
-        .map_err(|erro| ErroIntegracao::Indisponivel {
-            motivo: format!("o plugin não aceitou a mensagem: {erro}"),
+        .map_err(|erro| IntegrationError::Unavailable {
+            reason: format!("o plugin não aceitou a mensagem: {erro}"),
         })?;
     entrada
         .flush()
         .await
-        .map_err(|erro| ErroIntegracao::Indisponivel {
-            motivo: format!("o plugin não aceitou a mensagem: {erro}"),
+        .map_err(|erro| IntegrationError::Unavailable {
+            reason: format!("o plugin não aceitou a mensagem: {erro}"),
         })
 }
 
@@ -1241,34 +1257,34 @@ mod testes {
 
     #[test]
     fn estado_pronto_e_o_unico_que_aceita_comando() {
-        assert!(EstadoIntegracao::Pronto.esta_pronta());
+        assert!(IntegrationState::Ready.is_ready());
         for estado in [
-            EstadoIntegracao::Iniciando,
-            EstadoIntegracao::Reiniciando {
-                falhas: 1,
-                espera_ms: 10,
+            IntegrationState::Starting,
+            IntegrationState::Restarting {
+                failures: 1,
+                wait_ms: 10,
             },
-            EstadoIntegracao::Caida {
-                falhas: 5,
-                motivo: "x".to_owned(),
+            IntegrationState::Down {
+                failures: 5,
+                reason: "x".to_owned(),
             },
-            EstadoIntegracao::Encerrada,
+            IntegrationState::Closed,
         ] {
-            assert!(!estado.esta_pronta(), "{estado:?}");
+            assert!(!estado.is_ready(), "{estado:?}");
         }
         assert!(
-            EstadoIntegracao::Caida {
-                falhas: 5,
-                motivo: "x".to_owned()
+            IntegrationState::Down {
+                failures: 5,
+                reason: "x".to_owned()
             }
-            .esta_encerrada()
+            .is_closed()
         );
         assert!(
-            !EstadoIntegracao::Reiniciando {
-                falhas: 1,
-                espera_ms: 10
+            !IntegrationState::Restarting {
+                failures: 1,
+                wait_ms: 10
             }
-            .esta_encerrada()
+            .is_closed()
         );
     }
 }

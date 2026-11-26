@@ -37,8 +37,8 @@ use poph_store::{
     NovoFluxo, Papel, PublicacaoDeRevisao, StatusConversa, Store,
 };
 use poph_types::{
-    AgentId, ConversationId, FechadaPor, FluxosConfig, GatesJev, MessageId, OrgId, StatusExecucao,
-    StatusFicha, TipoEventoFicha,
+    AgentId, ClosedBy, ConversationId, ExecutionStatus, FlowsConfig, JevGates, MessageId, OrgId,
+    RecordEventKind, RecordStatus,
 };
 use serde_json::{Value, json};
 
@@ -192,7 +192,7 @@ impl Cenario {
     }
 
     /// Cria o fluxo, publica a primeira revisão e o libera ao agente.
-    fn fluxo(&self) -> poph_types::FluxoId {
+    fn fluxo(&self) -> poph_types::FlowId {
         self.criar_fluxo("agendar_visita", "Agendar visita", SCRIPT, true)
     }
 
@@ -203,7 +203,7 @@ impl Cenario {
         nome: &str,
         script: &str,
         liberar: bool,
-    ) -> poph_types::FluxoId {
+    ) -> poph_types::FlowId {
         let fluxo = self
             .store
             .fluxos()
@@ -245,7 +245,7 @@ impl Cenario {
     }
 
     /// Deixa o fluxo inativo (não inicia execução nova).
-    fn desativar(&self, fluxo: poph_types::FluxoId) {
+    fn desativar(&self, fluxo: poph_types::FlowId) {
         let atual = self
             .store
             .fluxos()
@@ -307,7 +307,7 @@ impl Cenario {
         &self,
         roteiros: Vec<Roteiro>,
         jev: Option<Arc<MotorJev>>,
-        fluxos: Option<FluxosConfig>,
+        fluxos: Option<FlowsConfig>,
     ) -> (Motor, Arc<ProvedorFake>) {
         let config = ConfigQuente::nova(
             Arc::clone(&self.store),
@@ -492,10 +492,10 @@ fn duas_chamadas(primeira: (&str, Value), segunda: (&str, Value)) -> Roteiro {
     ])
 }
 
-fn gates_com_g9() -> GatesJev {
-    GatesJev {
+fn gates_com_g9() -> JevGates {
+    JevGates {
         g9: true,
-        ..GatesJev::default()
+        ..JevGates::default()
     }
 }
 
@@ -541,11 +541,8 @@ async fn turno_com_fluxo(
         "g9_iniciar_fluxo",
         "agendar_visita",
     )])));
-    let (motor, provedor) = cenario.motor(
-        roteiros,
-        Some(motor_jev(jev)),
-        Some(FluxosConfig::default()),
-    );
+    let (motor, provedor) =
+        cenario.motor(roteiros, Some(motor_jev(jev)), Some(FlowsConfig::default()));
     let gatilho = cenario.falar(conversa, "queria marcar uma visita técnica");
     let resumo = cenario.turno(&motor, conversa, gatilho).await;
     (provedor, resumo)
@@ -577,7 +574,7 @@ async fn acao_valida_avanca_e_a_resposta_diz_a_etapa_nova() {
     // O banco avançou de etapa.
     let execucao = cenario.execucao(conversa);
     assert_eq!(execucao.no_atual, "confirmacao");
-    assert_eq!(execucao.status, StatusExecucao::Ativa);
+    assert_eq!(execucao.status, ExecutionStatus::Active);
 
     // A ferramenta foi oferecida no primeiro pedido e a resposta da etapa nova chegou ao modelo.
     let pedidos = provedor.recebidos();
@@ -607,9 +604,9 @@ async fn acao_valida_avanca_e_a_resposta_diz_a_etapa_nova() {
     let eventos = cenario.eventos(conversa);
     let acao = eventos
         .iter()
-        .find(|evento| evento.tipo == TipoEventoFicha::AcaoExecutada)
+        .find(|evento| evento.tipo == RecordEventKind::ActionExecuted)
         .expect("há o evento acao_executada");
-    assert_eq!(acao.ator_tipo, poph_types::AtorEvento::Agente);
+    assert_eq!(acao.ator_tipo, poph_types::EventActor::Agent);
 
     // O efeito `mensagem_ao_cliente` está na fila do fluxo, e não na conversa: quem entrega é o
     // laço do servidor, que espera o turno terminar (FX-21).
@@ -672,7 +669,7 @@ async fn campo_faltando_devolve_a_lista_e_nada_muda() {
         cenario
             .eventos(conversa)
             .iter()
-            .all(|evento| evento.tipo != TipoEventoFicha::AcaoExecutada),
+            .all(|evento| evento.tipo != RecordEventKind::ActionExecuted),
         "nenhum evento de ação gravado"
     );
     assert!(cenario.pendentes().is_empty(), "nenhum efeito enfileirado");
@@ -768,7 +765,7 @@ async fn fluxo_iniciar_so_aparece_na_reserva_e_valida_como_o_g9() {
             texto("Certo."),
         ],
         Some(motor_jev(jev)),
-        Some(FluxosConfig::default()),
+        Some(FlowsConfig::default()),
     );
     let gatilho = cenario.falar(conversa, "bom dia, tudo bem?");
     cenario.turno(&motor, conversa, gatilho).await;
@@ -793,7 +790,7 @@ async fn fluxo_iniciar_so_aparece_na_reserva_e_valida_como_o_g9() {
             texto("Perfeito, vou agendar."),
         ],
         None,
-        Some(FluxosConfig::default()),
+        Some(FlowsConfig::default()),
     );
     let gatilho = cenario.falar(conversa, "queria marcar uma visita");
     cenario.turno(&motor, conversa, gatilho).await;
@@ -814,9 +811,9 @@ async fn fluxo_iniciar_so_aparece_na_reserva_e_valida_como_o_g9() {
     let iniciado = cenario
         .eventos(conversa)
         .into_iter()
-        .find(|evento| evento.tipo == TipoEventoFicha::FluxoIniciado)
+        .find(|evento| evento.tipo == RecordEventKind::FlowStarted)
         .expect("evento fluxo_iniciado");
-    assert_eq!(iniciado.ator_tipo, poph_types::AtorEvento::Agente);
+    assert_eq!(iniciado.ator_tipo, poph_types::EventActor::Agent);
 
     // (c) Fluxo não liberado ao agente nunca inicia, mesmo com a ferramenta na mão. O fluxo
     //     liberado do catálogo mantém a reserva viva; o alvo é um fluxo publicado sem permissão.
@@ -830,7 +827,7 @@ async fn fluxo_iniciar_so_aparece_na_reserva_e_valida_como_o_g9() {
             texto("Não encontrei esse roteiro."),
         ],
         None,
-        Some(FluxosConfig::default()),
+        Some(FlowsConfig::default()),
     );
     let gatilho = cenario.falar(conversa, "queria marcar uma visita");
     cenario.turno(&motor, conversa, gatilho).await;
@@ -861,7 +858,7 @@ async fn fluxo_iniciar_so_aparece_na_reserva_e_valida_como_o_g9() {
             texto("Esse roteiro está fora do ar."),
         ],
         None,
-        Some(FluxosConfig::default()),
+        Some(FlowsConfig::default()),
     );
     let gatilho = cenario.falar(conversa, "queria marcar uma visita");
     cenario.turno(&motor, conversa, gatilho).await;
@@ -911,7 +908,7 @@ async fn chave_repetida_nao_duplica_evento_nem_efeito() {
             texto("De novo."),
         ],
         None,
-        Some(FluxosConfig::default()),
+        Some(FlowsConfig::default()),
     );
     let gatilho = cenario.falar(conversa, "como ficou?");
     cenario.turno(&motor, conversa, gatilho).await;
@@ -1004,7 +1001,7 @@ async fn abandonar_grava_motivo_e_nao_gera_efeito() {
     assert!(resultado.contains("abandonado"), "{resultado}");
 
     let execucao = cenario.execucao(conversa);
-    assert_eq!(execucao.status, StatusExecucao::Abandonada);
+    assert_eq!(execucao.status, ExecutionStatus::Abandoned);
     assert_eq!(
         execucao.motivo_fim.as_deref(),
         Some("cliente desistiu da visita")
@@ -1017,9 +1014,9 @@ async fn abandonar_grava_motivo_e_nao_gera_efeito() {
     let evento = cenario
         .eventos(conversa)
         .into_iter()
-        .find(|evento| evento.tipo == TipoEventoFicha::ExecucaoAbandonada)
+        .find(|evento| evento.tipo == RecordEventKind::ExecutionAbandoned)
         .expect("evento de abandono");
-    assert_eq!(evento.ator_tipo, poph_types::AtorEvento::Agente);
+    assert_eq!(evento.ator_tipo, poph_types::EventActor::Agent);
 }
 
 /// 9. Ação que chega a um `fim(encerra_atendimento = True)` fecha a Ficha e a conversa.
@@ -1049,8 +1046,8 @@ async fn acao_que_encerra_o_atendimento_fecha_a_ficha() {
     assert!(resultado.contains("fim"), "{resultado}");
 
     let ficha = cenario.ficha(conversa);
-    assert_eq!(ficha.status, StatusFicha::Fechada);
-    assert_eq!(ficha.fechada_por, Some(FechadaPor::Fluxo));
+    assert_eq!(ficha.status, RecordStatus::Closed);
+    assert_eq!(ficha.fechada_por, Some(ClosedBy::Flow));
     let conversa_gravada = cenario
         .store
         .conversas()
@@ -1058,7 +1055,7 @@ async fn acao_que_encerra_o_atendimento_fecha_a_ficha() {
         .expect("lê a conversa");
     assert_eq!(conversa_gravada.status, StatusConversa::Fechada);
     let execucao = cenario.execucao(conversa);
-    assert_eq!(execucao.status, StatusExecucao::Concluida);
+    assert_eq!(execucao.status, ExecutionStatus::Completed);
     assert_eq!(execucao.resultado.as_deref(), Some("Visita agendada"));
 }
 
@@ -1071,9 +1068,9 @@ async fn motor_desligado_nao_registra_nem_oferece_as_ferramentas() {
     let (motor, provedor) = cenario.motor(
         vec![texto("Oi! Como posso ajudar?")],
         None,
-        Some(FluxosConfig {
-            ativo: false,
-            ..FluxosConfig::default()
+        Some(FlowsConfig {
+            enabled: false,
+            ..FlowsConfig::default()
         }),
     );
     let gatilho = cenario.falar(conversa, "oi");
@@ -1090,9 +1087,9 @@ async fn motor_desligado_nao_registra_nem_oferece_as_ferramentas() {
     let registro = poph_agent::turno::registrar_ferramentas_do_fluxo(
         poph_agent::turno::RegistroPadrao::novo(),
         Arc::clone(&cenario.store),
-        &FluxosConfig {
-            ativo: false,
-            ..FluxosConfig::default()
+        &FlowsConfig {
+            enabled: false,
+            ..FlowsConfig::default()
         },
     );
     assert!(
@@ -1103,12 +1100,12 @@ async fn motor_desligado_nao_registra_nem_oferece_as_ferramentas() {
     let ligado = poph_agent::turno::registrar_ferramentas_do_fluxo(
         poph_agent::turno::RegistroPadrao::novo(),
         Arc::clone(&cenario.store),
-        &FluxosConfig::default(),
+        &FlowsConfig::default(),
     );
     assert_eq!(ligado.nomes().len(), 3, "{:?}", ligado.nomes());
 
     // A Ficha continua existindo (o módulo de Fichas não depende do motor de fluxo).
-    assert_eq!(cenario.ficha(conversa).status, StatusFicha::Aberta);
+    assert_eq!(cenario.ficha(conversa).status, RecordStatus::Open);
 }
 
 #[tokio::test]
@@ -1141,14 +1138,14 @@ async fn encerrar_pelo_agente_fecha_e_repeticao_e_idempotente() {
         StatusConversa::Fechada
     );
     let ficha = c.ficha(conversa);
-    assert_eq!(ficha.status, StatusFicha::Fechada);
-    assert_eq!(ficha.fechada_por, Some(FechadaPor::Agente));
+    assert_eq!(ficha.status, RecordStatus::Closed);
+    assert_eq!(ficha.fechada_por, Some(ClosedBy::Agent));
     assert_eq!(ficha.fechada_motivo.as_deref(), Some("resolvido"));
-    assert_eq!(c.execucao(conversa).status, StatusExecucao::Abandonada);
+    assert_eq!(c.execucao(conversa).status, ExecutionStatus::Abandoned);
     assert_eq!(
         c.eventos(conversa)
             .iter()
-            .filter(|e| e.tipo == TipoEventoFicha::FichaFechada)
+            .filter(|e| e.tipo == RecordEventKind::RecordClosed)
             .count(),
         1
     );
@@ -1186,5 +1183,5 @@ async fn encerramento_desabilitado_e_recusado() {
     .await;
     assert!(!oferecidas(&provedor.recebidos()[0]).contains(&"atendimento_encerrar".to_owned()));
     assert_eq!(c.chamadas(conversa)[0]["motivo"], "nao_habilitada");
-    assert_eq!(c.ficha(conversa).status, StatusFicha::Aberta);
+    assert_eq!(c.ficha(conversa).status, RecordStatus::Open);
 }

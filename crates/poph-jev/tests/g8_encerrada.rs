@@ -17,7 +17,7 @@ use poph_jev::{
     AvaliadorGates, EstadoJev, G8, G8_CONTINUA, G8_DESPEDIDA_PADRAO, G8_ENCERRADA, Gate, IdGate,
     JevFalso, Limiares, MensagemJev, MotorJev, OrigemDecisao, Resposta, despedida_do_agente,
 };
-use poph_types::GatesJev;
+use poph_types::JevGates;
 
 fn estado(mensagens: Vec<MensagemJev>) -> EstadoJev {
     EstadoJev::novo("whatsapp").com_mensagens(mensagens)
@@ -132,15 +132,15 @@ fn o_motor_so_pergunta_o_g8_com_a_flag_ligada() {
         G8_ENCERRADA.to_owned(),
     )])));
 
-    let desligado = MotorJev::novo(jev.clone(), GatesJev::default(), "jev-latest");
+    let desligado = MotorJev::novo(jev.clone(), JevGates::default(), "jev-latest");
     let _ = futures_block(desligado.avaliar(com_agente(), None));
     assert_eq!(jev.chamadas(), 0, "com o G8 desligado, nenhuma pergunta");
 
     let ligado = MotorJev::novo(
         jev.clone(),
-        GatesJev {
+        JevGates {
             g8: true,
-            ..GatesJev::default()
+            ..JevGates::default()
         },
         "jev-latest",
     );

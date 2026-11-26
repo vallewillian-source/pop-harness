@@ -16,7 +16,7 @@ use poph_jev::{
     MensagemJev, MotorJev, OrigemDecisao, Resposta, TipoPergunta, eval::ajuste_de_gate,
     g6_orientacao, g6_precisa_revisar,
 };
-use poph_types::GatesJev;
+use poph_types::JevGates;
 
 fn estado(resposta: &str) -> EstadoJev {
     EstadoJev::novo("whatsapp")
@@ -162,9 +162,9 @@ async fn g6_e_perguntado_fora_do_lote_so_com_resposta_em_revisao() {
     let mut escolhas: BTreeMap<String, String> = BTreeMap::new();
     escolhas.insert("g6_revisao".to_owned(), G6_REVISAR_PRECO.to_owned());
     let jev = Arc::new(JevFalso::com_escolhas(escolhas));
-    let globais = GatesJev {
+    let globais = JevGates {
         g6: true,
-        ..GatesJev::default()
+        ..JevGates::default()
     };
     let transporte: Arc<dyn poph_jev::TransporteJev> = jev.clone();
     let avaliador = MotorJev::novo(transporte, globais, "jev-latest");

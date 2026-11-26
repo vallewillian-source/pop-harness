@@ -39,7 +39,7 @@ use std::fmt::Write as _;
 
 use serde_json::Value as Json;
 
-use poph_types::{AtorAcao, DomainError, DomainResult, StatusExecucao, TipoCampo};
+use poph_types::{ActionActor, DomainError, DomainResult, ExecutionStatus, FieldKind};
 
 use crate::ir::{Acao, Campo, Destino, Etapa, Ir};
 use crate::motor::{Estado, atores_exigidos, dados_da_etapa};
@@ -63,7 +63,7 @@ pub fn renderizar_bloco(ir: &Ir, estado: &Estado) -> String {
         &mut saida,
         &format!("Fluxo em andamento: {}.", ir.fluxo.nome),
     );
-    if estado.status != StatusExecucao::Ativa {
+    if estado.status != ExecutionStatus::Active {
         linha(
             &mut saida,
             &format!(
@@ -120,14 +120,14 @@ pub fn renderizar_bloco(ir: &Ir, estado: &Estado) -> String {
 /// Etapa que não existe na estrutura é `não_encontrado` (HTTP 404).
 pub fn bloco_da_etapa(ir: &Ir, etapa_id: &str) -> DomainResult<String> {
     if etapa_por_id(ir, etapa_id).is_none() {
-        return Err(DomainError::NaoEncontrado {
-            entidade: "etapa",
+        return Err(DomainError::NotFound {
+            entity: "etapa",
             id: etapa_id.to_owned(),
         });
     }
     let estado = Estado {
         fluxo_id: ir.fluxo.id.clone(),
-        status: StatusExecucao::Ativa,
+        status: ExecutionStatus::Active,
         no_atual: Destino::Etapa {
             id: etapa_id.to_owned(),
         },
@@ -158,7 +158,7 @@ fn secao_da_etapa(saida: &mut String, ir: &Ir, etapa: &Etapa, estado: &Estado) {
         let faltam: Vec<String> = atores_exigidos(etapa)
             .into_iter()
             .filter(|ator| !estado.atores_que_agiram.contains(ator))
-            .map(|ator| ator.como_texto().to_owned())
+            .map(|ator| ator.as_text().to_owned())
             .collect();
         if !faltam.is_empty() {
             linha(
@@ -257,8 +257,8 @@ fn linha_da_acao(ir: &Ir, etapa: &Etapa, acao: &Acao) -> String {
 /// agente saber que não é dele executar; ação sem restrição segue os atores da etapa.
 fn quem_executa(etapa: &Etapa, acao: &Acao) -> String {
     match acao.ator {
-        Some(AtorAcao::Agente) => "o agente".to_owned(),
-        Some(AtorAcao::Atendente) => "o atendente (o agente não executa esta ação)".to_owned(),
+        Some(ActionActor::Agent) => "o agente".to_owned(),
+        Some(ActionActor::Attendant) => "o atendente (o agente não executa esta ação)".to_owned(),
         None => {
             if etapa.atores_acao.is_empty() {
                 "ninguém definido".to_owned()
@@ -266,7 +266,7 @@ fn quem_executa(etapa: &Etapa, acao: &Acao) -> String {
                 etapa
                     .atores_acao
                     .iter()
-                    .map(|ator| ator.como_texto())
+                    .map(|ator| ator.as_text())
                     .collect::<Vec<_>>()
                     .join(" ou ")
             }
@@ -304,12 +304,12 @@ fn destino_em_palavras(ir: &Ir, destino: &Destino) -> String {
 
 fn tipo_como_texto(campo: &Campo) -> String {
     match campo.tipo {
-        TipoCampo::Texto => "texto".to_owned(),
-        TipoCampo::Numero => "número".to_owned(),
-        TipoCampo::Data => "data".to_owned(),
-        TipoCampo::Booleano => "sim ou não".to_owned(),
-        TipoCampo::Anexo => "anexo".to_owned(),
-        TipoCampo::Opcao => format!("opção ({})", campo.opcoes.join(", ")),
+        FieldKind::Texto => "texto".to_owned(),
+        FieldKind::Number => "número".to_owned(),
+        FieldKind::Data => "data".to_owned(),
+        FieldKind::Boolean => "sim ou não".to_owned(),
+        FieldKind::Attachment => "anexo".to_owned(),
+        FieldKind::Option => format!("opção ({})", campo.opcoes.join(", ")),
     }
 }
 
@@ -317,7 +317,7 @@ fn tipo_como_texto(campo: &Campo) -> String {
 /// cliente, nunca instrução); booleano sai no canônico `sim`/`nao` (`FLUXOS_LINGUAGEM.md` §5).
 fn valor_como_texto(campo: &Campo, valor: &Json) -> String {
     match valor {
-        Json::Bool(verdadeiro) if campo.tipo == TipoCampo::Booleano => {
+        Json::Bool(verdadeiro) if campo.tipo == FieldKind::Boolean => {
             if *verdadeiro { "sim" } else { "nao" }.to_owned()
         }
         outro => json_canonico(outro),

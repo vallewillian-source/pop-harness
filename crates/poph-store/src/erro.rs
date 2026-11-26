@@ -41,13 +41,13 @@ impl ErroStore {
     pub fn eh_conflito_de_versao(&self) -> bool {
         matches!(
             self,
-            ErroStore::Dominio(DomainError::ConflitoDeVersao { .. })
+            ErroStore::Dominio(DomainError::VersionConflict { .. })
         )
     }
 
     /// `true` quando o registro não existe (ou não existe na org pedida).
     pub fn eh_nao_encontrado(&self) -> bool {
-        matches!(self, ErroStore::Dominio(DomainError::NaoEncontrado { .. }))
+        matches!(self, ErroStore::Dominio(DomainError::NotFound { .. }))
     }
 
     /// Traduz a falha de uma escrita no erro de domínio que a API e a CLI mostram.
@@ -88,9 +88,9 @@ impl ErroStore {
             }
             _ => return ErroStore::Sqlite(erro),
         };
-        ErroStore::Dominio(DomainError::Validacao {
-            campo,
-            motivo: motivo.to_owned(),
+        ErroStore::Dominio(DomainError::Validation {
+            field: campo,
+            reason: motivo.to_owned(),
         })
     }
 
@@ -146,7 +146,7 @@ mod testes {
 
     fn validacao(erro: ErroStore) -> (&'static str, String) {
         match erro {
-            ErroStore::Dominio(DomainError::Validacao { campo, motivo }) => (campo, motivo),
+            ErroStore::Dominio(DomainError::Validation { field, reason }) => (field, reason),
             outro => panic!("esperava validação do campo, veio {outro:?}"),
         }
     }

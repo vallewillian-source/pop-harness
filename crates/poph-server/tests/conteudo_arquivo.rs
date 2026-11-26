@@ -22,7 +22,7 @@ use argon2::password_hash::{PasswordHasher, SaltString};
 use poph_files::blob::sha256_hex;
 use poph_server::Estado;
 use poph_store::{Direcao, Mensagem, NovaConversa, NovaMensagem, NovoAnexoCanal, Papel, Store};
-use poph_types::config::TokenGlobalConfig;
+use poph_types::config::GlobalTokenConfig;
 use poph_types::{ConversationId, HarnessConfig, OrgId};
 use rand_core::OsRng;
 use reqwest::{Client, Method, StatusCode};
@@ -64,9 +64,9 @@ impl Cenario {
         fs::create_dir_all(pasta.join("dados")).expect("pasta de dados");
 
         let mut config = HarnessConfig::default();
-        config.dados.diretorio = pasta.join("dados");
-        config.servidor.porta = 7480;
-        config.admin.tokens_globais = vec![TokenGlobalConfig {
+        config.data.directory = pasta.join("dados");
+        config.server.port = 7480;
+        config.admin.tokens_globais = vec![GlobalTokenConfig {
             label: "teste".to_owned(),
             hash: hash_argon2(TOKEN_GLOBAL),
         }];

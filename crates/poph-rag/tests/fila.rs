@@ -7,7 +7,7 @@ use poph_rag::fake::vetor_fake;
 use poph_rag::{
     ConfigFila, Embedder, EmbedderFake, ErroRag, FilaEmbedding, FuturoLote, IdentidadeModelo,
 };
-use poph_types::{OrgId, Registro};
+use poph_types::{OrgId, Registry};
 
 fn fila_com(embedder: Arc<EmbedderFake>, config: ConfigFila) -> Arc<FilaEmbedding> {
     let dyn_embedder: Arc<dyn Embedder> = embedder;
@@ -200,7 +200,7 @@ async fn falha_do_modelo_chega_a_quem_pediu() {
 
 #[tokio::test]
 async fn metricas_contam_trechos_lotes_e_erros() {
-    let registro = Registro::new();
+    let registro = Registry::new();
     let metricas = poph_rag::MetricasRag::registrar(&registro).expect("registra");
     let embedder: Arc<dyn Embedder> = Arc::new(EmbedderFake::new());
     let fila =
@@ -213,7 +213,7 @@ async fn metricas_contam_trechos_lotes_e_erros() {
     .await
     .expect("embedding");
 
-    let texto = registro.renderizar();
+    let texto = registro.render();
     assert!(
         texto.contains("poph_embedding_trechos_total 3\n"),
         "{texto}"

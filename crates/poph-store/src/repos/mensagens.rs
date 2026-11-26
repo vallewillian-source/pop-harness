@@ -791,9 +791,9 @@ impl Mensagens<'_> {
                 None => Ok(None),
                 Some((rowid, id)) => {
                     let id: MessageId = id.parse().map_err(|_| {
-                        ErroStore::Dominio(poph_types::DomainError::Validacao {
-                            campo: "messages.id",
-                            motivo: "id de mensagem inválido no banco".to_owned(),
+                        ErroStore::Dominio(poph_types::DomainError::Validation {
+                            field: "messages.id",
+                            reason: "id de mensagem inválido no banco".to_owned(),
                         })
                     })?;
                     Ok(Some((u64::try_from(rowid).unwrap_or(0), id)))

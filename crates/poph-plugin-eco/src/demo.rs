@@ -20,7 +20,7 @@ use poph_agent::fila_integracao::{ConversaDoCanal, EnvioPeloCanal, InboxDoCanal}
 use poph_agent::metricas::MetricasMemoria;
 use poph_plugins::{OpcoesPlugin, Supervisor};
 use poph_store::{EstadoSaida, NovaConversa, NovaOrg, NovaSaida, NovoAgente, Pagina, Store};
-use poph_types::{Integration, IntegrationId, Receptor, SendText, TurnId};
+use poph_types::{EventSink, Integration, IntegrationId, SendText, TurnId};
 
 /// Nenhum turno é processado nesta demonstração: só a ida e a volta das filas.
 struct SemTurno;
@@ -102,11 +102,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // O canal: o supervisor do plugin em processo externo.
     let integracao = IntegrationId::generate();
     let opcoes = OpcoesPlugin::novo(&programa, integracao, org).com_kind("eco");
-    let supervisor = Supervisor::iniciar(opcoes, Arc::clone(&entrada) as Arc<dyn Receptor>).await?;
+    let supervisor =
+        Supervisor::iniciar(opcoes, Arc::clone(&entrada) as Arc<dyn EventSink>).await?;
     let manifesto = supervisor.manifesto().expect("manifesto do handshake");
     println!(
         "2. supervisor pronto: {} v{} (kind={}, protocolo={})",
-        manifesto.nome, manifesto.versao, manifesto.kind, manifesto.protocolo
+        manifesto.name, manifesto.version, manifesto.kind, manifesto.protocol
     );
     let canal: Arc<dyn Integration> = Arc::new(supervisor.clone());
 
@@ -150,10 +151,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Reentrega do mesmo comando: o `id_externo` estável faz a inbox descartar a repetição.
     canal
-        .enviar_texto(SendText {
-            idempotencia: format!("{turno}:0"),
+        .send_text(SendText {
+            idempotency: format!("{turno}:0"),
             peer: "5511999999999".to_owned(),
-            texto: "olá, mundo".to_owned(),
+            text: "olá, mundo".to_owned(),
         })
         .await?;
     esperar(|| entrada.contadores().duplicados >= 1).await?;
@@ -167,11 +168,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .listar(org, conversa.id, Pagina::com_limite(10))?;
     println!("7. mensagens na conversa no fim: {}", mensagens.len());
 
-    let saude = canal.saude().await?;
+    let saude = canal.health().await?;
     println!(
         "8. saúde do canal: ok={} ({})",
         saude.ok,
-        saude.detalhe.unwrap_or_default()
+        saude.detail.unwrap_or_default()
     );
     println!(
         "9. fila de saída no fim: pendentes={} enviados={}",

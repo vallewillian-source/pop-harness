@@ -132,7 +132,7 @@ fn cria_lista_conta_e_exclui() {
         .expect_err("não existe mais");
     assert!(matches!(
         erro,
-        ErroStore::Dominio(poph_types::DomainError::NaoEncontrado { .. })
+        ErroStore::Dominio(poph_types::DomainError::NotFound { .. })
     ));
 }
 
@@ -149,7 +149,7 @@ fn outro_agente_da_mesma_org_nao_alcanca_o_arquivo() {
         .expect_err("outro agente não vê");
     assert!(matches!(
         erro,
-        ErroStore::Dominio(poph_types::DomainError::NaoEncontrado { .. })
+        ErroStore::Dominio(poph_types::DomainError::NotFound { .. })
     ));
     let erro = cenario
         .biblioteca()
@@ -157,7 +157,7 @@ fn outro_agente_da_mesma_org_nao_alcanca_o_arquivo() {
         .expect_err("outro agente não apaga");
     assert!(matches!(
         erro,
-        ErroStore::Dominio(poph_types::DomainError::NaoEncontrado { .. })
+        ErroStore::Dominio(poph_types::DomainError::NotFound { .. })
     ));
     // E o dono continua com o arquivo.
     assert_eq!(
@@ -182,7 +182,7 @@ fn org_errada_nao_alcanca_o_arquivo() {
         .expect_err("org errada não vê");
     assert!(matches!(
         erro,
-        ErroStore::Dominio(poph_types::DomainError::NaoEncontrado { .. })
+        ErroStore::Dominio(poph_types::DomainError::NotFound { .. })
     ));
     assert_eq!(
         cenario
@@ -207,7 +207,7 @@ fn agente_de_outra_org_nao_recebe_arquivo() {
     assert!(
         matches!(
             erro,
-            ErroStore::Dominio(poph_types::DomainError::NaoEncontrado { .. })
+            ErroStore::Dominio(poph_types::DomainError::NotFound { .. })
         ),
         "{erro:?}"
     );
@@ -223,7 +223,7 @@ fn campos_invalidos_dao_erro_de_validacao() {
         .expect_err("nome vazio");
     assert!(matches!(
         erro,
-        ErroStore::Dominio(poph_types::DomainError::Validacao { campo: "nome", .. })
+        ErroStore::Dominio(poph_types::DomainError::Validation { field: "nome", .. })
     ));
 
     novo = cenario.novo_arquivo(cenario.agente, "a.pdf");
@@ -234,8 +234,8 @@ fn campos_invalidos_dao_erro_de_validacao() {
         .expect_err("sha inválido");
     assert!(matches!(
         erro,
-        ErroStore::Dominio(poph_types::DomainError::Validacao {
-            campo: "sha256",
+        ErroStore::Dominio(poph_types::DomainError::Validation {
+            field: "sha256",
             ..
         })
     ));
@@ -248,8 +248,8 @@ fn campos_invalidos_dao_erro_de_validacao() {
         .expect_err("descrição longa");
     assert!(matches!(
         erro,
-        ErroStore::Dominio(poph_types::DomainError::Validacao {
-            campo: "descrição",
+        ErroStore::Dominio(poph_types::DomainError::Validation {
+            field: "descrição",
             ..
         })
     ));

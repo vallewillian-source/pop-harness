@@ -24,7 +24,7 @@ use poph_store::{
     ErroStore, Fluxo, NovoFluxo, NovoRegistroAuditoria, Pagina, PublicacaoDeRevisao,
     RevisaoDeFluxo, Store,
 };
-use poph_types::{DomainError, FluxoId, HarnessConfig, OrgId};
+use poph_types::{DomainError, FlowId, HarnessConfig, OrgId};
 use serde_json::{Value, json};
 
 /// Quantos departamentos a resolução lê por página (a org tem poucos; o laço garante o resto).
@@ -192,8 +192,8 @@ impl<'a> Operacoes<'a> {
         Self {
             store,
             cache,
-            limites: Limites::da_config(&config.fluxos),
-            max_fluxos_por_org: u64::from(config.fluxos.max_fluxos_por_org),
+            limites: Limites::da_config(&config.flows),
+            max_fluxos_por_org: u64::from(config.flows.max_flows_per_org),
         }
     }
 
@@ -548,7 +548,7 @@ pub fn json_validacao(v: &Validacao) -> Value {
 }
 
 /// Resultado de `diff`: as duas revisões e a contagem de atendimentos ativos em cada uma.
-pub fn json_comparacao(fluxo: FluxoId, c: &Comparacao) -> Value {
+pub fn json_comparacao(fluxo: FlowId, c: &Comparacao) -> Value {
     json!({
         "flow_id": fluxo.to_string(),
         "from": { "revision": c.de.numero, "active_runs": c.ativas_de },

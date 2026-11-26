@@ -412,7 +412,7 @@ impl<P: PortaSalas> Provisionador<P> {
         config: &MatrixConfig,
     ) -> Result<Self, ErroFantasmas> {
         let usuarios = UsuariosVirtuais::da_config(cliente.clone(), config)?;
-        Ok(Self::com(cliente, usuarios, porta, config.poder_agente))
+        Ok(Self::com(cliente, usuarios, porta, config.agent_power))
     }
 
     /// Monta com as peças já prontas (o teto do cache de fantasmas vem de fora).

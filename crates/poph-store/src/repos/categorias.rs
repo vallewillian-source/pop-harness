@@ -144,8 +144,8 @@ impl Categorias<'_> {
 
 fn nao_encontrada(org: OrgId, id: ProductCategoryId) -> ErroStore {
     let _ = org;
-    ErroStore::Dominio(poph_types::DomainError::NaoEncontrado {
-        entidade: "categoria de produto",
+    ErroStore::Dominio(poph_types::DomainError::NotFound {
+        entity: "categoria de produto",
         id: id.to_string(),
     })
 }

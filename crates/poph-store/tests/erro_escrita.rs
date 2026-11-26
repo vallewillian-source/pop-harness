@@ -65,7 +65,7 @@ fn novo_agente(slug: &str) -> NovoAgente {
 /// Espera erro de validação de um campo e devolve (campo, motivo).
 fn validacao(erro: ErroStore) -> (&'static str, String) {
     match erro {
-        ErroStore::Dominio(DomainError::Validacao { campo, motivo }) => (campo, motivo),
+        ErroStore::Dominio(DomainError::Validation { field, reason }) => (field, reason),
         outro => panic!("esperava validação de campo, veio {outro:?}"),
     }
 }

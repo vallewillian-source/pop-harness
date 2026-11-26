@@ -25,8 +25,8 @@ use std::time::{Duration, Instant};
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, SaltString};
 use poph_store::{NovaOrg, NovoAgente, Store};
-use poph_types::config::TokenGlobalConfig;
-use poph_types::{FerramentaConfig, HarnessConfig, StructuredInstructions};
+use poph_types::config::GlobalTokenConfig;
+use poph_types::{HarnessConfig, StructuredInstructions, ToolConfig};
 use rand_core::OsRng;
 use serde_json::{Value, json};
 
@@ -232,9 +232,9 @@ impl Cenario {
             // filtro por agente (D-04).
             let instrucoes = StructuredInstructions {
                 tools: vec![
-                    FerramentaConfig::nova("enviar_arquivo"),
-                    FerramentaConfig::nova("consultar_base"),
-                    FerramentaConfig::nova("buscar_produto"),
+                    ToolConfig::new("enviar_arquivo"),
+                    ToolConfig::new("consultar_base"),
+                    ToolConfig::new("buscar_produto"),
                 ],
                 ..StructuredInstructions::default()
             };
@@ -244,7 +244,7 @@ impl Cenario {
                     org,
                     agente,
                     0,
-                    &instrucoes.para_json(),
+                    &instrucoes.to_json(),
                     &poph_agent::compor_instrucoes(&instrucoes),
                     true,
                 )
@@ -276,13 +276,13 @@ impl Cenario {
         };
 
         let mut config = HarnessConfig::default();
-        config.dados.diretorio = dados.clone();
-        config.servidor.porta = porta;
+        config.data.directory = dados.clone();
+        config.server.port = porta;
         config.llm.url_base = format!("http://127.0.0.1:{porta_llm}/v1");
-        config.llm.retentativas = 0;
-        config.llm.timeout_segundos = 10;
-        config.turno.intervalo_despacho_ms = 100;
-        config.admin.tokens_globais = vec![TokenGlobalConfig {
+        config.llm.retries = 0;
+        config.llm.timeout_seconds = 10;
+        config.turn.dispatch_interval_ms = 100;
+        config.admin.tokens_globais = vec![GlobalTokenConfig {
             label: "teste-hr46f".to_owned(),
             hash: hash_argon2(TOKEN_GLOBAL),
         }];
@@ -512,7 +512,7 @@ async fn sem_modelo_de_embedding_a_ferramenta_nao_habilitada_continua_fora() {
             .expect("agente")
             .id;
         let instrucoes = StructuredInstructions {
-            tools: vec![FerramentaConfig {
+            tools: vec![ToolConfig {
                 name: "enviar_arquivo".to_owned(),
                 enabled: false,
                 when_to_use: String::new(),
@@ -525,7 +525,7 @@ async fn sem_modelo_de_embedding_a_ferramenta_nao_habilitada_continua_fora() {
                 org,
                 agente,
                 0,
-                &instrucoes.para_json(),
+                &instrucoes.to_json(),
                 &poph_agent::compor_instrucoes(&instrucoes),
                 true,
             )
@@ -539,12 +539,12 @@ async fn sem_modelo_de_embedding_a_ferramenta_nao_habilitada_continua_fora() {
         ouvinte.local_addr().expect("endereço").port()
     };
     let mut config = HarnessConfig::default();
-    config.dados.diretorio = dados;
-    config.servidor.porta = porta;
+    config.data.directory = dados;
+    config.server.port = porta;
     config.llm.url_base = format!("http://127.0.0.1:{porta_llm}/v1");
-    config.llm.retentativas = 0;
-    config.turno.intervalo_despacho_ms = 100;
-    config.admin.tokens_globais = vec![TokenGlobalConfig {
+    config.llm.retries = 0;
+    config.turn.dispatch_interval_ms = 100;
+    config.admin.tokens_globais = vec![GlobalTokenConfig {
         label: "teste-hr46f".to_owned(),
         hash: hash_argon2(TOKEN_GLOBAL),
     }];

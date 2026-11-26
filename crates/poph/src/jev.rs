@@ -11,7 +11,7 @@ use std::process::ExitCode;
 
 use clap::{Args, Subcommand};
 use poph_jev::{ClienteJev, ConfigJev, IdGate, MotorJev, avaliar_conjunto, ler_conjunto};
-use poph_types::MetricasBase;
+use poph_types::BaseMetrics;
 
 use crate::apoio;
 use crate::config;
@@ -70,14 +70,14 @@ fn rodar_eval(
     })?;
     let cliente =
         ConfigJev::da_config(&configuracao.jev, chave).map_err(|erro| erro.to_string())?;
-    let registro = poph_types::Registro::new();
+    let registro = poph_types::Registry::new();
     let metricas =
-        MetricasBase::registrar(&registro).map_err(|erro| format!("métricas base: {erro}"))?;
+        BaseMetrics::register(&registro).map_err(|erro| format!("métricas base: {erro}"))?;
     let transporte = ClienteJev::novo(cliente, metricas).map_err(|erro| erro.to_string())?;
     let motor = MotorJev::novo(
         std::sync::Arc::new(transporte),
         configuracao.jev.gates,
-        configuracao.jev.modelo.clone(),
+        configuracao.jev.model.clone(),
     );
 
     let runtime = tokio::runtime::Builder::new_current_thread()

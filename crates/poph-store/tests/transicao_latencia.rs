@@ -28,7 +28,7 @@ use poph_store::{
     InicioDeExecucao, NovaConversa, NovaOrg, NovoAgente, Org, Store, TransicaoDeFluxo,
 };
 use poph_types::{
-    AtorAcao, AtorEvento, FichaId, FluxoId, RevisaoId, StatusExecucao, TipoEventoFicha,
+    ActionActor, EventActor, ExecutionStatus, FlowId, RecordEventKind, RecordId, RevisionId,
 };
 use rusqlite::Connection;
 
@@ -87,7 +87,7 @@ impl Cenario {
         org: &Org,
         agente: &poph_store::Agente,
         peer: &str,
-    ) -> (FichaId, poph_types::ConversationId) {
+    ) -> (RecordId, poph_types::ConversationId) {
         let conversa = self
             .store
             .conversas()
@@ -113,10 +113,10 @@ impl Cenario {
     }
 
     /// Fluxo publicado (revisão 1) gravado direto: a publicação é a FX-09.
-    fn fluxo(&self, org: &Org, slug: &str) -> (FluxoId, RevisaoId) {
+    fn fluxo(&self, org: &Org, slug: &str) -> (FlowId, RevisionId) {
         let conn = self.conexao();
-        let fluxo: FluxoId = uuid::Uuid::now_v7().to_string().parse().expect("fluxo");
-        let revisao: RevisaoId = uuid::Uuid::now_v7().to_string().parse().expect("revisão");
+        let fluxo: FlowId = uuid::Uuid::now_v7().to_string().parse().expect("fluxo");
+        let revisao: RevisionId = uuid::Uuid::now_v7().to_string().parse().expect("revisão");
         conn.execute(
             "INSERT INTO fluxos (id, org_id, slug, nome, descricao, status, rascunho_fonte,
                                  revisao_atual, version)
@@ -144,8 +144,8 @@ impl Cenario {
         &self,
         org: &Org,
         agente: &poph_store::Agente,
-        ficha: FichaId,
-        (fluxo, revisao): (FluxoId, RevisaoId),
+        ficha: RecordId,
+        (fluxo, revisao): (FlowId, RevisionId),
     ) -> ExecucaoGravada {
         self.store
             .fluxos()
@@ -160,7 +160,7 @@ impl Cenario {
                     ficha,
                     fluxo,
                     revisao,
-                    ator: AtorEvento::Agente,
+                    ator: EventActor::Agent,
                     ator_ref: Some("agente-de-teste"),
                     decisao_jev: None,
                     estado_inicial: estado_inicial("coleta"),
@@ -179,7 +179,7 @@ impl Drop for Cenario {
 
 fn estado_inicial(etapa: &str) -> EstadoDaExecucao {
     EstadoDaExecucao {
-        status: StatusExecucao::Ativa,
+        status: ExecutionStatus::Active,
         no_atual: etapa.to_owned(),
         dados_json: "{}".to_owned(),
         atores_que_agiram: Vec::new(),
@@ -192,24 +192,24 @@ fn estado_inicial(etapa: &str) -> EstadoDaExecucao {
 fn transicao_parcial(etapa: &str) -> TransicaoDeFluxo {
     TransicaoDeFluxo {
         novo_estado: EstadoDaExecucao {
-            status: StatusExecucao::Ativa,
+            status: ExecutionStatus::Active,
             no_atual: etapa.to_owned(),
             dados_json: format!("{{\"{etapa}\":{{\"endereco\":\"Rua das Flores, 10\"}}}}"),
-            atores_que_agiram: vec![AtorAcao::Agente],
+            atores_que_agiram: vec![ActionActor::Agent],
             resultado: None,
             motivo: None,
         },
         eventos: vec![
             EventoDaTransicao {
-                tipo: TipoEventoFicha::CamposPreenchidos,
-                ator_tipo: AtorEvento::Agente,
+                tipo: RecordEventKind::FieldsFilled,
+                ator_tipo: EventActor::Agent,
                 payload_json: format!(
                     "{{\"etapa\":\"{etapa}\",\"campos\":{{\"endereco\":\"x\"}}}}"
                 ),
             },
             EventoDaTransicao {
-                tipo: TipoEventoFicha::AcaoExecutada,
-                ator_tipo: AtorEvento::Agente,
+                tipo: RecordEventKind::ActionExecuted,
+                ator_tipo: EventActor::Agent,
                 payload_json: format!(
                     "{{\"etapa\":\"{etapa}\",\"acao\":\"registrar\",\"parcial\":true}}"
                 ),
@@ -230,7 +230,7 @@ fn transicao_parcial(etapa: &str) -> TransicaoDeFluxo {
 fn transicao_avanca(de: &str, para: &str) -> TransicaoDeFluxo {
     TransicaoDeFluxo {
         novo_estado: EstadoDaExecucao {
-            status: StatusExecucao::Ativa,
+            status: ExecutionStatus::Active,
             no_atual: para.to_owned(),
             dados_json: format!(
                 "{{\"{de}\":{{\"endereco\":\"Rua das Flores, 10\"}},\"{para}\":{{}}}}"
@@ -241,18 +241,18 @@ fn transicao_avanca(de: &str, para: &str) -> TransicaoDeFluxo {
         },
         eventos: vec![
             EventoDaTransicao {
-                tipo: TipoEventoFicha::AcaoExecutada,
-                ator_tipo: AtorEvento::Atendente,
+                tipo: RecordEventKind::ActionExecuted,
+                ator_tipo: EventActor::Attendant,
                 payload_json: format!("{{\"etapa\":\"{de}\",\"acao\":\"confirmar\"}}"),
             },
             EventoDaTransicao {
-                tipo: TipoEventoFicha::EtapaConcluida,
-                ator_tipo: AtorEvento::Sistema,
+                tipo: RecordEventKind::StepCompleted,
+                ator_tipo: EventActor::System,
                 payload_json: format!("{{\"etapa\":\"{de}\",\"acao\":\"confirmar\"}}"),
             },
             EventoDaTransicao {
-                tipo: TipoEventoFicha::EtapaEntrou,
-                ator_tipo: AtorEvento::Sistema,
+                tipo: RecordEventKind::StepEntered,
+                ator_tipo: EventActor::System,
                 payload_json: format!("{{\"etapa\":\"{para}\"}}"),
             },
         ],
@@ -267,7 +267,7 @@ fn transicao_avanca(de: &str, para: &str) -> TransicaoDeFluxo {
 fn transicao_encerra(de: &str) -> TransicaoDeFluxo {
     TransicaoDeFluxo {
         novo_estado: EstadoDaExecucao {
-            status: StatusExecucao::Concluida,
+            status: ExecutionStatus::Completed,
             no_atual: "concluida".to_owned(),
             dados_json: format!("{{\"{de}\":{{\"endereco\":\"Rua das Flores, 10\"}}}}"),
             atores_que_agiram: Vec::new(),
@@ -276,13 +276,13 @@ fn transicao_encerra(de: &str) -> TransicaoDeFluxo {
         },
         eventos: vec![
             EventoDaTransicao {
-                tipo: TipoEventoFicha::EtapaConcluida,
-                ator_tipo: AtorEvento::Sistema,
+                tipo: RecordEventKind::StepCompleted,
+                ator_tipo: EventActor::System,
                 payload_json: format!("{{\"etapa\":\"{de}\"}}"),
             },
             EventoDaTransicao {
-                tipo: TipoEventoFicha::ExecucaoConcluida,
-                ator_tipo: AtorEvento::Sistema,
+                tipo: RecordEventKind::ExecutionCompleted,
+                ator_tipo: EventActor::System,
                 payload_json: "{\"resultado\":\"Visita agendada\"}".to_owned(),
             },
         ],

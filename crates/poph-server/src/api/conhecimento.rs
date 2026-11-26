@@ -502,7 +502,7 @@ async fn sincronizar(
     static SINCRONIZACAO: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
     let _guarda = SINCRONIZACAO.lock().await;
     let config = ConfigModelo {
-        diretorio: e.config.modelos(),
+        diretorio: e.config.models(),
         ..ConfigModelo::default()
     };
     let modelo = tokio::task::spawn_blocking(move || EmbedderOrt::abrir(&config, None))

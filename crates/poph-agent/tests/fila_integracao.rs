@@ -64,14 +64,14 @@ impl Drop for Cenario {
 
 fn evento(peer: &str) -> InboundEvent {
     InboundEvent {
-        integracao: IntegrationId::generate(),
+        integration: IntegrationId::generate(),
         id_externo: format!("msg-{peer}"),
         peer: peer.to_owned(),
         remetente: None,
-        texto: "oi".to_owned(),
-        anexos: Vec::new(),
-        ocorrido_em: 1_795_140_000_000,
-        metadados: serde_json::Value::Null,
+        text: "oi".to_owned(),
+        attachments: Vec::new(),
+        occurred_at: 1_795_140_000_000,
+        metadata: serde_json::Value::Null,
     }
 }
 

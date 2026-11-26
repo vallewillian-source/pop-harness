@@ -10,7 +10,7 @@
 //!   mais tarde. O cliente, sozinho, só repete leitura (ver `cliente`): envio nunca repete dentro
 //!   dele.
 
-use poph_types::ErroIntegracao;
+use poph_types::IntegrationError;
 use thiserror::Error;
 
 /// O que pode dar errado ao falar com a Evolution ou ao ler o que ela entrega.
@@ -79,42 +79,40 @@ impl ErroEvolution {
     }
 
     /// Converte para o erro do contrato de integração, que é o que a `outbox` e o turno entendem.
-    pub fn para_integracao(&self, operacao: &str) -> ErroIntegracao {
+    pub fn para_integracao(&self, operacao: &str) -> IntegrationError {
         match self {
-            ErroEvolution::Rede(motivo) => ErroIntegracao::Indisponivel {
-                motivo: format!("{operacao}: {motivo}"),
+            ErroEvolution::Rede(motivo) => IntegrationError::Unavailable {
+                reason: format!("{operacao}: {motivo}"),
             },
-            ErroEvolution::Resposta { status, mensagem } => ErroIntegracao::Recusado {
-                operacao: operacao.to_owned(),
-                codigo: status.to_string(),
-                mensagem: mensagem.clone(),
-                transitoria: *status == 429 || *status >= 500,
+            ErroEvolution::Resposta { status, mensagem } => IntegrationError::Refused {
+                operation: operacao.to_owned(),
+                code: status.to_string(),
+                message: mensagem.clone(),
+                transient: *status == 429 || *status >= 500,
             },
-            ErroEvolution::MidiaGrandeDemais { bytes, teto } => {
-                ErroIntegracao::MensagemGrandeDemais {
-                    bytes: usize::try_from(*bytes).unwrap_or(usize::MAX),
-                    teto: usize::try_from(*teto).unwrap_or(usize::MAX),
-                }
-            }
-            ErroEvolution::MidiaExpirada(motivo) => ErroIntegracao::Recusado {
-                operacao: operacao.to_owned(),
-                codigo: "midia_expirada".to_owned(),
-                mensagem: motivo.clone(),
-                transitoria: false,
+            ErroEvolution::MidiaGrandeDemais { bytes, teto } => IntegrationError::MessageTooLarge {
+                bytes: usize::try_from(*bytes).unwrap_or(usize::MAX),
+                cap: usize::try_from(*teto).unwrap_or(usize::MAX),
+            },
+            ErroEvolution::MidiaExpirada(motivo) => IntegrationError::Refused {
+                operation: operacao.to_owned(),
+                code: "midia_expirada".to_owned(),
+                message: motivo.clone(),
+                transient: false,
             },
             ErroEvolution::Configuracao(motivo)
             | ErroEvolution::RespostaInvalida(motivo)
-            | ErroEvolution::BlobIlegivel { motivo, .. } => ErroIntegracao::Recusado {
-                operacao: operacao.to_owned(),
-                codigo: "integracao_invalida".to_owned(),
-                mensagem: motivo.clone(),
-                transitoria: false,
+            | ErroEvolution::BlobIlegivel { motivo, .. } => IntegrationError::Refused {
+                operation: operacao.to_owned(),
+                code: "integracao_invalida".to_owned(),
+                message: motivo.clone(),
+                transient: false,
             },
-            ErroEvolution::RespostaGrande { teto } => ErroIntegracao::Recusado {
-                operacao: operacao.to_owned(),
-                codigo: "resposta_grande".to_owned(),
-                mensagem: format!("a resposta passou de {teto} bytes"),
-                transitoria: false,
+            ErroEvolution::RespostaGrande { teto } => IntegrationError::Refused {
+                operation: operacao.to_owned(),
+                code: "resposta_grande".to_owned(),
+                message: format!("a resposta passou de {teto} bytes"),
+                transient: false,
             },
         }
     }

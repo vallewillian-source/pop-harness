@@ -5,7 +5,7 @@
 
 use poph_evolution::webhook::{Decisao, MotivoIgnorado, Politica, conferir_segredo, interpretar};
 use poph_evolution::{ErroWebhook, anexo_embutido};
-use poph_types::{AnexoEntrada, EventoEstado, IntegrationId, Segredo};
+use poph_types::{InboundAttachment, IntegrationId, Secret, StateEvent};
 use serde_json::{Value, json};
 
 fn integracao() -> IntegrationId {
@@ -44,9 +44,9 @@ fn texto_simples_vira_evento_normalizado() {
     };
     assert_eq!(entrada.evento.id_externo, "3EB0A1B2C3D4");
     assert_eq!(entrada.evento.peer, "5511999999999");
-    assert_eq!(entrada.evento.texto, "quero um orçamento de dedetização");
-    assert_eq!(entrada.evento.ocorrido_em, 1_795_000_000_000);
-    assert_eq!(entrada.evento.anexos.len(), 0);
+    assert_eq!(entrada.evento.text, "quero um orçamento de dedetização");
+    assert_eq!(entrada.evento.occurred_at, 1_795_000_000_000);
+    assert_eq!(entrada.evento.attachments.len(), 0);
     assert!(entrada.midias.is_empty());
     assert_eq!(entrada.evento.validar(), Ok(()));
 }
@@ -60,7 +60,7 @@ fn texto_estendido_tambem_e_lido() {
     let Decisao::Entrada(entrada) = interpretar(integracao(), &corpo, &Politica::default()) else {
         panic!("esperava entrada");
     };
-    assert_eq!(entrada.evento.texto, "e o prazo?");
+    assert_eq!(entrada.evento.text, "e o prazo?");
 }
 
 #[test]
@@ -75,7 +75,7 @@ fn imagem_sem_legenda_entra_como_anexo_a_baixar() {
     let Decisao::Entrada(entrada) = interpretar(integracao(), &corpo, &Politica::default()) else {
         panic!("esperava entrada");
     };
-    assert_eq!(entrada.evento.texto, "");
+    assert_eq!(entrada.evento.text, "");
     assert_eq!(entrada.midias.len(), 1);
     assert_eq!(entrada.midias[0].mime, "image/jpeg");
     assert_eq!(entrada.midias[0].tamanho_declarado, Some(204_800));
@@ -94,7 +94,7 @@ fn imagem_com_legenda_leva_o_texto_junto() {
     let Decisao::Entrada(entrada) = interpretar(integracao(), &corpo, &Politica::default()) else {
         panic!("esperava entrada");
     };
-    assert_eq!(entrada.evento.texto, "essa é a etiqueta do produto");
+    assert_eq!(entrada.evento.text, "essa é a etiqueta do produto");
     assert_eq!(entrada.midias.len(), 1);
 }
 
@@ -137,59 +137,59 @@ fn documento_de_tipo_nao_suportado_e_recusado_com_motivo() {
 /// baixar nada (nenhum anexo a baixar).
 #[test]
 fn midia_fora_do_escopo_vira_texto_de_historico_sem_download() {
-    let casos: [(Value, poph_types::MidiaForaDoEscopo); 11] = [
+    let casos: [(Value, poph_types::UnsupportedContent); 11] = [
         (
             json!({"audioMessage": {"mimetype": "audio/ogg"}}),
-            poph_types::MidiaForaDoEscopo::Audio,
+            poph_types::UnsupportedContent::Audio,
         ),
         (
             json!({"videoMessage": {"mimetype": "video/mp4"}}),
-            poph_types::MidiaForaDoEscopo::Video,
+            poph_types::UnsupportedContent::Video,
         ),
         (
             json!({"ptvMessage": {"mimetype": "video/mp4"}}),
-            poph_types::MidiaForaDoEscopo::Video,
+            poph_types::UnsupportedContent::Video,
         ),
         (
             json!({"stickerMessage": {"mimetype": "image/webp"}}),
-            poph_types::MidiaForaDoEscopo::Figurinha,
+            poph_types::UnsupportedContent::Sticker,
         ),
         (
             json!({"contactMessage": {"displayName": "Fulano"}}),
-            poph_types::MidiaForaDoEscopo::Contato,
+            poph_types::UnsupportedContent::Contact,
         ),
         (
             json!({"contactsArrayMessage": {}}),
-            poph_types::MidiaForaDoEscopo::Contato,
+            poph_types::UnsupportedContent::Contact,
         ),
         (
             json!({"locationMessage": {"degreesLatitude": 1}}),
-            poph_types::MidiaForaDoEscopo::Localizacao,
+            poph_types::UnsupportedContent::Location,
         ),
         (
             json!({"liveLocationMessage": {"degreesLatitude": 1}}),
-            poph_types::MidiaForaDoEscopo::Localizacao,
+            poph_types::UnsupportedContent::Location,
         ),
         (
             json!({"pollCreationMessage": {"name": "Qual dia?"}}),
-            poph_types::MidiaForaDoEscopo::Enquete,
+            poph_types::UnsupportedContent::Poll,
         ),
         (
             json!({"pollCreationMessageV2": {"name": "Qual dia?"}}),
-            poph_types::MidiaForaDoEscopo::Enquete,
+            poph_types::UnsupportedContent::Poll,
         ),
         (
             json!({"pollCreationMessageV3": {"name": "Qual dia?"}}),
-            poph_types::MidiaForaDoEscopo::Enquete,
+            poph_types::UnsupportedContent::Poll,
         ),
     ];
     for (message, tipo) in casos {
         let corpo = corpo("messages.upsert", mensagem(message.clone()));
         match interpretar(integracao(), &corpo, &Politica::default()) {
             Decisao::Entrada(entrada) => {
-                assert_eq!(entrada.evento.texto, tipo.texto_de_historico(), "{message}");
+                assert_eq!(entrada.evento.text, tipo.history_text(), "{message}");
                 assert!(entrada.midias.is_empty(), "não baixa mídia: {message}");
-                assert!(entrada.evento.anexos.is_empty(), "{message}");
+                assert!(entrada.evento.attachments.is_empty(), "{message}");
             }
             outra => panic!("esperava texto de histórico para {message}, veio {outra:?}"),
         }
@@ -204,8 +204,8 @@ fn legenda_de_video_nao_entra_no_historico_como_no_python() {
     );
     match interpretar(integracao(), &corpo, &Politica::default()) {
         Decisao::Entrada(entrada) => assert_eq!(
-            entrada.evento.texto,
-            poph_types::MidiaForaDoEscopo::Video.texto_de_historico()
+            entrada.evento.text,
+            poph_types::UnsupportedContent::Video.history_text()
         ),
         outra => panic!("esperava entrada, veio {outra:?}"),
     }
@@ -349,18 +349,18 @@ fn estado_de_conexao_vira_evento_de_estado() {
     let aberto = corpo("connection.update", json!({"state": "open"}));
     assert!(matches!(
         interpretar(integracao(), &aberto, &Politica::default()),
-        Decisao::Estado(EventoEstado::Conectado { .. })
+        Decisao::Estado(StateEvent::Connected { .. })
     ));
     let fechado = corpo("connection.update", json!({"state": "close"}));
     assert!(matches!(
         interpretar(integracao(), &fechado, &Politica::default()),
-        Decisao::Estado(EventoEstado::Desconectado { .. })
+        Decisao::Estado(StateEvent::Disconnected { .. })
     ));
     let qr = corpo(
         "qrcode.updated",
         json!({"qrcode": {"base64": "data:image/png;base64,AAAA"}}),
     );
-    let Decisao::Estado(EventoEstado::Qr { codigo, .. }) =
+    let Decisao::Estado(StateEvent::Qr { code: codigo, .. }) =
         interpretar(integracao(), &qr, &Politica::default())
     else {
         panic!("esperava QR");
@@ -370,7 +370,7 @@ fn estado_de_conexao_vira_evento_de_estado() {
 
 #[test]
 fn segredo_do_webhook_e_conferido() {
-    let segredo = Segredo::new("segredo-do-webhook".to_owned());
+    let segredo = Secret::new("segredo-do-webhook".to_owned());
     assert_eq!(
         conferir_segredo(&segredo, Some("segredo-do-webhook")),
         Ok(())
@@ -385,7 +385,7 @@ fn segredo_do_webhook_e_conferido() {
     );
     // Sem segredo configurado, nada é aceito.
     assert_eq!(
-        conferir_segredo(&Segredo::new(String::new()), Some("qualquer")),
+        conferir_segredo(&Secret::new(String::new()), Some("qualquer")),
         Err(ErroWebhook::SemSegredoConfigurado)
     );
 }
@@ -393,10 +393,10 @@ fn segredo_do_webhook_e_conferido() {
 #[test]
 fn anexo_embutido_leva_o_conteudo_em_base64() {
     let anexo = anexo_embutido("nota.pdf", "application/pdf", b"%PDF-1.4");
-    let AnexoEntrada::Bytes {
-        nome,
+    let InboundAttachment::Bytes {
+        name: nome,
         mime,
-        dados_base64,
+        data_base64: dados_base64,
     } = anexo
     else {
         panic!("esperava bytes");
@@ -423,7 +423,7 @@ fn reentrega_do_mesmo_webhook_produz_o_mesmo_id_externo() {
     };
     assert_eq!(primeira.evento.id_externo, segunda.evento.id_externo);
     assert_eq!(primeira.evento.peer, segunda.evento.peer);
-    assert_eq!(primeira.evento.ocorrido_em, segunda.evento.ocorrido_em);
+    assert_eq!(primeira.evento.occurred_at, segunda.evento.occurred_at);
 }
 
 // ───────────────────────── nome do cliente (MX-32) ─────────────────────────
@@ -444,7 +444,7 @@ fn push_name_da(dados: Value) -> Option<String> {
     };
     entrada
         .evento
-        .metadados
+        .metadata
         .get("push_name")
         .and_then(Value::as_str)
         .map(str::to_owned)
@@ -474,7 +474,7 @@ fn push_name_de_mensagem_do_proprio_aparelho_nao_vai() {
     let Decisao::Entrada(entrada) = interpretar(integracao(), &corpo, &politica) else {
         panic!("esperava entrada");
     };
-    assert!(entrada.evento.metadados.get("push_name").is_none());
+    assert!(entrada.evento.metadata.get("push_name").is_none());
 }
 
 #[test]

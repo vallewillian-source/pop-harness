@@ -137,7 +137,7 @@ possible failure. Full contract: [`docs/CONTRATO_CANAL.md`](docs/CONTRATO_CANAL.
 | **Backup** | A whole org in a single file, with restore. Importing over existing data is refused by default. Secrets are never stored in clear text in the file. |
 | **Retention** | History expires per org (default 30 days; `0` keeps everything). The sweep has `--dry-run`. |
 | **Observability** | `/healthz`, Prometheus metrics at `/metrics`, human-readable or JSON logs, `poph doctor`. Secrets never reach the logs; the Matrix and Flows modules also keep customer text and phone numbers out of them. |
-| **Secrets** | Environment only. Integration secrets are encrypted at rest. The `Sensivel` type prints `[oculto]` in logs and errors. Admin tokens are stored as Argon2id hashes. |
+| **Secrets** | Environment only. Integration secrets are encrypted at rest. The `Sensitive` type prints `[oculto]` in logs and errors. Admin tokens are stored as Argon2id hashes. |
 
 ## How it works
 
@@ -522,7 +522,7 @@ glue the pieces together.
 
 | Crate | What it does |
 |---|---|
-| `poph-types` | domain types, IDs, errors, contracts, configuration and `Sensivel` |
+| `poph-types` | domain types, IDs, errors, contracts, configuration and `Sensitive` |
 | `poph-core` | model-provider client (streaming, tools, images, per-org limit) |
 | `poph-store` | SQLite (`harness.db`, `rag.db`): single writer, WAL readers, migrations, per-org repositories, backup |
 | `poph-rag` | local embedding (ONNX Runtime, int8), batch queue and model install |

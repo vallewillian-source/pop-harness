@@ -221,12 +221,12 @@ impl Interno {
             entrada.pendentes.fetch_add(1, Ordering::AcqRel);
             match entrada.tx.try_send(tarefa) {
                 Ok(()) => {
-                    self.metricas.eventos_entregues.incrementar(1);
+                    self.metricas.eventos_entregues.increment(1);
                     return Ok(());
                 }
                 Err(mpsc::error::TrySendError::Full(_)) => {
                     entrada.pendentes.fetch_sub(1, Ordering::AcqRel);
-                    self.metricas.eventos_recusados.incrementar(1);
+                    self.metricas.eventos_recusados.increment(1);
                     return Err(ErroAgente::FilaCheia {
                         capacidade: self.opcoes.fila_por_conversa,
                     });
@@ -260,7 +260,7 @@ impl Interno {
                 }
                 None => {
                     // Todos ocupados: passar do teto é melhor que quebrar "um turno por conversa".
-                    self.metricas.atores_acima_do_teto.incrementar(1);
+                    self.metricas.atores_acima_do_teto.increment(1);
                 }
             }
         }
@@ -277,9 +277,9 @@ impl Interno {
                 pendentes: Arc::clone(&pendentes),
             },
         );
-        self.metricas.eventos_entregues.incrementar(1);
+        self.metricas.eventos_entregues.increment(1);
         let vivos = self.vivos.fetch_add(1, Ordering::AcqRel) + 1;
-        self.metricas.atores_vivos.definir(vivos);
+        self.metricas.atores_vivos.set(vivos);
 
         let interno = Arc::clone(self);
         drop(tokio::spawn(async move {
@@ -339,9 +339,9 @@ impl Interno {
             }
         }
         let vivos = self.vivos.fetch_sub(1, Ordering::AcqRel) - 1;
-        self.metricas.atores_vivos.definir(vivos.max(0));
+        self.metricas.atores_vivos.set(vivos.max(0));
         if despejado {
-            self.metricas.atores_despejados.incrementar(1);
+            self.metricas.atores_despejados.increment(1);
         }
         tracing::debug!(
             org = %chave.0,

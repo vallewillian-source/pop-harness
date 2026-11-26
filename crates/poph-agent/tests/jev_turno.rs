@@ -26,7 +26,7 @@ use poph_store::{
     Direcao, EstadoTurno, MudancaAgente, NovaConversa, NovaMensagem, NovaOrg, NovoAgente,
     NovoDepartamento, Papel, Store,
 };
-use poph_types::{AgentId, ConversationId, GatesJev, MessageId, OrgId};
+use poph_types::{AgentId, ConversationId, JevGates, MessageId, OrgId};
 
 struct SemEspera;
 
@@ -181,7 +181,7 @@ impl Cenario {
             .expect("ajusta o jev_json do agente");
     }
 
-    fn motor(&self, globais: GatesJev, jev: Option<Arc<MotorJev>>) -> Motor {
+    fn motor(&self, globais: JevGates, jev: Option<Arc<MotorJev>>) -> Motor {
         let config = ConfigQuente::nova(
             Arc::clone(&self.store),
             OpcoesConfigQuente::default(),
@@ -254,10 +254,10 @@ fn roteiro(texto: &str) -> Roteiro {
     ])
 }
 
-fn so_g1() -> GatesJev {
-    GatesJev {
+fn so_g1() -> JevGates {
+    JevGates {
         g1: true,
-        ..GatesJev::default()
+        ..JevGates::default()
     }
 }
 
@@ -268,7 +268,7 @@ fn escolhas(itens: &[(&str, &str)]) -> BTreeMap<String, String> {
         .collect()
 }
 
-fn motor_jev(jev: Arc<JevFalso>, globais: GatesJev) -> Arc<MotorJev> {
+fn motor_jev(jev: Arc<JevFalso>, globais: JevGates) -> Arc<MotorJev> {
     Arc::new(MotorJev::novo(jev, globais, "jev-latest"))
 }
 
@@ -336,8 +336,8 @@ async fn gates_desligados_nao_geram_pergunta() {
     let conversa = cenario.conversa();
     let jev = Arc::new(JevFalso::com_escolhas(BTreeMap::new()));
     let motor = cenario.motor(
-        GatesJev::default(),
-        Some(motor_jev(Arc::clone(&jev), GatesJev::default())),
+        JevGates::default(),
+        Some(motor_jev(Arc::clone(&jev), JevGates::default())),
     );
 
     let gatilho = cenario.falar(conversa, "bom dia");
@@ -411,9 +411,9 @@ async fn g4_leva_os_departamentos_ativos_da_org() {
     cenario.departamento("Comercial");
     cenario.departamento("Suporte");
     let conversa = cenario.conversa();
-    let globais = GatesJev {
+    let globais = JevGates {
         g4: true,
-        ..GatesJev::default()
+        ..JevGates::default()
     };
     let jev = Arc::new(JevFalso::com_escolhas(escolhas(&[(
         "g4_departamento",
@@ -462,7 +462,7 @@ async fn estado_tem_no_maximo_dez_mensagens() {
 async fn motor_sem_jev_responde_igual() {
     let cenario = Cenario::novo("sem-jev");
     let conversa = cenario.conversa();
-    let motor = cenario.motor(GatesJev::default(), None);
+    let motor = cenario.motor(JevGates::default(), None);
 
     let gatilho = cenario.falar(conversa, "bom dia");
     let resumo = cenario.turno(&motor, conversa, gatilho).await;
@@ -479,9 +479,9 @@ async fn g4_sem_departamentos_nao_pergunta() {
     let jev = Arc::new(JevFalso::com_escolhas(BTreeMap::new()));
     let motor = motor_jev(
         Arc::clone(&jev),
-        GatesJev {
+        JevGates {
             g4: true,
-            ..GatesJev::default()
+            ..JevGates::default()
         },
     );
 

@@ -48,7 +48,7 @@ fn preparar(rotulo: &str) -> Preparo {
     fs::create_dir_all(pasta.join("dados")).expect("pasta de dados");
 
     let mut config = HarnessConfig::default();
-    config.dados.diretorio = pasta.join("dados");
+    config.data.directory = pasta.join("dados");
     let store = Store::abrir(&config).expect("cria o banco");
     let org = store
         .orgaos()

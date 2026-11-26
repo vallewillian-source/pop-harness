@@ -6,12 +6,12 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use poph_types::{EventoEstado, EventoIntegracao, InboundEvent, Receptor};
+use poph_types::{EventSink, InboundEvent, IntegrationEvent, StateEvent};
 
 /// Receptor que guarda tudo o que chega.
 #[derive(Clone, Default)]
 pub struct ColetorEventos {
-    eventos: Arc<Mutex<Vec<EventoIntegracao>>>,
+    eventos: Arc<Mutex<Vec<IntegrationEvent>>>,
 }
 
 impl ColetorEventos {
@@ -21,7 +21,7 @@ impl ColetorEventos {
     }
 
     /// Tudo o que chegou, na ordem.
-    pub fn todos(&self) -> Vec<EventoIntegracao> {
+    pub fn todos(&self) -> Vec<IntegrationEvent> {
         self.eventos
             .lock()
             .unwrap_or_else(|veneno| veneno.into_inner())
@@ -33,19 +33,19 @@ impl ColetorEventos {
         self.todos()
             .into_iter()
             .filter_map(|evento| match evento {
-                EventoIntegracao::Entrada(entrada) => Some(entrada),
-                EventoIntegracao::Estado(_) => None,
+                IntegrationEvent::Inbound(entrada) => Some(entrada),
+                IntegrationEvent::Estado(_) => None,
             })
             .collect()
     }
 
     /// Só os eventos de estado.
-    pub fn estados(&self) -> Vec<EventoEstado> {
+    pub fn estados(&self) -> Vec<StateEvent> {
         self.todos()
             .into_iter()
             .filter_map(|evento| match evento {
-                EventoIntegracao::Estado(estado) => Some(estado),
-                EventoIntegracao::Entrada(_) => None,
+                IntegrationEvent::Estado(estado) => Some(estado),
+                IntegrationEvent::Inbound(_) => None,
             })
             .collect()
     }
@@ -59,7 +59,7 @@ impl ColetorEventos {
     }
 
     /// Espera até chegar o `minimo`-ésimo evento (ou estourar o prazo).
-    pub async fn esperar(&self, minimo: usize, prazo: Duration) -> Vec<EventoIntegracao> {
+    pub async fn esperar(&self, minimo: usize, prazo: Duration) -> Vec<IntegrationEvent> {
         let limite = tokio::time::Instant::now() + prazo;
         loop {
             let eventos = self.todos();
@@ -71,8 +71,8 @@ impl ColetorEventos {
     }
 }
 
-impl Receptor for ColetorEventos {
-    fn receber(&self, evento: EventoIntegracao) {
+impl EventSink for ColetorEventos {
+    fn receive(&self, evento: IntegrationEvent) {
         self.eventos
             .lock()
             .unwrap_or_else(|veneno| veneno.into_inner())

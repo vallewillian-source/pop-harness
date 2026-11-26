@@ -140,7 +140,7 @@ pub async fn mostrar(
         Ok(i) => {
             json!({"agent_id":i.agent_id.to_string(),"org_id":i.org_id.to_string(),"structured":serde_json::from_str::<Value>(&i.estruturado_json).unwrap_or(json!(i.estruturado_json)),"markdown":i.markdown,"derived_from_json":i.derivado_do_json,"version":i.versao,"created_at":i.criado_em,"updated_at":i.atualizado_em})
         }
-        Err(poph_store::ErroStore::Dominio(poph_types::DomainError::NaoEncontrado { .. })) => {
+        Err(poph_store::ErroStore::Dominio(poph_types::DomainError::NotFound { .. })) => {
             Value::Null
         }
         Err(e) => return Err(e.into()),
@@ -205,7 +205,7 @@ pub async fn criar(
         e.store.departamentos().obter(org, id)?;
     }
     if let Some(x) = d.provider {
-        if let Err(erro) = e.config.validar_escolha_de_provedor(&x) {
+        if let Err(erro) = e.config.validate_provider_choice(&x) {
             return Err(ApiError::validacao("provider", erro.to_string()));
         }
         n.provedor = x;
@@ -272,7 +272,7 @@ pub async fn atualizar(
             .map_err(|_| ApiError::validacao("jev_json", "JSON inválido"))?;
     }
     if let Some(ref escolha) = d.provider
-        && let Err(erro) = e.config.validar_escolha_de_provedor(escolha)
+        && let Err(erro) = e.config.validate_provider_choice(escolha)
     {
         return Err(ApiError::validacao("provider", erro.to_string()));
     }

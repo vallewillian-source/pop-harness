@@ -16,7 +16,7 @@ use axum::http::{HeaderMap, Method, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use poph_matrix::cliente::{ClienteMatrix, ConfigCliente, CriarSala};
 use poph_matrix::erro::{Classificacao, ErroChamada};
-use poph_types::Segredo;
+use poph_types::Secret;
 use serde_json::{Value, json};
 
 /// Valor-canário: se aparecer em Debug, Display, log, erro ou URL, o teste acusa.
@@ -164,7 +164,7 @@ async fn cenario_com(token: &str, timeout: Duration) -> Cenario {
             .expect("Synapse falso no ar");
     });
     let base = format!("http://{endereco}");
-    let config = ConfigCliente::novo(base, "matrix-dev.local", Segredo::new(token.to_owned()))
+    let config = ConfigCliente::novo(base, "matrix-dev.local", Secret::new(token.to_owned()))
         .expect("configuração do cliente")
         .com_timeout(timeout);
     let cliente = ClienteMatrix::novo(config).expect("cliente");
@@ -613,7 +613,7 @@ async fn falha_de_rede_e_transitoria() {
     let config = ConfigCliente::novo(
         format!("http://{endereco}"),
         "matrix-dev.local",
-        Segredo::new(CANARIO.to_owned()),
+        Secret::new(CANARIO.to_owned()),
     )
     .expect("configuração")
     .com_timeout(Duration::from_secs(2));

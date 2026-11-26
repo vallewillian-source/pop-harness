@@ -20,7 +20,7 @@ use poph_jev::{
     IdGate, JevFalso, Limiares, MAX_CHARS_GATILHO, MAX_FLUXOS_LIBERADOS, MensagemJev, MotorJev,
     OrigemDecisao, Resposta, criterio_do_fluxo, ler_conjunto,
 };
-use poph_types::GatesJev;
+use poph_types::JevGates;
 
 fn fluxo(id: &str, nome: &str) -> FluxoJev {
     FluxoJev {
@@ -60,12 +60,12 @@ fn resposta(escolha: &str, confianca: f64) -> Resposta {
     }
 }
 
-fn gates(g1: bool, g3: bool, g9: bool) -> GatesJev {
-    GatesJev {
+fn gates(g1: bool, g3: bool, g9: bool) -> JevGates {
+    JevGates {
         g1,
         g3,
         g9,
-        ..GatesJev::default()
+        ..JevGates::default()
     }
 }
 

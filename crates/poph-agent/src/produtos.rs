@@ -245,9 +245,9 @@ impl BuscadorProdutos for CatalogoProdutos {
                     };
                     if !self.categoria_visivel(org, agente, id)? {
                         // Paridade com o POP Atende: categoria não vinculada não é consultada.
-                        return Err(ErroAgente::Dominio(poph_types::DomainError::Validacao {
-                            campo: "categoria",
-                            motivo: "não está vinculada a este agente".to_owned(),
+                        return Err(ErroAgente::Dominio(poph_types::DomainError::Validation {
+                            field: "categoria",
+                            reason: "não está vinculada a este agente".to_owned(),
                         }));
                     }
                     Some(id)

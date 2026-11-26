@@ -43,7 +43,7 @@ use poph_matrix::erro::{Classificacao, ErroMidia};
 use poph_matrix::expiracao::{self, MidiaParaExpirar};
 use poph_matrix::usuarios::IdsFantasmas;
 use poph_store::{MidiaDaSala, Store};
-use poph_types::{MatrixConfig, OrgId, Segredo};
+use poph_types::{MatrixConfig, OrgId, Secret};
 use tokio::sync::watch;
 
 use crate::matrix_metricas::MetricasMatrix;
@@ -101,7 +101,7 @@ pub struct ExpiracaoMidia {
     store: Arc<Store>,
     cliente: ClienteMatrix,
     /// Token da API administrativa do Synapse (nunca em log).
-    token_admin: Segredo,
+    token_admin: Secret,
     ids: IdsFantasmas,
     /// Prazo de retenção, em dias, como está em `matrix.midia_retencao_dias`.
     retencao_dias: u32,
@@ -137,7 +137,7 @@ impl ExpiracaoMidia {
     pub fn novo(
         store: Arc<Store>,
         cliente: ClienteMatrix,
-        token_admin: Segredo,
+        token_admin: Secret,
         config: &MatrixConfig,
     ) -> Result<Self, poph_matrix::usuarios::ErroFantasmas> {
         let ids = IdsFantasmas::da_config(config)?;
@@ -147,7 +147,7 @@ impl ExpiracaoMidia {
             cliente,
             token_admin,
             ids,
-            retencao_dias: config.midia_retencao_dias.max(1),
+            retencao_dias: config.attachment_retention_days.max(1),
             lote: LOTE_PADRAO,
             periodo: PERIODO_PADRAO,
             espera_base: ESPERA_BASE,
@@ -276,7 +276,7 @@ impl ExpiracaoMidia {
         }
         self.metricas
             .midias_pendentes_expiracao
-            .definir(i64::from(pendentes));
+            .set(i64::from(pendentes));
         relato
     }
 
@@ -294,7 +294,7 @@ impl ExpiracaoMidia {
                     {
                         Ok(()) => {
                             relato.redigidas += 1;
-                            self.metricas.midias_redigidas.incrementar(1);
+                            self.metricas.midias_redigidas.increment(1);
                             tracing::info!(
                                 target: "poph_server::matrix_expiracao",
                                 org = %midia.org_id,
@@ -333,7 +333,7 @@ impl ExpiracaoMidia {
                             if !apagou {
                                 relato.ja_apagadas += 1;
                             }
-                            self.metricas.midias_apagadas.incrementar(1);
+                            self.metricas.midias_apagadas.increment(1);
                             tracing::info!(
                                 target: "poph_server::matrix_expiracao",
                                 org = %midia.org_id,
@@ -381,7 +381,7 @@ impl ExpiracaoMidia {
                     relato.erros_de_banco += 1;
                 }
                 relato.adiadas += 1;
-                self.metricas.midias_expiracao_adiadas.incrementar(1);
+                self.metricas.midias_expiracao_adiadas.increment(1);
             }
             None => {
                 if !midia.falta_redigir() && !midia.falta_apagar() {
@@ -416,14 +416,14 @@ impl ExpiracaoMidia {
     /// Conta a falha por classe (e o `429`), como o restante do módulo.
     fn contar_erro(&self, erro: &ErroMidia) {
         match erro.classificacao() {
-            Classificacao::Transitoria => self.metricas.erros_transitorios.incrementar(1),
-            Classificacao::Definitiva => self.metricas.erros_definitivos.incrementar(1),
+            Classificacao::Transitoria => self.metricas.erros_transitorios.increment(1),
+            Classificacao::Definitiva => self.metricas.erros_definitivos.increment(1),
         }
         if let ErroMidia::Chamada(poph_matrix::erro::ErroChamada::Resposta {
             status: 429, ..
         }) = erro
         {
-            self.metricas.respostas_429.incrementar(1);
+            self.metricas.respostas_429.increment(1);
         }
     }
 }

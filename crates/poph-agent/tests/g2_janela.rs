@@ -33,7 +33,7 @@ use poph_store::{
     Direcao, EstadoTurno, MudancaAgente, NovaConversa, NovaMensagem, NovaOrg, NovoAgente, Papel,
     Store,
 };
-use poph_types::{AgentId, ConversationId, GatesJev, MessageId, OrgId};
+use poph_types::{AgentId, ConversationId, JevGates, MessageId, OrgId};
 
 // ───────────────────────────── Pausa com relógio virtual ─────────────────────────────
 
@@ -307,19 +307,19 @@ fn provedor() -> Arc<ProvedorFake> {
     ])]))
 }
 
-fn so_g2() -> GatesJev {
-    GatesJev {
+fn so_g2() -> JevGates {
+    JevGates {
         g2: true,
-        ..GatesJev::default()
+        ..JevGates::default()
     }
 }
 
-fn motor_jev(jev: Arc<JevFalso>, gates: GatesJev) -> Arc<MotorJev> {
+fn motor_jev(jev: Arc<JevFalso>, gates: JevGates) -> Arc<MotorJev> {
     Arc::new(MotorJev::novo(jev, gates, "jev-latest"))
 }
 
 /// Motor do Jev com opções trocadas (prazo do lote, testes de timeout).
-fn motor_jev_com(jev: Arc<JevFalso>, gates: GatesJev, opcoes: OpcoesJev) -> Arc<MotorJev> {
+fn motor_jev_com(jev: Arc<JevFalso>, gates: JevGates, opcoes: OpcoesJev) -> Arc<MotorJev> {
     Arc::new(MotorJev::novo(jev, gates, "jev-latest").com_opcoes(opcoes))
 }
 
@@ -480,9 +480,9 @@ async fn gate_desligado_mantem_a_janela_fixa() {
         cenario.org,
         conversa,
     ));
-    let gates = GatesJev {
+    let gates = JevGates {
         g1: true,
-        ..GatesJev::default()
+        ..JevGates::default()
     };
     let jev = Arc::new(JevFalso::com_escolhas(escolha(
         "g1_transferir",

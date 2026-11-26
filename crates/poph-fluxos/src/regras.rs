@@ -55,7 +55,7 @@ use starlark::values::dict::AllocDict;
 use starlark::values::list::AllocList;
 
 use poph_types::DomainError;
-use poph_types::config::FluxosConfig;
+use poph_types::config::FlowsConfig;
 
 use crate::compilador::Limites;
 use crate::ir::Regra;
@@ -128,10 +128,10 @@ impl Default for LimitesRegra {
 impl LimitesRegra {
     /// Os limites de uma avaliação de regra que a configuração `[fluxos]` define (FX-26b):
     /// `fluxos.max_ticks_regra` e `fluxos.max_heap_regra`. Callstack e prazo ficam no padrão.
-    pub fn da_config(fluxos: &FluxosConfig) -> Self {
+    pub fn da_config(fluxos: &FlowsConfig) -> Self {
         Self {
-            max_ticks: fluxos.max_ticks_regra,
-            max_heap_bytes: usize::try_from(fluxos.max_heap_regra).unwrap_or(usize::MAX),
+            max_ticks: fluxos.max_rule_ticks,
+            max_heap_bytes: usize::try_from(fluxos.max_rule_heap).unwrap_or(usize::MAX),
             ..Self::default()
         }
     }
@@ -706,12 +706,12 @@ fn valor_starlark<'v>(
 
 /// Erro de regra por defeito do fluxo (`regra_invalida`).
 fn invalida(motivo: String) -> ErroRegra {
-    DomainError::RegraInvalida { motivo }
+    DomainError::InvalidRule { reason: motivo }
 }
 
 /// Erro de regra por limite estourado (`regra_limite`).
 fn limite(motivo: String) -> ErroRegra {
-    DomainError::RegraLimite { motivo }
+    DomainError::RuleLimit { reason: motivo }
 }
 
 /// Primeira linha de uma mensagem de erro, sem o rastro de chamadas do Starlark.
@@ -787,7 +787,7 @@ mod testes {
                 &dados("{}"),
             )
             .expect_err("campo fora do formato `etapa.campo` tem de ser recusado");
-            assert_eq!(erro.codigo_api(), "regra_invalida", "campo {campo}");
+            assert_eq!(erro.api_code(), "regra_invalida", "campo {campo}");
             assert!(erro.to_string().contains("etapa.campo"), "{campo}: {erro}");
         }
     }

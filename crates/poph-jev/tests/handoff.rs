@@ -14,7 +14,7 @@ use poph_jev::{
     RISCO_ANIMAL, RISCO_INGESTAO, RISCO_NENHUM, RISCO_OUTRO, RISCO_PERGUNTA_ID, Resposta,
     ResultadoOrientacao, TIPOS_DE_RISCO,
 };
-use poph_types::GatesJev;
+use poph_types::JevGates;
 
 /// Textos aprovados em 19/11/2026 (`HUMAN_HANDOFF_GUIDANCE_PRD.md` §5.3), copiados do documento.
 const APROVADO_INGESTAO: &str = "⚠️ Se alguém engoliu ou teve contato com o produto, procure \
@@ -41,9 +41,9 @@ fn estado() -> EstadoJev {
 fn motor(jev: Arc<JevFalso>) -> MotorJev {
     MotorJev::novo(
         jev,
-        GatesJev {
+        JevGates {
             g1: true,
-            ..GatesJev::default()
+            ..JevGates::default()
         },
         "jev-latest",
     )

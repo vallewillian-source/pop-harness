@@ -8,12 +8,12 @@ use poph_jev::{
     CasoRotulado, ErroConjunto, EstadoJev, G1_CONTINUAR, G1_TRANSFERIR, IdGate, JevFalso,
     MensagemJev, MotorJev, avaliar_conjunto, ler_conjunto,
 };
-use poph_types::GatesJev;
+use poph_types::JevGates;
 
-fn globais(g1: bool) -> GatesJev {
-    GatesJev {
+fn globais(g1: bool) -> JevGates {
+    JevGates {
         g1,
-        ..GatesJev::default()
+        ..JevGates::default()
     }
 }
 

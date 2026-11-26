@@ -113,8 +113,8 @@ impl Carrinhos<'_> {
                 .optional()
                 .map_err(ErroStore::from)?;
             let Some(preco) = preco else {
-                return Err(ErroStore::Dominio(poph_types::DomainError::NaoEncontrado {
-                    entidade: "produto disponível para este agente",
+                return Err(ErroStore::Dominio(poph_types::DomainError::NotFound {
+                    entity: "produto disponível para este agente",
                     id: texto_produto,
                 }));
             };
@@ -205,8 +205,8 @@ impl Carrinhos<'_> {
             )?;
             let carrinho =
                 carrinho_aberto(conn, &texto_org, &texto_conversa)?.ok_or_else(|| {
-                    ErroStore::Dominio(poph_types::DomainError::NaoEncontrado {
-                        entidade: "item do carrinho",
+                    ErroStore::Dominio(poph_types::DomainError::NotFound {
+                        entity: "item do carrinho",
                         id: texto_produto.clone(),
                     })
                 })?;
@@ -220,8 +220,8 @@ impl Carrinhos<'_> {
                 .optional()
                 .map_err(ErroStore::from)?
                 .ok_or_else(|| {
-                    ErroStore::Dominio(poph_types::DomainError::NaoEncontrado {
-                        entidade: "item do carrinho",
+                    ErroStore::Dominio(poph_types::DomainError::NotFound {
+                        entity: "item do carrinho",
                         id: texto_produto.clone(),
                     })
                 })?;
@@ -280,16 +280,16 @@ fn validar_quantidade(quantidade: u32) -> Resultado<()> {
     if (1..=LIMITE_QUANTIDADE).contains(&quantidade) {
         return Ok(());
     }
-    Err(ErroStore::Dominio(poph_types::DomainError::Validacao {
-        campo: "quantidade",
-        motivo: format!("informe de 1 a {LIMITE_QUANTIDADE} unidades"),
+    Err(ErroStore::Dominio(poph_types::DomainError::Validation {
+        field: "quantidade",
+        reason: format!("informe de 1 a {LIMITE_QUANTIDADE} unidades"),
     }))
 }
 
 fn limite_excedido() -> ErroStore {
-    ErroStore::Dominio(poph_types::DomainError::Validacao {
-        campo: "quantidade",
-        motivo: format!("o carrinho passaria de {LIMITE_QUANTIDADE} unidades deste produto"),
+    ErroStore::Dominio(poph_types::DomainError::Validation {
+        field: "quantidade",
+        reason: format!("o carrinho passaria de {LIMITE_QUANTIDADE} unidades deste produto"),
     })
 }
 

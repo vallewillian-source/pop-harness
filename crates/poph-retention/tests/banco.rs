@@ -19,7 +19,7 @@ use poph_store::{
     EfeitoDaTransicao, EstadoDaExecucao, InicioDeExecucao, NovaConversa, NovoFluxo,
     PublicacaoDeRevisao, Store,
 };
-use poph_types::{AgentId, AtorEvento, OrgId, StatusExecucao};
+use poph_types::{AgentId, EventActor, ExecutionStatus, OrgId};
 use rusqlite::{Connection, params, types::Value};
 use tempfile::TempDir;
 
@@ -865,11 +865,11 @@ fn ficha_execucao_etapa_evento_e_efeito_sobrevivem_a_varredura() {
                 ficha: ficha.id,
                 fluxo: fluxo.id,
                 revisao: revisao.id,
-                ator: AtorEvento::Agente,
+                ator: EventActor::Agent,
                 ator_ref: Some("agente-ficticio"),
                 decisao_jev: None,
                 estado_inicial: EstadoDaExecucao {
-                    status: StatusExecucao::Ativa,
+                    status: ExecutionStatus::Active,
                     no_atual: "coleta".to_owned(),
                     dados_json: "{}".to_owned(),
                     atores_que_agiram: Vec::new(),

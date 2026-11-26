@@ -147,7 +147,7 @@ The Matrix module has its own rule: **off, nothing from it is loaded**. Without 
 `habilitado = false`, the section's configuration is not checked (it may be empty), the two tokens are not read,
 and no task or route of the module exists. With `habilitado = true`, the section is validated — the error names the
 key and never repeats the value — and both tokens become required: if one is missing, startup refuses with the
-variable name, without printing the value. The tokens live in the `Sensivel` type and do not appear in `Debug`,
+variable name, without printing the value. The tokens live in the `Sensitive` type and do not appear in `Debug`,
 `Display`, logs, errors or responses (`crates/poph-matrix/src/config.rs`).
 
 The Matrix API client (`crates/poph-matrix/src/cliente.rs`, MX-09) uses a **fixed 10 s limit per call**
@@ -252,7 +252,25 @@ folder. A file that already checks out is not downloaded again.
 
 - Output goes to standard error (stderr), so the `doctor` JSON stays valid on stdout.
 - Turn context: `contexto_turno(org, agente, conversa, turno)` in the `poph` crate. Available from HR-13 onward.
-- Rule: no customer content and no secrets. Sensitive values use `Sensivel`, which prints as `[oculto]`.
+- Rule: no customer content and no secrets. Sensitive values use `Sensitive`, which prints as `[oculto]`.
+
+## Sections documented elsewhere
+
+The file has sections whose rules live with their subject, not here:
+
+| Section | Rules in |
+|---|---|
+| `[turno]` (`intervalo_despacho_ms`, `tentativas_falha_modelo`, `atraso_falha_modelo_ms`) | [`TURNO.md`](TURNO.md) |
+| `[handoff]` (automatic message and the risk guidance) | [`JEV.md`](JEV.md) |
+| `[admin].tokens_globais` (label plus Argon2id hash; the clear value only exists in `poph token global` output) | [`API.md`](API.md) |
+| `[cluster]` (`cluster.toml`: instances, org map, fingerprint) | [`CLUSTER.md`](CLUSTER.md) |
+
+## Metrics registry
+
+`poph-types` keeps the in-memory registry only (`Registry`, `Counter`, `Gauge`, `Histogram`, `BaseMetrics`);
+`/metrics` renders it in the Prometheus text format. Two rules apply to every name: it must start with
+`poph_` and use lowercase letters, digits and `_` only, and each name is registered **once** — registering
+the same name again is an error. The catalog and what each metric means are in [`API.md`](API.md).
 
 ## Tests
 

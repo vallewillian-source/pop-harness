@@ -27,9 +27,9 @@ use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, SaltString};
 use poph_server::Estado;
 use poph_store::{NovoFluxo, Pagina, Store};
-use poph_types::config::TokenGlobalConfig;
+use poph_types::config::GlobalTokenConfig;
 use poph_types::{
-    AgentId, AtorEvento, FichaId, FluxoId, HarnessConfig, OrgId, RevisaoId, StatusExecucao,
+    AgentId, EventActor, ExecutionStatus, FlowId, HarnessConfig, OrgId, RecordId, RevisionId,
 };
 use rand_core::OsRng;
 use reqwest::{Client, Method, StatusCode};
@@ -185,9 +185,9 @@ impl Cenario {
         fs::create_dir_all(pasta.join("dados")).expect("pasta de dados");
 
         let mut config = HarnessConfig::default();
-        config.dados.diretorio = pasta.join("dados");
-        config.servidor.porta = 7481;
-        config.admin.tokens_globais = vec![TokenGlobalConfig {
+        config.data.directory = pasta.join("dados");
+        config.server.port = 7481;
+        config.admin.tokens_globais = vec![GlobalTokenConfig {
             label: "teste".to_owned(),
             hash: hash_argon2(TOKEN_GLOBAL),
         }];
@@ -317,7 +317,7 @@ impl Cenario {
     }
 
     /// Ficha (atendimento) aberta direto no repositório: a rota de Ficha é a FX-29/FX-30.
-    fn criar_ficha(&self, org_id: &str, agente_id: &str) -> FichaId {
+    fn criar_ficha(&self, org_id: &str, agente_id: &str) -> RecordId {
         let org: OrgId = org_id.parse().expect("org válida");
         let agente: AgentId = agente_id.parse().expect("agente válido");
         self.store()
@@ -341,14 +341,14 @@ impl Cenario {
         &self,
         org_id: &str,
         agente_id: &str,
-        ficha: FichaId,
+        ficha: RecordId,
         fluxo_id: &str,
         revisao_id: &str,
     ) {
         let org: OrgId = org_id.parse().expect("org válida");
         let agente: AgentId = agente_id.parse().expect("agente válido");
-        let fluxo: FluxoId = fluxo_id.parse().expect("fluxo válido");
-        let revisao: RevisaoId = revisao_id.parse().expect("revisão válida");
+        let fluxo: FlowId = fluxo_id.parse().expect("fluxo válido");
+        let revisao: RevisionId = revisao_id.parse().expect("revisão válida");
         self.store()
             .fluxos()
             .liberar(org, agente, fluxo)
@@ -362,11 +362,11 @@ impl Cenario {
                     ficha,
                     fluxo,
                     revisao,
-                    ator: AtorEvento::Agente,
+                    ator: EventActor::Agent,
                     ator_ref: Some("atendente-de-teste"),
                     decisao_jev: None,
                     estado_inicial: poph_store::EstadoDaExecucao {
-                        status: StatusExecucao::Ativa,
+                        status: ExecutionStatus::Active,
                         no_atual: "coleta".to_owned(),
                         dados_json: "{}".to_owned(),
                         atores_que_agiram: Vec::new(),
@@ -380,7 +380,7 @@ impl Cenario {
     }
 
     /// Fluxo criado direto no repositório (para o teto não precisar de rota).
-    fn criar_fluxo(&self, org_id: &str, slug: &str) -> FluxoId {
+    fn criar_fluxo(&self, org_id: &str, slug: &str) -> FlowId {
         let org: OrgId = org_id.parse().expect("org válida");
         self.store()
             .fluxos()
@@ -1009,7 +1009,7 @@ async fn excluir_com_execucao_ativa_exige_force_e_audita() {
 #[tokio::test]
 async fn teto_de_fluxos_por_org_vale_na_criacao() {
     let c = Cenario::novo_com("fluxos-fx27-teto", |config| {
-        config.fluxos.max_fluxos_por_org = 1;
+        config.flows.max_flows_per_org = 1;
     })
     .await;
     let oa = c.criar_org("Org A", "fx27-teto-a").await;

@@ -77,7 +77,7 @@ use poph_store::{
     NovoRegistroAuditoria, Pagina, Papel, Store,
 };
 use poph_types::{
-    AgentId, ConversationId, DomainError, GatesJev, LlmConfig, MessageId, OrgId, TurnId,
+    AgentId, ConversationId, DomainError, JevGates, LlmConfig, MessageId, OrgId, TurnId,
 };
 use serde_json::json;
 
@@ -532,7 +532,7 @@ impl Motor {
             opcoes,
             metricas,
             pausa: Arc::new(PausaReal),
-            modelo_padrao: LlmConfig::default().modelo,
+            modelo_padrao: LlmConfig::default().model,
             cancelamento: None,
             resumidor,
             jev: None,
@@ -621,7 +621,7 @@ impl Motor {
     ///
     /// Sem esta chamada, ou com `[fluxos] ativo = false`, o turno não lê fluxo, não pergunta o G9 e
     /// não põe bloco no prompt — a Ficha continua sendo criada e fechada pelo `poph-store`.
-    pub fn com_fluxos(mut self, config: &poph_types::FluxosConfig) -> Self {
+    pub fn com_fluxos(mut self, config: &poph_types::FlowsConfig) -> Self {
         self.fluxos = Some(AjustesDoFluxo::da_config(config));
         self
     }
@@ -695,7 +695,7 @@ impl Motor {
         // D-05: agente inativo não abre turno. A mensagem continua gravada, o turno fica `skipped`.
         let quente = match self.config.carregar_verificando(org, agente_id) {
             Ok(quente) => quente,
-            Err(ErroAgente::Dominio(DomainError::AgenteInativo { status, .. })) => {
+            Err(ErroAgente::Dominio(DomainError::AgentInactive { status, .. })) => {
                 let motivo =
                     format!("agente inativo ({status}): mensagem registrada e não respondida");
                 return self.encerrar_ignorado(org, conversa_id, Some(agente_id), motivo, inicio);
@@ -802,10 +802,10 @@ impl Motor {
             );
             match decisao {
                 Some(poph_jev::G2_ESPERAR) if ajustada > janela => {
-                    self.metricas.janelas_esticadas.incrementar(1);
+                    self.metricas.janelas_esticadas.increment(1);
                 }
                 Some(poph_jev::G2_PROCESSAR) if ajustada < janela => {
-                    self.metricas.janelas_diretas.incrementar(1);
+                    self.metricas.janelas_diretas.increment(1);
                 }
                 _ => {}
             }
@@ -814,7 +814,7 @@ impl Motor {
         self.pausa.esperar(espera).await;
         self.metricas
             .espera_agrupamento_ms
-            .observar(espera.as_secs_f64() * 1000.0);
+            .observe(espera.as_secs_f64() * 1000.0);
 
         // Depois da janela, agrupa as mensagens seguidas do cliente que ainda não foram respondidas.
         let ultimas = self.ultimas_mensagens(org, conversa_id)?;
@@ -848,7 +848,7 @@ impl Motor {
             .store
             .turnos()
             .iniciar(org, conversa_id, Some(agente_id))?;
-        self.metricas.turnos_iniciados.incrementar(1);
+        self.metricas.turnos_iniciados.increment(1);
         observador.evento(EventoTurno::Inicio {
             turno: turno.id,
             agente: agente_id,
@@ -977,7 +977,7 @@ impl Motor {
             Some(Err(erro)) => {
                 // Base fora do ar não derruba a conversa: o turno segue sem os trechos.
                 tracing::warn!(erro = %erro, "busca na base falhou; turno segue sem trechos");
-                self.metricas.busca_falhas.incrementar(1);
+                self.metricas.busca_falhas.increment(1);
                 Vec::new()
             }
             None => Vec::new(),
@@ -990,7 +990,7 @@ impl Motor {
                 );
             }
             trechos.clear();
-            self.metricas.buscas_puladas_g3.incrementar(1);
+            self.metricas.buscas_puladas_g3.increment(1);
         }
         if let Some(jev) = &jev
             && (jev.falhou() || !jev.decisoes.is_empty())
@@ -1046,7 +1046,7 @@ impl Motor {
             .is_some_and(poph_jev::g7_pede_acao)
         {
             let resultado_jev = jev.as_ref().expect("o G7 só decide com o resultado do Jev");
-            self.metricas.g7_detectados.incrementar(1);
+            self.metricas.g7_detectados.increment(1);
             tracing::warn!(
                 conversa = %conversa_id,
                 classificacao = jev
@@ -1078,7 +1078,7 @@ impl Motor {
                     );
                 }
                 AcaoG7::Transferir => {
-                    self.metricas.g7_transferencias.incrementar(1);
+                    self.metricas.g7_transferencias.increment(1);
                     return self
                         .transferir(
                             Alvo {
@@ -1187,7 +1187,7 @@ impl Motor {
         if !trechos.is_empty() {
             self.metricas
                 .trechos_recuperados
-                .incrementar(trechos.len() as u64);
+                .increment(trechos.len() as u64);
             observador.evento(EventoTurno::Base {
                 fontes: trechos
                     .iter()
@@ -1227,7 +1227,7 @@ impl Motor {
                 unidade: produto.unidade.clone(),
                 condicoes: produto.condicoes.clone(),
             });
-            self.metricas.produtos_escolhidos_g5.incrementar(1);
+            self.metricas.produtos_escolhidos_g5.increment(1);
         }
         let preparo = Preparo {
             mensagens,
@@ -1352,7 +1352,7 @@ impl Motor {
                     conteudo_json: json!({ "texto": texto }).to_string(),
                 },
             )?;
-            self.metricas.respostas_gravadas.incrementar(1);
+            self.metricas.respostas_gravadas.increment(1);
         }
         self.store
             .conversas()
@@ -1387,16 +1387,14 @@ impl Motor {
             ..FinalizacaoTurno::default()
         };
         self.store.turnos().finalizar(org, turno.id, fim)?;
-        self.metricas.turnos_concluidos.incrementar(1);
-        self.metricas
-            .tokens_entrada
-            .incrementar(resposta.uso.entrada);
-        self.metricas.tokens_saida.incrementar(resposta.uso.saida);
+        self.metricas.turnos_concluidos.increment(1);
+        self.metricas.tokens_entrada.increment(resposta.uso.entrada);
+        self.metricas.tokens_saida.increment(resposta.uso.saida);
         self.metricas
             .duracao_turno_ms
-            .observar(tempos.total_ms as f64);
+            .observe(tempos.total_ms as f64);
         if let Some(primeiro) = tempos.primeiro_texto_ms {
-            self.metricas.primeiro_texto_ms.observar(primeiro as f64);
+            self.metricas.primeiro_texto_ms.observe(primeiro as f64);
         }
         observador.evento(EventoTurno::Fim {
             estado: EstadoTurno::Concluido.como_texto().to_owned(),
@@ -1778,7 +1776,7 @@ impl Motor {
         }
 
         // Reprovada: **uma** regeneração, com a orientação fixa do motivo escolhido.
-        self.metricas.reprovadas_g6.incrementar(1);
+        self.metricas.reprovadas_g6.increment(1);
         let orientacao = poph_jev::g6_orientacao(&escolha);
         let regenerada = match self
             .regenerar(
@@ -1835,7 +1833,7 @@ impl Motor {
         if let Some(segura) = poph_jev::resposta_segura_do_agente(&quente.agente.jev_json) {
             resposta.texto = segura;
             revisao.segura = true;
-            self.metricas.respostas_seguras_g6.incrementar(1);
+            self.metricas.respostas_seguras_g6.increment(1);
         }
         revisao
     }
@@ -1878,7 +1876,7 @@ impl Motor {
             .await;
         let escolha = resultado.escolha_confiavel(IdGate::G6).map(str::to_owned);
         somar_resultado_jev(jev, resultado);
-        self.metricas.revisoes_g6.incrementar(1);
+        self.metricas.revisoes_g6.increment(1);
         escolha
     }
 
@@ -1946,7 +1944,7 @@ impl Motor {
     ) -> Option<futures::future::BoxFuture<'static, ResultadoJev>> {
         let avaliador = Arc::clone(self.jev.as_ref()?);
         let ajuste: Option<AjusteGates> = poph_jev::ajuste_do_agente(&quente.agente.jev_json);
-        let gates: GatesJev = avaliador.gates_efetivos(ajuste);
+        let gates: JevGates = avaliador.gates_efetivos(ajuste);
         if MotorJev::nenhum(gates) {
             return None;
         }
@@ -1966,7 +1964,7 @@ impl Motor {
         quente: &AgenteQuente,
         ultimas: &[MensagemGravada],
         conversa: &poph_store::Conversa,
-        gates: GatesJev,
+        gates: JevGates,
         fluxos: Option<&[poph_jev::FluxoJev]>,
     ) -> Option<EstadoJev> {
         let mensagens: Vec<MensagemJev> = ultimas.iter().filter_map(mensagem_do_jev).collect();
@@ -2278,18 +2276,18 @@ impl Motor {
             .get("resultado")
             .and_then(serde_json::Value::as_str)
         {
-            Some("iniciou" | "iniciou_sem_bloco") => self.fluxos_g9.iniciou.incrementar(1),
-            Some("nenhum") => self.fluxos_g9.nenhum.incrementar(1),
-            Some("abaixo_do_limiar") => self.fluxos_g9.abaixo_do_limiar.incrementar(1),
-            Some("fallback" | "falhou" | "nao_iniciou") => self.fluxos_g9.fallback.incrementar(1),
+            Some("iniciou" | "iniciou_sem_bloco") => self.fluxos_g9.iniciou.increment(1),
+            Some("nenhum") => self.fluxos_g9.nenhum.increment(1),
+            Some("abaixo_do_limiar") => self.fluxos_g9.abaixo_do_limiar.increment(1),
+            Some("fallback" | "falhou" | "nao_iniciou") => self.fluxos_g9.fallback.increment(1),
             _ => {}
         }
     }
 
     /// Gates efetivos do agente: configuração global ajustada pelo `jev_json` dele.
-    fn gates_do_agente(&self, agente: &poph_store::Agente) -> GatesJev {
+    fn gates_do_agente(&self, agente: &poph_store::Agente) -> JevGates {
         let Some(avaliador) = self.jev.as_ref() else {
-            return GatesJev::default();
+            return JevGates::default();
         };
         avaliador.gates_efetivos(poph_jev::ajuste_do_agente(&agente.jev_json))
     }
@@ -2393,7 +2391,7 @@ impl Motor {
                     conteudo_json: json!({ "texto": texto }).to_string(),
                 },
             )?;
-            self.metricas.respostas_gravadas.incrementar(1);
+            self.metricas.respostas_gravadas.increment(1);
         }
 
         // 3. Departamento de destino (HR-32). A escolha do G4 é validada contra os departamentos
@@ -2481,10 +2479,10 @@ impl Motor {
                 ..FinalizacaoTurno::default()
             },
         )?;
-        self.metricas.turnos_concluidos.incrementar(1);
+        self.metricas.turnos_concluidos.increment(1);
         self.metricas
             .duracao_turno_ms
-            .observar(tempos.total_ms as f64);
+            .observe(tempos.total_ms as f64);
         tracing::info!(
             conversa = %conversa_id,
             departamento = ?departamento,
@@ -2563,7 +2561,7 @@ impl Motor {
                 conteudo_json: json!({ "texto": texto }).to_string(),
             },
         )?;
-        self.metricas.respostas_gravadas.incrementar(1);
+        self.metricas.respostas_gravadas.increment(1);
         self.store
             .conversas()
             .tocar(org, conversa_id, self.store.agora())?;
@@ -2594,11 +2592,11 @@ impl Motor {
                 ..FinalizacaoTurno::default()
             },
         )?;
-        self.metricas.turnos_concluidos.incrementar(1);
-        self.metricas.g7_respostas_padrao.incrementar(1);
+        self.metricas.turnos_concluidos.increment(1);
+        self.metricas.g7_respostas_padrao.increment(1);
         self.metricas
             .duracao_turno_ms
-            .observar(tempos.total_ms as f64);
+            .observe(tempos.total_ms as f64);
         tracing::warn!(
             conversa = %conversa_id,
             "G7: resposta neutra enviada sem chamar o modelo de texto"
@@ -2671,7 +2669,7 @@ impl Motor {
                     conteudo_json: json!({ "texto": texto }).to_string(),
                 },
             )?;
-            self.metricas.respostas_gravadas.incrementar(1);
+            self.metricas.respostas_gravadas.increment(1);
         }
         self.store
             .conversas()
@@ -2702,11 +2700,11 @@ impl Motor {
                 ..FinalizacaoTurno::default()
             },
         )?;
-        self.metricas.turnos_concluidos.incrementar(1);
-        self.metricas.encerradas_g8.incrementar(1);
+        self.metricas.turnos_concluidos.increment(1);
+        self.metricas.encerradas_g8.increment(1);
         self.metricas
             .duracao_turno_ms
-            .observar(tempos.total_ms as f64);
+            .observe(tempos.total_ms as f64);
         tracing::info!(
             conversa = %conversa_id,
             despedida = !texto.is_empty(),
@@ -2755,7 +2753,7 @@ impl Motor {
             return ResultadoOrientacao::nao_consultado("Jev desligado no motor");
         };
         let ajuste: Option<AjusteGates> = poph_jev::ajuste_do_agente(&quente.agente.jev_json);
-        let gates: GatesJev = avaliador.gates_efetivos(ajuste);
+        let gates: JevGates = avaliador.gates_efetivos(ajuste);
         let Some(estado) = self.estado_jev(org, quente, ultimas, conversa, gates, None) else {
             return ResultadoOrientacao::nao_consultado("sem mensagem para julgar");
         };
@@ -2792,7 +2790,7 @@ impl Motor {
                 ..FinalizacaoTurno::default()
             },
         )?;
-        self.metricas.turnos_ignorados.incrementar(1);
+        self.metricas.turnos_ignorados.increment(1);
         if let Some(agente) = agente {
             let _ = self.store.auditoria().registrar(
                 Some(org),
@@ -2864,12 +2862,12 @@ impl Motor {
                 ..FinalizacaoTurno::default()
             },
         )?;
-        self.metricas.turnos_falhos.incrementar(1);
+        self.metricas.turnos_falhos.increment(1);
         if classe == ClasseFalha::ModeloRecusado {
             // HR-26k: o provedor recusou o pedido (chave, modelo ou formato). Não se resolve
             // repetindo; a operação precisa corrigir a configuração. Aviso na hora.
-            self.metricas.falhas_modelo_recusadas.incrementar(1);
-            self.metricas.falhas_modelo_definitivas.incrementar(1);
+            self.metricas.falhas_modelo_recusadas.increment(1);
+            self.metricas.falhas_modelo_definitivas.increment(1);
             tracing::warn!(
                 target: "poph_agent::turno",
                 org = %org,
@@ -3202,7 +3200,7 @@ fn tratar_falha_modelo(
         for id in &ids {
             fluxo.concluir_entrada(org, *id, Some(motivo.as_str()))?;
         }
-        metricas.falhas_modelo_definitivas.incrementar(1);
+        metricas.falhas_modelo_definitivas.increment(1);
         tracing::warn!(
             target: "poph_agent::turno",
             org = %org,
@@ -3226,7 +3224,7 @@ fn tratar_falha_modelo(
         for id in &ids {
             fluxo.concluir_entrada(org, *id, Some(motivo.as_str()))?;
         }
-        metricas.falhas_modelo_definitivas.incrementar(1);
+        metricas.falhas_modelo_definitivas.increment(1);
         tracing::warn!(
             target: "poph_agent::turno",
             org = %org,
@@ -3245,7 +3243,7 @@ fn tratar_falha_modelo(
         .agora()
         .saturating_add(i64::try_from(espera.as_millis()).unwrap_or(i64::MAX));
     fluxo.adiar_entradas(org, &ids, proxima_em, &motivo)?;
-    metricas.falhas_modelo_adiadas.incrementar(1);
+    metricas.falhas_modelo_adiadas.increment(1);
     tracing::warn!(
         target: "poph_agent::turno",
         org = %org,

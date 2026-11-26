@@ -56,9 +56,9 @@ impl Produtos<'_> {
         let slug = validar_slug(novo.slug.as_deref().unwrap_or(""), &nome)?;
         validar_preco(novo.preco_centavos)?;
         let Some(categoria_id) = novo.categoria_id else {
-            return Err(ErroStore::Dominio(poph_types::DomainError::Validacao {
-                campo: "categoria do produto",
-                motivo: "informe a categoria (--category)".to_owned(),
+            return Err(ErroStore::Dominio(poph_types::DomainError::Validation {
+                field: "categoria do produto",
+                reason: "informe a categoria (--category)".to_owned(),
             }));
         };
         let aliases = lista_json(&novo.aliases);
@@ -502,15 +502,15 @@ pub fn texto_para_indice(
 fn validar_nome(nome: &str) -> Resultado<String> {
     let limpo = nome.trim();
     if limpo.is_empty() {
-        return Err(ErroStore::Dominio(poph_types::DomainError::Validacao {
-            campo: "nome do produto",
-            motivo: "não pode ficar em branco".to_owned(),
+        return Err(ErroStore::Dominio(poph_types::DomainError::Validation {
+            field: "nome do produto",
+            reason: "não pode ficar em branco".to_owned(),
         }));
     }
     if limpo.chars().count() > LIMITE_NOME {
-        return Err(ErroStore::Dominio(poph_types::DomainError::Validacao {
-            campo: "nome do produto",
-            motivo: format!(
+        return Err(ErroStore::Dominio(poph_types::DomainError::Validation {
+            field: "nome do produto",
+            reason: format!(
                 "até {LIMITE_NOME} caracteres; vieram {}",
                 limpo.chars().count()
             ),
@@ -527,9 +527,9 @@ fn validar_slug(slug: &str, nome: &str) -> Resultado<String> {
     };
     let tamanho = derivado.chars().count();
     if !(3..=64).contains(&tamanho) {
-        return Err(ErroStore::Dominio(poph_types::DomainError::Validacao {
-            campo: "slug do produto",
-            motivo: format!(
+        return Err(ErroStore::Dominio(poph_types::DomainError::Validation {
+            field: "slug do produto",
+            reason: format!(
                 "precisa de 3 a 64 caracteres (letras sem acento, números e hífen); o derivado \
                  ficou com {tamanho}"
             ),
@@ -540,9 +540,9 @@ fn validar_slug(slug: &str, nome: &str) -> Resultado<String> {
 
 fn validar_preco(centavos: i64) -> Resultado<()> {
     if centavos < 0 {
-        return Err(ErroStore::Dominio(poph_types::DomainError::Validacao {
-            campo: "preço do produto",
-            motivo: "não pode ser negativo (o valor é em centavos)".to_owned(),
+        return Err(ErroStore::Dominio(poph_types::DomainError::Validation {
+            field: "preço do produto",
+            reason: "não pode ser negativo (o valor é em centavos)".to_owned(),
         }));
     }
     Ok(())
@@ -563,8 +563,8 @@ fn texto_ou_nulo(texto: &str) -> Option<String> {
 }
 
 fn nao_encontrado(id: &str) -> ErroStore {
-    ErroStore::Dominio(poph_types::DomainError::NaoEncontrado {
-        entidade: "produto",
+    ErroStore::Dominio(poph_types::DomainError::NotFound {
+        entity: "produto",
         id: id.to_owned(),
     })
 }

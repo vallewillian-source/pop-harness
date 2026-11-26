@@ -20,7 +20,7 @@ use poph_rag::{ConfigIndice, Embedder, EmbedderFake, Indice};
 use poph_store::{
     NovaCategoria, NovaConversa, NovaMensagem, NovaOrg, NovoAgente, NovoProduto, Pagina, Store,
 };
-use poph_types::{AgentId, ConversationId, FerramentaConfig, OrgId, StructuredInstructions};
+use poph_types::{AgentId, ConversationId, OrgId, StructuredInstructions, ToolConfig};
 
 /// Pausa que não dorme: a janela de agrupamento é irrelevante aqui.
 #[derive(Default, Clone)]
@@ -77,7 +77,7 @@ impl Cenario {
             .expect("cria o agente")
             .id;
         let estruturado = StructuredInstructions {
-            tools: vec![FerramentaConfig {
+            tools: vec![ToolConfig {
                 name: "buscar_produto".to_owned(),
                 enabled: true,
                 when_to_use: String::new(),
@@ -90,7 +90,7 @@ impl Cenario {
                 org,
                 agente,
                 0,
-                &estruturado.para_json(),
+                &estruturado.to_json(),
                 "# Bia\n\nVocê é a atendente da FixProLar. Nunca invente preço.",
                 true,
             )

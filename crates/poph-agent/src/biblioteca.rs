@@ -279,12 +279,12 @@ fn arquivo_id(argumentos: &Value) -> Result<FileId, String> {
 /// Erro para o modelo: legível, sem detalhe de banco e sem dizer se o id existe em outra org.
 fn texto_erro(erro: &poph_store::ErroStore) -> String {
     match erro {
-        poph_store::ErroStore::Dominio(poph_types::DomainError::NaoEncontrado { .. }) => {
+        poph_store::ErroStore::Dominio(poph_types::DomainError::NotFound { .. }) => {
             "erro: não existe arquivo com esse id na sua biblioteca. Use um id da lista de arquivos \
              disponíveis; se a lista estiver vazia, diga ao cliente que não há arquivo para enviar."
                 .to_owned()
         }
-        poph_store::ErroStore::Dominio(poph_types::DomainError::Validacao { campo, motivo }) => {
+        poph_store::ErroStore::Dominio(poph_types::DomainError::Validation { field: campo, reason: motivo }) => {
             format!("erro: {campo}: {motivo}.")
         }
         _ => "erro: não consegui preparar o envio do arquivo agora. Tente de novo em instantes ou \

@@ -8,7 +8,7 @@ use argon2::password_hash::{PasswordHasher, SaltString};
 use poph_server::Estado;
 use poph_store::Store;
 use poph_types::HarnessConfig;
-use poph_types::config::TokenGlobalConfig;
+use poph_types::config::GlobalTokenConfig;
 use rand_core::OsRng;
 use reqwest::{Client, Method, StatusCode};
 use serde_json::{Value, json};
@@ -46,9 +46,9 @@ impl Scenario {
         fs::create_dir_all(dir.join("dados")).expect("data dir");
 
         let mut config = HarnessConfig::default();
-        config.dados.diretorio = dir.join("dados");
-        config.servidor.porta = 7483;
-        config.admin.tokens_globais = vec![TokenGlobalConfig {
+        config.data.directory = dir.join("dados");
+        config.server.port = 7483;
+        config.admin.tokens_globais = vec![GlobalTokenConfig {
             label: "teste".to_owned(),
             hash: hash_argon2(GLOBAL_TOKEN),
         }];

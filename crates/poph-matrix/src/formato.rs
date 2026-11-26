@@ -24,7 +24,7 @@
 //! e tamanhos, nunca o texto. Ela também não depende de `poph-store`: o chamador traduz as origens,
 //! os papéis e os sentidos da sua tabela para os enums locais deste módulo.
 
-use poph_types::{ConversationId, MessageId, MidiaForaDoEscopo};
+use poph_types::{ConversationId, MessageId, UnsupportedContent};
 
 use crate::eventos::MSGTYPE_AVISO;
 use crate::usuarios::{ErroFantasmas, Fantasma, IdsFantasmas};
@@ -192,7 +192,7 @@ pub fn decidir(ids: &IdsFantasmas, mensagem: &MensagemParaEspelho<'_>) -> Decisa
     // MX-45: o texto de histórico de áudio, vídeo, figurinha, contato, localização ou enquete não
     // vai para a sala como texto: vira aviso `m.notice`. Só vale para o que o cliente mandou.
     if mensagem.papel == PapelMensagem::Cliente
-        && let Some(tipo) = MidiaForaDoEscopo::reconhecer_historico(mensagem.texto)
+        && let Some(tipo) = UnsupportedContent::from_history_text(mensagem.texto)
     {
         return aviso_de_midia_fora_do_escopo(ids, mensagem, tipo);
     }
@@ -216,7 +216,7 @@ pub fn decidir(ids: &IdsFantasmas, mensagem: &MensagemParaEspelho<'_>) -> Decisa
 fn aviso_de_midia_fora_do_escopo(
     ids: &IdsFantasmas,
     mensagem: &MensagemParaEspelho<'_>,
-    tipo: MidiaForaDoEscopo,
+    tipo: UnsupportedContent,
 ) -> Decisao {
     let remetente = match ids.agente(mensagem.id_agente) {
         Ok(fantasma) => fantasma,
@@ -228,7 +228,7 @@ fn aviso_de_midia_fora_do_escopo(
         origem: OrigemMensagem::Agente,
         tipo_evento: TIPO_EVENTO,
         msgtype: MSGTYPE_AVISO,
-        corpo: tipo.aviso_na_sala().to_owned(),
+        corpo: tipo.room_notice().to_owned(),
         txn_id: txn_id_da_mensagem(mensagem.id),
         cortado: false,
         bytes_originais: mensagem.texto.len(),
@@ -499,16 +499,16 @@ mod testes {
 
     #[test]
     fn historico_de_midia_fora_do_escopo_vira_aviso_pelo_fantasma_do_agente() {
-        for tipo in MidiaForaDoEscopo::TODAS {
+        for tipo in UnsupportedContent::ALL_VALUES {
             let m = base(
-                tipo.texto_de_historico(),
+                tipo.history_text(),
                 OrigemMensagem::Agente,
                 PapelMensagem::Cliente,
                 Sentido::Entrada,
             );
             let envio = espelhada(decidir(&ids(), &m));
             assert_eq!(envio.msgtype, "m.notice", "{tipo:?}");
-            assert_eq!(envio.corpo, tipo.aviso_na_sala(), "{tipo:?}");
+            assert_eq!(envio.corpo, tipo.room_notice(), "{tipo:?}");
             assert!(
                 envio.remetente.user_id().starts_with("@ph_ag_agente-1:"),
                 "aviso sai pelo fantasma do agente, veio {}",
@@ -522,14 +522,14 @@ mod testes {
     #[test]
     fn historico_so_vira_aviso_quando_vem_do_cliente() {
         let m = base(
-            MidiaForaDoEscopo::Audio.texto_de_historico(),
+            UnsupportedContent::Audio.history_text(),
             OrigemMensagem::Agente,
             PapelMensagem::Agente,
             Sentido::Saida,
         );
         let envio = espelhada(decidir(&ids(), &m));
         assert_eq!(envio.msgtype, "m.text");
-        assert_eq!(envio.corpo, MidiaForaDoEscopo::Audio.texto_de_historico());
+        assert_eq!(envio.corpo, UnsupportedContent::Audio.history_text());
     }
 
     #[test]

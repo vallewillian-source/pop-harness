@@ -19,7 +19,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use poph_types::{AtorAcao, TipoCampo};
+use poph_types::{ActionActor, FieldKind};
 
 /// Versão do esquema que este crate produz e entende.
 pub const SCHEMA_VERSAO: u32 = 1;
@@ -77,7 +77,7 @@ pub struct Etapa {
     /// O que o agente deve fazer aqui; `null` quando vazio.
     pub instrucao: Option<String>,
     /// Quem pode executar ação nesta etapa.
-    pub atores_acao: Vec<AtorAcao>,
+    pub atores_acao: Vec<ActionActor>,
     /// Dados que a etapa coleta.
     pub campos: Vec<Campo>,
     /// Saídas da etapa.
@@ -94,7 +94,7 @@ pub struct Campo {
     /// Rótulo que o agente usa para perguntar.
     pub rotulo: String,
     /// Tipo do valor aceito.
-    pub tipo: TipoCampo,
+    pub tipo: FieldKind,
     /// Se o campo é necessário para a etapa estar completa.
     pub obrigatorio: bool,
     /// Valores aceitos; só existe com `tipo = opcao`.
@@ -113,7 +113,7 @@ pub struct Acao {
     /// Campos da própria etapa que precisam estar preenchidos.
     pub exige: Vec<String>,
     /// Restrição de quem pode executar; `null` = qualquer ator de `atores_acao`.
-    pub ator: Option<AtorAcao>,
+    pub ator: Option<ActionActor>,
     /// Para onde a execução vai quando a ação é executada.
     pub vai_para: Destino,
     /// Efeitos disparados junto da ação.

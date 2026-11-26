@@ -11,7 +11,7 @@ use poph_fluxos::ir::{Acao, Campo, Destino, Etapa, Fim, Fluxo, Gatilho, Ir};
 use poph_fluxos::motor::{Campos, Contexto, Estado, executar_acao, iniciar};
 use poph_fluxos::prompt::{TETO_DO_BLOCO, bloco_da_etapa, renderizar_bloco};
 use poph_fluxos::regras::Avaliador;
-use poph_types::{AtorAcao, DomainError, StatusExecucao, TipoCampo};
+use poph_types::{ActionActor, DomainError, ExecutionStatus, FieldKind};
 use serde_json::{Map, Value as Json, json};
 use std::sync::OnceLock;
 
@@ -30,7 +30,7 @@ fn ir_dourada_agendar_visita() -> Ir {
     Ir::de_json(&texto).expect("a IR dourada é JSON válido")
 }
 
-fn campo(id: &str, rotulo: &str, tipo: TipoCampo, obrigatorio: bool, opcoes: &[&str]) -> Campo {
+fn campo(id: &str, rotulo: &str, tipo: FieldKind, obrigatorio: bool, opcoes: &[&str]) -> Campo {
     Campo {
         id: id.to_owned(),
         rotulo: rotulo.to_owned(),
@@ -45,7 +45,7 @@ fn ir_para_etapa(id: &str) -> Destino {
     Destino::Etapa { id: id.to_owned() }
 }
 
-fn acao(id: &str, rotulo: &str, ator: Option<AtorAcao>, vai_para: Destino) -> Acao {
+fn acao(id: &str, rotulo: &str, ator: Option<ActionActor>, vai_para: Destino) -> Acao {
     Acao {
         id: id.to_owned(),
         rotulo: rotulo.to_owned(),
@@ -60,7 +60,7 @@ fn etapa(
     id: &str,
     nome: &str,
     instrucao: Option<&str>,
-    atores: &[AtorAcao],
+    atores: &[ActionActor],
     campos: Vec<Campo>,
     acoes: Vec<Acao>,
 ) -> Etapa {
@@ -165,19 +165,19 @@ fn etapa_parcial_diz_quem_falta_agir() {
                 "analise",
                 "Análise do pedido",
                 Some("Confira o pedido e envie para a aprovação."),
-                &[AtorAcao::Agente, AtorAcao::Atendente],
+                &[ActionActor::Agent, ActionActor::Attendant],
                 Vec::new(),
                 vec![
                     acao(
                         "enviar",
                         "Enviar para aprovação",
-                        Some(AtorAcao::Agente),
+                        Some(ActionActor::Agent),
                         ir_para_etapa("fechamento"),
                     ),
                     acao(
                         "aprovar",
                         "Aprovar pedido",
-                        Some(AtorAcao::Atendente),
+                        Some(ActionActor::Attendant),
                         ir_para_etapa("fechamento"),
                     ),
                 ],
@@ -186,7 +186,7 @@ fn etapa_parcial_diz_quem_falta_agir() {
                 "fechamento",
                 "Fechamento",
                 None,
-                &[AtorAcao::Agente],
+                &[ActionActor::Agent],
                 Vec::new(),
                 vec![acao(
                     "concluir",
@@ -207,12 +207,12 @@ fn etapa_parcial_diz_quem_falta_agir() {
         &inicial,
         "enviar",
         &Campos::new(),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &contexto(),
     )
     .expect("o agente envia para a aprovação");
-    assert_eq!(depois_do_agente.aguardando, vec![AtorAcao::Atendente]);
+    assert_eq!(depois_do_agente.aguardando, vec![ActionActor::Attendant]);
 
     let esperado = format!(
         r#"Fluxo em andamento: Aprovação de pedido.
@@ -251,19 +251,19 @@ fn quando_o_segundo_ator_age_o_bloco_mostra_a_etapa_seguinte() {
                 "analise",
                 "Análise do pedido",
                 None,
-                &[AtorAcao::Agente, AtorAcao::Atendente],
+                &[ActionActor::Agent, ActionActor::Attendant],
                 Vec::new(),
                 vec![
                     acao(
                         "enviar",
                         "Enviar",
-                        Some(AtorAcao::Agente),
+                        Some(ActionActor::Agent),
                         ir_para_etapa("fechamento"),
                     ),
                     acao(
                         "aprovar",
                         "Aprovar",
-                        Some(AtorAcao::Atendente),
+                        Some(ActionActor::Attendant),
                         ir_para_etapa("fechamento"),
                     ),
                 ],
@@ -272,7 +272,7 @@ fn quando_o_segundo_ator_age_o_bloco_mostra_a_etapa_seguinte() {
                 "fechamento",
                 "Fechamento",
                 Some("Feche o atendimento."),
-                &[AtorAcao::Agente],
+                &[ActionActor::Agent],
                 Vec::new(),
                 Vec::new(),
             ),
@@ -284,7 +284,7 @@ fn quando_o_segundo_ator_age_o_bloco_mostra_a_etapa_seguinte() {
         &inicial,
         "aprovar",
         &Campos::new(),
-        AtorAcao::Atendente,
+        ActionActor::Attendant,
         None,
         &contexto(),
     )
@@ -294,7 +294,7 @@ fn quando_o_segundo_ator_age_o_bloco_mostra_a_etapa_seguinte() {
         &parcial.novo_estado,
         "enviar",
         &Campos::new(),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &contexto(),
     )
@@ -336,7 +336,10 @@ Mapa do fluxo:
 fn preview_de_etapa_que_nao_existe_e_nao_encontrado() {
     let ir = ir_dourada_agendar_visita();
     match bloco_da_etapa(&ir, "fantasma") {
-        Err(DomainError::NaoEncontrado { entidade, id }) => {
+        Err(DomainError::NotFound {
+            entity: entidade,
+            id,
+        }) => {
             assert_eq!(entidade, "etapa");
             assert_eq!(id, "fantasma");
         }
@@ -370,7 +373,7 @@ fn execucao_no_fim_ou_fora_de_etapa_diz_que_nao_ha_acao() {
     ));
 
     let mut concluida = iniciar(&ir).expect("início");
-    concluida.status = StatusExecucao::Concluida;
+    concluida.status = ExecutionStatus::Completed;
     assert!(
         renderizar_bloco(&ir, &concluida)
             .contains("A execução não está ativa (concluida): não há ação a executar.")
@@ -431,8 +434,14 @@ fn valor_de_objeto_sai_com_chaves_em_ordem_fixa() {
             "envio",
             "Envio",
             None,
-            &[AtorAcao::Agente],
-            vec![campo("documento", "Documento", TipoCampo::Anexo, true, &[])],
+            &[ActionActor::Agent],
+            vec![campo(
+                "documento",
+                "Documento",
+                FieldKind::Attachment,
+                true,
+                &[],
+            )],
             Vec::new(),
         )],
     );
@@ -480,10 +489,10 @@ fn a_ordem_em_que_os_dados_foram_gravados_nao_muda_o_bloco() {
             "envio",
             "Envio",
             None,
-            &[AtorAcao::Agente],
+            &[ActionActor::Agent],
             vec![
-                campo("documento", "Documento", TipoCampo::Anexo, true, &[]),
-                campo("ok", "Ok", TipoCampo::Booleano, false, &[]),
+                campo("documento", "Documento", FieldKind::Attachment, true, &[]),
+                campo("ok", "Ok", FieldKind::Boolean, false, &[]),
             ],
             Vec::new(),
         )],
@@ -542,7 +551,7 @@ fn fluxo_grande(total_de_etapas: usize, instrucao: &str) -> Ir {
                 &format!("etapa_{indice:02}"),
                 &nome,
                 instrucao_da_etapa,
-                &[AtorAcao::Agente],
+                &[ActionActor::Agent],
                 Vec::new(),
                 acoes,
             )
@@ -631,17 +640,17 @@ fn campo_vazio_ou_nulo_conta_como_nao_preenchido() {
             "envio",
             "Envio",
             None,
-            &[AtorAcao::Agente],
+            &[ActionActor::Agent],
             vec![
-                campo("endereco", "Endereço", TipoCampo::Texto, true, &[]),
+                campo("endereco", "Endereço", FieldKind::Texto, true, &[]),
                 campo(
                     "periodo",
                     "Período",
-                    TipoCampo::Opcao,
+                    FieldKind::Option,
                     false,
                     &["manhã", "tarde"],
                 ),
-                campo("obs", "Observação", TipoCampo::Texto, false, &[]),
+                campo("obs", "Observação", FieldKind::Texto, false, &[]),
             ],
             Vec::new(),
         )],
@@ -669,10 +678,10 @@ fn booleano_sai_no_canonico_sim_ou_nao() {
             "envio",
             "Envio",
             None,
-            &[AtorAcao::Agente],
+            &[ActionActor::Agent],
             vec![
-                campo("sim_ou_nao", "Aceita", TipoCampo::Booleano, true, &[]),
-                campo("outro", "Outro", TipoCampo::Booleano, true, &[]),
+                campo("sim_ou_nao", "Aceita", FieldKind::Boolean, true, &[]),
+                campo("outro", "Outro", FieldKind::Boolean, true, &[]),
             ],
             Vec::new(),
         )],
@@ -696,7 +705,7 @@ fn acao_que_encerra_o_atendimento_diz_isso_em_palavras() {
             "fechamento",
             "Fechamento",
             None,
-            &[AtorAcao::Agente],
+            &[ActionActor::Agent],
             Vec::new(),
             vec![acao(
                 "concluir",

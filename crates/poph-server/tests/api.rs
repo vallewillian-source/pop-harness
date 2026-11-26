@@ -19,7 +19,7 @@ use argon2::password_hash::{PasswordHasher, SaltString};
 use poph_server::Estado;
 use poph_store::Store;
 use poph_types::HarnessConfig;
-use poph_types::config::TokenGlobalConfig;
+use poph_types::config::GlobalTokenConfig;
 use rand_core::OsRng;
 use reqwest::{Client, Method, StatusCode};
 use serde_json::{Value, json};
@@ -59,13 +59,13 @@ impl Cenario {
         fs::create_dir_all(pasta.join("dados")).expect("pasta de dados");
 
         let mut config = HarnessConfig::default();
-        config.dados.diretorio = pasta.join("dados");
+        config.data.directory = pasta.join("dados");
         if rotulo == "knowledge-real-model" {
-            config.dados.modelos =
+            config.data.models =
                 Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/modelos"));
         }
-        config.servidor.porta = 7480;
-        config.admin.tokens_globais = vec![TokenGlobalConfig {
+        config.server.port = 7480;
+        config.admin.tokens_globais = vec![GlobalTokenConfig {
             label: "teste".to_owned(),
             hash: hash_argon2(TOKEN_GLOBAL),
         }];
@@ -4998,6 +4998,6 @@ async fn reabrir_conversa_encerrada_devolve_409_conversa_encerrada() {
         .por_conversa(org, conversa.id)
         .unwrap()
         .expect("a conversa fechada pelo administrador tem Ficha fechada");
-    assert_eq!(ficha.status, poph_types::StatusFicha::Fechada);
-    assert_eq!(ficha.fechada_por, Some(poph_types::FechadaPor::Admin));
+    assert_eq!(ficha.status, poph_types::RecordStatus::Closed);
+    assert_eq!(ficha.fechada_por, Some(poph_types::ClosedBy::Admin));
 }

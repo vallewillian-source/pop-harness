@@ -31,7 +31,7 @@ fn estado(rotulo: &str, cfg: impl FnOnce(&mut HarnessConfig)) -> (Estado, PathBu
     let _ = fs::remove_dir_all(&pasta);
     fs::create_dir_all(pasta.join("dados")).expect("pasta de dados");
     let mut config = HarnessConfig::default();
-    config.dados.diretorio = pasta.join("dados");
+    config.data.directory = pasta.join("dados");
     cfg(&mut config);
     let store = Arc::new(Store::abrir(&config).expect("abre o banco"));
     let estado = Estado::novo(store, config).expect("estado do servidor");
@@ -39,7 +39,7 @@ fn estado(rotulo: &str, cfg: impl FnOnce(&mut HarnessConfig)) -> (Estado, PathBu
 }
 
 fn com_teto_de_fonte(bytes: u64) -> impl FnOnce(&mut HarnessConfig) {
-    move |config| config.fluxos.max_fonte_bytes = bytes
+    move |config| config.flows.max_source_bytes = bytes
 }
 
 #[test]
@@ -136,7 +136,7 @@ fn teto_de_nos_da_configuracao_vale_no_servidor() {
         ir.etapas.len() + ir.decisoes.len() + ir.fins.len()
     };
     let (apertado, pasta) = estado("nos", |config| {
-        config.fluxos.max_nos = u32::try_from(nos - 1).unwrap();
+        config.flows.max_nodes = u32::try_from(nos - 1).unwrap();
     });
     let compilado = apertado.compilar_fluxo(FLUXO);
     let _ = fs::remove_dir_all(&pasta);

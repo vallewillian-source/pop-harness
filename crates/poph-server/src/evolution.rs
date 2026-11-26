@@ -31,7 +31,7 @@ use poph_store::{
     NovaEntradaCanal, NovaMensagemDoAparelho, NovoAnexoCanal, Recebido, RecebidoComMensagem,
     RecebidoDoAparelho,
 };
-use poph_types::{EventoEstado, HarnessConfig, InboundEvent, IntegrationId, OrgId, Segredo};
+use poph_types::{HarnessConfig, InboundEvent, IntegrationId, OrgId, Secret, StateEvent};
 use serde_json::{Value, json};
 
 use crate::erro::ApiError;
@@ -47,7 +47,7 @@ pub struct CanalEvolution {
     /// Integração do agente que recebe as mensagens.
     pub integracao: IntegrationId,
     /// Segredo do webhook. `None` quando a variável não está no ambiente: a instância responde 401.
-    pub segredo: Option<Segredo>,
+    pub segredo: Option<Secret>,
     /// Cliente para baixar mídia. `None` quando falta a chave ou o endereço: a mensagem segue sem
     /// o anexo, com o texto.
     pub cliente: Option<ClienteEvolution>,
@@ -73,34 +73,34 @@ impl std::fmt::Debug for CanalEvolution {
 /// de segredo pelo nome. O valor de nenhum segredo sai daqui para log.
 pub fn canais_da_configuracao(
     config: &HarnessConfig,
-    chave_evolution: Option<Segredo>,
+    chave_evolution: Option<Secret>,
     ler_variavel: &dyn Fn(&str) -> Option<String>,
 ) -> Result<Vec<CanalEvolution>, String> {
     let Some(evolution) = config.evolution.as_ref() else {
         return Ok(Vec::new());
     };
-    let mut canais = Vec::with_capacity(evolution.instancias.len());
-    for instancia in &evolution.instancias {
+    let mut canais = Vec::with_capacity(evolution.instances.len());
+    for instancia in &evolution.instances {
         let org: OrgId = instancia
             .org_id
             .trim()
             .parse()
-            .map_err(|_| format!("org inválida na instância `{}`", instancia.instancia))?;
+            .map_err(|_| format!("org inválida na instância `{}`", instancia.instance))?;
         let integracao: IntegrationId =
-            instancia.integracao_id.trim().parse().map_err(|_| {
-                format!("integração inválida na instância `{}`", instancia.instancia)
+            instancia.integration_id.trim().parse().map_err(|_| {
+                format!("integração inválida na instância `{}`", instancia.instance)
             })?;
-        let nome = instancia.instancia.trim().to_owned();
+        let nome = instancia.instance.trim().to_owned();
 
-        let segredo = ler_variavel(&instancia.segredo_env)
+        let segredo = ler_variavel(&instancia.secret_env)
             .map(|valor| valor.trim().to_owned())
             .filter(|valor| !valor.is_empty())
-            .map(Segredo::new);
+            .map(Secret::new);
         if segredo.is_none() {
             tracing::warn!(
                 target: "poph_server::evolution",
                 instancia = %nome,
-                variavel = %instancia.segredo_env,
+                variavel = %instancia.secret_env,
                 "variável do segredo do webhook não definida: a instância responde 401 até ela existir"
             );
         }
@@ -209,7 +209,7 @@ pub async fn receber(
 fn receber_estado(
     estado: &Estado,
     canal: &CanalEvolution,
-    evento: &EventoEstado,
+    evento: &StateEvent,
 ) -> Result<Json<Value>, ApiError> {
     let Some(texto) = texto_do_estado(evento) else {
         return Ok(Json(json!({"recebido": true, "efeito": "nenhum"})));
@@ -239,12 +239,12 @@ fn receber_estado(
 }
 
 /// Texto gravado em `connection_state` para cada estado. Erro transitório não muda o estado.
-fn texto_do_estado(evento: &EventoEstado) -> Option<&'static str> {
+fn texto_do_estado(evento: &StateEvent) -> Option<&'static str> {
     match evento {
-        EventoEstado::Conectado { .. } => Some("connected"),
-        EventoEstado::Desconectado { .. } => Some("disconnected"),
-        EventoEstado::Qr { .. } => Some("awaiting_scan"),
-        EventoEstado::Erro { .. } => None,
+        StateEvent::Connected { .. } => Some("connected"),
+        StateEvent::Disconnected { .. } => Some("disconnected"),
+        StateEvent::Qr { .. } => Some("awaiting_scan"),
+        StateEvent::Error { .. } => None,
     }
 }
 
@@ -281,7 +281,7 @@ async fn receber_entrada(
     let evento_json = serde_json::to_string(&evento).map_err(|_| ApiError::interno())?;
     // Nome do cliente (MX-32): já vem filtrado pelo webhook (contato individual recebido).
     let nome_cliente = evento
-        .metadados
+        .metadata
         .get("push_name")
         .and_then(serde_json::Value::as_str)
         .map(str::to_owned);
@@ -292,7 +292,7 @@ async fn receber_entrada(
         id_externo: evento.id_externo,
         peer: evento.peer,
         evento_json,
-        texto: evento.texto,
+        texto: evento.text,
         anexos,
         nome_cliente,
     };
@@ -326,7 +326,7 @@ fn modulo_matrix_ligado(estado: &Estado, canal: &CanalEvolution) -> Result<bool,
 /// da instância, não pelo cliente, na visão dela.
 fn digitada_no_aparelho(evento: &InboundEvent) -> bool {
     evento
-        .metadados
+        .metadata
         .get("from_me")
         .and_then(Value::as_bool)
         .unwrap_or(false)
@@ -410,7 +410,7 @@ fn receber_do_aparelho(
                 canal: "whatsapp".to_owned(),
                 peer: evento.peer,
                 id_externo: evento.id_externo,
-                texto: evento.texto,
+                texto: evento.text,
             },
         )
         .map_err(|erro| falha_de_gravacao("mensagem do aparelho", &erro))?;

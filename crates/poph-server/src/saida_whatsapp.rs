@@ -293,7 +293,7 @@ impl SaidaWhatsApp {
                     "item de saída do WhatsApp enviado"
                 );
             }
-            Err(erro) if erro.eh_transitorio() => {
+            Err(erro) if erro.is_transient() => {
                 let falha = FalhaEnvio::transitoria(erro.to_string());
                 // O motivo já vem limpo do cliente (sem telefone, JID ou chave). Vai para o banco
                 // e, aqui, uma linha por tentativa; sem a chave da Evolution nem o corpo do evento.

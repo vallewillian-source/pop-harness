@@ -48,7 +48,7 @@ fn executar_install(
         }
     };
 
-    let diretorio = config.modelos();
+    let diretorio = config.models();
     match instalar(&diretorio) {
         Ok(relatorio) => {
             if args.json {

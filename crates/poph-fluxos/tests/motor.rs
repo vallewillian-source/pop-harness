@@ -11,7 +11,7 @@ use poph_fluxos::motor::{
     Campos, Contexto, Estado, atores_exigidos, campos_faltando, executar_acao, iniciar,
 };
 use poph_fluxos::regras::Avaliador;
-use poph_types::{AtorAcao, DomainError, StatusExecucao, TipoCampo, TipoEventoFicha};
+use poph_types::{ActionActor, DomainError, ExecutionStatus, FieldKind, RecordEventKind};
 use serde_json::{Value as Json, json};
 use std::sync::OnceLock;
 
@@ -24,7 +24,7 @@ fn contexto() -> Contexto<'static> {
     Contexto::novo(AVALIADOR.get_or_init(Avaliador::sem_funcoes))
 }
 
-fn campo(id: &str, tipo: TipoCampo, obrigatorio: bool, opcoes: &[&str]) -> Campo {
+fn campo(id: &str, tipo: FieldKind, obrigatorio: bool, opcoes: &[&str]) -> Campo {
     Campo {
         id: id.to_owned(),
         rotulo: id.to_uppercase(),
@@ -35,7 +35,7 @@ fn campo(id: &str, tipo: TipoCampo, obrigatorio: bool, opcoes: &[&str]) -> Campo
     }
 }
 
-fn acao(id: &str, ator: Option<AtorAcao>, exige: &[&str], vai_para: &str) -> Acao {
+fn acao(id: &str, ator: Option<ActionActor>, exige: &[&str], vai_para: &str) -> Acao {
     Acao {
         id: id.to_owned(),
         rotulo: id.to_uppercase(),
@@ -48,7 +48,7 @@ fn acao(id: &str, ator: Option<AtorAcao>, exige: &[&str], vai_para: &str) -> Aca
     }
 }
 
-fn acao_para_fim(id: &str, ator: Option<AtorAcao>) -> Acao {
+fn acao_para_fim(id: &str, ator: Option<ActionActor>) -> Acao {
     Acao {
         id: id.to_owned(),
         rotulo: id.to_uppercase(),
@@ -63,7 +63,7 @@ fn acao_para_fim(id: &str, ator: Option<AtorAcao>) -> Acao {
     }
 }
 
-fn etapa(id: &str, atores: &[AtorAcao], campos: Vec<Campo>, acoes: Vec<Acao>) -> Etapa {
+fn etapa(id: &str, atores: &[ActionActor], campos: Vec<Campo>, acoes: Vec<Acao>) -> Etapa {
     Etapa {
         id: id.to_owned(),
         nome: id.to_uppercase(),
@@ -122,8 +122,8 @@ fn fluxo_simples() -> Ir {
     fluxo(vec![
         etapa(
             "coleta",
-            &[AtorAcao::Agente],
-            vec![campo("endereco", TipoCampo::Texto, true, &[])],
+            &[ActionActor::Agent],
+            vec![campo("endereco", FieldKind::Texto, true, &[])],
             vec![
                 acao("confirmar", None, &["endereco"], "confirmacao"),
                 acao("desistir", None, &[], "confirmacao"),
@@ -131,7 +131,7 @@ fn fluxo_simples() -> Ir {
         ),
         etapa(
             "confirmacao",
-            &[AtorAcao::Agente],
+            &[ActionActor::Agent],
             Vec::new(),
             vec![acao_para_fim("ok", None)],
         ),
@@ -144,16 +144,16 @@ fn fluxo_com_dois_atores() -> Ir {
     fluxo(vec![
         etapa(
             "triagem",
-            &[AtorAcao::Agente, AtorAcao::Atendente],
-            vec![campo("resumo", TipoCampo::Texto, false, &[])],
+            &[ActionActor::Agent, ActionActor::Attendant],
+            vec![campo("resumo", FieldKind::Texto, false, &[])],
             vec![
-                acao("registrar", Some(AtorAcao::Agente), &[], "depois"),
-                acao("assumir", Some(AtorAcao::Atendente), &[], "depois"),
+                acao("registrar", Some(ActionActor::Agent), &[], "depois"),
+                acao("assumir", Some(ActionActor::Attendant), &[], "depois"),
             ],
         ),
         etapa(
             "depois",
-            &[AtorAcao::Agente],
+            &[ActionActor::Agent],
             Vec::new(),
             vec![acao_para_fim("ok", None)],
         ),
@@ -163,7 +163,7 @@ fn fluxo_com_dois_atores() -> Ir {
 /// Texto da recusa de ação (`acao_invalida`), para o teste conferir a mensagem que o agente lê.
 fn motivo(erro: &DomainError) -> String {
     match erro {
-        DomainError::AcaoInvalida { motivo, .. } => motivo.clone(),
+        DomainError::InvalidAction { reason: motivo, .. } => motivo.clone(),
         outro => panic!("esperava acao_invalida e veio {outro:?}"),
     }
 }
@@ -171,12 +171,12 @@ fn motivo(erro: &DomainError) -> String {
 /// Erros da recusa de campos (`campos_invalidos`).
 fn erros_de_campos(erro: &DomainError) -> Vec<String> {
     match erro {
-        DomainError::CamposDaEtapaInvalidos { erros, .. } => erros.clone(),
+        DomainError::InvalidStepFields { errors: erros, .. } => erros.clone(),
         outro => panic!("esperava campos_invalidos e veio {outro:?}"),
     }
 }
 
-fn tipos(resultado: &poph_fluxos::motor::Resultado) -> Vec<TipoEventoFicha> {
+fn tipos(resultado: &poph_fluxos::motor::Resultado) -> Vec<RecordEventKind> {
     resultado.eventos.iter().map(|evento| evento.tipo).collect()
 }
 
@@ -188,7 +188,7 @@ fn iniciar_comeca_na_etapa_de_inicio_com_o_estado_vazio() {
     let estado = iniciar(&ir).expect("a etapa de início existe");
 
     assert_eq!(estado.fluxo_id, "teste");
-    assert_eq!(estado.status, StatusExecucao::Ativa);
+    assert_eq!(estado.status, ExecutionStatus::Active);
     assert_eq!(
         estado.no_atual,
         Destino::Etapa {
@@ -209,10 +209,10 @@ fn iniciar_recusa_ir_que_aponta_para_etapa_inexistente() {
 
     let erro = iniciar(&ir).expect_err("a etapa de início não existe");
     assert!(
-        matches!(erro, DomainError::IrDivergente { .. }),
+        matches!(erro, DomainError::IrDivergent { .. }),
         "esperava ir_divergente e veio {erro:?}"
     );
-    assert_eq!(erro.codigo_api(), "ir_divergente");
+    assert_eq!(erro.api_code(), "ir_divergente");
 }
 
 // ------------------------------------------------------------------ ação válida avança
@@ -227,7 +227,7 @@ fn acao_valida_grava_os_campos_e_avanca_para_a_etapa_de_destino() {
         &estado,
         "confirmar",
         &campos(json!({ "endereco": "Rua das Flores, 10" })),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &contexto(),
     )
@@ -254,10 +254,10 @@ fn acao_valida_grava_os_campos_e_avanca_para_a_etapa_de_destino() {
     assert_eq!(
         tipos(&resultado),
         vec![
-            TipoEventoFicha::CamposPreenchidos,
-            TipoEventoFicha::AcaoExecutada,
-            TipoEventoFicha::EtapaConcluida,
-            TipoEventoFicha::EtapaEntrou,
+            RecordEventKind::FieldsFilled,
+            RecordEventKind::ActionExecuted,
+            RecordEventKind::StepCompleted,
+            RecordEventKind::StepEntered,
         ]
     );
     assert_eq!(
@@ -276,7 +276,7 @@ fn dados_das_etapas_anteriores_continuam_na_execucao() {
         &estado,
         "confirmar",
         &campos(json!({ "endereco": "Rua A" })),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &contexto(),
     )
@@ -288,7 +288,7 @@ fn dados_das_etapas_anteriores_continuam_na_execucao() {
         &estado,
         "ok",
         &sem_campos(),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &contexto(),
     )
@@ -320,7 +320,7 @@ fn o_texto_do_campo_e_gravado_sem_os_espacos_das_pontas() {
         &estado,
         "confirmar",
         &campos(json!({ "endereco": "  Rua B  " })),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &contexto(),
     )
@@ -344,14 +344,14 @@ fn campo_exigido_faltando_devolve_a_lista_do_que_falta() {
         &estado,
         "confirmar",
         &sem_campos(),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &contexto(),
     )
     .expect_err("`endereco` é exigido");
 
     let erros = erros_de_campos(&erro);
-    assert_eq!(erro.codigo_api(), "campos_invalidos");
+    assert_eq!(erro.api_code(), "campos_invalidos");
     assert!(
         erros
             .iter()
@@ -368,13 +368,13 @@ fn exige_de_campo_que_a_etapa_nao_declara_avisa_isso() {
     let ir = fluxo(vec![
         etapa(
             "coleta",
-            &[AtorAcao::Agente],
+            &[ActionActor::Agent],
             Vec::new(),
             vec![acao("confirmar", None, &["cep"], "depois")],
         ),
         etapa(
             "depois",
-            &[AtorAcao::Agente],
+            &[ActionActor::Agent],
             Vec::new(),
             vec![acao_para_fim("ok", None)],
         ),
@@ -386,7 +386,7 @@ fn exige_de_campo_que_a_etapa_nao_declara_avisa_isso() {
         &estado,
         "confirmar",
         &sem_campos(),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &contexto(),
     )
@@ -406,8 +406,8 @@ fn o_campo_informado_antes_conta_para_o_exige_da_acao_seguinte() {
     let ir = fluxo(vec![
         etapa(
             "coleta",
-            &[AtorAcao::Agente],
-            vec![campo("endereco", TipoCampo::Texto, true, &[])],
+            &[ActionActor::Agent],
+            vec![campo("endereco", FieldKind::Texto, true, &[])],
             vec![
                 acao("anotar", None, &[], "coleta"),
                 acao("confirmar", None, &["endereco"], "confirmacao"),
@@ -415,7 +415,7 @@ fn o_campo_informado_antes_conta_para_o_exige_da_acao_seguinte() {
         ),
         etapa(
             "confirmacao",
-            &[AtorAcao::Agente],
+            &[ActionActor::Agent],
             Vec::new(),
             vec![acao_para_fim("ok", None)],
         ),
@@ -427,7 +427,7 @@ fn o_campo_informado_antes_conta_para_o_exige_da_acao_seguinte() {
         &estado,
         "anotar",
         &campos(json!({ "endereco": "Rua C" })),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &contexto(),
     )
@@ -439,7 +439,7 @@ fn o_campo_informado_antes_conta_para_o_exige_da_acao_seguinte() {
         &estado,
         "confirmar",
         &sem_campos(),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &contexto(),
     )
@@ -457,13 +457,13 @@ fn campo_com_tipo_errado_e_recusado_com_o_que_veio() {
     let ir = fluxo(vec![
         etapa(
             "coleta",
-            &[AtorAcao::Agente],
-            vec![campo("idade", TipoCampo::Numero, false, &[])],
+            &[ActionActor::Agent],
+            vec![campo("idade", FieldKind::Number, false, &[])],
             vec![acao("ok", None, &[], "depois")],
         ),
         etapa(
             "depois",
-            &[AtorAcao::Agente],
+            &[ActionActor::Agent],
             Vec::new(),
             vec![acao_para_fim("fim", None)],
         ),
@@ -475,7 +475,7 @@ fn campo_com_tipo_errado_e_recusado_com_o_que_veio() {
         &estado,
         "ok",
         &campos(json!({ "idade": "quarenta" })),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &contexto(),
     )
@@ -494,18 +494,18 @@ fn cada_tipo_de_campo_recusa_o_valor_que_nao_e_dele() {
     let ir = fluxo(vec![
         etapa(
             "cadastro",
-            &[AtorAcao::Agente],
+            &[ActionActor::Agent],
             vec![
-                campo("texto", TipoCampo::Texto, false, &[]),
-                campo("data", TipoCampo::Data, false, &[]),
-                campo("booleano", TipoCampo::Booleano, false, &[]),
-                campo("anexo", TipoCampo::Anexo, false, &[]),
+                campo("texto", FieldKind::Texto, false, &[]),
+                campo("data", FieldKind::Data, false, &[]),
+                campo("booleano", FieldKind::Boolean, false, &[]),
+                campo("anexo", FieldKind::Attachment, false, &[]),
             ],
             vec![acao("ok", None, &[], "depois")],
         ),
         etapa(
             "depois",
-            &[AtorAcao::Agente],
+            &[ActionActor::Agent],
             Vec::new(),
             vec![acao_para_fim("fim", None)],
         ),
@@ -522,7 +522,7 @@ fn cada_tipo_de_campo_recusa_o_valor_que_nao_e_dele() {
             "booleano": "sim",
             "anexo": { "tipo": "application/pdf" },
         })),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &contexto(),
     )
@@ -541,19 +541,19 @@ fn os_valores_validos_de_cada_tipo_sao_gravados() {
     let ir = fluxo(vec![
         etapa(
             "cadastro",
-            &[AtorAcao::Agente],
+            &[ActionActor::Agent],
             vec![
-                campo("texto", TipoCampo::Texto, false, &[]),
-                campo("numero", TipoCampo::Numero, false, &[]),
-                campo("data", TipoCampo::Data, false, &[]),
-                campo("booleano", TipoCampo::Booleano, false, &[]),
-                campo("anexo", TipoCampo::Anexo, false, &[]),
+                campo("texto", FieldKind::Texto, false, &[]),
+                campo("numero", FieldKind::Number, false, &[]),
+                campo("data", FieldKind::Data, false, &[]),
+                campo("booleano", FieldKind::Boolean, false, &[]),
+                campo("anexo", FieldKind::Attachment, false, &[]),
             ],
             vec![acao("ok", None, &[], "depois")],
         ),
         etapa(
             "depois",
-            &[AtorAcao::Agente],
+            &[ActionActor::Agent],
             Vec::new(),
             vec![acao_para_fim("fim", None)],
         ),
@@ -572,7 +572,7 @@ fn os_valores_validos_de_cada_tipo_sao_gravados() {
             "booleano": true,
             "anexo": anexo,
         })),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &contexto(),
     )
@@ -595,10 +595,10 @@ fn opcao_fora_da_lista_e_recusada_com_as_opcoes() {
     let ir = fluxo(vec![
         etapa(
             "coleta",
-            &[AtorAcao::Agente],
+            &[ActionActor::Agent],
             vec![campo(
                 "periodo",
-                TipoCampo::Opcao,
+                FieldKind::Option,
                 false,
                 &["manhã", "tarde"],
             )],
@@ -606,7 +606,7 @@ fn opcao_fora_da_lista_e_recusada_com_as_opcoes() {
         ),
         etapa(
             "depois",
-            &[AtorAcao::Agente],
+            &[ActionActor::Agent],
             Vec::new(),
             vec![acao_para_fim("fim", None)],
         ),
@@ -618,7 +618,7 @@ fn opcao_fora_da_lista_e_recusada_com_as_opcoes() {
         &estado,
         "ok",
         &campos(json!({ "periodo": "noite" })),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &contexto(),
     )
@@ -641,7 +641,7 @@ fn campo_de_outra_etapa_e_recusado_com_os_campos_da_etapa() {
         &estado,
         "confirmar",
         &campos(json!({ "cep": "20000-000", "endereco": "Rua D" })),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &contexto(),
     )
@@ -665,7 +665,7 @@ fn campo_com_o_prefixo_da_etapa_e_recusado_com_a_dica() {
         &estado,
         "confirmar",
         &campos(json!({ "coleta.endereco": "Rua E" })),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &contexto(),
     )
@@ -688,7 +688,7 @@ fn campo_obrigatorio_nao_aceita_valor_vazio() {
         &estado,
         "confirmar",
         &campos(json!({ "endereco": "   " })),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &contexto(),
     )
@@ -702,8 +702,8 @@ fn campo_opcional_aceita_nulo_e_o_campo_conta_como_vazio() {
     let ir = fluxo(vec![
         etapa(
             "coleta",
-            &[AtorAcao::Agente],
-            vec![campo("bairro", TipoCampo::Texto, false, &[])],
+            &[ActionActor::Agent],
+            vec![campo("bairro", FieldKind::Texto, false, &[])],
             vec![
                 acao("limpar", None, &[], "coleta"),
                 acao("confirmar", None, &["bairro"], "depois"),
@@ -711,7 +711,7 @@ fn campo_opcional_aceita_nulo_e_o_campo_conta_como_vazio() {
         ),
         etapa(
             "depois",
-            &[AtorAcao::Agente],
+            &[ActionActor::Agent],
             Vec::new(),
             vec![acao_para_fim("fim", None)],
         ),
@@ -724,7 +724,7 @@ fn campo_opcional_aceita_nulo_e_o_campo_conta_como_vazio() {
         &estado,
         "limpar",
         &campos(json!({ "bairro": Json::Null })),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &contexto(),
     )
@@ -740,7 +740,7 @@ fn campo_opcional_aceita_nulo_e_o_campo_conta_como_vazio() {
         &com_nulo.novo_estado,
         "confirmar",
         &sem_campos(),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &contexto(),
     )
@@ -760,7 +760,7 @@ fn ator_fora_dos_atores_da_etapa_e_recusado() {
         &estado,
         "confirmar",
         &campos(json!({ "endereco": "Rua F" })),
-        AtorAcao::Atendente,
+        ActionActor::Attendant,
         None,
         &contexto(),
     )
@@ -783,7 +783,7 @@ fn acao_restrita_ao_atendente_recusada_para_o_agente() {
         &estado,
         "assumir",
         &sem_campos(),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &contexto(),
     )
@@ -808,7 +808,7 @@ fn etapa_com_dois_atores_fica_parcial_e_diz_quem_falta() {
         &estado,
         "registrar",
         &campos(json!({ "resumo": "cliente quer troca" })),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &contexto(),
     )
@@ -821,16 +821,16 @@ fn etapa_com_dois_atores_fica_parcial_e_diz_quem_falta() {
         },
         "a etapa não avança enquanto o atendente não agir"
     );
-    assert_eq!(resultado.aguardando, vec![AtorAcao::Atendente]);
+    assert_eq!(resultado.aguardando, vec![ActionActor::Attendant]);
     assert_eq!(
         resultado.novo_estado.atores_que_agiram,
-        vec![AtorAcao::Agente]
+        vec![ActionActor::Agent]
     );
     assert_eq!(
         tipos(&resultado),
         vec![
-            TipoEventoFicha::CamposPreenchidos,
-            TipoEventoFicha::AcaoExecutada,
+            RecordEventKind::FieldsFilled,
+            RecordEventKind::ActionExecuted,
         ],
         "etapa parcial não tem evento de conclusão nem de entrada"
     );
@@ -850,7 +850,7 @@ fn a_etapa_avanca_quando_o_segundo_ator_age() {
         &estado,
         "registrar",
         &sem_campos(),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &contexto(),
     )
@@ -862,7 +862,7 @@ fn a_etapa_avanca_quando_o_segundo_ator_age() {
         &estado,
         "assumir",
         &sem_campos(),
-        AtorAcao::Atendente,
+        ActionActor::Attendant,
         None,
         &contexto(),
     )
@@ -882,9 +882,9 @@ fn a_etapa_avanca_quando_o_segundo_ator_age() {
     assert_eq!(
         tipos(&resultado),
         vec![
-            TipoEventoFicha::AcaoExecutada,
-            TipoEventoFicha::EtapaConcluida,
-            TipoEventoFicha::EtapaEntrou,
+            RecordEventKind::ActionExecuted,
+            RecordEventKind::StepCompleted,
+            RecordEventKind::StepEntered,
         ],
         "o segundo ator conclui a etapa e entra na próxima"
     );
@@ -902,7 +902,7 @@ fn os_dois_atores_chegam_ao_mesmo_destino_em_qualquer_ordem() {
         &agente_primeiro,
         "registrar",
         &sem_campos(),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &contexto(),
     )
@@ -913,7 +913,7 @@ fn os_dois_atores_chegam_ao_mesmo_destino_em_qualquer_ordem() {
         &agente_primeiro,
         "assumir",
         &sem_campos(),
-        AtorAcao::Atendente,
+        ActionActor::Attendant,
         None,
         &contexto(),
     )
@@ -925,7 +925,7 @@ fn os_dois_atores_chegam_ao_mesmo_destino_em_qualquer_ordem() {
         &atendente_primeiro,
         "assumir",
         &sem_campos(),
-        AtorAcao::Atendente,
+        ActionActor::Attendant,
         None,
         &contexto(),
     )
@@ -936,7 +936,7 @@ fn os_dois_atores_chegam_ao_mesmo_destino_em_qualquer_ordem() {
         &atendente_primeiro,
         "registrar",
         &sem_campos(),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &contexto(),
     )
@@ -961,16 +961,16 @@ fn acao_irrestrita_avanca_sozinha() {
     let ir = fluxo(vec![
         etapa(
             "triagem",
-            &[AtorAcao::Agente, AtorAcao::Atendente],
+            &[ActionActor::Agent, ActionActor::Attendant],
             Vec::new(),
             vec![
                 acao("resolver", None, &[], "outro"),
-                acao_para_fim("encaminhar", Some(AtorAcao::Atendente)),
+                acao_para_fim("encaminhar", Some(ActionActor::Attendant)),
             ],
         ),
         etapa(
             "outro",
-            &[AtorAcao::Agente],
+            &[ActionActor::Agent],
             Vec::new(),
             vec![acao_para_fim("ok", None)],
         ),
@@ -982,7 +982,7 @@ fn acao_irrestrita_avanca_sozinha() {
         &estado,
         "resolver",
         &sem_campos(),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &contexto(),
     )
@@ -1005,22 +1005,22 @@ fn a_acao_irrestrita_ainda_espera_a_acao_restrita_do_outro_ator() {
     let ir = fluxo(vec![
         etapa(
             "triagem",
-            &[AtorAcao::Agente, AtorAcao::Atendente],
+            &[ActionActor::Agent, ActionActor::Attendant],
             Vec::new(),
             vec![
-                acao("encaminhar", Some(AtorAcao::Atendente), &[], "depois"),
+                acao("encaminhar", Some(ActionActor::Attendant), &[], "depois"),
                 acao("resolver", None, &[], "outro"),
             ],
         ),
         etapa(
             "depois",
-            &[AtorAcao::Agente],
+            &[ActionActor::Agent],
             Vec::new(),
             vec![acao_para_fim("ok", None)],
         ),
         etapa(
             "outro",
-            &[AtorAcao::Agente],
+            &[ActionActor::Agent],
             Vec::new(),
             vec![acao_para_fim("ok", None)],
         ),
@@ -1032,7 +1032,7 @@ fn a_acao_irrestrita_ainda_espera_a_acao_restrita_do_outro_ator() {
         &estado,
         "resolver",
         &sem_campos(),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &contexto(),
     )
@@ -1044,7 +1044,7 @@ fn a_acao_irrestrita_ainda_espera_a_acao_restrita_do_outro_ator() {
         },
         "o atendente ainda não agiu"
     );
-    assert_eq!(parcial.aguardando, vec![AtorAcao::Atendente]);
+    assert_eq!(parcial.aguardando, vec![ActionActor::Attendant]);
 
     estado = parcial.novo_estado;
     let avancou = executar_acao(
@@ -1052,7 +1052,7 @@ fn a_acao_irrestrita_ainda_espera_a_acao_restrita_do_outro_ator() {
         &estado,
         "encaminhar",
         &sem_campos(),
-        AtorAcao::Atendente,
+        ActionActor::Attendant,
         None,
         &contexto(),
     )
@@ -1073,16 +1073,16 @@ fn acao_que_vai_para_o_fim_e_decisiva_mesmo_com_outro_ator_pendente() {
     let ir = fluxo(vec![
         etapa(
             "triagem",
-            &[AtorAcao::Agente, AtorAcao::Atendente],
+            &[ActionActor::Agent, ActionActor::Attendant],
             Vec::new(),
             vec![
-                acao("assumir", Some(AtorAcao::Atendente), &[], "depois"),
+                acao("assumir", Some(ActionActor::Attendant), &[], "depois"),
                 acao_para_fim("encerrar", None),
             ],
         ),
         etapa(
             "depois",
-            &[AtorAcao::Agente],
+            &[ActionActor::Agent],
             Vec::new(),
             vec![acao_para_fim("ok", None)],
         ),
@@ -1094,7 +1094,7 @@ fn acao_que_vai_para_o_fim_e_decisiva_mesmo_com_outro_ator_pendente() {
         &estado,
         "encerrar",
         &sem_campos(),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &contexto(),
     )
@@ -1112,15 +1112,15 @@ fn acao_que_vai_para_o_fim_e_decisiva_mesmo_com_outro_ator_pendente() {
     assert_eq!(
         tipos(&resultado),
         vec![
-            TipoEventoFicha::AcaoExecutada,
-            TipoEventoFicha::EtapaConcluida,
-            TipoEventoFicha::ExecucaoConcluida,
+            RecordEventKind::ActionExecuted,
+            RecordEventKind::StepCompleted,
+            RecordEventKind::ExecutionCompleted,
         ],
         "sem `etapa_entrou`: o destino é o fim, que conclui a execução"
     );
     assert_eq!(
         resultado.novo_estado.status,
-        StatusExecucao::Concluida,
+        ExecutionStatus::Completed,
         "o fim conclui a execução na mesma passagem"
     );
     assert!(
@@ -1135,16 +1135,16 @@ fn a_etapa_com_acao_restrita_de_um_ator_so_nao_espera_o_outro() {
     let ir = fluxo(vec![
         etapa(
             "coleta",
-            &[AtorAcao::Agente, AtorAcao::Atendente],
+            &[ActionActor::Agent, ActionActor::Attendant],
             Vec::new(),
             vec![
                 acao("confirmar", None, &[], "depois"),
-                acao_para_fim("desistir", Some(AtorAcao::Atendente)),
+                acao_para_fim("desistir", Some(ActionActor::Attendant)),
             ],
         ),
         etapa(
             "depois",
-            &[AtorAcao::Agente],
+            &[ActionActor::Agent],
             Vec::new(),
             vec![acao_para_fim("ok", None)],
         ),
@@ -1156,7 +1156,7 @@ fn a_etapa_com_acao_restrita_de_um_ator_so_nao_espera_o_outro() {
         &estado,
         "confirmar",
         &sem_campos(),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &contexto(),
     )
@@ -1175,20 +1175,20 @@ fn a_etapa_com_acao_restrita_de_um_ator_so_nao_espera_o_outro() {
 fn os_atores_exigidos_vem_das_acoes_e_na_ordem_do_texto() {
     let etapa = etapa(
         "mista",
-        &[AtorAcao::Agente, AtorAcao::Atendente],
+        &[ActionActor::Agent, ActionActor::Attendant],
         Vec::new(),
         vec![
-            acao("assumir", Some(AtorAcao::Atendente), &[], "depois"),
-            acao_para_fim("desistir", Some(AtorAcao::Atendente)),
+            acao("assumir", Some(ActionActor::Attendant), &[], "depois"),
+            acao_para_fim("desistir", Some(ActionActor::Attendant)),
             acao("livre", None, &[], "depois"),
-            acao("registrar", Some(AtorAcao::Agente), &[], "depois"),
-            acao("registrar_de_novo", Some(AtorAcao::Agente), &[], "depois"),
+            acao("registrar", Some(ActionActor::Agent), &[], "depois"),
+            acao("registrar_de_novo", Some(ActionActor::Agent), &[], "depois"),
         ],
     );
 
     assert_eq!(
         atores_exigidos(&etapa),
-        vec![AtorAcao::Agente, AtorAcao::Atendente],
+        vec![ActionActor::Agent, ActionActor::Attendant],
         "sem repetição, sem o ator da ação de fim, na ordem alfabética do texto"
     );
 }
@@ -1197,11 +1197,11 @@ fn os_atores_exigidos_vem_das_acoes_e_na_ordem_do_texto() {
 fn campos_faltando_lista_so_os_obrigatorios_na_ordem_do_script() {
     let etapa = etapa(
         "coleta",
-        &[AtorAcao::Agente],
+        &[ActionActor::Agent],
         vec![
-            campo("endereco", TipoCampo::Texto, true, &[]),
-            campo("bairro", TipoCampo::Texto, false, &[]),
-            campo("periodo", TipoCampo::Opcao, true, &["manhã", "tarde"]),
+            campo("endereco", FieldKind::Texto, true, &[]),
+            campo("bairro", FieldKind::Texto, false, &[]),
+            campo("periodo", FieldKind::Option, true, &["manhã", "tarde"]),
         ],
         Vec::new(),
     );
@@ -1233,7 +1233,7 @@ fn repetir_a_chave_nao_gera_segundo_evento() {
         &estado,
         "confirmar",
         &entrada,
-        AtorAcao::Agente,
+        ActionActor::Agent,
         Some("chave-1"),
         &contexto(),
     )
@@ -1246,7 +1246,7 @@ fn repetir_a_chave_nao_gera_segundo_evento() {
         &primeira.novo_estado,
         "confirmar",
         &entrada,
-        AtorAcao::Agente,
+        ActionActor::Agent,
         Some("chave-1"),
         &contexto(),
     )
@@ -1266,7 +1266,7 @@ fn repetir_a_chave_nao_gera_segundo_evento() {
         &segunda.novo_estado,
         "ok",
         &sem_campos(),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         Some("chave-2"),
         &contexto(),
     )
@@ -1284,19 +1284,19 @@ fn a_chave_repetida_devolve_quem_faltava_quando_a_etapa_ficou_parcial() {
         &estado,
         "registrar",
         &sem_campos(),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         Some("chave-triagem"),
         &contexto(),
     )
     .expect("primeira passagem");
-    assert_eq!(primeira.aguardando, vec![AtorAcao::Atendente]);
+    assert_eq!(primeira.aguardando, vec![ActionActor::Attendant]);
 
     let repetida = executar_acao(
         &ir,
         &primeira.novo_estado,
         "registrar",
         &sem_campos(),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         Some("chave-triagem"),
         &contexto(),
     )
@@ -1305,7 +1305,7 @@ fn a_chave_repetida_devolve_quem_faltava_quando_a_etapa_ficou_parcial() {
     assert!(repetida.repetida);
     assert_eq!(
         repetida.aguardando,
-        vec![AtorAcao::Atendente],
+        vec![ActionActor::Attendant],
         "a repetição devolve o mesmo desfecho"
     );
     assert!(repetida.eventos.is_empty());
@@ -1323,7 +1323,7 @@ fn acao_inexistente_devolve_as_validas_e_nao_muda_nada() {
         &estado,
         "concluir",
         &campos(json!({ "endereco": "Rua I" })),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &contexto(),
     )
@@ -1334,7 +1334,7 @@ fn acao_inexistente_devolve_as_validas_e_nao_muda_nada() {
         texto.contains("`confirmar`") && texto.contains("`desistir`"),
         "a mensagem lista as ações válidas: {texto}"
     );
-    assert_eq!(erro.status_http(), 409);
+    assert_eq!(erro.http_status(), 409);
     // O estado passado não é tocado (a função é pura) e nada foi gravado.
     assert!(estado.dados.is_empty());
     assert_eq!(
@@ -1348,10 +1348,10 @@ fn acao_inexistente_devolve_as_validas_e_nao_muda_nada() {
 #[test]
 fn etapa_sem_acao_avisa_que_nao_tem_saida() {
     let ir = fluxo(vec![
-        etapa("coleta", &[AtorAcao::Agente], Vec::new(), Vec::new()),
+        etapa("coleta", &[ActionActor::Agent], Vec::new(), Vec::new()),
         etapa(
             "depois",
-            &[AtorAcao::Agente],
+            &[ActionActor::Agent],
             Vec::new(),
             vec![acao_para_fim("ok", None)],
         ),
@@ -1363,7 +1363,7 @@ fn etapa_sem_acao_avisa_que_nao_tem_saida() {
         &estado,
         "qualquer",
         &sem_campos(),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &contexto(),
     )
@@ -1377,14 +1377,14 @@ fn etapa_sem_acao_avisa_que_nao_tem_saida() {
 fn execucao_ja_encerrada_recusa_acao() {
     let ir = fluxo_simples();
     let mut estado = iniciar(&ir).expect("início");
-    estado.status = StatusExecucao::Concluida;
+    estado.status = ExecutionStatus::Completed;
 
     let erro = executar_acao(
         &ir,
         &estado,
         "confirmar",
         &campos(json!({ "endereco": "Rua J" })),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &contexto(),
     )
@@ -1421,7 +1421,7 @@ fn execucao_parada_numa_decisao_resolve_antes_de_executar_a_acao() {
         &estado,
         "confirmar",
         &campos(json!({ "endereco": "Rua das Flores, 10" })),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &contexto(),
     )
@@ -1430,12 +1430,12 @@ fn execucao_parada_numa_decisao_resolve_antes_de_executar_a_acao() {
     assert_eq!(
         tipos(&resultado),
         vec![
-            TipoEventoFicha::DecisaoResolvida,
-            TipoEventoFicha::EtapaEntrou,
-            TipoEventoFicha::CamposPreenchidos,
-            TipoEventoFicha::AcaoExecutada,
-            TipoEventoFicha::EtapaConcluida,
-            TipoEventoFicha::EtapaEntrou,
+            RecordEventKind::DecisionResolved,
+            RecordEventKind::StepEntered,
+            RecordEventKind::FieldsFilled,
+            RecordEventKind::ActionExecuted,
+            RecordEventKind::StepCompleted,
+            RecordEventKind::StepEntered,
         ],
         "a decisão é resolvida antes da ação"
     );
@@ -1451,7 +1451,7 @@ fn execucao_parada_numa_decisao_resolve_antes_de_executar_a_acao() {
 fn acao_para_etapa_inexistente_e_ir_divergente() {
     let ir = fluxo(vec![etapa(
         "coleta",
-        &[AtorAcao::Agente],
+        &[ActionActor::Agent],
         Vec::new(),
         vec![acao("ok", None, &[], "etapa_que_nao_existe")],
     )]);
@@ -1462,12 +1462,12 @@ fn acao_para_etapa_inexistente_e_ir_divergente() {
         &estado,
         "ok",
         &sem_campos(),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &contexto(),
     )
     .expect_err("o destino não existe na estrutura");
-    assert!(matches!(erro, DomainError::IrDivergente { .. }), "{erro:?}");
+    assert!(matches!(erro, DomainError::IrDivergent { .. }), "{erro:?}");
 }
 
 // ------------------------------------------------------------------ determinismo e IR real
@@ -1483,7 +1483,7 @@ fn a_mesma_entrada_produz_o_mesmo_resultado() {
         &estado,
         "registrar",
         &entrada,
-        AtorAcao::Agente,
+        ActionActor::Agent,
         Some("chave"),
         &contexto(),
     )
@@ -1493,7 +1493,7 @@ fn a_mesma_entrada_produz_o_mesmo_resultado() {
         &estado,
         "registrar",
         &entrada,
-        AtorAcao::Agente,
+        ActionActor::Agent,
         Some("chave"),
         &contexto(),
     )
@@ -1526,7 +1526,7 @@ fn a_ir_dourada_de_agendar_visita_roda_do_inicio_ao_fim_da_etapa() {
         &estado,
         "confirmar",
         &campos(json!({ "endereco": "Rua das Flores, 10", "periodo": "manhã" })),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         Some("acao-1"),
         &contexto(),
     )
@@ -1543,7 +1543,7 @@ fn a_ir_dourada_de_agendar_visita_roda_do_inicio_ao_fim_da_etapa() {
         &coletado.novo_estado,
         "ok",
         &sem_campos(),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         Some("acao-2"),
         &contexto(),
     )
@@ -1566,7 +1566,7 @@ fn o_dado_do_cliente_e_gravado_como_valor_e_nunca_interpretado() {
         &estado,
         "confirmar",
         &campos(json!({ "endereco": cliente })),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         None,
         &contexto(),
     )
@@ -1589,7 +1589,7 @@ fn o_estado_sobrevive_a_ida_e_volta_em_json() {
         &iniciar(&ir).expect("início"),
         "confirmar",
         &campos(json!({ "endereco": "Rua K" })),
-        AtorAcao::Agente,
+        ActionActor::Agent,
         Some("chave"),
         &contexto(),
     )
