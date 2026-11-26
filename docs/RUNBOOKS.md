@@ -351,7 +351,7 @@ what it accepts and the configuration format). If the program does not answer, t
 **Prerequisites:**
 
 - the plugin program compiled, with an absolute path. To test, the example plugin:
-  `cargo build -q -p poph-plugin-eco --bins` (this is what `scripts/plugin-eco.sh` does). The binary goes to
+  `cargo build -q -p poph-plugin-eco --bins` (this is what `scripts/plugin-echo.sh` does). The binary goes to
   `target/debug/plugin-eco`.
 
 ### Step 1: declare it in `poph.toml`
@@ -500,7 +500,7 @@ TYPESAFE_API_KEY='<chave do Jev>' ./target/debug/poph --config /tmp/hr58b-run/a/
   explains how to read it and gives the measurements of 2026-11-20 for each gate).
 - When changing the default, measure with the real Jev first.
 
-**Beware of the fake Jev.** `scripts/jev-falso.py` is only for testing the plumbing, not the quality.
+**Beware of the fake Jev.** `scripts/fake-jev.py` is only for testing the plumbing, not the quality.
 In the verification, I ran `jev eval g1` against it: 135 cases, 113 hits and 22 errors, 0 call failures. These numbers
 **do not** support any decision. With `g5`, the fake answered no questions (it only covers some gates), and the output
 showed abstention in every case. That is a limit of the fake, not of the command.

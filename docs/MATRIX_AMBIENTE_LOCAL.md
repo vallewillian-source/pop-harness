@@ -140,13 +140,13 @@ own healthcheck (`healthy`).
 
 ## Element captures for the MX-31 acceptance
 
-`scripts/aceite-matrix-element.mjs` takes the Element screenshots of the acceptance. It talks to Chrome through the
-DevTools protocol (Node 22's native WebSocket), without Playwright. `scripts/aceite-matrix.sh` (step A12) runs it with
+`scripts/acceptance-matrix-element.mjs` takes the Element screenshots of the acceptance. It talks to Chrome through the
+DevTools protocol (Node 22's native WebSocket), without Playwright. `scripts/acceptance-matrix.sh` (step A12) runs it with
 the right paths and variables; it can also be run by hand:
 
 ```bash
-node scripts/aceite-matrix-element.mjs a1    <output> <room> <space> <directory>
-node scripts/aceite-matrix-element.mjs final <output> <room> <space> <directory> [late-name-room]
+node scripts/acceptance-matrix-element.mjs a1    <output> <room> <space> <directory>
+node scripts/acceptance-matrix-element.mjs final <output> <room> <space> <directory> [late-name-room]
 ```
 
 - `a1` captures the room just created (with the customer's name) and the department's space **before** any transfer.
@@ -177,7 +177,7 @@ node scripts/aceite-matrix-element.mjs final <output> <room> <space> <directory>
   `poph matrix registro` (MX-21), with real tokens, and requires restarting the environment's Synapse — never this
   script.
 
-## Acceptance run (`scripts/aceite-matrix.sh`, MX-31)
+## Acceptance run (`scripts/acceptance-matrix.sh`, MX-31)
 
 The script is the phase 1 gate for the Matrix module. It starts a real `poph serve` against
 the development Synapse (port 18008), with the NEW Harness registration and the OLD Python
@@ -188,10 +188,10 @@ code fixes. Tokens, passwords and phone numbers are never printed; values stay i
 Usage:
 
 ```bash
-bash apps/pop-harness/scripts/aceite-matrix.sh                  # full run
-bash apps/pop-harness/scripts/aceite-matrix.sh --sem-element    # no screenshots
-bash apps/pop-harness/scripts/aceite-matrix.sh --fase2          # includes acceptance A14 (phase 2)
-bash apps/pop-harness/scripts/aceite-matrix.sh --manter         # keeps the working folder
+bash apps/pop-harness/scripts/acceptance-matrix.sh                  # full run
+bash apps/pop-harness/scripts/acceptance-matrix.sh --sem-element    # no screenshots
+bash apps/pop-harness/scripts/acceptance-matrix.sh --fase2          # includes acceptance A14 (phase 2)
+bash apps/pop-harness/scripts/acceptance-matrix.sh --manter         # keeps the working folder
 ```
 
 Variables: `POPH_ACEITE_DIR` (working folder, default `~/.cache/poph-aceite-matrix`),

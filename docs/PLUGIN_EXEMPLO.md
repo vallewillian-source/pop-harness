@@ -34,7 +34,7 @@ Two decisions that apply to any new plugin:
 ## 2. How to run it
 
 ```bash
-apps/pop-harness/scripts/plugin-eco.sh
+apps/pop-harness/scripts/plugin-echo.sh
 ```
 
 The script builds the plugin and the demonstration, runs everything in a temporary database and deletes the folder at

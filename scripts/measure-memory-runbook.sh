@@ -2,7 +2,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-MEASURE="bash scripts/medir-memoria.sh"
+MEASURE="bash scripts/measure-memory.sh"
 
 if [ "${1:-}" = rapido ]; then
     $MEASURE --modo desligado --salas 100 --rodada 1

@@ -21,7 +21,7 @@ run() {
     fi
 }
 
-run "build cache (prune what has not been used for 3 days)" bash scripts/limpar-cache.sh --dias 3
+run "build cache (prune what has not been used for 3 days)" bash scripts/clean-cache.sh --dias 3
 run "console (Console bundle embedded in the binary)" bash console/scripts/build.sh
 run "console (OpenAPI client up to date)" bash console/scripts/verify-api.sh
 run "console (component tests)" bash console/scripts/test.sh

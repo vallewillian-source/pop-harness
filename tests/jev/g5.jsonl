@@ -5,7 +5,7 @@
 # mensagem não pede produto do catálogo, quando nenhum candidato serve ou quando o cliente pede mais
 # de um produto (o gate se abstém e os candidatos vão ao LLM).
 #
-# Regras de contagem da medição (`scripts/jev-relatorio.py` não cobre o G5; os números saem do JSON
+# Regras de contagem da medição (`scripts/jev-report.py` não cobre o G5; os números saem do JSON
 # do `poph jev eval g5 ... --json`):
 #   * acerto   = decisão confiável igual ao esperado;
 #   * erro     = decisão confiável diferente do esperado — o erro grave é injetar o produto errado

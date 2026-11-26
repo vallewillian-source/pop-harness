@@ -42,7 +42,7 @@ Each round is an independent run:
    the messages, so everything that comes afterwards is mirrored.
 2. **Real `poph serve`** (`target/release/poph`) on top of that database, with the default production configuration:
    concurrency 8, interval of 500 ms, log at `info` level. No accelerated loop.
-3. **Fake Synapse in a separate process** (`scripts/medicao-memoria/synapse_falso.py`, standard library only), so that
+3. **Fake Synapse in a separate process** (`scripts/memory-measurement/fake_synapse.py`, standard library only), so that
    its consumption does not enter the RSS of `poph serve` and so that the 10,000-room scale fits in the time available.
    It answers the same routes as the fake used in the module's tests: ghost registration, profile, `createRoom` with
    alias, invite, join, members, state, send with `txnId` deduplication, and the probe `/_matrix/client/versions`.
@@ -259,13 +259,13 @@ cd apps/pop-harness
 export PATH="$HOME/.cargo/bin:$PATH"
 cargo build --release --locked -p poph          # the script uses target/release/poph
 
-bash scripts/medir-memoria.sh --modo desligado --salas 1000 --rodada 1
-bash scripts/medir-memoria.sh --modo ligado   --salas 1000 --mensagens 1  --rodada 1
-bash scripts/medir-memoria.sh --modo ligado   --salas 1000 --mensagens 10 --rodada 1   # throughput
-bash scripts/medir-memoria.sh --modo real     --salas 20   --rodada 1                  # development Synapse
+bash scripts/measure-memory.sh --modo desligado --salas 1000 --rodada 1
+bash scripts/measure-memory.sh --modo ligado   --salas 1000 --mensagens 1  --rodada 1
+bash scripts/measure-memory.sh --modo ligado   --salas 1000 --mensagens 10 --rodada 1   # throughput
+bash scripts/measure-memory.sh --modo real     --salas 20   --rodada 1                  # development Synapse
 
-bash scripts/medir-memoria-roteiro.sh           # the full matrix (7–8 min)
-bash scripts/medir-memoria-roteiro.sh rapido    # 100 rooms, quick check
+bash scripts/measure-memory-runbook.sh           # the full matrix (7–8 min)
+bash scripts/measure-memory-runbook.sh rapido    # 100 rooms, quick check
 ```
 
 Each round writes one line to `target/mx30/memoria.csv` (outside git), with startup RSS, steady state, peak, drain time,
@@ -278,7 +278,7 @@ never onto the command line or into the CSV.
 
 ### Rules of the measurement scripts
 
-- `medir-memoria.sh` stops with an error if `target/release/poph` does not exist: build it first. It needs ports 18431
+- `measure-memory.sh` stops with an error if `target/release/poph` does not exist: build it first. It needs ports 18431
   (fake Synapse) and 18432 (`poph serve`) free; change them with `MX30_PORTA_FALSO` and `MX30_PORTA_SERVE`.
 - `MX30_LIMITE_S` (default 3600 s) caps the wait for the throughput run. If the fake has not received every message by
   then, the round stops with an error.
@@ -293,4 +293,4 @@ never onto the command line or into the CSV.
 - The fake sets `disable_nagle_algorithm`. Without it, headers and body leave in two sends and each response takes about
   40 ms on localhost; that limited the first diagnosis to about 21 rooms per second.
 - The fake writes no logs, so logging does not enter the measurement.
-- `medir-memoria-roteiro.sh` stops at the first round that fails (`set -e`), so a run can leave a partial CSV.
+- `measure-memory-runbook.sh` stops at the first round that fails (`set -e`), so a run can leave a partial CSV.

@@ -15,10 +15,10 @@ It does NOT do production, deploy, push or code fixes. It is an environment proo
 No token, password or phone number is printed; the values stay in 0600 files.
 
 Usage:
-  bash apps/pop-harness/scripts/aceite-matrix.sh
-  bash apps/pop-harness/scripts/aceite-matrix.sh --sem-element   # no screenshots
-  bash apps/pop-harness/scripts/aceite-matrix.sh --fase2         # includes acceptance A14 (phase 2)
-  bash apps/pop-harness/scripts/aceite-matrix.sh --manter        # keeps the working folder
+  bash apps/pop-harness/scripts/acceptance-matrix.sh
+  bash apps/pop-harness/scripts/acceptance-matrix.sh --sem-element   # no screenshots
+  bash apps/pop-harness/scripts/acceptance-matrix.sh --fase2         # includes acceptance A14 (phase 2)
+  bash apps/pop-harness/scripts/acceptance-matrix.sh --manter        # keeps the working folder
 
 Variables:
   POPH_ACEITE_DIR       working folder (default ~/.cache/poph-aceite-matrix)
@@ -34,8 +34,8 @@ USAGE
 APP="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROOT="$(cd "$APP/../.." && pwd)"
 POPH="${POPH_BIN:-$APP/target/debug/poph}"
-AUX="$APP/scripts/aceite-matrix-aux.py"
-ELEMENT_JS="$APP/scripts/aceite-matrix-element.mjs"
+AUX="$APP/scripts/acceptance-matrix-aux.py"
+ELEMENT_JS="$APP/scripts/acceptance-matrix-element.mjs"
 
 DIR="${POPH_ACEITE_DIR:-$HOME/.cache/poph-aceite-matrix}"
 MANTER=0

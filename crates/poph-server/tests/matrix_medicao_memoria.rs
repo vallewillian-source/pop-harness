@@ -1,6 +1,6 @@
 //! Semeadura da medição de RAM e vazão do módulo Matrix (MX-30).
 //!
-//! Não é teste de comportamento: é `#[ignore]` e só roda por `scripts/medir-memoria.sh`, que
+//! Não é teste de comportamento: é `#[ignore]` e só roda por `scripts/measure-memory.sh`, que
 //! chama este arquivo com as variáveis abaixo e depois sobe o `poph serve` de verdade sobre o
 //! banco que ele gravou. A semeadura usa a API do `poph-store` (o mesmo caminho dos testes do
 //! módulo), para não depender de SQL escrito à mão.
@@ -47,7 +47,7 @@ fn criar_org(store: &Store) -> OrgId {
 }
 
 #[test]
-#[ignore = "semeadura da medição MX-30; roda por scripts/medir-memoria.sh"]
+#[ignore = "semeadura da medição MX-30; roda por scripts/measure-memory.sh"]
 fn semeia_conversas_para_a_medicao_de_memoria() {
     let pasta = PathBuf::from(variavel("MX30_PASTA").expect("MX30_PASTA é obrigatória"));
     let salas = numero("MX30_SALAS", 100);

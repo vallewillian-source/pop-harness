@@ -82,7 +82,7 @@ CSS_AT_RULES = """\
 
 def main():
     print("leitor de termos: texto de JSX, at-rule de CSS, chave e controles")
-    directory = Path(tempfile.mkdtemp(prefix="leitor-termos-"))
+    directory = Path(tempfile.mkdtemp(prefix="term-reader-"))
     try:
         jsx = tokens(directory, "jsx.tsx", JSX_TEXT)
         check("texto de JSX não vira identificador", "Organizações" not in jsx and "Filtrar" not in jsx, str(jsx))

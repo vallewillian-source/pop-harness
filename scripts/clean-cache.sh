@@ -15,12 +15,12 @@
 # `target/` exceeds the GB limit. Never touches code, `Cargo.lock` or any file outside `target/`.
 #
 # Usage:
-#   scripts/limpar-cache.sh                 # prunes what is older than 3 days; reduces if over 25 GB
-#   scripts/limpar-cache.sh --seco          # only shows what would be deleted
-#   scripts/limpar-cache.sh --dias 7        # longer retention
-#   scripts/limpar-cache.sh --limite-gb 40  # size ceiling for target
-#   scripts/limpar-cache.sh --tudo          # `cargo clean` (deletes the whole target; respects an active build)
-#   scripts/limpar-cache.sh --forcar        # prunes even with a build running (test only)
+#   scripts/clean-cache.sh                 # prunes what is older than 3 days; reduces if over 25 GB
+#   scripts/clean-cache.sh --seco          # only shows what would be deleted
+#   scripts/clean-cache.sh --dias 7        # longer retention
+#   scripts/clean-cache.sh --limite-gb 40  # size ceiling for target
+#   scripts/clean-cache.sh --tudo          # `cargo clean` (deletes the whole target; respects an active build)
+#   scripts/clean-cache.sh --forcar        # prunes even with a build running (test only)
 #
 # Output: summary with bytes freed. Exit code 0 also when it skips because a build is running —
 # CI must not fail because of pruning.

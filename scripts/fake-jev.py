@@ -15,7 +15,7 @@ change to a gate's wording (such as the one in HR-29a) changes nothing here, and
 only be measured with the real Jev.
 
 Usage:
-    python3 scripts/jev-falso.py --porta 18099
+    python3 scripts/fake-jev.py --porta 18099
     # in another terminal:
     TYPESAFE_API_KEY=ficticia POPH_CONFIG=/tmp/jev/poph.toml \
         cargo run -p poph -- jev eval g1 tests/jev/g1.jsonl

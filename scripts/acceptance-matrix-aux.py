@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Auxiliar do roteiro de aceite do módulo Matrix (MX-31).
 
-Faz o que o `aceite-matrix.sh` não faz bem em bash: servidores falsos (LLM e Evolution),
+Faz o que o `acceptance-matrix.sh` não faz bem em bash: servidores falsos (LLM e Evolution),
 chamadas HTTP ao Synapse de desenvolvimento e leitura do estado da sala.
 
 Nenhum token é impresso: os valores vêm do ambiente e só viajam em cabeçalho.
@@ -886,7 +886,7 @@ def expiry_state(db):
 
 def main(argv):
     if len(argv) < 2:
-        raise SystemExit("uso: aceite-matrix-aux.py <comando> ...")
+        raise SystemExit("uso: acceptance-matrix-aux.py <comando> ...")
     command = argv[1]
     if command == "falsos":
         fake_commands(argv[2], int(argv[3]), int(argv[4]))

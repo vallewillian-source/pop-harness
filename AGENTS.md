@@ -181,7 +181,7 @@ A single command, from the project root:
 bash scripts/ci.sh
 ```
 
-Order: cache pruning (`limpar-cache.sh`), Console bundle build, API client check, Console tests
+Order: cache pruning (`clean-cache.sh`), Console bundle build, API client check, Console tests
 (`console/scripts/test.sh`), formatting (`cargo fmt --check`), clippy with `-D warnings`, build, Rust tests
 (`cargo test --workspace`), model RAM test, aarch64 check of the crates without C, `cargo deny` and
 `cargo audit`.

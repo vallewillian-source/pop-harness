@@ -181,11 +181,11 @@ stubs the tool and proves the map parsing, the refusals, the edit applier and th
 
 | Script | What it is for |
 |---|---|
-| `scripts/medir-memoria.sh`, `scripts/medir-memoria-roteiro.sh` | RSS and throughput of the Matrix module with a fake Synapse |
-| `scripts/medir-resiliencia.sh` | Harness and Synapse going down in the middle of mirroring |
+| `scripts/measure-memory.sh`, `scripts/measure-memory-runbook.sh` | RSS and throughput of the Matrix module with a fake Synapse |
+| `scripts/measure-resilience.sh` | Harness and Synapse going down in the middle of mirroring |
 | `scripts/matrix-dev.sh` | starts a development Synapse with two registrations ([`docs/MATRIX_AMBIENTE_LOCAL.md`](docs/MATRIX_AMBIENTE_LOCAL.md)) |
-| `scripts/plugin-eco.sh` | exercises the example plugin |
-| `scripts/jev-relatorio.py`, `scripts/jev-falso.py` | report and fake server for the Jev ([`docs/JEV.md`](docs/JEV.md)) |
+| `scripts/plugin-echo.sh` | exercises the example plugin |
+| `scripts/jev-report.py`, `scripts/fake-jev.py` | report and fake server for the Jev ([`docs/JEV.md`](docs/JEV.md)) |
 
 ## Distribution package
 
@@ -230,10 +230,10 @@ a new set of artifacts in `target/`, and Cargo never deletes the old ones, so th
 and types that made every test binary grow by hundreds of megabytes.
 
 ```bash
-bash scripts/limpar-cache.sh --seco     # shows what it would delete
-bash scripts/limpar-cache.sh            # prunes units unused for 3 days; tightens retention above 25 GB
-bash scripts/limpar-cache.sh --dias 7   # longer retention
-bash scripts/limpar-cache.sh --tudo     # cargo clean
+bash scripts/clean-cache.sh --seco     # shows what it would delete
+bash scripts/clean-cache.sh            # prunes units unused for 3 days; tightens retention above 25 GB
+bash scripts/clean-cache.sh --dias 7   # longer retention
+bash scripts/clean-cache.sh --tudo     # cargo clean
 ```
 
 Pruning refuses to run while `cargo` or `rustc` is running, so it does not break a build in progress.

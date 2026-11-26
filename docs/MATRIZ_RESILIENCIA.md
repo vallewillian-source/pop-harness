@@ -102,7 +102,7 @@ Run 2 (same parameters, n = 120):
 
 ```bash
 cd apps/pop-harness
-bash scripts/medir-resiliencia.sh 3 40    # 3 rounds of 40 messages per scenario
+bash scripts/measure-resilience.sh 3 40    # 3 rounds of 40 messages per scenario
 ```
 
 It takes about 9 minutes per run. The CSV with each sample goes to `target/mx29/medicao.csv` (outside git). The printed
@@ -169,6 +169,6 @@ summary shows the median and p95 of each scenario.
 ## Files in this delivery
 
 - `crates/poph-server/tests/matrix_resiliencia.rs`: the resilience tests, the measurement and the defect test.
-- `scripts/medir-resiliencia.sh`: repeats the measurement.
+- `scripts/measure-resilience.sh`: repeats the measurement.
 - `docs/MATRIZ_RESILIENCIA.md`: this document.
 - The MX-29 line in the internal task list (not published).

@@ -276,15 +276,15 @@ fixa sem aumentar mensagens cortadas") é este teste.
 
 ```bash
 # simulado (custo zero, mede o encanamento — ele ignora a instrução):
-python3 scripts/jev-falso.py --porta 18097 &
+python3 scripts/fake-jev.py --porta 18097 &
 TYPESAFE_API_KEY=ficticia target/debug/poph --config /tmp/poph-hr30/poph-falso.toml \
     jev eval g2 tests/jev/g2.jsonl --json > /tmp/g2-falso.json
-python3 scripts/jev-relatorio.py /tmp/g2-falso.json --conjunto tests/jev/g2.jsonl --gate g2
+python3 scripts/jev-report.py /tmp/g2-falso.json --conjunto tests/jev/g2.jsonl --gate g2
 
 # Jev real (chave só no ambiente):
 TYPESAFE_API_KEY=… target/debug/poph --config /tmp/poph-hr30/poph-real.toml \
     jev eval g2 tests/jev/g2.jsonl --json > /tmp/g2-real.json
-python3 scripts/jev-relatorio.py /tmp/g2-real.json --conjunto tests/jev/g2.jsonl --gate g2
+python3 scripts/jev-report.py /tmp/g2-real.json --conjunto tests/jev/g2.jsonl --gate g2
 ```
 
 No simulado o número é 71/75 (89,7% de recall, 4 falsos negativos, zero falso positivo): ele lê só o
@@ -388,15 +388,15 @@ defensável — mas é decisão de produto, não de código, e por isso **o limi
 
 ```bash
 # simulado (custo zero, mede o encanamento — ele ignora a instrução):
-python3 scripts/jev-falso.py --porta 18093 &
+python3 scripts/fake-jev.py --porta 18093 &
 TYPESAFE_API_KEY=ficticia target/debug/poph --config /tmp/poph-hr32/poph-falso.toml \
     jev eval g4 tests/jev/g4.jsonl --json > /tmp/g4-falso.json
-python3 scripts/jev-relatorio.py /tmp/g4-falso.json --conjunto tests/jev/g4.jsonl --gate g4
+python3 scripts/jev-report.py /tmp/g4-falso.json --conjunto tests/jev/g4.jsonl --gate g4
 
 # Jev real (chave só no ambiente):
 TYPESAFE_API_KEY=… target/debug/poph --config /tmp/poph-hr32/poph-real.toml \
     jev eval g4 tests/jev/g4.jsonl --json > /tmp/g4-real1.json
-python3 scripts/jev-relatorio.py /tmp/g4-real1.json --conjunto tests/jev/g4.jsonl --gate g4
+python3 scripts/jev-report.py /tmp/g4-real1.json --conjunto tests/jev/g4.jsonl --gate g4
 ```
 
 O `--gate g4` do relatório imprime a matriz do G4: acerto, escolha errada confiante (o erro grave),
@@ -675,7 +675,7 @@ TYPESAFE_API_KEY=… target/debug/poph --config /tmp/jev-real.toml \
     jev eval g5 tests/jev/g5.jsonl --json > /tmp/g5-real.json
 ```
 
-O `scripts/jev-relatorio.py` ainda não tem a matriz do G5 (o número que importa aqui é o par
+O `scripts/jev-report.py` ainda não tem a matriz do G5 (o número que importa aqui é o par
 `esperado` × `escolha` do JSON, por isso a análise acima sai de um recorte sobre `detalhes`). O Jev
 falso não implementa o G5: ele responde por palavra-chave e não lê a lista de candidatos, então a
 medição útil do G5 é sempre com o Jev real.
@@ -1390,13 +1390,13 @@ Conjuntos em `apps/pop-harness/tests/jev/`:
 
 ### Jev falso para medir a mecânica
 
-`scripts/jev-falso.py` implementa o contrato `POST /v1/systemone` com **palavras-chave** — não é o
+`scripts/fake-jev.py` implementa o contrato `POST /v1/systemone` com **palavras-chave** — não é o
 Jev. Serve para rodar `poph jev eval` sem rede externa e sem chave real, e o número que ele produz
 mede o **conjunto e o encanamento** (limiares, contagem de falso positivo e falso negativo), não a
 qualidade do modelo:
 
 ```bash
-python3 scripts/jev-falso.py --porta 18099          # terminal 1
+python3 scripts/fake-jev.py --porta 18099          # terminal 1
 mkdir -p /tmp/jev/dados && cat > /tmp/jev/poph.toml <<'TOML'
 [dados]
 diretorio = "/tmp/jev/dados"
@@ -1464,7 +1464,7 @@ retentativas = 1
 TOML
 TYPESAFE_API_KEY=… target/debug/poph --config /tmp/jev-real.toml \
     jev eval g1 tests/jev/g1.jsonl --json > /tmp/g1-real.json
-python3 scripts/jev-relatorio.py /tmp/g1-real.json      # matriz de confusão, por categoria, erros
+python3 scripts/jev-report.py /tmp/g1-real.json      # matriz de confusão, por categoria, erros
 ```
 
 | Execução | acerto | abstenção | erro | confiança média | latência (média · p50 · p95) | tokens |
@@ -1595,7 +1595,7 @@ Comando para repetir (chave só no ambiente, nunca em arquivo):
 ```bash
 TYPESAFE_API_KEY=… target/debug/poph --config /tmp/jev-real.toml \
     jev eval g1 tests/jev/g1.jsonl --json > /tmp/g1-real.json
-python3 scripts/jev-relatorio.py /tmp/g1-real.json --conjunto tests/jev/g1.jsonl
+python3 scripts/jev-report.py /tmp/g1-real.json --conjunto tests/jev/g1.jsonl
 ```
 
 
@@ -1680,7 +1680,7 @@ python3 scripts/jev-relatorio.py /tmp/g1-real.json --conjunto tests/jev/g1.jsonl
 - **G5: o relatório do `poph jev eval` mistura abstenção certa com fallback** (baixa): com `esperado:
   "nenhum"` a resposta certa é uma abstenção, e o contador do relatório soma as duas coisas. A
   análise tem de ser feita pelo par `esperado` × `escolha` (é o que a §5-E faz).
-- **G5: o Jev falso não implementa a pergunta** (baixa): `scripts/jev-falso.py` responde por
+- **G5: o Jev falso não implementa a pergunta** (baixa): `scripts/fake-jev.py` responde por
   palavra-chave e não lê os candidatos — a medição do G5 só vale com o Jev real.
 - **G5: o rótulo do conjunto é nosso** (média): os 73 casos foram escritos e revisados por nós, com
   voz real do POP Bench. Três rótulos eram discutíveis e foram corrigidos depois da primeira

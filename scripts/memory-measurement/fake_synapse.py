@@ -9,7 +9,7 @@ user registration, profile and display name, room creation with alias, invite, j
 It keeps nothing on disk. The counters come out at `GET /_fake/estatisticas`, which needs no token.
 
 Usage:
-  MX30_AS_TOKEN=... python3 synapse_falso.py --porta 18431 [--latencia-ms 0]
+  MX30_AS_TOKEN=... python3 fake_synapse.py --porta 18431 [--latencia-ms 0]
 
 The AS token is read from the environment (never from the command line, so it does not show up in `ps`).
 Without the right token, the fake answers 401, as Synapse does.

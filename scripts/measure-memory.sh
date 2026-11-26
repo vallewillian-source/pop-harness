@@ -97,7 +97,7 @@ CONFIG="$DIR/poph.toml"
 
 FAKE_PID=""
 if [ "$MODE" != real ]; then
-    MX30_AS_TOKEN="$AS_TOKEN" python3 -I "$(pwd)/scripts/medicao-memoria/synapse_falso.py" \
+    MX30_AS_TOKEN="$AS_TOKEN" python3 -I "$(pwd)/scripts/memory-measurement/fake_synapse.py" \
         --porta "$PORT_FAKE" >"$ROOT/logs/falso-$MODE-$ROOMS-$MESSAGES-$ROUND.log" 2>&1 &
     FAKE_PID=$!
     for _ in $(seq 1 50); do

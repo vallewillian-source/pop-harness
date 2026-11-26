@@ -16,7 +16,7 @@ something else: the error the client feels. Each gate has its own:
 
 Usage:
     poph jev eval g1 tests/jev/g1.jsonl --json > relatorio.json
-    python3 scripts/jev-relatorio.py relatorio.json [--conjunto tests/jev/g1.jsonl] [--gate g2]
+    python3 scripts/jev-report.py relatorio.json [--conjunto tests/jev/g1.jsonl] [--gate g2]
 
 The set is read to show the client's text for each wrong case and to group by `categoria`.
 """

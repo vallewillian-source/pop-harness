@@ -13,7 +13,7 @@
 //! - **mensagem venenosa**: é isolada e a fila segue.
 //! - **cliente primeiro** (A1/A4): o cliente recebe a resposta mesmo com o Synapse fora ou lento.
 //!   A comparação de números (módulo ligado × desligado) está em `medicao_cliente_primeiro`, que
-//!   é `#[ignore]` e roda por `scripts/medir-resiliencia.sh`.
+//!   é `#[ignore]` e roda por `scripts/measure-resilience.sh`.
 //!
 //! Nada de rede externa. As quedas são simuladas (ver o limite no `docs/MATRIZ_RESILIENCIA.md`).
 
@@ -1825,9 +1825,9 @@ async fn medir_rodada(modo: Modo, rodada: usize, amostras: usize) -> Vec<Amostra
 /// Duas medidas por mensagem: `gravada_ms` (até a resposta entrar no banco, o trabalho do turno) e
 /// `envio_ms` (até o envio chegar à Evolution falsa, o que o cliente recebe, com o laço de saída de
 /// produção). `MX29_RODADAS` (padrão 3) e `MX29_AMOSTRAS` (padrão 20) controlam o tamanho.
-/// `MX29_CSV` recebe o caminho do arquivo. Roda por `scripts/medir-resiliencia.sh`.
+/// `MX29_CSV` recebe o caminho do arquivo. Roda por `scripts/measure-resilience.sh`.
 #[tokio::test]
-#[ignore = "medição: rodar por scripts/medir-resiliencia.sh"]
+#[ignore = "medição: rodar por scripts/measure-resilience.sh"]
 async fn medicao_cliente_primeiro() {
     let rodadas: usize = std::env::var("MX29_RODADAS")
         .ok()
