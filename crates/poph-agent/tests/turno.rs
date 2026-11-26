@@ -307,10 +307,10 @@ fn resposta(texto: &str) -> Script {
     Script::Events(vec![
         LlmEvent::Texto(texto.to_owned()),
         LlmEvent::Usage(Usage {
-            entrada: 120,
+            input: 120,
             saida: 30,
         }),
-        LlmEvent::Fim(FinishReason::Concluido),
+        LlmEvent::Fim(FinishReason::Completed),
     ])
 }
 
@@ -425,8 +425,8 @@ async fn prefixo_identico_em_tres_turnos() {
 
     let pedidos = fake.received();
     assert_eq!(pedidos.len(), 3);
-    let prefixo = |pedido: &poph_core::llm::Request| match &pedido.mensagens[0] {
-        poph_core::llm::Message::Sistema(texto) => texto.clone(),
+    let prefixo = |pedido: &poph_core::llm::Request| match &pedido.messages[0] {
+        poph_core::llm::Message::System(texto) => texto.clone(),
         outro => panic!("a primeira mensagem devia ser o prefixo: {outro:?}"),
     };
     let primeiro = prefixo(&pedidos[0]);
@@ -436,8 +436,8 @@ async fn prefixo_identico_em_tres_turnos() {
     }
 
     // O bloco volátil (segunda mensagem de sistema) traz a hora e muda entre turnos.
-    let volatil = |pedido: &poph_core::llm::Request| match &pedido.mensagens[1] {
-        poph_core::llm::Message::Sistema(texto) => texto.clone(),
+    let volatil = |pedido: &poph_core::llm::Request| match &pedido.messages[1] {
+        poph_core::llm::Message::System(texto) => texto.clone(),
         outro => panic!("a segunda mensagem devia ser o bloco volátil: {outro:?}"),
     };
     assert!(volatil(&pedidos[0]).contains("hora:"));
@@ -690,7 +690,7 @@ async fn ferramenta_nao_habilitada_nao_e_oferecida_e_laco_para_no_limite() {
             nome: "consultar_base".to_owned(),
             arguments: serde_json::json!({}),
         }),
-        LlmEvent::Fim(FinishReason::ChamadasFerramenta),
+        LlmEvent::Fim(FinishReason::ToolCalls),
     ]);
     let (motor, fake) = cenario.motor(vec![duas_chamadas, resposta("pronto")], cenario.pausa());
     let motor = motor.com_ferramentas(Arc::new(DoisRegistros));
@@ -723,10 +723,12 @@ async fn ferramenta_nao_habilitada_nao_e_oferecida_e_laco_para_no_limite() {
 
     // Chamada de ferramenta desabilitada vira resultado de erro, não execução.
     let resultados: Vec<String> = pedidos[1]
-        .mensagens
+        .messages
         .iter()
         .filter_map(|mensagem| match mensagem {
-            poph_core::llm::Message::Resultado { conteudo, .. } => Some(conteudo.clone()),
+            poph_core::llm::Message::Resultado {
+                content: conteudo, ..
+            } => Some(conteudo.clone()),
             _ => None,
         })
         .collect();
@@ -754,14 +756,14 @@ async fn cancelamento_encerra_o_turno_e_conclui_a_entrada() {
     let cenario = Cenario::novo("cancelamento");
     let (motor, _fake) = cenario.motor(
         vec![Script::Pending {
-            eventos: vec![LlmEvent::Texto("parcial ".to_owned())],
+            events: vec![LlmEvent::Texto("parcial ".to_owned())],
             after: Duration::from_secs(30),
-            erro: LlmError::TimedOut { segundos: 30 },
+            error: LlmError::TimedOut { seconds: 30 },
         }],
         cenario.pausa(),
     );
     // Cancelamento do processo, como o Ctrl-C do `chat`.
-    let compartilhado = Cancellation::novo();
+    let compartilhado = Cancellation::new();
     let fluxo = cenario.fluxo(Arc::new(motor.com_cancelamento(compartilhado.clone())));
 
     fluxo
@@ -828,7 +830,7 @@ async fn erro_do_provedor_grava_o_turno_e_nao_deixa_item_preso() {
     let (motor, _fake) = cenario.motor(
         vec![Script::Failure(LlmError::Unavailable {
             tentativas: 3,
-            ultimo: "503".to_owned(),
+            last_error: "503".to_owned(),
         })],
         cenario.pausa(),
     );
@@ -1394,7 +1396,7 @@ async fn esperar_fila_vazia(fluxo: &Fluxo, cenario: &Cenario) {
 fn falha_do_provedor() -> Script {
     Script::Failure(LlmError::Unavailable {
         tentativas: 3,
-        ultimo: "503 indisponível".to_owned(),
+        last_error: "503 indisponível".to_owned(),
     })
 }
 
@@ -1642,9 +1644,9 @@ async fn com_limite_de_uma_tentativa_a_primeira_falha_ja_e_definitiva() {
 async fn tempo_maximo_do_turno_conta_como_falha_do_modelo_e_entra_na_escada() {
     let cenario = Cenario::novo("tempo-maximo");
     let pendurado = Script::Pending {
-        eventos: Vec::new(),
+        events: Vec::new(),
         after: Duration::from_secs(10),
-        erro: LlmError::TimedOut { segundos: 10 },
+        error: LlmError::TimedOut { seconds: 10 },
     };
     let opcoes_turno = OpcoesTurno {
         tempo_maximo_turno: Duration::from_millis(50),

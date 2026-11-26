@@ -34,7 +34,7 @@ fn line_payload(raw: &[u8]) -> Option<String> {
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use super::*;
 
     #[test]
@@ -59,7 +59,7 @@ mod testes {
     }
 
     #[test]
-    fn ignora_linhas_que_nao_sao_dados_e_aceita_crlf() {
+    fn skips_non_data_lines_and_accepts_crlf() {
         let mut reader = SseReader::new();
         let input: &[u8] = b": comentario\r\nevent: x\r\ndata: ok\r\n";
         assert_eq!(reader.push(input), vec!["ok"]);

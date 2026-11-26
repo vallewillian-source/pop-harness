@@ -1796,8 +1796,11 @@ fn chamada(id: &str, nome: &str, argumentos: Value) -> LlmEvent {
 fn resultados(pedidos: &[Request], prefixo: &str) -> Vec<(String, String)> {
     let mut vistos: Vec<(String, String)> = Vec::new();
     for pedido in pedidos {
-        for mensagem in &pedido.mensagens {
-            if let Message::Resultado { id, conteudo } = mensagem
+        for mensagem in &pedido.messages {
+            if let Message::Resultado {
+                id,
+                content: conteudo,
+            } = mensagem
                 && id.starts_with(prefixo)
                 && !vistos.iter().any(|(visto, _)| visto == id)
             {
@@ -1880,7 +1883,7 @@ async fn ferramentas_do_llm_nao_alcancam_outra_org() {
     let roteiros = vec![
         Script::Events(vec![
             chamada("a1", "enviar_arquivo", json!({"id": b.arquivo})),
-            LlmEvent::Fim(FinishReason::ChamadasFerramenta),
+            LlmEvent::Fim(FinishReason::ToolCalls),
         ]),
         Script::Events(vec![
             chamada(
@@ -1888,35 +1891,35 @@ async fn ferramentas_do_llm_nao_alcancam_outra_org() {
                 "cart_add_item",
                 json!({"produto_id": b.produto, "quantidade": 1}),
             ),
-            LlmEvent::Fim(FinishReason::ChamadasFerramenta),
+            LlmEvent::Fim(FinishReason::ToolCalls),
         ]),
         Script::Events(vec![
             chamada("a3", "consultar_base", json!({"consulta": MARCADOR_B})),
-            LlmEvent::Fim(FinishReason::ChamadasFerramenta),
+            LlmEvent::Fim(FinishReason::ToolCalls),
         ]),
         Script::Events(vec![
             chamada("a4", "buscar_produto", json!({"termo": MARCADOR_B})),
-            LlmEvent::Fim(FinishReason::ChamadasFerramenta),
+            LlmEvent::Fim(FinishReason::ToolCalls),
         ]),
         Script::Events(vec![
             LlmEvent::Texto("Não tenho nada para enviar.".to_owned()),
-            LlmEvent::Fim(FinishReason::Concluido),
+            LlmEvent::Fim(FinishReason::Completed),
         ]),
         Script::Events(vec![
             chamada("b1", "enviar_arquivo", json!({"id": b.arquivo})),
-            LlmEvent::Fim(FinishReason::ChamadasFerramenta),
+            LlmEvent::Fim(FinishReason::ToolCalls),
         ]),
         Script::Events(vec![
             chamada("b2", "consultar_base", json!({"consulta": MARCADOR_B})),
-            LlmEvent::Fim(FinishReason::ChamadasFerramenta),
+            LlmEvent::Fim(FinishReason::ToolCalls),
         ]),
         Script::Events(vec![
             chamada("b3", "buscar_produto", json!({"termo": MARCADOR_B})),
-            LlmEvent::Fim(FinishReason::ChamadasFerramenta),
+            LlmEvent::Fim(FinishReason::ToolCalls),
         ]),
         Script::Events(vec![
             LlmEvent::Texto("Pronto.".to_owned()),
-            LlmEvent::Fim(FinishReason::Concluido),
+            LlmEvent::Fim(FinishReason::Completed),
         ]),
     ];
     let falso = Arc::new(FakeProvider::with_scripts(roteiros));

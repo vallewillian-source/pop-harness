@@ -541,10 +541,10 @@ fn resposta(texto: &str) -> Script {
     Script::Events(vec![
         LlmEvent::Texto(texto.to_owned()),
         LlmEvent::Usage(Usage {
-            entrada: 120,
+            input: 120,
             saida: 30,
         }),
-        LlmEvent::Fim(FinishReason::Concluido),
+        LlmEvent::Fim(FinishReason::Completed),
     ])
 }
 
@@ -1040,7 +1040,7 @@ async fn metricas_do_turno_aparecem_no_metrics() {
 fn falha_do_provedor() -> Script {
     Script::Failure(poph_core::llm::LlmError::Unavailable {
         tentativas: 3,
-        ultimo: "503 indisponível".to_owned(),
+        last_error: "503 indisponível".to_owned(),
     })
 }
 

@@ -255,7 +255,7 @@ impl Drop for Cenario {
 fn resposta(texto: &str) -> Script {
     Script::Events(vec![
         LlmEvent::Texto(texto.to_owned()),
-        LlmEvent::Fim(FinishReason::Concluido),
+        LlmEvent::Fim(FinishReason::Completed),
     ])
 }
 
@@ -266,7 +266,7 @@ fn chamada(nome: &str, argumentos: serde_json::Value) -> Script {
             nome: nome.to_owned(),
             arguments: argumentos,
         }),
-        LlmEvent::Fim(FinishReason::ChamadasFerramenta),
+        LlmEvent::Fim(FinishReason::ToolCalls),
     ])
 }
 
@@ -357,10 +357,12 @@ async fn ferramenta_nao_habilitada_grava_recusa_e_o_modelo_recebe_o_erro() {
     let pedidos = fake.received();
     assert_eq!(pedidos.len(), 2);
     let erro = pedidos[1]
-        .mensagens
+        .messages
         .iter()
         .find_map(|mensagem| match mensagem {
-            Message::Resultado { conteudo, .. } => Some(conteudo.clone()),
+            Message::Resultado {
+                content: conteudo, ..
+            } => Some(conteudo.clone()),
             _ => None,
         })
         .expect("o resultado da chamada vai para o modelo");

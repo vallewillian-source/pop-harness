@@ -343,10 +343,10 @@ fn roteiro_texto(texto: &str) -> Script {
     Script::Events(vec![
         LlmEvent::Texto(texto.to_owned()),
         LlmEvent::Usage(Usage {
-            entrada: 100,
+            input: 100,
             saida: 10,
         }),
-        LlmEvent::Fim(FinishReason::Concluido),
+        LlmEvent::Fim(FinishReason::Completed),
     ])
 }
 
@@ -845,19 +845,21 @@ async fn agente_que_desliga_o_g8_volta_ao_comportamento_de_hoje() {
 /// Todo o texto de um pedido ao modelo (sistema, usuário, assistente e resultado de ferramenta).
 fn caracteres_do_pedido(pedido: &poph_core::llm::Request) -> usize {
     pedido
-        .mensagens
+        .messages
         .iter()
         .map(|mensagem| match mensagem {
-            poph_core::llm::Message::Sistema(texto) => texto.chars().count(),
-            poph_core::llm::Message::Usuario(partes) => partes
+            poph_core::llm::Message::System(texto) => texto.chars().count(),
+            poph_core::llm::Message::User(partes) => partes
                 .iter()
                 .map(|parte| match parte {
                     poph_core::llm::Part::Texto(texto) => texto.chars().count(),
                     _ => 0,
                 })
                 .sum(),
-            poph_core::llm::Message::Assistente { texto, .. } => texto.chars().count(),
-            poph_core::llm::Message::Resultado { conteudo, .. } => conteudo.chars().count(),
+            poph_core::llm::Message::Assistant { texto, .. } => texto.chars().count(),
+            poph_core::llm::Message::Resultado {
+                content: conteudo, ..
+            } => conteudo.chars().count(),
         })
         .sum()
 }

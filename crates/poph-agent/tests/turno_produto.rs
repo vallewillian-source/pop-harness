@@ -217,7 +217,7 @@ impl Drop for Cenario {
 fn resposta(texto: &str) -> Script {
     Script::Events(vec![
         LlmEvent::Texto(texto.to_owned()),
-        LlmEvent::Fim(FinishReason::Concluido),
+        LlmEvent::Fim(FinishReason::Completed),
     ])
 }
 
@@ -236,7 +236,7 @@ async fn turno_grava_o_produto_usado_com_o_preco_do_registro() {
             nome: "buscar_produto".to_owned(),
             arguments: serde_json::json!({"termo": "baratas"}),
         }),
-        LlmEvent::Fim(FinishReason::ChamadasFerramenta),
+        LlmEvent::Fim(FinishReason::ToolCalls),
     ]);
     let (motor, fake) = cenario.motor(vec![chamada, resposta("A dedetização custa R$ 320,00.")]);
 

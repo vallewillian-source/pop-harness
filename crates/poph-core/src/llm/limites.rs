@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use poph_types::OrgId;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
-use super::erro::LlmError;
+use super::error::LlmError;
 
 #[derive(Debug, Clone)]
 pub struct LlmLimiter {
@@ -70,7 +70,7 @@ impl LlmLimiter {
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use std::time::Duration;
 
     use super::*;
@@ -104,12 +104,12 @@ mod testes {
         let _p2 = limiter.acquire(OrgId::generate()).await.expect("2");
         assert_eq!(limiter.available_globally(), 0);
 
-        let terceira = tokio::time::timeout(
+        let third = tokio::time::timeout(
             Duration::from_millis(50),
             limiter.acquire(OrgId::generate()),
         );
         assert!(
-            terceira.await.is_err(),
+            third.await.is_err(),
             "o global de 2 não pode deixar passar a 3ª"
         );
 

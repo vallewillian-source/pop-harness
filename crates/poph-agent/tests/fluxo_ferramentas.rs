@@ -450,10 +450,10 @@ fn texto(conteudo: &str) -> Script {
     Script::Events(vec![
         LlmEvent::Texto(conteudo.to_owned()),
         LlmEvent::Usage(Usage {
-            entrada: 10,
+            input: 10,
             saida: 5,
         }),
-        LlmEvent::Fim(FinishReason::Concluido),
+        LlmEvent::Fim(FinishReason::Completed),
     ])
 }
 
@@ -465,7 +465,7 @@ fn chamada(nome: &str, argumentos: Value) -> Script {
             nome: nome.to_owned(),
             arguments: argumentos,
         }),
-        LlmEvent::Fim(FinishReason::Concluido),
+        LlmEvent::Fim(FinishReason::Completed),
     ])
 }
 
@@ -482,7 +482,7 @@ fn duas_chamadas(primeira: (&str, Value), segunda: (&str, Value)) -> Script {
             nome: segunda.0.to_owned(),
             arguments: segunda.1,
         }),
-        LlmEvent::Fim(FinishReason::Concluido),
+        LlmEvent::Fim(FinishReason::Completed),
     ])
 }
 
@@ -507,10 +507,12 @@ fn escolhas(itens: &[(&str, &str)]) -> std::collections::BTreeMap<String, String
 /// O que o modelo recebeu como resultado das ferramentas (a mensagem de `Resultado` do pedido).
 fn resultados(pedido: &Request) -> Vec<String> {
     pedido
-        .mensagens
+        .messages
         .iter()
         .filter_map(|mensagem| match mensagem {
-            Message::Resultado { conteudo, .. } => Some(conteudo.clone()),
+            Message::Resultado {
+                content: conteudo, ..
+            } => Some(conteudo.clone()),
             _ => None,
         })
         .collect()

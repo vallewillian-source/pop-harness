@@ -337,10 +337,10 @@ fn roteiro(texto: &str) -> Script {
     Script::Events(vec![
         LlmEvent::Texto(texto.to_owned()),
         LlmEvent::Usage(Usage {
-            entrada: 10,
+            input: 10,
             saida: 5,
         }),
-        LlmEvent::Fim(FinishReason::Concluido),
+        LlmEvent::Fim(FinishReason::Completed),
     ])
 }
 
@@ -359,18 +359,18 @@ fn motor_jev(jev: Arc<JevFalso>) -> Arc<MotorJev> {
 /// Sistema de mensagens do pedido ao modelo, na ordem em que foram enviadas.
 fn sistemas(pedido: &poph_core::llm::Request) -> Vec<String> {
     pedido
-        .mensagens
+        .messages
         .iter()
         .filter_map(|mensagem| match mensagem {
-            poph_core::llm::Message::Sistema(texto) => Some(texto.clone()),
+            poph_core::llm::Message::System(texto) => Some(texto.clone()),
             _ => None,
         })
         .collect()
 }
 
 fn pedido(pedido: &poph_core::llm::Request, trecho: &str) -> bool {
-    pedido.mensagens.iter().any(|mensagem| match mensagem {
-        poph_core::llm::Message::Sistema(texto) => texto.contains(trecho),
+    pedido.messages.iter().any(|mensagem| match mensagem {
+        poph_core::llm::Message::System(texto) => texto.contains(trecho),
         _ => false,
     })
 }

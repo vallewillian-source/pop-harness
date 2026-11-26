@@ -989,10 +989,10 @@ fn resposta_do_agente(i: usize) -> Script {
     Script::Events(vec![
         LlmEvent::Texto(format!("resposta do agente {}", marcador(i))),
         LlmEvent::Usage(Usage {
-            entrada: 120,
+            input: 120,
             saida: 30,
         }),
-        LlmEvent::Fim(FinishReason::Concluido),
+        LlmEvent::Fim(FinishReason::Completed),
     ])
 }
 

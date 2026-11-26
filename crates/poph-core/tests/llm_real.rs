@@ -32,7 +32,7 @@ async fn uma_chamada_real_com_stream_e_ferramenta() {
         modelo: modelo.clone(),
         timeout: Duration::from_secs(120),
         retentativas: 0,
-        espera_base: Duration::from_secs(1),
+        base_wait: Duration::from_secs(1),
         temperatura: 0.0,
         max_tokens_saida: 512,
         recusa_turno_modelo: true,
@@ -48,8 +48,8 @@ async fn uma_chamada_real_com_stream_e_ferramenta() {
     let mut pedido = Request::new(
         OrgId::generate(),
         vec![
-            Message::Sistema("Você é um atendente objetivo. Responda em português do Brasil.".to_owned()),
-            Message::Usuario(vec![Part::Texto(
+            Message::System("Você é um atendente objetivo. Responda em português do Brasil.".to_owned()),
+            Message::User(vec![Part::Texto(
                 "Use a ferramenta buscar_produto com o termo 'dedetização de baratas' antes de responder.".to_owned(),
             )]),
         ],
@@ -57,7 +57,7 @@ async fn uma_chamada_real_com_stream_e_ferramenta() {
     pedido.tools = vec![Tool {
         nome: "buscar_produto".to_owned(),
         descricao: "Busca um produto no catálogo e devolve preço e condições".to_owned(),
-        parametros: json!({
+        parameters: json!({
             "type": "object",
             "properties": {"termo": {"type": "string", "description": "nome do produto"}},
             "required": ["termo"]

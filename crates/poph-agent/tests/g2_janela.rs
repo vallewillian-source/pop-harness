@@ -298,10 +298,10 @@ fn provedor() -> Arc<FakeProvider> {
     Arc::new(FakeProvider::with_scripts(vec![Script::Events(vec![
         LlmEvent::Texto("Claro, como posso ajudar?".to_owned()),
         LlmEvent::Usage(Usage {
-            entrada: 10,
+            input: 10,
             saida: 5,
         }),
-        LlmEvent::Fim(FinishReason::Concluido),
+        LlmEvent::Fim(FinishReason::Completed),
     ])]))
 }
 
@@ -375,9 +375,9 @@ async fn esperar_mais_estica_a_janela_e_agrupa_a_mensagem_seguinte() {
     assert_eq!(provedor.received().len(), 1, "uma chamada ao modelo");
     let pedido = &provedor.received()[0];
     let do_cliente = pedido
-        .mensagens
+        .messages
         .iter()
-        .filter(|mensagem| matches!(mensagem, Message::Usuario(_)))
+        .filter(|mensagem| matches!(mensagem, Message::User(_)))
         .count();
     assert_eq!(
         do_cliente, 2,

@@ -261,20 +261,20 @@ fn roteiro_texto(texto: &str) -> Script {
     Script::Events(vec![
         LlmEvent::Texto(texto.to_owned()),
         LlmEvent::Usage(Usage {
-            entrada: 100,
+            input: 100,
             saida: 10,
         }),
-        LlmEvent::Fim(FinishReason::Concluido),
+        LlmEvent::Fim(FinishReason::Completed),
     ])
 }
 
 /// Partes de imagem de um pedido, na ordem.
 fn imagens(pedido: &poph_core::llm::Request) -> Vec<(String, Vec<u8>)> {
     let mut achadas = Vec::new();
-    for mensagem in &pedido.mensagens {
-        if let Message::Usuario(partes) = mensagem {
+    for mensagem in &pedido.messages {
+        if let Message::User(partes) = mensagem {
             for parte in partes {
-                if let Part::Imagem { mime, bytes } = parte {
+                if let Part::Image { mime, bytes } = parte {
                     achadas.push((mime.clone(), bytes.clone()));
                 }
             }
@@ -286,13 +286,13 @@ fn imagens(pedido: &poph_core::llm::Request) -> Vec<(String, Vec<u8>)> {
 /// Todo o texto (de sistema e de usuário) de um pedido, junto.
 fn texto_do_pedido(pedido: &poph_core::llm::Request) -> String {
     let mut texto = String::new();
-    for mensagem in &pedido.mensagens {
+    for mensagem in &pedido.messages {
         match mensagem {
-            Message::Sistema(conteudo) => {
+            Message::System(conteudo) => {
                 texto.push_str(conteudo);
                 texto.push('\n');
             }
-            Message::Usuario(partes) => {
+            Message::User(partes) => {
                 for parte in partes {
                     if let Part::Texto(conteudo) = parte {
                         texto.push_str(conteudo);
@@ -300,7 +300,7 @@ fn texto_do_pedido(pedido: &poph_core::llm::Request) -> String {
                     }
                 }
             }
-            Message::Assistente {
+            Message::Assistant {
                 texto: conteudo, ..
             } => {
                 texto.push_str(conteudo);
@@ -328,12 +328,12 @@ async fn imagem_chega_ao_provedor() {
     assert_eq!(achadas[0].1, bytes, "os bytes vêm do blob, sem reextração");
     // O pedido não fica sem conteúdo: há a parte de imagem e não sobra texto em branco do cliente.
     let vazios = pedido
-        .mensagens
+        .messages
         .iter()
         .filter(|mensagem| {
             matches!(
                 mensagem,
-                Message::Usuario(partes)
+                Message::User(partes)
                     if partes.iter().all(|parte| matches!(parte, Part::Texto(t) if t.trim().is_empty()))
             )
         })

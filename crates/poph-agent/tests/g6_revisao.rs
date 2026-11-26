@@ -249,10 +249,10 @@ fn roteiro_texto(texto: &str) -> Script {
     Script::Events(vec![
         LlmEvent::Texto(texto.to_owned()),
         LlmEvent::Usage(Usage {
-            entrada: 100,
+            input: 100,
             saida: 10,
         }),
-        LlmEvent::Fim(FinishReason::Concluido),
+        LlmEvent::Fim(FinishReason::Completed),
     ])
 }
 
@@ -394,8 +394,8 @@ async fn g6_reprovada_regenera_uma_vez_e_envia_o_texto_novo() {
     let ultimo = pedidos.last().expect("o pedido da regeneração");
     assert!(
         matches!(
-            ultimo.mensagens.last(),
-            Some(poph_core::llm::Message::Usuario(_))
+            ultimo.messages.last(),
+            Some(poph_core::llm::Message::User(_))
         ),
         "o pedido da regeneração termina com a orientação do usuário"
     );

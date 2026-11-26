@@ -282,7 +282,7 @@ impl Drop for Cenario {
 fn resposta(texto: &str) -> Script {
     Script::Events(vec![
         LlmEvent::Texto(texto.to_owned()),
-        LlmEvent::Fim(FinishReason::Concluido),
+        LlmEvent::Fim(FinishReason::Completed),
     ])
 }
 
@@ -293,7 +293,7 @@ fn chamada(nome: &str, id: &str, argumentos: Value) -> Script {
             nome: nome.to_owned(),
             arguments: argumentos,
         }),
-        LlmEvent::Fim(FinishReason::ChamadasFerramenta),
+        LlmEvent::Fim(FinishReason::ToolCalls),
     ])
 }
 
@@ -482,12 +482,13 @@ async fn llm_manda_preco_no_turno_e_o_total_continua_do_catalogo() {
     // O erro da primeira tentativa volta ao modelo como resultado de ferramenta.
     let pedidos = fake.received();
     let resultado = pedidos[1]
-        .mensagens
+        .messages
         .iter()
         .find_map(|mensagem| match mensagem {
-            poph_core::llm::Message::Resultado { id, conteudo } if id == "c1" => {
-                Some(conteudo.clone())
-            }
+            poph_core::llm::Message::Resultado {
+                id,
+                content: conteudo,
+            } if id == "c1" => Some(conteudo.clone()),
             _ => None,
         })
         .expect("resultado da primeira chamada");

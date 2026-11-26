@@ -546,8 +546,8 @@ impl Resumidor {
         let mut pedido = Request::new(
             org,
             vec![
-                MensagemLlm::Sistema(INSTRUCOES_RESUMO.to_owned()),
-                MensagemLlm::Usuario(vec![Part::Texto(corpo)]),
+                MensagemLlm::System(INSTRUCOES_RESUMO.to_owned()),
+                MensagemLlm::User(vec![Part::Texto(corpo)]),
             ],
         );
         pedido.modelo = Some(modelo.to_owned());

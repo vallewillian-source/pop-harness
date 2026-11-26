@@ -285,10 +285,10 @@ fn roteiro_texto(texto: &str) -> Script {
     Script::Events(vec![
         LlmEvent::Texto(texto.to_owned()),
         LlmEvent::Usage(Usage {
-            entrada: 100,
+            input: 100,
             saida: 10,
         }),
-        LlmEvent::Fim(FinishReason::Concluido),
+        LlmEvent::Fim(FinishReason::Completed),
     ])
 }
 
@@ -370,9 +370,9 @@ fn jev_fora() -> Arc<JevFalso> {
 
 fn texto_do_pedido(pedido: &poph_core::llm::Request) -> String {
     let mut texto = String::new();
-    for mensagem in &pedido.mensagens {
+    for mensagem in &pedido.messages {
         match mensagem {
-            poph_core::llm::Message::Usuario(partes) => {
+            poph_core::llm::Message::User(partes) => {
                 for parte in partes {
                     if let poph_core::llm::Part::Texto(trecho) = parte {
                         texto.push_str(trecho);
@@ -380,15 +380,17 @@ fn texto_do_pedido(pedido: &poph_core::llm::Request) -> String {
                     }
                 }
             }
-            poph_core::llm::Message::Assistente { texto: fala, .. } => {
+            poph_core::llm::Message::Assistant { texto: fala, .. } => {
                 texto.push_str(fala);
                 texto.push('\n');
             }
-            poph_core::llm::Message::Sistema(instrucoes) => {
+            poph_core::llm::Message::System(instrucoes) => {
                 texto.push_str(instrucoes);
                 texto.push('\n');
             }
-            poph_core::llm::Message::Resultado { conteudo, .. } => {
+            poph_core::llm::Message::Resultado {
+                content: conteudo, ..
+            } => {
                 texto.push_str(conteudo);
                 texto.push('\n');
             }

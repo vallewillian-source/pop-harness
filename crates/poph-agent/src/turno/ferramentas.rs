@@ -380,7 +380,7 @@ pub fn oferecidas(registro: &dyn RegistroFerramentas, habilitadas: &[String]) ->
         .map(|ferramenta| Tool {
             nome: ferramenta.nome().to_owned(),
             descricao: ferramenta.descricao().to_owned(),
-            parametros: ferramenta.parametros(),
+            parameters: ferramenta.parametros(),
         })
         .collect()
 }

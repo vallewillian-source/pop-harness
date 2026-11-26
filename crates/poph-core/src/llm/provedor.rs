@@ -3,44 +3,44 @@ use std::collections::HashSet;
 use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 
-use super::erro::LlmError;
-use super::tipos::{LlmEvent, Message, Part, Request};
+use super::error::LlmError;
+use super::types::{LlmEvent, Message, Part, Request};
 
 pub type LlmStream = BoxStream<'static, Result<LlmEvent, LlmError>>;
 
 pub trait LlmProvider: Send + Sync {
-    fn stream<'a>(&'a self, pedido: Request) -> BoxFuture<'a, Result<LlmStream, LlmError>>;
+    fn stream<'a>(&'a self, request: Request) -> BoxFuture<'a, Result<LlmStream, LlmError>>;
 }
 
 pub const IMAGE_MIMES: [&str; 4] = ["image/jpeg", "image/png", "image/gif", "image/webp"];
 
-pub fn validate_request(pedido: &Request, recusa_turno_modelo: bool) -> Result<(), LlmError> {
-    let Some(last) = pedido.mensagens.last() else {
+pub fn validate_request(request: &Request, recusa_turno_modelo: bool) -> Result<(), LlmError> {
+    let Some(last) = request.messages.last() else {
         return Err(LlmError::InvalidRequest("nenhuma mensagem".to_owned()));
     };
-    if recusa_turno_modelo && let Message::Assistente { .. } = last {
+    if recusa_turno_modelo && let Message::Assistant { .. } = last {
         return Err(LlmError::InvalidRequest(
             "a última mensagem é do modelo e o provedor recusa esse formato (llm.recusa_turno_modelo = true). Termine com a instrução do usuário ou com o resultado de uma ferramenta".to_owned(),
         ));
     }
 
     let mut names = HashSet::new();
-    for ferramenta in &pedido.tools {
-        if ferramenta.nome.trim().is_empty() {
+    for tool in &request.tools {
+        if tool.nome.trim().is_empty() {
             return Err(LlmError::InvalidRequest("ferramenta sem nome".to_owned()));
         }
-        if !names.insert(ferramenta.nome.as_str()) {
+        if !names.insert(tool.nome.as_str()) {
             return Err(LlmError::InvalidRequest(format!(
                 "ferramenta repetida: {}",
-                ferramenta.nome
+                tool.nome
             )));
         }
     }
 
-    for mensagem in &pedido.mensagens {
-        if let Message::Usuario(partes) = mensagem {
-            for parte in partes {
-                if let Part::Imagem { mime, bytes } = parte {
+    for mensagem in &request.messages {
+        if let Message::User(parts) = mensagem {
+            for part in parts {
+                if let Part::Image { mime, bytes } = part {
                     if !IMAGE_MIMES.contains(&mime.as_str()) {
                         return Err(LlmError::InvalidRequest(format!(
                             "tipo de imagem não aceito: {mime}"
@@ -57,28 +57,28 @@ pub fn validate_request(pedido: &Request, recusa_turno_modelo: bool) -> Result<(
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use poph_types::OrgId;
 
     use super::*;
-    use crate::llm::tipos::Tool;
+    use crate::llm::types::Tool;
 
-    fn request(mensagens: Vec<Message>) -> Request {
-        Request::new(OrgId::generate(), mensagens)
+    fn request(messages: Vec<Message>) -> Request {
+        Request::new(OrgId::generate(), messages)
     }
 
     fn request_ending_with_model() -> Request {
         request(vec![
-            Message::Usuario(vec![Part::Texto("oi".into())]),
-            Message::Assistente {
+            Message::User(vec![Part::Texto("oi".into())]),
+            Message::Assistant {
                 texto: "olá".into(),
-                chamadas: vec![],
+                calls: vec![],
             },
         ])
     }
 
     #[test]
-    fn recusa_pedido_que_termina_em_turno_do_modelo() {
+    fn rejects_request_ending_in_model_turn() {
         assert!(matches!(
             validate_request(&request_ending_with_model(), true),
             Err(LlmError::InvalidRequest(_))
@@ -94,10 +94,10 @@ mod testes {
     #[test]
     fn accepts_request_ending_with_tool_result() {
         let p = request(vec![
-            Message::Usuario(vec![Part::Texto("preço?".into())]),
-            Message::Assistente {
+            Message::User(vec![Part::Texto("preço?".into())]),
+            Message::Assistant {
                 texto: String::new(),
-                chamadas: vec![crate::llm::tipos::ToolCall {
+                calls: vec![crate::llm::types::ToolCall {
                     id: "c1".into(),
                     nome: "buscar".into(),
                     arguments: serde_json::json!({}),
@@ -105,7 +105,7 @@ mod testes {
             },
             Message::Resultado {
                 id: "c1".into(),
-                conteudo: "R$ 10".into(),
+                content: "R$ 10".into(),
             },
         ]);
         assert!(validate_request(&p, true).is_ok());
@@ -113,17 +113,17 @@ mod testes {
 
     #[test]
     fn rejects_image_type_and_duplicate_tool() {
-        let mut p = request(vec![Message::Usuario(vec![Part::Imagem {
+        let mut p = request(vec![Message::User(vec![Part::Image {
             mime: "image/bmp".into(),
             bytes: vec![1],
         }])]);
         assert!(validate_request(&p, true).is_err());
 
-        p.mensagens = vec![Message::Usuario(vec![Part::Texto("x".into())])];
+        p.messages = vec![Message::User(vec![Part::Texto("x".into())])];
         let f = Tool {
             nome: "a".into(),
             descricao: String::new(),
-            parametros: serde_json::json!({"type": "object"}),
+            parameters: serde_json::json!({"type": "object"}),
         };
         p.tools = vec![f.clone(), f];
         assert!(validate_request(&p, true).is_err());

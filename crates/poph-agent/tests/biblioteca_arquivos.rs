@@ -275,7 +275,7 @@ impl Drop for Cenario {
 fn resposta(texto: &str) -> Script {
     Script::Events(vec![
         LlmEvent::Texto(texto.to_owned()),
-        LlmEvent::Fim(FinishReason::Concluido),
+        LlmEvent::Fim(FinishReason::Completed),
     ])
 }
 
@@ -286,7 +286,7 @@ fn chamada(id: &str, argumentos: Value) -> Script {
             nome: NOME_FERRAMENTA.to_owned(),
             arguments: argumentos,
         }),
-        LlmEvent::Fim(FinishReason::ChamadasFerramenta),
+        LlmEvent::Fim(FinishReason::ToolCalls),
     ])
 }
 
@@ -480,7 +480,7 @@ async fn agente_com_a_ferramenta_ve_a_descricao_dos_arquivos() {
     );
     // O esquema aceita só `id`.
     assert_eq!(
-        ferramenta.parametros["properties"]
+        ferramenta.parameters["properties"]
             .as_object()
             .map(|mapa| mapa.keys().cloned().collect::<Vec<_>>()),
         Some(vec!["id".to_owned()])
@@ -558,7 +558,7 @@ async fn falha_do_modelo_depois_de_arquivo_enfileirado_nao_repete_o_envio() {
     let cenario = Cenario::novo("falha-arquivo", &[NOME_FERRAMENTA]);
     let falha = Script::Failure(LlmError::Unavailable {
         tentativas: 3,
-        ultimo: "503".to_owned(),
+        last_error: "503".to_owned(),
     });
     let (motor, fake) = cenario.motor(vec![
         chamada("c1", json!({"id": cenario.catalogo.to_string()})),

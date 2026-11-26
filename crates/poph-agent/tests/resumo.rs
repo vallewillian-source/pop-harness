@@ -58,20 +58,20 @@ fn texto(i: usize) -> String {
 
 /// Texto de um pedido de resumo: é o que começa com as instruções do resumidor.
 fn e_pedido_de_resumo(pedido: &Request) -> bool {
-    matches!(pedido.mensagens.first(), Some(Message::Sistema(texto)) if texto.starts_with("Você mantém o resumo"))
+    matches!(pedido.messages.first(), Some(Message::System(texto)) if texto.starts_with("Você mantém o resumo"))
 }
 
 /// Mensagens de histórico (cliente e agente) de um pedido, em ordem.
 fn historico(pedido: &Request) -> Vec<String> {
     pedido
-        .mensagens
+        .messages
         .iter()
         .filter_map(|mensagem| match mensagem {
-            Message::Usuario(partes) => partes.iter().find_map(|parte| match parte {
+            Message::User(partes) => partes.iter().find_map(|parte| match parte {
                 Part::Texto(texto) => Some(texto.clone()),
-                Part::Imagem { .. } => None,
+                Part::Image { .. } => None,
             }),
-            Message::Assistente { texto, .. } => Some(texto.clone()),
+            Message::Assistant { texto, .. } => Some(texto.clone()),
             _ => None,
         })
         .collect()
@@ -79,8 +79,8 @@ fn historico(pedido: &Request) -> Vec<String> {
 
 /// Bloco volátil do turno (o que começa com a marca de contexto), se houver.
 fn bloco_volatil(pedido: &Request) -> Option<String> {
-    pedido.mensagens.iter().find_map(|mensagem| match mensagem {
-        Message::Sistema(texto) if texto.starts_with("<contexto_do_turno>") => Some(texto.clone()),
+    pedido.messages.iter().find_map(|mensagem| match mensagem {
+        Message::System(texto) if texto.starts_with("<contexto_do_turno>") => Some(texto.clone()),
         _ => None,
     })
 }
@@ -113,10 +113,10 @@ impl LlmProvider for ProvedorLento {
             let eventos = vec![
                 LlmEvent::Texto(texto),
                 LlmEvent::Usage(Usage {
-                    entrada: 100,
+                    input: 100,
                     saida: 20,
                 }),
-                LlmEvent::Fim(FinishReason::Concluido),
+                LlmEvent::Fim(FinishReason::Completed),
             ];
             Ok(Box::pin(stream::iter(eventos.into_iter().map(Ok))) as LlmStream)
         })
@@ -126,11 +126,8 @@ impl LlmProvider for ProvedorLento {
 fn resposta(texto: &str) -> Script {
     Script::Events(vec![
         LlmEvent::Texto(texto.to_owned()),
-        LlmEvent::Usage(Usage {
-            entrada: 1,
-            saida: 1,
-        }),
-        LlmEvent::Fim(FinishReason::Concluido),
+        LlmEvent::Usage(Usage { input: 1, saida: 1 }),
+        LlmEvent::Fim(FinishReason::Completed),
     ])
 }
 
@@ -381,8 +378,8 @@ async fn janela_cabe_no_orcamento_e_o_resumo_e_usado_no_turno_seguinte() {
     );
     let pedido_resumo = &pedidos[1];
     assert!(e_pedido_de_resumo(pedido_resumo));
-    let corpo = match pedido_resumo.mensagens.last() {
-        Some(Message::Usuario(partes)) => match partes.first() {
+    let corpo = match pedido_resumo.messages.last() {
+        Some(Message::User(partes)) => match partes.first() {
             Some(Part::Texto(texto)) => texto.clone(),
             _ => String::new(),
         },

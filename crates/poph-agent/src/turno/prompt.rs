@@ -69,9 +69,9 @@ impl Prompt {
     /// do que uma condicional.
     pub fn mensagens(&self, historico: Vec<Message>) -> Vec<Message> {
         let mut mensagens = Vec::with_capacity(historico.len() + 2);
-        mensagens.push(Message::Sistema(self.prefixo.clone()));
+        mensagens.push(Message::System(self.prefixo.clone()));
         if let Some(volatil) = &self.volatil {
-            mensagens.push(Message::Sistema(volatil.clone()));
+            mensagens.push(Message::System(volatil.clone()));
         }
         mensagens.extend(historico);
         mensagens
@@ -249,12 +249,12 @@ fn sem_escape(texto: &str) -> String {
 pub fn da_mensagem_gravada(mensagem: &MensagemGravada) -> Option<Message> {
     use poph_store::Role;
     match mensagem.role {
-        Role::User => Some(Message::Usuario(vec![poph_core::llm::Part::Texto(
+        Role::User => Some(Message::User(vec![poph_core::llm::Part::Texto(
             mensagem.texto.clone(),
         )])),
-        Role::Assistant => Some(Message::Assistente {
+        Role::Assistant => Some(Message::Assistant {
             texto: mensagem.texto.clone(),
-            chamadas: Vec::new(),
+            calls: Vec::new(),
         }),
         Role::Tool | Role::System => None,
     }
@@ -296,16 +296,15 @@ mod testes {
     fn prompt_mantem_o_prefixo_na_primeira_posicao() {
         let prompt =
             Prompt::novo("# Bia").com_volatil("<contexto_do_turno>\nhora: x\n</contexto_do_turno>");
-        let mensagens =
-            prompt.mensagens(vec![Message::Usuario(vec![poph_core::llm::Part::Texto(
-                "oi".into(),
-            )])]);
+        let mensagens = prompt.mensagens(vec![Message::User(vec![poph_core::llm::Part::Texto(
+            "oi".into(),
+        )])]);
         assert_eq!(mensagens.len(), 3);
-        assert_eq!(mensagens[0], Message::Sistema("# Bia".to_owned()));
+        assert_eq!(mensagens[0], Message::System("# Bia".to_owned()));
         assert!(
-            matches!(&mensagens[1], Message::Sistema(texto) if texto.starts_with(ABRE_CONTEXTO))
+            matches!(&mensagens[1], Message::System(texto) if texto.starts_with(ABRE_CONTEXTO))
         );
-        assert!(matches!(&mensagens[2], Message::Usuario(_)));
+        assert!(matches!(&mensagens[2], Message::User(_)));
     }
 
     #[test]

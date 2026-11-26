@@ -53,7 +53,7 @@ async fn https_funciona_quando_o_certificado_e_confiavel() {
     assert_eq!(eventos[0], LlmEvent::Texto("Olá".into()));
     assert_eq!(
         eventos.last(),
-        Some(&LlmEvent::Fim(FinishReason::Concluido))
+        Some(&LlmEvent::Fim(FinishReason::Completed))
     );
     // O pedido chegou inteiro pelo túnel TLS.
     let corpo = &servidor.pedidos()[0];

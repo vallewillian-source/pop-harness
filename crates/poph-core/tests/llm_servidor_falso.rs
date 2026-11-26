@@ -42,10 +42,10 @@ async fn texto_chega_em_stream_com_uso_e_fim() {
             LlmEvent::Texto("Olá".into()),
             LlmEvent::Texto(", tudo bem?".into()),
             LlmEvent::Usage(Usage {
-                entrada: 110,
+                input: 110,
                 saida: 7
             }),
-            LlmEvent::Fim(FinishReason::Concluido),
+            LlmEvent::Fim(FinishReason::Completed),
         ]
     );
     let corpo = &servidor.pedidos()[0];
@@ -75,12 +75,12 @@ async fn chamada_de_ferramenta_sai_com_argumentos_inteiros_e_volta_com_resultado
 
     let mut primeiro = Request::new(
         org,
-        vec![Message::Usuario(vec![Part::Texto("quanto custa?".into())])],
+        vec![Message::User(vec![Part::Texto("quanto custa?".into())])],
     );
     primeiro.tools = vec![Tool {
         nome: "buscar_produto".into(),
         descricao: "Busca um produto e devolve o preço".into(),
-        parametros: json!({"type": "object", "properties": {"termo": {"type": "string"}}}),
+        parameters: json!({"type": "object", "properties": {"termo": {"type": "string"}}}),
     }];
     let fluxo = m.cliente.stream(primeiro).await.expect("abre");
     let eventos = so_eventos(colher(fluxo).await);
@@ -92,7 +92,7 @@ async fn chamada_de_ferramenta_sai_com_argumentos_inteiros_e_volta_com_resultado
                 nome: "buscar_produto".into(),
                 arguments: json!({"termo": "dedetização"}),
             }),
-            LlmEvent::Fim(FinishReason::ChamadasFerramenta),
+            LlmEvent::Fim(FinishReason::ToolCalls),
         ]
     );
     let corpo_1 = &servidor.pedidos()[0];
@@ -100,10 +100,10 @@ async fn chamada_de_ferramenta_sai_com_argumentos_inteiros_e_volta_com_resultado
 
     // Volta com o resultado: a última mensagem é do resultado, e a chamada aparece antes dele.
     let segundo = pedido_com(vec![
-        Message::Usuario(vec![Part::Texto("quanto custa?".into())]),
-        Message::Assistente {
+        Message::User(vec![Part::Texto("quanto custa?".into())]),
+        Message::Assistant {
             texto: String::new(),
-            chamadas: vec![ToolCall {
+            calls: vec![ToolCall {
                 id: "call_1".into(),
                 nome: "buscar_produto".into(),
                 arguments: json!({"termo": "dedetização"}),
@@ -111,7 +111,7 @@ async fn chamada_de_ferramenta_sai_com_argumentos_inteiros_e_volta_com_resultado
         },
         Message::Resultado {
             id: "call_1".into(),
-            conteudo: "R$ 350,00".into(),
+            content: "R$ 350,00".into(),
         },
     ]);
     let fluxo = m.cliente.stream(segundo).await.expect("abre");
@@ -120,7 +120,7 @@ async fn chamada_de_ferramenta_sai_com_argumentos_inteiros_e_volta_com_resultado
         eventos,
         vec![
             LlmEvent::Texto("O preço é R$ 350.".into()),
-            LlmEvent::Fim(FinishReason::Concluido),
+            LlmEvent::Fim(FinishReason::Completed),
         ]
     );
     let corpo_2 = &servidor.pedidos()[1];
@@ -145,9 +145,9 @@ async fn imagem_vai_como_data_url_junto_do_texto() {
     .await;
     let m = montar(&servidor.url_base, 0, Duration::from_secs(5));
     let bytes = b"\x89PNG\r\n\x1a\nconteudo".to_vec();
-    let pedido = pedido_com(vec![Message::Usuario(vec![
+    let pedido = pedido_com(vec![Message::User(vec![
         Part::Texto("o que está escrito?".into()),
-        Part::Imagem {
+        Part::Image {
             mime: "image/png".into(),
             bytes: bytes.clone(),
         },
@@ -228,7 +228,7 @@ async fn esgotar_retentativas_devolve_indisponivel() {
         erro,
         LlmError::Unavailable {
             tentativas: 3,
-            ultimo: "HTTP 500".into()
+            last_error: "HTTP 500".into()
         }
     );
     assert_eq!(servidor.pedidos().len(), 3);
@@ -249,7 +249,7 @@ async fn timeout_devolve_tempo_esgotado_sem_retentar() {
         .await
         .err()
         .expect("expira");
-    assert_eq!(erro, LlmError::TimedOut { segundos: 1 });
+    assert_eq!(erro, LlmError::TimedOut { seconds: 1 });
     assert_eq!(
         servidor.pedidos().len(),
         1,
@@ -268,7 +268,7 @@ async fn cancelamento_no_meio_do_stream_fecha_e_libera_as_vagas() {
     .await;
     let m = montar(&servidor.url_base, 0, Duration::from_secs(30));
     let pedido = pergunta("conta uma história longa");
-    let cancelamento = pedido.cancelamento.clone();
+    let cancelamento = pedido.cancellation.clone();
 
     let mut fluxo = m.cliente.stream(pedido).await.expect("abre");
     assert_eq!(
@@ -333,10 +333,10 @@ async fn pedido_que_termina_em_turno_do_modelo_sai_quando_a_regra_esta_desligada
     .await;
     let m = montar_com_regra(&servidor.url_base, 0, Duration::from_secs(5), false);
     let pedido = pedido_com(vec![
-        Message::Usuario(vec![Part::Texto("oi".into())]),
-        Message::Assistente {
+        Message::User(vec![Part::Texto("oi".into())]),
+        Message::Assistant {
             texto: "olá".into(),
-            chamadas: vec![],
+            calls: vec![],
         },
     ]);
 
@@ -357,10 +357,10 @@ async fn pedido_que_termina_em_turno_do_modelo_nao_sai_do_processo() {
     let servidor = Servidor::iniciar(vec![Resposta::ok(sse(&["[DONE]"]))]).await;
     let m = montar(&servidor.url_base, 2, Duration::from_secs(5));
     let pedido = pedido_com(vec![
-        Message::Usuario(vec![Part::Texto("oi".into())]),
-        Message::Assistente {
+        Message::User(vec![Part::Texto("oi".into())]),
+        Message::Assistant {
             texto: "olá".into(),
-            chamadas: vec![],
+            calls: vec![],
         },
     ]);
 

@@ -291,10 +291,10 @@ fn texto(conteudo: &str) -> Script {
     Script::Events(vec![
         LlmEvent::Texto(conteudo.to_owned()),
         LlmEvent::Usage(Usage {
-            entrada: 10,
+            input: 10,
             saida: 5,
         }),
-        LlmEvent::Fim(FinishReason::Concluido),
+        LlmEvent::Fim(FinishReason::Completed),
     ])
 }
 
@@ -306,7 +306,7 @@ fn chamada(nome: &str, argumentos: Value) -> Script {
             nome: nome.to_owned(),
             arguments: argumentos,
         }),
-        LlmEvent::Fim(FinishReason::Concluido),
+        LlmEvent::Fim(FinishReason::Completed),
     ])
 }
 
@@ -405,7 +405,7 @@ async fn exemplo_visita_com_jev_campos_e_historico_http() {
     )
     .await;
     let pedidos = provedor.received();
-    assert!(format!("{:?}", pedidos[0].mensagens).contains("Coletar dados"));
+    assert!(format!("{:?}", pedidos[0].messages).contains("Coletar dados"));
     let base = api(&c).await;
     let ficha = c.ficha(conversa);
     let corpo = get_api(&base, &c, &ficha.id.to_string()).await;
@@ -755,8 +755,8 @@ async fn jev_falha_reserva_inicia_permitido_e_recusa_nao_liberado() {
     c.turno(&motor, conversa, mensagem).await;
     let pedidos = provedor.received();
     assert!(pedidos[0].tools.iter().any(|f| f.nome == "fluxo_iniciar"));
-    assert!(!format!("{:?}", pedidos[0].mensagens).contains("triagem_suporte"));
-    assert!(format!("{:?}", pedidos[1].mensagens).contains("não está entre os liberados"));
+    assert!(!format!("{:?}", pedidos[0].messages).contains("triagem_suporte"));
+    assert!(format!("{:?}", pedidos[1].messages).contains("não está entre os liberados"));
     assert_eq!(c.execucao(conversa).no_atual, "coleta");
     let runs = c
         .store

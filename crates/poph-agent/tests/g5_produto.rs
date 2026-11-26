@@ -332,10 +332,10 @@ fn roteiro_texto(texto: &str) -> Script {
     Script::Events(vec![
         LlmEvent::Texto(texto.to_owned()),
         LlmEvent::Usage(Usage {
-            entrada: 100,
+            input: 100,
             saida: 10,
         }),
-        LlmEvent::Fim(FinishReason::Concluido),
+        LlmEvent::Fim(FinishReason::Completed),
     ])
 }
 
@@ -367,11 +367,11 @@ fn nomes_das_ferramentas(pedido: &poph_core::llm::Request) -> Vec<String> {
 
 fn texto_do_prompt(pedido: &poph_core::llm::Request) -> String {
     pedido
-        .mensagens
+        .messages
         .iter()
         .map(|mensagem| match mensagem {
-            poph_core::llm::Message::Sistema(texto) => texto.clone(),
-            poph_core::llm::Message::Usuario(partes) => partes
+            poph_core::llm::Message::System(texto) => texto.clone(),
+            poph_core::llm::Message::User(partes) => partes
                 .iter()
                 .map(|parte| match parte {
                     poph_core::llm::Part::Texto(texto) => texto.clone(),
@@ -379,8 +379,10 @@ fn texto_do_prompt(pedido: &poph_core::llm::Request) -> String {
                 })
                 .collect::<Vec<_>>()
                 .join("\n"),
-            poph_core::llm::Message::Assistente { texto, .. } => texto.clone(),
-            poph_core::llm::Message::Resultado { conteudo, .. } => conteudo.clone(),
+            poph_core::llm::Message::Assistant { texto, .. } => texto.clone(),
+            poph_core::llm::Message::Resultado {
+                content: conteudo, ..
+            } => conteudo.clone(),
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -754,7 +756,7 @@ async fn g5_ferramenta_inventada_pelo_modelo_nao_e_executada() {
                     nome: "buscar_produto".to_owned(),
                     arguments: serde_json::json!({"termo": "baratas"}),
                 }),
-                LlmEvent::Fim(FinishReason::ChamadasFerramenta),
+                LlmEvent::Fim(FinishReason::ToolCalls),
             ]),
             roteiro_texto("A dedetização de baratas custa R$ 180,00."),
         ],
@@ -845,7 +847,7 @@ async fn medicao_rodadas_de_ferramenta_por_turno() {
                     nome: "buscar_produto".to_owned(),
                     arguments: serde_json::json!({"termo": "baratas"}),
                 }),
-                LlmEvent::Fim(FinishReason::ChamadasFerramenta),
+                LlmEvent::Fim(FinishReason::ToolCalls),
             ]),
             roteiro_texto("A dedetização de baratas custa R$ 180,00."),
         ],

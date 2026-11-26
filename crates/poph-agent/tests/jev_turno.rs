@@ -246,10 +246,10 @@ fn roteiro(texto: &str) -> Script {
     Script::Events(vec![
         poph_core::llm::LlmEvent::Texto(texto.to_owned()),
         poph_core::llm::LlmEvent::Usage(poph_core::llm::Usage {
-            entrada: 10,
+            input: 10,
             saida: 5,
         }),
-        poph_core::llm::LlmEvent::Fim(poph_core::llm::FinishReason::Concluido),
+        poph_core::llm::LlmEvent::Fim(poph_core::llm::FinishReason::Completed),
     ])
 }
 

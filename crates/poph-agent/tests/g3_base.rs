@@ -341,10 +341,10 @@ fn roteiro_texto(texto: &str) -> Script {
     Script::Events(vec![
         LlmEvent::Texto(texto.to_owned()),
         LlmEvent::Usage(Usage {
-            entrada: 100,
+            input: 100,
             saida: 10,
         }),
-        LlmEvent::Fim(FinishReason::Concluido),
+        LlmEvent::Fim(FinishReason::Completed),
     ])
 }
 
@@ -378,11 +378,11 @@ fn nomes_das_ferramentas(pedido: &poph_core::llm::Request) -> Vec<String> {
 /// Todo o texto do prompt, para procurar o trecho da base.
 fn texto_do_prompt(pedido: &poph_core::llm::Request) -> String {
     pedido
-        .mensagens
+        .messages
         .iter()
         .map(|mensagem| match mensagem {
-            poph_core::llm::Message::Sistema(texto) => texto.clone(),
-            poph_core::llm::Message::Usuario(partes) => partes
+            poph_core::llm::Message::System(texto) => texto.clone(),
+            poph_core::llm::Message::User(partes) => partes
                 .iter()
                 .map(|parte| match parte {
                     poph_core::llm::Part::Texto(texto) => texto.clone(),
@@ -390,8 +390,10 @@ fn texto_do_prompt(pedido: &poph_core::llm::Request) -> String {
                 })
                 .collect::<Vec<_>>()
                 .join("\n"),
-            poph_core::llm::Message::Assistente { texto, .. } => texto.clone(),
-            poph_core::llm::Message::Resultado { conteudo, .. } => conteudo.clone(),
+            poph_core::llm::Message::Assistant { texto, .. } => texto.clone(),
+            poph_core::llm::Message::Resultado {
+                content: conteudo, ..
+            } => conteudo.clone(),
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -467,7 +469,7 @@ async fn g3_nada_nao_executa_ferramenta_inventada_pelo_modelo() {
                     nome: "consultar_base".to_owned(),
                     arguments: serde_json::json!({"consulta": "prazo"}),
                 }),
-                LlmEvent::Fim(FinishReason::ChamadasFerramenta),
+                LlmEvent::Fim(FinishReason::ToolCalls),
             ]),
             roteiro_texto("Tudo certo por aqui!"),
         ],

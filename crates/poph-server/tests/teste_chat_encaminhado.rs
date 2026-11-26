@@ -132,9 +132,9 @@ async fn iniciar(
         // O turno de `b`: entrega "começou" e fica pendurado 30 s (tempo de sobra para provar que
         // o SSE atravessa sem esperar o fim).
         let fake = Arc::new(FakeProvider::with_scripts(vec![Script::Pending {
-            eventos: vec![LlmEvent::Texto("começou ".into())],
+            events: vec![LlmEvent::Texto("começou ".into())],
             after: Duration::from_secs(30),
-            erro: LlmError::TimedOut { segundos: 30 },
+            error: LlmError::TimedOut { seconds: 30 },
         }]));
         let provedor: Arc<dyn LlmProvider> = fake.clone();
         let motor = Arc::new(Motor::novo(

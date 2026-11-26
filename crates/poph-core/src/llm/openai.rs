@@ -9,14 +9,14 @@ use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde_json::{Value, json};
 
 use super::base64;
-use super::erro::LlmError;
+use super::error::LlmError;
 use super::limites::{LlmLimiter, LlmPermit};
 use super::provedor::{LlmProvider, LlmStream, validate_request};
 use super::sse::SseReader;
-use super::tipos::{
+use super::tls;
+use super::types::{
     Cancellation, FinishReason, LlmEvent, Message, Part, Request, Tool, ToolCall, Usage,
 };
-use super::tls;
 
 pub const OPENAI_COMPATIBLE_PROVIDER: &str = "openai_compativel";
 pub const ANTIGRAVITY_PROVIDER: &str = "antigravity2api";
@@ -30,7 +30,7 @@ pub struct OpenAiCompatibleConfig {
     pub modelo: String,
     pub timeout: Duration,
     pub retentativas: u32,
-    pub espera_base: Duration,
+    pub base_wait: Duration,
     pub temperatura: f32,
     pub max_tokens_saida: u32,
     pub recusa_turno_modelo: bool,
@@ -61,7 +61,7 @@ impl OpenAiCompatibleConfig {
             modelo: llm.model.clone(),
             timeout: Duration::from_secs(u64::from(llm.timeout_seconds)),
             retentativas: llm.retries,
-            espera_base: Duration::from_secs(1),
+            base_wait: Duration::from_secs(1),
             temperatura: llm.temperature,
             max_tokens_saida: llm.max_output_tokens,
             recusa_turno_modelo: llm.refuse_model_turn,
@@ -74,7 +74,7 @@ struct Inner {
     endpoint: String,
     config: OpenAiCompatibleConfig,
     limites: LlmLimiter,
-    metricas: BaseMetrics,
+    metrics: BaseMetrics,
 }
 
 #[derive(Clone)]
@@ -84,7 +84,7 @@ impl OpenAiCompatibleClient {
     pub fn new(
         config: OpenAiCompatibleConfig,
         limites: LlmLimiter,
-        metricas: BaseMetrics,
+        metrics: BaseMetrics,
     ) -> Result<Self, LlmError> {
         let http = build_http(None)?;
         let endpoint = format!("{}/chat/completions", config.url_base);
@@ -93,7 +93,7 @@ impl OpenAiCompatibleClient {
             endpoint,
             config,
             limites,
-            metricas,
+            metrics,
         })))
     }
 
@@ -105,7 +105,7 @@ impl OpenAiCompatibleClient {
             endpoint: self.0.endpoint.clone(),
             config: self.0.config.clone(),
             limites: self.0.limites.clone(),
-            metricas: self.0.metricas.clone(),
+            metrics: self.0.metrics.clone(),
         })))
     }
 }
@@ -113,88 +113,88 @@ impl OpenAiCompatibleClient {
 fn build_http(extra_root: Option<&[u8]>) -> Result<reqwest::Client, LlmError> {
     let mut construtor = reqwest::Client::builder();
     if let Some(der) = extra_root {
-        let certificate = reqwest::Certificate::from_der(der).map_err(|erro| {
+        let certificate = reqwest::Certificate::from_der(der).map_err(|error| {
             LlmError::Configuracao(format!(
                 "raiz de confiança inválida: {}",
-                erro.without_url()
+                error.without_url()
             ))
         })?;
         construtor = construtor.add_root_certificate(certificate);
     }
     construtor
         .build()
-        .map_err(|erro| LlmError::Configuracao(format!("cliente HTTP: {}", erro.without_url())))
+        .map_err(|error| LlmError::Configuracao(format!("cliente HTTP: {}", error.without_url())))
 }
 
 impl LlmProvider for OpenAiCompatibleClient {
-    fn stream<'a>(&'a self, pedido: Request) -> BoxFuture<'a, Result<LlmStream, LlmError>> {
-        Box::pin(abrir(Arc::clone(&self.0), pedido))
+    fn stream<'a>(&'a self, request: Request) -> BoxFuture<'a, Result<LlmStream, LlmError>> {
+        Box::pin(open_stream(Arc::clone(&self.0), request))
     }
 }
 
-async fn abrir(inner: Arc<Inner>, pedido: Request) -> Result<LlmStream, LlmError> {
-    validate_request(&pedido, inner.config.recusa_turno_modelo)
-        .map_err(|erro| inner.record_failure(erro))?;
-    inner.metricas.llm_calls.increment(1);
+async fn open_stream(inner: Arc<Inner>, request: Request) -> Result<LlmStream, LlmError> {
+    validate_request(&request, inner.config.recusa_turno_modelo)
+        .map_err(|error| inner.record_failure(error))?;
+    inner.metrics.llm_calls.increment(1);
 
-    let cancelamento = pedido.cancelamento.clone();
+    let cancellation = request.cancellation.clone();
     let permit: LlmPermit = tokio::select! {
         biased;
-        _ = cancelamento.wait() => return Err(LlmError::Cancelled),
-        resultado = inner.limites.acquire(pedido.org) => {
-            resultado.map_err(|erro| inner.record_failure(erro))?
+        _ = cancellation.wait() => return Err(LlmError::Cancelled),
+        resultado = inner.limites.acquire(request.org) => {
+            resultado.map_err(|error| inner.record_failure(error))?
         }
     };
 
-    let corpo = build_body(&pedido, &inner.config);
-    let modelo = pedido
+    let body = build_body(&request, &inner.config);
+    let modelo = request
         .modelo
         .clone()
         .unwrap_or_else(|| inner.config.modelo.clone());
-    let inicio = Instant::now();
-    let response = send(&inner, &corpo, &cancelamento)
+    let started = Instant::now();
+    let response = send(&inner, &body, &cancellation)
         .await
-        .map_err(|erro| inner.record_failure(erro))?;
+        .map_err(|error| inner.record_failure(error))?;
 
     tracing::debug!(modelo = %modelo, "resposta do LLM começou a chegar");
     let estado = Estado {
         inner: Arc::clone(&inner),
-        resposta: response,
+        response,
         reader: SseReader::new(),
-        parciais: BTreeMap::new(),
+        partials: BTreeMap::new(),
         pending: VecDeque::new(),
         motivo: None,
         usage: None,
         closed: false,
         permit: Some(permit),
-        cancelamento,
-        inicio,
+        cancellation,
+        started,
         modelo,
-        org: pedido.org,
+        org: request.org,
     };
     Ok(Box::pin(stream::unfold(estado, advance)))
 }
 
 impl Inner {
-    fn record_failure(&self, erro: LlmError) -> LlmError {
-        if erro != LlmError::Cancelled {
-            self.metricas.llm_errors.increment(1);
-            tracing::warn!(erro = %erro, "chamada ao LLM falhou");
+    fn record_failure(&self, error: LlmError) -> LlmError {
+        if error != LlmError::Cancelled {
+            self.metrics.llm_errors.increment(1);
+            tracing::warn!(error = %error, "chamada ao LLM falhou");
         }
-        erro
+        error
     }
 }
 
 async fn send(
     inner: &Inner,
-    corpo: &Value,
-    cancelamento: &Cancellation,
+    body: &Value,
+    cancellation: &Cancellation,
 ) -> Result<reqwest::Response, LlmError> {
     let total = inner.config.retentativas + 1;
-    let body_text = corpo.to_string();
-    let mut ultimo = String::from("sem resposta");
+    let body_text = body.to_string();
+    let mut last_error = String::from("sem resposta");
 
-    for tentativa in 1..=total {
+    for attempt in 1..=total {
         let sending = inner
             .http
             .post(&inner.endpoint)
@@ -209,17 +209,17 @@ async fn send(
 
         let resultado = tokio::select! {
             biased;
-            _ = cancelamento.wait() => return Err(LlmError::Cancelled),
+            _ = cancellation.wait() => return Err(LlmError::Cancelled),
             resultado = sending => resultado,
         };
 
         match resultado {
-            Ok(resposta) if resposta.status().is_success() => return Ok(resposta),
-            Ok(resposta) => {
-                let status = resposta.status().as_u16();
-                let texto = resposta.text().await.unwrap_or_default();
+            Ok(response) if response.status().is_success() => return Ok(response),
+            Ok(response) => {
+                let status = response.status().as_u16();
+                let texto = response.text().await.unwrap_or_default();
                 if status == 429 || (500..=599).contains(&status) {
-                    ultimo = format!("HTTP {status}");
+                    last_error = format!("HTTP {status}");
                 } else {
                     return Err(LlmError::Rejected {
                         status,
@@ -227,16 +227,16 @@ async fn send(
                     });
                 }
             }
-            Err(erro) if erro.is_timeout() => {
+            Err(error) if error.is_timeout() => {
                 return Err(LlmError::TimedOut {
-                    segundos: inner.config.timeout.as_secs(),
+                    seconds: inner.config.timeout.as_secs(),
                 });
             }
-            Err(erro) => {
-                if let Some(detail) = tls::tls_failure_detail(&erro) {
+            Err(error) => {
+                if let Some(detail) = tls::tls_failure_detail(&error) {
                     return Err(LlmError::Tls(detail));
                 }
-                ultimo = if erro.is_connect() {
+                last_error = if error.is_connect() {
                     "conexão recusada".to_owned()
                 } else {
                     "falha de rede".to_owned()
@@ -244,13 +244,13 @@ async fn send(
             }
         }
 
-        if tentativa < total {
-            let espera = retry_wait(inner.config.espera_base, tentativa);
-            tracing::info!(tentativa, motivo = %ultimo, "nova tentativa no LLM");
+        if attempt < total {
+            let wait = retry_wait(inner.config.base_wait, attempt);
+            tracing::info!(attempt, motivo = %last_error, "nova tentativa no LLM");
             let seguir = tokio::select! {
                 biased;
-                _ = cancelamento.wait() => false,
-                _ = tokio::time::sleep(espera) => true,
+                _ = cancellation.wait() => false,
+                _ = tokio::time::sleep(wait) => true,
             };
             if !seguir {
                 return Err(LlmError::Cancelled);
@@ -259,12 +259,12 @@ async fn send(
     }
     Err(LlmError::Unavailable {
         tentativas: total,
-        ultimo,
+        last_error,
     })
 }
 
-fn retry_wait(base: Duration, tentativa: u32) -> Duration {
-    let factor = 1u32 << (tentativa - 1).min(10);
+fn retry_wait(base: Duration, attempt: u32) -> Duration {
+    let factor = 1u32 << (attempt - 1).min(10);
     base.saturating_mul(factor).min(MAXIMUM_WAIT)
 }
 
@@ -273,45 +273,42 @@ fn summarize_error(texto: &str, chave: &str) -> String {
         .ok()
         .and_then(|v| v["error"]["message"].as_str().map(str::to_owned))
         .unwrap_or_else(|| texto.to_owned());
-    let mut limpo: String = mensagem.chars().take(300).collect();
+    let mut sanitized: String = mensagem.chars().take(300).collect();
     if !chave.is_empty() {
-        limpo = limpo.replace(chave, "[oculto]");
+        sanitized = sanitized.replace(chave, "[oculto]");
     }
-    limpo
+    sanitized
 }
 
-pub fn build_body(pedido: &Request, config: &OpenAiCompatibleConfig) -> Value {
-    let modelo = pedido.modelo.as_deref().unwrap_or(&config.modelo);
-    let messages: Vec<Value> = pedido.mensagens.iter().map(message_json).collect();
-    let temperatura = pedido.temperatura.unwrap_or(config.temperatura);
-    let max_tokens = pedido.max_tokens.unwrap_or(config.max_tokens_saida);
-    let mut corpo = json!({
+pub fn build_body(request: &Request, config: &OpenAiCompatibleConfig) -> Value {
+    let modelo = request.modelo.as_deref().unwrap_or(&config.modelo);
+    let messages: Vec<Value> = request.messages.iter().map(message_json).collect();
+    let temperatura = request.temperatura.unwrap_or(config.temperatura);
+    let max_tokens = request.max_tokens.unwrap_or(config.max_tokens_saida);
+    let mut body = json!({
         "model": modelo,
         "stream": true,
         "temperature": temperatura,
         "max_tokens": max_tokens,
         "messages": messages,
     });
-    if !pedido.tools.is_empty() {
-        corpo["tools"] = Value::Array(pedido.tools.iter().map(tool_json).collect());
+    if !request.tools.is_empty() {
+        body["tools"] = Value::Array(request.tools.iter().map(tool_json).collect());
     }
-    corpo
+    body
 }
 
 fn message_json(mensagem: &Message) -> Value {
     match mensagem {
-        Message::Sistema(texto) => json!({"role": "system", "content": texto}),
-        Message::Usuario(parts) => {
+        Message::System(texto) => json!({"role": "system", "content": texto}),
+        Message::User(parts) => {
             if let [Part::Texto(texto)] = parts.as_slice() {
                 return json!({"role": "user", "content": texto});
             }
-            let conteudo: Vec<Value> = parts.iter().map(part_json).collect();
-            json!({"role": "user", "content": conteudo})
+            let content: Vec<Value> = parts.iter().map(part_json).collect();
+            json!({"role": "user", "content": content})
         }
-        Message::Assistente {
-            texto,
-            chamadas: calls,
-        } => {
+        Message::Assistant { texto, calls } => {
             let mut obj = json!({"role": "assistant"});
             obj["content"] = if texto.is_empty() && !calls.is_empty() {
                 Value::Null
@@ -334,16 +331,16 @@ fn message_json(mensagem: &Message) -> Value {
             }
             obj
         }
-        Message::Resultado { id, conteudo } => {
-            json!({"role": "tool", "tool_call_id": id, "content": conteudo})
+        Message::Resultado { id, content } => {
+            json!({"role": "tool", "tool_call_id": id, "content": content})
         }
     }
 }
 
-fn part_json(parte: &Part) -> Value {
-    match parte {
+fn part_json(part: &Part) -> Value {
+    match part {
         Part::Texto(texto) => json!({"type": "text", "text": texto}),
-        Part::Imagem { mime, bytes } => json!({
+        Part::Image { mime, bytes } => json!({
             "type": "image_url",
             "image_url": {"url": format!("data:{mime};base64,{}", base64::encode(bytes))},
         }),
@@ -356,7 +353,7 @@ fn tool_json(tool: &Tool) -> Value {
         "function": {
             "name": tool.nome,
             "description": tool.descricao,
-            "parameters": tool.parametros,
+            "parameters": tool.parameters,
         },
     })
 }
@@ -365,21 +362,21 @@ fn tool_json(tool: &Tool) -> Value {
 struct Partial {
     id: Option<String>,
     nome: Option<String>,
-    argumentos: String,
+    arguments: String,
 }
 
 struct Estado {
     inner: Arc<Inner>,
-    resposta: reqwest::Response,
+    response: reqwest::Response,
     reader: SseReader,
-    parciais: BTreeMap<u64, Partial>,
+    partials: BTreeMap<u64, Partial>,
     pending: VecDeque<Result<LlmEvent, LlmError>>,
     motivo: Option<FinishReason>,
     usage: Option<Usage>,
     closed: bool,
     permit: Option<LlmPermit>,
-    cancelamento: Cancellation,
-    inicio: Instant,
+    cancellation: Cancellation,
+    started: Instant,
     modelo: String,
     org: poph_types::OrgId,
 }
@@ -399,10 +396,10 @@ async fn advance(mut e: Estado) -> Option<(Result<LlmEvent, LlmError>, Estado)> 
 
         let chunk = tokio::select! {
             biased;
-            _ = e.cancelamento.wait() => Err(LlmError::Cancelled),
-            pedaco = e.resposta.chunk() => pedaco.map_err(|erro| {
-                if erro.is_timeout() {
-                    LlmError::TimedOut { segundos: e.inner.config.timeout.as_secs() }
+            _ = e.cancellation.wait() => Err(LlmError::Cancelled),
+            chunk = e.response.chunk() => chunk.map_err(|error| {
+                if error.is_timeout() {
+                    LlmError::TimedOut { seconds: e.inner.config.timeout.as_secs() }
                 } else {
                     LlmError::ConnectionInterrupted("a conexão caiu no meio da resposta".to_owned())
                 }
@@ -410,11 +407,11 @@ async fn advance(mut e: Estado) -> Option<(Result<LlmEvent, LlmError>, Estado)> 
         };
 
         match chunk {
-            Err(erro) => {
+            Err(error) => {
                 e.closed = true;
                 e.permit = None;
-                let erro = e.inner.record_failure(erro);
-                e.pending.push_back(Err(erro));
+                let error = e.inner.record_failure(error);
+                e.pending.push_back(Err(error));
             }
             Ok(Some(bytes)) => {
                 for payload in e.reader.push(&bytes) {
@@ -433,11 +430,11 @@ async fn advance(mut e: Estado) -> Option<(Result<LlmEvent, LlmError>, Estado)> 
                 }
                 if !e.closed {
                     if e.motivo.is_none() {
-                        let erro = e.inner.record_failure(LlmError::InvalidResponse(
+                        let error = e.inner.record_failure(LlmError::InvalidResponse(
                             "a resposta terminou antes do fim (conexão fechada sem motivo de fim)"
                                 .to_owned(),
                         ));
-                        e.pending.push_back(Err(erro));
+                        e.pending.push_back(Err(error));
                         e.closed = true;
                         e.permit = None;
                     } else {
@@ -454,53 +451,53 @@ fn process_payload(e: &mut Estado, payload: &str) {
         finish_response(e);
         return;
     }
-    let Ok(valor) = serde_json::from_str::<Value>(payload) else {
+    let Ok(value) = serde_json::from_str::<Value>(payload) else {
         tracing::debug!("evento do stream do LLM sem JSON válido, ignorado");
         return;
     };
-    if !valor["error"].is_null() {
-        let mensagem = valor["error"]["message"]
+    if !value["error"].is_null() {
+        let mensagem = value["error"]["message"]
             .as_str()
             .map(|m| summarize_error(m, e.inner.config.chave.expose()))
             .unwrap_or_else(|| "erro sem detalhe".to_owned());
-        let erro = e.inner.record_failure(LlmError::StreamError(mensagem));
-        e.pending.push_back(Err(erro));
+        let error = e.inner.record_failure(LlmError::StreamError(mensagem));
+        e.pending.push_back(Err(error));
         e.closed = true;
         e.permit = None;
         return;
     }
-    if let Some(uso) = valor.get("usage").filter(|u| !u.is_null()) {
+    if let Some(usage) = value.get("usage").filter(|u| !u.is_null()) {
         e.usage = Some(Usage {
-            entrada: uso["prompt_tokens"].as_u64().unwrap_or(0),
-            saida: uso["completion_tokens"].as_u64().unwrap_or(0),
+            input: usage["prompt_tokens"].as_u64().unwrap_or(0),
+            saida: usage["completion_tokens"].as_u64().unwrap_or(0),
         });
     }
-    let escolha = &valor["choices"][0];
-    let delta = &escolha["delta"];
+    let choice = &value["choices"][0];
+    let delta = &choice["delta"];
     if let Some(texto) = delta["content"].as_str().filter(|t| !t.is_empty()) {
         e.pending.push_back(Ok(LlmEvent::Texto(texto.to_owned())));
     }
-    if let Some(chamadas) = delta["tool_calls"].as_array() {
-        for call in chamadas {
+    if let Some(calls) = delta["tool_calls"].as_array() {
+        for call in calls {
             let index = call["index"].as_u64().unwrap_or(0);
-            let partial = e.parciais.entry(index).or_default();
+            let partial = e.partials.entry(index).or_default();
             if let Some(id) = call["id"].as_str().filter(|s| !s.is_empty()) {
                 partial.id = Some(id.to_owned());
             }
             if let Some(nome) = call["function"]["name"].as_str().filter(|s| !s.is_empty()) {
                 partial.nome = Some(nome.to_owned());
             }
-            if let Some(pedaco) = call["function"]["arguments"].as_str() {
-                partial.argumentos.push_str(pedaco);
+            if let Some(chunk) = call["function"]["arguments"].as_str() {
+                partial.arguments.push_str(chunk);
             }
         }
     }
-    if let Some(motivo) = escolha["finish_reason"].as_str() {
+    if let Some(motivo) = choice["finish_reason"].as_str() {
         e.motivo = Some(match motivo {
-            "stop" => FinishReason::Concluido,
-            "tool_calls" | "function_call" => FinishReason::ChamadasFerramenta,
-            "length" => FinishReason::LimiteDeTokens,
-            outro => FinishReason::Outro(outro.to_owned()),
+            "stop" => FinishReason::Completed,
+            "tool_calls" | "function_call" => FinishReason::ToolCalls,
+            "length" => FinishReason::TokenLimit,
+            other => FinishReason::Other(other.to_owned()),
         });
     }
 }
@@ -512,61 +509,61 @@ fn finish_response(e: &mut Estado) {
     e.closed = true;
     e.permit = None;
 
-    let parciais = std::mem::take(&mut e.parciais);
-    let mut total_ferramentas = 0usize;
-    for (indice, partial) in parciais {
+    let partials = std::mem::take(&mut e.partials);
+    let mut total_tools = 0usize;
+    for (index, partial) in partials {
         let Some(nome) = partial.nome else {
-            let erro = e.inner.record_failure(LlmError::InvalidResponse(
+            let error = e.inner.record_failure(LlmError::InvalidResponse(
                 "chamada de ferramenta sem nome".to_owned(),
             ));
-            e.pending.push_back(Err(erro));
+            e.pending.push_back(Err(error));
             return;
         };
-        let argumentos = if partial.argumentos.trim().is_empty() {
+        let arguments = if partial.arguments.trim().is_empty() {
             json!({})
         } else {
-            match serde_json::from_str::<Value>(&partial.argumentos) {
-                Ok(valor) => valor,
+            match serde_json::from_str::<Value>(&partial.arguments) {
+                Ok(value) => value,
                 Err(_) => {
-                    let erro = e.inner.record_failure(LlmError::InvalidResponse(format!(
+                    let error = e.inner.record_failure(LlmError::InvalidResponse(format!(
                         "argumentos da ferramenta {nome} não são JSON válido"
                     )));
-                    e.pending.push_back(Err(erro));
+                    e.pending.push_back(Err(error));
                     return;
                 }
             }
         };
-        let id = partial.id.unwrap_or_else(|| format!("chamada_{indice}"));
-        total_ferramentas += 1;
+        let id = partial.id.unwrap_or_else(|| format!("chamada_{index}"));
+        total_tools += 1;
         e.pending.push_back(Ok(LlmEvent::Tool(ToolCall {
             id,
             nome,
-            arguments: argumentos,
+            arguments,
         })));
     }
 
-    if let Some(uso) = e.usage {
-        e.inner.metricas.tokens_total.increment(uso.total());
-        e.pending.push_back(Ok(LlmEvent::Usage(uso)));
+    if let Some(usage) = e.usage {
+        e.inner.metrics.tokens_total.increment(usage.total());
+        e.pending.push_back(Ok(LlmEvent::Usage(usage)));
     }
     let motivo = match e.motivo.take() {
         Some(motivo) => motivo,
-        None if total_ferramentas > 0 => FinishReason::ChamadasFerramenta,
-        None => FinishReason::Concluido,
+        None if total_tools > 0 => FinishReason::ToolCalls,
+        None => FinishReason::Completed,
     };
     e.pending.push_back(Ok(LlmEvent::Fim(motivo)));
 
     tracing::info!(
         org = %e.org,
         modelo = %e.modelo,
-        ferramentas = total_ferramentas,
-        duracao_ms = e.inicio.elapsed().as_millis() as u64,
+        tools = total_tools,
+        duration_ms = e.started.elapsed().as_millis() as u64,
         "resposta do LLM concluída"
     );
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use poph_types::OrgId;
 
     use super::*;
@@ -591,9 +588,9 @@ mod testes {
     fn accepts_https_rejects_invalid_address_and_empty_key() {
         let https = config("https://exemplo.test/v1", "k").expect("https aceito");
         assert_eq!(https.url_base, "https://exemplo.test/v1");
-        let sem_esquema = config("exemplo.test/v1", "k").unwrap_err();
+        let missing_scheme = config("exemplo.test/v1", "k").unwrap_err();
         assert!(
-            matches!(sem_esquema, LlmError::Configuracao(m) if m.contains("http:// ou https://"))
+            matches!(missing_scheme, LlmError::Configuracao(m) if m.contains("http:// ou https://"))
         );
         assert!(config("http://127.0.0.1:8045/v1/", "").is_err());
         let llm = LlmConfig {
@@ -612,35 +609,35 @@ mod testes {
     }
 
     #[test]
-    fn monta_corpo_com_imagem_ferramenta_e_modelo_do_pedido() {
+    fn builds_body_with_image_tool_and_requested_model() {
         let cfg = config("http://127.0.0.1:8045/v1", "segredo-de-teste").expect("config");
-        let mut pedido = Request::new(
+        let mut request = Request::new(
             OrgId::generate(),
             vec![
-                Message::Sistema("instruções".into()),
-                Message::Usuario(vec![
+                Message::System("instruções".into()),
+                Message::User(vec![
                     Part::Texto("o que tem na foto?".into()),
-                    Part::Imagem {
+                    Part::Image {
                         mime: "image/png".into(),
                         bytes: b"foo".to_vec(),
                     },
                 ]),
             ],
         );
-        pedido.modelo = Some("outro-modelo".into());
-        pedido.tools = vec![Tool {
+        request.modelo = Some("outro-modelo".into());
+        request.tools = vec![Tool {
             nome: "buscar".into(),
             descricao: "busca".into(),
-            parametros: json!({"type": "object"}),
+            parameters: json!({"type": "object"}),
         }];
-        let corpo = build_body(&pedido, &cfg);
-        assert_eq!(corpo["model"], "outro-modelo");
-        assert_eq!(corpo["stream"], true);
-        assert_eq!(corpo["messages"][0]["role"], "system");
-        let partes = &corpo["messages"][1]["content"];
-        assert_eq!(partes[1]["image_url"]["url"], "data:image/png;base64,Zm9v");
-        assert_eq!(corpo["tools"][0]["function"]["name"], "buscar");
-        assert!(!corpo.to_string().contains("segredo-de-teste"));
+        let body = build_body(&request, &cfg);
+        assert_eq!(body["model"], "outro-modelo");
+        assert_eq!(body["stream"], true);
+        assert_eq!(body["messages"][0]["role"], "system");
+        let parts = &body["messages"][1]["content"];
+        assert_eq!(parts[1]["image_url"]["url"], "data:image/png;base64,Zm9v");
+        assert_eq!(body["tools"][0]["function"]["name"], "buscar");
+        assert!(!body.to_string().contains("segredo-de-teste"));
     }
 
     #[test]
@@ -654,8 +651,8 @@ mod testes {
 
     #[test]
     fn provider_error_does_not_echo_key() {
-        let corpo = r#"{"error":{"message":"chave inválida: abc-123-segredo"}}"#;
-        let texto = summarize_error(corpo, "abc-123-segredo");
+        let body = r#"{"error":{"message":"chave inválida: abc-123-segredo"}}"#;
+        let texto = summarize_error(body, "abc-123-segredo");
         assert!(!texto.contains("abc-123-segredo"));
         assert!(texto.contains("[oculto]"));
     }

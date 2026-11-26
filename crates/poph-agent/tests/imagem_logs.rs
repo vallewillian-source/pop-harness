@@ -83,15 +83,15 @@ async fn imagem_do_cliente_nao_vai_para_o_log() {
     // A imagem boa chegou ao modelo: o log é o do caminho real, não de um turno vazio.
     let pedido = &fake.received()[0];
     let achadas: Vec<&Vec<u8>> = pedido
-        .mensagens
+        .messages
         .iter()
         .filter_map(|mensagem| match mensagem {
-            Message::Usuario(partes) => Some(partes),
+            Message::User(partes) => Some(partes),
             _ => None,
         })
         .flatten()
         .filter_map(|parte| match parte {
-            Part::Imagem { bytes, .. } => Some(bytes),
+            Part::Image { bytes, .. } => Some(bytes),
             _ => None,
         })
         .collect();

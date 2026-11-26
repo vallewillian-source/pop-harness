@@ -185,7 +185,7 @@ pub fn montar_com_regra(
         modelo: "gemini-3.8-flash-tiered".to_owned(),
         timeout,
         retentativas,
-        espera_base: Duration::from_millis(10),
+        base_wait: Duration::from_millis(10),
         temperatura: 0.0,
         max_tokens_saida: 512,
         recusa_turno_modelo,
@@ -207,8 +207,8 @@ pub fn pedido_com(mensagens: Vec<Message>) -> Request {
 
 pub fn pergunta(texto: &str) -> Request {
     pedido_com(vec![
-        Message::Sistema("Você é um assistente de atendimento.".to_owned()),
-        Message::Usuario(vec![Part::Texto(texto.to_owned())]),
+        Message::System("Você é um assistente de atendimento.".to_owned()),
+        Message::User(vec![Part::Texto(texto.to_owned())]),
     ])
 }
 

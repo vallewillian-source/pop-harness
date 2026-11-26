@@ -183,7 +183,7 @@ fn rodar(
             }
 
             let mut entrada = Entrada::nova(org, conversa.id, mensagem.id);
-            let cancelamento = Cancellation::novo();
+            let cancelamento = Cancellation::new();
             entrada.cancelamento = cancelamento.clone();
             let mut observador = ObservadorChat::novo(args.json);
             let turno = motor.executar(entrada, &mut observador);

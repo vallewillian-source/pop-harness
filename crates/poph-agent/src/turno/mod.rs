@@ -239,7 +239,7 @@ impl Entrada {
             org,
             conversa,
             mensagem,
-            cancelamento: Cancellation::novo(),
+            cancelamento: Cancellation::new(),
         }
     }
 }
@@ -933,7 +933,7 @@ impl Motor {
                 historico.push(item);
             }
             if !partes.is_empty() {
-                historico.push(Message::Usuario(partes));
+                historico.push(Message::User(partes));
             }
         }
         let (resultado_busca, jev_pos_janela) = match (busca_futuro, jev_futuro) {
@@ -1382,13 +1382,13 @@ impl Motor {
             passages_json: Some(utilizados_json(&trechos, &uso.produtos())),
             // HR-47b: `tools_json` guarda os nomes (contrato antigo) **e** o detalhe por chamada.
             tools_json: Some(registro_do_turno(&resposta.ferramentas, &chamadas)),
-            input_tokens: Some(u32::try_from(resposta.uso.entrada).unwrap_or(u32::MAX)),
+            input_tokens: Some(u32::try_from(resposta.uso.input).unwrap_or(u32::MAX)),
             output_tokens: Some(u32::try_from(resposta.uso.saida).unwrap_or(u32::MAX)),
             ..TurnFinalization::default()
         };
         self.store.turns().finalise(org, turno.id, fim)?;
         self.metricas.turnos_concluidos.increment(1);
-        self.metricas.tokens_entrada.increment(resposta.uso.entrada);
+        self.metricas.tokens_entrada.increment(resposta.uso.input);
         self.metricas.tokens_saida.increment(resposta.uso.saida);
         self.metricas
             .duracao_turno_ms
@@ -1409,7 +1409,7 @@ impl Motor {
             estado: TurnState::Completed,
             texto,
             mensagens: grupo_ids,
-            tokens_entrada: u32::try_from(resposta.uso.entrada).unwrap_or(u32::MAX),
+            tokens_entrada: u32::try_from(resposta.uso.input).unwrap_or(u32::MAX),
             tokens_saida: u32::try_from(resposta.uso.saida).unwrap_or(u32::MAX),
             tempos,
             modelo,
@@ -1475,7 +1475,7 @@ impl Motor {
             let mut pedido = Request::new(alvo.org, conversa.clone());
             pedido.tools = lista;
             pedido.modelo = Some(modelo.clone());
-            pedido.cancelamento = cancelamento.clone();
+            pedido.cancellation = cancelamento.clone();
             pedido.temperatura = quente.agente.temperatura.map(|valor| valor as f32);
             pedido.max_tokens = quente
                 .agente
@@ -1514,9 +1514,9 @@ impl Motor {
                 break;
             }
             resposta.rodadas += 1;
-            conversa.push(Message::Assistente {
+            conversa.push(Message::Assistant {
                 texto: texto_da_rodada,
-                chamadas: chamadas.clone(),
+                calls: chamadas.clone(),
             });
             for (indice, chamada) in chamadas.iter().enumerate() {
                 if indice >= max_por_mensagem as usize {
@@ -1536,7 +1536,7 @@ impl Motor {
                     );
                     conversa.push(Message::Resultado {
                         id: chamada.id.clone(),
-                        conteudo,
+                        content: conteudo,
                     });
                     continue;
                 }
@@ -1591,7 +1591,7 @@ impl Motor {
                 );
                 conversa.push(Message::Resultado {
                     id: chamada.id.clone(),
-                    conteudo: desfecho.em_texto(),
+                    content: desfecho.em_texto(),
                 });
             }
         }
@@ -1896,14 +1896,14 @@ impl Motor {
         cancelamento: &Cancellation,
     ) -> Result<RespostaRegenerada, LlmError> {
         let mut conversa = mensagens.to_vec();
-        conversa.push(Message::Assistente {
+        conversa.push(Message::Assistant {
             texto: rascunho.to_owned(),
-            chamadas: Vec::new(),
+            calls: Vec::new(),
         });
-        conversa.push(Message::Usuario(vec![Part::Texto(orientacao.to_owned())]));
+        conversa.push(Message::User(vec![Part::Texto(orientacao.to_owned())]));
         let mut pedido = Request::new(org, conversa);
         pedido.modelo = Some(modelo.to_owned());
-        pedido.cancelamento = cancelamento.clone();
+        pedido.cancellation = cancelamento.clone();
         pedido.temperatura = quente.agente.temperatura.map(|valor| valor as f32);
         pedido.max_tokens = quente
             .agente
@@ -2084,7 +2084,7 @@ impl Motor {
         ) {
             Ok(bytes) if !bytes.is_empty() => {
                 imagens.consumir(bytes.len() as u64);
-                Some(Part::Imagem {
+                Some(Part::Image {
                     mime: anexo.mime.clone(),
                     bytes,
                 })
@@ -3122,7 +3122,7 @@ fn erro_de_vaga_do_provedor(erro: ErroAgente) -> LlmError {
             espera_ms,
         } => LlmError::Unavailable {
             tentativas: 0,
-            ultimo: format!("sem vaga de chamada ao provedor `{provedor}` em {espera_ms} ms"),
+            last_error: format!("sem vaga de chamada ao provedor `{provedor}` em {espera_ms} ms"),
         },
         outro => LlmError::Configuracao(outro.to_string()),
     }
@@ -3402,7 +3402,7 @@ fn somar_resultado_jev(jev: &mut Option<ResultadoJev>, resultado: ResultadoJev) 
 
 fn somar_uso(total: Usage, outro: Usage) -> Usage {
     Usage {
-        entrada: total.entrada.saturating_add(outro.entrada),
+        input: total.input.saturating_add(outro.input),
         saida: total.saida.saturating_add(outro.saida),
     }
 }
@@ -3433,10 +3433,10 @@ fn status_do_atendimento(status: poph_store::ConversationStatus) -> &'static str
 
 fn motivo_texto(motivo: &FinishReason) -> String {
     match motivo {
-        FinishReason::Concluido => "concluido".to_owned(),
-        FinishReason::ChamadasFerramenta => "chamadas_ferramenta".to_owned(),
-        FinishReason::LimiteDeTokens => "limite_de_tokens".to_owned(),
-        FinishReason::Outro(texto) => texto.clone(),
+        FinishReason::Completed => "concluido".to_owned(),
+        FinishReason::ToolCalls => "chamadas_ferramenta".to_owned(),
+        FinishReason::TokenLimit => "limite_de_tokens".to_owned(),
+        FinishReason::Other(texto) => texto.clone(),
     }
 }
 

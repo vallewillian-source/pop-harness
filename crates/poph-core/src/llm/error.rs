@@ -11,14 +11,14 @@ pub enum LlmError {
     #[error("o provedor recusou o pedido (HTTP {status}): {mensagem}")]
     Rejected { status: u16, mensagem: String },
 
-    #[error("provedor indisponível depois de {tentativas} tentativa(s): {ultimo}")]
-    Unavailable { tentativas: u32, ultimo: String },
+    #[error("provedor indisponível depois de {tentativas} tentativa(s): {last_error}")]
+    Unavailable { tentativas: u32, last_error: String },
 
     #[error("falha de TLS ao falar com o provedor: {0}")]
     Tls(String),
 
-    #[error("a chamada ao provedor passou de {segundos} s")]
-    TimedOut { segundos: u64 },
+    #[error("a chamada ao provedor passou de {seconds} s")]
+    TimedOut { seconds: u64 },
 
     #[error("conexão com o provedor caiu durante a resposta: {0}")]
     ConnectionInterrupted(String),

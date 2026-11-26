@@ -24,7 +24,7 @@ pub fn encode(bytes: &[u8]) -> String {
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use super::*;
 
     #[test]

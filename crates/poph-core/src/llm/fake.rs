@@ -6,18 +6,18 @@ use futures::StreamExt;
 use futures::future::BoxFuture;
 use futures::stream;
 
-use super::erro::LlmError;
+use super::error::LlmError;
 use super::provedor::{LlmProvider, LlmStream, validate_request};
-use super::tipos::{LlmEvent, Request};
+use super::types::{LlmEvent, Request};
 
 #[derive(Debug, Clone)]
 pub enum Script {
     Events(Vec<LlmEvent>),
     Failure(LlmError),
     Pending {
-        eventos: Vec<LlmEvent>,
+        events: Vec<LlmEvent>,
         after: Duration,
-        erro: LlmError,
+        error: LlmError,
     },
 }
 
@@ -51,37 +51,36 @@ impl FakeProvider {
 }
 
 impl LlmProvider for FakeProvider {
-    fn stream<'a>(&'a self, pedido: Request) -> BoxFuture<'a, Result<LlmStream, LlmError>> {
+    fn stream<'a>(&'a self, request: Request) -> BoxFuture<'a, Result<LlmStream, LlmError>> {
         Box::pin(async move {
-            validate_request(&pedido, true)?;
-            let cancellation = pedido.cancelamento.clone();
+            validate_request(&request, true)?;
+            let cancellation = request.cancellation.clone();
             match self.received.lock() {
-                Ok(mut guard) => guard.push(pedido),
-                Err(poisoned) => poisoned.into_inner().push(pedido),
+                Ok(mut guard) => guard.push(request),
+                Err(poisoned) => poisoned.into_inner().push(request),
             }
             let script = self.next_script().ok_or_else(|| {
                 LlmError::Configuracao("provedor falso sem roteiro para esta chamada".to_owned())
             })?;
             match script {
-                Script::Failure(erro) => Err(erro),
-                Script::Events(eventos) => {
-                    let fluxo = stream::iter(eventos.into_iter().map(Ok));
+                Script::Failure(error) => Err(error),
+                Script::Events(events) => {
+                    let fluxo = stream::iter(events.into_iter().map(Ok));
                     Ok(Box::pin(fluxo) as LlmStream)
                 }
                 Script::Pending {
-                    eventos,
-                    after: depois,
-                    erro,
+                    events,
+                    after,
+                    error,
                 } => {
-                    let espera = async move {
+                    let wait = async move {
                         tokio::select! {
                             biased;
                             _ = cancellation.wait() => Err(LlmError::Cancelled),
-                            _ = tokio::time::sleep(depois) => Err(erro),
+                            _ = tokio::time::sleep(after) => Err(error),
                         }
                     };
-                    let fluxo =
-                        stream::iter(eventos.into_iter().map(Ok)).chain(stream::once(espera));
+                    let fluxo = stream::iter(events.into_iter().map(Ok)).chain(stream::once(wait));
                     Ok(Box::pin(fluxo) as LlmStream)
                 }
             }
@@ -90,25 +89,25 @@ impl LlmProvider for FakeProvider {
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use poph_types::OrgId;
 
     use super::*;
-    use crate::llm::tipos::{FinishReason, Message, Part};
+    use crate::llm::types::{FinishReason, Message, Part};
 
     #[tokio::test]
     async fn delivers_script_and_records_request() {
         let fake = FakeProvider::with_scripts(vec![Script::Events(vec![
             LlmEvent::Texto("oi".into()),
-            LlmEvent::Fim(FinishReason::Concluido),
+            LlmEvent::Fim(FinishReason::Completed),
         ])]);
-        let pedido = Request::new(
+        let request = Request::new(
             OrgId::generate(),
-            vec![Message::Usuario(vec![Part::Texto("olá".into())])],
+            vec![Message::User(vec![Part::Texto("olá".into())])],
         );
-        let mut fluxo = fake.stream(pedido).await.expect("abre");
-        let eventos: Vec<_> = fluxo.by_ref().collect().await;
-        assert_eq!(eventos.len(), 2);
+        let mut fluxo = fake.stream(request).await.expect("abre");
+        let events: Vec<_> = fluxo.by_ref().collect().await;
+        assert_eq!(events.len(), 2);
         assert_eq!(fake.received().len(), 1);
     }
 
@@ -116,14 +115,14 @@ mod testes {
     async fn script_failure_is_open_error() {
         let fake = FakeProvider::with_scripts(vec![Script::Failure(LlmError::Unavailable {
             tentativas: 3,
-            ultimo: "HTTP 503".into(),
+            last_error: "HTTP 503".into(),
         })]);
-        let pedido = Request::new(
+        let request = Request::new(
             OrgId::generate(),
-            vec![Message::Usuario(vec![Part::Texto("x".into())])],
+            vec![Message::User(vec![Part::Texto("x".into())])],
         );
         assert!(matches!(
-            fake.stream(pedido).await,
+            fake.stream(request).await,
             Err(LlmError::Unavailable { .. })
         ));
     }
@@ -131,18 +130,18 @@ mod testes {
     #[tokio::test]
     async fn pending_respects_cancellation() {
         let fake = FakeProvider::with_scripts(vec![Script::Pending {
-            eventos: vec![LlmEvent::Texto("parcial".into())],
+            events: vec![LlmEvent::Texto("parcial".into())],
             after: Duration::from_secs(30),
-            erro: LlmError::TimedOut { segundos: 30 },
+            error: LlmError::TimedOut { seconds: 30 },
         }]);
-        let pedido = Request::new(
+        let request = Request::new(
             OrgId::generate(),
-            vec![Message::Usuario(vec![Part::Texto("x".into())])],
+            vec![Message::User(vec![Part::Texto("x".into())])],
         );
-        let cancelamento = pedido.cancelamento.clone();
-        let mut fluxo = fake.stream(pedido).await.expect("abre");
+        let cancellation = request.cancellation.clone();
+        let mut fluxo = fake.stream(request).await.expect("abre");
         assert!(matches!(fluxo.next().await, Some(Ok(LlmEvent::Texto(_)))));
-        cancelamento.cancel();
+        cancellation.cancel();
         assert_eq!(fluxo.next().await, Some(Err(LlmError::Cancelled)));
     }
 }

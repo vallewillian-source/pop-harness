@@ -458,15 +458,15 @@ fn roteiro_padrao() -> Vec<Script> {
     vec![Script::Events(vec![
         LlmEvent::Texto("O prazo é ".into()),
         LlmEvent::Texto("de 5 dias úteis.".into()),
-        LlmEvent::Fim(FinishReason::Concluido),
+        LlmEvent::Fim(FinishReason::Completed),
     ])]
 }
 
 fn texto_do_pedido(pedido: &Request) -> String {
     let mut texto = String::new();
-    for mensagem in &pedido.mensagens {
+    for mensagem in &pedido.messages {
         match mensagem {
-            poph_core::llm::Message::Usuario(partes) => {
+            poph_core::llm::Message::User(partes) => {
                 for parte in partes {
                     if let poph_core::llm::Part::Texto(trecho) = parte {
                         texto.push_str(trecho);
@@ -474,7 +474,7 @@ fn texto_do_pedido(pedido: &Request) -> String {
                     }
                 }
             }
-            poph_core::llm::Message::Sistema(instrucoes) => texto.push_str(instrucoes),
+            poph_core::llm::Message::System(instrucoes) => texto.push_str(instrucoes),
             _ => {}
         }
     }
@@ -575,13 +575,13 @@ async fn duas_conexoes_na_mesma_conversa_nao_geram_dois_turnos() {
         "duas-abas",
         vec![
             Script::Pending {
-                eventos: vec![LlmEvent::Texto("parcial ".into())],
+                events: vec![LlmEvent::Texto("parcial ".into())],
                 after: Duration::from_secs(30),
-                erro: poph_core::llm::LlmError::TimedOut { segundos: 30 },
+                error: poph_core::llm::LlmError::TimedOut { seconds: 30 },
             },
             Script::Events(vec![
                 LlmEvent::Texto("resposta da segunda".into()),
-                LlmEvent::Fim(FinishReason::Concluido),
+                LlmEvent::Fim(FinishReason::Completed),
             ]),
         ],
         true,
@@ -624,9 +624,9 @@ async fn desconexao_cancela_o_turno_sem_fila_presa() {
     let c = Cenario::novo(
         "cancelamento",
         vec![Script::Pending {
-            eventos: vec![LlmEvent::Texto("começou ".into())],
+            events: vec![LlmEvent::Texto("começou ".into())],
             after: Duration::from_secs(30),
-            erro: poph_core::llm::LlmError::TimedOut { segundos: 30 },
+            error: poph_core::llm::LlmError::TimedOut { seconds: 30 },
         }],
         true,
     )
@@ -870,11 +870,11 @@ fn roteiro_envia_arquivo(arquivo: FileId) -> Vec<Script> {
                 nome: poph_agent::NOME_ENVIAR_ARQUIVO.to_owned(),
                 arguments: json!({ "id": arquivo.to_string() }),
             }),
-            LlmEvent::Fim(FinishReason::ChamadasFerramenta),
+            LlmEvent::Fim(FinishReason::ToolCalls),
         ]),
         Script::Events(vec![
             LlmEvent::Texto("Estou enviando o catálogo.".into()),
-            LlmEvent::Fim(FinishReason::Concluido),
+            LlmEvent::Fim(FinishReason::Completed),
         ]),
     ]
 }

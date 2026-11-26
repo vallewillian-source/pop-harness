@@ -192,10 +192,10 @@ impl Cenario {
         let roteiro = Script::Events(vec![
             LlmEvent::Texto("resposta".to_owned()),
             LlmEvent::Usage(Usage {
-                entrada: 100,
+                input: 100,
                 saida: 10,
             }),
-            LlmEvent::Fim(FinishReason::Concluido),
+            LlmEvent::Fim(FinishReason::Completed),
         ]);
         let fake = Arc::new(FakeProvider::with_scripts(vec![
             roteiro.clone(),
@@ -252,10 +252,10 @@ impl Drop for Cenario {
 
 fn textos_do_pedido(pedido: &poph_core::llm::Request) -> Vec<String> {
     pedido
-        .mensagens
+        .messages
         .iter()
         .filter_map(|mensagem| match mensagem {
-            poph_core::llm::Message::Sistema(texto) => Some(texto.clone()),
+            poph_core::llm::Message::System(texto) => Some(texto.clone()),
             _ => None,
         })
         .collect()
