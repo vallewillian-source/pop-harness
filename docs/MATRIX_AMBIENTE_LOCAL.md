@@ -138,6 +138,36 @@ docker ps --filter name=poph-matrix --format '{{.Names}} {{.Status}}'           
 `subir` already does the first and prints the two `Loaded application service` lines. The container has the image's
 own healthcheck (`healthy`).
 
+## Element captures for the MX-31 acceptance
+
+`scripts/aceite-matrix-element.mjs` takes the Element screenshots of the acceptance. It talks to Chrome through the
+DevTools protocol (Node 22's native WebSocket), without Playwright. `scripts/aceite-matrix.sh` (step A12) runs it with
+the right paths and variables; it can also be run by hand:
+
+```bash
+node scripts/aceite-matrix-element.mjs a1    <output> <room> <space> <directory>
+node scripts/aceite-matrix-element.mjs final <output> <room> <space> <directory> [late-name-room]
+```
+
+- `a1` captures the room just created (with the customer's name) and the department's space **before** any transfer.
+  It proves the room is born named and already inside the space.
+- `final` captures the state after the agent's reply, the transfer, the reopening and the closing, the home and, when
+  given, the room whose name arrived later (MX-32/MX-33).
+- Files written to `<output>`: `a1-sala.png`, `a1-espaco.png` (for `a1`); `sala.png`, `espaco.png`,
+  `sala-nome-depois.png` (when given) and `home.png` (for `final`); and `capturas.txt` listing them. On failure it writes
+  `falha.png` and exits 1.
+- Each mode has its own Chrome profile (`<directory>/chrome-profile-<mode>`), so the two passes do not share a profile.
+  A session left in that profile is reused by the next run of the same mode.
+- Before starting, leftovers from a Chrome killed by force are removed from the profile (`DevToolsActivePort` and the
+  `Singleton*` files); otherwise the next run reads the previous port and fails to connect.
+- Login: the account is the disposable development account of Synapse. If Element asks for device verification, the
+  script follows "Não consegue confirmar?" → "Continuar" → password. Element itself is not changed.
+- Banners that cover the screen ("Mais tarde", "Ok", "Dispensar") and the first-login modals ("Not now") are dismissed.
+  None of them changes the app; they only get in the way of the capture.
+- The Element texts above are matched literally. If Element changes its wording or language, these strings must change too.
+- Environment: `CHROME_BIN` (default `google-chrome`), `ACEITE_ELEMENT` (default `http://127.0.0.1:18403`),
+  `ACEITE_USUARIO` and `ACEITE_SENHA` (default: read from `<directory>/atendente.usuario` and `atendente.senha`).
+
 ## Limits of this environment
 
 - No federation (`trusted_key_servers: []`), no TLS, no open registration.
