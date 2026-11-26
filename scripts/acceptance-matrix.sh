@@ -960,8 +960,6 @@ def found(mime, sha):
     ]
 
 
-# O `infer` devolve `audio/opus` para OGG/Opus (o matcher de Opus vem antes do de OGG): os dois
-# MIMEs são o mesmo arquivo que o atendente mandou, e a lista fechada aceita ambos.
 audio = found("audio/ogg", sha_audio) or found("audio/opus", sha_audio)
 video = found("video/mp4", sha_video)
 

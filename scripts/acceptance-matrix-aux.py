@@ -1,11 +1,4 @@
 #!/usr/bin/env python3
-"""Auxiliar do roteiro de aceite do módulo Matrix (MX-31).
-
-Faz o que o `acceptance-matrix.sh` não faz bem em bash: servidores falsos (LLM e Evolution),
-chamadas HTTP ao Synapse de desenvolvimento e leitura do estado da sala.
-
-Nenhum token é impresso: os valores vêm do ambiente e só viajam em cabeçalho.
-"""
 import base64
 import hashlib
 import json
@@ -37,7 +30,6 @@ def _llm_response():
 
 
 class _Llm(BaseHTTPRequestHandler):
-    """OpenAI compatível, SSE: o Harness fala com o antigravity2api por stream."""
 
     protocol_version = "HTTP/1.1"
     directory = "."
@@ -85,7 +77,6 @@ def _png_chunk(kind, payload):
 
 
 def _test_png(width=360, height=220):
-    """PNG RGB com degradê (arquivo pequeno, visível no Element)."""
     lines = []
     for y in range(height):
         line = bytearray([0])
@@ -102,7 +93,6 @@ def _test_png(width=360, height=220):
 
 
 def _test_pdf(text="Aceite do modulo Matrix (fase 2) - arquivo de teste"):
-    """PDF mínimo de uma página, com uma linha de texto (sem acento, para não depender de fonte)."""
     stream = f"BT /F1 14 Tf 40 200 Td ({text}) Tj ET\n".encode("latin-1")
     objects = [
         b"<< /Type /Catalog /Pages 2 0 R >>",
@@ -129,13 +119,6 @@ def _test_pdf(text="Aceite do modulo Matrix (fase 2) - arquivo de teste"):
 
 
 def _with_ffmpeg(arguments, suffix):
-    """Gera um fixture de áudio/vídeo com o ffmpeg; `None` quando ele não está disponível.
-
-    O Element tenta reproduzir o que está na sala: um arquivo só com o cabeçalho aparece com
-    "Erro ao baixar o áudio". Por isso o fixture é real quando há ffmpeg (o caso deste ambiente) e
-    cai num cabeçalho mínimo quando não há — o caminho de entrega é o mesmo, o que muda é a
-    reprodução na tela.
-    """
     import shutil
     import subprocess
     import tempfile
@@ -156,11 +139,6 @@ def _with_ffmpeg(arguments, suffix):
 
 
 def _test_ogg():
-    """OGG/Opus de um segundo (silêncio) via ffmpeg; sem ffmpeg, cabeçalho `OggS` mínimo.
-
-    O `infer` reconhece o formato pelo "OggS" nos dois casos; com ffmpeg o Element também
-    reproduz o áudio na sala (MX-49).
-    """
     real = _with_ffmpeg(
         ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono", "-t", "1", "-c:a", "libopus", "-f", "ogg"],
         ".ogg",
@@ -181,7 +159,6 @@ def _test_ogg():
 
 
 def _test_mp4():
-    """MP4 H.264 de um segundo via ffmpeg; sem ffmpeg, cabeçalho `ftyp` mínimo (MX-49)."""
     real = _with_ffmpeg(
         [
             "-f",
@@ -213,7 +190,6 @@ FIXTURES = {
 
 
 def _event_attachment_mimetype(body):
-    """Mimetype do evento que o Harness mandou em `{"message": dados}` (ou 404 se desconhecido)."""
     payload = body.get("message") or {}
     content = payload.get("message") or {}
     for key in ("imageMessage", "documentMessage"):
@@ -224,7 +200,6 @@ def _event_attachment_mimetype(body):
 
 
 class _Evo(BaseHTTPRequestHandler):
-    """Evolution falsa: texto e mídia enviados, e o download da mídia que o cliente mandou."""
 
     protocol_version = "HTTP/1.1"
     directory = "."
@@ -260,7 +235,7 @@ class _Evo(BaseHTTPRequestHandler):
             encoded = body.get("media") or ""
             try:
                 attachment_bytes = base64.b64decode(encoded)
-            except Exception:  # noqa: BLE001 - prova de ambiente, não de produto
+            except Exception:
                 attachment_bytes = b""
             _record(
                 self.directory,
@@ -347,12 +322,6 @@ def _q(value):
 
 
 def _clear_space_children(room, token_as, bot):
-    """Tira do espaço as salas de execuções anteriores (o alias é reaproveitado).
-
-    Sem isso, a hierarquia do espaço acumula salas antigas e a captura do aceite fica ilegível.
-    Não apaga sala nenhuma: só remove o `m.space.child` do espaço do aceite (artefato de teste).
-    O bot do AS é quem escreve: membro do espaço com poder 50 (o atendente novo teria poder 0).
-    """
     status, state = _request("GET", f"/_matrix/client/v3/rooms/{_q(room)}/state", token=token_as)
     if status != 200:
         return 0
@@ -375,7 +344,6 @@ def _clear_space_children(room, token_as, bot):
 
 
 def spaces(output, human_token, as_token, bot):
-    """Cria os espaços do aceite como o atendente faria no Element e prepara o bot."""
     os.makedirs(output, exist_ok=True)
     _, who = _request("GET", "/_matrix/client/v3/account/whoami", token=human_token)
     human = who["user_id"]
@@ -473,7 +441,6 @@ def agent_send(room, text, token):
 
 
 def room_state(room, token):
-    """Estado relevante da sala, para o relatório e as checagens do roteiro."""
     output = {}
     for event in ("m.room.name", "com.sofacoding.atendimento.metadata", "m.space.parent", "m.room.join_rules"):
         status, d = _request("GET", f"/_matrix/client/v3/rooms/{_q(room)}/state/{event}", token=token)
@@ -503,7 +470,6 @@ def room_parent(room, token):
 
 
 def notices(room, token):
-    """Conta os `m.notice` do histórico da sala (prova de que renomear não avisa)."""
     status, d = _request("GET", f"/_matrix/client/v3/rooms/{_q(room)}/messages?dir=b&limit=100", token=token)
     if status != 200:
         print(json.dumps({"status": status, "erro": d}, ensure_ascii=False))
@@ -518,13 +484,11 @@ def notices(room, token):
 
 
 def profile(user, token):
-    """Nome de exibição de um fantasma (MX-10/MX-33)."""
     status, d = _request("GET", f"/_matrix/client/v3/profile/{_q(user)}/displayname", token=token)
     print(json.dumps(d if status == 200 else {"_status": status}, ensure_ascii=False))
 
 
 def play(db, conversation):
-    """Sobe `updated_at` da conversa, como qualquer alteração real faria (é o gatilho do laço de estado)."""
     import sqlite3
 
     con = sqlite3.connect(db)
@@ -535,7 +499,6 @@ def play(db, conversation):
 
 
 def transfer_department(db, conversation, department):
-    """Simula a transferência da MX-15: muda o alvo e sobe `updated_at` (o gatilho real é o G1/Jev)."""
     import sqlite3
 
     con = sqlite3.connect(db)
@@ -549,7 +512,6 @@ def transfer_department(db, conversation, department):
 
 
 def _request_raw(method, path, payload=None, token=None, content_type="application/octet-stream"):
-    """Pedido com corpo cru (upload de mídia). Devolve status e corpo JSON (ou vazio)."""
     headers = {"Content-Type": content_type}
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -568,11 +530,6 @@ def _request_raw(method, path, payload=None, token=None, content_type="applicati
 
 
 def webhook_attachment(org, instance, external_id, kind, caption, push_name):
-    """Cliente manda imagem ou documento pelo WhatsApp (MX-43).
-
-    A mensagem leva só a referência (mimetype e legenda); o conteúdo o Harness baixa da
-    Evolution falsa, que serve o fixture do tipo.
-    """
     base = os.environ.get("HARNESS", "http://127.0.0.1:18010")
     phone = os.environ.get("ACEITE_TELEFONE", "5521988887777")
     if kind == "imagem":
@@ -630,7 +587,6 @@ OUT_OF_SCOPE_KINDS = {
 
 
 def write_fixtures(directory):
-    """Grava o PNG e o PDF de teste (usados no envio do atendente, MX-44) e imprime os caminhos."""
     os.makedirs(directory, exist_ok=True)
     paths = {}
     for mime, (name, generate) in FIXTURES.items():
@@ -642,8 +598,6 @@ def write_fixtures(directory):
 
 
 def webhook_type(org, instance, external_id, kind, push_name):
-    """Cliente manda um tipo que o Harness não abre (áudio, vídeo, figurinha, contato,
-    localização, enquete): vira texto de histórico no turno e aviso na sala (MX-45)."""
     base = os.environ.get("HARNESS", "http://127.0.0.1:18010")
     phone = os.environ.get("ACEITE_TELEFONE", "5521988887777")
     if kind not in OUT_OF_SCOPE_KINDS:
@@ -679,7 +633,6 @@ def webhook_type(org, instance, external_id, kind, push_name):
 
 
 def webhook_device(org, instance, external_id, text):
-    """Mensagem digitada no celular da loja (`fromMe`): MX-41/MX-42."""
     base = os.environ.get("HARNESS", "http://127.0.0.1:18010")
     phone = os.environ.get("ACEITE_TELEFONE", "5521988887777")
     body = {
@@ -712,12 +665,6 @@ def webhook_device(org, instance, external_id, text):
 
 
 def agent_send_attachment(room, path, mime, name, txn=None):
-    """Atendente manda imagem, arquivo, áudio ou vídeo pela sala (o evento que o Element publica).
-
-    O `msgtype` segue o tipo real, como o Element faz: `m.image`, `m.audio`, `m.video` e `m.file`
-    para o resto (MX-44 e MX-49). O `txn` é opcional: repetir o mesmo valor reenvia a mesma
-    transação do Element, que o Synapse deduplica (prova de reentrega do MX-49).
-    """
     token = os.environ["ACEITE_TOKEN_HUMANO"]
     with open(path, "rb") as file:
         payload = file.read()
@@ -758,11 +705,6 @@ def agent_send_attachment(room, path, mime, name, txn=None):
 
 
 def events(room, limit=80):
-    """Timeline da sala em forma de relatório: corpo, remetente, anexo e redação.
-
-    Só o que é preciso para as asserções: nada de token, e o texto que aparece é o do
-    roteiro (fixtures), nunca dado de cliente real.
-    """
     token = os.environ["ACEITE_TOKEN_HUMANO"]
     status, d = _request(
         "GET",
@@ -817,7 +759,6 @@ def event_by_id(room, event_id):
 
 
 def attachment_exists(mxc):
-    """O arquivo responde no download de mídia do Synapse? (200 existe, 404 apagado)"""
     token = os.environ["ACEITE_TOKEN_HUMANO"]
     if not mxc.startswith("mxc://"):
         print(json.dumps({"erro": "endereco nao e mxc"}))
@@ -832,7 +773,6 @@ def attachment_exists(mxc):
 
 
 def prepare_expiry(db, days):
-    """Recua o `sent_at` da mídia pendente, para o prazo vencer sem esperar dias (só no teste)."""
     import sqlite3
 
     cutoff = int(time.time() * 1000) - int(days) * 86_400_000 - 60_000

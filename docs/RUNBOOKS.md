@@ -874,6 +874,39 @@ docker run --rm -u $(id -u):$(id -g) -v "$PWD:/w" -w /w/src/apps/pop-harness \
 image was not built and the commands above were not run. The rules come from the image's own comments, which
 were moved here when they were removed from the Dockerfile.
 
+## 10. Matrix acceptance script: rules it relies on (MX-31)
+
+`scripts/acceptance-matrix-aux.py` and the Python blocks of `scripts/acceptance-matrix.sh` drive the Matrix
+acceptance. These rules were written as comments and docstrings before they were removed from the code.
+
+- **Fixtures:** with `ffmpeg`, the audio and video fixtures are real files, so Element can play them in the room.
+  Without `ffmpeg`, they are a minimal header (`OggS` for audio, `ftyp` for MP4). The delivery path is the same;
+  only the playback in the room differs. `infer` recognizes both by their signature.
+- **MIME of OGG/Opus:** `infer` returns `audio/opus` for an OGG/Opus file, so the acceptance accepts both
+  `audio/ogg` and `audio/opus` for the same file.
+- **Clearing the space:** the script removes only the `m.space.child` links of old runs under the acceptance
+  space (the alias is reused). It deletes no room. The bot writes these links: it is a member of the space with
+  power level 50 (a new attendant would have power 0).
+- **Client attachment (MX-43):** the webhook carries only the reference (mimetype and caption). The content is
+  downloaded from the fake Evolution, which serves the fixture of that type.
+- **Client types the Harness does not open (MX-45):** the turn records a text in the history and the room gets a
+  notice.
+- **Store device (`fromMe`, MX-41/MX-42):** the script sends a `messages.upsert` event with `fromMe: true`, as a
+  message typed on the store phone would arrive.
+- **Attendant attachment (MX-44, MX-49):** `msgtype` follows the real type, as Element does: `m.image`,
+  `m.audio`, `m.video`, and `m.file` for the rest. `txn` is optional. Repeating the same `txn` resends the same
+  Element transaction, which Synapse deduplicates (the MX-49 redelivery proof).
+- **Renaming does not notify:** the count of `m.notice` events in the room is the proof that a rename sends no
+  notice.
+- **State loop trigger:** `play` raises `updated_at` of the conversation, as any real change would. The
+  transfer simulated by `transfer_department` (MX-15) does the same; the real trigger is the G1 gate of the Jev.
+- **Pending media expiry (test only):** `prepare_expiry` moves `sent_at` back so the deadline passes without waiting
+  days. It is never used outside the test.
+- **Events report:** it holds only what the assertions need, no token. Its text comes from the script fixtures,
+  never from real client data.
+
+**Not verified in this run:** the acceptance was not run end to end (it needs Synapse, Chrome, and Element).
+
 ## Verification log
 
 | Runbook | Run in this verification | Not verified (reason) |
