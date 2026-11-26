@@ -24,7 +24,7 @@ Para desligar o motor sem perder nada, `[fluxos] ativo = false`: as Fichas conti
 
 ## 2. Ciclo da Ficha
 
-**Criação.** Toda conversa nova ganha a Ficha na mesma escrita que a cria, tanto na API quanto na mensagem que chega pelo canal. O banco garante uma Ficha por conversa (índice único). A migração `0012` criou uma Ficha para cada conversa que já existia. Testes: `fichas_invariante.rs` (`criar_conversa_cria_a_ficha_na_mesma_escrita`, `recepcao_do_canal_cria_uma_ficha_por_conversa_e_nao_por_mensagem`) e `fichas_migracao.rs` (`backfill_cria_exatamente_uma_ficha_por_conversa`).
+**Criação.** Toda conversa nova ganha a Ficha na mesma escrita que a cria, tanto na API quanto na mensagem que chega pelo canal. O banco garante uma Ficha por conversa (índice único). A migração `0012` criou uma Ficha para cada conversa que já existia. Testes: `cases_invariant.rs` (`creating_conversation_creates_case_in_same_write`, `channel_reception_creates_one_case_per_conversation_and_not_per_message`) e `cases_migration.rs` (`backfill_creates_exactly_one_case_per_conversation`).
 
 **Estados.** Aberta ou fechada. A Ficha continua aberta enquanto a conversa está aberta **ou transferida** para atendente humano. Fecha quando a conversa fecha.
 
@@ -33,13 +33,13 @@ Para desligar o motor sem perder nada, `[fluxos] ativo = false`: as Fichas conti
 - o agente chama `atendimento_encerrar` (ferramenta do turno);
 - um fluxo chega a `fim(encerra_atendimento=True)`;
 - o atendente ou o admin fecha pela API (`POST .../fichas/{ficha_id}/close`), que também vale quando a conversa já foi apagada pela retenção;
-- o fechamento da conversa pelo repositório (`fechar_auditado` e `mudar_status`).
+- o fechamento da conversa pelo repositório (`close_audited` e `change_status`).
 
-Testes: `fichas_invariante.rs` (`fechar_conversa_fecha_a_ficha_e_registra_o_evento`, `mudar_status_para_fechada_tambem_fecha_a_ficha`, `fechar_com_execucao_ativa_abandona_a_execucao_na_mesma_escrita`, `falha_no_meio_do_fechamento_nao_deixa_conversa_fechada_com_ficha_aberta`), `fichas_acoes.rs` (close com e sem conversa) e `fluxos_e2e.rs` (encerramento pelo agente). A lista dos caminhos é mantida à mão; não há teste que a enumere sozinho.
+Testes: `cases_invariant.rs` (`closing_conversation_closes_case_and_records_event`, `changing_status_to_closed_also_closes_case`, `closing_with_active_execution_abandons_execution_in_same_write`, `failure_midway_through_closing_leaves_no_closed_conversation_with_open_case`), `fichas_acoes.rs` (close com e sem conversa) e `fluxos_e2e.rs` (encerramento pelo agente). A lista dos caminhos é mantida à mão; não há teste que a enumere sozinho.
 
-**Depois de fechar.** Conversa fechada não reabre: reabrir devolve `409 conversa_encerrada` (PRD L13). Conversa transferida reabre normalmente. A mensagem seguinte do cliente, depois de fechado, abre conversa e Ficha novas (`mensagem_depois_do_fechamento_abre_conversa_e_ficha_novas`, `reabrir_conversa_fechada_e_recusado_e_transferida_continua_reabrindo`, em `fichas_invariante.rs`; e o encerramento com Ficha seguinte em `fluxos_e2e.rs`, `encerramento_do_agente_e_proxima_mensagem_abrem_nova_ficha`).
+**Depois de fechar.** Conversa fechada não reabre: reabrir devolve `409 conversa_encerrada` (PRD L13). Conversa transferida reabre normalmente. A mensagem seguinte do cliente, depois de fechado, abre conversa e Ficha novas (`message_after_closing_opens_new_conversation_and_case`, `reopening_closed_conversation_is_refused_and_transferred_keeps_reopening`, em `cases_invariant.rs`; e o encerramento com Ficha seguinte em `fluxos_e2e.rs`, `encerramento_do_agente_e_proxima_mensagem_abrem_nova_ficha`).
 
-**Histórico.** Cada Ficha tem uma linha do tempo em `ficha_eventos`, numerada por `seq` e com idempotência por chave. Os tipos são `ficha_aberta`, `fluxo_iniciado`, `etapa_entrou`, `campos_preenchidos`, `acao_executada`, `decisao_resolvida`, `etapa_concluida`, `efeito_criado`, `efeito_enviado`, `efeito_falhou`, `execucao_concluida`, `execucao_abandonada`, `execucao_falhou`, `atendimento_transferido` e `ficha_fechada`. A API lê a Ficha com as execuções, as etapas, os campos respondidos e os eventos (`fichas_invariante.rs`, `eventos_saem_em_ordem_e_paginam_pelo_seq`). O histórico completo de cada Ficha é conferido na prova ponta a ponta (`fluxos_e2e.rs`).
+**Histórico.** Cada Ficha tem uma linha do tempo em `ficha_eventos`, numerada por `seq` e com idempotência por chave. Os tipos são `ficha_aberta`, `fluxo_iniciado`, `etapa_entrou`, `campos_preenchidos`, `acao_executada`, `decisao_resolvida`, `etapa_concluida`, `efeito_criado`, `efeito_enviado`, `efeito_falhou`, `execucao_concluida`, `execucao_abandonada`, `execucao_falhou`, `atendimento_transferido` e `ficha_fechada`. A API lê a Ficha com as execuções, as etapas, os campos respondidos e os eventos (`cases_invariant.rs`, `events_leave_in_order_and_paginate_by_seq`). O histórico completo de cada Ficha é conferido na prova ponta a ponta (`fluxos_e2e.rs`).
 
 **Quem fechou.** A coluna `fechada_por` aceita `cliente`, `agente`, `atendente`, `admin`, `fluxo`, `sistema` e `migracao`. Cada caminho acima grava o seu valor; não há teste que cubra cada valor separadamente.
 
@@ -56,13 +56,13 @@ Testes: `fichas_invariante.rs` (`fechar_conversa_fecha_a_ficha_e_registra_o_even
 
 Se já existe execução ativa, o turno não pergunta nada ao Jev: o bloco da etapa atual entra no prompt. Testes: `poph-jev/tests/g9_fluxo.rs` (opções, cortes em 400 caracteres, limiares, fallback, flag), `poph-agent/tests/fluxo_turno.rs` (início antes do modelo, reserva, bloco da etapa) e `poph-agent/tests/fluxo_ferramentas.rs`.
 
-**Revisão presa.** A execução guarda a revisão com que começou. Publicar a revisão 2 não muda a execução que está na 1 (`fluxos_e2e.rs`, `revisao_antiga_acao_humana_e_dois_fluxos_na_mesma_ficha`; `fluxos_migracao.rs`, `revisao_publicada_nao_pode_ser_alterada_nem_apagada`). `poph flow diff` mostra quantos atendimentos estão presos em cada revisão.
+**Revisão presa.** A execução guarda a revisão com que começou. Publicar a revisão 2 não muda a execução que está na 1 (`fluxos_e2e.rs`, `revisao_antiga_acao_humana_e_dois_fluxos_na_mesma_ficha`; `flows_migration.rs`, `published_revision_cannot_be_changed_nor_deleted`). `poph flow diff` mostra quantos atendimentos estão presos em cada revisão.
 
 **Etapas e ações.** Cada etapa pede campos (com tipo) e oferece ações. Quem age é sempre o ator da ação: `agente` (ferramenta do turno, sem escolha do modelo) ou `atendente` (pela API). Ação que não existe na etapa atual é recusada com a lista das válidas, e nada é gravado: o motor não executa ações intermediárias sozinho. Etapa que exige campo não avança sem ele, e a resposta diz o que falta (`motor.rs`: `acao_valida_grava_os_campos_e_avanca_para_a_etapa_de_destino`, `campo_exigido_faltando_devolve_a_lista_do_que_falta`).
 
 **Decisões.** Uma decisão escolhe o ramo pela regra (combinadores ou uma função `def`). Decisões encadeadas atravessam até 10 saltos numa mesma passagem (`[fluxos] max_saltos_decisao`); ciclo ou excesso leva a execução a falha (`motor_desfecho.rs`: `dez_saltos_passam_e_onze_derrubam_a_execucao`, `ciclo_de_decisoes_para_a_execucao_em_falha`).
 
-**Fim.** `fim(...)` conclui a execução. Com `encerra_atendimento=True`, também fecha a conversa e a Ficha (ver §2). Execução concluída, abandonada ou em falha não aceita mais ação (`execucao_encerrada_nao_aceita_transicao`, em `poph-store/tests/execucoes_fluxo.rs`).
+**Fim.** `fim(...)` conclui a execução. Com `encerra_atendimento=True`, também fecha a conversa e a Ficha (ver §2). Execução concluída, abandonada ou em falha não aceita mais ação (`closed_execution_accepts_no_transition`, em `poph-store/tests/flow_executions.rs`).
 
 **Abandono.** O agente abandona com `fluxo_abandonar(motivo)`; o atendente, com `POST .../flow-runs/{run_id}/abandon`. Abandono sem motivo é recusado.
 
@@ -70,7 +70,7 @@ Se já existe execução ativa, o turno não pergunta nada ao Jev: o bloco da et
 
 **Dados da execução.** O `dados_json` tem teto de 64 KB (`max_dados_bytes`). Script acima de 32 KB é recusado antes de compilar (`max_fonte_bytes`), e script com mais nós que `max_nos` também é recusado (`limites.rs`: `script_de_40_kib_e_recusado_com_o_padrao`, `teto_de_nos_da_configuracao_recusa_o_que_passa_dele`).
 
-**Agente e atendente agindo ao mesmo tempo.** Só um vence; o outro recebe `412` (versão velha) e nada é gravado (`fichas_acoes.rs`: `corrida_atendente_com_agente_da_412_e_nao_grava_nada`; `execucoes_fluxo.rs`: `duas_threads_agente_e_atendente_so_uma_vence`).
+**Agente e atendente agindo ao mesmo tempo.** Só um vence; o outro recebe `412` (versão velha) e nada é gravado (`fichas_acoes.rs`: `corrida_atendente_com_agente_da_412_e_nao_grava_nada`; `flow_executions.rs`: `two_threads_agent_and_attendant_only_one_wins`).
 
 **Ações humanas na API.** O atendente abre um fluxo liberado ao agente da Ficha, sem passar pelo Jev (`POST .../flow-runs`), age (`.../actions`), abandona e fecha a Ficha. Todas exigem `If-Match` e `chave_idempotencia`; repetir a chave devolve o resultado da primeira chamada, sem duplicar evento (`fichas_acoes.rs`).
 
@@ -94,7 +94,7 @@ Efeitos são o que sai do atendimento para fora da conversa. O motor só **produ
 
 **Entrega "pelo menos uma vez".** Se o servidor cair depois do envio e antes de gravar `enviado`, o efeito pode sair de novo. Isso é aceito e documentado. Efeito já enviado não sai de novo quando a execução segue: a prova ponta a ponta roda um ciclo extra de efeitos e saída e confere que nada é reenviado (`fluxos_e2e.rs`, `exemplo_entrega_notificacao_unica_e_transferencia_com_ficha_aberta`).
 
-**Testes.** Laço de entrega em `poph-server/tests/fluxos_efeitos.rs` (`mensagem_ao_cliente_chega_ao_cliente_uma_vez`, `notificar_whatsapp_vai_para_a_equipe_e_nao_para_o_cliente`, `sem_integracao_o_efeito_fica_pendente_e_nao_trava_o_laco`, `queda_entre_enfileirar_e_confirmar_reenvia_e_aceita_duplicata`, `falha_definitiva_vira_falhou_com_evento_e_metrica`); transição, efeitos na mesma escrita e falha no meio sem evento órfão em `poph-store/tests/execucoes_fluxo.rs` (`transicao_grava_estado_etapa_evento_e_efeito_numa_escrita`, `falha_no_meio_nao_deixa_evento_sem_estado`); os três exemplos com efeitos em `fluxos_e2e.rs`.
+**Testes.** Laço de entrega em `poph-server/tests/fluxos_efeitos.rs` (`mensagem_ao_cliente_chega_ao_cliente_uma_vez`, `notificar_whatsapp_vai_para_a_equipe_e_nao_para_o_cliente`, `sem_integracao_o_efeito_fica_pendente_e_nao_trava_o_laco`, `queda_entre_enfileirar_e_confirmar_reenvia_e_aceita_duplicata`, `falha_definitiva_vira_falhou_com_evento_e_metrica`); transição, efeitos na mesma escrita e falha no meio sem evento órfão em `poph-store/tests/flow_executions.rs` (`transition_writes_state_step_event_and_effect_in_one_write`, `failure_midway_leaves_no_event_without_state`); os três exemplos com efeitos em `fluxos_e2e.rs`.
 
 ## 5. Operação
 
@@ -160,10 +160,10 @@ O passo a passo para descobrir o motivo está em [RUNBOOKS.md](RUNBOOKS.md), na 
 
 | Tema | Testes ou relatórios |
 |---|---|
-| Ficha em todo caminho de criação e fechamento | `poph-store/tests/fichas_invariante.rs`, `fichas_migracao.rs` |
-| Esquema (tabelas, gatilhos, uma execução ativa) | `poph-store/tests/fluxos_migracao.rs`, `fluxos_repo.rs` |
+| Ficha em todo caminho de criação e fechamento | `poph-store/tests/cases_invariant.rs`, `cases_migration.rs` |
+| Esquema (tabelas, gatilhos, uma execução ativa) | `poph-store/tests/flows_migration.rs`, `flows_repo.rs` |
 | Linguagem (compilador, validador, regras, limites) | `poph-fluxos/tests/compilador.rs`, `validador.rs`, `regras.rs`, `limites.rs` |
-| Motor (início, ações, decisões, fim, efeitos) | `poph-fluxos/tests/motor.rs`, `motor_desfecho.rs`, `poph-store/tests/execucoes_fluxo.rs` |
+| Motor (início, ações, decisões, fim, efeitos) | `poph-fluxos/tests/motor.rs`, `motor_desfecho.rs`, `poph-store/tests/flow_executions.rs` |
 | Gate G9 e turno | `poph-jev/tests/g9_fluxo.rs`, `poph-agent/tests/fluxo_turno.rs`, `fluxo_ferramentas.rs` |
 | Paridade com o POP Atende | `poph-fluxos/tests/paridade.rs` e [FLUXOS_PARIDADE.md](FLUXOS_PARIDADE.md) |
 | API, permissão, Fichas e ações humanas | `poph-server/tests/agente_fluxos.rs`, `fichas_leitura.rs`, `fichas_acoes.rs`, `isolamento_orgs.rs` |
@@ -227,7 +227,7 @@ custa **7,2 a 7,8 KB** reais — ~2,6% da meta. Limite: o fluxo medido tem 8 eta
 Comando:
 
 ```text
-cargo test --release -p poph-store --test vazao -- --ignored --nocapture
+cargo test --release -p poph-store --test throughput -- --ignored --nocapture
 ```
 
 "Antes" é uma cópia isolada da árvore (worktree próprio em `/tmp`, alvo de build próprio) com **uma

@@ -464,8 +464,8 @@ not lost, the turn does not get stuck as "in progress", the conversation goes ba
     cut stream, expired reservation, and console output stuck in `sending`;
   - `cargo test -p poph-server --test turno_whatsapp` — `turno_interrompido_por_queda_e_retomado_uma_vez_na_subida` (one reply, one send) and
     `resposta_que_ficou_em_envio_na_queda_sai_na_subida`;
-  - `cargo test -p poph-store --test armazenamento` — `turno_orfaos_fecha_so_os_comecados_antes_da_subida` and
-    `resposta_e_item_de_saida_entram_na_mesma_escrita`;
+  - `cargo test -p poph-store --test storage` — `orphan_turns_closes_only_those_started_before_boot` and
+    `response_and_output_item_enter_same_write`;
   - run with the real binary, `kill -9` at six points, in `/tmp/hr57-run/queda.py`.
 
 ## 15. Flows in the turn (FX-23, FX-24, FX-25)

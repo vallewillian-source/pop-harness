@@ -390,7 +390,7 @@ transfere dentro do turno — provas em `crates/poph-server/tests/matrix_estado.
 
 Provas: `conversas_transferencia.rs` (`transferir_marca_a_conversa_e_audita_o_motivo`,
 `transferir_recusa_conversa_encerrada_da_outra_org_e_corpo_invalido`) e, no repositório,
-`transferencia_administrativa_*` em `crates/poph-store/tests/transferencia.rs`.
+`transferencia_administrativa_*` em `crates/poph-store/tests/transfer.rs`.
 
 ## Reabrir conversa (FX-07, PRD L13)
 
@@ -409,8 +409,8 @@ conversa encerrada e a Ficha dela ficam fechadas como registro do atendimento. O
 `PATCH` genérico de situação quando ele tentaria devolver uma conversa `closed` para `open`.
 
 Provas: `reabrir_conversa_encerrada_devolve_409_conversa_encerrada` em
-`crates/poph-server/tests/api.rs` e `reabrir_conversa_fechada_e_recusado_e_transferida_continua_reabrindo`
-em `crates/poph-store/tests/fichas_invariante.rs`.
+`crates/poph-server/tests/api.rs` e `reopening_closed_conversation_is_refused_and_transferred_keeps_reopening`
+em `crates/poph-store/tests/cases_invariant.rs`.
 
 ## Ficha do atendimento (FX-07)
 
@@ -482,7 +482,7 @@ quanto tempo é inatividade).
 
 Testes: `crates/poph-server/tests/conversas_filtros.rs` (filtros, ordem, `limit`, cursor recusado e
 valores inválidos), `crates/poph-server/tests/conversas_transferencia.rs` (corte por última atividade)
-e `crates/poph-store/tests/filtros_conversas.rs` (plano da consulta e identificador).
+e `crates/poph-store/tests/conversation_filters.rs` (plano da consulta e identificador).
 O índice que sustenta o filtro por cliente está em `docs/DADOS.md`, seção 4 (migração `0015`).
 
 ## Chat de teste do Console (HR-22)
@@ -1363,7 +1363,7 @@ Paridade de CLI: ainda não existe; entra na FX-31.
   de auditoria, em duas transações; falha de banco exatamente entre as duas deixa a mudança sem
   registro. Fora da transação: criar/alterar/excluir org, token, categoria, departamento, agente,
   instruções, grupo, item, vínculo, produto, integração e envio de arquivo. Dentro da mesma
-  transação: exclusão de arquivo (`excluir_auditado`) e reabertura de conversa (`reabrir_auditado`). O
+  transação: exclusão de arquivo (`excluir_auditado`) e reabertura de conversa (`reopen_audited`). O
   registro é sempre "quem fez o quê", nunca o valor de token ou segredo.
 - **Criação de agente com departamento de transferência e alteração conjunta de campos e categorias
   (média):** usam mais de uma escrita; falha no meio deixa a operação parcial, igual à CLI.

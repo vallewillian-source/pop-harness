@@ -67,7 +67,7 @@ pelo terminal, com o servidor parado.
   ela está no mapa, senão o campo do chamador; `FOREIGN KEY` aponta o campo do chamador, com o
   texto de que o registro não existe nesta org. Qualquer outro código estendido continua erro cru
   do banco (`StoreError::Sqlite`).
-- **Medido** (`cargo test --release -p poph-store --test vazao -- --ignored --nocapture`, esta
+- **Medido** (`cargo test --release -p poph-store --test throughput -- --ignored --nocapture`, esta
   estação x86_64 de 12 núcleos):
 
 | Cenário | Resultado (duas rodadas) | Meta (D-07 / HR-01) |
@@ -402,7 +402,7 @@ Decisões que o leitor do esquema precisa saber:
 - **Os nomes de tabela e coluna estão em português**, como os das Fichas: são os nomes que a API e o
   Console vão usar (decisão de contrato do mantenedor na FX-06).
 
-**Vazão de escrita de mensagens, antes e depois** (`cargo test --release -p poph-store --test vazao
+**Vazão de escrita de mensagens, antes e depois** (`cargo test --release -p poph-store --test throughput
 -- --ignored --nocapture`; a estação estava com outros agentes compilando, então vale a comparação,
 não o valor absoluto):
 

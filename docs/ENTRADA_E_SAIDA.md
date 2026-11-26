@@ -239,7 +239,7 @@ message, in the same transaction. The name is written in its own savepoint: if i
 and the failure shows only as a log line with a short code. A repeated message (redelivery) does not rewrite the name.
 Rules and columns: `DADOS.md`, migration `0008`.
 
-Proofs: `crates/poph-store/tests/nome_cliente.rs` (delivery records the name, a name failure does not drop the message,
+Proofs: `crates/poph-store/tests/customer_name.rs` (delivery records the name, a name failure does not drop the message,
 redelivery does not rewrite it) and `crates/poph-server/tests/webhook_evolution.rs` (create with the name, last name
 wins, cleanup, group and echo do not record, isolated failure, log canary).
 
