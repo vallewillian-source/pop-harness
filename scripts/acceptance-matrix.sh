@@ -611,21 +611,21 @@ BEFORE_TX="$(grep -c 'transação do Application Service processada' "$DIR/serve
 ROOM_PY="$(SYNAPSE="$SYNAPSE" python3 - "$PY_AS_TOKEN" <<'PY'
 import json, os, sys, urllib.request
 base = os.environ["SYNAPSE"]; token = sys.argv[1]
-def pedir(metodo, caminho, corpo=None):
-    dados = None if corpo is None else json.dumps(corpo).encode()
-    r = urllib.request.Request(base + caminho, data=dados, method=metodo,
+def request(method, path, body=None):
+    payload = None if body is None else json.dumps(body).encode()
+    r = urllib.request.Request(base + path, data=payload, method=method,
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(r, timeout=20) as resp: return resp.status, json.loads(resp.read() or b"{}")
     except urllib.error.HTTPError as e: return e.code, json.loads(e.read() or b"{}")
-s, d = pedir("POST", "/_matrix/client/v3/createRoom?user_id=%40wa_as_bot%3Amatrix-dev.local",
+s, d = request("POST", "/_matrix/client/v3/createRoom?user_id=%40wa_as_bot%3Amatrix-dev.local",
     {"room_alias_name": "wa_teste_aceite_" + __import__("secrets").token_hex(3), "name": "Sala do Python (teste)", "preset": "private_chat"})
 if s != 200: print(""); raise SystemExit(0)
-sala = d["room_id"]
+room = d["room_id"]
 import urllib.parse
-pedir("PUT", f"/_matrix/client/v3/rooms/{urllib.parse.quote(sala, safe='')}/send/m.room.message/py-aceite?user_id=%40wa_as_bot%3Amatrix-dev.local",
+request("PUT", f"/_matrix/client/v3/rooms/{urllib.parse.quote(room, safe='')}/send/m.room.message/py-aceite?user_id=%40wa_as_bot%3Amatrix-dev.local",
     {"msgtype": "m.text", "body": "evento do registro antigo"})
-print(sala)
+print(room)
 PY
 )"
 sleep 5
@@ -724,8 +724,8 @@ FIMSQL
         if python3 - "$DIR/eventos-f2.json" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
-tipos = {e["msgtype"] for e in d}
-raise SystemExit(0 if {"m.image", "m.file"} <= tipos else 1)
+types = {e["msgtype"] for e in d}
+raise SystemExit(0 if {"m.image", "m.file"} <= types else 1)
 PY
         then break; fi
         sleep 1
@@ -733,37 +733,37 @@ PY
     RESULT_MX43="$(python3 - "$DIR/eventos-f2.json" "$PHONE_F2" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
-cliente = "@ph_wa_%s:matrix-dev.local" % sys.argv[2]
+client = "@ph_wa_%s:matrix-dev.local" % sys.argv[2]
 
 
-def bom(e, tipo):
-    bloco = list((e.get("bloco_de_anexo") or {}).values())
+def good(e, kind):
+    block = list((e.get("bloco_de_anexo") or {}).values())
     return (
-        e["msgtype"] == tipo
-        and e["remetente"] == cliente
+        e["msgtype"] == kind
+        and e["remetente"] == client
         and (e.get("mxc") or "").startswith("mxc://")
-        and bool(bloco)
-        and bool(bloco[0].get("id"))
-        and bloco[0].get("source") == "whatsapp"
+        and bool(block)
+        and bool(block[0].get("id"))
+        and block[0].get("source") == "whatsapp"
     )
 
 
-imagem = [e for e in d if bom(e, "m.image")]
-arquivo = [e for e in d if bom(e, "m.file")]
-legendas = {e["corpo"] for e in d if e["msgtype"] == "m.text" and e["remetente"] == cliente}
+image = [e for e in d if good(e, "m.image")]
+file = [e for e in d if good(e, "m.file")]
+captions = {e["corpo"] for e in d if e["msgtype"] == "m.text" and e["remetente"] == client}
 ok = (
-    bool(imagem)
-    and bool(arquivo)
-    and "Segue a foto da fachada da loja." in legendas
-    and "Segue o laudo assinado." in legendas
+    bool(image)
+    and bool(file)
+    and "Segue a foto da fachada da loja." in captions
+    and "Segue o laudo assinado." in captions
 )
 if ok:
     print(
         "OK: imagem (%s) e arquivo (%s) na sala pelo fantasma do cliente, com o bloco do anexo "
-        "e as duas legendas" % (imagem[0]["corpo"], arquivo[0]["corpo"])
+        "e as duas legendas" % (image[0]["corpo"], file[0]["corpo"])
     )
 else:
-    print("FALHOU: imagem=%d arquivo=%d legendas=%s" % (len(imagem), len(arquivo), sorted(legendas)))
+    print("FALHOU: imagem=%d arquivo=%d legendas=%s" % (len(image), len(file), sorted(captions)))
 PY
 )"
     note MX43 "$RESULT_MX43"
@@ -787,8 +787,8 @@ PY
     RESULT_MX45="$(python3 - "$DIR/eventos-f2b.json" "$DIR/data/harness.db" <<'PY'
 import json, sqlite3, sys
 d = json.load(open(sys.argv[1]))
-avisos = {e["corpo"] for e in d if e["msgtype"] == "m.notice"}
-esperados = {
+notices = {e["corpo"] for e in d if e["msgtype"] == "m.notice"}
+expected = {
     "audio": "O cliente enviou um áudio. Esse tipo de mensagem ainda não é suportado.",
     "video": "O cliente enviou um vídeo. Esse tipo de mensagem ainda não é suportado.",
     "figurinha": "O cliente enviou uma figurinha. Esse tipo de mensagem ainda não é suportado.",
@@ -796,15 +796,15 @@ esperados = {
     "localizacao": "O cliente enviou uma localização. Esse tipo de mensagem ainda não é suportado.",
     "enquete": "O cliente enviou uma enquete. Esse tipo de mensagem ainda não é suportado.",
 }
-faltando = [tipo for tipo, texto in esperados.items() if texto not in avisos]
+missing = [kind for kind, text in expected.items() if text not in notices]
 con = sqlite3.connect(sys.argv[2])
-historico = con.execute(
+history = con.execute(
     "select count(*) from messages where text like '%que o sistema não consegue abrir%'"
 ).fetchone()[0]
-if not faltando and historico >= 6:
-    print("OK: seis avisos na sala (m.notice) e %d textos de histórico no turno" % historico)
+if not missing and history >= 6:
+    print("OK: seis avisos na sala (m.notice) e %d textos de histórico no turno" % history)
 else:
-    print("FALHOU: faltando %s; históricos=%d" % (faltando, historico))
+    print("FALHOU: faltando %s; históricos=%d" % (missing, history))
 PY
 )"
     note MX45 "$RESULT_MX45"
@@ -830,22 +830,22 @@ PY
     RESULT_MX41="$(python3 - "$DIR/eventos-f2c2.json" "$DIR/data/harness.db" "$DIR/f2-aparelho-2.json" "$CONVERSATION3" <<'PY'
 import json, sqlite3, sys
 d = json.load(open(sys.argv[1]))
-alvo = "Mensagem digitada no celular da loja."
-eventos = [e for e in d if (e["corpo"] or "") == alvo]
-do_aparelho = [e for e in eventos if e["remetente"].startswith("@ph_ap_")]
-reentrega = open(sys.argv[3]).read()
+target = "Mensagem digitada no celular da loja."
+events = [e for e in d if (e["corpo"] or "") == target]
+from_device = [e for e in events if e["remetente"].startswith("@ph_ap_")]
+redelivery = open(sys.argv[3]).read()
 con = sqlite3.connect(sys.argv[2])
 status = con.execute("select status from conversations where id=?", (sys.argv[4],)).fetchone()[0]
-ok = len(do_aparelho) == 1 and len(eventos) == 1 and "duplicada" in reentrega and status == "transferred"
+ok = len(from_device) == 1 and len(events) == 1 and "duplicada" in redelivery and status == "transferred"
 if ok:
     print(
         "OK: uma mensagem pelo fantasma do aparelho (%s), reentrega 'duplicada' sem segundo "
-        "evento e conversa %s" % (do_aparelho[0]["remetente"], status)
+        "evento e conversa %s" % (from_device[0]["remetente"], status)
     )
 else:
     print(
         "FALHOU: eventos=%d do aparelho=%d reentrega=%s status=%s"
-        % (len(eventos), len(do_aparelho), reentrega.strip()[:80], status)
+        % (len(events), len(from_device), redelivery.strip()[:80], status)
     )
 PY
 )"
@@ -865,28 +865,28 @@ PY
     done
     RESULT_MX44="$(python3 - "$DIR/falsos/evo_midia.jsonl" "$BEFORE_MEDIA" "$DIR/serve-fase2.log" <<'PY'
 import json, os, sys
-caminho, antes = sys.argv[1], int(sys.argv[2])
-linhas = []
-if os.path.exists(caminho):
-    with open(caminho, encoding="utf-8") as f:
-        linhas = [json.loads(l) for l in f if l.strip()]
-novas = linhas[antes:]
-imagem = [m for m in novas if m.get("mediatype") == "image" and (m.get("caption") or "").startswith("*[atendente")]
-documento = [m for m in novas if m.get("mediatype") == "document" and (m.get("caption") or "").startswith("*[atendente")]
-if imagem and documento:
+path, before = sys.argv[1], int(sys.argv[2])
+lines = []
+if os.path.exists(path):
+    with open(path, encoding="utf-8") as f:
+        lines = [json.loads(l) for l in f if l.strip()]
+new_entries = lines[before:]
+image = [m for m in new_entries if m.get("mediatype") == "image" and (m.get("caption") or "").startswith("*[atendente")]
+document = [m for m in new_entries if m.get("mediatype") == "document" and (m.get("caption") or "").startswith("*[atendente")]
+if image and document:
     print(
         "OK: imagem e PDF chegaram ao Evolution falso como %s/%s com a legenda do atendente (%s)"
-        % (imagem[0]["mediatype"], documento[0]["mediatype"], imagem[0]["caption"])
+        % (image[0]["mediatype"], document[0]["mediatype"], image[0]["caption"])
     )
 else:
-    motivo = "sem registro"
+    reason = "sem registro"
     for log in sys.argv[3:]:
         if os.path.exists(log):
             with open(log, errors="replace") as f:
-                for linha in f:
-                    if "arquivo_indisponivel" in linha:
-                        motivo = "arquivo_indisponivel"
-    print("FALHOU: o arquivo do atendente não chegou ao Evolution (motivo no log: %s; entradas novas: %d)" % (motivo, len(novas)))
+                for line in f:
+                    if "arquivo_indisponivel" in line:
+                        reason = "arquivo_indisponivel"
+    print("FALHOU: o arquivo do atendente não chegou ao Evolution (motivo no log: %s; entradas novas: %d)" % (reason, len(new_entries)))
 PY
 )"
     if printf '%s' "$RESULT_MX44" | grep -q FALHOU; then
@@ -937,24 +937,24 @@ PY
         "$DIR/eventos-mx49-depois.json" <<'PY'
 import hashlib, json, os, sys
 
-evo, antes, audio_path, video_path, antes_json, depois_json = sys.argv[1:7]
-linhas = []
+evo, before, audio_path, video_path, before_json, after_json = sys.argv[1:7]
+lines = []
 if os.path.exists(evo):
     with open(evo, encoding="utf-8") as f:
-        linhas = [json.loads(l) for l in f if l.strip()]
-novas = linhas[int(antes):]
+        lines = [json.loads(l) for l in f if l.strip()]
+new_entries = lines[int(before):]
 sha_audio = hashlib.sha256(open(audio_path, "rb").read()).hexdigest()
 sha_video = hashlib.sha256(open(video_path, "rb").read()).hexdigest()
-legenda = lambda m: (m.get("caption") or "").startswith("*[atendente")
+caption = lambda m: (m.get("caption") or "").startswith("*[atendente")
 
 
-def achei(mime, sha):
+def found(mime, sha):
     return [
         m
-        for m in novas
+        for m in new_entries
         if m.get("mimetype") == mime
         and m.get("mediatype") == "document"
-        and legenda(m)
+        and caption(m)
         and m.get("sha256") == sha
         and (m.get("bytes") or 0) > 0
     ]
@@ -962,28 +962,28 @@ def achei(mime, sha):
 
 # O `infer` devolve `audio/opus` para OGG/Opus (o matcher de Opus vem antes do de OGG): os dois
 # MIMEs são o mesmo arquivo que o atendente mandou, e a lista fechada aceita ambos.
-audio = achei("audio/ogg", sha_audio) or achei("audio/opus", sha_audio)
-video = achei("video/mp4", sha_video)
+audio = found("audio/ogg", sha_audio) or found("audio/opus", sha_audio)
+video = found("video/mp4", sha_video)
 
 
-def avisos(caminho):
-    with open(caminho, encoding="utf-8") as f:
-        eventos = json.load(f)
+def notices(path):
+    with open(path, encoding="utf-8") as f:
+        events = json.load(f)
     return [
         e
-        for e in eventos
+        for e in events
         if e.get("msgtype") == "m.notice"
         and "ainda não é suportado" in (e.get("corpo") or "")
     ]
 
 
-antes_avisos = len(avisos(antes_json))
-depois_avisos = len(avisos(depois_json))
-novos_avisos = depois_avisos - antes_avisos
-reentrega = len(
-    [m for m in novas if m.get("mimetype") in ("audio/ogg", "audio/opus")]
+before_notices = len(notices(before_json))
+after_notices = len(notices(after_json))
+new_notices = after_notices - before_notices
+redelivery = len(
+    [m for m in new_entries if m.get("mimetype") in ("audio/ogg", "audio/opus")]
 )
-if audio and video and novos_avisos == 0 and reentrega == 1:
+if audio and video and new_notices == 0 and redelivery == 1:
     print(
         "OK: áudio (%s) e vídeo (%s) chegaram ao Evolution falso como documento, com a legenda "
         "do atendente (%s), bytes íntegros e nenhum aviso de tipo não aceito; reentrega da mesma "
@@ -994,7 +994,7 @@ else:
     print(
         "FALHOU: áudio=%d vídeo=%d envios de áudio=%d avisos novos de tipo não aceito=%d "
         "(entradas novas no Evolution: %d)"
-        % (len(audio), len(video), reentrega, novos_avisos, len(novas))
+        % (len(audio), len(video), redelivery, new_notices, len(new_entries))
     )
 PY
 )"
@@ -1035,40 +1035,40 @@ PY
 import json, sqlite3, sys
 d = json.load(open(sys.argv[1]))
 con = sqlite3.connect(sys.argv[2])
-pendentes = con.execute(
+pending = con.execute(
     "select count(*) from matrix_midia where redacted_at is null or deleted_at is null"
 ).fetchone()[0]
-blocos = []
+blocks = []
 for e in d:
-    for valor in (e.get("bloco_expirado") or {}).values():
-        if isinstance(valor, dict) and all(k in valor for k in ("filename", "mimetype", "size", "sent_at", "kind")):
-            blocos.append(valor)
-nomes = sorted({b["filename"] for b in blocos})
-metricas = ""
+    for value in (e.get("bloco_expirado") or {}).values():
+        if isinstance(value, dict) and all(k in value for k in ("filename", "mimetype", "size", "sent_at", "kind")):
+            blocks.append(value)
+names = sorted({b["filename"] for b in blocks})
+metrics = ""
 try:
     with open(sys.argv[5], errors="replace") as f:
-        metricas = f.read()
+        metrics = f.read()
 except OSError:
     pass
-expiracao_ligada = "expiração da mídia ligada" in metricas
-sumiram, total = int(sys.argv[3]), int(sys.argv[4])
+expiry_on = "expiração da mídia ligada" in metrics
+gone, total = int(sys.argv[3]), int(sys.argv[4])
 ok = (
-    pendentes == 0
-    and len(nomes) >= 2
-    and all(str(b["sent_at"]).endswith("Z") for b in blocos)
-    and sumiram == total
+    pending == 0
+    and len(names) >= 2
+    and all(str(b["sent_at"]).endswith("Z") for b in blocks)
+    and gone == total
     and total >= 2
 )
 if ok:
     print(
         "OK: %d mídias redigidas com o bloco da expiração (%s, sent_at em ISO Z), %d/%d arquivos "
         "devolvem 404 e nenhuma pendente; expiração ligada no log"
-        % (len(blocos), ", ".join(nomes), sumiram, total)
+        % (len(blocks), ", ".join(names), gone, total)
     )
 else:
     print(
         "FALHOU: pendentes=%d redigidas=%d arquivos 404=%d/%d expiração ligada=%s"
-        % (pendentes, len(blocos), sumiram, total, expiracao_ligada)
+        % (pending, len(blocks), gone, total, expiry_on)
     )
 PY
 )"
