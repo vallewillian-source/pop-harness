@@ -84,7 +84,7 @@ index, trigger, type or default fails it.
 
 - Screens of the Console: they are captured by the visual baseline of the Designer task.
 - `console/src/api/schema.d.ts`: it is generated from the OpenAPI document and checked by
-  `console/scripts/verificar-api.sh`, so it is not a source here.
+  `console/scripts/verify-api.sh`, so it is not a source here.
 - The `/openapi.json` route: it serves the same document as `poph openapi`.
 - The Application Service routes of Matrix: they are the Synapse contract and answer `404` while
   the module is off.
