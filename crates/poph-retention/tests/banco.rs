@@ -12,8 +12,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, UNIX_EPOCH};
 
 use poph_retention::{
-    BancoHarness, ErroRetencao, Opcoes, RelatorioOrg, Situacao, VarreduraBanco, executar_org,
-    executar_todas,
+    DatabaseSweep, HarnessDatabase, Options, OrgReport, RetentionError, Situacao, run_all, run_org,
 };
 use poph_store::{
     ExecutionStart, ExecutionState, NewConversation, NewFlow, RevisionPublication, Store,
@@ -112,8 +111,8 @@ impl Cenario {
         conexao
     }
 
-    fn armazem(&self) -> BancoHarness<'_> {
-        BancoHarness::novo(&self.store, &self.blobs)
+    fn armazem(&self) -> HarnessDatabase<'_> {
+        HarnessDatabase::new(&self.store, &self.blobs)
     }
 
     fn pasta_da_org(&self, org: &str) -> PathBuf {
@@ -402,17 +401,17 @@ fn gravar_arquivo(pasta: &Path, nome: &str, idade_ms: i64) {
         .expect("fixa a data do arquivo");
 }
 
-fn opcoes(padrao_dias: u32, simular: bool) -> Opcoes {
-    Opcoes::novas(AGORA, padrao_dias, simular, "system")
+fn opcoes(padrao_dias: u32, simular: bool) -> Options {
+    Options::new(AGORA, padrao_dias, simular, "system")
 }
 
 fn org_id(texto: &str) -> OrgId {
     texto.parse().expect("id de org válido")
 }
 
-fn banco_da(relatorio: &RelatorioOrg) -> VarreduraBanco {
+fn banco_da(relatorio: &OrgReport) -> DatabaseSweep {
     relatorio
-        .banco
+        .database
         .clone()
         .expect("org varrida tem contagem do banco")
 }
@@ -426,24 +425,28 @@ fn varre_so_o_vencido_com_contagem_exata() {
     let org = semear(&c, "principal", "{}", 40);
     let armazem = cenario.armazem();
 
-    let relatorio = executar_org(&armazem, org_id(&org), &opcoes(30, false)).expect("varredura");
+    let relatorio = run_org(&armazem, org_id(&org), &opcoes(30, false)).expect("varredura");
 
     assert_eq!(
         relatorio.situacao,
-        Situacao::Varrida,
+        Situacao::Swept,
         "{:?}",
         relatorio.motivo
     );
     let banco = banco_da(&relatorio);
-    assert_eq!(banco.mensagens, 3, "mensagens antigas");
+    assert_eq!(banco.messages, 3, "mensagens antigas");
     assert_eq!(banco.anexos, 2, "anexos das mensagens antigas");
-    assert_eq!(banco.turnos, 1, "só o turno encerrado sem saída pendente");
+    assert_eq!(banco.turns, 1, "só o turno encerrado sem saída pendente");
     assert_eq!(banco.outbox, 1, "só a saída enviada e antiga");
     assert_eq!(banco.inbox, 1, "só a entrada processada e antiga");
     assert_eq!(banco.conversas, 2, "a vazia e a que ficou sem mensagem");
-    assert_eq!(banco.ids_conversas.len(), 3, "as três conversas afetadas");
     assert_eq!(
-        banco.hashes_referenciados,
+        banco.conversation_ids.len(),
+        3,
+        "as três conversas afetadas"
+    );
+    assert_eq!(
+        banco.referenced_hashes,
         vec![sha(3), sha(9)],
         "anexo vivo e biblioteca continuam com dono"
     );
@@ -465,12 +468,12 @@ fn varre_so_o_vencido_com_contagem_exata() {
     );
 
     // Segunda varredura no mesmo dia não apaga mais nada.
-    let de_novo = executar_org(&armazem, org_id(&org), &opcoes(30, false)).expect("de novo");
+    let de_novo = run_org(&armazem, org_id(&org), &opcoes(30, false)).expect("de novo");
     let banco2 = banco_da(&de_novo);
     assert_eq!(
-        banco2.mensagens
+        banco2.messages
             + banco2.anexos
-            + banco2.turnos
+            + banco2.turns
             + banco2.inbox
             + banco2.outbox
             + banco2.conversas,
@@ -486,10 +489,10 @@ fn retencao_zero_nao_apaga_nada_mesmo_com_dados_de_dez_anos() {
     let antes = foto(&c, &org, TABELAS_DA_ORG);
 
     let relatorio =
-        executar_org(&cenario.armazem(), org_id(&org), &opcoes(30, false)).expect("varredura");
+        run_org(&cenario.armazem(), org_id(&org), &opcoes(30, false)).expect("varredura");
 
-    assert_eq!(relatorio.situacao, Situacao::Ignorada);
-    assert_eq!(relatorio.banco, None);
+    assert_eq!(relatorio.situacao, Situacao::Skipped);
+    assert_eq!(relatorio.database, None);
     assert_eq!(foto(&c, &org, TABELAS_DA_ORG), antes, "nada mudou no banco");
     assert!(
         auditorias(&c, &org).is_empty(),
@@ -506,7 +509,7 @@ fn base_produtos_e_biblioteca_ficam_intactos_com_a_varredura_mais_agressiva() {
     let antes = foto(&c, &org, TABELAS_PROTEGIDAS);
     assert!(!antes["knowledge_items"].is_empty() && !antes["products"].is_empty());
 
-    executar_org(&cenario.armazem(), org_id(&org), &opcoes(1, false)).expect("varredura");
+    run_org(&cenario.armazem(), org_id(&org), &opcoes(1, false)).expect("varredura");
 
     assert_eq!(
         foto(&c, &org, TABELAS_PROTEGIDAS),
@@ -534,10 +537,10 @@ fn simulacao_nao_altera_banco_nem_pasta_e_conta_o_que_sairia() {
     let antes_arquivos = arquivos(&pasta);
     let armazem = cenario.armazem();
 
-    let simulado = executar_org(&armazem, org_id(&org), &opcoes(30, true)).expect("simulação");
+    let simulado = run_org(&armazem, org_id(&org), &opcoes(30, true)).expect("simulação");
 
-    assert_eq!(simulado.situacao, Situacao::Varrida);
-    assert_eq!(simulado.arquivos_apagados, 0);
+    assert_eq!(simulado.situacao, Situacao::Swept);
+    assert_eq!(simulado.deleted_files, 0);
     assert_eq!(
         foto(&c, &org, TABELAS_DA_ORG),
         antes_banco,
@@ -561,16 +564,13 @@ fn simulacao_nao_altera_banco_nem_pasta_e_conta_o_que_sairia() {
     );
 
     // A execução real faz exatamente o que a simulação disse.
-    let real = executar_org(&armazem, org_id(&org), &opcoes(30, false)).expect("real");
+    let real = run_org(&armazem, org_id(&org), &opcoes(30, false)).expect("real");
     assert_eq!(banco_da(&real), banco_da(&simulado), "mesmas contagens");
     assert_eq!(
-        real.arquivos_sem_dono, simulado.arquivos_sem_dono,
+        real.orphan_files, simulado.orphan_files,
         "mesmos arquivos órfãos"
     );
-    assert_eq!(
-        real.arquivos_apagados, 4,
-        "três blobs órfãos e um temporário"
-    );
+    assert_eq!(real.deleted_files, 4, "três blobs órfãos e um temporário");
     let restantes: Vec<String> = arquivos(&pasta).into_keys().collect();
     assert_eq!(restantes, vec![sha(3)], "só o blob vivo fica");
 }
@@ -593,14 +593,10 @@ fn blobs_orfaos_somem_referenciados_ficam_e_a_outra_org_nao_e_tocada() {
     let banco_b_antes = foto(&c, &b, TABELAS_DA_ORG);
     let arquivos_b_antes = arquivos(&pasta_b);
 
-    let relatorio =
-        executar_org(&cenario.armazem(), org_id(&a), &opcoes(30, false)).expect("varredura");
+    let relatorio = run_org(&cenario.armazem(), org_id(&a), &opcoes(30, false)).expect("varredura");
 
-    assert_eq!(relatorio.arquivos_apagados, 2);
-    assert_eq!(
-        relatorio.arquivos_sem_dono,
-        vec![sha(1), "sobra.tmp".to_owned()]
-    );
+    assert_eq!(relatorio.deleted_files, 2);
+    assert_eq!(relatorio.orphan_files, vec![sha(1), "sobra.tmp".to_owned()]);
     let restantes: Vec<String> = arquivos(&pasta_a).into_keys().collect();
     assert_eq!(
         restantes,
@@ -627,8 +623,7 @@ fn isolamento_entre_orgs_com_varredura_geral() {
     let ruim = semear(&c, "ruim", r#"{"retencao":{"dias":-5}}"#, 40);
     let antes_ruim = foto(&c, &ruim, TABELAS_DA_ORG);
 
-    let relatorio =
-        executar_todas(&cenario.armazem(), &opcoes(30, false)).expect("varredura geral");
+    let relatorio = run_all(&cenario.armazem(), &opcoes(30, false)).expect("varredura geral");
 
     let de_ok = relatorio
         .orgs
@@ -640,9 +635,9 @@ fn isolamento_entre_orgs_com_varredura_geral() {
         .iter()
         .find(|r| r.org_id == ruim)
         .expect("org ruim");
-    assert_eq!(de_ok.situacao, Situacao::Varrida);
-    assert_eq!(banco_da(de_ok).mensagens, 3);
-    assert_eq!(de_ruim.situacao, Situacao::Erro);
+    assert_eq!(de_ok.situacao, Situacao::Swept);
+    assert_eq!(banco_da(de_ok).messages, 3);
+    assert_eq!(de_ruim.situacao, Situacao::Failed);
     assert!(
         de_ruim
             .motivo
@@ -667,10 +662,10 @@ fn id_de_org_inexistente_nao_apaga_nada() {
     let org = semear(&c, "existe", "{}", 40);
     let antes = foto(&c, &org, TABELAS_DA_ORG);
 
-    let erro = executar_org(&cenario.armazem(), OrgId::generate(), &opcoes(30, false))
+    let erro = run_org(&cenario.armazem(), OrgId::generate(), &opcoes(30, false))
         .expect_err("org inexistente tem de falhar");
 
-    assert!(matches!(erro, ErroRetencao::OrgInexistente(_)), "{erro:?}");
+    assert!(matches!(erro, RetentionError::OrgNotFound(_)), "{erro:?}");
     assert_eq!(foto(&c, &org, TABELAS_DA_ORG), antes);
 }
 
@@ -730,7 +725,7 @@ fn pendentes_nunca_sao_apagados() {
     let antes = (nao_enviadas(&c), sem_processar(&c), rodando(&c));
     assert_eq!(antes, (4, 2, 2), "cenário de partida");
 
-    executar_org(&cenario.armazem(), org_id(&org), &opcoes(1, false)).expect("varredura");
+    run_org(&cenario.armazem(), org_id(&org), &opcoes(1, false)).expect("varredura");
 
     let depois = (nao_enviadas(&c), sem_processar(&c), rodando(&c));
     assert_eq!(
@@ -748,24 +743,21 @@ fn auditoria_bate_com_o_que_foi_apagado() {
     gravar_arquivo(&pasta, &sha(1), 40 * DIA);
 
     let relatorio =
-        executar_org(&cenario.armazem(), org_id(&org), &opcoes(30, false)).expect("varredura");
+        run_org(&cenario.armazem(), org_id(&org), &opcoes(30, false)).expect("varredura");
     let banco = banco_da(&relatorio);
 
     let auditoria = auditorias(&c, &org);
     assert_eq!(auditoria.len(), 1, "uma linha por org varrida");
     let detalhe = &auditoria[0];
     assert_eq!(detalhe["simulacao"], false);
-    assert_eq!(detalhe["mensagens"], banco.mensagens);
+    assert_eq!(detalhe["mensagens"], banco.messages);
     assert_eq!(detalhe["anexos"], banco.anexos);
-    assert_eq!(detalhe["turnos"], banco.turnos);
+    assert_eq!(detalhe["turnos"], banco.turns);
     assert_eq!(detalhe["inbox"], banco.inbox);
     assert_eq!(detalhe["outbox"], banco.outbox);
     assert_eq!(detalhe["conversas"], banco.conversas);
-    assert_eq!(detalhe["arquivos_apagados"], relatorio.arquivos_apagados);
-    assert_eq!(
-        detalhe["arquivos_sem_dono"],
-        relatorio.arquivos_sem_dono.len()
-    );
+    assert_eq!(detalhe["arquivos_apagados"], relatorio.deleted_files);
+    assert_eq!(detalhe["arquivos_sem_dono"], relatorio.orphan_files.len());
 }
 
 // ───────────── O que nunca sai: Fichas, execuções e fluxos (FX-34) ─────────────
@@ -893,8 +885,8 @@ fn ficha_execucao_etapa_evento_e_efeito_sobrevivem_a_varredura() {
     assert!(antes["ficha_eventos"].len() >= 2, "aberta + fluxo iniciado");
 
     // Simulação: conta a conversa que sairia e não muda nada.
-    let simulacao = executar_org(&cenario.armazem(), org, &opcoes(30, true)).expect("simulação");
-    assert_eq!(simulacao.situacao, Situacao::Varrida);
+    let simulacao = run_org(&cenario.armazem(), org, &opcoes(30, true)).expect("simulação");
+    assert_eq!(simulacao.situacao, Situacao::Swept);
     assert_eq!(banco_da(&simulacao).conversas, 1, "a conversa vazia sairia");
     assert_eq!(
         foto(&c, &org_texto, TABELAS_DO_MODULO),
@@ -908,7 +900,7 @@ fn ficha_execucao_etapa_evento_e_efeito_sobrevivem_a_varredura() {
     );
 
     // Varredura de verdade: a conversa sai, o atendimento registrado fica.
-    let real = executar_org(&cenario.armazem(), org, &opcoes(30, false)).expect("varredura");
+    let real = run_org(&cenario.armazem(), org, &opcoes(30, false)).expect("varredura");
     assert_eq!(banco_da(&real).conversas, 1);
     assert_eq!(contar(&c, "conversations", &org_texto), 0);
     assert_eq!(

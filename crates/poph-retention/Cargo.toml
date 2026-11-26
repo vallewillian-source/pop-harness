@@ -15,8 +15,6 @@ serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-# Os testes semeiam dados que o repositório ainda não cria (anexos, biblioteca, base, produtos)
-# direto no `harness.db` de teste.
 rusqlite.workspace = true
 tempfile = "3"
 

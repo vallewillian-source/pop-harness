@@ -12,10 +12,9 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Args, Subcommand};
-use poph_retention::config::dias_da_org;
+use poph_retention::config::days_of_org;
 use poph_retention::{
-    Armazem, BancoHarness, Opcoes, RelatorioExecucao, RelatorioOrg, Situacao, executar_org,
-    executar_todas,
+    ExecutionReport, HarnessDatabase, Options, OrgReport, Situacao, Warehouse, run_all, run_org,
 };
 use poph_store::Store;
 use poph_types::HarnessConfig;
@@ -92,19 +91,19 @@ fn executar_run(
     org: Option<&str>,
     args: RunArgs,
 ) -> ExitCode {
-    let armazem = BancoHarness::novo(store, configuracao.blobs());
+    let armazem = HarnessDatabase::new(store, configuracao.blobs());
     let agora = poph_store::system_now();
-    let opcoes = Opcoes::novas(agora, configuracao.retention.days, args.dry_run, "cli");
+    let opcoes = Options::new(agora, configuracao.retention.days, args.dry_run, "cli");
 
     let resultado = match org {
         Some(texto) => resolver_org(store, texto)
-            .and_then(|id| executar_org(&armazem, id, &opcoes).map_err(|erro| erro.to_string()))
-            .map(|relatorio| RelatorioExecucao {
-                agora_ms: agora,
-                simulacao: args.dry_run,
+            .and_then(|id| run_org(&armazem, id, &opcoes).map_err(|erro| erro.to_string()))
+            .map(|relatorio| ExecutionReport {
+                now_ms: agora,
+                simulation: args.dry_run,
                 orgs: vec![relatorio],
             }),
-        None => executar_todas(&armazem, &opcoes).map_err(|erro| erro.to_string()),
+        None => run_all(&armazem, &opcoes).map_err(|erro| erro.to_string()),
     };
     let relatorio = match resultado {
         Ok(relatorio) => relatorio,
@@ -119,7 +118,7 @@ fn executar_run(
     let com_erro = relatorio
         .orgs
         .iter()
-        .any(|org| org.situacao == Situacao::Erro);
+        .any(|org| org.situacao == Situacao::Failed);
     if com_erro {
         ExitCode::from(1)
     } else {
@@ -133,7 +132,7 @@ fn executar_show(
     org: Option<&str>,
     args: ShowArgs,
 ) -> ExitCode {
-    let armazem = BancoHarness::novo(store, configuracao.blobs());
+    let armazem = HarnessDatabase::new(store, configuracao.blobs());
     let orgs = match org {
         Some(texto) => match resolver_org(store, texto).and_then(|id| {
             armazem
@@ -155,7 +154,7 @@ fn executar_show(
         .iter()
         .map(|org| {
             let definido = configurada(&org.config_json);
-            match dias_da_org(&org.slug, &org.config_json, padrao) {
+            match days_of_org(&org.slug, &org.config_json, padrao) {
                 Ok(dias) => json!({
                     "org_id": org.id.to_string(),
                     "slug": org.slug,
@@ -199,7 +198,7 @@ fn configurada(config_json: &str) -> bool {
         .is_some()
 }
 
-fn json_run(relatorio: &RelatorioExecucao) -> Value {
+fn json_run(relatorio: &ExecutionReport) -> Value {
     let mut valor = serde_json::to_value(relatorio).unwrap_or_else(|_| json!({}));
     if let Some(mapa) = valor.as_object_mut() {
         mapa.insert("versao_relatorio".to_owned(), json!(VERSAO_RELATORIO));
@@ -207,8 +206,8 @@ fn json_run(relatorio: &RelatorioExecucao) -> Value {
     valor
 }
 
-fn imprimir_run(relatorio: &RelatorioExecucao) {
-    if relatorio.simulacao {
+fn imprimir_run(relatorio: &ExecutionReport) {
+    if relatorio.simulation {
         println!("POP Harness: retenção do histórico (simulação: nada será apagado)\n");
     } else {
         println!("POP Harness: retenção do histórico\n");
@@ -218,16 +217,16 @@ fn imprimir_run(relatorio: &RelatorioExecucao) {
         return;
     }
     for org in &relatorio.orgs {
-        imprimir_org(org, relatorio.simulacao);
+        imprimir_org(org, relatorio.simulation);
     }
 }
 
-fn imprimir_org(org: &RelatorioOrg, simulacao: bool) {
+fn imprimir_org(org: &OrgReport, simulacao: bool) {
     let rotulo = match org.situacao {
-        Situacao::Varrida if simulacao => "simulada",
-        Situacao::Varrida => "varrida",
-        Situacao::Ignorada => "pulada",
-        Situacao::Erro => "erro",
+        Situacao::Swept if simulacao => "simulada",
+        Situacao::Swept => "varrida",
+        Situacao::Skipped => "pulada",
+        Situacao::Failed => "erro",
     };
     println!("Org {}: {rotulo}", org.slug);
     if let Some(dias) = org.dias {
@@ -237,7 +236,7 @@ fn imprimir_org(org: &RelatorioOrg, simulacao: bool) {
             println!("  Retenção: {dias} dias");
         }
     }
-    if let Some(banco) = &org.banco {
+    if let Some(banco) = &org.database {
         let rotulo = if simulacao {
             "Histórico que sairia"
         } else {
@@ -245,18 +244,21 @@ fn imprimir_org(org: &RelatorioOrg, simulacao: bool) {
         };
         println!(
             "  {rotulo}: {} mensagens, {} anexos, {} turnos, {} entradas, {} saídas, {} conversas",
-            banco.mensagens, banco.anexos, banco.turnos, banco.inbox, banco.outbox, banco.conversas
+            banco.messages, banco.anexos, banco.turns, banco.inbox, banco.outbox, banco.conversas
         );
-        if !banco.ids_conversas.is_empty() {
-            println!("  Conversas afetadas: {}", banco.ids_conversas.join(", "));
+        if !banco.conversation_ids.is_empty() {
+            println!(
+                "  Conversas afetadas: {}",
+                banco.conversation_ids.join(", ")
+            );
         }
         let arquivos = if simulacao {
-            format!("{} sairiam", org.arquivos_sem_dono.len())
+            format!("{} sairiam", org.orphan_files.len())
         } else {
             format!(
                 "{} apagados de {} sem dono",
-                org.arquivos_apagados,
-                org.arquivos_sem_dono.len()
+                org.deleted_files,
+                org.orphan_files.len()
             )
         };
         println!("  Arquivos sem dono: {arquivos}");

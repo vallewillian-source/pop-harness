@@ -55,7 +55,7 @@ a turn in `running`.
 
 ## How it works internally
 
-- The clock is passed in as a parameter (`Opcoes::agora_ms`). Tests simulate the future without sleeping.
+- The clock is passed in as a parameter (`Options::now_ms`). Tests simulate the future without sleeping.
 - The deletion rule lives in `poph-store` (repository `retencao()`). The `poph-retention` crate decides the
   cutoff, reads the config and gathers the files.
 - Order per org: read the retention → delete in the database (one transaction per org) → list the blobs with no
@@ -63,10 +63,13 @@ a turn in `running`.
 - If the database fails, no file is deleted.
 - With `--dry-run`, the database runs the same calculations inside a savepoint and rolls back at the end. The
   counts match the real run.
-- Blobs: only a file whose name has 64 hexadecimal characters (the sha256) or ends in `.tmp` is considered.
-  Folders and symbolic links are never considered. A file modified in the last hour is kept (fixed grace
-  period), so a blob that another request just wrote and has not yet registered is not deleted.
-- Audit: one `audit_log` row per org swept, with `action = retention`. It holds the counts (`mensagens`,
+- Blobs: only a file whose name has 64 lowercase hexadecimal characters (the sha256) or ends in `.tmp` is
+  considered. Folders and symbolic links are never considered. A file modified in the last hour is kept (fixed
+  grace period), so a blob that another request just wrote and has not yet registered is not deleted. A missing
+  blob folder for an org simply has no orphans.
+- A failure in one org does not stop the others: `run` without `--org` keeps going and reports each org.
+- Audit: one `audit_log` row per org swept, with `action = retention`. The actor kind is `cli` (command line) or
+  `system`. It holds the counts (`mensagens`,
   `anexos`, `turnos`, `inbox`, `outbox`, `conversas`, `arquivos_sem_dono`, `arquivos_apagados`), the cutoff and
   `simulacao` (`true` in a dry run). No row is written for a skipped org.
 
@@ -84,3 +87,8 @@ a turn in `running`.
 - **Does not run by itself.** The worker in `poph serve` and the scheduling are left for the integration; today it
   only runs through `poph retention run`. Run it with the server stopped or without load, as with `poph migrate`.
 - **A message deleted in an open conversation does not come back.** This is the retention rule, not a defect.
+
+## Dependencies and why
+
+- `rusqlite` (dev-dependency only): the tests seed data that the repository does not create yet (attachments,
+  library, knowledge base, products) directly in the test `harness.db`. It is not used by the crate itself.

@@ -7,10 +7,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, UNIX_EPOCH};
 
-use poph_retention::config::DIA_MS;
+use poph_retention::config::DAY_MS;
 use poph_retention::{
-    Armazem, ErroRetencao, Opcoes, OrgRetencao, Situacao, VarreduraBanco, executar_org,
-    executar_todas,
+    DatabaseSweep, Options, OrgRetention, RetentionError, Situacao, Warehouse, run_all, run_org,
 };
 use poph_types::OrgId;
 
@@ -19,16 +18,16 @@ const SHA_VIVO: &str = "0f0e0d0c0b0a09080706050403020100ffeeddccbbaa998877665544
 const AGORA: i64 = 1_795_131_511_000;
 
 struct Falso {
-    orgs: Vec<OrgRetencao>,
+    orgs: Vec<OrgRetention>,
     pastas: HashMap<OrgId, PathBuf>,
-    varreduras: HashMap<OrgId, Result<VarreduraBanco, ErroRetencao>>,
+    varreduras: HashMap<OrgId, Result<DatabaseSweep, RetentionError>>,
     chamadas: RefCell<Vec<(OrgId, i64, bool)>>,
     auditorias: RefCell<Vec<(OrgId, String, String)>>,
     auditoria_falha: bool,
 }
 
 impl Falso {
-    fn com_orgs(orgs: Vec<(OrgRetencao, PathBuf)>) -> Self {
+    fn com_orgs(orgs: Vec<(OrgRetention, PathBuf)>) -> Self {
         let mut pastas = HashMap::new();
         let mut lista = Vec::new();
         for (org, pasta) in orgs {
@@ -46,40 +45,40 @@ impl Falso {
     }
 }
 
-impl Armazem for Falso {
-    fn orgs(&self) -> Result<Vec<OrgRetencao>, ErroRetencao> {
+impl Warehouse for Falso {
+    fn orgs(&self) -> Result<Vec<OrgRetention>, RetentionError> {
         Ok(self.orgs.clone())
     }
-    fn org(&self, id: OrgId) -> Result<OrgRetencao, ErroRetencao> {
+    fn org(&self, id: OrgId) -> Result<OrgRetention, RetentionError> {
         self.orgs
             .iter()
             .find(|o| o.id == id)
             .cloned()
-            .ok_or_else(|| ErroRetencao::Banco("org não encontrada".to_owned()))
+            .ok_or_else(|| RetentionError::Database("org não encontrada".to_owned()))
     }
-    fn varrer(
+    fn sweep(
         &self,
         org: OrgId,
         corte_ms: i64,
         simular: bool,
-    ) -> Result<VarreduraBanco, ErroRetencao> {
+    ) -> Result<DatabaseSweep, RetentionError> {
         self.chamadas.borrow_mut().push((org, corte_ms, simular));
         self.varreduras
             .get(&org)
             .cloned()
-            .unwrap_or_else(|| Ok(VarreduraBanco::default()))
+            .unwrap_or_else(|| Ok(DatabaseSweep::default()))
     }
-    fn pasta_blobs(&self, org: OrgId) -> PathBuf {
+    fn blob_folder(&self, org: OrgId) -> PathBuf {
         self.pastas[&org].clone()
     }
-    fn registrar_auditoria(
+    fn record_audit(
         &self,
         org: OrgId,
         ator_tipo: &str,
         detalhe_json: &str,
-    ) -> Result<(), ErroRetencao> {
+    ) -> Result<(), RetentionError> {
         if self.auditoria_falha {
-            return Err(ErroRetencao::Banco("disco cheio".to_owned()));
+            return Err(RetentionError::Database("disco cheio".to_owned()));
         }
         self.auditorias
             .borrow_mut()
@@ -88,8 +87,8 @@ impl Armazem for Falso {
     }
 }
 
-fn org(slug: &str, config: &str) -> OrgRetencao {
-    OrgRetencao {
+fn org(slug: &str, config: &str) -> OrgRetention {
+    OrgRetention {
         id: OrgId::generate(),
         slug: slug.to_owned(),
         config_json: config.to_owned(),
@@ -110,39 +109,39 @@ fn gravar(pasta: &Path, nome: &str, idade_ms: i64) {
         .unwrap();
 }
 
-fn opcoes(simular: bool) -> Opcoes {
-    Opcoes::novas(AGORA, 30, simular, "cli")
+fn opcoes(simular: bool) -> Options {
+    Options::new(AGORA, 30, simular, "cli")
 }
 
 #[test]
 fn dry_run_lista_o_orfao_e_nao_apaga_nada() {
     let base = tempfile::tempdir().unwrap();
     let pasta = base.path().join("org-a");
-    gravar(&pasta, SHA_ORFAO, 90 * DIA_MS);
+    gravar(&pasta, SHA_ORFAO, 90 * DAY_MS);
     let a = org("alfa", "{}");
     let mut falso = Falso::com_orgs(vec![(a.clone(), pasta.clone())]);
     falso.varreduras.insert(
         a.id,
-        Ok(VarreduraBanco {
-            mensagens: 12,
+        Ok(DatabaseSweep {
+            messages: 12,
             anexos: 2,
-            ids_conversas: vec!["c1".into()],
+            conversation_ids: vec!["c1".into()],
             ..Default::default()
         }),
     );
 
-    let relatorio = executar_org(&falso, a.id, &opcoes(true)).unwrap();
+    let relatorio = run_org(&falso, a.id, &opcoes(true)).unwrap();
 
-    assert_eq!(relatorio.situacao, Situacao::Varrida);
-    assert_eq!(relatorio.arquivos_sem_dono, vec![SHA_ORFAO.to_owned()]);
-    assert_eq!(relatorio.arquivos_apagados, 0);
+    assert_eq!(relatorio.situacao, Situacao::Swept);
+    assert_eq!(relatorio.orphan_files, vec![SHA_ORFAO.to_owned()]);
+    assert_eq!(relatorio.deleted_files, 0);
     assert!(
         pasta.join(SHA_ORFAO).exists(),
         "dry-run não pode apagar arquivo"
     );
     let chamada = falso.chamadas.borrow()[0];
     assert!(chamada.2, "o banco recebe a simulação");
-    assert_eq!(chamada.1, AGORA - 30 * DIA_MS);
+    assert_eq!(chamada.1, AGORA - 30 * DAY_MS);
     let (_, _, detalhe) = &falso.auditorias.borrow()[0];
     assert!(detalhe.contains("\"simulacao\":true"), "{detalhe}");
     assert!(detalhe.contains("\"mensagens\":12"), "{detalhe}");
@@ -152,28 +151,28 @@ fn dry_run_lista_o_orfao_e_nao_apaga_nada() {
 fn execucao_apaga_so_o_orfao_e_audita_as_contagens() {
     let base = tempfile::tempdir().unwrap();
     let pasta = base.path().join("org-a");
-    gravar(&pasta, SHA_ORFAO, 90 * DIA_MS);
-    gravar(&pasta, SHA_VIVO, 90 * DIA_MS);
+    gravar(&pasta, SHA_ORFAO, 90 * DAY_MS);
+    gravar(&pasta, SHA_VIVO, 90 * DAY_MS);
     let a = org("alfa", "{}");
     let mut falso = Falso::com_orgs(vec![(a.clone(), pasta.clone())]);
     falso.varreduras.insert(
         a.id,
-        Ok(VarreduraBanco {
-            mensagens: 5,
+        Ok(DatabaseSweep {
+            messages: 5,
             anexos: 1,
-            turnos: 3,
+            turns: 3,
             inbox: 4,
             outbox: 6,
             conversas: 1,
-            hashes_referenciados: vec![SHA_VIVO.to_owned()],
+            referenced_hashes: vec![SHA_VIVO.to_owned()],
             ..Default::default()
         }),
     );
 
-    let relatorio = executar_org(&falso, a.id, &opcoes(false)).unwrap();
+    let relatorio = run_org(&falso, a.id, &opcoes(false)).unwrap();
 
-    assert_eq!(relatorio.situacao, Situacao::Varrida);
-    assert_eq!(relatorio.arquivos_apagados, 1);
+    assert_eq!(relatorio.situacao, Situacao::Swept);
+    assert_eq!(relatorio.deleted_files, 1);
     assert!(!pasta.join(SHA_ORFAO).exists());
     assert!(pasta.join(SHA_VIVO).exists(), "arquivo com dono fica");
     let (_, ator, detalhe) = falso.auditorias.borrow()[0].clone();
@@ -193,13 +192,13 @@ fn execucao_apaga_so_o_orfao_e_audita_as_contagens() {
 fn retencao_zero_pula_a_org_sem_chamar_o_banco() {
     let base = tempfile::tempdir().unwrap();
     let pasta = base.path().join("org-a");
-    gravar(&pasta, SHA_ORFAO, 900 * DIA_MS);
+    gravar(&pasta, SHA_ORFAO, 900 * DAY_MS);
     let a = org("alfa", r#"{"retencao":{"dias":0}}"#);
     let falso = Falso::com_orgs(vec![(a.clone(), pasta.clone())]);
 
-    let relatorio = executar_org(&falso, a.id, &opcoes(false)).unwrap();
+    let relatorio = run_org(&falso, a.id, &opcoes(false)).unwrap();
 
-    assert_eq!(relatorio.situacao, Situacao::Ignorada);
+    assert_eq!(relatorio.situacao, Situacao::Skipped);
     assert!(
         falso.chamadas.borrow().is_empty(),
         "org com 0 não vai ao banco"
@@ -216,8 +215,8 @@ fn config_invalida_pula_so_aquela_org() {
     let base = tempfile::tempdir().unwrap();
     let pasta_ruim = base.path().join("ruim");
     let pasta_boa = base.path().join("boa");
-    gravar(&pasta_ruim, SHA_ORFAO, 90 * DIA_MS);
-    gravar(&pasta_boa, SHA_ORFAO, 90 * DIA_MS);
+    gravar(&pasta_ruim, SHA_ORFAO, 90 * DAY_MS);
+    gravar(&pasta_boa, SHA_ORFAO, 90 * DAY_MS);
     let ruim = org("ruim", r#"{"retencao":{"dias":-5}}"#);
     let boa = org("boa", "{}");
     let falso = Falso::com_orgs(vec![
@@ -225,11 +224,11 @@ fn config_invalida_pula_so_aquela_org() {
         (boa.clone(), pasta_boa.clone()),
     ]);
 
-    let relatorio = executar_todas(&falso, &opcoes(false)).unwrap();
+    let relatorio = run_all(&falso, &opcoes(false)).unwrap();
 
     let de_ruim = relatorio.orgs.iter().find(|o| o.slug == "ruim").unwrap();
     let de_boa = relatorio.orgs.iter().find(|o| o.slug == "boa").unwrap();
-    assert_eq!(de_ruim.situacao, Situacao::Erro);
+    assert_eq!(de_ruim.situacao, Situacao::Failed);
     assert!(
         de_ruim
             .motivo
@@ -241,7 +240,7 @@ fn config_invalida_pula_so_aquela_org() {
         pasta_ruim.join(SHA_ORFAO).exists(),
         "org ruim não perde nada"
     );
-    assert_eq!(de_boa.situacao, Situacao::Varrida);
+    assert_eq!(de_boa.situacao, Situacao::Swept);
     assert!(!pasta_boa.join(SHA_ORFAO).exists());
     assert!(falso.chamadas.borrow().iter().all(|c| c.0 != ruim.id));
 }
@@ -250,16 +249,17 @@ fn config_invalida_pula_so_aquela_org() {
 fn falha_no_banco_nao_apaga_arquivo_nenhum() {
     let base = tempfile::tempdir().unwrap();
     let pasta = base.path().join("org-a");
-    gravar(&pasta, SHA_ORFAO, 90 * DIA_MS);
+    gravar(&pasta, SHA_ORFAO, 90 * DAY_MS);
     let a = org("alfa", "{}");
     let mut falso = Falso::com_orgs(vec![(a.clone(), pasta.clone())]);
-    falso
-        .varreduras
-        .insert(a.id, Err(ErroRetencao::Banco("banco ocupado".to_owned())));
+    falso.varreduras.insert(
+        a.id,
+        Err(RetentionError::Database("banco ocupado".to_owned())),
+    );
 
-    let relatorio = executar_org(&falso, a.id, &opcoes(false)).unwrap();
+    let relatorio = run_org(&falso, a.id, &opcoes(false)).unwrap();
 
-    assert_eq!(relatorio.situacao, Situacao::Erro);
+    assert_eq!(relatorio.situacao, Situacao::Failed);
     assert!(pasta.join(SHA_ORFAO).exists(), "banco falhou: arquivo fica");
     assert!(falso.auditorias.borrow().is_empty());
 }
@@ -268,14 +268,14 @@ fn falha_no_banco_nao_apaga_arquivo_nenhum() {
 fn falha_na_auditoria_aparece_no_relatorio() {
     let base = tempfile::tempdir().unwrap();
     let pasta = base.path().join("org-a");
-    gravar(&pasta, SHA_ORFAO, 90 * DIA_MS);
+    gravar(&pasta, SHA_ORFAO, 90 * DAY_MS);
     let a = org("alfa", "{}");
     let mut falso = Falso::com_orgs(vec![(a.clone(), pasta.clone())]);
     falso.auditoria_falha = true;
 
-    let relatorio = executar_org(&falso, a.id, &opcoes(false)).unwrap();
+    let relatorio = run_org(&falso, a.id, &opcoes(false)).unwrap();
 
-    assert_eq!(relatorio.situacao, Situacao::Erro);
+    assert_eq!(relatorio.situacao, Situacao::Failed);
     assert!(
         relatorio
             .motivo
@@ -290,8 +290,8 @@ fn org_nao_toca_a_pasta_de_outra_org() {
     let base = tempfile::tempdir().unwrap();
     let pasta_a = base.path().join("org-a");
     let pasta_b = base.path().join("org-b");
-    gravar(&pasta_a, SHA_ORFAO, 90 * DIA_MS);
-    gravar(&pasta_b, SHA_ORFAO, 90 * DIA_MS);
+    gravar(&pasta_a, SHA_ORFAO, 90 * DAY_MS);
+    gravar(&pasta_b, SHA_ORFAO, 90 * DAY_MS);
     let a = org("alfa", "{}");
     let b = org("beta", "{}");
     let falso = Falso::com_orgs(vec![
@@ -299,7 +299,7 @@ fn org_nao_toca_a_pasta_de_outra_org() {
         (b.clone(), pasta_b.clone()),
     ]);
 
-    executar_org(&falso, a.id, &opcoes(false)).unwrap();
+    run_org(&falso, a.id, &opcoes(false)).unwrap();
 
     assert!(!pasta_a.join(SHA_ORFAO).exists());
     assert!(
@@ -317,9 +317,9 @@ fn arquivo_recente_fica_mesmo_sem_dono() {
     let a = org("alfa", "{}");
     let falso = Falso::com_orgs(vec![(a.clone(), pasta.clone())]);
 
-    let relatorio = executar_org(&falso, a.id, &opcoes(false)).unwrap();
+    let relatorio = run_org(&falso, a.id, &opcoes(false)).unwrap();
 
-    assert!(relatorio.arquivos_sem_dono.is_empty());
+    assert!(relatorio.orphan_files.is_empty());
     assert!(pasta.join(SHA_ORFAO).exists());
 }
 
@@ -328,11 +328,11 @@ fn relogio_no_futuro_recua_o_corte_pelos_dias_da_org() {
     let a = org("alfa", r#"{"retencao":{"dias":7}}"#);
     let base = tempfile::tempdir().unwrap();
     let falso = Falso::com_orgs(vec![(a.clone(), base.path().to_path_buf())]);
-    let daqui_dois_anos = AGORA + 730 * DIA_MS;
-    let opcoes = Opcoes::novas(daqui_dois_anos, 30, true, "system");
+    let daqui_dois_anos = AGORA + 730 * DAY_MS;
+    let opcoes = Options::new(daqui_dois_anos, 30, true, "system");
 
-    let relatorio = executar_org(&falso, a.id, &opcoes).unwrap();
+    let relatorio = run_org(&falso, a.id, &opcoes).unwrap();
 
-    assert_eq!(relatorio.corte_ms, Some(daqui_dois_anos - 7 * DIA_MS));
+    assert_eq!(relatorio.cutoff_ms, Some(daqui_dois_anos - 7 * DAY_MS));
     assert_eq!(relatorio.dias, Some(7));
 }
