@@ -26,7 +26,7 @@ use poph_evolution::webhook::{
     interpretar,
 };
 use poph_evolution::{ClienteEvolution, ConfigEvolution, ErroEvolution, TETO_MIDIA};
-use poph_files::{ConfigArquivos, Conteudo, ErroArquivo};
+use poph_files::{Content, FileConfig, FileError};
 use poph_store::{
     NewChannelAttachment, NewChannelInboxItem, NewDeviceMessage, Received, ReceivedFromDevice,
     ReceivedWithMessage,
@@ -457,7 +457,7 @@ async fn baixar_anexos(
     canal: &CanalEvolution,
     midias: &[MidiaParaBaixar],
 ) -> Result<Vec<NewChannelAttachment>, ApiError> {
-    let config = ConfigArquivos::padrao(estado.config.blobs());
+    let config = FileConfig::default(estado.config.blobs());
     let mut anexos = Vec::new();
     for midia in midias {
         let Some(cliente) = canal.cliente.as_ref() else {
@@ -490,14 +490,14 @@ async fn baixar_anexos(
         let org = canal.org;
         let config_tarefa = config.clone();
         let gravado = tokio::task::spawn_blocking(move || {
-            poph_files::receber(&config_tarefa, org, &nome, &baixada.bytes)
+            poph_files::receive(&config_tarefa, org, &nome, &baixada.bytes)
         })
         .await
         .map_err(|_| ApiError::interno())?;
 
         let arquivo = match gravado {
             Ok(arquivo) => arquivo,
-            Err(ErroArquivo::Gravacao(detalhe)) => {
+            Err(FileError::WriteOutcome(detalhe)) => {
                 tracing::error!(target: "poph_server::evolution", motivo = %detalhe, "blob da mídia não gravado");
                 return Err(indisponivel());
             }
@@ -513,19 +513,19 @@ async fn baixar_anexos(
 
         let metadados = arquivo.metadados;
         let blob_path = metadados
-            .caminho_blob
-            .strip_prefix(&config.pasta_blobs)
+            .blob_path
+            .strip_prefix(&config.blob_folder)
             .map(|relativo| relativo.to_string_lossy().replace('\\', "/"))
             .map_err(|_| ApiError::interno())?;
-        let (texto_extraido, status_extracao) = match arquivo.conteudo {
-            Conteudo::Imagem { .. } => (None, "skipped"),
-            Conteudo::Texto { envelopado, .. } => (Some(envelopado), "ok"),
-            Conteudo::SemTexto => (None, "failed"),
+        let (texto_extraido, status_extracao) = match arquivo.content {
+            Content::Image { .. } => (None, "skipped"),
+            Content::Texto { envelopado, .. } => (Some(envelopado), "ok"),
+            Content::NoText => (None, "failed"),
         };
         anexos.push(NewChannelAttachment {
-            name: metadados.nome_original,
+            name: metadados.original_name,
             mime: metadados.mime_real,
-            size_bytes: metadados.tamanho_bytes,
+            size_bytes: metadados.size_bytes,
             sha256: metadados.sha256,
             blob_path,
             extracted_text: texto_extraido,
@@ -543,12 +543,12 @@ fn categoria_de_download(erro: &ErroEvolution) -> &'static str {
     }
 }
 
-fn categoria_de_arquivo(erro: &ErroArquivo) -> &'static str {
+fn categoria_de_arquivo(erro: &FileError) -> &'static str {
     match erro {
-        ErroArquivo::Vazio => "arquivo vazio",
-        ErroArquivo::Grande { .. } => "arquivo acima do limite",
-        ErroArquivo::TipoNaoAceito(_) | ErroArquivo::ExtensaoEnganosa { .. } => "tipo não aceito",
-        ErroArquivo::Leitura(_) | ErroArquivo::Tempo { .. } => "arquivo ilegível",
+        FileError::Vazio => "arquivo vazio",
+        FileError::Large { .. } => "arquivo acima do limite",
+        FileError::UnsupportedType(_) | FileError::MisleadingExtension { .. } => "tipo não aceito",
+        FileError::Reading(_) | FileError::Time { .. } => "arquivo ilegível",
         _ => "falha na leitura do arquivo",
     }
 }

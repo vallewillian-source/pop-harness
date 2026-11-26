@@ -76,7 +76,7 @@ impl Cenario {
 
     /// Grava o blob como o recebimento grava e devolve os metadados do anexo.
     fn anexo(&self, org: OrgId, nome: &str, mime: &str, bytes: &[u8]) -> NewChannelAttachment {
-        let gravado = poph_files::blob::gravar(&self.blobs, org, bytes).expect("grava o blob");
+        let gravado = poph_files::blob::write(&self.blobs, org, bytes).expect("grava o blob");
         NewChannelAttachment {
             name: nome.to_owned(),
             mime: mime.to_owned(),

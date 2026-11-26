@@ -249,8 +249,7 @@ impl Cenario {
                     true,
                 )
                 .expect("instruções");
-            let gravado =
-                poph_files::blob::gravar(&dados.join("blobs"), org, &bytes).expect("blob");
+            let gravado = poph_files::blob::write(&dados.join("blobs"), org, &bytes).expect("blob");
             let arquivo = store
                 .library()
                 .create(

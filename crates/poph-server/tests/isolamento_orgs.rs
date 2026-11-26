@@ -51,7 +51,7 @@ use poph_core::llm::{
     FakeProvider, FinishReason, LlmError, LlmEvent, LlmProvider, LlmStream, Message, Request,
     Script, ToolCall,
 };
-use poph_files::ConfigArquivos;
+use poph_files::FileConfig;
 use poph_rag::{ConfigIndice, EmbedderFake, Indice};
 use poph_server::Estado;
 use poph_store::{
@@ -1725,7 +1725,7 @@ async fn subir_com_turno(
         let blobs = pasta.join("dados").join("blobs");
         let estado = Estado::novo(Arc::clone(store), config.clone())
             .expect("estado do servidor")
-            .com_arquivos(ConfigArquivos::padrao(blobs.clone()));
+            .com_arquivos(FileConfig::default(blobs.clone()));
         let config_quente = ConfigQuente::nova(
             Arc::clone(store),
             OpcoesConfigQuente::default(),
@@ -1744,7 +1744,7 @@ async fn subir_com_turno(
             MetricasTurno::proprio(),
         )
         .com_modelo_padrao("modelo-teste")
-        .com_arquivos(ConfigArquivos::padrao(blobs));
+        .com_arquivos(FileConfig::default(blobs));
         let indice = Indice::abrir(
             store.rag_path(),
             Arc::new(EmbedderFake::new()),

@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Args, Subcommand};
-use poph_files::ConfigArquivos;
+use poph_files::FileConfig;
 use poph_store::{LibraryFile, NewLibraryFile, Page, Store};
 use poph_types::{AgentId, FileId, HarnessConfig, OrgId};
 use serde_json::{Value, json};
@@ -155,9 +155,9 @@ fn enviar(
         Ok(agente) => agente,
         Err(erro) => return falha(erro),
     };
-    let config = ConfigArquivos::padrao(configuracao.blobs());
+    let config = FileConfig::default(configuracao.blobs());
     // Lê no máximo um byte além do limite: arquivo gigante é recusado sem carregar tudo na memória.
-    let bytes = match ler_com_teto(&args.caminho, config.limite_bytes) {
+    let bytes = match ler_com_teto(&args.caminho, config.byte_limit) {
         Ok(bytes) => bytes,
         Err(erro) => return falha(erro),
     };
@@ -166,23 +166,23 @@ fn enviar(
         .file_name()
         .map(|nome| nome.to_string_lossy().into_owned())
         .unwrap_or_else(|| "arquivo".to_owned());
-    let recebido = match poph_files::receber(&config, org, &nome_arquivo, &bytes) {
+    let recebido = match poph_files::receive(&config, org, &nome_arquivo, &bytes) {
         Ok(recebido) => recebido,
         Err(erro) => return falha(erro.to_string()),
     };
     let metadados = recebido.metadados;
     let nome = if args.name.trim().is_empty() {
-        metadados.nome_original.clone()
+        metadados.original_name.clone()
     } else {
         args.name
     };
-    let blob_relativo = relativo_ao_blobs(&config.pasta_blobs, &metadados.caminho_blob);
+    let blob_relativo = relativo_ao_blobs(&config.blob_folder, &metadados.blob_path);
     let novo = NewLibraryFile {
         agent_id: agente,
         name: nome,
         description: args.description,
         mime: metadados.mime_real.clone(),
-        size_bytes: metadados.tamanho_bytes,
+        size_bytes: metadados.size_bytes,
         sha256: metadados.sha256.clone(),
         blob_path: blob_relativo,
     };
@@ -190,7 +190,7 @@ fn enviar(
         Ok(arquivo) => saida_arquivo(
             &arquivo,
             args.json,
-            if metadados.blob_ja_existia {
+            if metadados.blob_already_existed {
                 "O conteúdo já estava guardado para esta org: um blob só, deduplicado por hash."
             } else {
                 "Blob gravado."

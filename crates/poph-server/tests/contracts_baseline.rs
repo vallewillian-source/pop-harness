@@ -382,7 +382,7 @@ impl Scenario {
             .link_agent(org.id, agent.id, group.id)
             .expect("link group");
         let content = b"conteudo de exemplo";
-        let blob = poph_files::blob::gravar(&self.blobs, org.id, content).expect("blob");
+        let blob = poph_files::blob::write(&self.blobs, org.id, content).expect("blob");
         let file = store
             .library()
             .create(

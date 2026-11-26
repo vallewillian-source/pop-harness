@@ -10,7 +10,7 @@
 //!   evento como chave de idempotência;
 //! - `MidiaDoAtendente` → o arquivo do atendente vai ao cliente (MX-44): baixa o conteúdo do
 //!   Synapse com teto de bytes e sem seguir redirecionamento, confere o tipo **pelo conteúdo**
-//!   (`poph_files::envio`, a lista fechada de saída — imagem, PDF, Office, áudio e vídeo),
+//!   (`poph_files::outbound`, a lista fechada de saída — imagem, PDF, Office, áudio e vídeo),
 //!   grava como blob da org e chama a operação atômica da MX-44 (mensagem `human` com anexo + item
 //!   `file` na fila + conversa `transferred` + auditoria, numa escrita só). O que não dá para
 //!   enviar (arquivo grande, tipo recusado, mídia que o Synapse não entrega mais) vira um aviso em
@@ -829,7 +829,7 @@ impl RespostaDoAtendente {
         //
         // A lista é a de **saída** (`envio`), não a de entrada: o arquivo do atendente é entregue,
         // não lido. É ela que aceita áudio e vídeo (MX-48) sem afrouxar o que o cliente pode mandar.
-        let tipo_real = match poph_files::envio::classificar(&bytes, nome) {
+        let tipo_real = match poph_files::outbound::classify(&bytes, nome) {
             Ok(tipo) => tipo,
             Err(_) => {
                 self.avisar_de_midia(
@@ -848,7 +848,7 @@ impl RespostaDoAtendente {
         let tamanho_bytes = bytes.len() as u64;
         let pasta_para_gravar = pasta.clone();
         let gravado = match tokio::task::spawn_blocking(move || {
-            poph_files::blob::gravar(&pasta_para_gravar, org, &bytes)
+            poph_files::blob::write(&pasta_para_gravar, org, &bytes)
         })
         .await
         {
@@ -866,7 +866,7 @@ impl RespostaDoAtendente {
             }
         };
 
-        let nome_arquivo = midia_atendente::nome_do_arquivo(nome, tipo_real.nome_padrao());
+        let nome_arquivo = midia_atendente::nome_do_arquivo(nome, tipo_real.default_name());
         let nome_atendente = self.nome_do_atendente(remetente).await;
         let legenda = legenda_do_arquivo(&nome_atendente);
         let blob_ref = format!("{}/{}", alvo.org, gravado.sha256);

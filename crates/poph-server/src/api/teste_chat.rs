@@ -32,7 +32,7 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use futures::stream;
 use poph_agent::turno::{Entrada, EventoTurno, Observador, ResumoTurno, TransporteConsole};
-use poph_files::{Conteudo, ErroArquivo};
+use poph_files::{Content, FileError};
 use poph_store::{
     AttachmentRecord, Conversa, Direction, Mensagem, NewChannelAttachment, NewConversation,
     NewMessage, OutboxItem, Page, Role, Turno,
@@ -680,9 +680,9 @@ async fn receber_arquivos(
         arquivos
             .into_iter()
             .map(|(nome, bytes)| {
-                poph_files::receber(&config, org, &nome, &bytes).map(|r| (r, nome))
+                poph_files::receive(&config, org, &nome, &bytes).map(|r| (r, nome))
             })
-            .collect::<Vec<Result<_, ErroArquivo>>>()
+            .collect::<Vec<Result<_, FileError>>>()
     })
     .await
     .map_err(|_| ApiError::interno())?;
@@ -693,27 +693,27 @@ async fn receber_arquivos(
         let (recebido, nome_enviado) = item.map_err(erro_do_arquivo)?;
         let metadados = recebido.metadados;
         let blob_path = metadados
-            .caminho_blob
+            .blob_path
             .strip_prefix(&pasta_blobs)
             .map(|relativo| relativo.to_string_lossy().replace('\\', "/"))
             .map_err(|_| ApiError::interno())?;
-        let (texto_extraido, status_extracao) = match recebido.conteudo {
-            Conteudo::Imagem { .. } => (None, "skipped"),
-            Conteudo::Texto { envelopado, .. } => (Some(envelopado), "ok"),
-            Conteudo::SemTexto => (None, "failed"),
+        let (texto_extraido, status_extracao) = match recebido.content {
+            Content::Image { .. } => (None, "skipped"),
+            Content::Texto { envelopado, .. } => (Some(envelopado), "ok"),
+            Content::NoText => (None, "failed"),
         };
         resumo.push(json!({
-            "name": metadados.nome_original,
+            "name": metadados.original_name,
             "sent_as": nome_enviado,
             "mime": metadados.mime_real,
-            "size_bytes": metadados.tamanho_bytes,
+            "size_bytes": metadados.size_bytes,
             "sha256": metadados.sha256,
             "extraction_status": status_extracao,
         }));
         anexos.push(NewChannelAttachment {
-            name: metadados.nome_original,
+            name: metadados.original_name,
             mime: metadados.mime_real,
-            size_bytes: metadados.tamanho_bytes,
+            size_bytes: metadados.size_bytes,
             sha256: metadados.sha256,
             blob_path,
             extracted_text: texto_extraido,
@@ -725,39 +725,44 @@ async fn receber_arquivos(
 
 /// Erro do arquivo para o operador: recusa de conteúdo é `400` com `details.field = "file"`;
 /// falha do servidor (gravação, configuração, leitor ausente) é `500` sem caminho interno.
-fn erro_do_arquivo(erro: ErroArquivo) -> ApiError {
+fn erro_do_arquivo(erro: FileError) -> ApiError {
     match erro {
-        ErroArquivo::Grande {
-            tamanho_mb,
-            limite_mb,
+        FileError::Large {
+            size_mb: tamanho_mb,
+            limit_mb: limite_mb,
         } => ApiError::validacao(
             "file",
             format!("o arquivo tem {tamanho_mb:.1} MB e o limite por arquivo é {limite_mb:.0} MB"),
         ),
-        ErroArquivo::Vazio => ApiError::validacao("file", "o arquivo está vazio"),
-        ErroArquivo::TipoNaoAceito(motivo) => {
+        FileError::Vazio => ApiError::validacao("file", "o arquivo está vazio"),
+        FileError::UnsupportedType(motivo) => {
             ApiError::validacao("file", format!("arquivo recusado: {motivo}"))
         }
-        ErroArquivo::ExtensaoEnganosa { declarada, real } => ApiError::validacao(
+        FileError::MisleadingExtension {
+            declared: declarada,
+            real,
+        } => ApiError::validacao(
             "file",
             format!("arquivo recusado: o nome termina em .{declarada}, mas o conteúdo é {real}"),
         ),
-        ErroArquivo::Leitura(motivo) => {
+        FileError::Reading(motivo) => {
             ApiError::validacao("file", format!("não consegui ler o arquivo: {motivo}"))
         }
-        ErroArquivo::Tempo { limite_segundos } => ApiError::validacao(
+        FileError::Time {
+            limit_seconds: limite_segundos,
+        } => ApiError::validacao(
             "file",
             format!("a leitura do arquivo passou de {limite_segundos} s e foi interrompida"),
         ),
-        ErroArquivo::Extrator(detalhe) => {
+        FileError::Extrator(detalhe) => {
             tracing::error!(detalhe = %detalhe, "leitor de arquivos indisponível");
             ApiError::interno()
         }
-        ErroArquivo::Gravacao(detalhe) => {
+        FileError::WriteOutcome(detalhe) => {
             tracing::error!(detalhe = %detalhe, "não consegui gravar o blob do anexo");
             ApiError::interno()
         }
-        ErroArquivo::Configuracao(detalhe) => {
+        FileError::Configuracao(detalhe) => {
             tracing::error!(detalhe = %detalhe, "configuração de arquivos inválida");
             ApiError::interno()
         }

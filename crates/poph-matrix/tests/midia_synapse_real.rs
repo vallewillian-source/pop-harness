@@ -390,7 +390,7 @@ async fn audio_e_video_do_atendente_sobem_e_descem_inteiros() {
     // MX-48: áudio e vídeo do atendente passaram a sair para o cliente. O que o Synapse falso não
     // prova é o servidor de verdade aceitar o upload e o download de um `audio/ogg` e de um
     // `video/mp4` em nome do fantasma do agente — e o tipo que sai do conteúdo baixado continuar
-    // sendo o esperado pela lista fechada de saída (`poph_files::envio`).
+    // sendo o esperado pela lista fechada de saída (`poph_files::outbound`).
     let base = credencial("POPH_MATRIX_DEV_BASE_URL");
     let server_name = credencial("POPH_MATRIX_DEV_SERVER_NAME");
     let token = credencial("POPH_MATRIX_DEV_HARNESS_AS_TOKEN");
@@ -479,15 +479,15 @@ async fn audio_e_video_do_atendente_sobem_e_descem_inteiros() {
 
         // O tipo do que desceu, pela lista fechada de saída: é o que o Harness usa para decidir o
         // que vai ao cliente.
-        let tipo = poph_files::envio::classificar(&baixado, nome)
+        let tipo = poph_files::outbound::classify(&baixado, nome)
             .unwrap_or_else(|erro| panic!("[{nome}] o tipo baixado foi recusado ({erro:?})"));
         let familia_esperada = if evento == "m.audio" {
-            poph_files::FamiliaEnvio::Audio
+            poph_files::OutboundFamily::Audio
         } else {
-            poph_files::FamiliaEnvio::Video
+            poph_files::OutboundFamily::Video
         };
         assert_eq!(
-            tipo.familia(),
+            tipo.family(),
             familia_esperada,
             "[{nome}] família do conteúdo"
         );

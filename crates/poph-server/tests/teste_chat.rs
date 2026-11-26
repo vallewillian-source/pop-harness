@@ -26,7 +26,7 @@ use poph_agent::turno::{
     Motor, OpcoesTurno, ProcessadorTurno, RegistroFerramentas, RegistroPadrao,
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, LlmProvider, Request, Script};
-use poph_files::ConfigArquivos;
+use poph_files::FileConfig;
 use poph_server::Estado;
 use poph_server::api::teste_chat::CANAL_DE_TESTE;
 use poph_store::{ConversationStatus, Direction, NewAgent, NewOrg, Page, Store, TurnState};
@@ -233,7 +233,7 @@ impl Cenario {
         // elas que o turno sabe quais ferramentas oferecer ao modelo (D-04).
         let arquivo = semear.map(|bytes| {
             let blobs = pasta.join("dados").join("blobs");
-            let gravado = poph_files::blob::gravar(&blobs, org, bytes).expect("grava o blob");
+            let gravado = poph_files::blob::write(&blobs, org, bytes).expect("grava o blob");
             let arquivo = store
                 .library()
                 .create(
@@ -273,8 +273,8 @@ impl Cenario {
 
         let fake = Arc::new(FakeProvider::with_scripts(roteiros(arquivo)));
         let mut estado = Estado::novo(Arc::clone(&store), config).expect("estado do servidor");
-        let mut arquivos = ConfigArquivos::padrao(pasta.join("dados").join("blobs"));
-        arquivos.caminho_extrator = Some(extrator_falso(&pasta));
+        let mut arquivos = FileConfig::default(pasta.join("dados").join("blobs"));
+        arquivos.extractor_path = Some(extrator_falso(&pasta));
         estado = estado.com_arquivos(arquivos);
 
         if ligar_turno {
@@ -538,7 +538,7 @@ async fn conversa_de_teste_recebe_sse_em_ordem_e_anexo_com_texto_no_prompt() {
         prompt.contains("POLITICA INTERNA: nunca prometa entrega em 24 horas"),
         "texto extraído ausente do prompt: {prompt}"
     );
-    assert!(prompt.contains(poph_files::envelope::AVISO_NAO_CONFIAVEL));
+    assert!(prompt.contains(poph_files::envelope::UNTRUSTED_NOTICE));
     assert!(prompt.contains("qual o prazo?"));
 
     // 3. O histórico mostra a mensagem do cliente com o anexo e a resposta do agente.

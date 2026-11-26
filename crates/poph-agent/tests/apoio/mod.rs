@@ -35,7 +35,7 @@ pub struct Cenario {
     pub store: Arc<Store>,
     pub org: OrgId,
     pub conversa: ConversationId,
-    pub arquivos: poph_files::ConfigArquivos,
+    pub arquivos: poph_files::FileConfig,
     pub metricas: MetricasTurno,
 }
 
@@ -134,7 +134,7 @@ impl Cenario {
             )
             .expect("abre a conversa")
             .id;
-        let arquivos = poph_files::ConfigArquivos::padrao(pasta.join("blobs"));
+        let arquivos = poph_files::FileConfig::default(pasta.join("blobs"));
         Self {
             pasta,
             store,
@@ -152,7 +152,7 @@ impl Cenario {
             let sha256 = if anexo.sem_blob {
                 poph_files::blob::sha256_hex(&anexo.bytes)
             } else {
-                poph_files::blob::gravar(&self.arquivos.pasta_blobs, self.org, &anexo.bytes)
+                poph_files::blob::write(&self.arquivos.blob_folder, self.org, &anexo.bytes)
                     .expect("grava o blob")
                     .sha256
             };

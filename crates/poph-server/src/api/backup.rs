@@ -203,11 +203,11 @@ fn ler_blobs(
                 .or_insert_with(|| nome.to_owned());
         }
     }
-    let pasta = &e.arquivos.pasta_blobs;
-    let limite = e.arquivos.limite_bytes;
+    let pasta = &e.arquivos.blob_folder;
+    let limite = e.arquivos.byte_limit;
     let mut blobs = BTreeMap::new();
     for (sha, nome) in nomes {
-        let bytes = poph_files::blob::ler(pasta, org, &sha, limite).map_err(|erro| {
+        let bytes = poph_files::blob::read(pasta, org, &sha, limite).map_err(|erro| {
             // O motivo do `ErroArquivo` é escrito sem caminho e sem conteúdo.
             tracing::warn!(org = %org, sha = %sha, motivo = %erro, "exportação sem o conteúdo de um arquivo");
             ApiError::novo(
@@ -497,9 +497,9 @@ fn gravar_no_destino(
     blobs: &BTreeMap<String, Vec<u8>>,
     sobrescrever: bool,
 ) -> Result<Result<ImportReport, ImportUpdates>, ApiError> {
-    let pasta = &e.arquivos.pasta_blobs;
+    let pasta = &e.arquivos.blob_folder;
     for (sha, conteudo) in blobs {
-        match poph_files::blob::gravar(pasta, org, conteudo) {
+        match poph_files::blob::write(pasta, org, conteudo) {
             Ok(gravado) if gravado.sha256 == *sha => {}
             Ok(_) => {
                 return Err(ApiError::novo(

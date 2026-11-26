@@ -420,7 +420,7 @@ model — a message with only an image produced a request with no content. Now:
 - **Degradation.** Without the file configuration in the engine (`Motor::com_arquivos`), without a blob on disk, invalid hash, or a blob
   above the read limit: the attachment is left out, with a log entry, and the turn **never** fails because of the image. The document
   text, if any, still goes.
-- **Who turns the configuration on:** the composition root (`crates/poph/src/montagem.rs`) passes `ConfigArquivos::padrao(configuracao.blobs())`
+- **Who turns the configuration on:** the composition root (`crates/poph/src/montagem.rs`) passes `FileConfig::default(configuracao.blobs())`
   to the engine. It is the same folder that intake and the test chat use to write the blob.
 - **Provider that does not accept images:** there is no per-provider capability declaration today — `validar_pedido` in `poph-core`
   refuses MIME types outside the list and empty images before sending, and the configured providers (antigravity) accept images. If a

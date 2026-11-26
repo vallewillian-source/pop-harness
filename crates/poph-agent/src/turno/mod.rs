@@ -496,7 +496,7 @@ pub struct Motor {
     handoff: Orientacao,
     /// Arquivos do cliente (HR-23b): pasta dos blobs e limites. Sem ela, o turno não lê imagem
     /// nenhuma do disco — o texto extraído continua indo ao modelo pelo banco.
-    arquivos: Option<poph_files::ConfigArquivos>,
+    arquivos: Option<poph_files::FileConfig>,
     /// Motor de fluxos (FX-23). Sem ele, o turno não toca em fluxo nenhum: `[fluxos] ativo = false`
     /// ou composição que não ligou o módulo.
     fluxos: Option<AjustesDoFluxo>,
@@ -612,7 +612,7 @@ impl Motor {
 
     /// Diz onde estão os blobs dos arquivos do cliente (HR-23b). Sem isso, o turno só usa o texto
     /// extraído; imagem fica gravada e não chega ao modelo.
-    pub fn com_arquivos(mut self, arquivos: poph_files::ConfigArquivos) -> Self {
+    pub fn com_arquivos(mut self, arquivos: poph_files::FileConfig) -> Self {
         self.arquivos = Some(arquivos);
         self
     }
@@ -2043,7 +2043,7 @@ impl Motor {
             // Vários documentos da mesma mensagem viram um texto só, como o G7 já os lê.
             partes.insert(
                 0,
-                Part::Texto(poph_files::envelope::AVISO_NAO_CONFIAVEL.to_owned()),
+                Part::Texto(poph_files::envelope::UNTRUSTED_NOTICE.to_owned()),
             );
             partes.insert(1, Part::Texto(textos.join("\n\n")));
         }
@@ -2076,8 +2076,8 @@ impl Motor {
             );
             return None;
         }
-        match poph_files::blob::ler(
-            &arquivos.pasta_blobs,
+        match poph_files::blob::read(
+            &arquivos.blob_folder,
             org,
             &anexo.sha256,
             MAX_BYTES_POR_IMAGEM,

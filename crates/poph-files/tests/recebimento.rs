@@ -6,22 +6,22 @@ use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use poph_files::envelope::{ABRE_NAO_CONFIAVEL, AVISO_NAO_CONFIAVEL, FECHA_NAO_CONFIAVEL};
-use poph_files::{ConfigArquivos, Conteudo, ErroArquivo, ParteArquivo, Tipo, receber};
+use poph_files::envelope::{UNTRUSTED_CLOSE, UNTRUSTED_NOTICE, UNTRUSTED_OPEN};
+use poph_files::{Content, FileConfig, FileError, FilePart, Tipo, receive};
 use poph_types::OrgId;
 use tempfile::TempDir;
 
 struct Ambiente {
     _pasta: TempDir,
     blobs: PathBuf,
-    config: ConfigArquivos,
+    config: FileConfig,
 }
 
 fn ambiente() -> Ambiente {
     let pasta = tempfile::tempdir().expect("pasta temporária");
     let blobs = pasta.path().join("blobs");
-    let mut config = ConfigArquivos::padrao(&blobs);
-    config.caminho_extrator = Some(PathBuf::from(env!("CARGO_BIN_EXE_poph-extrator")));
+    let mut config = FileConfig::default(&blobs);
+    config.extractor_path = Some(PathBuf::from(env!("CARGO_BIN_EXE_poph-extrator")));
     Ambiente {
         _pasta: pasta,
         blobs,
@@ -36,12 +36,12 @@ fn fixture(nome: &str) -> Vec<u8> {
     std::fs::read(&caminho).unwrap_or_else(|erro| panic!("fixture {nome}: {erro}"))
 }
 
-fn texto_das_partes(partes: &[ParteArquivo]) -> String {
+fn texto_das_partes(partes: &[FilePart]) -> String {
     partes
         .iter()
         .filter_map(|parte| match parte {
-            ParteArquivo::Texto(texto) => Some(texto.as_str()),
-            ParteArquivo::Imagem { .. } => None,
+            FilePart::Texto(texto) => Some(texto.as_str()),
+            FilePart::Image { .. } => None,
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -73,9 +73,9 @@ fn tipos_suportados_viram_texto_ou_imagem() {
         ("produtos.xls", "Exemplo 200 SC", "xls"),
     ];
     for (nome, esperado, _) in casos {
-        let recebido = receber(&amb.config, org, nome, &fixture(nome))
+        let recebido = receive(&amb.config, org, nome, &fixture(nome))
             .unwrap_or_else(|erro| panic!("{nome} deveria ser aceito: {erro}"));
-        let partes = recebido.para_llm();
+        let partes = recebido.for_llm();
         let texto = texto_das_partes(&partes);
         assert!(
             texto.contains(esperado),
@@ -83,14 +83,14 @@ fn tipos_suportados_viram_texto_ou_imagem() {
         );
     }
     // Procedimento tem entidade XML (&amp;) e tabela: tem que sair como texto legível.
-    let procedimento = receber(
+    let procedimento = receive(
         &amb.config,
         org,
         "procedimento.docx",
         &fixture("procedimento.docx"),
     )
     .unwrap();
-    let texto = texto_das_partes(&procedimento.para_llm());
+    let texto = texto_das_partes(&procedimento.for_llm());
     assert!(texto.contains("pronto-socorro & informe"), "{texto:?}");
     assert!(texto.contains("Náusea\tHidratação"), "{texto:?}");
 }
@@ -110,12 +110,12 @@ fn imagens_viram_partes_multimodais() {
         ("foto.webp", webp, "image/webp"),
     ];
     for (nome, bytes, mime_esperado) in casos {
-        let recebido = receber(&amb.config, org, nome, &bytes).unwrap();
+        let recebido = receive(&amb.config, org, nome, &bytes).unwrap();
         assert_eq!(recebido.metadados.mime_real, mime_esperado);
-        let partes = recebido.para_llm();
+        let partes = recebido.for_llm();
         assert_eq!(partes.len(), 1);
         match &partes[0] {
-            ParteArquivo::Imagem {
+            FilePart::Image {
                 mime,
                 bytes: enviados,
             } => {
@@ -134,14 +134,14 @@ fn planilha_com_nome_trocado_entre_xls_e_xlsx_e_aceita() {
     let amb = ambiente();
     let org = OrgId::generate();
     let texto = texto_das_partes(
-        &receber(
+        &receive(
             &amb.config,
             org,
             "tabela-antiga.xlsx",
             &fixture("produtos.xls"),
         )
         .unwrap()
-        .para_llm(),
+        .for_llm(),
     );
     assert!(texto.contains("Exemplo 200 SC"), "{texto:?}");
 }
@@ -151,9 +151,9 @@ fn doc_e_ppt_antigos_sao_recusados_com_mensagem_educada() {
     let amb = ambiente();
     let org = OrgId::generate();
     for nome in ["injecao.doc", "apresentacao.ppt"] {
-        let erro = receber(&amb.config, org, nome, &fixture(nome)).unwrap_err();
+        let erro = receive(&amb.config, org, nome, &fixture(nome)).unwrap_err();
         match erro {
-            ErroArquivo::TipoNaoAceito(mensagem) => {
+            FileError::UnsupportedType(mensagem) => {
                 assert!(
                     mensagem.contains(".docx") || mensagem.contains(".pptx"),
                     "{mensagem}"
@@ -170,9 +170,9 @@ fn audio_e_recusado() {
     let org = OrgId::generate();
     let mut audio = b"ID3\x03\x00\x00\x00\x00\x00\x00".to_vec();
     audio.extend_from_slice(&[0u8; 256]);
-    let erro = receber(&amb.config, org, "nota-de-voz.mp3", &audio).unwrap_err();
+    let erro = receive(&amb.config, org, "nota-de-voz.mp3", &audio).unwrap_err();
     assert!(
-        matches!(&erro, ErroArquivo::TipoNaoAceito(m) if m.contains("áudio")),
+        matches!(&erro, FileError::UnsupportedType(m) if m.contains("áudio")),
         "{erro:?}"
     );
 }
@@ -183,9 +183,12 @@ fn executavel_com_nome_de_pdf_e_extensao_enganosa() {
     let org = OrgId::generate();
     let mut elf = b"\x7fELF\x02\x01\x01\x00".to_vec();
     elf.extend_from_slice(&[0u8; 256]);
-    let erro = receber(&amb.config, org, "contrato.pdf", &elf).unwrap_err();
+    let erro = receive(&amb.config, org, "contrato.pdf", &elf).unwrap_err();
     match erro {
-        ErroArquivo::ExtensaoEnganosa { declarada, real } => {
+        FileError::MisleadingExtension {
+            declared: declarada,
+            real,
+        } => {
             assert_eq!(declarada, "pdf");
             assert!(real.contains("executável"), "{real}");
         }
@@ -197,9 +200,9 @@ fn executavel_com_nome_de_pdf_e_extensao_enganosa() {
 fn pdf_com_nome_de_docx_e_extensao_enganosa() {
     let amb = ambiente();
     let org = OrgId::generate();
-    let erro = receber(&amb.config, org, "relatorio.docx", &fixture("texto.pdf")).unwrap_err();
+    let erro = receive(&amb.config, org, "relatorio.docx", &fixture("texto.pdf")).unwrap_err();
     assert!(
-        matches!(erro, ErroArquivo::ExtensaoEnganosa { ref declarada, .. } if declarada == "docx"),
+        matches!(erro, FileError::MisleadingExtension { ref declared, .. } if declared == "docx"),
         "{erro:?}"
     );
 }
@@ -208,9 +211,9 @@ fn pdf_com_nome_de_docx_e_extensao_enganosa() {
 fn extensao_de_programa_e_recusada_mesmo_com_conteudo_de_pdf() {
     let amb = ambiente();
     let org = OrgId::generate();
-    let erro = receber(&amb.config, org, "instalar.exe", &fixture("texto.pdf")).unwrap_err();
+    let erro = receive(&amb.config, org, "instalar.exe", &fixture("texto.pdf")).unwrap_err();
     assert!(
-        matches!(&erro, ErroArquivo::TipoNaoAceito(m) if m.contains(".exe")),
+        matches!(&erro, FileError::UnsupportedType(m) if m.contains(".exe")),
         "{erro:?}"
     );
 }
@@ -219,9 +222,9 @@ fn extensao_de_programa_e_recusada_mesmo_com_conteudo_de_pdf() {
 fn script_disfarcado_de_texto_e_recusado() {
     let amb = ambiente();
     let org = OrgId::generate();
-    let erro = receber(&amb.config, org, "nota.txt", b"#!/bin/sh\necho oi\n").unwrap_err();
+    let erro = receive(&amb.config, org, "nota.txt", b"#!/bin/sh\necho oi\n").unwrap_err();
     assert!(
-        matches!(&erro, ErroArquivo::TipoNaoAceito(m) if m.contains("script")),
+        matches!(&erro, FileError::UnsupportedType(m) if m.contains("script")),
         "{erro:?}"
     );
 }
@@ -231,8 +234,8 @@ fn arquivo_acima_de_16_mb_e_recusado_sem_gravar() {
     let amb = ambiente();
     let org = OrgId::generate();
     let grande = vec![0u8; 16 * 1024 * 1024 + 1];
-    let erro = receber(&amb.config, org, "grande.pdf", &grande).unwrap_err();
-    assert!(matches!(erro, ErroArquivo::Grande { .. }), "{erro:?}");
+    let erro = receive(&amb.config, org, "grande.pdf", &grande).unwrap_err();
+    assert!(matches!(erro, FileError::Large { .. }), "{erro:?}");
     assert!(!amb.blobs.exists(), "nada pode ter sido gravado");
 }
 
@@ -242,8 +245,8 @@ fn arquivo_no_limite_exato_e_aceito_pelo_tamanho() {
     let org = OrgId::generate();
     // Exatamente 16 MB: passa do tamanho; o tipo (texto puro) é que recusa depois.
     let no_limite = vec![b'a'; 16 * 1024 * 1024];
-    let erro = receber(&amb.config, org, "nota.txt", &no_limite).unwrap_err();
-    assert!(matches!(erro, ErroArquivo::TipoNaoAceito(_)), "{erro:?}");
+    let erro = receive(&amb.config, org, "nota.txt", &no_limite).unwrap_err();
+    assert!(matches!(erro, FileError::UnsupportedType(_)), "{erro:?}");
 }
 
 #[test]
@@ -251,8 +254,8 @@ fn arquivo_vazio_e_recusado() {
     let amb = ambiente();
     let org = OrgId::generate();
     assert_eq!(
-        receber(&amb.config, org, "vazio.pdf", &[]).unwrap_err(),
-        ErroArquivo::Vazio
+        receive(&amb.config, org, "vazio.pdf", &[]).unwrap_err(),
+        FileError::Vazio
     );
 }
 
@@ -263,10 +266,10 @@ fn zip_bomba_e_recusada_rapido_e_sem_gravar() {
     let amb = ambiente();
     let org = OrgId::generate();
     let inicio = Instant::now();
-    let erro = receber(&amb.config, org, "bomba.docx", &fixture("bomba.docx")).unwrap_err();
+    let erro = receive(&amb.config, org, "bomba.docx", &fixture("bomba.docx")).unwrap_err();
     let decorrido = inicio.elapsed();
     assert!(
-        matches!(&erro, ErroArquivo::Leitura(m) if m.contains("32 MB")),
+        matches!(&erro, FileError::Reading(m) if m.contains("32 MB")),
         "{erro:?}"
     );
     assert!(decorrido < Duration::from_secs(3), "demorou {decorrido:?}");
@@ -278,11 +281,11 @@ fn pdf_malicioso_nao_derruba_o_processo_e_respeita_o_limite() {
     let amb = ambiente();
     let org = OrgId::generate();
     let inicio = Instant::now();
-    let erro = receber(&amb.config, org, "bomba.pdf", &fixture("bomba.pdf")).unwrap_err();
+    let erro = receive(&amb.config, org, "bomba.pdf", &fixture("bomba.pdf")).unwrap_err();
     let decorrido = inicio.elapsed();
     // Ou o sistema corta por memória (leitor parou) ou o prazo de tempo corta primeiro.
     assert!(
-        matches!(erro, ErroArquivo::Leitura(_) | ErroArquivo::Tempo { .. }),
+        matches!(erro, FileError::Reading(_) | FileError::Time { .. }),
         "{erro:?}"
     );
     assert!(decorrido < Duration::from_secs(12), "demorou {decorrido:?}");
@@ -292,11 +295,11 @@ fn pdf_malicioso_nao_derruba_o_processo_e_respeita_o_limite() {
 #[test]
 fn leitor_que_passa_do_teto_de_memoria_e_interrompido() {
     let mut amb = ambiente();
-    amb.config.tempo_extracao = Duration::from_secs(60);
+    amb.config.extraction_time = Duration::from_secs(60);
     let org = OrgId::generate();
-    let erro = receber(&amb.config, org, "bomba.pdf", &fixture("bomba.pdf")).unwrap_err();
+    let erro = receive(&amb.config, org, "bomba.pdf", &fixture("bomba.pdf")).unwrap_err();
     assert!(
-        matches!(&erro, ErroArquivo::Leitura(m) if m.contains("parou")),
+        matches!(&erro, FileError::Reading(m) if m.contains("parou")),
         "{erro:?}"
     );
 }
@@ -304,12 +307,12 @@ fn leitor_que_passa_do_teto_de_memoria_e_interrompido() {
 #[test]
 fn leitor_que_passa_do_prazo_e_morto() {
     let mut amb = ambiente();
-    amb.config.tempo_extracao = Duration::from_millis(500);
+    amb.config.extraction_time = Duration::from_millis(500);
     let org = OrgId::generate();
     let inicio = Instant::now();
-    let erro = receber(&amb.config, org, "bomba.pdf", &fixture("bomba.pdf")).unwrap_err();
+    let erro = receive(&amb.config, org, "bomba.pdf", &fixture("bomba.pdf")).unwrap_err();
     let decorrido = inicio.elapsed();
-    assert!(matches!(erro, ErroArquivo::Tempo { .. }), "{erro:?}");
+    assert!(matches!(erro, FileError::Time { .. }), "{erro:?}");
     assert!(decorrido < Duration::from_secs(3), "demorou {decorrido:?}");
 }
 
@@ -317,9 +320,9 @@ fn leitor_que_passa_do_prazo_e_morto() {
 fn pdf_quebrado_devolve_erro_claro() {
     let amb = ambiente();
     let org = OrgId::generate();
-    let erro = receber(&amb.config, org, "quebrado.pdf", &fixture("quebrado.pdf")).unwrap_err();
+    let erro = receive(&amb.config, org, "quebrado.pdf", &fixture("quebrado.pdf")).unwrap_err();
     assert!(
-        matches!(&erro, ErroArquivo::Leitura(m) if m.contains("corrompido")),
+        matches!(&erro, FileError::Reading(m) if m.contains("corrompido")),
         "{erro:?}"
     );
 }
@@ -328,14 +331,14 @@ fn pdf_quebrado_devolve_erro_claro() {
 fn pdf_escaneado_devolve_aviso_honesto_sem_texto_inventado() {
     let amb = ambiente();
     let org = OrgId::generate();
-    let recebido = receber(&amb.config, org, "scan.pdf", &fixture("scan.pdf")).unwrap();
-    assert_eq!(recebido.conteudo, Conteudo::SemTexto);
-    let caminho = recebido.metadados.caminho_blob.clone();
-    let partes = recebido.para_llm();
+    let recebido = receive(&amb.config, org, "scan.pdf", &fixture("scan.pdf")).unwrap();
+    assert_eq!(recebido.content, Content::NoText);
+    let caminho = recebido.metadados.blob_path.clone();
+    let partes = recebido.for_llm();
     let texto = texto_das_partes(&partes);
     assert!(texto.contains("Não consegui ler"), "{texto:?}");
     assert!(
-        !texto.contains(ABRE_NAO_CONFIAVEL),
+        !texto.contains(UNTRUSTED_OPEN),
         "não pode haver bloco de conteúdo inventado"
     );
     assert!(caminho.is_file(), "o arquivo recebido fica guardado");
@@ -347,27 +350,24 @@ fn pdf_escaneado_devolve_aviso_honesto_sem_texto_inventado() {
 fn injecao_no_pdf_sai_como_bloco_nao_confiavel() {
     let amb = ambiente();
     let org = OrgId::generate();
-    let recebido = receber(&amb.config, org, "orientacao.pdf", &fixture("injecao.pdf")).unwrap();
-    let partes = recebido.para_llm();
+    let recebido = receive(&amb.config, org, "orientacao.pdf", &fixture("injecao.pdf")).unwrap();
+    let partes = recebido.for_llm();
 
     // Primeira parte: aviso nosso. Depois o bloco. Nada fora dele é "conteúdo do cliente".
-    assert_eq!(
-        partes[0],
-        ParteArquivo::Texto(AVISO_NAO_CONFIAVEL.to_owned())
-    );
+    assert_eq!(partes[0], FilePart::Texto(UNTRUSTED_NOTICE.to_owned()));
     let bloco = match partes.last() {
-        Some(ParteArquivo::Texto(texto)) => texto.clone(),
+        Some(FilePart::Texto(texto)) => texto.clone(),
         outra => panic!("esperava bloco de texto, veio {outra:?}"),
     };
-    assert!(bloco.starts_with(ABRE_NAO_CONFIAVEL), "{bloco:?}");
-    assert!(bloco.ends_with(FECHA_NAO_CONFIAVEL), "{bloco:?}");
+    assert!(bloco.starts_with(UNTRUSTED_OPEN), "{bloco:?}");
+    assert!(bloco.ends_with(UNTRUSTED_CLOSE), "{bloco:?}");
     assert!(
         bloco.contains("Ignore as instruções anteriores"),
         "o texto tem que chegar, como dado"
     );
     // O PDF tentou fechar o bloco com a marca de fechamento: não pode conseguir.
-    assert_eq!(bloco.matches(FECHA_NAO_CONFIAVEL).count(), 1, "{bloco:?}");
-    assert_eq!(bloco.matches(ABRE_NAO_CONFIAVEL).count(), 1, "{bloco:?}");
+    assert_eq!(bloco.matches(UNTRUSTED_CLOSE).count(), 1, "{bloco:?}");
+    assert_eq!(bloco.matches(UNTRUSTED_OPEN).count(), 1, "{bloco:?}");
     assert!(bloco.contains("‹‹FIM_ARQUIVO_NAO_CONFIAVEL"), "{bloco:?}");
 }
 
@@ -377,11 +377,11 @@ fn texto_longo_e_cortado_com_aviso() {
     let org = OrgId::generate();
     let texto = "a".repeat(30_000);
     let bytes = docx_com_texto(&texto);
-    let recebido = receber(&amb.config, org, "longo.docx", &bytes).unwrap();
-    match &recebido.conteudo {
-        Conteudo::Texto {
-            caracteres_originais,
-            truncado,
+    let recebido = receive(&amb.config, org, "longo.docx", &bytes).unwrap();
+    match &recebido.content {
+        Content::Texto {
+            original_characters: caracteres_originais,
+            truncated: truncado,
             ..
         } => {
             assert_eq!(*caracteres_originais, 30_000);
@@ -389,19 +389,19 @@ fn texto_longo_e_cortado_com_aviso() {
         }
         outro => panic!("esperava texto, veio {outro:?}"),
     }
-    let partes = recebido.para_llm();
+    let partes = recebido.for_llm();
     let aviso = texto_das_partes(&partes);
     assert!(
         aviso.contains("tinha 30000 caracteres e foi cortado"),
         "{aviso}"
     );
     let bloco = match partes.last() {
-        Some(ParteArquivo::Texto(t)) => t.clone(),
+        Some(FilePart::Texto(t)) => t.clone(),
         _ => unreachable!(),
     };
     let miolo = bloco
-        .strip_prefix(ABRE_NAO_CONFIAVEL)
-        .and_then(|t| t.strip_suffix(FECHA_NAO_CONFIAVEL))
+        .strip_prefix(UNTRUSTED_OPEN)
+        .and_then(|t| t.strip_suffix(UNTRUSTED_CLOSE))
         .unwrap()
         .trim();
     assert_eq!(miolo.chars().count(), 20_000);
@@ -414,14 +414,11 @@ fn mesmo_arquivo_duas_vezes_gera_um_blob_so() {
     let amb = ambiente();
     let org = OrgId::generate();
     let bytes = fixture("texto.pdf");
-    let primeiro = receber(&amb.config, org, "a.pdf", &bytes).unwrap();
-    let segundo = receber(&amb.config, org, "b.pdf", &bytes).unwrap();
-    assert!(!primeiro.metadados.blob_ja_existia);
-    assert!(segundo.metadados.blob_ja_existia);
-    assert_eq!(
-        primeiro.metadados.caminho_blob,
-        segundo.metadados.caminho_blob
-    );
+    let primeiro = receive(&amb.config, org, "a.pdf", &bytes).unwrap();
+    let segundo = receive(&amb.config, org, "b.pdf", &bytes).unwrap();
+    assert!(!primeiro.metadados.blob_already_existed);
+    assert!(segundo.metadados.blob_already_existed);
+    assert_eq!(primeiro.metadados.blob_path, segundo.metadados.blob_path);
     assert_eq!(primeiro.metadados.sha256, segundo.metadados.sha256);
 
     let pasta_org = amb.blobs.join(org.to_string());
@@ -430,14 +427,8 @@ fn mesmo_arquivo_duas_vezes_gera_um_blob_so() {
         .map(|e| e.unwrap().file_name())
         .collect();
     assert_eq!(arquivos.len(), 1, "{arquivos:?}");
-    assert_eq!(
-        std::fs::read(&primeiro.metadados.caminho_blob).unwrap(),
-        bytes
-    );
-    assert_eq!(
-        primeiro.metadados.caminho_blob.file_name().unwrap().len(),
-        64
-    );
+    assert_eq!(std::fs::read(&primeiro.metadados.blob_path).unwrap(), bytes);
+    assert_eq!(primeiro.metadados.blob_path.file_name().unwrap().len(), 64);
 }
 
 #[test]
@@ -446,38 +437,38 @@ fn orgs_diferentes_guardam_o_blob_em_pastas_separadas() {
     let org_a = OrgId::generate();
     let org_b = OrgId::generate();
     let bytes = fixture("texto.pdf");
-    let a = receber(&amb.config, org_a, "x.pdf", &bytes).unwrap();
-    let b = receber(&amb.config, org_b, "x.pdf", &bytes).unwrap();
+    let a = receive(&amb.config, org_a, "x.pdf", &bytes).unwrap();
+    let b = receive(&amb.config, org_b, "x.pdf", &bytes).unwrap();
     assert!(
         a.metadados
-            .caminho_blob
+            .blob_path
             .starts_with(amb.blobs.join(org_a.to_string()))
     );
     assert!(
         b.metadados
-            .caminho_blob
+            .blob_path
             .starts_with(amb.blobs.join(org_b.to_string()))
     );
     // A org B nunca reaproveita o blob da org A: ele não aparece como "já existia" para ela.
-    assert!(!b.metadados.blob_ja_existia);
+    assert!(!b.metadados.blob_already_existed);
 }
 
 #[test]
 fn nome_com_pasta_nao_escapa_do_diretorio_da_org() {
     let amb = ambiente();
     let org = OrgId::generate();
-    let recebido = receber(
+    let recebido = receive(
         &amb.config,
         org,
         "../../../etc/contrato.pdf",
         &fixture("texto.pdf"),
     )
     .unwrap();
-    assert_eq!(recebido.metadados.nome_original, "contrato.pdf");
+    assert_eq!(recebido.metadados.original_name, "contrato.pdf");
     assert!(
         recebido
             .metadados
-            .caminho_blob
+            .blob_path
             .starts_with(amb.blobs.join(org.to_string()))
     );
 }
@@ -487,26 +478,26 @@ fn nome_com_pasta_nao_escapa_do_diretorio_da_org() {
 #[test]
 fn configuracao_invalida_e_recusada() {
     let mut amb = ambiente();
-    amb.config.limite_bytes = 0;
+    amb.config.byte_limit = 0;
     let org = OrgId::generate();
-    let erro = receber(&amb.config, org, "a.pdf", b"x").unwrap_err();
-    assert!(matches!(erro, ErroArquivo::Configuracao(_)), "{erro:?}");
+    let erro = receive(&amb.config, org, "a.pdf", b"x").unwrap_err();
+    assert!(matches!(erro, FileError::Configuracao(_)), "{erro:?}");
 }
 
 #[test]
 fn leitor_ausente_devolve_erro_claro() {
     let mut amb = ambiente();
-    amb.config.caminho_extrator = Some(amb.blobs.join("nao-existe"));
+    amb.config.extractor_path = Some(amb.blobs.join("nao-existe"));
     let org = OrgId::generate();
-    let erro = receber(&amb.config, org, "a.pdf", &fixture("texto.pdf")).unwrap_err();
-    assert!(matches!(erro, ErroArquivo::Extrator(_)), "{erro:?}");
+    let erro = receive(&amb.config, org, "a.pdf", &fixture("texto.pdf")).unwrap_err();
+    assert!(matches!(erro, FileError::Extrator(_)), "{erro:?}");
     assert!(!amb.blobs.exists());
 }
 
 #[test]
 fn tipo_real_e_o_que_o_conteudo_diz() {
     assert_eq!(
-        poph_files::classificar(&fixture("texto.pdf"), "qualquer.bin").unwrap(),
+        poph_files::classify(&fixture("texto.pdf"), "qualquer.bin").unwrap(),
         Tipo::Pdf
     );
 }

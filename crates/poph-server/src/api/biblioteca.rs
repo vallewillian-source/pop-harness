@@ -176,8 +176,8 @@ pub async fn criar(
         )
     })?;
 
-    let config = poph_files::ConfigArquivos::padrao(estado.config.blobs());
-    let limite = usize::try_from(config.limite_bytes).unwrap_or(usize::MAX);
+    let config = poph_files::FileConfig::default(estado.config.blobs());
+    let limite = usize::try_from(config.byte_limit).unwrap_or(usize::MAX);
     let bytes = axum::body::to_bytes(request.into_body(), limite)
         .await
         .map_err(|_| {
@@ -188,13 +188,13 @@ pub async fn criar(
         })?;
 
     let novo = tokio::task::spawn_blocking(move || {
-        let recebido = poph_files::receber(&config, org, &params.filename, &bytes).map_err(
+        let recebido = poph_files::receive(&config, org, &params.filename, &bytes).map_err(
             |erro| match erro {
-                poph_files::ErroArquivo::Vazio
-                | poph_files::ErroArquivo::Grande { .. }
-                | poph_files::ErroArquivo::TipoNaoAceito(_)
-                | poph_files::ErroArquivo::ExtensaoEnganosa { .. }
-                | poph_files::ErroArquivo::Leitura(_) => {
+                poph_files::FileError::Vazio
+                | poph_files::FileError::Large { .. }
+                | poph_files::FileError::UnsupportedType(_)
+                | poph_files::FileError::MisleadingExtension { .. }
+                | poph_files::FileError::Reading(_) => {
                     ApiError::validacao("arquivo", erro.to_string())
                 }
                 _ => ApiError::interno(),
@@ -203,21 +203,21 @@ pub async fn criar(
         let metadados = recebido.metadados;
         // Mesmo caminho relativo que a CLI grava (`<org>/<sha256>`), para o estado ser o mesmo.
         let blob_path = metadados
-            .caminho_blob
-            .strip_prefix(&config.pasta_blobs)
+            .blob_path
+            .strip_prefix(&config.blob_folder)
             .map_err(|_| ApiError::interno())?
             .to_string_lossy()
             .replace('\\', "/");
         Ok::<_, ApiError>(NewLibraryFile {
             agent_id: agente,
             name: if params.name.trim().is_empty() {
-                metadados.nome_original
+                metadados.original_name
             } else {
                 params.name
             },
             description: params.description,
             mime: metadados.mime_real,
-            size_bytes: metadados.tamanho_bytes,
+            size_bytes: metadados.size_bytes,
             sha256: metadados.sha256,
             blob_path,
         })

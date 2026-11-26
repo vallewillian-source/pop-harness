@@ -8,7 +8,7 @@ use std::time::{Duration, Instant, SystemTime};
 use argon2::password_hash::PasswordHash;
 use poph_agent::entrada_saida::Fluxo;
 use poph_agent::turno::Motor;
-use poph_files::ConfigArquivos;
+use poph_files::FileConfig;
 use poph_fluxos::{
     CacheRevisoes, ChaveRevisao, Compilado, FalhaCarregamento, Ir, Limites, compilar,
 };
@@ -63,7 +63,7 @@ pub struct Estado {
     /// responde `503 turno_indisponivel` em vez de abrir um turno que não pode responder.
     pub motor: Option<Arc<Motor>>,
     /// Configuração dos arquivos recebidos (HR-22/HR-23): limite de 16 MB, extração isolada.
-    pub arquivos: Arc<ConfigArquivos>,
+    pub arquivos: Arc<FileConfig>,
     /// Conversas de teste com turno em voo (HR-22): a segunda aba recebe `409`, nunca um segundo
     /// turno na mesma conversa. O valor é o instante da reserva: uma reserva que passe da validade
     /// é descartada (HR-57), para uma conversa não ficar presa para sempre.
@@ -130,7 +130,7 @@ impl Estado {
             );
         }
         let manifestos = Arc::new(CatalogoManifestos::novo(&config.plugins));
-        let arquivos = Arc::new(ConfigArquivos::padrao(config.blobs()));
+        let arquivos = Arc::new(FileConfig::default(config.blobs()));
         let registro = Arc::new(Registry::new());
         let metricas = BaseMetrics::register(&registro)
             .map_err(|erro| format!("não consegui registrar as métricas: {erro}"))?;
@@ -240,7 +240,7 @@ impl Estado {
     }
 
     /// Troca a configuração dos arquivos recebidos (testes: extrator próprio).
-    pub fn com_arquivos(mut self, arquivos: ConfigArquivos) -> Self {
+    pub fn com_arquivos(mut self, arquivos: FileConfig) -> Self {
         self.arquivos = Arc::new(arquivos);
         self
     }

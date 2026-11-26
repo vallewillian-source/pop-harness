@@ -5,7 +5,7 @@
 //! chega ao Application Service (`m.image`, `m.file`, `m.audio`, `m.video`), o Harness baixa o
 //! arquivo da sala, confere o tipo pelo conteúdo e deixa na fila de saída o item `file` que a
 //! Evolution entrega. Áudio e vídeo entraram na MX-48: o vetor é o mesmo, e o tipo real vem de
-//! `poph_files::envio` (lista fechada de saída, separada da lista de entrada).
+//! `poph_files::outbound` (lista fechada de saída, separada da lista de entrada).
 //!
 //! ## O que fica aqui
 //!

@@ -875,7 +875,7 @@ lugar.
 
 **Leitura do blob:** sempre pelo `poph_files::blob::ler`, que valida o hash (64 hex minúsculos)
 antes de tocar a pasta e confere o tamanho; o handler nunca monta caminho. Blob ausente no disco,
-hash inválido ou blob acima do teto de recebimento (`ConfigArquivos::limite_bytes`, 16 MB por
+hash inválido ou blob acima do teto de recebimento (`FileConfig::byte_limit`, 16 MB por
 padrão) viram `404 not_found` com mensagem genérica — o motivo real fica só no log, nunca o caminho
 do blob na resposta.
 

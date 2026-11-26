@@ -13,7 +13,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use poph_files::ConfigArquivos;
+use poph_files::FileConfig;
 use poph_store::backup::OrgSnapshot;
 use poph_store::{
     Direction, NewChannelAttachment, NewConversation, NewMessage, NewOutboxItem, Role, Store,
@@ -308,8 +308,8 @@ fn semear_origem(cenario: &Cenario) {
         )
         .expect("cria a conversa");
     let conteudo_anexo = [PNG, b"-anexo-do-cliente"].concat();
-    let anexo = poph_files::blob::gravar(
-        &ConfigArquivos::padrao(cenario.dados().join("blobs")).pasta_blobs,
+    let anexo = poph_files::blob::write(
+        &FileConfig::default(cenario.dados().join("blobs")).blob_folder,
         org,
         &conteudo_anexo,
     )

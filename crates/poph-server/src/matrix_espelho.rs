@@ -1574,7 +1574,7 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
         let limite = midia::LIMITE_MIDIA_BYTES;
         // Leitura de disco é bloqueante: sai da tarefa do laço.
         tokio::task::spawn_blocking(move || {
-            poph_files::blob::ler(&pasta, org, &sha256, limite)
+            poph_files::blob::read(&pasta, org, &sha256, limite)
                 .map_err(|_| MotivoDeRecusa::Ilegivel)
         })
         .await

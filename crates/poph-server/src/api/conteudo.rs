@@ -20,7 +20,7 @@ use std::path::Path;
 
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use poph_files::ConfigArquivos;
+use poph_files::FileConfig;
 use poph_types::OrgId;
 
 use crate::erro::ApiError;
@@ -32,13 +32,13 @@ const LIMITE_NOME: usize = 200;
 
 /// Teto de leitura do blob ao entregar o conteúdo.
 pub fn limite_de_leitura(pasta_blobs: &Path) -> u64 {
-    ConfigArquivos::padrao(pasta_blobs).limite_bytes
+    FileConfig::default(pasta_blobs).byte_limit
 }
 
 /// Bytes do blob da org. Qualquer falha de leitura (blob ausente, hash inválido, acima do teto)
 /// vira `404` genérico: quem não tem o arquivo não descobre se ele existe nem onde está.
 pub fn ler_blob(pasta_blobs: &Path, org: OrgId, sha256: &str) -> Result<Vec<u8>, ApiError> {
-    poph_files::blob::ler(pasta_blobs, org, sha256, limite_de_leitura(pasta_blobs)).map_err(
+    poph_files::blob::read(pasta_blobs, org, sha256, limite_de_leitura(pasta_blobs)).map_err(
         |erro| {
             // O motivo do `ErroArquivo` já é escrito sem caminho e sem conteúdo.
             tracing::warn!(org = %org, motivo = %erro, "conteúdo de arquivo indisponível");

@@ -20,7 +20,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use clap::{Args, Subcommand};
-use poph_files::ConfigArquivos;
+use poph_files::FileConfig;
 use poph_server::ChaveDeCifra;
 use poph_store::Store;
 use poph_store::backup::{ImportTarget, OrgSnapshot};
@@ -121,7 +121,7 @@ fn exportar(flag: Option<PathBuf>, ambiente: &config::Ambiente, args: ExportarOr
     };
 
     let pasta_blobs = configuracao.blobs();
-    let limite = ConfigArquivos::padrao(&pasta_blobs).limite_bytes;
+    let limite = FileConfig::default(&pasta_blobs).byte_limit;
     let blobs = match ler_blobs(&retrato, org, &pasta_blobs, limite) {
         Ok(blobs) => blobs,
         Err(erro) => return falha(erro),
@@ -217,7 +217,7 @@ fn ler_blobs(
     }
     let mut blobs = BTreeMap::new();
     for (sha, nome) in nomes {
-        let bytes = poph_files::blob::ler(pasta_blobs, org, &sha, limite).map_err(|erro| {
+        let bytes = poph_files::blob::read(pasta_blobs, org, &sha, limite).map_err(|erro| {
             format!("o conteúdo do arquivo `{nome}` (sha256 {sha}) não está disponível: {erro}")
         })?;
         blobs.insert(sha, bytes);
@@ -280,7 +280,7 @@ fn importar(flag: Option<PathBuf>, ambiente: &config::Ambiente, args: ImportarOr
     // mesmo se a gravação no banco falhar — a retenção apaga órfão depois.
     let pasta_blobs = configuracao.blobs();
     for (sha, conteudo) in &blobs {
-        match poph_files::blob::gravar(&pasta_blobs, org_destino, conteudo) {
+        match poph_files::blob::write(&pasta_blobs, org_destino, conteudo) {
             Ok(gravado) if gravado.sha256 == *sha => {}
             Ok(_) => {
                 return falha(format!(

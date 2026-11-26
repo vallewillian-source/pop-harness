@@ -242,7 +242,7 @@ pub fn montar(
     .com_provedores(Arc::new(provedores))
     // Arquivos do cliente (HR-23b): pasta dos blobs e limites, para a imagem do anexo chegar ao
     // modelo como parte multimodal. Sem isto, só o texto extraído entra no prompt.
-    .com_arquivos(poph_files::ConfigArquivos::padrao(configuracao.blobs()))
+    .com_arquivos(poph_files::FileConfig::default(configuracao.blobs()))
     // Transferência para humano (HR-29): textos da orientação e mensagem automática vêm do
     // `[handoff]` do `poph.toml` — trocar o texto não exige recompilar.
     .com_handoff(poph_jev::Orientacao::da_config(&configuracao.handoff))

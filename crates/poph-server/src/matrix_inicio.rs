@@ -313,7 +313,7 @@ pub fn iniciar_com_ajustes(
     }
     // Mídia do cliente (MX-43): a pasta onde o recebimento grava os blobs das orgs. É a mesma do
     // resto do servidor (`Estado::arquivos`), não uma segunda configuração.
-    espelho = espelho.com_pasta_de_blobs(estado.arquivos.pasta_blobs.clone());
+    espelho = espelho.com_pasta_de_blobs(estado.arquivos.blob_folder.clone());
 
     // ───── espelho do estado (MX-15) ─────
     let espacos = match Espacos::da_config(
@@ -406,7 +406,7 @@ pub fn iniciar_com_ajustes(
     }
     // Arquivo do atendente (MX-44): a mesma pasta de blobs do recebimento e do espelho — quem
     // baixa o arquivo da sala precisa de onde gravá-lo.
-    entrega = entrega.com_pasta_de_blobs(estado.arquivos.pasta_blobs.clone());
+    entrega = entrega.com_pasta_de_blobs(estado.arquivos.blob_folder.clone());
     let receptor = ReceptorAs::do_modulo(modulo, Arc::new(entrega));
     estado.ligar_matrix_as(Arc::new(receptor));
 

@@ -53,15 +53,15 @@ does not know the composer (which is still in `poph-core`).
 
 ## Configuration
 
-`ConfigArquivos::padrao(pasta_blobs)`:
+`FileConfig::default(blob_folder)`:
 
 | Field | Default | Note |
 |---|---|---|
-| `limite_bytes` | 16 MB | rejects above this, without writing |
-| `limite_caracteres` | 20,000 | text cut with a warning |
-| `tempo_extracao` | 5 s | after this, the reader is killed |
-| `memoria_extracao_bytes` | 512 MB | minimum 128 MB |
-| `caminho_extrator` | next to the executable, `poph-extrator` | the build must ship the program with it |
+| `byte_limit` | 16 MB | rejects above this, without writing |
+| `character_limit` | 20,000 | text cut with a warning |
+| `extraction_time` | 5 s | after this, the reader is killed |
+| `extraction_memory_bytes` | 512 MB | minimum 128 MB |
+| `extractor_path` | next to the executable, `poph-extrator` | the build must ship the program with it |
 
 Linking to `dados.blobs` (the data section of `HarnessConfig`, in `poph-types`) is done by the `poph` crate (HR-06 and HR-24).
 
@@ -75,13 +75,13 @@ message ("file reading program unavailable"); images do not depend on it.
 
 | Situation | Error | Message |
 |---|---|---|
-| Above 16 MB | `Grande` | "the file is X MB and the limit is 16 MB; it was not saved" |
+| Above 16 MB | `Large` | "the file is X MB and the limit is 16 MB; it was not saved" |
 | Empty | `Vazio` | "the file is empty" |
-| Program, script, audio, `.doc`/`.ppt` | `TipoNaoAceito` | explains what it is and what to send |
-| Name `.pdf`, content `.exe` | `ExtensaoEnganosa` | "the name ends in .pdf, but the content is an executable program" |
-| Corrupt PDF, zip bomb, unreadable spreadsheet | `Leitura` | short reason, no file content |
-| Time limit exceeded | `Tempo` | "exceeded 5 s and was stopped" |
-| Blob not written | `Gravacao` | disk failure |
+| Program, script, audio, `.doc`/`.ppt` | `UnsupportedType` | explains what it is and what to send |
+| Name `.pdf`, content `.exe` | `MisleadingExtension` | "the name ends in .pdf, but the content is an executable program" |
+| Corrupt PDF, zip bomb, unreadable spreadsheet | `Reading` | short reason, no file content |
+| Time limit exceeded | `Time` | "exceeded 5 s and was stopped" |
+| Blob not written | `WriteOutcome` | disk failure |
 
 The messages above are the ones the code emits, so they stay in Portuguese.
 
@@ -107,6 +107,31 @@ were generated with LibreOffice; the PDF bomb and the Word bomb come from the HR
 - **Spreadsheet:** `.xls` and `.xlsx` are the same group; swapping the name between the two is not refused.
 - **Word table:** a cell becomes a tab, a row becomes a line break.
 - **XML escaping:** `&amp;`, `&lt;` and numeric references are resolved.
+- **Blob write:** the content goes to a temporary file in the same folder and is renamed at the end, so a crash in the
+  middle never leaves a partial blob under its final name. If a blob with the same size already exists, it is reused and not rewritten.
+- **Blob read:** the hash is checked before the folder is touched. Only 64 lowercase hexadecimal characters are accepted,
+  so a hash coming from the database cannot become a path outside the org's folder. The read has a byte limit.
+- **Error text:** error messages never carry a disk path or the file content.
+- **Envelope:** the text cannot close the untrusted block by itself; a `<<` inside it is written as `‹‹`.
+
+## Files sent to the customer (outbound, MX-48)
+
+The file the attendant sends through the Element goes out to WhatsApp, so it uses a separate list. It is also closed:
+only the types listed below are accepted, one by one. Anything else is refused.
+
+- **image:** JPEG, PNG, WebP, GIF (WhatsApp shows them as a photo);
+- **document:** PDF, Word (.docx), Excel (.xlsx and .xls), PowerPoint (.pptx);
+- **audio:** MP3, M4A, OGG/Opus (the format of a voice note recorded in Element), WAV, AMR, AAC, FLAC, AIFF;
+- **video:** MP4, M4V, QuickTime (.mov), WebM, Matroska (.mkv), AVI, MPEG, WMV, FLV.
+
+Refused: programs, scripts, archives, old Office (.doc, .ppt), plain text, and anything the content detector does not recognize.
+The type is decided by the content. The file name only serves to catch a misleading name (for example, an image named `.pdf`).
+
+Grouping for the name check:
+
+- audio and video are one group: MP4 is a container for both, so an audio file named `.mp4` is not misleading;
+- the four image formats are one group: a `.jpg` with PNG content is accepted;
+- documents are fine-grained: a PDF named `.docx` is misleading and is refused.
 
 ## What is not in the crate
 
