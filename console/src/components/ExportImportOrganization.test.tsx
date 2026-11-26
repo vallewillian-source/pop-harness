@@ -225,7 +225,7 @@ describe("exportar", () => {
             .instalar();
         build();
 
-        expect(servidor.chamadas).toHaveLength(0);
+        expect(servidor.calls).toHaveLength(0);
     });
 });
 

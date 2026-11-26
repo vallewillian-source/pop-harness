@@ -61,7 +61,7 @@ function contextUrl(pathname: string): ContextNavigation {
     return {
         orgId: orgOpen || null,
         agentId: agentOpen || null,
-        totalDeOrgs: null,
+        totalOrgs: null,
         totalAgents: null,
     };
 }
@@ -75,7 +75,7 @@ function screensAvailable(context: ContextNavigation): ScreenSearchable[] {
         : ITEMS_NAVIGATION;
     return items.flatMap((item) => {
         if (item.estado !== "ativo") return [];
-        const path = item.rota(context);
+        const path = item.route(context);
         return path ? [{ rotulo: item.rotulo, caminho: path }] : [];
     });
 }
@@ -225,8 +225,8 @@ function SearchGlobal({ screens, placeholder }: { screens: ScreenSearchable[]; p
                     ) : (
                         GROUPS_SEARCH.map((group) => {
                             const ofGroup = options
-                                .map((option, position) => ({ opcao: option, posicao: position }))
-                                .filter(({ opcao: option }) => option.grupo === group);
+                                .map((option, position) => ({ option, position }))
+                                .filter(({ option }) => option.grupo === group);
                             if (ofGroup.length === 0) return null;
                             const idTitle = `${idBase}-grupo-${GROUPS_SEARCH.indexOf(group)}`;
                             return (
@@ -234,7 +234,7 @@ function SearchGlobal({ screens, placeholder }: { screens: ScreenSearchable[]; p
                                     <div id={idTitle} className="poph-search__group">
                                         {translate(SEARCH_GROUP_KEYS[group])}
                                     </div>
-                                    {ofGroup.map(({ opcao: option, posicao: position }) => {
+                                    {ofGroup.map(({ option, position }) => {
                                         const active = position === indexActive;
                                         return (
                                             <div
@@ -253,9 +253,9 @@ function SearchGlobal({ screens, placeholder }: { screens: ScreenSearchable[]; p
                                                 <span className="poph-search__label-option">
                                                     {option.rotulo}
                                                 </span>
-                                                {option.detalhe && (
+                                                {option.detail && (
                                                     <span className="poph-search__slug">
-                                                        {option.detalhe}
+                                                        {option.detail}
                                                     </span>
                                                 )}
                                             </div>
@@ -299,10 +299,10 @@ function stateInstance(
     withoutConnection: boolean,
     degraded: boolean,
     memory: number | null,
-): { texto: string; alerta: boolean } {
-    if (withoutConnection) return { texto: translate("shell.statusOffline"), alerta: true };
-    if (degraded) return { texto: translate("shell.statusDegraded503"), alerta: true };
-    if (!dados) return { texto: translate("shell.statusChecking"), alerta: false };
+): { texto: string; alert: boolean } {
+    if (withoutConnection) return { texto: translate("shell.statusOffline"), alert: true };
+    if (degraded) return { texto: translate("shell.statusDegraded503"), alert: true };
+    if (!dados) return { texto: translate("shell.statusChecking"), alert: false };
     const situacao =
         dados.status === "ok" ? "200 OK" : translate("shell.statusDegradedWord");
     const mb = memory == null ? null : Math.round(memory / 1048576);
@@ -310,7 +310,7 @@ function stateInstance(
         mb == null
             ? translate("shell.statusEngine", { state: situacao })
             : translate("shell.statusEngineWithMemory", { state: situacao, mb });
-    return { texto, alerta: dados.status !== "ok" };
+    return { texto, alert: dados.status !== "ok" };
 }
 
 function healthChip(
@@ -329,11 +329,11 @@ function stateAgent(
     dados: { status: string } | null,
     withoutConnection: boolean,
     degraded: boolean,
-): { modelo: string; saude: string; alerta: boolean } {
+): { modelo: string; saude: string; alert: boolean } {
     return {
         modelo: translate("shell.agentModel", { model: model ?? "—" }),
         saude: healthChip(dados, withoutConnection, degraded),
-        alerta: withoutConnection || degraded || (dados !== null && dados.status !== "ok"),
+        alert: withoutConnection || degraded || (dados !== null && dados.status !== "ok"),
     };
 }
 
@@ -345,10 +345,10 @@ export function Topbar({
     onOpenShortcuts: () => void;
 }) {
     const { translate } = useI18n();
-    const { sessao: session, sair: exit } = useSession();
+    const { sessao: session, signOut: exit } = useSession();
     const navigate = useNavigate();
     const { pathname } = useLocation();
-    const { saude: dados, semConexao: withoutConnection, degradada: degraded } = useHealth();
+    const { saude: dados, disconnected: withoutConnection, degradada: degraded } = useHealth();
     const memory = useMemoryProcess();
     const tokenScope =
         session?.escopo === "org"
@@ -402,7 +402,7 @@ export function Topbar({
                 {routeAgent ? (
                     <span
                         className={
-                            chipAgent.alerta
+                            chipAgent.alert
                                 ? "poph-topbar__state poph-topbar__state--agent poph-topbar__state--none"
                                 : "poph-topbar__state poph-topbar__state--agent"
                         }
@@ -415,7 +415,7 @@ export function Topbar({
                 ) : (
                     <span
                         className={
-                            estado.alerta
+                            estado.alert
                                 ? "poph-topbar__state poph-topbar__state--none"
                                 : "poph-topbar__state"
                         }

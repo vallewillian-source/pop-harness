@@ -111,8 +111,8 @@ function ContentTurn({ turno, numero }: { turno: TestTurn; numero: number | null
 
             <SectionJev jev={jev} />
             <SectionRecovered recovered={recovered} />
-            <SectionTools chamadas={calls} namesOld={tools} />
-            <SectionTimes tempos={times} />
+            <SectionTools calls={calls} namesOld={tools} />
+            <SectionTimes timings={times} />
         </>
     );
 }
@@ -404,10 +404,10 @@ function SectionRecovered({ recovered }: { recovered: TurnRetrieved }) {
 }
 
 function SectionTools({
-    chamadas: calls,
+    calls,
     namesOld,
 }: {
-    chamadas: ToolCall[];
+    calls: ToolCall[];
     namesOld: string[];
 }) {
     const { translate: t } = useI18n();
@@ -521,7 +521,7 @@ function CallTool({ chamada: call }: { chamada: ToolCall }) {
     );
 }
 
-function SectionTimes({ tempos: times }: { tempos: TurnTimings | null }) {
+function SectionTimes({ timings: times }: { timings: TurnTimings | null }) {
     const { translate: t } = useI18n();
     if (times === null) {
         return (

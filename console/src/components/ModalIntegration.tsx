@@ -95,7 +95,7 @@ type StateManifest =
 
 const MANIFEST_TIP_KEYS: Record<string, TranslationKey> = {
     manifesto_indisponivel: "integrations.manifestTipUnavailable",
-    rede: "integrations.manifestTipNetwork",
+    network: "integrations.manifestTipNetwork",
     not_found: "integrations.manifestTipNotFound",
 };
 
@@ -470,13 +470,13 @@ export function ModalIntegration({
                         <FormSchema
                             configuracao={manifesto.manifesto.configuracao}
                             segredos={manifesto.manifesto.segredos ?? null}
-                            valores={values}
+                            values={values}
                             onChange={(nome, value) =>
                                 setValues((current) => ({ ...current, [nome]: value }))
                             }
-                            erros={errors}
+                            errors={errors}
                             idPrefix="poph-integracao"
-                            estadoDosSegredos={{
+                            secretsState={{
                                 filled: secretsFilled,
                                 removed: secretsRemoved,
                             }}

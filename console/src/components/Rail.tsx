@@ -87,21 +87,21 @@ function AgentSubitems({ orgId, agents }: { orgId: string; agents: Agente[] }) {
 
 export function NavItemEntry({
     item,
-    contexto: context,
+    context,
     compact = false,
     cockpit = false,
 }: {
     item: ItemNavigation;
-    contexto: ContextNavigation;
+    context: ContextNavigation;
     compact?: boolean;
     cockpit?: boolean;
 }) {
     const { translate: t } = useI18n();
     const icon: ReactNode = <item.icon aria-hidden="true" />;
-    const count = item.contador?.(context) ?? null;
+    const count = item.counter?.(context) ?? null;
     const aside: ReactNode =
         count === null ? undefined : <span className="poph-rail__counter">{count}</span>;
-    const route = item.rota(context);
+    const route = item.route(context);
     const routeActive = item.routeActive?.(context) ?? null;
     const { pathname } = useLocation();
     const cssClass = cockpit ? "poph-rail__item poph-rail__item--cockpit" : "poph-rail__item";
@@ -166,7 +166,7 @@ export function Rail({
 }) {
     const { translate: t } = useI18n();
     const { sessao: session } = useSession();
-    const { saude: dados, semConexao: withoutConnection, degradada: degraded } = useHealth();
+    const { saude: dados, disconnected: withoutConnection, degradada: degraded } = useHealth();
     const { pathname } = useLocation();
     const buttonTop = useRef<HTMLButtonElement>(null);
     const buttonFooter = useRef<HTMLButtonElement>(null);
@@ -195,11 +195,11 @@ export function Rail({
     const context: ContextNavigation = {
         orgId: orgOpen || null,
         agentId: agentOpen || null,
-        totalDeOrgs: session ? orgs.length : null,
+        totalOrgs: session ? orgs.length : null,
         totalAgents,
     };
     const hidesOrgsList = (item: ItemNavigation): boolean =>
-        orgOpen !== "" && item.rota(context) === "/orgs";
+        orgOpen !== "" && item.route(context) === "/orgs";
 
     return (
         <SofaSidebarRail
@@ -292,7 +292,7 @@ export function Rail({
                         <NavItemEntry
                             key={item.id}
                             item={item}
-                            contexto={context}
+                            context={context}
                             compact={compact}
                             cockpit
                         />
@@ -306,7 +306,7 @@ export function Rail({
                         <NavItemEntry
                             key={item.id}
                             item={item}
-                            contexto={context}
+                            context={context}
                             compact={compact}
                             cockpit
                         />
@@ -324,13 +324,13 @@ export function Rail({
                             <Fragment key={item.id}>
                                 <NavItemEntry
                                     item={item}
-                                    contexto={context}
+                                    context={context}
                                     compact={compact}
                                 />
                                 {!compact &&
                                     orgOpen !== "" &&
                                     agents.length > 0 &&
-                                    item.rota(context) === `/orgs/${orgOpen}/agents` && (
+                                    item.route(context) === `/orgs/${orgOpen}/agents` && (
                                         <AgentSubitems orgId={orgOpen} agents={agents} />
                                     )}
                             </Fragment>

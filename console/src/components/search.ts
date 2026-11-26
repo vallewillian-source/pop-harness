@@ -23,7 +23,7 @@ export type OptionSearch = {
     chave: string;
     grupo: GroupSearch;
     rotulo: string;
-    detalhe?: string;
+    detail?: string;
     destination: { tipo: "caminho"; caminho: string } | { tipo: "comando"; texto: string };
 };
 
@@ -73,7 +73,7 @@ export function searchEverything(
             chave: `org-${org.id}`,
             grupo: "orgs",
             rotulo: org.name,
-            detalhe: org.slug,
+            detail: org.slug,
             destination: { tipo: "caminho", caminho: `/orgs/${org.id}` },
         });
     }
@@ -92,7 +92,7 @@ export function searchEverything(
             chave: `comando-${command.texto}`,
             grupo: "commands",
             rotulo: command.texto,
-            detalhe: command.descricao,
+            detail: command.descricao,
             destination: { tipo: "comando", texto: command.texto },
         });
     }

@@ -25,7 +25,7 @@ import {
 export interface ContextNavigation {
     orgId: string | null;
     agentId: string | null;
-    totalDeOrgs: number | null;
+    totalOrgs: number | null;
     totalAgents?: number | null;
 }
 
@@ -49,11 +49,11 @@ export interface ItemNavigation {
     grupo: NavigationGroup | "";
     readonly rotulo: string;
     icon: ComponentType<SofaIconProps>;
-    rota: (context: ContextNavigation) => string | null;
+    route: (context: ContextNavigation) => string | null;
     estado: StateItem;
     requiresOrg: boolean;
     requiresAgent: boolean;
-    contador?: (context: ContextNavigation) => number | null;
+    counter?: (context: ContextNavigation) => number | null;
     exato?: boolean;
     routeActive?: (context: ContextNavigation) => string | null;
 }
@@ -68,11 +68,11 @@ export const ITEMS_NAVIGATION: ItemNavigation[] = [
             return translate("navigation.organizations");
         },
         icon: IconBuilding,
-        rota: () => "/orgs",
+        route: () => "/orgs",
         estado: "ativo",
         requiresOrg: false,
         requiresAgent: false,
-        contador: ({ totalDeOrgs: totalOrgs }) => totalOrgs,
+        counter: ({ totalOrgs }) => totalOrgs,
         exato: true,
     },
     {
@@ -82,7 +82,7 @@ export const ITEMS_NAVIGATION: ItemNavigation[] = [
             return translate("navigation.structure");
         },
         icon: IconGrid,
-        rota: ({ orgId }) => (orgId ? `/orgs/${orgId}/structure` : null),
+        route: ({ orgId }) => (orgId ? `/orgs/${orgId}/structure` : null),
         estado: "ativo",
         requiresOrg: true,
         requiresAgent: false,
@@ -94,7 +94,7 @@ export const ITEMS_NAVIGATION: ItemNavigation[] = [
             return translate("navigation.products");
         },
         icon: IconTag,
-        rota: ({ orgId }) => (orgId ? `/orgs/${orgId}/products` : null),
+        route: ({ orgId }) => (orgId ? `/orgs/${orgId}/products` : null),
         estado: "ativo",
         requiresOrg: true,
         requiresAgent: false,
@@ -106,11 +106,11 @@ export const ITEMS_NAVIGATION: ItemNavigation[] = [
             return translate("navigation.agents");
         },
         icon: IconUsers,
-        rota: ({ orgId }) => (orgId ? `/orgs/${orgId}/agents` : null),
+        route: ({ orgId }) => (orgId ? `/orgs/${orgId}/agents` : null),
         estado: "ativo",
         requiresOrg: true,
         requiresAgent: false,
-        contador: ({ totalAgents }) => totalAgents ?? null,
+        counter: ({ totalAgents }) => totalAgents ?? null,
     },
     {
         id: "model-jev",
@@ -119,7 +119,7 @@ export const ITEMS_NAVIGATION: ItemNavigation[] = [
             return translate("navigation.modelJev");
         },
         icon: IconBot,
-        rota: ({ orgId, agentId }) =>
+        route: ({ orgId, agentId }) =>
             orgId && agentId ? `/orgs/${orgId}/agents/${agentId}/model-jev` : null,
         estado: "ativo",
         requiresOrg: true,
@@ -132,7 +132,7 @@ export const ITEMS_NAVIGATION: ItemNavigation[] = [
             return translate("navigation.turnInspection");
         },
         icon: IconList,
-        rota: () => null,
+        route: () => null,
         estado: "emBreve",
         requiresOrg: true,
         requiresAgent: true,
@@ -144,7 +144,7 @@ export const ITEMS_NAVIGATION: ItemNavigation[] = [
             return translate("navigation.testChat");
         },
         icon: IconMessage,
-        rota: ({ orgId, agentId }) =>
+        route: ({ orgId, agentId }) =>
             orgId && agentId ? `/orgs/${orgId}/agents/${agentId}/test-chat` : null,
         estado: "ativo",
         requiresOrg: true,
@@ -157,7 +157,7 @@ export const ITEMS_NAVIGATION: ItemNavigation[] = [
             return translate("navigation.whatsapp");
         },
         icon: IconPhone,
-        rota: () => null,
+        route: () => null,
         estado: "emBreve",
         requiresOrg: true,
         requiresAgent: true,
@@ -169,7 +169,7 @@ export const ITEMS_NAVIGATION: ItemNavigation[] = [
             return translate("navigation.matrix");
         },
         icon: IconLink,
-        rota: ({ orgId }) => (orgId ? `/orgs/${orgId}/matrix` : null),
+        route: ({ orgId }) => (orgId ? `/orgs/${orgId}/matrix` : null),
         estado: "ativo",
         requiresOrg: true,
         requiresAgent: false,
@@ -181,7 +181,7 @@ export const ITEMS_NAVIGATION: ItemNavigation[] = [
             return translate("navigation.plugins");
         },
         icon: IconGear,
-        rota: () => null,
+        route: () => null,
         estado: "emBreve",
         requiresOrg: false,
         requiresAgent: false,
@@ -193,7 +193,7 @@ export const ITEMS_NAVIGATION: ItemNavigation[] = [
             return translate("navigation.instanceHealth");
         },
         icon: IconBarChart,
-        rota: ({ orgId }) => (orgId ? `/orgs/${orgId}/operacao` : null),
+        route: ({ orgId }) => (orgId ? `/orgs/${orgId}/operacao` : null),
         estado: "ativo",
         requiresOrg: true,
         requiresAgent: false,
@@ -210,7 +210,7 @@ export const ITEMS_COCKPIT_AGENT: ItemNavigation[] = [
             return translate("navigation.cockpitInstructions");
         },
         icon: IconFile,
-        rota: ({ orgId, agentId }) =>
+        route: ({ orgId, agentId }) =>
             orgId && agentId ? `/orgs/${orgId}/agents/${agentId}/instructions` : null,
         routeActive: ({ orgId, agentId }) =>
             orgId && agentId ? `/orgs/${orgId}/agents/${agentId}` : null,
@@ -225,7 +225,7 @@ export const ITEMS_COCKPIT_AGENT: ItemNavigation[] = [
             return translate("navigation.cockpitKnowledge");
         },
         icon: IconDatabase,
-        rota: ({ orgId, agentId }) =>
+        route: ({ orgId, agentId }) =>
             orgId && agentId ? `/orgs/${orgId}/agents/${agentId}/knowledge-base` : null,
         estado: "ativo",
         requiresOrg: true,
@@ -238,7 +238,7 @@ export const ITEMS_COCKPIT_AGENT: ItemNavigation[] = [
             return translate("navigation.cockpitFiles");
         },
         icon: IconFolder,
-        rota: ({ orgId, agentId }) =>
+        route: ({ orgId, agentId }) =>
             orgId && agentId ? `/orgs/${orgId}/agents/${agentId}/files` : null,
         estado: "ativo",
         requiresOrg: true,
@@ -251,7 +251,7 @@ export const ITEMS_COCKPIT_AGENT: ItemNavigation[] = [
             return translate("navigation.cockpitRouting");
         },
         icon: IconWorkflow,
-        rota: ({ orgId, agentId }) =>
+        route: ({ orgId, agentId }) =>
             orgId && agentId ? `/orgs/${orgId}/agents/${agentId}/routing` : null,
         estado: "ativo",
         requiresOrg: true,
@@ -264,7 +264,7 @@ export const ITEMS_COCKPIT_AGENT: ItemNavigation[] = [
             return translate("navigation.cockpitModelJev");
         },
         icon: IconSliders,
-        rota: ({ orgId, agentId }) =>
+        route: ({ orgId, agentId }) =>
             orgId && agentId ? `/orgs/${orgId}/agents/${agentId}/model-jev` : null,
         estado: "ativo",
         requiresOrg: true,
@@ -277,7 +277,7 @@ export const ITEMS_COCKPIT_AGENT: ItemNavigation[] = [
             return translate("navigation.cockpitTestChat");
         },
         icon: IconMessage,
-        rota: ({ orgId, agentId }) =>
+        route: ({ orgId, agentId }) =>
             orgId && agentId ? `/orgs/${orgId}/agents/${agentId}/test-chat` : null,
         estado: "ativo",
         requiresOrg: true,
@@ -290,7 +290,7 @@ export const ITEMS_COCKPIT_AGENT: ItemNavigation[] = [
             return translate("navigation.cockpitTurnInspection");
         },
         icon: IconList,
-        rota: () => null,
+        route: () => null,
         estado: "emBreve",
         requiresOrg: true,
         requiresAgent: true,

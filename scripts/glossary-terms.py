@@ -63,6 +63,15 @@ TOML_PADRAO = RAIZ / "tests" / "contratos" / "base" / "config" / "default.toml"
 NAO_CODIGO = ("design_assets/",)
 
 IDENT_START = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_$")
+JSX_ABRE_APOS = set("(,=:[!&|?{};") | {"=>"}
+CHAVE_APOS_DE = {"{", ",", ";"}
+GENERICO_DE_FUNCAO = re.compile(r"<\s*[A-Za-z_$][\w$]*\s*(?:,|extends\b)")
+
+
+def _proximo_visivel(fonte, indice):
+    while indice < len(fonte) and fonte[indice].isspace():
+        indice += 1
+    return fonte[indice] if indice < len(fonte) else ""
 
 TIPOS_PUBLICADOS = (
     "linguagem_fluxos",
@@ -185,14 +194,103 @@ class LeitorTermos:
             indice += 1
         return tokens
 
-    def javascript(self, fonte):
+    def _nomes(self, trecho):
+        nomes = []
+        indice = 0
+        while indice < len(trecho):
+            if trecho[indice] in IDENT_START:
+                nome, indice = self._identificador(trecho, indice)
+                nomes.append(nome)
+            else:
+                indice += 1
+        return nomes
+
+    def _abre_jsx(self, fonte, indice, anterior):
+        proximo = fonte[indice + 1] if indice + 1 < len(fonte) else ""
+        if not (proximo in IDENT_START or proximo == ">"):
+            return False
+        if GENERICO_DE_FUNCAO.match(fonte, indice):
+            return False
+        return anterior == "" or anterior in JSX_ABRE_APOS or anterior in self.m.JS_REGEX_WORDS
+
+    def _modelo(self, fonte, indice):
+        tamanho = len(fonte)
+        cursor = indice + 1
         tokens = []
-        comentarios = []
+        while cursor < tamanho:
+            char = fonte[cursor]
+            if char == "\\":
+                cursor += 2
+                continue
+            if char == "`":
+                return cursor + 1, tokens
+            if char == "$" and fonte.startswith("${", cursor):
+                fim = self.m.scan_js_code(fonte, cursor + 2, [], True)
+                tokens.extend(self.javascript(fonte[cursor + 2 : max(cursor + 2, fim - 1)]))
+                cursor = fim
+                continue
+            cursor += 1
+        return tamanho, tokens
+
+    def javascript(self, fonte, jsx=False):
+        tokens = []
         tamanho = len(fonte)
         indice = 0
         anterior = ""
+        pilha = [["codigo", 0, False]]
         while indice < tamanho:
+            quadro = pilha[-1]
             char = fonte[indice]
+            if quadro[0] == "filhos":
+                if char == "<":
+                    if fonte.startswith("</", indice):
+                        fim = fonte.find(">", indice)
+                        fim = tamanho if fim < 0 else fim + 1
+                        tokens.extend(self._nomes(fonte[indice:fim]))
+                        pilha.pop()
+                        indice = fim
+                        anterior = "jsx"
+                        continue
+                    pilha.append(["tag", 0, False])
+                    indice += 1
+                    anterior = "<"
+                    continue
+                if char == "{":
+                    pilha.append(["codigo", 0, True])
+                    indice += 1
+                    anterior = "{"
+                    continue
+                indice += 1
+                continue
+            if quadro[0] == "tag":
+                if char in IDENT_START:
+                    token, indice = self._identificador(fonte, indice)
+                    tokens.append(token)
+                    anterior = token
+                    continue
+                if char in "\"'":
+                    indice = self.m.scan_escaped(fonte, indice + 1, char)
+                    continue
+                if char == "{":
+                    pilha.append(["codigo", 0, True])
+                    indice += 1
+                    anterior = "{"
+                    continue
+                if fonte.startswith("/>", indice):
+                    pilha.pop()
+                    indice += 2
+                    anterior = "jsx"
+                    continue
+                if char == ">":
+                    quadro[0] = "filhos"
+                    indice += 1
+                    anterior = ">"
+                    continue
+                indice += 1
+                continue
+            if char.isspace():
+                indice += 1
+                continue
             if char == "/" and fonte.startswith("//", indice):
                 fim = fonte.find("\n", indice)
                 indice = tamanho if fim < 0 else fim
@@ -212,19 +310,75 @@ class LeitorTermos:
                 indice += 1
                 continue
             if char == "`":
-                indice = self.m.scan_js_template(fonte, indice, comentarios)
+                indice, modelo = self._modelo(fonte, indice)
+                tokens.extend(modelo)
                 anterior = "string"
                 continue
             if char in "\"'":
-                indice = self.m.scan_escaped(fonte, indice + 1, char)
+                fim = self.m.scan_escaped(fonte, indice + 1, char)
+                if anterior in CHAVE_APOS_DE and _proximo_visivel(fonte, fim) == ":":
+                    tokens.extend(self._nomes(fonte[indice + 1 : max(indice + 1, fim - 1)]))
+                indice = fim
                 anterior = "string"
+                continue
+            if char == "{":
+                quadro[1] += 1
+                indice += 1
+                anterior = "{"
+                continue
+            if char == "}":
+                if quadro[1] == 0 and quadro[2]:
+                    pilha.pop()
+                elif quadro[1] > 0:
+                    quadro[1] -= 1
+                indice += 1
+                anterior = "}"
+                continue
+            if jsx and char == "<" and self._abre_jsx(fonte, indice, anterior):
+                if fonte.startswith("<>", indice):
+                    pilha.append(["filhos", 0, False])
+                    indice += 2
+                    anterior = "<"
+                    continue
+                pilha.append(["tag", 0, False])
+                indice += 1
+                anterior = "<"
                 continue
             if char in IDENT_START:
                 token, indice = self._identificador(fonte, indice)
                 tokens.append(token)
                 anterior = token
                 continue
+            if char == ">":
+                anterior = "=>" if indice > 0 and fonte[indice - 1] == "=" else ">"
+                indice += 1
+                continue
             anterior = char
+            indice += 1
+        return tokens
+
+    def css(self, fonte):
+        tokens = []
+        tamanho = len(fonte)
+        indice = 0
+        while indice < tamanho:
+            char = fonte[indice]
+            if fonte.startswith("/*", indice):
+                fim = fonte.find("*/", indice + 2)
+                indice = tamanho if fim < 0 else fim + 2
+                continue
+            if char == "@":
+                indice += 1
+                while indice < tamanho and (fonte[indice].isalnum() or fonte[indice] in "-_"):
+                    indice += 1
+                continue
+            if char in "\"'":
+                indice = self.m.scan_escaped(fonte, indice + 1, char)
+                continue
+            if char in IDENT_START:
+                token, indice = self._identificador(fonte, indice)
+                tokens.append(token)
+                continue
             indice += 1
         return tokens
 
@@ -389,13 +543,13 @@ class LeitorTermos:
         if linguagem == "rust":
             return self.rust(fonte)
         if linguagem == "javascript":
-            return self.javascript(fonte)
+            return self.javascript(fonte, jsx=caminho.suffix in (".jsx", ".tsx"))
         if linguagem == "python":
             return self.python(fonte)
         if linguagem == "shell":
             return self.shell(fonte)
         if linguagem == "css":
-            return self.generico(fonte, ("/*",))
+            return self.css(fonte)
         if linguagem == "sql":
             return self.generico(fonte, ("/*",), ("--",))
         if linguagem in ("toml", "yaml", "hash", "dockerfile"):

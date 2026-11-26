@@ -20,17 +20,17 @@ export type IdTabAgent =
 type Tab = {
     id: IdTabAgent;
     labelKey: TranslationKey;
-    rota: string;
+    route: string;
 };
 
 export const TABS_AGENT: readonly Tab[] = [
-    { id: "instructions", labelKey: "agents.tabInstructions", rota: "instructions" },
-    { id: "knowledge-base", labelKey: "agents.tabKnowledge", rota: "knowledge-base" },
-    { id: "files", labelKey: "agents.tabFiles", rota: "files" },
-    { id: "routing", labelKey: "agents.tabRouting", rota: "routing" },
-    { id: "integrations", labelKey: "agents.tabIntegrations", rota: "integrations" },
-    { id: "model-jev", labelKey: "agents.tabModelJev", rota: "model-jev" },
-    { id: "test-chat", labelKey: "agents.tabTestChat", rota: "test-chat" },
+    { id: "instructions", labelKey: "agents.tabInstructions", route: "instructions" },
+    { id: "knowledge-base", labelKey: "agents.tabKnowledge", route: "knowledge-base" },
+    { id: "files", labelKey: "agents.tabFiles", route: "files" },
+    { id: "routing", labelKey: "agents.tabRouting", route: "routing" },
+    { id: "integrations", labelKey: "agents.tabIntegrations", route: "integrations" },
+    { id: "model-jev", labelKey: "agents.tabModelJev", route: "model-jev" },
+    { id: "test-chat", labelKey: "agents.tabTestChat", route: "test-chat" },
 ] as const;
 
 export type TabsAgentProps = {
@@ -55,7 +55,7 @@ export function TabsAgent({ org, agente, active, nome, model }: TabsAgentProps) 
         const tab = TABS_AGENT.find((candidate) => candidate.id === id);
         if (!tab || id === active) return;
         guard.tentarNavegar(
-            `/orgs/${encodeURIComponent(org)}/agents/${encodeURIComponent(agente)}/${tab.rota}`,
+            `/orgs/${encodeURIComponent(org)}/agents/${encodeURIComponent(agente)}/${tab.route}`,
         );
     }
 
