@@ -17,7 +17,7 @@ use poph_agent::metricas::{MetricasFluxo, MetricasMemoria, MetricasTurno};
 use poph_agent::provedores::{ProvedorResolvido, Provedores};
 use poph_agent::turno::{AjustesDoFluxo, Motor, OpcoesTurno, ProcessadorTurno, RegistroPadrao};
 use poph_agent::{BuscadorBase, BuscadorProdutos, CatalogoProdutos, ConsultarBase, registro_com};
-use poph_core::llm::{LimitadorLlm, LlmProvider, OpenAiCompatibleClient, OpenAiCompatibleConfig};
+use poph_core::llm::{LlmLimiter, LlmProvider, OpenAiCompatibleClient, OpenAiCompatibleConfig};
 use poph_fluxos::cache::CacheRevisoes;
 use poph_store::Store;
 use poph_types::{BaseMetrics, HarnessConfig, LlmConfig, Registry, Secret};
@@ -151,9 +151,8 @@ fn cliente_llm(
 ) -> Result<Arc<dyn LlmProvider>, String> {
     let cliente = OpenAiCompatibleConfig::da_config(llm, chave)
         .map_err(|erro| format!("configuração do provedor {rotulo}: {erro}"))?;
-    let limites_llm =
-        LimitadorLlm::new(llm.concurrent_calls as usize, llm.concurrent_calls as usize)
-            .map_err(|erro| format!("limites do provedor {rotulo}: {erro}"))?;
+    let limites_llm = LlmLimiter::new(llm.concurrent_calls as usize, llm.concurrent_calls as usize)
+        .map_err(|erro| format!("limites do provedor {rotulo}: {erro}"))?;
     let cliente = OpenAiCompatibleClient::new(cliente, limites_llm, metricas)
         .map_err(|erro| format!("cliente do provedor {rotulo}: {erro}"))?;
     Ok(Arc::new(cliente))

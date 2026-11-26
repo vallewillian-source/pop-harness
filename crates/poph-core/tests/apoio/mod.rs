@@ -10,7 +10,7 @@ use std::time::Duration;
 use futures::StreamExt;
 use poph_core::llm::base64::codificar;
 use poph_core::llm::{
-    ChamadaFerramenta, ErroLlm, EventoLlm, Ferramenta, FluxoLlm, LimitadorLlm, LlmProvider,
+    ChamadaFerramenta, EventoLlm, Ferramenta, FluxoLlm, LlmError, LlmLimiter, LlmProvider,
     Mensagem, MotivoFim, OpenAiCompatibleClient, OpenAiCompatibleConfig, Parte, Pedido, Uso,
 };
 use poph_types::{BaseMetrics, OrgId, Registry, Secret};
@@ -165,7 +165,7 @@ pub async fn ler_requisicao(conexao: &mut TcpStream) -> Vec<u8> {
 
 pub struct Montagem {
     pub cliente: OpenAiCompatibleClient,
-    pub limites: LimitadorLlm,
+    pub limites: LlmLimiter,
     pub metricas: BaseMetrics,
 }
 
@@ -190,7 +190,7 @@ pub fn montar_com_regra(
         max_tokens_saida: 512,
         recusa_turno_modelo,
     };
-    let limites = LimitadorLlm::new(4, 2).expect("limites válidos");
+    let limites = LlmLimiter::new(4, 2).expect("limites válidos");
     let metricas = BaseMetrics::register(&Registry::new()).expect("catálogo");
     let cliente =
         OpenAiCompatibleClient::new(config, limites.clone(), metricas.clone()).expect("cliente");
@@ -212,7 +212,7 @@ pub fn pergunta(texto: &str) -> Pedido {
     ])
 }
 
-pub async fn colher(mut fluxo: FluxoLlm) -> Vec<Result<EventoLlm, ErroLlm>> {
+pub async fn colher(mut fluxo: FluxoLlm) -> Vec<Result<EventoLlm, LlmError>> {
     let mut itens = Vec::new();
     while let Some(item) = fluxo.next().await {
         itens.push(item);
@@ -220,7 +220,7 @@ pub async fn colher(mut fluxo: FluxoLlm) -> Vec<Result<EventoLlm, ErroLlm>> {
     itens
 }
 
-pub fn so_eventos(itens: Vec<Result<EventoLlm, ErroLlm>>) -> Vec<EventoLlm> {
+pub fn so_eventos(itens: Vec<Result<EventoLlm, LlmError>>) -> Vec<EventoLlm> {
     itens
         .into_iter()
         .map(|item| item.expect("evento sem erro"))

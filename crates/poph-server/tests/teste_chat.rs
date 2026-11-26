@@ -577,7 +577,7 @@ async fn duas_conexoes_na_mesma_conversa_nao_geram_dois_turnos() {
             Roteiro::Pendurado {
                 eventos: vec![EventoLlm::Texto("parcial ".into())],
                 depois: Duration::from_secs(30),
-                erro: poph_core::llm::ErroLlm::TempoEsgotado { segundos: 30 },
+                erro: poph_core::llm::LlmError::TimedOut { segundos: 30 },
             },
             Roteiro::Eventos(vec![
                 EventoLlm::Texto("resposta da segunda".into()),
@@ -626,7 +626,7 @@ async fn desconexao_cancela_o_turno_sem_fila_presa() {
         vec![Roteiro::Pendurado {
             eventos: vec![EventoLlm::Texto("começou ".into())],
             depois: Duration::from_secs(30),
-            erro: poph_core::llm::ErroLlm::TempoEsgotado { segundos: 30 },
+            erro: poph_core::llm::LlmError::TimedOut { segundos: 30 },
         }],
         true,
     )

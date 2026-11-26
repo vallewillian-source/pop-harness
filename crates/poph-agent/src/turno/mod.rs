@@ -64,7 +64,7 @@ use std::time::{Duration, Instant};
 
 use futures::StreamExt;
 use poph_core::llm::{
-    Cancelamento, ChamadaFerramenta, ErroLlm, EventoLlm, LlmProvider, Mensagem, MotivoFim, Parte,
+    Cancelamento, ChamadaFerramenta, EventoLlm, LlmError, LlmProvider, Mensagem, MotivoFim, Parte,
     Pedido, Uso,
 };
 use poph_jev::{
@@ -1429,7 +1429,7 @@ impl Motor {
         cancelamento: &Cancelamento,
         observador: &mut dyn Observador,
         inicio: Instant,
-    ) -> Result<(Resposta, Vec<Mensagem>), ErroLlm> {
+    ) -> Result<(Resposta, Vec<Mensagem>), LlmError> {
         let max_rodadas = quente.agente.max_tool_rounds.max(1);
         let max_por_mensagem = quente.agente.max_tools_per_message.max(1);
         let mut oferecidas =
@@ -1894,7 +1894,7 @@ impl Motor {
         orientacao: &str,
         modelo: &str,
         cancelamento: &Cancelamento,
-    ) -> Result<RespostaRegenerada, ErroLlm> {
+    ) -> Result<RespostaRegenerada, LlmError> {
         let mut conversa = mensagens.to_vec();
         conversa.push(Mensagem::Assistente {
             texto: rascunho.to_owned(),
@@ -2175,13 +2175,13 @@ impl Motor {
         &self,
         fluxo: &mut poph_core::llm::FluxoLlm,
         cancelamento: &Cancelamento,
-    ) -> Result<Option<Result<EventoLlm, ErroLlm>>, ErroLlm> {
+    ) -> Result<Option<Result<EventoLlm, LlmError>>, LlmError> {
         match &self.cancelamento {
             Some(compartilhado) => tokio::select! {
                 evento = fluxo.next() => Ok(evento),
                 _ = compartilhado.aguardar() => {
                     cancelamento.cancelar();
-                    Err(ErroLlm::Cancelada)
+                    Err(LlmError::Cancelled)
                 }
             },
             None => Ok(fluxo.next().await),
@@ -2305,7 +2305,7 @@ impl Motor {
         }
     }
 
-    fn provedor_do_turno(&self, quente: &AgenteQuente) -> Result<ProvedorResolvido, ErroLlm> {
+    fn provedor_do_turno(&self, quente: &AgenteQuente) -> Result<ProvedorResolvido, LlmError> {
         let Some(provedores) = &self.provedores else {
             return Ok(ProvedorResolvido::novo(
                 quente.agente.provedor.clone(),
@@ -3103,28 +3103,28 @@ enum ClasseFalha {
 /// Classe da falha de um erro do provedor. Erro de configuração ou de pedido não se resolve
 /// sozinho, e cancelamento é decisão de quem chamou: esses não são repetidos. Recusa do provedor
 /// (chave, modelo, pedido) também não se resolve repetindo.
-fn classe_do_erro_llm(erro: &ErroLlm) -> ClasseFalha {
+fn classe_do_erro_llm(erro: &LlmError) -> ClasseFalha {
     match erro {
-        ErroLlm::Configuracao(_) | ErroLlm::PedidoInvalido(_) | ErroLlm::Cancelada => {
+        LlmError::Configuracao(_) | LlmError::InvalidRequest(_) | LlmError::Cancelled => {
             ClasseFalha::Definitiva
         }
-        ErroLlm::Recusado { .. } => ClasseFalha::ModeloRecusado,
+        LlmError::Rejected { .. } => ClasseFalha::ModeloRecusado,
         _ => ClasseFalha::Modelo,
     }
 }
 
 /// Falta de vaga de chamada ao provedor (HR-26k). Nenhuma chamada chegou a sair, então vira falha
 /// de indisponibilidade (entra na escada). Os outros erros do limitador seguem como configuração.
-fn erro_de_vaga_do_provedor(erro: ErroAgente) -> ErroLlm {
+fn erro_de_vaga_do_provedor(erro: ErroAgente) -> LlmError {
     match erro {
         ErroAgente::SemVagaProvedor {
             provedor,
             espera_ms,
-        } => ErroLlm::Indisponivel {
+        } => LlmError::Unavailable {
             tentativas: 0,
             ultimo: format!("sem vaga de chamada ao provedor `{provedor}` em {espera_ms} ms"),
         },
-        outro => ErroLlm::Configuracao(outro.to_string()),
+        outro => LlmError::Configuracao(outro.to_string()),
     }
 }
 

@@ -12,7 +12,7 @@ use apoio::*;
 use futures::StreamExt;
 use poph_core::llm::base64::codificar;
 use poph_core::llm::{
-    ChamadaFerramenta, ErroLlm, EventoLlm, Ferramenta, LlmProvider, Mensagem, MotivoFim, Parte,
+    ChamadaFerramenta, EventoLlm, Ferramenta, LlmError, LlmProvider, Mensagem, MotivoFim, Parte,
     Pedido, Uso,
 };
 use poph_types::OrgId;
@@ -210,7 +210,7 @@ async fn erro_definitivo_nao_e_retentado_e_nao_ecoa_a_chave() {
         .err()
         .expect("recusado");
     match &erro {
-        ErroLlm::Recusado { status, mensagem } => {
+        LlmError::Rejected { status, mensagem } => {
             assert_eq!(*status, 401);
             assert!(!mensagem.contains(CHAVE));
         }
@@ -229,7 +229,7 @@ async fn esgotar_retentativas_devolve_indisponivel() {
     let erro = m.cliente.stream(pergunta("oi")).await.err().expect("falha");
     assert_eq!(
         erro,
-        ErroLlm::Indisponivel {
+        LlmError::Unavailable {
             tentativas: 3,
             ultimo: "HTTP 500".into()
         }
@@ -252,7 +252,7 @@ async fn timeout_devolve_tempo_esgotado_sem_retentar() {
         .await
         .err()
         .expect("expira");
-    assert_eq!(erro, ErroLlm::TempoEsgotado { segundos: 1 });
+    assert_eq!(erro, LlmError::TimedOut { segundos: 1 });
     assert_eq!(
         servidor.pedidos().len(),
         1,
@@ -279,7 +279,7 @@ async fn cancelamento_no_meio_do_stream_fecha_e_libera_as_vagas() {
         EventoLlm::Texto("Começando".into())
     );
     assert_eq!(
-        m.limites.livres_globais(),
+        m.limites.available_globally(),
         3,
         "a chamada segura uma vaga global"
     );
@@ -288,13 +288,13 @@ async fn cancelamento_no_meio_do_stream_fecha_e_libera_as_vagas() {
     let proximo = tokio::time::timeout(Duration::from_secs(2), fluxo.next())
         .await
         .expect("cancelamento não pode ficar pendurado");
-    assert_eq!(proximo, Some(Err(ErroLlm::Cancelada)));
+    assert_eq!(proximo, Some(Err(LlmError::Cancelled)));
     assert!(
         fluxo.next().await.is_none(),
         "depois do cancelamento o stream acaba"
     );
     assert_eq!(
-        m.limites.livres_globais(),
+        m.limites.available_globally(),
         4,
         "as vagas voltam depois do cancelamento"
     );
@@ -318,7 +318,7 @@ async fn resposta_cortada_vira_erro_e_nao_repete() {
     let itens = colher(fluxo).await;
     assert_eq!(itens.len(), 2);
     assert_eq!(itens[0], Ok(EventoLlm::Texto("Oi".into())));
-    assert!(matches!(itens[1], Err(ErroLlm::RespostaInvalida(_))));
+    assert!(matches!(itens[1], Err(LlmError::InvalidResponse(_))));
     assert_eq!(
         servidor.pedidos().len(),
         1,
@@ -368,7 +368,7 @@ async fn pedido_que_termina_em_turno_do_modelo_nao_sai_do_processo() {
     ]);
 
     let erro = m.cliente.stream(pedido).await.err().expect("recusado");
-    assert!(matches!(erro, ErroLlm::PedidoInvalido(_)));
+    assert!(matches!(erro, LlmError::InvalidRequest(_)));
     assert!(
         servidor.pedidos().is_empty(),
         "nada pode ser enviado ao gateway"

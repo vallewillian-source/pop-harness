@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use futures::StreamExt;
 use poph_core::llm::{
-    EventoLlm, Ferramenta, LimitadorLlm, LlmProvider, Mensagem, OpenAiCompatibleClient,
+    EventoLlm, Ferramenta, LlmLimiter, LlmProvider, Mensagem, OpenAiCompatibleClient,
     OpenAiCompatibleConfig, Parte, Pedido,
 };
 use poph_types::{BaseMetrics, OrgId, Registry, Secret};
@@ -40,7 +40,7 @@ async fn uma_chamada_real_com_stream_e_ferramenta() {
     let metricas = BaseMetrics::register(&Registry::new()).expect("catálogo");
     let cliente = OpenAiCompatibleClient::new(
         config,
-        LimitadorLlm::new(1, 1).expect("limites"),
+        LlmLimiter::new(1, 1).expect("limites"),
         metricas.clone(),
     )
     .expect("cliente");

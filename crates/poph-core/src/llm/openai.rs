@@ -25,8 +25,8 @@ use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde_json::{Value, json};
 
 use super::base64;
-use super::erro::ErroLlm;
-use super::limites::{LimitadorLlm, PermissaoLlm};
+use super::erro::LlmError;
+use super::limites::{LlmLimiter, LlmPermit};
 use super::provedor::{FluxoLlm, LlmProvider, validar_pedido};
 use super::sse::LeitorSse;
 use super::tipos::{
@@ -65,15 +65,15 @@ pub struct OpenAiCompatibleConfig {
 
 impl OpenAiCompatibleConfig {
     /// Monta a configuração a partir do bloco `[llm]` e da chave lida do ambiente.
-    pub fn da_config(llm: &LlmConfig, chave: Secret) -> Result<Self, ErroLlm> {
+    pub fn da_config(llm: &LlmConfig, chave: Secret) -> Result<Self, LlmError> {
         if !poph_types::llm_provider_accepted(&llm.provider) {
-            return Err(ErroLlm::Configuracao(format!(
+            return Err(LlmError::Configuracao(format!(
                 "provedor {} não suportado; use {PROVEDOR_OPENAI_COMPATIVEL} ou {PROVEDOR_ANTIGRAVITY}",
                 llm.provider
             )));
         }
         if chave.expose().trim().is_empty() {
-            return Err(ErroLlm::Configuracao(
+            return Err(LlmError::Configuracao(
                 "chave de API do provedor ausente".to_owned(),
             ));
         }
@@ -81,7 +81,7 @@ impl OpenAiCompatibleConfig {
         // http (gateway local) e https (provedor com TLS) são aceitos; o TLS usa rustls com as raízes
         // do sistema (HR-10b).
         if !(url_base.starts_with("http://") || url_base.starts_with("https://")) {
-            return Err(ErroLlm::Configuracao(
+            return Err(LlmError::Configuracao(
                 "o endereço do provedor deve começar com http:// ou https://".to_owned(),
             ));
         }
@@ -103,7 +103,7 @@ struct Interno {
     http: reqwest::Client,
     endpoint: String,
     config: OpenAiCompatibleConfig,
-    limites: LimitadorLlm,
+    limites: LlmLimiter,
     metricas: BaseMetrics,
 }
 
@@ -115,9 +115,9 @@ impl OpenAiCompatibleClient {
     /// Cria o cliente. `limites` e `metricas` são compartilhados com o resto da instância.
     pub fn new(
         config: OpenAiCompatibleConfig,
-        limites: LimitadorLlm,
+        limites: LlmLimiter,
         metricas: BaseMetrics,
-    ) -> Result<Self, ErroLlm> {
+    ) -> Result<Self, LlmError> {
         let http = construir_http(None)?;
         let endpoint = format!("{}/chat/completions", config.url_base);
         Ok(Self(Arc::new(Interno {
@@ -135,7 +135,7 @@ impl OpenAiCompatibleClient {
     /// validação nem existe para produção: é uma raiz a mais, e o certificado continua sendo
     /// conferido (nome, validade, cadeia).
     #[doc(hidden)]
-    pub fn com_raiz_de_teste(self, raiz_der: &[u8]) -> Result<Self, ErroLlm> {
+    pub fn com_raiz_de_teste(self, raiz_der: &[u8]) -> Result<Self, LlmError> {
         let http = construir_http(Some(raiz_der))?;
         Ok(Self(Arc::new(Interno {
             http,
@@ -148,11 +148,11 @@ impl OpenAiCompatibleClient {
 }
 
 /// Monta o cliente HTTP. Com `raiz_extra`, acrescenta uma raiz de confiança (só teste).
-fn construir_http(raiz_extra: Option<&[u8]>) -> Result<reqwest::Client, ErroLlm> {
+fn construir_http(raiz_extra: Option<&[u8]>) -> Result<reqwest::Client, LlmError> {
     let mut construtor = reqwest::Client::builder();
     if let Some(der) = raiz_extra {
         let certificado = reqwest::Certificate::from_der(der).map_err(|erro| {
-            ErroLlm::Configuracao(format!(
+            LlmError::Configuracao(format!(
                 "raiz de confiança inválida: {}",
                 erro.without_url()
             ))
@@ -161,25 +161,25 @@ fn construir_http(raiz_extra: Option<&[u8]>) -> Result<reqwest::Client, ErroLlm>
     }
     construtor
         .build()
-        .map_err(|erro| ErroLlm::Configuracao(format!("cliente HTTP: {}", erro.without_url())))
+        .map_err(|erro| LlmError::Configuracao(format!("cliente HTTP: {}", erro.without_url())))
 }
 
 impl LlmProvider for OpenAiCompatibleClient {
-    fn stream<'a>(&'a self, pedido: Pedido) -> BoxFuture<'a, Result<FluxoLlm, ErroLlm>> {
+    fn stream<'a>(&'a self, pedido: Pedido) -> BoxFuture<'a, Result<FluxoLlm, LlmError>> {
         Box::pin(abrir(Arc::clone(&self.0), pedido))
     }
 }
 
-async fn abrir(interno: Arc<Interno>, pedido: Pedido) -> Result<FluxoLlm, ErroLlm> {
+async fn abrir(interno: Arc<Interno>, pedido: Pedido) -> Result<FluxoLlm, LlmError> {
     validar_pedido(&pedido, interno.config.recusa_turno_modelo)
         .map_err(|erro| interno.registrar_falha(erro))?;
     interno.metricas.llm_calls.increment(1);
 
     let cancelamento = pedido.cancelamento.clone();
-    let permissao: PermissaoLlm = tokio::select! {
+    let permissao: LlmPermit = tokio::select! {
         biased;
-        _ = cancelamento.aguardar() => return Err(ErroLlm::Cancelada),
-        resultado = interno.limites.adquirir(pedido.org) => {
+        _ = cancelamento.aguardar() => return Err(LlmError::Cancelled),
+        resultado = interno.limites.acquire(pedido.org) => {
             resultado.map_err(|erro| interno.registrar_falha(erro))?
         }
     };
@@ -215,8 +215,8 @@ async fn abrir(interno: Arc<Interno>, pedido: Pedido) -> Result<FluxoLlm, ErroLl
 
 impl Interno {
     /// Conta a falha nas métricas e devolve o mesmo erro. Cancelamento não conta como falha.
-    fn registrar_falha(&self, erro: ErroLlm) -> ErroLlm {
-        if erro != ErroLlm::Cancelada {
+    fn registrar_falha(&self, erro: LlmError) -> LlmError {
+        if erro != LlmError::Cancelled {
             self.metricas.llm_errors.increment(1);
             tracing::warn!(erro = %erro, "chamada ao LLM falhou");
         }
@@ -229,7 +229,7 @@ async fn enviar(
     interno: &Interno,
     corpo: &Value,
     cancelamento: &Cancelamento,
-) -> Result<reqwest::Response, ErroLlm> {
+) -> Result<reqwest::Response, LlmError> {
     let total = interno.config.retentativas + 1;
     let corpo_texto = corpo.to_string();
     let mut ultimo = String::from("sem resposta");
@@ -249,7 +249,7 @@ async fn enviar(
 
         let resultado = tokio::select! {
             biased;
-            _ = cancelamento.aguardar() => return Err(ErroLlm::Cancelada),
+            _ = cancelamento.aguardar() => return Err(LlmError::Cancelled),
             resultado = envio => resultado,
         };
 
@@ -261,21 +261,21 @@ async fn enviar(
                 if status == 429 || (500..=599).contains(&status) {
                     ultimo = format!("HTTP {status}");
                 } else {
-                    return Err(ErroLlm::Recusado {
+                    return Err(LlmError::Rejected {
                         status,
                         mensagem: resumir_erro(&texto, interno.config.chave.expose()),
                     });
                 }
             }
             Err(erro) if erro.is_timeout() => {
-                return Err(ErroLlm::TempoEsgotado {
+                return Err(LlmError::TimedOut {
                     segundos: interno.config.timeout.as_secs(),
                 });
             }
             Err(erro) => {
                 // Falha de TLS é definitiva: repetir não conserta certificado nem nome errado.
                 if let Some(detalhe) = tls::tls_failure_detail(&erro) {
-                    return Err(ErroLlm::Tls(detalhe));
+                    return Err(LlmError::Tls(detalhe));
                 }
                 ultimo = if erro.is_connect() {
                     "conexão recusada".to_owned()
@@ -294,11 +294,11 @@ async fn enviar(
                 _ = tokio::time::sleep(espera) => true,
             };
             if !seguir {
-                return Err(ErroLlm::Cancelada);
+                return Err(LlmError::Cancelled);
             }
         }
     }
-    Err(ErroLlm::Indisponivel {
+    Err(LlmError::Unavailable {
         tentativas: total,
         ultimo,
     })
@@ -417,18 +417,18 @@ struct Estado {
     resposta: reqwest::Response,
     leitor: LeitorSse,
     parciais: BTreeMap<u64, Parcial>,
-    pendentes: VecDeque<Result<EventoLlm, ErroLlm>>,
+    pendentes: VecDeque<Result<EventoLlm, LlmError>>,
     motivo: Option<MotivoFim>,
     uso: Option<Uso>,
     encerrado: bool,
-    permissao: Option<PermissaoLlm>,
+    permissao: Option<LlmPermit>,
     cancelamento: Cancelamento,
     inicio: Instant,
     modelo: String,
     org: poph_types::OrgId,
 }
 
-async fn avancar(mut e: Estado) -> Option<(Result<EventoLlm, ErroLlm>, Estado)> {
+async fn avancar(mut e: Estado) -> Option<(Result<EventoLlm, LlmError>, Estado)> {
     loop {
         if let Some(item) = e.pendentes.pop_front() {
             if item.is_err() {
@@ -443,12 +443,12 @@ async fn avancar(mut e: Estado) -> Option<(Result<EventoLlm, ErroLlm>, Estado)> 
 
         let pedaco = tokio::select! {
             biased;
-            _ = e.cancelamento.aguardar() => Err(ErroLlm::Cancelada),
+            _ = e.cancelamento.aguardar() => Err(LlmError::Cancelled),
             pedaco = e.resposta.chunk() => pedaco.map_err(|erro| {
                 if erro.is_timeout() {
-                    ErroLlm::TempoEsgotado { segundos: e.interno.config.timeout.as_secs() }
+                    LlmError::TimedOut { segundos: e.interno.config.timeout.as_secs() }
                 } else {
-                    ErroLlm::ConexaoInterrompida("a conexão caiu no meio da resposta".to_owned())
+                    LlmError::ConnectionInterrupted("a conexão caiu no meio da resposta".to_owned())
                 }
             }),
         };
@@ -477,7 +477,7 @@ async fn avancar(mut e: Estado) -> Option<(Result<EventoLlm, ErroLlm>, Estado)> 
                 }
                 if !e.encerrado {
                     if e.motivo.is_none() {
-                        let erro = e.interno.registrar_falha(ErroLlm::RespostaInvalida(
+                        let erro = e.interno.registrar_falha(LlmError::InvalidResponse(
                             "a resposta terminou antes do fim (conexão fechada sem motivo de fim)"
                                 .to_owned(),
                         ));
@@ -508,7 +508,7 @@ fn processar_payload(e: &mut Estado, payload: &str) {
             .as_str()
             .map(|m| resumir_erro(m, e.interno.config.chave.expose()))
             .unwrap_or_else(|| "erro sem detalhe".to_owned());
-        let erro = e.interno.registrar_falha(ErroLlm::ErroNoStream(mensagem));
+        let erro = e.interno.registrar_falha(LlmError::StreamError(mensagem));
         e.pendentes.push_back(Err(erro));
         e.encerrado = true;
         e.permissao = None;
@@ -566,7 +566,7 @@ fn finalizar(e: &mut Estado) {
     let mut total_ferramentas = 0usize;
     for (indice, parcial) in parciais {
         let Some(nome) = parcial.nome else {
-            let erro = e.interno.registrar_falha(ErroLlm::RespostaInvalida(
+            let erro = e.interno.registrar_falha(LlmError::InvalidResponse(
                 "chamada de ferramenta sem nome".to_owned(),
             ));
             e.pendentes.push_back(Err(erro));
@@ -578,7 +578,7 @@ fn finalizar(e: &mut Estado) {
             match serde_json::from_str::<Value>(&parcial.argumentos) {
                 Ok(valor) => valor,
                 Err(_) => {
-                    let erro = e.interno.registrar_falha(ErroLlm::RespostaInvalida(format!(
+                    let erro = e.interno.registrar_falha(LlmError::InvalidResponse(format!(
                         "argumentos da ferramenta {nome} não são JSON válido"
                     )));
                     e.pendentes.push_back(Err(erro));
@@ -622,7 +622,7 @@ mod testes {
 
     use super::*;
 
-    fn config(url: &str, chave: &str) -> Result<OpenAiCompatibleConfig, ErroLlm> {
+    fn config(url: &str, chave: &str) -> Result<OpenAiCompatibleConfig, LlmError> {
         let llm = LlmConfig {
             provider: PROVEDOR_OPENAI_COMPATIVEL.to_owned(),
             url_base: url.to_owned(),
@@ -645,7 +645,7 @@ mod testes {
         assert_eq!(https.url_base, "https://exemplo.test/v1");
         let sem_esquema = config("exemplo.test/v1", "k").unwrap_err();
         assert!(
-            matches!(sem_esquema, ErroLlm::Configuracao(m) if m.contains("http:// ou https://"))
+            matches!(sem_esquema, LlmError::Configuracao(m) if m.contains("http:// ou https://"))
         );
         assert!(config("http://127.0.0.1:8045/v1/", "").is_err());
         let llm = LlmConfig {

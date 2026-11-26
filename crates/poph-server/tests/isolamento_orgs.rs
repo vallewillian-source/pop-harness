@@ -48,7 +48,7 @@ use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
 use poph_agent::produtos::{BuscadorProdutos, BuscarProduto, CatalogoProdutos, ParametrosProdutos};
 use poph_agent::turno::{Motor, OpcoesTurno, ProcessadorTurno};
 use poph_core::llm::{
-    ChamadaFerramenta, ErroLlm, EventoLlm, FluxoLlm, LlmProvider, Mensagem, MotivoFim, Pedido,
+    ChamadaFerramenta, EventoLlm, FluxoLlm, LlmError, LlmProvider, Mensagem, MotivoFim, Pedido,
     ProvedorFake, Roteiro,
 };
 use poph_files::ConfigArquivos;
@@ -1696,11 +1696,11 @@ fn caso_faltando_reprova_a_cobertura() {
 struct Repassa(std::sync::OnceLock<Arc<ProvedorFake>>);
 
 impl LlmProvider for Repassa {
-    fn stream<'a>(&'a self, pedido: Pedido) -> BoxFuture<'a, Result<FluxoLlm, ErroLlm>> {
+    fn stream<'a>(&'a self, pedido: Pedido) -> BoxFuture<'a, Result<FluxoLlm, LlmError>> {
         Box::pin(async move {
             match self.0.get() {
                 Some(falso) => falso.stream(pedido).await,
-                None => Err(ErroLlm::Configuracao(
+                None => Err(LlmError::Configuracao(
                     "provedor falso sem roteiro".to_owned(),
                 )),
             }

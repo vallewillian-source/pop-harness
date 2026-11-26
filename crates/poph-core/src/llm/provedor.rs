@@ -5,16 +5,16 @@ use std::collections::HashSet;
 use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 
-use super::erro::ErroLlm;
+use super::erro::LlmError;
 use super::tipos::{EventoLlm, Mensagem, Parte, Pedido};
 
 /// Stream de eventos de uma resposta. Quem consome pode parar a qualquer momento: soltar o stream cancela a chamada.
-pub type FluxoLlm = BoxStream<'static, Result<EventoLlm, ErroLlm>>;
+pub type FluxoLlm = BoxStream<'static, Result<EventoLlm, LlmError>>;
 
 /// Provedor de LLM. Hoje só existe o cliente OpenAI-compatível e o provedor falso para testes.
 pub trait LlmProvider: Send + Sync {
     /// Abre a resposta. Quando devolve `Ok`, o stream já está no ar; os eventos chegam por ele.
-    fn stream<'a>(&'a self, pedido: Pedido) -> BoxFuture<'a, Result<FluxoLlm, ErroLlm>>;
+    fn stream<'a>(&'a self, pedido: Pedido) -> BoxFuture<'a, Result<FluxoLlm, LlmError>>;
 }
 
 /// Tipos de imagem que o cliente aceita.
@@ -25,12 +25,12 @@ pub const MIMES_IMAGEM: [&str; 4] = ["image/jpeg", "image/png", "image/gif", "im
 /// Com `recusa_turno_modelo` (padrão), evita o HTTP 400 "Requests ending with a model turn are
 /// not supported" do gateway: a última mensagem tem de ser do usuário ou um resultado de
 /// ferramenta. Esta função não corrige o pedido, só recusa, para o erro aparecer aqui com a causa.
-pub fn validar_pedido(pedido: &Pedido, recusa_turno_modelo: bool) -> Result<(), ErroLlm> {
+pub fn validar_pedido(pedido: &Pedido, recusa_turno_modelo: bool) -> Result<(), LlmError> {
     let Some(ultima) = pedido.mensagens.last() else {
-        return Err(ErroLlm::PedidoInvalido("nenhuma mensagem".to_owned()));
+        return Err(LlmError::InvalidRequest("nenhuma mensagem".to_owned()));
     };
     if recusa_turno_modelo && let Mensagem::Assistente { .. } = ultima {
-        return Err(ErroLlm::PedidoInvalido(
+        return Err(LlmError::InvalidRequest(
             "a última mensagem é do modelo e o provedor recusa esse formato (llm.recusa_turno_modelo = true). Termine com a instrução do usuário ou com o resultado de uma ferramenta".to_owned(),
         ));
     }
@@ -38,10 +38,10 @@ pub fn validar_pedido(pedido: &Pedido, recusa_turno_modelo: bool) -> Result<(), 
     let mut nomes = HashSet::new();
     for ferramenta in &pedido.ferramentas {
         if ferramenta.nome.trim().is_empty() {
-            return Err(ErroLlm::PedidoInvalido("ferramenta sem nome".to_owned()));
+            return Err(LlmError::InvalidRequest("ferramenta sem nome".to_owned()));
         }
         if !nomes.insert(ferramenta.nome.as_str()) {
-            return Err(ErroLlm::PedidoInvalido(format!(
+            return Err(LlmError::InvalidRequest(format!(
                 "ferramenta repetida: {}",
                 ferramenta.nome
             )));
@@ -53,12 +53,12 @@ pub fn validar_pedido(pedido: &Pedido, recusa_turno_modelo: bool) -> Result<(), 
             for parte in partes {
                 if let Parte::Imagem { mime, bytes } = parte {
                     if !MIMES_IMAGEM.contains(&mime.as_str()) {
-                        return Err(ErroLlm::PedidoInvalido(format!(
+                        return Err(LlmError::InvalidRequest(format!(
                             "tipo de imagem não aceito: {mime}"
                         )));
                     }
                     if bytes.is_empty() {
-                        return Err(ErroLlm::PedidoInvalido("imagem vazia".to_owned()));
+                        return Err(LlmError::InvalidRequest("imagem vazia".to_owned()));
                     }
                 }
             }
@@ -92,7 +92,7 @@ mod testes {
     fn recusa_pedido_que_termina_em_turno_do_modelo() {
         assert!(matches!(
             validar_pedido(&pedido_terminando_no_modelo(), true),
-            Err(ErroLlm::PedidoInvalido(_))
+            Err(LlmError::InvalidRequest(_))
         ));
     }
 

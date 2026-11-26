@@ -27,7 +27,7 @@ use poph_agent::turno::{
     Entrada, FuturoPausa, Motor, ObservadorNulo, OpcoesTurno, Pausa, ResumoTurno,
 };
 use poph_core::llm::{
-    ErroLlm, EventoLlm, FluxoLlm, LlmProvider, Mensagem, MotivoFim, Parte, Pedido, ProvedorFake,
+    EventoLlm, FluxoLlm, LlmError, LlmProvider, Mensagem, MotivoFim, Parte, Pedido, ProvedorFake,
     Roteiro, Uso,
 };
 use poph_store::{
@@ -100,7 +100,7 @@ struct ProvedorLento {
 }
 
 impl LlmProvider for ProvedorLento {
-    fn stream<'a>(&'a self, pedido: Pedido) -> BoxFuture<'a, Result<FluxoLlm, ErroLlm>> {
+    fn stream<'a>(&'a self, pedido: Pedido) -> BoxFuture<'a, Result<FluxoLlm, LlmError>> {
         Box::pin(async move {
             tokio::time::sleep(self.latencia).await;
             self.chamadas.fetch_add(1, Ordering::SeqCst);
@@ -135,7 +135,7 @@ fn resposta(texto: &str) -> Roteiro {
 }
 
 fn falha() -> Roteiro {
-    Roteiro::Falha(ErroLlm::Configuracao(
+    Roteiro::Falha(LlmError::Configuracao(
         "modelo indisponível neste teste".to_owned(),
     ))
 }

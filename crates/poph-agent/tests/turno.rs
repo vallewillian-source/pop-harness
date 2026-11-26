@@ -30,7 +30,7 @@ use poph_agent::turno::{
     ProcessadorTurno, RegistroFerramentas,
 };
 use poph_core::llm::{
-    Cancelamento, ChamadaFerramenta, ErroLlm, EventoLlm, LlmProvider, MotivoFim, ProvedorFake,
+    Cancelamento, ChamadaFerramenta, EventoLlm, LlmError, LlmProvider, MotivoFim, ProvedorFake,
     Roteiro, Uso,
 };
 use poph_store::{
@@ -756,7 +756,7 @@ async fn cancelamento_encerra_o_turno_e_conclui_a_entrada() {
         vec![Roteiro::Pendurado {
             eventos: vec![EventoLlm::Texto("parcial ".to_owned())],
             depois: Duration::from_secs(30),
-            erro: ErroLlm::TempoEsgotado { segundos: 30 },
+            erro: LlmError::TimedOut { segundos: 30 },
         }],
         cenario.pausa(),
     );
@@ -826,7 +826,7 @@ async fn cancelamento_encerra_o_turno_e_conclui_a_entrada() {
 async fn erro_do_provedor_grava_o_turno_e_nao_deixa_item_preso() {
     let cenario = Cenario::novo("erro-provedor");
     let (motor, _fake) = cenario.motor(
-        vec![Roteiro::Falha(ErroLlm::Indisponivel {
+        vec![Roteiro::Falha(LlmError::Unavailable {
             tentativas: 3,
             ultimo: "503".to_owned(),
         })],
@@ -1213,7 +1213,7 @@ async fn falta_de_vaga_do_provedor_entra_na_escada_e_nao_chama_o_modelo() {
 async fn provedor_que_recusa_a_chave_nao_gasta_a_escada() {
     let cenario = Cenario::novo("recusa-401");
     let (motor, fake) = cenario.motor(
-        vec![Roteiro::Falha(ErroLlm::Recusado {
+        vec![Roteiro::Falha(LlmError::Rejected {
             status: 401,
             mensagem: "chave recusada".to_owned(),
         })],
@@ -1392,7 +1392,7 @@ async fn esperar_fila_vazia(fluxo: &Fluxo, cenario: &Cenario) {
 // ───────────────────────────── 8. Falha do modelo (HR-26i) ─────────────────────────────
 
 fn falha_do_provedor() -> Roteiro {
-    Roteiro::Falha(ErroLlm::Indisponivel {
+    Roteiro::Falha(LlmError::Unavailable {
         tentativas: 3,
         ultimo: "503 indisponível".to_owned(),
     })
@@ -1644,7 +1644,7 @@ async fn tempo_maximo_do_turno_conta_como_falha_do_modelo_e_entra_na_escada() {
     let pendurado = Roteiro::Pendurado {
         eventos: Vec::new(),
         depois: Duration::from_secs(10),
-        erro: ErroLlm::TempoEsgotado { segundos: 10 },
+        erro: LlmError::TimedOut { segundos: 10 },
     };
     let opcoes_turno = OpcoesTurno {
         tempo_maximo_turno: Duration::from_millis(50),

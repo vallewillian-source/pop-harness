@@ -27,7 +27,7 @@ use poph_agent::entrada_saida::{Fluxo, OpcoesFluxo};
 use poph_agent::limites::{Limitador, OpcoesLimites};
 use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
 use poph_agent::turno::{Motor, OpcoesTurno, ProcessadorTurno};
-use poph_core::llm::{ErroLlm, EventoLlm, LlmProvider, ProvedorFake, Roteiro};
+use poph_core::llm::{EventoLlm, LlmError, LlmProvider, ProvedorFake, Roteiro};
 use poph_server::Estado;
 use poph_server::cluster::ClusterVivo;
 use poph_store::{Direction, NewAgent, NewOrg, Page, Store, TurnState};
@@ -134,7 +134,7 @@ async fn iniciar(
         let fake = Arc::new(ProvedorFake::com_roteiros(vec![Roteiro::Pendurado {
             eventos: vec![EventoLlm::Texto("começou ".into())],
             depois: Duration::from_secs(30),
-            erro: ErroLlm::TempoEsgotado { segundos: 30 },
+            erro: LlmError::TimedOut { segundos: 30 },
         }]));
         let provedor: Arc<dyn LlmProvider> = fake.clone();
         let motor = Arc::new(Motor::novo(

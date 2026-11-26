@@ -12,7 +12,7 @@ use futures::StreamExt;
 use futures::future::BoxFuture;
 use futures::stream;
 
-use super::erro::ErroLlm;
+use super::erro::LlmError;
 use super::provedor::{FluxoLlm, LlmProvider, validar_pedido};
 use super::tipos::{EventoLlm, Pedido};
 
@@ -22,13 +22,13 @@ pub enum Roteiro {
     /// Eventos na ordem, terminando no `Fim` que estiver na lista.
     Eventos(Vec<EventoLlm>),
     /// Falha antes de a resposta começar (ex.: 429 ou 5xx já esgotados).
-    Falha(ErroLlm),
+    Falha(LlmError),
     /// Entrega os eventos e depois fica parado por `depois`. Se a chamada for cancelada
     /// antes, devolve `Cancelada`; se o tempo passar, devolve `erro` (ex.: `TempoEsgotado`).
     Pendurado {
         eventos: Vec<EventoLlm>,
         depois: Duration,
-        erro: ErroLlm,
+        erro: LlmError,
     },
 }
 
@@ -65,7 +65,7 @@ impl ProvedorFake {
 }
 
 impl LlmProvider for ProvedorFake {
-    fn stream<'a>(&'a self, pedido: Pedido) -> BoxFuture<'a, Result<FluxoLlm, ErroLlm>> {
+    fn stream<'a>(&'a self, pedido: Pedido) -> BoxFuture<'a, Result<FluxoLlm, LlmError>> {
         Box::pin(async move {
             validar_pedido(&pedido, true)?;
             let cancelamento = pedido.cancelamento.clone();
@@ -74,7 +74,7 @@ impl LlmProvider for ProvedorFake {
                 Err(veneno) => veneno.into_inner().push(pedido),
             }
             let roteiro = self.proximo().ok_or_else(|| {
-                ErroLlm::Configuracao("provedor falso sem roteiro para esta chamada".to_owned())
+                LlmError::Configuracao("provedor falso sem roteiro para esta chamada".to_owned())
             })?;
             match roteiro {
                 Roteiro::Falha(erro) => Err(erro),
@@ -90,7 +90,7 @@ impl LlmProvider for ProvedorFake {
                     let espera = async move {
                         tokio::select! {
                             biased;
-                            _ = cancelamento.aguardar() => Err(ErroLlm::Cancelada),
+                            _ = cancelamento.aguardar() => Err(LlmError::Cancelled),
                             _ = tokio::time::sleep(depois) => Err(erro),
                         }
                     };
@@ -128,7 +128,7 @@ mod testes {
 
     #[tokio::test]
     async fn falha_de_roteiro_chega_como_erro_ao_abrir() {
-        let fake = ProvedorFake::com_roteiros(vec![Roteiro::Falha(ErroLlm::Indisponivel {
+        let fake = ProvedorFake::com_roteiros(vec![Roteiro::Falha(LlmError::Unavailable {
             tentativas: 3,
             ultimo: "HTTP 503".into(),
         })]);
@@ -138,7 +138,7 @@ mod testes {
         );
         assert!(matches!(
             fake.stream(pedido).await,
-            Err(ErroLlm::Indisponivel { .. })
+            Err(LlmError::Unavailable { .. })
         ));
     }
 
@@ -147,7 +147,7 @@ mod testes {
         let fake = ProvedorFake::com_roteiros(vec![Roteiro::Pendurado {
             eventos: vec![EventoLlm::Texto("parcial".into())],
             depois: Duration::from_secs(30),
-            erro: ErroLlm::TempoEsgotado { segundos: 30 },
+            erro: LlmError::TimedOut { segundos: 30 },
         }]);
         let pedido = Pedido::new(
             OrgId::generate(),
@@ -157,6 +157,6 @@ mod testes {
         let mut fluxo = fake.stream(pedido).await.expect("abre");
         assert!(matches!(fluxo.next().await, Some(Ok(EventoLlm::Texto(_)))));
         cancelamento.cancelar();
-        assert_eq!(fluxo.next().await, Some(Err(ErroLlm::Cancelada)));
+        assert_eq!(fluxo.next().await, Some(Err(LlmError::Cancelled)));
     }
 }

@@ -13,7 +13,7 @@ use apoio::{
     Resposta, Servidor, ServidorTls, certificados, colher, montar, pergunta, so_eventos, sse,
 };
 use futures::StreamExt;
-use poph_core::llm::{ErroLlm, EventoLlm, LlmProvider, MotivoFim};
+use poph_core::llm::{EventoLlm, LlmError, LlmProvider, MotivoFim};
 
 const TEXTO_OLA: &str = r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":"Olá"},"finish_reason":null}]}"#;
 const FIM: &str = r#"{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}}"#;
@@ -75,14 +75,14 @@ async fn certificado_de_ca_desconhecida_e_recusado_e_nao_retenta() {
         Err(erro) => erro,
     };
 
-    let ErroLlm::Tls(detalhe) = &erro else {
+    let LlmError::Tls(detalhe) = &erro else {
         panic!("esperava erro de TLS, veio {erro:?}");
     };
     assert!(!detalhe.is_empty(), "detalhe vazio");
     let texto = erro.to_string();
     assert!(texto.contains("TLS"), "mensagem: {texto}");
     // Erro definitivo: a política de retentativa não pode tentar de novo um certificado recusado.
-    assert!(!erro.transitorio(), "erro de TLS não pode ser transitório");
+    assert!(!erro.is_transient(), "erro de TLS não pode ser transitório");
     assert_eq!(
         servidor.conexoes(),
         1,
@@ -116,8 +116,8 @@ async fn nome_do_servidor_diferente_do_certificado_e_recusado() {
         Err(erro) => erro,
     };
 
-    assert!(matches!(erro, ErroLlm::Tls(_)), "erro: {erro:?}");
-    assert!(!erro.transitorio());
+    assert!(matches!(erro, LlmError::Tls(_)), "erro: {erro:?}");
+    assert!(!erro.is_transient());
     assert!(servidor.pedidos().is_empty());
 }
 
@@ -162,7 +162,7 @@ async fn erro_de_tls_no_meio_do_stream_vira_conexao_interrompida() {
     assert!(
         matches!(
             erro,
-            ErroLlm::RespostaInvalida(_) | ErroLlm::ConexaoInterrompida(_)
+            LlmError::InvalidResponse(_) | LlmError::ConnectionInterrupted(_)
         ),
         "erro: {erro:?}"
     );

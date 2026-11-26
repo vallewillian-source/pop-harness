@@ -24,7 +24,7 @@ use poph_agent::turno::{
     ProcessadorTurno, RegistroFerramentas, RegistroPadrao, UsoFerramentas,
 };
 use poph_core::llm::{
-    ChamadaFerramenta, ErroLlm, EventoLlm, LlmProvider, MotivoFim, ProvedorFake, Roteiro,
+    ChamadaFerramenta, EventoLlm, LlmError, LlmProvider, MotivoFim, ProvedorFake, Roteiro,
 };
 use poph_store::{
     LibraryFile, NewAgent, NewConversation, NewLibraryFile, NewOrg, OutboxItem, Store,
@@ -556,7 +556,7 @@ fn arquivo_da_biblioteca_traz_o_caminho_relativo_do_blob() {
 #[tokio::test]
 async fn falha_do_modelo_depois_de_arquivo_enfileirado_nao_repete_o_envio() {
     let cenario = Cenario::novo("falha-arquivo", &[NOME_FERRAMENTA]);
-    let falha = Roteiro::Falha(ErroLlm::Indisponivel {
+    let falha = Roteiro::Falha(LlmError::Unavailable {
         tentativas: 3,
         ultimo: "503".to_owned(),
     });

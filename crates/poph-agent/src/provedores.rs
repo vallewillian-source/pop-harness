@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use poph_core::llm::{ErroLlm, LlmProvider};
+use poph_core::llm::{LlmError, LlmProvider};
 
 #[derive(Clone)]
 pub struct ProvedorResolvido {
@@ -63,7 +63,7 @@ impl Provedores {
         self.nomeados.keys().cloned().collect()
     }
 
-    pub fn resolver(&self, escolha: &str) -> Result<ProvedorResolvido, ErroLlm> {
+    pub fn resolver(&self, escolha: &str) -> Result<ProvedorResolvido, LlmError> {
         let escolha = escolha.trim();
         if escolha.is_empty() || poph_types::llm_provider_accepted(escolha) {
             return Ok(self.padrao.clone());
@@ -77,7 +77,7 @@ impl Provedores {
         } else {
             declarados.join(", ")
         };
-        Err(ErroLlm::Configuracao(format!(
+        Err(LlmError::Configuracao(format!(
             "provedor `{escolha}` não existe nesta instância; use vazio (o padrão do [llm]) ou um de [provedores]: {lista}"
         )))
     }

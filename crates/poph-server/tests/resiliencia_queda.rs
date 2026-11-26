@@ -24,7 +24,7 @@ use poph_agent::entrada_saida::{Fluxo, OpcoesFluxo};
 use poph_agent::limites::{Limitador, OpcoesLimites};
 use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
 use poph_agent::turno::{Motor, OpcoesTurno, ProcessadorTurno};
-use poph_core::llm::{ErroLlm, EventoLlm, LlmProvider, MotivoFim, ProvedorFake, Roteiro};
+use poph_core::llm::{EventoLlm, LlmError, LlmProvider, MotivoFim, ProvedorFake, Roteiro};
 use poph_server::Estado;
 use poph_server::entrada_turno::MOTIVO_INTERROMPIDO;
 use poph_store::{
@@ -443,7 +443,7 @@ async fn modelo_indisponivel_deixa_turno_falho_sem_perder_a_mensagem() {
         "indisponivel",
         semear_org_e_agente,
         vec![
-            Roteiro::Falha(ErroLlm::Indisponivel {
+            Roteiro::Falha(LlmError::Unavailable {
                 tentativas: 2,
                 ultimo: "HTTP 503".to_owned(),
             }),
@@ -506,7 +506,7 @@ async fn stream_cortado_no_meio_deixa_turno_falho_sem_resposta_parcial() {
             Roteiro::Pendurado {
                 eventos: vec![EventoLlm::Texto("o prazo é de ".into())],
                 depois: Duration::from_millis(50),
-                erro: ErroLlm::ConexaoInterrompida("conexão caiu".to_owned()),
+                erro: LlmError::ConnectionInterrupted("conexão caiu".to_owned()),
             },
             roteiro_ok(),
         ],

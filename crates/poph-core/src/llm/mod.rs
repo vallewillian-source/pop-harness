@@ -18,9 +18,9 @@ pub mod sse;
 pub mod tipos;
 pub mod tls;
 
-pub use erro::ErroLlm;
+pub use erro::LlmError;
 pub use fake::{ProvedorFake, Roteiro};
-pub use limites::{LimitadorLlm, PermissaoLlm};
+pub use limites::{LlmLimiter, LlmPermit};
 pub use openai::{
     OpenAiCompatibleClient, OpenAiCompatibleConfig, PROVEDOR_ANTIGRAVITY,
     PROVEDOR_OPENAI_COMPATIVEL,

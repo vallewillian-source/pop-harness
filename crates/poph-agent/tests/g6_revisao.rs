@@ -24,7 +24,7 @@ use poph_agent::metricas::{MetricasMemoria, MetricasTurno};
 use poph_agent::turno::{
     Entrada, FuturoPausa, Motor, ObservadorNulo, OpcoesTurno, Pausa, ResumoTurno,
 };
-use poph_core::llm::{ErroLlm, EventoLlm, MotivoFim, ProvedorFake, Roteiro, Uso};
+use poph_core::llm::{EventoLlm, LlmError, MotivoFim, ProvedorFake, Roteiro, Uso};
 use poph_jev::{ErroJev, JevFalso, LoteResposta, MotorJev, Resposta as RespostaJev};
 use poph_store::{
     AgentChange, Direction, NewAgent, NewConversation, NewMessage, Page, Role, Store, TurnState,
@@ -555,7 +555,7 @@ async fn g6_falha_do_modelo_na_regeneracao_mantem_a_resposta_original() {
     let (motor, provedor) = cenario.motor(
         vec![
             roteiro_texto(RASCUNHO),
-            Roteiro::Falha(ErroLlm::ConexaoInterrompida("conexão caiu".to_owned())),
+            Roteiro::Falha(LlmError::ConnectionInterrupted("conexão caiu".to_owned())),
         ],
         Some(motor_jev(jev, so_g6())),
     );
