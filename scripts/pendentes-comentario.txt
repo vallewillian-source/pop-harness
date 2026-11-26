@@ -369,13 +369,6 @@ M14	16	scripts/Dockerfile.build-arm
 M14	26	scripts/aceite-matrix-aux.py
 M14	28	scripts/aceite-matrix-element.mjs
 M14	79	scripts/aceite-matrix.sh
-M14	20	scripts/build-dist.sh
-M14	8	scripts/jev-falso.py
-M14	1	scripts/jev-relatorio.py
-M14	11	scripts/limpar-cache.sh
-M14	60	scripts/matrix-dev.sh
 M14	8	scripts/medicao-memoria/synapse_falso.py
 M14	11	scripts/medir-memoria-roteiro.sh
 M14	29	scripts/medir-memoria.sh
-M14	8	scripts/medir-resiliencia.sh
-M14	10	scripts/plugin-eco.sh
