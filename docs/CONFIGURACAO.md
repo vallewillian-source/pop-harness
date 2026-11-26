@@ -91,6 +91,15 @@ the manifest of each `kind` — starting the plugin once and keeping the result 
 integration configuration. Without the declaration, an integration `config_json` is refused with
 `422 manifest_indisponivel` (the message code stays as it is) and the manifest route answers `404`.
 
+### Site conversation settings
+
+`[site_chat]` configures the administrative routes for trusted website adapters. The
+`max_text_bytes` limit defaults to 16384 and accepts 1–262144 UTF-8 bytes. The `allowed_tools`
+list defaults to empty. It accepts `consultar_base`, `buscar_produto`, `cart_add_item`,
+`cart_remove_item`, `cart_summary` and `cart_clear`. Agents with any enabled tool missing from
+this list are refused. The setting is server-side and requires no additional credential.
+See [Site conversations](API.md#site-conversations) for the HTTP contract.
+
 ## Environment variables
 
 Non-secret fields (they override the file):

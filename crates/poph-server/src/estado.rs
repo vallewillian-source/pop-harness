@@ -62,6 +62,7 @@ pub struct Estado {
     /// mesmo provedor, memória e ferramentas. `None` = sem chave do modelo: o chat de teste
     /// responde `503 turno_indisponivel` em vez de abrir um turno que não pode responder.
     pub motor: Option<Arc<Motor>>,
+    pub(crate) site_workers: Arc<crate::site_chat::SiteWorkers>,
     /// Configuração dos arquivos recebidos (HR-22/HR-23): limite de 16 MB, extração isolada.
     pub arquivos: Arc<FileConfig>,
     /// Conversas de teste com turno em voo (HR-22): a segunda aba recebe `409`, nunca um segundo
@@ -160,6 +161,7 @@ impl Estado {
             manifestos,
             chave_de_cifra: ChaveDeCifra::do_ambiente().map(Arc::new),
             motor: None,
+            site_workers: Arc::default(),
             arquivos,
             testes_em_voo: Arc::new(Mutex::new(HashMap::new())),
             validade_da_reserva: VALIDADE_DA_RESERVA,

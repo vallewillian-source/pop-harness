@@ -26,6 +26,7 @@ pub mod matrix_inicio;
 pub mod matrix_metricas;
 pub mod matrix_resposta;
 pub mod saida_whatsapp;
+mod site_chat;
 
 use std::future::Future;
 
@@ -69,6 +70,7 @@ where
     // HR-57: turno que ficou em andamento quando o processo anterior morreu vira falha registrada,
     // antes de qualquer atendimento — o histórico não pode dizer "em andamento" para sempre.
     entrada_turno::recuperar_turnos_interrompidos(&estado);
+    site_chat::recover(&estado).map_err(std::io::Error::other)?;
     // Saída do WhatsApp (HR-26c): o laço só sobe quando há instância configurada, e para junto
     // com o servidor.
     let saida = saida_whatsapp::iniciar(&estado);

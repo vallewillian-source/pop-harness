@@ -129,6 +129,18 @@ const CONVERSATION_TABLES: &[Table] = &[
         name: "fluxo_efeitos",
         key: &["id"],
     },
+    Table {
+        name: "site_conversation_cursors",
+        key: &["conversation_id"],
+    },
+    Table {
+        name: "site_turns",
+        key: &["conversation_id", "id"],
+    },
+    Table {
+        name: "site_events",
+        key: &["conversation_id", "seq"],
+    },
 ];
 
 struct NaturalKey {
@@ -261,7 +273,10 @@ impl Store {
             let org_row = read_org(conn, org)?;
             let mut snapshot = BTreeMap::new();
             for table in tables {
-                snapshot.insert(table.name.to_owned(), read_table(conn, table.name, org)?);
+                let rows = read_table(conn, table.name, org)?;
+                if !rows.is_empty() || !table.name.starts_with("site_") {
+                    snapshot.insert(table.name.to_owned(), rows);
+                }
             }
             let encrypted_secrets = read_encrypted_secrets(conn, org)?;
             Ok(OrgSnapshot {
@@ -473,11 +488,14 @@ fn import(
                 CASE WHEN c.status = 'closed' THEN c.updated_at END,
                 CASE WHEN c.status = 'closed' THEN 'migracao' END,
                 CASE WHEN c.status = 'closed' THEN 'conversa importada de backup anterior' END, 1
-            FROM conversations c WHERE c.org_id = '{}' AND NOT EXISTS
+            FROM conversations c WHERE c.org_id = '{}' AND c.channel <> 'site' AND NOT EXISTS
                 (SELECT 1 FROM fichas f WHERE f.conversation_id = c.id);"#, org_id))?;
     }
     if let Some(conversations) = snapshot.tables.get("conversations") {
         for conversation in conversations {
+            if conversation.get("channel").and_then(Value::as_str) == Some("site") {
+                continue;
+            }
             let id = conversation
                 .get("id")
                 .and_then(Value::as_str)

@@ -995,6 +995,10 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
                 continue;
             };
 
+            if dados.sala.canal == "site" {
+                continue;
+            }
+
             // Mídia do cliente (MX-43): o anexo já está gravado; a mensagem vira mídia + legenda.
             // Sem saber os anexos, entregar só o texto esconderia a mídia: a linha fica pendente.
             let anexos = match self.anexos_do_cliente(mensagem) {

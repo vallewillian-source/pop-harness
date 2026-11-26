@@ -36,6 +36,37 @@ pub struct HarnessConfig {
     #[serde(default, skip_serializing_if = "PluginsConfig::empty")]
     pub plugins: PluginsConfig,
     pub admin: AdminConfig,
+    pub site_chat: SiteChatConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct SiteChatConfig {
+    pub max_text_bytes: usize,
+    pub allowed_tools: BTreeSet<String>,
+}
+
+impl Default for SiteChatConfig {
+    fn default() -> Self {
+        Self {
+            max_text_bytes: 16 * 1024,
+            allowed_tools: BTreeSet::new(),
+        }
+    }
+}
+
+impl SiteChatConfig {
+    pub fn permits_tool(&self, name: &str) -> bool {
+        matches!(
+            name,
+            "consultar_base"
+                | "buscar_produto"
+                | "cart_add_item"
+                | "cart_remove_item"
+                | "cart_summary"
+                | "cart_clear"
+        ) && self.allowed_tools.contains(name)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -509,6 +540,24 @@ impl HarnessConfig {
         validate_handoff(&self.handoff)?;
         validate_turn(&self.turn)?;
         validate_admin(&self.admin)?;
+        if !(1..=256 * 1024).contains(&self.site_chat.max_text_bytes) {
+            return Err(DomainError::Validation {
+                field: "site_chat.max_text_bytes",
+                reason: "informe de 1 a 262144 bytes".to_owned(),
+            });
+        }
+        if self
+            .site_chat
+            .allowed_tools
+            .iter()
+            .any(|name| !self.site_chat.permits_tool(name))
+        {
+            return Err(DomainError::Validation {
+                field: "site_chat.allowed_tools",
+                reason: "a lista contém uma ferramenta indisponível para conversas do site"
+                    .to_owned(),
+            });
+        }
         validate_plugins(&self.plugins)?;
         if let Some(evolution) = &self.evolution {
             validate_url("evolution.url_base", &evolution.url_base)?;

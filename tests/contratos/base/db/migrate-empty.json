@@ -68,12 +68,16 @@
       {
         "nome": "0018_usage_tokens",
         "versao": 18
+      },
+      {
+        "nome": "0019_site_conversations",
+        "versao": 19
       }
     ],
     "banco": "harness.db",
     "caminho": "data/harness.db",
     "versao_antes": 0,
-    "versao_depois": 18
+    "versao_depois": 19
   },
   "ja_estava_em_dia": false,
   "rag": {

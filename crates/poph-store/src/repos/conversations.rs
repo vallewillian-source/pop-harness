@@ -371,17 +371,24 @@ impl Conversas<'_> {
                     &departamento.to_string(),
                 )?;
             }
-            let situation: Option<String> = conn
+            let situation: Option<(String, bool)> = conn
                 .query_row(
-                    "SELECT status FROM conversations WHERE org_id = ?1 AND id = ?2",
+                    "SELECT status, channel = 'site' FROM conversations WHERE org_id = ?1 AND id = ?2",
                     params![text_org, text_id],
-                    |row| row.get(0),
+                    |row| Ok((row.get(0)?, row.get(1)?)),
                 )
-                .optional()
-                .map_err(StoreError::from)?;
-            let Some(situation) = situation else {
+                .optional()?;
+            let Some((situation, is_site)) = situation else {
                 return super::require::<()>(None, "conversa", &text_id);
             };
+            if is_site {
+                return Err(poph_types::DomainError::Conflict {
+                    entity: "conversa",
+                    id: text_id.clone(),
+                    reason: "conversa do site não permite transferência".to_owned(),
+                }
+                .into());
+            }
             if refuse_closed && situation == closed {
                 return Err(StoreError::Domain(
                     poph_types::DomainError::ConversationClosed {

@@ -29,6 +29,7 @@ mod orgs;
 mod paginacao;
 mod produtos;
 mod saude;
+mod site_chat;
 mod sla_analytics;
 pub mod teste_chat;
 mod tokens;
@@ -371,6 +372,7 @@ pub fn router(estado: Estado) -> Router {
         // Contrato do Synapse, não do Console: ficam fora do OpenAPI administrativo e respondem
         // `404` quando o módulo está desligado (`Estado::matrix_as` = `None`).
         .merge(matrix_as::rotas())
+        .merge(site_chat::routes())
         .with_state(estado.clone());
 
     Router::new()
@@ -552,6 +554,13 @@ pub fn documento() -> utoipa::openapi::OpenApi {
         fluxos::diff, fluxos::preview, fluxos::formatar,
         fichas::listar, fichas::mostrar, fichas::eventos, fichas::iniciar_fluxo, fichas::acao,
         fichas::abandonar, fichas::fechar,
+        site_chat::create,
+        site_chat::submit,
+        site_chat::turn,
+        site_chat::cancel,
+        site_chat::events,
+        site_chat::events_stream,
+        site_chat::history,
         analytics::operational_summary,
         conversation_analytics::report,
         sla_analytics::report,
@@ -588,6 +597,8 @@ pub fn documento() -> utoipa::openapi::OpenApi {
         biblioteca::ArquivoJson,
         paginacao::ListaJson<biblioteca::ArquivoJson>,
         teste_chat::DadosMensagemTeste,
+        site_chat::CreateBody,
+        site_chat::MessageBody,
         matrix::EstadoMatrixJson,
         matrix::AtrasoJson,
         matrix::EspacoJson,

@@ -1430,3 +1430,42 @@ change message counts and the earliest message available.
 `GET /admin/v1/orgs/{org_id}/analytics/sla` returns age buckets and the most idle open Cases. `to` is required in milliseconds; only Cases opened before it are included. `now` defaults to the server clock. `limit` defaults to 20 and accepts 1 through 100. `age_bounds_minutes` defaults to `60,240,1440,2880,4320,10080` and accepts up to 16 strictly increasing positive integers. Buckets are lower-inclusive and upper-exclusive, with negative ages in the first bucket.
 
 Each stale item provides `ficha_id`, `conversation_id`, `channel`, `peer`, `client_name`, `current_step_key`, `age_ms`, and `idle_ms`. The last activity is the latest Case event, falling back to opening time. The active flow supplies the current step. Deleted conversations leave their channel snapshot on the Case. Items are ordered by idle time, age and Case ID, all descending. Both lists use the same database snapshot.
+
+## Site conversations
+
+A trusted HTTP adapter calls these routes under `/admin/v1/orgs/{org_id}` using the same
+organization-scoped service credential as the other administrative routes. The adapter links
+each visitor and thread to an opaque reference and keeps the organization credential server-side.
+The session, origin checks and rate limits seen by the visitor belong to the adapter.
+
+| Method and path | Contract |
+| --- | --- |
+| `POST /agents/{agent_id}/site-conversations` | Takes `{"external_ref":"…"}` with 1–128 characters and returns `{"conversation_id":"…"}`. Creates a `site` conversation with no integration and uses the reference as its external peer. Returns 201 for a new `(org, agent, external_ref)` and 200 for the same conversation on repeat. |
+| `POST /site-conversations/{id}/messages` | Takes `{"text":"…","idempotency_key":"…"}`. Text has 1 to `site_chat.max_text_bytes` UTF-8 bytes and the key has 1–128 characters. Replies with 202 and `{message_id, turn_id, status:"accepted"}`. The same key and text return 200 with the same response. A reused key with different text returns 409 `idempotency_conflict`. A different key while a turn is queued or running returns 409 `turn_in_progress` with `details.turn_id`. |
+| `GET /site-conversations/{id}/turns/{turn_id}` | Returns `{status, error_code, started_at, finished_at}`. States are `queued`, `running`, `succeeded`, `failed`, and `cancelled`. Timestamps are UTC epoch milliseconds. While queued, `started_at` is the acceptance time. It becomes the execution start time when claimed. `finished_at` and `error_code` may be null. |
+| `POST /site-conversations/{id}/turns/{turn_id}/cancel` | Returns the same turn shape with its terminal status. If the turn already finished, the response describes that existing result. |
+| `GET /site-conversations/{id}/messages?before=<id>&limit=<n>` | Returns `{"messages":[...]}` in descending message ID order. Each row has `id`, `role` (`user` or `assistant`), `text` and `created_at`. The cursor is exclusive and omitted on the first page. The limit defaults to 50 and accepts 1–100. |
+| `GET /site-conversations/{id}/events?after=<seq>&limit=<n>` | Returns `{"events":[...]}` in ascending sequence order. The cursor is exclusive and defaults to 0. The limit defaults to 100 and accepts 1–200. |
+| `GET /site-conversations/{id}/events/stream?after=<seq>` | Returns a persistent SSE subscription. The event ID is the sequence. Replay begins after the greater of `after` and `Last-Event-ID`. The server sends keep-alives while idle. |
+
+Events have `seq`, `type` and `turn_id`. `message` adds `message_id`, `role` and `text`.
+`text_delta` adds `text` and `turn_failed` adds `error_code`. The other event types are
+`turn_start`, `turn_end` and `turn_cancelled`. A delta represents provisional text. Only the
+assistant's committed `message` event and text history represent the final reply. The stream
+exposes visitor and assistant text and turn lifecycle events.
+
+An accepted message and its first event are persisted together. The turn continues after the
+HTTP client disconnects. Startup resumes queued turns and marks interrupted running turns failed
+with `server_restarted`. Cancellation atomically records its terminal event and prevents any
+later completion from publishing an assistant message. The organization retention policy
+expires a site's replay events and idempotency record when it removes the corresponding visitor
+message. The conversation sequence remains monotonic across retention.
+
+The organization bearer token follows the usual 401 and 403 rules. Lookup within the requested
+organization returns 404 for missing conversations, non-site conversations and turns belonging
+to another conversation. The adapter must enforce visitor and configured-agent ownership before
+calling routes addressed by conversation ID. A rejected field returns 422 `validation_error`
+with `details.field`. An agent with an enabled tool outside the site's server-side policy
+returns 422 `agent_not_public`. The runtime checks the policy again when it starts a turn.
+Site turns cannot create Cases, transfer conversations, enqueue outbound channel work or
+notify a human. Attachments and lead capture are reserved for later versions.

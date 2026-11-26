@@ -26,6 +26,7 @@ mod orgs;
 mod products;
 mod retention;
 mod revisions;
+mod site_chat;
 mod tokens;
 mod turns;
 mod usage;
@@ -60,6 +61,9 @@ pub use orgs::Orgs;
 pub use products::{ProductReferences, Products};
 pub use retention::{Retencao, ScanRetention};
 pub use revisions::{ACTION_PUBLISH, ACTORS_OF_AUDIT, LIMIT_REVISIONS, Revisions};
+pub use site_chat::{
+    SiteChat, SiteEvent, SiteMessage, SiteOutcome, SiteReply, SiteSubmission, SiteTurn, SiteTurnKey,
+};
 pub use tokens::Tokens;
 pub use turns::{Audit, Turns};
 

@@ -58,6 +58,7 @@ mod fluxo;
 mod fluxo_ferramentas;
 mod pausa;
 mod prompt;
+mod site_chat;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -112,6 +113,7 @@ pub use prompt::{
     ABRE_BASE, ABRE_CONTEXTO, AVISO_BASE, FECHA_BASE, FECHA_CONTEXTO, Prompt, bloco_base,
     bloco_volatil, bloco_volatil_com_base, data_utc,
 };
+pub use site_chat::{SiteRun, SiteTurnError};
 
 /// Quantas mensagens o turno lê do banco por vez (teto de varredura da janela).
 const TETO_DE_LEITURA: u32 = 200;
@@ -684,6 +686,11 @@ impl Motor {
 
         let conversa = self.store.conversations().get(org, conversa_id)?;
         let agente_id = conversa.agent_id;
+        if conversa.canal == "site" {
+            return Err(ErroAgente::Interno(
+                "conversa do site exige execução própria".to_owned(),
+            ));
+        }
         if self
             .cancelamento
             .as_ref()

@@ -55,6 +55,7 @@ name	alias	published coluna: alias
 name	aliases	published campo json: aliases
 name	aliases_json	published coluna: aliases_json
 name	all	flow language word, frozen by P6
+name	allowed_tools	published chave toml: allowed_tools
 name	analytics	published rota: analytics
 name	analytics_resumo_operacional	published operation id: analytics_resumo_operacional
 name	anexos	published protocolo plugin: anexos
@@ -95,6 +96,7 @@ name	calls	published flag cli: calls
 name	campo	flow language word, frozen by P6
 name	campos	published campo json: campos
 name	canal	published coluna: canal
+name	cancel	published rota: cancel
 name	capacidades	published protocolo plugin: capacidades
 name	cart_id	published coluna: cart_id
 name	cart_items	published tabela: cart_items
@@ -148,7 +150,7 @@ name	conversations_cursor_at	published coluna: conversations_cursor_at
 name	conversations_cursor_id	published coluna: conversations_cursor_id
 name	cost_micros	published coluna: cost_micros
 name	count	published campo json: count
-name	create	published comando cli: create
+name	create	published operation id: create
 name	created_at	published coluna: created_at
 name	criar	published operation id: criar
 name	criar_item	published operation id: criar_item
@@ -206,6 +208,7 @@ name	entrou_em	published coluna: entrou_em
 name	enumerate	flow language word, frozen by P6
 name	enviado_em	published coluna: enviado_em
 name	error	published coluna: error
+name	error_code	published coluna: error_code
 name	escrever	published flag cli: escrever
 name	espaco	published comando cli: espaco
 name	estado	published coluna: estado
@@ -214,6 +217,7 @@ name	eval	published comando cli: eval
 name	event_id	published coluna: event_id
 name	evento	published protocolo plugin: evento
 name	events	published rota: events
+name	events_stream	published operation id: events_stream
 name	EVOLUTION_API_KEY	published variavel ambiente: EVOLUTION_API_KEY
 name	excludes	published coluna: excludes
 name	excluir	published operation id: excluir
@@ -224,6 +228,7 @@ name	exportado_em	published backup: exportado_em
 name	external_id	published coluna: external_id
 name	external_message_id	published coluna: external_message_id
 name	external_peer	published coluna: external_peer
+name	external_ref	published campo json: external_ref
 name	extracted_text	published coluna: extracted_text
 name	extraction_status	published coluna: extraction_status
 name	extrator	published binario: extrator
@@ -304,10 +309,12 @@ name	handoff_department	published campo json: handoff_department
 name	harness	published campo json: harness
 name	healthz	published rota: healthz
 name	help	published flag cli: help
+name	history	published operation id: history
 name	human_handoff_department_id	published coluna: human_handoff_department_id
 name	human_handoff_enabled	published coluna: human_handoff_enabled
 name	id	published coluna: id
 name	id_externo	published protocolo plugin: id_externo
+name	idempotency_key	published coluna: idempotency_key
 name	idle_ms	published campo json: idle_ms
 name	if	published flag cli: if
 name	igual	flow language word, frozen by P6
@@ -365,6 +372,7 @@ name	ix_messages_turno_humano	published indice: ix_messages_turno_humano
 name	ix_orgs_status	published indice: ix_orgs_status
 name	ix_outbox_state	published indice: ix_outbox_state
 name	ix_products_category	published indice: ix_products_category
+name	ix_site_events_turn	published indice: ix_site_events_turn
 name	ix_turns_conversation	published indice: ix_turns_conversation
 name	ix_turns_org_started_at	published indice: ix_turns_org_started_at
 name	jev	published comando cli: jev
@@ -380,6 +388,7 @@ name	label	published coluna: label
 name	last_error	published coluna: last_error
 name	last_failure	published campo json: last_failure
 name	last_message_at	published coluna: last_message_at
+name	last_seq	published coluna: last_seq
 name	last_status	published coluna: last_status
 name	len	flow language word, frozen by P6
 name	liberado_em	published coluna: liberado_em
@@ -425,6 +434,7 @@ name	max_minutes	published campo json: max_minutes
 name	max_nos	published chave toml: max_nos
 name	max_output_tokens	published coluna: max_output_tokens
 name	max_saltos_decisao	published chave toml: max_saltos_decisao
+name	max_text_bytes	published chave toml: max_text_bytes
 name	max_texto_bytes	published protocolo plugin: max_texto_bytes
 name	max_ticks_regra	published chave toml: max_ticks_regra
 name	max_tokens_saida	published chave toml: max_tokens_saida
@@ -670,6 +680,14 @@ name	servidor	published chave toml: servidor
 name	sha256	published coluna: sha256
 name	show	published comando cli: show
 name	simultaneos	published chave toml: simultaneos
+name	site	published rota: site
+name	site_chat	published chave toml: site_chat
+name	site_conversation_cursors	published tabela: site_conversation_cursors
+name	site_events	published tabela: site_events
+name	site_no_case	published gatilho: site_no_case
+name	site_no_outbox	published gatilho: site_no_outbox
+name	site_no_transfer	published gatilho: site_no_transfer
+name	site_turns	published tabela: site_turns
 name	situacao	published campo json: situacao
 name	size_bytes	published coluna: size_bytes
 name	sla	published rota: sla
@@ -688,8 +706,10 @@ name	started_at	published coluna: started_at
 name	state	published coluna: state
 name	status	published coluna: status
 name	str	flow language word, frozen by P6
+name	stream	published rota: stream
 name	structured	published campo json: structured
 name	structured_json	published coluna: structured_json
+name	submit	published operation id: submit
 name	substituir	published operation id: substituir
 name	summary	published coluna: summary
 name	tabelas	published backup: tabelas
@@ -737,6 +757,7 @@ name	transfer	published rota: transfer
 name	transferred	published campo json: transferred
 name	True	flow language word, frozen by P6
 name	tuple	flow language word, frozen by P6
+name	turn	published operation id: turn
 name	turn_count	published campo json: turn_count
 name	turn_id	published coluna: turn_id
 name	turno	published chave toml: turno
@@ -794,6 +815,8 @@ name	ux_product_categories_name	published indice: ux_product_categories_name
 name	ux_product_categories_org_id	published indice: ux_product_categories_org_id
 name	ux_products_org_id	published indice: ux_products_org_id
 name	ux_products_slug	published indice: ux_products_slug
+name	ux_site_active_turn	published indice: ux_site_active_turn
+name	ux_site_conversation_reference	published indice: ux_site_conversation_reference
 name	V	published flag cli: V
 name	v1	published rota: v1
 name	validar	published comando cli: validar

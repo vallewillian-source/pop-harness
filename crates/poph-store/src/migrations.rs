@@ -97,6 +97,11 @@ pub const HARNESS_MIGRATIONS: &[Migration] = &[
         name: "0018_usage_tokens",
         sql: include_str!("../migrations/harness/0018_usage_tokens.sql"),
     },
+    Migration {
+        version: 19,
+        name: "0019_site_conversations",
+        sql: include_str!("../migrations/harness/0019_site_conversations.sql"),
+    },
 ];
 
 pub const RAG_MIGRATIONS: &[Migration] = &[];

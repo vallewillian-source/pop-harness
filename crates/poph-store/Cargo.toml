@@ -10,6 +10,7 @@ publish.workspace = true
 [dependencies]
 poph-types = { path = "../poph-types" }
 rusqlite.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.11"
 uuid.workspace = true

@@ -247,6 +247,10 @@ impl Store {
         InstructionsRepo(self)
     }
 
+    pub fn site_chat(&self) -> SiteChat<'_> {
+        SiteChat(self)
+    }
+
     pub fn conversations(&self) -> Conversas<'_> {
         Conversas(self)
     }
