@@ -1163,6 +1163,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/v1/orgs/{org_id}/usage/tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["usage_tokens"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/healthz": {
         parameters: {
             query?: never;
@@ -1201,6 +1217,15 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        AgentUsageJson: {
+            agent_id?: string | null;
+            /** Format: int64 */
+            input_tokens: number;
+            /** Format: int64 */
+            output_tokens: number;
+            /** Format: int64 */
+            turns: number;
+        };
         /** @description Metadados de arquivo, sem caminho interno ou conteúdo. */
         ArquivoJson: {
             agent_id: string;
@@ -1445,6 +1470,13 @@ export interface components {
         DadosScript: {
             /** @description Texto do script de fluxo. */
             source: string;
+        };
+        DayUsageJson: {
+            date: string;
+            /** Format: int64 */
+            output_tokens: number;
+            /** Format: int64 */
+            turns: number;
         };
         /** @description Departamento na resposta da API. */
         DepartamentoJson: {
@@ -1887,6 +1919,18 @@ export interface components {
             revoked_at?: number | null;
             /** @description `active` ou `revoked`. */
             status: string;
+        };
+        TokenUsageJson: {
+            by_agent: components["schemas"]["AgentUsageJson"][];
+            by_day: components["schemas"]["DayUsageJson"][];
+            /** Format: int64 */
+            total_cost_micros: number;
+            /** Format: int64 */
+            total_input_tokens: number;
+            /** Format: int64 */
+            total_output_tokens: number;
+            /** Format: int64 */
+            turns: number;
         };
         /** @description Versões de esquema lidas do disco. */
         VersaoBancos: {
@@ -6067,6 +6111,46 @@ export interface operations {
             };
             /** @description Só token global revoga */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+        };
+    };
+    usage_tokens: {
+        parameters: {
+            query: {
+                from: number;
+                to: number;
+            };
+            header?: never;
+            path: {
+                org_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TokenUsageJson"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

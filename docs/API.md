@@ -329,6 +329,7 @@ Colunas:
 | Execuções de fluxo | POST | `/admin/v1/orgs/{org_id}/fichas/{ficha_id}/flow-runs` | exceção: CLI vem na FX-31 | sim | sim | sim |
 | Execuções de fluxo | POST | `/admin/v1/orgs/{org_id}/fichas/{ficha_id}/flow-runs/{run_id}/actions` | exceção: CLI vem na FX-31 | sim | sim | sim |
 | Execuções de fluxo | POST | `/admin/v1/orgs/{org_id}/fichas/{ficha_id}/flow-runs/{run_id}/abandon` | exceção: CLI vem na FX-31 | sim | sim | sim |
+| Token usage | GET | `/admin/v1/orgs/{org_id}/usage/tokens` | exceção: sem equivalente na CLI | n/a | n/a | sim |
 | Atendimento (resumo) | GET | `/admin/v1/orgs/{org_id}/analytics/operational-summary` | exceção: sem equivalente na CLI | n/a | n/a | sim |
 
 ## Fechar conversa (MX-06)
@@ -1399,3 +1400,9 @@ Paridade de CLI: ainda não existe; entra na FX-31.
 - **`DELETE` de fluxo sem `If-Match` (baixa):** a proteção contra exclusão acidental é o `force=true` exigido com
   atendimento ativo, mais a auditoria.
 - **`preview` sem dados preenchidos (baixa):** mostra a etapa com os campos vazios; não simula respostas.
+
+## Token usage by organization
+
+`GET /admin/v1/orgs/{org_id}/usage/tokens?from=<ms>&to=<ms>` requires an organization or global bearer token and an existing organization. Both integer epoch-millisecond bounds are required; the interval is `[from, to)` over `turns.started_at`. Invalid bounds return 422, unauthorized requests 401, another organization's token 403, and a missing organization 404.
+
+The response contains `total_input_tokens`, `total_output_tokens`, `total_cost_micros` and `turns`, plus `by_agent` and `by_day` arrays. Each agent entry has `agent_id`, `input_tokens`, `output_tokens` and `turns`; a null agent is included and sorted last. Day entries contain `date` (UTC, YYYY-MM-DD), `output_tokens` and `turns`, ordered by date. Empty periods produce zero totals and empty arrays. Counts refer to turns, not model calls; retained history may be incomplete. The queries share a read snapshot. Migration 0018 indexes `turns(org_id, started_at)`.

@@ -30,6 +30,7 @@ mod produtos;
 mod saude;
 pub mod teste_chat;
 mod tokens;
+mod usage;
 mod whatsapp;
 
 use axum::Router;
@@ -155,6 +156,7 @@ pub fn router(estado: Estado) -> Router {
             "/admin/v1/orgs/{org_id}/fichas/{ficha_id}/close",
             axum::routing::post(fichas::fechar),
         )
+        .route("/admin/v1/orgs/{org_id}/usage/tokens", get(usage::tokens))
         .route(
             "/admin/v1/orgs/{org_id}/analytics/operational-summary",
             get(analytics::operational_summary),
@@ -547,6 +549,7 @@ pub fn documento() -> utoipa::openapi::OpenApi {
         fichas::listar, fichas::mostrar, fichas::eventos, fichas::iniciar_fluxo, fichas::acao,
         fichas::abandonar, fichas::fechar,
         analytics::operational_summary,
+        usage::tokens,
         saude::healthz,
         saude::metrics,
     ),
@@ -590,6 +593,7 @@ pub fn documento() -> utoipa::openapi::OpenApi {
         saude::MetricasJson,
         analytics::OperationalSummaryJson,
         analytics::NodeCountJson,
+        usage::TokenUsageJson, usage::AgentUsageJson, usage::DayUsageJson,
     )),
     tags(
         (name = "orgs", description = "Orgs (tenants)"),
@@ -603,6 +607,7 @@ pub fn documento() -> utoipa::openapi::OpenApi {
         (name = "matrix", description = "Módulo Matrix: estado por org e espaços por departamento"),
         (name = "flows", description = "Fluxos: script, validação, publicação, revisões, diff e preview"),
         (name = "fichas", description = "Fichas do atendimento, execuções de fluxo e ações humanas"),
+        (name = "usage", description = "Uso agregado de tokens"),
         (name = "analytics", description = "Leitura agregada do atendimento: contadores e execuções ativas por nó"),
     ),
     modifiers(&EsquemaDeSeguranca)

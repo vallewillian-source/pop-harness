@@ -8,7 +8,7 @@ como **decisão** abaixo.
 
 | Arquivo | O que guarda | Situação |
 |---|---|---|
-| `data/harness.db` | tudo que é durável: orgs, agentes, instruções, base, produtos, integrações, conversas, mensagens, entrada/saída, turnos, auditoria, fichas, fluxos e execuções | **esquema completo** (versão 17: migrações 0001 a 0017) |
+| `data/harness.db` | tudo que é durável: orgs, agentes, instruções, base, produtos, integrações, conversas, mensagens, entrada/saída, turnos, auditoria, fichas, fluxos e execuções | **esquema completo** (versão 18: migrações 0001 a 0018) |
 | `data/rag.db` | trechos, vetores int8 e índice de texto (FTS5) | arquivo criado, **sem tabelas** (a HR-16 cria as migrações) |
 
 Caminhos vêm da configuração (`dados.diretorio`, `dados.harness_db`, `dados.rag_db`) — ver

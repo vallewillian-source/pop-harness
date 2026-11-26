@@ -331,6 +331,10 @@ impl Store {
         Fichas(self)
     }
 
+    pub fn usage(&self) -> Usage<'_> {
+        Usage(self)
+    }
+
     pub fn analytics(&self) -> Analytics<'_> {
         Analytics(self)
     }

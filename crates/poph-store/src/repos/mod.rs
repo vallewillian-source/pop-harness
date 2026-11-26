@@ -37,6 +37,8 @@ mod retencao;
 mod revisoes;
 mod tokens;
 mod turnos;
+mod usage;
+pub use usage::{AgentUsage, DayUsage, TokenUsage, Usage};
 
 pub use agentes::{Agentes, agentes_por_provedor_em};
 pub use analytics::{Analytics, NodeCount, OperationalSummary};

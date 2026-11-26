@@ -160,7 +160,7 @@ M08a	90	crates/poph-store/src/integracoes_admin.rs
 M08a	47	crates/poph-store/src/leitores.rs
 M08a	271	crates/poph-store/src/lib.rs
 M08a	25	crates/poph-store/src/metricas.rs
-M08a	107	crates/poph-store/src/migracoes.rs
+M08a	108	crates/poph-store/src/migracoes.rs
 M08a	481	crates/poph-store/src/modelo.rs
 M08b	376	crates/poph-store/src/repos/agentes.rs
 M08b	7	crates/poph-store/src/repos/analytics.rs
@@ -186,6 +186,7 @@ M08b	67	crates/poph-store/src/repos/retencao.rs
 M08b	217	crates/poph-store/src/repos/revisoes.rs
 M08b	95	crates/poph-store/src/repos/tokens.rs
 M08b	250	crates/poph-store/src/repos/turnos.rs
+M08b	12	crates/poph-store/src/repos/usage.rs
 M08c	3	crates/poph-store/migrations/harness/0004_audit_log_matrix_user.sql
 M08d	69	crates/poph-store/tests/agentes_por_provedor.rs
 M08d	961	crates/poph-store/tests/armazenamento.rs
@@ -304,6 +305,7 @@ M11a-c	169	crates/poph-server/src/api/produtos.rs
 M11a-c	99	crates/poph-server/src/api/saude.rs
 M11a-c	496	crates/poph-server/src/api/teste_chat.rs
 M11a-c	116	crates/poph-server/src/api/tokens.rs
+M11a-c	14	crates/poph-server/src/api/usage.rs
 M11a-c	170	crates/poph-server/src/api/whatsapp.rs
 M11a-c	83	crates/poph-server/src/auth.rs
 M11a-c	96	crates/poph-server/src/cifra.rs
@@ -350,7 +352,7 @@ M11d	841	crates/poph-server/tests/fluxos_efeitos.rs
 M11d	120	crates/poph-server/tests/fluxos_limites.rs
 M11d	68	crates/poph-server/tests/fluxos_metricas.rs
 M11d	972	crates/poph-server/tests/isolamento_matrix.rs
-M11d	1105	crates/poph-server/tests/isolamento_orgs.rs
+M11d	1106	crates/poph-server/tests/isolamento_orgs.rs
 M11d	354	crates/poph-server/tests/manifestos_plugins.rs
 M11d	675	crates/poph-server/tests/matrix_api.rs
 M11d	327	crates/poph-server/tests/matrix_as.rs
@@ -373,6 +375,7 @@ M11d	572	crates/poph-server/tests/saida_whatsapp.rs
 M11d	649	crates/poph-server/tests/teste_chat.rs
 M11d	196	crates/poph-server/tests/teste_chat_encaminhado.rs
 M11d	804	crates/poph-server/tests/turno_whatsapp.rs
+M11d	4	crates/poph-server/tests/usage_tokens.rs
 M11d	638	crates/poph-server/tests/webhook_evolution.rs
 M11d	421	crates/poph-server/tests/whatsapp_admin.rs
 M12a	13	crates/poph/examples/semear_org.rs

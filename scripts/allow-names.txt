@@ -353,6 +353,7 @@ name	ix_orgs_status	published indice: ix_orgs_status
 name	ix_outbox_state	published indice: ix_outbox_state
 name	ix_products_category	published indice: ix_products_category
 name	ix_turns_conversation	published indice: ix_turns_conversation
+name	ix_turns_org_started_at	published indice: ix_turns_org_started_at
 name	jev	published comando cli: jev
 name	jev_json	published coluna: jev_json
 name	json	published flag cli: json

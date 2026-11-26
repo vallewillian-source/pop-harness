@@ -1011,6 +1011,7 @@ fn casos() -> Vec<Caso> {
             Json(r#"{"motivo":"Invadido","chave_idempotencia":"Invadido"}"#),
         ),
         caso("post", &format!("{FI}/close"), Vazio),
+        caso("get", "/admin/v1/orgs/{org_id}/usage/tokens", Vazio),
         caso(
             "get",
             "/admin/v1/orgs/{org_id}/analytics/operational-summary",
@@ -1164,6 +1165,9 @@ fn controle_esperado(metodo: &str, modelo: &str) -> Option<u16> {
     if modelo.contains("/manifests/") {
         // Tipo sem plugin declarado: resposta de "não encontrado" do próprio manifesto.
         return Some(404);
+    }
+    if modelo.ends_with("/usage/tokens") {
+        return Some(422);
     }
     if modelo.ends_with("/analytics/operational-summary") {
         return Some(422);
