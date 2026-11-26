@@ -182,3 +182,6 @@ pub use conversation_analytics::{
     ConversationAgent, ConversationAnalytics, ConversationChannel, ConversationCounts,
     ConversationDay, ConversationReport, ConversationSummary,
 };
+
+mod sla_analytics;
+pub use sla_analytics::{SlaAnalytics, SlaItem, SlaReport};

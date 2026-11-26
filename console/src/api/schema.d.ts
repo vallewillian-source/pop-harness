@@ -428,6 +428,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/v1/orgs/{org_id}/analytics/sla": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["sla_analytics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/v1/orgs/{org_id}/backup": {
         parameters: {
             query?: never;
@@ -1233,6 +1249,14 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        AgeBucket: {
+            /** Format: int64 */
+            count: number;
+            /** Format: int64 */
+            max_minutes?: number | null;
+            /** Format: int64 */
+            min_minutes: number;
+        };
         AgentJson: {
             agent_id: string;
             agent_name: string;
@@ -1941,6 +1965,22 @@ export interface components {
             details: unknown;
             /** @description Mensagem legível, em português. */
             message: string;
+        };
+        SlaReportJson: {
+            age_buckets: components["schemas"]["AgeBucket"][];
+            stale_items: components["schemas"]["StaleItem"][];
+        };
+        StaleItem: {
+            /** Format: int64 */
+            age_ms: number;
+            channel: string;
+            client_name?: string | null;
+            conversation_id?: string | null;
+            current_step_key?: string | null;
+            ficha_id: string;
+            /** Format: int64 */
+            idle_ms: number;
+            peer?: string | null;
         };
         SummaryJson: {
             /** Format: double */
@@ -3434,6 +3474,48 @@ export interface operations {
                 };
             };
             /** @description `from` ou `to` ausente ou inválido, ou `from` não anterior a `to` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+        };
+    };
+    sla_analytics: {
+        parameters: {
+            query: {
+                to: number;
+                now?: number;
+                limit?: number;
+                age_bounds_minutes?: string;
+            };
+            header?: never;
+            path: {
+                org_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SlaReportJson"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
             422: {
                 headers: {
                     [name: string]: unknown;

@@ -29,6 +29,7 @@ mod orgs;
 mod paginacao;
 mod produtos;
 mod saude;
+mod sla_analytics;
 pub mod teste_chat;
 mod tokens;
 mod usage;
@@ -158,6 +159,7 @@ pub fn router(estado: Estado) -> Router {
             axum::routing::post(fichas::fechar),
         )
         .route("/admin/v1/orgs/{org_id}/analytics/conversations", get(conversation_analytics::report))
+        .route("/admin/v1/orgs/{org_id}/analytics/sla", get(sla_analytics::report))
         .route("/admin/v1/orgs/{org_id}/usage/tokens", get(usage::tokens))
         .route(
             "/admin/v1/orgs/{org_id}/analytics/operational-summary",
@@ -552,6 +554,7 @@ pub fn documento() -> utoipa::openapi::OpenApi {
         fichas::abandonar, fichas::fechar,
         analytics::operational_summary,
         conversation_analytics::report,
+        sla_analytics::report,
         usage::tokens,
         saude::healthz,
         saude::metrics,
@@ -594,6 +597,7 @@ pub fn documento() -> utoipa::openapi::OpenApi {
         matrix::EspacoDesligadoJson,
         saude::HealthJson,
         saude::MetricasJson,
+        sla_analytics::SlaReportJson, sla_analytics::AgeBucket, sla_analytics::StaleItem,
         conversation_analytics::ConversationReportJson, conversation_analytics::SummaryJson, conversation_analytics::DayJson, conversation_analytics::AgentJson, conversation_analytics::ChannelJson,
         analytics::OperationalSummaryJson,
         analytics::NodeCountJson,

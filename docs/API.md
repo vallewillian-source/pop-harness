@@ -330,6 +330,7 @@ Colunas:
 | Execuções de fluxo | POST | `/admin/v1/orgs/{org_id}/fichas/{ficha_id}/flow-runs/{run_id}/actions` | exceção: CLI vem na FX-31 | sim | sim | sim |
 | Execuções de fluxo | POST | `/admin/v1/orgs/{org_id}/fichas/{ficha_id}/flow-runs/{run_id}/abandon` | exceção: CLI vem na FX-31 | sim | sim | sim |
 | Conversation analytics | GET | `/admin/v1/orgs/{org_id}/analytics/conversations` | exceção: sem equivalente na CLI | n/a | n/a | sim |
+| SLA analytics | GET | `/admin/v1/orgs/{org_id}/analytics/sla` | exceção: sem equivalente na CLI | n/a | n/a | sim |
 | Token usage | GET | `/admin/v1/orgs/{org_id}/usage/tokens` | exceção: sem equivalente na CLI | n/a | n/a | sim |
 | Atendimento (resumo) | GET | `/admin/v1/orgs/{org_id}/analytics/operational-summary` | exceção: sem equivalente na CLI | n/a | n/a | sim |
 
@@ -1423,3 +1424,9 @@ and counts all retained messages per selected conversation. The Case rate is the
 selected conversations linked to a Case. Both are null without a denominator. Agent names
 reflect the current record. All blocks are read from the same database snapshot. Retention can
 change message counts and the earliest message available.
+
+### SLA analytics
+
+`GET /admin/v1/orgs/{org_id}/analytics/sla` returns age buckets and the most idle open Cases. `to` is required in milliseconds; only Cases opened before it are included. `now` defaults to the server clock. `limit` defaults to 20 and accepts 1 through 100. `age_bounds_minutes` defaults to `60,240,1440,2880,4320,10080` and accepts up to 16 strictly increasing positive integers. Buckets are lower-inclusive and upper-exclusive, with negative ages in the first bucket.
+
+Each stale item provides `ficha_id`, `conversation_id`, `channel`, `peer`, `client_name`, `current_step_key`, `age_ms`, and `idle_ms`. The last activity is the latest Case event, falling back to opening time. The active flow supplies the current step. Deleted conversations leave their channel snapshot on the Case. Items are ordered by idle time, age and Case ID, all descending. Both lists use the same database snapshot.

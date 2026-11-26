@@ -1016,6 +1016,7 @@ fn casos() -> Vec<Caso> {
             "/admin/v1/orgs/{org_id}/analytics/conversations",
             Vazio,
         ),
+        caso("get", "/admin/v1/orgs/{org_id}/analytics/sla", Vazio),
         caso("get", "/admin/v1/orgs/{org_id}/usage/tokens", Vazio),
         caso(
             "get",
@@ -1170,6 +1171,9 @@ fn controle_esperado(metodo: &str, modelo: &str) -> Option<u16> {
     if modelo.contains("/manifests/") {
         // Tipo sem plugin declarado: resposta de "não encontrado" do próprio manifesto.
         return Some(404);
+    }
+    if modelo.ends_with("/analytics/sla") {
+        return Some(422);
     }
     if modelo.ends_with("/analytics/conversations") {
         return Some(422);
