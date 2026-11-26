@@ -17,7 +17,6 @@ M04	5	crates/poph-rag/tests/vetores.rs
 M05	4	crates/poph-jev/Cargo.toml
 M05	59	crates/poph-jev/src/cliente.rs
 M05	75	crates/poph-jev/src/eval.rs
-M05	199	crates/poph-jev/src/gates.rs
 M05	61	crates/poph-jev/src/handoff.rs
 M05	21	crates/poph-jev/src/lib.rs
 M05	72	crates/poph-jev/src/motor.rs
